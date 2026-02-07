@@ -202,8 +202,36 @@ async function getSessionStatus(
 }
 
 /**
+ * Check if there's already a pending spawn request for this session label.
+ */
+async function hasSpawnRequest(sessionLabel: string, config: OrchestratorConfig): Promise<boolean> {
+  const openclawRoot = getOpenclawRoot(config);
+  const queueDir = path.join(openclawRoot, "antfarm", "spawn-queue");
+  
+  try {
+    const files = await fs.readdir(queueDir);
+    for (const file of files) {
+      if (!file.endsWith(".json")) continue;
+      try {
+        const content = await fs.readFile(path.join(queueDir, file), "utf-8");
+        const request = JSON.parse(content);
+        if (request.sessionLabel === sessionLabel) {
+          return true;
+        }
+      } catch {
+        // Skip malformed files
+      }
+    }
+  } catch {
+    // Queue dir doesn't exist yet
+  }
+  return false;
+}
+
+/**
  * Write spawn request to queue file for the main agent to pick up.
  * This is a coordination mechanism when direct API access isn't available.
+ * Deduplicates by sessionLabel - won't create duplicate requests.
  */
 async function writeSpawnRequest(
   agentId: string,
@@ -211,6 +239,12 @@ async function writeSpawnRequest(
   sessionLabel: string,
   config: OrchestratorConfig
 ): Promise<void> {
+  // Check for existing request with same sessionLabel
+  if (await hasSpawnRequest(sessionLabel, config)) {
+    log(config, `Spawn request already exists for: ${sessionLabel}`);
+    return;
+  }
+  
   const openclawRoot = getOpenclawRoot(config);
   const queueDir = path.join(openclawRoot, "antfarm", "spawn-queue");
   await fs.mkdir(queueDir, { recursive: true });
