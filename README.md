@@ -36,4 +36,5 @@ antfarm workflow status <task-title>
 antfarm workflow update <workflow-id>
 antfarm workflow update <workflow-id> <workflow-url>
 antfarm workflow uninstall <workflow-id>
+antfarm workflow uninstall --all
 ```

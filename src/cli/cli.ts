@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { installWorkflow } from "../installer/install.js";
-import { uninstallWorkflow } from "../installer/uninstall.js";
+import { uninstallAllWorkflows, uninstallWorkflow } from "../installer/uninstall.js";
 import { updateWorkflow } from "../installer/update.js";
 import { getWorkflowStatus } from "../installer/status.js";
 import { runWorkflow } from "../installer/run.js";
@@ -11,6 +11,7 @@ function printUsage() {
       "antfarm workflow install <url>",
       "antfarm workflow update <workflow-id> [<url>]",
       "antfarm workflow uninstall <workflow-id>",
+      "antfarm workflow uninstall --all",
       "antfarm workflow status <task-title>",
       "antfarm workflow run <workflow-id> <task-title>",
     ].join("\n") + "\n",
@@ -45,6 +46,10 @@ async function main() {
   }
 
   if (action === "uninstall") {
+    if (target === "--all" || target === "all") {
+      await uninstallAllWorkflows();
+      return;
+    }
     await uninstallWorkflow({ workflowId: target });
     return;
   }

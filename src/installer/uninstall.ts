@@ -2,7 +2,14 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { readOpenClawConfig, writeOpenClawConfig } from "./openclaw-config.js";
 import { removeMainAgentGuidance } from "./main-agent-guidance.js";
-import { resolveRunRoot, resolveWorkflowDir, resolveWorkflowWorkspaceDir } from "./paths.js";
+import {
+  resolveAntfarmRoot,
+  resolveRunRoot,
+  resolveWorkflowDir,
+  resolveWorkflowWorkspaceDir,
+  resolveWorkflowWorkspaceRoot,
+  resolveWorkflowRoot,
+} from "./paths.js";
 import type { WorkflowInstallResult } from "./types.js";
 
 function filterAgentList(
@@ -88,4 +95,52 @@ export async function uninstallWorkflow(params: {
   }
 
   return { workflowId: params.workflowId, workflowDir };
+}
+
+export async function uninstallAllWorkflows(): Promise<void> {
+  const { path: configPath, config } = await readOpenClawConfig();
+  const list = Array.isArray(config.agents?.list) ? config.agents?.list : [];
+  const removedAgents = list.filter((entry) => {
+    const id = typeof entry.id === "string" ? entry.id : "";
+    return id.includes("/");
+  });
+  if (config.agents) {
+    config.agents.list = list.filter((entry) => !removedAgents.includes(entry));
+  }
+  await writeOpenClawConfig(configPath, config);
+
+  await removeMainAgentGuidance();
+
+  const workflowRoot = resolveWorkflowRoot();
+  if (await pathExists(workflowRoot)) {
+    await fs.rm(workflowRoot, { recursive: true, force: true });
+  }
+
+  const workflowWorkspaceRoot = resolveWorkflowWorkspaceRoot();
+  if (await pathExists(workflowWorkspaceRoot)) {
+    await fs.rm(workflowWorkspaceRoot, { recursive: true, force: true });
+  }
+
+  const runRoot = resolveRunRoot();
+  if (await pathExists(runRoot)) {
+    await fs.rm(runRoot, { recursive: true, force: true });
+  }
+
+  for (const entry of removedAgents) {
+    const agentDir = typeof entry.agentDir === "string" ? entry.agentDir : "";
+    if (!agentDir) {
+      continue;
+    }
+    if (await pathExists(agentDir)) {
+      await fs.rm(agentDir, { recursive: true, force: true });
+    }
+  }
+
+  const antfarmRoot = resolveAntfarmRoot();
+  if (await pathExists(antfarmRoot)) {
+    const entries = await fs.readdir(antfarmRoot).catch(() => [] as string[]);
+    if (entries.length === 0) {
+      await fs.rm(antfarmRoot, { recursive: true, force: true });
+    }
+  }
 }
