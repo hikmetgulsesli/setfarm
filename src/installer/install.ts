@@ -18,6 +18,28 @@ function ensureAgentList(config: { agents?: { list?: Array<Record<string, unknow
   return config.agents.list;
 }
 
+// Default security settings for workflow agents
+// Restricts dangerous tools while allowing normal development work
+const WORKFLOW_AGENT_SECURITY = {
+  tools: {
+    deny: [
+      "gateway",        // Can't modify OpenClaw config or restart
+      "cron",           // Can't create scheduled tasks
+      "message",        // Can't send external messages (telegram, etc.)
+      "nodes",          // Can't access other devices
+      "canvas",         // Can't present UI to user
+      "sessions_spawn", // Can't spawn arbitrary agents
+      "sessions_send",  // Can't send messages to other sessions
+    ],
+    // Allowed by default: read, write, edit, exec, process, browser
+    // These are needed for normal development work
+  },
+  // Workflow agents can't spawn other agents
+  subagents: {
+    allowAgents: [] as string[],
+  },
+};
+
 function upsertAgent(
   list: Array<Record<string, unknown>>,
   agent: { id: string; name?: string; workspaceDir: string; agentDir: string },
@@ -28,6 +50,9 @@ function upsertAgent(
     name: agent.name ?? agent.id,
     workspace: agent.workspaceDir,
     agentDir: agent.agentDir,
+    // Apply security restrictions
+    tools: WORKFLOW_AGENT_SECURITY.tools,
+    subagents: WORKFLOW_AGENT_SECURITY.subagents,
   };
   if (existing) {
     Object.assign(existing, payload);
