@@ -1,10 +1,14 @@
 id: feature-dev
 name: Feature Development Workflow
-version: 1
+version: 2
+description: |
+  End-to-end feature development: plan, implement, verify, review, PR, document.
+  Agents figure out where to work based on the task description.
+
 agents:
   - id: lead
     name: Lead
-    description: Owns workflow visibility, status, and escalation.
+    description: Creates plans, owns workflow status, handles escalations.
     workspace:
       baseDir: agents/lead
       files:
@@ -13,14 +17,12 @@ agents:
         TOOLS.md: shared/TOOLS.md
         IDENTITY.md: agents/lead/IDENTITY.md
         USER.md: shared/USER.md
-        HEARTBEAT.md: shared/HEARTBEAT.md
-        BOOTSTRAP.md: shared/BOOTSTRAP.md
-        MEMORY.md: shared/MEMORY.md
       skills:
         - antfarm-workflows
+
   - id: developer
     name: Developer
-    description: Implements the task and commits code locally.
+    description: Implements features, writes tests, commits code.
     workspace:
       baseDir: agents/developer
       files:
@@ -29,14 +31,12 @@ agents:
         TOOLS.md: shared/TOOLS.md
         IDENTITY.md: agents/developer/IDENTITY.md
         USER.md: shared/USER.md
-        HEARTBEAT.md: shared/HEARTBEAT.md
-        BOOTSTRAP.md: shared/BOOTSTRAP.md
-        MEMORY.md: shared/MEMORY.md
       skills:
         - antfarm-workflows
+
   - id: verifier
     name: Verifier
-    description: Validates acceptance criteria and requests fixes.
+    description: Runs tests, validates acceptance criteria.
     workspace:
       baseDir: agents/verifier
       files:
@@ -45,14 +45,12 @@ agents:
         TOOLS.md: shared/TOOLS.md
         IDENTITY.md: agents/verifier/IDENTITY.md
         USER.md: shared/USER.md
-        HEARTBEAT.md: shared/HEARTBEAT.md
-        BOOTSTRAP.md: shared/BOOTSTRAP.md
-        MEMORY.md: shared/MEMORY.md
       skills:
         - antfarm-workflows
+
   - id: reviewer
     name: Reviewer
-    description: Creates and reviews a GitHub PR; requests changes.
+    description: Reviews code changes, creates PRs.
     workspace:
       baseDir: agents/reviewer
       files:
@@ -61,89 +59,231 @@ agents:
         TOOLS.md: shared/TOOLS.md
         IDENTITY.md: agents/reviewer/IDENTITY.md
         USER.md: shared/USER.md
-        HEARTBEAT.md: shared/HEARTBEAT.md
-        BOOTSTRAP.md: shared/BOOTSTRAP.md
-        MEMORY.md: shared/MEMORY.md
       skills:
         - antfarm-workflows
+
 steps:
-  - id: plan
-    agent: lead
-    input: |
-      You are the lead. Convert the task into a concise plan with acceptance criteria.
-      Task: {{task}}
-      Reply with:
-      STATUS: done
-      PLAN:
-      - ...
-      ACCEPTANCE:
-      - ...
-    expects: "STATUS: done"
-  - id: preflight-pr
+  - id: preflight
     agent: reviewer
     input: |
-      Confirm GitHub CLI access for creating PRs.
-      Run: gh auth status
+      Pre-flight checks before starting work.
+      
+      Task: {{task}}
+      
+      1. Find the relevant codebase for this task
+      2. Check git status is clean (no uncommitted changes)
+      3. Check we're on an appropriate branch (or create one)
+      4. Verify gh auth status works
+      
       Reply with:
       STATUS: done
-      or
+      REPO: /path/to/repo
+      BRANCH: branch-name
+      
+      Or if blocked:
       STATUS: blocked
-      MISSING:
-      - ...
+      REASON: ...
     expects: "STATUS: done"
     on_fail:
       escalate_to: lead
+
+  - id: plan
+    agent: lead
+    input: |
+      Create a detailed implementation plan.
+      
+      Task: {{task}}
+      Repo: {{repo}}
+      Branch: {{branch}}
+      
+      Explore the codebase to understand the structure. Then create a plan.
+      
+      Reply with:
+      STATUS: done
+      
+      FILES:
+      - path/to/file1.ts (create|modify|delete)
+      - path/to/file2.ts (create|modify|delete)
+      
+      PLAN:
+      1. First, do X
+      2. Then, do Y
+      3. Finally, do Z
+      
+      ACCEPTANCE:
+      - Criterion 1 (how to verify)
+      - Criterion 2 (how to verify)
+      - Criterion 3 (how to verify)
+    expects: "STATUS: done"
+
   - id: implement
     agent: developer
     input: |
-      Implement the feature described below. Follow the acceptance criteria.
+      Implement the feature according to the plan.
+      
+      Task: {{task}}
+      Repo: {{repo}}
+      Branch: {{branch}}
+      
+      FILES:
+      {{files}}
       
       PLAN:
       {{plan}}
       
       ACCEPTANCE:
       {{acceptance}}
+      
+      Requirements:
+      - Write clean, well-structured code
+      - Add or update tests for your changes
+      - Commit your changes with a clear message
+      
       Reply with:
       STATUS: done
-      SUMMARY: ...
-      TESTS: ...
+      
+      CHANGES:
+      - What you changed/added
+      
+      TESTS:
+      - What tests you wrote/updated
+      
+      COMMIT: commit-hash
     expects: "STATUS: done"
     max_retries: 3
+    on_fail:
+      escalate_to: lead
+
   - id: verify
     agent: verifier
     input: |
-      Verify the implementation against acceptance criteria.
+      Verify the implementation meets all acceptance criteria.
+      
+      Repo: {{repo}}
+      Branch: {{branch}}
+      
+      ACCEPTANCE:
+      {{acceptance}}
+      
+      CHANGES:
+      {{changes}}
+      
+      TESTS:
+      {{tests}}
+      
+      1. Run the test suite
+      2. Check each acceptance criterion
+      3. Look for obvious issues
+      
+      Reply with:
+      STATUS: done
+      VERIFIED: All acceptance criteria met
+      
+      Or if issues found:
+      STATUS: retry
+      ISSUES:
+      - Issue 1
+      - Issue 2
+    expects: "STATUS: done"
+    on_fail:
+      retry_step: implement
+      max_retries: 3
+      on_exhausted:
+        escalate_to: lead
+
+  - id: review
+    agent: reviewer
+    input: |
+      Review the code changes.
+      
+      Repo: {{repo}}
+      Branch: {{branch}}
+      Commit: {{commit}}
       
       PLAN:
       {{plan}}
       
-      ACCEPTANCE:
-      {{acceptance}}
+      CHANGES:
+      {{changes}}
+      
+      Run: git diff main...HEAD (or appropriate base branch)
+      
+      Review for:
+      - Code quality and clarity
+      - Potential bugs or edge cases
+      - Test coverage
+      - Follows project conventions
+      
       Reply with:
-      STATUS: done (if it meets all criteria)
-      or
+      STATUS: done
+      REVIEW: Approved
+      
+      Or if changes needed:
       STATUS: retry
-      MISSING:
-      - ...
+      FEEDBACK:
+      - Requested change 1
+      - Requested change 2
     expects: "STATUS: done"
     on_fail:
       retry_step: implement
-      max_retries: 5
+      max_retries: 2
       on_exhausted:
         escalate_to: lead
-  - id: review
+
+  - id: pr
     agent: reviewer
     input: |
-      Create a PR and review it. If changes are needed, request them.
-      Reply with:
-      STATUS: done (PR ready for owner)
-      or
-      STATUS: retry
+      Create a pull request.
+      
+      Repo: {{repo}}
+      Branch: {{branch}}
+      
+      TASK:
+      {{task}}
+      
+      PLAN:
+      {{plan}}
+      
       CHANGES:
-      - ...
+      {{changes}}
+      
+      Create a PR with:
+      - Clear title summarizing the change
+      - Description explaining what and why
+      - Reference to acceptance criteria
+      
+      Run: gh pr create --fill (or with explicit title/body)
+      
+      Reply with:
+      STATUS: done
+      PR: URL to the PR
     expects: "STATUS: done"
     on_fail:
-      retry_step: implement
-      max_retries: 5
-      on_exhausted:
-        escalate_to: lead
+      escalate_to: lead
+
+  - id: document
+    agent: lead
+    input: |
+      Document what was accomplished.
+      
+      Task: {{task}}
+      PR: {{pr}}
+      
+      PLAN:
+      {{plan}}
+      
+      CHANGES:
+      {{changes}}
+      
+      Write a summary to memory. Create or append to memory/YYYY-MM-DD.md (use today's date).
+      
+      Include:
+      - What was built
+      - Key decisions made
+      - Any lessons learned
+      - Link to PR
+      
+      Reply with:
+      STATUS: done
+      SUMMARY: Brief one-line summary
+    expects: "STATUS: done"
