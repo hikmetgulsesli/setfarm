@@ -7,6 +7,7 @@ import { runWorkflow } from "../installer/run.js";
 import { getNextStep, completeStep } from "../installer/step-runner.js";
 import { runOrchestrator, orchestrateOnce, listSpawnQueue, removeFromSpawnQueue } from "../daemon/orchestrator.js";
 import { getCronSetupInstructions } from "../installer/setup-cron.js";
+import { ensureOrchestratorCron } from "../installer/gateway-api.js";
 
 function printUsage() {
   process.stdout.write(
@@ -77,8 +78,21 @@ async function main() {
   if (action === "install") {
     const result = await installWorkflow({ source: target });
     process.stdout.write(`Installed workflow: ${result.workflowId}\n`);
-    process.stdout.write(`\nIMPORTANT: Run 'antfarm setup' to configure the orchestrator cron job.\n`);
-    process.stdout.write(`Without this, workflows won't auto-advance.\n`);
+    
+    // Automatically set up the orchestrator cron
+    process.stdout.write(`Setting up orchestrator cron...\n`);
+    const cronResult = await ensureOrchestratorCron();
+    if (cronResult.ok) {
+      if (cronResult.created) {
+        process.stdout.write(`Created antfarm-orchestrator cron job (runs every 30s)\n`);
+      } else {
+        process.stdout.write(`Orchestrator cron already exists\n`);
+      }
+      process.stdout.write(`\nReady! Start a workflow with: antfarm workflow run ${result.workflowId} "your task"\n`);
+    } else {
+      process.stdout.write(`Could not auto-create cron: ${cronResult.error}\n`);
+      process.stdout.write(`Run 'antfarm setup' for manual instructions.\n`);
+    }
     return;
   }
 
