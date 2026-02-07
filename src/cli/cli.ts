@@ -5,6 +5,7 @@ import { updateWorkflow } from "../installer/update.js";
 import { getWorkflowStatus } from "../installer/status.js";
 import { runWorkflow } from "../installer/run.js";
 import { getNextStep, completeStep } from "../installer/step-runner.js";
+import { runOrchestrator, orchestrateOnce, listSpawnQueue, removeFromSpawnQueue } from "../daemon/orchestrator.js";
 
 function printUsage() {
   process.stdout.write(
@@ -17,6 +18,11 @@ function printUsage() {
       "antfarm workflow run <workflow-id> <task-title>",
       "antfarm workflow next <task-title>",
       "antfarm workflow complete <task-title> <success|fail> [output]",
+      "",
+      "antfarm daemon start [--verbose]     Start the orchestrator daemon",
+      "antfarm daemon once [--verbose]      Run a single orchestration pass",
+      "antfarm daemon queue                 List pending spawn requests",
+      "antfarm daemon dequeue <file>        Remove a spawn request",
     ].join("\n") + "\n",
   );
 }
@@ -28,11 +34,17 @@ async function main() {
     process.exit(1);
   }
   const [group, action, target] = args;
+  
+  if (group === "daemon") {
+    await handleDaemon(args.slice(1));
+    return;
+  }
+  
   if (group !== "workflow") {
     printUsage();
     process.exit(1);
   }
-  if (!target) {
+  if (!target && action !== "next" && action !== "complete") {
     printUsage();
     process.exit(1);
   }
@@ -112,6 +124,51 @@ async function main() {
   }
 
   process.stderr.write(`Unknown action: ${action}\n`);
+  printUsage();
+  process.exit(1);
+}
+
+async function handleDaemon(args: string[]): Promise<void> {
+  const action = args[0];
+  const verbose = args.includes("--verbose") || args.includes("-v");
+  const pollInterval = parseInt(process.env.ANTFARM_POLL_INTERVAL ?? "15000", 10);
+  
+  const config = { pollIntervalMs: pollInterval, verbose };
+  
+  if (action === "start") {
+    await runOrchestrator(config);
+    return;
+  }
+  
+  if (action === "once") {
+    await orchestrateOnce(config);
+    return;
+  }
+  
+  if (action === "queue") {
+    const queue = await listSpawnQueue(config);
+    if (queue.length === 0) {
+      process.stdout.write("No pending spawn requests.\n");
+    } else {
+      for (const req of queue) {
+        process.stdout.write(`${req.file}: ${req.agentId} - ${req.task.slice(0, 50)}...\n`);
+      }
+    }
+    return;
+  }
+  
+  if (action === "dequeue") {
+    const file = args[1];
+    if (!file) {
+      process.stderr.write("Missing file name.\n");
+      process.exit(1);
+    }
+    await removeFromSpawnQueue(file, config);
+    process.stdout.write(`Removed: ${file}\n`);
+    return;
+  }
+  
+  process.stderr.write(`Unknown daemon action: ${action}\n`);
   printUsage();
   process.exit(1);
 }
