@@ -8,21 +8,24 @@ import { getNextStep, completeStep } from "../installer/step-runner.js";
 import { runOrchestrator, orchestrateOnce, listSpawnQueue, removeFromSpawnQueue } from "../daemon/orchestrator.js";
 import { getCronSetupInstructions } from "../installer/setup-cron.js";
 import { ensureOrchestratorCron } from "../installer/gateway-api.js";
+import { installAntfarm } from "../installer/install-antfarm.js";
 
 function printUsage() {
   process.stdout.write(
     [
-      "antfarm workflow install <url>",
-      "antfarm workflow update <workflow-id> [<url>]",
-      "antfarm workflow uninstall <workflow-id>",
-      "antfarm workflow uninstall --all",
-      "antfarm workflow status <task-title>",
-      "antfarm workflow run <workflow-id> <task-title>",
-      "antfarm workflow next <task-title>",
-      "antfarm workflow complete <task-title> <success|fail> [output]",
+      "antfarm install <github-url>         Install Antfarm + default workflows + cron",
       "",
-      "antfarm setup                        Show cron setup instructions (run once after install)",
-      "antfarm check [--verbose]            Run orchestration check (detect completions, queue spawns)",
+      "antfarm workflow install <url>       Install a single workflow",
+      "antfarm workflow update <id> [<url>] Update a workflow",
+      "antfarm workflow uninstall <id>      Uninstall a workflow",
+      "antfarm workflow uninstall --all     Uninstall all workflows",
+      "antfarm workflow status <task>       Check workflow run status",
+      "antfarm workflow run <id> <task>     Start a workflow run",
+      "antfarm workflow next <task>         Get next step info",
+      "antfarm workflow complete <task> <success|fail> [output]",
+      "",
+      "antfarm setup                        Show cron setup instructions",
+      "antfarm check [--verbose]            Run orchestration check",
       "antfarm queue                        List pending spawn requests",
       "antfarm dequeue <file>               Remove a spawn request",
     ].join("\n") + "\n",
@@ -34,6 +37,16 @@ async function main() {
   const [group, action, target] = args;
   
   // Handle single-word commands first (before length check)
+  if (group === "install" && args[1]) {
+    const result = await installAntfarm(args[1]);
+    const successCount = result.workflows.filter((w) => w.ok).length;
+    console.log(`\n✓ Antfarm installed`);
+    console.log(`  Cron: ${result.cronCreated ? "created" : result.cronExists ? "exists" : "failed"}`);
+    console.log(`  Workflows: ${successCount}/${result.workflows.length} installed`);
+    console.log(`\nStart a workflow with: antfarm workflow run <workflow-id> "your task"`);
+    return;
+  }
+  
   if (group === "setup") {
     process.stdout.write(getCronSetupInstructions());
     return;
