@@ -107,7 +107,9 @@ export async function listCronJobs(): Promise<{ ok: boolean; jobs?: Array<{ id: 
     if (!result.ok) {
       return { ok: false, error: result.error?.message ?? "Unknown error" };
     }
-    return { ok: true, jobs: result.result?.jobs ?? [] };
+    // Handle both { result: { jobs } } and { jobs } formats
+    const jobs = result.result?.jobs ?? result.jobs ?? [];
+    return { ok: true, jobs };
   } catch (err) {
     return { ok: false, error: `Failed to call gateway: ${err}` };
   }
