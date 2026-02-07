@@ -18,6 +18,7 @@ antfarm workflow install <workflow-url>
 Examples:
 
 ```bash
+antfarm workflow install ./workflows/feature-dev
 antfarm workflow install https://github.com/acme/workflows/tree/main/feature-dev
 antfarm workflow install https://raw.githubusercontent.com/acme/workflows/main/feature-dev/workflow.yml
 ```
