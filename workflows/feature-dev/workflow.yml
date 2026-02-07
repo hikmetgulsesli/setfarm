@@ -1,28 +1,15 @@
 id: feature-dev
 name: Feature Development Workflow
-version: 2
+version: 3
 description: |
-  End-to-end feature development: plan, implement, verify, review, PR, document.
-  Agents figure out where to work based on the task description.
+  Executes a well-specified plan from the main agent.
+  Main agent handles planning interactively with the human.
+  This workflow handles execution: implement, verify, test, PR, review.
 
 agents:
-  - id: lead
-    name: Lead
-    description: Creates plans, owns workflow status, handles escalations.
-    workspace:
-      baseDir: agents/lead
-      files:
-        AGENTS.md: agents/lead/AGENTS.md
-        SOUL.md: agents/lead/SOUL.md
-        TOOLS.md: shared/TOOLS.md
-        IDENTITY.md: agents/lead/IDENTITY.md
-        USER.md: shared/USER.md
-      skills:
-        - antfarm-workflows
-
   - id: developer
     name: Developer
-    description: Implements features, writes tests, commits code.
+    description: Implements features, writes tests, creates PRs.
     workspace:
       baseDir: agents/developer
       files:
@@ -31,12 +18,10 @@ agents:
         TOOLS.md: shared/TOOLS.md
         IDENTITY.md: agents/developer/IDENTITY.md
         USER.md: shared/USER.md
-      skills:
-        - antfarm-workflows
 
   - id: verifier
     name: Verifier
-    description: Runs tests, validates acceptance criteria.
+    description: Quick sanity check - did developer actually do the work?
     workspace:
       baseDir: agents/verifier
       files:
@@ -45,12 +30,22 @@ agents:
         TOOLS.md: shared/TOOLS.md
         IDENTITY.md: agents/verifier/IDENTITY.md
         USER.md: shared/USER.md
-      skills:
-        - antfarm-workflows
+
+  - id: tester
+    name: Tester
+    description: Thorough testing - runs tests, finds edge cases, browser testing if needed.
+    workspace:
+      baseDir: agents/tester
+      files:
+        AGENTS.md: agents/tester/AGENTS.md
+        SOUL.md: agents/tester/SOUL.md
+        TOOLS.md: shared/TOOLS.md
+        IDENTITY.md: agents/tester/IDENTITY.md
+        USER.md: shared/USER.md
 
   - id: reviewer
     name: Reviewer
-    description: Reviews code changes, creates PRs.
+    description: Reviews PRs, requests changes or approves.
     workspace:
       baseDir: agents/reviewer
       files:
@@ -59,231 +54,173 @@ agents:
         TOOLS.md: shared/TOOLS.md
         IDENTITY.md: agents/reviewer/IDENTITY.md
         USER.md: shared/USER.md
-      skills:
-        - antfarm-workflows
 
 steps:
-  - id: preflight
-    agent: reviewer
-    input: |
-      Pre-flight checks before starting work.
-      
-      Task: {{task}}
-      
-      1. Find the relevant codebase for this task
-      2. Check git status is clean (no uncommitted changes)
-      3. Check we're on an appropriate branch (or create one)
-      4. Verify gh auth status works
-      
-      Reply with:
-      STATUS: done
-      REPO: /path/to/repo
-      BRANCH: branch-name
-      
-      Or if blocked:
-      STATUS: blocked
-      REASON: ...
-    expects: "STATUS: done"
-    on_fail:
-      escalate_to: lead
-
-  - id: plan
-    agent: lead
-    input: |
-      Create a detailed implementation plan.
-      
-      Task: {{task}}
-      Repo: {{repo}}
-      Branch: {{branch}}
-      
-      Explore the codebase to understand the structure. Then create a plan.
-      
-      Reply with:
-      STATUS: done
-      
-      FILES:
-      - path/to/file1.ts (create|modify|delete)
-      - path/to/file2.ts (create|modify|delete)
-      
-      PLAN:
-      1. First, do X
-      2. Then, do Y
-      3. Finally, do Z
-      
-      ACCEPTANCE:
-      - Criterion 1 (how to verify)
-      - Criterion 2 (how to verify)
-      - Criterion 3 (how to verify)
-    expects: "STATUS: done"
-
   - id: implement
     agent: developer
     input: |
-      Implement the feature according to the plan.
+      Implement the following plan. The main agent has already discussed this with the human.
       
-      Task: {{task}}
-      Repo: {{repo}}
-      Branch: {{branch}}
-      
-      FILES:
-      {{files}}
-      
-      PLAN:
-      {{plan}}
-      
-      ACCEPTANCE:
-      {{acceptance}}
+      TASK:
+      {{task}}
       
       Requirements:
-      - Write clean, well-structured code
-      - Add or update tests for your changes
-      - Commit your changes with a clear message
+      1. Find the relevant codebase
+      2. Create a feature branch
+      3. Implement each subtask
+      4. Write tests for your changes
+      5. Commit with clear messages
+      
+      Before completing, update your AGENTS.md and memory if you learned anything useful for future tasks.
       
       Reply with:
       STATUS: done
       
-      CHANGES:
-      - What you changed/added
-      
-      TESTS:
-      - What tests you wrote/updated
-      
-      COMMIT: commit-hash
+      REPO: /path/to/repo
+      BRANCH: branch-name
+      COMMITS: list of commit hashes
+      CHANGES: what you implemented
+      TESTS: what tests you wrote
     expects: "STATUS: done"
-    max_retries: 3
+    max_retries: 2
     on_fail:
-      escalate_to: lead
+      escalate_to: human
 
   - id: verify
     agent: verifier
     input: |
-      Verify the implementation meets all acceptance criteria.
+      Quick verification: Did the developer actually complete the work?
       
-      Repo: {{repo}}
-      Branch: {{branch}}
+      TASK:
+      {{task}}
       
-      ACCEPTANCE:
-      {{acceptance}}
+      REPO: {{repo}}
+      BRANCH: {{branch}}
+      CHANGES: {{changes}}
       
-      CHANGES:
-      {{changes}}
+      Check:
+      1. Code exists (not just TODOs or placeholders)
+      2. Each part of the task was addressed
+      3. No obvious incomplete work
       
-      TESTS:
-      {{tests}}
+      This is a quick sanity check, not deep testing.
       
-      1. Run the test suite
-      2. Check each acceptance criterion
-      3. Look for obvious issues
+      Before completing, update your AGENTS.md and memory if you learned anything useful.
       
       Reply with:
       STATUS: done
-      VERIFIED: All acceptance criteria met
+      VERIFIED: What you confirmed
       
-      Or if issues found:
+      Or if incomplete:
       STATUS: retry
       ISSUES:
-      - Issue 1
-      - Issue 2
-    expects: "STATUS: done"
-    on_fail:
-      retry_step: implement
-      max_retries: 3
-      on_exhausted:
-        escalate_to: lead
-
-  - id: review
-    agent: reviewer
-    input: |
-      Review the code changes.
-      
-      Repo: {{repo}}
-      Branch: {{branch}}
-      Commit: {{commit}}
-      
-      PLAN:
-      {{plan}}
-      
-      CHANGES:
-      {{changes}}
-      
-      Run: git diff main...HEAD (or appropriate base branch)
-      
-      Review for:
-      - Code quality and clarity
-      - Potential bugs or edge cases
-      - Test coverage
-      - Follows project conventions
-      
-      Reply with:
-      STATUS: done
-      REVIEW: Approved
-      
-      Or if changes needed:
-      STATUS: retry
-      FEEDBACK:
-      - Requested change 1
-      - Requested change 2
+      - What's missing or incomplete
     expects: "STATUS: done"
     on_fail:
       retry_step: implement
       max_retries: 2
       on_exhausted:
-        escalate_to: lead
+        escalate_to: human
 
-  - id: pr
-    agent: reviewer
+  - id: test
+    agent: tester
     input: |
-      Create a pull request.
-      
-      Repo: {{repo}}
-      Branch: {{branch}}
+      Thorough testing of the implementation.
       
       TASK:
       {{task}}
       
-      PLAN:
-      {{plan}}
+      REPO: {{repo}}
+      BRANCH: {{branch}}
+      CHANGES: {{changes}}
+      TESTS: {{tests}}
       
-      CHANGES:
-      {{changes}}
+      Your job:
+      1. Run the existing test suite
+      2. Run the new tests
+      3. Look for edge cases
+      4. If this is a UI feature, use agent-browser to test it
+      5. Check error handling
+      
+      Decide what testing approach makes sense for this task.
+      
+      Before completing, update your AGENTS.md and memory if you learned anything useful.
+      
+      Reply with:
+      STATUS: done
+      RESULTS: What you tested and the outcomes
+      
+      Or if issues found:
+      STATUS: retry
+      FAILURES:
+      - Specific test failures or bugs found
+    expects: "STATUS: done"
+    on_fail:
+      retry_step: implement
+      max_retries: 2
+      on_exhausted:
+        escalate_to: human
+
+  - id: pr
+    agent: developer
+    input: |
+      Create a pull request for your changes.
+      
+      TASK:
+      {{task}}
+      
+      REPO: {{repo}}
+      BRANCH: {{branch}}
+      CHANGES: {{changes}}
+      RESULTS: {{results}}
       
       Create a PR with:
       - Clear title summarizing the change
       - Description explaining what and why
-      - Reference to acceptance criteria
+      - Reference to what was tested
       
-      Run: gh pr create --fill (or with explicit title/body)
+      Use: gh pr create
       
       Reply with:
       STATUS: done
-      PR: URL to the PR
+      PR: URL to the pull request
     expects: "STATUS: done"
     on_fail:
-      escalate_to: lead
+      escalate_to: human
 
-  - id: document
-    agent: lead
+  - id: review
+    agent: reviewer
     input: |
-      Document what was accomplished.
+      Review the pull request.
       
-      Task: {{task}}
       PR: {{pr}}
+      TASK: {{task}}
+      CHANGES: {{changes}}
       
-      PLAN:
-      {{plan}}
+      Review for:
+      - Code quality and clarity
+      - Potential bugs or issues
+      - Test coverage
+      - Follows project conventions
       
-      CHANGES:
-      {{changes}}
+      Use: gh pr view, gh pr diff
       
-      Write a summary to memory. Create or append to memory/YYYY-MM-DD.md (use today's date).
+      If changes needed, add comments to the PR explaining what needs to change.
       
-      Include:
-      - What was built
-      - Key decisions made
-      - Any lessons learned
-      - Link to PR
+      Before completing, update your AGENTS.md and memory if you learned anything useful.
       
       Reply with:
       STATUS: done
-      SUMMARY: Brief one-line summary
+      DECISION: approved
+      
+      Or if changes needed:
+      STATUS: retry
+      DECISION: changes_requested
+      FEEDBACK:
+      - What needs to change
     expects: "STATUS: done"
+    on_fail:
+      retry_step: implement
+      max_retries: 3
+      on_exhausted:
+        escalate_to: human
