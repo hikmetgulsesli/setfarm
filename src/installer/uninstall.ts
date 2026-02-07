@@ -99,6 +99,14 @@ export async function uninstallWorkflow(params: {
     if (await pathExists(agentDir)) {
       await fs.rm(agentDir, { recursive: true, force: true });
     }
+    // Also remove the parent directory if it's now empty
+    const parentDir = path.dirname(agentDir);
+    if (await pathExists(parentDir)) {
+      const remaining = await fs.readdir(parentDir).catch(() => ["placeholder"]);
+      if (remaining.length === 0) {
+        await fs.rm(parentDir, { recursive: true, force: true });
+      }
+    }
   }
 
   return { workflowId: params.workflowId, workflowDir };
@@ -146,6 +154,14 @@ export async function uninstallAllWorkflows(): Promise<void> {
     }
     if (await pathExists(agentDir)) {
       await fs.rm(agentDir, { recursive: true, force: true });
+    }
+    // Also remove the parent directory if it's now empty
+    const parentDir = path.dirname(agentDir);
+    if (await pathExists(parentDir)) {
+      const remaining = await fs.readdir(parentDir).catch(() => ["placeholder"]);
+      if (remaining.length === 0) {
+        await fs.rm(parentDir, { recursive: true, force: true });
+      }
     }
   }
 
