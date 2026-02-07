@@ -121,7 +121,8 @@ steps:
     on_fail:
       retry_step: implement
       max_retries: 5
-      on_exhausted: escalate_to: lead
+      on_exhausted:
+        escalate_to: lead
   - id: review
     agent: reviewer
     input: |
@@ -136,4 +137,5 @@ steps:
     on_fail:
       retry_step: implement
       max_retries: 5
-      on_exhausted: escalate_to: lead
+      on_exhausted:
+        escalate_to: lead
