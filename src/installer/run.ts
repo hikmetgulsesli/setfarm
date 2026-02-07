@@ -22,7 +22,9 @@ export async function runWorkflow(params: {
   const leadAgentId = resolveLeadAgentId(workflow);
   const now = new Date().toISOString();
   const runId = crypto.randomUUID();
-  const leadSessionLabel = `Workflow: ${workflow.name ?? workflow.id} — ${params.taskTitle}`;
+  const runId8 = runId.slice(0, 8);
+  // Session labels have 64 char limit: wf-{workflow}-lead-{runId8}
+  const leadSessionLabel = `wf-${workflow.id}-lead-${runId8}`;
   const record: WorkflowRunRecord = {
     id: runId,
     workflowId: workflow.id,
