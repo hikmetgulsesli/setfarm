@@ -5,6 +5,7 @@ import { loadWorkflowSpec } from "./workflow-spec.js";
 import { provisionAgents } from "./agent-provision.js";
 import { readOpenClawConfig, writeOpenClawConfig } from "./openclaw-config.js";
 import { updateMainAgentGuidance } from "./main-agent-guidance.js";
+import { addSubagentAllowlist } from "./subagent-allowlist.js";
 import type { WorkflowInstallResult } from "./types.js";
 
 function ensureAgentList(config: { agents?: { list?: Array<Record<string, unknown>> } }) {
@@ -59,6 +60,7 @@ export async function installWorkflow(params: { source: string }): Promise<Workf
 
   const { path: configPath, config } = await readOpenClawConfig();
   const list = ensureAgentList(config);
+  addSubagentAllowlist(config, provisioned.map((agent) => agent.id));
   for (const agent of provisioned) {
     upsertAgent(list, agent);
   }

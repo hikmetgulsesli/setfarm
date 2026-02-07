@@ -4,6 +4,11 @@ import { resolveOpenClawConfigPath } from "./paths.js";
 
 export type OpenClawConfig = {
   agents?: {
+    defaults?: {
+      subagents?: {
+        allowAgents?: string[];
+      };
+    };
     list?: Array<Record<string, unknown>>;
   };
 };

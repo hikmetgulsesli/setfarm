@@ -4,6 +4,7 @@ import { provisionAgents } from "./agent-provision.js";
 import { readOpenClawConfig, writeOpenClawConfig } from "./openclaw-config.js";
 import { updateMainAgentGuidance } from "./main-agent-guidance.js";
 import { resolveWorkflowDir } from "./paths.js";
+import { addSubagentAllowlist } from "./subagent-allowlist.js";
 import type { WorkflowInstallResult } from "./types.js";
 
 export async function updateWorkflowFromSource(params: {
@@ -15,6 +16,7 @@ export async function updateWorkflowFromSource(params: {
 
   const { path: configPath, config } = await readOpenClawConfig();
   const list = ensureAgentList(config);
+  addSubagentAllowlist(config, provisioned.map((agent) => agent.id));
   for (const agent of provisioned) {
     upsertAgent(list, agent);
   }
@@ -65,6 +67,7 @@ export async function updateWorkflow(params: {
 
   const { path: configPath, config } = await readOpenClawConfig();
   const list = ensureAgentList(config);
+  addSubagentAllowlist(config, provisioned.map((agent) => agent.id));
   for (const agent of provisioned) {
     upsertAgent(list, agent);
   }

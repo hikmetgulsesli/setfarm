@@ -10,6 +10,7 @@ import {
   resolveWorkflowWorkspaceRoot,
   resolveWorkflowRoot,
 } from "./paths.js";
+import { removeSubagentAllowlist } from "./subagent-allowlist.js";
 import type { WorkflowInstallResult } from "./types.js";
 
 function filterAgentList(
@@ -68,6 +69,12 @@ export async function uninstallWorkflow(params: {
   if (config.agents) {
     config.agents.list = nextList;
   }
+  removeSubagentAllowlist(
+    config,
+    removedAgents
+      .map((entry) => (typeof entry.id === "string" ? entry.id : ""))
+      .filter(Boolean),
+  );
   await writeOpenClawConfig(configPath, config);
 
   if (params.removeGuidance !== false) {
@@ -107,6 +114,12 @@ export async function uninstallAllWorkflows(): Promise<void> {
   if (config.agents) {
     config.agents.list = list.filter((entry) => !removedAgents.includes(entry));
   }
+  removeSubagentAllowlist(
+    config,
+    removedAgents
+      .map((entry) => (typeof entry.id === "string" ? entry.id : ""))
+      .filter(Boolean),
+  );
   await writeOpenClawConfig(configPath, config);
 
   await removeMainAgentGuidance();
