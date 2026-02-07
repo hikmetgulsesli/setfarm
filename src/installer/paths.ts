@@ -29,6 +29,14 @@ export function resolveWorkflowDir(workflowId: string): string {
   return path.join(resolveWorkflowRoot(), workflowId);
 }
 
+export function resolveWorkflowWorkspaceRoot(): string {
+  return path.join(resolveOpenClawStateDir(), "workspaces", "workflows");
+}
+
+export function resolveWorkflowWorkspaceDir(workflowId: string): string {
+  return path.join(resolveWorkflowWorkspaceRoot(), workflowId);
+}
+
 export function resolveRunRoot(): string {
   return path.join(resolveAntfarmRoot(), "runs");
 }
