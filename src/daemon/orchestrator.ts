@@ -42,6 +42,26 @@ function parseAgentOutput(output: string): { done: boolean; success: boolean; cl
 }
 
 /**
+ * Extract text content from a message content field.
+ * Handles both string content and array of content blocks.
+ */
+function extractTextContent(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (Array.isArray(content)) {
+    // Extract text from content blocks like [{type: "text", text: "..."}]
+    return content
+      .filter((block): block is { type: string; text: string } => 
+        block?.type === "text" && typeof block?.text === "string"
+      )
+      .map((block) => block.text)
+      .join("\n");
+  }
+  return "";
+}
+
+/**
  * Read a JSONL transcript file and extract messages.
  */
 async function readTranscript(filePath: string): Promise<Array<{ role: string; content: string }>> {
@@ -53,10 +73,20 @@ async function readTranscript(filePath: string): Promise<Array<{ role: string; c
     for (const line of lines) {
       try {
         const entry = JSON.parse(line);
-        if (entry.role && entry.content) {
-          messages.push({ role: entry.role, content: entry.content });
-        } else if (entry.message?.role && entry.message?.content) {
-          messages.push({ role: entry.message.role, content: entry.message.content });
+        
+        // Try entry.message first (OpenClaw transcript format)
+        if (entry.message?.role) {
+          const text = extractTextContent(entry.message.content);
+          if (text) {
+            messages.push({ role: entry.message.role, content: text });
+          }
+        }
+        // Fallback to direct role/content
+        else if (entry.role) {
+          const text = extractTextContent(entry.content);
+          if (text) {
+            messages.push({ role: entry.role, content: text });
+          }
         }
       } catch {
         // Skip malformed lines
@@ -70,14 +100,52 @@ async function readTranscript(filePath: string): Promise<Array<{ role: string; c
 }
 
 /**
+ * Read sessions.json to find session by label.
+ */
+async function findSessionByLabel(
+  agentId: string,
+  sessionLabel: string,
+  config: OrchestratorConfig
+): Promise<{ sessionId: string; transcriptPath: string } | null> {
+  const openclawRoot = getOpenclawRoot(config);
+  const agentDir = path.join(openclawRoot, "agents", agentId.replace("/", "-"), "sessions");
+  const sessionsFile = path.join(agentDir, "sessions.json");
+  
+  try {
+    const content = await fs.readFile(sessionsFile, "utf-8");
+    const sessions = JSON.parse(content) as Record<string, { sessionId: string; label?: string }>;
+    
+    for (const [key, session] of Object.entries(sessions)) {
+      if (session.label === sessionLabel) {
+        return {
+          sessionId: session.sessionId,
+          transcriptPath: path.join(agentDir, `${session.sessionId}.jsonl`),
+        };
+      }
+    }
+  } catch {
+    // File doesn't exist or can't be read
+  }
+  
+  return null;
+}
+
+/**
  * Find session transcript by searching agent session directories.
- * Sessions are stored in ~/.openclaw/agents/{agentId}/sessions/{sessionId}.jsonl
+ * First checks sessions.json for label match, then falls back to content search.
  */
 async function findSessionTranscript(
   agentId: string,
   sessionLabel: string,
   config: OrchestratorConfig
 ): Promise<string | null> {
+  // Try sessions.json first
+  const sessionInfo = await findSessionByLabel(agentId, sessionLabel, config);
+  if (sessionInfo) {
+    return sessionInfo.transcriptPath;
+  }
+  
+  // Fallback: search transcript content
   const openclawRoot = getOpenclawRoot(config);
   const agentDir = path.join(openclawRoot, "agents", agentId.replace("/", "-"), "sessions");
   
@@ -234,8 +302,10 @@ async function processRun(run: WorkflowRunRecord, config: OrchestratorConfig): P
   
   const stepKey = getStepKey(run.id, nextStep.step.id);
   
-  // Build session label for current step
-  const stepSessionLabel = `${run.leadSessionLabel} [${nextStep.step.id}]`;
+  // Build session label for current step (must fit in 64 chars)
+  // Format: wf-{workflowId}-{stepId}-{runId-first8}
+  const shortRunId = run.id.slice(0, 8);
+  const stepSessionLabel = `wf-${run.workflowId}-${nextStep.step.id}-${shortRunId}`.slice(0, 64);
   
   // Check if there's an active session for this step
   const sessionStatus = await getSessionStatus(nextStep.step.agentId, stepSessionLabel, config);
@@ -285,7 +355,7 @@ async function processRun(run: WorkflowRunRecord, config: OrchestratorConfig): P
   // If there's a next step, spawn it immediately
   if (result.nextStep?.status === "ready" && result.nextStep.step) {
     const nextStepKey = getStepKey(run.id, result.nextStep.step.id);
-    const nextSessionLabel = `${run.leadSessionLabel} [${result.nextStep.step.id}]`;
+    const nextSessionLabel = `wf-${run.workflowId}-${result.nextStep.step.id}-${shortRunId}`.slice(0, 64);
     
     const spawned = await spawnAgent(
       result.nextStep.step.agentId,
