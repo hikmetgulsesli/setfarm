@@ -1,18 +1,18 @@
-type SubagentDefaults = {
-  allowAgents?: string[];
+type AgentToAgentConfig = {
+  enabled?: boolean;
+  allow?: string[];
 };
 
-type AgentsConfig = {
-  defaults?: {
-    subagents?: SubagentDefaults;
-  };
+type ToolsConfig = {
+  agentToAgent?: AgentToAgentConfig;
 };
 
-type OpenClawConfig = {
-  agents?: AgentsConfig;
+// Use Record to allow additional properties from the full config
+type OpenClawConfig = Record<string, unknown> & {
+  tools?: ToolsConfig;
 };
 
-function normalizeAllowAgents(value: unknown): string[] {
+function normalizeAllow(value: unknown): string[] {
   if (!Array.isArray(value)) {
     return [];
   }
@@ -23,44 +23,38 @@ function uniq(values: string[]): string[] {
   return Array.from(new Set(values));
 }
 
-function ensureDefaults(config: OpenClawConfig): SubagentDefaults {
-  if (!config.agents) {
-    config.agents = {};
+function ensureAgentToAgent(config: OpenClawConfig): AgentToAgentConfig {
+  if (!config.tools) {
+    config.tools = {};
   }
-  if (!config.agents.defaults) {
-    config.agents.defaults = {};
+  if (!config.tools.agentToAgent) {
+    config.tools.agentToAgent = { enabled: true };
   }
-  if (!config.agents.defaults.subagents) {
-    config.agents.defaults.subagents = {};
-  }
-  return config.agents.defaults.subagents;
+  return config.tools.agentToAgent;
 }
 
 export function addSubagentAllowlist(config: OpenClawConfig, agentIds: string[]): void {
   if (agentIds.length === 0) {
     return;
   }
-  const subagents = ensureDefaults(config);
-  const existing = normalizeAllowAgents(subagents.allowAgents);
+  const agentToAgent = ensureAgentToAgent(config);
+  const existing = normalizeAllow(agentToAgent.allow);
+  // If "*" is in the list, all agents are already allowed
   if (existing.includes("*")) {
     return;
   }
-  subagents.allowAgents = uniq([...existing, ...agentIds]);
+  agentToAgent.allow = uniq([...existing, ...agentIds]);
 }
 
 export function removeSubagentAllowlist(config: OpenClawConfig, agentIds: string[]): void {
   if (agentIds.length === 0) {
     return;
   }
-  const subagents = ensureDefaults(config);
-  const existing = normalizeAllowAgents(subagents.allowAgents);
+  const agentToAgent = ensureAgentToAgent(config);
+  const existing = normalizeAllow(agentToAgent.allow);
   if (existing.includes("*")) {
     return;
   }
   const next = existing.filter((entry) => !agentIds.includes(entry));
-  if (next.length === 0) {
-    delete subagents.allowAgents;
-    return;
-  }
-  subagents.allowAgents = next;
+  agentToAgent.allow = next.length > 0 ? next : undefined;
 }
