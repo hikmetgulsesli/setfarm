@@ -1,6 +1,7 @@
 export type WorkflowAgentFiles = {
   baseDir: string;
   files: Record<string, string>;
+  skills?: string[];
 };
 
 export type WorkflowAgent = {

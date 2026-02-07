@@ -36,6 +36,7 @@ export async function provisionAgents(params: {
   workflow: WorkflowSpec;
   workflowDir: string;
   overwriteFiles?: boolean;
+  installSkill?: boolean;
 }): Promise<ProvisionedAgent[]> {
   const overwrite = params.overwriteFiles ?? false;
   const workflowRoot = resolveAgentWorkspaceRoot();
@@ -60,6 +61,11 @@ export async function provisionAgents(params: {
       await writeWorkflowFile({ destination, source, overwrite });
     }
 
+    if (agent.workspace.skills?.length) {
+      const skillsDir = path.join(workspaceDir, "skills");
+      await ensureDir(skillsDir);
+    }
+
     const agentDir = resolveAgentDir(`${params.workflow.id}-${agent.id}`);
     await ensureDir(agentDir);
 
@@ -71,5 +77,29 @@ export async function provisionAgents(params: {
     });
   }
 
+  if (params.installSkill !== false) {
+    await installWorkflowSkill(params.workflow, params.workflowDir);
+  }
+
   return results;
+}
+
+async function installWorkflowSkill(workflow: WorkflowSpec, workflowDir: string) {
+  const skillSource = path.join(workflowDir, "skills", "antfarm-workflows");
+  try {
+    await fs.access(skillSource);
+  } catch {
+    return;
+  }
+  for (const agent of workflow.agents) {
+    if (!agent.workspace.skills?.includes("antfarm-workflows")) {
+      continue;
+    }
+    const workspaceDir = resolveWorkspaceDir({ workflowId: workflow.id, agent });
+    const targetDir = path.join(workspaceDir, "skills");
+    await ensureDir(targetDir);
+    const destination = path.join(targetDir, "antfarm-workflows");
+    await fs.rm(destination, { recursive: true, force: true });
+    await fs.cp(skillSource, destination, { recursive: true });
+  }
 }

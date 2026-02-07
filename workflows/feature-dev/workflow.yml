@@ -16,6 +16,8 @@ agents:
         HEARTBEAT.md: shared/HEARTBEAT.md
         BOOTSTRAP.md: shared/BOOTSTRAP.md
         MEMORY.md: shared/MEMORY.md
+      skills:
+        - antfarm-workflows
   - id: developer
     name: Developer
     description: Implements the task and commits code locally.
@@ -30,6 +32,8 @@ agents:
         HEARTBEAT.md: shared/HEARTBEAT.md
         BOOTSTRAP.md: shared/BOOTSTRAP.md
         MEMORY.md: shared/MEMORY.md
+      skills:
+        - antfarm-workflows
   - id: verifier
     name: Verifier
     description: Validates acceptance criteria and requests fixes.
@@ -44,6 +48,8 @@ agents:
         HEARTBEAT.md: shared/HEARTBEAT.md
         BOOTSTRAP.md: shared/BOOTSTRAP.md
         MEMORY.md: shared/MEMORY.md
+      skills:
+        - antfarm-workflows
   - id: reviewer
     name: Reviewer
     description: Creates and reviews a GitHub PR; requests changes.
@@ -58,6 +64,8 @@ agents:
         HEARTBEAT.md: shared/HEARTBEAT.md
         BOOTSTRAP.md: shared/BOOTSTRAP.md
         MEMORY.md: shared/MEMORY.md
+      skills:
+        - antfarm-workflows
 steps:
   - id: plan
     agent: lead
