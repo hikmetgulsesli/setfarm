@@ -11,6 +11,7 @@ import {
   resolveWorkflowRoot,
 } from "./paths.js";
 import { removeSubagentAllowlist } from "./subagent-allowlist.js";
+import { uninstallAntfarmSkill } from "./skill-install.js";
 import type { WorkflowInstallResult } from "./types.js";
 
 function filterAgentList(
@@ -131,6 +132,7 @@ export async function uninstallAllWorkflows(): Promise<void> {
   await writeOpenClawConfig(configPath, config);
 
   await removeMainAgentGuidance();
+  await uninstallAntfarmSkill();
 
   const workflowRoot = resolveWorkflowRoot();
   if (await pathExists(workflowRoot)) {

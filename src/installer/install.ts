@@ -6,6 +6,7 @@ import { provisionAgents } from "./agent-provision.js";
 import { readOpenClawConfig, writeOpenClawConfig } from "./openclaw-config.js";
 import { updateMainAgentGuidance } from "./main-agent-guidance.js";
 import { addSubagentAllowlist } from "./subagent-allowlist.js";
+import { installAntfarmSkill } from "./skill-install.js";
 import type { WorkflowInstallResult } from "./types.js";
 
 function ensureAgentList(config: { agents?: { list?: Array<Record<string, unknown>> } }) {
@@ -91,6 +92,7 @@ export async function installWorkflow(params: { workflowId: string }): Promise<W
   }
   await writeOpenClawConfig(configPath, config);
   await updateMainAgentGuidance();
+  await installAntfarmSkill();
   await writeWorkflowMetadata({
     workflowDir,
     workflowId: workflow.id,
