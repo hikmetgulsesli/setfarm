@@ -30,17 +30,28 @@ export type WorkflowStatusResult =
   | { status: "ok"; run: RunInfo; steps: StepInfo[] }
   | { status: "not_found"; message: string };
 
-export function getWorkflowStatus(taskTitle: string): WorkflowStatusResult {
+export function getWorkflowStatus(query: string): WorkflowStatusResult {
   const db = getDb();
-  const run = db.prepare("SELECT * FROM runs WHERE LOWER(task) = LOWER(?) ORDER BY created_at DESC LIMIT 1").get(taskTitle) as RunInfo | undefined;
+
+  // Try exact match first, then substring match, then prefix match
+  let run = db.prepare("SELECT * FROM runs WHERE LOWER(task) = LOWER(?) ORDER BY created_at DESC LIMIT 1").get(query) as RunInfo | undefined;
 
   if (!run) {
-    const allRuns = db.prepare("SELECT task FROM runs ORDER BY created_at DESC LIMIT 20").all() as Array<{ task: string }>;
-    const available = allRuns.map((r) => r.task);
+    run = db.prepare("SELECT * FROM runs WHERE LOWER(task) LIKE '%' || LOWER(?) || '%' ORDER BY created_at DESC LIMIT 1").get(query) as RunInfo | undefined;
+  }
+
+  // Also try matching by run ID (prefix or full)
+  if (!run) {
+    run = db.prepare("SELECT * FROM runs WHERE id LIKE ? || '%' ORDER BY created_at DESC LIMIT 1").get(query) as RunInfo | undefined;
+  }
+
+  if (!run) {
+    const allRuns = db.prepare("SELECT id, task, status, created_at FROM runs ORDER BY created_at DESC LIMIT 20").all() as Array<{ id: string; task: string; status: string; created_at: string }>;
+    const available = allRuns.map((r) => `  [${r.status}] ${r.id.slice(0, 8)} ${r.task.slice(0, 60)}`);
     return {
       status: "not_found",
       message: available.length
-        ? `No run found for "${taskTitle}". Available: ${available.join(", ")}`
+        ? `No run matching "${query}". Recent runs:\n${available.join("\n")}`
         : "No workflow runs found.",
     };
   }

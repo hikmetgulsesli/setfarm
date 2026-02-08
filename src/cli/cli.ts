@@ -16,7 +16,8 @@ function printUsage() {
       "antfarm workflow uninstall <name>    Uninstall a workflow",
       "antfarm workflow uninstall --all     Uninstall all workflows",
       "antfarm workflow run <name> <task>   Start a workflow run",
-      "antfarm workflow status <task>       Check workflow run status",
+      "antfarm workflow status <query>      Check run status (task substring, run ID prefix)",
+      "antfarm workflow runs                List all workflow runs",
       "",
       "antfarm logs [<lines>]               Show recent log entries",
     ].join("\n") + "\n",
@@ -54,6 +55,16 @@ async function main() {
   if (args.length < 2) { printUsage(); process.exit(1); }
   if (group !== "workflow") { printUsage(); process.exit(1); }
 
+  if (action === "runs") {
+    const runs = listRuns();
+    if (runs.length === 0) { console.log("No workflow runs found."); return; }
+    console.log("Workflow runs:");
+    for (const r of runs) {
+      console.log(`  [${r.status.padEnd(9)}] ${r.id.slice(0, 8)}  ${r.workflow_id.padEnd(14)}  ${r.task.slice(0, 50)}${r.task.length > 50 ? "..." : ""}`);
+    }
+    return;
+  }
+
   if (action === "list") {
     const workflows = await listBundledWorkflows();
     if (workflows.length === 0) { process.stdout.write("No workflows available.\n"); } else {
@@ -78,13 +89,16 @@ async function main() {
   }
 
   if (action === "status") {
-    const result = getWorkflowStatus(target);
+    const query = args.slice(2).join(" ").trim();
+    if (!query) { process.stderr.write("Missing search query.\n"); printUsage(); process.exit(1); }
+    const result = getWorkflowStatus(query);
     if (result.status === "not_found") { process.stdout.write(`${result.message}\n`); return; }
     const { run, steps } = result;
     process.stdout.write(
       [
+        `Run: ${run.id}`,
         `Workflow: ${run.workflow_id}`,
-        `Task: ${run.task}`,
+        `Task: ${run.task.slice(0, 120)}${run.task.length > 120 ? "..." : ""}`,
         `Status: ${run.status}`,
         `Created: ${run.created_at}`,
         `Updated: ${run.updated_at}`,
