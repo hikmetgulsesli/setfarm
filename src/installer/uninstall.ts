@@ -13,6 +13,7 @@ import {
 import { removeSubagentAllowlist } from "./subagent-allowlist.js";
 import { uninstallAntfarmSkill } from "./skill-install.js";
 import { removeAgentCrons } from "./agent-cron.js";
+import { deleteAgentCronJobs } from "./gateway-api.js";
 import { getDb } from "../db.js";
 import type { WorkflowInstallResult } from "./types.js";
 
@@ -126,6 +127,9 @@ export async function uninstallAllWorkflows(): Promise<void> {
 
   await removeMainAgentGuidance();
   await uninstallAntfarmSkill();
+
+  // Remove all antfarm cron jobs
+  await deleteAgentCronJobs("antfarm/");
 
   const workflowRoot = resolveWorkflowRoot();
   if (await pathExists(workflowRoot)) {

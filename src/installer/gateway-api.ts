@@ -87,7 +87,20 @@ export async function listCronJobs(): Promise<{ ok: boolean; jobs?: Array<{ id: 
     if (!result.ok) {
       return { ok: false, error: result.error?.message ?? "Unknown error" };
     }
-    const jobs = result.result?.jobs ?? result.jobs ?? [];
+    // Gateway returns tool-call format: result.content[0].text is a JSON string
+    let jobs: Array<{ id: string; name: string }> = [];
+    const content = result.result?.content;
+    if (Array.isArray(content) && content[0]?.text) {
+      try {
+        const parsed = JSON.parse(content[0].text);
+        jobs = parsed.jobs ?? [];
+      } catch {
+        // fallback
+      }
+    }
+    if (jobs.length === 0) {
+      jobs = result.result?.jobs ?? result.jobs ?? [];
+    }
     return { ok: true, jobs };
   } catch (err) {
     return { ok: false, error: `Failed to call gateway: ${err}` };
