@@ -1,8 +1,3 @@
-/**
- * Direct OpenClaw Gateway API calls from the CLI.
- * This allows the installer to create cron jobs without needing agent context.
- */
-
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -35,32 +30,25 @@ async function getGatewayConfig(): Promise<GatewayConfig> {
   };
 }
 
-export async function createCronJob(job: {
+export async function createAgentCronJob(job: {
   name: string;
-  schedule: { kind: string; everyMs?: number };
-  payload: { kind: string; message: string };
+  schedule: { kind: string; everyMs?: number; anchorMs?: number };
   sessionTarget: string;
-  delivery?: { mode: string };
+  agentId: string;
+  payload: { kind: string; message: string };
+  delivery: { mode: string };
   enabled: boolean;
 }): Promise<{ ok: boolean; error?: string; id?: string }> {
   const gateway = await getGatewayConfig();
-  
-  try {
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    };
-    if (gateway.token) {
-      headers["Authorization"] = `Bearer ${gateway.token}`;
-    }
 
-    // Use /tools/invoke endpoint to call the cron tool
+  try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (gateway.token) headers["Authorization"] = `Bearer ${gateway.token}`;
+
     const response = await fetch(`${gateway.url}/tools/invoke`, {
       method: "POST",
       headers,
-      body: JSON.stringify({
-        tool: "cron",
-        args: { action: "add", job },
-      }),
+      body: JSON.stringify({ tool: "cron", args: { action: "add", job } }),
     });
 
     if (!response.ok) {
@@ -80,23 +68,15 @@ export async function createCronJob(job: {
 
 export async function listCronJobs(): Promise<{ ok: boolean; jobs?: Array<{ id: string; name: string }>; error?: string }> {
   const gateway = await getGatewayConfig();
-  
-  try {
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    };
-    if (gateway.token) {
-      headers["Authorization"] = `Bearer ${gateway.token}`;
-    }
 
-    // Use /tools/invoke endpoint to call the cron tool
+  try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (gateway.token) headers["Authorization"] = `Bearer ${gateway.token}`;
+
     const response = await fetch(`${gateway.url}/tools/invoke`, {
       method: "POST",
       headers,
-      body: JSON.stringify({
-        tool: "cron",
-        args: { action: "list" },
-      }),
+      body: JSON.stringify({ tool: "cron", args: { action: "list" } }),
     });
 
     if (!response.ok) {
@@ -107,7 +87,6 @@ export async function listCronJobs(): Promise<{ ok: boolean; jobs?: Array<{ id: 
     if (!result.ok) {
       return { ok: false, error: result.error?.message ?? "Unknown error" };
     }
-    // Handle both { result: { jobs } } and { jobs } formats
     const jobs = result.result?.jobs ?? result.jobs ?? [];
     return { ok: true, jobs };
   } catch (err) {
@@ -115,51 +94,37 @@ export async function listCronJobs(): Promise<{ ok: boolean; jobs?: Array<{ id: 
   }
 }
 
-export async function ensureOrchestratorCron(): Promise<{ ok: boolean; created: boolean; error?: string }> {
-  // Check if cron already exists
+export async function deleteCronJob(jobId: string): Promise<{ ok: boolean; error?: string }> {
+  const gateway = await getGatewayConfig();
+
+  try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (gateway.token) headers["Authorization"] = `Bearer ${gateway.token}`;
+
+    const response = await fetch(`${gateway.url}/tools/invoke`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ tool: "cron", args: { action: "remove", id: jobId } }),
+    });
+
+    if (!response.ok) {
+      return { ok: false, error: `Gateway returned ${response.status}` };
+    }
+
+    const result = await response.json();
+    return result.ok ? { ok: true } : { ok: false, error: result.error?.message ?? "Unknown error" };
+  } catch (err) {
+    return { ok: false, error: `Failed to call gateway: ${err}` };
+  }
+}
+
+export async function deleteAgentCronJobs(namePrefix: string): Promise<void> {
   const listResult = await listCronJobs();
-  if (!listResult.ok) {
-    return { ok: false, created: false, error: listResult.error };
+  if (!listResult.ok || !listResult.jobs) return;
+
+  for (const job of listResult.jobs) {
+    if (job.name.startsWith(namePrefix)) {
+      await deleteCronJob(job.id);
+    }
   }
-
-  const existing = listResult.jobs?.find((j) => j.name === "antfarm-orchestrator");
-  if (existing) {
-    return { ok: true, created: false };
-  }
-
-  // Create the cron job
-  const cronJob = {
-    name: "antfarm-orchestrator",
-    schedule: { kind: "every", everyMs: 30000 },
-    payload: {
-      kind: "agentTurn",
-      message: `Antfarm workflow orchestrator.
-
-Step 1: Run check to detect completions and queue spawns
-\`\`\`
-cd ~/.openclaw/workspace/antfarm && node dist/cli/cli.js check 2>&1
-\`\`\`
-
-Step 2: List pending spawns
-\`\`\`
-cd ~/.openclaw/workspace/antfarm && node dist/cli/cli.js queue
-\`\`\`
-
-Step 3: For each file listed, read it with cat ~/.openclaw/antfarm/spawn-queue/<filename>, then call sessions_spawn with the agentId, task, and label (sessionLabel field)
-
-Step 4: After successful spawn, run: node dist/cli/cli.js dequeue <filename>
-
-If no active runs and no spawn files, reply: HEARTBEAT_OK`,
-    },
-    sessionTarget: "isolated",
-    delivery: { mode: "none" },
-    enabled: true,
-  };
-
-  const createResult = await createCronJob(cronJob);
-  if (!createResult.ok) {
-    return { ok: false, created: false, error: createResult.error };
-  }
-
-  return { ok: true, created: true };
 }

@@ -1,54 +1,55 @@
 import crypto from "node:crypto";
 import { loadWorkflowSpec } from "./workflow-spec.js";
 import { resolveWorkflowDir } from "./paths.js";
-import { writeWorkflowRun } from "./run-store.js";
+import { getDb } from "../db.js";
 import { logger } from "../lib/logger.js";
-import type { WorkflowRunRecord } from "./types.js";
-
-function resolveLeadAgentId(workflow: { id: string; agents: Array<{ id: string }> }) {
-  const preferred = workflow.agents.find((agent) => agent.id === "lead");
-  const leadId = preferred?.id ?? workflow.agents[0]?.id;
-  if (!leadId) {
-    throw new Error(`Workflow ${workflow.id} has no agents to run`);
-  }
-  return leadId;
-}
 
 export async function runWorkflow(params: {
   workflowId: string;
   taskTitle: string;
-}): Promise<WorkflowRunRecord> {
+}): Promise<{ id: string; workflowId: string; task: string; status: string }> {
   const workflowDir = resolveWorkflowDir(params.workflowId);
   const workflow = await loadWorkflowSpec(workflowDir);
-  const leadAgentId = resolveLeadAgentId(workflow);
+  const db = getDb();
   const now = new Date().toISOString();
   const runId = crypto.randomUUID();
-  const runId8 = runId.slice(0, 8);
-  // Session labels have 64 char limit: wf-{workflow}-lead-{runId8}
-  const leadSessionLabel = `wf-${workflow.id}-lead-${runId8}`;
-  const record: WorkflowRunRecord = {
-    id: runId,
-    workflowId: workflow.id,
-    workflowName: workflow.name,
-    taskTitle: params.taskTitle,
-    status: "running",
-    leadAgentId: `${workflow.id}/${leadAgentId}`,
-    leadSessionLabel,
-    currentStepIndex: 0,
-    currentStepId: workflow.steps[0]?.id,
-    stepResults: [],
-    retryCount: 0,
-    context: { task: params.taskTitle },
-    createdAt: now,
-    updatedAt: now,
+
+  const initialContext: Record<string, string> = {
+    task: params.taskTitle,
+    ...workflow.context,
   };
-  await writeWorkflowRun(record);
-  
+
+  db.exec("BEGIN");
+  try {
+    const insertRun = db.prepare(
+      "INSERT INTO runs (id, workflow_id, task, status, context, created_at, updated_at) VALUES (?, ?, ?, 'running', ?, ?, ?)"
+    );
+    insertRun.run(runId, workflow.id, params.taskTitle, JSON.stringify(initialContext), now, now);
+
+    const insertStep = db.prepare(
+      "INSERT INTO steps (id, run_id, step_id, agent_id, step_index, input_template, expects, status, max_retries, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    );
+
+    for (let i = 0; i < workflow.steps.length; i++) {
+      const step = workflow.steps[i];
+      const stepUuid = crypto.randomUUID();
+      const agentId = `${workflow.id}/${step.agent}`;
+      const status = i === 0 ? "pending" : "waiting";
+      const maxRetries = step.max_retries ?? step.on_fail?.max_retries ?? 2;
+      insertStep.run(stepUuid, runId, step.id, agentId, i, step.input, step.expects, status, maxRetries, now, now);
+    }
+
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
+
   await logger.info(`Run started: "${params.taskTitle}"`, {
     workflowId: workflow.id,
     runId,
     stepId: workflow.steps[0]?.id,
   });
-  
-  return record;
+
+  return { id: runId, workflowId: workflow.id, task: params.taskTitle, status: "running" };
 }

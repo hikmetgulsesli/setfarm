@@ -33,6 +33,7 @@ export type WorkflowSpec = {
   version?: number;
   agents: WorkflowAgent[];
   steps: WorkflowStep[];
+  context?: Record<string, string>;
 };
 
 export type WorkflowInstallResult = {

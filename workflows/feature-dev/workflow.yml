@@ -15,9 +15,7 @@ agents:
       files:
         AGENTS.md: agents/developer/AGENTS.md
         SOUL.md: agents/developer/SOUL.md
-        TOOLS.md: shared/TOOLS.md
         IDENTITY.md: agents/developer/IDENTITY.md
-        USER.md: shared/USER.md
 
   - id: verifier
     name: Verifier
@@ -27,9 +25,7 @@ agents:
       files:
         AGENTS.md: agents/verifier/AGENTS.md
         SOUL.md: agents/verifier/SOUL.md
-        TOOLS.md: shared/TOOLS.md
         IDENTITY.md: agents/verifier/IDENTITY.md
-        USER.md: shared/USER.md
 
   - id: tester
     name: Tester
@@ -39,9 +35,7 @@ agents:
       files:
         AGENTS.md: agents/tester/AGENTS.md
         SOUL.md: agents/tester/SOUL.md
-        TOOLS.md: shared/TOOLS.md
         IDENTITY.md: agents/tester/IDENTITY.md
-        USER.md: shared/USER.md
 
   - id: reviewer
     name: Reviewer
@@ -51,9 +45,7 @@ agents:
       files:
         AGENTS.md: agents/reviewer/AGENTS.md
         SOUL.md: agents/reviewer/SOUL.md
-        TOOLS.md: shared/TOOLS.md
         IDENTITY.md: agents/reviewer/IDENTITY.md
-        USER.md: shared/USER.md
 
 steps:
   - id: implement

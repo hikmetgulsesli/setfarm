@@ -12,6 +12,8 @@ import {
 } from "./paths.js";
 import { removeSubagentAllowlist } from "./subagent-allowlist.js";
 import { uninstallAntfarmSkill } from "./skill-install.js";
+import { removeAgentCrons } from "./agent-cron.js";
+import { getDb } from "../db.js";
 import type { WorkflowInstallResult } from "./types.js";
 
 function filterAgentList(
@@ -34,26 +36,16 @@ async function pathExists(filePath: string): Promise<boolean> {
   }
 }
 
-async function removeRunRecords(workflowId: string): Promise<void> {
-  const runRoot = resolveRunRoot();
-  if (!(await pathExists(runRoot))) {
-    return;
-  }
-  const entries = await fs.readdir(runRoot);
-  for (const entry of entries) {
-    if (!entry.endsWith(".json")) {
-      continue;
+function removeRunRecords(workflowId: string): void {
+  try {
+    const db = getDb();
+    const runs = db.prepare("SELECT id FROM runs WHERE workflow_id = ?").all(workflowId) as Array<{ id: string }>;
+    for (const run of runs) {
+      db.prepare("DELETE FROM steps WHERE run_id = ?").run(run.id);
     }
-    const filePath = path.join(runRoot, entry);
-    try {
-      const raw = await fs.readFile(filePath, "utf-8");
-      const data = JSON.parse(raw) as { workflowId?: string };
-      if (data.workflowId === workflowId) {
-        await fs.rm(filePath, { force: true });
-      }
-    } catch {
-      // Ignore malformed run data.
-    }
+    db.prepare("DELETE FROM runs WHERE workflow_id = ?").run(workflowId);
+  } catch {
+    // DB might not exist yet
   }
 }
 
@@ -90,7 +82,8 @@ export async function uninstallWorkflow(params: {
     await fs.rm(workflowWorkspaceDir, { recursive: true, force: true });
   }
 
-  await removeRunRecords(params.workflowId);
+  removeRunRecords(params.workflowId);
+  await removeAgentCrons(params.workflowId);
 
   for (const entry of removedAgents) {
     const agentDir = typeof entry.agentDir === "string" ? entry.agentDir : "";
@@ -144,9 +137,13 @@ export async function uninstallAllWorkflows(): Promise<void> {
     await fs.rm(workflowWorkspaceRoot, { recursive: true, force: true });
   }
 
-  const runRoot = resolveRunRoot();
-  if (await pathExists(runRoot)) {
-    await fs.rm(runRoot, { recursive: true, force: true });
+  // Clean up SQLite run records
+  try {
+    const db = getDb();
+    db.exec("DELETE FROM steps");
+    db.exec("DELETE FROM runs");
+  } catch {
+    // DB might not exist
   }
 
   for (const entry of removedAgents) {

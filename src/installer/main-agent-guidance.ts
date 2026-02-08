@@ -11,14 +11,12 @@ const TOOLS_BLOCK = `${WORKFLOW_BLOCK_START}
 Antfarm CLI is at: ~/.openclaw/workspace/antfarm/dist/cli/cli.js
 
 Commands:
-- Install: \`node <cli> workflow install <github-url>\`
+- Install: \`node <cli> workflow install <name>\`
 - Run: \`node <cli> workflow run <workflow-id> "<task>"\`
 - Status: \`node <cli> workflow status "<task title>"\`
-- Check: \`node <cli> check\` (detect completions, queue spawns)
-- Queue: \`node <cli> queue\` (list pending spawns)
-- Dequeue: \`node <cli> dequeue <file>\` (remove spawn request)
+- Logs: \`node <cli> logs\`
 
-After first install, ensure the antfarm-orchestrator cron job exists (runs every 30s).
+Workflows are self-advancing via per-agent cron jobs. No manual orchestration needed.
 ${WORKFLOW_BLOCK_END}
 `;
 
@@ -26,82 +24,41 @@ const AGENTS_BLOCK = `${WORKFLOW_BLOCK_START}
 # Antfarm Workflow Policy
 
 ## Installing Workflows
-
-When user asks to install an Antfarm workflow:
-1. Run: \`cd ~/.openclaw/workspace/antfarm && node dist/cli/cli.js workflow install <url>\`
-2. Check if orchestrator cron exists: \`cron list\` and look for "antfarm-orchestrator"
-3. If no cron exists, create it:
-   \`\`\`
-   cron add with job: {
-     "name": "antfarm-orchestrator",
-     "schedule": {"kind": "every", "everyMs": 30000},
-     "payload": {"kind": "agentTurn", "message": "Antfarm orchestrator..."},
-     "sessionTarget": "isolated",
-     "delivery": {"mode": "none"},
-     "enabled": true
-   }
-   \`\`\`
+Run: \`cd ~/.openclaw/workspace/antfarm && node dist/cli/cli.js workflow install <name>\`
+Agent cron jobs are created automatically during install.
 
 ## Running Workflows
-
-- To start: \`antfarm workflow run <workflow-id> "<task description>"\`
-- For status: \`antfarm workflow status "<task title>"\`
-- Do not improvise workflows outside the runner.
-
-## Workflow Orchestration (Auto-Advance)
-
-When you receive an announce from a workflow agent (label starts with "wf-"):
-1. Run: \`antfarm check\` to detect completion and queue next spawn
-2. Check spawn queue: \`antfarm queue\`
-3. For each pending request, spawn the agent:
-   \`\`\`
-   sessions_spawn(agentId, task, label)  // from the spawn request
-   \`\`\`
-4. After spawning, dequeue: \`antfarm dequeue <filename>\`
-
-This keeps workflows advancing automatically without manual intervention.
+- Start: \`antfarm workflow run <workflow-id> "<task>"\`
+- Status: \`antfarm workflow status "<task title>"\`
+- Workflows self-advance via agent cron jobs polling SQLite for pending steps.
 ${WORKFLOW_BLOCK_END}
 `;
 
 function removeBlock(content: string): string {
   const start = content.indexOf(WORKFLOW_BLOCK_START);
   const end = content.indexOf(WORKFLOW_BLOCK_END);
-  if (start === -1 || end === -1) {
-    return content;
-  }
+  if (start === -1 || end === -1) return content;
   const after = end + WORKFLOW_BLOCK_END.length;
   const beforeText = content.slice(0, start).trimEnd();
   const afterText = content.slice(after).trimStart();
-  if (!beforeText) {
-    return afterText ? `${afterText}\n` : "";
-  }
-  if (!afterText) {
-    return `${beforeText}\n`;
-  }
+  if (!beforeText) return afterText ? `${afterText}\n` : "";
+  if (!afterText) return `${beforeText}\n`;
   return `${beforeText}\n\n${afterText}\n`;
 }
 
 function upsertBlock(content: string, block: string): string {
   const cleaned = removeBlock(content);
-  if (!cleaned.trim()) {
-    return `${block}\n`;
-  }
+  if (!cleaned.trim()) return `${block}\n`;
   return `${cleaned.trimEnd()}\n\n${block}\n`;
 }
 
 async function readFileOrEmpty(filePath: string): Promise<string> {
-  try {
-    return await fs.readFile(filePath, "utf-8");
-  } catch {
-    return "";
-  }
+  try { return await fs.readFile(filePath, "utf-8"); } catch { return ""; }
 }
 
 function resolveMainAgentWorkspacePath(cfg: { agents?: { defaults?: { workspace?: string } } }) {
   const workspace = cfg.agents?.defaults?.workspace?.trim();
-  if (workspace) {
-    return workspace;
-  }
+  if (workspace) return workspace;
   return path.join(process.env.HOME ?? "", ".openclaw", "workspace");
 }
 
@@ -128,12 +85,6 @@ export async function removeMainAgentGuidance(): Promise<void> {
   const toolsContent = await readFileOrEmpty(toolsPath);
   const agentsContent = await readFileOrEmpty(agentsPath);
 
-  if (toolsContent) {
-    const cleaned = removeBlock(toolsContent);
-    await fs.writeFile(toolsPath, cleaned, "utf-8");
-  }
-  if (agentsContent) {
-    const cleaned = removeBlock(agentsContent);
-    await fs.writeFile(agentsPath, cleaned, "utf-8");
-  }
+  if (toolsContent) await fs.writeFile(toolsPath, removeBlock(toolsContent), "utf-8");
+  if (agentsContent) await fs.writeFile(agentsPath, removeBlock(agentsContent), "utf-8");
 }
