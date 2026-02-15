@@ -88,12 +88,12 @@ The workflow cannot advance until you report. Your session ending without report
 }
 
 const DEFAULT_POLLING_TIMEOUT_SECONDS = 120;
-const DEFAULT_POLLING_MODEL = "claude-sonnet-4-20250514";
+const DEFAULT_POLLING_MODEL = "default";
 
 export function buildPollingPrompt(workflowId: string, agentId: string, workModel?: string): string {
   const fullAgentId = `${workflowId}-${agentId}`;
   const cli = resolveAntfarmCli();
-  const model = workModel ?? "claude-opus-4-6";
+  const model = workModel ?? "default";
   const workPrompt = buildWorkPrompt(workflowId, agentId);
 
   return `Step 1 — Quick check for pending work (lightweight, no side effects):
