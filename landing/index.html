@@ -134,8 +134,8 @@
           <p>Each agent gets a clean session. No context window bloat. No hallucinated state from 50 messages ago.</p>
         </div>
         <div class="step-card">
-          <h3>Retry and escalate</h3>
-          <p>Failed steps retry automatically. If retries exhaust, it escalates to you. Nothing fails silently.</p>
+          <h3>Automatic retries</h3>
+          <p>Failed steps retry automatically with configurable limits per step. The medic watches for stuck agents and cleans up abandoned work.</p>
         </div>
       </div>
     </section>
@@ -287,6 +287,8 @@
           <div class="cmd-row"><code>antfarm workflow status &lt;query&gt;</code><span>Check run status</span></div>
           <div class="cmd-row"><code>antfarm workflow runs</code><span>List all runs</span></div>
           <div class="cmd-row"><code>antfarm workflow resume &lt;run-id&gt;</code><span>Resume a failed run</span></div>
+          <div class="cmd-row"><code>antfarm workflow stop &lt;run-id&gt;</code><span>Cancel a running workflow</span></div>
+          <div class="cmd-row"><code>antfarm workflow ensure-crons &lt;id&gt;</code><span>Recreate crons after idle teardown</span></div>
         </div>
         <div class="cmd-group">
           <h4>Management</h4>
