@@ -294,7 +294,7 @@ function renderBoard(wf, runs) {
           const isFailed = run.status === 'failed' || run.status === 'error';
           const cls = isDone ? 'done' : isFailed ? 'failed' : '';
           const badge = `badge-${run.status}`;
-          const time = run.updated_at ? new Date(run.updated_at).toLocaleString() : '';
+          const time = run.updated_at ? parseTS(run.updated_at)?.toLocaleString() || "" : '';
           const title = run.task.length > 60 ? run.task.slice(0, 57) + '…' : run.task;
           return `<div class="card ${cls}" onclick="openRun('${run.id}')">
             <div class="card-title" title="${run.task.replace(/"/g, '&quot;')}">${title}</div>
@@ -313,12 +313,14 @@ function renderBoard(wf, runs) {
 
 const stepIcons = {done:'✓',running:'●',pending:'○',waiting:'◌',failed:'✗',error:'✗'};
 function esc(s) { if (!s) return ''; return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+// Normalize SQLite datetime('now') format (no T/Z) to proper ISO 8601 UTC
+function parseTS(ts) { if (!ts) return null; if (!ts.endsWith('Z') && !ts.includes('+')) ts = ts.replace(' ', 'T') + 'Z'; return new Date(ts); }
 
 async function openRun(id) {
   const run = await fetchJSON(`/api/runs/${id}`);
   const panel = document.getElementById('panel');
-  const created = run.created_at ? new Date(run.created_at).toLocaleString() : '';
-  const updated = run.updated_at ? new Date(run.updated_at).toLocaleString() : '';
+  const created = run.created_at ? parseTS(run.created_at)?.toLocaleString() || "" : '';
+  const updated = run.updated_at ? parseTS(run.updated_at)?.toLocaleString() || "" : '';
   const stepsHTML = (run.steps || []).map(s => {
     const st = s.status || 'waiting';
     const icon = stepIcons[st] || '○';
@@ -382,7 +384,7 @@ async function loadActivity(runId) {
   const panel = document.getElementById('activity-panel');
   if (!events || events.length === 0) { panel.innerHTML = ''; return; }
   const rows = events.map(evt => {
-    const t = new Date(evt.ts);
+    const t = parseTS(evt.ts);
     const time = t.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
     const agent = evt.agentId ? evt.agentId.split('/').pop() : '';
     const desc = formatEventDesc(evt);
@@ -486,7 +488,7 @@ async function loadMedicStatus() {
       return;
     }
 
-    const ageMin = Math.round((Date.now() - new Date(status.lastCheck.checkedAt).getTime()) / 60000);
+    const ageMin = Math.round((Date.now() - parseTS(status.lastCheck.checkedAt).getTime()) / 60000);
     const hasIssues = status.lastCheck.issuesFound > 0;
     const isStale = ageMin > 10;
 
@@ -520,7 +522,7 @@ async function loadMedicData() {
     let html = '';
     html += '<div style="margin-bottom:12px">';
     if (status.lastCheck) {
-      const ageMin = Math.round((Date.now() - new Date(status.lastCheck.checkedAt).getTime()) / 60000);
+      const ageMin = Math.round((Date.now() - parseTS(status.lastCheck.checkedAt).getTime()) / 60000);
       html += `<div class="medic-stat"><span>Last check</span><span class="medic-stat-value">${ageMin}m ago</span></div>`;
       html += `<div class="medic-stat"><span>Result</span><span class="medic-stat-value">${esc(status.lastCheck.summary)}</span></div>`;
     } else {
@@ -534,7 +536,7 @@ async function loadMedicData() {
     if (checks.length > 0) {
       html += '<div style="font-size:12px;font-weight:600;color:var(--text-primary);margin-bottom:8px">Recent Checks</div>';
       for (const c of checks) {
-        const t = new Date(c.checkedAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+        const t = parseTS(c.checkedAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
         const icon = c.issuesFound === 0 ? '·' : c.actionsTaken > 0 ? '~' : '!';
         const color = c.issuesFound === 0 ? 'var(--text-secondary)' : c.actionsTaken >= c.issuesFound ? 'var(--accent-teal)' : 'var(--accent-orange)';
         html += `<div class="medic-check-row">
