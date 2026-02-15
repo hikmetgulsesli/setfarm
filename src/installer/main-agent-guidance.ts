@@ -20,6 +20,16 @@ Commands:
 - Logs: \`${CLI} logs\`
 
 Workflows are self-advancing via per-agent cron jobs. No manual orchestration needed.
+
+## DELEGATION RULE (CRITICAL)
+- When a user asks for a new project/feature/app: DO NOT code it yourself. You are the orchestrator, not the developer.
+- ALWAYS delegate to antfarm workflow: \`${CLI} workflow run feature-dev "<task>"\`
+- Get next available port: \`curl -s http://127.0.0.1:3080/api/projects/next-port\`
+- ALWAYS specify the repo directory explicitly in the task description:
+  - Format: REPO: /home/setrox/<project-name>
+  - The project name should be kebab-case (lowercase, hyphens)
+- ALWAYS include the port in the task description: Frontend port: <port>
+- After starting the workflow, monitor progress and report to the user
 ${WORKFLOW_BLOCK_END}
 `;
 
@@ -34,6 +44,16 @@ Agent cron jobs are created automatically during install.
 - Start: \`${CLI} workflow run <workflow-id> "<task>"\`
 - Status: \`${CLI} workflow status "<task title>"\`
 - Workflows self-advance via agent cron jobs polling SQLite for pending steps.
+
+## DELEGATION RULE (CRITICAL)
+- When a user asks for a new project/feature/app: DO NOT code it yourself. You are the orchestrator, not the developer.
+- ALWAYS delegate to antfarm workflow: \`${CLI} workflow run feature-dev "<task>"\`
+- Get next available port: \`curl -s http://127.0.0.1:3080/api/projects/next-port\`
+- ALWAYS specify the repo directory explicitly in the task description:
+  - Format: REPO: /home/setrox/<project-name>
+  - The project name should be kebab-case (lowercase, hyphens)
+- ALWAYS include the port in the task description: Frontend port: <port>
+- After starting the workflow, monitor progress and report to the user
 ${WORKFLOW_BLOCK_END}
 `;
 

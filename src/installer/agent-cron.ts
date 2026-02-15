@@ -1,4 +1,4 @@
-import { createAgentCronJob, deleteAgentCronJobs, listCronJobs, checkCronToolAvailable } from "./gateway-api.js";
+import { createAgentCronJob, deleteAgentCronJobs, deleteCronJob, listCronJobs, checkCronToolAvailable } from "./gateway-api.js";
 import type { WorkflowSpec } from "./types.js";
 import { resolveAntfarmCli } from "./paths.js";
 import { getDb } from "../db.js";
@@ -16,7 +16,7 @@ function buildAgentPrompt(workflowId: string, agentId: string): string {
 
 Step 1 — Check for pending work:
 \`\`\`
-node ${cli} step claim "${fullAgentId}"
+/usr/bin/node ${cli} step claim "${fullAgentId}"
 \`\`\`
 
 If output is "NO_WORK", reply HEARTBEAT_OK and stop.
@@ -34,12 +34,12 @@ STATUS: done
 CHANGES: what you did
 TESTS: what tests you ran
 ANTFARM_EOF
-cat /tmp/antfarm-step-output.txt | node ${cli} step complete "<stepId>"
+cat /tmp/antfarm-step-output.txt | /usr/bin/node ${cli} step complete "<stepId>"
 \`\`\`
 
 If the work FAILED:
 \`\`\`
-node ${cli} step fail "<stepId>" "description of what went wrong"
+/usr/bin/node ${cli} step fail "<stepId>" "description of what went wrong"
 \`\`\`
 
 RULES:
@@ -71,12 +71,12 @@ STATUS: done
 CHANGES: what you did
 TESTS: what tests you ran
 ANTFARM_EOF
-cat /tmp/antfarm-step-output.txt | node ${cli} step complete "<stepId>"
+cat /tmp/antfarm-step-output.txt | /usr/bin/node ${cli} step complete "<stepId>"
 \`\`\`
 
 If the work FAILED:
 \`\`\`
-node ${cli} step fail "<stepId>" "description of what went wrong"
+/usr/bin/node ${cli} step fail "<stepId>" "description of what went wrong"
 \`\`\`
 
 RULES:
@@ -98,13 +98,13 @@ export function buildPollingPrompt(workflowId: string, agentId: string, workMode
 
   return `Step 1 — Quick check for pending work (lightweight, no side effects):
 \`\`\`
-node ${cli} step peek "${fullAgentId}"
+/usr/bin/node ${cli} step peek "${fullAgentId}"
 \`\`\`
 If output is "NO_WORK", reply HEARTBEAT_OK and stop immediately. Do NOT run step claim.
 
 Step 2 — If "HAS_WORK", claim the step:
 \`\`\`
-node ${cli} step claim "${fullAgentId}"
+/usr/bin/node ${cli} step claim "${fullAgentId}"
 \`\`\`
 If output is "NO_WORK", reply HEARTBEAT_OK and stop.
 
@@ -155,6 +155,23 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
 
     if (!result.ok) {
       throw new Error(`Failed to create cron job for agent "${agent.id}": ${result.error}`);
+    }
+
+    // Create parallel crons for developer and verifier (for concurrent project support)
+    const PARALLEL_AGENTS = ["developer", "verifier"];
+    const PARALLEL_COUNT = 5;
+    if (PARALLEL_AGENTS.includes(agent.id)) {
+      for (let n = 2; n <= PARALLEL_COUNT; n++) {
+        const pName = `antfarm/${workflow.id}/${agent.id}-${n}`;
+        await createAgentCronJob({
+          name: pName,
+          schedule: { kind: "every", everyMs, anchorMs: anchorMs + n * 15_000 },
+          sessionTarget: "isolated",
+          agentId,
+          payload: { kind: "agentTurn", message: prompt, timeoutSeconds },
+          enabled: true,
+        });
+      }
     }
   }
 }
@@ -209,5 +226,12 @@ export async function ensureWorkflowCrons(workflow: WorkflowSpec): Promise<void>
 export async function teardownWorkflowCronsIfIdle(workflowId: string): Promise<void> {
   const active = countActiveRuns(workflowId);
   if (active > 0) return;
-  await removeAgentCrons(workflowId);
+  // Remove ALL crons (base + parallel) so ensureWorkflowCrons recreates cleanly on next run
+  const listResult = await listCronJobs();
+  if (!listResult.ok || !listResult.jobs) return;
+  const prefix = `antfarm/${workflowId}/`;
+  for (const job of listResult.jobs) {
+    if (!job.name.startsWith(prefix)) continue;
+    await deleteCronJob(job.id);
+  }
 }

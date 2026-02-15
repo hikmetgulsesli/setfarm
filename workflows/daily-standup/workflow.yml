@@ -1,0 +1,66 @@
+id: daily-standup
+name: Daily Standup Meeting
+version: 1
+description: |
+  Gunluk standup toplantisi. Collector tum agentlardan durum toplar,
+  Reporter ozet hazirlayip kanallara gonderir.
+
+agents:
+  - id: collector
+    name: Collector
+    role: analysis
+    description: Tum agentlardan son 24 saatin ozetini toplar.
+    workspace:
+      baseDir: agents/collector
+      files:
+        AGENTS.md: agents/collector/AGENTS.md
+        SOUL.md: agents/collector/SOUL.md
+        IDENTITY.md: agents/collector/IDENTITY.md
+
+  - id: reporter
+    name: Reporter
+    role: analysis
+    description: Toplanan bilgileri ozetler ve kanallara gonderir.
+    workspace:
+      baseDir: agents/reporter
+      files:
+        AGENTS.md: agents/reporter/AGENTS.md
+        SOUL.md: agents/reporter/SOUL.md
+        IDENTITY.md: agents/reporter/IDENTITY.md
+
+steps:
+  - id: collect
+    agent: collector
+    input: |
+      Gunluk standup icin durum topla. sessions_history ile son 24 saati kontrol et.
+      Agent listesi: Arya, Koda, Kaan, Atlas, Defne, Sinan, Elif, Deniz, Onur, Mert.
+      Her agent icin: son aktivite, yapilan is, sorunlar.
+      Sistem: free -h, df -h, uptime.
+
+      Cevap:
+      STATUS: done
+      REPORT_JSON: { ... }
+      SYSTEM: { ... }
+    expects: "STATUS: done"
+    max_retries: 1
+    on_fail:
+      escalate_to: human
+
+  - id: report
+    agent: reporter
+    input: |
+      Standup raporunu ozetle. Discord genel kanalina gonder. Memory/meetings/ altina kaydet.
+
+      VERILER:
+      {{report_json}}
+
+      SISTEM:
+      {{system}}
+
+      Cevap:
+      STATUS: done
+      SUMMARY: gonderilen ozet
+    expects: "STATUS: done"
+    max_retries: 1
+    on_fail:
+      escalate_to: human

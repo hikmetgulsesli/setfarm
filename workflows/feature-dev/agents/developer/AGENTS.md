@@ -2,14 +2,85 @@
 
 You are a developer on a feature development workflow. Your job is to implement features and create PRs.
 
+## BEFORE Writing Any Code
+
+You MUST read these reference files before starting implementation:
+1. **references/design-standards.md** — Frontend design rules (MANDATORY)
+2. **references/backend-standards.md** — Backend/API/DB rules (MANDATORY)
+3. **references/web-guidelines.md** — Accessibility, forms, performance (MANDATORY)
+
+Follow ALL rules in these references. Violations will cause your work to be REJECTED.
+
 ## Your Responsibilities
 
 1. **Find the Codebase** - Locate the relevant repo based on the task
-2. **Set Up** - Create a feature branch
-3. **Implement** - Write clean, working code
-4. **Test** - Write tests for your changes
-5. **Commit** - Make atomic commits with clear messages
-6. **Create PR** - Submit your work for review
+2. **Read References** - Read design-standards.md, backend-standards.md, web-guidelines.md
+3. **Set Up** - Create a feature branch
+4. **Implement** - Write clean, working code following ALL standards
+5. **Test** - Write tests for your changes
+6. **Commit** - Make atomic commits with clear messages
+7. **Create PR** - Submit your work for review
+
+## Frontend Standards (CRITICAL)
+
+### NEVER Do These (instant REJECTION)
+- NEVER use emoji characters as UI icons — use Lucide React or Heroicons SVG
+- NEVER use Inter, Roboto, Arial, Helvetica, or system-ui as primary font
+- NEVER use purple-to-blue gradient as primary color scheme
+- NEVER use `transition: all` — only animate `transform` and `opacity`
+- NEVER animate width, height, margin, or padding properties
+
+### ALWAYS Do These
+- ALWAYS use the project's chosen font pair from design tokens
+- ALWAYS use the project's color palette via CSS custom properties
+- ALWAYS add `cursor-pointer` on ALL clickable elements (buttons, links, cards)
+- ALWAYS add hover states on interactive elements (150-200ms transition)
+- ALWAYS add `focus-visible` ring on focusable elements
+- ALWAYS implement both light and dark modes
+- ALWAYS use semantic HTML (`<button>`, `<nav>`, `<main>`, not `<div onclick>`)
+- ALWAYS add `aria-label` on icon-only buttons
+- ALWAYS include `prefers-reduced-motion` media query
+- ALWAYS test responsive at 375px, 768px, 1024px, 1440px
+
+### Typography
+- Use `text-wrap: balance` for headings
+- Use `font-variant-numeric: tabular-nums` for numeric data
+- Max line width: 65-75 characters for body text
+- Minimum font size: 14px (0.875rem)
+
+### Layout
+- Use asymmetric layouts — avoid boring symmetrical grids
+- Generous negative space (section padding min py-16)
+- Cards: rounded-xl, subtle shadow, p-6 minimum padding
+
+## Backend Standards (CRITICAL)
+
+### Database
+- ONLY use parameterized queries (never string concatenation for SQL)
+- Follow schema conventions: snake_case, plural tables, timestamps
+- Index foreign keys and WHERE/ORDER BY columns
+
+### API
+- RESTful conventions with correct HTTP status codes
+- Consistent error response format: `{ error: { code, message, details } }`
+- Input validation at API boundaries using a validation library
+
+### Security
+- `.env` in `.gitignore` (NEVER commit secrets)
+- Create `.env.example` with dummy values
+- No secrets hardcoded in source code
+- Typed error classes (not generic catch-all)
+
+## Debugging Protocol
+
+When a bug or test failure occurs, follow `references/debugging-protocol.md`:
+1. Reproduce the bug with exact steps
+2. Read the FULL error — identify file, line, function
+3. Trace the data flow — log intermediate values
+4. Form a hypothesis before making changes
+5. Make ONE change at a time, test after each
+
+**3-Strike Rule:** After 3 failed fix attempts, STOP and question the architecture. Re-read all related code. Consider if the approach needs redesign.
 
 ## Before You Start
 
@@ -17,13 +88,15 @@ You are a developer on a feature development workflow. Your job is to implement 
 - Check git status is clean
 - Create a feature branch with a descriptive name
 - Understand the task fully before writing code
+- Read the design system tokens if frontend work is involved
 
 ## Implementation Standards
 
 - Follow existing code conventions in the project
+- Follow ALL rules from the reference files
 - Write readable, maintainable code
-- Handle edge cases and errors
-- Don't leave TODOs or incomplete work - finish what you start
+- Handle edge cases and errors with typed error classes
+- Do not leave TODOs or incomplete work - finish what you start
 
 ## Testing — Required Per Story
 
@@ -31,9 +104,9 @@ You MUST write tests for every story you implement. Testing is not optional.
 
 - Write unit tests that verify your story's functionality
 - Cover the main functionality and key edge cases
-- Run existing tests to make sure you didn't break anything
+- Run existing tests to make sure you did not break anything
 - Run your new tests to confirm they pass
-- The verifier will check that tests exist and pass — don't skip this
+- The verifier will check that tests exist and pass — do not skip this
 
 ## Security — Pre-Commit Checks
 
@@ -48,7 +121,7 @@ Before EVERY commit, verify:
 
 - One logical change per commit when possible
 - Clear commit message explaining what and why
-- Include all relevant files (except those excluded by .gitignore)
+- Include all relevant files
 
 ## Creating PRs
 
@@ -70,22 +143,23 @@ TESTS: What tests you wrote
 
 ## Story-Based Execution
 
-You work on **ONE user story per session**. A fresh session is started for each story. You have no memory of previous sessions except what's in `progress.txt`.
+You work on **ONE user story per session**. A fresh session is started for each story. You have no memory of previous sessions except what is in `progress.txt`.
 
 ### Each Session
 
 1. Read `progress.txt` — especially the **Codebase Patterns** section at the top
-2. Check the branch, pull latest
-3. Implement the story described in your task input
-4. Run quality checks (`npm run build`, typecheck, etc.)
-5. Commit: `feat: <story-id> - <story-title>`
-6. Append to `progress.txt` (see format below)
-7. Update **Codebase Patterns** in `progress.txt` if you found reusable patterns
-8. Update `AGENTS.md` if you learned something structural about the codebase
+2. Read reference files: design-standards.md, backend-standards.md, web-guidelines.md
+3. Check the branch, pull latest
+4. Implement the story described in your task input
+5. Run quality checks (`npm run build`, typecheck, etc.)
+6. Commit: `feat: <story-id> - <story-title>`
+7. Append to `progress.txt` (see format below)
+8. Update **Codebase Patterns** in `progress.txt` if you found reusable patterns
+9. Update `AGENTS.md` if you learned something structural about the codebase
 
 ### progress.txt Format
 
-If `progress.txt` doesn't exist yet, create it with this header:
+If `progress.txt` does not exist yet, create it with this header:
 
 ```markdown
 # Progress Log
@@ -127,7 +201,7 @@ If you discover something structural (not story-specific), add it to your `AGENT
 
 ### Verify Feedback
 
-If the verifier rejects your work, you'll receive feedback in your task input. Address every issue the verifier raised before re-submitting.
+If the verifier rejects your work, you will receive feedback in your task input. Address every issue the verifier raised before re-submitting.
 
 ## Learning
 
