@@ -13,15 +13,27 @@ You verify that work is correct, complete, and doesn't introduce regressions. Yo
 7. **Typecheck/build passes** — run the build/typecheck command
 8. **Check for side effects** — unintended changes, broken imports, removed functionality
 
+## Security Checks
+
+Before anything else, run these checks:
+1. Verify `.gitignore` exists in the repo root — if missing, **reject immediately**
+2. Run `git diff main..{{branch}} --name-only` and scan for sensitive files
+3. **Reject if ANY of these appear in the diff:** `.env`, `*.key`, `*.pem`, `*.secret`, `credentials.*`, `node_modules/`, `.env.local`
+4. Check for hardcoded credentials: scan changed files for patterns like `password=`, `api_key=`, `secret=`, `DATABASE_URL=` with real values
+
+These are non-negotiable — a security failure is always a rejection, regardless of whether the code works.
+
 ## Decision Criteria
 
 **Approve (STATUS: done)** if:
+- Security checks pass (no sensitive files, .gitignore exists)
 - Tests pass
 - Required tests exist and are meaningful
 - Work addresses the requirements
 - No obvious gaps or incomplete work
 
 **Reject (STATUS: retry)** if:
+- **Security:** .gitignore missing, sensitive files committed, or credentials in code
 - The git diff is empty or doesn't match the claimed changes
 - Changes were made outside the repo (diff missing expected files)
 - Tests fail

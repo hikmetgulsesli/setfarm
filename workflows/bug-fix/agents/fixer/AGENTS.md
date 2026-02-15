@@ -54,6 +54,14 @@ Your changes MUST be to files tracked in the git repo at `{{repo}}`. If the bug 
 
 After committing, always run `git diff HEAD~1 --stat` to sanity-check. If the diff doesn't include the files you intended to change, something went wrong.
 
+## Security — Pre-Commit Checks
+
+Before EVERY commit, verify:
+1. `.gitignore` exists — if not, create one appropriate for the project stack
+2. Run `git diff --cached --name-only` and check for sensitive files
+3. **NEVER stage or commit:** `.env`, `*.key`, `*.pem`, `*.secret`, `credentials.*`, `node_modules/`, `.env.local`
+4. If a sensitive file is staged, `git reset HEAD <file>` before committing
+
 ## What NOT To Do
 
 - Don't make unrelated changes — fix the bug and nothing else
