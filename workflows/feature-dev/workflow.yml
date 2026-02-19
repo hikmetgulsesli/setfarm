@@ -1,20 +1,21 @@
+# Per-story PR workflow — each story gets its own branch, PR, review, and merge.
 # Ralph loop (https://github.com/snarktank/ralph) — each agent runs in a fresh
 # session with clean context. Memory persists via git history and progress files.
 id: feature-dev
 name: Feature Development Workflow
-version: 6
+version: 7.1
 description: |
-  Story-based execution pipeline. Planner decomposes tasks into user stories.
-  Setup prepares the environment and establishes baseline.
-  Developer implements each story (with tests) in a fresh session. Verifier checks each story.
-  Then integration/E2E testing, PR creation, and code review.
-  v6: Added design standards, backend standards, and quality gates.
+  Per-story PR pipeline. Each user story gets its own branch and pull request.
+  Developer: creates story branch → implements → tests → pushes → creates PR.
+  Verifier: reviews PR → checks quality → merges to feature branch.
+  After all stories: integration test on merged feature branch + final PR to main.
+  v7.1: Hardened output format enforcement to prevent missing variable errors.
 
 cron:
-  interval_ms: 120000  # 2 minutes instead of 5
+  interval_ms: 120000  # 2 minutes
 
 polling:
-  model: default
+  model: minimax/MiniMax-M2.5
   timeoutSeconds: 120
 
 agents:
@@ -32,7 +33,7 @@ agents:
   - id: setup
     name: Setup
     role: coding
-    description: Prepares environment, creates branch, establishes baseline.
+    description: Prepares environment, creates feature branch, establishes baseline.
     workspace:
       baseDir: agents/setup
       files:
@@ -43,7 +44,7 @@ agents:
   - id: developer
     name: Developer
     role: coding
-    description: Implements features, writes tests, creates PRs.
+    description: Implements features per story with individual PRs.
     workspace:
       baseDir: agents/developer
       files:
@@ -54,7 +55,7 @@ agents:
   - id: verifier
     name: Verifier
     role: verification
-    description: Quick sanity check - did developer actually do the work?
+    description: Reviews per-story PRs, approves and merges to feature branch.
     workspace:
       baseDir: agents/verifier
       skills:
@@ -67,26 +68,13 @@ agents:
   - id: tester
     name: Tester
     role: testing
-    description: Integration and E2E testing after all stories are implemented.
+    description: Integration testing and final PR after all stories are merged.
     workspace:
       baseDir: agents/tester
       files:
         AGENTS.md: agents/tester/AGENTS.md
         SOUL.md: agents/tester/SOUL.md
         IDENTITY.md: agents/tester/IDENTITY.md
-
-  - id: reviewer
-    name: Reviewer
-    role: analysis
-    description: Reviews PRs, requests changes or approves.
-    workspace:
-      baseDir: agents/reviewer
-      skills:
-        - agent-browser
-      files:
-        AGENTS.md: agents/reviewer/AGENTS.md
-        SOUL.md: agents/reviewer/SOUL.md
-        IDENTITY.md: agents/reviewer/IDENTITY.md
 
 steps:
   - id: plan
@@ -101,7 +89,7 @@ steps:
       1. Explore the codebase to understand the stack, conventions, and patterns
       2. Read references/design-standards.md for available palettes and font pairs
       3. Read references/brainstorming-protocol.md for architectural decision-making
-      4. Break the task into small user stories (max 20)
+      4. Break the task into small, focused user stories (as many as needed)
       5. Order by dependency: design tokens first, then schema/DB, backend, frontend, integration
       6. Each story must fit in one developer session (one context window)
       7. Every acceptance criterion must be mechanically verifiable
@@ -119,19 +107,27 @@ steps:
       - NEVER choose: purple gradient as primary aesthetic
       - NEVER plan for emoji icons
       - Include design tokens (CSS custom properties) in the FIRST user story
-      - Output: DESIGN_SYSTEM block with chosen values
 
-      Reply with:
+      ============================================================
+      MANDATORY OUTPUT FORMAT — PIPELINE WILL BREAK IF YOU SKIP ANY KEY
+      ============================================================
+      Your ENTIRE reply must follow this EXACT format. Every key is REQUIRED.
+      Extract REPO and BRANCH from the TASK above. If REPO is in the task, copy it exactly.
+      If BRANCH is not in the task, generate a short kebab-case branch name.
+
       STATUS: done
-      REPO: /path/to/repo
-      BRANCH: feature-branch-name
+      REPO: <exact repo path, e.g. /home/setrox/myproject>
+      BRANCH: <branch name, e.g. feature-name>
       DESIGN_SYSTEM:
-        aesthetic: [direction]
-        palette: [name]
-        heading_font: [font]
-        body_font: [font]
-        icon_library: [library]
+        aesthetic: <direction>
+        palette: <name>
+        heading_font: <font>
+        body_font: <font>
+        icon_library: <library>
       STORIES_JSON: [ ... array of story objects ... ]
+
+      FAILURE WARNING: If your reply does not contain "REPO:" and "BRANCH:" on their own lines, the entire pipeline crashes. These are NOT optional.
+      ============================================================
     expects: "STATUS: done"
     max_retries: 2
     on_fail:
@@ -149,21 +145,37 @@ steps:
       BRANCH: {{branch}}
 
       Instructions:
-      1. cd into the repo
-      2. Create the feature branch (git checkout -b {{branch}})
-      3. Read package.json, CI config, test config to understand the build/test setup
-      4. Run the build to establish a baseline
-      5. Run the tests to establish a baseline
-      6. Create a references/ symlink in the repo root:
+      1. If the repo directory does not exist: mkdir -p {{repo}} && cd {{repo}} && git init
+         If it exists: cd into the repo
+      2. CRITICAL - Ensure GitHub remote exists:
+         - Run: git remote -v
+         - If NO remote named 'origin' exists, create the GitHub repo:
+           PROJECT_NAME=$(basename {{repo}})
+           gh repo create hikmetgulsesli/$PROJECT_NAME --public --source . --remote origin --push 2>/dev/null || true
+         - If remote exists but repo doesn't exist on GitHub:
+           gh repo create hikmetgulsesli/$PROJECT_NAME --public --source . --remote origin --push 2>/dev/null || true
+         - Verify: git remote -v (must show origin)
+      3. Create the feature branch (git checkout -b {{branch}})
+      4. Read package.json, CI config, test config to understand the build/test setup
+      5. Run the build to establish a baseline
+      6. Run the tests to establish a baseline
+      7. Create a references/ symlink in the repo root:
          ln -sfn /home/setrox/.openclaw/antfarm-repo/references references
-      7. Report what you found
+      8. Push the feature branch to remote:
+         git push -u origin {{branch}}
+      9. Report what you found
 
-      Reply with:
+      ============================================================
+      MANDATORY OUTPUT FORMAT — PIPELINE WILL BREAK IF YOU SKIP ANY KEY
+      ============================================================
       STATUS: done
-      BUILD_CMD: <build command>
-      TEST_CMD: <test command>
+      BUILD_CMD: <the exact build command, e.g. pnpm run build>
+      TEST_CMD: <the exact test command, e.g. pnpm test>
       CI_NOTES: <brief CI notes>
       BASELINE: <baseline status>
+
+      FAILURE WARNING: If your reply does not contain "BUILD_CMD:" and "TEST_CMD:" on their own lines, the implement step crashes. These are NOT optional.
+      ============================================================
     expects: "STATUS: done"
     max_retries: 2
     on_fail:
@@ -180,6 +192,7 @@ steps:
       verify_step: verify
     input: |
       Implement the following user story. You are working on ONE story in a fresh session.
+      Each story gets its own branch and pull request.
 
       TASK (overall):
       {{task}}
@@ -214,19 +227,64 @@ steps:
 
       Instructions:
       1. Read progress-{{run_id}}.txt — especially the Codebase Patterns section
-      2. Pull latest on the branch
-      3. Implement this story only, following ALL design and backend standards
-      4. Write tests for this story's functionality
-      5. Run typecheck / build
-      6. Run tests to confirm they pass
-      7. Commit: feat: {{current_story_id}} - {{current_story_title}}
-      8. Append to progress-{{run_id}}.txt
-      9. Update Codebase Patterns if you found reusable patterns
+      2. cd into {{repo}}
 
-      Reply with:
+      === PER-STORY BRANCH + PR WORKFLOW ===
+
+      3. Make sure the feature branch is up to date:
+         git checkout {{branch}}
+         git pull origin {{branch}}
+
+      4. Create a NEW branch for this story from the feature branch:
+         STORY_BRANCH="{{current_story_id}}"
+         git checkout -b "$STORY_BRANCH"
+         IMPORTANT: Remember the STORY_BRANCH name — you MUST include it in your reply.
+
+      5. Implement this story only, following ALL design and backend standards
+      6. Write tests for this story's functionality
+      7. Run typecheck / build
+      8. Run tests to confirm they pass
+      9. Commit all changes:
+         git add -A
+         git commit -m "feat: {{current_story_id}} - {{current_story_title}}"
+
+      10. Push the story branch:
+          git push -u origin "$STORY_BRANCH"
+
+      11. Create a Pull Request to the FEATURE BRANCH (not main):
+          PR_URL=$(gh pr create \
+            --base {{branch}} \
+            --head "$STORY_BRANCH" \
+            --title "feat: {{current_story_id}} - {{current_story_title}}" \
+            --body "## Story
+          {{current_story_id}}: {{current_story_title}}
+
+          ## Changes
+          <describe changes>
+
+          ## Tests
+          <describe tests written>")
+          echo "Created PR: $PR_URL"
+
+      12. Append to progress-{{run_id}}.txt
+      13. Update Codebase Patterns if you found reusable patterns
+
+      === END WORKFLOW ===
+
+      ============================================================
+      MANDATORY OUTPUT FORMAT — PIPELINE WILL BREAK IF YOU SKIP ANY KEY
+      ============================================================
+      The FIRST 4 lines of your reply MUST be exactly:
+
       STATUS: done
-      CHANGES: what you implemented
-      TESTS: what tests you wrote
+      STORY_BRANCH: {{current_story_id}}
+      PR: <the full GitHub PR URL that gh pr create printed>
+      CHANGES: <what you implemented>
+      TESTS: <what tests you wrote>
+
+      FAILURE WARNING: If your reply does not contain "STORY_BRANCH:" and "PR:" on their own lines, the verify step crashes and the ENTIRE pipeline stops. These are NOT optional.
+      STORY_BRANCH must be the exact branch name (e.g. us-001). PR must be a full URL (e.g. https://github.com/hikmetgulsesli/repo/pull/1).
+      ============================================================
     expects: "STATUS: done"
     max_retries: 2
     on_fail:
@@ -235,13 +293,15 @@ steps:
   - id: verify
     agent: verifier
     input: |
-      Verify the developer's work on this story.
+      Review and merge the developer's pull request for this story.
 
       TASK (overall):
       {{task}}
 
       REPO: {{repo}}
       BRANCH: {{branch}}
+      STORY_BRANCH: {{story_branch}}
+      PR: {{pr}}
       CHANGES: {{changes}}
       TEST_CMD: {{test_cmd}}
 
@@ -251,46 +311,62 @@ steps:
       PROGRESS LOG:
       {{progress}}
 
-      Check:
-      1. Code exists (not just TODOs or placeholders)
-      2. Each acceptance criterion for the story is met
-      3. Tests were written for this story's functionality
-      4. Tests pass (run {{test_cmd}})
-      5. No obvious incomplete work
-      6. Typecheck passes
+      === PR REVIEW + MERGE WORKFLOW ===
 
-      ## Design Quality Verification (Frontend Changes)
-      Has frontend changes: {{has_frontend_changes}}
+      STEP 1 — Review the PR:
+      1. cd into {{repo}}
+      2. Checkout the story branch and pull latest:
+         git checkout {{story_branch}} && git pull
+      3. View the PR diff:
+         gh pr diff {{pr}}
+      4. Check that code exists (not just TODOs or placeholders)
+      5. Verify each acceptance criterion for the story
+      6. Run tests: {{test_cmd}}
+      7. Run typecheck/build
 
-      If {{has_frontend_changes}} is 'true', you MUST also check design quality:
-      1. Read references/design-checklist.md
-      2. Check EVERY item on the visual quality checklist
-      3. REJECT if: emoji icons found anywhere in the UI
-      4. REJECT if: Inter, Roboto, Arial, or system-ui used as primary font
-      5. REJECT if: cursor-pointer missing on clickable elements
-      6. REJECT if: no hover/focus states on interactive elements
-      7. REJECT if: contrast ratio below 4.5:1
-      8. REJECT if: transition:all used anywhere
-      9. Use the agent-browser skill to visually inspect the changed UI
-      10. Open the changed HTML file directly (file:// URL) or spin up a local dev server
-      11. Take a screenshot of the rendered page
-      12. Visually confirm layout renders correctly, styling applied, elements present
-      13. Include your visual and design quality findings in VERIFIED output
+      STEP 2 — Quality Checks:
 
-      If {{has_frontend_changes}} is 'false', skip visual verification entirely.
+      Code Quality:
+      - Tests were written for this story's functionality
+      - No obvious incomplete work
+      - No empty catch blocks or swallowed errors
 
-      ## Backend Quality Verification
-      If backend changes exist, also check:
-      1. No SQL string concatenation (parameterized queries only)
-      2. .env is in .gitignore
-      3. No secrets hardcoded in source code
-      4. Proper error handling (no empty catch blocks)
+      Security:
+      - .gitignore exists, .env not committed
+      - No hardcoded secrets
+      - Parameterized queries only (no SQL concatenation)
+
+      Design Quality (if frontend changes):
+      - No emoji icons
+      - No Inter/Roboto/Arial fonts
+      - Cursor-pointer on clickables
+      - Hover/focus states present
+      - Responsive breakpoints exist
+      - Read references/design-checklist.md and check all CRITICAL items
+      - Use agent-browser to visually verify if needed
+
+      STEP 3 — Decision:
+
+      If APPROVED:
+      1. Approve the PR on GitHub:
+         gh pr review {{pr}} --approve --body "Verified: all acceptance criteria met, tests pass, quality checks pass."
+      2. Squash-merge the PR to the feature branch:
+         gh pr merge {{pr}} --squash --delete-branch
+      3. Reply with STATUS: done
+
+      If REJECTED:
+      1. Request changes on the PR:
+         gh pr review {{pr}} --request-changes --body "Issues found: <list>"
+      2. Reply with STATUS: retry and list issues
+
+      === END WORKFLOW ===
 
       Reply with:
       STATUS: done
       VERIFIED: What you confirmed
+      MERGED: true
 
-      Or if incomplete:
+      Or if issues found:
       STATUS: retry
       ISSUES:
       - What's missing or incomplete
@@ -301,41 +377,65 @@ steps:
       on_exhausted:
         escalate_to: human
 
-  - id: test
+  - id: final-test
     agent: tester
     input: |
-      Integration and E2E testing of the implementation.
+      Integration testing on the merged feature branch, then create final PR to main.
 
       TASK:
       {{task}}
 
       REPO: {{repo}}
       BRANCH: {{branch}}
-      CHANGES: {{changes}}
       BUILD_CMD: {{build_cmd}}
       TEST_CMD: {{test_cmd}}
 
       PROGRESS LOG:
       {{progress}}
 
+      All individual story PRs have been merged to the feature branch ({{branch}}).
+      Now verify everything works together.
+
       BEFORE testing, read:
       1. references/web-guidelines.md — accessibility and performance standards
       2. references/debugging-protocol.md — systematic debugging if tests fail
 
-      Your job (integration/E2E testing — unit tests were already written per-story):
-      1. Run the full test suite ({{test_cmd}}) to confirm everything passes together
-      2. Look for integration issues between stories
-      3. If this is a UI feature, use agent-browser to test it end-to-end
-      4. Check cross-cutting concerns: error handling, edge cases across features
-      5. Verify the overall feature works as a cohesive whole
-      6. If frontend: check accessibility (semantic HTML, keyboard nav, aria attributes)
-      7. If frontend: check performance (lazy loading, font preload, image dimensions)
+      === INTEGRATION TEST WORKFLOW ===
 
-      If tests fail, follow the debugging protocol: reproduce, trace, hypothesize, fix ONE thing at a time.
+      STEP 1 — Checkout and verify:
+      1. cd into {{repo}}
+      2. git checkout {{branch}} && git pull origin {{branch}}
+      3. Run the full build: {{build_cmd}}
+      4. Run the full test suite: {{test_cmd}}
+
+      STEP 2 — Integration testing:
+      1. Look for integration issues between stories
+      2. If UI feature, use agent-browser to test end-to-end
+      3. Check cross-cutting concerns: error handling, edge cases
+      4. Verify the overall feature works as a cohesive whole
+      5. If frontend: check accessibility (semantic HTML, keyboard nav, aria)
+      6. If frontend: check performance (lazy loading, font preload, image dimensions)
+
+      STEP 3 — Create final PR to main:
+      1. If all tests pass, create a PR from feature branch to main:
+         gh pr create \
+           --base main \
+           --head {{branch}} \
+           --title "feat: complete {{branch}} feature" \
+           --body "## Summary
+      Feature branch {{branch}} with all stories implemented and tested.
+
+      ## Test Results
+      <test summary>"
+
+      If tests fail, follow debugging protocol. Fix issues, commit, push to feature branch.
+
+      === END WORKFLOW ===
 
       Reply with:
       STATUS: done
-      RESULTS: What you tested and the outcomes
+      RESULTS: What you tested and outcomes
+      FINAL_PR: URL of the PR to main
 
       Or if issues found:
       STATUS: retry
@@ -347,220 +447,3 @@ steps:
       max_retries: 2
       on_exhausted:
         escalate_to: human
-
-  - id: pr
-    agent: developer
-    input: |
-      Create a pull request for your changes.
-
-      TASK:
-      {{task}}
-
-      REPO: {{repo}}
-      BRANCH: {{branch}}
-      CHANGES: {{changes}}
-      RESULTS: {{results}}
-
-      PROGRESS LOG:
-      {{progress}}
-
-      Create a PR with:
-      - Clear title summarizing the change
-      - Description explaining what and why
-      - Reference to what was tested
-
-      Use: gh pr create
-
-      Reply with:
-      STATUS: done
-      PR: URL to the pull request
-    expects: "STATUS: done"
-    on_fail:
-      escalate_to: human
-
-  - id: review
-    agent: reviewer
-    input: |
-      Review the pull request.
-
-      PR: {{pr}}
-      TASK: {{task}}
-      CHANGES: {{changes}}
-
-      PROGRESS LOG:
-      {{progress}}
-
-      BEFORE reviewing, read:
-      1. references/design-standards.md — design rules and anti-patterns
-      2. references/design-checklist.md — visual QA checklist
-      3. references/backend-standards.md — backend quality standards
-
-      Review for:
-      - Code quality and clarity
-      - Potential bugs or issues
-      - Test coverage
-      - Follows project conventions
-
-      DESIGN QUALITY GATE:
-      REJECT the PR if ANY of these are true:
-      - Uses emoji characters as UI icons
-      - Uses Inter, Roboto, Arial, or system-ui as primary font
-      - Uses purple-gradient-on-white or purple-gradient-on-dark color scheme
-      - Has no hover/focus states on interactive elements
-      - Missing cursor-pointer on clickable elements
-      - Has no responsive breakpoints
-      - Layout is a basic centered single-column with no visual character
-      - Uses transition:all anywhere
-      When rejecting for design quality, cite the specific rule from design-standards.md.
-
-      BACKEND QUALITY GATE:
-      REJECT the PR if ANY of these are true:
-      - SQL string concatenation detected (injection risk)
-      - .env file committed or not in .gitignore
-      - Secrets hardcoded in source code
-      - Empty catch blocks (silent error swallowing)
-      - Generic error responses (everything returns 500)
-
-      Use: gh pr view, gh pr diff to read the PR.
-
-      IMPORTANT: Post your review to the PR on GitHub using:
-      - If approving: gh pr review <number> --approve --body "your review summary"
-      - If requesting changes: gh pr review <number> --request-changes --body "your feedback"
-
-      ## Visual Review (Frontend Changes)
-      Has frontend changes: {{has_frontend_changes}}
-
-      If {{has_frontend_changes}} is 'true', you MUST also perform a visual design review:
-      1. Check out the branch: git checkout {{branch}}
-      2. Use the agent-browser skill to open the changed page (file:// URL or local dev server)
-      3. Take a screenshot of the rendered page
-      4. Run through references/design-checklist.md — every CRITICAL item must pass
-      5. Evaluate visual polish and design quality:
-         - Does the UI look polished and intentional, not rough or AI-generated?
-         - Are colors, typography, and spacing consistent with the design system?
-         - Is the layout visually balanced with appropriate asymmetry?
-         - Do interactive elements have visible hover/focus/active states?
-         - Is the overall design distinctive — not generic dark Tailwind template?
-      6. Include your visual design assessment in the review output
-
-      If {{has_frontend_changes}} is 'false', skip visual review entirely.
-
-      If changes needed, add comments to the PR explaining what needs to change.
-
-      Reply with:
-      STATUS: done
-      DECISION: approved
-
-      Or if changes needed:
-      STATUS: retry
-      DECISION: changes_requested
-      FEEDBACK:
-      - What needs to change
-    expects: "STATUS: done"
-    on_fail:
-      retry_step: implement
-      max_retries: 3
-      on_exhausted:
-        escalate_to: human
-
-  - id: external-review
-    agent: reviewer
-    input: |
-      Read and address external code review comments on the PR from automated reviewers (GitHub Copilot, Gemini Code Review, etc.)
-
-      PR: {{pr}}
-      TASK: {{task}}
-      REPO: {{repo}}
-      BRANCH: {{branch}}
-      BUILD_CMD: {{build_cmd}}
-      TEST_CMD: {{test_cmd}}
-
-      PROGRESS LOG:
-      {{progress}}
-
-      Instructions:
-      1. Wait 90 seconds for automated review bots to finish:
-         sleep 90
-
-      2. Check if all PR checks have completed:
-         gh pr checks {{pr}} || true
-
-      3. Read ALL review comments on the PR:
-         gh api repos/{owner}/{repo}/pulls/{number}/reviews
-         gh api repos/{owner}/{repo}/pulls/{number}/comments
-         gh pr view {{pr}} --comments
-
-      4. Collect all actionable feedback from:
-         - GitHub Copilot review comments
-         - Gemini Code Review comments
-         - Any other automated reviewer comments
-         - Ignore "LGTM" / approval-only reviews with no code changes requested
-
-      5. If there are actionable code issues (bugs, security, performance, style violations):
-         - cd into {{repo}}, checkout {{branch}}, pull latest
-         - Fix each issue mentioned in the comments
-         - Run {{build_cmd}} to verify the build still passes
-         - Run {{test_cmd}} to verify tests still pass (if test command exists)
-         - Commit: fix: address external review feedback
-         - Push: git push
-         - Reply with STATUS: done and list what you fixed
-
-      6. If there are NO actionable issues (only approvals, or no bot comments):
-         - Reply with STATUS: done and note that no fixes were needed
-
-      7. After fixing, re-read comments one more time to confirm nothing was missed.
-
-      Reply with:
-      STATUS: done
-      FIXES: list of what was fixed (or "none needed")
-      EXTERNAL_REVIEWS: summary of bot feedback received
-
-      Or if you cannot fix an issue:
-      STATUS: retry
-      ISSUES:
-      - What could not be fixed and why
-    expects: "STATUS: done"
-    on_fail:
-      retry_step: implement
-      max_retries: 2
-      on_exhausted:
-        escalate_to: human
-
-  - id: merge
-    agent: developer
-    input: |
-      Merge the pull request and clean up.
-
-      PR: {{pr}}
-      REPO: {{repo}}
-      BRANCH: {{branch}}
-
-      PROGRESS LOG:
-      {{progress}}
-
-      Instructions:
-      1. Verify PR is in a mergeable state:
-         gh pr view {{pr}} --json mergeable,mergeStateStatus
-
-      2. If mergeable, squash-merge the PR:
-         gh pr merge {{pr}} --squash --delete-branch
-
-      3. If NOT mergeable (conflicts, failing checks):
-         - Report the issue and do NOT force merge
-         - Reply with STATUS: retry
-
-      4. After merge, verify:
-         gh pr view {{pr}} --json state
-
-      Reply with:
-      STATUS: done
-      MERGED: true
-      MERGE_SHA: <commit sha from merge>
-
-      Or if merge failed:
-      STATUS: retry
-      ISSUES:
-      - Why merge failed
-    expects: "STATUS: done"
-    on_fail:
-      escalate_to: human

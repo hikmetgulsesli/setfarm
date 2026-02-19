@@ -193,6 +193,15 @@ function parseAndInsertStories(output: string, runId: string): void {
   const startIdx = lines.findIndex(l => l.startsWith("STORIES_JSON:"));
   if (startIdx === -1) return;
 
+  // Dedup guard: if stories already exist for this run, skip insertion.
+  // Prevents 3x duplication when multiple cron instances process the same output.
+  const db0 = getDb();
+  const existingCount = db0.prepare("SELECT COUNT(*) as cnt FROM stories WHERE run_id = ?").get(runId);
+  if (existingCount && (existingCount as any).cnt > 0) {
+    logger.info("Stories already exist for run " + runId + ", skipping duplicate insertion");
+    return;
+  }
+
   // Collect JSON text: first line after prefix, then subsequent lines until next KEY: or end
   const firstLine = lines[startIdx].slice("STORIES_JSON:".length).trim();
   const jsonLines = [firstLine];
@@ -532,6 +541,11 @@ export function claimStep(agentId: string): ClaimResult {
       context["stories_remaining"] = String(pendingCount);
       context["progress"] = readProgressFile(step.run_id);
 
+      // FALLBACK: Ensure story_branch defaults to story ID if developer forgot to output it
+      if (!context["story_branch"]) {
+        context["story_branch"] = story.storyId.toLowerCase();
+      }
+
       if (!context["verify_feedback"]) {
         context["verify_feedback"] = "";
       }
@@ -540,6 +554,22 @@ export function claimStep(agentId: string): ClaimResult {
       db.prepare("UPDATE runs SET context = ?, updated_at = datetime('now') WHERE id = ?").run(JSON.stringify(context), step.run_id);
 
       const resolvedInput = resolveTemplate(step.input_template, context);
+
+      // MISSING_INPUT_GUARD: Fail step if unresolved template variables remain
+      const missingMatch = resolvedInput.match(/\[missing:\s*\w+\]/i);
+      if (missingMatch) {
+        const reason = `Blocked: unresolved variable ${missingMatch[0]} in input`;
+        logger.warn(reason, { runId: step.run_id, stepId: step.step_id });
+        db.prepare(
+          "UPDATE steps SET status = 'failed', output = ?, updated_at = datetime('now') WHERE id = ?"
+        ).run(reason, step.id);
+        db.prepare(
+          "UPDATE runs SET status = 'failed', updated_at = datetime('now') WHERE id = ?"
+        ).run(step.run_id);
+        emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId, detail: `Missing input: ${missingMatch[0]}` });
+        return { found: false };
+      }
+
       return { found: true, stepId: step.id, runId: step.run_id, resolvedInput };
     }
   }
@@ -560,6 +590,22 @@ export function claimStep(agentId: string): ClaimResult {
   }
 
   const resolvedInput = resolveTemplate(step.input_template, context);
+
+      // MISSING_INPUT_GUARD: Fail step if unresolved template variables remain
+      const missingMatch = resolvedInput.match(/\[missing:\s*\w+\]/i);
+      if (missingMatch) {
+        const reason = `Blocked: unresolved variable ${missingMatch[0]} in input`;
+        logger.warn(reason, { runId: step.run_id, stepId: step.step_id });
+        db.prepare(
+          "UPDATE steps SET status = 'failed', output = ?, updated_at = datetime('now') WHERE id = ?"
+        ).run(reason, step.id);
+        db.prepare(
+          "UPDATE runs SET status = 'failed', updated_at = datetime('now') WHERE id = ?"
+        ).run(step.run_id);
+        emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId, detail: `Missing input: ${missingMatch[0]}` });
+        return { found: false };
+      }
+
 
   return {
     found: true,
@@ -597,6 +643,19 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   const parsed = parseOutputKeyValues(output);
   for (const [key, value] of Object.entries(parsed)) {
     context[key] = value;
+  }
+
+  // FALLBACK: Extract critical keys from task text if agent forgot to output them.
+  // This prevents [missing: repo] errors when the planner omits REPO/BRANCH.
+  const CRITICAL_TASK_KEYS = ["repo", "branch"];
+  for (const ck of CRITICAL_TASK_KEYS) {
+    if (!context[ck] && context["task"]) {
+      const taskMatch = context["task"].match(new RegExp(`^${ck.toUpperCase()}:\\s*(.+)$`, "m"));
+      if (taskMatch) {
+        context[ck] = taskMatch[1].trim();
+        logger.info(`[context-fallback] Extracted ${ck} from task text: ${context[ck]}`, { runId: step.run_id });
+      }
+    }
   }
 
   db.prepare(
@@ -661,12 +720,28 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     }
   }
 
-  // Single step: mark done and advance
-  db.prepare(
-    "UPDATE steps SET status = 'done', output = ?, updated_at = datetime('now') WHERE id = ?"
+  // Single step: mark done (idempotency guard — only complete if still running)
+  const updateResult = db.prepare(
+    "UPDATE steps SET status = 'done', output = ?, updated_at = datetime('now') WHERE id = ? AND status = 'running'"
   ).run(output, stepId);
+  if (updateResult.changes === 0) {
+    // Already completed by another session — skip to prevent double pipeline advancement
+    logger.info(`Step already completed, skipping duplicate`, { runId: step.run_id, stepId: step.step_id });
+    return { advanced: false, runCompleted: false };
+  }
   emitEvent({ ts: new Date().toISOString(), event: "step.done", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id });
   logger.info(`Step completed: ${step.step_id}`, { runId: step.run_id, stepId: step.step_id });
+
+  // Guard: if a loop step is still active (not done), don't advance the pipeline.
+  // During verify_each cycles, single steps (test, pr, review, etc.) may get claimed
+  // and completed — advancing would skip the loop and break story iteration.
+  const activeLoop = db.prepare(
+    "SELECT id FROM steps WHERE run_id = ? AND type = 'loop' AND status NOT IN ('done', 'failed', 'waiting') LIMIT 1"
+  ).get(step.run_id) as { id: string } | undefined;
+  if (activeLoop) {
+    logger.info(`Skipping advancePipeline — loop step still active`, { runId: step.run_id, stepId: step.step_id });
+    return { advanced: false, runCompleted: false };
+  }
 
   return advancePipeline(step.run_id);
 }

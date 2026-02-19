@@ -88,7 +88,7 @@ The workflow cannot advance until you report. Your session ending without report
 }
 
 const DEFAULT_POLLING_TIMEOUT_SECONDS = 120;
-const DEFAULT_POLLING_MODEL = "default";
+const DEFAULT_POLLING_MODEL = "minimax/MiniMax-M2.5";
 
 export function buildPollingPrompt(workflowId: string, agentId: string, workModel?: string): string {
   const fullAgentId = `${workflowId}_${agentId}`;
@@ -226,7 +226,6 @@ export async function ensureWorkflowCrons(workflow: WorkflowSpec): Promise<void>
 export async function teardownWorkflowCronsIfIdle(workflowId: string): Promise<void> {
   const active = countActiveRuns(workflowId);
   if (active > 0) return;
-  // Remove ALL crons (base + parallel) so ensureWorkflowCrons recreates cleanly on next run
   const listResult = await listCronJobs();
   if (!listResult.ok || !listResult.jobs) return;
   const prefix = `antfarm/${workflowId}/`;

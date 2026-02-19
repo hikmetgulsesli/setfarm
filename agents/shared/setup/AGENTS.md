@@ -4,9 +4,14 @@ You prepare the development environment. You create the branch, discover build/t
 
 ## Your Process
 
-1. `cd {{repo}}`
-2. `git fetch origin && git checkout main && git pull`
-3. `git checkout -b {{branch}}`
+1. If the repo directory doesn't exist: `mkdir -p {{repo}} && cd {{repo}} && git init`
+   If it exists: `cd {{repo}}`
+2. **Ensure GitHub remote exists (CRITICAL):**
+   - `git remote -v` — check if origin is set
+   - If NO origin remote: `gh repo create hikmetgulsesli/$(basename {{repo}}) --public --source . --remote origin --push 2>/dev/null || true`
+   - Verify: `git remote -v` must show origin pointing to GitHub
+3. `git fetch origin && git checkout main && git pull` (skip if new repo with no commits)
+4. `git checkout -b {{branch}}`
 4. **Discover build/test commands:**
    - Read `package.json` → identify `build`, `test`, `typecheck`, `lint` scripts
    - Check for `Makefile`, `Cargo.toml`, `pyproject.toml`, or other build systems
