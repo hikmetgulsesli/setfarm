@@ -8,6 +8,9 @@ description: |
   Setup creates the security branch. Fixer implements each fix with regression tests.
   Verifier confirms each fix. Tester runs final integration validation. PR agent creates the pull request.
 
+notifications:
+  url: http://127.0.0.1:3080/api/discord-notify
+
 polling:
   model: default
   timeoutSeconds: 120
@@ -184,11 +187,12 @@ steps:
       4. Run the build to establish a baseline
       5. Run the tests to establish a baseline
 
-      Reply with:
+      CRITICAL — Your reply MUST include these EXACT keys on separate lines (not nested under other keys):
       STATUS: done
-      BUILD_CMD: <build command>
-      TEST_CMD: <test command>
+      BUILD_CMD: <the exact build command, e.g. npm run build>
+      TEST_CMD: <the exact test command, e.g. npm test>
       BASELINE: <baseline status>
+      WARNING: If you omit BUILD_CMD or TEST_CMD, the next step WILL fail. These are REQUIRED.
     expects: "STATUS: done"
     max_retries: 2
     on_fail:
