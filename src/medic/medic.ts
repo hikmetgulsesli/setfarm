@@ -6,7 +6,9 @@
  */
 import { getDb } from "../db.js";
 import { emitEvent, type EventType } from "../installer/events.js";
-import { teardownWorkflowCronsIfIdle } from "../installer/agent-cron.js";
+import { teardownWorkflowCronsIfIdle, ensureWorkflowCrons } from "../installer/agent-cron.js";
+import { loadWorkflowSpec } from "../installer/workflow-spec.js";
+import { resolveWorkflowDir } from "../installer/paths.js";
 import { listCronJobs } from "../installer/gateway-api.js";
 import {
   runSyncChecks,
@@ -68,6 +70,8 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
         return true;
       }
 
+      // SAFEGUARD_194: Medic resets use ONLY abandoned_count, NEVER retry_count.
+      // This preserves retry budget for real failures (agent explicitly calling step fail).
       db.prepare(
         "UPDATE steps SET status = 'pending', abandoned_count = ?, updated_at = datetime('now') WHERE id = ?"
       ).run(newCount, finding.stepId);
@@ -139,8 +143,35 @@ export interface MedicCheckResult {
 /**
  * Run all medic checks, remediate what we can, and log results.
  */
+/**
+ * Restore crons for any active runs that lost them (e.g. after gateway restart).
+ * Called once at medic startup and periodically during checks.
+ */
+export async function restoreActiveRunCrons(): Promise<number> {
+  const db = getDb();
+  const activeRuns = db.prepare(
+    "SELECT DISTINCT workflow_id FROM runs WHERE status = 'running'"
+  ).all() as Array<{ workflow_id: string }>;
+
+  let restored = 0;
+  for (const run of activeRuns) {
+    try {
+      const workflowDir = resolveWorkflowDir(run.workflow_id);
+      const workflow = await loadWorkflowSpec(workflowDir);
+      await ensureWorkflowCrons(workflow);
+      restored++;
+    } catch (err) {
+      // Workflow may not exist anymore — skip
+    }
+  }
+  return restored;
+}
+
 export async function runMedicCheck(): Promise<MedicCheckResult> {
   ensureMedicTables();
+
+  // Restore crons for active runs (fixes #183 — lost crons after restart)
+  try { await restoreActiveRunCrons(); } catch {}
 
   // Gather all findings
   const findings: MedicFinding[] = runSyncChecks();

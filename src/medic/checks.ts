@@ -201,8 +201,54 @@ export function checkOrphanedCrons(
 /**
  * Run all synchronous checks (everything except orphaned crons which needs async cron list).
  */
+// ── Check: Claimed But Not Progressing ────────────────────────────────
+
+const CLAIMED_STUCK_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes — if Phase 2 hasn't started in 10min, it's dead
+
+/**
+ * Find steps that were claimed (status='running') but haven't been updated
+ * within a short threshold. This catches Phase 2 sub-agents that never started
+ * or crashed immediately after spawn — much faster than the full role timeout.
+ */
+export function checkClaimedButStuck(): MedicFinding[] {
+  const db = getDb();
+  const findings: MedicFinding[] = [];
+
+  const stuck = db.prepare(`
+    SELECT s.id, s.step_id, s.run_id, s.agent_id, s.updated_at, s.abandoned_count,
+           r.workflow_id
+    FROM steps s
+    JOIN runs r ON r.id = s.run_id
+    WHERE s.status = 'running'
+      AND r.status = 'running'
+      AND (julianday('now') - julianday(s.updated_at)) * 86400000 > ?
+      AND (julianday('now') - julianday(s.updated_at)) * 86400000 < ?
+  `).all(CLAIMED_STUCK_THRESHOLD_MS, MAX_ROLE_TIMEOUT_MS) as Array<{
+    id: string; step_id: string; run_id: string; agent_id: string;
+    updated_at: string; abandoned_count: number; workflow_id: string;
+  }>;
+
+  for (const step of stuck) {
+    const ageMin = Math.round(
+      (Date.now() - new Date(step.updated_at).getTime()) / 60000
+    );
+    findings.push({
+      check: "claimed_but_stuck",
+      severity: "warning",
+      message: `Step "${step.step_id}" in run ${step.run_id.slice(0, 8)} claimed ${ageMin}min ago but no progress — Phase 2 agent likely dead`,
+      action: "reset_step",
+      runId: step.run_id,
+      stepId: step.id,
+      remediated: false,
+    });
+  }
+
+  return findings;
+}
+
 export function runSyncChecks(): MedicFinding[] {
   return [
+    ...checkClaimedButStuck(),
     ...checkStuckSteps(),
     ...checkStalledRuns(),
     ...checkDeadRuns(),
