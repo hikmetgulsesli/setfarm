@@ -6,11 +6,11 @@ try {
 } catch {
   console.error(
     `Error: node:sqlite is not available.\n\n` +
-    `Antfarm requires Node.js >= 22 with native SQLite support.\n` +
+    `Setfarm requires Node.js >= 22 with native SQLite support.\n` +
     `If you have Bun installed, its \`node\` wrapper does not support node:sqlite via ESM.\n\n` +
     `Fix: ensure the real Node.js 22+ is first on your PATH.\n` +
     `  Check: node -e "require('node:sqlite')"\n` +
-    `  See: https://github.com/snarktank/antfarm/issues/54`
+    `  See: https://github.com/hikmetgulsesli/setfarm`
   );
   process.exit(1);
 }
@@ -86,41 +86,41 @@ function printEvents(events: AntfarmEvent[]): void {
 function printUsage() {
   process.stdout.write(
     [
-      "antfarm install                      Install all bundled workflows",
-      "antfarm uninstall [--force]          Full uninstall (workflows, agents, crons, DB)",
+      "setfarm install                      Install all bundled workflows",
+      "setfarm uninstall [--force]          Full uninstall (workflows, agents, crons, DB)",
       "",
-      "antfarm workflow list                List available workflows",
-      "antfarm workflow install <name>      Install a workflow",
-      "antfarm workflow uninstall <name>    Uninstall a workflow (blocked if runs active)",
-      "antfarm workflow uninstall --all     Uninstall all workflows (--force to override)",
-      "antfarm workflow run <name> <task>   Start a workflow run",
-      "antfarm workflow status <query>      Check run status (task substring, run ID prefix)",
-      "antfarm workflow runs                List all workflow runs",
-      "antfarm workflow resume <run-id>     Resume a failed run from where it left off",
-      "antfarm workflow stop <run-id>        Stop/cancel a running workflow",
-      "antfarm workflow ensure-crons <name>  Recreate agent crons for a workflow",
+      "setfarm workflow list                List available workflows",
+      "setfarm workflow install <name>      Install a workflow",
+      "setfarm workflow uninstall <name>    Uninstall a workflow (blocked if runs active)",
+      "setfarm workflow uninstall --all     Uninstall all workflows (--force to override)",
+      "setfarm workflow run <name> <task>   Start a workflow run",
+      "setfarm workflow status <query>      Check run status (task substring, run ID prefix)",
+      "setfarm workflow runs                List all workflow runs",
+      "setfarm workflow resume <run-id>     Resume a failed run from where it left off",
+      "setfarm workflow stop <run-id>        Stop/cancel a running workflow",
+      "setfarm workflow ensure-crons <name>  Recreate agent crons for a workflow",
       "",
-      "antfarm dashboard [start] [--port N]   Start dashboard daemon (default: 3333)",
-      "antfarm dashboard stop                  Stop dashboard daemon",
-      "antfarm dashboard status                Check dashboard status",
+      "setfarm dashboard [start] [--port N]   Start dashboard daemon (default: 3333)",
+      "setfarm dashboard stop                  Stop dashboard daemon",
+      "setfarm dashboard status                Check dashboard status",
       "",
-      "antfarm step peek <agent-id>        Lightweight check for pending work (HAS_WORK or NO_WORK)",
-      "antfarm step claim <agent-id>       Claim pending step, output resolved input as JSON",
-      "antfarm step complete <step-id>      Complete step (reads output from stdin)",
-      "antfarm step fail <step-id> <error>  Fail step with retry logic",
-      "antfarm step stories <run-id>       List stories for a run",
+      "setfarm step peek <agent-id>        Lightweight check for pending work (HAS_WORK or NO_WORK)",
+      "setfarm step claim <agent-id>       Claim pending step, output resolved input as JSON",
+      "setfarm step complete <step-id>      Complete step (reads output from stdin)",
+      "setfarm step fail <step-id> <error>  Fail step with retry logic",
+      "setfarm step stories <run-id>       List stories for a run",
       "",
-      "antfarm medic install                Install medic watchdog cron",
-      "antfarm medic uninstall              Remove medic cron",
-      "antfarm medic run                    Run medic check now (manual trigger)",
-      "antfarm medic status                 Show medic health summary",
-      "antfarm medic log [<count>]          Show recent medic check history",
+      "setfarm medic install                Install medic watchdog cron",
+      "setfarm medic uninstall              Remove medic cron",
+      "setfarm medic run                    Run medic check now (manual trigger)",
+      "setfarm medic status                 Show medic health summary",
+      "setfarm medic log [<count>]          Show recent medic check history",
       "",
-      "antfarm logs [<lines>]               Show recent activity (from events)",
-      "antfarm logs <run-id>                Show activity for a specific run",
+      "setfarm logs [<lines>]               Show recent activity (from events)",
+      "setfarm logs <run-id>                Show activity for a specific run",
       "",
-      "antfarm version                      Show installed version",
-      "antfarm update                       Pull latest, rebuild, and reinstall workflows",
+      "setfarm version                      Show installed version",
+      "setfarm update                       Pull latest, rebuild, and reinstall workflows",
     ].join("\n") + "\n",
   );
 }
@@ -130,7 +130,7 @@ async function main() {
   const [group, action, target] = args;
 
   if (group === "version" || group === "--version" || group === "-v") {
-    console.log(`antfarm v${getVersion()}`);
+    console.log(`setfarm v${getVersion()}`);
     return;
   }
 
@@ -146,7 +146,7 @@ async function main() {
     try {
       execSync("git pull", { cwd: repoRoot, stdio: "inherit" });
     } catch {
-      process.stderr.write("Failed to git pull. Are you in the antfarm repo?\n");
+      process.stderr.write("Failed to git pull. Are you in the setfarm repo?\n");
       process.exit(1);
     }
     console.log("Installing dependencies...");
@@ -191,7 +191,7 @@ async function main() {
     }
 
     await uninstallAllWorkflows();
-    console.log("Antfarm fully uninstalled (workflows, agents, crons, database, skill).");
+    console.log("Setfarm fully uninstalled (workflows, agents, crons, database, skill).");
     return;
   }
 
@@ -209,7 +209,7 @@ async function main() {
       }
     }
     ensureCliSymlink();
-    console.log(`\nDone. Start a workflow with: antfarm workflow run <name> "your task"`);
+    console.log(`\nDone. Start a workflow with: setfarm workflow run <name> "your task"`);
 
     // Auto-start dashboard if not already running
     if (!isRunning().running) {
@@ -416,7 +416,7 @@ async function main() {
       }
       return;
     }
-    // Also support "antfarm logs #3" to show events for run number 3
+    // Also support "setfarm logs #3" to show events for run number 3
     if (arg && /^#\d+$/.test(arg)) {
       const runNum = parseInt(arg.slice(1), 10);
       const db2 = (await import("../db.js")).getDb();
@@ -473,7 +473,7 @@ async function main() {
   if (action === "install") {
     const result = await installWorkflow({ workflowId: target });
     process.stdout.write(`Installed workflow: ${result.workflowId}\nAgent crons will start when a run begins.\n`);
-    process.stdout.write(`\nStart with: antfarm workflow run ${result.workflowId} "your task"\n`);
+    process.stdout.write(`\nStart with: setfarm workflow run ${result.workflowId} "your task"\n`);
     return;
   }
 

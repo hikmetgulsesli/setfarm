@@ -101,6 +101,13 @@ function migrate(db: DatabaseSync): void {
       ) WHERE run_number IS NULL
     `);
   }
+
+  // Performance indexes
+  db.exec("CREATE INDEX IF NOT EXISTS idx_steps_run_status ON steps(run_id, status)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_steps_agent_status ON steps(agent_id, status)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_stories_run_status ON stories(run_id, status)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_runs_workflow_status ON runs(workflow_id, status)");
 }
 
 export function nextRunNumber(): number {
@@ -111,4 +118,23 @@ export function nextRunNumber(): number {
 
 export function getDbPath(): string {
   return DB_PATH;
+}
+
+/**
+ * Clean up orphaned steps/stories whose runs no longer exist.
+ */
+export function cleanupOrphans(): { deletedSteps: number; deletedStories: number } {
+  const db = getDb();
+  const s1 = db.prepare("DELETE FROM steps WHERE run_id NOT IN (SELECT id FROM runs)").run();
+  const s2 = db.prepare("DELETE FROM stories WHERE run_id NOT IN (SELECT id FROM runs)").run();
+  return { deletedSteps: Number(s1.changes), deletedStories: Number(s2.changes) };
+}
+
+/**
+ * Run WAL checkpoint and optional VACUUM.
+ */
+export function checkpoint(vacuum = false): void {
+  const db = getDb();
+  db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  if (vacuum) db.exec("VACUUM");
 }

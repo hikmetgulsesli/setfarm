@@ -1,24 +1,24 @@
-# Antfarm
+# Setfarm
 
-<img src="https://raw.githubusercontent.com/snarktank/antfarm/main/landing/logo.jpeg" alt="Antfarm" width="80">
+<img src="https://raw.githubusercontent.com/hikmetgulsesli/setfarm/main/landing/logo.jpeg" alt="Setfarm" width="80">
 
 **Build your agent team in [OpenClaw](https://docs.openclaw.ai) with one command.**
 
-You don't need to hire a dev team. You need to define one. Antfarm gives you a team of specialized AI agents — planner, developer, verifier, tester, reviewer — that work together in reliable, repeatable workflows. One install. Zero infrastructure.
+You don't need to hire a dev team. You need to define one. Setfarm gives you a team of specialized AI agents — planner, developer, verifier, tester, reviewer — that work together in reliable, repeatable workflows. One install. Zero infrastructure.
 
 ### Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/snarktank/antfarm/v0.5.1/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/hikmetgulsesli/setfarm/v0.5.1/scripts/install.sh | bash
 ```
 
-Or just tell your OpenClaw agent: **"install github.com/snarktank/antfarm"**
+Or just tell your OpenClaw agent: **"install github.com/hikmetgulsesli/setfarm"**
 
-That's it. Run `antfarm workflow list` to see available workflows.
+That's it. Run `setfarm workflow list` to see available workflows.
 
-> **Not on npm.** Antfarm is installed from GitHub, not the npm registry. There is an unrelated `antfarm` package on npm — that's not this.
+> **Not on npm.** Setfarm is installed from GitHub, not the npm registry. There is an unrelated `antfarm` package on npm — that's not this.
 
-> **Requires Node.js >= 22.** If `antfarm` fails with a `node:sqlite` error, make sure you're running real Node.js 22+, not Bun's node wrapper (see [#54](https://github.com/snarktank/antfarm/issues/54)).
+> **Requires Node.js >= 22.** If `antfarm` fails with a `node:sqlite` error, make sure you're running real Node.js 22+, not Bun's node wrapper (see [#54](https://github.com/hikmetgulsesli/setfarm/issues/54)).
 
 ---
 
@@ -67,7 +67,7 @@ triage → investigate → setup → fix → verify → PR
 
 ### Minimal by design
 
-YAML + SQLite + cron. That's it. No Redis, no Kafka, no container orchestrator. Antfarm is a TypeScript CLI with zero external dependencies. It runs wherever OpenClaw runs.
+YAML + SQLite + cron. That's it. No Redis, no Kafka, no container orchestrator. Setfarm is a TypeScript CLI with zero external dependencies. It runs wherever OpenClaw runs.
 
 ### Built on the Ralph loop
 
@@ -80,15 +80,15 @@ Each agent runs in a fresh session with clean context. Memory persists through g
 ## Quick Example
 
 ```bash
-$ antfarm workflow install feature-dev
+$ setfarm workflow install feature-dev
 ✓ Installed workflow: feature-dev
 
-$ antfarm workflow run feature-dev "Add user authentication with OAuth"
+$ setfarm workflow run feature-dev "Add user authentication with OAuth"
 Run: a1fdf573
 Workflow: feature-dev
 Status: running
 
-$ antfarm workflow status "OAuth"
+$ setfarm workflow status "OAuth"
 Run: a1fdf573
 Workflow: feature-dev
 Steps:
@@ -134,7 +134,7 @@ Full guide: [docs/creating-workflows.md](docs/creating-workflows.md)
 
 You're installing agent teams that run code on your machine. We take that seriously.
 
-- **Curated repo only** — Antfarm only installs workflows from the official [snarktank/antfarm](https://github.com/snarktank/antfarm) repository. No arbitrary remote sources.
+- **Curated repo only** — Setfarm only installs workflows from the official [hikmetgulsesli/setfarm](https://github.com/hikmetgulsesli/setfarm) repository. No arbitrary remote sources.
 - **Reviewed for prompt injection** — Every workflow is reviewed for prompt injection attacks and malicious agent files before merging.
 - **Community contributions welcome** — Want to add a workflow? Submit a PR. All submissions go through careful security review before they ship.
 - **Transparent by default** — Every workflow is plain YAML and Markdown. You can read exactly what each agent will do before you install it.
@@ -145,14 +145,14 @@ You're installing agent teams that run code on your machine. We take that seriou
 
 Monitor runs, track step progress, and view agent output in real time.
 
-![Antfarm dashboard](https://raw.githubusercontent.com/snarktank/antfarm/main/assets/dashboard-screenshot.png)
+![Setfarm dashboard](https://raw.githubusercontent.com/hikmetgulsesli/setfarm/main/assets/dashboard-screenshot.png)
 
-![Antfarm dashboard detail](https://raw.githubusercontent.com/snarktank/antfarm/main/assets/dashboard-detail-screenshot.png)
+![Setfarm dashboard detail](https://raw.githubusercontent.com/hikmetgulsesli/setfarm/main/assets/dashboard-detail-screenshot.png)
 
 ```bash
-antfarm dashboard              # Start on port 3333
-antfarm dashboard stop         # Stop
-antfarm dashboard status       # Check status
+setfarm dashboard              # Start on port 3333
+setfarm dashboard stop         # Stop
+setfarm dashboard status       # Check status
 ```
 
 ---
@@ -163,27 +163,27 @@ antfarm dashboard status       # Check status
 
 | Command | Description |
 |---------|-------------|
-| `antfarm install` | Install all bundled workflows |
-| `antfarm uninstall [--force]` | Full teardown (agents, crons, DB) |
+| `setfarm install` | Install all bundled workflows |
+| `setfarm uninstall [--force]` | Full teardown (agents, crons, DB) |
 
 ### Workflows
 
 | Command | Description |
 |---------|-------------|
-| `antfarm workflow run <id> <task>` | Start a run |
-| `antfarm workflow status <query>` | Check run status |
-| `antfarm workflow runs` | List all runs |
-| `antfarm workflow resume <run-id>` | Resume a failed run |
-| `antfarm workflow list` | List available workflows |
-| `antfarm workflow install <id>` | Install a single workflow |
-| `antfarm workflow uninstall <id>` | Remove a single workflow |
+| `setfarm workflow run <id> <task>` | Start a run |
+| `setfarm workflow status <query>` | Check run status |
+| `setfarm workflow runs` | List all runs |
+| `setfarm workflow resume <run-id>` | Resume a failed run |
+| `setfarm workflow list` | List available workflows |
+| `setfarm workflow install <id>` | Install a single workflow |
+| `setfarm workflow uninstall <id>` | Remove a single workflow |
 
 ### Management
 
 | Command | Description |
 |---------|-------------|
-| `antfarm dashboard` | Start the web dashboard |
-| `antfarm logs [<lines>]` | View recent log entries |
+| `setfarm dashboard` | Start the web dashboard |
+| `setfarm logs [<lines>]` | View recent log entries |
 
 ---
 
@@ -191,7 +191,7 @@ antfarm dashboard status       # Check status
 
 - Node.js >= 22
 - [OpenClaw](https://github.com/openclaw/openclaw) **v2026.2.9+** running on the host
-  - Antfarm uses cron jobs for workflow orchestration. Older OpenClaw versions may not expose the cron tool via `/tools/invoke`. Antfarm will automatically fall back to the `openclaw` CLI, but keeping OpenClaw up to date is recommended: `npm update -g openclaw`
+  - Setfarm uses cron jobs for workflow orchestration. Older OpenClaw versions may not expose the cron tool via `/tools/invoke`. Setfarm will automatically fall back to the `openclaw` CLI, but keeping OpenClaw up to date is recommended: `npm update -g openclaw`
 - `gh` CLI for PR creation steps
 
 ---

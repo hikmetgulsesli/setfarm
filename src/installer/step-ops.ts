@@ -167,11 +167,10 @@ function readProgressFile(runId: string): string {
   const workspace = getAgentWorkspacePath(loopStep.agent_id);
   if (!workspace) return "(no progress file)";
   try {
-    // Try run-scoped file first, fall back to legacy progress.txt
+    // Only use run-scoped progress file (no legacy fallback)
     const scopedPath = path.join(workspace, `progress-${runId}.txt`);
-    const legacyPath = path.join(workspace, "progress.txt");
-    const filePath = fs.existsSync(scopedPath) ? scopedPath : legacyPath;
-    return fs.readFileSync(filePath, "utf-8");
+    if (!fs.existsSync(scopedPath)) return "(no progress yet)";
+    return fs.readFileSync(scopedPath, "utf-8");
   } catch {
     return "(no progress yet)";
   }
@@ -566,13 +565,24 @@ export function claimStep(agentId: string): ClaimResult {
       }
       context["story_workdir"] = storyWorkdir || context["repo"] || "";
 
-      // Claim the story
+      // Transactional story claim — prevents parallel crons from double-claiming
+      db.exec("BEGIN IMMEDIATE");
+      // Re-check story is still pending inside transaction
+      const storyCheck = db.prepare(
+        "SELECT status FROM stories WHERE id = ? AND status = 'pending'"
+      ).get(nextStory.id) as { status: string } | undefined;
+      if (!storyCheck) {
+        db.exec("COMMIT");
+        // Another cron already claimed this story — return no work (will retry next cron tick)
+        return { found: false };
+      }
       db.prepare(
         "UPDATE stories SET status = 'running', updated_at = datetime('now') WHERE id = ?"
       ).run(nextStory.id);
       db.prepare(
         "UPDATE steps SET status = 'running', current_story_id = ?, updated_at = datetime('now') WHERE id = ?"
       ).run(nextStory.id, step.id);
+      db.exec("COMMIT");
 
       const wfId = getWorkflowId(step.run_id);
       emitEvent({ ts: new Date().toISOString(), event: "step.running", runId: step.run_id, workflowId: wfId, stepId: step.step_id, agentId: agentId });
@@ -618,29 +628,25 @@ export function claimStep(agentId: string): ClaimResult {
 
       let resolvedInput = resolveTemplate(step.input_template, context);
 
-      // MISSING_INPUT_GUARD: Fail only for critical unresolved variables.
-      // Non-critical missing vars are replaced with empty string + logged as warning.
-      const CRITICAL_VARS = ["repo", "branch", "task"];
+      // MISSING_INPUT_GUARD: Any [missing:] marker means upstream didn't produce required output.
+      // Fail the step AND run — downstream steps would be meaningless.
       const allMissing = [...resolvedInput.matchAll(/\[missing:\s*(\w+)\]/gi)].map(m => m[1].toLowerCase());
-      const criticalMissing = allMissing.filter(v => CRITICAL_VARS.includes(v));
-      
-      if (criticalMissing.length > 0) {
-        const reason = `Blocked: unresolved critical variable(s) [${criticalMissing.join(", ")}] in input`;
+      if (allMissing.length > 0) {
+        const reason = `Blocked: unresolved variable(s) [${allMissing.join(", ")}] in input — failing step and run`;
         logger.warn(reason, { runId: step.run_id, stepId: step.step_id });
         db.prepare(
-        "UPDATE steps SET status = 'failed', output = ?, updated_at = datetime('now') WHERE id = ?"
+          "UPDATE steps SET status = 'failed', output = ?, updated_at = datetime('now') WHERE id = ?"
         ).run(reason, step.id);
         db.prepare(
-        "UPDATE runs SET status = 'failed', updated_at = datetime('now') WHERE id = ?"
+          "UPDATE runs SET status = 'failed', updated_at = datetime('now') WHERE id = ?"
         ).run(step.run_id);
+        const wfId = getWorkflowId(step.run_id);
+        emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: reason });
+        emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: reason });
+        scheduleRunCronTeardown(step.run_id);
         return { found: false };
       }
       
-      // Strip non-critical [missing:] markers — agent gets clean input with empty values
-      if (allMissing.length > 0) {
-        logger.info(`[template-guard] Stripped non-critical missing vars: ${allMissing.join(", ")}`, { runId: step.run_id, stepId: step.step_id });
-        resolvedInput = resolvedInput.replace(/\[missing:\s*\w+\]/gi, "");
-      }
 
       return { found: true, stepId: step.id, runId: step.run_id, resolvedInput };
     }
@@ -663,30 +669,24 @@ export function claimStep(agentId: string): ClaimResult {
 
   let resolvedInput = resolveTemplate(step.input_template, context);
 
-      // MISSING_INPUT_GUARD: Fail only for critical unresolved variables.
-      // Non-critical missing vars are replaced with empty string + logged as warning.
-      const CRITICAL_VARS = ["repo", "branch", "task"];
+      // MISSING_INPUT_GUARD: Any [missing:] marker means upstream didn't produce required output.
+      // Fail the step AND run — downstream steps would be meaningless.
       const allMissing = [...resolvedInput.matchAll(/\[missing:\s*(\w+)\]/gi)].map(m => m[1].toLowerCase());
-      const criticalMissing = allMissing.filter(v => CRITICAL_VARS.includes(v));
-      
-      if (criticalMissing.length > 0) {
-        const reason = `Blocked: unresolved critical variable(s) [${criticalMissing.join(", ")}] in input`;
+      if (allMissing.length > 0) {
+        const reason = `Blocked: unresolved variable(s) [${allMissing.join(", ")}] in input — failing step and run`;
         logger.warn(reason, { runId: step.run_id, stepId: step.step_id });
         db.prepare(
-        "UPDATE steps SET status = 'failed', output = ?, updated_at = datetime('now') WHERE id = ?"
+          "UPDATE steps SET status = 'failed', output = ?, updated_at = datetime('now') WHERE id = ?"
         ).run(reason, step.id);
         db.prepare(
-        "UPDATE runs SET status = 'failed', updated_at = datetime('now') WHERE id = ?"
+          "UPDATE runs SET status = 'failed', updated_at = datetime('now') WHERE id = ?"
         ).run(step.run_id);
+        const wfId = getWorkflowId(step.run_id);
+        emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: reason });
+        emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: reason });
+        scheduleRunCronTeardown(step.run_id);
         return { found: false };
       }
-
-      // Strip non-critical [missing:] markers — agent gets clean input with empty values
-      if (allMissing.length > 0) {
-        logger.info(`[template-guard] Stripped non-critical missing vars: ${allMissing.join(", ")}`, { runId: step.run_id, stepId: step.step_id });
-        resolvedInput = resolvedInput.replace(/\[missing:\s*\w+\]/gi, "");
-      }
-
 
   return {
     found: true,
@@ -726,35 +726,8 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     context[key] = value;
   }
 
-  // FALLBACK: Extract critical keys from task text if agent forgot to output them.
-  // This prevents [missing: repo] errors when the planner omits REPO/BRANCH.
-  const CRITICAL_TASK_KEYS = ["repo", "branch"];
-  for (const ck of CRITICAL_TASK_KEYS) {
-    if (!context[ck] && context["task"]) {
-      const taskMatch = context["task"].match(new RegExp(`^${ck.toUpperCase()}:\\s*(.+)$`, "m"));
-      if (taskMatch) {
-        context[ck] = taskMatch[1].trim();
-        logger.info(`[context-fallback] Extracted ${ck} from task text: ${context[ck]}`, { runId: step.run_id });
-      }
-    }
-  }
-
-  // FALLBACK: For loop steps, ensure story_branch defaults to current_story_id.
-  // This prevents [missing: story_branch] in verify steps when developer forgets STORY_BRANCH output.
-  if (step.type === "loop" && step.current_story_id && !context["story_branch"]) {
-    context["story_branch"] = step.current_story_id.toLowerCase();
-    logger.info(`[context-fallback] story_branch defaulted to ${context["story_branch"]}`, { runId: step.run_id });
-  }
-
-  // FALLBACK: For loop steps, ensure pr has a value for verify steps.
-  // If developer created a PR but forgot to output PR: line, try to find it from output text.
-  if (step.type === "loop" && !context["pr"]) {
-    const prMatch = output.match(/https:\/\/github\.com\/[^\s]+\/pull\/\d+/);
-    if (prMatch) {
-      context["pr"] = prMatch[0];
-      logger.info(`[context-fallback] pr extracted from output: ${context["pr"]}`, { runId: step.run_id });
-    }
-  }
+  // No fallback extraction — if upstream didn't output required keys,
+  // the missing input guard will catch it and fail cleanly.
 
   db.prepare(
     "UPDATE runs SET context = ?, updated_at = datetime('now') WHERE id = ?"
@@ -995,35 +968,53 @@ function advancePipeline(runId: string): { advanced: boolean; runCompleted: bool
     return { advanced: false, runCompleted: false };
   }
 
-  const next = db.prepare(
-    "SELECT id, step_id FROM steps WHERE run_id = ? AND status = 'waiting' ORDER BY step_index ASC LIMIT 1"
-  ).get(runId) as { id: string; step_id: string } | undefined;
+  // BEGIN IMMEDIATE prevents concurrent crons from double-advancing
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const next = db.prepare(
+      "SELECT id, step_id, step_index FROM steps WHERE run_id = ? AND status = 'waiting' ORDER BY step_index ASC LIMIT 1"
+    ).get(runId) as { id: string; step_id: string; step_index: number } | undefined;
 
-  const incomplete = db.prepare(
-    "SELECT id FROM steps WHERE run_id = ? AND status IN ('failed', 'pending', 'running') LIMIT 1"
-  ).get(runId) as { id: string } | undefined;
+    const incomplete = db.prepare(
+      "SELECT id FROM steps WHERE run_id = ? AND status IN ('failed', 'pending', 'running') LIMIT 1"
+    ).get(runId) as { id: string } | undefined;
 
-  if (!next && incomplete) {
-    return { advanced: false, runCompleted: false };
-  }
+    if (!next && incomplete) {
+      db.exec("COMMIT");
+      return { advanced: false, runCompleted: false };
+    }
 
-  const wfId = getWorkflowId(runId);
-  if (next) {
-    db.prepare(
+    const wfId = getWorkflowId(runId);
+    if (next) {
+      // Guard: don't advance past steps that are still running or pending
+      const priorIncomplete = db.prepare(
+        "SELECT id FROM steps WHERE run_id = ? AND step_index < ? AND status IN ('running', 'pending') LIMIT 1"
+      ).get(runId, next.step_index) as { id: string } | undefined;
+      if (priorIncomplete) {
+        db.exec("COMMIT");
+        return { advanced: false, runCompleted: false };
+      }
+      db.prepare(
         "UPDATE steps SET status = 'pending', updated_at = datetime('now') WHERE id = ?"
-    ).run(next.id);
-    emitEvent({ ts: new Date().toISOString(), event: "pipeline.advanced", runId, workflowId: wfId, stepId: next.step_id });
-    emitEvent({ ts: new Date().toISOString(), event: "step.pending", runId, workflowId: wfId, stepId: next.step_id });
-    return { advanced: true, runCompleted: false };
-  } else {
-    db.prepare(
+      ).run(next.id);
+      db.exec("COMMIT");
+      emitEvent({ ts: new Date().toISOString(), event: "pipeline.advanced", runId, workflowId: wfId, stepId: next.step_id });
+      emitEvent({ ts: new Date().toISOString(), event: "step.pending", runId, workflowId: wfId, stepId: next.step_id });
+      return { advanced: true, runCompleted: false };
+    } else {
+      db.prepare(
         "UPDATE runs SET status = 'completed', updated_at = datetime('now') WHERE id = ?"
-    ).run(runId);
-    emitEvent({ ts: new Date().toISOString(), event: "run.completed", runId, workflowId: wfId });
-    logger.info("Run completed", { runId, workflowId: wfId });
-    archiveRunProgress(runId);
-    scheduleRunCronTeardown(runId);
-    return { advanced: false, runCompleted: true };
+      ).run(runId);
+      db.exec("COMMIT");
+      emitEvent({ ts: new Date().toISOString(), event: "run.completed", runId, workflowId: wfId });
+      logger.info("Run completed", { runId, workflowId: wfId });
+      archiveRunProgress(runId);
+      scheduleRunCronTeardown(runId);
+      return { advanced: false, runCompleted: true };
+    }
+  } catch (err) {
+    try { db.exec("ROLLBACK"); } catch {}
+    throw err;
   }
 }
 
@@ -1042,9 +1033,7 @@ export function archiveRunProgress(runId: string): void {
   if (!workspace) return;
 
   const scopedPath = path.join(workspace, `progress-${runId}.txt`);
-  const legacyPath = path.join(workspace, "progress.txt");
-  // Prefer run-scoped file, fall back to legacy
-  const progressPath = fs.existsSync(scopedPath) ? scopedPath : legacyPath;
+  const progressPath = scopedPath;
   if (!fs.existsSync(progressPath)) return;
 
   const archiveDir = path.join(workspace, "archive", runId);

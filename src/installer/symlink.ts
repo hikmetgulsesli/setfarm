@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, symlinkSync, unlinkSync, readlinkSync, lstatSync
 import { join } from "path";
 import { fileURLToPath } from "url";
 
-const BINARY_NAME = "antfarm";
+const BINARY_NAME = "setfarm";
 
 /**
  * Ensure `antfarm` is available on PATH by symlinking into ~/.local/bin.
