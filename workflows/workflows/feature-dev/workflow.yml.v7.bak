@@ -3,20 +3,20 @@
 # session with clean context. Memory persists via git history and progress files.
 id: feature-dev
 name: Feature Development Workflow
-version: 7.1
+version: 7
 description: |
   Per-story PR pipeline. Each user story gets its own branch and pull request.
   Developer: creates story branch → implements → tests → pushes → creates PR.
   Verifier: reviews PR → checks quality → merges to feature branch.
   After all stories: integration test on merged feature branch + final PR to main.
-  v7.1: Hardened output format enforcement to prevent missing variable errors.
+  v7: Per-story PR workflow replacing batch PR approach.
 
 cron:
   interval_ms: 120000  # 2 minutes
 
 polling:
   model: minimax/MiniMax-M2.5
-  timeoutSeconds: 1800
+  timeoutSeconds: 120
 
 agents:
   - id: planner
@@ -89,7 +89,7 @@ steps:
       1. Explore the codebase to understand the stack, conventions, and patterns
       2. Read references/design-standards.md for available palettes and font pairs
       3. Read references/brainstorming-protocol.md for architectural decision-making
-      4. Break the task into small, focused user stories (as many as needed)
+      4. Break the task into small user stories (max 20)
       5. Order by dependency: design tokens first, then schema/DB, backend, frontend, integration
       6. Each story must fit in one developer session (one context window)
       7. Every acceptance criterion must be mechanically verifiable
@@ -107,41 +107,19 @@ steps:
       - NEVER choose: purple gradient as primary aesthetic
       - NEVER plan for emoji icons
       - Include design tokens (CSS custom properties) in the FIRST user story
+      - Output: DESIGN_SYSTEM block with chosen values
 
-      ============================================================
-      MANDATORY OUTPUT FORMAT — PIPELINE WILL BREAK IF YOU SKIP ANY KEY
-      ============================================================
-      Your ENTIRE reply must follow this EXACT format. Every key is REQUIRED.
-      Extract REPO and BRANCH from the TASK above. If REPO is in the task, copy it exactly.
-      If BRANCH is not in the task, generate a short kebab-case branch name.
-
+      Reply with:
       STATUS: done
-      REPO: <exact repo path, e.g. /home/setrox/myproject>
-      BRANCH: <branch name, e.g. feature-name>
+      REPO: /path/to/repo
+      BRANCH: feature-branch-name
       DESIGN_SYSTEM:
-        aesthetic: <direction>
-        palette: <name>
-        heading_font: <font>
-        body_font: <font>
-        icon_library: <library>
-      STORIES_JSON:
-      [
-        {
-          "id": "US-001",
-          "title": "Short title of first story",
-          "description": "What this story implements",
-          "acceptanceCriteria": ["Criterion 1 passes", "Criterion 2 passes", "Typecheck passes"]
-        },
-        {
-          "id": "US-002",
-          "title": "Short title of second story",
-          "description": "What this story implements",
-          "acceptanceCriteria": ["Criterion 1 passes", "Tests for feature pass", "Typecheck passes"]
-        }
-      ]
-
-      FAILURE WARNING: If your reply does not contain "REPO:", "BRANCH:", and "STORIES_JSON:" on their own lines, the ENTIRE pipeline crashes. These are NOT optional. STORIES_JSON must be valid JSON array with objects containing id, title, description, acceptanceCriteria fields.
-      ============================================================
+        aesthetic: [direction]
+        palette: [name]
+        heading_font: [font]
+        body_font: [font]
+        icon_library: [library]
+      STORIES_JSON: [ ... array of story objects ... ]
     expects: "STATUS: done"
     max_retries: 2
     on_fail:
@@ -150,16 +128,6 @@ steps:
   - id: setup
     agent: setup
     input: |
-      ############################################################
-      CRITICAL EXECUTION RULES — VIOLATION BREAKS THE PIPELINE
-      ############################################################
-      - You MUST do ALL work directly in this session. Do NOT spawn sub-agents.
-      - Do NOT delegate to background processes. Do NOT use nohup or &.
-      - Do NOT create parallel tasks. Work sequentially in THIS session.
-      - Complete ALL steps (code, test, commit, push, PR) before replying.
-      - If a task is too complex, simplify your implementation — do NOT delegate.
-      ############################################################
-
       Prepare the development environment for this feature.
 
       TASK:
@@ -189,17 +157,13 @@ steps:
          git push -u origin {{branch}}
       9. Report what you found
 
-      ============================================================
-      MANDATORY OUTPUT FORMAT — PIPELINE WILL BREAK IF YOU SKIP ANY KEY
-      ============================================================
+      CRITICAL — Your reply MUST include these EXACT keys on separate lines (not nested under other keys):
       STATUS: done
-      BUILD_CMD: <the exact build command, e.g. pnpm run build>
-      TEST_CMD: <the exact test command, e.g. pnpm test>
+      BUILD_CMD: <the exact build command, e.g. npm run build>
+      TEST_CMD: <the exact test command, e.g. npm test>
       CI_NOTES: <brief CI notes>
       BASELINE: <baseline status>
-
-      FAILURE WARNING: If your reply does not contain "BUILD_CMD:" and "TEST_CMD:" on their own lines, the implement step crashes. These are NOT optional.
-      ============================================================
+      WARNING: If you omit BUILD_CMD or TEST_CMD, the next step WILL fail. These are REQUIRED.
     expects: "STATUS: done"
     max_retries: 2
     on_fail:
@@ -215,16 +179,6 @@ steps:
       verify_each: true
       verify_step: verify
     input: |
-      ############################################################
-      CRITICAL EXECUTION RULES — VIOLATION BREAKS THE PIPELINE
-      ############################################################
-      - You MUST do ALL work directly in this session. Do NOT spawn sub-agents.
-      - Do NOT delegate to background processes. Do NOT use nohup or &.
-      - Do NOT create parallel tasks. Work sequentially in THIS session.
-      - Complete ALL steps (code, test, commit, push, PR) before replying.
-      - If a task is too complex, simplify your implementation — do NOT delegate.
-      ############################################################
-
       Implement the following user story. You are working on ONE story in a fresh session.
       Each story gets its own branch and pull request.
 
@@ -249,12 +203,6 @@ steps:
 
       PROGRESS LOG:
       {{progress}}
-      - You MUST do ALL work directly in this session. Do NOT spawn sub-agents.
-      - Do NOT delegate to background processes. Do NOT use nohup or &.
-      - Do NOT create parallel tasks. Work on ONE story sequentially.
-      - Complete ALL steps (code, test, commit, push, PR) in THIS session.
-      - If a task is too complex, simplify your implementation — do NOT delegate.
-      ############################################################
 
       BEFORE writing any code:
       1. Read references/design-standards.md — follow ALL rules
@@ -292,39 +240,25 @@ steps:
           git push -u origin "$STORY_BRANCH"
 
       11. Create a Pull Request to the FEATURE BRANCH (not main):
-          PR_URL=$(gh pr create \
+          gh pr create \
             --base {{branch}} \
             --head "$STORY_BRANCH" \
             --title "feat: {{current_story_id}} - {{current_story_title}}" \
-            --body "## Story
-          {{current_story_id}}: {{current_story_title}}
-
-          ## Changes
-          <describe changes>
-
-          ## Tests
-          <describe tests written>")
-          echo "Created PR: $PR_URL"
+            --body "## Story\n{{current_story_id}}: {{current_story_title}}\n\n## Changes\n<describe changes>\n\n## Tests\n<describe tests written>"
 
       12. Append to progress-{{run_id}}.txt
       13. Update Codebase Patterns if you found reusable patterns
 
       === END WORKFLOW ===
 
-      ============================================================
-      MANDATORY OUTPUT FORMAT — PIPELINE WILL BREAK IF YOU SKIP ANY KEY
-      ============================================================
-      The FIRST 4 lines of your reply MUST be exactly:
-
+      CRITICAL — Your reply MUST include ALL of these EXACT keys on separate lines:
       STATUS: done
-      STORY_BRANCH: {{current_story_id}}
-      PR: <the full GitHub PR URL that gh pr create printed>
+      STORY_BRANCH: <the exact branch name you created, e.g. us-001-setup-tokens>
+      PR: <the full GitHub PR URL, e.g. https://github.com/hikmetgulsesli/repo/pull/1>
       CHANGES: <what you implemented>
       TESTS: <what tests you wrote>
-
-      FAILURE WARNING: If your reply does not contain "STORY_BRANCH:" and "PR:" on their own lines, the verify step crashes and the ENTIRE pipeline stops. These are NOT optional.
-      STORY_BRANCH must be the exact branch name (e.g. us-001). PR must be a full URL (e.g. https://github.com/hikmetgulsesli/repo/pull/1).
-      ============================================================
+      WARNING: If you omit STORY_BRANCH or PR, the verify step WILL fail. These are REQUIRED.
+      WARNING: You MUST create a story branch and PR — do NOT commit directly to the feature branch.
     expects: "STATUS: done"
     max_retries: 2
     on_fail:
@@ -333,16 +267,6 @@ steps:
   - id: verify
     agent: verifier
     input: |
-      ############################################################
-      CRITICAL EXECUTION RULES — VIOLATION BREAKS THE PIPELINE
-      ############################################################
-      - You MUST do ALL work directly in this session. Do NOT spawn sub-agents.
-      - Do NOT delegate to background processes. Do NOT use nohup or &.
-      - Do NOT create parallel tasks. Work sequentially in THIS session.
-      - Complete ALL steps (code, test, commit, push, PR) before replying.
-      - If a task is too complex, simplify your implementation — do NOT delegate.
-      ############################################################
-
       Review and merge the developer's pull request for this story.
 
       TASK (overall):
@@ -362,12 +286,6 @@ steps:
       {{progress}}
 
       === PR REVIEW + MERGE WORKFLOW ===
-      - You MUST do ALL work directly in this session. Do NOT spawn sub-agents.
-      - Do NOT delegate to background processes. Do NOT use nohup or &.
-      - Do NOT create parallel tasks. Work sequentially.
-      - Complete ALL steps in THIS session.
-      - If a task is too complex, simplify — do NOT delegate.
-      ############################################################
 
       STEP 1 — Review the PR:
       1. cd into {{repo}}
@@ -408,13 +326,7 @@ steps:
          gh pr review {{pr}} --approve --body "Verified: all acceptance criteria met, tests pass, quality checks pass."
       2. Squash-merge the PR to the feature branch:
          gh pr merge {{pr}} --squash --delete-branch
-      3. Close any duplicate/stale open PRs targeting the same base branch:
-         STALE_PRS=$(gh pr list --base {{branch}} --state open --json number,headRefName -q '.[] | select(.headRefName != "{{story_branch}}") | .number')
-         for stale_pr in $STALE_PRS; do
-           gh pr close "$stale_pr" --delete-branch 2>/dev/null || true
-           echo "Closed stale PR #$stale_pr"
-         done
-      4. Reply with STATUS: done
+      3. Reply with STATUS: done
 
       If REJECTED:
       1. Request changes on the PR:
@@ -442,16 +354,6 @@ steps:
   - id: final-test
     agent: tester
     input: |
-      ############################################################
-      CRITICAL EXECUTION RULES — VIOLATION BREAKS THE PIPELINE
-      ############################################################
-      - You MUST do ALL work directly in this session. Do NOT spawn sub-agents.
-      - Do NOT delegate to background processes. Do NOT use nohup or &.
-      - Do NOT create parallel tasks. Work sequentially in THIS session.
-      - Complete ALL steps (code, test, commit, push, PR) before replying.
-      - If a task is too complex, simplify your implementation — do NOT delegate.
-      ############################################################
-
       Integration testing on the merged feature branch, then create final PR to main.
 
       TASK:
@@ -488,29 +390,13 @@ steps:
       5. If frontend: check accessibility (semantic HTML, keyboard nav, aria)
       6. If frontend: check performance (lazy loading, font preload, image dimensions)
 
-      STEP 3 — Create final PR to main AND auto-merge:
+      STEP 3 — Create final PR to main:
       1. If all tests pass, create a PR from feature branch to main:
-         FINAL_PR=$(gh pr create \
+         gh pr create \
            --base main \
            --head {{branch}} \
-           --title "feat: complete {{branch}} feature" \
-           --body "## Summary
-      Feature branch {{branch}} with all stories implemented and tested.
-
-      ## Test Results
-      <test summary>")
-         echo "Created final PR: $FINAL_PR"
-
-      2. Auto-merge the final PR (squash merge, delete feature branch):
-         gh pr merge "$FINAL_PR" --squash --delete-branch
-         echo "Merged and cleaned up feature branch."
-
-      3. Close any remaining open PRs targeting the feature branch:
-         OPEN_PRS=$(gh pr list --base {{branch}} --state open --json number -q '.[].number')
-         for pr_num in $OPEN_PRS; do
-           gh pr close "$pr_num" --delete-branch 2>/dev/null || true
-           echo "Closed orphan PR #$pr_num"
-         done
+           --title "feat: {{task_summary}}" \
+           --body "## Summary\n<overall summary of all stories>\n\n## Stories Completed\n<list of stories>\n\n## Test Results\n<test summary>"
 
       If tests fail, follow debugging protocol. Fix issues, commit, push to feature branch.
 
