@@ -48,7 +48,7 @@ function ensureMainAgentInList(
 
 // ── Shared deny list: things no workflow agent should ever touch ──
 // Note: sessions_spawn DENIED — sub-agent delivery broken, agents must work inline
-const ALWAYS_DENY = ["gateway", "cron", "message", "nodes", "canvas", "sessions_send", "sessions_spawn", "agents"];
+const ALWAYS_DENY = ["gateway", "cron", "message", "nodes", "canvas", "sessions_send", "agents"];
 
 const DEFAULT_CRON_SESSION_RETENTION = "24h";
 const DEFAULT_SESSION_MAINTENANCE = {
