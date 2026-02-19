@@ -30,12 +30,12 @@ Step 3 — Do the work described in the input. Format your output with KEY: valu
 Step 4 — MANDATORY: Report completion (do this IMMEDIATELY after finishing the work):
 \`\`\`
 cat <<'ANTFARM_EOF' > /tmp/antfarm-step-output.txt
-STATUS: done
-CHANGES: what you did
-TESTS: what tests you ran
+<YOUR OUTPUT HERE — use the EXACT format specified in the step input above, including ALL required keys like STORIES_JSON, REPO, BRANCH etc.>
 ANTFARM_EOF
 cat /tmp/antfarm-step-output.txt | /usr/bin/node ${cli} step complete "<stepId>"
 \`\`\`
+
+CRITICAL: The output format in the heredoc MUST match what the step input asks for. Do NOT use a generic STATUS/CHANGES/TESTS format — read the step input and replicate its MANDATORY OUTPUT FORMAT exactly.
 
 If the work FAILED:
 \`\`\`
@@ -67,12 +67,12 @@ Do the work described in the input. Format your output with KEY: value lines as 
 MANDATORY: Report completion (do this IMMEDIATELY after finishing the work):
 \`\`\`
 cat <<'ANTFARM_EOF' > /tmp/antfarm-step-output.txt
-STATUS: done
-CHANGES: what you did
-TESTS: what tests you ran
+<YOUR OUTPUT HERE — use the EXACT format specified in the step input above, including ALL required keys like STORIES_JSON, REPO, BRANCH etc.>
 ANTFARM_EOF
 cat /tmp/antfarm-step-output.txt | /usr/bin/node ${cli} step complete "<stepId>"
 \`\`\`
+
+CRITICAL: The output format in the heredoc MUST match what the step input asks for. Do NOT use a generic STATUS/CHANGES/TESTS format — read the step input and replicate its MANDATORY OUTPUT FORMAT exactly.
 
 If the work FAILED:
 \`\`\`
