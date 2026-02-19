@@ -79,10 +79,13 @@ function getWorkflowId(runId: string): string | undefined {
  * Resolve {{key}} placeholders in a template against a context object.
  */
 export function resolveTemplate(template: string, context: Record<string, string>): string {
-  return template.replace(/\{\{(\w+(?:\.\w+)*)\}\}/g, (_match, key: string) => {
+  // Supports {{key}}, {{key|default_value}}, and {{key.sub}}
+  return template.replace(/\{\{(\w+(?:\.\w+)*)(?:\|([^}]*))?\}\}/g, (_match, key: string, defaultVal?: string) => {
     if (key in context) return context[key];
     const lower = key.toLowerCase();
     if (lower in context) return context[lower];
+    // If a default was provided via {{key|default}}, use it instead of [missing:]
+    if (defaultVal !== undefined) return defaultVal;
     return `[missing: ${key}]`;
   });
 }
@@ -553,21 +556,30 @@ export function claimStep(agentId: string): ClaimResult {
       // Persist story context vars to DB so verify_each steps can access them
       db.prepare("UPDATE runs SET context = ?, updated_at = datetime('now') WHERE id = ?").run(JSON.stringify(context), step.run_id);
 
-      const resolvedInput = resolveTemplate(step.input_template, context);
+      let resolvedInput = resolveTemplate(step.input_template, context);
 
-      // MISSING_INPUT_GUARD: Fail step if unresolved template variables remain
-      const missingMatch = resolvedInput.match(/\[missing:\s*\w+\]/i);
-      if (missingMatch) {
-        const reason = `Blocked: unresolved variable ${missingMatch[0]} in input`;
+      // MISSING_INPUT_GUARD: Fail only for critical unresolved variables.
+      // Non-critical missing vars are replaced with empty string + logged as warning.
+      const CRITICAL_VARS = ["repo", "branch", "task"];
+      const allMissing = [...resolvedInput.matchAll(/\[missing:\s*(\w+)\]/gi)].map(m => m[1].toLowerCase());
+      const criticalMissing = allMissing.filter(v => CRITICAL_VARS.includes(v));
+      
+      if (criticalMissing.length > 0) {
+        const reason = `Blocked: unresolved critical variable(s) [${criticalMissing.join(", ")}] in input`;
         logger.warn(reason, { runId: step.run_id, stepId: step.step_id });
         db.prepare(
-          "UPDATE steps SET status = 'failed', output = ?, updated_at = datetime('now') WHERE id = ?"
+        "UPDATE steps SET status = 'failed', output = ?, updated_at = datetime('now') WHERE id = ?"
         ).run(reason, step.id);
         db.prepare(
-          "UPDATE runs SET status = 'failed', updated_at = datetime('now') WHERE id = ?"
+        "UPDATE runs SET status = 'failed', updated_at = datetime('now') WHERE id = ?"
         ).run(step.run_id);
-        emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId, detail: `Missing input: ${missingMatch[0]}` });
         return { found: false };
+      }
+      
+      // Strip non-critical [missing:] markers — agent gets clean input with empty values
+      if (allMissing.length > 0) {
+        logger.info(`[template-guard] Stripped non-critical missing vars: ${allMissing.join(", ")}`, { runId: step.run_id, stepId: step.step_id });
+        resolvedInput = resolvedInput.replace(/\[missing:\s*\w+\]/gi, "");
       }
 
       return { found: true, stepId: step.id, runId: step.run_id, resolvedInput };
@@ -589,21 +601,30 @@ export function claimStep(agentId: string): ClaimResult {
     context["progress"] = readProgressFile(step.run_id);
   }
 
-  const resolvedInput = resolveTemplate(step.input_template, context);
+  let resolvedInput = resolveTemplate(step.input_template, context);
 
-      // MISSING_INPUT_GUARD: Fail step if unresolved template variables remain
-      const missingMatch = resolvedInput.match(/\[missing:\s*\w+\]/i);
-      if (missingMatch) {
-        const reason = `Blocked: unresolved variable ${missingMatch[0]} in input`;
+      // MISSING_INPUT_GUARD: Fail only for critical unresolved variables.
+      // Non-critical missing vars are replaced with empty string + logged as warning.
+      const CRITICAL_VARS = ["repo", "branch", "task"];
+      const allMissing = [...resolvedInput.matchAll(/\[missing:\s*(\w+)\]/gi)].map(m => m[1].toLowerCase());
+      const criticalMissing = allMissing.filter(v => CRITICAL_VARS.includes(v));
+      
+      if (criticalMissing.length > 0) {
+        const reason = `Blocked: unresolved critical variable(s) [${criticalMissing.join(", ")}] in input`;
         logger.warn(reason, { runId: step.run_id, stepId: step.step_id });
         db.prepare(
-          "UPDATE steps SET status = 'failed', output = ?, updated_at = datetime('now') WHERE id = ?"
+        "UPDATE steps SET status = 'failed', output = ?, updated_at = datetime('now') WHERE id = ?"
         ).run(reason, step.id);
         db.prepare(
-          "UPDATE runs SET status = 'failed', updated_at = datetime('now') WHERE id = ?"
+        "UPDATE runs SET status = 'failed', updated_at = datetime('now') WHERE id = ?"
         ).run(step.run_id);
-        emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId, detail: `Missing input: ${missingMatch[0]}` });
         return { found: false };
+      }
+
+      // Strip non-critical [missing:] markers — agent gets clean input with empty values
+      if (allMissing.length > 0) {
+        logger.info(`[template-guard] Stripped non-critical missing vars: ${allMissing.join(", ")}`, { runId: step.run_id, stepId: step.step_id });
+        resolvedInput = resolvedInput.replace(/\[missing:\s*\w+\]/gi, "");
       }
 
 
@@ -655,6 +676,23 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
         context[ck] = taskMatch[1].trim();
         logger.info(`[context-fallback] Extracted ${ck} from task text: ${context[ck]}`, { runId: step.run_id });
       }
+    }
+  }
+
+  // FALLBACK: For loop steps, ensure story_branch defaults to current_story_id.
+  // This prevents [missing: story_branch] in verify steps when developer forgets STORY_BRANCH output.
+  if (step.type === "loop" && step.current_story_id && !context["story_branch"]) {
+    context["story_branch"] = step.current_story_id.toLowerCase();
+    logger.info(`[context-fallback] story_branch defaulted to ${context["story_branch"]}`, { runId: step.run_id });
+  }
+
+  // FALLBACK: For loop steps, ensure pr has a value for verify steps.
+  // If developer created a PR but forgot to output PR: line, try to find it from output text.
+  if (step.type === "loop" && !context["pr"]) {
+    const prMatch = output.match(/https:\/\/github\.com\/[^\s]+\/pull\/\d+/);
+    if (prMatch) {
+      context["pr"] = prMatch[0];
+      logger.info(`[context-fallback] pr extracted from output: ${context["pr"]}`, { runId: step.run_id });
     }
   }
 
@@ -836,7 +874,7 @@ function checkLoopContinuation(runId: string, loopStepId: string): { advanced: b
     }
     // More stories — loop step back to pending
     db.prepare(
-      "UPDATE steps SET status = 'pending', updated_at = datetime('now') WHERE id = ?"
+        "UPDATE steps SET status = 'pending', updated_at = datetime('now') WHERE id = ?"
     ).run(loopStepId);
     return { advanced: false, runCompleted: false };
   }
@@ -848,10 +886,10 @@ function checkLoopContinuation(runId: string, loopStepId: string): { advanced: b
   if (failedStory) {
     // Nothing pending, but failures remain — fail loop + run
     db.prepare(
-      "UPDATE steps SET status = 'failed', output = ?, updated_at = datetime('now') WHERE id = ?"
+        "UPDATE steps SET status = 'failed', output = ?, updated_at = datetime('now') WHERE id = ?"
     ).run("Loop cannot continue because one or more stories failed", loopStepId);
     db.prepare(
-      "UPDATE runs SET status = 'failed', updated_at = datetime('now') WHERE id = ?"
+        "UPDATE runs SET status = 'failed', updated_at = datetime('now') WHERE id = ?"
     ).run(runId);
     const wfId = getWorkflowId(runId);
     emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId, workflowId: wfId, stepId: loopStepId, detail: "Loop has failed stories and no pending stories" });
@@ -907,14 +945,14 @@ function advancePipeline(runId: string): { advanced: boolean; runCompleted: bool
   const wfId = getWorkflowId(runId);
   if (next) {
     db.prepare(
-      "UPDATE steps SET status = 'pending', updated_at = datetime('now') WHERE id = ?"
+        "UPDATE steps SET status = 'pending', updated_at = datetime('now') WHERE id = ?"
     ).run(next.id);
     emitEvent({ ts: new Date().toISOString(), event: "pipeline.advanced", runId, workflowId: wfId, stepId: next.step_id });
     emitEvent({ ts: new Date().toISOString(), event: "step.pending", runId, workflowId: wfId, stepId: next.step_id });
     return { advanced: true, runCompleted: false };
   } else {
     db.prepare(
-      "UPDATE runs SET status = 'completed', updated_at = datetime('now') WHERE id = ?"
+        "UPDATE runs SET status = 'completed', updated_at = datetime('now') WHERE id = ?"
     ).run(runId);
     emitEvent({ ts: new Date().toISOString(), event: "run.completed", runId, workflowId: wfId });
     logger.info("Run completed", { runId, workflowId: wfId });
@@ -996,10 +1034,10 @@ export function failStep(stepId: string, error: string): { retrying: boolean; ru
 
   if (newRetryCount > step.max_retries) {
     db.prepare(
-      "UPDATE steps SET status = 'failed', output = ?, retry_count = ?, updated_at = datetime('now') WHERE id = ?"
+        "UPDATE steps SET status = 'failed', output = ?, retry_count = ?, updated_at = datetime('now') WHERE id = ?"
     ).run(error, newRetryCount, stepId);
     db.prepare(
-      "UPDATE runs SET status = 'failed', updated_at = datetime('now') WHERE id = ?"
+        "UPDATE runs SET status = 'failed', updated_at = datetime('now') WHERE id = ?"
     ).run(step.run_id);
     const wfId2 = getWorkflowId(step.run_id);
     emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId2, stepId: stepId, detail: error });
@@ -1008,7 +1046,7 @@ export function failStep(stepId: string, error: string): { retrying: boolean; ru
     return { retrying: false, runFailed: true };
   } else {
     db.prepare(
-      "UPDATE steps SET status = 'pending', retry_count = ?, updated_at = datetime('now') WHERE id = ?"
+        "UPDATE steps SET status = 'pending', retry_count = ?, updated_at = datetime('now') WHERE id = ?"
     ).run(newRetryCount, stepId);
     return { retrying: true, runFailed: false };
   }

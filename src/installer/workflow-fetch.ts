@@ -60,6 +60,12 @@ export async function fetchWorkflow(workflowId: string): Promise<{ workflowDir: 
   await ensureDir(resolveWorkflowRoot());
   const destination = resolveWorkflowDir(workflowId);
   await copyDirectory(bundledDir, destination);
+
+  // Replace workflow.yml copy with a symlink to the bundled source.
+  // This ensures repo edits are instantly reflected without re-install.
+  const destYml = path.join(destination, "workflow.yml");
+  await fs.rm(destYml, { force: true });
+  await fs.symlink(workflowYml, destYml);
   
   return { workflowDir: destination, bundledSourceDir: bundledDir };
 }
