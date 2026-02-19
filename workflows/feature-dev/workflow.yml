@@ -11,6 +11,15 @@ description: |
   After all stories: integration test on merged feature branch + final PR to main.
   v7.1: Hardened output format enforcement to prevent missing variable errors.
 
+
+# Named agent mapping (maps workflow roles to OpenClaw agent IDs)
+agent_mapping:
+  planner: main      # Arya plans the work
+  setup: atlas        # Atlas sets up environment
+  developer: koda     # Koda implements stories
+  verifier: sinan     # Sentinel verifies PRs
+  tester: sinan       # Sentinel runs integration tests
+
 cron:
   interval_ms: 120000  # 2 minutes
 
