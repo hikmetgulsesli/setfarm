@@ -232,9 +232,14 @@ steps:
       {{task}}
 
       REPO: {{repo}}
+      WORKDIR: {{story_workdir}}
       BRANCH: {{branch}}
       BUILD_CMD: {{build_cmd}}
       TEST_CMD: {{test_cmd}}
+
+      IMPORTANT: Work in the WORKDIR directory (git worktree), NOT in REPO directly.
+      cd into WORKDIR before doing any work. The branch is already checked out there.
+      node_modules is symlinked from REPO — no need to npm install.
 
       CURRENT STORY:
       {{current_story}}

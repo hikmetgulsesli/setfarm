@@ -11,6 +11,57 @@ import { logger } from "../lib/logger.js";
 import { getMaxRoleTimeoutSeconds } from "./install.js";
 import { isFrontendChange } from "../lib/frontend-detect.js";
 
+// --- Git worktree helpers for parallel story isolation ---
+function createStoryWorktree(repo: string, storyId: string, baseBranch: string): string {
+  const worktreeDir = path.join(repo, ".worktrees", storyId.toLowerCase());
+  try {
+    // Ensure .worktrees dir exists
+    fs.mkdirSync(path.join(repo, ".worktrees"), { recursive: true });
+    // Remove leftover worktree if exists (from failed previous run)
+    try { execFileSync("git", ["worktree", "remove", worktreeDir, "--force"], { cwd: repo, timeout: 10000, stdio: "pipe" }); } catch {}
+    try { execFileSync("git", ["worktree", "prune"], { cwd: repo, timeout: 5000, stdio: "pipe" }); } catch {}
+    // Create fresh worktree with new branch from base
+    execFileSync("git", ["worktree", "add", worktreeDir, "-b", storyId.toLowerCase(), baseBranch], { cwd: repo, timeout: 30000, stdio: "pipe" });
+    // Symlink node_modules to avoid reinstall per story
+    const nmSrc = path.join(repo, "node_modules");
+    const nmDst = path.join(worktreeDir, "node_modules");
+    if (fs.existsSync(nmSrc) && !fs.existsSync(nmDst)) {
+      fs.symlinkSync(nmSrc, nmDst);
+    }
+    logger.info(`[worktree] Created ${worktreeDir} from ${baseBranch}`, {});
+    return worktreeDir;
+  } catch (err: any) {
+    // Branch might already exist — try without -b
+    try {
+      execFileSync("git", ["worktree", "add", worktreeDir, storyId.toLowerCase()], { cwd: repo, timeout: 30000, stdio: "pipe" });
+      const nmSrc = path.join(repo, "node_modules");
+      const nmDst = path.join(worktreeDir, "node_modules");
+      if (fs.existsSync(nmSrc) && !fs.existsSync(nmDst)) {
+        fs.symlinkSync(nmSrc, nmDst);
+      }
+      logger.info(`[worktree] Created ${worktreeDir} (existing branch)`, {});
+      return worktreeDir;
+    } catch (err2: any) {
+      logger.warn(`[worktree] Failed to create worktree: ${(err2.message || "").slice(0, 100)}`, {});
+      return "";
+    }
+  }
+}
+
+function removeStoryWorktree(repo: string, storyId: string): void {
+  const worktreeDir = path.join(repo, ".worktrees", storyId.toLowerCase());
+  try {
+    // Remove node_modules symlink first (git worktree remove doesn't handle symlinks well)
+    const nmLink = path.join(worktreeDir, "node_modules");
+    try { fs.unlinkSync(nmLink); } catch {}
+    execFileSync("git", ["worktree", "remove", worktreeDir, "--force"], { cwd: repo, timeout: 10000, stdio: "pipe" });
+    execFileSync("git", ["worktree", "prune"], { cwd: repo, timeout: 5000, stdio: "pipe" });
+    logger.info(`[worktree] Removed ${worktreeDir}`, {});
+  } catch {
+    // Best effort — worktree might not exist
+  }
+}
+
 /**
  * Parse KEY: value lines from step output with support for multi-line values.
  * Accumulates continuation lines until the next KEY: boundary or end of output.
@@ -506,15 +557,14 @@ export function claimStep(agentId: string): ClaimResult {
         return { found: false };
       }
 
-      // STORY CONCURRENCY GUARD: Only 1 story per run at a time.
-      // Parallel crons still work for DIFFERENT runs (different repos).
-      // Within ONE run, stories must be sequential (shared repo = git conflicts if parallel).
-      const runningStoryCount = db.prepare(
-        "SELECT COUNT(*) as cnt FROM stories WHERE run_id = ? AND status = 'running'"
-      ).get(step.run_id) as { cnt: number };
-      if (runningStoryCount.cnt > 0) {
-        return { found: false };
+      // GIT WORKTREE ISOLATION: Each story gets its own working directory.
+      // Parallel crons can safely run different stories simultaneously.
+      const storyBranch = nextStory.story_id.toLowerCase();
+      let storyWorkdir = "";
+      if (context["repo"]) {
+        storyWorkdir = createStoryWorktree(context["repo"], storyBranch, context["branch"] || "master");
       }
+      context["story_workdir"] = storyWorkdir || context["repo"] || "";
 
       // Claim the story
       db.prepare(
@@ -724,6 +774,11 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     ).run(output, step.current_story_id);
     emitEvent({ ts: new Date().toISOString(), event: "story.done", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: storyRow?.story_id, storyTitle: storyRow?.title });
     logger.info(`Story done: ${storyRow?.story_id} — ${storyRow?.title}`, { runId: step.run_id, stepId: step.step_id });
+
+    // Clean up git worktree for completed story
+    if (storyRow?.story_id && context["repo"]) {
+      removeStoryWorktree(context["repo"], storyRow.story_id);
+    }
 
     // Clear current_story_id, save output
     db.prepare(
@@ -1020,7 +1075,12 @@ export function failStep(stepId: string, error: string): { retrying: boolean; ru
       const storyRow = db.prepare("SELECT story_id, title FROM stories WHERE id = ?").get(step.current_story_id!) as { story_id: string; title: string } | undefined;
       const newRetry = story.retry_count + 1;
       if (newRetry > story.max_retries) {
-        // Story retries exhausted
+        // Story retries exhausted — clean up worktree
+        if (storyRow?.story_id) {
+          const runCtx = db.prepare("SELECT context FROM runs WHERE id = ?").get(step.run_id) as { context: string } | undefined;
+          const ctx = runCtx ? JSON.parse(runCtx.context) : {};
+          if (ctx.repo) removeStoryWorktree(ctx.repo, storyRow.story_id);
+        }
         db.prepare("UPDATE stories SET status = 'failed', retry_count = ?, updated_at = datetime('now') WHERE id = ?").run(newRetry, story.id);
         db.prepare("UPDATE steps SET status = 'failed', output = ?, current_story_id = NULL, updated_at = datetime('now') WHERE id = ?").run(error, stepId);
         db.prepare("UPDATE runs SET status = 'failed', updated_at = datetime('now') WHERE id = ?").run(step.run_id);
@@ -1032,7 +1092,12 @@ export function failStep(stepId: string, error: string): { retrying: boolean; ru
         return { retrying: false, runFailed: true };
       }
 
-      // Retry the story
+      // Retry the story — clean up worktree (will be recreated on next claim)
+      if (storyRow?.story_id) {
+        const runCtx2 = db.prepare("SELECT context FROM runs WHERE id = ?").get(step.run_id) as { context: string } | undefined;
+        const ctx2 = runCtx2 ? JSON.parse(runCtx2.context) : {};
+        if (ctx2.repo) removeStoryWorktree(ctx2.repo, storyRow.story_id);
+      }
       db.prepare("UPDATE stories SET status = 'pending', retry_count = ?, updated_at = datetime('now') WHERE id = ?").run(newRetry, story.id);
       db.prepare("UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = datetime('now') WHERE id = ?").run(stepId);
       return { retrying: true, runFailed: false };
