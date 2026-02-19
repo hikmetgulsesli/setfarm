@@ -61,15 +61,32 @@ All errors MUST follow this structure:
 ## Database Standards
 
 ### Parameterized Queries (MANDATORY)
+
+**SQLite (better-sqlite3)** — Use `?` positional parameters:
 ```javascript
-// CORRECT - Parameterized
-db.query("SELECT * FROM users WHERE id = $1", [userId]);
-db.prepare("INSERT INTO tasks (title, status) VALUES ($1, $2)").run(title, status);
+// CORRECT for SQLite / better-sqlite3
+db.prepare("SELECT * FROM users WHERE id = ?").get(userId);
+db.prepare("INSERT INTO tasks (title, status) VALUES (?, ?)").run(title, status);
+db.prepare("SELECT * FROM users WHERE level > ? AND points > ?").all(minLevel, minPoints);
+db.prepare("UPDATE users SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(name, id);
+db.prepare("DELETE FROM users WHERE id = ?").run(id);
+
+// WRONG for SQLite — $1/$2 is PostgreSQL syntax, does NOT work with better-sqlite3!
+// db.prepare("SELECT * FROM users WHERE id = $1").get(userId);  // BROKEN!
 
 // BANNED - String interpolation (SQL injection risk!)
 // db.query(`SELECT * FROM users WHERE id = ${userId}`);
 // db.query("SELECT * FROM users WHERE name = '" + name + "'");
 ```
+
+**PostgreSQL (pg/knex)** — Use `$1`, `$2` positional parameters:
+```javascript
+// CORRECT for PostgreSQL
+db.query("SELECT * FROM users WHERE id = $1", [userId]);
+```
+
+**CRITICAL**: Check which database the project uses before writing queries.
+Our projects typically use **SQLite with better-sqlite3** — always use `?` parameters.
 
 ### Schema Conventions
 - Table names: lowercase, plural, snake_case: `user_tasks`, `project_members`
