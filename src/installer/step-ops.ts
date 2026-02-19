@@ -506,6 +506,16 @@ export function claimStep(agentId: string): ClaimResult {
         return { found: false };
       }
 
+      // STORY CONCURRENCY GUARD: Only 1 story per run at a time.
+      // Parallel crons still work for DIFFERENT runs (different repos).
+      // Within ONE run, stories must be sequential (shared repo = git conflicts if parallel).
+      const runningStoryCount = db.prepare(
+        "SELECT COUNT(*) as cnt FROM stories WHERE run_id = ? AND status = 'running'"
+      ).get(step.run_id) as { cnt: number };
+      if (runningStoryCount.cnt > 0) {
+        return { found: false };
+      }
+
       // Claim the story
       db.prepare(
         "UPDATE stories SET status = 'running', updated_at = datetime('now') WHERE id = ?"
