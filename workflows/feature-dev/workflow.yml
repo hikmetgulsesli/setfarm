@@ -296,16 +296,24 @@ steps:
 
       5. Implement this story only, following ALL design and backend standards
       6. Write tests for this story's functionality
-      7. Run typecheck / build
-      8. Run tests to confirm they pass
-      9. Commit all changes:
+      7. Run the FULL BUILD — this is MANDATORY, not optional:
+         {{build_cmd}}
+         CRITICAL: If the build FAILS, you MUST fix ALL errors before proceeding.
+         Do NOT commit or push code that fails to build. Fix the errors first.
+         Common issues: wrong imports, missing exports, type cast errors.
+      8. Run tests to confirm they pass: {{test_cmd}}
+         If tests fail, fix the issues before committing.
+      9. Commit all changes (ONLY after build AND tests pass):
          git add -A
          git commit -m "feat: {{current_story_id}} - {{current_story_title}}"
 
       10. Push the story branch:
           git push -u origin "$STORY_BRANCH"
 
-      11. Create a Pull Request to the FEATURE BRANCH (not main):
+      11. FINAL BUILD CHECK before creating PR:
+          {{build_cmd}} && echo "BUILD OK" || { echo "BUILD FAILED — fix before PR"; exit 1; }
+
+      12. Create a Pull Request to the FEATURE BRANCH (not main):
           PR_URL=$(gh pr create \
             --base {{branch}} \
             --head "$STORY_BRANCH" \
@@ -320,8 +328,8 @@ steps:
           <describe tests written>")
           echo "Created PR: $PR_URL"
 
-      12. Append to progress-{{run_id}}.txt
-      13. Update Codebase Patterns if you found reusable patterns
+      13. Append to progress-{{run_id}}.txt
+      14. Update Codebase Patterns if you found reusable patterns
 
       === END WORKFLOW ===
 
@@ -367,6 +375,7 @@ steps:
       STORY_BRANCH: {{story_branch}}
       PR: {{pr}}
       CHANGES: {{changes}}
+      BUILD_CMD: {{build_cmd}}
       TEST_CMD: {{test_cmd}}
 
       CURRENT STORY:
@@ -391,8 +400,11 @@ steps:
          gh pr diff {{pr}}
       4. Check that code exists (not just TODOs or placeholders)
       5. Verify each acceptance criterion for the story
-      6. Run tests: {{test_cmd}}
-      7. Run typecheck/build
+      6. Run the FULL BUILD first — this is the primary quality gate:
+         {{build_cmd}}
+         CRITICAL: If the build fails, immediately REJECT the PR. Do NOT proceed.
+         Build failures mean type errors, missing imports, or broken code.
+      7. Run tests: {{test_cmd}}
 
       STEP 2 — Quality Checks:
 
