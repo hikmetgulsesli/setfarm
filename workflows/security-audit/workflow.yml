@@ -16,8 +16,8 @@ agent_mapping:
   prioritizer: defne   # Iris prioritizes findings
   setup: onur          # Nexus sets up environment
   fixer: elif          # Cipher implements fixes
-  verifier: sinan      # Sentinel verifies each fix
-  tester: sinan        # Sentinel runs integration tests
+  verifier: mert       # Prism verifies each fix
+  tester: mert         # Prism runs integration tests
   pr: elif             # Cipher creates the PR
 
 polling:
