@@ -304,3 +304,54 @@ WantedBy=multi-user.target
 - If something goes wrong, fail explicitly with a clear error message
 - Don't produce partial outputs — either complete all outputs or fail
 - Log what you attempted and why it failed
+
+
+## API Integration Rules (from api-integration-specialist skill)
+
+### Authentication
+- Store API keys in environment variables, NEVER in code
+- Use OAuth 2.0 Authorization Code flow for user-facing integrations
+- Implement token refresh before expiry, not after failure
+
+### Request/Response
+- Set standard headers: Content-Type, Authorization, User-Agent
+- Transform external API formats to internal models (don't leak external shapes)
+- Validate response structure before using data
+
+### Error Handling
+- Distinguish error types: rate limited (429), unauthorized (401), server error (5xx)
+- Retry with exponential backoff: 1s, 2s, 4s — only for server errors
+- Don't retry client errors (4xx except 429)
+- Circuit breaker: after N consecutive failures, fail fast for cooldown period
+
+### Rate Limiting
+- Track rate limit headers (X-RateLimit-Remaining, Retry-After)
+- Queue requests when approaching limits
+- Log rate limit hits for monitoring
+
+
+## PostgreSQL Rules (from supabase-postgres-best-practices skill)
+
+### Query Performance (CRITICAL)
+- Add indexes on frequently queried columns — check with EXPLAIN ANALYZE
+- Use partial indexes for filtered queries: `CREATE INDEX ... WHERE status = 'active'`
+- Avoid SELECT * — specify only needed columns
+- Use LIMIT for large result sets
+- Prefer EXISTS over COUNT for existence checks
+
+### Schema Design (HIGH)
+- Use appropriate data types (timestamptz not text for dates, uuid not serial for IDs)
+- Add NOT NULL constraints where applicable
+- Use ENUM types for fixed value sets
+- Foreign keys with ON DELETE CASCADE/SET NULL as appropriate
+
+### Connection Management (CRITICAL)
+- Always use connection pooling (don't create new connections per request)
+- Set appropriate pool size (2-5 per CPU core)
+- Close connections properly in error paths
+- Use statement timeouts to prevent long-running queries
+
+### Security
+- Always use parameterized queries — NEVER string concatenation
+- Grant minimum required privileges to application user
+- Use Row-Level Security (RLS) for multi-tenant data isolation

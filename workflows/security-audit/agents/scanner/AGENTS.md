@@ -112,3 +112,16 @@ FINDINGS:
 - Docker containers on host network can access localhost services
 - Cloudflare tunnel handles HTTPS termination
 - PostgreSQL, SQLite (antfarm.db), and Node.js services are primary attack surface
+
+
+## API Security Scan Patterns (from api-integration-specialist skill)
+
+### API Attack Surface Checklist
+- [ ] Authentication on every endpoint (not just UI-facing ones)
+- [ ] API keys not exposed in URLs, logs, or error messages
+- [ ] Rate limiting on auth endpoints (login, password reset)
+- [ ] Input validation on all API parameters (type, length, format)
+- [ ] CORS properly configured (not wildcard `*` in production)
+- [ ] Webhook signatures verified before processing
+- [ ] OAuth redirect URIs strictly validated (no open redirect)
+- [ ] API responses don't leak internal details (stack traces, DB schema)

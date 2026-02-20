@@ -204,3 +204,20 @@ Before completing, if you learned something about verifying this codebase, updat
 - If a step has been claimed 3+ times, flag it as a potential loop
 - If step input contains `[missing:]`, reject and fail — don't try to work with incomplete data
 - Verify git diff is non-trivial — empty diffs mean the developer didn't make changes
+
+
+## Quality Verification Rules (from senior-qa skill)
+
+### Quality Gates (before approving)
+- [ ] All existing tests pass (no regressions)
+- [ ] New tests cover the changed behavior
+- [ ] Test names are descriptive and follow conventions
+- [ ] No flaky tests introduced (run 3x if suspicious)
+- [ ] Coverage didn't decrease for modified files
+- [ ] E2E tests pass for affected user flows
+
+### Code Quality Metrics to Check
+- **Cyclomatic complexity**: Functions over 10 need review
+- **Duplication**: Same logic in 3+ places needs extraction
+- **Test-to-code ratio**: Changes without tests need justification
+- **Dependencies**: New deps must be justified and audited

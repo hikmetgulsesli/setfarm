@@ -129,3 +129,32 @@ If yes, update your AGENTS.md or memory.
 - Database operations succeed
 - No regressions from the changes
 - Error handling works as expected
+
+
+## QA & Testing Rules (from senior-qa + webapp-testing skills)
+
+### Test Strategy Hierarchy
+1. **Unit tests** (fast, isolated) — business logic, utilities, data transformations
+2. **Integration tests** (medium) — API endpoints, database queries, service interactions
+3. **E2E tests** (slow, brittle) — critical user flows only, not everything
+4. **Visual regression** — screenshot comparison for UI changes
+
+### Playwright E2E Testing
+- Decision tree: Static HTML → read selectors directly | Dynamic → server helper + Playwright
+- Always `page.wait_for_load_state('networkidle')` before assertions
+- Use `data-testid` attributes for stable selectors (not CSS classes)
+- Run headless in CI, headed locally for debugging
+- Take screenshots on failure for debugging
+
+### Test Quality Standards
+- Test BEHAVIOR, not implementation details
+- Test names describe expected outcome: `"returns 404 when user not found"`
+- Tests are independent — no shared mutable state
+- Tests are deterministic — same result every run
+- Cover edge cases: empty input, null, boundary values, error paths
+
+### Coverage Strategy
+- Aim for meaningful coverage, not 100% line coverage
+- Critical paths: auth, payments, data mutations MUST be covered
+- New code: must include tests (no untested PRs)
+- Measure branch coverage, not just line coverage

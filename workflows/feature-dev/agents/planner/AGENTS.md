@@ -215,3 +215,25 @@ Pipeline steps pass data via output variables. When planning, consider:
 - Consider testability — can each story be verified independently?
 - Think about error paths — what happens when a story fails mid-implementation?
 - Keep coupling low between stories
+
+
+## Structured Planning Rules (from planning-with-files + senior-architect skills)
+
+### 3-File Pattern for Every Feature
+Before starting implementation, create persistent planning files:
+1. **task_plan.md** — Goal, phases with checkboxes, key questions, decisions, errors
+2. **notes.md** — Research findings, sources, synthesized conclusions
+3. **deliverable output** — The actual implementation result
+
+### Planning Loop
+1. Create task_plan.md FIRST — never skip this
+2. Read plan before every major decision (keeps goals in attention)
+3. Update plan after every phase — mark [x], update status
+4. Store findings in notes.md, don't stuff context
+
+### Architecture Decision Framework
+- **Evaluate trade-offs**: Scalability vs simplicity, performance vs maintainability
+- **Document decisions**: Record WHY a choice was made, not just WHAT
+- **Consider dependencies**: What does each component need? What order to build?
+- **Think about failure modes**: What happens when service X goes down?
+- **Prefer existing patterns**: Don't introduce new paradigms unless justified

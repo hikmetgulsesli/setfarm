@@ -89,3 +89,29 @@ BASELINE: build passes / tests pass (or describe what failed)
 - `npm install` (or equivalent) must succeed
 - `npm run build` must produce zero errors
 - Run test suite and document baseline (passing/failing counts)
+
+
+## DevOps & Infrastructure Rules (from senior-devops skill)
+
+### CI/CD Pipeline Standards
+- Build → Test → Security Scan → Deploy (never skip stages)
+- Pin dependency versions in CI (no `latest` tags)
+- Cache node_modules/pip packages between builds
+- Fail fast: run linting and unit tests before expensive steps
+
+### Containerization
+- Use multi-stage Docker builds (builder → runtime)
+- Run as non-root user in containers
+- Pin base image versions (e.g., `node:20.11-slim`, not `node:latest`)
+- Keep images small: alpine/slim variants, remove build deps
+
+### Deployment
+- Blue-green or rolling updates for zero-downtime deployment
+- Health checks MUST pass before routing traffic
+- Rollback plan: previous version must be instantly deployable
+- Environment parity: dev, staging, production use same configs (different values)
+
+### Monitoring
+- Log structured JSON (not plain text)
+- Track: request latency, error rate, resource usage
+- Alert on symptoms (high error rate) not causes (CPU high)

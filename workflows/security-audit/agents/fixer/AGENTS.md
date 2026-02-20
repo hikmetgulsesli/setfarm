@@ -123,3 +123,20 @@ REGRESSION_TEST: what test was added (test name, file, what it verifies)
 - If the bug/vulnerability cannot be fixed in this session, fail with detailed notes
 - Include: what you tried, why it didn't work, suggested next steps
 - Don't produce partial fixes that might break other things
+
+
+## API & Database Fix Patterns (from api-integration + postgres skills)
+
+### When Fixing API Issues
+- Check authentication first (expired tokens, wrong keys)
+- Verify request format matches API docs (headers, body schema)
+- Check rate limiting headers — are we being throttled?
+- Add retry logic with exponential backoff for transient failures
+- Log full request/response for debugging (sanitize secrets)
+
+### When Fixing Database Issues
+- Run EXPLAIN ANALYZE on slow queries — look for Seq Scan on large tables
+- Check for missing indexes on WHERE/JOIN columns
+- Look for N+1 queries (loop of SELECT inside application code)
+- Verify connection pool isn't exhausted (check active/idle counts)
+- Check for lock contention on frequently updated rows
