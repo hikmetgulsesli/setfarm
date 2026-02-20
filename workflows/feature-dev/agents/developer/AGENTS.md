@@ -259,3 +259,48 @@ If yes, update your AGENTS.md or memory.
 - Visually striking and memorable
 - Cohesive with a clear aesthetic point-of-view
 - Every detail refined — spacing, shadows, transitions, hover states
+
+
+## Deployment Rules (from setfarm-deploy skill)
+
+### When Building Web Apps
+- **Port convention**: 350x for standard projects, 450x for tools. Check `ss -tlnp` for conflicts
+- **Frontend API URLs**: MUST be relative (`/api/...`), NEVER absolute (`http://localhost:PORT/api/...`)
+- **Systemd gotchas**: `StartLimitBurst`/`StartLimitIntervalSec` go in `[Unit]`, NOT `[Service]`
+- **Healthcheck**: Every service MUST expose a `/health` endpoint
+
+### Service Template (if creating a deployable app)
+```
+[Unit]
+Description=<Project Name>
+After=network.target
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+User=setrox
+WorkingDirectory=/home/setrox/<path>
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+RestartSec=5
+Environment=NODE_ENV=production
+Environment=PORT=<port>
+
+[Install]
+WantedBy=multi-user.target
+```
+
+
+## Pipeline Awareness (from setfarm-pipeline-ops skill)
+
+### Output Rules
+- ALWAYS provide ALL required output variables listed in your step definition
+- NEVER produce `[missing: X]` values — this triggers the missing input guard and fails downstream steps
+- If you cannot produce a required output, FAIL the step cleanly with an explanation
+- Output format must match exactly what downstream steps expect
+
+### Clean Failure
+- If something goes wrong, fail explicitly with a clear error message
+- Don't produce partial outputs — either complete all outputs or fail
+- Log what you attempted and why it failed

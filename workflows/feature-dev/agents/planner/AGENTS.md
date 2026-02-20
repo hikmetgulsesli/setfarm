@@ -193,3 +193,25 @@ STORIES_JSON: [
 - REPO and BRANCH must be explicitly specified
 - STORIES_JSON must be valid JSON with id, title, description, acceptance_criteria
 - Include setup requirements (dependencies, config, environment)
+
+
+## Workflow Planning Rules (from setfarm-workflow-dev skill)
+
+### Story Decomposition for Pipeline
+- Each story should be completable in ONE agent session (< 30 min of coding)
+- Stories MUST be independent — no story should depend on another story's output
+- Order stories by dependency: foundation/setup first, features second, polish last
+- Cap at 5 stories max per run — more than 5 means the feature should be split into multiple runs
+
+### Step Output Dependencies
+Pipeline steps pass data via output variables. When planning, consider:
+- `plan` step outputs: REPO, BRANCH, STORIES_JSON
+- `setup` step outputs: BUILD_CMD, TEST_CMD, BASELINE_STATUS
+- `implement` step outputs: CODE_CHANGES, TESTS_ADDED (per story)
+- Every output variable MUST be provided — missing outputs fail downstream steps
+
+### Architecture Fit
+- Prefer existing patterns over introducing new ones
+- Consider testability — can each story be verified independently?
+- Think about error paths — what happens when a story fails mid-implementation?
+- Keep coupling low between stories

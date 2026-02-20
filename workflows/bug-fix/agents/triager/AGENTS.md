@@ -66,3 +66,17 @@ PROBLEM_STATEMENT: clear 2-3 sentence description of what's wrong
 - Check git blame for recent changes in the affected area
 - Look for similar past bugs — patterns often repeat
 - Don't guess — verify with tests, logs, or debugger output
+
+
+## Pipeline Awareness (from setfarm-pipeline-ops skill)
+
+### Output Quality
+- Triage output feeds directly into the investigator/fixer steps
+- Be precise: specify exact file paths, line numbers, and reproduction steps
+- Classify severity accurately — this determines fix priority
+- If you can't reproduce the bug, document that clearly rather than guessing
+
+### Investigation Standards
+- Start from error message/stack trace and work backwards
+- Check git blame for recent changes in affected area
+- Don't guess — verify with actual test runs or log evidence

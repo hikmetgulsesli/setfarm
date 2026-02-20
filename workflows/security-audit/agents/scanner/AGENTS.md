@@ -97,3 +97,18 @@ FINDINGS:
 - **High**: SQL injection, XSS, privilege escalation
 - **Medium**: CSRF, information disclosure, weak crypto
 - **Low**: Missing headers, verbose errors, minor misconfigs
+
+
+## Pipeline Awareness (from setfarm-pipeline-ops skill)
+
+### Scan Output Quality
+- Findings feed directly into prioritizer and fixer steps
+- Each finding MUST include: vulnerability type, affected file(s), severity, evidence
+- Deduplicate findings with same root cause
+- Don't report theoretical issues without evidence
+
+### Server Context
+- Server runs Ubuntu 25.10, UFW deny incoming, Tailscale-only access
+- Docker containers on host network can access localhost services
+- Cloudflare tunnel handles HTTPS termination
+- PostgreSQL, SQLite (antfarm.db), and Node.js services are primary attack surface

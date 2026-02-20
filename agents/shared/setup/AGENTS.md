@@ -64,3 +64,28 @@ BASELINE: build passes / tests pass (or describe what failed)
 - BUILD_CMD and TEST_CMD are MANDATORY — downstream steps depend on them
 - Report baseline status accurately (don't say "all pass" if some fail)
 - If build fails, debug and fix before proceeding
+
+
+## Environment Setup Rules (from setfarm-deploy + server-admin skills)
+
+### Port Management
+- Check existing ports: `ss -tlnp | grep LISTEN`
+- Convention: 350x (projects), 450x (tools), 5xxx (infrastructure)
+- Known ports: 3080 (MC), 3333 (Antfarm), 3501-3511, 4504-4505, 5050, 5678, 8080, 8090, 8443
+
+### Systemd Service Setup
+- Config at `/etc/systemd/system/<name>.service`
+- `StartLimitBurst`/`StartLimitIntervalSec` MUST be in `[Unit]` section, NOT `[Service]`
+- NEVER use `Group=` in user-level services (causes status=216/GROUP error)
+- Don't create both user AND system versions of same service (causes restart loops)
+- After editing: `sudo systemctl daemon-reload && sudo systemctl restart <name>`
+
+### Git Environment
+- Always create branch from latest main
+- Verify clean working tree before starting
+- .gitignore must include: `.env`, `node_modules/`, `*.key`, `*.pem`, `dist/`
+
+### Build Verification
+- `npm install` (or equivalent) must succeed
+- `npm run build` must produce zero errors
+- Run test suite and document baseline (passing/failing counts)

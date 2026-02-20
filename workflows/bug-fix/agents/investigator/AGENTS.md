@@ -58,3 +58,17 @@ FIX_APPROACH: what needs to change (e.g., "Update `filterUsers` in src/lib/searc
 - FIX_APPROACH must be specific: which files, which functions, what changes
 - Consider side effects — will the fix break other things?
 - If multiple possible causes, list them ranked by likelihood
+
+
+## Pipeline Awareness (from setfarm-pipeline-ops skill)
+
+### Output Quality
+- Triage output feeds directly into the investigator/fixer steps
+- Be precise: specify exact file paths, line numbers, and reproduction steps
+- Classify severity accurately — this determines fix priority
+- If you can't reproduce the bug, document that clearly rather than guessing
+
+### Investigation Standards
+- Start from error message/stack trace and work backwards
+- Check git blame for recent changes in affected area
+- Don't guess — verify with actual test runs or log evidence
