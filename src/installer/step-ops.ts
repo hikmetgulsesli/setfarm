@@ -453,11 +453,16 @@ export type PeekResult = "HAS_WORK" | "NO_WORK";
  */
 export function peekStep(agentId: string): PeekResult {
   const db = getDb();
+  // Count pending/waiting steps, PLUS running loop steps that still have pending stories
   const row = db.prepare(
     `SELECT COUNT(*) as cnt FROM steps s
      JOIN runs r ON r.id = s.run_id
-     WHERE s.agent_id = ? AND s.status IN ('pending', 'waiting')
-       AND r.status = 'running'`
+     WHERE s.agent_id = ? AND r.status = 'running'
+       AND (
+         s.status IN ('pending', 'waiting')
+         OR (s.status = 'running' AND s.type = 'loop'
+             AND EXISTS (SELECT 1 FROM stories st WHERE st.run_id = s.run_id AND st.status = 'pending'))
+       )`
   ).get(agentId) as { cnt: number };
   return row.cnt > 0 ? "HAS_WORK" : "NO_WORK";
 }
@@ -489,14 +494,17 @@ export function claimStep(agentId: string): ClaimResult {
   }
   const db = getDb();
 
+  // Allow claiming from both pending AND running loop steps (parallel story execution)
   const step = db.prepare(
-    `SELECT s.id, s.step_id, s.run_id, s.input_template, s.type, s.loop_config
+    `SELECT s.id, s.step_id, s.run_id, s.input_template, s.type, s.loop_config, s.status as step_status
      FROM steps s
      JOIN runs r ON r.id = s.run_id
-     WHERE s.agent_id = ? AND s.status = 'pending'
+     WHERE s.agent_id = ?
+       AND (s.status = 'pending' OR (s.status = 'running' AND s.type = 'loop'))
        AND r.status NOT IN ('failed', 'cancelled')
+     ORDER BY s.status ASC
      LIMIT 1`
-  ).get(agentId) as { id: string; step_id: string; run_id: string; input_template: string; type: string; loop_config: string | null } | undefined;
+  ).get(agentId) as { id: string; step_id: string; run_id: string; input_template: string; type: string; loop_config: string | null; step_status: string } | undefined;
 
   if (!step) return { found: false };
 
@@ -910,10 +918,23 @@ function checkLoopContinuation(runId: string, loopStepId: string): { advanced: b
     if (loopStatus?.status === "failed") {
       return { advanced: false, runCompleted: false };
     }
-    // More stories — loop step back to pending
-    db.prepare(
-        "UPDATE steps SET status = 'pending', updated_at = datetime('now') WHERE id = ?"
-    ).run(loopStepId);
+    // More stories pending — keep step available for parallel claims
+    // Only set to pending if not already running (don't interrupt parallel stories)
+    if (loopStatus?.status !== "running") {
+      db.prepare(
+          "UPDATE steps SET status = 'pending', updated_at = datetime('now') WHERE id = ?"
+      ).run(loopStepId);
+    }
+    return { advanced: false, runCompleted: false };
+  }
+
+  // No pending stories — check if any are still running (parallel execution)
+  const runningStory = db.prepare(
+    "SELECT id FROM stories WHERE run_id = ? AND status = 'running' LIMIT 1"
+  ).get(runId) as { id: string } | undefined;
+
+  if (runningStory) {
+    // Other stories still running in parallel — wait for them
     return { advanced: false, runCompleted: false };
   }
 
