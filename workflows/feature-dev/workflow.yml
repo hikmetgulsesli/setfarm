@@ -3,7 +3,7 @@
 # session with clean context. Memory persists via git history and progress files.
 id: feature-dev
 name: Feature Development Workflow
-version: 7.3
+version: 7.4
 description: |
   Per-story PR pipeline. Each user story gets its own branch and pull request.
   Developer: creates story branch → implements → tests → pushes → creates PR.
@@ -122,7 +122,11 @@ steps:
       ============================================================
       Your ENTIRE reply must follow this EXACT format. Every key is REQUIRED.
       Extract REPO and BRANCH from the TASK above. If REPO is in the task, copy it exactly.
-      If BRANCH is not in the task, generate a short kebab-case branch name.
+      BRANCH rules:
+      - If BRANCH is "main" or not specified: generate a unique kebab-case branch name
+        based on the task (e.g. "content-studio", "settings-trends", "publish-system")
+      - NEVER use "main" as BRANCH — always create a dedicated feature branch
+      - Keep it short (2-4 words, kebab-case)
 
       STATUS: done
       REPO: <exact repo path, e.g. /home/setrox/myproject>
@@ -290,9 +294,11 @@ steps:
          git pull origin {{branch}}
 
       4. Create a NEW branch for this story from the feature branch:
-         STORY_BRANCH="{{current_story_id}}"
+         RUN_SHORT=$(echo "{{run_id}}" | cut -c1-8)
+         STORY_BRANCH="${RUN_SHORT}-{{current_story_id}}"
          git checkout -b "$STORY_BRANCH"
-         IMPORTANT: Remember the STORY_BRANCH name — you MUST include it in your reply.
+         IMPORTANT: The STORY_BRANCH includes the run prefix to prevent collisions
+         between parallel runs. You MUST include the full STORY_BRANCH name in your reply.
 
       5. Implement this story only, following ALL design and backend standards
       6. Write tests for this story's functionality
