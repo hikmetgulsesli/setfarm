@@ -142,7 +142,7 @@ export function startDashboard(port = 3333): http.Server {
   });
 
   server.listen(port, () => {
-    console.log(`Antfarm Dashboard: http://localhost:${port}`);
+    console.log(`Setfarm Dashboard: http://localhost:${port}`);
   });
 
   return server;

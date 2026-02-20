@@ -1,6 +1,6 @@
 import { createAgentCronJob, deleteAgentCronJobs, deleteCronJob, listCronJobs, checkCronToolAvailable } from "./gateway-api.js";
 import type { WorkflowSpec, AgentMapping } from "./types.js";
-import { resolveAntfarmCli } from "./paths.js";
+import { resolveSetfarmCli } from "./paths.js";
 import { getDb } from "../db.js";
 
 const DEFAULT_EVERY_MS = 300_000; // 5 minutes
@@ -8,9 +8,9 @@ const DEFAULT_AGENT_TIMEOUT_SECONDS = 30 * 60; // 30 minutes
 
 function buildAgentPrompt(workflowId: string, agentId: string): string {
   const fullAgentId = `${workflowId}_${agentId}`;
-  const cli = resolveAntfarmCli();
+  const cli = resolveSetfarmCli();
 
-  return `You are an Antfarm workflow agent. Check for pending work and execute it.
+  return `You are an Setfarm workflow agent. Check for pending work and execute it.
 
 ⚠️ CRITICAL: You MUST call "step complete" or "step fail" before ending your session. If you don't, the workflow will be stuck forever. This is non-negotiable.
 
@@ -29,10 +29,10 @@ Step 3 — Do the work described in the input. Format your output with KEY: valu
 
 Step 4 — MANDATORY: Report completion (do this IMMEDIATELY after finishing the work):
 \`\`\`
-cat <<'ANTFARM_EOF' > /tmp/antfarm-step-output.txt
+cat <<'ANTFARM_EOF' > /tmp/setfarm-step-output.txt
 <YOUR OUTPUT HERE — use the EXACT format specified in the step input above, including ALL required keys like STORIES_JSON, REPO, BRANCH etc.>
 ANTFARM_EOF
-cat /tmp/antfarm-step-output.txt | /usr/bin/node ${cli} step complete "<stepId>"
+cat /tmp/setfarm-step-output.txt | /usr/bin/node ${cli} step complete "<stepId>"
 \`\`\`
 
 CRITICAL: The output format in the heredoc MUST match what the step input asks for. Do NOT use a generic STATUS/CHANGES/TESTS format — read the step input and replicate its MANDATORY OUTPUT FORMAT exactly.
@@ -52,9 +52,9 @@ The workflow cannot advance until you report. Your session ending without report
 
 export function buildWorkPrompt(workflowId: string, agentId: string): string {
   const fullAgentId = `${workflowId}_${agentId}`;
-  const cli = resolveAntfarmCli();
+  const cli = resolveSetfarmCli();
 
-  return `You are an Antfarm workflow agent. Execute the pending work below.
+  return `You are an Setfarm workflow agent. Execute the pending work below.
 
 ⚠️ CRITICAL: You MUST call "step complete" or "step fail" before ending your session. If you don't, the workflow will be stuck forever. This is non-negotiable.
 
@@ -66,10 +66,10 @@ Do the work described in the input. Format your output with KEY: value lines as 
 
 MANDATORY: Report completion (do this IMMEDIATELY after finishing the work):
 \`\`\`
-cat <<'ANTFARM_EOF' > /tmp/antfarm-step-output.txt
+cat <<'ANTFARM_EOF' > /tmp/setfarm-step-output.txt
 <YOUR OUTPUT HERE — use the EXACT format specified in the step input above, including ALL required keys like STORIES_JSON, REPO, BRANCH etc.>
 ANTFARM_EOF
-cat /tmp/antfarm-step-output.txt | /usr/bin/node ${cli} step complete "<stepId>"
+cat /tmp/setfarm-step-output.txt | /usr/bin/node ${cli} step complete "<stepId>"
 \`\`\`
 
 CRITICAL: The output format in the heredoc MUST match what the step input asks for. Do NOT use a generic STATUS/CHANGES/TESTS format — read the step input and replicate its MANDATORY OUTPUT FORMAT exactly.
@@ -92,7 +92,7 @@ const DEFAULT_POLLING_MODEL = "minimax/MiniMax-M2.5";
 
 export function buildPollingPrompt(workflowId: string, agentId: string, workModel?: string): string {
   const fullAgentId = `${workflowId}_${agentId}`;
-  const cli = resolveAntfarmCli();
+  const cli = resolveSetfarmCli();
   const model = workModel ?? "default";
   const workPrompt = buildWorkPrompt(workflowId, agentId);
 
@@ -138,7 +138,7 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
   for (let i = 0; i < agents.length; i++) {
     const agent = agents[i];
     const anchorMs = i * 60_000; // stagger by 1 minute each
-    const cronName = `antfarm/${workflow.id}/${agent.id}`;
+    const cronName = `setfarm/${workflow.id}/${agent.id}`;
     // Use mapped OpenClaw agent ID if available, otherwise fall back to workflow agent ID
     const mappedAgentId = agentMapping[agent.id];
     const cronAgentId = mappedAgentId ?? `${workflow.id}_${agent.id}`;
@@ -168,7 +168,7 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
     const PARALLEL_COUNT = 5;
     if (PARALLEL_AGENTS.includes(agent.id)) {
       for (let n = 2; n <= PARALLEL_COUNT; n++) {
-        const pName = `antfarm/${workflow.id}/${agent.id}-${n}`;
+        const pName = `setfarm/${workflow.id}/${agent.id}-${n}`;
         await createAgentCronJob({
           name: pName,
           schedule: { kind: "every", everyMs, anchorMs: anchorMs + n * 15_000 },
@@ -183,7 +183,7 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
 }
 
 export async function removeAgentCrons(workflowId: string): Promise<void> {
-  await deleteAgentCronJobs(`antfarm/${workflowId}/`);
+  await deleteAgentCronJobs(`setfarm/${workflowId}/`);
 }
 
 // ── Run-scoped cron lifecycle ───────────────────────────────────────
@@ -205,7 +205,7 @@ function countActiveRuns(workflowId: string): number {
 async function workflowCronsExist(workflowId: string): Promise<boolean> {
   const result = await listCronJobs();
   if (!result.ok || !result.jobs) return false;
-  const prefix = `antfarm/${workflowId}/`;
+  const prefix = `setfarm/${workflowId}/`;
   return result.jobs.some((j) => j.name.startsWith(prefix));
 }
 
@@ -234,7 +234,7 @@ export async function teardownWorkflowCronsIfIdle(workflowId: string): Promise<v
   if (active > 0) return;
   const listResult = await listCronJobs();
   if (!listResult.ok || !listResult.jobs) return;
-  const prefix = `antfarm/${workflowId}/`;
+  const prefix = `setfarm/${workflowId}/`;
   for (const job of listResult.jobs) {
     if (!job.name.startsWith(prefix)) continue;
     await deleteCronJob(job.id);

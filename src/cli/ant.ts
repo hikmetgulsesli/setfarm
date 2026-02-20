@@ -1,5 +1,5 @@
 /**
- * Easter egg: `antfarm ant` prints ASCII art and a random quote.
+ * Easter egg: `setfarm ant` prints ASCII art and a random quote.
  */
 
 const ANT_ART = `

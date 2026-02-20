@@ -21,7 +21,7 @@ import { getWorkflowStatus, listRuns, stopWorkflow } from "../installer/status.j
 import { runWorkflow } from "../installer/run.js";
 import { listBundledWorkflows } from "../installer/workflow-fetch.js";
 import { readRecentLogs } from "../lib/logger.js";
-import { getRecentEvents, getRunEvents, type AntfarmEvent } from "../installer/events.js";
+import { getRecentEvents, getRunEvents, type SetfarmEvent } from "../installer/events.js";
 import { startDaemon, stopDaemon, getDaemonStatus, isRunning } from "../server/daemonctl.js";
 import { claimStep, completeStep, failStep, getStories, peekStep } from "../installer/step-ops.js";
 import { ensureCliSymlink } from "../installer/symlink.js";
@@ -50,7 +50,7 @@ function formatEventTime(ts: string): string {
   return d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true });
 }
 
-function formatEventLabel(evt: AntfarmEvent): string {
+function formatEventLabel(evt: SetfarmEvent): string {
   const labels: Record<string, string> = {
     "run.started": "Run started",
     "run.completed": "Run completed",
@@ -70,7 +70,7 @@ function formatEventLabel(evt: AntfarmEvent): string {
   return labels[evt.event] ?? evt.event;
 }
 
-function printEvents(events: AntfarmEvent[]): void {
+function printEvents(events: SetfarmEvent[]): void {
   if (events.length === 0) { console.log("No events yet."); return; }
   for (const evt of events) {
     const time = formatEventTime(evt.ts);
@@ -253,7 +253,7 @@ async function main() {
     if (portIdx !== -1 && args[portIdx + 1]) {
       port = parseInt(args[portIdx + 1], 10) || 3333;
     } else if (sub && sub !== "start" && !sub.startsWith("-")) {
-      // legacy: antfarm dashboard 4000
+      // legacy: setfarm dashboard 4000
       const parsed = parseInt(sub, 10);
       if (!Number.isNaN(parsed)) port = parsed;
     }
@@ -314,7 +314,7 @@ async function main() {
       const status = getMedicStatus();
       const cronInstalled = await isMedicCronInstalled();
 
-      console.log("Antfarm Medic");
+      console.log("Setfarm Medic");
       console.log(`  Cron: ${cronInstalled ? "installed (every 5 min)" : "not installed"}`);
 
       if (status.lastCheck) {

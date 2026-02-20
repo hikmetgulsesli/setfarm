@@ -124,10 +124,10 @@ async function resolveExternalSkillSource(skillName: string): Promise<string | n
 
 /**
  * Install external skills (non-bundled) from user skill directories into agent workspaces.
- * Skips bundled skills like "antfarm-workflows" which are handled separately.
+ * Skips bundled skills like "setfarm-workflows" which are handled separately.
  */
 async function installExternalSkills(workflow: WorkflowSpec): Promise<void> {
-  const bundledSkills = new Set(["antfarm-workflows"]);
+  const bundledSkills = new Set(["setfarm-workflows"]);
 
   for (const agent of workflow.agents) {
     if (!agent.workspace.skills?.length) continue;
@@ -143,7 +143,7 @@ async function installExternalSkills(workflow: WorkflowSpec): Promise<void> {
       const source = await resolveExternalSkillSource(skillName);
       if (!source) {
         // Warn but don't fail — skill may be optional or installed later
-        console.warn(`[antfarm] Skill "${skillName}" not found for agent "${agent.id}", skipping`);
+        console.warn(`[setfarm] Skill "${skillName}" not found for agent "${agent.id}", skipping`);
         continue;
       }
       const destination = path.join(skillsDir, skillName);
@@ -154,20 +154,20 @@ async function installExternalSkills(workflow: WorkflowSpec): Promise<void> {
 }
 
 async function installWorkflowSkill(workflow: WorkflowSpec, workflowDir: string) {
-  const skillSource = path.join(workflowDir, "skills", "antfarm-workflows");
+  const skillSource = path.join(workflowDir, "skills", "setfarm-workflows");
   try {
     await fs.access(skillSource);
   } catch {
     return;
   }
   for (const agent of workflow.agents) {
-    if (!agent.workspace.skills?.includes("antfarm-workflows")) {
+    if (!agent.workspace.skills?.includes("setfarm-workflows")) {
       continue;
     }
     const workspaceDir = resolveWorkspaceDir({ workflowId: workflow.id, agent });
     const targetDir = path.join(workspaceDir, "skills");
     await ensureDir(targetDir);
-    const destination = path.join(targetDir, "antfarm-workflows");
+    const destination = path.join(targetDir, "setfarm-workflows");
     await fs.rm(destination, { recursive: true, force: true });
     await fs.cp(skillSource, destination, { recursive: true });
   }

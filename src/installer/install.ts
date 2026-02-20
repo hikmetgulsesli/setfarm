@@ -6,7 +6,7 @@ import { provisionAgents } from "./agent-provision.js";
 import { readOpenClawConfig, writeOpenClawConfig, type OpenClawConfig } from "./openclaw-config.js";
 import { updateMainAgentGuidance } from "./main-agent-guidance.js";
 import { addSubagentAllowlist } from "./subagent-allowlist.js";
-import { installAntfarmSkill } from "./skill-install.js";
+import { installSetfarmSkill } from "./skill-install.js";
 import type { AgentRole, WorkflowInstallResult } from "./types.js";
 
 function ensureAgentList(config: { agents?: { list?: Array<Record<string, unknown>>; defaults?: Record<string, unknown> } }) {
@@ -211,7 +211,7 @@ function upsertAgent(
   agent: { id: string; name?: string; model?: string; timeoutSeconds?: number; workspaceDir: string; agentDir: string; role: AgentRole },
 ) {
   const existing = list.find((entry) => entry.id === agent.id);
-  // Never overwrite the user's default (main) agent — it was configured outside antfarm.
+  // Never overwrite the user's default (main) agent — it was configured outside setfarm.
   if (existing?.default === true) return;
   const payload: Record<string, unknown> = {
     id: agent.id,
@@ -266,7 +266,7 @@ export async function installWorkflow(params: { workflowId: string }): Promise<W
   }
   await writeOpenClawConfig(configPath, config);
   await updateMainAgentGuidance();
-  await installAntfarmSkill();
+  await installSetfarmSkill();
   await writeWorkflowMetadata({ workflowDir, workflowId: workflow.id, source: `bundled:${params.workflowId}` });
 
   return { workflowId: workflow.id, workflowDir };

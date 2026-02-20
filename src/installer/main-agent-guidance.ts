@@ -2,15 +2,15 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { readOpenClawConfig } from "./openclaw-config.js";
 
-const WORKFLOW_BLOCK_START = "<!-- antfarm:workflows -->";
-const WORKFLOW_BLOCK_END = "<!-- /antfarm:workflows -->";
+const WORKFLOW_BLOCK_START = "<!-- setfarm:workflows -->";
+const WORKFLOW_BLOCK_END = "<!-- /setfarm:workflows -->";
 
-const CLI = "node ~/.openclaw/workspace/antfarm/dist/cli/cli.js";
+const CLI = "node ~/.openclaw/workspace/setfarm/dist/cli/cli.js";
 
 const TOOLS_BLOCK = `${WORKFLOW_BLOCK_START}
-# Antfarm Workflows
+# Setfarm Workflows
 
-Antfarm CLI (always use full path to avoid PATH issues):
+Setfarm CLI (always use full path to avoid PATH issues):
 \`${CLI}\`
 
 Commands:
@@ -23,7 +23,7 @@ Workflows are self-advancing via per-agent cron jobs. No manual orchestration ne
 
 ## DELEGATION RULE (CRITICAL)
 - When a user asks for a new project/feature/app: DO NOT code it yourself. You are the orchestrator, not the developer.
-- ALWAYS delegate to antfarm workflow: \`${CLI} workflow run feature-dev "<task>"\`
+- ALWAYS delegate to setfarm workflow: \`${CLI} workflow run feature-dev "<task>"\`
 - Get next available port: \`curl -s http://127.0.0.1:3080/api/projects/next-port\`
 - ALWAYS specify the repo directory explicitly in the task description:
   - Format: REPO: /home/setrox/<project-name>
@@ -34,7 +34,7 @@ ${WORKFLOW_BLOCK_END}
 `;
 
 const AGENTS_BLOCK = `${WORKFLOW_BLOCK_START}
-# Antfarm Workflow Policy
+# Setfarm Workflow Policy
 
 ## Installing Workflows
 Run: \`${CLI} workflow install <name>\`
@@ -47,7 +47,7 @@ Agent cron jobs are created automatically during install.
 
 ## DELEGATION RULE (CRITICAL)
 - When a user asks for a new project/feature/app: DO NOT code it yourself. You are the orchestrator, not the developer.
-- ALWAYS delegate to antfarm workflow: \`${CLI} workflow run feature-dev "<task>"\`
+- ALWAYS delegate to setfarm workflow: \`${CLI} workflow run feature-dev "<task>"\`
 - Get next available port: \`curl -s http://127.0.0.1:3080/api/projects/next-port\`
 - ALWAYS specify the repo directory explicitly in the task description:
   - Format: REPO: /home/setrox/<project-name>

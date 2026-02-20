@@ -3,7 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import { getDb } from "../db.js";
 
-const EVENTS_DIR = path.join(os.homedir(), ".openclaw", "antfarm");
+const EVENTS_DIR = path.join(os.homedir(), ".openclaw", "setfarm");
 const EVENTS_FILE = path.join(EVENTS_DIR, "events.jsonl");
 const MAX_EVENTS_SIZE = 10 * 1024 * 1024; // 10MB
 
@@ -13,7 +13,7 @@ export type EventType =
   | "story.started" | "story.done" | "story.verified" | "story.retry" | "story.failed"
   | "pipeline.advanced";
 
-export interface AntfarmEvent {
+export interface SetfarmEvent {
   ts: string;
   event: EventType;
   runId: string;
@@ -26,7 +26,7 @@ export interface AntfarmEvent {
   detail?: string;
 }
 
-export function emitEvent(evt: AntfarmEvent): void {
+export function emitEvent(evt: SetfarmEvent): void {
   try {
     fs.mkdirSync(EVENTS_DIR, { recursive: true });
     // Rotate if too large
@@ -61,7 +61,7 @@ function getNotifyUrl(runId: string): string | null {
   }
 }
 
-function fireWebhook(evt: AntfarmEvent): void {
+function fireWebhook(evt: SetfarmEvent): void {
   const raw = getNotifyUrl(evt.runId);
   if (!raw) return;
   try {
@@ -84,13 +84,13 @@ function fireWebhook(evt: AntfarmEvent): void {
 }
 
 // Read recent events (last N)
-export function getRecentEvents(limit = 50): AntfarmEvent[] {
+export function getRecentEvents(limit = 50): SetfarmEvent[] {
   try {
     const content = fs.readFileSync(EVENTS_FILE, "utf-8");
     const lines = content.trim().split("\n").filter(Boolean);
-    const events: AntfarmEvent[] = [];
+    const events: SetfarmEvent[] = [];
     for (const line of lines) {
-      try { events.push(JSON.parse(line) as AntfarmEvent); } catch {}
+      try { events.push(JSON.parse(line) as SetfarmEvent); } catch {}
     }
     return events.slice(-limit);
   } catch {
@@ -99,14 +99,14 @@ export function getRecentEvents(limit = 50): AntfarmEvent[] {
 }
 
 // Read events for a specific run (supports prefix match)
-export function getRunEvents(runId: string, limit = 200): AntfarmEvent[] {
+export function getRunEvents(runId: string, limit = 200): SetfarmEvent[] {
   try {
     const content = fs.readFileSync(EVENTS_FILE, "utf-8");
     const lines = content.trim().split("\n").filter(Boolean);
-    const events: AntfarmEvent[] = [];
+    const events: SetfarmEvent[] = [];
     for (const line of lines) {
       try {
-        const evt = JSON.parse(line) as AntfarmEvent;
+        const evt = JSON.parse(line) as SetfarmEvent;
         if (evt.runId === runId || evt.runId.startsWith(runId)) events.push(evt);
       } catch {}
     }

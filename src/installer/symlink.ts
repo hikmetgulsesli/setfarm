@@ -5,7 +5,7 @@ import { fileURLToPath } from "url";
 const BINARY_NAME = "setfarm";
 
 /**
- * Ensure `antfarm` is available on PATH by symlinking into ~/.local/bin.
+ * Ensure `setfarm` is available on PATH by symlinking into ~/.local/bin.
  * Safe to call repeatedly — skips if already correct, updates if stale.
  */
 export function ensureCliSymlink(): void {
@@ -36,7 +36,7 @@ export function ensureCliSymlink(): void {
       const stats = lstatSync(linkPath);
       if (!stats.isSymbolicLink()) {
         // Don't overwrite user-created files (e.g. bash wrappers for node resolution)
-        console.warn(`  ⚠ ${linkPath} exists and is not a symlink — skipping (remove it manually to let antfarm manage it)`);
+        console.warn(`  ⚠ ${linkPath} exists and is not a symlink — skipping (remove it manually to let setfarm manage it)`);
         return;
       }
       const current = readlinkSync(linkPath);
