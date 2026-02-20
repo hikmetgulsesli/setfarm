@@ -14,7 +14,7 @@ notifications:
 agent_mapping:
   triager: defne       # Iris analyzes bug reports
   investigator: defne  # Iris traces root cause
-  setup: atlas         # Atlas sets up environment
+  setup: kaan          # Flux sets up environment
   fixer: elif          # Cipher implements the fix
   verifier: sinan      # Sentinel verifies correctness
   pr: elif             # Cipher creates the PR
