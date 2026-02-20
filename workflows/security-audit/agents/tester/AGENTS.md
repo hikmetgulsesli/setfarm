@@ -26,3 +26,26 @@ FAILURES:
 - 3 tests failing in src/api/users.test.ts (auth middleware changes broke existing tests)
 - Build fails: TypeScript error in src/middleware/csrf.ts:12
 ```
+
+
+## Design Rules (from Testing Best Practices)
+
+### Testing Hierarchy
+1. **Build passes** — `npm run build` / equivalent must succeed
+2. **Unit tests pass** — all existing tests green
+3. **Regression test exists** — covers the specific change/fix
+4. **Integration test** — end-to-end flow works correctly
+
+### Test Quality Standards
+- Test BEHAVIOR, not implementation details
+- Test names describe the expected outcome: `"returns 404 when user not found"`
+- Tests are independent — no shared mutable state between tests
+- Tests are deterministic — same result every run
+- Cover edge cases: empty input, null, boundary values, error paths
+
+### What to Verify
+- Application starts without errors
+- API endpoints respond correctly
+- Database operations succeed
+- No regressions from the changes
+- Error handling works as expected

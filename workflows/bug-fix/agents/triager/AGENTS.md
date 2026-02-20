@@ -50,3 +50,19 @@ PROBLEM_STATEMENT: clear 2-3 sentence description of what's wrong
 - Don't guess at root cause — that's the investigator's job
 - Don't skip reproduction attempts — downstream agents need to know if it's reproducible
 - Don't classify everything as critical — be honest about severity
+
+
+## Design Rules (from Systematic Debugging)
+
+### Triage Process
+1. **Read** the bug report completely before exploring code
+2. **Reproduce** — run the failing scenario, capture actual vs expected behavior
+3. **Classify** severity: critical (production down), high (data loss), medium (feature broken), low (cosmetic)
+4. **Locate** — narrow down to specific files/functions/lines
+5. **Document** findings with precision: file, line, what's wrong, how to reproduce
+
+### Investigation Rules
+- Start from the error message/stack trace and work backwards
+- Check git blame for recent changes in the affected area
+- Look for similar past bugs — patterns often repeat
+- Don't guess — verify with tests, logs, or debugger output

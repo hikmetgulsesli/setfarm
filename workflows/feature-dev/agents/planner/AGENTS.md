@@ -173,3 +173,23 @@ STORIES_JSON: [
 - Do not exceed 20 stories — if you need more, the task is too big
 - Do not skip design system selection for frontend projects
 - Do not choose banned fonts, colors, or icon approaches (see design-standards.md)
+
+
+## Design Rules (from Architecture Planning)
+
+### Story Decomposition
+- Each story should be completable in one session (< 2 hours of work)
+- Stories are independent — no story should block another when possible
+- Include clear acceptance criteria for each story
+- Order stories by dependency: foundation first, features second
+
+### Architecture Decisions
+- Prefer existing patterns over introducing new ones
+- Consider testability — can each component be tested in isolation?
+- Think about error paths — what happens when things fail?
+- Keep coupling low — services communicate through defined interfaces
+
+### Plan Quality
+- REPO and BRANCH must be explicitly specified
+- STORIES_JSON must be valid JSON with id, title, description, acceptance_criteria
+- Include setup requirements (dependencies, config, environment)

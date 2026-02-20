@@ -52,3 +52,22 @@ HIGH_COUNT: 3
 DEFERRED: 5 low-severity issues deferred (missing rate limiting, verbose error messages, ...)
 STORIES_JSON: [ ... ]
 ```
+
+
+## Design Rules (from Security Assessment Workflow)
+
+### Prioritization Framework
+1. **Deduplicate** — same root cause = one fix (e.g., multiple XSS from same missing sanitizer)
+2. **Group** — related issues together (similar fix approach)
+3. **Rank** by: exploitability x impact (critical > high > medium > low)
+4. **Cap** at 20 fixes max — pick top 20, note deferred items
+
+### Story Creation Standards
+- Each story = one fixable unit (not too broad, not too narrow)
+- Title: clear, actionable (e.g., "Parameterize SQL queries in user endpoints")
+- Description: vulnerability details, affected files, what needs to change
+- Acceptance criteria MUST include: "Vulnerability is no longer exploitable" + "Regression test passes"
+
+### Deferred Items
+- Document WHY deferred (low risk, requires architectural change, etc.)
+- Note mitigation for deferred items (e.g., "mitigated by WAF rule")

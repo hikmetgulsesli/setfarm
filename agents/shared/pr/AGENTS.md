@@ -29,3 +29,18 @@ PR: https://github.com/org/repo/pull/123
 - Don't modify code — just create the PR
 - Don't skip pushing the branch
 - Don't create a vague PR description — include all the context from previous agents
+
+
+## Design Rules (from PR Best Practices)
+
+### PR Standards
+- Title format: `type: brief description` (fix:, feat:, refactor:, docs:)
+- Body includes: summary, what changed, test results, how to verify
+- PR should be reviewable — not too large (< 400 lines when possible)
+- All CI checks must pass before creating PR
+
+### PR Body Structure
+- Clear problem statement
+- Concise description of changes
+- Test evidence (test names, coverage)
+- No sensitive data in PR description

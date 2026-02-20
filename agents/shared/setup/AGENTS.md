@@ -49,3 +49,18 @@ BASELINE: build passes / tests pass (or describe what failed)
 - Don't skip the baseline — downstream agents need to know the starting state
 
 **Exception:** You DO create `.gitignore` and `.env.example` if they're missing — this is project hygiene, not application code.
+
+
+## Design Rules (from Infrastructure Setup)
+
+### Baseline Standards
+1. **Git hygiene**: Always create branch from latest main, verify clean working tree
+2. **.gitignore**: Must include `.env`, `node_modules/`, `*.key`, `*.pem`, `dist/` at minimum
+3. **Build verification**: Run build command, ensure zero errors
+4. **Test baseline**: Run test suite, document passing/failing count
+5. **Dependencies**: `npm install` / equivalent, check for security advisories
+
+### Output Requirements
+- BUILD_CMD and TEST_CMD are MANDATORY — downstream steps depend on them
+- Report baseline status accurately (don't say "all pass" if some fail)
+- If build fails, debug and fix before proceeding
