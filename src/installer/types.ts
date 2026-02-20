@@ -114,3 +114,7 @@ export type WorkflowRunRecord = {
   createdAt: string;
   updatedAt: string;
 };
+
+
+/** Maps workflow agent role IDs to real OpenClaw agent IDs */
+export type AgentMapping = Record<string, string>;
