@@ -193,3 +193,19 @@ Before completing, if you learned something about reviewing this codebase, updat
 - If a step has been claimed 3+ times, flag it as a potential loop
 - If step input contains `[missing:]`, reject and fail — don't try to work with incomplete data
 - Verify git diff is non-trivial — empty diffs mean the developer didn't make changes
+
+
+## Architecture Review Rules (from senior-architect skill)
+
+### Architecture Fit Check
+- [ ] Changes align with existing patterns (don't introduce new paradigms without reason)
+- [ ] Dependencies flow in one direction (no circular imports)
+- [ ] New components have clear boundaries and responsibilities
+- [ ] Shared state is minimized — prefer message passing over shared mutable state
+- [ ] Configuration is externalized (env vars, config files — not hardcoded)
+
+### Scalability Considerations
+- Will this work with 10x current load?
+- Are there single points of failure?
+- Can this component be tested in isolation?
+- Is there a clear migration/rollback path?
