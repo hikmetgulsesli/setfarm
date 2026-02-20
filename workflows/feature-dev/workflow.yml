@@ -14,11 +14,11 @@ description: |
 
 # Named agent mapping (maps workflow roles to OpenClaw agent IDs)
 agent_mapping:
-  planner: main      # Arya plans the work
-  setup: atlas        # Atlas sets up environment
-  developer: koda     # Koda implements stories
-  verifier: sinan     # Sentinel verifies PRs
-  tester: sinan       # Sentinel runs integration tests
+  planner: main                  # Arya plans the work
+  setup: atlas                   # Atlas sets up environment
+  developer: [koda, kaan, elif]  # 3 dev agents: Koda, Flux, Cipher
+  verifier: [sinan, defne]       # 2 review agents: Sentinel, Iris
+  tester: sinan                  # Sentinel runs integration tests
 
 cron:
   interval_ms: 120000  # 2 minutes

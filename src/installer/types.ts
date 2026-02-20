@@ -118,4 +118,4 @@ export type WorkflowRunRecord = {
 
 
 /** Maps workflow agent role IDs to real OpenClaw agent IDs */
-export type AgentMapping = Record<string, string>;
+export type AgentMapping = Record<string, string | string[]>;

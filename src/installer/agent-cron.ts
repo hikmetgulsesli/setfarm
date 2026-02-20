@@ -140,7 +140,8 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
     const anchorMs = i * 60_000; // stagger by 1 minute each
     const cronName = `setfarm/${workflow.id}/${agent.id}`;
     // Use mapped OpenClaw agent ID if available, otherwise fall back to workflow agent ID
-    const mappedAgentId = agentMapping[agent.id];
+    const rawMappedId = agentMapping[agent.id];
+    const mappedAgentId = Array.isArray(rawMappedId) ? rawMappedId[0] : rawMappedId;
     const cronAgentId = mappedAgentId ?? `${workflow.id}_${agent.id}`;
 
     // Two-phase: Phase 1 uses cheap polling model + minimal prompt
@@ -163,17 +164,25 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
       throw new Error(`Failed to create cron job for agent "${agent.id}": ${result.error}`);
     }
 
-    // Create parallel crons for developer and verifier (for concurrent project support)
+    // Create parallel crons for developer and verifier, distributed across agent array
     const PARALLEL_AGENTS = ["developer", "verifier"];
     const PARALLEL_COUNT = 5;
     if (PARALLEL_AGENTS.includes(agent.id)) {
+      // Get all mapped agents for this role (supports string or string[])
+      const rawMapping = agentMapping[agent.id];
+      const allAgents: string[] = Array.isArray(rawMapping)
+        ? rawMapping
+        : rawMapping ? [rawMapping] : [cronAgentId];
+
       for (let n = 2; n <= PARALLEL_COUNT; n++) {
+        // Round-robin distribute across available agents
+        const agentForCron = allAgents[(n - 1) % allAgents.length];
         const pName = `setfarm/${workflow.id}/${agent.id}-${n}`;
         await createAgentCronJob({
           name: pName,
           schedule: { kind: "every", everyMs, anchorMs: anchorMs + n * 15_000 },
           sessionTarget: "isolated",
-          agentId: cronAgentId,
+          agentId: agentForCron,
           payload: { kind: "agentTurn", message: prompt, timeoutSeconds },
           enabled: true,
         });
