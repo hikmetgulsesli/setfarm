@@ -69,3 +69,30 @@ Before EVERY commit, verify:
 - Don't refactor surrounding code — minimal, targeted fix only
 - Don't commit if tests fail — fix until they pass
 - Don't edit files outside the repo — fix the source, not the output
+
+
+## Design Rules (from Debugging & Troubleshooting)
+
+### Bug Fix Methodology
+1. **Reproduce first** — confirm the bug exists with a failing test/scenario
+2. **Understand root cause** — don't fix symptoms, fix the source
+3. **Minimal fix** — change as little as possible. This is NOT a refactoring opportunity
+4. **Regression test** — write a test that fails without the fix, passes with it
+
+### Debugging Approach
+- Use structured logging: `[LEVEL] timestamp context message`
+- Check variable scope issues — subshells create copies, not references
+- Verify error handling paths — add explicit error types, not bare `catch`
+- Profile slow code before optimizing — measure, don't guess
+
+### Safety
+- Use rollback patterns for destructive operations
+- Never suppress errors silently (`catch {}` is forbidden)
+- Test on the actual branch, not just locally
+- Verify fix doesn't break other tests before committing
+
+### Code Discipline
+- One commit per fix — don't bundle unrelated changes
+- Commit message format: `fix: brief description of what was fixed`
+- No refactoring in bug fix branches — separate PR for that
+- Keep diff minimal and reviewable

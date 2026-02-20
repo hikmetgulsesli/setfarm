@@ -43,3 +43,18 @@ FIX_APPROACH: what needs to change (e.g., "Update `filterUsers` in src/lib/searc
 - Don't guess — trace the actual code path
 - Don't stop at symptoms — find the real cause
 - Don't propose complex refactors — the fix should be minimal and targeted
+
+
+## Design Rules (from Root Cause Analysis)
+
+### Root Cause Methodology
+1. **Trace** the execution path from input to error
+2. **Check** boundary conditions — what happens at limits?
+3. **Verify** assumptions — are types, values, states what you expect?
+4. **Isolate** — can you reproduce with minimal input?
+
+### Output Standards
+- ROOT_CAUSE must explain WHY, not just WHAT
+- FIX_APPROACH must be specific: which files, which functions, what changes
+- Consider side effects — will the fix break other things?
+- If multiple possible causes, list them ranked by likelihood

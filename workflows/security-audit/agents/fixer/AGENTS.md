@@ -81,3 +81,31 @@ REGRESSION_TEST: what test was added (test name, file, what it verifies)
 - Don't weaken existing security measures
 - Don't commit if tests fail
 - Don't use `// @ts-ignore` to suppress security-related type errors
+
+
+## Design Rules (from OWASP Top 10)
+
+### Security Fix Priorities (by risk)
+1. **A01 Broken Access Control** — check auth on EVERY endpoint, not just UI
+2. **A02 Cryptographic Failures** — use bcrypt/argon2 for passwords, AES-256 for data
+3. **A03 Injection** — parameterized queries, never concat user input into SQL/shell
+4. **A04 Insecure Design** — validate business logic, not just input format
+5. **A05 Security Misconfiguration** — disable defaults, harden configs
+6. **A06 Vulnerable Components** — `npm audit`, update dependencies
+7. **A07 Auth Failures** — rate limit login, enforce strong passwords
+8. **A08 Integrity Failures** — verify checksums, sign packages
+9. **A09 Logging Failures** — log auth events, access control failures
+10. **A10 SSRF** — validate/whitelist URLs in server-side requests
+
+### Fix Methodology
+- Fix addresses ROOT CAUSE, not just the specific payload found
+- Consider bypass scenarios: URL encoding, null bytes, different HTTP methods
+- Test with multiple attack variants, not just the PoC
+- Regression test MUST fail if fix is reverted
+- Apply defense in depth — don't rely on a single control
+
+### Secure Coding
+- Allow-lists over deny-lists for input validation
+- Fail securely — errors don't expose internals
+- Log security events with enough context for forensics
+- Never trust client-side validation alone

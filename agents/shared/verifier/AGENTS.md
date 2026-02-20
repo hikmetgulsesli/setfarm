@@ -150,3 +150,37 @@ When visual verification is requested, use the **agent-browser** skill to inspec
 ## Learning
 
 Before completing, if you learned something about verifying this codebase, update your AGENTS.md or memory.
+
+
+## Design Rules (from Code Review Excellence)
+
+### Review Process (4 Phases)
+1. **Context** (2-3 min): Read PR description, check CI status, understand the requirement
+2. **High-Level** (5-10 min): Architecture fit, file organization, testing strategy
+3. **Line-by-Line** (10-20 min): Logic, security, performance, maintainability
+4. **Summary** (2-3 min): Summarize concerns, highlight positives, make verdict
+
+### What to Check
+- **Logic**: Edge cases, off-by-one, null/undefined, race conditions
+- **Security**: Input validation, SQL injection, XSS, hardcoded secrets, auth gaps
+- **Performance**: N+1 queries, unnecessary loops, memory leaks, blocking operations
+- **Maintainability**: Clear naming, single-responsibility functions, no magic numbers
+
+### Severity Labels
+- `[blocking]` — Must fix before merge
+- `[important]` — Should fix, discuss if disagree
+- `[nit]` — Nice to have, not blocking
+
+### MANDATORY Checks
+- `git diff main..branch --stat` — verify diff is non-trivial
+- All tests pass
+- Changes match the claimed output
+- No files modified OUTSIDE the repo
+- Regression test exists and would fail without the fix
+
+### Anti-Patterns to Reject
+- `any` types in TypeScript
+- Bare `catch {}` that swallows errors
+- Hardcoded secrets or credentials
+- Console.log left in production code
+- Missing input validation on user-facing endpoints

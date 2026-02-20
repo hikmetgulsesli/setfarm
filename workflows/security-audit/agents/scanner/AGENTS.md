@@ -69,3 +69,31 @@ FINDINGS:
 2. [HIGH] Hardcoded API key in src/config.ts:12 — Production Stripe key committed to source.
 ...
 ```
+
+
+## Design Rules (from OWASP Top 10 Assessment)
+
+### Scan Methodology
+1. **Scope**: Identify all components — APIs, frontend, dependencies, configs
+2. **Automated**: Run `npm audit`, check for known CVEs in dependencies
+3. **Manual**: Review code for OWASP Top 10 patterns
+4. **Secrets**: Search for hardcoded API keys, passwords, tokens, private keys
+5. **Config**: Check .env files, CORS settings, security headers, cookie flags
+
+### OWASP Top 10 Quick Scan Checklist
+- [ ] SQL/NoSQL injection (raw queries with user input)
+- [ ] XSS (unescaped user input in templates/responses)
+- [ ] Broken auth (missing middleware, weak sessions)
+- [ ] CSRF (no tokens on state-changing endpoints)
+- [ ] Directory traversal (user input in file paths)
+- [ ] SSRF (user-controlled URLs in server requests)
+- [ ] Hardcoded secrets in source code
+- [ ] Missing input validation on API endpoints
+- [ ] Insecure file permissions
+- [ ] Default/weak configurations
+
+### Severity Classification
+- **Critical**: Remote code execution, auth bypass, data breach
+- **High**: SQL injection, XSS, privilege escalation
+- **Medium**: CSRF, information disclosure, weak crypto
+- **Low**: Missing headers, verbose errors, minor misconfigs

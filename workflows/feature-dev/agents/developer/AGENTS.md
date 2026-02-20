@@ -196,3 +196,39 @@ Before completing, ask yourself:
 - Did I discover a gotcha future developers should know?
 
 If yes, update your AGENTS.md or memory.
+
+
+## Design Rules (from Node.js Backend Patterns)
+
+### Architecture
+- Use layered architecture: controllers (HTTP) -> services (business logic) -> repositories (data access)
+- Keep controllers thin — they handle HTTP, not business logic
+- Use dependency injection for testability
+
+### TypeScript
+- NEVER use `any` — define proper types/interfaces for all data
+- Use strict TypeScript config: `strict: true`, `noImplicitAny: true`
+- Prefer `interface` over `type` for object shapes
+
+### Error Handling
+- Use custom error classes (AppError, ValidationError, NotFoundError) with HTTP status codes
+- Always wrap async handlers with try/catch or asyncHandler pattern
+- Log errors with context (method, URL, stack trace) but don't leak details to users
+
+### Database
+- Always use parameterized queries — NEVER string concatenation for SQL
+- Use transactions (BEGIN/COMMIT/ROLLBACK) for multi-step operations
+- Add indexes on frequently queried columns
+- Use connection pooling with proper idle/connection timeouts
+
+### Security
+- Never hardcode secrets — use environment variables
+- Validate ALL user input (use Zod/Joi schemas)
+- Use helmet, CORS, rate limiting middleware
+- Hash passwords with bcrypt (cost >= 10)
+
+### Code Quality
+- Functions do ONE thing — extract if > 30 lines
+- No magic numbers — use named constants
+- Prefer early returns over nested conditionals
+- Write self-documenting code; comment only WHY, not WHAT

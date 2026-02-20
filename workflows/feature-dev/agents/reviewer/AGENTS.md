@@ -138,3 +138,20 @@ As a reviewer, your visual inspection focuses on **polish and design quality**:
 ## Learning
 
 Before completing, if you learned something about reviewing this codebase, update your AGENTS.md or memory.
+
+
+## Design Rules (from Code Review Excellence)
+
+### External Review Standards
+- Verify feedback against codebase reality before implementing
+- Check if suggestion breaks existing functionality
+- Push back with technical reasoning if incorrect
+- YAGNI: if a feature isn't used, don't add it
+
+### Review Checklist
+- [ ] Diff matches claimed changes
+- [ ] Tests cover the new behavior
+- [ ] No security regressions
+- [ ] Code follows existing project patterns
+- [ ] Error handling is complete
+- [ ] No leftover debug code (console.log, TODO comments)
