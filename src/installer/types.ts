@@ -83,6 +83,7 @@ export type WorkflowSpec = {
   notifications?: {
     url?: string;
   };
+  agent_mapping?: AgentMapping;
 };
 
 export type WorkflowInstallResult = {

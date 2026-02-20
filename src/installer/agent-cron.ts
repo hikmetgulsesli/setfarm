@@ -129,7 +129,7 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
 
   // Agent mapping: maps workflow role IDs to real OpenClaw agent IDs
   // e.g. { developer: "koda", verifier: "sinan", planner: "main" }
-  const agentMapping: AgentMapping = (workflow as any).agent_mapping ?? {};
+  const agentMapping: AgentMapping = workflow.agent_mapping ?? {};
 
   // Resolve polling model: per-agent > workflow-level > default
   const workflowPollingModel = workflow.polling?.model ?? DEFAULT_POLLING_MODEL;

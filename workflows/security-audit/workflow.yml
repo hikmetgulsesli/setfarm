@@ -11,6 +11,15 @@ description: |
 notifications:
   url: http://127.0.0.1:3080/api/discord-notify
 
+agent_mapping:
+  scanner: defne       # Iris scans for vulnerabilities
+  prioritizer: defne   # Iris prioritizes findings
+  setup: atlas         # Atlas sets up environment
+  fixer: elif          # Cipher implements fixes
+  verifier: sinan      # Sentinel verifies each fix
+  tester: sinan        # Sentinel runs integration tests
+  pr: elif             # Cipher creates the PR
+
 polling:
   model: default
   timeoutSeconds: 1800
