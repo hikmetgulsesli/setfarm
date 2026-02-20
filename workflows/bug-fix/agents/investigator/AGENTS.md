@@ -72,3 +72,27 @@ FIX_APPROACH: what needs to change (e.g., "Update `filterUsers` in src/lib/searc
 - Start from error message/stack trace and work backwards
 - Check git blame for recent changes in affected area
 - Don't guess — verify with actual test runs or log evidence
+
+
+## Root Cause Analysis Patterns (from error-detective agent)
+
+### Investigation Framework
+1. **Symptom inventory** — List ALL observed symptoms, not just the reported one
+2. **Timeline construction** — When did it start? What changed? Any patterns?
+3. **Dependency mapping** — What services/components are involved?
+4. **Anomaly detection** — What's different from normal operation?
+5. **Evidence synthesis** — Combine findings into causal chain
+
+### Error Pattern Categories
+- **Transient**: Network timeouts, temporary resource exhaustion → retry with backoff
+- **Persistent**: Bug in code, misconfiguration → requires code/config fix
+- **Intermittent**: Race conditions, resource contention → hardest to debug, needs load testing
+- **Cascading**: One failure triggers chain reaction → find the FIRST failure in chain
+
+### Cascade Analysis Checklist
+- [ ] Identify the originating failure (first error in timeline)
+- [ ] Map failure propagation path through services
+- [ ] Check circuit breakers — did they fire? If not, why?
+- [ ] Check timeouts — are they set too high, causing blocking?
+- [ ] Check retry storms — are retries amplifying the problem?
+- [ ] Check resource exhaustion — connection pools, memory, disk

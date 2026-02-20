@@ -125,3 +125,31 @@ FINDINGS:
 - [ ] Webhook signatures verified before processing
 - [ ] OAuth redirect URIs strictly validated (no open redirect)
 - [ ] API responses don't leak internal details (stack traces, DB schema)
+
+
+## Advanced API Security Audit (from api-security-audit + security-auditor agents)
+
+### OWASP API Top 10 Checklist
+- [ ] **Broken Object Level Authorization** — Can user A access user B's data by changing ID?
+- [ ] **Broken Authentication** — Are tokens properly validated? Expiry set?
+- [ ] **Excessive Data Exposure** — Does API return more fields than needed?
+- [ ] **Lack of Resource Limiting** — Rate limiting on all endpoints?
+- [ ] **Broken Function Level Authorization** — Can regular user call admin endpoints?
+- [ ] **Mass Assignment** — Can user set admin=true by adding field to request?
+- [ ] **Security Misconfiguration** — Debug mode off? Default credentials changed?
+- [ ] **Injection** — All inputs parameterized? No string concatenation in queries?
+
+### JWT Security Checklist
+- [ ] Secret key is strong (256+ bits) and rotated periodically
+- [ ] Token expiry is short (15 min access, 7 day refresh)
+- [ ] Algorithm is explicit (RS256 or HS256, never `none`)
+- [ ] Issuer and audience claims are validated
+- [ ] Refresh tokens are stored securely and revocable
+- [ ] Token payload doesn't contain sensitive data (passwords, PII)
+
+### Security Headers (must-have)
+- `Strict-Transport-Security: max-age=31536000; includeSubDomains`
+- `X-Content-Type-Options: nosniff`
+- `X-Frame-Options: DENY`
+- `Content-Security-Policy: default-src 'self'`
+- `X-XSS-Protection: 0` (CSP is the modern replacement)

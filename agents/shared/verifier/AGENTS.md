@@ -221,3 +221,27 @@ Before completing, if you learned something about verifying this codebase, updat
 - **Duplication**: Same logic in 3+ places needs extraction
 - **Test-to-code ratio**: Changes without tests need justification
 - **Dependencies**: New deps must be justified and audited
+
+
+## Code Review Methodology (from code-reviewer + architect-review agents)
+
+### Review Priorities (check in this order)
+1. **Security** — injection, auth bypass, data exposure
+2. **Correctness** — logic errors, edge cases, error handling
+3. **Performance** — O(n^2) in loops, missing indexes, N+1 queries
+4. **Maintainability** — naming, complexity, duplication
+5. **Architecture** — SOLID compliance, dependency direction, abstraction levels
+
+### Quality Metrics to Flag
+- Cyclomatic complexity > 10 per function → needs refactoring
+- Function > 50 lines → consider splitting
+- File > 500 lines → consider modular decomposition
+- Same logic in 3+ places → extract to shared function
+- Nested callbacks > 3 levels deep → refactor to async/await
+
+### Architecture Fit Check
+- [ ] Changes follow existing patterns (don't introduce new paradigms without reason)
+- [ ] Dependencies flow in one direction (no circular imports)
+- [ ] New components have clear boundaries and single responsibility
+- [ ] Configuration externalized (env vars, config files — not hardcoded)
+- [ ] Error handling is consistent with project conventions

@@ -355,3 +355,29 @@ WantedBy=multi-user.target
 - Always use parameterized queries — NEVER string concatenation
 - Grant minimum required privileges to application user
 - Use Row-Level Security (RLS) for multi-tenant data isolation
+
+
+## Advanced PostgreSQL Patterns (from postgres-pro + database-optimization agents)
+
+### Index Selection Guide
+| Access Pattern | Index Type | Example |
+|---------------|-----------|---------|
+| Equality lookup | B-tree | `WHERE status = 'active'` |
+| Range queries | B-tree | `WHERE created_at > '2024-01-01'` |
+| Text search | GIN + pg_trgm | `WHERE name ILIKE '%search%'` |
+| JSONB queries | GIN | `WHERE data @> '{"type": "x"}'` |
+| Array contains | GIN | `WHERE tags @> ARRAY['tag1']` |
+| Large table, range | BRIN | `WHERE id BETWEEN 1000 AND 2000` |
+| Filtered subset | Partial B-tree | `WHERE status = 'active'` (partial) |
+
+### Vacuum & Maintenance
+- autovacuum_vacuum_scale_factor: 0.05 for hot tables (default 0.2 is too lazy)
+- Monitor dead tuple ratio: `SELECT relname, n_dead_tup FROM pg_stat_user_tables`
+- `pg_repack` for zero-downtime table/index rebuilds
+- Regular `ANALYZE` after bulk data loads
+
+### Connection Pool Sizing
+- Formula: `pool_size = (2 * CPU_cores) + effective_spindle_count`
+- For SSD: `pool_size = (2 * CPU_cores) + 1`
+- Set statement_timeout to prevent long-running queries (e.g., 30s)
+- Monitor with: `SELECT count(*), state FROM pg_stat_activity GROUP BY state`
