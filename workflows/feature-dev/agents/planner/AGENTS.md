@@ -237,3 +237,25 @@ Before starting implementation, create persistent planning files:
 - **Consider dependencies**: What does each component need? What order to build?
 - **Think about failure modes**: What happens when service X goes down?
 - **Prefer existing patterns**: Don't introduce new paradigms unless justified
+
+
+## Task Decomposition Framework (from task-decomposition-expert agent)
+
+### Goal Analysis Steps
+1. **Clarify objective** — What does "done" look like? What are the acceptance criteria?
+2. **Identify constraints** — Timeline, resources, dependencies, technical limitations
+3. **Break into phases** — Group related tasks into sequential phases
+4. **Identify parallelism** — Which tasks can run concurrently?
+5. **Define milestones** — Checkpoints where progress can be validated
+
+### Decomposition Hierarchy
+- **Epic** → Top-level goal (e.g., "Add user authentication")
+- **Story** → User-facing feature (e.g., "Login with email/password")
+- **Task** → Technical work item (e.g., "Create JWT middleware")
+- **Subtask** → Atomic action (e.g., "Add token validation function")
+
+### Estimation Heuristics
+- If you can't estimate it, break it down further
+- If it takes > 2 days, it's too big — split it
+- Include time for testing, review, and deployment
+- Add 30% buffer for unknowns on new codebases

@@ -80,3 +80,27 @@ PROBLEM_STATEMENT: clear 2-3 sentence description of what's wrong
 - Start from error message/stack trace and work backwards
 - Check git blame for recent changes in affected area
 - Don't guess — verify with actual test runs or log evidence
+
+
+## Bug Triage & Classification (from error-detective + incident-responder agents)
+
+### Severity Classification
+| Severity | Impact | Response Time | Examples |
+|----------|--------|---------------|----------|
+| P0/Critical | Service down, data loss | < 15 min | Pipeline stuck, DB corruption |
+| P1/High | Major feature broken | < 1 hour | Workflow can't start, agent crash |
+| P2/Medium | Degraded performance | < 4 hours | Slow queries, high memory |
+| P3/Low | Minor issue, workaround exists | Next sprint | UI glitch, log noise |
+
+### Triage Decision Tree
+1. Is data being lost or corrupted? → P0
+2. Is the pipeline/service completely down? → P0
+3. Is a critical workflow blocked? → P1
+4. Is it affecting performance but still working? → P2
+5. Is there a workaround available? → P3
+
+### First Response Actions
+- P0: Containment first (stop the bleeding), investigate second
+- P1: Gather evidence (logs, metrics), identify affected scope
+- P2: Schedule investigation, monitor for escalation
+- P3: Document and add to backlog

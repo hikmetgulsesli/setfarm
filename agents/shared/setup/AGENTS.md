@@ -115,3 +115,48 @@ BASELINE: build passes / tests pass (or describe what failed)
 - Log structured JSON (not plain text)
 - Track: request latency, error rate, resource usage
 - Alert on symptoms (high error rate) not causes (CPU high)
+
+
+## Monitoring & Observability Rules (from monitoring-specialist agent)
+
+### Four Golden Signals (monitor ALL of these)
+1. **Latency** — Time to serve a request (track p50, p90, p99)
+2. **Traffic** — Requests per second, concurrent users
+3. **Errors** — Error rate as percentage of total requests
+4. **Saturation** — How full is each resource (CPU, memory, disk, connections)
+
+### Alert Design Principles
+- Alert on SYMPTOMS not causes (alert on "error rate > 5%", not "CPU > 90%")
+- Every alert must have a clear ACTION the responder can take
+- Avoid alert fatigue: group related alerts, suppress flapping
+- Use severity levels: page (P0-P1), ticket (P2), log (P3)
+
+### Monitoring Stack Integration
+- Prometheus scrape interval: 15s for services, 60s for infrastructure
+- Grafana dashboards: one per service, one overview
+- Log format: structured JSON with timestamp, level, service, message, trace_id
+- Uptime checks: HTTP health endpoints every 30s, alert after 2 failures
+
+
+## Deployment Strategy Rules (from deployment-engineer agent)
+
+### Deployment Safety Checklist
+- [ ] Health check endpoint responds before routing traffic
+- [ ] Rollback plan: previous version instantly deployable
+- [ ] Database migrations are backward-compatible (additive only)
+- [ ] Feature flags for risky changes (can disable without redeploy)
+- [ ] Smoke tests run automatically after deployment
+
+### DORA Metrics Targets
+- Deployment Frequency: daily or more
+- Lead Time for Changes: < 1 hour from commit to production
+- Mean Time to Recovery (MTTR): < 30 minutes
+- Change Failure Rate: < 5%
+
+### Zero-Downtime Deployment Pattern
+1. Deploy new version alongside old (blue-green or rolling)
+2. Run health checks on new version
+3. Gradually shift traffic to new version
+4. Monitor error rates during transition
+5. Rollback immediately if error rate spikes
+6. Remove old version after bake period
