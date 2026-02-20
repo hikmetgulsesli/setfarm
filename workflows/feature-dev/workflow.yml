@@ -3,7 +3,7 @@
 # session with clean context. Memory persists via git history and progress files.
 id: feature-dev
 name: Feature Development Workflow
-version: 7.1
+version: 7.3
 description: |
   Per-story PR pipeline. Each user story gets its own branch and pull request.
   Developer: creates story branch → implements → tests → pushes → creates PR.
@@ -210,7 +210,7 @@ steps:
       FAILURE WARNING: If your reply does not contain "BUILD_CMD:" and "TEST_CMD:" on their own lines, the implement step crashes. These are NOT optional.
       ============================================================
     expects: "STATUS: done"
-    max_retries: 2
+    max_retries: 4
     on_fail:
       escalate_to: human
 
@@ -296,13 +296,23 @@ steps:
 
       5. Implement this story only, following ALL design and backend standards
       6. Write tests for this story's functionality
-      7. Run the FULL BUILD — this is MANDATORY, not optional:
+      7. Run the FULL BUILD — this is MANDATORY:
          {{build_cmd}}
-         CRITICAL: If the build FAILS, you MUST fix ALL errors before proceeding.
-         Do NOT commit or push code that fails to build. Fix the errors first.
-         Common issues: wrong imports, missing exports, type cast errors.
-      8. Run tests to confirm they pass: {{test_cmd}}
-         If tests fail, fix the issues before committing.
+         If the build FAILS:
+         a) Read the error output — identify every error
+         b) Fix ALL errors: wrong imports, missing exports, type cast issues, syntax errors
+         c) Run {{build_cmd}} again
+         d) Repeat until build passes with ZERO errors
+         You MUST NOT proceed to step 8 until the build succeeds.
+
+      8. Run tests: {{test_cmd}}
+         If tests FAIL:
+         a) Read the test output — identify failing tests
+         b) Fix the code or tests
+         c) Run {{build_cmd}} again (to make sure fixes didn't break the build)
+         d) Run {{test_cmd}} again
+         e) Repeat until both build AND tests pass
+
       9. Commit all changes (ONLY after build AND tests pass):
          git add -A
          git commit -m "feat: {{current_story_id}} - {{current_story_title}}"
@@ -310,8 +320,15 @@ steps:
       10. Push the story branch:
           git push -u origin "$STORY_BRANCH"
 
-      11. FINAL BUILD CHECK before creating PR:
-          {{build_cmd}} && echo "BUILD OK" || { echo "BUILD FAILED — fix before PR"; exit 1; }
+      11. FINAL BUILD VERIFICATION before creating PR:
+          Run: {{build_cmd}}
+          If the build FAILS at this point:
+          a) Read the error output carefully
+          b) Fix EVERY error (wrong imports, missing exports, type mismatches)
+          c) Run {{build_cmd}} again
+          d) Repeat until the build passes — do NOT create a PR with a broken build
+          e) Commit the fixes: git add -A && git commit -m "fix: resolve build errors for {{current_story_id}}"
+          f) Push: git push origin "$STORY_BRANCH"
 
       12. Create a Pull Request to the FEATURE BRANCH (not main):
           PR_URL=$(gh pr create \
@@ -348,7 +365,7 @@ steps:
       STORY_BRANCH must be the exact branch name (e.g. us-001). PR must be a full URL (e.g. https://github.com/hikmetgulsesli/repo/pull/1).
       ============================================================
     expects: "STATUS: done"
-    max_retries: 2
+    max_retries: 5
     on_fail:
       escalate_to: human
 
@@ -400,10 +417,13 @@ steps:
          gh pr diff {{pr}}
       4. Check that code exists (not just TODOs or placeholders)
       5. Verify each acceptance criterion for the story
-      6. Run the FULL BUILD first — this is the primary quality gate:
+      6. Run the FULL BUILD — this is the primary quality gate:
          {{build_cmd}}
-         CRITICAL: If the build fails, immediately REJECT the PR. Do NOT proceed.
-         Build failures mean type errors, missing imports, or broken code.
+         If the build FAILS:
+         - REJECT the PR immediately with STATUS: retry
+         - Include the EXACT build error output in your ISSUES list
+         - The developer will receive your feedback and fix the errors
+         - Do NOT proceed to test or quality checks if build fails.
       7. Run tests: {{test_cmd}}
 
       STEP 2 — Quality Checks:
@@ -461,7 +481,7 @@ steps:
     expects: "STATUS: done"
     on_fail:
       retry_step: implement
-      max_retries: 2
+      max_retries: 5
       on_exhausted:
         escalate_to: human
 
@@ -538,7 +558,16 @@ steps:
            echo "Closed orphan PR #$pr_num"
          done
 
-      If tests fail, follow debugging protocol. Fix issues, commit, push to feature branch.
+      If build or tests FAIL:
+      1. Read the error output carefully — identify every error
+      2. Fix ALL errors in the code (wrong imports, type errors, missing files, test failures)
+      3. Run {{build_cmd}} again to verify the fix
+      4. Run {{test_cmd}} again to verify tests pass
+      5. Repeat until BOTH build and tests pass
+      6. Commit fixes: git add -A && git commit -m "fix: resolve integration issues on {{branch}}"
+      7. Push: git push origin {{branch}}
+      Do NOT reply with STATUS: retry until you have tried to fix the issues yourself.
+      Only reply STATUS: retry if you truly cannot fix the problem after multiple attempts.
 
       === END WORKFLOW ===
 
@@ -554,6 +583,6 @@ steps:
     expects: "STATUS: done"
     on_fail:
       retry_step: implement
-      max_retries: 2
+      max_retries: 5
       on_exhausted:
         escalate_to: human
