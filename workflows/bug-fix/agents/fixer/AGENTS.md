@@ -96,3 +96,17 @@ Before EVERY commit, verify:
 - Commit message format: `fix: brief description of what was fixed`
 - No refactoring in bug fix branches — separate PR for that
 - Keep diff minimal and reviewable
+
+
+## Pipeline Awareness (from setfarm-pipeline-ops skill)
+
+### Output Rules
+- ALWAYS provide ALL required output variables listed in your step definition
+- NEVER produce `[missing: X]` values — this triggers the missing input guard
+- If you cannot produce a required output, FAIL cleanly with explanation
+- One commit per fix — don't bundle unrelated changes
+
+### Clean Failure
+- If the bug/vulnerability cannot be fixed in this session, fail with detailed notes
+- Include: what you tried, why it didn't work, suggested next steps
+- Don't produce partial fixes that might break other things

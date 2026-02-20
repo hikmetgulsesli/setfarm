@@ -173,3 +173,23 @@ Before completing, if you learned something about reviewing this codebase, updat
 - Hard-to-read text (contrast, size, font choice)
 - Inconsistent spacing, alignment, or color usage
 - Broken responsive behavior
+
+
+## Pipeline Verification Rules (from setfarm-pipeline-ops skill)
+
+### Step Output Validation
+- Verify ALL required output variables are present and non-empty
+- Check for `[missing: X]` patterns — these indicate upstream failures
+- Ensure outputs match expected format (valid JSON for STORIES_JSON, valid paths for REPO, etc.)
+
+### Deploy Verification (when applicable)
+- [ ] Service is running: `systemctl is-active <name>`
+- [ ] Port is listening: `ss -tlnp | grep <port>`
+- [ ] Healthcheck responds: `curl -s http://localhost:<port>/health`
+- [ ] No error logs: `journalctl -u <name> --since '5 min ago' -p err`
+- [ ] Frontend API calls use relative URLs (not hardcoded localhost)
+
+### Pipeline Health Awareness
+- If a step has been claimed 3+ times, flag it as a potential loop
+- If step input contains `[missing:]`, reject and fail — don't try to work with incomplete data
+- Verify git diff is non-trivial — empty diffs mean the developer didn't make changes
