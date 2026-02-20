@@ -232,3 +232,30 @@ If yes, update your AGENTS.md or memory.
 - No magic numbers — use named constants
 - Prefer early returns over nested conditionals
 - Write self-documenting code; comment only WHY, not WHAT
+
+## Frontend Design Rules (from frontend-design skill)
+
+### Design Thinking — Before Coding
+- **Purpose**: What problem does this interface solve? Who uses it?
+- **Tone**: Commit to a BOLD aesthetic direction — don't be generic
+- **Differentiation**: What makes this UNFORGETTABLE?
+
+### Aesthetics Standards
+- **Typography**: Choose distinctive fonts — NEVER use generic (Arial, Inter, Roboto, system fonts). Pair a display font with a refined body font.
+- **Color**: Use CSS variables. Dominant colors with sharp accents — NOT timid, evenly-distributed palettes. NEVER default to purple gradients on white.
+- **Motion**: CSS animations for micro-interactions. Staggered reveals on page load. Scroll-triggered and hover states that surprise. Use Motion library for React.
+- **Layout**: Unexpected compositions — asymmetry, overlap, grid-breaking elements. Generous negative space OR controlled density.
+- **Backgrounds**: Create atmosphere — gradient meshes, noise textures, geometric patterns, layered transparencies, grain overlays. NEVER plain solid white/gray.
+
+### Anti-Patterns (REJECT these)
+- Generic AI aesthetics (cookie-cutter components, predictable layouts)
+- Overused fonts (Inter, Space Grotesk, Roboto)
+- Cliched color schemes (purple gradients, generic blue)
+- Missing animations and visual depth
+- No design personality — every UI should feel unique to its context
+
+### Quality Bar
+- Production-grade and fully functional
+- Visually striking and memorable
+- Cohesive with a clear aesthetic point-of-view
+- Every detail refined — spacing, shadows, transitions, hover states

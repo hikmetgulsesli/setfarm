@@ -155,3 +155,21 @@ Before completing, if you learned something about reviewing this codebase, updat
 - [ ] Code follows existing project patterns
 - [ ] Error handling is complete
 - [ ] No leftover debug code (console.log, TODO comments)
+
+## Frontend Visual Review Rules (from frontend-design skill)
+
+### Visual Quality Checklist
+- [ ] Typography is distinctive — not generic system/Inter/Roboto fonts
+- [ ] Color palette is cohesive with CSS variables — not random colors
+- [ ] Animations exist for key interactions (page load, hover, transitions)
+- [ ] Layout has visual interest — not a boring grid of cards
+- [ ] Backgrounds create atmosphere — not plain white/gray
+- [ ] Responsive design works on mobile and desktop
+- [ ] No "AI slop" aesthetics — the design feels intentional and unique
+
+### What to REJECT
+- Generic, cookie-cutter UI with no design personality
+- Missing hover states, transitions, or loading states
+- Hard-to-read text (contrast, size, font choice)
+- Inconsistent spacing, alignment, or color usage
+- Broken responsive behavior
