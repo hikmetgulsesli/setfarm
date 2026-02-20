@@ -1,5 +1,5 @@
 import { createAgentCronJob, deleteAgentCronJobs, deleteCronJob, listCronJobs, checkCronToolAvailable } from "./gateway-api.js";
-import type { WorkflowSpec } from "./types.js";
+import type { WorkflowSpec, AgentMapping } from "./types.js";
 import { resolveAntfarmCli } from "./paths.js";
 import { getDb } from "../db.js";
 
@@ -127,6 +127,10 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
   // Allow per-workflow cron interval via cron.interval_ms in workflow.yml
   const everyMs = (workflow as any).cron?.interval_ms ?? DEFAULT_EVERY_MS;
 
+  // Agent mapping: maps workflow role IDs to real OpenClaw agent IDs
+  // e.g. { developer: "koda", verifier: "sinan", planner: "main" }
+  const agentMapping: AgentMapping = (workflow as any).agent_mapping ?? {};
+
   // Resolve polling model: per-agent > workflow-level > default
   const workflowPollingModel = workflow.polling?.model ?? DEFAULT_POLLING_MODEL;
   const workflowPollingTimeout = workflow.polling?.timeoutSeconds ?? DEFAULT_POLLING_TIMEOUT_SECONDS;
@@ -135,7 +139,9 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
     const agent = agents[i];
     const anchorMs = i * 60_000; // stagger by 1 minute each
     const cronName = `antfarm/${workflow.id}/${agent.id}`;
-    const agentId = `${workflow.id}_${agent.id}`;
+    // Use mapped OpenClaw agent ID if available, otherwise fall back to workflow agent ID
+    const mappedAgentId = agentMapping[agent.id];
+    const cronAgentId = mappedAgentId ?? `${workflow.id}_${agent.id}`;
 
     // Two-phase: Phase 1 uses cheap polling model + minimal prompt
     const pollingModel = agent.pollingModel ?? workflowPollingModel;
@@ -147,7 +153,7 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
       name: cronName,
       schedule: { kind: "every", everyMs, anchorMs },
       sessionTarget: "isolated",
-      agentId,
+      agentId: cronAgentId,
       payload: { kind: "agentTurn", message: prompt, model: pollingModel, timeoutSeconds },
       delivery: { mode: "none" },
       enabled: true,
@@ -167,7 +173,7 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
           name: pName,
           schedule: { kind: "every", everyMs, anchorMs: anchorMs + n * 15_000 },
           sessionTarget: "isolated",
-          agentId,
+          agentId: cronAgentId,
           payload: { kind: "agentTurn", message: prompt, timeoutSeconds },
           enabled: true,
         });
