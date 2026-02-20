@@ -6,7 +6,7 @@ import { startDashboard } from "./dashboard.js";
 
 const port = parseInt(process.argv[2], 10) || 3333;
 
-const pidDir = path.join(os.homedir(), ".openclaw", "antfarm");
+const pidDir = path.join(os.homedir(), ".openclaw", "setfarm");
 const pidFile = path.join(pidDir, "dashboard.pid");
 
 fs.mkdirSync(pidDir, { recursive: true });

@@ -3,10 +3,10 @@ import path from "node:path";
 import os from "node:os";
 
 /**
- * Get the path to the antfarm skills directory (bundled with antfarm).
+ * Get the path to the setfarm skills directory (bundled with setfarm).
  */
-function getAntfarmSkillsDir(): string {
-  // Skills are in the antfarm package under skills/
+function getSetfarmSkillsDir(): string {
+  // Skills are in the setfarm package under skills/
   return path.join(import.meta.dirname, "..", "..", "skills");
 }
 
@@ -18,11 +18,11 @@ function getUserSkillsDir(): string {
 }
 
 /**
- * Install the antfarm-workflows skill to the user's skills directory.
+ * Install the setfarm-workflows skill to the user's skills directory.
  */
-export async function installAntfarmSkill(): Promise<{ installed: boolean; path: string }> {
-  const srcDir = path.join(getAntfarmSkillsDir(), "antfarm-workflows");
-  const destDir = path.join(getUserSkillsDir(), "antfarm-workflows");
+export async function installSetfarmSkill(): Promise<{ installed: boolean; path: string }> {
+  const srcDir = path.join(getSetfarmSkillsDir(), "setfarm-workflows");
+  const destDir = path.join(getUserSkillsDir(), "setfarm-workflows");
   
   // Ensure user skills directory exists
   await fs.mkdir(getUserSkillsDir(), { recursive: true });
@@ -47,10 +47,10 @@ export async function installAntfarmSkill(): Promise<{ installed: boolean; path:
 }
 
 /**
- * Uninstall the antfarm-workflows skill from the user's skills directory.
+ * Uninstall the setfarm-workflows skill from the user's skills directory.
  */
-export async function uninstallAntfarmSkill(): Promise<void> {
-  const destDir = path.join(getUserSkillsDir(), "antfarm-workflows");
+export async function uninstallSetfarmSkill(): Promise<void> {
+  const destDir = path.join(getUserSkillsDir(), "setfarm-workflows");
   
   try {
     await fs.rm(destDir, { recursive: true, force: true });

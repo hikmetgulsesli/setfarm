@@ -7,11 +7,11 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export function getPidFile(): string {
-  return path.join(os.homedir(), ".openclaw", "antfarm", "dashboard.pid");
+  return path.join(os.homedir(), ".openclaw", "setfarm", "dashboard.pid");
 }
 
 export function getLogFile(): string {
-  return path.join(os.homedir(), ".openclaw", "antfarm", "dashboard.log");
+  return path.join(os.homedir(), ".openclaw", "setfarm", "dashboard.log");
 }
 
 export function isRunning(): { running: true; pid: number } | { running: false } {

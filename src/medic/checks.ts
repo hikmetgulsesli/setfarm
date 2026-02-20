@@ -8,6 +8,7 @@ export type MedicSeverity = "info" | "warning" | "critical";
 export type MedicActionType =
   | "reset_step"
   | "fail_run"
+  | "resume_run"
   | "teardown_crons"
   | "none";
 
@@ -169,10 +170,10 @@ export function checkOrphanedCrons(
   const db = getDb();
   const findings: MedicFinding[] = [];
 
-  // Extract unique workflow IDs from antfarm cron job names
+  // Extract unique workflow IDs from setfarm cron job names
   const workflowIds = new Set<string>();
   for (const job of cronJobs) {
-    const match = job.name.match(/^antfarm\/([^/]+)\//);
+    const match = job.name.match(/^setfarm\/([^/]+)\//);
     if (match) workflowIds.add(match[1]);
   }
 
@@ -182,7 +183,7 @@ export function checkOrphanedCrons(
     ).get(wfId) as { cnt: number };
 
     if (active.cnt === 0) {
-      const jobCount = cronJobs.filter(j => j.name.startsWith(`antfarm/${wfId}/`)).length;
+      const jobCount = cronJobs.filter(j => j.name.startsWith(`setfarm/${wfId}/`)).length;
       findings.push({
         check: "orphaned_crons",
         severity: "warning",
@@ -246,11 +247,68 @@ export function checkClaimedButStuck(): MedicFinding[] {
   return findings;
 }
 
+// ── Check: Failed Runs (Auto-Resume Candidate) ─────────────────────
+
+const RESUME_MAX_ATTEMPTS = 3;
+const RESUME_COOLDOWN_MS = 10 * 60 * 1000; // 10 min cooldown between resumes
+
+/**
+ * Find runs that failed due to step retries exhausted but still have
+ * pending stories. These are candidates for auto-resume.
+ * Respects a max resume count (stored in run meta) and cooldown period.
+ */
+export function checkFailedRunsForResume(): MedicFinding[] {
+  const db = getDb();
+  const findings: MedicFinding[] = [];
+
+  const failedRuns = db.prepare(`
+    SELECT r.id, r.workflow_id, r.task, r.updated_at, r.meta
+    FROM runs r
+    WHERE r.status = 'failed'
+      AND EXISTS (
+        SELECT 1 FROM stories st
+        WHERE st.run_id = r.id
+        AND st.status IN ('pending', 'running')
+      )
+  `).all() as Array<{
+    id: string; workflow_id: string; task: string;
+    updated_at: string; meta: string | null;
+  }>;
+
+  for (const run of failedRuns) {
+    const meta = run.meta ? JSON.parse(run.meta) : {};
+    const resumeCount: number = meta.medic_resume_count ?? 0;
+    const lastResume = meta.medic_last_resume ? new Date(meta.medic_last_resume).getTime() : 0;
+    const cooldownOk = (Date.now() - lastResume) > RESUME_COOLDOWN_MS;
+    const updatedAge = Date.now() - new Date(run.updated_at).getTime();
+
+    if (resumeCount >= RESUME_MAX_ATTEMPTS) continue;
+    if (!cooldownOk) continue;
+    if (updatedAge < 2 * 60 * 1000) continue; // wait 2 min for dust to settle
+
+    const pendingStories = db.prepare(
+      "SELECT COUNT(*) as cnt FROM stories WHERE run_id = ? AND status IN ('pending', 'running')"
+    ).get(run.id) as { cnt: number };
+
+    findings.push({
+      check: "failed_run_resumable",
+      severity: "warning",
+      message: `Run ${run.id.slice(0, 8)} (${run.workflow_id}) failed with ${pendingStories.cnt} stories remaining — auto-resume ${resumeCount + 1}/${RESUME_MAX_ATTEMPTS}`,
+      action: "resume_run",
+      runId: run.id,
+      remediated: false,
+    });
+  }
+
+  return findings;
+}
+
 export function runSyncChecks(): MedicFinding[] {
   return [
     ...checkClaimedButStuck(),
     ...checkStuckSteps(),
     ...checkStalledRuns(),
     ...checkDeadRuns(),
+    ...checkFailedRunsForResume(),
   ];
 }

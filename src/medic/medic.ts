@@ -1,5 +1,5 @@
 /**
- * Medic — the antfarm health watchdog.
+ * Medic — the setfarm health watchdog.
  *
  * Runs periodic health checks on workflow runs, detects stuck/stalled/dead state,
  * and takes corrective action where safe. Logs all findings to the medic_checks table.
@@ -123,6 +123,85 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
       }
     }
 
+    case "resume_run": {
+      if (!finding.runId) return false;
+      const run = db.prepare(
+        "SELECT id, workflow_id, status, meta FROM runs WHERE id = ? AND status = 'failed'"
+      ).get(finding.runId) as { id: string; workflow_id: string; status: string; meta: string | null } | undefined;
+      if (!run) return false;
+
+      // Find the failed step
+      const failedStep = db.prepare(
+        "SELECT id, step_id, type, current_story_id FROM steps WHERE run_id = ? AND status = 'failed' ORDER BY step_index ASC LIMIT 1"
+      ).get(run.id) as { id: string; step_id: string; type: string; current_story_id: string | null } | undefined;
+      if (!failedStep) return false;
+
+      // Check if it's a loop step with verify_each pattern
+      const loopStep = db.prepare(
+        "SELECT id, loop_config FROM steps WHERE run_id = ? AND type = 'loop' AND status IN ('running', 'failed') LIMIT 1"
+      ).get(run.id) as { id: string; loop_config: string | null } | undefined;
+
+      if (loopStep?.loop_config) {
+        const lc = JSON.parse(loopStep.loop_config);
+        if (lc.verifyEach && lc.verifyStep === failedStep.step_id) {
+          db.prepare(
+            "UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = 0, updated_at = datetime('now') WHERE id = ?"
+          ).run(loopStep.id);
+          db.prepare(
+            "UPDATE steps SET status = 'waiting', current_story_id = NULL, retry_count = 0, updated_at = datetime('now') WHERE id = ?"
+          ).run(failedStep.id);
+          db.prepare(
+            "UPDATE stories SET status = 'pending', updated_at = datetime('now') WHERE run_id = ? AND status = 'failed'"
+          ).run(run.id);
+        }
+      } else {
+        // Simple step reset
+        if (failedStep.type === "loop") {
+          const failedStory = db.prepare(
+            "SELECT id FROM stories WHERE run_id = ? AND status = 'failed' ORDER BY story_index ASC LIMIT 1"
+          ).get(run.id) as { id: string } | undefined;
+          if (failedStory) {
+            db.prepare(
+              "UPDATE stories SET status = 'pending', updated_at = datetime('now') WHERE id = ?"
+            ).run(failedStory.id);
+          }
+          db.prepare(
+            "UPDATE steps SET retry_count = 0 WHERE run_id = ? AND type = 'loop'"
+          ).run(run.id);
+        }
+        db.prepare(
+          "UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = 0, updated_at = datetime('now') WHERE id = ?"
+        ).run(failedStep.id);
+      }
+
+      // Set run back to running
+      db.prepare(
+        "UPDATE runs SET status = 'running', updated_at = datetime('now') WHERE id = ?"
+      ).run(run.id);
+
+      // Update medic resume metadata
+      const meta = run.meta ? JSON.parse(run.meta) : {};
+      meta.medic_resume_count = (meta.medic_resume_count ?? 0) + 1;
+      meta.medic_last_resume = new Date().toISOString();
+      db.prepare("UPDATE runs SET meta = ? WHERE id = ?").run(JSON.stringify(meta), run.id);
+
+      // Restore crons
+      try {
+        const workflowDir = resolveWorkflowDir(run.workflow_id);
+        const workflow = await loadWorkflowSpec(workflowDir);
+        await ensureWorkflowCrons(workflow);
+      } catch {}
+
+      emitEvent({
+        ts: new Date().toISOString(),
+        event: "run.resumed" as EventType,
+        runId: run.id,
+        workflowId: run.workflow_id,
+        detail: `Medic: auto-resumed (attempt ${meta.medic_resume_count}/3)`,
+      });
+      return true;
+    }
+
     case "none":
     default:
       return false;
@@ -180,8 +259,8 @@ export async function runMedicCheck(): Promise<MedicCheckResult> {
   try {
     const cronResult = await listCronJobs();
     if (cronResult.ok && cronResult.jobs) {
-      const antfarmCrons = cronResult.jobs.filter(j => j.name.startsWith("antfarm/"));
-      findings.push(...checkOrphanedCrons(antfarmCrons));
+      const setfarmCrons = cronResult.jobs.filter(j => j.name.startsWith("setfarm/"));
+      findings.push(...checkOrphanedCrons(setfarmCrons));
     }
   } catch {
     // Can't check crons — skip this check
