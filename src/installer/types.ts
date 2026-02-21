@@ -45,6 +45,7 @@ export type LoopConfig = {
   freshSession?: boolean;
   verifyEach?: boolean;
   verifyStep?: string;
+  parallelCount?: number;
 };
 
 export type WorkflowStep = {
@@ -66,7 +67,7 @@ export type Story = {
   title: string;
   description: string;
   acceptanceCriteria: string[];
-  status: "pending" | "running" | "done" | "failed";
+  status: "pending" | "running" | "done" | "failed" | "skipped" | "verified";
   output?: string;
   retryCount: number;
   maxRetries: number;

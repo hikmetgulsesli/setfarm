@@ -1,37 +1,32 @@
-# Per-story PR workflow — each story gets its own branch, PR, review, and merge.
-# Ralph loop (https://github.com/snarktank/ralph) — each agent runs in a fresh
-# session with clean context. Memory persists via git history and progress files.
+# PR-based workflow — each story creates a PR, verifier reviews + merges.
+# v9.0: PRD-based decomposition, lint enforcement, PR workflow, skip-on-fail.
 id: feature-dev
 name: Feature Development Workflow
-version: 7.4
+version: 9.0
 description: |
-  Per-story PR pipeline. Each user story gets its own branch and pull request.
-  Developer: creates story branch → implements → tests → pushes → creates PR.
-  Verifier: reviews PR → checks quality → merges to feature branch.
-  After all stories: integration test on merged feature branch + final PR to main.
-  v7.1: Hardened output format enforcement to prevent missing variable errors.
+  Full-quality pipeline. Developer creates PR per story, verifier reads
+  external review comments (Gemini/Copilot), fixes issues, merges via squash.
+  Failed stories are skipped — other stories continue.
 
-
-# Named agent mapping (maps workflow roles to OpenClaw agent IDs)
 agent_mapping:
-  planner: main                  # Arya plans the work
-  setup: atlas                   # Atlas sets up environment
-  developer: [koda, kaan, elif]  # 3 dev agents: Koda, Flux, Cipher
-  verifier: [sinan, defne]       # 2 review agents: Sentinel, Iris
-  tester: sinan                  # Sentinel runs integration tests
+  planner: main
+  setup: atlas
+  developer: [koda, kaan, elif]
+  verifier: [sinan, defne]
+  tester: sinan
 
 cron:
   interval_ms: 240000  # 4 minutes
 
 polling:
-  model: kimi-coding/k2p5
+  model: zai/glm-4.7
   timeoutSeconds: 1800
 
 agents:
   - id: planner
     name: Planner
     role: analysis
-    description: Decomposes tasks into ordered user stories.
+    description: Decomposes tasks into ordered user stories based on PRD functional modules.
     workspace:
       baseDir: agents/planner
       files:
@@ -42,7 +37,7 @@ agents:
   - id: setup
     name: Setup
     role: coding
-    description: Prepares environment, creates feature branch, establishes baseline.
+    description: Prepares environment, creates feature branch, establishes baseline with lint.
     workspace:
       baseDir: agents/setup
       files:
@@ -53,7 +48,7 @@ agents:
   - id: developer
     name: Developer
     role: coding
-    description: Implements features per story with individual PRs.
+    description: Implements features per story, creates PR for each.
     workspace:
       baseDir: agents/developer
       files:
@@ -64,11 +59,9 @@ agents:
   - id: verifier
     name: Verifier
     role: verification
-    description: Reviews per-story PRs, approves and merges to feature branch.
+    description: Reads PR review comments, fixes issues, merges PR.
     workspace:
       baseDir: agents/verifier
-      skills:
-        - agent-browser
       files:
         AGENTS.md: ../../agents/shared/verifier/AGENTS.md
         SOUL.md: ../../agents/shared/verifier/SOUL.md
@@ -77,7 +70,7 @@ agents:
   - id: tester
     name: Tester
     role: testing
-    description: Integration testing and final PR after all stories are merged.
+    description: Integration testing and final PR to main.
     workspace:
       baseDir: agents/tester
       files:
@@ -98,13 +91,50 @@ steps:
       1. Explore the codebase to understand the stack, conventions, and patterns
       2. Read references/design-standards.md for available palettes and font pairs
       3. Read references/brainstorming-protocol.md for architectural decision-making
-      4. Break the task into small, focused user stories (as many as needed)
+      4. Break the task into FUNCTIONAL MODULE based stories (see rules below)
       5. Order by dependency: design tokens first, then schema/DB, backend, frontend, integration
       6. Each story must fit in one developer session (one context window)
       7. Every acceptance criterion must be mechanically verifiable
       8. Always include "Typecheck passes" as the last criterion in every story
       9. Every story MUST include test criteria — "Tests for [feature] pass"
       10. The developer is expected to write tests as part of each story
+
+      STORY CREATION RULES:
+
+      1. FUNCTIONAL MODULE BASED DECOMPOSITION:
+         - PRD section count != story count
+         - Each story = one functional module (model + API + UI + tests)
+         - If a PRD section has multiple independent modules → separate stories
+         - If multiple small PRD sections describe the same module → single story
+
+      2. STORY SIZE RULE:
+         - Each story should be completable in 15-25 minutes
+         - Estimated 200-500 lines of code
+         - If a module needs 500+ lines → split (backend + frontend)
+
+      3. TARGET STORY COUNT BY PRD SIZE:
+         - Small PRD (< 100 lines, 6-8 sections): 4-6 stories
+         - Medium PRD (100-400 lines, 6-8 sections): 5-8 stories
+         - Large PRD (400+ lines, 10+ sections): 10-15 stories
+
+      4. STORY CONTENT MUST BE RICH:
+         - What the functional module does (full description)
+         - DB tables/models (if applicable)
+         - API endpoints (if applicable)
+         - UI components (if applicable)
+         - Test requirements (MANDATORY for every story)
+
+      5. ORDERING (by dependency):
+         - 1st: Project setup + design tokens + DB schema
+         - 2nd: Auth + user management
+         - 3rd: Core backend modules (independent ones can run in parallel)
+         - 4th: Frontend modules
+         - 5th: Integrations + dashboard
+
+      6. NEVER:
+         - Create micro-stories ("Create user model" separate, "Create user API" separate → WRONG)
+         - Make stories for non-code sections (metrics, risks, timeline)
+         - Create stories that take longer than 30 minutes
 
       DESIGN SYSTEM — Select a cohesive design direction for the project:
       - Read references/design-standards.md for available palettes and font pairs
@@ -120,14 +150,6 @@ steps:
       ============================================================
       MANDATORY OUTPUT FORMAT — PIPELINE WILL BREAK IF YOU SKIP ANY KEY
       ============================================================
-      Your ENTIRE reply must follow this EXACT format. Every key is REQUIRED.
-      Extract REPO and BRANCH from the TASK above. If REPO is in the task, copy it exactly.
-      BRANCH rules:
-      - If BRANCH is "main" or not specified: generate a unique kebab-case branch name
-        based on the task (e.g. "content-studio", "settings-trends", "publish-system")
-      - NEVER use "main" as BRANCH — always create a dedicated feature branch
-      - Keep it short (2-4 words, kebab-case)
-
       STATUS: done
       REPO: <exact repo path, e.g. /home/setrox/myproject>
       BRANCH: <branch name, e.g. feature-name>
@@ -141,19 +163,13 @@ steps:
       [
         {
           "id": "US-001",
-          "title": "Short title of first story",
-          "description": "What this story implements",
-          "acceptanceCriteria": ["Criterion 1 passes", "Criterion 2 passes", "Typecheck passes"]
-        },
-        {
-          "id": "US-002",
-          "title": "Short title of second story",
-          "description": "What this story implements",
-          "acceptanceCriteria": ["Criterion 1 passes", "Tests for feature pass", "Typecheck passes"]
+          "title": "Short title",
+          "description": "What this story implements — full functional module description including DB tables, API endpoints, UI components",
+          "acceptanceCriteria": ["Criterion 1", "Tests pass", "Typecheck passes"]
         }
       ]
 
-      FAILURE WARNING: If your reply does not contain "REPO:", "BRANCH:", and "STORIES_JSON:" on their own lines, the ENTIRE pipeline crashes. These are NOT optional. STORIES_JSON must be valid JSON array with objects containing id, title, description, acceptanceCriteria fields.
+      BRANCH rules: NEVER use "main". Generate a unique kebab-case name (2-4 words).
       ============================================================
     expects: "STATUS: done"
     max_retries: 2
@@ -164,54 +180,55 @@ steps:
     agent: setup
     input: |
       ############################################################
-      CRITICAL EXECUTION RULES — VIOLATION BREAKS THE PIPELINE
-      ############################################################
-      - You MUST do ALL work directly in this session. Do NOT spawn sub-agents.
-      - Do NOT delegate to background processes. Do NOT use nohup or &.
-      - Do NOT create parallel tasks. Work sequentially in THIS session.
-      - Complete ALL steps (code, test, commit, push, PR) before replying.
-      - If a task is too complex, simplify your implementation — do NOT delegate.
+      CRITICAL: Do ALL work in THIS session. No sub-agents, no background processes.
       ############################################################
 
       Prepare the development environment for this feature.
 
-      TASK:
-      {{task}}
-
+      TASK: {{task}}
       REPO: {{repo}}
       BRANCH: {{branch}}
 
       Instructions:
-      1. If the repo directory does not exist: mkdir -p {{repo}} && cd {{repo}} && git init
-         If it exists: cd into the repo
-      2. CRITICAL - Ensure GitHub remote exists:
-         - Run: git remote -v
-         - If NO remote named 'origin' exists, create the GitHub repo:
-           PROJECT_NAME=$(basename {{repo}})
-           gh repo create hikmetgulsesli/$PROJECT_NAME --public --source . --remote origin --push 2>/dev/null || true
-         - If remote exists but repo doesn't exist on GitHub:
-           gh repo create hikmetgulsesli/$PROJECT_NAME --public --source . --remote origin --push 2>/dev/null || true
-         - Verify: git remote -v (must show origin)
-      3. Create the feature branch (git checkout -b {{branch}})
-      4. Read package.json, CI config, test config to understand the build/test setup
-      5. Run the build to establish a baseline
-      6. Run the tests to establish a baseline
-      7. Create a references/ symlink in the repo root:
-         ln -sfn /home/setrox/.openclaw/antfarm-repo/references references
-      8. Push the feature branch to remote:
-         git push -u origin {{branch}}
-      9. Report what you found
+      1. If repo doesn't exist: mkdir -p {{repo}} && cd {{repo}} && git init
+      2. Ensure GitHub remote exists:
+         git remote -v || PROJECT_NAME=$(basename {{repo}}) && gh repo create hikmetgulsesli/$PROJECT_NAME --public --source . --remote origin --push 2>/dev/null || true
+      3. Create feature branch: git checkout -b {{branch}}
+      4. Read package.json, test config to understand build/test setup
+      5. Run build + tests to establish baseline
+      6. Create references symlink: ln -sfn /home/setrox/.openclaw/setfarm-repo/references references
+      7. Push: git push -u origin {{branch}}
+
+      EXISTING CODE CHECK (resume safety):
+      - If the project directory already exists:
+        a. Run `git status` to check if working tree is clean
+        b. Run existing build+test commands to verify baseline
+        c. Fix any issues before proceeding
+        d. Set EXISTING_CODE: true in output
+
+      LINT SETUP (MANDATORY):
+      - Check if package.json has a "lint" script
+      - If NO lint script exists, set one up:
+        a. For React/Next.js: npm install -D eslint @eslint/js typescript-eslint
+        b. Add "lint": "eslint \"**/*.{ts,tsx}\"" to package.json scripts
+        c. Create a basic eslint.config.js if none exists
+      - Run the lint command to verify it works
+      - Run: npx eslint --fix "client/src/**/*.{ts,tsx}" (or equivalent) to auto-fix
+      - If ERRORS remain after --fix, manually fix them (empty catch blocks, useless assignments etc.)
+      - Warnings are acceptable. ERRORS are NOT — fix all errors before reporting done.
+      - Run lint again to confirm 0 errors before completing
+      - Lint MUST be working with 0 errors before STATUS: done
 
       ============================================================
-      MANDATORY OUTPUT FORMAT — PIPELINE WILL BREAK IF YOU SKIP ANY KEY
+      MANDATORY OUTPUT FORMAT
       ============================================================
       STATUS: done
-      BUILD_CMD: <the exact build command, e.g. pnpm run build>
-      TEST_CMD: <the exact test command, e.g. pnpm test>
-      CI_NOTES: <brief CI notes>
-      BASELINE: <baseline status>
-
-      FAILURE WARNING: If your reply does not contain "BUILD_CMD:" and "TEST_CMD:" on their own lines, the implement step crashes. These are NOT optional.
+      BUILD_CMD: <e.g. pnpm run build>
+      TEST_CMD: <e.g. pnpm test>
+      LINT_CMD: <e.g. pnpm run lint>
+      CI_NOTES: <brief>
+      BASELINE: <status>
+      EXISTING_CODE: <true/false>
       ============================================================
     expects: "STATUS: done"
     max_retries: 4
@@ -229,146 +246,100 @@ steps:
       verify_step: verify
     input: |
       ############################################################
-      CRITICAL EXECUTION RULES — VIOLATION BREAKS THE PIPELINE
-      ############################################################
-      - You MUST do ALL work directly in this session. Do NOT spawn sub-agents.
-      - Do NOT delegate to background processes. Do NOT use nohup or &.
-      - Do NOT create parallel tasks. Work sequentially in THIS session.
-      - Complete ALL steps (code, test, commit, push, PR) before replying.
-      - If a task is too complex, simplify your implementation — do NOT delegate.
+      CRITICAL: Do ALL work in THIS session. No sub-agents, no background processes.
       ############################################################
 
-      Implement the following user story. You are working on ONE story in a fresh session.
-      Each story gets its own branch and pull request.
+      Implement ONE user story. Create a PR for review.
 
-      TASK (overall):
-      {{task}}
-
+      TASK: {{task}}
       REPO: {{repo}}
       WORKDIR: {{story_workdir}}
       BRANCH: {{branch}}
       BUILD_CMD: {{build_cmd}}
       TEST_CMD: {{test_cmd}}
+      LINT_CMD: {{lint_cmd}}
 
-      IMPORTANT: Work in the WORKDIR directory (git worktree), NOT in REPO directly.
-      cd into WORKDIR before doing any work. The branch is already checked out there.
-      node_modules is symlinked from REPO — no need to npm install.
+      Work in WORKDIR (git worktree). The branch is already checked out.
+      node_modules is symlinked from REPO.
 
-      CURRENT STORY:
-      {{current_story}}
-
-      COMPLETED STORIES:
-      {{completed_stories}}
-
+      CURRENT STORY: {{current_story}}
+      COMPLETED STORIES: {{completed_stories}}
       STORIES REMAINING: {{stories_remaining}}
+      VERIFY FEEDBACK (if retrying): {{verify_feedback}}
+      PROGRESS LOG: {{progress}}
 
-      VERIFY FEEDBACK (if retrying):
-      {{verify_feedback}}
+      BEFORE writing code:
+      1. Read the FULL story description and ALL acceptance criteria before coding
+      2. Read references/design-standards.md + references/backend-standards.md
+      3. NEVER use: emoji icons, Inter/Roboto/Arial, purple gradients, transition:all
+      4. ALWAYS use: cursor-pointer on clickables, hover/focus states, parameterized queries
 
-      PROGRESS LOG:
-      {{progress}}
-      - You MUST do ALL work directly in this session. Do NOT spawn sub-agents.
-      - Do NOT delegate to background processes. Do NOT use nohup or &.
-      - Do NOT create parallel tasks. Work on ONE story sequentially.
-      - Complete ALL steps (code, test, commit, push, PR) in THIS session.
-      - If a task is too complex, simplify your implementation — do NOT delegate.
-      ############################################################
+      === WORKFLOW ===
 
-      BEFORE writing any code:
-      1. Read references/design-standards.md — follow ALL rules
-      2. Read references/backend-standards.md — follow ALL rules
-      3. Read references/web-guidelines.md — check accessibility + performance
-      4. NEVER use: emoji icons, Inter/Roboto/Arial fonts, purple gradients, transition:all
-      5. ALWAYS use: SVG icons from chosen library, project font pair, project color palette
-      6. ALWAYS use: cursor-pointer on clickable elements, hover states, focus-visible rings
-      7. ALWAYS use: parameterized queries, typed errors, proper HTTP status codes
+      1. Read progress-{{run_id}}.txt to understand what previous stories implemented
 
-      Instructions:
-      1. Read progress-{{run_id}}.txt — especially the Codebase Patterns section
-      2. cd into {{repo}}
+      2. cd into WORKDIR
 
-      === PER-STORY BRANCH + PR WORKFLOW ===
-
-      3. Make sure the feature branch is up to date:
-         git checkout {{branch}}
-         git pull origin {{branch}}
-
-      4. Create a NEW branch for this story from the feature branch:
+      3. Create story branch from feature branch:
+         cd {{repo}} && git checkout {{branch}} && git pull origin {{branch}}
          RUN_SHORT=$(echo "{{run_id}}" | cut -c1-8)
          STORY_BRANCH="${RUN_SHORT}-{{current_story_id}}"
          git checkout -b "$STORY_BRANCH"
-         IMPORTANT: The STORY_BRANCH includes the run prefix to prevent collisions
-         between parallel runs. You MUST include the full STORY_BRANCH name in your reply.
 
-      5. Implement this story only, following ALL design and backend standards
-      6. Write tests for this story's functionality
-      7. Run the FULL BUILD — this is MANDATORY:
-         {{build_cmd}}
-         If the build FAILS:
-         a) Read the error output — identify every error
-         b) Fix ALL errors: wrong imports, missing exports, type cast issues, syntax errors
-         c) Run {{build_cmd}} again
-         d) Repeat until build passes with ZERO errors
-         You MUST NOT proceed to step 8 until the build succeeds.
+      4. Implement the story fully:
+         - Write tests for EVERY acceptance criterion
+         - Implement the functional module completely
+         - No TODOs, no placeholders, no shortcuts
 
-      8. Run tests: {{test_cmd}}
-         If tests FAIL:
-         a) Read the test output — identify failing tests
-         b) Fix the code or tests
-         c) Run {{build_cmd}} again (to make sure fixes didn't break the build)
-         d) Run {{test_cmd}} again
-         e) Repeat until both build AND tests pass
+      5. Lint: {{lint_cmd}}
+         Fix ALL lint errors until lint passes clean.
 
-      9. Commit all changes (ONLY after build AND tests pass):
-         git add -A
-         git commit -m "feat: {{current_story_id}} - {{current_story_title}}"
+      6. Build: {{build_cmd}}
+         Fix ALL build/type errors until build passes.
 
-      10. Push the story branch:
-          git push -u origin "$STORY_BRANCH"
+      7. Test: {{test_cmd}}
+         Fix ALL failing tests until tests pass.
 
-      11. FINAL BUILD VERIFICATION before creating PR:
-          Run: {{build_cmd}}
-          If the build FAILS at this point:
-          a) Read the error output carefully
-          b) Fix EVERY error (wrong imports, missing exports, type mismatches)
-          c) Run {{build_cmd}} again
-          d) Repeat until the build passes — do NOT create a PR with a broken build
-          e) Commit the fixes: git add -A && git commit -m "fix: resolve build errors for {{current_story_id}}"
-          f) Push: git push origin "$STORY_BRANCH"
+      8. Commit:
+         git add -A && git commit -m "feat: {{current_story_id}} - {{current_story_title}}"
 
-      12. Create a Pull Request to the FEATURE BRANCH (not main):
-          PR_URL=$(gh pr create \
-            --base {{branch}} \
-            --head "$STORY_BRANCH" \
+      9. Push:
+         git push -u origin "$STORY_BRANCH"
+
+      10. Create PR:
+          PR_URL=$(gh pr create --base {{branch}} --head "$STORY_BRANCH" \
             --title "feat: {{current_story_id}} - {{current_story_title}}" \
-            --body "## Story
-          {{current_story_id}}: {{current_story_title}}
+            --body "$(cat <<'PRBODY'
+          ## Story
+          {{current_story}}
 
           ## Changes
-          <describe changes>
+          <describe what you implemented>
 
           ## Tests
-          <describe tests written>")
-          echo "Created PR: $PR_URL"
+          <describe what tests you wrote>
+          PRBODY
+          )")
+          echo "PR created: $PR_URL"
 
-      13. Append to progress-{{run_id}}.txt
-      14. Update Codebase Patterns if you found reusable patterns
-
-      === END WORKFLOW ===
+      11. Write detailed progress to progress-{{run_id}}.txt:
+          === {{current_story_id}}: {{current_story_title}} ===
+          COMPLETED: $(date -Iseconds)
+          FILES CHANGED: <list of files>
+          KEY DECISIONS: <architectural decisions made>
+          DEPENDENCIES ADDED: <if any>
 
       ============================================================
-      MANDATORY OUTPUT FORMAT — PIPELINE WILL BREAK IF YOU SKIP ANY KEY
+      MANDATORY OUTPUT FORMAT
       ============================================================
-      The FIRST 4 lines of your reply MUST be exactly:
-
       STATUS: done
-      STORY_BRANCH: {{current_story_id}}
-      PR: <the full GitHub PR URL that gh pr create printed>
+      STORY_BRANCH: <exact branch name, e.g. a1b2c3d4-US-001>
+      PR_URL: <full PR URL from gh pr create>
       CHANGES: <what you implemented>
       TESTS: <what tests you wrote>
 
-      FAILURE WARNING: If your reply does not contain "STORY_BRANCH:" and "PR:" on their own lines, the verify step crashes and the ENTIRE pipeline stops. These are NOT optional.
-      STORY_BRANCH must be the exact branch name (e.g. us-001). PR must be a full URL (e.g. https://github.com/hikmetgulsesli/repo/pull/1).
+      STORY_BRANCH must be the exact branch name you created and pushed.
+      PR_URL must be the URL returned by gh pr create.
       ============================================================
     expects: "STATUS: done"
     max_retries: 5
@@ -379,111 +350,102 @@ steps:
     agent: verifier
     input: |
       ############################################################
-      CRITICAL EXECUTION RULES — VIOLATION BREAKS THE PIPELINE
-      ############################################################
-      - You MUST do ALL work directly in this session. Do NOT spawn sub-agents.
-      - Do NOT delegate to background processes. Do NOT use nohup or &.
-      - Do NOT create parallel tasks. Work sequentially in THIS session.
-      - Complete ALL steps (code, test, commit, push, PR) before replying.
-      - If a task is too complex, simplify your implementation — do NOT delegate.
+      CRITICAL: Do ALL work in THIS session. No sub-agents, no background processes.
       ############################################################
 
-      Review and merge the developer's pull request for this story.
+      Verify the developer's story implementation by reading PR review comments,
+      fixing issues, then merging the PR.
 
-      TASK (overall):
-      {{task}}
-
+      TASK: {{task}}
       REPO: {{repo}}
       BRANCH: {{branch}}
       STORY_BRANCH: {{story_branch}}
-      PR: {{pr}}
+      PR_URL: {{pr_url}}
       CHANGES: {{changes}}
       BUILD_CMD: {{build_cmd}}
       TEST_CMD: {{test_cmd}}
+      LINT_CMD: {{lint_cmd}}
+      CURRENT STORY: {{current_story}}
+      PROGRESS LOG: {{progress}}
 
-      CURRENT STORY:
-      {{current_story}}
+      === VERIFY + FIX + MERGE WORKFLOW ===
 
-      PROGRESS LOG:
-      {{progress}}
+      STEP 0 — Wait for external review:
+      Wait 5 minutes to give Gemini/Copilot time to review the PR.
+      sleep 300
 
-      === PR REVIEW + MERGE WORKFLOW ===
-      - You MUST do ALL work directly in this session. Do NOT spawn sub-agents.
-      - Do NOT delegate to background processes. Do NOT use nohup or &.
-      - Do NOT create parallel tasks. Work sequentially.
-      - Complete ALL steps in THIS session.
-      - If a task is too complex, simplify — do NOT delegate.
-      ############################################################
-
-      STEP 1 — Review the PR:
+      STEP 1 — Checkout and read PR reviews:
       1. cd into {{repo}}
-      2. Checkout the story branch and pull latest:
-         git checkout {{story_branch}} && git pull
-      3. View the PR diff:
-         gh pr diff {{pr}}
-      4. Check that code exists (not just TODOs or placeholders)
-      5. Verify each acceptance criterion for the story
-      6. Run the FULL BUILD — this is the primary quality gate:
-         {{build_cmd}}
-         If the build FAILS:
-         - REJECT the PR immediately with STATUS: retry
-         - Include the EXACT build error output in your ISSUES list
-         - The developer will receive your feedback and fix the errors
-         - Do NOT proceed to test or quality checks if build fails.
-      7. Run tests: {{test_cmd}}
+      2. git fetch origin
+      3. git checkout {{story_branch}} && git pull origin {{story_branch}}
+      4. Get PR number and read review comments:
+         PR_NUM=$(gh pr view "{{pr_url}}" --json number --jq '.number' 2>/dev/null || echo "")
+         REVIEWS=$(gh pr view "{{pr_url}}" --json reviews --jq '.reviews[].body' 2>/dev/null || echo "")
+         COMMENTS=$(gh pr view "{{pr_url}}" --json comments --jq '.comments[].body' 2>/dev/null || echo "")
+         if [ -n "$PR_NUM" ]; then
+           REPO_SLUG=$(gh pr view "{{pr_url}}" --json url --jq '.url' | sed 's|https://github.com/||;s|/pull/.*||')
+           REVIEW_COMMENTS=$(gh api "repos/$REPO_SLUG/pulls/$PR_NUM/comments" --jq '.[].body' 2>/dev/null || echo "")
+         fi
+      5. If external reviews exist → read them and proceed to STEP 2
+         If NO reviews exist → skip to STEP 3 (do your own quality review instead)
+         Do NOT retry waiting for reviews — you already waited 5 minutes. Proceed with your own judgment.
 
-      STEP 2 — Quality Checks:
+      STEP 2 — Fix review issues (only if external reviews exist):
+      1. Read ALL review suggestions and comments carefully
+      2. If reviews mention issues or suggestions → fix ALL of them
+      3. Run lint: {{lint_cmd}} → fix any lint errors
+      4. Run build: {{build_cmd}} → fix any build errors
+      5. Run test: {{test_cmd}} → fix any test failures
+      6. If fixes were needed:
+         git add -A && git commit -m "fix: address review comments for {{current_story_id}}"
+         git push
 
-      Code Quality:
-      - Tests were written for this story's functionality
-      - No obvious incomplete work
-      - No empty catch blocks or swallowed errors
+      STEP 3 — Quality check (always do this, whether or not external reviews exist):
+      1. Review the code changes yourself:
+         - Code exists (not just TODOs/placeholders)
+         - Tests were written for this story
+         - No hardcoded secrets, .env not committed
+         - If frontend: no emoji icons, no Inter/Roboto fonts
+      2. Run lint: {{lint_cmd}} → fix any lint errors
+      3. Run build: {{build_cmd}} → fix any build errors
+      4. Run test: {{test_cmd}} → fix any test failures
+      5. If you found issues and fixed them:
+         git add -A && git commit -m "fix: quality improvements for {{current_story_id}}"
+         git push
 
-      Security:
-      - .gitignore exists, .env not committed
-      - No hardcoded secrets
-      - Parameterized queries only (no SQL concatenation)
+      STEP 4 — Merge PR:
+      1. gh pr comment "{{pr_url}}" --body "Verified: lint/build/test pass. Code quality checked."
+      2. gh pr merge "{{pr_url}}" --squash --delete-branch
+      3. Reply STATUS: done
 
-      Design Quality (if frontend changes):
-      - No emoji icons
-      - No Inter/Roboto/Arial fonts
-      - Cursor-pointer on clickables
-      - Hover/focus states present
-      - Responsive breakpoints exist
-      - Read references/design-checklist.md and check all CRITICAL items
-      - Use agent-browser to visually verify if needed
+      If build/test FAILS and you cannot fix:
+      Reply STATUS: retry with issues list.
 
-      STEP 3 — Decision:
+      ESCALATION MODE (retry count >= 3):
+      If this story has been retried 3+ times, DO NOT send back to developer.
+      Instead:
+      1. Read ALL previous error output and verify feedback
+      2. Fix the code YOURSELF — you have full access to the repo
+      3. Run lint+build+test
+      4. If you fix it → commit, push, merge PR → STATUS: done
+      5. If you truly cannot fix it → STATUS: skip (story will be skipped, others continue)
 
-      If APPROVED:
-      1. Approve the PR on GitHub:
-         gh pr review {{pr}} --approve --body "Verified: all acceptance criteria met, tests pass, quality checks pass."
-      2. Squash-merge the PR to the feature branch:
-         gh pr merge {{pr}} --squash --delete-branch
-      3. Close any duplicate/stale open PRs targeting the same base branch:
-         STALE_PRS=$(gh pr list --base {{branch}} --state open --json number,headRefName -q '.[] | select(.headRefName != "{{story_branch}}") | .number')
-         for stale_pr in $STALE_PRS; do
-           gh pr close "$stale_pr" --delete-branch 2>/dev/null || true
-           echo "Closed stale PR #$stale_pr"
-         done
-      4. Reply with STATUS: done
-
-      If REJECTED:
-      1. Request changes on the PR:
-         gh pr review {{pr}} --request-changes --body "Issues found: <list>"
-      2. Reply with STATUS: retry and list issues
-
-      === END WORKFLOW ===
-
-      Reply with:
+      ============================================================
+      MANDATORY OUTPUT FORMAT
+      ============================================================
       STATUS: done
-      VERIFIED: What you confirmed
+      VERIFIED: <what you confirmed>
       MERGED: true
 
       Or if issues found:
       STATUS: retry
       ISSUES:
-      - What's missing or incomplete
+      - <what's wrong>
+
+      Or if escalation and unfixable:
+      STATUS: skip
+      REASON: <why this story cannot be completed>
+      ============================================================
     expects: "STATUS: done"
     on_fail:
       retry_step: implement
@@ -495,100 +457,55 @@ steps:
     agent: tester
     input: |
       ############################################################
-      CRITICAL EXECUTION RULES — VIOLATION BREAKS THE PIPELINE
-      ############################################################
-      - You MUST do ALL work directly in this session. Do NOT spawn sub-agents.
-      - Do NOT delegate to background processes. Do NOT use nohup or &.
-      - Do NOT create parallel tasks. Work sequentially in THIS session.
-      - Complete ALL steps (code, test, commit, push, PR) before replying.
-      - If a task is too complex, simplify your implementation — do NOT delegate.
+      CRITICAL: Do ALL work in THIS session. No sub-agents, no background processes.
       ############################################################
 
-      Integration testing on the merged feature branch, then create final PR to main.
+      Integration testing on merged feature branch, then create final PR to main.
 
-      TASK:
-      {{task}}
-
+      TASK: {{task}}
       REPO: {{repo}}
       BRANCH: {{branch}}
       BUILD_CMD: {{build_cmd}}
       TEST_CMD: {{test_cmd}}
+      LINT_CMD: {{lint_cmd}}
+      PROGRESS LOG: {{progress}}
 
-      PROGRESS LOG:
-      {{progress}}
+      === INTEGRATION TEST + PR WORKFLOW ===
 
-      All individual story PRs have been merged to the feature branch ({{branch}}).
-      Now verify everything works together.
-
-      BEFORE testing, read:
-      1. references/web-guidelines.md — accessibility and performance standards
-      2. references/debugging-protocol.md — systematic debugging if tests fail
-
-      === INTEGRATION TEST WORKFLOW ===
-
-      STEP 1 — Checkout and verify:
+      STEP 1 — Verify:
       1. cd into {{repo}}
       2. git checkout {{branch}} && git pull origin {{branch}}
-      3. Run the full build: {{build_cmd}}
-      4. Run the full test suite: {{test_cmd}}
+      3. Lint: {{lint_cmd}}
+      4. Build: {{build_cmd}}
+      5. Tests: {{test_cmd}}
 
-      STEP 2 — Integration testing:
-      1. Look for integration issues between stories
-      2. If UI feature, use agent-browser to test end-to-end
-      3. Check cross-cutting concerns: error handling, edge cases
-      4. Verify the overall feature works as a cohesive whole
-      5. If frontend: check accessibility (semantic HTML, keyboard nav, aria)
-      6. If frontend: check performance (lazy loading, font preload, image dimensions)
+      STEP 2 — Integration checks:
+      1. Check cross-story integration issues
+      2. Verify overall feature works as cohesive whole
+      3. Fix any issues found, commit and push
 
-      STEP 3 — Create final PR to main AND auto-merge:
-      1. If all tests pass, create a PR from feature branch to main:
-         FINAL_PR=$(gh pr create \
-           --base main \
-           --head {{branch}} \
-           --title "feat: complete {{branch}} feature" \
-           --body "## Summary
-      Feature branch {{branch}} with all stories implemented and tested.
-
-      ## Test Results
-      <test summary>")
+      STEP 3 — Create final PR to main AND merge:
+      1. Create PR:
+         FINAL_PR=$(gh pr create --base main --head {{branch}} --title "feat: complete {{branch}} feature" --body "Feature branch {{branch}} — all stories implemented and tested.")
          echo "Created final PR: $FINAL_PR"
-
-      2. Auto-merge the final PR (squash merge, delete feature branch):
-         gh pr merge "$FINAL_PR" --squash --delete-branch
-         echo "Merged and cleaned up feature branch."
-
-      3. Close any remaining open PRs targeting the feature branch:
+      2. Merge: gh pr merge "$FINAL_PR" --squash --delete-branch
+      3. Close orphan PRs:
          OPEN_PRS=$(gh pr list --base {{branch}} --state open --json number -q '.[].number')
-         for pr_num in $OPEN_PRS; do
-           gh pr close "$pr_num" --delete-branch 2>/dev/null || true
-           echo "Closed orphan PR #$pr_num"
-         done
+         for pr_num in $OPEN_PRS; do gh pr close "$pr_num" --delete-branch 2>/dev/null || true; done
 
-      If build or tests FAIL:
-      1. Read the error output carefully — identify every error
-      2. Fix ALL errors in the code (wrong imports, type errors, missing files, test failures)
-      3. Run {{build_cmd}} again to verify the fix
-      4. Run {{test_cmd}} again to verify tests pass
-      5. Repeat until BOTH build and tests pass
-      6. Commit fixes: git add -A && git commit -m "fix: resolve integration issues on {{branch}}"
-      7. Push: git push origin {{branch}}
-      Do NOT reply with STATUS: retry until you have tried to fix the issues yourself.
-      Only reply STATUS: retry if you truly cannot fix the problem after multiple attempts.
+      If build/tests FAIL: fix issues, commit, push, retry. Only STATUS: retry if truly stuck.
 
-      === END WORKFLOW ===
-
-      Reply with:
+      ============================================================
+      MANDATORY OUTPUT FORMAT
+      ============================================================
       STATUS: done
-      RESULTS: What you tested and outcomes
-      FINAL_PR: URL of the PR to main
+      RESULTS: <test outcomes>
+      FINAL_PR: <URL>
 
-      Or if issues found:
-      STATUS: retry
-      FAILURES:
-      - Specific test failures or bugs found
+      Or: STATUS: retry / FAILURES: <list>
+      ============================================================
     expects: "STATUS: done"
     on_fail:
-      retry_step: implement
-      max_retries: 5
+      max_retries: 2
       on_exhausted:
         escalate_to: human

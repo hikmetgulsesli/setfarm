@@ -93,7 +93,7 @@ const DEFAULT_POLLING_MODEL = "minimax/MiniMax-M2.5";
 export function buildPollingPrompt(workflowId: string, agentId: string, workModel?: string): string {
   const fullAgentId = `${workflowId}_${agentId}`;
   const cli = resolveSetfarmCli();
-  const model = workModel ?? "default";
+  const model = workModel ?? DEFAULT_POLLING_MODEL;
   const workPrompt = buildWorkPrompt(workflowId, agentId);
 
   return `Step 1 — Quick check for pending work (lightweight, no side effects):
@@ -183,7 +183,7 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
           schedule: { kind: "every", everyMs, anchorMs: anchorMs + n * 40_000 },
           sessionTarget: "isolated",
           agentId: agentForCron,
-          payload: { kind: "agentTurn", message: prompt, timeoutSeconds },
+          payload: { kind: "agentTurn", message: prompt, model: pollingModel, timeoutSeconds },
           enabled: true,
         });
       }

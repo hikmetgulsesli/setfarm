@@ -516,7 +516,8 @@ async function main() {
       const done = stories.filter((s) => s.status === "done").length;
       const running = stories.filter((s) => s.status === "running").length;
       const failed = stories.filter((s) => s.status === "failed").length;
-      lines.push("", `Stories: ${done}/${stories.length} done${running ? `, ${running} running` : ""}${failed ? `, ${failed} failed` : ""}`);
+      const skipped = stories.filter((s) => s.status === "skipped").length;
+      lines.push("", `Stories: ${done}/${stories.length} done${running ? `, ${running} running` : ""}${skipped ? `, ${skipped} skipped` : ""}${failed ? `, ${failed} failed` : ""}`);
       for (const s of stories) {
         lines.push(`  ${s.storyId.padEnd(8)} [${s.status.padEnd(7)}] ${s.title}`);
       }
