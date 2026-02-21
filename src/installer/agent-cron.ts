@@ -137,7 +137,7 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
 
   for (let i = 0; i < agents.length; i++) {
     const agent = agents[i];
-    const anchorMs = i * 60_000; // stagger by 1 minute each
+    const anchorMs = i * 40_000; // stagger by 40s each
     const cronName = `setfarm/${workflow.id}/${agent.id}`;
     // Use mapped OpenClaw agent ID if available, otherwise fall back to workflow agent ID
     const rawMappedId = agentMapping[agent.id];
@@ -166,7 +166,7 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
 
     // Create parallel crons for developer and verifier, distributed across agent array
     const PARALLEL_AGENTS = ["developer", "verifier"];
-    const PARALLEL_COUNT = 5;
+    const PARALLEL_COUNT = 3;
     if (PARALLEL_AGENTS.includes(agent.id)) {
       // Get all mapped agents for this role (supports string or string[])
       const rawMapping = agentMapping[agent.id];
@@ -180,7 +180,7 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
         const pName = `setfarm/${workflow.id}/${agent.id}-${n}`;
         await createAgentCronJob({
           name: pName,
-          schedule: { kind: "every", everyMs, anchorMs: anchorMs + n * 15_000 },
+          schedule: { kind: "every", everyMs, anchorMs: anchorMs + n * 40_000 },
           sessionTarget: "isolated",
           agentId: agentForCron,
           payload: { kind: "agentTurn", message: prompt, timeoutSeconds },

@@ -21,10 +21,10 @@ agent_mapping:
   tester: sinan                  # Sentinel runs integration tests
 
 cron:
-  interval_ms: 120000  # 2 minutes
+  interval_ms: 240000  # 4 minutes
 
 polling:
-  model: minimax/MiniMax-M2.5
+  model: kimi-coding/k2p5
   timeoutSeconds: 1800
 
 agents:
