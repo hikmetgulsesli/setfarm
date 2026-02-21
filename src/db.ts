@@ -8,7 +8,8 @@ const DB_PATH = path.join(DB_DIR, "setfarm.db");
 
 let _db: DatabaseSync | null = null;
 let _dbOpenedAt = 0;
-const DB_MAX_AGE_MS = 5000;
+const DB_MAX_AGE_MS = 60_000;
+let _migrated = false;
 
 export function getDb(): DatabaseSync {
   const now = Date.now();
@@ -20,7 +21,10 @@ export function getDb(): DatabaseSync {
   _dbOpenedAt = now;
   _db.exec("PRAGMA journal_mode=WAL");
   _db.exec("PRAGMA foreign_keys=ON");
-  migrate(_db);
+  if (!_migrated) {
+    migrate(_db);
+    _migrated = true;
+  }
   return _db;
 }
 
@@ -102,12 +106,22 @@ function migrate(db: DatabaseSync): void {
     `);
   }
 
+  // Add columns to stories table for backwards compat
+  const storyCols = db.prepare("PRAGMA table_info(stories)").all() as Array<{ name: string }>;
+  const storyColNames = new Set(storyCols.map((c) => c.name));
+  if (!storyColNames.has("abandoned_count")) {
+    db.exec("ALTER TABLE stories ADD COLUMN abandoned_count INTEGER DEFAULT 0");
+  }
+
   // Performance indexes
   db.exec("CREATE INDEX IF NOT EXISTS idx_steps_run_status ON steps(run_id, status)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_steps_agent_status ON steps(agent_id, status)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_stories_run_status ON stories(run_id, status)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_runs_workflow_status ON runs(workflow_id, status)");
+  // Item 11: indexes for abandoned step/story queries
+  db.exec("CREATE INDEX IF NOT EXISTS idx_stories_status_updated ON stories(status, updated_at)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_steps_status_updated ON steps(status, updated_at)");
 }
 
 export function nextRunNumber(): number {

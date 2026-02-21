@@ -10,7 +10,7 @@ const MAX_EVENTS_SIZE = 10 * 1024 * 1024; // 10MB
 export type EventType =
   | "run.started" | "run.completed" | "run.failed"
   | "step.pending" | "step.running" | "step.done" | "step.failed" | "step.timeout"
-  | "story.started" | "story.done" | "story.verified" | "story.retry" | "story.failed"
+  | "story.started" | "story.done" | "story.verified" | "story.retry" | "story.failed" | "story.skipped"
   | "pipeline.advanced";
 
 export interface SetfarmEvent {

@@ -1,46 +1,83 @@
 id: daily-standup
 name: Daily Standup Meeting
-version: 1
+version: 2
 description: |
-  Gunluk standup toplantisi. Collector tum agentlardan durum toplar,
-  Reporter ozet hazirlayip kanallara gonderir.
+  Gunluk standup raporu. Collector son 24 saatteki agent aktivitesini,
+  run durumlarini ve sistem sagligini toplar. Reporter ozet hazirlayip
+  Discord ve Telegram a gonderir.
+
+agent_mapping:
+  collector: onur
+  reporter: deniz
+
+cron:
+  interval_ms: 240000
+
+polling:
+  model: zai/glm-4.7
+  timeoutSeconds: 600
+
+notifications:
+  url: http://127.0.0.1:3080/api/discord-notify
 
 agents:
   - id: collector
     name: Collector
     role: analysis
-    description: Tum agentlardan son 24 saatin ozetini toplar.
+    model: minimax/MiniMax-M2.5
+    description: Son 24 saatteki agent aktivitesini, run durumlarini ve sistem bilgisini toplar.
     workspace:
       baseDir: agents/collector
       files:
         AGENTS.md: agents/collector/AGENTS.md
-        SOUL.md: agents/collector/SOUL.md
         IDENTITY.md: agents/collector/IDENTITY.md
 
   - id: reporter
     name: Reporter
     role: analysis
-    description: Toplanan bilgileri ozetler ve kanallara gonderir.
+    model: minimax/MiniMax-M2.5
+    description: Toplanan veriyi ozetleyip Discord ve Telegram a gonderir.
     workspace:
       baseDir: agents/reporter
       files:
         AGENTS.md: agents/reporter/AGENTS.md
-        SOUL.md: agents/reporter/SOUL.md
         IDENTITY.md: agents/reporter/IDENTITY.md
 
 steps:
   - id: collect
     agent: collector
     input: |
-      Gunluk standup icin durum topla. sessions_history ile son 24 saati kontrol et.
-      Agent listesi: Arya, Koda, Kaan, Atlas, Defne, Sinan, Elif, Deniz, Onur, Mert.
-      Her agent icin: son aktivite, yapilan is, sorunlar.
-      Sistem: free -h, df -h, uptime.
+      Gunluk standup icin veri topla. Asagidaki komutlari calistir ve ciktilarini raporla.
 
-      Cevap:
+      1. SON 24 SAAT RUNLAR:
+      sqlite3 ~/.openclaw/setfarm/setfarm.db "SELECT workflow_id, status, task, created_at FROM runs WHERE datetime(created_at) > datetime('now', '-24 hours') ORDER BY created_at DESC;"
+
+      2. SON 24 SAAT STORY DURUMU:
+      sqlite3 ~/.openclaw/setfarm/setfarm.db "SELECT s.story_id, s.title, s.status, s.retry_count, r.workflow_id FROM stories s JOIN runs r ON r.id = s.run_id WHERE datetime(s.updated_at) > datetime('now', '-24 hours') ORDER BY s.updated_at DESC LIMIT 30;"
+
+      3. AGENT AKTIVITESI:
+      curl -s http://127.0.0.1:3080/api/setfarm/agents 2>/dev/null || echo "MC API unavailable"
+
+      4. AKTIF ALERTLER:
+      curl -s http://127.0.0.1:3080/api/setfarm/alerts 2>/dev/null || echo "No alerts endpoint"
+
+      5. SISTEM DURUMU:
+      echo "=== UPTIME ===" && uptime
+      echo "=== MEMORY ===" && free -h
+      echo "=== DISK ===" && df -h / /home
+      echo "=== DOCKER ===" && docker ps --format "table {{.Names}}\t{{.Status}}" 2>/dev/null
+
+      6. MALIYET:
+      curl -s http://127.0.0.1:3080/api/costs 2>/dev/null | head -50 || echo "No cost data"
+
+      MANDATORY OUTPUT FORMAT:
       STATUS: done
-      REPORT_JSON: { ... }
-      SYSTEM: { ... }
+      RUNS_DATA: <son 24 saat run ozeti>
+      STORIES_DATA: <story durumlari>
+      AGENTS_DATA: <agent aktivite ozeti>
+      SYSTEM_DATA: <sistem durumu ozeti>
+      COST_DATA: <maliyet ozeti>
+      ALERTS_DATA: <alert ozeti>
     expects: "STATUS: done"
     max_retries: 1
     on_fail:
@@ -49,17 +86,66 @@ steps:
   - id: report
     agent: reporter
     input: |
-      Standup raporunu ozetle. Discord genel kanalina gonder. Memory/meetings/ altina kaydet.
+      Standup raporunu ozetle ve gonder.
 
-      VERILER:
-      {{report_json}}
+      TOPLANAN VERILER:
+      RUNLAR: {{runs_data}}
+      STORY LERI: {{stories_data}}
+      AGENTLAR: {{agents_data}}
+      SISTEM: {{system_data}}
+      MALIYET: {{cost_data}}
+      ALERTLER: {{alerts_data}}
 
-      SISTEM:
-      {{system}}
+      GOREVLER — HEPSINI SIRASI ILE CALISTIR, HICBIRINI ATLAMA:
 
-      Cevap:
+      GOREV 1: Raporu dosyaya yaz (dolar isaretlerini oldugu gibi yaz, shell escape yapma):
+      ```
+      cat > /tmp/standup-report.txt << 'STANDUP_EOF'
+      <asagidaki formatta rapor yaz>
+      STANDUP_EOF
+      ```
+
+      GOREV 2: Discord a gonder (dosyadan oku):
+      ```
+      openclaw message send --channel discord --target 1472655519662477315 --message "$(cat /tmp/standup-report.txt)"
+      ```
+
+      GOREV 3: Telegram a gonder (dosyadan oku):
+      ```
+      openclaw message send --channel telegram --target 725838988 --message "$(cat /tmp/standup-report.txt)"
+      ```
+
+      GOREV 4: Kalici kayit:
+      ```
+      cp /tmp/standup-report.txt ~/.openclaw/workspace/memory/meetings/standup-$(date +%Y-%m-%d).md
+      ```
+
+      KRITIK: Her komutu GERCEKTEN CALISTIR. "Gonderdim" deme, komutu calistir ve ciktisini goster.
+      Komut ciktisinda "Sent via Discord" ve "Sent via Telegram" gormeden STATUS: done DEME.
+
+      RAPOR FORMATI (Turkce, emoji kullan):
+      GUNLUK STANDUP — <tarih>
+
+      RUNLAR (son 24s)
+      - <workflow>: <durum> — <ozet>
+
+      AGENT AKTIVITESI
+      - <agent>: <ne yapti>
+
+      SISTEM
+      - RAM: .../... | Disk: .../... | Uptime: ...
+
+      MALIYET
+      - Gunluk toplam: USD ...
+
+      ALERTLER
+      - <varsa listele, yoksa "Temiz">
+
+      NOT: Maliyet degerlerini "USD 0.26" formatinda yaz, dolar isareti kullanma.
+
+      MANDATORY OUTPUT FORMAT:
       STATUS: done
-      SUMMARY: gonderilen ozet
+      SUMMARY: <gonderilen rapor ozeti — Discord ve Telegram message ID lerini dahil et>
     expects: "STATUS: done"
     max_retries: 1
     on_fail:

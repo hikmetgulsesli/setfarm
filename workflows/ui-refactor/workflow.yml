@@ -1,0 +1,455 @@
+# UI Refactor workflow — design consistency, token adoption, pattern normalization.
+# v1.0: Report-driven decomposition, style audit, PR-per-story.
+id: ui-refactor
+name: UI Refactor & Design Consistency
+version: 1.0
+description: |
+  Design refactoring pipeline. Planner analyzes an existing codebase's design
+  system and decomposes a refactoring report into ordered stories.
+  Developer replaces hardcoded values with tokens, normalizes patterns,
+  fixes inconsistencies. Verifier checks consistency and merges PRs.
+
+agent_mapping:
+  planner: deniz
+  setup: atlas
+  developer: [mert, kaan]
+  verifier: [sinan, defne]
+  tester: sinan
+
+cron:
+  interval_ms: 240000  # 4 minutes
+
+polling:
+  model: zai/glm-4.7
+  timeoutSeconds: 1800
+
+notifications:
+  url: http://127.0.0.1:3080/api/discord-notify
+
+agents:
+  - id: planner
+    name: Refactor Planner
+    role: analysis
+    description: Analyzes design report and decomposes refactoring work into ordered stories.
+    workspace:
+      baseDir: agents/planner
+      files:
+        AGENTS.md: agents/planner/AGENTS.md
+        SOUL.md: agents/planner/SOUL.md
+        IDENTITY.md: agents/planner/IDENTITY.md
+
+  - id: setup
+    name: Setup
+    role: coding
+    description: Prepares environment, creates refactor branch, establishes baseline.
+    workspace:
+      baseDir: agents/setup
+      files:
+        AGENTS.md: ../../agents/shared/setup/AGENTS.md
+        SOUL.md: ../../agents/shared/setup/SOUL.md
+        IDENTITY.md: ../../agents/shared/setup/IDENTITY.md
+
+  - id: developer
+    name: Refactorer
+    role: coding
+    description: Implements design refactoring per story, replaces hardcoded values with tokens.
+    workspace:
+      baseDir: agents/refactorer
+      files:
+        AGENTS.md: agents/refactorer/AGENTS.md
+        SOUL.md: agents/refactorer/SOUL.md
+        IDENTITY.md: agents/refactorer/IDENTITY.md
+
+  - id: verifier
+    name: Verifier
+    role: verification
+    description: Reads PR review comments, verifies design consistency, merges PR.
+    workspace:
+      baseDir: agents/verifier
+      files:
+        AGENTS.md: ../../agents/shared/verifier/AGENTS.md
+        SOUL.md: ../../agents/shared/verifier/SOUL.md
+        IDENTITY.md: ../../agents/shared/verifier/IDENTITY.md
+
+  - id: tester
+    name: Tester
+    role: testing
+    description: Integration testing and final PR to main.
+    workspace:
+      baseDir: agents/tester
+      files:
+        AGENTS.md: ../../agents/shared/verifier/AGENTS.md
+        SOUL.md: ../../agents/shared/verifier/SOUL.md
+        IDENTITY.md: ../../agents/shared/verifier/IDENTITY.md
+
+steps:
+  - id: plan
+    agent: planner
+    input: |
+      Analyze the following refactoring report and decompose it into ordered stories.
+
+      REFACTORING REPORT:
+      {{task}}
+
+      Instructions:
+      1. Explore the codebase to understand the EXISTING design system:
+         - Find design tokens (CSS variables, theme files, token files)
+         - Find existing patterns (how components use colors, spacing, typography)
+         - Identify which components follow the design system and which don't
+      2. Read the refactoring report carefully — it lists specific issues and files
+      3. Group related issues into stories (e.g., all hardcoded color fixes in one area = one story)
+      4. Order by impact and dependency:
+         - Token/variable fixes first (foundation)
+         - Component-level fixes next (building blocks)
+         - Page-level fixes last (compositions)
+         - Responsive/a11y fixes at the end
+      5. Each story must be completable in one developer session
+
+      STORY CREATION RULES:
+
+      1. GROUP BY COMPONENT OR PATTERN:
+         - All hardcoded colors in Sidebar.tsx = one story
+         - All input styling normalization across 3 files = one story
+         - Don't create micro-stories per CSS property
+
+      2. STORY SIZE:
+         - Each story should take 10-20 minutes
+         - Estimated 50-200 lines of changes per story
+         - If a component has 20+ hardcoded values, it's its own story
+
+      3. STORY CONTENT MUST INCLUDE:
+         - Exact files to modify
+         - What pattern to replace (e.g., "bg-dark-800" -> "bg-surface")
+         - What token/variable to use instead
+         - Specific acceptance criteria that are mechanically verifiable
+
+      4. DESIGN SYSTEM AWARENESS:
+         - You are NOT creating a new design system
+         - You are enforcing an EXISTING design system
+         - Read the token files to know what tokens are available
+         - Map hardcoded values to the correct existing tokens
+
+      5. NEVER:
+         - Create stories for features/functionality changes
+         - Mix refactoring with new feature work
+         - Create stories that change component behavior (only appearance)
+         - Create stories without specific file references
+
+      ============================================================
+      MANDATORY OUTPUT FORMAT
+      ============================================================
+      STATUS: done
+      REPO: <exact repo path>
+      BRANCH: <branch name, e.g. refactor/design-consistency>
+      DESIGN_TOKENS_FILE: <path to existing tokens file>
+      STORIES_JSON:
+      [
+        {
+          "id": "RF-001",
+          "title": "Short title",
+          "description": "What to refactor — exact files, exact patterns to replace, exact tokens to use",
+          "acceptanceCriteria": ["No hardcoded dark-* classes in Sidebar.tsx", "All colors use token variables", "Build passes", "Typecheck passes"]
+        }
+      ]
+
+      BRANCH rules: NEVER use "main". Use "refactor/" prefix with descriptive name.
+      ============================================================
+    expects: "STATUS: done"
+    max_retries: 2
+    on_fail:
+      escalate_to: human
+
+  - id: setup
+    agent: setup
+    input: |
+      ############################################################
+      CRITICAL: Do ALL work in THIS session. No sub-agents, no background processes.
+      ############################################################
+
+      Prepare the environment for refactoring.
+
+      TASK: {{task}}
+      REPO: {{repo}}
+      BRANCH: {{branch}}
+
+      Instructions:
+      1. cd into the repo
+      2. Ensure GitHub remote exists:
+         git remote -v || PROJECT_NAME=$(basename {{repo}}) && gh repo create hikmetgulsesli/$PROJECT_NAME --public --source . --remote origin --push 2>/dev/null || true
+      3. Create refactor branch: git checkout -b {{branch}}
+      4. Read package.json to understand build/test setup
+      5. Run build + tests to establish baseline
+      6. Create references symlink: ln -sfn /home/setrox/.openclaw/setfarm-repo/references references
+      7. Push: git push -u origin {{branch}}
+
+      LINT SETUP (MANDATORY):
+      - Check if package.json has a "lint" script
+      - If NO lint script exists, set one up:
+        a. For React/Next.js: npm install -D eslint @eslint/js typescript-eslint
+        b. Add "lint": "eslint \"**/*.{ts,tsx}\"" to package.json scripts
+        c. Create a basic eslint.config.js if none exists
+      - Run the lint command to verify it works
+      - Run: npx eslint --fix "client/src/**/*.{ts,tsx}" (or equivalent) to auto-fix
+      - If ERRORS remain after --fix, manually fix them (empty catch blocks, useless assignments etc.)
+      - Warnings are acceptable. ERRORS are NOT — fix all errors before reporting done.
+      - Run lint again to confirm 0 errors before completing
+
+      ============================================================
+      MANDATORY OUTPUT FORMAT
+      ============================================================
+      STATUS: done
+      BUILD_CMD: <e.g. npm run build>
+      TEST_CMD: <e.g. npm test>
+      LINT_CMD: <e.g. npm run lint>
+      BASELINE: <status>
+      ============================================================
+    expects: "STATUS: done"
+    max_retries: 4
+    on_fail:
+      escalate_to: human
+
+  - id: implement
+    agent: developer
+    type: loop
+    loop:
+      over: stories
+      completion: all_done
+      fresh_session: true
+      verify_each: true
+      verify_step: verify
+    input: |
+      ############################################################
+      CRITICAL: Do ALL work in THIS session. No sub-agents, no background processes.
+      ############################################################
+
+      Implement ONE refactoring story. Create a PR for review.
+
+      TASK: {{task}}
+      REPO: {{repo}}
+      WORKDIR: {{story_workdir}}
+      BRANCH: {{branch}}
+      BUILD_CMD: {{build_cmd}}
+      TEST_CMD: {{test_cmd}}
+      LINT_CMD: {{lint_cmd}}
+
+      Work in WORKDIR (git worktree). The branch is already checked out.
+      node_modules is symlinked from REPO.
+
+      CURRENT STORY: {{current_story}}
+      COMPLETED STORIES: {{completed_stories}}
+      STORIES REMAINING: {{stories_remaining}}
+      VERIFY FEEDBACK (if retrying): {{verify_feedback}}
+      PROGRESS LOG: {{progress}}
+
+      BEFORE writing code:
+      1. Read the FULL story description — it tells you EXACTLY what to change
+      2. Read the existing design tokens file to know available tokens
+      3. Understand the current patterns before replacing them
+
+      === REFACTORING RULES ===
+
+      - ONLY change styling/design code — never change component logic or behavior
+      - Replace hardcoded values with existing design tokens
+      - Maintain visual consistency — the UI should look the SAME or BETTER after refactoring
+      - If a token doesn't exist for a value, note it but use the closest match
+      - Test the build after every file change to catch issues early
+      - Do NOT add new features, components, or functionality
+
+      === WORKFLOW ===
+
+      1. Read progress-{{run_id}}.txt to understand what previous stories refactored
+
+      2. cd into WORKDIR
+
+      3. Create story branch from refactor branch:
+         cd {{repo}} && git checkout {{branch}} && git pull origin {{branch}}
+         RUN_SHORT=$(echo "{{run_id}}" | cut -c1-8)
+         STORY_BRANCH="${RUN_SHORT}-{{current_story_id}}"
+         git checkout -b "$STORY_BRANCH"
+
+      4. Implement the refactoring:
+         - Read each file listed in the story
+         - Replace hardcoded values with tokens as specified
+         - Verify each change doesn't break the layout
+
+      5. Lint: {{lint_cmd}} — fix ALL lint errors
+
+      6. Build: {{build_cmd}} — fix ALL build/type errors
+
+      7. Test: {{test_cmd}} — fix ALL failing tests
+
+      8. Commit:
+         git add -A && git commit -m "refactor: {{current_story_id}} - {{current_story_title}}"
+
+      9. Push:
+         git push -u origin "$STORY_BRANCH"
+
+      10. Create PR:
+          PR_URL=$(gh pr create --base {{branch}} --head "$STORY_BRANCH" \
+            --title "refactor: {{current_story_id}} - {{current_story_title}}" \
+            --body "$(cat <<'PRBODY'
+          ## Refactoring Story
+          {{current_story}}
+
+          ## Changes
+          <describe what patterns were replaced>
+
+          ## Design Tokens Used
+          <list which tokens replaced which hardcoded values>
+          PRBODY
+          )")
+          echo "PR created: $PR_URL"
+
+      11. Write detailed progress to progress-{{run_id}}.txt
+
+      ============================================================
+      MANDATORY OUTPUT FORMAT
+      ============================================================
+      STATUS: done
+      STORY_BRANCH: <exact branch name>
+      PR_URL: <full PR URL from gh pr create>
+      CHANGES: <what you refactored>
+      ============================================================
+    expects: "STATUS: done"
+    max_retries: 5
+    on_fail:
+      escalate_to: human
+
+  - id: verify
+    agent: verifier
+    input: |
+      ############################################################
+      CRITICAL: Do ALL work in THIS session. No sub-agents, no background processes.
+      ############################################################
+
+      Verify the refactoring story. Focus on DESIGN CONSISTENCY.
+
+      TASK: {{task}}
+      REPO: {{repo}}
+      BRANCH: {{branch}}
+      STORY_BRANCH: {{story_branch}}
+      PR_URL: {{pr_url}}
+      CHANGES: {{changes}}
+      BUILD_CMD: {{build_cmd}}
+      TEST_CMD: {{test_cmd}}
+      LINT_CMD: {{lint_cmd}}
+      CURRENT STORY: {{current_story}}
+      PROGRESS LOG: {{progress}}
+
+      === VERIFY + FIX + MERGE WORKFLOW ===
+
+      STEP 0 — Wait for external review:
+      sleep 300
+
+      STEP 1 — Checkout and read PR reviews:
+      1. cd into {{repo}}
+      2. git fetch origin
+      3. git checkout {{story_branch}} && git pull origin {{story_branch}}
+      4. Read PR review comments (same as feature-dev verifier)
+
+      STEP 2 — Fix review issues (if any)
+
+      STEP 3 — Design consistency check (CRITICAL for refactoring):
+      1. Verify NO hardcoded color values remain in changed files
+      2. Verify ALL replacements use correct tokens (check against tokens file)
+      3. Verify no behavior changes — only styling/design changes
+      4. Grep for remaining hardcoded patterns in changed files:
+         - dark-[0-9] classes
+         - Inline style={{ color: '#...' }} or backgroundColor: '#...'
+         - Hardcoded px values where spacing tokens exist
+      5. Run lint: {{lint_cmd}}
+      6. Run build: {{build_cmd}}
+      7. Run test: {{test_cmd}}
+
+      STEP 3b — Accessibility & Responsive checks (from design skills):
+      1. Focus states: verify NO bare "focus:" classes remain — all must be "focus-visible:"
+         Run: grep -rn 'focus:' --include='*.tsx' on changed files, exclude focus-visible: and focus-within:
+         If bare focus: classes found -> REJECT with specific file:line references
+      2. aria-label: verify ALL icon-only buttons have aria-label attribute
+         Look for buttons containing only an icon component (no visible text children)
+         If missing aria-label on icon-only button -> REJECT
+      3. Responsive: verify NO fixed-width modals/dialogs without mobile fallback
+         Check for bare max-w-lg/max-w-xl without w-full or sm:max-w-* prefix
+         Modal pattern should be: w-full sm:max-w-lg (not just max-w-lg)
+         If bare max-w without responsive handling -> REJECT
+      4. Spacing: verify spacing values use constrained scale
+         Allowed Tailwind spacing: p-1 through p-16, gap-1 through gap-16
+         Flag arbitrary values like p-[13px] or gap-[7px]
+      5. Touch targets: icon-only buttons should be at least 44x44px
+         Check for min-h-11 min-w-11 or sufficient padding (p-2.5+)
+
+      STEP 4 — Merge PR:
+      gh pr comment "{{pr_url}}" --body "Verified: design consistency checked, no hardcoded values remain."
+      gh pr merge "{{pr_url}}" --squash --delete-branch
+
+      ESCALATION MODE (retry count >= 3):
+      Fix the code yourself, or STATUS: skip if unfixable.
+
+      ============================================================
+      MANDATORY OUTPUT FORMAT
+      ============================================================
+      STATUS: done
+      VERIFIED: <what you confirmed>
+      MERGED: true
+
+      Or: STATUS: retry / ISSUES: <list>
+      Or: STATUS: skip / REASON: <why>
+      ============================================================
+    expects: "STATUS: done"
+    on_fail:
+      retry_step: implement
+      max_retries: 5
+      on_exhausted:
+        escalate_to: human
+
+  - id: final-test
+    agent: tester
+    input: |
+      ############################################################
+      CRITICAL: Do ALL work in THIS session. No sub-agents, no background processes.
+      ############################################################
+
+      Integration testing on merged refactor branch, then create final PR to main.
+
+      TASK: {{task}}
+      REPO: {{repo}}
+      BRANCH: {{branch}}
+      BUILD_CMD: {{build_cmd}}
+      TEST_CMD: {{test_cmd}}
+      LINT_CMD: {{lint_cmd}}
+      PROGRESS LOG: {{progress}}
+
+      === INTEGRATION TEST + PR WORKFLOW ===
+
+      STEP 1 — Verify:
+      1. cd into {{repo}}
+      2. git checkout {{branch}} && git pull origin {{branch}}
+      3. Lint: {{lint_cmd}}
+      4. Build: {{build_cmd}}
+      5. Tests: {{test_cmd}}
+
+      STEP 2 — Design consistency audit:
+      1. Grep the ENTIRE codebase for remaining hardcoded patterns
+      2. Verify token usage is consistent across all modified files
+      3. Check no regressions in non-modified files
+
+      STEP 3 — Create final PR to main AND merge:
+      FINAL_PR=$(gh pr create --base main --head {{branch}} --title "refactor: design consistency - {{branch}}" --body "Refactor branch {{branch}} — all design consistency stories implemented and tested.")
+      gh pr merge "$FINAL_PR" --squash --delete-branch
+
+      Close orphan PRs:
+      OPEN_PRS=$(gh pr list --base {{branch}} --state open --json number -q '.[].number')
+      for pr_num in $OPEN_PRS; do gh pr close "$pr_num" --delete-branch 2>/dev/null || true; done
+
+      ============================================================
+      MANDATORY OUTPUT FORMAT
+      ============================================================
+      STATUS: done
+      RESULTS: <test outcomes>
+      FINAL_PR: <URL>
+      ============================================================
+    expects: "STATUS: done"
+    on_fail:
+      max_retries: 2
+      on_exhausted:
+        escalate_to: human
