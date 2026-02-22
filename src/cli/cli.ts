@@ -173,6 +173,10 @@ async function main() {
   }
 
   if (group === "uninstall" && (!args[1] || args[1] === "--force")) {
+    if (!process.stdin.isTTY && !args.includes("--force")) {
+      process.stderr.write("Error: 'uninstall' is blocked in non-interactive (agent) sessions.\nUse --force from a terminal to override.\n");
+      process.exit(1);
+    }
     const force = args.includes("--force");
     const activeRuns = checkActiveRuns();
     if (activeRuns.length > 0 && !force) {
@@ -460,6 +464,10 @@ async function main() {
   }
 
   if (action === "stop") {
+    if (!process.stdin.isTTY && !args.includes("--force")) {
+      process.stderr.write("Error: 'workflow stop' is blocked in non-interactive (agent) sessions.\nUse --force from a terminal to override.\n");
+      process.exit(1);
+    }
     if (!target) { process.stderr.write("Missing run-id.\n"); printUsage(); process.exit(1); }
     const result = await stopWorkflow(target);
     if (result.status === "not_found") { process.stderr.write(result.message + "\n"); process.exit(1); }
@@ -478,6 +486,10 @@ async function main() {
   }
 
   if (action === "uninstall") {
+    if (!process.stdin.isTTY && !args.includes("--force")) {
+      process.stderr.write("Error: 'workflow uninstall' is blocked in non-interactive (agent) sessions.\nUse --force from a terminal to override.\n");
+      process.exit(1);
+    }
     const force = args.includes("--force");
     const isAll = target === "--all" || target === "all";
     const activeRuns = checkActiveRuns(isAll ? undefined : target);
