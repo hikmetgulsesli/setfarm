@@ -283,3 +283,47 @@ describe("POST /api/users", () => {
 - Reset state between tests (truncate tables)
 - Do not depend on test execution order
 - Use factories/fixtures for test data, not hardcoded values
+
+## ESM / TypeScript Module System (CRITICAL)
+
+### Rule: Always use `.js` extensions in relative imports
+When `package.json` has `"type": "module"`, Node.js requires `.js` file extensions on ALL relative imports. TypeScript compiles `.ts` → `.js` but does NOT rewrite import paths.
+
+```typescript
+// WRONG — will crash at runtime with ERR_MODULE_NOT_FOUND
+import { config } from '../config/index';
+import { errorHandler } from '../middleware/error-handler';
+
+// CORRECT — always add .js extension
+import { config } from '../config/index.js';
+import { errorHandler } from '../middleware/error-handler.js';
+```
+
+### Rule: Use `NodeNext` module resolution
+```json
+// tsconfig.json — CORRECT for Node.js ESM projects
+{
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext"
+  }
+}
+```
+Never use `"moduleResolution": "bundler"` for server-side Node.js code. `bundler` mode is only for frontend code bundled by Vite/webpack.
+
+### Rule: Directory imports must include `/index.js`
+```typescript
+// WRONG — Node.js ESM does NOT auto-resolve index files
+import { config } from '../config';
+
+// CORRECT
+import { config } from '../config/index.js';
+```
+
+### Eslint enforcement
+Projects MUST include `eslint-plugin-import` with this rule:
+```js
+'import/extensions': ['error', 'ignorePackages', { ts: 'always', tsx: 'always' }]
+```
+This will catch missing `.js` extensions at lint time (before build).
+
