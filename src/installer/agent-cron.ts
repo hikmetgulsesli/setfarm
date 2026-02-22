@@ -50,6 +50,7 @@ RULES:
 The workflow cannot advance until you report. Your session ending without reporting = broken pipeline.`;
 }
 
+/** @deprecated Kept for backward compatibility — inline execution replaces spawn */
 export function buildWorkPrompt(workflowId: string, agentId: string): string {
   const fullAgentId = `${workflowId}_${agentId}`;
   const cli = resolveSetfarmCli();
@@ -90,13 +91,24 @@ The workflow cannot advance until you report. Your session ending without report
 const DEFAULT_POLLING_TIMEOUT_SECONDS = 120;
 const DEFAULT_POLLING_MODEL = "minimax/MiniMax-M2.5";
 
-export function buildPollingPrompt(workflowId: string, agentId: string, workModel?: string): string {
+/**
+ * Build inline execution prompt — no sessions_spawn.
+ *
+ * The agent peeks, claims, and does the work ALL in the same session.
+ * This eliminates the unreliable spawn layer that caused orphaned stories.
+ *
+ * Before (v1.1): peek → claim → sessions_spawn(work) → [spawn dies] → orphan
+ * After  (v1.2): peek → claim → do work inline → step complete → done
+ */
+export function buildPollingPrompt(workflowId: string, agentId: string): string {
   const fullAgentId = `${workflowId}_${agentId}`;
   const cli = resolveSetfarmCli();
-  const model = workModel ?? DEFAULT_POLLING_MODEL;
-  const workPrompt = buildWorkPrompt(workflowId, agentId);
 
-  return `Step 1 — Quick check for pending work (lightweight, no side effects):
+  return `You are a Setfarm workflow agent. Check for pending work and execute it inline.
+
+⚠️ CRITICAL: If you claim work, you MUST call "step complete" or "step fail" before ending your session. If you don't, the workflow will be stuck forever.
+
+Step 1 — Quick check for pending work (lightweight, no side effects):
 \`\`\`
 /usr/bin/node ${cli} step peek "${fullAgentId}"
 \`\`\`
@@ -108,18 +120,34 @@ Step 2 — If "HAS_WORK", claim the step:
 \`\`\`
 If output is "NO_WORK", reply HEARTBEAT_OK and stop.
 
-If JSON is returned, parse it to extract stepId, runId, and input fields.
-Then call sessions_spawn with these parameters:
-- agentId: "${fullAgentId}"
-- model: "${model}"
-- task: The full work prompt below, followed by "\\n\\nCLAIMED STEP JSON:\\n" and the exact JSON output from step claim.
+Step 3 — If JSON is returned, it contains: {"stepId": "...", "runId": "...", "input": "..."}
+Save the stepId — you'll need it to report completion.
+The "input" field contains your FULLY RESOLVED task instructions. Read it carefully and DO the work.
 
-Full work prompt to include in the spawned task:
----START WORK PROMPT---
-${workPrompt}
----END WORK PROMPT---
+Step 4 — Do the work described in the input. Format your output with KEY: value lines as specified in the input.
 
-Reply with a short summary of what you spawned.`;
+Step 5 — MANDATORY: Report completion (do this IMMEDIATELY after finishing the work):
+\`\`\`
+cat <<'ANTFARM_EOF' > /tmp/setfarm-step-output.txt
+<YOUR OUTPUT HERE — use the EXACT format specified in the step input above, including ALL required keys like STORIES_JSON, REPO, BRANCH etc.>
+ANTFARM_EOF
+cat /tmp/setfarm-step-output.txt | /usr/bin/node ${cli} step complete "<stepId>"
+\`\`\`
+
+CRITICAL: The output format in the heredoc MUST match what the step input asks for. Do NOT use a generic STATUS/CHANGES/TESTS format — read the step input and replicate its MANDATORY OUTPUT FORMAT exactly.
+
+If the work FAILED:
+\`\`\`
+/usr/bin/node ${cli} step fail "<stepId>" "description of what went wrong"
+\`\`\`
+
+RULES:
+1. NEVER end your session without calling step complete or step fail
+2. Write output to a file first, then pipe via stdin (shell escaping breaks direct args)
+3. If you're unsure whether to complete or fail, call step fail with an explanation
+4. Do NOT call sessions_spawn — do all work directly in this session
+
+The workflow cannot advance until you report. Your session ending without reporting = broken pipeline.`;
 }
 
 export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
@@ -131,9 +159,8 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
   // e.g. { developer: "koda", verifier: "sinan", planner: "main" }
   const agentMapping: AgentMapping = workflow.agent_mapping ?? {};
 
-  // Resolve polling model: per-agent > workflow-level > default
+  // Resolve polling model (used as fallback if agent has no work model)
   const workflowPollingModel = workflow.polling?.model ?? DEFAULT_POLLING_MODEL;
-  const workflowPollingTimeout = workflow.polling?.timeoutSeconds ?? DEFAULT_POLLING_TIMEOUT_SECONDS;
 
   for (let i = 0; i < agents.length; i++) {
     const agent = agents[i];
@@ -144,18 +171,20 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
     const mappedAgentId = Array.isArray(rawMappedId) ? rawMappedId[0] : rawMappedId;
     const cronAgentId = mappedAgentId ?? `${workflow.id}_${agent.id}`;
 
-    // Two-phase: Phase 1 uses cheap polling model + minimal prompt
-    const pollingModel = agent.pollingModel ?? workflowPollingModel;
-    const workModel = agent.model; // Phase 2 model (passed to sessions_spawn via prompt)
-    const prompt = buildPollingPrompt(workflow.id, agent.id, workModel);
-    const timeoutSeconds = workflowPollingTimeout;
+    // Inline execution: single model does peek + claim + work.
+    // Prefer agent's work model; fall back to workflow polling model.
+    const model = agent.model ?? agent.pollingModel ?? workflowPollingModel;
+    const prompt = buildPollingPrompt(workflow.id, agent.id);
+    // Timeout must accommodate full work duration (30min), not just peek (2min).
+    // Heartbeats still finish in seconds — timeout is just the max.
+    const timeoutSeconds = agent.timeoutSeconds ?? DEFAULT_AGENT_TIMEOUT_SECONDS;
 
     const result = await createAgentCronJob({
       name: cronName,
       schedule: { kind: "every", everyMs, anchorMs },
       sessionTarget: "isolated",
       agentId: cronAgentId,
-      payload: { kind: "agentTurn", message: prompt, model: pollingModel, timeoutSeconds },
+      payload: { kind: "agentTurn", message: prompt, model, timeoutSeconds },
       delivery: { mode: "none" },
       enabled: true,
     });
@@ -183,7 +212,7 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
           schedule: { kind: "every", everyMs, anchorMs: anchorMs + n * 40_000 },
           sessionTarget: "isolated",
           agentId: agentForCron,
-          payload: { kind: "agentTurn", message: prompt, model: pollingModel, timeoutSeconds },
+          payload: { kind: "agentTurn", message: prompt, model, timeoutSeconds },
           enabled: true,
         });
       }
