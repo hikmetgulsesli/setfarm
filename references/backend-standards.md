@@ -321,9 +321,15 @@ import { config } from '../config/index.js';
 ```
 
 ### Eslint enforcement
-Projects MUST include `eslint-plugin-import` with this rule:
+Projects MUST include this `no-restricted-syntax` rule in `eslint.config.js`:
 ```js
-'import/extensions': ['error', 'ignorePackages', { ts: 'always', tsx: 'always' }]
+'no-restricted-syntax': [
+  'error',
+  {
+    selector: 'ImportDeclaration[source.value=/^\\.\\.?\\/.*(?<!\\.js)$/]',
+    message: 'Relative imports must end with .js extension for Node.js ESM compatibility.',
+  },
+],
 ```
-This will catch missing `.js` extensions at lint time (before build).
+This catches missing `.js` extensions at lint time (before build). No extra plugin needed.
 
