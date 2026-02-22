@@ -14,7 +14,7 @@ cron:
   interval_ms: 240000
 
 polling:
-  model: zai/glm-4.7
+  model: kimi-coding/k2p5
   timeoutSeconds: 600
 
 notifications:
