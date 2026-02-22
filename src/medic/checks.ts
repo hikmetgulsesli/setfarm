@@ -10,6 +10,8 @@ export type MedicActionType =
   | "fail_run"
   | "resume_run"
   | "teardown_crons"
+  | "reset_story"
+  | "recreate_crons"
   | "none";
 
 export interface MedicFinding {
@@ -20,6 +22,8 @@ export interface MedicFinding {
   /** IDs of affected entities */
   runId?: string;
   stepId?: string;
+  storyId?: string;
+  workflowId?: string;
   /** Whether the medic auto-remediated this */
   remediated: boolean;
 }
@@ -303,12 +307,139 @@ export function checkFailedRunsForResume(): MedicFinding[] {
   return findings;
 }
 
+// ── Check: Orphaned Stories (#225) ──────────────────────────────────
+
+const STORY_STUCK_THRESHOLD_MS = 20 * 60 * 1000; // 20 minutes
+
+/**
+ * Find stories stuck in 'running' state for too long.
+ *
+ * In loop steps with parallel execution, the STEP stays "running" for hours
+ * while processing multiple stories. Individual stories can get orphaned when
+ * the agent session dies without calling step complete/fail.
+ *
+ * cleanupAbandonedSteps() only checks step.current_story_id (one story),
+ * and only runs when crons are alive. This check catches ALL orphaned stories
+ * independently via medic's own cron.
+ *
+ * Note: story.updated_at is set on claim (status='running') and only updated
+ * again on status change. 20min threshold allows legitimate work (agent timeout
+ * is 30min) while catching dead sessions reasonably fast.
+ */
+export function checkOrphanedStories(): MedicFinding[] {
+  const db = getDb();
+  const findings: MedicFinding[] = [];
+
+  const stuck = db.prepare(`
+    SELECT st.id, st.story_id, st.title, st.updated_at, st.abandoned_count,
+           st.run_id, r.workflow_id
+    FROM stories st
+    JOIN runs r ON r.id = st.run_id
+    WHERE st.status = 'running'
+      AND r.status = 'running'
+      AND (julianday('now') - julianday(st.updated_at)) * 86400000 > ?
+  `).all(STORY_STUCK_THRESHOLD_MS) as Array<{
+    id: string; story_id: string; title: string; updated_at: string;
+    abandoned_count: number; run_id: string; workflow_id: string;
+  }>;
+
+  for (const story of stuck) {
+    const ageMin = Math.round(
+      (Date.now() - new Date(story.updated_at).getTime()) / 60000
+    );
+    findings.push({
+      check: "orphaned_stories",
+      severity: "warning",
+      message: `Story "${story.story_id}" (${(story.title ?? "").slice(0, 40)}) in run ${story.run_id.slice(0, 8)} (${story.workflow_id}) has been running for ${ageMin}min — session likely dead`,
+      action: "reset_story",
+      runId: story.run_id,
+      storyId: story.id,
+      remediated: false,
+    });
+  }
+
+  return findings;
+}
+
+// ── Check: Stalled Workflow Crons / Circuit Breaker (#218) ──────────
+
+const CIRCUIT_BREAKER_THRESHOLD_MS = 12 * 60 * 1000; // 12 min = 3x the 4-min cron interval
+
+/**
+ * Detect when agent crons are dead or in error state.
+ *
+ * Signal: pending stories exist (work available) but no story has been
+ * claimed recently. With 4-min interval and 3 parallel crons, a claim
+ * should happen every 1-2 min. If no claim in 12 min, crons are likely dead.
+ *
+ * Includes 15-min cooldown (checked via medic_checks history) to prevent
+ * rapid re-creation loops.
+ */
+export function checkStalledWorkflowCrons(): MedicFinding[] {
+  const db = getDb();
+  const findings: MedicFinding[] = [];
+
+  // Get all workflows with running runs
+  const workflows = db.prepare(
+    "SELECT DISTINCT workflow_id FROM runs WHERE status = 'running'"
+  ).all() as Array<{ workflow_id: string }>;
+
+  for (const { workflow_id } of workflows) {
+    // Check if there are pending stories waiting to be claimed
+    const pending = db.prepare(`
+      SELECT COUNT(*) as cnt FROM stories st
+      JOIN runs r ON r.id = st.run_id
+      WHERE r.workflow_id = ? AND r.status = 'running' AND st.status = 'pending'
+    `).get(workflow_id) as { cnt: number };
+
+    if (pending.cnt === 0) continue; // no pending work — crons are fine or not needed
+
+    // When was the last story claimed (set to running)?
+    const lastClaim = db.prepare(`
+      SELECT MAX(st.updated_at) as ts FROM stories st
+      JOIN runs r ON r.id = st.run_id
+      WHERE r.workflow_id = ? AND r.status = 'running' AND st.status = 'running'
+    `).get(workflow_id) as { ts: string | null };
+
+    const age = lastClaim?.ts
+      ? Date.now() - new Date(lastClaim.ts).getTime()
+      : CIRCUIT_BREAKER_THRESHOLD_MS + 1; // no running stories at all = stalled
+
+    if (age <= CIRCUIT_BREAKER_THRESHOLD_MS) continue;
+
+    // Cooldown: don't re-fire if we already recreated crons in the last 15 min
+    const recentRecreate = db.prepare(`
+      SELECT MAX(checked_at) as ts FROM medic_checks
+      WHERE details LIKE '%stalled_workflow_crons%'
+        AND details LIKE '%"remediated":true%'
+        AND details LIKE ?
+        AND checked_at > datetime('now', '-15 minutes')
+    `).get(`%${workflow_id}%`) as { ts: string | null };
+
+    if (recentRecreate?.ts) continue;
+
+    const ageMin = lastClaim?.ts ? Math.round(age / 60000) : -1;
+    findings.push({
+      check: "stalled_workflow_crons",
+      severity: "warning",
+      message: `Workflow "${workflow_id}" has ${pending.cnt} pending stories but ${ageMin > 0 ? `no claim in ${ageMin}min` : "no active claims"} — crons may be dead, force-recreating`,
+      action: "recreate_crons",
+      workflowId: workflow_id,
+      remediated: false,
+    });
+  }
+
+  return findings;
+}
+
 export function runSyncChecks(): MedicFinding[] {
   return [
+    ...checkOrphanedStories(),
     ...checkClaimedButStuck(),
     ...checkStuckSteps(),
     ...checkStalledRuns(),
     ...checkDeadRuns(),
     ...checkFailedRunsForResume(),
+    ...checkStalledWorkflowCrons(),
   ];
 }
