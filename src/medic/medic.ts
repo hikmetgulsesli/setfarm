@@ -6,7 +6,7 @@
  */
 import { getDb } from "../db.js";
 import { emitEvent, type EventType } from "../installer/events.js";
-import { teardownWorkflowCronsIfIdle, ensureWorkflowCrons } from "../installer/agent-cron.js";
+import { teardownWorkflowCronsIfIdle, ensureWorkflowCrons, removeAgentCrons, setupAgentCrons } from "../installer/agent-cron.js";
 import { loadWorkflowSpec } from "../installer/workflow-spec.js";
 import { resolveWorkflowDir } from "../installer/paths.js";
 import { listCronJobs } from "../installer/gateway-api.js";
@@ -44,14 +44,12 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
   switch (finding.action) {
     case "reset_step": {
       if (!finding.stepId) return false;
-      // Reset the stuck step to pending so it can be reclaimed
       const step = db.prepare(
         "SELECT abandoned_count FROM steps WHERE id = ?"
       ).get(finding.stepId) as { abandoned_count: number } | undefined;
       if (!step) return false;
 
       const newCount = (step.abandoned_count ?? 0) + 1;
-      // Don't auto-reset if already abandoned too many times — let cleanupAbandonedSteps handle final failure
       if (newCount >= 5) {
         db.prepare(
           "UPDATE steps SET status = 'failed', output = 'Medic: abandoned too many times', abandoned_count = ?, updated_at = datetime('now') WHERE id = ?"
@@ -71,7 +69,6 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
       }
 
       // SAFEGUARD_194: Medic resets use ONLY abandoned_count, NEVER retry_count.
-      // This preserves retry budget for real failures (agent explicitly calling step fail).
       db.prepare(
         "UPDATE steps SET status = 'pending', abandoned_count = ?, updated_at = datetime('now') WHERE id = ?"
       ).run(newCount, finding.stepId);
@@ -95,7 +92,6 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
       db.prepare(
         "UPDATE runs SET status = 'failed', updated_at = datetime('now') WHERE id = ?"
       ).run(finding.runId);
-      // Also fail any non-terminal steps
       db.prepare(
         "UPDATE steps SET status = 'failed', output = 'Medic: run marked as dead', updated_at = datetime('now') WHERE run_id = ? AND status IN ('waiting', 'pending', 'running')"
       ).run(finding.runId);
@@ -106,13 +102,11 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
         workflowId: run.workflow_id,
         detail: "Medic: zombie run — all steps terminal but run still marked running",
       });
-      // Try to clean up crons
       try { await teardownWorkflowCronsIfIdle(run.workflow_id); } catch {}
       return true;
     }
 
     case "teardown_crons": {
-      // Extract workflow ID from the message (format: "... for workflow "xyz" ...")
       const match = finding.message.match(/workflow "([^"]+)"/);
       if (!match) return false;
       try {
@@ -130,13 +124,11 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
       ).get(finding.runId) as { id: string; workflow_id: string; status: string; meta: string | null } | undefined;
       if (!run) return false;
 
-      // Find the failed step
       const failedStep = db.prepare(
         "SELECT id, step_id, type, current_story_id FROM steps WHERE run_id = ? AND status = 'failed' ORDER BY step_index ASC LIMIT 1"
       ).get(run.id) as { id: string; step_id: string; type: string; current_story_id: string | null } | undefined;
       if (!failedStep) return false;
 
-      // Check if it's a loop step with verify_each pattern
       const loopStep = db.prepare(
         "SELECT id, loop_config FROM steps WHERE run_id = ? AND type = 'loop' AND status IN ('running', 'failed') LIMIT 1"
       ).get(run.id) as { id: string; loop_config: string | null } | undefined;
@@ -155,7 +147,6 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
           ).run(run.id);
         }
       } else {
-        // Simple step reset
         if (failedStep.type === "loop") {
           const failedStory = db.prepare(
             "SELECT id FROM stories WHERE run_id = ? AND status = 'failed' ORDER BY story_index ASC LIMIT 1"
@@ -174,18 +165,15 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
         ).run(failedStep.id);
       }
 
-      // Set run back to running
       db.prepare(
         "UPDATE runs SET status = 'running', updated_at = datetime('now') WHERE id = ?"
       ).run(run.id);
 
-      // Update medic resume metadata
       const meta = run.meta ? JSON.parse(run.meta) : {};
       meta.medic_resume_count = (meta.medic_resume_count ?? 0) + 1;
       meta.medic_last_resume = new Date().toISOString();
       db.prepare("UPDATE runs SET meta = ? WHERE id = ?").run(JSON.stringify(meta), run.id);
 
-      // Restore crons
       try {
         const workflowDir = resolveWorkflowDir(run.workflow_id);
         const workflow = await loadWorkflowSpec(workflowDir);
@@ -200,6 +188,71 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
         detail: `Medic: auto-resumed (attempt ${meta.medic_resume_count}/3)`,
       });
       return true;
+    }
+
+    // ── #225: Reset orphaned story to pending ───────────────────────
+    case "reset_story": {
+      if (!finding.storyId) return false;
+      const story = db.prepare(
+        "SELECT abandoned_count, run_id FROM stories WHERE id = ? AND status = 'running'"
+      ).get(finding.storyId) as { abandoned_count: number; run_id: string } | undefined;
+      if (!story) return false;
+
+      const newCount = (story.abandoned_count ?? 0) + 1;
+      const MAX_STORY_ABANDONS = 5;
+
+      if (newCount >= MAX_STORY_ABANDONS) {
+        // Too many abandons — skip this story so the loop can continue
+        db.prepare(
+          "UPDATE stories SET status = 'skipped', abandoned_count = ?, output = 'Medic: abandoned too many times', updated_at = datetime('now') WHERE id = ?"
+        ).run(newCount, finding.storyId);
+        emitEvent({
+          ts: new Date().toISOString(),
+          event: "story.failed" as EventType,
+          runId: story.run_id,
+          detail: `Medic: story abandoned ${newCount} times — skipped`,
+        });
+      } else {
+        // Reset to pending for retry (uses abandoned_count, NOT retry_count)
+        db.prepare(
+          "UPDATE stories SET status = 'pending', abandoned_count = ?, updated_at = datetime('now') WHERE id = ?"
+        ).run(newCount, finding.storyId);
+        // Clear current_story_id on the loop step if it points to this story
+        db.prepare(
+          "UPDATE steps SET current_story_id = NULL, updated_at = datetime('now') WHERE run_id = ? AND type = 'loop' AND current_story_id = ?"
+        ).run(story.run_id, finding.storyId);
+        emitEvent({
+          ts: new Date().toISOString(),
+          event: "step.timeout" as EventType,
+          runId: story.run_id,
+          detail: `Medic: orphaned story reset to pending (abandon ${newCount}/${MAX_STORY_ABANDONS})`,
+        });
+      }
+      return true;
+    }
+
+    // ── #218: Circuit breaker — force-recreate dead crons ───────────
+    case "recreate_crons": {
+      const wfId = finding.workflowId ?? finding.message.match(/workflow "([^"]+)"/)?.[1];
+      if (!wfId) return false;
+      try {
+        // Delete all existing (possibly errored) crons for this workflow
+        await removeAgentCrons(wfId);
+        // Recreate from workflow spec
+        const workflowDir = resolveWorkflowDir(wfId);
+        const workflow = await loadWorkflowSpec(workflowDir);
+        await setupAgentCrons(workflow);
+        emitEvent({
+          ts: new Date().toISOString(),
+          event: "run.resumed" as EventType,
+          runId: finding.runId ?? "",
+          workflowId: wfId,
+          detail: `Medic: circuit breaker — force-recreated crons for "${wfId}"`,
+        });
+        return true;
+      } catch {
+        return false;
+      }
     }
 
     case "none":
@@ -219,9 +272,6 @@ export interface MedicCheckResult {
   findings: MedicFinding[];
 }
 
-/**
- * Run all medic checks, remediate what we can, and log results.
- */
 /**
  * Restore crons for any active runs that lost them (e.g. after gateway restart).
  * Called once at medic startup and periodically during checks.
@@ -321,9 +371,9 @@ export async function runMedicCheck(): Promise<MedicCheckResult> {
 export interface MedicStatus {
   installed: boolean;
   lastCheck: { checkedAt: string; summary: string; issuesFound: number; actionsTaken: number } | null;
-  recentChecks: number; // checks in last 24h
-  recentIssues: number; // issues found in last 24h
-  recentActions: number; // actions taken in last 24h
+  recentChecks: number;
+  recentIssues: number;
+  recentActions: number;
 }
 
 export function getMedicStatus(): MedicStatus {
