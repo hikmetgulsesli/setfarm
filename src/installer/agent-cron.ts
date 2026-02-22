@@ -146,6 +146,7 @@ RULES:
 2. Write output to a file first, then pipe via stdin (shell escaping breaks direct args)
 3. If you're unsure whether to complete or fail, call step fail with an explanation
 4. Do NOT call sessions_spawn — do all work directly in this session
+5. NEVER run destructive commands: workflow stop, workflow uninstall, uninstall — these kill the entire pipeline and are FORBIDDEN
 
 The workflow cannot advance until you report. Your session ending without reporting = broken pipeline.`;
 }
