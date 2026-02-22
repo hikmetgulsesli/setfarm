@@ -16,6 +16,7 @@ import {
   type MedicFinding,
 } from "./checks.js";
 import crypto from "node:crypto";
+import { execFileSync } from "node:child_process";
 
 // ── DB Migration ────────────────────────────────────────────────────
 
@@ -31,6 +32,47 @@ export function ensureMedicTables(): void {
       details TEXT
     )
   `);
+}
+
+// ── GitHub PR Helpers (Medic v6) ─────────────────────────────────────
+
+/**
+ * Extract GitHub repo URL from a run task string.
+ */
+function extractRepoUrl(task: string): string | null {
+  const match = task.match(/https:\/\/github\.com\/[\w-]+\/[\w.-]+/);
+  return match ? match[0] : null;
+}
+
+/**
+ * Check GitHub for a merged PR matching this story.
+ * Returns PR URL if found, null otherwise.
+ */
+function checkMergedPR(repoUrl: string, storyId: string, runId: string): string | null {
+  const repoPath = repoUrl.replace("https://github.com/", "");
+  const runPrefix = runId.slice(0, 8);
+  const storyLower = storyId.toLowerCase().replace(/_/g, "-");
+  try {
+    const output = execFileSync(
+      "gh",
+      ["pr", "list", "--repo", repoPath, "--state", "merged", "--json", "number,url,headRefName", "--limit", "100"],
+      { encoding: "utf-8", timeout: 15000, stdio: ["pipe", "pipe", "pipe"] }
+    );
+    const prs = JSON.parse(output) as Array<{ number: number; url: string; headRefName: string }>;
+    for (const pr of prs) {
+      const branch = pr.headRefName.toLowerCase();
+      if (
+        branch === storyLower ||
+        branch.includes("-" + storyLower) ||
+        branch.includes("/" + storyLower) ||
+        branch.startsWith(runPrefix + "-") ||
+        branch.startsWith(runPrefix.toLowerCase() + "-")
+      ) {
+        return pr.url;
+      }
+    }
+  } catch { /* gh unavailable or API error — fall through */ }
+  return null;
 }
 
 // ── Remediation ─────────────────────────────────────────────────────
@@ -197,6 +239,44 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
         "SELECT abandoned_count, run_id FROM stories WHERE id = ? AND status = 'running'"
       ).get(finding.storyId) as { abandoned_count: number; run_id: string } | undefined;
       if (!story) return false;
+
+
+      // ── Medic v6: GitHub PR guard ───────────────────────────────────────
+      // Before resetting, check if the agent already merged a PR on GitHub.
+      // If yes → auto-verify instead of wasting another cycle.
+      const storyMeta = db.prepare(
+        "SELECT story_id FROM stories WHERE id = ?"
+      ).get(finding.storyId) as { story_id: string } | undefined;
+      const runMeta = db.prepare(
+        "SELECT task FROM runs WHERE id = ?"
+      ).get(story.run_id) as { task: string } | undefined;
+      if (storyMeta && runMeta) {
+        const repoUrl = extractRepoUrl(runMeta.task);
+        if (repoUrl) {
+          const prUrl = checkMergedPR(repoUrl, storyMeta.story_id, story.run_id);
+          if (prUrl) {
+            db.prepare(
+              "UPDATE stories SET status = 'verified', abandoned_count = 0, output = ?, updated_at = datetime('now') WHERE id = ?"
+            ).run(
+              `STATUS: done
+PR_URL: ${prUrl}
+CHANGES: Auto-verified by Medic v6 — merged PR detected on GitHub`,
+              finding.storyId
+            );
+            db.prepare(
+              "UPDATE steps SET current_story_id = NULL, updated_at = datetime('now') WHERE run_id = ? AND type = 'loop' AND current_story_id = ?"
+            ).run(story.run_id, finding.storyId);
+            emitEvent({
+              ts: new Date().toISOString(),
+              event: "story.done" as EventType,
+              runId: story.run_id,
+              detail: `Medic v6: auto-verified ${storyMeta.story_id} — merged PR: ${prUrl}`,
+            });
+            return true;
+          }
+        }
+      }
+      // ── End GitHub PR guard ─────────────────────────────────────────────
 
       const newCount = (story.abandoned_count ?? 0) + 1;
       const MAX_STORY_ABANDONS = 5;
