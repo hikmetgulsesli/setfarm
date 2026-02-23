@@ -160,8 +160,6 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
   // e.g. { developer: "koda", verifier: "sinan", planner: "main" }
   const agentMapping: AgentMapping = workflow.agent_mapping ?? {};
 
-  // Resolve polling model (used as fallback if agent has no work model)
-  const workflowPollingModel = workflow.polling?.model ?? DEFAULT_POLLING_MODEL;
 
   for (let i = 0; i < agents.length; i++) {
     const agent = agents[i];
@@ -172,9 +170,9 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
     const mappedAgentId = Array.isArray(rawMappedId) ? rawMappedId[0] : rawMappedId;
     const cronAgentId = mappedAgentId ?? `${workflow.id}_${agent.id}`;
 
-    // Inline execution: single model does peek + claim + work.
-    // Prefer agent's work model; fall back to workflow polling model.
-    const model = agent.model ?? agent.pollingModel ?? workflowPollingModel;
+    // Model is NOT passed to the cron payload — the gateway resolves it
+    // from the agent's config in openclaw.json (which includes fallbacks).
+    // This ensures failover works when the primary model is unavailable.
     const prompt = buildPollingPrompt(workflow.id, agent.id);
     // Timeout must accommodate full work duration (30min), not just peek (2min).
     // Heartbeats still finish in seconds — timeout is just the max.
@@ -185,7 +183,7 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
       schedule: { kind: "every", everyMs, anchorMs },
       sessionTarget: "isolated",
       agentId: cronAgentId,
-      payload: { kind: "agentTurn", message: prompt, model, timeoutSeconds },
+      payload: { kind: "agentTurn", message: prompt, timeoutSeconds },
       delivery: { mode: "none" },
       enabled: true,
     });
@@ -213,7 +211,7 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
           schedule: { kind: "every", everyMs, anchorMs: anchorMs + n * 40_000 },
           sessionTarget: "isolated",
           agentId: agentForCron,
-          payload: { kind: "agentTurn", message: prompt, model, timeoutSeconds },
+          payload: { kind: "agentTurn", message: prompt, timeoutSeconds },
           enabled: true,
         });
       }
