@@ -99,7 +99,7 @@ let testDb: DatabaseSync;
 
 describe("peekStep - lightweight work check", () => {
   // These tests use the compiled dist module with a real in-memory DB.
-  // We mock getDb by setting the ANTFARM_DB_PATH env var to a temp file.
+  // We mock getDb by setting the SETFARM_DB_PATH env var to a temp file.
 
   let tmpDbPath: string;
   let originalDbPath: string | undefined;
@@ -110,16 +110,16 @@ describe("peekStep - lightweight work check", () => {
     const path = await import("node:path");
     const fs = await import("node:fs");
     tmpDbPath = path.join(os.tmpdir(), `setfarm-test-peek-${crypto.randomUUID()}.db`);
-    originalDbPath = process.env.ANTFARM_DB_PATH;
-    process.env.ANTFARM_DB_PATH = tmpDbPath;
+    originalDbPath = process.env.SETFARM_DB_PATH;
+    process.env.SETFARM_DB_PATH = tmpDbPath;
   });
 
   after(async () => {
     // Restore original DB path
     if (originalDbPath !== undefined) {
-      process.env.ANTFARM_DB_PATH = originalDbPath;
+      process.env.SETFARM_DB_PATH = originalDbPath;
     } else {
-      delete process.env.ANTFARM_DB_PATH;
+      delete process.env.SETFARM_DB_PATH;
     }
     // Clean up temp file
     const fs = await import("node:fs");

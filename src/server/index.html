@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Antfarm Dashboard</title>
+<title>Setfarm Dashboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Geist+Mono&display=swap" rel="stylesheet">
@@ -208,7 +208,7 @@ select:focus{outline:none;border-color:#8ECFC0}
 </head>
 <body>
 <header>
-  <h1><span>antfarm</span> dashboard</h1>
+  <h1><span>setfarm</span> dashboard</h1>
   <select id="wf-select"><option value="">Loading...</option></select>
   <button class="theme-toggle" id="theme-toggle" title="Toggle light/dark mode" aria-label="Toggle light/dark mode">☀️</button>
   <div class="medic-badge" id="medic-badge" onclick="toggleMedicPanel()" title="Medic watchdog status">
@@ -546,7 +546,7 @@ async function loadMedicData() {
       }
     }
 
-    body.innerHTML = html || '<div style="color:var(--text-secondary);font-size:12px;padding:8px 0">No medic data yet. Run <code>antfarm medic install</code> to enable.</div>';
+    body.innerHTML = html || '<div style="color:var(--text-secondary);font-size:12px;padding:8px 0">No medic data yet. Run <code>setfarm medic install</code> to enable.</div>';
   } catch {
     body.innerHTML = '<div style="color:var(--text-secondary);font-size:12px;padding:8px 0">Could not load medic data.</div>';
   }
@@ -559,7 +559,7 @@ setInterval(loadMedicStatus, 30000);
 (function initTheme() {
   const btn = document.getElementById('theme-toggle');
   const root = document.documentElement;
-  const STORAGE_KEY = 'antfarm-theme';
+  const STORAGE_KEY = 'setfarm-theme';
 
   function getEffectiveTheme() {
     const stored = localStorage.getItem(STORAGE_KEY);

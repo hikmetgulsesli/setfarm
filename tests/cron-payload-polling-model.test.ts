@@ -79,7 +79,7 @@ describe("cron payload includes polling model (regression #121)", () => {
 
     // And NOT the old buildAgentPrompt style (which had the full execution logic inline)
     assert.ok(
-      !payload.message.startsWith("You are an Antfarm workflow agent. Check for pending work"),
+      !payload.message.startsWith("You are an Setfarm workflow agent. Check for pending work"),
       "should NOT use old buildAgentPrompt format"
     );
   });

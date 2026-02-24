@@ -32,13 +32,13 @@ echo "Linking CLI..."
 npm link
 
 # Install workflows — use linked CLI or fall back to direct node
-ANTFARM="$(command -v setfarm 2>/dev/null || echo "")"
-if [ -z "$ANTFARM" ]; then
-  ANTFARM="node $DEST/dist/cli/cli.js"
+SETFARM="$(command -v setfarm 2>/dev/null || echo "")"
+if [ -z "$SETFARM" ]; then
+  SETFARM="node $DEST/dist/cli/cli.js"
 fi
 
 echo "Installing workflows..."
-$ANTFARM install
+$SETFARM install
 
 echo ""
 echo "Setfarm installed! Run 'setfarm workflow list' to see available workflows."
