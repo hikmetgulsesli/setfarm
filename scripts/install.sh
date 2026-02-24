@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Antfarm installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/snarktank/antfarm/v1.4.0/scripts/install.sh | bash
+# Setfarm installer
+# Usage: curl -fsSL https://raw.githubusercontent.com/hikmetgulsesli/setfarm/v1.4.0/scripts/install.sh | bash
 
-REPO="https://github.com/snarktank/antfarm.git"
-DEST="${HOME}/.openclaw/workspace/antfarm"
+REPO="https://github.com/hikmetgulsesli/setfarm.git"
+DEST="${HOME}/.openclaw/workspace/setfarm"
 
-echo "Installing Antfarm..."
+echo "Installing Setfarm..."
 
 # Clone or pull
 if [ -d "$DEST/.git" ]; then
@@ -32,7 +32,7 @@ echo "Linking CLI..."
 npm link
 
 # Install workflows — use linked CLI or fall back to direct node
-ANTFARM="$(command -v antfarm 2>/dev/null || echo "")"
+ANTFARM="$(command -v setfarm 2>/dev/null || echo "")"
 if [ -z "$ANTFARM" ]; then
   ANTFARM="node $DEST/dist/cli/cli.js"
 fi
@@ -41,4 +41,4 @@ echo "Installing workflows..."
 $ANTFARM install
 
 echo ""
-echo "Antfarm installed! Run 'antfarm workflow list' to see available workflows."
+echo "Setfarm installed! Run 'setfarm workflow list' to see available workflows."

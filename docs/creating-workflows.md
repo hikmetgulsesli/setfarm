@@ -1,6 +1,6 @@
 # Creating Custom Workflows
 
-This guide covers how to create your own Antfarm workflow.
+This guide covers how to create your own Setfarm workflow.
 
 ## Directory Structure
 
@@ -106,7 +106,7 @@ agents:
         SOUL.md: agents/my-agent/SOUL.md
         IDENTITY.md: agents/my-agent/IDENTITY.md
       skills:                # Optional: skills to install into the workspace
-        - antfarm-workflows
+        - setfarm-workflows
 ```
 
 File paths are relative to the workflow directory. You can reference shared agents:
@@ -154,7 +154,7 @@ steps:
 
 ### Agent Timeouts
 
-Antfarm runs workflow agents as isolated cron jobs in OpenClaw. You can override the
+Setfarm runs workflow agents as isolated cron jobs in OpenClaw. You can override the
 per-agent session timeout with `timeoutSeconds` in the agent definition:
 
 ```yaml
@@ -163,7 +163,7 @@ agents:
     timeoutSeconds: 3600
 ```
 
-If omitted, Antfarm defaults to 30 minutes per agent session.
+If omitted, Setfarm defaults to 30 minutes per agent session.
 
 ### Template Variables
 
@@ -302,7 +302,7 @@ Agent name and role. Example:
 
 ## Shared Agents
 
-Antfarm includes shared agents in `agents/shared/` that you can reuse:
+Setfarm includes shared agents in `agents/shared/` that you can reuse:
 
 - **setup** — Creates branches, establishes build/test baselines
 - **verifier** — Verifies work against acceptance criteria
@@ -326,7 +326,7 @@ Reference them from your workflow:
 Place your workflow directory in `workflows/` and run:
 
 ```bash
-antfarm workflow install my-workflow
+setfarm workflow install my-workflow
 ```
 
 This provisions agent workspaces, registers agents in OpenClaw config, and sets up cron polling.

@@ -74,7 +74,7 @@ describe("two-phase-integration", () => {
   describe("work prompt has full execution instructions", () => {
     it("contains step complete with file-pipe pattern", () => {
       const prompt = buildWorkPrompt("feature-dev", "developer");
-      assert.ok(prompt.includes("antfarm-step-output.txt"), "file-pipe pattern");
+      assert.ok(prompt.includes("setfarm-step-output.txt"), "file-pipe pattern");
       assert.ok(prompt.includes("step complete"), "step complete command");
     });
 

@@ -2,7 +2,7 @@
  * Regression test: polling timeout values match workflow YAML configs
  *
  * Guards against test expectations drifting from actual workflow config.
- * See: https://github.com/snarktank/antfarm/issues/124
+ * See: https://github.com/hikmetgulsesli/setfarm/issues/124
  *
  * Three tests previously hardcoded timeoutSeconds=30 when the actual
  * workflow YAMLs all specify 120 (DEFAULT_POLLING_TIMEOUT_SECONDS).

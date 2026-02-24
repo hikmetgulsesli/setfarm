@@ -94,7 +94,7 @@ describe("polling config", () => {
   let tmpDir: string;
 
   before(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "antfarm-polling-test-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "setfarm-polling-test-"));
   });
 
   after(async () => {

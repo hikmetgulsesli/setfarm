@@ -14,7 +14,7 @@ describe("External skill installation", () => {
   let origHome: string;
 
   beforeEach(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "antfarm-skill-test-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "setfarm-skill-test-"));
     fakeHome = path.join(tmpDir, "home");
     await fs.mkdir(path.join(fakeHome, ".openclaw", "workspace", "skills", "agent-browser"), { recursive: true });
     await fs.writeFile(
@@ -136,11 +136,11 @@ describe("External skill installation", () => {
     });
   });
 
-  it("does not interfere with antfarm-workflows skill (bundled)", async () => {
+  it("does not interfere with setfarm-workflows skill (bundled)", async () => {
     const mod = await import("../dist/installer/agent-provision.js");
     const workflowDir = path.join(tmpDir, "workflow");
-    // Create bundled antfarm-workflows skill in workflow dir
-    const bundledSkillDir = path.join(workflowDir, "skills", "antfarm-workflows");
+    // Create bundled setfarm-workflows skill in workflow dir
+    const bundledSkillDir = path.join(workflowDir, "skills", "setfarm-workflows");
     await fs.mkdir(bundledSkillDir, { recursive: true });
     await fs.writeFile(path.join(bundledSkillDir, "SKILL.md"), "# Antfarm Workflows");
 
@@ -154,7 +154,7 @@ describe("External skill installation", () => {
           role: "planning",
           workspace: {
             baseDir: "agents/planner",
-            skills: ["antfarm-workflows", "agent-browser"],
+            skills: ["setfarm-workflows", "agent-browser"],
             files: {},
           },
         },
@@ -167,8 +167,8 @@ describe("External skill installation", () => {
       installSkill: true,
     });
 
-    // antfarm-workflows should be installed from bundled source
-    const bundledDest = path.join(results[0].workspaceDir, "skills", "antfarm-workflows", "SKILL.md");
+    // setfarm-workflows should be installed from bundled source
+    const bundledDest = path.join(results[0].workspaceDir, "skills", "setfarm-workflows", "SKILL.md");
     const bundledContent = await fs.readFile(bundledDest, "utf-8");
     assert.ok(bundledContent.includes("Antfarm Workflows"));
 

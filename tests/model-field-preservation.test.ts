@@ -54,7 +54,7 @@ steps:
 `;
 
 async function createTempWorkflow(): Promise<string> {
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "antfarm-test-"));
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "setfarm-test-"));
   await fs.writeFile(path.join(tmpDir, "workflow.yml"), TEST_WORKFLOW_WITH_MODELS);
 
   // Create minimal agent files to satisfy validation

@@ -1,6 +1,6 @@
 /**
  * Regression test for multi-line output variable resolution.
- * Issue: https://github.com/snarktank/antfarm/issues/111
+ * Issue: https://github.com/hikmetgulsesli/setfarm/issues/111
  *
  * The output parser in completeStep() used a per-line regex /^([A-Z_]+):\s*(.+)$/
  * that failed for multi-line values:
@@ -18,10 +18,10 @@ import { parseOutputKeyValues } from "../dist/installer/step-ops.js";
 describe("parseOutputKeyValues — multi-line output parsing", () => {
 
   it("parses single-line KEY: value pairs", () => {
-    const output = "STATUS: done\nREPO: /Users/scout/antfarm\nVULNERABILITY_COUNT: 3";
+    const output = "STATUS: done\nREPO: /Users/scout/setfarm\nVULNERABILITY_COUNT: 3";
     const result = parseOutputKeyValues(output);
     assert.equal(result["status"], "done");
-    assert.equal(result["repo"], "/Users/scout/antfarm");
+    assert.equal(result["repo"], "/Users/scout/setfarm");
     assert.equal(result["vulnerability_count"], "3");
   });
 

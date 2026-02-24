@@ -6,7 +6,7 @@
  * It reads the actual workflow.yml values and asserts they match expectations,
  * ensuring tests and config never drift apart again.
  *
- * See: https://github.com/snarktank/antfarm/issues/121
+ * See: https://github.com/hikmetgulsesli/setfarm/issues/121
  */
 
 import path from "node:path";

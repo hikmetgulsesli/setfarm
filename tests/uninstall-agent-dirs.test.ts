@@ -16,7 +16,7 @@ describe("uninstall agent directory cleanup", () => {
   let tmpDir: string;
 
   beforeEach(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "antfarm-test-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "setfarm-test-"));
   });
 
   afterEach(async () => {

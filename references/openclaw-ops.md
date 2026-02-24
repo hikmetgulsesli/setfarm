@@ -77,9 +77,9 @@ openclaw sessions list
 | File | Purpose |
 |---|---|
 | `~/.openclaw/openclaw.json` | Main config (models, channels, agents) |
-| `~/.openclaw/antfarm/antfarm.db` | Antfarm pipeline database (node:sqlite) |
-| `~/.openclaw/antfarm/workflows/` | Workflow definitions (YAML) |
-| `~/.openclaw/scripts/antfarm-update.sh` | Antfarm update/patch script |
+| `~/.openclaw/setfarm/setfarm.db` | Setfarm pipeline database (node:sqlite) |
+| `~/.openclaw/setfarm/workflows/` | Workflow definitions (YAML) |
+| `~/.openclaw/scripts/setfarm-update.sh` | Setfarm update/patch script |
 | `~/.openclaw/scripts/fix-pipeline-v2.py` | Pipeline fix script (node:sqlite API) |
 | `~/.openclaw/workspace-main/` | Main agent workspace |
 | `/home/setrox/mission-control/projects.json` | Project registry |
@@ -117,6 +117,6 @@ WantedBy=multi-user.target
 
 ```bash
 cd ~/.openclaw && openclaw update
-# Then run antfarm patches:
-bash ~/.openclaw/scripts/antfarm-update.sh
+# Then run setfarm patches:
+bash ~/.openclaw/scripts/setfarm-update.sh
 ```

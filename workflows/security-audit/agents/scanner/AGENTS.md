@@ -111,7 +111,7 @@ FINDINGS:
 - Server runs Ubuntu 25.10, UFW deny incoming, Tailscale-only access
 - Docker containers on host network can access localhost services
 - Cloudflare tunnel handles HTTPS termination
-- PostgreSQL, SQLite (antfarm.db), and Node.js services are primary attack surface
+- PostgreSQL, SQLite (setfarm.db), and Node.js services are primary attack surface
 
 
 ## API Security Scan Patterns (from api-integration-specialist skill)

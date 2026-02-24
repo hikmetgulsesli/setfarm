@@ -83,7 +83,7 @@ Config: `/etc/cloudflared/config.yml`
 
 - 3080: Mission Control
 - 3001-3006: Infrastructure (Uptime Kuma, Grafana, etc.)
-- 3500+: Project apps (auto-allocated by antfarm)
+- 3500+: Project apps (auto-allocated by setfarm)
 - Next available port: query MC API at /api/projects/next-port
 
 ## Project Deployment Checklist
@@ -142,7 +142,7 @@ WantedBy=multi-user.target
 ## Backup
 
 Important directories to back up:
-- ~/.openclaw/ (config, antfarm DB, scripts)
+- ~/.openclaw/ (config, setfarm DB, scripts)
 - ~/mission-control/projects.json (project registry)
 - /etc/cloudflared/config.yml (tunnel config)
 - /etc/systemd/system/*.service (service files)
