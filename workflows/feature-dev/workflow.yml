@@ -14,6 +14,7 @@ agent_mapping:
   developer: [koda, kaan, elif]
   verifier: [sinan, defne]
   tester: sinan
+  security-gate: sinan
 
 cron:
   interval_ms: 240000  # 4 minutes
@@ -77,6 +78,17 @@ agents:
         AGENTS.md: agents/tester/AGENTS.md
         SOUL.md: agents/tester/SOUL.md
         IDENTITY.md: agents/tester/IDENTITY.md
+
+  - id: security-gate
+    name: Security Gate
+    role: verification
+    description: Scans code for security vulnerabilities before final testing.
+    workspace:
+      baseDir: agents/security-gate
+      files:
+        AGENTS.md: agents/security-gate/AGENTS.md
+        SOUL.md: agents/security-gate/SOUL.md
+        IDENTITY.md: agents/security-gate/IDENTITY.md
 
 steps:
   - id: plan
@@ -453,6 +465,49 @@ steps:
       on_exhausted:
         escalate_to: human
 
+
+  - id: security-gate
+    agent: security-gate
+    input: |
+      Scan the feature branch for security vulnerabilities.
+
+      REPO: {{repo}}
+      BRANCH: {{branch}}
+
+      1. cd {{repo}} && git checkout {{branch}} && git pull
+      2. Run: git diff main...HEAD
+      3. Scan ALL changed files for:
+         - Hardcoded secrets (API keys, tokens, passwords, .env values in code)
+         - SQL injection (string concatenation in queries)
+         - XSS (unsanitized user input in HTML/JSX)
+         - Command injection (unsanitized input in exec/spawn)
+         - Overly permissive operations (chmod 777, rm -rf /, wildcard deletes)
+         - Missing input validation on API endpoints
+         - Error handling leaking stack traces to users
+         - Auth/authz bypasses
+         - AI code smells (TODO placeholders, lorem ipsum, hardcoded test data in prod)
+      4. Run project linters if available: {{lint_cmd}}
+      5. Check for .env files in git: git ls-files | grep -i .env
+
+      OUTPUT:
+      - If clean: STATUS: done + SECURITY_REPORT: pass + SECURITY_NOTES: <summary>
+      - If issues found but fixable: Fix them, commit, push, then STATUS: done
+      - If critical unfixable issues: STATUS: retry + SECURITY_ISSUES: <list>
+
+      ============================================================
+      MANDATORY OUTPUT FORMAT
+      ============================================================
+      STATUS: done
+      SECURITY_REPORT: <pass/warn>
+      SECURITY_NOTES: <findings summary or "No issues found">
+      ============================================================
+    expects: "STATUS: done"
+    on_fail:
+      retry_step: implement
+      max_retries: 2
+      on_exhausted:
+        escalate_to: human
+
   - id: final-test
     agent: tester
     input: |
@@ -469,6 +524,7 @@ steps:
       TEST_CMD: {{test_cmd}}
       LINT_CMD: {{lint_cmd}}
       PROGRESS LOG: {{progress}}
+      SECURITY_NOTES: {{security_notes}}
 
       === INTEGRATION TEST + PR WORKFLOW ===
 
