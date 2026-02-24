@@ -506,7 +506,14 @@ export function claimStep(agentId: string): ClaimResult {
      WHERE s.agent_id = ?
        AND (s.status = 'pending' OR (s.status = 'running' AND s.type = 'loop'))
        AND r.status NOT IN ('failed', 'cancelled')
-     ORDER BY s.status ASC
+       AND NOT EXISTS (
+         SELECT 1 FROM steps prev
+         WHERE prev.run_id = s.run_id
+           AND prev.step_index < s.step_index
+           AND prev.status NOT IN ('done', 'skipped', 'verified')
+           AND NOT (prev.type = 'loop' AND prev.status = 'running')
+       )
+     ORDER BY s.step_index ASC, s.status ASC
      LIMIT 1`
   ).get(agentId) as { id: string; step_id: string; run_id: string; input_template: string; type: string; loop_config: string | null; step_status: string } | undefined;
 
@@ -557,6 +564,26 @@ export function claimStep(agentId: string): ClaimResult {
         ).get(step.run_id);
         if (runningStory) {
           return { found: false }; // Other stories still running, wait for them
+        }
+
+        // #157 GUARD: 0 total stories means planner did not produce STORIES_JSON
+        const totalStories = db.prepare(
+          "SELECT COUNT(*) as cnt FROM stories WHERE run_id = ?"
+        ).get(step.run_id) as { cnt: number };
+        if (totalStories.cnt === 0) {
+          const noStoriesReason = "No stories exist — planner did not produce STORIES_JSON";
+          logger.warn(noStoriesReason, { runId: step.run_id, stepId: step.step_id });
+          db.prepare(
+            "UPDATE steps SET status = 'failed', output = ?, updated_at = datetime('now') WHERE id = ?"
+          ).run(noStoriesReason, step.id);
+          db.prepare(
+            "UPDATE runs SET status = 'failed', updated_at = datetime('now') WHERE id = ?"
+          ).run(step.run_id);
+          const wfId157 = getWorkflowId(step.run_id);
+          emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId157, stepId: step.step_id, detail: noStoriesReason });
+          emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId157, detail: noStoriesReason });
+          scheduleRunCronTeardown(step.run_id);
+          return { found: false };
         }
 
         // No pending, running, or failed stories — mark step done and advance
@@ -830,6 +857,27 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
 
   // T5: Parse STORIES_JSON from output (any step, typically the planner)
   parseAndInsertStories(output, step.run_id);
+
+  // #157 GUARD: If a downstream loop step expects stories, verify they exist
+  const nextLoopStep = db.prepare(
+    "SELECT id, step_id FROM steps WHERE run_id = ? AND type = 'loop' AND step_index > ? AND status = 'waiting' ORDER BY step_index ASC LIMIT 1"
+  ).get(step.run_id, step.step_index) as { id: string; step_id: string } | undefined;
+  if (nextLoopStep) {
+    const storyCount = db.prepare(
+      "SELECT COUNT(*) as cnt FROM stories WHERE run_id = ?"
+    ).get(step.run_id) as { cnt: number };
+    if (storyCount.cnt === 0) {
+      const noStoriesMsg = "Step completed but produced no STORIES_JSON — downstream loop would run with 0 stories";
+      logger.warn(noStoriesMsg, { runId: step.run_id, stepId: step.step_id });
+      db.prepare("UPDATE steps SET status = 'failed', output = ?, updated_at = datetime('now') WHERE id = ?").run(noStoriesMsg, step.id);
+      db.prepare("UPDATE runs SET status = 'failed', updated_at = datetime('now') WHERE id = ?").run(step.run_id);
+      const wfId157b = getWorkflowId(step.run_id);
+      emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId157b, stepId: step.step_id, detail: noStoriesMsg });
+      emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId157b, detail: noStoriesMsg });
+      scheduleRunCronTeardown(step.run_id);
+      return { advanced: false, runCompleted: false };
+    }
+  }
 
   // T7: Loop step completion
   if (step.type === "loop" && step.current_story_id) {
