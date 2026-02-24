@@ -28,8 +28,8 @@ html = html.replace(
 
 // Curl URLs: replace tagged version in raw.githubusercontent URLs
 html = html.replace(
-  /raw\.githubusercontent\.com\/snarktank\/antfarm\/v[\d.]+\//g,
-  `raw.githubusercontent.com/snarktank/antfarm/v${version}/`
+  /raw\.githubusercontent\.com\/hikmetgulsesli\/setfarm\/v[\d.]+\//g,
+  `raw.githubusercontent.com/hikmetgulsesli/setfarm/v${version}/`
 );
 
 writeFileSync(htmlPath, html, "utf8");
@@ -40,8 +40,8 @@ const readmePath = join(root, "README.md");
 if (existsSync(readmePath)) {
   let readme = readFileSync(readmePath, "utf8");
   readme = readme.replace(
-    /raw\.githubusercontent\.com\/snarktank\/antfarm\/v[\d.]+\//g,
-    `raw.githubusercontent.com/snarktank/antfarm/v${version}/`
+    /raw\.githubusercontent\.com\/hikmetgulsesli\/setfarm\/v[\d.]+\//g,
+    `raw.githubusercontent.com/hikmetgulsesli/setfarm/v${version}/`
   );
   writeFileSync(readmePath, readme, "utf8");
   console.log(`Injected version ${version} into README.md`);
@@ -52,8 +52,8 @@ const installPath = join(root, "scripts", "install.sh");
 if (existsSync(installPath)) {
   let install = readFileSync(installPath, "utf8");
   install = install.replace(
-    /raw\.githubusercontent\.com\/snarktank\/antfarm\/v[\d.]+\//g,
-    `raw.githubusercontent.com/snarktank/antfarm/v${version}/`
+    /raw\.githubusercontent\.com\/hikmetgulsesli\/setfarm\/v[\d.]+\//g,
+    `raw.githubusercontent.com/hikmetgulsesli/setfarm/v${version}/`
   );
   writeFileSync(installPath, install, "utf8");
   console.log(`Injected version ${version} into scripts/install.sh`);

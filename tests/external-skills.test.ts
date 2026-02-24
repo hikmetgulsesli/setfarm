@@ -142,7 +142,7 @@ describe("External skill installation", () => {
     // Create bundled setfarm-workflows skill in workflow dir
     const bundledSkillDir = path.join(workflowDir, "skills", "setfarm-workflows");
     await fs.mkdir(bundledSkillDir, { recursive: true });
-    await fs.writeFile(path.join(bundledSkillDir, "SKILL.md"), "# Antfarm Workflows");
+    await fs.writeFile(path.join(bundledSkillDir, "SKILL.md"), "# Setfarm Workflows");
 
     const workflow = {
       id: "test-wf4",
@@ -170,7 +170,7 @@ describe("External skill installation", () => {
     // setfarm-workflows should be installed from bundled source
     const bundledDest = path.join(results[0].workspaceDir, "skills", "setfarm-workflows", "SKILL.md");
     const bundledContent = await fs.readFile(bundledDest, "utf-8");
-    assert.ok(bundledContent.includes("Antfarm Workflows"));
+    assert.ok(bundledContent.includes("Setfarm Workflows"));
 
     // agent-browser should be installed from external source
     const externalDest = path.join(results[0].workspaceDir, "skills", "agent-browser", "SKILL.md");

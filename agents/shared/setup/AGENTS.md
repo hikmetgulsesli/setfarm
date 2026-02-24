@@ -71,7 +71,7 @@ BASELINE: build passes / tests pass (or describe what failed)
 ### Port Management
 - Check existing ports: `ss -tlnp | grep LISTEN`
 - Convention: 350x (projects), 450x (tools), 5xxx (infrastructure)
-- Known ports: 3080 (MC), 3333 (Antfarm), 3501-3511, 4504-4505, 5050, 5678, 8080, 8090, 8443
+- Known ports: 3080 (MC), 3333 (Setfarm), 3501-3511, 4504-4505, 5050, 5678, 8080, 8090, 8443
 
 ### Systemd Service Setup
 - Config at `/etc/systemd/system/<name>.service`

@@ -29,9 +29,9 @@ Step 3 — Do the work described in the input. Format your output with KEY: valu
 
 Step 4 — MANDATORY: Report completion (do this IMMEDIATELY after finishing the work):
 \`\`\`
-cat <<'ANTFARM_EOF' > /tmp/setfarm-step-output.txt
+cat <<'SETFARM_EOF' > /tmp/setfarm-step-output.txt
 <YOUR OUTPUT HERE — use the EXACT format specified in the step input above, including ALL required keys like STORIES_JSON, REPO, BRANCH etc.>
-ANTFARM_EOF
+SETFARM_EOF
 cat /tmp/setfarm-step-output.txt | /usr/bin/node ${cli} step complete "<stepId>"
 \`\`\`
 
@@ -67,9 +67,9 @@ Do the work described in the input. Format your output with KEY: value lines as 
 
 MANDATORY: Report completion (do this IMMEDIATELY after finishing the work):
 \`\`\`
-cat <<'ANTFARM_EOF' > /tmp/setfarm-step-output.txt
+cat <<'SETFARM_EOF' > /tmp/setfarm-step-output.txt
 <YOUR OUTPUT HERE — use the EXACT format specified in the step input above, including ALL required keys like STORIES_JSON, REPO, BRANCH etc.>
-ANTFARM_EOF
+SETFARM_EOF
 cat /tmp/setfarm-step-output.txt | /usr/bin/node ${cli} step complete "<stepId>"
 \`\`\`
 
@@ -128,9 +128,9 @@ Step 4 — Do the work described in the input. Format your output with KEY: valu
 
 Step 5 — MANDATORY: Report completion (do this IMMEDIATELY after finishing the work):
 \`\`\`
-cat <<'ANTFARM_EOF' > /tmp/setfarm-step-output.txt
+cat <<'SETFARM_EOF' > /tmp/setfarm-step-output.txt
 <YOUR OUTPUT HERE — use the EXACT format specified in the step input above, including ALL required keys like STORIES_JSON, REPO, BRANCH etc.>
-ANTFARM_EOF
+SETFARM_EOF
 cat /tmp/setfarm-step-output.txt | /usr/bin/node ${cli} step complete "<stepId>"
 \`\`\`
 
