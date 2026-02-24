@@ -109,7 +109,7 @@ describe("peekStep - lightweight work check", () => {
     const os = await import("node:os");
     const path = await import("node:path");
     const fs = await import("node:fs");
-    tmpDbPath = path.join(os.tmpdir(), `antfarm-test-peek-${crypto.randomUUID()}.db`);
+    tmpDbPath = path.join(os.tmpdir(), `setfarm-test-peek-${crypto.randomUUID()}.db`);
     originalDbPath = process.env.ANTFARM_DB_PATH;
     process.env.ANTFARM_DB_PATH = tmpDbPath;
   });

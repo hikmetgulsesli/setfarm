@@ -1,10 +1,10 @@
-# Antfarm Pipeline Debug Skill
+# Setfarm Pipeline Debug Skill
 
-Debugging and fixing Antfarm CI/CD pipeline issues.
+Debugging and fixing Setfarm CI/CD pipeline issues.
 
 ## CRITICAL: node:sqlite API (NOT better-sqlite3!)
 
-Antfarm uses Node.js 22 built-in `node:sqlite` (DatabaseSync), NOT `better-sqlite3`.
+Setfarm uses Node.js 22 built-in `node:sqlite` (DatabaseSync), NOT `better-sqlite3`.
 
 ### API Differences
 
@@ -48,14 +48,14 @@ plan -> setup -> implement (story loop) -> verify -> test -> pr -> review -> ext
 ### 1. db.pragma is not a function
 **Cause:** Code uses better-sqlite3 API but runtime is node:sqlite
 **Fix:** Run `~/.openclaw/scripts/fix-pipeline-v2.py`
-**Location:** `dist/installer/step-ops.js` (both workspace and antfarm-repo)
+**Location:** `dist/installer/step-ops.js` (both workspace and setfarm-repo)
 
 ### 2. Pipeline step stuck at "waiting"
 **Cause:** advancePipeline crashed before setting next step to "pending"
 **Fix:** Manually set the stuck step to pending:
 ```javascript
 const { DatabaseSync } = require('node:sqlite');
-const db = new DatabaseSync(process.env.HOME + '/.openclaw/antfarm/antfarm.db');
+const db = new DatabaseSync(process.env.HOME + '/.openclaw/setfarm/setfarm.db');
 db.prepare("UPDATE steps SET status = 'pending', updated_at = datetime('now') WHERE run_id = ? AND step_id = ? AND status = 'waiting'").run(runId, stepId);
 ```
 
@@ -91,7 +91,7 @@ db.prepare("UPDATE steps SET status = 'pending', updated_at = datetime('now') WH
 
 ```javascript
 const { DatabaseSync } = require('node:sqlite');
-const db = new DatabaseSync(process.env.HOME + '/.openclaw/antfarm/antfarm.db');
+const db = new DatabaseSync(process.env.HOME + '/.openclaw/setfarm/setfarm.db');
 
 // Check all runs
 db.prepare("SELECT id, status, task FROM runs ORDER BY created_at DESC").all();
@@ -106,12 +106,12 @@ db.prepare("SELECT id, title, status FROM stories WHERE run_id = ? ORDER BY stor
 ## Fix Script Locations
 
 - `~/.openclaw/scripts/fix-pipeline-v2.py` - Fix advancePipeline node:sqlite API
-- `~/.openclaw/scripts/antfarm-update.sh` - Apply all patches (9 patches + build)
+- `~/.openclaw/scripts/setfarm-update.sh` - Apply all patches (9 patches + build)
 
 ## Three Deployment Locations
 
-1. `~/.openclaw/antfarm-repo/dist/` - Build output (source of truth after build)
-2. `~/.openclaw/workspace/antfarm/dist/` - RUNTIME (what actually runs)
-3. `~/.openclaw/antfarm/` - Installed workflows, DB, dashboard
+1. `~/.openclaw/setfarm-repo/dist/` - Build output (source of truth after build)
+2. `~/.openclaw/workspace/setfarm/dist/` - RUNTIME (what actually runs)
+3. `~/.openclaw/setfarm/` - Installed workflows, DB, dashboard
 
 Fix must be applied to BOTH location 1 and 2 for persistence.

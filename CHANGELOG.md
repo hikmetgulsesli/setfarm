@@ -21,8 +21,8 @@
 - This was the root cause of loop steps (like security audit fixes) completing with zero work done
 
 ### Added
-- `antfarm version` — show installed version
-- `antfarm update` — pull latest, rebuild, and reinstall workflows in one command
+- `setfarm version` — show installed version
+- `setfarm update` — pull latest, rebuild, and reinstall workflows in one command
 - CHANGELOG.md
 
 ## v0.1.0 — Initial release

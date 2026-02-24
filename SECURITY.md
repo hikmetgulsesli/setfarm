@@ -1,12 +1,12 @@
 # Security
 
-Antfarm workflows run AI agents on your machine. That's powerful — and it means security matters.
+Setfarm workflows run AI agents on your machine. That's powerful — and it means security matters.
 
 ## How we keep things safe
 
 ### Curated repository only
 
-Antfarm only installs workflows from this official repository (`snarktank/antfarm`). There is no mechanism to install workflows from arbitrary URLs, third-party repos, or remote sources. If it's not in this repo, it doesn't run.
+Setfarm only installs workflows from this official repository (`hikmetgulsesli/setfarm`). There is no mechanism to install workflows from arbitrary URLs, third-party repos, or remote sources. If it's not in this repo, it doesn't run.
 
 ### Every workflow is reviewed
 
@@ -38,7 +38,7 @@ See [docs/creating-workflows.md](docs/creating-workflows.md) for the full guide.
 
 ## Reporting vulnerabilities
 
-If you find a security issue in Antfarm, please report it responsibly:
+If you find a security issue in Setfarm, please report it responsibly:
 
 - **Email:** Ryan@ryancarson.com
 - **Do not** open a public issue for security vulnerabilities

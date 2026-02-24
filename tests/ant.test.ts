@@ -1,5 +1,5 @@
 /**
- * Tests for the `antfarm ant` easter egg command.
+ * Tests for the `setfarm ant` easter egg command.
  * Verifies CLI integration and output format.
  */
 import { describe, it } from "node:test";
@@ -9,7 +9,7 @@ import path from "node:path";
 
 const CLI = path.resolve(import.meta.dirname, "..", "dist", "cli", "cli.js");
 
-describe("antfarm ant (CLI)", () => {
+describe("setfarm ant (CLI)", () => {
   it("prints ASCII art containing ant body characters", () => {
     const output = execFileSync("node", [CLI, "ant"], { encoding: "utf-8" });
     assert.ok(output.includes("---"), "should have dashes for ant body");
@@ -31,6 +31,6 @@ describe("antfarm ant (CLI)", () => {
     } catch (e: any) {
       helpOutput = e.stdout ?? "";
     }
-    assert.ok(!helpOutput.includes("antfarm ant"), "ant should not appear in help");
+    assert.ok(!helpOutput.includes("setfarm ant"), "ant should not appear in help");
   });
 });

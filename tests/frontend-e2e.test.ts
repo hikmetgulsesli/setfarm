@@ -32,7 +32,7 @@ describe("E2E: frontend change detection in verify flow", () => {
   const testAgentId = `test-verifier-${randomUUID().slice(0, 8)}`;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "antfarm-e2e-"));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-e2e-"));
     // Create a real git repo with a main branch
     execSync("git init && git checkout -b main", { cwd: tmpDir });
     fs.writeFileSync(path.join(tmpDir, "README.md"), "# test");

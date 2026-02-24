@@ -16,9 +16,9 @@ Or just tell your OpenClaw agent: **"install github.com/hikmetgulsesli/setfarm"*
 
 That's it. Run `setfarm workflow list` to see available workflows.
 
-> **Not on npm.** Setfarm is installed from GitHub, not the npm registry. There is an unrelated `antfarm` package on npm — that's not this.
+> **Not on npm.** Setfarm is installed from GitHub, not the npm registry. There is an unrelated `setfarm` package on npm — that's not this.
 
-> **Requires Node.js >= 22.** If `antfarm` fails with a `node:sqlite` error, make sure you're running real Node.js 22+, not Bun's node wrapper (see [#54](https://github.com/hikmetgulsesli/setfarm/issues/54)).
+> **Requires Node.js >= 22.** If `setfarm` fails with a `node:sqlite` error, make sure you're running real Node.js 22+, not Bun's node wrapper (see [#54](https://github.com/hikmetgulsesli/setfarm/issues/54)).
 
 ---
 

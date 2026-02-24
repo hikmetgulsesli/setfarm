@@ -441,7 +441,7 @@ The Cloudflare tunnel config at `/etc/cloudflared/config.yml` routes ALL public 
 
 Gateway restarts are allowed when necessary (e.g., after a config fix), but follow this checklist:
 
-1. **Check for active pipelines first**: `antfarm workflow runs` — note any `[running]` runs
+1. **Check for active pipelines first**: `setfarm workflow runs` — note any `[running]` runs
 2. **If a pipeline is running**, wait for the current step to complete, or accept that the step may need recovery
 3. **The unstick-steps watchdog** (`~/.openclaw/scripts/unstick-steps.sh`) runs every 10 minutes and auto-recovers stuck steps after restart
 4. **After restart**, verify all channels started: look for `[telegram] starting provider`, `[whatsapp] Listening`, `[discord] logged in` in logs

@@ -1,20 +1,20 @@
 ---
-name: antfarm-workflows
-description: "Multi-agent workflow orchestration for OpenClaw. Use when user mentions antfarm, asks to run a multi-step workflow (feature dev, bug fix, security audit), or wants to install/uninstall/check status of antfarm workflows."
+name: setfarm-workflows
+description: "Multi-agent workflow orchestration for OpenClaw. Use when user mentions setfarm, asks to run a multi-step workflow (feature dev, bug fix, security audit), or wants to install/uninstall/check status of setfarm workflows."
 user-invocable: false
 ---
 
-# Antfarm
+# Setfarm
 
 Multi-agent workflow pipelines on OpenClaw. Each workflow is a sequence of specialized agents (planner, developer, verifier, tester, reviewer) that execute autonomously via cron jobs polling a shared SQLite database.
 
 All CLI commands use the full path to avoid PATH issues:
 
 ```bash
-node ~/.openclaw/workspace/antfarm/dist/cli/cli.js <command>
+node ~/.openclaw/workspace/setfarm/dist/cli/cli.js <command>
 ```
 
-Shorthand used below: `antfarm-cli` means `node ~/.openclaw/workspace/antfarm/dist/cli/cli.js`.
+Shorthand used below: `setfarm-cli` means `node ~/.openclaw/workspace/setfarm/dist/cli/cli.js`.
 
 ## Workflows
 
@@ -28,29 +28,29 @@ Shorthand used below: `antfarm-cli` means `node ~/.openclaw/workspace/antfarm/di
 
 ```bash
 # Install all workflows (creates agents + starts dashboard)
-node ~/.openclaw/workspace/antfarm/dist/cli/cli.js install
+node ~/.openclaw/workspace/setfarm/dist/cli/cli.js install
 
 # Full uninstall (workflows, agents, crons, DB, dashboard)
-node ~/.openclaw/workspace/antfarm/dist/cli/cli.js uninstall [--force]
+node ~/.openclaw/workspace/setfarm/dist/cli/cli.js uninstall [--force]
 
 # Start a run
-node ~/.openclaw/workspace/antfarm/dist/cli/cli.js workflow run <workflow-id> "<detailed task with acceptance criteria>"
+node ~/.openclaw/workspace/setfarm/dist/cli/cli.js workflow run <workflow-id> "<detailed task with acceptance criteria>"
 
 # Check a run
-node ~/.openclaw/workspace/antfarm/dist/cli/cli.js workflow status "<task or run-id prefix>"
+node ~/.openclaw/workspace/setfarm/dist/cli/cli.js workflow status "<task or run-id prefix>"
 
 # List all runs
-node ~/.openclaw/workspace/antfarm/dist/cli/cli.js workflow runs
+node ~/.openclaw/workspace/setfarm/dist/cli/cli.js workflow runs
 
 # Resume a failed run from the failed step
-node ~/.openclaw/workspace/antfarm/dist/cli/cli.js workflow resume <run-id>
+node ~/.openclaw/workspace/setfarm/dist/cli/cli.js workflow resume <run-id>
 
 # View logs
-node ~/.openclaw/workspace/antfarm/dist/cli/cli.js logs [lines]
+node ~/.openclaw/workspace/setfarm/dist/cli/cli.js logs [lines]
 
 # Dashboard
-node ~/.openclaw/workspace/antfarm/dist/cli/cli.js dashboard [start] [--port N]
-node ~/.openclaw/workspace/antfarm/dist/cli/cli.js dashboard stop
+node ~/.openclaw/workspace/setfarm/dist/cli/cli.js dashboard [start] [--port N]
+node ~/.openclaw/workspace/setfarm/dist/cli/cli.js dashboard stop
 ```
 
 ## Before Starting a Run
@@ -73,18 +73,18 @@ Get the user to confirm the plan and acceptance criteria before running.
 
 ## Force-Triggering Agents
 
-To skip the 15-min cron wait, use the `cron` tool with `action: "run"` and the agent's job ID. List crons to find them — they're named `antfarm/<workflow-id>/<agent-id>`.
+To skip the 15-min cron wait, use the `cron` tool with `action: "run"` and the agent's job ID. List crons to find them — they're named `setfarm/<workflow-id>/<agent-id>`.
 
 ## Workflow Management
 
 ```bash
 # List available workflows
-node ~/.openclaw/workspace/antfarm/dist/cli/cli.js workflow list
+node ~/.openclaw/workspace/setfarm/dist/cli/cli.js workflow list
 
 # Install/uninstall individual workflows
-node ~/.openclaw/workspace/antfarm/dist/cli/cli.js workflow install <name>
-node ~/.openclaw/workspace/antfarm/dist/cli/cli.js workflow uninstall <name>
-node ~/.openclaw/workspace/antfarm/dist/cli/cli.js workflow uninstall --all [--force]
+node ~/.openclaw/workspace/setfarm/dist/cli/cli.js workflow install <name>
+node ~/.openclaw/workspace/setfarm/dist/cli/cli.js workflow uninstall <name>
+node ~/.openclaw/workspace/setfarm/dist/cli/cli.js workflow uninstall --all [--force]
 ```
 
 ## Creating Custom Workflows
@@ -94,8 +94,8 @@ See `{baseDir}/../../docs/creating-workflows.md` for the full guide on writing w
 ## Agent Step Operations (used by agent cron jobs, not typically manual)
 
 ```bash
-node ~/.openclaw/workspace/antfarm/dist/cli/cli.js step claim <agent-id>        # Claim pending step
-node ~/.openclaw/workspace/antfarm/dist/cli/cli.js step complete <step-id>      # Complete step (output from stdin)
-node ~/.openclaw/workspace/antfarm/dist/cli/cli.js step fail <step-id> <error>  # Fail step with retry
-node ~/.openclaw/workspace/antfarm/dist/cli/cli.js step stories <run-id>        # List stories for a run
+node ~/.openclaw/workspace/setfarm/dist/cli/cli.js step claim <agent-id>        # Claim pending step
+node ~/.openclaw/workspace/setfarm/dist/cli/cli.js step complete <step-id>      # Complete step (output from stdin)
+node ~/.openclaw/workspace/setfarm/dist/cli/cli.js step fail <step-id> <error>  # Fail step with retry
+node ~/.openclaw/workspace/setfarm/dist/cli/cli.js step stories <run-id>        # List stories for a run
 ```
