@@ -181,6 +181,22 @@ function readProgressFile(runId: string): string {
 }
 
 /**
+ * Read PROJECT_MEMORY.md from the repo root.
+ * Returns placeholder if file does not exist — non-breaking for existing workflows.
+ */
+function readProjectMemory(context: Record<string, string>): string {
+  const repo = context["repo"] || context["story_workdir"];
+  if (!repo) return "";
+  try {
+    const memoryPath = path.join(repo, "PROJECT_MEMORY.md");
+    if (!fs.existsSync(memoryPath)) return "(no project memory yet)";
+    return fs.readFileSync(memoryPath, "utf-8");
+  } catch {
+    return "(no project memory yet)";
+  }
+}
+
+/**
  * Get all stories for a run, ordered by story_index.
  */
 export function getStories(runId: string): Story[] {
@@ -669,6 +685,7 @@ export function claimStep(agentId: string): ClaimResult {
       context["completed_stories"] = formatCompletedStories(allStories);
       context["stories_remaining"] = String(pendingCount);
       context["progress"] = readProgressFile(step.run_id);
+      context["project_memory"] = readProjectMemory(context);
 
       // FALLBACK: Ensure story_branch defaults to story ID if developer forgot to output it
       if (!context["story_branch"]) {
@@ -730,6 +747,7 @@ export function claimStep(agentId: string): ClaimResult {
   ).get(step.run_id) as { cnt: number };
   if (hasStories.cnt > 0) {
     context["progress"] = readProgressFile(step.run_id);
+    context["project_memory"] = readProjectMemory(context);
   }
 
   // BUG FIX: If this is a verify step for a verify_each loop, inject the correct
