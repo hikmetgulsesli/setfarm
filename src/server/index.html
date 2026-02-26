@@ -679,7 +679,7 @@ async function loadStories(runId) {
   const stories = await fetchJSON('/api/runs/' + runId + '/stories');
   const container = document.getElementById('stories-panel');
   if (!stories || stories.length === 0) { container.textContent = ''; return; }
-  var done = stories.filter(s => s.status === 'done').length;
+  var done = stories.filter(s => ['done', 'verified', 'skipped'].includes(s.status)).length;
   var pct = Math.round((done / stories.length) * 100);
 
   container.textContent = '';
