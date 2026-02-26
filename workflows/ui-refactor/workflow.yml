@@ -10,11 +10,11 @@ description: |
   fixes inconsistencies. Verifier checks consistency and merges PRs.
 
 agent_mapping:
-  planner: deniz
+  planner: lux
   setup: atlas
-  developer: [mert, kaan]
-  verifier: [sinan, defne]
-  tester: sinan
+  developer: [prism, flux]
+  verifier: [sentinel, iris]
+  tester: sentinel
 
 cron:
   interval_ms: 240000  # 4 minutes

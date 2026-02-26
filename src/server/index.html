@@ -126,6 +126,12 @@ select:focus{outline:none;border-color:#8ECFC0}
 .theme-toggle{background:none;border:1px solid rgba(255,255,255,.2);border-radius:6px;color:#fff;cursor:pointer;padding:5px 8px;font-size:16px;line-height:1;transition:border-color .15s}
 .theme-toggle:hover{border-color:rgba(255,255,255,.5)}
 
+/* ── Tab navigation ────────────────────────────────────────────── */
+.tab-nav{display:flex;gap:4px;margin-left:8px}
+.tab-btn{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15);border-radius:6px;color:rgba(255,255,255,.7);cursor:pointer;padding:5px 14px;font-size:13px;font-weight:500;font-family:'Inter',sans-serif;transition:all .15s}
+.tab-btn:hover{background:rgba(255,255,255,.15);color:#fff}
+.tab-btn.active{background:rgba(255,255,255,.2);border-color:rgba(255,255,255,.3);color:#fff}
+
 /* ── Board ─────────────────────────────────────────────────────── */
 .board{display:flex;gap:16px;padding:24px;overflow-x:auto;min-height:calc(100vh - 65px)}
 .column{min-width:240px;flex:1;background:var(--bg-surface);border:none;border-radius:8px;display:flex;flex-direction:column;box-shadow:0 2px 8px var(--shadow)}
@@ -177,7 +183,7 @@ select:focus{outline:none;border-color:#8ECFC0}
 /* ── Misc ──────────────────────────────────────────────────────── */
 .empty{color:var(--text-secondary);font-size:12px;text-align:center;padding:24px 8px}
 .refresh-note{color:rgba(255,255,255,.6);font-size:11px;margin-left:auto}
-@media(max-width:768px){.board{flex-direction:column}.column{min-width:unset}}
+@media(max-width:768px){.board{flex-direction:column}.column{min-width:unset}.scrape-layout{flex-direction:column}.scrape-history{max-width:unset;min-width:unset}}
 .story-open{display:block!important}
 .story-chevron-open{transform:rotate(90deg)}
 .step-open{display:block!important}
@@ -204,20 +210,116 @@ select:focus{outline:none;border-color:#8ECFC0}
 .medic-check-row:last-child{border-bottom:none}
 .medic-check-time{color:var(--text-secondary);font-family:'Geist Mono',monospace}
 .medic-check-summary{color:var(--text-primary);margin-left:8px}
+
+/* ── Scrape page ───────────────────────────────────────────────── */
+.scrape-layout{display:flex;gap:20px;padding:24px;min-height:calc(100vh - 65px)}
+.scrape-main{flex:1;display:flex;flex-direction:column;gap:16px}
+.scrape-history{width:320px;min-width:280px;background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 2px 8px var(--shadow);display:flex;flex-direction:column;max-height:calc(100vh - 89px)}
+.scrape-history-header{padding:14px 16px;border-bottom:1px solid var(--border-light);font-size:14px;font-weight:600;color:var(--text-primary)}
+.scrape-history-body{padding:8px;flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:4px}
+.scrape-history-item{padding:10px 12px;border:1px solid var(--border);border-radius:6px;cursor:pointer;transition:border-color .15s,box-shadow .15s;background:var(--bg-surface-alt)}
+.scrape-history-item:hover{border-color:var(--accent-orange);box-shadow:0 2px 8px var(--accent-orange-subtle)}
+.scrape-history-item.success{border-left:3px solid var(--accent-green)}
+.scrape-history-item.error{border-left:3px solid var(--accent-orange)}
+.scrape-history-url{font-size:12px;font-weight:500;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:4px}
+.scrape-history-meta{font-size:11px;color:var(--text-secondary);display:flex;justify-content:space-between;align-items:center}
+
+.scrape-form{background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;padding:20px;box-shadow:0 2px 8px var(--shadow)}
+.scrape-form-row{display:flex;gap:12px;align-items:end}
+.scrape-form-row .field{display:flex;flex-direction:column;gap:4px}
+.scrape-form-row .field.grow{flex:1}
+.scrape-form-row label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.3px;color:var(--text-secondary)}
+.scrape-form input[type="text"],.scrape-form select{background:var(--bg-surface-alt);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:14px;font-family:'Inter',sans-serif;outline:none;transition:border-color .15s}
+.scrape-form input[type="text"]:focus,.scrape-form select:focus{border-color:var(--accent-teal)}
+.scrape-form select{background:var(--bg-surface-alt);color:var(--text-primary)}
+.scrape-form select option{background:var(--bg-surface);color:var(--text-primary)}
+.scrape-btn{background:var(--accent-green);color:#fff;border:none;border-radius:6px;padding:8px 20px;font-size:14px;font-weight:600;cursor:pointer;transition:opacity .15s;font-family:'Inter',sans-serif;white-space:nowrap}
+.scrape-btn:hover{opacity:.9}
+.scrape-btn:disabled{opacity:.5;cursor:not-allowed}
+
+.scrape-result{background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 2px 8px var(--shadow);overflow:hidden}
+.scrape-result-header{padding:14px 16px;border-bottom:1px solid var(--border-light);display:flex;align-items:center;justify-content:space-between}
+.scrape-result-header h3{font-size:14px;font-weight:600;color:var(--text-primary)}
+.scrape-result-meta{font-size:11px;color:var(--text-secondary);display:flex;gap:12px}
+.scrape-result-body{padding:16px;max-height:60vh;overflow-y:auto}
+.scrape-result-body pre{background:var(--bg-code);border:1px solid var(--border);border-radius:6px;padding:12px;font-family:'Geist Mono',monospace;font-size:12px;white-space:pre-wrap;word-break:break-word;line-height:1.6;color:var(--text-primary)}
+
+.scrape-error{background:var(--accent-orange-subtle);border:1px solid var(--accent-orange);border-radius:8px;padding:16px;color:var(--accent-orange);font-size:13px;font-weight:500}
+
+.scrape-loading{display:flex;align-items:center;justify-content:center;padding:40px;gap:12px;color:var(--text-secondary);font-size:13px}
+.scrape-spinner{width:20px;height:20px;border:2px solid var(--border);border-top-color:var(--accent-teal);border-radius:50%;animation:spin .6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
 <header>
   <h1><span>setfarm</span> dashboard</h1>
+  <div class="tab-nav">
+    <button class="tab-btn active" id="tab-runs" onclick="switchTab('runs')">Runs</button>
+    <button class="tab-btn" id="tab-scrape" onclick="switchTab('scrape')">Scrape</button>
+  </div>
   <select id="wf-select"><option value="">Loading...</option></select>
-  <button class="theme-toggle" id="theme-toggle" title="Toggle light/dark mode" aria-label="Toggle light/dark mode">☀️</button>
+  <button class="theme-toggle" id="theme-toggle" title="Toggle light/dark mode" aria-label="Toggle light/dark mode">&#9728;&#65039;</button>
   <div class="medic-badge" id="medic-badge" onclick="toggleMedicPanel()" title="Medic watchdog status">
     <span class="medic-dot unknown" id="medic-dot"></span>
     <span id="medic-label">Medic</span>
   </div>
   <span class="refresh-note" id="refresh-note">Auto-refresh: 30s</span>
 </header>
-<div class="board" id="board"><div class="empty" style="margin:auto">Select a workflow</div></div>
+
+<!-- Runs page (existing) -->
+<div id="page-runs">
+  <div class="board" id="board"><div class="empty" style="margin:auto">Select a workflow</div></div>
+</div>
+
+<!-- Scrape page (new) -->
+<div id="page-scrape" style="display:none">
+  <div class="scrape-layout">
+    <div class="scrape-main">
+      <div class="scrape-form">
+        <div class="scrape-form-row" style="margin-bottom:12px">
+          <div class="field grow">
+            <label for="scrape-url">URL</label>
+            <input type="text" id="scrape-url" placeholder="https://example.com" spellcheck="false">
+          </div>
+        </div>
+        <div class="scrape-form-row">
+          <div class="field">
+            <label for="scrape-adaptor">Adaptor</label>
+            <select id="scrape-adaptor">
+              <option value="auto">Auto Detect</option>
+              <option value="amazon">Amazon</option>
+              <option value="linkedin">LinkedIn</option>
+              <option value="twitter">Twitter/X</option>
+              <option value="generic">Generic</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="scrape-format">Format</label>
+            <select id="scrape-format">
+              <option value="json">JSON</option>
+              <option value="text">Text</option>
+              <option value="markdown">Markdown</option>
+            </select>
+          </div>
+          <div class="field grow">
+            <label for="scrape-selector">CSS Selector <span style="font-weight:400;text-transform:none">(optional)</span></label>
+            <input type="text" id="scrape-selector" placeholder="h1, .product-title, #content" spellcheck="false">
+          </div>
+          <button class="scrape-btn" id="scrape-btn" onclick="doScrape()">Scrape</button>
+        </div>
+      </div>
+      <div id="scrape-output"></div>
+    </div>
+    <div class="scrape-history">
+      <div class="scrape-history-header">History</div>
+      <div class="scrape-history-body" id="scrape-history-body">
+        <div class="empty">No scrapes yet</div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="medic-panel" id="medic-panel">
   <div class="medic-panel-header">Workflow Medic</div>
   <div class="medic-panel-body" id="medic-panel-body">Loading...</div>
@@ -230,6 +332,18 @@ select:focus{outline:none;border-color:#8ECFC0}
 const API = '';
 let workflows = [];
 let currentWf = null;
+let currentTab = 'runs';
+
+// ── Tab switching ──
+function switchTab(name) {
+  currentTab = name;
+  document.getElementById('page-runs').style.display = name === 'runs' ? '' : 'none';
+  document.getElementById('page-scrape').style.display = name === 'scrape' ? '' : 'none';
+  document.getElementById('tab-runs').classList.toggle('active', name === 'runs');
+  document.getElementById('tab-scrape').classList.toggle('active', name === 'scrape');
+  document.getElementById('wf-select').style.display = name === 'runs' ? '' : 'none';
+  if (name === 'scrape') loadScrapeHistory();
+}
 
 async function fetchJSON(url) {
   const r = await fetch(API + url);
@@ -239,16 +353,24 @@ async function fetchJSON(url) {
 async function loadWorkflows() {
   workflows = await fetchJSON('/api/workflows');
   const sel = document.getElementById('wf-select');
-  sel.innerHTML = '<option value="">— select workflow —</option>' +
-    workflows.map(w => `<option value="${w.id}">${w.name}</option>`).join('');
+  sel.textContent = '';
+  const defaultOpt = document.createElement('option');
+  defaultOpt.value = '';
+  defaultOpt.textContent = '\u2014 select workflow \u2014';
+  sel.appendChild(defaultOpt);
+  workflows.forEach(function(w) {
+    var opt = document.createElement('option');
+    opt.value = w.id;
+    opt.textContent = w.name;
+    sel.appendChild(opt);
+  });
   if (workflows.length === 1) {
     sel.value = workflows[0].id;
     selectWorkflow(workflows[0].id);
   } else if (workflows.length > 1) {
-    // Auto-select workflow with active runs
     try {
       for (const w of workflows) {
-        const runs = await fetchJSON(`/api/runs?workflow=${w.id}`);
+        const runs = await fetchJSON('/api/runs?workflow=' + w.id);
         const active = runs.find(r => r.status === 'running' || r.status === 'pending');
         if (active) { sel.value = w.id; selectWorkflow(w.id); break; }
       }
@@ -259,12 +381,20 @@ async function loadWorkflows() {
 function selectWorkflow(id) {
   currentWf = workflows.find(w => w.id === id) || null;
   if (currentWf) loadRuns();
-  else document.getElementById('board').innerHTML = '<div class="empty" style="margin:auto">Select a workflow</div>';
+  else {
+    var board = document.getElementById('board');
+    board.textContent = '';
+    var emptyDiv = document.createElement('div');
+    emptyDiv.className = 'empty';
+    emptyDiv.style.margin = 'auto';
+    emptyDiv.textContent = 'Select a workflow';
+    board.appendChild(emptyDiv);
+  }
 }
 
 async function loadRuns() {
   if (!currentWf) return;
-  const runs = await fetchJSON(`/api/runs?workflow=${currentWf.id}`);
+  const runs = await fetchJSON('/api/runs?workflow=' + currentWf.id);
   renderBoard(currentWf, runs);
 }
 
@@ -274,135 +404,270 @@ function getActiveStepId(run) {
   return active ? active.step_id : run.steps[run.steps.length - 1].step_id;
 }
 
+function esc(s) { if (!s) return ''; return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function parseTS(ts) { if (!ts) return null; if (!ts.endsWith('Z') && !ts.includes('+')) ts = ts.replace(' ', 'T') + 'Z'; return new Date(ts); }
+const stepIcons = {done:'\u2713',running:'\u25CF',pending:'\u25CB',waiting:'\u25CC',failed:'\u2717',error:'\u2717'};
+
 function renderBoard(wf, runs) {
   const board = document.getElementById('board');
   const columns = {};
   wf.steps.forEach(s => { columns[s.id] = []; });
-
   runs.forEach(run => {
     const stepId = getActiveStepId(run);
     const col = stepId && columns[stepId] !== undefined ? stepId : wf.steps[wf.steps.length - 1]?.id;
     if (col && columns[col]) columns[col].push(run);
   });
 
-  board.innerHTML = wf.steps.map(step => {
-    const cards = columns[step.id];
-    const cardHTML = cards.length === 0
-      ? '<div class="empty">No runs</div>'
-      : cards.map(run => {
-          const isDone = run.status === 'done';
-          const isFailed = run.status === 'failed' || run.status === 'error';
-          const cls = isDone ? 'done' : isFailed ? 'failed' : '';
-          const badge = `badge-${run.status}`;
-          const time = run.updated_at ? parseTS(run.updated_at)?.toLocaleString() || "" : '';
-          const title = run.task.length > 60 ? run.task.slice(0, 57) + '…' : run.task;
-          return `<div class="card ${cls}" onclick="openRun('${run.id}')">
-            <div class="card-title" title="${run.task.replace(/"/g, '&quot;')}">${title}</div>
-            <div class="card-meta">
-              <span class="badge ${badge}">${run.status}</span>
-              <span>${time}</span>
-            </div>
-          </div>`;
-        }).join('');
-    return `<div class="column">
-      <div class="column-header">${step.id}<span class="count">${cards.length}</span></div>
-      <div class="cards">${cardHTML}</div>
-    </div>`;
-  }).join('');
+  board.textContent = '';
+  wf.steps.forEach(function(step) {
+    var cards = columns[step.id];
+    var colDiv = document.createElement('div');
+    colDiv.className = 'column';
+    var headerDiv = document.createElement('div');
+    headerDiv.className = 'column-header';
+    headerDiv.textContent = step.id;
+    var countSpan = document.createElement('span');
+    countSpan.className = 'count';
+    countSpan.textContent = cards.length;
+    headerDiv.appendChild(countSpan);
+    colDiv.appendChild(headerDiv);
+
+    var cardsDiv = document.createElement('div');
+    cardsDiv.className = 'cards';
+    if (cards.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'empty';
+      empty.textContent = 'No runs';
+      cardsDiv.appendChild(empty);
+    } else {
+      cards.forEach(function(run) {
+        var isDone = run.status === 'done';
+        var isFailed = run.status === 'failed' || run.status === 'error';
+        var card = document.createElement('div');
+        card.className = 'card' + (isDone ? ' done' : isFailed ? ' failed' : '');
+        card.onclick = function() { openRun(run.id); };
+
+        var titleDiv = document.createElement('div');
+        titleDiv.className = 'card-title';
+        titleDiv.title = run.task;
+        titleDiv.textContent = run.task.length > 60 ? run.task.slice(0, 57) + '\u2026' : run.task;
+        card.appendChild(titleDiv);
+
+        var metaDiv = document.createElement('div');
+        metaDiv.className = 'card-meta';
+        var badge = document.createElement('span');
+        badge.className = 'badge badge-' + run.status;
+        badge.textContent = run.status;
+        metaDiv.appendChild(badge);
+        var timeSpan = document.createElement('span');
+        timeSpan.textContent = run.updated_at ? parseTS(run.updated_at)?.toLocaleString() || "" : '';
+        metaDiv.appendChild(timeSpan);
+        card.appendChild(metaDiv);
+        cardsDiv.appendChild(card);
+      });
+    }
+    colDiv.appendChild(cardsDiv);
+    board.appendChild(colDiv);
+  });
 }
 
-const stepIcons = {done:'✓',running:'●',pending:'○',waiting:'◌',failed:'✗',error:'✗'};
-function esc(s) { if (!s) return ''; return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-// Normalize SQLite datetime('now') format (no T/Z) to proper ISO 8601 UTC
-function parseTS(ts) { if (!ts) return null; if (!ts.endsWith('Z') && !ts.includes('+')) ts = ts.replace(' ', 'T') + 'Z'; return new Date(ts); }
-
 async function openRun(id) {
-  const run = await fetchJSON(`/api/runs/${id}`);
+  const run = await fetchJSON('/api/runs/' + id);
   const panel = document.getElementById('panel');
   const created = run.created_at ? parseTS(run.created_at)?.toLocaleString() || "" : '';
   const updated = run.updated_at ? parseTS(run.updated_at)?.toLocaleString() || "" : '';
-  const stepsHTML = (run.steps || []).map(s => {
-    const st = s.status || 'waiting';
-    const icon = stepIcons[st] || '○';
-    const hasOutput = !!s.output;
-    const toggleAttr = hasOutput ? `onclick="this.querySelector('.step-details').classList.toggle('step-open');this.querySelector('.step-chevron').classList.toggle('step-chevron-open')" style="cursor:pointer"` : '';
-    return `<div class="step-row" style="flex-direction:column;align-items:stretch;gap:0;padding:0;overflow:hidden" ${toggleAttr}>
-      <div style="display:flex;align-items:center;gap:8px;padding:10px 12px">
-        <div class="step-icon ${st}">${icon}</div>
-        <div class="step-name" style="flex:1">${s.step_id}</div>
-        <div class="step-agent">${s.agent_id || ''}</div>
-        <div class="step-status"><span class="badge badge-${st}">${st}</span></div>
-        ${hasOutput ? '<span class="step-chevron" style="color:var(--text-secondary);font-size:10px;transition:transform .15s;display:inline-block">▶</span>' : ''}
-      </div>
-      ${hasOutput ? `<div class="step-details" style="display:none;padding:0 12px 12px 44px;font-size:12px;color:var(--text-tertiary);line-height:1.6">
-        <details style="margin-top:4px" onclick="event.stopPropagation()"><summary style="font-size:11px;color:var(--text-secondary);cursor:pointer;font-weight:500">Output</summary><pre style="margin-top:6px;padding:8px;background:var(--bg-code);border:1px solid var(--border);border-radius:4px;font-family:'Geist Mono',monospace;font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow-y:auto">${esc(s.output)}</pre></details>
-      </div>` : ''}
-    </div>`;
-  }).join('');
-  panel.innerHTML = `
-    <button class="panel-close" onclick="closePanel()">✕</button>
-    <h2>${run.workflow_id}</h2>
-    <div class="panel-task">${esc(run.task)}</div>
-    <div class="panel-meta">
-      <span><span class="badge badge-${run.status}">${run.status}</span></span>
-      <span>Created: ${created}</span>
-      <span>Updated: ${updated}</span>
-    </div>
-    <div class="steps-list">${stepsHTML}</div>
-    <div id="stories-panel"></div>
-    <div id="activity-panel"></div>
-  `;
+
+  panel.textContent = '';
+
+  // Close button
+  var closeBtn = document.createElement('button');
+  closeBtn.className = 'panel-close';
+  closeBtn.textContent = '\u2715';
+  closeBtn.onclick = closePanel;
+  panel.appendChild(closeBtn);
+
+  // Title
+  var h2 = document.createElement('h2');
+  h2.textContent = run.workflow_id;
+  panel.appendChild(h2);
+
+  // Task
+  var taskDiv = document.createElement('div');
+  taskDiv.className = 'panel-task';
+  taskDiv.textContent = run.task;
+  panel.appendChild(taskDiv);
+
+  // Meta
+  var metaDiv = document.createElement('div');
+  metaDiv.className = 'panel-meta';
+  var badgeSpan = document.createElement('span');
+  var badge = document.createElement('span');
+  badge.className = 'badge badge-' + run.status;
+  badge.textContent = run.status;
+  badgeSpan.appendChild(badge);
+  metaDiv.appendChild(badgeSpan);
+  var createdSpan = document.createElement('span');
+  createdSpan.textContent = 'Created: ' + created;
+  metaDiv.appendChild(createdSpan);
+  var updatedSpan = document.createElement('span');
+  updatedSpan.textContent = 'Updated: ' + updated;
+  metaDiv.appendChild(updatedSpan);
+  panel.appendChild(metaDiv);
+
+  // Steps
+  var stepsDiv = document.createElement('div');
+  stepsDiv.className = 'steps-list';
+  (run.steps || []).forEach(function(s) {
+    var st = s.status || 'waiting';
+    var icon = stepIcons[st] || '\u25CB';
+    var hasOutput = !!s.output;
+
+    var row = document.createElement('div');
+    row.className = 'step-row';
+    row.style.cssText = 'flex-direction:column;align-items:stretch;gap:0;padding:0;overflow:hidden';
+
+    var topRow = document.createElement('div');
+    topRow.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 12px';
+
+    var iconDiv = document.createElement('div');
+    iconDiv.className = 'step-icon ' + st;
+    iconDiv.textContent = icon;
+    topRow.appendChild(iconDiv);
+
+    var nameDiv = document.createElement('div');
+    nameDiv.className = 'step-name';
+    nameDiv.style.flex = '1';
+    nameDiv.textContent = s.step_id;
+    topRow.appendChild(nameDiv);
+
+    var agentDiv = document.createElement('div');
+    agentDiv.className = 'step-agent';
+    agentDiv.textContent = s.agent_id || '';
+    topRow.appendChild(agentDiv);
+
+    var statusDiv = document.createElement('div');
+    statusDiv.className = 'step-status';
+    var statusBadge = document.createElement('span');
+    statusBadge.className = 'badge badge-' + st;
+    statusBadge.textContent = st;
+    statusDiv.appendChild(statusBadge);
+    topRow.appendChild(statusDiv);
+
+    if (hasOutput) {
+      var chevron = document.createElement('span');
+      chevron.className = 'step-chevron';
+      chevron.style.cssText = 'color:var(--text-secondary);font-size:10px;transition:transform .15s;display:inline-block';
+      chevron.textContent = '\u25B6';
+      topRow.appendChild(chevron);
+    }
+
+    row.appendChild(topRow);
+
+    if (hasOutput) {
+      var details = document.createElement('div');
+      details.className = 'step-details';
+      details.style.cssText = 'display:none;padding:0 12px 12px 44px;font-size:12px;color:var(--text-tertiary);line-height:1.6';
+      var det = document.createElement('details');
+      det.style.marginTop = '4px';
+      det.onclick = function(e) { e.stopPropagation(); };
+      var sum = document.createElement('summary');
+      sum.style.cssText = 'font-size:11px;color:var(--text-secondary);cursor:pointer;font-weight:500';
+      sum.textContent = 'Output';
+      det.appendChild(sum);
+      var pre = document.createElement('pre');
+      pre.style.cssText = 'margin-top:6px;padding:8px;background:var(--bg-code);border:1px solid var(--border);border-radius:4px;font-family:Geist Mono,monospace;font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow-y:auto';
+      pre.textContent = s.output;
+      det.appendChild(pre);
+      details.appendChild(det);
+      row.appendChild(details);
+
+      row.style.cursor = 'pointer';
+      row.onclick = function() {
+        details.classList.toggle('step-open');
+        chevron.classList.toggle('step-chevron-open');
+      };
+    }
+
+    stepsDiv.appendChild(row);
+  });
+  panel.appendChild(stepsDiv);
+
+  // Stories and activity containers
+  var storiesPanel = document.createElement('div');
+  storiesPanel.id = 'stories-panel';
+  panel.appendChild(storiesPanel);
+  var activityPanel = document.createElement('div');
+  activityPanel.id = 'activity-panel';
+  panel.appendChild(activityPanel);
+
   document.getElementById('overlay').classList.add('open');
   loadStories(id);
   loadActivity(id);
 }
 
 function formatEventDesc(evt) {
-  const e = evt.event;
-  const story = evt.storyTitle ? `${evt.storyId}: "${evt.storyTitle}"` : evt.storyId || '';
+  var e = evt.event;
+  var story = evt.storyTitle ? evt.storyId + ': "' + evt.storyTitle + '"' : evt.storyId || '';
   switch (e) {
     case 'run.started': return 'Run started';
-    case 'run.completed': return 'Run completed ✅';
-    case 'run.failed': return 'Run failed ❌';
-    case 'step.pending': return `Step pending`;
-    case 'step.running': return `Claimed step`;
-    case 'step.done': return `Step completed`;
-    case 'step.failed': return `Step failed` + (evt.detail ? `: ${evt.detail.slice(0,80)}` : '');
-    case 'step.timeout': return `Step timed out` + (evt.detail ? ` — ${evt.detail}` : '');
-    case 'story.started': return `Claimed story ${story}`;
-    case 'story.done': return `Completed ${story}`;
-    case 'story.verified': return `Verified ${story} ✅`;
-    case 'story.retry': return `Retry ${story}` + (evt.detail ? ` — ${evt.detail.slice(0,80)}` : '');
-    case 'story.failed': return `Story failed ${story}`;
-    case 'pipeline.advanced': return `Pipeline advanced`;
+    case 'run.completed': return 'Run completed';
+    case 'run.failed': return 'Run failed';
+    case 'step.pending': return 'Step pending';
+    case 'step.running': return 'Claimed step';
+    case 'step.done': return 'Step completed';
+    case 'step.failed': return 'Step failed' + (evt.detail ? ': ' + evt.detail.slice(0,80) : '');
+    case 'step.timeout': return 'Step timed out' + (evt.detail ? ' \u2014 ' + evt.detail : '');
+    case 'story.started': return 'Claimed story ' + story;
+    case 'story.done': return 'Completed ' + story;
+    case 'story.verified': return 'Verified ' + story;
+    case 'story.retry': return 'Retry ' + story + (evt.detail ? ' \u2014 ' + evt.detail.slice(0,80) : '');
+    case 'story.failed': return 'Story failed ' + story;
+    case 'pipeline.advanced': return 'Pipeline advanced';
     default: return e;
   }
 }
 
 async function loadActivity(runId) {
-  const events = await fetchJSON(`/api/runs/${runId}/events`);
-  const panel = document.getElementById('activity-panel');
-  if (!events || events.length === 0) { panel.innerHTML = ''; return; }
-  const rows = events.map(evt => {
-    const t = parseTS(evt.ts);
-    const time = t.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
-    const agent = evt.agentId ? evt.agentId.split('/').pop() : '';
-    const desc = formatEventDesc(evt);
-    const agentSpan = agent
-      ? `<span style="color:var(--accent-teal);font-family:'Geist Mono',monospace;flex-shrink:0">${esc(agent)}</span>`
-      : '';
-    return `<div style="display:flex;gap:12px;padding:4px 0;font-size:12px;line-height:1.5;border-bottom:1px solid var(--border-light)">
-      <span style="color:var(--text-secondary);font-family:'Geist Mono',monospace;flex-shrink:0;min-width:44px">${time}</span>
-      ${agentSpan}
-      <span style="color:var(--text-primary)">${esc(desc)}</span>
-    </div>`;
-  }).join('');
-  panel.innerHTML = `
-    <div style="margin-top:24px;border-top:1px solid var(--border);padding-top:20px">
-      <h3 style="font-size:15px;font-weight:600;color:var(--text-primary);margin-bottom:12px">Activity</h3>
-      <div style="max-height:300px;overflow-y:auto">${rows}</div>
-    </div>
-  `;
+  const events = await fetchJSON('/api/runs/' + runId + '/events');
+  const container = document.getElementById('activity-panel');
+  if (!events || events.length === 0) { container.textContent = ''; return; }
+
+  container.textContent = '';
+  var wrapper = document.createElement('div');
+  wrapper.style.cssText = 'margin-top:24px;border-top:1px solid var(--border);padding-top:20px';
+  var h3 = document.createElement('h3');
+  h3.style.cssText = 'font-size:15px;font-weight:600;color:var(--text-primary);margin-bottom:12px';
+  h3.textContent = 'Activity';
+  wrapper.appendChild(h3);
+
+  var scrollDiv = document.createElement('div');
+  scrollDiv.style.cssText = 'max-height:300px;overflow-y:auto';
+  events.forEach(function(evt) {
+    var t = parseTS(evt.ts);
+    var time = t.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+    var agent = evt.agentId ? evt.agentId.split('/').pop() : '';
+    var desc = formatEventDesc(evt);
+
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:12px;padding:4px 0;font-size:12px;line-height:1.5;border-bottom:1px solid var(--border-light)';
+    var timeSpan = document.createElement('span');
+    timeSpan.style.cssText = 'color:var(--text-secondary);font-family:Geist Mono,monospace;flex-shrink:0;min-width:44px';
+    timeSpan.textContent = time;
+    row.appendChild(timeSpan);
+    if (agent) {
+      var agentSpan = document.createElement('span');
+      agentSpan.style.cssText = 'color:var(--accent-teal);font-family:Geist Mono,monospace;flex-shrink:0';
+      agentSpan.textContent = agent;
+      row.appendChild(agentSpan);
+    }
+    var descSpan = document.createElement('span');
+    descSpan.style.cssText = 'color:var(--text-primary)';
+    descSpan.textContent = desc;
+    row.appendChild(descSpan);
+    scrollDiv.appendChild(row);
+  });
+  wrapper.appendChild(scrollDiv);
+  container.appendChild(wrapper);
 }
 
 function closePanel() {
@@ -411,54 +676,155 @@ function closePanel() {
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closePanel(); });
 
 async function loadStories(runId) {
-  const stories = await fetchJSON(`/api/runs/${runId}/stories`);
-  const panel = document.getElementById('stories-panel');
-  if (!stories || stories.length === 0) { panel.innerHTML = ''; return; }
-  const done = stories.filter(s => s.status === 'done').length;
-  const pct = Math.round((done / stories.length) * 100);
-  panel.innerHTML = `
-    <div style="margin-top:24px;border-top:1px solid var(--border);padding-top:20px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-        <h3 style="font-size:15px;font-weight:600;color:var(--text-primary)">Stories</h3>
-        <span style="font-size:13px;font-weight:600;color:var(--accent-green)">${done} / ${stories.length} done</span>
-      </div>
-      <div style="background:var(--accent-muted);border-radius:4px;height:8px;margin-bottom:16px;overflow:hidden">
-        <div style="background:var(--accent-green);height:100%;width:${pct}%;border-radius:4px;transition:width .3s"></div>
-      </div>
-      <div style="display:flex;flex-direction:column;gap:6px">
-        ${stories.map((s, i) => {
-          const st = s.status || 'pending';
-          const icon = stepIcons[st] || '○';
-          let ac = [];
-          try { ac = JSON.parse(s.acceptance_criteria || '[]'); } catch { ac = [s.acceptance_criteria]; }
-          const retryInfo = s.retry_count > 0 ? ` <span style="color:var(--accent-orange);font-size:10px">(retry ${s.retry_count})</span>` : '';
-          const hasDetails = s.description || ac.length > 0 || s.output;
-          const toggleAttr = hasDetails ? `onclick="this.querySelector('.story-details').classList.toggle('story-open');this.querySelector('.story-chevron').classList.toggle('story-chevron-open')" style="cursor:pointer"` : '';
-          return `<div class="step-row" style="flex-direction:column;align-items:stretch;gap:0;padding:0;overflow:hidden" ${toggleAttr}>
-            <div style="display:flex;align-items:center;gap:8px;padding:10px 12px">
-              <div class="step-icon ${st}">${icon}</div>
-              <div class="step-name" style="flex:1">${s.story_id}: ${s.title}${retryInfo}</div>
-              <div class="step-status"><span class="badge badge-${st}">${st}</span></div>
-              ${hasDetails ? '<span class="story-chevron" style="color:var(--text-secondary);font-size:10px;transition:transform .15s;display:inline-block">▶</span>' : ''}
-            </div>
-            ${hasDetails ? `<div class="story-details" style="display:none;padding:0 12px 12px 44px;font-size:12px;color:var(--text-tertiary);line-height:1.6">
-              ${s.description ? `<div style="margin-bottom:8px">${esc(s.description)}</div>` : ''}
-              ${ac.length > 0 ? `<div style="margin-bottom:8px"><div style="font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.3px;color:var(--accent-green);margin-bottom:4px">Acceptance Criteria</div>${ac.map(c => `<label style="display:flex;align-items:flex-start;gap:6px;margin-bottom:3px;cursor:default"><span style="color:var(${st==='done'?'--accent-green':'--border'});flex-shrink:0">${st==='done'?'☑':'☐'}</span><span>${esc(c)}</span></label>`).join('')}</div>` : ''}
-              ${s.output ? `<details style="margin-top:4px" onclick="event.stopPropagation()"><summary style="font-size:11px;color:var(--text-secondary);cursor:pointer;font-weight:500">Output</summary><pre style="margin-top:6px;padding:8px;background:var(--bg-code);border:1px solid var(--border);border-radius:4px;font-family:'Geist Mono',monospace;font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:200px;overflow-y:auto">${esc(s.output)}</pre></details>` : ''}
-            </div>` : ''}
-          </div>`;
-        }).join('')}
-      </div>
-    </div>
-  `;
+  const stories = await fetchJSON('/api/runs/' + runId + '/stories');
+  const container = document.getElementById('stories-panel');
+  if (!stories || stories.length === 0) { container.textContent = ''; return; }
+  var done = stories.filter(s => s.status === 'done').length;
+  var pct = Math.round((done / stories.length) * 100);
+
+  container.textContent = '';
+  var wrapper = document.createElement('div');
+  wrapper.style.cssText = 'margin-top:24px;border-top:1px solid var(--border);padding-top:20px';
+
+  var headerRow = document.createElement('div');
+  headerRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:12px';
+  var h3 = document.createElement('h3');
+  h3.style.cssText = 'font-size:15px;font-weight:600;color:var(--text-primary)';
+  h3.textContent = 'Stories';
+  headerRow.appendChild(h3);
+  var countSpan = document.createElement('span');
+  countSpan.style.cssText = 'font-size:13px;font-weight:600;color:var(--accent-green)';
+  countSpan.textContent = done + ' / ' + stories.length + ' done';
+  headerRow.appendChild(countSpan);
+  wrapper.appendChild(headerRow);
+
+  // Progress bar
+  var barOuter = document.createElement('div');
+  barOuter.style.cssText = 'background:var(--accent-muted);border-radius:4px;height:8px;margin-bottom:16px;overflow:hidden';
+  var barInner = document.createElement('div');
+  barInner.style.cssText = 'background:var(--accent-green);height:100%;width:' + pct + '%;border-radius:4px;transition:width .3s';
+  barOuter.appendChild(barInner);
+  wrapper.appendChild(barOuter);
+
+  var listDiv = document.createElement('div');
+  listDiv.style.cssText = 'display:flex;flex-direction:column;gap:6px';
+
+  stories.forEach(function(s) {
+    var st = s.status || 'pending';
+    var icon = stepIcons[st] || '\u25CB';
+    var ac = [];
+    try { ac = JSON.parse(s.acceptance_criteria || '[]'); } catch(e) { ac = [s.acceptance_criteria]; }
+    var hasDetails = s.description || ac.length > 0 || s.output;
+
+    var row = document.createElement('div');
+    row.className = 'step-row';
+    row.style.cssText = 'flex-direction:column;align-items:stretch;gap:0;padding:0;overflow:hidden';
+
+    var topRow = document.createElement('div');
+    topRow.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 12px';
+
+    var iconDiv = document.createElement('div');
+    iconDiv.className = 'step-icon ' + st;
+    iconDiv.textContent = icon;
+    topRow.appendChild(iconDiv);
+
+    var nameDiv = document.createElement('div');
+    nameDiv.className = 'step-name';
+    nameDiv.style.flex = '1';
+    var nameText = s.story_id + ': ' + s.title;
+    if (s.retry_count > 0) nameText += ' (retry ' + s.retry_count + ')';
+    nameDiv.textContent = nameText;
+    topRow.appendChild(nameDiv);
+
+    var statusDiv = document.createElement('div');
+    statusDiv.className = 'step-status';
+    var statusBadge = document.createElement('span');
+    statusBadge.className = 'badge badge-' + st;
+    statusBadge.textContent = st;
+    statusDiv.appendChild(statusBadge);
+    topRow.appendChild(statusDiv);
+
+    var chevron = null;
+    if (hasDetails) {
+      chevron = document.createElement('span');
+      chevron.className = 'story-chevron';
+      chevron.style.cssText = 'color:var(--text-secondary);font-size:10px;transition:transform .15s;display:inline-block';
+      chevron.textContent = '\u25B6';
+      topRow.appendChild(chevron);
+    }
+
+    row.appendChild(topRow);
+
+    if (hasDetails) {
+      var detailsDiv = document.createElement('div');
+      detailsDiv.className = 'story-details';
+      detailsDiv.style.cssText = 'display:none;padding:0 12px 12px 44px;font-size:12px;color:var(--text-tertiary);line-height:1.6';
+
+      if (s.description) {
+        var descDiv = document.createElement('div');
+        descDiv.style.marginBottom = '8px';
+        descDiv.textContent = s.description;
+        detailsDiv.appendChild(descDiv);
+      }
+
+      if (ac.length > 0) {
+        var acDiv = document.createElement('div');
+        acDiv.style.marginBottom = '8px';
+        var acHeader = document.createElement('div');
+        acHeader.style.cssText = 'font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.3px;color:var(--accent-green);margin-bottom:4px';
+        acHeader.textContent = 'Acceptance Criteria';
+        acDiv.appendChild(acHeader);
+        ac.forEach(function(c) {
+          var label = document.createElement('label');
+          label.style.cssText = 'display:flex;align-items:flex-start;gap:6px;margin-bottom:3px;cursor:default';
+          var check = document.createElement('span');
+          check.style.cssText = 'color:var(' + (st === 'done' ? '--accent-green' : '--border') + ');flex-shrink:0';
+          check.textContent = st === 'done' ? '\u2611' : '\u2610';
+          label.appendChild(check);
+          var text = document.createElement('span');
+          text.textContent = c;
+          label.appendChild(text);
+          acDiv.appendChild(label);
+        });
+        detailsDiv.appendChild(acDiv);
+      }
+
+      if (s.output) {
+        var det = document.createElement('details');
+        det.style.marginTop = '4px';
+        det.onclick = function(e) { e.stopPropagation(); };
+        var sum = document.createElement('summary');
+        sum.style.cssText = 'font-size:11px;color:var(--text-secondary);cursor:pointer;font-weight:500';
+        sum.textContent = 'Output';
+        det.appendChild(sum);
+        var pre = document.createElement('pre');
+        pre.style.cssText = 'margin-top:6px;padding:8px;background:var(--bg-code);border:1px solid var(--border);border-radius:4px;font-family:Geist Mono,monospace;font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:200px;overflow-y:auto';
+        pre.textContent = s.output;
+        det.appendChild(pre);
+        detailsDiv.appendChild(det);
+      }
+
+      row.appendChild(detailsDiv);
+      row.style.cursor = 'pointer';
+      row.onclick = function() {
+        detailsDiv.classList.toggle('story-open');
+        chevron.classList.toggle('story-chevron-open');
+      };
+    }
+
+    listDiv.appendChild(row);
+  });
+
+  wrapper.appendChild(listDiv);
+  container.appendChild(wrapper);
 }
 
 document.getElementById('wf-select').addEventListener('change', e => selectWorkflow(e.target.value));
 loadWorkflows();
-setInterval(() => { if (currentWf) loadRuns(); }, 30000);
+setInterval(() => { if (currentWf && currentTab === 'runs') loadRuns(); }, 30000);
 
 // ── Medic ───────────────────────────────────────────────────────
-let medicPanelOpen = false;
+var medicPanelOpen = false;
 
 function toggleMedicPanel() {
   medicPanelOpen = !medicPanelOpen;
@@ -468,11 +834,11 @@ function toggleMedicPanel() {
 
 document.addEventListener('click', e => {
   if (!medicPanelOpen) return;
-  const panel = document.getElementById('medic-panel');
-  const badge = document.getElementById('medic-badge');
-  if (!panel.contains(e.target) && !badge.contains(e.target)) {
+  const mpanel = document.getElementById('medic-panel');
+  const mbadge = document.getElementById('medic-badge');
+  if (!mpanel.contains(e.target) && !mbadge.contains(e.target)) {
     medicPanelOpen = false;
-    panel.classList.remove('open');
+    mpanel.classList.remove('open');
   }
 });
 
@@ -494,16 +860,16 @@ async function loadMedicStatus() {
 
     if (hasIssues && status.lastCheck.actionsTaken < status.lastCheck.issuesFound) {
       dot.className = 'medic-dot critical';
-      label.textContent = `${status.lastCheck.issuesFound} issue(s)`;
+      label.textContent = status.lastCheck.issuesFound + ' issue(s)';
     } else if (isStale) {
       dot.className = 'medic-dot warning';
-      label.textContent = `${ageMin}m ago`;
+      label.textContent = ageMin + 'm ago';
     } else if (hasIssues) {
       dot.className = 'medic-dot warning';
-      label.textContent = `${status.lastCheck.issuesFound} fixed`;
+      label.textContent = status.lastCheck.issuesFound + ' fixed';
     } else {
       dot.className = 'medic-dot healthy';
-      label.textContent = `${ageMin}m ago`;
+      label.textContent = ageMin + 'm ago';
     }
   } catch {
     document.getElementById('medic-dot').className = 'medic-dot unknown';
@@ -519,36 +885,71 @@ async function loadMedicData() {
       fetchJSON('/api/medic/checks?limit=10'),
     ]);
 
-    let html = '';
-    html += '<div style="margin-bottom:12px">';
-    if (status.lastCheck) {
-      const ageMin = Math.round((Date.now() - parseTS(status.lastCheck.checkedAt).getTime()) / 60000);
-      html += `<div class="medic-stat"><span>Last check</span><span class="medic-stat-value">${ageMin}m ago</span></div>`;
-      html += `<div class="medic-stat"><span>Result</span><span class="medic-stat-value">${esc(status.lastCheck.summary)}</span></div>`;
-    } else {
-      html += '<div class="medic-stat"><span>Last check</span><span class="medic-stat-value">Never</span></div>';
+    body.textContent = '';
+    var statsDiv = document.createElement('div');
+    statsDiv.style.marginBottom = '12px';
+
+    function addStat(label, value) {
+      var row = document.createElement('div');
+      row.className = 'medic-stat';
+      var lbl = document.createElement('span');
+      lbl.textContent = label;
+      row.appendChild(lbl);
+      var val = document.createElement('span');
+      val.className = 'medic-stat-value';
+      val.textContent = value;
+      row.appendChild(val);
+      statsDiv.appendChild(row);
     }
-    html += `<div class="medic-stat"><span>Checks (24h)</span><span class="medic-stat-value">${status.recentChecks}</span></div>`;
-    html += `<div class="medic-stat"><span>Issues found (24h)</span><span class="medic-stat-value">${status.recentIssues}</span></div>`;
-    html += `<div class="medic-stat"><span>Auto-fixed (24h)</span><span class="medic-stat-value">${status.recentActions}</span></div>`;
-    html += '</div>';
+
+    if (status.lastCheck) {
+      var ageMin = Math.round((Date.now() - parseTS(status.lastCheck.checkedAt).getTime()) / 60000);
+      addStat('Last check', ageMin + 'm ago');
+      addStat('Result', status.lastCheck.summary);
+    } else {
+      addStat('Last check', 'Never');
+    }
+    addStat('Checks (24h)', String(status.recentChecks));
+    addStat('Issues found (24h)', String(status.recentIssues));
+    addStat('Auto-fixed (24h)', String(status.recentActions));
+    body.appendChild(statsDiv);
 
     if (checks.length > 0) {
-      html += '<div style="font-size:12px;font-weight:600;color:var(--text-primary);margin-bottom:8px">Recent Checks</div>';
-      for (const c of checks) {
-        const t = parseTS(c.checkedAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
-        const icon = c.issuesFound === 0 ? '·' : c.actionsTaken > 0 ? '~' : '!';
-        const color = c.issuesFound === 0 ? 'var(--text-secondary)' : c.actionsTaken >= c.issuesFound ? 'var(--accent-teal)' : 'var(--accent-orange)';
-        html += `<div class="medic-check-row">
-          <span class="medic-check-time">${t}</span>
-          <span class="medic-check-summary" style="color:${color}">${icon} ${esc(c.summary)}</span>
-        </div>`;
-      }
+      var checksHeader = document.createElement('div');
+      checksHeader.style.cssText = 'font-size:12px;font-weight:600;color:var(--text-primary);margin-bottom:8px';
+      checksHeader.textContent = 'Recent Checks';
+      body.appendChild(checksHeader);
+
+      checks.forEach(function(c) {
+        var t = parseTS(c.checkedAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+        var row = document.createElement('div');
+        row.className = 'medic-check-row';
+        var timeSpan = document.createElement('span');
+        timeSpan.className = 'medic-check-time';
+        timeSpan.textContent = t;
+        row.appendChild(timeSpan);
+        var summarySpan = document.createElement('span');
+        summarySpan.className = 'medic-check-summary';
+        var icon = c.issuesFound === 0 ? '\u00B7' : c.actionsTaken > 0 ? '~' : '!';
+        summarySpan.textContent = icon + ' ' + c.summary;
+        summarySpan.style.color = c.issuesFound === 0 ? 'var(--text-secondary)' : c.actionsTaken >= c.issuesFound ? 'var(--accent-teal)' : 'var(--accent-orange)';
+        row.appendChild(summarySpan);
+        body.appendChild(row);
+      });
     }
 
-    body.innerHTML = html || '<div style="color:var(--text-secondary);font-size:12px;padding:8px 0">No medic data yet. Run <code>setfarm medic install</code> to enable.</div>';
+    if (!body.hasChildNodes()) {
+      var noData = document.createElement('div');
+      noData.style.cssText = 'color:var(--text-secondary);font-size:12px;padding:8px 0';
+      noData.textContent = 'No medic data yet. Run setfarm medic install to enable.';
+      body.appendChild(noData);
+    }
   } catch {
-    body.innerHTML = '<div style="color:var(--text-secondary);font-size:12px;padding:8px 0">Could not load medic data.</div>';
+    body.textContent = '';
+    var errDiv = document.createElement('div');
+    errDiv.style.cssText = 'color:var(--text-secondary);font-size:12px;padding:8px 0';
+    errDiv.textContent = 'Could not load medic data.';
+    body.appendChild(errDiv);
   }
 }
 
@@ -569,7 +970,7 @@ setInterval(loadMedicStatus, 30000);
 
   function applyTheme(theme) {
     root.setAttribute('data-theme', theme);
-    btn.textContent = theme === 'dark' ? '🌙' : '☀️';
+    btn.textContent = theme === 'dark' ? '\uD83C\uDF19' : '\u2600\uFE0F';
     btn.title = theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
   }
 
@@ -582,11 +983,155 @@ setInterval(loadMedicStatus, 30000);
     applyTheme(next);
   });
 
-  // Update if system preference changes and no manual override
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
     if (!localStorage.getItem(STORAGE_KEY)) applyTheme(getEffectiveTheme());
   });
 })();
+
+// ── Scrape ──────────────────────────────────────────────────────
+var scrapeRunning = false;
+
+async function doScrape() {
+  if (scrapeRunning) return;
+  var urlInput = document.getElementById('scrape-url');
+  var url = urlInput.value.trim();
+  if (!url) { urlInput.focus(); return; }
+
+  var adaptor = document.getElementById('scrape-adaptor').value;
+  var format = document.getElementById('scrape-format').value;
+  var selector = document.getElementById('scrape-selector').value.trim();
+
+  var btn = document.getElementById('scrape-btn');
+  var output = document.getElementById('scrape-output');
+
+  scrapeRunning = true;
+  btn.disabled = true;
+  btn.textContent = 'Scraping...';
+
+  output.textContent = '';
+  var loadingDiv = document.createElement('div');
+  loadingDiv.className = 'scrape-loading';
+  var spinner = document.createElement('div');
+  spinner.className = 'scrape-spinner';
+  loadingDiv.appendChild(spinner);
+  loadingDiv.appendChild(document.createTextNode('Scraping ' + url + '...'));
+  output.appendChild(loadingDiv);
+
+  try {
+    var resp = await fetch(API + '/api/scrape', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: url, adaptor: adaptor, format: format, selector: selector }),
+    });
+    var result = await resp.json();
+
+    output.textContent = '';
+    if (result.success) {
+      var meta = result.metadata || {};
+      var dataStr = JSON.stringify(result.data, null, 2);
+
+      var resultDiv = document.createElement('div');
+      resultDiv.className = 'scrape-result';
+
+      var headerDiv = document.createElement('div');
+      headerDiv.className = 'scrape-result-header';
+      var h3 = document.createElement('h3');
+      h3.textContent = result.data?.title || result.data?.adaptor || 'Result';
+      headerDiv.appendChild(h3);
+      var metaDiv = document.createElement('div');
+      metaDiv.className = 'scrape-result-meta';
+      var statusSpan = document.createElement('span');
+      statusSpan.textContent = 'Status: ' + (meta.status || '?');
+      metaDiv.appendChild(statusSpan);
+      var timeSpan = document.createElement('span');
+      timeSpan.textContent = (meta.elapsed_seconds || '?') + 's';
+      metaDiv.appendChild(timeSpan);
+      var urlSpan = document.createElement('span');
+      urlSpan.textContent = meta.url || url;
+      metaDiv.appendChild(urlSpan);
+      headerDiv.appendChild(metaDiv);
+      resultDiv.appendChild(headerDiv);
+
+      var bodyDiv = document.createElement('div');
+      bodyDiv.className = 'scrape-result-body';
+      var pre = document.createElement('pre');
+      pre.textContent = dataStr;
+      bodyDiv.appendChild(pre);
+      resultDiv.appendChild(bodyDiv);
+
+      output.appendChild(resultDiv);
+    } else {
+      var errorDiv = document.createElement('div');
+      errorDiv.className = 'scrape-error';
+      errorDiv.textContent = 'Error: ' + (result.error || 'Unknown error');
+      output.appendChild(errorDiv);
+    }
+  } catch (e) {
+    output.textContent = '';
+    var errorDiv = document.createElement('div');
+    errorDiv.className = 'scrape-error';
+    errorDiv.textContent = 'Request failed: ' + e.message;
+    output.appendChild(errorDiv);
+  }
+
+  scrapeRunning = false;
+  btn.disabled = false;
+  btn.textContent = 'Scrape';
+  loadScrapeHistory();
+}
+
+// Enter key triggers scrape
+document.getElementById('scrape-url').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') doScrape();
+});
+
+async function loadScrapeHistory() {
+  try {
+    var history = await fetchJSON('/api/scrape/history');
+    var body = document.getElementById('scrape-history-body');
+    body.textContent = '';
+    if (!history || history.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'empty';
+      empty.textContent = 'No scrapes yet';
+      body.appendChild(empty);
+      return;
+    }
+    history.forEach(function(h) {
+      var t = new Date(h.timestamp);
+      var time = t.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+      var displayUrl = h.url.length > 40 ? h.url.slice(0, 37) + '...' : h.url;
+
+      var item = document.createElement('div');
+      item.className = 'scrape-history-item ' + h.status;
+      item.onclick = function() {
+        document.getElementById('scrape-url').value = h.url;
+      };
+
+      var urlDiv = document.createElement('div');
+      urlDiv.className = 'scrape-history-url';
+      urlDiv.title = h.url;
+      urlDiv.textContent = displayUrl;
+      item.appendChild(urlDiv);
+
+      var metaDiv = document.createElement('div');
+      metaDiv.className = 'scrape-history-meta';
+      var badge = document.createElement('span');
+      badge.className = 'badge badge-' + (h.status === 'success' ? 'done' : 'failed');
+      badge.textContent = h.status;
+      metaDiv.appendChild(badge);
+      var elapsedSpan = document.createElement('span');
+      elapsedSpan.textContent = h.elapsed + 's';
+      metaDiv.appendChild(elapsedSpan);
+      var timeSpan = document.createElement('span');
+      timeSpan.textContent = time;
+      metaDiv.appendChild(timeSpan);
+      item.appendChild(metaDiv);
+
+      body.appendChild(item);
+    });
+  } catch {}
+}
 </script>
 </body>
 </html>

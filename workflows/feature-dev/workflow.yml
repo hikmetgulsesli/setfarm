@@ -11,10 +11,10 @@ description: |
 agent_mapping:
   planner: main
   setup: atlas
-  developer: [koda, kaan, elif]
-  verifier: [sinan, defne]
-  tester: sinan
-  security-gate: sinan
+  developer: [koda, flux, cipher]
+  verifier: [sentinel, iris]
+  tester: sentinel
+  security-gate: sentinel
 
 cron:
   interval_ms: 240000  # 4 minutes

@@ -12,13 +12,13 @@ notifications:
   url: http://127.0.0.1:3080/api/discord-notify
 
 agent_mapping:
-  scanner: defne       # Iris scans for vulnerabilities
-  prioritizer: defne   # Iris prioritizes findings
-  setup: onur          # Nexus sets up environment
-  fixer: elif          # Cipher implements fixes
-  verifier: mert       # Prism verifies each fix
-  tester: mert         # Prism runs integration tests
-  pr: elif             # Cipher creates the PR
+  scanner: iris       # Iris scans for vulnerabilities
+  prioritizer: iris   # Iris prioritizes findings
+  setup: nexus          # Nexus sets up environment
+  fixer: cipher          # Cipher implements fixes
+  verifier: prism       # Prism verifies each fix
+  tester: prism         # Prism runs integration tests
+  pr: cipher             # Cipher creates the PR
 
 polling:
   model: default

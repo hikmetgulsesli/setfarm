@@ -195,6 +195,70 @@ function readProjectMemory(context: Record<string, string>): string {
     return "(no project memory yet)";
   }
 }
+/**
+ * Update PROJECT_MEMORY.md after a story completes.
+ * Appends/updates the story entry in the Completed Stories section.
+ * Runs programmatically — does not depend on agent following instructions.
+ */
+function updateProjectMemory(
+  context: Record<string, string>,
+  storyId: string,
+  storyTitle: string,
+  storyStatus: string,
+  output: string
+): void {
+  const repo = context["repo"];
+  if (!repo) return;
+
+  try {
+    const memoryPath = path.join(repo, "PROJECT_MEMORY.md");
+    let content = "";
+    if (fs.existsSync(memoryPath)) {
+      content = fs.readFileSync(memoryPath, "utf-8");
+    } else {
+      content = "# Project Memory\n\n## Completed Stories\n";
+    }
+
+    // Extract key info from agent output
+    const parsed: Record<string, string> = {};
+    for (const line of output.split("\n")) {
+      const m = line.match(/^([A-Z_]+):\s*(.+)/);
+      if (m) parsed[m[1]] = m[2].trim();
+    }
+
+    const files = parsed["FILES_CHANGED"] || parsed["CHANGES"] || "";
+    const statusLabel = storyStatus === "skipped" ? "skipped" : storyStatus === "verified" ? "verified" : "done";
+    const storyEntry = `### ${storyId}: ${storyTitle} [${statusLabel}]\n- Files: ${files || "(see PR)"}\n`;
+
+    // Check if this story already exists in the memory
+    const storyPattern = new RegExp(`### ${storyId}:.*\\n(- .*\\n)*`, "g");
+    if (storyPattern.test(content)) {
+      // Update existing entry
+      content = content.replace(storyPattern, storyEntry);
+    } else {
+      // Append to Completed Stories section
+      if (content.includes("## Completed Stories")) {
+        content = content.replace(
+          /(## Completed Stories\n)/,
+          `$1${storyEntry}\n`
+        );
+      } else {
+        content += `\n## Completed Stories\n${storyEntry}\n`;
+      }
+    }
+
+    // Trim to max 150 lines
+    const lines = content.split("\n");
+    if (lines.length > 150) {
+      content = lines.slice(0, 150).join("\n") + "\n";
+    }
+
+    fs.writeFileSync(memoryPath, content, "utf-8");
+    logger.info(`Updated PROJECT_MEMORY.md for ${storyId} in ${repo}`);
+  } catch (err) {
+    logger.warn(`Failed to update PROJECT_MEMORY.md: ${err}`);
+  }
+}
 
 /**
  * Get all stories for a run, ordered by story_index.
@@ -914,6 +978,11 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     emitEvent({ ts: new Date().toISOString(), event: storyEvent, runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: storyRow?.story_id, storyTitle: storyRow?.title });
     logger.info(`Story ${storyStatus}: ${storyRow?.story_id} — ${storyRow?.title}`, { runId: step.run_id, stepId: step.step_id });
 
+
+    // Update PROJECT_MEMORY.md with completed story info
+    if (storyRow && storyStatus !== "skipped") {
+      updateProjectMemory(context, storyRow.story_id, storyRow.title, storyStatus, output);
+    }
     // Clean up git worktree for completed story
     if (storyRow?.story_id && context["repo"]) {
       removeStoryWorktree(context["repo"], storyRow.story_id);
