@@ -12,12 +12,12 @@ notifications:
   url: http://127.0.0.1:3080/api/discord-notify
 
 agent_mapping:
-  triager: defne       # Iris analyzes bug reports
-  investigator: defne  # Iris traces root cause
-  setup: kaan          # Flux sets up environment
-  fixer: elif          # Cipher implements the fix
-  verifier: deniz      # Lux verifies correctness
-  pr: elif             # Cipher creates the PR
+  triager: iris       # Iris analyzes bug reports
+  investigator: iris  # Iris traces root cause
+  setup: flux          # Flux sets up environment
+  fixer: cipher          # Cipher implements the fix
+  verifier: lux      # Lux verifies correctness
+  pr: cipher             # Cipher creates the PR
 
 polling:
   model: default

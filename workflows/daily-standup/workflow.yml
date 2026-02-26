@@ -7,8 +7,8 @@ description: |
   Discord ve Telegram a gonderir.
 
 agent_mapping:
-  collector: onur
-  reporter: deniz
+  collector: nexus
+  reporter: lux
 
 cron:
   interval_ms: 240000

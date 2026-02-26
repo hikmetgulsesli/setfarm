@@ -2,6 +2,7 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { execFile } from "node:child_process";
 import { getDb } from "../db.js";
 import { resolveBundledWorkflowsDir } from "../installer/paths.js";
 import YAML from "yaml";
@@ -63,18 +64,130 @@ function json(res: http.ServerResponse, data: unknown, status = 200) {
 
 function serveHTML(res: http.ServerResponse) {
   const htmlPath = path.join(__dirname, "index.html");
-  // In dist, index.html won't exist—serve from src
   const srcHtmlPath = path.resolve(__dirname, "..", "..", "src", "server", "index.html");
   const filePath = fs.existsSync(htmlPath) ? htmlPath : srcHtmlPath;
   res.writeHead(200, { "Content-Type": "text/html" });
   res.end(fs.readFileSync(filePath, "utf-8"));
 }
 
+// ── Scrape ──────────────────────────────────────────────────────
+const SCRAPE_PYTHON = path.join(process.env.HOME ?? "/home/setrox", "libs", "scrapling", ".venv", "bin", "python");
+const SCRAPE_SCRIPT = path.join(process.env.HOME ?? "/home/setrox", "libs", "scrapling", "scrape-api.py");
+const SCRAPE_CWD = path.join(process.env.HOME ?? "/home/setrox", "libs", "scrapling");
+
+interface ScrapeHistoryEntry {
+  url: string;
+  adaptor: string;
+  status: "success" | "error";
+  elapsed: number;
+  timestamp: string;
+  preview?: string;
+}
+
+const scrapeHistory: ScrapeHistoryEntry[] = [];
+const SCRAPE_HISTORY_MAX = 50;
+
+const SCRAPE_ADAPTORS = [
+  { id: "auto", name: "Auto Detect" },
+  { id: "amazon", name: "Amazon" },
+  { id: "linkedin", name: "LinkedIn" },
+  { id: "twitter", name: "Twitter/X" },
+  { id: "generic", name: "Generic" },
+];
+
+function readBody(req: http.IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c: Buffer) => chunks.push(c));
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
+    req.on("error", reject);
+  });
+}
+
+function runScrape(input: string): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = execFile(
+      SCRAPE_PYTHON,
+      [SCRAPE_SCRIPT],
+      {
+        cwd: SCRAPE_CWD,
+        env: { ...process.env, PYTHONPATH: SCRAPE_CWD },
+        timeout: 30_000,
+        maxBuffer: 5 * 1024 * 1024,
+      },
+      (err, stdout, stderr) => {
+        if (err) {
+          if (stdout) return resolve({ stdout, stderr });
+          return reject(err);
+        }
+        resolve({ stdout, stderr });
+      },
+    );
+    child.stdin?.write(input);
+    child.stdin?.end();
+  });
+}
+
 export function startDashboard(port = 3333): http.Server {
-  const server = http.createServer((req, res) => {
+  const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://localhost:${port}`);
     const p = url.pathname;
 
+    // CORS preflight
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      });
+      return res.end();
+    }
+
+    // ── Scrape API ──
+    if (p === "/api/scrape" && req.method === "POST") {
+      try {
+        const body = await readBody(req);
+        const parsed = JSON.parse(body);
+        if (!parsed.url || typeof parsed.url !== "string") {
+          return json(res, { success: false, error: "URL is required" }, 400);
+        }
+        const input = JSON.stringify({
+          url: parsed.url,
+          adaptor: parsed.adaptor ?? "auto",
+          selector: parsed.selector ?? "",
+          format: parsed.format ?? "json",
+        });
+        const { stdout } = await runScrape(input);
+        const result = JSON.parse(stdout);
+
+        const entry: ScrapeHistoryEntry = {
+          url: parsed.url,
+          adaptor: parsed.adaptor ?? "auto",
+          status: result.success ? "success" : "error",
+          elapsed: result.metadata?.elapsed_seconds ?? 0,
+          timestamp: new Date().toISOString(),
+          preview: result.success
+            ? (result.data?.title || result.data?.product?.title || parsed.url).slice(0, 80)
+            : (result.error || "Unknown error").slice(0, 80),
+        };
+        scrapeHistory.unshift(entry);
+        if (scrapeHistory.length > SCRAPE_HISTORY_MAX) scrapeHistory.length = SCRAPE_HISTORY_MAX;
+
+        return json(res, result);
+      } catch (e: any) {
+        return json(res, { success: false, error: e.message ?? "Scrape failed" }, 500);
+      }
+    }
+
+    if (p === "/api/scrape/adaptors") {
+      return json(res, SCRAPE_ADAPTORS);
+    }
+
+    if (p === "/api/scrape/history") {
+      return json(res, scrapeHistory);
+    }
+
+    // ── Existing API routes ──
     if (p === "/api/workflows") {
       return json(res, loadWorkflows());
     }
