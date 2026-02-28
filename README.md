@@ -9,7 +9,7 @@ You don't need to hire a dev team. You need to define one. Setfarm gives you a t
 ### Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hikmetgulsesli/setfarm/v1.5.2/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/hikmetgulsesli/setfarm/v1.5.3/scripts/install.sh | bash
 ```
 
 Or just tell your OpenClaw agent: **"install github.com/hikmetgulsesli/setfarm"**

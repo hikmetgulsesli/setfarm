@@ -295,8 +295,18 @@ steps:
       BEFORE writing code:
       1. Read the FULL story description and ALL acceptance criteria before coding
       2. Read references/design-standards.md + references/backend-standards.md
-      3. NEVER use: emoji icons, Inter/Roboto/Arial, purple gradients, transition:all
-      4. ALWAYS use: cursor-pointer on clickables, hover/focus states, parameterized queries
+
+      DESIGN ENFORCEMENT (frontend stories — MANDATORY checklist before commit):
+      - FONTS: Google Fonts <link> in layout <head> (NOT next/font for static exports).
+        :root must have --font-heading and --font-body CSS vars.
+        h1-h6 → var(--font-heading), body → var(--font-body).
+        BANNED font-family values: system-ui, Roboto, Arial, Inter, Helvetica.
+      - COLORS: shadcn/ui → update globals.css --accent from default gray to palette accent.
+        Keep HSL format. Do not leave shadcn boilerplate unchanged.
+      - LAYOUT: Hero → asymmetric grid, NOT centered text-center single-column.
+        Feature/tool grids → first item lg:col-span-2 or unequal column widths.
+      - NEVER: emoji icons, purple gradients, transition:all
+      - ALWAYS: cursor-pointer on clickables, hover/focus states, focus-visible rings
 
       === WORKFLOW ===
 
@@ -424,17 +434,23 @@ steps:
          git add -A && git commit -m "fix: address review comments for {{current_story_id}}"
          git push
 
-      STEP 3 — Quality check (always do this, whether or not external reviews exist):
+      STEP 3 — Quality + Design check (always do this, whether or not external reviews exist):
       1. Review the code changes yourself:
          - Code exists (not just TODOs/placeholders)
          - Tests were written for this story
          - No hardcoded secrets, .env not committed
-         - If frontend: no emoji icons, no Inter/Roboto fonts
-      2. Run lint: {{lint_cmd}} → fix any lint errors
-      3. Run build: {{build_cmd}} → fix any build errors
-      4. Run test: {{test_cmd}} → fix any test failures
-      5. If you found issues and fixed them:
-         git add -A && git commit -m "fix: quality improvements for {{current_story_id}}"
+      2. Frontend design checks (if any .css/.tsx changed):
+         - grep -rE "font-family.*system-ui|font-family.*Roboto|font-family.*Arial|font-family.*Inter" src/ → FAIL if found (banned fonts)
+         - grep -rE "fonts\.googleapis\.com|next/font" src/ → FAIL if missing (no font import)
+         - grep -rE "\-\-font-heading|\-\-font-body" src/ → FAIL if missing (no font vars)
+         - grep -rE "transition:\s*all" src/ → FAIL if found
+         - grep -rE "grid-cols-3" src/ → WARN (check asymmetry manually)
+         If any FAIL → fix yourself, commit, push before proceeding
+      3. Run lint: {{lint_cmd}} → fix any lint errors
+      4. Run build: {{build_cmd}} → fix any build errors
+      5. Run test: {{test_cmd}} → fix any test failures
+      6. If you found issues and fixed them:
+         git add -A && git commit -m "fix: quality + design improvements for {{current_story_id}}"
          git push
 
       STEP 4 — Merge PR:
