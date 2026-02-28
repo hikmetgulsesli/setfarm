@@ -683,12 +683,30 @@ steps:
       POST http://127.0.0.1:3080/api/projects → name, emoji "🌐", category "own", type "web"
       PATCH http://127.0.0.1:3080/api/projects/$ID → ports, repo, stack, service, github, workflowRunId, createdBy, completedAt, domain
 
-      A7 — Cloudflare Tunnel:
+      A7 — Cloudflare Tunnel + DNS:
       HOSTNAME="${PROJECT_NAME}.setrox.com.tr"
+      CF_TOKEN="CP1qBCzEfcwYlFifgNfEiVEye75FWR7Dq_7BEh8O"
+      CF_ZONE_ID="dcb4b61afa6f4a6bd8c05950381655f2"
+      CF_TUNNEL_ID="92d8df83-3623-4850-ba41-29126106d020"
+
+      a) Add tunnel ingress rule (if not exists):
       if ! grep -q "$HOSTNAME" /etc/cloudflared/config.yml; then
         sudo sed -i "/^- service: http_status:404$/i\\- hostname: $HOSTNAME\\n  service: http:\\/\\/127.0.0.1:$PORT" /etc/cloudflared/config.yml
         sudo systemctl restart cloudflared
       fi
+
+      b) Create DNS CNAME record (if not exists):
+      Check if CNAME already exists via Cloudflare API:
+      curl -s "https://api.cloudflare.com/client/v4/zones/$CF_ZONE_ID/dns_records?name=$HOSTNAME&type=CNAME" \
+        -H "Authorization: Bearer $CF_TOKEN"
+      If result count is 0, create it:
+      curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$CF_ZONE_ID/dns_records" \
+        -H "Authorization: Bearer $CF_TOKEN" -H "Content-Type: application/json" \
+        -d '{"type":"CNAME","name":"PROJECT_NAME","content":"CF_TUNNEL_ID.cfargotunnel.com","proxied":true,"ttl":1}'
+      (Replace PROJECT_NAME and CF_TUNNEL_ID with actual values)
+
+      c) Cloudflare Access is already configured as wildcard (*.setrox.com.tr).
+         New subdomains are automatically protected — no per-project action needed.
 
       → OUTPUT: DEPLOY_TYPE=new-web, all fields filled.
 

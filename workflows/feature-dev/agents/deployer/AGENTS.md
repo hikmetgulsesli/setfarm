@@ -89,8 +89,9 @@ WantedBy=default.target
 - Update: `PATCH http://127.0.0.1:3080/api/projects/<id>`
 - Next port: `GET http://127.0.0.1:3080/api/projects/next-port`
 
-## Cloudflare Tunnel (Category A only)
+## Cloudflare Tunnel + DNS (Category A only)
 
+### 1. Tunnel Ingress Rule
 Config: `/etc/cloudflared/config.yml`
 Insert before catch-all `service: http_status:404`:
 ```yaml
@@ -98,3 +99,16 @@ Insert before catch-all `service: http_status:404`:
   service: http://127.0.0.1:PORT
 ```
 Then: `sudo systemctl restart cloudflared`
+
+### 2. DNS CNAME Record (CRITICAL — without this, domain won't resolve!)
+Use Cloudflare API to create CNAME:
+```
+CF_TOKEN="CP1qBCzEfcwYlFifgNfEiVEye75FWR7Dq_7BEh8O"
+CF_ZONE_ID="dcb4b61afa6f4a6bd8c05950381655f2"
+CF_TUNNEL_ID="92d8df83-3623-4850-ba41-29126106d020"
+```
+- Check if exists: `GET /zones/{zone_id}/dns_records?name={hostname}&type=CNAME`
+- If not exists: `POST /zones/{zone_id}/dns_records` with type=CNAME, name=`<name>`, content=`{tunnel_id}.cfargotunnel.com`, proxied=true
+
+### 3. Cloudflare Access
+Already configured as wildcard `*.setrox.com.tr` — new subdomains are automatically protected. No per-project action needed.
