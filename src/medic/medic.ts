@@ -38,10 +38,27 @@ export function ensureMedicTables(): void {
 
 /**
  * Extract GitHub repo URL from a run task string.
+ * Falls back to reading git remote from local repo path.
  */
 function extractRepoUrl(task: string): string | null {
+  // 1. Try explicit GitHub URL in task
   const match = task.match(/https:\/\/github\.com\/[\w-]+\/[\w.-]+/);
-  return match ? match[0] : null;
+  if (match) return match[0];
+
+  // 2. Fallback: extract local REPO path and read git remote origin
+  const repoPathMatch = task.match(/REPO:\s*(\/\S+)/);
+  if (repoPathMatch) {
+    try {
+      const remoteUrl = execFileSync(
+        "git", ["-C", repoPathMatch[1], "remote", "get-url", "origin"],
+        { encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"] }
+      ).trim();
+      const ghMatch = remoteUrl.match(/github\.com[:/]([\w-]+\/[\w.-]+?)(?:\.git)?$/);
+      if (ghMatch) return `https://github.com/${ghMatch[1]}`;
+    } catch { /* git not available or no remote — fall through */ }
+  }
+
+  return null;
 }
 
 /**
@@ -92,7 +109,8 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
       if (!step) return false;
 
       const newCount = (step.abandoned_count ?? 0) + 1;
-      if (newCount >= 5) {
+      const MAX_STEP_ABANDONS = 10;
+      if (newCount >= MAX_STEP_ABANDONS) {
         db.prepare(
           "UPDATE steps SET status = 'failed', output = 'Medic: abandoned too many times', abandoned_count = ?, updated_at = datetime('now') WHERE id = ?"
         ).run(newCount, finding.stepId);
@@ -120,7 +138,7 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
           event: "step.timeout" as EventType,
           runId: finding.runId,
           stepId: finding.stepId,
-          detail: `Medic: reset stuck step (abandon ${newCount}/5)`,
+          detail: `Medic: reset stuck step (abandon ${newCount}/${MAX_STEP_ABANDONS})`,
         });
       }
       return true;
@@ -256,11 +274,11 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
           const prUrl = checkMergedPR(repoUrl, storyMeta.story_id, story.run_id);
           if (prUrl) {
             db.prepare(
-              "UPDATE stories SET status = 'verified', abandoned_count = 0, output = ?, updated_at = datetime('now') WHERE id = ?"
+              "UPDATE stories SET status = 'done', abandoned_count = 0, output = ?, updated_at = datetime('now') WHERE id = ?"
             ).run(
               `STATUS: done
 PR_URL: ${prUrl}
-CHANGES: Auto-verified by Medic v6 — merged PR detected on GitHub`,
+CHANGES: Medic v6: merged PR found — awaiting verifier review`,
               finding.storyId
             );
             db.prepare(
@@ -270,7 +288,7 @@ CHANGES: Auto-verified by Medic v6 — merged PR detected on GitHub`,
               ts: new Date().toISOString(),
               event: "story.done" as EventType,
               runId: story.run_id,
-              detail: `Medic v6: auto-verified ${storyMeta.story_id} — merged PR: ${prUrl}`,
+              detail: `Medic v6: PR merged, set to done — verifier must review ${storyMeta.story_id} (PR: ${prUrl})`,
             });
             return true;
           }
@@ -279,7 +297,7 @@ CHANGES: Auto-verified by Medic v6 — merged PR detected on GitHub`,
       // ── End GitHub PR guard ─────────────────────────────────────────────
 
       const newCount = (story.abandoned_count ?? 0) + 1;
-      const MAX_STORY_ABANDONS = 5;
+      const MAX_STORY_ABANDONS = 10;
 
       if (newCount >= MAX_STORY_ABANDONS) {
         // Too many abandons — skip this story so the loop can continue

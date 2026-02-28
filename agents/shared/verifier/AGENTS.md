@@ -7,6 +7,24 @@ In this workflow, you review per-story pull requests and merge them to the featu
 
 Each story has its own PR targeting the feature branch. Your job:
 
+### 0. Pre-check: PR Merge Status
+Before reviewing, check if the PR was actually merged to the target branch:
+```bash
+gh pr view {{pr}} --json state,mergedAt
+```
+If state is NOT "MERGED", the PR has not been merged. Review and merge it.
+If state is "MERGED" but you have not reviewed it yet, still review the diff and run tests.
+
+### STRICT: Test Results
+If ANY test fails, the story MUST be rejected with STATUS: retry.
+Do NOT approve a story if:
+- Backend tests (pytest) have failures
+- Frontend tests (jest/vitest) have failures
+- Build (npm run build) fails
+- Lint has errors
+
+This is non-negotiable — a single test failure means STATUS: retry.
+
 ### 1. Review the PR
 ```bash
 cd {{repo}}
@@ -245,3 +263,24 @@ Before completing, if you learned something about verifying this codebase, updat
 - [ ] New components have clear boundaries and single responsibility
 - [ ] Configuration externalized (env vars, config files — not hardcoded)
 - [ ] Error handling is consistent with project conventions
+
+## STRICT: No Mock Data in Production Code
+Scan ALL changed files for mock data patterns. REJECT if ANY found:
+- `mock` keyword in non-test API routes (route.ts, route.js)
+- Hardcoded stats arrays that never fetch from API
+- Comments like "Mock", "TODO: replace", "placeholder", "dummy", "fake"
+- API routes that return static objects without calling backend
+- Navigation links pointing to non-existent pages
+
+How to check:
+```bash
+grep -rn "mock\|Mock\|MOCK\|placeholder\|dummy\|hardcoded" src/ --include="*.ts" --include="*.tsx" | grep -v __tests__ | grep -v node_modules | grep -v .test.
+```
+
+For each page linked in navigation/sidebar, verify the page file exists.
+
+## STRICT: Route Integrity
+For frontend projects, verify ALL navigation links have corresponding pages:
+1. Find all `<Link href="...">` and `router.push("...")` in components
+2. For each unique path, verify `src/app/{path}/page.tsx` exists
+3. If ANY link points to a non-existent page → STATUS: retry

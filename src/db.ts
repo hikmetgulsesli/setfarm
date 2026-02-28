@@ -19,6 +19,7 @@ export function getDb(): DatabaseSync {
   fs.mkdirSync(DB_DIR, { recursive: true });
   _db = new DatabaseSync(DB_PATH);
   _dbOpenedAt = now;
+  _db.exec("PRAGMA busy_timeout = 5000");
   _db.exec("PRAGMA journal_mode=WAL");
   _db.exec("PRAGMA foreign_keys=ON");
   if (!_migrated) {
