@@ -130,6 +130,7 @@ function runScrape(input: string): Promise<{ stdout: string; stderr: string }> {
 
 export function startDashboard(port = 3333): http.Server {
   const server = http.createServer(async (req, res) => {
+   try {
     const url = new URL(req.url ?? "/", `http://localhost:${port}`);
     const p = url.pathname;
 
@@ -252,9 +253,13 @@ export function startDashboard(port = 3333): http.Server {
 
     // Serve frontend
     serveHTML(res);
+   } catch (e: any) {
+    console.error("Request error:", e.message);
+    if (!res.headersSent) json(res, { error: "Internal server error" }, 500);
+   }
   });
 
-  server.listen(port, () => {
+  server.listen(port, "127.0.0.1", () => {
     console.log(`Setfarm Dashboard: http://localhost:${port}`);
   });
 
