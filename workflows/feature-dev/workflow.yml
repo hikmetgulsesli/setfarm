@@ -1,8 +1,8 @@
 # PR-based workflow — each story creates a PR, verifier reviews + merges.
-# v9.0: PRD-based decomposition, lint enforcement, PR workflow, skip-on-fail.
+# v10.0: PRD-based decomposition, lint enforcement, PR workflow, skip-on-fail, auto-deploy.
 id: feature-dev
 name: Feature Development Workflow
-version: 9.0
+version: 10.0
 description: |
   Full-quality pipeline. Developer creates PR per story, verifier reads
   external review comments (Gemini/Copilot), fixes issues, merges via squash.
@@ -15,6 +15,7 @@ agent_mapping:
   verifier: [sentinel, iris]
   tester: sentinel
   security-gate: sentinel
+  deployer: atlas
 
 cron:
   interval_ms: 240000  # 4 minutes
@@ -89,6 +90,17 @@ agents:
         AGENTS.md: agents/security-gate/AGENTS.md
         SOUL.md: agents/security-gate/SOUL.md
         IDENTITY.md: agents/security-gate/IDENTITY.md
+
+  - id: deployer
+    name: Deployer
+    role: deployment
+    description: Deploys completed projects — creates systemd service, registers in Mission Control, sets up Cloudflare tunnel.
+    workspace:
+      baseDir: agents/deployer
+      files:
+        AGENTS.md: agents/deployer/AGENTS.md
+        SOUL.md: agents/deployer/SOUL.md
+        IDENTITY.md: agents/deployer/IDENTITY.md
 
 steps:
   - id: plan
@@ -565,3 +577,189 @@ steps:
       max_retries: 2
       on_exhausted:
         escalate_to: human
+
+  - id: deploy
+    agent: deployer
+    input: |
+      ############################################################
+      CRITICAL: Do ALL work in THIS session. No sub-agents, no background processes.
+      ############################################################
+
+      Deploy the completed project to production.
+
+      TASK: {{task}}
+      REPO: {{repo}}
+      BRANCH: main
+      BUILD_CMD: {{build_cmd}}
+      FINAL_PR: {{final_pr}}
+      RUN_ID: {{run_id}}
+
+      === DEPLOYMENT WORKFLOW ===
+
+      STEP 0 — Read project info:
+      1. cd {{repo}}
+      2. git checkout main && git pull origin main
+      3. Read package.json to understand:
+         - Project name
+         - Start/build scripts
+         - Dependencies
+      4. Read next.config.* to detect if static export (output: 'export')
+      5. Determine PORT from task description (look for "port: XXXX" or "Frontend port: XXXX")
+         If no port specified, get next available: curl -s http://127.0.0.1:3080/api/projects/next-port | jq -r '.port'
+
+      STEP 1 — Move project to ~/projects/ (if not already there):
+      PROJECT_NAME=$(basename {{repo}})
+      TARGET_DIR="/home/setrox/projects/$PROJECT_NAME"
+      if [ "{{repo}}" != "$TARGET_DIR" ] && [ ! -d "$TARGET_DIR" ]; then
+        mv {{repo}} $TARGET_DIR
+        # Update symlinks if needed
+        ln -sfn $TARGET_DIR {{repo}} 2>/dev/null || true
+      fi
+      REPO_DIR="$TARGET_DIR"
+
+      STEP 2 — Build for production:
+      cd $REPO_DIR
+      npm install --production=false 2>/dev/null || true
+      {{build_cmd}}
+
+      STEP 3 — Detect service type and create systemd service:
+      Detect type:
+      a) If next.config.* has output: 'export' → STATIC (use serve)
+      b) If package.json has "start": "next start" → NEXTJS (use next start -p PORT)
+      c) If has server/dist/index.js or dist/index.js → NODEJS (use node)
+      d) Fallback → use npm start with PORT env
+
+      SERVICE_NAME="${PROJECT_NAME}.service"
+      SERVICE_FILE="/home/setrox/.config/systemd/user/$SERVICE_NAME"
+
+      For STATIC type:
+      ```
+      [Unit]
+      Description=$PROJECT_NAME
+      After=network.target
+
+      [Service]
+      Type=simple
+      WorkingDirectory=$REPO_DIR
+      ExecStart=/home/setrox/.npm-global/bin/serve dist -l $PORT -s
+      Restart=on-failure
+      RestartSec=5
+
+      [Install]
+      WantedBy=default.target
+      ```
+
+      For NEXTJS type:
+      ```
+      [Unit]
+      Description=$PROJECT_NAME
+      After=network.target
+
+      [Service]
+      Type=simple
+      WorkingDirectory=$REPO_DIR
+      ExecStart=/usr/bin/npx next start -p $PORT
+      Restart=on-failure
+      RestartSec=5
+      Environment=NODE_ENV=production
+
+      [Install]
+      WantedBy=default.target
+      ```
+
+      For NODEJS type:
+      ```
+      [Unit]
+      Description=$PROJECT_NAME
+      After=network.target
+
+      [Service]
+      Type=simple
+      WorkingDirectory=$REPO_DIR
+      ExecStart=/usr/bin/node dist/index.js
+      Restart=on-failure
+      RestartSec=5
+      Environment=NODE_ENV=production
+      Environment=PORT=$PORT
+
+      [Install]
+      WantedBy=default.target
+      ```
+
+      Write the service file, then:
+      systemctl --user daemon-reload
+      systemctl --user enable $SERVICE_NAME
+      systemctl --user start $SERVICE_NAME
+
+      STEP 4 — Health check:
+      sleep 3
+      HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:$PORT/ || echo "000")
+      If HTTP_CODE is not 200, check logs:
+        journalctl --user -u $SERVICE_NAME --no-pager -n 20
+      Fix any issues and retry.
+
+      STEP 5 — Register in Mission Control:
+      Detect stack from package.json dependencies (e.g. next→Next.js, react→React, tailwindcss→Tailwind)
+      GITHUB_URL=$(cd $REPO_DIR && git remote get-url origin 2>/dev/null | sed 's/.git$//')
+
+      curl -s -X POST http://127.0.0.1:3080/api/projects         -H 'Content-Type: application/json'         -d "{
+          "name": "$PROJECT_NAME_DISPLAY",
+          "description": "$(echo '{{task}}' | head -c 200)",
+          "emoji": "📦",
+          "category": "own",
+          "type": "web"
+        }"
+
+      curl -s -X PATCH "http://127.0.0.1:3080/api/projects/$PROJECT_ID"         -H 'Content-Type: application/json'         -d "{
+          "ports": {"frontend": $PORT},
+          "repo": "$REPO_DIR",
+          "stack": $STACK_JSON,
+          "service": "$SERVICE_NAME",
+          "github": "$GITHUB_URL",
+          "workflowRunId": "{{run_id}}",
+          "createdBy": "setfarm/feature-dev",
+          "completedAt": "$(date -Iseconds)",
+          "domain": "${PROJECT_NAME}.setrox.com.tr"
+        }"
+
+      STEP 6 — Add Cloudflare Tunnel entry:
+      HOSTNAME="${PROJECT_NAME}.setrox.com.tr"
+      TUNNEL_CFG="/etc/cloudflared/config.yml"
+
+      Check if hostname already exists:
+      if ! grep -q "$HOSTNAME" $TUNNEL_CFG; then
+        # Insert before the catch-all line (service: http_status:404)
+        sudo sed -i "/^- service: http_status:404$/i\- hostname: $HOSTNAME\n  service: http:\/\/127.0.0.1:$PORT" $TUNNEL_CFG
+        sudo systemctl restart cloudflared
+        echo "Tunnel entry added: $HOSTNAME → :$PORT"
+      else
+        echo "Tunnel entry already exists for $HOSTNAME"
+      fi
+
+      STEP 7 — Final verification:
+      1. systemctl --user is-active $SERVICE_NAME
+      2. curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:$PORT/
+      3. curl -s http://127.0.0.1:3080/api/projects/$PROJECT_ID | grep -q "$PROJECT_NAME"
+
+      ============================================================
+      MANDATORY OUTPUT FORMAT
+      ============================================================
+      STATUS: done
+      SERVICE_NAME: <service name>
+      SERVICE_STATUS: active
+      PORT: <port>
+      DOMAIN: <hostname>.setrox.com.tr
+      MC_PROJECT_ID: <project-id>
+      HEALTH_CHECK: <http status code>
+      DEPLOY_NOTES: <any notes about the deployment>
+
+      Or if deployment fails:
+      STATUS: retry
+      DEPLOY_ERRORS:
+      - <what went wrong>
+      ============================================================
+    expects: "STATUS: done"
+    max_retries: 3
+    on_fail:
+      escalate_to: human
+
