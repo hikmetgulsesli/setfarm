@@ -101,14 +101,12 @@ Insert before catch-all `service: http_status:404`:
 Then: `sudo systemctl restart cloudflared`
 
 ### 2. DNS CNAME Record (CRITICAL — without this, domain won't resolve!)
-Use Cloudflare API to create CNAME:
+Use cloudflared CLI (recommended, most reliable):
+```bash
+sudo cloudflared tunnel route dns 92d8df83-3623-4850-ba41-29126106d020 <name>.setrox.com.tr
 ```
-CF_TOKEN="CP1qBCzEfcwYlFifgNfEiVEye75FWR7Dq_7BEh8O"
-CF_ZONE_ID="dcb4b61afa6f4a6bd8c05950381655f2"
-CF_TUNNEL_ID="92d8df83-3623-4850-ba41-29126106d020"
-```
-- Check if exists: `GET /zones/{zone_id}/dns_records?name={hostname}&type=CNAME`
-- If not exists: `POST /zones/{zone_id}/dns_records` with type=CNAME, name=`<name>`, content=`{tunnel_id}.cfargotunnel.com`, proxied=true
+This creates a proxied CNAME pointing to the tunnel.
+NOTE: DNS propagation may take 5-15 minutes for new records.
 
 ### 3. Cloudflare Access
 Already configured as wildcard `*.setrox.com.tr` — new subdomains are automatically protected. No per-project action needed.
