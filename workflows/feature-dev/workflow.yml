@@ -685,8 +685,6 @@ steps:
 
       A7 — Cloudflare Tunnel + DNS:
       HOSTNAME="${PROJECT_NAME}.setrox.com.tr"
-      CF_TOKEN="CP1qBCzEfcwYlFifgNfEiVEye75FWR7Dq_7BEh8O"
-      CF_ZONE_ID="dcb4b61afa6f4a6bd8c05950381655f2"
       CF_TUNNEL_ID="92d8df83-3623-4850-ba41-29126106d020"
 
       a) Add tunnel ingress rule (if not exists):
@@ -695,15 +693,10 @@ steps:
         sudo systemctl restart cloudflared
       fi
 
-      b) Create DNS CNAME record (if not exists):
-      Check if CNAME already exists via Cloudflare API:
-      curl -s "https://api.cloudflare.com/client/v4/zones/$CF_ZONE_ID/dns_records?name=$HOSTNAME&type=CNAME" \
-        -H "Authorization: Bearer $CF_TOKEN"
-      If result count is 0, create it:
-      curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$CF_ZONE_ID/dns_records" \
-        -H "Authorization: Bearer $CF_TOKEN" -H "Content-Type: application/json" \
-        -d '{"type":"CNAME","name":"PROJECT_NAME","content":"CF_TUNNEL_ID.cfargotunnel.com","proxied":true,"ttl":1}'
-      (Replace PROJECT_NAME and CF_TUNNEL_ID with actual values)
+      b) Create DNS CNAME record via cloudflared CLI (recommended method):
+      sudo cloudflared tunnel route dns $CF_TUNNEL_ID $HOSTNAME
+      This creates a proxied CNAME: $HOSTNAME → $CF_TUNNEL_ID.cfargotunnel.com
+      NOTE: DNS propagation may take 5-15 minutes for new records.
 
       c) Cloudflare Access is already configured as wildcard (*.setrox.com.tr).
          New subdomains are automatically protected — no per-project action needed.
