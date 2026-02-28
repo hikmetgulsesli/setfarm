@@ -585,7 +585,7 @@ steps:
       CRITICAL: Do ALL work in THIS session. No sub-agents, no background processes.
       ############################################################
 
-      Deploy the completed project to production.
+      Deploy the completed project to production (if applicable).
 
       TASK: {{task}}
       REPO: {{repo}}
@@ -594,35 +594,47 @@ steps:
       FINAL_PR: {{final_pr}}
       RUN_ID: {{run_id}}
 
-      === DEPLOYMENT WORKFLOW ===
+      === STEP 0: CLASSIFY TASK TYPE ===
 
-      STEP 0 — Detect project type and read info:
-      1. cd {{repo}}
-      2. git checkout main && git pull origin main
-      3. Read package.json to understand project name, scripts, dependencies
-      4. PROJECT_NAME=$(basename {{repo}})
+      Read the TASK description and REPO path carefully.
+      Classify into one of these categories:
 
-      DETECT PROJECT TYPE:
-      - If package.json has "react-native" or "expo" dependency → TYPE=mobile
-      - If task description contains "mobile" or "React Native" or "Expo" → TYPE=mobile
-      - If package.json has "flutter" or pubspec.yaml exists → TYPE=mobile
-      - Otherwise → TYPE=web
+      CATEGORY A — NEW WEB PROJECT:
+        Signals: new repo created during this run, task describes a new app/site/dashboard,
+        repo is NOT already in ~/projects/, no existing systemd service for it.
+
+      CATEGORY B — NEW MOBILE APP:
+        Signals: package.json has react-native/expo/flutter dependency,
+        task mentions "mobile", "React Native", "Expo", "Flutter", "iOS", "Android".
+
+      CATEGORY C — EXISTING PROJECT UPDATE:
+        Signals: repo is ALREADY under ~/projects/ (or ~/mobile/ for mobile),
+        project is ALREADY registered in Mission Control
+        (check: curl -s http://127.0.0.1:3080/api/projects | grep -q "$(basename {{repo}})")
+
+      CATEGORY D — LIBRARY / SKILL / TOOL:
+        Signals: task mentions "install", "kur", "library", "fork", "skill", "tool", "CLI",
+        repo is under ~/libs/ or should be,
+        no web server / no port / no frontend.
+
+      CATEGORY E — NO DEPLOY NEEDED:
+        Signals: task is purely analytical, documentation, or config change,
+        no runnable artifact produced.
 
       ══════════════════════════════════════════════════════════
-      IF TYPE=mobile → SKIP TO "MOBILE DEPLOY PATH" BELOW
-      IF TYPE=web    → CONTINUE WITH "WEB DEPLOY PATH"
+      Based on category, follow the matching path below.
       ══════════════════════════════════════════════════════════
 
       ┌─────────────────────────────────────────────────────────┐
-      │                    WEB DEPLOY PATH                      │
+      │              CATEGORY A: NEW WEB PROJECT                │
       └─────────────────────────────────────────────────────────┘
 
-      WEB-1 — Determine PORT:
-      Look for "port: XXXX" or "Frontend port: XXXX" in the task description.
-      If no port specified:
-        PORT=$(curl -s http://127.0.0.1:3080/api/projects/next-port | jq -r '.port')
+      A1 — Determine PORT:
+      Extract from task ("port: XXXX" or "Frontend port: XXXX").
+      If not specified: PORT=$(curl -s http://127.0.0.1:3080/api/projects/next-port | jq -r '.port')
 
-      WEB-2 — Move project to ~/projects/:
+      A2 — Move to ~/projects/:
+      PROJECT_NAME=$(basename {{repo}})
       TARGET_DIR="/home/setrox/projects/$PROJECT_NAME"
       if [ "{{repo}}" != "$TARGET_DIR" ] && [ ! -d "$TARGET_DIR" ]; then
         mv {{repo}} $TARGET_DIR
@@ -630,23 +642,18 @@ steps:
       fi
       REPO_DIR="$TARGET_DIR"
 
-      WEB-3 — Build for production:
-      cd $REPO_DIR
-      npm install --production=false 2>/dev/null || true
+      A3 — Build:
+      cd $REPO_DIR && npm install --production=false 2>/dev/null || true
       {{build_cmd}}
 
-      WEB-4 — Detect service type and create systemd service:
-      a) If next.config.* has output: 'export' → STATIC
-         ExecStart=/home/setrox/.npm-global/bin/serve dist -l $PORT -s
-      b) If package.json has "start": "next start" → NEXTJS
-         ExecStart=/usr/bin/npx next start -p $PORT
-      c) If has server/dist/index.js or dist/index.js → NODEJS
-         ExecStart=/usr/bin/node dist/index.js
-         Environment=PORT=$PORT
-      d) Fallback → npm start with PORT env
+      A4 — Create systemd service:
+      Detect type from project files:
+        - next.config with output:'export' → STATIC: serve dist -l $PORT -s
+        - next.config without export → NEXTJS: npx next start -p $PORT
+        - server/dist/index.js or dist/index.js → NODEJS: node dist/index.js
+        - Fallback → npm start with PORT env
 
-      SERVICE_NAME="${PROJECT_NAME}.service"
-      Write to ~/.config/systemd/user/$SERVICE_NAME:
+      Write ~/.config/systemd/user/${PROJECT_NAME}.service:
       ```
       [Unit]
       Description=$PROJECT_NAME
@@ -655,7 +662,7 @@ steps:
       [Service]
       Type=simple
       WorkingDirectory=$REPO_DIR
-      ExecStart=<see above based on type>
+      ExecStart=<based on type above>
       Restart=on-failure
       RestartSec=5
       Environment=NODE_ENV=production
@@ -663,95 +670,106 @@ steps:
       [Install]
       WantedBy=default.target
       ```
+      systemctl --user daemon-reload && systemctl --user enable --now ${PROJECT_NAME}.service
 
-      systemctl --user daemon-reload
-      systemctl --user enable $SERVICE_NAME
-      systemctl --user start $SERVICE_NAME
-
-      WEB-5 — Health check:
+      A5 — Health check:
       sleep 3
-      HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:$PORT/ || echo "000")
-      If HTTP_CODE is not 200, check logs:
-        journalctl --user -u $SERVICE_NAME --no-pager -n 20
-      Fix any issues and retry.
+      curl -sf http://127.0.0.1:$PORT/ > /dev/null || (journalctl --user -u ${PROJECT_NAME}.service -n 20 --no-pager; fix and retry)
 
-      WEB-6 — Register in Mission Control:
-      Detect stack from package.json deps (next→Next.js, react→React, tailwindcss→Tailwind, etc.)
+      A6 — Register in Mission Control:
       GITHUB_URL=$(cd $REPO_DIR && git remote get-url origin 2>/dev/null | sed 's/.git$//')
+      Detect stack from package.json deps.
 
-      curl -s -X POST http://127.0.0.1:3080/api/projects \
-        -H 'Content-Type: application/json' \
-        -d "{\"name\":\"$PROJECT_NAME\",\"description\":\"$(echo '{{task}}' | head -c 200)\",\"emoji\":\"🌐\",\"category\":\"own\",\"type\":\"web\"}"
+      POST http://127.0.0.1:3080/api/projects → name, emoji "🌐", category "own", type "web"
+      PATCH http://127.0.0.1:3080/api/projects/$ID → ports, repo, stack, service, github, workflowRunId, createdBy, completedAt, domain
 
-      curl -s -X PATCH "http://127.0.0.1:3080/api/projects/$PROJECT_ID" \
-        -H 'Content-Type: application/json' \
-        -d "{\"ports\":{\"frontend\":$PORT},\"repo\":\"$REPO_DIR\",\"stack\":$STACK_JSON,\"service\":\"$SERVICE_NAME\",\"github\":\"$GITHUB_URL\",\"workflowRunId\":\"{{run_id}}\",\"createdBy\":\"setfarm/feature-dev\",\"completedAt\":\"$(date -Iseconds)\",\"domain\":\"${PROJECT_NAME}.setrox.com.tr\"}"
-
-      WEB-7 — Add Cloudflare Tunnel entry:
+      A7 — Cloudflare Tunnel:
       HOSTNAME="${PROJECT_NAME}.setrox.com.tr"
-      TUNNEL_CFG="/etc/cloudflared/config.yml"
-      if ! grep -q "$HOSTNAME" $TUNNEL_CFG; then
-        sudo sed -i "/^- service: http_status:404$/i\\- hostname: $HOSTNAME\\n  service: http:\\/\\/127.0.0.1:$PORT" $TUNNEL_CFG
+      if ! grep -q "$HOSTNAME" /etc/cloudflared/config.yml; then
+        sudo sed -i "/^- service: http_status:404$/i\\- hostname: $HOSTNAME\\n  service: http:\\/\\/127.0.0.1:$PORT" /etc/cloudflared/config.yml
         sudo systemctl restart cloudflared
       fi
 
-      WEB-8 — Final verification:
-      1. systemctl --user is-active $SERVICE_NAME
-      2. curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:$PORT/
-      3. curl -s http://127.0.0.1:3080/api/projects/$PROJECT_ID | jq -r '.id'
-
-      → Go to OUTPUT FORMAT section.
+      → OUTPUT: DEPLOY_TYPE=new-web, all fields filled.
 
       ┌─────────────────────────────────────────────────────────┐
-      │                   MOBILE DEPLOY PATH                    │
+      │              CATEGORY B: NEW MOBILE APP                 │
       └─────────────────────────────────────────────────────────┘
 
-      MOBILE-1 — Move project to ~/mobile/:
+      B1 — Move to ~/mobile/:
       TARGET_DIR="/home/setrox/mobile/$PROJECT_NAME"
-      if [ "{{repo}}" != "$TARGET_DIR" ] && [ ! -d "$TARGET_DIR" ]; then
-        mv {{repo}} $TARGET_DIR
-        ln -sfn $TARGET_DIR {{repo}} 2>/dev/null || true
-      fi
-      REPO_DIR="$TARGET_DIR"
+      Move if not already there (same logic as A2).
 
-      MOBILE-2 — Install dependencies:
-      cd $REPO_DIR
-      npm install 2>/dev/null || true
+      B2 — Install deps:
+      cd $REPO_DIR && npm install 2>/dev/null || true
 
-      MOBILE-3 — Register in Mission Control (mobile type):
-      GITHUB_URL=$(cd $REPO_DIR && git remote get-url origin 2>/dev/null | sed 's/.git$//')
-      Detect stack: react-native→React Native, expo→Expo, flutter→Flutter, etc.
+      B3 — Register in Mission Control:
+      POST → type "mobile", emoji "📱"
+      PATCH → repo, stack, github, workflowRunId, createdBy, completedAt
+      (NO ports, NO service, NO domain)
 
-      curl -s -X POST http://127.0.0.1:3080/api/projects \
-        -H 'Content-Type: application/json' \
-        -d "{\"name\":\"$PROJECT_NAME\",\"description\":\"$(echo '{{task}}' | head -c 200)\",\"emoji\":\"📱\",\"category\":\"own\",\"type\":\"mobile\"}"
+      → OUTPUT: DEPLOY_TYPE=new-mobile, SERVICE_NAME=none, PORT=none, DOMAIN=none.
 
-      curl -s -X PATCH "http://127.0.0.1:3080/api/projects/$PROJECT_ID" \
-        -H 'Content-Type: application/json' \
-        -d "{\"repo\":\"$REPO_DIR\",\"stack\":$STACK_JSON,\"github\":\"$GITHUB_URL\",\"workflowRunId\":\"{{run_id}}\",\"createdBy\":\"setfarm/feature-dev\",\"completedAt\":\"$(date -Iseconds)\"}"
+      ┌─────────────────────────────────────────────────────────┐
+      │           CATEGORY C: EXISTING PROJECT UPDATE           │
+      └─────────────────────────────────────────────────────────┘
 
-      NOTE: Mobile apps do NOT get:
-      - systemd service (no server to run)
-      - port assignment (no port needed)
-      - Cloudflare tunnel (no web endpoint)
+      C1 — Pull latest and rebuild:
+      cd {{repo}} && git checkout main && git pull
+      {{build_cmd}}
 
-      MOBILE-4 — Verify MC registration:
-      curl -s http://127.0.0.1:3080/api/projects/$PROJECT_ID | jq -r '.id'
+      C2 — Restart service (if web):
+      SERVICE_NAME=$(basename {{repo}}).service
+      systemctl --user restart $SERVICE_NAME 2>/dev/null || true
 
-      → Go to OUTPUT FORMAT section.
+      C3 — Health check (if web):
+      Detect port from MC: curl -s http://127.0.0.1:3080/api/projects/$(basename {{repo}}) | jq '.ports.frontend'
+      curl -sf http://127.0.0.1:$PORT/ > /dev/null
+
+      C4 — Update MC metadata:
+      PATCH → completedAt, workflowRunId (append to setfarmRunIds if supported)
+
+      → OUTPUT: DEPLOY_TYPE=update, existing service restarted.
+
+      ┌─────────────────────────────────────────────────────────┐
+      │           CATEGORY D: LIBRARY / SKILL / TOOL            │
+      └─────────────────────────────────────────────────────────┘
+
+      D1 — Ensure correct location:
+      If repo is NOT under ~/libs/, move it there:
+        TARGET_DIR="/home/setrox/libs/$PROJECT_NAME"
+        mv {{repo}} $TARGET_DIR 2>/dev/null || true
+
+      D2 — Install/build if needed:
+      cd $TARGET_DIR
+      npm install 2>/dev/null || pip install -e . 2>/dev/null || true
+      If build script exists: run it.
+
+      D3 — NO Mission Control registration (libs are not projects).
+      D4 — NO systemd service, NO tunnel, NO port.
+
+      → OUTPUT: DEPLOY_TYPE=library, SERVICE_NAME=none, PORT=none, DOMAIN=none, MC_PROJECT_ID=none.
+
+      ┌─────────────────────────────────────────────────────────┐
+      │            CATEGORY E: NO DEPLOY NEEDED                 │
+      └─────────────────────────────────────────────────────────┘
+
+      Nothing to deploy. Just report done.
+
+      → OUTPUT: DEPLOY_TYPE=skip, all fields "none".
 
       ============================================================
       MANDATORY OUTPUT FORMAT
       ============================================================
       STATUS: done
-      DEPLOY_TYPE: <web|mobile>
-      SERVICE_NAME: <service name, or "none" for mobile>
-      SERVICE_STATUS: <active|none>
-      PORT: <port number, or "none" for mobile>
-      DOMAIN: <hostname>.setrox.com.tr or "none" for mobile
-      MC_PROJECT_ID: <project-id>
-      HEALTH_CHECK: <http status code, or "n/a" for mobile>
-      DEPLOY_NOTES: <any notes about the deployment>
+      DEPLOY_TYPE: <new-web|new-mobile|update|library|skip>
+      SERVICE_NAME: <name.service|none>
+      SERVICE_STATUS: <active|restarted|none>
+      PORT: <number|none>
+      DOMAIN: <hostname.setrox.com.tr|none>
+      MC_PROJECT_ID: <id|none>
+      HEALTH_CHECK: <200|n/a>
+      DEPLOY_NOTES: <summary of what was done>
 
       Or if deployment fails:
       STATUS: retry
