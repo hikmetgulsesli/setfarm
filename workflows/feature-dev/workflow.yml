@@ -12,7 +12,7 @@ agent_mapping:
   planner: main
   setup: atlas
   developer: [koda, flux, cipher]
-  verifier: [sentinel, iris]
+  reviewer: [sentinel, iris]
   tester: sentinel
   security-gate: sentinel
   deployer: atlas
@@ -58,16 +58,16 @@ agents:
         SOUL.md: agents/developer/SOUL.md
         IDENTITY.md: agents/developer/IDENTITY.md
 
-  - id: verifier
-    name: Verifier
+  - id: reviewer
+    name: Reviewer
     role: verification
     description: Reads PR review comments, fixes issues, merges PR.
     workspace:
-      baseDir: agents/verifier
+      baseDir: agents/reviewer
       files:
-        AGENTS.md: ../../agents/shared/verifier/AGENTS.md
-        SOUL.md: ../../agents/shared/verifier/SOUL.md
-        IDENTITY.md: ../../agents/shared/verifier/IDENTITY.md
+        AGENTS.md: agents/reviewer/AGENTS.md
+        SOUL.md: agents/reviewer/SOUL.md
+        IDENTITY.md: agents/reviewer/IDENTITY.md
 
   - id: tester
     name: Tester
@@ -93,7 +93,7 @@ agents:
 
   - id: deployer
     name: Deployer
-    role: deployment
+    role: coding
     description: Deploys completed projects — creates systemd service, registers in Mission Control, sets up Cloudflare tunnel.
     workspace:
       baseDir: agents/deployer
@@ -371,7 +371,7 @@ steps:
       escalate_to: human
 
   - id: verify
-    agent: verifier
+    agent: reviewer
     input: |
       ############################################################
       CRITICAL: Do ALL work in THIS session. No sub-agents, no background processes.

@@ -330,14 +330,7 @@ function parseAndInsertStories(output: string, runId: string): void {
   const startIdx = lines.findIndex(l => l.startsWith("STORIES_JSON:"));
   if (startIdx === -1) return;
 
-  // Dedup guard: if stories already exist for this run, skip insertion.
-  // Prevents 3x duplication when multiple cron instances process the same output.
-  const db0 = getDb();
-  const existingCount = db0.prepare("SELECT COUNT(*) as cnt FROM stories WHERE run_id = ?").get(runId);
-  if (existingCount && (existingCount as any).cnt > 0) {
-    logger.info("Stories already exist for run " + runId + ", skipping duplicate insertion");
-    return;
-  }
+  // Dedup guard moved inside transaction below (was vulnerable to race condition).
 
   // Collect JSON text: first line after prefix, then subsequent lines until next KEY: or end
   const firstLine = lines[startIdx].slice("STORIES_JSON:".length).trim();
@@ -363,24 +356,43 @@ function parseAndInsertStories(output: string, runId: string): void {
   }
 
   const db = getDb();
-  const now = new Date().toISOString();
-  const insert = db.prepare(
-    "INSERT INTO stories (id, run_id, story_index, story_id, title, description, acceptance_criteria, status, retry_count, max_retries, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, 3, ?, ?)"
-  );
 
-  const seenIds = new Set<string>();
-  for (let i = 0; i < stories.length; i++) {
-    const s = stories[i];
-    // Accept both camelCase and snake_case
-    const ac = s.acceptanceCriteria ?? s.acceptance_criteria;
-    if (!s.id || !s.title || !s.description || !Array.isArray(ac) || ac.length === 0) {
-      throw new Error(`STORIES_JSON story at index ${i} missing required fields (id, title, description, acceptanceCriteria)`);
+  // BEGIN IMMEDIATE: dedup check + insert must be atomic to prevent
+  // parallel agents from both passing the dedup guard and double-inserting.
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const existingCount = db.prepare("SELECT COUNT(*) as cnt FROM stories WHERE run_id = ?").get(runId) as { cnt: number };
+    if (existingCount.cnt > 0) {
+      db.exec("ROLLBACK");
+      logger.info("Stories already exist for run " + runId + ", skipping duplicate insertion");
+      return;
     }
-    if (seenIds.has(s.id)) {
-      throw new Error(`STORIES_JSON has duplicate story id "${s.id}"`);
+
+    const now = new Date().toISOString();
+    const insert = db.prepare(
+      "INSERT INTO stories (id, run_id, story_index, story_id, title, description, acceptance_criteria, status, retry_count, max_retries, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, 3, ?, ?)"
+    );
+
+    const seenIds = new Set<string>();
+    for (let i = 0; i < stories.length; i++) {
+      const s = stories[i];
+      // Accept both camelCase and snake_case
+      const ac = s.acceptanceCriteria ?? s.acceptance_criteria;
+      if (!s.id || !s.title || !s.description || !Array.isArray(ac) || ac.length === 0) {
+        db.exec("ROLLBACK");
+        throw new Error(`STORIES_JSON story at index ${i} missing required fields (id, title, description, acceptanceCriteria)`);
+      }
+      if (seenIds.has(s.id)) {
+        db.exec("ROLLBACK");
+        throw new Error(`STORIES_JSON has duplicate story id "${s.id}"`);
+      }
+      seenIds.add(s.id);
+      insert.run(crypto.randomUUID(), runId, i, s.id, s.title, s.description, JSON.stringify(ac), now, now);
     }
-    seenIds.add(s.id);
-    insert.run(crypto.randomUUID(), runId, i, s.id, s.title, s.description, JSON.stringify(ac), now, now);
+    db.exec("COMMIT");
+  } catch (err) {
+    try { db.exec("ROLLBACK"); } catch {}
+    throw err;
   }
 }
 
