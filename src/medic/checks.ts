@@ -309,7 +309,7 @@ export function checkFailedRunsForResume(): MedicFinding[] {
 
 // ── Check: Orphaned Stories (#225) ──────────────────────────────────
 
-const STORY_STUCK_THRESHOLD_MS = 20 * 60 * 1000; // 20 minutes
+const STORY_STUCK_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes — matches agent timeout
 
 /**
  * Find stories stuck in 'running' state for too long.
