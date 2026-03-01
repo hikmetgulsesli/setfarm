@@ -581,8 +581,8 @@ async function main() {
       ).get(run.id) as { id: string } | undefined;
       if (failedStory) {
         db.prepare(
-          "UPDATE stories SET status = 'pending', updated_at = datetime('now') WHERE id = ?"
-        ).run(failedStory.id);
+          "UPDATE stories SET status = 'pending', updated_at = ? WHERE id = ?"
+        ).run(new Date().toISOString(), failedStory.id);
       }
       db.prepare(
         "UPDATE steps SET retry_count = 0 WHERE run_id = ? AND type = 'loop'"
@@ -599,21 +599,21 @@ async function main() {
       if (lc.verifyEach && lc.verifyStep === failedStep.step_id) {
         // Reset the loop step (developer) to pending so it re-claims the story and populates context
         db.prepare(
-          "UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = 0, updated_at = datetime('now') WHERE id = ?"
-        ).run(loopStep.id);
+          "UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = 0, updated_at = ? WHERE id = ?"
+        ).run(new Date().toISOString(), loopStep.id);
         // Reset verify step to waiting (fires after developer completes)
         db.prepare(
-          "UPDATE steps SET status = 'waiting', current_story_id = NULL, retry_count = 0, updated_at = datetime('now') WHERE id = ?"
-        ).run(failedStep.id);
+          "UPDATE steps SET status = 'waiting', current_story_id = NULL, retry_count = 0, updated_at = ? WHERE id = ?"
+        ).run(new Date().toISOString(), failedStep.id);
         // Reset any failed stories to pending
         db.prepare(
-          "UPDATE stories SET status = 'pending', updated_at = datetime('now') WHERE run_id = ? AND status = 'failed'"
-        ).run(run.id);
+          "UPDATE stories SET status = 'pending', updated_at = ? WHERE run_id = ? AND status = 'failed'"
+        ).run(new Date().toISOString(), run.id);
 
         // Reset run to running
         db.prepare(
-          "UPDATE runs SET status = 'running', updated_at = datetime('now') WHERE id = ?"
-        ).run(run.id);
+          "UPDATE runs SET status = 'running', updated_at = ? WHERE id = ?"
+        ).run(new Date().toISOString(), run.id);
 
         // Ensure crons are running for this workflow
         const { loadWorkflowSpec } = await import("../installer/workflow-spec.js");
@@ -634,13 +634,13 @@ async function main() {
 
     // Reset step to pending
     db.prepare(
-      "UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = 0, updated_at = datetime('now') WHERE id = ?"
-    ).run(failedStep.id);
+      "UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = 0, updated_at = ? WHERE id = ?"
+    ).run(new Date().toISOString(), failedStep.id);
 
     // Reset run to running
     db.prepare(
-      "UPDATE runs SET status = 'running', updated_at = datetime('now') WHERE id = ?"
-    ).run(run.id);
+      "UPDATE runs SET status = 'running', updated_at = ? WHERE id = ?"
+    ).run(new Date().toISOString(), run.id);
 
     // Ensure crons are running for this workflow
     const { loadWorkflowSpec } = await import("../installer/workflow-spec.js");
