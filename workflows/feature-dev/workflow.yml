@@ -686,9 +686,12 @@ steps:
       │              CATEGORY A: NEW WEB PROJECT                │
       └─────────────────────────────────────────────────────────┘
 
-      A1 — Determine PORT:
-      Extract from task ("port: XXXX" or "Frontend port: XXXX").
-      If not specified: PORT=$(curl -s http://127.0.0.1:3080/api/projects/next-port | jq -r '.port')
+      A1 — Determine PORT (priority order — ALWAYS prefer existing port):
+      1. Existing systemd service: grep -oP 'PORT=\K[0-9]+' ~/.config/systemd/user/$(basename REPO).service
+      2. Existing server code or .env: grep PORT from REPO/server/index.ts or REPO/.env
+      3. Task text ("port: XXXX" or "Frontend port: XXXX")
+      4. Last resort only: PORT=$(curl -s http://127.0.0.1:3080/api/projects/next-port | jq -r '.port')
+      CRITICAL: Never assign a new port if the service already has one configured.
 
       A2 — Move to ~/projects/:
       PROJECT_NAME=$(basename {{repo}})
