@@ -12,6 +12,7 @@ export type MedicActionType =
   | "teardown_crons"
   | "reset_story"
   | "recreate_crons"
+  | "restart_service"
   | "none";
 
 export interface MedicFinding {
@@ -25,6 +26,7 @@ export interface MedicFinding {
   storyId?: string;
   workflowId?: string;
   /** Whether the medic auto-remediated this */
+  serviceName?: string;
   remediated: boolean;
 }
 
@@ -432,6 +434,67 @@ export function checkStalledWorkflowCrons(): MedicFinding[] {
   return findings;
 }
 
+
+// ── Check: Offline Services ────────────────────────────────────────
+
+import { execFileSync } from "node:child_process";
+
+/**
+ * For running pipelines, check if the project systemd service is running.
+ * Agents sometimes stop services during implementation and forget to restart.
+ */
+export function checkOfflineServices(): MedicFinding[] {
+  const db = getDb();
+  const findings: MedicFinding[] = [];
+
+  const running = db.prepare(
+    "SELECT id, context FROM runs WHERE status = 'running'"
+  ).all() as Array<{ id: string; context: string }>;
+
+  for (const run of running) {
+    try {
+      const ctx = JSON.parse(run.context);
+      const repo = ctx.repo;
+      if (!repo) continue;
+
+      const serviceName = repo.replace(/\/+$/, "").split("/").pop();
+      if (!serviceName) continue;
+
+      try {
+        execFileSync("systemctl", ["--user", "is-active", serviceName], {
+          encoding: "utf-8",
+          timeout: 5000,
+        });
+      } catch (err: any) {
+        const stdout = (err.stdout ?? "").trim();
+        if (stdout === "inactive" || stdout === "dead" || stdout === "failed") {
+          try {
+            execFileSync("systemctl", ["--user", "cat", serviceName], {
+              encoding: "utf-8",
+              timeout: 5000,
+            });
+            findings.push({
+              check: "offline_service",
+              severity: "warning",
+              message: "Service " + serviceName + " is " + stdout + " while pipeline run " + run.id.slice(0, 8) + " is active",
+              action: "restart_service",
+              runId: run.id,
+              serviceName,
+              remediated: false,
+            });
+          } catch {
+            // Service file does not exist — skip
+          }
+        }
+      }
+    } catch {
+      // skip
+    }
+  }
+
+  return findings;
+}
+
 export function runSyncChecks(): MedicFinding[] {
   return [
     ...checkOrphanedStories(),
@@ -441,5 +504,6 @@ export function runSyncChecks(): MedicFinding[] {
     ...checkDeadRuns(),
     ...checkFailedRunsForResume(),
     ...checkStalledWorkflowCrons(),
+    ...checkOfflineServices(),
   ];
 }

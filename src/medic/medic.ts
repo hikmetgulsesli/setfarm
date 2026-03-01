@@ -15,6 +15,7 @@ import {
   checkOrphanedCrons,
   type MedicFinding,
 } from "./checks.js";
+import { completeStep } from "../installer/step-ops.js";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 
@@ -104,9 +105,34 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
     case "reset_step": {
       if (!finding.stepId) return false;
       const step = db.prepare(
-        "SELECT abandoned_count FROM steps WHERE id = ?"
-      ).get(finding.stepId) as { abandoned_count: number } | undefined;
+        "SELECT abandoned_count, output, status FROM steps WHERE id = ?"
+      ).get(finding.stepId) as { abandoned_count: number; output: string | null; status: string } | undefined;
       if (!step) return false;
+
+      // AUTO-COMPLETE: If the agent finished (output says STATUS: done/pass)
+      // but session timed out before completeStep was called, complete it now
+      // instead of wastefully resetting to pending for re-execution.
+      if (step.status === "running" && step.output) {
+        const statusMatch = step.output.match(/^STATUS:\s*(.+)$/im);
+        const statusVal = statusMatch?.[1]?.trim().toLowerCase();
+        if (statusVal && ["done", "pass", "passed", "verified"].includes(statusVal)) {
+          try {
+            const result = completeStep(finding.stepId, step.output);
+            if (result.advanced || result.runCompleted) {
+              emitEvent({
+                ts: new Date().toISOString(),
+                event: "step.done" as EventType,
+                runId: finding.runId ?? "",
+                stepId: finding.stepId,
+                detail: "Medic: auto-completed stuck step (output had STATUS: done)",
+              });
+              return true;
+            }
+          } catch (err) {
+            // completeStep failed — fall through to normal reset
+          }
+        }
+      }
 
       const newCount = (step.abandoned_count ?? 0) + 1;
       const MAX_STEP_ABANDONS = 10;
@@ -144,6 +170,7 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
       return true;
     }
 
+case "restart_service": {      if (!finding.serviceName) return false;      try {        execFileSync("systemctl", ["--user", "start", finding.serviceName], {          encoding: "utf-8",          timeout: 10000,        });        emitEvent({          ts: new Date().toISOString(),          event: "step.done" as EventType,          runId: finding.runId ?? "",          detail: "Medic: restarted offline service " + finding.serviceName,        });        return true;      } catch {        return false;      }    }
     case "fail_run": {
       if (!finding.runId) return false;
       const run = db.prepare("SELECT status, workflow_id FROM runs WHERE id = ?").get(finding.runId) as { status: string; workflow_id: string } | undefined;
