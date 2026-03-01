@@ -220,6 +220,8 @@ steps:
       3. Ensure main branch exists (CRITICAL for final PR):
          git branch -M main 2>/dev/null || true
          git push -u origin main 2>/dev/null || true
+      3.5. Ensure .worktrees/ is in .gitignore (prevents worktree dirs from being committed):
+         grep -qxF '.worktrees/' .gitignore 2>/dev/null || echo '.worktrees/' >> .gitignore
       4. Create feature branch: git checkout -b {{branch}}
       5. Read package.json, test config to understand build/test setup
       6. Run build + tests to establish baseline
@@ -700,6 +702,13 @@ steps:
       A3 — Build:
       cd $REPO_DIR && npm install --production=false 2>/dev/null || true
       {{build_cmd}}
+
+      A3.5 — Check for duplicate system-level service (CRITICAL):
+      If a system-level service exists for this project, it MUST be disabled first:
+        sudo systemctl is-active ${PROJECT_NAME}.service 2>/dev/null && sudo systemctl disable --now ${PROJECT_NAME}.service
+        sudo rm -f /etc/systemd/system/${PROJECT_NAME}.service 2>/dev/null
+        sudo systemctl daemon-reload 2>/dev/null
+      This prevents port conflicts and restart loops from having both system and user services.
 
       A4 — Create systemd service:
       Detect type from project files:

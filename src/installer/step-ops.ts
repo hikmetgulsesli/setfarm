@@ -1344,6 +1344,7 @@ function advancePipeline(runId: string): { advanced: boolean; runCompleted: bool
       logger.info("Run completed", { runId, workflowId: wfId });
       archiveRunProgress(runId);
       cleanupWorktrees(runId);
+      cleanupLocalBranches(runId);
       scheduleRunCronTeardown(runId);
       return { advanced: false, runCompleted: true };
     }
@@ -1405,6 +1406,52 @@ function cleanupWorktrees(runId: string): void {
     logger.info(`[worktree] Cleanup completed for run ${runId} in ${repo}`, {});
   } catch (err) {
     logger.warn(`[worktree] Cleanup failed for run ${runId}: ${err}`, {});
+  }
+}
+
+// ── Local Branch Cleanup (v1.5.5) ──────────────────────────────────
+
+/**
+ * Clean up leftover local git branches when a run completes.
+ * Switches to main and deletes all other branches.
+ */
+function cleanupLocalBranches(runId: string): void {
+  try {
+    const db = getDb();
+    const run = db.prepare("SELECT context FROM runs WHERE id = ?").get(runId) as { context: string } | undefined;
+    if (!run) return;
+    const context = JSON.parse(run.context);
+    const repo = context.repo;
+    if (!repo) return;
+
+    // Switch to main first
+    try {
+      execFileSync("git", ["checkout", "main"], { cwd: repo, timeout: 10_000, stdio: "pipe" });
+    } catch {
+      logger.warn(`[branch-cleanup] Could not checkout main in ${repo}`, {});
+      return;
+    }
+
+    // List all branches except main
+    try {
+      const result = execFileSync("git", ["branch", "--format=%(refname:short)"], { cwd: repo, timeout: 10_000, stdio: "pipe" });
+      const branches = result.toString().trim().split("\n").filter(b => b && b !== "main");
+      for (const branch of branches) {
+        try {
+          execFileSync("git", ["branch", "-D", branch.trim()], { cwd: repo, timeout: 5_000, stdio: "pipe" });
+        } catch {}
+      }
+      if (branches.length > 0) {
+        logger.info(`[branch-cleanup] Deleted ${branches.length} stale branches for run ${runId}`, {});
+      }
+    } catch {}
+
+    // Prune remote tracking branches
+    try {
+      execFileSync("git", ["fetch", "--prune"], { cwd: repo, timeout: 15_000, stdio: "pipe" });
+    } catch {}
+  } catch (err) {
+    logger.warn(`[branch-cleanup] Failed for run ${runId}: ${err}`, {});
   }
 }
 
