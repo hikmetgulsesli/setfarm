@@ -112,12 +112,12 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
       const MAX_STEP_ABANDONS = 10;
       if (newCount >= MAX_STEP_ABANDONS) {
         db.prepare(
-          "UPDATE steps SET status = 'failed', output = 'Medic: abandoned too many times', abandoned_count = ?, updated_at = datetime('now') WHERE id = ?"
-        ).run(newCount, finding.stepId);
+          "UPDATE steps SET status = 'failed', output = 'Medic: abandoned too many times', abandoned_count = ?, updated_at = ? WHERE id = ?"
+        ).run(newCount, new Date().toISOString(), finding.stepId);
         if (finding.runId) {
           db.prepare(
-            "UPDATE runs SET status = 'failed', updated_at = datetime('now') WHERE id = ?"
-          ).run(finding.runId);
+            "UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?"
+          ).run(new Date().toISOString(), finding.runId);
           emitEvent({
             ts: new Date().toISOString(),
             event: "run.failed" as EventType,
@@ -130,8 +130,8 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
 
       // SAFEGUARD_194: Medic resets use ONLY abandoned_count, NEVER retry_count.
       db.prepare(
-        "UPDATE steps SET status = 'pending', abandoned_count = ?, updated_at = datetime('now') WHERE id = ?"
-      ).run(newCount, finding.stepId);
+        "UPDATE steps SET status = 'pending', abandoned_count = ?, updated_at = ? WHERE id = ?"
+      ).run(newCount, new Date().toISOString(), finding.stepId);
       if (finding.runId) {
         emitEvent({
           ts: new Date().toISOString(),
@@ -150,11 +150,11 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
       if (!run || run.status !== "running") return false;
 
       db.prepare(
-        "UPDATE runs SET status = 'failed', updated_at = datetime('now') WHERE id = ?"
-      ).run(finding.runId);
+        "UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?"
+      ).run(new Date().toISOString(), finding.runId);
       db.prepare(
-        "UPDATE steps SET status = 'failed', output = 'Medic: run marked as dead', updated_at = datetime('now') WHERE run_id = ? AND status IN ('waiting', 'pending', 'running')"
-      ).run(finding.runId);
+        "UPDATE steps SET status = 'failed', output = 'Medic: run marked as dead', updated_at = ? WHERE run_id = ? AND status IN ('waiting', 'pending', 'running')"
+      ).run(new Date().toISOString(), finding.runId);
       emitEvent({
         ts: new Date().toISOString(),
         event: "run.failed" as EventType,
@@ -197,14 +197,14 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
         const lc = JSON.parse(loopStep.loop_config);
         if (lc.verifyEach && lc.verifyStep === failedStep.step_id) {
           db.prepare(
-            "UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = 0, updated_at = datetime('now') WHERE id = ?"
-          ).run(loopStep.id);
+            "UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = 0, updated_at = ? WHERE id = ?"
+          ).run(new Date().toISOString(), loopStep.id);
           db.prepare(
-            "UPDATE steps SET status = 'waiting', current_story_id = NULL, retry_count = 0, updated_at = datetime('now') WHERE id = ?"
-          ).run(failedStep.id);
+            "UPDATE steps SET status = 'waiting', current_story_id = NULL, retry_count = 0, updated_at = ? WHERE id = ?"
+          ).run(new Date().toISOString(), failedStep.id);
           db.prepare(
-            "UPDATE stories SET status = 'pending', updated_at = datetime('now') WHERE run_id = ? AND status = 'failed'"
-          ).run(run.id);
+            "UPDATE stories SET status = 'pending', updated_at = ? WHERE run_id = ? AND status = 'failed'"
+          ).run(new Date().toISOString(), run.id);
         }
       } else {
         if (failedStep.type === "loop") {
@@ -213,21 +213,21 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
           ).get(run.id) as { id: string } | undefined;
           if (failedStory) {
             db.prepare(
-              "UPDATE stories SET status = 'pending', updated_at = datetime('now') WHERE id = ?"
-            ).run(failedStory.id);
+              "UPDATE stories SET status = 'pending', updated_at = ? WHERE id = ?"
+            ).run(new Date().toISOString(), failedStory.id);
           }
           db.prepare(
             "UPDATE steps SET retry_count = 0 WHERE run_id = ? AND type = 'loop'"
           ).run(run.id);
         }
         db.prepare(
-          "UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = 0, updated_at = datetime('now') WHERE id = ?"
-        ).run(failedStep.id);
+          "UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = 0, updated_at = ? WHERE id = ?"
+        ).run(new Date().toISOString(), failedStep.id);
       }
 
       db.prepare(
-        "UPDATE runs SET status = 'running', updated_at = datetime('now') WHERE id = ?"
-      ).run(run.id);
+        "UPDATE runs SET status = 'running', updated_at = ? WHERE id = ?"
+      ).run(new Date().toISOString(), run.id);
 
       const meta = run.meta ? JSON.parse(run.meta) : {};
       meta.medic_resume_count = (meta.medic_resume_count ?? 0) + 1;
@@ -274,16 +274,17 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
           const prUrl = checkMergedPR(repoUrl, storyMeta.story_id, story.run_id);
           if (prUrl) {
             db.prepare(
-              "UPDATE stories SET status = 'done', abandoned_count = 0, output = ?, updated_at = datetime('now') WHERE id = ?"
+              "UPDATE stories SET status = 'done', abandoned_count = 0, output = ?, updated_at = ? WHERE id = ?"
             ).run(
               `STATUS: done
 PR_URL: ${prUrl}
 CHANGES: Medic v6: merged PR found — awaiting verifier review`,
+              new Date().toISOString(),
               finding.storyId
             );
             db.prepare(
-              "UPDATE steps SET current_story_id = NULL, updated_at = datetime('now') WHERE run_id = ? AND type = 'loop' AND current_story_id = ?"
-            ).run(story.run_id, finding.storyId);
+              "UPDATE steps SET current_story_id = NULL, updated_at = ? WHERE run_id = ? AND type = 'loop' AND current_story_id = ?"
+            ).run(new Date().toISOString(), story.run_id, finding.storyId);
             emitEvent({
               ts: new Date().toISOString(),
               event: "story.done" as EventType,
@@ -302,8 +303,8 @@ CHANGES: Medic v6: merged PR found — awaiting verifier review`,
       if (newCount >= MAX_STORY_ABANDONS) {
         // Too many abandons — skip this story so the loop can continue
         db.prepare(
-          "UPDATE stories SET status = 'skipped', abandoned_count = ?, output = 'Medic: abandoned too many times', updated_at = datetime('now') WHERE id = ?"
-        ).run(newCount, finding.storyId);
+          "UPDATE stories SET status = 'skipped', abandoned_count = ?, output = 'Medic: abandoned too many times', updated_at = ? WHERE id = ?"
+        ).run(newCount, new Date().toISOString(), finding.storyId);
         emitEvent({
           ts: new Date().toISOString(),
           event: "story.failed" as EventType,
@@ -313,12 +314,12 @@ CHANGES: Medic v6: merged PR found — awaiting verifier review`,
       } else {
         // Reset to pending for retry (uses abandoned_count, NOT retry_count)
         db.prepare(
-          "UPDATE stories SET status = 'pending', abandoned_count = ?, updated_at = datetime('now') WHERE id = ?"
-        ).run(newCount, finding.storyId);
+          "UPDATE stories SET status = 'pending', abandoned_count = ?, updated_at = ? WHERE id = ?"
+        ).run(newCount, new Date().toISOString(), finding.storyId);
         // Clear current_story_id on the loop step if it points to this story
         db.prepare(
-          "UPDATE steps SET current_story_id = NULL, updated_at = datetime('now') WHERE run_id = ? AND type = 'loop' AND current_story_id = ?"
-        ).run(story.run_id, finding.storyId);
+          "UPDATE steps SET current_story_id = NULL, updated_at = ? WHERE run_id = ? AND type = 'loop' AND current_story_id = ?"
+        ).run(new Date().toISOString(), story.run_id, finding.storyId);
         emitEvent({
           ts: new Date().toISOString(),
           event: "step.timeout" as EventType,

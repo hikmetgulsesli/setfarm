@@ -112,12 +112,12 @@ export async function stopWorkflow(query: string): Promise<StopWorkflowResult> {
   }
 
   // Set run status to cancelled
-  db.prepare("UPDATE runs SET status = 'cancelled', updated_at = datetime('now') WHERE id = ?").run(run.id);
+  db.prepare("UPDATE runs SET status = 'cancelled', updated_at = ? WHERE id = ?").run(new Date().toISOString(), run.id);
 
   // Update all non-done steps to failed
   const result = db.prepare(
-    "UPDATE steps SET status = 'failed', output = 'Cancelled by user', updated_at = datetime('now') WHERE run_id = ? AND status IN ('waiting', 'pending', 'running')"
-  ).run(run.id);
+    "UPDATE steps SET status = 'failed', output = 'Cancelled by user', updated_at = ? WHERE run_id = ? AND status IN ('waiting', 'pending', 'running')"
+  ).run(new Date().toISOString(), run.id);
   const cancelledSteps = Number(result.changes);
 
   // Clean up cron jobs if no other active runs
