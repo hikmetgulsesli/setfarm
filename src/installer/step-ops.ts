@@ -1328,12 +1328,68 @@ function advancePipeline(runId: string): { advanced: boolean; runCompleted: bool
       emitEvent({ ts: new Date().toISOString(), event: "run.completed", runId, workflowId: wfId });
       logger.info("Run completed", { runId, workflowId: wfId });
       archiveRunProgress(runId);
+      cleanupWorktrees(runId);
       scheduleRunCronTeardown(runId);
       return { advanced: false, runCompleted: true };
     }
   } catch (err) {
     try { db.exec("ROLLBACK"); } catch {}
     throw err;
+  }
+}
+
+// ── Worktree Cleanup (v1.5.4) ───────────────────────────────────────
+
+/**
+ * Clean up leftover git worktrees when a run completes.
+ * Prunes stale worktree refs and removes the .worktrees/ directory.
+ */
+function cleanupWorktrees(runId: string): void {
+  try {
+    const db = getDb();
+    const run = db.prepare("SELECT context FROM runs WHERE id = ?").get(runId) as { context: string } | undefined;
+    if (!run) return;
+    const context = JSON.parse(run.context);
+    const repo = context.repo;
+    if (!repo) return;
+
+    // Prune stale worktree references
+    try {
+      execFileSync("git", ["worktree", "prune"], { cwd: repo, timeout: 10_000, stdio: "pipe" });
+    } catch {}
+
+    // Remove .worktrees/ directory if empty or contains only leftover dirs
+    const worktreesDir = path.join(repo, ".worktrees");
+    if (fs.existsSync(worktreesDir)) {
+      const entries = fs.readdirSync(worktreesDir);
+      for (const entry of entries) {
+        const entryPath = path.join(worktreesDir, entry);
+        try {
+          // Remove node_modules symlink first
+          const nmLink = path.join(entryPath, "node_modules");
+          try { fs.unlinkSync(nmLink); } catch {}
+          execFileSync("git", ["worktree", "remove", entryPath, "--force"], { cwd: repo, timeout: 10_000, stdio: "pipe" });
+        } catch {
+          // If git worktree remove fails, try rm -rf
+          try { fs.rmSync(entryPath, { recursive: true, force: true }); } catch {}
+        }
+      }
+      // Prune again after removals
+      try {
+        execFileSync("git", ["worktree", "prune"], { cwd: repo, timeout: 5_000, stdio: "pipe" });
+      } catch {}
+      // Remove the .worktrees dir itself if now empty
+      try {
+        const remaining = fs.readdirSync(worktreesDir);
+        if (remaining.length === 0) {
+          fs.rmdirSync(worktreesDir);
+        }
+      } catch {}
+    }
+
+    logger.info(`[worktree] Cleanup completed for run ${runId} in ${repo}`, {});
+  } catch (err) {
+    logger.warn(`[worktree] Cleanup failed for run ${runId}: ${err}`, {});
   }
 }
 

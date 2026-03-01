@@ -217,11 +217,14 @@ steps:
       1. If repo doesn't exist: mkdir -p {{repo}} && cd {{repo}} && git init
       2. Ensure GitHub remote exists:
          git remote -v || PROJECT_NAME=$(basename {{repo}}) && gh repo create hikmetgulsesli/$PROJECT_NAME --public --source . --remote origin --push 2>/dev/null || true
-      3. Create feature branch: git checkout -b {{branch}}
-      4. Read package.json, test config to understand build/test setup
-      5. Run build + tests to establish baseline
-      6. Create references symlink: ln -sfn /home/setrox/.openclaw/setfarm-repo/references references
-      7. Push: git push -u origin {{branch}}
+      3. Ensure main branch exists (CRITICAL for final PR):
+         git branch -M main 2>/dev/null || true
+         git push -u origin main 2>/dev/null || true
+      4. Create feature branch: git checkout -b {{branch}}
+      5. Read package.json, test config to understand build/test setup
+      6. Run build + tests to establish baseline
+      7. Create references symlink: ln -sfn /home/setrox/.openclaw/setfarm-repo/references references
+      8. Push: git push -u origin {{branch}}
 
       EXISTING CODE CHECK (resume safety):
       - If the project directory already exists:
@@ -453,9 +456,28 @@ steps:
          git add -A && git commit -m "fix: quality + design improvements for {{current_story_id}}"
          git push
 
-      STEP 4 — Merge PR:
+      STEP 4 — Rebase onto latest feature branch (prevents merge conflicts):
+      1. git fetch origin
+      2. git rebase origin/{{branch}}
+      3. If rebase conflicts occur:
+         - Read each conflicted file carefully
+         - Resolve conflicts preserving BOTH the existing feature-branch code AND this story's changes
+         - git add <resolved files> && git rebase --continue
+         - If conflict is unresolvable: git rebase --abort and proceed to merge anyway
+      4. Run lint: {{lint_cmd}} → fix errors
+      5. Run build: {{build_cmd}} → fix errors
+      6. Run test: {{test_cmd}} → fix failures
+      7. git push --force-with-lease
+
+      STEP 5 — Merge PR:
       1. gh pr comment "{{pr_url}}" --body "Verified: lint/build/test pass. Code quality checked."
-      2. gh pr merge "{{pr_url}}" --squash --delete-branch
+      2. Merge with fallback:
+         gh pr merge "{{pr_url}}" --squash --delete-branch || {
+           echo "Merge failed — retrying after rebase"
+           git fetch origin && git rebase origin/{{branch}}
+           git push --force-with-lease
+           gh pr merge "{{pr_url}}" --squash --delete-branch
+         }
       3. Reply STATUS: done
 
       If build/test FAILS and you cannot fix:
@@ -555,6 +577,23 @@ steps:
       SECURITY_NOTES: {{security_notes}}
 
       === INTEGRATION TEST + PR WORKFLOW ===
+
+      STEP 0 — Merge any remaining open story PRs (cleanup from verify failures):
+      1. cd into {{repo}}
+      2. git checkout {{branch}} && git pull origin {{branch}}
+      3. Check for unmerged story PRs targeting this branch:
+         OPEN_STORY_PRS=$(gh pr list --base {{branch}} --state open --json number,headRefName -q '.[].number' 2>/dev/null || echo "")
+         for pr_num in $OPEN_STORY_PRS; do
+           echo "Attempting to merge remaining PR #$pr_num"
+           PR_BRANCH=$(gh pr view "$pr_num" --json headRefName -q '.headRefName')
+           git fetch origin "$PR_BRANCH" 2>/dev/null || continue
+           git checkout "$PR_BRANCH" 2>/dev/null || continue
+           git rebase origin/{{branch}} || { git rebase --abort; git checkout {{branch}}; continue; }
+           git push --force-with-lease 2>/dev/null || { git checkout {{branch}}; continue; }
+           gh pr merge "$pr_num" --squash --delete-branch 2>/dev/null || true
+           git checkout {{branch}} && git pull origin {{branch}}
+         done
+      4. git checkout {{branch}} && git pull origin {{branch}}
 
       STEP 1 — Verify:
       1. cd into {{repo}}

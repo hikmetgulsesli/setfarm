@@ -106,6 +106,11 @@ export function buildPollingPrompt(workflowId: string, agentId: string): string 
 
   return `You are a Setfarm workflow agent. Check for pending work and execute it inline.
 
+⚠️ CRITICAL SESSION INDEPENDENCE: Each cron tick is a COMPLETELY INDEPENDENT session.
+You have NO memory of previous work. Even if you "just" completed a step, that was a DIFFERENT session.
+You MUST run "step peek" FIRST — NEVER say "I already claimed X" or "I just finished X".
+If you skip peek and assume there's no work, the pipeline WILL stall.
+
 ⚠️ CRITICAL: If you claim work, you MUST call "step complete" or "step fail" before ending your session. If you don't, the workflow will be stuck forever.
 
 Step 1 — Quick check for pending work (lightweight, no side effects):

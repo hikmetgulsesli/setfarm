@@ -384,6 +384,7 @@ async function main() {
       }
       const result = completeStep(target, output);
       process.stdout.write(JSON.stringify(result) + "\n");
+      process.stdout.write("\n===== SESSION_DONE =====\nStep completed successfully. This session's work is FINISHED.\nDo NOT attempt any further work. Reply HEARTBEAT_OK and stop.\n");
       return;
     }
     if (action === "fail") {
@@ -391,6 +392,7 @@ async function main() {
       const error = args.slice(3).join(" ").trim() || "Unknown error";
       const result = failStep(target, error);
       process.stdout.write(JSON.stringify(result) + "\n");
+      process.stdout.write("\n===== SESSION_DONE =====\nStep failed and recorded. This session's work is FINISHED.\nDo NOT attempt any further work. Reply HEARTBEAT_OK and stop.\n");
       return;
     }
     if (action === "stories") {
