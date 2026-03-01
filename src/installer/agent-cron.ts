@@ -152,6 +152,10 @@ RULES:
 3. If you're unsure whether to complete or fail, call step fail with an explanation
 4. Do NOT call sessions_spawn — do all work directly in this session
 5. NEVER run destructive commands: workflow stop, workflow uninstall, uninstall — these kill the entire pipeline and are FORBIDDEN
+6. If step complete or step fail returns an error or "Step not found", the step was already handled externally — STOP immediately and reply HEARTBEAT_OK
+7. Before starting long work (>2 min), verify the step is still valid:
+   /usr/bin/node ${cli} step peek "${fullAgentId}"
+   If NO_WORK, the step was cancelled/failed externally — STOP and reply HEARTBEAT_OK
 
 The workflow cannot advance until you report. Your session ending without reporting = broken pipeline.`;
 }

@@ -549,15 +549,18 @@ export type PeekResult = "HAS_WORK" | "NO_WORK";
  */
 export function peekStep(agentId: string): PeekResult {
   const db = getDb();
-  // Count pending/waiting steps, PLUS running loop steps that still have pending stories
+  // Count pending steps, PLUS running loop steps that still have pending stories
+  // #182: Don't match 'waiting' (claimStep won't accept them → wasted sessions)
+  // #262: Also match running loops with unverified 'done' stories (verify_each cycle)
   const row = db.prepare(
     `SELECT COUNT(*) as cnt FROM steps s
      JOIN runs r ON r.id = s.run_id
      WHERE s.agent_id = ? AND r.status = 'running'
        AND (
-         s.status IN ('pending', 'waiting')
+         s.status = 'pending'
          OR (s.status = 'running' AND s.type = 'loop'
-             AND EXISTS (SELECT 1 FROM stories st WHERE st.run_id = s.run_id AND st.status = 'pending'))
+             AND (EXISTS (SELECT 1 FROM stories st WHERE st.run_id = s.run_id AND st.status = 'pending')
+                  OR EXISTS (SELECT 1 FROM stories st WHERE st.run_id = s.run_id AND st.status = 'done')))
        )`
   ).get(agentId) as { cnt: number };
   return row.cnt > 0 ? "HAS_WORK" : "NO_WORK";
@@ -817,6 +820,12 @@ export function claimStep(agentId: string): ClaimResult {
   emitEvent({ ts: new Date().toISOString(), event: "step.running", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId });
   logger.info(`Step claimed by ${agentId}`, { runId: step.run_id, stepId: step.step_id });
 
+  // #260: Default optional template vars to prevent MISSING_INPUT_GUARD false positives
+  const OPTIONAL_VARS = ["verify_feedback", "progress", "project_memory", "security_notes", "changes", "story_branch", "pr_url", "completed_stories", "stories_remaining", "current_story", "current_story_id", "current_story_title", "final_pr"];
+  for (const v of OPTIONAL_VARS) {
+    if (!context[v]) context[v] = "";
+  }
+
   // Inject progress for any step in a run that has stories
   const hasStories = db.prepare(
     "SELECT COUNT(*) as cnt FROM stories WHERE run_id = ?"
@@ -916,8 +925,14 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   const context: Record<string, string> = JSON.parse(run.context);
 
   // Parse KEY: value lines and merge into context
+  // #197: Protect seed context keys from being overwritten by step output
+  const PROTECTED_KEYS = new Set(["repo", "task", "branch", "run_id"]);
   const parsed = parseOutputKeyValues(output);
   for (const [key, value] of Object.entries(parsed)) {
+    if (PROTECTED_KEYS.has(key) && context[key]) {
+      logger.warn(`[context] Blocked overwrite of protected key "${key}" (current: "${context[key]}", attempted: "${value}")`, { runId: step.run_id });
+      continue;
+    }
     context[key] = value;
   }
 
