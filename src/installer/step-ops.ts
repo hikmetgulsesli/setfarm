@@ -1271,6 +1271,7 @@ function checkLoopContinuation(runId: string, loopStepId: string): { advanced: b
   }
 
   // All stories verified/skipped — mark loop step done
+// Early worktree cleanup: clean up .worktrees when implement loop finishes,  // not just when the entire run completes. Prevents stale worktree accumulation.  cleanupWorktrees(runId);
   db.prepare(
     "UPDATE steps SET status = 'done', updated_at = ? WHERE id = ?"
   ).run(new Date().toISOString(), loopStepId);
