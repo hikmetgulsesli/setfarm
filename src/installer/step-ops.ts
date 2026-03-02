@@ -994,6 +994,14 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   }
 
   // T7: Loop step completion
+  // RACE CONDITION GUARD: If loop step but current_story_id is NULL,
+  // another parallel agent cleared it. Do NOT fall through to single-step
+  // completion — that would prematurely end the loop while stories remain.
+  if (step.type === "loop" && !step.current_story_id) {
+    logger.warn(`Loop step complete called with no current_story_id — parallel race condition, ignoring`, { runId: step.run_id, stepId: step.step_id });
+    return { advanced: false, runCompleted: false };
+  }
+
   if (step.type === "loop" && step.current_story_id) {
     // Look up story info for event
     const storyRow = db.prepare("SELECT story_id, title FROM stories WHERE id = ?").get(step.current_story_id) as { story_id: string; title: string } | undefined;
