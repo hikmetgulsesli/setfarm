@@ -718,22 +718,27 @@ export function claimStep(agentId: string): ClaimResult {
 
       // Transactional story claim — prevents parallel crons from double-claiming
       db.exec("BEGIN IMMEDIATE");
-      // Re-check story is still pending inside transaction
-      const storyCheck = db.prepare(
-        "SELECT status FROM stories WHERE id = ? AND status = 'pending'"
-      ).get(nextStory.id) as { status: string } | undefined;
-      if (!storyCheck) {
+      try {
+        // Re-check story is still pending inside transaction
+        const storyCheck = db.prepare(
+          "SELECT status FROM stories WHERE id = ? AND status = 'pending'"
+        ).get(nextStory.id) as { status: string } | undefined;
+        if (!storyCheck) {
+          db.exec("COMMIT");
+          // Another cron already claimed this story — return no work (will retry next cron tick)
+          return { found: false };
+        }
+        db.prepare(
+          "UPDATE stories SET status = 'running', updated_at = ? WHERE id = ?"
+        ).run(new Date().toISOString(), nextStory.id);
+        db.prepare(
+          "UPDATE steps SET status = 'running', current_story_id = ?, updated_at = ? WHERE id = ?"
+        ).run(nextStory.id, new Date().toISOString(), step.id);
         db.exec("COMMIT");
-        // Another cron already claimed this story — return no work (will retry next cron tick)
-        return { found: false };
+      } catch (err) {
+        try { db.exec("ROLLBACK"); } catch {}
+        throw err;
       }
-      db.prepare(
-        "UPDATE stories SET status = 'running', updated_at = ? WHERE id = ?"
-      ).run(new Date().toISOString(), nextStory.id);
-      db.prepare(
-        "UPDATE steps SET status = 'running', current_story_id = ?, updated_at = ? WHERE id = ?"
-      ).run(nextStory.id, new Date().toISOString(), step.id);
-      db.exec("COMMIT");
 
       const wfId = getWorkflowId(step.run_id);
       emitEvent({ ts: new Date().toISOString(), event: "step.running", runId: step.run_id, workflowId: wfId, stepId: step.step_id, agentId: agentId });
@@ -1097,10 +1102,23 @@ function handleVerifyEachCompletion(
   const db = getDb();
   const status = context["status"]?.toLowerCase();
 
-  // Reset verify step to waiting for next use
-  db.prepare(
-    "UPDATE steps SET status = 'waiting', output = ?, updated_at = ? WHERE id = ?"
-  ).run(output, new Date().toISOString(), verifyStep.id);
+  // Atomic guard: prevent parallel crons from double-completing the same verify step.
+  // Only proceed if we are the one that transitions it from running → waiting.
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const changed = db.prepare(
+      "UPDATE steps SET status = 'waiting', output = ?, updated_at = ? WHERE id = ? AND status = 'running'"
+    ).run(output, new Date().toISOString(), verifyStep.id);
+    if (changed.changes === 0) {
+      db.exec("COMMIT");
+      // Another cron already processed this verify step
+      return { advanced: false, runCompleted: false };
+    }
+    db.exec("COMMIT");
+  } catch (err) {
+    try { db.exec("ROLLBACK"); } catch {}
+    throw err;
+  }
 
   // Identify the story being verified using context (not just last done)
   const verifiedStoryId = context["current_story_id"];
@@ -1366,7 +1384,13 @@ function cleanupWorktrees(runId: string): void {
     const db = getDb();
     const run = db.prepare("SELECT context FROM runs WHERE id = ?").get(runId) as { context: string } | undefined;
     if (!run) return;
-    const context = JSON.parse(run.context);
+    let context: Record<string, string>;
+    try {
+      context = JSON.parse(run.context);
+    } catch (parseErr) {
+      logger.warn(`[worktree] Corrupt context JSON for run ${runId}, skipping cleanup`, {});
+      return;
+    }
     const repo = context.repo;
     if (!repo) return;
 

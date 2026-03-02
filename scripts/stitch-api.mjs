@@ -255,9 +255,32 @@ const commands = {
         if (item.type === 'text') {
           try {
             const parsed = JSON.parse(item.text);
-            screens = parsed.screens || parsed || [];
+            // Handle multiple response formats:
+            // 1. { screens: [...] }
+            // 2. Direct array [...]
+            // 3. { structuredContent: { screens: [...] } }
+            // 4. { outputComponents: [{ design: { screens: [...] } }] }
+            if (Array.isArray(parsed)) {
+              screens = parsed;
+            } else if (parsed.screens) {
+              screens = parsed.screens;
+            } else if (parsed.structuredContent?.screens) {
+              screens = parsed.structuredContent.screens;
+            } else if (parsed.outputComponents) {
+              for (const comp of parsed.outputComponents) {
+                if (comp.design?.screens) {
+                  screens.push(...comp.design.screens);
+                }
+              }
+            } else if (parsed.output_components) {
+              for (const comp of parsed.output_components) {
+                if (comp.design?.screens) {
+                  screens.push(...comp.design.screens);
+                }
+              }
+            }
           } catch {
-            // skip
+            // skip unparseable text
           }
         }
       }

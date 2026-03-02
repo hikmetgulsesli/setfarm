@@ -78,6 +78,7 @@ function checkMergedPR(repoUrl: string, storyId: string, runId: string): string 
     );
     const prs = JSON.parse(output) as Array<{ number: number; url: string; headRefName: string }>;
     for (const pr of prs) {
+      if (!pr.headRefName) continue;
       const branch = pr.headRefName.toLowerCase();
       if (
         branch === storyLower ||

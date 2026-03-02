@@ -446,9 +446,12 @@ export function checkStalledWorkflowCrons(): MedicFinding[] {
 
 import { execFileSync } from "node:child_process";
 
+const SERVICE_RESTART_COOLDOWN_MS = 10 * 60 * 1000; // 10 min cooldown between restarts
+
 /**
  * For running pipelines, check if the project systemd service is running.
  * Agents sometimes stop services during implementation and forget to restart.
+ * Includes 10-min cooldown per service to prevent crash-loop restart storms.
  */
 export function checkOfflineServices(): MedicFinding[] {
   const db = getDb();
@@ -486,6 +489,18 @@ export function checkOfflineServices(): MedicFinding[] {
               encoding: "utf-8",
               timeout: 5000,
             });
+
+            // Cooldown: skip if we already restarted this service recently
+            const recentRestart = db.prepare(`
+              SELECT MAX(checked_at) as ts FROM medic_checks
+              WHERE details LIKE '%offline_service%'
+                AND details LIKE '%"remediated":true%'
+                AND details LIKE ?
+                AND checked_at > datetime('now', '-10 minutes')
+            `).get(`%${serviceName}%`) as { ts: string | null };
+
+            if (recentRestart?.ts) continue;
+
             findings.push({
               check: "offline_service",
               severity: "warning",
