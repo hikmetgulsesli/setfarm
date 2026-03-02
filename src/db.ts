@@ -113,6 +113,12 @@ function migrate(db: DatabaseSync): void {
   if (!storyColNames.has("abandoned_count")) {
     db.exec("ALTER TABLE stories ADD COLUMN abandoned_count INTEGER DEFAULT 0");
   }
+  if (!storyColNames.has("pr_url")) {
+    db.exec("ALTER TABLE stories ADD COLUMN pr_url TEXT");
+  }
+  if (!storyColNames.has("story_branch")) {
+    db.exec("ALTER TABLE stories ADD COLUMN story_branch TEXT");
+  }
 
   // Performance indexes
   db.exec("CREATE INDEX IF NOT EXISTS idx_steps_run_status ON steps(run_id, status)");

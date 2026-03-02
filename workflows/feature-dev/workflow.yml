@@ -501,9 +501,6 @@ steps:
 
       === VERIFY + FIX + MERGE WORKFLOW ===
 
-      STEP 0 — Wait for external review:
-      Wait 5 minutes to give Gemini/Copilot time to review the PR.
-      sleep 300
 
       STEP 1 — Checkout and read PR reviews:
       1. cd into {{repo}}

@@ -99,18 +99,37 @@ export function checkStalledRuns(): MedicFinding[] {
     updated_at: string; last_step_update: string;
   }>;
 
+  const STALL_AUTOFAIL_MS = 6 * 60 * 60 * 1000; // 6 hours — auto-fail if no progress
+
   for (const run of stalled) {
-    const ageMin = Math.round(
-      (Date.now() - new Date(run.last_step_update).getTime()) / 60000
-    );
-    findings.push({
-      check: "stalled_runs",
-      severity: "critical",
-      message: `Run ${run.id.slice(0, 8)} (${run.workflow_id}: "${run.task.slice(0, 60)}") has had no step progress for ${ageMin}min`,
-      action: "none", // alert only — don't auto-fail without human input
-      runId: run.id,
-      remediated: false,
-    });
+    const ageMs = Date.now() - new Date(run.last_step_update).getTime();
+    const ageMin = Math.round(ageMs / 60000);
+
+    if (ageMs > STALL_AUTOFAIL_MS) {
+      // Auto-fail runs stalled for 6+ hours
+      db.prepare("UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ? AND status = 'running'")
+        .run(new Date().toISOString(), run.id);
+      // Fail any non-terminal steps
+      db.prepare("UPDATE steps SET status = 'failed', output = 'Auto-failed: run stalled for ' || ? || ' minutes', updated_at = ? WHERE run_id = ? AND status NOT IN ('done', 'failed')")
+        .run(String(ageMin), new Date().toISOString(), run.id);
+      findings.push({
+        check: "stalled_runs",
+        severity: "critical",
+        message: `Run ${run.id.slice(0, 8)} (${run.workflow_id}: "${run.task.slice(0, 60)}") stalled for ${ageMin}min — AUTO-FAILED`,
+        action: "fail_run",
+        runId: run.id,
+        remediated: true,
+      });
+    } else {
+      findings.push({
+        check: "stalled_runs",
+        severity: "critical",
+        message: `Run ${run.id.slice(0, 8)} (${run.workflow_id}: "${run.task.slice(0, 60)}") has had no step progress for ${ageMin}min`,
+        action: "none",
+        runId: run.id,
+        remediated: false,
+      });
+    }
   }
 
   return findings;
@@ -523,8 +542,68 @@ export function checkOfflineServices(): MedicFinding[] {
   return findings;
 }
 
+
+// ── Check: Orphaned Steps/Stories in Terminal Runs ──────────────────
+
+/**
+ * Find steps and stories that are still in active states but belong to
+ * cancelled/failed runs. These should be moved to 'failed' to prevent
+ * medic from repeatedly processing them.
+ */
+export function checkOrphanedInTerminalRuns(): MedicFinding[] {
+  const db = getDb();
+  const findings: MedicFinding[] = [];
+
+  // Fix orphaned steps
+  const orphanSteps = db.prepare(`
+    SELECT s.id, s.step_id, s.run_id, s.status, r.status as run_status
+    FROM steps s JOIN runs r ON s.run_id = r.id
+    WHERE r.status IN ('cancelled', 'failed')
+    AND s.status NOT IN ('done', 'failed')
+  `).all() as { id: string; step_id: string; run_id: string; status: string; run_status: string }[];
+
+  for (const step of orphanSteps) {
+    db.prepare("UPDATE steps SET status = 'failed', output = 'Auto-failed: run is ' || ?, updated_at = ? WHERE id = ?")
+      .run(step.run_status, new Date().toISOString(), step.id);
+    findings.push({
+      check: "orphaned_in_terminal_run",
+      severity: "warning",
+      message: `Step ${step.step_id} was '${step.status}' in ${step.run_status} run ${step.run_id} — auto-failed`,
+      action: "none",
+      runId: step.run_id,
+      stepId: step.id,
+      remediated: true,
+    });
+  }
+
+  // Fix orphaned stories
+  const orphanStories = db.prepare(`
+    SELECT s.id, s.story_id, s.run_id, s.status, r.status as run_status
+    FROM stories s JOIN runs r ON s.run_id = r.id
+    WHERE r.status IN ('cancelled', 'failed')
+    AND s.status NOT IN ('done', 'verified', 'failed', 'skipped')
+  `).all() as { id: string; story_id: string; run_id: string; status: string; run_status: string }[];
+
+  for (const story of orphanStories) {
+    db.prepare("UPDATE stories SET status = 'failed', updated_at = ? WHERE id = ?")
+      .run(new Date().toISOString(), story.id);
+    findings.push({
+      check: "orphaned_in_terminal_run",
+      severity: "warning",
+      message: `Story ${story.story_id} was '${story.status}' in ${story.run_status} run ${story.run_id} — auto-failed`,
+      action: "none",
+      runId: story.run_id,
+      storyId: story.id,
+      remediated: true,
+    });
+  }
+
+  return findings;
+}
+
 export function runSyncChecks(): MedicFinding[] {
   return [
+    ...checkOrphanedInTerminalRuns(),
     ...checkOrphanedStories(),
     ...checkClaimedButStuck(),
     ...checkStuckSteps(),

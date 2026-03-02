@@ -398,7 +398,8 @@ function parseAndInsertStories(output: string, runId: string): void {
 
 // ── Abandoned Step Cleanup ──────────────────────────────────────────
 
-const ABANDONED_THRESHOLD_MS = (getMaxRoleTimeoutSeconds() + 5 * 60) * 1000; // max role timeout + 5 min buffer
+const BASE_ABANDONED_THRESHOLD_MS = (getMaxRoleTimeoutSeconds() + 5 * 60) * 1000; // max role timeout + 5 min buffer
+const FAST_ABANDONED_THRESHOLD_MS = 15 * 60 * 1000; // 15 min for steps that have been abandoned before
 const MAX_ABANDON_RESETS = 5; // abandoned steps get more chances than explicit failures
 
 /**
@@ -409,12 +410,15 @@ const MAX_ABANDON_RESETS = 5; // abandoned steps get more chances than explicit 
 export function cleanupAbandonedSteps(): void {
   const db = getDb();
   // Use numeric comparison so mixed timestamp formats don't break ordering.
-  const thresholdMs = ABANDONED_THRESHOLD_MS;
-
   // Find running steps that haven't been updated recently
+  // Progressive threshold: first abandon uses base timeout, subsequent uses faster 15min threshold
   const abandonedSteps = db.prepare(
-    "SELECT id, step_id, run_id, retry_count, max_retries, type, current_story_id, loop_config, abandoned_count FROM steps WHERE status = 'running' AND (julianday('now') - julianday(updated_at)) * 86400000 > ?"
-  ).all(thresholdMs) as { id: string; step_id: string; run_id: string; retry_count: number; max_retries: number; type: string; current_story_id: string | null; loop_config: string | null; abandoned_count: number }[];
+    `SELECT id, step_id, run_id, retry_count, max_retries, type, current_story_id, loop_config, abandoned_count FROM steps
+     WHERE status = 'running' AND (
+       (abandoned_count = 0 AND (julianday('now') - julianday(updated_at)) * 86400000 > ?)
+       OR (abandoned_count > 0 AND (julianday('now') - julianday(updated_at)) * 86400000 > ?)
+     )`
+  ).all(BASE_ABANDONED_THRESHOLD_MS, FAST_ABANDONED_THRESHOLD_MS) as { id: string; step_id: string; run_id: string; retry_count: number; max_retries: number; type: string; current_story_id: string | null; loop_config: string | null; abandoned_count: number }[];
 
   for (const step of abandonedSteps) {
     if (step.type === "loop" && !step.current_story_id && step.loop_config) {
@@ -488,7 +492,7 @@ export function cleanupAbandonedSteps(): void {
   // Don't increment retry_count for abandonment; only explicit failStep() counts against retries
   const abandonedStories = db.prepare(
     "SELECT id, retry_count, max_retries, run_id FROM stories WHERE status = 'running' AND (julianday('now') - julianday(updated_at)) * 86400000 > ?"
-  ).all(thresholdMs) as { id: string; retry_count: number; max_retries: number; run_id: string }[];
+  ).all(BASE_ABANDONED_THRESHOLD_MS) as { id: string; retry_count: number; max_retries: number; run_id: string }[];
 
   for (const story of abandonedStories) {
     // Simply reset to pending without incrementing retry_count
@@ -852,12 +856,18 @@ export function claimStep(agentId: string): ClaimResult {
       const nextUnverified = db.prepare(
         "SELECT * FROM stories WHERE run_id = ? AND status = 'done' ORDER BY story_index ASC LIMIT 1"
       ).get(step.run_id) as any | undefined;
-      if (nextUnverified?.output) {
-        // Parse story's own output to get its story_branch, pr_url, etc.
-        const storyOutput = parseOutputKeyValues(nextUnverified.output);
-        for (const [key, value] of Object.entries(storyOutput)) {
-          context[key] = value;
+      if (nextUnverified) {
+        // Use story-level pr_url/story_branch first (persisted in completeStep),
+        // then fall back to parsing story output.
+        if (nextUnverified.output) {
+          const storyOutput = parseOutputKeyValues(nextUnverified.output);
+          for (const [key, value] of Object.entries(storyOutput)) {
+            context[key] = value;
+          }
         }
+        // Override with DB columns if available (more reliable than output parse)
+        if (nextUnverified.pr_url) context["pr_url"] = nextUnverified.pr_url;
+        if (nextUnverified.story_branch) context["story_branch"] = nextUnverified.story_branch;
         context["current_story_id"] = nextUnverified.story_id;
         context["current_story_title"] = nextUnverified.title;
         const storyObj: Story = {
@@ -1011,10 +1021,12 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     const storyStatus = statusVal === "skip" ? "skipped" : "done";
     const storyEvent = statusVal === "skip" ? "story.skipped" : "story.done";
 
-    // Mark current story done or skipped
+    // Mark current story done or skipped + persist PR context for verify_each
+    const storyPrUrl = parsed["pr_url"] || context["pr_url"] || "";
+    const storyBranchName = parsed["story_branch"] || context["story_branch"] || "";
     db.prepare(
-      "UPDATE stories SET status = ?, output = ?, updated_at = ? WHERE id = ?"
-    ).run(storyStatus, output, new Date().toISOString(), step.current_story_id);
+      "UPDATE stories SET status = ?, output = ?, pr_url = ?, story_branch = ?, updated_at = ? WHERE id = ?"
+    ).run(storyStatus, output, storyPrUrl, storyBranchName, new Date().toISOString(), step.current_story_id);
     emitEvent({ ts: new Date().toISOString(), event: storyEvent, runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: storyRow?.story_id, storyTitle: storyRow?.title });
     logger.info(`Story ${storyStatus}: ${storyRow?.story_id} — ${storyRow?.title}`, { runId: step.run_id, stepId: step.step_id });
 
@@ -1192,16 +1204,44 @@ function handleVerifyEachCompletion(
   delete context["verify_feedback"];
 
   // Check for more unverified 'done' stories before checking loop continuation
-  const nextUnverifiedStory = db.prepare(
-    "SELECT id, story_id, output FROM stories WHERE run_id = ? AND status = 'done' ORDER BY story_index ASC LIMIT 1"
-  ).get(verifyStep.run_id) as { id: string; story_id: string; output: string | null } | undefined;
+  // Auto-verify stories whose PRs are already merged (prevents redundant verify cycles)
+  let nextUnverifiedStory: { id: string; story_id: string; output: string | null; pr_url: string | null; story_branch: string | null } | undefined;
+  while (true) {
+    nextUnverifiedStory = db.prepare(
+      "SELECT id, story_id, output, pr_url, story_branch FROM stories WHERE run_id = ? AND status = 'done' ORDER BY story_index ASC LIMIT 1"
+    ).get(verifyStep.run_id) as typeof nextUnverifiedStory;
+    if (!nextUnverifiedStory) break;
 
-  if (nextUnverifiedStory?.output) {
-    // More stories need verification — inject next story's info and cycle verify
-    const storyOut = parseOutputKeyValues(nextUnverifiedStory.output);
-    for (const [key, value] of Object.entries(storyOut)) {
-      context[key] = value;
+    // Check if PR is already merged — if so, auto-verify and skip
+    const prUrl = nextUnverifiedStory.pr_url || "";
+    if (prUrl) {
+      try {
+        const prState = execFileSync("gh", ["pr", "view", prUrl, "--json", "state,merged", "--jq", '"state" + ":" + (."merged" | tostring)'], { timeout: 15000, stdio: "pipe" }).toString().trim();
+        if (prState === "MERGED:true" || prState.includes("MERGED")) {
+          db.prepare("UPDATE stories SET status = 'verified', updated_at = ? WHERE id = ?")
+            .run(new Date().toISOString(), nextUnverifiedStory.id);
+          logger.info(`Auto-verified story ${nextUnverifiedStory.story_id} — PR already merged`, { runId: verifyStep.run_id });
+          continue; // Check next story
+        }
+      } catch (e) {
+        // gh command failed — proceed with normal verify
+        logger.warn(`PR state check failed for ${prUrl}: ${String(e)}`, { runId: verifyStep.run_id });
+      }
     }
+    break; // Found a story that needs actual verification
+  }
+
+  if (nextUnverifiedStory) {
+    // More stories need verification — inject next story's info and cycle verify
+    if (nextUnverifiedStory.output) {
+      const storyOut = parseOutputKeyValues(nextUnverifiedStory.output);
+      for (const [key, value] of Object.entries(storyOut)) {
+        context[key] = value;
+      }
+    }
+    // Override with DB columns if available
+    if (nextUnverifiedStory.pr_url) context["pr_url"] = nextUnverifiedStory.pr_url;
+    if (nextUnverifiedStory.story_branch) context["story_branch"] = nextUnverifiedStory.story_branch;
     context["current_story_id"] = nextUnverifiedStory.story_id;
     db.prepare("UPDATE runs SET context = ?, updated_at = ? WHERE id = ?")
       .run(JSON.stringify(context), new Date().toISOString(), verifyStep.run_id);
