@@ -86,13 +86,16 @@ async function callTool(name, args) {
   return result;
 }
 
-// Download a file from a signed URL
-async function downloadFile(url, outputPath) {
-  const res = await fetch(url, { signal: AbortSignal.timeout(120_000) });
+// Download a file from a signed URL (User-Agent + 429 retry + size validation)
+async function downloadFile(url, outputPath, attempt = 1) {
+  const headers = { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) Chrome/120.0.0.0 Safari/537.36' };
+  const res = await fetch(url, { signal: AbortSignal.timeout(120_000), headers });
+  if (res.status === 429 && attempt < 3) { await new Promise(r => setTimeout(r, 10_000)); return downloadFile(url, outputPath, attempt + 1); }
   if (!res.ok) throw new Error(`Download failed: HTTP ${res.status}`);
   const buffer = Buffer.from(await res.arrayBuffer());
   mkdirSync(dirname(outputPath), { recursive: true });
   writeFileSync(outputPath, buffer);
+  if (buffer.length < 500 && outputPath.endsWith('.html')) throw new Error('Empty HTML (' + buffer.length + ' bytes) - design not generated');
   return { path: outputPath, size: buffer.length };
 }
 
