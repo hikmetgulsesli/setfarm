@@ -165,3 +165,26 @@ Before generating designs, read:
 1. `references/design-standards.md` — color palettes, font pairs, layout rules
 2. The planner's `DESIGN_SYSTEM` output — aesthetic, palette, fonts, icons
 3. The task/PRD description — domain context for appropriate design choices
+
+## POST-DOWNLOAD HTML VALIDATION (CRITICAL)
+
+After each HTML download, verify the file is NOT empty:
+
+```bash
+size=$(wc -c < stitch/SCREEN.html)
+if [ "$size" -eq 0 ]; then
+  # Delete and retry download up to 2 more times
+  # If still empty after 3 attempts → FAIL the step (do NOT silently continue)
+  # Empty HTML files = design not generated = developer cannot implement
+  echo "ERROR: stitch/SCREEN.html is 0 bytes — download failed"
+  exit 1
+fi
+```
+
+**Validation rule:** HTML files MUST be > 500 bytes to be considered valid.
+
+- Empty HTML file (0 bytes) = the design was NOT saved = treat as a download failure
+- Retry the download up to 2 more times before failing
+- If all 3 attempts produce an empty file, **FAIL the step** with a clear error message
+- Do NOT create a DESIGN_MANIFEST.json pointing to empty HTML files
+- Developers cannot implement a design they cannot see — failing early is better than shipping a broken pipeline

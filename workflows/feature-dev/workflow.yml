@@ -540,6 +540,10 @@ steps:
          - Check CSS vars from stitch/design-tokens.css are used
          - grep hardcoded colors not in design-tokens → WARN
          - Verify fonts match stitch/DESIGN_MANIFEST.json
+      1.6. Completeness checks (CRITICAL - FAIL if any found):
+         - grep -rE "coming soon|Coming Soon|placeholder|TODO.*implement|work in progress" --include="*.tsx" --include="*.ts" . → FAIL if found as visible UI text content
+         - If stitch/DESIGN_MANIFEST.json exists: for each screen listed, verify a corresponding component or page implements it (search by title keywords). Missing screen = FAIL.
+         - grep -rE "blue-[0-9]+/[0-9]+" components/ → WARN: likely hardcoded Tailwind color — check if it belongs in design-tokens instead
       2. Frontend design checks (if any .css/.tsx changed):
          - grep -rE "font-family.*system-ui|font-family.*Roboto|font-family.*Arial|font-family.*Inter" src/ → FAIL if found (banned fonts)
          - grep -rE "fonts\.googleapis\.com|next/font" src/ → FAIL if missing (no font import)

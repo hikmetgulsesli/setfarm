@@ -76,6 +76,9 @@ TESTS: what tests you wrote
 - NEVER use purple-to-blue gradient as primary color scheme
 - NEVER use `transition: all` — only animate `transform` and `opacity`
 - NEVER animate width, height, margin, or padding properties
+- NEVER use "coming soon", "placeholder", "TODO", "to be implemented", or "work in progress" as visible UI content. If a feature is not implemented, the code must not ship. Half-implemented features = FAIL. Either implement it or remove it entirely.
+- NEVER create a marketing/landing page when the task is to build a functional app/dashboard. A weather dashboard must show weather. A task manager must manage tasks. The output must be the actual working feature.
+- ALWAYS implement ALL screens defined in stitch/DESIGN_MANIFEST.json. Missing screens = incomplete implementation = FAIL.
 
 ### ALWAYS Do These
 - ALWAYS use the project's chosen font pair from design tokens
