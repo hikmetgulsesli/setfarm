@@ -56,7 +56,7 @@ function extractRepoUrl(task: string): string | null {
       ).trim();
       const ghMatch = remoteUrl.match(/github\.com[:/]([\w-]+\/[\w.-]+?)(?:\.git)?$/);
       if (ghMatch) return `https://github.com/${ghMatch[1]}`;
-    } catch { /* git not available or no remote — fall through */ }
+    } catch (err) { /* git not available or no remote — fall through */ }
   }
 
   return null;
@@ -89,7 +89,7 @@ function checkMergedPR(repoUrl: string, storyId: string, runId: string): string 
         return pr.url;
       }
     }
-  } catch { /* gh unavailable or API error — fall through */ }
+  } catch (err) { /* gh unavailable or API error — fall through */ }
   return null;
 }
 
@@ -170,7 +170,7 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
       return true;
     }
 
-case "restart_service": {      if (!finding.serviceName) return false;      try {        execFileSync("systemctl", ["--user", "start", finding.serviceName], {          encoding: "utf-8",          timeout: 10000,        });        emitEvent({          ts: new Date().toISOString(),          event: "step.done" as EventType,          runId: finding.runId ?? "",          detail: "Medic: restarted offline service " + finding.serviceName,        });        return true;      } catch {        return false;      }    }
+case "restart_service": {      if (!finding.serviceName) return false;      try {        execFileSync("systemctl", ["--user", "start", finding.serviceName], {          encoding: "utf-8",          timeout: 10000,        });        emitEvent({          ts: new Date().toISOString(),          event: "step.done" as EventType,          runId: finding.runId ?? "",          detail: "Medic: restarted offline service " + finding.serviceName,        });        return true;      } catch (err) {        return false;      }    }
     case "fail_run": {
       if (!finding.runId) return false;
       const run = db.prepare("SELECT status, workflow_id FROM runs WHERE id = ?").get(finding.runId) as { status: string; workflow_id: string } | undefined;
@@ -199,7 +199,7 @@ case "restart_service": {      if (!finding.serviceName) return false;      try 
       try {
         await teardownWorkflowCronsIfIdle(match[1]);
         return true;
-      } catch {
+      } catch (err) {
         return false;
       }
     }
@@ -265,7 +265,7 @@ case "restart_service": {      if (!finding.serviceName) return false;      try 
         const workflowDir = resolveWorkflowDir(run.workflow_id);
         const workflow = await loadWorkflowSpec(workflowDir);
         await ensureWorkflowCrons(workflow);
-      } catch {}
+      } catch (err) {}
 
       emitEvent({
         ts: new Date().toISOString(),
@@ -376,7 +376,7 @@ CHANGES: Medic v6: merged PR found — awaiting verifier review`,
           detail: `Medic: circuit breaker — force-recreated crons for "${wfId}"`,
         });
         return true;
-      } catch {
+      } catch (err) {
         return false;
       }
     }
@@ -438,8 +438,8 @@ export async function runMedicCheck(): Promise<MedicCheckResult> {
       const setfarmCrons = cronResult.jobs.filter(j => j.name.startsWith("setfarm/"));
       findings.push(...checkOrphanedCrons(setfarmCrons));
     }
-  } catch {
-    // Can't check crons — skip this check
+  } catch (err) {
+    console.warn("listCronJobs failed, skipping orphaned cron check:", String(err));
   }
 
   // Remediate
@@ -529,7 +529,7 @@ export function getMedicStatus(): MedicStatus {
       recentIssues: stats.issues,
       recentActions: stats.actions,
     };
-  } catch {
+  } catch (err) {
     return { installed: false, lastCheck: null, recentChecks: 0, recentIssues: 0, recentActions: 0 };
   }
 }
@@ -560,7 +560,7 @@ export function getRecentMedicChecks(limit = 20): Array<{
       summary: r.summary,
       details: JSON.parse(r.details ?? "[]"),
     }));
-  } catch {
+  } catch (err) {
     return [];
   }
 }

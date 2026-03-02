@@ -141,7 +141,35 @@ async function main() {
   }
 
   if (group === "update") {
+    const force = args.includes("--force");
     const repoRoot = join(__dirname, "..", "..");
+
+    // Active-run guard: don't rebuild while pipeline is running
+    if (!force) {
+      const activeRuns = checkActiveRuns();
+      if (activeRuns.length > 0) {
+        process.stderr.write(`Cannot update: ${activeRuns.length} active run(s):\n`);
+        for (const run of activeRuns) {
+          process.stderr.write(`  - ${run.id} (${run.workflow_id}): ${run.task}\n`);
+        }
+        process.stderr.write(`\nUse 'setfarm update --force' to override.\n`);
+        process.exit(1);
+      }
+    }
+
+    // No-op guard: skip rebuild if already up-to-date
+    console.log("Checking for updates...");
+    try {
+      execSync("git fetch", { cwd: repoRoot, stdio: "inherit" });
+      const diff = execSync("git diff HEAD..origin/main --stat", { cwd: repoRoot, encoding: "utf-8" }).trim();
+      if (!diff && !force) {
+        console.log("Already up to date. Nothing to rebuild.");
+        return;
+      }
+    } catch {
+      // If fetch/diff fails, proceed with pull anyway
+    }
+
     console.log("Pulling latest...");
     try {
       execSync("git pull", { cwd: repoRoot, stdio: "inherit" });

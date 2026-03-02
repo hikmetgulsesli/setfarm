@@ -1,16 +1,19 @@
 # PR-based workflow — each story creates a PR, verifier reviews + merges.
-# v10.0: PRD-based decomposition, lint enforcement, PR workflow, skip-on-fail, auto-deploy.
+# v11.0: Stitch design integration — DESIGN step between SETUP and IMPLEMENT.
 id: feature-dev
 name: Feature Development Workflow
-version: 10.0
+version: 11.0
 description: |
-  Full-quality pipeline. Developer creates PR per story, verifier reads
-  external review comments (Gemini/Copilot), fixes issues, merges via squash.
+  Full-quality pipeline with Stitch design generation. PLAN → SETUP → DESIGN →
+  IMPLEMENT → VERIFY → SECURITY-GATE → FINAL-TEST → DEPLOY.
+  Designer generates UI screens via Stitch API before coding begins.
+  Developer creates PR per story, verifier reviews + merges.
   Failed stories are skipped — other stories continue.
 
 agent_mapping:
   planner: main
   setup: atlas
+  designer: mert
   developer: [koda, flux, cipher]
   reviewer: [sentinel, iris]
   tester: sentinel
@@ -101,6 +104,17 @@ agents:
         AGENTS.md: agents/deployer/AGENTS.md
         SOUL.md: agents/deployer/SOUL.md
         IDENTITY.md: agents/deployer/IDENTITY.md
+
+  - id: designer
+    name: Designer
+    role: coding
+    description: Generates UI designs via Stitch API and saves to project.
+    workspace:
+      baseDir: agents/designer
+      files:
+        AGENTS.md: agents/designer/AGENTS.md
+        SOUL.md: agents/designer/SOUL.md
+        IDENTITY.md: agents/designer/IDENTITY.md
 
 steps:
   - id: plan
@@ -264,6 +278,73 @@ steps:
     on_fail:
       escalate_to: human
 
+  - id: design
+    agent: designer
+    input: |
+      ############################################################
+      CRITICAL: Do ALL work in THIS session. No sub-agents, no background processes.
+      ############################################################
+
+      Generate professional UI designs for all frontend screens using Stitch.
+
+      TASK: {{task}}
+      REPO: {{repo}}
+      BRANCH: {{branch}}
+      DESIGN_SYSTEM: {{design_system}}
+
+      === DEVICE TYPE ===
+      - "mobile/React Native/Expo/iOS/Android" in TASK → MOBILE
+      - "tablet/iPad" in TASK → TABLET
+      - Otherwise → DESKTOP
+
+      === STITCH API ===
+      Script: /home/setrox/.openclaw/setfarm-repo/scripts/stitch-api.mjs
+
+      STEP 1 — Create project:
+      STITCH=$(node /home/setrox/.openclaw/setfarm-repo/scripts/stitch-api.mjs create-project "$(basename {{repo}})")
+      PROJECT_ID=$(echo "$STITCH" | jq -r '.projectId')
+
+      STEP 2 — Generate screens (UI stories only):
+      For each story with UI components:
+        a. Build detailed prompt from story (include colors, fonts, layout from design_system)
+        b. node /home/setrox/.openclaw/setfarm-repo/scripts/stitch-api.mjs generate-screen "$PROJECT_ID" "<prompt>" <DEVICE> GEMINI_3_PRO
+        c. Parse screens from response, download HTML + screenshot
+
+      STEP 3 — Save to stitch/:
+      - stitch/<story-id>.html, stitch/<story-id>.png
+      - stitch/DESIGN_MANIFEST.json
+      - stitch/design-tokens.css (extracted from first HTML)
+
+      STEP 4 — Commit + push:
+      git add stitch/ && git commit -m "design: Stitch UI designs" && git push
+
+      === FONT MAP (design-standards → Stitch enum) ===
+      Space Grotesk → SPACE_GROTESK | DM Sans → DM_SANS | Sora → SORA
+      Nunito Sans → NUNITO_SANS | Plus Jakarta Sans → PLUS_JAKARTA_SANS
+      Work Sans → WORK_SANS | Manrope → MANROPE | Source Sans 3 → SOURCE_SANS_THREE
+      Geist → GEIST | IBM Plex Sans → IBM_PLEX_SANS | Montserrat → MONTSERRAT
+      (Fontshare → closest: EPILOGUE or LEXEND)
+
+      === RETRY ===
+      Fail → retry 2x. At least 1 screen required, else STATUS: retry.
+      Backend-only project (0 UI stories) → STATUS: done, SCREENS_GENERATED: 0
+
+      ============================================================
+      MANDATORY OUTPUT FORMAT
+      ============================================================
+      STATUS: done
+      STITCH_PROJECT_ID: <id>
+      DEVICE_TYPE: <DESKTOP|MOBILE|TABLET>
+      SCREENS_GENERATED: <count>
+      DESIGN_MANIFEST: stitch/DESIGN_MANIFEST.json
+      DESIGN_TOKENS: stitch/design-tokens.css
+      DESIGN_NOTES: <summary>
+      ============================================================
+    expects: "STATUS: done"
+    max_retries: 3
+    on_fail:
+      escalate_to: human
+
   - id: implement
     agent: developer
     type: loop
@@ -297,9 +378,20 @@ steps:
       VERIFY FEEDBACK (if retrying): {{verify_feedback}}
       PROGRESS LOG: {{progress}}
 
+      DESIGN DATA (if available):
+      STITCH_PROJECT_ID: {{stitch_project_id}}
+      DESIGN_MANIFEST: {{design_manifest}}
+      DESIGN_TOKENS: {{design_tokens}}
+
       BEFORE writing code:
       1. Read the FULL story description and ALL acceptance criteria before coding
       2. Read references/design-standards.md + references/backend-standards.md
+      3. If stitch/ directory exists:
+         a. Read stitch/DESIGN_MANIFEST.json → find this story's screen
+         b. Read stitch/<story-id>.html for layout reference
+         c. Read stitch/design-tokens.css for colors/fonts/spacing
+         d. Implementation MUST match Stitch design (layout, colors, fonts)
+         e. NEVER use fonts/colors NOT in design-tokens.css
 
       DESIGN ENFORCEMENT (frontend stories — MANDATORY checklist before commit):
       - FONTS: Google Fonts <link> in layout <head> (NOT next/font for static exports).
@@ -444,6 +536,10 @@ steps:
          - Code exists (not just TODOs/placeholders)
          - Tests were written for this story
          - No hardcoded secrets, .env not committed
+      1.5. Stitch design compliance (if stitch/ exists):
+         - Check CSS vars from stitch/design-tokens.css are used
+         - grep hardcoded colors not in design-tokens → WARN
+         - Verify fonts match stitch/DESIGN_MANIFEST.json
       2. Frontend design checks (if any .css/.tsx changed):
          - grep -rE "font-family.*system-ui|font-family.*Roboto|font-family.*Arial|font-family.*Inter" src/ → FAIL if found (banned fonts)
          - grep -rE "fonts\.googleapis\.com|next/font" src/ → FAIL if missing (no font import)
@@ -756,7 +852,7 @@ steps:
 
       a) Add tunnel ingress rule (if not exists):
       if ! grep -q "$HOSTNAME" /etc/cloudflared/config.yml; then
-        sudo sed -i "/^- service: http_status:404$/i\\- hostname: $HOSTNAME\\n  service: http:\\/\\/127.0.0.1:$PORT" /etc/cloudflared/config.yml
+        sudo sed -i "/  - service: http_status:404/i\  - hostname: $HOSTNAME\n    service: http:\/\/127.0.0.1:$PORT" /etc/cloudflared/config.yml
         sudo systemctl restart cloudflared
       fi
 

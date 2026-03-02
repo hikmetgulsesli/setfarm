@@ -8,3 +8,5 @@ progress.txt
 progress*.txt
 .github/workflows/
 src.bak-pre-cleanup/
+.env
+scripts/.env

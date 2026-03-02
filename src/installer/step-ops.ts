@@ -821,7 +821,7 @@ export function claimStep(agentId: string): ClaimResult {
   logger.info(`Step claimed by ${agentId}`, { runId: step.run_id, stepId: step.step_id });
 
   // #260: Default optional template vars to prevent MISSING_INPUT_GUARD false positives
-  const OPTIONAL_VARS = ["verify_feedback", "progress", "project_memory", "security_notes", "changes", "story_branch", "pr_url", "completed_stories", "stories_remaining", "current_story", "current_story_id", "current_story_title", "final_pr"];
+  const OPTIONAL_VARS = ["verify_feedback", "progress", "project_memory", "security_notes", "changes", "story_branch", "pr_url", "completed_stories", "stories_remaining", "current_story", "current_story_id", "current_story_title", "final_pr", "stitch_project_id", "design_manifest", "design_tokens", "screens_generated", "device_type", "design_notes"];
   for (const v of OPTIONAL_VARS) {
     if (!context[v]) context[v] = "";
   }
@@ -926,7 +926,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
 
   // Parse KEY: value lines and merge into context
   // #197: Protect seed context keys from being overwritten by step output
-  const PROTECTED_KEYS = new Set(["repo", "task", "branch", "run_id"]);
+  const PROTECTED_KEYS = new Set(["repo", "task", "branch", "run_id", "design_system"]);
   const parsed = parseOutputKeyValues(output);
   for (const [key, value] of Object.entries(parsed)) {
     if (PROTECTED_KEYS.has(key) && context[key]) {

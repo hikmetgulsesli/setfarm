@@ -60,6 +60,26 @@ Choose ONE pair per project. Include Google Fonts link in `<head>`.
 | 9 | **Satoshi** | Cabinet Grotesk | Startup chic | Use Fontshare CDN |
 | 10 | **Bricolage Grotesque** | Instrument Sans | Quirky, distinctive | `family=Bricolage+Grotesque:wght@500;700&family=Instrument+Sans:wght@400;500` |
 
+### Stitch-Compatible Font Pairs
+
+For projects using Stitch design integration, ONLY use fonts available in the Stitch API:
+
+| # | Heading Font | Body Font | Stitch Heading Enum | Stitch Body Enum |
+|---|-------------|-----------|-------------------|-----------------|
+| 1 | Space Grotesk | DM Sans | SPACE_GROTESK | DM_SANS |
+| 3 | Sora | Nunito Sans | SORA | NUNITO_SANS |
+| 5 | Plus Jakarta Sans | Work Sans | PLUS_JAKARTA_SANS | WORK_SANS |
+| 6 | Manrope | Source Sans 3 | MANROPE | SOURCE_SANS_THREE |
+| NEW | Geist | IBM Plex Sans | GEIST | IBM_PLEX_SANS |
+| NEW | Montserrat | EB Garamond | MONTSERRAT | EB_GARAMOND |
+
+Fontshare fonts are NOT available in Stitch. Use closest equivalents:
+- Clash Display → EPILOGUE
+- Satoshi → LEXEND
+- Cabinet Grotesk → LEXEND
+
+**Rule:** Stitch-entegrasyonlu projelerde YALNIZCA Stitch-uyumlu font ciftleri kullanilmali.
+
 ### Typography Rules
 - Heading: font-weight 600-700, tracking tight (-0.02em to -0.01em)
 - Body: font-weight 400-500, line-height 1.5-1.7

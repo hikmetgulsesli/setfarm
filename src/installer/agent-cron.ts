@@ -29,10 +29,10 @@ Step 3 — Do the work described in the input. Format your output with KEY: valu
 
 Step 4 — MANDATORY: Report completion (do this IMMEDIATELY after finishing the work):
 \`\`\`
-cat <<'SETFARM_EOF' > /tmp/setfarm-step-output.txt
+cat <<'SETFARM_EOF' > .setfarm-step-output.txt
 <YOUR OUTPUT HERE — use the EXACT format specified in the step input above, including ALL required keys like STORIES_JSON, REPO, BRANCH etc.>
 SETFARM_EOF
-cat /tmp/setfarm-step-output.txt | /usr/bin/node ${cli} step complete "<stepId>"
+cat .setfarm-step-output.txt | /usr/bin/node ${cli} step complete "<stepId>"
 \`\`\`
 
 CRITICAL: The output format in the heredoc MUST match what the step input asks for. Do NOT use a generic STATUS/CHANGES/TESTS format — read the step input and replicate its MANDATORY OUTPUT FORMAT exactly.
@@ -46,6 +46,8 @@ RULES:
 1. NEVER end your session without calling step complete or step fail
 2. Write output to a file first, then pipe via stdin (shell escaping breaks direct args)
 3. If you're unsure whether to complete or fail, call step fail with an explanation
+4. NEVER say "I will do X next" as your final message — if you have something to do, DO IT as a tool call. Your session may end after any text response.
+5. Prioritize step complete/fail over all other actions. If you created a PR but haven't called step complete yet, call it IMMEDIATELY — do not do more checks.
 
 The workflow cannot advance until you report. Your session ending without reporting = broken pipeline.`;
 }
@@ -67,10 +69,10 @@ Do the work described in the input. Format your output with KEY: value lines as 
 
 MANDATORY: Report completion (do this IMMEDIATELY after finishing the work):
 \`\`\`
-cat <<'SETFARM_EOF' > /tmp/setfarm-step-output.txt
+cat <<'SETFARM_EOF' > .setfarm-step-output.txt
 <YOUR OUTPUT HERE — use the EXACT format specified in the step input above, including ALL required keys like STORIES_JSON, REPO, BRANCH etc.>
 SETFARM_EOF
-cat /tmp/setfarm-step-output.txt | /usr/bin/node ${cli} step complete "<stepId>"
+cat .setfarm-step-output.txt | /usr/bin/node ${cli} step complete "<stepId>"
 \`\`\`
 
 CRITICAL: The output format in the heredoc MUST match what the step input asks for. Do NOT use a generic STATUS/CHANGES/TESTS format — read the step input and replicate its MANDATORY OUTPUT FORMAT exactly.
@@ -84,6 +86,8 @@ RULES:
 1. NEVER end your session without calling step complete or step fail
 2. Write output to a file first, then pipe via stdin (shell escaping breaks direct args)
 3. If you're unsure whether to complete or fail, call step fail with an explanation
+4. NEVER say "I will do X next" as your final message — if you have something to do, DO IT as a tool call. Your session may end after any text response.
+5. Prioritize step complete/fail over all other actions. If you created a PR but haven't called step complete yet, call it IMMEDIATELY — do not do more checks.
 
 The workflow cannot advance until you report. Your session ending without reporting = broken pipeline.`;
 }
@@ -131,12 +135,14 @@ The "input" field contains your FULLY RESOLVED task instructions. Read it carefu
 
 Step 4 — Do the work described in the input. Format your output with KEY: value lines as specified in the input.
 
+⚠️ IMPORTANT: Do NOT narrate what you will do — just DO it. Never say "I will now run step complete" as text. Instead, immediately execute the tool call. Text without action = wasted turn.
+
 Step 5 — MANDATORY: Report completion (do this IMMEDIATELY after finishing the work):
 \`\`\`
-cat <<'SETFARM_EOF' > /tmp/setfarm-step-output.txt
+cat <<'SETFARM_EOF' > .setfarm-step-output.txt
 <YOUR OUTPUT HERE — use the EXACT format specified in the step input above, including ALL required keys like STORIES_JSON, REPO, BRANCH etc.>
 SETFARM_EOF
-cat /tmp/setfarm-step-output.txt | /usr/bin/node ${cli} step complete "<stepId>"
+cat .setfarm-step-output.txt | /usr/bin/node ${cli} step complete "<stepId>"
 \`\`\`
 
 CRITICAL: The output format in the heredoc MUST match what the step input asks for. Do NOT use a generic STATUS/CHANGES/TESTS format — read the step input and replicate its MANDATORY OUTPUT FORMAT exactly.
@@ -147,7 +153,7 @@ If the work FAILED:
 \`\`\`
 
 RULES:
-1. NEVER end your session without calling step complete or step fail
+1. NEVER end your session without calling step complete or step fail — this is the #1 cause of pipeline stalls
 2. Write output to a file first, then pipe via stdin (shell escaping breaks direct args)
 3. If you're unsure whether to complete or fail, call step fail with an explanation
 4. Do NOT call sessions_spawn — do all work directly in this session
@@ -156,6 +162,8 @@ RULES:
 7. Before starting long work (>2 min), verify the step is still valid:
    /usr/bin/node ${cli} step peek "${fullAgentId}"
    If NO_WORK, the step was cancelled/failed externally — STOP and reply HEARTBEAT_OK
+8. NEVER say "I will do X next" as your final message — if you have something to do, DO IT as a tool call. Your session may end after any text response.
+9. Prioritize step complete/fail over all other actions. If you created a PR but haven't called step complete yet, call it IMMEDIATELY — do not do more checks.
 
 The workflow cannot advance until you report. Your session ending without reporting = broken pipeline.`;
 }
@@ -260,7 +268,11 @@ async function workflowCronsExist(workflowId: string): Promise<boolean> {
  * No-ops if crons already exist (another run of the same workflow is active).
  */
 export async function ensureWorkflowCrons(workflow: WorkflowSpec): Promise<void> {
-  if (await workflowCronsExist(workflow.id)) return;
+  if (await workflowCronsExist(workflow.id)) {
+    // Crons already exist — skip to prevent anchor-reset loop (#48 fix)
+    // Use `workflow ensure-crons <name>` CLI to force-recreate when config changes.
+    return;
+  }
 
   // Preflight: verify cron tool is accessible before attempting to create jobs
   const preflight = await checkCronToolAvailable();

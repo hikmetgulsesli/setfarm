@@ -189,6 +189,13 @@ export function checkOrphanedCrons(
     ).get(wfId) as { cnt: number };
 
     if (active.cnt === 0) {
+      // Guard: don't tear down if pending/running/claimed stories exist (fixes teardown/recreate race)
+      const pendingWork = db.prepare(`
+        SELECT COUNT(*) as cnt FROM stories st
+        JOIN runs r ON r.id = st.run_id
+        WHERE r.workflow_id = ? AND st.status IN ('pending','running','claimed')
+      `).get(wfId) as { cnt: number };
+      if (pendingWork.cnt > 0) continue;
       const jobCount = cronJobs.filter(j => j.name.startsWith(`setfarm/${wfId}/`)).length;
       findings.push({
         check: "orphaned_crons",
@@ -311,7 +318,7 @@ export function checkFailedRunsForResume(): MedicFinding[] {
 
 // ── Check: Orphaned Stories (#225) ──────────────────────────────────
 
-const STORY_STUCK_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes — matches agent timeout
+const STORY_STUCK_THRESHOLD_MS = 15 * 60 * 1000; // 15 minutes — half of agent timeout, faster recovery
 
 /**
  * Find stories stuck in 'running' state for too long.
@@ -453,6 +460,12 @@ export function checkOfflineServices(): MedicFinding[] {
 
   for (const run of running) {
     try {
+      // Only check services for runs where deploy step has completed
+      const deployDone = db.prepare(
+        "SELECT 1 FROM steps WHERE run_id = ? AND step_id = 'deploy' AND status = 'done' LIMIT 1"
+      ).get(run.id);
+      if (!deployDone) continue;
+
       const ctx = JSON.parse(run.context);
       const repo = ctx.repo;
       if (!repo) continue;
