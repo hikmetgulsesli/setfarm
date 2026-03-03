@@ -840,12 +840,21 @@ steps:
       sleep 3
       curl -sf http://127.0.0.1:$PORT/ > /dev/null || (journalctl --user -u ${PROJECT_NAME}.service -n 20 --no-pager; fix and retry)
 
-      A6 — Register in Mission Control:
-      GITHUB_URL=$(cd $REPO_DIR && git remote get-url origin 2>/dev/null | sed 's/.git$//')
-      Detect stack from package.json deps.
+      A6 — Register in Mission Control (MANDATORY — verify it worked):
+      GITHUB_URL=$(cd $REPO_DIR && git remote get-url origin 2>/dev/null | sed 's/.git$//' || echo "")
+      GITHUB_SLUG=$(echo "$GITHUB_URL" | sed 's|https://github.com/||')
+      # Detect stack from package.json
+      STACK_JSON=$(cd $REPO_DIR && node -e "const p=require('./package.json'); const d={...p.dependencies,...p.devDependencies}; const s=[]; if(d.react)s.push('React'); if(d.next)s.push('Next.js'); if(d.express)s.push('Express'); if(d.vite)s.push('Vite'); if(d.typescript)s.push('TypeScript'); if(d.tailwindcss||d['@tailwindcss/postcss'])s.push('Tailwind CSS'); console.log(JSON.stringify(s))" 2>/dev/null || echo '[]')
 
-      POST http://127.0.0.1:3080/api/projects → name, emoji "🌐", category "own", type "web"
-      PATCH http://127.0.0.1:3080/api/projects/$ID → ports, repo, stack, service, github, workflowRunId, createdBy, completedAt, domain
+      # Step 1: Create project
+      curl -sf -X POST http://127.0.0.1:3080/api/projects         -H 'Content-Type: application/json'         -d "{"name":"$PROJECT_NAME","description":"{{task}}","repo":"$REPO_DIR","port":$PORT,"domain":"${PROJECT_NAME}.setrox.com.tr","github":"$GITHUB_SLUG"}"
+
+      # Step 2: Verify registration — FAIL if not found
+      MC_CHECK=$(curl -sf http://127.0.0.1:3080/api/projects/$PROJECT_NAME 2>/dev/null | grep -c '"id"' || echo "0")
+      if [ "$MC_CHECK" = "0" ]; then
+        echo "ERROR: MC registration failed — project not found after POST. Retrying..."
+        curl -sf -X POST http://127.0.0.1:3080/api/projects           -H 'Content-Type: application/json'           -d "{"name":"$PROJECT_NAME","description":"{{task}}","repo":"$REPO_DIR","port":$PORT,"domain":"${PROJECT_NAME}.setrox.com.tr","github":"$GITHUB_SLUG"}"
+      fi
 
       A7 — Cloudflare Tunnel + DNS:
       HOSTNAME="${PROJECT_NAME}.setrox.com.tr"
@@ -902,7 +911,15 @@ steps:
       curl -sf http://127.0.0.1:$PORT/ > /dev/null
 
       C4 — Update MC metadata:
-      PATCH → completedAt, workflowRunId (append to setfarmRunIds if supported)
+      # Verify project exists in MC; if not, register it
+      MC_CHECK=$(curl -sf http://127.0.0.1:3080/api/projects/$(basename {{repo}}) 2>/dev/null | grep -c '"id"' || echo "0")
+      if [ "$MC_CHECK" = "0" ]; then
+        echo "Project not in MC — registering..."
+        GITHUB_URL=$(cd {{repo}} && git remote get-url origin 2>/dev/null | sed 's/.git$//' || echo "")
+        GITHUB_SLUG=$(echo "$GITHUB_URL" | sed 's|https://github.com/||')
+        PROJECT_NAME=$(basename {{repo}})
+        curl -sf -X POST http://127.0.0.1:3080/api/projects           -H 'Content-Type: application/json'           -d "{"name":"$PROJECT_NAME","description":"{{task}}","repo":"{{repo}}","port":$PORT,"domain":"${PROJECT_NAME}.setrox.com.tr","github":"$GITHUB_SLUG"}"
+      fi
 
       → OUTPUT: DEPLOY_TYPE=update, existing service restarted.
 
