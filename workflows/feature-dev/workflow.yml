@@ -301,9 +301,26 @@ steps:
       === STITCH API ===
       Script: /home/setrox/.openclaw/setfarm-repo/scripts/stitch-api.mjs
 
-      STEP 1 — Create project:
-      STITCH=$(node /home/setrox/.openclaw/setfarm-repo/scripts/stitch-api.mjs create-project "$(basename {{repo}})")
-      PROJECT_ID=$(echo "$STITCH" | jq -r '.projectId')
+      STEP 1 — Get or create project (REUSE existing — never create duplicates):
+      STITCH_SCRIPT="/home/setrox/.openclaw/setfarm-repo/scripts/stitch-api.mjs"
+      if [ -f "{{repo}}/.stitch" ]; then
+        PROJECT_ID=$(jq -r '.projectId' "{{repo}}/.stitch")
+        echo "Reusing Stitch project from .stitch file: $PROJECT_ID"
+      else
+        EXISTING=$(node "$STITCH_SCRIPT" find-project "$(basename {{repo}})" | jq -r 'if .found then .projectId else empty end')
+        if [ -n "$EXISTING" ]; then
+          PROJECT_ID="$EXISTING"
+          echo "Found existing Stitch project: $PROJECT_ID"
+        else
+          STITCH=$(node "$STITCH_SCRIPT" create-project "$(basename {{repo}})")
+          PROJECT_ID=$(echo "$STITCH" | jq -r '.projectId')
+          echo "Created new Stitch project: $PROJECT_ID"
+        fi
+      fi
+
+      STEP 1.5 — Check existing screens (edit vs generate):
+      EXISTING_SCREENS=$(node "$STITCH_SCRIPT" list-screens "$PROJECT_ID" | jq -r 'length // 0')
+      echo "Existing screens in project: $EXISTING_SCREENS"
 
       STEP 2 — Generate screens (UI stories only):
       For each story with UI components:
@@ -316,8 +333,9 @@ steps:
       - stitch/DESIGN_MANIFEST.json
       - stitch/design-tokens.css (extracted from first HTML)
 
-      STEP 4 — Commit + push:
-      git add stitch/ && git commit -m "design: Stitch UI designs" && git push
+      STEP 4 — Save .stitch file + commit + push:
+      printf '{"projectId": "%s", "updatedAt": "%s"}' "$PROJECT_ID" "$(date -Iseconds)" | jq . > "{{repo}}/.stitch"
+      git add stitch/ .stitch && git commit -m "design: Stitch UI designs" && git push
 
       === FONT MAP (design-standards → Stitch enum) ===
       Space Grotesk → SPACE_GROTESK | DM Sans → DM_SANS | Sora → SORA
@@ -914,16 +932,11 @@ steps:
       HOSTNAME="${PROJECT_NAME}.setrox.com.tr"
       CF_TUNNEL_ID="92d8df83-3623-4850-ba41-29126106d020"
 
-      a) Add tunnel ingress rule (if not exists):
-      if ! grep -q "$HOSTNAME" /etc/cloudflared/config.yml; then
-        sudo sed -i "/  - service: http_status:404/i\  - hostname: $HOSTNAME\n    service: http:\/\/127.0.0.1:$PORT" /etc/cloudflared/config.yml
-        sudo systemctl restart cloudflared
-      fi
-
-      b) Create DNS CNAME record via cloudflared CLI (recommended method):
-      sudo cloudflared tunnel route dns $CF_TUNNEL_ID $HOSTNAME
-      This creates a proxied CNAME: $HOSTNAME → $CF_TUNNEL_ID.cfargotunnel.com
-      NOTE: DNS propagation may take 5-15 minutes for new records.
+      a) Add tunnel ingress + DNS (MUST use this script, never edit config.yml directly):
+      sudo bash /home/setrox/.openclaw/scripts/tunnel-add.sh "$HOSTNAME" "$PORT"
+      This script safely: adds ingress rule, validates YAML, rolls back on error,
+      restarts cloudflared, and creates DNS CNAME.
+      IMPORTANT: Do NOT manually edit /etc/cloudflared/config.yml or use sed on it.
 
       c) Cloudflare Access is already configured as wildcard (*.setrox.com.tr).
          New subdomains are automatically protected — no per-project action needed.

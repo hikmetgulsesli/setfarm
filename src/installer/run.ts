@@ -23,6 +23,20 @@ export async function runWorkflow(params: {
     ...workflow.context,
   };
 
+  // Duplicate run guard: prevent starting a new run for same repo if one is already running
+  const repoMatch = params.taskTitle.match(/Repo:\s*(\S+)/i);
+  if (repoMatch) {
+    const repoPath = repoMatch[1].replace(/~/g, "/home/setrox");
+    const existingRun = db.prepare(
+      "SELECT id, run_number FROM runs WHERE status = 'running' AND task LIKE ?"
+    ).get(`%${repoPath}%`) as { id: string; run_number: number } | undefined;
+    if (existingRun) {
+      throw new Error(
+        `Already running: Run #${existingRun.run_number} (${existingRun.id}) for repo ${repoPath}. Cancel it first or wait for completion.`
+      );
+    }
+  }
+
   db.exec("BEGIN");
   try {
     const notifyUrl = params.notifyUrl ?? workflow.notifications?.url ?? null;
