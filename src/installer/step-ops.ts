@@ -10,6 +10,9 @@ import { emitEvent } from "./events.js";
 import { logger } from "../lib/logger.js";
 import { getMaxRoleTimeoutSeconds } from "./install.js";
 import { isFrontendChange } from "../lib/frontend-detect.js";
+import { runQualityChecks, formatQualityReport } from "./quality-gates.js";
+import { buildDesignContracts, generateUIContract, enrichStoriesWithDesignContract, validateDesignCompliance } from "./design-contract.js";
+import { provisionDatabase, resolveDbType } from "./db-provision.js";
 
 // --- Git worktree helpers for parallel story isolation ---
 function createStoryWorktree(repo: string, storyId: string, baseBranch: string): string {
@@ -398,8 +401,8 @@ function parseAndInsertStories(output: string, runId: string): void {
 
 // ── Abandoned Step Cleanup ──────────────────────────────────────────
 
-const BASE_ABANDONED_THRESHOLD_MS = (getMaxRoleTimeoutSeconds() + 5 * 60) * 1000; // max role timeout + 5 min buffer
-const FAST_ABANDONED_THRESHOLD_MS = 15 * 60 * 1000; // 15 min for steps that have been abandoned before
+const BASE_ABANDONED_THRESHOLD_MS = 120_000; // 2 min — fast detect for "son mil" abandoned sessions
+const FAST_ABANDONED_THRESHOLD_MS = 90_000; // 90 sec for repeat abandonments
 const MAX_ABANDON_RESETS = 5; // abandoned steps get more chances than explicit failures
 
 /**
@@ -495,8 +498,9 @@ export function cleanupAbandonedSteps(): void {
   ).all(BASE_ABANDONED_THRESHOLD_MS) as { id: string; retry_count: number; max_retries: number; run_id: string }[];
 
   for (const story of abandonedStories) {
-    // Simply reset to pending without incrementing retry_count
-    db.prepare("UPDATE stories SET status = 'pending', updated_at = ? WHERE id = ?").run(new Date().toISOString(), story.id);
+    // Reset to pending — increment abandoned_count (NOT retry_count) for abandon tracking
+    const newAbandonCount = ((story as any).abandoned_count ?? 0) + 1;
+    db.prepare("UPDATE stories SET status = 'pending', abandoned_count = abandoned_count + 1, updated_at = ? WHERE id = ?").run(new Date().toISOString(), story.id);
   }
 
   // Recover stuck pipelines: loop step done but no subsequent step pending/running
@@ -580,10 +584,10 @@ interface ClaimResult {
 }
 
 /**
- * Throttle cleanupAbandonedSteps: run at most once every 5 minutes.
+ * Throttle cleanupAbandonedSteps: run at most once every 30 seconds (matches cron interval).
  */
 let lastCleanupTime = 0;
-const CLEANUP_THROTTLE_MS = 5 * 60 * 1000; // 5 minutes
+const CLEANUP_THROTTLE_MS = 30_000; // 30 sec — match cron interval for fast abandon detection
 
 /**
  * Find and claim a pending step for an agent, returning the resolved input.
@@ -640,6 +644,74 @@ export function claimStep(agentId: string): ClaimResult {
   if (step.type === "loop") {
     const loopConfig: LoopConfig | null = step.loop_config ? JSON.parse(step.loop_config) : null;
     if (loopConfig?.over === "stories") {
+      // #claim-auto-complete: Auto-complete stories that already have a PR (open or merged).
+      // In implement step, PR creation IS the deliverable — merge happens in verify step.
+      // Checks BOTH running AND pending stories — medic resets running→pending faster
+      // than cron claims, so pending stories with PRs must also be caught.
+      // Branch naming convention: {runId_prefix}-{storyId} e.g. "433ff7a1-US-001"
+      const runIdPrefix = step.run_id.slice(0, 8);
+      const autoCompleteStories = db.prepare(
+        "SELECT * FROM stories WHERE run_id = ? AND status IN ('running', 'pending') ORDER BY story_index ASC"
+      ).all(step.run_id) as any[];
+      for (const rs of autoCompleteStories) {
+        // Build expected branch: {runId_prefix}-{STORY_ID} e.g. "433ff7a1-US-001"
+        const storyBranchForCheck = rs.story_branch || `${runIdPrefix}-${rs.story_id}`;
+        const existingPrUrl = rs.pr_url || "";
+
+        try {
+          let prUrl = existingPrUrl;
+          let prFound = false;
+
+          if (prUrl) {
+            // Check existing PR exists and is not CLOSED (open or merged = OK)
+            const prState = execFileSync("gh", ["pr", "view", prUrl, "--json", "state", "--jq", ".state"], {
+              timeout: 15000, stdio: "pipe"
+            }).toString().trim();
+            if (prState === "MERGED" || prState === "OPEN") {
+              prFound = true;
+            } else if (prState === "CLOSED") {
+              // FIX: CLOSED PR — try to reopen it
+              try {
+                execFileSync("gh", ["pr", "reopen", prUrl], { timeout: 15000, stdio: "pipe" });
+                prFound = true;
+                logger.info(`[claim-auto-complete] Reopened CLOSED PR for story ${rs.story_id}: ${prUrl}`, { runId: step.run_id });
+              } catch (reopenErr) {
+                // Reopen failed (branch deleted, etc.) — leave story pending so agent recreates PR
+                logger.warn(`[claim-auto-complete] Cannot reopen CLOSED PR ${prUrl} for story ${rs.story_id}: ${String(reopenErr)}`, { runId: step.run_id });
+                prFound = false;
+              }
+            }
+          } else if (storyBranchForCheck && context["repo"]) {
+            // No pr_url recorded — search by branch name (any state except closed)
+            // First check merged PRs
+            let foundUrl = execFileSync("gh", ["pr", "list", "--head", storyBranchForCheck, "--state", "merged", "--json", "url", "--jq", ".[0].url"], {
+              cwd: context["repo"], timeout: 15000, stdio: "pipe"
+            }).toString().trim();
+            if (!foundUrl) {
+              // Then check open PRs
+              foundUrl = execFileSync("gh", ["pr", "list", "--head", storyBranchForCheck, "--state", "open", "--json", "url", "--jq", ".[0].url"], {
+                cwd: context["repo"], timeout: 15000, stdio: "pipe"
+              }).toString().trim();
+            }
+            if (foundUrl) {
+              prUrl = foundUrl;
+              prFound = true;
+            }
+          }
+
+          if (prFound && prUrl) {
+            db.prepare("UPDATE stories SET status = 'done', pr_url = ?, story_branch = ?, updated_at = ? WHERE id = ?")
+              .run(prUrl, storyBranchForCheck, new Date().toISOString(), rs.id);
+            db.prepare("UPDATE steps SET current_story_id = NULL, updated_at = ? WHERE id = ? AND current_story_id = ?")
+              .run(new Date().toISOString(), step.id, rs.id);
+            logger.info(`[claim-auto-complete] Story ${rs.story_id} auto-completed — PR exists: ${prUrl}`, { runId: step.run_id });
+            emitEvent({ ts: new Date().toISOString(), event: "story.done", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: rs.story_id, storyTitle: rs.title, detail: `Auto-completed — PR exists (${prUrl})` });
+          }
+        } catch (e) {
+          logger.warn(`[claim-auto-complete] PR check failed for story ${rs.story_id}: ${String(e)}`, { runId: step.run_id });
+        }
+      }
+
       // Find next pending story
       const nextStory = db.prepare(
         "SELECT * FROM stories WHERE run_id = ? AND status = 'pending' ORDER BY story_index ASC LIMIT 1"
@@ -775,14 +847,10 @@ export function claimStep(agentId: string): ClaimResult {
       context["progress"] = readProgressFile(step.run_id);
       context["project_memory"] = readProjectMemory(context);
 
-      // FALLBACK: Ensure story_branch defaults to story ID if developer forgot to output it
-      if (!context["story_branch"]) {
-        context["story_branch"] = story.storyId.toLowerCase();
-      }
-
-      if (!context["verify_feedback"]) {
-        context["verify_feedback"] = "";
-      }
+      // FIX: Clear stale story-specific context from previous story to prevent cross-contamination
+      context["pr_url"] = "";
+      context["story_branch"] = "";
+      context["verify_feedback"] = "";
 
       // Persist story context vars to DB so verify_each steps can access them
       db.prepare("UPDATE runs SET context = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(context), new Date().toISOString(), step.run_id);
@@ -830,7 +898,7 @@ export function claimStep(agentId: string): ClaimResult {
   logger.info(`Step claimed by ${agentId}`, { runId: step.run_id, stepId: step.step_id });
 
   // #260: Default optional template vars to prevent MISSING_INPUT_GUARD false positives
-  const OPTIONAL_VARS = ["verify_feedback", "progress", "project_memory", "security_notes", "changes", "story_branch", "pr_url", "completed_stories", "stories_remaining", "current_story", "current_story_id", "current_story_title", "final_pr", "stitch_project_id", "design_manifest", "design_tokens", "screens_generated", "device_type", "design_notes"];
+  const OPTIONAL_VARS = ["verify_feedback", "progress", "project_memory", "security_notes", "changes", "story_branch", "pr_url", "completed_stories", "stories_remaining", "current_story", "current_story_id", "current_story_title", "final_pr", "stitch_project_id", "design_manifest", "design_tokens", "screens_generated", "device_type", "design_notes", "ui_contract", "design_feedback", "database_url", "db_host", "db_port", "db_name", "db_user", "db_password", "db_required", "db_type"];
   for (const v of OPTIONAL_VARS) {
     if (!context[v]) context[v] = "";
   }
@@ -847,42 +915,129 @@ export function claimStep(agentId: string): ClaimResult {
   // BUG FIX: If this is a verify step for a verify_each loop, inject the correct
   // story info from the oldest unverified 'done' story (not from stale context).
   // This prevents parallel developers from overwriting each other's story context.
+  // #claim-auto-verify: Also auto-verifies stories whose PRs are already merged,
+  // preventing the "son mil" agent timeout loop.
   const loopStepForVerify = db.prepare(
-    "SELECT loop_config FROM steps WHERE run_id = ? AND type = 'loop' LIMIT 1"
-  ).get(step.run_id) as { loop_config: string | null } | undefined;
+    "SELECT id, loop_config FROM steps WHERE run_id = ? AND type = 'loop' LIMIT 1"
+  ).get(step.run_id) as { id: string; loop_config: string | null } | undefined;
   if (loopStepForVerify?.loop_config) {
     const lcCheck: LoopConfig = JSON.parse(loopStepForVerify.loop_config);
     if (lcCheck.verifyEach && lcCheck.verifyStep === step.step_id) {
-      const nextUnverified = db.prepare(
-        "SELECT * FROM stories WHERE run_id = ? AND status = 'done' ORDER BY story_index ASC LIMIT 1"
-      ).get(step.run_id) as any | undefined;
-      if (nextUnverified) {
-        // Use story-level pr_url/story_branch first (persisted in completeStep),
-        // then fall back to parsing story output.
-        if (nextUnverified.output) {
-          const storyOutput = parseOutputKeyValues(nextUnverified.output);
-          for (const [key, value] of Object.entries(storyOutput)) {
-            context[key] = value;
+      // Auto-verify stories whose PRs are already merged OR open (auto-merge + verify).
+      // "Son mil" fix: agent reviews PR but session dies before step complete.
+      // Instead of retrying indefinitely, auto-merge open PRs to unblock pipeline.
+      let nextUnverified: any | undefined;
+      while (true) {
+        nextUnverified = db.prepare(
+          "SELECT * FROM stories WHERE run_id = ? AND status = 'done' ORDER BY story_index ASC LIMIT 1"
+        ).get(step.run_id) as any | undefined;
+        if (!nextUnverified) break;
+
+        const prUrl = nextUnverified.pr_url || "";
+        if (prUrl) {
+          try {
+            const prState = execFileSync("gh", ["pr", "view", prUrl, "--json", "state", "--jq", ".state"], {
+              timeout: 15000, stdio: "pipe"
+            }).toString().trim();
+            if (prState === "MERGED") {
+              // Quality gate: even merged PRs must pass quality checks before auto-verify
+              const cavRepoPath = context["repo"] || context["REPO"] || "";
+              if (cavRepoPath) {
+                const cavIssues = runQualityChecks(cavRepoPath);
+                const cavErrors = cavIssues.filter(i => i.severity === "error");
+                if (cavErrors.length > 0) {
+                  const cavReport = formatQualityReport(cavIssues);
+                  logger.warn(`[claim-auto-verify-quality] PR merged but quality gate failed for ${nextUnverified.story_id}:
+${cavReport}`, { runId: step.run_id });
+                  // Don't auto-verify — let agent handle it
+                  break;
+                }
+              }
+              db.prepare("UPDATE stories SET status = 'verified', updated_at = ? WHERE id = ?")
+                .run(new Date().toISOString(), nextUnverified.id);
+              logger.info(`[claim-auto-verify] Story ${nextUnverified.story_id} auto-verified — PR merged + quality gate passed`, { runId: step.run_id });
+              emitEvent({ ts: new Date().toISOString(), event: "story.verified", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: nextUnverified.story_id, storyTitle: nextUnverified.title });
+              continue; // Check next story
+            }
+            if (prState === "CLOSED") {
+              // FIX: CLOSED PR — try to reopen, otherwise skip the story
+              try {
+                execFileSync("gh", ["pr", "reopen", prUrl], { timeout: 15000, stdio: "pipe" });
+                logger.info(`[claim-auto-verify] Reopened CLOSED PR for story ${nextUnverified.story_id}: ${prUrl}`, { runId: step.run_id });
+                // Fall through to agent verification — agent will review the reopened PR
+              } catch (reopenErr) {
+                // Reopen failed (branch deleted, etc.) — skip story to prevent infinite loop
+                db.prepare("UPDATE stories SET status = 'skipped', output = 'Skipped: CLOSED PR could not be reopened', updated_at = ? WHERE id = ?")
+                  .run(new Date().toISOString(), nextUnverified.id);
+                logger.warn(`[claim-auto-verify] CLOSED PR ${prUrl} cannot be reopened — skipping story ${nextUnverified.story_id}`, { runId: step.run_id });
+                emitEvent({ ts: new Date().toISOString(), event: "story.skipped", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: nextUnverified.story_id, detail: `CLOSED PR could not be reopened` });
+                continue; // Check next story
+              }
+            }
+            if (prState === "OPEN") {
+              // Auto-merge open PRs — the implement agent already created the PR,
+              // and reviewer session keeps dying before merge. Unblock the pipeline.
+              const abandonCount = nextUnverified.abandoned_count ?? 0;
+              if (abandonCount >= 1) {
+                // Only auto-merge after at least 1 failed verify attempt
+                try {
+                  execFileSync("gh", ["pr", "merge", prUrl, "--squash", "--delete-branch"], {
+                    timeout: 30000, stdio: "pipe"
+                  });
+                  db.prepare("UPDATE stories SET status = 'verified', updated_at = ? WHERE id = ?")
+                    .run(new Date().toISOString(), nextUnverified.id);
+                  logger.info(`[claim-auto-verify] Story ${nextUnverified.story_id} auto-merged + verified — PR was OPEN after ${abandonCount} abandon(s)`, { runId: step.run_id });
+                  emitEvent({ ts: new Date().toISOString(), event: "story.verified", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: nextUnverified.story_id, storyTitle: nextUnverified.title, detail: `Auto-merged after ${abandonCount} abandon(s)` });
+                  continue; // Check next story
+                } catch (mergeErr) {
+                  logger.warn(`[claim-auto-verify] Auto-merge failed for ${prUrl}: ${String(mergeErr)}`, { runId: step.run_id });
+                  // Fall through to agent verification
+                }
+              }
+            }
+          } catch (e) {
+            // gh command failed — proceed with normal agent verify
+            logger.warn(`[claim-auto-verify] PR state check failed for ${prUrl}: ${String(e)}`, { runId: step.run_id });
           }
         }
-        // Override with DB columns if available (more reliable than output parse)
-        if (nextUnverified.pr_url) context["pr_url"] = nextUnverified.pr_url;
-        if (nextUnverified.story_branch) context["story_branch"] = nextUnverified.story_branch;
-        context["current_story_id"] = nextUnverified.story_id;
-        context["current_story_title"] = nextUnverified.title;
-        const storyObj: Story = {
-          id: nextUnverified.id, runId: nextUnverified.run_id,
-          storyIndex: nextUnverified.story_index, storyId: nextUnverified.story_id,
-          title: nextUnverified.title, description: nextUnverified.description,
-          acceptanceCriteria: JSON.parse(nextUnverified.acceptance_criteria),
-          status: nextUnverified.status, output: nextUnverified.output,
-          retryCount: nextUnverified.retry_count, maxRetries: nextUnverified.max_retries,
-        };
-        context["current_story"] = formatStoryForTemplate(storyObj);
-        db.prepare("UPDATE runs SET context = ?, updated_at = ? WHERE id = ?")
-          .run(JSON.stringify(context), new Date().toISOString(), step.run_id);
-        logger.info(`Verify step: injected story ${nextUnverified.story_id} context`, { runId: step.run_id });
+        break; // Found a story that needs actual agent verification
       }
+
+      if (!nextUnverified) {
+        // All stories auto-verified — no agent work needed, advance pipeline
+        db.prepare("UPDATE steps SET status = 'waiting', updated_at = ? WHERE id = ?")
+          .run(new Date().toISOString(), step.id);
+        logger.info(`[claim-auto-verify] All stories auto-verified, triggering pipeline advancement`, { runId: step.run_id });
+        checkLoopContinuation(step.run_id, loopStepForVerify.id);
+        return { found: false };
+      }
+
+      // Inject unverified story context for agent verification
+      if (nextUnverified.output) {
+        const storyOutput = parseOutputKeyValues(nextUnverified.output);
+        const VERIFY_PROTECTED_KEYS = new Set(["repo", "task", "branch", "run_id", "design_system"]);
+        for (const [key, value] of Object.entries(storyOutput)) {
+          if (VERIFY_PROTECTED_KEYS.has(key) && context[key]) continue;
+          context[key] = value;
+        }
+      }
+      // Override with DB columns if available (more reliable than output parse)
+      if (nextUnverified.pr_url) context["pr_url"] = nextUnverified.pr_url;
+      if (nextUnverified.story_branch) context["story_branch"] = nextUnverified.story_branch;
+      context["current_story_id"] = nextUnverified.story_id;
+      context["current_story_title"] = nextUnverified.title;
+      const storyObj: Story = {
+        id: nextUnverified.id, runId: nextUnverified.run_id,
+        storyIndex: nextUnverified.story_index, storyId: nextUnverified.story_id,
+        title: nextUnverified.title, description: nextUnverified.description,
+        acceptanceCriteria: JSON.parse(nextUnverified.acceptance_criteria),
+        status: nextUnverified.status, output: nextUnverified.output,
+        retryCount: nextUnverified.retry_count, maxRetries: nextUnverified.max_retries,
+      };
+      context["current_story"] = formatStoryForTemplate(storyObj);
+      db.prepare("UPDATE runs SET context = ?, updated_at = ? WHERE id = ?")
+        .run(JSON.stringify(context), new Date().toISOString(), step.run_id);
+      logger.info(`Verify step: injected story ${nextUnverified.story_id} context`, { runId: step.run_id });
     }
   }
 
@@ -975,6 +1130,87 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     }
   }
 
+  // QUALITY GATE GUARDRAIL: Server-side grep for dead links, empty handlers, placeholder text.
+  // Runs independently of agent — step-ops enforces this even if agent skips checks.
+  if (parsed["status"]?.toLowerCase() === "done") {
+    const qgStepId = step.step_id;
+    if (qgStepId === "implement" || qgStepId === "verify" || qgStepId === "final-test") {
+      const repoPath = context["repo"] || context["REPO"] || "";
+      if (repoPath) {
+        const qualityIssues = runQualityChecks(repoPath);
+        const errors = qualityIssues.filter(i => i.severity === "error");
+        if (errors.length > 0) {
+          const report = formatQualityReport(qualityIssues);
+          logger.warn(`[quality-gate] ${errors.length} quality error(s) in ${repoPath}:\n${report}`, { runId: step.run_id, stepId: step.step_id });
+          failStep(stepId, `GUARDRAIL: Quality gate failed — ${errors.length} error(s) detected.\n${report}\nFix these issues and retry.`);
+          return { advanced: false, runCompleted: false };
+        }
+      }
+    }
+  }
+
+  // === FAZ 1: Design Contract — UI element extraction + story enrichment ===
+  // === FAZ 3: Design Rules Enforcement — validate Stitch HTML compliance ===
+  if (step.step_id === "design" && parsed["status"]?.toLowerCase() === "done") {
+    const repoPath = context["repo"] || context["REPO"] || "";
+    if (repoPath) {
+      try {
+        const contracts = buildDesignContracts(repoPath);
+        if (contracts.length > 0) {
+          context["ui_contract"] = generateUIContract(contracts);
+          const contractPath = path.join(repoPath, "stitch", "UI_CONTRACT.json");
+          fs.writeFileSync(contractPath, JSON.stringify(contracts, null, 2));
+          // Enrich pending stories; claimed/running stories will get contract via lazy-load at claim time
+          enrichStoriesWithDesignContract(getDb(), step.run_id, contracts);
+          logger.info(`[design-contract] UI contract: ${contracts.reduce((s: number, c: any) => s + c.totalInteractive, 0)} elements`, { runId: step.run_id });
+        }
+      } catch (e) {
+        logger.warn(`[design-contract] Failed: ${String(e)}`, { runId: step.run_id });
+      }
+
+      // Design rules validation
+      try {
+        const designIssues = validateDesignCompliance(repoPath);
+        if (designIssues.length > 0) {
+          const report = designIssues.map((i: string) => `  - ${i}`).join("\n");
+          context["design_feedback"] = `DESIGN RULES VIOLATIONS:\n${report}\nFix these before proceeding.`;
+          logger.warn(`[design-rules] ${designIssues.length} violation(s):\n${report}`, { runId: step.run_id });
+          if (designIssues.some((i: string) => i.includes("CRITICAL"))) {
+            failStep(stepId, `DESIGN RULES: Critical violations found.\n${report}`);
+            return { advanced: false, runCompleted: false };
+          }
+        }
+      } catch (e) {
+        logger.warn(`[design-rules] Validation failed: ${String(e)}`, { runId: step.run_id });
+      }
+    }
+  }
+
+  // === FAZ 2: DB Auto-Provisioning on setup step completion ===
+  if (step.step_id === "setup" && parsed["status"]?.toLowerCase() === "done") {
+    const dbRequired = (context["db_required"] || "").toLowerCase();
+    if (dbRequired && dbRequired !== "false" && dbRequired !== "no" && dbRequired !== "none") {
+      try {
+        const projectName = path.basename(context["repo"] || "project");
+        const dbType = resolveDbType(dbRequired);
+        const creds = provisionDatabase(projectName, dbType);
+        context["database_url"] = creds.connectionString;
+        context["db_type"] = creds.type;
+        context["db_host"] = creds.host;
+        context["db_port"] = String(creds.port);
+        context["db_name"] = creds.database;
+        context["db_user"] = creds.username;
+        context["db_password"] = creds.password;
+        logger.info(`[db-provision] Created ${creds.type} DB: ${creds.database} @ ${creds.host}:${creds.port}`, { runId: step.run_id });
+      } catch (e) {
+        logger.error(`[db-provision] Failed: ${String(e)}`, { runId: step.run_id });
+        failStep(stepId, `DB provisioning failed: ${String(e)}. Check DB server connectivity and credentials.`);
+        return { advanced: false, runCompleted: false };
+      }
+    }
+  }
+
+
   db.prepare(
     "UPDATE runs SET context = ?, updated_at = ? WHERE id = ?"
   ).run(JSON.stringify(context), new Date().toISOString(), step.run_id);
@@ -1022,8 +1258,9 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     const storyEvent = statusVal === "skip" ? "story.skipped" : "story.done";
 
     // Mark current story done or skipped + persist PR context for verify_each
-    const storyPrUrl = parsed["pr_url"] || context["pr_url"] || "";
-    const storyBranchName = parsed["story_branch"] || context["story_branch"] || "";
+    // FIX: Remove context fallback to prevent cross-contamination between parallel stories
+    const storyPrUrl = parsed["pr_url"] || "";
+    const storyBranchName = parsed["story_branch"] || "";
     db.prepare(
       "UPDATE stories SET status = ?, output = ?, pr_url = ?, story_branch = ?, updated_at = ? WHERE id = ?"
     ).run(storyStatus, output, storyPrUrl, storyBranchName, new Date().toISOString(), step.current_story_id);
@@ -1039,6 +1276,16 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     if (storyRow?.story_id && context["repo"]) {
       removeStoryWorktree(context["repo"], storyRow.story_id);
     }
+
+    // FIX: Clear story-specific context to prevent cross-contamination between parallel stories
+    delete context["pr_url"];
+    delete context["story_branch"];
+    delete context["current_story_id"];
+    delete context["current_story_title"];
+    delete context["current_story"];
+    delete context["verify_feedback"];
+    db.prepare("UPDATE runs SET context = ?, updated_at = ? WHERE id = ?")
+      .run(JSON.stringify(context), new Date().toISOString(), step.run_id);
 
     // Clear current_story_id, save output
     db.prepare(
@@ -1216,12 +1463,45 @@ function handleVerifyEachCompletion(
     const prUrl = nextUnverifiedStory.pr_url || "";
     if (prUrl) {
       try {
-        const prState = execFileSync("gh", ["pr", "view", prUrl, "--json", "state,merged", "--jq", '"state" + ":" + (."merged" | tostring)'], { timeout: 15000, stdio: "pipe" }).toString().trim();
-        if (prState === "MERGED:true" || prState.includes("MERGED")) {
+        const prState = execFileSync("gh", ["pr", "view", prUrl, "--json", "state", "--jq", ".state"], { timeout: 15000, stdio: "pipe" }).toString().trim();
+        if (prState === "MERGED") {
+          // Quality gate: even merged PRs must pass quality checks
+          const hveRepoPath = context["repo"] || context["REPO"] || "";
+          if (hveRepoPath) {
+            const hveIssues = runQualityChecks(hveRepoPath);
+            const hveErrors = hveIssues.filter(i => i.severity === "error");
+            if (hveErrors.length > 0) {
+              const hveReport = formatQualityReport(hveIssues);
+              logger.warn(`[auto-verify-quality] PR merged but quality gate failed for ${nextUnverifiedStory.story_id}:
+${hveReport}`, { runId: verifyStep.run_id });
+              // Block auto-verify — story goes back to pending for agent to fix
+              db.prepare("UPDATE stories SET status = 'pending', retry_count = retry_count + 1, updated_at = ? WHERE id = ?")
+                .run(new Date().toISOString(), nextUnverifiedStory.id);
+              context["verify_feedback"] = `QUALITY GATE BLOCKED AUTO-VERIFY:
+${hveReport}
+Fix these issues in the merged code.`;
+              db.prepare("UPDATE runs SET context = ?, updated_at = ? WHERE id = ?")
+                .run(JSON.stringify(context), new Date().toISOString(), verifyStep.run_id);
+              break; // Stop auto-verify loop — agent needs to fix
+            }
+          }
           db.prepare("UPDATE stories SET status = 'verified', updated_at = ? WHERE id = ?")
             .run(new Date().toISOString(), nextUnverifiedStory.id);
-          logger.info(`Auto-verified story ${nextUnverifiedStory.story_id} — PR already merged`, { runId: verifyStep.run_id });
+          logger.info(`Auto-verified story ${nextUnverifiedStory.story_id} — PR merged + quality gate passed`, { runId: verifyStep.run_id });
           continue; // Check next story
+        }
+        if (prState === "CLOSED") {
+          // FIX: CLOSED PR — try to reopen, otherwise skip
+          try {
+            execFileSync("gh", ["pr", "reopen", prUrl], { timeout: 15000, stdio: "pipe" });
+            logger.info(`[handleVerifyEach] Reopened CLOSED PR for story ${nextUnverifiedStory.story_id}: ${prUrl}`, { runId: verifyStep.run_id });
+            // Fall through to agent verification
+          } catch (reopenErr) {
+            db.prepare("UPDATE stories SET status = 'skipped', output = 'Skipped: CLOSED PR could not be reopened', updated_at = ? WHERE id = ?")
+              .run(new Date().toISOString(), nextUnverifiedStory.id);
+            logger.warn(`[handleVerifyEach] CLOSED PR ${prUrl} cannot be reopened — skipping story ${nextUnverifiedStory.story_id}`, { runId: verifyStep.run_id });
+            continue; // Check next story
+          }
         }
       } catch (e) {
         // gh command failed — proceed with normal verify

@@ -13,6 +13,7 @@ export type MedicActionType =
   | "reset_story"
   | "recreate_crons"
   | "restart_service"
+  | "restart_gateway"
   | "none";
 
 export interface MedicFinding {
@@ -337,7 +338,7 @@ export function checkFailedRunsForResume(): MedicFinding[] {
 
 // ── Check: Orphaned Stories (#225) ──────────────────────────────────
 
-const STORY_STUCK_THRESHOLD_MS = 15 * 60 * 1000; // 15 minutes — half of agent timeout, faster recovery
+const STORY_STUCK_THRESHOLD_MS = 20 * 60 * 1000; // 20 min — match agent timeout (30min), allow legitimate implement work
 
 /**
  * Find stories stuck in 'running' state for too long.
@@ -391,7 +392,7 @@ export function checkOrphanedStories(): MedicFinding[] {
 
 // ── Check: Stalled Workflow Crons / Circuit Breaker (#218) ──────────
 
-const CIRCUIT_BREAKER_THRESHOLD_MS = 12 * 60 * 1000; // 12 min = 3x the 4-min cron interval
+const CIRCUIT_BREAKER_THRESHOLD_MS = 5 * 60 * 1000; // 5 min — detect dead crons faster
 
 /**
  * Detect when agent crons are dead or in error state.
@@ -441,7 +442,7 @@ export function checkStalledWorkflowCrons(): MedicFinding[] {
       WHERE details LIKE '%stalled_workflow_crons%'
         AND details LIKE '%"remediated":true%'
         AND details LIKE ?
-        AND checked_at > datetime('now', '-15 minutes')
+        AND julianday(checked_at) > julianday('now', '-5 minutes')
     `).get(`%${workflow_id}%`) as { ts: string | null };
 
     if (recentRecreate?.ts) continue;
@@ -515,7 +516,7 @@ export function checkOfflineServices(): MedicFinding[] {
               WHERE details LIKE '%offline_service%'
                 AND details LIKE '%"remediated":true%'
                 AND details LIKE ?
-                AND checked_at > datetime('now', '-10 minutes')
+                AND julianday(checked_at) > julianday('now', '-10 minutes')
             `).get(`%${serviceName}%`) as { ts: string | null };
 
             if (recentRestart?.ts) continue;
@@ -601,6 +602,69 @@ export function checkOrphanedInTerminalRuns(): MedicFinding[] {
   return findings;
 }
 
+// ── Check: Gateway Stalling ─────────────────────────────────────────
+
+const GATEWAY_RESTART_COOLDOWN_MS = 20 * 60 * 1000; // 20 min cooldown between restarts
+const GATEWAY_STALL_WINDOW_MS = 15 * 60 * 1000; // 15 min window to check recreate count
+const GATEWAY_STALL_RECREATE_THRESHOLD = 3; // 3+ recreates in window = stalling
+
+/**
+ * Detect gateway scheduler stalling: if crons have been recreated 3+ times
+ * in the last 15 minutes but no stories have been claimed, the gateway itself
+ * is stuck and needs a restart.
+ *
+ * Includes 20-min cooldown to prevent restart storms.
+ */
+export function checkGatewayStalling(): MedicFinding[] {
+  const db = getDb();
+  const findings: MedicFinding[] = [];
+
+  // Check if any active runs exist — no runs = no need to check
+  const activeRuns = db.prepare(
+    "SELECT COUNT(*) as cnt FROM runs WHERE status = 'running'"
+  ).get() as { cnt: number };
+  if (activeRuns.cnt === 0) return findings;
+
+  // Count cron recreates in the last 15 minutes
+  const recreates = db.prepare(`
+    SELECT COUNT(*) as cnt FROM medic_checks
+    WHERE details LIKE '%recreate_crons%'
+      AND details LIKE '%"remediated":true%'
+      AND (julianday('now') - julianday(checked_at)) * 86400000 < ?
+  `).get(GATEWAY_STALL_WINDOW_MS) as { cnt: number };
+
+  if (recreates.cnt < GATEWAY_STALL_RECREATE_THRESHOLD) return findings;
+
+  // Check if any story was claimed in the same window
+  const recentClaims = db.prepare(`
+    SELECT COUNT(*) as cnt FROM stories
+    WHERE status = 'running'
+      AND (julianday('now') - julianday(updated_at)) * 86400000 < ?
+  `).get(GATEWAY_STALL_WINDOW_MS) as { cnt: number };
+
+  if (recentClaims.cnt > 0) return findings; // Claims happening = gateway alive
+
+  // Cooldown: don't restart if we already restarted recently
+  const recentRestart = db.prepare(`
+    SELECT MAX(checked_at) as ts FROM medic_checks
+    WHERE details LIKE '%restart_gateway%'
+      AND details LIKE '%"remediated":true%'
+      AND (julianday('now') - julianday(checked_at)) * 86400000 < ?
+  `).get(GATEWAY_RESTART_COOLDOWN_MS) as { ts: string | null };
+
+  if (recentRestart?.ts) return findings;
+
+  findings.push({
+    check: "gateway_stalling",
+    severity: "critical",
+    message: `Gateway scheduler stalled: ${recreates.cnt} cron recreates in 15min but 0 claims — restarting gateway`,
+    action: "restart_gateway",
+    remediated: false,
+  });
+
+  return findings;
+}
+
 export function runSyncChecks(): MedicFinding[] {
   return [
     ...checkOrphanedInTerminalRuns(),
@@ -612,5 +676,6 @@ export function runSyncChecks(): MedicFinding[] {
     ...checkFailedRunsForResume(),
     ...checkStalledWorkflowCrons(),
     ...checkOfflineServices(),
+    ...checkGatewayStalling(),
   ];
 }
