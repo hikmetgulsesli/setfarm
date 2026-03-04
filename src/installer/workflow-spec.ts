@@ -78,6 +78,7 @@ function parseLoopConfig(raw: any): LoopConfig {
     freshSession: raw.fresh_session ?? raw.freshSession,
     verifyEach: raw.verify_each ?? raw.verifyEach,
     verifyStep: raw.verify_step ?? raw.verifyStep,
+    parallelCount: raw.parallel_count ?? raw.parallelCount,
   };
 }
 

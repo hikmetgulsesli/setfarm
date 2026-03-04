@@ -14,6 +14,7 @@ export type MedicActionType =
   | "recreate_crons"
   | "restart_service"
   | "restart_gateway"
+  | "kill_browser_sessions"
   | "none";
 
 export interface MedicFinding {
@@ -665,6 +666,50 @@ export function checkGatewayStalling(): MedicFinding[] {
   return findings;
 }
 
+
+// ── Orphaned Browser Processes ──────────────────────────────────────
+
+function checkOrphanedBrowserProcesses(): MedicFinding[] {
+  const findings: MedicFinding[] = [];
+  const db = getDb();
+
+  try {
+    let chromiumCount = 0;
+    try {
+      const output = execFileSync("pgrep", ["-cf", "chromium.*--remote-debugging"], {
+        timeout: 5000,
+        stdio: "pipe",
+      }).toString().trim();
+      chromiumCount = parseInt(output, 10) || 0;
+    } catch {
+      return findings; // pgrep exit 1 = no matches
+    }
+
+    if (chromiumCount === 0) return findings;
+
+    // Check if there are active runs — if so, some Chrome processes may be legit
+    const activeRuns = db.prepare(
+      "SELECT COUNT(*) as cnt FROM runs WHERE status = 'running'"
+    ).get() as { cnt: number };
+
+    // Allow up to 2 Chrome processes per active run (main + devtools)
+    const maxExpected = activeRuns.cnt * 2;
+
+    if (chromiumCount > maxExpected) {
+      findings.push({
+        check: "orphaned_browser",
+        severity: "warning",
+        message: `Found ${chromiumCount} Chromium process(es) but only ${activeRuns.cnt} active run(s) — likely orphaned browser sessions`,
+        action: "kill_browser_sessions",
+        remediated: false,
+      });
+    }
+  } catch {
+    // Non-critical — skip silently
+  }
+
+  return findings;
+}
 export function runSyncChecks(): MedicFinding[] {
   return [
     ...checkOrphanedInTerminalRuns(),
@@ -677,5 +722,6 @@ export function runSyncChecks(): MedicFinding[] {
     ...checkStalledWorkflowCrons(),
     ...checkOfflineServices(),
     ...checkGatewayStalling(),
+    ...checkOrphanedBrowserProcesses(),
   ];
 }

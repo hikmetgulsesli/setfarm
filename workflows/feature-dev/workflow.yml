@@ -14,14 +14,14 @@ agent_mapping:
   planner: main
   setup: atlas
   designer: mert
-  developer: [koda, flux, cipher]
+  developer: [koda, flux, cipher, prism, iris]
   reviewer: [sentinel, iris]
   tester: sentinel
   security-gate: sentinel
   deployer: atlas
 
 cron:
-  interval_ms: 240000  # 4 minutes
+  interval_ms: 60000  # 1 minute
 
 polling:
   model: kimi-coding/k2p5
@@ -197,6 +197,7 @@ steps:
         heading_font: <font>
         body_font: <font>
         icon_library: <library>
+      DB_REQUIRED: false/postgres/mariadb/mysql/mongodb (does the project need a database? specify type)
       STORIES_JSON:
       [
         {
@@ -354,6 +355,7 @@ steps:
       fresh_session: true
       verify_each: true
       verify_step: verify
+      parallel_count: 5
     input: |
       ############################################################
       CRITICAL: Do ALL work in THIS session. No sub-agents, no background processes.
@@ -404,6 +406,36 @@ steps:
         Feature/tool grids → first item lg:col-span-2 or unequal column widths.
       - NEVER: emoji icons, purple gradients, transition:all
       - ALWAYS: cursor-pointer on clickables, hover/focus states, focus-visible rings
+
+
+      UI CONTRACT (auto-generated from Stitch design — EVERY element MUST work):
+      {{ui_contract}}
+
+      DESIGN CONTRACT RULES:
+      1. Every navigation link MUST route to its page (install react-router-dom if needed)
+      2. Every button MUST have a functional onClick handler
+      3. Every input MUST have onChange and controlled state
+      4. All hardcoded demo data MUST be replaced with dynamic props/state
+
+      DATABASE (if provisioned — auto-created, use this in .env):
+      Type: {{db_type}} | Connection: {{database_url}}
+      Host: {{db_host}} Port: {{db_port}}
+      Database: {{db_name}} User: {{db_user}} Password: {{db_password}}
+      Write this connection string to the project .env file as DATABASE_URL.
+
+      ## Browser Verification (OPTIONAL — use when dev server is running)
+      After writing code, verify your changes visually:
+      1. If dev server is running, use browser to check:
+         ```bash
+         export AGENT_BROWSER_SESSION="{{current_story_id}}-impl"
+         export AGENT_BROWSER_CONTENT_BOUNDARIES=1
+         agent-browser open http://localhost:$(cat .dev-port 2>/dev/null || echo 3000)
+         agent-browser wait --load networkidle
+         agent-browser snapshot -i
+         ```
+      2. Check if all buttons have handlers, all links route correctly
+      3. If issues found, fix and re-verify
+      4. Always close: `agent-browser close`
 
       === WORKFLOW ===
 
@@ -541,6 +573,13 @@ steps:
          - grep -rE "coming soon|Coming Soon|placeholder|TODO.*implement|work in progress" --include="*.tsx" --include="*.ts" . → FAIL if found as visible UI text content
          - If stitch/DESIGN_MANIFEST.json exists: for each screen listed, verify a corresponding component or page implements it (search by title keywords). Missing screen = FAIL.
          - grep -rE "blue-[0-9]+/[0-9]+" components/ → WARN: likely hardcoded Tailwind color — check if it belongs in design-tokens instead
+      1.7. UI Contract compliance (if stitch/UI_CONTRACT.json exists):
+         - Read UI_CONTRACT.json and verify each element is implemented:
+         - Navigation links → matching Route/page components exist
+         - Buttons → matching onClick handlers exist (not empty)
+         - Inputs → controlled state (onChange + value/checked)
+         - package.json dependencies match contract requirements (router, DnD)
+         - Hardcoded demo names replaced with dynamic props/state
       2. Frontend design checks (if any .css/.tsx changed):
          - grep -rE "font-family.*system-ui|font-family.*Roboto|font-family.*Arial|font-family.*Inter" src/ → FAIL if found (banned fonts)
          - grep -rE "fonts\.googleapis\.com|next/font" src/ → FAIL if missing (no font import)
@@ -554,6 +593,21 @@ steps:
       6. If you found issues and fixed them:
          git add -A && git commit -m "fix: quality + design improvements for {{current_story_id}}"
          git push
+
+
+      STEP 3.5 — Visual Inspection (OPTIONAL — use when dev server is running):
+      If the project has a running instance:
+      1. Open browser:
+         ```bash
+         export AGENT_BROWSER_SESSION="{{current_story_id}}-verify"
+         export AGENT_BROWSER_CONTENT_BOUNDARIES=1
+         agent-browser open http://localhost:$(cat .dev-port 2>/dev/null || echo 3000)
+         agent-browser wait --load networkidle
+         ```
+      2. Take annotated screenshot: `agent-browser screenshot --annotate`
+      3. Verify UI matches acceptance criteria
+      4. Check for visual regressions: `agent-browser diff snapshot`
+      5. Always close: `agent-browser close`
 
       STEP 4 — Rebase onto latest feature branch (prevents merge conflicts):
       1. git fetch origin

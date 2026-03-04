@@ -1836,50 +1836,6 @@ function advancePipeline(runId: string): { advanced: boolean; runCompleted: bool
   }
 }
 
-// ── Process Cleanup (v1.5.15) ───────────────────────────────────────
-
-/**
- * Kill all processes whose working directory is inside the given directory.
- * This prevents orphaned vitest/esbuild/node processes from consuming CPU
- * after a step completes. Uses /proc/<pid>/cwd to detect CWD on Linux.
- */
-function killWorktreeProcesses(dir: string): void {
-  if (process.platform !== "linux") return;
-  try {
-    // Find all PIDs with cwd inside the target directory
-    const result = execSync(
-      `find /proc/[0-9]*/cwd -maxdepth 0 2>/dev/null | while read link; do pid=$(echo "$link" | cut -d/ -f3); target=$(readlink "$link" 2>/dev/null || true); if [ -n "$target" ] && echo "$target" | grep -q "^${dir}"; then echo "$pid"; fi; done`,
-      { timeout: 10_000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8" }
-    ).trim();
-    if (!result) return;
-
-    const pids = result.split("\n").filter(Boolean);
-    if (pids.length === 0) return;
-
-    const myPid = String(process.pid);
-    const parentPid = String(process.ppid);
-
-    for (const pid of pids) {
-      if (pid === myPid || pid === parentPid) continue;
-      try { process.kill(Number(pid), "SIGTERM"); } catch {}
-    }
-
-    // Give processes 2s to exit gracefully, then SIGKILL survivors
-    try { execSync("sleep 2", { timeout: 5_000, stdio: "pipe" }); } catch {}
-    for (const pid of pids) {
-      if (pid === myPid || pid === parentPid) continue;
-      try {
-        process.kill(Number(pid), 0); // Check if still alive
-        process.kill(Number(pid), "SIGKILL");
-      } catch {} // Already dead — good
-    }
-
-    logger.info(`[worktree] Killed ${pids.length} orphaned process(es) in ${dir}`, {});
-  } catch (err) {
-    logger.warn(`[worktree] Process cleanup failed for ${dir}: ${err}`, {});
-  }
-}
-
 // ── Worktree Cleanup (v1.5.4) ───────────────────────────────────────
 
 /**
@@ -1912,8 +1868,6 @@ function cleanupWorktrees(runId: string): void {
       const entries = fs.readdirSync(worktreesDir);
       for (const entry of entries) {
         const entryPath = path.join(worktreesDir, entry);
-        // Kill orphaned processes (vitest, esbuild, etc.) before removing worktree
-        killWorktreeProcesses(entryPath);
         try {
           // Remove node_modules symlink first
           const nmLink = path.join(entryPath, "node_modules");

@@ -11,6 +11,28 @@ You MUST read these reference files before starting implementation:
 
 Follow ALL rules in these references. Violations will cause your PR to be REJECTED.
 
+## CRITICAL: Commit Early, Commit Often
+
+Your session has a time limit. If you don't commit, ALL your work is LOST.
+
+**Rule: Commit after EVERY meaningful change.** Do NOT wait until everything is done.
+
+```bash
+# After creating each file or completing each logical unit:
+git add -A && git commit -m "wip: [description of what you just did]"
+```
+
+**Commit checkpoints (MANDATORY):**
+1. After creating/modifying each component file → commit
+2. After writing utility/helper functions → commit
+3. After adding styles → commit
+4. After writing tests → commit
+5. After fixing build/lint errors → commit
+
+**Final commit:** rename the last WIP commit or create a clean commit + push + PR.
+
+If your session ends before you finish, your committed work is preserved and the next session continues from there. Uncommitted work is PERMANENTLY LOST.
+
 ## Per-Story PR Workflow
 
 Each story you implement gets its **own branch and pull request**. This is the core workflow:

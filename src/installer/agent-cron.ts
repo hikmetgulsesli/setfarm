@@ -3,8 +3,8 @@ import type { WorkflowSpec, AgentMapping } from "./types.js";
 import { resolveSetfarmCli } from "./paths.js";
 import { getDb } from "../db.js";
 
-const DEFAULT_EVERY_MS = 300_000; // 5 minutes
-const DEFAULT_AGENT_TIMEOUT_SECONDS = 30 * 60; // 30 minutes
+const DEFAULT_EVERY_MS = 30_000; // 30 seconds
+const DEFAULT_AGENT_TIMEOUT_SECONDS = 15 * 60; // 15 minutes
 
 function buildAgentPrompt(workflowId: string, agentId: string): string {
   const fullAgentId = `${workflowId}_${agentId}`;
@@ -108,64 +108,41 @@ export function buildPollingPrompt(workflowId: string, agentId: string): string 
   const fullAgentId = `${workflowId}_${agentId}`;
   const cli = resolveSetfarmCli();
 
-  return `You are a Setfarm workflow agent. Check for pending work and execute it inline.
+  return `You are a workflow agent. Check for work and do it.
 
-⚠️ CRITICAL SESSION INDEPENDENCE: Each cron tick is a COMPLETELY INDEPENDENT session.
-You have NO memory of previous work. Even if you "just" completed a step, that was a DIFFERENT session.
-You MUST run "step peek" FIRST — NEVER say "I already claimed X" or "I just finished X".
-If you skip peek and assume there's no work, the pipeline WILL stall.
-
-⚠️ CRITICAL: If you claim work, you MUST call "step complete" or "step fail" before ending your session. If you don't, the workflow will be stuck forever.
-
-Step 1 — Quick check for pending work (lightweight, no side effects):
+STEP 1 — Peek:
 \`\`\`
 /usr/bin/node ${cli} step peek "${fullAgentId}"
 \`\`\`
-If output is "NO_WORK", reply HEARTBEAT_OK and stop immediately. Do NOT run step claim.
+If output is "NO_WORK" → reply with ONLY the word "HEARTBEAT_OK" and STOP. Do NOT run any other commands. Your session is DONE.
 
-Step 2 — If "HAS_WORK", claim the step:
+STEP 2 — Claim (only if HAS_WORK):
 \`\`\`
 /usr/bin/node ${cli} step claim "${fullAgentId}"
 \`\`\`
-If output is "NO_WORK", reply HEARTBEAT_OK and stop.
+If "NO_WORK" → reply "HEARTBEAT_OK" and STOP.
+If JSON returned → save stepId, read input field, do the work described in it.
 
-Step 3 — If JSON is returned, it contains: {"stepId": "...", "runId": "...", "input": "..."}
-Save the stepId — you'll need it to report completion.
-The "input" field contains your FULLY RESOLVED task instructions. Read it carefully and DO the work.
+STEP 3 — Do the work. No narration. Just execute.
 
-Step 4 — Do the work described in the input. Format your output with KEY: value lines as specified in the input.
-
-⚠️ IMPORTANT: Do NOT narrate what you will do — just DO it. Never say "I will now run step complete" as text. Instead, immediately execute the tool call. Text without action = wasted turn.
-
-Step 5 — MANDATORY: Report completion (do this IMMEDIATELY after finishing the work):
+STEP 4 — Report (MANDATORY, do this IMMEDIATELY after work):
 \`\`\`
 cat <<'SETFARM_EOF' > .setfarm-step-output.txt
-<YOUR OUTPUT HERE — use the EXACT format specified in the step input above, including ALL required keys like STORIES_JSON, REPO, BRANCH etc.>
+<output in EXACT format from step input>
 SETFARM_EOF
 cat .setfarm-step-output.txt | /usr/bin/node ${cli} step complete "<stepId>"
 \`\`\`
+On failure: /usr/bin/node ${cli} step fail "<stepId>" "reason"
 
-CRITICAL: The output format in the heredoc MUST match what the step input asks for. Do NOT use a generic STATUS/CHANGES/TESTS format — read the step input and replicate its MANDATORY OUTPUT FORMAT exactly.
+STEP 5 — STOP. After step complete or step fail, your session is DONE. Reply "HEARTBEAT_OK" and produce NO more tool calls. Do NOT check for more work. Do NOT run peek again. STOP IMMEDIATELY.
 
-If the work FAILED:
-\`\`\`
-/usr/bin/node ${cli} step fail "<stepId>" "description of what went wrong"
-\`\`\`
-
-RULES:
-1. NEVER end your session without calling step complete or step fail — this is the #1 cause of pipeline stalls
-2. Write output to a file first, then pipe via stdin (shell escaping breaks direct args)
-3. If you're unsure whether to complete or fail, call step fail with an explanation
-4. Do NOT call sessions_spawn — do all work directly in this session
-5. NEVER run destructive commands: workflow stop, workflow uninstall, uninstall — these kill the entire pipeline and are FORBIDDEN
-6. If step complete or step fail returns an error or "Step not found", the step was already handled externally — STOP immediately and reply HEARTBEAT_OK
-7. Before starting long work (>2 min), verify the step is still valid:
-   /usr/bin/node ${cli} step peek "${fullAgentId}"
-   If NO_WORK, the step was cancelled/failed externally — STOP and reply HEARTBEAT_OK
-8. NEVER say "I will do X next" as your final message — if you have something to do, DO IT as a tool call. Your session may end after any text response.
-9. Prioritize step complete/fail over all other actions. If you created a PR but haven't called step complete yet, call it IMMEDIATELY — do not do more checks.
-
-The workflow cannot advance until you report. Your session ending without reporting = broken pipeline.`;
+ABSOLUTE RULES:
+- After NO_WORK, step complete, or step fail → SESSION IS OVER. No more tool calls. Reply HEARTBEAT_OK only.
+- NEVER skip peek. Each session is independent with zero memory.
+- NEVER run: workflow stop, workflow uninstall, uninstall, sessions_spawn
+- If step complete returns error → STOP, reply HEARTBEAT_OK
+- Write output to file first, pipe via stdin (never as CLI arg)
+- Prioritize step complete over everything. PR created but no step complete yet? Do step complete NOW.`;
 }
 
 export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
@@ -180,7 +157,7 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
 
   for (let i = 0; i < agents.length; i++) {
     const agent = agents[i];
-    const anchorMs = i * 40_000; // stagger by 40s each
+    const anchorMs = i * 15_000; // stagger by 15s each
     const cronName = `setfarm/${workflow.id}/${agent.id}`;
     // Use mapped OpenClaw agent ID if available, otherwise fall back to workflow agent ID
     const rawMappedId = agentMapping[agent.id];
@@ -225,7 +202,7 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
         const pName = `setfarm/${workflow.id}/${agent.id}-${n}`;
         await createAgentCronJob({
           name: pName,
-          schedule: { kind: "every", everyMs, anchorMs: anchorMs + n * 40_000 },
+          schedule: { kind: "every", everyMs, anchorMs: anchorMs + n * 15_000 },
           sessionTarget: "isolated",
           agentId: agentForCron,
           payload: { kind: "agentTurn", message: prompt, timeoutSeconds },

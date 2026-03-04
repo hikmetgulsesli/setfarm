@@ -172,6 +172,25 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
     }
 
 case "restart_service": {      if (!finding.serviceName) return false;      try {        execFileSync("systemctl", ["--user", "start", finding.serviceName], {          encoding: "utf-8",          timeout: 10000,        });        emitEvent({          ts: new Date().toISOString(),          event: "step.done" as EventType,          runId: finding.runId ?? "",          detail: "Medic: restarted offline service " + finding.serviceName,        });        return true;      } catch (err) {        return false;      }    }
+
+    case "restart_gateway": {
+      try {
+        execFileSync("systemctl", ["--user", "restart", "openclaw-gateway"], {
+          encoding: "utf-8",
+          timeout: 30000,
+        });
+        emitEvent({
+          ts: new Date().toISOString(),
+          event: "run.resumed" as EventType,
+          runId: finding.runId ?? "",
+          detail: "Medic: gateway scheduler stalled — restarted openclaw-gateway",
+        });
+        return true;
+      } catch (err) {
+        return false;
+      }
+    }
+
     case "fail_run": {
       if (!finding.runId) return false;
       const run = db.prepare("SELECT status, workflow_id FROM runs WHERE id = ?").get(finding.runId) as { status: string; workflow_id: string } | undefined;
@@ -382,6 +401,25 @@ CHANGES: Medic v6: merged PR found — awaiting verifier review`,
       }
     }
 
+    case "kill_browser_sessions": {
+      try {
+        const { killOrphanedBrowserSessions } = await import("../installer/browser-tools.js");
+        const killed = killOrphanedBrowserSessions();
+        if (killed > 0) {
+          emitEvent({
+            ts: new Date().toISOString(),
+            event: "step.done" as EventType,
+            runId: finding.runId ?? "",
+            detail: `Medic: killed ${killed} orphaned Chromium process(es)`,
+          });
+          return true;
+        }
+        return false;
+      } catch {
+        return false;
+      }
+    }
+
     case "none":
     default:
       return false;
@@ -401,6 +439,7 @@ export interface MedicCheckResult {
 
 /**
  * Restore crons for any active runs that lost them (e.g. after gateway restart).
+ * Also detects overdue crons (nextRunAtMs in the past) and force-recreates them.
  * Called once at medic startup and periodically during checks.
  */
 export async function restoreActiveRunCrons(): Promise<number> {
@@ -410,11 +449,46 @@ export async function restoreActiveRunCrons(): Promise<number> {
   ).all() as Array<{ workflow_id: string }>;
 
   let restored = 0;
+
+  // Check for overdue crons — if any setfarm cron's nextRunAtMs is > 5 min in the past,
+  // the gateway scheduler has stalled. Force-recreate all crons for that workflow.
+  const OVERDUE_THRESHOLD_MS = 5 * 60 * 1000; // 5 min
+  let overdueCronWorkflows = new Set<string>();
+  try {
+    const cronResult = await listCronJobs();
+    if (cronResult.ok && cronResult.jobs) {
+      const now = Date.now();
+      for (const job of cronResult.jobs) {
+        if (!job.name.startsWith("setfarm/")) continue;
+        const nextRun = (job as any).state?.nextRunAtMs ?? 0;
+        if (nextRun > 0 && (now - nextRun) > OVERDUE_THRESHOLD_MS) {
+          // Extract workflow ID from cron name: setfarm/<workflow_id>/<agent>
+          const parts = job.name.split("/");
+          if (parts.length >= 3) overdueCronWorkflows.add(parts[1]);
+        }
+      }
+    }
+  } catch {}
+
   for (const run of activeRuns) {
     try {
       const workflowDir = resolveWorkflowDir(run.workflow_id);
       const workflow = await loadWorkflowSpec(workflowDir);
-      await ensureWorkflowCrons(workflow);
+
+      if (overdueCronWorkflows.has(run.workflow_id)) {
+        // Crons are overdue — force-recreate with fresh anchors
+        await removeAgentCrons(run.workflow_id);
+        await setupAgentCrons(workflow);
+        emitEvent({
+          ts: new Date().toISOString(),
+          event: "run.resumed" as EventType,
+          runId: "",
+          workflowId: run.workflow_id,
+          detail: `Medic: overdue crons detected for "${run.workflow_id}" — force-recreated`,
+        });
+      } else {
+        await ensureWorkflowCrons(workflow);
+      }
       restored++;
     } catch (err) {
       // Workflow may not exist anymore — skip
@@ -515,7 +589,7 @@ export function getMedicStatus(): MedicStatus {
     const stats = db.prepare(`
       SELECT COUNT(*) as checks, COALESCE(SUM(issues_found), 0) as issues, COALESCE(SUM(actions_taken), 0) as actions
       FROM medic_checks
-      WHERE checked_at > datetime('now', '-24 hours')
+      WHERE julianday(checked_at) > julianday('now', '-24 hours')
     `).get() as { checks: number; issues: number; actions: number };
 
     return {

@@ -125,7 +125,12 @@ The developer is expected to write unit tests alongside the implementation. The 
 
 ## Max Stories
 
-Maximum **20 stories** per run. If the task genuinely needs more, the task is too big — suggest splitting the task itself.
+Maximum **30 stories** per run. Each story MUST be small enough to complete in a single 30-minute session:
+- **Max 3-4 files** changed per story
+- **One logical unit** of work (e.g. "create users table + seed data", NOT "create all 7 tables + auth + UI")
+- Split large modules into backend + frontend stories (e.g. "Customer API" then "Customer List UI" then "Customer Form UI")
+- Setup stories should do ONE thing (e.g. "DB schema" separate from "Auth setup" separate from "Layout + routing")
+- If a story has more than 5 acceptance criteria, it is too big — split it.
 
 ## Output Format
 

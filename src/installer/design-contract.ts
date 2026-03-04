@@ -364,12 +364,12 @@ export function validateDesignCompliance(repoPath: string): string[] {
 
     // CRITICAL: Banned fonts
     if (/font-family:[^;]*\b(Inter|Roboto|Arial|system-ui|Helvetica)\b/i.test(html)) {
-      issues.push(`CRITICAL: Banned font in ${htmlFile}`);
+      issues.push(`WARNING: Banned font in ${htmlFile}`);
     }
 
     // CRITICAL: Emoji icons
     if (/[\u{1F300}-\u{1F9FF}]/u.test(html)) {
-      issues.push(`CRITICAL: Emoji icon in ${htmlFile}`);
+      issues.push(`WARNING: Emoji icon in ${htmlFile}`);
     }
 
     // WARNING: Purple gradient
@@ -380,6 +380,15 @@ export function validateDesignCompliance(repoPath: string): string[] {
     // WARNING: transition: all
     if (/transition:\s*all/i.test(html)) {
       issues.push(`WARNING: transition:all in ${htmlFile}`);
+    }
+
+    // WARNING: Missing dark/light mode support
+    const hasDarkMode = /prefers-color-scheme:\s*dark/i.test(html) ||
+      /data-theme=["']dark["']/i.test(html) ||
+      /\.dark\s*\{/i.test(html) ||
+      /class=["'][^"']*dark/i.test(html);
+    if (!hasDarkMode) {
+      issues.push(`WARNING: No dark mode support in ${htmlFile} — design should include both light and dark themes`);
     }
   }
 

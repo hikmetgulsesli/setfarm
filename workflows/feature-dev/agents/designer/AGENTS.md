@@ -37,6 +37,18 @@ node /home/setrox/.openclaw/setfarm-repo/scripts/stitch-api.mjs download "<url>"
 - Stories with no user-facing UI component
 - Report `SCREENS_GENERATED: 0` for these — this is valid
 
+## MANDATORY: Dark & Light Mode
+
+Every UI screen MUST include both light and dark mode styles. Include this in EVERY Stitch prompt:
+
+```
+Theme: Include both light and dark mode. Use CSS prefers-color-scheme media query or data-theme attribute.
+Light mode: [light background, dark text, lighter surfaces]
+Dark mode: [dark background, light text, darker surfaces with subtle borders]
+```
+
+The generated HTML must contain `prefers-color-scheme: dark` media query or `[data-theme="dark"]` / `.dark` CSS selectors. This is validated automatically — missing dark mode triggers a warning.
+
 ## Design Prompt Construction
 
 Build detailed Stitch prompts from story descriptions:
@@ -49,6 +61,7 @@ Color scheme: [from DESIGN_SYSTEM — primary, accent, surface colors]
 Typography: heading font [name], body font [name]
 Components: [list specific UI elements from the story]
 Style: [aesthetic direction — minimal, modern, professional, etc.]
+Theme: Both light and dark mode with prefers-color-scheme support
 Device: [DESKTOP/MOBILE/TABLET]
 ```
 
