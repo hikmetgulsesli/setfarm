@@ -197,7 +197,7 @@ steps:
         heading_font: <font>
         body_font: <font>
         icon_library: <library>
-      DB_REQUIRED: false/postgres/mariadb/mysql/mongodb (does the project need a database? specify type)
+      DB_REQUIRED: false/postgres (if project needs a database, use postgres. External PostgreSQL: host=***REMOVED*** port=37550 user=postgres pass=***REMOVED***)
       STORIES_JSON:
       [
         {
@@ -238,6 +238,14 @@ steps:
       4. Create feature branch: git checkout -b {{branch}}
       5. Read package.json, test config to understand build/test setup
       6. Run build + tests to establish baseline
+      DATABASE SETUP (when DB_REQUIRED is postgres):
+      - Use external PostgreSQL: host=***REMOVED*** port=37550 user=postgres pass=***REMOVED***
+      - Create database: psql "postgresql://postgres:***REMOVED***@***REMOVED***:37550/postgres" -c "CREATE DATABASE <project_db_name>;" (ignore if exists)
+      - Create app user if needed, grant permissions
+      - Store connection string in .env file (never commit .env)
+      - Use Drizzle ORM or Prisma for schema management
+      - NEVER use \gexec or psql meta-commands with -c flag — use plain SQL only
+
       7. Create references symlink: ln -sfn /home/setrox/.openclaw/setfarm-repo/references references
       8. Push: git push -u origin {{branch}}
 
