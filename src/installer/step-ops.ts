@@ -587,6 +587,14 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   // No fallback extraction — if upstream didn't output required keys,
   // the missing input guard will catch it and fail cleanly.
 
+  // EAGER CONTEXT SAVE: Persist merged context BEFORE guardrail checks.
+  // Guardrails (test, quality, db-provision) may call failStep + return early,
+  // which previously skipped the context save — losing parsed output keys.
+  db.prepare(
+    "UPDATE runs SET context = ?, updated_at = ? WHERE id = ?"
+  ).run(JSON.stringify(context), new Date().toISOString(), step.run_id);
+
+
   // TEST FAILURE GUARDRAIL
   if (parsed["status"]?.toLowerCase() === "done") {
     const testFailMsg = checkTestFailures(output);
