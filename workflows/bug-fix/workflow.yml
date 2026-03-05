@@ -217,6 +217,11 @@ steps:
       5. Run {{test_cmd}} to verify all tests pass
       6. Commit: fix: brief description of the fix
 
+      STITCH DESIGN GUARD (if stitch/ directory exists in the repo):
+      - Do NOT create inline UI overlays in page files if dedicated components exist in components/
+      - If you modify UI files, check components/ for existing screen components and use them
+      - NEVER duplicate or replace a Stitch-generated component with inline code
+
       Reply with:
       STATUS: done
       CHANGES: what was changed

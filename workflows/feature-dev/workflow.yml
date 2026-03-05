@@ -384,7 +384,7 @@ steps:
 
       BEFORE writing code:
       1. Read the FULL story description and ALL acceptance criteria before coding
-      2. Read references/design-standards.md + references/backend-standards.md
+      2. Read references/design-standards.md + references/backend-standards.md + references/react-best-practices.md
       3. If stitch/ directory exists:
          a. Read stitch/DESIGN_MANIFEST.json → find this story's screen
          b. Read stitch/<story-id>.html for layout reference
