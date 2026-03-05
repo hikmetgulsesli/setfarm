@@ -412,6 +412,8 @@ steps:
          c. Read stitch/design-tokens.css for colors/fonts/spacing
          d. Implementation MUST match Stitch design (layout, colors, fonts)
          e. NEVER use fonts/colors NOT in design-tokens.css
+         f. You MUST @import or copy stitch/design-tokens.css into your main CSS file — do NOT recreate tokens.
+         g. stitch/design-tokens.css is the SINGLE SOURCE OF TRUTH for all design values.
 
       DESIGN ENFORCEMENT (frontend stories — MANDATORY checklist before commit):
       - FONTS: Google Fonts <link> in layout <head> (NOT next/font for static exports).
@@ -585,6 +587,7 @@ steps:
          - No hardcoded secrets, .env not committed
       1.5. Stitch design compliance (if stitch/ exists):
          - Check CSS vars from stitch/design-tokens.css are used
+         - FAIL if main CSS file has custom tokens that duplicate stitch/design-tokens.css values (agent must not recreate tokens)
          - grep hardcoded colors not in design-tokens → WARN
          - Verify fonts match stitch/DESIGN_MANIFEST.json
       1.6. Completeness checks (CRITICAL - FAIL if any found):
@@ -977,17 +980,36 @@ steps:
       Detect port from MC: curl -s http://127.0.0.1:3080/api/projects/$(basename {{repo}}) | jq '.ports.frontend'
       curl -sf http://127.0.0.1:$PORT/ > /dev/null
 
-      C4 — Update MC metadata:
-      # Verify project exists in MC; if not, register it
-      MC_CHECK=$(curl -sf http://127.0.0.1:3080/api/projects/$(basename {{repo}}) 2>/dev/null | grep -c '"id"' || echo "0")
+      C4 — Update MC metadata (ALWAYS update, even if project exists):
+      PROJECT_NAME=$(basename {{repo}})
+      GITHUB_URL=$(cd {{repo}} && git remote get-url origin 2>/dev/null | sed 's/.git$//' || echo "")
+      GITHUB_SLUG=$(echo "$GITHUB_URL" | sed 's|https://github.com/||')
+      SERVICE_NAME="${PROJECT_NAME}.service"
+      STACK_JSON=$(cd {{repo}} && node -e "const p=require('./package.json'); const d={...p.dependencies,...p.devDependencies}; const s=[]; if(d.react)s.push('React'); if(d.next)s.push('Next.js'); if(d.express)s.push('Express'); if(d.vite)s.push('Vite'); if(d.typescript)s.push('TypeScript'); if(d.tailwindcss||d['@tailwindcss/postcss'])s.push('Tailwind CSS'); console.log(JSON.stringify(s))" 2>/dev/null || echo '[]')
+      
+      # Check if project exists in MC; if not, register it first
+      MC_CHECK=$(curl -sf http://127.0.0.1:3080/api/projects/$PROJECT_NAME 2>/dev/null | grep -c '"id"' || echo "0")
       if [ "$MC_CHECK" = "0" ]; then
         echo "Project not in MC — registering..."
-        GITHUB_URL=$(cd {{repo}} && git remote get-url origin 2>/dev/null | sed 's/.git$//' || echo "")
-        GITHUB_SLUG=$(echo "$GITHUB_URL" | sed 's|https://github.com/||')
-        PROJECT_NAME=$(basename {{repo}})
-        curl -sf -X POST http://127.0.0.1:3080/api/projects           -H 'Content-Type: application/json'           -d "{"name":"$PROJECT_NAME","description":"{{task}}","repo":"{{repo}}","port":$PORT,"domain":"${PROJECT_NAME}.setrox.com.tr","github":"$GITHUB_SLUG"}"
+        curl -sf -X POST http://127.0.0.1:3080/api/projects \
+          -H 'Content-Type: application/json' \
+          -d '{"name":"'$PROJECT_NAME'","description":"{{task}}","repo":"{{repo}}","domain":"'$PROJECT_NAME'.setrox.com.tr","github":"'$GITHUB_SLUG'"}'
       fi
-
+      
+      # ALWAYS PATCH with current port, service, stack, checklist
+      # This ensures MC is complete even if project was pre-registered by setup step
+      curl -sf -X PATCH http://127.0.0.1:3080/api/projects/$PROJECT_NAME \
+        -H 'Content-Type: application/json' \
+        -d '{"ports":{"frontend":'$PORT'},"service":"'$PROJECT_NAME'","serviceStatus":"running","stack":'$STACK_JSON',"checklist":[{"id":"task-received","label":"Gorev iletildi","completed":true},{"id":"github-repo","label":"GitHub repo olusturuldu","completed":true},{"id":"dns-setup","label":"Cloudflare DNS ve subdomain olusturuldu","completed":true},{"id":"added-to-projects","label":"Projeler bolumune eklendi","completed":true},{"id":"ports-assigned","label":"Portlar belirlendi","completed":true},{"id":"setup-run","label":"Setup calistirildi","completed":true},{"id":"dev-started","label":"Gelistirici calismaya basladi","completed":true},{"id":"test-review","label":"Test ve review tamamlandi","completed":true}]}'
+      
+      # Verify PATCH worked
+      MC_PORT=$(curl -sf http://127.0.0.1:3080/api/projects/$PROJECT_NAME 2>/dev/null | python3 -c "import json,sys; p=json.load(sys.stdin); print(p.get('ports',{}).get('frontend',''))" 2>/dev/null || echo "")
+      if [ -z "$MC_PORT" ] || [ "$MC_PORT" = "None" ]; then
+        echo "WARNING: MC PATCH may have failed — port not set after update"
+      else
+        echo "MC updated: port=$MC_PORT, service=$PROJECT_NAME"
+      fi
+      
       → OUTPUT: DEPLOY_TYPE=update, existing service restarted.
 
       ┌─────────────────────────────────────────────────────────┐
