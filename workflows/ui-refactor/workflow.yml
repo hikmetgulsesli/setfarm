@@ -238,6 +238,14 @@ steps:
       2. Read the existing design tokens file to know available tokens
       3. Understand the current patterns before replacing them
 
+      STITCH COMPONENT IMPORT RULES (MANDATORY — NO EXCEPTIONS):
+      1. If stitch/ directory has screen HTML files, there MUST be corresponding React components in components/
+      2. These screen components MUST be imported and rendered in the main page (app/page.tsx or equivalent)
+      3. NEVER create inline/duplicate overlay or screen implementations in page files
+      4. NEVER write game state overlays (start, pause, game-over) directly inside page.tsx — ALWAYS use dedicated components
+      5. If a component exists in components/ that matches a Stitch screen, you MUST use it — do NOT recreate it
+      6. After implementation, verify: every file in stitch/DESIGN_MANIFEST.json screens has a matching import in the render tree
+
       === REFACTORING RULES ===
 
       - ONLY change styling/design code — never change component logic or behavior
@@ -343,6 +351,13 @@ steps:
       1. Verify NO hardcoded color values remain in changed files
       2. Verify ALL replacements use correct tokens (check against tokens file)
       3. Verify no behavior changes — only styling/design changes
+      1.56. Stitch component import verification (if stitch/ exists):
+         - List all screen HTML files in stitch/ directory
+         - For each screen, verify a corresponding React component exists in components/
+         - CRITICAL: Verify that each screen component is IMPORTED in app/page.tsx (or main entry)
+         - grep for inline overlay/modal implementations in page.tsx — if found, FAIL
+         - Patterns to flag: gameState conditions rendering plain text overlays without component imports
+         - FAIL REASON: "Stitch screen components exist but are not imported in render tree — inline duplicates detected"
       4. Grep for remaining hardcoded patterns in changed files:
          - dark-[0-9] classes
          - Inline style={{ color: '#...' }} or backgroundColor: '#...'
