@@ -106,15 +106,7 @@ steps:
   - id: scan
     agent: scanner
     input: |
-      ############################################################
-      CRITICAL EXECUTION RULES — VIOLATION BREAKS THE PIPELINE
-      ############################################################
-      - You MUST do ALL work directly in this session. Do NOT spawn sub-agents.
-      - Do NOT delegate to background processes. Do NOT use nohup or &.
-      - Do NOT create parallel tasks. Work sequentially in THIS session.
-      - Complete ALL steps (code, test, commit, push, PR) before replying.
-      - If a task is too complex, simplify your implementation — do NOT delegate.
-      ############################################################
+      !include critical-preamble.md
 
       Perform a comprehensive security audit of the codebase.
 
@@ -161,15 +153,7 @@ steps:
   - id: prioritize
     agent: prioritizer
     input: |
-      ############################################################
-      CRITICAL EXECUTION RULES — VIOLATION BREAKS THE PIPELINE
-      ############################################################
-      - You MUST do ALL work directly in this session. Do NOT spawn sub-agents.
-      - Do NOT delegate to background processes. Do NOT use nohup or &.
-      - Do NOT create parallel tasks. Work sequentially in THIS session.
-      - Complete ALL steps (code, test, commit, push, PR) before replying.
-      - If a task is too complex, simplify your implementation — do NOT delegate.
-      ############################################################
+      !include critical-preamble.md
 
       Prioritize and group the security findings into a fix plan.
 
@@ -210,15 +194,7 @@ steps:
   - id: setup
     agent: setup
     input: |
-      ############################################################
-      CRITICAL EXECUTION RULES — VIOLATION BREAKS THE PIPELINE
-      ############################################################
-      - You MUST do ALL work directly in this session. Do NOT spawn sub-agents.
-      - Do NOT delegate to background processes. Do NOT use nohup or &.
-      - Do NOT create parallel tasks. Work sequentially in THIS session.
-      - Complete ALL steps (code, test, commit, push, PR) before replying.
-      - If a task is too complex, simplify your implementation — do NOT delegate.
-      ############################################################
+      !include critical-preamble.md
 
       Prepare the environment for security fixes.
 
@@ -253,15 +229,7 @@ steps:
       verify_each: true
       verify_step: verify
     input: |
-      ############################################################
-      CRITICAL EXECUTION RULES — VIOLATION BREAKS THE PIPELINE
-      ############################################################
-      - You MUST do ALL work directly in this session. Do NOT spawn sub-agents.
-      - Do NOT delegate to background processes. Do NOT use nohup or &.
-      - Do NOT create parallel tasks. Work sequentially in THIS session.
-      - Complete ALL steps (code, test, commit, push, PR) before replying.
-      - If a task is too complex, simplify your implementation — do NOT delegate.
-      ############################################################
+      !include critical-preamble.md
 
       Implement a security fix. You are working on ONE fix in a fresh session.
 
@@ -309,15 +277,7 @@ steps:
   - id: verify
     agent: verifier
     input: |
-      ############################################################
-      CRITICAL EXECUTION RULES — VIOLATION BREAKS THE PIPELINE
-      ############################################################
-      - You MUST do ALL work directly in this session. Do NOT spawn sub-agents.
-      - Do NOT delegate to background processes. Do NOT use nohup or &.
-      - Do NOT create parallel tasks. Work sequentially in THIS session.
-      - Complete ALL steps (code, test, commit, push, PR) before replying.
-      - If a task is too complex, simplify your implementation — do NOT delegate.
-      ############################################################
+      !include critical-preamble.md
 
       Verify the security fix is correct and the vulnerability is patched.
 
@@ -366,15 +326,7 @@ steps:
   - id: test
     agent: tester
     input: |
-      ############################################################
-      CRITICAL EXECUTION RULES — VIOLATION BREAKS THE PIPELINE
-      ############################################################
-      - You MUST do ALL work directly in this session. Do NOT spawn sub-agents.
-      - Do NOT delegate to background processes. Do NOT use nohup or &.
-      - Do NOT create parallel tasks. Work sequentially in THIS session.
-      - Complete ALL steps (code, test, commit, push, PR) before replying.
-      - If a task is too complex, simplify your implementation — do NOT delegate.
-      ############################################################
+      !include critical-preamble.md
 
       Final integration testing after all security fixes.
 
@@ -418,15 +370,7 @@ steps:
   - id: pr
     agent: pr
     input: |
-      ############################################################
-      CRITICAL EXECUTION RULES — VIOLATION BREAKS THE PIPELINE
-      ############################################################
-      - You MUST do ALL work directly in this session. Do NOT spawn sub-agents.
-      - Do NOT delegate to background processes. Do NOT use nohup or &.
-      - Do NOT create parallel tasks. Work sequentially in THIS session.
-      - Complete ALL steps (code, test, commit, push, PR) before replying.
-      - If a task is too complex, simplify your implementation — do NOT delegate.
-      ############################################################
+      !include critical-preamble.md
 
       Create a pull request for the security fixes.
 

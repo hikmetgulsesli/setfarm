@@ -419,3 +419,293 @@ function detectDeviceType(html: string): "DESKTOP" | "MOBILE" | "TABLET" {
   if (/max-width:\s*(768|834|1024)px/i.test(html)) return "TABLET";
   return "DESKTOP";
 }
+
+
+// --- Layout Skeleton Extraction ---
+
+/** Layout-relevant CSS properties to extract */
+const LAYOUT_CSS_PROPS = new Set([
+  "display", "flex-direction", "flex-wrap", "grid-template-columns", "grid-template-rows",
+  "gap", "row-gap", "column-gap", "padding", "border", "border-radius", "background",
+  "background-color", "width", "height", "min-width", "min-height", "max-width", "max-height",
+  "align-items", "justify-content", "align-self", "justify-self", "margin", "position",
+  "overflow", "box-shadow",
+]);
+
+/** Tailwind classes relevant to layout */
+const TAILWIND_LAYOUT_RE = /\b(flex|inline-flex|grid|inline-grid|block|inline-block|hidden|gap-\S+|p-\S+|px-\S+|py-\S+|pt-\S+|pb-\S+|pl-\S+|pr-\S+|m-\S+|mx-\S+|my-\S+|mt-\S+|mb-\S+|ml-\S+|mr-\S+|rounded\S*|border\S*|w-\S+|h-\S+|min-w-\S+|min-h-\S+|max-w-\S+|max-h-\S+|items-\S+|justify-\S+|self-\S+|col-span-\S+|row-span-\S+|grid-cols-\S+|grid-rows-\S+|flex-row|flex-col|flex-wrap|flex-nowrap|space-x-\S+|space-y-\S+|overflow-\S+|relative|absolute|fixed|sticky)\b/g;
+
+interface CSSMap {
+  [selector: string]: Record<string, string>;
+}
+
+interface SkeletonNode {
+  tag: string;
+  className: string;
+  styles: Record<string, string>;
+  tailwindClasses: string[];
+  textHint: string;
+  repeatHint: string;
+  children: SkeletonNode[];
+}
+
+/** Parse <style> blocks and extract class-to-CSS-properties map (layout-relevant only) */
+export function parseStyleBlock(html: string): CSSMap {
+  const cssMap: CSSMap = {};
+  const styleRe = /<style[^>]*>([\s\S]*?)<\/style>/gi;
+  let m: RegExpExecArray | null;
+
+  while ((m = styleRe.exec(html)) !== null) {
+    const css = m[1];
+    const ruleRe = /([^{}]+)\{([^{}]+)\}/g;
+    let rm: RegExpExecArray | null;
+    while ((rm = ruleRe.exec(css)) !== null) {
+      const selectors = rm[1].trim();
+      const declarations = rm[2].trim();
+
+      for (const sel of selectors.split(",")) {
+        const trimSel = sel.trim();
+        if (!trimSel || trimSel.startsWith("@")) continue;
+
+        const props: Record<string, string> = {};
+        for (const decl of declarations.split(";")) {
+          const colonIdx = decl.indexOf(":");
+          if (colonIdx < 0) continue;
+          const prop = decl.substring(0, colonIdx).trim().toLowerCase();
+          const value = decl.substring(colonIdx + 1).trim();
+          if (LAYOUT_CSS_PROPS.has(prop)) {
+            props[prop] = value;
+          }
+        }
+        if (Object.keys(props).length > 0) {
+          cssMap[trimSel] = { ...(cssMap[trimSel] || {}), ...props };
+        }
+      }
+    }
+  }
+  return cssMap;
+}
+
+/** Container tags worth including in skeleton */
+const CONTAINER_TAGS = new Set(["div", "section", "header", "main", "nav", "footer", "article", "aside", "ul", "ol", "form", "body"]);
+
+/** Extract layout skeleton from HTML */
+export function extractLayoutSkeleton(html: string, screenId: string): SkeletonNode[] {
+  const cssMap = parseStyleBlock(html);
+
+  const cleanHtml = html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "");
+
+  function parseNodes(content: string, depth: number): SkeletonNode[] {
+    if (depth > 5) return [];
+    const nodes: SkeletonNode[] = [];
+    const tagRe = /<([\w-]+)([^>]*)>([\s\S]*?)<\/\1>/gi;
+    let tm: RegExpExecArray | null;
+
+    while ((tm = tagRe.exec(content)) !== null) {
+      const tag = tm[1].toLowerCase();
+      const attrs = tm[2];
+      const inner = tm[3];
+
+      const isContainer = CONTAINER_TAGS.has(tag);
+      const isHeading = /^h[1-6]$/.test(tag);
+      const isButton = tag === "button";
+      const isCanvas = tag === "canvas";
+
+      if (!isContainer && !isHeading && !isButton && !isCanvas) continue;
+
+      const classMatch = attrs.match(/class=["']([^"']*)["']/i);
+      const className = classMatch ? classMatch[1].trim() : "";
+
+      let styles: Record<string, string> = {};
+      if (className) {
+        for (const cls of className.split(/\s+/)) {
+          const dotCls = "." + cls;
+          if (cssMap[dotCls]) {
+            styles = { ...styles, ...cssMap[dotCls] };
+          }
+        }
+      }
+      if (cssMap[tag]) {
+        styles = { ...cssMap[tag], ...styles };
+      }
+
+      const inlineStyleMatch = attrs.match(/style=["']([^"']*)["']/i);
+      if (inlineStyleMatch) {
+        for (const decl of inlineStyleMatch[1].split(";")) {
+          const colonIdx = decl.indexOf(":");
+          if (colonIdx < 0) continue;
+          const prop = decl.substring(0, colonIdx).trim().toLowerCase();
+          const value = decl.substring(colonIdx + 1).trim();
+          if (LAYOUT_CSS_PROPS.has(prop)) {
+            styles[prop] = value;
+          }
+        }
+      }
+
+      const tailwindClasses: string[] = [];
+      if (className) {
+        const twMatches = className.match(TAILWIND_LAYOUT_RE);
+        if (twMatches) tailwindClasses.push(...twMatches);
+      }
+
+      const textContent = inner.replace(/<[^>]*>/g, "").trim();
+      let textHint = textContent.substring(0, 30);
+      if (textContent.length > 30) textHint += "...";
+
+      let repeatHint = "";
+
+      let children: SkeletonNode[] = [];
+      if (isContainer && depth < 5) {
+        children = parseNodes(inner, depth + 1);
+      }
+
+      if (isContainer && children.length === 0 && Object.keys(styles).length === 0 && tailwindClasses.length === 0 && !textHint) {
+        continue;
+      }
+
+      nodes.push({
+        tag,
+        className: className.split(/\s+/).filter((c: string) => !TAILWIND_LAYOUT_RE.test(c)).slice(0, 2).join(".") || "",
+        styles,
+        tailwindClasses,
+        textHint: isHeading || isButton || isCanvas ? textHint : "",
+        repeatHint,
+        children,
+      });
+    }
+
+    const sigCounts: Record<string, number> = {};
+    const sigIndices: Record<string, number[]> = {};
+    nodes.forEach((n, i) => {
+      const sig = n.tag + "." + n.className;
+      sigCounts[sig] = (sigCounts[sig] || 0) + 1;
+      if (!sigIndices[sig]) sigIndices[sig] = [];
+      sigIndices[sig].push(i);
+    });
+
+    const collapsed: SkeletonNode[] = [];
+    const skip = new Set<number>();
+    for (let i = 0; i < nodes.length; i++) {
+      if (skip.has(i)) continue;
+      const sig = nodes[i].tag + "." + nodes[i].className;
+      const count = sigCounts[sig];
+      if (count > 1) {
+        nodes[i].repeatHint = "x" + count;
+        for (const idx of sigIndices[sig]) {
+          if (idx !== i) skip.add(idx);
+        }
+      }
+      collapsed.push(nodes[i]);
+    }
+
+    return collapsed;
+  }
+
+  const bodyMatch = cleanHtml.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+  const bodyContent = bodyMatch ? bodyMatch[1] : cleanHtml;
+
+  return parseNodes(bodyContent, 0);
+}
+
+/** Format skeleton nodes as human-readable indented text */
+export function formatSkeletonText(nodes: SkeletonNode[], indent: number = 2): string {
+  const lines: string[] = [];
+
+  function render(nodeList: SkeletonNode[], depth: number): void {
+    const prefix = " ".repeat(depth);
+    for (const n of nodeList) {
+      let line = prefix + "<" + n.tag;
+      if (n.className) line += "." + n.className;
+      line += ">";
+
+      const styleEntries = Object.entries(n.styles);
+      const twClasses = n.tailwindClasses;
+      if (styleEntries.length > 0 || twClasses.length > 0) {
+        const parts: string[] = [];
+        for (const [prop, val] of styleEntries) {
+          parts.push(prop + ": " + val);
+        }
+        if (twClasses.length > 0) {
+          parts.push("tw: " + twClasses.join(" "));
+        }
+        line += " [" + parts.join("; ") + "]";
+      }
+
+      if (n.textHint) {
+        line += ' "' + n.textHint + '"';
+      }
+
+      if (n.repeatHint) {
+        line += " [" + n.repeatHint + "]";
+      }
+
+      lines.push(line);
+
+      if (n.children.length > 0) {
+        render(n.children, depth + indent);
+      }
+    }
+  }
+
+  render(nodes, 0);
+  return lines.join("\n");
+}
+
+/** Generate layout skeletons for all design contract screens */
+export function generateLayoutSkeletons(repoPath: string, contracts: DesignContract[]): string {
+  const stitchDir = path.join(repoPath, "stitch");
+  if (!fs.existsSync(stitchDir)) return "";
+
+  const sections: string[] = [];
+
+  const manifestPath = path.join(stitchDir, "DESIGN_MANIFEST.json");
+  let screenFiles: Array<{ id: string; title: string; file: string; device?: string }> = [];
+
+  if (fs.existsSync(manifestPath)) {
+    try {
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+      const screens = manifest.screens || manifest.pages || [];
+      for (const screen of screens) {
+        screenFiles.push({
+          id: screen.id || screen.name,
+          title: screen.title || screen.name || screen.id,
+          file: screen.html || screen.file || (screen.id || screen.name) + ".html",
+          device: screen.device,
+        });
+      }
+    } catch {}
+  }
+
+  if (screenFiles.length === 0) {
+    try {
+      const files = fs.readdirSync(stitchDir).filter((f: string) => f.endsWith(".html"));
+      for (const file of files) {
+        const id = path.basename(file, ".html");
+        screenFiles.push({ id, title: id, file });
+      }
+    } catch {}
+  }
+
+  for (const screen of screenFiles) {
+    const htmlPath = path.join(stitchDir, screen.file);
+    if (!fs.existsSync(htmlPath)) continue;
+
+    let html: string;
+    try {
+      html = fs.readFileSync(htmlPath, "utf-8");
+    } catch { continue; }
+    if (!html.trim()) continue;
+
+    const deviceType = screen.device?.toUpperCase() || detectDeviceType(html);
+    const nodes = extractLayoutSkeleton(html, screen.id);
+    if (nodes.length === 0) continue;
+
+    const skeletonText = formatSkeletonText(nodes);
+    sections.push("LAYOUT SKELETON [" + screen.id + "] (" + deviceType + "):\n" + skeletonText);
+  }
+
+  if (sections.length === 0) return "";
+  return sections.join("\n\n");
+}

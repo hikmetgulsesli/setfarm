@@ -1,12 +1,50 @@
 import fs from "node:fs/promises";
+import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
 import type { LoopConfig, PollingConfig, WorkflowAgent, WorkflowSpec, WorkflowStep } from "./types.js";
 
+/**
+ * Resolve !include directives in raw YAML content.
+ * Replaces lines matching `!include <filename>` with the content of the
+ * referenced file from the _fragments directory, preserving indentation.
+ * Runs before YAML.parse() — pure text-level replacement.
+ */
+function resolveIncludes(raw: string, workflowDir: string): string {
+  const fragmentsDir = path.join(workflowDir, "..", "_fragments");
+  if (!existsSync(fragmentsDir)) return raw;
+
+  const lines = raw.split("\n");
+  const resolved: string[] = [];
+
+  for (const line of lines) {
+    const match = line.match(/^(\s*)!include\s+(\S+)\s*$/);
+    if (match) {
+      const indent = match[1];
+      const fragmentName = match[2];
+      const fragmentPath = path.join(fragmentsDir, fragmentName);
+      if (existsSync(fragmentPath)) {
+        const content = readFileSync(fragmentPath, "utf-8").trimEnd();
+        for (const fLine of content.split("\n")) {
+          resolved.push(fLine.length > 0 ? indent + fLine : "");
+        }
+      } else {
+        // Fragment not found — leave include line as-is
+        resolved.push(line);
+      }
+    } else {
+      resolved.push(line);
+    }
+  }
+
+  return resolved.join("\n");
+}
+
 export async function loadWorkflowSpec(workflowDir: string): Promise<WorkflowSpec> {
   const filePath = path.join(workflowDir, "workflow.yml");
   const raw = await fs.readFile(filePath, "utf-8");
-  const parsed = YAML.parse(raw) as WorkflowSpec;
+  const resolved = resolveIncludes(raw, workflowDir);
+  const parsed = YAML.parse(resolved) as WorkflowSpec;
   if (!parsed?.id) {
     throw new Error(`workflow.yml missing id in ${workflowDir}`);
   }

@@ -1,0 +1,121 @@
+/**
+ * Setfarm Constants — Single Source of Truth
+ *
+ * All magic numbers, threshold values, and duplicate lists extracted from
+ * step-ops.ts and other modules. Import these instead of inline values.
+ */
+
+// ── Abandoned Step Detection ────────────────────────────────────────
+
+/** Base threshold for detecting abandoned steps (first abandon) */
+export const BASE_ABANDONED_THRESHOLD_MS = 120_000; // 2 min
+
+/** Faster threshold for repeat abandonments */
+export const FAST_ABANDONED_THRESHOLD_MS = 90_000; // 90 sec
+
+/** Max abandon resets before failing the step/story permanently */
+export const MAX_ABANDON_RESETS = 5;
+
+// ── Cleanup Throttle ────────────────────────────────────────────────
+
+/** Throttle interval for cleanupAbandonedSteps (matches cron interval) */
+export const CLEANUP_THROTTLE_MS = 30_000; // 30 sec
+
+// ── Git Timeouts ────────────────────────────────────────────────────
+
+export const GIT_SHORT_TIMEOUT = 5_000;
+export const GIT_MEDIUM_TIMEOUT = 10_000;
+export const GIT_LONG_TIMEOUT = 30_000;
+export const GH_CLI_TIMEOUT = 15_000;
+export const GH_MERGE_TIMEOUT = 30_000;
+
+// ── Context Protection ──────────────────────────────────────────────
+
+/**
+ * Context keys that must never be overwritten by step output.
+ * These are seed values set at run creation time.
+ */
+export const PROTECTED_CONTEXT_KEYS = new Set([
+  "repo",
+  "task",
+  "branch",
+  "run_id",
+  "design_system",
+]);
+
+// ── Optional Template Variables ─────────────────────────────────────
+
+/**
+ * Variables that may or may not exist depending on workflow configuration.
+ * Defaulted to "" to prevent MISSING_INPUT_GUARD false positives.
+ *
+ * IMPORTANT: This is the SINGLE source of truth. Previously duplicated at:
+ *   - step-ops.ts line 959 (STORY_OPTIONAL_VARS — story-each flow)
+ *   - step-ops.ts line 1010 (OPTIONAL_VARS — single-step flow)
+ */
+export const OPTIONAL_TEMPLATE_VARS = [
+  // Verify/progress
+  "verify_feedback",
+  "progress",
+  "project_memory",
+  "security_notes",
+  "changes",
+  // Story context
+  "story_branch",
+  "pr_url",
+  "completed_stories",
+  "stories_remaining",
+  "current_story",
+  "current_story_id",
+  "current_story_title",
+  "final_pr",
+  // Design system (Stitch)
+  "stitch_project_id",
+  "design_manifest",
+  "design_tokens",
+  "screens_generated",
+  "device_type",
+  "design_notes",
+  "ui_contract",
+  "design_feedback",
+  "layout_skeleton",
+  // Database
+  "database_url",
+  "db_host",
+  "db_port",
+  "db_name",
+  "db_user",
+  "db_password",
+  "db_required",
+  "db_type",
+  // Dev server
+  "dev_server_port",
+  // Browser
+  "browser_dom_snapshot",
+  "browser_check_result",
+] as const;
+
+// ── Stories ──────────────────────────────────────────────────────────
+
+/** Maximum number of stories a planner can produce */
+export const MAX_STORIES = 20;
+
+/** Max lines for PROJECT_MEMORY.md */
+export const PROJECT_MEMORY_MAX_LINES = 150;
+
+// ── Test Failure Patterns ───────────────────────────────────────────
+
+/**
+ * Regex patterns to detect test failures in agent output.
+ * Used by the test guardrail in completeStep.
+ */
+export const TEST_FAIL_PATTERNS = [
+  /Tests?:\s+(\d+)\s+failed/i,           // Jest: "Tests: 73 failed"
+  /Test Suites?:\s+(\d+)\s+failed/i,      // Jest: "Test Suites: 5 failed"
+  /(\d+)\s+tests?\s+failed/i,             // Generic: "73 tests failed"
+  /(\d+)\s+failing\b/i,                   // Mocha: "73 failing"
+] as const;
+
+// ── Frontend Change Detection ───────────────────────────────────────
+
+export const GIT_DIFF_TIMEOUT = 10_000;

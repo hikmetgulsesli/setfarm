@@ -218,9 +218,7 @@ steps:
   - id: setup
     agent: setup
     input: |
-      ############################################################
-      CRITICAL: Do ALL work in THIS session. No sub-agents, no background processes.
-      ############################################################
+      !include critical-preamble-short.md
 
       Prepare the development environment for this feature.
 
@@ -250,18 +248,7 @@ steps:
         c. Fix any issues before proceeding
         d. Set EXISTING_CODE: true in output
 
-      LINT SETUP (MANDATORY):
-      - Check if package.json has a "lint" script
-      - If NO lint script exists, set one up:
-        a. For React/Next.js: npm install -D eslint @eslint/js typescript-eslint
-        b. Add "lint": "eslint \"**/*.{ts,tsx}\"" to package.json scripts
-        c. Create a basic eslint.config.js if none exists
-      - Run the lint command to verify it works
-      - Run: npx eslint --fix "client/src/**/*.{ts,tsx}" (or equivalent) to auto-fix
-      - If ERRORS remain after --fix, manually fix them (empty catch blocks, useless assignments etc.)
-      - Warnings are acceptable. ERRORS are NOT — fix all errors before reporting done.
-      - Run lint again to confirm 0 errors before completing
-      - Lint MUST be working with 0 errors before STATUS: done
+      !include lint-setup.md
 
       ============================================================
       MANDATORY OUTPUT FORMAT
@@ -282,9 +269,7 @@ steps:
   - id: design
     agent: designer
     input: |
-      ############################################################
-      CRITICAL: Do ALL work in THIS session. No sub-agents, no background processes.
-      ############################################################
+      !include critical-preamble-short.md
 
       Generate professional UI designs for all frontend screens using Stitch.
 
@@ -375,9 +360,7 @@ steps:
       verify_step: verify
       parallel_count: 5
     input: |
-      ############################################################
-      CRITICAL: Do ALL work in THIS session. No sub-agents, no background processes.
-      ############################################################
+      !include critical-preamble-short.md
 
       Implement ONE user story. Create a PR for review.
 
@@ -392,11 +375,7 @@ steps:
       Work in WORKDIR (git worktree). The branch is already checked out.
       node_modules is symlinked from REPO.
 
-      CURRENT STORY: {{current_story}}
-      COMPLETED STORIES: {{completed_stories}}
-      STORIES REMAINING: {{stories_remaining}}
-      VERIFY FEEDBACK (if retrying): {{verify_feedback}}
-      PROGRESS LOG: {{progress}}
+      !include story-loop-context.md
 
       DESIGN DATA (if available):
       STITCH_PROJECT_ID: {{stitch_project_id}}
@@ -415,21 +394,23 @@ steps:
          f. You MUST @import or copy stitch/design-tokens.css into your main CSS file — do NOT recreate tokens.
          g. stitch/design-tokens.css is the SINGLE SOURCE OF TRUTH for all design values.
 
-      DESIGN ENFORCEMENT (frontend stories — MANDATORY checklist before commit):
-      - FONTS: Google Fonts <link> in layout <head> (NOT next/font for static exports).
-        :root must have --font-heading and --font-body CSS vars.
-        h1-h6 → var(--font-heading), body → var(--font-body).
-        BANNED font-family values: system-ui, Roboto, Arial, Inter, Helvetica.
-      - COLORS: shadcn/ui → update globals.css --accent from default gray to palette accent.
-        Keep HSL format. Do not leave shadcn boilerplate unchanged.
-      - LAYOUT: Hero → asymmetric grid, NOT centered text-center single-column.
-        Feature/tool grids → first item lg:col-span-2 or unequal column widths.
-      - NEVER: emoji icons, purple gradients, transition:all
-      - ALWAYS: cursor-pointer on clickables, hover/focus states, focus-visible rings
+      !include implement-design-enforcement.md
 
 
       UI CONTRACT (auto-generated from Stitch design — EVERY element MUST work):
       {{ui_contract}}
+
+      LAYOUT STRUCTURE (auto-extracted from Stitch HTML — REPRODUCE THIS EXACTLY):
+      {{layout_skeleton}}
+
+      LAYOUT RULES (MANDATORY):
+      1. Every container shown above MUST exist in your implementation with the SAME nesting
+      2. Use the same CSS class names or semantic equivalents (.score-board → ScoreBoard component)
+      3. Preserve flex/grid layout type — if Stitch uses flex, use flex. If grid, use grid.
+      4. Preserve container properties (border, border-radius, padding, background, gap)
+      5. Do NOT flatten the hierarchy — if Stitch shows a wrapper card, you MUST have a wrapper
+      6. Do NOT invent your own layout — follow the skeleton above
+      7. Read stitch/<screen>.html for full detail if skeleton is unclear
 
       DESIGN CONTRACT RULES:
       1. Every navigation link MUST route to its page (install react-router-dom if needed)
@@ -437,25 +418,9 @@ steps:
       3. Every input MUST have onChange and controlled state
       4. All hardcoded demo data MUST be replaced with dynamic props/state
 
-      DATABASE (if provisioned — auto-created, use this in .env):
-      Type: {{db_type}} | Connection: {{database_url}}
-      Host: {{db_host}} Port: {{db_port}}
-      Database: {{db_name}} User: {{db_user}} Password: {{db_password}}
-      Write this connection string to the project .env file as DATABASE_URL.
+      !include db-context.md
 
-      ## Browser Verification (OPTIONAL — use when dev server is running)
-      After writing code, verify your changes visually:
-      1. If dev server is running, use browser to check:
-         ```bash
-         export AGENT_BROWSER_SESSION="{{current_story_id}}-impl"
-         export AGENT_BROWSER_CONTENT_BOUNDARIES=1
-         agent-browser open http://localhost:$(cat .dev-port 2>/dev/null || echo 3000)
-         agent-browser wait --load networkidle
-         agent-browser snapshot -i
-         ```
-      2. Check if all buttons have handlers, all links route correctly
-      3. If issues found, fix and re-verify
-      4. Always close: `agent-browser close`
+      !include browser-verification.md
 
       === WORKFLOW ===
 
@@ -532,9 +497,7 @@ steps:
   - id: verify
     agent: reviewer
     input: |
-      ############################################################
-      CRITICAL: Do ALL work in THIS session. No sub-agents, no background processes.
-      ############################################################
+      !include critical-preamble-short.md
 
       Verify the developer's story implementation by reading PR review comments,
       fixing issues, then merging the PR.
@@ -590,6 +553,17 @@ steps:
          - FAIL if main CSS file has custom tokens that duplicate stitch/design-tokens.css values (agent must not recreate tokens)
          - grep hardcoded colors not in design-tokens → WARN
          - Verify fonts match stitch/DESIGN_MANIFEST.json
+      1.55. Layout structure compliance (if stitch/ exists):
+         - Read stitch/<story-html>.html for expected DOM structure
+         - For each top-level section with a class name in stitch HTML,
+           verify a matching container/component exists in implementation:
+           a. grep for class name (kebab-case) or component name (PascalCase)
+           b. FAIL if a major section is completely missing (e.g. .score-board, .game-container)
+           c. WARN if container nesting is significantly different
+         - Check layout type preserved:
+           a. If stitch uses flex layout → implementation should use flex (not float/table)
+           b. If stitch uses grid → implementation should use grid
+         - This checks STRUCTURE not pixel-perfection
       1.6. Completeness checks (CRITICAL - FAIL if any found):
          - grep -rE "coming soon|Coming Soon|placeholder|TODO.*implement|work in progress" --include="*.tsx" --include="*.ts" . → FAIL if found as visible UI text content
          - If stitch/DESIGN_MANIFEST.json exists: for each screen listed, verify a corresponding component or page implements it (search by title keywords). Missing screen = FAIL.
@@ -735,9 +709,7 @@ steps:
   - id: final-test
     agent: tester
     input: |
-      ############################################################
-      CRITICAL: Do ALL work in THIS session. No sub-agents, no background processes.
-      ############################################################
+      !include critical-preamble-short.md
 
       Integration testing on merged feature branch, then create final PR to main.
 
@@ -810,9 +782,7 @@ steps:
   - id: deploy
     agent: deployer
     input: |
-      ############################################################
-      CRITICAL: Do ALL work in THIS session. No sub-agents, no background processes.
-      ############################################################
+      !include critical-preamble-short.md
 
       Deploy the completed project to production (if applicable).
 

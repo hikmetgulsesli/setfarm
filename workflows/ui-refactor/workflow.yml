@@ -162,9 +162,7 @@ steps:
   - id: setup
     agent: setup
     input: |
-      ############################################################
-      CRITICAL: Do ALL work in THIS session. No sub-agents, no background processes.
-      ############################################################
+      !include critical-preamble-short.md
 
       Prepare the environment for refactoring.
 
@@ -218,9 +216,7 @@ steps:
       verify_each: true
       verify_step: verify
     input: |
-      ############################################################
-      CRITICAL: Do ALL work in THIS session. No sub-agents, no background processes.
-      ############################################################
+      !include critical-preamble-short.md
 
       Implement ONE refactoring story. Create a PR for review.
 
@@ -235,11 +231,7 @@ steps:
       Work in WORKDIR (git worktree). The branch is already checked out.
       node_modules is symlinked from REPO.
 
-      CURRENT STORY: {{current_story}}
-      COMPLETED STORIES: {{completed_stories}}
-      STORIES REMAINING: {{stories_remaining}}
-      VERIFY FEEDBACK (if retrying): {{verify_feedback}}
-      PROGRESS LOG: {{progress}}
+      !include story-loop-context.md
 
       BEFORE writing code:
       1. Read the FULL story description — it tells you EXACTLY what to change
@@ -318,9 +310,7 @@ steps:
   - id: verify
     agent: verifier
     input: |
-      ############################################################
-      CRITICAL: Do ALL work in THIS session. No sub-agents, no background processes.
-      ############################################################
+      !include critical-preamble-short.md
 
       Verify the refactoring story. Focus on DESIGN CONSISTENCY.
 
@@ -405,9 +395,7 @@ steps:
   - id: final-test
     agent: tester
     input: |
-      ############################################################
-      CRITICAL: Do ALL work in THIS session. No sub-agents, no background processes.
-      ############################################################
+      !include critical-preamble-short.md
 
       Integration testing on merged refactor branch, then create final PR to main.
 
