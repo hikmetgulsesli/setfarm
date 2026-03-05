@@ -237,6 +237,7 @@ steps:
       1. Read the FULL story description — it tells you EXACTLY what to change
       2. Read the existing design tokens file to know available tokens
       4. Read references/react-best-practices.md for React performance and UX rules
+      5. Read references/web-design-guidelines.md for accessibility and interaction rules
       3. Understand the current patterns before replacing them
 
       STITCH COMPONENT IMPORT RULES (MANDATORY — NO EXCEPTIONS):

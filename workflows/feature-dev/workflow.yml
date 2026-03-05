@@ -385,6 +385,8 @@ steps:
       BEFORE writing code:
       1. Read the FULL story description and ALL acceptance criteria before coding
       2. Read references/design-standards.md + references/backend-standards.md + references/react-best-practices.md
+      3. Read references/web-design-guidelines.md for accessibility and interaction rules
+      4. If project uses Next.js, read references/next-best-practices.md
       3. If stitch/ directory exists:
          a. Read stitch/DESIGN_MANIFEST.json → find this story's screen
          b. Read stitch/<story-id>.html for layout reference
@@ -571,6 +573,12 @@ steps:
            a. If stitch uses flex layout → implementation should use flex (not float/table)
            b. If stitch uses grid → implementation should use grid
          - This checks STRUCTURE not pixel-perfection
+      1.57. Web Interface Guidelines compliance:
+         - grep for anti-patterns: transition: all, outline-none without focus replacement, div onClick without button
+         - Verify all images have explicit width and height attributes
+         - Verify all icon-only buttons have aria-label
+         - Verify form inputs have associated labels
+         - WARN on any violations found
       1.56. Stitch component import verification (if stitch/ exists):
          - List all screen HTML files in stitch/ directory
          - For each screen, verify a corresponding React component exists in components/

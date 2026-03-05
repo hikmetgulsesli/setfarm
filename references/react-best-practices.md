@@ -94,3 +94,46 @@
 - NO emoji icons: use SVG (Lucide React or Heroicons)
 - Consistent icon sizing: 24x24 viewBox, w-6 h-6
 - Smooth transitions: `transition-colors duration-200`
+
+---
+
+## React Composition Patterns (from Vercel)
+
+### Avoid Boolean Prop Proliferation
+```tsx
+// BAD — boolean props multiply
+<Card isCompact isHighlighted hasBorder />
+
+// GOOD — composition
+<Card variant="compact">
+  <Card.Highlight>
+    <Card.Border>...</Card.Border>
+  </Card.Highlight>
+</Card>
+```
+
+### Compound Components
+- Structure complex components with shared context (Provider + sub-components)
+- Provider is the ONLY place that knows how state is managed
+- Define generic interface: `{ state, actions, meta }`
+
+### Explicit Variants Over Booleans
+```tsx
+// BAD
+<Button isPrimary isLarge isLoading />
+
+// GOOD
+<Button variant="primary" size="lg" loading />
+```
+
+### Children Over Render Props
+- Use `children` for composition instead of `renderHeader`, `renderFooter` props
+- Render props only when child needs parent data
+
+### State Lifting
+- Move shared state into Provider components for sibling access
+- Decouple implementation — consumers don't know if state is useState, Zustand, or URL params
+
+### React 19+ (if applicable)
+- Don't use `forwardRef` — pass `ref` as regular prop
+- Use `use()` instead of `useContext()`
