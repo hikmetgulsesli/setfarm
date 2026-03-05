@@ -115,14 +115,14 @@ export function resolveDbType(dbRequired: string): DbType {
 function provisionPostgres(master: ParsedUrl, dbName: string, dbUser: string, dbPass: string): void {
   const connStr = `postgresql://${master.username}:${master.password}@${master.host}:${master.port}/${master.database || "postgres"}`;
 
-  // Create role if not exists
+  // Create role if not exists, update password if exists
   execFileSync("psql", [connStr, "-c",
-    `DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${dbUser}') THEN CREATE ROLE ${dbUser} WITH LOGIN PASSWORD '${dbPass}'; END IF; END $$;`
+    `DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${dbUser}') THEN CREATE ROLE ${dbUser} WITH LOGIN PASSWORD '${dbPass}'; ELSE ALTER ROLE ${dbUser} WITH PASSWORD '${dbPass}'; END IF; END $$;`
   ], { timeout: 15000, stdio: "pipe" });
 
   // Create database if not exists
   execFileSync("psql", [connStr, "-c",
-    `SELECT 'CREATE DATABASE ${dbName} OWNER ${dbUser}' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '${dbName}')\\gexec`
+    `DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_database WHERE datname = '${dbName}') THEN EXECUTE 'CREATE DATABASE ${dbName} OWNER ${dbUser}'; END IF; END $$;`
   ], { timeout: 15000, stdio: "pipe" });
 
   // Grant privileges
