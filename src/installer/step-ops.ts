@@ -1,4 +1,4 @@
-import { getDb } from "../db.js";
+import { getDb, beginTx, endTx } from "../db.js";
 import type { LoopConfig, Story } from "./types.js";
 import { execFileSync } from "node:child_process";
 import { emitEvent } from "./events.js";
@@ -90,6 +90,8 @@ let lastCleanupTime = 0;
  * Find and claim a pending step for an agent, returning the resolved input.
  */
 export function claimStep(agentId: string): ClaimResult {
+  beginTx();
+  try {
   // Throttle cleanup: run at most once every 5 minutes across all agents
   const now = Date.now();
   if (now - lastCleanupTime >= CLEANUP_THROTTLE_MS) {
@@ -294,7 +296,7 @@ export function claimStep(agentId: string): ClaimResult {
         ).run(nextStory.id, new Date().toISOString(), step.id);
         db.exec("COMMIT");
       } catch (err) {
-        try { db.exec("ROLLBACK"); } catch {}
+        try { db.exec("ROLLBACK"); } catch (e) { logger.warn(`[step-ops] ROLLBACK failed: ${String(e)}`, {}); }
         throw err;
       }
 
@@ -549,6 +551,7 @@ ${cavReport}`, { runId: step.run_id });
     runId: step.run_id,
     resolvedInput,
   };
+  } finally { endTx(); }
 }
 
 // ── Complete ────────────────────────────────────────────────────────
@@ -557,6 +560,8 @@ ${cavReport}`, { runId: step.run_id });
  * Complete a step: save output, merge context, advance pipeline.
  */
 export function completeStep(stepId: string, output: string): { advanced: boolean; runCompleted: boolean } {
+  beginTx();
+  try {
   const db = getDb();
 
   const step = db.prepare(
@@ -774,6 +779,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   }
 
   return advancePipeline(step.run_id);
+  } finally { endTx(); }
 }
 
 /**
@@ -802,7 +808,7 @@ function handleVerifyEachCompletion(
     }
     db.exec("COMMIT");
   } catch (err) {
-    try { db.exec("ROLLBACK"); } catch {}
+    try { db.exec("ROLLBACK"); } catch (e) { logger.warn(`[step-ops] ROLLBACK failed: ${String(e)}`, {}); }
     throw err;
   }
 
@@ -1102,7 +1108,7 @@ function advancePipeline(runId: string): { advanced: boolean; runCompleted: bool
       return { advanced: false, runCompleted: true };
     }
   } catch (err) {
-    try { db.exec("ROLLBACK"); } catch {}
+    try { db.exec("ROLLBACK"); } catch (e) { logger.warn(`[step-ops] ROLLBACK failed: ${String(e)}`, {}); }
     throw err;
   }
 }

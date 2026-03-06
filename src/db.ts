@@ -10,10 +10,14 @@ let _db: DatabaseSync | null = null;
 let _dbOpenedAt = 0;
 const DB_MAX_AGE_MS = 60_000;
 let _migrated = false;
+let _inTx = false;
+
+export function beginTx() { _inTx = true; }
+export function endTx() { _inTx = false; }
 
 export function getDb(): DatabaseSync {
   const now = Date.now();
-  if (_db && (now - _dbOpenedAt) < DB_MAX_AGE_MS) return _db;
+  if (_db && (_inTx || (now - _dbOpenedAt) < DB_MAX_AGE_MS)) return _db;
   if (_db) { try { _db.close(); } catch {} }
 
   fs.mkdirSync(DB_DIR, { recursive: true });

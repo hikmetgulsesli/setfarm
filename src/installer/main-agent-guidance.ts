@@ -26,7 +26,7 @@ Workflows are self-advancing via per-agent cron jobs. No manual orchestration ne
 - ALWAYS delegate to setfarm workflow: \`${CLI} workflow run feature-dev "<task>"\`
 - Get next available port: \`curl -s http://127.0.0.1:3080/api/projects/next-port\`
 - ALWAYS specify the repo directory explicitly in the task description:
-  - Format: REPO: /home/setrox/projects/<project-name>
+  - Format: REPO: ~/projects/<project-name>
   - The project name should be kebab-case (lowercase, hyphens)
   - NEVER create projects in ~/  or ~/.openclaw/ — ALWAYS use ~/projects/
 - ALWAYS include the port in the task description: Frontend port: <port>
@@ -51,7 +51,7 @@ Agent cron jobs are created automatically during install.
 - ALWAYS delegate to setfarm workflow: \`${CLI} workflow run feature-dev "<task>"\`
 - Get next available port: \`curl -s http://127.0.0.1:3080/api/projects/next-port\`
 - ALWAYS specify the repo directory explicitly in the task description:
-  - Format: REPO: /home/setrox/projects/<project-name>
+  - Format: REPO: ~/projects/<project-name>
   - The project name should be kebab-case (lowercase, hyphens)
   - NEVER create projects in ~/  or ~/.openclaw/ — ALWAYS use ~/projects/
 - ALWAYS include the port in the task description: Frontend port: <port>

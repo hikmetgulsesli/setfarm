@@ -79,10 +79,10 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
     try {
       execFileSync("git", ["rev-parse", "--verify", storyId.toLowerCase()], { cwd: repo, timeout: 5000, stdio: "pipe" });
       branchExists = true;
-    } catch {}
+    } catch (e) { /* branch not found — expected */ }
     // Remove leftover worktree dir if exists (but branch is preserved above)
-    try { execFileSync("git", ["worktree", "remove", worktreeDir, "--force"], { cwd: repo, timeout: 10000, stdio: "pipe" }); } catch {}
-    try { execFileSync("git", ["worktree", "prune"], { cwd: repo, timeout: 5000, stdio: "pipe" }); } catch {}
+    try { execFileSync("git", ["worktree", "remove", worktreeDir, "--force"], { cwd: repo, timeout: 10000, stdio: "pipe" }); } catch (e) { logger.warn(`[worktree] leftover remove failed: ${String(e)}`, {}); }
+    try { execFileSync("git", ["worktree", "prune"], { cwd: repo, timeout: 5000, stdio: "pipe" }); } catch (e) { logger.warn(`[worktree] prune failed: ${String(e)}`, {}); }
     if (branchExists) {
       // Reuse existing branch (preserves WIP commits from abandoned sessions)
       execFileSync("git", ["worktree", "add", worktreeDir, storyId.toLowerCase()], { cwd: repo, timeout: 30000, stdio: "pipe" });
@@ -172,7 +172,7 @@ export function removeStoryWorktree(repo: string, storyId: string, agentId?: str
     }
     // Remove node_modules symlink first (git worktree remove doesn't handle symlinks well)
     const nmLink = path.join(worktreeDir, "node_modules");
-    try { fs.unlinkSync(nmLink); } catch {}
+    try { fs.unlinkSync(nmLink); } catch (e) { logger.warn(`[worktree] symlink unlink failed: ${String(e)}`, {}); }
     execFileSync("git", ["worktree", "remove", worktreeDir, "--force"], { cwd: repo, timeout: 10000, stdio: "pipe" });
     execFileSync("git", ["worktree", "prune"], { cwd: repo, timeout: 5000, stdio: "pipe" });
     logger.info(`[worktree] Removed ${worktreeDir}`, {});
@@ -207,17 +207,17 @@ export function killWorktreeProcesses(dir: string): void {
 
     for (const pid of pids) {
       if (pid === myPid || pid === parentPid) continue;
-      try { process.kill(Number(pid), "SIGTERM"); } catch {}
+      try { process.kill(Number(pid), "SIGTERM"); } catch (e) { /* process may already be dead */ }
     }
 
     // Give processes 2s to exit gracefully, then SIGKILL survivors
-    try { execSync("sleep 2", { timeout: 5_000, stdio: "pipe" }); } catch {}
+    try { execSync("sleep 2", { timeout: 5_000, stdio: "pipe" }); } catch (e) { logger.warn(`[worktree] sleep interrupted: ${String(e)}`, {}); }
     for (const pid of pids) {
       if (pid === myPid || pid === parentPid) continue;
       try {
         process.kill(Number(pid), 0); // Check if still alive
         process.kill(Number(pid), "SIGKILL");
-      } catch {} // Already dead — good
+      } catch (e) { /* already dead */ }
     }
 
     logger.info(`[worktree] Killed ${pids.length} orphaned process(es) in ${dir}`, {});
@@ -250,7 +250,7 @@ export function cleanupWorktrees(runId: string): void {
     // Prune stale worktree references
     try {
       execFileSync("git", ["worktree", "prune"], { cwd: repo, timeout: 10_000, stdio: "pipe" });
-    } catch {}
+    } catch (e) { logger.warn(`[worktree] stale prune failed: ${String(e)}`, {}); }
 
     // Remove .worktrees/ directory if empty or contains only leftover dirs
     const worktreesDir = path.join(repo, ".worktrees");
@@ -263,24 +263,24 @@ export function cleanupWorktrees(runId: string): void {
         try {
           // Remove node_modules symlink first
           const nmLink = path.join(entryPath, "node_modules");
-          try { fs.unlinkSync(nmLink); } catch {}
+          try { fs.unlinkSync(nmLink); } catch (e) { logger.warn(`[worktree] cleanup symlink unlink failed: ${String(e)}`, {}); }
           execFileSync("git", ["worktree", "remove", entryPath, "--force"], { cwd: repo, timeout: 10_000, stdio: "pipe" });
         } catch {
           // If git worktree remove fails, try rm -rf
-          try { fs.rmSync(entryPath, { recursive: true, force: true }); } catch {}
+          try { fs.rmSync(entryPath, { recursive: true, force: true }); } catch (e) { logger.warn(`[worktree] rm fallback failed: ${String(e)}`, {}); }
         }
       }
       // Prune again after removals
       try {
         execFileSync("git", ["worktree", "prune"], { cwd: repo, timeout: 5_000, stdio: "pipe" });
-      } catch {}
+      } catch (e) { logger.warn(`[worktree] post-cleanup prune failed: ${String(e)}`, {}); }
       // Remove the .worktrees dir itself if now empty
       try {
         const remaining = fs.readdirSync(worktreesDir);
         if (remaining.length === 0) {
           fs.rmdirSync(worktreesDir);
         }
-      } catch {}
+      } catch (e) { logger.warn(`[worktree] .worktrees dir removal failed: ${String(e)}`, {}); }
     }
 
     logger.info(`[worktree] Cleanup completed for run ${runId} in ${repo}`, {});

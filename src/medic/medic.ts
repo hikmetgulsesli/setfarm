@@ -18,6 +18,7 @@ import {
 import { completeStep } from "../installer/step-ops.js";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { logger } from "../lib/logger.js";
 
 // ── DB Migration ────────────────────────────────────────────────────
 
@@ -209,7 +210,7 @@ case "restart_service": {      if (!finding.serviceName) return false;      try 
         workflowId: run.workflow_id,
         detail: "Medic: zombie run — all steps terminal but run still marked running",
       });
-      try { await teardownWorkflowCronsIfIdle(run.workflow_id); } catch {}
+      try { await teardownWorkflowCronsIfIdle(run.workflow_id); } catch (e) { logger.warn(`[medic] cron teardown failed: ${String(e)}`, {}); }
       return true;
     }
 
@@ -468,7 +469,7 @@ export async function restoreActiveRunCrons(): Promise<number> {
         }
       }
     }
-  } catch {}
+  } catch (e) { logger.warn(`[medic] overdue cron check failed: ${String(e)}`, {}); }
 
   for (const run of activeRuns) {
     try {
@@ -501,7 +502,7 @@ export async function runMedicCheck(): Promise<MedicCheckResult> {
   ensureMedicTables();
 
   // Restore crons for active runs (fixes #183 — lost crons after restart)
-  try { await restoreActiveRunCrons(); } catch {}
+  try { await restoreActiveRunCrons(); } catch (e) { logger.warn(`[medic] restoreActiveRunCrons failed: ${String(e)}`, {}); }
 
   // Gather all findings
   const findings: MedicFinding[] = runSyncChecks();

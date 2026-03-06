@@ -1,3 +1,4 @@
+import os from "node:os";
 import crypto from "node:crypto";
 import { loadWorkflowSpec } from "./workflow-spec.js";
 import { resolveWorkflowDir } from "./paths.js";
@@ -26,7 +27,7 @@ export async function runWorkflow(params: {
   // Duplicate run guard: prevent starting a new run for same repo if one is already running
   const repoMatch = params.taskTitle.match(/Repo:\s*(\S+)/i);
   if (repoMatch) {
-    const repoPath = repoMatch[1].replace(/~/g, "/home/setrox");
+    const repoPath = repoMatch[1].replace(/~/g, os.homedir());
     const existingRun = db.prepare(
       "SELECT id, run_number FROM runs WHERE status = 'running' AND task LIKE ?"
     ).get(`%${repoPath}%`) as { id: string; run_number: number } | undefined;

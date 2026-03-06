@@ -1,3 +1,4 @@
+import os from "node:os";
 /**
  * Browser-based DOM verification tools for Setfarm pipeline.
  * Uses agent-browser (headless Chromium) to inspect rendered pages.
@@ -40,7 +41,7 @@ interface DomExtractResult {
 // ── Constants ───────────────────────────────────────────────────────
 
 const DOM_EXTRACT_SCRIPT = path.join(
-  process.env.HOME || "/home/setrox",
+  process.env.HOME || os.homedir(),
   ".openclaw/workspace/scripts/headless-dom-extract.js"
 );
 

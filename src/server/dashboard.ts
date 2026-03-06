@@ -1,4 +1,5 @@
 import http from "node:http";
+import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -71,9 +72,9 @@ function serveHTML(res: http.ServerResponse) {
 }
 
 // ── Scrape ──────────────────────────────────────────────────────
-const SCRAPE_PYTHON = path.join(process.env.HOME ?? "/home/setrox", "libs", "scrapling", ".venv", "bin", "python");
-const SCRAPE_SCRIPT = path.join(process.env.HOME ?? "/home/setrox", "libs", "scrapling", "scrape-api.py");
-const SCRAPE_CWD = path.join(process.env.HOME ?? "/home/setrox", "libs", "scrapling");
+const SCRAPE_PYTHON = path.join(process.env.HOME ?? os.homedir(), "libs", "scrapling", ".venv", "bin", "python");
+const SCRAPE_SCRIPT = path.join(process.env.HOME ?? os.homedir(), "libs", "scrapling", "scrape-api.py");
+const SCRAPE_CWD = path.join(process.env.HOME ?? os.homedir(), "libs", "scrapling");
 
 interface ScrapeHistoryEntry {
   url: string;
