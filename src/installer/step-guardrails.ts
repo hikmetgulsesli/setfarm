@@ -68,14 +68,35 @@ export function checkMissingInputs(resolvedInput: string): string[] {
 
 /**
  * Process design step completion: extract UI contracts, validate compliance.
+ * Returns failure message if stitch/ has no HTML files, or null if OK.
  */
 export function processDesignCompletion(
   runId: string,
   context: Record<string, string>,
   db: ReturnType<typeof getDb>
-): void {
+): string | null {
   const repoPath = context["repo"] || context["REPO"] || "";
-  if (!repoPath) return;
+  if (!repoPath) return null;
+
+  // GUARDRAIL: Require at least 1 HTML file in stitch/ unless SCREENS_GENERATED: 0 (backend-only)
+  const screensGenerated = parseInt(context["screens_generated"] || "-1", 10);
+  if (screensGenerated !== 0) {
+    const stitchDir = path.join(repoPath, "stitch");
+    let htmlCount = 0;
+    try {
+      if (fs.existsSync(stitchDir)) {
+        htmlCount = fs.readdirSync(stitchDir).filter(f => f.endsWith(".html")).length;
+      }
+    } catch (e) {
+      logger.warn(`[design-guardrail] Could not read stitch/ dir: ${String(e)}`, { runId });
+    }
+    if (htmlCount === 0) {
+      const msg = `GUARDRAIL: Design step completed but stitch/ has 0 HTML files. Agent must generate and download at least 1 screen HTML before completing. Retry with Stitch generate-screen + download.`;
+      logger.warn(`[design-guardrail] ${msg}`, { runId });
+      return msg;
+    }
+    logger.info(`[design-guardrail] stitch/ has ${htmlCount} HTML file(s) — OK`, { runId });
+  }
 
   try {
     const contracts = buildDesignContracts(repoPath);
@@ -102,6 +123,8 @@ export function processDesignCompletion(
   } catch (e) {
     logger.warn(`[design-rules] Validation failed: ${String(e)}`, { runId });
   }
+
+  return null;
 }
 
 // ── DB Auto-Provisioning ────────────────────────────────────────────

@@ -5,7 +5,9 @@
  *
  * Usage:
  *   node stitch-api.mjs create-project "Project Name"
+ *   node stitch-api.mjs ensure-project "Project Name" /path/to/repo    (find-or-create + persist .stitch)
  *   node stitch-api.mjs generate-screen <projectId> "<prompt>" [DESKTOP|MOBILE|TABLET] [GEMINI_3_PRO|GEMINI_3_FLASH]
+ *   node stitch-api.mjs generate-screen-safe <projectId> "<prompt>" "<title>" [device] [model]  (dedup check)
  *   node stitch-api.mjs list-screens <projectId>
  *   node stitch-api.mjs get-screen <projectId> <screenId>
  *   node stitch-api.mjs download <url> <outputFile>
@@ -312,6 +314,120 @@ const commands = {
     console.log(JSON.stringify(screen, null, 2));
   },
 
+  async 'ensure-project'(name, repoPath) {
+    if (!name || !repoPath) throw new Error('Usage: ensure-project "Project Name" /path/to/repo');
+
+    const stitchFile = resolve(repoPath, '.stitch');
+
+    // 1. Check existing .stitch file
+    try {
+      const existing = JSON.parse(readFileSync(stitchFile, 'utf-8'));
+      if (existing.projectId) {
+        console.log(JSON.stringify({ projectId: existing.projectId, source: 'stitch-file' }, null, 2));
+        return;
+      }
+    } catch { /* no .stitch file or invalid */ }
+
+    await initialize();
+
+    // 2. Find existing project by name
+    const listResult = await callTool('list_projects', {});
+    let projects = [];
+    if (listResult && listResult.content) {
+      for (const item of listResult.content) {
+        if (item.type === 'text') {
+          try {
+            const parsed = JSON.parse(item.text);
+            projects = parsed.projects || parsed || [];
+          } catch { /* skip */ }
+        }
+      }
+    }
+
+    const match = projects.find(p => {
+      const pName = (p.title || p.displayName || p.name || '').toLowerCase();
+      return pName === name.toLowerCase() || pName.includes(name.toLowerCase());
+    });
+
+    let projectId;
+    if (match) {
+      projectId = (match.name || '').replace('projects/', '') || match.projectId || match.id;
+      process.stderr.write(`Found existing Stitch project: ${projectId}\n`);
+    } else {
+      // 3. Create new project
+      const createResult = await callTool('create_project', { title: name });
+      if (createResult && createResult.content) {
+        for (const item of createResult.content) {
+          if (item.type === 'text') {
+            try {
+              const parsed = JSON.parse(item.text);
+              const pname = parsed.name || parsed.project?.name || '';
+              projectId = pname.replace('projects/', '') || parsed.projectId || parsed.project_id;
+              if (projectId) break;
+            } catch {
+              const m2 = item.text.match(/projects\/(\d+)/);
+              if (m2) { projectId = m2[1]; break; }
+            }
+          }
+        }
+      }
+      process.stderr.write(`Created new Stitch project: ${projectId}\n`);
+    }
+
+    if (!projectId) throw new Error('Failed to get or create project ID');
+
+    // 4. Persist .stitch file
+    const stitchData = { projectId, name, updatedAt: new Date().toISOString() };
+    mkdirSync(dirname(stitchFile), { recursive: true });
+    writeFileSync(stitchFile, JSON.stringify(stitchData, null, 2));
+
+    console.log(JSON.stringify({ projectId, source: 'created-or-found' }, null, 2));
+  },
+
+  async 'generate-screen-safe'(projectId, prompt, screenTitle, deviceType = 'DESKTOP', modelId = 'GEMINI_3_PRO') {
+    if (!projectId || !prompt) throw new Error('Usage: generate-screen-safe <projectId> "<prompt>" "<screenTitle>" [DESKTOP|MOBILE|TABLET] [model]');
+
+    await initialize();
+
+    // 1. Check for duplicate screens by title
+    if (screenTitle) {
+      const listResult = await callTool('list_screens', { projectId });
+      let existingScreens = [];
+      if (listResult && listResult.content) {
+        for (const item of listResult.content) {
+          if (item.type === 'text') {
+            try {
+              const parsed = JSON.parse(item.text);
+              if (Array.isArray(parsed)) existingScreens = parsed;
+              else if (parsed.screens) existingScreens = parsed.screens;
+              else if (parsed.structuredContent?.screens) existingScreens = parsed.structuredContent.screens;
+            } catch { /* skip */ }
+          }
+        }
+      }
+
+      const titleLower = screenTitle.toLowerCase();
+      const duplicate = existingScreens.find(s => {
+        const sTitle = (s.title || '').toLowerCase();
+        return sTitle === titleLower || sTitle.includes(titleLower) || titleLower.includes(sTitle);
+      });
+
+      if (duplicate) {
+        const dupId = (duplicate.name || '').replace(/^projects\/\d+\/screens\//, '') || duplicate.id;
+        process.stderr.write(`SKIP: Screen "${screenTitle}" already exists as "${duplicate.title}" (${dupId})\n`);
+        console.log(JSON.stringify({ skipped: true, reason: 'duplicate', existingTitle: duplicate.title, existingId: dupId }, null, 2));
+        return;
+      }
+    }
+
+    // 2. Generate screen
+    const args = { projectId, prompt, deviceType, modelId };
+    const result = await callTool('generate_screen_from_text', args);
+    const { screens, suggestions } = parseScreens(result);
+
+    console.log(JSON.stringify({ skipped: false, screens, suggestions }, null, 2));
+  },
+
   async download(url, outputFile) {
     if (!url || !outputFile) throw new Error('Usage: download <url> <outputFile>');
     const result = await downloadFile(url, outputFile);
@@ -326,13 +442,15 @@ if (!cmd || !commands[cmd]) {
   console.error(`Usage: node stitch-api.mjs <command> [args...]
 
 Commands:
-  list-projects                                             List all Stitch projects
-  find-project "Name"                                       Find project by name
-  create-project "Title"                                    Create a Stitch project
-  generate-screen <projectId> "<prompt>" [device] [model]   Generate a screen
-  list-screens <projectId>                                  List screens in project
-  get-screen <projectId> <screenId>                         Get screen details
-  download <url> <outputFile>                               Download file from URL`);
+  list-projects                                                          List all Stitch projects
+  find-project "Name"                                                    Find project by name
+  create-project "Title"                                                 Create a Stitch project
+  ensure-project "Name" /path/to/repo                                    Find-or-create + persist .stitch
+  generate-screen <projectId> "<prompt>" [device] [model]                Generate a screen
+  generate-screen-safe <projectId> "<prompt>" "<title>" [device] [model] Generate with dedup check
+  list-screens <projectId>                                               List screens in project
+  get-screen <projectId> <screenId>                                      Get screen details
+  download <url> <outputFile>                                            Download file from URL`);
   process.exit(1);
 }
 

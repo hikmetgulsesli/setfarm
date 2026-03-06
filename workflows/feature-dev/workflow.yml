@@ -294,40 +294,28 @@ steps:
       === STITCH API ===
       Script: /home/setrox/.openclaw/setfarm-repo/scripts/stitch-api.mjs
 
-      STEP 1 — Get or create project (REUSE existing — never create duplicates):
+      STEP 1 — Get or create project (ONE COMMAND — handles .stitch persistence):
       STITCH_SCRIPT="/home/setrox/.openclaw/setfarm-repo/scripts/stitch-api.mjs"
-      if [ -f "{{repo}}/.stitch" ]; then
-        PROJECT_ID=$(jq -r '.projectId' "{{repo}}/.stitch")
-        echo "Reusing Stitch project from .stitch file: $PROJECT_ID"
-      else
-        EXISTING=$(node "$STITCH_SCRIPT" find-project "$(basename {{repo}})" | jq -r 'if .found then .projectId else empty end')
-        if [ -n "$EXISTING" ]; then
-          PROJECT_ID="$EXISTING"
-          echo "Found existing Stitch project: $PROJECT_ID"
-        else
-          STITCH=$(node "$STITCH_SCRIPT" create-project "$(basename {{repo}})")
-          PROJECT_ID=$(echo "$STITCH" | jq -r '.projectId')
-          echo "Created new Stitch project: $PROJECT_ID"
-        fi
-      fi
+      RESULT=$(node "$STITCH_SCRIPT" ensure-project "$(basename {{repo}})" "{{repo}}")
+      PROJECT_ID=$(echo "$RESULT" | jq -r '.projectId')
+      echo "Stitch project ID: $PROJECT_ID (source: $(echo "$RESULT" | jq -r '.source'))"
 
-      STEP 1.5 — Check existing screens (edit vs generate):
-      EXISTING_SCREENS=$(node "$STITCH_SCRIPT" list-screens "$PROJECT_ID" | jq -r 'length // 0')
-      echo "Existing screens in project: $EXISTING_SCREENS"
-
-      STEP 2 — Generate screens (UI stories only):
+      STEP 2 — Generate screens (UI stories only, with DEDUP):
       For each story with UI components:
         a. Build detailed prompt from story (include colors, fonts, layout from design_system)
-        b. node /home/setrox/.openclaw/setfarm-repo/scripts/stitch-api.mjs generate-screen "$PROJECT_ID" "<prompt>" <DEVICE> GEMINI_3_PRO
-        c. Parse screens from response, download HTML + screenshot
+        b. Use generate-screen-safe to avoid duplicates:
+           node "$STITCH_SCRIPT" generate-screen-safe "$PROJECT_ID" "<prompt>" "<Screen Title>" <DEVICE> GEMINI_3_PRO
+        c. If result has "skipped: true" → screen already exists, skip download
+        d. Otherwise, parse screens from response, download HTML + screenshot
 
       STEP 3 — Save to stitch/:
       - stitch/<story-id>.html, stitch/<story-id>.png
       - stitch/DESIGN_MANIFEST.json
       - stitch/design-tokens.css (extracted from first HTML)
+      IMPORTANT: You MUST download the HTML files. Writing a manifest without HTML is NOT enough.
+      The server will REJECT design completion if stitch/ has 0 HTML files.
 
-      STEP 4 — Save .stitch file + commit + push:
-      printf '{"projectId": "%s", "updatedAt": "%s"}' "$PROJECT_ID" "$(date -Iseconds)" | jq . > "{{repo}}/.stitch"
+      STEP 4 — Commit + push (no need to manually create .stitch — ensure-project already did it):
       git add stitch/ .stitch && git commit -m "design: Stitch UI designs" && git push
 
       === FONT MAP (design-standards → Stitch enum) ===

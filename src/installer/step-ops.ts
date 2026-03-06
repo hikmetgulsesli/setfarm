@@ -623,7 +623,12 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
 
   // Design Contract + Rules (design step)
   if (step.step_id === "design" && parsed["status"]?.toLowerCase() === "done") {
-    processDesignCompletion(step.run_id, context, db);
+    const designErr = processDesignCompletion(step.run_id, context, db);
+    if (designErr) {
+      logger.warn(`[design-guardrail] Failed`, { runId: step.run_id, stepId: step.step_id });
+      failStep(stepId, designErr);
+      return { advanced: false, runCompleted: false };
+    }
   }
 
   // DB Auto-Provisioning (setup step)
