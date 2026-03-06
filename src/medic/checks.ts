@@ -393,7 +393,7 @@ export function checkOrphanedStories(): MedicFinding[] {
 
 // ── Check: Stalled Workflow Crons / Circuit Breaker (#218) ──────────
 
-const CIRCUIT_BREAKER_THRESHOLD_MS = 5 * 60 * 1000; // 5 min — detect dead crons faster
+const CIRCUIT_BREAKER_THRESHOLD_MS = 5 * 60 * 1000; // 5 min — but running story guard prevents false positives
 
 /**
  * Detect when agent crons are dead or in error state.
@@ -424,16 +424,33 @@ export function checkStalledWorkflowCrons(): MedicFinding[] {
 
     if (pending.cnt === 0) continue; // no pending work — crons are fine or not needed
 
-    // When was the last story claimed (set to running)?
-    const lastClaim = db.prepare(`
-      SELECT MAX(st.updated_at) as ts FROM stories st
+    // Guard: if any stories are currently running, agents are actively working.
+    // Don't recreate crons just because no NEW claim happened — the agent is busy.
+    const runningStories = db.prepare(`
+      SELECT COUNT(*) as cnt FROM stories st
       JOIN runs r ON r.id = st.run_id
       WHERE r.workflow_id = ? AND r.status = 'running' AND st.status = 'running'
+    `).get(workflow_id) as { cnt: number };
+
+    // Also check if any steps are running (single steps, not just loop stories)
+    const runningSteps = db.prepare(`
+      SELECT COUNT(*) as cnt FROM steps s
+      JOIN runs r ON r.id = s.run_id
+      WHERE r.workflow_id = ? AND r.status = 'running' AND s.status = 'running'
+    `).get(workflow_id) as { cnt: number };
+
+    if (runningStories.cnt > 0 || runningSteps.cnt > 0) continue; // agents are busy — crons are fine
+
+    // No running stories/steps — check when the last activity happened
+    const lastActivity = db.prepare(`
+      SELECT MAX(st.updated_at) as ts FROM stories st
+      JOIN runs r ON r.id = st.run_id
+      WHERE r.workflow_id = ? AND r.status = 'running' AND st.status IN ('running', 'done')
     `).get(workflow_id) as { ts: string | null };
 
-    const age = lastClaim?.ts
-      ? Date.now() - new Date(lastClaim.ts).getTime()
-      : CIRCUIT_BREAKER_THRESHOLD_MS + 1; // no running stories at all = stalled
+    const age = lastActivity?.ts
+      ? Date.now() - new Date(lastActivity.ts).getTime()
+      : CIRCUIT_BREAKER_THRESHOLD_MS + 1; // no activity at all = stalled
 
     if (age <= CIRCUIT_BREAKER_THRESHOLD_MS) continue;
 
@@ -443,12 +460,12 @@ export function checkStalledWorkflowCrons(): MedicFinding[] {
       WHERE details LIKE '%stalled_workflow_crons%'
         AND details LIKE '%"remediated":true%'
         AND details LIKE ?
-        AND julianday(checked_at) > julianday('now', '-5 minutes')
+        AND julianday(checked_at) > julianday('now', '-10 minutes')
     `).get(`%${workflow_id}%`) as { ts: string | null };
 
     if (recentRecreate?.ts) continue;
 
-    const ageMin = lastClaim?.ts ? Math.round(age / 60000) : -1;
+    const ageMin = lastActivity?.ts ? Math.round(age / 60000) : -1;
     findings.push({
       check: "stalled_workflow_crons",
       severity: "warning",
