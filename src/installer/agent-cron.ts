@@ -275,3 +275,34 @@ export async function teardownWorkflowCronsIfIdle(workflowId: string): Promise<v
     await deleteCronJob(job.id);
   }
 }
+
+// ── Cron Count Helpers ──────────────────────────────────────────────
+
+const PARALLEL_AGENTS_SET = new Set(["developer", "verifier"]);
+const CRON_PARALLEL_COUNT = 3;
+
+/**
+ * Calculate how many crons a workflow SHOULD have based on its agent spec.
+ * Used by medic to detect partial cron loss.
+ */
+export function expectedCronCount(workflow: WorkflowSpec): number {
+  let count = 0;
+  for (const agent of workflow.agents) {
+    count++; // base cron
+    if (PARALLEL_AGENTS_SET.has(agent.id)) {
+      count += CRON_PARALLEL_COUNT - 1; // parallel crons (2 extra for count=3)
+    }
+  }
+  return count;
+}
+
+/**
+ * Count actual crons for a workflow in the gateway.
+ * Returns -1 if gateway API is unreachable.
+ */
+export async function actualCronCount(workflowId: string): Promise<number> {
+  const result = await listCronJobs();
+  if (!result.ok || !result.jobs) return -1;
+  const prefix = `setfarm/${workflowId}/`;
+  return result.jobs.filter(j => j.name.startsWith(prefix)).length;
+}

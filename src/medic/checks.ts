@@ -416,13 +416,21 @@ export function checkStalledWorkflowCrons(): MedicFinding[] {
 
   for (const { workflow_id } of workflows) {
     // Check if there are pending stories waiting to be claimed
-    const pending = db.prepare(`
+    const pendingStories = db.prepare(`
       SELECT COUNT(*) as cnt FROM stories st
       JOIN runs r ON r.id = st.run_id
       WHERE r.workflow_id = ? AND r.status = 'running' AND st.status = 'pending'
     `).get(workflow_id) as { cnt: number };
 
-    if (pending.cnt === 0) continue; // no pending work — crons are fine or not needed
+    // Also check pending single steps (e.g. design step has no stories)
+    const pendingSteps = db.prepare(`
+      SELECT COUNT(*) as cnt FROM steps s
+      JOIN runs r ON r.id = s.run_id
+      WHERE r.workflow_id = ? AND r.status = 'running' AND s.status = 'pending' AND s.type = 'single'
+    `).get(workflow_id) as { cnt: number };
+
+    const pendingTotal = pendingStories.cnt + pendingSteps.cnt;
+    if (pendingTotal === 0) continue; // no pending work — crons are fine or not needed
 
     // Guard: if any stories are currently running, agents are actively working.
     // Don't recreate crons just because no NEW claim happened — the agent is busy.
@@ -442,11 +450,18 @@ export function checkStalledWorkflowCrons(): MedicFinding[] {
     if (runningStories.cnt > 0 || runningSteps.cnt > 0) continue; // agents are busy — crons are fine
 
     // No running stories/steps — check when the last activity happened
-    const lastActivity = db.prepare(`
+    const lastStoryActivity = db.prepare(`
       SELECT MAX(st.updated_at) as ts FROM stories st
       JOIN runs r ON r.id = st.run_id
       WHERE r.workflow_id = ? AND r.status = 'running' AND st.status IN ('running', 'done')
     `).get(workflow_id) as { ts: string | null };
+    const lastStepActivity = db.prepare(`
+      SELECT MAX(s.updated_at) as ts FROM steps s
+      JOIN runs r ON r.id = s.run_id
+      WHERE r.workflow_id = ? AND r.status = 'running' AND s.status IN ('running', 'done')
+    `).get(workflow_id) as { ts: string | null };
+    const lastActivityTs = [lastStoryActivity?.ts, lastStepActivity?.ts].filter(Boolean).sort().pop() ?? null;
+    const lastActivity = { ts: lastActivityTs };
 
     const age = lastActivity?.ts
       ? Date.now() - new Date(lastActivity.ts).getTime()
@@ -469,7 +484,7 @@ export function checkStalledWorkflowCrons(): MedicFinding[] {
     findings.push({
       check: "stalled_workflow_crons",
       severity: "warning",
-      message: `Workflow "${workflow_id}" has ${pending.cnt} pending stories but ${ageMin > 0 ? `no claim in ${ageMin}min` : "no active claims"} — crons may be dead, force-recreating`,
+      message: `Workflow "${workflow_id}" has ${pendingTotal} pending item(s) but ${ageMin > 0 ? `no claim in ${ageMin}min` : "no active claims"} — crons may be dead, force-recreating`,
       action: "recreate_crons",
       workflowId: workflow_id,
       remediated: false,

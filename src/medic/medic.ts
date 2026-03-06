@@ -6,7 +6,7 @@
  */
 import { getDb } from "../db.js";
 import { emitEvent, type EventType } from "../installer/events.js";
-import { teardownWorkflowCronsIfIdle, ensureWorkflowCrons, removeAgentCrons, setupAgentCrons } from "../installer/agent-cron.js";
+import { teardownWorkflowCronsIfIdle, ensureWorkflowCrons, removeAgentCrons, setupAgentCrons, expectedCronCount, actualCronCount } from "../installer/agent-cron.js";
 import { loadWorkflowSpec } from "../installer/workflow-spec.js";
 import { resolveWorkflowDir } from "../installer/paths.js";
 import { listCronJobs } from "../installer/gateway-api.js";
@@ -488,11 +488,49 @@ export async function restoreActiveRunCrons(): Promise<number> {
           detail: `Medic: overdue crons detected for "${run.workflow_id}" — force-recreated`,
         });
       } else {
-        await ensureWorkflowCrons(workflow);
+        // Count-based verification: detect partial cron loss (some crons exist but not all)
+        const expected = expectedCronCount(workflow);
+        const actual = await actualCronCount(run.workflow_id);
+
+        if (actual === -1) {
+          // Gateway API unreachable — log and skip (will retry next cycle)
+          logger.warn(`[medic] gateway unreachable for cron count check (${run.workflow_id})`, {});
+        } else if (actual === 0) {
+          // Total cron loss — recreate all
+          await setupAgentCrons(workflow);
+          logger.warn(`[medic] 0/${expected} crons for "${run.workflow_id}" — recreated all`, {});
+          emitEvent({
+            ts: new Date().toISOString(),
+            event: "run.resumed" as EventType,
+            runId: "",
+            workflowId: run.workflow_id,
+            detail: `Medic: 0/${expected} crons for "${run.workflow_id}" — recreated`,
+          });
+          restored++;
+        } else if (actual < expected) {
+          // Partial cron loss — remove all and recreate to avoid duplicates
+          await removeAgentCrons(run.workflow_id);
+          await setupAgentCrons(workflow);
+          logger.warn(`[medic] ${actual}/${expected} crons for "${run.workflow_id}" — removed and recreated`, {});
+          emitEvent({
+            ts: new Date().toISOString(),
+            event: "run.resumed" as EventType,
+            runId: "",
+            workflowId: run.workflow_id,
+            detail: `Medic: partial cron loss ${actual}/${expected} for "${run.workflow_id}" — recreated`,
+          });
+          restored++;
+        } else if (actual > expected) {
+          // Duplicate crons — remove all and recreate clean
+          await removeAgentCrons(run.workflow_id);
+          await setupAgentCrons(workflow);
+          logger.warn(`[medic] ${actual}/${expected} crons for "${run.workflow_id}" (duplicates) — cleaned and recreated`, {});
+          restored++;
+        }
+        // else actual === expected — all good, nothing to do
       }
-      restored++;
     } catch (err) {
-      // Workflow may not exist anymore — skip
+      logger.warn(`[medic] restoreActiveRunCrons failed for ${run.workflow_id}: ${String(err)}`, {});
     }
   }
   return restored;
