@@ -469,10 +469,11 @@ export function checkStalledWorkflowCrons(): MedicFinding[] {
 
     if (age <= CIRCUIT_BREAKER_THRESHOLD_MS) continue;
 
-    // Cooldown: don't re-fire if we already recreated crons in the last 15 min
+    // Cooldown: don't re-fire if crons were already recreated recently
+    // (by this check OR by restoreActiveRunCrons count-based verification)
     const recentRecreate = db.prepare(`
       SELECT MAX(checked_at) as ts FROM medic_checks
-      WHERE details LIKE '%stalled_workflow_crons%'
+      WHERE (details LIKE '%stalled_workflow_crons%' OR details LIKE '%partial cron loss%' OR details LIKE '%crons for%')
         AND details LIKE '%"remediated":true%'
         AND details LIKE ?
         AND julianday(checked_at) > julianday('now', '-10 minutes')
