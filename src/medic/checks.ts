@@ -743,6 +743,81 @@ function checkOrphanedBrowserProcesses(): MedicFinding[] {
 
   return findings;
 }
+
+// ── Check: Provider Failure (mass 404) ──────────────────────────────
+
+const PROVIDER_FAIL_WINDOW_MS = 15 * 60 * 1000; // 15 min window
+const PROVIDER_FAIL_ABANDON_THRESHOLD = 6; // 6+ abandons with 0 completions = provider down
+const PROVIDER_FAIL_COOLDOWN_MS = 30 * 60 * 1000; // 30 min cooldown
+
+/**
+ * Detect provider-level failures: when the LLM API returns persistent errors
+ * (e.g. 404 from corrupted hot-reload state), ALL agents fail simultaneously.
+ *
+ * Signal: many step resets (abandons) in a short window with zero story completions.
+ * This is distinct from individual agent failures (which produce 1-2 abandons).
+ *
+ * Fix: restart the gateway to re-instantiate provider adapters.
+ */
+export function checkProviderFailure(): MedicFinding[] {
+  const db = getDb();
+  const findings: MedicFinding[] = [];
+
+  // Must have active runs
+  const activeRuns = db.prepare(
+    "SELECT COUNT(*) as cnt FROM runs WHERE status = 'running'"
+  ).get() as { cnt: number };
+  if (activeRuns.cnt === 0) return findings;
+
+  // Count recent step abandons (medic resets) in the window
+  const recentAbandons = db.prepare(`
+    SELECT COUNT(*) as cnt FROM medic_checks
+    WHERE details LIKE '%reset_step%'
+      AND details LIKE '%"remediated":true%'
+      AND (julianday('now') - julianday(checked_at)) * 86400000 < ?
+  `).get(PROVIDER_FAIL_WINDOW_MS) as { cnt: number };
+
+  if (recentAbandons.cnt < PROVIDER_FAIL_ABANDON_THRESHOLD) return findings;
+
+  // Check if ANY story completed in the same window (if yes, provider works for some agents)
+  const recentCompletions = db.prepare(`
+    SELECT COUNT(*) as cnt FROM stories
+    WHERE status IN ('done', 'verified')
+      AND (julianday('now') - julianday(updated_at)) * 86400000 < ?
+  `).get(PROVIDER_FAIL_WINDOW_MS) as { cnt: number };
+
+  if (recentCompletions.cnt > 0) return findings; // Some agents succeed = not a provider issue
+
+  // Also check if any step completed
+  const recentStepDone = db.prepare(`
+    SELECT COUNT(*) as cnt FROM steps
+    WHERE status = 'done'
+      AND (julianday('now') - julianday(updated_at)) * 86400000 < ?
+  `).get(PROVIDER_FAIL_WINDOW_MS) as { cnt: number };
+
+  if (recentStepDone.cnt > 0) return findings;
+
+  // Cooldown: don't restart if we already did recently
+  const recentRestart = db.prepare(`
+    SELECT MAX(checked_at) as ts FROM medic_checks
+    WHERE (details LIKE '%provider_failure%' OR details LIKE '%restart_gateway%')
+      AND details LIKE '%"remediated":true%'
+      AND (julianday('now') - julianday(checked_at)) * 86400000 < ?
+  `).get(PROVIDER_FAIL_COOLDOWN_MS) as { ts: string | null };
+
+  if (recentRestart?.ts) return findings;
+
+  findings.push({
+    check: "provider_failure",
+    severity: "critical",
+    message: `Provider failure detected: ${recentAbandons.cnt} step abandons in 15min with 0 completions — restarting gateway to reset provider state`,
+    action: "restart_gateway",
+    remediated: false,
+  });
+
+  return findings;
+}
+
 export function runSyncChecks(): MedicFinding[] {
   return [
     ...checkOrphanedInTerminalRuns(),
@@ -755,6 +830,7 @@ export function runSyncChecks(): MedicFinding[] {
     ...checkStalledWorkflowCrons(),
     ...checkOfflineServices(),
     ...checkGatewayStalling(),
+    ...checkProviderFailure(),
     ...checkOrphanedBrowserProcesses(),
   ];
 }
