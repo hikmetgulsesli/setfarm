@@ -14,8 +14,8 @@ agent_mapping:
   planner: main
   setup: atlas
   designer: mert
-  developer: [koda, flux, cipher, prism, iris]
-  reviewer: [sentinel, iris]
+  developer: [koda, flux, cipher, prism]
+  reviewer: [sentinel, iris, sentinel, iris, sentinel]
   tester: sentinel
   security-gate: sentinel
   deployer: atlas
@@ -150,10 +150,14 @@ steps:
          - Estimated 200-500 lines of code
          - If a module needs 500+ lines → split (backend + frontend)
 
-      3. TARGET STORY COUNT BY PRD SIZE:
-         - Small PRD (< 100 lines, 6-8 sections): 4-6 stories
-         - Medium PRD (100-400 lines, 6-8 sections): 5-8 stories
-         - Large PRD (400+ lines, 10+ sections): 10-15 stories
+      3. TARGET STORY COUNT BY PRD SIZE (MANDATORY — scale up for complex projects):
+         - Small PRD (< 100 lines, simple app): 6-10 stories
+         - Medium PRD (100-400 lines, moderate complexity): 12-20 stories
+         - Large PRD (400+ lines, complex app with auth/CRUD/dashboard): 20-35 stories
+         - Very Large PRD (enterprise, multi-role, reporting): 30-50 stories
+         IMPORTANT: Every page/module in the PRD MUST have its own story.
+         Never use placeholder pages like 'yakinda eklenecek'. If the PRD
+         describes a module, it MUST be fully implemented in a story.
 
       4. STORY CONTENT MUST BE RICH:
          - What the functional module does (full description)

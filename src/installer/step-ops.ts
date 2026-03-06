@@ -1,6 +1,7 @@
 import { getDb, beginTx, endTx } from "../db.js";
 import type { LoopConfig, Story } from "./types.js";
 import { execFileSync } from "node:child_process";
+import os from "node:os";
 import { emitEvent } from "./events.js";
 import { logger } from "../lib/logger.js";
 import { runQualityChecks, formatQualityReport } from "./quality-gates.js";
@@ -31,6 +32,39 @@ import {
   findLoopStep, findActiveLoop, findVerifyStepByStepId,
   updateStoryStatus,
 } from "./repo.js";
+
+/**
+ * Search for an alternative merged/open PR when the recorded PR is CLOSED.
+ * Developer retries often create a new branch (e.g. US-005-v2) with a new PR,
+ * but the DB still points to the old CLOSED PR. This searches by story branch
+ * pattern to find the actual deliverable.
+ */
+function findAlternativePR(repoPath: string, storyId: string, runIdPrefix: string): string | null {
+  // Search patterns: exact branch, branch with suffix (-v2, -fix, etc.)
+  const baseBranch = `${runIdPrefix}-${storyId}`;
+  try {
+    // First: search for merged PRs matching the story ID in the title or branch
+    let foundUrl = execFileSync("gh", ["pr", "list", "--search", `${storyId} in:title`, "--state", "merged", "--json", "url", "--jq", ".[0].url"], {
+      cwd: repoPath, timeout: 15000, stdio: "pipe"
+    }).toString().trim();
+    if (foundUrl) return foundUrl;
+
+    // Second: search for open PRs matching the story ID
+    foundUrl = execFileSync("gh", ["pr", "list", "--search", `${storyId} in:title`, "--state", "open", "--json", "url", "--jq", ".[0].url"], {
+      cwd: repoPath, timeout: 15000, stdio: "pipe"
+    }).toString().trim();
+    if (foundUrl) return foundUrl;
+
+    // Third: search by base branch name pattern
+    foundUrl = execFileSync("gh", ["pr", "list", "--search", `head:${baseBranch}`, "--state", "merged", "--json", "url", "--jq", ".[0].url"], {
+      cwd: repoPath, timeout: 15000, stdio: "pipe"
+    }).toString().trim();
+    if (foundUrl) return foundUrl;
+  } catch {
+    // gh search failed — no alternative found
+  }
+  return null;
+}
 
 /**
  * Wrapper: calls cleanup-ops.cleanupAbandonedSteps with advancePipeline callback.
@@ -445,17 +479,29 @@ ${cavReport}`, { runId: step.run_id });
               continue; // Check next story
             }
             if (prState === "CLOSED") {
-              // FIX: CLOSED PR — try to reopen, otherwise skip the story
+              // FIX: CLOSED PR — try to reopen first
               try {
                 execFileSync("gh", ["pr", "reopen", prUrl], { timeout: 15000, stdio: "pipe" });
                 logger.info(`[claim-auto-verify] Reopened CLOSED PR for story ${nextUnverified.story_id}: ${prUrl}`, { runId: step.run_id });
                 // Fall through to agent verification — agent will review the reopened PR
               } catch (reopenErr) {
-                // Reopen failed (branch deleted, etc.) — skip story to prevent infinite loop
-                db.prepare("UPDATE stories SET status = 'skipped', output = 'Skipped: CLOSED PR could not be reopened', updated_at = ? WHERE id = ?")
+                // Reopen failed — search for alternative merged/open PR (developer retry creates new branch)
+                const repoPath = context["repo"] || "";
+                const runIdPrefix = step.run_id.slice(0, 8);
+                const altPr = repoPath ? findAlternativePR(repoPath, nextUnverified.story_id, runIdPrefix) : null;
+                if (altPr) {
+                  // Found alternative PR — update DB and re-check state
+                  db.prepare("UPDATE stories SET pr_url = ?, updated_at = ? WHERE id = ?")
+                    .run(altPr, new Date().toISOString(), nextUnverified.id);
+                  logger.info(`[claim-auto-verify] Found alternative PR for ${nextUnverified.story_id}: ${altPr} (original CLOSED: ${prUrl})`, { runId: step.run_id });
+                  emitEvent({ ts: new Date().toISOString(), event: "story.retry", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: nextUnverified.story_id, detail: `Switched to alternative PR: ${altPr}` });
+                  continue; // Re-check with updated PR on next iteration
+                }
+                // No alternative found — skip story
+                db.prepare("UPDATE stories SET status = 'skipped', output = 'Skipped: CLOSED PR could not be reopened and no alternative PR found', updated_at = ? WHERE id = ?")
                   .run(new Date().toISOString(), nextUnverified.id);
-                logger.warn(`[claim-auto-verify] CLOSED PR ${prUrl} cannot be reopened — skipping story ${nextUnverified.story_id}`, { runId: step.run_id });
-                emitEvent({ ts: new Date().toISOString(), event: "story.skipped", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: nextUnverified.story_id, detail: `CLOSED PR could not be reopened` });
+                logger.warn(`[claim-auto-verify] CLOSED PR ${prUrl} — no alternative found — skipping story ${nextUnverified.story_id}`, { runId: step.run_id });
+                emitEvent({ ts: new Date().toISOString(), event: "story.skipped", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: nextUnverified.story_id, detail: `CLOSED PR could not be reopened, no alternative found` });
                 continue; // Check next story
               }
             }
@@ -587,6 +633,14 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
       continue;
     }
     context[key] = value;
+  }
+
+  // Expand tilde in repo path (Node.js fs does not expand ~)
+  if (context["repo"]?.startsWith("~/")) {
+    context["repo"] = context["repo"].replace(/^~\//, os.homedir() + "/");
+  }
+  if (context["story_workdir"]?.startsWith("~/")) {
+    context["story_workdir"] = context["story_workdir"].replace(/^~\//, os.homedir() + "/");
   }
 
   // No fallback extraction — if upstream didn't output required keys,
@@ -920,15 +974,26 @@ Fix these issues in the merged code.`;
           continue; // Check next story
         }
         if (prState === "CLOSED") {
-          // FIX: CLOSED PR — try to reopen, otherwise skip
+          // FIX: CLOSED PR — try to reopen first
           try {
             execFileSync("gh", ["pr", "reopen", prUrl], { timeout: 15000, stdio: "pipe" });
             logger.info(`[handleVerifyEach] Reopened CLOSED PR for story ${nextUnverifiedStory.story_id}: ${prUrl}`, { runId: verifyStep.run_id });
             // Fall through to agent verification
           } catch (reopenErr) {
-            db.prepare("UPDATE stories SET status = 'skipped', output = 'Skipped: CLOSED PR could not be reopened', updated_at = ? WHERE id = ?")
+            // Reopen failed — search for alternative merged/open PR
+            const repoPath = context["repo"] || "";
+            const runIdPrefix = verifyStep.run_id.slice(0, 8);
+            const altPr = repoPath ? findAlternativePR(repoPath, nextUnverifiedStory.story_id, runIdPrefix) : null;
+            if (altPr) {
+              db.prepare("UPDATE stories SET pr_url = ?, updated_at = ? WHERE id = ?")
+                .run(altPr, new Date().toISOString(), nextUnverifiedStory.id);
+              logger.info(`[handleVerifyEach] Found alternative PR for ${nextUnverifiedStory.story_id}: ${altPr} (original CLOSED: ${prUrl})`, { runId: verifyStep.run_id });
+              continue; // Re-check with updated PR on next iteration
+            }
+            // No alternative found — skip story
+            db.prepare("UPDATE stories SET status = 'skipped', output = 'Skipped: CLOSED PR could not be reopened and no alternative PR found', updated_at = ? WHERE id = ?")
               .run(new Date().toISOString(), nextUnverifiedStory.id);
-            logger.warn(`[handleVerifyEach] CLOSED PR ${prUrl} cannot be reopened — skipping story ${nextUnverifiedStory.story_id}`, { runId: verifyStep.run_id });
+            logger.warn(`[handleVerifyEach] CLOSED PR ${prUrl} — no alternative found — skipping story ${nextUnverifiedStory.story_id}`, { runId: verifyStep.run_id });
             continue; // Check next story
           }
         }

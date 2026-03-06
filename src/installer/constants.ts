@@ -98,7 +98,7 @@ export const OPTIONAL_TEMPLATE_VARS = [
 // ── Stories ──────────────────────────────────────────────────────────
 
 /** Maximum number of stories a planner can produce */
-export const MAX_STORIES = 20;
+export const MAX_STORIES = 50;
 
 /** Max lines for PROJECT_MEMORY.md */
 export const PROJECT_MEMORY_MAX_LINES = 150;

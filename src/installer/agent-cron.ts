@@ -186,17 +186,17 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
       throw new Error(`Failed to create cron job for agent "${agent.id}": ${result.error}`);
     }
 
-    // Create parallel crons for developer and verifier, distributed across agent array
-    const PARALLEL_AGENTS = ["developer", "verifier"];
-    const PARALLEL_COUNT = 3;
+    // Create parallel crons for roles with multiple agents, count derived from agent_mapping
+    const PARALLEL_AGENTS = ["developer", "reviewer", "verifier"];
     if (PARALLEL_AGENTS.includes(agent.id)) {
       // Get all mapped agents for this role (supports string or string[])
       const rawMapping = agentMapping[agent.id];
       const allAgents: string[] = Array.isArray(rawMapping)
         ? rawMapping
         : rawMapping ? [rawMapping] : [cronAgentId];
+      const parallelCount = allAgents.length; // dynamic: 5 developers → 5 crons
 
-      for (let n = 2; n <= PARALLEL_COUNT; n++) {
+      for (let n = 2; n <= parallelCount; n++) {
         // Round-robin distribute across available agents
         const agentForCron = allAgents[(n - 1) % allAgents.length];
         const pName = `setfarm/${workflow.id}/${agent.id}-${n}`;
@@ -278,19 +278,22 @@ export async function teardownWorkflowCronsIfIdle(workflowId: string): Promise<v
 
 // ── Cron Count Helpers ──────────────────────────────────────────────
 
-const PARALLEL_AGENTS_SET = new Set(["developer", "verifier"]);
-const CRON_PARALLEL_COUNT = 3;
+const PARALLEL_AGENTS_SET = new Set(["developer", "reviewer", "verifier"]);
 
 /**
  * Calculate how many crons a workflow SHOULD have based on its agent spec.
+ * Uses agent_mapping array length for dynamic parallel count.
  * Used by medic to detect partial cron loss.
  */
 export function expectedCronCount(workflow: WorkflowSpec): number {
+  const agentMapping: AgentMapping = workflow.agent_mapping ?? {};
   let count = 0;
   for (const agent of workflow.agents) {
     count++; // base cron
     if (PARALLEL_AGENTS_SET.has(agent.id)) {
-      count += CRON_PARALLEL_COUNT - 1; // parallel crons (2 extra for count=3)
+      const rawMapping = agentMapping[agent.id];
+      const agentCount = Array.isArray(rawMapping) ? rawMapping.length : 1;
+      count += agentCount - 1; // extra crons beyond the base
     }
   }
   return count;

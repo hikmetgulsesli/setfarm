@@ -5,11 +5,22 @@
  */
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { getDb } from "../db.js";
 import { logger } from "../lib/logger.js";
 import { OPTIONAL_TEMPLATE_VARS, PROTECTED_CONTEXT_KEYS, PROJECT_MEMORY_MAX_LINES } from "./constants.js";
 import { getAgentWorkspacePath } from "./worktree-ops.js";
+
+// ── Path Utilities ────────────────────────────────────────────────
+
+/**
+ * Expand leading ~ to home directory. Node.js fs does not expand tilde.
+ */
+export function expandTilde(p: string): string {
+  if (p.startsWith("~/")) return path.join(os.homedir(), p.slice(2));
+  return p;
+}
 
 // ── Template Resolution ─────────────────────────────────────────────
 
@@ -86,6 +97,13 @@ export function mergeContextSafe(
     }
     context[key] = value;
   }
+
+  // Normalize tilde in path-like keys (Node.js fs does not expand ~)
+  for (const pathKey of ["repo", "story_workdir"]) {
+    if (context[pathKey]?.startsWith("~/")) {
+      context[pathKey] = expandTilde(context[pathKey]);
+    }
+  }
 }
 
 /**
@@ -129,7 +147,7 @@ export function readProgressFile(runId: string): string {
  * Returns placeholder if file does not exist — non-breaking for existing workflows.
  */
 export function readProjectMemory(context: Record<string, string>): string {
-  const repo = context["repo"] || context["story_workdir"];
+  const repo = expandTilde(context["repo"] || context["story_workdir"] || "");
   if (!repo) return "";
   try {
     const memoryPath = path.join(repo, "PROJECT_MEMORY.md");
@@ -152,7 +170,7 @@ export function updateProjectMemory(
   storyStatus: string,
   output: string
 ): void {
-  const repo = context["repo"];
+  const repo = expandTilde(context["repo"] || "");
   if (!repo) return;
 
   try {
