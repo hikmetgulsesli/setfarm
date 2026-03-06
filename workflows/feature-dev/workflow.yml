@@ -612,19 +612,26 @@ steps:
          git push
 
 
-      STEP 3.5 — Visual Inspection (OPTIONAL — use when dev server is running):
-      If the project has a running instance:
-      1. Open browser:
+      STEP 3.5 — Runtime Smoke Test (MANDATORY for web projects):
+      Run the Playwright smoke test to catch runtime errors, missing DOM elements,
+      JS exceptions, and blank pages that unit tests and build checks miss.
+
+      1. Run the smoke test:
          ```bash
-         export AGENT_BROWSER_SESSION="{{current_story_id}}-verify"
-         export AGENT_BROWSER_CONTENT_BOUNDARIES=1
-         agent-browser open http://localhost:$(cat .dev-port 2>/dev/null || echo 3000)
-         agent-browser wait --load networkidle
+         SMOKE_RESULT=$(node /home/setrox/.openclaw/setfarm-repo/scripts/smoke-test.mjs "{{repo}}" 2>&1)
+         SMOKE_EXIT=$?
+         echo "$SMOKE_RESULT"
          ```
-      2. Take annotated screenshot: `agent-browser screenshot --annotate`
-      3. Verify UI matches acceptance criteria
-      4. Check for visual regressions: `agent-browser diff snapshot`
-      5. Always close: `agent-browser close`
+      2. Parse the result:
+         - If exit code 0 (pass): continue to STEP 4
+         - If exit code 1 (failures found): read the failures array and FIX each issue
+           - "JS Exception: ..." → find and fix the runtime error in code
+           - "Console Error: ..." → fix missing imports, broken references, module issues
+           - "Page appears blank" → ensure the app renders visible content
+           After fixing: run lint+build+test, commit, push, then re-run smoke test
+         - If exit code 2 (script error) or status "skip": continue to STEP 4 (non-web project)
+      3. FAIL the verify step if smoke test fails after 2 fix attempts:
+         STATUS: retry with ISSUES listing the smoke test failures
 
       STEP 4 — Rebase onto latest feature branch (prevents merge conflicts):
       1. git fetch origin
@@ -774,6 +781,16 @@ steps:
       1. Check cross-story integration issues
       2. Verify overall feature works as cohesive whole
       3. Fix any issues found, commit and push
+
+      STEP 2.5 — Runtime Smoke Test (MANDATORY for web projects):
+      1. Build the project: {{build_cmd}}
+      2. Run smoke test:
+         SMOKE_RESULT=$(node /home/setrox/.openclaw/setfarm-repo/scripts/smoke-test.mjs "{{repo}}" 2>&1)
+         SMOKE_EXIT=$?
+         echo "$SMOKE_RESULT"
+      3. If smoke test fails (exit 1): fix each issue, rebuild, re-test
+         If smoke test errors/skips (exit 2 or status "skip"): continue
+      4. FAIL the final-test step if smoke test still fails after fixes
 
       STEP 3 — Create final PR to main AND merge:
       1. Create PR:
@@ -926,6 +943,9 @@ steps:
       A7 — Cloudflare Tunnel + DNS:
       HOSTNAME="${PROJECT_NAME}.setrox.com.tr"
       CF_TUNNEL_ID="92d8df83-3623-4850-ba41-29126106d020"
+      GUARDRAIL: HOSTNAME must be simple like "space-shooter.setrox.com.tr" (no path segments like repo/projects/fr).
+      If HOSTNAME contains more than one hyphen-separated word before .setrox.com.tr, you are doing it WRONG.
+      HOSTNAME must equal "{{repo}}.setrox.com.tr" — nothing else. Do NOT derive it from the full path.
 
       a) Add tunnel ingress + DNS (MUST use this script, never edit config.yml directly):
       sudo bash /home/setrox/.openclaw/scripts/tunnel-add.sh "$HOSTNAME" "$PORT"
