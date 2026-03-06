@@ -197,7 +197,7 @@ steps:
         heading_font: <font>
         body_font: <font>
         icon_library: <library>
-      DB_REQUIRED: false/postgres (if project needs a database, use postgres. External PostgreSQL: host=***REMOVED*** port=37550 user=postgres pass=***REMOVED***)
+      DB_REQUIRED: false/postgres (if project needs a database, use postgres. External PostgreSQL credentials are in ~/.openclaw/setfarm-repo/.env — agent reads SETFARM_DB_HOST, SETFARM_DB_PORT, SETFARM_DB_USER, SETFARM_DB_PASS from there)
       STORIES_JSON:
       [
         {
@@ -239,8 +239,8 @@ steps:
       5. Read package.json, test config to understand build/test setup
       6. Run build + tests to establish baseline
       DATABASE SETUP (when DB_REQUIRED is postgres):
-      - Use external PostgreSQL: host=***REMOVED*** port=37550 user=postgres pass=***REMOVED***
-      - Create database: psql "postgresql://postgres:***REMOVED***@***REMOVED***:37550/postgres" -c "CREATE DATABASE <project_db_name>;" (ignore if exists)
+      - Use external PostgreSQL: read credentials from ~/.openclaw/setfarm-repo/.env (source it or parse SETFARM_DB_HOST, SETFARM_DB_PORT, SETFARM_DB_USER, SETFARM_DB_PASS)
+      - Create database: source ~/.openclaw/setfarm-repo/.env && psql "postgresql://$SETFARM_DB_USER:$SETFARM_DB_PASS@$SETFARM_DB_HOST:$SETFARM_DB_PORT/postgres" -c "CREATE DATABASE <project_db_name>;" (ignore if exists)
       - Create app user if needed, grant permissions
       - Store connection string in .env file (never commit .env)
       - Use Drizzle ORM or Prisma for schema management
