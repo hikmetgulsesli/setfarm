@@ -4,6 +4,7 @@ import type { WorkflowAgent, WorkflowSpec } from "./types.js";
 import { resolveOpenClawStateDir, resolveWorkflowWorkspaceRoot } from "./paths.js";
 import { writeWorkflowFile } from "./workspace-files.js";
 
+import { logger } from "../lib/logger.js";
 export type ProvisionedAgent = {
   id: string;
   name?: string;
@@ -57,6 +58,13 @@ export async function provisionAgents(params: {
       // Try the installed workflow dir first, then fall back to the bundled source
       // (handles relative paths like ../../agents/shared/ that escape the workflow dir)
       let source = path.resolve(params.workflowDir, relativePath);
+    // Path traversal guard: source must be within workflowDir or bundled source
+    const normalizedSource = path.normalize(source);
+    if (!normalizedSource.startsWith(path.normalize(params.workflowDir)) &&
+        !normalizedSource.startsWith(path.normalize(params.bundledSourceDir || ""))) {
+      logger.warn(`[agent-provision] Path traversal blocked: ${relativePath}`, {});
+      continue;
+    }
       try {
         await fs.access(source);
       } catch {

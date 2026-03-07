@@ -4,6 +4,7 @@ import path from "node:path";
 import YAML from "yaml";
 import type { LoopConfig, PollingConfig, WorkflowAgent, WorkflowSpec, WorkflowStep } from "./types.js";
 
+import { logger } from "../lib/logger.js";
 /**
  * Resolve !include directives in raw YAML content.
  * Replaces lines matching `!include <filename>` with the content of the
@@ -22,7 +23,7 @@ function resolveIncludes(raw: string, workflowDir: string): string {
     if (match) {
       const indent = match[1];
       const fragmentName = match[2];
-      const fragmentPath = path.join(fragmentsDir, fragmentName);
+      const fragmentPath = path.resolve(fragmentsDir, fragmentName);
       if (existsSync(fragmentPath)) {
         const content = readFileSync(fragmentPath, "utf-8").trimEnd();
         for (const fLine of content.split("\n")) {

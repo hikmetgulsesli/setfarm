@@ -8,7 +8,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { execSync, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { getDb } from "../db.js";
 import { logger } from "../lib/logger.js";
 
@@ -148,8 +148,8 @@ export function autoSaveWorktree(repo: string, storyId: string, agentId?: string
       execFileSync("git", ["commit", "-m", `wip: auto-save on abandon (${storyId})`], { cwd: worktreeDir, timeout: 10000, stdio: "pipe" });
       logger.info(`[worktree] Auto-saved uncommitted changes on abandon for ${storyId}`, {});
     }
-  } catch {
-    // Best effort
+  } catch (err) {
+    logger.warn(`[worktree] Auto-save failed for ${storyId}: ${String(err)}`, {});
   }
 }
 
@@ -191,33 +191,45 @@ export function removeStoryWorktree(repo: string, storyId: string, agentId?: str
  */
 export function killWorktreeProcesses(dir: string): void {
   if (process.platform !== "linux") return;
+  // Validate dir is within a known worktree location (safety guard against accidental kills)
+  if (!dir.includes(".worktrees") && !dir.includes("story-worktrees")) {
+    logger.warn(`[worktree] Refusing to kill processes in non-worktree dir: ${dir}`, {});
+    return;
+  }
   try {
-    // Find all PIDs with cwd inside the target directory
-    const result = execSync(
-      `find /proc/[0-9]*/cwd -maxdepth 0 2>/dev/null | while read link; do pid=$(echo "$link" | cut -d/ -f3); target=$(readlink "$link" 2>/dev/null || true); if [ -n "$target" ] && echo "$target" | grep -q "^${dir}"; then echo "$pid"; fi; done`,
-      { timeout: 10_000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8" }
-    ).trim();
-    if (!result) return;
+    // Node.js native /proc scanning — no shell, no injection risk
+    const procDir = "/proc";
+    let entries: string[];
+    try { entries = fs.readdirSync(procDir); } catch { return; }
 
-    const pids = result.split("\n").filter(Boolean);
-    if (pids.length === 0) return;
+    const pids: number[] = [];
+    const myPid = process.pid;
+    const parentPid = process.ppid;
 
-    const myPid = String(process.pid);
-    const parentPid = String(process.ppid);
-
-    for (const pid of pids) {
-      if (pid === myPid || pid === parentPid) continue;
-      try { process.kill(Number(pid), "SIGTERM"); } catch (e) { /* process may already be dead */ }
-    }
-
-    // Give processes 2s to exit gracefully, then SIGKILL survivors
-    try { execSync("sleep 2", { timeout: 5_000, stdio: "pipe" }); } catch (e) { logger.warn(`[worktree] sleep interrupted: ${String(e)}`, {}); }
-    for (const pid of pids) {
+    for (const entry of entries) {
+      if (!/^\d+$/.test(entry)) continue;
+      const pid = parseInt(entry, 10);
       if (pid === myPid || pid === parentPid) continue;
       try {
-        process.kill(Number(pid), 0); // Check if still alive
-        process.kill(Number(pid), "SIGKILL");
-      } catch (e) { /* already dead */ }
+        const cwd = fs.readlinkSync(path.join(procDir, entry, "cwd"));
+        if (cwd.startsWith(dir)) pids.push(pid);
+      } catch { /* process gone or no permission */ }
+    }
+
+    if (pids.length === 0) return;
+
+    for (const pid of pids) {
+      try { process.kill(pid, "SIGTERM"); } catch { /* already dead */ }
+    }
+
+    // 2s grace period then SIGKILL survivors
+    const deadline = Date.now() + 2000;
+    while (Date.now() < deadline) { /* busy-wait */ }
+    for (const pid of pids) {
+      try {
+        process.kill(pid, 0);
+        process.kill(pid, "SIGKILL");
+      } catch { /* already dead */ }
     }
 
     logger.info(`[worktree] Killed ${pids.length} orphaned process(es) in ${dir}`, {});

@@ -221,17 +221,17 @@ export function cleanupLocalBranches(runId: string): void {
       for (const branch of branches) {
         try {
           execFileSync("git", ["branch", "-D", branch.trim()], { cwd: repo, timeout: 5_000, stdio: "pipe" });
-        } catch {}
+        } catch (err) { logger.warn(`[cleanup] ${String(err)}`, {}); }
       }
       if (branches.length > 0) {
         logger.info(`[branch-cleanup] Deleted ${branches.length} stale branches for run ${runId}`, {});
       }
-    } catch {}
+    } catch (err) { logger.warn(`[cleanup] ${String(err)}`, {}); }
 
     // Prune remote tracking branches
     try {
       execFileSync("git", ["fetch", "--prune"], { cwd: repo, timeout: 15_000, stdio: "pipe" });
-    } catch {}
+    } catch (err) { logger.warn(`[cleanup] ${String(err)}`, {}); }
   } catch (err) {
     logger.warn(`[branch-cleanup] Failed for run ${runId}: ${err}`, {});
   }

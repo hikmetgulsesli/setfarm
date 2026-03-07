@@ -3,6 +3,7 @@
  */
 import { getDb } from "../db.js";
 import { getMaxRoleTimeoutSeconds } from "../installer/install.js";
+import { logger } from "../lib/logger.js";
 
 export type MedicSeverity = "info" | "warning" | "critical";
 export type MedicActionType =
@@ -564,12 +565,12 @@ export function checkOfflineServices(): MedicFinding[] {
               serviceName,
               remediated: false,
             });
-          } catch {
+          } catch (err) { logger.warn("[medic] service restart check failed", {});
             // Service file does not exist — skip
           }
         }
       }
-    } catch {
+    } catch (err) { logger.warn("[medic] offline service check failed", {});
       // skip
     }
   }
@@ -714,7 +715,7 @@ function checkOrphanedBrowserProcesses(): MedicFinding[] {
         stdio: "pipe",
       }).toString().trim();
       chromiumCount = parseInt(output, 10) || 0;
-    } catch {
+    } catch (err) { /* browser proc check */
       return findings; // pgrep exit 1 = no matches
     }
 
@@ -737,7 +738,7 @@ function checkOrphanedBrowserProcesses(): MedicFinding[] {
         remediated: false,
       });
     }
-  } catch {
+  } catch (err) { logger.warn("[medic] browser cleanup failed", {});
     // Non-critical — skip silently
   }
 

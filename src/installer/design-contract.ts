@@ -200,7 +200,9 @@ function parseAllHTMLFiles(stitchDir: string): DesignContract[] {
       const screenId = path.basename(file, ".html");
       contracts.push(parseDesignHTML(html, screenId));
     }
-  } catch {}
+  } catch (err) {
+    logger.warn(`[design-contract] Failed to read stitch dir: ${String(err)}`, {});
+  }
   return contracts;
 }
 

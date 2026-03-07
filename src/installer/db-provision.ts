@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import os from "node:os";
 import { logger } from "../lib/logger.js";
 
 export type DbType = "postgres" | "mariadb" | "mysql" | "mongodb";
@@ -58,7 +59,7 @@ function parseDbUrl(url: string): ParsedUrl {
   // mysql://user:pass@host:port/db
   // mongodb://user:pass@host:port
   const m = url.match(/^(\w+):\/\/([^:]+?):(.+)@([^:\/]+):(\d+)(?:\/(.*))?$/);
-  if (!m) throw new Error(`Invalid DB URL format: ${url.slice(0, 30)}...`);
+  if (!m) throw new Error(`Invalid DB URL format (check scripts/.env)`);
   return {
     protocol: m[1],
     username: m[2],
@@ -113,22 +114,28 @@ export function resolveDbType(dbRequired: string): DbType {
 // --- PostgreSQL provisioning ---
 
 function provisionPostgres(master: ParsedUrl, dbName: string, dbUser: string, dbPass: string): void {
-  const connStr = `postgresql://${master.username}:${master.password}@${master.host}:${master.port}/${master.database || "postgres"}`;
+  // Use PGPASSWORD env var instead of embedding master password in connection string
+  // Security: prevents credential exposure via /proc/*/cmdline
+  const pgEnv = { ...process.env, PGPASSWORD: master.password };
+  const connArgs = ["-h", master.host, "-p", String(master.port), "-U", master.username, "-d", master.database || "postgres"];
+
+  // Escape single quotes in password for SQL string literals
+  const escapedPass = dbPass.replace(/'/g, "''");
 
   // Create role if not exists, update password if exists
-  execFileSync("psql", [connStr, "-c",
-    `DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${dbUser}') THEN CREATE ROLE ${dbUser} WITH LOGIN PASSWORD '${dbPass}'; ELSE ALTER ROLE ${dbUser} WITH PASSWORD '${dbPass}'; END IF; END $$;`
-  ], { timeout: 15000, stdio: "pipe" });
+  execFileSync("psql", [...connArgs, "-c",
+    `DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${dbUser}') THEN CREATE ROLE "${dbUser}" WITH LOGIN PASSWORD '${escapedPass}'; ELSE ALTER ROLE "${dbUser}" WITH PASSWORD '${escapedPass}'; END IF; END $$;`
+  ], { timeout: 15000, stdio: "pipe", env: pgEnv });
 
   // Create database if not exists
-  execFileSync("psql", [connStr, "-c",
-    `DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_database WHERE datname = '${dbName}') THEN EXECUTE 'CREATE DATABASE ${dbName} OWNER ${dbUser}'; END IF; END $$;`
-  ], { timeout: 15000, stdio: "pipe" });
+  execFileSync("psql", [...connArgs, "-c",
+    `DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_database WHERE datname = '${dbName}') THEN EXECUTE 'CREATE DATABASE "${dbName}" OWNER "${dbUser}"'; END IF; END $$;`
+  ], { timeout: 15000, stdio: "pipe", env: pgEnv });
 
   // Grant privileges
-  execFileSync("psql", [connStr, "-c",
-    `GRANT ALL PRIVILEGES ON DATABASE ${dbName} TO ${dbUser};`
-  ], { timeout: 10000, stdio: "pipe" });
+  execFileSync("psql", [...connArgs, "-c",
+    `GRANT ALL PRIVILEGES ON DATABASE "${dbName}" TO "${dbUser}";`
+  ], { timeout: 10000, stdio: "pipe", env: pgEnv });
 }
 
 // --- MySQL/MariaDB provisioning ---
@@ -138,7 +145,7 @@ function provisionMysql(master: ParsedUrl, dbName: string, dbUser: string, dbPas
     `-h`, master.host,
     `-P`, String(master.port),
     `-u`, master.username,
-    `--password=${master.password}`,
+    // MYSQL_PWD env var used instead of --password= (security: prevents /proc/*/cmdline exposure)
     `-e`,
     `CREATE DATABASE IF NOT EXISTS \`${dbName}\`; ` +
     `CREATE USER IF NOT EXISTS '${dbUser}'@'%' IDENTIFIED BY '${dbPass}'; ` +
@@ -146,7 +153,7 @@ function provisionMysql(master: ParsedUrl, dbName: string, dbUser: string, dbPas
     `FLUSH PRIVILEGES;`
   ];
 
-  execFileSync("mysql", args, { timeout: 15000, stdio: "pipe" });
+  execFileSync("mysql", args, { timeout: 15000, stdio: "pipe", env: { ...process.env, MYSQL_PWD: master.password } });
 }
 
 // --- MongoDB provisioning ---
@@ -165,7 +172,14 @@ function provisionMongodb(master: ParsedUrl, dbName: string, dbUser: string, dbP
     }
   `;
 
-  execFileSync("mongosh", [connStr, "--eval", script], { timeout: 15000, stdio: "pipe" });
+  // Write to temp file instead of --eval to prevent JS injection
+  const tmpFile = path.join(os.tmpdir(), `mongo-provision-${Date.now()}.js`);
+  fs.writeFileSync(tmpFile, script, "utf-8");
+  try {
+    execFileSync("mongosh", [connStr, "--file", tmpFile], { timeout: 15000, stdio: "pipe" });
+  } finally {
+    try { fs.unlinkSync(tmpFile); } catch { /* cleanup best effort */ }
+  }
 }
 
 // --- Main provisioning function ---
