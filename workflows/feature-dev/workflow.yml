@@ -1,8 +1,8 @@
 # PR-based workflow — each story creates a PR, verifier reviews + merges.
-# v11.0: Stitch design integration — DESIGN step between SETUP and IMPLEMENT.
+# v11.2: Mandatory esbuild for browser TS + Playwright smoke test in verify+final-test.
 id: feature-dev
 name: Feature Development Workflow
-version: 11.0
+version: 11.2
 description: |
   Full-quality pipeline with Stitch design generation. PLAN → SETUP → DESIGN →
   IMPLEMENT → VERIFY → SECURITY-GATE → FINAL-TEST → DEPLOY.
@@ -249,6 +249,23 @@ steps:
       - Store connection string in .env file (never commit .env)
       - Use Drizzle ORM or Prisma for schema management
       - NEVER use \gexec or psql meta-commands with -c flag — use plain SQL only
+
+      FRONTEND BUNDLER SETUP (MANDATORY for browser-targeted TypeScript projects):
+      After step 6, check if the project needs a bundler:
+      - If package.json exists AND has TypeScript (.ts/.tsx files in src/) AND the project
+        targets a browser (has index.html, or uses React/Canvas/DOM APIs):
+        a. Check if a bundler already exists in devDependencies (vite, esbuild, webpack, parcel, rollup)
+        b. If NO bundler found:
+           - Install esbuild: npm install --save-dev esbuild
+           - Update "build" script in package.json to use esbuild:
+             For plain TS: "esbuild src/index.ts --bundle --outfile=dist/index.js --format=esm --sourcemap --target=es2020"
+             For React/TSX: "esbuild src/index.tsx --bundle --outfile=dist/index.js --format=esm --sourcemap --target=es2020 --jsx=automatic --loader:.tsx=tsx --loader:.ts=ts"
+           - Update "copy-assets" to also copy index.html and CSS files to dist/
+           - REASON: tsc alone produces bare imports (e.g. './Game' without .js extension)
+             that browsers cannot resolve. A bundler is required for browser projects.
+        c. If bundler already exists: verify build script produces a working bundle
+      - If project is Node.js backend only (no index.html, no DOM usage): skip this step
+      - NEVER use "tsc" alone as the build command for browser-targeted projects
 
       7. Create references symlink: ln -sfn /home/setrox/.openclaw/setfarm-repo/references references
       8. Push: git push -u origin {{branch}}
