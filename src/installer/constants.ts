@@ -40,7 +40,6 @@ export const PROTECTED_CONTEXT_KEYS = new Set([
   "task",
   "branch",
   "run_id",
-  "design_system",
 ]);
 
 // ── Optional Template Variables ─────────────────────────────────────
@@ -68,9 +67,13 @@ export const OPTIONAL_TEMPLATE_VARS = [
   "stories_remaining",
   "current_story",
   "current_story_id",
+  "stories_json",
   "current_story_title",
   "final_pr",
+  // PRD (plan step output, design+stories step input)
+  "prd",
   // Design system (Stitch)
+  "design_system",
   "stitch_project_id",
   "design_manifest",
   "design_tokens",

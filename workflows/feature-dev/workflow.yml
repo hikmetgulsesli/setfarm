@@ -1,13 +1,14 @@
 # PR-based workflow — each story creates a PR, verifier reviews + merges.
-# v11.2: Mandatory esbuild for browser TS + Playwright smoke test in verify+final-test.
+# v12.0: Design-first pipeline. PRD → screens → stories → setup → code.
 id: feature-dev
 name: Feature Development Workflow
-version: 11.2
+version: 12.0
 description: |
-  Full-quality pipeline with Stitch design generation. PLAN → SETUP → DESIGN →
-  IMPLEMENT → VERIFY → SECURITY-GATE → FINAL-TEST → DEPLOY.
-  Design step owns visual direction: selects design system, identifies screens
-  from PRD, generates UI via Stitch. Plan step focuses on story decomposition.
+  Design-first pipeline: PLAN → DESIGN → STORIES → SETUP → IMPLEMENT →
+  VERIFY → SECURITY-GATE → FINAL-TEST → DEPLOY.
+  Plan step produces PRD only (no stories). Design step generates screens
+  from PRD via Stitch (no screen limit). Stories step decomposes PRD into
+  user stories using SCREEN_MAP for screen↔story binding.
   Developer creates PR per story, verifier reviews + merges.
   Failed stories are skipped — other stories continue.
 
@@ -121,25 +122,71 @@ steps:
   - id: plan
     agent: planner
     input: |
-      Decompose the following task into ordered user stories for autonomous execution.
+      Analyze the following task and produce a detailed PRD (Product Requirements Document).
+      Do NOT create stories yet — the design step will generate screen designs first,
+      then the stories step will decompose based on both PRD and screen designs.
 
       TASK:
       {{task}}
 
       Instructions:
-      1. Explore the codebase to understand the stack, conventions, and patterns
-      2. Read references/design-standards.md for available palettes and font pairs
-      3. Read references/brainstorming-protocol.md for architectural decision-making
-      4. Break the task into FUNCTIONAL MODULE based stories (see rules below)
-      5. Order by dependency: design tokens first, then schema/DB, backend, frontend, integration
-      6. Each story must fit in one developer session (one context window)
-      7. Every acceptance criterion must be mechanically verifiable
-      8. Always include "Typecheck passes" as the last criterion in every story
-      9. Every story MUST include test criteria — "Tests for [feature] pass"
-      10. The developer is expected to write tests as part of each story
+      1. Explore the codebase (if repo exists) to understand the stack, conventions, and patterns
+      2. Read references/brainstorming-protocol.md for architectural decision-making
+      3. Write a comprehensive PRD covering:
+         - Project overview and goals
+         - Target platform (web/mobile/desktop)
+         - Functional requirements (all features, pages, modules)
+         - Technical requirements (stack, DB, APIs, auth)
+         - UI/UX requirements (pages, screens, interactions)
+         - Non-functional requirements (performance, security)
+      4. The PRD must be detailed enough for a designer to identify ALL screens
+         and for a developer to implement without ambiguity
+      5. Determine the repo path and branch name
 
       PREVIOUS FAILURE (if retrying — READ THIS AND FIX THE ISSUE):
       {{previous_failure}}
+
+      ============================================================
+      MANDATORY OUTPUT FORMAT — PIPELINE WILL BREAK IF YOU SKIP ANY KEY
+      ============================================================
+      STATUS: done
+      REPO: <exact repo path, e.g. /home/setrox/projects/myproject>
+      BRANCH: <branch name, e.g. feature-name>
+      PRD:
+      <full PRD text — include all sections, pages, features, technical details>
+      ============================================================
+    expects: "STATUS: done"
+    max_retries: 2
+    on_fail:
+      escalate_to: human
+
+  - id: stories
+    agent: planner
+    input: |
+      Read the PRD and SCREEN_MAP from the design step, then decompose the PRD into
+      ordered user stories. Each story must reference screens from SCREEN_MAP.
+
+      TASK: {{task}}
+      PRD: {{prd}}
+      REPO: {{repo}}
+      BRANCH: {{branch}}
+      SCREEN_MAP: {{screen_map}}
+      DESIGN_SYSTEM: {{design_system}}
+
+      PREVIOUS FAILURE (if retrying — READ THIS AND FIX THE ISSUE):
+      {{previous_failure}}
+
+      Instructions:
+      1. Read the PRD thoroughly to understand all features, pages, and modules
+      2. Read SCREEN_MAP to understand which screens were designed
+      3. Read references/brainstorming-protocol.md for architectural decision-making
+      4. Break the PRD into FUNCTIONAL MODULE based stories (see rules below)
+      5. Map each story to its relevant screen(s) from SCREEN_MAP using screenId
+      6. Order by dependency: design tokens first, then schema/DB, backend, frontend, integration
+      7. Each story must fit in one developer session (one context window)
+      8. Every acceptance criterion must be mechanically verifiable
+      9. Always include "Typecheck passes" as the last criterion in every story
+      10. Every story MUST include test criteria — "Tests for [feature] pass"
 
       STORY CREATION RULES:
 
@@ -169,6 +216,7 @@ steps:
          - API endpoints (if applicable)
          - UI components (if applicable)
          - Test requirements (MANDATORY for every story)
+         - screens: which screenId(s) from SCREEN_MAP this story implements
 
       5. ORDERING (by dependency):
          - 1st: Project setup + design tokens + DB schema
@@ -177,6 +225,7 @@ steps:
          - 4th: Frontend modules
          - 5th: Integrations + dashboard
 
+      DO NOT:
          - Create micro-stories ("Create user model" separate, "Create user API" separate → WRONG)
          - Make stories for non-code sections (metrics, risks, timeline)
          - Create stories that take longer than 30 minutes
@@ -185,29 +234,36 @@ steps:
       MANDATORY OUTPUT FORMAT — PIPELINE WILL BREAK IF YOU SKIP ANY KEY
       ============================================================
       STATUS: done
-      REPO: <exact repo path, e.g. /home/setrox/myproject>
-      BRANCH: <branch name, e.g. feature-name>
-      (DESIGN_SYSTEM is selected by the design step — do NOT output it here)
       STORIES_JSON:
       [
         {
           "id": "US-001",
           "title": "Short title",
-          "description": "What this story implements — full functional module description including DB tables, API endpoints, UI components",
+          "description": "What this story implements — full functional module description",
           "acceptanceCriteria": ["Criterion 1", "Tests pass", "Typecheck passes"],
-          "depends_on": []
+          "depends_on": [],
+          "screens": ["SCR-001"]
         }
       ]
 
       DEPENDENCY RULES (depends_on field):
       - Foundation stories (setup, design tokens, DB schema): depends_on: [] (no dependencies)
       - Page/feature stories: depends_on: ["US-001"] (depend on foundation)
-      - Integration stories (navigation, routing, final tests): depends_on: ["US-002", "US-003"] (depend on ALL pages they connect)
+      - Integration stories (navigation, routing, final tests): depends_on: ["US-002", "US-003"]
       - Stories with depends_on will NOT start until ALL listed stories are complete
-      - This prevents: navigation story running before the pages it links to exist
-      - ALWAYS add depends_on for stories that reference other stories' output (pages, components, APIs)
+      - ALWAYS add depends_on for stories that reference other stories' output
 
-      (SCREEN_MAP is created by the design step — do NOT output it here)
+      SCREEN_MAP:
+      <output the SCREEN_MAP again, but now with "stories" field added to each screen>
+      [
+        {
+          "screenId": "SCR-001",
+          "name": "Main Dashboard",
+          "type": "dashboard",
+          "description": "Primary overview screen",
+          "stories": ["US-001", "US-003"]
+        }
+      ]
       ============================================================
     expects: "STATUS: done"
     max_retries: 2
@@ -263,6 +319,31 @@ steps:
       - NEVER use "tsc" alone as the build command for browser-targeted projects
 
       7. Create references symlink: ln -sfn /home/setrox/.openclaw/setfarm-repo/references references
+
+      STITCH DESIGN DOWNLOAD (if STITCH_PROJECT_ID is set):
+      Download all screen HTML files from Stitch cloud into stitch/ directory:
+        STITCH_SCRIPT="/home/setrox/.openclaw/setfarm-repo/scripts/stitch-api.mjs"
+        STITCH_PROJECT_ID="{{stitch_project_id}}"
+        if [ -n "$STITCH_PROJECT_ID" ] && [ "$STITCH_PROJECT_ID" != "[missing: stitch_project_id]" ]; then
+          mkdir -p stitch
+          SCREENS=$(node "$STITCH_SCRIPT" list-screens "$STITCH_PROJECT_ID" 2>/dev/null || echo "[]")
+          echo "$SCREENS" | jq -c '.[]' 2>/dev/null | while read -r screen; do
+            SCREEN_ID=$(echo "$screen" | jq -r '.id // .screenId // empty')
+            SCREEN_NAME=$(echo "$screen" | jq -r '.name // .title // empty')
+            if [ -n "$SCREEN_ID" ]; then
+              node "$STITCH_SCRIPT" download-screen "$STITCH_PROJECT_ID" "$SCREEN_ID" "stitch/${SCREEN_NAME:-$SCREEN_ID}.html" 2>/dev/null || true
+            fi
+          done
+          # Extract design tokens from first HTML
+          FIRST_HTML=$(ls stitch/*.html 2>/dev/null | head -1)
+          if [ -n "$FIRST_HTML" ]; then
+            node -e "const fs=require('fs');const h=fs.readFileSync('$FIRST_HTML','utf8');const m=h.match(/:root\s*\{[^}]+\}/s);if(m)fs.writeFileSync('stitch/design-tokens.css',m[0])" 2>/dev/null || true
+          fi
+          # Create .stitch file for persistence
+          echo "$STITCH_PROJECT_ID" > .stitch
+          git add stitch/ .stitch && git commit -m "design: Stitch UI screens" 2>/dev/null || true
+        fi
+
       8. Push: git push -u origin {{branch}}
 
       EXISTING CODE CHECK (resume safety):
@@ -296,10 +377,10 @@ steps:
       !include critical-preamble-short.md
 
       Generate professional UI designs for all frontend screens using Stitch.
+      You work from the PRD — stories do not exist yet. Identify screens from the PRD.
 
       TASK: {{task}}
-      REPO: {{repo}}
-      BRANCH: {{branch}}
+      PRD: {{prd}}
 
       === DEVICE TYPE ===
       - "mobile/React Native/Expo/iOS/Android" in TASK → MOBILE
@@ -309,11 +390,17 @@ steps:
       === STITCH API ===
       Script: /home/setrox/.openclaw/setfarm-repo/scripts/stitch-api.mjs
 
-      STEP 1 — Get or create project (ONE COMMAND — handles .stitch persistence):
+      STEP 1 — Get or create Stitch project:
       STITCH_SCRIPT="/home/setrox/.openclaw/setfarm-repo/scripts/stitch-api.mjs"
-      RESULT=$(node "$STITCH_SCRIPT" ensure-project "$(basename {{repo}})" "{{repo}}")
-      PROJECT_ID=$(echo "$RESULT" | jq -r '.projectId')
-      echo "Stitch project ID: $PROJECT_ID (source: $(echo "$RESULT" | jq -r '.source'))"
+      PROJECT_NAME=$(basename {{repo}})
+      RESULT=$(node "$STITCH_SCRIPT" find-project "$PROJECT_NAME" 2>/dev/null || echo '{"found":false}')
+      if echo "$RESULT" | jq -e '.found' > /dev/null 2>&1 && [ "$(echo "$RESULT" | jq -r '.found')" = "true" ]; then
+        PROJECT_ID=$(echo "$RESULT" | jq -r '.projectId')
+      else
+        RESULT=$(node "$STITCH_SCRIPT" create-project "$PROJECT_NAME")
+        PROJECT_ID=$(echo "$RESULT" | jq -r '.projectId')
+      fi
+      echo "Stitch project ID: $PROJECT_ID"
 
       === DESIGN SYSTEM SELECTION (YOUR RESPONSIBILITY) ===
       Read references/design-standards.md for available palettes and font pairs.
@@ -326,28 +413,24 @@ steps:
       - NEVER choose: purple gradient as primary aesthetic
       - NEVER plan for emoji icons
 
-      === SCREEN IDENTIFICATION (from TASK/PRD — YOUR RESPONSIBILITY) ===
-      Read the TASK carefully and identify ALL unique screens the project needs:
+      === SCREEN IDENTIFICATION (from PRD — YOUR RESPONSIBILITY) ===
+      Read the PRD carefully and identify ALL unique screens the project needs:
       1. Each unique page/view = 1 screen entry
       2. Categories: landing, dashboard, list-view, detail-view, form, settings, game-hud, game-over, etc.
-      3. Max 8 screens. Most projects need 3-6.
+      3. No screen limit — generate as many screens as the PRD requires.
+         Scale with PRD complexity (simple app: 3-6, complex app: 10-30+).
       4. Backend-only project (0 UI) → set SCREENS_GENERATED: 0 and skip to output
-      5. Map stories to screens: read the stories from context and assign each UI story to a screen
 
-      STEP 2 — Generate screens from your identified screens:
+      STEP 2 — Generate screens:
       For each unique screen you identified:
       a. Build detailed prompt from screen name, type, description + your chosen design_system colors/fonts
       b. Use generate-screen-safe with screenId as identifier:
          node "$STITCH_SCRIPT" generate-screen-safe "$PROJECT_ID" "<prompt>" "<screen.name>" <DEVICE> GEMINI_3_PRO
-      c. If result has "skipped: true" → screen already exists, skip download
-      d. Otherwise, parse screens from response, download HTML as stitch/<screenId>.html + screenshot
+      c. If result has "skipped: true" → screen already exists, skip
+      d. Otherwise, parse screens from response
 
-      - stitch/design-tokens.css (extracted from first HTML)
-      IMPORTANT: You MUST download the HTML files. Writing a manifest without HTML is NOT enough.
-      The server will REJECT design completion if stitch/ has 0 HTML files.
-
-      STEP 4 — Commit + push (no need to manually create .stitch — ensure-project already did it):
-      git add stitch/ .stitch && git commit -m "design: Stitch UI designs" && git push
+      NOTE: Do NOT commit to git — the repo may not exist yet. The setup step will
+      download HTML files from Stitch and commit them.
 
       === FONT MAP (design-standards → Stitch enum) ===
       Space Grotesk → SPACE_GROTESK | DM Sans → DM_SANS | Sora → SORA
@@ -358,7 +441,7 @@ steps:
 
       === RETRY ===
       Fail → retry 2x. At least 1 screen required, else STATUS: retry.
-      Backend-only project (0 UI stories) → STATUS: done, SCREENS_GENERATED: 0
+      Backend-only project (0 UI) → STATUS: done, SCREENS_GENERATED: 0
 
       ============================================================
       MANDATORY OUTPUT FORMAT
@@ -367,8 +450,6 @@ steps:
       STITCH_PROJECT_ID: <id>
       DEVICE_TYPE: <DESKTOP|MOBILE|TABLET>
       SCREENS_GENERATED: <count>
-      DESIGN_MANIFEST: stitch/DESIGN_MANIFEST.json
-      DESIGN_TOKENS: stitch/design-tokens.css
       DESIGN_SYSTEM:
         aesthetic: <direction>
         palette: <name>
@@ -381,8 +462,7 @@ steps:
           "screenId": "SCR-001",
           "name": "Main Dashboard",
           "type": "dashboard",
-          "description": "Primary overview screen",
-          "stories": ["US-001", "US-003"]
+          "description": "Primary overview screen"
         }
       ]
       DESIGN_NOTES: <summary>

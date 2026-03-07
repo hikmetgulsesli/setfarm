@@ -21,7 +21,7 @@ export { archiveRunProgress } from "./cleanup-ops.js";
 import { resolveTemplate, parseOutputKeyValues, readProgressFile, readProjectMemory, updateProjectMemory } from "./context-ops.js";
 import { getStories, formatStoryForTemplate, formatCompletedStories, parseAndInsertStories } from "./story-ops.js";
 import { createStoryWorktree, removeStoryWorktree, cleanupWorktrees } from "./worktree-ops.js";
-import { computeHasFrontendChanges, checkTestFailures, checkQualityGate, checkMissingInputs, processDesignCompletion, processSetupCompletion, processBrowserCheck, checkScreenMapPresence } from "./step-guardrails.js";
+import { computeHasFrontendChanges, checkTestFailures, checkQualityGate, checkMissingInputs, processDesignCompletion, processSetupCompletion, processBrowserCheck } from "./step-guardrails.js";
 import { cleanupAbandonedSteps as _cleanupAbandonedSteps, scheduleRunCronTeardown, archiveRunProgress, cleanupLocalBranches } from "./cleanup-ops.js";
 import {
   getRunStatus, getRunContext, updateRunContext, failRun, completeRun,
@@ -487,6 +487,16 @@ export function claimStep(agentId: string): ClaimResult {
   if (hasStories.cnt > 0) {
     context["progress"] = readProgressFile(step.run_id);
     context["project_memory"] = readProjectMemory(context);
+
+    // Inject stories_json for non-loop steps that need it
+    const allStoriesForCtx = getStories(step.run_id);
+    const storiesForTemplate = allStoriesForCtx.map(s => ({
+      id: s.storyId,
+      title: s.title,
+      description: s.description,
+      acceptanceCriteria: s.acceptanceCriteria,
+    }));
+    context["stories_json"] = JSON.stringify(storiesForTemplate, null, 2);
   }
 
   // BUG FIX: If this is a verify step for a verify_each loop, inject the correct
@@ -773,6 +783,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   }
 
   // SCREEN_MAP Enforcement (design step) — design owns screen identification
+  // v12.0: design step SCREEN_MAP no longer requires stories field (stories step adds it later)
   logger.info(`[completeStep] step_id=${step.step_id} status=${parsed["status"]} has_screen_map=${!!context["screen_map"]}`, { runId: step.run_id });
   if (step.step_id === "design" && parsed["status"]?.toLowerCase() === "done") {
     logger.info(`[screen-map-guardrail] Entering design step guardrail check`, { runId: step.run_id });
@@ -782,11 +793,11 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
       try {
         const sm = JSON.parse(screenMapRaw);
         if (!Array.isArray(sm) || sm.length === 0) {
-          screenMapErr = "GUARDRAIL: SCREEN_MAP is empty array. Planner must identify unique screens and map stories to them. Retry with valid SCREEN_MAP.";
+          screenMapErr = "GUARDRAIL: SCREEN_MAP is empty array. Design must identify unique screens. Retry with valid SCREEN_MAP.";
         } else {
           for (const scr of sm) {
-            if (!scr.screenId || !scr.name || !Array.isArray(scr.stories)) {
-              screenMapErr = "GUARDRAIL: SCREEN_MAP entries must have screenId, name, and stories array. Fix SCREEN_MAP format.";
+            if (!scr.screenId || !scr.name) {
+              screenMapErr = "GUARDRAIL: SCREEN_MAP entries must have screenId and name. Fix SCREEN_MAP format.";
               break;
             }
           }
@@ -794,6 +805,11 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
       } catch {
         screenMapErr = "GUARDRAIL: SCREEN_MAP is not valid JSON. Fix SCREEN_MAP format.";
       }
+    }
+    if (screenMapErr) {
+      logger.warn(`[screen-map-guardrail] SCREEN_MAP validation failed: ${screenMapErr}`, { runId: step.run_id, stepId: step.step_id });
+      failStep(stepId, screenMapErr);
+      return { advanced: false, runCompleted: false };
     }
   }
 
@@ -809,38 +825,55 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   // T5: Parse STORIES_JSON from output (any step, typically the planner)
   parseAndInsertStories(output, step.run_id);
 
-  // Auto-generate SCREEN_MAP if design step did not produce one (fallback)
-  if (step.step_id === "design" && parsed["status"]?.toLowerCase() === "done" && !context["screen_map"]) {
-    const uiRe = /(?:ui|page|screen|component|frontend|button|form|dashboard|layout|css|html|react|next|vue|angular|svelte)/i;
-    const taskText = context["task"] || "";
-    if (uiRe.test(output) || uiRe.test(taskText)) {
-      const autoStories = getStories(step.run_id);
-      if (autoStories.length > 0) {
-        const screenMap: Array<{screenId: string; name: string; type: string; description: string; stories: string[]}> = [];
-        let scrIdx = 1;
-        for (const s of autoStories) {
-          if (uiRe.test(s.title + " " + (s.description || ""))) {
+  // Auto-generate SCREEN_MAP if stories step did not produce one with story mappings (fallback)
+  // v12.0: stories step should output SCREEN_MAP with stories field, but if it doesn't, auto-generate
+  if (step.step_id === "stories" && parsed["status"]?.toLowerCase() === "done") {
+    const screenMapRaw = context["screen_map"];
+    let needsAutoGen = false;
+    if (screenMapRaw) {
+      try {
+        const sm = JSON.parse(screenMapRaw);
+        // Check if stories field is populated
+        const hasStoryMappings = Array.isArray(sm) && sm.some((s: any) => Array.isArray(s.stories) && s.stories.length > 0);
+        if (!hasStoryMappings) needsAutoGen = true;
+      } catch {
+        needsAutoGen = true;
+      }
+    } else {
+      needsAutoGen = true;
+    }
+    if (needsAutoGen) {
+      const uiRe = /(?:ui|page|screen|component|frontend|button|form|dashboard|layout|css|html|react|next|vue|angular|svelte)/i;
+      const taskText = context["task"] || "";
+      if (uiRe.test(output) || uiRe.test(taskText)) {
+        const autoStories = getStories(step.run_id);
+        if (autoStories.length > 0) {
+          const screenMap: Array<{screenId: string; name: string; type: string; description: string; stories: string[]}> = [];
+          let scrIdx = 1;
+          for (const s of autoStories) {
+            if (uiRe.test(s.title + " " + (s.description || ""))) {
+              screenMap.push({
+                screenId: `SCR-${String(scrIdx++).padStart(3, "0")}`,
+                name: s.title,
+                type: "app-screen",
+                description: s.description || s.title,
+                stories: [s.storyId],
+              });
+            }
+          }
+          if (screenMap.length === 0) {
             screenMap.push({
-              screenId: `SCR-${String(scrIdx++).padStart(3, "0")}`,
-              name: s.title,
+              screenId: "SCR-001",
+              name: "Main Screen",
               type: "app-screen",
-              description: s.description || s.title,
-              stories: [s.storyId],
+              description: "Primary application interface",
+              stories: autoStories.map(s => s.storyId),
             });
           }
+          context["screen_map"] = JSON.stringify(screenMap);
+          db.prepare("UPDATE runs SET context = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(context), new Date().toISOString(), step.run_id);
+          logger.info(`[screen-map-guardrail] Auto-generated SCREEN_MAP with ${screenMap.length} screen(s) from ${autoStories.length} stories (stories step fallback)`, { runId: step.run_id });
         }
-        if (screenMap.length === 0) {
-          screenMap.push({
-            screenId: "SCR-001",
-            name: "Main Screen",
-            type: "app-screen",
-            description: "Primary application interface",
-            stories: autoStories.map(s => s.storyId),
-          });
-        }
-        context["screen_map"] = JSON.stringify(screenMap);
-        db.prepare("UPDATE runs SET context = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(context), new Date().toISOString(), step.run_id);
-        logger.info(`[screen-map-guardrail] Auto-generated SCREEN_MAP with ${screenMap.length} screen(s) from ${autoStories.length} stories (design fallback)`, { runId: step.run_id });
       }
     }
   }

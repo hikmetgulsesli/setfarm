@@ -76,78 +76,77 @@ export function processDesignCompletion(
   db: ReturnType<typeof getDb>
 ): string | null {
   const repoPath = context["repo"] || context["REPO"] || "";
-  if (!repoPath) return null;
 
-  // GUARDRAIL: Require at least 1 HTML file in stitch/ unless SCREENS_GENERATED: 0 (backend-only)
+  // v12.0: Design step is cloud-only (no repo access). HTML download happens in setup step.
+  // Validate SCREENS_GENERATED and STITCH_PROJECT_ID instead of checking local stitch/ dir.
   const screensGenerated = parseInt(context["screens_generated"] || "-1", 10);
-  if (screensGenerated !== 0) {
-    const stitchDir = path.join(repoPath, "stitch");
-    let htmlCount = 0;
-    try {
-      if (fs.existsSync(stitchDir)) {
-        htmlCount = fs.readdirSync(stitchDir).filter(f => f.endsWith(".html")).length;
-      }
-    } catch (e) {
-      logger.warn(`[design-guardrail] Could not read stitch/ dir: ${String(e)}`, { runId });
-    }
-    if (htmlCount === 0) {
-      const msg = `GUARDRAIL: Design step completed but stitch/ has 0 HTML files. Agent must generate and download at least 1 screen HTML before completing. Retry with Stitch generate-screen + download.`;
-      logger.warn(`[design-guardrail] ${msg}`, { runId });
-      return msg;
-    }
-    logger.info(`[design-guardrail] stitch/ has ${htmlCount} HTML file(s) — OK`, { runId });
+  const stitchProjectId = context["stitch_project_id"] || "";
+  if (screensGenerated !== 0 && !stitchProjectId) {
+    const msg = `GUARDRAIL: Design step completed with SCREENS_GENERATED > 0 but no STITCH_PROJECT_ID. Agent must output STITCH_PROJECT_ID for setup step to download HTML files.`;
+    logger.warn(`[design-guardrail] ${msg}`, { runId });
+    return msg;
+  }
+  if (screensGenerated > 0) {
+    logger.info(`[design-guardrail] ${screensGenerated} screen(s) generated in Stitch project ${stitchProjectId} — OK (HTML download deferred to setup)`, { runId });
   }
 
-  try {
-    const contracts = buildDesignContracts(repoPath);
-    if (contracts.length > 0) {
-      context["ui_contract"] = generateUIContract(contracts);
-      context["layout_skeleton"] = generateLayoutSkeletons(repoPath, contracts);
-      const contractPath = path.join(repoPath, "stitch", "UI_CONTRACT.json");
-      fs.writeFileSync(contractPath, JSON.stringify(contracts, null, 2));
-      enrichStoriesWithDesignContract(db, runId, contracts);
-      logger.info(`[design-contract] UI contract: ${contracts.reduce((s: number, c: any) => s + c.totalInteractive, 0)} elements`, { runId });
+  // v12.0: Design step is cloud-only — local stitch/ dir doesn't exist yet.
+  // Contract building and design rules validation are deferred to setup step completion,
+  // which downloads HTML from Stitch and commits to repo.
+  if (repoPath) {
+    try {
+      const contracts = buildDesignContracts(repoPath);
+      if (contracts.length > 0) {
+        context["ui_contract"] = generateUIContract(contracts);
+        context["layout_skeleton"] = generateLayoutSkeletons(repoPath, contracts);
+        const contractPath = path.join(repoPath, "stitch", "UI_CONTRACT.json");
+        fs.writeFileSync(contractPath, JSON.stringify(contracts, null, 2));
+        enrichStoriesWithDesignContract(db, runId, contracts);
+        logger.info(`[design-contract] UI contract: ${contracts.reduce((s: number, c: any) => s + c.totalInteractive, 0)} elements`, { runId });
 
-      // Precise story-screen mapping via SCREEN_MAP
-      const screenMapRaw = context["screen_map"];
-      if (screenMapRaw) {
-        try {
-          const screenMap = JSON.parse(screenMapRaw);
-          for (const screen of screenMap) {
-            if (!Array.isArray(screen.stories)) continue;
-            for (const storyId of screen.stories) {
-              const row = db.prepare(
-                "SELECT id, acceptance_criteria FROM stories WHERE run_id = ? AND story_id = ?"
-              ).get(runId, storyId) as any;
-              if (!row) continue;
-              const criterion = `Must implement screen ${screen.screenId} (${screen.name}) — read stitch/${screen.screenId}.html`;
-              if (!row.acceptance_criteria.includes(screen.screenId)) {
-                const updated = row.acceptance_criteria + `\n- [SCREEN] ${criterion}`;
-                db.prepare("UPDATE stories SET acceptance_criteria = ?, updated_at = ? WHERE id = ?")
-                  .run(updated, new Date().toISOString(), row.id);
+        // Precise story-screen mapping via SCREEN_MAP
+        const screenMapRaw = context["screen_map"];
+        if (screenMapRaw) {
+          try {
+            const screenMap = JSON.parse(screenMapRaw);
+            for (const screen of screenMap) {
+              if (!Array.isArray(screen.stories)) continue;
+              for (const storyId of screen.stories) {
+                const row = db.prepare(
+                  "SELECT id, acceptance_criteria FROM stories WHERE run_id = ? AND story_id = ?"
+                ).get(runId, storyId) as any;
+                if (!row) continue;
+                const criterion = `Must implement screen ${screen.screenId} (${screen.name}) — read stitch/${screen.screenId}.html`;
+                if (!row.acceptance_criteria.includes(screen.screenId)) {
+                  const updated = row.acceptance_criteria + `\n- [SCREEN] ${criterion}`;
+                  db.prepare("UPDATE stories SET acceptance_criteria = ?, updated_at = ? WHERE id = ?")
+                    .run(updated, new Date().toISOString(), row.id);
+                }
               }
             }
+            logger.info(`[screen-map] Story-screen enrichment completed`, { runId });
+          } catch (e) {
+            logger.warn(`[screen-map] screen_map enrichment failed: ${String(e)}`, { runId });
           }
-          logger.info(`[screen-map] Story-screen enrichment completed`, { runId });
-        } catch (e) {
-          logger.warn(`[screen-map] screen_map enrichment failed: ${String(e)}`, { runId });
         }
       }
+    } catch (e) {
+      logger.warn(`[design-contract] Failed (expected if repo not yet created): ${String(e)}`, { runId });
     }
-  } catch (e) {
-    logger.warn(`[design-contract] Failed: ${String(e)}`, { runId });
-  }
 
-  // Design rules validation (advisory only — Stitch output cannot be controlled)
-  try {
-    const designIssues = validateDesignCompliance(repoPath);
-    if (designIssues.length > 0) {
-      const report = designIssues.map((i: string) => `  - ${i}`).join("\n");
-      context["design_feedback"] = `DESIGN RULES NOTES:\n${report}\nAddress these during implementation if possible.`;
-      logger.warn(`[design-rules] ${designIssues.length} violation(s) (advisory):\n${report}`, { runId });
+    // Design rules validation (advisory only)
+    try {
+      const designIssues = validateDesignCompliance(repoPath);
+      if (designIssues.length > 0) {
+        const report = designIssues.map((i: string) => `  - ${i}`).join("\n");
+        context["design_feedback"] = `DESIGN RULES NOTES:\n${report}\nAddress these during implementation if possible.`;
+        logger.warn(`[design-rules] ${designIssues.length} violation(s) (advisory):\n${report}`, { runId });
+      }
+    } catch (e) {
+      logger.warn(`[design-rules] Validation skipped: ${String(e)}`, { runId });
     }
-  } catch (e) {
-    logger.warn(`[design-rules] Validation failed: ${String(e)}`, { runId });
+  } else {
+    logger.info(`[design-contract] Skipped — no repo path yet (design-first pipeline)`, { runId });
   }
 
   return null;
@@ -235,17 +234,17 @@ export function checkScreenMapPresence(
   output: string
 ): string | null {
   const screenMapRaw = context["screen_map"];
-  // If planner already output SCREEN_MAP and it parsed into context, validate it
+  // v12.0: stories field is optional (design step doesn't have stories yet)
   if (screenMapRaw) {
     try {
       const screenMap = JSON.parse(screenMapRaw);
       if (!Array.isArray(screenMap) || screenMap.length === 0) {
-        return "GUARDRAIL: SCREEN_MAP is empty array. Planner must identify unique screens and map stories to them. Retry with valid SCREEN_MAP.";
+        return "GUARDRAIL: SCREEN_MAP is empty array. Must identify unique screens. Retry with valid SCREEN_MAP.";
       }
       // Validate structure
       for (const screen of screenMap) {
-        if (!screen.screenId || !screen.name || !Array.isArray(screen.stories)) {
-          return "GUARDRAIL: SCREEN_MAP entries must have screenId, name, and stories array. Fix SCREEN_MAP format.";
+        if (!screen.screenId || !screen.name) {
+          return "GUARDRAIL: SCREEN_MAP entries must have screenId and name. Fix SCREEN_MAP format.";
         }
       }
       return null; // Valid SCREEN_MAP
@@ -254,12 +253,11 @@ export function checkScreenMapPresence(
     }
   }
 
-  // Check if this is a UI project by looking at stories
-  const storiesRaw = context["stories_json"] || "";
+  // Check if this is a UI project
   const hasUiKeywords = /(ui|page|screen|component|frontend|button|form|dashboard|layout|css|html|react|next|vue|angular|svelte)/i.test(output);
 
   if (hasUiKeywords) {
-    return "GUARDRAIL: Plan step completed without SCREEN_MAP but project has UI stories. Planner must output SCREEN_MAP after STORIES_JSON. Retry.";
+    return "GUARDRAIL: Step completed without SCREEN_MAP but project has UI elements. Must output SCREEN_MAP. Retry.";
   }
 
   // Backend-only project — SCREEN_MAP not required
