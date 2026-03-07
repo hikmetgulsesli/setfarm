@@ -321,11 +321,26 @@ steps:
       PROJECT_ID=$(echo "$RESULT" | jq -r '.projectId')
       echo "Stitch project ID: $PROJECT_ID (source: $(echo "$RESULT" | jq -r '.source'))"
 
-      STEP 2 — Generate screens (UI stories only, with DEDUP):
-      For each story with UI components:
-        a. Build detailed prompt from story (include colors, fonts, layout from design_system)
+      STEP 2 — Generate screens (UNIQUE screens only — NOT one per story):
+      CRITICAL RULE: Generate ONE screen per UNIQUE page/view, NOT per story.
+      Multiple stories may share the same screen (e.g. 3 stories about the main page = 1 screen).
+      Before generating, classify each story into a screen category:
+        - main-menu/landing/home → 1 screen
+        - gameplay/hud/overlay → 1 screen  
+        - game-over/results → 1 screen
+        - pause/settings → 1 screen
+        - high-scores/leaderboard → 1 screen
+        - dashboard/overview → 1 screen
+        - list-view/browse → 1 screen per distinct list
+        - detail-view → 1 screen per distinct entity type
+        - form/editor → 1 screen per distinct form
+      MAXIMUM: Do not exceed 8 screens per project. Most projects need 3-6 screens.
+      If a project has 20 stories, it still probably has only 4-6 unique screens.
+
+      For each UNIQUE screen (not each story):
+        a. Build detailed prompt (include colors, fonts, layout from design_system)
         b. Use generate-screen-safe to avoid duplicates:
-           node "$STITCH_SCRIPT" generate-screen-safe "$PROJECT_ID" "<prompt>" "<Screen Title>" <DEVICE> GEMINI_3_PRO
+           node "" generate-screen-safe "" "<prompt>" "<Screen Title>" <DEVICE> GEMINI_3_PRO
         c. If result has "skipped: true" → screen already exists, skip download
         d. Otherwise, parse screens from response, download HTML + screenshot
 
