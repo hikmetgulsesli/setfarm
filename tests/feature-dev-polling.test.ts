@@ -22,12 +22,12 @@ describe("feature-dev workflow polling config", () => {
   it("still has all expected steps", async () => {
     const spec = await loadWorkflowSpec(WORKFLOW_DIR);
     const stepIds = spec.steps.map((s) => s.id);
-    assert.deepEqual(stepIds, ["plan", "setup", "design", "implement", "verify", "security-gate", "final-test", "deploy"]);
+    assert.deepEqual(stepIds, ["plan", "design", "stories", "setup", "implement", "verify", "security-gate", "final-test", "deploy"]);
   });
 
   it("workflow id and version are unchanged", async () => {
     const spec = await loadWorkflowSpec(WORKFLOW_DIR);
     assert.equal(spec.id, "feature-dev");
-    assert.equal(spec.version, 11.2);
+    assert.equal(spec.version, 12);
   });
 });

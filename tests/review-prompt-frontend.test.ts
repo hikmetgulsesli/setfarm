@@ -36,11 +36,11 @@ describe("Review step frontend visual verification", () => {
     assert.ok(workflowContent.includes("- id: deploy"), "must have deploy step");
   });
 
-  it("workflow has 8 steps in v11.2 pipeline", () => {
+  it("workflow has 9 steps in v12.0 pipeline", () => {
     const stepMatches = workflowContent.match(/^\s+- id: (?!planner|setup|developer|reviewer|tester|security-gate|deployer|designer)\w+/gm);
     // Count steps section entries (after "steps:" heading)
     const stepsSection = workflowContent.split(/^steps:/m)[1];
     const steps = stepsSection?.match(/^\s+- id: \w+/gm) || [];
-    assert.equal(steps.length, 8, "should have 8 steps");
+    assert.equal(steps.length, 9, "should have 9 steps");
   });
 });
