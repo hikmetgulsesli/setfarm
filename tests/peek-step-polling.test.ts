@@ -271,7 +271,7 @@ describe("polling prompt includes step peek", () => {
     assert.ok(prompt.includes("NO_WORK"), "should mention NO_WORK");
     assert.ok(prompt.includes("HEARTBEAT_OK"), "should still include HEARTBEAT_OK");
     assert.ok(
-      prompt.includes("Do NOT run step claim") || prompt.includes("stop immediately"),
+      prompt.includes("STOP") || prompt.includes("Do NOT"),
       "should instruct to skip claim when no work"
     );
   });

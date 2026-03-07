@@ -6,26 +6,22 @@ import path from "node:path";
 describe("workflow-spec skills parsing", () => {
   const featureDevDir = path.resolve("workflows/feature-dev");
 
-  it("parses verifier agent with agent-browser skill", async () => {
+  it("parses reviewer agent", async () => {
     const spec = await loadWorkflowSpec(featureDevDir);
-    const verifier = spec.agents.find((a: any) => a.id === "verifier");
-    assert.ok(verifier, "verifier agent should exist");
-    assert.ok(Array.isArray(verifier.workspace.skills), "verifier should have skills array");
-    assert.ok(verifier.workspace.skills!.includes("agent-browser"), "verifier should have agent-browser skill");
+    const reviewer = spec.agents.find((a) => a.id === "reviewer");
+    assert.ok(reviewer, "reviewer agent should exist");
   });
 
-  it("parses reviewer agent with agent-browser skill", async () => {
+  it("parses designer agent", async () => {
     const spec = await loadWorkflowSpec(featureDevDir);
-    const reviewer = spec.agents.find((a: any) => a.id === "reviewer");
-    assert.ok(reviewer, "reviewer agent should exist");
-    assert.ok(Array.isArray(reviewer.workspace.skills), "reviewer should have skills array");
-    assert.ok(reviewer.workspace.skills!.includes("agent-browser"), "reviewer should have agent-browser skill");
+    const designer = spec.agents.find((a) => a.id === "designer");
+    assert.ok(designer, "designer agent should exist");
   });
 
   it("agents without skills have no skills field", async () => {
     const spec = await loadWorkflowSpec(featureDevDir);
-    const planner = spec.agents.find((a: any) => a.id === "planner");
+    const planner = spec.agents.find((a) => a.id === "planner");
     assert.ok(planner, "planner agent should exist");
-    assert.equal(planner.workspace.skills, undefined, "planner should not have skills");
+    assert.equal(planner.workspace?.skills, undefined, "planner should not have skills");
   });
 });

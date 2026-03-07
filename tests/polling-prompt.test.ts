@@ -25,40 +25,35 @@ describe("buildPollingPrompt", () => {
     assert.ok(prompt.includes('step claim "bug-fix_fixer"'));
   });
 
-  it("includes instructions for parsing step claim JSON output", () => {
+  it("includes step peek command", () => {
     const prompt = buildPollingPrompt("feature-dev", "developer");
-    assert.ok(prompt.includes("stepId"), "should mention stepId field");
-    assert.ok(prompt.includes("runId"), "should mention runId field");
-    assert.ok(prompt.includes("input"), "should mention input field");
-    assert.ok(prompt.includes("parse"), "should instruct to parse JSON");
+    assert.ok(prompt.includes("step peek"), "should include step peek");
   });
 
-  it("includes sessions_spawn invocation with correct agentId", () => {
+  it("instructs to stop on NO_WORK from peek without running claim", () => {
     const prompt = buildPollingPrompt("feature-dev", "developer");
-    assert.ok(prompt.includes("sessions_spawn"), "should mention sessions_spawn");
-    assert.ok(prompt.includes('"feature-dev_developer"'), "should include full agentId");
+    assert.ok(prompt.includes("NO_WORK"), "should mention NO_WORK");
+    assert.ok(prompt.includes("HEARTBEAT_OK"), "should instruct HEARTBEAT_OK");
   });
 
-  it("includes the full work prompt with step complete/fail instructions", () => {
+  it("includes step complete and step fail instructions", () => {
     const prompt = buildPollingPrompt("feature-dev", "developer");
-    assert.ok(prompt.includes("step complete"), "should include step complete from work prompt");
-    assert.ok(prompt.includes("step fail"), "should include step fail from work prompt");
-    assert.ok(prompt.includes("---START WORK PROMPT---"), "should delimit work prompt");
-    assert.ok(prompt.includes("---END WORK PROMPT---"), "should delimit work prompt");
+    assert.ok(prompt.includes("step complete"), "should include step complete");
+    assert.ok(prompt.includes("step fail"), "should include step fail");
   });
 
-  it("specifies the full model for the spawned task", () => {
-    const prompt = buildPollingPrompt("feature-dev", "developer", "claude-opus-4-6");
-    assert.ok(prompt.includes('"claude-opus-4-6"'), "should specify model for spawn");
+  it("mentions stepId for claim output", () => {
+    const prompt = buildPollingPrompt("feature-dev", "developer");
+    assert.ok(prompt.includes("stepId"), "should mention stepId");
   });
 
-  it("uses default model when workModel not provided", () => {
+  it("forbids running sessions_spawn", () => {
     const prompt = buildPollingPrompt("feature-dev", "developer");
-    assert.ok(prompt.includes('"default"'), "should use default model");
+    assert.ok(prompt.includes("sessions_spawn"), "should mention sessions_spawn in NEVER rules");
   });
 
-  it("instructs to include claimed JSON in spawned task", () => {
+  it("is under 5000 chars", () => {
     const prompt = buildPollingPrompt("feature-dev", "developer");
-    assert.ok(prompt.includes("CLAIMED STEP JSON"), "should instruct to append claimed JSON");
+    assert.ok(prompt.length < 5000, `Prompt too long: ${prompt.length} chars`);
   });
 });

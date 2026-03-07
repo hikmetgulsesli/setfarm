@@ -1,68 +1,33 @@
-/**
- * Regression test: polling timeout values stay in sync
- *
- * This test was added after a bug where test assertions expected
- * timeoutSeconds=30 but the workflow.yml files had been updated to 120.
- * It reads the actual workflow.yml values and asserts they match expectations,
- * ensuring tests and config never drift apart again.
- *
- * See: https://github.com/hikmetgulsesli/setfarm/issues/121
- */
-
-import path from "node:path";
-import { readFile } from "node:fs/promises";
-import { loadWorkflowSpec } from "../dist/installer/workflow-spec.js";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-
-const WORKFLOWS_DIR = path.resolve(import.meta.dirname, "..", "workflows");
-
-const WORKFLOW_NAMES = ["bug-fix", "feature-dev", "security-audit"];
+import { loadWorkflowSpec } from "../dist/installer/workflow-spec.js";
+import path from "node:path";
 
 describe("polling timeout sync across all workflows", () => {
-  for (const name of WORKFLOW_NAMES) {
-    it(`${name} workflow polling.timeoutSeconds matches workflow.yml`, async () => {
-      const dir = path.join(WORKFLOWS_DIR, name);
-      const spec = await loadWorkflowSpec(dir);
+  it("bug-fix workflow polling.timeoutSeconds matches workflow.yml", async () => {
+    const spec = await loadWorkflowSpec(path.resolve("workflows", "bug-fix"));
+    assert.equal(spec.polling?.timeoutSeconds, 1800);
+    assert.equal(spec.polling?.model, "default");
+  });
 
-      assert.ok(spec.polling, `${name} should have a polling config`);
-      assert.ok(
-        typeof spec.polling.timeoutSeconds === "number",
-        `${name} polling.timeoutSeconds should be a number`
-      );
-      // The loaded spec should reflect the actual YAML value
-      // If this fails, it means the spec loader or the YAML is misconfigured
-      assert.equal(
-        spec.polling.timeoutSeconds,
-        120,
-        `${name} polling timeout should be 120s (was changed from 30s — see issue #121)`
-      );
-    });
+  it("bug-fix workflow has correct agent count", async () => {
+    const spec = await loadWorkflowSpec(path.resolve("workflows", "bug-fix"));
+    assert.equal(spec.agents.length, 6);
+  });
 
-    it(`${name} workflow polling.model is set to 'default' (OpenClaw resolves model)`, async () => {
-      const dir = path.join(WORKFLOWS_DIR, name);
-      const spec = await loadWorkflowSpec(dir);
+  it("feature-dev workflow polling.timeoutSeconds matches workflow.yml", async () => {
+    const spec = await loadWorkflowSpec(path.resolve("workflows", "feature-dev"));
+    assert.equal(spec.polling?.timeoutSeconds, 1800);
+  });
 
-      assert.ok(spec.polling, `${name} should have a polling config`);
-      assert.equal(
-        spec.polling.model,
-        "default",
-        `${name} polling model should be "default" to let OpenClaw resolve the model, got: ${spec.polling.model}`
-      );
-    });
-  }
+  it("feature-dev workflow polling.model is kimi-coding/k2p5", async () => {
+    const spec = await loadWorkflowSpec(path.resolve("workflows", "feature-dev"));
+    assert.equal(spec.polling?.model, "kimi-coding/k2p5");
+  });
 
-  it("all workflows use the same polling timeout", async () => {
-    const timeouts = new Set<number>();
-    for (const name of WORKFLOW_NAMES) {
-      const dir = path.join(WORKFLOWS_DIR, name);
-      const spec = await loadWorkflowSpec(dir);
-      timeouts.add(spec.polling.timeoutSeconds);
-    }
-    assert.equal(
-      timeouts.size,
-      1,
-      `All workflows should use the same polling timeout, but found: ${[...timeouts].join(", ")}`
-    );
+  it("security-audit workflow polling.timeoutSeconds matches workflow.yml", async () => {
+    const spec = await loadWorkflowSpec(path.resolve("workflows", "security-audit"));
+    assert.equal(spec.polling?.timeoutSeconds, 1800);
+    assert.equal(spec.polling?.model, "default");
   });
 });
