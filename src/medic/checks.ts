@@ -239,7 +239,7 @@ export function checkOrphanedCrons(
  */
 // ── Check: Claimed But Not Progressing ────────────────────────────────
 
-const CLAIMED_STUCK_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes — if Phase 2 hasn't started in 10min, it's dead
+const CLAIMED_STUCK_THRESHOLD_MS = 5 * 60 * 1000; // 5 min — reduced from 10min, it's dead
 
 /**
  * Find steps that were claimed (status='running') but haven't been updated
@@ -285,7 +285,7 @@ export function checkClaimedButStuck(): MedicFinding[] {
 // ── Check: Failed Runs (Auto-Resume Candidate) ─────────────────────
 
 const RESUME_MAX_ATTEMPTS = 3;
-const RESUME_COOLDOWN_MS = 10 * 60 * 1000; // 10 min cooldown between resumes
+const RESUME_COOLDOWN_MS = 5 * 60 * 1000; // 5 min cooldown — reduced from 10min between resumes
 
 /**
  * Find runs that failed due to step retries exhausted but still have
@@ -394,7 +394,7 @@ export function checkOrphanedStories(): MedicFinding[] {
 
 // ── Check: Stalled Workflow Crons / Circuit Breaker (#218) ──────────
 
-const CIRCUIT_BREAKER_THRESHOLD_MS = 5 * 60 * 1000; // 5 min — but running story guard prevents false positives
+const CIRCUIT_BREAKER_THRESHOLD_MS = 3 * 60 * 1000; // 3 min — reduced from 5min — but running story guard prevents false positives
 
 /**
  * Detect when agent crons are dead or in error state.
@@ -501,7 +501,7 @@ export function checkStalledWorkflowCrons(): MedicFinding[] {
 
 import { execFileSync } from "node:child_process";
 
-const SERVICE_RESTART_COOLDOWN_MS = 10 * 60 * 1000; // 10 min cooldown between restarts
+const SERVICE_RESTART_COOLDOWN_MS = 5 * 60 * 1000; // 5 min cooldown — reduced from 10min between restarts
 
 /**
  * For running pipelines, check if the project systemd service is running.
@@ -639,8 +639,8 @@ export function checkOrphanedInTerminalRuns(): MedicFinding[] {
 
 // ── Check: Gateway Stalling ─────────────────────────────────────────
 
-const GATEWAY_RESTART_COOLDOWN_MS = 20 * 60 * 1000; // 20 min cooldown between restarts
-const GATEWAY_STALL_WINDOW_MS = 10 * 60 * 1000; // 10 min window to check recreate count
+const GATEWAY_RESTART_COOLDOWN_MS = 8 * 60 * 1000; // 8 min cooldown — reduced from 20min between restarts
+const GATEWAY_STALL_WINDOW_MS = 5 * 60 * 1000; // 5 min window — reduced from 10min to check recreate count
 const GATEWAY_STALL_RECREATE_THRESHOLD = 2; // 2+ recreates in window = stalling
 
 /**

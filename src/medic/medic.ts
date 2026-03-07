@@ -180,11 +180,26 @@ case "restart_service": {      if (!finding.serviceName) return false;      try 
           encoding: "utf-8",
           timeout: 30000,
         });
+        // Wait for gateway to come up, then force-recreate crons (remove + create = fresh scheduler entries)
+        // This is the root fix: gateway restart alone leaves crons registered but not firing.
+        try {
+          const { setTimeout: sleep } = await import("timers/promises");
+          await sleep(5000);
+          // Get all running workflows and ensure-crons for each
+          const activeWfs = db.prepare("SELECT DISTINCT workflow_id FROM runs WHERE status = 'running'").all() as Array<{ workflow_id: string }>;
+          const CLI = process.env.HOME + "/.openclaw/setfarm-repo/dist/cli/cli.js";
+          for (const wf of activeWfs) {
+            try {
+              execFileSync("node", [CLI, "workflow", "ensure-crons", wf.workflow_id], { encoding: "utf-8", timeout: 60000 });
+              logger.warn(`[medic] ensure-crons after gateway restart for ${wf.workflow_id}`, {});
+            } catch {}
+          }
+        } catch {}
         emitEvent({
           ts: new Date().toISOString(),
           event: "run.resumed" as EventType,
           runId: finding.runId ?? "",
-          detail: "Medic: gateway scheduler stalled — restarted openclaw-gateway",
+          detail: "Medic: gateway scheduler stalled — restarted openclaw-gateway + ensure-crons",
         });
         return true;
       } catch (err) {
