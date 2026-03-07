@@ -6,8 +6,7 @@ version: 11.2
 description: |
   Full-quality pipeline with Stitch design generation. PLAN → SETUP → DESIGN →
   IMPLEMENT → VERIFY → SECURITY-GATE → FINAL-TEST → DEPLOY.
-  Design step owns visual direction: selects design system, identifies screens
-  from PRD, generates UI via Stitch. Plan step focuses on story decomposition.
+  Designer generates UI screens via Stitch API before coding begins.
   Developer creates PR per story, verifier reviews + merges.
   Failed stories are skipped — other stories continue.
 
@@ -177,9 +176,31 @@ steps:
          - 4th: Frontend modules
          - 5th: Integrations + dashboard
 
+      SCREEN IDENTIFICATION (MANDATORY for UI projects):
+      After creating stories, identify UNIQUE screens the project needs:
+      1. Group stories by the screen/page they affect
+      2. Each unique page/view = 1 screen entry (multiple stories can share a screen)
+      3. Categories: landing, dashboard, list-view, detail-view, form, settings, game-hud, game-over, etc.
+      4. Max 8 screens. Most projects need 3-6.
+      5. Every story with UI work MUST map to at least 1 screen
+      6. Backend-only stories map to the screen they serve (e.g. API story for user list -> list-view screen)
+      7. Output as SCREEN_MAP in the mandatory output section
+
+      6. NEVER:
          - Create micro-stories ("Create user model" separate, "Create user API" separate → WRONG)
          - Make stories for non-code sections (metrics, risks, timeline)
          - Create stories that take longer than 30 minutes
+
+      DESIGN SYSTEM — Select a cohesive design direction for the project:
+      - Read references/design-standards.md for available palettes and font pairs
+      - Choose: aesthetic direction (minimal, brutalist, luxury, editorial, industrial, organic, playful, corporate)
+      - Choose: color palette matching the project's domain (from the 8 palettes in the reference)
+      - Choose: font pair (heading + body) from the 10-pair reference table
+      - Choose: icon library (Lucide React or Heroicons)
+      - NEVER choose: Inter, Roboto, Arial, system-ui fonts
+      - NEVER choose: purple gradient as primary aesthetic
+      - NEVER plan for emoji icons
+      - Include design tokens (CSS custom properties) in the FIRST user story
 
       ============================================================
       MANDATORY OUTPUT FORMAT — PIPELINE WILL BREAK IF YOU SKIP ANY KEY
@@ -187,7 +208,13 @@ steps:
       STATUS: done
       REPO: <exact repo path, e.g. /home/setrox/myproject>
       BRANCH: <branch name, e.g. feature-name>
-      (DESIGN_SYSTEM is selected by the design step — do NOT output it here)
+      DESIGN_SYSTEM:
+        aesthetic: <direction>
+        palette: <name>
+        heading_font: <font>
+        body_font: <font>
+        icon_library: <library>
+      DB_REQUIRED: false/postgres (if project needs a database, use postgres. External PostgreSQL credentials are in ~/.openclaw/setfarm-repo/.env — agent reads SETFARM_DB_HOST, SETFARM_DB_PORT, SETFARM_DB_USER, SETFARM_DB_PASS from there)
       STORIES_JSON:
       [
         {
@@ -207,7 +234,24 @@ steps:
       - This prevents: navigation story running before the pages it links to exist
       - ALWAYS add depends_on for stories that reference other stories' output (pages, components, APIs)
 
-      (SCREEN_MAP is created by the design step — do NOT output it here)
+      SCREEN_MAP:
+      [
+        {
+          "screenId": "SCR-001",
+          "name": "Main Dashboard",
+          "type": "dashboard",
+          "description": "Primary overview screen with stats and navigation",
+          "stories": ["US-001", "US-003", "US-007"]
+        }
+      ]
+      SCREEN_MAP rules:
+      - screenId: SCR-001, SCR-002, etc. (sequential)
+      - stories: array of story IDs that touch this screen
+      - Every UI story MUST appear in at least one screen's stories array
+      - Backend-only stories: map to the screen they serve
+      - Max 8 screens per project
+
+      BRANCH rules: NEVER use "main". Generate a unique kebab-case name (2-4 words).
       ============================================================
     expects: "STATUS: done"
     max_retries: 2
@@ -300,6 +344,7 @@ steps:
       TASK: {{task}}
       REPO: {{repo}}
       BRANCH: {{branch}}
+      DESIGN_SYSTEM: {{design_system}}
 
       === DEVICE TYPE ===
       - "mobile/React Native/Expo/iOS/Android" in TASK → MOBILE
@@ -315,33 +360,39 @@ steps:
       PROJECT_ID=$(echo "$RESULT" | jq -r '.projectId')
       echo "Stitch project ID: $PROJECT_ID (source: $(echo "$RESULT" | jq -r '.source'))"
 
-      === DESIGN SYSTEM SELECTION (YOUR RESPONSIBILITY) ===
-      Read references/design-standards.md for available palettes and font pairs.
-      Choose a cohesive design direction for this project:
-      - aesthetic direction: (minimal, brutalist, luxury, editorial, industrial, organic, playful, corporate)
-      - color palette matching the project's domain (from the 8 palettes in the reference)
-      - font pair (heading + body) from the 10-pair reference table
-      - icon library: Lucide React or Heroicons
-      - NEVER choose: Inter, Roboto, Arial, system-ui fonts
-      - NEVER choose: purple gradient as primary aesthetic
-      - NEVER plan for emoji icons
+      STEP 2 — Generate screens using SCREEN_MAP (or category heuristic as fallback):
+      SCREEN_MAP: {{screen_map}}
 
-      === SCREEN IDENTIFICATION (from TASK/PRD — YOUR RESPONSIBILITY) ===
-      Read the TASK carefully and identify ALL unique screens the project needs:
-      1. Each unique page/view = 1 screen entry
-      2. Categories: landing, dashboard, list-view, detail-view, form, settings, game-hud, game-over, etc.
-      3. Max 8 screens. Most projects need 3-6.
-      4. Backend-only project (0 UI) → set SCREENS_GENERATED: 0 and skip to output
-      5. Map stories to screens: read the stories from context and assign each UI story to a screen
+      IF SCREEN_MAP is non-empty (preferred path):
+        Parse the JSON array. For each screen entry:
+        a. Build detailed prompt from screen.name, screen.type, screen.description + design_system colors/fonts
+        b. Use generate-screen-safe with screenId as identifier:
+           node "$STITCH_SCRIPT" generate-screen-safe "$PROJECT_ID" "<prompt>" "<screen.name>" <DEVICE> GEMINI_3_PRO
+        c. If result has "skipped: true" → screen already exists, skip download
+        d. Otherwise, parse screens from response, download HTML as stitch/<screenId>.html + screenshot
 
-      STEP 2 — Generate screens from your identified screens:
-      For each unique screen you identified:
-      a. Build detailed prompt from screen name, type, description + your chosen design_system colors/fonts
-      b. Use generate-screen-safe with screenId as identifier:
-         node "$STITCH_SCRIPT" generate-screen-safe "$PROJECT_ID" "<prompt>" "<screen.name>" <DEVICE> GEMINI_3_PRO
-      c. If result has "skipped: true" → screen already exists, skip download
-      d. Otherwise, parse screens from response, download HTML as stitch/<screenId>.html + screenshot
+      IF SCREEN_MAP is empty (fallback — legacy runs without planner SCREEN_MAP):
+        Classify stories into screen categories manually:
+        - main-menu/landing/home → 1 screen
+        - gameplay/hud/overlay → 1 screen
+        - game-over/results → 1 screen
+        - pause/settings → 1 screen
+        - high-scores/leaderboard → 1 screen
+        - dashboard/overview → 1 screen
+        - list-view/browse → 1 screen per distinct list
+        - detail-view → 1 screen per distinct entity type
+        - form/editor → 1 screen per distinct form
+        MAXIMUM: 8 screens per project. Most projects need 3-6 screens.
+        For each UNIQUE screen (not each story):
+        a. Build detailed prompt (include colors, fonts, layout from design_system)
+        b. Use generate-screen-safe to avoid duplicates:
+           node "$STITCH_SCRIPT" generate-screen-safe "$PROJECT_ID" "<prompt>" "<Screen Title>" <DEVICE> GEMINI_3_PRO
+        c. If result has "skipped: true" → screen already exists, skip download
+        d. Otherwise, parse screens from response, download HTML + screenshot
 
+      STEP 3 — Save to stitch/:
+      - stitch/<screenId>.html, stitch/<screenId>.png (use screenId from SCREEN_MAP, e.g. SCR-001)
+      - stitch/DESIGN_MANIFEST.json (include "stories" array from SCREEN_MAP per screen entry)
       - stitch/design-tokens.css (extracted from first HTML)
       IMPORTANT: You MUST download the HTML files. Writing a manifest without HTML is NOT enough.
       The server will REJECT design completion if stitch/ has 0 HTML files.
@@ -369,22 +420,6 @@ steps:
       SCREENS_GENERATED: <count>
       DESIGN_MANIFEST: stitch/DESIGN_MANIFEST.json
       DESIGN_TOKENS: stitch/design-tokens.css
-      DESIGN_SYSTEM:
-        aesthetic: <direction>
-        palette: <name>
-        heading_font: <font>
-        body_font: <font>
-        icon_library: <library>
-      SCREEN_MAP:
-      [
-        {
-          "screenId": "SCR-001",
-          "name": "Main Dashboard",
-          "type": "dashboard",
-          "description": "Primary overview screen",
-          "stories": ["US-001", "US-003"]
-        }
-      ]
       DESIGN_NOTES: <summary>
       ============================================================
     expects: "STATUS: done"

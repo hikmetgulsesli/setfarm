@@ -1,6 +1,6 @@
 {
   "name": "setfarm",
-  "version": "1.5.26",
+  "version": "1.5.27",
   "type": "module",
   "private": true,
   "engines": {

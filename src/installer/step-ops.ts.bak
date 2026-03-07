@@ -772,10 +772,10 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     }
   }
 
-  // SCREEN_MAP Enforcement (design step) — design owns screen identification
+  // SCREEN_MAP Enforcement (plan step) — inlined to avoid module resolution issues
   logger.info(`[completeStep] step_id=${step.step_id} status=${parsed["status"]} has_screen_map=${!!context["screen_map"]}`, { runId: step.run_id });
-  if (step.step_id === "design" && parsed["status"]?.toLowerCase() === "done") {
-    logger.info(`[screen-map-guardrail] Entering design step guardrail check`, { runId: step.run_id });
+  if (step.step_id === "plan" && parsed["status"]?.toLowerCase() === "done") {
+    logger.info(`[screen-map-guardrail] Entering plan step guardrail check`, { runId: step.run_id });
     let screenMapErr: string | null = null;
     const screenMapRaw = context["screen_map"];
     if (screenMapRaw) {
@@ -809,8 +809,8 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   // T5: Parse STORIES_JSON from output (any step, typically the planner)
   parseAndInsertStories(output, step.run_id);
 
-  // Auto-generate SCREEN_MAP if design step did not produce one (fallback)
-  if (step.step_id === "design" && parsed["status"]?.toLowerCase() === "done" && !context["screen_map"]) {
+  // Auto-generate SCREEN_MAP after stories are inserted (plan step only)
+  if (step.step_id === "plan" && parsed["status"]?.toLowerCase() === "done" && !context["screen_map"]) {
     const uiRe = /(?:ui|page|screen|component|frontend|button|form|dashboard|layout|css|html|react|next|vue|angular|svelte)/i;
     const taskText = context["task"] || "";
     if (uiRe.test(output) || uiRe.test(taskText)) {
@@ -840,7 +840,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
         }
         context["screen_map"] = JSON.stringify(screenMap);
         db.prepare("UPDATE runs SET context = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(context), new Date().toISOString(), step.run_id);
-        logger.info(`[screen-map-guardrail] Auto-generated SCREEN_MAP with ${screenMap.length} screen(s) from ${autoStories.length} stories (design fallback)`, { runId: step.run_id });
+        logger.info(`[screen-map-guardrail] Auto-generated SCREEN_MAP with ${screenMap.length} screen(s) from ${autoStories.length} stories (post-insert)`, { runId: step.run_id });
       }
     }
   }
