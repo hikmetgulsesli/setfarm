@@ -883,22 +883,33 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     }
   }
 
-  // #157 GUARD: If a downstream loop step expects stories, verify they exist
+  // #157 GUARD: If the IMMEDIATELY NEXT step is a loop, verify stories exist.
+  // v12.0: Only fire if no non-loop steps remain between current and next loop step,
+  // because intermediate steps (e.g. stories, setup) may produce STORIES_JSON later.
   const nextLoopStep = db.prepare(
-    "SELECT id, step_id FROM steps WHERE run_id = ? AND type = 'loop' AND step_index > ? AND status = 'waiting' ORDER BY step_index ASC LIMIT 1"
-  ).get(step.run_id, step.step_index) as { id: string; step_id: string } | undefined;
+    "SELECT id, step_id, step_index FROM steps WHERE run_id = ? AND type = 'loop' AND step_index > ? AND status = 'waiting' ORDER BY step_index ASC LIMIT 1"
+  ).get(step.run_id, step.step_index) as { id: string; step_id: string; step_index: number } | undefined;
   if (nextLoopStep) {
-    const storyCount = { cnt: countAllStories(step.run_id) };
-    if (storyCount.cnt === 0) {
-      const noStoriesMsg = "Step completed but produced no STORIES_JSON — downstream loop would run with 0 stories";
-      logger.warn(noStoriesMsg, { runId: step.run_id, stepId: step.step_id });
-      failStepWithOutput(step.id, noStoriesMsg);
-      failRun(step.run_id);
-      const wfId157b = getWorkflowId(step.run_id);
-      emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId157b, stepId: step.step_id, detail: noStoriesMsg });
-      emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId157b, detail: noStoriesMsg });
-      scheduleRunCronTeardown(step.run_id);
-      return { advanced: false, runCompleted: false };
+    // Check if there are any non-loop steps between us and the next loop step
+    const intermediateSteps = db.prepare(
+      "SELECT COUNT(*) as cnt FROM steps WHERE run_id = ? AND step_index > ? AND step_index < ? AND type != 'loop' AND status IN ('waiting', 'pending')"
+    ).get(step.run_id, step.step_index, nextLoopStep.step_index) as { cnt: number };
+    if (intermediateSteps.cnt === 0) {
+      // No intermediate steps — this is the last step before the loop
+      const storyCount = { cnt: countAllStories(step.run_id) };
+      if (storyCount.cnt === 0) {
+        const noStoriesMsg = "Step completed but produced no STORIES_JSON — downstream loop would run with 0 stories";
+        logger.warn(noStoriesMsg, { runId: step.run_id, stepId: step.step_id });
+        failStepWithOutput(step.id, noStoriesMsg);
+        failRun(step.run_id);
+        const wfId157b = getWorkflowId(step.run_id);
+        emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId157b, stepId: step.step_id, detail: noStoriesMsg });
+        emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId157b, detail: noStoriesMsg });
+        scheduleRunCronTeardown(step.run_id);
+        return { advanced: false, runCompleted: false };
+      }
+    } else {
+      logger.info(`[stories-guard] Skipped — ${intermediateSteps.cnt} step(s) remain before loop step ${nextLoopStep.step_id}`, { runId: step.run_id, stepId: step.step_id });
     }
   }
 
