@@ -67,18 +67,16 @@ export function checkMissingInputs(resolvedInput: string): string[] {
 // ── Design Contract Processing ──────────────────────────────────────
 
 /**
- * Process design step completion: extract UI contracts, validate compliance.
- * Returns failure message if stitch/ has no HTML files, or null if OK.
+ * Process design step completion: cloud-only validation.
+ * v12.0: Design step runs in the cloud (no repo access). HTML download happens in setup step.
+ * Contract building is deferred to processSetupDesignContracts().
  */
 export function processDesignCompletion(
   runId: string,
   context: Record<string, string>,
   db: ReturnType<typeof getDb>
 ): string | null {
-  const repoPath = context["repo"] || context["REPO"] || "";
-
-  // v12.0: Design step is cloud-only (no repo access). HTML download happens in setup step.
-  // Validate SCREENS_GENERATED and STITCH_PROJECT_ID instead of checking local stitch/ dir.
+  // v12.0: Design step is cloud-only. Validate SCREENS_GENERATED and STITCH_PROJECT_ID.
   const screensGenerated = parseInt(context["screens_generated"] || "-1", 10);
   const stitchProjectId = context["stitch_project_id"] || "";
   if (screensGenerated !== 0 && !stitchProjectId) {
@@ -90,66 +88,127 @@ export function processDesignCompletion(
     logger.info(`[design-guardrail] ${screensGenerated} screen(s) generated in Stitch project ${stitchProjectId} — OK (HTML download deferred to setup)`, { runId });
   }
 
-  // v12.0: Design step is cloud-only — local stitch/ dir doesn't exist yet.
-  // Contract building and design rules validation are deferred to setup step completion,
-  // which downloads HTML from Stitch and commits to repo.
-  if (repoPath) {
-    try {
-      const contracts = buildDesignContracts(repoPath);
-      if (contracts.length > 0) {
-        context["ui_contract"] = generateUIContract(contracts);
-        context["layout_skeleton"] = generateLayoutSkeletons(repoPath, contracts);
-        const contractPath = path.join(repoPath, "stitch", "UI_CONTRACT.json");
-        fs.writeFileSync(contractPath, JSON.stringify(contracts, null, 2));
-        enrichStoriesWithDesignContract(db, runId, contracts);
-        logger.info(`[design-contract] UI contract: ${contracts.reduce((s: number, c: any) => s + c.totalInteractive, 0)} elements`, { runId });
+  // v12.0: Contract building, design rules validation, and story enrichment
+  // are ALL deferred to setup step completion (processSetupDesignContracts).
+  // This ensures stitch/ HTML files exist locally before parsing.
+  logger.info(`[design-contract] Deferred to setup step (design-first pipeline)`, { runId });
 
-        // Precise story-screen mapping via SCREEN_MAP
-        const screenMapRaw = context["screen_map"];
-        if (screenMapRaw) {
-          try {
-            const screenMap = JSON.parse(screenMapRaw);
-            for (const screen of screenMap) {
-              if (!Array.isArray(screen.stories)) continue;
-              for (const storyId of screen.stories) {
-                const row = db.prepare(
-                  "SELECT id, acceptance_criteria FROM stories WHERE run_id = ? AND story_id = ?"
-                ).get(runId, storyId) as any;
-                if (!row) continue;
-                const criterion = `Must implement screen ${screen.screenId} (${screen.name}) — read stitch/${screen.screenId}.html`;
-                if (!row.acceptance_criteria.includes(screen.screenId)) {
-                  const updated = row.acceptance_criteria + `\n- [SCREEN] ${criterion}`;
-                  db.prepare("UPDATE stories SET acceptance_criteria = ?, updated_at = ? WHERE id = ?")
-                    .run(updated, new Date().toISOString(), row.id);
-                }
+  return null;
+}
+
+// ── Design Contract Building (setup step) ───────────────────────────
+
+/**
+ * Process setup step completion: build design contracts after HTML download.
+ * v12.0: This runs AFTER setup step downloads Stitch HTML files into stitch/ dir.
+ * Advisory-only — errors are logged but do not fail the step.
+ */
+export function processSetupDesignContracts(
+  runId: string,
+  context: Record<string, string>,
+  db: ReturnType<typeof getDb>
+): void {
+  const repoPath = context["repo"] || context["REPO"] || "";
+  if (!repoPath) {
+    logger.info(`[setup-design-contracts] Skipped — no repo path`, { runId });
+    return;
+  }
+
+  const stitchDir = path.join(repoPath, "stitch");
+  if (!fs.existsSync(stitchDir)) {
+    logger.info(`[setup-design-contracts] Skipped — no stitch/ directory (non-UI project or design step skipped)`, { runId });
+    return;
+  }
+
+  const htmlFiles = fs.readdirSync(stitchDir).filter(f => f.endsWith(".html"));
+  if (htmlFiles.length === 0) {
+    logger.info(`[setup-design-contracts] Skipped — stitch/ has no HTML files`, { runId });
+    return;
+  }
+
+  logger.info(`[setup-design-contracts] Building design contracts from ${htmlFiles.length} HTML file(s)`, { runId });
+
+  // 1. Build design contracts from stitch/*.html
+  try {
+    const contracts = buildDesignContracts(repoPath);
+    if (contracts.length > 0) {
+      // 2. Generate UI contract
+      context["ui_contract"] = generateUIContract(contracts);
+
+      // 3. Generate layout skeletons
+      context["layout_skeleton"] = generateLayoutSkeletons(repoPath, contracts);
+
+      // 4. Write UI_CONTRACT.json
+      const contractPath = path.join(stitchDir, "UI_CONTRACT.json");
+      fs.writeFileSync(contractPath, JSON.stringify(contracts, null, 2));
+
+      // 5. Enrich stories with design criteria
+      enrichStoriesWithDesignContract(db, runId, contracts);
+
+      logger.info(`[setup-design-contracts] UI contract: ${contracts.reduce((s: number, c: any) => s + c.totalInteractive, 0)} elements`, { runId });
+
+      // 6. Precise story-screen mapping via SCREEN_MAP
+      const screenMapRaw = context["screen_map"];
+      if (screenMapRaw) {
+        try {
+          const screenMap = JSON.parse(screenMapRaw);
+          for (const screen of screenMap) {
+            if (!Array.isArray(screen.stories)) continue;
+            for (const storyId of screen.stories) {
+              const row = db.prepare(
+                "SELECT id, acceptance_criteria FROM stories WHERE run_id = ? AND story_id = ?"
+              ).get(runId, storyId) as any;
+              if (!row) continue;
+              const criterion = `Must implement screen ${screen.screenId} (${screen.name}) — read stitch/${screen.screenId}.html`;
+              if (!row.acceptance_criteria.includes(screen.screenId)) {
+                const updated = row.acceptance_criteria + `\n- [SCREEN] ${criterion}`;
+                db.prepare("UPDATE stories SET acceptance_criteria = ?, updated_at = ? WHERE id = ?")
+                  .run(updated, new Date().toISOString(), row.id);
               }
             }
-            logger.info(`[screen-map] Story-screen enrichment completed`, { runId });
-          } catch (e) {
-            logger.warn(`[screen-map] screen_map enrichment failed: ${String(e)}`, { runId });
           }
+          logger.info(`[setup-design-contracts] Story-screen enrichment completed`, { runId });
+        } catch (e) {
+          logger.warn(`[setup-design-contracts] screen_map enrichment failed: ${String(e)}`, { runId });
+        }
+      }
+    }
+  } catch (e) {
+    logger.warn(`[setup-design-contracts] Contract building failed (advisory): ${String(e)}`, { runId });
+  }
+
+  // 7. Design rules validation (advisory only)
+  try {
+    const designIssues = validateDesignCompliance(repoPath);
+    if (designIssues.length > 0) {
+      const report = designIssues.map((i: string) => `  - ${i}`).join("\n");
+      context["design_feedback"] = `DESIGN RULES NOTES:\n${report}\nAddress these during implementation if possible.`;
+      logger.warn(`[setup-design-contracts] ${designIssues.length} design rule violation(s) (advisory):\n${report}`, { runId });
+    }
+  } catch (e) {
+    logger.warn(`[setup-design-contracts] Design validation skipped: ${String(e)}`, { runId });
+  }
+
+  // 8. DESIGN_MANIFEST.json → SCREEN_MAP auto-generate fallback
+  if (!context["screen_map"]) {
+    try {
+      const manifestPath = path.join(stitchDir, "DESIGN_MANIFEST.json");
+      if (fs.existsSync(manifestPath)) {
+        const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+        if (Array.isArray(manifest) && manifest.length > 0) {
+          const autoScreenMap = manifest.map((entry: any) => ({
+            screenId: entry.screenId || entry.htmlFile?.replace(".html", "") || "unknown",
+            name: entry.title || "Untitled",
+            stories: [], // no story binding — implement step will use fallback
+          }));
+          context["screen_map"] = JSON.stringify(autoScreenMap);
+          logger.info(`[setup-design-contracts] Auto-generated SCREEN_MAP from DESIGN_MANIFEST.json (${autoScreenMap.length} screens)`, { runId });
         }
       }
     } catch (e) {
-      logger.warn(`[design-contract] Failed (expected if repo not yet created): ${String(e)}`, { runId });
+      logger.warn(`[setup-design-contracts] SCREEN_MAP auto-generate failed: ${String(e)}`, { runId });
     }
-
-    // Design rules validation (advisory only)
-    try {
-      const designIssues = validateDesignCompliance(repoPath);
-      if (designIssues.length > 0) {
-        const report = designIssues.map((i: string) => `  - ${i}`).join("\n");
-        context["design_feedback"] = `DESIGN RULES NOTES:\n${report}\nAddress these during implementation if possible.`;
-        logger.warn(`[design-rules] ${designIssues.length} violation(s) (advisory):\n${report}`, { runId });
-      }
-    } catch (e) {
-      logger.warn(`[design-rules] Validation skipped: ${String(e)}`, { runId });
-    }
-  } else {
-    logger.info(`[design-contract] Skipped — no repo path yet (design-first pipeline)`, { runId });
   }
-
-  return null;
 }
 
 // ── DB Auto-Provisioning ────────────────────────────────────────────
@@ -254,7 +313,7 @@ export function checkScreenMapPresence(
   }
 
   // Check if this is a UI project
-  const hasUiKeywords = /(ui|page|screen|component|frontend|button|form|dashboard|layout|css|html|react|next|vue|angular|svelte)/i.test(output);
+  const hasUiKeywords = /(ui|page|screen|component|frontend|button|form|dashboard|layout|css|html|react|next|vue|angular|svelte)/i.test(output);
 
   if (hasUiKeywords) {
     return "GUARDRAIL: Step completed without SCREEN_MAP but project has UI elements. Must output SCREEN_MAP. Retry.";

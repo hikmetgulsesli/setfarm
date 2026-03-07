@@ -10,10 +10,13 @@
  *   node stitch-api.mjs generate-screen-safe <projectId> "<prompt>" "<title>" [device] [model]  (dedup check)
  *   node stitch-api.mjs list-screens <projectId>
  *   node stitch-api.mjs get-screen <projectId> <screenId>
+ *   node stitch-api.mjs download-screen <projectId> <screenId> <outputPath>
+ *   node stitch-api.mjs create-manifest <projectId> <outputDir>
+ *   node stitch-api.mjs extract-tokens <stitchDir> [outputCssFile]
  *   node stitch-api.mjs download <url> <outputFile>
  */
 
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -155,6 +158,38 @@ function parseScreens(result) {
   return { screens, suggestions };
 }
 
+// Parse screen list from list_screens result (shared helper)
+function parseScreenList(result) {
+  let screens = [];
+  if (result && result.content) {
+    for (const item of result.content) {
+      if (item.type === 'text') {
+        try {
+          const parsed = JSON.parse(item.text);
+          if (Array.isArray(parsed)) {
+            screens = parsed;
+          } else if (parsed.screens) {
+            screens = parsed.screens;
+          } else if (parsed.structuredContent?.screens) {
+            screens = parsed.structuredContent.screens;
+          } else if (parsed.outputComponents) {
+            for (const comp of parsed.outputComponents) {
+              if (comp.design?.screens) screens.push(...comp.design.screens);
+            }
+          } else if (parsed.output_components) {
+            for (const comp of parsed.output_components) {
+              if (comp.design?.screens) screens.push(...comp.design.screens);
+            }
+          }
+        } catch {
+          // skip unparseable text
+        }
+      }
+    }
+  }
+  return screens;
+}
+
 // Commands
 const commands = {
   async 'list-projects'() {
@@ -250,44 +285,7 @@ const commands = {
     if (!projectId) throw new Error('Usage: list-screens <projectId>');
     await initialize();
     const result = await callTool('list_screens', { projectId });
-
-    let screens = [];
-    if (result && result.content) {
-      for (const item of result.content) {
-        if (item.type === 'text') {
-          try {
-            const parsed = JSON.parse(item.text);
-            // Handle multiple response formats:
-            // 1. { screens: [...] }
-            // 2. Direct array [...]
-            // 3. { structuredContent: { screens: [...] } }
-            // 4. { outputComponents: [{ design: { screens: [...] } }] }
-            if (Array.isArray(parsed)) {
-              screens = parsed;
-            } else if (parsed.screens) {
-              screens = parsed.screens;
-            } else if (parsed.structuredContent?.screens) {
-              screens = parsed.structuredContent.screens;
-            } else if (parsed.outputComponents) {
-              for (const comp of parsed.outputComponents) {
-                if (comp.design?.screens) {
-                  screens.push(...comp.design.screens);
-                }
-              }
-            } else if (parsed.output_components) {
-              for (const comp of parsed.output_components) {
-                if (comp.design?.screens) {
-                  screens.push(...comp.design.screens);
-                }
-              }
-            }
-          } catch {
-            // skip unparseable text
-          }
-        }
-      }
-    }
-
+    const screens = parseScreenList(result);
     console.log(JSON.stringify(screens, null, 2));
   },
 
@@ -392,19 +390,7 @@ const commands = {
     // 1. Check for duplicate screens by title
     if (screenTitle) {
       const listResult = await callTool('list_screens', { projectId });
-      let existingScreens = [];
-      if (listResult && listResult.content) {
-        for (const item of listResult.content) {
-          if (item.type === 'text') {
-            try {
-              const parsed = JSON.parse(item.text);
-              if (Array.isArray(parsed)) existingScreens = parsed;
-              else if (parsed.screens) existingScreens = parsed.screens;
-              else if (parsed.structuredContent?.screens) existingScreens = parsed.structuredContent.screens;
-            } catch { /* skip */ }
-          }
-        }
-      }
+      let existingScreens = parseScreenList(listResult);
 
       const titleLower = screenTitle.toLowerCase();
 
@@ -461,6 +447,101 @@ const commands = {
     console.log(JSON.stringify({ skipped: false, screens, suggestions }, null, 2));
   },
 
+  // ── New commands (v1.5.28) ──────────────────────────────────────
+
+  async 'download-screen'(projectId, screenId, outputPath) {
+    if (!projectId || !screenId || !outputPath) throw new Error('Usage: download-screen <projectId> <screenId> <outputPath>');
+    await initialize();
+    const name = `projects/${projectId}/screens/${screenId}`;
+    const result = await callTool('get_screen', { name, projectId, screenId });
+
+    let htmlUrl = null;
+    if (result && result.content) {
+      for (const item of result.content) {
+        if (item.type === 'text') {
+          try {
+            const parsed = JSON.parse(item.text);
+            // Screen object may be at top level or nested under .screen
+            const screen = parsed.screen || parsed;
+            htmlUrl = screen.htmlCode?.downloadUrl || screen.html_code?.download_url || null;
+            if (htmlUrl) break;
+          } catch { /* skip */ }
+        }
+      }
+    }
+
+    if (!htmlUrl) throw new Error(`No HTML download URL found for screen ${screenId}`);
+    const dlResult = await downloadFile(htmlUrl, outputPath);
+    console.log(JSON.stringify(dlResult, null, 2));
+  },
+
+  async 'create-manifest'(projectId, outputDir) {
+    if (!projectId || !outputDir) throw new Error('Usage: create-manifest <projectId> <outputDir>');
+    await initialize();
+    const result = await callTool('list_screens', { projectId });
+    const screens = parseScreenList(result);
+
+    const manifest = screens.map(s => {
+      const screenId = (s.name || '').replace(/^projects\/\d+\/screens\//, '') || s.id || s.screenId;
+      const title = s.title || s.displayName || 'Untitled';
+      return {
+        screenId,
+        title,
+        htmlFile: `${title.replace(/[^a-zA-Z0-9_-]/g, '-')}.html`,
+        deviceType: s.deviceType || s.device_type || 'DESKTOP',
+        htmlUrl: s.htmlCode?.downloadUrl || s.html_code?.download_url || null,
+      };
+    });
+
+    mkdirSync(outputDir, { recursive: true });
+    const manifestPath = resolve(outputDir, 'DESIGN_MANIFEST.json');
+    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+    console.log(JSON.stringify({ path: manifestPath, screens: manifest.length }, null, 2));
+  },
+
+  async 'extract-tokens'(stitchDir, outputCssFile) {
+    if (!stitchDir) throw new Error('Usage: extract-tokens <stitchDir> [outputCssFile]');
+    const outFile = outputCssFile || resolve(stitchDir, 'design-tokens.css');
+
+    const htmlFiles = readdirSync(stitchDir)
+      .filter(f => f.endsWith('.html'))
+      .map(f => resolve(stitchDir, f));
+
+    if (htmlFiles.length === 0) {
+      console.log(JSON.stringify({ error: 'No HTML files found', dir: stitchDir }, null, 2));
+      return;
+    }
+
+    // Parse :root blocks from all HTML files, merge (last-wins for dupes)
+    const properties = new Map();
+    for (const file of htmlFiles) {
+      const content = readFileSync(file, 'utf-8');
+      for (const match of content.matchAll(/:root\s*\{([^}]+)\}/gs)) {
+        for (const line of match[1].split('\n')) {
+          const propMatch = line.match(/^\s*(--[\w-]+)\s*:\s*(.+?)\s*;?\s*$/);
+          if (propMatch) {
+            properties.set(propMatch[1], propMatch[2].replace(/;$/, '').trim());
+          }
+        }
+      }
+    }
+
+    if (properties.size === 0) {
+      console.log(JSON.stringify({ error: 'No CSS custom properties found', files: htmlFiles.length }, null, 2));
+      return;
+    }
+
+    let css = ':root {\n';
+    for (const [prop, value] of properties) {
+      css += `  ${prop}: ${value};\n`;
+    }
+    css += '}\n';
+
+    mkdirSync(dirname(outFile), { recursive: true });
+    writeFileSync(outFile, css);
+    console.log(JSON.stringify({ path: outFile, properties: properties.size, sources: htmlFiles.length }, null, 2));
+  },
+
   async download(url, outputFile) {
     if (!url || !outputFile) throw new Error('Usage: download <url> <outputFile>');
     const result = await downloadFile(url, outputFile);
@@ -483,6 +564,9 @@ Commands:
   generate-screen-safe <projectId> "<prompt>" "<title>" [device] [model] Generate with dedup check
   list-screens <projectId>                                               List screens in project
   get-screen <projectId> <screenId>                                      Get screen details
+  download-screen <projectId> <screenId> <outputPath>                    Download screen HTML
+  create-manifest <projectId> <outputDir>                                Create DESIGN_MANIFEST.json
+  extract-tokens <stitchDir> [outputCssFile]                             Merge CSS tokens from all HTMLs
   download <url> <outputFile>                                            Download file from URL`);
   process.exit(1);
 }

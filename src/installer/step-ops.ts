@@ -21,7 +21,7 @@ export { archiveRunProgress } from "./cleanup-ops.js";
 import { resolveTemplate, parseOutputKeyValues, readProgressFile, readProjectMemory, updateProjectMemory } from "./context-ops.js";
 import { getStories, formatStoryForTemplate, formatCompletedStories, parseAndInsertStories } from "./story-ops.js";
 import { createStoryWorktree, removeStoryWorktree, cleanupWorktrees } from "./worktree-ops.js";
-import { computeHasFrontendChanges, checkTestFailures, checkQualityGate, checkMissingInputs, processDesignCompletion, processSetupCompletion, processBrowserCheck } from "./step-guardrails.js";
+import { computeHasFrontendChanges, checkTestFailures, checkQualityGate, checkMissingInputs, processDesignCompletion, processSetupCompletion, processSetupDesignContracts, processBrowserCheck } from "./step-guardrails.js";
 import { cleanupAbandonedSteps as _cleanupAbandonedSteps, scheduleRunCronTeardown, archiveRunProgress, cleanupLocalBranches } from "./cleanup-ops.js";
 import {
   getRunStatus, getRunContext, updateRunContext, failRun, completeRun,
@@ -780,6 +780,11 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
       failStep(stepId, dbErr);
       return { advanced: false, runCompleted: false };
     }
+  }
+
+  // Design Contract Building (setup step — after HTML download)
+  if (step.step_id === "setup" && parsed["status"]?.toLowerCase() === "done") {
+    processSetupDesignContracts(step.run_id, context, db);
   }
 
   // SCREEN_MAP Enforcement (design step) — design owns screen identification

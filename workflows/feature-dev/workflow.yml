@@ -427,22 +427,23 @@ steps:
         STITCH_PROJECT_ID="{{stitch_project_id}}"
         if [ -n "$STITCH_PROJECT_ID" ] && [ "$STITCH_PROJECT_ID" != "[missing: stitch_project_id]" ]; then
           mkdir -p stitch
+          # Step 1: Create DESIGN_MANIFEST.json (screen metadata)
+          node "$STITCH_SCRIPT" create-manifest "$STITCH_PROJECT_ID" stitch 2>/dev/null || true
+          # Step 2: Download each screen HTML via dedicated command
           SCREENS=$(node "$STITCH_SCRIPT" list-screens "$STITCH_PROJECT_ID" 2>/dev/null || echo "[]")
           echo "$SCREENS" | jq -c '.[]' 2>/dev/null | while read -r screen; do
-            SCREEN_ID=$(echo "$screen" | jq -r '.id // .screenId // empty')
-            SCREEN_NAME=$(echo "$screen" | jq -r '.name // .title // empty')
+            SCREEN_ID=$(echo "$screen" | jq -r '.name // empty' | sed 's|projects/[0-9]*/screens/||' || echo "$screen" | jq -r '.id // .screenId // empty')
+            SCREEN_TITLE=$(echo "$screen" | jq -r '.title // empty')
+            SCREEN_FILE=$(echo "$SCREEN_TITLE" | sed 's/[^a-zA-Z0-9_-]/-/g')
             if [ -n "$SCREEN_ID" ]; then
-              node "$STITCH_SCRIPT" download-screen "$STITCH_PROJECT_ID" "$SCREEN_ID" "stitch/${SCREEN_NAME:-$SCREEN_ID}.html" 2>/dev/null || true
+              node "$STITCH_SCRIPT" download-screen "$STITCH_PROJECT_ID" "$SCREEN_ID" "stitch/${SCREEN_FILE:-$SCREEN_ID}.html" 2>/dev/null || true
             fi
           done
-          # Extract design tokens from first HTML
-          FIRST_HTML=$(ls stitch/*.html 2>/dev/null | head -1)
-          if [ -n "$FIRST_HTML" ]; then
-            node -e "const fs=require('fs');const h=fs.readFileSync('$FIRST_HTML','utf8');const m=h.match(/:root\s*\{[^}]+\}/s);if(m)fs.writeFileSync('stitch/design-tokens.css',m[0])" 2>/dev/null || true
-          fi
-          # Create .stitch file for persistence
+          # Step 3: Extract and merge design tokens from ALL HTML files
+          node "$STITCH_SCRIPT" extract-tokens stitch stitch/design-tokens.css 2>/dev/null || true
+          # Step 4: Persist .stitch file
           echo "$STITCH_PROJECT_ID" > .stitch
-          git add stitch/ .stitch && git commit -m "design: Stitch UI screens" 2>/dev/null || true
+          git add stitch/ .stitch && git commit -m "design: Stitch UI screens + manifest + tokens" 2>/dev/null || true
         fi
 
       8. Push: git push -u origin {{branch}}
@@ -537,6 +538,21 @@ steps:
       4. NEVER write game state overlays (start, pause, game-over) directly inside page.tsx — ALWAYS use dedicated components
       5. If a component exists in components/ that matches a Stitch screen, you MUST use it — do NOT recreate it
       6. After implementation, verify: every file in stitch/DESIGN_MANIFEST.json screens has a matching import in the render tree
+
+      FRAMEWORK-AWARE DESIGN INTEGRATION (MANDATORY):
+      1. NEXT.JS (app/ dir varsa):
+         - app/layout.tsx ASLA silme/boslaltma
+         - app/globals.css'in BASINA: @import "../stitch/design-tokens.css"
+         - Font loading: next/font veya Google Fonts <link>
+         - Component logic page.tsx'e DEGIL components/ klasorune
+      2. REACT (Vite/CRA):
+         - src/index.css veya src/main.tsx'de design-tokens.css import et
+         - React Router ile navigation (Stitch link hedeflerine esle)
+      3. GENEL KURALLAR:
+         - design-tokens.css IMPORT edilir, copy-paste YAPILMAZ
+         - var(--property-name) ile kullan
+         - design-tokens.css disinda --font-*, --color-* tanimlama YASAK
+         - Mevcut CSS dosyalarini SILME — @import ekle
 
       !include implement-design-enforcement.md
 
@@ -694,8 +710,14 @@ steps:
          - Tests were written for this story
          - No hardcoded secrets, .env not committed
       1.5. Stitch design compliance (if stitch/ exists):
+         - CRITICAL: stitch/design-tokens.css IMPORT edilmis mi kontrol et:
+           grep -rE "@import.*design-tokens|import.*design-tokens" src/ app/ styles/ 2>/dev/null
+           Bulunamazsa → FAIL (agent duzeltmeli)
          - Check CSS vars from stitch/design-tokens.css are used
          - FAIL if main CSS file has custom tokens that duplicate stitch/design-tokens.css values (agent must not recreate tokens)
+         - Duplicate CSS var kontrolu:
+           grep -rE "^\s*--" src/ app/ styles/ 2>/dev/null | grep -v design-tokens
+           design-tokens.css'deki var'larla eslesen varsa → FAIL
          - grep hardcoded colors not in design-tokens → WARN
          - Verify fonts match stitch/DESIGN_MANIFEST.json
       1.55. Layout structure compliance (screen-based if STORY_SCREENS available):
