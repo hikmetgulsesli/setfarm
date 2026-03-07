@@ -79,6 +79,8 @@ export const OPTIONAL_TEMPLATE_VARS = [
   "ui_contract",
   "design_feedback",
   "layout_skeleton",
+  "screen_map",
+  "story_screens",
   // Database
   "database_url",
   "db_host",

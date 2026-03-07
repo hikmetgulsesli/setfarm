@@ -107,6 +107,32 @@ export function processDesignCompletion(
       fs.writeFileSync(contractPath, JSON.stringify(contracts, null, 2));
       enrichStoriesWithDesignContract(db, runId, contracts);
       logger.info(`[design-contract] UI contract: ${contracts.reduce((s: number, c: any) => s + c.totalInteractive, 0)} elements`, { runId });
+
+      // Precise story-screen mapping via SCREEN_MAP
+      const screenMapRaw = context["screen_map"];
+      if (screenMapRaw) {
+        try {
+          const screenMap = JSON.parse(screenMapRaw);
+          for (const screen of screenMap) {
+            if (!Array.isArray(screen.stories)) continue;
+            for (const storyId of screen.stories) {
+              const row = db.prepare(
+                "SELECT id, acceptance_criteria FROM stories WHERE run_id = ? AND story_id = ?"
+              ).get(runId, storyId) as any;
+              if (!row) continue;
+              const criterion = `Must implement screen ${screen.screenId} (${screen.name}) — read stitch/${screen.screenId}.html`;
+              if (!row.acceptance_criteria.includes(screen.screenId)) {
+                const updated = row.acceptance_criteria + `\n- [SCREEN] ${criterion}`;
+                db.prepare("UPDATE stories SET acceptance_criteria = ?, updated_at = ? WHERE id = ?")
+                  .run(updated, new Date().toISOString(), row.id);
+              }
+            }
+          }
+          logger.info(`[screen-map] Story-screen enrichment completed`, { runId });
+        } catch (e) {
+          logger.warn(`[screen-map] screen_map enrichment failed: ${String(e)}`, { runId });
+        }
+      }
     }
   } catch (e) {
     logger.warn(`[design-contract] Failed: ${String(e)}`, { runId });

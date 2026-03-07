@@ -370,6 +370,28 @@ export function claimStep(agentId: string): ClaimResult {
       context["story_branch"] = "";
       context["verify_feedback"] = "";
 
+      // Resolve story_screens from SCREEN_MAP
+      const screenMapRaw = context["screen_map"];
+      if (screenMapRaw) {
+        try {
+          const screenMap = JSON.parse(screenMapRaw);
+          if (Array.isArray(screenMap)) {
+            const storyScreens = screenMap
+              .filter((s: any) => Array.isArray(s.stories) && s.stories.includes(story.storyId))
+              .map((s: any) => ({
+                screenId: s.screenId,
+                name: s.name,
+                type: s.type,
+                htmlFile: `stitch/${s.screenId}.html`,
+              }));
+            context["story_screens"] = JSON.stringify(storyScreens);
+          }
+        } catch (e) {
+          logger.warn(`Failed to parse screen_map for story ${story.storyId}`, { runId: step.run_id });
+          context["story_screens"] = "";
+        }
+      }
+
       // Default optional template vars to prevent MISSING_INPUT_GUARD false positives (story-each flow)
       for (const v of OPTIONAL_TEMPLATE_VARS) {
         if (!context[v]) context[v] = "";
@@ -564,6 +586,29 @@ ${cavReport}`, { runId: step.run_id });
         retryCount: nextUnverified.retry_count, maxRetries: nextUnverified.max_retries,
       };
       context["current_story"] = formatStoryForTemplate(storyObj);
+
+      // Resolve story_screens from SCREEN_MAP for verify_each
+      const vScreenMapRaw = context["screen_map"];
+      if (vScreenMapRaw) {
+        try {
+          const vScreenMap = JSON.parse(vScreenMapRaw);
+          if (Array.isArray(vScreenMap)) {
+            const vStoryScreens = vScreenMap
+              .filter((s: any) => Array.isArray(s.stories) && s.stories.includes(nextUnverified.story_id))
+              .map((s: any) => ({
+                screenId: s.screenId,
+                name: s.name,
+                type: s.type,
+                htmlFile: `stitch/${s.screenId}.html`,
+              }));
+            context["story_screens"] = JSON.stringify(vStoryScreens);
+          }
+        } catch (e) {
+          logger.warn(`Failed to parse screen_map for verify story ${nextUnverified.story_id}`, { runId: step.run_id });
+          context["story_screens"] = "";
+        }
+      }
+
       db.prepare("UPDATE runs SET context = ?, updated_at = ? WHERE id = ?")
         .run(JSON.stringify(context), new Date().toISOString(), step.run_id);
       logger.info(`Verify step: injected story ${nextUnverified.story_id} context`, { runId: step.run_id });
