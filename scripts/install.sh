@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Setfarm installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/hikmetgulsesli/setfarm/v1.5.30/scripts/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/hikmetgulsesli/setfarm/v1.5.31/scripts/install.sh | bash
 
 REPO="https://github.com/hikmetgulsesli/setfarm.git"
 DEST="${HOME}/.openclaw/workspace/setfarm"

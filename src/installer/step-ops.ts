@@ -2,6 +2,8 @@ import { getDb, beginTx, endTx } from "../db.js";
 import type { LoopConfig, Story } from "./types.js";
 import { execFileSync } from "node:child_process";
 import os from "node:os";
+import fs from "node:fs";
+import path from "node:path";
 import { emitEvent } from "./events.js";
 import { logger } from "../lib/logger.js";
 import { runQualityChecks, formatQualityReport } from "./quality-gates.js";
@@ -741,6 +743,59 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     "UPDATE runs SET context = ?, updated_at = ? WHERE id = ?"
   ).run(JSON.stringify(context), new Date().toISOString(), step.run_id);
 
+  // REPO DEDUP GUARDRAIL (plan step) — if repo dir has existing code, auto-suffix or reset
+  if (step.step_id === "plan" && parsed["status"]?.toLowerCase() === "done") {
+    const repoPath = context["repo"] || context["REPO"] || "";
+    if (repoPath) {
+      try {
+        
+        
+        if (fs.existsSync(path.join(repoPath, ".git"))) {
+          let commitCount = 0;
+          try {
+            const out = execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: repoPath, timeout: 5000 }).toString().trim();
+            commitCount = parseInt(out, 10) || 0;
+          } catch {}
+          if (commitCount > 2) {
+            const priorRun = db.prepare(
+              "SELECT id FROM runs WHERE status = 'completed' AND context LIKE ? AND id != ? LIMIT 1"
+            ).get(`%${repoPath}%`, step.run_id) as { id: string } | undefined;
+            if (priorRun) {
+              const baseName = path.basename(repoPath);
+              const parentDir = path.dirname(repoPath);
+              let suffix = 2;
+              let newPath = path.join(parentDir, `${baseName}-${suffix}`);
+              while (fs.existsSync(newPath)) {
+                suffix++;
+                newPath = path.join(parentDir, `${baseName}-${suffix}`);
+              }
+              fs.mkdirSync(newPath, { recursive: true });
+              execFileSync("git", ["init"], { cwd: newPath, timeout: 5000 });
+              execFileSync("git", ["checkout", "-b", "main"], { cwd: newPath, timeout: 5000 });
+              fs.writeFileSync(path.join(newPath, "README.md"), "# Project\n");
+              execFileSync("git", ["add", "."], { cwd: newPath, timeout: 5000 });
+              execFileSync("git", ["commit", "-m", "initial"], { cwd: newPath, timeout: 5000 });
+              context["repo"] = newPath;
+              logger.info(`[repo-dedup] Repo ${repoPath} already used by run ${priorRun.id}, created ${newPath}`, { runId: step.run_id });
+              db.prepare("UPDATE runs SET context = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(context), new Date().toISOString(), step.run_id);
+            } else {
+              execFileSync("git", ["checkout", "--orphan", "__fresh__"], { cwd: repoPath, timeout: 5000 });
+              execFileSync("git", ["rm", "-rf", "."], { cwd: repoPath, timeout: 5000 });
+              execFileSync("git", ["clean", "-fd"], { cwd: repoPath, timeout: 5000 });
+              fs.writeFileSync(path.join(repoPath, "README.md"), "# Project\n");
+              execFileSync("git", ["add", "."], { cwd: repoPath, timeout: 5000 });
+              execFileSync("git", ["commit", "-m", "initial"], { cwd: repoPath, timeout: 5000 });
+              try { execFileSync("git", ["branch", "-D", "main"], { cwd: repoPath, timeout: 5000 }); } catch {}
+              execFileSync("git", ["branch", "-m", "main"], { cwd: repoPath, timeout: 5000 });
+              logger.info(`[repo-dedup] Reset existing repo ${repoPath} (${commitCount} commits, no prior completed run)`, { runId: step.run_id });
+            }
+          }
+        }
+      } catch (e: any) {
+        logger.warn(`[repo-dedup] Error: ${e.message}`, { runId: step.run_id });
+      }
+    }
+  }
 
   // TEST FAILURE GUARDRAIL
   if (parsed["status"]?.toLowerCase() === "done") {
