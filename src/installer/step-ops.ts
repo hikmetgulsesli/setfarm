@@ -794,32 +794,6 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
       } catch {
         screenMapErr = "GUARDRAIL: SCREEN_MAP is not valid JSON. Fix SCREEN_MAP format.";
       }
-    } else {
-      // No SCREEN_MAP in context — auto-generate from stories for UI projects
-      const uiRe = /(?:ui|page|screen|component|frontend|button|form|dashboard|layout|css|html|react|next|vue|angular|svelte)/i;
-      const taskText = context["task"] || "";
-      if (uiRe.test(output) || uiRe.test(taskText)) {
-        // Auto-generate SCREEN_MAP from stories
-        const autoStories = getStories(step.run_id);
-        if (autoStories.length > 0) {
-          const screenMap: Array<{screenId: string; name: string; type: string; description: string; stories: string[]}> = [];
-          const uiStories = autoStories.filter(s => uiRe.test(s.title + " " + s.description));
-          // Group: first story is setup (all stories share it), rest get individual screens
-          const setupStory = autoStories.find(s => /setup|foundation|design.*token|config/i.test(s.title));
-          let scrIdx = 1;
-          // Create a main screen with all UI stories
-          screenMap.push({
-            screenId: `SCR-${String(scrIdx++).padStart(3, "0")}`,
-            name: "Main Game Screen",
-            type: "game-hud",
-            description: "Primary game interface",
-            stories: autoStories.map(s => s.storyId),
-          });
-          context["screen_map"] = JSON.stringify(screenMap);
-          db.prepare("UPDATE runs SET context = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(context), new Date().toISOString(), step.run_id);
-          logger.info(`[screen-map-guardrail] Auto-generated SCREEN_MAP with ${screenMap.length} screen(s) from ${autoStories.length} stories`, { runId: step.run_id });
-        }
-      }
     }
   }
 
@@ -834,6 +808,42 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
 
   // T5: Parse STORIES_JSON from output (any step, typically the planner)
   parseAndInsertStories(output, step.run_id);
+
+  // Auto-generate SCREEN_MAP after stories are inserted (plan step only)
+  if (step.step_id === "plan" && parsed["status"]?.toLowerCase() === "done" && !context["screen_map"]) {
+    const uiRe = /(?:ui|page|screen|component|frontend|button|form|dashboard|layout|css|html|react|next|vue|angular|svelte)/i;
+    const taskText = context["task"] || "";
+    if (uiRe.test(output) || uiRe.test(taskText)) {
+      const autoStories = getStories(step.run_id);
+      if (autoStories.length > 0) {
+        const screenMap: Array<{screenId: string; name: string; type: string; description: string; stories: string[]}> = [];
+        let scrIdx = 1;
+        for (const s of autoStories) {
+          if (uiRe.test(s.title + " " + (s.description || ""))) {
+            screenMap.push({
+              screenId: `SCR-${String(scrIdx++).padStart(3, "0")}`,
+              name: s.title,
+              type: "app-screen",
+              description: s.description || s.title,
+              stories: [s.storyId],
+            });
+          }
+        }
+        if (screenMap.length === 0) {
+          screenMap.push({
+            screenId: "SCR-001",
+            name: "Main Screen",
+            type: "app-screen",
+            description: "Primary application interface",
+            stories: autoStories.map(s => s.storyId),
+          });
+        }
+        context["screen_map"] = JSON.stringify(screenMap);
+        db.prepare("UPDATE runs SET context = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(context), new Date().toISOString(), step.run_id);
+        logger.info(`[screen-map-guardrail] Auto-generated SCREEN_MAP with ${screenMap.length} screen(s) from ${autoStories.length} stories (post-insert)`, { runId: step.run_id });
+      }
+    }
+  }
 
   // #157 GUARD: If a downstream loop step expects stories, verify they exist
   const nextLoopStep = db.prepare(
