@@ -439,6 +439,25 @@ export interface MedicCheckResult {
 }
 
 /**
+ * Log cron recreate to medic_checks so checkGatewayStalling can detect persistent stalling.
+ * Without this, overdue/partial recreates were invisible to the stalling detector,
+ * causing infinite recreate loops without ever restarting the gateway.
+ */
+function logCronRecreate(reason: string, workflowId: string): void {
+  try {
+    const db = getDb();
+    db.prepare(
+      "INSERT INTO medic_checks (id, checked_at, issues_found, actions_taken, summary, details) VALUES (?, ?, 1, 1, ?, ?)"
+    ).run(
+      crypto.randomUUID(),
+      new Date().toISOString(),
+      `Cron recreate: ${reason}`,
+      JSON.stringify([{ check: "restore_crons", action: "recreate_crons", workflowId, remediated: true }])
+    );
+  } catch (e) { logger.warn(`[medic] logCronRecreate failed: ${String(e)}`, {}); }
+}
+
+/**
  * Restore crons for any active runs that lost them (e.g. after gateway restart).
  * Also detects overdue crons (nextRunAtMs in the past) and force-recreates them.
  * Called once at medic startup and periodically during checks.
@@ -480,6 +499,8 @@ export async function restoreActiveRunCrons(): Promise<number> {
         // Crons are overdue — force-recreate with fresh anchors
         await removeAgentCrons(run.workflow_id);
         await setupAgentCrons(workflow);
+        logCronRecreate("overdue", run.workflow_id);
+        restored++;
         emitEvent({
           ts: new Date().toISOString(),
           event: "run.resumed" as EventType,
@@ -498,6 +519,7 @@ export async function restoreActiveRunCrons(): Promise<number> {
         } else if (actual === 0) {
           // Total cron loss — recreate all
           await setupAgentCrons(workflow);
+          logCronRecreate("total_loss", run.workflow_id);
           logger.warn(`[medic] 0/${expected} crons for "${run.workflow_id}" — recreated all`, {});
           emitEvent({
             ts: new Date().toISOString(),
@@ -511,6 +533,7 @@ export async function restoreActiveRunCrons(): Promise<number> {
           // Partial cron loss — remove all and recreate to avoid duplicates
           await removeAgentCrons(run.workflow_id);
           await setupAgentCrons(workflow);
+          logCronRecreate("partial_loss", run.workflow_id);
           logger.warn(`[medic] ${actual}/${expected} crons for "${run.workflow_id}" — removed and recreated`, {});
           emitEvent({
             ts: new Date().toISOString(),
@@ -524,6 +547,7 @@ export async function restoreActiveRunCrons(): Promise<number> {
           // Duplicate crons — remove all and recreate clean
           await removeAgentCrons(run.workflow_id);
           await setupAgentCrons(workflow);
+          logCronRecreate("duplicates", run.workflow_id);
           logger.warn(`[medic] ${actual}/${expected} crons for "${run.workflow_id}" (duplicates) — cleaned and recreated`, {});
           restored++;
         }

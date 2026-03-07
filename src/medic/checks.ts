@@ -640,13 +640,17 @@ export function checkOrphanedInTerminalRuns(): MedicFinding[] {
 // ── Check: Gateway Stalling ─────────────────────────────────────────
 
 const GATEWAY_RESTART_COOLDOWN_MS = 20 * 60 * 1000; // 20 min cooldown between restarts
-const GATEWAY_STALL_WINDOW_MS = 15 * 60 * 1000; // 15 min window to check recreate count
-const GATEWAY_STALL_RECREATE_THRESHOLD = 3; // 3+ recreates in window = stalling
+const GATEWAY_STALL_WINDOW_MS = 10 * 60 * 1000; // 10 min window to check recreate count
+const GATEWAY_STALL_RECREATE_THRESHOLD = 2; // 2+ recreates in window = stalling
 
 /**
- * Detect gateway scheduler stalling: if crons have been recreated 3+ times
- * in the last 15 minutes but no stories have been claimed, the gateway itself
+ * Detect gateway scheduler stalling: if crons have been recreated 2+ times
+ * in the last 10 minutes but no stories have been claimed, the gateway itself
  * is stuck and needs a restart.
+ *
+ * NOTE: restoreActiveRunCrons logs each recreate to medic_checks via logCronRecreate(),
+ * making overdue/partial/total recreations visible to this check. Without this,
+ * the stalling detector was blind to restoreActiveRunCrons and never triggered.
  *
  * Includes 20-min cooldown to prevent restart storms.
  */
