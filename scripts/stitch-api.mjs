@@ -407,9 +407,42 @@ const commands = {
       }
 
       const titleLower = screenTitle.toLowerCase();
+
+      // Category-based dedup: detect screen type by keywords, skip if same type exists
+      const SCREEN_CATEGORIES = [
+        { name: 'main-menu', keywords: ['main menu', 'start menu', 'home screen', 'title screen', 'landing'] },
+        { name: 'game-over', keywords: ['game over', 'game-over', 'death screen', 'defeat', 'mission failed'] },
+        { name: 'pause', keywords: ['pause', 'paused'] },
+        { name: 'hud', keywords: ['hud', 'gameplay', 'heads-up', 'overlay', 'active game'] },
+        { name: 'high-scores', keywords: ['high score', 'leaderboard', 'scoreboard', 'rankings'] },
+        { name: 'settings', keywords: ['settings', 'options', 'config', 'preferences'] },
+        { name: 'victory', keywords: ['victory', 'level complete', 'mission complete', 'win screen'] },
+        { name: 'loading', keywords: ['loading', 'splash'] },
+        { name: 'login', keywords: ['login', 'sign in', 'register', 'sign up', 'auth'] },
+        { name: 'dashboard', keywords: ['dashboard', 'overview', 'summary'] },
+        { name: 'profile', keywords: ['profile', 'account', 'user page'] },
+        { name: 'list', keywords: ['list view', 'table view', 'browse', 'catalog'] },
+        { name: 'detail', keywords: ['detail', 'single view', 'item page'] },
+        { name: 'form', keywords: ['form', 'editor', 'create new', 'add new', 'edit'] },
+      ];
+      const detectCategory = (title) => {
+        const t = title.toLowerCase();
+        for (const cat of SCREEN_CATEGORIES) {
+          if (cat.keywords.some(kw => t.includes(kw))) return cat.name;
+        }
+        return null;
+      };
+      const newCategory = detectCategory(screenTitle);
       const duplicate = existingScreens.find(s => {
         const sTitle = (s.title || '').toLowerCase();
-        return sTitle === titleLower || sTitle.includes(titleLower) || titleLower.includes(sTitle);
+        // Exact or substring match (original logic)
+        if (sTitle === titleLower || sTitle.includes(titleLower) || titleLower.includes(sTitle)) return true;
+        // Category-based: if both belong to same category, it is a duplicate
+        if (newCategory) {
+          const existingCat = detectCategory(s.title || '');
+          if (existingCat === newCategory) return true;
+        }
+        return false;
       });
 
       if (duplicate) {
