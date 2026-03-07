@@ -160,6 +160,107 @@ steps:
     on_fail:
       escalate_to: human
 
+  - id: design
+    agent: designer
+    input: |
+      !include critical-preamble-short.md
+
+      Generate professional UI designs for all frontend screens using Stitch.
+      You work from the PRD — stories do not exist yet. Identify screens from the PRD.
+
+      TASK: {{task}}
+      PRD: {{prd}}
+
+      === DEVICE TYPE ===
+      - "mobile/React Native/Expo/iOS/Android" in TASK → MOBILE
+      - "tablet/iPad" in TASK → TABLET
+      - Otherwise → DESKTOP
+
+      === STITCH API ===
+      Script: /home/setrox/.openclaw/setfarm-repo/scripts/stitch-api.mjs
+
+      STEP 1 — Get or create Stitch project:
+      STITCH_SCRIPT="/home/setrox/.openclaw/setfarm-repo/scripts/stitch-api.mjs"
+      PROJECT_NAME=$(basename {{repo}})
+      RESULT=$(node "$STITCH_SCRIPT" find-project "$PROJECT_NAME" 2>/dev/null || echo '{"found":false}')
+      if echo "$RESULT" | jq -e '.found' > /dev/null 2>&1 && [ "$(echo "$RESULT" | jq -r '.found')" = "true" ]; then
+        PROJECT_ID=$(echo "$RESULT" | jq -r '.projectId')
+      else
+        RESULT=$(node "$STITCH_SCRIPT" create-project "$PROJECT_NAME")
+        PROJECT_ID=$(echo "$RESULT" | jq -r '.projectId')
+      fi
+      echo "Stitch project ID: $PROJECT_ID"
+
+      === DESIGN SYSTEM SELECTION (YOUR RESPONSIBILITY) ===
+      Read references/design-standards.md for available palettes and font pairs.
+      Choose a cohesive design direction for this project:
+      - aesthetic direction: (minimal, brutalist, luxury, editorial, industrial, organic, playful, corporate)
+      - color palette matching the project's domain (from the 8 palettes in the reference)
+      - font pair (heading + body) from the 10-pair reference table
+      - icon library: Lucide React or Heroicons
+      - NEVER choose: Inter, Roboto, Arial, system-ui fonts
+      - NEVER choose: purple gradient as primary aesthetic
+      - NEVER plan for emoji icons
+
+      === SCREEN IDENTIFICATION (from PRD — YOUR RESPONSIBILITY) ===
+      Read the PRD carefully and identify ALL unique screens the project needs:
+      1. Each unique page/view = 1 screen entry
+      2. Categories: landing, dashboard, list-view, detail-view, form, settings, game-hud, game-over, etc.
+      3. No screen limit — generate as many screens as the PRD requires.
+         Scale with PRD complexity (simple app: 3-6, complex app: 10-30+).
+      4. Backend-only project (0 UI) → set SCREENS_GENERATED: 0 and skip to output
+
+      STEP 2 — Generate screens:
+      For each unique screen you identified:
+      a. Build detailed prompt from screen name, type, description + your chosen design_system colors/fonts
+      b. Use generate-screen-safe with screenId as identifier:
+         node "$STITCH_SCRIPT" generate-screen-safe "$PROJECT_ID" "<prompt>" "<screen.name>" <DEVICE> GEMINI_3_PRO
+      c. If result has "skipped: true" → screen already exists, skip
+      d. Otherwise, parse screens from response
+
+      NOTE: Do NOT commit to git — the repo may not exist yet. The setup step will
+      download HTML files from Stitch and commit them.
+
+      === FONT MAP (design-standards → Stitch enum) ===
+      Space Grotesk → SPACE_GROTESK | DM Sans → DM_SANS | Sora → SORA
+      Nunito Sans → NUNITO_SANS | Plus Jakarta Sans → PLUS_JAKARTA_SANS
+      Work Sans → WORK_SANS | Manrope → MANROPE | Source Sans 3 → SOURCE_SANS_THREE
+      Geist → GEIST | IBM Plex Sans → IBM_PLEX_SANS | Montserrat → MONTSERRAT
+      (Fontshare → closest: EPILOGUE or LEXEND)
+
+      === RETRY ===
+      Fail → retry 2x. At least 1 screen required, else STATUS: retry.
+      Backend-only project (0 UI) → STATUS: done, SCREENS_GENERATED: 0
+
+      ============================================================
+      MANDATORY OUTPUT FORMAT
+      ============================================================
+      STATUS: done
+      STITCH_PROJECT_ID: <id>
+      DEVICE_TYPE: <DESKTOP|MOBILE|TABLET>
+      SCREENS_GENERATED: <count>
+      DESIGN_SYSTEM:
+        aesthetic: <direction>
+        palette: <name>
+        heading_font: <font>
+        body_font: <font>
+        icon_library: <library>
+      SCREEN_MAP:
+      [
+        {
+          "screenId": "SCR-001",
+          "name": "Main Dashboard",
+          "type": "dashboard",
+          "description": "Primary overview screen"
+        }
+      ]
+      DESIGN_NOTES: <summary>
+      ============================================================
+    expects: "STATUS: done"
+    max_retries: 3
+    on_fail:
+      escalate_to: human
+
   - id: stories
     agent: planner
     input: |
@@ -368,107 +469,6 @@ steps:
       ============================================================
     expects: "STATUS: done"
     max_retries: 4
-    on_fail:
-      escalate_to: human
-
-  - id: design
-    agent: designer
-    input: |
-      !include critical-preamble-short.md
-
-      Generate professional UI designs for all frontend screens using Stitch.
-      You work from the PRD — stories do not exist yet. Identify screens from the PRD.
-
-      TASK: {{task}}
-      PRD: {{prd}}
-
-      === DEVICE TYPE ===
-      - "mobile/React Native/Expo/iOS/Android" in TASK → MOBILE
-      - "tablet/iPad" in TASK → TABLET
-      - Otherwise → DESKTOP
-
-      === STITCH API ===
-      Script: /home/setrox/.openclaw/setfarm-repo/scripts/stitch-api.mjs
-
-      STEP 1 — Get or create Stitch project:
-      STITCH_SCRIPT="/home/setrox/.openclaw/setfarm-repo/scripts/stitch-api.mjs"
-      PROJECT_NAME=$(basename {{repo}})
-      RESULT=$(node "$STITCH_SCRIPT" find-project "$PROJECT_NAME" 2>/dev/null || echo '{"found":false}')
-      if echo "$RESULT" | jq -e '.found' > /dev/null 2>&1 && [ "$(echo "$RESULT" | jq -r '.found')" = "true" ]; then
-        PROJECT_ID=$(echo "$RESULT" | jq -r '.projectId')
-      else
-        RESULT=$(node "$STITCH_SCRIPT" create-project "$PROJECT_NAME")
-        PROJECT_ID=$(echo "$RESULT" | jq -r '.projectId')
-      fi
-      echo "Stitch project ID: $PROJECT_ID"
-
-      === DESIGN SYSTEM SELECTION (YOUR RESPONSIBILITY) ===
-      Read references/design-standards.md for available palettes and font pairs.
-      Choose a cohesive design direction for this project:
-      - aesthetic direction: (minimal, brutalist, luxury, editorial, industrial, organic, playful, corporate)
-      - color palette matching the project's domain (from the 8 palettes in the reference)
-      - font pair (heading + body) from the 10-pair reference table
-      - icon library: Lucide React or Heroicons
-      - NEVER choose: Inter, Roboto, Arial, system-ui fonts
-      - NEVER choose: purple gradient as primary aesthetic
-      - NEVER plan for emoji icons
-
-      === SCREEN IDENTIFICATION (from PRD — YOUR RESPONSIBILITY) ===
-      Read the PRD carefully and identify ALL unique screens the project needs:
-      1. Each unique page/view = 1 screen entry
-      2. Categories: landing, dashboard, list-view, detail-view, form, settings, game-hud, game-over, etc.
-      3. No screen limit — generate as many screens as the PRD requires.
-         Scale with PRD complexity (simple app: 3-6, complex app: 10-30+).
-      4. Backend-only project (0 UI) → set SCREENS_GENERATED: 0 and skip to output
-
-      STEP 2 — Generate screens:
-      For each unique screen you identified:
-      a. Build detailed prompt from screen name, type, description + your chosen design_system colors/fonts
-      b. Use generate-screen-safe with screenId as identifier:
-         node "$STITCH_SCRIPT" generate-screen-safe "$PROJECT_ID" "<prompt>" "<screen.name>" <DEVICE> GEMINI_3_PRO
-      c. If result has "skipped: true" → screen already exists, skip
-      d. Otherwise, parse screens from response
-
-      NOTE: Do NOT commit to git — the repo may not exist yet. The setup step will
-      download HTML files from Stitch and commit them.
-
-      === FONT MAP (design-standards → Stitch enum) ===
-      Space Grotesk → SPACE_GROTESK | DM Sans → DM_SANS | Sora → SORA
-      Nunito Sans → NUNITO_SANS | Plus Jakarta Sans → PLUS_JAKARTA_SANS
-      Work Sans → WORK_SANS | Manrope → MANROPE | Source Sans 3 → SOURCE_SANS_THREE
-      Geist → GEIST | IBM Plex Sans → IBM_PLEX_SANS | Montserrat → MONTSERRAT
-      (Fontshare → closest: EPILOGUE or LEXEND)
-
-      === RETRY ===
-      Fail → retry 2x. At least 1 screen required, else STATUS: retry.
-      Backend-only project (0 UI) → STATUS: done, SCREENS_GENERATED: 0
-
-      ============================================================
-      MANDATORY OUTPUT FORMAT
-      ============================================================
-      STATUS: done
-      STITCH_PROJECT_ID: <id>
-      DEVICE_TYPE: <DESKTOP|MOBILE|TABLET>
-      SCREENS_GENERATED: <count>
-      DESIGN_SYSTEM:
-        aesthetic: <direction>
-        palette: <name>
-        heading_font: <font>
-        body_font: <font>
-        icon_library: <library>
-      SCREEN_MAP:
-      [
-        {
-          "screenId": "SCR-001",
-          "name": "Main Dashboard",
-          "type": "dashboard",
-          "description": "Primary overview screen"
-        }
-      ]
-      DESIGN_NOTES: <summary>
-      ============================================================
-    expects: "STATUS: done"
-    max_retries: 3
     on_fail:
       escalate_to: human
 
