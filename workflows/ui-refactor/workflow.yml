@@ -177,7 +177,7 @@ steps:
       3. Create refactor branch: git checkout -b {{branch}}
       4. Read package.json to understand build/test setup
       5. Run build + tests to establish baseline
-      6. Create references symlink: ln -sfn /home/setrox/.openclaw/setfarm-repo/references references
+      6. Create references symlink: ln -sfn $HOME/.openclaw/setfarm-repo/references references
       7. Push: git push -u origin {{branch}}
 
       LINT SETUP (MANDATORY):

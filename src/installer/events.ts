@@ -3,8 +3,14 @@ import path from "node:path";
 import os from "node:os";
 import { getDb } from "../db.js";
 
-const EVENTS_DIR = path.join(os.homedir(), ".openclaw", "setfarm");
-const EVENTS_FILE = path.join(EVENTS_DIR, "events.jsonl");
+function getEventsDir(): string {
+  return process.env.SETFARM_DB_PATH
+    ? path.dirname(process.env.SETFARM_DB_PATH)
+    : path.join(os.homedir(), ".openclaw", "setfarm");
+}
+function getEventsFile(): string {
+  return path.join(getEventsDir(), "events.jsonl");
+}
 const MAX_EVENTS_SIZE = 10 * 1024 * 1024; // 10MB
 
 export type EventType =
@@ -28,17 +34,17 @@ export interface SetfarmEvent {
 
 export function emitEvent(evt: SetfarmEvent): void {
   try {
-    fs.mkdirSync(EVENTS_DIR, { recursive: true });
+    fs.mkdirSync(getEventsDir(), { recursive: true });
     // Rotate if too large
     try {
-      const stats = fs.statSync(EVENTS_FILE);
+      const stats = fs.statSync(getEventsFile());
       if (stats.size > MAX_EVENTS_SIZE) {
-        const rotated = EVENTS_FILE + ".1";
+        const rotated = getEventsFile() + ".1";
         try { fs.unlinkSync(rotated); } catch {}
-        fs.renameSync(EVENTS_FILE, rotated);
+        fs.renameSync(getEventsFile(), rotated);
       }
     } catch {}
-    fs.appendFileSync(EVENTS_FILE, JSON.stringify(evt) + "\n");
+    fs.appendFileSync(getEventsFile(), JSON.stringify(evt) + "\n");
   } catch {
     // best-effort, never throw
   }
@@ -86,7 +92,7 @@ function fireWebhook(evt: SetfarmEvent): void {
 // Read recent events (last N)
 export function getRecentEvents(limit = 50): SetfarmEvent[] {
   try {
-    const content = fs.readFileSync(EVENTS_FILE, "utf-8");
+    const content = fs.readFileSync(getEventsFile(), "utf-8");
     const lines = content.trim().split("\n").filter(Boolean);
     const events: SetfarmEvent[] = [];
     for (const line of lines) {
@@ -101,7 +107,7 @@ export function getRecentEvents(limit = 50): SetfarmEvent[] {
 // Read events for a specific run (supports prefix match)
 export function getRunEvents(runId: string, limit = 200): SetfarmEvent[] {
   try {
-    const content = fs.readFileSync(EVENTS_FILE, "utf-8");
+    const content = fs.readFileSync(getEventsFile(), "utf-8");
     const lines = content.trim().split("\n").filter(Boolean);
     const events: SetfarmEvent[] = [];
     for (const line of lines) {
