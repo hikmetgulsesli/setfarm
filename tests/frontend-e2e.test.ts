@@ -4,7 +4,7 @@ import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { getDb } from "../dist/db.js";
+import { getDb, resetDb } from "../dist/db.js";
 import { claimStep } from "../dist/installer/step-ops.js";
 import { randomUUID } from "node:crypto";
 
@@ -28,10 +28,16 @@ If {{has_frontend_changes}} is 'false', skip visual verification entirely.`;
 
 describe("E2E: frontend change detection in verify flow", () => {
   let tmpDir: string;
+  let testDbDir: string;
   const testRunIds: string[] = [];
   const testAgentId = `test-verifier-${randomUUID().slice(0, 8)}`;
 
   beforeEach(() => {
+    // Isolate from production DB
+    testDbDir = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-testdb-"));
+    process.env.SETFARM_DB_PATH = path.join(testDbDir, "test.db");
+    resetDb();
+
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-e2e-"));
     // Create a real git repo with a main branch
     execSync("git init && git checkout -b main", { cwd: tmpDir });
@@ -42,13 +48,10 @@ describe("E2E: frontend change detection in verify flow", () => {
   afterEach(() => {
     // Clean up git repo
     fs.rmSync(tmpDir, { recursive: true, force: true });
-
-    // Clean up DB entries
-    const db = getDb();
-    for (const runId of testRunIds) {
-      db.prepare("DELETE FROM steps WHERE run_id = ?").run(runId);
-      db.prepare("DELETE FROM runs WHERE id = ?").run(runId);
-    }
+    // Clean up isolated test DB
+    resetDb();
+    delete process.env.SETFARM_DB_PATH;
+    fs.rmSync(testDbDir, { recursive: true, force: true });
     testRunIds.length = 0;
   });
 

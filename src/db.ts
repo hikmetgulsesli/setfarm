@@ -3,25 +3,36 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 
-const DB_DIR = path.join(os.homedir(), ".openclaw", "setfarm");
-const DB_PATH = path.join(DB_DIR, "setfarm.db");
+const DEFAULT_DB_PATH = path.join(os.homedir(), ".openclaw", "setfarm", "setfarm.db");
+
+function resolveDbPath(): string {
+  return process.env.SETFARM_DB_PATH || DEFAULT_DB_PATH;
+}
 
 let _db: DatabaseSync | null = null;
 let _dbOpenedAt = 0;
 const DB_MAX_AGE_MS = 60_000;
 let _migrated = false;
 let _inTx = false;
+let _dbPath: string | null = null;
 
 export function beginTx() { _inTx = true; }
 export function endTx() { _inTx = false; }
 
 export function getDb(): DatabaseSync {
+  const dbPath = resolveDbPath();
   const now = Date.now();
+  if (_db && _dbPath !== dbPath) {
+    try { _db.close(); } catch {}
+    _db = null;
+    _migrated = false;
+  }
   if (_db && (_inTx || (now - _dbOpenedAt) < DB_MAX_AGE_MS)) return _db;
   if (_db) { try { _db.close(); } catch {} }
 
-  fs.mkdirSync(DB_DIR, { recursive: true });
-  _db = new DatabaseSync(DB_PATH);
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  _db = new DatabaseSync(dbPath);
+  _dbPath = dbPath;
   _dbOpenedAt = now;
   _db.exec("PRAGMA busy_timeout = 5000");
   _db.exec("PRAGMA journal_mode=WAL");
@@ -144,8 +155,16 @@ export function nextRunNumber(): number {
   return row.next;
 }
 
+export function resetDb(): void {
+  if (_db) { try { _db.close(); } catch {} }
+  _db = null;
+  _dbPath = null;
+  _dbOpenedAt = 0;
+  _migrated = false;
+}
+
 export function getDbPath(): string {
-  return DB_PATH;
+  return resolveDbPath();
 }
 
 /**
