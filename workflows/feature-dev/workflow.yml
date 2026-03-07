@@ -425,7 +425,7 @@ steps:
       Download all screen HTML files from Stitch cloud into stitch/ directory:
         STITCH_SCRIPT="/home/setrox/.openclaw/setfarm-repo/scripts/stitch-api.mjs"
         STITCH_PROJECT_ID="{{stitch_project_id}}"
-        if [ -n "$STITCH_PROJECT_ID" ] && [ "$STITCH_PROJECT_ID" != "[missing: stitch_project_id]" ]; then
+        if [ -n "$STITCH_PROJECT_ID" ] && true; then
           mkdir -p stitch
           # Step 1: Create DESIGN_MANIFEST.json (screen metadata)
           node "$STITCH_SCRIPT" create-manifest "$STITCH_PROJECT_ID" stitch 2>/dev/null || true
