@@ -107,23 +107,37 @@ export function processSetupDesignContracts(
   runId: string,
   context: Record<string, string>,
   db: ReturnType<typeof getDb>
-): void {
+): string | null {
   const repoPath = context["repo"] || context["REPO"] || "";
   if (!repoPath) {
     logger.info(`[setup-design-contracts] Skipped — no repo path`, { runId });
-    return;
+    return null;
   }
 
   const stitchDir = path.join(repoPath, "stitch");
+  const stitchProjectId = context["stitch_project_id"] || "";
+  const screensGenerated = parseInt(context["screens_generated"] || "0", 10);
+  const designExpected = stitchProjectId && screensGenerated > 0;
+
   if (!fs.existsSync(stitchDir)) {
+    if (designExpected) {
+      const msg = `GUARDRAIL: Design step generated ${screensGenerated} screen(s) in Stitch project ${stitchProjectId} but stitch/ directory does not exist. Setup step failed to download design files.`;
+      logger.error(`[setup-design-contracts] ${msg}`, { runId });
+      return msg;
+    }
     logger.info(`[setup-design-contracts] Skipped — no stitch/ directory (non-UI project or design step skipped)`, { runId });
-    return;
+    return null;
   }
 
   const htmlFiles = fs.readdirSync(stitchDir).filter(f => f.endsWith(".html"));
   if (htmlFiles.length === 0) {
+    if (designExpected) {
+      const msg = `GUARDRAIL: Design step generated ${screensGenerated} screen(s) but stitch/ has 0 HTML files. Download failed silently.`;
+      logger.error(`[setup-design-contracts] ${msg}`, { runId });
+      return msg;
+    }
     logger.info(`[setup-design-contracts] Skipped — stitch/ has no HTML files`, { runId });
-    return;
+    return null;
   }
 
   logger.info(`[setup-design-contracts] Building design contracts from ${htmlFiles.length} HTML file(s)`, { runId });
@@ -209,6 +223,8 @@ export function processSetupDesignContracts(
       logger.warn(`[setup-design-contracts] SCREEN_MAP auto-generate failed: ${String(e)}`, { runId });
     }
   }
+
+  return null;
 }
 
 // ── DB Auto-Provisioning ────────────────────────────────────────────

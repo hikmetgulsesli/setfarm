@@ -420,6 +420,15 @@ export function claimStep(agentId: string): ClaimResult {
                 htmlFile: `stitch/${s.screenId}.html`,
               }));
             context["story_screens"] = JSON.stringify(storyScreens);
+            // Warn if referenced screen HTML files don't exist
+            const repoPath = context["repo"] || context["REPO"] || "";
+            if (repoPath && storyScreens.length > 0) {
+              const missing = storyScreens.filter((s: any) => !fs.existsSync(path.join(repoPath, s.htmlFile)));
+              if (missing.length > 0) {
+                context["design_warning"] = `WARNING: ${missing.length} design reference file(s) missing: ${missing.map((s: any) => s.htmlFile).join(", ")}. Implement based on screen names and design-tokens.css.`;
+                logger.warn(`[story-claim] Missing design files for story ${story.storyId}: ${missing.map((s: any) => s.htmlFile).join(", ")}`, { runId: step.run_id });
+              }
+            }
           }
         } catch (e) {
           logger.warn(`Failed to parse screen_map for story ${story.storyId}`, { runId: step.run_id });
@@ -839,7 +848,11 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
 
   // Design Contract Building (setup step — after HTML download)
   if (step.step_id === "setup" && parsed["status"]?.toLowerCase() === "done") {
-    processSetupDesignContracts(step.run_id, context, db);
+    const designErr = processSetupDesignContracts(step.run_id, context, db);
+    if (designErr) {
+      failStep(stepId, designErr);
+      return { advanced: false, runCompleted: false };
+    }
   }
 
   // SCREEN_MAP Enforcement (design step) — design owns screen identification

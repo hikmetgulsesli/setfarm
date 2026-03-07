@@ -177,10 +177,10 @@ steps:
       - Otherwise → DESKTOP
 
       === STITCH API ===
-      Script: /home/setrox/.openclaw/setfarm-repo/scripts/stitch-api.mjs
+      Script: $HOME/.openclaw/setfarm-repo/scripts/stitch-api.mjs
 
       STEP 1 — Get or create Stitch project:
-      STITCH_SCRIPT="/home/setrox/.openclaw/setfarm-repo/scripts/stitch-api.mjs"
+      STITCH_SCRIPT="$HOME/.openclaw/setfarm-repo/scripts/stitch-api.mjs"
       PROJECT_NAME=$(basename {{repo}})
       RESULT=$(node "$STITCH_SCRIPT" find-project "$PROJECT_NAME" 2>/dev/null || echo '{"found":false}')
       if echo "$RESULT" | jq -e '.found' > /dev/null 2>&1 && [ "$(echo "$RESULT" | jq -r '.found')" = "true" ]; then
@@ -432,31 +432,39 @@ steps:
       - If project is Node.js backend only (no index.html, no DOM usage): skip this step
       - NEVER use "tsc" alone as the build command for browser-targeted projects
 
-      7. Create references symlink: ln -sfn /home/setrox/.openclaw/setfarm-repo/references references
+      7. Create references symlink: ln -sfn $HOME/.openclaw/setfarm-repo/references references
 
       STITCH DESIGN DOWNLOAD (if STITCH_PROJECT_ID is set):
       Download all screen HTML files from Stitch cloud into stitch/ directory:
-        STITCH_SCRIPT="/home/setrox/.openclaw/setfarm-repo/scripts/stitch-api.mjs"
+        STITCH_SCRIPT="$HOME/.openclaw/setfarm-repo/scripts/stitch-api.mjs"
         STITCH_PROJECT_ID="{{stitch_project_id}}"
-        if [ -n "$STITCH_PROJECT_ID" ] && true; then
+        if [ -n "$STITCH_PROJECT_ID" ] ; then
           mkdir -p stitch
           # Step 1: Create DESIGN_MANIFEST.json (screen metadata)
-          node "$STITCH_SCRIPT" create-manifest "$STITCH_PROJECT_ID" stitch 2>/dev/null || true
+          node "$STITCH_SCRIPT" create-manifest "$STITCH_PROJECT_ID" stitch
           # Step 2: Download each screen HTML via dedicated command
-          SCREENS=$(node "$STITCH_SCRIPT" list-screens "$STITCH_PROJECT_ID" 2>/dev/null || echo "[]")
+          SCREENS=$(node "$STITCH_SCRIPT" list-screens "$STITCH_PROJECT_ID")
           echo "$SCREENS" | jq -c '.[]' 2>/dev/null | while read -r screen; do
             SCREEN_ID=$(echo "$screen" | jq -r '.name // empty' | sed 's|projects/[0-9]*/screens/||' || echo "$screen" | jq -r '.id // .screenId // empty')
             SCREEN_TITLE=$(echo "$screen" | jq -r '.title // empty')
             SCREEN_FILE=$(echo "$SCREEN_TITLE" | sed 's/[^a-zA-Z0-9_-]/-/g')
             if [ -n "$SCREEN_ID" ]; then
-              node "$STITCH_SCRIPT" download-screen "$STITCH_PROJECT_ID" "$SCREEN_ID" "stitch/${SCREEN_FILE:-$SCREEN_ID}.html" 2>/dev/null || true
+              node "$STITCH_SCRIPT" download-screen "$STITCH_PROJECT_ID" "$SCREEN_ID" "stitch/${SCREEN_FILE:-$SCREEN_ID}.html"
             fi
           done
           # Step 3: Extract and merge design tokens from ALL HTML files
-          node "$STITCH_SCRIPT" extract-tokens stitch stitch/design-tokens.css 2>/dev/null || true
-          # Step 4: Persist .stitch file
+          node "$STITCH_SCRIPT" extract-tokens stitch stitch/design-tokens.css
+          # Step 4: Validate downloaded files
+          HTML_COUNT=$(find stitch -name '*.html' 2>/dev/null | wc -l)
+          if [ "$HTML_COUNT" -eq 0 ]; then
+            echo "FATAL: STITCH_PROJECT_ID set but 0 HTML files downloaded"
+            echo "STATUS: fail"
+            exit 1
+          fi
+          echo "Stitch: $HTML_COUNT HTML files downloaded"
+          # Step 5: Persist .stitch file
           echo "$STITCH_PROJECT_ID" > .stitch
-          git add stitch/ .stitch && git commit -m "design: Stitch UI screens + manifest + tokens" 2>/dev/null || true
+          git add stitch/ .stitch && git commit -m "design: Stitch UI screens + manifest + tokens" || true
         fi
 
       8. Push: git push -u origin {{branch}}
@@ -799,7 +807,7 @@ steps:
 
       1. Run the smoke test:
          ```bash
-         SMOKE_RESULT=$(node /home/setrox/.openclaw/setfarm-repo/scripts/smoke-test.mjs "{{repo}}" 2>&1)
+         SMOKE_RESULT=$(node $HOME/.openclaw/setfarm-repo/scripts/smoke-test.mjs "{{repo}}" 2>&1)
          SMOKE_EXIT=$?
          echo "$SMOKE_RESULT"
          ```
@@ -966,7 +974,7 @@ steps:
       STEP 2.5 — Runtime Smoke Test (MANDATORY for web projects):
       1. Build the project: {{build_cmd}}
       2. Run smoke test:
-         SMOKE_RESULT=$(node /home/setrox/.openclaw/setfarm-repo/scripts/smoke-test.mjs "{{repo}}" 2>&1)
+         SMOKE_RESULT=$(node $HOME/.openclaw/setfarm-repo/scripts/smoke-test.mjs "{{repo}}" 2>&1)
          SMOKE_EXIT=$?
          echo "$SMOKE_RESULT"
       3. If smoke test fails (exit 1): fix each issue, rebuild, re-test
@@ -1057,7 +1065,7 @@ steps:
 
       A2 — Move to ~/projects/:
       PROJECT_NAME=$(basename {{repo}})
-      TARGET_DIR="/home/setrox/projects/$PROJECT_NAME"
+      TARGET_DIR="$HOME/projects/$PROJECT_NAME"
       if [ "{{repo}}" != "$TARGET_DIR" ] && [ ! -d "$TARGET_DIR" ]; then
         mv {{repo}} $TARGET_DIR
         ln -sfn $TARGET_DIR {{repo}} 2>/dev/null || true
@@ -1129,7 +1137,7 @@ steps:
       HOSTNAME must equal "{{repo}}.setrox.com.tr" — nothing else. Do NOT derive it from the full path.
 
       a) Add tunnel ingress + DNS (MUST use this script, never edit config.yml directly):
-      sudo bash /home/setrox/.openclaw/scripts/tunnel-add.sh "$HOSTNAME" "$PORT"
+      sudo bash $HOME/.openclaw/scripts/tunnel-add.sh "$HOSTNAME" "$PORT"
       This script safely: adds ingress rule, validates YAML, rolls back on error,
       restarts cloudflared, and creates DNS CNAME.
       IMPORTANT: Do NOT manually edit /etc/cloudflared/config.yml or use sed on it.
@@ -1144,7 +1152,7 @@ steps:
       └─────────────────────────────────────────────────────────┘
 
       B1 — Move to ~/mobile/:
-      TARGET_DIR="/home/setrox/mobile/$PROJECT_NAME"
+      TARGET_DIR="$HOME/mobile/$PROJECT_NAME"
       Move if not already there (same logic as A2).
 
       B2 — Install deps:
@@ -1211,7 +1219,7 @@ steps:
 
       D1 — Ensure correct location:
       If repo is NOT under ~/libs/, move it there:
-        TARGET_DIR="/home/setrox/libs/$PROJECT_NAME"
+        TARGET_DIR="$HOME/libs/$PROJECT_NAME"
         mv {{repo}} $TARGET_DIR 2>/dev/null || true
 
       D2 — Install/build if needed:

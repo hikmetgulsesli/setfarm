@@ -502,6 +502,7 @@ const commands = {
   async 'extract-tokens'(stitchDir, outputCssFile) {
     if (!stitchDir) throw new Error('Usage: extract-tokens <stitchDir> [outputCssFile]');
     const outFile = outputCssFile || resolve(stitchDir, 'design-tokens.css');
+    const outJson = outFile.replace(/\.css$/, '.json');
 
     const htmlFiles = readdirSync(stitchDir)
       .filter(f => f.endsWith('.html'))
@@ -512,10 +513,14 @@ const commands = {
       return;
     }
 
-    // Parse :root blocks from all HTML files, merge (last-wins for dupes)
+    // Parse tokens from all HTML files, merge (last-wins for dupes)
     const properties = new Map();
+    const googleFonts = new Set();
+
     for (const file of htmlFiles) {
       const content = readFileSync(file, 'utf-8');
+
+      // Source 1: :root {} blocks (backward compat)
       for (const match of content.matchAll(/:root\s*\{([^}]+)\}/gs)) {
         for (const line of match[1].split('\n')) {
           const propMatch = line.match(/^\s*(--[\w-]+)\s*:\s*(.+?)\s*;?\s*$/);
@@ -524,22 +529,102 @@ const commands = {
           }
         }
       }
+
+      // Source 2: <script id="tailwind-config"> blocks (Stitch's actual format)
+      const twMatch = content.match(/<script\s+id=["']tailwind-config["'][^>]*>([\s\S]*?)<\/script>/i);
+      if (twMatch) {
+        try {
+          // Extract the config object from "tailwind.config = { ... }"
+          const configMatch = twMatch[1].match(/tailwind\.config\s*=\s*(\{[\s\S]*\})\s*;?\s*$/);
+          if (configMatch) {
+            // Use Function constructor to safely evaluate the object literal
+            const configObj = new Function('return (' + configMatch[1] + ')')();
+            const extend = configObj?.theme?.extend || {};
+
+            // Colors → --color-{key}: {value}
+            if (extend.colors && typeof extend.colors === 'object') {
+              for (const [key, value] of Object.entries(extend.colors)) {
+                if (typeof value === 'string') {
+                  properties.set(`--color-${key}`, value);
+                } else if (typeof value === 'object' && value !== null) {
+                  for (const [shade, val] of Object.entries(value)) {
+                    if (typeof val === 'string') {
+                      properties.set(`--color-${key}-${shade}`, val);
+                    }
+                  }
+                }
+              }
+            }
+
+            // Font families → --font-{key}: {value}
+            if (extend.fontFamily && typeof extend.fontFamily === 'object') {
+              for (const [key, value] of Object.entries(extend.fontFamily)) {
+                const fontValue = Array.isArray(value) ? value.join(', ') : String(value);
+                properties.set(`--font-${key}`, fontValue);
+              }
+            }
+
+            // Border radius → --radius-{key}: {value}
+            if (extend.borderRadius && typeof extend.borderRadius === 'object') {
+              for (const [key, value] of Object.entries(extend.borderRadius)) {
+                if (typeof value === 'string') {
+                  properties.set(`--radius-${key}`, value);
+                }
+              }
+            }
+
+            // Spacing → --spacing-{key}: {value}
+            if (extend.spacing && typeof extend.spacing === 'object') {
+              for (const [key, value] of Object.entries(extend.spacing)) {
+                if (typeof value === 'string') {
+                  properties.set(`--spacing-${key}`, value);
+                }
+              }
+            }
+          }
+        } catch (e) {
+          process.stderr.write(`WARN: Could not parse tailwind config in ${file}: ${e.message}\n`);
+        }
+      }
+
+      // Source 3: Google Fonts <link> tags → --font-google-{family}: {family}
+      for (const fontMatch of content.matchAll(/fonts\.googleapis\.com\/css2\?family=([^&"]+)/g)) {
+        const family = decodeURIComponent(fontMatch[1].replace(/\+/g, ' ').replace(/:wght.*/, ''));
+        if (!family.includes('Material') && !family.includes('Icon')) {
+          googleFonts.add(family);
+        }
+      }
     }
 
+    // Add Google Fonts as tokens
+    let fontIndex = 0;
+    for (const family of googleFonts) {
+      properties.set(`--font-google-${fontIndex}`, family);
+      fontIndex++;
+    }
+
+    // Build output
     if (properties.size === 0) {
-      console.log(JSON.stringify({ error: 'No CSS custom properties found', files: htmlFiles.length }, null, 2));
+      // Fallback: write a placeholder so downstream steps know design-tokens.css exists
+      const fallbackCss = `/* design-tokens.css — auto-generated */\n/* WARNING: No design tokens could be extracted from ${htmlFiles.length} Stitch HTML file(s). */\n/* Implement using colors/fonts visible in stitch/*.html directly. */\n:root {}\n`;
+      mkdirSync(dirname(outFile), { recursive: true });
+      writeFileSync(outFile, fallbackCss);
+      console.log(JSON.stringify({ path: outFile, properties: 0, sources: htmlFiles.length, warning: 'No tokens extracted — fallback written' }, null, 2));
       return;
     }
 
-    let css = ':root {\n';
+    let css = '/* design-tokens.css — auto-generated from Stitch HTML */\n:root {\n';
+    const jsonTokens = {};
     for (const [prop, value] of properties) {
       css += `  ${prop}: ${value};\n`;
+      jsonTokens[prop] = value;
     }
     css += '}\n';
 
     mkdirSync(dirname(outFile), { recursive: true });
     writeFileSync(outFile, css);
-    console.log(JSON.stringify({ path: outFile, properties: properties.size, sources: htmlFiles.length }, null, 2));
+    writeFileSync(outJson, JSON.stringify(jsonTokens, null, 2));
+    console.log(JSON.stringify({ path: outFile, jsonPath: outJson, properties: properties.size, sources: htmlFiles.length }, null, 2));
   },
 
   async download(url, outputFile) {
