@@ -793,10 +793,16 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
         screenMapErr = "GUARDRAIL: SCREEN_MAP is not valid JSON. Fix SCREEN_MAP format.";
       }
     } else {
-      // No SCREEN_MAP in context — check if UI project
+      // No SCREEN_MAP in context — check if UI project via output, task, and story titles
       const uiRe = /(ui|page|screen|component|frontend|button|form|dashboard|layout|css|html|react|next|vue|angular|svelte)/i;
-      if (uiRe.test(output)) {
+      const taskText = context["task"] || "";
+      // Also check story titles/descriptions from DB
+      const allStories = getStories(step.run_id);
+      const storyText = allStories.map(s => s.title + " " + s.description).join(" ");
+      const combinedText = output + " " + taskText + " " + storyText;
+      if (uiRe.test(combinedText)) {
         screenMapErr = "GUARDRAIL: Plan step completed without SCREEN_MAP but project has UI stories. Planner must output SCREEN_MAP after STORIES_JSON. Retry.";
+        logger.info(`[screen-map-guardrail] UI detected in: output=${uiRe.test(output)}, task=${uiRe.test(taskText)}, stories=${uiRe.test(storyText)}`, { runId: step.run_id });
       }
     }
     if (screenMapErr) {
