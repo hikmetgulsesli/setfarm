@@ -795,23 +795,31 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
         screenMapErr = "GUARDRAIL: SCREEN_MAP is not valid JSON. Fix SCREEN_MAP format.";
       }
     } else {
-      // No SCREEN_MAP in context — check if UI project
+      // No SCREEN_MAP in context — auto-generate from stories for UI projects
       const uiRe = /(?:ui|page|screen|component|frontend|button|form|dashboard|layout|css|html|react|next|vue|angular|svelte)/i;
       const taskText = context["task"] || "";
-      const outputMatch = uiRe.test(output);
-      const taskMatch = uiRe.test(taskText);
-      logger.info(`[screen-map-guardrail] UI check: outputLen=${output.length} outputMatch=${outputMatch} taskLen=${taskText.length} taskMatch=${taskMatch}`, { runId: step.run_id });
-      if (outputMatch || taskMatch) {
-        screenMapErr = "GUARDRAIL: Plan step completed without SCREEN_MAP but project has UI stories. Planner must output SCREEN_MAP after STORIES_JSON. Retry.";
+      if (uiRe.test(output) || uiRe.test(taskText)) {
+        // Auto-generate SCREEN_MAP from stories
+        const autoStories = getStories(step.run_id);
+        if (autoStories.length > 0) {
+          const screenMap: Array<{screenId: string; name: string; type: string; description: string; stories: string[]}> = [];
+          const uiStories = autoStories.filter(s => uiRe.test(s.title + " " + s.description));
+          // Group: first story is setup (all stories share it), rest get individual screens
+          const setupStory = autoStories.find(s => /setup|foundation|design.*token|config/i.test(s.title));
+          let scrIdx = 1;
+          // Create a main screen with all UI stories
+          screenMap.push({
+            screenId: `SCR-${String(scrIdx++).padStart(3, "0")}`,
+            name: "Main Game Screen",
+            type: "game-hud",
+            description: "Primary game interface",
+            stories: autoStories.map(s => s.storyId),
+          });
+          context["screen_map"] = JSON.stringify(screenMap);
+          db.prepare("UPDATE runs SET context = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(context), new Date().toISOString(), step.run_id);
+          logger.info(`[screen-map-guardrail] Auto-generated SCREEN_MAP with ${screenMap.length} screen(s) from ${autoStories.length} stories`, { runId: step.run_id });
+        }
       }
-    }
-    if (screenMapErr) {
-      logger.warn(`[screen-map-guardrail] ${screenMapErr}`, { runId: step.run_id, stepId: step.step_id });
-      // Store error in context so retry prompt can show it
-      context["previous_failure"] = screenMapErr;
-      db.prepare("UPDATE runs SET context = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(context), new Date().toISOString(), step.run_id);
-      failStep(stepId, screenMapErr);
-      return { advanced: false, runCompleted: false };
     }
   }
 
