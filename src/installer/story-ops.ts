@@ -122,7 +122,7 @@ export function parseAndInsertStories(output: string, runId: string): void {
 
     const now = new Date().toISOString();
     const insert = db.prepare(
-      "INSERT INTO stories (id, run_id, story_index, story_id, title, description, acceptance_criteria, status, retry_count, max_retries, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, 3, ?, ?)"
+      "INSERT INTO stories (id, run_id, story_index, story_id, title, description, acceptance_criteria, status, retry_count, max_retries, depends_on, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, 3, ?, ?, ?)"
     );
 
     const seenIds = new Set<string>();
@@ -139,7 +139,8 @@ export function parseAndInsertStories(output: string, runId: string): void {
         throw new Error(`STORIES_JSON has duplicate story id "${s.id}"`);
       }
       seenIds.add(s.id);
-      insert.run(crypto.randomUUID(), runId, i, s.id, s.title, s.description, JSON.stringify(ac), now, now);
+      const dependsOn = Array.isArray(s.depends_on) ? JSON.stringify(s.depends_on) : null;
+      insert.run(crypto.randomUUID(), runId, i, s.id, s.title, s.description, JSON.stringify(ac), dependsOn, now, now);
     }
     db.exec("COMMIT");
   } catch (err) {

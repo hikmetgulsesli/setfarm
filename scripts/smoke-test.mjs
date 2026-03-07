@@ -218,6 +218,30 @@ async function runSmokeTest() {
       failures.push('Page appears blank — no visible text content and minimal DOM elements');
     }
 
+    // Internal link verification — check that all relative links resolve
+    try {
+      const links = await page.evaluate(() => {
+        const anchors = Array.from(document.querySelectorAll('a[href]'));
+        return anchors
+          .map(a => ({ href: a.getAttribute('href'), text: a.textContent?.trim() || '' }))
+          .filter(l => l.href && !l.href.startsWith('http') && !l.href.startsWith('mailto:') && !l.href.startsWith('tel:') && l.href !== '#');
+      });
+
+      for (const link of links) {
+        try {
+          const linkUrl = new URL(link.href, url);
+          const resp = await page.context().request.get(linkUrl.toString());
+          if (resp.status() >= 400) {
+            failures.push(`Broken internal link: "${link.text}" → ${link.href} (HTTP ${resp.status()})`);
+          }
+        } catch (e) {
+          failures.push(`Broken internal link: "${link.text}" → ${link.href} (unreachable)`);
+        }
+      }
+    } catch (e) {
+      // Link check failed — non-fatal, continue
+    }
+
     const result = {
       status: failures.length === 0 ? 'pass' : 'fail',
       url,

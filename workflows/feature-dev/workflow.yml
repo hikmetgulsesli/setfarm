@@ -218,9 +218,18 @@ steps:
           "id": "US-001",
           "title": "Short title",
           "description": "What this story implements — full functional module description including DB tables, API endpoints, UI components",
-          "acceptanceCriteria": ["Criterion 1", "Tests pass", "Typecheck passes"]
+          "acceptanceCriteria": ["Criterion 1", "Tests pass", "Typecheck passes"],
+          "depends_on": []
         }
       ]
+
+      DEPENDENCY RULES (depends_on field):
+      - Foundation stories (setup, design tokens, DB schema): depends_on: [] (no dependencies)
+      - Page/feature stories: depends_on: ["US-001"] (depend on foundation)
+      - Integration stories (navigation, routing, final tests): depends_on: ["US-002", "US-003"] (depend on ALL pages they connect)
+      - Stories with depends_on will NOT start until ALL listed stories are complete
+      - This prevents: navigation story running before the pages it links to exist
+      - ALWAYS add depends_on for stories that reference other stories' output (pages, components, APIs)
 
       SCREEN_MAP:
       [

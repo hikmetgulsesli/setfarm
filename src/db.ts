@@ -123,6 +123,9 @@ function migrate(db: DatabaseSync): void {
   if (!storyColNames.has("story_branch")) {
     db.exec("ALTER TABLE stories ADD COLUMN story_branch TEXT");
   }
+  if (!storyColNames.has("depends_on")) {
+    db.exec("ALTER TABLE stories ADD COLUMN depends_on TEXT");
+  }
 
   // Performance indexes
   db.exec("CREATE INDEX IF NOT EXISTS idx_steps_run_status ON steps(run_id, status)");

@@ -21,7 +21,7 @@ export { archiveRunProgress } from "./cleanup-ops.js";
 import { resolveTemplate, parseOutputKeyValues, readProgressFile, readProjectMemory, updateProjectMemory } from "./context-ops.js";
 import { getStories, formatStoryForTemplate, formatCompletedStories, parseAndInsertStories } from "./story-ops.js";
 import { createStoryWorktree, removeStoryWorktree, cleanupWorktrees } from "./worktree-ops.js";
-import { computeHasFrontendChanges, checkTestFailures, checkQualityGate, checkMissingInputs, processDesignCompletion, processSetupCompletion, processBrowserCheck } from "./step-guardrails.js";
+import { computeHasFrontendChanges, checkTestFailures, checkQualityGate, checkMissingInputs, processDesignCompletion, processSetupCompletion, processBrowserCheck, checkScreenMapPresence } from "./step-guardrails.js";
 import { cleanupAbandonedSteps as _cleanupAbandonedSteps, scheduleRunCronTeardown, archiveRunProgress, cleanupLocalBranches } from "./cleanup-ops.js";
 import {
   getRunStatus, getRunContext, updateRunContext, failRun, completeRun,
@@ -243,10 +243,34 @@ export function claimStep(agentId: string): ClaimResult {
         }
       }
 
-      // Find next pending story
-      const nextStory = db.prepare(
-        "SELECT * FROM stories WHERE run_id = ? AND status = 'pending' ORDER BY story_index ASC LIMIT 1"
-      ).get(step.run_id) as any | undefined;
+      // Find next pending story with dependency check
+      const pendingStories = db.prepare(
+        "SELECT * FROM stories WHERE run_id = ? AND status = 'pending' ORDER BY story_index ASC"
+      ).all(step.run_id) as any[];
+
+      let nextStory: any | undefined;
+      for (const candidate of pendingStories) {
+        if (candidate.depends_on) {
+          try {
+            const deps: string[] = JSON.parse(candidate.depends_on);
+            if (deps.length > 0) {
+              const completedIds = db.prepare(
+                "SELECT story_id FROM stories WHERE run_id = ? AND status IN ('done', 'verified', 'skipped')"
+              ).all(step.run_id).map((r: any) => r.story_id);
+              const completedSet = new Set(completedIds);
+              const unmet = deps.filter(d => !completedSet.has(d));
+              if (unmet.length > 0) {
+                logger.info(`Story ${candidate.story_id} blocked by unmet dependencies: ${unmet.join(', ')}`, { runId: step.run_id });
+                continue; // Skip this story, try next one
+              }
+            }
+          } catch (e) {
+            logger.warn(`Failed to parse depends_on for story ${candidate.story_id}: ${String(e)}`, { runId: step.run_id });
+          }
+        }
+        nextStory = candidate;
+        break;
+      }
 
       if (!nextStory) {
         const failedStory = findStoryByStatus(step.run_id, "failed") as { id: string } | undefined;
@@ -264,6 +288,15 @@ export function claimStep(agentId: string): ClaimResult {
         ).get(step.run_id);
         if (runningStory) {
           return { found: false }; // Other stories still running, wait for them
+        }
+
+        // DEPENDENCY DEADLOCK GUARD: pending stories exist but all blocked by deps
+        if (pendingStories.length > 0 && !failedStory) {
+          logger.warn(`Dependency deadlock: ${pendingStories.length} pending stories but all blocked by unmet dependencies — skipping blocked stories`, { runId: step.run_id });
+          for (const blocked of pendingStories) {
+            db.prepare("UPDATE stories SET status = 'skipped', output = 'Skipped: dependency deadlock', updated_at = ? WHERE id = ?")
+              .run(new Date().toISOString(), blocked.id);
+          }
         }
 
         // #157 GUARD: 0 total stories means planner did not produce STORIES_JSON
@@ -735,6 +768,16 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     const dbErr = processSetupCompletion(context, step.run_id);
     if (dbErr) {
       failStep(stepId, dbErr);
+      return { advanced: false, runCompleted: false };
+    }
+  }
+
+  // SCREEN_MAP Enforcement (plan step)
+  if (step.step_id === "plan" && parsed["status"]?.toLowerCase() === "done") {
+    const screenMapErr = checkScreenMapPresence(context, output);
+    if (screenMapErr) {
+      logger.warn(`[screen-map-guardrail] ${screenMapErr}`, { runId: step.run_id, stepId: step.step_id });
+      failStep(stepId, screenMapErr);
       return { advanced: false, runCompleted: false };
     }
   }

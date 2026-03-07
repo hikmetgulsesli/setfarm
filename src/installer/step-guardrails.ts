@@ -223,6 +223,49 @@ export function processBrowserCheck(
   }
 }
 
+// ── SCREEN_MAP Enforcement (plan step) ───────────────────────────────
+
+/**
+ * Verify that plan step output includes a valid SCREEN_MAP.
+ * Returns failure message if missing/invalid, or null if OK.
+ * Only enforced for UI projects (stories with UI-related keywords).
+ */
+export function checkScreenMapPresence(
+  context: Record<string, string>,
+  output: string
+): string | null {
+  const screenMapRaw = context["screen_map"];
+  // If planner already output SCREEN_MAP and it parsed into context, validate it
+  if (screenMapRaw) {
+    try {
+      const screenMap = JSON.parse(screenMapRaw);
+      if (!Array.isArray(screenMap) || screenMap.length === 0) {
+        return "GUARDRAIL: SCREEN_MAP is empty array. Planner must identify unique screens and map stories to them. Retry with valid SCREEN_MAP.";
+      }
+      // Validate structure
+      for (const screen of screenMap) {
+        if (!screen.screenId || !screen.name || !Array.isArray(screen.stories)) {
+          return "GUARDRAIL: SCREEN_MAP entries must have screenId, name, and stories array. Fix SCREEN_MAP format.";
+        }
+      }
+      return null; // Valid SCREEN_MAP
+    } catch (e) {
+      return "GUARDRAIL: SCREEN_MAP is not valid JSON. Fix SCREEN_MAP format.";
+    }
+  }
+
+  // Check if this is a UI project by looking at stories
+  const storiesRaw = context["stories_json"] || "";
+  const hasUiKeywords = /(ui|page|screen|component|frontend|button|form|dashboard|layout|css|html|react|next|vue|angular|svelte)/i.test(output);
+
+  if (hasUiKeywords) {
+    return "GUARDRAIL: Plan step completed without SCREEN_MAP but project has UI stories. Planner must output SCREEN_MAP after STORIES_JSON. Retry.";
+  }
+
+  // Backend-only project — SCREEN_MAP not required
+  return null;
+}
+
 // ── Frontend Change Detection ───────────────────────────────────────
 
 /**
