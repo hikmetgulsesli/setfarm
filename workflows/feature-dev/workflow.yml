@@ -339,6 +339,19 @@ steps:
          - 4th: Frontend modules
          - 5th: Integrations + dashboard
 
+      6. MANDATORY INTEGRATION STORY (LAST STORY):
+         - The LAST story MUST be an integration/wiring story
+         - Title: "Integration wiring and end-to-end verification"
+         - This story depends_on ALL other stories
+         - Acceptance criteria MUST include:
+           a) All components from src/components/ are imported and rendered in their pages
+           b) All routes/pages are navigable (no dead routes)
+           c) All interactive elements (buttons, forms, links) trigger real functionality
+           d) No placeholder text ("Coming soon", "Game Started!", "TODO", etc.)
+           e) State transitions work end-to-end (e.g. menu -> game -> pause -> game over)
+           f) Canvas/game/chart renders actual content, not static text
+         - This story WIRES everything together - without it, components exist in isolation
+
       DO NOT:
          - Create micro-stories ("Create user model" separate, "Create user API" separate → WRONG)
          - Make stories for non-code sections (metrics, risks, timeline)
@@ -966,20 +979,42 @@ steps:
       4. Build: {{build_cmd}}
       5. Tests: {{test_cmd}}
 
-      STEP 2 — Integration checks:
+      STEP 2 — Integration wiring verification (CRITICAL):
       1. Check cross-story integration issues
-      2. Verify overall feature works as cohesive whole
-      3. Fix any issues found, commit and push
+      2. Verify ALL components in src/components/ are actually imported and rendered:
+         - List all .tsx/.jsx files in src/components/ (exclude index, types, utils)
+         - For each component, verify it appears in at least one page/layout import
+         - If a component exists but is never imported, it is DEAD CODE — wire it in
+      3. Verify ALL routes are functional:
+         - Check src/app/*/page.tsx (or pages/*.tsx) — each must render real content
+         - No route should show placeholder text (Coming soon, TODO, Game Started!, etc.)
+      4. Verify interactive elements work:
+         - Buttons must trigger real state changes, not show static placeholder text
+         - Navigation links must lead to real pages
+         - Canvas/game elements must render actual content after interaction
+      5. Fix any issues found, commit and push
 
-      STEP 2.5 — Runtime Smoke Test (MANDATORY for web projects):
+      STEP 2.5 — Runtime Smoke Test v2 (MANDATORY for web projects):
+      The smoke test now checks ALL routes, clicks buttons, and detects placeholders.
       1. Build the project: {{build_cmd}}
       2. Run smoke test:
          SMOKE_RESULT=$(node $HOME/.openclaw/setfarm-repo/scripts/smoke-test.mjs "{{repo}}" 2>&1)
          SMOKE_EXIT=$?
          echo "$SMOKE_RESULT"
-      3. If smoke test fails (exit 1): fix each issue, rebuild, re-test
-         If smoke test errors/skips (exit 2 or status "skip"): continue
-      4. FAIL the final-test step if smoke test still fails after fixes
+      3. The smoke test checks:
+         - Every discovered route (not just /)
+         - Button clicks and state transitions
+         - Placeholder content detection (Coming soon, Game Started!, TODO, etc.)
+         - Component wiring (files in src/components/ that are never imported)
+         - Canvas presence after Start/Play buttons
+      4. If smoke test fails (exit 1): READ the failures JSON carefully, fix EACH issue:
+         - PLACEHOLDER failures: replace static text with actual component rendering
+         - WIRING failures: import and render the unused component in the correct page
+         - JS Exception: fix the runtime error
+         - Blank page: check route rendering
+         Rebuild and re-test after each fix.
+      5. If smoke test errors/skips (exit 2 or status "skip"): continue
+      6. FAIL the final-test step if smoke test still fails after fixes
 
       STEP 3 — Create final PR to main AND merge:
       1. Create PR:
