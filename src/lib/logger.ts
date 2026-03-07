@@ -3,8 +3,18 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 
-const LOG_DIR = path.join(os.homedir(), ".openclaw", "setfarm", "logs");
-const LOG_FILE = path.join(LOG_DIR, "workflow.log");
+const DEFAULT_LOG_DIR = path.join(os.homedir(), ".openclaw", "setfarm", "logs");
+
+function resolveLogDir(): string {
+  if (process.env.SETFARM_DB_PATH) {
+    return path.join(path.dirname(process.env.SETFARM_DB_PATH), "logs");
+  }
+  return DEFAULT_LOG_DIR;
+}
+
+function resolveLogFile(): string {
+  return path.join(resolveLogDir(), "workflow.log");
+}
 const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5MB
 
 export type LogLevel = "info" | "warn" | "error" | "debug";
@@ -19,19 +29,23 @@ interface LogEntry {
 }
 
 let logDirReady = false;
+let _lastLogDir: string | null = null;
 
 function ensureLogDirSync(): void {
-  if (logDirReady) return;
-  fs.mkdirSync(LOG_DIR, { recursive: true });
+  const logDir = resolveLogDir();
+  if (logDirReady && _lastLogDir === logDir) return;
+  fs.mkdirSync(logDir, { recursive: true });
+  _lastLogDir = logDir;
   logDirReady = true;
 }
 
 function rotateIfNeededSync(): void {
   try {
-    const stats = fs.statSync(LOG_FILE);
+    const logFile = resolveLogFile();
+    const stats = fs.statSync(logFile);
     if (stats.size > MAX_LOG_SIZE) {
-      const rotatedPath = `${LOG_FILE}.1`;
-      fs.renameSync(LOG_FILE, rotatedPath);
+      const rotatedPath = `${logFile}.1`;
+      fs.renameSync(logFile, rotatedPath);
     }
   } catch {
     // File doesn't exist yet, no rotation needed
@@ -72,7 +86,7 @@ export function log(
     };
 
     const line = formatEntry(entry) + "\n";
-    fs.appendFileSync(LOG_FILE, line, "utf-8");
+    fs.appendFileSync(resolveLogFile(), line, "utf-8");
   } catch {
     // Logging must never throw into the caller
   }
@@ -91,7 +105,7 @@ export const logger = {
 
 export async function readRecentLogs(lines: number = 50): Promise<string[]> {
   try {
-    const content = await readFile(LOG_FILE, "utf-8");
+    const content = await readFile(resolveLogFile(), "utf-8");
     const allLines = content.trim().split("\n");
     return allLines.slice(-lines);
   } catch {
