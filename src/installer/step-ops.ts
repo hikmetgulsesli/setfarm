@@ -772,9 +772,33 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     }
   }
 
-  // SCREEN_MAP Enforcement (plan step)
+  // SCREEN_MAP Enforcement (plan step) — inlined to avoid module resolution issues
   if (step.step_id === "plan" && parsed["status"]?.toLowerCase() === "done") {
-    const screenMapErr = checkScreenMapPresence(context, output);
+    let screenMapErr: string | null = null;
+    const screenMapRaw = context["screen_map"];
+    if (screenMapRaw) {
+      try {
+        const sm = JSON.parse(screenMapRaw);
+        if (!Array.isArray(sm) || sm.length === 0) {
+          screenMapErr = "GUARDRAIL: SCREEN_MAP is empty array. Planner must identify unique screens and map stories to them. Retry with valid SCREEN_MAP.";
+        } else {
+          for (const scr of sm) {
+            if (!scr.screenId || !scr.name || !Array.isArray(scr.stories)) {
+              screenMapErr = "GUARDRAIL: SCREEN_MAP entries must have screenId, name, and stories array. Fix SCREEN_MAP format.";
+              break;
+            }
+          }
+        }
+      } catch {
+        screenMapErr = "GUARDRAIL: SCREEN_MAP is not valid JSON. Fix SCREEN_MAP format.";
+      }
+    } else {
+      // No SCREEN_MAP in context — check if UI project
+      const uiRe = /(ui|page|screen|component|frontend|button|form|dashboard|layout|css|html|react|next|vue|angular|svelte)/i;
+      if (uiRe.test(output)) {
+        screenMapErr = "GUARDRAIL: Plan step completed without SCREEN_MAP but project has UI stories. Planner must output SCREEN_MAP after STORIES_JSON. Retry.";
+      }
+    }
     if (screenMapErr) {
       logger.warn(`[screen-map-guardrail] ${screenMapErr}`, { runId: step.run_id, stepId: step.step_id });
       failStep(stepId, screenMapErr);
