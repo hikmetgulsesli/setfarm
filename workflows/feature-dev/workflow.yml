@@ -137,6 +137,9 @@ steps:
       9. Every story MUST include test criteria — "Tests for [feature] pass"
       10. The developer is expected to write tests as part of each story
 
+      PREVIOUS FAILURE (if retrying — READ THIS AND FIX THE ISSUE):
+      {{previous_failure}}
+
       STORY CREATION RULES:
 
       1. FUNCTIONAL MODULE BASED DECOMPOSITION:

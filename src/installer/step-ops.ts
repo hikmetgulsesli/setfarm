@@ -773,7 +773,9 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   }
 
   // SCREEN_MAP Enforcement (plan step) — inlined to avoid module resolution issues
+  logger.info(`[completeStep] step_id=${step.step_id} status=${parsed["status"]} has_screen_map=${!!context["screen_map"]}`, { runId: step.run_id });
   if (step.step_id === "plan" && parsed["status"]?.toLowerCase() === "done") {
+    logger.info(`[screen-map-guardrail] Entering plan step guardrail check`, { runId: step.run_id });
     let screenMapErr: string | null = null;
     const screenMapRaw = context["screen_map"];
     if (screenMapRaw) {
@@ -793,20 +795,21 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
         screenMapErr = "GUARDRAIL: SCREEN_MAP is not valid JSON. Fix SCREEN_MAP format.";
       }
     } else {
-      // No SCREEN_MAP in context — check if UI project via output, task, and story titles
-      const uiRe = /(ui|page|screen|component|frontend|button|form|dashboard|layout|css|html|react|next|vue|angular|svelte)/i;
+      // No SCREEN_MAP in context — check if UI project
+      const uiRe = /(?:ui|page|screen|component|frontend|button|form|dashboard|layout|css|html|react|next|vue|angular|svelte)/i;
       const taskText = context["task"] || "";
-      // Also check story titles/descriptions from DB
-      const allStories = getStories(step.run_id);
-      const storyText = allStories.map(s => s.title + " " + s.description).join(" ");
-      const combinedText = output + " " + taskText + " " + storyText;
-      if (uiRe.test(combinedText)) {
+      const outputMatch = uiRe.test(output);
+      const taskMatch = uiRe.test(taskText);
+      logger.info(`[screen-map-guardrail] UI check: outputLen=${output.length} outputMatch=${outputMatch} taskLen=${taskText.length} taskMatch=${taskMatch}`, { runId: step.run_id });
+      if (outputMatch || taskMatch) {
         screenMapErr = "GUARDRAIL: Plan step completed without SCREEN_MAP but project has UI stories. Planner must output SCREEN_MAP after STORIES_JSON. Retry.";
-        logger.info(`[screen-map-guardrail] UI detected in: output=${uiRe.test(output)}, task=${uiRe.test(taskText)}, stories=${uiRe.test(storyText)}`, { runId: step.run_id });
       }
     }
     if (screenMapErr) {
       logger.warn(`[screen-map-guardrail] ${screenMapErr}`, { runId: step.run_id, stepId: step.step_id });
+      // Store error in context so retry prompt can show it
+      context["previous_failure"] = screenMapErr;
+      db.prepare("UPDATE runs SET context = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(context), new Date().toISOString(), step.run_id);
       failStep(stepId, screenMapErr);
       return { advanced: false, runCompleted: false };
     }

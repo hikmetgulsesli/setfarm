@@ -56,6 +56,7 @@ export const PROTECTED_CONTEXT_KEYS = new Set([
 export const OPTIONAL_TEMPLATE_VARS = [
   // Verify/progress
   "verify_feedback",
+  "previous_failure",
   "progress",
   "project_memory",
   "security_notes",
