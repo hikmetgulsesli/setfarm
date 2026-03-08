@@ -681,14 +681,19 @@ export function checkGatewayStalling(): MedicFinding[] {
 
   if (recreates.cnt < GATEWAY_STALL_RECREATE_THRESHOLD) return findings;
 
-  // Check if any story was claimed in the same window
-  const recentClaims = db.prepare(`
+  // Check if any story OR step was claimed in the same window
+  const recentStoryClaims = db.prepare(`
     SELECT COUNT(*) as cnt FROM stories
     WHERE status = 'running'
       AND (julianday('now') - julianday(updated_at)) * 86400000 < ?
   `).get(GATEWAY_STALL_WINDOW_MS) as { cnt: number };
+  const recentStepClaims = db.prepare(`
+    SELECT COUNT(*) as cnt FROM steps
+    WHERE status = 'running'
+      AND (julianday('now') - julianday(updated_at)) * 86400000 < ?
+  `).get(GATEWAY_STALL_WINDOW_MS) as { cnt: number };
 
-  if (recentClaims.cnt > 0) return findings; // Claims happening = gateway alive
+  if (recentStoryClaims.cnt > 0 || recentStepClaims.cnt > 0) return findings; // Claims happening = gateway alive
 
   // Cooldown: don't restart if we already restarted recently
   const recentRestart = db.prepare(`
