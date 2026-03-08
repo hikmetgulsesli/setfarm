@@ -146,6 +146,9 @@ ABSOLUTE RULES:
 }
 
 export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
+  // Always remove existing crons first to prevent duplicates
+  // Gateway API creates new crons even if same name exists
+  await removeAgentCrons(workflow.id);
   const agents = workflow.agents;
   // Allow per-workflow cron interval via cron.interval_ms in workflow.yml
   const everyMs = (workflow as any).cron?.interval_ms ?? DEFAULT_EVERY_MS;
