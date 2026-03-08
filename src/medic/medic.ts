@@ -474,119 +474,45 @@ function logCronRecreate(reason: string, workflowId: string): void {
 
 /**
  * Restore crons for any active runs that lost them (e.g. after gateway restart).
- * Also detects overdue crons (nextRunAtMs in the past) and force-recreates them.
- * Called once at medic startup and periodically during checks.
+ * Only acts when actual cron count is 0 (total loss).
+ * Does NOT manipulate crons for count mismatches — that causes churn loops.
  */
 export async function restoreActiveRunCrons(): Promise<number> {
   const db = getDb();
-
-  // ── COOLDOWN: Prevent cron churn loop ──────────────────────────────
-  // Root cause: medic detects count mismatch → remove+recreate all crons →
-  // new cron IDs invalidate gateway timers → next cycle: mismatch again → loop.
-  // Fix: skip if we recreated crons in the last 5 minutes.
-  const RECREATE_COOLDOWN_MS = 5 * 60 * 1000;
-  try {
-    const lastRecreate = db.prepare(
-      `SELECT checked_at FROM medic_checks WHERE summary LIKE 'Cron recreate:%' ORDER BY checked_at DESC LIMIT 1`
-    ).get() as { checked_at: string } | undefined;
-    if (lastRecreate) {
-      const elapsed = Date.now() - new Date(lastRecreate.checked_at).getTime();
-      if (elapsed < RECREATE_COOLDOWN_MS) {
-        return 0;
-      }
-    }
-  } catch { /* proceed */ }
-
   const activeRuns = db.prepare(
     "SELECT DISTINCT workflow_id FROM runs WHERE status = 'running'"
   ).all() as Array<{ workflow_id: string }>;
 
   let restored = 0;
 
-  // Check for overdue crons — if any setfarm cron's nextRunAtMs is > 5 min in the past,
-  // the gateway scheduler has stalled. Force-recreate all crons for that workflow.
-  const OVERDUE_THRESHOLD_MS = 5 * 60 * 1000; // 5 min
-  let overdueCronWorkflows = new Set<string>();
-  try {
-    const cronResult = await listCronJobs();
-    if (cronResult.ok && cronResult.jobs) {
-      const now = Date.now();
-      for (const job of cronResult.jobs) {
-        if (!job.name.startsWith("setfarm/")) continue;
-        const nextRun = (job as any).state?.nextRunAtMs ?? 0;
-        if (nextRun > 0 && (now - nextRun) > OVERDUE_THRESHOLD_MS) {
-          // Extract workflow ID from cron name: setfarm/<workflow_id>/<agent>
-          const parts = job.name.split("/");
-          if (parts.length >= 3) overdueCronWorkflows.add(parts[1]);
-        }
-      }
-    }
-  } catch (e) { logger.warn(`[medic] overdue cron check failed: ${String(e)}`, {}); }
-
   for (const run of activeRuns) {
     try {
-      const workflowDir = resolveWorkflowDir(run.workflow_id);
-      const workflow = await loadWorkflowSpec(workflowDir);
+      const actual = await actualCronCount(run.workflow_id);
 
-      if (overdueCronWorkflows.has(run.workflow_id)) {
-        // Crons are overdue — force-recreate with fresh anchors
-        await removeAgentCrons(run.workflow_id);
+      if (actual === -1) {
+        // Gateway API unreachable — skip, will retry next cycle
+        logger.warn(`[medic] gateway unreachable for cron count check (${run.workflow_id})`, {});
+        continue;
+      }
+
+      if (actual === 0) {
+        // Total cron loss (gateway restart) — recreate all
+        const workflowDir = resolveWorkflowDir(run.workflow_id);
+        const workflow = await loadWorkflowSpec(workflowDir);
         await setupAgentCrons(workflow);
-        logCronRecreate("overdue", run.workflow_id);
-        restored++;
+        logCronRecreate("total_loss", run.workflow_id);
+        const expected = expectedCronCount(workflow);
+        logger.warn(`[medic] 0/${expected} crons for "${run.workflow_id}" — recreated all`, {});
         emitEvent({
           ts: new Date().toISOString(),
           event: "run.resumed" as EventType,
           runId: "",
           workflowId: run.workflow_id,
-          detail: `Medic: overdue crons detected for "${run.workflow_id}" — force-recreated`,
+          detail: `Medic: 0/${expected} crons for "${run.workflow_id}" — recreated`,
         });
-      } else {
-        // Count-based verification: detect partial cron loss (some crons exist but not all)
-        const expected = expectedCronCount(workflow);
-        const actual = await actualCronCount(run.workflow_id);
-
-        if (actual === -1) {
-          // Gateway API unreachable — log and skip (will retry next cycle)
-          logger.warn(`[medic] gateway unreachable for cron count check (${run.workflow_id})`, {});
-        } else if (actual === 0) {
-          // Total cron loss — recreate all
-          await setupAgentCrons(workflow);
-          logCronRecreate("total_loss", run.workflow_id);
-          logger.warn(`[medic] 0/${expected} crons for "${run.workflow_id}" — recreated all`, {});
-          emitEvent({
-            ts: new Date().toISOString(),
-            event: "run.resumed" as EventType,
-            runId: "",
-            workflowId: run.workflow_id,
-            detail: `Medic: 0/${expected} crons for "${run.workflow_id}" — recreated`,
-          });
-          restored++;
-        } else if (actual < expected) {
-          // Partial cron loss — remove all and recreate to avoid duplicates
-          await removeAgentCrons(run.workflow_id);
-          await setupAgentCrons(workflow);
-          logCronRecreate("partial_loss", run.workflow_id);
-          logger.warn(`[medic] ${actual}/${expected} crons for "${run.workflow_id}" — removed and recreated`, {});
-          emitEvent({
-            ts: new Date().toISOString(),
-            event: "run.resumed" as EventType,
-            runId: "",
-            workflowId: run.workflow_id,
-            detail: `Medic: partial cron loss ${actual}/${expected} for "${run.workflow_id}" — recreated`,
-          });
-          restored++;
-        } else if (actual > expected + 2) {
-          // Significant duplicates (>2 extra) — remove all and recreate clean
-          // Tolerate ±2 to avoid churn from race conditions between gateway and medic
-          await removeAgentCrons(run.workflow_id);
-          await setupAgentCrons(workflow);
-          logCronRecreate("duplicates", run.workflow_id);
-          logger.warn(`[medic] ${actual}/${expected} crons for "${run.workflow_id}" (duplicates) — cleaned and recreated`, {});
-          restored++;
-        }
-        // else actual === expected — all good, nothing to do
+        restored++;
       }
+      // else actual > 0 — crons exist, don't touch them
     } catch (err) {
       logger.warn(`[medic] restoreActiveRunCrons failed for ${run.workflow_id}: ${String(err)}`, {});
     }

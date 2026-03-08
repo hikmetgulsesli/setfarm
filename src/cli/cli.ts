@@ -587,7 +587,7 @@ async function main() {
     }
 
     if (!run) { process.stderr.write(`Run not found: ${target}\n`); process.exit(1); }
-    if (run.status !== "failed") {
+    if (run.status !== "failed" && run.status !== "cancelled") {
       process.stderr.write(`Run ${run.id.slice(0, 8)} is "${run.status}", not "failed". Nothing to resume.\n`);
       process.exit(1);
     }
@@ -646,11 +646,24 @@ async function main() {
         // Ensure crons are running for this workflow
         const { loadWorkflowSpec } = await import("../installer/workflow-spec.js");
         const { resolveWorkflowDir } = await import("../installer/paths.js");
-        const { ensureWorkflowCrons } = await import("../installer/agent-cron.js");
+        const { removeAgentCrons, setupAgentCrons } = await import("../installer/agent-cron.js");
         try {
           const workflowDir = resolveWorkflowDir(run.workflow_id);
           const workflow = await loadWorkflowSpec(workflowDir);
-          await ensureWorkflowCrons(workflow);
+          await removeAgentCrons(run.workflow_id);
+          await setupAgentCrons(workflow);
+          // Force gateway restart so scheduler picks up fresh crons
+          const { execFile: execFile2 } = await import("child_process");
+          const { promisify: promisify2 } = await import("util");
+          const execFileAsync2 = promisify2(execFile2);
+          try {
+            await execFileAsync2("systemctl", ["--user", "restart", "openclaw-gateway"], { timeout: 10000 });
+            await new Promise(r => setTimeout(r, 5000));
+            await removeAgentCrons(run.workflow_id);
+            await setupAgentCrons(workflow);
+          } catch (restartErr) {
+            process.stderr.write(`Warning: Gateway restart failed: ${restartErr instanceof Error ? restartErr.message : String(restartErr)}\n`);
+          }
         } catch (err) {
           process.stderr.write(`Warning: Could not start crons: ${err instanceof Error ? err.message : String(err)}\n`);
         }
@@ -673,11 +686,25 @@ async function main() {
     // Ensure crons are running for this workflow
     const { loadWorkflowSpec } = await import("../installer/workflow-spec.js");
     const { resolveWorkflowDir } = await import("../installer/paths.js");
-    const { ensureWorkflowCrons } = await import("../installer/agent-cron.js");
+    const { removeAgentCrons, setupAgentCrons } = await import("../installer/agent-cron.js");
     try {
       const workflowDir = resolveWorkflowDir(run.workflow_id);
       const workflow = await loadWorkflowSpec(workflowDir);
-      await ensureWorkflowCrons(workflow);
+      await removeAgentCrons(run.workflow_id);
+      await setupAgentCrons(workflow);
+      // Force gateway restart so scheduler picks up fresh crons (workaround for stale scheduler bug)
+      const { execFile } = await import("child_process");
+      const { promisify } = await import("util");
+      const execFileAsync = promisify(execFile);
+      try {
+        await execFileAsync("systemctl", ["--user", "restart", "openclaw-gateway"], { timeout: 10000 });
+        // Wait for gateway to come back up, then re-create crons on the new instance
+        await new Promise(r => setTimeout(r, 5000));
+        await removeAgentCrons(run.workflow_id);
+        await setupAgentCrons(workflow);
+      } catch (restartErr) {
+        process.stderr.write(`Warning: Gateway restart failed: ${restartErr instanceof Error ? restartErr.message : String(restartErr)}\n`);
+      }
     } catch (err) {
       process.stderr.write(`Warning: Could not start crons: ${err instanceof Error ? err.message : String(err)}\n`);
     }

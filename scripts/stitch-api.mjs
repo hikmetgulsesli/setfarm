@@ -277,6 +277,18 @@ const commands = {
 
     const result = await callTool('generate_screen_from_text', args);
     const { screens, suggestions } = parseScreens(result);
+// Save generated screens to local tracking file for dedup
+    if (screens.length > 0) {
+      const trackingFile = resolve(process.cwd(), '.stitch-screens.json');
+      let tracked = [];
+      try { tracked = JSON.parse(readFileSync(trackingFile, 'utf-8')); } catch {}
+      for (const s of screens) {
+        if (!tracked.some(t => t.screenId === s.screenId)) {
+          tracked.push({ screenId: s.screenId, title: s.title || '', category: null });
+        }
+      }
+      writeFileSync(trackingFile, JSON.stringify(tracked, null, 2));
+    }
 
     console.log(JSON.stringify({ screens, suggestions }, null, 2));
   },
@@ -285,7 +297,12 @@ const commands = {
     if (!projectId) throw new Error('Usage: list-screens <projectId>');
     await initialize();
     const result = await callTool('list_screens', { projectId });
-    const screens = parseScreenList(result);
+    let screens = parseScreenList(result);
+    // Fallback: if API returns empty, try local tracking file
+    if (screens.length === 0) {
+      const trackingFile = resolve(process.cwd(), '.stitch-screens.json');
+      try { screens = JSON.parse(readFileSync(trackingFile, 'utf-8')); } catch {}
+    }
     console.log(JSON.stringify(screens, null, 2));
   },
 
@@ -389,8 +406,10 @@ const commands = {
 
     // 1. Check for duplicate screens by title
     if (screenTitle) {
-      const listResult = await callTool('list_screens', { projectId });
-      let existingScreens = parseScreenList(listResult);
+      // list_screens API returns empty for generated screens — use local tracking instead
+      let existingScreens = [];
+      const trackingFile = resolve(process.cwd(), '.stitch-screens.json');
+      try { existingScreens = JSON.parse(readFileSync(trackingFile, 'utf-8')); } catch {}
 
       const titleLower = screenTitle.toLowerCase();
 
@@ -443,6 +462,18 @@ const commands = {
     const args = { projectId, prompt, deviceType, modelId };
     const result = await callTool('generate_screen_from_text', args);
     const { screens, suggestions } = parseScreens(result);
+// Save generated screens to local tracking file for dedup
+    if (screens.length > 0) {
+      const trackingFile = resolve(process.cwd(), '.stitch-screens.json');
+      let tracked = [];
+      try { tracked = JSON.parse(readFileSync(trackingFile, 'utf-8')); } catch {}
+      for (const s of screens) {
+        if (!tracked.some(t => t.screenId === s.screenId)) {
+          tracked.push({ screenId: s.screenId, title: s.title || '', category: null });
+        }
+      }
+      writeFileSync(trackingFile, JSON.stringify(tracked, null, 2));
+    }
 
     console.log(JSON.stringify({ skipped: false, screens, suggestions }, null, 2));
   },
