@@ -453,21 +453,37 @@ steps:
         STITCH_PROJECT_ID="{{stitch_project_id}}"
         if [ -n "$STITCH_PROJECT_ID" ] ; then
           mkdir -p stitch
-          # Step 1: Create DESIGN_MANIFEST.json (screen metadata)
-          node "$STITCH_SCRIPT" create-manifest "$STITCH_PROJECT_ID" stitch
-          # Step 2: Download each screen HTML via dedicated command
-          SCREENS=$(node "$STITCH_SCRIPT" list-screens "$STITCH_PROJECT_ID")
-          echo "$SCREENS" | jq -c '.[]' 2>/dev/null | while read -r screen; do
-            SCREEN_ID=$(echo "$screen" | jq -r '.name // empty' | sed 's|projects/[0-9]*/screens/||' || echo "$screen" | jq -r '.id // .screenId // empty')
-            SCREEN_TITLE=$(echo "$screen" | jq -r '.title // empty')
-            SCREEN_FILE=$(echo "$SCREEN_TITLE" | sed 's/[^a-zA-Z0-9_-]/-/g')
-            if [ -n "$SCREEN_ID" ]; then
-              node "$STITCH_SCRIPT" download-screen "$STITCH_PROJECT_ID" "$SCREEN_ID" "stitch/${SCREEN_FILE:-$SCREEN_ID}.html"
-            fi
-          done
-          # Step 3: Extract and merge design tokens from ALL HTML files
+          # Step 1: Collect screen IDs from SCREEN_MAP (design step output)
+          SCREEN_IDS=$(node -e "try{JSON.parse(process.argv[1]).forEach(s=>{if(s.screenId)console.log(s.screenId)})}catch{}" '{{screen_map}}' 2>/dev/null | tr '\n' ',')
+          # Step 2: Create DESIGN_MANIFEST.json (with screen ID fallback)
+          if [ -n "$SCREEN_IDS" ]; then
+            node "$STITCH_SCRIPT" create-manifest "$STITCH_PROJECT_ID" stitch $SCREEN_IDS
+          else
+            node "$STITCH_SCRIPT" create-manifest "$STITCH_PROJECT_ID" stitch
+          fi
+          # Step 3: Download each screen HTML — try list-screens first, fall back to SCREEN_MAP IDs
+          SCREENS=$(node "$STITCH_SCRIPT" list-screens "$STITCH_PROJECT_ID" 2>/dev/null || echo "[]")
+          SCREEN_COUNT=$(node -e "try{const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));console.log(Array.isArray(d)?d.length:0)}catch{console.log(0)}" <<< "$SCREENS" 2>/dev/null || echo "0")
+          if [ "$SCREEN_COUNT" -gt 0 ] 2>/dev/null; then
+            echo "Downloading $SCREEN_COUNT screens via list-screens..."
+            node -e "try{JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8')).forEach(s=>{const sid=(s.name||'').split('/').pop()||s.id||s.screenId||'';const t=s.title||'Untitled';if(sid)console.log(sid+'|'+t)})}catch{}" <<< "$SCREENS" 2>/dev/null | while IFS='|' read -r SCREEN_ID SCREEN_TITLE; do
+              SCREEN_FILE=$(echo "$SCREEN_TITLE" | sed 's/[^a-zA-Z0-9_-]/-/g')
+              if [ -n "$SCREEN_ID" ]; then
+                node "$STITCH_SCRIPT" download-screen "$STITCH_PROJECT_ID" "$SCREEN_ID" "stitch/${SCREEN_FILE:-$SCREEN_ID}.html"
+              fi
+            done
+          elif [ -n "$SCREEN_IDS" ]; then
+            echo "list-screens returned empty, using SCREEN_MAP IDs as fallback..."
+            node -e "try{JSON.parse(process.argv[1]).forEach(s=>{if(s.screenId)console.log(s.screenId+'|'+(s.name||'Untitled'))})}catch{}" '{{screen_map}}' 2>/dev/null | while IFS='|' read -r SID STITLE; do
+              SFILE=$(echo "$STITLE" | sed 's/[^a-zA-Z0-9_-]/-/g')
+              if [ -n "$SID" ]; then
+                node "$STITCH_SCRIPT" download-screen "$STITCH_PROJECT_ID" "$SID" "stitch/${SFILE:-$SID}.html"
+              fi
+            done
+          fi
+          # Step 4: Extract and merge design tokens from ALL HTML files
           node "$STITCH_SCRIPT" extract-tokens stitch stitch/design-tokens.css
-          # Step 4: Validate downloaded files
+          # Step 5: Validate downloaded files
           HTML_COUNT=$(find stitch -name '*.html' 2>/dev/null | wc -l)
           if [ "$HTML_COUNT" -eq 0 ]; then
             echo "FATAL: STITCH_PROJECT_ID set but 0 HTML files downloaded"
@@ -475,7 +491,7 @@ steps:
             exit 1
           fi
           echo "Stitch: $HTML_COUNT HTML files downloaded"
-          # Step 5: Persist .stitch file
+          # Step 6: Persist .stitch file
           echo "$STITCH_PROJECT_ID" > .stitch
           git add stitch/ .stitch && git commit -m "design: Stitch UI screens + manifest + tokens" || true
         fi
