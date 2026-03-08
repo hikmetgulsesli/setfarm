@@ -562,8 +562,8 @@ export async function restoreActiveRunCrons(): Promise<number> {
             detail: `Medic: 0/${expected} crons for "${run.workflow_id}" — recreated`,
           });
           restored++;
-        } else if (actual < expected) {
-          // Partial cron loss — remove all and recreate to avoid duplicates
+        } else if (actual < expected && (expected - actual) >= 3) {
+          // Partial cron loss — only act if 3+ crons missing (avoids churn for minor gaps)
           await removeAgentCrons(run.workflow_id);
           await setupAgentCrons(workflow);
           logCronRecreate("partial_loss", run.workflow_id);
