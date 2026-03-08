@@ -75,10 +75,10 @@ export async function installMedicCron(): Promise<{ ok: boolean; error?: string 
   const result = await createAgentCronJob({
     name: MEDIC_CRON_NAME,
     schedule: { kind: "every", everyMs: MEDIC_EVERY_MS },
-    sessionTarget: "isolated",
+    sessionTarget: "main",
     agentId: "setfarm-medic",
     payload: {
-      kind: "agentTurn",
+      kind: "systemEvent",
       message: buildMedicPrompt(),
       model: MEDIC_MODEL,
       timeoutSeconds: MEDIC_TIMEOUT_SECONDS,

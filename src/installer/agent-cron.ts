@@ -175,9 +175,9 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
     const result = await createAgentCronJob({
       name: cronName,
       schedule: { kind: "every", everyMs, anchorMs },
-      sessionTarget: "isolated",
+      sessionTarget: "main",
       agentId: cronAgentId,
-      payload: { kind: "agentTurn", message: prompt, timeoutSeconds },
+      payload: { kind: "systemEvent", message: prompt, timeoutSeconds },
       delivery: { mode: "none" },
       enabled: true,
     });
@@ -203,9 +203,9 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
         await createAgentCronJob({
           name: pName,
           schedule: { kind: "every", everyMs, anchorMs: anchorMs + n * 15_000 },
-          sessionTarget: "isolated",
+          sessionTarget: "main",
           agentId: agentForCron,
-          payload: { kind: "agentTurn", message: prompt, timeoutSeconds },
+          payload: { kind: "systemEvent", message: prompt, timeoutSeconds },
           enabled: true,
         });
       }

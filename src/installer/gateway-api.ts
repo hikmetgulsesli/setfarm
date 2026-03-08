@@ -140,7 +140,11 @@ export async function createAgentCronJob(job: {
     }
 
     if (job.payload?.message) {
-      args.push("--message", job.payload.message);
+      if (job.payload.kind === "systemEvent") {
+        args.push("--system-event", job.payload.message);
+      } else {
+        args.push("--message", job.payload.message);
+      }
     }
 
     if (job.payload?.timeoutSeconds) {
@@ -151,7 +155,7 @@ export async function createAgentCronJob(job: {
       args.push("--model", job.payload.model);
     }
 
-    if (job.delivery?.mode === "none") {
+    if (job.delivery?.mode === "none" && job.sessionTarget === "isolated") {
       args.push("--no-deliver");
     }
 
