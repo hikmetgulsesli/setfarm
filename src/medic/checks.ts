@@ -4,6 +4,10 @@
 import { getDb } from "../db.js";
 import { getMaxRoleTimeoutSeconds } from "../installer/install.js";
 import { logger } from "../lib/logger.js";
+import { existsSync } from "fs";
+import { join } from "path";
+
+const DISABLED_DIR = join(process.env.HOME || "/home/setrox", ".openclaw/disabled-services");
 
 export type MedicSeverity = "info" | "warning" | "critical";
 export type MedicActionType =
@@ -530,6 +534,9 @@ export function checkOfflineServices(): MedicFinding[] {
 
       const serviceName = repo.replace(/\/+$/, "").split("/").pop();
       if (!serviceName) continue;
+
+      // Skip manually disabled services (marker file from MC toggle)
+      if (existsSync(join(DISABLED_DIR, serviceName))) continue;
 
       try {
         execFileSync("systemctl", ["--user", "is-active", serviceName], {
