@@ -479,6 +479,24 @@ function logCronRecreate(reason: string, workflowId: string): void {
  */
 export async function restoreActiveRunCrons(): Promise<number> {
   const db = getDb();
+
+  // ── COOLDOWN: Prevent cron churn loop ──────────────────────────────
+  // Root cause: medic detects count mismatch → remove+recreate all crons →
+  // new cron IDs invalidate gateway timers → next cycle: mismatch again → loop.
+  // Fix: skip if we recreated crons in the last 5 minutes.
+  const RECREATE_COOLDOWN_MS = 5 * 60 * 1000;
+  try {
+    const lastRecreate = db.prepare(
+      `SELECT checked_at FROM medic_checks WHERE summary LIKE 'Cron recreate:%' ORDER BY checked_at DESC LIMIT 1`
+    ).get() as { checked_at: string } | undefined;
+    if (lastRecreate) {
+      const elapsed = Date.now() - new Date(lastRecreate.checked_at).getTime();
+      if (elapsed < RECREATE_COOLDOWN_MS) {
+        return 0;
+      }
+    }
+  } catch { /* proceed */ }
+
   const activeRuns = db.prepare(
     "SELECT DISTINCT workflow_id FROM runs WHERE status = 'running'"
   ).all() as Array<{ workflow_id: string }>;
@@ -558,8 +576,9 @@ export async function restoreActiveRunCrons(): Promise<number> {
             detail: `Medic: partial cron loss ${actual}/${expected} for "${run.workflow_id}" — recreated`,
           });
           restored++;
-        } else if (actual > expected) {
-          // Duplicate crons — remove all and recreate clean
+        } else if (actual > expected + 2) {
+          // Significant duplicates (>2 extra) — remove all and recreate clean
+          // Tolerate ±2 to avoid churn from race conditions between gateway and medic
           await removeAgentCrons(run.workflow_id);
           await setupAgentCrons(workflow);
           logCronRecreate("duplicates", run.workflow_id);
