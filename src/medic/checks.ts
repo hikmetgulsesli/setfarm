@@ -243,7 +243,7 @@ export function checkOrphanedCrons(
  */
 // ── Check: Claimed But Not Progressing ────────────────────────────────
 
-const CLAIMED_STUCK_THRESHOLD_MS = 5 * 60 * 1000; // 5 min — reduced from 10min, it's dead
+const CLAIMED_STUCK_THRESHOLD_MS = 15 * 60 * 1000; // 15 min — setup/implement can legitimately take 10+ min
 
 /**
  * Find steps that were claimed (status='running') but haven't been updated
