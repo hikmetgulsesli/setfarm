@@ -517,6 +517,33 @@ export async function restoreActiveRunCrons(): Promise<number> {
       logger.warn(`[medic] restoreActiveRunCrons failed for ${run.workflow_id}: ${String(err)}`, {});
     }
   }
+
+  // Overdue detection: if any cron's nextRunAtMs is >5min in the past,
+  // the scheduler has stalled. Don't manipulate crons (causes churn),
+  // just log it so checkGatewayStalling can trigger a gateway restart.
+  const OVERDUE_THRESHOLD_MS = 5 * 60 * 1000;
+  try {
+    const cronResult = await listCronJobs();
+    if (cronResult.ok && cronResult.jobs) {
+      const now = Date.now();
+      const overdueWorkflows = new Set<string>();
+      for (const job of cronResult.jobs) {
+        if (!job.name.startsWith("setfarm/")) continue;
+        const nextRun = (job as any).state?.nextRunAtMs ?? 0;
+        if (nextRun > 0 && (now - nextRun) > OVERDUE_THRESHOLD_MS) {
+          const parts = job.name.split("/");
+          if (parts.length >= 3) overdueWorkflows.add(parts[1]);
+        }
+      }
+      for (const wfId of overdueWorkflows) {
+        logCronRecreate("overdue_signal", wfId);
+        logger.warn(`[medic] overdue crons detected for "${wfId}" — signaling gateway stall (no cron manipulation)`, {});
+      }
+    }
+  } catch (e) {
+    logger.warn(`[medic] overdue cron check failed: ${String(e)}`, {});
+  }
+
   return restored;
 }
 
