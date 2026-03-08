@@ -62,8 +62,8 @@ function findAlternativePR(repoPath: string, storyId: string, runIdPrefix: strin
       cwd: repoPath, timeout: 15000, stdio: "pipe"
     }).toString().trim();
     if (foundUrl) return foundUrl;
-  } catch (ghErr: any) {
-    logger.debug("gh PR search failed: " + (ghErr?.message || "unknown"));
+  } catch {
+    // gh search failed — no alternative found
   }
   return null;
 }
@@ -382,7 +382,7 @@ export function claimStep(agentId: string): ClaimResult {
         storyId: nextStory.story_id,
         title: nextStory.title,
         description: nextStory.description,
-        acceptanceCriteria: (() => { try { return JSON.parse(nextStory.acceptance_criteria); } catch { logger.warn("Bad acceptance_criteria JSON for story " + nextStory.story_id); return []; } })(),
+        acceptanceCriteria: JSON.parse(nextStory.acceptance_criteria),
         status: nextStory.status,
         output: nextStory.output ?? undefined,
         retryCount: nextStory.retry_count,
@@ -635,7 +635,7 @@ ${cavReport}`, { runId: step.run_id });
         id: nextUnverified.id, runId: nextUnverified.run_id,
         storyIndex: nextUnverified.story_index, storyId: nextUnverified.story_id,
         title: nextUnverified.title, description: nextUnverified.description,
-        acceptanceCriteria: (() => { try { return JSON.parse(nextUnverified.acceptance_criteria); } catch { logger.warn("Bad acceptance_criteria JSON for story " + nextUnverified.story_id); return []; } })(),
+        acceptanceCriteria: JSON.parse(nextUnverified.acceptance_criteria),
         status: nextUnverified.status, output: nextUnverified.output,
         retryCount: nextUnverified.retry_count, maxRetries: nextUnverified.max_retries,
       };
@@ -764,7 +764,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
           try {
             const out = execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: repoPath, timeout: 5000 }).toString().trim();
             commitCount = parseInt(out, 10) || 0;
-          } catch (gitErr: any) { logger.debug("git rev-list failed: " + (gitErr?.message || "")); }
+          } catch {}
           if (commitCount > 2) {
             const priorRun = db.prepare(
               "SELECT id FROM runs WHERE status = 'completed' AND context LIKE ? AND id != ? LIMIT 1"
@@ -909,7 +909,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
         // Check if stories field is populated
         const hasStoryMappings = Array.isArray(sm) && sm.some((s: any) => Array.isArray(s.stories) && s.stories.length > 0);
         if (!hasStoryMappings) needsAutoGen = true;
-      } catch (parseErr: any) {
+      } catch {
         needsAutoGen = true;
       }
     } else {

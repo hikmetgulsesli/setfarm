@@ -475,30 +475,11 @@ const commands = {
     console.log(JSON.stringify(dlResult, null, 2));
   },
 
-  async 'create-manifest'(projectId, outputDir, ...screenIdArgs) {
-    if (!projectId || !outputDir) throw new Error('Usage: create-manifest <projectId> <outputDir> [screenId1,screenId2,...]');
+  async 'create-manifest'(projectId, outputDir) {
+    if (!projectId || !outputDir) throw new Error('Usage: create-manifest <projectId> <outputDir>');
     await initialize();
     const result = await callTool('list_screens', { projectId });
-    let screens = parseScreenList(result);
-
-    // Fallback: if list_screens returns empty, use provided screen IDs with get_screen
-    if (screens.length === 0 && screenIdArgs.length > 0) {
-      const ids = screenIdArgs.join(',').split(',').filter(Boolean);
-      for (const sid of ids) {
-        try {
-          const name = `projects/${projectId}/screens/${sid}`;
-          const sr = await callTool('get_screen', { name, projectId, screenId: sid });
-          // Prefer structuredContent (cleaner), fall back to text content
-          if (sr && sr.structuredContent && sr.structuredContent.name) {
-            screens.push(sr.structuredContent);
-          } else if (sr && sr.content) {
-            for (const item of sr.content) {
-              if (item.type === 'text') { try { screens.push(JSON.parse(item.text)); break; } catch {} }
-            }
-          }
-        } catch (e) { console.error('Warning: get_screen ' + sid + ' failed: ' + e.message); }
-      }
-    }
+    const screens = parseScreenList(result);
 
     const manifest = screens.map(s => {
       const screenId = (s.name || '').replace(/^projects\/\d+\/screens\//, '') || s.id || s.screenId;
