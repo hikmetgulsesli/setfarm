@@ -95,7 +95,7 @@ async function callTool(name, args) {
 async function downloadFile(url, outputPath, attempt = 1) {
   const headers = { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) Chrome/120.0.0.0 Safari/537.36' };
   const res = await fetch(url, { signal: AbortSignal.timeout(120_000), headers });
-  if (res.status === 429 && attempt < 3) { await new Promise(r => setTimeout(r, 10_000)); return downloadFile(url, outputPath, attempt + 1); }
+  if (res.status === 429 && attempt < 5) { const delay = 10000 * Math.pow(2, attempt - 1) + Math.random() * 2000; process.stderr.write(`429 rate limited — retrying in ${Math.round(delay/1000)}s (attempt ${attempt}/5)\n`); await new Promise(r => setTimeout(r, delay)); return downloadFile(url, outputPath, attempt + 1); }
   if (!res.ok) throw new Error(`Download failed: HTTP ${res.status}`);
   const buffer = Buffer.from(await res.arrayBuffer());
   mkdirSync(dirname(outputPath), { recursive: true });
@@ -188,6 +188,30 @@ function parseScreenList(result) {
     }
   }
   return screens;
+}
+
+// Safe JS object literal parser — converts JS object syntax to JSON then parses.
+// Handles: unquoted keys, single-quoted strings, trailing commas, template literals.
+// Does NOT execute arbitrary code (unlike new Function()).
+function safeParseJsObject(src) {
+  let s = src.trim();
+  // Remove template literals (backtick strings) — replace with empty string
+  s = s.replace(/`[^`]*`/g, '""');
+  // Convert single-quoted strings to double-quoted
+  s = s.replace(/'([^'\\]*(\\.[^'\\]*)*)'/g, '"$1"');
+  // Quote unquoted keys: word characters before a colon
+  s = s.replace(/([{,]\s*)(\w+)\s*:/g, '$1"$2":');
+  // Remove trailing commas before } or ]
+  s = s.replace(/,\s*([}\]])/g, '$1');
+  // Remove JS comments
+  s = s.replace(/\/\/[^\n]*/g, '');
+  s = s.replace(/\/\*[\s\S]*?\*\//g, '');
+  try {
+    return JSON.parse(s);
+  } catch (e) {
+    process.stderr.write(`WARN: safeParseJsObject failed: ${e.message}\n`);
+    return {};
+  }
 }
 
 // Commands
@@ -587,8 +611,8 @@ const commands = {
           // Extract the config object from "tailwind.config = { ... }"
           const configMatch = twMatch[1].match(/tailwind\.config\s*=\s*(\{[\s\S]*\})\s*;?\s*$/);
           if (configMatch) {
-            // Use Function constructor to safely evaluate the object literal
-            const configObj = new Function('return (' + configMatch[1] + ')')();
+            // Parse JS object literal safely (handles unquoted keys, trailing commas)
+            const configObj = safeParseJsObject(configMatch[1]);
             const extend = configObj?.theme?.extend || {};
 
             // Colors → --color-{key}: {value}

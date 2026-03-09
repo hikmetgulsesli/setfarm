@@ -125,6 +125,34 @@ export function parseAndInsertStories(output: string, runId: string): void {
       "INSERT INTO stories (id, run_id, story_index, story_id, title, description, acceptance_criteria, status, retry_count, max_retries, depends_on, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, 3, ?, ?, ?)"
     );
 
+    // Cycle detection: topological sort to catch A→B→C→A before insertion
+    const storyIds = new Set(stories.map((s: any) => s.id));
+    const adjList = new Map<string, string[]>();
+    for (const s of stories) {
+      const deps = Array.isArray(s.depends_on) ? s.depends_on : [];
+      // Only track deps that reference stories in THIS batch (ignore external refs)
+      adjList.set(s.id, deps.filter((d: string) => storyIds.has(d)));
+    }
+    const visited = new Set<string>();
+    const inStack = new Set<string>();
+    function hasCycle(node: string): boolean {
+      if (inStack.has(node)) return true;
+      if (visited.has(node)) return false;
+      visited.add(node);
+      inStack.add(node);
+      for (const dep of (adjList.get(node) || [])) {
+        if (hasCycle(dep)) return true;
+      }
+      inStack.delete(node);
+      return false;
+    }
+    for (const sid of storyIds) {
+      if (hasCycle(sid)) {
+        db.exec("ROLLBACK");
+        throw new Error(`STORIES_JSON has a dependency cycle involving story "${sid}"`);
+      }
+    }
+
     const seenIds = new Set<string>();
     for (let i = 0; i < stories.length; i++) {
       const s = stories[i];

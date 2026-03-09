@@ -242,8 +242,13 @@ case "restart_service": {      if (!finding.serviceName) return false;      try 
 
     case "resume_run": {
       if (!finding.runId) return false;
+      // Atomic claim: UPDATE + changes() prevents two medic cycles from resuming the same run
+      const resumeClaim = db.prepare(
+        "UPDATE runs SET status = 'resuming', updated_at = ? WHERE id = ? AND status = 'failed'"
+      ).run(new Date().toISOString(), finding.runId);
+      if (resumeClaim.changes === 0) return false; // Another cycle already claimed this run
       const run = db.prepare(
-        "SELECT id, workflow_id, status, meta FROM runs WHERE id = ? AND status = 'failed'"
+        "SELECT id, workflow_id, status, meta FROM runs WHERE id = ?"
       ).get(finding.runId) as { id: string; workflow_id: string; status: string; meta: string | null } | undefined;
       if (!run) return false;
 
@@ -289,7 +294,7 @@ case "restart_service": {      if (!finding.serviceName) return false;      try 
       }
 
       db.prepare(
-        "UPDATE runs SET status = 'running', updated_at = ? WHERE id = ?"
+        "UPDATE runs SET status = 'running', updated_at = ? WHERE id = ? AND status = 'resuming'"
       ).run(new Date().toISOString(), run.id);
 
       const meta = run.meta ? JSON.parse(run.meta) : {};

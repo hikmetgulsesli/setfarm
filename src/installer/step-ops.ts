@@ -245,6 +245,12 @@ export function claimStep(agentId: string): ClaimResult {
         }
       }
 
+      // BEGIN IMMEDIATE early: story selection + claim must be atomic to prevent
+      // two parallel crons from selecting the same story (race condition fix #4)
+      db.exec("BEGIN IMMEDIATE");
+      let _txOpen = true;
+      const _rollbackEarly = () => { if (_txOpen) { try { db.exec("ROLLBACK"); } catch {} _txOpen = false; } };
+
       // Find next pending story with dependency check
       const pendingStories = db.prepare(
         "SELECT * FROM stories WHERE run_id = ? AND status = 'pending' ORDER BY story_index ASC"
@@ -275,6 +281,7 @@ export function claimStep(agentId: string): ClaimResult {
       }
 
       if (!nextStory) {
+        _rollbackEarly();
         const failedStory = findStoryByStatus(step.run_id, "failed") as { id: string } | undefined;
 
         if (failedStory) {
@@ -289,7 +296,7 @@ export function claimStep(agentId: string): ClaimResult {
           "SELECT id FROM stories WHERE run_id = ? AND status = 'running'"
         ).get(step.run_id);
         if (runningStory) {
-          return { found: false }; // Other stories still running, wait for them
+          _rollbackEarly(); return { found: false }; // Other stories still running, wait for them
         }
 
         // DEPENDENCY DEADLOCK GUARD: pending stories exist but all blocked by deps
@@ -332,7 +339,7 @@ export function claimStep(agentId: string): ClaimResult {
       const runningStoryCount = { cnt: countStoriesByStatus(step.run_id, "running") };
       const parallelLimit = loopConfig?.parallelCount ?? 3;
       if (runningStoryCount.cnt >= parallelLimit) {
-        return { found: false }; // At capacity, wait for running stories to finish
+        _rollbackEarly(); return { found: false }; // At capacity, wait for running stories to finish
       }
 
 
@@ -345,29 +352,15 @@ export function claimStep(agentId: string): ClaimResult {
       }
       context["story_workdir"] = storyWorkdir || context["repo"] || "";
 
-      // Transactional story claim — prevents parallel crons from double-claiming
-      db.exec("BEGIN IMMEDIATE");
-      try {
-        // Re-check story is still pending inside transaction
-        const storyCheck = db.prepare(
-          "SELECT status FROM stories WHERE id = ? AND status = 'pending'"
-        ).get(nextStory.id) as { status: string } | undefined;
-        if (!storyCheck) {
-          db.exec("COMMIT");
-          // Another cron already claimed this story — return no work (will retry next cron tick)
-          return { found: false };
-        }
-        db.prepare(
-          "UPDATE stories SET status = 'running', updated_at = ? WHERE id = ?"
-        ).run(new Date().toISOString(), nextStory.id);
-        db.prepare(
-          "UPDATE steps SET status = 'running', current_story_id = ?, updated_at = ? WHERE id = ?"
-        ).run(nextStory.id, new Date().toISOString(), step.id);
-        db.exec("COMMIT");
-      } catch (err) {
-        try { db.exec("ROLLBACK"); } catch (e) { logger.warn(`[step-ops] ROLLBACK failed: ${String(e)}`, {}); }
-        throw err;
-      }
+      // Claim the story (transaction already open from story selection)
+      db.prepare(
+        "UPDATE stories SET status = 'running', updated_at = ? WHERE id = ?"
+      ).run(new Date().toISOString(), nextStory.id);
+      db.prepare(
+        "UPDATE steps SET status = 'running', current_story_id = ?, updated_at = ? WHERE id = ?"
+      ).run(nextStory.id, new Date().toISOString(), step.id);
+      db.exec("COMMIT");
+      _txOpen = false;
 
       const wfId = getWorkflowId(step.run_id);
       emitEvent({ ts: new Date().toISOString(), event: "step.running", runId: step.run_id, workflowId: wfId, stepId: step.step_id, agentId: agentId });
@@ -375,6 +368,15 @@ export function claimStep(agentId: string): ClaimResult {
       logger.info(`Story started: ${nextStory.story_id} — ${nextStory.title}`, { runId: step.run_id, stepId: step.step_id });
 
       // Build story template vars
+      // FIX #5: Clear stale story context at claim time (not just completeStep)
+      // Prevents cross-contamination when parallel stories share the same run context
+      delete context["pr_url"];
+      delete context["story_branch"];
+      delete context["current_story_id"];
+      delete context["current_story_title"];
+      delete context["current_story"];
+      delete context["verify_feedback"];
+
       const story: Story = {
         id: nextStory.id,
         runId: nextStory.run_id,
@@ -523,7 +525,13 @@ export function claimStep(agentId: string): ClaimResult {
       // "Son mil" fix: agent reviews PR but session dies before step complete.
       // Instead of retrying indefinitely, auto-merge open PRs to unblock pipeline.
       let nextUnverified: any | undefined;
+      let _autoVerifyCount1 = 0;
+      const MAX_AUTO_VERIFY = 5;
       while (true) {
+        if (++_autoVerifyCount1 > MAX_AUTO_VERIFY) {
+          logger.info(`[claim-auto-verify] Hit MAX_AUTO_VERIFY (${MAX_AUTO_VERIFY}) — deferring remaining stories to next cycle`, { runId: step.run_id });
+          break;
+        }
         nextUnverified = db.prepare(
           "SELECT * FROM stories WHERE run_id = ? AND status = 'done' ORDER BY story_index ASC LIMIT 1"
         ).get(step.run_id) as any | undefined;
@@ -1193,7 +1201,13 @@ function handleVerifyEachCompletion(
   // Check for more unverified 'done' stories before checking loop continuation
   // Auto-verify stories whose PRs are already merged (prevents redundant verify cycles)
   let nextUnverifiedStory: { id: string; story_id: string; output: string | null; pr_url: string | null; story_branch: string | null } | undefined;
+  let _autoVerifyCount2 = 0;
+  const MAX_AUTO_VERIFY_HVE = 5;
   while (true) {
+    if (++_autoVerifyCount2 > MAX_AUTO_VERIFY_HVE) {
+      logger.info(`[handleVerifyEach] Hit MAX_AUTO_VERIFY (${MAX_AUTO_VERIFY_HVE}) — deferring remaining stories to next cycle`, { runId: verifyStep.run_id });
+      break;
+    }
     nextUnverifiedStory = db.prepare(
       "SELECT id, story_id, output, pr_url, story_branch FROM stories WHERE run_id = ? AND status = 'done' ORDER BY story_index ASC LIMIT 1"
     ).get(verifyStep.run_id) as typeof nextUnverifiedStory;

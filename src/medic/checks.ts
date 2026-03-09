@@ -405,9 +405,9 @@ const CIRCUIT_BREAKER_THRESHOLD_MS = 3 * 60 * 1000; // 3 min — reduced from 5m
  *
  * Signal: pending stories exist (work available) but no story has been
  * claimed recently. With 4-min interval and 3 parallel crons, a claim
- * should happen every 1-2 min. If no claim in 12 min, crons are likely dead.
+ * should happen every 1-2 min. If no claim in 3 min, crons are likely dead.
  *
- * Includes 15-min cooldown (checked via medic_checks history) to prevent
+ * Includes 10-min cooldown (checked via medic_checks history) to prevent
  * rapid re-creation loops.
  */
 export function checkStalledWorkflowCrons(): MedicFinding[] {
@@ -510,7 +510,7 @@ const SERVICE_RESTART_COOLDOWN_MS = 5 * 60 * 1000; // 5 min cooldown — reduced
 /**
  * For running pipelines, check if the project systemd service is running.
  * Agents sometimes stop services during implementation and forget to restart.
- * Includes 10-min cooldown per service to prevent crash-loop restart storms.
+ * Includes 5-min cooldown per service to prevent crash-loop restart storms.
  */
 export function checkOfflineServices(): MedicFinding[] {
   const db = getDb();
@@ -646,20 +646,20 @@ export function checkOrphanedInTerminalRuns(): MedicFinding[] {
 
 // ── Check: Gateway Stalling ─────────────────────────────────────────
 
-const GATEWAY_RESTART_COOLDOWN_MS = 8 * 60 * 1000; // 8 min cooldown — reduced from 20min between restarts
+const GATEWAY_RESTART_COOLDOWN_MS = 8 * 60 * 1000; // 8 min cooldown between gateway restarts
 const GATEWAY_STALL_WINDOW_MS = 5 * 60 * 1000; // 5 min window — reduced from 10min to check recreate count
 const GATEWAY_STALL_RECREATE_THRESHOLD = 2; // 2+ recreates in window = stalling
 
 /**
  * Detect gateway scheduler stalling: if crons have been recreated 2+ times
- * in the last 10 minutes but no stories have been claimed, the gateway itself
+ * in the last 5 minutes but no stories have been claimed, the gateway itself
  * is stuck and needs a restart.
  *
  * NOTE: restoreActiveRunCrons logs each recreate to medic_checks via logCronRecreate(),
  * making overdue/partial/total recreations visible to this check. Without this,
  * the stalling detector was blind to restoreActiveRunCrons and never triggered.
  *
- * Includes 20-min cooldown to prevent restart storms.
+ * Includes 8-min cooldown to prevent restart storms.
  */
 export function checkGatewayStalling(): MedicFinding[] {
   const db = getDb();
@@ -671,7 +671,7 @@ export function checkGatewayStalling(): MedicFinding[] {
   ).get() as { cnt: number };
   if (activeRuns.cnt === 0) return findings;
 
-  // Count cron recreates in the last 15 minutes
+  // Count cron recreates in the stall window
   const recreates = db.prepare(`
     SELECT COUNT(*) as cnt FROM medic_checks
     WHERE details LIKE '%recreate_crons%'
@@ -708,7 +708,7 @@ export function checkGatewayStalling(): MedicFinding[] {
   findings.push({
     check: "gateway_stalling",
     severity: "critical",
-    message: `Gateway scheduler stalled: ${recreates.cnt} cron recreates in 15min but 0 claims — restarting gateway`,
+    message: `Gateway scheduler stalled: ${recreates.cnt} cron recreates in 5min but 0 claims — restarting gateway`,
     action: "restart_gateway",
     remediated: false,
   });
