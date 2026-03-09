@@ -6,7 +6,7 @@
  */
 import { getDb } from "../db.js";
 import { emitEvent, type EventType } from "../installer/events.js";
-import { teardownWorkflowCronsIfIdle, ensureWorkflowCrons, removeAgentCrons, setupAgentCrons, expectedCronCount, actualCronCount } from "../installer/agent-cron.js";
+import { teardownWorkflowCronsIfIdle, ensureWorkflowCrons, removeAgentCrons, setupAgentCrons, expectedCronCount, actualCronCount, repairAgentCrons } from "../installer/agent-cron.js";
 import { loadWorkflowSpec } from "../installer/workflow-spec.js";
 import { resolveWorkflowDir } from "../installer/paths.js";
 import { listCronJobs } from "../installer/gateway-api.js";
@@ -555,7 +555,7 @@ export async function restoreActiveRunCrons(): Promise<number> {
           // Gateway API unreachable — log and skip (will retry next cycle)
           logger.warn(`[medic] gateway unreachable for cron count check (${run.workflow_id})`, {});
         } else if (actual === 0) {
-          // Total cron loss — recreate all
+          // Total cron loss — recreate all (no existing crons to preserve)
           await setupAgentCrons(workflow);
           logCronRecreate("total_loss", run.workflow_id);
           logger.warn(`[medic] 0/${expected} crons for "${run.workflow_id}" — recreated all`, {});
@@ -567,28 +567,15 @@ export async function restoreActiveRunCrons(): Promise<number> {
             detail: `Medic: 0/${expected} crons for "${run.workflow_id}" — recreated`,
           });
           restored++;
-        } else if (actual < expected && (expected - actual) >= 3) {
-          // Partial cron loss — only act if 3+ crons missing (avoids churn for minor gaps)
-          await removeAgentCrons(run.workflow_id);
-          await setupAgentCrons(workflow);
-          logCronRecreate("partial_loss", run.workflow_id);
-          logger.warn(`[medic] ${actual}/${expected} crons for "${run.workflow_id}" — removed and recreated`, {});
-          emitEvent({
-            ts: new Date().toISOString(),
-            event: "run.resumed" as EventType,
-            runId: "",
-            workflowId: run.workflow_id,
-            detail: `Medic: partial cron loss ${actual}/${expected} for "${run.workflow_id}" — recreated`,
-          });
-          restored++;
-        } else if (actual > expected + 2) {
-          // Significant duplicates (>2 extra) — remove all and recreate clean
-          // Tolerate ±2 to avoid churn from race conditions between gateway and medic
-          await removeAgentCrons(run.workflow_id);
-          await setupAgentCrons(workflow);
-          logCronRecreate("duplicates", run.workflow_id);
-          logger.warn(`[medic] ${actual}/${expected} crons for "${run.workflow_id}" (duplicates) — cleaned and recreated`, {});
-          restored++;
+        } else if (actual !== expected) {
+          // Additive repair: only add missing crons, remove extras.
+          // Does NOT touch existing crons — prevents anchor-reset loop (#cron-churn fix).
+          const { added, removed } = await repairAgentCrons(workflow);
+          if (added > 0 || removed > 0) {
+            logCronRecreate(actual < expected ? "partial_loss" : "duplicates", run.workflow_id);
+            logger.warn(`[medic] ${actual}/${expected} crons for "${run.workflow_id}" — repaired (added ${added}, removed ${removed})`, {});
+            restored++;
+          }
         }
         // else actual === expected — all good, nothing to do
       }

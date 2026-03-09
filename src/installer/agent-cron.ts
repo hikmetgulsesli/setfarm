@@ -312,3 +312,99 @@ export async function actualCronCount(workflowId: string): Promise<number> {
   const prefix = `setfarm/${workflowId}/`;
   return result.jobs.filter(j => j.name.startsWith(prefix)).length;
 }
+
+/**
+ * Additive cron repair: only add missing crons, remove extras.
+ * Does NOT touch existing crons — prevents anchor-reset loop.
+ */
+export async function repairAgentCrons(workflow: WorkflowSpec): Promise<{ added: number; removed: number }> {
+  const result = await listCronJobs();
+  if (!result.ok || !result.jobs) throw new Error("Cannot list crons for repair");
+
+  const prefix = `setfarm/${workflow.id}/`;
+  const existingCrons = result.jobs.filter(j => j.name.startsWith(prefix));
+  const existingNames = new Set(existingCrons.map(j => j.name));
+
+  // Build expected cron names
+  const expectedNames = new Set<string>();
+  const agentMapping: AgentMapping = workflow.agent_mapping ?? {};
+
+  for (const agent of workflow.agents) {
+    expectedNames.add(`setfarm/${workflow.id}/${agent.id}`);
+
+    const PARALLEL_AGENTS = ["developer", "reviewer", "verifier"];
+    if (PARALLEL_AGENTS.includes(agent.id)) {
+      const rawMapping = agentMapping[agent.id];
+      const allAgents: string[] = Array.isArray(rawMapping)
+        ? rawMapping
+        : rawMapping ? [rawMapping] : [`${workflow.id}_${agent.id}`];
+      for (let n = 2; n <= allAgents.length; n++) {
+        expectedNames.add(`setfarm/${workflow.id}/${agent.id}-${n}`);
+      }
+    }
+  }
+
+  let added = 0;
+  let removed = 0;
+
+  // Remove extras (not in expected set)
+  for (const cron of existingCrons) {
+    if (!expectedNames.has(cron.name)) {
+      await deleteCronJob(cron.id);
+      removed++;
+    }
+  }
+
+  // Add missing (in expected but not existing)
+  const everyMs = (workflow as any).cron?.interval_ms ?? DEFAULT_EVERY_MS;
+  const agents = workflow.agents;
+  for (let i = 0; i < agents.length; i++) {
+    const agent = agents[i];
+    const anchorMs = i * 15_000;
+    const cronName = `setfarm/${workflow.id}/${agent.id}`;
+    const rawMappedId = agentMapping[agent.id];
+    const mappedAgentId = Array.isArray(rawMappedId) ? rawMappedId[0] : rawMappedId;
+    const cronAgentId = mappedAgentId ?? `${workflow.id}_${agent.id}`;
+    const prompt = buildPollingPrompt(workflow.id, agent.id);
+    const timeoutSeconds = agent.timeoutSeconds ?? DEFAULT_AGENT_TIMEOUT_SECONDS;
+
+    if (!existingNames.has(cronName)) {
+      const res = await createAgentCronJob({
+        name: cronName,
+        schedule: { kind: "every", everyMs, anchorMs },
+        sessionTarget: "isolated",
+        agentId: cronAgentId,
+        payload: { kind: "agentTurn", message: prompt, timeoutSeconds },
+        delivery: { mode: "none" },
+        enabled: true,
+      });
+      if (res.ok) added++;
+    }
+
+    // Parallel crons
+    const PARALLEL_AGENTS = ["developer", "reviewer", "verifier"];
+    if (PARALLEL_AGENTS.includes(agent.id)) {
+      const rawMapping = agentMapping[agent.id];
+      const allAgents: string[] = Array.isArray(rawMapping)
+        ? rawMapping
+        : rawMapping ? [rawMapping] : [cronAgentId];
+      for (let n = 2; n <= allAgents.length; n++) {
+        const pName = `setfarm/${workflow.id}/${agent.id}-${n}`;
+        if (!existingNames.has(pName)) {
+          const agentForCron = allAgents[(n - 1) % allAgents.length];
+          const res = await createAgentCronJob({
+            name: pName,
+            schedule: { kind: "every", everyMs, anchorMs: anchorMs + n * 15_000 },
+            sessionTarget: "isolated",
+            agentId: agentForCron,
+            payload: { kind: "agentTurn", message: prompt, timeoutSeconds },
+            enabled: true,
+          });
+          if (res.ok) added++;
+        }
+      }
+    }
+  }
+
+  return { added, removed };
+}

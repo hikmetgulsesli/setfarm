@@ -82,17 +82,23 @@ export function formatCompletedStories(stories: Story[]): string {
 export function parseAndInsertStories(output: string, runId: string): void {
   const lines = output.split("\n");
   const startIdx = lines.findIndex(l => l.startsWith("STORIES_JSON:"));
-  if (startIdx === -1) return;
 
-  // Collect JSON text: first line after prefix, then subsequent lines until next KEY: or end
-  const firstLine = lines[startIdx].slice("STORIES_JSON:".length).trim();
-  const jsonLines = [firstLine];
-  for (let i = startIdx + 1; i < lines.length; i++) {
-    if (/^[A-Z_]+:\s/.test(lines[i])) break;
-    jsonLines.push(lines[i]);
+  let jsonText: string;
+  if (startIdx !== -1) {
+    // Standard format: STORIES_JSON: [...]
+    const firstLine = lines[startIdx].slice("STORIES_JSON:".length).trim();
+    const jsonLines = [firstLine];
+    for (let i = startIdx + 1; i < lines.length; i++) {
+      if (/^[A-Z_]+:\s/.test(lines[i])) break;
+      jsonLines.push(lines[i]);
+    }
+    jsonText = jsonLines.join("\n").trim();
+  } else {
+    // Fallback: output is raw JSON array (no STORIES_JSON: prefix)
+    const trimmed = output.trim();
+    if (!trimmed.startsWith("[")) return; // Not a JSON array — skip
+    jsonText = trimmed;
   }
-
-  const jsonText = jsonLines.join("\n").trim();
   let stories: any[];
   try {
     stories = JSON.parse(jsonText);

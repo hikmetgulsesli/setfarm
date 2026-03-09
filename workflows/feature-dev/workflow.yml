@@ -725,7 +725,18 @@ steps:
       STORY_SCREENS: {{story_screens}}
       PROGRESS LOG: {{progress}}
 
+      PREVIOUS FAILURE (if retrying — YOU MUST FIX THESE ISSUES FIRST before doing anything else):
+      {{previous_failure}}
+
       === VERIFY + FIX + MERGE WORKFLOW ===
+
+      STEP 0 — Fix previous failures (MANDATORY if PREVIOUS FAILURE is non-empty):
+      If previous_failure contains QUALITY GATE or GUARDRAIL errors:
+      1. cd {{repo}} && git checkout {{story_branch}} && git pull origin {{story_branch}}
+      2. Read each error carefully and fix the code
+      3. git add -A && git commit -m fix: address quality gate issues for {{current_story_id}}
+      4. git push
+      5. Then continue with STEP 1
 
 
       STEP 1 — Checkout and read PR reviews:
