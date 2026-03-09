@@ -20,7 +20,7 @@ cron:
   interval_ms: 240000  # 4 minutes
 
 polling:
-  model: kimi-coding/k2p5
+  model: minimax/MiniMax-M2.5
   timeoutSeconds: 1800
 
 notifications:

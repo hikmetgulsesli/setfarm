@@ -26,7 +26,7 @@ cron:
   interval_ms: 60000  # 1 minute
 
 polling:
-  model: kimi-coding/k2p5
+  model: minimax/MiniMax-M2.5
   timeoutSeconds: 1800
 
 agents:
@@ -733,11 +733,22 @@ steps:
 
       STEP 0 — Fix previous failures (MANDATORY if PREVIOUS FAILURE is non-empty):
       If previous_failure contains QUALITY GATE or GUARDRAIL errors:
-      1. cd {{repo}} && git checkout {{story_branch}} && git pull origin {{story_branch}}
-      2. Read each error carefully and fix the code
-      3. git add -A && git commit -m fix: address quality gate issues for {{current_story_id}}
-      4. git push
-      5. Then continue with STEP 1
+      1. cd {{repo}}
+      2. Check if story branch exists:
+         git fetch origin
+         if git rev-parse --verify origin/{{story_branch}} >/dev/null 2>&1; then
+           git checkout {{story_branch}} && git pull origin {{story_branch}}
+         else
+           # PR already merged — fix directly on feature branch
+           git checkout {{branch}} && git pull origin {{branch}}
+         fi
+      3. Read each error message carefully and fix the code in the specified files
+         - dead_link_hash: Replace href="#" with real routes (e.g. /terms, /privacy)
+         - hardcoded_user_data: Replace fake names in placeholders with generic text
+         - Any other error: read the file and line number, fix the issue
+      4. git add -A && git commit -m "fix: address quality gate issues for {{current_story_id}}"
+      5. git push
+      6. Then continue with STEP 1
 
 
       STEP 1 — Checkout and read PR reviews:
