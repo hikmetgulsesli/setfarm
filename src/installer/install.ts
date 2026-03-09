@@ -69,7 +69,7 @@ const DEFAULT_SESSION_MAINTENANCE = {
  * If a role has no timeoutSeconds, OpenClaw's global default (600s) applies.
  */
 const TIMEOUT_20_MIN = 1200;
-const TIMEOUT_30_MIN = 1800;
+const TIMEOUT_30_MIN = 2700;
 
 const ROLE_POLICIES: Record<AgentRole, { profile?: string; alsoAllow?: string[]; deny: string[]; timeoutSeconds: number }> = {
   // analysis: read code, run git/grep, reason — no writing, no web, no browser
