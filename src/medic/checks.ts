@@ -439,18 +439,22 @@ export function checkStalledWorkflowCrons(): MedicFinding[] {
 
     // Guard: if any stories are currently running, agents are actively working.
     // Don't recreate crons just because no NEW claim happened — the agent is busy.
+    // v1.5.47: Only count "running" items that were recently updated.
+    // A step stuck in "running" with error output (e.g. MISSING_INPUT_GUARD) is effectively dead.
     const runningStories = db.prepare(`
       SELECT COUNT(*) as cnt FROM stories st
       JOIN runs r ON r.id = st.run_id
       WHERE r.workflow_id = ? AND r.status = 'running' AND st.status = 'running'
-    `).get(workflow_id) as { cnt: number };
+        AND (julianday('now') - julianday(st.updated_at)) * 86400000 < ?
+    `).get(workflow_id, CLAIMED_STUCK_THRESHOLD_MS) as { cnt: number };
 
     // Also check if any steps are running (single steps, not just loop stories)
     const runningSteps = db.prepare(`
       SELECT COUNT(*) as cnt FROM steps s
       JOIN runs r ON r.id = s.run_id
       WHERE r.workflow_id = ? AND r.status = 'running' AND s.status = 'running'
-    `).get(workflow_id) as { cnt: number };
+        AND (julianday('now') - julianday(s.updated_at)) * 86400000 < ?
+    `).get(workflow_id, CLAIMED_STUCK_THRESHOLD_MS) as { cnt: number };
 
     if (runningStories.cnt > 0 || runningSteps.cnt > 0) continue; // agents are busy — crons are fine
 

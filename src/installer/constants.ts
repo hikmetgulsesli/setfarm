@@ -94,6 +94,10 @@ export const OPTIONAL_TEMPLATE_VARS = [
   "db_password",
   "db_required",
   "db_type",
+  // Build/test/lint commands (may not exist for all project types)
+  "build_cmd",
+  "test_cmd",
+  "lint_cmd",
   // Dev server
   "dev_server_port",
   // Browser

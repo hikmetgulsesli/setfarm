@@ -449,7 +449,7 @@ export function claimStep(agentId: string): ClaimResult {
       let resolvedInput = resolveTemplate(step.input_template, context);
 
       // Item 7: MISSING_INPUT_GUARD inside claim flow — also reset the claimed story on failure
-      const allMissing = [...resolvedInput.matchAll(/\[missing:\s*(\w+)\]/gi)].map(m => m[1].toLowerCase());
+      const allMissing = [...new Set([...resolvedInput.matchAll(/\[missing:\s*(\w+)\]/gi)].map(m => m[1].toLowerCase()))];
       if (allMissing.length > 0) {
         const reason = `Blocked: unresolved variable(s) [${allMissing.join(", ")}] in input — failing step and run`;
         logger.warn(reason, { runId: step.run_id, stepId: step.step_id });
@@ -681,7 +681,7 @@ ${cavReport}`, { runId: step.run_id });
 
       // MISSING_INPUT_GUARD: Any [missing:] marker means upstream didn't produce required output.
       // Fail the step AND run — downstream steps would be meaningless.
-      const allMissing = [...resolvedInput.matchAll(/\[missing:\s*(\w+)\]/gi)].map(m => m[1].toLowerCase());
+      const allMissing = [...new Set([...resolvedInput.matchAll(/\[missing:\s*(\w+)\]/gi)].map(m => m[1].toLowerCase()))];
       if (allMissing.length > 0) {
         const reason = `Blocked: unresolved variable(s) [${allMissing.join(", ")}] in input — failing step and run`;
         logger.warn(reason, { runId: step.run_id, stepId: step.step_id });
@@ -756,6 +756,8 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   // EAGER CONTEXT SAVE: Persist merged context BEFORE guardrail checks.
   // Guardrails (test, quality, db-provision) may call failStep + return early,
   // which previously skipped the context save — losing parsed output keys.
+  // v1.5.47: Snapshot context before save so guardrail failures can rollback bad values.
+  const prevContextJson = db.prepare("SELECT context FROM runs WHERE id = ?").get(step.run_id) as { context: string } | undefined;
   db.prepare(
     "UPDATE runs SET context = ?, updated_at = ? WHERE id = ?"
   ).run(JSON.stringify(context), new Date().toISOString(), step.run_id);
@@ -819,6 +821,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     const testFailMsg = checkTestFailures(output);
     if (testFailMsg) {
       logger.warn(`Test guardrail triggered`, { runId: step.run_id, stepId: step.step_id });
+      if (prevContextJson) db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(prevContextJson.context, step.run_id);
       failStep(stepId, testFailMsg);
       return { advanced: false, runCompleted: false };
     }
@@ -830,6 +833,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     const qgMsg = checkQualityGate(step.step_id, repoPath);
     if (qgMsg) {
       logger.warn(`[quality-gate] Failed`, { runId: step.run_id, stepId: step.step_id });
+      if (prevContextJson) db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(prevContextJson.context, step.run_id);
       failStep(stepId, qgMsg);
       return { advanced: false, runCompleted: false };
     }
@@ -840,6 +844,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     const designErr = processDesignCompletion(step.run_id, context, db);
     if (designErr) {
       logger.warn(`[design-guardrail] Failed`, { runId: step.run_id, stepId: step.step_id });
+      if (prevContextJson) db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(prevContextJson.context, step.run_id);
       failStep(stepId, designErr);
       return { advanced: false, runCompleted: false };
     }
