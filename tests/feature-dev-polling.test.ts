@@ -9,7 +9,7 @@ describe("feature-dev workflow polling config", () => {
   it("has a polling section with model and timeoutSeconds", async () => {
     const spec = await loadWorkflowSpec(WORKFLOW_DIR);
     assert.ok(spec.polling, "polling config should exist");
-    assert.equal(spec.polling.model, "kimi-coding/k2p5");
+    assert.equal(spec.polling.model, "minimax/MiniMax-M2.5");
     assert.equal(spec.polling.timeoutSeconds, 1800);
   });
 

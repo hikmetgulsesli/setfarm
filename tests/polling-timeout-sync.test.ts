@@ -20,9 +20,9 @@ describe("polling timeout sync across all workflows", () => {
     assert.equal(spec.polling?.timeoutSeconds, 1800);
   });
 
-  it("feature-dev workflow polling.model is kimi-coding/k2p5", async () => {
+  it("feature-dev workflow polling.model is minimax/MiniMax-M2.5", async () => {
     const spec = await loadWorkflowSpec(path.resolve("workflows", "feature-dev"));
-    assert.equal(spec.polling?.model, "kimi-coding/k2p5");
+    assert.equal(spec.polling?.model, "minimax/MiniMax-M2.5");
   });
 
   it("security-audit workflow polling.timeoutSeconds matches workflow.yml", async () => {
