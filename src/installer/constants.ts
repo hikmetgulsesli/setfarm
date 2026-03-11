@@ -14,7 +14,7 @@ export const BASE_ABANDONED_THRESHOLD_MS = 600_000; // 10 min
 export const FAST_ABANDONED_THRESHOLD_MS = 300_000; // 5 min
 
 /** Max abandon resets before failing the step/story permanently */
-export const MAX_ABANDON_RESETS = 8;
+export const MAX_ABANDON_RESETS = 3;
 
 // ── Cleanup Throttle ────────────────────────────────────────────────
 
@@ -103,6 +103,9 @@ export const OPTIONAL_TEMPLATE_VARS = [
   // Browser
   "browser_dom_snapshot",
   "browser_check_result",
+  // Design fidelity
+  "design_fidelity_feedback",
+  "design_warning",
 ] as const;
 
 // ── Stories ──────────────────────────────────────────────────────────

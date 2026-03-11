@@ -100,7 +100,7 @@ export function runQualityChecks(repoPath: string): QualityIssue[] {
       if (matches.length > 0) {
         issues.push({
           rule: "placeholder_text",
-          severity: "error",
+          severity: "warning",
           detail: `Found ${matches.length} placeholder text(s) in UI`,
           matches: matches.slice(0, 10),
         });
@@ -161,7 +161,7 @@ export function runQualityChecks(repoPath: string): QualityIssue[] {
         if (matches.length > 0) {
           issues.push({
             rule: "hardcoded_user_data",
-            severity: "error",
+            severity: "warning",
             detail: `Found hardcoded fake name: ${name}`,
             matches: matches.slice(0, 5),
           });

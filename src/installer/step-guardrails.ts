@@ -12,7 +12,7 @@ import { getDb } from "../db.js";
 import { logger } from "../lib/logger.js";
 import { isFrontendChange } from "../lib/frontend-detect.js";
 import { runQualityChecks, formatQualityReport } from "./quality-gates.js";
-import { buildDesignContracts, generateUIContract, enrichStoriesWithDesignContract, validateDesignCompliance, generateLayoutSkeletons } from "./design-contract.js";
+import { buildDesignContracts, generateUIContract, enrichStoriesWithDesignContract, validateDesignCompliance, generateLayoutSkeletons, checkCrossScreenConsistency, checkDesignFidelity, detectUnusedModules, reconcileDesignWithStories, checkIntegrationWiring } from "./design-contract.js";
 import { provisionDatabase, resolveDbType } from "./db-provision.js";
 import { runBrowserDomCheck } from "./browser-tools.js";
 import { TEST_FAIL_PATTERNS, GIT_DIFF_TIMEOUT } from "./constants.js";
@@ -204,6 +204,61 @@ export function processSetupDesignContracts(
     logger.warn(`[setup-design-contracts] Design validation skipped: ${String(e)}`, { runId });
   }
 
+  // 7.5. Cross-screen design consistency check (advisory)
+  try {
+    const crossScreenIssues = checkCrossScreenConsistency(repoPath);
+    if (crossScreenIssues.length > 0) {
+      const report = crossScreenIssues.map((i: string) => `  - ${i}`).join("\n");
+      const existing = context["design_feedback"] || "";
+      context["design_feedback"] = existing + (existing ? "\n" : "") + `CROSS-SCREEN CONSISTENCY:\n${report}\nUse a SINGLE unified palette and font family.`;
+      logger.warn(`[setup-design-contracts] ${crossScreenIssues.length} cross-screen inconsistency(ies):\n${report}`, { runId });
+    }
+  } catch (e) {
+    logger.warn(`[setup-design-contracts] Cross-screen check skipped: ${String(e)}`, { runId });
+  }
+
+  // 7.6. Design↔Stories reconciliation (advisory — log orphaned design elements)
+  try {
+    const stories = db.prepare(
+      "SELECT story_id as storyId, title, description FROM stories WHERE run_id = ?"
+    ).all(runId) as Array<{ storyId: string; title: string; description: string }>;
+    const prd = context["prd"] || "";
+    const orphanedElements = reconcileDesignWithStories(repoPath, stories, prd);
+    if (orphanedElements.length > 0) {
+      const report = orphanedElements.map(e => `  - [${e.screen}] ${e.type}: "${e.label}"`).join("\n");
+      const existing = context["design_feedback"] || "";
+      context["design_feedback"] = existing + (existing ? "\n" : "") + `ORPHANED DESIGN ELEMENTS (in Stitch design but no matching story/PRD):\n${report}\nThese elements may need implementation or stories created.`;
+      logger.warn(`[setup-design-contracts] ${orphanedElements.length} orphaned design element(s):\n${report}`, { runId });
+    }
+  } catch (e) {
+    logger.warn(`[setup-design-contracts] Design reconciliation skipped: ${String(e)}`, { runId });
+  }
+
+  // 7.7. Persist story_screens to DB for each story
+  try {
+    const screenMapRaw2 = context["screen_map"];
+    if (screenMapRaw2) {
+      const screenMap2 = JSON.parse(screenMapRaw2);
+      if (Array.isArray(screenMap2)) {
+        const allStories = db.prepare(
+          "SELECT id, story_id FROM stories WHERE run_id = ?"
+        ).all(runId) as Array<{ id: string; story_id: string }>;
+        for (const story of allStories) {
+          const storyScreens = screenMap2
+            .filter((s: any) => Array.isArray(s.stories) && s.stories.includes(story.story_id))
+            .map((s: any) => ({ screenId: s.screenId, name: s.name, type: s.type }));
+          if (storyScreens.length > 0) {
+            db.prepare("UPDATE stories SET story_screens = ?, updated_at = ? WHERE id = ?")
+              .run(JSON.stringify(storyScreens), new Date().toISOString(), story.id);
+          }
+        }
+        logger.info(`[setup-design-contracts] Persisted story_screens to DB for ${allStories.length} stories`, { runId });
+      }
+    }
+  } catch (e) {
+    logger.warn(`[setup-design-contracts] story_screens persist failed: ${String(e)}`, { runId });
+  }
+
   // 8. DESIGN_MANIFEST.json → SCREEN_MAP auto-generate fallback
   if (!context["screen_map"]) {
     try {
@@ -346,6 +401,69 @@ export function checkScreenMapPresence(
  * Compute whether a branch has frontend changes relative to main.
  * Returns 'true' or 'false' as a string for template context.
  */
+// ── Design Fidelity Check (verify/final-test step) ──────────────────
+
+/**
+ * Run design fidelity + unused module + integration wiring checks.
+ * Advisory only — populates context with feedback for agent.
+ */
+export function processDesignFidelityCheck(
+  context: Record<string, string>,
+  runId: string
+): void {
+  const repoPath = context["repo"] || context["REPO"] || "";
+  if (!repoPath) return;
+
+  const stitchDir = path.join(repoPath, "stitch");
+  if (!fs.existsSync(stitchDir)) return;
+
+  const feedbackParts: string[] = [];
+
+  // 1. Design fidelity (Stitch HTML vs built code)
+  try {
+    const fidelityIssues = checkDesignFidelity(repoPath);
+    const errors = fidelityIssues.filter(i => i.severity === "error");
+    const warnings = fidelityIssues.filter(i => i.severity === "warning");
+    if (errors.length > 0 || warnings.length > 0) {
+      const report = fidelityIssues.map(i => `  [${i.severity}] ${i.screen}: ${i.message}`).join("\n");
+      feedbackParts.push(`DESIGN FIDELITY (${errors.length} errors, ${warnings.length} warnings):\n${report}`);
+      logger.warn(`[design-fidelity] ${fidelityIssues.length} issue(s):\n${report}`, { runId });
+    }
+  } catch (e) {
+    logger.warn(`[design-fidelity] Check skipped: ${String(e)}`, { runId });
+  }
+
+  // 2. Unused module detection
+  try {
+    const unusedModules = detectUnusedModules(repoPath);
+    if (unusedModules.length > 0) {
+      const report = unusedModules.map(m => `  - ${m}`).join("\n");
+      feedbackParts.push(`UNUSED MODULES (created but never imported — possible dead code):\n${report}\nEither import these in the entry point or remove them.`);
+      logger.warn(`[unused-modules] ${unusedModules.length} unused module(s):\n${report}`, { runId });
+    }
+  } catch (e) {
+    logger.warn(`[unused-modules] Check skipped: ${String(e)}`, { runId });
+  }
+
+  // 3. Integration wiring check
+  try {
+    const wiringIssues = checkIntegrationWiring(repoPath);
+    if (wiringIssues.length > 0) {
+      const report = wiringIssues.map(i => `  - ${i}`).join("\n");
+      feedbackParts.push(`INTEGRATION WIRING (modules not connected to entry point):\n${report}\nThe integration story must import and use ALL component modules.`);
+      logger.warn(`[integration-wiring] ${wiringIssues.length} issue(s):\n${report}`, { runId });
+    }
+  } catch (e) {
+    logger.warn(`[integration-wiring] Check skipped: ${String(e)}`, { runId });
+  }
+
+  if (feedbackParts.length > 0) {
+    context["design_fidelity_feedback"] = feedbackParts.join("\n\n");
+  }
+}
+
+// ── Frontend Change Detection ───────────────────────────────────────
+
 export function computeHasFrontendChanges(repo: string, branch: string): string {
   try {
     const output = execFileSync("git", ["diff", "--name-only", `main..${branch}`], {

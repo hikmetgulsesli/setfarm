@@ -163,16 +163,16 @@ export function buildDesignContracts(repoPath: string): DesignContract[] {
     const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
     const contracts: DesignContract[] = [];
 
-    const screens = manifest.screens || manifest.pages || [];
+    const screens = Array.isArray(manifest) ? manifest : (manifest.screens || manifest.pages || []);
     for (const screen of screens) {
-      const htmlFile = screen.html || screen.file || `${screen.id || screen.name}.html`;
+      const htmlFile = screen.htmlFile || screen.html || screen.file || `${screen.id || screen.screenId || screen.name}.html`;
       const htmlPath = path.join(stitchDir, htmlFile);
       if (!fs.existsSync(htmlPath)) continue;
 
       const html = fs.readFileSync(htmlPath, "utf-8");
       if (!html.trim()) continue; // Skip 0-byte files
 
-      const contract = parseDesignHTML(html, screen.id || screen.name);
+      const contract = parseDesignHTML(html, screen.screenId || screen.id || screen.name);
       contract.screenTitle = screen.title || screen.name || contract.screenTitle;
       if (screen.device) contract.deviceType = screen.device.toUpperCase() as any;
       contracts.push(contract);
@@ -668,13 +668,13 @@ export function generateLayoutSkeletons(repoPath: string, contracts: DesignContr
   if (fs.existsSync(manifestPath)) {
     try {
       const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
-      const screens = manifest.screens || manifest.pages || [];
+      const screens = Array.isArray(manifest) ? manifest : (manifest.screens || manifest.pages || []);
       for (const screen of screens) {
         screenFiles.push({
-          id: screen.id || screen.name,
-          title: screen.title || screen.name || screen.id,
-          file: screen.html || screen.file || (screen.id || screen.name) + ".html",
-          device: screen.device,
+          id: screen.screenId || screen.id || screen.name,
+          title: screen.title || screen.name || screen.screenId || screen.id,
+          file: screen.htmlFile || screen.html || screen.file || (screen.screenId || screen.id || screen.name) + ".html",
+          device: screen.device || screen.deviceType,
         });
       }
     } catch {}
@@ -710,4 +710,398 @@ export function generateLayoutSkeletons(repoPath: string, contracts: DesignContr
 
   if (sections.length === 0) return "";
   return sections.join("\n\n");
+}
+
+
+// --- Cross-Screen Design Consistency Check ---
+
+interface ScreenDesignProps {
+  screenId: string;
+  title: string;
+  primaryColor: string | null;
+  fonts: string[];
+  bgColor: string | null;
+}
+
+function extractDesignProps(html: string, screenId: string, title: string): ScreenDesignProps {
+  let primaryColor: string | null = null;
+  const primaryMatch = html.match(/primary:\s*["']?(#[0-9a-fA-F]{3,8})/i) ||
+    html.match(/--color-primary:\s*(#[0-9a-fA-F]{3,8})/i);
+  if (primaryMatch) primaryColor = primaryMatch[1].toLowerCase();
+
+  let bgColor: string | null = null;
+  const bgMatch = html.match(/background-dark:\s*["']?(#[0-9a-fA-F]{3,8})/i) ||
+    html.match(/--color-background-dark:\s*(#[0-9a-fA-F]{3,8})/i);
+  if (bgMatch) bgColor = bgMatch[1].toLowerCase();
+
+  const fonts: string[] = [];
+  const fontLinkRe = /fonts\.googleapis\.com\/css2\?family=([^&"']+)/g;
+  let fm: RegExpExecArray | null;
+  while ((fm = fontLinkRe.exec(html)) !== null) {
+    for (const fam of fm[1].split("&family=")) {
+      const fontName = decodeURIComponent(fam.split(":")[0].replace(/\+/g, " "));
+      if (fontName && !fonts.includes(fontName)) fonts.push(fontName);
+    }
+  }
+  const twFontRe = /fontFamily:\s*\{[^}]*?(\w+):\s*\[["']([^"']+)["']/g;
+  while ((fm = twFontRe.exec(html)) !== null) {
+    const fontName = fm[2].split(",")[0].trim().replace(/['"]/g, "");
+    if (fontName && !fonts.includes(fontName)) fonts.push(fontName);
+  }
+
+  return { screenId, title, primaryColor, fonts, bgColor };
+}
+
+export function checkCrossScreenConsistency(repoPath: string): string[] {
+  const stitchDir = path.join(repoPath, "stitch");
+  if (!fs.existsSync(stitchDir)) return [];
+
+  const manifestPath = path.join(stitchDir, "DESIGN_MANIFEST.json");
+  let screenEntries: Array<{ id: string; title: string; file: string }> = [];
+
+  if (fs.existsSync(manifestPath)) {
+    try {
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+      const screens = Array.isArray(manifest) ? manifest : (manifest.screens || manifest.pages || []);
+      for (const s of screens) {
+        screenEntries.push({
+          id: s.screenId || s.id || s.name,
+          title: s.title || s.name || s.screenId || s.id,
+          file: s.htmlFile || s.html || s.file || `${s.screenId || s.id || s.name}.html`,
+        });
+      }
+    } catch { /* ignore */ }
+  }
+  if (screenEntries.length === 0) {
+    try {
+      const files = fs.readdirSync(stitchDir).filter(f => f.endsWith(".html") && !f.startsWith("index"));
+      screenEntries = files.map(f => ({ id: path.basename(f, ".html"), title: path.basename(f, ".html"), file: f }));
+    } catch { return []; }
+  }
+
+  if (screenEntries.length < 2) return [];
+
+  const allProps: ScreenDesignProps[] = [];
+  for (const entry of screenEntries) {
+    const htmlPath = path.join(stitchDir, entry.file);
+    if (!fs.existsSync(htmlPath)) continue;
+    try {
+      const html = fs.readFileSync(htmlPath, "utf-8");
+      if (!html.trim()) continue;
+      allProps.push(extractDesignProps(html, entry.id, entry.title));
+    } catch { continue; }
+  }
+
+  if (allProps.length < 2) return [];
+  const issues: string[] = [];
+
+  const colors = allProps.filter(p => p.primaryColor).map(p => ({ screen: p.title, color: p.primaryColor! }));
+  if (colors.length >= 2) {
+    const uniqueColors = [...new Set(colors.map(c => c.color))];
+    if (uniqueColors.length > 1) {
+      const detail = colors.map(c => `${c.screen}: ${c.color}`).join(", ");
+      issues.push(`CROSS-SCREEN: Inconsistent primary colors (${detail}). Pick ONE.`);
+    }
+  }
+
+  const bgColors = allProps.filter(p => p.bgColor).map(p => ({ screen: p.title, color: p.bgColor! }));
+  if (bgColors.length >= 2) {
+    const uniqueBg = [...new Set(bgColors.map(c => c.color))];
+    if (uniqueBg.length > 1) {
+      const detail = bgColors.map(c => `${c.screen}: ${c.color}`).join(", ");
+      issues.push(`CROSS-SCREEN: Inconsistent background colors (${detail}). Unify palette.`);
+    }
+  }
+
+  const allFontSets = allProps.filter(p => p.fonts.length > 0);
+  if (allFontSets.length >= 2) {
+    const firstFonts = [...allFontSets[0].fonts].sort().join(",");
+    const inconsistent = allFontSets.filter(p => [...p.fonts].sort().join(",") !== firstFonts);
+    if (inconsistent.length > 0) {
+      const detail = allFontSets.map(p => `${p.title}: [${p.fonts.join(", ")}]`).join("; ");
+      issues.push(`CROSS-SCREEN: Inconsistent fonts (${detail}). Use same font family.`);
+    }
+  }
+
+  return issues;
+}
+
+
+// --- Design Fidelity Check (Stitch HTML vs Built Code) ---
+
+export interface FidelityIssue {
+  screen: string;
+  severity: "error" | "warning";
+  message: string;
+}
+
+export function checkDesignFidelity(repoPath: string): FidelityIssue[] {
+  const stitchDir = path.join(repoPath, "stitch");
+  if (!fs.existsSync(stitchDir)) return [];
+
+  const issues: FidelityIssue[] = [];
+  const contracts = buildDesignContracts(repoPath);
+  if (contracts.length === 0) return [];
+
+  let allSourceContent = "";
+  const srcDirs = ["src", "app", "components", "pages"].map(d => path.join(repoPath, d));
+  const builtHtmlPath = path.join(stitchDir, "index.html");
+  if (fs.existsSync(builtHtmlPath)) {
+    try { allSourceContent += fs.readFileSync(builtHtmlPath, "utf-8"); } catch { /* ignore */ }
+  }
+  for (const dir of srcDirs) {
+    if (!fs.existsSync(dir)) continue;
+    try {
+      const files = readdirRecursive(dir).filter(f => /\.(tsx?|jsx?|html|css)$/.test(f));
+      for (const f of files) {
+        try { allSourceContent += "\n" + fs.readFileSync(f, "utf-8"); } catch { /* ignore */ }
+      }
+    } catch { /* ignore */ }
+  }
+  try {
+    const stitchFiles = fs.readdirSync(stitchDir).filter(f => /\.(js|css)$/.test(f));
+    for (const f of stitchFiles) {
+      try { allSourceContent += "\n" + fs.readFileSync(path.join(stitchDir, f), "utf-8"); } catch { /* ignore */ }
+    }
+  } catch { /* ignore */ }
+
+  if (!allSourceContent.trim()) return [];
+  const srcLower = allSourceContent.toLowerCase();
+
+  for (const contract of contracts) {
+    for (const btn of contract.buttons) {
+      const label = btn.label.replace(/\[icon: |\]/g, "").toLowerCase().trim();
+      if (!label || label.length < 2) continue;
+      const found = srcLower.includes(label) ||
+        srcLower.includes(label.replace(/\s+/g, "")) ||
+        srcLower.includes(label.replace(/\s+/g, "_")) ||
+        srcLower.includes(label.replace(/\s+/g, "-"));
+      if (!found) {
+        issues.push({ screen: contract.screenTitle, severity: "warning", message: `Button "${btn.label}" from design not found in code` });
+      }
+    }
+
+    for (const nav of contract.navigation) {
+      const label = nav.label.toLowerCase().trim();
+      if (!label || label.length < 2 || nav.href === "#" || nav.href?.startsWith("javascript:")) continue;
+      if (!srcLower.includes(label)) {
+        issues.push({ screen: contract.screenTitle, severity: "warning", message: `Nav link "${nav.label}" (href="${nav.href}") from design not found in code` });
+      }
+    }
+
+    for (const inp of contract.inputs) {
+      const label = (inp.placeholder || inp.label).toLowerCase().trim();
+      if (!label || label.length < 2 || label === "text" || label === "number") continue;
+      if (!srcLower.includes(label)) {
+        issues.push({ screen: contract.screenTitle, severity: "warning", message: `Input "${inp.placeholder || inp.label}" from design not found in code` });
+      }
+    }
+
+    const htmlFile = findScreenHtml(stitchDir, contract.screenId);
+    if (htmlFile) {
+      try {
+        const designHtml = fs.readFileSync(htmlFile, "utf-8");
+        const designSections = (designHtml.match(/<(section|header|footer|nav|main)[^>]*>/gi) || []).length;
+        const codeSections = (allSourceContent.match(/<(section|header|footer|nav|main|Section|Header|Footer|Nav|Main)[^>]*>/g) || []).length;
+        if (designSections > 0 && codeSections < designSections * 0.5) {
+          issues.push({
+            screen: contract.screenTitle,
+            severity: "error",
+            message: `Structural gap: design has ${designSections} sections, code has ${codeSections}. ${Math.round((1 - codeSections / designSections) * 100)}% missing.`,
+          });
+        }
+      } catch { /* ignore */ }
+    }
+  }
+
+  return issues;
+}
+
+function findScreenHtml(stitchDir: string, screenId: string): string | null {
+  const direct = path.join(stitchDir, screenId + ".html");
+  if (fs.existsSync(direct)) return direct;
+  try {
+    const files = fs.readdirSync(stitchDir).filter(f => f.endsWith(".html"));
+    for (const f of files) {
+      if (f.includes(screenId) || screenId.includes(path.basename(f, ".html"))) return path.join(stitchDir, f);
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
+function readdirRecursive(dir: string): string[] {
+  const results: string[] = [];
+  try {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "stitch") continue;
+      if (entry.isDirectory()) {
+        results.push(...readdirRecursive(fullPath));
+      } else {
+        results.push(fullPath);
+      }
+    }
+  } catch { /* ignore */ }
+  return results;
+}
+
+
+// --- Unused Module Detection ---
+
+export function detectUnusedModules(repoPath: string): string[] {
+  const srcDirs = ["src", "app", "components", "pages", "lib", "utils"].map(d => path.join(repoPath, d));
+  const stitchDir = path.join(repoPath, "stitch");
+  if (fs.existsSync(stitchDir)) srcDirs.push(stitchDir);
+
+  const allFiles: string[] = [];
+  for (const dir of srcDirs) {
+    if (!fs.existsSync(dir)) continue;
+    allFiles.push(...readdirRecursive(dir).filter(f => /\.(tsx?|jsx?|mjs)$/.test(f)));
+  }
+  if (allFiles.length <= 1) return [];
+
+  const fileContents = new Map<string, string>();
+  for (const f of allFiles) {
+    try { fileContents.set(f, fs.readFileSync(f, "utf-8")); } catch { /* ignore */ }
+  }
+
+  const entryPatterns = [
+    /index\.(tsx?|jsx?|html)$/, /main\.(tsx?|jsx?)$/, /app\.(tsx?|jsx?)$/,
+    /page\.(tsx?|jsx?)$/, /layout\.(tsx?|jsx?)$/, /\.test\.(tsx?|jsx?)$/,
+    /\.spec\.(tsx?|jsx?)$/, /\.config\.(tsx?|jsx?|mjs)$/,
+  ];
+
+  const importedModules = new Set<string>();
+  for (const [, content] of fileContents) {
+    const importRe = /(?:import|from)\s+["']\.?\/?([^"']+)["']/g;
+    let im: RegExpExecArray | null;
+    while ((im = importRe.exec(content)) !== null) importedModules.add(im[1]);
+    const requireRe = /require\(["']\.?\/?([^"']+)["']\)/g;
+    while ((im = requireRe.exec(content)) !== null) importedModules.add(im[1]);
+    const dynRe = /import\(["']\.?\/?([^"']+)["']\)/g;
+    while ((im = dynRe.exec(content)) !== null) importedModules.add(im[1]);
+    const scriptRe = /src=["']\.?\/?([^"']+\.(?:js|mjs|ts|tsx))["']/g;
+    while ((im = scriptRe.exec(content)) !== null) importedModules.add(im[1]);
+  }
+
+  const unused: string[] = [];
+  for (const filePath of allFiles) {
+    if (entryPatterns.some(p => p.test(filePath))) continue;
+    const baseName = path.basename(filePath);
+    const baseNoExt = baseName.replace(/\.(tsx?|jsx?|mjs)$/, "");
+    if (/^(index|utils|helpers|types|constants|config)$/i.test(baseNoExt)) continue;
+
+    const isImported = [...importedModules].some(imp => {
+      const impBase = path.basename(imp).replace(/\.(tsx?|jsx?|mjs)$/, "");
+      return imp === baseName || impBase === baseNoExt || imp.endsWith("/" + baseNoExt) || imp.endsWith("/" + baseName);
+    });
+
+    if (!isImported) unused.push(path.relative(repoPath, filePath));
+  }
+  return unused;
+}
+
+
+// --- Design to PRD/Stories Reconciliation ---
+
+export interface OrphanedDesignElement {
+  screen: string;
+  type: "button" | "link" | "input";
+  label: string;
+}
+
+export function reconcileDesignWithStories(
+  repoPath: string,
+  stories: Array<{ storyId: string; title: string; description: string }>,
+  prd: string
+): OrphanedDesignElement[] {
+  const contracts = buildDesignContracts(repoPath);
+  if (contracts.length === 0) return [];
+
+  const orphaned: OrphanedDesignElement[] = [];
+  const allStoryText = stories.map(s => `${s.title} ${s.description}`).join(" ").toLowerCase();
+  const searchText = allStoryText + " " + (prd || "").toLowerCase();
+
+  for (const contract of contracts) {
+    for (const btn of contract.buttons) {
+      const label = btn.label.replace(/\[icon: |\]/g, "").toLowerCase().trim();
+      if (!label || label.length < 3) continue;
+      if (/^(close|x|ok|cancel|submit|back|next|menu|search)$/i.test(label)) continue;
+      const words = label.split(/\s+/);
+      const found = words.some(w => w.length >= 3 && searchText.includes(w));
+      if (!found) orphaned.push({ screen: contract.screenTitle, type: "button", label: btn.label });
+    }
+
+    for (const nav of contract.navigation) {
+      const label = nav.label.toLowerCase().trim();
+      if (!label || label.length < 3 || nav.href === "#" || nav.href?.startsWith("javascript:")) continue;
+      const words = label.split(/\s+/);
+      const found = words.some(w => w.length >= 3 && searchText.includes(w));
+      if (!found) orphaned.push({ screen: contract.screenTitle, type: "link", label: nav.label });
+    }
+  }
+
+  return orphaned;
+}
+
+
+// --- Integration Story Module Verification ---
+
+export function checkIntegrationWiring(repoPath: string): string[] {
+  const issues: string[] = [];
+  const entryPaths = [
+    path.join(repoPath, "app", "page.tsx"), path.join(repoPath, "src", "App.tsx"),
+    path.join(repoPath, "src", "app", "page.tsx"), path.join(repoPath, "src", "main.tsx"),
+    path.join(repoPath, "src", "index.tsx"), path.join(repoPath, "pages", "index.tsx"),
+    path.join(repoPath, "stitch", "index.html"), path.join(repoPath, "index.html"),
+  ];
+
+  let entryContent = "";
+  let entryPath = "";
+  for (const ep of entryPaths) {
+    if (fs.existsSync(ep)) {
+      try { entryContent = fs.readFileSync(ep, "utf-8"); entryPath = ep; break; } catch { /* ignore */ }
+    }
+  }
+  if (!entryContent) return [];
+
+  const componentDirs = [
+    path.join(repoPath, "src", "components"), path.join(repoPath, "components"),
+    path.join(repoPath, "src", "features"), path.join(repoPath, "src", "modules"),
+  ];
+
+  const componentFiles: string[] = [];
+  for (const dir of componentDirs) {
+    if (!fs.existsSync(dir)) continue;
+    try {
+      componentFiles.push(...readdirRecursive(dir).filter(f => /\.(tsx?|jsx?)$/.test(f) && !/\.(test|spec|stories)\./i.test(f)));
+    } catch { /* ignore */ }
+  }
+
+  if (componentFiles.length === 0) {
+    const stitchDir = path.join(repoPath, "stitch");
+    if (fs.existsSync(stitchDir)) {
+      try {
+        const jsFiles = fs.readdirSync(stitchDir).filter(f => /\.(js|mjs)$/.test(f) && f !== "index.js");
+        componentFiles.push(...jsFiles.map(f => path.join(stitchDir, f)));
+      } catch { /* ignore */ }
+    }
+  }
+  if (componentFiles.length === 0) return [];
+
+  const entryLower = entryContent.toLowerCase();
+  for (const compFile of componentFiles) {
+    const baseName = path.basename(compFile).replace(/\.(tsx?|jsx?|mjs?)$/, "");
+    if (/^(index|utils|helpers|types|constants|config)$/i.test(baseName)) continue;
+
+    const isReferenced = entryLower.includes(baseName.toLowerCase()) ||
+      entryContent.includes(baseName) ||
+      entryLower.includes(baseName.replace(/([A-Z])/g, "-$1").toLowerCase().replace(/^-/, ""));
+
+    if (!isReferenced) {
+      issues.push(`Module "${path.relative(repoPath, compFile)}" not imported in ${path.relative(repoPath, entryPath)} — possible dead code`);
+    }
+  }
+  return issues;
 }

@@ -73,6 +73,35 @@ export function copyStitchToWorktree(repo: string, worktreeDir: string): void {
 export function createStoryWorktree(repo: string, storyId: string, baseBranch: string, agentId?: string): string {
   const worktreeBase = resolveWorktreeBaseDir(repo, agentId);
   const worktreeDir = path.join(worktreeBase, storyId.toLowerCase());
+
+  // Cross-project collision guard: if worktreeDir exists but belongs to a different repo, remove it.
+  // Worktree .git files contain: "gitdir: /path/to/original-repo/.git/worktrees/xxx"
+  // Extract the original repo path and compare with current repo.
+  if (fs.existsSync(worktreeDir)) {
+    let shouldRemove = false;
+    const gitFile = path.join(worktreeDir, ".git");
+    if (fs.existsSync(gitFile)) {
+      try {
+        const gitContent = fs.readFileSync(gitFile, "utf-8").trim();
+        // Parse: "gitdir: /home/setrox/projects/sudoku/.git/worktrees/us-001"
+        const m = gitContent.match(/gitdir:\s*(.+?)\/.git\/worktrees\//);
+        if (m) {
+          const worktreeRepo = m[1];
+          if (path.resolve(worktreeRepo) !== path.resolve(repo)) {
+            shouldRemove = true;
+            logger.info(`[worktree] Stale cross-project worktree: ${worktreeDir} belongs to ${worktreeRepo}, current repo is ${repo}`, {});
+          }
+        }
+      } catch {}
+    } else {
+      // No .git file — orphaned directory
+      shouldRemove = true;
+    }
+    if (shouldRemove) {
+      try { fs.rmSync(worktreeDir, { recursive: true, force: true }); } catch {}
+    }
+  }
+
   try {
     // Check if story branch already exists (may have WIP commits from previous session)
     let branchExists = false;

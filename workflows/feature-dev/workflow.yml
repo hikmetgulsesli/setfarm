@@ -682,6 +682,8 @@ steps:
       LINT_CMD: {{lint_cmd}}
       CURRENT STORY: {{current_story}}
       STORY_SCREENS: {{story_screens}}
+      DESIGN_FIDELITY_FEEDBACK: {{design_fidelity_feedback}}
+      DESIGN_WARNING: {{design_warning}}
       PROGRESS LOG: {{progress}}
 
       PREVIOUS FAILURE (if retrying — YOU MUST FIX THESE ISSUES FIRST before doing anything else):
@@ -788,6 +790,9 @@ steps:
       1.6. Completeness checks (CRITICAL - FAIL if any found):
          - grep -rE "coming soon|Coming Soon|placeholder|TODO.*implement|work in progress" --include="*.tsx" --include="*.ts" . → FAIL if found as visible UI text content
          - If stitch/DESIGN_MANIFEST.json exists: for each screen listed, verify a corresponding component or page implements it (search by title keywords). Missing screen = FAIL.
+         - DEAD CODE CHECK: List all .js/.ts/.tsx files in src/components/ or stitch/. For each, verify it is imported somewhere. If a module exists but is never imported in the entry point (page.tsx, index.html, App.tsx) → WARN and import it or remove it.
+         - INTEGRATION WIRING: If this is the last story (integration story), verify ALL previously created component modules are imported and rendered in the main entry point. Do NOT reimplement functionality inline — use the existing modules.
+         - DESIGN FIDELITY: If DESIGN_FIDELITY_FEEDBACK is non-empty, read each issue and fix. Missing buttons, nav links, or inputs from Stitch design MUST be added to the implementation.
          - grep -rE "blue-[0-9]+/[0-9]+" components/ → WARN: likely hardcoded Tailwind color — check if it belongs in design-tokens instead
       1.65. Stitch HTML uyumluluk kontrolü (ZORUNLU — stitch/ varsa):
          IF stitch/ directory exists AND STORY_SCREENS is non-empty:

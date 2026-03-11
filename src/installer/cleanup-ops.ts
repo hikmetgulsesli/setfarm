@@ -108,7 +108,7 @@ export function cleanupAbandonedSteps(advancePipeline: (runId: string) => { adva
           scheduleRunCronTeardown(step.run_id);
         } else {
           db.prepare("UPDATE stories SET status = 'pending', abandoned_count = ?, updated_at = ? WHERE id = ?").run(newAbandonCount, new Date().toISOString(), story.id);
-          db.prepare("UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = ? WHERE id = ?").run(new Date().toISOString(), step.id);
+          db.prepare("UPDATE steps SET status = 'pending', current_story_id = NULL, abandoned_count = ?, updated_at = ? WHERE id = ?").run(newAbandonCount, new Date().toISOString(), step.id);
           emitEvent({ ts: new Date().toISOString(), event: "step.timeout", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: `Story ${story.story_id} abandoned — reset to pending (abandon ${newAbandonCount}/${MAX_ABANDON_RESETS})` });
           logger.info(`Abandoned step reset to pending (story abandon ${newAbandonCount})`, { runId: step.run_id, stepId: step.step_id });
         }
@@ -169,6 +169,30 @@ export function cleanupAbandonedSteps(advancePipeline: (runId: string) => { adva
   for (const stuck of stuckLoops) {
     logger.info(`Recovering stuck pipeline after loop completion`, { runId: stuck.run_id, stepId: stuck.id });
     advancePipeline(stuck.run_id);
+  }
+
+  // Recover stuck verify_each: verify step is 'waiting' but 'done' stories exist that need verification
+  const stuckVerify = db.prepare(`
+    SELECT s.id, s.run_id, s.step_id, ls.loop_config FROM steps s
+    JOIN runs r ON r.id = s.run_id
+    JOIN steps ls ON ls.run_id = s.run_id AND ls.type = 'loop'
+    WHERE r.status = 'running'
+    AND s.status = 'waiting'
+    AND ls.loop_config IS NOT NULL
+    AND EXISTS (
+      SELECT 1 FROM stories st WHERE st.run_id = s.run_id AND st.status = 'done'
+    )
+  `).all() as { id: string; run_id: string; step_id: string; loop_config: string }[];
+
+  for (const sv of stuckVerify) {
+    try {
+      const lc = JSON.parse(sv.loop_config);
+      if (lc.verifyEach && lc.verifyStep === sv.step_id) {
+        db.prepare("UPDATE steps SET status = 'pending', updated_at = ? WHERE id = ?")
+          .run(new Date().toISOString(), sv.id);
+        logger.info(`[cleanup] Recovered stuck verify_each step ${sv.step_id} — done stories awaiting verification`, { runId: sv.run_id });
+      }
+    } catch { /* malformed loop_config */ }
   }
 }
 

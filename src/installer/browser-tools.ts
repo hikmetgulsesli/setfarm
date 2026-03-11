@@ -241,14 +241,14 @@ function analyzeDOM(
     });
   }
 
-  // Rule: button_no_handler — buttons without click handlers
+  // Rule: button_no_handler — buttons without click handlers (ERROR: every button must do something)
   const noHandlerButtons = dom.buttons.filter((b) => !b.hasHandler);
   if (noHandlerButtons.length > 0) {
     const examples = noHandlerButtons.slice(0, 5).map((b) => b.label).join(", ");
     result.issues.push({
       rule: "button_no_handler",
-      severity: "warning",
-      detail: `${noHandlerButtons.length} button(s) without handlers: ${examples}`,
+      severity: "error",
+      detail: `${noHandlerButtons.length} button(s) without onClick handlers: ${examples}. Every button MUST have an onClick handler — either implement the feature or show a toast/feedback and log it in INCOMPLETE.md.`,
     });
   }
 

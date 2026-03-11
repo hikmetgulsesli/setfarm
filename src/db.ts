@@ -137,6 +137,9 @@ function migrate(db: DatabaseSync): void {
   if (!storyColNames.has("depends_on")) {
     db.exec("ALTER TABLE stories ADD COLUMN depends_on TEXT");
   }
+  if (!storyColNames.has("story_screens")) {
+    db.exec("ALTER TABLE stories ADD COLUMN story_screens TEXT");
+  }
 
   // Rules table
   db.exec(`

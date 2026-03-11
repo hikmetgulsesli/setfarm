@@ -4,7 +4,7 @@ import { resolveSetfarmCli } from "./paths.js";
 import { getDb } from "../db.js";
 
 const DEFAULT_EVERY_MS = 30_000; // 30 seconds
-const DEFAULT_AGENT_TIMEOUT_SECONDS = 15 * 60; // 15 minutes
+const DEFAULT_AGENT_TIMEOUT_SECONDS = 30 * 60; // 30 minutes
 
 function buildAgentPrompt(workflowId: string, agentId: string): string {
   const fullAgentId = `${workflowId}_${agentId}`;

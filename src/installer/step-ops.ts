@@ -23,7 +23,7 @@ export { archiveRunProgress } from "./cleanup-ops.js";
 import { resolveTemplate, parseOutputKeyValues, readProgressFile, readProjectMemory, updateProjectMemory } from "./context-ops.js";
 import { getStories, formatStoryForTemplate, formatCompletedStories, parseAndInsertStories } from "./story-ops.js";
 import { createStoryWorktree, removeStoryWorktree, cleanupWorktrees } from "./worktree-ops.js";
-import { computeHasFrontendChanges, checkTestFailures, checkQualityGate, checkMissingInputs, processDesignCompletion, processSetupCompletion, processSetupDesignContracts, processBrowserCheck } from "./step-guardrails.js";
+import { computeHasFrontendChanges, checkTestFailures, checkQualityGate, checkMissingInputs, processDesignCompletion, processSetupCompletion, processSetupDesignContracts, processBrowserCheck, processDesignFidelityCheck } from "./step-guardrails.js";
 import { cleanupAbandonedSteps as _cleanupAbandonedSteps, scheduleRunCronTeardown, archiveRunProgress, cleanupLocalBranches } from "./cleanup-ops.js";
 import {
   getRunStatus, getRunContext, updateRunContext, failRun, completeRun,
@@ -184,7 +184,7 @@ export function claimStep(agentId: string): ClaimResult {
       // Branch naming convention: {runId_prefix}-{storyId} e.g. "433ff7a1-US-001"
       const runIdPrefix = step.run_id.slice(0, 8);
       const autoCompleteStories = db.prepare(
-        "SELECT * FROM stories WHERE run_id = ? AND status IN ('running', 'pending') ORDER BY story_index ASC"
+        "SELECT * FROM stories WHERE run_id = ? AND status = 'pending' ORDER BY story_index ASC"
       ).all(step.run_id) as any[];
       for (const rs of autoCompleteStories) {
         // Build expected branch: {runId_prefix}-{STORY_ID} e.g. "433ff7a1-US-001"
@@ -349,6 +349,16 @@ export function claimStep(agentId: string): ClaimResult {
       let storyWorkdir = "";
       if (context["repo"]) {
         storyWorkdir = createStoryWorktree(context["repo"], storyBranch, context["branch"] || "master", agentId);
+      }
+      if (!storyWorkdir && context["repo"]) {
+        // Worktree creation failed — fail the story to prevent parallel corruption
+        _rollbackEarly();
+        const wtReason = `Worktree creation failed for story ${nextStory.story_id} — cannot isolate parallel work`;
+        logger.error(wtReason, { runId: step.run_id, stepId: step.step_id });
+        db.prepare("UPDATE stories SET status = 'failed', updated_at = ? WHERE id = ?")
+          .run(new Date().toISOString(), nextStory.id);
+        emitEvent({ ts: new Date().toISOString(), event: "story.failed", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: nextStory.story_id, storyTitle: nextStory.title, detail: wtReason });
+        return { found: false };
       }
       context["story_workdir"] = storyWorkdir || context["repo"] || "";
 
@@ -868,6 +878,19 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     }
   }
 
+  // SETUP-BUILD BASELINE GUARDRAIL: If build baseline failed, don't advance
+  if (step.step_id === "setup-build" && parsed["status"]?.toLowerCase() === "done") {
+    const baseline = (parsed["baseline"] || "").toLowerCase().trim();
+    const baselineOk = !baseline || /(pass|success|ok|done|clean|good|ready)/i.test(baseline);
+    if (baseline && !baselineOk && /(fail|error|broken|crash)/i.test(baseline)) {
+      const baselineMsg = `GUARDRAIL: setup-build baseline is "${parsed["baseline"]}" — build is not passing. Fix build errors before advancing.`;
+      logger.warn(`[setup-build-guardrail] ${baselineMsg}`, { runId: step.run_id, stepId: step.step_id });
+      if (prevContextJson) db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(prevContextJson.context, step.run_id);
+      failStep(stepId, baselineMsg);
+      return { advanced: false, runCompleted: false };
+    }
+  }
+
   // SCREEN_MAP Enforcement (design step) — design owns screen identification
   // v12.0: design step SCREEN_MAP no longer requires stories field (stories step adds it later)
   logger.info(`[completeStep] step_id=${step.step_id} status=${parsed["status"]} has_screen_map=${!!context["screen_map"]}`, { runId: step.run_id });
@@ -902,6 +925,11 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   // Browser DOM Gate (implement step — advisory)
   if (step.step_id === "implement" && parsed["status"]?.toLowerCase() === "done") {
     processBrowserCheck(context, step.run_id, step.step_id);
+  }
+
+  // Design Fidelity Check (verify + final-test steps — advisory)
+  if ((step.step_id === "verify" || step.step_id === "final-test") && parsed["status"]?.toLowerCase() === "done") {
+    processDesignFidelityCheck(context, step.run_id);
   }
 
   db.prepare(
