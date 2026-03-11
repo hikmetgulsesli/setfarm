@@ -73,7 +73,7 @@ export function findStoryByStatus(runId: string, status: string): { id: string }
 }
 
 export function getNextPendingStory(runId: string): any | undefined {
-  return getDb().prepare("SELECT * FROM stories WHERE run_id = ? AND status = 'pending' ORDER BY story_index ASC LIMIT 1")
+  return getDb().prepare("SELECT * FROM stories WHERE run_id = ? AND status = 'pending' AND (abandoned_count IS NULL OR abandoned_count < 3) ORDER BY story_index ASC LIMIT 1")
     .get(runId);
 }
 
