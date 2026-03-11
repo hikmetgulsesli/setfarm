@@ -4,7 +4,7 @@ id: feature-dev
 name: Feature Development Workflow
 version: 12.0
 description: |
-  Design-first pipeline: PLAN → DESIGN → STORIES → SETUP → IMPLEMENT →
+  Design-first pipeline: PLAN → DESIGN → STORIES → SETUP-REPO → SETUP-BUILD → IMPLEMENT →
   VERIFY → SECURITY-GATE → FINAL-TEST → DEPLOY.
   Plan step produces PRD only (no stories). Design step generates screens
   from PRD via Stitch (no screen limit). Stories step decomposes PRD into
@@ -14,7 +14,8 @@ description: |
 
 agent_mapping:
   planner: main
-  setup: atlas
+  setup-repo: atlas
+  setup-build: atlas
   designer: mert
   developer: [koda, flux, cipher, prism]
   reviewer: [sentinel, iris, sentinel, iris, sentinel]
@@ -41,10 +42,21 @@ agents:
         SOUL.md: agents/planner/SOUL.md
         IDENTITY.md: agents/planner/IDENTITY.md
 
-  - id: setup
-    name: Setup
+  - id: setup-repo
+    name: Setup Repo
     role: coding
-    description: Prepares environment, creates feature branch, establishes baseline with lint.
+    description: Creates repo, GitHub remote, downloads Stitch designs, pushes branch.
+    workspace:
+      baseDir: agents/setup
+      files:
+        AGENTS.md: ../../agents/shared/setup/AGENTS.md
+        SOUL.md: ../../agents/shared/setup/SOUL.md
+        IDENTITY.md: ../../agents/shared/setup/IDENTITY.md
+
+  - id: setup-build
+    name: Setup Build
+    role: coding
+    description: Installs dependencies, establishes build baseline, configures lint.
     workspace:
       baseDir: agents/setup
       files:
@@ -163,7 +175,7 @@ steps:
   - id: design
     agent: designer
     input: |
-      !include critical-preamble-short.md
+      !include critical-preamble.md
 
       Generate professional UI designs for all frontend screens using Stitch.
       You work from the PRD — stories do not exist yet. Identify screens from the PRD.
@@ -179,16 +191,11 @@ steps:
       === STITCH API ===
       Script: $HOME/.openclaw/setfarm-repo/scripts/stitch-api.mjs
 
-      STEP 1 — Get or create Stitch project:
+      STEP 1 — Create Stitch project:
       STITCH_SCRIPT="$HOME/.openclaw/setfarm-repo/scripts/stitch-api.mjs"
       PROJECT_NAME=$(basename {{repo}})
-      RESULT=$(node "$STITCH_SCRIPT" find-project "$PROJECT_NAME" 2>/dev/null || echo '{"found":false}')
-      if echo "$RESULT" | jq -e '.found' > /dev/null 2>&1 && [ "$(echo "$RESULT" | jq -r '.found')" = "true" ]; then
-        PROJECT_ID=$(echo "$RESULT" | jq -r '.projectId')
-      else
-        RESULT=$(node "$STITCH_SCRIPT" create-project "$PROJECT_NAME")
-        PROJECT_ID=$(echo "$RESULT" | jq -r '.projectId')
-      fi
+      RESULT=$(node "$STITCH_SCRIPT" create-project "$PROJECT_NAME")
+      PROJECT_ID=$(echo "$RESULT" | jq -r '.projectId')
       echo "Stitch project ID: $PROJECT_ID"
 
       === DESIGN SYSTEM SELECTION (YOUR RESPONSIBILITY) ===
@@ -210,20 +217,7 @@ steps:
          Scale with PRD complexity (simple app: 3-6, complex app: 10-30+).
       4. Backend-only project (0 UI) → set SCREENS_GENERATED: 0 and skip to output
 
-      STEP 1.5 — Check existing screens (DUPLICATE PREVENTION):
-      EXISTING=$(node "$STITCH_SCRIPT" list-screens "$PROJECT_ID" 2>/dev/null | jq 'length' 2>/dev/null || echo "0")
-      echo "Existing screens in Stitch project: $EXISTING"
-      If EXISTING >= number of screens you identified:
-        - The project already has enough screens from a previous run
-        - Do NOT generate new screens — reuse existing ones
-        - Skip directly to output format
-        - Set SCREENS_GENERATED to $EXISTING (existing count)
-      If EXISTING > 0 but < needed:
-        - Some screens exist. Only generate MISSING screens using generate-screen-safe (dedup will handle exact matches)
-      If EXISTING = 0:
-        - Fresh project. Generate all screens.
-
-      STEP 2 — Generate screens:
+      STEP 2 — Generate screens (ALWAYS generate fresh for this project):
       For each unique screen you identified:
       a. Build detailed prompt from screen name, type, description + your chosen design_system colors/fonts
       b. Use generate-screen-safe with screenId as identifier:
@@ -261,12 +255,15 @@ steps:
       SCREEN_MAP:
       [
         {
-          "screenId": "SCR-001",
+          "screenId": "<ACTUAL stitch screen ID from generate-screen-safe response, e.g. 11b4576160e0442d>",
           "name": "Main Dashboard",
           "type": "dashboard",
           "description": "Primary overview screen"
         }
       ]
+      IMPORTANT: screenId MUST be the real Stitch ID returned by generate-screen-safe
+      (the hex string from the API response), NOT a made-up ID like SCR-001.
+      Parse it from the generate-screen-safe JSON output: response.screens[0].screenId
       DESIGN_NOTES: <summary>
       ============================================================
     expects: "STATUS: done"
@@ -397,113 +394,60 @@ steps:
     on_fail:
       escalate_to: human
 
-  - id: setup
-    agent: setup
+  - id: setup-repo
+    agent: setup-repo
     input: |
-      !include critical-preamble-short.md
+      !include critical-preamble.md
 
-      Prepare the development environment for this feature.
+      Set up the repository and download design assets.
+      Run this single command to do everything:
+
+      bash /Users/setrox/.openclaw/setfarm-repo/scripts/setup-repo.sh {{repo}} {{branch}} {{stitch_project_id}} '{{screen_map}}'
+
+      The script handles: git init, GitHub remote, .gitignore, branch, stitch download, push.
+      Report the script output as your output. If it prints STATUS: fail, report STATUS: fail.
+
+      ============================================================
+      MANDATORY OUTPUT FORMAT
+      ============================================================
+      STATUS: done
+      EXISTING_CODE: <true/false>
+      ============================================================
+    expects: "STATUS: done"
+    max_retries: 4
+    on_fail:
+      escalate_to: human
+
+  - id: setup-build
+    agent: setup-build
+    input: |
+      !include critical-preamble.md
+
+      Install dependencies, establish build baseline, and configure lint.
 
       TASK: {{task}}
       REPO: {{repo}}
       BRANCH: {{branch}}
 
       Instructions:
-      1. If repo doesn't exist: mkdir -p {{repo}} && cd {{repo}} && git init
-      2. Ensure GitHub remote exists:
-         git remote -v || PROJECT_NAME=$(basename {{repo}}) && gh repo create hikmetgulsesli/$PROJECT_NAME --public --source . --remote origin --push 2>/dev/null || true
-      3. Ensure main branch exists (CRITICAL for final PR):
-         git branch -M main 2>/dev/null || true
-         git push -u origin main 2>/dev/null || true
-      3.5. Ensure .worktrees/ is in .gitignore (prevents worktree dirs from being committed):
-         grep -qxF '.worktrees/' .gitignore 2>/dev/null || echo '.worktrees/' >> .gitignore
-      4. Create feature branch: git checkout -b {{branch}}
-      5. Read package.json, test config to understand build/test setup
-      6. Run build + tests to establish baseline
-      DATABASE SETUP (when DB_REQUIRED is postgres):
-      - Use external PostgreSQL: read credentials from ~/.openclaw/setfarm-repo/.env (source it or parse SETFARM_DB_HOST, SETFARM_DB_PORT, SETFARM_DB_USER, SETFARM_DB_PASS)
-      - Create database: source ~/.openclaw/setfarm-repo/.env && psql "postgresql://$SETFARM_DB_USER:$SETFARM_DB_PASS@$SETFARM_DB_HOST:$SETFARM_DB_PORT/postgres" -c "CREATE DATABASE <project_db_name>;" (ignore if exists)
-      - Create app user if needed, grant permissions
-      - Store connection string in .env file (never commit .env)
-      - Use Drizzle ORM or Prisma for schema management
-      - NEVER use \gexec or psql meta-commands with -c flag — use plain SQL only
+      1. cd {{repo}} && git checkout {{branch}}
+      2. Read package.json to understand the project stack
+      3. Install dependencies: npm install (or pnpm install if pnpm-lock.yaml exists)
 
       FRONTEND BUNDLER SETUP (MANDATORY for browser-targeted TypeScript projects):
-      After step 6, check if the project needs a bundler:
+      After installing dependencies, check if the project needs a bundler:
       - If package.json exists AND has TypeScript (.ts/.tsx files in src/) AND the project
         targets a browser (has index.html, or uses React/Canvas/DOM APIs):
         a. Check if a bundler already exists in devDependencies (vite, esbuild, webpack, parcel, rollup)
-        b. If NO bundler found:
-           - Install esbuild: npm install --save-dev esbuild
-           - Update "build" script in package.json to use esbuild:
-             For plain TS: "esbuild src/index.ts --bundle --outfile=dist/index.js --format=esm --sourcemap --target=es2020"
-             For React/TSX: "esbuild src/index.tsx --bundle --outfile=dist/index.js --format=esm --sourcemap --target=es2020 --jsx=automatic --loader:.tsx=tsx --loader:.ts=ts"
-           - Update "copy-assets" to also copy index.html and CSS files to dist/
-           - REASON: tsc alone produces bare imports (e.g. './Game' without .js extension)
-             that browsers cannot resolve. A bundler is required for browser projects.
+        b. If NO bundler found: install esbuild, configure build script
         c. If bundler already exists: verify build script produces a working bundle
-      - If project is Node.js backend only (no index.html, no DOM usage): skip this step
+      - If project is Node.js backend only: skip this step
       - NEVER use "tsc" alone as the build command for browser-targeted projects
 
-      7. Create references symlink: ln -sfn $HOME/.openclaw/setfarm-repo/references references
-
-      STITCH DESIGN DOWNLOAD (if STITCH_PROJECT_ID is set):
-      Download all screen HTML files from Stitch cloud into stitch/ directory:
-        STITCH_SCRIPT="$HOME/.openclaw/setfarm-repo/scripts/stitch-api.mjs"
-        STITCH_PROJECT_ID="{{stitch_project_id}}"
-        if [ -n "$STITCH_PROJECT_ID" ] ; then
-          mkdir -p stitch
-          # Step 1: Collect screen IDs from SCREEN_MAP (design step output)
-          SCREEN_IDS=$(node -e "try{JSON.parse(process.argv[1]).forEach(s=>{if(s.screenId)console.log(s.screenId)})}catch{}" '{{screen_map}}' 2>/dev/null | tr '\n' ',')
-          # Step 2: Create DESIGN_MANIFEST.json (with screen ID fallback)
-          if [ -n "$SCREEN_IDS" ]; then
-            node "$STITCH_SCRIPT" create-manifest "$STITCH_PROJECT_ID" stitch $SCREEN_IDS
-          else
-            node "$STITCH_SCRIPT" create-manifest "$STITCH_PROJECT_ID" stitch
-          fi
-          # Step 3: Download each screen HTML — try list-screens first, fall back to SCREEN_MAP IDs
-          SCREENS=$(node "$STITCH_SCRIPT" list-screens "$STITCH_PROJECT_ID" 2>/dev/null || echo "[]")
-          SCREEN_COUNT=$(node -e "try{const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));console.log(Array.isArray(d)?d.length:0)}catch{console.log(0)}" <<< "$SCREENS" 2>/dev/null || echo "0")
-          if [ "$SCREEN_COUNT" -gt 0 ] 2>/dev/null; then
-            echo "Downloading $SCREEN_COUNT screens via list-screens..."
-            node -e "try{JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8')).forEach(s=>{const sid=(s.name||'').split('/').pop()||s.id||s.screenId||'';const t=s.title||'Untitled';if(sid)console.log(sid+'|'+t)})}catch{}" <<< "$SCREENS" 2>/dev/null | while IFS='|' read -r SCREEN_ID SCREEN_TITLE; do
-              SCREEN_FILE=$(echo "$SCREEN_TITLE" | sed 's/[^a-zA-Z0-9_-]/-/g')
-              if [ -n "$SCREEN_ID" ]; then
-                node "$STITCH_SCRIPT" download-screen "$STITCH_PROJECT_ID" "$SCREEN_ID" "stitch/${SCREEN_FILE:-$SCREEN_ID}.html"
-              fi
-            done
-          elif [ -n "$SCREEN_IDS" ]; then
-            echo "list-screens returned empty, using SCREEN_MAP IDs as fallback..."
-            node -e "try{JSON.parse(process.argv[1]).forEach(s=>{if(s.screenId)console.log(s.screenId+'|'+(s.name||'Untitled'))})}catch{}" '{{screen_map}}' 2>/dev/null | while IFS='|' read -r SID STITLE; do
-              SFILE=$(echo "$STITLE" | sed 's/[^a-zA-Z0-9_-]/-/g')
-              if [ -n "$SID" ]; then
-                node "$STITCH_SCRIPT" download-screen "$STITCH_PROJECT_ID" "$SID" "stitch/${SFILE:-$SID}.html"
-              fi
-            done
-          fi
-          # Step 4: Extract and merge design tokens from ALL HTML files
-          node "$STITCH_SCRIPT" extract-tokens stitch stitch/design-tokens.css
-          # Step 5: Validate downloaded files
-          HTML_COUNT=$(find stitch -name '*.html' 2>/dev/null | wc -l)
-          if [ "$HTML_COUNT" -eq 0 ]; then
-            echo "FATAL: STITCH_PROJECT_ID set but 0 HTML files downloaded"
-            echo "STATUS: fail"
-            exit 1
-          fi
-          echo "Stitch: $HTML_COUNT HTML files downloaded"
-          # Step 6: Persist .stitch file
-          echo "$STITCH_PROJECT_ID" > .stitch
-          git add stitch/ .stitch && git commit -m "design: Stitch UI screens + manifest + tokens" || true
-        fi
-
-      8. Push: git push -u origin {{branch}}
-
-      EXISTING CODE CHECK (resume safety):
-      - If the project directory already exists:
-        a. Run `git status` to check if working tree is clean
-        b. Run existing build+test commands to verify baseline
-        c. Fix any issues before proceeding
-        d. Set EXISTING_CODE: true in output
+      4. Run build to establish baseline
+      5. Run tests if test script exists
+      6. Commit any setup changes: git add -A && git commit -m "chore: setup build baseline" || true
+      7. Push: git push origin {{branch}}
 
       !include lint-setup.md
 
@@ -511,17 +455,17 @@ steps:
       MANDATORY OUTPUT FORMAT
       ============================================================
       STATUS: done
-      BUILD_CMD: <e.g. pnpm run build>
-      TEST_CMD: <e.g. pnpm test>
-      LINT_CMD: <e.g. pnpm run lint>
+      BUILD_CMD: <e.g. npm run build>
+      TEST_CMD: <e.g. npm test>
+      LINT_CMD: <e.g. npm run lint>
       CI_NOTES: <brief>
       BASELINE: <status>
-      EXISTING_CODE: <true/false>
       ============================================================
     expects: "STATUS: done"
     max_retries: 4
     on_fail:
       escalate_to: human
+
 
   - id: implement
     agent: developer
@@ -534,7 +478,7 @@ steps:
       verify_step: verify
       parallel_count: 5
     input: |
-      !include critical-preamble-short.md
+      !include critical-preamble.md
 
       Implement ONE user story. Create a PR for review.
 
@@ -560,7 +504,7 @@ steps:
       BEFORE writing code:
       1. Read the FULL story description and ALL acceptance criteria before coding
       2. Read references/design-standards.md + references/backend-standards.md + references/react-best-practices.md
-      3. Read references/web-design-guidelines.md for accessibility and interaction rules
+      3. Read references/web-guidelines.md for accessibility and interaction rules
       4. If project uses Next.js, read references/next-best-practices.md
 
       SCREEN BINDING (MANDATORY — do this before writing any code):
@@ -603,6 +547,20 @@ steps:
          - var(--property-name) ile kullan
          - design-tokens.css disinda --font-*, --color-* tanimlama YASAK
          - Mevcut CSS dosyalarini SILME — @import ekle
+
+
+      STITCH HTML → KOD DÖNÜŞÜMÜ (ZORUNLU — ATLAMA YASAK):
+      stitch/ dizininde bu story için HTML varsa:
+      1. İlgili HTML dosyasını TAMAMEN oku (cat ile, head/tail KULLANMA)
+      2. HTML'deki TÜM bölümleri (header, hero, features, pricing, footer vb.) koda dönüştür
+      3. TÜM metin içeriğini koru — başlıklar, açıklamalar, buton yazıları, listeler
+      4. TÜM layout yapısını koru — flex, grid, section sırası, nesting
+      5. design-tokens.css değişkenlerini kullan (var(--color-*), var(--font-*))
+      6. Bölüm atlama, placeholder yazma, basitleştirme YASAK
+      7. Stitch HTML'deki element sayısı ile kodlanan element sayısı eşleşmeli
+      8. HTML'de 5 section varsa kodda da 5 section olmalı — 2 section yazıp geçme
+      DOĞRULAMA: Kodlama bittikten sonra stitch HTML'i tekrar oku ve her bölümün
+      karşılığını kodunda bul. Eksik bölüm varsa ekle.
 
       !include implement-design-enforcement.md
 
@@ -708,7 +666,7 @@ steps:
   - id: verify
     agent: reviewer
     input: |
-      !include critical-preamble-short.md
+      !include critical-preamble.md
 
       Verify the developer's story implementation by reading PR review comments,
       fixing issues, then merging the PR.
@@ -831,6 +789,17 @@ steps:
          - grep -rE "coming soon|Coming Soon|placeholder|TODO.*implement|work in progress" --include="*.tsx" --include="*.ts" . → FAIL if found as visible UI text content
          - If stitch/DESIGN_MANIFEST.json exists: for each screen listed, verify a corresponding component or page implements it (search by title keywords). Missing screen = FAIL.
          - grep -rE "blue-[0-9]+/[0-9]+" components/ → WARN: likely hardcoded Tailwind color — check if it belongs in design-tokens instead
+      1.65. Stitch HTML uyumluluk kontrolü (ZORUNLU — stitch/ varsa):
+         IF stitch/ directory exists AND STORY_SCREENS is non-empty:
+           For each screen in STORY_SCREENS:
+           a. Count top-level sections in stitch/<screenId>.html:
+              STITCH_SECTIONS=$(grep -cE "<(section|header|footer|nav|main|div class)" stitch/<screenId>.html 2>/dev/null || echo "0")
+           b. Count corresponding sections in implementation code:
+              CODE_SECTIONS=$(grep -crE "<(section|header|footer|nav|main|div className)" src/ app/ components/ 2>/dev/null | awk -F: '{sum+=$NF}END{print sum}')
+           c. If CODE_SECTIONS < STITCH_SECTIONS * 0.7 → FAIL: "Stitch HTML %70 eşleşme altında — eksik bölümler var"
+           d. grep -rE "placeholder|TODO|coming soon|Coming Soon|yakında" src/ app/ components/ → FAIL if found in JSX content
+           e. Count code lines for this story's main component:
+              If component < 80 lines BUT stitch HTML > 200 lines → FAIL: "Component çok kısa — Stitch HTML tam dönüştürülmemiş"
       1.7. UI Contract compliance (if stitch/UI_CONTRACT.json exists):
          - Read UI_CONTRACT.json and verify each element is implemented:
          - Navigation links → matching Route/page components exist
@@ -979,7 +948,7 @@ steps:
   - id: final-test
     agent: tester
     input: |
-      !include critical-preamble-short.md
+      !include critical-preamble.md
 
       Integration testing on merged feature branch, then create final PR to main.
 
@@ -1084,7 +1053,7 @@ steps:
   - id: deploy
     agent: deployer
     input: |
-      !include critical-preamble-short.md
+      !include critical-preamble.md
 
       Deploy the completed project to production (if applicable).
 
@@ -1254,6 +1223,16 @@ steps:
       C3 — Health check (if web):
       Detect port from MC: curl -s http://127.0.0.1:3080/api/projects/$(basename {{repo}}) | jq '.ports.frontend'
       curl -sf http://127.0.0.1:$PORT/ > /dev/null
+
+      C3.5 — Ensure DNS exists (MANDATORY for web projects):
+      HOSTNAME="${PROJECT_NAME}.setrox.com.tr"
+      # Check if tunnel ingress exists for this hostname
+      if ! grep -q "$HOSTNAME" /etc/cloudflared/config.yml 2>/dev/null; then
+        echo "DNS/tunnel missing for $HOSTNAME — creating..."
+        sudo bash $HOME/.openclaw/scripts/tunnel-add.sh "$HOSTNAME" "$PORT"
+      else
+        echo "Tunnel ingress already exists for $HOSTNAME"
+      fi
 
       C4 — Update MC metadata (ALWAYS update, even if project exists):
       PROJECT_NAME=$(basename {{repo}})

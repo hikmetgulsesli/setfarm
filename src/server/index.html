@@ -249,6 +249,59 @@ select:focus{outline:none;border-color:#8ECFC0}
 .scrape-loading{display:flex;align-items:center;justify-content:center;padding:40px;gap:12px;color:var(--text-secondary);font-size:13px}
 .scrape-spinner{width:20px;height:20px;border:2px solid var(--border);border-top-color:var(--accent-teal);border-radius:50%;animation:spin .6s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── Rules page ────────────────────────────────────────────────── */
+.rules-layout{display:flex;flex-direction:column;gap:16px;padding:24px;max-width:1200px;margin:0 auto}
+.rules-toolbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.rules-toolbar input,.rules-toolbar select{background:var(--bg-surface-alt);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:14px;font-family:'Inter',sans-serif;outline:none;transition:border-color .15s}
+.rules-toolbar input:focus,.rules-toolbar select:focus{border-color:var(--accent-teal)}
+.rules-toolbar select option{background:var(--bg-surface);color:var(--text-primary)}
+.rules-actions{display:flex;gap:8px;margin-left:auto}
+.rules-actions button{background:var(--accent-green);color:#fff;border:none;border-radius:6px;padding:7px 16px;font-size:13px;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif;transition:opacity .15s}
+.rules-actions button:hover{opacity:.9}
+.rules-stats{font-size:13px;color:var(--text-secondary);font-weight:500}
+.rules-list{display:flex;flex-direction:column;gap:8px}
+.rule-card{background:var(--bg-surface);border:1px solid var(--border);border-radius:10px;padding:16px;cursor:pointer;transition:border-color .15s,box-shadow .15s}
+.rule-card:hover{box-shadow:0 2px 8px var(--shadow)}
+.rule-card.system{border-left:3px solid var(--accent-teal)}
+.rule-card.custom{border-left:3px solid var(--accent-green)}
+.rule-card.disabled{opacity:.5}
+.rule-card-header{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.rule-title{font-size:14px;font-weight:600;color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rule-badge{font-size:11px;padding:2px 8px;border-radius:6px;font-weight:600;text-transform:uppercase;letter-spacing:.3px}
+.rule-badge.design{background:#e8d5f5;color:#7c3aed}
+.rule-badge.implementation{background:#dbeafe;color:#2563eb}
+.rule-badge.verification{background:#d1fae5;color:#059669}
+.rule-badge.setup{background:#fef3c7;color:#d97706}
+.rule-badge.lint{background:#fee2e2;color:#dc2626}
+.rule-badge.pipeline{background:#e0e7ff;color:#4338ca}
+.rule-badge.general{background:var(--accent-muted);color:var(--text-secondary)}
+.rule-badge.project-type{background:#fce7f3;color:#db2777}
+.rule-badge.source-system{background:var(--accent-teal-subtle);color:var(--accent-teal)}
+.rule-badge.source-custom{background:var(--accent-green-subtle);color:var(--accent-green)}
+[data-theme="dark"] .rule-badge.design{background:rgba(124,58,237,.2);color:#a78bfa}
+[data-theme="dark"] .rule-badge.implementation{background:rgba(37,99,235,.2);color:#93c5fd}
+[data-theme="dark"] .rule-badge.verification{background:rgba(5,150,105,.2);color:#6ee7b7}
+[data-theme="dark"] .rule-badge.setup{background:rgba(217,119,6,.2);color:#fcd34d}
+[data-theme="dark"] .rule-badge.lint{background:rgba(220,38,38,.2);color:#fca5a5}
+[data-theme="dark"] .rule-badge.pipeline{background:rgba(67,56,202,.2);color:#a5b4fc}
+[data-theme="dark"] .rule-badge.project-type{background:rgba(219,39,119,.2);color:#f9a8d4}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]) .rule-badge.design{background:rgba(124,58,237,.2);color:#a78bfa}:root:not([data-theme="light"]) .rule-badge.implementation{background:rgba(37,99,235,.2);color:#93c5fd}:root:not([data-theme="light"]) .rule-badge.verification{background:rgba(5,150,105,.2);color:#6ee7b7}:root:not([data-theme="light"]) .rule-badge.setup{background:rgba(217,119,6,.2);color:#fcd34d}:root:not([data-theme="light"]) .rule-badge.lint{background:rgba(220,38,38,.2);color:#fca5a5}:root:not([data-theme="light"]) .rule-badge.pipeline{background:rgba(67,56,202,.2);color:#a5b4fc}:root:not([data-theme="light"]) .rule-badge.project-type{background:rgba(219,39,119,.2);color:#f9a8d4}}
+.rule-actions button{background:var(--bg-surface-alt);border:1px solid var(--border);border-radius:4px;padding:3px 10px;font-size:11px;font-weight:600;cursor:pointer;color:var(--text-secondary);font-family:'Inter',sans-serif;transition:border-color .15s,color .15s}
+.rule-actions button:hover{border-color:var(--accent-orange);color:var(--accent-orange)}
+.rule-content{margin-top:12px;padding-top:12px;border-top:1px solid var(--border);white-space:pre-wrap;font-family:'Geist Mono',monospace;font-size:13px;max-height:400px;overflow-y:auto;display:none;color:var(--text-tertiary);line-height:1.6}
+.rule-card.expanded .rule-content{display:block}
+.rule-meta{font-size:12px;color:var(--text-secondary);margin-top:4px}
+.rules-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center}
+.rules-modal{background:var(--bg-surface);border-radius:12px;padding:24px;width:600px;max-height:80vh;overflow-y:auto;box-shadow:0 8px 32px var(--shadow-heavy)}
+.rules-modal h3{margin:0 0 16px;font-size:16px;font-weight:600;color:var(--text-primary)}
+.rules-modal label{display:block;margin:12px 0 4px;font-weight:600;font-size:13px;color:var(--text-secondary)}
+.rules-modal input,.rules-modal select,.rules-modal textarea{width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-page);color:var(--text-primary);font-size:14px;font-family:'Inter',sans-serif;outline:none;box-sizing:border-box}
+.rules-modal textarea{min-height:200px;font-family:'Geist Mono',monospace;font-size:13px;resize:vertical}
+.rules-modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+.rules-modal-actions button{border:none;border-radius:6px;padding:8px 20px;font-size:14px;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif}
+.rules-modal-actions .btn-save{background:var(--accent-green);color:#fff}
+.rules-modal-actions .btn-cancel{background:var(--bg-surface-alt);color:var(--text-primary);border:1px solid var(--border)}
 </style>
 </head>
 <body>
@@ -257,6 +310,7 @@ select:focus{outline:none;border-color:#8ECFC0}
   <div class="tab-nav">
     <button class="tab-btn active" id="tab-runs" onclick="switchTab('runs')">Runs</button>
     <button class="tab-btn" id="tab-scrape" onclick="switchTab('scrape')">Scrape</button>
+    <button class="tab-btn" id="tab-rules" onclick="switchTab('rules')">Rules</button>
   </div>
   <select id="wf-select"><option value="">Loading...</option></select>
   <button class="theme-toggle" id="theme-toggle" title="Toggle light/dark mode" aria-label="Toggle light/dark mode">&#9728;&#65039;</button>
@@ -320,6 +374,45 @@ select:focus{outline:none;border-color:#8ECFC0}
   </div>
 </div>
 
+<!-- Rules page -->
+<div id="page-rules" style="display:none">
+  <div class="rules-layout">
+    <div class="rules-toolbar">
+      <input type="text" id="rules-search" placeholder="Kural ara..." oninput="filterRules()" style="min-width:180px">
+      <select id="rules-cat-filter" onchange="filterRules()">
+        <option value="">Tum Kategoriler</option>
+        <option value="design">Design</option>
+        <option value="implementation">Implementation</option>
+        <option value="verification">Verification</option>
+        <option value="setup">Setup</option>
+        <option value="lint">Lint</option>
+        <option value="pipeline">Pipeline</option>
+        <option value="general">General</option>
+      </select>
+      <select id="rules-type-filter" onchange="filterRules()">
+        <option value="">Tum Proje Tipleri</option>
+        <option value="react">React</option>
+        <option value="nextjs">Next.js</option>
+        <option value="mobile">Mobile</option>
+        <option value="general">Genel</option>
+      </select>
+      <select id="rules-source-filter" onchange="filterRules()">
+        <option value="">Tumunu Goster</option>
+        <option value="system">System</option>
+        <option value="custom">Custom</option>
+      </select>
+      <div class="rules-actions">
+        <button onclick="openRuleModal()">+ Ekle</button>
+        <button onclick="importRules()">Upload</button>
+        <button onclick="exportRules()">Download</button>
+      </div>
+    </div>
+    <div class="rules-stats" id="rules-stats"></div>
+    <div class="rules-list" id="rules-list"></div>
+  </div>
+  <input type="file" id="rules-file-input" accept=".json" style="display:none" onchange="handleRulesImport(event)">
+</div>
+
 <div class="medic-panel" id="medic-panel">
   <div class="medic-panel-header">Workflow Medic</div>
   <div class="medic-panel-body" id="medic-panel-body">Loading...</div>
@@ -339,10 +432,13 @@ function switchTab(name) {
   currentTab = name;
   document.getElementById('page-runs').style.display = name === 'runs' ? '' : 'none';
   document.getElementById('page-scrape').style.display = name === 'scrape' ? '' : 'none';
+  document.getElementById('page-rules').style.display = name === 'rules' ? '' : 'none';
   document.getElementById('tab-runs').classList.toggle('active', name === 'runs');
   document.getElementById('tab-scrape').classList.toggle('active', name === 'scrape');
+  document.getElementById('tab-rules').classList.toggle('active', name === 'rules');
   document.getElementById('wf-select').style.display = name === 'runs' ? '' : 'none';
   if (name === 'scrape') loadScrapeHistory();
+  if (name === 'rules') loadRulesData();
 }
 
 async function fetchJSON(url) {
@@ -1131,6 +1227,233 @@ async function loadScrapeHistory() {
       body.appendChild(item);
     });
   } catch {}
+}
+
+// ── Rules ──────────────────────────────────────────────────────
+var allRules = [];
+
+async function loadRulesData() {
+  try {
+    allRules = await fetchJSON('/api/rules');
+    filterRules();
+  } catch (e) {
+    document.getElementById('rules-list').textContent = 'Failed to load rules';
+  }
+}
+
+function filterRules() {
+  var search = document.getElementById('rules-search').value.toLowerCase();
+  var cat = document.getElementById('rules-cat-filter').value;
+  var type = document.getElementById('rules-type-filter').value;
+  var source = document.getElementById('rules-source-filter').value;
+
+  var filtered = allRules.filter(function(r) {
+    if (search && r.title.toLowerCase().indexOf(search) === -1 && r.content.toLowerCase().indexOf(search) === -1) return false;
+    if (cat && r.category !== cat) return false;
+    if (type && r.project_type !== type) return false;
+    if (source === 'system' && !r.readonly) return false;
+    if (source === 'custom' && r.readonly) return false;
+    return true;
+  });
+
+  renderRulesList(filtered);
+}
+
+function renderRulesList(rules) {
+  var list = document.getElementById('rules-list');
+  var stats = document.getElementById('rules-stats');
+  var systemCount = rules.filter(function(r) { return r.readonly; }).length;
+  var customCount = rules.filter(function(r) { return !r.readonly; }).length;
+  stats.textContent = rules.length + ' kural (' + systemCount + ' system, ' + customCount + ' custom)';
+
+  list.textContent = '';
+  rules.forEach(function(r) {
+    var card = document.createElement('div');
+    card.className = 'rule-card ' + (r.readonly ? 'system' : 'custom') + (r.enabled === false ? ' disabled' : '');
+    card.onclick = function() { card.classList.toggle('expanded'); };
+
+    var header = document.createElement('div');
+    header.className = 'rule-card-header';
+
+    var catBadge = document.createElement('span');
+    catBadge.className = 'rule-badge ' + r.category;
+    catBadge.textContent = r.category.toUpperCase();
+    header.appendChild(catBadge);
+
+    if (r.project_type !== 'general') {
+      var typeBadge = document.createElement('span');
+      typeBadge.className = 'rule-badge project-type';
+      typeBadge.textContent = r.project_type.toUpperCase();
+      header.appendChild(typeBadge);
+    }
+
+    var sourceBadge = document.createElement('span');
+    sourceBadge.className = 'rule-badge ' + (r.readonly ? 'source-system' : 'source-custom');
+    sourceBadge.textContent = r.readonly ? (r.source ? r.source.toUpperCase() : 'SYSTEM') : 'CUSTOM';
+    header.appendChild(sourceBadge);
+
+    var title = document.createElement('span');
+    title.className = 'rule-title';
+    title.textContent = r.title;
+    header.appendChild(title);
+
+    if (!r.readonly) {
+      var actions = document.createElement('span');
+      actions.className = 'rule-actions';
+      var editBtn = document.createElement('button');
+      editBtn.textContent = 'Edit';
+      editBtn.onclick = function(e) { e.stopPropagation(); openRuleModal(r.id); };
+      actions.appendChild(editBtn);
+      var delBtn = document.createElement('button');
+      delBtn.textContent = 'Sil';
+      delBtn.onclick = function(e) { e.stopPropagation(); deleteRule(r.id); };
+      actions.appendChild(delBtn);
+      header.appendChild(actions);
+    }
+
+    card.appendChild(header);
+
+    var meta = document.createElement('div');
+    meta.className = 'rule-meta';
+    meta.textContent = [r.severity, r.applies_to, r.source_file].filter(Boolean).join(' \u00B7 ');
+    card.appendChild(meta);
+
+    var content = document.createElement('div');
+    content.className = 'rule-content';
+    content.textContent = r.content;
+    card.appendChild(content);
+
+    list.appendChild(card);
+  });
+}
+
+function openRuleModal(ruleId) {
+  var rule = ruleId ? allRules.find(function(r) { return r.id === ruleId; }) : null;
+  var existing = document.getElementById('rules-modal-overlay');
+  if (existing) existing.remove();
+
+  var overlay = document.createElement('div');
+  overlay.className = 'rules-modal-overlay';
+  overlay.id = 'rules-modal-overlay';
+  overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+
+  var modal = document.createElement('div');
+  modal.className = 'rules-modal';
+
+  var h3 = document.createElement('h3');
+  h3.textContent = rule ? 'Kural Duzenle' : 'Yeni Kural';
+  modal.appendChild(h3);
+
+  function addField(labelText, type, id, value, options) {
+    var lbl = document.createElement('label');
+    lbl.textContent = labelText;
+    modal.appendChild(lbl);
+    if (type === 'textarea') {
+      var ta = document.createElement('textarea');
+      ta.id = id;
+      ta.value = value || '';
+      modal.appendChild(ta);
+    } else if (type === 'select') {
+      var sel = document.createElement('select');
+      sel.id = id;
+      (options || []).forEach(function(o) {
+        var opt = document.createElement('option');
+        opt.value = o[0]; opt.textContent = o[1];
+        if (o[0] === value) opt.selected = true;
+        sel.appendChild(opt);
+      });
+      modal.appendChild(sel);
+    } else {
+      var inp = document.createElement('input');
+      inp.type = 'text'; inp.id = id; inp.value = value || '';
+      modal.appendChild(inp);
+    }
+  }
+
+  addField('Baslik', 'text', 'rule-title', rule ? rule.title : '');
+  addField('Icerik', 'textarea', 'rule-content', rule ? rule.content : '');
+  addField('Kategori', 'select', 'rule-category', rule ? rule.category : 'general', [
+    ['design','Design'],['implementation','Implementation'],['verification','Verification'],
+    ['setup','Setup'],['lint','Lint'],['pipeline','Pipeline'],['general','General']
+  ]);
+  addField('Proje Tipi', 'select', 'rule-project-type', rule ? rule.project_type : 'general', [
+    ['general','Genel'],['react','React'],['nextjs','Next.js'],['mobile','Mobile']
+  ]);
+  addField('Onem', 'select', 'rule-severity', rule ? rule.severity : 'mandatory', [
+    ['mandatory','Mandatory'],['advisory','Advisory'],['info','Info']
+  ]);
+  addField('Uygulanir', 'select', 'rule-applies-to', rule ? rule.applies_to : 'implement', [
+    ['implement','Implement'],['verify','Verify'],['setup','Setup'],['design','Design'],['all','All']
+  ]);
+
+  var actions = document.createElement('div');
+  actions.className = 'rules-modal-actions';
+  var cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn-cancel';
+  cancelBtn.textContent = 'Iptal';
+  cancelBtn.onclick = function() { overlay.remove(); };
+  actions.appendChild(cancelBtn);
+  var saveBtn = document.createElement('button');
+  saveBtn.className = 'btn-save';
+  saveBtn.textContent = 'Kaydet';
+  saveBtn.onclick = function() {
+    var data = {
+      title: document.getElementById('rule-title').value,
+      content: document.getElementById('rule-content').value,
+      category: document.getElementById('rule-category').value,
+      project_type: document.getElementById('rule-project-type').value,
+      severity: document.getElementById('rule-severity').value,
+      applies_to: document.getElementById('rule-applies-to').value,
+      enabled: true
+    };
+    if (!data.title || !data.content) { return; }
+    saveRule(rule ? rule.id : null, data);
+    overlay.remove();
+  };
+  actions.appendChild(saveBtn);
+  modal.appendChild(actions);
+
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+}
+
+async function saveRule(id, data) {
+  var method = id ? 'PUT' : 'POST';
+  var url = id ? API + '/api/rules/' + id : API + '/api/rules';
+  await fetch(url, { method: method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
+  loadRulesData();
+}
+
+async function deleteRule(id) {
+  if (!confirm('Bu kurali silmek istediginize emin misiniz?')) return;
+  await fetch(API + '/api/rules/' + id, { method: 'DELETE' });
+  loadRulesData();
+}
+
+async function exportRules() {
+  var resp = await fetch(API + '/api/rules/export');
+  var blob = await resp.blob();
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url; a.download = 'setfarm-rules.json'; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function importRules() {
+  document.getElementById('rules-file-input').click();
+}
+
+async function handleRulesImport(event) {
+  var file = event.target.files[0];
+  if (!file) return;
+  var text = await file.text();
+  var resp = await fetch(API + '/api/rules/import', {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: text
+  });
+  var result = await resp.json();
+  alert('Import: ' + (result.imported || 0) + ' eklendi, ' + (result.updated || 0) + ' guncellendi, ' + (result.skipped || 0) + ' atildi');
+  loadRulesData();
+  event.target.value = '';
 }
 </script>
 </body>

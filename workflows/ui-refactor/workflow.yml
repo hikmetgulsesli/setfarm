@@ -162,7 +162,7 @@ steps:
   - id: setup
     agent: setup
     input: |
-      !include critical-preamble-short.md
+      !include critical-preamble.md
 
       Prepare the environment for refactoring.
 
@@ -216,7 +216,7 @@ steps:
       verify_each: true
       verify_step: verify
     input: |
-      !include critical-preamble-short.md
+      !include critical-preamble.md
 
       Implement ONE refactoring story. Create a PR for review.
 
@@ -237,7 +237,7 @@ steps:
       1. Read the FULL story description — it tells you EXACTLY what to change
       2. Read the existing design tokens file to know available tokens
       4. Read references/react-best-practices.md for React performance and UX rules
-      5. Read references/web-design-guidelines.md for accessibility and interaction rules
+      5. Read references/web-guidelines.md for accessibility and interaction rules
       3. Understand the current patterns before replacing them
 
       STITCH COMPONENT IMPORT RULES (MANDATORY — NO EXCEPTIONS):
@@ -320,7 +320,7 @@ steps:
   - id: verify
     agent: verifier
     input: |
-      !include critical-preamble-short.md
+      !include critical-preamble.md
 
       Verify the refactoring story. Focus on DESIGN CONSISTENCY.
 
@@ -412,7 +412,7 @@ steps:
   - id: final-test
     agent: tester
     input: |
-      !include critical-preamble-short.md
+      !include critical-preamble.md
 
       Integration testing on merged refactor branch, then create final PR to main.
 

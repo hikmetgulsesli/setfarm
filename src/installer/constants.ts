@@ -8,13 +8,13 @@
 // ── Abandoned Step Detection ────────────────────────────────────────
 
 /** Base threshold for detecting abandoned steps (first abandon) */
-export const BASE_ABANDONED_THRESHOLD_MS = 120_000; // 2 min
+export const BASE_ABANDONED_THRESHOLD_MS = 600_000; // 10 min
 
 /** Faster threshold for repeat abandonments */
-export const FAST_ABANDONED_THRESHOLD_MS = 90_000; // 90 sec
+export const FAST_ABANDONED_THRESHOLD_MS = 300_000; // 5 min
 
 /** Max abandon resets before failing the step/story permanently */
-export const MAX_ABANDON_RESETS = 5;
+export const MAX_ABANDON_RESETS = 8;
 
 // ── Cleanup Throttle ────────────────────────────────────────────────
 

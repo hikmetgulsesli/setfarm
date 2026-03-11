@@ -1,9 +1,13 @@
 #!/usr/bin/env node
 /**
- * Smoke Test v3 — Hybrid: static analysis + agent-browser interactive check.
+ * Smoke Test v4 — Hybrid: static analysis + agent-browser interactive check.
  *
  * Phase 1 (fast): Component wiring, route discovery — pure filesystem
  * Phase 2 (browser): Homepage load, primary button click, placeholder detection
+ * Phase 3 (browser): Link validation — navigate internal links, check for errors
+ * Phase 4 (browser): Button functionality — click buttons, verify responses
+ * Phase 5 (browser): Form testing — fill inputs, submit forms
+ * Phase 6 (browser): Console error collection — JS error aggregation
  *   Uses agent-browser CLI for real browser interaction
  *
  * Usage: node smoke-test.mjs <repo-path> [--port PORT] [--timeout MS]
@@ -113,12 +117,27 @@ function checkComponentWiring(repo) {
 // ── Phase 2: Browser Test ───────────────────────────────────────────
 
 function parseSnapshot(text) {
-  if (!text) return { headings:[], buttons:[], links:[], canvas:false };
+  if (!text) return { headings:[], buttons:[], links:[], inputs:[], canvas:false, refs:{} };
+  const refs = {};
+  // Parse refs for links: link "text" [ref=X]
+  for (const m of text.matchAll(/link "([^"]*)"[^\[]*\[ref=(\w+)\]/g)) {
+    refs['link:' + m[1]] = m[2];
+  }
+  // Parse refs for buttons: button "text" [ref=X]
+  for (const m of text.matchAll(/button "([^"]*)"[^\[]*\[ref=(\w+)\]/g)) {
+    refs['button:' + m[1]] = m[2];
+  }
+  // Parse refs for inputs: textbox/input [ref=X]
+  for (const m of text.matchAll(/(textbox|input)[^\[]*\[ref=(\w+)\]/g)) {
+    refs['input:' + m[2]] = m[2];
+  }
   return {
     headings: [...text.matchAll(/heading "([^"]+)"/g)].map(m=>m[1]),
     buttons: [...text.matchAll(/button "([^"]+)"/g)].map(m=>m[1]),
     links: [...text.matchAll(/link "([^"]+)"/g)].map(m=>m[1]),
+    inputs: [...text.matchAll(/(textbox|input)[^\[]*\[ref=(\w+)\]/g)].map(m=>({ type: m[1], ref: m[2] })),
     canvas: text.includes('canvas'),
+    refs,
   };
 }
 
@@ -140,6 +159,34 @@ function startServer(dir, port) {
   });
 }
 
+// ── Phase helpers ───────────────────────────────────────────────────
+
+/** Check if page is non-blank (has content in accessibility tree) */
+function isPageNonBlank(snap) {
+  const p = parseSnapshot(snap);
+  return p.headings.length > 0 || p.buttons.length > 0 || p.links.length > 0 || p.canvas;
+}
+
+/** Get JS error count from injected collector */
+function getJsErrorCount() {
+  const result = abOk('eval', 'return window.__smoke_errors?.length || 0');
+  return parseInt(result || '0', 10) || 0;
+}
+
+/** Inject the error collector into the current page */
+function injectErrorCollector() {
+  abOk('eval',
+    'window.__smoke_errors=[];' +
+    'window.addEventListener("error", e => window.__smoke_errors.push(e.message));' +
+    'window.addEventListener("unhandledrejection", e => window.__smoke_errors.push(e.reason?.message || String(e.reason)))'
+  );
+}
+
+/** Elapsed time helper */
+function elapsed(start) { return Date.now() - start; }
+
+const SKIP_BUTTON_RE = /^(close|dismiss|cancel|x|\u00d7|\u2715|\u2716)$/i;
+
 // ── Main ────────────────────────────────────────────────────────────
 
 async function main() {
@@ -147,11 +194,15 @@ async function main() {
   if (!serveDir) { console.log(JSON.stringify({status:'skip',reason:'No serveable directory'})); process.exit(0); }
 
   const failures = [];
+  let linksChecked = 0, linksBroken = 0;
+  let buttonsChecked = 0;
+  let formsChecked = 0;
+  let consoleErrors = [];
 
   // ── Phase 1: Static ──
   const routes = discoverRoutes(repoPath);
   const wiringIssues = checkComponentWiring(repoPath);
-  for (const w of wiringIssues) failures.push(`WIRING: ${w}`);
+  for (const w of wiringIssues) failures.push('WIRING: ' + w);
 
   // ── Phase 2: Browser (homepage + primary action) ──
   const port = requestedPort > 0 ? requestedPort : 9100 + Math.floor(Math.random()*900);
@@ -162,7 +213,7 @@ async function main() {
     if (requestedPort <= 0) {
       serverProc = await startServer(serveDir, port);
     }
-    const baseUrl = `http://localhost:${port}`;
+    const baseUrl = 'http://localhost:' + port;
 
     ab('close');
     await sleep(300);
@@ -170,9 +221,13 @@ async function main() {
     // Open homepage
     const nav = ab('open', baseUrl);
     if (nav.startsWith('__ERR__')) {
-      failures.push(`[/] Homepage failed to load: ${nav}`);
+      failures.push('[/] Homepage failed to load: ' + nav);
     } else {
       await sleep(2000);
+
+      // ── Phase 6 (setup): Inject error collector right after open ──
+      injectErrorCollector();
+
       const snap = abOk('snapshot') || '';
       const p = parseSnapshot(snap);
 
@@ -182,7 +237,7 @@ async function main() {
       }
 
       // Placeholder check
-      for (const h of p.headings) { if (isPlaceholder(h)) failures.push(`[/] Placeholder heading: "${h}"`); }
+      for (const h of p.headings) { if (isPlaceholder(h)) failures.push('[/] Placeholder heading: "' + h + '"'); }
 
       // Screenshot
       ab('screenshot', join(repoPath, 'smoke-home.png'), '--annotate');
@@ -202,22 +257,22 @@ async function main() {
 
         if (gameStartedHeading && onlyBackBtn && !after.canvas) {
           failures.push(
-            `[/] PLACEHOLDER GAME: "${primaryBtn}" -> "${after.headings[0]}" with only ` +
-            `"${after.buttons[0] || 'no'}" button. No canvas/game UI. Components exist in ` +
-            `src/components/ but are NOT wired into the page.`
+            '[/] PLACEHOLDER GAME: "' + primaryBtn + '" -> "' + (after.headings[0] || '') + '" with only ' +
+            '"' + (after.buttons[0] || 'no') + '" button. No canvas/game UI. Components exist in ' +
+            'src/components/ but are NOT wired into the page.'
           );
         }
 
         // Generic placeholder after click
         for (const h of after.headings) {
           if (isPlaceholder(h) && !p.headings.includes(h)) {
-            failures.push(`[/] Placeholder after clicking "${primaryBtn}": "${h}"`);
+            failures.push('[/] Placeholder after clicking "' + primaryBtn + '": "' + h + '"');
           }
         }
 
         // Blank after click
         if (!after.headings.length && !after.buttons.length && !after.canvas) {
-          failures.push(`[/] Page went blank after clicking "${primaryBtn}"`);
+          failures.push('[/] Page went blank after clicking "' + primaryBtn + '"');
         }
 
         ab('screenshot', join(repoPath, 'smoke-after-click.png'), '--annotate');
@@ -225,24 +280,223 @@ async function main() {
 
       // Check other routes exist (navigate to first 3 non-root routes)
       for (const route of routes.slice(1, 4)) {
-        const rNav = ab('open', `${baseUrl}${route}`);
+        const rNav = ab('open', baseUrl + route);
         if (rNav.startsWith('__ERR__')) {
-          failures.push(`[${route}] Route failed to load`);
+          failures.push('[' + route + '] Route failed to load');
           continue;
         }
         await sleep(1500);
         const rSnap = abOk('snapshot') || '';
         const rp = parseSnapshot(rSnap);
         if (!rp.headings.length && !rp.buttons.length && !rp.links.length && !rp.canvas) {
-          failures.push(`[${route}] Route appears blank`);
+          failures.push('[' + route + '] Route appears blank');
         }
-        for (const h of rp.headings) { if (isPlaceholder(h)) failures.push(`[${route}] Placeholder: "${h}"`); }
+        for (const h of rp.headings) { if (isPlaceholder(h)) failures.push('[' + route + '] Placeholder: "' + h + '"'); }
       }
+
+      // ── Phase 3: Link Validation ──────────────────────────────────
+      const phase3Start = Date.now();
+      const PHASE3_MAX_MS = 20000; // 20s max
+
+      try {
+        // Navigate back to homepage to collect links
+        ab('open', baseUrl);
+        await sleep(1500);
+        // Re-inject error collector after navigation
+        injectErrorCollector();
+
+        // Get all links via eval (hrefs)
+        const linksJson = abOk('eval',
+          'return JSON.stringify(' +
+            'Array.from(document.querySelectorAll("a[href]"))' +
+            '.map(a => ({text: a.textContent?.trim() || "", href: a.getAttribute("href")}))' +
+            '.filter(l => l.href && !l.href.startsWith("mailto:") && !l.href.startsWith("tel:") && !l.href.startsWith("javascript:"))' +
+          ')'
+        );
+
+        let allLinks = [];
+        try { allLinks = JSON.parse(linksJson || '[]'); } catch {}
+
+        // Filter to internal links only
+        const internalLinks = allLinks.filter(l => {
+          const h = l.href;
+          if (h.startsWith('/') || h.startsWith('#') || h.startsWith('./') || h.startsWith('../')) return true;
+          try { const u = new URL(h); return u.hostname === 'localhost'; } catch { return true; }
+        });
+
+        // Deduplicate by href
+        const seen = new Set();
+        const uniqueLinks = internalLinks.filter(l => {
+          if (seen.has(l.href)) return false;
+          seen.add(l.href);
+          return true;
+        });
+
+        // Test up to 10 internal links (skip # and /)
+        const linksToTest = uniqueLinks.filter(l => l.href !== '/' && l.href !== '#').slice(0, 10);
+        for (const link of linksToTest) {
+          if (elapsed(phase3Start) > PHASE3_MAX_MS) break;
+
+          const href = link.href;
+          const url = href.startsWith('http') ? href : baseUrl + (href.startsWith('/') ? href : '/' + href);
+          const lNav = ab('open', url);
+          linksChecked++;
+
+          if (lNav.startsWith('__ERR__')) {
+            linksBroken++;
+            failures.push('[LINK] "' + link.text + '" (' + href + ') — failed to load');
+            continue;
+          }
+          await sleep(1500);
+
+          const lSnap = abOk('snapshot') || '';
+          if (!isPageNonBlank(lSnap)) {
+            linksBroken++;
+            failures.push('[LINK] "' + link.text + '" (' + href + ') — page is blank');
+            continue;
+          }
+
+          const errCount = getJsErrorCount();
+          if (errCount > 0) {
+            linksBroken++;
+            failures.push('[LINK] "' + link.text + '" (' + href + ') — ' + errCount + ' JS error(s)');
+          }
+        }
+      } catch (e) {
+        failures.push('[LINK] Phase 3 error: ' + e.message);
+      }
+
+      // ── Phase 4: Button Functionality ─────────────────────────────
+      const phase4Start = Date.now();
+      const PHASE4_MAX_MS = 20000; // 20s max
+
+      try {
+        // Navigate back to homepage
+        ab('open', baseUrl);
+        await sleep(1500);
+        // Re-inject error collector
+        injectErrorCollector();
+
+        const btnSnap = abOk('snapshot') || '';
+        const btnParsed = parseSnapshot(btnSnap);
+
+        // Filter buttons: skip close/dismiss/cancel/x, skip already-tested primary
+        const buttonsToTest = btnParsed.buttons
+          .filter(b => !SKIP_BUTTON_RE.test(b.trim()))
+          .filter(b => !(primaryBtn && b === primaryBtn))
+          .slice(0, 5);
+
+        for (const btn of buttonsToTest) {
+          if (elapsed(phase4Start) > PHASE4_MAX_MS) break;
+
+          // Click the button
+          const ref = btnParsed.refs['button:' + btn];
+          if (ref) {
+            ab('click', '@ref_' + ref);
+          } else {
+            ab('click', btn);
+          }
+          await sleep(1500);
+          buttonsChecked++;
+
+          // Check page didn't go blank
+          const postSnap = abOk('snapshot') || '';
+          if (!isPageNonBlank(postSnap)) {
+            failures.push('[BTN] Page went blank after clicking "' + btn + '"');
+          }
+
+          // JS error check after click
+          const errCount = getJsErrorCount();
+          if (errCount > 0) {
+            failures.push('[BTN] "' + btn + '" — ' + errCount + ' JS error(s) after click');
+          }
+
+          // Navigate back to homepage for next test
+          ab('open', baseUrl);
+          await sleep(1500);
+          // Re-inject error collector
+          injectErrorCollector();
+        }
+      } catch (e) {
+        failures.push('[BTN] Phase 4 error: ' + e.message);
+      }
+
+      // ── Phase 5: Form Testing ─────────────────────────────────────
+      const phase5Start = Date.now();
+      const PHASE5_MAX_MS = 15000; // 15s max
+
+      try {
+        // Navigate back to homepage
+        ab('open', baseUrl);
+        await sleep(1500);
+        // Re-inject error collector
+        injectErrorCollector();
+
+        const formSnap = abOk('snapshot') || '';
+        const formParsed = parseSnapshot(formSnap);
+
+        if (formParsed.inputs.length > 0) {
+          formsChecked++;
+
+          // Test data for different input types
+          const testValues = ['Test', 'test@test.com', '12345'];
+          let valueIdx = 0;
+
+          // Fill up to 3 inputs
+          for (const input of formParsed.inputs.slice(0, 3)) {
+            if (elapsed(phase5Start) > PHASE5_MAX_MS) break;
+            const val = testValues[valueIdx % testValues.length];
+            abOk('fill', '@ref_' + input.ref, val);
+            await sleep(500);
+            valueIdx++;
+          }
+
+          // Find submit/send button and click it
+          const submitBtn = formParsed.buttons.find(b =>
+            /submit|send|go|search|login|sign|save|ok|gonder|kaydet|ara/i.test(b)
+          );
+          if (submitBtn) {
+            const submitRef = formParsed.refs['button:' + submitBtn];
+            if (submitRef) {
+              ab('click', '@ref_' + submitRef);
+            } else {
+              ab('click', submitBtn);
+            }
+            await sleep(1500);
+
+            // Verify page did not crash after submit
+            const afterSubmitSnap = abOk('snapshot') || '';
+            if (!isPageNonBlank(afterSubmitSnap)) {
+              failures.push('[FORM] Page went blank after form submission');
+            }
+
+            const errCount = getJsErrorCount();
+            if (errCount > 0) {
+              failures.push('[FORM] ' + errCount + ' JS error(s) after form submission');
+            }
+          }
+        }
+        // If no forms found, skip silently (best-effort)
+      } catch (e) {
+        failures.push('[FORM] Phase 5 error: ' + e.message);
+      }
+
+      // ── Phase 6 (collect): Gather console errors ──────────────────
+      try {
+        const errJson = abOk('eval', 'return JSON.stringify(window.__smoke_errors || [])');
+        try {
+          const errors = JSON.parse(errJson || '[]');
+          if (Array.isArray(errors) && errors.length > 0) {
+            consoleErrors = errors.slice(0, 20); // Cap at 20
+            failures.push('[CONSOLE] ' + errors.length + ' JS error(s) collected: ' + errors.slice(0, 3).join('; '));
+          }
+        } catch {}
+      } catch {}
     }
 
     ab('close');
   } catch (err) {
-    failures.push(`Browser test error: ${err.message}`);
+    failures.push('Browser test error: ' + err.message);
     ab('close');
   }
 
@@ -255,6 +509,11 @@ async function main() {
     routes,
     componentWiringIssues: wiringIssues.length,
     wiringDetails: wiringIssues,
+    linksChecked,
+    linksBroken,
+    buttonsChecked,
+    formsChecked,
+    consoleErrors,
     failures,
   };
 

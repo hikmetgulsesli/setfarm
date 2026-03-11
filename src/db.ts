@@ -138,6 +138,25 @@ function migrate(db: DatabaseSync): void {
     db.exec("ALTER TABLE stories ADD COLUMN depends_on TEXT");
   }
 
+  // Rules table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS rules (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'general',
+      project_type TEXT NOT NULL DEFAULT 'general',
+      severity TEXT NOT NULL DEFAULT 'mandatory',
+      applies_to TEXT NOT NULL DEFAULT 'implement',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_rules_category ON rules(category)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_rules_project_type ON rules(project_type)");
+
   // Performance indexes
   db.exec("CREATE INDEX IF NOT EXISTS idx_steps_run_status ON steps(run_id, status)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_steps_agent_status ON steps(agent_id, status)");

@@ -24,6 +24,20 @@ export async function runWorkflow(params: {
     ...workflow.context,
   };
 
+  // Parse --repo and --branch from task text into initial context
+  const repoFlag = params.taskTitle.match(/--repo\s+(\S+)/);
+  if (repoFlag) {
+    initialContext.repo = repoFlag[1].replace(/~/g, os.homedir());
+  }
+  const branchFlag = params.taskTitle.match(/--branch\s+(\S+)/);
+  if (branchFlag) {
+    initialContext.branch = branchFlag[1];
+  }
+  const portFlag = params.taskTitle.match(/--port\s+(\d+)/);
+  if (portFlag) {
+    initialContext.dev_server_port = portFlag[1];
+  }
+
   // Duplicate run guard: prevent starting a new run for same repo if one is already running
   const repoMatch = params.taskTitle.match(/Repo:\s*(\S+)/i);
   if (repoMatch) {

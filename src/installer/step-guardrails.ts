@@ -109,6 +109,7 @@ export function processSetupDesignContracts(
   db: ReturnType<typeof getDb>
 ): string | null {
   const repoPath = context["repo"] || context["REPO"] || "";
+  logger.info(`[setup-design-contracts] ENTERING guardrail: repo=${repoPath} stitch_project_id=${context["stitch_project_id"]} screens_generated=${context["screens_generated"]}`, { runId });
   if (!repoPath) {
     logger.info(`[setup-design-contracts] Skipped — no repo path`, { runId });
     return null;

@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
+import crypto from "node:crypto";
 import { getDb } from "../db.js";
 import { resolveBundledWorkflowsDir } from "../installer/paths.js";
 import YAML from "yaml";
@@ -129,6 +130,137 @@ function runScrape(input: string): Promise<{ stdout: string; stderr: string }> {
   });
 }
 
+// ── Rules ───────────────────────────────────────────────────────
+
+interface ParsedRule {
+  id: string;
+  title: string;
+  content: string;
+  category: string;
+  project_type: string;
+  source: "fragment" | "reference";
+  source_file: string;
+  severity: string;
+  applies_to: string;
+  enabled: boolean;
+  readonly: true;
+}
+
+const FRAGMENT_CATEGORY_MAP: Record<string, { category: string; applies_to: string }> = {
+  "implement": { category: "implementation", applies_to: "implement" },
+  "verify": { category: "verification", applies_to: "verify" },
+  "setup": { category: "setup", applies_to: "setup" },
+  "lint": { category: "lint", applies_to: "implement" },
+  "browser": { category: "verification", applies_to: "verify" },
+  "story": { category: "pipeline", applies_to: "implement" },
+  "critical": { category: "general", applies_to: "all" },
+  "final": { category: "pipeline", applies_to: "verify" },
+  "db": { category: "setup", applies_to: "setup" },
+};
+
+const REFERENCE_MAP: Record<string, { category: string; project_type: string }> = {
+  "design-standards.md": { category: "design", project_type: "general" },
+  "design-checklist.md": { category: "design", project_type: "general" },
+  "react-best-practices.md": { category: "implementation", project_type: "react" },
+  "next-best-practices.md": { category: "implementation", project_type: "nextjs" },
+  "backend-standards.md": { category: "implementation", project_type: "general" },
+  "web-design-guidelines.md": { category: "design", project_type: "general" },
+  "web-guidelines.md": { category: "design", project_type: "general" },
+};
+
+function titleFromFilename(filename: string): string {
+  return filename
+    .replace(/\.md$/, "")
+    .split("-")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+function parseSystemRules(): ParsedRule[] {
+  const rules: ParsedRule[] = [];
+  const wfDir = resolveBundledWorkflowsDir();
+
+  // Scan top-level _fragments directory
+  const fragDir = path.join(wfDir, "_fragments");
+  try {
+    if (fs.existsSync(fragDir)) {
+      for (const f of fs.readdirSync(fragDir)) {
+        if (!f.endsWith(".md")) continue;
+        const content = fs.readFileSync(path.join(fragDir, f), "utf-8");
+        const prefix = f.split("-")[0];
+        const mapping = FRAGMENT_CATEGORY_MAP[prefix] ?? { category: "general", applies_to: "all" };
+        rules.push({
+          id: `frag-${f.replace(/\.md$/, "")}`,
+          title: titleFromFilename(f),
+          content,
+          category: mapping.category,
+          project_type: "general",
+          source: "fragment",
+          source_file: f,
+          severity: "mandatory",
+          applies_to: mapping.applies_to,
+          enabled: true,
+          readonly: true,
+        });
+      }
+    }
+  } catch { /* empty */ }
+
+  // References
+  const refsDir = path.resolve(wfDir, "..", "references");
+  try {
+    for (const f of fs.readdirSync(refsDir)) {
+      if (!f.endsWith(".md")) continue;
+      const content = fs.readFileSync(path.join(refsDir, f), "utf-8");
+      const mapping = REFERENCE_MAP[f] ?? { category: "general", project_type: "general" };
+      rules.push({
+        id: `ref-${f.replace(/\.md$/, "")}`,
+        title: titleFromFilename(f),
+        content,
+        category: mapping.category,
+        project_type: mapping.project_type,
+        source: "reference",
+        source_file: f,
+        severity: "advisory",
+        applies_to: "all",
+        enabled: true,
+        readonly: true,
+      });
+    }
+  } catch { /* empty */ }
+
+  return rules;
+}
+
+function getCustomRules(): any[] {
+  const db = getDb();
+  return db.prepare("SELECT * FROM rules ORDER BY sort_order ASC, created_at ASC").all() as any[];
+}
+
+function getAllRules(query: URLSearchParams): any[] {
+  const systemRules = parseSystemRules();
+  const customRules = getCustomRules().map((r: any) => ({
+    ...r,
+    enabled: !!r.enabled,
+    readonly: false,
+  }));
+
+  let all = [...systemRules, ...customRules];
+
+  const category = query.get("category");
+  const projectType = query.get("project_type");
+  const source = query.get("source");
+  const search = query.get("search")?.toLowerCase();
+
+  if (category) all = all.filter((r) => r.category === category);
+  if (projectType) all = all.filter((r) => r.project_type === projectType);
+  if (source === "system") all = all.filter((r) => r.readonly);
+  else if (source === "custom") all = all.filter((r) => !r.readonly);
+  if (search) all = all.filter((r) => r.title.toLowerCase().includes(search) || r.content.toLowerCase().includes(search));
+
+  return all;
+}
+
 export function startDashboard(port = 3333): http.Server {
   const server = http.createServer(async (req, res) => {
    try {
@@ -139,7 +271,7 @@ export function startDashboard(port = 3333): http.Server {
     if (req.method === "OPTIONS") {
       res.writeHead(204, {
         "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type",
       });
       return res.end();
@@ -187,6 +319,101 @@ export function startDashboard(port = 3333): http.Server {
 
     if (p === "/api/scrape/history") {
       return json(res, scrapeHistory);
+    }
+
+    // ── Rules API ──
+    if (p === "/api/rules" && req.method === "GET") {
+      return json(res, getAllRules(url.searchParams));
+    }
+
+    if (p === "/api/rules" && req.method === "POST") {
+      try {
+        const body = JSON.parse(await readBody(req));
+        const db = getDb();
+        const now = new Date().toISOString();
+        const id = crypto.randomUUID();
+        db.prepare(
+          "INSERT INTO rules (id, title, content, category, project_type, severity, applies_to, enabled, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)"
+        ).run(id, body.title, body.content, body.category ?? "general", body.project_type ?? "general", body.severity ?? "mandatory", body.applies_to ?? "implement", now, now);
+        return json(res, { id }, 201);
+      } catch (e: any) {
+        return json(res, { error: e.message }, 400);
+      }
+    }
+
+    if (p === "/api/rules/export" && req.method === "GET") {
+      const rules = getAllRules(new URLSearchParams());
+      const payload = JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), rules }, null, 2);
+      res.writeHead(200, {
+        "Content-Type": "application/json",
+        "Content-Disposition": 'attachment; filename="setfarm-rules.json"',
+        "Access-Control-Allow-Origin": "*",
+      });
+      return res.end(payload);
+    }
+
+    if (p === "/api/rules/import" && req.method === "POST") {
+      try {
+        const body = JSON.parse(await readBody(req));
+        const items = body.rules ?? [];
+        const db = getDb();
+        const now = new Date().toISOString();
+        let imported = 0, updated = 0, skipped = 0;
+        for (const r of items) {
+          if (r.readonly || r.source === "fragment" || r.source === "reference") { skipped++; continue; }
+          const existing = db.prepare("SELECT id FROM rules WHERE title = ?").get(r.title) as any;
+          if (existing) {
+            db.prepare(
+              "UPDATE rules SET content = ?, category = ?, project_type = ?, severity = ?, applies_to = ?, enabled = ?, updated_at = ? WHERE id = ?"
+            ).run(r.content, r.category ?? "general", r.project_type ?? "general", r.severity ?? "mandatory", r.applies_to ?? "implement", r.enabled === false ? 0 : 1, now, existing.id);
+            updated++;
+          } else {
+            const id = crypto.randomUUID();
+            db.prepare(
+              "INSERT INTO rules (id, title, content, category, project_type, severity, applies_to, enabled, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)"
+            ).run(id, r.title, r.content, r.category ?? "general", r.project_type ?? "general", r.severity ?? "mandatory", r.applies_to ?? "implement", r.enabled === false ? 0 : 1, now, now);
+            imported++;
+          }
+        }
+        return json(res, { imported, updated, skipped });
+      } catch (e: any) {
+        return json(res, { error: e.message }, 400);
+      }
+    }
+
+    const ruleToggleMatch = p.match(/^\/api\/rules\/([^/]+)\/toggle$/);
+    if (ruleToggleMatch && req.method === "PUT") {
+      const id = ruleToggleMatch[1];
+      if (id.startsWith("frag-") || id.startsWith("ref-")) return json(res, { error: "Cannot toggle system rules" }, 403);
+      const db = getDb();
+      const now = new Date().toISOString();
+      db.prepare("UPDATE rules SET enabled = CASE WHEN enabled = 1 THEN 0 ELSE 1 END, updated_at = ? WHERE id = ?").run(now, id);
+      return json(res, { ok: true });
+    }
+
+    const ruleMatch = p.match(/^\/api\/rules\/([^/]+)$/);
+    if (ruleMatch && req.method === "PUT") {
+      const id = ruleMatch[1];
+      if (id.startsWith("frag-") || id.startsWith("ref-")) return json(res, { error: "Cannot edit system rules" }, 403);
+      try {
+        const body = JSON.parse(await readBody(req));
+        const db = getDb();
+        const now = new Date().toISOString();
+        db.prepare(
+          "UPDATE rules SET title = ?, content = ?, category = ?, project_type = ?, severity = ?, applies_to = ?, enabled = ?, updated_at = ? WHERE id = ?"
+        ).run(body.title, body.content, body.category ?? "general", body.project_type ?? "general", body.severity ?? "mandatory", body.applies_to ?? "implement", body.enabled === false ? 0 : 1, now, id);
+        return json(res, { ok: true });
+      } catch (e: any) {
+        return json(res, { error: e.message }, 400);
+      }
+    }
+
+    if (ruleMatch && req.method === "DELETE") {
+      const id = ruleMatch[1];
+      if (id.startsWith("frag-") || id.startsWith("ref-")) return json(res, { error: "Cannot delete system rules" }, 403);
+      const db = getDb();
+      db.prepare("DELETE FROM rules WHERE id = ?").run(id);
+      return json(res, { ok: true });
     }
 
     // ── Existing API routes ──

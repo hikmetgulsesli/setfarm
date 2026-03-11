@@ -308,7 +308,7 @@ const commands = {
       try { tracked = JSON.parse(readFileSync(trackingFile, 'utf-8')); } catch {}
       for (const s of screens) {
         if (!tracked.some(t => t.screenId === s.screenId)) {
-          tracked.push({ screenId: s.screenId, title: s.title || '', category: null });
+          tracked.push({ screenId: s.screenId, title: s.title || '', category: null, htmlUrl: s.htmlUrl || null });
         }
       }
       writeFileSync(trackingFile, JSON.stringify(tracked, null, 2));
@@ -493,7 +493,7 @@ const commands = {
       try { tracked = JSON.parse(readFileSync(trackingFile, 'utf-8')); } catch {}
       for (const s of screens) {
         if (!tracked.some(t => t.screenId === s.screenId)) {
-          tracked.push({ screenId: s.screenId, title: s.title || '', category: null });
+          tracked.push({ screenId: s.screenId, title: s.title || '', category: null, htmlUrl: s.htmlUrl || null });
         }
       }
       writeFileSync(trackingFile, JSON.stringify(tracked, null, 2));
@@ -536,7 +536,33 @@ const commands = {
     const result = await callTool('list_screens', { projectId });
     let screens = parseScreenList(result);
 
-    // Fallback: if list_screens returns empty, use provided screen IDs with get_screen
+    // Fallback 1: if list_screens returns empty, try get_project for screenInstances
+    if (screens.length === 0) {
+      try {
+        const projResult = await callTool('get_project', { name: 'projects/' + projectId });
+        if (projResult && projResult.structuredContent && projResult.structuredContent.screenInstances) {
+          const instances = projResult.structuredContent.screenInstances;
+          for (const inst of instances) {
+            const sid = inst.id || (inst.sourceScreen || '').replace(/^projects\/\d+\/screens\//, '');
+            if (sid) {
+              try {
+                const sr = await callTool('get_screen', { name: 'projects/' + projectId + '/screens/' + sid, projectId, screenId: sid });
+                if (sr && sr.structuredContent) {
+                  screens.push(sr.structuredContent);
+                } else if (sr && sr.content) {
+                  for (const item of sr.content) {
+                    if (item.type === 'text') { try { screens.push(JSON.parse(item.text)); break; } catch {} }
+                  }
+                }
+              } catch (e) { console.error('Warning: get_screen ' + sid + ' failed: ' + e.message); }
+            }
+          }
+          if (screens.length > 0) console.error('Recovered ' + screens.length + ' screens via get_project fallback');
+        }
+      } catch (e) { console.error('Warning: get_project fallback failed: ' + e.message); }
+    }
+
+    // Fallback 2: if still empty, use provided screen IDs with get_screen
     if (screens.length === 0 && screenIdArgs.length > 0) {
       const ids = screenIdArgs.join(',').split(',').filter(Boolean);
       for (const sid of ids) {

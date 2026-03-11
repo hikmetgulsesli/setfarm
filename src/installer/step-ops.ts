@@ -851,7 +851,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   }
 
   // DB Auto-Provisioning (setup step)
-  if (step.step_id === "setup" && parsed["status"]?.toLowerCase() === "done") {
+  if (step.step_id === "setup-repo" && parsed["status"]?.toLowerCase() === "done") {
     const dbErr = processSetupCompletion(context, step.run_id);
     if (dbErr) {
       failStep(stepId, dbErr);
@@ -860,7 +860,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   }
 
   // Design Contract Building (setup step — after HTML download)
-  if (step.step_id === "setup" && parsed["status"]?.toLowerCase() === "done") {
+  if (step.step_id === "setup-repo" && parsed["status"]?.toLowerCase() === "done") {
     const designErr = processSetupDesignContracts(step.run_id, context, db);
     if (designErr) {
       failStep(stepId, designErr);
