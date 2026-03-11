@@ -501,7 +501,13 @@ steps:
       DESIGN_TOKENS: {{design_tokens}}
       STORY_SCREENS: {{story_screens}}
 
+      PREVIOUS FAILURE (if retrying — READ THIS FIRST and avoid the same mistake):
+      {{previous_failure}}
+
       BEFORE writing code:
+      0. If PREVIOUS FAILURE is non-empty: analyze what went wrong. The previous attempt
+         timed out or crashed. Common causes: infinite loop, hanging process, excessive
+         file I/O, or memory exhaustion. Adjust your approach to avoid the same failure.
       1. Read the FULL story description and ALL acceptance criteria before coding
       2. Read references/design-standards.md + references/backend-standards.md + references/react-best-practices.md
       3. Read references/web-guidelines.md for accessibility and interaction rules
