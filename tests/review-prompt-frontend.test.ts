@@ -41,6 +41,6 @@ describe("Review step frontend visual verification", () => {
     // Count steps section entries (after "steps:" heading)
     const stepsSection = workflowContent.split(/^steps:/m)[1];
     const steps = stepsSection?.match(/^\s+- id: \w+/gm) || [];
-    assert.equal(steps.length, 9, "should have 9 steps");
+    assert.equal(steps.length, 10, "should have 10 steps (setup split into setup-repo + setup-build)");
   });
 });

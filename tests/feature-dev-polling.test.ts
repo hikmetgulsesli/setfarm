@@ -16,13 +16,13 @@ describe("feature-dev workflow polling config", () => {
   it("still has all expected agents", async () => {
     const spec = await loadWorkflowSpec(WORKFLOW_DIR);
     const ids = spec.agents.map((a) => a.id);
-    assert.deepEqual(ids, ["planner", "setup", "developer", "reviewer", "tester", "security-gate", "deployer", "designer"]);
+    assert.deepEqual(ids, ["planner", "setup-repo", "setup-build", "developer", "reviewer", "tester", "security-gate", "deployer", "designer"]);
   });
 
   it("still has all expected steps", async () => {
     const spec = await loadWorkflowSpec(WORKFLOW_DIR);
     const stepIds = spec.steps.map((s) => s.id);
-    assert.deepEqual(stepIds, ["plan", "design", "stories", "setup", "implement", "verify", "security-gate", "final-test", "deploy"]);
+    assert.deepEqual(stepIds, ["plan", "design", "stories", "setup-repo", "setup-build", "implement", "verify", "security-gate", "final-test", "deploy"]);
   });
 
   it("workflow id and version are unchanged", async () => {
