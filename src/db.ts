@@ -140,6 +140,12 @@ function migrate(db: DatabaseSync): void {
   if (!storyColNames.has("story_screens")) {
     db.exec("ALTER TABLE stories ADD COLUMN story_screens TEXT");
   }
+  if (!storyColNames.has("claimed_at")) {
+    db.exec("ALTER TABLE stories ADD COLUMN claimed_at TEXT");
+  }
+  if (!storyColNames.has("claimed_by")) {
+    db.exec("ALTER TABLE stories ADD COLUMN claimed_by TEXT");
+  }
 
   // Rules table
   db.exec(`
@@ -169,6 +175,25 @@ function migrate(db: DatabaseSync): void {
   // Item 11: indexes for abandoned step/story queries
   db.exec("CREATE INDEX IF NOT EXISTS idx_stories_status_updated ON stories(status, updated_at)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_steps_status_updated ON steps(status, updated_at)");
+
+  // Claim log table — tracks every claim for diagnostics
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS claim_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id TEXT NOT NULL,
+      step_id TEXT NOT NULL,
+      story_id TEXT,
+      agent_id TEXT NOT NULL,
+      claimed_at TEXT NOT NULL,
+      outcome TEXT,
+      abandoned_at TEXT,
+      duration_ms INTEGER,
+      diagnostic TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_claim_log_run ON claim_log(run_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_claim_log_story ON claim_log(story_id)");
 }
 
 export function nextRunNumber(): number {

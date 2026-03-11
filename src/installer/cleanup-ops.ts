@@ -56,12 +56,12 @@ export function cleanupAbandonedSteps(advancePipeline: (runId: string) => { adva
   // Find running steps that haven't been updated recently
   // Progressive threshold: first abandon uses base timeout, subsequent uses faster threshold
   const abandonedSteps = db.prepare(
-    `SELECT id, step_id, run_id, retry_count, max_retries, type, current_story_id, loop_config, abandoned_count, agent_id FROM steps
+    `SELECT id, step_id, run_id, retry_count, max_retries, type, current_story_id, loop_config, abandoned_count, agent_id, updated_at FROM steps
      WHERE status = 'running' AND (
        (abandoned_count = 0 AND (julianday('now') - julianday(updated_at)) * 86400000 > ?)
        OR (abandoned_count > 0 AND (julianday('now') - julianday(updated_at)) * 86400000 > ?)
      )`
-  ).all(BASE_ABANDONED_THRESHOLD_MS, FAST_ABANDONED_THRESHOLD_MS) as { id: string; step_id: string; run_id: string; retry_count: number; max_retries: number; type: string; current_story_id: string | null; loop_config: string | null; abandoned_count: number; agent_id: string }[];
+  ).all(BASE_ABANDONED_THRESHOLD_MS, FAST_ABANDONED_THRESHOLD_MS) as { id: string; step_id: string; run_id: string; retry_count: number; max_retries: number; type: string; current_story_id: string | null; loop_config: string | null; abandoned_count: number; agent_id: string; updated_at: string }[];
 
   for (const step of abandonedSteps) {
     if (step.type === "loop" && !step.current_story_id && step.loop_config) {
@@ -83,8 +83,8 @@ export function cleanupAbandonedSteps(advancePipeline: (runId: string) => { adva
     // Item 8: Loop steps — use abandoned_count, NOT retry_count (abandonment != agent failure)
     if (step.type === "loop" && step.current_story_id) {
       const story = db.prepare(
-        "SELECT id, retry_count, max_retries, story_id, title, abandoned_count FROM stories WHERE id = ?"
-      ).get(step.current_story_id) as { id: string; retry_count: number; max_retries: number; story_id: string; title: string; abandoned_count: number } | undefined;
+        "SELECT id, retry_count, max_retries, story_id, title, abandoned_count, claimed_at FROM stories WHERE id = ?"
+      ).get(step.current_story_id) as { id: string; retry_count: number; max_retries: number; story_id: string; title: string; abandoned_count: number; claimed_at: string | null } | undefined;
 
       if (story) {
         // Auto-save uncommitted worktree changes before resetting story
@@ -98,18 +98,33 @@ export function cleanupAbandonedSteps(advancePipeline: (runId: string) => { adva
 
         const newAbandonCount = (story.abandoned_count ?? 0) + 1;
         const wfId = getWorkflowId(step.run_id);
+        // v1.5.50: Build diagnostic for abandon
+        const claimedAt = (story as any).claimed_at || step.updated_at;
+        const abandonedAt = new Date().toISOString();
+        const durationMin = Math.round((Date.now() - new Date(claimedAt as string).getTime()) / 60000);
+
         if (newAbandonCount >= MAX_ABANDON_RESETS) {
-          db.prepare("UPDATE stories SET status = 'failed', abandoned_count = ?, updated_at = ? WHERE id = ?").run(newAbandonCount, new Date().toISOString(), story.id);
-          db.prepare("UPDATE steps SET status = 'failed', output = 'Story abandoned and abandon limit reached', current_story_id = NULL, updated_at = ? WHERE id = ?").run(new Date().toISOString(), step.id);
+          const diagnostic = `ABANDONED: Agent ${step.agent_id} claimed at ${claimedAt}, timed out after ~${durationMin}min. No output produced. Attempt ${newAbandonCount}/${MAX_ABANDON_RESETS}. Limit reached — story failed.`;
+          // Write diagnostic to story output if empty
+          db.prepare("UPDATE stories SET output = ? WHERE id = ? AND (output IS NULL OR output = '')").run(diagnostic, story.id);
+          db.prepare("UPDATE stories SET status = 'failed', abandoned_count = ?, updated_at = ? WHERE id = ?").run(newAbandonCount, abandonedAt, story.id);
+          db.prepare("UPDATE steps SET status = 'failed', output = 'Story abandoned and abandon limit reached', current_story_id = NULL, updated_at = ? WHERE id = ?").run(abandonedAt, step.id);
+          // Resolve claim_log
+          try { db.prepare("UPDATE claim_log SET outcome = 'abandoned', abandoned_at = ?, duration_ms = ?, diagnostic = ? WHERE story_id = ? AND outcome IS NULL").run(abandonedAt, durationMin * 60000, diagnostic, story.story_id); } catch {}
           failRun(step.run_id);
-          emitEvent({ ts: new Date().toISOString(), event: "story.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, storyId: story.story_id, storyTitle: story.title, detail: `Abandoned — abandon limit reached (${newAbandonCount}/${MAX_ABANDON_RESETS})` });
+          emitEvent({ ts: new Date().toISOString(), event: "story.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, storyId: story.story_id, storyTitle: story.title, detail: `Abandoned — ${diagnostic}` });
           emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: "Story abandoned and abandon limit reached" });
           emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: "Story abandoned and abandon limit reached" });
           scheduleRunCronTeardown(step.run_id);
         } else {
-          db.prepare("UPDATE stories SET status = 'pending', abandoned_count = ?, updated_at = ? WHERE id = ?").run(newAbandonCount, new Date().toISOString(), story.id);
-          db.prepare("UPDATE steps SET status = 'pending', current_story_id = NULL, abandoned_count = ?, updated_at = ? WHERE id = ?").run(newAbandonCount, new Date().toISOString(), step.id);
-          emitEvent({ ts: new Date().toISOString(), event: "step.timeout", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: `Story ${story.story_id} abandoned — reset to pending (abandon ${newAbandonCount}/${MAX_ABANDON_RESETS})` });
+          const diagnostic = `ABANDONED: Agent ${step.agent_id} claimed at ${claimedAt}, timed out after ~${durationMin}min. No output produced. Attempt ${newAbandonCount}/${MAX_ABANDON_RESETS}.`;
+          // Write diagnostic to story output if empty (so next attempt gets it via previous_failure)
+          db.prepare("UPDATE stories SET output = ? WHERE id = ? AND (output IS NULL OR output = '')").run(diagnostic, story.id);
+          db.prepare("UPDATE stories SET status = 'pending', abandoned_count = ?, updated_at = ? WHERE id = ?").run(newAbandonCount, abandonedAt, story.id);
+          db.prepare("UPDATE steps SET status = 'pending', current_story_id = NULL, abandoned_count = ?, updated_at = ? WHERE id = ?").run(newAbandonCount, abandonedAt, step.id);
+          // Resolve claim_log
+          try { db.prepare("UPDATE claim_log SET outcome = 'abandoned', abandoned_at = ?, duration_ms = ?, diagnostic = ? WHERE story_id = ? AND outcome IS NULL").run(abandonedAt, durationMin * 60000, diagnostic, story.story_id); } catch {}
+          emitEvent({ ts: new Date().toISOString(), event: "step.timeout", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: `Story ${story.story_id} abandoned — ${diagnostic}` });
           logger.info(`Abandoned step reset to pending (story abandon ${newAbandonCount})`, { runId: step.run_id, stepId: step.step_id });
         }
         continue;
@@ -118,17 +133,22 @@ export function cleanupAbandonedSteps(advancePipeline: (runId: string) => { adva
 
     // Single steps (or loop steps without a current story): use abandoned_count, not retry_count
     const newAbandonCount = (step.abandoned_count ?? 0) + 1;
+    // v1.5.50: Build diagnostic for single step abandon
+    const singleDiagnostic = `ABANDONED: Agent ${step.agent_id} timed out. No completion signal received. Attempt ${newAbandonCount}/${MAX_ABANDON_RESETS}.`;
+
     if (newAbandonCount >= MAX_ABANDON_RESETS) {
       // Too many abandons — fail the step and run
       db.prepare(
-        "UPDATE steps SET status = 'failed', output = 'Agent abandoned step without completing (' || ? || ' times)', abandoned_count = ?, updated_at = ? WHERE id = ?"
-      ).run(newAbandonCount, newAbandonCount, new Date().toISOString(), step.id);
+        "UPDATE steps SET status = 'failed', output = ?, abandoned_count = ?, updated_at = ? WHERE id = ?"
+      ).run(singleDiagnostic, newAbandonCount, new Date().toISOString(), step.id);
       db.prepare(
         "UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?"
       ).run(new Date().toISOString(), step.run_id);
+      // Resolve claim_log
+      try { db.prepare("UPDATE claim_log SET outcome = 'abandoned', abandoned_at = ?, diagnostic = ? WHERE run_id = ? AND step_id = ? AND outcome IS NULL").run(new Date().toISOString(), singleDiagnostic, step.run_id, step.step_id); } catch {}
       const wfId = getWorkflowId(step.run_id);
-      emitEvent({ ts: new Date().toISOString(), event: "step.timeout", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: `Retries exhausted — step failed` });
-      emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: "Agent abandoned step without completing" });
+      emitEvent({ ts: new Date().toISOString(), event: "step.timeout", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: `Retries exhausted — ${singleDiagnostic}` });
+      emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: singleDiagnostic });
       emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: "Step abandoned and retries exhausted" });
       scheduleRunCronTeardown(step.run_id);
     } else {
@@ -136,7 +156,9 @@ export function cleanupAbandonedSteps(advancePipeline: (runId: string) => { adva
       db.prepare(
         "UPDATE steps SET status = 'pending', abandoned_count = ?, updated_at = ? WHERE id = ?"
       ).run(newAbandonCount, new Date().toISOString(), step.id);
-      emitEvent({ ts: new Date().toISOString(), event: "step.timeout", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, detail: `Reset to pending (abandon ${newAbandonCount}/${MAX_ABANDON_RESETS})` });
+      // Resolve claim_log
+      try { db.prepare("UPDATE claim_log SET outcome = 'abandoned', abandoned_at = ?, diagnostic = ? WHERE run_id = ? AND step_id = ? AND outcome IS NULL").run(new Date().toISOString(), singleDiagnostic, step.run_id, step.step_id); } catch {}
+      emitEvent({ ts: new Date().toISOString(), event: "step.timeout", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, detail: `Reset to pending — ${singleDiagnostic}` });
     }
   }
 

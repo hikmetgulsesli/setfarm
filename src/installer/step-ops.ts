@@ -372,6 +372,17 @@ export function claimStep(agentId: string): ClaimResult {
       db.exec("COMMIT");
       _txOpen = false;
 
+      // v1.5.50: Record claim in claim_log + update story claim metadata
+      const claimNow = new Date().toISOString();
+      try {
+        db.prepare(
+          "INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at) VALUES (?, ?, ?, ?, ?)"
+        ).run(step.run_id, step.step_id, nextStory.story_id, agentId, claimNow);
+        db.prepare(
+          "UPDATE stories SET claimed_at = ?, claimed_by = ? WHERE id = ?"
+        ).run(claimNow, agentId, nextStory.id);
+      } catch (e) { logger.warn(`[claim-log] Failed to record claim: ${String(e)}`, { runId: step.run_id }); }
+
       const wfId = getWorkflowId(step.run_id);
       emitEvent({ ts: new Date().toISOString(), event: "step.running", runId: step.run_id, workflowId: wfId, stepId: step.step_id, agentId: agentId });
       emitEvent({ ts: new Date().toISOString(), event: "story.started", runId: step.run_id, workflowId: wfId, stepId: step.step_id, agentId: agentId, storyId: nextStory.story_id, storyTitle: nextStory.title });
@@ -456,6 +467,11 @@ export function claimStep(agentId: string): ClaimResult {
       // Persist story context vars to DB so verify_each steps can access them
       updateRunContext(step.run_id, context);
 
+      // v1.5.50: Inject previous_failure from prior abandon output
+      if (nextStory.output && (nextStory.abandoned_count > 0 || nextStory.retry_count > 0)) {
+        context["previous_failure"] = nextStory.output;
+      }
+
       let resolvedInput = resolveTemplate(step.input_template, context);
 
       // Item 7: MISSING_INPUT_GUARD inside claim flow — also reset the claimed story on failure
@@ -497,6 +513,13 @@ export function claimStep(agentId: string): ClaimResult {
   }
   emitEvent({ ts: new Date().toISOString(), event: "step.running", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId });
   logger.info(`Step claimed by ${agentId}`, { runId: step.run_id, stepId: step.step_id });
+
+  // v1.5.50: Record single step claim in claim_log
+  try {
+    db.prepare(
+      "INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at) VALUES (?, ?, NULL, ?, ?)"
+    ).run(step.run_id, step.step_id, agentId, new Date().toISOString());
+  } catch (e) { logger.warn(`[claim-log] Failed to record claim: ${String(e)}`, { runId: step.run_id }); }
 
   // #260: Default optional template vars to prevent MISSING_INPUT_GUARD false positives
   for (const v of OPTIONAL_TEMPLATE_VARS) {
@@ -1050,6 +1073,13 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     emitEvent({ ts: new Date().toISOString(), event: storyEvent, runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: storyRow?.story_id, storyTitle: storyRow?.title });
     logger.info(`Story ${storyStatus}: ${storyRow?.story_id} — ${storyRow?.title}`, { runId: step.run_id, stepId: step.step_id });
 
+    // v1.5.50: Resolve claim_log outcome
+    try {
+      db.prepare(
+        "UPDATE claim_log SET outcome = 'completed' WHERE story_id = ? AND outcome IS NULL"
+      ).run(storyRow?.story_id || "");
+    } catch (e) { logger.warn(`[claim-log] Failed to resolve completion: ${String(e)}`, { runId: step.run_id }); }
+
 
     // Update PROJECT_MEMORY.md with completed story info
     if (storyRow && storyStatus !== "skipped") {
@@ -1124,6 +1154,13 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   }
   emitEvent({ ts: new Date().toISOString(), event: "step.done", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id });
   logger.info(`Step completed: ${step.step_id}`, { runId: step.run_id, stepId: step.step_id });
+
+  // v1.5.50: Resolve claim_log outcome for single step
+  try {
+    db.prepare(
+      "UPDATE claim_log SET outcome = 'completed' WHERE run_id = ? AND step_id = ? AND story_id IS NULL AND outcome IS NULL"
+    ).run(step.run_id, step.step_id);
+  } catch (e) { logger.warn(`[claim-log] Failed to resolve completion: ${String(e)}`, { runId: step.run_id }); }
 
   // Guard: if a loop step is still active (not done), don't advance the pipeline.
   // During verify_each cycles, single steps (test, pr, review, etc.) may get claimed
@@ -1520,6 +1557,8 @@ export function failStep(stepId: string, error: string): { retrying: boolean; ru
         emitEvent({ ts: new Date().toISOString(), event: "story.failed", runId: step.run_id, workflowId: wfId, stepId: stepId, storyId: storyRow?.story_id, storyTitle: storyRow?.title, detail: error });
         emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: stepId, detail: error });
         emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: "Story retries exhausted" });
+        // v1.5.50: Resolve claim_log outcome
+        try { db.prepare("UPDATE claim_log SET outcome = 'failed', diagnostic = ? WHERE story_id = ? AND outcome IS NULL").run(error, storyRow?.story_id || ""); } catch {}
         scheduleRunCronTeardown(step.run_id);
         return { retrying: false, runFailed: true };
       }
@@ -1531,6 +1570,8 @@ export function failStep(stepId: string, error: string): { retrying: boolean; ru
       }
       db.prepare("UPDATE stories SET status = 'pending', retry_count = ?, updated_at = ? WHERE id = ?").run(newRetry, new Date().toISOString(), story.id);
       db.prepare("UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = ? WHERE id = ?").run(new Date().toISOString(), stepId);
+      // v1.5.50: Resolve claim_log outcome
+      try { db.prepare("UPDATE claim_log SET outcome = 'failed', diagnostic = ? WHERE story_id = ? AND outcome IS NULL").run(error, storyRow?.story_id || ""); } catch {}
       return { retrying: true, runFailed: false };
     }
   }
@@ -1548,12 +1589,16 @@ export function failStep(stepId: string, error: string): { retrying: boolean; ru
     const wfId2 = getWorkflowId(step.run_id);
     emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId2, stepId: stepId, detail: error });
     emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId2, detail: "Step retries exhausted" });
+    // v1.5.50: Resolve claim_log outcome
+    try { db.prepare("UPDATE claim_log SET outcome = 'failed', diagnostic = ? WHERE run_id = ? AND step_id = ? AND story_id IS NULL AND outcome IS NULL").run(error, step.run_id, stepId); } catch {}
     scheduleRunCronTeardown(step.run_id);
     return { retrying: false, runFailed: true };
   } else {
     db.prepare(
         "UPDATE steps SET status = 'pending', retry_count = ?, updated_at = ? WHERE id = ?"
     ).run(newRetryCount, new Date().toISOString(), stepId);
+    // v1.5.50: Resolve claim_log outcome
+    try { db.prepare("UPDATE claim_log SET outcome = 'failed', diagnostic = ? WHERE run_id = ? AND step_id = ? AND story_id IS NULL AND outcome IS NULL").run(error, step.run_id, stepId); } catch {}
     return { retrying: true, runFailed: false };
   }
 }
