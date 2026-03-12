@@ -862,9 +862,13 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   }
 
   // QUALITY GATE GUARDRAIL
+  // For implement step (loop), check story worktree — not main repo.
+  // Story code lives in worktree until PR merge; main repo won't have the changes yet.
   if (parsed["status"]?.toLowerCase() === "done") {
-    const repoPath = context["repo"] || context["REPO"] || "";
-    const qgMsg = checkQualityGate(step.step_id, repoPath);
+    const qgPath = (step.step_id === "implement" && context["story_workdir"])
+      ? context["story_workdir"]
+      : (context["repo"] || context["REPO"] || "");
+    const qgMsg = checkQualityGate(step.step_id, qgPath);
     if (qgMsg) {
       logger.warn(`[quality-gate] Failed`, { runId: step.run_id, stepId: step.step_id });
       if (prevContextJson) db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(prevContextJson.context, step.run_id);
