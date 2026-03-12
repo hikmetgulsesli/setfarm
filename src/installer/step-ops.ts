@@ -951,8 +951,12 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   }
 
   // Browser DOM Gate (implement step — advisory)
+  // Use story_workdir for implement — story code lives in worktree, not main repo.
   if (step.step_id === "implement" && parsed["status"]?.toLowerCase() === "done") {
-    processBrowserCheck(context, step.run_id, step.step_id);
+    const browserCtx = context["story_workdir"]
+      ? { ...context, repo: context["story_workdir"] }
+      : context;
+    processBrowserCheck(browserCtx, step.run_id, step.step_id);
   }
 
   // Design Fidelity Check (verify + final-test steps — advisory)
