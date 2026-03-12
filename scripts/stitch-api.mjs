@@ -487,13 +487,35 @@ const commands = {
     const result = await callTool('generate_screen_from_text', args);
     const { screens, suggestions } = parseScreens(result);
 // Save generated screens to local tracking file for dedup
+// AND eagerly download HTML+screenshot (Stitch deletes them after ~hours)
     if (screens.length > 0) {
       const trackingFile = resolve(process.cwd(), '.stitch-screens.json');
+      const stitchDir = resolve(process.cwd(), 'stitch');
+      mkdirSync(stitchDir, { recursive: true });
       let tracked = [];
       try { tracked = JSON.parse(readFileSync(trackingFile, 'utf-8')); } catch {}
       for (const s of screens) {
+        let localHtml = null, localScreenshot = null;
+        // Eager download HTML
+        if (s.htmlUrl) {
+          try {
+            const htmlPath = resolve(stitchDir, s.screenId + '.html');
+            await downloadFile(s.htmlUrl, htmlPath);
+            localHtml = htmlPath;
+            process.stderr.write('Downloaded HTML: ' + s.screenId + '.html\n');
+          } catch (e) { process.stderr.write('WARN: HTML download failed for ' + s.screenId + ': ' + e.message + '\n'); }
+        }
+        // Eager download screenshot
+        if (s.screenshotUrl) {
+          try {
+            const pngPath = resolve(stitchDir, s.screenId + '.png');
+            await downloadFile(s.screenshotUrl, pngPath);
+            localScreenshot = pngPath;
+            process.stderr.write('Downloaded screenshot: ' + s.screenId + '.png\n');
+          } catch (e) { process.stderr.write('WARN: Screenshot download failed for ' + s.screenId + ': ' + e.message + '\n'); }
+        }
         if (!tracked.some(t => t.screenId === s.screenId)) {
-          tracked.push({ screenId: s.screenId, title: s.title || '', category: null, htmlUrl: s.htmlUrl || null });
+          tracked.push({ screenId: s.screenId, title: s.title || '', category: null, htmlUrl: s.htmlUrl || null, screenshotUrl: s.screenshotUrl || null, localHtml, localScreenshot });
         }
       }
       writeFileSync(trackingFile, JSON.stringify(tracked, null, 2));
