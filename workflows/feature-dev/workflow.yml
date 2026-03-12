@@ -191,11 +191,22 @@ steps:
       === STITCH API ===
       Script: $HOME/.openclaw/setfarm-repo/scripts/stitch-api.mjs
 
-      STEP 1 — Create Stitch project:
+      STEP 1 — Get or create Stitch project:
       STITCH_SCRIPT="$HOME/.openclaw/setfarm-repo/scripts/stitch-api.mjs"
       PROJECT_NAME=$(basename {{repo}})
-      RESULT=$(node "$STITCH_SCRIPT" create-project "$PROJECT_NAME")
-      PROJECT_ID=$(echo "$RESULT" | jq -r '.projectId')
+      REPO_PATH="{{repo}}"
+
+      # Reuse existing project if .stitch file exists in repo (prevents duplicates on retry runs)
+      if [ -f "$REPO_PATH/.stitch" ]; then
+        PROJECT_ID=$(cat "$REPO_PATH/.stitch" | jq -r '.projectId // empty')
+      fi
+      if [ -z "$PROJECT_ID" ]; then
+        RESULT=$(node "$STITCH_SCRIPT" create-project "$PROJECT_NAME")
+        PROJECT_ID=$(echo "$RESULT" | jq -r '.projectId')
+        # Persist for future runs (mkdir -p in case repo doesn't exist yet)
+        mkdir -p "$REPO_PATH"
+        echo "{\"projectId\": \"$PROJECT_ID\", \"name\": \"$PROJECT_NAME\", \"updatedAt\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" > "$REPO_PATH/.stitch"
+      fi
       echo "Stitch project ID: $PROJECT_ID"
 
       === DESIGN SYSTEM SELECTION (YOUR RESPONSIBILITY) ===
