@@ -160,6 +160,44 @@ export function claimStep(agentId: string): ClaimResult {
   // Guard: don't claim work for a failed run
   if (getRunStatus(step.run_id) === "failed") return { found: false };
 
+  // DESIGN STEP DEDUP: If .stitch + stitch/*.html exist, auto-complete design step.
+  // Prevents duplicate Stitch projects on retry/re-run of same repo.
+  if (step.step_id === "design") {
+    const dRepoPath = getRunContext(step.run_id)["repo"] || "";
+    if (dRepoPath) {
+      const dStitchFile = path.join(dRepoPath, ".stitch");
+      const dStitchDir = path.join(dRepoPath, "stitch");
+      if (fs.existsSync(dStitchFile) && fs.existsSync(dStitchDir)) {
+        try {
+          const dData = JSON.parse(fs.readFileSync(dStitchFile, "utf-8"));
+          const dHtmlFiles = fs.readdirSync(dStitchDir).filter((f: string) => f.endsWith(".html"));
+          if (dData.projectId && dHtmlFiles.length > 0) {
+            const dScreenMap = dHtmlFiles.map((f: string) => ({
+              screenId: f.replace(".html", ""),
+              name: f.replace(".html", ""),
+              type: "page",
+              description: f.replace(".html", ""),
+            }));
+            const dCtx = getRunContext(step.run_id);
+            dCtx["stitch_project_id"] = dData.projectId;
+            dCtx["screens_generated"] = String(dHtmlFiles.length);
+            dCtx["screen_map"] = JSON.stringify(dScreenMap);
+            dCtx["device_type"] = dCtx["device_type"] || "DESKTOP";
+            dCtx["design_system"] = dCtx["design_system"] || "reused from previous run";
+            dCtx["design_notes"] = `Reused ${dHtmlFiles.length} existing screen designs from .stitch`;
+            updateRunContext(step.run_id, dCtx);
+            const dOutput = `STATUS: done\nSTITCH_PROJECT_ID: ${dData.projectId}\nSCREENS_GENERATED: ${dHtmlFiles.length}\nDESIGN_NOTES: Reused ${dHtmlFiles.length} screens from previous run`;
+            db.prepare("UPDATE steps SET status = 'done', output = ?, updated_at = ? WHERE id = ?")
+              .run(dOutput, new Date().toISOString(), step.id);
+            logger.info(`[design-dedup] Skipped — reusing ${dHtmlFiles.length} screens from .stitch (project ${dData.projectId})`, { runId: step.run_id });
+            advancePipeline(step.run_id);
+            return { found: false };
+          }
+        } catch (e) { logger.warn(`[design-dedup] .stitch parse error: ${e}`, { runId: step.run_id }); }
+      }
+    }
+  }
+
   // Get run context
   const context: Record<string, string> = getRunContext(step.run_id);
 
