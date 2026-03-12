@@ -577,21 +577,22 @@ export function claimStep(agentId: string): ClaimResult {
               timeout: 15000, stdio: "pipe"
             }).toString().trim();
             if (prState === "MERGED") {
-              // Quality gate: even merged PRs must pass quality checks before auto-verify
+              // Merged PRs: auto-verify regardless of quality gate.
+              // Quality issues are repo-wide, not story-specific — blocking here
+              // causes infinite loop when the error is in files not owned by this story.
+              // Downstream steps (security-gate, final-test) will catch quality issues.
               const cavRepoPath = context["repo"] || context["REPO"] || "";
               if (cavRepoPath) {
                 const cavIssues = runQualityChecks(cavRepoPath);
                 const cavErrors = cavIssues.filter(i => i.severity === "error");
                 if (cavErrors.length > 0) {
                   const cavReport = formatQualityReport(cavIssues);
-                  logger.warn(`[claim-auto-verify-quality] PR merged but quality gate failed for ${nextUnverified.story_id}:
+                  logger.warn(`[claim-auto-verify-quality] PR merged — quality gate has ${cavErrors.length} error(s) but auto-verifying anyway (deferred to downstream steps):
 ${cavReport}`, { runId: step.run_id });
-                  // Don't auto-verify — let agent handle it
-                  break;
                 }
               }
               verifyStory(nextUnverified.id);
-              logger.info(`[claim-auto-verify] Story ${nextUnverified.story_id} auto-verified — PR merged + quality gate passed`, { runId: step.run_id });
+              logger.info(`[claim-auto-verify] Story ${nextUnverified.story_id} auto-verified — PR merged`, { runId: step.run_id });
               emitEvent({ ts: new Date().toISOString(), event: "story.verified", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: nextUnverified.story_id, storyTitle: nextUnverified.title });
               continue; // Check next story
             }
@@ -1290,28 +1291,21 @@ function handleVerifyEachCompletion(
       try {
         const prState = execFileSync("gh", ["pr", "view", prUrl, "--json", "state", "--jq", ".state"], { timeout: 15000, stdio: "pipe" }).toString().trim();
         if (prState === "MERGED") {
-          // Quality gate: even merged PRs must pass quality checks
+          // Merged PRs: auto-verify regardless of quality gate.
+          // Quality issues are repo-wide — blocking causes infinite loops.
+          // Downstream steps (security-gate, final-test) handle quality.
           const hveRepoPath = context["repo"] || context["REPO"] || "";
           if (hveRepoPath) {
             const hveIssues = runQualityChecks(hveRepoPath);
             const hveErrors = hveIssues.filter(i => i.severity === "error");
             if (hveErrors.length > 0) {
               const hveReport = formatQualityReport(hveIssues);
-              logger.warn(`[auto-verify-quality] PR merged but quality gate failed for ${nextUnverifiedStory.story_id}:
+              logger.warn(`[auto-verify-quality] PR merged — quality gate has ${hveErrors.length} error(s) but auto-verifying anyway (deferred to downstream):
 ${hveReport}`, { runId: verifyStep.run_id });
-              // Block auto-verify — story goes back to pending for agent to fix
-              db.prepare("UPDATE stories SET status = 'pending', retry_count = retry_count + 1, updated_at = ? WHERE id = ?")
-                .run(new Date().toISOString(), nextUnverifiedStory.id);
-              context["verify_feedback"] = `QUALITY GATE BLOCKED AUTO-VERIFY:
-${hveReport}
-Fix these issues in the merged code.`;
-              db.prepare("UPDATE runs SET context = ?, updated_at = ? WHERE id = ?")
-                .run(JSON.stringify(context), new Date().toISOString(), verifyStep.run_id);
-              break; // Stop auto-verify loop — agent needs to fix
             }
           }
           verifyStory(nextUnverifiedStory.id);
-          logger.info(`Auto-verified story ${nextUnverifiedStory.story_id} — PR merged + quality gate passed`, { runId: verifyStep.run_id });
+          logger.info(`Auto-verified story ${nextUnverifiedStory.story_id} — PR merged`, { runId: verifyStep.run_id });
           continue; // Check next story
         }
         if (prState === "CLOSED") {

@@ -41,7 +41,7 @@ export function checkTestFailures(output: string): string | null {
  * Returns failure message or null if clean.
  */
 export function checkQualityGate(stepId: string, repoPath: string): string | null {
-  if (stepId === "implement" || stepId === "verify" || stepId === "final-test") {
+  if (stepId === "implement" || stepId === "final-test") {
     if (repoPath) {
       const qualityIssues = runQualityChecks(repoPath);
       const errors = qualityIssues.filter(i => i.severity === "error");
