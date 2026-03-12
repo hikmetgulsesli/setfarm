@@ -67,5 +67,17 @@ export async function fetchWorkflow(workflowId: string): Promise<{ workflowDir: 
   await fs.rm(destYml, { force: true });
   await fs.symlink(workflowYml, destYml);
   
+  // Deploy _fragments alongside workflows (shared includes for YAML templates)
+  const bundledFragments = path.join(resolveBundledWorkflowsDir(), "_fragments");
+  const destFragments = path.join(resolveWorkflowRoot(), "_fragments");
+  try {
+    const stat = await fs.lstat(destFragments).catch(() => null);
+    if (!stat) {
+      await fs.symlink(bundledFragments, destFragments);
+    }
+  } catch {
+    // Best effort — _fragments may already exist
+  }
+
   return { workflowDir: destination, bundledSourceDir: bundledDir };
 }

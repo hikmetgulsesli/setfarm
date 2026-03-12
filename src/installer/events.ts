@@ -40,10 +40,10 @@ export function emitEvent(evt: SetfarmEvent): void {
       const stats = fs.statSync(getEventsFile());
       if (stats.size > MAX_EVENTS_SIZE) {
         const rotated = getEventsFile() + ".1";
-        try { fs.unlinkSync(rotated); } catch {}
+        try { fs.unlinkSync(rotated); } catch { /* rotated file may not exist */ }
         fs.renameSync(getEventsFile(), rotated);
       }
-    } catch {}
+    } catch { /* events file may not exist yet */ }
     fs.appendFileSync(getEventsFile(), JSON.stringify(evt) + "\n");
   } catch {
     // best-effort, never throw
@@ -96,7 +96,7 @@ export function getRecentEvents(limit = 50): SetfarmEvent[] {
     const lines = content.trim().split("\n").filter(Boolean);
     const events: SetfarmEvent[] = [];
     for (const line of lines) {
-      try { events.push(JSON.parse(line) as SetfarmEvent); } catch {}
+      try { events.push(JSON.parse(line) as SetfarmEvent); } catch { /* malformed JSONL line — skip */ }
     }
     return events.slice(-limit);
   } catch {
@@ -114,7 +114,7 @@ export function getRunEvents(runId: string, limit = 200): SetfarmEvent[] {
       try {
         const evt = JSON.parse(line) as SetfarmEvent;
         if (evt.runId === runId || evt.runId.startsWith(runId)) events.push(evt);
-      } catch {}
+      } catch { /* malformed JSONL line — skip */ }
     }
     return events.slice(-limit);
   } catch {

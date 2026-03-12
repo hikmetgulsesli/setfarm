@@ -139,7 +139,7 @@ export function runQualityChecks(repoPath: string): QualityIssue[] {
           matches: ["Install @dnd-kit/core or react-beautiful-dnd"],
         });
       }
-    } catch {}
+    } catch { /* contract/package.json parse failure — non-fatal */ }
   }
 
   // --- HARDCODED USER DATA CHECK ---
@@ -185,7 +185,7 @@ export function runQualityChecks(repoPath: string): QualityIssue[] {
         const parts = line.split(":");
         return sum + (parseInt(parts[parts.length - 1], 10) || 0);
       }, 0);
-    } catch {}
+    } catch { /* grep exit 1 = no match */ }
     // Subtract type="submit" buttons — they use form onSubmit, not onClick
     try {
       const submitResult = execFileSync("grep", [
@@ -196,7 +196,7 @@ export function runQualityChecks(repoPath: string): QualityIssue[] {
         const parts = line.split(":");
         return sum + (parseInt(parts[parts.length - 1], 10) || 0);
       }, 0);
-    } catch {}
+    } catch { /* grep exit 1 = no match */ }
     const actionButtonCount = Math.max(0, buttonCount - submitCount);
     try {
       const clickResult = execFileSync("grep", [
@@ -207,7 +207,7 @@ export function runQualityChecks(repoPath: string): QualityIssue[] {
         const parts = line.split(":");
         return sum + (parseInt(parts[parts.length - 1], 10) || 0);
       }, 0);
-    } catch {}
+    } catch { /* grep exit 1 = no match */ }
     if (actionButtonCount > 0 && onClickCount > 0) {
       const ratio = onClickCount / actionButtonCount;
       if (ratio < 0.7) {
@@ -219,7 +219,7 @@ export function runQualityChecks(repoPath: string): QualityIssue[] {
         });
       }
     }
-  } catch {}
+  } catch { /* button handler check — non-fatal */ }
   return issues;
 }
 

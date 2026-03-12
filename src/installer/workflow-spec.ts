@@ -13,7 +13,12 @@ import { logger } from "../lib/logger.js";
  */
 function resolveIncludes(raw: string, workflowDir: string): string {
   const fragmentsDir = path.join(workflowDir, "..", "_fragments");
-  if (!existsSync(fragmentsDir)) return raw;
+  if (!existsSync(fragmentsDir)) {
+    if (raw.includes("!include ")) {
+      logger.warn(`[workflow-spec] _fragments directory missing at ${fragmentsDir} — !include directives will be passed as raw text to agents`);
+    }
+    return raw;
+  }
 
   const lines = raw.split("\n");
   const resolved: string[] = [];
@@ -30,7 +35,7 @@ function resolveIncludes(raw: string, workflowDir: string): string {
           resolved.push(fLine.length > 0 ? indent + fLine : "");
         }
       } else {
-        // Fragment not found — leave include line as-is
+        logger.warn(`[workflow-spec] Fragment not found: ${fragmentPath} — include directive will be passed as raw text`);
         resolved.push(line);
       }
     } else {

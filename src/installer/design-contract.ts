@@ -189,7 +189,7 @@ export function buildDesignContracts(repoPath: string): DesignContract[] {
 }
 
 function parseAllHTMLFiles(stitchDir: string): DesignContract[] {
-  if (!fs.existsSync(stitchDir)) return [];
+  if (!fs.existsSync(stitchDir)) { logger.debug(`[design-contract] parseAllHTMLFiles: stitch dir not found: ${stitchDir}`); return []; }
 
   const contracts: DesignContract[] = [];
   try {
@@ -677,7 +677,7 @@ export function generateLayoutSkeletons(repoPath: string, contracts: DesignContr
           device: screen.device || screen.deviceType,
         });
       }
-    } catch {}
+    } catch (e) { logger.warn(`[design-contract] Failed to parse DESIGN_MANIFEST.json: ${String(e)}`); }
   }
 
   if (screenFiles.length === 0) {
@@ -687,7 +687,7 @@ export function generateLayoutSkeletons(repoPath: string, contracts: DesignContr
         const id = path.basename(file, ".html");
         screenFiles.push({ id, title: id, file });
       }
-    } catch {}
+    } catch (e) { logger.warn(`[design-contract] Failed to list stitch HTML files: ${String(e)}`); }
   }
 
   for (const screen of screenFiles) {
@@ -754,7 +754,7 @@ function extractDesignProps(html: string, screenId: string, title: string): Scre
 
 export function checkCrossScreenConsistency(repoPath: string): string[] {
   const stitchDir = path.join(repoPath, "stitch");
-  if (!fs.existsSync(stitchDir)) return [];
+  if (!fs.existsSync(stitchDir)) { logger.debug(`[design-contract] checkCrossScreenConsistency: stitch dir not found`); return []; }
 
   const manifestPath = path.join(stitchDir, "DESIGN_MANIFEST.json");
   let screenEntries: Array<{ id: string; title: string; file: string }> = [];
@@ -837,7 +837,7 @@ export interface FidelityIssue {
 
 export function checkDesignFidelity(repoPath: string): FidelityIssue[] {
   const stitchDir = path.join(repoPath, "stitch");
-  if (!fs.existsSync(stitchDir)) return [];
+  if (!fs.existsSync(stitchDir)) { logger.debug(`[design-contract] checkDesignFidelity: stitch dir not found`); return []; }
 
   const issues: FidelityIssue[] = [];
   const contracts = buildDesignContracts(repoPath);
@@ -865,7 +865,7 @@ export function checkDesignFidelity(repoPath: string): FidelityIssue[] {
     }
   } catch { /* ignore */ }
 
-  if (!allSourceContent.trim()) return [];
+  if (!allSourceContent.trim()) { logger.debug("[design-contract] checkDesignFidelity: no source content to analyze"); return []; }
   const srcLower = allSourceContent.toLowerCase();
 
   for (const contract of contracts) {

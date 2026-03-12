@@ -49,6 +49,26 @@ export function resolveTemplate(template: string, context: Record<string, string
  */
 export function parseOutputKeyValues(output: string): Record<string, string> {
   const result: Record<string, string> = {};
+
+  // Try JSON object format first: {"STATUS": "done", "KEY": "value", ...}
+  const trimmed = output.trim();
+  if (trimmed.startsWith("{")) {
+    try {
+      const obj = JSON.parse(trimmed);
+      for (const [key, value] of Object.entries(obj)) {
+        if (key === "STORIES_JSON" || key === "SCREEN_MAP") {
+          // Complex values — store as JSON string for downstream parsing
+          result[key.toLowerCase()] = typeof value === "string" ? value : JSON.stringify(value);
+        } else {
+          result[key.toLowerCase()] = String(value);
+        }
+      }
+      return result;
+    } catch {
+      // Not valid JSON — fall through to line-based parsing
+    }
+  }
+
   const lines = output.split("\n");
   let pendingKey: string | null = null;
   let pendingValue = "";
@@ -148,7 +168,7 @@ export function readProgressFile(runId: string): string {
  */
 export function readProjectMemory(context: Record<string, string>): string {
   const repo = expandTilde(context["repo"] || context["story_workdir"] || "");
-  if (!repo) return "";
+  if (!repo) { logger.debug("[context-ops] readProjectMemory: no repo path in context"); return ""; }
   try {
     const memoryPath = path.join(repo, "PROJECT_MEMORY.md");
     if (!fs.existsSync(memoryPath)) return "(no project memory yet)";

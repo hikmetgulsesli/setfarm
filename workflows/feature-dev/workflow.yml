@@ -431,8 +431,18 @@ steps:
 
       Instructions:
       1. cd {{repo}} && git checkout {{branch}}
+
+      PROJECT SCAFFOLDING (if no package.json exists):
+      If there is NO package.json in the repo root, you MUST scaffold the project first:
+      - Read the TASK description and stitch/ design files to understand what kind of project this is
+      - For React/Next.js projects: npx create-next-app@latest . --typescript --tailwind --eslint --app --no-src-dir --import-alias "@/*" --yes
+      - For vanilla JS/TS projects: npm init -y, then install needed deps
+      - For Node.js backend: npm init -y, install express/fastify as needed
+      - Make sure the scaffolded project matches the tech stack described in the TASK
+      - After scaffolding, continue with steps below
+
       2. Read package.json to understand the project stack
-      3. Install dependencies: npm install (or pnpm install if pnpm-lock.yaml exists)
+      3. Install any additional dependencies needed: npm install
 
       FRONTEND BUNDLER SETUP (MANDATORY for browser-targeted TypeScript projects):
       After installing dependencies, check if the project needs a bundler:

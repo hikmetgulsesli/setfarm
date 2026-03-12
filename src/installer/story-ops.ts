@@ -94,10 +94,26 @@ export function parseAndInsertStories(output: string, runId: string): void {
     }
     jsonText = jsonLines.join("\n").trim();
   } else {
-    // Fallback: output is raw JSON array (no STORIES_JSON: prefix)
+    // Fallback: try parsing output as JSON object or array
     const trimmed = output.trim();
-    if (!trimmed.startsWith("[")) return; // Not a JSON array — skip
-    jsonText = trimmed;
+    if (trimmed.startsWith("[")) {
+      // Raw JSON array
+      jsonText = trimmed;
+    } else if (trimmed.startsWith("{")) {
+      // JSON object — extract STORIES_JSON field
+      try {
+        const obj = JSON.parse(trimmed);
+        if (obj.STORIES_JSON && Array.isArray(obj.STORIES_JSON)) {
+          jsonText = JSON.stringify(obj.STORIES_JSON);
+        } else {
+          return; // No STORIES_JSON field in object
+        }
+      } catch {
+        return; // Not valid JSON
+      }
+    } else {
+      return; // Not JSON at all — skip
+    }
   }
   let stories: any[];
   try {
@@ -178,7 +194,7 @@ export function parseAndInsertStories(output: string, runId: string): void {
     }
     db.exec("COMMIT");
   } catch (err) {
-    try { db.exec("ROLLBACK"); } catch {}
+    try { db.exec("ROLLBACK"); } catch { /* best effort */ }
     throw err;
   }
 }

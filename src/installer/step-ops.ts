@@ -249,7 +249,7 @@ export function claimStep(agentId: string): ClaimResult {
       // two parallel crons from selecting the same story (race condition fix #4)
       db.exec("BEGIN IMMEDIATE");
       let _txOpen = true;
-      const _rollbackEarly = () => { if (_txOpen) { try { db.exec("ROLLBACK"); } catch {} _txOpen = false; } };
+      const _rollbackEarly = () => { if (_txOpen) { try { db.exec("ROLLBACK"); } catch (e) { logger.warn(`[claim] ROLLBACK failed: ${String(e)}`, {}); } _txOpen = false; } };
 
       // Find next pending story with dependency check
       const pendingStories = db.prepare(
@@ -837,7 +837,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
               fs.writeFileSync(path.join(repoPath, "README.md"), "# Project\n");
               execFileSync("git", ["add", "."], { cwd: repoPath, timeout: 5000 });
               execFileSync("git", ["commit", "-m", "initial"], { cwd: repoPath, timeout: 5000 });
-              try { execFileSync("git", ["branch", "-D", "main"], { cwd: repoPath, timeout: 5000 }); } catch {}
+              try { execFileSync("git", ["branch", "-D", "main"], { cwd: repoPath, timeout: 5000 }); } catch (e) { logger.warn(`[repo-dedup] branch -D main failed (expected if not exists): ${String(e)}`, {}); }
               execFileSync("git", ["branch", "-m", "main"], { cwd: repoPath, timeout: 5000 });
               logger.info(`[repo-dedup] Reset existing repo ${repoPath} (${commitCount} commits, no prior completed run)`, { runId: step.run_id });
             }
@@ -1143,9 +1143,10 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     }
   }
 
-  // Single step: mark done (idempotency guard — only complete if still running)
+  // Single step: mark done (accept both running and pending — medic may have reset a slow step to pending
+  // while the agent was still finishing its work, so we should still accept the completion)
   const updateResult = db.prepare(
-    "UPDATE steps SET status = 'done', output = ?, updated_at = ? WHERE id = ? AND status = 'running'"
+    "UPDATE steps SET status = 'done', output = ?, updated_at = ? WHERE id = ? AND status IN ('running', 'pending')"
   ).run(output, new Date().toISOString(), stepId);
   if (updateResult.changes === 0) {
     // Already completed by another session — skip to prevent double pipeline advancement
@@ -1558,7 +1559,7 @@ export function failStep(stepId: string, error: string): { retrying: boolean; ru
         emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: stepId, detail: error });
         emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: "Story retries exhausted" });
         // v1.5.50: Resolve claim_log outcome
-        try { db.prepare("UPDATE claim_log SET outcome = 'failed', diagnostic = ? WHERE story_id = ? AND outcome IS NULL").run(error, storyRow?.story_id || ""); } catch {}
+        try { db.prepare("UPDATE claim_log SET outcome = 'failed', diagnostic = ? WHERE story_id = ? AND outcome IS NULL").run(error, storyRow?.story_id || ""); } catch (e) { logger.warn(`[claim_log] update failed: ${String(e)}`, {}); }
         scheduleRunCronTeardown(step.run_id);
         return { retrying: false, runFailed: true };
       }
@@ -1571,7 +1572,7 @@ export function failStep(stepId: string, error: string): { retrying: boolean; ru
       db.prepare("UPDATE stories SET status = 'pending', retry_count = ?, updated_at = ? WHERE id = ?").run(newRetry, new Date().toISOString(), story.id);
       db.prepare("UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = ? WHERE id = ?").run(new Date().toISOString(), stepId);
       // v1.5.50: Resolve claim_log outcome
-      try { db.prepare("UPDATE claim_log SET outcome = 'failed', diagnostic = ? WHERE story_id = ? AND outcome IS NULL").run(error, storyRow?.story_id || ""); } catch {}
+      try { db.prepare("UPDATE claim_log SET outcome = 'failed', diagnostic = ? WHERE story_id = ? AND outcome IS NULL").run(error, storyRow?.story_id || ""); } catch (e) { logger.warn(`[claim_log] update failed: ${String(e)}`, {}); }
       return { retrying: true, runFailed: false };
     }
   }
@@ -1590,7 +1591,7 @@ export function failStep(stepId: string, error: string): { retrying: boolean; ru
     emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId2, stepId: stepId, detail: error });
     emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId2, detail: "Step retries exhausted" });
     // v1.5.50: Resolve claim_log outcome
-    try { db.prepare("UPDATE claim_log SET outcome = 'failed', diagnostic = ? WHERE run_id = ? AND step_id = ? AND story_id IS NULL AND outcome IS NULL").run(error, step.run_id, stepId); } catch {}
+    try { db.prepare("UPDATE claim_log SET outcome = 'failed', diagnostic = ? WHERE run_id = ? AND step_id = ? AND story_id IS NULL AND outcome IS NULL").run(error, step.run_id, stepId); } catch (e) { logger.warn(`[claim_log] update failed: ${String(e)}`, {}); }
     scheduleRunCronTeardown(step.run_id);
     return { retrying: false, runFailed: true };
   } else {
@@ -1598,7 +1599,7 @@ export function failStep(stepId: string, error: string): { retrying: boolean; ru
         "UPDATE steps SET status = 'pending', retry_count = ?, updated_at = ? WHERE id = ?"
     ).run(newRetryCount, new Date().toISOString(), stepId);
     // v1.5.50: Resolve claim_log outcome
-    try { db.prepare("UPDATE claim_log SET outcome = 'failed', diagnostic = ? WHERE run_id = ? AND step_id = ? AND story_id IS NULL AND outcome IS NULL").run(error, step.run_id, stepId); } catch {}
+    try { db.prepare("UPDATE claim_log SET outcome = 'failed', diagnostic = ? WHERE run_id = ? AND step_id = ? AND story_id IS NULL AND outcome IS NULL").run(error, step.run_id, stepId); } catch (e) { logger.warn(`[claim_log] update failed: ${String(e)}`, {}); }
     return { retrying: true, runFailed: false };
   }
 }

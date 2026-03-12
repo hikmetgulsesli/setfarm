@@ -121,7 +121,7 @@ export function cleanupAbandonedSteps(advancePipeline: (runId: string) => { adva
           db.prepare("UPDATE stories SET status = 'failed', abandoned_count = ?, updated_at = ? WHERE id = ?").run(newAbandonCount, abandonedAt, story.id);
           db.prepare("UPDATE steps SET status = 'failed', output = 'Story abandoned and abandon limit reached', current_story_id = NULL, updated_at = ? WHERE id = ?").run(abandonedAt, step.id);
           // Resolve claim_log
-          try { db.prepare("UPDATE claim_log SET outcome = 'abandoned', abandoned_at = ?, duration_ms = ?, diagnostic = ? WHERE story_id = ? AND outcome IS NULL").run(abandonedAt, durationMin * 60000, diagnostic, story.story_id); } catch {}
+          try { db.prepare("UPDATE claim_log SET outcome = 'abandoned', abandoned_at = ?, duration_ms = ?, diagnostic = ? WHERE story_id = ? AND outcome IS NULL").run(abandonedAt, durationMin * 60000, diagnostic, story.story_id); } catch (e) { logger.warn("[cleanup] claim_log update failed: " + String(e), { runId: step.run_id }); }
           failRun(step.run_id);
           emitEvent({ ts: new Date().toISOString(), event: "story.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, storyId: story.story_id, storyTitle: story.title, detail: `Abandoned — ${diagnostic}` });
           emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: "Story abandoned and abandon limit reached" });
@@ -134,7 +134,7 @@ export function cleanupAbandonedSteps(advancePipeline: (runId: string) => { adva
           db.prepare("UPDATE stories SET status = 'pending', abandoned_count = ?, updated_at = ? WHERE id = ?").run(newAbandonCount, abandonedAt, story.id);
           db.prepare("UPDATE steps SET status = 'pending', current_story_id = NULL, abandoned_count = ?, updated_at = ? WHERE id = ?").run(newAbandonCount, abandonedAt, step.id);
           // Resolve claim_log
-          try { db.prepare("UPDATE claim_log SET outcome = 'abandoned', abandoned_at = ?, duration_ms = ?, diagnostic = ? WHERE story_id = ? AND outcome IS NULL").run(abandonedAt, durationMin * 60000, diagnostic, story.story_id); } catch {}
+          try { db.prepare("UPDATE claim_log SET outcome = 'abandoned', abandoned_at = ?, duration_ms = ?, diagnostic = ? WHERE story_id = ? AND outcome IS NULL").run(abandonedAt, durationMin * 60000, diagnostic, story.story_id); } catch (e) { logger.warn("[cleanup] claim_log update failed: " + String(e), { runId: step.run_id }); }
           emitEvent({ ts: new Date().toISOString(), event: "step.timeout", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: `Story ${story.story_id} abandoned — ${diagnostic}` });
           logger.info(`Abandoned step reset to pending (story abandon ${newAbandonCount})`, { runId: step.run_id, stepId: step.step_id });
         }
@@ -156,7 +156,7 @@ export function cleanupAbandonedSteps(advancePipeline: (runId: string) => { adva
         "UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?"
       ).run(new Date().toISOString(), step.run_id);
       // Resolve claim_log
-      try { db.prepare("UPDATE claim_log SET outcome = 'abandoned', abandoned_at = ?, diagnostic = ? WHERE run_id = ? AND step_id = ? AND outcome IS NULL").run(new Date().toISOString(), singleDiagnostic, step.run_id, step.step_id); } catch {}
+      try { db.prepare("UPDATE claim_log SET outcome = 'abandoned', abandoned_at = ?, diagnostic = ? WHERE run_id = ? AND step_id = ? AND outcome IS NULL").run(new Date().toISOString(), singleDiagnostic, step.run_id, step.step_id); } catch (e) { logger.warn("[cleanup] claim_log update failed: " + String(e), { runId: step.run_id }); }
       const wfId = getWorkflowId(step.run_id);
       emitEvent({ ts: new Date().toISOString(), event: "step.timeout", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: `Retries exhausted — ${singleDiagnostic}` });
       emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: singleDiagnostic });
@@ -168,7 +168,7 @@ export function cleanupAbandonedSteps(advancePipeline: (runId: string) => { adva
         "UPDATE steps SET status = 'pending', abandoned_count = ?, updated_at = ? WHERE id = ?"
       ).run(newAbandonCount, new Date().toISOString(), step.id);
       // Resolve claim_log
-      try { db.prepare("UPDATE claim_log SET outcome = 'abandoned', abandoned_at = ?, diagnostic = ? WHERE run_id = ? AND step_id = ? AND outcome IS NULL").run(new Date().toISOString(), singleDiagnostic, step.run_id, step.step_id); } catch {}
+      try { db.prepare("UPDATE claim_log SET outcome = 'abandoned', abandoned_at = ?, diagnostic = ? WHERE run_id = ? AND step_id = ? AND outcome IS NULL").run(new Date().toISOString(), singleDiagnostic, step.run_id, step.step_id); } catch (e) { logger.warn("[cleanup] claim_log update failed: " + String(e), { runId: step.run_id }); }
       emitEvent({ ts: new Date().toISOString(), event: "step.timeout", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, detail: `Reset to pending — ${singleDiagnostic}` });
     }
   }

@@ -63,8 +63,8 @@ export function copyStitchToWorktree(repo: string, worktreeDir: string): void {
       }
     }
     logger.info(`[worktree] Copied stitch/ assets to ${worktreeDir}`, {});
-  } catch {
-    // Best effort — missing design files are non-fatal
+  } catch (e) {
+    logger.warn(`[worktree] Failed to copy stitch/ assets to ${worktreeDir}: ${String(e)}`, {});
   }
 }
 
@@ -92,13 +92,13 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
             logger.info(`[worktree] Stale cross-project worktree: ${worktreeDir} belongs to ${worktreeRepo}, current repo is ${repo}`, {});
           }
         }
-      } catch {}
+      } catch (e) { logger.warn(`[worktree] Failed to read .git file in ${worktreeDir}: ${String(e)}`, {}); }
     } else {
       // No .git file — orphaned directory
       shouldRemove = true;
     }
     if (shouldRemove) {
-      try { fs.rmSync(worktreeDir, { recursive: true, force: true }); } catch {}
+      try { fs.rmSync(worktreeDir, { recursive: true, force: true }); } catch (e) { logger.warn(`[worktree] Failed to remove stale worktree ${worktreeDir}: ${String(e)}`, {}); }
     }
   }
 
