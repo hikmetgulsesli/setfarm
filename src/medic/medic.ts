@@ -175,6 +175,21 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
 case "restart_service": {      if (!finding.serviceName) return false;      try {        execFileSync("systemctl", ["--user", "start", finding.serviceName], {          encoding: "utf-8",          timeout: 10000,        });        emitEvent({          ts: new Date().toISOString(),          event: "step.done" as EventType,          runId: finding.runId ?? "",          detail: "Medic: restarted offline service " + finding.serviceName,        });        return true;      } catch (err) {        return false;      }    }
 
     case "restart_gateway": {
+      // Uptime guard: if gateway started < 30min ago, restart won't help.
+      // Persistent stalling on a fresh gateway = API-side issue (rate limits).
+      try {
+        const uptimeOut = execFileSync("systemctl", [
+          "--user", "show", "openclaw-gateway", "--property=ActiveEnterTimestamp"
+        ], { encoding: "utf-8", timeout: 5000 }).trim();
+        const tsMatch = uptimeOut.match(/ActiveEnterTimestamp=(.+)/);
+        if (tsMatch) {
+          const uptimeMs = Date.now() - new Date(tsMatch[1]).getTime();
+          if (uptimeMs < 30 * 60 * 1000) {
+            logger.warn(`[medic] gateway restart skipped — uptime ${Math.round(uptimeMs / 60000)}min < 30min (issue likely API-side)`, {});
+            return false;
+          }
+        }
+      } catch { /* systemctl show failed — proceed with restart */ }
       try {
         execFileSync("systemctl", ["--user", "restart", "openclaw-gateway"], {
           encoding: "utf-8",

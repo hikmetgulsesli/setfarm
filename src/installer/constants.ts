@@ -16,6 +16,15 @@ export const FAST_ABANDONED_THRESHOLD_MS = 300_000; // 5 min
 /** Max abandon resets before failing the step/story permanently */
 export const MAX_ABANDON_RESETS = 3;
 
+/** Steps that need longer abandon thresholds (Stitch API, complex builds) */
+export const SLOW_STEP_IDS = new Set(["design", "implement", "setup-repo", "setup-build"]);
+
+/** Extended threshold for slow steps (first abandon) */
+export const SLOW_ABANDONED_THRESHOLD_MS = 1_500_000; // 25 min
+
+/** Extended fast threshold for slow steps (repeat abandons) */
+export const SLOW_FAST_ABANDONED_THRESHOLD_MS = 900_000; // 15 min
+
 // ── Cleanup Throttle ────────────────────────────────────────────────
 
 /** Throttle interval for cleanupAbandonedSteps (matches cron interval) */

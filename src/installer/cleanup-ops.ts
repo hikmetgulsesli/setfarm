@@ -16,6 +16,9 @@ import { teardownWorkflowCronsIfIdle } from "./agent-cron.js";
 import {
   BASE_ABANDONED_THRESHOLD_MS,
   FAST_ABANDONED_THRESHOLD_MS,
+  SLOW_STEP_IDS,
+  SLOW_ABANDONED_THRESHOLD_MS,
+  SLOW_FAST_ABANDONED_THRESHOLD_MS,
   MAX_ABANDON_RESETS,
 } from "./constants.js";
 import { autoSaveWorktree } from "./worktree-ops.js";
@@ -64,6 +67,14 @@ export function cleanupAbandonedSteps(advancePipeline: (runId: string) => { adva
   ).all(BASE_ABANDONED_THRESHOLD_MS, FAST_ABANDONED_THRESHOLD_MS) as { id: string; step_id: string; run_id: string; retry_count: number; max_retries: number; type: string; current_story_id: string | null; loop_config: string | null; abandoned_count: number; agent_id: string; updated_at: string }[];
 
   for (const step of abandonedSteps) {
+    // Per-step threshold: slow steps (design, implement) get more time
+    const isSlow = SLOW_STEP_IDS.has(step.step_id);
+    const baseThreshold = isSlow ? SLOW_ABANDONED_THRESHOLD_MS : BASE_ABANDONED_THRESHOLD_MS;
+    const fastThreshold = isSlow ? SLOW_FAST_ABANDONED_THRESHOLD_MS : FAST_ABANDONED_THRESHOLD_MS;
+    const elapsedMs = (Date.now() - new Date(step.updated_at).getTime());
+    const threshold = step.abandoned_count === 0 ? baseThreshold : fastThreshold;
+    if (elapsedMs < threshold) continue; // not yet abandoned for this step type
+
     if (step.type === "loop" && !step.current_story_id && step.loop_config) {
       try {
         const loopConfig: LoopConfig = JSON.parse(step.loop_config);
