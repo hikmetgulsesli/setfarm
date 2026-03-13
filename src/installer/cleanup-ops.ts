@@ -103,8 +103,8 @@ export function cleanupAbandonedSteps(advancePipeline: (runId: string) => { adva
           const ctx = getRunContext(step.run_id);
           const repo = ctx.repo || ctx.REPO;
           if (repo) autoSaveWorktree(repo, story.story_id, step.agent_id);
-        } catch {
-          // Best effort — don't block abandon handling
+        } catch (e) {
+          logger.warn(`[cleanup] auto-save worktree failed: ${String(e)}`, { runId: step.run_id });
         }
 
         const newAbandonCount = (story.abandoned_count ?? 0) + 1;

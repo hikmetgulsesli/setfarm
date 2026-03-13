@@ -64,8 +64,8 @@ export function parseOutputKeyValues(output: string): Record<string, string> {
         }
       }
       return result;
-    } catch {
-      // Not valid JSON — fall through to line-based parsing
+    } catch (e) {
+      logger.warn(`[parseOutputKeyValues] JSON parse failed — falling back to line-based parsing: ${String(e)}`, {});
     }
   }
 

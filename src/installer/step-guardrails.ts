@@ -176,7 +176,11 @@ export function processSetupDesignContracts(
               if (!row) continue;
               const criterion = `Must implement screen ${screen.screenId} (${screen.name}) — read stitch/${screen.screenId}.html`;
               if (!row.acceptance_criteria.includes(screen.screenId)) {
-                const updated = row.acceptance_criteria + `\n- [SCREEN] ${criterion}`;
+                // v1.5.53: Parse as JSON array before appending (was raw string concat → broke JSON)
+                let acArr: string[] = [];
+                try { acArr = JSON.parse(row.acceptance_criteria); } catch { acArr = [row.acceptance_criteria]; }
+                acArr.push(criterion);
+                const updated = JSON.stringify(acArr);
                 db.prepare("UPDATE stories SET acceptance_criteria = ?, updated_at = ? WHERE id = ?")
                   .run(updated, new Date().toISOString(), row.id);
               }

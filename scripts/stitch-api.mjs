@@ -538,13 +538,39 @@ const commands = {
         if (item.type === 'text') {
           try {
             const parsed = JSON.parse(item.text);
-            // Screen object may be at top level or nested under .screen
             const screen = parsed.screen || parsed;
-            htmlUrl = screen.htmlCode?.downloadUrl || screen.html_code?.download_url || null;
+            htmlUrl = screen.htmlUrl || screen.htmlCode?.downloadUrl || screen.html_code?.download_url || null;
             if (htmlUrl) break;
           } catch { /* skip */ }
         }
       }
+    }
+
+    // Fallback: list-screens to find htmlUrl
+    if (!htmlUrl) {
+      const screens = parseScreenList(await callTool('list_screens', { projectId }));
+      const target = screens.find(s => {
+        const sid = (s.name || '').replace(/^projects\/\d+\/screens\//, '') || s.id || s.screenId;
+        return sid === screenId;
+      });
+      htmlUrl = target?.htmlUrl || target?.htmlCode?.downloadUrl || target?.html_code?.download_url || null;
+    }
+
+    // Fallback: local tracking file
+    if (!htmlUrl) {
+      try {
+        const trackingFile = resolve(process.cwd(), '.stitch-screens.json');
+        const tracked = JSON.parse(readFileSync(trackingFile, 'utf-8'));
+        const local = tracked.find(t => t.screenId === screenId);
+        if (local?.localHtml) {
+          // Already downloaded locally — just copy
+          const { copyFileSync } = await import('node:fs');
+          copyFileSync(local.localHtml, outputPath);
+          console.log(JSON.stringify({ path: outputPath, size: readFileSync(outputPath).length, source: 'local-cache' }, null, 2));
+          return;
+        }
+        htmlUrl = local?.htmlUrl || null;
+      } catch { /* no tracking file */ }
     }
 
     if (!htmlUrl) throw new Error(`No HTML download URL found for screen ${screenId}`);
@@ -611,7 +637,7 @@ const commands = {
         title,
         htmlFile: `${title.replace(/[^a-zA-Z0-9_-]/g, '-')}.html`,
         deviceType: s.deviceType || s.device_type || 'DESKTOP',
-        htmlUrl: s.htmlCode?.downloadUrl || s.html_code?.download_url || null,
+        htmlUrl: s.htmlUrl || s.htmlCode?.downloadUrl || s.html_code?.download_url || null,
       };
     });
 

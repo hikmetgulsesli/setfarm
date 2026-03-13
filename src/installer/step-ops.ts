@@ -871,6 +871,17 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     context["story_workdir"] = context["story_workdir"].replace(/^~\//, os.homedir() + "/");
   }
 
+  // FIX 1: Explicit fail interceptor — agent reported STATUS: fail/error
+  const statusVal = parsed["status"]?.toLowerCase();
+  if (statusVal === "fail" || statusVal === "failed" || statusVal === "error") {
+    logger.warn(`Agent reported STATUS: ${parsed["status"]} — failing step`, { runId: step.run_id, stepId: step.step_id });
+    failStep(stepId, `Agent reported failure: ${parsed["status"]}. Output: ${output.slice(0, 500)}`);
+    return { advanced: false, runCompleted: false };
+  }
+
+  // FIX 6: Status is ephemeral — do not propagate upstream status to downstream steps
+  delete context["status"];
+
   // No fallback extraction — if upstream didn't output required keys,
   // the missing input guard will catch it and fail cleanly.
 
@@ -1154,10 +1165,16 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     // Look up story info for event
     const storyRow = getStoryInfo(step.current_story_id);
 
-    // v9.0: Check if agent output STATUS: skip — mark story as skipped instead of done
+    // v9.0: Check agent STATUS — skip, fail/error (defense-in-depth), or done
     const statusVal = parsed["status"]?.toLowerCase();
-    const storyStatus = statusVal === "skip" ? "skipped" : "done";
-    const storyEvent = statusVal === "skip" ? "story.skipped" : "story.done";
+    let storyStatus: string, storyEvent: string;
+    if (statusVal === "fail" || statusVal === "failed" || statusVal === "error") {
+      storyStatus = "failed"; storyEvent = "story.failed";
+    } else if (statusVal === "skip") {
+      storyStatus = "skipped"; storyEvent = "story.skipped";
+    } else {
+      storyStatus = "done"; storyEvent = "story.done";
+    }
 
     // Mark current story done or skipped + persist PR context for verify_each
     // FIX: Remove context fallback to prevent cross-contamination between parallel stories
@@ -1166,7 +1183,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     db.prepare(
       "UPDATE stories SET status = ?, output = ?, pr_url = ?, story_branch = ?, updated_at = ? WHERE id = ?"
     ).run(storyStatus, output, storyPrUrl, storyBranchName, new Date().toISOString(), step.current_story_id);
-    emitEvent({ ts: new Date().toISOString(), event: storyEvent, runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: storyRow?.story_id, storyTitle: storyRow?.title });
+    emitEvent({ ts: new Date().toISOString(), event: storyEvent as import("./events.js").EventType, runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: storyRow?.story_id, storyTitle: storyRow?.title });
     logger.info(`Story ${storyStatus}: ${storyRow?.story_id} — ${storyRow?.title}`, { runId: step.run_id, stepId: step.step_id });
 
     // v1.5.50: Resolve claim_log outcome
@@ -1282,7 +1299,8 @@ function handleVerifyEachCompletion(
   context: Record<string, string>
 ): { advanced: boolean; runCompleted: boolean } {
   const db = getDb();
-  const status = context["status"]?.toLowerCase();
+  const parsedOutput = parseOutputKeyValues(output);
+  const status = parsedOutput["status"]?.toLowerCase() || context["status"]?.toLowerCase();
 
   // Atomic guard: prevent parallel crons from double-completing the same verify step.
   // Only proceed if we are the one that transitions it from running → waiting.

@@ -413,7 +413,7 @@ steps:
       Set up the repository and download design assets.
       Run this single command to do everything:
 
-      bash /Users/setrox/.openclaw/setfarm-repo/scripts/setup-repo.sh {{repo}} {{branch}} {{stitch_project_id}} '{{screen_map}}'
+      bash /home/setrox/.openclaw/setfarm-repo/scripts/setup-repo.sh {{repo}} {{branch}} {{stitch_project_id}} '{{screen_map}}'
 
       The script handles: git init, GitHub remote, .gitignore, branch, stitch download, push.
       Report the script output as your output. If it prints STATUS: fail, report STATUS: fail.
