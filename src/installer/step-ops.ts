@@ -198,6 +198,55 @@ export function claimStep(agentId: string): ClaimResult {
     }
   }
 
+  // DEPLOY ENV GUARD: Auto-generate .env for projects with auth/DB before deploy
+  if (step.step_id === "deploy") {
+    const dCtx = getRunContext(step.run_id);
+    const repoPath = dCtx["repo"] || "";
+    if (repoPath && !fs.existsSync(path.join(repoPath, ".env"))) {
+      const envLines: string[] = [];
+      // DB connection — prefer external DB
+      const dbUrl = dCtx["database_url"] || "";
+      const dbHost = dCtx["db_host"] || "72.61.186.46";
+      const dbPort = dCtx["db_port"] || "37550";
+      const dbName = dCtx["db_name"] || path.basename(repoPath).replace(/-/g, "_");
+      const dbUser = dCtx["db_user"] || "postgres";
+      const dbPass = dCtx["db_password"] || "lckdvtbwghdzhxxh";
+      if (dbUrl) {
+        envLines.push(`DATABASE_URL=${dbUrl}`);
+      } else {
+        // Check if project uses Prisma/DB
+        const pkgPath = path.join(repoPath, "package.json");
+        if (fs.existsSync(pkgPath)) {
+          try {
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+            const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
+            if (allDeps["prisma"] || allDeps["@prisma/client"] || allDeps["drizzle-orm"] || allDeps["typeorm"]) {
+              envLines.push(`DATABASE_URL=postgresql://${dbUser}:${dbPass}@${dbHost}:${dbPort}/${dbName}`);
+            }
+          } catch {}
+        }
+      }
+      // NextAuth secret
+      const pkgPath2 = path.join(repoPath, "package.json");
+      if (fs.existsSync(pkgPath2)) {
+        try {
+          const pkg2 = JSON.parse(fs.readFileSync(pkgPath2, "utf-8"));
+          const allDeps2 = { ...pkg2.dependencies, ...pkg2.devDependencies };
+          if (allDeps2["next-auth"] || allDeps2["@auth/core"]) {
+            const secret = execFileSync("openssl", ["rand", "-base64", "32"], { timeout: 5000 }).toString().trim();
+            const hostname = path.basename(repoPath);
+            envLines.push(`NEXTAUTH_SECRET=${secret}`);
+            envLines.push(`NEXTAUTH_URL=https://${hostname}.setrox.com.tr`);
+          }
+        } catch {}
+      }
+      if (envLines.length > 0) {
+        fs.writeFileSync(path.join(repoPath, ".env"), envLines.join("\n") + "\n");
+        logger.info(`[deploy-env] Generated .env with ${envLines.length} var(s): ${envLines.map(l => l.split("=")[0]).join(", ")}`, { runId: step.run_id });
+      }
+    }
+  }
+
   // Get run context
   const context: Record<string, string> = getRunContext(step.run_id);
 
