@@ -362,8 +362,18 @@ const commands = {
     try {
       const existing = JSON.parse(readFileSync(stitchFile, 'utf-8'));
       if (existing.projectId) {
-        console.log(JSON.stringify({ projectId: existing.projectId, source: 'stitch-file' }, null, 2));
-        return;
+        // v1.5.60: Validate project has screens before reusing
+        const stitchDir = resolve(repoPath, 'stitch');
+        let htmlCount = 0;
+        try { htmlCount = readdirSync(stitchDir).filter(f => f.endsWith('.html')).length; } catch {}
+        let trackedCount = 0;
+        try { trackedCount = JSON.parse(readFileSync(resolve(repoPath, '.stitch-screens.json'), 'utf-8')).length; } catch {}
+        if (htmlCount > 0 || trackedCount > 0) {
+          console.log(JSON.stringify({ projectId: existing.projectId, source: 'stitch-file' }, null, 2));
+          return;
+        }
+        process.stderr.write('Existing project ' + existing.projectId + ' has no screens — creating new
+');
       }
     } catch { /* no .stitch file or invalid */ }
 
@@ -610,7 +620,20 @@ const commands = {
       } catch (e) { console.error('Warning: get_project fallback failed: ' + e.message); }
     }
 
-    // Fallback 2: if still empty, use provided screen IDs with get_screen
+    // Fallback 2b: use local tracking file (most reliable — has eager-downloaded HTML paths)
+    if (screens.length === 0) {
+      const trackingFile = resolve(process.cwd(), '.stitch-screens.json');
+      try {
+        const tracked = JSON.parse(readFileSync(trackingFile, 'utf-8'));
+        if (Array.isArray(tracked) && tracked.length > 0) {
+          screens = tracked;
+          process.stderr.write('Recovered ' + screens.length + ' screens from .stitch-screens.json fallback
+');
+        }
+      } catch {}
+    }
+
+    // Fallback 3: if still empty, use provided screen IDs with get_screen
     if (screens.length === 0 && screenIdArgs.length > 0) {
       const ids = screenIdArgs.join(',').split(',').filter(Boolean);
       for (const sid of ids) {
@@ -632,12 +655,14 @@ const commands = {
     const manifest = screens.map(s => {
       const screenId = (s.name || '').replace(/^projects\/\d+\/screens\//, '') || s.id || s.screenId;
       const title = s.title || s.displayName || 'Untitled';
+      const localHtml = s.localHtml || null;
       return {
         screenId,
         title,
         htmlFile: `${title.replace(/[^a-zA-Z0-9_-]/g, '-')}.html`,
         deviceType: s.deviceType || s.device_type || 'DESKTOP',
         htmlUrl: s.htmlUrl || s.htmlCode?.downloadUrl || s.html_code?.download_url || null,
+        localHtml,
       };
     });
 
