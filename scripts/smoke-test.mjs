@@ -1,13 +1,16 @@
 #!/usr/bin/env node
 /**
- * Smoke Test v4 — Hybrid: static analysis + agent-browser interactive check.
+ * Smoke Test v5 — Hybrid: static analysis + agent-browser interactive check.
  *
  * Phase 1 (fast): Component wiring, route discovery — pure filesystem
  * Phase 2 (browser): Homepage load, primary button click, placeholder detection
  * Phase 3 (browser): Link validation — navigate internal links, check for errors
  * Phase 4 (browser): Button functionality — click buttons, verify responses
  * Phase 5 (browser): Form testing — fill inputs, submit forms
- * Phase 6 (browser): Console error collection — JS error aggregation
+ * Phase 7  (browser): Visual & Asset Integrity — icons, images, font loading
+ * Phase 8  (browser): Layout & UX Glitches — overflow, duplicate IDs, z-index overlap
+ * Phase 9  (browser): Network Silent Failures — fetch/XHR error collection
+ * Phase 10 (browser): Console error collection — JS error aggregation
  *   Uses agent-browser CLI for real browser interaction
  *
  * Usage: node smoke-test.mjs <repo-path> [--port PORT] [--timeout MS]
@@ -173,12 +176,23 @@ function getJsErrorCount() {
   return parseInt(result || '0', 10) || 0;
 }
 
-/** Inject the error collector into the current page */
+/** Inject error collector + network watcher into the current page */
 function injectErrorCollector() {
   abOk('eval',
     'window.__smoke_errors=[];' +
     'window.addEventListener("error", e => window.__smoke_errors.push(e.message));' +
-    'window.addEventListener("unhandledrejection", e => window.__smoke_errors.push(e.reason?.message || String(e.reason)))'
+    'window.addEventListener("unhandledrejection", e => window.__smoke_errors.push(e.reason?.message || String(e.reason)));' +
+    'if(!window.__smoke_net_patched){window.__smoke_net_patched=true;window.__smoke_network_errors=[];' +
+    'var _f=window.fetch;window.fetch=function(){var a=arguments;' +
+    'return _f.apply(this,a).then(function(r){' +
+    'if(!r.ok)window.__smoke_network_errors.push("FETCH "+r.status+" "+String(a[0]).substring(0,120));' +
+    'return r}).catch(function(e){window.__smoke_network_errors.push("FETCH_ERR "+e.message);throw e})};' +
+    'var _x=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){' +
+    'this.__su=String(u).substring(0,120);this.__sm=m;_x.apply(this,arguments)};' +
+    'var _s=XMLHttpRequest.prototype.send;XMLHttpRequest.prototype.send=function(){' +
+    'var x=this;x.addEventListener("loadend",function(){' +
+    'if(x.status>=400)window.__smoke_network_errors.push("XHR "+x.status+" "+x.__sm+" "+x.__su)});' +
+    '_s.apply(this,arguments)}}'
   );
 }
 
@@ -482,14 +496,13 @@ async function main() {
       }
 
 
-      // ── Phase 5.5: Icon Render Check ──────────────────────────────
-      const PHASE55_MAX_MS = 10000; // 10s max
+      // ── Phase 7: Visual & Asset Integrity ─────────────────────
       try {
-        // Navigate back to homepage
         ab('open', baseUrl);
         await sleep(1500);
+        injectErrorCollector();
 
-        const iconJson = abOk('eval',
+        const visualJson = abOk('eval',
           'return JSON.stringify((function() {' +
           '  var issues = [];' +
           '  document.querySelectorAll("svg").forEach(function(svg) {' +
@@ -504,8 +517,14 @@ async function main() {
           '    "span[class*=icon], span[class*=fa-], span[class*=material]";' +
           '  document.querySelectorAll(iconSel).forEach(function(el) {' +
           '    var r = el.getBoundingClientRect();' +
+          '    var cs = window.getComputedStyle(el);' +
           '    if (r.width === 0 && r.height === 0) {' +
           '      issues.push({type:"font-icon-zero", detail: el.className});' +
+          '    } else if (cs.content === "none" || cs.content === "normal" || cs.content === "") {' +
+          '      var ff = cs.fontFamily || "";' +
+          '      if (/awesome|material|icon/i.test(ff)) {' +
+          '        issues.push({type:"font-icon-empty", detail: el.className + " (" + ff.split(",")[0] + ")"});' +
+          '      }' +
           '    }' +
           '  });' +
           '  document.querySelectorAll("img").forEach(function(img) {' +
@@ -513,35 +532,89 @@ async function main() {
           '      issues.push({type:"broken-img", detail: img.src.split("/").pop()});' +
           '    }' +
           '  });' +
+          '  var failed = Array.from(document.fonts).filter(function(f){return f.status==="error"}).map(function(f){return f.family});' +
+          '  failed.forEach(function(f){ issues.push({type:"font-load-fail", detail: f}); });' +
           '  return issues;' +
           '})()'
         );
 
-        let iconIssuesFound = [];
-        try { iconIssuesFound = JSON.parse(iconJson || '[]'); } catch {}
+        let visualIssues = [];
+        try { visualIssues = JSON.parse(visualJson || '[]'); } catch {}
 
-        if (Array.isArray(iconIssuesFound) && iconIssuesFound.length > 0) {
+        if (Array.isArray(visualIssues) && visualIssues.length > 0) {
           const byType = {};
-          for (const i of iconIssuesFound) {
-            byType[i.type] = (byType[i.type] || 0) + 1;
-          }
+          for (const i of visualIssues) { byType[i.type] = (byType[i.type] || 0) + 1; }
           const summary = Object.entries(byType).map(([t,c]) => c + ' ' + t).join(', ');
-          failures.push('[ICON] ' + iconIssuesFound.length + ' icon rendering issue(s): ' + summary);
-          for (const i of iconIssuesFound.slice(0, 5)) {
-            failures.push('[ICON]   ' + i.type + ': ' + i.detail);
+          failures.push('[VISUAL] ' + visualIssues.length + ' visual issue(s): ' + summary);
+          for (const i of visualIssues.slice(0, 5)) {
+            failures.push('[VISUAL]   ' + i.type + ': ' + i.detail);
           }
         }
       } catch (e) {
-        failures.push('[ICON] Phase 5.5 error: ' + e.message);
+        failures.push('[VISUAL] Phase 7 error: ' + e.message);
       }
 
-      // ── Phase 6 (collect): Gather console errors ──────────────────
+      // ── Phase 8: Layout & UX Glitches ─────────────────────────
+      try {
+        const layoutJson = abOk('eval',
+          'return JSON.stringify((function() {' +
+          '  var issues = [];' +
+          '  if (document.documentElement.scrollWidth > window.innerWidth + 5) {' +
+          '    issues.push({type:"h-overflow", detail: "scrollW=" + document.documentElement.scrollWidth + " vp=" + window.innerWidth});' +
+          '  }' +
+          '  var ids = []; document.querySelectorAll("[id]").forEach(function(el){ ids.push(el.id); });' +
+          '  var seen = {}; var dupes = [];' +
+          '  ids.forEach(function(id){ if(seen[id] && dupes.indexOf(id)===-1) dupes.push(id); seen[id]=true; });' +
+          '  if (dupes.length > 0) {' +
+          '    issues.push({type:"duplicate-id", detail: dupes.slice(0,10).join(", ")});' +
+          '  }' +
+          '  document.querySelectorAll("button, a[href], [role=button]").forEach(function(el) {' +
+          '    var r = el.getBoundingClientRect();' +
+          '    if (r.width === 0 || r.height === 0 || r.top < 0 || r.left < 0) return;' +
+          '    var cx = r.left + r.width/2; var cy = r.top + r.height/2;' +
+          '    var top = document.elementFromPoint(cx, cy);' +
+          '    if (top && top !== el && !el.contains(top) && !top.contains(el)) {' +
+          '      var tn = (el.textContent || "").trim().substring(0,30) || el.tagName;' +
+          '      var bn = top.tagName + (top.className ? "." + String(top.className).split(" ")[0] : "");' +
+          '      issues.push({type:"z-overlap", detail: tn + " blocked by " + bn});' +
+          '    }' +
+          '  });' +
+          '  return issues;' +
+          '})()'
+        );
+
+        let layoutIssues = [];
+        try { layoutIssues = JSON.parse(layoutJson || '[]'); } catch {}
+
+        if (Array.isArray(layoutIssues) && layoutIssues.length > 0) {
+          for (const i of layoutIssues) {
+            failures.push('[LAYOUT] ' + i.type + ': ' + i.detail);
+          }
+        }
+      } catch (e) {
+        failures.push('[LAYOUT] Phase 8 error: ' + e.message);
+      }
+
+      // ── Phase 9: Network Silent Failures ──────────────────────
+      let networkErrors = [];
+      try {
+        const netJson = abOk('eval', 'return JSON.stringify(window.__smoke_network_errors || [])');
+        try { networkErrors = JSON.parse(netJson || '[]'); } catch {}
+        if (Array.isArray(networkErrors) && networkErrors.length > 0) {
+          networkErrors = networkErrors.slice(0, 20);
+          failures.push('[NETWORK] ' + networkErrors.length + ' silent API failure(s): ' + networkErrors.slice(0, 3).join('; '));
+        }
+      } catch (e) {
+        failures.push('[NETWORK] Phase 9 error: ' + e.message);
+      }
+
+      // ── Phase 10 (collect): Gather console errors ─────────────
       try {
         const errJson = abOk('eval', 'return JSON.stringify(window.__smoke_errors || [])');
         try {
           const errors = JSON.parse(errJson || '[]');
           if (Array.isArray(errors) && errors.length > 0) {
-            consoleErrors = errors.slice(0, 20); // Cap at 20
+            consoleErrors = errors.slice(0, 20);
             failures.push('[CONSOLE] ' + errors.length + ' JS error(s) collected: ' + errors.slice(0, 3).join('; '));
           }
         } catch {}
@@ -567,7 +640,9 @@ async function main() {
     linksBroken,
     buttonsChecked,
     formsChecked,
-    iconIssues: failures.filter(f => f.startsWith("[ICON]")).length,
+    visualIssues: failures.filter(f => f.startsWith('[VISUAL]')).length,
+    layoutIssues: failures.filter(f => f.startsWith('[LAYOUT]')).length,
+    networkErrors: failures.filter(f => f.startsWith('[NETWORK]')).length,
     consoleErrors,
     failures,
   };
