@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Smoke Test v6 — Hybrid: static analysis + agent-browser interactive check.
+ * Smoke Test v7 — Hybrid: static analysis + agent-browser interactive check.
  *
  * Phase 1 (fast): Component wiring, route discovery — pure filesystem
  * Phase 2 (browser): Homepage load, primary button click, placeholder detection
@@ -12,7 +12,9 @@
  * Phase 8  (browser): Layout & UX Glitches — overflow, duplicate IDs, z-index overlap
  * Phase 9  (browser): Network Silent Failures — fetch/XHR error collection
  * Phase 10 (browser): Console error collection — JS error aggregation
- * Phase 11 (browser): Hydration & Interactivity — stalled UI, unresponsive buttons
+ * Phase 11 (browser): Hydration & Interactivity
+ * Phase 13 (browser): Content Sanity — hallucinated text, debug artifacts, raw vars
+ * Phase 14 (browser): Interaction Dead-Ends — buttons with no DOM response — stalled UI, unresponsive buttons
  *   Uses agent-browser CLI for real browser interaction
  *
  * Usage: node smoke-test.mjs <repo-path> [--port PORT] [--timeout MS]
@@ -759,6 +761,106 @@ async function main() {
       } catch (e) {
         failures.push('[HYDRATION] Phase 11 error: ' + e.message);
       }
+
+      // ── Phase 13: Content Sanity (Hallucination Checker) ──────
+      try {
+        const contentJson = abOk('eval',
+          'return JSON.stringify((function() {' +
+          '  var issues = [];' +
+          '  var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);' +
+          '  var hallucinationRe = /\\b(undefined|null|NaN|\\[object Object\\]|lorem ipsum|TODO:|FIXME:|HACK:|XXX:)\\b/i;' +
+          '  var debugRe = /\\{\\{\\s*\\w+\\s*\\}\\}|\\$\\{[^}]+\\}/;' +
+          '  var rawVarRe = /^(props\\.|state\\.|data\\.|item\\.)/;' +
+          '  var checked = 0;' +
+          '  while (walker.nextNode() && checked < 500) {' +
+          '    checked++;' +
+          '    var t = walker.currentNode.textContent.trim();' +
+          '    if (!t || t.length < 3 || t.length > 200) continue;' +
+          '    var parent = walker.currentNode.parentElement;' +
+          '    if (parent && (parent.tagName === "SCRIPT" || parent.tagName === "STYLE" || parent.tagName === "NOSCRIPT")) continue;' +
+          '    if (hallucinationRe.test(t)) {' +
+          '      issues.push({type:"hallucination", detail: t.substring(0,60)});' +
+          '    }' +
+          '    if (debugRe.test(t)) {' +
+          '      issues.push({type:"raw-template", detail: t.substring(0,60)});' +
+          '    }' +
+          '    if (rawVarRe.test(t)) {' +
+          '      issues.push({type:"raw-var", detail: t.substring(0,60)});' +
+          '    }' +
+          '  }' +
+          '  var imgs = document.querySelectorAll("img[alt]");' +
+          '  imgs.forEach(function(img) {' +
+          '    var alt = img.getAttribute("alt") || "";' +
+          '    if (/placeholder|lorem|sample|test image|untitled/i.test(alt)) {' +
+          '      issues.push({type:"placeholder-alt", detail: alt.substring(0,40)});' +
+          '    }' +
+          '  });' +
+          '  return issues;' +
+          '})()'
+        );
+
+        let contentIssues = [];
+        try { contentIssues = JSON.parse(contentJson || '[]'); } catch {}
+
+        if (Array.isArray(contentIssues) && contentIssues.length > 0) {
+          const byType = {};
+          for (const i of contentIssues) { byType[i.type] = (byType[i.type] || 0) + 1; }
+          const summary = Object.entries(byType).map(([t,c]) => c + ' ' + t).join(', ');
+          failures.push('[CONTENT] ' + contentIssues.length + ' content issue(s): ' + summary);
+          for (const i of contentIssues.slice(0, 5)) {
+            failures.push('[CONTENT]   ' + i.type + ': ' + i.detail);
+          }
+        }
+      } catch (e) {
+        failures.push('[CONTENT] Phase 13 error: ' + e.message);
+      }
+
+      // ── Phase 14: Interaction Dead-Ends (UX Feedback) ─────────
+      try {
+        ab('open', baseUrl);
+        await sleep(1500);
+        injectErrorCollector();
+
+        const uxJson = abOk('eval',
+          'return JSON.stringify((function() {' +
+          '  var issues = [];' +
+          '  var btns = document.querySelectorAll("button:not([disabled]), [role=button]:not([disabled])");' +
+          '  var tested = 0;' +
+          '  btns.forEach(function(btn) {' +
+          '    if (tested >= 5) return;' +
+          '    var text = (btn.textContent||"").trim().substring(0,30);' +
+          '    if (!text || /^(close|dismiss|cancel|x|\\u00d7)$/i.test(text)) return;' +
+          '    tested++;' +
+          '    var snapshot = document.body.innerHTML.length;' +
+          '    var mutated = false;' +
+          '    var obs = new MutationObserver(function() { mutated = true; });' +
+          '    obs.observe(document.body, {childList:true, subtree:true, attributes:true, characterData:true});' +
+          '    try { btn.click(); } catch(e) {}' +
+          '    var start = Date.now();' +
+          '    while (Date.now() - start < 100) {}' +
+          '    obs.disconnect();' +
+          '    var newSnapshot = document.body.innerHTML.length;' +
+          '    var domDelta = Math.abs(newSnapshot - snapshot);' +
+          '    var pctChange = snapshot > 0 ? (domDelta / snapshot * 100) : 0;' +
+          '    if (!mutated && pctChange < 0.5) {' +
+          '      issues.push({type:"dead-button", detail: text + " (0% DOM change)"});' +
+          '    }' +
+          '  });' +
+          '  return issues;' +
+          '})()'
+        );
+
+        let uxIssues = [];
+        try { uxIssues = JSON.parse(uxJson || '[]'); } catch {}
+
+        if (Array.isArray(uxIssues) && uxIssues.length > 0) {
+          for (const i of uxIssues) {
+            failures.push('[UX] ' + i.type + ': ' + i.detail);
+          }
+        }
+      } catch (e) {
+        failures.push('[UX] Phase 14 error: ' + e.message);
+      }
     }
 
     ab('close');
@@ -778,12 +880,16 @@ async function main() {
   const layoutCount = failures.filter(f => f.startsWith('[LAYOUT]')).length;
   const a11yCount = failures.filter(f => f.startsWith('[A11Y]')).length;
   const hydrationCount = failures.filter(f => f.startsWith('[HYDRATION]')).length;
+  const contentCount = failures.filter(f => f.startsWith('[CONTENT]')).length;
+  const uxCount = failures.filter(f => f.startsWith('[UX]')).length;
   if (consoleCount > 0) confidence -= 40;
   if (networkCount > 0) confidence -= 30;
   if (layoutCount > 0) confidence -= 20;
   if (visualCount > 0) confidence -= 10;
   if (a11yCount > 0) confidence -= 5;
   if (hydrationCount > 0) confidence -= 15;
+  if (contentCount > 0) confidence -= 15;
+  if (uxCount > 0) confidence -= 10;
   if (wiringIssues.length > 0) confidence -= 20;
   if (linksBroken > 0) confidence -= 10;
   confidence = Math.max(0, confidence);
@@ -804,6 +910,8 @@ async function main() {
     layoutIssues: layoutCount,
     networkErrors: networkCount,
     hydrationIssues: hydrationCount,
+    contentIssues: contentCount,
+    uxDeadEnds: uxCount,
     consoleErrors,
     failures,
   };
