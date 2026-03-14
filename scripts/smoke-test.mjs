@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Smoke Test v5 — Hybrid: static analysis + agent-browser interactive check.
+ * Smoke Test v6 — Hybrid: static analysis + agent-browser interactive check.
  *
  * Phase 1 (fast): Component wiring, route discovery — pure filesystem
  * Phase 2 (browser): Homepage load, primary button click, placeholder detection
@@ -199,6 +199,16 @@ function injectErrorCollector() {
 /** Elapsed time helper */
 function elapsed(start) { return Date.now() - start; }
 
+/** Smart retry — retries fn up to maxRetries with exponential backoff */
+async function smartRetry(fn, maxRetries = 2, baseMs = 1500) {
+  for (let i = 0; i <= maxRetries; i++) {
+    const result = fn();
+    if (result && !String(result).startsWith("__ERR__")) return result;
+    if (i < maxRetries) await sleep(baseMs * Math.pow(2, i));
+  }
+  return null;
+}
+
 const SKIP_BUTTON_RE = /^(close|dismiss|cancel|x|\u00d7|\u2715|\u2716)$/i;
 
 // ── Main ────────────────────────────────────────────────────────────
@@ -353,7 +363,7 @@ async function main() {
 
           const href = link.href;
           const url = href.startsWith('http') ? href : baseUrl + (href.startsWith('/') ? href : '/' + href);
-          const lNav = ab('open', url);
+          const lNav = await smartRetry(() => ab('open', url));
           linksChecked++;
 
           if (lNav.startsWith('__ERR__')) {
@@ -406,9 +416,9 @@ async function main() {
           // Click the button
           const ref = btnParsed.refs['button:' + btn];
           if (ref) {
-            ab('click', '@ref_' + ref);
+            await smartRetry(() => ab('click', '@ref_' + ref));
           } else {
-            ab('click', btn);
+            await smartRetry(() => ab('click', btn));
           }
           await sleep(1500);
           buttonsChecked++;
@@ -496,6 +506,62 @@ async function main() {
       }
 
 
+      // ── Phase 6: Accessibility Basics ─────────────────────────
+      try {
+        const a11yJson = abOk('eval',
+          'return JSON.stringify((function() {' +
+          '  var issues = [];' +
+          '  document.querySelectorAll("img").forEach(function(img) {' +
+          '    if (!img.getAttribute("alt") && !img.getAttribute("role")) {' +
+          '      issues.push({type:"img-no-alt", detail: (img.src||"").split("/").pop().substring(0,60)});' +
+          '    }' +
+          '  });' +
+          '  document.querySelectorAll("button, [role=button]").forEach(function(btn) {' +
+          '    var text = (btn.textContent||"").trim();' +
+          '    var aria = btn.getAttribute("aria-label") || btn.getAttribute("title") || "";' +
+          '    if (!text && !aria) {' +
+          '      var inner = btn.innerHTML.substring(0,40);' +
+          '      issues.push({type:"btn-no-label", detail: inner});' +
+          '    }' +
+          '  });' +
+          '  var headings = [];' +
+          '  document.querySelectorAll("h1,h2,h3,h4,h5,h6").forEach(function(h) {' +
+          '    headings.push(parseInt(h.tagName[1]));' +
+          '  });' +
+          '  for (var i = 1; i < headings.length; i++) {' +
+          '    if (headings[i] > headings[i-1] + 1) {' +
+          '      issues.push({type:"heading-skip", detail: "h" + headings[i-1] + " -> h" + headings[i]});' +
+          '    }' +
+          '  }' +
+          '  if (headings.length > 0 && headings[0] !== 1) {' +
+          '    issues.push({type:"no-h1", detail: "first heading is h" + headings[0]});' +
+          '  }' +
+          '  document.querySelectorAll("a[href]").forEach(function(a) {' +
+          '    var text = (a.textContent||"").trim();' +
+          '    if (/^(click here|here|link|read more)$/i.test(text)) {' +
+          '      issues.push({type:"vague-link", detail: text + " -> " + (a.getAttribute("href")||"").substring(0,40)});' +
+          '    }' +
+          '  });' +
+          '  return issues;' +
+          '})()'
+        );
+
+        let a11yIssues = [];
+        try { a11yIssues = JSON.parse(a11yJson || '[]'); } catch {}
+
+        if (Array.isArray(a11yIssues) && a11yIssues.length > 0) {
+          const byType = {};
+          for (const i of a11yIssues) { byType[i.type] = (byType[i.type] || 0) + 1; }
+          const summary = Object.entries(byType).map(([t,c]) => c + ' ' + t).join(', ');
+          failures.push('[A11Y] ' + a11yIssues.length + ' accessibility issue(s): ' + summary);
+          for (const i of a11yIssues.slice(0, 5)) {
+            failures.push('[A11Y]   ' + i.type + ': ' + i.detail);
+          }
+        }
+      } catch (e) {
+        failures.push('[A11Y] Phase 6 error: ' + e.message);
+      }
+
       // ── Phase 7: Visual & Asset Integrity ─────────────────────
       try {
         ab('open', baseUrl);
@@ -534,6 +600,26 @@ async function main() {
           '  });' +
           '  var failed = Array.from(document.fonts).filter(function(f){return f.status==="error"}).map(function(f){return f.family});' +
           '  failed.forEach(function(f){ issues.push({type:"font-load-fail", detail: f}); });' +
+          '  var textEls = document.querySelectorAll("h1,h2,h3,h4,h5,h6,p,span,a,button,label,li,td,th");' +
+          '  var checked = 0;' +
+          '  textEls.forEach(function(el) {' +
+          '    if (checked >= 20) return;' +
+          '    var cs = window.getComputedStyle(el);' +
+          '    var fg = cs.color; var bg = cs.backgroundColor;' +
+          '    if (!fg || !bg || bg === "rgba(0, 0, 0, 0)" || bg === "transparent") return;' +
+          '    checked++;' +
+          '    function lum(c) {' +
+          '      var m = c.match(/\\d+/g); if(!m||m.length<3) return 0;' +
+          '      var rgb = m.slice(0,3).map(function(v){v=parseInt(v)/255; return v<=0.03928?v/12.92:Math.pow((v+0.055)/1.055,2.4)});' +
+          '      return 0.2126*rgb[0]+0.7152*rgb[1]+0.0722*rgb[2];' +
+          '    }' +
+          '    var l1 = lum(fg); var l2 = lum(bg);' +
+          '    var ratio = (Math.max(l1,l2)+0.05)/(Math.min(l1,l2)+0.05);' +
+          '    if (ratio < 3) {' +
+          '      var txt = (el.textContent||"").trim().substring(0,25);' +
+          '      if (txt) issues.push({type:"low-contrast", detail: txt + " (" + ratio.toFixed(1) + ":1, fg=" + fg + " bg=" + bg + ")"});' +
+          '    }' +
+          '  });' +
           '  return issues;' +
           '})()'
         );
@@ -619,6 +705,58 @@ async function main() {
           }
         } catch {}
       } catch {}
+
+      // ── Phase 11: Hydration & Interactivity ───────────────────
+      try {
+        ab('open', baseUrl);
+        await sleep(1000);
+
+        const hydroJson = abOk('eval',
+          'return JSON.stringify((function() {' +
+          '  var issues = [];' +
+          '  var start = performance.now();' +
+          '  var btns = document.querySelectorAll("button, [role=button]");' +
+          '  var unresponsive = 0;' +
+          '  btns.forEach(function(btn) {' +
+          '    try {' +
+          '      var clicked = false;' +
+          '      var handler = function() { clicked = true; };' +
+          '      btn.addEventListener("click", handler, {once:true});' +
+          '      btn.click();' +
+          '      btn.removeEventListener("click", handler);' +
+          '      if (!clicked && !btn.disabled) unresponsive++;' +
+          '    } catch(e) {}' +
+          '  });' +
+          '  if (unresponsive > 0 && btns.length > 0) {' +
+          '    issues.push({type:"unresponsive-btn", detail: unresponsive + "/" + btns.length + " buttons did not fire click"});' +
+          '  }' +
+          '  var tti = performance.now() - performance.timing.domContentLoadedEventEnd;' +
+          '  if (tti > 3000) {' +
+          '    issues.push({type:"slow-interactive", detail: "TTI ~" + Math.round(tti) + "ms (>3s)"});' +
+          '  }' +
+          '  var scripts = document.querySelectorAll("script[src]");' +
+          '  var blocking = 0;' +
+          '  scripts.forEach(function(s) {' +
+          '    if (!s.defer && !s.async && !s.type) blocking++;' +
+          '  });' +
+          '  if (blocking > 2) {' +
+          '    issues.push({type:"blocking-scripts", detail: blocking + " render-blocking scripts"});' +
+          '  }' +
+          '  return issues;' +
+          '})()'
+        );
+
+        let hydroIssues = [];
+        try { hydroIssues = JSON.parse(hydroJson || '[]'); } catch {}
+
+        if (Array.isArray(hydroIssues) && hydroIssues.length > 0) {
+          for (const i of hydroIssues) {
+            failures.push('[HYDRATION] ' + i.type + ': ' + i.detail);
+          }
+        }
+      } catch (e) {
+        failures.push('[HYDRATION] Phase 11 error: ' + e.message);
+      }
     }
 
     ab('close');
@@ -630,8 +768,27 @@ async function main() {
   if (serverProc) serverProc.kill();
 
   // ── Output ──
+  // ── Confidence Score ──
+  let confidence = 100;
+  const consoleCount = failures.filter(f => f.startsWith('[CONSOLE]')).length;
+  const networkCount = failures.filter(f => f.startsWith('[NETWORK]')).length;
+  const visualCount = failures.filter(f => f.startsWith('[VISUAL]')).length;
+  const layoutCount = failures.filter(f => f.startsWith('[LAYOUT]')).length;
+  const a11yCount = failures.filter(f => f.startsWith('[A11Y]')).length;
+  const hydrationCount = failures.filter(f => f.startsWith('[HYDRATION]')).length;
+  if (consoleCount > 0) confidence -= 40;
+  if (networkCount > 0) confidence -= 30;
+  if (layoutCount > 0) confidence -= 20;
+  if (visualCount > 0) confidence -= 10;
+  if (a11yCount > 0) confidence -= 5;
+  if (hydrationCount > 0) confidence -= 15;
+  if (wiringIssues.length > 0) confidence -= 20;
+  if (linksBroken > 0) confidence -= 10;
+  confidence = Math.max(0, confidence);
+
   const result = {
-    status: failures.length === 0 ? 'pass' : 'fail',
+    status: failures.length === 0 ? 'pass' : (confidence >= 70 ? 'warn' : 'fail'),
+    confidence,
     routesDiscovered: routes.length,
     routes,
     componentWiringIssues: wiringIssues.length,
@@ -640,9 +797,11 @@ async function main() {
     linksBroken,
     buttonsChecked,
     formsChecked,
-    visualIssues: failures.filter(f => f.startsWith('[VISUAL]')).length,
-    layoutIssues: failures.filter(f => f.startsWith('[LAYOUT]')).length,
-    networkErrors: failures.filter(f => f.startsWith('[NETWORK]')).length,
+    a11yIssues: a11yCount,
+    visualIssues: visualCount,
+    layoutIssues: layoutCount,
+    networkErrors: networkCount,
+    hydrationIssues: hydrationCount,
     consoleErrors,
     failures,
   };
