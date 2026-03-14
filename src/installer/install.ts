@@ -69,7 +69,8 @@ const DEFAULT_SESSION_MAINTENANCE = {
  * If a role has no timeoutSeconds, OpenClaw's global default (600s) applies.
  */
 const TIMEOUT_20_MIN = 1200;
-const TIMEOUT_30_MIN = 3600; // 60 min — design+implement steps need more time for Stitch API
+const TIMEOUT_30_MIN = 1800; // 30 min (v1.5.53: was incorrectly 3600/60min)
+const TIMEOUT_60_MIN = 3600; // 60 min — for heavy steps that genuinely need more time
 
 const ROLE_POLICIES: Record<AgentRole, { profile?: string; alsoAllow?: string[]; deny: string[]; timeoutSeconds: number }> = {
   // analysis: read code, run git/grep, reason — no writing, no web, no browser
@@ -92,7 +93,7 @@ const ROLE_POLICIES: Record<AgentRole, { profile?: string; alsoAllow?: string[];
       "image", "tts",                  // unnecessary
       "group:ui",                      // no browser/canvas
     ],
-    timeoutSeconds: TIMEOUT_30_MIN,  // implements code + build + tests
+    timeoutSeconds: TIMEOUT_60_MIN,  // implements code + build + tests (v1.5.53: needs 60min)
   },
 
   // verification: read + exec but NO write — preserves independent verification integrity

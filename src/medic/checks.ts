@@ -55,7 +55,7 @@ export function checkStuckSteps(): MedicFinding[] {
     FROM steps s
     JOIN runs r ON r.id = s.run_id
     WHERE s.status = 'running'
-      AND r.status = 'running'
+      AND r.status IN ('running', 'resuming')
       AND (julianday('now') - julianday(s.updated_at)) * 86400000 > ?
   `).all(MAX_ROLE_TIMEOUT_MS) as Array<{
     id: string; step_id: string; run_id: string; agent_id: string;
@@ -98,7 +98,7 @@ export function checkStalledRuns(): MedicFinding[] {
            MAX(s.updated_at) as last_step_update
     FROM runs r
     JOIN steps s ON s.run_id = r.id
-    WHERE r.status = 'running'
+    WHERE r.status IN ('running', 'resuming')
     GROUP BY r.id
     HAVING (julianday('now') - julianday(MAX(s.updated_at))) * 86400000 > ?
   `).all(STALL_THRESHOLD_MS) as Array<{
@@ -114,7 +114,7 @@ export function checkStalledRuns(): MedicFinding[] {
 
     if (ageMs > STALL_AUTOFAIL_MS) {
       // Auto-fail runs stalled for 6+ hours
-      db.prepare("UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ? AND status = 'running'")
+      db.prepare("UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ? AND status IN ('running', 'resuming')")
         .run(new Date().toISOString(), run.id);
       // Fail any non-terminal steps
       db.prepare("UPDATE steps SET status = 'failed', output = 'Auto-failed: run stalled for ' || ? || ' minutes', updated_at = ? WHERE run_id = ? AND status NOT IN ('done', 'failed')")
@@ -137,6 +137,27 @@ export function checkStalledRuns(): MedicFinding[] {
         remediated: false,
       });
     }
+  }
+
+  // v1.5.53: Resuming state should not last more than 2 minutes
+  const stuckResuming = db.prepare(`
+    SELECT id, workflow_id, task FROM runs
+    WHERE status = 'resuming'
+    AND (julianday('now') - julianday(updated_at)) * 86400000 > 120000
+  `).all() as Array<{ id: string; workflow_id: string; task: string }>;
+  for (const run of stuckResuming) {
+    db.prepare("UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?")
+      .run(new Date().toISOString(), run.id);
+    db.prepare("UPDATE steps SET status = 'failed', output = 'Auto-failed: run stuck in resuming state', updated_at = ? WHERE run_id = ? AND status NOT IN ('done', 'failed')")
+      .run(new Date().toISOString(), run.id);
+    findings.push({
+      check: "stalled_runs",
+      severity: "critical",
+      message: `Run ${run.id.slice(0, 8)} (${run.workflow_id}) stuck in resuming state >2min — AUTO-FAILED`,
+      action: "fail_run",
+      runId: run.id,
+      remediated: true,
+    });
   }
 
   return findings;
@@ -260,7 +281,7 @@ export function checkClaimedButStuck(): MedicFinding[] {
     FROM steps s
     JOIN runs r ON r.id = s.run_id
     WHERE s.status = 'running'
-      AND r.status = 'running'
+      AND r.status IN ('running', 'resuming')
       AND (julianday('now') - julianday(s.updated_at)) * 86400000 > ?
       AND (julianday('now') - julianday(s.updated_at)) * 86400000 < ?
   `).all(CLAIMED_STUCK_THRESHOLD_MS, MAX_ROLE_TIMEOUT_MS) as Array<{
@@ -371,7 +392,7 @@ export function checkOrphanedStories(): MedicFinding[] {
     FROM stories st
     JOIN runs r ON r.id = st.run_id
     WHERE st.status = 'running'
-      AND r.status = 'running'
+      AND r.status IN ('running', 'resuming')
       AND (julianday('now') - julianday(st.updated_at)) * 86400000 > ?
   `).all(STORY_STUCK_THRESHOLD_MS) as Array<{
     id: string; story_id: string; title: string; updated_at: string;
@@ -416,7 +437,7 @@ export function checkStalledWorkflowCrons(): MedicFinding[] {
 
   // Get all workflows with running runs
   const workflows = db.prepare(
-    "SELECT DISTINCT workflow_id FROM runs WHERE status = 'running'"
+    "SELECT DISTINCT workflow_id FROM runs WHERE status IN ('running', 'resuming')"
   ).all() as Array<{ workflow_id: string }>;
 
   for (const { workflow_id } of workflows) {
@@ -424,14 +445,14 @@ export function checkStalledWorkflowCrons(): MedicFinding[] {
     const pendingStories = db.prepare(`
       SELECT COUNT(*) as cnt FROM stories st
       JOIN runs r ON r.id = st.run_id
-      WHERE r.workflow_id = ? AND r.status = 'running' AND st.status = 'pending'
+      WHERE r.workflow_id = ? AND r.status IN ('running', 'resuming') AND st.status = 'pending'
     `).get(workflow_id) as { cnt: number };
 
     // Also check pending single steps (e.g. design step has no stories)
     const pendingSteps = db.prepare(`
       SELECT COUNT(*) as cnt FROM steps s
       JOIN runs r ON r.id = s.run_id
-      WHERE r.workflow_id = ? AND r.status = 'running' AND s.status = 'pending' AND s.type = 'single'
+      WHERE r.workflow_id = ? AND r.status IN ('running', 'resuming') AND s.status = 'pending' AND s.type = 'single'
     `).get(workflow_id) as { cnt: number };
 
     const pendingTotal = pendingStories.cnt + pendingSteps.cnt;
@@ -444,7 +465,7 @@ export function checkStalledWorkflowCrons(): MedicFinding[] {
     const runningStories = db.prepare(`
       SELECT COUNT(*) as cnt FROM stories st
       JOIN runs r ON r.id = st.run_id
-      WHERE r.workflow_id = ? AND r.status = 'running' AND st.status = 'running'
+      WHERE r.workflow_id = ? AND r.status IN ('running', 'resuming') AND st.status = 'running'
         AND (julianday('now') - julianday(st.updated_at)) * 86400000 < ?
     `).get(workflow_id, CLAIMED_STUCK_THRESHOLD_MS) as { cnt: number };
 
@@ -452,7 +473,7 @@ export function checkStalledWorkflowCrons(): MedicFinding[] {
     const runningSteps = db.prepare(`
       SELECT COUNT(*) as cnt FROM steps s
       JOIN runs r ON r.id = s.run_id
-      WHERE r.workflow_id = ? AND r.status = 'running' AND s.status = 'running'
+      WHERE r.workflow_id = ? AND r.status IN ('running', 'resuming') AND s.status = 'running'
         AND (julianday('now') - julianday(s.updated_at)) * 86400000 < ?
     `).get(workflow_id, CLAIMED_STUCK_THRESHOLD_MS) as { cnt: number };
 
@@ -462,12 +483,12 @@ export function checkStalledWorkflowCrons(): MedicFinding[] {
     const lastStoryActivity = db.prepare(`
       SELECT MAX(st.updated_at) as ts FROM stories st
       JOIN runs r ON r.id = st.run_id
-      WHERE r.workflow_id = ? AND r.status = 'running' AND st.status IN ('running', 'done')
+      WHERE r.workflow_id = ? AND r.status IN ('running', 'resuming') AND st.status IN ('running', 'done')
     `).get(workflow_id) as { ts: string | null };
     const lastStepActivity = db.prepare(`
       SELECT MAX(s.updated_at) as ts FROM steps s
       JOIN runs r ON r.id = s.run_id
-      WHERE r.workflow_id = ? AND r.status = 'running' AND s.status IN ('running', 'done')
+      WHERE r.workflow_id = ? AND r.status IN ('running', 'resuming') AND s.status IN ('running', 'done')
     `).get(workflow_id) as { ts: string | null };
     const lastActivityTs = [lastStoryActivity?.ts, lastStepActivity?.ts].filter(Boolean).sort().pop() ?? null;
     const lastActivity = { ts: lastActivityTs };

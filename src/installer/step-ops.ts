@@ -386,13 +386,22 @@ export function claimStep(agentId: string): ClaimResult {
           _rollbackEarly(); return { found: false }; // Other stories still running, wait for them
         }
 
-        // DEPENDENCY DEADLOCK GUARD: pending stories exist but all blocked by deps
+        // DEPENDENCY DEADLOCK GUARD: pending stories exist but all blocked by deps — FAIL RUN (v1.5.53)
         if (pendingStories.length > 0 && !failedStory) {
-          logger.warn(`Dependency deadlock: ${pendingStories.length} pending stories but all blocked by unmet dependencies — skipping blocked stories`, { runId: step.run_id });
+          const deadlockMsg = `Dependency deadlock: ${pendingStories.length} pending stories all blocked by unmet dependencies — failing run`;
+          logger.error(deadlockMsg, { runId: step.run_id });
           for (const blocked of pendingStories) {
-            db.prepare("UPDATE stories SET status = 'skipped', output = 'Skipped: dependency deadlock', updated_at = ? WHERE id = ?")
+            db.prepare("UPDATE stories SET status = 'failed', output = 'Failed: dependency deadlock', updated_at = ? WHERE id = ?")
               .run(new Date().toISOString(), blocked.id);
           }
+          db.prepare("UPDATE steps SET status = 'failed', output = ?, updated_at = ? WHERE id = ?")
+            .run(deadlockMsg, new Date().toISOString(), step.id);
+          failRun(step.run_id);
+          const wfIdDL = getWorkflowId(step.run_id);
+          emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfIdDL, stepId: step.step_id, detail: deadlockMsg });
+          emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfIdDL, detail: deadlockMsg });
+          scheduleRunCronTeardown(step.run_id);
+          return { found: false };
         }
 
         // #157 GUARD: 0 total stories means planner did not produce STORIES_JSON
@@ -561,27 +570,36 @@ export function claimStep(agentId: string): ClaimResult {
 
       let resolvedInput = resolveTemplate(step.input_template, context);
 
-      // Item 7: MISSING_INPUT_GUARD inside claim flow — also reset the claimed story on failure
+      // Item 7: MISSING_INPUT_GUARD inside claim flow (v1.5.53: retry once before failing run)
       const allMissing = [...new Set([...resolvedInput.matchAll(/\[missing:\s*(\w+)\]/gi)].map(m => m[1].toLowerCase()))];
       if (allMissing.length > 0) {
-        const reason = `Blocked: unresolved variable(s) [${allMissing.join(", ")}] in input — failing step and run`;
-        logger.warn(reason, { runId: step.run_id, stepId: step.step_id });
-        // Fail the story that was just claimed
-        db.prepare(
-          "UPDATE stories SET status = 'failed', updated_at = ? WHERE id = ?"
-        ).run(new Date().toISOString(), nextStory.id);
-        db.prepare(
-          "UPDATE steps SET status = 'failed', output = ?, current_story_id = NULL, updated_at = ? WHERE id = ?"
-        ).run(reason, new Date().toISOString(), step.id);
-        db.prepare(
-          "UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?"
-        ).run(new Date().toISOString(), step.run_id);
-        const wfId2 = getWorkflowId(step.run_id);
-        emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId2, stepId: step.step_id, detail: reason });
-        emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId2, detail: reason });
-        // Clean up the worktree we just created
-        if (context["repo"]) removeStoryWorktree(context["repo"], storyBranch, agentId);
-        scheduleRunCronTeardown(step.run_id);
+        const reason = `Blocked: unresolved variable(s) [${allMissing.join(", ")}] in input`;
+        const storyRetry = db.prepare("SELECT retry_count FROM stories WHERE id = ?").get(nextStory.id) as { retry_count: number } | undefined;
+        const retryCount = storyRetry?.retry_count ?? 0;
+        logger.warn(`${reason} (story=${nextStory.story_id}, retry=${retryCount})`, { runId: step.run_id, stepId: step.step_id });
+        // Reset the claimed story
+        if (retryCount > 0) {
+          // Second occurrence — fail everything
+          db.prepare("UPDATE stories SET status = 'failed', updated_at = ? WHERE id = ?")
+            .run(new Date().toISOString(), nextStory.id);
+          db.prepare("UPDATE steps SET status = 'failed', output = ?, current_story_id = NULL, updated_at = ? WHERE id = ?")
+            .run(reason + " — failing run (retry exhausted)", new Date().toISOString(), step.id);
+          db.prepare("UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?")
+            .run(new Date().toISOString(), step.run_id);
+          const wfId2 = getWorkflowId(step.run_id);
+          emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId2, stepId: step.step_id, detail: reason });
+          emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId2, detail: reason });
+          if (context["repo"]) removeStoryWorktree(context["repo"], storyBranch, agentId);
+          scheduleRunCronTeardown(step.run_id);
+        } else {
+          // First occurrence — retry story (possible WAL lag)
+          db.prepare("UPDATE stories SET status = 'pending', retry_count = retry_count + 1, output = ?, updated_at = ? WHERE id = ?")
+            .run(reason + " — retrying once", new Date().toISOString(), nextStory.id);
+          db.prepare("UPDATE steps SET current_story_id = NULL, updated_at = ? WHERE id = ?")
+            .run(new Date().toISOString(), step.id);
+          if (context["repo"]) removeStoryWorktree(context["repo"], storyBranch, agentId);
+          logger.info(`[missing-input] Story ${nextStory.story_id} will retry — possible WAL lag`, { runId: step.run_id });
+        }
         return { found: false };
       }
 
@@ -800,22 +818,31 @@ ${cavReport}`, { runId: step.run_id });
 
   let resolvedInput = resolveTemplate(step.input_template, context);
 
-      // MISSING_INPUT_GUARD: Any [missing:] marker means upstream didn't produce required output.
-      // Fail the step AND run — downstream steps would be meaningless.
+      // MISSING_INPUT_GUARD (v1.5.53): First miss → retry step, second → fail run.
+      // WAL race condition can cause false positives — one retry absorbs that.
       const allMissing = [...new Set([...resolvedInput.matchAll(/\[missing:\s*(\w+)\]/gi)].map(m => m[1].toLowerCase()))];
       if (allMissing.length > 0) {
-        const reason = `Blocked: unresolved variable(s) [${allMissing.join(", ")}] in input — failing step and run`;
-        logger.warn(reason, { runId: step.run_id, stepId: step.step_id });
-        db.prepare(
-          "UPDATE steps SET status = 'failed', output = ?, updated_at = ? WHERE id = ?"
-        ).run(reason, new Date().toISOString(), step.id);
-        db.prepare(
-          "UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?"
-        ).run(new Date().toISOString(), step.run_id);
-        const wfId = getWorkflowId(step.run_id);
-        emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: reason });
-        emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: reason });
-        scheduleRunCronTeardown(step.run_id);
+        const reason = `Blocked: unresolved variable(s) [${allMissing.join(", ")}] in input`;
+        // Check step's retry_count to decide retry vs fail
+        const stepRetry = db.prepare("SELECT retry_count FROM steps WHERE id = ?").get(step.id) as { retry_count: number } | undefined;
+        const retryCount = stepRetry?.retry_count ?? 0;
+        logger.warn(`${reason} (retry=${retryCount})`, { runId: step.run_id, stepId: step.step_id });
+        if (retryCount > 0) {
+          // Second occurrence — fail run
+          db.prepare("UPDATE steps SET status = 'failed', output = ?, updated_at = ? WHERE id = ?")
+            .run(reason + " — failing run (retry exhausted)", new Date().toISOString(), step.id);
+          db.prepare("UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?")
+            .run(new Date().toISOString(), step.run_id);
+          const wfId = getWorkflowId(step.run_id);
+          emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: reason });
+          emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: reason });
+          scheduleRunCronTeardown(step.run_id);
+        } else {
+          // First occurrence — retry step (possible WAL lag)
+          db.prepare("UPDATE steps SET status = 'pending', retry_count = retry_count + 1, output = ?, updated_at = ? WHERE id = ?")
+            .run(reason + " — retrying once", new Date().toISOString(), step.id);
+          logger.info(`[missing-input] Step ${step.step_id} will retry — possible WAL lag`, { runId: step.run_id });
+        }
         return { found: false };
       }
 
@@ -893,6 +920,18 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   db.prepare(
     "UPDATE runs SET context = ?, updated_at = ? WHERE id = ?"
   ).run(JSON.stringify(context), new Date().toISOString(), step.run_id);
+
+  // PLAN STEP PRD GUARDRAIL (v1.5.53): Plan must output a meaningful PRD
+  if (step.step_id === "plan" && parsed["status"]?.toLowerCase() === "done") {
+    const prdVal = (parsed["prd"] || context["prd"] || "").trim();
+    if (prdVal.length < 100) {
+      const prdErr = `GUARDRAIL: Plan step completed but PRD is ${prdVal.length < 1 ? "empty" : "too short (" + prdVal.length + " chars)"}. Plan must output a meaningful PRD.`;
+      logger.warn(`[plan-guardrail] ${prdErr}`, { runId: step.run_id });
+      if (prevContextJson) db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(prevContextJson.context, step.run_id);
+      failStep(stepId, prdErr);
+      return { advanced: false, runCompleted: false };
+    }
+  }
 
   // REPO DEDUP GUARDRAIL (plan step) — if repo dir has existing code, auto-suffix or reset
   if (step.step_id === "plan" && parsed["status"]?.toLowerCase() === "done") {
@@ -1004,15 +1043,51 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     }
   }
 
-  // SETUP-BUILD BASELINE GUARDRAIL: If build baseline failed, don't advance
+  // SETUP-BUILD BASELINE GUARDRAIL (v1.5.53): Also reject empty baseline
   if (step.step_id === "setup-build" && parsed["status"]?.toLowerCase() === "done") {
     const baseline = (parsed["baseline"] || "").toLowerCase().trim();
-    const baselineOk = !baseline || /(pass|success|ok|done|clean|good|ready)/i.test(baseline);
-    if (baseline && !baselineOk && /(fail|error|broken|crash)/i.test(baseline)) {
-      const baselineMsg = `GUARDRAIL: setup-build baseline is "${parsed["baseline"]}" — build is not passing. Fix build errors before advancing.`;
+    if (!baseline || /(fail|error|broken|crash)/i.test(baseline)) {
+      const baselineMsg = `GUARDRAIL: setup-build baseline is "${parsed["baseline"] || "(empty)"}" — build must explicitly pass.`;
       logger.warn(`[setup-build-guardrail] ${baselineMsg}`, { runId: step.run_id, stepId: step.step_id });
       if (prevContextJson) db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(prevContextJson.context, step.run_id);
       failStep(stepId, baselineMsg);
+      return { advanced: false, runCompleted: false };
+    }
+  }
+
+  // DEPLOY HEALTH CHECK GUARDRAIL (v1.5.53): Verify service is actually running after deploy
+  if (step.step_id === "deploy" && parsed["status"]?.toLowerCase() === "done") {
+    const port = context["port"] || parsed["port"] || "";
+    const serviceName = context["service_name"] || parsed["service_name"] || "";
+    let deployErr = "";
+
+    // Health check: curl
+    if (port) {
+      try {
+        execFileSync("curl", ["-sf", "--max-time", "5", `http://127.0.0.1:${port}/`],
+          { timeout: 10_000, stdio: "pipe" });
+      } catch {
+        deployErr = `GUARDRAIL: Deploy health check failed — service not responding on port ${port}`;
+      }
+    }
+
+    // Service check: systemctl
+    if (!deployErr && serviceName) {
+      try {
+        const isActive = execFileSync("systemctl", ["--user", "is-active", serviceName],
+          { timeout: 5_000, stdio: "pipe" }).toString().trim();
+        if (isActive !== "active") {
+          deployErr = `GUARDRAIL: Service ${serviceName} is ${isActive}, not active`;
+        }
+      } catch {
+        deployErr = `GUARDRAIL: Service ${serviceName} not found or inactive`;
+      }
+    }
+
+    if (deployErr) {
+      logger.warn(`[deploy-guardrail] ${deployErr}`, { runId: step.run_id, stepId: step.step_id });
+      if (prevContextJson) db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(prevContextJson.context, step.run_id);
+      failStep(stepId, deployErr);
       return { advanced: false, runCompleted: false };
     }
   }
@@ -1068,6 +1143,18 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
 
   // T5: Parse STORIES_JSON from output (any step, typically the planner)
   parseAndInsertStories(output, step.run_id);
+
+  // STORIES STEP EARLY GUARD (v1.5.53): Catch 0 stories immediately instead of wasting setup time
+  if (step.step_id === "stories" && parsed["status"]?.toLowerCase() === "done") {
+    const storyCount = countAllStories(step.run_id);
+    if (storyCount === 0) {
+      const noStoriesMsg = "GUARDRAIL: Stories step completed with STATUS: done but produced 0 stories — STORIES_JSON missing or empty";
+      logger.warn(`[stories-guardrail] ${noStoriesMsg}`, { runId: step.run_id });
+      if (prevContextJson) db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(prevContextJson.context, step.run_id);
+      failStep(stepId, noStoriesMsg);
+      return { advanced: false, runCompleted: false };
+    }
+  }
 
   // Auto-generate SCREEN_MAP if stories step did not produce one with story mappings (fallback)
   // v12.0: stories step should output SCREEN_MAP with stories field, but if it doesn't, auto-generate
@@ -1320,8 +1407,18 @@ function handleVerifyEachCompletion(
     throw err;
   }
 
-  // Identify the story being verified using context (not just last done)
-  const verifiedStoryId = context["current_story_id"];
+  // Identify the story being verified: output first (most reliable), then context (v1.5.53)
+  let verifiedStoryId = parsedOutput["current_story_id"] || context["current_story_id"];
+  if (!verifiedStoryId) {
+    // Fallback: find the most recent 'done' story
+    const lastDone = db.prepare(
+      "SELECT story_id FROM stories WHERE run_id = ? AND status = 'done' ORDER BY updated_at DESC LIMIT 1"
+    ).get(verifyStep.run_id) as { story_id: string } | undefined;
+    if (lastDone) {
+      verifiedStoryId = lastDone.story_id;
+      logger.warn(`[verify] current_story_id missing from output+context, using fallback: ${lastDone.story_id}`, { runId: verifyStep.run_id });
+    }
+  }
 
   if (status === "retry") {
     // Verify failed — retry the story

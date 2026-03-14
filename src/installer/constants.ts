@@ -79,8 +79,7 @@ export const OPTIONAL_TEMPLATE_VARS = [
   "stories_json",
   "current_story_title",
   "final_pr",
-  // PRD (plan step output, design+stories step input)
-  "prd",
+  // PRD: removed from optional list in v1.5.53 — prd is now mandatory
   // Design system (Stitch)
   "design_system",
   "stitch_project_id",
