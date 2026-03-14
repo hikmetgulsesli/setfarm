@@ -1162,6 +1162,13 @@ steps:
       3. Task text ("port: XXXX" or "Frontend port: XXXX")
       4. Last resort only: PORT=$(curl -s http://127.0.0.1:3080/api/projects/next-port | jq -r '.port')
       CRITICAL: Never assign a new port if the service already has one configured.
+      PORT GUARDRAIL: After determining PORT, validate it follows the convention:
+        - Frontend ports MUST be in range 3500-3599 (e.g. 3536, 3549)
+        - Backend ports MUST be in range 4500-4599 (e.g. 4519)
+        - REJECT framework defaults: 5173 (Vite), 3000 (Next.js/Express), 4200 (Angular), 8080 (generic)
+        - If PORT is outside the valid range or is a framework default, OVERRIDE it:
+          PORT=$(curl -s http://127.0.0.1:3080/api/projects/next-port | jq -r ".port")
+        - Also fix any hardcoded port in the project: package.json scripts, vite.config, .env, server files.
 
       A2 — Move to ~/projects/:
       PROJECT_NAME=$(basename {{repo}})
