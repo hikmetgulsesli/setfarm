@@ -481,6 +481,60 @@ async function main() {
         failures.push('[FORM] Phase 5 error: ' + e.message);
       }
 
+
+      // ── Phase 5.5: Icon Render Check ──────────────────────────────
+      const PHASE55_MAX_MS = 10000; // 10s max
+      try {
+        // Navigate back to homepage
+        ab('open', baseUrl);
+        await sleep(1500);
+
+        const iconJson = abOk('eval',
+          'return JSON.stringify((function() {' +
+          '  var issues = [];' +
+          '  document.querySelectorAll("svg").forEach(function(svg) {' +
+          '    var r = svg.getBoundingClientRect();' +
+          '    if (r.width === 0 || r.height === 0) {' +
+          '      var cls = svg.getAttribute("class") || "";' +
+          '      var id = svg.getAttribute("id") || "";' +
+          '      issues.push({type:"svg-zero", detail: cls || id || "unnamed SVG"});' +
+          '    }' +
+          '  });' +
+          '  var iconSel = "i[class*=icon], i[class*=fa-], i[class*=material], " +' +
+          '    "span[class*=icon], span[class*=fa-], span[class*=material]";' +
+          '  document.querySelectorAll(iconSel).forEach(function(el) {' +
+          '    var r = el.getBoundingClientRect();' +
+          '    if (r.width === 0 && r.height === 0) {' +
+          '      issues.push({type:"font-icon-zero", detail: el.className});' +
+          '    }' +
+          '  });' +
+          '  document.querySelectorAll("img").forEach(function(img) {' +
+          '    if (img.complete && img.naturalWidth === 0 && img.src && !img.src.startsWith("data:")) {' +
+          '      issues.push({type:"broken-img", detail: img.src.split("/").pop()});' +
+          '    }' +
+          '  });' +
+          '  return issues;' +
+          '})()'
+        );
+
+        let iconIssuesFound = [];
+        try { iconIssuesFound = JSON.parse(iconJson || '[]'); } catch {}
+
+        if (Array.isArray(iconIssuesFound) && iconIssuesFound.length > 0) {
+          const byType = {};
+          for (const i of iconIssuesFound) {
+            byType[i.type] = (byType[i.type] || 0) + 1;
+          }
+          const summary = Object.entries(byType).map(([t,c]) => c + ' ' + t).join(', ');
+          failures.push('[ICON] ' + iconIssuesFound.length + ' icon rendering issue(s): ' + summary);
+          for (const i of iconIssuesFound.slice(0, 5)) {
+            failures.push('[ICON]   ' + i.type + ': ' + i.detail);
+          }
+        }
+      } catch (e) {
+        failures.push('[ICON] Phase 5.5 error: ' + e.message);
+      }
+
       // ── Phase 6 (collect): Gather console errors ──────────────────
       try {
         const errJson = abOk('eval', 'return JSON.stringify(window.__smoke_errors || [])');
@@ -513,6 +567,7 @@ async function main() {
     linksBroken,
     buttonsChecked,
     formsChecked,
+    iconIssues: failures.filter(f => f.startsWith("[ICON]")).length,
     consoleErrors,
     failures,
   };

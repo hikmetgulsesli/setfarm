@@ -806,20 +806,60 @@ const commands = {
 
   'populate-cache': async function populateCache(sourceDir, destDir) {
     if (!sourceDir || !destDir) throw new Error('Usage: populate-cache <sourceDir> <destDir>');
+    const { join: pathJoin } = await import('node:path');
     mkdirSync(destDir, { recursive: true });
     let copied = 0;
+
+    // Copy all existing HTML/PNG files
     try {
       const files = readdirSync(sourceDir);
       for (const file of files) {
         if (file.endsWith('.png') || file.endsWith('.html')) {
-          const { join: pathJoin } = await import('node:path');
           copyFileSync(pathJoin(sourceDir, file), pathJoin(destDir, file));
           copied++;
         }
       }
     } catch (e) {
-      process.stderr.write('WARN: populate-cache error: ' + e.message + '\n');
+      process.stderr.write('WARN: populate-cache copy error: ' + e.message + '\n');
     }
+
+    // v1.5.53: Use DESIGN_MANIFEST.json to create screenId-based symlinks/copies
+    // MC backend looks for <screenId>.html and <screenId>.png
+    const manifestPath = pathJoin(sourceDir, 'DESIGN_MANIFEST.json');
+    let manifest = [];
+    try { manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')); } catch { /* no manifest */ }
+
+    for (const screen of manifest) {
+      if (!screen.screenId || !screen.htmlFile) continue;
+      const srcHtml = pathJoin(sourceDir, screen.htmlFile);
+      const dstHtml = pathJoin(destDir, screen.screenId + '.html');
+      // Copy HTML with screenId name (MC expects this)
+      if (existsSync(srcHtml) && !existsSync(dstHtml)) {
+        try { copyFileSync(srcHtml, dstHtml); copied++; } catch {}
+      }
+      // Also copy original name for "View HTML" button
+      const dstOriginal = pathJoin(destDir, screen.htmlFile);
+      if (existsSync(srcHtml) && !existsSync(dstOriginal)) {
+        try { copyFileSync(srcHtml, dstOriginal); copied++; } catch {}
+      }
+      // Download screenshot via get-screen API if PNG doesn't exist
+      const dstPng = pathJoin(destDir, screen.screenId + '.png');
+      if (!existsSync(dstPng)) {
+        try {
+          const { execFileSync } = await import('node:child_process');
+          const gsOut = execFileSync('node', [process.argv[1], 'get-screen', destDir.split('/').pop(), screen.screenId], { timeout: 30000, stdio: 'pipe' }).toString().trim();
+          const gsData = JSON.parse(gsOut);
+          const screenshotUrl = gsData.screenshotUrl || gsData.screenshot?.downloadUrl || gsData.screenshot?.download_url || null;
+          if (screenshotUrl) {
+            execFileSync('node', [process.argv[1], 'download', screenshotUrl, dstPng], { timeout: 30000, stdio: 'pipe' });
+            copied++;
+          }
+        } catch (e) {
+          process.stderr.write('WARN: screenshot download failed for ' + screen.screenId + ': ' + e.message + '\n');
+        }
+      }
+    }
+
     console.log(JSON.stringify({ success: true, copied }, null, 2));
   },
 };
