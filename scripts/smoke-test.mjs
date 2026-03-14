@@ -7,10 +7,12 @@
  * Phase 3 (browser): Link validation — navigate internal links, check for errors
  * Phase 4 (browser): Button functionality — click buttons, verify responses
  * Phase 5 (browser): Form testing — fill inputs, submit forms
- * Phase 7  (browser): Visual & Asset Integrity — icons, images, font loading
+ * Phase 6  (browser): Accessibility basics — alt text, aria labels, heading hierarchy
+ * Phase 7  (browser): Visual & Asset Integrity — icons, images, fonts, contrast
  * Phase 8  (browser): Layout & UX Glitches — overflow, duplicate IDs, z-index overlap
  * Phase 9  (browser): Network Silent Failures — fetch/XHR error collection
  * Phase 10 (browser): Console error collection — JS error aggregation
+ * Phase 11 (browser): Hydration & Interactivity — stalled UI, unresponsive buttons
  *   Uses agent-browser CLI for real browser interaction
  *
  * Usage: node smoke-test.mjs <repo-path> [--port PORT] [--timeout MS]
