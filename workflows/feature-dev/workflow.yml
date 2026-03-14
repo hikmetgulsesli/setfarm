@@ -1165,7 +1165,10 @@ steps:
       PORT GUARDRAIL: After determining PORT, validate it follows the convention:
         - Frontend ports MUST be in range 3500-3599 (e.g. 3536, 3549)
         - Backend ports MUST be in range 4500-4599 (e.g. 4519)
-        - REJECT framework defaults: 5173 (Vite), 3000 (Next.js/Express), 4200 (Angular), 8080 (generic)
+        - REJECT framework defaults: 5173 (Vite), 3000 (Next.js/Express/CRA), 4200 (Angular),
+          8080 (generic), 8000 (Django/FastAPI), 4000 (Remix), 1234 (Parcel), 8888 (Jupyter),
+          5000 (Flask), 8001 (uvicorn), 9000 (PHP), 4321 (Astro), 5500 (LiveServer),
+          ANY port outside 3500-3599 (frontend) or 4500-4599 (backend) range
         - If PORT is outside the valid range or is a framework default, OVERRIDE it:
           PORT=$(curl -s http://127.0.0.1:3080/api/projects/next-port | jq -r ".port")
         - Also fix any hardcoded port in the project: package.json scripts, vite.config, .env, server files.
