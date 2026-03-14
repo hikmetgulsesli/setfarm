@@ -27,10 +27,26 @@ Detect: If TASK or PRD contains "game", "oyun", "canvas", "endless runner", "pla
    - Check `keys` in update loop, not in event handler directly
    - Call `e.preventDefault()` for game keys (Space, ArrowUp, ArrowDown) to prevent page scroll
 
-5. EXPOSE GAME STATE — for smoke test verification:
-   - Set `window.game = { player, state, score, ... }` so automated tests can read game state
-   - This is MANDATORY — the smoke test Phase 15 checks `window.game` after input to verify the game responds
-   - Minimum: `window.game = { player: { x, y, velocityY }, state: currentState, score: score }`
+5. EXPOSE GAME STATE — for smoke test verification (MANDATORY):
+   a) `window.render_game_to_text()` — returns JSON string of game state:
+      ```
+      window.render_game_to_text = () => JSON.stringify({
+        mode: gameState,  // 'menu'|'playing'|'paused'|'gameover'
+        player: { x: player.x, y: player.y, vy: player.velocityY },
+        entities: obstacles.map(o => ({ x: o.x, y: o.y, w: o.width })),
+        score: score, isGrounded: player.isGrounded
+      });
+      ```
+   b) `window.advanceTime(ms)` — deterministic time stepping for automated testing:
+      ```
+      window.advanceTime = (ms) => {
+        const steps = Math.max(1, Math.round(ms / (1000 / 60)));
+        for (let i = 0; i < steps; i++) update(1 / 60);
+        render();
+      };
+      ```
+   c) `window.game = { player, state, score }` — also set this object for simple state access
+   - Smoke test Phase 15 calls render_game_to_text() and advanceTime() to verify the game responds to input
 
 6. PROPER GAME LOOP PATTERN:
    ```
