@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * stitch-api.mjs — CLI wrapper for Google Stitch MCP (JSON-RPC over HTTPS)
+ * stitch-api.mjs -- CLI wrapper for Google Stitch MCP (JSON-RPC over HTTPS)
  *
  * Usage:
  *   node stitch-api.mjs create-project "Project Name"
@@ -16,7 +16,7 @@
  *   node stitch-api.mjs download <url> <outputFile>
  */
 
-import { readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, copyFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -95,7 +95,7 @@ async function callTool(name, args) {
 async function downloadFile(url, outputPath, attempt = 1) {
   const headers = { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) Chrome/120.0.0.0 Safari/537.36' };
   const res = await fetch(url, { signal: AbortSignal.timeout(120_000), headers });
-  if (res.status === 429 && attempt < 5) { const delay = 10000 * Math.pow(2, attempt - 1) + Math.random() * 2000; process.stderr.write(`429 rate limited — retrying in ${Math.round(delay/1000)}s (attempt ${attempt}/5)\n`); await new Promise(r => setTimeout(r, delay)); return downloadFile(url, outputPath, attempt + 1); }
+  if (res.status === 429 && attempt < 5) { const delay = 10000 * Math.pow(2, attempt - 1) + Math.random() * 2000; process.stderr.write(`429 rate limited -- retrying in ${Math.round(delay/1000)}s (attempt ${attempt}/5)\n`); await new Promise(r => setTimeout(r, delay)); return downloadFile(url, outputPath, attempt + 1); }
   if (!res.ok) throw new Error(`Download failed: HTTP ${res.status}`);
   const buffer = Buffer.from(await res.arrayBuffer());
   mkdirSync(dirname(outputPath), { recursive: true });
@@ -190,12 +190,12 @@ function parseScreenList(result) {
   return screens;
 }
 
-// Safe JS object literal parser — converts JS object syntax to JSON then parses.
+// Safe JS object literal parser -- converts JS object syntax to JSON then parses.
 // Handles: unquoted keys, single-quoted strings, trailing commas, template literals.
 // Does NOT execute arbitrary code (unlike new Function()).
 function safeParseJsObject(src) {
   let s = src.trim();
-  // Remove template literals (backtick strings) — replace with empty string
+  // Remove template literals (backtick strings) -- replace with empty string
   s = s.replace(/`[^`]*`/g, '""');
   // Convert single-quoted strings to double-quoted
   s = s.replace(/'([^'\\]*(\\.[^'\\]*)*)'/g, '"$1"');
@@ -372,8 +372,7 @@ const commands = {
           console.log(JSON.stringify({ projectId: existing.projectId, source: 'stitch-file' }, null, 2));
           return;
         }
-        process.stderr.write('Existing project ' + existing.projectId + ' has no screens — creating new
-');
+        process.stderr.write('Existing project ' + existing.projectId + ' has no screens -- creating new\n');
       }
     } catch { /* no .stitch file or invalid */ }
 
@@ -440,7 +439,7 @@ const commands = {
 
     // 1. Check for duplicate screens by title
     if (screenTitle) {
-      // list_screens API returns empty for generated screens — use local tracking instead
+      // list_screens API returns empty for generated screens -- use local tracking instead
       let existingScreens = [];
       const trackingFile = resolve(process.cwd(), '.stitch-screens.json');
       try { existingScreens = JSON.parse(readFileSync(trackingFile, 'utf-8')); } catch {}
@@ -534,7 +533,7 @@ const commands = {
     console.log(JSON.stringify({ skipped: false, screens, suggestions }, null, 2));
   },
 
-  // ── New commands (v1.5.28) ──────────────────────────────────────
+  // ---- New commands (v1.5.28) ----------------------------------------------------------------------------
 
   async 'download-screen'(projectId, screenId, outputPath) {
     if (!projectId || !screenId || !outputPath) throw new Error('Usage: download-screen <projectId> <screenId> <outputPath>');
@@ -573,7 +572,7 @@ const commands = {
         const tracked = JSON.parse(readFileSync(trackingFile, 'utf-8'));
         const local = tracked.find(t => t.screenId === screenId);
         if (local?.localHtml) {
-          // Already downloaded locally — just copy
+          // Already downloaded locally -- just copy
           const { copyFileSync } = await import('node:fs');
           copyFileSync(local.localHtml, outputPath);
           console.log(JSON.stringify({ path: outputPath, size: readFileSync(outputPath).length, source: 'local-cache' }, null, 2));
@@ -620,15 +619,14 @@ const commands = {
       } catch (e) { console.error('Warning: get_project fallback failed: ' + e.message); }
     }
 
-    // Fallback 2b: use local tracking file (most reliable — has eager-downloaded HTML paths)
+    // Fallback 2b: use local tracking file (most reliable -- has eager-downloaded HTML paths)
     if (screens.length === 0) {
       const trackingFile = resolve(process.cwd(), '.stitch-screens.json');
       try {
         const tracked = JSON.parse(readFileSync(trackingFile, 'utf-8'));
         if (Array.isArray(tracked) && tracked.length > 0) {
           screens = tracked;
-          process.stderr.write('Recovered ' + screens.length + ' screens from .stitch-screens.json fallback
-');
+          process.stderr.write('Recovered ' + screens.length + ' screens from .stitch-screens.json fallback\n');
         }
       } catch {}
     }
@@ -714,7 +712,7 @@ const commands = {
             const configObj = safeParseJsObject(configMatch[1]);
             const extend = configObj?.theme?.extend || {};
 
-            // Colors → --color-{key}: {value}
+            // Colors -> --color-{key}: {value}
             if (extend.colors && typeof extend.colors === 'object') {
               for (const [key, value] of Object.entries(extend.colors)) {
                 if (typeof value === 'string') {
@@ -729,7 +727,7 @@ const commands = {
               }
             }
 
-            // Font families → --font-{key}: {value}
+            // Font families -> --font-{key}: {value}
             if (extend.fontFamily && typeof extend.fontFamily === 'object') {
               for (const [key, value] of Object.entries(extend.fontFamily)) {
                 const fontValue = Array.isArray(value) ? value.join(', ') : String(value);
@@ -737,7 +735,7 @@ const commands = {
               }
             }
 
-            // Border radius → --radius-{key}: {value}
+            // Border radius -> --radius-{key}: {value}
             if (extend.borderRadius && typeof extend.borderRadius === 'object') {
               for (const [key, value] of Object.entries(extend.borderRadius)) {
                 if (typeof value === 'string') {
@@ -746,7 +744,7 @@ const commands = {
               }
             }
 
-            // Spacing → --spacing-{key}: {value}
+            // Spacing -> --spacing-{key}: {value}
             if (extend.spacing && typeof extend.spacing === 'object') {
               for (const [key, value] of Object.entries(extend.spacing)) {
                 if (typeof value === 'string') {
@@ -760,7 +758,7 @@ const commands = {
         }
       }
 
-      // Source 3: Google Fonts <link> tags → --font-google-{family}: {family}
+      // Source 3: Google Fonts <link> tags -> --font-google-{family}: {family}
       for (const fontMatch of content.matchAll(/fonts\.googleapis\.com\/css2\?family=([^&"]+)/g)) {
         const family = decodeURIComponent(fontMatch[1].replace(/\+/g, ' ').replace(/:wght.*/, ''));
         if (!family.includes('Material') && !family.includes('Icon')) {
@@ -779,14 +777,14 @@ const commands = {
     // Build output
     if (properties.size === 0) {
       // Fallback: write a placeholder so downstream steps know design-tokens.css exists
-      const fallbackCss = `/* design-tokens.css — auto-generated */\n/* WARNING: No design tokens could be extracted from ${htmlFiles.length} Stitch HTML file(s). */\n/* Implement using colors/fonts visible in stitch/*.html directly. */\n:root {}\n`;
+      const fallbackCss = `/* design-tokens.css -- auto-generated */\n/* WARNING: No design tokens could be extracted from ${htmlFiles.length} Stitch HTML file(s). */\n/* Implement using colors/fonts visible in stitch/*.html directly. */\n:root {}\n`;
       mkdirSync(dirname(outFile), { recursive: true });
       writeFileSync(outFile, fallbackCss);
-      console.log(JSON.stringify({ path: outFile, properties: 0, sources: htmlFiles.length, warning: 'No tokens extracted — fallback written' }, null, 2));
+      console.log(JSON.stringify({ path: outFile, properties: 0, sources: htmlFiles.length, warning: 'No tokens extracted -- fallback written' }, null, 2));
       return;
     }
 
-    let css = '/* design-tokens.css — auto-generated from Stitch HTML */\n:root {\n';
+    let css = '/* design-tokens.css -- auto-generated from Stitch HTML */\n:root {\n';
     const jsonTokens = {};
     for (const [prop, value] of properties) {
       css += `  ${prop}: ${value};\n`;
@@ -804,6 +802,25 @@ const commands = {
     if (!url || !outputFile) throw new Error('Usage: download <url> <outputFile>');
     const result = await downloadFile(url, outputFile);
     console.log(JSON.stringify(result, null, 2));
+  },
+
+  'populate-cache': async function populateCache(sourceDir, destDir) {
+    if (!sourceDir || !destDir) throw new Error('Usage: populate-cache <sourceDir> <destDir>');
+    mkdirSync(destDir, { recursive: true });
+    let copied = 0;
+    try {
+      const files = readdirSync(sourceDir);
+      for (const file of files) {
+        if (file.endsWith('.png') || file.endsWith('.html')) {
+          const { join: pathJoin } = await import('node:path');
+          copyFileSync(pathJoin(sourceDir, file), pathJoin(destDir, file));
+          copied++;
+        }
+      }
+    } catch (e) {
+      process.stderr.write('WARN: populate-cache error: ' + e.message + '\n');
+    }
+    console.log(JSON.stringify({ success: true, copied }, null, 2));
   },
 };
 
@@ -825,7 +842,8 @@ Commands:
   download-screen <projectId> <screenId> <outputPath>                    Download screen HTML
   create-manifest <projectId> <outputDir>                                Create DESIGN_MANIFEST.json
   extract-tokens <stitchDir> [outputCssFile]                             Merge CSS tokens from all HTMLs
-  download <url> <outputFile>                                            Download file from URL`);
+  download <url> <outputFile>                                            Download file from URL
+  populate-cache <sourceDir> <destDir>                                   Copy PNGs+HTMLs from sourceDir to destDir`);
   process.exit(1);
 }
 

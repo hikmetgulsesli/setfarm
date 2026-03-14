@@ -23,10 +23,27 @@ else
   echo "Initialized new repo at $REPO"
 fi
 
-# 2. GitHub remote
+# 2. GitHub remote (with duplicate-name fallback)
 PROJECT_NAME=$(basename "$REPO")
 if ! git remote -v 2>/dev/null | grep -q origin; then
-  gh repo create "hikmetgulsesli/$PROJECT_NAME" --public --source . --remote origin --push 2>/dev/null || true
+  if gh repo create "hikmetgulsesli/$PROJECT_NAME" --public --source . --remote origin --push 2>/dev/null; then
+    echo "GitHub repo created: hikmetgulsesli/$PROJECT_NAME"
+  else
+    # Name taken — try with suffix
+    for SUFFIX in 2 3 4 5; do
+      ALT_NAME="${PROJECT_NAME}-${SUFFIX}"
+      if gh repo create "hikmetgulsesli/$ALT_NAME" --public --source . --remote origin --push 2>/dev/null; then
+        echo "GitHub repo created with alt name: hikmetgulsesli/$ALT_NAME"
+        break
+      fi
+    done
+  fi
+  # Final check: if still no remote, warn but continue
+  if ! git remote -v 2>/dev/null | grep -q origin; then
+    echo "FATAL: Could not create GitHub repo (all names taken or API error)"
+    echo "STATUS: fail"
+    exit 1
+  fi
 fi
 
 # 3. Main branch

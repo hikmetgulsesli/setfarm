@@ -589,6 +589,20 @@ steps:
       DOĞRULAMA: Kodlama bittikten sonra stitch HTML'i tekrar oku ve her bölümün
       karşılığını kodunda bul. Eksik bölüm varsa ekle.
 
+
+      STITCH HTML → KOD DÖNÜŞÜMÜ (ZORUNLU — ATLAMA YASAK):
+      stitch/ dizininde bu story için HTML varsa:
+      1. İlgili HTML dosyasını TAMAMEN oku (cat ile, head/tail KULLANMA)
+      2. HTML'deki TÜM bölümleri (header, hero, features, pricing, footer vb.) koda dönüştür
+      3. TÜM metin içeriğini koru — başlıklar, açıklamalar, buton yazıları, listeler
+      4. TÜM layout yapısını koru — flex, grid, section sırası, nesting
+      5. design-tokens.css değişkenlerini kullan (var(--color-*), var(--font-*))
+      6. Bölüm atlama, placeholder yazma, basitleştirme YASAK
+      7. Stitch HTML'deki element sayısı ile kodlanan element sayısı eşleşmeli
+      8. HTML'de 5 section varsa kodda da 5 section olmalı — 2 section yazıp geçme
+      DOĞRULAMA: Kodlama bittikten sonra stitch HTML'i tekrar oku ve her bölümün
+      karşılığını kodunda bul. Eksik bölüm varsa ekle.
+
       !include implement-design-enforcement.md
 
 
@@ -821,6 +835,17 @@ steps:
          - INTEGRATION WIRING: If this is the last story (integration story), verify ALL previously created component modules are imported and rendered in the main entry point. Do NOT reimplement functionality inline — use the existing modules.
          - DESIGN FIDELITY: If DESIGN_FIDELITY_FEEDBACK is non-empty, read each issue and fix. Missing buttons, nav links, or inputs from Stitch design MUST be added to the implementation.
          - grep -rE "blue-[0-9]+/[0-9]+" components/ → WARN: likely hardcoded Tailwind color — check if it belongs in design-tokens instead
+      1.65. Stitch HTML uyumluluk kontrolü (ZORUNLU — stitch/ varsa):
+         IF stitch/ directory exists AND STORY_SCREENS is non-empty:
+           For each screen in STORY_SCREENS:
+           a. Count top-level sections in stitch/<screenId>.html:
+              STITCH_SECTIONS=$(grep -cE "<(section|header|footer|nav|main|div class)" stitch/<screenId>.html 2>/dev/null || echo "0")
+           b. Count corresponding sections in implementation code:
+              CODE_SECTIONS=$(grep -crE "<(section|header|footer|nav|main|div className)" src/ app/ components/ 2>/dev/null | awk -F: '{sum+=$NF}END{print sum}')
+           c. If CODE_SECTIONS < STITCH_SECTIONS * 0.7 → FAIL: "Stitch HTML %70 eşleşme altında — eksik bölümler var"
+           d. grep -rE "placeholder|TODO|coming soon|Coming Soon|yakında" src/ app/ components/ → FAIL if found in JSX content
+           e. Count code lines for this story's main component:
+              If component < 80 lines BUT stitch HTML > 200 lines → FAIL: "Component çok kısa — Stitch HTML tam dönüştürülmemiş"
       1.65. Stitch HTML uyumluluk kontrolü (ZORUNLU — stitch/ varsa):
          IF stitch/ directory exists AND STORY_SCREENS is non-empty:
            For each screen in STORY_SCREENS:
@@ -1263,7 +1288,8 @@ steps:
         echo "DNS/tunnel missing for $HOSTNAME — creating..."
         sudo bash $HOME/.openclaw/scripts/tunnel-add.sh "$HOSTNAME" "$PORT"
       else
-        echo "Tunnel ingress already exists for $HOSTNAME"
+        echo "Tunnel ingress exists for $HOSTNAME, verifying DNS..."
+        sudo bash $HOME/.openclaw/scripts/tunnel-add.sh "$HOSTNAME" "$PORT"
       fi
 
       C4 — Update MC metadata (ALWAYS update, even if project exists):
