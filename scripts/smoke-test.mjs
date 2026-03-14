@@ -865,147 +865,163 @@ async function main() {
 
 
       // ── Phase 15: Interactive State Verification ─────────────────
-      // Tests keyboard-driven interaction + meaningful state change.
-      // Works for: canvas games, keyboard-driven UIs, SPAs, dashboards.
+      // v3: Control-group approach — detects ambient animation (e.g. bouncing sprites)
+      // and discounts pixel/state signals that change without input.
+      // Prevents false positives on animated scenes.
       try {
         ab('open', baseUrl);
         await sleep(2000);
         injectErrorCollector();
 
-        const interactJson = abOk('eval',
-          'return JSON.stringify((function() {' +
-          '  var issues = [];' +
-          '  var canvas = document.querySelector("canvas");' +
-          '  var hasKeyHint = document.body.innerText.match(/press (space|enter|any key|start)|arrow keys|wasd|jump|duck|space to/i);' +
-          '  var isInteractive = canvas || hasKeyHint;' +
-          '  if (!isInteractive) return {skip: true, reason: "no canvas or keyboard hints"};' +
-          '' +
-          '  // ── Signal 1: DOM text snapshot ──' +
-          '  function domTextHash() {' +
-          '    var el = document.querySelector("[class*=score], [id*=score], .hud, #hud, [class*=status], [class*=counter], [class*=timer], [class*=level], main, [role=main]");' +
-          '    return el ? el.textContent.trim().substring(0,200) : document.body.innerText.substring(0,500);' +
-          '  }' +
-          '' +
-          '  // ── Signal 2: Canvas pixel sampling (5 points) ──' +
-          '  function samplePixels() {' +
-          '    if (!canvas) return null;' +
-          '    try {' +
-          '      var ctx = canvas.getContext("2d");' +
-          '      var w = canvas.width, h = canvas.height;' +
-          '      var pts = [[w*0.25,h*0.75],[w*0.5,h*0.5],[w*0.75,h*0.5],[w*0.5,h*0.25],[w*0.1,h*0.9]];' +
-          '      return pts.map(function(p) {' +
-          '        var d = ctx.getImageData(Math.floor(p[0]), Math.floor(p[1]), 1, 1).data;' +
-          '        return [d[0],d[1],d[2],d[3]];' +
-          '      });' +
-          '    } catch(e) { return null; }' +
-          '  }' +
-          '' +
-          '  // ── Signal 3: Exposed app state ──' +
-          '  function readAppState() {' +
-          '    if (typeof window.render_game_to_text === "function") {' +
-          '      try { return window.render_game_to_text(); } catch(e) {}' +
-          '    }' +
-          '    var names = ["game","player","character","gameState","state","app","engine","store","__APP_STATE__"];' +
-          '    var s = {};' +
-          '    names.forEach(function(n) {' +
-          '      if (window[n] != null && typeof window[n] === "object") {' +
-          '        try { s[n] = JSON.stringify(window[n]).substring(0,500); } catch(e) { s[n] = "exists"; }' +
-          '      } else if (typeof window[n] === "string") { s[n] = window[n]; }' +
-          '    });' +
-          '    return JSON.stringify(s);' +
-          '  }' +
-          '' +
-          '  // ── Signal 4: URL/hash change ──' +
-          '  var beforeUrl = location.href + location.hash;' +
-          '' +
-          '  // ── BEFORE snapshot ──' +
-          '  var beforeText = domTextHash();' +
-          '  var beforePixels = samplePixels();' +
-          '  var beforeState = readAppState();' +
-          '' +
-          '  // ── Dispatch keyboard events ──' +
-          '  var keysToTry = [' +
-          '    {key:" ", code:"Space", keyCode:32},' +
-          '    {key:"Enter", code:"Enter", keyCode:13},' +
-          '    {key:"ArrowUp", code:"ArrowUp", keyCode:38},' +
-          '    {key:"ArrowRight", code:"ArrowRight", keyCode:39}' +
-          '  ];' +
-          '  keysToTry.forEach(function(k) {' +
-          '    var opts = {key:k.key, code:k.code, keyCode:k.keyCode, bubbles:true};' +
-          '    window.dispatchEvent(new KeyboardEvent("keydown", opts));' +
-          '    document.dispatchEvent(new KeyboardEvent("keydown", opts));' +
-          '    if (canvas) canvas.dispatchEvent(new KeyboardEvent("keydown", opts));' +
-          '  });' +
-          '' +
-          '  // Wait for state to settle' +
-          '  var t0 = Date.now(); while(Date.now()-t0 < 100) {}' +
-          '' +
-          '  // Try advanceTime if available (deterministic game stepping)' +
-          '  if (typeof window.advanceTime === "function") {' +
-          '    try { window.advanceTime(500); } catch(e) {}' +
-          '  }' +
-          '' +
-          '  keysToTry.forEach(function(k) {' +
-          '    var opts = {key:k.key, code:k.code, keyCode:k.keyCode, bubbles:true};' +
-          '    window.dispatchEvent(new KeyboardEvent("keyup", opts));' +
-          '    document.dispatchEvent(new KeyboardEvent("keyup", opts));' +
-          '  });' +
-          '' +
-          '  // Wait for effects (animations, state transitions, route changes)' +
-          '  var t1 = Date.now(); while(Date.now()-t1 < 400) {}' +
-          '' +
-          '  // ── AFTER snapshot ──' +
-          '  var afterText = domTextHash();' +
-          '  var afterPixels = samplePixels();' +
-          '  var afterState = readAppState();' +
-          '  var afterUrl = location.href + location.hash;' +
-          '' +
-          '  // ── Compare all signals ──' +
-          '  var textChanged = (beforeText !== afterText);' +
-          '  var urlChanged = (beforeUrl !== afterUrl);' +
-          '  var stateChanged = (beforeState !== afterState);' +
-          '' +
-          '  var pixelChanged = false;' +
-          '  if (beforePixels && afterPixels) {' +
-          '    for (var i = 0; i < beforePixels.length; i++) {' +
-          '      for (var j = 0; j < 4; j++) {' +
-          '        if (beforePixels[i][j] !== afterPixels[i][j]) { pixelChanged = true; break; }' +
-          '      }' +
-          '      if (pixelChanged) break;' +
-          '    }' +
-          '  }' +
-          '' +
-          '  var anyChanged = textChanged || pixelChanged || stateChanged || urlChanged;' +
-          '' +
-          '  if (!anyChanged) {' +
-          '    issues.push({type:"interactive-no-response",' +
-          '      detail:"Keyboard input (Space/Enter/ArrowUp/ArrowRight) caused zero state change across 4 signals: DOM text, canvas pixels, app state, URL"});' +
-          '  }' +
-          '' +
-          '  return {' +
-          '    skip: false,' +
-          '    issues: issues,' +
-          '    signals: {textChanged:textChanged, pixelChanged:pixelChanged, stateChanged:stateChanged, urlChanged:urlChanged},' +
-          '    hasCanvas: !!canvas,' +
-          '    hasKeyHint: !!hasKeyHint,' +
-          '    hasRenderFn: typeof window.render_game_to_text === "function",' +
-          '    hasAdvanceTime: typeof window.advanceTime === "function"' +
+        // Inject reusable helpers on window (avoids repeating in each eval)
+        abOk('eval',
+          '(function() {' +
+          '  window.__p15h = {' +
+          '    domText: function() {' +
+          '      var el = document.querySelector("[class*=score],[id*=score],.hud,#hud,[class*=status],[class*=counter],[class*=timer],[class*=level],main,[role=main]");' +
+          '      return el ? el.textContent.trim().substring(0,200) : document.body.innerText.substring(0,500);' +
+          '    },' +
+          '    pixels: function() {' +
+          '      var canvas = document.querySelector("canvas");' +
+          '      if (!canvas) return null;' +
+          '      try { var ctx = canvas.getContext("2d"); var w = canvas.width, h = canvas.height;' +
+          '        return [[w*0.25,h*0.75],[w*0.5,h*0.5],[w*0.75,h*0.5],[w*0.5,h*0.25],[w*0.1,h*0.9]].map(function(p){' +
+          '          var d = ctx.getImageData(Math.floor(p[0]),Math.floor(p[1]),1,1).data; return [d[0],d[1],d[2],d[3]]; });' +
+          '      } catch(e) { return null; }' +
+          '    },' +
+          '    state: function() {' +
+          '      if (typeof window.render_game_to_text === "function") { try { return window.render_game_to_text(); } catch(e) {} }' +
+          '      var s = {};' +
+          '      ["game","player","character","gameState","state","app","engine","store","__APP_STATE__"].forEach(function(n) {' +
+          '        if (window[n] != null && typeof window[n] === "object") { try { s[n] = JSON.stringify(window[n]).substring(0,500); } catch(e) { s[n] = "exists"; } }' +
+          '        else if (typeof window[n] === "string") { s[n] = window[n]; }' +
+          '      }); return JSON.stringify(s);' +
+          '    },' +
+          '    pixelsDiffer: function(a, b) {' +
+          '      if (!a || !b) return false;' +
+          '      for (var i = 0; i < a.length; i++) {' +
+          '        for (var j = 0; j < 4; j++) { if (a[i][j] !== b[i][j]) return true; }' +
+          '      } return false;' +
+          '    },' +
+          '    snap: function() { return { text: this.domText(), pixels: this.pixels(), state: this.state(), url: location.href + location.hash }; }' +
           '  };' +
-          '})())'
+          '})(); return "ok"'
         );
 
-        let interactResult = null;
-        try { interactResult = JSON.parse(interactJson || 'null'); } catch {}
+        // Step 1: Detect interactivity + capture T0
+        const detectJson = abOk('eval',
+          'return JSON.stringify((function() {' +
+          '  var canvas = document.querySelector("canvas");' +
+          '  var hasKeyHint = document.body.innerText.match(/press (space|enter|any key|start)|arrow keys|wasd|jump|duck|space to/i);' +
+          '  if (!canvas && !hasKeyHint) return {skip: true, reason: "no canvas or keyboard hints"};' +
+          '  window.__p15_t0 = window.__p15h.snap();' +
+          '  return {skip: false, hasCanvas: !!canvas, hasKeyHint: !!hasKeyHint, hasAdvanceTime: typeof window.advanceTime === "function"};' +
+          '})()'
+        );
 
-        if (interactResult && !interactResult.skip && Array.isArray(interactResult.issues)) {
-          for (const i of interactResult.issues) {
-            failures.push('[INTERACT] ' + i.type + ': ' + i.detail);
+        let detectResult = null;
+        try { detectResult = JSON.parse(detectJson || 'null'); } catch {}
+
+        if (detectResult && !detectResult.skip) {
+          // Step 2: Control wait — NO input, same duration as input test
+          await sleep(800);
+
+          // Step 3: Capture T1 (control) — detect ambient changes
+          const controlJson = abOk('eval',
+            'return JSON.stringify((function() {' +
+            '  var h = window.__p15h, t0 = window.__p15_t0;' +
+            '  if (!t0) return {skip: true};' +
+            '  window.__p15_t1 = h.snap();' +
+            '  var t1 = window.__p15_t1;' +
+            '  return {' +
+            '    ambientPixels: h.pixelsDiffer(t0.pixels, t1.pixels),' +
+            '    ambientText: (t0.text !== t1.text),' +
+            '    ambientState: (t0.state !== t1.state),' +
+            '    ambientUrl: (t0.url !== t1.url)' +
+            '  };' +
+            '})()'
+          );
+
+          let controlResult = null;
+          try { controlResult = JSON.parse(controlJson || 'null'); } catch {}
+          if (!controlResult || controlResult.skip) controlResult = { ambientPixels: false, ambientText: false, ambientState: false, ambientUrl: false };
+
+          // Step 4: Dispatch keyboard inputs (from T1 baseline)
+          abOk('eval',
+            '(function() {' +
+            '  var canvas = document.querySelector("canvas");' +
+            '  var keys = [{key:" ",code:"Space",keyCode:32},{key:"Enter",code:"Enter",keyCode:13},{key:"ArrowUp",code:"ArrowUp",keyCode:38},{key:"ArrowRight",code:"ArrowRight",keyCode:39}];' +
+            '  keys.forEach(function(k) {' +
+            '    var opts = {key:k.key, code:k.code, keyCode:k.keyCode, bubbles:true};' +
+            '    window.dispatchEvent(new KeyboardEvent("keydown", opts));' +
+            '    document.dispatchEvent(new KeyboardEvent("keydown", opts));' +
+            '    if (canvas) canvas.dispatchEvent(new KeyboardEvent("keydown", opts));' +
+            '  });' +
+            '  if (typeof window.advanceTime === "function") { try { window.advanceTime(500); } catch(e) {} }' +
+            '  setTimeout(function() {' +
+            '    keys.forEach(function(k) {' +
+            '      var opts = {key:k.key, code:k.code, keyCode:k.keyCode, bubbles:true};' +
+            '      window.dispatchEvent(new KeyboardEvent("keyup", opts));' +
+            '      document.dispatchEvent(new KeyboardEvent("keyup", opts));' +
+            '    });' +
+            '  }, 100);' +
+            '})(); return "ok"'
+          );
+
+          // Step 5: Wait for game loop to process inputs
+          await sleep(800);
+
+          // Step 6: Capture T2, compare with T1, apply ambient discount
+          const afterJson = abOk('eval',
+            'return JSON.stringify((function() {' +
+            '  var h = window.__p15h, t1 = window.__p15_t1;' +
+            '  if (!t1) return {skip: true};' +
+            '  var t2 = h.snap();' +
+            '  var textChanged = (t1.text !== t2.text);' +
+            '  var pixelChanged = h.pixelsDiffer(t1.pixels, t2.pixels);' +
+            '  var stateChanged = (t1.state !== t2.state);' +
+            '  var urlChanged = (t1.url !== t2.url);' +
+            '  delete window.__p15_t0; delete window.__p15_t1; delete window.__p15h;' +
+            '  return {skip:false, signals:{textChanged:textChanged, pixelChanged:pixelChanged, stateChanged:stateChanged, urlChanged:urlChanged}};' +
+            '})()'
+          );
+
+          let interactResult = null;
+          try { interactResult = JSON.parse(afterJson || 'null'); } catch {}
+
+          if (interactResult && !interactResult.skip) {
+            const s = interactResult.signals;
+            const amb = controlResult;
+
+            // A signal is "input-confirmed" only if it changed AND was NOT ambient
+            const inputConfirmed = (
+              (s.textChanged && !amb.ambientText) ||
+              (s.stateChanged && !amb.ambientState) ||
+              (s.pixelChanged && !amb.ambientPixels) ||
+              (s.urlChanged && !amb.ambientUrl)
+            );
+
+            const anyAmbient = amb.ambientPixels || amb.ambientText || amb.ambientState || amb.ambientUrl;
+            const anyChanged = s.textChanged || s.pixelChanged || s.stateChanged || s.urlChanged;
+
+            if (!anyChanged && !anyAmbient) {
+              // Nothing changed at all — static page, input ignored
+              failures.push('[INTERACT] interactive-no-response: Keyboard input (Space/Enter/ArrowUp/ArrowRight) caused zero state change across 4 signals: DOM text, canvas pixels, app state, URL');
+            } else if (!inputConfirmed && anyAmbient) {
+              // Only ambient signals changed — cannot confirm input caused it
+              const ambList = [];
+              if (amb.ambientPixels) ambList.push('canvas pixels');
+              if (amb.ambientText) ambList.push('DOM text');
+              if (amb.ambientState) ambList.push('app state');
+              if (amb.ambientUrl) ambList.push('URL');
+              failures.push('[INTERACT] interactive-ambiguous: Ambient animation detected on ' + ambList.join(', ') + ' — these signals change without input. No non-ambient signal confirmed keyboard response');
+            }
+            // else: inputConfirmed = true → at least one non-ambient signal changed → PASS
           }
         }
       } catch (e) {
         failures.push('[INTERACT] Phase 15 error: ' + e.message);
       }
-
     }
 
     ab('close');

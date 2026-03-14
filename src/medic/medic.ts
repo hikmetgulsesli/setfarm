@@ -8,7 +8,7 @@ import { getDb } from "../db.js";
 import { emitEvent, type EventType } from "../installer/events.js";
 import { teardownWorkflowCronsIfIdle, ensureWorkflowCrons, removeAgentCrons, setupAgentCrons, expectedCronCount, actualCronCount, repairAgentCrons } from "../installer/agent-cron.js";
 import { loadWorkflowSpec } from "../installer/workflow-spec.js";
-import { resolveWorkflowDir } from "../installer/paths.js";
+import { resolveWorkflowDir, resolveSetfarmCli } from "../installer/paths.js";
 import { listCronJobs } from "../installer/gateway-api.js";
 import {
   runSyncChecks,
@@ -172,7 +172,24 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
       return true;
     }
 
-case "restart_service": {      if (!finding.serviceName) return false;      try {        execFileSync("systemctl", ["--user", "start", finding.serviceName], {          encoding: "utf-8",          timeout: 10000,        });        emitEvent({          ts: new Date().toISOString(),          event: "step.done" as EventType,          runId: finding.runId ?? "",          detail: "Medic: restarted offline service " + finding.serviceName,        });        return true;      } catch (err) {        return false;      }    }
+case "restart_service": {
+      if (!finding.serviceName) return false;
+      try {
+        execFileSync("systemctl", ["--user", "start", finding.serviceName], {
+          encoding: "utf-8",
+          timeout: 10000,
+        });
+        emitEvent({
+          ts: new Date().toISOString(),
+          event: "step.done" as EventType,
+          runId: finding.runId ?? "",
+          detail: "Medic: restarted offline service " + finding.serviceName,
+        });
+        return true;
+      } catch (err) {
+        return false;
+      }
+    }
 
     case "restart_gateway": {
       // Uptime guard: if gateway started < 30min ago, restart won't help.
@@ -202,7 +219,7 @@ case "restart_service": {      if (!finding.serviceName) return false;      try 
           await sleep(5000);
           // Get all running workflows and ensure-crons for each
           const activeWfs = db.prepare("SELECT DISTINCT workflow_id FROM runs WHERE status = 'running'").all() as Array<{ workflow_id: string }>;
-          const CLI = process.env.HOME + "/.openclaw/setfarm-repo/dist/cli/cli.js";
+          const CLI = resolveSetfarmCli();
           for (const wf of activeWfs) {
             try {
               execFileSync("node", [CLI, "workflow", "ensure-crons", wf.workflow_id], { encoding: "utf-8", timeout: 60000 });

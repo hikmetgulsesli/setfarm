@@ -252,8 +252,7 @@ export function killWorktreeProcesses(dir: string): void {
     }
 
     // 2s grace period then SIGKILL survivors
-    const deadline = Date.now() + 2000;
-    while (Date.now() < deadline) { /* busy-wait */ }
+    try { execFileSync("sleep", ["2"], { timeout: 5000 }); } catch { /* timeout OK */ }
     for (const pid of pids) {
       try {
         process.kill(pid, 0);

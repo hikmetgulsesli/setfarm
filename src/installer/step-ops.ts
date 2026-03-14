@@ -206,11 +206,11 @@ export function claimStep(agentId: string): ClaimResult {
       const envLines: string[] = [];
       // DB connection — prefer external DB
       const dbUrl = dCtx["database_url"] || "";
-      const dbHost = dCtx["db_host"] || "72.61.186.46";
-      const dbPort = dCtx["db_port"] || "37550";
+      const dbHost = dCtx["db_host"] || process.env.SETFARM_DEFAULT_DB_HOST || "localhost";
+      const dbPort = dCtx["db_port"] || process.env.SETFARM_DEFAULT_DB_PORT || "5432";
       const dbName = dCtx["db_name"] || path.basename(repoPath).replace(/-/g, "_");
-      const dbUser = dCtx["db_user"] || "postgres";
-      const dbPass = dCtx["db_password"] || "lckdvtbwghdzhxxh";
+      const dbUser = dCtx["db_user"] || process.env.SETFARM_DEFAULT_DB_USER || "postgres";
+      const dbPass = dCtx["db_password"] || process.env.SETFARM_DEFAULT_DB_PASS || "";
       if (dbUrl) {
         envLines.push(`DATABASE_URL=${dbUrl}`);
       } else {
