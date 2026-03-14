@@ -1212,6 +1212,8 @@ steps:
       ExecStart=<based on type above>
       Restart=on-failure
       RestartSec=5
+      KillMode=mixed
+      TimeoutStopSec=5
       Environment=NODE_ENV=production
 
       [Install]
