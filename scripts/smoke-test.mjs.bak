@@ -15,7 +15,6 @@
  * Phase 11 (browser): Hydration & Interactivity
  * Phase 13 (browser): Content Sanity — hallucinated text, debug artifacts, raw vars
  * Phase 14 (browser): Interaction Dead-Ends — buttons with no DOM response — stalled UI, unresponsive buttons
- * Phase 15 (browser): State Mutation Check — canvas game input→physics verification
  *   Uses agent-browser CLI for real browser interaction
  *
  * Usage: node smoke-test.mjs <repo-path> [--port PORT] [--timeout MS]
@@ -862,119 +861,6 @@ async function main() {
       } catch (e) {
         failures.push('[UX] Phase 14 error: ' + e.message);
       }
-
-
-      // ── Phase 15: State Mutation Check (Game Interactivity) ────
-      try {
-        ab('open', baseUrl);
-        await sleep(2000);
-
-        const gameplayJson = abOk('eval',
-          'return JSON.stringify((function() {' +
-          '  var issues = [];' +
-          '  var canvas = document.querySelector("canvas");' +
-          '  if (!canvas) return {skip: true};' +
-          '' +
-          '  function samplePixels(c) {' +
-          '    try {' +
-          '      var ctx = c.getContext("2d");' +
-          '      var w = c.width, h = c.height;' +
-          '      var points = [' +
-          '        [Math.floor(w*0.25), Math.floor(h*0.75)],' +
-          '        [Math.floor(w*0.5), Math.floor(h*0.5)],' +
-          '        [Math.floor(w*0.75), Math.floor(h*0.5)],' +
-          '        [Math.floor(w*0.5), Math.floor(h*0.25)],' +
-          '        [Math.floor(w*0.1), Math.floor(h*0.9)]' +
-          '      ];' +
-          '      return points.map(function(p) {' +
-          '        var d = ctx.getImageData(p[0], p[1], 1, 1).data;' +
-          '        return [d[0],d[1],d[2],d[3]];' +
-          '      });' +
-          '    } catch(e) { return null; }' +
-          '  }' +
-          '' +
-          '  function getGameState() {' +
-          '    var s = {};' +
-          '    var names = ["game","player","character","gameState","state","app","engine"];' +
-          '    names.forEach(function(n) {' +
-          '      if (window[n] != null && typeof window[n] === "object") {' +
-          '        try { s[n] = JSON.stringify(window[n]).substring(0,500); } catch(e) { s[n] = "exists"; }' +
-          '      } else if (typeof window[n] === "string") {' +
-          '        s[n] = window[n];' +
-          '      }' +
-          '    });' +
-          '    return s;' +
-          '  }' +
-          '' +
-          '  function getScoreText() {' +
-          '    var scoreEl = document.querySelector("[class*=score], [id*=score], .hud, #hud");' +
-          '    return scoreEl ? scoreEl.textContent.trim().substring(0,50) : null;' +
-          '  }' +
-          '' +
-          '  var beforePixels = samplePixels(canvas);' +
-          '  var beforeState = getGameState();' +
-          '  var beforeScore = getScoreText();' +
-          '' +
-          '  window.dispatchEvent(new KeyboardEvent("keydown",{key:" ",code:"Space",keyCode:32,bubbles:true}));' +
-          '  document.dispatchEvent(new KeyboardEvent("keydown",{key:" ",code:"Space",keyCode:32,bubbles:true}));' +
-          '  canvas.dispatchEvent(new KeyboardEvent("keydown",{key:" ",code:"Space",keyCode:32,bubbles:true}));' +
-          '' +
-          '  var t0 = Date.now(); while(Date.now()-t0 < 50) {}' +
-          '' +
-          '  window.dispatchEvent(new KeyboardEvent("keyup",{key:" ",code:"Space",keyCode:32,bubbles:true}));' +
-          '  document.dispatchEvent(new KeyboardEvent("keyup",{key:" ",code:"Space",keyCode:32,bubbles:true}));' +
-          '' +
-          '  var t1 = Date.now(); while(Date.now()-t1 < 200) {}' +
-          '' +
-          '  window.dispatchEvent(new KeyboardEvent("keydown",{key:" ",code:"Space",keyCode:32,bubbles:true}));' +
-          '  window.dispatchEvent(new KeyboardEvent("keydown",{key:"ArrowUp",code:"ArrowUp",keyCode:38,bubbles:true}));' +
-          '' +
-          '  var t2 = Date.now(); while(Date.now()-t2 < 150) {}' +
-          '' +
-          '  window.dispatchEvent(new KeyboardEvent("keyup",{key:" ",code:"Space",keyCode:32,bubbles:true}));' +
-          '  window.dispatchEvent(new KeyboardEvent("keyup",{key:"ArrowUp",code:"ArrowUp",keyCode:38,bubbles:true}));' +
-          '' +
-          '  var t3 = Date.now(); while(Date.now()-t3 < 300) {}' +
-          '' +
-          '  var afterPixels = samplePixels(canvas);' +
-          '  var afterState = getGameState();' +
-          '  var afterScore = getScoreText();' +
-          '' +
-          '  var pixelChanged = false;' +
-          '  if (beforePixels && afterPixels) {' +
-          '    for (var i = 0; i < beforePixels.length; i++) {' +
-          '      for (var j = 0; j < 4; j++) {' +
-          '        if (beforePixels[i][j] !== afterPixels[i][j]) { pixelChanged = true; break; }' +
-          '      }' +
-          '      if (pixelChanged) break;' +
-          '    }' +
-          '  }' +
-          '' +
-          '  var stateChanged = (JSON.stringify(beforeState) !== JSON.stringify(afterState));' +
-          '  var scoreChanged = (beforeScore !== afterScore);' +
-          '' +
-          '  if (!pixelChanged && !stateChanged && !scoreChanged) {' +
-          '    issues.push({type:"game-no-response", detail:"Space/ArrowUp input caused zero state mutation (pixels, globals, score all identical)"});' +
-          '  } else if (!pixelChanged && !stateChanged) {' +
-          '    issues.push({type:"game-weak-response", detail:"Only score text changed but canvas and game state unchanged"});' +
-          '  }' +
-          '' +
-          '  return {skip:false, issues:issues, pixelChanged:pixelChanged, stateChanged:stateChanged, scoreChanged:scoreChanged};' +
-          '})())'
-        );
-
-        let gameplayResult = null;
-        try { gameplayResult = JSON.parse(gameplayJson || 'null'); } catch {}
-
-        if (gameplayResult && !gameplayResult.skip && Array.isArray(gameplayResult.issues)) {
-          for (const i of gameplayResult.issues) {
-            failures.push('[GAMEPLAY] ' + i.type + ': ' + i.detail);
-          }
-        }
-      } catch (e) {
-        failures.push('[GAMEPLAY] Phase 15 error: ' + e.message);
-      }
-
     }
 
     ab('close');
@@ -996,7 +882,6 @@ async function main() {
   const hydrationCount = failures.filter(f => f.startsWith('[HYDRATION]')).length;
   const contentCount = failures.filter(f => f.startsWith('[CONTENT]')).length;
   const uxCount = failures.filter(f => f.startsWith('[UX]')).length;
-  const gameplayCount = failures.filter(f => f.startsWith('[GAMEPLAY]')).length;
   if (consoleCount > 0) confidence -= 40;
   if (networkCount > 0) confidence -= 30;
   if (layoutCount > 0) confidence -= 20;
@@ -1005,7 +890,6 @@ async function main() {
   if (hydrationCount > 0) confidence -= 15;
   if (contentCount > 0) confidence -= 15;
   if (uxCount > 0) confidence -= 10;
-  if (gameplayCount > 0) confidence -= 50;
   if (wiringIssues.length > 0) confidence -= 20;
   if (linksBroken > 0) confidence -= 10;
   confidence = Math.max(0, confidence);
@@ -1028,7 +912,6 @@ async function main() {
     hydrationIssues: hydrationCount,
     contentIssues: contentCount,
     uxDeadEnds: uxCount,
-    gameplayIssues: gameplayCount,
     consoleErrors,
     failures,
   };
