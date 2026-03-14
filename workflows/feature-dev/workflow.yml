@@ -151,6 +151,8 @@ steps:
          - Technical requirements (stack, DB, APIs, auth)
          - UI/UX requirements (pages, screens, interactions)
          - Non-functional requirements (performance, security)
+         - If the task is a game/oyun: specify game type, physics model, input keys,
+           state machine states, and require window.game state exposure
       4. The PRD must be detailed enough for a designer to identify ALL screens
          and for a developer to implement without ambiguity
       5. Determine the repo path and branch name
@@ -358,6 +360,10 @@ steps:
            d) No placeholder text ("Coming soon", "Game Started!", "TODO", etc.)
            e) State transitions work end-to-end (e.g. menu -> game -> pause -> game over)
            f) Canvas/game/chart renders actual content, not static text
+           g) window.game object is exposed with player state, score, and game state
+           h) Keyboard input (Space/ArrowUp) causes visible state change within 100ms
+           i) No Math.random() in render loop — random values seeded at init
+           j) Single state machine — not dual string+object tracking
          - This story WIRES everything together - without it, components exist in isolation
 
       DO NOT:
@@ -574,6 +580,8 @@ steps:
          - var(--property-name) ile kullan
          - design-tokens.css disinda --font-*, --color-* tanimlama YASAK
          - Mevcut CSS dosyalarini SILME — @import ekle
+
+      !include game-dev-rules.md
 
 
       STITCH HTML → KOD DÖNÜŞÜMÜ (ZORUNLU — ATLAMA YASAK):
