@@ -170,6 +170,15 @@ export function claimStep(agentId: string): ClaimResult {
       if (fs.existsSync(dStitchFile) && fs.existsSync(dStitchDir)) {
         try {
           const dData = JSON.parse(fs.readFileSync(dStitchFile, "utf-8"));
+          // Only reuse if .stitch was written DURING this run (prevents cross-run contamination)
+          const runRow = db.prepare("SELECT created_at FROM runs WHERE id = ?").get(step.run_id) as any;
+          const runCreatedAt = runRow ? new Date(runRow.created_at).getTime() : 0;
+          const stitchUpdatedAt = dData.updatedAt ? new Date(dData.updatedAt).getTime() : 0;
+          if (stitchUpdatedAt < runCreatedAt) {
+            logger.info(`[design-dedup] .stitch is stale (written ${dData.updatedAt}, run started ${runRow?.created_at}) — deleting to force fresh design`, { runId: step.run_id });
+            try { fs.unlinkSync(dStitchFile); } catch {}
+            try { fs.rmSync(dStitchDir, { recursive: true, force: true }); } catch {}
+          } else {
           const dHtmlFiles = fs.readdirSync(dStitchDir).filter((f: string) => f.endsWith(".html"));
           if (dData.projectId && dHtmlFiles.length > 0) {
             const dScreenMap = dHtmlFiles.map((f: string) => ({
@@ -193,7 +202,7 @@ export function claimStep(agentId: string): ClaimResult {
             advancePipeline(step.run_id);
             return { found: false };
           }
-        } catch (e) { logger.warn(`[design-dedup] .stitch parse error: ${e}`, { runId: step.run_id }); }
+        }} catch (e) { logger.warn(`[design-dedup] .stitch parse error: ${e}`, { runId: step.run_id }); }
       }
     }
   }
@@ -948,27 +957,14 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
           } catch (gitErr: any) { logger.debug("git rev-list failed: " + (gitErr?.message || "")); }
           if (commitCount > 2) {
             const priorRun = db.prepare(
-              "SELECT id FROM runs WHERE status = 'completed' AND context LIKE ? AND id != ? LIMIT 1"
+              "SELECT id FROM runs WHERE status IN ('completed','cancelled','failed') AND context LIKE ? AND id != ? LIMIT 1"
             ).get(`%${repoPath}%`, step.run_id) as { id: string } | undefined;
-            if (priorRun) {
-              const baseName = path.basename(repoPath);
-              const parentDir = path.dirname(repoPath);
-              let suffix = 2;
-              let newPath = path.join(parentDir, `${baseName}-${suffix}`);
-              while (fs.existsSync(newPath)) {
-                suffix++;
-                newPath = path.join(parentDir, `${baseName}-${suffix}`);
-              }
-              fs.mkdirSync(newPath, { recursive: true });
-              execFileSync("git", ["init"], { cwd: newPath, timeout: 5000 });
-              execFileSync("git", ["checkout", "-b", "main"], { cwd: newPath, timeout: 5000 });
-              fs.writeFileSync(path.join(newPath, "README.md"), "# Project\n");
-              execFileSync("git", ["add", "."], { cwd: newPath, timeout: 5000 });
-              execFileSync("git", ["commit", "-m", "initial"], { cwd: newPath, timeout: 5000 });
-              context["repo"] = newPath;
-              logger.info(`[repo-dedup] Repo ${repoPath} already used by run ${priorRun.id}, created ${newPath}`, { runId: step.run_id });
-              db.prepare("UPDATE runs SET context = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(context), new Date().toISOString(), step.run_id);
-            } else {
+            // Clean in-place: same directory, fresh start (no suffix — keeps resume working)
+            {
+              // Clean stale artifacts from previous runs
+              try { fs.unlinkSync(path.join(repoPath, ".stitch")); } catch {}
+              try { fs.rmSync(path.join(repoPath, "stitch"), { recursive: true, force: true }); } catch {}
+              try { fs.rmSync(path.join(repoPath, ".stitch-screens.json"), { force: true }); } catch {}
               execFileSync("git", ["checkout", "--orphan", "__fresh__"], { cwd: repoPath, timeout: 5000 });
               execFileSync("git", ["rm", "-rf", "."], { cwd: repoPath, timeout: 5000 });
               execFileSync("git", ["clean", "-fd"], { cwd: repoPath, timeout: 5000 });
@@ -1023,10 +1019,69 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
       failStep(stepId, designErr);
       return { advanced: false, runCompleted: false };
     }
+
+    // Immediately download Stitch HTML after design completes (don't wait for setup-repo)
+    const dRepo = context["repo"] || context["REPO"] || "";
+    const dProjId = context["stitch_project_id"] || "";
+    const dScreenCount = parseInt(context["screens_generated"] || "0", 10);
+    const dScreenMap = context["screen_map"] || "";
+    const dHasScreens = dScreenCount > 0 || (dScreenMap.length > 10 && dScreenMap.includes("screenId"));
+    if (dRepo && dProjId && dHasScreens) {
+      const dStitchDir = path.join(dRepo, "stitch");
+      if (!fs.existsSync(dStitchDir) || fs.readdirSync(dStitchDir).filter(f => f.endsWith(".html")).length === 0) {
+        logger.info(`[design-download] Downloading ${dScreenCount} screens from Stitch project ${dProjId}`, { runId: step.run_id });
+        try {
+          fs.mkdirSync(dStitchDir, { recursive: true });
+          const stitchScript = path.join(os.homedir(), ".openclaw/setfarm-repo/scripts/stitch-api.mjs");
+          let screenIds: any[] = [];
+          const screenMapJson = context["screen_map"] || "";
+          if (screenMapJson) {
+            try { screenIds = JSON.parse(screenMapJson); } catch {}
+          }
+          if (screenIds.length === 0) {
+            try {
+              const listOut = execFileSync("node", [stitchScript, "list-screens", dProjId], { encoding: "utf-8", timeout: 30000 }).trim();
+              try { screenIds = JSON.parse(listOut); } catch {}
+            } catch {}
+          }
+          let dlCount = 0;
+          for (const scr of screenIds) {
+            const sid = scr?.id || scr?.screenId || (typeof scr === "string" ? scr : null);
+            if (!sid) continue;
+            try {
+              execFileSync("node", [stitchScript, "download-screen", dProjId, String(sid), path.join(dStitchDir, String(sid) + ".html")], { encoding: "utf-8", timeout: 30000 });
+              dlCount++;
+            } catch (dlErr) { logger.warn(`[design-download] download-screen ${sid} failed: ${dlErr}`, { runId: step.run_id }); }
+          }
+          try { execFileSync("node", [stitchScript, "create-manifest", dStitchDir], { encoding: "utf-8", timeout: 15000 }); } catch {}
+          try { execFileSync("node", [stitchScript, "extract-tokens", dStitchDir], { encoding: "utf-8", timeout: 15000 }); } catch {}
+          logger.info(`[design-download] Downloaded ${dlCount}/${screenIds.length} screen(s)`, { runId: step.run_id });
+        } catch (dlErr) {
+          logger.warn(`[design-download] Screen download failed: ${dlErr}`, { runId: step.run_id });
+        }
+      }
+    }
   }
 
   // DB Auto-Provisioning (setup step)
   if (step.step_id === "setup-repo" && parsed["status"]?.toLowerCase() === "done") {
+    // Ensure plan's BRANCH exists in repo (create from main if missing)
+    const planBranch = context["branch"] || context["BRANCH"];
+    const repoDir = context["repo"] || context["REPO"];
+    if (planBranch && repoDir && planBranch !== "main" && planBranch !== "master") {
+      try {
+        const branchList = execFileSync("git", ["branch", "--list", planBranch], { cwd: repoDir, encoding: "utf-8", timeout: 5000 }).trim();
+        if (!branchList) {
+          execFileSync("git", ["checkout", "-b", planBranch], { cwd: repoDir, timeout: 5000 });
+          execFileSync("git", ["checkout", "main"], { cwd: repoDir, timeout: 5000 });
+          logger.info(`[setup-repo] Created missing branch "${planBranch}" from main`, { runId: step.run_id });
+        }
+      } catch (e) {
+        logger.warn(`[setup-repo] Could not create branch "${planBranch}", falling back to main: ${e}`, { runId: step.run_id });
+        context["branch"] = "main";
+        updateRunContext(step.run_id, context);
+      }
+    }
     const dbErr = processSetupCompletion(context, step.run_id);
     if (dbErr) {
       failStep(stepId, dbErr);
@@ -1040,6 +1095,22 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     if (designErr) {
       failStep(stepId, designErr);
       return { advanced: false, runCompleted: false };
+    }
+  }
+
+  // SETUP-BUILD BRANCH FALLBACK: if plan's branch doesn't exist, use main
+  if (step.step_id === "setup-build") {
+    const buildBranch = context["branch"] || context["BRANCH"];
+    const buildRepo = context["repo"] || context["REPO"];
+    if (buildBranch && buildRepo && buildBranch !== "main" && buildBranch !== "master") {
+      try {
+        const exists = execFileSync("git", ["branch", "--list", buildBranch], { cwd: buildRepo, encoding: "utf-8", timeout: 5000 }).trim();
+        if (!exists) {
+          logger.warn(`[setup-build] Branch "${buildBranch}" not found, falling back to main`, { runId: step.run_id });
+          context["branch"] = "main";
+          updateRunContext(step.run_id, context);
+        }
+      } catch {}
     }
   }
 

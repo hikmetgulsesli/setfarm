@@ -584,6 +584,29 @@ const commands = {
 
     if (!htmlUrl) throw new Error(`No HTML download URL found for screen ${screenId}`);
     const dlResult = await downloadFile(htmlUrl, outputPath);
+
+    // Also download screenshot PNG if available
+    let screenshotUrl = null;
+    if (result && result.content) {
+      for (const item of result.content) {
+        if (item.type === 'text') {
+          try {
+            const parsed = JSON.parse(item.text);
+            const screen = parsed.screen || parsed;
+            screenshotUrl = screen.screenshotUrl || screen.screenshot?.downloadUrl || screen.screenshot?.download_url || null;
+            if (screenshotUrl) break;
+          } catch { /* skip */ }
+        }
+      }
+    }
+    if (screenshotUrl) {
+      const pngPath = outputPath.replace(/\.html$/, '.png');
+      try {
+        await downloadFile(screenshotUrl, pngPath);
+        process.stderr.write('Downloaded screenshot: ' + pngPath + '\n');
+      } catch (e) { process.stderr.write('Screenshot download failed: ' + e.message + '\n'); }
+    }
+
     console.log(JSON.stringify(dlResult, null, 2));
   },
 

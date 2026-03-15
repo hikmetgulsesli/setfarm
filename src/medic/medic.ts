@@ -138,6 +138,26 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
 
       const newCount = (step.abandoned_count ?? 0) + 1;
       const MAX_STEP_ABANDONS = 10;
+      const SAME_ERROR_LIMIT = 3;
+
+      // Circuit breaker: if step output hasn't changed across retries, same error is repeating
+      if (step.output && newCount >= SAME_ERROR_LIMIT) {
+        const recentChecks = db.prepare(
+          "SELECT detail FROM medic_checks WHERE run_id = ? AND step_id = ? AND action = 'reset_step' ORDER BY checked_at DESC LIMIT ?"
+        ).all(finding.runId || "", finding.stepId || "", SAME_ERROR_LIMIT) as { detail: string }[];
+        if (recentChecks.length >= SAME_ERROR_LIMIT - 1) {
+          logger.error(`[medic] Same-error circuit breaker: step ${finding.stepId} reset ${newCount}x with no progress — failing run`, { runId: finding.runId });
+          db.prepare(
+            "UPDATE steps SET status = 'failed', output = ?, abandoned_count = ?, updated_at = ? WHERE id = ?"
+          ).run("Medic: same error repeated " + newCount + " times — circuit breaker triggered. Last output: " + (step.output || "").substring(0, 300), newCount, new Date().toISOString(), finding.stepId);
+          if (finding.runId) {
+            db.prepare("UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?").run(new Date().toISOString(), finding.runId);
+            emitEvent({ ts: new Date().toISOString(), event: "run.failed" as EventType, runId: finding.runId, detail: "Medic: same-error circuit breaker on step " + (finding.stepId || "") });
+          }
+          return true;
+        }
+      }
+
       if (newCount >= MAX_STEP_ABANDONS) {
         db.prepare(
           "UPDATE steps SET status = 'failed', output = 'Medic: abandoned too many times', abandoned_count = ?, updated_at = ? WHERE id = ?"
