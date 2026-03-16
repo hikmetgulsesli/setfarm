@@ -116,6 +116,17 @@ export const OPTIONAL_TEMPLATE_VARS = [
   "design_warning",
 ] as const;
 
+
+// ── Story Retry / Model Fallback ────────────────────────────────────
+
+/** Default max retries per story (was 3, raised to 5) */
+export const DEFAULT_STORY_MAX_RETRIES = 5;
+
+/** After this many retries, switch to fallback model */
+export const STORY_FALLBACK_RETRY_THRESHOLD = 3;
+
+/** Fallback model for story retries (minimax when primary is kimi, vice versa) */
+export const STORY_FALLBACK_MODEL = "minimax/MiniMax-M2.5";
 // ── Stories ──────────────────────────────────────────────────────────
 
 /** Maximum number of stories a planner can produce */

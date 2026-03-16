@@ -8,7 +8,7 @@ import crypto from "node:crypto";
 import { getDb } from "../db.js";
 import type { Story } from "./types.js";
 import { logger } from "../lib/logger.js";
-import { MAX_STORIES } from "./constants.js";
+import { MAX_STORIES, DEFAULT_STORY_MAX_RETRIES } from "./constants.js";
 
 // ── Story CRUD ──────────────────────────────────────────────────────
 
@@ -144,7 +144,7 @@ export function parseAndInsertStories(output: string, runId: string): void {
 
     const now = new Date().toISOString();
     const insert = db.prepare(
-      "INSERT INTO stories (id, run_id, story_index, story_id, title, description, acceptance_criteria, status, retry_count, max_retries, depends_on, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, 3, ?, ?, ?)"
+      "INSERT INTO stories (id, run_id, story_index, story_id, title, description, acceptance_criteria, status, retry_count, max_retries, depends_on, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, 5, ?, ?, ?)"
     );
 
     // Cycle detection: topological sort to catch A→B→C→A before insertion
