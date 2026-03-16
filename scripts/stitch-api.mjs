@@ -303,7 +303,8 @@ const commands = {
     const { screens, suggestions } = parseScreens(result);
 // Save generated screens to local tracking file for dedup
     if (screens.length > 0) {
-      const trackingFile = resolve(process.cwd(), '.stitch-screens.json');
+      // Write tracking to project-scoped file
+      const trackingFile = resolve(process.cwd(), '.stitch-screens-' + projectId + '.json');
       let tracked = [];
       try { tracked = JSON.parse(readFileSync(trackingFile, 'utf-8')); } catch {}
       for (const s of screens) {
@@ -324,7 +325,7 @@ const commands = {
     let screens = parseScreenList(result);
     // Fallback: if API returns empty, try local tracking file
     if (screens.length === 0) {
-      const trackingFile = resolve(process.cwd(), '.stitch-screens.json');
+      const trackingFile = resolve(process.cwd(), '.stitch-screens-' + projectId + '.json');
       try { screens = JSON.parse(readFileSync(trackingFile, 'utf-8')); } catch {}
     }
     console.log(JSON.stringify(screens, null, 2));
@@ -441,7 +442,7 @@ const commands = {
     if (screenTitle) {
       // list_screens API returns empty for generated screens -- use local tracking instead
       let existingScreens = [];
-      const trackingFile = resolve(process.cwd(), '.stitch-screens.json');
+      const trackingFile = resolve(process.cwd(), '.stitch-screens-' + projectId + '.json');
       try { existingScreens = JSON.parse(readFileSync(trackingFile, 'utf-8')); } catch {}
 
       const titleLower = screenTitle.toLowerCase();
@@ -498,7 +499,7 @@ const commands = {
 // Save generated screens to local tracking file for dedup
 // AND eagerly download HTML+screenshot (Stitch deletes them after ~hours)
     if (screens.length > 0) {
-      const trackingFile = resolve(process.cwd(), '.stitch-screens.json');
+      const trackingFile = resolve(process.cwd(), '.stitch-screens-' + projectId + '.json');
       const stitchDir = resolve(process.cwd(), 'stitch');
       mkdirSync(stitchDir, { recursive: true });
       let tracked = [];
@@ -568,7 +569,7 @@ const commands = {
     // Fallback: local tracking file
     if (!htmlUrl) {
       try {
-        const trackingFile = resolve(process.cwd(), '.stitch-screens.json');
+        const trackingFile = resolve(process.cwd(), '.stitch-screens-' + projectId + '.json');
         const tracked = JSON.parse(readFileSync(trackingFile, 'utf-8'));
         const local = tracked.find(t => t.screenId === screenId);
         if (local?.localHtml) {
@@ -644,7 +645,7 @@ const commands = {
 
     // Fallback 2b: use local tracking file (most reliable -- has eager-downloaded HTML paths)
     if (screens.length === 0) {
-      const trackingFile = resolve(process.cwd(), '.stitch-screens.json');
+      const trackingFile = resolve(process.cwd(), '.stitch-screens-' + projectId + '.json');
       try {
         const tracked = JSON.parse(readFileSync(trackingFile, 'utf-8'));
         if (Array.isArray(tracked) && tracked.length > 0) {
