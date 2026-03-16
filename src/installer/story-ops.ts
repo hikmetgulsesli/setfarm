@@ -15,6 +15,8 @@ import { MAX_STORIES, DEFAULT_STORY_MAX_RETRIES } from "./constants.js";
 /**
  * Get all stories for a run, ordered by story_index.
  */
+function safeParseAC(raw: string): string[] { try { const arr = JSON.parse(raw); return Array.isArray(arr) ? arr : [raw]; } catch { const m = raw.match(/^(\[.*?\])/s); if (m) { try { return JSON.parse(m[1]); } catch {} } return raw ? [raw] : []; } }
+
 export function getStories(runId: string): Story[] {
   const db = getDb();
   const rows = db.prepare(
@@ -27,7 +29,7 @@ export function getStories(runId: string): Story[] {
     storyId: r.story_id,
     title: r.title,
     description: r.description,
-    acceptanceCriteria: JSON.parse(r.acceptance_criteria),
+    acceptanceCriteria: safeParseAC(r.acceptance_criteria),
     status: r.status,
     output: r.output ?? undefined,
     retryCount: r.retry_count,
@@ -53,7 +55,7 @@ export function getCurrentStory(stepId: string): Story | null {
     storyId: row.story_id,
     title: row.title,
     description: row.description,
-    acceptanceCriteria: JSON.parse(row.acceptance_criteria),
+    acceptanceCriteria: safeParseAC(row.acceptance_criteria),
     status: row.status,
     output: row.output ?? undefined,
     retryCount: row.retry_count,
