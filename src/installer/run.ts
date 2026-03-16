@@ -38,6 +38,17 @@ export async function runWorkflow(params: {
     initialContext.dev_server_port = portFlag[1];
   }
 
+  // Parse DB_REQUIRED from task text (e.g. "DB_REQUIRED: postgres")
+  const dbMatch = params.taskTitle.match(/DB_REQUIRED:\s*(\S+)/i);
+  if (dbMatch) {
+    initialContext.db_required = dbMatch[1].toLowerCase();
+  }
+  // Parse explicit DB host/port if provided (e.g. "host=1.2.3.4, port=5432")
+  const dbHostMatch = params.taskTitle.match(/(?:db_host|host)\s*[=:]\s*([\d.]+)/i);
+  if (dbHostMatch) initialContext.db_host = dbHostMatch[1];
+  const dbPortMatch = params.taskTitle.match(/(?:db_port|port)\s*[=:]\s*(\d+)/i);
+  if (dbPortMatch) initialContext.db_port = dbPortMatch[1];
+
   // Duplicate run guard: prevent starting a new run for same repo if one is already running
   const repoMatch = params.taskTitle.match(/Repo:\s*(\S+)/i);
   if (repoMatch) {

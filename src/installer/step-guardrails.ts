@@ -297,9 +297,38 @@ export function processSetupCompletion(
   context: Record<string, string>,
   runId: string
 ): string | null {
-  const dbRequired = (context["db_required"] || "").toLowerCase();
+  let dbRequired = (context["db_required"] || "").toLowerCase();
+
+  // Auto-detect DB need if not explicitly set
   if (!dbRequired || dbRequired === "false" || dbRequired === "no" || dbRequired === "none") {
-    return null;
+    const taskText = (context["task"] || "") + " " + (context["prd"] || "");
+    const repoPath = context["repo"] || "";
+
+    // Check task/prd text for DB indicators
+    const dbKeywords = /postgresql|postgres|prisma|drizzle|typeorm|sequelize|knex|supabase.*database|DB_REQUIRED|veritabanı şeması|database.*schema/i;
+    if (dbKeywords.test(taskText)) {
+      dbRequired = "postgres";
+      context["db_required"] = dbRequired;
+      logger.info(`[db-provision] Auto-detected DB requirement from task/PRD text`, { runId });
+    }
+
+    // Check package.json for DB dependencies
+    if (!dbRequired && repoPath) {
+      try {
+        const pkgPath = path.join(repoPath, "package.json");
+        if (fs.existsSync(pkgPath)) {
+          const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+          const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
+          if (allDeps["prisma"] || allDeps["@prisma/client"] || allDeps["drizzle-orm"] || allDeps["typeorm"] || allDeps["sequelize"] || allDeps["knex"] || allDeps["pg"]) {
+            dbRequired = "postgres";
+            context["db_required"] = dbRequired;
+            logger.info(`[db-provision] Auto-detected DB requirement from package.json dependencies`, { runId });
+          }
+        }
+      } catch {}
+    }
+
+    if (!dbRequired) return null;
   }
   try {
     const projectName = path.basename(context["repo"] || "project");
