@@ -69,7 +69,7 @@ export function formatStoryForTemplate(story: Story): string {
 }
 
 export function formatCompletedStories(stories: Story[]): string {
-  const completed = stories.filter(s => s.status === "done" || s.status === "skipped" || s.status === "verified");
+  const completed = stories.filter(s => s.status === "done" || s.status === "failed" || s.status === "skipped" || s.status === "verified");
   if (completed.length === 0) return "(none yet)";
   return completed.map(s => `- ${s.storyId}: ${s.title} [${s.status}]`).join("\n");
 }

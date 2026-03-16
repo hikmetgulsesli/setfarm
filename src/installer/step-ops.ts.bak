@@ -69,41 +69,6 @@ function findAlternativePR(repoPath: string, storyId: string, runIdPrefix: strin
 }
 
 /**
- * Check if a story branch's changes are already present in a target branch.
- * Used when a PR is CLOSED (e.g., GitHub auto-closed it when base branch was merged/deleted).
- * Uses the PR's head commit SHA to check ancestry — if the head SHA is an ancestor of target,
- * the story's code is already delivered.
- */
-function isStoryContentInBranch(repoPath: string, prUrl: string, targetBranches: string[]): boolean {
-  try {
-    // Get the closed PR's head commit SHA
-    const headSha = execFileSync("gh", ["pr", "view", prUrl, "--json", "headRefOid", "--jq", ".headRefOid"], {
-      cwd: repoPath, timeout: 15000, stdio: "pipe"
-    }).toString().trim();
-    if (!headSha || headSha.length < 7) return false;
-
-    // Fetch latest refs
-    execFileSync("git", ["fetch", "origin", "--prune"], { cwd: repoPath, timeout: 15000, stdio: "pipe" });
-
-    // Check if headSha is ancestor of any target branch
-    for (const target of targetBranches) {
-      try {
-        execFileSync("git", ["merge-base", "--is-ancestor", headSha, "origin/" + target], {
-          cwd: repoPath, timeout: 10000, stdio: "pipe"
-        });
-        return true; // headSha is ancestor of target = changes are in target
-      } catch {
-        // Not ancestor of this branch, try next
-      }
-    }
-    return false;
-  } catch (e) {
-    logger.debug("[isStoryContentInBranch] Check failed: " + String(e));
-    return false;
-  }
-}
-
-/**
  * Wrapper: calls cleanup-ops.cleanupAbandonedSteps with advancePipeline callback.
  * Maintains the original zero-arg signature for backwards compatibility.
  */
@@ -183,7 +148,7 @@ export function claimStep(agentId: string): ClaimResult {
          SELECT 1 FROM steps prev
          WHERE prev.run_id = s.run_id
            AND prev.step_index < s.step_index
-           AND prev.status NOT IN ('done', 'failed', 'skipped', 'verified')
+           AND prev.status NOT IN ('done', 'skipped', 'verified')
            AND NOT (prev.type = 'loop' AND prev.status = 'running')
        )
      ORDER BY s.step_index ASC, s.status ASC
@@ -394,7 +359,7 @@ export function claimStep(agentId: string): ClaimResult {
             const deps: string[] = JSON.parse(candidate.depends_on);
             if (deps.length > 0) {
               const completedIds = db.prepare(
-                "SELECT story_id FROM stories WHERE run_id = ? AND status IN ('done', 'failed', 'verified', 'skipped')"
+                "SELECT story_id FROM stories WHERE run_id = ? AND status IN ('done', 'verified', 'skipped')"
               ).all(step.run_id).map((r: any) => r.story_id);
               const completedSet = new Set(completedIds);
               const unmet = deps.filter(d => !completedSet.has(d));
@@ -764,23 +729,11 @@ ${cavReport}`, { runId: step.run_id });
                   emitEvent({ ts: new Date().toISOString(), event: "story.retry", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: nextUnverified.story_id, detail: `Switched to alternative PR: ${altPr}` });
                   continue; // Re-check with updated PR on next iteration
                 }
-                // No alternative PR found — check if story changes are already in base branch
-                // (happens when final-test merges feature branch → GitHub auto-closes remaining story PRs)
-                const repoPathForCheck = context["repo"] || context["REPO"] || "";
-                const featureBranch = context["branch"] || context["BRANCH"] || "";
-                const checkBranches = [featureBranch, "main", "master"].filter(Boolean);
-                if (repoPathForCheck && isStoryContentInBranch(repoPathForCheck, prUrl, checkBranches)) {
-                  // Story code is already in base branch — auto-verify
-                  verifyStory(nextUnverified.id);
-                  logger.info(`[claim-auto-verify] Story ${nextUnverified.story_id} auto-verified — CLOSED PR content found in base branch (PR: ${prUrl})`, { runId: step.run_id });
-                  emitEvent({ ts: new Date().toISOString(), event: "story.verified", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: nextUnverified.story_id, storyTitle: nextUnverified.title, detail: `Auto-verified — CLOSED PR content already in base branch` });
-                  continue; // Check next story
-                }
-                // Content truly missing — fail the story (never skip)
-                db.prepare("UPDATE stories SET status = 'failed', output = 'Failed: CLOSED PR could not be reopened, content not found in base branch', updated_at = ? WHERE id = ?")
+                // No alternative found — skip story
+                db.prepare("UPDATE stories SET status = 'skipped', output = 'Skipped: CLOSED PR could not be reopened and no alternative PR found', updated_at = ? WHERE id = ?")
                   .run(new Date().toISOString(), nextUnverified.id);
-                logger.warn(`[claim-auto-verify] CLOSED PR ${prUrl} — content NOT in base branch — failing story ${nextUnverified.story_id}`, { runId: step.run_id });
-                emitEvent({ ts: new Date().toISOString(), event: "story.failed", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: nextUnverified.story_id, storyTitle: nextUnverified.title, detail: `CLOSED PR content not in base branch` });
+                logger.warn(`[claim-auto-verify] CLOSED PR ${prUrl} — no alternative found — skipping story ${nextUnverified.story_id}`, { runId: step.run_id });
+                emitEvent({ ts: new Date().toISOString(), event: "story.skipped", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: nextUnverified.story_id, detail: `CLOSED PR could not be reopened, no alternative found` });
                 continue; // Check next story
               }
             }
@@ -1653,19 +1606,10 @@ ${hveReport}`, { runId: verifyStep.run_id });
               logger.info(`[handleVerifyEach] Found alternative PR for ${nextUnverifiedStory.story_id}: ${altPr} (original CLOSED: ${prUrl})`, { runId: verifyStep.run_id });
               continue; // Re-check with updated PR on next iteration
             }
-            // No alternative PR found — check if story changes are already in base branch
-            const repoPathForCheck2 = context["repo"] || context["REPO"] || "";
-            const featureBranch2 = context["branch"] || context["BRANCH"] || "";
-            const checkBranches2 = [featureBranch2, "main", "master"].filter(Boolean);
-            if (repoPathForCheck2 && isStoryContentInBranch(repoPathForCheck2, prUrl, checkBranches2)) {
-              verifyStory(nextUnverifiedStory.id);
-              logger.info(`[handleVerifyEach] Story ${nextUnverifiedStory.story_id} auto-verified — CLOSED PR content found in base branch`, { runId: verifyStep.run_id });
-              continue;
-            }
-            // Content truly missing — fail the story (never skip)
-            db.prepare("UPDATE stories SET status = 'failed', output = 'Failed: CLOSED PR could not be reopened, content not found in base branch', updated_at = ? WHERE id = ?")
+            // No alternative found — skip story
+            db.prepare("UPDATE stories SET status = 'skipped', output = 'Skipped: CLOSED PR could not be reopened and no alternative PR found', updated_at = ? WHERE id = ?")
               .run(new Date().toISOString(), nextUnverifiedStory.id);
-            logger.warn(`[handleVerifyEach] CLOSED PR ${prUrl} — content NOT in base branch — failing story ${nextUnverifiedStory.story_id}`, { runId: verifyStep.run_id });
+            logger.warn(`[handleVerifyEach] CLOSED PR ${prUrl} — no alternative found — skipping story ${nextUnverifiedStory.story_id}`, { runId: verifyStep.run_id });
             continue; // Check next story
           }
         }

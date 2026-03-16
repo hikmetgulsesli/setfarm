@@ -51,8 +51,8 @@ export function verifyStory(storyId: string): void {
 }
 
 export function skipFailedStories(runId: string): void {
-  getDb().prepare("UPDATE stories SET status = 'skipped', updated_at = ? WHERE run_id = ? AND status = 'failed'")
-    .run(now(), runId);
+  // No-op: stories stay as 'failed' — never convert to skipped.
+  // Loop completion now counts 'failed' as terminal status.
 }
 
 export function countStoriesByStatus(runId: string, status: string): number {

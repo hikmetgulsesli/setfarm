@@ -421,9 +421,9 @@ CHANGES: Medic v6: merged PR found — awaiting verifier review`,
       const MAX_STORY_ABANDONS = 10;
 
       if (newCount >= MAX_STORY_ABANDONS) {
-        // Too many abandons — skip this story so the loop can continue
+        // Too many abandons — fail this story (never skip)
         db.prepare(
-          "UPDATE stories SET status = 'skipped', abandoned_count = ?, output = 'Medic: abandoned too many times', updated_at = ? WHERE id = ?"
+          "UPDATE stories SET status = 'failed', abandoned_count = ?, output = 'Medic: abandoned too many times — failed', updated_at = ? WHERE id = ?"
         ).run(newCount, new Date().toISOString(), finding.storyId);
         emitEvent({
           ts: new Date().toISOString(),
