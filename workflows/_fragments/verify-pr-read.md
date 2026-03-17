@@ -23,3 +23,19 @@ STEP 2 — Fix review issues (only if external reviews exist):
 6. If fixes were needed:
    git add -A && git commit -m "fix: address review comments for {{current_story_id}}"
    git push
+
+STEP 4 — STITCH SCREEN COVERAGE AUDIT (MANDATORY for final story or US-xxx where xxx is last):
+1. Read stitch/DESIGN_MANIFEST.json (or stitch/UI_CONTRACT.json)
+2. List ALL designed screens
+3. For EACH screen, verify a corresponding page/route exists in the codebase:
+   - find app/ -name 'page.tsx' | sort
+4. If any screen has NO matching page:
+   - Report it as ISSUES in STATUS: retry
+   - List: 'Missing page for Stitch screen: <screenTitle>'
+5. This ensures 100% design-to-code coverage
+
+STEP 5 — DB SCHEMA VERIFICATION (if project uses database):
+1. Check if prisma/schema.prisma exists
+2. If yes, run: npx prisma db push --accept-data-loss 2>&1
+3. If schema drift is detected and fixed, report it
+4. Run tests again after schema sync to confirm
