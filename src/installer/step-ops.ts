@@ -990,6 +990,27 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
       failStep(stepId, prdErr);
       return { advanced: false, runCompleted: false };
     }
+
+    // PRD_SCREEN_COUNT guardrail: minimum 3 screens
+    const screenCount = parseInt(parsed["prd_screen_count"] || context["prd_screen_count"] || "0", 10);
+    if (screenCount > 0 && screenCount < 3) {
+      const scErr = `GUARDRAIL: PRD has only ${screenCount} screen(s). Minimum is 3 (main view + error state + empty/alternate state). Add missing screens to PRD Ekranlar table and update PRD_SCREEN_COUNT.`;
+      logger.warn(`[plan-guardrail] ${scErr}`, { runId: step.run_id });
+      if (prevContextJson) db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(prevContextJson.context, step.run_id);
+      failStep(stepId, scErr);
+      return { advanced: false, runCompleted: false };
+    }
+
+    // REPO path guardrail: must be under /home/setrox/projects/
+    const repoVal = (parsed["repo"] || context["repo"] || "").trim();
+    if (repoVal && !repoVal.startsWith("/home/setrox/projects/")) {
+      // Auto-fix: extract last segment and put under /home/setrox/projects/
+      const slug = repoVal.split("/").filter(Boolean).pop() || "project";
+      const fixedRepo = "/home/setrox/projects/" + slug;
+      parsed["repo"] = fixedRepo;
+      context["repo"] = fixedRepo;
+      logger.warn(`[plan-guardrail] REPO auto-fixed: ${repoVal} → ${fixedRepo}`, { runId: step.run_id });
+    }
   }
 
   // REPO DEDUP GUARDRAIL (plan step) — if repo dir has existing code, auto-suffix or reset
@@ -1232,6 +1253,16 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
               break;
             }
           }
+          // v1.7.7: Minimum screen count enforcement
+          // Count PRD screen table rows from context (if planner stored them)
+          const prdScreenCount = context["prd_screen_count"] ? parseInt(context["prd_screen_count"], 10) : 0;
+          if (!screenMapErr && prdScreenCount > 0 && sm.length < prdScreenCount) {
+            screenMapErr = `GUARDRAIL: SCREEN_MAP has ${sm.length} screens but PRD requires ${prdScreenCount}. Design must generate ALL screens from PRD table. Missing: ${prdScreenCount - sm.length} screens.`;
+          }
+          // Minimum absolute count: CRM/SaaS projects should have at least 8 screens
+          if (!screenMapErr && sm.length < 3) {
+            screenMapErr = "GUARDRAIL: SCREEN_MAP has only " + sm.length + " screens. Minimum 3 required. Add missing screens.";
+          }
         }
       } catch {
         screenMapErr = "GUARDRAIL: SCREEN_MAP is not valid JSON. Fix SCREEN_MAP format.";
@@ -1256,6 +1287,17 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   // Design Fidelity Check (verify + final-test steps — advisory)
   if ((step.step_id === "verify" || step.step_id === "final-test") && parsed["status"]?.toLowerCase() === "done") {
     processDesignFidelityCheck(context, step.run_id);
+  }
+
+  // SMOKE TEST GUARDRAIL (final-test): If agent skipped smoke test, retry
+  if (step.step_id === "final-test" && parsed["status"]?.toLowerCase() === "done") {
+    const smokeResult = parsed["smoke_test_result"] || "";
+    if (!smokeResult) {
+      logger.warn(`[final-test-guardrail] SMOKE_TEST_RESULT missing from final-test output — agent likely skipped smoke test. Retrying.`, { runId: step.run_id, stepId: step.step_id });
+      if (prevContextJson) db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(prevContextJson.context, step.run_id);
+      failStep(stepId, "GUARDRAIL: final-test completed without SMOKE_TEST_RESULT. You MUST run smoke-test.mjs and include SMOKE_TEST_RESULT in your output.");
+      return { advanced: false, runCompleted: false };
+    }
   }
 
   db.prepare(
@@ -1776,19 +1818,36 @@ function checkLoopContinuation(runId: string, loopStepId: string): { advanced: b
   }
 
   // All stories verified/skipped — mark loop step done
+  // Generate summary output for the loop step (Fix: was empty before)
+  const loopSummaryStories = db.prepare(
+    "SELECT story_id, status FROM stories WHERE run_id = ? ORDER BY story_index ASC"
+  ).all(runId) as Array<{ story_id: string; status: string }>;
+  const verifiedCount = loopSummaryStories.filter(s => s.status === "verified").length;
+  const skippedCount = loopSummaryStories.filter(s => s.status === "skipped").length;
+  const failedCount = loopSummaryStories.filter(s => s.status === "failed").length;
+  const totalCount = loopSummaryStories.length;
+  const loopSummaryOutput = `STATUS: done
+STORIES_TOTAL: ${totalCount}
+STORIES_VERIFIED: ${verifiedCount}
+STORIES_SKIPPED: ${skippedCount}
+STORIES_FAILED: ${failedCount}
+SUMMARY: ${verifiedCount}/${totalCount} stories verified, ${skippedCount} skipped, ${failedCount} failed`;
+
 // Early worktree cleanup: clean up .worktrees when implement loop finishes,  // not just when the entire run completes. Prevents stale worktree accumulation.  cleanupWorktrees(runId);
   db.prepare(
-    "UPDATE steps SET status = 'done', updated_at = ? WHERE id = ?"
-  ).run(new Date().toISOString(), loopStepId);
+    "UPDATE steps SET status = done, output = ?, updated_at = ? WHERE id = ?"
+  ).run(loopSummaryOutput, new Date().toISOString(), loopStepId);
 
-  // Also mark verify step done if it exists
+  // Also mark verify step done if it exists (with summary output)
   const loopStep = db.prepare("SELECT loop_config, run_id FROM steps WHERE id = ?").get(loopStepId) as { loop_config: string | null; run_id: string } | undefined;
   if (loopStep?.loop_config) {
     const lc: LoopConfig = JSON.parse(loopStep.loop_config);
     if (lc.verifyEach && lc.verifyStep) {
+      const verifySummary = `STATUS: done
+VERIFICATION_SUMMARY: ${verifiedCount}/${totalCount} stories verified`;
       db.prepare(
-        "UPDATE steps SET status = 'done', updated_at = ? WHERE run_id = ? AND step_id = ?"
-      ).run(new Date().toISOString(), runId, lc.verifyStep);
+        "UPDATE steps SET status = done, output = ?, updated_at = ? WHERE run_id = ? AND step_id = ?"
+      ).run(verifySummary, new Date().toISOString(), runId, lc.verifyStep);
     }
   }
 

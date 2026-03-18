@@ -80,6 +80,8 @@ export const OPTIONAL_TEMPLATE_VARS = [
   "current_story_title",
   "final_pr",
   // PRD: removed from optional list in v1.5.53 — prd is now mandatory
+  // PRD screen count
+  "prd_screen_count",
   // Design system (Stitch)
   "design_system",
   "stitch_project_id",

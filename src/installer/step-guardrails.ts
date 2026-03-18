@@ -88,6 +88,48 @@ export function processDesignCompletion(
     logger.info(`[design-guardrail] ${screensGenerated} screen(s) generated in Stitch project ${stitchProjectId} — OK (HTML download deferred to setup)`, { runId });
   }
 
+  // SCREEN_MAP enforcement: if missing, auto-recover from Stitch API (don't depend on agent)
+  if (screensGenerated > 0) {
+    let screenMapRaw = context["screen_map"];
+    let needsRecovery = !screenMapRaw || screenMapRaw.trim() === "";
+    if (!needsRecovery) {
+      try {
+        const sm = JSON.parse(screenMapRaw);
+        if (!Array.isArray(sm) || sm.length === 0 || sm.some((s: any) => !s.screenId || !s.name)) {
+          needsRecovery = true;
+        }
+      } catch {
+        needsRecovery = true;
+      }
+    }
+    if (needsRecovery && stitchProjectId) {
+      logger.warn(`[design-guardrail] SCREEN_MAP missing or invalid. Auto-recovering from Stitch API (project ${stitchProjectId})...`, { runId });
+      try {
+        const { execSync } = require("child_process");
+        const stitchScript = require("path").join(process.env.HOME || "", ".openclaw/setfarm-repo/scripts/stitch-api.mjs");
+        const raw = execSync(`node "${stitchScript}" list-screens "${stitchProjectId}"`, { encoding: "utf8", timeout: 30000 });
+        const screens = JSON.parse(raw);
+        if (Array.isArray(screens) && screens.length > 0) {
+          const screenMap = screens.map((s: any) => ({
+            screenId: (s.name || "").replace(/^projects\/\d+\/screens\//, "") || s.id || s.screenId,
+            name: s.title || s.displayName || "Untitled",
+            type: (s.deviceType || "DESKTOP").toLowerCase(),
+            description: s.title || s.displayName || "",
+          }));
+          context["screen_map"] = JSON.stringify(screenMap);
+          logger.info(`[design-guardrail] SCREEN_MAP auto-recovered: ${screenMap.length} screen(s) from Stitch API`, { runId });
+        } else {
+          logger.warn(`[design-guardrail] Stitch API returned 0 screens for project ${stitchProjectId}`, { runId });
+        }
+      } catch (e: any) {
+        logger.warn(`[design-guardrail] SCREEN_MAP auto-recovery failed: ${e.message}`, { runId });
+      }
+    } else if (!needsRecovery) {
+      const sm = JSON.parse(context["screen_map"]);
+      logger.info(`[design-guardrail] SCREEN_MAP valid: ${sm.length} screen(s)`, { runId });
+    }
+  }
+
   // v12.0: Contract building, design rules validation, and story enrichment
   // are ALL deferred to setup step completion (processSetupDesignContracts).
   // This ensures stitch/ HTML files exist locally before parsing.
@@ -250,7 +292,16 @@ export function processSetupDesignContracts(
         for (const story of allStories) {
           const storyScreens = screenMap2
             .filter((s: any) => Array.isArray(s.stories) && s.stories.includes(story.story_id))
-            .map((s: any) => ({ screenId: s.screenId, name: s.name, type: s.type }));
+            .map((s: any) => ({ screenId: s.screenId, name: s.name, type: s.type }))
+            .filter((s: any) => {
+              // Fix: Validate screenId HTML file exists in stitch/ dir — skip phantom references from prior runs
+              const htmlPath = path.join(stitchDir, `${s.screenId}.html`);
+              if (!fs.existsSync(htmlPath)) {
+                logger.warn(`[setup-design-contracts] Skipping phantom screenId "${s.screenId}" for story ${story.story_id} — ${htmlPath} not found`, { runId });
+                return false;
+              }
+              return true;
+            });
           if (storyScreens.length > 0) {
             db.prepare("UPDATE stories SET story_screens = ?, updated_at = ? WHERE id = ?")
               .run(JSON.stringify(storyScreens), new Date().toISOString(), story.id);
@@ -281,6 +332,33 @@ export function processSetupDesignContracts(
       }
     } catch (e) {
       logger.warn(`[setup-design-contracts] SCREEN_MAP auto-generate failed: ${String(e)}`, { runId });
+    }
+  }
+
+  // 9. Last resort: generate SCREEN_MAP + DESIGN_MANIFEST.json from stitch/*.html files
+  if (!context["screen_map"] && htmlFiles.length > 0) {
+    try {
+      const autoScreenMap = htmlFiles.map(f => ({
+        screenId: f.replace(".html", ""),
+        name: f.replace(".html", "").replace(/[-_]/g, " ") || "Screen",
+        type: "page",
+        stories: [],
+      }));
+      context["screen_map"] = JSON.stringify(autoScreenMap);
+
+      // Also write DESIGN_MANIFEST.json so MC API can find it
+      const manifest = htmlFiles.map(f => ({
+        screenId: f.replace(".html", ""),
+        title: f.replace(".html", ""),
+        htmlFile: f,
+        type: "page",
+      }));
+      const manifestPath = path.join(stitchDir, "DESIGN_MANIFEST.json");
+      fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+
+      logger.info(`[setup-design-contracts] Auto-generated SCREEN_MAP + DESIGN_MANIFEST.json from ${htmlFiles.length} stitch HTML file(s)`, { runId });
+    } catch (e) {
+      logger.warn(`[setup-design-contracts] Stitch HTML fallback failed: ${String(e)}`, { runId });
     }
   }
 
