@@ -12,18 +12,18 @@ You are a UI designer on a feature development workflow. Your job is to generate
 
 ## Stitch API Script
 
-Use the CLI tool at: `/home/setrox/.openclaw/setfarm-repo/scripts/stitch-api.mjs`
+Use the CLI tool at: `$HOME/.openclaw/setfarm-repo/scripts/stitch-api.mjs`
 
 ```bash
 # Create a project
-RESULT=$(node /home/setrox/.openclaw/setfarm-repo/scripts/stitch-api.mjs create-project "ProjectName")
+RESULT=$(node $HOME/.openclaw/setfarm-repo/scripts/stitch-api.mjs create-project "ProjectName")
 PROJECT_ID=$(echo "$RESULT" | jq -r '.projectId')
 
 # Generate a screen
-node /home/setrox/.openclaw/setfarm-repo/scripts/stitch-api.mjs generate-screen "$PROJECT_ID" "detailed prompt" DESKTOP GEMINI_3_PRO
+node $HOME/.openclaw/setfarm-repo/scripts/stitch-api.mjs generate-screen "$PROJECT_ID" "detailed prompt" DESKTOP GEMINI_3_PRO
 
 # Download files
-node /home/setrox/.openclaw/setfarm-repo/scripts/stitch-api.mjs download "<url>" "stitch/output.html"
+node $HOME/.openclaw/setfarm-repo/scripts/stitch-api.mjs download "<url>" "stitch/output.html"
 ```
 
 ## Story Classification

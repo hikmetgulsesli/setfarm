@@ -90,12 +90,13 @@ export function detectDevServerPort(repoPath: string): number | null {
       }).toString().trim();
 
       if (lsofOutput) return expectedPort;
-    } catch {
-      // lsof exit 1 = no process listening
+    } catch (e) {
+      logger.debug(`[browser-tools] Port ${expectedPort} not listening`, {});
     }
 
     return null;
-  } catch {
+  } catch (e) {
+    logger.debug(`[browser-tools] Failed to detect dev server port: ${e}`, {});
     return null;
   }
 }
@@ -106,7 +107,8 @@ function isAgentBrowserInstalled(): boolean {
   try {
     execFileSync("which", ["agent-browser"], { timeout: 3000, stdio: "pipe" });
     return true;
-  } catch {
+  } catch (e) {
+    logger.debug(`[browser-tools] agent-browser not installed`, {});
     return false;
   }
 }
@@ -157,8 +159,8 @@ export function runBrowserDomCheck(repoPath: string, sessionName: string): Brows
         timeout: 20000,
         stdio: "pipe",
       });
-    } catch {
-      // networkidle timeout is non-fatal — page may still be usable
+    } catch (e) {
+      logger.debug(`[browser-tools] networkidle timeout, continuing: ${e}`, {});
     }
 
     // Run DOM extraction
@@ -205,8 +207,8 @@ export function runBrowserDomCheck(repoPath: string, sessionName: string): Brows
         timeout: 10000,
         stdio: "pipe",
       });
-    } catch {
-      // Best-effort close
+    } catch (e) {
+      logger.debug(`[browser-tools] Failed to close browser session: ${e}`, {});
     }
   }
 
@@ -275,8 +277,8 @@ function analyzeDOM(
           detail: `${missingVars.length} design token(s) not found in rendered CSS: ${missingVars.slice(0, 5).join(", ")}`,
         });
       }
-    } catch {
-      // Can't read design tokens — skip
+    } catch (e) {
+      logger.debug(`[browser-tools] Could not read design tokens: ${e}`, {});
     }
   }
 
@@ -308,8 +310,8 @@ function analyzeDOM(
           });
         }
       }
-    } catch {
-      // Can't read contract — skip
+    } catch (e) {
+      logger.debug(`[browser-tools] Could not read UI contract: ${e}`, {});
     }
   }
 
@@ -339,8 +341,9 @@ export function killOrphanedBrowserSessions(): number {
         stdio: "pipe",
       }).toString().trim();
       count = parseInt(countOutput, 10) || 0;
-    } catch {
-      return 0; // pgrep exit 1 = no matches
+    } catch (e) {
+      logger.debug(`[browser-tools] No orphaned Chromium processes found`, {});
+      return 0;
     }
 
     if (count === 0) return 0;
@@ -351,13 +354,14 @@ export function killOrphanedBrowserSessions(): number {
         timeout: 10000,
         stdio: "pipe",
       });
-    } catch {
-      // pkill exit 1 = no matching processes (race condition OK)
+    } catch (e) {
+      logger.debug(`[browser-tools] pkill race condition or processes already gone: ${e}`, {});
     }
 
     logger.info(`[browser-cleanup] Killed ${count} orphaned Chromium process(es)`);
     return count;
-  } catch {
+  } catch (e) {
+    logger.debug(`[browser-tools] killOrphanedBrowserSessions error: ${e}`, {});
     return 0;
   }
 }

@@ -204,9 +204,9 @@ steps:
       PRD_SCREEN_COUNT below 3 will be REJECTED by the pipeline guardrail.
 
       5. Determine the repo path and branch name
-         CRITICAL REPO PATH RULE: The repo path MUST be /home/setrox/projects/<slug>
+         CRITICAL REPO PATH RULE: The repo path MUST be $HOME/projects/<slug>
          where <slug> is derived from the task description (Turkish chars removed, lowercase, hyphens).
-         Example: "Basit hesap makinesi" → /home/setrox/projects/basit-hesap-makinesi
+         Example: "Basit hesap makinesi" → $HOME/projects/basit-hesap-makinesi
          NEVER use a different base directory. NEVER translate the project name to English.
          Use the EXACT words from the task, just slugified.
 
@@ -217,7 +217,7 @@ steps:
       MANDATORY OUTPUT FORMAT — PIPELINE WILL BREAK IF YOU SKIP ANY KEY
       ============================================================
       STATUS: done
-      REPO: <exact repo path, e.g. /home/setrox/projects/myproject>
+      REPO: <exact repo path, e.g. $HOME/projects/myproject>
       BRANCH: <branch name, e.g. feature-name>
       PRD:
       <full PRD text — include all sections, pages, features, technical details>
@@ -510,7 +510,7 @@ steps:
       Set up the repository and download design assets.
       Run this single command to do everything:
 
-      bash /home/setrox/.openclaw/setfarm-repo/scripts/setup-repo.sh {{repo}} {{branch}} {{stitch_project_id}} '{{screen_map}}'
+      bash $HOME/.openclaw/setfarm-repo/scripts/setup-repo.sh {{repo}} {{branch}} {{stitch_project_id}} '{{screen_map}}'
 
       The script handles: git init, GitHub remote, .gitignore, branch, stitch download, push.
       Report the script output as your output. If it prints STATUS: fail, report STATUS: fail.

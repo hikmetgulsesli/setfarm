@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { execFile } from "node:child_process";
+import { logger } from "../lib/logger.js";
 
 interface GatewayConfig {
   url: string;
@@ -29,7 +30,8 @@ async function readOpenClawConfig(): Promise<{
         process.env.OPENCLAW_GATEWAY_PASSWORD ??
         config.gateway?.auth?.password,
     };
-  } catch {
+  } catch (e) {
+    logger.debug(`[gateway-api] openclaw.json not found or unreadable: ${e}`, {});
     return {};
   }
 }
@@ -85,7 +87,7 @@ async function findOpenclawBinary(): Promise<string> {
       await fs.access(c, 0o1 /* fs.constants.X_OK */);
       cachedBinary = c;
       return c;
-    } catch { /* skip */ }
+    } catch (e) { logger.debug(`[gateway-api] Binary candidate not accessible: ${c}`, {}); }
   }
 
   // 3. Fall back to npx
@@ -148,7 +150,7 @@ export async function createAgentCronJob(job: {
     }
 
     if (job.payload?.timeoutSeconds) {
-      args.push("--timeout-seconds", `${job.payload.timeoutSeconds}`);
+      args.push("--timeout", `${job.payload.timeoutSeconds}`);
     }
 
     if (job.payload?.model) {
@@ -168,8 +170,8 @@ export async function createAgentCronJob(job: {
     try {
       const parsed = JSON.parse(stdout);
       return { ok: true, id: parsed.id ?? parsed.jobId };
-    } catch {
-      // CLI succeeded but output wasn't JSON — still ok
+    } catch (e) {
+      logger.debug(`[gateway-api] CLI output not JSON, command still succeeded: ${e}`, {});
       return { ok: true };
     }
   } catch (err) {
@@ -210,8 +212,9 @@ async function createAgentCronJobHTTP(job: {
       return { ok: false, error: result.error?.message ?? "Unknown error" };
     }
     return { ok: true, id: result.result?.id };
-  } catch {
-    return null; // network error → try CLI
+  } catch (e) {
+    logger.debug(`[gateway-api] HTTP gateway unavailable, will try CLI: ${e}`, {});
+    return null;
   }
 }
 
@@ -238,15 +241,16 @@ export async function checkCronToolAvailable(): Promise<{ ok: boolean; error?: s
       const text = await response.text();
       return { ok: false, error: `Gateway returned ${response.status}: ${text}` };
     }
-  } catch {
-    // network error — fall through to CLI check
+  } catch (e) {
+    logger.debug(`[gateway-api] HTTP preflight failed, trying CLI: ${e}`, {});
   }
 
   // Try CLI fallback
   try {
     await runCli(["cron", "list", "--json"]);
     return { ok: true };
-  } catch {
+  } catch (e) {
+    logger.debug(`[gateway-api] Both HTTP and CLI cron checks failed: ${e}`, {});
     return {
       ok: false,
       error: `Cannot access cron: neither the /tools/invoke HTTP endpoint nor the openclaw CLI are available. ${UPDATE_HINT}`,
@@ -300,13 +304,14 @@ async function listCronJobsHTTP(): Promise<{ ok: boolean; jobs?: Array<{ id: str
       try {
         const parsed = JSON.parse(content[0].text);
         jobs = parsed.jobs ?? [];
-      } catch { /* fallback */ }
+      } catch (e) { logger.debug(`[gateway-api] Failed to parse cron list response JSON: ${e}`, {}); }
     }
     if (jobs.length === 0) {
       jobs = result.result?.jobs ?? result.jobs ?? [];
     }
     return { ok: true, jobs };
-  } catch {
+  } catch (e) {
+    logger.debug(`[gateway-api] HTTP listCronJobs failed, returning null for CLI fallback: ${e}`, {});
     return null;
   }
 }
@@ -346,7 +351,8 @@ async function deleteCronJobHTTP(jobId: string): Promise<{ ok: boolean; error?: 
 
     const result = await response.json();
     return result.ok ? { ok: true } : { ok: false, error: result.error?.message ?? "Unknown error" };
-  } catch {
+  } catch (e) {
+    logger.debug(`[gateway-api] HTTP deleteCronJob failed, returning null for CLI fallback: ${e}`, {});
     return null;
   }
 }

@@ -17,7 +17,7 @@ Instructions:
 4. Create feature branch: git checkout -b {{branch}}
 5. Read package.json, test config to understand build/test setup
 6. Run build + tests to establish baseline
-7. Create references symlink: ln -sfn /home/setrox/.openclaw/setfarm-repo/references references
+7. Create references symlink: ln -sfn $HOME/.openclaw/setfarm-repo/references references
 8. Push feature branch: git push -u origin {{branch}}
 9. IMPORTANT: All PRs MUST use --base main (not the feature branch). The feature branch is for development, main is the merge target.
 

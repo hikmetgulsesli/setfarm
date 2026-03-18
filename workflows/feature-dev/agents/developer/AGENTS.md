@@ -305,7 +305,7 @@ StartLimitIntervalSec=60
 [Service]
 Type=simple
 User=setrox
-WorkingDirectory=/home/setrox/<path>
+WorkingDirectory=$HOME/projects/<path>
 ExecStart=/usr/bin/node server.js
 Restart=on-failure
 RestartSec=5

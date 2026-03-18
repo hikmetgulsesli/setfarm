@@ -39,8 +39,8 @@ export function scheduleRunCronTeardown(runId: string): void {
         logger.error(`Cron teardown failed for workflow ${wfId}: ${String(err)}`, { runId });
       });
     }
-  } catch {
-    // best-effort
+  } catch (e) {
+    logger.debug(`[cleanup] Cron teardown scheduling failed: ${e}`, { runId });
   }
 }
 
@@ -86,8 +86,8 @@ export function cleanupAbandonedSteps(advancePipeline: (runId: string) => { adva
             continue;
           }
         }
-      } catch {
-        // If loop config is malformed, fall through to abandonment handling.
+      } catch (e) {
+        logger.debug(`[cleanup] Malformed loop_config, proceeding with abandonment: ${e}`, { runId: step.run_id });
       }
     }
 
@@ -225,7 +225,7 @@ export function cleanupAbandonedSteps(advancePipeline: (runId: string) => { adva
           .run(new Date().toISOString(), sv.id);
         logger.info(`[cleanup] Recovered stuck verify_each step ${sv.step_id} — done stories awaiting verification`, { runId: sv.run_id });
       }
-    } catch { /* malformed loop_config */ }
+    } catch (e) { logger.debug(`[cleanup] Skipping stuck verify with malformed loop_config: ${e}`, { runId: sv.run_id }); }
   }
 }
 

@@ -67,12 +67,14 @@ export async function provisionAgents(params: {
     }
       try {
         await fs.access(source);
-      } catch {
+      } catch (e) {
+        logger.debug(`[agent-provision] Source file not found, trying bundled: ${relativePath}`, {});
         if (params.bundledSourceDir) {
           source = path.resolve(params.bundledSourceDir, relativePath);
           try {
             await fs.access(source);
-          } catch {
+          } catch (e2) {
+            logger.debug(`[agent-provision] Bundled source also not found: ${relativePath}`, {});
             throw new Error(`Missing bootstrap file for agent "${agent.id}": ${relativePath}`);
           }
         } else {
@@ -123,8 +125,8 @@ async function resolveExternalSkillSource(skillName: string): Promise<string | n
     try {
       await fs.access(candidate);
       return candidate;
-    } catch {
-      // not found, try next
+    } catch (e) {
+      logger.debug(`[agent-provision] Skill candidate not found: ${candidate}`, {});
     }
   }
   return null;
@@ -165,7 +167,8 @@ async function installWorkflowSkill(workflow: WorkflowSpec, workflowDir: string)
   const skillSource = path.join(workflowDir, "skills", "setfarm-workflows");
   try {
     await fs.access(skillSource);
-  } catch {
+  } catch (e) {
+    logger.debug(`[agent-provision] Bundled skills directory not found, skipping`, {});
     return;
   }
   for (const agent of workflow.agents) {

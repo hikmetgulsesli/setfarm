@@ -73,7 +73,7 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/setrox/projects/<name>
+WorkingDirectory=$HOME/projects/<name>
 ExecStart=<based on service type>
 Restart=on-failure
 RestartSec=5

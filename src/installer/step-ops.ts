@@ -1001,12 +1001,13 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
       return { advanced: false, runCompleted: false };
     }
 
-    // REPO path guardrail: must be under /home/setrox/projects/
+    // REPO path guardrail: must be under $HOME/projects/
     const repoVal = (parsed["repo"] || context["repo"] || "").trim();
-    if (repoVal && !repoVal.startsWith("/home/setrox/projects/")) {
-      // Auto-fix: extract last segment and put under /home/setrox/projects/
+    const projectsDir = path.join(os.homedir(), "projects");
+    if (repoVal && !repoVal.startsWith(projectsDir)) {
+      // Auto-fix: extract last segment and put under $HOME/projects/
       const slug = repoVal.split("/").filter(Boolean).pop() || "project";
-      const fixedRepo = "/home/setrox/projects/" + slug;
+      const fixedRepo = path.join(projectsDir, slug);
       parsed["repo"] = fixedRepo;
       context["repo"] = fixedRepo;
       logger.warn(`[plan-guardrail] REPO auto-fixed: ${repoVal} → ${fixedRepo}`, { runId: step.run_id });
