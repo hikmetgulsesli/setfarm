@@ -22,6 +22,7 @@ agent_mapping:
   tester: sentinel
   security-gate: sentinel
   deployer: atlas
+  qa-tester: sentinel
 
 cron:
   interval_ms: 60000  # 1 minute
@@ -108,6 +109,17 @@ agents:
         SOUL.md: agents/security-gate/SOUL.md
         IDENTITY.md: agents/security-gate/IDENTITY.md
 
+  - id: qa-tester
+    name: QA Tester
+    role: testing
+    description: Stitch-driven browser QA testing — verifies every screen, button, form, and API.
+    workspace:
+      baseDir: agents/qa-tester
+      files:
+        AGENTS.md: agents/qa-tester/AGENTS.md
+        SOUL.md: agents/qa-tester/SOUL.md
+        IDENTITY.md: agents/qa-tester/IDENTITY.md
+
   - id: deployer
     name: Deployer
     role: coding
@@ -155,7 +167,48 @@ steps:
            state machine states, and require window.game state exposure
       4. The PRD must be detailed enough for a designer to identify ALL screens
          and for a developer to implement without ambiguity
+
+      === MANDATORY: SCREEN TABLE IN PRD ===
+      The PRD MUST end with a "## Ekranlar (Screens)" section containing a numbered table:
+      | # | Ekran Adı | Tür | Açıklama |
+      |---|-----------|-----|----------|
+      | 1 | Ana Dashboard | dashboard | KPI kartları, son aktiviteler |
+      | 2 | Müşteri Listesi | list-view | Arama, filtre, pagination |
+      ...
+
+      MINIMUM SCREEN COUNT by project type:
+      - Landing page / static site: 3-5
+      - Game (web/mobile): 5-8
+      - Dashboard / analytics: 8-15
+      - CRUD application: 10-15
+      - CRM / ERP / SaaS: 20-35
+      - E-commerce: 25-40
+
+      MANDATORY SCREENS for CRUD entities:
+      Each entity (customer, quotation, product, etc.) requires minimum 3 screens:
+      1. List view (search, filter, pagination)
+      2. Detail view (all info, related data, actions)
+      3. Form (create/edit, validation)
+
+      Each report type = 1 separate screen (not a single "reports" page).
+
+      Standard screens that MUST be included:
+      - Login page
+      - Settings (profile, notifications, appearance, security)
+      - 404 / Error page
+      - Empty states (when lists are empty)
+
+      If the PRD screen table has FEWER screens than the minimum for the project type,
+      add the missing screens before outputting the PRD.
+      CRITICAL: Even simple single-page apps MUST have at least 3 screens (e.g. main view, error state, empty state).
+      PRD_SCREEN_COUNT below 3 will be REJECTED by the pipeline guardrail.
+
       5. Determine the repo path and branch name
+         CRITICAL REPO PATH RULE: The repo path MUST be /home/setrox/projects/<slug>
+         where <slug> is derived from the task description (Turkish chars removed, lowercase, hyphens).
+         Example: "Basit hesap makinesi" → /home/setrox/projects/basit-hesap-makinesi
+         NEVER use a different base directory. NEVER translate the project name to English.
+         Use the EXACT words from the task, just slugified.
 
       PREVIOUS FAILURE (if retrying — READ THIS AND FIX THE ISSUE):
       {{previous_failure}}
@@ -168,6 +221,7 @@ steps:
       BRANCH: <branch name, e.g. feature-name>
       PRD:
       <full PRD text — include all sections, pages, features, technical details>
+      PRD_SCREEN_COUNT: <number of rows in the Ekranlar/Screens table>
       ============================================================
     expects: "STATUS: done"
     max_retries: 2
@@ -181,6 +235,12 @@ steps:
 
       Generate professional UI designs for all frontend screens using Stitch.
       You work from the PRD — stories do not exist yet. Identify screens from the PRD.
+
+      LANGUAGE RULE: All screen prompts sent to Stitch MUST use Turkish text content.
+      Button labels, menu items, headings, placeholder text, error messages — everything
+      the user sees on screen must be in Turkish. Example: "Hesapla" not "Calculate",
+      "Ayarlar" not "Settings", "Geri Sayım" not "Countdown".
+      Only technical terms (API, CSS, HTML) stay in English.
 
       TASK: {{task}}
       PRD: {{prd}}
@@ -226,8 +286,9 @@ steps:
       Read the PRD carefully and identify ALL unique screens the project needs:
       1. Each unique page/view = 1 screen entry
       2. Categories: landing, dashboard, list-view, detail-view, form, settings, game-hud, game-over, etc.
-      3. No screen limit — generate as many screens as the PRD requires.
-         Scale with PRD complexity (simple app: 3-6, complex app: 10-30+).
+      3. MANDATORY: Generate ALL screens listed in the PRD's "Ekranlar" table.
+         The SCREENS_GENERATED count must be >= the number of rows in the PRD screen table.
+         If any screen from the PRD table is missing, the design step FAILS.
       4. Backend-only project (0 UI) → set SCREENS_GENERATED: 0 and skip to output
 
       STEP 2 — Generate screens (ALWAYS generate fresh for this project):
@@ -235,8 +296,17 @@ steps:
       a. Build detailed prompt from screen name, type, description + your chosen design_system colors/fonts
       b. Use generate-screen-safe with screenId as identifier:
          node "$STITCH_SCRIPT" generate-screen-safe "$PROJECT_ID" "<prompt>" "<screen.name>" <DEVICE> GEMINI_3_PRO
-      c. If result has "skipped: true" → screen already exists, skip
+      c. If result has "skipped: true" → screen already exists (OK, continue to next)
       d. Otherwise, parse screens from response
+      e. ALWAYS save the screenId from each call (even skipped ones have screenId in response)
+
+      STEP 3 — Collect SCREEN_MAP (MANDATORY — even if all screens were reused/skipped):
+      After generating all screens, you MUST build SCREEN_MAP for the output.
+      If any screens were skipped (reused), get the full list:
+        node "$STITCH_SCRIPT" list-screens "$PROJECT_ID"
+      This returns ALL screens with their screenId, name, and metadata.
+      Use this data to build the SCREEN_MAP JSON array in your output.
+      NEVER skip SCREEN_MAP output. Without it, the entire pipeline breaks.
 
       NOTE: Do NOT commit to git — the repo may not exist yet. The setup step will
       download HTML files from Stitch and commit them.
@@ -277,6 +347,12 @@ steps:
       IMPORTANT: screenId MUST be the real Stitch ID returned by generate-screen-safe
       (the hex string from the API response), NOT a made-up ID like SCR-001.
       Parse it from the generate-screen-safe JSON output: response.screens[0].screenId
+      If screens were reused, get IDs via: node "$STITCH_SCRIPT" list-screens "$PROJECT_ID"
+
+      CRITICAL: SCREEN_MAP is MANDATORY. If you output STATUS: done without SCREEN_MAP,
+      the pipeline guardrail will REJECT your output and force a retry.
+      Even if screens were reused/skipped, you MUST output SCREEN_MAP with real IDs.
+
       DESIGN_NOTES: <summary>
       ============================================================
     expects: "STATUS: done"
@@ -289,6 +365,11 @@ steps:
     input: |
       Read the PRD and SCREEN_MAP from the design step, then decompose the PRD into
       ordered user stories. Each story must reference screens from SCREEN_MAP.
+
+      LANGUAGE RULE: All user-facing text in stories (titles, descriptions, acceptance criteria)
+      must be in English for developer clarity, BUT any UI text referenced in acceptance criteria
+      (button labels, headings, placeholders) must specify the Turkish version.
+      Example: "Button text must be 'Hesapla' (not 'Calculate')"
 
       TASK: {{task}}
       PRD: {{prd}}
@@ -363,8 +444,18 @@ steps:
            g) window.game object is exposed with player state, score, and game state
            h) Keyboard input (Space/ArrowUp) causes visible state change within 100ms
            i) No Math.random() in render loop — random values seeded at init
-           j) Single state machine — not dual string+object tracking
+           j) Single state machine
+           k) Remove all orphan/dead code files created by individual stories that are
+              no longer needed after integration (e.g. standalone components replaced by
+              unified modules, duplicate utility files, unused story-specific helpers) — not dual string+object tracking
          - This story WIRES everything together - without it, components exist in isolation
+
+      7. INTEGRATION STORY MUST CLEAN DEAD CODE:
+         - The integration story acceptance criteria MUST include:
+           "Remove all orphan/dead code files from previous stories that were
+           superseded by integration wiring. If story X created helper.ts but
+           integration replaces it with a unified module, delete helper.ts."
+         - This prevents file bloat from incremental story development.
 
       DO NOT:
          - Create micro-stories ("Create user model" separate, "Create user API" separate → WRONG)
@@ -509,6 +600,10 @@ steps:
 
       Implement ONE user story. Create a PR for review.
 
+      LANGUAGE RULE: All user-facing text (buttons, labels, headings, placeholders,
+      error messages, tooltips) MUST be in Turkish unless the task explicitly says otherwise.
+      Code comments and variable names stay in English.
+
       TASK: {{task}}
       REPO: {{repo}}
       WORKDIR: {{story_workdir}}
@@ -558,6 +653,13 @@ steps:
            - NEVER use fonts/colors NOT in design-tokens.css
            - You MUST @import or copy stitch/design-tokens.css into your main CSS file
            - stitch/design-tokens.css is the SINGLE SOURCE OF TRUTH for all design values
+      === CRITICAL: NO STITCH = NO CODE ===
+      If a page/screen you need to implement does NOT have a corresponding Stitch HTML in stitch/:
+      - Do NOT create the page with mock data or placeholder content
+      - Instead, add it to the MISSING_SCREENS list in your output
+      - Only implement pages that have Stitch HTML reference
+      This prevents mock data accumulation and ensures design-code consistency.
+
       STITCH COMPONENT IMPORT RULES (MANDATORY — NO EXCEPTIONS):
       1. If stitch/ directory has screen HTML files, there MUST be corresponding React components in components/
       2. These screen components MUST be imported and rendered in the main page (app/page.tsx or equivalent)
@@ -841,8 +943,21 @@ steps:
          - If stitch/DESIGN_MANIFEST.json exists: for each screen listed, verify a corresponding component or page implements it (search by title keywords). Missing screen = FAIL.
          - DEAD CODE CHECK: List all .js/.ts/.tsx files in src/components/ or stitch/. For each, verify it is imported somewhere. If a module exists but is never imported in the entry point (page.tsx, index.html, App.tsx) → WARN and import it or remove it.
          - INTEGRATION WIRING: If this is the last story (integration story), verify ALL previously created component modules are imported and rendered in the main entry point. Do NOT reimplement functionality inline — use the existing modules.
+         - DEAD CODE CLEANUP (integration story only): After wiring, find and DELETE orphan files:
+           * Files in src/components/ that are not imported anywhere
+           * Duplicate utility/helper files superseded by unified modules
+           * Story-specific standalone files replaced by integrated versions
+           Run: find src/ -name "*.tsx" -o -name "*.ts" | while read f; do basename=$(basename "$f" .tsx); grep -rq "$basename" src/ --include="*.tsx" --include="*.ts" -l | grep -v "$f" || echo "ORPHAN: $f"; done
          - DESIGN FIDELITY: If DESIGN_FIDELITY_FEEDBACK is non-empty, read each issue and fix. Missing buttons, nav links, or inputs from Stitch design MUST be added to the implementation.
          - grep -rE "blue-[0-9]+/[0-9]+" components/ → WARN: likely hardcoded Tailwind color — check if it belongs in design-tokens instead
+      1.68. Mock data detection (CRITICAL — FAIL if found):
+         Search all .tsx/.ts/.jsx files for mock/hardcoded data patterns:
+         - grep -rE "useState\(\[\{.*name:.*John|Jane|test|demo" --include="*.tsx" --include="*.ts" . → FAIL
+         - grep -rE "const (mock|fake|dummy|sample|hardcoded)" --include="*.tsx" --include="*.ts" . → FAIL
+         - grep -rE "setTimeout\(.*router\.(push|replace)" --include="*.tsx" . → FAIL (fake form submit)
+         - grep -rE "customers/[0-9]|products/[0-9]|users/[0-9]" --include="*.tsx" . → FAIL (hardcoded integer IDs instead of UUIDs)
+         If any of these patterns are found, the developer used mock data instead of real API integration.
+         FIX: replace with actual API calls (fetch from /api/...) or FAIL the story.
       1.65. Stitch HTML uyumluluk kontrolü (ZORUNLU — stitch/ varsa):
          IF stitch/ directory exists AND STORY_SCREENS is non-empty:
            For each screen in STORY_SCREENS:
@@ -1010,12 +1125,212 @@ steps:
       on_exhausted:
         escalate_to: human
 
+  - id: qa-test
+    agent: qa-tester
+    input: |
+      !include critical-preamble.md
+
+      Perform comprehensive browser-based QA testing on the deployed application.
+      Test EVERY screen from the Stitch design manifest.
+
+      TASK: {{task}}
+      REPO: {{repo}}
+      BRANCH: {{branch}}
+      BUILD_CMD: {{build_cmd}}
+      TEST_CMD: {{test_cmd}}
+
+      === SETUP ===
+
+      1. cd {{repo}} && git checkout {{branch}} && git pull
+      2. Read stitch/DESIGN_MANIFEST.json → list all screens
+      3. Read stitch/design-tokens.css → expected colors, fonts
+      4. Read .env.test or .env.local or .env → TEST_EMAIL, TEST_PASSWORD
+      5. Build: {{build_cmd}}
+      6. Start dev server (find available port, start in background):
+         PORT=$(shuf -i 9200-9299 -n 1)
+         npx next start -p $PORT &
+         SERVER_PID=$!
+         sleep 5
+      7. Open browser: agent-browser open http://localhost:$PORT
+
+      === AUTH ===
+
+      If login page is detected:
+      1. agent-browser fill 'input[type="email"]' "$TEST_EMAIL"
+      2. agent-browser fill 'input[type="password"]' "$TEST_PASSWORD"
+      3. agent-browser click 'button[type="submit"]'
+      4. Wait 3 seconds, verify redirect to dashboard/home
+      If no login page → skip
+
+      === SCREEN-BY-SCREEN TESTING ===
+
+      For EACH screen in DESIGN_MANIFEST.json:
+
+      A. NAVIGATION
+         - Determine the route for this screen (from screen name/type mapping)
+         - agent-browser open http://localhost:$PORT/<route>
+         - Wait 2 seconds for page load
+         - agent-browser screenshot {{repo}}/qa-screenshots/<screen-name>.png
+
+      B. PAGE EXISTENCE CHECK
+         - agent-browser snapshot → check for headings, buttons, or content
+         - If page is blank or shows 404 → CRITICAL: "Screen '<name>' has no corresponding page"
+
+      C. STITCH DESIGN COMPLIANCE
+         - Read stitch/<screenFile>.html for this screen
+         - Count sections/cards in Stitch HTML vs actual page DOM
+         - agent-browser eval: check computed font-family matches design-tokens.css
+         - agent-browser eval: check computed primary color matches design-tokens.css
+         - agent-browser eval: check for emoji icons (BANNED — must use SVG/icon-font)
+         - Report differences as HIGH severity
+
+      D. BUTTON TESTING (max 10 buttons per page)
+         - agent-browser snapshot → list all buttons
+         - For each button:
+           * Inject collectors via agent-browser eval:
+             window.__qa_net=[];window.__qa_err=[];
+             var origFetch=window.fetch;
+             window.fetch=function(){var a=arguments;return origFetch.apply(this,a).then(function(r){window.__qa_net.push({url:String(a[0]),status:r.status});return r})};
+             window.addEventListener("error",function(e){window.__qa_err.push(e.message)});
+           * agent-browser click '<button selector>'
+           * Wait 2 seconds for async response
+           * Check: DOM changed (new elements/text), OR network request fired, OR modal opened
+           * Check: no 4xx/5xx in window.__qa_net
+           * Check: no JS errors in window.__qa_err
+           * If button did nothing → HIGH: "Button '<text>' is non-functional"
+           * If button caused 5xx → CRITICAL: "Button '<text>' causes server error"
+
+      E. FORM TESTING (if forms found on page)
+         - agent-browser snapshot → list all input fields
+         - Fill each input with realistic Turkish test data:
+           * email: "test@firma.com.tr"
+           * text/name: "Test Musteri A.S."
+           * number/currency: "15000"
+           * date: today's date
+           * select: pick first non-placeholder option
+           * textarea: "QA test aciklamasi — bu alan otomatik doldurulmustur."
+         - Click submit button
+         - Wait 3 seconds
+         - Check: page redirected, OR success toast appeared, OR error message shown
+         - Check: no 5xx responses in network
+         - If form does nothing on submit → CRITICAL: "Form submit is non-functional"
+
+      F. MOCK DATA DETECTION
+         - agent-browser eval: scan all visible text on page for:
+           * English placeholder names: "John Doe", "Jane Smith", "Acme Corp"
+           * Lorem ipsum text
+           * Test emails: "test@test.com", "user@example.com"
+           * Placeholder text: "Coming soon", "TODO", "placeholder", "yakinda", "lorem"
+           * Empty tables/lists (0 data rows but should have data)
+         - If found → CRITICAL: "Mock/placeholder data detected: '<matched text>'"
+
+      G. LINK VALIDATION
+         - agent-browser snapshot → list all internal links (same origin)
+         - For each unique internal link (max 15):
+           * Navigate to link href
+           * Check: not 404, not blank page
+           * Navigate back
+         - Report broken links as HIGH severity
+
+      H. CONSOLE ERROR CHECK
+         - agent-browser eval: check for console errors collected during testing
+         - Report uncaught errors as MEDIUM severity
+
+      === CROSS-PAGE TESTS ===
+
+      1. CRUD FLOW (if applicable — check if create/edit forms exist):
+         - Navigate to list page
+         - Click "Create/Ekle/Yeni" button
+         - Fill form with test data, submit
+         - Verify entity appears in list
+         - Click entity to go to detail page
+         - Click "Edit/Duzenle" button
+         - Modify a field, save
+         - Verify change persisted
+         - Report issues
+
+      2. NAVIGATION CONSISTENCY:
+         - Visit 5 different pages
+         - Verify sidebar/navbar is identical on each page
+         - Report inconsistencies as HIGH
+
+      3. DARK MODE (if theme toggle exists):
+         - Find and click theme toggle
+         - Visit 3 different pages
+         - Check for white backgrounds or unreadable text on dark bg
+         - Switch back to default theme
+         - Report issues as MEDIUM
+
+      === CLEANUP ===
+
+      1. agent-browser close
+      2. kill $SERVER_PID (if started)
+
+      === REPORT ===
+
+      Write {{repo}}/QA_REPORT.md with this structure:
+
+      # QA Test Report
+      **Date**: <date>
+      **Branch**: {{branch}}
+      **Screens Tested**: <N>/<total from DESIGN_MANIFEST>
+      **Issues Found**: <N>
+
+      ## Summary
+      | Severity | Count |
+      |----------|-------|
+      | CRITICAL | X |
+      | HIGH     | X |
+      | MEDIUM   | X |
+      | LOW      | X |
+
+      ## Screen Results
+      | # | Screen | Route | Status | Issues |
+      |---|--------|-------|--------|--------|
+      | 1 | Screen Name | /route | PASS/FAIL | count |
+      ...
+
+      ## Issues Detail
+      ### CRITICAL
+      1. [Page Name] Description of issue
+      ...
+      ### HIGH
+      1. [Page Name] Description of issue
+      ...
+
+      Then: git add QA_REPORT.md qa-screenshots/ && git commit -m "qa: browser test report" && git push
+
+      ============================================================
+      MANDATORY OUTPUT FORMAT
+      ============================================================
+      STATUS: done
+      QA_CRITICAL_COUNT: <number>
+      QA_HIGH_COUNT: <number>
+      QA_TOTAL_ISSUES: <number>
+      QA_SCREENS_TESTED: <number>
+      QA_SCREENS_PASSED: <number>
+      QA_REPORT: |
+        <full report text — include all screen results and issues>
+      ============================================================
+    expects: "STATUS: done"
+    max_retries: 1
+    on_fail:
+      escalate_to: human
+
   - id: final-test
     agent: tester
     input: |
       !include critical-preamble.md
 
       Integration testing on merged feature branch, then create final PR to main.
+
+      CRITICAL IDENTITY RULE:
+      You are a QA TESTER, NOT a security scanner. Do NOT run security scans,
+      vulnerability checks, or dependency audits. The security-gate step already
+      did that. Your ONLY job is:
+      1. Integration testing (lint, build, test)
+      2. Runtime smoke test via smoke-test.mjs (MANDATORY)
+      3. Create final PR to main
 
       TASK: {{task}}
       REPO: {{repo}}
@@ -1067,8 +1382,9 @@ steps:
          - Canvas/game elements must render actual content after interaction
       5. Fix any issues found, commit and push
 
-      STEP 2.5 — Runtime Smoke Test v2 (MANDATORY for web projects):
-      The smoke test now checks ALL routes, clicks buttons, and detects placeholders.
+      STEP 2.5 — Runtime Smoke Test v2 (MANDATORY — NOT OPTIONAL):
+      This is the MOST IMPORTANT step. Without smoke test output, the step CANNOT pass.
+      Do NOT replace this with a security scan. Run the actual smoke-test.mjs script.
       1. Build the project: {{build_cmd}}
       2. Run smoke test:
          SMOKE_RESULT=$(node $HOME/.openclaw/setfarm-repo/scripts/smoke-test.mjs "{{repo}}" 2>&1)
@@ -1105,9 +1421,11 @@ steps:
       ============================================================
       STATUS: done
       RESULTS: <test outcomes>
+      SMOKE_TEST_RESULT: <pass/fail/skip/error>
       FINAL_PR: <URL>
 
       Or: STATUS: retry / FAILURES: <list>
+      IMPORTANT: If SMOKE_TEST_RESULT key is missing, step will be retried.
       ============================================================
     expects: "STATUS: done"
     on_fail:

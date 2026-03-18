@@ -173,10 +173,6 @@ function checkEntryPointImports(repo) {
   }
   return issues;
 }
-    }
-  }
-  return issues;
-}
 
 // ── Phase 2: Browser Test ───────────────────────────────────────────
 
@@ -272,6 +268,79 @@ async function smartRetry(fn, maxRetries = 2, baseMs = 1500) {
 
 const SKIP_BUTTON_RE = /^(close|dismiss|cancel|x|\u00d7|\u2715|\u2716)$/i;
 
+// Try to authenticate if app requires login
+async function tryAuth(baseUrl, repoPath) {
+  // Check if there's a login page
+  const snap = abOk('snapshot') || '';
+  const hasLoginForm = /password|şifre|login|giriş/i.test(snap);
+  if (!hasLoginForm) return null;
+
+  // Look for test credentials in .env or .env.test or .env.local
+  for (const envFile of ['.env.test', '.env.local', '.env']) {
+    const envPath = join(repoPath, envFile);
+    if (!existsSync(envPath)) continue;
+    const content = readFileSync(envPath, 'utf-8');
+    const emailMatch = content.match(/(?:TEST_EMAIL|ADMIN_EMAIL|SEED_EMAIL)=(.+)/);
+    const passMatch = content.match(/(?:TEST_PASSWORD|ADMIN_PASSWORD|SEED_PASSWORD)=(.+)/);
+    if (emailMatch && passMatch) {
+      const email = emailMatch[1].trim().replace(/^["']|["']$/g, '');
+      const pass = passMatch[1].trim().replace(/^["']|["']$/g, '');
+      // Try to fill and submit login form
+      try {
+        // Find email/username input
+        abOk('eval', `
+          var inputs = document.querySelectorAll('input[type="email"], input[name="email"], input[type="text"][name*="user"], input[type="text"][name*="email"]');
+          if (inputs.length > 0) {
+            var nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+            nativeInputValueSetter.call(inputs[0], '${email.replace(/'/g, "\\'")}');
+            inputs[0].dispatchEvent(new Event('input', { bubbles: true }));
+            inputs[0].dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        `);
+        await sleep(500);
+        abOk('eval', `
+          var inputs = document.querySelectorAll('input[type="password"]');
+          if (inputs.length > 0) {
+            var nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+            nativeInputValueSetter.call(inputs[0], '${pass.replace(/'/g, "\\'")}');
+            inputs[0].dispatchEvent(new Event('input', { bubbles: true }));
+            inputs[0].dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        `);
+        await sleep(500);
+        // Click submit button
+        abOk('eval', `
+          var btn = document.querySelector('button[type="submit"], form button, button:not([type="button"])');
+          if (btn) btn.click();
+        `);
+        await sleep(3000);
+        // Check if we're still on login page
+        const afterSnap = abOk('snapshot') || '';
+        if (/password|şifre|login|giriş/i.test(afterSnap)) {
+          return 'login-failed';
+        }
+        return 'logged-in';
+      } catch (e) {
+        return 'login-error: ' + e.message;
+      }
+    }
+  }
+
+  // No credentials found — try NextAuth/session-based test bypass
+  // Check if there's a seed script
+  const pkgPath = join(repoPath, 'package.json');
+  if (existsSync(pkgPath)) {
+    try {
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+      if (pkg.prisma?.seed || pkg.scripts?.['prisma:seed'] || pkg.scripts?.seed) {
+        return 'no-credentials-found (hint: add TEST_EMAIL/TEST_PASSWORD to .env.test)';
+      }
+    } catch {}
+  }
+
+  return 'login-required-but-no-credentials';
+}
+
 // ── Main ────────────────────────────────────────────────────────────
 
 async function main() {
@@ -307,6 +376,12 @@ async function main() {
 
     // Open homepage
     const nav = ab('open', baseUrl);
+
+    // Auth detection — try to login if app has login page
+    const authResult = await tryAuth(baseUrl, repoPath);
+    if (authResult) {
+      process.stderr.write('Auth: ' + authResult + '\n');
+    }
     if (nav.startsWith('__ERR__')) {
       failures.push('[/] Homepage failed to load: ' + nav);
     } else {
@@ -365,8 +440,8 @@ async function main() {
         ab('screenshot', join(repoPath, 'smoke-after-click.png'), '--annotate');
       }
 
-      // Check other routes exist (navigate to first 3 non-root routes)
-      for (const route of routes.slice(1, 4)) {
+      // Check other routes exist (navigate to first 20 non-root routes)
+      for (const route of routes.slice(1, 20)) {
         const rNav = ab('open', baseUrl + route);
         if (rNav.startsWith('__ERR__')) {
           failures.push('[' + route + '] Route failed to load');
@@ -379,6 +454,46 @@ async function main() {
           failures.push('[' + route + '] Route appears blank');
         }
         for (const h of rp.headings) { if (isPlaceholder(h)) failures.push('[' + route + '] Placeholder: "' + h + '"'); }
+
+        // Per-route button dead-end check (mini Phase 14)
+        if (rp.buttons.length > 0) {
+          injectErrorCollector();
+          const routeBtnJson = abOk('eval',
+            'return JSON.stringify((function() {' +
+            '  var issues = [];' +
+            '  var btns = document.querySelectorAll("button:not([disabled]), [role=button]:not([disabled])");' +
+            '  var tested = 0;' +
+            '  btns.forEach(function(btn) {' +
+            '    if (tested >= 3) return;' +
+            '    var text = (btn.textContent||"").trim().substring(0,30);' +
+            '    if (!text || /^(close|dismiss|cancel|x|\\u00d7)$/i.test(text)) return;' +
+            '    tested++;' +
+            '    var mutated = false;' +
+            '    var obs = new MutationObserver(function() { mutated = true; });' +
+            '    obs.observe(document.body, {childList:true, subtree:true, attributes:true, characterData:true});' +
+            '    try { btn.click(); } catch(e) {}' +
+            '    var start = Date.now();' +
+            '    while (Date.now() - start < 500) {}' +
+            '    obs.disconnect();' +
+            '    if (!mutated) {' +
+            '      issues.push({type:"dead-button", detail: text});' +
+            '    }' +
+            '  });' +
+            '  return issues;' +
+            '})()'
+          );
+          try {
+            const routeBtnIssues = JSON.parse(routeBtnJson || '[]');
+            for (const i of routeBtnIssues) {
+              failures.push('[' + route + '] dead-button: "' + i.detail + '"');
+            }
+          } catch {}
+          // Check for JS errors after clicking
+          const errCount = getJsErrorCount();
+          if (errCount > 0) {
+            failures.push('[' + route + '] ' + errCount + ' JS error(s) after button clicks');
+          }
+        }
       }
 
       // ── Phase 3: Link Validation ──────────────────────────────────
@@ -497,6 +612,19 @@ async function main() {
           if (errCount > 0) {
             failures.push('[BTN] "' + btn + '" — ' + errCount + ' JS error(s) after click');
           }
+
+          // Check for network errors after button click
+          const netErrors = abOk('eval', 'return JSON.stringify(window.__smoke_network_errors || [])');
+          try {
+            const netArr = JSON.parse(netErrors || '[]');
+            if (netArr.length > 0) {
+              for (const ne of netArr) {
+                failures.push('[BTN] "' + btn + '" triggered network error: ' + ne);
+              }
+            }
+          } catch {}
+          // Reset network errors for next button
+          abOk('eval', 'window.__smoke_network_errors = []');
 
           // Navigate back to homepage for next test
           ab('open', baseUrl);
@@ -896,12 +1024,9 @@ async function main() {
           '    obs.observe(document.body, {childList:true, subtree:true, attributes:true, characterData:true});' +
           '    try { btn.click(); } catch(e) {}' +
           '    var start = Date.now();' +
-          '    while (Date.now() - start < 100) {}' +
+          '    while (Date.now() - start < 2000) {}' +
           '    obs.disconnect();' +
-          '    var newSnapshot = document.body.innerHTML.length;' +
-          '    var domDelta = Math.abs(newSnapshot - snapshot);' +
-          '    var pctChange = snapshot > 0 ? (domDelta / snapshot * 100) : 0;' +
-          '    if (!mutated && pctChange < 0.5) {' +
+          '    if (!mutated) {' +
           '      issues.push({type:"dead-button", detail: text + " (0% DOM change)"});' +
           '    }' +
           '  });' +
@@ -1143,23 +1268,9 @@ async function main() {
 }
 
 main();
- + '&');
-        const exportPatterns = [
-          new RegExp('export\\s+(function|const|let|var|class)\\s+' + escaped + '\\b'),
-          new RegExp('export\\s*\\{[^}]*\\b' + escaped + '\\b[^}]*\\}'),
-        ];
-        const hasExport = exportPatterns.some(p => p.test(targetContent));
-        if (!hasExport) {
-          issues.push(
-            relative(repo, fp) + ': imports "' + name + '" from "' + specifier +
-            '" but target does not export it'
-          );
-        }
-      }
-    }
-  }
-  return issues;
-}
+
+// ── Dead copy (wrapped in block scope to avoid duplicate declarations) ──
+{
 
 // ── Phase 2: Browser Test ───────────────────────────────────────────
 
@@ -1255,6 +1366,79 @@ async function smartRetry(fn, maxRetries = 2, baseMs = 1500) {
 
 const SKIP_BUTTON_RE = /^(close|dismiss|cancel|x|\u00d7|\u2715|\u2716)$/i;
 
+// Try to authenticate if app requires login
+async function tryAuth(baseUrl, repoPath) {
+  // Check if there's a login page
+  const snap = abOk('snapshot') || '';
+  const hasLoginForm = /password|şifre|login|giriş/i.test(snap);
+  if (!hasLoginForm) return null;
+
+  // Look for test credentials in .env or .env.test or .env.local
+  for (const envFile of ['.env.test', '.env.local', '.env']) {
+    const envPath = join(repoPath, envFile);
+    if (!existsSync(envPath)) continue;
+    const content = readFileSync(envPath, 'utf-8');
+    const emailMatch = content.match(/(?:TEST_EMAIL|ADMIN_EMAIL|SEED_EMAIL)=(.+)/);
+    const passMatch = content.match(/(?:TEST_PASSWORD|ADMIN_PASSWORD|SEED_PASSWORD)=(.+)/);
+    if (emailMatch && passMatch) {
+      const email = emailMatch[1].trim().replace(/^["']|["']$/g, '');
+      const pass = passMatch[1].trim().replace(/^["']|["']$/g, '');
+      // Try to fill and submit login form
+      try {
+        // Find email/username input
+        abOk('eval', `
+          var inputs = document.querySelectorAll('input[type="email"], input[name="email"], input[type="text"][name*="user"], input[type="text"][name*="email"]');
+          if (inputs.length > 0) {
+            var nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+            nativeInputValueSetter.call(inputs[0], '${email.replace(/'/g, "\\'")}');
+            inputs[0].dispatchEvent(new Event('input', { bubbles: true }));
+            inputs[0].dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        `);
+        await sleep(500);
+        abOk('eval', `
+          var inputs = document.querySelectorAll('input[type="password"]');
+          if (inputs.length > 0) {
+            var nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+            nativeInputValueSetter.call(inputs[0], '${pass.replace(/'/g, "\\'")}');
+            inputs[0].dispatchEvent(new Event('input', { bubbles: true }));
+            inputs[0].dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        `);
+        await sleep(500);
+        // Click submit button
+        abOk('eval', `
+          var btn = document.querySelector('button[type="submit"], form button, button:not([type="button"])');
+          if (btn) btn.click();
+        `);
+        await sleep(3000);
+        // Check if we're still on login page
+        const afterSnap = abOk('snapshot') || '';
+        if (/password|şifre|login|giriş/i.test(afterSnap)) {
+          return 'login-failed';
+        }
+        return 'logged-in';
+      } catch (e) {
+        return 'login-error: ' + e.message;
+      }
+    }
+  }
+
+  // No credentials found — try NextAuth/session-based test bypass
+  // Check if there's a seed script
+  const pkgPath = join(repoPath, 'package.json');
+  if (existsSync(pkgPath)) {
+    try {
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+      if (pkg.prisma?.seed || pkg.scripts?.['prisma:seed'] || pkg.scripts?.seed) {
+        return 'no-credentials-found (hint: add TEST_EMAIL/TEST_PASSWORD to .env.test)';
+      }
+    } catch {}
+  }
+
+  return 'login-required-but-no-credentials';
+}
+
 // ── Main ────────────────────────────────────────────────────────────
 
 async function main() {
@@ -1290,6 +1474,12 @@ async function main() {
 
     // Open homepage
     const nav = ab('open', baseUrl);
+
+    // Auth detection — try to login if app has login page
+    const authResult = await tryAuth(baseUrl, repoPath);
+    if (authResult) {
+      process.stderr.write('Auth: ' + authResult + '\n');
+    }
     if (nav.startsWith('__ERR__')) {
       failures.push('[/] Homepage failed to load: ' + nav);
     } else {
@@ -1348,8 +1538,8 @@ async function main() {
         ab('screenshot', join(repoPath, 'smoke-after-click.png'), '--annotate');
       }
 
-      // Check other routes exist (navigate to first 3 non-root routes)
-      for (const route of routes.slice(1, 4)) {
+      // Check other routes exist (navigate to first 20 non-root routes)
+      for (const route of routes.slice(1, 20)) {
         const rNav = ab('open', baseUrl + route);
         if (rNav.startsWith('__ERR__')) {
           failures.push('[' + route + '] Route failed to load');
@@ -1362,6 +1552,46 @@ async function main() {
           failures.push('[' + route + '] Route appears blank');
         }
         for (const h of rp.headings) { if (isPlaceholder(h)) failures.push('[' + route + '] Placeholder: "' + h + '"'); }
+
+        // Per-route button dead-end check (mini Phase 14)
+        if (rp.buttons.length > 0) {
+          injectErrorCollector();
+          const routeBtnJson = abOk('eval',
+            'return JSON.stringify((function() {' +
+            '  var issues = [];' +
+            '  var btns = document.querySelectorAll("button:not([disabled]), [role=button]:not([disabled])");' +
+            '  var tested = 0;' +
+            '  btns.forEach(function(btn) {' +
+            '    if (tested >= 3) return;' +
+            '    var text = (btn.textContent||"").trim().substring(0,30);' +
+            '    if (!text || /^(close|dismiss|cancel|x|\\u00d7)$/i.test(text)) return;' +
+            '    tested++;' +
+            '    var mutated = false;' +
+            '    var obs = new MutationObserver(function() { mutated = true; });' +
+            '    obs.observe(document.body, {childList:true, subtree:true, attributes:true, characterData:true});' +
+            '    try { btn.click(); } catch(e) {}' +
+            '    var start = Date.now();' +
+            '    while (Date.now() - start < 500) {}' +
+            '    obs.disconnect();' +
+            '    if (!mutated) {' +
+            '      issues.push({type:"dead-button", detail: text});' +
+            '    }' +
+            '  });' +
+            '  return issues;' +
+            '})()'
+          );
+          try {
+            const routeBtnIssues = JSON.parse(routeBtnJson || '[]');
+            for (const i of routeBtnIssues) {
+              failures.push('[' + route + '] dead-button: "' + i.detail + '"');
+            }
+          } catch {}
+          // Check for JS errors after clicking
+          const errCount = getJsErrorCount();
+          if (errCount > 0) {
+            failures.push('[' + route + '] ' + errCount + ' JS error(s) after button clicks');
+          }
+        }
       }
 
       // ── Phase 3: Link Validation ──────────────────────────────────
@@ -1480,6 +1710,19 @@ async function main() {
           if (errCount > 0) {
             failures.push('[BTN] "' + btn + '" — ' + errCount + ' JS error(s) after click');
           }
+
+          // Check for network errors after button click
+          const netErrors = abOk('eval', 'return JSON.stringify(window.__smoke_network_errors || [])');
+          try {
+            const netArr = JSON.parse(netErrors || '[]');
+            if (netArr.length > 0) {
+              for (const ne of netArr) {
+                failures.push('[BTN] "' + btn + '" triggered network error: ' + ne);
+              }
+            }
+          } catch {}
+          // Reset network errors for next button
+          abOk('eval', 'window.__smoke_network_errors = []');
 
           // Navigate back to homepage for next test
           ab('open', baseUrl);
@@ -1879,12 +2122,9 @@ async function main() {
           '    obs.observe(document.body, {childList:true, subtree:true, attributes:true, characterData:true});' +
           '    try { btn.click(); } catch(e) {}' +
           '    var start = Date.now();' +
-          '    while (Date.now() - start < 100) {}' +
+          '    while (Date.now() - start < 2000) {}' +
           '    obs.disconnect();' +
-          '    var newSnapshot = document.body.innerHTML.length;' +
-          '    var domDelta = Math.abs(newSnapshot - snapshot);' +
-          '    var pctChange = snapshot > 0 ? (domDelta / snapshot * 100) : 0;' +
-          '    if (!mutated && pctChange < 0.5) {' +
+          '    if (!mutated) {' +
           '      issues.push({type:"dead-button", detail: text + " (0% DOM change)"});' +
           '    }' +
           '  });' +
@@ -2126,3 +2366,5 @@ async function main() {
 }
 
 main();
+
+} // end dead copy block
