@@ -107,11 +107,32 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
     try { execFileSync("git", ["worktree", "prune"], { cwd: repo, timeout: 5000, stdio: "pipe" }); } catch (e) { logger.warn(`[worktree] prune failed: ${String(e)}`, {}); }
     if (branchExists) {
       // Reuse existing branch (preserves WIP commits from abandoned sessions)
-      execFileSync("git", ["worktree", "add", worktreeDir, storyId.toLowerCase()], { cwd: repo, timeout: 30000, stdio: "pipe" });
+      try {
+        execFileSync("git", ["worktree", "add", worktreeDir, storyId.toLowerCase()], { cwd: repo, timeout: 30000, stdio: "pipe" });
+      } catch (reuse_err: any) {
+        // Branch may be locked by another worktree — detach and recreate
+        if (String(reuse_err).includes("already used by worktree") || String(reuse_err).includes("already checked out")) {
+          execFileSync("git", ["worktree", "add", "--detach", worktreeDir, baseBranch], { cwd: repo, timeout: 30000, stdio: "pipe" });
+          execFileSync("git", ["checkout", storyId.toLowerCase()], { cwd: worktreeDir, timeout: 10000, stdio: "pipe" });
+        } else {
+          throw reuse_err;
+        }
+      }
       logger.info(`[worktree] Resumed ${storyId} branch with existing commits`, {});
     } else {
       // Create fresh worktree with new branch from base
-      execFileSync("git", ["worktree", "add", worktreeDir, "-b", storyId.toLowerCase(), baseBranch], { cwd: repo, timeout: 30000, stdio: "pipe" });
+      try {
+        execFileSync("git", ["worktree", "add", worktreeDir, "-b", storyId.toLowerCase(), baseBranch], { cwd: repo, timeout: 30000, stdio: "pipe" });
+      } catch (create_err: any) {
+        // baseBranch may be locked by main worktree — detach first, then create branch
+        if (String(create_err).includes("already used by worktree") || String(create_err).includes("already checked out")) {
+          const baseRef = execFileSync("git", ["rev-parse", baseBranch], { cwd: repo, timeout: 5000, stdio: "pipe" }).toString().trim();
+          execFileSync("git", ["worktree", "add", "--detach", worktreeDir, baseRef], { cwd: repo, timeout: 30000, stdio: "pipe" });
+          execFileSync("git", ["checkout", "-b", storyId.toLowerCase()], { cwd: worktreeDir, timeout: 10000, stdio: "pipe" });
+        } else {
+          throw create_err;
+        }
+      }
     }
     // Symlink node_modules to avoid reinstall per story
     const nmSrc = path.join(repo, "node_modules");
@@ -126,7 +147,17 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
   } catch (err: any) {
     // Branch might already exist — try without -b
     try {
-      execFileSync("git", ["worktree", "add", worktreeDir, storyId.toLowerCase()], { cwd: repo, timeout: 30000, stdio: "pipe" });
+      try {
+        execFileSync("git", ["worktree", "add", worktreeDir, storyId.toLowerCase()], { cwd: repo, timeout: 30000, stdio: "pipe" });
+      } catch (fallback_err: any) {
+        if (String(fallback_err).includes("already used by worktree") || String(fallback_err).includes("already checked out")) {
+          const baseRef2 = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, timeout: 5000, stdio: "pipe" }).toString().trim();
+          execFileSync("git", ["worktree", "add", "--detach", worktreeDir, baseRef2], { cwd: repo, timeout: 30000, stdio: "pipe" });
+          execFileSync("git", ["checkout", storyId.toLowerCase()], { cwd: worktreeDir, timeout: 10000, stdio: "pipe" });
+        } else {
+          throw fallback_err;
+        }
+      }
       const nmSrc = path.join(repo, "node_modules");
       const nmDst = path.join(worktreeDir, "node_modules");
       if (fs.existsSync(nmSrc) && !fs.existsSync(nmDst)) {

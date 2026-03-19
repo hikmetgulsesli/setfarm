@@ -33,6 +33,14 @@ LINT SETUP (MANDATORY):
   IMPORTANT: Never use glob "**/*.{ts,tsx}" (matches node_modules). Always scope to "src/**/*".
   IMPORTANT: If eslint.config.js already exists, do NOT overwrite it — just ensure lint script exists.
 
+- TSCONFIG TEST FIX (if vitest/jest is in devDependencies):
+  If tsconfig.json exists and does NOT have "types": ["vitest/globals"] (or "jest"):
+    - Add "types": ["vitest/globals"] to compilerOptions
+    - Ensure test files (*.test.ts, *.test.tsx) are NOT included in main tsconfig build
+    - If tsconfig has no "exclude", add: "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
+    - OR create tsconfig.app.json for build (without tests) and tsconfig.json for IDE (with tests)
+  This prevents "Cannot find module 'vitest'" errors during tsc build.
+
 - Run the lint command to verify it works
 - Run: npx eslint --fix "src/**/*.{ts,tsx}" (or equivalent matching the project type) to auto-fix
 - If ERRORS remain after --fix, manually fix them (empty catch blocks, useless assignments etc.)

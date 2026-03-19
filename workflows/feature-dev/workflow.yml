@@ -631,8 +631,15 @@ steps:
       TEST_CMD: {{test_cmd}}
       LINT_CMD: {{lint_cmd}}
 
-      Work in WORKDIR (git worktree). The branch is already checked out.
-      node_modules is symlinked from REPO.
+      CRITICAL: You MUST `cd {{story_workdir}}` FIRST before ANY action. ALL commands,
+      file reads, and file writes MUST use WORKDIR as the working directory.
+      NEVER run commands from your default workspace — always cd to WORKDIR first.
+      The branch is already checked out. node_modules is symlinked from REPO.
+
+      DEPENDENCY RULE: NEVER use `npx <package>` or run a CLI tool without first verifying
+      the package is installed. If you need tailwindcss, run `npm install -D tailwindcss`
+      BEFORE `npx tailwindcss init`. If you need postcss, install it first. Check package.json
+      devDependencies before assuming any tool is available.
 
       !include story-loop-context.md
 
@@ -663,20 +670,20 @@ steps:
       SCREEN BINDING (MANDATORY — do this before writing any code):
       IF STORY_SCREENS is non-empty:
         a. Parse the JSON array — these are the exact screens this story must implement
-        b. For each screen: read stitch/<screenId>.html for layout reference
-        c. Read stitch/design-tokens.css for colors/fonts/spacing
+        b. For each screen: read {{story_workdir}}/stitch/<screenId>.html for layout reference
+        c. Read {{story_workdir}}/stitch/design-tokens.css for colors/fonts/spacing
         d. Implementation MUST match Stitch design (layout, colors, fonts)
         e. NEVER use fonts/colors NOT in design-tokens.css
-        f. You MUST @import or copy stitch/design-tokens.css into your main CSS file — do NOT recreate tokens
-        g. stitch/design-tokens.css is the SINGLE SOURCE OF TRUTH for all design values
+        f. You MUST @import or copy {{story_workdir}}/stitch/design-tokens.css into your main CSS file — do NOT recreate tokens
+        g. {{story_workdir}}/stitch/design-tokens.css is the SINGLE SOURCE OF TRUTH for all design values
       IF STORY_SCREENS is empty (fallback):
         a. If stitch/ directory exists:
-           - Read stitch/DESIGN_MANIFEST.json to find this story's screen
-           - Read stitch/<story-id>.html for layout reference
-           - Read stitch/design-tokens.css for colors/fonts/spacing
+           - Read {{story_workdir}}/stitch/DESIGN_MANIFEST.json to find this story's screen
+           - Read {{story_workdir}}/stitch/<story-id>.html for layout reference
+           - Read {{story_workdir}}/stitch/design-tokens.css for colors/fonts/spacing
            - Implementation MUST match Stitch design (layout, colors, fonts)
            - NEVER use fonts/colors NOT in design-tokens.css
-           - You MUST @import or copy stitch/design-tokens.css into your main CSS file
+           - You MUST @import or copy {{story_workdir}}/stitch/design-tokens.css into your main CSS file
            - stitch/design-tokens.css is the SINGLE SOURCE OF TRUTH for all design values
       === CRITICAL: NO STITCH = NO CODE ===
       If a page/screen you need to implement does NOT have a corresponding Stitch HTML in stitch/:
