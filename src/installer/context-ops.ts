@@ -214,7 +214,8 @@ export function updateProjectMemory(
     const storyEntry = `### ${storyId}: ${storyTitle} [${statusLabel}]\n- Files: ${files || "(see PR)"}\n`;
 
     // Check if this story already exists in the memory
-    const storyPattern = new RegExp(`### ${storyId}:.*\\n(- .*\\n)*`, "g");
+    const escapedId = storyId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const storyPattern = new RegExp(`### ${escapedId}:.*\\n(- .*\\n)*`, "g");
     if (storyPattern.test(content)) {
       // Update existing entry
       content = content.replace(storyPattern, storyEntry);

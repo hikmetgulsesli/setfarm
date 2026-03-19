@@ -31,6 +31,7 @@ if [ -f "stitch/DESIGN_MANIFEST.json" ]; then
     if [ -n "$SID" ] && [ ! -f "stitch/$SFILE" ]; then
       echo "Downloading screen $SID -> stitch/$SFILE"
       node "$STITCH_SCRIPT" download-screen "$STITCH_PROJECT_ID" "$SID" "stitch/$SFILE" || echo "WARN: Failed to download $SID"
+      sleep 0.2
     fi
   done
 fi

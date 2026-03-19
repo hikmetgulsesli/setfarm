@@ -6,105 +6,37 @@ import fs from "node:fs";
 import path from "node:path";
 import { emitEvent } from "./events.js";
 import { logger } from "../lib/logger.js";
-import { buildPollingPrompt } from "./agent-cron.js";
 import { runQualityChecks, formatQualityReport } from "./quality-gates.js";
 import {
   CLEANUP_THROTTLE_MS,
   PROTECTED_CONTEXT_KEYS,
   OPTIONAL_TEMPLATE_VARS,
-  STORY_FALLBACK_RETRY_THRESHOLD,
-  STORY_FALLBACK_MODEL,
 } from "./constants.js";
+import { getPRState, tryReopenPR, tryAutoMergePR, findPrByBranch, resolveClosedPR } from "./pr-state.js";
+import { failStep } from "./step-fail.js";
+import { advancePipeline, checkLoopContinuation } from "./step-advance.js";
 
 // ── Re-exports from extracted modules (backwards compat for cli.ts, medic.ts) ──
 export { resolveTemplate, parseOutputKeyValues } from "./context-ops.js";
 export { getStories, getCurrentStory } from "./story-ops.js";
 export { computeHasFrontendChanges } from "./step-guardrails.js";
 export { archiveRunProgress } from "./cleanup-ops.js";
+export { failStep } from "./step-fail.js";
 
 // ── Imports from extracted modules (used internally) ──
 import { resolveTemplate, parseOutputKeyValues, readProgressFile, readProjectMemory, updateProjectMemory } from "./context-ops.js";
 import { getStories, formatStoryForTemplate, formatCompletedStories, parseAndInsertStories } from "./story-ops.js";
-import { createStoryWorktree, removeStoryWorktree, cleanupWorktrees } from "./worktree-ops.js";
-import { computeHasFrontendChanges, checkTestFailures, checkQualityGate, checkMissingInputs, processDesignCompletion, processSetupCompletion, processSetupDesignContracts, processBrowserCheck, processDesignFidelityCheck } from "./step-guardrails.js";
-import { cleanupAbandonedSteps as _cleanupAbandonedSteps, scheduleRunCronTeardown, archiveRunProgress, cleanupLocalBranches } from "./cleanup-ops.js";
+import { createStoryWorktree, removeStoryWorktree } from "./worktree-ops.js";
+import { computeHasFrontendChanges, checkTestFailures, checkQualityGate, processDesignCompletion, processSetupCompletion, processSetupDesignContracts, processBrowserCheck, processDesignFidelityCheck } from "./step-guardrails.js";
+import { cleanupAbandonedSteps as _cleanupAbandonedSteps, scheduleRunCronTeardown } from "./cleanup-ops.js";
 import {
-  getRunStatus, getRunContext, updateRunContext, failRun, completeRun,
+  getRunStatus, getRunContext, updateRunContext, failRun,
   getWorkflowId as _getWorkflowId,
   verifyStory, skipFailedStories, countAllStories, countStoriesByStatus,
-  findStoryByStatus, getNextPendingStory, getNextDoneStory, getStoryInfo,
-  setStepStatus, setStepStatusConditional, failStepWithOutput, clearStepStory,
-  findLoopStep, findActiveLoop, findVerifyStepByStepId,
-  updateStoryStatus,
+  findStoryByStatus, getStoryInfo,
+  setStepStatus, failStepWithOutput,
+  findLoopStep, findActiveLoop,
 } from "./repo.js";
-
-/**
- * Search for an alternative merged/open PR when the recorded PR is CLOSED.
- * Developer retries often create a new branch (e.g. US-005-v2) with a new PR,
- * but the DB still points to the old CLOSED PR. This searches by story branch
- * pattern to find the actual deliverable.
- */
-function findAlternativePR(repoPath: string, storyId: string, runIdPrefix: string): string | null {
-  // Search patterns: exact branch, branch with suffix (-v2, -fix, etc.)
-  const baseBranch = `${runIdPrefix}-${storyId}`;
-  try {
-    // First: search for merged PRs matching the story ID in the title or branch
-    let foundUrl = execFileSync("gh", ["pr", "list", "--search", `${storyId} in:title`, "--state", "merged", "--json", "url", "--jq", ".[0].url"], {
-      cwd: repoPath, timeout: 15000, stdio: "pipe"
-    }).toString().trim();
-    if (foundUrl) return foundUrl;
-
-    // Second: search for open PRs matching the story ID
-    foundUrl = execFileSync("gh", ["pr", "list", "--search", `${storyId} in:title`, "--state", "open", "--json", "url", "--jq", ".[0].url"], {
-      cwd: repoPath, timeout: 15000, stdio: "pipe"
-    }).toString().trim();
-    if (foundUrl) return foundUrl;
-
-    // Third: search by base branch name pattern
-    foundUrl = execFileSync("gh", ["pr", "list", "--search", `head:${baseBranch}`, "--state", "merged", "--json", "url", "--jq", ".[0].url"], {
-      cwd: repoPath, timeout: 15000, stdio: "pipe"
-    }).toString().trim();
-    if (foundUrl) return foundUrl;
-  } catch (ghErr: any) {
-    logger.debug("gh PR search failed: " + (ghErr?.message || "unknown"));
-  }
-  return null;
-}
-
-/**
- * Check if a story branch's changes are already present in a target branch.
- * Used when a PR is CLOSED (e.g., GitHub auto-closed it when base branch was merged/deleted).
- * Uses the PR's head commit SHA to check ancestry — if the head SHA is an ancestor of target,
- * the story's code is already delivered.
- */
-function isStoryContentInBranch(repoPath: string, prUrl: string, targetBranches: string[]): boolean {
-  try {
-    // Get the closed PR's head commit SHA
-    const headSha = execFileSync("gh", ["pr", "view", prUrl, "--json", "headRefOid", "--jq", ".headRefOid"], {
-      cwd: repoPath, timeout: 15000, stdio: "pipe"
-    }).toString().trim();
-    if (!headSha || headSha.length < 7) return false;
-
-    // Fetch latest refs
-    execFileSync("git", ["fetch", "origin", "--prune"], { cwd: repoPath, timeout: 15000, stdio: "pipe" });
-
-    // Check if headSha is ancestor of any target branch
-    for (const target of targetBranches) {
-      try {
-        execFileSync("git", ["merge-base", "--is-ancestor", headSha, "origin/" + target], {
-          cwd: repoPath, timeout: 10000, stdio: "pipe"
-        });
-        return true; // headSha is ancestor of target = changes are in target
-      } catch {
-        // Not ancestor of this branch, try next
-      }
-    }
-    return false;
-  } catch (e) {
-    logger.debug("[isStoryContentInBranch] Check failed: " + String(e));
-    return false;
-  }
-}
 
 /**
  * Wrapper: calls cleanup-ops.cleanupAbandonedSteps with advancePipeline callback.
@@ -330,36 +262,14 @@ export function claimStep(agentId: string): ClaimResult {
           let prFound = false;
 
           if (prUrl) {
-            // Check existing PR exists and is not CLOSED (open or merged = OK)
-            const prState = execFileSync("gh", ["pr", "view", prUrl, "--json", "state", "--jq", ".state"], {
-              timeout: 15000, stdio: "pipe"
-            }).toString().trim();
-            if (prState === "MERGED" || prState === "OPEN") {
+            const state = getPRState(prUrl);
+            if (state === "MERGED" || state === "OPEN") {
               prFound = true;
-            } else if (prState === "CLOSED") {
-              // FIX: CLOSED PR — try to reopen it
-              try {
-                execFileSync("gh", ["pr", "reopen", prUrl], { timeout: 15000, stdio: "pipe" });
-                prFound = true;
-                logger.info(`[claim-auto-complete] Reopened CLOSED PR for story ${rs.story_id}: ${prUrl}`, { runId: step.run_id });
-              } catch (reopenErr) {
-                // Reopen failed (branch deleted, etc.) — leave story pending so agent recreates PR
-                logger.warn(`[claim-auto-complete] Cannot reopen CLOSED PR ${prUrl} for story ${rs.story_id}: ${String(reopenErr)}`, { runId: step.run_id });
-                prFound = false;
-              }
+            } else if (state === "CLOSED") {
+              prFound = tryReopenPR(prUrl, rs.story_id, step.run_id);
             }
           } else if (storyBranchForCheck && context["repo"]) {
-            // No pr_url recorded — search by branch name (any state except closed)
-            // First check merged PRs
-            let foundUrl = execFileSync("gh", ["pr", "list", "--head", storyBranchForCheck, "--state", "merged", "--json", "url", "--jq", ".[0].url"], {
-              cwd: context["repo"], timeout: 15000, stdio: "pipe"
-            }).toString().trim();
-            if (!foundUrl) {
-              // Then check open PRs
-              foundUrl = execFileSync("gh", ["pr", "list", "--head", storyBranchForCheck, "--state", "open", "--json", "url", "--jq", ".[0].url"], {
-                cwd: context["repo"], timeout: 15000, stdio: "pipe"
-              }).toString().trim();
-            }
+            const foundUrl = findPrByBranch(context["repo"], storyBranchForCheck);
             if (foundUrl) {
               prUrl = foundUrl;
               prFound = true;
@@ -724,92 +634,57 @@ export function claimStep(agentId: string): ClaimResult {
 
         const prUrl = nextUnverified.pr_url || "";
         if (prUrl) {
-          try {
-            const prState = execFileSync("gh", ["pr", "view", prUrl, "--json", "state", "--jq", ".state"], {
-              timeout: 15000, stdio: "pipe"
-            }).toString().trim();
-            if (prState === "MERGED") {
-              // Merged PRs: auto-verify regardless of quality gate.
-              // Quality issues are repo-wide, not story-specific — blocking here
-              // causes infinite loop when the error is in files not owned by this story.
-              // Downstream steps (security-gate, final-test) will catch quality issues.
-              const cavRepoPath = context["repo"] || context["REPO"] || "";
-              if (cavRepoPath) {
-                const cavIssues = runQualityChecks(cavRepoPath);
-                const cavErrors = cavIssues.filter(i => i.severity === "error");
-                if (cavErrors.length > 0) {
-                  const cavReport = formatQualityReport(cavIssues);
-                  logger.warn(`[claim-auto-verify-quality] PR merged — quality gate has ${cavErrors.length} error(s) but auto-verifying anyway (deferred to downstream steps):
-${cavReport}`, { runId: step.run_id });
-                }
+          const prState = getPRState(prUrl);
+          if (prState === "MERGED") {
+            // Advisory quality check — auto-verify regardless (downstream steps catch issues)
+            const cavRepoPath = context["repo"] || context["REPO"] || "";
+            if (cavRepoPath) {
+              const cavIssues = runQualityChecks(cavRepoPath);
+              const cavErrors = cavIssues.filter(i => i.severity === "error");
+              if (cavErrors.length > 0) {
+                logger.warn(`[claim-auto-verify-quality] PR merged — quality gate has ${cavErrors.length} error(s) but auto-verifying anyway (deferred to downstream steps):\n${formatQualityReport(cavIssues)}`, { runId: step.run_id });
               }
+            }
+            verifyStory(nextUnverified.id);
+            logger.info(`[claim-auto-verify] Story ${nextUnverified.story_id} auto-verified — PR merged`, { runId: step.run_id });
+            emitEvent({ ts: new Date().toISOString(), event: "story.verified", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: nextUnverified.story_id, storyTitle: nextUnverified.title });
+            continue;
+          }
+          if (prState === "CLOSED") {
+            const repoPath = context["repo"] || "";
+            const runIdPrefix = step.run_id.slice(0, 8);
+            const featureBranch = context["branch"] || context["BRANCH"] || "";
+            const checkBranches = [featureBranch, "main", "master"].filter(Boolean);
+            const resolution = resolveClosedPR(prUrl, nextUnverified.story_id, step.run_id, repoPath, runIdPrefix, checkBranches);
+            if (resolution.alternativePrUrl) {
+              db.prepare("UPDATE stories SET pr_url = ?, updated_at = ? WHERE id = ?")
+                .run(resolution.alternativePrUrl, new Date().toISOString(), nextUnverified.id);
+              logger.info(`[claim-auto-verify] Found alternative PR for ${nextUnverified.story_id}: ${resolution.alternativePrUrl} (original CLOSED: ${prUrl})`, { runId: step.run_id });
+              emitEvent({ ts: new Date().toISOString(), event: "story.retry", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: nextUnverified.story_id, detail: `Switched to alternative PR: ${resolution.alternativePrUrl}` });
+              continue;
+            } else if (resolution.contentInBaseBranch) {
               verifyStory(nextUnverified.id);
-              logger.info(`[claim-auto-verify] Story ${nextUnverified.story_id} auto-verified — PR merged`, { runId: step.run_id });
-              emitEvent({ ts: new Date().toISOString(), event: "story.verified", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: nextUnverified.story_id, storyTitle: nextUnverified.title });
-              continue; // Check next story
+              logger.info(`[claim-auto-verify] Story ${nextUnverified.story_id} auto-verified — CLOSED PR content found in base branch`, { runId: step.run_id });
+              emitEvent({ ts: new Date().toISOString(), event: "story.verified", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: nextUnverified.story_id, storyTitle: nextUnverified.title, detail: `Auto-verified — CLOSED PR content already in base branch` });
+              continue;
+            } else if (!resolution.reopened) {
+              // Content truly missing — fail the story
+              db.prepare("UPDATE stories SET status = 'failed', output = 'Failed: CLOSED PR could not be reopened, content not found in base branch', updated_at = ? WHERE id = ?")
+                .run(new Date().toISOString(), nextUnverified.id);
+              logger.warn(`[claim-auto-verify] CLOSED PR ${prUrl} — content NOT in base branch — failing story ${nextUnverified.story_id}`, { runId: step.run_id });
+              emitEvent({ ts: new Date().toISOString(), event: "story.failed", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: nextUnverified.story_id, storyTitle: nextUnverified.title, detail: `CLOSED PR content not in base branch` });
+              continue;
             }
-            if (prState === "CLOSED") {
-              // FIX: CLOSED PR — try to reopen first
-              try {
-                execFileSync("gh", ["pr", "reopen", prUrl], { timeout: 15000, stdio: "pipe" });
-                logger.info(`[claim-auto-verify] Reopened CLOSED PR for story ${nextUnverified.story_id}: ${prUrl}`, { runId: step.run_id });
-                // Fall through to agent verification — agent will review the reopened PR
-              } catch (reopenErr) {
-                // Reopen failed — search for alternative merged/open PR (developer retry creates new branch)
-                const repoPath = context["repo"] || "";
-                const runIdPrefix = step.run_id.slice(0, 8);
-                const altPr = repoPath ? findAlternativePR(repoPath, nextUnverified.story_id, runIdPrefix) : null;
-                if (altPr) {
-                  // Found alternative PR — update DB and re-check state
-                  db.prepare("UPDATE stories SET pr_url = ?, updated_at = ? WHERE id = ?")
-                    .run(altPr, new Date().toISOString(), nextUnverified.id);
-                  logger.info(`[claim-auto-verify] Found alternative PR for ${nextUnverified.story_id}: ${altPr} (original CLOSED: ${prUrl})`, { runId: step.run_id });
-                  emitEvent({ ts: new Date().toISOString(), event: "story.retry", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: nextUnverified.story_id, detail: `Switched to alternative PR: ${altPr}` });
-                  continue; // Re-check with updated PR on next iteration
-                }
-                // No alternative PR found — check if story changes are already in base branch
-                // (happens when final-test merges feature branch → GitHub auto-closes remaining story PRs)
-                const repoPathForCheck = context["repo"] || context["REPO"] || "";
-                const featureBranch = context["branch"] || context["BRANCH"] || "";
-                const checkBranches = [featureBranch, "main", "master"].filter(Boolean);
-                if (repoPathForCheck && isStoryContentInBranch(repoPathForCheck, prUrl, checkBranches)) {
-                  // Story code is already in base branch — auto-verify
-                  verifyStory(nextUnverified.id);
-                  logger.info(`[claim-auto-verify] Story ${nextUnverified.story_id} auto-verified — CLOSED PR content found in base branch (PR: ${prUrl})`, { runId: step.run_id });
-                  emitEvent({ ts: new Date().toISOString(), event: "story.verified", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: nextUnverified.story_id, storyTitle: nextUnverified.title, detail: `Auto-verified — CLOSED PR content already in base branch` });
-                  continue; // Check next story
-                }
-                // Content truly missing — fail the story (never skip)
-                db.prepare("UPDATE stories SET status = 'failed', output = 'Failed: CLOSED PR could not be reopened, content not found in base branch', updated_at = ? WHERE id = ?")
-                  .run(new Date().toISOString(), nextUnverified.id);
-                logger.warn(`[claim-auto-verify] CLOSED PR ${prUrl} — content NOT in base branch — failing story ${nextUnverified.story_id}`, { runId: step.run_id });
-                emitEvent({ ts: new Date().toISOString(), event: "story.failed", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: nextUnverified.story_id, storyTitle: nextUnverified.title, detail: `CLOSED PR content not in base branch` });
-                continue; // Check next story
-              }
+            // reopened=true → fall through to agent verification
+          }
+          if (prState === "OPEN") {
+            const abandonCount = nextUnverified.abandoned_count ?? 0;
+            if (abandonCount >= 1 && tryAutoMergePR(prUrl, nextUnverified.story_id, step.run_id)) {
+              verifyStory(nextUnverified.id);
+              logger.info(`[claim-auto-verify] Story ${nextUnverified.story_id} auto-merged + verified — PR was OPEN after ${abandonCount} abandon(s)`, { runId: step.run_id });
+              emitEvent({ ts: new Date().toISOString(), event: "story.verified", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: nextUnverified.story_id, storyTitle: nextUnverified.title, detail: `Auto-merged after ${abandonCount} abandon(s)` });
+              continue;
             }
-            if (prState === "OPEN") {
-              // Auto-merge open PRs — the implement agent already created the PR,
-              // and reviewer session keeps dying before merge. Unblock the pipeline.
-              const abandonCount = nextUnverified.abandoned_count ?? 0;
-              if (abandonCount >= 1) {
-                // Only auto-merge after at least 1 failed verify attempt
-                try {
-                  execFileSync("gh", ["pr", "merge", prUrl, "--squash", "--delete-branch"], {
-                    timeout: 30000, stdio: "pipe"
-                  });
-                  verifyStory(nextUnverified.id);
-                  logger.info(`[claim-auto-verify] Story ${nextUnverified.story_id} auto-merged + verified — PR was OPEN after ${abandonCount} abandon(s)`, { runId: step.run_id });
-                  emitEvent({ ts: new Date().toISOString(), event: "story.verified", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: nextUnverified.story_id, storyTitle: nextUnverified.title, detail: `Auto-merged after ${abandonCount} abandon(s)` });
-                  continue; // Check next story
-                } catch (mergeErr) {
-                  logger.warn(`[claim-auto-verify] Auto-merge failed for ${prUrl}: ${String(mergeErr)}`, { runId: step.run_id });
-                  // Fall through to agent verification
-                }
-              }
-            }
-          } catch (e) {
-            // gh command failed — proceed with normal agent verify
-            logger.warn(`[claim-auto-verify] PR state check failed for ${prUrl}: ${String(e)}`, { runId: step.run_id });
           }
         }
         break; // Found a story that needs actual agent verification
@@ -1551,6 +1426,15 @@ function handleVerifyEachCompletion(
 ): { advanced: boolean; runCompleted: boolean } {
   const db = getDb();
   const parsedOutput = parseOutputKeyValues(output);
+
+  // Guard: strip protected keys from parsed output to prevent seed value corruption
+  for (const key of PROTECTED_CONTEXT_KEYS) {
+    if (key in parsedOutput) {
+      logger.warn(`[handleVerifyEach] Stripped protected key "${key}" from output`, { runId: verifyStep.run_id });
+      delete parsedOutput[key];
+    }
+  }
+
   const status = parsedOutput["status"]?.toLowerCase() || context["status"]?.toLowerCase();
 
   // Atomic guard: prevent parallel crons from double-completing the same verify step.
@@ -1662,62 +1546,43 @@ function handleVerifyEachCompletion(
     // Check if PR is already merged — if so, auto-verify and skip
     const prUrl = nextUnverifiedStory.pr_url || "";
     if (prUrl) {
-      try {
-        const prState = execFileSync("gh", ["pr", "view", prUrl, "--json", "state", "--jq", ".state"], { timeout: 15000, stdio: "pipe" }).toString().trim();
-        if (prState === "MERGED") {
-          // Merged PRs: auto-verify regardless of quality gate.
-          // Quality issues are repo-wide — blocking causes infinite loops.
-          // Downstream steps (security-gate, final-test) handle quality.
-          const hveRepoPath = context["repo"] || context["REPO"] || "";
-          if (hveRepoPath) {
-            const hveIssues = runQualityChecks(hveRepoPath);
-            const hveErrors = hveIssues.filter(i => i.severity === "error");
-            if (hveErrors.length > 0) {
-              const hveReport = formatQualityReport(hveIssues);
-              logger.warn(`[auto-verify-quality] PR merged — quality gate has ${hveErrors.length} error(s) but auto-verifying anyway (deferred to downstream):
-${hveReport}`, { runId: verifyStep.run_id });
-            }
+      const prState = getPRState(prUrl);
+      if (prState === "MERGED") {
+        // Advisory quality check — auto-verify regardless (downstream steps catch issues)
+        const hveRepoPath = context["repo"] || context["REPO"] || "";
+        if (hveRepoPath) {
+          const hveIssues = runQualityChecks(hveRepoPath);
+          const hveErrors = hveIssues.filter(i => i.severity === "error");
+          if (hveErrors.length > 0) {
+            logger.warn(`[auto-verify-quality] PR merged — quality gate has ${hveErrors.length} error(s) but auto-verifying anyway (deferred to downstream):\n${formatQualityReport(hveIssues)}`, { runId: verifyStep.run_id });
           }
+        }
+        verifyStory(nextUnverifiedStory.id);
+        logger.info(`Auto-verified story ${nextUnverifiedStory.story_id} — PR merged`, { runId: verifyStep.run_id });
+        continue;
+      }
+      if (prState === "CLOSED") {
+        const repoPath = context["repo"] || "";
+        const runIdPrefix = verifyStep.run_id.slice(0, 8);
+        const featureBranch2 = context["branch"] || context["BRANCH"] || "";
+        const checkBranches2 = [featureBranch2, "main", "master"].filter(Boolean);
+        const resolution = resolveClosedPR(prUrl, nextUnverifiedStory.story_id, verifyStep.run_id, repoPath, runIdPrefix, checkBranches2);
+        if (resolution.alternativePrUrl) {
+          db.prepare("UPDATE stories SET pr_url = ?, updated_at = ? WHERE id = ?")
+            .run(resolution.alternativePrUrl, new Date().toISOString(), nextUnverifiedStory.id);
+          logger.info(`[handleVerifyEach] Found alternative PR for ${nextUnverifiedStory.story_id}: ${resolution.alternativePrUrl}`, { runId: verifyStep.run_id });
+          continue;
+        } else if (resolution.contentInBaseBranch) {
           verifyStory(nextUnverifiedStory.id);
-          logger.info(`Auto-verified story ${nextUnverifiedStory.story_id} — PR merged`, { runId: verifyStep.run_id });
-          continue; // Check next story
+          logger.info(`[handleVerifyEach] Story ${nextUnverifiedStory.story_id} auto-verified — CLOSED PR content found in base branch`, { runId: verifyStep.run_id });
+          continue;
+        } else if (!resolution.reopened) {
+          db.prepare("UPDATE stories SET status = 'failed', output = 'Failed: CLOSED PR could not be reopened, content not found in base branch', updated_at = ? WHERE id = ?")
+            .run(new Date().toISOString(), nextUnverifiedStory.id);
+          logger.warn(`[handleVerifyEach] CLOSED PR ${prUrl} — content NOT in base branch — failing story ${nextUnverifiedStory.story_id}`, { runId: verifyStep.run_id });
+          continue;
         }
-        if (prState === "CLOSED") {
-          // FIX: CLOSED PR — try to reopen first
-          try {
-            execFileSync("gh", ["pr", "reopen", prUrl], { timeout: 15000, stdio: "pipe" });
-            logger.info(`[handleVerifyEach] Reopened CLOSED PR for story ${nextUnverifiedStory.story_id}: ${prUrl}`, { runId: verifyStep.run_id });
-            // Fall through to agent verification
-          } catch (reopenErr) {
-            // Reopen failed — search for alternative merged/open PR
-            const repoPath = context["repo"] || "";
-            const runIdPrefix = verifyStep.run_id.slice(0, 8);
-            const altPr = repoPath ? findAlternativePR(repoPath, nextUnverifiedStory.story_id, runIdPrefix) : null;
-            if (altPr) {
-              db.prepare("UPDATE stories SET pr_url = ?, updated_at = ? WHERE id = ?")
-                .run(altPr, new Date().toISOString(), nextUnverifiedStory.id);
-              logger.info(`[handleVerifyEach] Found alternative PR for ${nextUnverifiedStory.story_id}: ${altPr} (original CLOSED: ${prUrl})`, { runId: verifyStep.run_id });
-              continue; // Re-check with updated PR on next iteration
-            }
-            // No alternative PR found — check if story changes are already in base branch
-            const repoPathForCheck2 = context["repo"] || context["REPO"] || "";
-            const featureBranch2 = context["branch"] || context["BRANCH"] || "";
-            const checkBranches2 = [featureBranch2, "main", "master"].filter(Boolean);
-            if (repoPathForCheck2 && isStoryContentInBranch(repoPathForCheck2, prUrl, checkBranches2)) {
-              verifyStory(nextUnverifiedStory.id);
-              logger.info(`[handleVerifyEach] Story ${nextUnverifiedStory.story_id} auto-verified — CLOSED PR content found in base branch`, { runId: verifyStep.run_id });
-              continue;
-            }
-            // Content truly missing — fail the story (never skip)
-            db.prepare("UPDATE stories SET status = 'failed', output = 'Failed: CLOSED PR could not be reopened, content not found in base branch', updated_at = ? WHERE id = ?")
-              .run(new Date().toISOString(), nextUnverifiedStory.id);
-            logger.warn(`[handleVerifyEach] CLOSED PR ${prUrl} — content NOT in base branch — failing story ${nextUnverifiedStory.story_id}`, { runId: verifyStep.run_id });
-            continue; // Check next story
-          }
-        }
-      } catch (e) {
-        // gh command failed — proceed with normal verify
-        logger.warn(`PR state check failed for ${prUrl}: ${String(e)}`, { runId: verifyStep.run_id });
+        // reopened=true → fall through to agent verification
       }
     }
     break; // Found a story that needs actual verification
@@ -1756,276 +1621,3 @@ ${hveReport}`, { runId: verifyStep.run_id });
   }
 }
 
-/**
- * Check if the loop has more stories; if so set loop step pending, otherwise done + advance.
- */
-function checkLoopContinuation(runId: string, loopStepId: string): { advanced: boolean; runCompleted: boolean } {
-  const db = getDb();
-  const pendingStory = findStoryByStatus(runId, "pending") as { id: string } | undefined;
-
-  const loopStatus = db.prepare(
-    "SELECT status FROM steps WHERE id = ?"
-  ).get(loopStepId) as { status: string } | undefined;
-
-  if (pendingStory) {
-    if (loopStatus?.status === "failed") {
-      return { advanced: false, runCompleted: false };
-    }
-    // More stories pending — keep step available for parallel claims
-    // Only set to pending if not already running (don't interrupt parallel stories)
-    if (loopStatus?.status !== "running") {
-      db.prepare(
-          "UPDATE steps SET status = 'pending', updated_at = ? WHERE id = ?"
-      ).run(new Date().toISOString(), loopStepId);
-    }
-    return { advanced: false, runCompleted: false };
-  }
-
-  // No pending stories — check if any are still running (parallel execution)
-  const runningStory = findStoryByStatus(runId, "running") as { id: string } | undefined;
-
-  if (runningStory) {
-    // Other stories still running in parallel — wait for them
-    return { advanced: false, runCompleted: false };
-  }
-
-  // BUG FIX: Check for unverified 'done' stories — these still need verify_each processing.
-  // Without this check, parallel story completion causes the loop to end prematurely,
-  // leaving stories implemented but never verified/merged.
-  const loopStepConfig = db.prepare("SELECT loop_config FROM steps WHERE id = ?").get(loopStepId) as { loop_config: string | null } | undefined;
-  if (loopStepConfig?.loop_config) {
-    const lcForCheck: LoopConfig = JSON.parse(loopStepConfig.loop_config);
-    if (lcForCheck.verifyEach && lcForCheck.verifyStep) {
-      const unverifiedStory = findStoryByStatus(runId, "done") as { id: string } | undefined;
-      if (unverifiedStory) {
-        // Stories need verification — set verify step to pending
-        db.prepare(
-          "UPDATE steps SET status = 'pending', updated_at = ? WHERE run_id = ? AND step_id = ? AND status IN ('waiting', 'done')"
-        ).run(new Date().toISOString(), runId, lcForCheck.verifyStep);
-        logger.info(`Loop has unverified stories — keeping verify active`, { runId });
-        return { advanced: false, runCompleted: false };
-      }
-    }
-  }
-
-  const failedStory = findStoryByStatus(runId, "failed") as { id: string } | undefined;
-
-  if (failedStory) {
-    // v9.0: Skip failed stories instead of failing the loop — let remaining stories continue
-    skipFailedStories(runId);
-    const wfId = getWorkflowId(runId);
-    emitEvent({ ts: new Date().toISOString(), event: "story.skipped", runId, workflowId: wfId, stepId: loopStepId, detail: "Failed stories skipped — loop continues" });
-    // Fall through to mark loop done
-  }
-
-  // All stories verified/skipped — mark loop step done
-  // Generate summary output for the loop step (Fix: was empty before)
-  const loopSummaryStories = db.prepare(
-    "SELECT story_id, status FROM stories WHERE run_id = ? ORDER BY story_index ASC"
-  ).all(runId) as Array<{ story_id: string; status: string }>;
-  const verifiedCount = loopSummaryStories.filter(s => s.status === "verified").length;
-  const skippedCount = loopSummaryStories.filter(s => s.status === "skipped").length;
-  const failedCount = loopSummaryStories.filter(s => s.status === "failed").length;
-  const totalCount = loopSummaryStories.length;
-  const loopSummaryOutput = `STATUS: done
-STORIES_TOTAL: ${totalCount}
-STORIES_VERIFIED: ${verifiedCount}
-STORIES_SKIPPED: ${skippedCount}
-STORIES_FAILED: ${failedCount}
-SUMMARY: ${verifiedCount}/${totalCount} stories verified, ${skippedCount} skipped, ${failedCount} failed`;
-
-// Early worktree cleanup: clean up .worktrees when implement loop finishes,  // not just when the entire run completes. Prevents stale worktree accumulation.  cleanupWorktrees(runId);
-  db.prepare(
-    "UPDATE steps SET status = 'done', output = ?, updated_at = ? WHERE id = ?"
-  ).run(loopSummaryOutput, new Date().toISOString(), loopStepId);
-
-  // Also mark verify step done if it exists (with summary output)
-  const loopStep = db.prepare("SELECT loop_config, run_id FROM steps WHERE id = ?").get(loopStepId) as { loop_config: string | null; run_id: string } | undefined;
-  if (loopStep?.loop_config) {
-    const lc: LoopConfig = JSON.parse(loopStep.loop_config);
-    if (lc.verifyEach && lc.verifyStep) {
-      const verifySummary = `STATUS: done
-VERIFICATION_SUMMARY: ${verifiedCount}/${totalCount} stories verified`;
-      db.prepare(
-        "UPDATE steps SET status = 'done', output = ?, updated_at = ? WHERE run_id = ? AND step_id = ?"
-      ).run(verifySummary, new Date().toISOString(), runId, lc.verifyStep);
-    }
-  }
-
-  return advancePipeline(runId);
-}
-
-/**
- * Advance the pipeline: find the next waiting step and make it pending, or complete the run.
- * Respects terminal run states — a failed run cannot be advanced or completed.
- */
-function advancePipeline(runId: string): { advanced: boolean; runCompleted: boolean } {
-  const db = getDb();
-
-  // Guard: don't advance or complete a run that's already failed/cancelled
-  const runSt = getRunStatus(runId);
-  if (runSt === "failed" || runSt === "cancelled") {
-    return { advanced: false, runCompleted: false };
-  }
-
-  // BEGIN IMMEDIATE prevents concurrent crons from double-advancing
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    const next = db.prepare(
-      "SELECT id, step_id, step_index FROM steps WHERE run_id = ? AND status = 'waiting' ORDER BY step_index ASC LIMIT 1"
-    ).get(runId) as { id: string; step_id: string; step_index: number } | undefined;
-
-    const incomplete = db.prepare(
-      "SELECT id FROM steps WHERE run_id = ? AND status IN ('failed', 'pending', 'running') LIMIT 1"
-    ).get(runId) as { id: string } | undefined;
-
-    if (!next && incomplete) {
-      db.exec("COMMIT");
-      return { advanced: false, runCompleted: false };
-    }
-
-    const wfId = getWorkflowId(runId);
-    if (next) {
-      // Guard: don't advance past steps that are still running or pending
-      const priorIncomplete = db.prepare(
-        "SELECT id FROM steps WHERE run_id = ? AND step_index < ? AND status IN ('running', 'pending') LIMIT 1"
-      ).get(runId, next.step_index) as { id: string } | undefined;
-      if (priorIncomplete) {
-        db.exec("COMMIT");
-        return { advanced: false, runCompleted: false };
-      }
-      db.prepare(
-        "UPDATE steps SET status = 'pending', updated_at = ? WHERE id = ?"
-      ).run(new Date().toISOString(), next.id);
-      db.exec("COMMIT");
-      emitEvent({ ts: new Date().toISOString(), event: "pipeline.advanced", runId, workflowId: wfId, stepId: next.step_id });
-      emitEvent({ ts: new Date().toISOString(), event: "step.pending", runId, workflowId: wfId, stepId: next.step_id });
-      return { advanced: true, runCompleted: false };
-    } else {
-      completeRun(runId);
-      db.exec("COMMIT");
-      emitEvent({ ts: new Date().toISOString(), event: "run.completed", runId, workflowId: wfId });
-      logger.info("Run completed", { runId, workflowId: wfId });
-      archiveRunProgress(runId);
-      cleanupWorktrees(runId);
-      cleanupLocalBranches(runId);
-      scheduleRunCronTeardown(runId);
-      return { advanced: false, runCompleted: true };
-    }
-  } catch (err) {
-    try { db.exec("ROLLBACK"); } catch (e) { logger.warn(`[step-ops] ROLLBACK failed: ${String(e)}`, {}); }
-    throw err;
-  }
-}
-
-/**
- * Fail a step, with retry logic. For loop steps, applies per-story retry.
- */
-export function failStep(stepId: string, error: string): { retrying: boolean; runFailed: boolean } {
-  const db = getDb();
-
-  const step = db.prepare(
-    "SELECT run_id, retry_count, max_retries, type, current_story_id, agent_id FROM steps WHERE id = ?"
-  ).get(stepId) as { run_id: string; retry_count: number; max_retries: number; type: string; current_story_id: string | null; agent_id: string } | undefined;
-
-  if (!step) throw new Error(`Step not found: ${stepId}`);
-
-  // T9: Loop step failure — per-story retry
-  if (step.type === "loop" && step.current_story_id) {
-    const story = db.prepare(
-      "SELECT id, retry_count, max_retries FROM stories WHERE id = ?"
-    ).get(step.current_story_id) as { id: string; retry_count: number; max_retries: number } | undefined;
-
-    if (story) {
-      const storyRow = getStoryInfo(step.current_story_id);
-      const newRetry = story.retry_count + 1;
-      if (newRetry > story.max_retries) {
-        // Story retries exhausted — mark story as failed but DON'T fail the run
-        // Let the loop continue with remaining stories (pipeline resilience)
-        if (storyRow?.story_id) {
-          const ctx = getRunContext(step.run_id);
-          if (ctx.repo) removeStoryWorktree(ctx.repo, storyRow.story_id, step.agent_id);
-        }
-        db.prepare("UPDATE stories SET status = 'failed', retry_count = ?, updated_at = ? WHERE id = ?").run(newRetry, new Date().toISOString(), story.id);
-        // Reset step to pending so it can pick up the next story (don't fail the step)
-        db.prepare("UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = ? WHERE id = ?").run(new Date().toISOString(), stepId);
-        const wfId = getWorkflowId(step.run_id);
-        emitEvent({ ts: new Date().toISOString(), event: "story.failed", runId: step.run_id, workflowId: wfId, stepId: stepId, storyId: storyRow?.story_id, storyTitle: storyRow?.title, detail: `Story retries exhausted (${newRetry}/${story.max_retries}) — loop continues` });
-        // v1.5.50: Resolve claim_log outcome
-        try { db.prepare("UPDATE claim_log SET outcome = 'failed', diagnostic = ? WHERE story_id = ? AND outcome IS NULL").run(error, storyRow?.story_id || ""); } catch (e) { logger.warn(`[claim_log] update failed: ${String(e)}`, {}); }
-        logger.info(`[failStep] Story ${storyRow?.story_id} retries exhausted — marked failed, loop continues`, { runId: step.run_id });
-        return { retrying: false, runFailed: false };
-      }
-
-      // Retry the story — clean up worktree (will be recreated on next claim)
-      if (storyRow?.story_id) {
-        const ctx2 = getRunContext(step.run_id);
-        if (ctx2.repo) removeStoryWorktree(ctx2.repo, storyRow.story_id, step.agent_id);
-      }
-      db.prepare("UPDATE stories SET status = 'pending', retry_count = ?, updated_at = ? WHERE id = ?").run(newRetry, new Date().toISOString(), story.id);
-      db.prepare("UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = ? WHERE id = ?").run(new Date().toISOString(), stepId);
-      // v1.5.50: Resolve claim_log outcome
-      try { db.prepare("UPDATE claim_log SET outcome = 'failed', diagnostic = ? WHERE story_id = ? AND outcome IS NULL").run(error, storyRow?.story_id || ""); } catch (e) { logger.warn(`[claim_log] update failed: ${String(e)}`, {}); }
-
-      // v1.7.8: After STORY_FALLBACK_RETRY_THRESHOLD retries, fire a one-shot cron
-      // with fallback model so a different LLM attempts the story
-      if (newRetry >= STORY_FALLBACK_RETRY_THRESHOLD) {
-        try {
-          const wfId2 = getWorkflowId(step.run_id) || "feature-dev";
-          const agentRole = step.agent_id.includes("_") ? step.agent_id.split("_").pop()! : step.agent_id;
-          // Pick a different agent from the pool for variety
-          const mappedAgents = ["koda", "flux", "cipher", "prism"];
-          const fallbackAgent = mappedAgents[newRetry % mappedAgents.length];
-          const cronName = `setfarm/fallback-retry/${storyRow?.story_id || "unknown"}-r${newRetry}`;
-          const pollingPrompt = buildPollingPrompt(wfId2, agentRole);
-          execFileSync("openclaw", [
-            "cron", "add",
-            "--name", cronName,
-            "--agent", fallbackAgent,
-            "--model", STORY_FALLBACK_MODEL,
-            "--at", "+10s",
-            "--delete-after-run",
-            "--exact",
-            "--session", "isolated",
-            "--payload", JSON.stringify({
-              kind: "agentTurn",
-              message: pollingPrompt,
-              timeoutSeconds: 1800,
-            }),
-          ], { timeout: 15000, stdio: "pipe" });
-          logger.info(`[failStep] Fired fallback retry with model ${STORY_FALLBACK_MODEL} for story ${storyRow?.story_id} (retry ${newRetry}, agent ${fallbackAgent})`, { runId: step.run_id });
-        } catch (fallbackErr) {
-          logger.warn(`[failStep] Fallback cron creation failed: ${String(fallbackErr)} — normal retry will still work`, { runId: step.run_id });
-        }
-      }
-
-      return { retrying: true, runFailed: false };
-    }
-  }
-
-  // Single step: existing logic
-  const newRetryCount = step.retry_count + 1;
-
-  if (newRetryCount > step.max_retries) {
-    db.prepare(
-        "UPDATE steps SET status = 'failed', output = ?, retry_count = ?, updated_at = ? WHERE id = ?"
-    ).run(error, newRetryCount, new Date().toISOString(), stepId);
-    db.prepare(
-        "UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?"
-    ).run(new Date().toISOString(), step.run_id);
-    const wfId2 = getWorkflowId(step.run_id);
-    emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId2, stepId: stepId, detail: error });
-    emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId2, detail: "Step retries exhausted" });
-    // v1.5.50: Resolve claim_log outcome
-    try { db.prepare("UPDATE claim_log SET outcome = 'failed', diagnostic = ? WHERE run_id = ? AND step_id = ? AND story_id IS NULL AND outcome IS NULL").run(error, step.run_id, stepId); } catch (e) { logger.warn(`[claim_log] update failed: ${String(e)}`, {}); }
-    scheduleRunCronTeardown(step.run_id);
-    return { retrying: false, runFailed: true };
-  } else {
-    db.prepare(
-        "UPDATE steps SET status = 'pending', retry_count = ?, updated_at = ? WHERE id = ?"
-    ).run(newRetryCount, new Date().toISOString(), stepId);
-    // v1.5.50: Resolve claim_log outcome
-    try { db.prepare("UPDATE claim_log SET outcome = 'failed', diagnostic = ? WHERE run_id = ? AND step_id = ? AND story_id IS NULL AND outcome IS NULL").run(error, step.run_id, stepId); } catch (e) { logger.warn(`[claim_log] update failed: ${String(e)}`, {}); }
-    return { retrying: true, runFailed: false };
-  }
-}

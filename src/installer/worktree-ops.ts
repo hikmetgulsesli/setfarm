@@ -54,17 +54,10 @@ export function copyStitchToWorktree(repo: string, worktreeDir: string): void {
     const stitchSrc = path.join(repo, "stitch");
     if (!fs.existsSync(stitchSrc)) return;
     const stitchDst = path.join(worktreeDir, "stitch");
-    fs.mkdirSync(stitchDst, { recursive: true });
-    for (const file of fs.readdirSync(stitchSrc)) {
-      const src = path.join(stitchSrc, file);
-      const dst = path.join(stitchDst, file);
-      if (fs.statSync(src).isFile()) {
-        fs.copyFileSync(src, dst);
-      }
-    }
-    logger.info(`[worktree] Copied stitch/ assets to ${worktreeDir}`, {});
-  } catch (e) {
-    logger.warn(`[worktree] Failed to copy stitch/ assets to ${worktreeDir}: ${String(e)}`, {});
+    fs.cpSync(stitchSrc, stitchDst, { recursive: true });
+    logger.info(`[worktree] Copied stitch/ to worktree`, {});
+  } catch (e: any) {
+    logger.warn(`[worktree] copyStitchToWorktree failed: ${e.message}`, {});
   }
 }
 
@@ -252,7 +245,7 @@ export function killWorktreeProcesses(dir: string): void {
     }
 
     // 2s grace period then SIGKILL survivors
-    try { execFileSync("sleep", ["2"], { timeout: 5000 }); } catch { /* timeout OK */ }
+    try { const _b = new SharedArrayBuffer(4); Atomics.wait(new Int32Array(_b), 0, 0, 2000); } catch { /* wait OK */ }
     for (const pid of pids) {
       try {
         process.kill(pid, 0);

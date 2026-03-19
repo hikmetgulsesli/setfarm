@@ -153,3 +153,36 @@ export const TEST_FAIL_PATTERNS = [
 // ── Frontend Change Detection ───────────────────────────────────────
 
 export const GIT_DIFF_TIMEOUT = 10_000;
+
+// ── Status Constants ────────────────────────────────────────────────
+
+export const RUN_STATUS = {
+  PENDING: "pending",
+  RUNNING: "running",
+  DONE: "done",
+  FAILED: "failed",
+  CANCELLED: "cancelled",
+} as const;
+
+export const STEP_STATUS = {
+  PENDING: "pending",
+  RUNNING: "running",
+  DONE: "done",
+  FAILED: "failed",
+  SKIPPED: "skipped",
+  WAITING: "waiting",
+} as const;
+
+export const STORY_STATUS = {
+  PENDING: "pending",
+  RUNNING: "running",
+  DONE: "done",
+  VERIFIED: "verified",
+  FAILED: "failed",
+  SKIPPED: "skipped",
+  CANCELLED: "cancelled",
+} as const;
+
+// ── Developer Agent Pool ────────────────────────────────────────────
+
+export const DEFAULT_DEVELOPER_AGENTS = ["koda", "flux", "cipher", "prism", "iris"] as const;

@@ -39,9 +39,8 @@ export function emitEvent(evt: SetfarmEvent): void {
     try {
       const stats = fs.statSync(getEventsFile());
       if (stats.size > MAX_EVENTS_SIZE) {
-        const rotated = getEventsFile() + ".1";
-        try { fs.unlinkSync(rotated); } catch { /* rotated file may not exist */ }
-        fs.renameSync(getEventsFile(), rotated);
+        const rotated = getEventsFile() + "." + Date.now();
+        try { fs.renameSync(getEventsFile(), rotated); } catch { /* another process already rotated */ }
       }
     } catch { /* events file may not exist yet */ }
     fs.appendFileSync(getEventsFile(), JSON.stringify(evt) + "\n");

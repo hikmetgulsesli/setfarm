@@ -26,17 +26,21 @@ fi
 # 2. GitHub remote (with duplicate-name fallback)
 PROJECT_NAME=$(basename "$REPO")
 if ! git remote -v 2>/dev/null | grep -q origin; then
-  if gh repo create "hikmetgulsesli/$PROJECT_NAME" --public --source . --remote origin --push 2>/dev/null; then
+  if OUTPUT=$(gh repo create "hikmetgulsesli/$PROJECT_NAME" --public --source . --remote origin --push 2>&1); then
     echo "GitHub repo created: hikmetgulsesli/$PROJECT_NAME"
   else
-    # Name taken — try with suffix
-    for SUFFIX in 2 3 4 5; do
-      ALT_NAME="${PROJECT_NAME}-${SUFFIX}"
-      if gh repo create "hikmetgulsesli/$ALT_NAME" --public --source . --remote origin --push 2>/dev/null; then
-        echo "GitHub repo created with alt name: hikmetgulsesli/$ALT_NAME"
-        break
-      fi
-    done
+    if echo "$OUTPUT" | grep -qi "Name already exists\|already exists"; then
+      # Name taken — try with suffix
+      for SUFFIX in 2 3 4 5; do
+        ALT_NAME="${PROJECT_NAME}-${SUFFIX}"
+        if gh repo create "hikmetgulsesli/$ALT_NAME" --public --source . --remote origin --push 2>/dev/null; then
+          echo "GitHub repo created with alt name: hikmetgulsesli/$ALT_NAME"
+          break
+        fi
+      done
+    else
+      echo "WARN: GitHub API error: $OUTPUT"
+    fi
   fi
   # Final check: if still no remote, warn but continue
   if ! git remote -v 2>/dev/null | grep -q origin; then
@@ -49,7 +53,9 @@ fi
 # 3. Main branch
 git branch -M main 2>/dev/null || true
 git commit --allow-empty -m "chore: initial commit" 2>/dev/null || true
-git push -u origin main 2>/dev/null || true
+if ! git push -u origin main 2>&1; then
+  echo "WARN: git push to main failed — may need manual intervention"
+fi
 
 # 4. .gitignore (covers ALL project types)
 cat > .gitignore << GITIGNORE
@@ -196,7 +202,9 @@ if [ -n "$STITCH_PROJECT_ID" ] && [ "$STITCH_PROJECT_ID" != "undefined" ] && [ "
 fi
 
 # 8. Push
-git push -u origin "$BRANCH" 2>/dev/null || true
+if ! git push -u origin "$BRANCH" 2>&1; then
+  echo "WARN: git push to $BRANCH failed — may need manual intervention"
+fi
 
 echo "============================================"
 echo "STATUS: done"

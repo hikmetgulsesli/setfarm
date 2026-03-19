@@ -6,6 +6,7 @@
  */
 
 import { getDb } from "../db.js";
+import { logger } from "../lib/logger.js";
 
 const now = () => new Date().toISOString();
 
@@ -40,7 +41,10 @@ export function getWorkflowId(runId: string): string | undefined {
   try {
     const row = getDb().prepare("SELECT workflow_id FROM runs WHERE id = ?").get(runId) as { workflow_id: string } | undefined;
     return row?.workflow_id;
-  } catch { return undefined; }
+  } catch (e: any) {
+    logger.warn(`[repo] getWorkflowId("${runId}") failed: ${e.message}`);
+    return undefined;
+  }
 }
 
 // ── Story queries ───────────────────────────────────────────────────
@@ -51,8 +55,8 @@ export function verifyStory(storyId: string): void {
 }
 
 export function skipFailedStories(runId: string): void {
-  // No-op: stories stay as 'failed' — never convert to skipped.
-  // Loop completion now counts 'failed' as terminal status.
+  getDb().prepare("UPDATE stories SET status = 'skipped', updated_at = ? WHERE run_id = ? AND status = 'failed'")
+    .run(now(), runId);
 }
 
 export function countStoriesByStatus(runId: string, status: string): number {
@@ -87,25 +91,21 @@ export function getStoryInfo(storyId: string): { story_id: string; title: string
     .get(storyId) as { story_id: string; title: string } | undefined;
 }
 
-export function updateStoryStatus(storyId: string, status: string, extra?: { output?: string; retryCount?: number; prUrl?: string; storyBranch?: string; abandonedCount?: number }): void {
+export function updateStoryStatus(storyId: string, status: string, extra?: {
+  output?: string; prUrl?: string; storyBranch?: string;
+  retryCount?: number; abandonedCount?: number;
+}): void {
   const db = getDb();
   const ts = now();
-  if (extra?.output !== undefined && extra?.prUrl !== undefined) {
-    db.prepare("UPDATE stories SET status = ?, output = ?, pr_url = ?, story_branch = ?, updated_at = ? WHERE id = ?")
-      .run(status, extra.output, extra.prUrl, extra.storyBranch ?? "", ts, storyId);
-  } else if (extra?.retryCount !== undefined) {
-    db.prepare("UPDATE stories SET status = ?, retry_count = ?, updated_at = ? WHERE id = ?")
-      .run(status, extra.retryCount, ts, storyId);
-  } else if (extra?.abandonedCount !== undefined) {
-    db.prepare("UPDATE stories SET status = ?, abandoned_count = ?, updated_at = ? WHERE id = ?")
-      .run(status, extra.abandonedCount, ts, storyId);
-  } else if (extra?.output !== undefined) {
-    db.prepare("UPDATE stories SET status = ?, output = ?, updated_at = ? WHERE id = ?")
-      .run(status, extra.output, ts, storyId);
-  } else {
-    db.prepare("UPDATE stories SET status = ?, updated_at = ? WHERE id = ?")
-      .run(status, ts, storyId);
-  }
+  const sets: string[] = ["status = ?", "updated_at = ?"];
+  const vals: any[] = [status, ts];
+  if (extra?.output !== undefined) { sets.push("output = ?"); vals.push(extra.output); }
+  if (extra?.prUrl !== undefined) { sets.push("pr_url = ?"); vals.push(extra.prUrl); }
+  if (extra?.storyBranch !== undefined) { sets.push("story_branch = ?"); vals.push(extra.storyBranch); }
+  if (extra?.retryCount !== undefined) { sets.push("retry_count = ?"); vals.push(extra.retryCount); }
+  if (extra?.abandonedCount !== undefined) { sets.push("abandoned_count = ?"); vals.push(extra.abandonedCount); }
+  vals.push(storyId);
+  db.prepare(`UPDATE stories SET ${sets.join(", ")} WHERE id = ?`).run(...vals);
 }
 
 // ── Step queries ────────────────────────────────────────────────────

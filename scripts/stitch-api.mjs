@@ -655,7 +655,6 @@ const commands = {
         const local = tracked.find(t => t.screenId === screenId);
         if (local?.localHtml) {
           // Already downloaded locally -- just copy
-          const { copyFileSync } = await import('node:fs');
           copyFileSync(local.localHtml, outputPath);
           console.log(JSON.stringify({ path: outputPath, size: readFileSync(outputPath).length, source: 'local-cache' }, null, 2));
           return;
