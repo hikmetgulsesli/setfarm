@@ -13,34 +13,51 @@ import { GH_CLI_TIMEOUT, GH_MERGE_TIMEOUT } from "./constants.js";
 
 export type PRState = "MERGED" | "OPEN" | "CLOSED" | "UNKNOWN";
 
-export interface PRStateResult {
-  /** Raw state from gh CLI */
-  state: PRState;
-  /** PR exists and is deliverable (MERGED or OPEN) */
-  isDeliverable: boolean;
-  /** PR was reopened from CLOSED state */
-  wasReopened: boolean;
-  /** Alternative PR URL found (when original was CLOSED and reopen failed) */
-  alternativePrUrl: string | null;
-  /** Story content already merged into base branch (CLOSED PR but code delivered) */
-  contentInBaseBranch: boolean;
+// ── PR State Cache (prevents redundant gh calls across cron cycles) ──
+
+const PR_STATE_CACHE_TTL_MS = 60_000; // 60 seconds
+const _prStateCache = new Map<string, { state: PRState; ts: number }>();
+
+function getCachedPRState(prUrl: string): PRState | null {
+  const entry = _prStateCache.get(prUrl);
+  if (entry && Date.now() - entry.ts < PR_STATE_CACHE_TTL_MS) return entry.state;
+  return null;
+}
+
+function setCachedPRState(prUrl: string, state: PRState): void {
+  _prStateCache.set(prUrl, { state, ts: Date.now() });
+  // Evict stale entries periodically (prevent unbounded growth)
+  if (_prStateCache.size > 200) {
+    const cutoff = Date.now() - PR_STATE_CACHE_TTL_MS;
+    for (const [key, val] of _prStateCache) {
+      if (val.ts < cutoff) _prStateCache.delete(key);
+    }
+  }
 }
 
 // ── Core: Get PR State ───────────────────────────────────────────────
 
 /**
- * Get the current state of a PR via gh CLI.
+ * Get the current state of a PR via gh CLI. Results are cached for 60 seconds.
  */
 export function getPRState(prUrl: string): PRState {
+  const cached = getCachedPRState(prUrl);
+  if (cached) return cached;
   try {
     const state = execFileSync("gh", ["pr", "view", prUrl, "--json", "state", "--jq", ".state"], {
       timeout: GH_CLI_TIMEOUT, stdio: "pipe"
     }).toString().trim();
-    if (state === "MERGED" || state === "OPEN" || state === "CLOSED") return state;
-    return "UNKNOWN";
+    const result: PRState = (state === "MERGED" || state === "OPEN" || state === "CLOSED") ? state : "UNKNOWN";
+    setCachedPRState(prUrl, result);
+    return result;
   } catch {
     return "UNKNOWN";
   }
+}
+
+/** Invalidate cache for a specific PR (call after merge/reopen changes state). */
+export function invalidatePRStateCache(prUrl: string): void {
+  _prStateCache.delete(prUrl);
 }
 
 // ── Reopen CLOSED PR ─────────────────────────────────────────────────
@@ -51,6 +68,7 @@ export function getPRState(prUrl: string): PRState {
 export function tryReopenPR(prUrl: string, storyId: string, runId: string): boolean {
   try {
     execFileSync("gh", ["pr", "reopen", prUrl], { timeout: GH_CLI_TIMEOUT, stdio: "pipe" });
+    invalidatePRStateCache(prUrl);
     logger.info(`[pr-state] Reopened CLOSED PR for story ${storyId}: ${prUrl}`, { runId });
     return true;
   } catch (err) {
@@ -69,6 +87,7 @@ export function tryAutoMergePR(prUrl: string, storyId: string, runId: string): b
     execFileSync("gh", ["pr", "merge", prUrl, "--squash", "--delete-branch"], {
       timeout: GH_MERGE_TIMEOUT, stdio: "pipe"
     });
+    invalidatePRStateCache(prUrl);
     logger.info(`[pr-state] Auto-merged PR for story ${storyId}: ${prUrl}`, { runId });
     return true;
   } catch (err) {

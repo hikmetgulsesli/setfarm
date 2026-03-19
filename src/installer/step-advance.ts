@@ -11,9 +11,8 @@ import { logger } from "../lib/logger.js";
 import type { LoopConfig } from "./types.js";
 import { emitEvent } from "./events.js";
 import {
-  getRunStatus, getWorkflowId, completeRun, failRun,
-  findStoryByStatus, skipFailedStories, countAllStories,
-  setStepStatus,
+  getRunStatus, getWorkflowId, completeRun,
+  findStoryByStatus, skipFailedStories,
 } from "./repo.js";
 import { archiveRunProgress, scheduleRunCronTeardown, cleanupLocalBranches } from "./cleanup-ops.js";
 import { cleanupWorktrees } from "./worktree-ops.js";

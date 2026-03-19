@@ -17,7 +17,6 @@ import {
 } from "./constants.js";
 import {
   getRunContext, getWorkflowId, getStoryInfo,
-  failRun, setStepStatus,
 } from "./repo.js";
 import { removeStoryWorktree } from "./worktree-ops.js";
 import { scheduleRunCronTeardown } from "./cleanup-ops.js";
@@ -62,33 +61,42 @@ function handleLoopStepFailure(
   const storyRow = getStoryInfo(step.current_story_id!);
   const newRetry = story.retry_count + 1;
 
+  // Clean up worktree BEFORE transaction (slow git ops should not hold write lock)
+  if (storyRow?.story_id) {
+    const ctx = getRunContext(step.run_id);
+    if (ctx.repo) removeStoryWorktree(ctx.repo, storyRow.story_id, step.agent_id);
+  }
+
   if (newRetry > story.max_retries) {
     // Story retries exhausted — mark story as failed but DON'T fail the run
-    // Let the loop continue with remaining stories (pipeline resilience)
-    if (storyRow?.story_id) {
-      const ctx = getRunContext(step.run_id);
-      if (ctx.repo) removeStoryWorktree(ctx.repo, storyRow.story_id, step.agent_id);
+    // Atomic: story fail + step reset must happen together
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      db.prepare("UPDATE stories SET status = 'failed', retry_count = ?, updated_at = ? WHERE id = ?").run(newRetry, new Date().toISOString(), story.id);
+      db.prepare("UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = ? WHERE id = ?").run(new Date().toISOString(), stepId);
+      try { db.prepare("UPDATE claim_log SET outcome = 'failed', diagnostic = ? WHERE story_id = ? AND outcome IS NULL").run(error, storyRow?.story_id || ""); } catch {}
+      db.exec("COMMIT");
+    } catch (txErr) {
+      try { db.exec("ROLLBACK"); } catch {}
+      throw txErr;
     }
-    db.prepare("UPDATE stories SET status = 'failed', retry_count = ?, updated_at = ? WHERE id = ?").run(newRetry, new Date().toISOString(), story.id);
-    // Reset step to pending so it can pick up the next story (don't fail the step)
-    db.prepare("UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = ? WHERE id = ?").run(new Date().toISOString(), stepId);
     const wfId = getWorkflowId(step.run_id);
     emitEvent({ ts: new Date().toISOString(), event: "story.failed", runId: step.run_id, workflowId: wfId, stepId: stepId, storyId: storyRow?.story_id, storyTitle: storyRow?.title, detail: `Story retries exhausted (${newRetry}/${story.max_retries}) — loop continues` });
-    // v1.5.50: Resolve claim_log outcome
-    try { db.prepare("UPDATE claim_log SET outcome = 'failed', diagnostic = ? WHERE story_id = ? AND outcome IS NULL").run(error, storyRow?.story_id || ""); } catch (e) { logger.warn(`[claim_log] update failed: ${String(e)}`, {}); }
     logger.info(`[failStep] Story ${storyRow?.story_id} retries exhausted — marked failed, loop continues`, { runId: step.run_id });
     return { retrying: false, runFailed: false };
   }
 
-  // Retry the story — clean up worktree (will be recreated on next claim)
-  if (storyRow?.story_id) {
-    const ctx2 = getRunContext(step.run_id);
-    if (ctx2.repo) removeStoryWorktree(ctx2.repo, storyRow.story_id, step.agent_id);
+  // Retry the story — atomic: story pending + step reset
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare("UPDATE stories SET status = 'pending', retry_count = ?, updated_at = ? WHERE id = ?").run(newRetry, new Date().toISOString(), story.id);
+    db.prepare("UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = ? WHERE id = ?").run(new Date().toISOString(), stepId);
+    try { db.prepare("UPDATE claim_log SET outcome = 'failed', diagnostic = ? WHERE story_id = ? AND outcome IS NULL").run(error, storyRow?.story_id || ""); } catch {}
+    db.exec("COMMIT");
+  } catch (txErr) {
+    try { db.exec("ROLLBACK"); } catch {}
+    throw txErr;
   }
-  db.prepare("UPDATE stories SET status = 'pending', retry_count = ?, updated_at = ? WHERE id = ?").run(newRetry, new Date().toISOString(), story.id);
-  db.prepare("UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = ? WHERE id = ?").run(new Date().toISOString(), stepId);
-  // v1.5.50: Resolve claim_log outcome
-  try { db.prepare("UPDATE claim_log SET outcome = 'failed', diagnostic = ? WHERE story_id = ? AND outcome IS NULL").run(error, storyRow?.story_id || ""); } catch (e) { logger.warn(`[claim_log] update failed: ${String(e)}`, {}); }
 
   // v1.7.8: After STORY_FALLBACK_RETRY_THRESHOLD retries, fire a one-shot cron
   // with fallback model so a different LLM attempts the story
@@ -109,27 +117,31 @@ function handleSingleStepFailure(
   const db = getDb();
   const newRetryCount = step.retry_count + 1;
 
-  if (newRetryCount > step.max_retries) {
-    db.prepare(
-      "UPDATE steps SET status = 'failed', output = ?, retry_count = ?, updated_at = ? WHERE id = ?"
-    ).run(error, newRetryCount, new Date().toISOString(), stepId);
-    db.prepare(
-      "UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?"
-    ).run(new Date().toISOString(), step.run_id);
-    const wfId2 = getWorkflowId(step.run_id);
-    emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId2, stepId: stepId, detail: error });
-    emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId2, detail: "Step retries exhausted" });
-    // v1.5.50: Resolve claim_log outcome
-    try { db.prepare("UPDATE claim_log SET outcome = 'failed', diagnostic = ? WHERE run_id = ? AND step_id = ? AND story_id IS NULL AND outcome IS NULL").run(error, step.run_id, stepId); } catch (e) { logger.warn(`[claim_log] update failed: ${String(e)}`, {}); }
-    scheduleRunCronTeardown(step.run_id);
-    return { retrying: false, runFailed: true };
-  } else {
-    db.prepare(
-      "UPDATE steps SET status = 'pending', retry_count = ?, updated_at = ? WHERE id = ?"
-    ).run(newRetryCount, new Date().toISOString(), stepId);
-    // v1.5.50: Resolve claim_log outcome
-    try { db.prepare("UPDATE claim_log SET outcome = 'failed', diagnostic = ? WHERE run_id = ? AND step_id = ? AND story_id IS NULL AND outcome IS NULL").run(error, step.run_id, stepId); } catch (e) { logger.warn(`[claim_log] update failed: ${String(e)}`, {}); }
-    return { retrying: true, runFailed: false };
+  // Atomic: step + run status updates must happen together
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    if (newRetryCount > step.max_retries) {
+      db.prepare("UPDATE steps SET status = 'failed', output = ?, retry_count = ?, updated_at = ? WHERE id = ?")
+        .run(error, newRetryCount, new Date().toISOString(), stepId);
+      db.prepare("UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?")
+        .run(new Date().toISOString(), step.run_id);
+      try { db.prepare("UPDATE claim_log SET outcome = 'failed', diagnostic = ? WHERE run_id = ? AND step_id = ? AND story_id IS NULL AND outcome IS NULL").run(error, step.run_id, stepId); } catch {}
+      db.exec("COMMIT");
+      const wfId2 = getWorkflowId(step.run_id);
+      emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId2, stepId: stepId, detail: error });
+      emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId2, detail: "Step retries exhausted" });
+      scheduleRunCronTeardown(step.run_id);
+      return { retrying: false, runFailed: true };
+    } else {
+      db.prepare("UPDATE steps SET status = 'pending', retry_count = ?, updated_at = ? WHERE id = ?")
+        .run(newRetryCount, new Date().toISOString(), stepId);
+      try { db.prepare("UPDATE claim_log SET outcome = 'failed', diagnostic = ? WHERE run_id = ? AND step_id = ? AND story_id IS NULL AND outcome IS NULL").run(error, step.run_id, stepId); } catch {}
+      db.exec("COMMIT");
+      return { retrying: true, runFailed: false };
+    }
+  } catch (txErr) {
+    try { db.exec("ROLLBACK"); } catch {}
+    throw txErr;
   }
 }
 
