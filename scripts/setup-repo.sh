@@ -183,6 +183,12 @@ yarn-error.log*
 GITIGNORE
 git add .gitignore && git commit -m "chore: add .gitignore" 2>/dev/null || true
 
+# Remove any accidentally tracked gitignored files (dist/, node_modules/, etc.)
+git rm -r --cached dist/ 2>/dev/null || true
+git rm -r --cached node_modules/ 2>/dev/null || true
+git rm --cached .setfarm-step-output.txt 2>/dev/null || true
+git diff --cached --quiet || git commit -m "chore: untrack gitignored files" 2>/dev/null || true
+
 # 5. Feature branch
 git checkout -b "$BRANCH" 2>/dev/null || git checkout "$BRANCH" 2>/dev/null || true
 

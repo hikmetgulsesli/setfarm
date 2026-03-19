@@ -856,7 +856,8 @@ steps:
          if you have genuinely tried 3 fix cycles and the error is truly unfixable
          (e.g. missing external API, infrastructure issue, dependency conflict).
 
-      8. Commit:
+      8. Commit (exclude runtime files):
+         rm -f .setfarm-step-output.txt 2>/dev/null || true
          git add -A && git commit -m "feat: {{current_story_id}} - {{current_story_title}}"
 
       9. Push:
@@ -952,9 +953,11 @@ steps:
 
       STEP 1 — Checkout and read PR reviews:
       1. cd into {{repo}}
-      2. Clean cached files that block checkout:
+      2. Clean files that block checkout/rebase:
          git clean -fd node_modules/.vite 2>/dev/null || true
          git checkout -- node_modules/.vite 2>/dev/null || true
+         rm -f .setfarm-step-output.txt 2>/dev/null || true
+         git checkout -- .setfarm-step-output.txt 2>/dev/null || true
       3. git fetch origin
       4. git checkout {{story_branch}} && git pull origin {{story_branch}}
          If checkout fails with "local changes would be overwritten":
@@ -1122,12 +1125,16 @@ steps:
          STATUS: retry with ISSUES listing the smoke test failures
 
       STEP 4 — Rebase onto latest feature branch (prevents merge conflicts):
-      1. git fetch origin
-      2. Try rebase:
+      1. Clean unstaged files that block rebase:
+         rm -f .setfarm-step-output.txt 2>/dev/null || true
+         git checkout -- .setfarm-step-output.txt 2>/dev/null || true
+         git clean -fd node_modules/.vite 2>/dev/null || true
+      2. git fetch origin
+      3. Try rebase:
          git rebase origin/{{branch}} 2>&1
          REBASE_EXIT=$?
-      3. If rebase succeeds (exit 0): continue to lint/build/test
-      4. If rebase conflicts occur (exit != 0):
+      4. If rebase succeeds (exit 0): continue to lint/build/test
+      5. If rebase conflicts occur (exit != 0):
          a. Check conflicted files: git diff --name-only --diff-filter=U
          b. For each conflicted file:
             - If it's package.json: accept theirs (feature branch), then re-add your dependency changes
