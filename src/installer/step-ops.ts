@@ -811,8 +811,8 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   const db = getDb();
 
   const step = db.prepare(
-    "SELECT id, run_id, step_id, step_index, type, loop_config, current_story_id, agent_id FROM steps WHERE id = ?"
-  ).get(stepId) as { id: string; run_id: string; step_id: string; step_index: number; type: string; loop_config: string | null; current_story_id: string | null; agent_id: string } | undefined;
+    "SELECT id, run_id, step_id, step_index, type, loop_config, current_story_id, agent_id, retry_count, max_retries FROM steps WHERE id = ?"
+  ).get(stepId) as { id: string; run_id: string; step_id: string; step_index: number; type: string; loop_config: string | null; current_story_id: string | null; agent_id: string; retry_count: number; max_retries: number } | undefined;
 
   if (!step) throw new Error(`Step not found: ${stepId}`);
 
@@ -941,27 +941,41 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     }
   }
 
-  // TEST FAILURE GUARDRAIL
+  // TEST FAILURE GUARDRAIL — soft retry with fix instructions instead of hard fail
   if (parsed["status"]?.toLowerCase() === "done") {
     const testFailMsg = checkTestFailures(output);
-    if (testFailMsg) {
-      logger.warn(`Test guardrail triggered`, { runId: step.run_id, stepId: step.step_id });
+    if (testFailMsg && step.retry_count < step.max_retries) {
+      logger.warn(`Test guardrail triggered — soft retry with fix instructions`, { runId: step.run_id, stepId: step.step_id });
+      // Inject failure details as previous_failure so agent knows what to fix
+      context["previous_failure"] = `TEST GUARDRAIL: ${testFailMsg}`;
+      db.prepare("UPDATE runs SET context = ?, updated_at = ? WHERE id = ?")
+        .run(JSON.stringify(context), new Date().toISOString(), step.run_id);
+      failStep(stepId, testFailMsg);
+      return { advanced: false, runCompleted: false };
+    } else if (testFailMsg) {
+      // Max retries reached — hard fail
+      logger.warn(`Test guardrail — max retries reached, hard fail`, { runId: step.run_id, stepId: step.step_id });
       if (prevContextJson) db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(prevContextJson.context, step.run_id);
       failStep(stepId, testFailMsg);
       return { advanced: false, runCompleted: false };
     }
   }
 
-  // QUALITY GATE GUARDRAIL
-  // For implement step (loop), check story worktree — not main repo.
-  // Story code lives in worktree until PR merge; main repo won't have the changes yet.
+  // QUALITY GATE GUARDRAIL — soft retry with fix context
   if (parsed["status"]?.toLowerCase() === "done") {
     const qgPath = (step.step_id === "implement" && context["story_workdir"])
       ? context["story_workdir"]
       : (context["repo"] || context["REPO"] || "");
     const qgMsg = checkQualityGate(step.step_id, qgPath);
-    if (qgMsg) {
-      logger.warn(`[quality-gate] Failed`, { runId: step.run_id, stepId: step.step_id });
+    if (qgMsg && step.retry_count < step.max_retries) {
+      logger.warn(`[quality-gate] Soft retry with fix instructions`, { runId: step.run_id, stepId: step.step_id });
+      context["previous_failure"] = `QUALITY GATE: ${qgMsg}`;
+      db.prepare("UPDATE runs SET context = ?, updated_at = ? WHERE id = ?")
+        .run(JSON.stringify(context), new Date().toISOString(), step.run_id);
+      failStep(stepId, qgMsg);
+      return { advanced: false, runCompleted: false };
+    } else if (qgMsg) {
+      logger.warn(`[quality-gate] Max retries — hard fail`, { runId: step.run_id, stepId: step.step_id });
       if (prevContextJson) db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(prevContextJson.context, step.run_id);
       failStep(stepId, qgMsg);
       return { advanced: false, runCompleted: false };

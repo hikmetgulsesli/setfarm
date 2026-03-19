@@ -125,7 +125,7 @@ export const OPTIONAL_TEMPLATE_VARS = [
 export const DEFAULT_STORY_MAX_RETRIES = 5;
 
 /** After this many retries, switch to fallback model */
-export const STORY_FALLBACK_RETRY_THRESHOLD = 3;
+export const STORY_FALLBACK_RETRY_THRESHOLD = 2;
 
 /** Fallback model for story retries (minimax when primary is kimi, vice versa) */
 export const STORY_FALLBACK_MODEL = "minimax/MiniMax-M2.7";

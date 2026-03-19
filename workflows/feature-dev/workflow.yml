@@ -809,14 +809,52 @@ steps:
          - No TODOs, no placeholders, no shortcuts
          - Use REALISTIC demo content: real Turkish names (Elif Yılmaz, Ahmet Kaya), real-looking emails (elif@reelforge.com), meaningful descriptions. NEVER use John Doe, Jane Smith, Lorem ipsum, test@test.com, foo@bar, example@, dummy, sample data. If data will come from API later, use realistic placeholder that looks like production.
 
-      5. Lint: {{lint_cmd}}
-         Fix ALL lint errors until lint passes clean.
+      5-7. SELF-FIX LOOP (up to 3 cycles — do NOT give up after first failure):
+         for CYCLE in 1 2 3; do
+           echo "=== Verification cycle $CYCLE ==="
+           LINT_OK=true; BUILD_OK=true; TEST_OK=true
 
-      6. Build: {{build_cmd}}
-         Fix ALL build/type errors until build passes.
+           # Lint
+           {{lint_cmd}} 2>&1 || { LINT_OK=false; echo "Lint failed — fixing..."; }
+           if [ "$LINT_OK" = "false" ]; then
+             npx eslint --fix "src/**/*.{ts,tsx}" 2>/dev/null || true
+             # Read remaining errors and fix manually
+             LINT_OUT=$({{lint_cmd}} 2>&1) || true
+             # Parse error file:line from output and fix each one
+           fi
 
-      7. Test: {{test_cmd}}
-         Fix ALL failing tests until tests pass.
+           # Build
+           {{build_cmd}} 2>&1 || { BUILD_OK=false; echo "Build failed — fixing..."; }
+           if [ "$BUILD_OK" = "false" ]; then
+             # Read the exact TS errors and fix the files
+             BUILD_OUT=$({{build_cmd}} 2>&1) || true
+             echo "$BUILD_OUT"
+             # Fix each error: unused imports → remove, missing module → check path, type errors → fix
+           fi
+
+           # Test
+           {{test_cmd}} 2>&1 || { TEST_OK=false; echo "Tests failed — fixing..."; }
+           if [ "$TEST_OK" = "false" ]; then
+             TEST_OUT=$({{test_cmd}} 2>&1) || true
+             echo "$TEST_OUT"
+             # Read failing test output and fix the code or tests
+           fi
+
+           if [ "$LINT_OK" = "true" ] && [ "$BUILD_OK" = "true" ] && [ "$TEST_OK" = "true" ]; then
+             echo "All checks pass on cycle $CYCLE"
+             break
+           fi
+
+           if [ "$CYCLE" = "3" ]; then
+             echo "WARNING: Still failing after 3 fix cycles — committing best effort"
+           fi
+         done
+
+         IMPORTANT: Do NOT report STATUS: retry just because lint/build/test failed once.
+         You MUST attempt to fix the issue yourself. Read the error output carefully,
+         identify the root cause, edit the file, and re-run. Only report STATUS: retry
+         if you have genuinely tried 3 fix cycles and the error is truly unfixable
+         (e.g. missing external API, infrastructure issue, dependency conflict).
 
       8. Commit:
          git add -A && git commit -m "feat: {{current_story_id}} - {{current_story_title}}"
