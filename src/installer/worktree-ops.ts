@@ -381,6 +381,12 @@ export function cleanAgentWorkspace(agentId: string): void {
   const ws = getAgentWorkspacePath(agentId);
   if (!ws || !fs.existsSync(ws)) return;
 
+  // Also clean stale setfarm output files (prevents "Step not found" errors)
+  for (const staleFile of ['.setfarm-step-output.txt', 'setfarm-output.txt']) {
+    const stale = path.join(ws, staleFile);
+    try { if (fs.existsSync(stale)) { fs.unlinkSync(stale); logger.info(`[workspace-clean] Removed stale ${staleFile} from ${agentId}`, {}); } } catch {}
+  }
+
   try {
     const entries = fs.readdirSync(ws);
     let removed = 0;

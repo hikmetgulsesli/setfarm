@@ -937,6 +937,9 @@ steps:
       PREVIOUS FAILURE (if retrying — YOU MUST FIX THESE ISSUES FIRST before doing anything else):
       {{previous_failure}}
 
+      GIT COMMIT RULE: ALWAYS use `git commit -m "message"`. NEVER use bare `git commit`
+      without -m flag — the server has no terminal editor (EDITOR unset), bare commit will fail.
+
       GH CLI NOTE: Only use valid --json fields. Common valid fields:
       number, title, state, body, url, headRefName, baseRefName, reviews, comments,
       additions, deletions, changedFiles, mergeable, createdAt, closedAt, mergedAt.
@@ -1169,7 +1172,10 @@ steps:
               git add -A && git commit --no-edit 2>/dev/null || true
             }
       5. Run lint: {{lint_cmd}} → fix errors
-      6. Run build: {{build_cmd}} → fix errors
+      6. Kill stale build processes before running build:
+         pkill -f "next build" 2>/dev/null || true
+         sleep 1
+         Run build: {{build_cmd}} → fix errors
       7. Run test: {{test_cmd}} → fix failures
       8. git push --force-with-lease
 
