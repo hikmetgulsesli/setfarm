@@ -166,22 +166,32 @@ SUMMARY: ${verifiedCount}/${totalCount} stories verified, ${skippedCount} skippe
   // Early worktree cleanup: clean up .worktrees when implement loop finishes,
   // not just when the entire run completes. Prevents stale worktree accumulation.
   cleanupWorktrees(runId);
-  db.prepare(
-    "UPDATE steps SET status = 'done', output = ?, updated_at = ? WHERE id = ?"
-  ).run(loopSummaryOutput, new Date().toISOString(), loopStepId);
 
-  // Also mark verify step done if it exists (with summary output)
-  const loopStep = db.prepare("SELECT loop_config, run_id FROM steps WHERE id = ?").get(loopStepId) as { loop_config: string | null; run_id: string } | undefined;
-  if (loopStep?.loop_config) {
-    const lc: LoopConfig = JSON.parse(loopStep.loop_config);
-    if (lc.verifyEach && lc.verifyStep) {
-      const verifySummary = `STATUS: done
+  // Atomic: mark loop done + verify done must happen together
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare(
+      "UPDATE steps SET status = 'done', output = ?, updated_at = ? WHERE id = ?"
+    ).run(loopSummaryOutput, new Date().toISOString(), loopStepId);
+
+    // Also mark verify step done if it exists (with summary output)
+    const loopStep = db.prepare("SELECT loop_config, run_id FROM steps WHERE id = ?").get(loopStepId) as { loop_config: string | null; run_id: string } | undefined;
+    if (loopStep?.loop_config) {
+      const lc: LoopConfig = JSON.parse(loopStep.loop_config);
+      if (lc.verifyEach && lc.verifyStep) {
+        const verifySummary = `STATUS: done
 VERIFICATION_SUMMARY: ${verifiedCount}/${totalCount} stories verified`;
-      db.prepare(
-        "UPDATE steps SET status = 'done', output = ?, updated_at = ? WHERE run_id = ? AND step_id = ?"
-      ).run(verifySummary, new Date().toISOString(), runId, lc.verifyStep);
+        db.prepare(
+          "UPDATE steps SET status = 'done', output = ?, updated_at = ? WHERE run_id = ? AND step_id = ?"
+        ).run(verifySummary, new Date().toISOString(), runId, lc.verifyStep);
+      }
     }
+    db.exec("COMMIT");
+  } catch (err) {
+    try { db.exec("ROLLBACK"); } catch (e) { logger.warn("[step-advance] ROLLBACK failed: " + String(e), {}); }
+    throw err;
   }
 
+  // advancePipeline has its own BEGIN IMMEDIATE — must stay outside our tx
   return advancePipeline(runId);
 }

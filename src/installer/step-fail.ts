@@ -74,10 +74,10 @@ function handleLoopStepFailure(
     try {
       db.prepare("UPDATE stories SET status = 'failed', retry_count = ?, updated_at = ? WHERE id = ?").run(newRetry, new Date().toISOString(), story.id);
       db.prepare("UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = ? WHERE id = ?").run(new Date().toISOString(), stepId);
-      try { db.prepare("UPDATE claim_log SET outcome = 'failed', diagnostic = ? WHERE story_id = ? AND outcome IS NULL").run(error, storyRow?.story_id || ""); } catch {}
+      try { db.prepare("UPDATE claim_log SET outcome = 'failed', diagnostic = ? WHERE story_id = ? AND outcome IS NULL").run(error, storyRow?.story_id || ""); } catch (e) { logger.warn("[claim-log] update failed: " + String(e), {}); }
       db.exec("COMMIT");
     } catch (txErr) {
-      try { db.exec("ROLLBACK"); } catch {}
+      try { db.exec("ROLLBACK"); } catch (e) { logger.warn("[tx] ROLLBACK failed: " + String(e), {}); }
       throw txErr;
     }
     const wfId = getWorkflowId(step.run_id);
@@ -91,10 +91,10 @@ function handleLoopStepFailure(
   try {
     db.prepare("UPDATE stories SET status = 'pending', retry_count = ?, updated_at = ? WHERE id = ?").run(newRetry, new Date().toISOString(), story.id);
     db.prepare("UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = ? WHERE id = ?").run(new Date().toISOString(), stepId);
-    try { db.prepare("UPDATE claim_log SET outcome = 'failed', diagnostic = ? WHERE story_id = ? AND outcome IS NULL").run(error, storyRow?.story_id || ""); } catch {}
+    try { db.prepare("UPDATE claim_log SET outcome = 'failed', diagnostic = ? WHERE story_id = ? AND outcome IS NULL").run(error, storyRow?.story_id || ""); } catch (e) { logger.warn("[claim-log] update failed: " + String(e), {}); }
     db.exec("COMMIT");
   } catch (txErr) {
-    try { db.exec("ROLLBACK"); } catch {}
+    try { db.exec("ROLLBACK"); } catch (e) { logger.warn("[tx] ROLLBACK failed: " + String(e), {}); }
     throw txErr;
   }
 
@@ -125,7 +125,7 @@ function handleSingleStepFailure(
         .run(error, newRetryCount, new Date().toISOString(), stepId);
       db.prepare("UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?")
         .run(new Date().toISOString(), step.run_id);
-      try { db.prepare("UPDATE claim_log SET outcome = 'failed', diagnostic = ? WHERE run_id = ? AND step_id = ? AND story_id IS NULL AND outcome IS NULL").run(error, step.run_id, stepId); } catch {}
+      try { db.prepare("UPDATE claim_log SET outcome = 'failed', diagnostic = ? WHERE run_id = ? AND step_id = ? AND story_id IS NULL AND outcome IS NULL").run(error, step.run_id, stepId); } catch (e) { logger.warn("[claim-log] update failed: " + String(e), {}); }
       db.exec("COMMIT");
       const wfId2 = getWorkflowId(step.run_id);
       emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId2, stepId: stepId, detail: error });
@@ -135,12 +135,12 @@ function handleSingleStepFailure(
     } else {
       db.prepare("UPDATE steps SET status = 'pending', retry_count = ?, updated_at = ? WHERE id = ?")
         .run(newRetryCount, new Date().toISOString(), stepId);
-      try { db.prepare("UPDATE claim_log SET outcome = 'failed', diagnostic = ? WHERE run_id = ? AND step_id = ? AND story_id IS NULL AND outcome IS NULL").run(error, step.run_id, stepId); } catch {}
+      try { db.prepare("UPDATE claim_log SET outcome = 'failed', diagnostic = ? WHERE run_id = ? AND step_id = ? AND story_id IS NULL AND outcome IS NULL").run(error, step.run_id, stepId); } catch (e) { logger.warn("[claim-log] update failed: " + String(e), {}); }
       db.exec("COMMIT");
       return { retrying: true, runFailed: false };
     }
   } catch (txErr) {
-    try { db.exec("ROLLBACK"); } catch {}
+    try { db.exec("ROLLBACK"); } catch (e) { logger.warn("[tx] ROLLBACK failed: " + String(e), {}); }
     throw txErr;
   }
 }

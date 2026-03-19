@@ -89,6 +89,447 @@ interface ClaimResult {
   resolvedInput?: string;
 }
 
+/** Step row as returned by the step selection query in claimStep. */
+type StepRow = {
+  id: string;
+  step_id: string;
+  run_id: string;
+  input_template: string;
+  type: string;
+  loop_config: string | null;
+  step_status: string;
+};
+
+// ── Extracted helpers (private, called only from claimStep) ──────────
+
+/**
+ * DESIGN STEP DEDUP: If .stitch + stitch/*.html exist, auto-complete design step.
+ * Returns true if the step was auto-completed (caller should return { found: false }).
+ */
+function handleDesignDedup(step: StepRow, db: any): boolean {
+  if (step.step_id !== "design") return false;
+
+  const dRepoPath = getRunContext(step.run_id)["repo"] || "";
+  if (!dRepoPath) return false;
+
+  const dStitchFile = path.join(dRepoPath, ".stitch");
+  const dStitchDir = path.join(dRepoPath, "stitch");
+  if (!fs.existsSync(dStitchFile) || !fs.existsSync(dStitchDir)) return false;
+
+  try {
+    const dData = JSON.parse(fs.readFileSync(dStitchFile, "utf-8"));
+    // Only reuse if .stitch was written DURING this run (prevents cross-run contamination)
+    const runRow = db.prepare("SELECT created_at FROM runs WHERE id = ?").get(step.run_id) as any;
+    const runCreatedAt = runRow ? new Date(runRow.created_at).getTime() : 0;
+    const stitchUpdatedAt = dData.updatedAt ? new Date(dData.updatedAt).getTime() : 0;
+    if (stitchUpdatedAt < runCreatedAt) {
+      logger.info(`[design-dedup] .stitch is stale (written ${dData.updatedAt}, run started ${runRow?.created_at}) — deleting to force fresh design`, { runId: step.run_id });
+      try { fs.unlinkSync(dStitchFile); } catch {}
+      try { fs.rmSync(dStitchDir, { recursive: true, force: true }); } catch {}
+      return false;
+    }
+
+    const dHtmlFiles = fs.readdirSync(dStitchDir).filter((f: string) => f.endsWith(".html"));
+    if (dData.projectId && dHtmlFiles.length > 0) {
+      const dScreenMap = dHtmlFiles.map((f: string) => ({
+        screenId: f.replace(".html", ""),
+        name: f.replace(".html", ""),
+        type: "page",
+        description: f.replace(".html", ""),
+      }));
+      const dCtx = getRunContext(step.run_id);
+      dCtx["stitch_project_id"] = dData.projectId;
+      dCtx["screens_generated"] = String(dHtmlFiles.length);
+      dCtx["screen_map"] = JSON.stringify(dScreenMap);
+      dCtx["device_type"] = dCtx["device_type"] || "DESKTOP";
+      dCtx["design_system"] = dCtx["design_system"] || "reused from previous run";
+      dCtx["design_notes"] = `Reused ${dHtmlFiles.length} existing screen designs from .stitch`;
+      updateRunContext(step.run_id, dCtx);
+      const dOutput = `STATUS: done\nSTITCH_PROJECT_ID: ${dData.projectId}\nSCREENS_GENERATED: ${dHtmlFiles.length}\nDESIGN_NOTES: Reused ${dHtmlFiles.length} screens from previous run`;
+      db.prepare("UPDATE steps SET status = 'done', output = ?, updated_at = ? WHERE id = ?")
+        .run(dOutput, new Date().toISOString(), step.id);
+      logger.info(`[design-dedup] Skipped — reusing ${dHtmlFiles.length} screens from .stitch (project ${dData.projectId})`, { runId: step.run_id });
+      advancePipeline(step.run_id);
+      return true;
+    }
+  } catch (e) { logger.warn(`[design-dedup] .stitch parse error: ${e}`, { runId: step.run_id }); }
+
+  return false;
+}
+
+/**
+ * DEPLOY ENV GUARD: Auto-generate .env for projects with auth/DB before deploy.
+ * Mutates the filesystem only (no return value needed).
+ */
+function handleDeployEnvGuard(step: StepRow): void {
+  if (step.step_id !== "deploy") return;
+
+  const dCtx = getRunContext(step.run_id);
+  const repoPath = dCtx["repo"] || "";
+  if (!repoPath || fs.existsSync(path.join(repoPath, ".env"))) return;
+
+  const envLines: string[] = [];
+  // DB connection — prefer external DB
+  const dbUrl = dCtx["database_url"] || "";
+  const dbHost = dCtx["db_host"] || process.env.SETFARM_DEFAULT_DB_HOST || "localhost";
+  const dbPort = dCtx["db_port"] || process.env.SETFARM_DEFAULT_DB_PORT || "5432";
+  const dbName = dCtx["db_name"] || path.basename(repoPath).replace(/-/g, "_");
+  const dbUser = dCtx["db_user"] || process.env.SETFARM_DEFAULT_DB_USER || "postgres";
+  const dbPass = dCtx["db_password"] || process.env.SETFARM_DEFAULT_DB_PASS || "";
+  if (dbUrl) {
+    envLines.push(`DATABASE_URL=${dbUrl}`);
+  } else {
+    // Check if project uses Prisma/DB
+    const pkgPath = path.join(repoPath, "package.json");
+    if (fs.existsSync(pkgPath)) {
+      try {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+        const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
+        if (allDeps["prisma"] || allDeps["@prisma/client"] || allDeps["drizzle-orm"] || allDeps["typeorm"]) {
+          envLines.push(`DATABASE_URL=postgresql://${dbUser}:${dbPass}@${dbHost}:${dbPort}/${dbName}`);
+        }
+      } catch {}
+    }
+  }
+  // NextAuth secret
+  const pkgPath2 = path.join(repoPath, "package.json");
+  if (fs.existsSync(pkgPath2)) {
+    try {
+      const pkg2 = JSON.parse(fs.readFileSync(pkgPath2, "utf-8"));
+      const allDeps2 = { ...pkg2.dependencies, ...pkg2.devDependencies };
+      if (allDeps2["next-auth"] || allDeps2["@auth/core"]) {
+        const secret = execFileSync("openssl", ["rand", "-base64", "32"], { timeout: 5000 }).toString().trim();
+        const hostname = path.basename(repoPath);
+        envLines.push(`NEXTAUTH_SECRET=${secret}`);
+        envLines.push(`NEXTAUTH_URL=https://${hostname}.setrox.com.tr`);
+      }
+    } catch {}
+  }
+  if (envLines.length > 0) {
+    fs.writeFileSync(path.join(repoPath, ".env"), envLines.join("\n") + "\n");
+    logger.info(`[deploy-env] Generated .env with ${envLines.length} var(s): ${envLines.map(l => l.split("=")[0]).join(", ")}`, { runId: step.run_id });
+  }
+}
+
+/**
+ * Auto-complete stories that already have a PR (open or merged).
+ * Checks BOTH running AND pending stories — medic resets running->pending faster
+ * than cron claims, so pending stories with PRs must also be caught.
+ */
+function autoCompleteStoriesWithPRs(
+  step: StepRow,
+  runIdPrefix: string,
+  context: Record<string, string>,
+  db: any,
+): void {
+  const autoCompleteStories = db.prepare(
+    "SELECT * FROM stories WHERE run_id = ? AND status = 'pending' ORDER BY story_index ASC"
+  ).all(step.run_id) as any[];
+  for (const rs of autoCompleteStories) {
+    // Build expected branch: {runId_prefix}-{STORY_ID} e.g. "433ff7a1-US-001"
+    const storyBranchForCheck = rs.story_branch || `${runIdPrefix}-${rs.story_id}`;
+    const existingPrUrl = rs.pr_url || "";
+
+    try {
+      let prUrl = existingPrUrl;
+      let prFound = false;
+
+      if (prUrl) {
+        const state = getPRState(prUrl);
+        if (state === "MERGED" || state === "OPEN") {
+          prFound = true;
+        } else if (state === "CLOSED") {
+          prFound = tryReopenPR(prUrl, rs.story_id, step.run_id);
+        }
+      } else if (storyBranchForCheck && context["repo"]) {
+        const foundUrl = findPrByBranch(context["repo"], storyBranchForCheck);
+        if (foundUrl) {
+          prUrl = foundUrl;
+          prFound = true;
+        }
+      }
+
+      if (prFound && prUrl) {
+        db.prepare("UPDATE stories SET status = 'done', pr_url = ?, story_branch = ?, updated_at = ? WHERE id = ?")
+          .run(prUrl, storyBranchForCheck, new Date().toISOString(), rs.id);
+        db.prepare("UPDATE steps SET current_story_id = NULL, updated_at = ? WHERE id = ? AND current_story_id = ?")
+          .run(new Date().toISOString(), step.id, rs.id);
+        logger.info(`[claim-auto-complete] Story ${rs.story_id} auto-completed — PR exists: ${prUrl}`, { runId: step.run_id });
+        emitEvent({ ts: new Date().toISOString(), event: "story.done", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: rs.story_id, storyTitle: rs.title, detail: `Auto-completed — PR exists (${prUrl})` });
+      }
+    } catch (e) {
+      logger.warn(`[claim-auto-complete] PR check failed for story ${rs.story_id}: ${String(e)}`, { runId: step.run_id });
+    }
+  }
+}
+
+/**
+ * Resolve story_screens from SCREEN_MAP for a given storyId.
+ * Mutates context["story_screens"] and optionally context["design_warning"].
+ */
+function resolveStoryScreens(
+  storyId: string,
+  context: Record<string, string>,
+  runId: string,
+  logPrefix: string,
+): void {
+  const screenMapRaw = context["screen_map"];
+  if (!screenMapRaw) return;
+
+  try {
+    const screenMap = JSON.parse(screenMapRaw);
+    if (Array.isArray(screenMap)) {
+      const storyScreens = screenMap
+        .filter((s: any) => Array.isArray(s.stories) && s.stories.includes(storyId))
+        .map((s: any) => ({
+          screenId: s.screenId,
+          name: s.name,
+          type: s.type,
+          htmlFile: `stitch/${s.screenId}.html`,
+        }));
+      context["story_screens"] = JSON.stringify(storyScreens);
+      // Warn if referenced screen HTML files don't exist
+      const repoPath = context["repo"] || context["REPO"] || "";
+      if (repoPath && storyScreens.length > 0) {
+        const missing = storyScreens.filter((s: any) => !fs.existsSync(path.join(repoPath, s.htmlFile)));
+        if (missing.length > 0) {
+          context["design_warning"] = `WARNING: ${missing.length} design reference file(s) missing: ${missing.map((s: any) => s.htmlFile).join(", ")}. Implement based on screen names and design-tokens.css.`;
+          logger.warn(`[${logPrefix}] Missing design files for story ${storyId}: ${missing.map((s: any) => s.htmlFile).join(", ")}`, { runId });
+        }
+      }
+    }
+  } catch (e) {
+    logger.warn(`Failed to parse screen_map for story ${storyId}`, { runId });
+    context["story_screens"] = "";
+  }
+}
+
+/**
+ * Inject story-specific context vars after a story is claimed in a loop step.
+ * Mutates `context` in-place with current_story, completed_stories, story_screens, etc.
+ */
+function injectStoryContext(
+  nextStory: any,
+  step: StepRow,
+  context: Record<string, string>,
+): void {
+  // FIX #5: Clear stale story context at claim time (not just completeStep)
+  // Prevents cross-contamination when parallel stories share the same run context
+  delete context["pr_url"];
+  delete context["story_branch"];
+  delete context["current_story_id"];
+  delete context["current_story_title"];
+  delete context["current_story"];
+  delete context["verify_feedback"];
+
+  const story: Story = {
+    id: nextStory.id,
+    runId: nextStory.run_id,
+    storyIndex: nextStory.story_index,
+    storyId: nextStory.story_id,
+    title: nextStory.title,
+    description: nextStory.description,
+    acceptanceCriteria: (() => { try { return JSON.parse(nextStory.acceptance_criteria); } catch { logger.warn("Bad acceptance_criteria JSON for story " + nextStory.story_id); return []; } })(),
+    status: nextStory.status,
+    output: nextStory.output ?? undefined,
+    retryCount: nextStory.retry_count,
+    maxRetries: nextStory.max_retries,
+  };
+
+  const allStories = getStories(step.run_id);
+  const pendingCount = allStories.filter(s => s.status === STORY_STATUS.PENDING || s.status === STORY_STATUS.RUNNING).length;
+
+  context["current_story"] = formatStoryForTemplate(story);
+  context["current_story_id"] = story.storyId;
+  context["current_story_title"] = story.title;
+  context["completed_stories"] = formatCompletedStories(allStories);
+  context["stories_remaining"] = String(pendingCount);
+  context["progress"] = readProgressFile(step.run_id);
+  context["project_memory"] = readProjectMemory(context);
+
+  // FIX: Clear stale story-specific context from previous story to prevent cross-contamination
+  context["pr_url"] = "";
+  context["story_branch"] = "";
+  context["verify_feedback"] = "";
+
+  // Resolve story_screens from SCREEN_MAP
+  resolveStoryScreens(story.storyId, context, step.run_id, "story-claim");
+
+  // Default optional template vars to prevent MISSING_INPUT_GUARD false positives (story-each flow)
+  for (const v of OPTIONAL_TEMPLATE_VARS) {
+    if (!context[v]) context[v] = "";
+  }
+
+  // Persist story context vars to DB so verify_each steps can access them
+  updateRunContext(step.run_id, context);
+
+  // v1.5.50: Inject previous_failure from prior abandon output
+  if (nextStory.output && (nextStory.abandoned_count > 0 || nextStory.retry_count > 0)) {
+    context["previous_failure"] = nextStory.output;
+  }
+}
+
+/**
+ * Inject verify-each story context for the single-step verify claim path.
+ * Mutates `context` in-place and updates DB context.
+ * Returns false if all stories were auto-verified (caller should return { found: false }).
+ */
+function injectVerifyContext(
+  step: StepRow,
+  context: Record<string, string>,
+  db: any,
+): boolean {
+  const loopStepForVerify = findLoopStep(step.run_id);
+  if (!loopStepForVerify?.loop_config) return true;
+
+  const lcCheck: LoopConfig = JSON.parse(loopStepForVerify.loop_config);
+  if (!lcCheck.verifyEach || lcCheck.verifyStep !== step.step_id) return true;
+
+  // Auto-verify stories whose PRs are already merged/closed-with-ancestry.
+  // Also auto-merges OPEN PRs after abandonment (prevents "son mil" loop).
+  const nextUnverified = autoVerifyDoneStories(step.run_id, context, "claim-auto-verify", { autoMergeOpen: true });
+
+  if (!nextUnverified) {
+    // All stories auto-verified — no agent work needed, advance pipeline
+    db.prepare("UPDATE steps SET status = 'waiting', updated_at = ? WHERE id = ?")
+      .run(new Date().toISOString(), step.id);
+    logger.info(`[claim-auto-verify] All stories auto-verified, triggering pipeline advancement`, { runId: step.run_id });
+    try { checkLoopContinuation(step.run_id, loopStepForVerify.id); } catch (e) { logger.error("[claim-auto-verify] checkLoopContinuation failed: " + String(e), { runId: step.run_id }); }
+    return false;
+  }
+
+  // Inject unverified story context for agent verification
+  if (nextUnverified.output) {
+    const storyOutput = parseOutputKeyValues(nextUnverified.output);
+    for (const [key, value] of Object.entries(storyOutput)) {
+      if (PROTECTED_CONTEXT_KEYS.has(key) && context[key]) continue;
+      context[key] = value;
+    }
+  }
+  // Override with DB columns if available (more reliable than output parse)
+  if (nextUnverified.pr_url) context["pr_url"] = nextUnverified.pr_url;
+  if (nextUnverified.story_branch) context["story_branch"] = nextUnverified.story_branch;
+  context["current_story_id"] = nextUnverified.story_id;
+  context["current_story_title"] = nextUnverified.title;
+  const storyObj: Story = {
+    id: nextUnverified.id, runId: nextUnverified.run_id,
+    storyIndex: nextUnverified.story_index, storyId: nextUnverified.story_id,
+    title: nextUnverified.title, description: nextUnverified.description,
+    acceptanceCriteria: (() => { try { return JSON.parse(nextUnverified.acceptance_criteria); } catch { logger.warn("Bad acceptance_criteria JSON for story " + nextUnverified.story_id); return []; } })(),
+    status: nextUnverified.status, output: nextUnverified.output,
+    retryCount: nextUnverified.retry_count, maxRetries: nextUnverified.max_retries,
+  };
+  context["current_story"] = formatStoryForTemplate(storyObj);
+
+  // Resolve story_screens from SCREEN_MAP for verify_each
+  resolveStoryScreens(nextUnverified.story_id, context, step.run_id, "verify-claim");
+
+  db.prepare("UPDATE runs SET context = ?, updated_at = ? WHERE id = ?")
+    .run(JSON.stringify(context), new Date().toISOString(), step.run_id);
+  logger.info(`Verify step: injected story ${nextUnverified.story_id} context`, { runId: step.run_id });
+
+  return true;
+}
+
+/**
+ * Claim a single (non-loop) step: atomic claim, optional verify context injection,
+ * progress/stories injection, and missing-input guard.
+ * Returns a ClaimResult.
+ */
+function claimSingleStep(
+  step: StepRow,
+  agentId: string,
+  context: Record<string, string>,
+  db: any,
+): ClaimResult {
+  // Item 6: Single step — atomic claim with changes check to prevent race condition
+  const claimResult = db.prepare(
+    "UPDATE steps SET status = 'running', updated_at = ? WHERE id = ? AND status = 'pending'"
+  ).run(new Date().toISOString(), step.id);
+  if (claimResult.changes === 0) {
+    // Already claimed by another cron — return no work
+    return { found: false };
+  }
+  emitEvent({ ts: new Date().toISOString(), event: "step.running", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId });
+  logger.info(`Step claimed by ${agentId}`, { runId: step.run_id, stepId: step.step_id });
+
+  // v1.5.50: Record single step claim in claim_log
+  try {
+    db.prepare(
+      "INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at) VALUES (?, ?, NULL, ?, ?)"
+    ).run(step.run_id, step.step_id, agentId, new Date().toISOString());
+  } catch (e) { logger.warn(`[claim-log] Failed to record claim: ${String(e)}`, { runId: step.run_id }); }
+
+  // #260: Default optional template vars to prevent MISSING_INPUT_GUARD false positives
+  for (const v of OPTIONAL_TEMPLATE_VARS) {
+    if (!context[v]) context[v] = "";
+  }
+
+  // Inject progress for any step in a run that has stories
+  const hasStories = db.prepare(
+    "SELECT COUNT(*) as cnt FROM stories WHERE run_id = ?"
+  ).get(step.run_id) as { cnt: number };
+  if (hasStories.cnt > 0) {
+    context["progress"] = readProgressFile(step.run_id);
+    context["project_memory"] = readProjectMemory(context);
+
+    // Inject stories_json for non-loop steps that need it
+    const allStoriesForCtx = getStories(step.run_id);
+    const storiesForTemplate = allStoriesForCtx.map(s => ({
+      id: s.storyId,
+      title: s.title,
+      description: s.description,
+      acceptanceCriteria: s.acceptanceCriteria,
+    }));
+    context["stories_json"] = JSON.stringify(storiesForTemplate, null, 2);
+  }
+
+  // BUG FIX: If this is a verify step for a verify_each loop, inject the correct
+  // story info from the oldest unverified 'done' story (not from stale context).
+  if (!injectVerifyContext(step, context, db)) {
+    return { found: false };
+  }
+
+  let resolvedInput = resolveTemplate(step.input_template, context);
+
+  // MISSING_INPUT_GUARD (v1.5.53): First miss -> retry step, second -> fail run.
+  // WAL race condition can cause false positives — one retry absorbs that.
+  const allMissing = [...new Set([...resolvedInput.matchAll(/\[missing:\s*(\w+)\]/gi)].map(m => m[1].toLowerCase()))];
+  if (allMissing.length > 0) {
+    const reason = `Blocked: unresolved variable(s) [${allMissing.join(", ")}] in input`;
+    // Check step's retry_count to decide retry vs fail
+    const stepRetry = db.prepare("SELECT retry_count FROM steps WHERE id = ?").get(step.id) as { retry_count: number } | undefined;
+    const retryCount = stepRetry?.retry_count ?? 0;
+    logger.warn(`${reason} (retry=${retryCount})`, { runId: step.run_id, stepId: step.step_id });
+    if (retryCount > 0) {
+      // Second occurrence — fail run
+      db.prepare("UPDATE steps SET status = 'failed', output = ?, updated_at = ? WHERE id = ?")
+        .run(reason + " — failing run (retry exhausted)", new Date().toISOString(), step.id);
+      db.prepare("UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?")
+        .run(new Date().toISOString(), step.run_id);
+      const wfId = getWorkflowId(step.run_id);
+      emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: reason });
+      emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: reason });
+      scheduleRunCronTeardown(step.run_id);
+    } else {
+      // First occurrence — retry step (possible WAL lag)
+      db.prepare("UPDATE steps SET status = 'pending', retry_count = retry_count + 1, output = ?, updated_at = ? WHERE id = ?")
+        .run(reason + " — retrying once", new Date().toISOString(), step.id);
+      logger.info(`[missing-input] Step ${step.step_id} will retry — possible WAL lag`, { runId: step.run_id });
+    }
+    return { found: false };
+  }
+
+  return {
+    found: true,
+    stepId: step.id,
+    runId: step.run_id,
+    resolvedInput,
+  };
+}
+
+// ── End extracted helpers ────────────────────────────────────────────
+
 /**
  * Throttle cleanupAbandonedSteps: run at most once every 30 seconds (matches cron interval).
  */
@@ -132,101 +573,11 @@ export function claimStep(agentId: string): ClaimResult {
   // Guard: don't claim work for a failed run
   if (getRunStatus(step.run_id) === RUN_STATUS.FAILED) return { found: false };
 
-  // DESIGN STEP DEDUP: If .stitch + stitch/*.html exist, auto-complete design step.
-  // Prevents duplicate Stitch projects on retry/re-run of same repo.
-  if (step.step_id === "design") {
-    const dRepoPath = getRunContext(step.run_id)["repo"] || "";
-    if (dRepoPath) {
-      const dStitchFile = path.join(dRepoPath, ".stitch");
-      const dStitchDir = path.join(dRepoPath, "stitch");
-      if (fs.existsSync(dStitchFile) && fs.existsSync(dStitchDir)) {
-        try {
-          const dData = JSON.parse(fs.readFileSync(dStitchFile, "utf-8"));
-          // Only reuse if .stitch was written DURING this run (prevents cross-run contamination)
-          const runRow = db.prepare("SELECT created_at FROM runs WHERE id = ?").get(step.run_id) as any;
-          const runCreatedAt = runRow ? new Date(runRow.created_at).getTime() : 0;
-          const stitchUpdatedAt = dData.updatedAt ? new Date(dData.updatedAt).getTime() : 0;
-          if (stitchUpdatedAt < runCreatedAt) {
-            logger.info(`[design-dedup] .stitch is stale (written ${dData.updatedAt}, run started ${runRow?.created_at}) — deleting to force fresh design`, { runId: step.run_id });
-            try { fs.unlinkSync(dStitchFile); } catch {}
-            try { fs.rmSync(dStitchDir, { recursive: true, force: true }); } catch {}
-          } else {
-          const dHtmlFiles = fs.readdirSync(dStitchDir).filter((f: string) => f.endsWith(".html"));
-          if (dData.projectId && dHtmlFiles.length > 0) {
-            const dScreenMap = dHtmlFiles.map((f: string) => ({
-              screenId: f.replace(".html", ""),
-              name: f.replace(".html", ""),
-              type: "page",
-              description: f.replace(".html", ""),
-            }));
-            const dCtx = getRunContext(step.run_id);
-            dCtx["stitch_project_id"] = dData.projectId;
-            dCtx["screens_generated"] = String(dHtmlFiles.length);
-            dCtx["screen_map"] = JSON.stringify(dScreenMap);
-            dCtx["device_type"] = dCtx["device_type"] || "DESKTOP";
-            dCtx["design_system"] = dCtx["design_system"] || "reused from previous run";
-            dCtx["design_notes"] = `Reused ${dHtmlFiles.length} existing screen designs from .stitch`;
-            updateRunContext(step.run_id, dCtx);
-            const dOutput = `STATUS: done\nSTITCH_PROJECT_ID: ${dData.projectId}\nSCREENS_GENERATED: ${dHtmlFiles.length}\nDESIGN_NOTES: Reused ${dHtmlFiles.length} screens from previous run`;
-            db.prepare("UPDATE steps SET status = 'done', output = ?, updated_at = ? WHERE id = ?")
-              .run(dOutput, new Date().toISOString(), step.id);
-            logger.info(`[design-dedup] Skipped — reusing ${dHtmlFiles.length} screens from .stitch (project ${dData.projectId})`, { runId: step.run_id });
-            advancePipeline(step.run_id);
-            return { found: false };
-          }
-        }} catch (e) { logger.warn(`[design-dedup] .stitch parse error: ${e}`, { runId: step.run_id }); }
-      }
-    }
-  }
+  // DESIGN STEP DEDUP
+  if (handleDesignDedup(step, db)) return { found: false };
 
-  // DEPLOY ENV GUARD: Auto-generate .env for projects with auth/DB before deploy
-  if (step.step_id === "deploy") {
-    const dCtx = getRunContext(step.run_id);
-    const repoPath = dCtx["repo"] || "";
-    if (repoPath && !fs.existsSync(path.join(repoPath, ".env"))) {
-      const envLines: string[] = [];
-      // DB connection — prefer external DB
-      const dbUrl = dCtx["database_url"] || "";
-      const dbHost = dCtx["db_host"] || process.env.SETFARM_DEFAULT_DB_HOST || "localhost";
-      const dbPort = dCtx["db_port"] || process.env.SETFARM_DEFAULT_DB_PORT || "5432";
-      const dbName = dCtx["db_name"] || path.basename(repoPath).replace(/-/g, "_");
-      const dbUser = dCtx["db_user"] || process.env.SETFARM_DEFAULT_DB_USER || "postgres";
-      const dbPass = dCtx["db_password"] || process.env.SETFARM_DEFAULT_DB_PASS || "";
-      if (dbUrl) {
-        envLines.push(`DATABASE_URL=${dbUrl}`);
-      } else {
-        // Check if project uses Prisma/DB
-        const pkgPath = path.join(repoPath, "package.json");
-        if (fs.existsSync(pkgPath)) {
-          try {
-            const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
-            const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
-            if (allDeps["prisma"] || allDeps["@prisma/client"] || allDeps["drizzle-orm"] || allDeps["typeorm"]) {
-              envLines.push(`DATABASE_URL=postgresql://${dbUser}:${dbPass}@${dbHost}:${dbPort}/${dbName}`);
-            }
-          } catch {}
-        }
-      }
-      // NextAuth secret
-      const pkgPath2 = path.join(repoPath, "package.json");
-      if (fs.existsSync(pkgPath2)) {
-        try {
-          const pkg2 = JSON.parse(fs.readFileSync(pkgPath2, "utf-8"));
-          const allDeps2 = { ...pkg2.dependencies, ...pkg2.devDependencies };
-          if (allDeps2["next-auth"] || allDeps2["@auth/core"]) {
-            const secret = execFileSync("openssl", ["rand", "-base64", "32"], { timeout: 5000 }).toString().trim();
-            const hostname = path.basename(repoPath);
-            envLines.push(`NEXTAUTH_SECRET=${secret}`);
-            envLines.push(`NEXTAUTH_URL=https://${hostname}.setrox.com.tr`);
-          }
-        } catch {}
-      }
-      if (envLines.length > 0) {
-        fs.writeFileSync(path.join(repoPath, ".env"), envLines.join("\n") + "\n");
-        logger.info(`[deploy-env] Generated .env with ${envLines.length} var(s): ${envLines.map(l => l.split("=")[0]).join(", ")}`, { runId: step.run_id });
-      }
-    }
-  }
+  // DEPLOY ENV GUARD
+  handleDeployEnvGuard(step);
 
   // Get run context
   const context: Record<string, string> = getRunContext(step.run_id);
@@ -245,51 +596,9 @@ export function claimStep(agentId: string): ClaimResult {
   if (step.type === "loop") {
     const loopConfig: LoopConfig | null = step.loop_config ? JSON.parse(step.loop_config) : null;
     if (loopConfig?.over === "stories") {
-      // #claim-auto-complete: Auto-complete stories that already have a PR (open or merged).
-      // In implement step, PR creation IS the deliverable — merge happens in verify step.
-      // Checks BOTH running AND pending stories — medic resets running→pending faster
-      // than cron claims, so pending stories with PRs must also be caught.
-      // Branch naming convention: {runId_prefix}-{storyId} e.g. "433ff7a1-US-001"
+      // Auto-complete stories that already have a PR (open or merged)
       const runIdPrefix = step.run_id.slice(0, 8);
-      const autoCompleteStories = db.prepare(
-        "SELECT * FROM stories WHERE run_id = ? AND status = 'pending' ORDER BY story_index ASC"
-      ).all(step.run_id) as any[];
-      for (const rs of autoCompleteStories) {
-        // Build expected branch: {runId_prefix}-{STORY_ID} e.g. "433ff7a1-US-001"
-        const storyBranchForCheck = rs.story_branch || `${runIdPrefix}-${rs.story_id}`;
-        const existingPrUrl = rs.pr_url || "";
-
-        try {
-          let prUrl = existingPrUrl;
-          let prFound = false;
-
-          if (prUrl) {
-            const state = getPRState(prUrl);
-            if (state === "MERGED" || state === "OPEN") {
-              prFound = true;
-            } else if (state === "CLOSED") {
-              prFound = tryReopenPR(prUrl, rs.story_id, step.run_id);
-            }
-          } else if (storyBranchForCheck && context["repo"]) {
-            const foundUrl = findPrByBranch(context["repo"], storyBranchForCheck);
-            if (foundUrl) {
-              prUrl = foundUrl;
-              prFound = true;
-            }
-          }
-
-          if (prFound && prUrl) {
-            db.prepare("UPDATE stories SET status = 'done', pr_url = ?, story_branch = ?, updated_at = ? WHERE id = ?")
-              .run(prUrl, storyBranchForCheck, new Date().toISOString(), rs.id);
-            db.prepare("UPDATE steps SET current_story_id = NULL, updated_at = ? WHERE id = ? AND current_story_id = ?")
-              .run(new Date().toISOString(), step.id, rs.id);
-            logger.info(`[claim-auto-complete] Story ${rs.story_id} auto-completed — PR exists: ${prUrl}`, { runId: step.run_id });
-            emitEvent({ ts: new Date().toISOString(), event: "story.done", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: rs.story_id, storyTitle: rs.title, detail: `Auto-completed — PR exists (${prUrl})` });
-          }
-        } catch (e) {
-          logger.warn(`[claim-auto-complete] PR check failed for story ${rs.story_id}: ${String(e)}`, { runId: step.run_id });
-        }
-      }
+      autoCompleteStoriesWithPRs(step, runIdPrefix, context, db);
 
       // BEGIN IMMEDIATE early: story selection + claim must be atomic to prevent
       // two parallel crons from selecting the same story (race condition fix #4)
@@ -443,89 +752,8 @@ export function claimStep(agentId: string): ClaimResult {
       emitEvent({ ts: new Date().toISOString(), event: "story.started", runId: step.run_id, workflowId: wfId, stepId: step.step_id, agentId: agentId, storyId: nextStory.story_id, storyTitle: nextStory.title });
       logger.info(`Story started: ${nextStory.story_id} — ${nextStory.title}`, { runId: step.run_id, stepId: step.step_id });
 
-      // Build story template vars
-      // FIX #5: Clear stale story context at claim time (not just completeStep)
-      // Prevents cross-contamination when parallel stories share the same run context
-      delete context["pr_url"];
-      delete context["story_branch"];
-      delete context["current_story_id"];
-      delete context["current_story_title"];
-      delete context["current_story"];
-      delete context["verify_feedback"];
-
-      const story: Story = {
-        id: nextStory.id,
-        runId: nextStory.run_id,
-        storyIndex: nextStory.story_index,
-        storyId: nextStory.story_id,
-        title: nextStory.title,
-        description: nextStory.description,
-        acceptanceCriteria: (() => { try { return JSON.parse(nextStory.acceptance_criteria); } catch { logger.warn("Bad acceptance_criteria JSON for story " + nextStory.story_id); return []; } })(),
-        status: nextStory.status,
-        output: nextStory.output ?? undefined,
-        retryCount: nextStory.retry_count,
-        maxRetries: nextStory.max_retries,
-      };
-
-      const allStories = getStories(step.run_id);
-      const pendingCount = allStories.filter(s => s.status === STORY_STATUS.PENDING || s.status === STORY_STATUS.RUNNING).length;
-
-      context["current_story"] = formatStoryForTemplate(story);
-      context["current_story_id"] = story.storyId;
-      context["current_story_title"] = story.title;
-      context["completed_stories"] = formatCompletedStories(allStories);
-      context["stories_remaining"] = String(pendingCount);
-      context["progress"] = readProgressFile(step.run_id);
-      context["project_memory"] = readProjectMemory(context);
-
-      // FIX: Clear stale story-specific context from previous story to prevent cross-contamination
-      context["pr_url"] = "";
-      context["story_branch"] = "";
-      context["verify_feedback"] = "";
-
-      // Resolve story_screens from SCREEN_MAP
-      const screenMapRaw = context["screen_map"];
-      if (screenMapRaw) {
-        try {
-          const screenMap = JSON.parse(screenMapRaw);
-          if (Array.isArray(screenMap)) {
-            const storyScreens = screenMap
-              .filter((s: any) => Array.isArray(s.stories) && s.stories.includes(story.storyId))
-              .map((s: any) => ({
-                screenId: s.screenId,
-                name: s.name,
-                type: s.type,
-                htmlFile: `stitch/${s.screenId}.html`,
-              }));
-            context["story_screens"] = JSON.stringify(storyScreens);
-            // Warn if referenced screen HTML files don't exist
-            const repoPath = context["repo"] || context["REPO"] || "";
-            if (repoPath && storyScreens.length > 0) {
-              const missing = storyScreens.filter((s: any) => !fs.existsSync(path.join(repoPath, s.htmlFile)));
-              if (missing.length > 0) {
-                context["design_warning"] = `WARNING: ${missing.length} design reference file(s) missing: ${missing.map((s: any) => s.htmlFile).join(", ")}. Implement based on screen names and design-tokens.css.`;
-                logger.warn(`[story-claim] Missing design files for story ${story.storyId}: ${missing.map((s: any) => s.htmlFile).join(", ")}`, { runId: step.run_id });
-              }
-            }
-          }
-        } catch (e) {
-          logger.warn(`Failed to parse screen_map for story ${story.storyId}`, { runId: step.run_id });
-          context["story_screens"] = "";
-        }
-      }
-
-      // Default optional template vars to prevent MISSING_INPUT_GUARD false positives (story-each flow)
-      for (const v of OPTIONAL_TEMPLATE_VARS) {
-        if (!context[v]) context[v] = "";
-      }
-
-      // Persist story context vars to DB so verify_each steps can access them
-      updateRunContext(step.run_id, context);
-
-      // v1.5.50: Inject previous_failure from prior abandon output
-      if (nextStory.output && (nextStory.abandoned_count > 0 || nextStory.retry_count > 0)) {
-        context["previous_failure"] = nextStory.output;
-      }
+      // Inject story context (template vars, screen_map, optional vars, previous_failure)
+      injectStoryContext(nextStory, step, context);
 
       let resolvedInput = resolveTemplate(step.input_template, context);
 
@@ -567,157 +795,8 @@ export function claimStep(agentId: string): ClaimResult {
     }
   }
 
-  // Item 6: Single step — atomic claim with changes check to prevent race condition
-  const claimResult = db.prepare(
-    "UPDATE steps SET status = 'running', updated_at = ? WHERE id = ? AND status = 'pending'"
-  ).run(new Date().toISOString(), step.id);
-  if (claimResult.changes === 0) {
-    // Already claimed by another cron — return no work
-    return { found: false };
-  }
-  emitEvent({ ts: new Date().toISOString(), event: "step.running", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId });
-  logger.info(`Step claimed by ${agentId}`, { runId: step.run_id, stepId: step.step_id });
-
-  // v1.5.50: Record single step claim in claim_log
-  try {
-    db.prepare(
-      "INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at) VALUES (?, ?, NULL, ?, ?)"
-    ).run(step.run_id, step.step_id, agentId, new Date().toISOString());
-  } catch (e) { logger.warn(`[claim-log] Failed to record claim: ${String(e)}`, { runId: step.run_id }); }
-
-  // #260: Default optional template vars to prevent MISSING_INPUT_GUARD false positives
-  for (const v of OPTIONAL_TEMPLATE_VARS) {
-    if (!context[v]) context[v] = "";
-  }
-
-  // Inject progress for any step in a run that has stories
-  const hasStories = db.prepare(
-    "SELECT COUNT(*) as cnt FROM stories WHERE run_id = ?"
-  ).get(step.run_id) as { cnt: number };
-  if (hasStories.cnt > 0) {
-    context["progress"] = readProgressFile(step.run_id);
-    context["project_memory"] = readProjectMemory(context);
-
-    // Inject stories_json for non-loop steps that need it
-    const allStoriesForCtx = getStories(step.run_id);
-    const storiesForTemplate = allStoriesForCtx.map(s => ({
-      id: s.storyId,
-      title: s.title,
-      description: s.description,
-      acceptanceCriteria: s.acceptanceCriteria,
-    }));
-    context["stories_json"] = JSON.stringify(storiesForTemplate, null, 2);
-  }
-
-  // BUG FIX: If this is a verify step for a verify_each loop, inject the correct
-  // story info from the oldest unverified 'done' story (not from stale context).
-  // This prevents parallel developers from overwriting each other's story context.
-  // #claim-auto-verify: Also auto-verifies stories whose PRs are already merged,
-  // preventing the "son mil" agent timeout loop.
-  const loopStepForVerify = findLoopStep(step.run_id);
-  if (loopStepForVerify?.loop_config) {
-    const lcCheck: LoopConfig = JSON.parse(loopStepForVerify.loop_config);
-    if (lcCheck.verifyEach && lcCheck.verifyStep === step.step_id) {
-      // Auto-verify stories whose PRs are already merged/closed-with-ancestry.
-      // Also auto-merges OPEN PRs after abandonment (prevents "son mil" loop).
-      const nextUnverified = autoVerifyDoneStories(step.run_id, context, "claim-auto-verify", { autoMergeOpen: true });
-
-      if (!nextUnverified) {
-        // All stories auto-verified — no agent work needed, advance pipeline
-        db.prepare("UPDATE steps SET status = 'waiting', updated_at = ? WHERE id = ?")
-          .run(new Date().toISOString(), step.id);
-        logger.info(`[claim-auto-verify] All stories auto-verified, triggering pipeline advancement`, { runId: step.run_id });
-        try { checkLoopContinuation(step.run_id, loopStepForVerify.id); } catch (e) { logger.error("[claim-auto-verify] checkLoopContinuation failed: " + String(e), { runId: step.run_id }); }
-        return { found: false };
-      }
-
-      // Inject unverified story context for agent verification
-      if (nextUnverified.output) {
-        const storyOutput = parseOutputKeyValues(nextUnverified.output);
-        for (const [key, value] of Object.entries(storyOutput)) {
-          if (PROTECTED_CONTEXT_KEYS.has(key) && context[key]) continue;
-          context[key] = value;
-        }
-      }
-      // Override with DB columns if available (more reliable than output parse)
-      if (nextUnverified.pr_url) context["pr_url"] = nextUnverified.pr_url;
-      if (nextUnverified.story_branch) context["story_branch"] = nextUnverified.story_branch;
-      context["current_story_id"] = nextUnverified.story_id;
-      context["current_story_title"] = nextUnverified.title;
-      const storyObj: Story = {
-        id: nextUnverified.id, runId: nextUnverified.run_id,
-        storyIndex: nextUnverified.story_index, storyId: nextUnverified.story_id,
-        title: nextUnverified.title, description: nextUnverified.description,
-        acceptanceCriteria: (() => { try { return JSON.parse(nextUnverified.acceptance_criteria); } catch { logger.warn("Bad acceptance_criteria JSON for story " + nextUnverified.story_id); return []; } })(),
-        status: nextUnverified.status, output: nextUnverified.output,
-        retryCount: nextUnverified.retry_count, maxRetries: nextUnverified.max_retries,
-      };
-      context["current_story"] = formatStoryForTemplate(storyObj);
-
-      // Resolve story_screens from SCREEN_MAP for verify_each
-      const vScreenMapRaw = context["screen_map"];
-      if (vScreenMapRaw) {
-        try {
-          const vScreenMap = JSON.parse(vScreenMapRaw);
-          if (Array.isArray(vScreenMap)) {
-            const vStoryScreens = vScreenMap
-              .filter((s: any) => Array.isArray(s.stories) && s.stories.includes(nextUnverified.story_id))
-              .map((s: any) => ({
-                screenId: s.screenId,
-                name: s.name,
-                type: s.type,
-                htmlFile: `stitch/${s.screenId}.html`,
-              }));
-            context["story_screens"] = JSON.stringify(vStoryScreens);
-          }
-        } catch (e) {
-          logger.warn(`Failed to parse screen_map for verify story ${nextUnverified.story_id}`, { runId: step.run_id });
-          context["story_screens"] = "";
-        }
-      }
-
-      db.prepare("UPDATE runs SET context = ?, updated_at = ? WHERE id = ?")
-        .run(JSON.stringify(context), new Date().toISOString(), step.run_id);
-      logger.info(`Verify step: injected story ${nextUnverified.story_id} context`, { runId: step.run_id });
-    }
-  }
-
-  let resolvedInput = resolveTemplate(step.input_template, context);
-
-      // MISSING_INPUT_GUARD (v1.5.53): First miss → retry step, second → fail run.
-      // WAL race condition can cause false positives — one retry absorbs that.
-      const allMissing = [...new Set([...resolvedInput.matchAll(/\[missing:\s*(\w+)\]/gi)].map(m => m[1].toLowerCase()))];
-      if (allMissing.length > 0) {
-        const reason = `Blocked: unresolved variable(s) [${allMissing.join(", ")}] in input`;
-        // Check step's retry_count to decide retry vs fail
-        const stepRetry = db.prepare("SELECT retry_count FROM steps WHERE id = ?").get(step.id) as { retry_count: number } | undefined;
-        const retryCount = stepRetry?.retry_count ?? 0;
-        logger.warn(`${reason} (retry=${retryCount})`, { runId: step.run_id, stepId: step.step_id });
-        if (retryCount > 0) {
-          // Second occurrence — fail run
-          db.prepare("UPDATE steps SET status = 'failed', output = ?, updated_at = ? WHERE id = ?")
-            .run(reason + " — failing run (retry exhausted)", new Date().toISOString(), step.id);
-          db.prepare("UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?")
-            .run(new Date().toISOString(), step.run_id);
-          const wfId = getWorkflowId(step.run_id);
-          emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: reason });
-          emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: reason });
-          scheduleRunCronTeardown(step.run_id);
-        } else {
-          // First occurrence — retry step (possible WAL lag)
-          db.prepare("UPDATE steps SET status = 'pending', retry_count = retry_count + 1, output = ?, updated_at = ? WHERE id = ?")
-            .run(reason + " — retrying once", new Date().toISOString(), step.id);
-          logger.info(`[missing-input] Step ${step.step_id} will retry — possible WAL lag`, { runId: step.run_id });
-        }
-        return { found: false };
-      }
-
-  return {
-    found: true,
-    stepId: step.id,
-    runId: step.run_id,
-    resolvedInput,
-  };
+  // Single (non-loop) step claim path
+  return claimSingleStep(step, agentId, context, db);
   } finally { endTx(); }
 }
 

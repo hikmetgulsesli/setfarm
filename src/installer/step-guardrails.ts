@@ -403,7 +403,7 @@ export function processSetupCompletion(
             logger.info(`[db-provision] Auto-detected DB requirement from package.json dependencies`, { runId });
           }
         }
-      } catch {}
+      } catch { /* fallback below */ }
     }
 
     if (!dbRequired) return null;

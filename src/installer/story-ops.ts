@@ -15,7 +15,7 @@ import { MAX_STORIES, DEFAULT_STORY_MAX_RETRIES } from "./constants.js";
 /**
  * Get all stories for a run, ordered by story_index.
  */
-function safeParseAC(raw: string): string[] { try { const arr = JSON.parse(raw); return Array.isArray(arr) ? arr : [raw]; } catch { const m = raw.match(/^(\[.*?\])/s); if (m) { try { return JSON.parse(m[1]); } catch {} } return raw ? [raw] : []; } }
+function safeParseAC(raw: string): string[] { try { const arr = JSON.parse(raw); return Array.isArray(arr) ? arr : [raw]; } catch { const m = raw.match(/^(\[.*?\])/s); if (m) { try { return JSON.parse(m[1]); } catch { /* fallback below */ } } return raw ? [raw] : []; } }
 
 export function getStories(runId: string): Story[] {
   const db = getDb();
@@ -196,7 +196,7 @@ export function parseAndInsertStories(output: string, runId: string): void {
     }
     db.exec("COMMIT");
   } catch (err) {
-    try { db.exec("ROLLBACK"); } catch { /* best effort */ }
+    try { db.exec("ROLLBACK"); } catch (e) { logger.warn("[tx] ROLLBACK failed: " + String(e), {}); }
     throw err;
   }
 }
