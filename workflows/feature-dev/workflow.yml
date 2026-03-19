@@ -648,6 +648,12 @@ steps:
       NEVER run commands from your default workspace — always cd to WORKDIR first.
       The branch is already checked out. node_modules is symlinked from REPO.
 
+      NEXT.JS CONFIG RULE: If next.config.ts exists, do NOT add unknown options.
+      Valid options: reactStrictMode, images, env, experimental, output, distDir.
+      NEVER add: appDir (removed in Next 14+), swcMinify (default in Next 14+),
+      transpilePackages (use experimental instead). If build says "Invalid next.config.ts",
+      read the error and remove the invalid option.
+
       DEPENDENCY RULE: NEVER use `npx <package>` or run a CLI tool without first verifying
       the package is installed. If you need tailwindcss, run `npm install -D tailwindcss`
       BEFORE `npx tailwindcss init`. If you need postcss, install it first. Check package.json
@@ -801,7 +807,8 @@ steps:
       2. cd into WORKDIR
 
       3. Create story branch from feature branch:
-         cd {{repo}} && git checkout {{branch}} && git pull origin {{branch}}
+         cd {{repo}} && git stash --include-untracked 2>/dev/null || true
+         git checkout {{branch}} && git pull origin {{branch}}
          RUN_SHORT=$(echo "{{run_id}}" | cut -c1-8)
          STORY_BRANCH="${RUN_SHORT}-{{current_story_id}}"
          git checkout -b "$STORY_BRANCH"
@@ -960,6 +967,8 @@ steps:
            # PR already merged — fix directly on feature branch
            git checkout {{branch}} && git pull origin {{branch}}
          fi
+      2b. If checkout fails with "local changes would be overwritten":
+           git stash --include-untracked && git checkout {{story_branch}} && git stash pop 2>/dev/null || true
       3. Read each error message carefully and fix the code in the specified files
          - dead_link_hash: Replace href="#" with real routes (e.g. /terms, /privacy)
          - hardcoded_user_data: Replace fake names in placeholders with generic text
