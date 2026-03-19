@@ -690,6 +690,18 @@ export function claimStep(agentId: string): ClaimResult {
           return { found: false };
         }
 
+        // PENDING STORY GUARD: If pending stories remain but agent said "done", DON'T complete the loop.
+        // Reset step to pending so the next claim cycle picks up remaining stories.
+        const remainingPending = db.prepare(
+          "SELECT COUNT(*) as cnt FROM stories WHERE run_id = ? AND status = 'pending'"
+        ).get(step.run_id) as { cnt: number };
+        if (remainingPending.cnt > 0) {
+          logger.warn(`[loop-guard] ${remainingPending.cnt} pending stories remain — refusing to complete implement loop`, { runId: step.run_id });
+          db.prepare("UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = ? WHERE id = ?")
+            .run(new Date().toISOString(), step.id);
+          return { found: false };
+        }
+
         // No pending, running, or failed stories — mark step done and advance
         db.prepare(
           "UPDATE steps SET status = 'done', updated_at = ? WHERE id = ?"

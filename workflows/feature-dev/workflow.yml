@@ -655,9 +655,12 @@ steps:
 
       SHARED FILE RULE: Do NOT modify package.json unless this is the setup story (US-001).
       All dependencies should already be installed by the setup story. If a dependency is
-      truly missing, run `npm install <pkg>` in the WORKTREE (it will use the shared
-      node_modules via symlink) but do NOT commit package.json changes — they will cause
-      merge conflicts with other parallel stories.
+      truly missing (e.g. build fails with "Cannot find module X"):
+      1. Run `npm install <pkg>` in the MAIN REPO ({{repo}}), not the worktree
+         cd {{repo}} && npm install <pkg> && cd {{story_workdir}}
+      2. The worktree's node_modules symlink will pick it up automatically
+      3. Do NOT commit package.json changes from the worktree — they cause merge conflicts
+      Common missing packages: lucide-react, recharts, react-router-dom, chart.js, @types/*
 
       !include story-loop-context.md
 
@@ -826,10 +829,15 @@ steps:
            # Build
            {{build_cmd}} 2>&1 || { BUILD_OK=false; echo "Build failed — fixing..."; }
            if [ "$BUILD_OK" = "false" ]; then
-             # Read the exact TS errors and fix the files
              BUILD_OUT=$({{build_cmd}} 2>&1) || true
              echo "$BUILD_OUT"
-             # Fix each error: unused imports → remove, missing module → check path, type errors → fix
+             # Common fix patterns:
+             # "Cannot find module 'vitest'" → exclude test files from tsconfig build:
+             #   Add "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"] to tsconfig.json
+             #   OR add "types": ["vitest/globals"] to compilerOptions
+             # "Cannot find module 'X'" → npm install X in {{repo}}
+             # "'X' is declared but never used" → remove unused import
+             # Fix each error, then re-run build
            fi
 
            # Test
@@ -928,6 +936,12 @@ steps:
 
       PREVIOUS FAILURE (if retrying — YOU MUST FIX THESE ISSUES FIRST before doing anything else):
       {{previous_failure}}
+
+      GH CLI NOTE: Only use valid --json fields. Common valid fields:
+      number, title, state, body, url, headRefName, baseRefName, reviews, comments,
+      additions, deletions, changedFiles, mergeable, createdAt, closedAt, mergedAt.
+      INVALID fields (will error): headSha, mergeableState, statusCheckRollup.
+      To check mergeable status: gh pr view URL --json mergeable --jq '.mergeable'
 
       === VERIFY + FIX + MERGE WORKFLOW ===
 
@@ -1113,9 +1127,12 @@ steps:
          SMOKE_EXIT=$?
          echo "$SMOKE_RESULT"
          ```
-      2. Parse the result:
+      2. Parse the result JSON:
+         - If status is "pass" OR "warn" with 0 failures: continue to STEP 4
          - If exit code 0 (pass): continue to STEP 4
-         - If exit code 1 (failures found): read the failures array and FIX each issue
+         - If exit code 1 but status is "warn" and failures array is empty: this is a
+           false positive — continue to STEP 4 (warn means non-critical issues only)
+         - If exit code 1 with actual failures: read the failures array and FIX each issue
            - "JS Exception: ..." → find and fix the runtime error in code
            - "Console Error: ..." → fix missing imports, broken references, module issues
            - "Page appears blank" → ensure the app renders visible content
