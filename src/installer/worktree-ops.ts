@@ -96,6 +96,18 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
   }
 
   try {
+    // MERGE_CONFLICT FIX: Fetch latest base branch before creating worktree.
+    // Without this, worktree is created from stale local base branch that
+    // doesn't include recently merged PRs from other stories.
+    try {
+      execFileSync("git", ["fetch", "origin", baseBranch], { cwd: repo, timeout: 15000, stdio: "pipe" });
+      // Fast-forward local base branch to include merged PRs
+      execFileSync("git", ["branch", "-f", baseBranch, "origin/" + baseBranch], { cwd: repo, timeout: 5000, stdio: "pipe" });
+      logger.info(`[worktree] Synced ${baseBranch} to origin/${baseBranch} before creating worktree`, {});
+    } catch (fetchErr) {
+      logger.warn(`[worktree] Could not sync base branch: ${String(fetchErr)}`, {});
+    }
+
     // Check if story branch already exists (may have WIP commits from previous session)
     let branchExists = false;
     try {

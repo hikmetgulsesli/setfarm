@@ -817,13 +817,14 @@ steps:
            echo "=== Verification cycle $CYCLE ==="
            LINT_OK=true; BUILD_OK=true; TEST_OK=true
 
-           # Lint
-           {{lint_cmd}} 2>&1 || { LINT_OK=false; echo "Lint failed — fixing..."; }
+           # Lint — always auto-fix first, then check
+           npx eslint --fix "src/**/*.{ts,tsx}" 2>/dev/null || npx eslint --fix "app/**/*.{ts,tsx}" 2>/dev/null || true
+           {{lint_cmd}} 2>&1 || { LINT_OK=false; echo "Lint failed after auto-fix — manual fix needed"; }
            if [ "$LINT_OK" = "false" ]; then
-             npx eslint --fix "src/**/*.{ts,tsx}" 2>/dev/null || true
-             # Read remaining errors and fix manually
              LINT_OUT=$({{lint_cmd}} 2>&1) || true
-             # Parse error file:line from output and fix each one
+             echo "$LINT_OUT"
+             # Read each error line (file:line:col error message), open the file, fix the issue
+             # Common fixes: remove unused imports, add missing types, fix naming
            fi
 
            # Build
