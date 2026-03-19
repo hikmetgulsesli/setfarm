@@ -15,7 +15,7 @@ import {
   findStoryByStatus, skipFailedStories,
 } from "./repo.js";
 import { archiveRunProgress, scheduleRunCronTeardown, cleanupLocalBranches } from "./cleanup-ops.js";
-import { cleanupWorktrees } from "./worktree-ops.js";
+import { cleanupWorktrees, cleanAgentWorkspace } from "./worktree-ops.js";
 import { RUN_STATUS, STEP_STATUS, STORY_STATUS } from "./constants.js";
 
 // ── advancePipeline ──────────────────────────────────────────────────
@@ -74,6 +74,13 @@ export function advancePipeline(runId: string): { advanced: boolean; runComplete
       archiveRunProgress(runId);
       cleanupWorktrees(runId);
       cleanupLocalBranches(runId);
+      // Clean agent workspaces of project files from this run
+      try {
+        const agentRows = db.prepare("SELECT DISTINCT agent_id FROM steps WHERE run_id = ?").all(runId) as { agent_id: string }[];
+        for (const row of agentRows) {
+          cleanAgentWorkspace(row.agent_id);
+        }
+      } catch (e) { logger.warn(`[advance] Workspace cleanup failed: ${String(e)}`, {}); }
       scheduleRunCronTeardown(runId);
       return { advanced: false, runCompleted: true };
     }

@@ -1,0 +1,81 @@
+STATUS: done
+STITCH_PROJECT_ID: 17837416582586999951
+DEVICE_TYPE: DESKTOP
+SCREENS_GENERATED: 11
+DESIGN_SYSTEM:
+  aesthetic: glassmorphism-dark-atmospheric
+  palette: deep-blue-purple-gradient
+  heading_font: SORA
+  body_font: NUNITO_SANS
+  icon_library: Lucide React
+DESIGN_MD: none
+DESIGN_NOTES: Generated 11 screens for the Hava Durumu Dashboard weather app. All screens use glassmorphism design with dark atmospheric gradient backgrounds (#0f0c29 → #302b63 → #24243e), cyan accent (#00d4ff), and Turkish UI content. Screens cover all 10 PRD screen types plus an extra error variant.
+SCREEN_MAP:
+[
+  {
+    "screenId": "375fa5bd36d1419099e7dea71f97c61c",
+    "name": "Ana Dashboard",
+    "type": "dashboard",
+    "description": "Main weather dashboard with search sidebar, current weather hero, 5-day forecast list, and metrics panel"
+  },
+  {
+    "screenId": "cb047008541a42c79ea06e1424b54df9",
+    "name": "Şehir Arama",
+    "type": "search-view",
+    "description": "City search with input, spinner, and dropdown results (max 5)"
+  },
+  {
+    "screenId": "5b588a12daea4a3784b1a6255aa596ae",
+    "name": "Anlık Hava Durumu",
+    "type": "hero-card",
+    "description": "Hero weather card with city, country flag, animated icon, temperature, feels-like, description, high/low"
+  },
+  {
+    "screenId": "1c5a5b10bb8c4c228e34b5783072a6b5",
+    "name": "5 Günlük Tahmin",
+    "type": "list-view",
+    "description": "5-day forecast cards with day name, date, weather icon, day/night temps, precipitation chance"
+  },
+  {
+    "screenId": "177a7137466a4e25b13b0049a472a95f",
+    "name": "Sıcaklık Grafiği",
+    "type": "chart",
+    "description": "5-day temperature chart with min/max line curves, tooltips, cyan theme"
+  },
+  {
+    "screenId": "acec4bf39e8744ef815241c290f4d2c5",
+    "name": "Nem Grafiği",
+    "type": "chart",
+    "description": "5-day humidity bar chart with cyan bars, day labels, percentage tooltips"
+  },
+  {
+    "screenId": "cfd01f4d8f364c9887c5b30762c91914",
+    "name": "Rüzgar Grafiği",
+    "type": "chart",
+    "description": "5-day wind speed line chart with cyan/green line, km/s unit, tooltips"
+  },
+  {
+    "screenId": "5f2a8e4555e248efa8964d94e2f68fed",
+    "name": "Bağlantı Hatası",
+    "type": "error-state",
+    "description": "Connection error screen with error icon, message, and retry button"
+  },
+  {
+    "screenId": "8f86af5147b149bf95f3fadbb27f8fb9",
+    "name": "Hava Durumu Yüklenemedi Hatası",
+    "type": "error-state",
+    "description": "API error screen for failed weather data load"
+  },
+  {
+    "screenId": "85f3c5240f734d8d99ee30fd9e5f90e6",
+    "name": "Boş Durum",
+    "type": "empty-state",
+    "description": "Welcome/empty state with search prompt and search box"
+  },
+  {
+    "screenId": "fcca84b1dd0144dd9a74d4520af63cd7",
+    "name": "Yükleme Ekranı",
+    "type": "loading-state",
+    "description": "Loading skeleton screen with shimmer animations and spinner"
+  }
+]

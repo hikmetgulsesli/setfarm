@@ -5,6 +5,7 @@ import { resolveWorkflowDir } from "./paths.js";
 import { getDb, nextRunNumber } from "../db.js";
 import { logger } from "../lib/logger.js";
 import { ensureWorkflowCrons } from "./agent-cron.js";
+import { cleanAgentWorkspace } from "./worktree-ops.js";
 import { emitEvent } from "./events.js";
 
 export async function runWorkflow(params: {
@@ -90,6 +91,16 @@ export async function runWorkflow(params: {
   } catch (err) {
     db.exec("ROLLBACK");
     throw err;
+  }
+
+  // Clean agent workspaces of stale files from previous runs
+  const agentIds = new Set(workflow.steps.map((s: any) => `${workflow.id}_${s.agent}`));
+  for (const agentId of agentIds) {
+    try {
+      cleanAgentWorkspace(agentId);
+    } catch (err) {
+      logger.warn(`[run] Workspace cleanup failed for ${agentId}: ${err}`, {});
+    }
   }
 
   // Start crons for this workflow (no-op if already running from another run)

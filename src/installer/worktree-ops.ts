@@ -321,3 +321,65 @@ export function cleanupWorktrees(runId: string): void {
     logger.warn(`[worktree] Cleanup failed for run ${runId}: ${err}`, {});
   }
 }
+
+// ── Agent Workspace Cleanup ─────────────────────────────────────────
+
+/**
+ * Preserved files/dirs in agent workspace (OpenClaw system files).
+ * Everything else is leftover from a previous run and must be removed.
+ */
+const WORKSPACE_PRESERVED = new Set([
+  '.openclaw',
+  'SOUL.md',
+  'AGENTS.md',
+  'IDENTITY.md',
+  'HEARTBEAT.md',
+  'TOOLS.md',
+  'USER.md',
+  'BOOTSTRAP.md',
+  'README.md',
+  '.git',
+]);
+
+/**
+ * Clean an agent's workspace of all project files from previous runs.
+ * Preserves OpenClaw system files (SOUL.md, AGENTS.md, .openclaw/, etc.)
+ * Call this before a new run claims a step for the agent.
+ */
+export function cleanAgentWorkspace(agentId: string): void {
+  const ws = getAgentWorkspacePath(agentId);
+  if (!ws || !fs.existsSync(ws)) return;
+
+  try {
+    const entries = fs.readdirSync(ws);
+    let removed = 0;
+
+    for (const entry of entries) {
+      // Skip preserved system files
+      if (WORKSPACE_PRESERVED.has(entry)) continue;
+      // Skip hidden dirs other than .git (e.g. .openclaw)
+      if (entry.startsWith('.') && entry !== '.git') continue;
+
+      const fullPath = path.join(ws, entry);
+      try {
+        const stat = fs.lstatSync(fullPath);
+        if (stat.isDirectory()) {
+          // Kill any orphaned processes in the directory first
+          killWorktreeProcesses(fullPath);
+          fs.rmSync(fullPath, { recursive: true, force: true });
+        } else {
+          fs.unlinkSync(fullPath);
+        }
+        removed++;
+      } catch (e) {
+        logger.warn(`[workspace-clean] Failed to remove ${entry} in ${agentId} workspace: ${String(e)}`, {});
+      }
+    }
+
+    if (removed > 0) {
+      logger.info(`[workspace-clean] Cleaned ${removed} stale entries from ${agentId} workspace`, {});
+    }
+  } catch (err) {
+    logger.warn(`[workspace-clean] Failed for ${agentId}: ${String(err)}`, {});
+  }
+}
