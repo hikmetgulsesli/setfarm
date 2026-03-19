@@ -464,10 +464,22 @@ steps:
            integration replaces it with a unified module, delete helper.ts."
          - This prevents file bloat from incremental story development.
 
+      SHARED FILE CONFLICT PREVENTION (CRITICAL):
+      Stories run in parallel worktrees. If 2 stories modify the same file,
+      merge conflicts WILL occur and waste retries. Rules:
+      - package.json: ONLY the FIRST story (US-001 setup) should add dependencies.
+        All other stories MUST NOT run npm install or modify package.json.
+        If a story needs a new dependency, add it to US-001's acceptance criteria.
+      - Shared type files (types/*.ts): Define ALL types in US-001. Later stories
+        MUST import existing types, never create overlapping type definitions.
+      - Config files (tsconfig.json, tailwind.config.*, vite.config.*): ONLY US-001.
+      - If 2 stories MUST touch the same file, use depends_on so they run sequentially.
+
       DO NOT:
-         - Create micro-stories ("Create user model" separate, "Create user API" separate → WRONG)
-         - Make stories for non-code sections (metrics, risks, timeline)
-         - Create stories that take longer than 30 minutes
+      - Create micro-stories ("Create user model" separate, "Create user API" separate → WRONG)
+      - Make stories for non-code sections (metrics, risks, timeline)
+      - Create stories that take longer than 30 minutes
+      - Have multiple stories modify package.json, tsconfig.json, or shared type files
 
       ============================================================
       MANDATORY OUTPUT FORMAT — PIPELINE WILL BREAK IF YOU SKIP ANY KEY
@@ -640,6 +652,12 @@ steps:
       the package is installed. If you need tailwindcss, run `npm install -D tailwindcss`
       BEFORE `npx tailwindcss init`. If you need postcss, install it first. Check package.json
       devDependencies before assuming any tool is available.
+
+      SHARED FILE RULE: Do NOT modify package.json unless this is the setup story (US-001).
+      All dependencies should already be installed by the setup story. If a dependency is
+      truly missing, run `npm install <pkg>` in the WORKTREE (it will use the shared
+      node_modules via symlink) but do NOT commit package.json changes — they will cause
+      merge conflicts with other parallel stories.
 
       !include story-loop-context.md
 
@@ -896,15 +914,25 @@ steps:
 
       STEP 1 — Checkout and read PR reviews:
       1. cd into {{repo}}
-      2. git fetch origin
-      3. git checkout {{story_branch}} && git pull origin {{story_branch}}
+      2. Clean cached files that block checkout:
+         git clean -fd node_modules/.vite 2>/dev/null || true
+         git checkout -- node_modules/.vite 2>/dev/null || true
+      3. git fetch origin
+      4. git checkout {{story_branch}} && git pull origin {{story_branch}}
+         If checkout fails with "local changes would be overwritten":
+           git stash && git checkout {{story_branch}} && git pull origin {{story_branch}} && git stash pop 2>/dev/null || true
       4. Get PR number and read review comments:
          PR_NUM=$(gh pr view "{{pr_url}}" --json number --jq '.number' 2>/dev/null || echo "")
-         REVIEWS=$(gh pr view "{{pr_url}}" --json reviews --jq '.reviews[].body' 2>/dev/null || echo "")
-         COMMENTS=$(gh pr view "{{pr_url}}" --json comments --jq '.comments[].body' 2>/dev/null || echo "")
-         if [ -n "$PR_NUM" ]; then
-           REPO_SLUG=$(gh pr view "{{pr_url}}" --json url --jq '.url' | sed 's|https://github.com/||;s|/pull/.*||')
-           REVIEW_COMMENTS=$(gh api "repos/$REPO_SLUG/pulls/$PR_NUM/comments" --jq '.[].body' 2>/dev/null || echo "")
+         if [ -z "$PR_NUM" ]; then
+           # PR may not exist yet or URL is invalid — skip review reading
+           echo "No PR found at {{pr_url}} — will do own quality review"
+         else
+           REVIEWS=$(gh pr view "{{pr_url}}" --json reviews --jq '.reviews[].body' 2>/dev/null || echo "")
+           COMMENTS=$(gh pr view "{{pr_url}}" --json comments --jq '.comments[].body' 2>/dev/null || echo "")
+           REPO_SLUG=$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || echo "")
+           if [ -n "$REPO_SLUG" ]; then
+             REVIEW_COMMENTS=$(gh api "repos/$REPO_SLUG/pulls/$PR_NUM/comments" --jq '.[].body' 2>/dev/null || echo "")
+           fi
          fi
       5. If external reviews exist → read them and proceed to STEP 2
          If NO reviews exist → skip to STEP 3 (do your own quality review instead)
@@ -1057,26 +1085,57 @@ steps:
 
       STEP 4 — Rebase onto latest feature branch (prevents merge conflicts):
       1. git fetch origin
-      2. git rebase origin/{{branch}}
-      3. If rebase conflicts occur:
-         - Read each conflicted file carefully
-         - Resolve conflicts preserving BOTH the existing feature-branch code AND this story's changes
-         - git add <resolved files> && git rebase --continue
-         - If conflict is unresolvable: git rebase --abort and proceed to merge anyway
-      4. Run lint: {{lint_cmd}} → fix errors
-      5. Run build: {{build_cmd}} → fix errors
-      6. Run test: {{test_cmd}} → fix failures
-      7. git push --force-with-lease
+      2. Try rebase:
+         git rebase origin/{{branch}} 2>&1
+         REBASE_EXIT=$?
+      3. If rebase succeeds (exit 0): continue to lint/build/test
+      4. If rebase conflicts occur (exit != 0):
+         a. Check conflicted files: git diff --name-only --diff-filter=U
+         b. For each conflicted file:
+            - If it's package.json: accept theirs (feature branch), then re-add your dependency changes
+              git checkout --theirs package.json && git add package.json
+            - If it's a shared type file (types/*.ts): merge both additions manually
+            - For other files: read carefully, keep BOTH changes where possible
+         c. git add <resolved files> && git rebase --continue
+         d. If rebase is still stuck after 2 attempts:
+            git rebase --abort
+            # Fall back to merge instead of rebase
+            git merge origin/{{branch}} --no-edit 2>&1 || {
+              # If merge also conflicts, resolve the same way
+              git checkout --theirs package.json 2>/dev/null && git add package.json 2>/dev/null
+              git checkout --theirs package-lock.json 2>/dev/null && git add package-lock.json 2>/dev/null
+              git add -A && git commit --no-edit 2>/dev/null || true
+            }
+      5. Run lint: {{lint_cmd}} → fix errors
+      6. Run build: {{build_cmd}} → fix errors
+      7. Run test: {{test_cmd}} → fix failures
+      8. git push --force-with-lease
 
       STEP 5 — Merge PR:
-      1. gh pr comment "{{pr_url}}" --body "Verified: lint/build/test pass. Code quality checked."
-      2. Merge with fallback:
-         gh pr merge "{{pr_url}}" --squash --delete-branch || {
-           echo "Merge failed — retrying after rebase"
-           git fetch origin && git rebase origin/{{branch}}
-           git push --force-with-lease
-           gh pr merge "{{pr_url}}" --squash --delete-branch
-         }
+      1. Verify PR exists and is open:
+         PR_STATE=$(gh pr view "{{pr_url}}" --json state --jq '.state' 2>/dev/null || echo "UNKNOWN")
+         if [ "$PR_STATE" = "MERGED" ]; then
+           echo "PR already merged — nothing to do"
+           # Skip to STATUS: done
+         elif [ "$PR_STATE" = "UNKNOWN" ] || [ "$PR_STATE" = "CLOSED" ]; then
+           # PR doesn't exist or is closed — push and create
+           git push -u origin {{story_branch}} 2>/dev/null || true
+           gh pr create --base {{branch}} --head {{story_branch}} --title "{{current_story_id}}" --body "Auto-created by verify step" 2>/dev/null || true
+           PR_STATE="OPEN"
+         fi
+      2. If PR is open, add comment and merge:
+         if [ "$PR_STATE" = "OPEN" ]; then
+           gh pr comment "{{pr_url}}" --body "Verified: lint/build/test pass." 2>/dev/null || true
+           gh pr merge "{{pr_url}}" --squash --delete-branch 2>/dev/null || {
+             echo "Merge failed — retrying after rebase"
+             git fetch origin && git rebase origin/{{branch}} 2>/dev/null || git rebase --abort 2>/dev/null
+             git push --force-with-lease 2>/dev/null || git push 2>/dev/null || true
+             gh pr merge "{{pr_url}}" --squash --delete-branch 2>/dev/null || {
+               echo "Merge still failing — trying merge commit instead of squash"
+               gh pr merge "{{pr_url}}" --merge --delete-branch 2>/dev/null || true
+             }
+           }
+         fi
       3. Reply STATUS: done
 
       If build/test FAILS and you cannot fix:
