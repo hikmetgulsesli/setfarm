@@ -93,7 +93,7 @@ The workflow cannot advance until you report. Your session ending without report
 }
 
 const DEFAULT_POLLING_TIMEOUT_SECONDS = 120;
-const DEFAULT_POLLING_MODEL = "minimax/MiniMax-M2.5";
+const DEFAULT_POLLING_MODEL = "minimax/MiniMax-M2.7";
 
 /**
  * Build inline execution prompt — no sessions_spawn.

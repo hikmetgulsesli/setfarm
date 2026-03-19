@@ -6,8 +6,9 @@
  * Usage:
  *   node stitch-api.mjs create-project "Project Name"
  *   node stitch-api.mjs ensure-project "Project Name" /path/to/repo    (find-or-create + persist .stitch)
- *   node stitch-api.mjs generate-screen <projectId> "<prompt>" [DESKTOP|MOBILE|TABLET] [GEMINI_3_PRO|GEMINI_3_FLASH]
+ *   node stitch-api.mjs generate-screen <projectId> "<prompt>" [DESKTOP|MOBILE|TABLET] [GEMINI_3_1_PRO|GEMINI_3_FLASH]
  *   node stitch-api.mjs generate-screen-safe <projectId> "<prompt>" "<title>" [device] [model]  (dedup check)
+ *   node stitch-api.mjs get-design-md <projectId> [repoPath]                                    (extract DESIGN.md)
  *   node stitch-api.mjs list-screens <projectId>
  *   node stitch-api.mjs get-screen <projectId> <screenId>
  *   node stitch-api.mjs download-screen <projectId> <screenId> <outputPath>
@@ -288,8 +289,8 @@ const commands = {
     console.log(JSON.stringify({ projectId, title }, null, 2));
   },
 
-  async 'generate-screen'(projectId, prompt, deviceType = 'DESKTOP', modelId = 'GEMINI_3_PRO') {
-    if (!projectId || !prompt) throw new Error('Usage: generate-screen <projectId> "<prompt>" [DESKTOP|MOBILE|TABLET] [GEMINI_3_PRO|GEMINI_3_FLASH]');
+  async 'generate-screen'(projectId, prompt, deviceType = 'DESKTOP', modelId = 'GEMINI_3_1_PRO') {
+    if (!projectId || !prompt) throw new Error('Usage: generate-screen <projectId> "<prompt>" [DESKTOP|MOBILE|TABLET] [GEMINI_3_1_PRO|GEMINI_3_FLASH]');
     await initialize();
 
     const args = {
@@ -433,7 +434,7 @@ const commands = {
     console.log(JSON.stringify({ projectId, source: 'created-or-found' }, null, 2));
   },
 
-  async 'generate-screen-safe'(projectId, prompt, screenTitle, deviceType = 'DESKTOP', modelId = 'GEMINI_3_PRO') {
+  async 'generate-screen-safe'(projectId, prompt, screenTitle, deviceType = 'DESKTOP', modelId = 'GEMINI_3_1_PRO') {
     if (!projectId || !prompt) throw new Error('Usage: generate-screen-safe <projectId> "<prompt>" "<screenTitle>" [DESKTOP|MOBILE|TABLET] [model]');
 
     await initialize();
@@ -529,12 +530,92 @@ const commands = {
         }
       }
       writeFileSync(trackingFile, JSON.stringify(tracked, null, 2));
+
+      // Extract DESIGN.md from project if it doesn't exist yet
+      const designMdPath = resolve(process.cwd(), 'DESIGN.md');
+      if (!existsSync(designMdPath)) {
+        try {
+          const projResult = await callTool('get_project', { name: 'projects/' + projectId });
+          let designMd = null;
+          if (projResult && projResult.content) {
+            for (const item of projResult.content) {
+              if (item.type === 'text') {
+                try {
+                  const parsed = JSON.parse(item.text);
+                  designMd = parsed.designTheme?.designMd
+                    || parsed.theme?.designMd
+                    || parsed.designMd
+                    || parsed.design_theme?.design_md
+                    || parsed.designSystem?.designMd
+                    || null;
+                  if (designMd) break;
+                } catch { /* skip */ }
+              }
+            }
+          }
+          if (designMd) {
+            writeFileSync(designMdPath, designMd);
+            process.stderr.write('Saved DESIGN.md (' + designMd.length + ' chars)\n');
+          }
+        } catch (e) {
+          process.stderr.write('WARN: Could not extract DESIGN.md: ' + e.message + '\n');
+        }
+      }
     }
 
     console.log(JSON.stringify({ skipped: false, screens, suggestions }, null, 2));
   },
 
   // ---- New commands (v1.5.28) ----------------------------------------------------------------------------
+
+
+  async 'get-design-md'(projectId, repoPath) {
+    if (!projectId) throw new Error('Usage: get-design-md <projectId> [repoPath]');
+    await initialize();
+    const result = await callTool('get_project', { name: 'projects/' + projectId });
+
+    let designMd = null;
+    let designTokens = null;
+    let styleGuidelines = null;
+
+    if (result && result.content) {
+      for (const item of result.content) {
+        if (item.type === 'text') {
+          try {
+            const parsed = JSON.parse(item.text);
+            // Try multiple paths for designMd
+            designMd = parsed.designTheme?.designMd
+              || parsed.theme?.designMd
+              || parsed.designMd
+              || parsed.design_theme?.design_md
+              || parsed.designSystem?.designMd
+              || null;
+            // Extract design tokens and style guidelines
+            const ds = parsed.designTheme?.designSystem
+              || parsed.theme?.designSystem
+              || parsed.designSystem
+              || parsed.design_theme?.design_system
+              || {};
+            designTokens = ds.designTokens || ds.design_tokens || null;
+            styleGuidelines = ds.styleGuidelines || ds.style_guidelines || null;
+            if (designMd) break;
+          } catch {
+            // skip unparseable
+          }
+        }
+      }
+    }
+
+    // Write DESIGN.md if repoPath provided and designMd found
+    if (designMd && repoPath) {
+      const designMdPath = resolve(repoPath, 'DESIGN.md');
+      mkdirSync(dirname(designMdPath), { recursive: true });
+      writeFileSync(designMdPath, designMd);
+      process.stderr.write('Saved DESIGN.md to ' + designMdPath + ' (' + designMd.length + ' chars)\n');
+    }
+
+    console.log(JSON.stringify({ designMd: designMd || '', designTokens: designTokens || '', styleGuidelines: styleGuidelines || '' }, null, 2));
+  },
 
   async 'download-screen'(projectId, screenId, outputPath) {
     if (!projectId || !screenId || !outputPath) throw new Error('Usage: download-screen <projectId> <screenId> <outputPath>');
@@ -901,6 +982,7 @@ Commands:
   ensure-project "Name" /path/to/repo                                    Find-or-create + persist .stitch
   generate-screen <projectId> "<prompt>" [device] [model]                Generate a screen
   generate-screen-safe <projectId> "<prompt>" "<title>" [device] [model] Generate with dedup check
+  get-design-md <projectId> [repoPath]                                   Extract DESIGN.md from project
   list-screens <projectId>                                               List screens in project
   get-screen <projectId> <screenId>                                      Get screen details
   download-screen <projectId> <screenId> <outputPath>                    Download screen HTML

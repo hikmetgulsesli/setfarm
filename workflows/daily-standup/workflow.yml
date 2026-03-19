@@ -14,7 +14,7 @@ cron:
   interval_ms: 240000
 
 polling:
-  model: minimax/MiniMax-M2.5
+  model: minimax/MiniMax-M2.7
   timeoutSeconds: 600
 
 notifications:
@@ -24,7 +24,7 @@ agents:
   - id: collector
     name: Collector
     role: analysis
-    model: minimax/MiniMax-M2.5
+    model: minimax/MiniMax-M2.7
     description: Son 24 saatteki agent aktivitesini, run durumlarini ve sistem bilgisini toplar.
     workspace:
       baseDir: agents/collector
@@ -35,7 +35,7 @@ agents:
   - id: reporter
     name: Reporter
     role: analysis
-    model: minimax/MiniMax-M2.5
+    model: minimax/MiniMax-M2.7
     description: Toplanan veriyi ozetleyip Discord ve Telegram a gonderir.
     workspace:
       baseDir: agents/reporter

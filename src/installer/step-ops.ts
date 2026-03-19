@@ -820,7 +820,7 @@ ${cavReport}`, { runId: step.run_id });
         db.prepare("UPDATE steps SET status = 'waiting', updated_at = ? WHERE id = ?")
           .run(new Date().toISOString(), step.id);
         logger.info(`[claim-auto-verify] All stories auto-verified, triggering pipeline advancement`, { runId: step.run_id });
-        checkLoopContinuation(step.run_id, loopStepForVerify.id);
+        try { checkLoopContinuation(step.run_id, loopStepForVerify.id); } catch (e) { logger.error("[claim-auto-verify] checkLoopContinuation failed: " + String(e), { runId: step.run_id }); }
         return { found: false };
       }
 
@@ -1836,7 +1836,7 @@ SUMMARY: ${verifiedCount}/${totalCount} stories verified, ${skippedCount} skippe
 
 // Early worktree cleanup: clean up .worktrees when implement loop finishes,  // not just when the entire run completes. Prevents stale worktree accumulation.  cleanupWorktrees(runId);
   db.prepare(
-    "UPDATE steps SET status = done, output = ?, updated_at = ? WHERE id = ?"
+    "UPDATE steps SET status = 'done', output = ?, updated_at = ? WHERE id = ?"
   ).run(loopSummaryOutput, new Date().toISOString(), loopStepId);
 
   // Also mark verify step done if it exists (with summary output)
@@ -1847,7 +1847,7 @@ SUMMARY: ${verifiedCount}/${totalCount} stories verified, ${skippedCount} skippe
       const verifySummary = `STATUS: done
 VERIFICATION_SUMMARY: ${verifiedCount}/${totalCount} stories verified`;
       db.prepare(
-        "UPDATE steps SET status = done, output = ?, updated_at = ? WHERE run_id = ? AND step_id = ?"
+        "UPDATE steps SET status = 'done', output = ?, updated_at = ? WHERE run_id = ? AND step_id = ?"
       ).run(verifySummary, new Date().toISOString(), runId, lc.verifyStep);
     }
   }

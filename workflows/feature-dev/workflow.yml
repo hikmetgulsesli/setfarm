@@ -28,7 +28,7 @@ cron:
   interval_ms: 60000  # 1 minute
 
 polling:
-  model: minimax/MiniMax-M2.5
+  model: minimax/MiniMax-M2.7
   timeoutSeconds: 1800
 
 agents:
@@ -111,7 +111,7 @@ agents:
 
   - id: qa-tester
     name: QA Tester
-    role: testing
+    role: coding
     description: Stitch-driven browser QA testing — verifies every screen, button, form, and API.
     workspace:
       baseDir: agents/qa-tester
@@ -295,7 +295,7 @@ steps:
       For each unique screen you identified:
       a. Build detailed prompt from screen name, type, description + your chosen design_system colors/fonts
       b. Use generate-screen-safe with screenId as identifier:
-         node "$STITCH_SCRIPT" generate-screen-safe "$PROJECT_ID" "<prompt>" "<screen.name>" <DEVICE> GEMINI_3_PRO
+         node "$STITCH_SCRIPT" generate-screen-safe "$PROJECT_ID" "<prompt>" "<screen.name>" <DEVICE> GEMINI_3_1_PRO
       c. If result has "skipped: true" → screen already exists (OK, continue to next)
       d. Otherwise, parse screens from response
       e. ALWAYS save the screenId from each call (even skipped ones have screenId in response)
@@ -307,6 +307,12 @@ steps:
       This returns ALL screens with their screenId, name, and metadata.
       Use this data to build the SCREEN_MAP JSON array in your output.
       NEVER skip SCREEN_MAP output. Without it, the entire pipeline breaks.
+
+      STEP 3.5 — Extract DESIGN.md:
+      After all screens are generated, extract the project's design system:
+        cd "$REPO_PATH"
+        node "$STITCH_SCRIPT" get-design-md "$PROJECT_ID" "$REPO_PATH"
+      This saves DESIGN.md to the repo root. The implement step will use it for visual consistency.
 
       NOTE: Do NOT commit to git — the repo may not exist yet. The setup step will
       download HTML files from Stitch and commit them.
@@ -353,6 +359,7 @@ steps:
       the pipeline guardrail will REJECT your output and force a retry.
       Even if screens were reused/skipped, you MUST output SCREEN_MAP with real IDs.
 
+      DESIGN_MD: <path to DESIGN.md or "none" if backend-only>
       DESIGN_NOTES: <summary>
       ============================================================
     expects: "STATUS: done"
@@ -513,6 +520,18 @@ steps:
       bash $HOME/.openclaw/setfarm-repo/scripts/setup-repo.sh {{repo}} {{branch}} {{stitch_project_id}} '{{screen_map}}'
 
       The script handles: git init, GitHub remote, .gitignore, branch, stitch download, push.
+
+      After setup-repo.sh completes successfully, also extract DESIGN.md:
+        STITCH_SCRIPT="$HOME/.openclaw/setfarm-repo/scripts/stitch-api.mjs"
+        if [ -n "{{stitch_project_id}}" ] && [ "{{stitch_project_id}}" != "undefined" ]; then
+          cd "{{repo}}"
+          node "$STITCH_SCRIPT" get-design-md "{{stitch_project_id}}" "{{repo}}"
+          if [ -f "{{repo}}/DESIGN.md" ]; then
+            git add DESIGN.md && git commit -m "design: add DESIGN.md from Stitch" || true
+            git push origin {{branch}} || true
+          fi
+        fi
+
       Report the script output as your output. If it prints STATUS: fail, report STATUS: fail.
 
       ============================================================
@@ -622,6 +641,12 @@ steps:
       DESIGN_MANIFEST: {{design_manifest}}
       DESIGN_TOKENS: {{design_tokens}}
       STORY_SCREENS: {{story_screens}}
+
+      DESIGN.MD INTEGRATION (MANDATORY if file exists):
+      If DESIGN.md exists at the repo root, read it before writing any UI code.
+      Follow its design system guidelines (colors, typography, spacing, component
+      patterns) when implementing UI components. DESIGN.md is the authoritative
+      source for visual consistency across all screens and stories.
 
       PREVIOUS FAILURE (if retrying — READ THIS FIRST and avoid the same mistake):
       {{previous_failure}}
@@ -1261,7 +1286,37 @@ steps:
          - Switch back to default theme
          - Report issues as MEDIUM
 
-      === CLEANUP ===
+      === FIX CYCLE (MANDATORY if CRITICAL/HIGH issues found, max 2 rounds) ===
+
+      After completing all screen tests, if you found CRITICAL or HIGH issues
+      (non-functional buttons, broken forms, missing wiring, dead clicks):
+
+      ROUND 1:
+      1. For each CRITICAL/HIGH issue:
+         a. Read the source file containing the broken element
+         b. Identify the root cause:
+            - Missing onClick/onSubmit handler
+            - Handler exists but empty or no-op
+            - Modal/dialog component not rendered
+            - State not connected to UI
+            - Event handler not imported or wired
+         c. Fix the code: add the missing wiring, connect handlers, render components
+         d. Keep fixes minimal: just make the feature work, no refactoring
+      2. git add -A && git commit -m "qa: fix non-functional UI elements" && git push
+      3. Rebuild: {{build_cmd}}
+      4. Restart dev server, re-test ONLY the previously broken elements
+      5. Update issue status in QA_REPORT.md (FIXED or STILL_BROKEN)
+
+      ROUND 2 (only if Round 1 left unresolved issues):
+      1. Re-examine the code with fresh eyes
+      2. Try alternative fix approach
+      3. Rebuild, re-test, commit, push
+      4. If still broken: mark as UNRESOLVED in report, continue
+
+      CRITICAL: Do NOT skip this cycle. Finding bugs without fixing them is NOT acceptable.
+      You have coding access. READ the code, UNDERSTAND the bug, FIX it, TEST it.
+
+            === CLEANUP ===
 
       1. agent-browser close
       2. kill $SERVER_PID (if started)

@@ -116,7 +116,7 @@ id: feature-dev
 agents:
   - id: planner
     role: analysis
-    model: minimax/MiniMax-M2.5
+    model: minimax/MiniMax-M2.7
     workspace: { baseDir: ..., files: {...} }
 steps:
   - id: plan

@@ -128,7 +128,7 @@ export const DEFAULT_STORY_MAX_RETRIES = 5;
 export const STORY_FALLBACK_RETRY_THRESHOLD = 3;
 
 /** Fallback model for story retries (minimax when primary is kimi, vice versa) */
-export const STORY_FALLBACK_MODEL = "minimax/MiniMax-M2.5";
+export const STORY_FALLBACK_MODEL = "minimax/MiniMax-M2.7";
 // ── Stories ──────────────────────────────────────────────────────────
 
 /** Maximum number of stories a planner can produce */

@@ -6,9 +6,9 @@ OpenClaw platform operations, configuration, and management guide.
 
 | Agent Role | Primary Model | Fallback |
 |---|---|---|
-| Coding (developer, setup, tester, verifier, fixer) | `kimi-coding/k2p5` (Kimi K2.5) | `minimax/MiniMax-M2.5` |
-| Non-coding (planner, reviewer, main, PR, merge) | `minimax/MiniMax-M2.5` | `kimi-coding/k2p5` |
-| Subagents | `kimi-coding/k2p5` | `minimax/MiniMax-M2.5` |
+| Coding (developer, setup, tester, verifier, fixer) | `kimi-coding/k2p5` (Kimi K2.5) | `minimax/MiniMax-M2.7` |
+| Non-coding (planner, reviewer, main, PR, merge) | `minimax/MiniMax-M2.7` | `kimi-coding/k2p5` |
+| Subagents | `kimi-coding/k2p5` | `minimax/MiniMax-M2.7` |
 
 **RULE: Kimi K2.5 must NEVER be removed from coding agents. This is a fixed policy.**
 
@@ -20,7 +20,7 @@ Per-agent override format:
   "id": "feature-dev_developer",
   "model": {
     "primary": "kimi-coding/k2p5",
-    "fallback": "minimax/MiniMax-M2.5"
+    "fallback": "minimax/MiniMax-M2.7"
   }
 }
 ```
