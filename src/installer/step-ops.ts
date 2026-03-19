@@ -9,6 +9,8 @@ import { logger } from "../lib/logger.js";
 import { runQualityChecks, formatQualityReport } from "./quality-gates.js";
 import {
   CLEANUP_THROTTLE_MS,
+  RUN_STATUS,
+  STORY_STATUS,
   PROTECTED_CONTEXT_KEYS,
   OPTIONAL_TEMPLATE_VARS,
 } from "./constants.js";
@@ -128,7 +130,7 @@ export function claimStep(agentId: string): ClaimResult {
   if (!step) return { found: false };
 
   // Guard: don't claim work for a failed run
-  if (getRunStatus(step.run_id) === "failed") return { found: false };
+  if (getRunStatus(step.run_id) === RUN_STATUS.FAILED) return { found: false };
 
   // DESIGN STEP DEDUP: If .stitch + stitch/*.html exist, auto-complete design step.
   // Prevents duplicate Stitch projects on retry/re-run of same repo.
@@ -466,7 +468,7 @@ export function claimStep(agentId: string): ClaimResult {
       };
 
       const allStories = getStories(step.run_id);
-      const pendingCount = allStories.filter(s => s.status === "pending" || s.status === "running").length;
+      const pendingCount = allStories.filter(s => s.status === STORY_STATUS.PENDING || s.status === STORY_STATUS.RUNNING).length;
 
       context["current_story"] = formatStoryForTemplate(story);
       context["current_story_id"] = story.storyId;
@@ -806,7 +808,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   if (!step) throw new Error(`Step not found: ${stepId}`);
 
   // Guard: don't process completions for failed runs
-  if (getRunStatus(step.run_id) === "failed") {
+  if (getRunStatus(step.run_id) === RUN_STATUS.FAILED) {
     return { advanced: false, runCompleted: false };
   }
 
@@ -1295,11 +1297,11 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     const statusVal = parsed["status"]?.toLowerCase();
     let storyStatus: string, storyEvent: string;
     if (statusVal === "fail" || statusVal === "failed" || statusVal === "error") {
-      storyStatus = "failed"; storyEvent = "story.failed";
+      storyStatus = STORY_STATUS.FAILED; storyEvent = "story.failed";
     } else if (statusVal === "skip") {
-      storyStatus = "skipped"; storyEvent = "story.skipped";
+      storyStatus = STORY_STATUS.SKIPPED; storyEvent = "story.skipped";
     } else {
-      storyStatus = "done"; storyEvent = "story.done";
+      storyStatus = STORY_STATUS.DONE; storyEvent = "story.done";
     }
 
     // Mark current story done or skipped + persist PR context for verify_each
@@ -1321,7 +1323,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
 
 
     // Update PROJECT_MEMORY.md with completed story info
-    if (storyRow && storyStatus !== "skipped") {
+    if (storyRow && storyStatus !== STORY_STATUS.SKIPPED) {
       updateProjectMemory(context, storyRow.story_id, storyRow.title, storyStatus, output);
     }
     // Clean up: remove worktree (auto-saves uncommitted changes before removal)

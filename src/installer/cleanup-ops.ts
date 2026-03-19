@@ -20,6 +20,7 @@ import {
   SLOW_ABANDONED_THRESHOLD_MS,
   SLOW_FAST_ABANDONED_THRESHOLD_MS,
   MAX_ABANDON_RESETS,
+  STEP_STATUS,
 } from "./constants.js";
 import { autoSaveWorktree } from "./worktree-ops.js";
 import { getWorkflowId, getRunContext, failRun } from "./repo.js";
@@ -82,7 +83,7 @@ export function cleanupAbandonedSteps(advancePipeline: (runId: string) => { adva
           const verifyStatus = db.prepare(
             "SELECT status FROM steps WHERE run_id = ? AND step_id = ? LIMIT 1"
           ).get(step.run_id, loopConfig.verifyStep) as { status: string } | undefined;
-          if (verifyStatus?.status === "pending" || verifyStatus?.status === "running") {
+          if (verifyStatus?.status === STEP_STATUS.PENDING || verifyStatus?.status === STEP_STATUS.RUNNING) {
             continue;
           }
         }

@@ -17,6 +17,7 @@ import {
 } from "./repo.js";
 import { archiveRunProgress, scheduleRunCronTeardown, cleanupLocalBranches } from "./cleanup-ops.js";
 import { cleanupWorktrees } from "./worktree-ops.js";
+import { RUN_STATUS, STEP_STATUS, STORY_STATUS } from "./constants.js";
 
 // ── advancePipeline ──────────────────────────────────────────────────
 
@@ -29,7 +30,7 @@ export function advancePipeline(runId: string): { advanced: boolean; runComplete
 
   // Guard: don't advance or complete a run that's already failed/cancelled
   const runSt = getRunStatus(runId);
-  if (runSt === "failed" || runSt === "cancelled") {
+  if (runSt === RUN_STATUS.FAILED || runSt === RUN_STATUS.CANCELLED) {
     return { advanced: false, runCompleted: false };
   }
 
@@ -97,12 +98,12 @@ export function checkLoopContinuation(runId: string, loopStepId: string): { adva
   ).get(loopStepId) as { status: string } | undefined;
 
   if (pendingStory) {
-    if (loopStatus?.status === "failed") {
+    if (loopStatus?.status === STEP_STATUS.FAILED) {
       return { advanced: false, runCompleted: false };
     }
     // More stories pending — keep step available for parallel claims
     // Only set to pending if not already running (don't interrupt parallel stories)
-    if (loopStatus?.status !== "running") {
+    if (loopStatus?.status !== STEP_STATUS.RUNNING) {
       db.prepare(
         "UPDATE steps SET status = 'pending', updated_at = ? WHERE id = ?"
       ).run(new Date().toISOString(), loopStepId);
@@ -152,9 +153,9 @@ export function checkLoopContinuation(runId: string, loopStepId: string): { adva
   const loopSummaryStories = db.prepare(
     "SELECT story_id, status FROM stories WHERE run_id = ? ORDER BY story_index ASC"
   ).all(runId) as Array<{ story_id: string; status: string }>;
-  const verifiedCount = loopSummaryStories.filter(s => s.status === "verified").length;
-  const skippedCount = loopSummaryStories.filter(s => s.status === "skipped").length;
-  const failedCount = loopSummaryStories.filter(s => s.status === "failed").length;
+  const verifiedCount = loopSummaryStories.filter(s => s.status === STORY_STATUS.VERIFIED).length;
+  const skippedCount = loopSummaryStories.filter(s => s.status === STORY_STATUS.SKIPPED).length;
+  const failedCount = loopSummaryStories.filter(s => s.status === STORY_STATUS.FAILED).length;
   const totalCount = loopSummaryStories.length;
   const loopSummaryOutput = `STATUS: done
 STORIES_TOTAL: ${totalCount}
