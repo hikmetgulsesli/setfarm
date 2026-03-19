@@ -1654,14 +1654,17 @@ function autoVerifyDoneStories(
         return story;
       }
 
-      if (prState === "OPEN" && options?.autoMergeOpen) {
-        const abandonCount = story.abandoned_count ?? 0;
-        if (abandonCount >= 1 && tryAutoMergePR(prUrl, story.story_id, runId)) {
+      if (prState === "OPEN") {
+        // Always try auto-merge for done stories with OPEN PRs.
+        // The verify agent already marked it "done" meaning quality checks passed.
+        // Waiting for abandon count wastes cycles — merge immediately.
+        if (tryAutoMergePR(prUrl, story.story_id, runId)) {
           verifyStory(story.id);
-          logger.info(`[${logPrefix}] Story ${story.story_id} auto-merged + verified — PR was OPEN after ${abandonCount} abandon(s)`, { runId });
-          emitEvent({ ts: new Date().toISOString(), event: "story.verified", runId, workflowId: getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title, detail: `Auto-merged after ${abandonCount} abandon(s)` });
+          logger.info(`[${logPrefix}] Story ${story.story_id} auto-merged + verified — PR was OPEN (done story)`, { runId });
+          emitEvent({ ts: new Date().toISOString(), event: "story.verified", runId, workflowId: getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title, detail: "Auto-merged — done story with OPEN PR" });
           continue;
         }
+        // If auto-merge failed, still needs agent verification
       }
     } catch (e) {
       logger.warn(`[${logPrefix}] PR state check failed for ${prUrl}: ${String(e)}`, { runId });

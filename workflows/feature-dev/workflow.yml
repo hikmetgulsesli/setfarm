@@ -1136,7 +1136,14 @@ steps:
              }
            }
          fi
-      3. Reply STATUS: done
+      3. Verify PR is actually merged:
+         FINAL_STATE=$(gh pr view "{{pr_url}}" --json state --jq '.state' 2>/dev/null || echo "UNKNOWN")
+         if [ "$FINAL_STATE" != "MERGED" ]; then
+           echo "WARNING: PR state is $FINAL_STATE after merge attempt"
+           # One more try
+           gh pr merge "{{pr_url}}" --squash --delete-branch 2>/dev/null ||              gh pr merge "{{pr_url}}" --merge --delete-branch 2>/dev/null ||              echo "PR merge failed — will be auto-merged by medic"
+         fi
+      4. Reply STATUS: done
 
       If build/test FAILS and you cannot fix:
       Reply STATUS: retry with issues list.
