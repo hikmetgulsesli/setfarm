@@ -122,7 +122,9 @@ function handleDesignDedup(step: StepRow, db: any): boolean {
     const runRow = db.prepare("SELECT created_at FROM runs WHERE id = ?").get(step.run_id) as any;
     const runCreatedAt = runRow ? new Date(runRow.created_at).getTime() : 0;
     const stitchUpdatedAt = dData.updatedAt ? new Date(dData.updatedAt).getTime() : 0;
-    if (stitchUpdatedAt < runCreatedAt) {
+    // 60s tolerance: PRD Generator writes .stitch seconds before run starts
+    const STALE_TOLERANCE_MS = 60000;
+    if (stitchUpdatedAt < (runCreatedAt - STALE_TOLERANCE_MS)) {
       logger.info(`[design-dedup] .stitch is stale (written ${dData.updatedAt}, run started ${runRow?.created_at}) — deleting to force fresh design`, { runId: step.run_id });
       try { fs.unlinkSync(dStitchFile); } catch {}
       try { fs.rmSync(dStitchDir, { recursive: true, force: true }); } catch {}
@@ -931,13 +933,25 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
             ).get(`%${repoPath}%`, step.run_id) as { id: string } | undefined;
             // Clean in-place: same directory, fresh start (no suffix — keeps resume working)
             {
-              // Clean stale artifacts from previous runs
-              try { fs.unlinkSync(path.join(repoPath, ".stitch")); } catch {}
-              try { fs.rmSync(path.join(repoPath, "stitch"), { recursive: true, force: true }); } catch {}
-              try { fs.rmSync(path.join(repoPath, ".stitch-screens.json"), { force: true }); } catch {}
+              // Backup stitch before git reset
+              const _stitchDir = path.join(repoPath, "stitch");
+              const _stitchFile = path.join(repoPath, ".stitch");
+              const _bkDir = path.join(repoPath, "..", ".stitch-bk-" + Date.now());
+              const _hasStitch = fs.existsSync(_stitchDir) || fs.existsSync(_stitchFile);
+              if (_hasStitch) {
+                fs.mkdirSync(_bkDir, { recursive: true });
+                fs.cpSync(_stitchDir, path.join(_bkDir, "stitch"), { recursive: true });
+                fs.copyFileSync(_stitchFile, path.join(_bkDir, ".stitch"));
+              }
               execFileSync("git", ["checkout", "--orphan", "__fresh__"], { cwd: repoPath, timeout: 5000 });
               execFileSync("git", ["rm", "-rf", "."], { cwd: repoPath, timeout: 5000 });
               execFileSync("git", ["clean", "-fd"], { cwd: repoPath, timeout: 5000 });
+              // Restore stitch after git reset
+              if (_hasStitch) {
+                try { fs.cpSync(path.join(_bkDir, "stitch"), _stitchDir, { recursive: true }); } catch {}
+                try { fs.copyFileSync(path.join(_bkDir, ".stitch"), _stitchFile); } catch {}
+                fs.rmSync(_bkDir, { recursive: true, force: true });
+              }
               fs.writeFileSync(path.join(repoPath, "README.md"), "# Project\n");
               execFileSync("git", ["add", "."], { cwd: repoPath, timeout: 5000 });
               execFileSync("git", ["commit", "-m", "initial"], { cwd: repoPath, timeout: 5000 });
@@ -1352,9 +1366,17 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     // v1.5.50: Resolve claim_log outcome
     try {
       db.prepare(
-        "UPDATE claim_log SET outcome = 'completed' WHERE story_id = ? AND outcome IS NULL"
+        "UPDATE claim_log SET outcome = 'completed', duration_ms = CAST((julianday('now') - julianday(claimed_at)) * 86400000 AS INTEGER) WHERE story_id = ? AND outcome IS NULL"
       ).run(storyRow?.story_id || "");
     } catch (e) { logger.warn(`[claim-log] Failed to resolve completion: ${String(e)}`, { runId: step.run_id }); }
+
+    // B2: Record step_metrics for SLA tracking
+    try {
+      db.prepare(
+        "INSERT INTO step_metrics (run_id, step_name, agent_id, claimed_at, completed_at, duration_ms, outcome, created_at) VALUES (?, ?, ?, ?, datetime('now'), CAST((julianday('now') - julianday(?)) * 86400000 AS INTEGER), 'completed', datetime('now'))"
+      ).run(step.run_id, step.step_id, step.agent_id || "", new Date().toISOString(), new Date().toISOString());
+    } catch (e) { logger.warn(`[step-metrics] insert failed: ${String(e)}`, { runId: step.run_id }); }
+
 
 
     // Update PROJECT_MEMORY.md with completed story info
@@ -1435,9 +1457,17 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   // v1.5.50: Resolve claim_log outcome for single step
   try {
     db.prepare(
-      "UPDATE claim_log SET outcome = 'completed' WHERE run_id = ? AND step_id = ? AND story_id IS NULL AND outcome IS NULL"
+      "UPDATE claim_log SET outcome = 'completed', duration_ms = CAST((julianday('now') - julianday(claimed_at)) * 86400000 AS INTEGER) WHERE run_id = ? AND step_id = ? AND story_id IS NULL AND outcome IS NULL"
     ).run(step.run_id, step.step_id);
   } catch (e) { logger.warn(`[claim-log] Failed to resolve completion: ${String(e)}`, { runId: step.run_id }); }
+
+    // B2: Record step_metrics for single step
+    try {
+      db.prepare(
+        "INSERT INTO step_metrics (run_id, step_name, agent_id, claimed_at, completed_at, duration_ms, outcome, created_at) VALUES (?, ?, ?, ?, datetime('now'), CAST((julianday('now') - julianday(?)) * 86400000 AS INTEGER), 'completed', datetime('now'))"
+      ).run(step.run_id, step.step_id, step.agent_id || "", new Date().toISOString(), new Date().toISOString());
+    } catch (e) { logger.warn(`[step-metrics] insert failed: ${String(e)}`, { runId: step.run_id }); }
+
 
   // Guard: if a loop step is still active (not done), don't advance the pipeline.
   // During verify_each cycles, single steps (test, pr, review, etc.) may get claimed

@@ -214,6 +214,13 @@ steps:
       {{previous_failure}}
 
       ============================================================
+      === DATABASE REQUIREMENT ===
+      Analyze the project and decide if it needs a database:
+      - Static sites, portfolios, landing pages, games → DB_REQUIRED: none
+      - Apps with user data, CRUD, auth → DB_REQUIRED: postgres
+      - Simple local storage apps → DB_REQUIRED: none
+      If unsure, default to none. The pipeline will provision DB only when DB_REQUIRED is postgres.
+
       MANDATORY OUTPUT FORMAT — PIPELINE WILL BREAK IF YOU SKIP ANY KEY
       ============================================================
       STATUS: done
@@ -222,6 +229,7 @@ steps:
       PRD:
       <full PRD text — include all sections, pages, features, technical details>
       PRD_SCREEN_COUNT: <number of rows in the Ekranlar/Screens table>
+      DB_REQUIRED: <none|postgres|sqlite>
       ============================================================
     expects: "STATUS: done"
     max_retries: 2
@@ -1753,9 +1761,30 @@ steps:
       ```
       systemctl --user daemon-reload && systemctl --user enable --now ${PROJECT_NAME}.service
 
-      A5 — Health check:
-      sleep 3
-      curl -sf http://127.0.0.1:$PORT/ > /dev/null || (journalctl --user -u ${PROJECT_NAME}.service -n 20 --no-pager; fix and retry)
+      A5 — Health check (MANDATORY — 5 attempts with retry):
+      PRE-FLIGHT: Before starting the service, verify:
+        1. Port is free: ! ss -tlnp | grep -q ":$PORT " || echo "PORT $PORT IN USE — stop conflicting service first"
+        2. Service file exists: test -f ~/.config/systemd/user/${PROJECT_NAME}.service
+        3. WorkingDirectory exists: test -d $REPO_DIR
+
+      After starting service, run health check with 5 retries:
+      for i in 1 2 3 4 5; do
+        sleep 5
+        if curl -sf http://127.0.0.1:$PORT/ > /dev/null 2>&1; then
+          echo "Health check passed (attempt $i)"
+          break
+        fi
+        echo "Health check failed (attempt $i/5)"
+        if [ $i -eq 5 ]; then
+          echo "DEPLOY FAILED: Service not responding after 5 attempts"
+          journalctl --user -u ${PROJECT_NAME}.service -n 30 --no-pager
+          systemctl --user status ${PROJECT_NAME}.service
+          # Try to diagnose and fix
+          systemctl --user restart ${PROJECT_NAME}.service
+          sleep 5
+          curl -sf http://127.0.0.1:$PORT/ > /dev/null 2>&1 || echo "Still failing after restart"
+        fi
+      done
 
       A6 — Register in Mission Control (MANDATORY — verify it worked):
       GITHUB_URL=$(cd $REPO_DIR && git remote get-url origin 2>/dev/null | sed 's/.git$//' || echo "")

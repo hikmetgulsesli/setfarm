@@ -437,6 +437,13 @@ const commands = {
   async 'generate-screen-safe'(projectId, prompt, screenTitle, deviceType = 'DESKTOP', modelId = 'GEMINI_3_1_PRO') {
     if (!projectId || !prompt) throw new Error('Usage: generate-screen-safe <projectId> "<prompt>" "<screenTitle>" [DESKTOP|MOBILE|TABLET] [model]');
 
+    // E2BIG fix: if prompt starts with @, read from file
+    if (prompt.startsWith('@')) {
+      const fs = await import('fs');
+      const filePath = prompt.slice(1);
+      prompt = fs.readFileSync(filePath, 'utf8');
+    }
+
     await initialize();
 
     // 1. Check for duplicate screens by title

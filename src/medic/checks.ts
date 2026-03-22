@@ -504,7 +504,7 @@ export function checkStalledWorkflowCrons(): MedicFinding[] {
     const recentRecreate = db.prepare(`
       SELECT MAX(checked_at) as ts FROM medic_checks
       WHERE (details LIKE '%stalled_workflow_crons%' OR details LIKE '%partial cron loss%' OR details LIKE '%crons for%')
-        AND details LIKE '%"remediated":true%'
+        AND details LIKE '%recreate_crons%'
         AND details LIKE ?
         AND julianday(checked_at) > julianday('now', '-10 minutes')
     `).get(`%${workflow_id}%`) as { ts: string | null };
@@ -581,7 +581,7 @@ export function checkOfflineServices(): MedicFinding[] {
             const recentRestart = db.prepare(`
               SELECT MAX(checked_at) as ts FROM medic_checks
               WHERE details LIKE '%offline_service%'
-                AND details LIKE '%"remediated":true%'
+                AND details LIKE '%recreate_crons%'
                 AND details LIKE ?
                 AND julianday(checked_at) > julianday('now', '-10 minutes')
             `).get(`%${serviceName}%`) as { ts: string | null };
@@ -700,7 +700,7 @@ export function checkGatewayStalling(): MedicFinding[] {
   const recreates = db.prepare(`
     SELECT COUNT(*) as cnt FROM medic_checks
     WHERE details LIKE '%recreate_crons%'
-      AND details LIKE '%"remediated":true%'
+      AND details LIKE '%recreate_crons%'
       AND (julianday('now') - julianday(checked_at)) * 86400000 < ?
   `).get(GATEWAY_STALL_WINDOW_MS) as { cnt: number };
 
@@ -724,7 +724,7 @@ export function checkGatewayStalling(): MedicFinding[] {
   const recentRestart = db.prepare(`
     SELECT MAX(checked_at) as ts FROM medic_checks
     WHERE details LIKE '%restart_gateway%'
-      AND details LIKE '%"remediated":true%'
+      AND details LIKE '%recreate_crons%'
       AND (julianday('now') - julianday(checked_at)) * 86400000 < ?
   `).get(GATEWAY_RESTART_COOLDOWN_MS) as { ts: string | null };
 
@@ -815,7 +815,7 @@ export function checkProviderFailure(): MedicFinding[] {
   const recentAbandons = db.prepare(`
     SELECT COUNT(*) as cnt FROM medic_checks
     WHERE details LIKE '%reset_step%'
-      AND details LIKE '%"remediated":true%'
+      AND details LIKE '%recreate_crons%'
       AND (julianday('now') - julianday(checked_at)) * 86400000 < ?
   `).get(PROVIDER_FAIL_WINDOW_MS) as { cnt: number };
 
@@ -843,7 +843,7 @@ export function checkProviderFailure(): MedicFinding[] {
   const recentRestart = db.prepare(`
     SELECT MAX(checked_at) as ts FROM medic_checks
     WHERE (details LIKE '%provider_failure%' OR details LIKE '%restart_gateway%')
-      AND details LIKE '%"remediated":true%'
+      AND details LIKE '%recreate_crons%'
       AND (julianday('now') - julianday(checked_at)) * 86400000 < ?
   `).get(PROVIDER_FAIL_COOLDOWN_MS) as { ts: string | null };
 
@@ -858,6 +858,55 @@ export function checkProviderFailure(): MedicFinding[] {
   });
 
   return findings;
+}
+
+
+// B4: Detect stale claims (agent claimed 60+ min ago but still running)
+export async function checkStaleClaims(db: any, logger: any): Promise<{ found: number; fixed: number }> {
+  const STALE_THRESHOLD_MIN = 60;
+  let found = 0, fixed = 0;
+  try {
+    const stale = db.prepare(
+      "SELECT cl.rowid, cl.run_id, cl.step_id, cl.story_id, cl.agent_id, cl.claimed_at " +
+      "FROM claim_log cl WHERE cl.outcome IS NULL AND cl.claimed_at IS NOT NULL " +
+      "AND (julianday('now') - julianday(cl.claimed_at)) * 1440 > ?"
+    ).all(STALE_THRESHOLD_MIN);
+    found = stale.length;
+    for (const claim of stale) {
+      logger.warn(`[MEDIC] Stale claim detected: agent=${claim.agent_id} step=${claim.step_id} story=${claim.story_id || 'N/A'} age=${STALE_THRESHOLD_MIN}+min`, { runId: claim.run_id });
+      db.prepare(
+        "UPDATE claim_log SET outcome = 'abandoned', abandoned_at = datetime('now'), duration_ms = CAST((julianday('now') - julianday(claimed_at)) * 86400000 AS INTEGER), diagnostic = 'Stale claim detected by medic (60+ min)' WHERE rowid = ?"
+      ).run(claim.rowid);
+      fixed++;
+    }
+  } catch (e) { logger.warn("[MEDIC] checkStaleClaims error: " + String(e), {}); }
+  return { found, fixed };
+}
+
+// A3: Detect cascade failures (prerequisite step failed -> dependent step will also fail)
+export async function checkCascadingFailures(db: any, logger: any): Promise<{ detected: number }> {
+  let detected = 0;
+  try {
+    // Find running runs where an early step failed but later steps are still pending/running
+    const cascades = db.prepare(
+      "SELECT r.id as run_id, fs.step_id as failed_step, fs.step_index as failed_idx, " +
+      "ps.step_id as pending_step, ps.step_index as pending_idx, ps.status as pending_status " +
+      "FROM runs r " +
+      "JOIN steps fs ON fs.run_id = r.id AND fs.status = 'failed' " +
+      "JOIN steps ps ON ps.run_id = r.id AND ps.step_index > fs.step_index AND ps.status IN ('pending', 'running') " +
+      "WHERE r.status = 'running' " +
+      "ORDER BY r.id, fs.step_index"
+    ).all();
+
+    const seenRuns = new Set<string>();
+    for (const c of cascades) {
+      if (seenRuns.has(c.run_id)) continue;
+      seenRuns.add(c.run_id);
+      logger.warn(`[MEDIC] CASCADE: run=${c.run_id} failed_step=${c.failed_step}(idx ${c.failed_idx}) -> ${c.pending_step}(idx ${c.pending_idx}) is ${c.pending_status} but will likely fail`, { runId: c.run_id });
+      detected++;
+    }
+  } catch (e) { logger.warn("[MEDIC] checkCascadingFailures error: " + String(e), {}); }
+  return { detected };
 }
 
 export function runSyncChecks(): MedicFinding[] {

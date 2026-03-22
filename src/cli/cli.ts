@@ -734,7 +734,12 @@ async function main() {
       notifyUrl = runArgs[nuIdx + 1];
       runArgs.splice(nuIdx, 2);
     }
-    const taskTitle = runArgs.join(" ").trim();
+    let taskTitle = runArgs.join(" ").trim();
+    // E2BIG fix: if task starts with @, read from file
+    if (taskTitle.startsWith("@")) {
+      const { readFileSync } = await import("fs");
+      taskTitle = readFileSync(taskTitle.slice(1), "utf8").trim();
+    }
     if (!taskTitle) { process.stderr.write("Missing task title.\n"); printUsage(); process.exit(1); }
     const run = await runWorkflow({ workflowId: target, taskTitle, notifyUrl });
     process.stdout.write(

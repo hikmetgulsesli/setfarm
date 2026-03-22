@@ -4,6 +4,19 @@ import os from "node:os";
 import { execFile } from "node:child_process";
 import { logger } from "../lib/logger.js";
 
+// Fetch with AbortController timeout — prevents medic/cron from hanging forever
+const GATEWAY_FETCH_TIMEOUT_MS = 15_000; // 15 seconds
+async function fetchWithTimeout(url: string, options: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), GATEWAY_FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+
 interface GatewayConfig {
   url: string;
   token?: string;
@@ -194,7 +207,7 @@ async function createAgentCronJobHTTP(job: {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (gateway.secret) headers["Authorization"] = `Bearer ${gateway.secret}`;
 
-    const response = await fetch(`${gateway.url}/tools/invoke`, {
+    const response = await fetchWithTimeout(`${gateway.url}/tools/invoke`, {
       method: "POST",
       headers,
       body: JSON.stringify({ tool: "cron", args: { action: "add", job }, sessionKey: "agent:main:main" }),
@@ -228,7 +241,7 @@ export async function checkCronToolAvailable(): Promise<{ ok: boolean; error?: s
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (gateway.secret) headers["Authorization"] = `Bearer ${gateway.secret}`;
 
-    const response = await fetch(`${gateway.url}/tools/invoke`, {
+    const response = await fetchWithTimeout(`${gateway.url}/tools/invoke`, {
       method: "POST",
       headers,
       body: JSON.stringify({ tool: "cron", args: { action: "list" } }),
@@ -281,7 +294,7 @@ async function listCronJobsHTTP(): Promise<{ ok: boolean; jobs?: Array<{ id: str
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (gateway.secret) headers["Authorization"] = `Bearer ${gateway.secret}`;
 
-    const response = await fetch(`${gateway.url}/tools/invoke`, {
+    const response = await fetchWithTimeout(`${gateway.url}/tools/invoke`, {
       method: "POST",
       headers,
       body: JSON.stringify({ tool: "cron", args: { action: "list" }, sessionKey: "agent:main:main" }),
@@ -337,7 +350,7 @@ async function deleteCronJobHTTP(jobId: string): Promise<{ ok: boolean; error?: 
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (gateway.secret) headers["Authorization"] = `Bearer ${gateway.secret}`;
 
-    const response = await fetch(`${gateway.url}/tools/invoke`, {
+    const response = await fetchWithTimeout(`${gateway.url}/tools/invoke`, {
       method: "POST",
       headers,
       body: JSON.stringify({ tool: "cron", args: { action: "remove", id: jobId }, sessionKey: "agent:main:main" }),
