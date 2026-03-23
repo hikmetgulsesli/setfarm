@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import os from "node:os";
 import { logger } from "../lib/logger.js";
 
-export type DbType = "postgres" | "mariadb" | "mysql" | "mongodb";
+export type DbType = "postgres" | "sqlite" | "mariadb" | "mysql" | "mongodb";
 
 export interface DbCredentials {
   type: DbType;
@@ -90,6 +90,7 @@ function getMasterUrl(dbType: DbType): string {
     mariadb: "MASTER_MARIADB_URL",
     mysql: "MASTER_MYSQL_URL",
     mongodb: "MASTER_MONGODB_URL",
+    sqlite: "MASTER_SQLITE_PATH",
   };
 
   // Also check process.env
@@ -107,8 +108,10 @@ export function resolveDbType(dbRequired: string): DbType {
   if (lower === "mariadb" || lower === "maria") return "mariadb";
   if (lower === "mysql") return "mysql";
   if (lower === "mongodb" || lower === "mongo") return "mongodb";
-  // Default: postgres for "true", "yes", "postgres", "postgresql"
-  return "postgres";
+  if (lower === "postgres" || lower === "postgresql") return "postgres";
+  if (lower === "sqlite") return "sqlite";
+  // Reject unknown values instead of silently defaulting
+  throw new Error("Unknown DB_REQUIRED value: " + dbRequired + ". Must be: none|postgres|sqlite|mysql|mongodb");
 }
 
 // --- PostgreSQL provisioning ---
@@ -207,10 +210,13 @@ export function provisionDatabase(projectName: string, dbType?: DbType): DbCrede
     case "mongodb":
       provisionMongodb(master, dbName, dbUser, dbPass);
       break;
+    case "sqlite":
+      // SQLite needs no server provisioning — just set the path
+      break;
   }
 
   // Build connection string
-  let connectionString: string;
+  let connectionString: string = "";
   switch (type) {
     case "postgres":
       connectionString = `postgresql://${dbUser}:${dbPass}@${master.host}:${master.port}/${dbName}`;
@@ -223,6 +229,12 @@ export function provisionDatabase(projectName: string, dbType?: DbType): DbCrede
       break;
     case "mongodb":
       connectionString = `mongodb://${dbUser}:${dbPass}@${master.host}:${master.port}/${dbName}?authSource=${dbName}`;
+      break;
+    case "sqlite":
+      connectionString = "file:./" + dbName + ".db";
+      break;
+    case "sqlite":
+      // SQLite needs no server provisioning — just set the path
       break;
   }
 

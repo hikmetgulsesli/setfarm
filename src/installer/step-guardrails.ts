@@ -377,36 +377,10 @@ export function processSetupCompletion(
 ): string | null {
   let dbRequired = (context["db_required"] || "").toLowerCase();
 
-  // Auto-detect DB need if not explicitly set
+  // Only provision DB when explicitly requested by planner (DB_REQUIRED: postgres|sqlite)
+  // No auto-detection from PRD text or package.json
   if (!dbRequired || dbRequired === "false" || dbRequired === "no" || dbRequired === "none") {
-    const taskText = (context["task"] || "") + " " + (context["prd"] || "");
-    const repoPath = context["repo"] || "";
-
-    // Check task/prd text for DB indicators
-    const dbKeywords = /postgresql|postgres|prisma|drizzle|typeorm|sequelize|knex|supabase.*database|DB_REQUIRED|veritabanı şeması|database.*schema/i;
-    if (dbKeywords.test(taskText)) {
-      dbRequired = "postgres";
-      context["db_required"] = dbRequired;
-      logger.info(`[db-provision] Auto-detected DB requirement from task/PRD text`, { runId });
-    }
-
-    // Check package.json for DB dependencies
-    if (!dbRequired && repoPath) {
-      try {
-        const pkgPath = path.join(repoPath, "package.json");
-        if (fs.existsSync(pkgPath)) {
-          const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
-          const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
-          if (allDeps["prisma"] || allDeps["@prisma/client"] || allDeps["drizzle-orm"] || allDeps["typeorm"] || allDeps["sequelize"] || allDeps["knex"] || allDeps["pg"]) {
-            dbRequired = "postgres";
-            context["db_required"] = dbRequired;
-            logger.info(`[db-provision] Auto-detected DB requirement from package.json dependencies`, { runId });
-          }
-        }
-      } catch { /* fallback below */ }
-    }
-
-    if (!dbRequired) return null;
+    return null;
   }
   try {
     const projectName = path.basename(context["repo"] || "project");
@@ -496,7 +470,7 @@ export function checkScreenMapPresence(
   }
 
   // Check if this is a UI project
-  const hasUiKeywords = /(ui|page|screen|component|frontend|button|form|dashboard|layout|css|html|react|next|vue|angular|svelte)/i.test(output);
+  const hasUiKeywords = ((context["has_ui"] || "").toLowerCase() === "true" || ["ui", "fullstack"].includes((context["project_type"] || "").toLowerCase()));
 
   if (hasUiKeywords) {
     return "GUARDRAIL: Step completed without SCREEN_MAP but project has UI elements. Must output SCREEN_MAP. Retry.";

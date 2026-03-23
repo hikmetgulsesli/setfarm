@@ -1115,7 +1115,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   // SETUP-BUILD BASELINE GUARDRAIL (v1.5.53): Also reject empty baseline
   if (step.step_id === "setup-build" && parsed["status"]?.toLowerCase() === "done") {
     const baseline = (parsed["baseline"] || "").toLowerCase().trim();
-    if (!baseline || /(fail|error|broken|crash)/i.test(baseline)) {
+    if (!baseline || !["pass", "ok"].includes(baseline.toLowerCase())) {
       const baselineMsg = `GUARDRAIL: setup-build baseline is "${parsed["baseline"] || "(empty)"}" — build must explicitly pass.`;
       logger.warn(`[setup-build-guardrail] ${baselineMsg}`, { runId: step.run_id, stepId: step.step_id });
       if (prevContextJson) db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(prevContextJson.context, step.run_id);
@@ -1264,15 +1264,14 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
       needsAutoGen = true;
     }
     if (needsAutoGen) {
-      const uiRe = /(?:ui|page|screen|component|frontend|button|form|dashboard|layout|css|html|react|next|vue|angular|svelte)/i;
-      const taskText = context["task"] || "";
-      if (uiRe.test(output) || uiRe.test(taskText)) {
+      const hasUi = (context["has_ui"] || "").toLowerCase() === "true" || ["ui", "fullstack"].includes((context["project_type"] || "").toLowerCase());
+      if (hasUi) {
         const autoStories = getStories(step.run_id);
         if (autoStories.length > 0) {
           const screenMap: Array<{screenId: string; name: string; type: string; description: string; stories: string[]}> = [];
           let scrIdx = 1;
           for (const s of autoStories) {
-            if (uiRe.test(s.title + " " + (s.description || ""))) {
+            if (true) { // All stories in UI projects get screen mapping
               screenMap.push({
                 screenId: `SCR-${String(scrIdx++).padStart(3, "0")}`,
                 name: s.title,
