@@ -52,7 +52,10 @@ fi
 
 # 3. Main branch
 git branch -M main 2>/dev/null || true
-git commit --allow-empty -m "chore: initial commit" 2>/dev/null || true
+# Commit existing files (stitch/, README, etc.) if any, otherwise empty commit
+git add -A 2>/dev/null || true
+git diff --cached --quiet && git commit --allow-empty -m "chore: initial commit" 2>/dev/null || true
+git diff --cached --quiet || git commit -m "chore: initial commit" 2>/dev/null || true
 if ! git push -u origin main 2>&1; then
   echo "WARN: git push to main failed — may need manual intervention"
 fi
@@ -197,14 +200,28 @@ ln -sfn "$HOME/.openclaw/setfarm-repo/references" references 2>/dev/null || true
 
 # 7. Stitch download (if project ID provided and not empty)
 if [ -n "$STITCH_PROJECT_ID" ] && [ "$STITCH_PROJECT_ID" != "undefined" ] && [ "$STITCH_PROJECT_ID" != "" ]; then
-  echo "=== STITCH DOWNLOAD ==="
-  bash "$HOME/.openclaw/setfarm-repo/scripts/stitch-download.sh" "$STITCH_PROJECT_ID" "$SCREEN_MAP"
-  STITCH_EXIT=$?
-  if [ $STITCH_EXIT -ne 0 ]; then
-    echo "FATAL: Stitch download failed with exit code $STITCH_EXIT"
-    echo "STATUS: fail"
-    exit 1
+  # PRD Generator already populates stitch/ — skip download if HTML files exist
+  EXISTING_HTML=$(find stitch -name "*.html" 2>/dev/null | wc -l)
+  if [ "$EXISTING_HTML" -ge 2 ]; then
+    echo "=== STITCH SKIP: PRD Generator already placed $EXISTING_HTML HTML files in stitch/ ==="
+  else
+    echo "=== STITCH DOWNLOAD ==="
+    bash "$HOME/.openclaw/setfarm-repo/scripts/stitch-download.sh" "$STITCH_PROJECT_ID" "$SCREEN_MAP"
+    STITCH_EXIT=$?
+    if [ $STITCH_EXIT -ne 0 ]; then
+      echo "FATAL: Stitch download failed with exit code $STITCH_EXIT"
+      echo "STATUS: fail"
+      exit 1
+    fi
   fi
+fi
+
+# 7.5. Commit stitch design assets + any PRD Generator files to git
+if [ -d "stitch" ] && [ "$(find stitch -name "*.html" 2>/dev/null | wc -l)" -gt 0 ]; then
+  git add stitch/ .stitch DESIGN_MANIFEST.json DESIGN.md UI_CONTRACT.json design-tokens.* 2>/dev/null || true
+  git add stitch/ 2>/dev/null || true
+  git diff --cached --quiet || git commit -m "design: Stitch UI screens + manifest + tokens"
+  echo "Committed stitch design assets to git"
 fi
 
 # 8. Push
