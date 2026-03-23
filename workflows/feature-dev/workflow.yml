@@ -580,13 +580,20 @@ steps:
       1. cd {{repo}} && git checkout {{branch}}
 
       PROJECT SCAFFOLDING (if no package.json exists):
-      If there is NO package.json in the repo root, you MUST scaffold the project first:
-      - Read the TASK description and stitch/ design files to understand what kind of project this is
-      - For React/Next.js projects: npx create-next-app@latest . --typescript --tailwind --eslint --app --no-src-dir --import-alias "@/*" --yes
-      - For vanilla JS/TS projects: npm init -y, then install needed deps
-      - For Node.js backend: npm init -y, install express/fastify as needed
-      - Make sure the scaffolded project matches the tech stack described in the TASK
-      - After scaffolding, continue with steps below
+      If there is NO package.json in the repo root, you MUST scaffold the project.
+      Use TECH_STACK from plan context: {{tech_stack}}
+      CRITICAL: Always scaffold IN the current directory (use . not project name).
+      CRITICAL: You are ALREADY inside the repo directory. Do NOT create a subdirectory.
+
+      Commands by TECH_STACK:
+      - nextjs:        npx create-next-app@latest . --typescript --tailwind --eslint --app --no-src-dir --import-alias "@/*" --yes
+      - vite-react:    npm create vite@latest . -- --template react-ts && npm install
+      - vanilla-ts:    npm init -y && npm install -D typescript
+      - node-express:  npm init -y && npm install express && npm install -D typescript @types/express @types/node
+      - react-native:  npx react-native init . --template react-native-template-typescript
+
+      After scaffolding, continue with steps below.
+      VERIFY: ls package.json — if missing, scaffolding failed.
 
       2. Read package.json to understand the project stack
       3. Install any additional dependencies needed: npm install
