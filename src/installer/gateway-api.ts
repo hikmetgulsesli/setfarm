@@ -213,7 +213,7 @@ async function createAgentCronJobHTTP(job: {
       body: JSON.stringify({ tool: "cron", args: { action: "add", job }, sessionKey: "agent:main:main" }),
     });
 
-    if (response.status === 404) return null; // signal CLI fallback
+    if (response.status === 404 || response.status === 401) return null; // signal CLI fallback
 
     if (!response.ok) {
       const text = await response.text();
@@ -250,7 +250,7 @@ export async function checkCronToolAvailable(): Promise<{ ok: boolean; error?: s
     if (response.ok) return { ok: true };
 
     // Non-404 errors are real failures
-    if (response.status !== 404) {
+    if (response.status !== 404 && response.status !== 401) {
       const text = await response.text();
       return { ok: false, error: `Gateway returned ${response.status}: ${text}` };
     }
@@ -300,7 +300,7 @@ async function listCronJobsHTTP(): Promise<{ ok: boolean; jobs?: Array<{ id: str
       body: JSON.stringify({ tool: "cron", args: { action: "list" }, sessionKey: "agent:main:main" }),
     });
 
-    if (response.status === 404) return null;
+    if (response.status === 404 || response.status === 401) return null;
 
     if (!response.ok) {
       return { ok: false, error: `Gateway returned ${response.status}` };
@@ -356,7 +356,7 @@ async function deleteCronJobHTTP(jobId: string): Promise<{ ok: boolean; error?: 
       body: JSON.stringify({ tool: "cron", args: { action: "remove", id: jobId }, sessionKey: "agent:main:main" }),
     });
 
-    if (response.status === 404) return null;
+    if (response.status === 404 || response.status === 401) return null;
 
     if (!response.ok) {
       return { ok: false, error: `Gateway returned ${response.status}` };
