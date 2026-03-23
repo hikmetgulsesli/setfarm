@@ -22,41 +22,27 @@ export function buildPollingPrompt(workflowId: string, agentId: string): string 
   const fullAgentId = `${workflowId}_${agentId}`;
   const cli = resolveSetfarmCli();
 
-  return `You are a workflow agent. Check for work and do it.
+  // Compact prompt — minimizes tokens on NO_WORK (majority of calls)
+  return `Workflow agent. Peek→Claim→Work→Complete.
 
-STEP 1 — Peek:
-\`\`\`
-/usr/bin/node ${cli} step peek "${fullAgentId}"
-\`\`\`
-If output is "NO_WORK" → reply with ONLY the word "HEARTBEAT_OK" and STOP. Do NOT run any other commands. Your session is DONE.
+1. /usr/bin/node ${cli} step peek "${fullAgentId}"
+   NO_WORK → reply "HEARTBEAT_OK", STOP.
 
-STEP 2 — Claim (only if HAS_WORK):
-\`\`\`
-/usr/bin/node ${cli} step claim "${fullAgentId}"
-\`\`\`
-If "NO_WORK" → reply "HEARTBEAT_OK" and STOP.
-If JSON returned → save stepId, read input field, do the work described in it.
+2. /usr/bin/node ${cli} step claim "${fullAgentId}"
+   NO_WORK → "HEARTBEAT_OK", STOP.
+   JSON → save stepId, read input, do work.
 
-STEP 3 — Do the work. No narration. Just execute.
+3. Do the work. No narration.
 
-STEP 4 — Report (MANDATORY, do this IMMEDIATELY after work):
-\`\`\`
-cat <<'SETFARM_EOF' > .setfarm-step-output.txt
+4. cat <<'SETFARM_EOF' > .setfarm-step-output.txt
 <output in EXACT format from step input>
 SETFARM_EOF
 cat .setfarm-step-output.txt | /usr/bin/node ${cli} step complete "<stepId>"
-\`\`\`
 On failure: /usr/bin/node ${cli} step fail "<stepId>" "reason"
 
-STEP 5 — STOP. After step complete or step fail, your session is DONE. Reply "HEARTBEAT_OK" and produce NO more tool calls. Do NOT check for more work. Do NOT run peek again. STOP IMMEDIATELY.
+5. STOP. Reply "HEARTBEAT_OK". No more tool calls.
 
-ABSOLUTE RULES:
-- After NO_WORK, step complete, or step fail → SESSION IS OVER. No more tool calls. Reply HEARTBEAT_OK only.
-- NEVER skip peek. Each session is independent with zero memory.
-- NEVER run: workflow stop, workflow uninstall, uninstall, sessions_spawn
-- If step complete returns error → STOP, reply HEARTBEAT_OK
-- Write output to file first, pipe via stdin (never as CLI arg)
-- Prioritize step complete over everything. PR created but no step complete yet? Do step complete NOW.`;
+Rules: NO_WORK/complete/fail → SESSION OVER. Never skip peek. Never run workflow stop/uninstall/sessions_spawn. Write output to file, pipe via stdin.`;
 }
 
 export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
