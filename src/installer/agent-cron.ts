@@ -63,6 +63,8 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
   // Always remove existing crons first to prevent duplicates
   // Gateway API creates new crons even if same name exists
   await removeAgentCrons(workflow.id);
+  // Wait for WS to settle after bulk cron removal (OpenClaw 2026.3.13 handshake issue)
+  await new Promise(r => setTimeout(r, 3000));
   const agents = workflow.agents;
   // Allow per-workflow cron interval via cron.interval_ms in workflow.yml
   const everyMs = (workflow as any).cron?.interval_ms ?? DEFAULT_EVERY_MS;
@@ -100,7 +102,20 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
     });
 
     if (!result.ok) {
-      throw new Error(`Failed to create cron job for agent "${agent.id}": ${result.error}`);
+      // Retry once after 2s — WS may still be settling
+      await new Promise(r => setTimeout(r, 2000));
+      const retry = await createAgentCronJob({
+        name: cronName,
+        schedule: { kind: "every", everyMs, anchorMs },
+        sessionTarget: "isolated",
+        agentId: cronAgentId,
+        payload: { kind: "agentTurn", message: prompt, timeoutSeconds },
+        delivery: { mode: "none" },
+        enabled: true,
+      });
+      if (!retry.ok) {
+        throw new Error();
+      }
     }
 
     // Create parallel crons for roles with multiple agents, count derived from agent_mapping
