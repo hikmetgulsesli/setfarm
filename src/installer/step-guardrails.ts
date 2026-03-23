@@ -354,7 +354,10 @@ export function processSetupDesignContracts(
         type: "page",
       }));
       const manifestPath = path.join(stitchDir, "DESIGN_MANIFEST.json");
-      fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+      // Only write manifest if PRD Generator hasnt already placed one
+      let hasExisting = false;
+      try { const em = JSON.parse(fs.readFileSync(manifestPath, "utf-8")); hasExisting = Array.isArray(em) ? em.length > 0 : (em.screens?.length > 0); } catch {}
+      if (!hasExisting) { fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2)); } else { logger.info("[setup-design-contracts] DESIGN_MANIFEST.json already has content — not overwriting", { runId }); }
 
       logger.info(`[setup-design-contracts] Auto-generated SCREEN_MAP + DESIGN_MANIFEST.json from ${htmlFiles.length} stitch HTML file(s)`, { runId });
     } catch (e) {

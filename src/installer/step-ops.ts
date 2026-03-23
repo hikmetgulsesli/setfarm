@@ -1051,7 +1051,11 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
               dlCount++;
             } catch (dlErr) { logger.warn(`[design-download] download-screen ${sid} failed: ${dlErr}`, { runId: step.run_id }); }
           }
-          try { execFileSync("node", [stitchScript, "create-manifest", dStitchDir], { encoding: "utf-8", timeout: 15000 }); } catch {}
+          // Only create manifest if PRD Generator hasnt already placed one
+          const mPath = path.join(dStitchDir, "DESIGN_MANIFEST.json");
+          let hasManifest = false;
+          try { const m = JSON.parse(fs.readFileSync(mPath, "utf-8")); hasManifest = Array.isArray(m) ? m.length > 0 : (m.screens?.length > 0); } catch {}
+          if (!hasManifest) { try { execFileSync("node", [stitchScript, "create-manifest", dStitchDir], { encoding: "utf-8", timeout: 15000 }); } catch {} }
           try { execFileSync("node", [stitchScript, "extract-tokens", dStitchDir], { encoding: "utf-8", timeout: 15000 }); } catch {}
           logger.info(`[design-download] Downloaded ${dlCount}/${screenIds.length} screen(s)`, { runId: step.run_id });
         } catch (dlErr) {
