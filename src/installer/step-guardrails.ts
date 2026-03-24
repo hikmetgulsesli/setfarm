@@ -223,7 +223,61 @@ export function processSetupDesignContracts(
       const screenMapRaw = context["screen_map"];
       if (screenMapRaw) {
         try {
-          const screenMap = JSON.parse(screenMapRaw);
+          let screenMap = JSON.parse(screenMapRaw);
+
+          // Format normalization: PRD Generator sends {"Screen Name": "screenId"}
+          // Pipeline expects [{"screenId":"xxx", "name":"yyy", "stories":["US-xxx"]}]
+          if (!Array.isArray(screenMap) && typeof screenMap === "object") {
+            // Old format: convert to new format using DESIGN_MANIFEST.json
+            const manifestPath = path.join(repoPath, "stitch", "DESIGN_MANIFEST.json");
+            let manifestScreens: any[] = [];
+            try {
+              const raw = fs.readFileSync(manifestPath, "utf-8");
+              const parsed = JSON.parse(raw);
+              manifestScreens = Array.isArray(parsed) ? parsed : (parsed.screens || []);
+            } catch {}
+
+            const allStories = db.prepare("SELECT story_id, title FROM stories WHERE run_id = ?").all(runId) as any[];
+            const converted: any[] = [];
+
+            for (const [screenName, screenId] of Object.entries(screenMap)) {
+              // Find matching stories by keyword overlap between screen name and story title
+              const nameWords = screenName.toLowerCase().split(/[\s\-]+/).filter((w: string) => w.length > 2);
+              const matchedStories = allStories
+                .filter((s: any) => {
+                  const titleLower = s.title.toLowerCase();
+                  return nameWords.some((w: string) => titleLower.includes(w));
+                })
+                .map((s: any) => s.story_id);
+
+              // Find HTML file from manifest or guess by screenId
+              let htmlFile = screenId + ".html";
+              const manifestEntry = manifestScreens.find((m: any) => m.id === screenId || m.title === screenName);
+              if (manifestEntry?.file) htmlFile = manifestEntry.file;
+
+              converted.push({
+                screenId: screenId as string,
+                name: screenName,
+                type: "page",
+                htmlFile: "stitch/" + htmlFile,
+                stories: matchedStories.length > 0 ? matchedStories : [],
+              });
+            }
+
+            // If no story matches found, distribute screens across stories sequentially
+            if (converted.every(s => s.stories.length === 0) && allStories.length > 0) {
+              for (let i = 0; i < converted.length; i++) {
+                const storyIdx = Math.min(i, allStories.length - 1);
+                converted[i].stories = [allStories[storyIdx].story_id];
+              }
+            }
+
+            screenMap = converted;
+            context["screen_map"] = JSON.stringify(screenMap);
+            db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(JSON.stringify(context), runId);
+            logger.info("[setup-design-contracts] Converted old SCREEN_MAP format to array format: " + converted.length + " screens", { runId });
+          }
+
           for (const screen of screenMap) {
             if (!Array.isArray(screen.stories)) continue;
             for (const storyId of screen.stories) {
