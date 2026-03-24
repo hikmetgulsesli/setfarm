@@ -25,7 +25,7 @@ agent_mapping:
   qa-tester: sentinel
 
 cron:
-  interval_ms: 60000  # 1 minute
+  interval_ms: 120000  # 2 minutes
 
 polling:
   model: minimax/MiniMax-M2.7
@@ -584,6 +584,22 @@ steps:
       Use TECH_STACK from plan context: {{tech_stack}}
       CRITICAL: Always scaffold IN the current directory (use . not project name).
       CRITICAL: You are ALREADY inside the repo directory. Do NOT create a subdirectory.
+
+      STITCH ASSET PROTECTION (CRITICAL — do this BEFORE scaffolding):
+      Scaffold tools (create-next-app, create-vite, etc.) DELETE all existing files in the directory.
+      You MUST backup stitch/ and other design assets BEFORE running any scaffold command:
+        mkdir -p /tmp/_stitch_backup_$(basename {{repo}})
+        cp -r stitch/ /tmp/_stitch_backup_$(basename {{repo}})/ 2>/dev/null || true
+        cp .stitch /tmp/_stitch_backup_$(basename {{repo}})/ 2>/dev/null || true
+        cp DESIGN.md /tmp/_stitch_backup_$(basename {{repo}})/ 2>/dev/null || true
+        cp -r references/ /tmp/_stitch_backup_$(basename {{repo}})/ 2>/dev/null || true
+      After scaffolding completes, RESTORE them:
+        cp -r /tmp/_stitch_backup_$(basename {{repo}})/stitch/ . 2>/dev/null || true
+        cp /tmp/_stitch_backup_$(basename {{repo}})/.stitch . 2>/dev/null || true
+        cp /tmp/_stitch_backup_$(basename {{repo}})/DESIGN.md . 2>/dev/null || true
+        cp -r /tmp/_stitch_backup_$(basename {{repo}})/references/ . 2>/dev/null || true
+        rm -rf /tmp/_stitch_backup_$(basename {{repo}})
+      VERIFY: ls stitch/*.html — stitch files must exist after scaffolding.
 
       Commands by TECH_STACK:
       - nextjs:        npx create-next-app@latest . --typescript --tailwind --eslint --app --no-src-dir --import-alias "@/*" --yes

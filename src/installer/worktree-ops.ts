@@ -51,11 +51,46 @@ export function resolveWorktreeBaseDir(repo: string, agentId?: string): string {
 /** Copy stitch/ design assets from main repo into worktree so developers can reference them */
 export function copyStitchToWorktree(repo: string, worktreeDir: string): void {
   try {
-    const stitchSrc = path.join(repo, "stitch");
-    if (!fs.existsSync(stitchSrc)) return;
     const stitchDst = path.join(worktreeDir, "stitch");
-    fs.cpSync(stitchSrc, stitchDst, { recursive: true });
-    logger.info(`[worktree] Copied stitch/ to worktree`, {});
+    if (fs.existsSync(stitchDst) && fs.readdirSync(stitchDst).some(f => f.endsWith(".html"))) {
+      logger.info(`[worktree] stitch/ already present in worktree, skipping copy`, {});
+      return;
+    }
+
+    // Source 1: repo working directory
+    const stitchSrc = path.join(repo, "stitch");
+    if (fs.existsSync(stitchSrc) && fs.readdirSync(stitchSrc).some(f => f.endsWith(".html"))) {
+      fs.cpSync(stitchSrc, stitchDst, { recursive: true });
+      logger.info(`[worktree] Copied stitch/ from repo working dir`, {});
+      return;
+    }
+
+    // Source 2: git history — scaffold tools may have deleted stitch/ from working dir
+    // Find the design commit that added stitch files and restore from there
+    try {
+      const { execFileSync } = require("child_process");
+      // Find the commit that last had stitch/ files
+      const commitHash = execFileSync("git", ["log", "--all", "--diff-filter=A", "--format=%H", "--", "stitch/"], { cwd: repo, timeout: 10000, stdio: "pipe" }).toString().trim().split("\n")[0];
+      if (commitHash) {
+        // List stitch files in that commit
+        const files = execFileSync("git", ["ls-tree", "-r", "--name-only", commitHash, "stitch/"], { cwd: repo, timeout: 10000, stdio: "pipe" }).toString().trim().split("\n").filter(Boolean);
+        if (files.length > 0) {
+          fs.mkdirSync(stitchDst, { recursive: true });
+          for (const file of files) {
+            const destFile = path.join(worktreeDir, file);
+            fs.mkdirSync(path.dirname(destFile), { recursive: true });
+            const blob = execFileSync("git", ["show", `${commitHash}:${file}`], { cwd: repo, timeout: 10000, stdio: "pipe", maxBuffer: 10 * 1024 * 1024 });
+            fs.writeFileSync(destFile, blob);
+          }
+          logger.info(`[worktree] Restored stitch/ from git history (commit ${commitHash.slice(0, 8)}), ${files.length} files`, {});
+          return;
+        }
+      }
+    } catch (gitErr: any) {
+      logger.warn(`[worktree] git stitch restore failed: ${gitErr.message}`, {});
+    }
+
+    logger.warn(`[worktree] No stitch/ source found for worktree`, {});
   } catch (e: any) {
     logger.warn(`[worktree] copyStitchToWorktree failed: ${e.message}`, {});
   }

@@ -31,19 +31,22 @@ export function buildPollingPrompt(workflowId: string, agentId: string): string 
 
 2. /usr/bin/node ${cli} step claim "${fullAgentId}"
    NO_WORK → "HEARTBEAT_OK", STOP.
-   JSON → save stepId, read input, do work.
+   JSON output contains {"stepId":"<UUID>","runId":"<UUID>","input":"..."}.
+   CRITICAL: Save the "stepId" value (NOT "runId"). You MUST use stepId for complete/fail.
 
-3. Do the work. No narration.
+3. Do the work described in "input". No narration.
 
-4. cat <<'SETFARM_EOF' > .setfarm-step-output.txt
-<output in EXACT format from step input>
+4. Write output in KEY: VALUE format (NOT JSON), then complete:
+cat <<'SETFARM_EOF' > .setfarm-step-output.txt
+STATUS: done
+<other keys as specified in step input>
 SETFARM_EOF
-cat .setfarm-step-output.txt | /usr/bin/node ${cli} step complete "<stepId>"
-On failure: /usr/bin/node ${cli} step fail "<stepId>" "reason"
+cat .setfarm-step-output.txt | /usr/bin/node ${cli} step complete "<the stepId from claim JSON>"
+On failure: /usr/bin/node ${cli} step fail "<the stepId from claim JSON>" "reason"
 
 5. STOP. Reply "HEARTBEAT_OK". No more tool calls.
 
-Rules: NO_WORK/complete/fail → SESSION OVER. Never skip peek. Never run workflow stop/uninstall/sessions_spawn. Write output to file, pipe via stdin.`;
+Rules: NO_WORK/complete/fail → SESSION OVER. Never skip peek. Never run workflow stop/uninstall/sessions_spawn. Write output to file, pipe via stdin. Output must be KEY: VALUE lines, NOT JSON.`;
 }
 
 export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {

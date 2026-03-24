@@ -847,11 +847,24 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   try {
   const db = getDb();
 
-  const step = db.prepare(
+  type StepRow = { id: string; run_id: string; step_id: string; step_index: number; type: string; loop_config: string | null; current_story_id: string | null; agent_id: string; retry_count: number; max_retries: number };
+  let step = db.prepare(
     "SELECT id, run_id, step_id, step_index, type, loop_config, current_story_id, agent_id, retry_count, max_retries FROM steps WHERE id = ?"
-  ).get(stepId) as { id: string; run_id: string; step_id: string; step_index: number; type: string; loop_config: string | null; current_story_id: string | null; agent_id: string; retry_count: number; max_retries: number } | undefined;
+  ).get(stepId) as StepRow | undefined;
 
-  if (!step) throw new Error(`Step not found: ${stepId}`);
+  if (!step) {
+    // Fallback: agent may have passed runId instead of stepId — find the active step for this run
+    const fallbackStep = db.prepare(
+      `SELECT id, run_id, step_id, step_index, type, loop_config, current_story_id, agent_id, retry_count, max_retries
+       FROM steps WHERE run_id = ? AND status IN ('running', 'pending') ORDER BY step_index ASC LIMIT 1`
+    ).get(stepId) as StepRow | undefined;
+    if (fallbackStep) {
+      logger.warn(`[completeStep] Agent passed runId "${stepId}" instead of stepId — resolved to step "${fallbackStep.id}" (${fallbackStep.step_id})`, { runId: fallbackStep.run_id });
+      step = fallbackStep;
+    } else {
+      throw new Error(`Step not found: ${stepId}`);
+    }
+  }
 
   // Guard: don't process completions for failed runs
   if (getRunStatus(step.run_id) === RUN_STATUS.FAILED) {

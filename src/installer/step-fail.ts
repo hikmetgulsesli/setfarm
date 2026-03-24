@@ -29,11 +29,24 @@ import { scheduleRunCronTeardown } from "./cleanup-ops.js";
 export function failStep(stepId: string, error: string): { retrying: boolean; runFailed: boolean } {
   const db = getDb();
 
-  const step = db.prepare(
-    "SELECT run_id, retry_count, max_retries, type, current_story_id, agent_id FROM steps WHERE id = ?"
-  ).get(stepId) as { run_id: string; retry_count: number; max_retries: number; type: string; current_story_id: string | null; agent_id: string } | undefined;
+  type FailStepRow = { id: string; run_id: string; retry_count: number; max_retries: number; type: string; current_story_id: string | null; agent_id: string };
+  let step = db.prepare(
+    "SELECT id, run_id, retry_count, max_retries, type, current_story_id, agent_id FROM steps WHERE id = ?"
+  ).get(stepId) as FailStepRow | undefined;
 
-  if (!step) throw new Error(`Step not found: ${stepId}`);
+  if (!step) {
+    // Fallback: agent may have passed runId instead of stepId
+    const fallbackStep = db.prepare(
+      `SELECT id, run_id, retry_count, max_retries, type, current_story_id, agent_id
+       FROM steps WHERE run_id = ? AND status IN ('running', 'pending') ORDER BY step_index ASC LIMIT 1`
+    ).get(stepId) as FailStepRow | undefined;
+    if (fallbackStep) {
+      stepId = fallbackStep.id;
+      step = fallbackStep;
+    } else {
+      throw new Error(`Step not found: ${stepId}`);
+    }
+  }
 
   // T9: Loop step failure — per-story retry
   if (step.type === "loop" && step.current_story_id) {
