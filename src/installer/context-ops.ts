@@ -8,9 +8,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { getDb } from "../db.js";
+import { pgGet } from "../db-pg.js";
 import { logger } from "../lib/logger.js";
 import { OPTIONAL_TEMPLATE_VARS, PROTECTED_CONTEXT_KEYS, PROJECT_MEMORY_MAX_LINES } from "./constants.js";
 import { getAgentWorkspacePath } from "./worktree-ops.js";
+
+const USE_PG = process.env.DB_BACKEND === "postgres";
 
 // ── Path Utilities ────────────────────────────────────────────────
 
@@ -142,21 +145,36 @@ export function applyOptionalDefaults(context: Record<string, string>): void {
 /**
  * Read progress.txt from the loop step's agent workspace.
  */
-export function readProgressFile(runId: string): string {
-  const db = getDb();
-  const loopStep = db.prepare(
-    "SELECT agent_id FROM steps WHERE run_id = ? AND type = 'loop' LIMIT 1"
-  ).get(runId) as { agent_id: string } | undefined;
-  if (!loopStep) return "(no progress file)";
-  const workspace = getAgentWorkspacePath(loopStep.agent_id);
-  if (!workspace) return "(no progress file)";
-  try {
-    // Only use run-scoped progress file (no legacy fallback)
-    const scopedPath = path.join(workspace, `progress-${runId}.txt`);
-    if (!fs.existsSync(scopedPath)) return "(no progress yet)";
-    return fs.readFileSync(scopedPath, "utf-8");
-  } catch {
-    return "(no progress yet)";
+export async function readProgressFile(runId: string): Promise<string> {
+  if (USE_PG) {
+    const loopStep = await pgGet<{ agent_id: string }>(
+      "SELECT agent_id FROM steps WHERE run_id = $1 AND type = 'loop' LIMIT 1", [runId]
+    );
+    if (!loopStep) return "(no progress file)";
+    const workspace = getAgentWorkspacePath(loopStep.agent_id);
+    if (!workspace) return "(no progress file)";
+    try {
+      const scopedPath = path.join(workspace, `progress-${runId}.txt`);
+      if (!fs.existsSync(scopedPath)) return "(no progress yet)";
+      return fs.readFileSync(scopedPath, "utf-8");
+    } catch {
+      return "(no progress yet)";
+    }
+  } else {
+    const db = getDb();
+    const loopStep = db.prepare(
+      "SELECT agent_id FROM steps WHERE run_id = ? AND type = 'loop' LIMIT 1"
+    ).get(runId) as { agent_id: string } | undefined;
+    if (!loopStep) return "(no progress file)";
+    const workspace = getAgentWorkspacePath(loopStep.agent_id);
+    if (!workspace) return "(no progress file)";
+    try {
+      const scopedPath = path.join(workspace, `progress-${runId}.txt`);
+      if (!fs.existsSync(scopedPath)) return "(no progress yet)";
+      return fs.readFileSync(scopedPath, "utf-8");
+    } catch {
+      return "(no progress yet)";
+    }
   }
 }
 

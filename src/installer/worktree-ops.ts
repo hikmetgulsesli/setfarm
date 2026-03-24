@@ -10,7 +10,10 @@ import path from "node:path";
 import os from "node:os";
 import { execFileSync } from "node:child_process";
 import { getDb } from "../db.js";
+import { pgGet } from "../db-pg.js";
 import { logger } from "../lib/logger.js";
+
+const USE_PG = process.env.DB_BACKEND === "postgres";
 
 // ── Worktree Base Dir Resolution ────────────────────────────────────
 
@@ -343,17 +346,28 @@ export function killWorktreeProcesses(dir: string): void {
  * Clean up leftover git worktrees when a run completes.
  * Prunes stale worktree refs and removes the .worktrees/ directory.
  */
-export function cleanupWorktrees(runId: string): void {
+export async function cleanupWorktrees(runId: string): Promise<void> {
   try {
-    const db = getDb();
-    const run = db.prepare("SELECT context FROM runs WHERE id = ?").get(runId) as { context: string } | undefined;
-    if (!run) return;
     let context: Record<string, string>;
-    try {
-      context = JSON.parse(run.context);
-    } catch (parseErr) {
-      logger.warn(`[worktree] Corrupt context JSON for run ${runId}, skipping cleanup`, {});
-      return;
+    if (USE_PG) {
+      const run = await pgGet<{ context: string }>("SELECT context FROM runs WHERE id = $1", [runId]);
+      if (!run) return;
+      try {
+        context = JSON.parse(run.context);
+      } catch (parseErr) {
+        logger.warn(`[worktree] Corrupt context JSON for run ${runId}, skipping cleanup`, {});
+        return;
+      }
+    } else {
+      const db = getDb();
+      const run = db.prepare("SELECT context FROM runs WHERE id = ?").get(runId) as { context: string } | undefined;
+      if (!run) return;
+      try {
+        context = JSON.parse(run.context);
+      } catch (parseErr) {
+        logger.warn(`[worktree] Corrupt context JSON for run ${runId}, skipping cleanup`, {});
+        return;
+      }
     }
     const repo = context.repo;
     if (!repo) return;

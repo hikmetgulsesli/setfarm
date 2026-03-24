@@ -26,6 +26,8 @@ import { startDaemon, stopDaemon, getDaemonStatus, isRunning } from "../server/d
 import { claimStep, completeStep, failStep, getStories, peekStep } from "../installer/step-ops.js";
 import { ensureCliSymlink } from "../installer/symlink.js";
 import { runMedicCheck, getMedicStatus, getRecentMedicChecks } from "../medic/medic.js";
+import { pgQuery, pgGet, pgRun } from "../db-pg.js";
+const USE_PG = process.env.DB_BACKEND === 'postgres';
 import { installMedicCron, uninstallMedicCron, isMedicCronInstalled } from "../medic/medic-cron.js";
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -146,7 +148,7 @@ async function main() {
 
     // Active-run guard: don't rebuild while pipeline is running
     if (!force) {
-      const activeRuns = checkActiveRuns();
+      const activeRuns = await checkActiveRuns();
       if (activeRuns.length > 0) {
         process.stderr.write(`Cannot update: ${activeRuns.length} active run(s):\n`);
         for (const run of activeRuns) {
@@ -206,7 +208,7 @@ async function main() {
       process.exit(1);
     }
     const force = args.includes("--force");
-    const activeRuns = checkActiveRuns();
+    const activeRuns = await checkActiveRuns();
     if (activeRuns.length > 0 && !force) {
       process.stderr.write(`Cannot uninstall: ${activeRuns.length} active run(s):\n`);
       for (const run of activeRuns) {
@@ -343,7 +345,7 @@ async function main() {
     }
 
     if (action === "status") {
-      const status = getMedicStatus();
+      const status = await getMedicStatus();
       const cronInstalled = await isMedicCronInstalled();
 
       console.log("Setfarm Medic");
@@ -362,7 +364,7 @@ async function main() {
 
     if (action === "log") {
       const limit = target ? parseInt(target, 10) || 20 : 20;
-      const checks = getRecentMedicChecks(limit);
+      const checks = await getRecentMedicChecks(limit);
       if (checks.length === 0) {
         console.log("No medic checks recorded yet.");
         return;
@@ -384,13 +386,13 @@ async function main() {
   if (group === "step") {
     if (action === "peek") {
       if (!target) { process.stderr.write("Missing agent-id.\n"); process.exit(1); }
-      const result = peekStep(target);
+      const result = await peekStep(target);
       process.stdout.write(result + "\n");
       return;
     }
     if (action === "claim") {
       if (!target) { process.stderr.write("Missing agent-id.\n"); process.exit(1); }
-      const result = claimStep(target);
+      const result = await claimStep(target);
       if (!result.found) {
         process.stdout.write("NO_WORK\n");
       } else {
@@ -410,7 +412,7 @@ async function main() {
         }
         output = Buffer.concat(chunks).toString("utf-8").trim();
       }
-      const result = completeStep(target, output);
+      const result = await completeStep(target, output);
       process.stdout.write(JSON.stringify(result) + "\n");
       process.stdout.write("\n===== SESSION_DONE =====\nStep completed successfully. This session's work is FINISHED.\nDo NOT attempt any further work. Reply HEARTBEAT_OK and stop.\n");
       return;
@@ -418,14 +420,14 @@ async function main() {
     if (action === "fail") {
       if (!target) { process.stderr.write("Missing step-id.\n"); process.exit(1); }
       const error = args.slice(3).join(" ").trim() || "Unknown error";
-      const result = failStep(target, error);
+      const result = await failStep(target, error);
       process.stdout.write(JSON.stringify(result) + "\n");
       process.stdout.write("\n===== SESSION_DONE =====\nStep failed and recorded. This session's work is FINISHED.\nDo NOT attempt any further work. Reply HEARTBEAT_OK and stop.\n");
       return;
     }
     if (action === "stories") {
       if (!target) { process.stderr.write("Missing run-id.\n"); process.exit(1); }
-      const stories = getStories(target);
+      const stories = await getStories(target);
       if (stories.length === 0) { console.log("No stories found for this run."); return; }
       for (const s of stories) {
         const retryInfo = s.retryCount > 0 ? ` (retry ${s.retryCount})` : "";
@@ -453,8 +455,9 @@ async function main() {
     // Also support "setfarm logs #3" to show events for run number 3
     if (arg && /^#\d+$/.test(arg)) {
       const runNum = parseInt(arg.slice(1), 10);
-      const db2 = (await import("../db.js")).getDb();
-      const r = db2.prepare("SELECT id FROM runs WHERE run_number = ?").get(runNum) as { id: string } | undefined;
+      const r = USE_PG
+        ? await pgGet<{ id: string }>("SELECT id FROM runs WHERE run_number = $1", [runNum])
+        : ((await import("../db.js")).getDb().prepare("SELECT id FROM runs WHERE run_number = ?").get(runNum) as { id: string } | undefined);
       if (r) {
         const events = getRunEvents(r.id);
         if (events.length === 0) { console.log(`No events for run #${runNum}.`); }
@@ -474,7 +477,7 @@ async function main() {
   if (group !== "workflow") { printUsage(); process.exit(1); }
 
   if (action === "runs") {
-    const runs = listRuns();
+    const runs = await listRuns();
     if (runs.length === 0) { console.log("No workflow runs found."); return; }
     console.log("Workflow runs:");
     for (const r of runs) {
@@ -522,7 +525,7 @@ async function main() {
     }
     const force = args.includes("--force");
     const isAll = target === "--all" || target === "all";
-    const activeRuns = checkActiveRuns(isAll ? undefined : target);
+    const activeRuns = await checkActiveRuns(isAll ? undefined : target);
     if (activeRuns.length > 0 && !force) {
       process.stderr.write(`Cannot uninstall: ${activeRuns.length} active run(s):\n`);
       for (const run of activeRuns) {
@@ -538,7 +541,7 @@ async function main() {
   if (action === "status") {
     const query = args.slice(2).join(" ").trim();
     if (!query) { process.stderr.write("Missing search query.\n"); printUsage(); process.exit(1); }
-    const result = getWorkflowStatus(query);
+    const result = await getWorkflowStatus(query);
     if (result.status === "not_found") { process.stdout.write(`${result.message}\n`); return; }
     const { run, steps } = result;
     const runLabel = run.run_number != null ? `#${run.run_number} (${run.id})` : run.id;
@@ -553,7 +556,7 @@ async function main() {
       "Steps:",
       ...steps.map((s) => `  [${s.status}] ${s.step_id} (${s.agent_id})`),
     ];
-    const stories = getStories(run.id);
+    const stories = await getStories(run.id);
     if (stories.length > 0) {
       const done = stories.filter((s) => s.status === "done").length;
       const running = stories.filter((s) => s.status === "running").length;
@@ -570,20 +573,21 @@ async function main() {
 
   if (action === "resume") {
     if (!target) { process.stderr.write("Missing run-id.\n"); printUsage(); process.exit(1); }
-    const db = (await import("../db.js")).getDb();
+    let db: any;
+    if (!USE_PG) db = (await import("../db.js")).getDb();
 
     // Find the run (support prefix match)
     // Support run number lookup in addition to UUID prefix
     let run: { id: string; run_number: number | null; workflow_id: string; status: string } | undefined;
     if (/^\d+$/.test(target)) {
-      run = db.prepare(
-        "SELECT id, run_number, workflow_id, status FROM runs WHERE run_number = ?"
-      ).get(parseInt(target, 10)) as typeof run;
+      run = USE_PG
+        ? await pgGet("SELECT id, run_number, workflow_id, status FROM runs WHERE run_number = $1", [parseInt(target, 10)])
+        : db.prepare("SELECT id, run_number, workflow_id, status FROM runs WHERE run_number = ?").get(parseInt(target, 10)) as typeof run;
     }
     if (!run) {
-      run = db.prepare(
-        "SELECT id, run_number, workflow_id, status FROM runs WHERE id = ? OR id LIKE ?"
-      ).get(target, `${target}%`) as typeof run;
+      run = USE_PG
+        ? await pgGet("SELECT id, run_number, workflow_id, status FROM runs WHERE id = $1 OR id LIKE $2", [target, `${target}%`])
+        : db.prepare("SELECT id, run_number, workflow_id, status FROM runs WHERE id = ? OR id LIKE ?").get(target, `${target}%`) as typeof run;
     }
 
     if (!run) { process.stderr.write(`Run not found: ${target}\n`); process.exit(1); }
@@ -593,9 +597,9 @@ async function main() {
     }
 
     // Find the failed step (or first non-done step)
-    const failedStep = db.prepare(
-      "SELECT id, step_id, type, current_story_id FROM steps WHERE run_id = ? AND status = 'failed' ORDER BY step_index ASC LIMIT 1"
-    ).get(run.id) as { id: string; step_id: string; type: string; current_story_id: string | null } | undefined;
+    const failedStep = USE_PG
+      ? await pgGet<{ id: string; step_id: string; type: string; current_story_id: string | null }>("SELECT id, step_id, type, current_story_id FROM steps WHERE run_id = $1 AND status = 'failed' ORDER BY step_index ASC LIMIT 1", [run.id])
+      : db.prepare("SELECT id, step_id, type, current_story_id FROM steps WHERE run_id = ? AND status = 'failed' ORDER BY step_index ASC LIMIT 1").get(run.id) as { id: string; step_id: string; type: string; current_story_id: string | null } | undefined;
 
     if (!failedStep) {
       process.stderr.write(`No failed step found in run ${run.id.slice(0, 8)}.\n`);
@@ -604,23 +608,23 @@ async function main() {
 
     // If it's a loop step with a failed story, reset that story to pending
     if (failedStep.type === "loop") {
-      const failedStory = db.prepare(
-        "SELECT id FROM stories WHERE run_id = ? AND status = 'failed' ORDER BY story_index ASC LIMIT 1"
-      ).get(run.id) as { id: string } | undefined;
+      const failedStory = USE_PG
+        ? await pgGet<{ id: string }>("SELECT id FROM stories WHERE run_id = $1 AND status = 'failed' ORDER BY story_index ASC LIMIT 1", [run.id])
+        : db.prepare("SELECT id FROM stories WHERE run_id = ? AND status = 'failed' ORDER BY story_index ASC LIMIT 1").get(run.id) as { id: string } | undefined;
       if (failedStory) {
         db.prepare(
           "UPDATE stories SET status = 'pending', updated_at = ? WHERE id = ?"
         ).run(new Date().toISOString(), failedStory.id);
       }
-      db.prepare(
+      if (USE_PG) { await pgRun("UPDATE steps SET retry_count = 0 WHERE run_id = $1 AND type = 'loop'", [run.id]); } else { db.prepare(
         "UPDATE steps SET retry_count = 0 WHERE run_id = ? AND type = 'loop'"
-      ).run(run.id);
+      ).run(run.id); }
     }
 
     // Check if the failed step is a verify step linked to a loop step's verify_each
-    const loopStep = db.prepare(
-      "SELECT id, loop_config FROM steps WHERE run_id = ? AND type = 'loop' AND status IN ('running', 'failed') LIMIT 1"
-    ).get(run.id) as { id: string; loop_config: string | null } | undefined;
+    const loopStep = USE_PG
+      ? await pgGet<{ id: string; loop_config: string | null }>("SELECT id, loop_config FROM steps WHERE run_id = $1 AND type = 'loop' AND status IN ('running', 'failed') LIMIT 1", [run.id])
+      : db.prepare("SELECT id, loop_config FROM steps WHERE run_id = ? AND type = 'loop' AND status IN ('running', 'failed') LIMIT 1").get(run.id) as { id: string; loop_config: string | null } | undefined;
 
     if (loopStep?.loop_config) {
       const lc = JSON.parse(loopStep.loop_config);

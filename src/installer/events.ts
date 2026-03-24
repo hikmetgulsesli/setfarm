@@ -2,6 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { getDb } from "../db.js";
+import { pgGet } from "../db-pg.js";
+
+const USE_PG = process.env.DB_BACKEND === "postgres";
 
 function getEventsDir(): string {
   return process.env.SETFARM_DB_PATH
@@ -53,39 +56,47 @@ export function emitEvent(evt: SetfarmEvent): void {
 // In-memory cache: runId -> notify_url | null
 const notifyUrlCache = new Map<string, string | null>();
 
-function getNotifyUrl(runId: string): string | null {
+async function getNotifyUrl(runId: string): Promise<string | null> {
   if (notifyUrlCache.has(runId)) return notifyUrlCache.get(runId)!;
   try {
-    const db = getDb();
-    const row = db.prepare("SELECT notify_url FROM runs WHERE id = ?").get(runId) as { notify_url: string | null } | undefined;
-    const url = row?.notify_url ?? null;
-    notifyUrlCache.set(runId, url);
-    return url;
+    if (USE_PG) {
+      const row = await pgGet<{ notify_url: string | null }>("SELECT notify_url FROM runs WHERE id = $1", [runId]);
+      const url = row?.notify_url ?? null;
+      notifyUrlCache.set(runId, url);
+      return url;
+    } else {
+      const db = getDb();
+      const row = db.prepare("SELECT notify_url FROM runs WHERE id = ?").get(runId) as { notify_url: string | null } | undefined;
+      const url = row?.notify_url ?? null;
+      notifyUrlCache.set(runId, url);
+      return url;
+    }
   } catch {
     return null;
   }
 }
 
 function fireWebhook(evt: SetfarmEvent): void {
-  const raw = getNotifyUrl(evt.runId);
-  if (!raw) return;
-  try {
-    let url = raw;
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-    const hashIdx = url.indexOf("#auth=");
-    if (hashIdx !== -1) {
-      headers["Authorization"] = decodeURIComponent(url.slice(hashIdx + 6));
-      url = url.slice(0, hashIdx);
+  getNotifyUrl(evt.runId).then((raw) => {
+    if (!raw) return;
+    try {
+      let url = raw;
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      const hashIdx = url.indexOf("#auth=");
+      if (hashIdx !== -1) {
+        headers["Authorization"] = decodeURIComponent(url.slice(hashIdx + 6));
+        url = url.slice(0, hashIdx);
+      }
+      fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(evt),
+        signal: AbortSignal.timeout(5000),
+      }).catch(() => {});
+    } catch {
+      // fire-and-forget
     }
-    fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(evt),
-      signal: AbortSignal.timeout(5000),
-    }).catch(() => {});
-  } catch {
-    // fire-and-forget
-  }
+  }).catch(() => {});
 }
 
 // Read recent events (last N)

@@ -1,3 +1,5 @@
+import { pgQuery, pgGet, pgRun, pgExec, pgBegin } from "../db-pg.js";
+const USE_PG = process.env.DB_BACKEND === 'postgres';
 import { getDb, beginTx, endTx } from "../db.js";
 import type { LoopConfig, Story } from "./types.js";
 import { execFileSync } from "node:child_process";
@@ -48,8 +50,8 @@ export function cleanupAbandonedSteps(): void {
   _cleanupAbandonedSteps(advancePipeline);
 }
 
-function getWorkflowId(runId: string): string | undefined {
-  return _getWorkflowId(runId);
+async function getWorkflowId(runId: string): Promise<string | undefined> {
+  return await _getWorkflowId(runId);
 }
 
 // ── Peek (lightweight work check) ───────────────────────────────────
@@ -61,7 +63,21 @@ export type PeekResult = "HAS_WORK" | "NO_WORK";
  * Unlike claimStep(), this runs a single cheap COUNT query — no cleanup, no context resolution.
  * Returns "HAS_WORK" if any pending/waiting steps exist, "NO_WORK" otherwise.
  */
-export function peekStep(agentId: string): PeekResult {
+export async function peekStep(agentId: string): Promise<PeekResult> {
+  if (USE_PG) {
+    const row = await pgGet<{ cnt: number }>(
+      `SELECT COUNT(*) as cnt FROM steps s
+       JOIN runs r ON r.id = s.run_id
+       WHERE s.agent_id = $1 AND r.status = 'running'
+         AND (
+           s.status = 'pending'
+           OR (s.status = 'running' AND s.type = 'loop'
+               AND (EXISTS (SELECT 1 FROM stories st WHERE st.run_id = s.run_id AND st.status = 'pending')
+                    OR EXISTS (SELECT 1 FROM stories st WHERE st.run_id = s.run_id AND st.status = 'done')))
+         )`, [agentId]
+    );
+    return (row?.cnt ?? 0) > 0 ? "HAS_WORK" : "NO_WORK";
+  }
   const db = getDb();
   // Count pending steps, PLUS running loop steps that still have pending stories
   // #182: Don't match 'waiting' (claimStep won't accept them → wasted sessions)
@@ -106,22 +122,22 @@ type StepRow = {
  * Auto-complete design step with existing HTML files.
  * Shared by .stitch dedup and PRD Generator cache path.
  */
-function autoCompleteDesignStep(step: StepRow, db: any, htmlFiles: string[], projectId: string): boolean {
-  const dRepoPath = getRunContext(step.run_id)["repo"] || "";
+async function autoCompleteDesignStep(step: StepRow, db: any, htmlFiles: string[], projectId: string): Promise<boolean> {
+  const dRepoPath = (await getRunContext(step.run_id))["repo"] || "";
   const dScreenMap = htmlFiles.map((f: string) => ({
     screenId: f.replace(".html", ""),
     name: f.replace(".html", ""),
     type: "page",
     description: f.replace(".html", ""),
   }));
-  const dCtx = getRunContext(step.run_id);
+  const dCtx = await getRunContext(step.run_id);
   dCtx["stitch_project_id"] = projectId;
   dCtx["screens_generated"] = String(htmlFiles.length);
   dCtx["screen_map"] = JSON.stringify(dScreenMap);
   dCtx["device_type"] = dCtx["device_type"] || "DESKTOP";
   dCtx["design_system"] = dCtx["design_system"] || "reused from existing designs";
   dCtx["design_notes"] = `Reused ${htmlFiles.length} existing screen designs`;
-  updateRunContext(step.run_id, dCtx);
+  await updateRunContext(step.run_id, dCtx);
   const dOutput = `STATUS: done\nSTITCH_PROJECT_ID: ${projectId}\nSCREENS_GENERATED: ${htmlFiles.length}\nDESIGN_NOTES: Reused ${htmlFiles.length} screens (auto-skip)`;
   db.prepare("UPDATE steps SET status = 'done', output = ?, updated_at = ? WHERE id = ?")
     .run(dOutput, new Date().toISOString(), step.id);
@@ -135,10 +151,10 @@ function autoCompleteDesignStep(step: StepRow, db: any, htmlFiles: string[], pro
  * Also auto-skips when stitch/ has ≥2 HTML files from PRD Generator cache.
  * Returns true if the step was auto-completed (caller should return { found: false }).
  */
-function handleDesignDedup(step: StepRow, db: any): boolean {
+async function handleDesignDedup(step: StepRow, db: any): Promise<boolean> {
   if (step.step_id !== "design") return false;
 
-  const dRepoPath = getRunContext(step.run_id)["repo"] || "";
+  const dRepoPath = (await getRunContext(step.run_id))["repo"] || "";
   if (!dRepoPath) return false;
 
   const dStitchFile = path.join(dRepoPath, ".stitch");
@@ -168,7 +184,7 @@ function handleDesignDedup(step: StepRow, db: any): boolean {
       }
 
       if (dData.projectId && dHtmlFiles.length > 0) {
-        return autoCompleteDesignStep(step, db, dHtmlFiles, dData.projectId);
+        return await autoCompleteDesignStep(step, db, dHtmlFiles, dData.projectId);
       }
     } catch (e) { logger.warn(`[design-dedup] .stitch parse error: ${e}`, { runId: step.run_id }); }
   }
@@ -176,7 +192,7 @@ function handleDesignDedup(step: StepRow, db: any): boolean {
   // Case B: No .stitch file but stitch/ has ≥2 HTML files (PRD Generator cache)
   if (dHtmlFiles.length >= 2) {
     logger.info(`[design-dedup] No .stitch file but stitch/ has ${dHtmlFiles.length} HTML files — auto-skipping design step`, { runId: step.run_id });
-    return autoCompleteDesignStep(step, db, dHtmlFiles, "prd-generator-cache");
+    return await autoCompleteDesignStep(step, db, dHtmlFiles, "prd-generator-cache");
   }
 
   return false;
@@ -186,10 +202,10 @@ function handleDesignDedup(step: StepRow, db: any): boolean {
  * DEPLOY ENV GUARD: Auto-generate .env for projects with auth/DB before deploy.
  * Mutates the filesystem only (no return value needed).
  */
-function handleDeployEnvGuard(step: StepRow): void {
+async function handleDeployEnvGuard(step: StepRow): Promise<void> {
   if (step.step_id !== "deploy") return;
 
-  const dCtx = getRunContext(step.run_id);
+  const dCtx = await getRunContext(step.run_id);
   const repoPath = dCtx["repo"] || "";
   if (!repoPath || fs.existsSync(path.join(repoPath, ".env"))) return;
 
@@ -241,12 +257,12 @@ function handleDeployEnvGuard(step: StepRow): void {
  * Checks BOTH running AND pending stories — medic resets running->pending faster
  * than cron claims, so pending stories with PRs must also be caught.
  */
-function autoCompleteStoriesWithPRs(
+async function autoCompleteStoriesWithPRs(
   step: StepRow,
   runIdPrefix: string,
   context: Record<string, string>,
   db: any,
-): void {
+): Promise<void> {
   const autoCompleteStories = db.prepare(
     "SELECT * FROM stories WHERE run_id = ? AND status = 'pending' ORDER BY story_index ASC"
   ).all(step.run_id) as any[];
@@ -280,7 +296,7 @@ function autoCompleteStoriesWithPRs(
         db.prepare("UPDATE steps SET current_story_id = NULL, updated_at = ? WHERE id = ? AND current_story_id = ?")
           .run(new Date().toISOString(), step.id, rs.id);
         logger.info(`[claim-auto-complete] Story ${rs.story_id} auto-completed — PR exists: ${prUrl}`, { runId: step.run_id });
-        emitEvent({ ts: new Date().toISOString(), event: "story.done", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: rs.story_id, storyTitle: rs.title, detail: `Auto-completed — PR exists (${prUrl})` });
+        emitEvent({ ts: new Date().toISOString(), event: "story.done", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, storyId: rs.story_id, storyTitle: rs.title, detail: `Auto-completed — PR exists (${prUrl})` });
       }
     } catch (e) {
       logger.warn(`[claim-auto-complete] PR check failed for story ${rs.story_id}: ${String(e)}`, { runId: step.run_id });
@@ -292,12 +308,12 @@ function autoCompleteStoriesWithPRs(
  * Resolve story_screens from SCREEN_MAP for a given storyId.
  * Mutates context["story_screens"] and optionally context["design_warning"].
  */
-function resolveStoryScreens(
+async function resolveStoryScreens(
   storyId: string,
   context: Record<string, string>,
   runId: string,
   logPrefix: string,
-): void {
+): Promise<void> {
   const screenMapRaw = context["screen_map"];
   if (!screenMapRaw) return;
 
@@ -333,11 +349,11 @@ function resolveStoryScreens(
  * Inject story-specific context vars after a story is claimed in a loop step.
  * Mutates `context` in-place with current_story, completed_stories, story_screens, etc.
  */
-function injectStoryContext(
+async function injectStoryContext(
   nextStory: any,
   step: StepRow,
   context: Record<string, string>,
-): void {
+): Promise<void> {
   // FIX #5: Clear stale story context at claim time (not just completeStep)
   // Prevents cross-contamination when parallel stories share the same run context
   delete context["pr_url"];
@@ -361,7 +377,7 @@ function injectStoryContext(
     maxRetries: nextStory.max_retries,
   };
 
-  const allStories = getStories(step.run_id);
+  const allStories = await getStories(step.run_id);
   const pendingCount = allStories.filter(s => s.status === STORY_STATUS.PENDING || s.status === STORY_STATUS.RUNNING).length;
 
   context["current_story"] = formatStoryForTemplate(story);
@@ -369,8 +385,8 @@ function injectStoryContext(
   context["current_story_title"] = story.title;
   context["completed_stories"] = formatCompletedStories(allStories);
   context["stories_remaining"] = String(pendingCount);
-  context["progress"] = readProgressFile(step.run_id);
-  context["project_memory"] = readProjectMemory(context);
+  context["progress"] = await readProgressFile(step.run_id);
+  context["project_memory"] = await readProjectMemory(context);
 
   // FIX: Clear stale story-specific context from previous story to prevent cross-contamination
   context["pr_url"] = "";
@@ -378,7 +394,7 @@ function injectStoryContext(
   context["verify_feedback"] = "";
 
   // Resolve story_screens from SCREEN_MAP
-  resolveStoryScreens(story.storyId, context, step.run_id, "story-claim");
+  await resolveStoryScreens(story.storyId, context, step.run_id, "story-claim");
 
   // Default optional template vars to prevent MISSING_INPUT_GUARD false positives (story-each flow)
   for (const v of OPTIONAL_TEMPLATE_VARS) {
@@ -386,7 +402,7 @@ function injectStoryContext(
   }
 
   // Persist story context vars to DB so verify_each steps can access them
-  updateRunContext(step.run_id, context);
+  await updateRunContext(step.run_id, context);
 
   // v1.5.50: Inject previous_failure from prior abandon output
   if (nextStory.output && (nextStory.abandoned_count > 0 || nextStory.retry_count > 0)) {
@@ -399,12 +415,12 @@ function injectStoryContext(
  * Mutates `context` in-place and updates DB context.
  * Returns false if all stories were auto-verified (caller should return { found: false }).
  */
-function injectVerifyContext(
+async function injectVerifyContext(
   step: StepRow,
   context: Record<string, string>,
   db: any,
-): boolean {
-  const loopStepForVerify = findLoopStep(step.run_id);
+): Promise<boolean> {
+  const loopStepForVerify = await findLoopStep(step.run_id);
   if (!loopStepForVerify?.loop_config) return true;
 
   const lcCheck: LoopConfig = JSON.parse(loopStepForVerify.loop_config);
@@ -412,7 +428,7 @@ function injectVerifyContext(
 
   // Auto-verify stories whose PRs are already merged/closed-with-ancestry.
   // Also auto-merges OPEN PRs after abandonment (prevents "son mil" loop).
-  const nextUnverified = autoVerifyDoneStories(step.run_id, context, "claim-auto-verify", { autoMergeOpen: true });
+  const nextUnverified = await autoVerifyDoneStories(step.run_id, context, "claim-auto-verify", { autoMergeOpen: true });
 
   if (!nextUnverified) {
     // All stories auto-verified — no agent work needed, advance pipeline
@@ -447,7 +463,7 @@ function injectVerifyContext(
   context["current_story"] = formatStoryForTemplate(storyObj);
 
   // Resolve story_screens from SCREEN_MAP for verify_each
-  resolveStoryScreens(nextUnverified.story_id, context, step.run_id, "verify-claim");
+  await resolveStoryScreens(nextUnverified.story_id, context, step.run_id, "verify-claim");
 
   db.prepare("UPDATE runs SET context = ?, updated_at = ? WHERE id = ?")
     .run(JSON.stringify(context), new Date().toISOString(), step.run_id);
@@ -461,12 +477,12 @@ function injectVerifyContext(
  * progress/stories injection, and missing-input guard.
  * Returns a ClaimResult.
  */
-function claimSingleStep(
+async function claimSingleStep(
   step: StepRow,
   agentId: string,
   context: Record<string, string>,
   db: any,
-): ClaimResult {
+): Promise<ClaimResult> {
   // Item 6: Single step — atomic claim with changes check to prevent race condition
   const claimResult = db.prepare(
     "UPDATE steps SET status = 'running', updated_at = ? WHERE id = ? AND status = 'pending'"
@@ -475,7 +491,7 @@ function claimSingleStep(
     // Already claimed by another cron — return no work
     return { found: false };
   }
-  emitEvent({ ts: new Date().toISOString(), event: "step.running", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId });
+  emitEvent({ ts: new Date().toISOString(), event: "step.running", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId });
   logger.info(`Step claimed by ${agentId}`, { runId: step.run_id, stepId: step.step_id });
 
   // v1.5.50: Record single step claim in claim_log
@@ -495,11 +511,11 @@ function claimSingleStep(
     "SELECT COUNT(*) as cnt FROM stories WHERE run_id = ?"
   ).get(step.run_id) as { cnt: number };
   if (hasStories.cnt > 0) {
-    context["progress"] = readProgressFile(step.run_id);
-    context["project_memory"] = readProjectMemory(context);
+    context["progress"] = await readProgressFile(step.run_id);
+    context["project_memory"] = await readProjectMemory(context);
 
     // Inject stories_json for non-loop steps that need it
-    const allStoriesForCtx = getStories(step.run_id);
+    const allStoriesForCtx = await getStories(step.run_id);
     const storiesForTemplate = allStoriesForCtx.map(s => ({
       id: s.storyId,
       title: s.title,
@@ -511,7 +527,7 @@ function claimSingleStep(
 
   // BUG FIX: If this is a verify step for a verify_each loop, inject the correct
   // story info from the oldest unverified 'done' story (not from stale context).
-  if (!injectVerifyContext(step, context, db)) {
+  if (!await injectVerifyContext(step, context, db)) {
     return { found: false };
   }
 
@@ -532,7 +548,7 @@ function claimSingleStep(
         .run(reason + " — failing run (retry exhausted)", new Date().toISOString(), step.id);
       db.prepare("UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?")
         .run(new Date().toISOString(), step.run_id);
-      const wfId = getWorkflowId(step.run_id);
+      const wfId = await getWorkflowId(step.run_id);
       emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: reason });
       emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: reason });
       scheduleRunCronTeardown(step.run_id);
@@ -563,7 +579,7 @@ let lastCleanupTime = 0;
 /**
  * Find and claim a pending step for an agent, returning the resolved input.
  */
-export function claimStep(agentId: string): ClaimResult {
+export async function claimStep(agentId: string): Promise<ClaimResult> {
   beginTx();
   try {
   // Throttle cleanup: run at most once every 5 minutes across all agents
@@ -596,16 +612,16 @@ export function claimStep(agentId: string): ClaimResult {
   if (!step) return { found: false };
 
   // Guard: don't claim work for a failed run
-  if (getRunStatus(step.run_id) === RUN_STATUS.FAILED) return { found: false };
+  if (await getRunStatus(step.run_id) === RUN_STATUS.FAILED) return { found: false };
 
   // DESIGN STEP DEDUP
-  if (handleDesignDedup(step, db)) return { found: false };
+  if (await handleDesignDedup(step, db)) return { found: false };
 
   // DEPLOY ENV GUARD
-  handleDeployEnvGuard(step);
+  await handleDeployEnvGuard(step);
 
   // Get run context
-  const context: Record<string, string> = getRunContext(step.run_id);
+  const context: Record<string, string> = await getRunContext(step.run_id);
 
   // Always inject run_id so templates can use {{run_id}} (e.g. for scoped progress files)
   context["run_id"] = step.run_id;
@@ -623,7 +639,7 @@ export function claimStep(agentId: string): ClaimResult {
     if (loopConfig?.over === "stories") {
       // Auto-complete stories that already have a PR (open or merged)
       const runIdPrefix = step.run_id.slice(0, 8);
-      autoCompleteStoriesWithPRs(step, runIdPrefix, context, db);
+      await autoCompleteStoriesWithPRs(step, runIdPrefix, context, db);
 
       // BEGIN IMMEDIATE early: story selection + claim must be atomic to prevent
       // two parallel crons from selecting the same story (race condition fix #4)
@@ -662,12 +678,12 @@ export function claimStep(agentId: string): ClaimResult {
 
       if (!nextStory) {
         _rollbackEarly();
-        const failedStory = findStoryByStatus(step.run_id, "failed") as { id: string } | undefined;
+        const failedStory = await findStoryByStatus(step.run_id, "failed") as { id: string } | undefined;
 
         if (failedStory) {
           // v9.0: Skip failed stories instead of failing the loop
-          skipFailedStories(step.run_id);
-          const wfId = getWorkflowId(step.run_id);
+          await skipFailedStories(step.run_id);
+          const wfId = await getWorkflowId(step.run_id);
           emitEvent({ ts: new Date().toISOString(), event: "story.skipped", runId: step.run_id, workflowId: wfId, stepId: step.id, agentId: agentId, detail: "Failed stories skipped — loop continues" });
         }
 
@@ -689,8 +705,8 @@ export function claimStep(agentId: string): ClaimResult {
           }
           db.prepare("UPDATE steps SET status = 'failed', output = ?, updated_at = ? WHERE id = ?")
             .run(deadlockMsg, new Date().toISOString(), step.id);
-          failRun(step.run_id);
-          const wfIdDL = getWorkflowId(step.run_id);
+          await failRun(step.run_id);
+          const wfIdDL = await getWorkflowId(step.run_id);
           emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfIdDL, stepId: step.step_id, detail: deadlockMsg });
           emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfIdDL, detail: deadlockMsg });
           scheduleRunCronTeardown(step.run_id);
@@ -698,7 +714,7 @@ export function claimStep(agentId: string): ClaimResult {
         }
 
         // #157 GUARD: 0 total stories means planner did not produce STORIES_JSON
-        const totalStories = { cnt: countAllStories(step.run_id) };
+        const totalStories = { cnt: await countAllStories(step.run_id) };
         if (totalStories.cnt === 0) {
           const noStoriesReason = "No stories exist — planner did not produce STORIES_JSON";
           logger.warn(noStoriesReason, { runId: step.run_id, stepId: step.step_id });
@@ -708,7 +724,7 @@ export function claimStep(agentId: string): ClaimResult {
           db.prepare(
             "UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?"
           ).run(new Date().toISOString(), step.run_id);
-          const wfId157 = getWorkflowId(step.run_id);
+          const wfId157 = await getWorkflowId(step.run_id);
           emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId157, stepId: step.step_id, detail: noStoriesReason });
           emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId157, detail: noStoriesReason });
           scheduleRunCronTeardown(step.run_id);
@@ -731,13 +747,13 @@ export function claimStep(agentId: string): ClaimResult {
         db.prepare(
           "UPDATE steps SET status = 'done', updated_at = ? WHERE id = ?"
         ).run(new Date().toISOString(), step.id);
-        emitEvent({ ts: new Date().toISOString(), event: "step.done", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId });
+        emitEvent({ ts: new Date().toISOString(), event: "step.done", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId });
         advancePipeline(step.run_id);
         return { found: false };
       }
 
       // PARALLEL LIMIT: Don't exceed max concurrent running stories
-      const runningStoryCount = { cnt: countStoriesByStatus(step.run_id, "running") };
+      const runningStoryCount = { cnt: await countStoriesByStatus(step.run_id, "running") };
       const parallelLimit = loopConfig?.parallelCount ?? 3;
       if (runningStoryCount.cnt >= parallelLimit) {
         _rollbackEarly(); return { found: false }; // At capacity, wait for running stories to finish
@@ -768,7 +784,7 @@ export function claimStep(agentId: string): ClaimResult {
           .run(new Date().toISOString(), nextStory.id);
         db.prepare("UPDATE steps SET current_story_id = NULL, updated_at = ? WHERE id = ?")
           .run(new Date().toISOString(), step.id);
-        emitEvent({ ts: new Date().toISOString(), event: "story.failed", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: nextStory.story_id, storyTitle: nextStory.title, detail: wtReason });
+        emitEvent({ ts: new Date().toISOString(), event: "story.failed", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, storyId: nextStory.story_id, storyTitle: nextStory.title, detail: wtReason });
         return { found: false };
       }
       context["story_workdir"] = storyWorkdir || context["repo"] || "";
@@ -784,13 +800,13 @@ export function claimStep(agentId: string): ClaimResult {
         ).run(claimNow, agentId, nextStory.id);
       } catch (e) { logger.warn(`[claim-log] Failed to record claim: ${String(e)}`, { runId: step.run_id }); }
 
-      const wfId = getWorkflowId(step.run_id);
+      const wfId = await getWorkflowId(step.run_id);
       emitEvent({ ts: new Date().toISOString(), event: "step.running", runId: step.run_id, workflowId: wfId, stepId: step.step_id, agentId: agentId });
       emitEvent({ ts: new Date().toISOString(), event: "story.started", runId: step.run_id, workflowId: wfId, stepId: step.step_id, agentId: agentId, storyId: nextStory.story_id, storyTitle: nextStory.title });
       logger.info(`Story started: ${nextStory.story_id} — ${nextStory.title}`, { runId: step.run_id, stepId: step.step_id });
 
       // Inject story context (template vars, screen_map, optional vars, previous_failure)
-      injectStoryContext(nextStory, step, context);
+      await injectStoryContext(nextStory, step, context);
 
       let resolvedInput = resolveTemplate(step.input_template, context);
 
@@ -810,7 +826,7 @@ export function claimStep(agentId: string): ClaimResult {
             .run(reason + " — failing run (retry exhausted)", new Date().toISOString(), step.id);
           db.prepare("UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?")
             .run(new Date().toISOString(), step.run_id);
-          const wfId2 = getWorkflowId(step.run_id);
+          const wfId2 = await getWorkflowId(step.run_id);
           emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId2, stepId: step.step_id, detail: reason });
           emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId2, detail: reason });
           if (context["repo"]) removeStoryWorktree(context["repo"], storyBranch, agentId);
@@ -833,7 +849,7 @@ export function claimStep(agentId: string): ClaimResult {
   }
 
   // Single (non-loop) step claim path
-  return claimSingleStep(step, agentId, context, db);
+  return await claimSingleStep(step, agentId, context, db);
   } finally { endTx(); }
 }
 
@@ -842,7 +858,7 @@ export function claimStep(agentId: string): ClaimResult {
 /**
  * Complete a step: save output, merge context, advance pipeline.
  */
-export function completeStep(stepId: string, output: string): { advanced: boolean; runCompleted: boolean } {
+export async function completeStep(stepId: string, output: string): Promise<{ advanced: boolean; runCompleted: boolean }> {
   beginTx();
   try {
   const db = getDb();
@@ -867,12 +883,12 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   }
 
   // Guard: don't process completions for failed runs
-  if (getRunStatus(step.run_id) === RUN_STATUS.FAILED) {
+  if (await getRunStatus(step.run_id) === RUN_STATUS.FAILED) {
     return { advanced: false, runCompleted: false };
   }
 
   // Merge KEY: value lines into run context
-  const context: Record<string, string> = getRunContext(step.run_id);
+  const context: Record<string, string> = await getRunContext(step.run_id);
 
   // Parse KEY: value lines and merge into context
   // #197: Protect seed context keys from being overwritten by step output
@@ -897,7 +913,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   const statusVal = parsed["status"]?.toLowerCase();
   if (statusVal === "fail" || statusVal === "failed" || statusVal === "error") {
     logger.warn(`Agent reported STATUS: ${parsed["status"]} — failing step`, { runId: step.run_id, stepId: step.step_id });
-    failStep(stepId, `Agent reported failure: ${parsed["status"]}. Output: ${output.slice(0, 500)}`);
+    await failStep(stepId, `Agent reported failure: ${parsed["status"]}. Output: ${output.slice(0, 500)}`);
     return { advanced: false, runCompleted: false };
   }
 
@@ -923,7 +939,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
       const prdErr = `GUARDRAIL: Plan step completed but PRD is ${prdVal.length < 1 ? "empty" : "too short (" + prdVal.length + " chars)"}. Plan must output a meaningful PRD.`;
       logger.warn(`[plan-guardrail] ${prdErr}`, { runId: step.run_id });
       if (prevContextJson) db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(prevContextJson.context, step.run_id);
-      failStep(stepId, prdErr);
+      await failStep(stepId, prdErr);
       return { advanced: false, runCompleted: false };
     }
 
@@ -933,7 +949,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
       const scErr = `GUARDRAIL: PRD has only ${screenCount} screen(s). Minimum is 3 (main view + error state + empty/alternate state). Add missing screens to PRD Ekranlar table and update PRD_SCREEN_COUNT.`;
       logger.warn(`[plan-guardrail] ${scErr}`, { runId: step.run_id });
       if (prevContextJson) db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(prevContextJson.context, step.run_id);
-      failStep(stepId, scErr);
+      await failStep(stepId, scErr);
       return { advanced: false, runCompleted: false };
     }
 
@@ -1012,13 +1028,13 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
       context["previous_failure"] = `TEST GUARDRAIL: ${testFailMsg}`;
       db.prepare("UPDATE runs SET context = ?, updated_at = ? WHERE id = ?")
         .run(JSON.stringify(context), new Date().toISOString(), step.run_id);
-      failStep(stepId, testFailMsg);
+      await failStep(stepId, testFailMsg);
       return { advanced: false, runCompleted: false };
     } else if (testFailMsg) {
       // Max retries reached — hard fail
       logger.warn(`Test guardrail — max retries reached, hard fail`, { runId: step.run_id, stepId: step.step_id });
       if (prevContextJson) db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(prevContextJson.context, step.run_id);
-      failStep(stepId, testFailMsg);
+      await failStep(stepId, testFailMsg);
       return { advanced: false, runCompleted: false };
     }
   }
@@ -1034,12 +1050,12 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
       context["previous_failure"] = `QUALITY GATE: ${qgMsg}`;
       db.prepare("UPDATE runs SET context = ?, updated_at = ? WHERE id = ?")
         .run(JSON.stringify(context), new Date().toISOString(), step.run_id);
-      failStep(stepId, qgMsg);
+      await failStep(stepId, qgMsg);
       return { advanced: false, runCompleted: false };
     } else if (qgMsg) {
       logger.warn(`[quality-gate] Max retries — hard fail`, { runId: step.run_id, stepId: step.step_id });
       if (prevContextJson) db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(prevContextJson.context, step.run_id);
-      failStep(stepId, qgMsg);
+      await failStep(stepId, qgMsg);
       return { advanced: false, runCompleted: false };
     }
   }
@@ -1050,7 +1066,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     if (designErr) {
       logger.warn(`[design-guardrail] Failed`, { runId: step.run_id, stepId: step.step_id });
       if (prevContextJson) db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(prevContextJson.context, step.run_id);
-      failStep(stepId, designErr);
+      await failStep(stepId, designErr);
       return { advanced: false, runCompleted: false };
     }
 
@@ -1117,12 +1133,12 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
       } catch (e) {
         logger.warn(`[setup-repo] Could not create branch "${planBranch}", falling back to main: ${e}`, { runId: step.run_id });
         context["branch"] = "main";
-        updateRunContext(step.run_id, context);
+        await updateRunContext(step.run_id, context);
       }
     }
     const dbErr = processSetupCompletion(context, step.run_id);
     if (dbErr) {
-      failStep(stepId, dbErr);
+      await failStep(stepId, dbErr);
       return { advanced: false, runCompleted: false };
     }
   }
@@ -1131,7 +1147,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   if (step.step_id === "setup-repo" && parsed["status"]?.toLowerCase() === "done") {
     const designErr = processSetupDesignContracts(step.run_id, context, db);
     if (designErr) {
-      failStep(stepId, designErr);
+      await failStep(stepId, designErr);
       return { advanced: false, runCompleted: false };
     }
   }
@@ -1146,7 +1162,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
         if (!exists) {
           logger.warn(`[setup-build] Branch "${buildBranch}" not found, falling back to main`, { runId: step.run_id });
           context["branch"] = "main";
-          updateRunContext(step.run_id, context);
+          await updateRunContext(step.run_id, context);
         }
       } catch {}
     }
@@ -1159,7 +1175,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
       const baselineMsg = `GUARDRAIL: setup-build baseline is "${parsed["baseline"] || "(empty)"}" — build must explicitly pass.`;
       logger.warn(`[setup-build-guardrail] ${baselineMsg}`, { runId: step.run_id, stepId: step.step_id });
       if (prevContextJson) db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(prevContextJson.context, step.run_id);
-      failStep(stepId, baselineMsg);
+      await failStep(stepId, baselineMsg);
       return { advanced: false, runCompleted: false };
     }
   }
@@ -1196,7 +1212,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     if (deployErr) {
       logger.warn(`[deploy-guardrail] ${deployErr}`, { runId: step.run_id, stepId: step.step_id });
       if (prevContextJson) db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(prevContextJson.context, step.run_id);
-      failStep(stepId, deployErr);
+      await failStep(stepId, deployErr);
       return { advanced: false, runCompleted: false };
     }
   }
@@ -1237,7 +1253,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     }
     if (screenMapErr) {
       logger.warn(`[screen-map-guardrail] SCREEN_MAP validation failed: ${screenMapErr}`, { runId: step.run_id, stepId: step.step_id });
-      failStep(stepId, screenMapErr);
+      await failStep(stepId, screenMapErr);
       return { advanced: false, runCompleted: false };
     }
   }
@@ -1262,7 +1278,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     if (!smokeResult) {
       logger.warn(`[final-test-guardrail] SMOKE_TEST_RESULT missing from final-test output — agent likely skipped smoke test. Retrying.`, { runId: step.run_id, stepId: step.step_id });
       if (prevContextJson) db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(prevContextJson.context, step.run_id);
-      failStep(stepId, "GUARDRAIL: final-test completed without SMOKE_TEST_RESULT. You MUST run smoke-test.mjs and include SMOKE_TEST_RESULT in your output.");
+      await failStep(stepId, "GUARDRAIL: final-test completed without SMOKE_TEST_RESULT. You MUST run smoke-test.mjs and include SMOKE_TEST_RESULT in your output.");
       return { advanced: false, runCompleted: false };
     }
   }
@@ -1272,16 +1288,16 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   ).run(JSON.stringify(context), new Date().toISOString(), step.run_id);
 
   // T5: Parse STORIES_JSON from output (any step, typically the planner)
-  parseAndInsertStories(output, step.run_id);
+  await parseAndInsertStories(output, step.run_id);
 
   // STORIES STEP EARLY GUARD (v1.5.53): Catch 0 stories immediately instead of wasting setup time
   if (step.step_id === "stories" && parsed["status"]?.toLowerCase() === "done") {
-    const storyCount = countAllStories(step.run_id);
+    const storyCount = await countAllStories(step.run_id);
     if (storyCount === 0) {
       const noStoriesMsg = "GUARDRAIL: Stories step completed with STATUS: done but produced 0 stories — STORIES_JSON missing or empty";
       logger.warn(`[stories-guardrail] ${noStoriesMsg}`, { runId: step.run_id });
       if (prevContextJson) db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(prevContextJson.context, step.run_id);
-      failStep(stepId, noStoriesMsg);
+      await failStep(stepId, noStoriesMsg);
       return { advanced: false, runCompleted: false };
     }
   }
@@ -1306,7 +1322,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     if (needsAutoGen) {
       const hasUi = (context["has_ui"] || "").toLowerCase() === "true" || ["ui", "fullstack"].includes((context["project_type"] || "").toLowerCase());
       if (hasUi) {
-        const autoStories = getStories(step.run_id);
+        const autoStories = await getStories(step.run_id);
         if (autoStories.length > 0) {
           const screenMap: Array<{screenId: string; name: string; type: string; description: string; stories: string[]}> = [];
           let scrIdx = 1;
@@ -1351,13 +1367,13 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     ).get(step.run_id, step.step_index, nextLoopStep.step_index) as { cnt: number };
     if (intermediateSteps.cnt === 0) {
       // No intermediate steps — this is the last step before the loop
-      const storyCount = { cnt: countAllStories(step.run_id) };
+      const storyCount = { cnt: await countAllStories(step.run_id) };
       if (storyCount.cnt === 0) {
         const noStoriesMsg = "Step completed but produced no STORIES_JSON — downstream loop would run with 0 stories";
         logger.warn(noStoriesMsg, { runId: step.run_id, stepId: step.step_id });
-        failStepWithOutput(step.id, noStoriesMsg);
-        failRun(step.run_id);
-        const wfId157b = getWorkflowId(step.run_id);
+        await failStepWithOutput(step.id, noStoriesMsg);
+        await failRun(step.run_id);
+        const wfId157b = await getWorkflowId(step.run_id);
         emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId157b, stepId: step.step_id, detail: noStoriesMsg });
         emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId157b, detail: noStoriesMsg });
         scheduleRunCronTeardown(step.run_id);
@@ -1379,7 +1395,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
 
   if (step.type === "loop" && step.current_story_id) {
     // Look up story info for event
-    const storyRow = getStoryInfo(step.current_story_id);
+    const storyRow = await getStoryInfo(step.current_story_id);
 
     // v9.0: Check agent STATUS — skip, fail/error (defense-in-depth), or done
     const statusVal = parsed["status"]?.toLowerCase();
@@ -1399,7 +1415,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     db.prepare(
       "UPDATE stories SET status = ?, output = ?, pr_url = ?, story_branch = ?, updated_at = ? WHERE id = ?"
     ).run(storyStatus, output, storyPrUrl, storyBranchName, new Date().toISOString(), step.current_story_id);
-    emitEvent({ ts: new Date().toISOString(), event: storyEvent as import("./events.js").EventType, runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, storyId: storyRow?.story_id, storyTitle: storyRow?.title });
+    emitEvent({ ts: new Date().toISOString(), event: storyEvent as import("./events.js").EventType, runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, storyId: storyRow?.story_id, storyTitle: storyRow?.title });
     logger.info(`Story ${storyStatus}: ${storyRow?.story_id} — ${storyRow?.title}`, { runId: step.run_id, stepId: step.step_id });
 
     // v1.5.50: Resolve claim_log outcome
@@ -1420,7 +1436,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
 
     // Update PROJECT_MEMORY.md with completed story info
     if (storyRow && storyStatus !== STORY_STATUS.SKIPPED) {
-      updateProjectMemory(context, storyRow.story_id, storyRow.title, storyStatus, output);
+      await updateProjectMemory(context, storyRow.story_id, storyRow.title, storyStatus, output);
     }
     // Clean up: remove worktree (auto-saves uncommitted changes before removal)
     if (storyRow?.story_id && context["repo"]) {
@@ -1434,7 +1450,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     delete context["current_story_title"];
     delete context["current_story"];
     delete context["verify_feedback"];
-    updateRunContext(step.run_id, context);
+    await updateRunContext(step.run_id, context);
 
     // Clear current_story_id, save output
     db.prepare(
@@ -1476,7 +1492,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   if (loopStepRow?.loop_config) {
     const lc: LoopConfig = JSON.parse(loopStepRow.loop_config);
     if (lc.verifyEach && lc.verifyStep === step.step_id) {
-      return handleVerifyEachCompletion(step, loopStepRow.id, output, context);
+      return await handleVerifyEachCompletion(step, loopStepRow.id, output, context);
     }
   }
 
@@ -1490,7 +1506,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     logger.info(`Step already completed, skipping duplicate`, { runId: step.run_id, stepId: step.step_id });
     return { advanced: false, runCompleted: false };
   }
-  emitEvent({ ts: new Date().toISOString(), event: "step.done", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id });
+  emitEvent({ ts: new Date().toISOString(), event: "step.done", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id });
   logger.info(`Step completed: ${step.step_id}`, { runId: step.run_id, stepId: step.step_id });
 
   // v1.5.50: Resolve claim_log outcome for single step
@@ -1511,7 +1527,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   // Guard: if a loop step is still active (not done), don't advance the pipeline.
   // During verify_each cycles, single steps (test, pr, review, etc.) may get claimed
   // and completed — advancing would skip the loop and break story iteration.
-  const activeLoop = findActiveLoop(step.run_id);
+  const activeLoop = await findActiveLoop(step.run_id);
   if (activeLoop) {
     logger.info(`Skipping advancePipeline — loop step still active`, { runId: step.run_id, stepId: step.step_id });
     return { advanced: false, runCompleted: false };
@@ -1524,12 +1540,12 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
 /**
  * Handle verify-each completion: pass or fail the story.
  */
-function handleVerifyEachCompletion(
+async function handleVerifyEachCompletion(
   verifyStep: { id: string; run_id: string; step_id: string; step_index: number },
   loopStepId: string,
   output: string,
   context: Record<string, string>
-): { advanced: boolean; runCompleted: boolean } {
+): Promise<{ advanced: boolean; runCompleted: boolean }> {
   const db = getDb();
   const parsedOutput = parseOutputKeyValues(output);
 
@@ -1595,9 +1611,9 @@ function handleVerifyEachCompletion(
       if (newRetry > retryStory.max_retries) {
         // Story retries exhausted — fail everything
         db.prepare("UPDATE stories SET status = 'failed', retry_count = ?, updated_at = ? WHERE id = ?").run(newRetry, new Date().toISOString(), retryStory.id);
-        setStepStatus(loopStepId, "failed");
-        failRun(verifyStep.run_id);
-        const wfId = getWorkflowId(verifyStep.run_id);
+        await setStepStatus(loopStepId, "failed");
+        await failRun(verifyStep.run_id);
+        const wfId = await getWorkflowId(verifyStep.run_id);
         emitEvent({ ts: new Date().toISOString(), event: "story.failed", runId: verifyStep.run_id, workflowId: wfId, stepId: verifyStep.step_id });
         emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: verifyStep.run_id, workflowId: wfId, detail: "Verification retries exhausted" });
         scheduleRunCronTeardown(verifyStep.run_id);
@@ -1610,12 +1626,12 @@ function handleVerifyEachCompletion(
       // Store verify feedback
       const issues = context["issues"] ?? output;
       context["verify_feedback"] = issues;
-      emitEvent({ ts: new Date().toISOString(), event: "story.retry", runId: verifyStep.run_id, workflowId: getWorkflowId(verifyStep.run_id), stepId: verifyStep.step_id, detail: issues });
-      updateRunContext(verifyStep.run_id, context);
+      emitEvent({ ts: new Date().toISOString(), event: "story.retry", runId: verifyStep.run_id, workflowId: await getWorkflowId(verifyStep.run_id), stepId: verifyStep.step_id, detail: issues });
+      await updateRunContext(verifyStep.run_id, context);
     }
 
     // Set loop step back to pending for retry
-    setStepStatus(loopStepId, "pending");
+    await setStepStatus(loopStepId, "pending");
     return { advanced: false, runCompleted: false };
   }
 
@@ -1625,17 +1641,17 @@ function handleVerifyEachCompletion(
       "SELECT id FROM stories WHERE run_id = ? AND story_id = ? AND status = 'done' LIMIT 1"
     ).get(verifyStep.run_id, verifiedStoryId) as { id: string } | undefined;
     if (verifiedRow) {
-      verifyStory(verifiedRow.id);
+      await verifyStory(verifiedRow.id);
       logger.info(`Story verified: ${verifiedStoryId}`, { runId: verifyStep.run_id });
     }
   }
-  emitEvent({ ts: new Date().toISOString(), event: "story.verified", runId: verifyStep.run_id, workflowId: getWorkflowId(verifyStep.run_id), stepId: verifyStep.step_id, storyId: verifiedStoryId });
+  emitEvent({ ts: new Date().toISOString(), event: "story.verified", runId: verifyStep.run_id, workflowId: await getWorkflowId(verifyStep.run_id), stepId: verifyStep.step_id, storyId: verifiedStoryId });
 
   // Clear feedback
   delete context["verify_feedback"];
 
   // Auto-verify 'done' stories whose PRs are already merged (prevents redundant verify cycles)
-  const nextUnverifiedStory = autoVerifyDoneStories(verifyStep.run_id, context, "handleVerifyEach");
+  const nextUnverifiedStory = await autoVerifyDoneStories(verifyStep.run_id, context, "handleVerifyEach");
 
   if (nextUnverifiedStory) {
     // More stories need verification — inject next story's info and cycle verify
@@ -1649,23 +1665,23 @@ function handleVerifyEachCompletion(
     if (nextUnverifiedStory.pr_url) context["pr_url"] = nextUnverifiedStory.pr_url;
     if (nextUnverifiedStory.story_branch) context["story_branch"] = nextUnverifiedStory.story_branch;
     context["current_story_id"] = nextUnverifiedStory.story_id;
-    updateRunContext(verifyStep.run_id, context);
+    await updateRunContext(verifyStep.run_id, context);
 
     // Set verify step to pending for next story
-    setStepStatus(verifyStep.id, "pending");
+    await setStepStatus(verifyStep.id, "pending");
     logger.info(`Verify cycling to next unverified story: ${nextUnverifiedStory.story_id}`, { runId: verifyStep.run_id });
     return { advanced: false, runCompleted: false };
   }
 
   // No more unverified stories — persist context and check loop continuation
-  updateRunContext(verifyStep.run_id, context);
+  await updateRunContext(verifyStep.run_id, context);
 
   try {
     return checkLoopContinuation(verifyStep.run_id, loopStepId);
   } catch (err) {
     logger.error(`checkLoopContinuation failed, recovering: ${String(err)}`, { runId: verifyStep.run_id });
     // Ensure loop step is at least pending so cron can retry
-    setStepStatus(loopStepId, "pending");
+    await setStepStatus(loopStepId, "pending");
     return { advanced: false, runCompleted: false };
   }
 }
@@ -1678,12 +1694,12 @@ const MAX_AUTO_VERIFY_ITERATIONS = 5;
  * Auto-verify 'done' stories whose PRs are already merged/closed-with-ancestry.
  * Returns the first story that still needs agent verification, or null if all auto-verified.
  */
-function autoVerifyDoneStories(
+async function autoVerifyDoneStories(
   runId: string,
   context: Record<string, string>,
   logPrefix: string,
   options?: { autoMergeOpen?: boolean },
-): any | null {
+): Promise<any | null> {
   const db = getDb();
   let count = 0;
   while (true) {
@@ -1716,9 +1732,9 @@ function autoVerifyDoneStories(
             logger.warn(`[${logPrefix}] runQualityChecks threw: ${String(qErr)}`, { runId });
           }
         }
-        verifyStory(story.id);
+        await verifyStory(story.id);
         logger.info(`[${logPrefix}] Story ${story.story_id} auto-verified — PR merged`, { runId });
-        emitEvent({ ts: new Date().toISOString(), event: "story.verified", runId, workflowId: getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title });
+        emitEvent({ ts: new Date().toISOString(), event: "story.verified", runId, workflowId: await getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title });
         continue;
       }
 
@@ -1734,15 +1750,15 @@ function autoVerifyDoneStories(
           logger.info(`[${logPrefix}] Found alternative PR for ${story.story_id}: ${resolution.alternativePrUrl}`, { runId });
           continue; // Re-check with updated PR
         } else if (resolution.contentInBaseBranch) {
-          verifyStory(story.id);
+          await verifyStory(story.id);
           logger.info(`[${logPrefix}] Story ${story.story_id} auto-verified — CLOSED PR content in base branch`, { runId });
-          emitEvent({ ts: new Date().toISOString(), event: "story.verified", runId, workflowId: getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title, detail: "Auto-verified — CLOSED PR content in base branch" });
+          emitEvent({ ts: new Date().toISOString(), event: "story.verified", runId, workflowId: await getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title, detail: "Auto-verified — CLOSED PR content in base branch" });
           continue;
         } else if (!resolution.reopened) {
           db.prepare("UPDATE stories SET status = 'failed', output = 'Failed: CLOSED PR could not be reopened, content not found in base branch', updated_at = ? WHERE id = ?")
             .run(new Date().toISOString(), story.id);
           logger.warn(`[${logPrefix}] CLOSED PR ${prUrl} — content NOT in base branch — failing story ${story.story_id}`, { runId });
-          emitEvent({ ts: new Date().toISOString(), event: "story.failed", runId, workflowId: getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title, detail: "CLOSED PR content not in base branch" });
+          emitEvent({ ts: new Date().toISOString(), event: "story.failed", runId, workflowId: await getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title, detail: "CLOSED PR content not in base branch" });
           continue;
         }
         // reopened=true → fall through to agent verification
@@ -1754,9 +1770,9 @@ function autoVerifyDoneStories(
         // The verify agent already marked it "done" meaning quality checks passed.
         // Waiting for abandon count wastes cycles — merge immediately.
         if (tryAutoMergePR(prUrl, story.story_id, runId)) {
-          verifyStory(story.id);
+          await verifyStory(story.id);
           logger.info(`[${logPrefix}] Story ${story.story_id} auto-merged + verified — PR was OPEN (done story)`, { runId });
-          emitEvent({ ts: new Date().toISOString(), event: "story.verified", runId, workflowId: getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title, detail: "Auto-merged — done story with OPEN PR" });
+          emitEvent({ ts: new Date().toISOString(), event: "story.verified", runId, workflowId: await getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title, detail: "Auto-merged — done story with OPEN PR" });
           continue;
         }
         // If auto-merge failed, still needs agent verification

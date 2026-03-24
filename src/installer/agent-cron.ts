@@ -2,7 +2,10 @@ import { createAgentCronJob, deleteAgentCronJobs, deleteCronJob, listCronJobs, c
 import type { WorkflowSpec, AgentMapping } from "./types.js";
 import { resolveSetfarmCli } from "./paths.js";
 import { getDb } from "../db.js";
+import { pgGet } from "../db-pg.js";
 import { logger } from "../lib/logger.js";
+
+const USE_PG = process.env.DB_BACKEND === "postgres";
 
 const DEFAULT_EVERY_MS = 240_000; // 4 minutes
 const DEFAULT_AGENT_TIMEOUT_SECONDS = 30 * 60; // 30 minutes
@@ -146,12 +149,19 @@ export async function removeAgentCrons(workflowId: string): Promise<void> {
 /**
  * Count active (running) runs for a given workflow.
  */
-function countActiveRuns(workflowId: string): number {
-  const db = getDb();
-  const row = db.prepare(
-    "SELECT COUNT(*) as cnt FROM runs WHERE workflow_id = ? AND status = 'running'"
-  ).get(workflowId) as { cnt: number };
-  return row.cnt;
+async function countActiveRuns(workflowId: string): Promise<number> {
+  if (USE_PG) {
+    const row = await pgGet<{ cnt: number }>(
+      "SELECT COUNT(*) as cnt FROM runs WHERE workflow_id = $1 AND status = 'running'", [workflowId]
+    );
+    return Number(row?.cnt ?? 0);
+  } else {
+    const db = getDb();
+    const row = db.prepare(
+      "SELECT COUNT(*) as cnt FROM runs WHERE workflow_id = ? AND status = 'running'"
+    ).get(workflowId) as { cnt: number };
+    return row.cnt;
+  }
 }
 
 /**
@@ -192,14 +202,14 @@ export async function ensureWorkflowCrons(workflow: WorkflowSpec): Promise<void>
 const TEARDOWN_GRACE_MS = 5 * 60 * 1000; // 5 minutes
 
 export async function teardownWorkflowCronsIfIdle(workflowId: string): Promise<void> {
-  const active = countActiveRuns(workflowId);
+  const active = await countActiveRuns(workflowId);
   if (active > 0) return;
 
   // Grace period: wait 5min, then re-check. If a new run started, keep crons.
   await new Promise(r => setTimeout(r, TEARDOWN_GRACE_MS));
 
   // Re-check after grace period — new run may have started
-  const activeAfterGrace = countActiveRuns(workflowId);
+  const activeAfterGrace = await countActiveRuns(workflowId);
   if (activeAfterGrace > 0) {
     logger.info(`[teardown] Grace period saved crons — new run detected for ${workflowId}`, {});
     return;

@@ -16,8 +16,11 @@ import { uninstallSetfarmSkill } from "./skill-install.js";
 import { removeAgentCrons } from "./agent-cron.js";
 import { deleteAgentCronJobs } from "./gateway-api.js";
 import { getDb } from "../db.js";
+import { pgQuery, pgRun, pgGet } from "../db-pg.js";
 import { stopDaemon } from "../server/daemonctl.js";
 import type { WorkflowInstallResult } from "./types.js";
+
+const USE_PG = process.env.DB_BACKEND === "postgres";
 
 function filterAgentList(
   list: Array<Record<string, unknown>>,
@@ -47,31 +50,51 @@ const DEFAULT_SESSION_MAINTENANCE = {
   rotateBytes: "10mb",
 } as const;
 
-function getActiveRuns(workflowId?: string): Array<{ id: string; workflow_id: string; task: string }> {
+async function getActiveRuns(workflowId?: string): Promise<Array<{ id: string; workflow_id: string; task: string }>> {
   try {
-    const db = getDb();
-    if (workflowId) {
-      return db.prepare("SELECT id, workflow_id, task FROM runs WHERE workflow_id = ? AND status = 'running'").all(workflowId) as Array<{ id: string; workflow_id: string; task: string }>;
+    if (USE_PG) {
+      if (workflowId) {
+        return await pgQuery<{ id: string; workflow_id: string; task: string }>(
+          "SELECT id, workflow_id, task FROM runs WHERE workflow_id = $1 AND status = 'running'", [workflowId]
+        );
+      }
+      return await pgQuery<{ id: string; workflow_id: string; task: string }>(
+        "SELECT id, workflow_id, task FROM runs WHERE status = 'running'"
+      );
+    } else {
+      const db = getDb();
+      if (workflowId) {
+        return db.prepare("SELECT id, workflow_id, task FROM runs WHERE workflow_id = ? AND status = 'running'").all(workflowId) as Array<{ id: string; workflow_id: string; task: string }>;
+      }
+      return db.prepare("SELECT id, workflow_id, task FROM runs WHERE status = 'running'").all() as Array<{ id: string; workflow_id: string; task: string }>;
     }
-    return db.prepare("SELECT id, workflow_id, task FROM runs WHERE status = 'running'").all() as Array<{ id: string; workflow_id: string; task: string }>;
   } catch {
     return [];
   }
 }
 
-export function checkActiveRuns(workflowId?: string): Array<{ id: string; workflow_id: string; task: string }> {
+export async function checkActiveRuns(workflowId?: string): Promise<Array<{ id: string; workflow_id: string; task: string }>> {
   return getActiveRuns(workflowId);
 }
 
-function removeRunRecords(workflowId: string): void {
+async function removeRunRecords(workflowId: string): Promise<void> {
   try {
-    const db = getDb();
-    const runs = db.prepare("SELECT id FROM runs WHERE workflow_id = ?").all(workflowId) as Array<{ id: string }>;
-    for (const run of runs) {
-      db.prepare("DELETE FROM stories WHERE run_id = ?").run(run.id);
-      db.prepare("DELETE FROM steps WHERE run_id = ?").run(run.id);
+    if (USE_PG) {
+      const runs = await pgQuery<{ id: string }>("SELECT id FROM runs WHERE workflow_id = $1", [workflowId]);
+      for (const run of runs) {
+        await pgRun("DELETE FROM stories WHERE run_id = $1", [run.id]);
+        await pgRun("DELETE FROM steps WHERE run_id = $1", [run.id]);
+      }
+      await pgRun("DELETE FROM runs WHERE workflow_id = $1", [workflowId]);
+    } else {
+      const db = getDb();
+      const runs = db.prepare("SELECT id FROM runs WHERE workflow_id = ?").all(workflowId) as Array<{ id: string }>;
+      for (const run of runs) {
+        db.prepare("DELETE FROM stories WHERE run_id = ?").run(run.id);
+        db.prepare("DELETE FROM steps WHERE run_id = ?").run(run.id);
+      }
+      db.prepare("DELETE FROM runs WHERE workflow_id = ?").run(workflowId);
     }
-    db.prepare("DELETE FROM runs WHERE workflow_id = ?").run(workflowId);
   } catch {
     // DB might not exist yet
   }
@@ -110,7 +133,7 @@ export async function uninstallWorkflow(params: {
     await fs.rm(workflowWorkspaceDir, { recursive: true, force: true });
   }
 
-  removeRunRecords(params.workflowId);
+  await removeRunRecords(params.workflowId);
   await removeAgentCrons(params.workflowId);
 
   for (const entry of removedAgents) {
@@ -118,8 +141,6 @@ export async function uninstallWorkflow(params: {
     if (!agentDir) {
       continue;
     }
-    // Remove the entire parent directory (e.g. ~/.openclaw/agents/bug-fix_triager/)
-    // since both agent/ and sessions/ inside it are setfarm-managed
     const parentDir = path.dirname(agentDir);
     if (await pathExists(parentDir)) {
       await fs.rm(parentDir, { recursive: true, force: true });
@@ -130,15 +151,12 @@ export async function uninstallWorkflow(params: {
 }
 
 export async function uninstallAllWorkflows(): Promise<void> {
-  // Stop the dashboard daemon before cleaning up files
   stopDaemon();
 
   const { path: configPath, config } = await readOpenClawConfig();
   const list = Array.isArray(config.agents?.list) ? config.agents?.list : [];
   const removedAgents = list.filter((entry) => {
     const id = typeof entry.id === "string" ? entry.id : "";
-    // Identify setfarm-managed agents: they have agentDir under ~/.openclaw/agents/
-    // and id is not "main" (the user's default agent)
     const agentDir = typeof entry.agentDir === "string" ? entry.agentDir : "";
     return id !== "main" && agentDir.includes("/.openclaw/agents/");
   });
@@ -177,7 +195,6 @@ export async function uninstallAllWorkflows(): Promise<void> {
   await removeMainAgentGuidance();
   await uninstallSetfarmSkill();
 
-  // Remove all setfarm cron jobs
   await deleteAgentCronJobs("setfarm/");
 
   const workflowRoot = resolveWorkflowRoot();
@@ -190,13 +207,11 @@ export async function uninstallAllWorkflows(): Promise<void> {
     await fs.rm(workflowWorkspaceRoot, { recursive: true, force: true });
   }
 
-  // Remove the SQLite database file
   const { getDbPath } = await import("../db.js");
   const dbPath = getDbPath();
   if (await pathExists(dbPath)) {
     await fs.rm(dbPath, { force: true });
   }
-  // WAL and SHM files
   for (const suffix of ["-wal", "-shm"]) {
     const p = dbPath + suffix;
     if (await pathExists(p)) {
@@ -209,8 +224,6 @@ export async function uninstallAllWorkflows(): Promise<void> {
     if (!agentDir) {
       continue;
     }
-    // Remove the entire parent directory (e.g. ~/.openclaw/agents/bug-fix_triager/)
-    // since both agent/ and sessions/ inside it are setfarm-managed
     const parentDir = path.dirname(agentDir);
     if (await pathExists(parentDir)) {
       await fs.rm(parentDir, { recursive: true, force: true });
@@ -219,27 +232,22 @@ export async function uninstallAllWorkflows(): Promise<void> {
 
   const setfarmRoot = resolveSetfarmRoot();
   if (await pathExists(setfarmRoot)) {
-    // Clean up remaining runtime files (dashboard.pid, dashboard.log, events.jsonl, logs/)
     for (const name of ["dashboard.pid", "dashboard.log", "events.jsonl", "logs"]) {
       const p = path.join(setfarmRoot, name);
       if (await pathExists(p)) {
         await fs.rm(p, { recursive: true, force: true });
       }
     }
-    // Remove the directory if now empty
     const entries = await fs.readdir(setfarmRoot).catch(() => ["placeholder"] as string[]);
     if (entries.length === 0) {
       await fs.rm(setfarmRoot, { recursive: true, force: true });
     }
   }
 
-  // Remove CLI symlink from ~/.local/bin
   const { removeCliSymlink } = await import("./symlink.js");
   removeCliSymlink();
 
-  // Remove npm link, build output, and node_modules.
-  // Note: this deletes dist/ which contains the currently running code.
-  // Safe because this is the final operation in the function.
+  // Note: execSync used here for npm unlink — no user input, safe usage
   const projectRoot = path.resolve(import.meta.dirname, "..", "..");
   try {
     execSync("npm unlink -g", { cwd: projectRoot, stdio: "ignore" });

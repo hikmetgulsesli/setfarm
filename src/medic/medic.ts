@@ -3,8 +3,12 @@
  *
  * Runs periodic health checks on workflow runs, detects stuck/stalled/dead state,
  * and takes corrective action where safe. Logs all findings to the medic_checks table.
+ *
+ * NOTE: This file uses execFileSync (not exec) for all subprocess calls.
+ * execFileSync is safe against shell injection as it does not invoke a shell.
  */
 import { getDb } from "../db.js";
+import { pgQuery, pgGet, pgRun, pgExec, pgBegin } from "../db-pg.js";
 import { emitEvent, type EventType } from "../installer/events.js";
 import { teardownWorkflowCronsIfIdle, ensureWorkflowCrons, removeAgentCrons, setupAgentCrons, expectedCronCount, actualCronCount, repairAgentCrons } from "../installer/agent-cron.js";
 import { loadWorkflowSpec } from "../installer/workflow-spec.js";
@@ -20,34 +24,42 @@ import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { logger } from "../lib/logger.js";
 
+const USE_PG = process.env.DB_BACKEND === 'postgres';
+
 // ── DB Migration ────────────────────────────────────────────────────
 
-export function ensureMedicTables(): void {
-  const db = getDb();
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS medic_checks (
-      id TEXT PRIMARY KEY,
-      checked_at TEXT NOT NULL,
-      issues_found INTEGER DEFAULT 0,
-      actions_taken INTEGER DEFAULT 0,
-      summary TEXT,
-      details TEXT
-    )
-  `);
+export async function ensureMedicTables(): Promise<void> {
+  if (USE_PG) {
+    await pgExec(`
+      CREATE TABLE IF NOT EXISTS medic_checks (
+        id TEXT PRIMARY KEY,
+        checked_at TEXT NOT NULL,
+        issues_found INTEGER DEFAULT 0,
+        actions_taken INTEGER DEFAULT 0,
+        summary TEXT,
+        details TEXT
+      )
+    `);
+  } else {
+    const db = getDb();
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS medic_checks (
+        id TEXT PRIMARY KEY,
+        checked_at TEXT NOT NULL,
+        issues_found INTEGER DEFAULT 0,
+        actions_taken INTEGER DEFAULT 0,
+        summary TEXT,
+        details TEXT
+      )
+    `);
+  }
 }
 
 // ── GitHub PR Helpers (Medic v6) ─────────────────────────────────────
 
-/**
- * Extract GitHub repo URL from a run task string.
- * Falls back to reading git remote from local repo path.
- */
 function extractRepoUrl(task: string): string | null {
-  // 1. Try explicit GitHub URL in task
   const match = task.match(/https:\/\/github\.com\/[\w-]+\/[\w.-]+/);
   if (match) return match[0];
-
-  // 2. Fallback: extract local REPO path and read git remote origin
   const repoPathMatch = task.match(/REPO:\s*(\/\S+)/);
   if (repoPathMatch) {
     try {
@@ -57,82 +69,58 @@ function extractRepoUrl(task: string): string | null {
       ).trim();
       const ghMatch = remoteUrl.match(/github\.com[:/]([\w-]+\/[\w.-]+?)(?:\.git)?$/);
       if (ghMatch) return `https://github.com/${ghMatch[1]}`;
-    } catch (err) { /* git not available or no remote — fall through */ }
+    } catch (err) { /* fall through */ }
   }
-
   return null;
 }
 
-/**
- * Check GitHub for a merged PR matching this story.
- * Returns PR URL if found, null otherwise.
- */
 function checkMergedPR(repoUrl: string, storyId: string, runId: string): string | null {
   const repoPath = repoUrl.replace("https://github.com/", "");
   const runPrefix = runId.slice(0, 8);
   const storyLower = storyId.toLowerCase().replace(/_/g, "-");
   try {
     const output = execFileSync(
-      "gh",
-      ["pr", "list", "--repo", repoPath, "--state", "merged", "--json", "number,url,headRefName", "--limit", "100"],
+      "gh", ["pr", "list", "--repo", repoPath, "--state", "merged", "--json", "number,url,headRefName", "--limit", "100"],
       { encoding: "utf-8", timeout: 15000, stdio: ["pipe", "pipe", "pipe"] }
     );
     const prs = JSON.parse(output) as Array<{ number: number; url: string; headRefName: string }>;
     for (const pr of prs) {
       if (!pr.headRefName) continue;
       const branch = pr.headRefName.toLowerCase();
-      if (
-        branch === storyLower ||
-        branch.includes("-" + storyLower) ||
-        branch.includes("/" + storyLower) ||
-        branch.startsWith(runPrefix + "-") ||
-        branch.startsWith(runPrefix.toLowerCase() + "-")
-      ) {
+      if (branch === storyLower || branch.includes("-" + storyLower) || branch.includes("/" + storyLower) || branch.startsWith(runPrefix + "-") || branch.startsWith(runPrefix.toLowerCase() + "-")) {
         return pr.url;
       }
     }
-  } catch (err) { /* gh unavailable or API error — fall through */ }
+  } catch (err) { /* fall through */ }
   return null;
 }
 
 // ── Remediation ─────────────────────────────────────────────────────
 
-/**
- * Attempt to remediate a finding. Returns true if action was taken.
- */
 async function remediate(finding: MedicFinding): Promise<boolean> {
+  if (USE_PG) {
+    return remediatePG(finding);
+  }
+
   const db = getDb();
 
   switch (finding.action) {
     case "reset_step": {
       if (!finding.stepId) return false;
-      const step = db.prepare(
-        "SELECT abandoned_count, output, status FROM steps WHERE id = ?"
-      ).get(finding.stepId) as { abandoned_count: number; output: string | null; status: string } | undefined;
+      const step = db.prepare("SELECT abandoned_count, output, status FROM steps WHERE id = ?").get(finding.stepId) as { abandoned_count: number; output: string | null; status: string } | undefined;
       if (!step) return false;
 
-      // AUTO-COMPLETE: If the agent finished (output says STATUS: done/pass)
-      // but session timed out before completeStep was called, complete it now
-      // instead of wastefully resetting to pending for re-execution.
       if (step.status === "running" && step.output) {
         const statusMatch = step.output.match(/^STATUS:\s*(.+)$/im);
         const statusVal = statusMatch?.[1]?.trim().toLowerCase();
         if (statusVal && ["done", "pass", "passed", "verified"].includes(statusVal)) {
           try {
-            const result = completeStep(finding.stepId, step.output);
+            const result = await completeStep(finding.stepId, step.output);
             if (result.advanced || result.runCompleted) {
-              emitEvent({
-                ts: new Date().toISOString(),
-                event: "step.done" as EventType,
-                runId: finding.runId ?? "",
-                stepId: finding.stepId,
-                detail: "Medic: auto-completed stuck step (output had STATUS: done)",
-              });
+              emitEvent({ ts: new Date().toISOString(), event: "step.done" as EventType, runId: finding.runId ?? "", stepId: finding.stepId, detail: "Medic: auto-completed stuck step (output had STATUS: done)" });
               return true;
             }
-          } catch (err) {
-            // completeStep failed — fall through to normal reset
-          }
+          } catch (err) { /* fall through */ }
         }
       }
 
@@ -140,16 +128,11 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
       const MAX_STEP_ABANDONS = 10;
       const SAME_ERROR_LIMIT = 3;
 
-      // Circuit breaker: if step output hasn't changed across retries, same error is repeating
       if (step.output && newCount >= SAME_ERROR_LIMIT) {
-        const recentChecks = db.prepare(
-          "SELECT detail FROM medic_checks WHERE run_id = ? AND step_id = ? AND action = 'reset_step' ORDER BY checked_at DESC LIMIT ?"
-        ).all(finding.runId || "", finding.stepId || "", SAME_ERROR_LIMIT) as { detail: string }[];
+        const recentChecks = db.prepare("SELECT detail FROM medic_checks WHERE run_id = ? AND step_id = ? AND action = 'reset_step' ORDER BY checked_at DESC LIMIT ?").all(finding.runId || "", finding.stepId || "", SAME_ERROR_LIMIT) as { detail: string }[];
         if (recentChecks.length >= SAME_ERROR_LIMIT - 1) {
           logger.error(`[medic] Same-error circuit breaker: step ${finding.stepId} reset ${newCount}x with no progress — failing run`, { runId: finding.runId });
-          db.prepare(
-            "UPDATE steps SET status = 'failed', output = ?, abandoned_count = ?, updated_at = ? WHERE id = ?"
-          ).run("Medic: same error repeated " + newCount + " times — circuit breaker triggered. Last output: " + (step.output || "").substring(0, 300), newCount, new Date().toISOString(), finding.stepId);
+          db.prepare("UPDATE steps SET status = 'failed', output = ?, abandoned_count = ?, updated_at = ? WHERE id = ?").run("Medic: same error repeated " + newCount + " times — circuit breaker triggered. Last output: " + (step.output || "").substring(0, 300), newCount, new Date().toISOString(), finding.stepId);
           if (finding.runId) {
             db.prepare("UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?").run(new Date().toISOString(), finding.runId);
             emitEvent({ ts: new Date().toISOString(), event: "run.failed" as EventType, runId: finding.runId, detail: "Medic: same-error circuit breaker on step " + (finding.stepId || "") });
@@ -159,124 +142,60 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
       }
 
       if (newCount >= MAX_STEP_ABANDONS) {
-        db.prepare(
-          "UPDATE steps SET status = 'failed', output = 'Medic: abandoned too many times', abandoned_count = ?, updated_at = ? WHERE id = ?"
-        ).run(newCount, new Date().toISOString(), finding.stepId);
+        db.prepare("UPDATE steps SET status = 'failed', output = 'Medic: abandoned too many times', abandoned_count = ?, updated_at = ? WHERE id = ?").run(newCount, new Date().toISOString(), finding.stepId);
         if (finding.runId) {
-          db.prepare(
-            "UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?"
-          ).run(new Date().toISOString(), finding.runId);
-          emitEvent({
-            ts: new Date().toISOString(),
-            event: "run.failed" as EventType,
-            runId: finding.runId,
-            detail: "Medic: step abandoned too many times",
-          });
+          db.prepare("UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?").run(new Date().toISOString(), finding.runId);
+          emitEvent({ ts: new Date().toISOString(), event: "run.failed" as EventType, runId: finding.runId, detail: "Medic: step abandoned too many times" });
         }
         return true;
       }
 
-      // SAFEGUARD_194: Medic resets use ONLY abandoned_count, NEVER retry_count.
-      db.prepare(
-        "UPDATE steps SET status = 'pending', abandoned_count = ?, updated_at = ? WHERE id = ?"
-      ).run(newCount, new Date().toISOString(), finding.stepId);
+      db.prepare("UPDATE steps SET status = 'pending', abandoned_count = ?, updated_at = ? WHERE id = ?").run(newCount, new Date().toISOString(), finding.stepId);
       if (finding.runId) {
-        emitEvent({
-          ts: new Date().toISOString(),
-          event: "step.timeout" as EventType,
-          runId: finding.runId,
-          stepId: finding.stepId,
-          detail: `Medic: reset stuck step (abandon ${newCount}/${MAX_STEP_ABANDONS})`,
-        });
+        emitEvent({ ts: new Date().toISOString(), event: "step.timeout" as EventType, runId: finding.runId, stepId: finding.stepId, detail: `Medic: reset stuck step (abandon ${newCount}/${MAX_STEP_ABANDONS})` });
       }
       return true;
     }
 
-case "restart_service": {
+    case "restart_service": {
       if (!finding.serviceName) return false;
       try {
-        execFileSync("systemctl", ["--user", "start", finding.serviceName], {
-          encoding: "utf-8",
-          timeout: 10000,
-        });
-        emitEvent({
-          ts: new Date().toISOString(),
-          event: "step.done" as EventType,
-          runId: finding.runId ?? "",
-          detail: "Medic: restarted offline service " + finding.serviceName,
-        });
+        execFileSync("systemctl", ["--user", "start", finding.serviceName], { encoding: "utf-8", timeout: 10000 });
+        emitEvent({ ts: new Date().toISOString(), event: "step.done" as EventType, runId: finding.runId ?? "", detail: "Medic: restarted offline service " + finding.serviceName });
         return true;
-      } catch (err) {
-        return false;
-      }
+      } catch (err) { return false; }
     }
 
     case "restart_gateway": {
-      // Uptime guard: if gateway started < 30min ago, restart won't help.
-      // Persistent stalling on a fresh gateway = API-side issue (rate limits).
       try {
-        const uptimeOut = execFileSync("systemctl", [
-          "--user", "show", "openclaw-gateway", "--property=ActiveEnterTimestamp"
-        ], { encoding: "utf-8", timeout: 5000 }).trim();
+        const uptimeOut = execFileSync("systemctl", ["--user", "show", "openclaw-gateway", "--property=ActiveEnterTimestamp"], { encoding: "utf-8", timeout: 5000 }).trim();
         const tsMatch = uptimeOut.match(/ActiveEnterTimestamp=(.+)/);
         if (tsMatch) {
           const uptimeMs = Date.now() - new Date(tsMatch[1]).getTime();
-          if (uptimeMs < 30 * 60 * 1000) {
-            logger.warn(`[medic] gateway restart skipped — uptime ${Math.round(uptimeMs / 60000)}min < 30min (issue likely API-side)`, {});
-            return false;
-          }
+          if (uptimeMs < 30 * 60 * 1000) { logger.warn(`[medic] gateway restart skipped — uptime ${Math.round(uptimeMs / 60000)}min < 30min`, {}); return false; }
         }
-      } catch { /* systemctl show failed — proceed with restart */ }
+      } catch { /* proceed */ }
       try {
-        execFileSync("systemctl", ["--user", "restart", "openclaw-gateway"], {
-          encoding: "utf-8",
-          timeout: 30000,
-        });
-        // Wait for gateway to come up, then force-recreate crons (remove + create = fresh scheduler entries)
-        // This is the root fix: gateway restart alone leaves crons registered but not firing.
+        execFileSync("systemctl", ["--user", "restart", "openclaw-gateway"], { encoding: "utf-8", timeout: 30000 });
         try {
           const { setTimeout: sleep } = await import("timers/promises");
           await sleep(5000);
-          // Get all running workflows and ensure-crons for each
           const activeWfs = db.prepare("SELECT DISTINCT workflow_id FROM runs WHERE status = 'running'").all() as Array<{ workflow_id: string }>;
           const CLI = resolveSetfarmCli();
-          for (const wf of activeWfs) {
-            try {
-              execFileSync("node", [CLI, "workflow", "ensure-crons", wf.workflow_id], { encoding: "utf-8", timeout: 60000 });
-              logger.warn(`[medic] ensure-crons after gateway restart for ${wf.workflow_id}`, {});
-            } catch {}
-          }
+          for (const wf of activeWfs) { try { execFileSync("node", [CLI, "workflow", "ensure-crons", wf.workflow_id], { encoding: "utf-8", timeout: 60000 }); } catch {} }
         } catch {}
-        emitEvent({
-          ts: new Date().toISOString(),
-          event: "run.resumed" as EventType,
-          runId: finding.runId ?? "",
-          detail: "Medic: gateway scheduler stalled — restarted openclaw-gateway + ensure-crons",
-        });
+        emitEvent({ ts: new Date().toISOString(), event: "run.resumed" as EventType, runId: finding.runId ?? "", detail: "Medic: gateway scheduler stalled — restarted openclaw-gateway + ensure-crons" });
         return true;
-      } catch (err) {
-        return false;
-      }
+      } catch (err) { return false; }
     }
 
     case "fail_run": {
       if (!finding.runId) return false;
       const run = db.prepare("SELECT status, workflow_id FROM runs WHERE id = ?").get(finding.runId) as { status: string; workflow_id: string } | undefined;
       if (!run || run.status !== "running") return false;
-
-      db.prepare(
-        "UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?"
-      ).run(new Date().toISOString(), finding.runId);
-      db.prepare(
-        "UPDATE steps SET status = 'failed', output = 'Medic: run marked as dead', updated_at = ? WHERE run_id = ? AND status IN ('waiting', 'pending', 'running')"
-      ).run(new Date().toISOString(), finding.runId);
-      emitEvent({
-        ts: new Date().toISOString(),
-        event: "run.failed" as EventType,
-        runId: finding.runId,
-        workflowId: run.workflow_id,
-        detail: "Medic: zombie run — all steps terminal but run still marked running",
-      });
+      db.prepare("UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?").run(new Date().toISOString(), finding.runId);
+      db.prepare("UPDATE steps SET status = 'failed', output = 'Medic: run marked as dead', updated_at = ? WHERE run_id = ? AND status IN ('waiting', 'pending', 'running')").run(new Date().toISOString(), finding.runId);
+      emitEvent({ ts: new Date().toISOString(), event: "run.failed" as EventType, runId: finding.runId, workflowId: run.workflow_id, detail: "Medic: zombie run — all steps terminal but run still marked running" });
       try { await teardownWorkflowCronsIfIdle(run.workflow_id); } catch (e) { logger.warn(`[medic] cron teardown failed: ${String(e)}`, {}); }
       return true;
     }
@@ -284,213 +203,277 @@ case "restart_service": {
     case "teardown_crons": {
       const match = finding.message.match(/workflow "([^"]+)"/);
       if (!match) return false;
-      try {
-        await teardownWorkflowCronsIfIdle(match[1]);
-        return true;
-      } catch (err) {
-        return false;
-      }
+      try { await teardownWorkflowCronsIfIdle(match[1]); return true; } catch (err) { return false; }
     }
 
     case "resume_run": {
       if (!finding.runId) return false;
-      // Atomic claim: UPDATE + changes() prevents two medic cycles from resuming the same run
-      const resumeClaim = db.prepare(
-        "UPDATE runs SET status = 'resuming', updated_at = ? WHERE id = ? AND status = 'failed'"
-      ).run(new Date().toISOString(), finding.runId);
-      if (resumeClaim.changes === 0) return false; // Another cycle already claimed this run
-      const run = db.prepare(
-        "SELECT id, workflow_id, status, meta FROM runs WHERE id = ?"
-      ).get(finding.runId) as { id: string; workflow_id: string; status: string; meta: string | null } | undefined;
+      const resumeClaim = db.prepare("UPDATE runs SET status = 'resuming', updated_at = ? WHERE id = ? AND status = 'failed'").run(new Date().toISOString(), finding.runId);
+      if (resumeClaim.changes === 0) return false;
+      const run = db.prepare("SELECT id, workflow_id, status, meta FROM runs WHERE id = ?").get(finding.runId) as { id: string; workflow_id: string; status: string; meta: string | null } | undefined;
       if (!run) return false;
-
-      const failedStep = db.prepare(
-        "SELECT id, step_id, type, current_story_id FROM steps WHERE run_id = ? AND status = 'failed' ORDER BY step_index ASC LIMIT 1"
-      ).get(run.id) as { id: string; step_id: string; type: string; current_story_id: string | null } | undefined;
+      const failedStep = db.prepare("SELECT id, step_id, type, current_story_id FROM steps WHERE run_id = ? AND status = 'failed' ORDER BY step_index ASC LIMIT 1").get(run.id) as { id: string; step_id: string; type: string; current_story_id: string | null } | undefined;
       if (!failedStep) return false;
-
-      const loopStep = db.prepare(
-        "SELECT id, loop_config FROM steps WHERE run_id = ? AND type = 'loop' AND status IN ('running', 'failed') LIMIT 1"
-      ).get(run.id) as { id: string; loop_config: string | null } | undefined;
+      const loopStep = db.prepare("SELECT id, loop_config FROM steps WHERE run_id = ? AND type = 'loop' AND status IN ('running', 'failed') LIMIT 1").get(run.id) as { id: string; loop_config: string | null } | undefined;
 
       if (loopStep?.loop_config) {
         const lc = JSON.parse(loopStep.loop_config);
         if (lc.verifyEach && lc.verifyStep === failedStep.step_id) {
-          db.prepare(
-            "UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = 0, updated_at = ? WHERE id = ?"
-          ).run(new Date().toISOString(), loopStep.id);
-          db.prepare(
-            "UPDATE steps SET status = 'waiting', current_story_id = NULL, retry_count = 0, updated_at = ? WHERE id = ?"
-          ).run(new Date().toISOString(), failedStep.id);
-          db.prepare(
-            "UPDATE stories SET status = 'pending', updated_at = ? WHERE run_id = ? AND status = 'failed'"
-          ).run(new Date().toISOString(), run.id);
+          db.prepare("UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = 0, updated_at = ? WHERE id = ?").run(new Date().toISOString(), loopStep.id);
+          db.prepare("UPDATE steps SET status = 'waiting', current_story_id = NULL, retry_count = 0, updated_at = ? WHERE id = ?").run(new Date().toISOString(), failedStep.id);
+          db.prepare("UPDATE stories SET status = 'pending', updated_at = ? WHERE run_id = ? AND status = 'failed'").run(new Date().toISOString(), run.id);
         }
       } else {
         if (failedStep.type === "loop") {
-          const failedStory = db.prepare(
-            "SELECT id FROM stories WHERE run_id = ? AND status = 'failed' ORDER BY story_index ASC LIMIT 1"
-          ).get(run.id) as { id: string } | undefined;
-          if (failedStory) {
-            db.prepare(
-              "UPDATE stories SET status = 'pending', updated_at = ? WHERE id = ?"
-            ).run(new Date().toISOString(), failedStory.id);
-          }
-          db.prepare(
-            "UPDATE steps SET retry_count = 0 WHERE run_id = ? AND type = 'loop'"
-          ).run(run.id);
+          const failedStory = db.prepare("SELECT id FROM stories WHERE run_id = ? AND status = 'failed' ORDER BY story_index ASC LIMIT 1").get(run.id) as { id: string } | undefined;
+          if (failedStory) { db.prepare("UPDATE stories SET status = 'pending', updated_at = ? WHERE id = ?").run(new Date().toISOString(), failedStory.id); }
+          db.prepare("UPDATE steps SET retry_count = 0 WHERE run_id = ? AND type = 'loop'").run(run.id);
         }
-        db.prepare(
-          "UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = 0, updated_at = ? WHERE id = ?"
-        ).run(new Date().toISOString(), failedStep.id);
+        db.prepare("UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = 0, updated_at = ? WHERE id = ?").run(new Date().toISOString(), failedStep.id);
       }
 
-      db.prepare(
-        "UPDATE runs SET status = 'running', updated_at = ? WHERE id = ? AND status = 'resuming'"
-      ).run(new Date().toISOString(), run.id);
-
+      db.prepare("UPDATE runs SET status = 'running', updated_at = ? WHERE id = ? AND status = 'resuming'").run(new Date().toISOString(), run.id);
       const meta = run.meta ? JSON.parse(run.meta) : {};
       meta.medic_resume_count = (meta.medic_resume_count ?? 0) + 1;
       meta.medic_last_resume = new Date().toISOString();
       db.prepare("UPDATE runs SET meta = ? WHERE id = ?").run(JSON.stringify(meta), run.id);
 
-      try {
-        const workflowDir = resolveWorkflowDir(run.workflow_id);
-        const workflow = await loadWorkflowSpec(workflowDir);
-        await ensureWorkflowCrons(workflow);
-      } catch (err) {}
+      try { const workflowDir = resolveWorkflowDir(run.workflow_id); const workflow = await loadWorkflowSpec(workflowDir); await ensureWorkflowCrons(workflow); } catch (err) {}
 
-      emitEvent({
-        ts: new Date().toISOString(),
-        event: "run.resumed" as EventType,
-        runId: run.id,
-        workflowId: run.workflow_id,
-        detail: `Medic: auto-resumed (attempt ${meta.medic_resume_count}/3)`,
-      });
+      emitEvent({ ts: new Date().toISOString(), event: "run.resumed" as EventType, runId: run.id, workflowId: run.workflow_id, detail: `Medic: auto-resumed (attempt ${meta.medic_resume_count}/3)` });
       return true;
     }
 
-    // ── #225: Reset orphaned story to pending ───────────────────────
     case "reset_story": {
       if (!finding.storyId) return false;
-      const story = db.prepare(
-        "SELECT abandoned_count, run_id FROM stories WHERE id = ? AND status = 'running'"
-      ).get(finding.storyId) as { abandoned_count: number; run_id: string } | undefined;
+      const story = db.prepare("SELECT abandoned_count, run_id FROM stories WHERE id = ? AND status = 'running'").get(finding.storyId) as { abandoned_count: number; run_id: string } | undefined;
       if (!story) return false;
 
-
-      // ── Medic v6: GitHub PR guard ───────────────────────────────────────
-      // Before resetting, check if the agent already merged a PR on GitHub.
-      // If yes → auto-verify instead of wasting another cycle.
-      const storyMeta = db.prepare(
-        "SELECT story_id FROM stories WHERE id = ?"
-      ).get(finding.storyId) as { story_id: string } | undefined;
-      const runMeta = db.prepare(
-        "SELECT task FROM runs WHERE id = ?"
-      ).get(story.run_id) as { task: string } | undefined;
+      const storyMeta = db.prepare("SELECT story_id FROM stories WHERE id = ?").get(finding.storyId) as { story_id: string } | undefined;
+      const runMeta = db.prepare("SELECT task FROM runs WHERE id = ?").get(story.run_id) as { task: string } | undefined;
       if (storyMeta && runMeta) {
         const repoUrl = extractRepoUrl(runMeta.task);
         if (repoUrl) {
           const prUrl = checkMergedPR(repoUrl, storyMeta.story_id, story.run_id);
           if (prUrl) {
-            db.prepare(
-              "UPDATE stories SET status = 'done', abandoned_count = 0, output = ?, updated_at = ? WHERE id = ?"
-            ).run(
-              `STATUS: done
-PR_URL: ${prUrl}
-CHANGES: Medic v6: merged PR found — awaiting verifier review`,
-              new Date().toISOString(),
-              finding.storyId
-            );
-            db.prepare(
-              "UPDATE steps SET current_story_id = NULL, updated_at = ? WHERE run_id = ? AND type = 'loop' AND current_story_id = ?"
-            ).run(new Date().toISOString(), story.run_id, finding.storyId);
-            emitEvent({
-              ts: new Date().toISOString(),
-              event: "story.done" as EventType,
-              runId: story.run_id,
-              detail: `Medic v6: PR merged, set to done — verifier must review ${storyMeta.story_id} (PR: ${prUrl})`,
-            });
+            db.prepare("UPDATE stories SET status = 'done', abandoned_count = 0, output = ?, updated_at = ? WHERE id = ?").run(`STATUS: done\nPR_URL: ${prUrl}\nCHANGES: Medic v6: merged PR found — awaiting verifier review`, new Date().toISOString(), finding.storyId);
+            db.prepare("UPDATE steps SET current_story_id = NULL, updated_at = ? WHERE run_id = ? AND type = 'loop' AND current_story_id = ?").run(new Date().toISOString(), story.run_id, finding.storyId);
+            emitEvent({ ts: new Date().toISOString(), event: "story.done" as EventType, runId: story.run_id, detail: `Medic v6: PR merged, set to done — verifier must review ${storyMeta.story_id} (PR: ${prUrl})` });
             return true;
           }
         }
       }
-      // ── End GitHub PR guard ─────────────────────────────────────────────
 
       const newCount = (story.abandoned_count ?? 0) + 1;
       const MAX_STORY_ABANDONS = 10;
-
       if (newCount >= MAX_STORY_ABANDONS) {
-        // Too many abandons — fail this story (never skip)
-        db.prepare(
-          "UPDATE stories SET status = 'failed', abandoned_count = ?, output = 'Medic: abandoned too many times — failed', updated_at = ? WHERE id = ?"
-        ).run(newCount, new Date().toISOString(), finding.storyId);
-        emitEvent({
-          ts: new Date().toISOString(),
-          event: "story.failed" as EventType,
-          runId: story.run_id,
-          detail: `Medic: story abandoned ${newCount} times — skipped`,
-        });
+        db.prepare("UPDATE stories SET status = 'failed', abandoned_count = ?, output = 'Medic: abandoned too many times — failed', updated_at = ? WHERE id = ?").run(newCount, new Date().toISOString(), finding.storyId);
+        emitEvent({ ts: new Date().toISOString(), event: "story.failed" as EventType, runId: story.run_id, detail: `Medic: story abandoned ${newCount} times — skipped` });
       } else {
-        // Reset to pending for retry (uses abandoned_count, NOT retry_count)
-        db.prepare(
-          "UPDATE stories SET status = 'pending', abandoned_count = ?, updated_at = ? WHERE id = ?"
-        ).run(newCount, new Date().toISOString(), finding.storyId);
-        // Clear current_story_id on the loop step if it points to this story
-        db.prepare(
-          "UPDATE steps SET current_story_id = NULL, updated_at = ? WHERE run_id = ? AND type = 'loop' AND current_story_id = ?"
-        ).run(new Date().toISOString(), story.run_id, finding.storyId);
-        emitEvent({
-          ts: new Date().toISOString(),
-          event: "step.timeout" as EventType,
-          runId: story.run_id,
-          detail: `Medic: orphaned story reset to pending (abandon ${newCount}/${MAX_STORY_ABANDONS})`,
-        });
+        db.prepare("UPDATE stories SET status = 'pending', abandoned_count = ?, updated_at = ? WHERE id = ?").run(newCount, new Date().toISOString(), finding.storyId);
+        db.prepare("UPDATE steps SET current_story_id = NULL, updated_at = ? WHERE run_id = ? AND type = 'loop' AND current_story_id = ?").run(new Date().toISOString(), story.run_id, finding.storyId);
+        emitEvent({ ts: new Date().toISOString(), event: "step.timeout" as EventType, runId: story.run_id, detail: `Medic: orphaned story reset to pending (abandon ${newCount}/${MAX_STORY_ABANDONS})` });
       }
       return true;
     }
 
-    // ── #218: Circuit breaker — force-recreate dead crons ───────────
     case "recreate_crons": {
       const wfId = finding.workflowId ?? finding.message.match(/workflow "([^"]+)"/)?.[1];
       if (!wfId) return false;
       try {
-        // Delete all existing (possibly errored) crons for this workflow
         await removeAgentCrons(wfId);
-        // Recreate from workflow spec
         const workflowDir = resolveWorkflowDir(wfId);
         const workflow = await loadWorkflowSpec(workflowDir);
         await setupAgentCrons(workflow);
-        emitEvent({
-          ts: new Date().toISOString(),
-          event: "run.resumed" as EventType,
-          runId: finding.runId ?? "",
-          workflowId: wfId,
-          detail: `Medic: circuit breaker — force-recreated crons for "${wfId}"`,
-        });
+        emitEvent({ ts: new Date().toISOString(), event: "run.resumed" as EventType, runId: finding.runId ?? "", workflowId: wfId, detail: `Medic: circuit breaker — force-recreated crons for "${wfId}"` });
         return true;
-      } catch (err) {
-        return false;
-      }
+      } catch (err) { return false; }
     }
 
     case "kill_browser_sessions": {
       try {
         const { killOrphanedBrowserSessions } = await import("../installer/browser-tools.js");
         const killed = killOrphanedBrowserSessions();
-        if (killed > 0) {
-          emitEvent({
-            ts: new Date().toISOString(),
-            event: "step.done" as EventType,
-            runId: finding.runId ?? "",
-            detail: `Medic: killed ${killed} orphaned Chromium process(es)`,
-          });
+        if (killed > 0) { emitEvent({ ts: new Date().toISOString(), event: "step.done" as EventType, runId: finding.runId ?? "", detail: `Medic: killed ${killed} orphaned Chromium process(es)` }); return true; }
+        return false;
+      } catch { return false; }
+    }
+
+    case "none":
+    default:
+      return false;
+  }
+}
+
+// ── PG Remediation ──────────────────────────────────────────────────
+
+async function remediatePG(finding: MedicFinding): Promise<boolean> {
+  switch (finding.action) {
+    case "reset_step": {
+      if (!finding.stepId) return false;
+      const step = await pgGet<{ abandoned_count: number; output: string | null; status: string }>("SELECT abandoned_count, output, status FROM steps WHERE id = $1", [finding.stepId]);
+      if (!step) return false;
+
+      if (step.status === "running" && step.output) {
+        const statusMatch = step.output.match(/^STATUS:\s*(.+)$/im);
+        const statusVal = statusMatch?.[1]?.trim().toLowerCase();
+        if (statusVal && ["done", "pass", "passed", "verified"].includes(statusVal)) {
+          try { const result = await completeStep(finding.stepId, step.output); if (result.advanced || result.runCompleted) { emitEvent({ ts: new Date().toISOString(), event: "step.done" as EventType, runId: finding.runId ?? "", stepId: finding.stepId, detail: "Medic: auto-completed stuck step (output had STATUS: done)" }); return true; } } catch (err) { /* fall through */ }
+        }
+      }
+
+      const newCount = (step.abandoned_count ?? 0) + 1;
+      const MAX_STEP_ABANDONS = 10;
+      const SAME_ERROR_LIMIT = 3;
+
+      if (step.output && newCount >= SAME_ERROR_LIMIT) {
+        const recentChecks = await pgQuery<{ detail: string }>("SELECT detail FROM medic_checks WHERE run_id = $1 AND step_id = $2 AND action = 'reset_step' ORDER BY checked_at DESC LIMIT $3", [finding.runId || "", finding.stepId || "", SAME_ERROR_LIMIT]);
+        if (recentChecks.length >= SAME_ERROR_LIMIT - 1) {
+          logger.error(`[medic] Same-error circuit breaker: step ${finding.stepId} reset ${newCount}x`, { runId: finding.runId });
+          await pgRun("UPDATE steps SET status = 'failed', output = $1, abandoned_count = $2, updated_at = $3 WHERE id = $4", ["Medic: same error repeated " + newCount + " times — circuit breaker. Last output: " + (step.output || "").substring(0, 300), newCount, new Date().toISOString(), finding.stepId]);
+          if (finding.runId) { await pgRun("UPDATE runs SET status = 'failed', updated_at = $1 WHERE id = $2", [new Date().toISOString(), finding.runId]); emitEvent({ ts: new Date().toISOString(), event: "run.failed" as EventType, runId: finding.runId, detail: "Medic: same-error circuit breaker on step " + (finding.stepId || "") }); }
           return true;
         }
-        return false;
-      } catch {
-        return false;
       }
+
+      if (newCount >= MAX_STEP_ABANDONS) {
+        await pgRun("UPDATE steps SET status = 'failed', output = 'Medic: abandoned too many times', abandoned_count = $1, updated_at = $2 WHERE id = $3", [newCount, new Date().toISOString(), finding.stepId]);
+        if (finding.runId) { await pgRun("UPDATE runs SET status = 'failed', updated_at = $1 WHERE id = $2", [new Date().toISOString(), finding.runId]); emitEvent({ ts: new Date().toISOString(), event: "run.failed" as EventType, runId: finding.runId, detail: "Medic: step abandoned too many times" }); }
+        return true;
+      }
+
+      await pgRun("UPDATE steps SET status = 'pending', abandoned_count = $1, updated_at = $2 WHERE id = $3", [newCount, new Date().toISOString(), finding.stepId]);
+      if (finding.runId) { emitEvent({ ts: new Date().toISOString(), event: "step.timeout" as EventType, runId: finding.runId, stepId: finding.stepId, detail: `Medic: reset stuck step (abandon ${newCount}/${MAX_STEP_ABANDONS})` }); }
+      return true;
+    }
+
+    case "restart_service":
+    case "restart_gateway":
+    case "recreate_crons":
+    case "kill_browser_sessions": {
+      // These actions don't differ between PG/SQLite — delegate to shared logic
+      // (they use execFileSync/system calls, not DB)
+      // For restart_gateway we need the DB query for activeWfs
+      if (finding.action === "restart_gateway") {
+        try {
+          const uptimeOut = execFileSync("systemctl", ["--user", "show", "openclaw-gateway", "--property=ActiveEnterTimestamp"], { encoding: "utf-8", timeout: 5000 }).trim();
+          const tsMatch = uptimeOut.match(/ActiveEnterTimestamp=(.+)/);
+          if (tsMatch) { const uptimeMs = Date.now() - new Date(tsMatch[1]).getTime(); if (uptimeMs < 30 * 60 * 1000) { return false; } }
+        } catch {}
+        try {
+          execFileSync("systemctl", ["--user", "restart", "openclaw-gateway"], { encoding: "utf-8", timeout: 30000 });
+          try {
+            const { setTimeout: sleep } = await import("timers/promises");
+            await sleep(5000);
+            const activeWfs = await pgQuery<{ workflow_id: string }>("SELECT DISTINCT workflow_id FROM runs WHERE status = 'running'");
+            const CLI = resolveSetfarmCli();
+            for (const wf of activeWfs) { try { execFileSync("node", [CLI, "workflow", "ensure-crons", wf.workflow_id], { encoding: "utf-8", timeout: 60000 }); } catch {} }
+          } catch {}
+          emitEvent({ ts: new Date().toISOString(), event: "run.resumed" as EventType, runId: finding.runId ?? "", detail: "Medic: gateway scheduler stalled — restarted" });
+          return true;
+        } catch { return false; }
+      }
+      if (finding.action === "restart_service") {
+        if (!finding.serviceName) return false;
+        try { execFileSync("systemctl", ["--user", "start", finding.serviceName], { encoding: "utf-8", timeout: 10000 }); emitEvent({ ts: new Date().toISOString(), event: "step.done" as EventType, runId: finding.runId ?? "", detail: "Medic: restarted " + finding.serviceName }); return true; } catch { return false; }
+      }
+      if (finding.action === "recreate_crons") {
+        const wfId = finding.workflowId ?? finding.message.match(/workflow "([^"]+)"/)?.[1];
+        if (!wfId) return false;
+        try { await removeAgentCrons(wfId); const workflowDir = resolveWorkflowDir(wfId); const workflow = await loadWorkflowSpec(workflowDir); await setupAgentCrons(workflow); emitEvent({ ts: new Date().toISOString(), event: "run.resumed" as EventType, runId: finding.runId ?? "", workflowId: wfId, detail: `Medic: force-recreated crons for "${wfId}"` }); return true; } catch { return false; }
+      }
+      if (finding.action === "kill_browser_sessions") {
+        try { const { killOrphanedBrowserSessions } = await import("../installer/browser-tools.js"); const killed = killOrphanedBrowserSessions(); if (killed > 0) { emitEvent({ ts: new Date().toISOString(), event: "step.done" as EventType, runId: finding.runId ?? "", detail: `Medic: killed ${killed} orphaned Chromium` }); return true; } return false; } catch { return false; }
+      }
+      return false;
+    }
+
+    case "fail_run": {
+      if (!finding.runId) return false;
+      const run = await pgGet<{ status: string; workflow_id: string }>("SELECT status, workflow_id FROM runs WHERE id = $1", [finding.runId]);
+      if (!run || run.status !== "running") return false;
+      await pgRun("UPDATE runs SET status = 'failed', updated_at = $1 WHERE id = $2", [new Date().toISOString(), finding.runId]);
+      await pgRun("UPDATE steps SET status = 'failed', output = 'Medic: run marked as dead', updated_at = $1 WHERE run_id = $2 AND status IN ('waiting', 'pending', 'running')", [new Date().toISOString(), finding.runId]);
+      emitEvent({ ts: new Date().toISOString(), event: "run.failed" as EventType, runId: finding.runId, workflowId: run.workflow_id, detail: "Medic: zombie run" });
+      try { await teardownWorkflowCronsIfIdle(run.workflow_id); } catch {}
+      return true;
+    }
+
+    case "teardown_crons": {
+      const match = finding.message.match(/workflow "([^"]+)"/);
+      if (!match) return false;
+      try { await teardownWorkflowCronsIfIdle(match[1]); return true; } catch { return false; }
+    }
+
+    case "resume_run": {
+      if (!finding.runId) return false;
+      const resumeClaim = await pgRun("UPDATE runs SET status = 'resuming', updated_at = $1 WHERE id = $2 AND status = 'failed'", [new Date().toISOString(), finding.runId]);
+      if (resumeClaim.changes === 0) return false;
+      const run = await pgGet<{ id: string; workflow_id: string; status: string; meta: string | null }>("SELECT id, workflow_id, status, meta FROM runs WHERE id = $1", [finding.runId]);
+      if (!run) return false;
+      const failedStep = await pgGet<{ id: string; step_id: string; type: string; current_story_id: string | null }>("SELECT id, step_id, type, current_story_id FROM steps WHERE run_id = $1 AND status = 'failed' ORDER BY step_index ASC LIMIT 1", [run.id]);
+      if (!failedStep) return false;
+      const loopStep = await pgGet<{ id: string; loop_config: string | null }>("SELECT id, loop_config FROM steps WHERE run_id = $1 AND type = 'loop' AND status IN ('running', 'failed') LIMIT 1", [run.id]);
+
+      if (loopStep?.loop_config) {
+        const lc = JSON.parse(loopStep.loop_config);
+        if (lc.verifyEach && lc.verifyStep === failedStep.step_id) {
+          await pgRun("UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = 0, updated_at = $1 WHERE id = $2", [new Date().toISOString(), loopStep.id]);
+          await pgRun("UPDATE steps SET status = 'waiting', current_story_id = NULL, retry_count = 0, updated_at = $1 WHERE id = $2", [new Date().toISOString(), failedStep.id]);
+          await pgRun("UPDATE stories SET status = 'pending', updated_at = $1 WHERE run_id = $2 AND status = 'failed'", [new Date().toISOString(), run.id]);
+        }
+      } else {
+        if (failedStep.type === "loop") {
+          const failedStory = await pgGet<{ id: string }>("SELECT id FROM stories WHERE run_id = $1 AND status = 'failed' ORDER BY story_index ASC LIMIT 1", [run.id]);
+          if (failedStory) { await pgRun("UPDATE stories SET status = 'pending', updated_at = $1 WHERE id = $2", [new Date().toISOString(), failedStory.id]); }
+          await pgRun("UPDATE steps SET retry_count = 0 WHERE run_id = $1 AND type = 'loop'", [run.id]);
+        }
+        await pgRun("UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = 0, updated_at = $1 WHERE id = $2", [new Date().toISOString(), failedStep.id]);
+      }
+
+      await pgRun("UPDATE runs SET status = 'running', updated_at = $1 WHERE id = $2 AND status = 'resuming'", [new Date().toISOString(), run.id]);
+      const meta = run.meta ? JSON.parse(run.meta) : {};
+      meta.medic_resume_count = (meta.medic_resume_count ?? 0) + 1;
+      meta.medic_last_resume = new Date().toISOString();
+      await pgRun("UPDATE runs SET meta = $1 WHERE id = $2", [JSON.stringify(meta), run.id]);
+
+      try { const workflowDir = resolveWorkflowDir(run.workflow_id); const workflow = await loadWorkflowSpec(workflowDir); await ensureWorkflowCrons(workflow); } catch {}
+
+      emitEvent({ ts: new Date().toISOString(), event: "run.resumed" as EventType, runId: run.id, workflowId: run.workflow_id, detail: `Medic: auto-resumed (attempt ${meta.medic_resume_count}/3)` });
+      return true;
+    }
+
+    case "reset_story": {
+      if (!finding.storyId) return false;
+      const story = await pgGet<{ abandoned_count: number; run_id: string }>("SELECT abandoned_count, run_id FROM stories WHERE id = $1 AND status = 'running'", [finding.storyId]);
+      if (!story) return false;
+
+      const storyMeta = await pgGet<{ story_id: string }>("SELECT story_id FROM stories WHERE id = $1", [finding.storyId]);
+      const runMeta = await pgGet<{ task: string }>("SELECT task FROM runs WHERE id = $1", [story.run_id]);
+      if (storyMeta && runMeta) {
+        const repoUrl = extractRepoUrl(runMeta.task);
+        if (repoUrl) {
+          const prUrl = checkMergedPR(repoUrl, storyMeta.story_id, story.run_id);
+          if (prUrl) {
+            await pgRun("UPDATE stories SET status = 'done', abandoned_count = 0, output = $1, updated_at = $2 WHERE id = $3", [`STATUS: done\nPR_URL: ${prUrl}\nCHANGES: Medic v6: merged PR found`, new Date().toISOString(), finding.storyId]);
+            await pgRun("UPDATE steps SET current_story_id = NULL, updated_at = $1 WHERE run_id = $2 AND type = 'loop' AND current_story_id = $3", [new Date().toISOString(), story.run_id, finding.storyId]);
+            emitEvent({ ts: new Date().toISOString(), event: "story.done" as EventType, runId: story.run_id, detail: `Medic v6: PR merged — ${storyMeta.story_id} (${prUrl})` });
+            return true;
+          }
+        }
+      }
+
+      const newCount = (story.abandoned_count ?? 0) + 1;
+      const MAX_STORY_ABANDONS = 10;
+      if (newCount >= MAX_STORY_ABANDONS) {
+        await pgRun("UPDATE stories SET status = 'failed', abandoned_count = $1, output = 'Medic: abandoned too many times — failed', updated_at = $2 WHERE id = $3", [newCount, new Date().toISOString(), finding.storyId]);
+        emitEvent({ ts: new Date().toISOString(), event: "story.failed" as EventType, runId: story.run_id, detail: `Medic: story abandoned ${newCount} times` });
+      } else {
+        await pgRun("UPDATE stories SET status = 'pending', abandoned_count = $1, updated_at = $2 WHERE id = $3", [newCount, new Date().toISOString(), finding.storyId]);
+        await pgRun("UPDATE steps SET current_story_id = NULL, updated_at = $1 WHERE run_id = $2 AND type = 'loop' AND current_story_id = $3", [new Date().toISOString(), story.run_id, finding.storyId]);
+        emitEvent({ ts: new Date().toISOString(), event: "step.timeout" as EventType, runId: story.run_id, detail: `Medic: orphaned story reset (abandon ${newCount}/${MAX_STORY_ABANDONS})` });
+      }
+      return true;
     }
 
     case "none":
@@ -501,84 +484,36 @@ CHANGES: Medic v6: merged PR found — awaiting verifier review`,
 
 // ── Main Check Runner ───────────────────────────────────────────────
 
-export interface MedicCheckResult {
-  id: string;
-  checkedAt: string;
-  issuesFound: number;
-  actionsTaken: number;
-  summary: string;
-  findings: MedicFinding[];
-}
+export interface MedicCheckResult { id: string; checkedAt: string; issuesFound: number; actionsTaken: number; summary: string; findings: MedicFinding[]; }
 
-/**
- * Log cron recreate to medic_checks so checkGatewayStalling can detect persistent stalling.
- * Without this, overdue/partial recreates were invisible to the stalling detector,
- * causing infinite recreate loops without ever restarting the gateway.
- */
-function logCronRecreate(reason: string, workflowId: string): void {
+async function logCronRecreate(reason: string, workflowId: string): Promise<void> {
   try {
-    const db = getDb();
-    db.prepare(
-      "INSERT INTO medic_checks (id, checked_at, issues_found, actions_taken, summary, details) VALUES (?, ?, 1, 1, ?, ?)"
-    ).run(
-      crypto.randomUUID(),
-      new Date().toISOString(),
-      `Cron recreate: ${reason}`,
-      JSON.stringify([{ check: "restore_crons", action: "recreate_crons", workflowId, remediated: true }])
-    );
+    if (USE_PG) {
+      await pgRun("INSERT INTO medic_checks (id, checked_at, issues_found, actions_taken, summary, details) VALUES ($1, $2, 1, 1, $3, $4)", [crypto.randomUUID(), new Date().toISOString(), `Cron recreate: ${reason}`, JSON.stringify([{ check: "restore_crons", action: "recreate_crons", workflowId, remediated: true }])]);
+    } else {
+      const db = getDb();
+      db.prepare("INSERT INTO medic_checks (id, checked_at, issues_found, actions_taken, summary, details) VALUES (?, ?, 1, 1, ?, ?)").run(crypto.randomUUID(), new Date().toISOString(), `Cron recreate: ${reason}`, JSON.stringify([{ check: "restore_crons", action: "recreate_crons", workflowId, remediated: true }]));
+    }
   } catch (e) { logger.warn(`[medic] logCronRecreate failed: ${String(e)}`, {}); }
 }
 
-/**
- * Restore crons for any active runs that lost them (e.g. after gateway restart).
- * Also detects overdue crons (nextRunAtMs in the past) and force-recreates them.
- * Called once at medic startup and periodically during checks.
- */
 export async function restoreActiveRunCrons(): Promise<number> {
-  const db = getDb();
-
-  // ── COOLDOWN: Prevent cron churn loop ──────────────────────────────
-  // Root cause: medic detects count mismatch → remove+recreate all crons →
-  // new cron IDs invalidate gateway timers → next cycle: mismatch again → loop.
-  // Fix: skip if we recreated crons in the last 5 minutes.
   const RECREATE_COOLDOWN_MS = 5 * 60 * 1000;
-  try {
-    const lastRecreate = db.prepare(
-      `SELECT checked_at FROM medic_checks WHERE summary LIKE 'Cron recreate:%' ORDER BY checked_at DESC LIMIT 1`
-    ).get() as { checked_at: string } | undefined;
-    if (lastRecreate) {
-      const elapsed = Date.now() - new Date(lastRecreate.checked_at).getTime();
-      if (elapsed < RECREATE_COOLDOWN_MS) {
-        return 0;
-      }
-    }
-  } catch { /* proceed */ }
+  let activeRuns: Array<{ workflow_id: string }>;
 
-  const activeRuns = db.prepare(
-    "SELECT DISTINCT workflow_id FROM runs WHERE status = 'running'"
-  ).all() as Array<{ workflow_id: string }>;
+  if (USE_PG) {
+    try { const lastRecreate = await pgGet<{ checked_at: string }>("SELECT checked_at FROM medic_checks WHERE summary LIKE 'Cron recreate:%' ORDER BY checked_at DESC LIMIT 1"); if (lastRecreate && (Date.now() - new Date(lastRecreate.checked_at).getTime()) < RECREATE_COOLDOWN_MS) return 0; } catch {}
+    activeRuns = await pgQuery<{ workflow_id: string }>("SELECT DISTINCT workflow_id FROM runs WHERE status = 'running'");
+  } else {
+    const db = getDb();
+    try { const lastRecreate = db.prepare("SELECT checked_at FROM medic_checks WHERE summary LIKE 'Cron recreate:%' ORDER BY checked_at DESC LIMIT 1").get() as { checked_at: string } | undefined; if (lastRecreate && (Date.now() - new Date(lastRecreate.checked_at).getTime()) < RECREATE_COOLDOWN_MS) return 0; } catch {}
+    activeRuns = db.prepare("SELECT DISTINCT workflow_id FROM runs WHERE status = 'running'").all() as Array<{ workflow_id: string }>;
+  }
 
   let restored = 0;
-
-  // Check for overdue crons — if any setfarm cron's nextRunAtMs is > 5 min in the past,
-  // the gateway scheduler has stalled. Force-recreate all crons for that workflow.
-  const OVERDUE_THRESHOLD_MS = 5 * 60 * 1000; // 5 min
+  const OVERDUE_THRESHOLD_MS = 5 * 60 * 1000;
   let overdueCronWorkflows = new Set<string>();
-  try {
-    const cronResult = await listCronJobs();
-    if (cronResult.ok && cronResult.jobs) {
-      const now = Date.now();
-      for (const job of cronResult.jobs) {
-        if (!job.name.startsWith("setfarm/")) continue;
-        const nextRun = (job as any).state?.nextRunAtMs ?? 0;
-        if (nextRun > 0 && (now - nextRun) > OVERDUE_THRESHOLD_MS) {
-          // Extract workflow ID from cron name: setfarm/<workflow_id>/<agent>
-          const parts = job.name.split("/");
-          if (parts.length >= 3) overdueCronWorkflows.add(parts[1]);
-        }
-      }
-    }
-  } catch (e) { logger.warn(`[medic] overdue cron check failed: ${String(e)}`, {}); }
+  try { const cronResult = await listCronJobs(); if (cronResult.ok && cronResult.jobs) { const now = Date.now(); for (const job of cronResult.jobs) { if (!job.name.startsWith("setfarm/")) continue; const nextRun = (job as any).state?.nextRunAtMs ?? 0; if (nextRun > 0 && (now - nextRun) > OVERDUE_THRESHOLD_MS) { const parts = job.name.split("/"); if (parts.length >= 3) overdueCronWorkflows.add(parts[1]); } } } } catch (e) { logger.warn(`[medic] overdue cron check failed: ${String(e)}`, {}); }
 
   for (const run of activeRuns) {
     try {
@@ -586,197 +521,78 @@ export async function restoreActiveRunCrons(): Promise<number> {
       const workflow = await loadWorkflowSpec(workflowDir);
 
       if (overdueCronWorkflows.has(run.workflow_id)) {
-        // Crons are overdue — force-recreate with fresh anchors
-        await removeAgentCrons(run.workflow_id);
-        await setupAgentCrons(workflow);
-        logCronRecreate("overdue", run.workflow_id);
-        restored++;
-        emitEvent({
-          ts: new Date().toISOString(),
-          event: "run.resumed" as EventType,
-          runId: "",
-          workflowId: run.workflow_id,
-          detail: `Medic: overdue crons detected for "${run.workflow_id}" — force-recreated`,
-        });
+        await removeAgentCrons(run.workflow_id); await setupAgentCrons(workflow); await logCronRecreate("overdue", run.workflow_id); restored++;
+        emitEvent({ ts: new Date().toISOString(), event: "run.resumed" as EventType, runId: "", workflowId: run.workflow_id, detail: `Medic: overdue crons for "${run.workflow_id}" — force-recreated` });
       } else {
-        // Count-based verification: detect partial cron loss (some crons exist but not all)
         const expected = expectedCronCount(workflow);
         const actual = await actualCronCount(run.workflow_id);
-
-        if (actual === -1) {
-          // Gateway API unreachable — log and skip (will retry next cycle)
-          logger.warn(`[medic] gateway unreachable for cron count check (${run.workflow_id})`, {});
-        } else if (actual === 0) {
-          // Total cron loss — recreate all (no existing crons to preserve)
-          await setupAgentCrons(workflow);
-          logCronRecreate("total_loss", run.workflow_id);
-          logger.warn(`[medic] 0/${expected} crons for "${run.workflow_id}" — recreated all`, {});
-          emitEvent({
-            ts: new Date().toISOString(),
-            event: "run.resumed" as EventType,
-            runId: "",
-            workflowId: run.workflow_id,
-            detail: `Medic: 0/${expected} crons for "${run.workflow_id}" — recreated`,
-          });
-          restored++;
-        } else if (actual !== expected) {
-          // Additive repair: only add missing crons, remove extras.
-          // Does NOT touch existing crons — prevents anchor-reset loop (#cron-churn fix).
-          const { added, removed } = await repairAgentCrons(workflow);
-          if (added > 0 || removed > 0) {
-            logCronRecreate(actual < expected ? "partial_loss" : "duplicates", run.workflow_id);
-            logger.warn(`[medic] ${actual}/${expected} crons for "${run.workflow_id}" — repaired (added ${added}, removed ${removed})`, {});
-            restored++;
-          }
-        }
-        // else actual === expected — all good, nothing to do
+        if (actual === -1) { logger.warn(`[medic] gateway unreachable (${run.workflow_id})`, {}); }
+        else if (actual === 0) { await setupAgentCrons(workflow); await logCronRecreate("total_loss", run.workflow_id); restored++; emitEvent({ ts: new Date().toISOString(), event: "run.resumed" as EventType, runId: "", workflowId: run.workflow_id, detail: `Medic: 0/${expected} crons — recreated` }); }
+        else if (actual !== expected) { const { added, removed } = await repairAgentCrons(workflow); if (added > 0 || removed > 0) { await logCronRecreate(actual < expected ? "partial_loss" : "duplicates", run.workflow_id); restored++; } }
       }
-    } catch (err) {
-      logger.warn(`[medic] restoreActiveRunCrons failed for ${run.workflow_id}: ${String(err)}`, {});
-    }
+    } catch (err) { logger.warn(`[medic] restoreActiveRunCrons failed for ${run.workflow_id}: ${String(err)}`, {}); }
   }
   return restored;
 }
 
 export async function runMedicCheck(): Promise<MedicCheckResult> {
-  ensureMedicTables();
-
-  // Restore crons for active runs (fixes #183 — lost crons after restart)
+  await ensureMedicTables();
   try { await restoreActiveRunCrons(); } catch (e) { logger.warn(`[medic] restoreActiveRunCrons failed: ${String(e)}`, {}); }
 
-  // Gather all findings
-  const findings: MedicFinding[] = runSyncChecks();
+  const findings: MedicFinding[] = await runSyncChecks();
+  try { const cronResult = await listCronJobs(); if (cronResult.ok && cronResult.jobs) { findings.push(...await checkOrphanedCrons(cronResult.jobs.filter(j => j.name.startsWith("setfarm/")))); } } catch (err) { console.warn("listCronJobs failed:", String(err)); }
 
-  // Async check: orphaned crons
-  try {
-    const cronResult = await listCronJobs();
-    if (cronResult.ok && cronResult.jobs) {
-      const setfarmCrons = cronResult.jobs.filter(j => j.name.startsWith("setfarm/"));
-      findings.push(...checkOrphanedCrons(setfarmCrons));
-    }
-  } catch (err) {
-    console.warn("listCronJobs failed, skipping orphaned cron check:", String(err));
-  }
-
-  // Remediate
   let actionsTaken = 0;
-  for (const finding of findings) {
-    if (finding.action !== "none") {
-      const success = await remediate(finding);
-      if (success) {
-        finding.remediated = true;
-        actionsTaken++;
-      }
-    }
-  }
+  for (const finding of findings) { if (finding.action !== "none") { const success = await remediate(finding); if (success) { finding.remediated = true; actionsTaken++; } } }
 
-  // Build summary
   const parts: string[] = [];
-  if (findings.length === 0) {
-    parts.push("All clear — no issues found");
-  } else {
-    const critical = findings.filter(f => f.severity === "critical").length;
-    const warnings = findings.filter(f => f.severity === "warning").length;
-    if (critical > 0) parts.push(`${critical} critical`);
-    if (warnings > 0) parts.push(`${warnings} warning(s)`);
-    if (actionsTaken > 0) parts.push(`${actionsTaken} auto-fixed`);
-  }
+  if (findings.length === 0) { parts.push("All clear — no issues found"); } else { const critical = findings.filter(f => f.severity === "critical").length; const warnings = findings.filter(f => f.severity === "warning").length; if (critical > 0) parts.push(`${critical} critical`); if (warnings > 0) parts.push(`${warnings} warning(s)`); if (actionsTaken > 0) parts.push(`${actionsTaken} auto-fixed`); }
   const summary = parts.join(", ");
 
-  // Log to DB
   const checkId = crypto.randomUUID();
   const checkedAt = new Date().toISOString();
-  const db = getDb();
-  db.prepare(
-    "INSERT INTO medic_checks (id, checked_at, issues_found, actions_taken, summary, details) VALUES (?, ?, ?, ?, ?, ?)"
-  ).run(checkId, checkedAt, findings.length, actionsTaken, summary, JSON.stringify(findings));
+  if (USE_PG) {
+    await pgRun("INSERT INTO medic_checks (id, checked_at, issues_found, actions_taken, summary, details) VALUES ($1, $2, $3, $4, $5, $6)", [checkId, checkedAt, findings.length, actionsTaken, summary, JSON.stringify(findings)]);
+    await pgExec("DELETE FROM medic_checks WHERE id NOT IN (SELECT id FROM medic_checks ORDER BY checked_at DESC LIMIT 500)");
+  } else {
+    const db = getDb();
+    db.prepare("INSERT INTO medic_checks (id, checked_at, issues_found, actions_taken, summary, details) VALUES (?, ?, ?, ?, ?, ?)").run(checkId, checkedAt, findings.length, actionsTaken, summary, JSON.stringify(findings));
+    db.prepare("DELETE FROM medic_checks WHERE id NOT IN (SELECT id FROM medic_checks ORDER BY checked_at DESC LIMIT 500)").run();
+  }
 
-  // Prune old checks (keep last 500)
-  db.prepare(`
-    DELETE FROM medic_checks WHERE id NOT IN (
-      SELECT id FROM medic_checks ORDER BY checked_at DESC LIMIT 500
-    )
-  `).run();
-
-  return {
-    id: checkId,
-    checkedAt,
-    issuesFound: findings.length,
-    actionsTaken,
-    summary,
-    findings,
-  };
+  return { id: checkId, checkedAt, issuesFound: findings.length, actionsTaken, summary, findings };
 }
 
 // ── Query Helpers ───────────────────────────────────────────────────
 
-export interface MedicStatus {
-  installed: boolean;
-  lastCheck: { checkedAt: string; summary: string; issuesFound: number; actionsTaken: number } | null;
-  recentChecks: number;
-  recentIssues: number;
-  recentActions: number;
+export interface MedicStatus { installed: boolean; lastCheck: { checkedAt: string; summary: string; issuesFound: number; actionsTaken: number } | null; recentChecks: number; recentIssues: number; recentActions: number; }
+
+export async function getMedicStatus(): Promise<MedicStatus> {
+  try {
+    await ensureMedicTables();
+    if (USE_PG) {
+      const last = await pgGet<{ checked_at: string; summary: string; issues_found: number; actions_taken: number }>("SELECT checked_at, summary, issues_found, actions_taken FROM medic_checks ORDER BY checked_at DESC LIMIT 1");
+      const stats = await pgGet<{ checks: number; issues: number; actions: number }>("SELECT COUNT(*) as checks, COALESCE(SUM(issues_found), 0) as issues, COALESCE(SUM(actions_taken), 0) as actions FROM medic_checks WHERE checked_at > (NOW() - INTERVAL '24 hours')::text");
+      return { installed: true, lastCheck: last ? { checkedAt: last.checked_at, summary: last.summary, issuesFound: last.issues_found, actionsTaken: last.actions_taken } : null, recentChecks: stats?.checks ?? 0, recentIssues: stats?.issues ?? 0, recentActions: stats?.actions ?? 0 };
+    } else {
+      const db = getDb();
+      const last = db.prepare("SELECT checked_at, summary, issues_found, actions_taken FROM medic_checks ORDER BY checked_at DESC LIMIT 1").get() as { checked_at: string; summary: string; issues_found: number; actions_taken: number } | undefined;
+      const stats = db.prepare("SELECT COUNT(*) as checks, COALESCE(SUM(issues_found), 0) as issues, COALESCE(SUM(actions_taken), 0) as actions FROM medic_checks WHERE julianday(checked_at) > julianday('now', '-24 hours')").get() as { checks: number; issues: number; actions: number };
+      return { installed: true, lastCheck: last ? { checkedAt: last.checked_at, summary: last.summary, issuesFound: last.issues_found, actionsTaken: last.actions_taken } : null, recentChecks: stats.checks, recentIssues: stats.issues, recentActions: stats.actions };
+    }
+  } catch (err) { return { installed: false, lastCheck: null, recentChecks: 0, recentIssues: 0, recentActions: 0 }; }
 }
 
-export function getMedicStatus(): MedicStatus {
+export async function getRecentMedicChecks(limit = 20): Promise<Array<{ id: string; checkedAt: string; issuesFound: number; actionsTaken: number; summary: string; details: MedicFinding[]; }>> {
   try {
-    ensureMedicTables();
-    const db = getDb();
-
-    const last = db.prepare(
-      "SELECT checked_at, summary, issues_found, actions_taken FROM medic_checks ORDER BY checked_at DESC LIMIT 1"
-    ).get() as { checked_at: string; summary: string; issues_found: number; actions_taken: number } | undefined;
-
-    const stats = db.prepare(`
-      SELECT COUNT(*) as checks, COALESCE(SUM(issues_found), 0) as issues, COALESCE(SUM(actions_taken), 0) as actions
-      FROM medic_checks
-      WHERE julianday(checked_at) > julianday('now', '-24 hours')
-    `).get() as { checks: number; issues: number; actions: number };
-
-    return {
-      installed: true,
-      lastCheck: last ? {
-        checkedAt: last.checked_at,
-        summary: last.summary,
-        issuesFound: last.issues_found,
-        actionsTaken: last.actions_taken,
-      } : null,
-      recentChecks: stats.checks,
-      recentIssues: stats.issues,
-      recentActions: stats.actions,
-    };
-  } catch (err) {
-    return { installed: false, lastCheck: null, recentChecks: 0, recentIssues: 0, recentActions: 0 };
-  }
-}
-
-export function getRecentMedicChecks(limit = 20): Array<{
-  id: string;
-  checkedAt: string;
-  issuesFound: number;
-  actionsTaken: number;
-  summary: string;
-  details: MedicFinding[];
-}> {
-  try {
-    ensureMedicTables();
-    const db = getDb();
-    const rows = db.prepare(
-      "SELECT * FROM medic_checks ORDER BY checked_at DESC LIMIT ?"
-    ).all(limit) as Array<{
-      id: string; checked_at: string; issues_found: number;
-      actions_taken: number; summary: string; details: string;
-    }>;
-
-    return rows.map(r => ({
-      id: r.id,
-      checkedAt: r.checked_at,
-      issuesFound: r.issues_found,
-      actionsTaken: r.actions_taken,
-      summary: r.summary,
-      details: JSON.parse(r.details ?? "[]"),
-    }));
-  } catch (err) {
-    return [];
-  }
+    await ensureMedicTables();
+    if (USE_PG) {
+      const rows = await pgQuery<{ id: string; checked_at: string; issues_found: number; actions_taken: number; summary: string; details: string; }>("SELECT * FROM medic_checks ORDER BY checked_at DESC LIMIT $1", [limit]);
+      return rows.map(r => ({ id: r.id, checkedAt: r.checked_at, issuesFound: r.issues_found, actionsTaken: r.actions_taken, summary: r.summary, details: JSON.parse(r.details ?? "[]") }));
+    } else {
+      const db = getDb();
+      const rows = db.prepare("SELECT * FROM medic_checks ORDER BY checked_at DESC LIMIT ?").all(limit) as Array<{ id: string; checked_at: string; issues_found: number; actions_taken: number; summary: string; details: string; }>;
+      return rows.map(r => ({ id: r.id, checkedAt: r.checked_at, issuesFound: r.issues_found, actionsTaken: r.actions_taken, summary: r.summary, details: JSON.parse(r.details ?? "[]") }));
+    }
+  } catch (err) { return []; }
 }

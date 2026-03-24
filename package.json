@@ -17,6 +17,7 @@
   "dependencies": {
     "json5": "^2.2.3",
     "playwright": "^1.58.2",
+    "postgres": "^3.4.8",
     "yaml": "^2.4.5"
   },
   "devDependencies": {

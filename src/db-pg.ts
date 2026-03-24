@@ -1,0 +1,99 @@
+/**
+ * PostgreSQL database layer for Setfarm.
+ * Async API that mirrors the SQLite layer's functionality.
+ * Uses porsager/postgres (tagged template SQL).
+ */
+import postgres from 'postgres';
+import os from 'node:os';
+import path from 'node:path';
+
+const DEFAULT_PG_URL = 'postgresql://setrox:k7z6*n4u4@localhost:5432/setfarm';
+
+let _sql: ReturnType<typeof postgres> | null = null;
+
+function getSql() {
+  if (!_sql) {
+    const url = process.env.SETFARM_PG_URL || DEFAULT_PG_URL;
+    _sql = postgres(url, {
+      max: 20,
+      idle_timeout: 60,
+      connect_timeout: 10,
+    });
+  }
+  return _sql;
+}
+
+export { getSql };
+
+// ── Query helpers (async equivalents of SQLite's prepare().get/all/run) ──
+
+export async function pgQuery<T = any>(sql: string, params: any[] = []): Promise<T[]> {
+  const s = getSql();
+  if (params.length === 0) {
+    return s.unsafe(sql) as any;
+  }
+  return s.unsafe(sql, params) as any;
+}
+
+export async function pgGet<T = any>(sql: string, params: any[] = []): Promise<T | undefined> {
+  const rows = await pgQuery<T>(sql, params);
+  return rows[0];
+}
+
+export async function pgRun(sql: string, params: any[] = []): Promise<{ changes: number }> {
+  const s = getSql();
+  const result = params.length === 0 ? await s.unsafe(sql) : await s.unsafe(sql, params);
+  return { changes: (result as any).count ?? 0 };
+}
+
+export async function pgExec(sql: string): Promise<void> {
+  const s = getSql();
+  await s.unsafe(sql);
+}
+
+// ── Transaction support ──
+
+export async function pgBegin<T>(fn: (sql: ReturnType<typeof postgres>) => Promise<T>): Promise<T> {
+  const s = getSql();
+  return s.begin(fn as any) as any;
+}
+
+// ── Migration (schema creation) ──
+
+export async function pgMigrate(): Promise<void> {
+  // Schema already created by migrate-to-pg.py script
+  // This is a no-op safety check
+  const s = getSql();
+  const tables = await s`SELECT tablename FROM pg_tables WHERE schemaname = 'public'`;
+  const tableNames = new Set(tables.map((t: any) => t.tablename));
+  if (!tableNames.has('runs')) {
+    throw new Error('PostgreSQL setfarm schema not found. Run migration script first.');
+  }
+}
+
+// ── Utility functions ──
+
+export async function pgNextRunNumber(): Promise<number> {
+  const row = await pgGet<{ next: number }>(
+    "SELECT COALESCE(MAX(run_number), 0) + 1 AS next FROM runs"
+  );
+  return row?.next ?? 1;
+}
+
+export async function pgCleanupOrphans(): Promise<{ deletedSteps: number; deletedStories: number }> {
+  const s = getSql();
+  const r1 = await s`DELETE FROM steps WHERE run_id NOT IN (SELECT id FROM runs)`;
+  const r2 = await s`DELETE FROM stories WHERE run_id NOT IN (SELECT id FROM runs)`;
+  return { deletedSteps: r1.count, deletedStories: r2.count };
+}
+
+export async function pgCheckpoint(): Promise<void> {
+  // PostgreSQL handles WAL internally, no manual checkpoint needed
+}
+
+export async function pgClose(): Promise<void> {
+  if (_sql) {
+    await _sql.end();
+    _sql = null;
+  }
+}

@@ -2,11 +2,13 @@
  * Medic health checks — modular functions that inspect DB state and return findings.
  */
 import { getDb } from "../db.js";
+import { pgGet, pgQuery, pgRun } from "../db-pg.js";
 import { getMaxRoleTimeoutSeconds } from "../installer/install.js";
 import { logger } from "../lib/logger.js";
 import { existsSync } from "fs";
 import { join } from "path";
 
+const USE_PG = process.env.DB_BACKEND === 'postgres';
 const DISABLED_DIR = join(process.env.HOME || "/home/setrox", ".openclaw/disabled-services");
 
 export type MedicSeverity = "info" | "warning" | "critical";
@@ -45,22 +47,36 @@ const MAX_ROLE_TIMEOUT_MS = (getMaxRoleTimeoutSeconds() + 5 * 60) * 1000;
  * Find steps that have been "running" longer than the max role timeout.
  * These are likely abandoned by crashed/timed-out agents.
  */
-export function checkStuckSteps(): MedicFinding[] {
-  const db = getDb();
+export async function checkStuckSteps(): Promise<MedicFinding[]> {
   const findings: MedicFinding[] = [];
 
-  const stuck = db.prepare(`
-    SELECT s.id, s.step_id, s.run_id, s.agent_id, s.updated_at, s.abandoned_count,
-           r.workflow_id, r.task
-    FROM steps s
-    JOIN runs r ON r.id = s.run_id
-    WHERE s.status = 'running'
-      AND r.status IN ('running', 'resuming')
-      AND (julianday('now') - julianday(s.updated_at)) * 86400000 > ?
-  `).all(MAX_ROLE_TIMEOUT_MS) as Array<{
+  let stuck: Array<{
     id: string; step_id: string; run_id: string; agent_id: string;
     updated_at: string; abandoned_count: number; workflow_id: string; task: string;
   }>;
+
+  if (USE_PG) {
+    stuck = await pgQuery(`
+      SELECT s.id, s.step_id, s.run_id, s.agent_id, s.updated_at, s.abandoned_count,
+             r.workflow_id, r.task
+      FROM steps s
+      JOIN runs r ON r.id = s.run_id
+      WHERE s.status = 'running'
+        AND r.status IN ('running', 'resuming')
+        AND EXTRACT(EPOCH FROM NOW() - s.updated_at::timestamptz) * 1000 > $1
+    `, [MAX_ROLE_TIMEOUT_MS]);
+  } else {
+    const db = getDb();
+    stuck = db.prepare(`
+      SELECT s.id, s.step_id, s.run_id, s.agent_id, s.updated_at, s.abandoned_count,
+             r.workflow_id, r.task
+      FROM steps s
+      JOIN runs r ON r.id = s.run_id
+      WHERE s.status = 'running'
+        AND r.status IN ('running', 'resuming')
+        AND (julianday('now') - julianday(s.updated_at)) * 86400000 > ?
+    `).all(MAX_ROLE_TIMEOUT_MS) as typeof stuck;
+  }
 
   for (const step of stuck) {
     const ageMin = Math.round(
@@ -88,23 +104,36 @@ const STALL_THRESHOLD_MS = MAX_ROLE_TIMEOUT_MS * 2;
  * Find runs where no step has transitioned in 2x the max role timeout.
  * This catches systemic issues (all agents broken, crons failing, etc).
  */
-export function checkStalledRuns(): MedicFinding[] {
-  const db = getDb();
+export async function checkStalledRuns(): Promise<MedicFinding[]> {
   const findings: MedicFinding[] = [];
 
-  // Get running runs where the most recent step update is stale
-  const stalled = db.prepare(`
-    SELECT r.id, r.workflow_id, r.task, r.updated_at,
-           MAX(s.updated_at) as last_step_update
-    FROM runs r
-    JOIN steps s ON s.run_id = r.id
-    WHERE r.status IN ('running', 'resuming')
-    GROUP BY r.id
-    HAVING (julianday('now') - julianday(MAX(s.updated_at))) * 86400000 > ?
-  `).all(STALL_THRESHOLD_MS) as Array<{
+  let stalled: Array<{
     id: string; workflow_id: string; task: string;
     updated_at: string; last_step_update: string;
   }>;
+
+  if (USE_PG) {
+    stalled = await pgQuery(`
+      SELECT r.id, r.workflow_id, r.task, r.updated_at,
+             MAX(s.updated_at) as last_step_update
+      FROM runs r
+      JOIN steps s ON s.run_id = r.id
+      WHERE r.status IN ('running', 'resuming')
+      GROUP BY r.id, r.workflow_id, r.task, r.updated_at
+      HAVING EXTRACT(EPOCH FROM NOW() - MAX(s.updated_at)::timestamptz) * 1000 > $1
+    `, [STALL_THRESHOLD_MS]);
+  } else {
+    const db = getDb();
+    stalled = db.prepare(`
+      SELECT r.id, r.workflow_id, r.task, r.updated_at,
+             MAX(s.updated_at) as last_step_update
+      FROM runs r
+      JOIN steps s ON s.run_id = r.id
+      WHERE r.status IN ('running', 'resuming')
+      GROUP BY r.id
+      HAVING (julianday('now') - julianday(MAX(s.updated_at))) * 86400000 > ?
+    `).all(STALL_THRESHOLD_MS) as typeof stalled;
+  }
 
   const STALL_AUTOFAIL_MS = 6 * 60 * 60 * 1000; // 6 hours — auto-fail if no progress
 
@@ -114,11 +143,18 @@ export function checkStalledRuns(): MedicFinding[] {
 
     if (ageMs > STALL_AUTOFAIL_MS) {
       // Auto-fail runs stalled for 6+ hours
-      db.prepare("UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ? AND status IN ('running', 'resuming')")
-        .run(new Date().toISOString(), run.id);
-      // Fail any non-terminal steps
-      db.prepare("UPDATE steps SET status = 'failed', output = 'Auto-failed: run stalled for ' || ? || ' minutes', updated_at = ? WHERE run_id = ? AND status NOT IN ('done', 'failed')")
-        .run(String(ageMin), new Date().toISOString(), run.id);
+      if (USE_PG) {
+        await pgRun("UPDATE runs SET status = 'failed', updated_at = $1 WHERE id = $2 AND status IN ('running', 'resuming')",
+          [new Date().toISOString(), run.id]);
+        await pgRun("UPDATE steps SET status = 'failed', output = 'Auto-failed: run stalled for ' || $1 || ' minutes', updated_at = $2 WHERE run_id = $3 AND status NOT IN ('done', 'failed')",
+          [String(ageMin), new Date().toISOString(), run.id]);
+      } else {
+        const db = getDb();
+        db.prepare("UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ? AND status IN ('running', 'resuming')")
+          .run(new Date().toISOString(), run.id);
+        db.prepare("UPDATE steps SET status = 'failed', output = 'Auto-failed: run stalled for ' || ? || ' minutes', updated_at = ? WHERE run_id = ? AND status NOT IN ('done', 'failed')")
+          .run(String(ageMin), new Date().toISOString(), run.id);
+      }
       findings.push({
         check: "stalled_runs",
         severity: "critical",
@@ -140,16 +176,36 @@ export function checkStalledRuns(): MedicFinding[] {
   }
 
   // v1.5.53: Resuming state should not last more than 2 minutes
-  const stuckResuming = db.prepare(`
-    SELECT id, workflow_id, task FROM runs
-    WHERE status = 'resuming'
-    AND (julianday('now') - julianday(updated_at)) * 86400000 > 120000
-  `).all() as Array<{ id: string; workflow_id: string; task: string }>;
+  let stuckResuming: Array<{ id: string; workflow_id: string; task: string }>;
+
+  if (USE_PG) {
+    stuckResuming = await pgQuery(`
+      SELECT id, workflow_id, task FROM runs
+      WHERE status = 'resuming'
+      AND EXTRACT(EPOCH FROM NOW() - updated_at::timestamptz) * 1000 > 120000
+    `);
+  } else {
+    const db = getDb();
+    stuckResuming = db.prepare(`
+      SELECT id, workflow_id, task FROM runs
+      WHERE status = 'resuming'
+      AND (julianday('now') - julianday(updated_at)) * 86400000 > 120000
+    `).all() as typeof stuckResuming;
+  }
+
   for (const run of stuckResuming) {
-    db.prepare("UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?")
-      .run(new Date().toISOString(), run.id);
-    db.prepare("UPDATE steps SET status = 'failed', output = 'Auto-failed: run stuck in resuming state', updated_at = ? WHERE run_id = ? AND status NOT IN ('done', 'failed')")
-      .run(new Date().toISOString(), run.id);
+    if (USE_PG) {
+      await pgRun("UPDATE runs SET status = 'failed', updated_at = $1 WHERE id = $2",
+        [new Date().toISOString(), run.id]);
+      await pgRun("UPDATE steps SET status = 'failed', output = 'Auto-failed: run stuck in resuming state', updated_at = $1 WHERE run_id = $2 AND status NOT IN ('done', 'failed')",
+        [new Date().toISOString(), run.id]);
+    } else {
+      const db = getDb();
+      db.prepare("UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?")
+        .run(new Date().toISOString(), run.id);
+      db.prepare("UPDATE steps SET status = 'failed', output = 'Auto-failed: run stuck in resuming state', updated_at = ? WHERE run_id = ? AND status NOT IN ('done', 'failed')")
+        .run(new Date().toISOString(), run.id);
+    }
     findings.push({
       check: "stalled_runs",
       severity: "critical",
@@ -169,30 +225,54 @@ export function checkStalledRuns(): MedicFinding[] {
  * Find runs marked as "running" but all steps are terminal (done/failed)
  * with no waiting/pending/running steps left. These are zombie runs.
  */
-export function checkDeadRuns(): MedicFinding[] {
-  const db = getDb();
+export async function checkDeadRuns(): Promise<MedicFinding[]> {
   const findings: MedicFinding[] = [];
 
-  const zombies = db.prepare(`
-    SELECT r.id, r.workflow_id, r.task
-    FROM runs r
-    WHERE r.status = 'running'
-      AND NOT EXISTS (
-        SELECT 1 FROM steps s
-        WHERE s.run_id = r.id
-        AND s.status IN ('waiting', 'pending', 'running')
-      )
-  `).all() as Array<{ id: string; workflow_id: string; task: string }>;
+  let zombies: Array<{ id: string; workflow_id: string; task: string }>;
+
+  if (USE_PG) {
+    zombies = await pgQuery(`
+      SELECT r.id, r.workflow_id, r.task
+      FROM runs r
+      WHERE r.status = 'running'
+        AND NOT EXISTS (
+          SELECT 1 FROM steps s
+          WHERE s.run_id = r.id
+          AND s.status IN ('waiting', 'pending', 'running')
+        )
+    `);
+  } else {
+    const db = getDb();
+    zombies = db.prepare(`
+      SELECT r.id, r.workflow_id, r.task
+      FROM runs r
+      WHERE r.status = 'running'
+        AND NOT EXISTS (
+          SELECT 1 FROM steps s
+          WHERE s.run_id = r.id
+          AND s.status IN ('waiting', 'pending', 'running')
+        )
+    `).all() as typeof zombies;
+  }
 
   for (const run of zombies) {
-    // Check if all steps are done (should be completed) or some are failed
-    const failed = db.prepare(
-      "SELECT COUNT(*) as cnt FROM steps WHERE run_id = ? AND status = 'failed'"
-    ).get(run.id) as { cnt: number };
+    let failedCnt: number;
+    if (USE_PG) {
+      const row = await pgGet<{ cnt: string }>(
+        "SELECT COUNT(*) as cnt FROM steps WHERE run_id = $1 AND status = 'failed'", [run.id]
+      );
+      failedCnt = Number(row?.cnt ?? 0);
+    } else {
+      const db = getDb();
+      const failed = db.prepare(
+        "SELECT COUNT(*) as cnt FROM steps WHERE run_id = ? AND status = 'failed'"
+      ).get(run.id) as { cnt: number };
+      failedCnt = failed.cnt;
+    }
 
     const action: MedicActionType = "fail_run";
-    const detail = failed.cnt > 0
-      ? `${failed.cnt} failed step(s), no active steps remaining`
+    const detail = failedCnt > 0
+      ? `${failedCnt} failed step(s), no active steps remaining`
       : `All steps terminal but run still marked as running`;
 
     findings.push({
@@ -217,10 +297,9 @@ export function checkDeadRuns(): MedicFinding[] {
  * NOTE: This check requires the list of current cron jobs to be passed in,
  * since reading crons is async (gateway API). The medic runner handles this.
  */
-export function checkOrphanedCrons(
+export async function checkOrphanedCrons(
   cronJobs: Array<{ id: string; name: string }>,
-): MedicFinding[] {
-  const db = getDb();
+): Promise<MedicFinding[]> {
   const findings: MedicFinding[] = [];
 
   // Extract unique workflow IDs from setfarm cron job names
@@ -231,18 +310,41 @@ export function checkOrphanedCrons(
   }
 
   for (const wfId of workflowIds) {
-    const active = db.prepare(
-      "SELECT COUNT(*) as cnt FROM runs WHERE workflow_id = ? AND status = 'running'"
-    ).get(wfId) as { cnt: number };
+    let activeCnt: number;
+    let pendingWorkCnt: number;
 
-    if (active.cnt === 0) {
-      // Guard: don't tear down if pending/running/claimed stories exist (fixes teardown/recreate race)
-      const pendingWork = db.prepare(`
-        SELECT COUNT(*) as cnt FROM stories st
-        JOIN runs r ON r.id = st.run_id
-        WHERE r.workflow_id = ? AND st.status IN ('pending','running','claimed')
-      `).get(wfId) as { cnt: number };
-      if (pendingWork.cnt > 0) continue;
+    if (USE_PG) {
+      const active = await pgGet<{ cnt: string }>(
+        "SELECT COUNT(*) as cnt FROM runs WHERE workflow_id = $1 AND status = 'running'", [wfId]
+      );
+      activeCnt = Number(active?.cnt ?? 0);
+    } else {
+      const db = getDb();
+      const active = db.prepare(
+        "SELECT COUNT(*) as cnt FROM runs WHERE workflow_id = ? AND status = 'running'"
+      ).get(wfId) as { cnt: number };
+      activeCnt = active.cnt;
+    }
+
+    if (activeCnt === 0) {
+      if (USE_PG) {
+        const pendingWork = await pgGet<{ cnt: string }>(`
+          SELECT COUNT(*) as cnt FROM stories st
+          JOIN runs r ON r.id = st.run_id
+          WHERE r.workflow_id = $1 AND st.status IN ('pending','running','claimed')
+        `, [wfId]);
+        pendingWorkCnt = Number(pendingWork?.cnt ?? 0);
+      } else {
+        const db = getDb();
+        const pendingWork = db.prepare(`
+          SELECT COUNT(*) as cnt FROM stories st
+          JOIN runs r ON r.id = st.run_id
+          WHERE r.workflow_id = ? AND st.status IN ('pending','running','claimed')
+        `).get(wfId) as { cnt: number };
+        pendingWorkCnt = pendingWork.cnt;
+      }
+      if (pendingWorkCnt > 0) continue;
+
       const jobCount = cronJobs.filter(j => j.name.startsWith(`setfarm/${wfId}/`)).length;
       findings.push({
         check: "orphaned_crons",
@@ -271,23 +373,38 @@ const CLAIMED_STUCK_THRESHOLD_MS = 25 * 60 * 1000; // 25 min — design (Stitch 
  * within a short threshold. This catches Phase 2 sub-agents that never started
  * or crashed immediately after spawn — much faster than the full role timeout.
  */
-export function checkClaimedButStuck(): MedicFinding[] {
-  const db = getDb();
+export async function checkClaimedButStuck(): Promise<MedicFinding[]> {
   const findings: MedicFinding[] = [];
 
-  const stuck = db.prepare(`
-    SELECT s.id, s.step_id, s.run_id, s.agent_id, s.updated_at, s.abandoned_count,
-           r.workflow_id
-    FROM steps s
-    JOIN runs r ON r.id = s.run_id
-    WHERE s.status = 'running'
-      AND r.status IN ('running', 'resuming')
-      AND (julianday('now') - julianday(s.updated_at)) * 86400000 > ?
-      AND (julianday('now') - julianday(s.updated_at)) * 86400000 < ?
-  `).all(CLAIMED_STUCK_THRESHOLD_MS, MAX_ROLE_TIMEOUT_MS) as Array<{
+  let stuck: Array<{
     id: string; step_id: string; run_id: string; agent_id: string;
     updated_at: string; abandoned_count: number; workflow_id: string;
   }>;
+
+  if (USE_PG) {
+    stuck = await pgQuery(`
+      SELECT s.id, s.step_id, s.run_id, s.agent_id, s.updated_at, s.abandoned_count,
+             r.workflow_id
+      FROM steps s
+      JOIN runs r ON r.id = s.run_id
+      WHERE s.status = 'running'
+        AND r.status IN ('running', 'resuming')
+        AND EXTRACT(EPOCH FROM NOW() - s.updated_at::timestamptz) * 1000 > $1
+        AND EXTRACT(EPOCH FROM NOW() - s.updated_at::timestamptz) * 1000 < $2
+    `, [CLAIMED_STUCK_THRESHOLD_MS, MAX_ROLE_TIMEOUT_MS]);
+  } else {
+    const db = getDb();
+    stuck = db.prepare(`
+      SELECT s.id, s.step_id, s.run_id, s.agent_id, s.updated_at, s.abandoned_count,
+             r.workflow_id
+      FROM steps s
+      JOIN runs r ON r.id = s.run_id
+      WHERE s.status = 'running'
+        AND r.status IN ('running', 'resuming')
+        AND (julianday('now') - julianday(s.updated_at)) * 86400000 > ?
+        AND (julianday('now') - julianday(s.updated_at)) * 86400000 < ?
+    `).all(CLAIMED_STUCK_THRESHOLD_MS, MAX_ROLE_TIMEOUT_MS) as typeof stuck;
+  }
 
   for (const step of stuck) {
     const ageMin = Math.round(
@@ -317,23 +434,38 @@ const RESUME_COOLDOWN_MS = 5 * 60 * 1000; // 5 min cooldown — reduced from 10m
  * pending stories. These are candidates for auto-resume.
  * Respects a max resume count (stored in run meta) and cooldown period.
  */
-export function checkFailedRunsForResume(): MedicFinding[] {
-  const db = getDb();
+export async function checkFailedRunsForResume(): Promise<MedicFinding[]> {
   const findings: MedicFinding[] = [];
 
-  const failedRuns = db.prepare(`
-    SELECT r.id, r.workflow_id, r.task, r.updated_at, r.meta
-    FROM runs r
-    WHERE r.status = 'failed'
-      AND EXISTS (
-        SELECT 1 FROM stories st
-        WHERE st.run_id = r.id
-        AND st.status IN ('pending', 'running')
-      )
-  `).all() as Array<{
+  let failedRuns: Array<{
     id: string; workflow_id: string; task: string;
     updated_at: string; meta: string | null;
   }>;
+
+  if (USE_PG) {
+    failedRuns = await pgQuery(`
+      SELECT r.id, r.workflow_id, r.task, r.updated_at, r.meta
+      FROM runs r
+      WHERE r.status = 'failed'
+        AND EXISTS (
+          SELECT 1 FROM stories st
+          WHERE st.run_id = r.id
+          AND st.status IN ('pending', 'running')
+        )
+    `);
+  } else {
+    const db = getDb();
+    failedRuns = db.prepare(`
+      SELECT r.id, r.workflow_id, r.task, r.updated_at, r.meta
+      FROM runs r
+      WHERE r.status = 'failed'
+        AND EXISTS (
+          SELECT 1 FROM stories st
+          WHERE st.run_id = r.id
+          AND st.status IN ('pending', 'running')
+        )
+    `).all() as typeof failedRuns;
+  }
 
   for (const run of failedRuns) {
     const meta = run.meta ? JSON.parse(run.meta) : {};
@@ -346,14 +478,24 @@ export function checkFailedRunsForResume(): MedicFinding[] {
     if (!cooldownOk) continue;
     if (updatedAge < 2 * 60 * 1000) continue; // wait 2 min for dust to settle
 
-    const pendingStories = db.prepare(
-      "SELECT COUNT(*) as cnt FROM stories WHERE run_id = ? AND status IN ('pending', 'running')"
-    ).get(run.id) as { cnt: number };
+    let pendingCnt: number;
+    if (USE_PG) {
+      const row = await pgGet<{ cnt: string }>(
+        "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status IN ('pending', 'running')", [run.id]
+      );
+      pendingCnt = Number(row?.cnt ?? 0);
+    } else {
+      const db = getDb();
+      const pendingStories = db.prepare(
+        "SELECT COUNT(*) as cnt FROM stories WHERE run_id = ? AND status IN ('pending', 'running')"
+      ).get(run.id) as { cnt: number };
+      pendingCnt = pendingStories.cnt;
+    }
 
     findings.push({
       check: "failed_run_resumable",
       severity: "warning",
-      message: `Run ${run.id.slice(0, 8)} (${run.workflow_id}) failed with ${pendingStories.cnt} stories remaining — auto-resume ${resumeCount + 1}/${RESUME_MAX_ATTEMPTS}`,
+      message: `Run ${run.id.slice(0, 8)} (${run.workflow_id}) failed with ${pendingCnt} stories remaining — auto-resume ${resumeCount + 1}/${RESUME_MAX_ATTEMPTS}`,
       action: "resume_run",
       runId: run.id,
       remediated: false,
@@ -369,35 +511,37 @@ const STORY_STUCK_THRESHOLD_MS = 20 * 60 * 1000; // 20 min — match agent timeo
 
 /**
  * Find stories stuck in 'running' state for too long.
- *
- * In loop steps with parallel execution, the STEP stays "running" for hours
- * while processing multiple stories. Individual stories can get orphaned when
- * the agent session dies without calling step complete/fail.
- *
- * cleanupAbandonedSteps() only checks step.current_story_id (one story),
- * and only runs when crons are alive. This check catches ALL orphaned stories
- * independently via medic's own cron.
- *
- * Note: story.updated_at is set on claim (status='running') and only updated
- * again on status change. 20min threshold allows legitimate work (agent timeout
- * is 30min) while catching dead sessions reasonably fast.
  */
-export function checkOrphanedStories(): MedicFinding[] {
-  const db = getDb();
+export async function checkOrphanedStories(): Promise<MedicFinding[]> {
   const findings: MedicFinding[] = [];
 
-  const stuck = db.prepare(`
-    SELECT st.id, st.story_id, st.title, st.updated_at, st.abandoned_count,
-           st.run_id, r.workflow_id
-    FROM stories st
-    JOIN runs r ON r.id = st.run_id
-    WHERE st.status = 'running'
-      AND r.status IN ('running', 'resuming')
-      AND (julianday('now') - julianday(st.updated_at)) * 86400000 > ?
-  `).all(STORY_STUCK_THRESHOLD_MS) as Array<{
+  let stuck: Array<{
     id: string; story_id: string; title: string; updated_at: string;
     abandoned_count: number; run_id: string; workflow_id: string;
   }>;
+
+  if (USE_PG) {
+    stuck = await pgQuery(`
+      SELECT st.id, st.story_id, st.title, st.updated_at, st.abandoned_count,
+             st.run_id, r.workflow_id
+      FROM stories st
+      JOIN runs r ON r.id = st.run_id
+      WHERE st.status = 'running'
+        AND r.status IN ('running', 'resuming')
+        AND EXTRACT(EPOCH FROM NOW() - st.updated_at::timestamptz) * 1000 > $1
+    `, [STORY_STUCK_THRESHOLD_MS]);
+  } else {
+    const db = getDb();
+    stuck = db.prepare(`
+      SELECT st.id, st.story_id, st.title, st.updated_at, st.abandoned_count,
+             st.run_id, r.workflow_id
+      FROM stories st
+      JOIN runs r ON r.id = st.run_id
+      WHERE st.status = 'running'
+        AND r.status IN ('running', 'resuming')
+        AND (julianday('now') - julianday(st.updated_at)) * 86400000 > ?
+    `).all(STORY_STUCK_THRESHOLD_MS) as typeof stuck;
+  }
 
   for (const story of stuck) {
     const ageMin = Math.round(
@@ -423,95 +567,165 @@ const CIRCUIT_BREAKER_THRESHOLD_MS = 3 * 60 * 1000; // 3 min — reduced from 5m
 
 /**
  * Detect when agent crons are dead or in error state.
- *
- * Signal: pending stories exist (work available) but no story has been
- * claimed recently. With 4-min interval and 3 parallel crons, a claim
- * should happen every 1-2 min. If no claim in 3 min, crons are likely dead.
- *
- * Includes 10-min cooldown (checked via medic_checks history) to prevent
- * rapid re-creation loops.
  */
-export function checkStalledWorkflowCrons(): MedicFinding[] {
-  const db = getDb();
+export async function checkStalledWorkflowCrons(): Promise<MedicFinding[]> {
   const findings: MedicFinding[] = [];
 
-  // Get all workflows with running runs
-  const workflows = db.prepare(
-    "SELECT DISTINCT workflow_id FROM runs WHERE status IN ('running', 'resuming')"
-  ).all() as Array<{ workflow_id: string }>;
+  let workflows: Array<{ workflow_id: string }>;
+
+  if (USE_PG) {
+    workflows = await pgQuery(
+      "SELECT DISTINCT workflow_id FROM runs WHERE status IN ('running', 'resuming')"
+    );
+  } else {
+    const db = getDb();
+    workflows = db.prepare(
+      "SELECT DISTINCT workflow_id FROM runs WHERE status IN ('running', 'resuming')"
+    ).all() as typeof workflows;
+  }
 
   for (const { workflow_id } of workflows) {
-    // Check if there are pending stories waiting to be claimed
-    const pendingStories = db.prepare(`
-      SELECT COUNT(*) as cnt FROM stories st
-      JOIN runs r ON r.id = st.run_id
-      WHERE r.workflow_id = ? AND r.status IN ('running', 'resuming') AND st.status = 'pending'
-    `).get(workflow_id) as { cnt: number };
+    let pendingStoriesCnt: number;
+    let pendingStepsCnt: number;
 
-    // Also check pending single steps (e.g. design step has no stories)
-    const pendingSteps = db.prepare(`
-      SELECT COUNT(*) as cnt FROM steps s
-      JOIN runs r ON r.id = s.run_id
-      WHERE r.workflow_id = ? AND r.status IN ('running', 'resuming') AND s.status = 'pending' AND s.type = 'single'
-    `).get(workflow_id) as { cnt: number };
+    if (USE_PG) {
+      const ps = await pgGet<{ cnt: string }>(`
+        SELECT COUNT(*) as cnt FROM stories st
+        JOIN runs r ON r.id = st.run_id
+        WHERE r.workflow_id = $1 AND r.status IN ('running', 'resuming') AND st.status = 'pending'
+      `, [workflow_id]);
+      pendingStoriesCnt = Number(ps?.cnt ?? 0);
 
-    const pendingTotal = pendingStories.cnt + pendingSteps.cnt;
+      const pst = await pgGet<{ cnt: string }>(`
+        SELECT COUNT(*) as cnt FROM steps s
+        JOIN runs r ON r.id = s.run_id
+        WHERE r.workflow_id = $1 AND r.status IN ('running', 'resuming') AND s.status = 'pending' AND s.type = 'single'
+      `, [workflow_id]);
+      pendingStepsCnt = Number(pst?.cnt ?? 0);
+    } else {
+      const db = getDb();
+      const pendingStories = db.prepare(`
+        SELECT COUNT(*) as cnt FROM stories st
+        JOIN runs r ON r.id = st.run_id
+        WHERE r.workflow_id = ? AND r.status IN ('running', 'resuming') AND st.status = 'pending'
+      `).get(workflow_id) as { cnt: number };
+      pendingStoriesCnt = pendingStories.cnt;
+
+      const pendingSteps = db.prepare(`
+        SELECT COUNT(*) as cnt FROM steps s
+        JOIN runs r ON r.id = s.run_id
+        WHERE r.workflow_id = ? AND r.status IN ('running', 'resuming') AND s.status = 'pending' AND s.type = 'single'
+      `).get(workflow_id) as { cnt: number };
+      pendingStepsCnt = pendingSteps.cnt;
+    }
+
+    const pendingTotal = pendingStoriesCnt + pendingStepsCnt;
     if (pendingTotal === 0) continue; // no pending work — crons are fine or not needed
 
     // Guard: if any stories are currently running, agents are actively working.
-    // Don't recreate crons just because no NEW claim happened — the agent is busy.
-    // v1.5.47: Only count "running" items that were recently updated.
-    // A step stuck in "running" with error output (e.g. MISSING_INPUT_GUARD) is effectively dead.
-    const runningStories = db.prepare(`
-      SELECT COUNT(*) as cnt FROM stories st
-      JOIN runs r ON r.id = st.run_id
-      WHERE r.workflow_id = ? AND r.status IN ('running', 'resuming') AND st.status = 'running'
-        AND (julianday('now') - julianday(st.updated_at)) * 86400000 < ?
-    `).get(workflow_id, CLAIMED_STUCK_THRESHOLD_MS) as { cnt: number };
+    let runningStoriesCnt: number;
+    let runningStepsCnt: number;
 
-    // Also check if any steps are running (single steps, not just loop stories)
-    const runningSteps = db.prepare(`
-      SELECT COUNT(*) as cnt FROM steps s
-      JOIN runs r ON r.id = s.run_id
-      WHERE r.workflow_id = ? AND r.status IN ('running', 'resuming') AND s.status = 'running'
-        AND (julianday('now') - julianday(s.updated_at)) * 86400000 < ?
-    `).get(workflow_id, CLAIMED_STUCK_THRESHOLD_MS) as { cnt: number };
+    if (USE_PG) {
+      const rs = await pgGet<{ cnt: string }>(`
+        SELECT COUNT(*) as cnt FROM stories st
+        JOIN runs r ON r.id = st.run_id
+        WHERE r.workflow_id = $1 AND r.status IN ('running', 'resuming') AND st.status = 'running'
+          AND EXTRACT(EPOCH FROM NOW() - st.updated_at::timestamptz) * 1000 < $2
+      `, [workflow_id, CLAIMED_STUCK_THRESHOLD_MS]);
+      runningStoriesCnt = Number(rs?.cnt ?? 0);
 
-    if (runningStories.cnt > 0 || runningSteps.cnt > 0) continue; // agents are busy — crons are fine
+      const rst = await pgGet<{ cnt: string }>(`
+        SELECT COUNT(*) as cnt FROM steps s
+        JOIN runs r ON r.id = s.run_id
+        WHERE r.workflow_id = $1 AND r.status IN ('running', 'resuming') AND s.status = 'running'
+          AND EXTRACT(EPOCH FROM NOW() - s.updated_at::timestamptz) * 1000 < $2
+      `, [workflow_id, CLAIMED_STUCK_THRESHOLD_MS]);
+      runningStepsCnt = Number(rst?.cnt ?? 0);
+    } else {
+      const db = getDb();
+      const runningStories = db.prepare(`
+        SELECT COUNT(*) as cnt FROM stories st
+        JOIN runs r ON r.id = st.run_id
+        WHERE r.workflow_id = ? AND r.status IN ('running', 'resuming') AND st.status = 'running'
+          AND (julianday('now') - julianday(st.updated_at)) * 86400000 < ?
+      `).get(workflow_id, CLAIMED_STUCK_THRESHOLD_MS) as { cnt: number };
+      runningStoriesCnt = runningStories.cnt;
+
+      const runningSteps = db.prepare(`
+        SELECT COUNT(*) as cnt FROM steps s
+        JOIN runs r ON r.id = s.run_id
+        WHERE r.workflow_id = ? AND r.status IN ('running', 'resuming') AND s.status = 'running'
+          AND (julianday('now') - julianday(s.updated_at)) * 86400000 < ?
+      `).get(workflow_id, CLAIMED_STUCK_THRESHOLD_MS) as { cnt: number };
+      runningStepsCnt = runningSteps.cnt;
+    }
+
+    if (runningStoriesCnt > 0 || runningStepsCnt > 0) continue; // agents are busy — crons are fine
 
     // No running stories/steps — check when the last activity happened
-    const lastStoryActivity = db.prepare(`
-      SELECT MAX(st.updated_at) as ts FROM stories st
-      JOIN runs r ON r.id = st.run_id
-      WHERE r.workflow_id = ? AND r.status IN ('running', 'resuming') AND st.status IN ('running', 'done')
-    `).get(workflow_id) as { ts: string | null };
-    const lastStepActivity = db.prepare(`
-      SELECT MAX(s.updated_at) as ts FROM steps s
-      JOIN runs r ON r.id = s.run_id
-      WHERE r.workflow_id = ? AND r.status IN ('running', 'resuming') AND s.status IN ('running', 'done')
-    `).get(workflow_id) as { ts: string | null };
-    const lastActivityTs = [lastStoryActivity?.ts, lastStepActivity?.ts].filter(Boolean).sort().pop() ?? null;
-    const lastActivity = { ts: lastActivityTs };
+    let lastActivityTs: string | null;
 
-    const age = lastActivity?.ts
-      ? Date.now() - new Date(lastActivity.ts).getTime()
+    if (USE_PG) {
+      const lastStoryActivity = await pgGet<{ ts: string | null }>(`
+        SELECT MAX(st.updated_at) as ts FROM stories st
+        JOIN runs r ON r.id = st.run_id
+        WHERE r.workflow_id = $1 AND r.status IN ('running', 'resuming') AND st.status IN ('running', 'done')
+      `, [workflow_id]);
+      const lastStepActivity = await pgGet<{ ts: string | null }>(`
+        SELECT MAX(s.updated_at) as ts FROM steps s
+        JOIN runs r ON r.id = s.run_id
+        WHERE r.workflow_id = $1 AND r.status IN ('running', 'resuming') AND s.status IN ('running', 'done')
+      `, [workflow_id]);
+      lastActivityTs = [lastStoryActivity?.ts, lastStepActivity?.ts].filter(Boolean).sort().pop() ?? null;
+    } else {
+      const db = getDb();
+      const lastStoryActivity = db.prepare(`
+        SELECT MAX(st.updated_at) as ts FROM stories st
+        JOIN runs r ON r.id = st.run_id
+        WHERE r.workflow_id = ? AND r.status IN ('running', 'resuming') AND st.status IN ('running', 'done')
+      `).get(workflow_id) as { ts: string | null };
+      const lastStepActivity = db.prepare(`
+        SELECT MAX(s.updated_at) as ts FROM steps s
+        JOIN runs r ON r.id = s.run_id
+        WHERE r.workflow_id = ? AND r.status IN ('running', 'resuming') AND s.status IN ('running', 'done')
+      `).get(workflow_id) as { ts: string | null };
+      lastActivityTs = [lastStoryActivity?.ts, lastStepActivity?.ts].filter(Boolean).sort().pop() ?? null;
+    }
+
+    const age = lastActivityTs
+      ? Date.now() - new Date(lastActivityTs).getTime()
       : CIRCUIT_BREAKER_THRESHOLD_MS + 1; // no activity at all = stalled
 
     if (age <= CIRCUIT_BREAKER_THRESHOLD_MS) continue;
 
     // Cooldown: don't re-fire if crons were already recreated recently
-    // (by this check OR by restoreActiveRunCrons count-based verification)
-    const recentRecreate = db.prepare(`
-      SELECT MAX(checked_at) as ts FROM medic_checks
-      WHERE (details LIKE '%stalled_workflow_crons%' OR details LIKE '%partial cron loss%' OR details LIKE '%crons for%')
-        AND details LIKE '%recreate_crons%'
-        AND details LIKE ?
-        AND julianday(checked_at) > julianday('now', '-10 minutes')
-    `).get(`%${workflow_id}%`) as { ts: string | null };
+    let recentRecreateTs: string | null;
 
-    if (recentRecreate?.ts) continue;
+    if (USE_PG) {
+      const recentRecreate = await pgGet<{ ts: string | null }>(`
+        SELECT MAX(checked_at) as ts FROM medic_checks
+        WHERE (details LIKE '%stalled_workflow_crons%' OR details LIKE '%partial cron loss%' OR details LIKE '%crons for%')
+          AND details LIKE '%recreate_crons%'
+          AND details LIKE $1
+          AND checked_at > NOW() - INTERVAL '10 minutes'
+      `, [`%${workflow_id}%`]);
+      recentRecreateTs = recentRecreate?.ts ?? null;
+    } else {
+      const db = getDb();
+      const recentRecreate = db.prepare(`
+        SELECT MAX(checked_at) as ts FROM medic_checks
+        WHERE (details LIKE '%stalled_workflow_crons%' OR details LIKE '%partial cron loss%' OR details LIKE '%crons for%')
+          AND details LIKE '%recreate_crons%'
+          AND details LIKE ?
+          AND julianday(checked_at) > julianday('now', '-10 minutes')
+      `).get(`%${workflow_id}%`) as { ts: string | null };
+      recentRecreateTs = recentRecreate?.ts ?? null;
+    }
 
-    const ageMin = lastActivity?.ts ? Math.round(age / 60000) : -1;
+    if (recentRecreateTs) continue;
+
+    const ageMin = lastActivityTs ? Math.round(age / 60000) : -1;
     findings.push({
       check: "stalled_workflow_crons",
       severity: "warning",
@@ -537,20 +751,36 @@ const SERVICE_RESTART_COOLDOWN_MS = 5 * 60 * 1000; // 5 min cooldown — reduced
  * Agents sometimes stop services during implementation and forget to restart.
  * Includes 5-min cooldown per service to prevent crash-loop restart storms.
  */
-export function checkOfflineServices(): MedicFinding[] {
-  const db = getDb();
+export async function checkOfflineServices(): Promise<MedicFinding[]> {
   const findings: MedicFinding[] = [];
 
-  const running = db.prepare(
-    "SELECT id, context FROM runs WHERE status = 'running'"
-  ).all() as Array<{ id: string; context: string }>;
+  let running: Array<{ id: string; context: string }>;
+
+  if (USE_PG) {
+    running = await pgQuery(
+      "SELECT id, context FROM runs WHERE status = 'running'"
+    );
+  } else {
+    const db = getDb();
+    running = db.prepare(
+      "SELECT id, context FROM runs WHERE status = 'running'"
+    ).all() as typeof running;
+  }
 
   for (const run of running) {
     try {
       // Only check services for runs where deploy step has completed
-      const deployDone = db.prepare(
-        "SELECT 1 FROM steps WHERE run_id = ? AND step_id = 'deploy' AND status = 'done' LIMIT 1"
-      ).get(run.id);
+      let deployDone: any;
+      if (USE_PG) {
+        deployDone = await pgGet(
+          "SELECT 1 FROM steps WHERE run_id = $1 AND step_id = 'deploy' AND status = 'done' LIMIT 1", [run.id]
+        );
+      } else {
+        const db = getDb();
+        deployDone = db.prepare(
+          "SELECT 1 FROM steps WHERE run_id = ? AND step_id = 'deploy' AND status = 'done' LIMIT 1"
+        ).get(run.id);
+      }
       if (!deployDone) continue;
 
       const ctx = JSON.parse(run.context);
@@ -578,15 +808,29 @@ export function checkOfflineServices(): MedicFinding[] {
             });
 
             // Cooldown: skip if we already restarted this service recently
-            const recentRestart = db.prepare(`
-              SELECT MAX(checked_at) as ts FROM medic_checks
-              WHERE details LIKE '%offline_service%'
-                AND details LIKE '%recreate_crons%'
-                AND details LIKE ?
-                AND julianday(checked_at) > julianday('now', '-10 minutes')
-            `).get(`%${serviceName}%`) as { ts: string | null };
+            let recentRestartTs: string | null;
+            if (USE_PG) {
+              const recentRestart = await pgGet<{ ts: string | null }>(`
+                SELECT MAX(checked_at) as ts FROM medic_checks
+                WHERE details LIKE '%offline_service%'
+                  AND details LIKE '%recreate_crons%'
+                  AND details LIKE $1
+                  AND checked_at > NOW() - INTERVAL '10 minutes'
+              `, [`%${serviceName}%`]);
+              recentRestartTs = recentRestart?.ts ?? null;
+            } else {
+              const db = getDb();
+              const recentRestart = db.prepare(`
+                SELECT MAX(checked_at) as ts FROM medic_checks
+                WHERE details LIKE '%offline_service%'
+                  AND details LIKE '%recreate_crons%'
+                  AND details LIKE ?
+                  AND julianday(checked_at) > julianday('now', '-10 minutes')
+              `).get(`%${serviceName}%`) as { ts: string | null };
+              recentRestartTs = recentRestart?.ts ?? null;
+            }
 
-            if (recentRestart?.ts) continue;
+            if (recentRestartTs) continue;
 
             findings.push({
               check: "offline_service",
@@ -618,21 +862,38 @@ export function checkOfflineServices(): MedicFinding[] {
  * cancelled/failed runs. These should be moved to 'failed' to prevent
  * medic from repeatedly processing them.
  */
-export function checkOrphanedInTerminalRuns(): MedicFinding[] {
-  const db = getDb();
+export async function checkOrphanedInTerminalRuns(): Promise<MedicFinding[]> {
   const findings: MedicFinding[] = [];
 
-  // Fix orphaned steps
-  const orphanSteps = db.prepare(`
-    SELECT s.id, s.step_id, s.run_id, s.status, r.status as run_status
-    FROM steps s JOIN runs r ON s.run_id = r.id
-    WHERE r.status IN ('cancelled', 'failed')
-    AND s.status NOT IN ('done', 'failed')
-  `).all() as { id: string; step_id: string; run_id: string; status: string; run_status: string }[];
+  let orphanSteps: { id: string; step_id: string; run_id: string; status: string; run_status: string }[];
+  let orphanStories: { id: string; story_id: string; run_id: string; status: string; run_status: string }[];
+
+  if (USE_PG) {
+    orphanSteps = await pgQuery(`
+      SELECT s.id, s.step_id, s.run_id, s.status, r.status as run_status
+      FROM steps s JOIN runs r ON s.run_id = r.id
+      WHERE r.status IN ('cancelled', 'failed')
+      AND s.status NOT IN ('done', 'failed')
+    `);
+  } else {
+    const db = getDb();
+    orphanSteps = db.prepare(`
+      SELECT s.id, s.step_id, s.run_id, s.status, r.status as run_status
+      FROM steps s JOIN runs r ON s.run_id = r.id
+      WHERE r.status IN ('cancelled', 'failed')
+      AND s.status NOT IN ('done', 'failed')
+    `).all() as typeof orphanSteps;
+  }
 
   for (const step of orphanSteps) {
-    db.prepare("UPDATE steps SET status = 'failed', output = 'Auto-failed: run is ' || ?, updated_at = ? WHERE id = ?")
-      .run(step.run_status, new Date().toISOString(), step.id);
+    if (USE_PG) {
+      await pgRun("UPDATE steps SET status = 'failed', output = 'Auto-failed: run is ' || $1, updated_at = $2 WHERE id = $3",
+        [step.run_status, new Date().toISOString(), step.id]);
+    } else {
+      const db = getDb();
+      db.prepare("UPDATE steps SET status = 'failed', output = 'Auto-failed: run is ' || ?, updated_at = ? WHERE id = ?")
+        .run(step.run_status, new Date().toISOString(), step.id);
+    }
     findings.push({
       check: "orphaned_in_terminal_run",
       severity: "warning",
@@ -645,16 +906,32 @@ export function checkOrphanedInTerminalRuns(): MedicFinding[] {
   }
 
   // Fix orphaned stories
-  const orphanStories = db.prepare(`
-    SELECT s.id, s.story_id, s.run_id, s.status, r.status as run_status
-    FROM stories s JOIN runs r ON s.run_id = r.id
-    WHERE r.status IN ('cancelled', 'failed')
-    AND s.status NOT IN ('done', 'verified', 'failed', 'skipped')
-  `).all() as { id: string; story_id: string; run_id: string; status: string; run_status: string }[];
+  if (USE_PG) {
+    orphanStories = await pgQuery(`
+      SELECT s.id, s.story_id, s.run_id, s.status, r.status as run_status
+      FROM stories s JOIN runs r ON s.run_id = r.id
+      WHERE r.status IN ('cancelled', 'failed')
+      AND s.status NOT IN ('done', 'verified', 'failed', 'skipped')
+    `);
+  } else {
+    const db = getDb();
+    orphanStories = db.prepare(`
+      SELECT s.id, s.story_id, s.run_id, s.status, r.status as run_status
+      FROM stories s JOIN runs r ON s.run_id = r.id
+      WHERE r.status IN ('cancelled', 'failed')
+      AND s.status NOT IN ('done', 'verified', 'failed', 'skipped')
+    `).all() as typeof orphanStories;
+  }
 
   for (const story of orphanStories) {
-    db.prepare("UPDATE stories SET status = 'failed', updated_at = ? WHERE id = ?")
-      .run(new Date().toISOString(), story.id);
+    if (USE_PG) {
+      await pgRun("UPDATE stories SET status = 'failed', updated_at = $1 WHERE id = $2",
+        [new Date().toISOString(), story.id]);
+    } else {
+      const db = getDb();
+      db.prepare("UPDATE stories SET status = 'failed', updated_at = ? WHERE id = ?")
+        .run(new Date().toISOString(), story.id);
+    }
     findings.push({
       check: "orphaned_in_terminal_run",
       severity: "warning",
@@ -679,61 +956,115 @@ const GATEWAY_STALL_RECREATE_THRESHOLD = 2; // 2+ recreates in window = stalling
  * Detect gateway scheduler stalling: if crons have been recreated 2+ times
  * in the last 5 minutes but no stories have been claimed, the gateway itself
  * is stuck and needs a restart.
- *
- * NOTE: restoreActiveRunCrons logs each recreate to medic_checks via logCronRecreate(),
- * making overdue/partial/total recreations visible to this check. Without this,
- * the stalling detector was blind to restoreActiveRunCrons and never triggered.
- *
- * Includes 8-min cooldown to prevent restart storms.
  */
-export function checkGatewayStalling(): MedicFinding[] {
-  const db = getDb();
+export async function checkGatewayStalling(): Promise<MedicFinding[]> {
   const findings: MedicFinding[] = [];
 
-  // Check if any active runs exist — no runs = no need to check
-  const activeRuns = db.prepare(
-    "SELECT COUNT(*) as cnt FROM runs WHERE status = 'running'"
-  ).get() as { cnt: number };
-  if (activeRuns.cnt === 0) return findings;
+  let activeRunsCnt: number;
+
+  if (USE_PG) {
+    const row = await pgGet<{ cnt: string }>(
+      "SELECT COUNT(*) as cnt FROM runs WHERE status = 'running'"
+    );
+    activeRunsCnt = Number(row?.cnt ?? 0);
+  } else {
+    const db = getDb();
+    const activeRuns = db.prepare(
+      "SELECT COUNT(*) as cnt FROM runs WHERE status = 'running'"
+    ).get() as { cnt: number };
+    activeRunsCnt = activeRuns.cnt;
+  }
+  if (activeRunsCnt === 0) return findings;
 
   // Count cron recreates in the stall window
-  const recreates = db.prepare(`
-    SELECT COUNT(*) as cnt FROM medic_checks
-    WHERE details LIKE '%recreate_crons%'
-      AND details LIKE '%recreate_crons%'
-      AND (julianday('now') - julianday(checked_at)) * 86400000 < ?
-  `).get(GATEWAY_STALL_WINDOW_MS) as { cnt: number };
+  let recreatesCnt: number;
 
-  if (recreates.cnt < GATEWAY_STALL_RECREATE_THRESHOLD) return findings;
+  if (USE_PG) {
+    const row = await pgGet<{ cnt: string }>(`
+      SELECT COUNT(*) as cnt FROM medic_checks
+      WHERE details LIKE '%recreate_crons%'
+        AND details LIKE '%recreate_crons%'
+        AND EXTRACT(EPOCH FROM NOW() - checked_at::timestamptz) * 1000 < $1
+    `, [GATEWAY_STALL_WINDOW_MS]);
+    recreatesCnt = Number(row?.cnt ?? 0);
+  } else {
+    const db = getDb();
+    const recreates = db.prepare(`
+      SELECT COUNT(*) as cnt FROM medic_checks
+      WHERE details LIKE '%recreate_crons%'
+        AND details LIKE '%recreate_crons%'
+        AND (julianday('now') - julianday(checked_at)) * 86400000 < ?
+    `).get(GATEWAY_STALL_WINDOW_MS) as { cnt: number };
+    recreatesCnt = recreates.cnt;
+  }
+
+  if (recreatesCnt < GATEWAY_STALL_RECREATE_THRESHOLD) return findings;
 
   // Check if any story OR step was claimed in the same window
-  const recentStoryClaims = db.prepare(`
-    SELECT COUNT(*) as cnt FROM stories
-    WHERE status = 'running'
-      AND (julianday('now') - julianday(updated_at)) * 86400000 < ?
-  `).get(GATEWAY_STALL_WINDOW_MS) as { cnt: number };
-  const recentStepClaims = db.prepare(`
-    SELECT COUNT(*) as cnt FROM steps
-    WHERE status = 'running'
-      AND (julianday('now') - julianday(updated_at)) * 86400000 < ?
-  `).get(GATEWAY_STALL_WINDOW_MS) as { cnt: number };
+  let recentStoryClaimsCnt: number;
+  let recentStepClaimsCnt: number;
 
-  if (recentStoryClaims.cnt > 0 || recentStepClaims.cnt > 0) return findings; // Claims happening = gateway alive
+  if (USE_PG) {
+    const rsc = await pgGet<{ cnt: string }>(`
+      SELECT COUNT(*) as cnt FROM stories
+      WHERE status = 'running'
+        AND EXTRACT(EPOCH FROM NOW() - updated_at::timestamptz) * 1000 < $1
+    `, [GATEWAY_STALL_WINDOW_MS]);
+    recentStoryClaimsCnt = Number(rsc?.cnt ?? 0);
+
+    const rstc = await pgGet<{ cnt: string }>(`
+      SELECT COUNT(*) as cnt FROM steps
+      WHERE status = 'running'
+        AND EXTRACT(EPOCH FROM NOW() - updated_at::timestamptz) * 1000 < $1
+    `, [GATEWAY_STALL_WINDOW_MS]);
+    recentStepClaimsCnt = Number(rstc?.cnt ?? 0);
+  } else {
+    const db = getDb();
+    const recentStoryClaims = db.prepare(`
+      SELECT COUNT(*) as cnt FROM stories
+      WHERE status = 'running'
+        AND (julianday('now') - julianday(updated_at)) * 86400000 < ?
+    `).get(GATEWAY_STALL_WINDOW_MS) as { cnt: number };
+    recentStoryClaimsCnt = recentStoryClaims.cnt;
+
+    const recentStepClaims = db.prepare(`
+      SELECT COUNT(*) as cnt FROM steps
+      WHERE status = 'running'
+        AND (julianday('now') - julianday(updated_at)) * 86400000 < ?
+    `).get(GATEWAY_STALL_WINDOW_MS) as { cnt: number };
+    recentStepClaimsCnt = recentStepClaims.cnt;
+  }
+
+  if (recentStoryClaimsCnt > 0 || recentStepClaimsCnt > 0) return findings; // Claims happening = gateway alive
 
   // Cooldown: don't restart if we already restarted recently
-  const recentRestart = db.prepare(`
-    SELECT MAX(checked_at) as ts FROM medic_checks
-    WHERE details LIKE '%restart_gateway%'
-      AND details LIKE '%recreate_crons%'
-      AND (julianday('now') - julianday(checked_at)) * 86400000 < ?
-  `).get(GATEWAY_RESTART_COOLDOWN_MS) as { ts: string | null };
+  let recentRestartTs: string | null;
 
-  if (recentRestart?.ts) return findings;
+  if (USE_PG) {
+    const row = await pgGet<{ ts: string | null }>(`
+      SELECT MAX(checked_at) as ts FROM medic_checks
+      WHERE details LIKE '%restart_gateway%'
+        AND details LIKE '%recreate_crons%'
+        AND EXTRACT(EPOCH FROM NOW() - checked_at::timestamptz) * 1000 < $1
+    `, [GATEWAY_RESTART_COOLDOWN_MS]);
+    recentRestartTs = row?.ts ?? null;
+  } else {
+    const db = getDb();
+    const recentRestart = db.prepare(`
+      SELECT MAX(checked_at) as ts FROM medic_checks
+      WHERE details LIKE '%restart_gateway%'
+        AND details LIKE '%recreate_crons%'
+        AND (julianday('now') - julianday(checked_at)) * 86400000 < ?
+    `).get(GATEWAY_RESTART_COOLDOWN_MS) as { ts: string | null };
+    recentRestartTs = recentRestart?.ts ?? null;
+  }
+
+  if (recentRestartTs) return findings;
 
   findings.push({
     check: "gateway_stalling",
     severity: "critical",
-    message: `Gateway scheduler stalled: ${recreates.cnt} cron recreates in 5min but 0 claims — restarting gateway`,
+    message: `Gateway scheduler stalled: ${recreatesCnt} cron recreates in 5min but 0 claims — restarting gateway`,
     action: "restart_gateway",
     remediated: false,
   });
@@ -744,9 +1075,8 @@ export function checkGatewayStalling(): MedicFinding[] {
 
 // ── Orphaned Browser Processes ──────────────────────────────────────
 
-function checkOrphanedBrowserProcesses(): MedicFinding[] {
+async function checkOrphanedBrowserProcesses(): Promise<MedicFinding[]> {
   const findings: MedicFinding[] = [];
-  const db = getDb();
 
   try {
     let chromiumCount = 0;
@@ -763,18 +1093,29 @@ function checkOrphanedBrowserProcesses(): MedicFinding[] {
     if (chromiumCount === 0) return findings;
 
     // Check if there are active runs — if so, some Chrome processes may be legit
-    const activeRuns = db.prepare(
-      "SELECT COUNT(*) as cnt FROM runs WHERE status = 'running'"
-    ).get() as { cnt: number };
+    let activeRunsCnt: number;
+
+    if (USE_PG) {
+      const row = await pgGet<{ cnt: string }>(
+        "SELECT COUNT(*) as cnt FROM runs WHERE status = 'running'"
+      );
+      activeRunsCnt = Number(row?.cnt ?? 0);
+    } else {
+      const db = getDb();
+      const activeRuns = db.prepare(
+        "SELECT COUNT(*) as cnt FROM runs WHERE status = 'running'"
+      ).get() as { cnt: number };
+      activeRunsCnt = activeRuns.cnt;
+    }
 
     // Allow up to 2 Chrome processes per active run (main + devtools)
-    const maxExpected = activeRuns.cnt * 2;
+    const maxExpected = activeRunsCnt * 2;
 
     if (chromiumCount > maxExpected) {
       findings.push({
         check: "orphaned_browser",
         severity: "warning",
-        message: `Found ${chromiumCount} Chromium process(es) but only ${activeRuns.cnt} active run(s) — likely orphaned browser sessions`,
+        message: `Found ${chromiumCount} Chromium process(es) but only ${activeRunsCnt} active run(s) — likely orphaned browser sessions`,
         action: "kill_browser_sessions",
         remediated: false,
       });
@@ -795,64 +1136,123 @@ const PROVIDER_FAIL_COOLDOWN_MS = 30 * 60 * 1000; // 30 min cooldown
 /**
  * Detect provider-level failures: when the LLM API returns persistent errors
  * (e.g. 404 from corrupted hot-reload state), ALL agents fail simultaneously.
- *
- * Signal: many step resets (abandons) in a short window with zero story completions.
- * This is distinct from individual agent failures (which produce 1-2 abandons).
- *
- * Fix: restart the gateway to re-instantiate provider adapters.
  */
-export function checkProviderFailure(): MedicFinding[] {
-  const db = getDb();
+export async function checkProviderFailure(): Promise<MedicFinding[]> {
   const findings: MedicFinding[] = [];
 
   // Must have active runs
-  const activeRuns = db.prepare(
-    "SELECT COUNT(*) as cnt FROM runs WHERE status = 'running'"
-  ).get() as { cnt: number };
-  if (activeRuns.cnt === 0) return findings;
+  let activeRunsCnt: number;
+
+  if (USE_PG) {
+    const row = await pgGet<{ cnt: string }>(
+      "SELECT COUNT(*) as cnt FROM runs WHERE status = 'running'"
+    );
+    activeRunsCnt = Number(row?.cnt ?? 0);
+  } else {
+    const db = getDb();
+    const activeRuns = db.prepare(
+      "SELECT COUNT(*) as cnt FROM runs WHERE status = 'running'"
+    ).get() as { cnt: number };
+    activeRunsCnt = activeRuns.cnt;
+  }
+  if (activeRunsCnt === 0) return findings;
 
   // Count recent step abandons (medic resets) in the window
-  const recentAbandons = db.prepare(`
-    SELECT COUNT(*) as cnt FROM medic_checks
-    WHERE details LIKE '%reset_step%'
-      AND details LIKE '%recreate_crons%'
-      AND (julianday('now') - julianday(checked_at)) * 86400000 < ?
-  `).get(PROVIDER_FAIL_WINDOW_MS) as { cnt: number };
+  let recentAbandonsCnt: number;
 
-  if (recentAbandons.cnt < PROVIDER_FAIL_ABANDON_THRESHOLD) return findings;
+  if (USE_PG) {
+    const row = await pgGet<{ cnt: string }>(`
+      SELECT COUNT(*) as cnt FROM medic_checks
+      WHERE details LIKE '%reset_step%'
+        AND details LIKE '%recreate_crons%'
+        AND EXTRACT(EPOCH FROM NOW() - checked_at::timestamptz) * 1000 < $1
+    `, [PROVIDER_FAIL_WINDOW_MS]);
+    recentAbandonsCnt = Number(row?.cnt ?? 0);
+  } else {
+    const db = getDb();
+    const recentAbandons = db.prepare(`
+      SELECT COUNT(*) as cnt FROM medic_checks
+      WHERE details LIKE '%reset_step%'
+        AND details LIKE '%recreate_crons%'
+        AND (julianday('now') - julianday(checked_at)) * 86400000 < ?
+    `).get(PROVIDER_FAIL_WINDOW_MS) as { cnt: number };
+    recentAbandonsCnt = recentAbandons.cnt;
+  }
 
-  // Check if ANY story completed in the same window (if yes, provider works for some agents)
-  const recentCompletions = db.prepare(`
-    SELECT COUNT(*) as cnt FROM stories
-    WHERE status IN ('done', 'verified')
-      AND (julianday('now') - julianday(updated_at)) * 86400000 < ?
-  `).get(PROVIDER_FAIL_WINDOW_MS) as { cnt: number };
+  if (recentAbandonsCnt < PROVIDER_FAIL_ABANDON_THRESHOLD) return findings;
 
-  if (recentCompletions.cnt > 0) return findings; // Some agents succeed = not a provider issue
+  // Check if ANY story completed in the same window
+  let recentCompletionsCnt: number;
+
+  if (USE_PG) {
+    const row = await pgGet<{ cnt: string }>(`
+      SELECT COUNT(*) as cnt FROM stories
+      WHERE status IN ('done', 'verified')
+        AND EXTRACT(EPOCH FROM NOW() - updated_at::timestamptz) * 1000 < $1
+    `, [PROVIDER_FAIL_WINDOW_MS]);
+    recentCompletionsCnt = Number(row?.cnt ?? 0);
+  } else {
+    const db = getDb();
+    const recentCompletions = db.prepare(`
+      SELECT COUNT(*) as cnt FROM stories
+      WHERE status IN ('done', 'verified')
+        AND (julianday('now') - julianday(updated_at)) * 86400000 < ?
+    `).get(PROVIDER_FAIL_WINDOW_MS) as { cnt: number };
+    recentCompletionsCnt = recentCompletions.cnt;
+  }
+
+  if (recentCompletionsCnt > 0) return findings; // Some agents succeed = not a provider issue
 
   // Also check if any step completed
-  const recentStepDone = db.prepare(`
-    SELECT COUNT(*) as cnt FROM steps
-    WHERE status = 'done'
-      AND (julianday('now') - julianday(updated_at)) * 86400000 < ?
-  `).get(PROVIDER_FAIL_WINDOW_MS) as { cnt: number };
+  let recentStepDoneCnt: number;
 
-  if (recentStepDone.cnt > 0) return findings;
+  if (USE_PG) {
+    const row = await pgGet<{ cnt: string }>(`
+      SELECT COUNT(*) as cnt FROM steps
+      WHERE status = 'done'
+        AND EXTRACT(EPOCH FROM NOW() - updated_at::timestamptz) * 1000 < $1
+    `, [PROVIDER_FAIL_WINDOW_MS]);
+    recentStepDoneCnt = Number(row?.cnt ?? 0);
+  } else {
+    const db = getDb();
+    const recentStepDone = db.prepare(`
+      SELECT COUNT(*) as cnt FROM steps
+      WHERE status = 'done'
+        AND (julianday('now') - julianday(updated_at)) * 86400000 < ?
+    `).get(PROVIDER_FAIL_WINDOW_MS) as { cnt: number };
+    recentStepDoneCnt = recentStepDone.cnt;
+  }
+
+  if (recentStepDoneCnt > 0) return findings;
 
   // Cooldown: don't restart if we already did recently
-  const recentRestart = db.prepare(`
-    SELECT MAX(checked_at) as ts FROM medic_checks
-    WHERE (details LIKE '%provider_failure%' OR details LIKE '%restart_gateway%')
-      AND details LIKE '%recreate_crons%'
-      AND (julianday('now') - julianday(checked_at)) * 86400000 < ?
-  `).get(PROVIDER_FAIL_COOLDOWN_MS) as { ts: string | null };
+  let recentRestartTs: string | null;
 
-  if (recentRestart?.ts) return findings;
+  if (USE_PG) {
+    const row = await pgGet<{ ts: string | null }>(`
+      SELECT MAX(checked_at) as ts FROM medic_checks
+      WHERE (details LIKE '%provider_failure%' OR details LIKE '%restart_gateway%')
+        AND details LIKE '%recreate_crons%'
+        AND EXTRACT(EPOCH FROM NOW() - checked_at::timestamptz) * 1000 < $1
+    `, [PROVIDER_FAIL_COOLDOWN_MS]);
+    recentRestartTs = row?.ts ?? null;
+  } else {
+    const db = getDb();
+    const recentRestart = db.prepare(`
+      SELECT MAX(checked_at) as ts FROM medic_checks
+      WHERE (details LIKE '%provider_failure%' OR details LIKE '%restart_gateway%')
+        AND details LIKE '%recreate_crons%'
+        AND (julianday('now') - julianday(checked_at)) * 86400000 < ?
+    `).get(PROVIDER_FAIL_COOLDOWN_MS) as { ts: string | null };
+    recentRestartTs = recentRestart?.ts ?? null;
+  }
+
+  if (recentRestartTs) return findings;
 
   findings.push({
     check: "provider_failure",
     severity: "critical",
-    message: `Provider failure detected: ${recentAbandons.cnt} step abandons in 15min with 0 completions — restarting gateway to reset provider state`,
+    message: `Provider failure detected: ${recentAbandonsCnt} step abandons in 15min with 0 completions — restarting gateway to reset provider state`,
     action: "restart_gateway",
     remediated: false,
   });
@@ -866,18 +1266,36 @@ export async function checkStaleClaims(db: any, logger: any): Promise<{ found: n
   const STALE_THRESHOLD_MIN = 60;
   let found = 0, fixed = 0;
   try {
-    const stale = db.prepare(
-      "SELECT cl.rowid, cl.run_id, cl.step_id, cl.story_id, cl.agent_id, cl.claimed_at " +
-      "FROM claim_log cl WHERE cl.outcome IS NULL AND cl.claimed_at IS NOT NULL " +
-      "AND (julianday('now') - julianday(cl.claimed_at)) * 1440 > ?"
-    ).all(STALE_THRESHOLD_MIN);
-    found = stale.length;
-    for (const claim of stale) {
-      logger.warn(`[MEDIC] Stale claim detected: agent=${claim.agent_id} step=${claim.step_id} story=${claim.story_id || 'N/A'} age=${STALE_THRESHOLD_MIN}+min`, { runId: claim.run_id });
-      db.prepare(
-        "UPDATE claim_log SET outcome = 'abandoned', abandoned_at = datetime('now'), duration_ms = CAST((julianday('now') - julianday(claimed_at)) * 86400000 AS INTEGER), diagnostic = 'Stale claim detected by medic (60+ min)' WHERE rowid = ?"
-      ).run(claim.rowid);
-      fixed++;
+    if (USE_PG) {
+      const stale = await pgQuery(
+        "SELECT cl.ctid, cl.run_id, cl.step_id, cl.story_id, cl.agent_id, cl.claimed_at " +
+        "FROM claim_log cl WHERE cl.outcome IS NULL AND cl.claimed_at IS NOT NULL " +
+        "AND EXTRACT(EPOCH FROM NOW() - cl.claimed_at::timestamptz) / 60 > $1",
+        [STALE_THRESHOLD_MIN]
+      );
+      found = stale.length;
+      for (const claim of stale) {
+        logger.warn(`[MEDIC] Stale claim detected: agent=${claim.agent_id} step=${claim.step_id} story=${claim.story_id || 'N/A'} age=${STALE_THRESHOLD_MIN}+min`, { runId: claim.run_id });
+        await pgRun(
+          "UPDATE claim_log SET outcome = 'abandoned', abandoned_at = NOW(), duration_ms = CAST(EXTRACT(EPOCH FROM NOW() - claimed_at::timestamptz) * 1000 AS INTEGER), diagnostic = 'Stale claim detected by medic (60+ min)' WHERE run_id = $1 AND step_id = $2 AND claimed_at = $3 AND outcome IS NULL",
+          [claim.run_id, claim.step_id, claim.claimed_at]
+        );
+        fixed++;
+      }
+    } else {
+      const stale = db.prepare(
+        "SELECT cl.rowid, cl.run_id, cl.step_id, cl.story_id, cl.agent_id, cl.claimed_at " +
+        "FROM claim_log cl WHERE cl.outcome IS NULL AND cl.claimed_at IS NOT NULL " +
+        "AND (julianday('now') - julianday(cl.claimed_at)) * 1440 > ?"
+      ).all(STALE_THRESHOLD_MIN);
+      found = stale.length;
+      for (const claim of stale) {
+        logger.warn(`[MEDIC] Stale claim detected: agent=${claim.agent_id} step=${claim.step_id} story=${claim.story_id || 'N/A'} age=${STALE_THRESHOLD_MIN}+min`, { runId: claim.run_id });
+        db.prepare(
+          "UPDATE claim_log SET outcome = 'abandoned', abandoned_at = datetime('now'), duration_ms = CAST((julianday('now') - julianday(claimed_at)) * 86400000 AS INTEGER), diagnostic = 'Stale claim detected by medic (60+ min)' WHERE rowid = ?"
+        ).run(claim.rowid);
+        fixed++;
+      }
     }
   } catch (e) { logger.warn("[MEDIC] checkStaleClaims error: " + String(e), {}); }
   return { found, fixed };
@@ -887,16 +1305,28 @@ export async function checkStaleClaims(db: any, logger: any): Promise<{ found: n
 export async function checkCascadingFailures(db: any, logger: any): Promise<{ detected: number }> {
   let detected = 0;
   try {
-    // Find running runs where an early step failed but later steps are still pending/running
-    const cascades = db.prepare(
-      "SELECT r.id as run_id, fs.step_id as failed_step, fs.step_index as failed_idx, " +
-      "ps.step_id as pending_step, ps.step_index as pending_idx, ps.status as pending_status " +
-      "FROM runs r " +
-      "JOIN steps fs ON fs.run_id = r.id AND fs.status = 'failed' " +
-      "JOIN steps ps ON ps.run_id = r.id AND ps.step_index > fs.step_index AND ps.status IN ('pending', 'running') " +
-      "WHERE r.status = 'running' " +
-      "ORDER BY r.id, fs.step_index"
-    ).all();
+    let cascades: any[];
+    if (USE_PG) {
+      cascades = await pgQuery(
+        "SELECT r.id as run_id, fs.step_id as failed_step, fs.step_index as failed_idx, " +
+        "ps.step_id as pending_step, ps.step_index as pending_idx, ps.status as pending_status " +
+        "FROM runs r " +
+        "JOIN steps fs ON fs.run_id = r.id AND fs.status = 'failed' " +
+        "JOIN steps ps ON ps.run_id = r.id AND ps.step_index > fs.step_index AND ps.status IN ('pending', 'running') " +
+        "WHERE r.status = 'running' " +
+        "ORDER BY r.id, fs.step_index"
+      );
+    } else {
+      cascades = db.prepare(
+        "SELECT r.id as run_id, fs.step_id as failed_step, fs.step_index as failed_idx, " +
+        "ps.step_id as pending_step, ps.step_index as pending_idx, ps.status as pending_status " +
+        "FROM runs r " +
+        "JOIN steps fs ON fs.run_id = r.id AND fs.status = 'failed' " +
+        "JOIN steps ps ON ps.run_id = r.id AND ps.step_index > fs.step_index AND ps.status IN ('pending', 'running') " +
+        "WHERE r.status = 'running' " +
+        "ORDER BY r.id, fs.step_index"
+      ).all();
+    }
 
     const seenRuns = new Set<string>();
     for (const c of cascades) {
@@ -909,19 +1339,19 @@ export async function checkCascadingFailures(db: any, logger: any): Promise<{ de
   return { detected };
 }
 
-export function runSyncChecks(): MedicFinding[] {
+export async function runSyncChecks(): Promise<MedicFinding[]> {
   return [
-    ...checkOrphanedInTerminalRuns(),
-    ...checkOrphanedStories(),
-    ...checkClaimedButStuck(),
-    ...checkStuckSteps(),
-    ...checkStalledRuns(),
-    ...checkDeadRuns(),
-    ...checkFailedRunsForResume(),
-    ...checkStalledWorkflowCrons(),
-    ...checkOfflineServices(),
-    ...checkGatewayStalling(),
-    ...checkProviderFailure(),
-    ...checkOrphanedBrowserProcesses(),
+    ...await checkOrphanedInTerminalRuns(),
+    ...await checkOrphanedStories(),
+    ...await checkClaimedButStuck(),
+    ...await checkStuckSteps(),
+    ...await checkStalledRuns(),
+    ...await checkDeadRuns(),
+    ...await checkFailedRunsForResume(),
+    ...await checkStalledWorkflowCrons(),
+    ...await checkOfflineServices(),
+    ...await checkGatewayStalling(),
+    ...await checkProviderFailure(),
+    ...await checkOrphanedBrowserProcesses(),
   ];
 }

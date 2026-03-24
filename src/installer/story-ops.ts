@@ -6,9 +6,12 @@
 
 import crypto from "node:crypto";
 import { getDb } from "../db.js";
+import { pgQuery, pgGet, pgRun, pgExec, pgBegin } from "../db-pg.js";
 import type { Story } from "./types.js";
 import { logger } from "../lib/logger.js";
 import { MAX_STORIES, DEFAULT_STORY_MAX_RETRIES } from "./constants.js";
+
+const USE_PG = process.env.DB_BACKEND === 'postgres';
 
 // ── Story CRUD ──────────────────────────────────────────────────────
 
@@ -17,12 +20,8 @@ import { MAX_STORIES, DEFAULT_STORY_MAX_RETRIES } from "./constants.js";
  */
 function safeParseAC(raw: string): string[] { try { const arr = JSON.parse(raw); return Array.isArray(arr) ? arr : [raw]; } catch { const m = raw.match(/^(\[.*?\])/s); if (m) { try { return JSON.parse(m[1]); } catch { /* fallback below */ } } return raw ? [raw] : []; } }
 
-export function getStories(runId: string): Story[] {
-  const db = getDb();
-  const rows = db.prepare(
-    "SELECT * FROM stories WHERE run_id = ? ORDER BY story_index ASC"
-  ).all(runId) as any[];
-  return rows.map(r => ({
+function mapStoryRow(r: any): Story {
+  return {
     id: r.id,
     runId: r.run_id,
     storyIndex: r.story_index,
@@ -34,33 +33,46 @@ export function getStories(runId: string): Story[] {
     output: r.output ?? undefined,
     retryCount: r.retry_count,
     maxRetries: r.max_retries,
-  }));
+  };
+}
+
+export async function getStories(runId: string): Promise<Story[]> {
+  if (USE_PG) {
+    const rows = await pgQuery(
+      "SELECT * FROM stories WHERE run_id = $1 ORDER BY story_index ASC", [runId]
+    );
+    return rows.map(mapStoryRow);
+  } else {
+    const db = getDb();
+    const rows = db.prepare(
+      "SELECT * FROM stories WHERE run_id = ? ORDER BY story_index ASC"
+    ).all(runId) as any[];
+    return rows.map(mapStoryRow);
+  }
 }
 
 /**
  * Get the story currently being worked on by a loop step.
  */
-export function getCurrentStory(stepId: string): Story | null {
-  const db = getDb();
-  const step = db.prepare(
-    "SELECT current_story_id FROM steps WHERE id = ?"
-  ).get(stepId) as { current_story_id: string | null } | undefined;
-  if (!step?.current_story_id) return null;
-  const row = db.prepare("SELECT * FROM stories WHERE id = ?").get(step.current_story_id) as any;
-  if (!row) return null;
-  return {
-    id: row.id,
-    runId: row.run_id,
-    storyIndex: row.story_index,
-    storyId: row.story_id,
-    title: row.title,
-    description: row.description,
-    acceptanceCriteria: safeParseAC(row.acceptance_criteria),
-    status: row.status,
-    output: row.output ?? undefined,
-    retryCount: row.retry_count,
-    maxRetries: row.max_retries,
-  };
+export async function getCurrentStory(stepId: string): Promise<Story | null> {
+  if (USE_PG) {
+    const step = await pgGet<{ current_story_id: string | null }>(
+      "SELECT current_story_id FROM steps WHERE id = $1", [stepId]
+    );
+    if (!step?.current_story_id) return null;
+    const row = await pgGet("SELECT * FROM stories WHERE id = $1", [step.current_story_id]);
+    if (!row) return null;
+    return mapStoryRow(row);
+  } else {
+    const db = getDb();
+    const step = db.prepare(
+      "SELECT current_story_id FROM steps WHERE id = ?"
+    ).get(stepId) as { current_story_id: string | null } | undefined;
+    if (!step?.current_story_id) return null;
+    const row = db.prepare("SELECT * FROM stories WHERE id = ?").get(step.current_story_id) as any;
+    if (!row) return null;
+    return mapStoryRow(row);
+  }
 }
 
 // ── Story Formatting ────────────────────────────────────────────────
@@ -81,7 +93,7 @@ export function formatCompletedStories(stories: Story[]): string {
 /**
  * Parse STORIES_JSON from step output and insert stories into the DB.
  */
-export function parseAndInsertStories(output: string, runId: string): void {
+export async function parseAndInsertStories(output: string, runId: string): Promise<void> {
   const lines = output.split("\n");
   const startIdx = lines.findIndex(l => l.startsWith("STORIES_JSON:"));
 
@@ -131,72 +143,88 @@ export function parseAndInsertStories(output: string, runId: string): void {
     throw new Error(`STORIES_JSON has ${stories.length} stories, max is ${MAX_STORIES}`);
   }
 
-  const db = getDb();
-
-  // BEGIN IMMEDIATE: dedup check + insert must be atomic to prevent
-  // parallel agents from both passing the dedup guard and double-inserting.
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    const existingCount = db.prepare("SELECT COUNT(*) as cnt FROM stories WHERE run_id = ?").get(runId) as { cnt: number };
-    if (existingCount.cnt > 0) {
-      db.exec("ROLLBACK");
-      logger.info("Stories already exist for run " + runId + ", skipping duplicate insertion");
-      return;
+  // Cycle detection: topological sort to catch A->B->C->A before insertion
+  const storyIds = new Set(stories.map((s: any) => s.id));
+  const adjList = new Map<string, string[]>();
+  for (const s of stories) {
+    const deps = Array.isArray(s.depends_on) ? s.depends_on : [];
+    adjList.set(s.id, deps.filter((d: string) => storyIds.has(d)));
+  }
+  const visited = new Set<string>();
+  const inStack = new Set<string>();
+  function hasCycle(node: string): boolean {
+    if (inStack.has(node)) return true;
+    if (visited.has(node)) return false;
+    visited.add(node);
+    inStack.add(node);
+    for (const dep of (adjList.get(node) || [])) {
+      if (hasCycle(dep)) return true;
     }
-
-    const now = new Date().toISOString();
-    const insert = db.prepare(
-      "INSERT INTO stories (id, run_id, story_index, story_id, title, description, acceptance_criteria, status, retry_count, max_retries, depends_on, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, 5, ?, ?, ?)"
-    );
-
-    // Cycle detection: topological sort to catch A→B→C→A before insertion
-    const storyIds = new Set(stories.map((s: any) => s.id));
-    const adjList = new Map<string, string[]>();
-    for (const s of stories) {
-      const deps = Array.isArray(s.depends_on) ? s.depends_on : [];
-      // Only track deps that reference stories in THIS batch (ignore external refs)
-      adjList.set(s.id, deps.filter((d: string) => storyIds.has(d)));
+    inStack.delete(node);
+    return false;
+  }
+  for (const sid of storyIds) {
+    if (hasCycle(sid)) {
+      throw new Error(`STORIES_JSON has a dependency cycle involving story "${sid}"`);
     }
-    const visited = new Set<string>();
-    const inStack = new Set<string>();
-    function hasCycle(node: string): boolean {
-      if (inStack.has(node)) return true;
-      if (visited.has(node)) return false;
-      visited.add(node);
-      inStack.add(node);
-      for (const dep of (adjList.get(node) || [])) {
-        if (hasCycle(dep)) return true;
+  }
+
+  // Validate all stories before insertion
+  const seenIds = new Set<string>();
+  for (let i = 0; i < stories.length; i++) {
+    const s = stories[i];
+    const ac = s.acceptanceCriteria ?? s.acceptance_criteria;
+    if (!s.id || !s.title || !s.description || !Array.isArray(ac) || ac.length === 0) {
+      throw new Error(`STORIES_JSON story at index ${i} missing required fields (id, title, description, acceptanceCriteria)`);
+    }
+    if (seenIds.has(s.id)) {
+      throw new Error(`STORIES_JSON has duplicate story id "${s.id}"`);
+    }
+    seenIds.add(s.id);
+  }
+
+  if (USE_PG) {
+    await pgBegin(async (sql) => {
+      const existingCount = await sql`SELECT COUNT(*) as cnt FROM stories WHERE run_id = ${runId}`;
+      if (Number(existingCount[0].cnt) > 0) {
+        logger.info("Stories already exist for run " + runId + ", skipping duplicate insertion");
+        return;
       }
-      inStack.delete(node);
-      return false;
-    }
-    for (const sid of storyIds) {
-      if (hasCycle(sid)) {
+      const now = new Date().toISOString();
+      for (let i = 0; i < stories.length; i++) {
+        const s = stories[i];
+        const ac = s.acceptanceCriteria ?? s.acceptance_criteria;
+        const dependsOn = Array.isArray(s.depends_on) ? JSON.stringify(s.depends_on) : null;
+        await sql`INSERT INTO stories (id, run_id, story_index, story_id, title, description, acceptance_criteria, status, retry_count, max_retries, depends_on, created_at, updated_at)
+          VALUES (${crypto.randomUUID()}, ${runId}, ${i}, ${s.id}, ${s.title}, ${s.description}, ${JSON.stringify(ac)}, 'pending', 0, 5, ${dependsOn}, ${now}, ${now})`;
+      }
+    });
+  } else {
+    const db = getDb();
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const existingCount = db.prepare("SELECT COUNT(*) as cnt FROM stories WHERE run_id = ?").get(runId) as { cnt: number };
+      if (existingCount.cnt > 0) {
         db.exec("ROLLBACK");
-        throw new Error(`STORIES_JSON has a dependency cycle involving story "${sid}"`);
+        logger.info("Stories already exist for run " + runId + ", skipping duplicate insertion");
+        return;
       }
-    }
 
-    const seenIds = new Set<string>();
-    for (let i = 0; i < stories.length; i++) {
-      const s = stories[i];
-      // Accept both camelCase and snake_case
-      const ac = s.acceptanceCriteria ?? s.acceptance_criteria;
-      if (!s.id || !s.title || !s.description || !Array.isArray(ac) || ac.length === 0) {
-        db.exec("ROLLBACK");
-        throw new Error(`STORIES_JSON story at index ${i} missing required fields (id, title, description, acceptanceCriteria)`);
+      const now = new Date().toISOString();
+      const insert = db.prepare(
+        "INSERT INTO stories (id, run_id, story_index, story_id, title, description, acceptance_criteria, status, retry_count, max_retries, depends_on, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, 5, ?, ?, ?)"
+      );
+
+      for (let i = 0; i < stories.length; i++) {
+        const s = stories[i];
+        const ac = s.acceptanceCriteria ?? s.acceptance_criteria;
+        const dependsOn = Array.isArray(s.depends_on) ? JSON.stringify(s.depends_on) : null;
+        insert.run(crypto.randomUUID(), runId, i, s.id, s.title, s.description, JSON.stringify(ac), dependsOn, now, now);
       }
-      if (seenIds.has(s.id)) {
-        db.exec("ROLLBACK");
-        throw new Error(`STORIES_JSON has duplicate story id "${s.id}"`);
-      }
-      seenIds.add(s.id);
-      const dependsOn = Array.isArray(s.depends_on) ? JSON.stringify(s.depends_on) : null;
-      insert.run(crypto.randomUUID(), runId, i, s.id, s.title, s.description, JSON.stringify(ac), dependsOn, now, now);
+      db.exec("COMMIT");
+    } catch (err) {
+      try { db.exec("ROLLBACK"); } catch (e) { logger.warn("[tx] ROLLBACK failed: " + String(e), {}); }
+      throw err;
     }
-    db.exec("COMMIT");
-  } catch (err) {
-    try { db.exec("ROLLBACK"); } catch (e) { logger.warn("[tx] ROLLBACK failed: " + String(e), {}); }
-    throw err;
   }
 }
