@@ -17,7 +17,7 @@ agent_mapping:
   setup-repo: atlas
   setup-build: atlas
   designer: mert
-  developer: [koda, flux, cipher, prism]
+  developer: [koda, flux, cipher, prism, lux, nexus]
   reviewer: [sentinel, iris, sentinel, iris, sentinel]
   tester: sentinel
   security-gate: sentinel
@@ -656,7 +656,7 @@ steps:
       fresh_session: true
       verify_each: true
       verify_step: verify
-      parallel_count: 5
+      parallel_count: 6
     input: |
       !include critical-preamble.md
 
