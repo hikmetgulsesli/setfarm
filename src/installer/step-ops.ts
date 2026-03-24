@@ -103,7 +103,36 @@ type StepRow = {
 // ── Extracted helpers (private, called only from claimStep) ──────────
 
 /**
+ * Auto-complete design step with existing HTML files.
+ * Shared by .stitch dedup and PRD Generator cache path.
+ */
+function autoCompleteDesignStep(step: StepRow, db: any, htmlFiles: string[], projectId: string): boolean {
+  const dRepoPath = getRunContext(step.run_id)["repo"] || "";
+  const dScreenMap = htmlFiles.map((f: string) => ({
+    screenId: f.replace(".html", ""),
+    name: f.replace(".html", ""),
+    type: "page",
+    description: f.replace(".html", ""),
+  }));
+  const dCtx = getRunContext(step.run_id);
+  dCtx["stitch_project_id"] = projectId;
+  dCtx["screens_generated"] = String(htmlFiles.length);
+  dCtx["screen_map"] = JSON.stringify(dScreenMap);
+  dCtx["device_type"] = dCtx["device_type"] || "DESKTOP";
+  dCtx["design_system"] = dCtx["design_system"] || "reused from existing designs";
+  dCtx["design_notes"] = `Reused ${htmlFiles.length} existing screen designs`;
+  updateRunContext(step.run_id, dCtx);
+  const dOutput = `STATUS: done\nSTITCH_PROJECT_ID: ${projectId}\nSCREENS_GENERATED: ${htmlFiles.length}\nDESIGN_NOTES: Reused ${htmlFiles.length} screens (auto-skip)`;
+  db.prepare("UPDATE steps SET status = 'done', output = ?, updated_at = ? WHERE id = ?")
+    .run(dOutput, new Date().toISOString(), step.id);
+  logger.info(`[design-dedup] Auto-skipped design — reusing ${htmlFiles.length} screens (project ${projectId})`, { runId: step.run_id });
+  advancePipeline(step.run_id);
+  return true;
+}
+
+/**
  * DESIGN STEP DEDUP: If .stitch + stitch/*.html exist, auto-complete design step.
+ * Also auto-skips when stitch/ has ≥2 HTML files from PRD Generator cache.
  * Returns true if the step was auto-completed (caller should return { found: false }).
  */
 function handleDesignDedup(step: StepRow, db: any): boolean {
@@ -114,47 +143,41 @@ function handleDesignDedup(step: StepRow, db: any): boolean {
 
   const dStitchFile = path.join(dRepoPath, ".stitch");
   const dStitchDir = path.join(dRepoPath, "stitch");
-  if (!fs.existsSync(dStitchFile) || !fs.existsSync(dStitchDir)) return false;
 
-  try {
-    const dData = JSON.parse(fs.readFileSync(dStitchFile, "utf-8"));
-    // Only reuse if .stitch was written DURING this run (prevents cross-run contamination)
-    const runRow = db.prepare("SELECT created_at FROM runs WHERE id = ?").get(step.run_id) as any;
-    const runCreatedAt = runRow ? new Date(runRow.created_at).getTime() : 0;
-    const stitchUpdatedAt = dData.updatedAt ? new Date(dData.updatedAt).getTime() : 0;
-    // 60s tolerance: PRD Generator writes .stitch seconds before run starts
-    const STALE_TOLERANCE_MS = 60000;
-    if (stitchUpdatedAt < (runCreatedAt - STALE_TOLERANCE_MS)) {
-      logger.info(`[design-dedup] .stitch is stale (written ${dData.updatedAt}, run started ${runRow?.created_at}) — deleting to force fresh design`, { runId: step.run_id });
-      try { fs.unlinkSync(dStitchFile); } catch {}
-      try { fs.rmSync(dStitchDir, { recursive: true, force: true }); } catch {}
-      return false;
-    }
+  // Fix 2: Also auto-skip when stitch/ has ≥2 HTML files WITHOUT .stitch file
+  // (PRD Generator copies HTML from cache — no .stitch metadata needed)
+  if (!fs.existsSync(dStitchDir)) return false;
 
-    const dHtmlFiles = fs.readdirSync(dStitchDir).filter((f: string) => f.endsWith(".html"));
-    if (dData.projectId && dHtmlFiles.length > 0) {
-      const dScreenMap = dHtmlFiles.map((f: string) => ({
-        screenId: f.replace(".html", ""),
-        name: f.replace(".html", ""),
-        type: "page",
-        description: f.replace(".html", ""),
-      }));
-      const dCtx = getRunContext(step.run_id);
-      dCtx["stitch_project_id"] = dData.projectId;
-      dCtx["screens_generated"] = String(dHtmlFiles.length);
-      dCtx["screen_map"] = JSON.stringify(dScreenMap);
-      dCtx["device_type"] = dCtx["device_type"] || "DESKTOP";
-      dCtx["design_system"] = dCtx["design_system"] || "reused from previous run";
-      dCtx["design_notes"] = `Reused ${dHtmlFiles.length} existing screen designs from .stitch`;
-      updateRunContext(step.run_id, dCtx);
-      const dOutput = `STATUS: done\nSTITCH_PROJECT_ID: ${dData.projectId}\nSCREENS_GENERATED: ${dHtmlFiles.length}\nDESIGN_NOTES: Reused ${dHtmlFiles.length} screens from previous run`;
-      db.prepare("UPDATE steps SET status = 'done', output = ?, updated_at = ? WHERE id = ?")
-        .run(dOutput, new Date().toISOString(), step.id);
-      logger.info(`[design-dedup] Skipped — reusing ${dHtmlFiles.length} screens from .stitch (project ${dData.projectId})`, { runId: step.run_id });
-      advancePipeline(step.run_id);
-      return true;
-    }
-  } catch (e) { logger.warn(`[design-dedup] .stitch parse error: ${e}`, { runId: step.run_id }); }
+  const dHtmlFiles = fs.readdirSync(dStitchDir).filter((f: string) => f.endsWith(".html"));
+
+  // Case A: .stitch file exists — validate freshness
+  if (fs.existsSync(dStitchFile)) {
+    try {
+      const dData = JSON.parse(fs.readFileSync(dStitchFile, "utf-8"));
+      // Only reuse if .stitch was written DURING this run (prevents cross-run contamination)
+      const runRow = db.prepare("SELECT created_at FROM runs WHERE id = ?").get(step.run_id) as any;
+      const runCreatedAt = runRow ? new Date(runRow.created_at).getTime() : 0;
+      const stitchUpdatedAt = dData.updatedAt ? new Date(dData.updatedAt).getTime() : 0;
+      // 60s tolerance: PRD Generator writes .stitch seconds before run starts
+      const STALE_TOLERANCE_MS = 60000;
+      if (stitchUpdatedAt < (runCreatedAt - STALE_TOLERANCE_MS)) {
+        logger.info(`[design-dedup] .stitch is stale (written ${dData.updatedAt}, run started ${runRow?.created_at}) — deleting to force fresh design`, { runId: step.run_id });
+        try { fs.unlinkSync(dStitchFile); } catch {}
+        try { fs.rmSync(dStitchDir, { recursive: true, force: true }); } catch {}
+        return false;
+      }
+
+      if (dData.projectId && dHtmlFiles.length > 0) {
+        return autoCompleteDesignStep(step, db, dHtmlFiles, dData.projectId);
+      }
+    } catch (e) { logger.warn(`[design-dedup] .stitch parse error: ${e}`, { runId: step.run_id }); }
+  }
+
+  // Case B: No .stitch file but stitch/ has ≥2 HTML files (PRD Generator cache)
+  if (dHtmlFiles.length >= 2) {
+    logger.info(`[design-dedup] No .stitch file but stitch/ has ${dHtmlFiles.length} HTML files — auto-skipping design step`, { runId: step.run_id });
+    return autoCompleteDesignStep(step, db, dHtmlFiles, "prd-generator-cache");
+  }
 
   return false;
 }

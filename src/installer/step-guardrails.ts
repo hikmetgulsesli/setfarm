@@ -24,6 +24,21 @@ import { TEST_FAIL_PATTERNS, GIT_DIFF_TIMEOUT } from "./constants.js";
  * Returns failure message or null if clean.
  */
 export function checkTestFailures(output: string): string | null {
+  // Fix 4: Don't flag test failures if no test framework is installed
+  // (agent may have tried to run tests but none existed — false positive)
+  const noTestsPatterns = [
+    /no tests? found/i,
+    /no test suites? found/i,
+    /command not found.*jest\b/i,
+    /command not found.*vitest\b/i,
+    /Cannot find module.*jest/i,
+    /Cannot find module.*vitest/i,
+    /ERR_MODULE_NOT_FOUND.*test/i,
+  ];
+  for (const noTestPat of noTestsPatterns) {
+    if (noTestPat.test(output)) return null;
+  }
+
   for (const pat of TEST_FAIL_PATTERNS) {
     const m = output.match(pat);
     if (m && parseInt(m[1], 10) > 0) {

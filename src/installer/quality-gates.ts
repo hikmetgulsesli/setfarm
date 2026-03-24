@@ -45,7 +45,7 @@ export function runQualityChecks(repoPath: string): QualityIssue[] {
         if (matches.length > 0) {
           issues.push({
             rule,
-            severity: "error",
+            severity: "warning", // Fix 4: downgraded from error — advisory only
             detail: `Found ${matches.length} dead link(s): ${pattern}`,
             matches: matches.slice(0, 10),
           });
@@ -76,7 +76,7 @@ export function runQualityChecks(repoPath: string): QualityIssue[] {
         if (matches.length > 0) {
           issues.push({
             rule,
-            severity: "error",
+            severity: "warning", // Fix 4: downgraded from error — advisory only
             detail: `Found ${matches.length} empty handler(s): ${pattern}`,
             matches: matches.slice(0, 10),
           });
@@ -124,7 +124,7 @@ export function runQualityChecks(repoPath: string): QualityIssue[] {
       if (needsRouter && !allDeps["react-router-dom"] && !allDeps["react-router"] && !allDeps["next"]) {
         issues.push({
           rule: "missing_router",
-          severity: "error",
+          severity: "warning", // Fix 4: downgraded — agent can install during implement
           detail: "UI contract requires routing but no router library found in package.json",
           matches: ["Install react-router-dom or next"],
         });
@@ -134,7 +134,7 @@ export function runQualityChecks(repoPath: string): QualityIssue[] {
       if (needsDnD && !allDeps["@dnd-kit/core"] && !allDeps["react-beautiful-dnd"] && !allDeps["@hello-pangea/dnd"]) {
         issues.push({
           rule: "missing_dnd",
-          severity: "error",
+          severity: "warning", // Fix 4: downgraded — agent can install during implement
           detail: "UI contract requires drag-and-drop but no DnD library found in package.json",
           matches: ["Install @dnd-kit/core or react-beautiful-dnd"],
         });

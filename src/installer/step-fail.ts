@@ -109,6 +109,9 @@ function handleLoopStepFailure(
 
 // ── Single step failure ──────────────────────────────────────────────
 
+// Fix 3: Steps that MUST fail the run when retries exhausted (critical path)
+const CRITICAL_STEPS = new Set(["deploy", "plan", "setup-repo", "setup-build", "stories"]);
+
 function handleSingleStepFailure(
   stepId: string,
   step: { run_id: string; retry_count: number; max_retries: number; type: string; current_story_id: string | null; agent_id: string },
@@ -117,21 +120,44 @@ function handleSingleStepFailure(
   const db = getDb();
   const newRetryCount = step.retry_count + 1;
 
+  // Look up the workflow step_id (e.g. "design", "deploy", "security-gate")
+  const stepRow = db.prepare("SELECT step_id FROM steps WHERE id = ?").get(stepId) as { step_id: string } | undefined;
+  const workflowStepId = stepRow?.step_id || "";
+
   // Atomic: step + run status updates must happen together
   db.exec("BEGIN IMMEDIATE");
   try {
     if (newRetryCount > step.max_retries) {
-      db.prepare("UPDATE steps SET status = 'failed', output = ?, retry_count = ?, updated_at = ? WHERE id = ?")
-        .run(error, newRetryCount, new Date().toISOString(), stepId);
-      db.prepare("UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?")
-        .run(new Date().toISOString(), step.run_id);
-      try { db.prepare("UPDATE claim_log SET outcome = 'failed', duration_ms = CAST((julianday('now') - julianday(claimed_at)) * 86400000 AS INTEGER), diagnostic = ? WHERE run_id = ? AND step_id = ? AND story_id IS NULL AND outcome IS NULL").run(error, step.run_id, stepId); } catch (e) { logger.warn("[claim-log] update failed: " + String(e), {}); }
-      db.exec("COMMIT");
-      const wfId2 = getWorkflowId(step.run_id);
-      emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId2, stepId: stepId, detail: error });
-      emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId2, detail: "Step retries exhausted" });
-      scheduleRunCronTeardown(step.run_id);
-      return { retrying: false, runFailed: true };
+      const isCritical = CRITICAL_STEPS.has(workflowStepId);
+
+      if (isCritical) {
+        // Critical step: fail the run (original behavior)
+        db.prepare("UPDATE steps SET status = 'failed', output = ?, retry_count = ?, updated_at = ? WHERE id = ?")
+          .run(error, newRetryCount, new Date().toISOString(), stepId);
+        db.prepare("UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?")
+          .run(new Date().toISOString(), step.run_id);
+        try { db.prepare("UPDATE claim_log SET outcome = 'failed', duration_ms = CAST((julianday('now') - julianday(claimed_at)) * 86400000 AS INTEGER), diagnostic = ? WHERE run_id = ? AND step_id = ? AND story_id IS NULL AND outcome IS NULL").run(error, step.run_id, stepId); } catch (e) { logger.warn("[claim-log] update failed: " + String(e), {}); }
+        db.exec("COMMIT");
+        const wfId2 = getWorkflowId(step.run_id);
+        emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId2, stepId: stepId, detail: error });
+        emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId2, detail: "Critical step retries exhausted" });
+        scheduleRunCronTeardown(step.run_id);
+        return { retrying: false, runFailed: true };
+      } else {
+        // Fix 3: Non-critical step (design, security-gate, qa-test, final-test, verify):
+        // Skip and let pipeline continue instead of killing the entire run
+        db.prepare("UPDATE steps SET status = 'skipped', output = ?, retry_count = ?, updated_at = ? WHERE id = ?")
+          .run(`SKIPPED: ${error}`, newRetryCount, new Date().toISOString(), stepId);
+        try { db.prepare("UPDATE claim_log SET outcome = 'skipped', duration_ms = CAST((julianday('now') - julianday(claimed_at)) * 86400000 AS INTEGER), diagnostic = ? WHERE run_id = ? AND step_id = ? AND story_id IS NULL AND outcome IS NULL").run(error, step.run_id, stepId); } catch (e) { logger.warn("[claim-log] update failed: " + String(e), {}); }
+        db.exec("COMMIT");
+        const wfId2 = getWorkflowId(step.run_id);
+        emitEvent({ ts: new Date().toISOString(), event: "step.skipped", runId: step.run_id, workflowId: wfId2, stepId: workflowStepId, detail: `Retries exhausted — skipped: ${error}` });
+        logger.warn(`[failStep] Non-critical step ${workflowStepId} skipped after ${newRetryCount} retries — pipeline continues`, { runId: step.run_id });
+        // Advance pipeline past the skipped step (lazy import to avoid circular dep)
+        const { advancePipeline } = require("./step-advance.js");
+        advancePipeline(step.run_id);
+        return { retrying: false, runFailed: false };
+      }
     } else {
       db.prepare("UPDATE steps SET status = 'pending', retry_count = ?, updated_at = ? WHERE id = ?")
         .run(newRetryCount, new Date().toISOString(), stepId);

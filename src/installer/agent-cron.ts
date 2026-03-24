@@ -2,6 +2,7 @@ import { createAgentCronJob, deleteAgentCronJobs, deleteCronJob, listCronJobs, c
 import type { WorkflowSpec, AgentMapping } from "./types.js";
 import { resolveSetfarmCli } from "./paths.js";
 import { getDb } from "../db.js";
+import { logger } from "../lib/logger.js";
 
 const DEFAULT_EVERY_MS = 240_000; // 4 minutes
 const DEFAULT_AGENT_TIMEOUT_SECONDS = 30 * 60; // 30 minutes
@@ -100,7 +101,9 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
         enabled: true,
       });
       if (!retry.ok) {
-        throw new Error();
+        // Fix 1: Don't throw — log and continue so remaining agents still get crons
+        logger.warn(`[setupAgentCrons] Failed to create cron for ${cronName} (agent ${cronAgentId}) after retry — skipping`, {});
+        continue;
       }
     }
 
@@ -181,10 +184,24 @@ export async function ensureWorkflowCrons(workflow: WorkflowSpec): Promise<void>
 /**
  * Tear down crons for a workflow when a run ends.
  * Only removes if no other active runs exist for this workflow.
+ * Fix 1: 5-minute grace period — if a new run starts within 5min, crons survive.
  */
+const TEARDOWN_GRACE_MS = 5 * 60 * 1000; // 5 minutes
+
 export async function teardownWorkflowCronsIfIdle(workflowId: string): Promise<void> {
   const active = countActiveRuns(workflowId);
   if (active > 0) return;
+
+  // Grace period: wait 5min, then re-check. If a new run started, keep crons.
+  await new Promise(r => setTimeout(r, TEARDOWN_GRACE_MS));
+
+  // Re-check after grace period — new run may have started
+  const activeAfterGrace = countActiveRuns(workflowId);
+  if (activeAfterGrace > 0) {
+    logger.info(`[teardown] Grace period saved crons — new run detected for ${workflowId}`, {});
+    return;
+  }
+
   const listResult = await listCronJobs();
   if (!listResult.ok || !listResult.jobs) return;
   const prefix = `setfarm/${workflowId}/`;
@@ -192,6 +209,7 @@ export async function teardownWorkflowCronsIfIdle(workflowId: string): Promise<v
     if (!job.name.startsWith(prefix)) continue;
     await deleteCronJob(job.id);
   }
+  logger.info(`[teardown] Crons removed for ${workflowId} after grace period (no active runs)`, {});
 }
 
 // ── Cron Count Helpers ──────────────────────────────────────────────
