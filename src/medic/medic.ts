@@ -30,16 +30,9 @@ const USE_PG = process.env.DB_BACKEND === 'postgres';
 
 export async function ensureMedicTables(): Promise<void> {
   if (USE_PG) {
-    await pgExec(`
-      CREATE TABLE IF NOT EXISTS medic_checks (
-        id TEXT PRIMARY KEY,
-        checked_at TEXT NOT NULL,
-        issues_found INTEGER DEFAULT 0,
-        actions_taken INTEGER DEFAULT 0,
-        summary TEXT,
-        details TEXT
-      )
-    `);
+    // Skip DDL — table already created by migration script
+    // PG emits NOTICE for CREATE TABLE IF NOT EXISTS which clutters logs
+    return;
   } else {
     const db = getDb();
     db.exec(`

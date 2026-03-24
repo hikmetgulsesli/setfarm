@@ -26,7 +26,7 @@ import { startDaemon, stopDaemon, getDaemonStatus, isRunning } from "../server/d
 import { claimStep, completeStep, failStep, getStories, peekStep } from "../installer/step-ops.js";
 import { ensureCliSymlink } from "../installer/symlink.js";
 import { runMedicCheck, getMedicStatus, getRecentMedicChecks } from "../medic/medic.js";
-import { pgQuery, pgGet, pgRun } from "../db-pg.js";
+import { pgQuery, pgGet, pgRun, pgClose } from "../db-pg.js";
 const USE_PG = process.env.DB_BACKEND === 'postgres';
 import { installMedicCron, uninstallMedicCron, isMedicCronInstalled } from "../medic/medic-cron.js";
 import { execSync } from "node:child_process";
@@ -761,3 +761,4 @@ main().catch((err) => {
   process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
   process.exit(1);
 });
+
