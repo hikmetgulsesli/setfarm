@@ -16,7 +16,8 @@ function getSql() {
     const url = process.env.SETFARM_PG_URL || DEFAULT_PG_URL;
     _sql = postgres(url, {
       max: 20,
-      idle_timeout: 60,
+      idle_timeout: 5,
+      onnotice: () => {},
       connect_timeout: 10,
     });
   }
