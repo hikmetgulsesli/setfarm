@@ -553,6 +553,35 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
     lastCleanupTime = epochMs;
   }
 
+  // OUTPUT RECOVERY: If a previous agent session died after writing output but before completing,
+  // recover the output from /tmp/setfarm-output.txt
+  const outputRecoveryFile = '/tmp/setfarm-output.txt';
+  try {
+    if (fs.existsSync(outputRecoveryFile)) {
+      const recoveryOutput = fs.readFileSync(outputRecoveryFile, 'utf-8').trim();
+      if (recoveryOutput.includes('STATUS:')) {
+        // Find the running step for this agent
+        const runningStep = await pgGet<{ id: string; step_id: string; run_id: string }>(
+          `SELECT s.id, s.step_id, s.run_id FROM steps s JOIN runs r ON r.id = s.run_id
+           WHERE s.agent_id = $1 AND s.status = 'running' AND r.status = 'running'
+           LIMIT 1`, [agentId]
+        );
+        if (runningStep) {
+          logger.info(`[output-recovery] Found orphaned output for step ${runningStep.step_id} — auto-completing`, { runId: runningStep.run_id });
+          try {
+            const { completeStep } = await import("./step-ops.js");
+            await completeStep(runningStep.id, recoveryOutput);
+            fs.unlinkSync(outputRecoveryFile);
+            return { found: false };
+          } catch (e) {
+            logger.warn(`[output-recovery] Auto-complete failed: ${String(e)}`, { runId: runningStep.run_id });
+            // Don't delete file on failure — retry next cycle
+          }
+        }
+      }
+    }
+  } catch (e) { logger.warn(`[output-recovery] Check failed: ${String(e)}`, {}); }
+
   // Allow claiming from both pending AND running loop steps (parallel story execution)
   const step = await pgGet<{ id: string; step_id: string; run_id: string; input_template: string; type: string; loop_config: string | null; step_status: string }>(
         `SELECT s.id, s.step_id, s.run_id, s.input_template, s.type, s.loop_config, s.status as step_status

@@ -272,7 +272,7 @@ export async function checkOrphanedCrons(
  */
 // ── Check: Claimed But Not Progressing ────────────────────────────────
 
-const CLAIMED_STUCK_THRESHOLD_MS = 25 * 60 * 1000; // 25 min — design (Stitch API) and implement can take 20+ min
+const CLAIMED_STUCK_THRESHOLD_MS = 10 * 60 * 1000; // 10 min — reduced from 25min (was 30min) for faster recovery
 
 /**
  * Find steps that were claimed (status='running') but haven't been updated

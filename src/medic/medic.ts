@@ -9,7 +9,7 @@
  */
 import { pgQuery, pgGet, pgRun, pgExec, pgBegin, now } from "../db-pg.js";
 import { emitEvent, type EventType } from "../installer/events.js";
-import { teardownWorkflowCronsIfIdle, ensureWorkflowCrons, removeAgentCrons, setupAgentCrons, expectedCronCount, actualCronCount, repairAgentCrons } from "../installer/agent-cron.js";
+import { teardownWorkflowCronsIfIdle, ensureWorkflowCrons, removeAgentCrons, setupAgentCrons, expectedCronCount, actualCronCount, repairAgentCrons, syncActiveCrons } from "../installer/agent-cron.js";
 import { loadWorkflowSpec } from "../installer/workflow-spec.js";
 import { resolveWorkflowDir, resolveSetfarmCli } from "../installer/paths.js";
 import { listCronJobs } from "../installer/gateway-api.js";
@@ -280,7 +280,17 @@ export async function restoreActiveRunCrons(): Promise<number> {
         const expected = expectedCronCount(workflow);
         const actual = await actualCronCount(run.workflow_id);
         if (actual === -1) { logger.warn(`[medic] gateway unreachable (${run.workflow_id})`, {}); }
-        else if (actual === 0) { await setupAgentCrons(workflow); await logCronRecreate("total_loss", run.workflow_id); restored++; emitEvent({ ts: now(), event: "run.resumed" as EventType, runId: "", workflowId: run.workflow_id, detail: `Medic: 0/${expected} crons — recreated` }); }
+        else if (actual === 0) {
+          // Prefer syncActiveCrons (demand-based) over setupAgentCrons (all agents)
+          const activeRun = await pgGet<{ id: string }>("SELECT id FROM runs WHERE workflow_id = $1 AND status = 'running' ORDER BY created_at DESC LIMIT 1", [run.workflow_id]);
+          if (activeRun) {
+            await syncActiveCrons(activeRun.id, run.workflow_id);
+          } else {
+            await setupAgentCrons(workflow);
+          }
+          await logCronRecreate("total_loss", run.workflow_id); restored++;
+          emitEvent({ ts: now(), event: "run.resumed" as EventType, runId: activeRun?.id || "", workflowId: run.workflow_id, detail: `Medic: 0/${expected} crons — recreated (demand-based)` });
+        }
         else if (actual !== expected) {
           // DEMAND-BASED: syncActiveCrons manages cron count.
           // Don't repair — intentional mismatch.
