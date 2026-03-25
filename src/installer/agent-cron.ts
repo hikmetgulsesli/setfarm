@@ -381,11 +381,14 @@ export async function repairAgentCrons(workflow: WorkflowSpec): Promise<{ added:
  */
 export async function syncActiveCrons(runId: string, workflowId: string): Promise<void> {
   try {
-    // 1. Find steps that NEED crons (pending or running)
+    // 1. Find steps that NEED crons across ALL active runs of this workflow
+    //    (not just the given run — parallel runs share the same cron pool)
     const activeSteps = await pgQuery<{ agent_id: string; step_id: string; status: string; type: string; loop_config: string | null }>(
-      `SELECT s.agent_id, s.step_id, s.status, s.type, s.loop_config
-       FROM steps s WHERE s.run_id = $1 AND s.status IN ('pending', 'running')`,
-      [runId]
+      `SELECT DISTINCT s.agent_id, s.step_id, s.status, s.type, s.loop_config
+       FROM steps s JOIN runs r ON r.id = s.run_id
+       WHERE r.workflow_id = $1 AND r.status = 'running'
+         AND s.status IN ('pending', 'running')`,
+      [workflowId]
     );
 
     if (activeSteps.length === 0) return;
