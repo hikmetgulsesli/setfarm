@@ -8,7 +8,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { getDb } from "../db.js";
+import { pgGet, pgRun, pgQuery, now } from "../db-pg.js";
 import { logger } from "../lib/logger.js";
 import { isFrontendChange } from "../lib/frontend-detect.js";
 import { runQualityChecks, formatQualityReport } from "./quality-gates.js";
@@ -86,11 +86,10 @@ export function checkMissingInputs(resolvedInput: string): string[] {
  * v12.0: Design step runs in the cloud (no repo access). HTML download happens in setup step.
  * Contract building is deferred to processSetupDesignContracts().
  */
-export function processDesignCompletion(
+export async function processDesignCompletion(
   runId: string,
   context: Record<string, string>,
-  db: ReturnType<typeof getDb>
-): string | null {
+): Promise<string | null> {
   // v12.0: Design step is cloud-only. Validate SCREENS_GENERATED and STITCH_PROJECT_ID.
   const screensGenerated = parseInt(context["screens_generated"] || "-1", 10);
   const stitchProjectId = context["stitch_project_id"] || "";
@@ -160,11 +159,10 @@ export function processDesignCompletion(
  * v12.0: This runs AFTER setup step downloads Stitch HTML files into stitch/ dir.
  * Advisory-only — errors are logged but do not fail the step.
  */
-export function processSetupDesignContracts(
+export async function processSetupDesignContracts(
   runId: string,
   context: Record<string, string>,
-  db: ReturnType<typeof getDb>
-): string | null {
+): Promise<string | null> {
   const repoPath = context["repo"] || context["REPO"] || "";
   logger.info(`[setup-design-contracts] ENTERING guardrail: repo=${repoPath} stitch_project_id=${context["stitch_project_id"]} screens_generated=${context["screens_generated"]}`, { runId });
   if (!repoPath) {
@@ -215,7 +213,7 @@ export function processSetupDesignContracts(
       fs.writeFileSync(contractPath, JSON.stringify(contracts, null, 2));
 
       // 5. Enrich stories with design criteria
-      enrichStoriesWithDesignContract(db, runId, contracts);
+      await enrichStoriesWithDesignContract(runId, contracts);
 
       logger.info(`[setup-design-contracts] UI contract: ${contracts.reduce((s: number, c: any) => s + c.totalInteractive, 0)} elements`, { runId });
 
@@ -237,7 +235,7 @@ export function processSetupDesignContracts(
               manifestScreens = Array.isArray(parsed) ? parsed : (parsed.screens || []);
             } catch {}
 
-            const allStories = db.prepare("SELECT story_id, title FROM stories WHERE run_id = ?").all(runId) as any[];
+            const allStories = await pgQuery<any>("SELECT story_id, title FROM stories WHERE run_id = $1", [runId]);
             const converted: any[] = [];
 
             for (const [screenName, screenId] of Object.entries(screenMap)) {
@@ -274,16 +272,14 @@ export function processSetupDesignContracts(
 
             screenMap = converted;
             context["screen_map"] = JSON.stringify(screenMap);
-            db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(JSON.stringify(context), runId);
+            await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [JSON.stringify(context), runId]);
             logger.info("[setup-design-contracts] Converted old SCREEN_MAP format to array format: " + converted.length + " screens", { runId });
           }
 
           for (const screen of screenMap) {
             if (!Array.isArray(screen.stories)) continue;
             for (const storyId of screen.stories) {
-              const row = db.prepare(
-                "SELECT id, acceptance_criteria FROM stories WHERE run_id = ? AND story_id = ?"
-              ).get(runId, storyId) as any;
+              const row = await pgGet<any>("SELECT id, acceptance_criteria FROM stories WHERE run_id = $1 AND story_id = $2", [runId, storyId]);
               if (!row) continue;
               const criterion = `Must implement screen ${screen.screenId} (${screen.name}) — read stitch/${screen.screenId}.html`;
               if (!row.acceptance_criteria.includes(screen.screenId)) {
@@ -292,8 +288,7 @@ export function processSetupDesignContracts(
                 try { acArr = JSON.parse(row.acceptance_criteria); } catch { acArr = [row.acceptance_criteria]; }
                 acArr.push(criterion);
                 const updated = JSON.stringify(acArr);
-                db.prepare("UPDATE stories SET acceptance_criteria = ?, updated_at = ? WHERE id = ?")
-                  .run(updated, new Date().toISOString(), row.id);
+                await pgRun("UPDATE stories SET acceptance_criteria = $1, updated_at = $2 WHERE id = $3", [updated, now(), row.id]);
               }
             }
           }
@@ -334,9 +329,9 @@ export function processSetupDesignContracts(
 
   // 7.6. Design↔Stories reconciliation (advisory — log orphaned design elements)
   try {
-    const stories = db.prepare(
-      "SELECT story_id as storyId, title, description FROM stories WHERE run_id = ?"
-    ).all(runId) as Array<{ storyId: string; title: string; description: string }>;
+    const stories = await pgQuery<{ storyId: string; title: string; description: string }>(
+      "SELECT story_id as storyId, title, description FROM stories WHERE run_id = $1", [runId]
+    );
     const prd = context["prd"] || "";
     const orphanedElements = reconcileDesignWithStories(repoPath, stories, prd);
     if (orphanedElements.length > 0) {
@@ -355,9 +350,9 @@ export function processSetupDesignContracts(
     if (screenMapRaw2) {
       const screenMap2 = JSON.parse(screenMapRaw2);
       if (Array.isArray(screenMap2)) {
-        const allStories = db.prepare(
-          "SELECT id, story_id FROM stories WHERE run_id = ?"
-        ).all(runId) as Array<{ id: string; story_id: string }>;
+        const allStories = await pgQuery<{ id: string; story_id: string }>(
+          "SELECT id, story_id FROM stories WHERE run_id = $1", [runId]
+        );
         for (const story of allStories) {
           const storyScreens = screenMap2
             .filter((s: any) => Array.isArray(s.stories) && s.stories.includes(story.story_id))
@@ -372,8 +367,7 @@ export function processSetupDesignContracts(
               return true;
             });
           if (storyScreens.length > 0) {
-            db.prepare("UPDATE stories SET story_screens = ?, updated_at = ? WHERE id = ?")
-              .run(JSON.stringify(storyScreens), new Date().toISOString(), story.id);
+            await pgRun("UPDATE stories SET story_screens = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(storyScreens), now(), story.id]);
           }
         }
         logger.info(`[setup-design-contracts] Persisted story_screens to DB for ${allStories.length} stories`, { runId });

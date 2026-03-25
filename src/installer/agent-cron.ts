@@ -1,11 +1,8 @@
 import { createAgentCronJob, deleteAgentCronJobs, deleteCronJob, listCronJobs, checkCronToolAvailable } from "./gateway-api.js";
 import type { WorkflowSpec, AgentMapping } from "./types.js";
 import { resolveSetfarmCli } from "./paths.js";
-import { getDb } from "../db.js";
-import { pgGet } from "../db-pg.js";
+import { pgGet, pgQuery } from "../db-pg.js";
 import { logger } from "../lib/logger.js";
-
-const USE_PG = process.env.DB_BACKEND === "postgres";
 
 const DEFAULT_EVERY_MS = 240_000; // 4 minutes
 const DEFAULT_AGENT_TIMEOUT_SECONDS = 30 * 60; // 30 minutes
@@ -25,14 +22,16 @@ const DEFAULT_POLLING_MODEL = "minimax/MiniMax-M2.7";
 export function buildPollingPrompt(workflowId: string, agentId: string): string {
   const fullAgentId = `${workflowId}_${agentId}`;
   const cli = resolveSetfarmCli();
+  // Pass DB_BACKEND to agent sessions — gateway env doesn't propagate to cron exec tool
+  const dbEnv = "DB_BACKEND=postgres ";
 
   // Compact prompt — minimizes tokens on NO_WORK (majority of calls)
   return `Workflow agent. Peek→Claim→Work→Complete.
 
-1. /usr/bin/node ${cli} step peek "${fullAgentId}"
+1. ${dbEnv}/usr/bin/node ${cli} step peek "${fullAgentId}"
    NO_WORK → reply "HEARTBEAT_OK", STOP.
 
-2. /usr/bin/node ${cli} step claim "${fullAgentId}"
+2. ${dbEnv}/usr/bin/node ${cli} step claim "${fullAgentId}"
    NO_WORK → "HEARTBEAT_OK", STOP.
    JSON output contains {"stepId":"<UUID>","runId":"<UUID>","input":"..."}.
    CRITICAL: Save the "stepId" value (NOT "runId"). You MUST use stepId for complete/fail.
@@ -44,8 +43,8 @@ cat <<'SETFARM_EOF' > .setfarm-step-output.txt
 STATUS: done
 <other keys as specified in step input>
 SETFARM_EOF
-cat .setfarm-step-output.txt | /usr/bin/node ${cli} step complete "<the stepId from claim JSON>"
-On failure: /usr/bin/node ${cli} step fail "<the stepId from claim JSON>" "reason"
+cat .setfarm-step-output.txt | ${dbEnv}/usr/bin/node ${cli} step complete "<the stepId from claim JSON>"
+On failure: ${dbEnv}/usr/bin/node ${cli} step fail "<the stepId from claim JSON>" "reason"
 
 5. STOP. Reply "HEARTBEAT_OK". No more tool calls.
 
@@ -58,6 +57,19 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
   await removeAgentCrons(workflow.id);
   // Wait for WS to settle after bulk cron removal (OpenClaw 2026.3.13 handshake issue)
   await new Promise(r => setTimeout(r, 3000));
+
+  // DEMAND-BASED: Only create crons for agents with pending/running steps.
+  // syncActiveCrons() will add more as pipeline advances.
+  const activeRun = await pgGet<{ id: string }>(
+    "SELECT id FROM runs WHERE workflow_id = $1 AND status = 'running' ORDER BY created_at DESC LIMIT 1",
+    [workflow.id]
+  );
+  if (activeRun) {
+    await syncActiveCrons(activeRun.id, workflow.id);
+    return;
+  }
+
+  // Fallback: no active run yet (first setup) — create only first step's agent cron
   const agents = workflow.agents;
   // Allow per-workflow cron interval via cron.interval_ms in workflow.yml
   const everyMs = (workflow as any).cron?.interval_ms ?? DEFAULT_EVERY_MS;
@@ -69,7 +81,7 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
 
   for (let i = 0; i < agents.length; i++) {
     const agent = agents[i];
-    const anchorMs = i * 15_000; // stagger by 15s each
+    const anchorMs = i * 60_000; // stagger by 60s to prevent gateway OOM // stagger by 15s each
     const cronName = `setfarm/${workflow.id}/${agent.id}`;
     // Use mapped OpenClaw agent ID if available, otherwise fall back to workflow agent ID
     const rawMappedId = agentMapping[agent.id];
@@ -150,18 +162,10 @@ export async function removeAgentCrons(workflowId: string): Promise<void> {
  * Count active (running) runs for a given workflow.
  */
 async function countActiveRuns(workflowId: string): Promise<number> {
-  if (USE_PG) {
-    const row = await pgGet<{ cnt: number }>(
-      "SELECT COUNT(*) as cnt FROM runs WHERE workflow_id = $1 AND status = 'running'", [workflowId]
-    );
-    return Number(row?.cnt ?? 0);
-  } else {
-    const db = getDb();
-    const row = db.prepare(
-      "SELECT COUNT(*) as cnt FROM runs WHERE workflow_id = ? AND status = 'running'"
-    ).get(workflowId) as { cnt: number };
-    return row.cnt;
-  }
+  const row = await pgGet<{ cnt: number }>(
+    "SELECT COUNT(*) as cnt FROM runs WHERE workflow_id = $1 AND status = 'running'", [workflowId]
+  );
+  return Number(row?.cnt ?? 0);
 }
 
 /**
@@ -182,6 +186,16 @@ export async function ensureWorkflowCrons(workflow: WorkflowSpec): Promise<void>
   if (await workflowCronsExist(workflow.id)) {
     // Crons already exist — skip to prevent anchor-reset loop (#48 fix)
     // Use `workflow ensure-crons <name>` CLI to force-recreate when config changes.
+    // Demand-based: sync crons to match active steps instead of blindly recreating all
+    try {
+      const activeRun = await pgGet<{ id: string; workflow_id: string }>(
+        "SELECT id, workflow_id FROM runs WHERE workflow_id = $1 AND status = 'running' ORDER BY created_at DESC LIMIT 1",
+        [workflow.id]
+      );
+      if (activeRun) {
+        await syncActiveCrons(activeRun.id, activeRun.workflow_id);
+      }
+    } catch {}
     return;
   }
 
@@ -306,7 +320,7 @@ export async function repairAgentCrons(workflow: WorkflowSpec): Promise<{ added:
   const agents = workflow.agents;
   for (let i = 0; i < agents.length; i++) {
     const agent = agents[i];
-    const anchorMs = i * 15_000;
+    const anchorMs = i * 60_000; // stagger by 60s to prevent gateway OOM
     const cronName = `setfarm/${workflow.id}/${agent.id}`;
     const rawMappedId = agentMapping[agent.id];
     const mappedAgentId = Array.isArray(rawMappedId) ? rawMappedId[0] : rawMappedId;
@@ -353,4 +367,121 @@ export async function repairAgentCrons(workflow: WorkflowSpec): Promise<{ added:
   }
 
   return { added, removed };
+}
+
+
+// ── Demand-based cron sync ──────────────────────────────────────────
+
+/**
+ * Sync gateway crons to match ONLY the agents that have pending/running steps.
+ * Called by advancePipeline after each step transition.
+ *
+ * Instead of 19 crons firing every 4 minutes (17-18 doing NO_WORK),
+ * only 1-6 crons exist at any time — matching the active pipeline phase.
+ */
+export async function syncActiveCrons(runId: string, workflowId: string): Promise<void> {
+  try {
+    // 1. Find steps that NEED crons (pending or running)
+    const activeSteps = await pgQuery<{ agent_id: string; step_id: string; status: string; type: string; loop_config: string | null }>(
+      `SELECT s.agent_id, s.step_id, s.status, s.type, s.loop_config
+       FROM steps s WHERE s.run_id = $1 AND s.status IN ('pending', 'running')`,
+      [runId]
+    );
+
+    if (activeSteps.length === 0) return;
+
+    // 2. Load workflow spec to resolve agent_mapping (role -> gateway agent IDs)
+    const { resolveWorkflowDir } = await import("./paths.js");
+    const { loadWorkflowSpec } = await import("./workflow-spec.js");
+    const workflowDir = resolveWorkflowDir(workflowId);
+    const workflow = await loadWorkflowSpec(workflowDir);
+    const agentMapping: Record<string, string | string[]> = workflow.agent_mapping ?? {};
+
+    // 3. Build set of GATEWAY agent IDs that need crons
+    const neededGatewayAgents = new Set<string>();
+    const neededRoles = new Set<string>();
+
+    for (const step of activeSteps) {
+      // Extract role from agent_id: "feature-dev_developer" -> "developer"
+      const role = step.agent_id.replace(workflowId + '_', '');
+      neededRoles.add(role);
+
+      // Resolve via agent_mapping to actual gateway agent IDs
+      const mapped = agentMapping[role];
+      if (Array.isArray(mapped)) {
+        for (const a of mapped) neededGatewayAgents.add(a);
+      } else if (mapped) {
+        neededGatewayAgents.add(mapped);
+      } else {
+        neededGatewayAgents.add(role); // fallback: use role name as agent ID
+      }
+
+      // For loop steps with verify_each, also keep the verify agent active
+      if (step.type === 'loop' && step.loop_config) {
+        try {
+          const lc = JSON.parse(step.loop_config);
+          if (lc.verifyEach && lc.verifyStep) {
+            const verifyRole = lc.verifyStep.replace(workflowId + '_', '');
+            neededRoles.add(verifyRole);
+            const verifyMapped = agentMapping[verifyRole];
+            if (Array.isArray(verifyMapped)) {
+              for (const a of verifyMapped) neededGatewayAgents.add(a);
+            } else if (verifyMapped) {
+              neededGatewayAgents.add(verifyMapped);
+            }
+          }
+        } catch {}
+      }
+    }
+
+    // 4. Get current gateway crons for this workflow
+    const cronResult = await listCronJobs();
+    if (!cronResult.ok || !cronResult.jobs) return;
+
+    const prefix = `setfarm/${workflowId}/`;
+    const existingCrons = cronResult.jobs.filter((j: any) => j.name.startsWith(prefix));
+
+    // 5. Remove crons whose gateway agent ID is NOT in the needed set
+    let removed = 0;
+    for (const cron of existingCrons) {
+      const cronAgentId = (cron as any).agentId || '';
+      if (!neededGatewayAgents.has(cronAgentId)) {
+        try { await deleteCronJob(cron.id); removed++; } catch {}
+      }
+    }
+
+    // 6. Check if needed agents are missing crons — recreate from workflow spec
+    const existingAgentIds = new Set(existingCrons.map((c: any) => (c as any).agentId || ''));
+    let added = 0;
+    for (const role of neededRoles) {
+      const mapped = agentMapping[role];
+      const agents: string[] = Array.isArray(mapped) ? mapped : mapped ? [mapped] : [role];
+
+      for (let i = 0; i < agents.length; i++) {
+        if (existingAgentIds.has(agents[i])) continue;
+
+        const cronName = i === 0
+          ? `setfarm/${workflowId}/${role}`
+          : `setfarm/${workflowId}/${role}-${i + 1}`;
+        const prompt = buildPollingPrompt(workflowId, role);
+
+        await createAgentCronJob({
+          name: cronName,
+          schedule: { kind: "every", everyMs: DEFAULT_EVERY_MS, anchorMs: i * 60_000 },
+          sessionTarget: "isolated",
+          agentId: agents[i],
+          payload: { kind: "agentTurn", message: prompt, timeoutSeconds: DEFAULT_AGENT_TIMEOUT_SECONDS },
+          delivery: { mode: "none" },
+          enabled: true,
+        });
+        added++;
+      }
+    }
+
+    if (removed > 0 || added > 0) {
+      logger.info(`[syncActiveCrons] Removed ${removed} idle, added ${added} needed — ${neededGatewayAgents.size} active agents for roles [${[...neededRoles].join(',')}]`, { runId });
+    }
+  } catch (err) {
+    logger.warn(`[syncActiveCrons] Failed: ${String(err)}`, { runId });
+  }
 }

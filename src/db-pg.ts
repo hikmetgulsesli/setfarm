@@ -1,13 +1,13 @@
 /**
  * PostgreSQL database layer for Setfarm.
- * Async API that mirrors the SQLite layer's functionality.
+ * Async API — PostgreSQL-only database layer.
  * Uses porsager/postgres (tagged template SQL).
  */
 import postgres from 'postgres';
 import os from 'node:os';
 import path from 'node:path';
 
-const DEFAULT_PG_URL = 'postgresql://setrox:k7z6*n4u4@localhost:5432/setfarm';
+const DEFAULT_PG_URL = 'postgresql://localhost:5432/setfarm';
 
 let _sql: ReturnType<typeof postgres> | null = null;
 
@@ -26,7 +26,7 @@ function getSql() {
 
 export { getSql };
 
-// ── Query helpers (async equivalents of SQLite's prepare().get/all/run) ──
+// ── Query helpers ──
 
 export async function pgQuery<T = any>(sql: string, params: any[] = []): Promise<T[]> {
   const s = getSql();
@@ -98,3 +98,6 @@ export async function pgClose(): Promise<void> {
     _sql = null;
   }
 }
+
+/** ISO timestamp — single source of truth for all modules */
+export const now = (): string => new Date().toISOString();

@@ -1,6 +1,4 @@
-import { pgQuery, pgGet, pgRun, pgExec, pgBegin } from "../db-pg.js";
-const USE_PG = process.env.DB_BACKEND === 'postgres';
-import { getDb, beginTx, endTx } from "../db.js";
+import { pgQuery, pgGet, pgRun, pgExec, pgBegin, now } from "../db-pg.js";
 import type { LoopConfig, Story } from "./types.js";
 import { execFileSync } from "node:child_process";
 import os from "node:os";
@@ -64,7 +62,6 @@ export type PeekResult = "HAS_WORK" | "NO_WORK";
  * Returns "HAS_WORK" if any pending/waiting steps exist, "NO_WORK" otherwise.
  */
 export async function peekStep(agentId: string): Promise<PeekResult> {
-  if (USE_PG) {
     const row = await pgGet<{ cnt: number }>(
       `SELECT COUNT(*) as cnt FROM steps s
        JOIN runs r ON r.id = s.run_id
@@ -77,23 +74,6 @@ export async function peekStep(agentId: string): Promise<PeekResult> {
          )`, [agentId]
     );
     return (row?.cnt ?? 0) > 0 ? "HAS_WORK" : "NO_WORK";
-  }
-  const db = getDb();
-  // Count pending steps, PLUS running loop steps that still have pending stories
-  // #182: Don't match 'waiting' (claimStep won't accept them → wasted sessions)
-  // #262: Also match running loops with unverified 'done' stories (verify_each cycle)
-  const row = db.prepare(
-    `SELECT COUNT(*) as cnt FROM steps s
-     JOIN runs r ON r.id = s.run_id
-     WHERE s.agent_id = ? AND r.status = 'running'
-       AND (
-         s.status = 'pending'
-         OR (s.status = 'running' AND s.type = 'loop'
-             AND (EXISTS (SELECT 1 FROM stories st WHERE st.run_id = s.run_id AND st.status = 'pending')
-                  OR EXISTS (SELECT 1 FROM stories st WHERE st.run_id = s.run_id AND st.status = 'done')))
-       )`
-  ).get(agentId) as { cnt: number };
-  return row.cnt > 0 ? "HAS_WORK" : "NO_WORK";
 }
 
 // ── Claim ───────────────────────────────────────────────────────────
@@ -139,8 +119,7 @@ async function autoCompleteDesignStep(step: StepRow, db: any, htmlFiles: string[
   dCtx["design_notes"] = `Reused ${htmlFiles.length} existing screen designs`;
   await updateRunContext(step.run_id, dCtx);
   const dOutput = `STATUS: done\nSTITCH_PROJECT_ID: ${projectId}\nSCREENS_GENERATED: ${htmlFiles.length}\nDESIGN_NOTES: Reused ${htmlFiles.length} screens (auto-skip)`;
-  db.prepare("UPDATE steps SET status = 'done', output = ?, updated_at = ? WHERE id = ?")
-    .run(dOutput, new Date().toISOString(), step.id);
+  await pgRun("UPDATE steps SET status = 'done', output = $1, updated_at = $2 WHERE id = $3", [dOutput, now(), step.id]);
   logger.info(`[design-dedup] Auto-skipped design — reusing ${htmlFiles.length} screens (project ${projectId})`, { runId: step.run_id });
   advancePipeline(step.run_id);
   return true;
@@ -171,7 +150,7 @@ async function handleDesignDedup(step: StepRow, db: any): Promise<boolean> {
     try {
       const dData = JSON.parse(fs.readFileSync(dStitchFile, "utf-8"));
       // Only reuse if .stitch was written DURING this run (prevents cross-run contamination)
-      const runRow = db.prepare("SELECT created_at FROM runs WHERE id = ?").get(step.run_id) as any;
+      const runRow = await pgGet<any>("SELECT created_at FROM runs WHERE id = $1", [step.run_id]);
       const runCreatedAt = runRow ? new Date(runRow.created_at).getTime() : 0;
       const stitchUpdatedAt = dData.updatedAt ? new Date(dData.updatedAt).getTime() : 0;
       // 60s tolerance: PRD Generator writes .stitch seconds before run starts
@@ -263,9 +242,7 @@ async function autoCompleteStoriesWithPRs(
   context: Record<string, string>,
   db: any,
 ): Promise<void> {
-  const autoCompleteStories = db.prepare(
-    "SELECT * FROM stories WHERE run_id = ? AND status = 'pending' ORDER BY story_index ASC"
-  ).all(step.run_id) as any[];
+  const autoCompleteStories = await pgQuery<any>("SELECT * FROM stories WHERE run_id = $1 AND status = 'pending' ORDER BY story_index ASC", [step.run_id]);
   for (const rs of autoCompleteStories) {
     // Build expected branch: {runId_prefix}-{STORY_ID} e.g. "433ff7a1-US-001"
     const storyBranchForCheck = rs.story_branch || `${runIdPrefix}-${rs.story_id}`;
@@ -291,12 +268,10 @@ async function autoCompleteStoriesWithPRs(
       }
 
       if (prFound && prUrl) {
-        db.prepare("UPDATE stories SET status = 'done', pr_url = ?, story_branch = ?, updated_at = ? WHERE id = ?")
-          .run(prUrl, storyBranchForCheck, new Date().toISOString(), rs.id);
-        db.prepare("UPDATE steps SET current_story_id = NULL, updated_at = ? WHERE id = ? AND current_story_id = ?")
-          .run(new Date().toISOString(), step.id, rs.id);
+          await pgRun("UPDATE stories SET status = 'done', pr_url = $1, story_branch = $2, updated_at = $3 WHERE id = $4", [prUrl, storyBranchForCheck, now(), rs.id]);
+          await pgRun("UPDATE steps SET current_story_id = NULL, updated_at = $1 WHERE id = $2 AND current_story_id = $3", [now(), step.id, rs.id]);
         logger.info(`[claim-auto-complete] Story ${rs.story_id} auto-completed — PR exists: ${prUrl}`, { runId: step.run_id });
-        emitEvent({ ts: new Date().toISOString(), event: "story.done", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, storyId: rs.story_id, storyTitle: rs.title, detail: `Auto-completed — PR exists (${prUrl})` });
+        emitEvent({ ts: now(), event: "story.done", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, storyId: rs.story_id, storyTitle: rs.title, detail: `Auto-completed — PR exists (${prUrl})` });
       }
     } catch (e) {
       logger.warn(`[claim-auto-complete] PR check failed for story ${rs.story_id}: ${String(e)}`, { runId: step.run_id });
@@ -432,8 +407,7 @@ async function injectVerifyContext(
 
   if (!nextUnverified) {
     // All stories auto-verified — no agent work needed, advance pipeline
-    db.prepare("UPDATE steps SET status = 'waiting', updated_at = ? WHERE id = ?")
-      .run(new Date().toISOString(), step.id);
+    await pgRun("UPDATE steps SET status = 'waiting', updated_at = $1 WHERE id = $2", [now(), step.id]);
     logger.info(`[claim-auto-verify] All stories auto-verified, triggering pipeline advancement`, { runId: step.run_id });
     try { checkLoopContinuation(step.run_id, loopStepForVerify.id); } catch (e) { logger.error("[claim-auto-verify] checkLoopContinuation failed: " + String(e), { runId: step.run_id }); }
     return false;
@@ -465,8 +439,7 @@ async function injectVerifyContext(
   // Resolve story_screens from SCREEN_MAP for verify_each
   await resolveStoryScreens(nextUnverified.story_id, context, step.run_id, "verify-claim");
 
-  db.prepare("UPDATE runs SET context = ?, updated_at = ? WHERE id = ?")
-    .run(JSON.stringify(context), new Date().toISOString(), step.run_id);
+  await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
   logger.info(`Verify step: injected story ${nextUnverified.story_id} context`, { runId: step.run_id });
 
   return true;
@@ -484,21 +457,19 @@ async function claimSingleStep(
   db: any,
 ): Promise<ClaimResult> {
   // Item 6: Single step — atomic claim with changes check to prevent race condition
-  const claimResult = db.prepare(
-    "UPDATE steps SET status = 'running', updated_at = ? WHERE id = ? AND status = 'pending'"
-  ).run(new Date().toISOString(), step.id);
-  if (claimResult.changes === 0) {
+  let _claimChanges: number;
+  const _cr = await pgRun("UPDATE steps SET status = 'running', updated_at = $1 WHERE id = $2 AND status = 'pending'", [now(), step.id]);
+  _claimChanges = _cr.changes;
+  if (_claimChanges === 0) {
     // Already claimed by another cron — return no work
     return { found: false };
   }
-  emitEvent({ ts: new Date().toISOString(), event: "step.running", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId });
+  emitEvent({ ts: now(), event: "step.running", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId });
   logger.info(`Step claimed by ${agentId}`, { runId: step.run_id, stepId: step.step_id });
 
   // v1.5.50: Record single step claim in claim_log
   try {
-    db.prepare(
-      "INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at) VALUES (?, ?, NULL, ?, ?)"
-    ).run(step.run_id, step.step_id, agentId, new Date().toISOString());
+    await pgRun("INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at) VALUES ($1, $2, NULL, $3, $4)", [step.run_id, step.step_id, agentId, now()]);
   } catch (e) { logger.warn(`[claim-log] Failed to record claim: ${String(e)}`, { runId: step.run_id }); }
 
   // #260: Default optional template vars to prevent MISSING_INPUT_GUARD false positives
@@ -507,10 +478,8 @@ async function claimSingleStep(
   }
 
   // Inject progress for any step in a run that has stories
-  const hasStories = db.prepare(
-    "SELECT COUNT(*) as cnt FROM stories WHERE run_id = ?"
-  ).get(step.run_id) as { cnt: number };
-  if (hasStories.cnt > 0) {
+  const hasStories = await pgGet<{ cnt: number }>("SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1", [step.run_id]);
+  if ((hasStories?.cnt ?? 0) > 0) {
     context["progress"] = await readProgressFile(step.run_id);
     context["project_memory"] = await readProjectMemory(context);
 
@@ -539,23 +508,20 @@ async function claimSingleStep(
   if (allMissing.length > 0) {
     const reason = `Blocked: unresolved variable(s) [${allMissing.join(", ")}] in input`;
     // Check step's retry_count to decide retry vs fail
-    const stepRetry = db.prepare("SELECT retry_count FROM steps WHERE id = ?").get(step.id) as { retry_count: number } | undefined;
+    const stepRetry = await pgGet<{ retry_count: number }>("SELECT retry_count FROM steps WHERE id = $1", [step.id]);
     const retryCount = stepRetry?.retry_count ?? 0;
     logger.warn(`${reason} (retry=${retryCount})`, { runId: step.run_id, stepId: step.step_id });
     if (retryCount > 0) {
       // Second occurrence — fail run
-      db.prepare("UPDATE steps SET status = 'failed', output = ?, updated_at = ? WHERE id = ?")
-        .run(reason + " — failing run (retry exhausted)", new Date().toISOString(), step.id);
-      db.prepare("UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?")
-        .run(new Date().toISOString(), step.run_id);
+      await pgRun("UPDATE steps SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3", [reason + " — failing run (retry exhausted)", now(), step.id]);
+      await pgRun("UPDATE runs SET status = 'failed', updated_at = $1 WHERE id = $2", [now(), step.run_id]);
       const wfId = await getWorkflowId(step.run_id);
-      emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: reason });
-      emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: reason });
+      emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: reason });
+      emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: reason });
       scheduleRunCronTeardown(step.run_id);
     } else {
       // First occurrence — retry step (possible WAL lag)
-      db.prepare("UPDATE steps SET status = 'pending', retry_count = retry_count + 1, output = ?, updated_at = ? WHERE id = ?")
-        .run(reason + " — retrying once", new Date().toISOString(), step.id);
+      await pgRun("UPDATE steps SET status = 'pending', retry_count = retry_count + 1, output = $1, updated_at = $2 WHERE id = $3", [reason + " — retrying once", now(), step.id]);
       logger.info(`[missing-input] Step ${step.step_id} will retry — possible WAL lag`, { runId: step.run_id });
     }
     return { found: false };
@@ -580,34 +546,30 @@ let lastCleanupTime = 0;
  * Find and claim a pending step for an agent, returning the resolved input.
  */
 export async function claimStep(agentId: string): Promise<ClaimResult> {
-  beginTx();
-  try {
   // Throttle cleanup: run at most once every 5 minutes across all agents
-  const now = Date.now();
-  if (now - lastCleanupTime >= CLEANUP_THROTTLE_MS) {
+  const epochMs = Date.now();
+  if (epochMs - lastCleanupTime >= CLEANUP_THROTTLE_MS) {
     cleanupAbandonedSteps();
-    lastCleanupTime = now;
+    lastCleanupTime = epochMs;
   }
-  const db = getDb();
 
   // Allow claiming from both pending AND running loop steps (parallel story execution)
-  const step = db.prepare(
-    `SELECT s.id, s.step_id, s.run_id, s.input_template, s.type, s.loop_config, s.status as step_status
-     FROM steps s
-     JOIN runs r ON r.id = s.run_id
-     WHERE s.agent_id = ?
-       AND (s.status = 'pending' OR (s.status = 'running' AND s.type = 'loop'))
-       AND r.status NOT IN ('failed', 'cancelled')
-       AND NOT EXISTS (
-         SELECT 1 FROM steps prev
-         WHERE prev.run_id = s.run_id
-           AND prev.step_index < s.step_index
-           AND prev.status NOT IN ('done', 'failed', 'skipped', 'verified')
-           AND NOT (prev.type = 'loop' AND prev.status = 'running')
-       )
-     ORDER BY s.step_index ASC, s.status ASC
-     LIMIT 1`
-  ).get(agentId) as { id: string; step_id: string; run_id: string; input_template: string; type: string; loop_config: string | null; step_status: string } | undefined;
+  const step = await pgGet<{ id: string; step_id: string; run_id: string; input_template: string; type: string; loop_config: string | null; step_status: string }>(
+        `SELECT s.id, s.step_id, s.run_id, s.input_template, s.type, s.loop_config, s.status as step_status
+         FROM steps s
+         JOIN runs r ON r.id = s.run_id
+         WHERE s.agent_id = $1
+           AND (s.status = 'pending' OR (s.status = 'running' AND s.type = 'loop'))
+           AND r.status NOT IN ('failed', 'cancelled')
+           AND NOT EXISTS (
+             SELECT 1 FROM steps prev
+             WHERE prev.run_id = s.run_id
+               AND prev.step_index < s.step_index
+               AND prev.status NOT IN ('done', 'failed', 'skipped', 'verified')
+               AND NOT (prev.type = 'loop' AND prev.status = 'running')
+           )
+         ORDER BY s.step_index ASC, s.status ASC
+         LIMIT 1`, [agentId]);
 
   if (!step) return { found: false };
 
@@ -615,7 +577,7 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
   if (await getRunStatus(step.run_id) === RUN_STATUS.FAILED) return { found: false };
 
   // DESIGN STEP DEDUP
-  if (await handleDesignDedup(step, db)) return { found: false };
+  if (await handleDesignDedup(step, null)) return { found: false };
 
   // DEPLOY ENV GUARD
   await handleDeployEnvGuard(step);
@@ -639,18 +601,19 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
     if (loopConfig?.over === "stories") {
       // Auto-complete stories that already have a PR (open or merged)
       const runIdPrefix = step.run_id.slice(0, 8);
-      await autoCompleteStoriesWithPRs(step, runIdPrefix, context, db);
+      await autoCompleteStoriesWithPRs(step, runIdPrefix, context, null);
 
-      // BEGIN IMMEDIATE early: story selection + claim must be atomic to prevent
+      // Story selection + claim must be atomic to prevent
       // two parallel crons from selecting the same story (race condition fix #4)
-      db.exec("BEGIN IMMEDIATE");
       let _txOpen = true;
-      const _rollbackEarly = () => { if (_txOpen) { try { db.exec("ROLLBACK"); } catch (e) { logger.warn(`[claim] ROLLBACK failed: ${String(e)}`, {}); } _txOpen = false; } };
+      const _rollbackEarly = () => {
+        if (_txOpen) {
+          _txOpen = false;
+        }
+      };
 
       // Find next pending story with dependency check
-      const pendingStories = db.prepare(
-        "SELECT * FROM stories WHERE run_id = ? AND status = 'pending' ORDER BY story_index ASC"
-      ).all(step.run_id) as any[];
+      const pendingStories = await pgQuery<any>("SELECT * FROM stories WHERE run_id = $1 AND status = 'pending' ORDER BY story_index ASC", [step.run_id]);
 
       let nextStory: any | undefined;
       for (const candidate of pendingStories) {
@@ -658,9 +621,8 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
           try {
             const deps: string[] = JSON.parse(candidate.depends_on);
             if (deps.length > 0) {
-              const completedIds = db.prepare(
-                "SELECT story_id FROM stories WHERE run_id = ? AND status IN ('done', 'failed', 'verified', 'skipped')"
-              ).all(step.run_id).map((r: any) => r.story_id);
+              const completedIds = (await pgQuery<{ story_id: string }>("SELECT story_id FROM stories WHERE run_id = $1 AND status IN ('done', 'failed', 'verified', 'skipped')", [step.run_id])
+              ).map((r: any) => r.story_id);
               const completedSet = new Set(completedIds);
               const unmet = deps.filter(d => !completedSet.has(d));
               if (unmet.length > 0) {
@@ -684,13 +646,11 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
           // v9.0: Skip failed stories instead of failing the loop
           await skipFailedStories(step.run_id);
           const wfId = await getWorkflowId(step.run_id);
-          emitEvent({ ts: new Date().toISOString(), event: "story.skipped", runId: step.run_id, workflowId: wfId, stepId: step.id, agentId: agentId, detail: "Failed stories skipped — loop continues" });
+          emitEvent({ ts: now(), event: "story.skipped", runId: step.run_id, workflowId: wfId, stepId: step.id, agentId: agentId, detail: "Failed stories skipped — loop continues" });
         }
 
         // Check if other stories are still running in parallel
-        const runningStory = db.prepare(
-          "SELECT id FROM stories WHERE run_id = ? AND status = 'running'"
-        ).get(step.run_id);
+        const runningStory = await pgGet<{ id: string }>("SELECT id FROM stories WHERE run_id = $1 AND status = 'running'", [step.run_id]);
         if (runningStory) {
           _rollbackEarly(); return { found: false }; // Other stories still running, wait for them
         }
@@ -700,15 +660,13 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
           const deadlockMsg = `Dependency deadlock: ${pendingStories.length} pending stories all blocked by unmet dependencies — failing run`;
           logger.error(deadlockMsg, { runId: step.run_id });
           for (const blocked of pendingStories) {
-            db.prepare("UPDATE stories SET status = 'failed', output = 'Failed: dependency deadlock', updated_at = ? WHERE id = ?")
-              .run(new Date().toISOString(), blocked.id);
+            await pgRun("UPDATE stories SET status = 'failed', output = 'Failed: dependency deadlock', updated_at = $1 WHERE id = $2", [now(), blocked.id]);
           }
-          db.prepare("UPDATE steps SET status = 'failed', output = ?, updated_at = ? WHERE id = ?")
-            .run(deadlockMsg, new Date().toISOString(), step.id);
+          await pgRun("UPDATE steps SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3", [deadlockMsg, now(), step.id]);
           await failRun(step.run_id);
           const wfIdDL = await getWorkflowId(step.run_id);
-          emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfIdDL, stepId: step.step_id, detail: deadlockMsg });
-          emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfIdDL, detail: deadlockMsg });
+          emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfIdDL, stepId: step.step_id, detail: deadlockMsg });
+          emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfIdDL, detail: deadlockMsg });
           scheduleRunCronTeardown(step.run_id);
           return { found: false };
         }
@@ -718,36 +676,27 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
         if (totalStories.cnt === 0) {
           const noStoriesReason = "No stories exist — planner did not produce STORIES_JSON";
           logger.warn(noStoriesReason, { runId: step.run_id, stepId: step.step_id });
-          db.prepare(
-            "UPDATE steps SET status = 'failed', output = ?, updated_at = ? WHERE id = ?"
-          ).run(noStoriesReason, new Date().toISOString(), step.id);
-          db.prepare(
-            "UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?"
-          ).run(new Date().toISOString(), step.run_id);
+          await pgRun("UPDATE steps SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3", [noStoriesReason, now(), step.id]);
+          await pgRun("UPDATE runs SET status = 'failed', updated_at = $1 WHERE id = $2", [now(), step.run_id]);
           const wfId157 = await getWorkflowId(step.run_id);
-          emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId157, stepId: step.step_id, detail: noStoriesReason });
-          emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId157, detail: noStoriesReason });
+          emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId157, stepId: step.step_id, detail: noStoriesReason });
+          emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId157, detail: noStoriesReason });
           scheduleRunCronTeardown(step.run_id);
           return { found: false };
         }
 
         // PENDING STORY GUARD: If pending stories remain but agent said "done", DON'T complete the loop.
         // Reset step to pending so the next claim cycle picks up remaining stories.
-        const remainingPending = db.prepare(
-          "SELECT COUNT(*) as cnt FROM stories WHERE run_id = ? AND status = 'pending'"
-        ).get(step.run_id) as { cnt: number };
-        if (remainingPending.cnt > 0) {
-          logger.warn(`[loop-guard] ${remainingPending.cnt} pending stories remain — refusing to complete implement loop`, { runId: step.run_id });
-          db.prepare("UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = ? WHERE id = ?")
-            .run(new Date().toISOString(), step.id);
+        const remainingPending = await pgGet<{ cnt: number }>("SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status = 'pending'", [step.run_id]);
+        if ((remainingPending?.cnt ?? 0) > 0) {
+          logger.warn(`[loop-guard] ${remainingPending?.cnt} pending stories remain — refusing to complete implement loop`, { runId: step.run_id });
+          await pgRun("UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = $1 WHERE id = $2", [now(), step.id]);
           return { found: false };
         }
 
         // No pending, running, or failed stories — mark step done and advance
-        db.prepare(
-          "UPDATE steps SET status = 'done', updated_at = ? WHERE id = ?"
-        ).run(new Date().toISOString(), step.id);
-        emitEvent({ ts: new Date().toISOString(), event: "step.done", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId });
+        await pgRun("UPDATE steps SET status = 'done', updated_at = $1 WHERE id = $2", [now(), step.id]);
+        emitEvent({ ts: now(), event: "step.done", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId });
         advancePipeline(step.run_id);
         return { found: false };
       }
@@ -761,17 +710,12 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
 
       // Claim the story FIRST (inside transaction — prevents parallel crons from double-claiming)
       const storyBranch = nextStory.story_id.toLowerCase();
-      db.prepare(
-        "UPDATE stories SET status = 'running', updated_at = ? WHERE id = ?"
-      ).run(new Date().toISOString(), nextStory.id);
-      db.prepare(
-        "UPDATE steps SET status = 'running', current_story_id = ?, updated_at = ? WHERE id = ?"
-      ).run(nextStory.id, new Date().toISOString(), step.id);
-      db.exec("COMMIT");
+      await pgRun("UPDATE stories SET status = 'running', updated_at = \$1 WHERE id = \$2", [now(), nextStory.id]);
+      await pgRun("UPDATE steps SET status = 'running', current_story_id = \$1, updated_at = \$2 WHERE id = \$3", [nextStory.id, now(), step.id]);
       _txOpen = false;
 
-      // GIT WORKTREE ISOLATION: Create OUTSIDE transaction to avoid holding SQLite
-      // write lock during slow git operations (was causing "database is locked" for parallel crons).
+      // GIT WORKTREE ISOLATION: Create OUTSIDE transaction to avoid holding DB
+      // lock during slow git operations.
       let storyWorkdir = "";
       if (context["repo"]) {
         storyWorkdir = createStoryWorktree(context["repo"], storyBranch, context["branch"] || "master", agentId);
@@ -780,29 +724,23 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
         // Worktree creation failed — revert story claim
         const wtReason = `Worktree creation failed for story ${nextStory.story_id} — cannot isolate parallel work`;
         logger.error(wtReason, { runId: step.run_id, stepId: step.step_id });
-        db.prepare("UPDATE stories SET status = 'failed', updated_at = ? WHERE id = ?")
-          .run(new Date().toISOString(), nextStory.id);
-        db.prepare("UPDATE steps SET current_story_id = NULL, updated_at = ? WHERE id = ?")
-          .run(new Date().toISOString(), step.id);
-        emitEvent({ ts: new Date().toISOString(), event: "story.failed", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, storyId: nextStory.story_id, storyTitle: nextStory.title, detail: wtReason });
+        await pgRun("UPDATE stories SET status = 'failed', updated_at = $1 WHERE id = $2", [now(), nextStory.id]);
+        await pgRun("UPDATE steps SET current_story_id = NULL, updated_at = $1 WHERE id = $2", [now(), step.id]);
+        emitEvent({ ts: now(), event: "story.failed", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, storyId: nextStory.story_id, storyTitle: nextStory.title, detail: wtReason });
         return { found: false };
       }
       context["story_workdir"] = storyWorkdir || context["repo"] || "";
 
       // v1.5.50: Record claim in claim_log + update story claim metadata
-      const claimNow = new Date().toISOString();
+      const claimNow = now();
       try {
-        db.prepare(
-          "INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at) VALUES (?, ?, ?, ?, ?)"
-        ).run(step.run_id, step.step_id, nextStory.story_id, agentId, claimNow);
-        db.prepare(
-          "UPDATE stories SET claimed_at = ?, claimed_by = ? WHERE id = ?"
-        ).run(claimNow, agentId, nextStory.id);
+        await pgRun("INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at) VALUES ($1, $2, $3, $4, $5)", [step.run_id, step.step_id, nextStory.story_id, agentId, claimNow]);
+        await pgRun("UPDATE stories SET claimed_at = $1, claimed_by = $2 WHERE id = $3", [claimNow, agentId, nextStory.id]);
       } catch (e) { logger.warn(`[claim-log] Failed to record claim: ${String(e)}`, { runId: step.run_id }); }
 
       const wfId = await getWorkflowId(step.run_id);
-      emitEvent({ ts: new Date().toISOString(), event: "step.running", runId: step.run_id, workflowId: wfId, stepId: step.step_id, agentId: agentId });
-      emitEvent({ ts: new Date().toISOString(), event: "story.started", runId: step.run_id, workflowId: wfId, stepId: step.step_id, agentId: agentId, storyId: nextStory.story_id, storyTitle: nextStory.title });
+      emitEvent({ ts: now(), event: "step.running", runId: step.run_id, workflowId: wfId, stepId: step.step_id, agentId: agentId });
+      emitEvent({ ts: now(), event: "story.started", runId: step.run_id, workflowId: wfId, stepId: step.step_id, agentId: agentId, storyId: nextStory.story_id, storyTitle: nextStory.title });
       logger.info(`Story started: ${nextStory.story_id} — ${nextStory.title}`, { runId: step.run_id, stepId: step.step_id });
 
       // Inject story context (template vars, screen_map, optional vars, previous_failure)
@@ -814,29 +752,24 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
       const allMissing = [...new Set([...resolvedInput.matchAll(/\[missing:\s*(\w+)\]/gi)].map(m => m[1].toLowerCase()))];
       if (allMissing.length > 0) {
         const reason = `Blocked: unresolved variable(s) [${allMissing.join(", ")}] in input`;
-        const storyRetry = db.prepare("SELECT retry_count FROM stories WHERE id = ?").get(nextStory.id) as { retry_count: number } | undefined;
+        const storyRetry = await pgGet<{ retry_count: number }>("SELECT retry_count FROM stories WHERE id = $1", [nextStory.id]);
         const retryCount = storyRetry?.retry_count ?? 0;
         logger.warn(`${reason} (story=${nextStory.story_id}, retry=${retryCount})`, { runId: step.run_id, stepId: step.step_id });
         // Reset the claimed story
         if (retryCount > 0) {
           // Second occurrence — fail everything
-          db.prepare("UPDATE stories SET status = 'failed', updated_at = ? WHERE id = ?")
-            .run(new Date().toISOString(), nextStory.id);
-          db.prepare("UPDATE steps SET status = 'failed', output = ?, current_story_id = NULL, updated_at = ? WHERE id = ?")
-            .run(reason + " — failing run (retry exhausted)", new Date().toISOString(), step.id);
-          db.prepare("UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?")
-            .run(new Date().toISOString(), step.run_id);
+          await pgRun("UPDATE stories SET status = 'failed', updated_at = $1 WHERE id = $2", [now(), nextStory.id]);
+          await pgRun("UPDATE steps SET status = 'failed', output = $1, current_story_id = NULL, updated_at = $2 WHERE id = $3", [reason + " — failing run (retry exhausted)", now(), step.id]);
+          await pgRun("UPDATE runs SET status = 'failed', updated_at = $1 WHERE id = $2", [now(), step.run_id]);
           const wfId2 = await getWorkflowId(step.run_id);
-          emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId2, stepId: step.step_id, detail: reason });
-          emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId2, detail: reason });
+          emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId2, stepId: step.step_id, detail: reason });
+          emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId2, detail: reason });
           if (context["repo"]) removeStoryWorktree(context["repo"], storyBranch, agentId);
           scheduleRunCronTeardown(step.run_id);
         } else {
           // First occurrence — retry story (possible WAL lag)
-          db.prepare("UPDATE stories SET status = 'pending', retry_count = retry_count + 1, output = ?, updated_at = ? WHERE id = ?")
-            .run(reason + " — retrying once", new Date().toISOString(), nextStory.id);
-          db.prepare("UPDATE steps SET current_story_id = NULL, updated_at = ? WHERE id = ?")
-            .run(new Date().toISOString(), step.id);
+          await pgRun("UPDATE stories SET status = 'pending', retry_count = retry_count + 1, output = $1, updated_at = $2 WHERE id = $3", [reason + " — retrying once", now(), nextStory.id]);
+          await pgRun("UPDATE steps SET current_story_id = NULL, updated_at = $1 WHERE id = $2", [now(), step.id]);
           if (context["repo"]) removeStoryWorktree(context["repo"], storyBranch, agentId);
           logger.info(`[missing-input] Story ${nextStory.story_id} will retry — possible WAL lag`, { runId: step.run_id });
         }
@@ -849,8 +782,7 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
   }
 
   // Single (non-loop) step claim path
-  return await claimSingleStep(step, agentId, context, db);
-  } finally { endTx(); }
+  return await claimSingleStep(step, agentId, context, null);
 }
 
 // ── Complete ────────────────────────────────────────────────────────
@@ -859,21 +791,13 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
  * Complete a step: save output, merge context, advance pipeline.
  */
 export async function completeStep(stepId: string, output: string): Promise<{ advanced: boolean; runCompleted: boolean }> {
-  beginTx();
-  try {
-  const db = getDb();
 
   type StepRow = { id: string; run_id: string; step_id: string; step_index: number; type: string; loop_config: string | null; current_story_id: string | null; agent_id: string; retry_count: number; max_retries: number };
-  let step = db.prepare(
-    "SELECT id, run_id, step_id, step_index, type, loop_config, current_story_id, agent_id, retry_count, max_retries FROM steps WHERE id = ?"
-  ).get(stepId) as StepRow | undefined;
+  let step = await pgGet<StepRow>("SELECT id, run_id, step_id, step_index, type, loop_config, current_story_id, agent_id, retry_count, max_retries FROM steps WHERE id = $1", [stepId]);
 
   if (!step) {
     // Fallback: agent may have passed runId instead of stepId — find the active step for this run
-    const fallbackStep = db.prepare(
-      `SELECT id, run_id, step_id, step_index, type, loop_config, current_story_id, agent_id, retry_count, max_retries
-       FROM steps WHERE run_id = ? AND status IN ('running', 'pending') ORDER BY step_index ASC LIMIT 1`
-    ).get(stepId) as StepRow | undefined;
+    const fallbackStep = await pgGet<StepRow>(`SELECT id, run_id, step_id, step_index, type, loop_config, current_story_id, agent_id, retry_count, max_retries FROM steps WHERE run_id = $1 AND status IN ('running', 'pending') ORDER BY step_index ASC LIMIT 1`, [stepId]);
     if (fallbackStep) {
       logger.warn(`[completeStep] Agent passed runId "${stepId}" instead of stepId — resolved to step "${fallbackStep.id}" (${fallbackStep.step_id})`, { runId: fallbackStep.run_id });
       step = fallbackStep;
@@ -927,18 +851,27 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
   // Guardrails (test, quality, db-provision) may call failStep + return early,
   // which previously skipped the context save — losing parsed output keys.
   // v1.5.47: Snapshot context before save so guardrail failures can rollback bad values.
-  const prevContextJson = db.prepare("SELECT context FROM runs WHERE id = ?").get(step.run_id) as { context: string } | undefined;
-  db.prepare(
-    "UPDATE runs SET context = ?, updated_at = ? WHERE id = ?"
-  ).run(JSON.stringify(context), new Date().toISOString(), step.run_id);
+  const prevContextJson = await pgGet<{ context: string }>("SELECT context FROM runs WHERE id = $1", [step.run_id]);
+  await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
 
   // PLAN STEP PRD GUARDRAIL (v1.5.53): Plan must output a meaningful PRD
-  if (step.step_id === "plan" && parsed["status"]?.toLowerCase() === "done") {
-    const prdVal = (parsed["prd"] || context["prd"] || "").trim();
+  if (step.step_id === "plan") {
+    // Auto-resolve prd from prd_path if inline prd is missing
+    let prdVal = (parsed["prd"] || context["prd"] || "").trim();
+    if (prdVal.length < 100 && context["prd_path"]) {
+      try {
+        const prdContent = fs.readFileSync(context["prd_path"], "utf-8").trim();
+        if (prdContent.length >= 100) {
+          prdVal = prdContent;
+          context["prd"] = prdContent;
+          parsed["prd"] = prdContent;
+        }
+      } catch {}
+    }
     if (prdVal.length < 100) {
       const prdErr = `GUARDRAIL: Plan step completed but PRD is ${prdVal.length < 1 ? "empty" : "too short (" + prdVal.length + " chars)"}. Plan must output a meaningful PRD.`;
       logger.warn(`[plan-guardrail] ${prdErr}`, { runId: step.run_id });
-      if (prevContextJson) db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(prevContextJson.context, step.run_id);
+      if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
       await failStep(stepId, prdErr);
       return { advanced: false, runCompleted: false };
     }
@@ -948,7 +881,7 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
     if (screenCount > 0 && screenCount < 3) {
       const scErr = `GUARDRAIL: PRD has only ${screenCount} screen(s). Minimum is 3 (main view + error state + empty/alternate state). Add missing screens to PRD Ekranlar table and update PRD_SCREEN_COUNT.`;
       logger.warn(`[plan-guardrail] ${scErr}`, { runId: step.run_id });
-      if (prevContextJson) db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(prevContextJson.context, step.run_id);
+      if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
       await failStep(stepId, scErr);
       return { advanced: false, runCompleted: false };
     }
@@ -980,9 +913,7 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
             commitCount = parseInt(out, 10) || 0;
           } catch (gitErr: any) { logger.debug("git rev-list failed: " + (gitErr?.message || "")); }
           if (commitCount > 2) {
-            const priorRun = db.prepare(
-              "SELECT id FROM runs WHERE status IN ('completed','cancelled','failed') AND context LIKE ? AND id != ? LIMIT 1"
-            ).get(`%${repoPath}%`, step.run_id) as { id: string } | undefined;
+            const priorRun = await pgGet<{ id: string }>("SELECT id FROM runs WHERE status IN ('completed','cancelled','failed') AND context LIKE $1 AND id != $2 LIMIT 1", [`%${repoPath}%`, step.run_id]);
             // Clean in-place: same directory, fresh start (no suffix — keeps resume working)
             {
               // Backup stitch before git reset
@@ -1026,14 +957,13 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
       logger.warn(`Test guardrail triggered — soft retry with fix instructions`, { runId: step.run_id, stepId: step.step_id });
       // Inject failure details as previous_failure so agent knows what to fix
       context["previous_failure"] = `TEST GUARDRAIL: ${testFailMsg}`;
-      db.prepare("UPDATE runs SET context = ?, updated_at = ? WHERE id = ?")
-        .run(JSON.stringify(context), new Date().toISOString(), step.run_id);
+      await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
       await failStep(stepId, testFailMsg);
       return { advanced: false, runCompleted: false };
     } else if (testFailMsg) {
       // Max retries reached — hard fail
       logger.warn(`Test guardrail — max retries reached, hard fail`, { runId: step.run_id, stepId: step.step_id });
-      if (prevContextJson) db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(prevContextJson.context, step.run_id);
+      if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
       await failStep(stepId, testFailMsg);
       return { advanced: false, runCompleted: false };
     }
@@ -1048,13 +978,12 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
     if (qgMsg && step.retry_count < step.max_retries) {
       logger.warn(`[quality-gate] Soft retry with fix instructions`, { runId: step.run_id, stepId: step.step_id });
       context["previous_failure"] = `QUALITY GATE: ${qgMsg}`;
-      db.prepare("UPDATE runs SET context = ?, updated_at = ? WHERE id = ?")
-        .run(JSON.stringify(context), new Date().toISOString(), step.run_id);
+      await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
       await failStep(stepId, qgMsg);
       return { advanced: false, runCompleted: false };
     } else if (qgMsg) {
       logger.warn(`[quality-gate] Max retries — hard fail`, { runId: step.run_id, stepId: step.step_id });
-      if (prevContextJson) db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(prevContextJson.context, step.run_id);
+      if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
       await failStep(stepId, qgMsg);
       return { advanced: false, runCompleted: false };
     }
@@ -1062,10 +991,10 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
 
   // Design Contract + Rules (design step)
   if (step.step_id === "design" && parsed["status"]?.toLowerCase() === "done") {
-    const designErr = processDesignCompletion(step.run_id, context, db);
+    const designErr = await processDesignCompletion(step.run_id, context);
     if (designErr) {
       logger.warn(`[design-guardrail] Failed`, { runId: step.run_id, stepId: step.step_id });
-      if (prevContextJson) db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(prevContextJson.context, step.run_id);
+      if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
       await failStep(stepId, designErr);
       return { advanced: false, runCompleted: false };
     }
@@ -1145,7 +1074,7 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
 
   // Design Contract Building (setup step — after HTML download)
   if (step.step_id === "setup-repo" && parsed["status"]?.toLowerCase() === "done") {
-    const designErr = processSetupDesignContracts(step.run_id, context, db);
+    const designErr = await processSetupDesignContracts(step.run_id, context);
     if (designErr) {
       await failStep(stepId, designErr);
       return { advanced: false, runCompleted: false };
@@ -1174,7 +1103,7 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
     if (!baseline || !["pass", "ok"].includes(baseline.toLowerCase())) {
       const baselineMsg = `GUARDRAIL: setup-build baseline is "${parsed["baseline"] || "(empty)"}" — build must explicitly pass.`;
       logger.warn(`[setup-build-guardrail] ${baselineMsg}`, { runId: step.run_id, stepId: step.step_id });
-      if (prevContextJson) db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(prevContextJson.context, step.run_id);
+      if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
       await failStep(stepId, baselineMsg);
       return { advanced: false, runCompleted: false };
     }
@@ -1211,7 +1140,7 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
 
     if (deployErr) {
       logger.warn(`[deploy-guardrail] ${deployErr}`, { runId: step.run_id, stepId: step.step_id });
-      if (prevContextJson) db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(prevContextJson.context, step.run_id);
+      if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
       await failStep(stepId, deployErr);
       return { advanced: false, runCompleted: false };
     }
@@ -1277,15 +1206,13 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
     const smokeResult = parsed["smoke_test_result"] || "";
     if (!smokeResult) {
       logger.warn(`[final-test-guardrail] SMOKE_TEST_RESULT missing from final-test output — agent likely skipped smoke test. Retrying.`, { runId: step.run_id, stepId: step.step_id });
-      if (prevContextJson) db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(prevContextJson.context, step.run_id);
+      if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
       await failStep(stepId, "GUARDRAIL: final-test completed without SMOKE_TEST_RESULT. You MUST run smoke-test.mjs and include SMOKE_TEST_RESULT in your output.");
       return { advanced: false, runCompleted: false };
     }
   }
 
-  db.prepare(
-    "UPDATE runs SET context = ?, updated_at = ? WHERE id = ?"
-  ).run(JSON.stringify(context), new Date().toISOString(), step.run_id);
+  await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
 
   // T5: Parse STORIES_JSON from output (any step, typically the planner)
   await parseAndInsertStories(output, step.run_id);
@@ -1296,7 +1223,7 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
     if (storyCount === 0) {
       const noStoriesMsg = "GUARDRAIL: Stories step completed with STATUS: done but produced 0 stories — STORIES_JSON missing or empty";
       logger.warn(`[stories-guardrail] ${noStoriesMsg}`, { runId: step.run_id });
-      if (prevContextJson) db.prepare("UPDATE runs SET context = ? WHERE id = ?").run(prevContextJson.context, step.run_id);
+      if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
       await failStep(stepId, noStoriesMsg);
       return { advanced: false, runCompleted: false };
     }
@@ -1347,7 +1274,7 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
             });
           }
           context["screen_map"] = JSON.stringify(screenMap);
-          db.prepare("UPDATE runs SET context = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(context), new Date().toISOString(), step.run_id);
+          await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
           logger.info(`[screen-map-guardrail] Auto-generated SCREEN_MAP with ${screenMap.length} screen(s) from ${autoStories.length} stories (stories step fallback)`, { runId: step.run_id });
         }
       }
@@ -1357,15 +1284,11 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
   // #157 GUARD: If the IMMEDIATELY NEXT step is a loop, verify stories exist.
   // v12.0: Only fire if no non-loop steps remain between current and next loop step,
   // because intermediate steps (e.g. stories, setup) may produce STORIES_JSON later.
-  const nextLoopStep = db.prepare(
-    "SELECT id, step_id, step_index FROM steps WHERE run_id = ? AND type = 'loop' AND step_index > ? AND status = 'waiting' ORDER BY step_index ASC LIMIT 1"
-  ).get(step.run_id, step.step_index) as { id: string; step_id: string; step_index: number } | undefined;
+  const nextLoopStep = await pgGet<{ id: string; step_id: string; step_index: number }>("SELECT id, step_id, step_index FROM steps WHERE run_id = $1 AND type = 'loop' AND step_index > $2 AND status = 'waiting' ORDER BY step_index ASC LIMIT 1", [step.run_id, step.step_index]);
   if (nextLoopStep) {
     // Check if there are any non-loop steps between us and the next loop step
-    const intermediateSteps = db.prepare(
-      "SELECT COUNT(*) as cnt FROM steps WHERE run_id = ? AND step_index > ? AND step_index < ? AND type != 'loop' AND status IN ('waiting', 'pending')"
-    ).get(step.run_id, step.step_index, nextLoopStep.step_index) as { cnt: number };
-    if (intermediateSteps.cnt === 0) {
+    const intermediateSteps = await pgGet<{ cnt: number }>("SELECT COUNT(*) as cnt FROM steps WHERE run_id = $1 AND step_index > $2 AND step_index < $3 AND type != 'loop' AND status IN ('waiting', 'pending')", [step.run_id, step.step_index, nextLoopStep.step_index]);
+    if ((intermediateSteps?.cnt ?? 0) === 0) {
       // No intermediate steps — this is the last step before the loop
       const storyCount = { cnt: await countAllStories(step.run_id) };
       if (storyCount.cnt === 0) {
@@ -1374,13 +1297,13 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
         await failStepWithOutput(step.id, noStoriesMsg);
         await failRun(step.run_id);
         const wfId157b = await getWorkflowId(step.run_id);
-        emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId157b, stepId: step.step_id, detail: noStoriesMsg });
-        emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId157b, detail: noStoriesMsg });
+        emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId157b, stepId: step.step_id, detail: noStoriesMsg });
+        emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId157b, detail: noStoriesMsg });
         scheduleRunCronTeardown(step.run_id);
         return { advanced: false, runCompleted: false };
       }
     } else {
-      logger.info(`[stories-guard] Skipped — ${intermediateSteps.cnt} step(s) remain before loop step ${nextLoopStep.step_id}`, { runId: step.run_id, stepId: step.step_id });
+      logger.info(`[stories-guard] Skipped — ${intermediateSteps?.cnt} step(s) remain before loop step ${nextLoopStep.step_id}`, { runId: step.run_id, stepId: step.step_id });
     }
   }
 
@@ -1412,24 +1335,18 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
     // FIX: Remove context fallback to prevent cross-contamination between parallel stories
     const storyPrUrl = parsed["pr_url"] || "";
     const storyBranchName = parsed["story_branch"] || "";
-    db.prepare(
-      "UPDATE stories SET status = ?, output = ?, pr_url = ?, story_branch = ?, updated_at = ? WHERE id = ?"
-    ).run(storyStatus, output, storyPrUrl, storyBranchName, new Date().toISOString(), step.current_story_id);
-    emitEvent({ ts: new Date().toISOString(), event: storyEvent as import("./events.js").EventType, runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, storyId: storyRow?.story_id, storyTitle: storyRow?.title });
+    await pgRun("UPDATE stories SET status = $1, output = $2, pr_url = $3, story_branch = $4, updated_at = $5 WHERE id = $6", [storyStatus, output, storyPrUrl, storyBranchName, now(), step.current_story_id]);
+    emitEvent({ ts: now(), event: storyEvent as import("./events.js").EventType, runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, storyId: storyRow?.story_id, storyTitle: storyRow?.title });
     logger.info(`Story ${storyStatus}: ${storyRow?.story_id} — ${storyRow?.title}`, { runId: step.run_id, stepId: step.step_id });
 
     // v1.5.50: Resolve claim_log outcome
     try {
-      db.prepare(
-        "UPDATE claim_log SET outcome = 'completed', duration_ms = CAST((julianday('now') - julianday(claimed_at)) * 86400000 AS INTEGER) WHERE story_id = ? AND outcome IS NULL"
-      ).run(storyRow?.story_id || "");
+      await pgRun("UPDATE claim_log SET outcome = 'completed', duration_ms = EXTRACT(EPOCH FROM NOW() - claimed_at::timestamptz) * 1000 WHERE story_id = $1 AND outcome IS NULL", [storyRow?.story_id || ""]);
     } catch (e) { logger.warn(`[claim-log] Failed to resolve completion: ${String(e)}`, { runId: step.run_id }); }
 
     // B2: Record step_metrics for SLA tracking
     try {
-      db.prepare(
-        "INSERT INTO step_metrics (run_id, step_name, agent_id, claimed_at, completed_at, duration_ms, outcome, created_at) VALUES (?, ?, ?, ?, datetime('now'), CAST((julianday('now') - julianday(?)) * 86400000 AS INTEGER), 'completed', datetime('now'))"
-      ).run(step.run_id, step.step_id, step.agent_id || "", new Date().toISOString(), new Date().toISOString());
+      await pgRun("INSERT INTO step_metrics (run_id, step_name, agent_id, claimed_at, completed_at, duration_ms, outcome, created_at) VALUES ($1, $2, $3, $4, NOW(), EXTRACT(EPOCH FROM NOW() - $5::timestamptz) * 1000, 'completed', NOW())", [step.run_id, step.step_id, step.agent_id || "", now(), now()]);
     } catch (e) { logger.warn(`[step-metrics] insert failed: ${String(e)}`, { runId: step.run_id }); }
 
 
@@ -1453,27 +1370,18 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
     await updateRunContext(step.run_id, context);
 
     // Clear current_story_id, save output
-    db.prepare(
-      "UPDATE steps SET current_story_id = NULL, output = ?, updated_at = ? WHERE id = ?"
-    ).run(output, new Date().toISOString(), step.id);
+    await pgRun("UPDATE steps SET current_story_id = NULL, output = $1, updated_at = $2 WHERE id = $3", [output, now(), step.id]);
 
     const loopConfig: LoopConfig | null = step.loop_config ? JSON.parse(step.loop_config) : null;
 
     // T8: verify_each flow — set verify step to pending
     if (loopConfig?.verifyEach && loopConfig.verifyStep) {
-      const verifyStep = db.prepare(
-        "SELECT id FROM steps WHERE run_id = ? AND step_id = ? LIMIT 1"
-      ).get(step.run_id, loopConfig.verifyStep) as { id: string } | undefined;
+      const verifyStep = await pgGet<{ id: string }>("SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1", [step.run_id, loopConfig.verifyStep]);
 
       if (verifyStep) {
         // Only set verify to pending if not already pending/running (prevents race condition with parallel stories)
-        db.prepare(
-          "UPDATE steps SET status = 'pending', updated_at = ? WHERE id = ? AND status IN ('waiting', 'done')"
-        ).run(new Date().toISOString(), verifyStep.id);
-        // Loop step stays 'running'
-        db.prepare(
-          "UPDATE steps SET status = 'running', updated_at = ? WHERE id = ?"
-        ).run(new Date().toISOString(), step.id);
+        await pgRun("UPDATE steps SET status = 'pending', updated_at = $1 WHERE id = $2 AND status IN ('waiting', 'done')", [now(), verifyStep.id]);
+        await pgRun("UPDATE steps SET status = 'running', updated_at = $1 WHERE id = $2", [now(), step.id]);
         return { advanced: false, runCompleted: false };
       }
     }
@@ -1485,9 +1393,7 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
   // T8: Check if this is a verify step triggered by verify-each
   // NOTE: Don't filter by status='running' — the loop step may have been temporarily
   // reset by cleanupAbandonedSteps, causing this to fall through to single-step path (#52)
-  const loopStepRow = db.prepare(
-    "SELECT id, loop_config, run_id FROM steps WHERE run_id = ? AND type = 'loop' LIMIT 1"
-  ).get(step.run_id) as { id: string; loop_config: string | null; run_id: string } | undefined;
+  const loopStepRow = await pgGet<{ id: string; loop_config: string | null; run_id: string }>("SELECT id, loop_config, run_id FROM steps WHERE run_id = $1 AND type = 'loop' LIMIT 1", [step.run_id]);
 
   if (loopStepRow?.loop_config) {
     const lc: LoopConfig = JSON.parse(loopStepRow.loop_config);
@@ -1498,29 +1404,25 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
 
   // Single step: mark done (accept both running and pending — medic may have reset a slow step to pending
   // while the agent was still finishing its work, so we should still accept the completion)
-  const updateResult = db.prepare(
-    "UPDATE steps SET status = 'done', output = ?, updated_at = ? WHERE id = ? AND status IN ('running', 'pending')"
-  ).run(output, new Date().toISOString(), stepId);
-  if (updateResult.changes === 0) {
+  let _updateChanges: number;
+  const _ur = await pgRun("UPDATE steps SET status = 'done', output = $1, updated_at = $2 WHERE id = $3 AND status IN ('running', 'pending')", [output, now(), stepId]);
+  _updateChanges = _ur.changes;
+  if (_updateChanges === 0) {
     // Already completed by another session — skip to prevent double pipeline advancement
     logger.info(`Step already completed, skipping duplicate`, { runId: step.run_id, stepId: step.step_id });
     return { advanced: false, runCompleted: false };
   }
-  emitEvent({ ts: new Date().toISOString(), event: "step.done", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id });
+  emitEvent({ ts: now(), event: "step.done", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id });
   logger.info(`Step completed: ${step.step_id}`, { runId: step.run_id, stepId: step.step_id });
 
   // v1.5.50: Resolve claim_log outcome for single step
   try {
-    db.prepare(
-      "UPDATE claim_log SET outcome = 'completed', duration_ms = CAST((julianday('now') - julianday(claimed_at)) * 86400000 AS INTEGER) WHERE run_id = ? AND step_id = ? AND story_id IS NULL AND outcome IS NULL"
-    ).run(step.run_id, step.step_id);
+    await pgRun("UPDATE claim_log SET outcome = 'completed', duration_ms = EXTRACT(EPOCH FROM NOW() - claimed_at::timestamptz) * 1000 WHERE run_id = $1 AND step_id = $2 AND story_id IS NULL AND outcome IS NULL", [step.run_id, step.step_id]);
   } catch (e) { logger.warn(`[claim-log] Failed to resolve completion: ${String(e)}`, { runId: step.run_id }); }
 
     // B2: Record step_metrics for single step
     try {
-      db.prepare(
-        "INSERT INTO step_metrics (run_id, step_name, agent_id, claimed_at, completed_at, duration_ms, outcome, created_at) VALUES (?, ?, ?, ?, datetime('now'), CAST((julianday('now') - julianday(?)) * 86400000 AS INTEGER), 'completed', datetime('now'))"
-      ).run(step.run_id, step.step_id, step.agent_id || "", new Date().toISOString(), new Date().toISOString());
+      await pgRun("INSERT INTO step_metrics (run_id, step_name, agent_id, claimed_at, completed_at, duration_ms, outcome, created_at) VALUES ($1, $2, $3, $4, NOW(), 0, 'completed', NOW())", [step.run_id, step.step_id, step.agent_id || "", now()]);
     } catch (e) { logger.warn(`[step-metrics] insert failed: ${String(e)}`, { runId: step.run_id }); }
 
 
@@ -1534,7 +1436,6 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
   }
 
   return advancePipeline(step.run_id);
-  } finally { endTx(); }
 }
 
 /**
@@ -1546,7 +1447,6 @@ async function handleVerifyEachCompletion(
   output: string,
   context: Record<string, string>
 ): Promise<{ advanced: boolean; runCompleted: boolean }> {
-  const db = getDb();
   const parsedOutput = parseOutputKeyValues(output);
 
   // Guard: strip protected keys from parsed output to prevent seed value corruption
@@ -1561,29 +1461,14 @@ async function handleVerifyEachCompletion(
 
   // Atomic guard: prevent parallel crons from double-completing the same verify step.
   // Only proceed if we are the one that transitions it from running → waiting.
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    const changed = db.prepare(
-      "UPDATE steps SET status = 'waiting', output = ?, updated_at = ? WHERE id = ? AND status = 'running'"
-    ).run(output, new Date().toISOString(), verifyStep.id);
-    if (changed.changes === 0) {
-      db.exec("COMMIT");
-      // Another cron already processed this verify step
-      return { advanced: false, runCompleted: false };
-    }
-    db.exec("COMMIT");
-  } catch (err) {
-    try { db.exec("ROLLBACK"); } catch (e) { logger.warn(`[step-ops] ROLLBACK failed: ${String(e)}`, {}); }
-    throw err;
-  }
+  const _pgChanged = await pgRun("UPDATE steps SET status = 'waiting', output = $1, updated_at = $2 WHERE id = $3 AND status = 'running'", [output, now(), verifyStep.id]);
+  if (_pgChanged.changes === 0) { return { advanced: false, runCompleted: false }; }
 
   // Identify the story being verified: output first (most reliable), then context (v1.5.53)
   let verifiedStoryId = parsedOutput["current_story_id"] || context["current_story_id"];
   if (!verifiedStoryId) {
     // Fallback: find the most recent 'done' story
-    const lastDone = db.prepare(
-      "SELECT story_id FROM stories WHERE run_id = ? AND status = 'done' ORDER BY updated_at DESC LIMIT 1"
-    ).get(verifyStep.run_id) as { story_id: string } | undefined;
+    const lastDone = await pgGet<{ story_id: string }>("SELECT story_id FROM stories WHERE run_id = $1 AND status = 'done' ORDER BY updated_at DESC LIMIT 1", [verifyStep.run_id]);
     if (lastDone) {
       verifiedStoryId = lastDone.story_id;
       logger.warn(`[verify] current_story_id missing from output+context, using fallback: ${lastDone.story_id}`, { runId: verifyStep.run_id });
@@ -1595,38 +1480,34 @@ async function handleVerifyEachCompletion(
     // Find the specific story that was being verified
     let retryStory: { id: string; retry_count: number; max_retries: number } | undefined;
     if (verifiedStoryId) {
-      retryStory = db.prepare(
-        "SELECT id, retry_count, max_retries FROM stories WHERE run_id = ? AND story_id = ? AND status = 'done' LIMIT 1"
-      ).get(verifyStep.run_id, verifiedStoryId) as typeof retryStory;
+      retryStory = await pgGet<typeof retryStory>("SELECT id, retry_count, max_retries FROM stories WHERE run_id = $1 AND story_id = $2 AND status = 'done' LIMIT 1", [verifyStep.run_id, verifiedStoryId]);
     }
     // Fallback: last done story by updated_at
     if (!retryStory) {
-      retryStory = db.prepare(
-        "SELECT id, retry_count, max_retries FROM stories WHERE run_id = ? AND status = 'done' ORDER BY updated_at DESC LIMIT 1"
-      ).get(verifyStep.run_id) as typeof retryStory;
+      retryStory = await pgGet<typeof retryStory>("SELECT id, retry_count, max_retries FROM stories WHERE run_id = $1 AND status = 'done' ORDER BY updated_at DESC LIMIT 1", [verifyStep.run_id]);
     }
 
     if (retryStory) {
       const newRetry = retryStory.retry_count + 1;
       if (newRetry > retryStory.max_retries) {
         // Story retries exhausted — fail everything
-        db.prepare("UPDATE stories SET status = 'failed', retry_count = ?, updated_at = ? WHERE id = ?").run(newRetry, new Date().toISOString(), retryStory.id);
+        await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, updated_at = $2 WHERE id = $3", [newRetry, now(), retryStory.id]);
         await setStepStatus(loopStepId, "failed");
         await failRun(verifyStep.run_id);
         const wfId = await getWorkflowId(verifyStep.run_id);
-        emitEvent({ ts: new Date().toISOString(), event: "story.failed", runId: verifyStep.run_id, workflowId: wfId, stepId: verifyStep.step_id });
-        emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: verifyStep.run_id, workflowId: wfId, detail: "Verification retries exhausted" });
+        emitEvent({ ts: now(), event: "story.failed", runId: verifyStep.run_id, workflowId: wfId, stepId: verifyStep.step_id });
+        emitEvent({ ts: now(), event: "run.failed", runId: verifyStep.run_id, workflowId: wfId, detail: "Verification retries exhausted" });
         scheduleRunCronTeardown(verifyStep.run_id);
         return { advanced: false, runCompleted: false };
       }
 
       // Set story back to pending for retry
-      db.prepare("UPDATE stories SET status = 'pending', retry_count = ?, updated_at = ? WHERE id = ?").run(newRetry, new Date().toISOString(), retryStory.id);
+      await pgRun("UPDATE stories SET status = 'pending', retry_count = $1, updated_at = $2 WHERE id = $3", [newRetry, now(), retryStory.id]);
 
       // Store verify feedback
       const issues = context["issues"] ?? output;
       context["verify_feedback"] = issues;
-      emitEvent({ ts: new Date().toISOString(), event: "story.retry", runId: verifyStep.run_id, workflowId: await getWorkflowId(verifyStep.run_id), stepId: verifyStep.step_id, detail: issues });
+      emitEvent({ ts: now(), event: "story.retry", runId: verifyStep.run_id, workflowId: await getWorkflowId(verifyStep.run_id), stepId: verifyStep.step_id, detail: issues });
       await updateRunContext(verifyStep.run_id, context);
     }
 
@@ -1637,15 +1518,13 @@ async function handleVerifyEachCompletion(
 
   // Verify PASSED — mark the verified story as 'verified' (not just 'done')
   if (verifiedStoryId) {
-    const verifiedRow = db.prepare(
-      "SELECT id FROM stories WHERE run_id = ? AND story_id = ? AND status = 'done' LIMIT 1"
-    ).get(verifyStep.run_id, verifiedStoryId) as { id: string } | undefined;
+    const verifiedRow = await pgGet<{ id: string }>("SELECT id FROM stories WHERE run_id = $1 AND story_id = $2 AND status = 'done' LIMIT 1", [verifyStep.run_id, verifiedStoryId]);
     if (verifiedRow) {
       await verifyStory(verifiedRow.id);
       logger.info(`Story verified: ${verifiedStoryId}`, { runId: verifyStep.run_id });
     }
   }
-  emitEvent({ ts: new Date().toISOString(), event: "story.verified", runId: verifyStep.run_id, workflowId: await getWorkflowId(verifyStep.run_id), stepId: verifyStep.step_id, storyId: verifiedStoryId });
+  emitEvent({ ts: now(), event: "story.verified", runId: verifyStep.run_id, workflowId: await getWorkflowId(verifyStep.run_id), stepId: verifyStep.step_id, storyId: verifiedStoryId });
 
   // Clear feedback
   delete context["verify_feedback"];
@@ -1700,16 +1579,13 @@ async function autoVerifyDoneStories(
   logPrefix: string,
   options?: { autoMergeOpen?: boolean },
 ): Promise<any | null> {
-  const db = getDb();
   let count = 0;
   while (true) {
     if (++count > MAX_AUTO_VERIFY_ITERATIONS) {
       logger.info(`[${logPrefix}] Hit MAX_AUTO_VERIFY (${MAX_AUTO_VERIFY_ITERATIONS}) — deferring remaining stories to next cycle`, { runId });
       return null; // Treat as "all done for now"
     }
-    const story = db.prepare(
-      "SELECT * FROM stories WHERE run_id = ? AND status = 'done' ORDER BY story_index ASC LIMIT 1"
-    ).get(runId) as any | undefined;
+    const story = await pgGet<any>("SELECT * FROM stories WHERE run_id = $1 AND status = 'done' ORDER BY story_index ASC LIMIT 1", [runId]);
     if (!story) return null;
 
     const prUrl = story.pr_url || "";
@@ -1734,7 +1610,7 @@ async function autoVerifyDoneStories(
         }
         await verifyStory(story.id);
         logger.info(`[${logPrefix}] Story ${story.story_id} auto-verified — PR merged`, { runId });
-        emitEvent({ ts: new Date().toISOString(), event: "story.verified", runId, workflowId: await getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title });
+        emitEvent({ ts: now(), event: "story.verified", runId, workflowId: await getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title });
         continue;
       }
 
@@ -1745,20 +1621,18 @@ async function autoVerifyDoneStories(
         const checkBranches = [featureBranch, "main", "master"].filter(Boolean);
         const resolution = resolveClosedPR(prUrl, story.story_id, runId, repoPath, runIdPrefix, checkBranches);
         if (resolution.alternativePrUrl) {
-          db.prepare("UPDATE stories SET pr_url = ?, updated_at = ? WHERE id = ?")
-            .run(resolution.alternativePrUrl, new Date().toISOString(), story.id);
+          await pgRun("UPDATE stories SET pr_url = $1, updated_at = $2 WHERE id = $3", [resolution.alternativePrUrl, now(), story.id]);
           logger.info(`[${logPrefix}] Found alternative PR for ${story.story_id}: ${resolution.alternativePrUrl}`, { runId });
           continue; // Re-check with updated PR
         } else if (resolution.contentInBaseBranch) {
           await verifyStory(story.id);
           logger.info(`[${logPrefix}] Story ${story.story_id} auto-verified — CLOSED PR content in base branch`, { runId });
-          emitEvent({ ts: new Date().toISOString(), event: "story.verified", runId, workflowId: await getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title, detail: "Auto-verified — CLOSED PR content in base branch" });
+          emitEvent({ ts: now(), event: "story.verified", runId, workflowId: await getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title, detail: "Auto-verified — CLOSED PR content in base branch" });
           continue;
         } else if (!resolution.reopened) {
-          db.prepare("UPDATE stories SET status = 'failed', output = 'Failed: CLOSED PR could not be reopened, content not found in base branch', updated_at = ? WHERE id = ?")
-            .run(new Date().toISOString(), story.id);
+          await pgRun("UPDATE stories SET status = 'failed', output = 'Failed: CLOSED PR could not be reopened, content not found in base branch', updated_at = $1 WHERE id = $2", [now(), story.id]);
           logger.warn(`[${logPrefix}] CLOSED PR ${prUrl} — content NOT in base branch — failing story ${story.story_id}`, { runId });
-          emitEvent({ ts: new Date().toISOString(), event: "story.failed", runId, workflowId: await getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title, detail: "CLOSED PR content not in base branch" });
+          emitEvent({ ts: now(), event: "story.failed", runId, workflowId: await getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title, detail: "CLOSED PR content not in base branch" });
           continue;
         }
         // reopened=true → fall through to agent verification
@@ -1772,7 +1646,7 @@ async function autoVerifyDoneStories(
         if (tryAutoMergePR(prUrl, story.story_id, runId)) {
           await verifyStory(story.id);
           logger.info(`[${logPrefix}] Story ${story.story_id} auto-merged + verified — PR was OPEN (done story)`, { runId });
-          emitEvent({ ts: new Date().toISOString(), event: "story.verified", runId, workflowId: await getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title, detail: "Auto-merged — done story with OPEN PR" });
+          emitEvent({ ts: now(), event: "story.verified", runId, workflowId: await getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title, detail: "Auto-merged — done story with OPEN PR" });
           continue;
         }
         // If auto-merge failed, still needs agent verification
