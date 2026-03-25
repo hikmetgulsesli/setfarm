@@ -1,20 +1,5 @@
 #!/usr/bin/env node
 
-// Runtime check: node:sqlite requires Node.js >= 22 (real Node, not Bun's wrapper)
-try {
-  await import("node:sqlite");
-} catch {
-  console.error(
-    `Error: node:sqlite is not available.\n\n` +
-    `Setfarm requires Node.js >= 22 with native SQLite support.\n` +
-    `If you have Bun installed, its \`node\` wrapper does not support node:sqlite via ESM.\n\n` +
-    `Fix: ensure the real Node.js 22+ is first on your PATH.\n` +
-    `  Check: node -e "require('node:sqlite')"\n` +
-    `  See: https://github.com/hikmetgulsesli/setfarm`
-  );
-  process.exit(1);
-}
-
 import { installWorkflow } from "../installer/install.js";
 import { uninstallAllWorkflows, uninstallWorkflow, checkActiveRuns } from "../installer/uninstall.js";
 import { getWorkflowStatus, listRuns, stopWorkflow } from "../installer/status.js";
@@ -26,8 +11,7 @@ import { startDaemon, stopDaemon, getDaemonStatus, isRunning } from "../server/d
 import { claimStep, completeStep, failStep, getStories, peekStep } from "../installer/step-ops.js";
 import { ensureCliSymlink } from "../installer/symlink.js";
 import { runMedicCheck, getMedicStatus, getRecentMedicChecks } from "../medic/medic.js";
-import { pgQuery, pgGet, pgRun, pgClose } from "../db-pg.js";
-const USE_PG = process.env.DB_BACKEND === 'postgres';
+import { pgQuery, pgGet, pgRun, pgClose, now } from "../db-pg.js";
 import { installMedicCron, uninstallMedicCron, isMedicCronInstalled } from "../medic/medic-cron.js";
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -402,10 +386,20 @@ async function main() {
     }
     if (action === "complete") {
       if (!target) { process.stderr.write("Missing step-id.\n"); process.exit(1); }
-      // Read output from args or stdin
-      let output = args.slice(3).join(" ").trim();
+      // Read output from --file flag, args, or stdin (in priority order)
+      let output = "";
+      const fileIdx = args.indexOf("--file");
+      if (fileIdx !== -1 && args[fileIdx + 1]) {
+        // --file /path/to/output.txt — most reliable, no piping needed
+        const fs = await import("node:fs");
+        const filePath = args[fileIdx + 1];
+        try { output = fs.readFileSync(filePath, "utf-8").trim(); }
+        catch (e) { process.stderr.write(`Cannot read file ${filePath}: ${e}\n`); process.exit(1); }
+      } else {
+        output = args.slice(3).filter(a => a !== "--file").join(" ").trim();
+      }
       if (!output) {
-        // Read from stdin (piped input)
+        // Read from stdin (piped input) — fallback
         const chunks: Buffer[] = [];
         for await (const chunk of process.stdin) {
           chunks.push(chunk);
@@ -455,9 +449,7 @@ async function main() {
     // Also support "setfarm logs #3" to show events for run number 3
     if (arg && /^#\d+$/.test(arg)) {
       const runNum = parseInt(arg.slice(1), 10);
-      const r = USE_PG
-        ? await pgGet<{ id: string }>("SELECT id FROM runs WHERE run_number = $1", [runNum])
-        : ((await import("../db.js")).getDb().prepare("SELECT id FROM runs WHERE run_number = ?").get(runNum) as { id: string } | undefined);
+      const r = await pgGet<{ id: string }>("SELECT id FROM runs WHERE run_number = $1", [runNum]);
       if (r) {
         const events = getRunEvents(r.id);
         if (events.length === 0) { console.log(`No events for run #${runNum}.`); }
@@ -573,21 +565,15 @@ async function main() {
 
   if (action === "resume") {
     if (!target) { process.stderr.write("Missing run-id.\n"); printUsage(); process.exit(1); }
-    let db: any;
-    if (!USE_PG) db = (await import("../db.js")).getDb();
 
     // Find the run (support prefix match)
     // Support run number lookup in addition to UUID prefix
     let run: { id: string; run_number: number | null; workflow_id: string; status: string } | undefined;
     if (/^\d+$/.test(target)) {
-      run = USE_PG
-        ? await pgGet("SELECT id, run_number, workflow_id, status FROM runs WHERE run_number = $1", [parseInt(target, 10)])
-        : db.prepare("SELECT id, run_number, workflow_id, status FROM runs WHERE run_number = ?").get(parseInt(target, 10)) as typeof run;
+      run = await pgGet("SELECT id, run_number, workflow_id, status FROM runs WHERE run_number = $1", [parseInt(target, 10)]);
     }
     if (!run) {
-      run = USE_PG
-        ? await pgGet("SELECT id, run_number, workflow_id, status FROM runs WHERE id = $1 OR id LIKE $2", [target, `${target}%`])
-        : db.prepare("SELECT id, run_number, workflow_id, status FROM runs WHERE id = ? OR id LIKE ?").get(target, `${target}%`) as typeof run;
+      run = await pgGet("SELECT id, run_number, workflow_id, status FROM runs WHERE id = $1 OR id LIKE $2", [target, `${target}%`]);
     }
 
     if (!run) { process.stderr.write(`Run not found: ${target}\n`); process.exit(1); }
@@ -597,9 +583,7 @@ async function main() {
     }
 
     // Find the failed step (or first non-done step)
-    const failedStep = USE_PG
-      ? await pgGet<{ id: string; step_id: string; type: string; current_story_id: string | null }>("SELECT id, step_id, type, current_story_id FROM steps WHERE run_id = $1 AND status = 'failed' ORDER BY step_index ASC LIMIT 1", [run.id])
-      : db.prepare("SELECT id, step_id, type, current_story_id FROM steps WHERE run_id = ? AND status = 'failed' ORDER BY step_index ASC LIMIT 1").get(run.id) as { id: string; step_id: string; type: string; current_story_id: string | null } | undefined;
+    const failedStep = await pgGet<{ id: string; step_id: string; type: string; current_story_id: string | null }>("SELECT id, step_id, type, current_story_id FROM steps WHERE run_id = $1 AND status = 'failed' ORDER BY step_index ASC LIMIT 1", [run.id]);
 
     if (!failedStep) {
       process.stderr.write(`No failed step found in run ${run.id.slice(0, 8)}.\n`);
@@ -608,44 +592,43 @@ async function main() {
 
     // If it's a loop step with a failed story, reset that story to pending
     if (failedStep.type === "loop") {
-      const failedStory = USE_PG
-        ? await pgGet<{ id: string }>("SELECT id FROM stories WHERE run_id = $1 AND status = 'failed' ORDER BY story_index ASC LIMIT 1", [run.id])
-        : db.prepare("SELECT id FROM stories WHERE run_id = ? AND status = 'failed' ORDER BY story_index ASC LIMIT 1").get(run.id) as { id: string } | undefined;
+      const failedStory = await pgGet<{ id: string }>("SELECT id FROM stories WHERE run_id = $1 AND status = 'failed' ORDER BY story_index ASC LIMIT 1", [run.id]);
       if (failedStory) {
-        db.prepare(
-          "UPDATE stories SET status = 'pending', updated_at = ? WHERE id = ?"
-        ).run(new Date().toISOString(), failedStory.id);
+        await pgRun(
+          "UPDATE stories SET status = 'pending', updated_at = $1 WHERE id = $2",
+          [now(), failedStory.id]
+        );
       }
-      if (USE_PG) { await pgRun("UPDATE steps SET retry_count = 0 WHERE run_id = $1 AND type = 'loop'", [run.id]); } else { db.prepare(
-        "UPDATE steps SET retry_count = 0 WHERE run_id = ? AND type = 'loop'"
-      ).run(run.id); }
+      await pgRun("UPDATE steps SET retry_count = 0 WHERE run_id = $1 AND type = 'loop'", [run.id]);
     }
 
     // Check if the failed step is a verify step linked to a loop step's verify_each
-    const loopStep = USE_PG
-      ? await pgGet<{ id: string; loop_config: string | null }>("SELECT id, loop_config FROM steps WHERE run_id = $1 AND type = 'loop' AND status IN ('running', 'failed') LIMIT 1", [run.id])
-      : db.prepare("SELECT id, loop_config FROM steps WHERE run_id = ? AND type = 'loop' AND status IN ('running', 'failed') LIMIT 1").get(run.id) as { id: string; loop_config: string | null } | undefined;
+    const loopStep = await pgGet<{ id: string; loop_config: string | null }>("SELECT id, loop_config FROM steps WHERE run_id = $1 AND type = 'loop' AND status IN ('running', 'failed') LIMIT 1", [run.id]);
 
     if (loopStep?.loop_config) {
       const lc = JSON.parse(loopStep.loop_config);
       if (lc.verifyEach && lc.verifyStep === failedStep.step_id) {
         // Reset the loop step (developer) to pending so it re-claims the story and populates context
-        db.prepare(
-          "UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = 0, updated_at = ? WHERE id = ?"
-        ).run(new Date().toISOString(), loopStep.id);
+        await pgRun(
+          "UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = 0, updated_at = $1 WHERE id = $2",
+          [now(), loopStep.id]
+        );
         // Reset verify step to waiting (fires after developer completes)
-        db.prepare(
-          "UPDATE steps SET status = 'waiting', current_story_id = NULL, retry_count = 0, updated_at = ? WHERE id = ?"
-        ).run(new Date().toISOString(), failedStep.id);
+        await pgRun(
+          "UPDATE steps SET status = 'waiting', current_story_id = NULL, retry_count = 0, updated_at = $1 WHERE id = $2",
+          [now(), failedStep.id]
+        );
         // Reset any failed stories to pending
-        db.prepare(
-          "UPDATE stories SET status = 'pending', updated_at = ? WHERE run_id = ? AND status = 'failed'"
-        ).run(new Date().toISOString(), run.id);
+        await pgRun(
+          "UPDATE stories SET status = 'pending', updated_at = $1 WHERE run_id = $2 AND status = 'failed'",
+          [now(), run.id]
+        );
 
         // Reset run to running
-        db.prepare(
-          "UPDATE runs SET status = 'running', updated_at = ? WHERE id = ?"
-        ).run(new Date().toISOString(), run.id);
+        await pgRun(
+          "UPDATE runs SET status = 'running', updated_at = $1 WHERE id = $2",
+          [now(), run.id]
+        );
 
         // Ensure crons are running for this workflow
         const { loadWorkflowSpec } = await import("../installer/workflow-spec.js");
@@ -678,14 +661,16 @@ async function main() {
     }
 
     // Reset step to pending
-    db.prepare(
-      "UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = 0, updated_at = ? WHERE id = ?"
-    ).run(new Date().toISOString(), failedStep.id);
+    await pgRun(
+      "UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = 0, updated_at = $1 WHERE id = $2",
+      [now(), failedStep.id]
+    );
 
     // Reset run to running
-    db.prepare(
-      "UPDATE runs SET status = 'running', updated_at = ? WHERE id = ?"
-    ).run(new Date().toISOString(), run.id);
+    await pgRun(
+      "UPDATE runs SET status = 'running', updated_at = $1 WHERE id = $2",
+      [now(), run.id]
+    );
 
     // Ensure crons are running for this workflow
     const { loadWorkflowSpec } = await import("../installer/workflow-spec.js");

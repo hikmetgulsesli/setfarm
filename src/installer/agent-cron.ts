@@ -38,17 +38,17 @@ export function buildPollingPrompt(workflowId: string, agentId: string): string 
 
 3. Do the work described in "input". No narration.
 
-4. Write output in KEY: VALUE format (NOT JSON), then complete:
-cat <<'SETFARM_EOF' > .setfarm-step-output.txt
+4. Write output in KEY: VALUE format (NOT JSON) to /tmp, then complete:
+cat <<'SETFARM_EOF' > /tmp/setfarm-output.txt
 STATUS: done
 <other keys as specified in step input>
 SETFARM_EOF
-cat .setfarm-step-output.txt | ${dbEnv}/usr/bin/node ${cli} step complete "<the stepId from claim JSON>"
+${dbEnv}/usr/bin/node ${cli} step complete "<the stepId from claim JSON>" --file /tmp/setfarm-output.txt
 On failure: ${dbEnv}/usr/bin/node ${cli} step fail "<the stepId from claim JSON>" "reason"
 
 5. STOP. Reply "HEARTBEAT_OK". No more tool calls.
 
-Rules: NO_WORK/complete/fail → SESSION OVER. Never skip peek. Never run workflow stop/uninstall/sessions_spawn. Write output to file, pipe via stdin. Output must be KEY: VALUE lines, NOT JSON.`;
+Rules: NO_WORK/complete/fail → SESSION OVER. Never skip peek. Never run workflow stop/uninstall/sessions_spawn. Write output to /tmp/setfarm-output.txt, use --file flag. Output must be KEY: VALUE lines, NOT JSON.`;
 }
 
 export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
