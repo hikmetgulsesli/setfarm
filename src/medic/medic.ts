@@ -282,17 +282,9 @@ export async function restoreActiveRunCrons(): Promise<number> {
         if (actual === -1) { logger.warn(`[medic] gateway unreachable (${run.workflow_id})`, {}); }
         else if (actual === 0) { await setupAgentCrons(workflow); await logCronRecreate("total_loss", run.workflow_id); restored++; emitEvent({ ts: now(), event: "run.resumed" as EventType, runId: "", workflowId: run.workflow_id, detail: `Medic: 0/${expected} crons — recreated` }); }
         else if (actual !== expected) {
-          // Grace period: skip cron repair if run started < 3 min ago
-          const CRON_GRACE_MS = 180_000;
-          const _nr = await pgGet<{ created_at: string }>("SELECT created_at FROM runs WHERE workflow_id = $1 AND status = 'running' ORDER BY created_at DESC LIMIT 1", [run.workflow_id]);
-          const _nrTs = _nr?.created_at;
-          const _runAge = _nrTs ? Date.now() - new Date(_nrTs).getTime() : Infinity;
-          if (_runAge < CRON_GRACE_MS) {
-            logger.info(`[medic] Skipping cron repair for ${run.workflow_id} — run age ${Math.round(_runAge / 1000)}s < grace 180s`, {});
-          } else {
-            const { added, removed } = await repairAgentCrons(workflow);
-            if (added > 0 || removed > 0) { await logCronRecreate(actual < expected ? "partial_loss" : "duplicates", run.workflow_id); restored++; }
-          }
+          // DEMAND-BASED: syncActiveCrons manages cron count.
+          // Don't repair — intentional mismatch.
+          logger.info(`[medic] Cron count: actual=${actual} expected=${expected} for ${run.workflow_id} — demand-based, skipping repair`, {});
         }
       }
     } catch (err) { logger.warn(`[medic] restoreActiveRunCrons failed for ${run.workflow_id}: ${String(err)}`, {}); }
