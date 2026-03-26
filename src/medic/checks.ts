@@ -19,6 +19,7 @@ export type MedicActionType =
   | "restart_service"
   | "restart_gateway"
   | "kill_browser_sessions"
+  | "advance_pipeline"
   | "none";
 
 export interface MedicFinding {
@@ -964,4 +965,58 @@ export async function runSyncChecks(): Promise<MedicFinding[]> {
     ...await checkProviderFailure(),
     ...await checkOrphanedBrowserProcesses(),
   ];
+}
+
+
+// ── Check: Stuck Waiting Steps (advancePipeline recovery) ──────────
+
+/**
+ * If a step is 'done' but the immediately next step is still 'waiting',
+ * advancePipeline failed to activate it. Re-trigger advancement.
+ * This is the safety net for gateway restarts during advancePipeline.
+ */
+export async function checkStuckWaitingSteps(): Promise<MedicFinding[]> {
+  const findings: MedicFinding[] = [];
+
+  const stuckRows = await pgQuery<{
+    run_id: string;
+    done_step: string;
+    done_index: number;
+    next_step: string;
+    next_index: number;
+    next_id: string;
+    run_status: string;
+    done_at: string;
+  }>(`
+    SELECT
+      s1.run_id,
+      s1.step_id as done_step,
+      s1.step_index as done_index,
+      s2.step_id as next_step,
+      s2.step_index as next_index,
+      s2.id as next_id,
+      r.status as run_status,
+      s1.updated_at as done_at
+    FROM steps s1
+    JOIN steps s2 ON s2.run_id = s1.run_id AND s2.step_index = s1.step_index + 1
+    JOIN runs r ON r.id = s1.run_id
+    WHERE r.status = 'running'
+      AND s1.status = 'done'
+      AND s2.status = 'waiting'
+      AND EXTRACT(EPOCH FROM NOW() - s1.updated_at) > 120
+  `);
+
+  for (const row of stuckRows) {
+    findings.push({
+      check: "stuck_waiting_step",
+      severity: "warning",
+      message: `Step "${row.next_step}" is waiting but previous step "${row.done_step}" is done (since ${row.done_at}) — advancePipeline missed, re-triggering`,
+      action: "advance_pipeline",
+      runId: row.run_id,
+      stepId: row.next_id,
+      remediated: false,
+    });
+  }
+
+  return findings;
 }

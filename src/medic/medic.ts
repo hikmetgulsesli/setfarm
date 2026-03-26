@@ -16,6 +16,7 @@ import { listCronJobs } from "../installer/gateway-api.js";
 import {
   runSyncChecks,
   checkOrphanedCrons,
+  checkStuckWaitingSteps,
   type MedicFinding,
 } from "./checks.js";
 import { completeStep } from "../installer/step-ops.js";
@@ -242,6 +243,22 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
       return true;
     }
 
+    case "advance_pipeline": {
+      if (!finding.runId) return false;
+      try {
+        const { advancePipeline } = await import("../installer/step-advance.js");
+        const result = await advancePipeline(finding.runId);
+        if (result.advanced) {
+          emitEvent({ ts: now(), event: "pipeline.advanced" as EventType, runId: finding.runId, detail: "Medic: recovered stuck waiting step" });
+          logger.info(`[medic] advancePipeline recovered stuck step for run ${finding.runId}`, {});
+        }
+        return result.advanced || result.runCompleted;
+      } catch (err) {
+        logger.warn(`[medic] advancePipeline recovery failed: ${String(err)}`, {});
+        return false;
+      }
+    }
+
     case "none":
     default:
       return false;
@@ -307,6 +324,7 @@ export async function runMedicCheck(): Promise<MedicCheckResult> {
   try { await restoreActiveRunCrons(); } catch (e) { logger.warn(`[medic] restoreActiveRunCrons failed: ${String(e)}`, {}); }
 
   const findings: MedicFinding[] = await runSyncChecks();
+  try { findings.push(...await checkStuckWaitingSteps()); } catch (e) { logger.warn(`[medic] checkStuckWaitingSteps failed: ${String(e)}`, {}); }
   try { const cronResult = await listCronJobs(); if (cronResult.ok && cronResult.jobs) { findings.push(...await checkOrphanedCrons(cronResult.jobs.filter(j => j.name.startsWith("setfarm/")))); } } catch (err) { console.warn("listCronJobs failed:", String(err)); }
 
   let actionsTaken = 0;
