@@ -273,12 +273,15 @@ export async function checkOrphanedCrons(
  */
 // ── Check: Claimed But Not Progressing ────────────────────────────────
 
-const CLAIMED_STUCK_THRESHOLD_MS = 10 * 60 * 1000; // 10 min — reduced from 25min (was 30min) for faster recovery
+const CLAIMED_STUCK_THRESHOLD_MS = 10 * 60 * 1000; // 10 min — for fast steps (plan, stories, etc.)
+const CLAIMED_STUCK_SLOW_THRESHOLD_MS = 25 * 60 * 1000; // 25 min — for slow steps (design, implement, setup)
+const SLOW_STEP_IDS_FOR_MEDIC = new Set(["design", "implement", "setup-repo", "setup-build"]);
 
 /**
  * Find steps that were claimed (status='running') but haven't been updated
  * within a short threshold. This catches Phase 2 sub-agents that never started
  * or crashed immediately after spawn — much faster than the full role timeout.
+ * Slow steps (design, implement, setup) get 25min threshold instead of 10min.
  */
 export async function checkClaimedButStuck(): Promise<MedicFinding[]> {
   const findings: MedicFinding[] = [];
@@ -300,9 +303,12 @@ export async function checkClaimedButStuck(): Promise<MedicFinding[]> {
   `, [CLAIMED_STUCK_THRESHOLD_MS, MAX_ROLE_TIMEOUT_MS]);
 
   for (const step of stuck) {
-    const ageMin = Math.round(
-      (Date.now() - new Date(step.updated_at).getTime()) / 60000
-    );
+    const elapsedMs = Date.now() - new Date(step.updated_at).getTime();
+    // Slow steps get longer threshold — design/implement genuinely need 15-25 min
+    if (SLOW_STEP_IDS_FOR_MEDIC.has(step.step_id) && elapsedMs < CLAIMED_STUCK_SLOW_THRESHOLD_MS) {
+      continue; // Not stuck yet — still within slow step threshold
+    }
+    const ageMin = Math.round(elapsedMs / 60000);
     findings.push({
       check: "claimed_but_stuck",
       severity: "warning",
