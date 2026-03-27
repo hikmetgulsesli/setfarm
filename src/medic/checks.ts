@@ -518,7 +518,7 @@ export async function checkStalledWorkflowCrons(): Promise<MedicFinding[]> {
       check: "stalled_workflow_crons",
       severity: "warning",
       message: `Workflow "${workflow_id}" has ${pendingTotal} pending item(s) but ${ageMin > 0 ? `no claim in ${ageMin}min` : "no active claims"} — crons may be dead, force-recreating`,
-      action: "none",
+      action: "recreate_crons",
       workflowId: workflow_id,
       remediated: false,
     });
