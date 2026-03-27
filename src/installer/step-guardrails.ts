@@ -156,7 +156,7 @@ export async function processDesignCompletion(
       const repoPath = context["repo"] || "";
       if (repoPath) {
         const stitchDir = path.join(repoPath, "stitch");
-        const cacheDir = path.join("/home/setrox/projects/mission-control/server/stitch-cache", stitchProjectId);
+        const cacheDir = path.join(process.env.HOME || "/home/setrox", ".openclaw/setfarm/stitch-cache", stitchProjectId);
         if (fs.existsSync(stitchDir)) {
           fs.mkdirSync(cacheDir, { recursive: true });
           for (const f of fs.readdirSync(stitchDir)) {
