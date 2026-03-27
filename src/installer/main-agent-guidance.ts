@@ -44,7 +44,7 @@ Agent cron jobs are created automatically during install.
 ## Running Workflows
 - Start: \`${CLI} workflow run <workflow-id> "<task>"\`
 - Status: \`${CLI} workflow status "<task title>"\`
-- Workflows self-advance via agent cron jobs polling SQLite for pending steps.
+- Workflows self-advance via agent cron jobs polling PostgreSQL for pending steps.
 
 ## DELEGATION RULE (CRITICAL)
 - When a user asks for a new project/feature/app: DO NOT code it yourself. You are the orchestrator, not the developer.

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { logger } from "../lib/logger.js";
-import { getDb } from "../db.js";
+import { pgQuery, pgRun, now } from "../db-pg.js";
 
 // --- Types ---
 
@@ -266,14 +266,14 @@ export function formatUIContractForTemplate(contracts: DesignContract[]): string
 
 // --- Enrich stories with design-driven acceptance criteria ---
 
-export function enrichStoriesWithDesignContract(
-  db: ReturnType<typeof getDb>,
+export async function enrichStoriesWithDesignContract(
   runId: string,
   contracts: DesignContract[]
-): void {
-  const stories = db.prepare(
-    "SELECT id, story_id, title, acceptance_criteria FROM stories WHERE run_id = ? AND status = 'pending'"
-  ).all(runId) as Array<{ id: string; story_id: string; title: string; acceptance_criteria: string }>;
+): Promise<void> {
+  const stories = await pgQuery<{ id: string; story_id: string; title: string; acceptance_criteria: string }>(
+    "SELECT id, story_id, title, acceptance_criteria FROM stories WHERE run_id = $1 AND status = 'pending'",
+    [runId]
+  );
 
   if (stories.length === 0 || contracts.length === 0) return;
 
@@ -331,9 +331,10 @@ export function enrichStoriesWithDesignContract(
     const designAC = toAdd.map(c => `- [DESIGN] ${c}`).join("\n");
     const updatedAC = existingAC + separator + "\n--- Design Contract Requirements ---\n" + designAC;
 
-    db.prepare(
-      "UPDATE stories SET acceptance_criteria = ?, updated_at = ? WHERE id = ?"
-    ).run(updatedAC, new Date().toISOString(), story.id);
+    await pgRun(
+      "UPDATE stories SET acceptance_criteria = $1, updated_at = $2 WHERE id = $3",
+      [updatedAC, now(), story.id]
+    );
   }
 
   logger.info(`[design-contract] Enriched ${stories.length} stories with design criteria`, { runId });

@@ -1,10 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { getDb } from "../db.js";
 import { pgGet } from "../db-pg.js";
-
-const USE_PG = process.env.DB_BACKEND === "postgres";
 
 function getEventsDir(): string {
   return process.env.SETFARM_DB_PATH
@@ -59,18 +56,10 @@ const notifyUrlCache = new Map<string, string | null>();
 async function getNotifyUrl(runId: string): Promise<string | null> {
   if (notifyUrlCache.has(runId)) return notifyUrlCache.get(runId)!;
   try {
-    if (USE_PG) {
-      const row = await pgGet<{ notify_url: string | null }>("SELECT notify_url FROM runs WHERE id = $1", [runId]);
-      const url = row?.notify_url ?? null;
-      notifyUrlCache.set(runId, url);
-      return url;
-    } else {
-      const db = getDb();
-      const row = db.prepare("SELECT notify_url FROM runs WHERE id = ?").get(runId) as { notify_url: string | null } | undefined;
-      const url = row?.notify_url ?? null;
-      notifyUrlCache.set(runId, url);
-      return url;
-    }
+    const row = await pgGet<{ notify_url: string | null }>("SELECT notify_url FROM runs WHERE id = $1", [runId]);
+    const url = row?.notify_url ?? null;
+    notifyUrlCache.set(runId, url);
+    return url;
   } catch {
     return null;
   }

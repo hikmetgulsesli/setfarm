@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import crypto from "node:crypto";
-import { getDb } from "../db.js";
+import { pgQuery, pgGet, pgRun, now } from "../db-pg.js";
 import { resolveBundledWorkflowsDir } from "../installer/paths.js";
 import YAML from "yaml";
 
@@ -40,22 +40,22 @@ function loadWorkflows(): WorkflowDef[] {
   return results;
 }
 
-function getRuns(workflowId?: string): Array<RunInfo & { steps: StepInfo[] }> {
-  const db = getDb();
+async function getRuns(workflowId?: string): Promise<Array<RunInfo & { steps: StepInfo[] }>> {
   const runs = workflowId
-    ? db.prepare("SELECT * FROM runs WHERE workflow_id = ? ORDER BY created_at DESC").all(workflowId) as RunInfo[]
-    : db.prepare("SELECT * FROM runs ORDER BY created_at DESC").all() as RunInfo[];
-  return runs.map((r) => {
-    const steps = db.prepare("SELECT * FROM steps WHERE run_id = ? ORDER BY step_index ASC").all(r.id) as StepInfo[];
-    return { ...r, steps };
-  });
+    ? await pgQuery<RunInfo>("SELECT * FROM runs WHERE workflow_id = $1 ORDER BY created_at DESC", [workflowId])
+    : await pgQuery<RunInfo>("SELECT * FROM runs ORDER BY created_at DESC");
+  const results: Array<RunInfo & { steps: StepInfo[] }> = [];
+  for (const r of runs) {
+    const steps = await pgQuery<StepInfo>("SELECT * FROM steps WHERE run_id = $1 ORDER BY step_index ASC", [r.id]);
+    results.push({ ...r, steps });
+  }
+  return results;
 }
 
-function getRunById(id: string): (RunInfo & { steps: StepInfo[] }) | null {
-  const db = getDb();
-  const run = db.prepare("SELECT * FROM runs WHERE id = ?").get(id) as RunInfo | undefined;
+async function getRunById(id: string): Promise<(RunInfo & { steps: StepInfo[] }) | null> {
+  const run = await pgGet<RunInfo>("SELECT * FROM runs WHERE id = $1", [id]);
   if (!run) return null;
-  const steps = db.prepare("SELECT * FROM steps WHERE run_id = ? ORDER BY step_index ASC").all(run.id) as StepInfo[];
+  const steps = await pgQuery<StepInfo>("SELECT * FROM steps WHERE run_id = $1 ORDER BY step_index ASC", [run.id]);
   return { ...run, steps };
 }
 
@@ -232,14 +232,13 @@ function parseSystemRules(): ParsedRule[] {
   return rules;
 }
 
-function getCustomRules(): any[] {
-  const db = getDb();
-  return db.prepare("SELECT * FROM rules ORDER BY sort_order ASC, created_at ASC").all() as any[];
+async function getCustomRules(): Promise<any[]> {
+  return await pgQuery("SELECT * FROM rules ORDER BY sort_order ASC, created_at ASC");
 }
 
-function getAllRules(query: URLSearchParams): any[] {
+async function getAllRules(query: URLSearchParams): Promise<any[]> {
   const systemRules = parseSystemRules();
-  const customRules = getCustomRules().map((r: any) => ({
+  const customRules = (await getCustomRules()).map((r: any) => ({
     ...r,
     enabled: !!r.enabled,
     readonly: false,
@@ -299,7 +298,7 @@ export function startDashboard(port = 3333): http.Server {
           adaptor: parsed.adaptor ?? "auto",
           status: result.success ? "success" : "error",
           elapsed: result.metadata?.elapsed_seconds ?? 0,
-          timestamp: new Date().toISOString(),
+          timestamp: now(),
           preview: result.success
             ? (result.data?.title || result.data?.product?.title || parsed.url).slice(0, 80)
             : (result.error || "Unknown error").slice(0, 80),
@@ -323,18 +322,18 @@ export function startDashboard(port = 3333): http.Server {
 
     // ── Rules API ──
     if (p === "/api/rules" && req.method === "GET") {
-      return json(res, getAllRules(url.searchParams));
+      return json(res, await getAllRules(url.searchParams));
     }
 
     if (p === "/api/rules" && req.method === "POST") {
       try {
         const body = JSON.parse(await readBody(req));
-        const db = getDb();
-        const now = new Date().toISOString();
+        const ts = now();
         const id = crypto.randomUUID();
-        db.prepare(
-          "INSERT INTO rules (id, title, content, category, project_type, severity, applies_to, enabled, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)"
-        ).run(id, body.title, body.content, body.category ?? "general", body.project_type ?? "general", body.severity ?? "mandatory", body.applies_to ?? "implement", now, now);
+        await pgRun(
+          "INSERT INTO rules (id, title, content, category, project_type, severity, applies_to, enabled, sort_order, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, 1, 0, $8, $9)",
+          [id, body.title, body.content, body.category ?? "general", body.project_type ?? "general", body.severity ?? "mandatory", body.applies_to ?? "implement", ts, ts]
+        );
         return json(res, { id }, 201);
       } catch (e: any) {
         return json(res, { error: e.message }, 400);
@@ -342,8 +341,8 @@ export function startDashboard(port = 3333): http.Server {
     }
 
     if (p === "/api/rules/export" && req.method === "GET") {
-      const rules = getAllRules(new URLSearchParams());
-      const payload = JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), rules }, null, 2);
+      const rules = await getAllRules(new URLSearchParams());
+      const payload = JSON.stringify({ version: 1, exportedAt: now(), rules }, null, 2);
       res.writeHead(200, {
         "Content-Type": "application/json",
         "Content-Disposition": 'attachment; filename="setfarm-rules.json"',
@@ -356,22 +355,23 @@ export function startDashboard(port = 3333): http.Server {
       try {
         const body = JSON.parse(await readBody(req));
         const items = body.rules ?? [];
-        const db = getDb();
-        const now = new Date().toISOString();
+        const ts = now();
         let imported = 0, updated = 0, skipped = 0;
         for (const r of items) {
           if (r.readonly || r.source === "fragment" || r.source === "reference") { skipped++; continue; }
-          const existing = db.prepare("SELECT id FROM rules WHERE title = ?").get(r.title) as any;
+          const existing = await pgGet<any>("SELECT id FROM rules WHERE title = $1", [r.title]);
           if (existing) {
-            db.prepare(
-              "UPDATE rules SET content = ?, category = ?, project_type = ?, severity = ?, applies_to = ?, enabled = ?, updated_at = ? WHERE id = ?"
-            ).run(r.content, r.category ?? "general", r.project_type ?? "general", r.severity ?? "mandatory", r.applies_to ?? "implement", r.enabled === false ? 0 : 1, now, existing.id);
+            await pgRun(
+              "UPDATE rules SET content = $1, category = $2, project_type = $3, severity = $4, applies_to = $5, enabled = $6, updated_at = $7 WHERE id = $8",
+              [r.content, r.category ?? "general", r.project_type ?? "general", r.severity ?? "mandatory", r.applies_to ?? "implement", r.enabled === false ? 0 : 1, ts, existing.id]
+            );
             updated++;
           } else {
             const id = crypto.randomUUID();
-            db.prepare(
-              "INSERT INTO rules (id, title, content, category, project_type, severity, applies_to, enabled, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)"
-            ).run(id, r.title, r.content, r.category ?? "general", r.project_type ?? "general", r.severity ?? "mandatory", r.applies_to ?? "implement", r.enabled === false ? 0 : 1, now, now);
+            await pgRun(
+              "INSERT INTO rules (id, title, content, category, project_type, severity, applies_to, enabled, sort_order, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9, $10)",
+              [id, r.title, r.content, r.category ?? "general", r.project_type ?? "general", r.severity ?? "mandatory", r.applies_to ?? "implement", r.enabled === false ? 0 : 1, ts, ts]
+            );
             imported++;
           }
         }
@@ -385,9 +385,8 @@ export function startDashboard(port = 3333): http.Server {
     if (ruleToggleMatch && req.method === "PUT") {
       const id = ruleToggleMatch[1];
       if (id.startsWith("frag-") || id.startsWith("ref-")) return json(res, { error: "Cannot toggle system rules" }, 403);
-      const db = getDb();
-      const now = new Date().toISOString();
-      db.prepare("UPDATE rules SET enabled = CASE WHEN enabled = 1 THEN 0 ELSE 1 END, updated_at = ? WHERE id = ?").run(now, id);
+      const ts = now();
+      await pgRun("UPDATE rules SET enabled = CASE WHEN enabled = 1 THEN 0 ELSE 1 END, updated_at = $1 WHERE id = $2", [ts, id]);
       return json(res, { ok: true });
     }
 
@@ -397,11 +396,11 @@ export function startDashboard(port = 3333): http.Server {
       if (id.startsWith("frag-") || id.startsWith("ref-")) return json(res, { error: "Cannot edit system rules" }, 403);
       try {
         const body = JSON.parse(await readBody(req));
-        const db = getDb();
-        const now = new Date().toISOString();
-        db.prepare(
-          "UPDATE rules SET title = ?, content = ?, category = ?, project_type = ?, severity = ?, applies_to = ?, enabled = ?, updated_at = ? WHERE id = ?"
-        ).run(body.title, body.content, body.category ?? "general", body.project_type ?? "general", body.severity ?? "mandatory", body.applies_to ?? "implement", body.enabled === false ? 0 : 1, now, id);
+        const ts = now();
+        await pgRun(
+          "UPDATE rules SET title = $1, content = $2, category = $3, project_type = $4, severity = $5, applies_to = $6, enabled = $7, updated_at = $8 WHERE id = $9",
+          [body.title, body.content, body.category ?? "general", body.project_type ?? "general", body.severity ?? "mandatory", body.applies_to ?? "implement", body.enabled === false ? 0 : 1, ts, id]
+        );
         return json(res, { ok: true });
       } catch (e: any) {
         return json(res, { error: e.message }, 400);
@@ -411,8 +410,7 @@ export function startDashboard(port = 3333): http.Server {
     if (ruleMatch && req.method === "DELETE") {
       const id = ruleMatch[1];
       if (id.startsWith("frag-") || id.startsWith("ref-")) return json(res, { error: "Cannot delete system rules" }, 403);
-      const db = getDb();
-      db.prepare("DELETE FROM rules WHERE id = ?").run(id);
+      await pgRun("DELETE FROM rules WHERE id = $1", [id]);
       return json(res, { ok: true });
     }
 
@@ -428,22 +426,22 @@ export function startDashboard(port = 3333): http.Server {
 
     const storiesMatch = p.match(/^\/api\/runs\/([^/]+)\/stories$/);
     if (storiesMatch) {
-      const db = getDb();
-      const stories = db.prepare(
-        "SELECT * FROM stories WHERE run_id = ? ORDER BY story_index ASC"
-      ).all(storiesMatch[1]);
+      const stories = await pgQuery(
+        "SELECT * FROM stories WHERE run_id = $1 ORDER BY story_index ASC",
+        [storiesMatch[1]]
+      );
       return json(res, stories);
     }
 
     const runMatch = p.match(/^\/api\/runs\/(.+)$/);
     if (runMatch) {
-      const run = getRunById(runMatch[1]);
+      const run = await getRunById(runMatch[1]);
       return run ? json(res, run) : json(res, { error: "not found" }, 404);
     }
 
     if (p === "/api/runs") {
       const wf = url.searchParams.get("workflow") ?? undefined;
-      return json(res, getRuns(wf));
+      return json(res, await getRuns(wf));
     }
 
     // Medic API

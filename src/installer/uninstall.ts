@@ -15,12 +15,10 @@ import { removeSubagentAllowlist } from "./subagent-allowlist.js";
 import { uninstallSetfarmSkill } from "./skill-install.js";
 import { removeAgentCrons } from "./agent-cron.js";
 import { deleteAgentCronJobs } from "./gateway-api.js";
-import { getDb } from "../db.js";
 import { pgQuery, pgRun, pgGet } from "../db-pg.js";
 import { stopDaemon } from "../server/daemonctl.js";
 import type { WorkflowInstallResult } from "./types.js";
 
-const USE_PG = process.env.DB_BACKEND === "postgres";
 
 function filterAgentList(
   list: Array<Record<string, unknown>>,
@@ -52,22 +50,14 @@ const DEFAULT_SESSION_MAINTENANCE = {
 
 async function getActiveRuns(workflowId?: string): Promise<Array<{ id: string; workflow_id: string; task: string }>> {
   try {
-    if (USE_PG) {
-      if (workflowId) {
-        return await pgQuery<{ id: string; workflow_id: string; task: string }>(
-          "SELECT id, workflow_id, task FROM runs WHERE workflow_id = $1 AND status = 'running'", [workflowId]
-        );
-      }
+    if (workflowId) {
       return await pgQuery<{ id: string; workflow_id: string; task: string }>(
-        "SELECT id, workflow_id, task FROM runs WHERE status = 'running'"
+        "SELECT id, workflow_id, task FROM runs WHERE workflow_id = $1 AND status = 'running'", [workflowId]
       );
-    } else {
-      const db = getDb();
-      if (workflowId) {
-        return db.prepare("SELECT id, workflow_id, task FROM runs WHERE workflow_id = ? AND status = 'running'").all(workflowId) as Array<{ id: string; workflow_id: string; task: string }>;
-      }
-      return db.prepare("SELECT id, workflow_id, task FROM runs WHERE status = 'running'").all() as Array<{ id: string; workflow_id: string; task: string }>;
     }
+    return await pgQuery<{ id: string; workflow_id: string; task: string }>(
+      "SELECT id, workflow_id, task FROM runs WHERE status = 'running'"
+    );
   } catch {
     return [];
   }
@@ -79,22 +69,12 @@ export async function checkActiveRuns(workflowId?: string): Promise<Array<{ id: 
 
 async function removeRunRecords(workflowId: string): Promise<void> {
   try {
-    if (USE_PG) {
-      const runs = await pgQuery<{ id: string }>("SELECT id FROM runs WHERE workflow_id = $1", [workflowId]);
-      for (const run of runs) {
-        await pgRun("DELETE FROM stories WHERE run_id = $1", [run.id]);
-        await pgRun("DELETE FROM steps WHERE run_id = $1", [run.id]);
-      }
-      await pgRun("DELETE FROM runs WHERE workflow_id = $1", [workflowId]);
-    } else {
-      const db = getDb();
-      const runs = db.prepare("SELECT id FROM runs WHERE workflow_id = ?").all(workflowId) as Array<{ id: string }>;
-      for (const run of runs) {
-        db.prepare("DELETE FROM stories WHERE run_id = ?").run(run.id);
-        db.prepare("DELETE FROM steps WHERE run_id = ?").run(run.id);
-      }
-      db.prepare("DELETE FROM runs WHERE workflow_id = ?").run(workflowId);
+    const runs = await pgQuery<{ id: string }>("SELECT id FROM runs WHERE workflow_id = $1", [workflowId]);
+    for (const run of runs) {
+      await pgRun("DELETE FROM stories WHERE run_id = $1", [run.id]);
+      await pgRun("DELETE FROM steps WHERE run_id = $1", [run.id]);
     }
+    await pgRun("DELETE FROM runs WHERE workflow_id = $1", [workflowId]);
   } catch {
     // DB might not exist yet
   }
@@ -205,18 +185,6 @@ export async function uninstallAllWorkflows(): Promise<void> {
   const workflowWorkspaceRoot = resolveWorkflowWorkspaceRoot();
   if (await pathExists(workflowWorkspaceRoot)) {
     await fs.rm(workflowWorkspaceRoot, { recursive: true, force: true });
-  }
-
-  const { getDbPath } = await import("../db.js");
-  const dbPath = getDbPath();
-  if (await pathExists(dbPath)) {
-    await fs.rm(dbPath, { force: true });
-  }
-  for (const suffix of ["-wal", "-shm"]) {
-    const p = dbPath + suffix;
-    if (await pathExists(p)) {
-      await fs.rm(p, { force: true });
-    }
   }
 
   for (const entry of removedAgents) {

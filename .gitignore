@@ -10,3 +10,13 @@ progress*.txt
 src.bak-pre-cleanup/
 .env
 scripts/.env
+run-*/
+run-reports/
+workspace/
+workspaces/
+wrk/
+*.bak
+.setfarm-step-output.txt
+.setfarm-*.txt
+.setfarm-*.json
+prd-*.md

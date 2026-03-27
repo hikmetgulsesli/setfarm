@@ -1,56 +1,56 @@
 import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
-import { getDb } from "../db.js";
+import { pgQuery, pgGet, pgRun, now } from "../db-pg.js";
 import { stopWorkflow } from "./status.js";
 import type { StopWorkflowResult } from "./status.js";
 
 // Helper to create a test run with steps
-function createTestRun(opts: {
+async function createTestRun(opts: {
   runId: string;
   workflowId: string;
   status?: string;
   steps?: Array<{ stepId: string; status: string; output?: string | null }>;
 }) {
-  const db = getDb();
-  const now = new Date().toISOString();
-  db.prepare(
-    "INSERT INTO runs (id, workflow_id, task, status, context, created_at, updated_at) VALUES (?, ?, ?, ?, '{}', ?, ?)"
-  ).run(opts.runId, opts.workflowId, "test task", opts.status ?? "running", now, now);
+  const ts = now();
+  await pgRun(
+    "INSERT INTO runs (id, workflow_id, task, status, context, created_at, updated_at) VALUES ($1, $2, $3, $4, '{}', $5, $6)",
+    [opts.runId, opts.workflowId, "test task", opts.status ?? "running", ts, ts]
+  );
 
   if (opts.steps) {
     for (let i = 0; i < opts.steps.length; i++) {
       const s = opts.steps[i];
-      db.prepare(
-        "INSERT INTO steps (id, run_id, step_id, agent_id, step_index, input_template, expects, status, output, created_at, updated_at) VALUES (?, ?, ?, ?, ?, '', '', ?, ?, ?, ?)"
-      ).run(
-        crypto.randomUUID(),
-        opts.runId,
-        s.stepId,
-        "test-agent",
-        i,
-        s.status,
-        s.output ?? null,
-        now,
-        now
+      await pgRun(
+        "INSERT INTO steps (id, run_id, step_id, agent_id, step_index, input_template, expects, status, output, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, '', '', $6, $7, $8, $9)",
+        [
+          crypto.randomUUID(),
+          opts.runId,
+          s.stepId,
+          "test-agent",
+          i,
+          s.status,
+          s.output ?? null,
+          ts,
+          ts,
+        ]
       );
     }
   }
 }
 
 // Helper to clean up a test run and its steps
-function cleanupTestRun(runId: string) {
-  const db = getDb();
-  db.prepare("DELETE FROM steps WHERE run_id = ?").run(runId);
-  db.prepare("DELETE FROM runs WHERE id = ?").run(runId);
+async function cleanupTestRun(runId: string) {
+  await pgRun("DELETE FROM steps WHERE run_id = $1", [runId]);
+  await pgRun("DELETE FROM runs WHERE id = $1", [runId]);
 }
 
 describe("stopWorkflow", () => {
   const testRunIds: string[] = [];
 
-  afterEach(() => {
+  afterEach(async () => {
     for (const id of testRunIds) {
-      cleanupTestRun(id);
+      await cleanupTestRun(id);
     }
     testRunIds.length = 0;
   });
@@ -58,7 +58,7 @@ describe("stopWorkflow", () => {
   it("stops a running workflow with mixed step statuses and returns correct cancelled count", async () => {
     const runId = crypto.randomUUID();
     testRunIds.push(runId);
-    createTestRun({
+    await createTestRun({
       runId,
       workflowId: "test-wf-1",
       status: "running",
@@ -78,11 +78,12 @@ describe("stopWorkflow", () => {
     assert.equal(result.cancelledSteps, 3); // running + waiting + pending
 
     // Verify DB state
-    const db = getDb();
-    const run = db.prepare("SELECT status FROM runs WHERE id = ?").get(runId) as { status: string };
-    assert.equal(run.status, "cancelled");
+    const run = await pgGet<{ status: string }>("SELECT status FROM runs WHERE id = $1", [runId]);
+    assert.equal(run?.status, "cancelled");
 
-    const steps = db.prepare("SELECT step_id, status, output FROM steps WHERE run_id = ? ORDER BY step_index").all(runId) as Array<{ step_id: string; status: string; output: string | null }>;
+    const steps = await pgQuery<{ step_id: string; status: string; output: string | null }>(
+      "SELECT step_id, status, output FROM steps WHERE run_id = $1 ORDER BY step_index", [runId]
+    );
     assert.equal(steps[0].status, "done"); // done step unchanged
     assert.equal(steps[0].output, "plan output"); // done step output unchanged
     assert.equal(steps[1].status, "failed");
@@ -103,7 +104,7 @@ describe("stopWorkflow", () => {
   it("returns already_done for an already completed run", async () => {
     const runId = crypto.randomUUID();
     testRunIds.push(runId);
-    createTestRun({
+    await createTestRun({
       runId,
       workflowId: "test-wf-2",
       status: "completed",
@@ -119,7 +120,7 @@ describe("stopWorkflow", () => {
   it("returns already_done for an already cancelled run", async () => {
     const runId = crypto.randomUUID();
     testRunIds.push(runId);
-    createTestRun({
+    await createTestRun({
       runId,
       workflowId: "test-wf-3",
       status: "cancelled",
@@ -135,7 +136,7 @@ describe("stopWorkflow", () => {
   it("supports prefix matching with first 8 chars of UUID", async () => {
     const runId = crypto.randomUUID();
     testRunIds.push(runId);
-    createTestRun({
+    await createTestRun({
       runId,
       workflowId: "test-wf-4",
       status: "running",
@@ -153,7 +154,7 @@ describe("stopWorkflow", () => {
   it("does NOT change done steps to failed", async () => {
     const runId = crypto.randomUUID();
     testRunIds.push(runId);
-    createTestRun({
+    await createTestRun({
       runId,
       workflowId: "test-wf-5",
       status: "running",
@@ -170,8 +171,9 @@ describe("stopWorkflow", () => {
     assert.equal(result.cancelledSteps, 1); // only the running step
 
     // Verify done steps are untouched
-    const db = getDb();
-    const steps = db.prepare("SELECT step_id, status, output FROM steps WHERE run_id = ? ORDER BY step_index").all(runId) as Array<{ step_id: string; status: string; output: string | null }>;
+    const steps = await pgQuery<{ step_id: string; status: string; output: string | null }>(
+      "SELECT step_id, status, output FROM steps WHERE run_id = $1 ORDER BY step_index", [runId]
+    );
     assert.equal(steps[0].status, "done");
     assert.equal(steps[0].output, "original output");
     assert.equal(steps[1].status, "done");
