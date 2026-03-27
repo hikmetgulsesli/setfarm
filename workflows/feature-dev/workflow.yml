@@ -215,13 +215,14 @@ steps:
 
       ============================================================
       === TECH STACK SELECTION ===
-      Choose the tech stack based on TASK description:
-      - If task says "React + Vite" or "Vite" or "React" (without Next) → TECH_STACK: vite-react
-      - If task says "Next.js" or "Next" → TECH_STACK: nextjs
-      - If task says "vanilla" or "plain" → TECH_STACK: vanilla-ts
-      - If task says "Express" or "API" → TECH_STACK: node-express
-      - If task says "React Native" or "mobile" → TECH_STACK: react-native
-      - DEFAULT for web projects: vite-react (NOT nextjs — only use nextjs when explicitly requested)
+      Analyze the project requirements and choose the BEST tech stack:
+      - Simple SPA, game, utility, dashboard, portfolio → vite-react (lightweight, fast)
+      - SSR/SEO needed, blog, e-commerce, multi-page content site → nextjs
+      - No UI, API only → node-express
+      - CLI tool, no frontend → vanilla-ts
+      - Mobile app → react-native
+      Choose based on actual project needs. Do NOT default to nextjs for everything.
+      If the task explicitly mentions a framework, use that one.
 
       === DATABASE REQUIREMENT ===
       Analyze the project and decide if it needs a database:
