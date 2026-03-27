@@ -1178,6 +1178,32 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
       await failStep(stepId, deployErr);
       return { advanced: false, runCompleted: false };
     }
+
+    // MC registration guardrail: verify project is registered in Mission Control
+    const deployType = parsed["deploy_type"] || "";
+    if (deployType === "new-web" || deployType === "new-mobile" || deployType === "update") {
+      const projectName = context["repo"] ? path.basename(context["repo"]) : "";
+      if (projectName) {
+        try {
+          const mcCheck = execFileSync("curl", ["-sf", "--max-time", "5", `http://127.0.0.1:3080/api/projects/${projectName}`],
+            { timeout: 10_000, stdio: "pipe" }).toString().trim();
+          const mcData = JSON.parse(mcCheck);
+          if (!mcData.id) {
+            deployErr = `GUARDRAIL: Project "${projectName}" not found in Mission Control after deploy. MC registration failed.`;
+          } else {
+            logger.info(`[deploy-guardrail] MC registration verified: ${projectName}`, { runId: step.run_id });
+          }
+        } catch {
+          deployErr = `GUARDRAIL: Project "${projectName}" not found in Mission Control. Deploy must register the project.`;
+        }
+        if (deployErr) {
+          logger.warn(`[deploy-guardrail] ${deployErr}`, { runId: step.run_id, stepId: step.step_id });
+          if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
+          await failStep(stepId, deployErr);
+          return { advanced: false, runCompleted: false };
+        }
+      }
+    }
   }
 
   // SCREEN_MAP Enforcement (design step) — design owns screen identification
