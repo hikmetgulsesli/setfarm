@@ -313,6 +313,8 @@ steps:
       STEP 2 — Generate screens (ALWAYS generate fresh for this project):
       For each unique screen you identified:
       a. Build detailed prompt from screen name, type, description + your chosen design_system colors/fonts
+         CRITICAL: Prompt'un SONUNA şunu ekle: "All visible text content (buttons, labels, headings, placeholders, menu items) must be in Turkish language."
+         Bu olmadan Stitch İngilizce content üretir.
       b. Use generate-screen-safe with screenId as identifier:
          node "$STITCH_SCRIPT" generate-screen-safe "$PROJECT_ID" "<prompt>" "<screen.name>" <DEVICE> GEMINI_3_1_PRO
       c. If result has "skipped: true" → screen already exists (OK, continue to next)
