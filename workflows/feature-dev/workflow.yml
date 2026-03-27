@@ -214,6 +214,15 @@ steps:
       {{previous_failure}}
 
       ============================================================
+      === TECH STACK SELECTION ===
+      Choose the tech stack based on TASK description:
+      - If task says "React + Vite" or "Vite" or "React" (without Next) → TECH_STACK: vite-react
+      - If task says "Next.js" or "Next" → TECH_STACK: nextjs
+      - If task says "vanilla" or "plain" → TECH_STACK: vanilla-ts
+      - If task says "Express" or "API" → TECH_STACK: node-express
+      - If task says "React Native" or "mobile" → TECH_STACK: react-native
+      - DEFAULT for web projects: vite-react (NOT nextjs — only use nextjs when explicitly requested)
+
       === DATABASE REQUIREMENT ===
       Analyze the project and decide if it needs a database:
       - Static sites, portfolios, landing pages, games → DB_REQUIRED: none
@@ -226,6 +235,7 @@ steps:
       STATUS: done
       REPO: <exact repo path, e.g. $HOME/projects/myproject>
       BRANCH: <branch name, e.g. feature-name>
+      TECH_STACK: <vite-react|nextjs|vanilla-ts|node-express|react-native>
       PRD:
       <full PRD text — include all sections, pages, features, technical details>
       PRD_SCREEN_COUNT: <number of rows in the Ekranlar/Screens table>

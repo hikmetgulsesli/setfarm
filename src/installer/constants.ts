@@ -105,6 +105,8 @@ export const OPTIONAL_TEMPLATE_VARS = [
   "db_password",
   "db_required",
   "db_type",
+  // Tech stack
+  "tech_stack",
   // Smart Context (injected at implement step)
   "project_tree",
   "installed_packages",
