@@ -691,12 +691,9 @@ steps:
 
       Implement ONE user story. Create a PR for review.
 
-      LANGUAGE RULE: All user-facing text (buttons, labels, headings, placeholders,
-      error messages, tooltips, aria-labels, alt text, counter labels, section titles)
-      MUST be in Turkish unless the task explicitly says otherwise.
-      ZERO TOLERANCE: "Current Tally"→"Toplam Sayaç", "Settings"→"Ayarlar", "Submit"→"Gönder"
-      If you see English text in Stitch HTML, TRANSLATE it to Turkish in your implementation.
-      Code comments and variable names stay in English.
+      LANGUAGE RULE: Kullanıcının ekranda gördüğü HER metin Türkçe olmalı.
+      Stitch HTML'deki İngilizce metinler dahil — implementasyona geçerken Türkçeye çevir.
+      Sadece kod (variable, comment, className) İngilizce kalır.
 
       TASK: {{task}}
       REPO: {{repo}}
