@@ -66,7 +66,14 @@ export async function advancePipeline(runId: string): Promise<{ advanced: boolea
       emitEvent({ ts: now(), event: "pipeline.advanced", runId, workflowId: wfId, stepId: next.step_id });
       emitEvent({ ts: now(), event: "step.pending", runId, workflowId: wfId, stepId: next.step_id });
       // Demand-based crons: remove idle agent crons, keep only active ones
-      try { await syncActiveCrons(runId, wfId || ""); } catch (e) { logger.warn(`[advance] syncActiveCrons: ${String(e)}`, {}); }
+      try {
+        await syncActiveCrons(runId, wfId || "");
+      } catch (e) {
+        logger.warn(`[advance] syncActiveCrons failed, retrying in 5s: ${String(e)}`, {});
+        setTimeout(async () => {
+          try { await syncActiveCrons(runId, wfId || ""); } catch (e2) { logger.error(`[advance] syncActiveCrons retry failed: ${String(e2)}`, {}); }
+        }, 5000);
+      }
       return { advanced: true, runCompleted: false };
     } else {
       await completeRun(runId);

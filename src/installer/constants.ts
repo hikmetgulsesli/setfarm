@@ -185,4 +185,4 @@ export const STORY_STATUS = {
 
 // ── Developer Agent Pool ────────────────────────────────────────────
 
-export const DEFAULT_DEVELOPER_AGENTS = ["koda", "flux", "cipher", "prism", "iris"] as const;
+export const DEFAULT_DEVELOPER_AGENTS = ["koda", "flux", "cipher", "prism", "lux", "nexus"] as const;

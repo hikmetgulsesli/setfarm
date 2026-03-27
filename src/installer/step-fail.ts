@@ -142,7 +142,7 @@ async function handleSingleStepFailurePG(
       const wfId2 = await getWorkflowId(step.run_id);
       emitEvent({ ts: now(), event: "step.skipped", runId: step.run_id, workflowId: wfId2, stepId: workflowStepId, detail: `Retries exhausted — skipped: ${error}` });
       logger.warn(`[failStep] Non-critical step ${workflowStepId} skipped after ${newRetryCount} retries — pipeline continues`, { runId: step.run_id });
-      const { advancePipeline } = require("./step-advance.js");
+      const { advancePipeline } = await import("./step-advance.js");
       advancePipeline(step.run_id);
       return { retrying: false, runFailed: false };
     }

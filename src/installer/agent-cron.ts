@@ -8,6 +8,14 @@ const DEFAULT_EVERY_MS = 120_000; // 2 min — safe with demand-based crons // 4
 const DEFAULT_AGENT_TIMEOUT_SECONDS = 30 * 60; // 30 minutes
 
 const DEFAULT_POLLING_TIMEOUT_SECONDS = 120;
+
+/** Extract role from cron name: "setfarm/feature-dev/security-gate" -> "security-gate", "setfarm/feature-dev/reviewer-2" -> "reviewer" */
+function extractRoleFromCronName(name: string, prefix: string): string {
+  const suffix = name.replace(prefix, '');
+  // Handle indexed names: "reviewer-2" -> "reviewer"
+  const match = suffix.match(/^(.+)-(\d+)$/);
+  return match ? match[1] : suffix;
+}
 const DEFAULT_POLLING_MODEL = "minimax/MiniMax-M2.7";
 
 /**
@@ -444,24 +452,26 @@ export async function syncActiveCrons(runId: string, workflowId: string): Promis
     const prefix = `setfarm/${workflowId}/`;
     const existingCrons = cronResult.jobs.filter((j: any) => j.name.startsWith(prefix));
 
-    // 5. Remove crons whose gateway agent ID is NOT in the needed set
+    // 5. Remove crons whose ROLE is NOT in the needed set
+    //    Parse role from cron name (not agentId — listCronJobs may not return it)
     let removed = 0;
     for (const cron of existingCrons) {
-      const cronAgentId = (cron as any).agentId || '';
-      if (!neededGatewayAgents.has(cronAgentId)) {
+      const cronRole = extractRoleFromCronName(cron.name, prefix);
+      if (!neededRoles.has(cronRole)) {
         try { await deleteCronJob(cron.id); removed++; } catch {}
       }
     }
 
-    // 6. Check if needed agents are missing crons — recreate from workflow spec
-    const existingAgentIds = new Set(existingCrons.map((c: any) => (c as any).agentId || ''));
+    // 6. Check if needed roles are missing crons — recreate from workflow spec
+    const existingRoles = new Set(existingCrons.map((c: any) => extractRoleFromCronName(c.name, prefix)));
     let added = 0;
     for (const role of neededRoles) {
+      if (existingRoles.has(role)) continue; // Role already has cron(s)
+
       const mapped = agentMapping[role];
       const agents: string[] = Array.isArray(mapped) ? mapped : mapped ? [mapped] : [role];
 
       for (let i = 0; i < agents.length; i++) {
-        if (existingAgentIds.has(agents[i])) continue;
 
         const cronName = i === 0
           ? `setfarm/${workflowId}/${role}`

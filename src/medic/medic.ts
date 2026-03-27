@@ -309,9 +309,26 @@ export async function restoreActiveRunCrons(): Promise<number> {
           emitEvent({ ts: now(), event: "run.resumed" as EventType, runId: activeRun?.id || "", workflowId: run.workflow_id, detail: `Medic: 0/${expected} crons — recreated (demand-based)` });
         }
         else if (actual !== expected) {
-          // DEMAND-BASED: syncActiveCrons manages cron count.
-          // Don't repair — intentional mismatch.
-          logger.info(`[medic] Cron count: actual=${actual} expected=${expected} for ${run.workflow_id} — demand-based, skipping repair`, {});
+          // DEMAND-BASED: syncActiveCrons manages cron count — mismatch is normal.
+          // But if actual < 2 and pending steps exist, partial cron loss needs repair.
+          const pendingSteps = await pgGet<{ cnt: number }>(
+            `SELECT COUNT(*) as cnt FROM steps s JOIN runs r ON r.id = s.run_id
+             WHERE r.workflow_id = $1 AND r.status = 'running' AND s.status = 'pending'`,
+            [run.workflow_id]
+          );
+          if (actual < 2 && (pendingSteps?.cnt ?? 0) > 0) {
+            const activeRunForRepair = await pgGet<{ id: string }>(
+              "SELECT id FROM runs WHERE workflow_id = $1 AND status = 'running' ORDER BY created_at DESC LIMIT 1",
+              [run.workflow_id]
+            );
+            if (activeRunForRepair) {
+              await syncActiveCrons(activeRunForRepair.id, run.workflow_id);
+              logger.info(`[medic] Partial cron loss: actual=${actual}, ${pendingSteps?.cnt} pending steps — repaired`, {});
+              restored++;
+            }
+          } else {
+            logger.info(`[medic] Cron count: actual=${actual} expected=${expected} for ${run.workflow_id} — demand-based, ok`, {});
+          }
         }
       }
     } catch (err) { logger.warn(`[medic] restoreActiveRunCrons failed for ${run.workflow_id}: ${String(err)}`, {}); }

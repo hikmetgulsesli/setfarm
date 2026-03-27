@@ -737,9 +737,14 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
         _rollbackEarly(); return { found: false }; // At capacity, wait for running stories to finish
       }
 
-      // Claim the story FIRST (inside transaction — prevents parallel crons from double-claiming)
+      // Claim the story with optimistic lock — only succeeds if still pending (prevents double-claim)
       const storyBranch = nextStory.story_id.toLowerCase();
-      await pgRun("UPDATE stories SET status = 'running', updated_at = \$1 WHERE id = \$2", [now(), nextStory.id]);
+      const claimResult = await pgGet<{ id: string }>("UPDATE stories SET status = 'running', updated_at = $1 WHERE id = $2 AND status = 'pending' RETURNING id", [now(), nextStory.id]);
+      if (!claimResult) {
+        // Another agent claimed this story between SELECT and UPDATE — retry next cycle
+        logger.info(`[claim] Story ${nextStory.story_id} already claimed by another agent — skipping`, { runId: step.run_id });
+        _rollbackEarly(); return { found: false };
+      }
       await pgRun("UPDATE steps SET status = 'running', current_story_id = \$1, updated_at = \$2 WHERE id = \$3", [nextStory.id, now(), step.id]);
       _txOpen = false;
 

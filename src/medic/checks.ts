@@ -998,7 +998,10 @@ export async function checkStuckWaitingSteps(): Promise<MedicFinding[]> {
       r.status as run_status,
       s1.updated_at as done_at
     FROM steps s1
-    JOIN steps s2 ON s2.run_id = s1.run_id AND s2.step_index = s1.step_index + 1
+    JOIN steps s2 ON s2.run_id = s1.run_id AND s2.step_index = (
+        SELECT MIN(s3.step_index) FROM steps s3
+        WHERE s3.run_id = s1.run_id AND s3.step_index > s1.step_index
+      )
     JOIN runs r ON r.id = s1.run_id
     WHERE r.status = 'running'
       AND s1.status = 'done'

@@ -18,7 +18,7 @@ agent_mapping:
   setup-build: atlas
   designer: mert
   developer: [koda, flux, cipher, prism, lux, nexus]
-  reviewer: [sentinel, iris, sentinel, iris, sentinel]
+  reviewer: [sentinel, iris]
   tester: [sentinel, iris]
   security-gate: [sentinel, iris]
   deployer: atlas
