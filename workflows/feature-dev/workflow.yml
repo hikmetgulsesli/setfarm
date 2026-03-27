@@ -19,10 +19,10 @@ agent_mapping:
   designer: mert
   developer: [koda, flux, cipher, prism, lux, nexus]
   reviewer: [sentinel, iris, sentinel, iris, sentinel]
-  tester: sentinel
-  security-gate: sentinel
+  tester: [sentinel, iris]
+  security-gate: [sentinel, iris]
   deployer: atlas
-  qa-tester: sentinel
+  qa-tester: [sentinel, iris]
 
 cron:
   interval_ms: 120000  # 2 minutes
