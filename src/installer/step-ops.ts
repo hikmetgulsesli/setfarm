@@ -62,6 +62,35 @@ export type PeekResult = "HAS_WORK" | "NO_WORK";
  * Returns "HAS_WORK" if any pending/waiting steps exist, "NO_WORK" otherwise.
  */
 export async function peekStep(agentId: string): Promise<PeekResult> {
+    // OUTPUT RECOVERY at peek time: if a previous session wrote output but died before
+    // completing, recover it now. This prevents the "peek→NO_WORK→loop forever" problem
+    // where claimStep's recovery never runs because peek returns NO_WORK first.
+    const outputFile = `/tmp/setfarm-output-${agentId}.txt`;
+    try {
+      if (fs.existsSync(outputFile)) {
+        const output = fs.readFileSync(outputFile, 'utf-8').trim();
+        if (output.includes('STATUS:')) {
+          const runningStep = await pgGet<{ id: string; step_id: string; run_id: string }>(
+            `SELECT s.id, s.step_id, s.run_id FROM steps s JOIN runs r ON r.id = s.run_id
+             WHERE s.agent_id = $1 AND s.status = 'running' AND r.status = 'running'
+             LIMIT 1`, [agentId]
+          );
+          if (runningStep) {
+            logger.info(`[peek-recovery] Found orphaned output for ${runningStep.step_id} (${agentId}) — auto-completing`, { runId: runningStep.run_id });
+            try {
+              const { completeStep } = await import("./step-ops.js");
+              const result = await completeStep(runningStep.id, output);
+              fs.unlinkSync(outputFile);
+              logger.info(`[peek-recovery] Auto-completed ${runningStep.step_id}, advanced=${result.advanced}`, { runId: runningStep.run_id });
+              // After recovery, check if there's now new pending work
+            } catch (e) {
+              logger.warn(`[peek-recovery] Auto-complete failed: ${String(e)}`, { runId: runningStep.run_id });
+            }
+          }
+        }
+      }
+    } catch (e) { /* non-fatal */ }
+
     const row = await pgGet<{ cnt: number }>(
       `SELECT COUNT(*) as cnt FROM steps s
        JOIN runs r ON r.id = s.run_id
