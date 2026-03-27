@@ -149,6 +149,29 @@ export async function processDesignCompletion(
   // This ensures stitch/ HTML files exist locally before parsing.
   logger.info(`[design-contract] Deferred to setup step (design-first pipeline)`, { runId });
 
+  // Persist stitch artifacts to MC stitch-cache for screenshot display
+  // (worktree gets deleted after run completes, so cache survives)
+  if (stitchProjectId && screensGenerated > 0) {
+    try {
+      const repoPath = context["repo"] || "";
+      if (repoPath) {
+        const stitchDir = path.join(repoPath, "stitch");
+        const cacheDir = path.join("/home/setrox/projects/mission-control/server/stitch-cache", stitchProjectId);
+        if (fs.existsSync(stitchDir)) {
+          fs.mkdirSync(cacheDir, { recursive: true });
+          for (const f of fs.readdirSync(stitchDir)) {
+            if (f.endsWith(".png") || f === "DESIGN_MANIFEST.json") {
+              fs.copyFileSync(path.join(stitchDir, f), path.join(cacheDir, f));
+            }
+          }
+          logger.info(`[design-guardrail] Persisted stitch artifacts to ${cacheDir}`, { runId });
+        }
+      }
+    } catch (e: any) {
+      logger.warn(`[design-guardrail] Failed to persist stitch artifacts: ${e.message}`, { runId });
+    }
+  }
+
   return null;
 }
 
