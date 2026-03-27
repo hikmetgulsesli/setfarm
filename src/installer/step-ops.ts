@@ -554,8 +554,8 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
   }
 
   // OUTPUT RECOVERY: If a previous agent session died after writing output but before completing,
-  // recover the output from /tmp/setfarm-output.txt
-  const outputRecoveryFile = '/tmp/setfarm-output.txt';
+  // recover the output from agent-scoped file (prevents cross-agent contamination)
+  const outputRecoveryFile = `/tmp/setfarm-output-${agentId}.txt`;
   try {
     if (fs.existsSync(outputRecoveryFile)) {
       const recoveryOutput = fs.readFileSync(outputRecoveryFile, 'utf-8').trim();
