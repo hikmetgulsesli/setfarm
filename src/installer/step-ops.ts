@@ -26,10 +26,10 @@ export { archiveRunProgress } from "./cleanup-ops.js";
 export { failStep } from "./step-fail.js";
 
 // ── Imports from extracted modules (used internally) ──
-import { resolveTemplate, parseOutputKeyValues, readProgressFile, readProjectMemory, updateProjectMemory } from "./context-ops.js";
+import { resolveTemplate, parseOutputKeyValues, readProgressFile, readProjectMemory, updateProjectMemory, getProjectTree, getInstalledPackages, getSharedCode, getRecentStoryCode, getComponentRegistry, getApiRoutes } from "./context-ops.js";
 import { getStories, formatStoryForTemplate, formatCompletedStories, parseAndInsertStories } from "./story-ops.js";
 import { createStoryWorktree, removeStoryWorktree } from "./worktree-ops.js";
-import { computeHasFrontendChanges, checkTestFailures, checkQualityGate, processDesignCompletion, processSetupCompletion, processSetupDesignContracts, processBrowserCheck, processDesignFidelityCheck } from "./step-guardrails.js";
+import { computeHasFrontendChanges, checkTestFailures, checkQualityGate, processDesignCompletion, processSetupCompletion, processSetupDesignContracts, processBrowserCheck, processDesignFidelityCheck, checkStoryDesignCompliance } from "./step-guardrails.js";
 import { cleanupAbandonedSteps as _cleanupAbandonedSteps, scheduleRunCronTeardown } from "./cleanup-ops.js";
 import {
   getRunStatus, getRunContext, updateRunContext, failRun,
@@ -370,6 +370,72 @@ async function injectStoryContext(
 
   // Resolve story_screens from SCREEN_MAP
   await resolveStoryScreens(story.storyId, context, step.run_id, "story-claim");
+
+  // Inject stitch HTML content for this story's screens into context
+  // This embeds the actual HTML into the prompt so the agent doesn't need to read files
+  const storyScreensRaw = context["story_screens"] || "[]";
+  try {
+    const storyScreensParsed = JSON.parse(storyScreensRaw);
+    const repoPath = context["repo"] || context["REPO"] || "";
+    if (Array.isArray(storyScreensParsed) && storyScreensParsed.length > 0 && repoPath) {
+      let stitchHtmlContent = "";
+      for (const screen of storyScreensParsed) {
+        const htmlFile = path.join(repoPath, screen.htmlFile || `stitch/${screen.screenId}.html`);
+        if (fs.existsSync(htmlFile)) {
+          const html = fs.readFileSync(htmlFile, "utf-8");
+          // Truncate if too large (max 15K chars per screen, ~4K tokens)
+          const truncated = html.length > 15000 ? html.slice(0, 15000) + "\n<!-- ...truncated -->" : html;
+          stitchHtmlContent += `\n<!-- STITCH SCREEN: ${screen.name || screen.screenId} -->\n${truncated}\n`;
+        }
+      }
+      if (stitchHtmlContent) {
+        context["stitch_html"] = stitchHtmlContent;
+        logger.info(`[stitch-html-inject] Injected ${storyScreensParsed.length} screen HTML(s) into context for story ${story.storyId} (${stitchHtmlContent.length} chars)`, { runId: step.run_id });
+      }
+    }
+  } catch (e) {
+    logger.warn(`[stitch-html-inject] Failed to inject stitch HTML: ${String(e)}`, { runId: step.run_id });
+  }
+
+  // ── Smart Context Injection — only for implement step ───────────
+  if (step.step_id === "implement") {
+    const repoPath = context["repo"] || "";
+    const workdir = context["story_workdir"] || repoPath;
+    if (workdir) {
+      try {
+        const projectTree = getProjectTree(workdir);
+        if (projectTree) context["project_tree"] = projectTree;
+
+        const packages = getInstalledPackages(workdir);
+        if (packages) context["installed_packages"] = packages;
+
+        const sharedCode = getSharedCode(workdir);
+        if (sharedCode) context["shared_code"] = sharedCode;
+
+        const recentCode = await getRecentStoryCode(step.run_id, repoPath, story.storyId);
+        if (recentCode) context["recent_stories_code"] = recentCode;
+
+        const components = getComponentRegistry(workdir);
+        if (components) context["component_registry"] = components;
+
+        const apiRoutes = getApiRoutes(workdir);
+        if (apiRoutes) context["api_routes"] = apiRoutes;
+
+        logger.info(`[smart-context] Injected: tree=${projectTree.length}c packages=${packages.length}c shared=${sharedCode.length}c recent=${recentCode.length}c components=${components.length}c api=${apiRoutes.length}c`, { runId: step.run_id });
+
+        // Truncate if total context is too large (>200K estimated tokens)
+        const totalChars = Object.values(context).reduce((sum, v) => sum + (v?.length || 0), 0);
+        const estimatedTokens = Math.ceil(totalChars / 4);
+        if (estimatedTokens > 200000) {
+          context["recent_stories_code"] = (context["recent_stories_code"] || "").slice(0, 20000);
+          context["shared_code"] = (context["shared_code"] || "").slice(0, 15000);
+          logger.warn(`[smart-context] Context too large (${estimatedTokens} tokens est.), truncated`, { runId: step.run_id });
+        }
+      } catch (e) {
+        logger.warn(`[smart-context] Injection failed: ${String(e)}`, { runId: step.run_id });
+      }
+    }
+  }
 
   // Default optional template vars to prevent MISSING_INPUT_GUARD false positives (story-each flow)
   for (const v of OPTIONAL_TEMPLATE_VARS) {
@@ -1389,6 +1455,21 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
       storyStatus = STORY_STATUS.SKIPPED; storyEvent = "story.skipped";
     } else {
       storyStatus = STORY_STATUS.DONE; storyEvent = "story.done";
+    }
+
+    // Design compliance check — only for implement step, done stories
+    if (step.step_id === "implement" && storyStatus === STORY_STATUS.DONE) {
+      const designIssue = checkStoryDesignCompliance(context);
+      if (designIssue && step.retry_count < step.max_retries) {
+        logger.warn(`[design-compliance] Story ${storyRow?.story_id} failed design check — soft retry`, { runId: step.run_id });
+        context["previous_failure"] = `DESIGN COMPLIANCE: ${designIssue}`;
+        await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
+        await failStep(stepId, designIssue);
+        return { advanced: false, runCompleted: false };
+      } else if (designIssue) {
+        // Max retries — log warning but let story pass (advisory)
+        logger.warn(`[design-compliance] Story ${storyRow?.story_id} design issues (max retries reached, advisory): ${designIssue}`, { runId: step.run_id });
+      }
     }
 
     // Mark current story done or skipped + persist PR context for verify_each

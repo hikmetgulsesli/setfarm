@@ -701,6 +701,28 @@ steps:
 
       !include story-loop-context.md
 
+      === PROJE BAĞLAMI (BU BİLGİLERİ KULLAN — tekrar oluşturma, import et) ===
+
+      DOSYA AĞACI (mevcut dosyalar — tekrar oluşturma, import et):
+      {{project_tree}}
+
+      KURULU PAKETLER (npm install YAPMA, zaten kurulu):
+      {{installed_packages}}
+
+      COMPONENT REGISTRY (mevcut component'lar — import et, yeniden yazma):
+      {{component_registry}}
+
+      API ENDPOINTS (mevcut route'lar — doğru endpoint kullan):
+      {{api_routes}}
+
+      ORTAK KOD (types, utils, config — bunları import et):
+      {{shared_code}}
+
+      ÖNCEKİ STORY KODLARI (aynı pattern'ı takip et):
+      {{recent_stories_code}}
+
+      === PROJE BAĞLAMI SONU ===
+
       DESIGN DATA (if available):
       STITCH_PROJECT_ID: {{stitch_project_id}}
       DESIGN_MANIFEST: {{design_manifest}}
@@ -776,56 +798,7 @@ steps:
       !include game-dev-rules.md
 
 
-      STITCH HTML → KOD DÖNÜŞÜMÜ (ZORUNLU — ATLAMA YASAK):
-      stitch/ dizininde bu story için HTML varsa:
-      1. İlgili HTML dosyasını TAMAMEN oku (cat ile, head/tail KULLANMA)
-      2. HTML'deki TÜM bölümleri (header, hero, features, pricing, footer vb.) koda dönüştür
-      3. TÜM metin içeriğini koru — başlıklar, açıklamalar, buton yazıları, listeler
-      4. TÜM layout yapısını koru — flex, grid, section sırası, nesting
-      5. design-tokens.css değişkenlerini kullan (var(--color-*), var(--font-*))
-      6. Bölüm atlama, placeholder yazma, basitleştirme YASAK
-      7. Stitch HTML'deki element sayısı ile kodlanan element sayısı eşleşmeli
-      8. HTML'de 5 section varsa kodda da 5 section olmalı — 2 section yazıp geçme
-      DOĞRULAMA: Kodlama bittikten sonra stitch HTML'i tekrar oku ve her bölümün
-      karşılığını kodunda bul. Eksik bölüm varsa ekle.
-
-
-      STITCH HTML → KOD DÖNÜŞÜMÜ (ZORUNLU — ATLAMA YASAK):
-      stitch/ dizininde bu story için HTML varsa:
-      1. İlgili HTML dosyasını TAMAMEN oku (cat ile, head/tail KULLANMA)
-      2. HTML'deki TÜM bölümleri (header, hero, features, pricing, footer vb.) koda dönüştür
-      3. TÜM metin içeriğini koru — başlıklar, açıklamalar, buton yazıları, listeler
-      4. TÜM layout yapısını koru — flex, grid, section sırası, nesting
-      5. design-tokens.css değişkenlerini kullan (var(--color-*), var(--font-*))
-      6. Bölüm atlama, placeholder yazma, basitleştirme YASAK
-      7. Stitch HTML'deki element sayısı ile kodlanan element sayısı eşleşmeli
-      8. HTML'de 5 section varsa kodda da 5 section olmalı — 2 section yazıp geçme
-      DOĞRULAMA: Kodlama bittikten sonra stitch HTML'i tekrar oku ve her bölümün
-      karşılığını kodunda bul. Eksik bölüm varsa ekle.
-
-      !include implement-design-enforcement.md
-
-
-      UI CONTRACT (auto-generated from Stitch design — EVERY element MUST work):
-      {{ui_contract}}
-
-      LAYOUT STRUCTURE (auto-extracted from Stitch HTML — REPRODUCE THIS EXACTLY):
-      {{layout_skeleton}}
-
-      LAYOUT RULES (MANDATORY):
-      1. Every container shown above MUST exist in your implementation with the SAME nesting
-      2. Use the same CSS class names or semantic equivalents (.score-board → ScoreBoard component)
-      3. Preserve flex/grid layout type — if Stitch uses flex, use flex. If grid, use grid.
-      4. Preserve container properties (border, border-radius, padding, background, gap)
-      5. Do NOT flatten the hierarchy — if Stitch shows a wrapper card, you MUST have a wrapper
-      6. Do NOT invent your own layout — follow the skeleton above
-      7. Read stitch/<screen>.html for full detail if skeleton is unclear
-
-      DESIGN CONTRACT RULES:
-      1. Every navigation link MUST route to its page (install react-router-dom if needed)
-      2. Every button MUST have a functional onClick handler
-      3. Every input MUST have onChange and controlled state
-      4. All hardcoded demo data MUST be replaced with dynamic props/state
+      !include design-first.md
 
       !include db-context.md
 

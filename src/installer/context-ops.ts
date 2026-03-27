@@ -5,9 +5,10 @@
  */
 
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
-import { pgGet } from "../db-pg.js";
+import { pgGet, pgQuery } from "../db-pg.js";
 import { logger } from "../lib/logger.js";
 import { OPTIONAL_TEMPLATE_VARS, PROTECTED_CONTEXT_KEYS, PROJECT_MEMORY_MAX_LINES } from "./constants.js";
 import { getAgentWorkspacePath } from "./worktree-ops.js";
@@ -250,4 +251,171 @@ export function updateProjectMemory(
   } catch (err) {
     logger.warn(`Failed to update PROJECT_MEMORY.md: ${err}`);
   }
+}
+
+// ── Smart Context Injection ─────────────────────────────────────────
+
+/**
+ * Layer 1: Project file tree (src/ or app/, max 100 lines).
+ * Lets the agent know which files already exist — prevents recreating them.
+ */
+export function getProjectTree(workdir: string): string {
+  try {
+    const srcDir = path.join(workdir, "src");
+    const appDir = path.join(workdir, "app");
+    const targetDir = fs.existsSync(srcDir) ? srcDir : fs.existsSync(appDir) ? appDir : "";
+    if (!targetDir) return "";
+    const tree = execFileSync("find", [targetDir, "-type", "f",
+      "-not", "-path", "*/node_modules/*",
+      "-not", "-path", "*/.git/*",
+      "-not", "-path", "*/stitch/*",
+    ], { encoding: "utf-8", timeout: 5000 });
+    return tree.trim().split("\n")
+      .map(f => f.replace(workdir + "/", ""))
+      .slice(0, 100)
+      .join("\n");
+  } catch { return ""; }
+}
+
+/**
+ * Layer 2: Installed packages from package.json dependencies.
+ * Prevents unnecessary npm install and module-not-found errors.
+ */
+export function getInstalledPackages(workdir: string): string {
+  const pkgPath = path.join(workdir, "package.json");
+  if (!fs.existsSync(pkgPath)) return "";
+  try {
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+    return Object.entries(deps)
+      .map(([name, ver]) => `${name}: ${ver}`)
+      .join("\n");
+  } catch { return ""; }
+}
+
+/**
+ * Layer 3: Shared code — types, utils, config, entry points.
+ * Agent sees type definitions and utility functions to import, not recreate.
+ */
+export function getSharedCode(workdir: string): string {
+  const patterns = [
+    "types.ts", "types.tsx", "interfaces.ts", "interfaces.tsx",
+    "constants.ts", "constants.tsx", "config.ts", "config.tsx",
+    "utils.ts", "utils.tsx", "lib/index.ts", "lib/index.tsx",
+    "App.tsx", "App.jsx", "app/layout.tsx", "app/layout.jsx",
+    "routes.tsx", "routes.jsx", "router.tsx", "router.jsx",
+    "main.tsx", "main.jsx", "main.ts", "index.tsx", "index.jsx", "index.ts",
+  ];
+
+  let result = "";
+  for (const pattern of patterns) {
+    try {
+      const searchPaths = [`*/src/${pattern}`];
+      if (pattern.startsWith("app/")) searchPaths.push(`*/${pattern}`);
+      for (const sp of searchPaths) {
+        const found = execFileSync("find", [
+          workdir, "-path", sp,
+          "-not", "-path", "*/node_modules/*",
+          "-not", "-path", "*/.git/*",
+        ], { encoding: "utf-8", timeout: 3000 });
+        const files = found.trim().split("\n").filter(Boolean).slice(0, 4);
+        for (const f of files) {
+          try {
+            const code = fs.readFileSync(f, "utf-8");
+            const truncated = code.length > 3000
+              ? code.slice(0, 3000) + "\n// ...truncated"
+              : code;
+            result += `\n// === ${f.replace(workdir + "/", "")} ===\n${truncated}\n`;
+          } catch { /* file read failed */ }
+        }
+      }
+    } catch { /* find failed */ }
+  }
+  return result.slice(0, 40000); // Max ~10K token
+}
+
+/**
+ * Layer 4: Code from recently completed stories in the same run.
+ * Agent sees what patterns/components previous stories created.
+ */
+export async function getRecentStoryCode(
+  runId: string, repoPath: string, currentStoryId: string
+): Promise<string> {
+  let stories: { story_id: string; story_branch: string; title: string }[];
+  try {
+    stories = await pgQuery<{ story_id: string; story_branch: string; title: string }>(
+      `SELECT story_id, story_branch, title FROM stories
+       WHERE run_id = $1 AND status IN ('done','verified') AND story_id != $2
+       ORDER BY updated_at DESC LIMIT 3`, [runId, currentStoryId]);
+  } catch { return ""; }
+
+  let content = "";
+  for (const s of stories) {
+    if (!s.story_branch) continue;
+    try {
+      // Verify branch exists locally
+      execFileSync("git", ["rev-parse", "--verify", s.story_branch],
+        { cwd: repoPath, encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"] });
+
+      const changedFiles = execFileSync("git", [
+        "diff", "--name-only", `main...${s.story_branch}`, "--", "src/", "app/"
+      ], { cwd: repoPath, encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"] })
+        .trim().split("\n").filter(Boolean).slice(0, 5);
+
+      let storyCode = `\n// ─── ${s.story_id}: ${s.title} ───\n`;
+      for (const f of changedFiles) {
+        try {
+          const code = execFileSync("git", ["show", `${s.story_branch}:${f}`],
+            { cwd: repoPath, encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"] });
+          const truncated = code.length > 3000
+            ? code.slice(0, 3000) + "\n// ...truncated"
+            : code;
+          storyCode += `// --- ${f} ---\n${truncated}\n`;
+        } catch { /* file not in branch */ }
+      }
+      content += storyCode;
+    } catch { /* branch not found */ }
+  }
+  return content.slice(0, 60000); // Max ~15K token
+}
+
+/**
+ * Layer 5: Component registry — export statements from all components.
+ * Agent knows which components exist and can import them correctly.
+ */
+export function getComponentRegistry(workdir: string): string {
+  try {
+    const result = execFileSync("grep", [
+      "-rl", "^export", path.join(workdir, "src"),
+      "--include=*.tsx", "--include=*.jsx", "--include=*.ts",
+    ], { encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"] });
+
+    const files = result.trim().split("\n").filter(Boolean).slice(0, 30);
+    let registry = "";
+    for (const f of files) {
+      try {
+        const exports = execFileSync("grep", ["-n", "^export", f],
+          { encoding: "utf-8", timeout: 2000, stdio: ["pipe", "pipe", "pipe"] })
+          .trim().split("\n").slice(0, 5).join("\n");
+        registry += `${f.replace(workdir + "/", "")}:\n${exports}\n\n`;
+      } catch { /* no exports */ }
+    }
+    return registry.slice(0, 12000); // Max ~3K token
+  } catch { return ""; }
+}
+
+/**
+ * Layer 6: API route definitions from backend code.
+ * Frontend agent knows which endpoints exist and their methods.
+ */
+export function getApiRoutes(workdir: string): string {
+  try {
+    const result = execFileSync("grep", [
+      "-rn", "-E",
+      "router\\.(get|post|put|delete|patch)\\(|app\\.(get|post|put|delete)\\(",
+      path.join(workdir, "src"),
+      "--include=*.ts", "--include=*.tsx", "--include=*.js", "--include=*.py",
+    ], { encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"] });
+    return result.slice(0, 8000); // Max ~2K token
+  } catch { return ""; }
 }

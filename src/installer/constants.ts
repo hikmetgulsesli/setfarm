@@ -95,6 +95,7 @@ export const OPTIONAL_TEMPLATE_VARS = [
   "layout_skeleton",
   "screen_map",
   "story_screens",
+  "stitch_html",
   // Database
   "database_url",
   "db_host",
@@ -104,6 +105,13 @@ export const OPTIONAL_TEMPLATE_VARS = [
   "db_password",
   "db_required",
   "db_type",
+  // Smart Context (injected at implement step)
+  "project_tree",
+  "installed_packages",
+  "shared_code",
+  "recent_stories_code",
+  "component_registry",
+  "api_routes",
   // Build/test/lint commands (may not exist for all project types)
   "build_cmd",
   "test_cmd",

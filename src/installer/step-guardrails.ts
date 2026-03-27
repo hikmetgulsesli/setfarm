@@ -651,3 +651,64 @@ export function computeHasFrontendChanges(repo: string, branch: string): string 
     return "false";
   }
 }
+
+// ── Story-Level Design Compliance Check ─────────────────────────────
+
+/**
+ * Check if a completed story respects stitch design tokens.
+ * Returns failure message if design-tokens.css exists but is not imported,
+ * or if too many hardcoded hex colors are used. Null if OK or N/A.
+ */
+export function checkStoryDesignCompliance(
+  context: Record<string, string>,
+): string | null {
+  const repo = context["repo"] || "";
+  const workdir = context["story_workdir"] || repo;
+  if (!workdir) return null;
+
+  const stitchDir = path.join(repo, "stitch");
+  if (!fs.existsSync(stitchDir)) return null;
+  if (!fs.existsSync(path.join(stitchDir, "design-tokens.css"))) return null;
+
+  // Only check if src/ directory exists in workdir
+  const srcDir = path.join(workdir, "src");
+  if (!fs.existsSync(srcDir)) return null;
+
+  const issues: string[] = [];
+
+  // 1. design-tokens.css imported/referenced?
+  try {
+    const result = execFileSync("grep", ["-rl", "design-tokens", srcDir], {
+      encoding: "utf-8",
+      timeout: 5000,
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+    if (!result) {
+      issues.push("design-tokens.css hiçbir dosyada import/referans edilmemiş");
+    }
+  } catch {
+    issues.push("design-tokens.css hiçbir dosyada import/referans edilmemiş");
+  }
+
+  // 2. Too many hardcoded hex colors?
+  try {
+    const hexResult = execFileSync("grep", [
+      "-roh", "#[0-9a-fA-F]\\{3,8\\}",
+      srcDir,
+      "--include=*.css", "--include=*.tsx", "--include=*.jsx",
+      "--include=*.ts", "--include=*.js",
+    ], {
+      encoding: "utf-8",
+      timeout: 5000,
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+    const uniqueColors = new Set(hexResult.split("\n").filter(Boolean));
+    if (uniqueColors.size > 10) {
+      issues.push(`${uniqueColors.size} farklı hardcoded hex renk — design-tokens kullan`);
+    }
+  } catch { /* no matches is fine */ }
+
+  if (issues.length === 0) return null;
+
+  return `DESIGN UYUMSUZLUK:\n${issues.map(i => "• " + i).join("\n")}\nDÜZELT: stitch/design-tokens.css'i import et, hardcoded renkleri var(--*) ile değiştir.`;
+}
