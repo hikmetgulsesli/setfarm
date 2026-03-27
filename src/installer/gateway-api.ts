@@ -162,8 +162,10 @@ export async function createAgentCronJob(job: {
       }
     }
 
+    // CRITICAL: --timeout-seconds (NOT --timeout). --timeout sets WS connect timeout in ms,
+    // so 1800 becomes 1.8s and kills all cron creation. Fixed 3x, keep this comment.
     if (job.payload?.timeoutSeconds) {
-      args.push("--timeout", `${job.payload.timeoutSeconds}`);
+      args.push("--timeout-seconds", `${job.payload.timeoutSeconds}`);
     }
 
     if (job.payload?.model) {
