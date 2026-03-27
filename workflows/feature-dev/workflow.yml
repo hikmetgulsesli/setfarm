@@ -619,8 +619,26 @@ steps:
       - node-express:  npm init -y && npm install express && npm install -D typescript @types/express @types/node
       - react-native:  npx react-native init . --template react-native-template-typescript
 
-      After scaffolding, continue with steps below.
+      After scaffolding, IMMEDIATELY create .gitignore (scaffold tools often skip this):
+      cat > .gitignore << 'GITIGNORE'
+      node_modules/
+      dist/
+      build/
+      .next/
+      .env
+      .env.local
+      .env*.local
+      *.tsbuildinfo
+      .DS_Store
+      .setfarm-step-output.txt
+      .vercel/
+      .turbo/
+      .cache/
+      GITIGNORE
+      git add .gitignore && git commit -m "chore: add .gitignore" 2>/dev/null || true
+
       VERIFY: ls package.json — if missing, scaffolding failed.
+      VERIFY: cat .gitignore | grep node_modules — if missing, create it.
 
       2. Read package.json to understand the project stack
       3. Install any additional dependencies needed: npm install
@@ -674,7 +692,10 @@ steps:
       Implement ONE user story. Create a PR for review.
 
       LANGUAGE RULE: All user-facing text (buttons, labels, headings, placeholders,
-      error messages, tooltips) MUST be in Turkish unless the task explicitly says otherwise.
+      error messages, tooltips, aria-labels, alt text, counter labels, section titles)
+      MUST be in Turkish unless the task explicitly says otherwise.
+      ZERO TOLERANCE: "Current Tally"→"Toplam Sayaç", "Settings"→"Ayarlar", "Submit"→"Gönder"
+      If you see English text in Stitch HTML, TRANSLATE it to Turkish in your implementation.
       Code comments and variable names stay in English.
 
       TASK: {{task}}

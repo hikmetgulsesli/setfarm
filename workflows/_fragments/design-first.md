@@ -21,6 +21,9 @@ DESIGN ENFORCEMENT (MANDATORY):
   :root must have --font-heading and --font-body CSS vars.
   BANNED font-family values: system-ui, Roboto, Arial, Inter, Helvetica.
 - COLORS: design-tokens.css'teki renkleri kullan. Kendi hex/rgb tanımlama.
+  HARDCODED RENK YASAK: #hex veya rgb() değeri YAZMA — her zaman var(--color-*) kullan.
+  Stitch HTML'de hex görsen bile, karşılık gelen design token'ı bul ve onu kullan.
+  Örnek: bg-[#13091e] YANLIŞ → bg-surface DOĞRU, text-[#bd9dff] YANLIŞ → text-primary DOĞRU
 - LAYOUT: Stitch HTML'deki flex/grid yapısını birebir koru.
 - NEVER: emoji icons, purple gradients, transition:all
 - ALWAYS: cursor-pointer on clickables, hover/focus states, focus-visible rings
