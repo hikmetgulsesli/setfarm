@@ -74,6 +74,17 @@ export function formatCompletedStories(stories: Story[]): string {
 export async function parseAndInsertStories(output: string, runId: string): Promise<void> {
   const lines = output.split("\n");
   const startIdx = lines.findIndex(l => l.startsWith("STORIES_JSON:"));
+  // B64 support: agent sometimes encodes STORIES_JSON as base64
+  const b64Idx = lines.findIndex(l => l.startsWith("STORIES_JSON_B64:"));
+  if (b64Idx !== -1) {
+    const b64Data = lines[b64Idx].slice("STORIES_JSON_B64:".length).trim();
+    try {
+      const decoded = Buffer.from(b64Data, "base64").toString("utf-8");
+      return parseAndInsertStories("STORIES_JSON: " + decoded, runId);
+    } catch (e) {
+      logger.warn("[stories] B64 decode failed: " + String(e), { runId });
+    }
+  }
 
   let jsonText: string;
   if (startIdx !== -1) {
