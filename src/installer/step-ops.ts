@@ -65,31 +65,36 @@ export async function peekStep(agentId: string): Promise<PeekResult> {
     // OUTPUT RECOVERY at peek time: if a previous session wrote output but died before
     // completing, recover it now. This prevents the "peek→NO_WORK→loop forever" problem
     // where claimStep's recovery never runs because peek returns NO_WORK first.
-    const outputFile = `/tmp/setfarm-output-${agentId}.txt`;
+    // Scans ALL output files in /tmp — each parallel agent writes to its own file
+    // (e.g. setfarm-output-koda.txt, setfarm-output-flux.txt)
     try {
-      if (fs.existsSync(outputFile)) {
-        const output = fs.readFileSync(outputFile, 'utf-8').trim();
-        if (output.includes('STATUS:')) {
+      const tmpFiles = fs.readdirSync('/tmp').filter(f => f.startsWith('setfarm-output-') && f.endsWith('.txt'));
+      for (const fileName of tmpFiles) {
+        const filePath = `/tmp/${fileName}`;
+        try {
+          const output = fs.readFileSync(filePath, 'utf-8').trim();
+          if (!output.includes('STATUS:')) continue;
+          // Find any running step for this agent role that could match
           const runningStep = await pgGet<{ id: string; step_id: string; run_id: string }>(
             `SELECT s.id, s.step_id, s.run_id FROM steps s JOIN runs r ON r.id = s.run_id
              WHERE s.agent_id = $1 AND s.status = 'running' AND r.status = 'running'
              LIMIT 1`, [agentId]
           );
           if (runningStep) {
-            logger.info(`[peek-recovery] Found orphaned output for ${runningStep.step_id} (${agentId}) — auto-completing`, { runId: runningStep.run_id });
+            logger.info(`[peek-recovery] Found orphaned output ${fileName} for ${runningStep.step_id} (${agentId}) — auto-completing`, { runId: runningStep.run_id });
             try {
               const { completeStep } = await import("./step-ops.js");
               const result = await completeStep(runningStep.id, output);
-              fs.unlinkSync(outputFile);
-              logger.info(`[peek-recovery] Auto-completed ${runningStep.step_id}, advanced=${result.advanced}`, { runId: runningStep.run_id });
-              // After recovery, check if there's now new pending work
+              fs.unlinkSync(filePath);
+              logger.info(`[peek-recovery] Auto-completed ${runningStep.step_id} from ${fileName}, advanced=${result.advanced}`, { runId: runningStep.run_id });
+              break; // One recovery per peek call
             } catch (e) {
-              logger.warn(`[peek-recovery] Auto-complete failed: ${String(e)}`, { runId: runningStep.run_id });
+              logger.warn(`[peek-recovery] Auto-complete failed for ${fileName}: ${String(e)}`, { runId: runningStep.run_id });
             }
           }
-        }
+        } catch { /* single file read failed, continue */ }
       }
-    } catch (e) { /* non-fatal */ }
+    } catch (e) { /* non-fatal — /tmp read failed */ }
 
     const row = await pgGet<{ cnt: number }>(
       `SELECT COUNT(*) as cnt FROM steps s
@@ -649,31 +654,31 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
   }
 
   // OUTPUT RECOVERY: If a previous agent session died after writing output but before completing,
-  // recover the output from agent-scoped file (prevents cross-agent contamination)
-  const outputRecoveryFile = `/tmp/setfarm-output-${agentId}.txt`;
+  // recover the output. Scans all setfarm-output-*.txt files (each parallel agent has its own).
   try {
-    if (fs.existsSync(outputRecoveryFile)) {
-      const recoveryOutput = fs.readFileSync(outputRecoveryFile, 'utf-8').trim();
-      if (recoveryOutput.includes('STATUS:')) {
-        // Find the running step for this agent
+    const tmpFiles = fs.readdirSync('/tmp').filter(f => f.startsWith('setfarm-output-') && f.endsWith('.txt'));
+    for (const fileName of tmpFiles) {
+      const filePath = `/tmp/${fileName}`;
+      try {
+        const recoveryOutput = fs.readFileSync(filePath, 'utf-8').trim();
+        if (!recoveryOutput.includes('STATUS:')) continue;
         const runningStep = await pgGet<{ id: string; step_id: string; run_id: string }>(
           `SELECT s.id, s.step_id, s.run_id FROM steps s JOIN runs r ON r.id = s.run_id
            WHERE s.agent_id = $1 AND s.status = 'running' AND r.status = 'running'
            LIMIT 1`, [agentId]
         );
         if (runningStep) {
-          logger.info(`[output-recovery] Found orphaned output for step ${runningStep.step_id} — auto-completing`, { runId: runningStep.run_id });
+          logger.info(`[output-recovery] Found orphaned ${fileName} for ${runningStep.step_id} — auto-completing`, { runId: runningStep.run_id });
           try {
             const { completeStep } = await import("./step-ops.js");
             await completeStep(runningStep.id, recoveryOutput);
-            fs.unlinkSync(outputRecoveryFile);
+            fs.unlinkSync(filePath);
             return { found: false };
           } catch (e) {
-            logger.warn(`[output-recovery] Auto-complete failed: ${String(e)}`, { runId: runningStep.run_id });
-            // Don't delete file on failure — retry next cycle
+            logger.warn(`[output-recovery] Auto-complete failed for ${fileName}: ${String(e)}`, { runId: runningStep.run_id });
           }
         }
-      }
+      } catch { /* single file failed */ }
     }
   } catch (e) { logger.warn(`[output-recovery] Check failed: ${String(e)}`, {}); }
 

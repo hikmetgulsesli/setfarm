@@ -27,8 +27,11 @@ const DEFAULT_POLLING_MODEL = "minimax/MiniMax-M2.7";
  * Before (v1.1): peek → claim → sessions_spawn(work) → [spawn dies] → orphan
  * After  (v1.2): peek → claim → do work inline → step complete → done
  */
-export function buildPollingPrompt(workflowId: string, agentId: string): string {
+export function buildPollingPrompt(workflowId: string, agentId: string, gatewayAgentId?: string): string {
   const fullAgentId = `${workflowId}_${agentId}`;
+  // Use gateway agent ID for output file to prevent cross-agent contamination
+  // e.g. koda, flux, cipher each write to their own file
+  const outputFileId = gatewayAgentId || fullAgentId;
   const cli = resolveSetfarmCli();
   // Pass DB_BACKEND to agent sessions — gateway env doesn't propagate to cron exec tool
   const dbEnv = "DB_BACKEND=postgres ";
@@ -47,16 +50,16 @@ export function buildPollingPrompt(workflowId: string, agentId: string): string 
 3. Do the work described in "input". No narration.
 
 4. Write output in KEY: VALUE format (NOT JSON) to /tmp, then complete:
-cat <<'SETFARM_EOF' > /tmp/setfarm-output-${fullAgentId}.txt
+cat <<'SETFARM_EOF' > /tmp/setfarm-output-${outputFileId}.txt
 STATUS: done
 <other keys as specified in step input>
 SETFARM_EOF
-${dbEnv}/usr/bin/node ${cli} step complete "<the stepId from claim JSON>" --file /tmp/setfarm-output-${fullAgentId}.txt
+${dbEnv}/usr/bin/node ${cli} step complete "<the stepId from claim JSON>" --file /tmp/setfarm-output-${outputFileId}.txt
 On failure: ${dbEnv}/usr/bin/node ${cli} step fail "<the stepId from claim JSON>" "reason"
 
 5. STOP. Reply "HEARTBEAT_OK". No more tool calls.
 
-Rules: NO_WORK/complete/fail → SESSION OVER. Never skip peek. Never run workflow stop/uninstall/sessions_spawn. Write output to /tmp/setfarm-output-${fullAgentId}.txt, use --file flag. Output must be KEY: VALUE lines, NOT JSON.`;
+Rules: NO_WORK/complete/fail → SESSION OVER. Never skip peek. Never run workflow stop/uninstall/sessions_spawn. Write output to /tmp/setfarm-output-${outputFileId}.txt, use --file flag. Output must be KEY: VALUE lines, NOT JSON.`;
 }
 
 export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
@@ -99,7 +102,7 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
     // Model is NOT passed to the cron payload — the gateway resolves it
     // from the agent's config in openclaw.json (which includes fallbacks).
     // This ensures failover works when the primary model is unavailable.
-    const prompt = buildPollingPrompt(workflow.id, agent.id);
+    const prompt = buildPollingPrompt(workflow.id, agent.id, cronAgentId);
     // Timeout must accommodate full work duration (30min), not just peek (2min).
     // Heartbeats still finish in seconds — timeout is just the max.
     const timeoutSeconds = agent.timeoutSeconds ?? DEFAULT_AGENT_TIMEOUT_SECONDS;
@@ -147,12 +150,13 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
         // Round-robin distribute across available agents
         const agentForCron = allAgents[(n - 1) % allAgents.length];
         const pName = `setfarm/${workflow.id}/${agent.id}-${n}`;
+        const pPrompt = buildPollingPrompt(workflow.id, agent.id, agentForCron);
         await createAgentCronJob({
           name: pName,
           schedule: { kind: "every", everyMs, anchorMs: anchorMs + n * 15_000 },
           sessionTarget: "isolated",
           agentId: agentForCron,
-          payload: { kind: "agentTurn", message: prompt, timeoutSeconds },
+          payload: { kind: "agentTurn", message: pPrompt, timeoutSeconds },
           enabled: true,
         });
       }
@@ -333,7 +337,7 @@ export async function repairAgentCrons(workflow: WorkflowSpec): Promise<{ added:
     const rawMappedId = agentMapping[agent.id];
     const mappedAgentId = Array.isArray(rawMappedId) ? rawMappedId[0] : rawMappedId;
     const cronAgentId = mappedAgentId ?? `${workflow.id}_${agent.id}`;
-    const prompt = buildPollingPrompt(workflow.id, agent.id);
+    const prompt = buildPollingPrompt(workflow.id, agent.id, cronAgentId);
     const timeoutSeconds = agent.timeoutSeconds ?? DEFAULT_AGENT_TIMEOUT_SECONDS;
 
     if (!existingNames.has(cronName)) {
@@ -360,12 +364,13 @@ export async function repairAgentCrons(workflow: WorkflowSpec): Promise<{ added:
         const pName = `setfarm/${workflow.id}/${agent.id}-${n}`;
         if (!existingNames.has(pName)) {
           const agentForCron = allAgents[(n - 1) % allAgents.length];
+          const pPrompt = buildPollingPrompt(workflow.id, agent.id, agentForCron);
           const res = await createAgentCronJob({
             name: pName,
             schedule: { kind: "every", everyMs, anchorMs: anchorMs + n * 15_000 },
             sessionTarget: "isolated",
             agentId: agentForCron,
-            payload: { kind: "agentTurn", message: prompt, timeoutSeconds },
+            payload: { kind: "agentTurn", message: pPrompt, timeoutSeconds },
             enabled: true,
           });
           if (res.ok) added++;
@@ -476,7 +481,7 @@ export async function syncActiveCrons(runId: string, workflowId: string): Promis
         const cronName = i === 0
           ? `setfarm/${workflowId}/${role}`
           : `setfarm/${workflowId}/${role}-${i + 1}`;
-        const prompt = buildPollingPrompt(workflowId, role);
+        const prompt = buildPollingPrompt(workflowId, role, agents[i]);
 
         await createAgentCronJob({
           name: cronName,
