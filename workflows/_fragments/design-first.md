@@ -36,6 +36,10 @@ DESIGN ENFORCEMENT (MANDATORY):
 
 DESIGN CONTRACT RULES:
 1. Every navigation link MUST route to its page (install react-router-dom if needed)
-2. Every button MUST have a functional onClick handler
+   Stitch'te bir buton veya link varsa (settings, history, profile vb.) ama o sayfa
+   PRD'de yoksa — projeye uygun basit bir sayfa ÜRET. Boş bırakma, console.log yazma.
+   Örn: settings butonu varsa → tema, dil, bildirim gibi ayarlar sayfası oluştur.
+2. Every button MUST have a functional onClick handler — state değiştirmeli,
+   modal/drawer açmalı, veya route değiştirmeli. console.log() YASAK.
 3. Every input MUST have onChange and controlled state
 4. All hardcoded demo data MUST be replaced with dynamic props/state
