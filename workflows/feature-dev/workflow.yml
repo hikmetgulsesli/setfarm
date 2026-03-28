@@ -434,11 +434,14 @@ steps:
          - Estimated 200-500 lines of code
          - If a module needs 500+ lines → split (backend + frontend)
 
-      3. TARGET STORY COUNT BY PRD SIZE (MANDATORY — scale up for complex projects):
-         - Small PRD (< 100 lines, simple app): 6-10 stories
-         - Medium PRD (100-400 lines, moderate complexity): 12-20 stories
-         - Large PRD (400+ lines, complex app with auth/CRUD/dashboard): 20-35 stories
-         - Very Large PRD (enterprise, multi-role, reporting): 30-50 stories
+      3. TARGET STORY COUNT BY PRD SIZE (MANDATORY):
+         - Tiny PRD (single page, no CRUD, no auth): 3-4 stories (setup + 1-2 feature + integration)
+         - Small PRD (< 100 lines, simple app): 4-6 stories
+         - Medium PRD (100-400 lines, moderate complexity): 8-15 stories
+         - Large PRD (400+ lines, complex app with auth/CRUD/dashboard): 15-25 stories
+         - Very Large PRD (enterprise, multi-role, reporting): 25-40 stories
+         DO NOT over-split: if two features share the same component, combine them.
+         A "Counter button controls" and "Counter display" can be ONE story.
          IMPORTANT: Every page/module in the PRD MUST have its own story.
          Never use placeholder pages like 'yakinda eklenecek'. If the PRD
          describes a module, it MUST be fully implemented in a story.
