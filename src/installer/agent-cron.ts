@@ -485,7 +485,7 @@ export async function syncActiveCrons(runId: string, workflowId: string): Promis
 
         await createAgentCronJob({
           name: cronName,
-          schedule: { kind: "every", everyMs: DEFAULT_EVERY_MS, anchorMs: i * 60_000 },
+          schedule: { kind: "every", everyMs: (workflow as any).cron?.interval_ms ?? DEFAULT_EVERY_MS, anchorMs: i * 60_000 },
           sessionTarget: "isolated",
           agentId: agents[i],
           payload: { kind: "agentTurn", message: prompt, timeoutSeconds: DEFAULT_AGENT_TIMEOUT_SECONDS },
