@@ -65,9 +65,9 @@ Rules: NO_WORK/complete/fail → SESSION OVER. Never skip peek. Never run workfl
 export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
   // Always remove existing crons first to prevent duplicates
   // Gateway API creates new crons even if same name exists
-  await removeAgentCrons(workflow.id);
+  // DISABLED: await removeAgentCrons(workflow.id); // Removal destabilizes gateway scheduler
   // Wait for WS to settle after bulk cron removal (OpenClaw 2026.3.13 handshake issue)
-  await new Promise(r => setTimeout(r, 3000));
+  // DISABLED: await new Promise(r => setTimeout(r, 3000)); // No removal = no settle needed
 
   // DEMAND-BASED: Only create crons for agents with pending/running steps.
   // syncActiveCrons() will add more as pipeline advances.
@@ -457,13 +457,13 @@ export async function syncActiveCrons(runId: string, workflowId: string): Promis
     const prefix = `setfarm/${workflowId}/`;
     const existingCrons = cronResult.jobs.filter((j: any) => j.name.startsWith(prefix));
 
-    // 5. Remove crons whose ROLE is NOT in the needed set
+    // 5. SKIP removal — deleting crons destabilizes gateway scheduler
     //    Parse role from cron name (not agentId — listCronJobs may not return it)
     let removed = 0;
     for (const cron of existingCrons) {
       const cronRole = extractRoleFromCronName(cron.name, prefix);
       if (!neededRoles.has(cronRole)) {
-        try { await deleteCronJob(cron.id); removed++; } catch {}
+        // DISABLED: try { await deleteCronJob(cron.id); removed++; } catch {}
       }
     }
 
