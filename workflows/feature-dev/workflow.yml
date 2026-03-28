@@ -698,7 +698,7 @@ steps:
 
       LANGUAGE RULE: Kullanıcının ekranda gördüğü HER metin Türkçe olmalı.
       Stitch HTML'deki İngilizce metinler dahil — implementasyona geçerken Türkçeye çevir.
-      Sadece kod (variable, comment, className) İngilizce kalır.
+      Sadece kod (variable, comment, className) ve material icon adları İngilizce kalır.
 
       TASK: {{task}}
       REPO: {{repo}}
