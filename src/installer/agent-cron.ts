@@ -4,7 +4,7 @@ import { resolveSetfarmCli } from "./paths.js";
 import { pgGet, pgQuery } from "../db-pg.js";
 import { logger } from "../lib/logger.js";
 
-const DEFAULT_EVERY_MS = 120_000; // 2 min — safe with demand-based crons // 4 minutes
+const DEFAULT_EVERY_MS = 60_000; // 2 min — safe with demand-based crons // 4 minutes
 const DEFAULT_AGENT_TIMEOUT_SECONDS = 30 * 60; // 30 minutes
 
 const DEFAULT_POLLING_TIMEOUT_SECONDS = 120;
