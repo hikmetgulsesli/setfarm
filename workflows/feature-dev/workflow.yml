@@ -1159,6 +1159,9 @@ steps:
          - grep -rE "\-\-font-heading|\-\-font-body" src/ → FAIL if missing (no font vars)
          - grep -rE "transition:\s*all" src/ → FAIL if found
          - grep -rE "grid-cols-3" src/ → WARN (check asymmetry manually)
+         - grep -rE "console\.log\(" src/components/ src/pages/ app/ → FAIL if found in click handlers (empty handler)
+         - grep -l "material-symbols\|material_symbols" index.html src/index.html app/layout.tsx → if Stitch HTML uses Material Symbols icons but no font link found → FAIL
+         - grep -rE "DECREASE|INCREASE|RESET|Submit|Cancel|Save|Delete|Loading|Error" --include="*.tsx" src/ app/ → WARN if English UI text found (should be Turkish)
          If any FAIL → fix yourself, commit, push before proceeding
       3. Run lint: {{lint_cmd}} → fix any lint errors
       4. Run build: {{build_cmd}} → fix any build errors
