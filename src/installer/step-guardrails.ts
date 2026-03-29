@@ -93,10 +93,9 @@ export async function processDesignCompletion(
   // v12.0: Design step is cloud-only. Validate SCREENS_GENERATED and STITCH_PROJECT_ID.
   const screensGenerated = parseInt(context["screens_generated"] || "-1", 10);
   const stitchProjectId = context["stitch_project_id"] || "";
-  if (screensGenerated !== 0 && !stitchProjectId) {
-    const msg = `GUARDRAIL: Design step completed with SCREENS_GENERATED > 0 but no STITCH_PROJECT_ID. Agent must output STITCH_PROJECT_ID for setup step to download HTML files.`;
-    logger.warn(`[design-guardrail] ${msg}`, { runId });
-    return msg;
+  // STITCH_PROJECT_ID no longer required from agent — pipeline auto-creates
+  if (!stitchProjectId) {
+    logger.info(`[design-guardrail] No STITCH_PROJECT_ID — pipeline will auto-create`, { runId });
   }
   if (screensGenerated > 0) {
     logger.info(`[design-guardrail] ${screensGenerated} screen(s) generated in Stitch project ${stitchProjectId} — OK (HTML download deferred to setup)`, { runId });

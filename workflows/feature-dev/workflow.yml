@@ -308,9 +308,7 @@ steps:
       MANDATORY OUTPUT FORMAT
       ============================================================
       STATUS: done
-      STITCH_PROJECT_ID: <id>
       DEVICE_TYPE: <DESKTOP|MOBILE|TABLET>
-      SCREENS_GENERATED: <count>
       DESIGN_SYSTEM:
         aesthetic: <direction>
         palette: <name>
@@ -330,12 +328,10 @@ steps:
       (the hex string from the API response), NOT a made-up ID like SCR-001.
       The pipeline will map these to real Stitch screen IDs automatically.
 
-      CRITICAL: SCREEN_MAP is MANDATORY. If you output STATUS: done without SCREEN_MAP,
+      NOTE: Pipeline auto-creates Stitch project and generates all screens from SCREEN_MAP.
       the pipeline guardrail will REJECT your output and force a retry.
       Even if screens were reused/skipped, you MUST output SCREEN_MAP with real IDs.
 
-      DESIGN_MD: <path to DESIGN.md or "none" if backend-only>
-      DESIGN_NOTES: <summary>
       ============================================================
     expects: "STATUS: done"
     max_retries: 3
