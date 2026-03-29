@@ -989,7 +989,56 @@ const commands = {
    * promptFile: text file with full multi-screen prompt
    * Key insight: Stitch can generate multiple screens from one prompt (e.g. "Generate 8 screens: 1)... 2)... 3)...")
    */
-  "generate-all-screens": async function generateAllScreens(projectId, promptFile, deviceType = "DESKTOP", modelId = "GEMINI_3_1_PRO") {
+
+  'download-all': async function downloadAll(projectId, outputDir) {
+    if (!projectId || !outputDir) throw new Error('Usage: download-all <projectId> <outputDir>');
+    const { mkdirSync, existsSync } = await import('fs');
+    const { join } = await import('path');
+    mkdirSync(outputDir, { recursive: true });
+    await initialize();
+    process.stderr.write('Listing screens for project ' + projectId + '...\n');
+    let screenList = [];
+    try { const r = await callTool('list_screens', { projectId }); screenList = parseScreens(r).screens || []; } catch {}
+    if (screenList.length === 0) {
+      try { const { readFileSync } = await import('fs'); const { resolve } = await import('path');
+        screenList = JSON.parse(readFileSync(resolve(process.cwd(), '.stitch-screens-' + projectId + '.json'), 'utf-8'));
+      } catch {}
+    }
+    if (screenList.length === 0) {
+      try {
+        const pr = await callTool('get_project', { name: 'projects/' + projectId });
+        if (pr && pr.content) for (const item of pr.content) { if (item.type === 'text') { try { const p = JSON.parse(item.text);
+          if (p.screenInstances) screenList = p.screenInstances.map(s => ({ screenId: (s.name || '').replace(/^projects\/\d+\/screens\//, ''), title: s.displayName || '', htmlUrl: s.htmlCode?.downloadUrl || null, screenshotUrl: s.screenshot?.downloadUrl || null }));
+        } catch {} } }
+      } catch {}
+    }
+    if (screenList.length === 0) throw new Error('No screens found for project ' + projectId);
+    process.stderr.write('Found ' + screenList.length + ' screens. Downloading...\n');
+    let downloaded = 0, failed = 0;
+    for (let i = 0; i < screenList.length; i += 5) {
+      const batch = screenList.slice(i, i + 5);
+      await Promise.allSettled(batch.map(async (screen) => {
+        const sid = screen.screenId || screen.id || (screen.name || '').replace(/^projects\/\d+\/screens\//, '');
+        if (!sid) return;
+        try {
+          let htmlUrl = screen.htmlUrl, screenshotUrl = screen.screenshotUrl;
+          if (!htmlUrl) { try { const sd = await callTool('get_screen', { projectId, screenId: sid, name: 'projects/' + projectId + '/screens/' + sid });
+            if (sd && sd.content) for (const item of sd.content) { if (item.type === 'text') { try { const p = JSON.parse(item.text); htmlUrl = p.htmlCode?.downloadUrl || htmlUrl; screenshotUrl = p.screenshot?.downloadUrl || screenshotUrl; } catch {} } }
+          } catch {} }
+          if (htmlUrl) { const hp = join(outputDir, sid + '.html'); if (!existsSync(hp)) { await downloadFile(htmlUrl, hp); process.stderr.write('  HTML: ' + sid + '\n'); } }
+          if (screenshotUrl) { const pp = join(outputDir, sid + '.png'); if (!existsSync(pp)) { await downloadFile(screenshotUrl, pp); } }
+          downloaded++;
+        } catch (e) { process.stderr.write('  FAIL: ' + sid + ' - ' + e.message + '\n'); failed++; }
+      }));
+    }
+    process.stderr.write('Creating manifest + tokens...\n');
+    try { await commands['create-manifest'](projectId, outputDir); } catch {}
+    try { await commands['extract-tokens'](outputDir); } catch {}
+    process.stderr.write('Done: ' + downloaded + '/' + screenList.length + ' downloaded\n');
+    console.log(JSON.stringify({ projectId, total: screenList.length, downloaded, failed, outputDir }, null, 2));
+  },
+
+  'generate-all-screens': async function generateAllScreens(projectId, promptFile, deviceType = "DESKTOP", modelId = "GEMINI_3_1_PRO") {
     if (!projectId || !promptFile) throw new Error("Usage: generate-all-screens <projectId> <promptFile> [device] [model]");
     const { readFileSync } = await import("fs");
     let prompt;
@@ -1099,7 +1148,9 @@ Commands:
   create-manifest <projectId> <outputDir>                                Create DESIGN_MANIFEST.json
   extract-tokens <stitchDir> [outputCssFile]                             Merge CSS tokens from all HTMLs
   download <url> <outputFile>                                            Download file from URL
-  populate-cache <sourceDir> <destDir>                                   Copy PNGs+HTMLs from sourceDir to destDir`);
+  populate-cache <sourceDir> <destDir>                                   Copy PNGs+HTMLs from sourceDir to destDir
+  download-all <projectId> <outputDir>                                   Download all screens + manifest + tokens
+  generate-all-screens <pId> <promptFile> [device] [model]                Single-call multi-screen generation`);
   process.exit(1);
 }
 
