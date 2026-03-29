@@ -1166,7 +1166,7 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
         try {
           const stitchScript = path.join(os.homedir(), ".openclaw/setfarm-repo/scripts/stitch-api.mjs");
           // Use download-all for parallel batch download (HTML + PNG + manifest + tokens)
-          const dlOut = execFileSync("node", [stitchScript, "download-all", dProjId, dStitchDir], { encoding: "utf-8", timeout: 120000, cwd: dRepo });
+          const dlOut = execFileSync("node", [stitchScript, "download-all", dProjId, dStitchDir], { encoding: "utf-8", timeout: 180000, cwd: dRepo });
           let dlResult: any = {};
           try { dlResult = JSON.parse(dlOut); } catch {}
           logger.info(`[design-download] Batch download: ${dlResult.downloaded || 0}/${dlResult.total || 0} screens`, { runId: step.run_id });

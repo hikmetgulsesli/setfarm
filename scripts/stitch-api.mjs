@@ -1042,6 +1042,35 @@ const commands = {
       process.stderr.write("Downloaded " + dlOk + "/" + screens.length + " screens\n");
     }
 
+    // Fallback: if parse returned 0 screens, Stitch may have generated them but response format was different
+    // Try list-screens to get the actual generated screens
+    if (screens.length === 0) {
+      process.stderr.write("0 screens parsed from response — trying list-screens fallback...\n");
+      try {
+        const listResult = await callTool("list_screens", { projectId });
+        const listed = parseScreens(listResult);
+        if (listed.screens.length > 0) {
+          process.stderr.write("Found " + listed.screens.length + " screens via list-screens\n");
+          // Download them
+          const { mkdirSync } = await import("fs");
+          const { resolve } = await import("path");
+          const stitchDir = resolve(process.cwd(), "stitch");
+          mkdirSync(stitchDir, { recursive: true });
+          let dlOk = 0;
+          await Promise.allSettled(listed.screens.map(async (s) => {
+            try {
+              if (s.htmlUrl) { await downloadFile(s.htmlUrl, resolve(stitchDir, s.screenId + ".html")); dlOk++; }
+              if (s.screenshotUrl) { await downloadFile(s.screenshotUrl, resolve(stitchDir, s.screenId + ".png")); }
+            } catch {}
+          }));
+          process.stderr.write("Fallback downloaded " + dlOk + " screens\n");
+          screens.push(...listed.screens);
+        }
+      } catch (e) {
+        process.stderr.write("list-screens fallback failed: " + e.message + "\n");
+      }
+    }
+
     console.log(JSON.stringify({
       total: screens.length,
       screens: screens.map(s => ({ screenId: s.screenId, title: s.title })),
