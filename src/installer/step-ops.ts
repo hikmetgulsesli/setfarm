@@ -1173,6 +1173,18 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
         } catch (dlErr) {
           logger.warn(`[design-download] Batch download failed: ${dlErr}`, { runId: step.run_id });
         }
+
+        // GUARD: Verify HTML files actually exist after download
+        const htmlAfterDownload = fs.readdirSync(dStitchDir).filter((f: string) => f.endsWith(".html"));
+        if (htmlAfterDownload.length === 0 && dScreenCount > 0) {
+          const failMsg = `GUARDRAIL: Design step claims ${dScreenCount} screens but 0 HTML files downloaded. Stitch project may be deleted or API failed. Remove .stitch file and retry.`;
+          logger.error(`[design-download] ${failMsg}`, { runId: step.run_id });
+          // Remove stale .stitch so retry creates fresh project
+          const staleStitch = path.join(dRepo, ".stitch");
+          if (fs.existsSync(staleStitch)) { try { fs.unlinkSync(staleStitch); } catch {} }
+          await failStep(stepId, failMsg);
+          return { advanced: false, runCompleted: false };
+        }
       }
     }
   }
