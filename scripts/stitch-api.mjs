@@ -982,7 +982,7 @@ const commands = {
     }
 
     console.log(JSON.stringify({ success: true, copied }, null, 2));
-  },,
+  },
   /**
    * generate-all-screens: Generate ALL screens in a SINGLE Stitch API call
    * Usage: node stitch-api.mjs generate-all-screens <projectId> <promptFile> [device] [model]
