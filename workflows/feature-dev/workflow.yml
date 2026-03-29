@@ -312,7 +312,21 @@ steps:
          If any screen from the PRD table is missing, the design step FAILS.
       4. Backend-only project (0 UI) → set SCREENS_GENERATED: 0 and skip to output
 
-      STEP 2 — Generate ALL screens in PARALLEL (BATCH MODE):
+      === STRICT RULES (VIOLATION = IMMEDIATE FAIL) ===
+      - NEVER generate more than 1 version of the same screen. "Ana Sayfa" = 1 screen, NOT 5 variants.
+      - NEVER experiment with different themes/aesthetics. Pick ONE design system in STEP 1 and use it for ALL screens.
+      - NEVER add suffixes like "_v2", "_modern", "_dark", "_tr", "_pwa" to screen names.
+      - Total screen count MUST match the PRD screen table. If PRD says 8 screens, generate EXACTLY 8.
+      - If a screen with similar name already exists (skipped: true), DO NOT generate another variant.
+      - generate-screen-safe already has dedup — if it says "skipped", MOVE ON to the next screen.
+
+      === CHECK EXISTING SCREENS FIRST ===
+      BEFORE generating anything, check what already exists:
+        node "$STITCH_SCRIPT" list-screens "$PROJECT_ID"
+      If screens already exist from a previous attempt, USE THEM. Do NOT regenerate.
+      Only generate screens that are MISSING from the list.
+
+      STEP 2 — Generate ONLY MISSING screens (BATCH MODE):
       a. For each screen you identified, build a detailed prompt including your design_system colors/fonts.
          CRITICAL: Her prompt'un SONUNA sunu ekle: "All visible text content (buttons, labels, headings, placeholders, menu items) must be in Turkish language."
       b. Write ALL screen prompts to a single JSON file:

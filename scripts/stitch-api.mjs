@@ -489,6 +489,16 @@ const commands = {
           const existingCat = detectCategory(s.title || '');
           if (existingCat === newCategory) return true;
         }
+        // Fuzzy prefix match: "Ana Sayfa" matches "Ana Sayfa Modern Dark", "Ana Sayfa V2" etc.
+        const normalize = (t) => t.replace(/[_\-\s]+/g, ' ').replace(/(v\d+|modern|dark|light|pwa|tr|turkuaz|tema|yeni|alt|variant|\d+)$/gi, '').trim();
+        const normNew = normalize(titleLower);
+        const normExisting = normalize(sTitle);
+        if (normNew && normExisting && (normNew === normExisting || normNew.startsWith(normExisting) || normExisting.startsWith(normNew))) return true;
+        // Word overlap: if 2+ significant words match, likely duplicate
+        const wordsNew = normNew.split(' ').filter(w => w.length > 2);
+        const wordsExisting = normExisting.split(' ').filter(w => w.length > 2);
+        const overlap = wordsNew.filter(w => wordsExisting.includes(w)).length;
+        if (wordsNew.length > 0 && wordsExisting.length > 0 && overlap >= Math.min(2, Math.min(wordsNew.length, wordsExisting.length))) return true;
         return false;
       });
 
@@ -973,99 +983,6 @@ const commands = {
 
     console.log(JSON.stringify({ success: true, copied }, null, 2));
   },
-
-  // BATCH OPERATIONS (v1.7.49)
-
-  "generate-screens-batch": async function generateScreensBatch(projectId, screensJsonPath, deviceType = "DESKTOP", modelId = "GEMINI_3_1_PRO", concurrency = "3") {
-    if (!projectId || !screensJsonPath) throw new Error("Usage: generate-screens-batch <projectId> <screensJsonFile> [device] [model] [concurrency]");
-    const { readFileSync } = await import("fs");
-    let screens;
-    try { screens = JSON.parse(readFileSync(screensJsonPath, "utf-8")); } catch (e) { throw new Error("Cannot read screens JSON: " + e.message); }
-    if (!Array.isArray(screens) || screens.length === 0) throw new Error("screensJsonFile must be non-empty array of {name, prompt}");
-    const maxC = Math.min(parseInt(concurrency) || 3, 5);
-    const results = [], errors = [];
-    process.stderr.write("Batch generating " + screens.length + " screens (concurrency: " + maxC + ")...
-");
-    for (let i = 0; i < screens.length; i += maxC) {
-      const batch = screens.slice(i, i + maxC);
-      process.stderr.write("Batch " + (Math.floor(i/maxC)+1) + "/" + Math.ceil(screens.length/maxC) + ": " + batch.map(s=>s.name).join(", ") + "
-");
-      const promises = batch.map(async (screen) => {
-        try {
-          await commands["generate-screen-safe"](projectId, screen.prompt, screen.name, deviceType, modelId);
-          return { name: screen.name, status: "ok" };
-        } catch (e) {
-          process.stderr.write("ERROR " + screen.name + ": " + e.message + "
-");
-          return { name: screen.name, status: "error", error: e.message };
-        }
-      });
-      const br = await Promise.allSettled(promises);
-      for (const r of br) {
-        const v = r.status === "fulfilled" ? r.value : { name: "unknown", status: "error", error: r.reason?.message };
-        if (v.status === "ok") results.push(v); else errors.push(v);
-      }
-      if (i + maxC < screens.length) await new Promise(r => setTimeout(r, 2000));
-    }
-    process.stderr.write("Batch done: " + results.length + " ok, " + errors.length + " errors
-");
-    console.log(JSON.stringify({ total: screens.length, success: results.length, failed: errors.length, results, errors }, null, 2));
-  },
-
-  "download-all": async function downloadAll(projectId, outputDir) {
-    if (!projectId || !outputDir) throw new Error("Usage: download-all <projectId> <outputDir>");
-    const { mkdirSync, existsSync } = await import("fs");
-    const { join } = await import("path");
-    mkdirSync(outputDir, { recursive: true });
-    await initialize();
-    process.stderr.write("Listing screens for project " + projectId + "...
-");
-    let screenList = [];
-    try { const r = await callTool("list_screens", { projectId }); screenList = parseScreens(r).screens || []; } catch {}
-    if (screenList.length === 0) {
-      try { const { readFileSync } = await import("fs"); const { resolve } = await import("path");
-        screenList = JSON.parse(readFileSync(resolve(process.cwd(), ".stitch-screens-" + projectId + ".json"), "utf-8"));
-      } catch {}
-    }
-    if (screenList.length === 0) {
-      try {
-        const pr = await callTool("get_project", { name: "projects/" + projectId });
-        if (pr?.content) for (const item of pr.content) { if (item.type === "text") { try { const p = JSON.parse(item.text);
-          if (p.screenInstances) screenList = p.screenInstances.map(s => ({ screenId: (s.name||"").replace(/^projects\/\d+\/screens\//, ""), title: s.displayName||"", htmlUrl: s.htmlCode?.downloadUrl||null, screenshotUrl: s.screenshot?.downloadUrl||null }));
-        } catch {} } }
-      } catch {}
-    }
-    if (screenList.length === 0) throw new Error("No screens found for project " + projectId);
-    process.stderr.write("Found " + screenList.length + " screens. Downloading...
-");
-    let downloaded = 0, failed = 0;
-    for (let i = 0; i < screenList.length; i += 5) {
-      const batch = screenList.slice(i, i + 5);
-      await Promise.allSettled(batch.map(async (screen) => {
-        const sid = screen.screenId || screen.id || (screen.name||"").replace(/^projects\/\d+\/screens\//, "");
-        if (!sid) return;
-        try {
-          let htmlUrl = screen.htmlUrl, screenshotUrl = screen.screenshotUrl;
-          if (!htmlUrl) { try { const sd = await callTool("get_screen", { projectId, screenId: sid, name: "projects/" + projectId + "/screens/" + sid });
-            if (sd?.content) for (const item of sd.content) { if (item.type === "text") { try { const p = JSON.parse(item.text); htmlUrl = p.htmlCode?.downloadUrl || htmlUrl; screenshotUrl = p.screenshot?.downloadUrl || screenshotUrl; } catch {} } }
-          } catch {} }
-          if (htmlUrl) { const hp = join(outputDir, sid + ".html"); if (!existsSync(hp)) { await downloadFile(htmlUrl, hp); process.stderr.write("  HTML: " + sid + "
-"); } }
-          if (screenshotUrl) { const pp = join(outputDir, sid + ".png"); if (!existsSync(pp)) { await downloadFile(screenshotUrl, pp); } }
-          downloaded++;
-        } catch (e) { process.stderr.write("  FAIL: " + sid + " - " + e.message + "
-"); failed++; }
-      }));
-    }
-    process.stderr.write("Creating manifest + tokens...
-");
-    try { await commands["create-manifest"](projectId, outputDir); } catch {}
-    try { await commands["extract-tokens"](outputDir); } catch {}
-    process.stderr.write("Done: " + downloaded + "/" + screenList.length + " downloaded
-");
-    console.log(JSON.stringify({ projectId, total: screenList.length, downloaded, failed, outputDir }, null, 2));
-  },
-
 };
 
 // Main
@@ -1088,9 +1005,7 @@ Commands:
   create-manifest <projectId> <outputDir>                                Create DESIGN_MANIFEST.json
   extract-tokens <stitchDir> [outputCssFile]                             Merge CSS tokens from all HTMLs
   download <url> <outputFile>                                            Download file from URL
-  populate-cache <sourceDir> <destDir>                                   Copy PNGs+HTMLs from sourceDir to destDir
-  generate-screens-batch <pId> <json> [device] [model] [N]               Parallel screen generation
-  download-all <projectId> <outputDir>                                   Download all screens + manifest + tokens`);
+  populate-cache <sourceDir> <destDir>                                   Copy PNGs+HTMLs from sourceDir to destDir`);
   process.exit(1);
 }
 
