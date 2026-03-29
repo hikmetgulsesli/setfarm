@@ -1266,14 +1266,7 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
 
     if (dRepo && dProjId && dHasScreens) {
       const dStitchDir = path.join(dRepo, "stitch");
-      // ALWAYS auto-generate — clear partial screens and regenerate from PRD
-      if (fs.existsSync(dStitchDir)) {
-        for (const f of fs.readdirSync(dStitchDir)) {
-          if (f.endsWith(".html") || f.endsWith(".png")) {
-            try { fs.unlinkSync(path.join(dStitchDir, f)); } catch {}
-          }
-        }
-      }
+      // Only generate if no HTML exists (skip if already downloaded)
       {
         // Screens already generated in pre-claim. Just verify they exist.
         const stitchScript = path.join(os.homedir(), ".openclaw/setfarm-repo/scripts/stitch-api.mjs");
