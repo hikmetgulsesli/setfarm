@@ -1012,6 +1012,12 @@ const commands = {
         } catch {} } }
       } catch {}
     }
+    // Retry list-screens with delay (Stitch API can have delay after generation)
+    for (let retry = 0; retry < 3 && screenList.length === 0; retry++) {
+      process.stderr.write('No screens found, waiting 15s (retry ' + (retry + 1) + '/3)...\n');
+      await new Promise(r => setTimeout(r, 15000));
+      try { const r = await callTool('list_screens', { projectId }); screenList = parseScreens(r).screens || []; } catch {}
+    }
     if (screenList.length === 0) throw new Error('No screens found for project ' + projectId);
     process.stderr.write('Found ' + screenList.length + ' screens. Downloading...\n');
     let downloaded = 0, failed = 0;
@@ -1094,29 +1100,33 @@ const commands = {
     // Fallback: if parse returned 0 screens, Stitch may have generated them but response format was different
     // Try list-screens to get the actual generated screens
     if (screens.length === 0) {
-      process.stderr.write("0 screens parsed from response — trying list-screens fallback...\n");
-      try {
-        const listResult = await callTool("list_screens", { projectId });
-        const listed = parseScreens(listResult);
-        if (listed.screens.length > 0) {
-          process.stderr.write("Found " + listed.screens.length + " screens via list-screens\n");
-          // Download them
-          const { mkdirSync } = await import("fs");
-          const { resolve } = await import("path");
-          const stitchDir = resolve(process.cwd(), "stitch");
-          mkdirSync(stitchDir, { recursive: true });
-          let dlOk = 0;
-          await Promise.allSettled(listed.screens.map(async (s) => {
-            try {
-              if (s.htmlUrl) { await downloadFile(s.htmlUrl, resolve(stitchDir, s.screenId + ".html")); dlOk++; }
-              if (s.screenshotUrl) { await downloadFile(s.screenshotUrl, resolve(stitchDir, s.screenId + ".png")); }
-            } catch {}
-          }));
-          process.stderr.write("Fallback downloaded " + dlOk + " screens\n");
-          screens.push(...listed.screens);
+      process.stderr.write("0 screens parsed — waiting for Stitch to finish generation...\n");
+      for (let retry = 0; retry < 3 && screens.length === 0; retry++) {
+        await new Promise(r => setTimeout(r, 30000)); // 30s wait for Stitch API delay
+        process.stderr.write("Retry " + (retry + 1) + "/3: listing screens...\n");
+        try {
+          const listResult = await callTool("list_screens", { projectId });
+          const listed = parseScreens(listResult);
+          if (listed.screens.length > 0) {
+            process.stderr.write("Found " + listed.screens.length + " screens via list-screens (retry " + (retry + 1) + ")\n");
+            // Download them
+            const { mkdirSync } = await import("fs");
+            const { resolve } = await import("path");
+            const stitchDir = resolve(process.cwd(), "stitch");
+            mkdirSync(stitchDir, { recursive: true });
+            let dlOk = 0;
+            await Promise.allSettled(listed.screens.map(async (s) => {
+              try {
+                if (s.htmlUrl) { await downloadFile(s.htmlUrl, resolve(stitchDir, s.screenId + ".html")); dlOk++; }
+                if (s.screenshotUrl) { await downloadFile(s.screenshotUrl, resolve(stitchDir, s.screenId + ".png")); }
+              } catch {}
+            }));
+            process.stderr.write("Fallback downloaded " + dlOk + " screens\n");
+            screens.push(...listed.screens);
+          }
+        } catch (e) {
+          process.stderr.write("list-screens retry " + (retry + 1) + " failed: " + e.message + "\n");
         }
-      } catch (e) {
-        process.stderr.write("list-screens fallback failed: " + e.message + "\n");
       }
     }
 

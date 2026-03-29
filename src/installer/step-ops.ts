@@ -81,6 +81,11 @@ export async function peekStep(agentId: string): Promise<PeekResult> {
              LIMIT 1`, [agentId]
           );
           if (runningStep) {
+            // Skip orphan recovery for design step — pre-claim generates screens, recovery would corrupt output
+            if (runningStep.step_id === 'design') {
+              logger.info(`[peek-recovery] Skipping orphan recovery for design step — pre-claim handles it`, { runId: runningStep.run_id });
+              continue;
+            }
             logger.info(`[peek-recovery] Found orphaned output ${fileName} for ${runningStep.step_id} (${agentId}) — auto-completing`, { runId: runningStep.run_id });
             try {
               const { completeStep } = await import("./step-ops.js");
@@ -663,15 +668,24 @@ async function claimSingleStep(
           logger.info(`[design-preclaim] Generated ${genResult.total || 0} screens in ${genResult.elapsedSeconds || "?"}s`, { runId: step.run_id });
         } catch (e) { logger.warn(`[design-preclaim] generate-all-screens failed: ${e}`, { runId: step.run_id }); }
 
-        // 4. download-all
-        try {
-          const dlOut = execFileSync("node", [stitchScript, "download-all", projId, dStitchDir],
-            { encoding: "utf-8", timeout: 180000, cwd: dRepo });
-          let dlResult: any = {};
-          try { dlResult = JSON.parse(dlOut); } catch {}
-          logger.info(`[design-preclaim] Downloaded ${dlResult.downloaded || 0}/${dlResult.total || 0} screens`, { runId: step.run_id });
-          context["screens_generated"] = String(dlResult.downloaded || 0);
-        } catch (e) { logger.warn(`[design-preclaim] download-all failed: ${e}`, { runId: step.run_id }); }
+        // 4. download-all — retry if 0 HTML (Stitch API can have delay after generation)
+        let htmlCount = 0;
+        for (let dlRetry = 0; dlRetry < 3; dlRetry++) {
+          try {
+            const dlOut = execFileSync("node", [stitchScript, "download-all", projId, dStitchDir],
+              { encoding: "utf-8", timeout: 180000, cwd: dRepo });
+            let dlResult: any = {};
+            try { dlResult = JSON.parse(dlOut); } catch {}
+            htmlCount = fs.readdirSync(dStitchDir).filter((f: string) => f.endsWith(".html")).length;
+            logger.info(`[design-preclaim] Downloaded ${dlResult.downloaded || 0}/${dlResult.total || 0} screens (${htmlCount} HTML files, attempt ${dlRetry + 1}/3)`, { runId: step.run_id });
+            context["screens_generated"] = String(dlResult.downloaded || 0);
+            if (htmlCount > 0) break;
+          } catch (e) { logger.warn(`[design-preclaim] download-all failed (attempt ${dlRetry + 1}/3): ${e}`, { runId: step.run_id }); }
+          if (htmlCount === 0 && dlRetry < 2) {
+            logger.info(`[design-preclaim] 0 HTML after download, waiting 30s before retry ${dlRetry + 2}/3`, { runId: step.run_id });
+            execFileSync("sleep", ["30"]);
+          }
+        }
 
         // 5. Generate DESIGN_DOM.json
         try {
@@ -754,6 +768,11 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
            LIMIT 1`, [agentId]
         );
         if (runningStep) {
+          // Skip orphan recovery for design step — pre-claim generates screens, recovery would corrupt output
+          if (runningStep.step_id === 'design') {
+            logger.info(`[output-recovery] Skipping orphan recovery for design step — pre-claim handles it`, { runId: runningStep.run_id });
+            continue;
+          }
           logger.info(`[output-recovery] Found orphaned ${fileName} for ${runningStep.step_id} — auto-completing`, { runId: runningStep.run_id });
           try {
             const { completeStep } = await import("./step-ops.js");
