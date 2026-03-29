@@ -1155,10 +1155,30 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
 
     // Immediately download Stitch HTML after design completes (don't wait for setup-repo)
     const dRepo = context["repo"] || context["REPO"] || "";
-    const dProjId = context["stitch_project_id"] || "";
+    let dProjId = context["stitch_project_id"] || "";
     const dScreenCount = parseInt(context["screens_generated"] || "0", 10);
     const dScreenMap = context["screen_map"] || "";
     const dHasScreens = dScreenCount > 0 || (dScreenMap.length > 10 && dScreenMap.includes("screenId"));
+
+    // AUTO-CREATE Stitch project if agent didn't create one
+    if (dRepo && !dProjId && dHasScreens) {
+      const stitchScript = path.join(os.homedir(), ".openclaw/setfarm-repo/scripts/stitch-api.mjs");
+      const projectName = path.basename(dRepo);
+      logger.info(`[design-auto-project] Creating Stitch project "${projectName}"`, { runId: step.run_id });
+      try {
+        const ensureOut = execFileSync("node", [stitchScript, "ensure-project", projectName, dRepo], { encoding: "utf-8", timeout: 30000, cwd: dRepo });
+        let ensureResult: any = {};
+        try { ensureResult = JSON.parse(ensureOut); } catch {}
+        dProjId = ensureResult.projectId || "";
+        if (dProjId) {
+          context["stitch_project_id"] = dProjId;
+          logger.info(`[design-auto-project] Created Stitch project: ${dProjId}`, { runId: step.run_id });
+        }
+      } catch (e) {
+        logger.warn(`[design-auto-project] Failed: ${e}`, { runId: step.run_id });
+      }
+    }
+
     if (dRepo && dProjId && dHasScreens) {
       const dStitchDir = path.join(dRepo, "stitch");
       if (!fs.existsSync(dStitchDir) || fs.readdirSync(dStitchDir).filter(f => f.endsWith(".html")).length === 0) {
@@ -1173,12 +1193,32 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
           const task = context["task"] || "";
           const deviceType = context["device_type"] || "DESKTOP";
 
-          // Build multi-screen prompt
+          // Build multi-screen prompt with FULL PRD
+          const prd = context["prd"] || context["PRD"] || "";
           const screenDescs = screenMapArr.map((s: any, i: number) =>
             `Screen ${i + 1}: ${s.name} — ${s.description || s.type || "UI screen"}`
           ).join("\n");
 
-          const prompt = `Generate ${screenMapArr.length} screens for a ${task.slice(0, 200)}.\n\nDesign system: ${designSystem}\n\n${screenDescs}\n\nAll visible text (buttons, labels, headings, placeholders) MUST be in Turkish. Use Material Symbols icons. Consistent design across ALL screens.`;
+          // PRD truncate: max 6000 chars to fit Stitch API limits
+          const prdTruncated = prd.length > 6000 ? prd.slice(0, 6000) + "\n...(truncated)" : prd;
+
+          const prompt = `Generate ${screenMapArr.length} screens for the following application.
+
+=== PRD (Product Requirements Document) ===
+${prdTruncated}
+
+=== DESIGN SYSTEM ===
+${designSystem}
+
+=== SCREENS TO GENERATE ===
+${screenDescs}
+
+=== RULES ===
+- All visible text (buttons, labels, headings, placeholders, menu items) MUST be in Turkish language.
+- Use Material Symbols icons.
+- Consistent design system across ALL screens.
+- Each screen must be a complete, detailed, production-ready UI design.
+- Dark theme with the colors specified in design system.`;
 
           const promptFile = path.join(dStitchDir, ".generate-prompt.txt");
           fs.writeFileSync(promptFile, prompt);
