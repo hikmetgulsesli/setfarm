@@ -1162,39 +1162,16 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
     if (dRepo && dProjId && dHasScreens) {
       const dStitchDir = path.join(dRepo, "stitch");
       if (!fs.existsSync(dStitchDir) || fs.readdirSync(dStitchDir).filter(f => f.endsWith(".html")).length === 0) {
-        logger.info(`[design-download] Downloading ${dScreenCount} screens from Stitch project ${dProjId}`, { runId: step.run_id });
+        logger.info(`[design-download] Batch downloading screens from Stitch project ${dProjId}`, { runId: step.run_id });
         try {
-          fs.mkdirSync(dStitchDir, { recursive: true });
           const stitchScript = path.join(os.homedir(), ".openclaw/setfarm-repo/scripts/stitch-api.mjs");
-          let screenIds: any[] = [];
-          const screenMapJson = context["screen_map"] || "";
-          if (screenMapJson) {
-            try { screenIds = JSON.parse(screenMapJson); } catch {}
-          }
-          if (screenIds.length === 0) {
-            try {
-              const listOut = execFileSync("node", [stitchScript, "list-screens", dProjId], { encoding: "utf-8", timeout: 30000 }).trim();
-              try { screenIds = JSON.parse(listOut); } catch {}
-            } catch {}
-          }
-          let dlCount = 0;
-          for (const scr of screenIds) {
-            const sid = scr?.id || scr?.screenId || (typeof scr === "string" ? scr : null);
-            if (!sid) continue;
-            try {
-              execFileSync("node", [stitchScript, "download-screen", dProjId, String(sid), path.join(dStitchDir, String(sid) + ".html")], { encoding: "utf-8", timeout: 30000 });
-              dlCount++;
-            } catch (dlErr) { logger.warn(`[design-download] download-screen ${sid} failed: ${dlErr}`, { runId: step.run_id }); }
-          }
-          // Only create manifest if PRD Generator hasnt already placed one
-          const mPath = path.join(dStitchDir, "DESIGN_MANIFEST.json");
-          let hasManifest = false;
-          try { const m = JSON.parse(fs.readFileSync(mPath, "utf-8")); hasManifest = Array.isArray(m) ? m.length > 0 : (m.screens?.length > 0); } catch {}
-          if (!hasManifest) { try { execFileSync("node", [stitchScript, "create-manifest", dStitchDir], { encoding: "utf-8", timeout: 15000 }); } catch {} }
-          try { execFileSync("node", [stitchScript, "extract-tokens", dStitchDir], { encoding: "utf-8", timeout: 15000 }); } catch {}
-          logger.info(`[design-download] Downloaded ${dlCount}/${screenIds.length} screen(s)`, { runId: step.run_id });
+          // Use download-all for parallel batch download (HTML + PNG + manifest + tokens)
+          const dlOut = execFileSync("node", [stitchScript, "download-all", dProjId, dStitchDir], { encoding: "utf-8", timeout: 120000, cwd: dRepo });
+          let dlResult: any = {};
+          try { dlResult = JSON.parse(dlOut); } catch {}
+          logger.info(`[design-download] Batch download: ${dlResult.downloaded || 0}/${dlResult.total || 0} screens`, { runId: step.run_id });
         } catch (dlErr) {
-          logger.warn(`[design-download] Screen download failed: ${dlErr}`, { runId: step.run_id });
+          logger.warn(`[design-download] Batch download failed: ${dlErr}`, { runId: step.run_id });
         }
       }
     }
