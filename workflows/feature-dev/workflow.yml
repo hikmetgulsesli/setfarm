@@ -271,105 +271,36 @@ steps:
       - "tablet/iPad" in TASK → TABLET
       - Otherwise → DESKTOP
 
-      === STITCH API ===
-      Script: $HOME/.openclaw/setfarm-repo/scripts/stitch-api.mjs
+      === SCREEN DESIGN (FULLY AUTOMATED — DO NOT USE STITCH API) ===
 
-      STEP 1 — Get or create Stitch project:
-      STITCH_SCRIPT="$HOME/.openclaw/setfarm-repo/scripts/stitch-api.mjs"
-      PROJECT_NAME=$(basename {{repo}})
-      REPO_PATH="{{repo}}"
+      *** YOU DO NOT CALL ANY STITCH COMMANDS. NO generate-screen, NO create-project,    ***
+      *** NO list-screens, NO download-all, NO get-design-md. NOTHING.                   ***
+      *** The pipeline handles ALL Stitch operations automatically after you output done. ***
 
-      # Reuse existing project if .stitch file exists in repo (prevents duplicates on retry runs)
-      if [ -f "$REPO_PATH/.stitch" ]; then
-        PROJECT_ID=$(cat "$REPO_PATH/.stitch" | jq -r '.projectId // empty')
-      fi
-      if [ -z "$PROJECT_ID" ]; then
-        RESULT=$(node "$STITCH_SCRIPT" create-project "$PROJECT_NAME")
-        PROJECT_ID=$(echo "$RESULT" | jq -r '.projectId')
-        # Persist for future runs (mkdir -p in case repo doesn't exist yet)
-        mkdir -p "$REPO_PATH"
-        echo "{\"projectId\": \"$PROJECT_ID\", \"name\": \"$PROJECT_NAME\", \"updatedAt\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" > "$REPO_PATH/.stitch"
-      fi
-      echo "Stitch project ID: $PROJECT_ID"
+      YOUR ONLY JOBS:
+      1. Choose a design system (aesthetic, palette, fonts, colors)
+      2. Identify ALL screens from PRD
+      3. Write SCREEN_MAP with DETAILED descriptions for each screen
+      4. Output STATUS: done
 
-      === DESIGN SYSTEM SELECTION (YOUR RESPONSIBILITY) ===
-      Read references/design-standards.md for available palettes and font pairs.
-      Choose a cohesive design direction for this project:
-      - aesthetic direction: (minimal, brutalist, luxury, editorial, industrial, organic, playful, corporate)
-      - color palette matching the project's domain (from the 8 palettes in the reference)
-      - font pair (heading + body) from the 10-pair reference table
-      - icon library: Lucide React or Heroicons
-      - NEVER choose: Inter, Roboto, Arial, system-ui fonts
-      - NEVER choose: purple gradient as primary aesthetic
-      - NEVER plan for emoji icons
+      SCREEN_MAP descriptions are CRITICAL — the pipeline uses them to generate Stitch screens.
+      Include: layout details, component list, content, interactions, colors for EACH screen.
 
-      === SCREEN IDENTIFICATION (from PRD — YOUR RESPONSIBILITY) ===
-      Read the PRD carefully and identify ALL unique screens the project needs:
-      1. Each unique page/view = 1 screen entry
-      2. Categories: landing, dashboard, list-view, detail-view, form, settings, game-hud, game-over, etc.
-      3. MANDATORY: Generate ALL screens listed in the PRD's "Ekranlar" table.
-         The SCREENS_GENERATED count must be >= the number of rows in the PRD screen table.
-         If any screen from the PRD table is missing, the design step FAILS.
-      4. Backend-only project (0 UI) → set SCREENS_GENERATED: 0 and skip to output
+      Example SCREEN_MAP entry:
+      {
+        "screenId": "ana-sayfa",
+        "name": "Ana Sayfa",
+        "type": "dashboard",
+        "description": "Main dashboard with greeting heading, daily streak counter card, 4 breathing technique cards in 2x2 grid (4-7-8 Teknigi, Kare Nefes, Basit Nefes, Derin Nefes), each card has icon + name + duration. Quick start CTA button. Bottom navigation with 4 tabs. Dark background #0D1117, card surface #161B22, accent #58A6FF."
+      }
 
-      === STRICT RULES (VIOLATION = IMMEDIATE FAIL) ===
-      - NEVER generate more than 1 version of the same screen. "Ana Sayfa" = 1 screen, NOT 5 variants.
-      - NEVER experiment with different themes/aesthetics. Pick ONE design system in STEP 1 and use it for ALL screens.
-      - NEVER add suffixes like "_v2", "_modern", "_dark", "_tr", "_pwa" to screen names.
-      - Total screen count MUST match the PRD screen table. If PRD says 8 screens, generate EXACTLY 8.
-      - If a screen with similar name already exists (skipped: true), DO NOT generate another variant.
-      - Do NOT call generate-screen-safe. Use generate-all-screens ONLY.
+      The pipeline will:
+      - Auto-create Stitch project (if not exists)
+      - Build a single prompt from PRD + SCREEN_MAP + design system
+      - Generate ALL screens in one API call
+      - Download HTML + PNG + manifest + tokens
 
-      === CHECK EXISTING SCREENS FIRST ===
-      BEFORE generating anything, check what already exists:
-        node "$STITCH_SCRIPT" list-screens "$PROJECT_ID"
-      If screens already exist from a previous attempt, USE THEM. Do NOT regenerate.
-      Only generate screens that are MISSING from the list.
-
-      ============================================================
-      STEP 2 — DO NOT GENERATE SCREENS (AUTOMATED BY PIPELINE)
-      ============================================================
-
-      Screen generation is FULLY AUTOMATED by the pipeline after you output STATUS: done.
-      The pipeline reads your SCREEN_MAP and generates ALL screens in a single API call.
-
-      YOU DO NOT CALL ANY STITCH GENERATE OR DOWNLOAD COMMANDS.
-      NO generate-screen, NO generate-screen-safe, NO generate-all-screens, NO download-all.
-      The pipeline handles everything automatically.
-
-      Your ONLY job in this step:
-      1. Create/find the Stitch project (STEP 1 above)
-      2. Choose a design system (aesthetic, palette, fonts)
-      3. Build the SCREEN_MAP with detailed descriptions for each screen
-      4. Output STATUS: done with SCREEN_MAP
-
-      The more detailed your SCREEN_MAP descriptions, the better the auto-generated screens.
-
-      STEP 3 — Collect SCREEN_MAP (MANDATORY — even if all screens were reused/skipped):
-      After generating all screens, you MUST build SCREEN_MAP for the output.
-      If any screens were skipped (reused), get the full list:
-        node "$STITCH_SCRIPT" list-screens "$PROJECT_ID"
-      This returns ALL screens with their screenId, name, and metadata.
-      Use this data to build the SCREEN_MAP JSON array in your output.
-      NEVER skip SCREEN_MAP output. Without it, the entire pipeline breaks.
-
-      STEP 3.5 — Extract DESIGN.md:
-      After all screens are generated, extract the project's design system:
-        cd "$REPO_PATH"
-        node "$STITCH_SCRIPT" get-design-md "$PROJECT_ID" "$REPO_PATH"
-      This saves DESIGN.md to the repo root. The implement step will use it for visual consistency.
-
-      NOTE: Do NOT commit to git — the repo may not exist yet. The setup step will
-      download HTML files from Stitch and commit them.
-
-      === FONT MAP (design-standards → Stitch enum) ===
-      Space Grotesk → SPACE_GROTESK | DM Sans → DM_SANS | Sora → SORA
-      Nunito Sans → NUNITO_SANS | Plus Jakarta Sans → PLUS_JAKARTA_SANS
-      Work Sans → WORK_SANS | Manrope → MANROPE | Source Sans 3 → SOURCE_SANS_THREE
-      Geist → GEIST | IBM Plex Sans → IBM_PLEX_SANS | Montserrat → MONTSERRAT
-      (Fontshare → closest: EPILOGUE or LEXEND)
-
-      === RETRY ===
+            === RETRY ===
       Fail → retry 2x. At least 1 screen required, else STATUS: retry.
       Backend-only project (0 UI) → STATUS: done, SCREENS_GENERATED: 0
 
@@ -389,16 +320,15 @@ steps:
       SCREEN_MAP:
       [
         {
-          "screenId": "<ACTUAL stitch screen ID from list-screens, e.g. 11b4576160e0442d>",
+          "screenId": "<unique-screen-id>",
           "name": "Main Dashboard",
           "type": "dashboard",
           "description": "Primary overview screen"
         }
       ]
-      IMPORTANT: screenId MUST be the real Stitch ID returned by generate-all-screens or list-screens
+      IMPORTANT: screenId should be a unique kebab-case identifier for each screen
       (the hex string from the API response), NOT a made-up ID like SCR-001.
-      Parse screenId from list-screens output after generation.
-      If screens were reused, get IDs via: node "$STITCH_SCRIPT" list-screens "$PROJECT_ID"
+      The pipeline will map these to real Stitch screen IDs automatically.
 
       CRITICAL: SCREEN_MAP is MANDATORY. If you output STATUS: done without SCREEN_MAP,
       the pipeline guardrail will REJECT your output and force a retry.
