@@ -327,41 +327,23 @@ steps:
       Only generate screens that are MISSING from the list.
 
       ============================================================
-      STEP 2 — SCREEN GENERATION (MANDATORY: USE generate-all-screens)
+      STEP 2 — DO NOT GENERATE SCREENS (AUTOMATED BY PIPELINE)
       ============================================================
 
-      *** FORBIDDEN: generate-screen-safe, generate-screen ***
-      *** You MUST use generate-all-screens. No exceptions. ***
-      *** Calling generate-screen-safe = IMMEDIATE STEP FAILURE ***
+      Screen generation is FULLY AUTOMATED by the pipeline after you output STATUS: done.
+      The pipeline reads your SCREEN_MAP and generates ALL screens in a single API call.
 
-      Write ONE prompt file describing ALL screens, then make ONE API call:
+      YOU DO NOT CALL ANY STITCH GENERATE OR DOWNLOAD COMMANDS.
+      NO generate-screen, NO generate-screen-safe, NO generate-all-screens, NO download-all.
+      The pipeline handles everything automatically.
 
-      cat > /tmp/stitch-prompt.txt << 'PROMPT_EOF'
-      Generate [N] screens for [project name]: [description].
+      Your ONLY job in this step:
+      1. Create/find the Stitch project (STEP 1 above)
+      2. Choose a design system (aesthetic, palette, fonts)
+      3. Build the SCREEN_MAP with detailed descriptions for each screen
+      4. Output STATUS: done with SCREEN_MAP
 
-      Design system: [aesthetic] theme, [palette] palette, [heading_font]/[body_font],
-      primary color [hex]. Dark background.
-
-      Screen 1: [Name] — [detailed layout, components, content, interactions]
-      Screen 2: [Name] — [detailed layout, components, content, interactions]
-      Screen 3: [Name] — [detailed layout, components, content, interactions]
-      ...continue for ALL screens from PRD...
-
-      All visible text (buttons, labels, headings, placeholders) MUST be in Turkish.
-      Use Material Symbols icons. Same design system across ALL screens.
-      PROMPT_EOF
-
-      node "$STITCH_SCRIPT" generate-all-screens "$PROJECT_ID" /tmp/stitch-prompt.txt <DEVICE> GEMINI_3_1_PRO
-
-      Then download everything:
-      mkdir -p "{{repo}}/stitch"
-      node "$STITCH_SCRIPT" download-all "$PROJECT_ID" "{{repo}}/stitch"
-
-      If download-all returns fewer than expected, list and download remaining:
-      node "$STITCH_SCRIPT" list-screens "$PROJECT_ID"
-      node "$STITCH_SCRIPT" download-all "$PROJECT_ID" "{{repo}}/stitch"
-
-      NEVER call generate-screen-safe or generate-screen individually.
+      The more detailed your SCREEN_MAP descriptions, the better the auto-generated screens.
 
       STEP 3 — Collect SCREEN_MAP (MANDATORY — even if all screens were reused/skipped):
       After generating all screens, you MUST build SCREEN_MAP for the output.

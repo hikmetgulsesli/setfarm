@@ -1162,14 +1162,45 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
     if (dRepo && dProjId && dHasScreens) {
       const dStitchDir = path.join(dRepo, "stitch");
       if (!fs.existsSync(dStitchDir) || fs.readdirSync(dStitchDir).filter(f => f.endsWith(".html")).length === 0) {
-        logger.info(`[design-download] Batch downloading screens from Stitch project ${dProjId}`, { runId: step.run_id });
+        const stitchScript = path.join(os.homedir(), ".openclaw/setfarm-repo/scripts/stitch-api.mjs");
+        fs.mkdirSync(dStitchDir, { recursive: true });
+
+        // AUTO-GENERATE: Build prompt from SCREEN_MAP and call generate-all-screens
+        let screenMapArr: any[] = [];
+        try { screenMapArr = JSON.parse(dScreenMap); } catch {}
+        if (screenMapArr.length > 0) {
+          const designSystem = context["design_system"] || "";
+          const task = context["task"] || "";
+          const deviceType = context["device_type"] || "DESKTOP";
+
+          // Build multi-screen prompt
+          const screenDescs = screenMapArr.map((s: any, i: number) =>
+            `Screen ${i + 1}: ${s.name} — ${s.description || s.type || "UI screen"}`
+          ).join("\n");
+
+          const prompt = `Generate ${screenMapArr.length} screens for a ${task.slice(0, 200)}.\n\nDesign system: ${designSystem}\n\n${screenDescs}\n\nAll visible text (buttons, labels, headings, placeholders) MUST be in Turkish. Use Material Symbols icons. Consistent design across ALL screens.`;
+
+          const promptFile = path.join(dStitchDir, ".generate-prompt.txt");
+          fs.writeFileSync(promptFile, prompt);
+
+          logger.info(`[design-generate] Auto-generating ${screenMapArr.length} screens via generate-all-screens`, { runId: step.run_id });
+          try {
+            const genOut = execFileSync("node", [stitchScript, "generate-all-screens", dProjId, promptFile, deviceType, "GEMINI_3_1_PRO"], { encoding: "utf-8", timeout: 600000, cwd: dRepo });
+            let genResult: any = {};
+            try { genResult = JSON.parse(genOut); } catch {}
+            logger.info(`[design-generate] Generated ${genResult.total || 0} screens in ${genResult.elapsedSeconds || "?"}s`, { runId: step.run_id });
+          } catch (genErr) {
+            logger.warn(`[design-generate] generate-all-screens failed: ${genErr}`, { runId: step.run_id });
+          }
+        }
+
+        // DOWNLOAD: Batch download all screens (HTML + PNG + manifest + tokens)
+        logger.info(`[design-download] Downloading all screens from Stitch project ${dProjId}`, { runId: step.run_id });
         try {
-          const stitchScript = path.join(os.homedir(), ".openclaw/setfarm-repo/scripts/stitch-api.mjs");
-          // Use download-all for parallel batch download (HTML + PNG + manifest + tokens)
           const dlOut = execFileSync("node", [stitchScript, "download-all", dProjId, dStitchDir], { encoding: "utf-8", timeout: 180000, cwd: dRepo });
           let dlResult: any = {};
           try { dlResult = JSON.parse(dlOut); } catch {}
-          logger.info(`[design-download] Batch download: ${dlResult.downloaded || 0}/${dlResult.total || 0} screens`, { runId: step.run_id });
+          logger.info(`[design-download] Downloaded ${dlResult.downloaded || 0}/${dlResult.total || 0} screens`, { runId: step.run_id });
         } catch (dlErr) {
           logger.warn(`[design-download] Batch download failed: ${dlErr}`, { runId: step.run_id });
         }
