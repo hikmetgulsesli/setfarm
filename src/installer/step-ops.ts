@@ -620,6 +620,72 @@ async function claimSingleStep(
     return { found: false };
   }
 
+  // ═══ DESIGN PRE-CLAIM: Auto-generate Stitch screens from PRD ═══
+  if (step.step_id === "design") {
+    const dRepo = context["repo"] || context["REPO"] || "";
+    const dPrd = context["prd"] || context["PRD"] || "";
+    const dStitchDir = dRepo ? path.join(dRepo, "stitch") : "";
+    const existingHtml = dStitchDir && fs.existsSync(dStitchDir)
+      ? fs.readdirSync(dStitchDir).filter((f: string) => f.endsWith(".html")).length : 0;
+
+    if (dRepo && dPrd && existingHtml === 0) {
+      const stitchScript = path.join(os.homedir(), ".openclaw/setfarm-repo/scripts/stitch-api.mjs");
+      fs.mkdirSync(dStitchDir, { recursive: true });
+
+      // 1. Ensure Stitch project
+      let projId = "";
+      try {
+        const dotStitch = path.join(dRepo, ".stitch");
+        if (fs.existsSync(dotStitch)) projId = JSON.parse(fs.readFileSync(dotStitch, "utf-8")).projectId || "";
+      } catch {}
+      if (!projId) {
+        try {
+          const ensureOut = execFileSync("node", [stitchScript, "ensure-project", path.basename(dRepo), dRepo],
+            { encoding: "utf-8", timeout: 30000, cwd: dRepo });
+          try { projId = JSON.parse(ensureOut).projectId || ""; } catch {}
+        } catch (e) { logger.warn(`[design-preclaim] ensure-project failed: ${e}`, { runId: step.run_id }); }
+      }
+
+      if (projId) {
+        context["stitch_project_id"] = projId;
+        // 2. Write PRD as Stitch prompt
+        const promptFile = path.join(dStitchDir, ".generate-prompt.txt");
+        const deviceType = context["device_type"] || "DESKTOP";
+        fs.writeFileSync(promptFile, dPrd + "\n\nGenerate all screens described in this PRD as separate screen designs. All visible text must be in Turkish. Use a dark, modern theme.");
+        logger.info(`[design-preclaim] Generating screens from PRD via generate-all-screens (project: ${projId})`, { runId: step.run_id });
+
+        // 3. generate-all-screens
+        try {
+          const genOut = execFileSync("node", [stitchScript, "generate-all-screens", projId, promptFile, deviceType, "GEMINI_3_1_PRO"],
+            { encoding: "utf-8", timeout: 600000, cwd: dRepo });
+          let genResult: any = {};
+          try { genResult = JSON.parse(genOut); } catch {}
+          logger.info(`[design-preclaim] Generated ${genResult.total || 0} screens in ${genResult.elapsedSeconds || "?"}s`, { runId: step.run_id });
+        } catch (e) { logger.warn(`[design-preclaim] generate-all-screens failed: ${e}`, { runId: step.run_id }); }
+
+        // 4. download-all
+        try {
+          const dlOut = execFileSync("node", [stitchScript, "download-all", projId, dStitchDir],
+            { encoding: "utf-8", timeout: 180000, cwd: dRepo });
+          let dlResult: any = {};
+          try { dlResult = JSON.parse(dlOut); } catch {}
+          logger.info(`[design-preclaim] Downloaded ${dlResult.downloaded || 0}/${dlResult.total || 0} screens`, { runId: step.run_id });
+          context["screens_generated"] = String(dlResult.downloaded || 0);
+        } catch (e) { logger.warn(`[design-preclaim] download-all failed: ${e}`, { runId: step.run_id }); }
+
+        // 5. Generate DESIGN_DOM.json
+        try {
+          const domScript = path.join(os.homedir(), ".openclaw/setfarm-repo/scripts/design-dom-extract.mjs");
+          if (fs.existsSync(domScript)) {
+            execFileSync("node", [domScript, dStitchDir], { encoding: "utf-8", timeout: 30000 });
+          }
+        } catch {}
+
+        await updateRunContext(step.run_id, context);
+      }
+    }
+  }
+
   let resolvedInput = resolveTemplate(step.input_template, context);
 
   // MISSING_INPUT_GUARD (v1.5.53): First miss -> retry step, second -> fail run.
@@ -1190,10 +1256,8 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
         }
       }
       {
+        // Screens already generated in pre-claim. Just verify they exist.
         const stitchScript = path.join(os.homedir(), ".openclaw/setfarm-repo/scripts/stitch-api.mjs");
-        fs.mkdirSync(dStitchDir, { recursive: true });
-
-        // AUTO-GENERATE: Build prompt from SCREEN_MAP and call generate-all-screens
         let screenMapArr: any[] = [];
         try { screenMapArr = JSON.parse(dScreenMap); } catch {}
         if (screenMapArr.length > 0) {

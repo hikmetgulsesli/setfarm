@@ -271,34 +271,21 @@ steps:
       - "tablet/iPad" in TASK → TABLET
       - Otherwise → DESKTOP
 
-      === SCREEN DESIGN (FULLY AUTOMATED — DO NOT USE STITCH API) ===
+      === STITCH EKRANLARI PIPELINE TARAFINDAN ÜRETİLDİ ===
 
-      *** YOU DO NOT CALL ANY STITCH COMMANDS. NO generate-screen, NO create-project,    ***
-      *** NO list-screens, NO download-all, NO get-design-md. NOTHING.                   ***
-      *** The pipeline handles ALL Stitch operations automatically after you output done. ***
+      Pipeline PRD'yi Stitch'e gönderdi ve tüm ekranları otomatik üretti.
+      stitch/ dizininde HTML tasarım dosyaları mevcut.
 
-      YOUR ONLY JOBS:
-      1. Choose a design system (aesthetic, palette, fonts, colors)
-      2. Identify ALL screens from PRD
-      3. Write SCREEN_MAP with DETAILED descriptions for each screen
-      4. Output STATUS: done
+      *** STITCH API'YE DOKUNMA. generate-screen, create-project, list-screens ÇAĞIRMA. ***
+      *** Ekranlar zaten üretildi. Senin görevin KONTROL ETMEK. ***
 
-      SCREEN_MAP descriptions are CRITICAL — the pipeline uses them to generate Stitch screens.
-      Include: layout details, component list, content, interactions, colors for EACH screen.
-
-      Example SCREEN_MAP entry:
-      {
-        "screenId": "ana-sayfa",
-        "name": "Ana Sayfa",
-        "type": "dashboard",
-        "description": "Main dashboard with greeting heading, daily streak counter card, 4 breathing technique cards in 2x2 grid (4-7-8 Teknigi, Kare Nefes, Basit Nefes, Derin Nefes), each card has icon + name + duration. Quick start CTA button. Bottom navigation with 4 tabs. Dark background #0D1117, card surface #161B22, accent #58A6FF."
-      }
-
-      The pipeline will:
-      - Auto-create Stitch project (if not exists)
-      - Build a single prompt from PRD + SCREEN_MAP + design system
-      - Generate ALL screens in one API call
-      - Download HTML + PNG + manifest + tokens
+      GÖREVİN:
+      1. stitch/ dizinindeki HTML dosyalarını listele ve incele
+      2. Her ekranı PRD'deki ekran tablosuyla karşılaştır
+      3. Eksik veya yanlış ekran var mı kontrol et
+      4. Design system tutarlılığını doğrula (renkler, fontlar, tema)
+      5. SCREEN_MAP oluştur — her ekran için screenId, name, type, description
+      6. STATUS: done output'u ver
 
             === RETRY ===
       Fail → retry 2x. At least 1 screen required, else STATUS: retry.
