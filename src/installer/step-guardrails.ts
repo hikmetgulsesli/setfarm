@@ -451,6 +451,34 @@ export async function processSetupDesignContracts(
     }
   }
 
+  // BLOCKING GATE: Validate manifest + HTML when design was expected
+  const screensGen = parseInt(context["screens_generated"] || "0", 10);
+  if (screensGen > 0) {
+    const mPath = path.join(repoPath, "stitch", "DESIGN_MANIFEST.json");
+    let manifestCount = 0;
+    try {
+      const mData = JSON.parse(fs.readFileSync(mPath, "utf-8"));
+      manifestCount = Array.isArray(mData) ? mData.length : (mData.screens?.length || 0);
+    } catch {}
+    const htmlFiles2 = fs.readdirSync(path.join(repoPath, "stitch")).filter((f: string) => f.endsWith(".html"));
+    if (manifestCount === 0 && htmlFiles2.length === 0) {
+      return `GUARDRAIL FAIL: DESIGN_MANIFEST is empty and stitch/ has 0 HTML files. ${screensGen} screens were expected. Design download failed completely.`;
+    }
+    if (htmlFiles2.length < screensGen * 0.5) {
+      return `GUARDRAIL FAIL: Expected ${screensGen} screen HTML files, found ${htmlFiles2.length} (${Math.round((1 - htmlFiles2.length / screensGen) * 100)}% missing). Design download incomplete.`;
+    }
+  }
+
+  // Generate DESIGN_DOM.json for element-level fidelity
+  try {
+    const { generateDesignDOM } = await import("./design-contract.js");
+    if (generateDesignDOM(repoPath)) {
+      logger.info(`[setup-design-contracts] DESIGN_DOM.json generated`, { runId });
+    }
+  } catch (e) {
+    logger.warn(`[setup-design-contracts] DESIGN_DOM generation skipped: ${String(e)}`, { runId });
+  }
+
   return null;
 }
 
@@ -581,15 +609,15 @@ export function checkScreenMapPresence(
  * Run design fidelity + unused module + integration wiring checks.
  * Advisory only — populates context with feedback for agent.
  */
-export function processDesignFidelityCheck(
+export async function processDesignFidelityCheck(
   context: Record<string, string>,
   runId: string
-): void {
+): Promise<string | null> {
   const repoPath = context["repo"] || context["REPO"] || "";
-  if (!repoPath) return;
+  if (!repoPath) return null;
 
   const stitchDir = path.join(repoPath, "stitch");
-  if (!fs.existsSync(stitchDir)) return;
+  if (!fs.existsSync(stitchDir)) return null;
 
   const feedbackParts: string[] = [];
 
@@ -631,9 +659,35 @@ export function processDesignFidelityCheck(
     logger.warn(`[integration-wiring] Check skipped: ${String(e)}`, { runId });
   }
 
+  // DOM Compare: DESIGN_DOM.json vs actual browser DOM
+  const designDomPath = path.join(repoPath, "stitch", "DESIGN_DOM.json");
+  if (fs.existsSync(designDomPath) && context["browser_dom_snapshot"]) {
+    try {
+      const actualDom = JSON.parse(context["browser_dom_snapshot"]);
+      const { compareDesignVsActual } = await import("./design-contract.js");
+      const comparison = compareDesignVsActual(designDomPath, actualDom);
+      if (comparison.score < 60) {
+        const msg = `DESIGN FIDELITY SCORE: ${comparison.score}/100 (threshold: 60)\n${comparison.issues.join("\n")}`;
+        feedbackParts.push(msg);
+      } else if (comparison.issues.length > 0) {
+        feedbackParts.push(`Design fidelity score: ${comparison.score}/100\n${comparison.issues.join("\n")}`);
+      }
+    } catch (e) {
+      logger.warn(`[design-fidelity] DOM compare failed: ${String(e)}`, { runId });
+    }
+  }
+
   if (feedbackParts.length > 0) {
     context["design_fidelity_feedback"] = feedbackParts.join("\n\n");
   }
+
+  // BLOCKING: structural gaps or integration wiring errors fail the step
+  const structuralErrors = feedbackParts.filter(p => p.includes("Structural gap") || p.includes("INTEGRATION WIRING"));
+  if (structuralErrors.length > 0) {
+    return `GUARDRAIL FAIL: Design fidelity check found critical issues:\n${structuralErrors.join("\n")}\nFix structural gaps and integration wiring before advancing.`;
+  }
+
+  return null;
 }
 
 // ── Frontend Change Detection ───────────────────────────────────────

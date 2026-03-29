@@ -431,6 +431,26 @@ async function injectStoryContext(
     logger.warn(`[stitch-html-inject] Failed to inject stitch HTML: ${String(e)}`, { runId: step.run_id });
   }
 
+  // Inject DESIGN_DOM for element-level coding guidance
+  try {
+    const storyScreensForDom = JSON.parse(context["story_screens"] || "[]");
+    const repoDom = context["repo"] || context["REPO"] || "";
+    const designDomPath = path.join(repoDom, "stitch", "DESIGN_DOM.json");
+    if (repoDom && fs.existsSync(designDomPath)) {
+      const fullDom = JSON.parse(fs.readFileSync(designDomPath, "utf-8"));
+      if (fullDom.screens) {
+        const storyScreenIds = storyScreensForDom.map((s: any) => s.screenId);
+        const filteredScreens: Record<string, any> = {};
+        for (const sid of storyScreenIds) {
+          if (fullDom.screens[sid]) filteredScreens[sid] = fullDom.screens[sid];
+        }
+        const domToInject = Object.keys(filteredScreens).length > 0 ? filteredScreens : fullDom.screens;
+        const domJson = JSON.stringify(domToInject);
+        context["design_dom"] = domJson.length > 8000 ? domJson.substring(0, 8000) + "...(truncated)" : domJson;
+      }
+    }
+  } catch {}
+
   // ── Smart Context Injection — only for implement step ───────────
   if (step.step_id === "implement") {
     const repoPath = context["repo"] || "";
@@ -1356,9 +1376,15 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
     processBrowserCheck(browserCtx, step.run_id, step.step_id);
   }
 
-  // Design Fidelity Check (verify + final-test steps — advisory)
+  // Design Fidelity Check (verify + final-test steps — BLOCKING on structural/wiring errors)
   if ((step.step_id === "verify" || step.step_id === "final-test") && parsed["status"]?.toLowerCase() === "done") {
-    processDesignFidelityCheck(context, step.run_id);
+    const fidelityErr = await processDesignFidelityCheck(context, step.run_id);
+    if (fidelityErr) {
+      logger.warn(`[design-fidelity-gate] Blocking: ${fidelityErr}`, { runId: step.run_id, stepId: step.step_id });
+      if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
+      await failStep(stepId, fidelityErr);
+      return { advanced: false, runCompleted: false };
+    }
   }
 
   // SMOKE TEST GUARDRAIL (final-test): If agent skipped smoke test, retry

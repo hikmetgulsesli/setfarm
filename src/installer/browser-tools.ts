@@ -271,10 +271,11 @@ function analyzeDOM(
 
       const missingVars = keyVars.filter((v) => !dom.cssVars[v]);
       if (missingVars.length > 0) {
+        const missingRatio = missingVars.length / keyVars.length;
         result.issues.push({
           rule: "missing_css_var",
-          severity: "warning",
-          detail: `${missingVars.length} design token(s) not found in rendered CSS: ${missingVars.slice(0, 5).join(", ")}`,
+          severity: missingRatio > 0.5 ? "error" : "warning",
+          detail: `${missingVars.length}/${keyVars.length} design token(s) not found in rendered CSS (${Math.round(missingRatio * 100)}% missing): ${missingVars.slice(0, 5).join(", ")}`,
         });
       }
     } catch (e) {

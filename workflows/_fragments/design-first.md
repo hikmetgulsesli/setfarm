@@ -10,6 +10,9 @@ STITCH HTML (BU LAYOUT'U KOPYALA):
 DESIGN TOKENS:
 {{design_tokens}}
 
+DESIGN DOM (extract edilmis element listesi):
+{{design_dom}}
+
 UI CONTRACT (auto-generated from Stitch design — EVERY element MUST work):
 {{ui_contract}}
 
@@ -32,6 +35,8 @@ DESIGN ENFORCEMENT (MANDATORY):
 - ALWAYS: cursor-pointer on clickables, hover/focus states, focus-visible rings
 - LINKS: NEVER use href="#" — every link MUST point to a real route.
 - HANDLERS: NEVER use onClick={() => {}} or console.log() — every handler MUST do something real.
+
+DİL (ZORUNLU): Tüm görünür metin TÜRKÇE. "Current Tally", "Settings", "Home" gibi İngilizce metinler YASAK. Teknik terimler hariç her şey Türkçe. Placeholder, aria-label, title, error mesajları dahil.
   Buton tıklanınca state değişmeli, modal açılmalı, veya route değişmeli. console.log YASAK.
 
 DESIGN CONTRACT RULES:

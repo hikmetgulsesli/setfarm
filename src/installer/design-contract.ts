@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { logger } from "../lib/logger.js";
@@ -915,6 +916,30 @@ export function checkDesignFidelity(repoPath: string): FidelityIssue[] {
     }
   }
 
+  // CSS Token Compliance Check
+  const tokenPath = path.join(stitchDir, "design-tokens.css");
+  if (fs.existsSync(tokenPath)) {
+    try {
+      const tokenContent = fs.readFileSync(tokenPath, "utf-8");
+      const tokenVars = tokenContent.match(/--[\w-]+/g) || [];
+      const keyTokens = tokenVars.filter(
+        (v: string) => v.includes("color") || v.includes("font") || v.includes("spacing") || v.includes("radius")
+      );
+      if (keyTokens.length > 0 && allSourceContent) {
+        const varUsages = (allSourceContent.match(/var\(--[\w-]+\)/g) || []);
+        const usedTokens = new Set(varUsages.map((v: string) => v.replace("var(", "").replace(")", "")));
+        const tokenUsageRate = keyTokens.filter((t: string) => usedTokens.has(t)).length / keyTokens.length;
+        if (tokenUsageRate < 0.3) {
+          issues.push({
+            screen: "global",
+            severity: "error",
+            message: `CSS token adoption critically low: ${Math.round(tokenUsageRate * 100)}% of design tokens used (${usedTokens.size}/${keyTokens.length} key tokens). Must use var(--token) instead of hardcoded values.`,
+          });
+        }
+      }
+    } catch { /* ignore */ }
+  }
+
   return issues;
 }
 
@@ -1105,4 +1130,110 @@ export function checkIntegrationWiring(repoPath: string): string[] {
     }
   }
   return issues;
+}
+
+/**
+ * Compare DESIGN_DOM.json with actual browser DOM extraction
+ * Returns score 0-100 and list of issues
+ */
+export function compareDesignVsActual(
+  designDomPath: string,
+  actualDom: any
+): { score: number; issues: string[] } {
+  const issues: string[] = [];
+  let score = 100;
+
+  if (!fs.existsSync(designDomPath)) {
+    return { score: 0, issues: ["DESIGN_DOM.json not found"] };
+  }
+
+  let designDom: any;
+  try {
+    designDom = JSON.parse(fs.readFileSync(designDomPath, "utf-8"));
+  } catch {
+    return { score: 0, issues: ["DESIGN_DOM.json parse error"] };
+  }
+
+  if (!designDom.screens || !actualDom) {
+    return { score: 50, issues: ["Incomplete data for comparison"] };
+  }
+
+  // Aggregate design totals across all screens
+  let expectedButtons = 0, expectedInputs = 0, expectedLinks = 0, expectedSections = 0;
+  const expectedIcons = new Set<string>();
+  const expectedCssVars = new Set<string>();
+
+  for (const screen of Object.values(designDom.screens) as any[]) {
+    expectedButtons += screen.buttons?.length || 0;
+    expectedInputs += screen.inputs?.length || 0;
+    expectedLinks += screen.navLinks?.length || 0;
+    expectedSections += screen.sections?.length || 0;
+    for (const icon of (screen.icons || [])) expectedIcons.add(icon);
+    for (const v of Object.keys(screen.cssVars || {})) expectedCssVars.add(v);
+  }
+
+  // Actual counts
+  const actualButtons = actualDom.buttons?.length || 0;
+  const actualInputs = actualDom.inputs?.length || 0;
+  const actualLinks = actualDom.navigation?.length || 0;
+  const actualSections = actualDom.sections?.length || 0;
+
+  // Button check (-5 per missing, max -25)
+  if (expectedButtons > 0 && actualButtons < expectedButtons * 0.5) {
+    const penalty = Math.min(25, (expectedButtons - actualButtons) * 5);
+    score -= penalty;
+    issues.push(`Buttons: expected ~${expectedButtons}, found ${actualButtons} (-${penalty})`);
+  }
+
+  // Input check (-5 per missing, max -20)
+  if (expectedInputs > 0 && actualInputs < expectedInputs * 0.5) {
+    const penalty = Math.min(20, (expectedInputs - actualInputs) * 5);
+    score -= penalty;
+    issues.push(`Inputs: expected ~${expectedInputs}, found ${actualInputs} (-${penalty})`);
+  }
+
+  // Navigation check (-5 per missing, max -20)
+  if (expectedLinks > 0 && actualLinks < expectedLinks * 0.5) {
+    const penalty = Math.min(20, (expectedLinks - actualLinks) * 5);
+    score -= penalty;
+    issues.push(`NavLinks: expected ~${expectedLinks}, found ${actualLinks} (-${penalty})`);
+  }
+
+  // Section structure check (-20 if less than half)
+  if (expectedSections > 0 && actualSections < expectedSections * 0.5) {
+    score -= 20;
+    issues.push(`Sections: expected ~${expectedSections}, found ${actualSections} (-20)`);
+  }
+
+  // CSS Variables check (-20 if less than 50% used)
+  if (expectedCssVars.size > 0) {
+    const actualCssVarCount = Object.keys(actualDom.cssVars || {}).length;
+    if (actualCssVarCount < expectedCssVars.size * 0.5) {
+      score -= 20;
+      issues.push(`CSS Vars: expected ~${expectedCssVars.size}, found ${actualCssVarCount} (-20)`);
+    }
+  }
+
+  score = Math.max(0, score);
+  return { score, issues };
+}
+
+/**
+ * Generate DESIGN_DOM.json from stitch HTML files using design-dom-extract.mjs
+ */
+export function generateDesignDOM(repoPath: string): boolean {
+  const stitchDir = path.join(repoPath, "stitch");
+  if (!fs.existsSync(stitchDir)) return false;
+  const htmlFiles = fs.readdirSync(stitchDir).filter(f => f.endsWith(".html"));
+  if (htmlFiles.length === 0) return false;
+
+  const script = path.join(path.dirname(path.dirname(__dirname)), "scripts", "design-dom-extract.mjs");
+  if (!fs.existsSync(script)) return false;
+
+  try {
+    execFileSync("node", [script, stitchDir], { timeout: 30000, stdio: "pipe" });
+    return fs.existsSync(path.join(stitchDir, "DESIGN_DOM.json"));
+  } catch (e) {
+    return false;
+  }
 }

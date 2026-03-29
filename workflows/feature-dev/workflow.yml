@@ -146,6 +146,8 @@ steps:
   - id: plan
     agent: planner
     input: |
+      DİL KURALI (ZORUNLU): Tüm UI içeriği (buton etiketleri, başlıklar, placeholder'lar, hata mesajları, menü öğeleri) TÜRKÇE olacak. Sadece teknik terimler (API, CSS, component adları) orijinal kalabilir. Kullanıcı farklı dil belirtmedikçe HER ŞEY TÜRKÇE.
+
       Analyze the following task and produce a detailed PRD (Product Requirements Document).
       Do NOT create stories yet — the design step will generate screen designs first,
       then the stories step will decompose based on both PRD and screen designs.
@@ -391,6 +393,8 @@ steps:
   - id: stories
     agent: planner
     input: |
+      DİL KURALI (ZORUNLU): Tüm UI içeriği (buton etiketleri, başlıklar, placeholder'lar, hata mesajları, menü öğeleri) TÜRKÇE olacak. Sadece teknik terimler (API, CSS, component adları) orijinal kalabilir. Kullanıcı farklı dil belirtmedikçe HER ŞEY TÜRKÇE.
+
       Read the PRD and SCREEN_MAP from the design step, then decompose the PRD into
       ordered user stories. Each story must reference screens from SCREEN_MAP.
 
@@ -696,9 +700,9 @@ steps:
 
       Implement ONE user story. Create a PR for review.
 
-      LANGUAGE RULE: Kullanıcının ekranda gördüğü HER metin Türkçe olmalı.
+      DİL KURALI (ZORUNLU): Tüm UI içeriği (buton etiketleri, başlıklar, placeholder'lar, hata mesajları, menü öğeleri) TÜRKÇE olacak. Sadece teknik terimler (API, CSS, component adları) orijinal kalabilir. Kullanıcı farklı dil belirtmedikçe HER ŞEY TÜRKÇE.
       Stitch HTML'deki İngilizce metinler dahil — implementasyona geçerken Türkçeye çevir.
-      Sadece kod (variable, comment, className) ve material icon adları İngilizce kalır.
+      "Current Tally", "Settings", "Home" gibi İngilizce metinler YASAK. Placeholder, aria-label, title, error mesajları dahil.
 
       TASK: {{task}}
       REPO: {{repo}}
@@ -762,6 +766,16 @@ steps:
       DESIGN_MANIFEST: {{design_manifest}}
       DESIGN_TOKENS: {{design_tokens}}
       STORY_SCREENS: {{story_screens}}
+
+      DESIGN DOM (element-level structure — HER ELEMENTI BIREBIR KODLA):
+      {{design_dom}}
+
+      DESIGN DOM KURALLARI:
+      - DESIGN_DOM'daki her buton, ayni label ve icon ile kodda olmali
+      - Her input, ayni type ve placeholder ile olmali
+      - Her nav link, dogru sayfaya yonlendirmeli
+      - Section sayisi ve yapisi eslesmeli
+      - CSS class'larini var(--token) ile adapt et
 
       DESIGN.MD INTEGRATION (MANDATORY if file exists):
       If DESIGN.md exists at the repo root, read it before writing any UI code.

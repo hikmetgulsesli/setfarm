@@ -16,6 +16,7 @@
  * Phase 13 (browser): Content Sanity — hallucinated text, debug artifacts, raw vars
  * Phase 14 (browser): Interaction Dead-Ends — buttons with no DOM response — stalled UI, unresponsive buttons
  * Phase 15 (browser): Interactive State Verification — keyboard input→state change (canvas, SPA, dashboard)
+ * Phase 16 (static):  Design Fidelity — DESIGN_DOM vs code element counts, CSS token usage
  *   Uses agent-browser CLI for real browser interaction
  *
  * Usage: node smoke-test.mjs <repo-path> [--port PORT] [--timeout MS]
@@ -1215,6 +1216,70 @@ async function main() {
 
   if (serverProc) serverProc.kill();
 
+
+  // ── Phase 16: Design Fidelity (Stitch DESIGN_DOM vs actual) ──────
+  try {
+    const designDomPath = join(repoPath, 'stitch', 'DESIGN_DOM.json');
+    const designTokensPath = join(repoPath, 'stitch', 'design-tokens.css');
+
+    if (existsSync(designDomPath)) {
+      try {
+        const dom = JSON.parse(readFileSync(designDomPath, 'utf-8'));
+        const totalButtons = Object.values(dom.screens || {}).reduce((sum, s) => sum + (s.buttons?.length || 0), 0);
+        const totalInputs = Object.values(dom.screens || {}).reduce((sum, s) => sum + (s.inputs?.length || 0), 0);
+        const totalSections = Object.values(dom.screens || {}).reduce((sum, s) => sum + (s.sections?.length || 0), 0);
+
+        // Check source for element implementation
+        const srcDir = join(repoPath, 'src');
+        if (existsSync(srcDir)) {
+          const srcContent = readdirSync(srcDir, { recursive: true })
+            .filter(f => f.endsWith('.tsx') || f.endsWith('.jsx'))
+            .map(f => readFileSync(join(srcDir, f), 'utf-8'))
+            .join('\n');
+
+          const actualButtons = (srcContent.match(/<button/gi) || []).length;
+          const actualInputs = (srcContent.match(/<input|<textarea|<select/gi) || []).length;
+
+          if (totalButtons > 0 && actualButtons < totalButtons * 0.3) {
+            failures.push('[FIDELITY] Buttons: design has ' + totalButtons + ', code has ' + actualButtons);
+          }
+          if (totalInputs > 0 && actualInputs < totalInputs * 0.3) {
+            failures.push('[FIDELITY] Inputs: design has ' + totalInputs + ', code has ' + actualInputs);
+          }
+        }
+      } catch (e) {
+        failures.push('[FIDELITY] DESIGN_DOM parse error: ' + e.message);
+      }
+    }
+
+    // CSS Token usage check
+    if (existsSync(designTokensPath)) {
+      try {
+        const tokenContent = readFileSync(designTokensPath, 'utf-8');
+        const tokenVars = [...tokenContent.matchAll(/--([\/\w-]+)/g)].map(m => m[1]);
+        const keyTokens = tokenVars.filter(v => v.includes('color') || v.includes('font') || v.includes('primary') || v.includes('background') || v.includes('surface'));
+
+        if (keyTokens.length > 0) {
+          const srcDir = join(repoPath, 'src');
+          if (existsSync(srcDir)) {
+            const allCss = readdirSync(srcDir, { recursive: true })
+              .filter(f => f.endsWith('.css') || f.endsWith('.tsx') || f.endsWith('.jsx'))
+              .map(f => readFileSync(join(srcDir, f), 'utf-8'))
+              .join('\n');
+
+            const usedCount = keyTokens.filter(v => allCss.includes('--' + v)).length;
+            const ratio = usedCount / keyTokens.length;
+            if (ratio < 0.3) {
+              failures.push('[FIDELITY] CSS tokens: only ' + usedCount + '/' + keyTokens.length + ' (' + Math.round(ratio * 100) + '%) design tokens used');
+            }
+          }
+        }
+      } catch (e) { /* ignore token parse errors */ }
+    }
+  } catch (e) {
+    failures.push('[FIDELITY] Phase 16 error: ' + e.message);
+  }
+
   // ── Output ──
   // ── Confidence Score ──
   let confidence = 100;
@@ -1236,6 +1301,8 @@ async function main() {
   if (contentCount > 0) confidence -= 15;
   if (uxCount > 0) confidence -= 10;
   if (interactCount > 0) confidence -= 40;
+  const fidelityCount = failures.filter(f => f.startsWith('[FIDELITY]')).length;
+  if (fidelityCount > 0) confidence -= 35;
   if (wiringIssues.length > 0) confidence -= 20;
   if (linksBroken > 0) confidence -= 10;
   confidence = Math.max(0, confidence);
