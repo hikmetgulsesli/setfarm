@@ -982,6 +982,71 @@ const commands = {
     }
 
     console.log(JSON.stringify({ success: true, copied }, null, 2));
+  },,
+  /**
+   * generate-all-screens: Generate ALL screens in a SINGLE Stitch API call
+   * Usage: node stitch-api.mjs generate-all-screens <projectId> <promptFile> [device] [model]
+   * promptFile: text file with full multi-screen prompt
+   * Key insight: Stitch can generate multiple screens from one prompt (e.g. "Generate 8 screens: 1)... 2)... 3)...")
+   */
+  "generate-all-screens": async function generateAllScreens(projectId, promptFile, deviceType = "DESKTOP", modelId = "GEMINI_3_1_PRO") {
+    if (!projectId || !promptFile) throw new Error("Usage: generate-all-screens <projectId> <promptFile> [device] [model]");
+    const { readFileSync } = await import("fs");
+    let prompt;
+    try { prompt = readFileSync(promptFile, "utf-8").trim(); } catch (e) { throw new Error("Cannot read prompt file: " + e.message); }
+    if (!prompt) throw new Error("Prompt file is empty");
+
+    await initialize();
+    process.stderr.write("Generating all screens in single API call...\n");
+    const startTime = Date.now();
+
+    const result = await callTool("generate_screen_from_text", { projectId, prompt, deviceType, modelId });
+    const { screens } = parseScreens(result);
+
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
+    process.stderr.write("Generated " + screens.length + " screens in " + elapsed + "s\n");
+
+    // Eager download all screens
+    if (screens.length > 0) {
+      const { mkdirSync, writeFileSync: wfs } = await import("fs");
+      const { resolve } = await import("path");
+      const stitchDir = resolve(process.cwd(), "stitch");
+      mkdirSync(stitchDir, { recursive: true });
+
+      let tracked = [];
+      const trackingFile = resolve(process.cwd(), ".stitch-screens-" + projectId + ".json");
+      try { tracked = JSON.parse(readFileSync(trackingFile, "utf-8")); } catch {}
+
+      let dlOk = 0, dlFail = 0;
+      // Download in parallel (all at once since they are already generated)
+      await Promise.allSettled(screens.map(async (s) => {
+        try {
+          if (s.htmlUrl) {
+            await downloadFile(s.htmlUrl, resolve(stitchDir, s.screenId + ".html"));
+            process.stderr.write("  HTML: " + (s.title || s.screenId) + "\n");
+          }
+          if (s.screenshotUrl) {
+            await downloadFile(s.screenshotUrl, resolve(stitchDir, s.screenId + ".png"));
+          }
+          dlOk++;
+        } catch (e) {
+          process.stderr.write("  FAIL: " + (s.title || s.screenId) + " - " + e.message + "\n");
+          dlFail++;
+        }
+        if (!tracked.some(t => t.screenId === s.screenId)) {
+          tracked.push({ screenId: s.screenId, title: s.title || "", htmlUrl: s.htmlUrl || null, screenshotUrl: s.screenshotUrl || null });
+        }
+      }));
+
+      wfs(trackingFile, JSON.stringify(tracked, null, 2));
+      process.stderr.write("Downloaded " + dlOk + "/" + screens.length + " screens\n");
+    }
+
+    console.log(JSON.stringify({
+      total: screens.length,
+      screens: screens.map(s => ({ screenId: s.screenId, title: s.title })),
+      elapsedSeconds: Math.round((Date.now() - startTime) / 1000)
+    }, null, 2));
   },
 };
 

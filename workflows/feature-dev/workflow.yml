@@ -326,26 +326,38 @@ steps:
       If screens already exist from a previous attempt, USE THEM. Do NOT regenerate.
       Only generate screens that are MISSING from the list.
 
-      STEP 2 — Generate ONLY MISSING screens (BATCH MODE):
-      a. For each screen you identified, build a detailed prompt including your design_system colors/fonts.
-         CRITICAL: Her prompt'un SONUNA sunu ekle: "All visible text content (buttons, labels, headings, placeholders, menu items) must be in Turkish language."
-      b. Write ALL screen prompts to a single JSON file:
-         cat > /tmp/stitch-screens.json << 'SCREENS_EOF'
-         [
-           {"name": "Ana Sayfa", "prompt": "A modern dark-themed main dashboard with...Turkish text..."},
-           {"name": "Ayarlar", "prompt": "Settings page with...Turkish text..."}
-         ]
-         SCREENS_EOF
-      c. Generate ALL screens in parallel with batch command:
-         node "$STITCH_SCRIPT" generate-screens-batch "$PROJECT_ID" /tmp/stitch-screens.json <DEVICE> GEMINI_3_1_PRO 3
-         This generates 3 screens at a time in parallel (much faster than sequential).
-      d. Parse the batch output — check success/failed counts.
-         If any failed, you can retry individually:
-         node "$STITCH_SCRIPT" generate-screen-safe "$PROJECT_ID" "<prompt>" "<name>" <DEVICE> GEMINI_3_1_PRO
-      e. After batch completes, download all screens at once:
+      STEP 2 — Generate ALL screens in ONE SINGLE API call:
+      Stitch can generate multiple screens from a single prompt. This is MUCH faster than
+      generating one at a time. Write ONE prompt that describes ALL screens at once.
+
+      a. Write a single multi-screen prompt to a file:
+         cat > /tmp/stitch-prompt.txt << 'PROMPT_EOF'
+         Generate [N] screens for [project description]. Design system: [aesthetic], [palette],
+         [heading_font]/[body_font], dark theme, [primary_color].
+
+         Screen 1: [Name] — [detailed description with layout, components, interactions]
+         Screen 2: [Name] — [detailed description...]
+         Screen 3: [Name] — [detailed description...]
+         ...
+         Screen N: [Name] — [detailed description...]
+
+         All visible text content (buttons, labels, headings, placeholders, menu items) must be
+         in Turkish language. Use Material Symbols icons. Consistent design across all screens.
+         PROMPT_EOF
+
+      b. Generate ALL screens with a single API call:
+         node "$STITCH_SCRIPT" generate-all-screens "$PROJECT_ID" /tmp/stitch-prompt.txt <DEVICE> GEMINI_3_1_PRO
+         This generates ALL screens at once and downloads HTML+PNG automatically.
+
+      c. If the single call returns fewer screens than expected, generate ONLY the missing ones:
+         node "$STITCH_SCRIPT" generate-screen-safe "$PROJECT_ID" "<prompt for missing screen>" "<screen name>" <DEVICE> GEMINI_3_1_PRO
+
+      d. After all screens are generated, run download-all to ensure everything is downloaded:
          mkdir -p "{{repo}}/stitch"
          node "$STITCH_SCRIPT" download-all "$PROJECT_ID" "{{repo}}/stitch"
-         This downloads HTML+PNG, creates DESIGN_MANIFEST.json, and extracts design-tokens.css.
+
+      IMPORTANT: Do NOT generate screens one by one. Use generate-all-screens for the bulk.
+      IMPORTANT: Do NOT generate variants or multiple versions of the same screen.
 
       STEP 3 — Collect SCREEN_MAP (MANDATORY — even if all screens were reused/skipped):
       After generating all screens, you MUST build SCREEN_MAP for the output.
