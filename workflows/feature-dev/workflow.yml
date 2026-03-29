@@ -318,7 +318,7 @@ steps:
       - NEVER add suffixes like "_v2", "_modern", "_dark", "_tr", "_pwa" to screen names.
       - Total screen count MUST match the PRD screen table. If PRD says 8 screens, generate EXACTLY 8.
       - If a screen with similar name already exists (skipped: true), DO NOT generate another variant.
-      - generate-screen-safe already has dedup — if it says "skipped", MOVE ON to the next screen.
+      - Do NOT call generate-screen-safe. Use generate-all-screens ONLY.
 
       === CHECK EXISTING SCREENS FIRST ===
       BEFORE generating anything, check what already exists:
@@ -407,15 +407,15 @@ steps:
       SCREEN_MAP:
       [
         {
-          "screenId": "<ACTUAL stitch screen ID from generate-screen-safe response, e.g. 11b4576160e0442d>",
+          "screenId": "<ACTUAL stitch screen ID from list-screens, e.g. 11b4576160e0442d>",
           "name": "Main Dashboard",
           "type": "dashboard",
           "description": "Primary overview screen"
         }
       ]
-      IMPORTANT: screenId MUST be the real Stitch ID returned by generate-screen-safe
+      IMPORTANT: screenId MUST be the real Stitch ID returned by generate-all-screens or list-screens
       (the hex string from the API response), NOT a made-up ID like SCR-001.
-      Parse it from the generate-screen-safe JSON output: response.screens[0].screenId
+      Parse screenId from list-screens output after generation.
       If screens were reused, get IDs via: node "$STITCH_SCRIPT" list-screens "$PROJECT_ID"
 
       CRITICAL: SCREEN_MAP is MANDATORY. If you output STATUS: done without SCREEN_MAP,
