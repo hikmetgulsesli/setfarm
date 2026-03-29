@@ -997,8 +997,18 @@ const commands = {
     mkdirSync(outputDir, { recursive: true });
     await initialize();
     process.stderr.write('Listing screens for project ' + projectId + '...\n');
+    // Use parseScreenList (same parser as list-screens command) + map to download format
     let screenList = [];
-    try { const r = await callTool('list_screens', { projectId }); screenList = parseScreens(r).screens || []; } catch {}
+    try {
+      const r = await callTool('list_screens', { projectId });
+      const rawScreens = parseScreenList(r);
+      screenList = rawScreens.map(s => ({
+        screenId: (s.name || '').replace(/^projects\/\d+\/screens\//, '') || s.id || s.screenId,
+        title: s.title || s.displayName || '',
+        htmlUrl: s.htmlCode?.downloadUrl || s.html_code?.download_url || null,
+        screenshotUrl: s.screenshot?.downloadUrl || s.screenshot?.download_url || null,
+      }));
+    } catch {}
     if (screenList.length === 0) {
       try { const { readFileSync } = await import('fs'); const { resolve } = await import('path');
         screenList = JSON.parse(readFileSync(resolve(process.cwd(), '.stitch-screens-' + projectId + '.json'), 'utf-8'));
@@ -1016,7 +1026,16 @@ const commands = {
     for (let retry = 0; retry < 3 && screenList.length === 0; retry++) {
       process.stderr.write('No screens found, waiting 15s (retry ' + (retry + 1) + '/3)...\n');
       await new Promise(r => setTimeout(r, 15000));
-      try { const r = await callTool('list_screens', { projectId }); screenList = parseScreens(r).screens || []; } catch {}
+      try {
+        const r = await callTool('list_screens', { projectId });
+        const rawRetry = parseScreenList(r);
+        screenList = rawRetry.map(s => ({
+          screenId: (s.name || '').replace(/^projects\/\d+\/screens\//, '') || s.id || s.screenId,
+          title: s.title || s.displayName || '',
+          htmlUrl: s.htmlCode?.downloadUrl || s.html_code?.download_url || null,
+          screenshotUrl: s.screenshot?.downloadUrl || s.screenshot?.download_url || null,
+        }));
+      } catch {}
     }
     if (screenList.length === 0) throw new Error('No screens found for project ' + projectId);
     process.stderr.write('Found ' + screenList.length + ' screens. Downloading...\n');
