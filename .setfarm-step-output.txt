@@ -1,81 +1,45 @@
 STATUS: done
-STITCH_PROJECT_ID: 17837416582586999951
+STITCH_PROJECT_ID: 4422340880014728082
 DEVICE_TYPE: DESKTOP
-SCREENS_GENERATED: 11
+SCREENS_GENERATED: 5
 DESIGN_SYSTEM:
-  aesthetic: glassmorphism-dark-atmospheric
-  palette: deep-blue-purple-gradient
-  heading_font: SORA
-  body_font: NUNITO_SANS
+  aesthetic: industrial
+  palette: DevTool / CLI Dashboard
+  heading_font: JetBrains Mono
+  body_font: JetBrains Mono
   icon_library: Lucide React
-DESIGN_MD: none
-DESIGN_NOTES: Generated 11 screens for the Hava Durumu Dashboard weather app. All screens use glassmorphism design with dark atmospheric gradient backgrounds (#0f0c29 → #302b63 → #24243e), cyan accent (#00d4ff), and Turkish UI content. Screens cover all 10 PRD screen types plus an extra error variant.
 SCREEN_MAP:
 [
   {
-    "screenId": "375fa5bd36d1419099e7dea71f97c61c",
-    "name": "Ana Dashboard",
-    "type": "dashboard",
-    "description": "Main weather dashboard with search sidebar, current weather hero, 5-day forecast list, and metrics panel"
+    "screenId": "b0184093a7e04e78abdc892ccbbacd84",
+    "name": "JSON Input View",
+    "type": "main-view",
+    "description": "Sol pane: textarea, drag-drop, paste JSON"
   },
   {
-    "screenId": "cb047008541a42c79ea06e1424b54df9",
-    "name": "Şehir Arama",
-    "type": "search-view",
-    "description": "City search with input, spinner, and dropdown results (max 5)"
+    "screenId": "765cf7700a82474e87357a1c9411473d",
+    "name": "Tree View",
+    "type": "tree-view",
+    "description": "Sag pane: formatted JSON as collapsible tree"
   },
   {
-    "screenId": "5b588a12daea4a3784b1a6255aa596ae",
-    "name": "Anlık Hava Durumu",
-    "type": "hero-card",
-    "description": "Hero weather card with city, country flag, animated icon, temperature, feels-like, description, high/low"
-  },
-  {
-    "screenId": "1c5a5b10bb8c4c228e34b5783072a6b5",
-    "name": "5 Günlük Tahmin",
-    "type": "list-view",
-    "description": "5-day forecast cards with day name, date, weather icon, day/night temps, precipitation chance"
-  },
-  {
-    "screenId": "177a7137466a4e25b13b0049a472a95f",
-    "name": "Sıcaklık Grafiği",
-    "type": "chart",
-    "description": "5-day temperature chart with min/max line curves, tooltips, cyan theme"
-  },
-  {
-    "screenId": "acec4bf39e8744ef815241c290f4d2c5",
-    "name": "Nem Grafiği",
-    "type": "chart",
-    "description": "5-day humidity bar chart with cyan bars, day labels, percentage tooltips"
-  },
-  {
-    "screenId": "cfd01f4d8f364c9887c5b30762c91914",
-    "name": "Rüzgar Grafiği",
-    "type": "chart",
-    "description": "5-day wind speed line chart with cyan/green line, km/s unit, tooltips"
-  },
-  {
-    "screenId": "5f2a8e4555e248efa8964d94e2f68fed",
-    "name": "Bağlantı Hatası",
+    "screenId": "f57a1bf42e8b4dda8f91492242572355",
+    "name": "Error State",
     "type": "error-state",
-    "description": "Connection error screen with error icon, message, and retry button"
+    "description": "Gecersiz JSON'da hata mesaji, satir/sutun, pozisyon vurgu"
   },
   {
-    "screenId": "8f86af5147b149bf95f3fadbb27f8fb9",
-    "name": "Hava Durumu Yüklenemedi Hatası",
-    "type": "error-state",
-    "description": "API error screen for failed weather data load"
-  },
-  {
-    "screenId": "85f3c5240f734d8d99ee30fd9e5f90e6",
-    "name": "Boş Durum",
+    "screenId": "bddb055b202242b9932f237e41eef00c",
+    "name": "Empty State",
     "type": "empty-state",
-    "description": "Welcome/empty state with search prompt and search box"
+    "description": "Ilk acilista bos rehber"
   },
   {
-    "screenId": "fcca84b1dd0144dd9a74d4520af63cd7",
-    "name": "Yükleme Ekranı",
-    "type": "loading-state",
-    "description": "Loading skeleton screen with shimmer animations and spinner"
+    "screenId": "e42016b071244121a39609951c41e58d",
+    "name": "Keyboard Shortcuts Modal",
+    "type": "modal",
+    "description": "Klavye kisayollari paneli (? tusu ile acilir)"
   }
 ]
+DESIGN_MD: /home/setrox/projects/json-formatter/DESIGN.md
+DESIGN_NOTES: 5 screens generated for json-formatter. Design follows dark DevTool aesthetic with JetBrains Mono throughout. Palette: cyan primary (#81ecff), purple secondary (#bc87fe), teal tertiary (#a0fff0) on deep blacks. All Turkish UI text. Stitch generated HTML files downloaded to working dir.
