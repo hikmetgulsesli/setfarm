@@ -1,0 +1,101 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --game-bg: #121213;
+  --game-text: #d7dadc;
+  --tile-empty: #3a3a3c;
+  --tile-filled: #565758;
+  --color-correct: #538d4e;
+  --color-present: #b59f3b;
+  --color-absent: #3a3a3c;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Clear Sans', 'Helvetica Neue', Arial, sans-serif;
+  background-color: var(--game-bg);
+  color: var(--game-text);
+}
+
+.bg-game-bg {
+  background-color: var(--game-bg);
+}
+
+.text-game-text {
+  color: var(--game-text);
+}
+
+.bg-tile-empty {
+  background-color: var(--tile-empty);
+}
+
+.border-tile-empty {
+  border-color: var(--tile-empty);
+}
+
+.bg-tile-filled {
+  background-color: var(--tile-filled);
+}
+
+.border-tile-filled {
+  border-color: var(--tile-filled);
+}
+
+.text-tile-filled {
+  color: var(--tile-filled);
+}
+
+/* Animation for tile flip */
+@keyframes flip {
+  0% {
+    transform: rotateX(0);
+  }
+  50% {
+    transform: rotateX(-90deg);
+  }
+  100% {
+    transform: rotateX(0);
+  }
+}
+
+.tile-flip {
+  animation: flip 0.5s ease-in-out;
+}
+
+/* Animation for shake on invalid */
+@keyframes shake {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-5px);
+  }
+  75% {
+    transform: translateX(5px);
+  }
+}
+
+.tile-shake {
+  animation: shake 0.3s ease-in-out;
+}
+
+/* Animation for bounce on win */
+@keyframes bounce {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+.tile-bounce {
+  animation: bounce 0.3s ease-in-out;
+}
