@@ -687,6 +687,29 @@ async function claimSingleStep(
           }
         }
 
+        // 4b. Fallback: if still 0 HTML, try direct download from tracking file URLs
+        if (htmlCount === 0) {
+          const trackFile = path.join(dRepo, ".stitch-screens-" + projId + ".json");
+          if (fs.existsSync(trackFile)) {
+            try {
+              const tracked = JSON.parse(fs.readFileSync(trackFile, "utf-8"));
+              logger.info(`[design-preclaim] Trying direct download from tracking file (${tracked.length} entries)`, { runId: step.run_id });
+              for (const s of tracked) {
+                if (s.htmlUrl) {
+                  const hp = path.join(dStitchDir, (s.screenId || "unknown") + ".html");
+                  if (!fs.existsSync(hp)) {
+                    try {
+                      const resp = execFileSync("curl", ["-sL", "-o", hp, "--max-time", "30", s.htmlUrl], { timeout: 35000 });
+                      if (fs.existsSync(hp) && fs.statSync(hp).size > 100) htmlCount++;
+                    } catch {}
+                  }
+                }
+              }
+              logger.info(`[design-preclaim] Tracking fallback: ${htmlCount} HTML files recovered`, { runId: step.run_id });
+            } catch (e) { logger.warn(`[design-preclaim] Tracking fallback failed: ${e}`, { runId: step.run_id }); }
+          }
+        }
+
         // 5. Generate DESIGN_DOM.json
         try {
           const domScript = path.join(os.homedir(), ".openclaw/setfarm-repo/scripts/design-dom-extract.mjs");

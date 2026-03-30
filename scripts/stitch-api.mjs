@@ -1052,7 +1052,8 @@ const commands = {
           } catch {} }
           if (htmlUrl) { const hp = join(outputDir, sid + '.html'); if (!existsSync(hp)) { await downloadFile(htmlUrl, hp); process.stderr.write('  HTML: ' + sid + '\n'); } }
           if (screenshotUrl) { const pp = join(outputDir, sid + '.png'); if (!existsSync(pp)) { await downloadFile(screenshotUrl, pp); } }
-          downloaded++;
+          const gotHtml = htmlUrl && existsSync(join(outputDir, sid + '.html'));
+          if (gotHtml) { downloaded++; } else { process.stderr.write('  SKIP (no htmlUrl): ' + sid + '\n'); failed++; }
         } catch (e) { process.stderr.write('  FAIL: ' + sid + ' - ' + e.message + '\n'); failed++; }
       }));
     }
