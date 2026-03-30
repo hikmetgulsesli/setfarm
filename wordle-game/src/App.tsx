@@ -1,7 +1,57 @@
+import { useState, useCallback, useEffect } from 'react';
+import { Board } from './components';
 import { useGame } from './hooks/useGame';
 
 function App() {
-  const { gameState, currentRow, guesses, addLetter, removeLetter, submitGuess, resetGame, getStatistics } = useGame();
+  const { 
+    gameState, 
+    currentRow, 
+    currentTile,
+    guesses, 
+    addLetter, 
+    removeLetter, 
+    submitGuess, 
+    resetGame, 
+    getStatistics 
+  } = useGame();
+  
+  const [shakingRow, setShakingRow] = useState<number | null>(null);
+
+  // Handle submit with shake animation on invalid word
+  const handleSubmit = useCallback(() => {
+    const result = submitGuess();
+    if (!result && currentTile === 5) {
+      // Invalid word - trigger shake animation
+      setShakingRow(currentRow);
+      setTimeout(() => setShakingRow(null), 600);
+    }
+  }, [submitGuess, currentTile, currentRow]);
+
+  // Get current word being typed
+  const currentWord = guesses[currentRow]?.word || '';
+
+  // Keyboard event handler
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (gameState === 'WIN' || gameState === 'LOSE') return;
+
+      const key = e.key.toUpperCase();
+
+      if (key === 'ENTER') {
+        e.preventDefault();
+        handleSubmit();
+      } else if (key === 'BACKSPACE') {
+        e.preventDefault();
+        removeLetter();
+      } else if (key.length === 1 && /^[A-ZÇĞİÖŞÜ]$/.test(key)) {
+        e.preventDefault();
+        addLetter(key);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [addLetter, removeLetter, handleSubmit, gameState]);
 
   return (
     <div className="min-h-screen bg-game-bg text-game-text flex flex-col">
@@ -19,35 +69,14 @@ function App() {
       </header>
 
       <main className="flex-1 flex flex-col items-center justify-center p-4">
-        {/* Game Grid */}
-        <div className="grid grid-rows-6 gap-2 mb-8">
-          {Array.from({ length: 6 }).map((_, rowIndex) => (
-            <div key={rowIndex} className="grid grid-cols-5 gap-2">
-              {Array.from({ length: 5 }).map((_, colIndex) => {
-                const guess = guesses[rowIndex];
-                const tile = guess?.tiles[colIndex];
-                const letter = guess?.word[colIndex] || '';
-                const isCurrentRow = rowIndex === currentRow;
-                const isFilled = colIndex < (guess?.word.length || 0);
-
-                let bgClass = 'bg-tile-empty border-tile-empty';
-                if (tile?.status === 'correct') bgClass = 'bg-green-600 border-green-600';
-                else if (tile?.status === 'present') bgClass = 'bg-yellow-600 border-yellow-600';
-                else if (tile?.status === 'absent') bgClass = 'bg-gray-600 border-gray-600';
-                else if (isCurrentRow && isFilled) bgClass = 'bg-tile-filled border-tile-filled';
-
-                return (
-                  <div
-                    key={colIndex}
-                    className={`w-14 h-14 border-2 flex items-center justify-center text-2xl font-bold uppercase transition-all ${bgClass}`}
-                  >
-                    {letter}
-                  </div>
-                );
-              })}
-            </div>
-          ))}
-        </div>
+        {/* Game Board */}
+        <Board 
+          guesses={guesses}
+          currentRow={currentRow}
+          currentWord={currentWord}
+          shakingRow={shakingRow}
+          isWin={gameState === 'WIN'}
+        />
 
         {/* Game Status */}
         {gameState === 'WIN' && (
@@ -82,7 +111,7 @@ function App() {
                   <button
                     key={key}
                     onClick={() => {
-                      if (key === 'ENTER') submitGuess();
+                      if (key === 'ENTER') handleSubmit();
                       else if (key === 'BACKSPACE') removeLetter();
                       else addLetter(key);
                     }}

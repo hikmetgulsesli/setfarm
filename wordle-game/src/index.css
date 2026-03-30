@@ -52,7 +52,31 @@ body {
   color: var(--tile-filled);
 }
 
-/* Animation for tile flip */
+.bg-correct {
+  background-color: var(--color-correct);
+}
+
+.border-correct {
+  border-color: var(--color-correct);
+}
+
+.bg-present {
+  background-color: var(--color-present);
+}
+
+.border-present {
+  border-color: var(--color-present);
+}
+
+.bg-absent {
+  background-color: var(--color-absent);
+}
+
+.border-absent {
+  border-color: var(--color-absent);
+}
+
+/* Animation for tile flip - 250ms per tile with sequential delay */
 @keyframes flip {
   0% {
     transform: rotateX(0);
@@ -65,25 +89,38 @@ body {
   }
 }
 
-.tile-flip {
-  animation: flip 0.5s ease-in-out;
-}
-
-/* Animation for shake on invalid */
+/* Animation for shake on invalid word - 600ms horizontal shake */
 @keyframes shake {
   0%, 100% {
     transform: translateX(0);
   }
-  25% {
-    transform: translateX(-5px);
+  10% {
+    transform: translateX(-8px);
   }
-  75% {
-    transform: translateX(5px);
+  20% {
+    transform: translateX(8px);
   }
-}
-
-.tile-shake {
-  animation: shake 0.3s ease-in-out;
+  30% {
+    transform: translateX(-8px);
+  }
+  40% {
+    transform: translateX(8px);
+  }
+  50% {
+    transform: translateX(-4px);
+  }
+  60% {
+    transform: translateX(4px);
+  }
+  70% {
+    transform: translateX(-2px);
+  }
+  80% {
+    transform: translateX(2px);
+  }
+  90% {
+    transform: translateX(-1px);
+  }
 }
 
 /* Animation for bounce on win */
@@ -94,8 +131,4 @@ body {
   50% {
     transform: translateY(-10px);
   }
-}
-
-.tile-bounce {
-  animation: bounce 0.3s ease-in-out;
 }
