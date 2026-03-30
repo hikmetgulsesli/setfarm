@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { Board } from './components';
+import { Board, Keyboard } from './components';
 import { useGame } from './hooks/useGame';
 
 function App() {
@@ -98,34 +98,12 @@ function App() {
         )}
 
         {/* Keyboard */}
-        <div className="w-full max-w-lg">
-          {[
-            ['E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', 'Ğ', 'Ü'],
-            ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', 'Ş', 'İ'],
-            ['ENTER', 'Z', 'C', 'V', 'B', 'N', 'M', 'Ö', 'Ç', 'BACKSPACE'],
-          ].map((row, rowIndex) => (
-            <div key={rowIndex} className="flex justify-center gap-1 mb-2">
-              {row.map((key) => {
-                const isSpecial = key === 'ENTER' || key === 'BACKSPACE';
-                return (
-                  <button
-                    key={key}
-                    onClick={() => {
-                      if (key === 'ENTER') handleSubmit();
-                      else if (key === 'BACKSPACE') removeLetter();
-                      else addLetter(key);
-                    }}
-                    className={`${
-                      isSpecial ? 'px-4' : 'w-8'
-                    } h-12 bg-tile-empty hover:bg-tile-filled rounded font-bold text-sm transition-colors`}
-                  >
-                    {key === 'BACKSPACE' ? '←' : key}
-                  </button>
-                );
-              })}
-            </div>
-          ))}
-        </div>
+        <Keyboard
+          guesses={guesses}
+          onEnter={handleSubmit}
+          onBackspace={removeLetter}
+          onLetter={addLetter}
+        />
 
         {/* Statistics */}
         <div className="mt-8 text-center">
