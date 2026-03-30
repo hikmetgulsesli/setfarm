@@ -1,0 +1,77 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --game-bg: #0a0a0f;
+  --game-text: #ffffff;
+  --tile-empty: #3a3a3c;
+  --tile-filled: #565758;
+  --correct: #538d4e;
+  --present: #b59f3b;
+  --absent: #3a3a3c;
+}
+
+@layer base {
+  body {
+    @apply bg-game-bg text-game-text;
+    font-family: 'Geist', ui-sans-serif, system-ui, sans-serif;
+  }
+}
+
+@layer utilities {
+  .bg-game-bg {
+    background-color: var(--game-bg);
+  }
+  .text-game-text {
+    color: var(--game-text);
+  }
+  .bg-tile-empty {
+    background-color: var(--tile-empty);
+  }
+  .border-tile-empty {
+    border-color: var(--tile-empty);
+  }
+  .bg-tile-filled {
+    background-color: var(--tile-filled);
+  }
+  .border-tile-filled {
+    border-color: var(--tile-filled);
+  }
+  .bg-correct {
+    background-color: var(--correct);
+  }
+  .border-correct {
+    border-color: var(--correct);
+  }
+  .bg-present {
+    background-color: var(--present);
+  }
+  .border-present {
+    border-color: var(--present);
+  }
+  .bg-absent {
+    background-color: var(--absent);
+  }
+  .border-absent {
+    border-color: var(--absent);
+  }
+}
+
+/* Animations */
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
+  20%, 40%, 60%, 80% { transform: translateX(5px); }
+}
+
+@keyframes flip {
+  0% { transform: rotateX(0); }
+  50% { transform: rotateX(90deg); }
+  100% { transform: rotateX(0); }
+}
+
+@keyframes bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
