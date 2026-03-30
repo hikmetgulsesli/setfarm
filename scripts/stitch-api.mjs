@@ -1014,6 +1014,22 @@ const commands = {
         screenList = JSON.parse(readFileSync(resolve(process.cwd(), '.stitch-screens-' + projectId + '.json'), 'utf-8'));
       } catch {}
     }
+    // Merge tracking file URLs into screenList for entries missing htmlUrl
+    if (screenList.length > 0 && screenList.some(s => !s.htmlUrl)) {
+      try {
+        const { readFileSync: rfs } = await import('fs');
+        const { resolve: res } = await import('path');
+        const tracked = JSON.parse(rfs(res(process.cwd(), '.stitch-screens-' + projectId + '.json'), 'utf-8'));
+        const trackMap = new Map(tracked.map(t => [t.screenId, t]));
+        for (const s of screenList) {
+          if (!s.htmlUrl && trackMap.has(s.screenId)) {
+            s.htmlUrl = trackMap.get(s.screenId).htmlUrl;
+            s.screenshotUrl = s.screenshotUrl || trackMap.get(s.screenId).screenshotUrl;
+          }
+        }
+        process.stderr.write('Merged tracking URLs for ' + screenList.filter(s => s.htmlUrl).length + '/' + screenList.length + ' screens\n');
+      } catch {}
+    }
     if (screenList.length === 0) {
       try {
         const pr = await callTool('get_project', { name: 'projects/' + projectId });
@@ -1052,8 +1068,9 @@ const commands = {
           } catch {} }
           if (htmlUrl) { const hp = join(outputDir, sid + '.html'); if (!existsSync(hp)) { await downloadFile(htmlUrl, hp); process.stderr.write('  HTML: ' + sid + '\n'); } }
           if (screenshotUrl) { const pp = join(outputDir, sid + '.png'); if (!existsSync(pp)) { await downloadFile(screenshotUrl, pp); } }
-          const gotHtml = htmlUrl && existsSync(join(outputDir, sid + '.html'));
-          if (gotHtml) { downloaded++; } else { process.stderr.write('  SKIP (no htmlUrl): ' + sid + '\n'); failed++; }
+          const htmlPath = join(outputDir, sid + '.html');
+          const gotHtml = existsSync(htmlPath) && (await import('fs')).statSync(htmlPath).size > 100;
+          if (gotHtml) { downloaded++; } else { process.stderr.write('  NO-HTML: ' + sid + ' (htmlUrl=' + (htmlUrl ? 'yes' : 'null') + ')\n'); failed++; }
         } catch (e) { process.stderr.write('  FAIL: ' + sid + ' - ' + e.message + '\n'); failed++; }
       }));
     }
