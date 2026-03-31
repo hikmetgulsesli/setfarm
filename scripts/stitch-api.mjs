@@ -321,8 +321,14 @@ const commands = {
       modelId,
     };
 
-    const result = await callTool('generate_screen_from_text', args);
-    const { screens, suggestions } = parseScreens(result);
+    let result = await callTool('generate_screen_from_text', args);
+    let { screens, suggestions } = parseScreens(result);
+    // Quota exhaustion detection: Stitch returns 200 OK but no screens when credits are gone
+    if (screens.length === 0 && rotateKey('no screens returned — possible quota exhaustion')) {
+      await initialize(); // re-init MCP session with new key
+      result = await callTool('generate_screen_from_text', args);
+      ({ screens, suggestions } = parseScreens(result));
+    }
 // Save generated screens to local tracking file for dedup
     if (screens.length > 0) {
       // Write tracking to project-scoped file
