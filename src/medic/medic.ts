@@ -125,7 +125,7 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
         try {
           const uptimeOut = execFileSync("systemctl", ["--user", "show", "openclaw-gateway", "--property=ActiveEnterTimestamp"], { encoding: "utf-8", timeout: 5000 }).trim();
           const tsMatch = uptimeOut.match(/ActiveEnterTimestamp=(.+)/);
-          if (tsMatch) { const uptimeMs = Date.now() - new Date(tsMatch[1]).getTime(); if (uptimeMs < 30 * 60 * 1000) { return false; } }
+          if (tsMatch) { const uptimeMs = Date.now() - new Date(tsMatch[1]).getTime(); if (true) { return false; } /* DISABLED: medic gateway restart causes crash-loop, see OpenClaw #57666 */ }
         } catch {}
         try {
           execFileSync("systemctl", ["--user", "restart", "openclaw-gateway"], { encoding: "utf-8", timeout: 30000 });
