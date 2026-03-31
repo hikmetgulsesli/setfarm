@@ -1956,17 +1956,22 @@ async function autoVerifyDoneStories(
     const story = await pgGet<any>("SELECT * FROM stories WHERE run_id = $1 AND status = 'done' ORDER BY story_index ASC LIMIT 1", [runId]);
     if (!story) return null;
 
-    // FIX: If story has been abandoned 5+ times in verify, force auto-verify
-    // This prevents the "106 claim" infinite loop where reviewer can never complete
-    const verifyAbandons = story.abandoned_count ?? 0;
-    if (verifyAbandons >= 5) {
+    // FIX: If this story has been stuck in verify for too many cycles, force auto-verify.
+    // Count how many times the verify STEP (not story) has been claimed for this story.
+    // story.abandoned_count tracks implement abandons, not verify — so we use step claims.
+    const verifyStep = await pgGet<{ abandoned_count: number }>(
+      "SELECT abandoned_count FROM steps WHERE run_id = $1 AND step_id IN (SELECT step_id FROM steps WHERE run_id = $1 AND type = 'loop' AND loop_config LIKE '%verifyEach%') AND status IN ('running','pending') LIMIT 1",
+      [runId]
+    );
+    const verifyStepAbandons = verifyStep?.abandoned_count ?? 0;
+    if (verifyStepAbandons >= 3) {
       const prUrl = story.pr_url || "";
       if (prUrl) {
         try { tryAutoMergePR(prUrl, story.story_id, runId); } catch {}
       }
       await verifyStory(story.id);
-      logger.info(`[${logPrefix}] Story ${story.story_id} FORCE auto-verified — ${verifyAbandons} verify abandons (threshold: 5)`, { runId });
-      emitEvent({ ts: now(), event: "story.verified", runId, workflowId: await getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title, detail: `Force auto-verified after ${verifyAbandons} verify abandons` });
+      logger.info(`[${logPrefix}] Story ${story.story_id} FORCE auto-verified — verify step abandoned ${verifyStepAbandons} times (threshold: 3)`, { runId });
+      emitEvent({ ts: now(), event: "story.verified", runId, workflowId: await getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title, detail: `Force auto-verified — verify step abandoned ${verifyStepAbandons} times` });
       continue;
     }
 

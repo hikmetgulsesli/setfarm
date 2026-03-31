@@ -23,7 +23,7 @@ export const SLOW_STEP_IDS = new Set(["design", "implement", "setup-repo", "setu
 export const SLOW_ABANDONED_THRESHOLD_MS = 900_000; // 15 min
 
 /** Extended fast threshold for slow steps (repeat abandons) */
-export const SLOW_FAST_ABANDONED_THRESHOLD_MS = 300_000; // 5 min
+export const SLOW_FAST_ABANDONED_THRESHOLD_MS = 600_000; // 10 min
 
 // ── Cleanup Throttle ────────────────────────────────────────────────
 
