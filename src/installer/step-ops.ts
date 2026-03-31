@@ -1300,13 +1300,14 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
 
     if (dRepo && dProjId && dHasScreens) {
       const dStitchDir = path.join(dRepo, "stitch");
-      // Only generate if no HTML exists (skip if already downloaded)
+      // Only generate if no HTML exists (skip if already downloaded by pre-claim)
       {
-        // Screens already generated in pre-claim. Just verify they exist.
         const stitchScript = path.join(os.homedir(), ".openclaw/setfarm-repo/scripts/stitch-api.mjs");
+        const existingHtmlCount = fs.existsSync(dStitchDir)
+          ? fs.readdirSync(dStitchDir).filter((f: string) => f.endsWith(".html")).length : 0;
         let screenMapArr: any[] = [];
         try { screenMapArr = JSON.parse(dScreenMap); } catch {}
-        if (screenMapArr.length > 0) {
+        if (screenMapArr.length > 0 && existingHtmlCount === 0) {
           const designSystem = context["design_system"] || "";
           const task = context["task"] || "";
           const deviceType = context["device_type"] || "DESKTOP";
