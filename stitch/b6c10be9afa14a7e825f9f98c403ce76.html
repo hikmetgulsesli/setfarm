@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="tr"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "surface-dim": "#131313",
+              "outline-variant": "#464554",
+              "primary-fixed-dim": "#c0c1ff",
+              "tertiary": "#ffb783",
+              "secondary-fixed": "#e1e0ff",
+              "on-error": "#690005",
+              "surface-container-highest": "#353534",
+              "surface": "#131313",
+              "on-background": "#e5e2e1",
+              "surface-tint": "#c0c1ff",
+              "on-primary": "#1000a9",
+              "surface-bright": "#3a3939",
+              "secondary-container": "#42447b",
+              "primary-fixed": "#e1e0ff",
+              "inverse-surface": "#e5e2e1",
+              "on-secondary": "#292a60",
+              "on-secondary-fixed": "#13144a",
+              "surface-container-low": "#1c1b1b",
+              "on-secondary-fixed-variant": "#404178",
+              "on-surface-variant": "#c7c4d7",
+              "secondary": "#c0c1ff",
+              "tertiary-fixed-dim": "#ffb783",
+              "surface-variant": "#353534",
+              "surface-container": "#201f1f",
+              "primary": "#c0c1ff",
+              "error-container": "#93000a",
+              "primary-container": "#8083ff",
+              "on-primary-fixed-variant": "#2f2ebe",
+              "error": "#ffb4ab",
+              "tertiary-fixed": "#ffdcc5",
+              "on-tertiary-fixed": "#301400",
+              "on-surface": "#e5e2e1",
+              "inverse-primary": "#494bd6",
+              "surface-container-high": "#2a2a2a",
+              "on-tertiary-container": "#452000",
+              "on-tertiary": "#4f2500",
+              "on-primary-container": "#0d0096",
+              "tertiary-container": "#d97721",
+              "on-secondary-container": "#b2b3f2",
+              "on-primary-fixed": "#07006c",
+              "background": "#131313",
+              "on-tertiary-fixed-variant": "#703700",
+              "inverse-on-surface": "#313030",
+              "outline": "#908fa0",
+              "surface-container-lowest": "#0e0e0e",
+              "secondary-fixed-dim": "#c0c1ff",
+              "on-error-container": "#ffdad6"
+            },
+            fontFamily: {
+              "headline": ["Space Grotesk"],
+              "body": ["Inter"],
+              "label": ["Inter"]
+            },
+            borderRadius: {"DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem"},
+          },
+        },
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            display: inline-block;
+            line-height: 1;
+            text-transform: none;
+            letter-spacing: normal;
+            word-wrap: normal;
+            white-space: nowrap;
+            direction: ltr;
+        }
+        body {
+            background-color: #131313;
+            color: #e5e2e1;
+            font-family: 'Inter', sans-serif;
+        }
+        .calendar-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 1px;
+        }
+    </style>
+</head>
+<body class="bg-surface-dim overflow-hidden h-screen flex">
+<!-- SideNavBar Anchor -->
+<aside class="hidden md:flex flex-col h-full py-8 px-4 gap-4 bg-[#1c1b1b] fixed left-0 top-0 w-64 z-20 transition-all duration-300 ease-in-out">
+<div class="flex items-center gap-3 px-2 mb-8">
+<div class="w-10 h-10 rounded-full overflow-hidden bg-surface-container-highest flex items-center justify-center">
+<img alt="Kullanıcı" data-alt="professional portrait of a creative designer in a dark studio setting with soft rim lighting" src="https://lh3.googleusercontent.com/aida-public/AB6AXuB1f-_57AsPkj_RJ534zRR8wI6qLdAqZI6HxsluKj3DYH3QCcdyrf6Tn_1daocm-Gx5wi1Qp9fMsGlrDmbeYLgTAplFJHtH-5sSDa2YyiksMMH2s77z6S1Wml4BFBglmFAQP_ysYF2FgYjumNvU2CAot9kwDLS7tG1bWaftN_OMaKQzq4uLVFD0T8gyVphHVJFfOCuM0nSYhPAxuXlDwqo6rURadifgUcwoDIs5iUW7Xat3LEFTbK9TE_rDdYKCJzbKAjHhrj_hKIId"/>
+</div>
+<div>
+<p class="text-sm font-semibold tracking-wide text-on-surface">Kullanıcı</p>
+<p class="text-xs text-on-surface-variant opacity-60">Premium Plan</p>
+</div>
+</div>
+<nav class="flex-1 flex flex-col gap-1">
+<a class="flex items-center gap-3 px-4 py-3 bg-[#353534] text-[#c0c1ff] rounded-lg transition-all" href="#">
+<span class="material-symbols-outlined" data-icon="calendar_month">calendar_month</span>
+<span class="text-sm font-semibold tracking-wide">Takvim</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 text-[#e5e2e1] opacity-50 hover:bg-[#201f1f] hover:opacity-100 rounded-lg transition-all" href="#">
+<span class="material-symbols-outlined" data-icon="check_circle">check_circle</span>
+<span class="text-sm font-semibold tracking-wide">Görevler</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 text-[#e5e2e1] opacity-50 hover:bg-[#201f1f] hover:opacity-100 rounded-lg transition-all" href="#">
+<span class="material-symbols-outlined" data-icon="leaderboard">leaderboard</span>
+<span class="text-sm font-semibold tracking-wide">İstatistikler</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 text-[#e5e2e1] opacity-50 hover:bg-[#201f1f] hover:opacity-100 rounded-lg transition-all" href="#">
+<span class="material-symbols-outlined" data-icon="settings">settings</span>
+<span class="text-sm font-semibold tracking-wide">Ayarlar</span>
+</a>
+</nav>
+<button class="mt-auto w-full py-3 px-4 rounded-xl bg-gradient-to-br from-primary to-primary-container text-on-primary font-semibold text-sm transition-all active:scale-95 flex items-center justify-center gap-2">
+<span class="material-symbols-outlined text-sm" data-icon="add">add</span>
+            Etkinlik Ekle
+        </button>
+</aside>
+<!-- Main Content Canvas -->
+<main class="flex-1 md:ml-64 flex flex-col h-full bg-surface-dim relative">
+<!-- TopAppBar Anchor -->
+<header class="flex justify-between items-center w-full px-8 py-6 bg-[#131313] z-10 sticky top-0">
+<div class="flex items-center gap-8">
+<h1 class="text-4xl font-bold tracking-tight font-headline text-[#c0c1ff]">Haziran</h1>
+<div class="flex items-center gap-2">
+<button class="p-2 hover:bg-[#201f1f] text-on-surface-variant transition-colors duration-200 active:scale-95 rounded-full">
+<span class="material-symbols-outlined" data-icon="chevron_left">chevron_left</span>
+</button>
+<button class="p-2 hover:bg-[#201f1f] text-on-surface-variant transition-colors duration-200 active:scale-95 rounded-full">
+<span class="material-symbols-outlined" data-icon="chevron_right">chevron_right</span>
+</button>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<button class="px-5 py-2 text-sm font-medium font-body text-[#c0c1ff] hover:bg-[#201f1f] transition-all rounded-lg active:scale-95">
+                    Bugün
+                </button>
+<button class="md:hidden p-3 bg-gradient-to-br from-primary to-primary-container text-on-primary rounded-full shadow-lg">
+<span class="material-symbols-outlined" data-icon="add">add</span>
+</button>
+</div>
+</header>
+<!-- Calendar Container -->
+<section class="flex-1 px-8 pb-32 md:pb-8 overflow-y-auto">
+<!-- Weekdays Header -->
+<div class="grid grid-cols-7 mb-4">
+<div class="text-center py-2 text-[10px] uppercase tracking-widest text-on-surface-variant font-medium">Pazartesi</div>
+<div class="text-center py-2 text-[10px] uppercase tracking-widest text-on-surface-variant font-medium">Salı</div>
+<div class="text-center py-2 text-[10px] uppercase tracking-widest text-on-surface-variant font-medium">Çarşamba</div>
+<div class="text-center py-2 text-[10px] uppercase tracking-widest text-on-surface-variant font-medium">Perşembe</div>
+<div class="text-center py-2 text-[10px] uppercase tracking-widest text-on-surface-variant font-medium">Cuma</div>
+<div class="text-center py-2 text-[10px] uppercase tracking-widest text-on-surface-variant font-medium text-tertiary">Cumartesi</div>
+<div class="text-center py-2 text-[10px] uppercase tracking-widest text-on-surface-variant font-medium text-tertiary">Pazar</div>
+</div>
+<!-- Calendar Grid -->
+<div class="grid grid-cols-7 gap-[2px] bg-outline-variant bg-opacity-10 rounded-2xl overflow-hidden min-h-[600px]">
+<!-- Row 1 (Empty/Prev Month Placeholder Logic) -->
+<div class="bg-surface-container-lowest p-4 min-h-[120px] opacity-20">
+<span class="text-sm font-body font-medium">27</span>
+</div>
+<div class="bg-surface-container-lowest p-4 min-h-[120px] opacity-20">
+<span class="text-sm font-body font-medium">28</span>
+</div>
+<div class="bg-surface-container-lowest p-4 min-h-[120px] opacity-20">
+<span class="text-sm font-body font-medium">29</span>
+</div>
+<div class="bg-surface-container-lowest p-4 min-h-[120px] opacity-20">
+<span class="text-sm font-body font-medium">30</span>
+</div>
+<div class="bg-surface-container-lowest p-4 min-h-[120px] opacity-20">
+<span class="text-sm font-body font-medium">31</span>
+</div>
+<!-- Actual Month Days -->
+<div class="bg-surface-container p-4 min-h-[120px] hover:bg-surface-container-high transition-colors group relative cursor-pointer">
+<span class="text-sm font-body font-medium">1</span>
+<div class="mt-2 flex gap-1 flex-wrap">
+<div class="w-1.5 h-1.5 rounded-full bg-primary"></div>
+</div>
+</div>
+<div class="bg-surface-container p-4 min-h-[120px] hover:bg-surface-container-high transition-colors group relative cursor-pointer">
+<span class="text-sm font-body font-medium">2</span>
+</div>
+<!-- Row 2 -->
+<div class="bg-surface-container p-4 min-h-[120px] hover:bg-surface-container-high transition-colors group relative cursor-pointer">
+<span class="text-sm font-body font-medium">3</span>
+<div class="mt-2 flex gap-1 flex-wrap">
+<div class="w-1.5 h-1.5 rounded-full bg-tertiary"></div>
+<div class="w-1.5 h-1.5 rounded-full bg-primary"></div>
+</div>
+</div>
+<div class="bg-surface-container p-4 min-h-[120px] hover:bg-surface-container-high transition-colors group relative cursor-pointer">
+<span class="text-sm font-body font-medium">4</span>
+</div>
+<div class="bg-surface-container p-4 min-h-[120px] hover:bg-surface-container-high transition-colors group relative cursor-pointer">
+<span class="text-sm font-body font-medium">5</span>
+</div>
+<div class="bg-surface-container p-4 min-h-[120px] hover:bg-surface-container-high transition-colors group relative cursor-pointer">
+<span class="text-sm font-body font-medium">6</span>
+<div class="mt-2 flex gap-1 flex-wrap">
+<div class="w-1.5 h-1.5 rounded-full bg-error"></div>
+</div>
+</div>
+<div class="bg-surface-container p-4 min-h-[120px] hover:bg-surface-container-high transition-colors group relative cursor-pointer">
+<span class="text-sm font-body font-medium">7</span>
+</div>
+<div class="bg-surface-container p-4 min-h-[120px] hover:bg-surface-container-high transition-colors group relative cursor-pointer">
+<span class="text-sm font-body font-medium">8</span>
+</div>
+<div class="bg-surface-container p-4 min-h-[120px] hover:bg-surface-container-high transition-colors group relative cursor-pointer">
+<span class="text-sm font-body font-medium">9</span>
+</div>
+<!-- Row 3 - TODAY HIGHLIGHT -->
+<div class="bg-surface-container p-4 min-h-[120px] hover:bg-surface-container-high transition-colors group relative cursor-pointer">
+<span class="text-sm font-body font-medium">10</span>
+</div>
+<div class="bg-surface-container-high p-4 min-h-[120px] relative cursor-pointer border-t-2 border-primary">
+<div class="absolute top-2 right-2 bg-primary text-on-primary w-6 h-6 flex items-center justify-center rounded-full text-[10px] font-bold">11</div>
+<span class="text-sm font-body font-bold text-primary">11</span>
+<p class="mt-4 text-[10px] font-medium text-primary opacity-80 uppercase tracking-tighter">Bugün</p>
+<div class="mt-2 flex gap-1 flex-wrap">
+<div class="w-1.5 h-1.5 rounded-full bg-primary"></div>
+<div class="w-1.5 h-1.5 rounded-full bg-primary"></div>
+</div>
+</div>
+<div class="bg-surface-container p-4 min-h-[120px] hover:bg-surface-container-high transition-colors group relative cursor-pointer">
+<span class="text-sm font-body font-medium">12</span>
+</div>
+<div class="bg-surface-container p-4 min-h-[120px] hover:bg-surface-container-high transition-colors group relative cursor-pointer">
+<span class="text-sm font-body font-medium">13</span>
+</div>
+<div class="bg-surface-container p-4 min-h-[120px] hover:bg-surface-container-high transition-colors group relative cursor-pointer">
+<span class="text-sm font-body font-medium">14</span>
+<div class="mt-2 flex gap-1 flex-wrap">
+<div class="w-1.5 h-1.5 rounded-full bg-tertiary"></div>
+</div>
+</div>
+<div class="bg-surface-container p-4 min-h-[120px] hover:bg-surface-container-high transition-colors group relative cursor-pointer">
+<span class="text-sm font-body font-medium">15</span>
+</div>
+<div class="bg-surface-container p-4 min-h-[120px] hover:bg-surface-container-high transition-colors group relative cursor-pointer">
+<span class="text-sm font-body font-medium">16</span>
+</div>
+<!-- Row 4 -->
+<div class="bg-surface-container p-4 min-h-[120px] hover:bg-surface-container-high transition-colors group relative cursor-pointer">
+<span class="text-sm font-body font-medium">17</span>
+</div>
+<div class="bg-surface-container p-4 min-h-[120px] hover:bg-surface-container-high transition-colors group relative cursor-pointer">
+<span class="text-sm font-body font-medium">18</span>
+<div class="mt-2 flex gap-1 flex-wrap">
+<div class="w-1.5 h-1.5 rounded-full bg-primary"></div>
+<div class="w-1.5 h-1.5 rounded-full bg-primary"></div>
+<div class="w-1.5 h-1.5 rounded-full bg-primary"></div>
+</div>
+</div>
+<div class="bg-surface-container p-4 min-h-[120px] hover:bg-surface-container-high transition-colors group relative cursor-pointer">
+<span class="text-sm font-body font-medium">19</span>
+</div>
+<div class="bg-surface-container p-4 min-h-[120px] hover:bg-surface-container-high transition-colors group relative cursor-pointer">
+<span class="text-sm font-body font-medium">20</span>
+</div>
+<div class="bg-surface-container p-4 min-h-[120px] hover:bg-surface-container-high transition-colors group relative cursor-pointer">
+<span class="text-sm font-body font-medium">21</span>
+</div>
+<div class="bg-surface-container p-4 min-h-[120px] hover:bg-surface-container-high transition-colors group relative cursor-pointer">
+<span class="text-sm font-body font-medium">22</span>
+</div>
+<div class="bg-surface-container p-4 min-h-[120px] hover:bg-surface-container-high transition-colors group relative cursor-pointer">
+<span class="text-sm font-body font-medium">23</span>
+</div>
+<!-- Row 5 -->
+<div class="bg-surface-container p-4 min-h-[120px] hover:bg-surface-container-high transition-colors group relative cursor-pointer">
+<span class="text-sm font-body font-medium">24</span>
+</div>
+<div class="bg-surface-container p-4 min-h-[120px] hover:bg-surface-container-high transition-colors group relative cursor-pointer">
+<span class="text-sm font-body font-medium">25</span>
+<div class="mt-2 flex gap-1 flex-wrap">
+<div class="w-1.5 h-1.5 rounded-full bg-tertiary"></div>
+</div>
+</div>
+<div class="bg-surface-container p-4 min-h-[120px] hover:bg-surface-container-high transition-colors group relative cursor-pointer">
+<span class="text-sm font-body font-medium">26</span>
+</div>
+<div class="bg-surface-container p-4 min-h-[120px] hover:bg-surface-container-high transition-colors group relative cursor-pointer">
+<span class="text-sm font-body font-medium">27</span>
+</div>
+<div class="bg-surface-container p-4 min-h-[120px] hover:bg-surface-container-high transition-colors group relative cursor-pointer">
+<span class="text-sm font-body font-medium">28</span>
+<div class="mt-2 flex gap-1 flex-wrap">
+<div class="w-1.5 h-1.5 rounded-full bg-primary"></div>
+</div>
+</div>
+<div class="bg-surface-container p-4 min-h-[120px] hover:bg-surface-container-high transition-colors group relative cursor-pointer">
+<span class="text-sm font-body font-medium">29</span>
+</div>
+<div class="bg-surface-container p-4 min-h-[120px] hover:bg-surface-container-high transition-colors group relative cursor-pointer">
+<span class="text-sm font-body font-medium">30</span>
+</div>
+</div>
+</section>
+<!-- BottomNavBar Anchor (Mobile Only) -->
+<nav class="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-6 pb-8 pt-4 bg-[#201f1f]/80 dark:bg-[#201f1f]/80 backdrop-blur-xl md:hidden rounded-t-3xl shadow-2xl shadow-black">
+<a class="flex flex-col items-center text-[#c0c1ff] font-bold scale-110 transition-opacity" href="#">
+<span class="material-symbols-outlined" data-icon="calendar_today">calendar_today</span>
+<span class="text-[10px] uppercase tracking-widest mt-1">Takvim</span>
+</a>
+<a class="flex flex-col items-center text-[#e5e2e1] opacity-40 hover:opacity-100 transition-opacity" href="#">
+<span class="material-symbols-outlined" data-icon="format_list_bulleted">format_list_bulleted</span>
+<span class="text-[10px] uppercase tracking-widest mt-1">Görevler</span>
+</a>
+<button class="bg-primary text-on-primary w-12 h-12 rounded-full flex items-center justify-center shadow-lg active:scale-90 transition-all">
+<span class="material-symbols-outlined" data-icon="add">add</span>
+</button>
+<a class="flex flex-col items-center text-[#e5e2e1] opacity-40 hover:opacity-100 transition-opacity" href="#">
+<span class="material-symbols-outlined" data-icon="settings">settings</span>
+<span class="text-[10px] uppercase tracking-widest mt-1">Ayarlar</span>
+</a>
+</nav>
+</main>
+<!-- Floating Quick View Bento Element -->
+<div class="hidden xl:block fixed right-8 top-32 w-72 h-auto z-10 pointer-events-none">
+<div class="bg-surface-container/40 backdrop-blur-2xl p-6 rounded-3xl border border-outline-variant/10 shadow-2xl pointer-events-auto">
+<h3 class="font-headline font-bold text-lg mb-4 text-on-surface">Bugün Ne Var?</h3>
+<div class="space-y-4">
+<div class="flex gap-4 items-start group cursor-pointer">
+<div class="w-1 h-12 bg-primary rounded-full"></div>
+<div>
+<p class="text-xs font-semibold text-primary uppercase tracking-wider">09:00 - 10:30</p>
+<p class="text-sm font-medium text-on-surface">Tasarım Gözden Geçirme</p>
+<p class="text-xs text-on-surface-variant">Toplantı Odası B</p>
+</div>
+</div>
+<div class="flex gap-4 items-start group cursor-pointer">
+<div class="w-1 h-12 bg-tertiary rounded-full"></div>
+<div>
+<p class="text-xs font-semibold text-tertiary uppercase tracking-wider">13:00 - 14:00</p>
+<p class="text-sm font-medium text-on-surface">Ekip Öğle Yemeği</p>
+<p class="text-xs text-on-surface-variant">Lobi</p>
+</div>
+</div>
+</div>
+<div class="mt-8 rounded-2xl overflow-hidden aspect-video relative group">
+<img alt="Location" data-alt="minimalistic dark themed vector map of istanbul city streets with subtle cyan and purple accents" data-location="Istanbul" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBqiq3_r6vYydenJ2nBpvEJqqFlaB4x5QyTnI8IqeCKjM4vq8zs2r_MKaNIQasWalOoVkomJ5VBUC02U39WY9joPAfXEFZj2cgICpSTFLWbR5yOaYXm_ZmiSjBpdnHzYaxR1iy_KtuMH4e8GLGWdvm85UrKudI4WjHL_HX3XuUX1_WRCZXuvmhi5rc-phjrvcd8YRn-JsUjiK19-27t3wI2LcUDCt30I0KaP6HGK5fZO7259TC9jgJ-Os6UzUymFKMNV5NGlgeLXksM"/>
+<div class="absolute inset-0 bg-gradient-to-t from-surface-dim to-transparent opacity-60"></div>
+<div class="absolute bottom-3 left-3">
+<p class="text-[10px] font-bold text-primary tracking-widest uppercase">Konum</p>
+<p class="text-xs text-on-surface">Beşiktaş, İstanbul</p>
+</div>
+</div>
+</div>
+</div>
+</body></html>

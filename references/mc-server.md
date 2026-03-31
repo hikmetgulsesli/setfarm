@@ -8,7 +8,7 @@ Server administration for the OpenClaw platform host.
 |---|---|
 | Hostname | moltclaw |
 | IP (Tailscale) | 100.119.51.42 |
-| IP (LAN) | 192.168.1.100 |
+| IP (LAN) | 192.168.1.198 |
 | User | setrox |
 | SSH | `ssh setrox@100.119.51.42` |
 | OS | Ubuntu / Debian-based Linux |

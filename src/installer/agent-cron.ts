@@ -113,7 +113,7 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
       sessionTarget: "isolated",
       agentId: cronAgentId,
       payload: { kind: "agentTurn", message: prompt, timeoutSeconds },
-      delivery: { mode: "none" },
+      delivery: { mode: "none", channel: "telegram" },
       enabled: true,
     });
 
@@ -126,7 +126,7 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
         sessionTarget: "isolated",
         agentId: cronAgentId,
         payload: { kind: "agentTurn", message: prompt, timeoutSeconds },
-        delivery: { mode: "none" },
+        delivery: { mode: "none", channel: "telegram" },
         enabled: true,
       });
       if (!retry.ok) {
@@ -347,7 +347,7 @@ export async function repairAgentCrons(workflow: WorkflowSpec): Promise<{ added:
         sessionTarget: "isolated",
         agentId: cronAgentId,
         payload: { kind: "agentTurn", message: prompt, timeoutSeconds },
-        delivery: { mode: "none" },
+        delivery: { mode: "none", channel: "telegram" },
         enabled: true,
       });
       if (res.ok) added++;
@@ -489,7 +489,7 @@ export async function syncActiveCrons(runId: string, workflowId: string): Promis
           sessionTarget: "isolated",
           agentId: agents[i],
           payload: { kind: "agentTurn", message: prompt, timeoutSeconds: DEFAULT_AGENT_TIMEOUT_SECONDS },
-          delivery: { mode: "none" },
+          delivery: { mode: "none", channel: "telegram" },
           enabled: true,
         });
         added++;
