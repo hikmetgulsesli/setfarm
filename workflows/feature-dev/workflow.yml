@@ -348,6 +348,15 @@ steps:
       PREVIOUS FAILURE (if retrying — READ THIS AND FIX THE ISSUE):
       {{previous_failure}}
 
+      SCREEN ELEMENT COVERAGE RULE (MANDATORY):
+      - Each story's acceptance criteria MUST explicitly list ALL buttons, inputs,
+        and UI elements from the corresponding SCREEN_MAP screen
+      - If a Stitch screen has 5 buttons, the story AC must mention all 5
+      - Include specific element text: "Share button with label 'PAYLAŞ' works"
+      - Include modal/popup elements: "Next word countdown timer displays correctly"
+      - Include navigation: "Bottom tab bar with OYUN/İSTATİSTİK/AYARLAR tabs navigates correctly"
+      - Missing element in AC = missing feature in implementation
+
       Instructions:
       1. Read the PRD thoroughly to understand all features, pages, and modules
       2. Read SCREEN_MAP to understand which screens were designed
@@ -705,12 +714,19 @@ steps:
       DESIGN DOM (element-level structure — HER ELEMENTI BIREBIR KODLA):
       {{design_dom}}
 
-      DESIGN DOM KURALLARI:
-      - DESIGN_DOM'daki her buton, ayni label ve icon ile kodda olmali
-      - Her input, ayni type ve placeholder ile olmali
-      - Her nav link, dogru sayfaya yonlendirmeli
-      - Section sayisi ve yapisi eslesmeli
-      - CSS class'larini var(--token) ile adapt et
+      DESIGN DOM RULES (MANDATORY — FOLLOW EXACTLY):
+      - Every button in DESIGN_DOM must exist in code with the EXACT SAME label and icon
+      - Every input must have the same type and placeholder
+      - Every nav link must route to the correct page/modal
+      - Section count and structure must match
+      - Adapt CSS classes to var(--token) format
+      - NEVER change button labels from Stitch (if Stitch says ENTER, code must say ENTER — not GÖNDER)
+      - NEVER skip keyboard keys — if Stitch shows Q W E R T..., code must have Q W E R T... in that order
+      - If DESIGN_DOM has a tabBar array, implement it as a bottom navigation with ALL tabs functional
+      - Every tab must open its corresponding page/modal — no empty onClick handlers
+      - onClick={() => {}} is FORBIDDEN — if a button has no functionality, do not render it
+      - Glassmorphism (backdrop-blur, opacity) must match Stitch exactly
+      - If Stitch has a SHARE button or countdown timer, implement it
 
       DESIGN.MD INTEGRATION (MANDATORY if file exists):
       If DESIGN.md exists at the repo root, read it before writing any UI code.

@@ -656,7 +656,18 @@ async function claimSingleStep(
         // 2. Write PRD as Stitch prompt
         const promptFile = path.join(dStitchDir, ".generate-prompt.txt");
         const deviceType = context["device_type"] || "DESKTOP";
-        fs.writeFileSync(promptFile, dPrd + "\n\nGenerate all screens described in this PRD as separate screen designs. All visible text must be in Turkish. Use a dark, modern theme.");
+        fs.writeFileSync(promptFile, dPrd + `
+
+Generate a SEPARATE screen design for EVERY page, view, modal, dialog, tab panel, and settings screen described in this PRD. Do NOT skip ANY screen — even if it seems minor.
+
+MANDATORY SCREENS:
+- If the PRD mentions "settings" or "ayarlar" → generate a Settings screen
+- If the PRD mentions tabs or bottom navigation → generate EACH tab view as a separate screen
+- If the PRD mentions modals (statistics, help, share, confirmation) → generate each as a separate screen
+- If the PRD mentions error states, empty states, loading states → generate those too
+- Generate at least as many screens as there are distinct views/pages/modals in the PRD
+
+All visible text must be in Turkish. Use a dark, modern theme.`);
         logger.info(`[design-preclaim] Generating screens from PRD via generate-all-screens (project: ${projId})`, { runId: step.run_id });
 
         // 3. generate-all-screens

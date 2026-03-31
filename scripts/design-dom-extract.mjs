@@ -125,6 +125,7 @@ function extractElements(html, screenId) {
     if (gapMatch) result.layoutHints.gap = gapMatch[1];
   }
 
+  result.tabBar = extractTabBar(html);
   return result;
 }
 
@@ -138,6 +139,40 @@ function predictAction(label) {
   if (l.includes('d\u00fczenle') || l.includes('edit') || l.includes('g\u00fcncelle')) return 'edit';
   if (l.includes('ara') || l.includes('search') || l.includes('filtre')) return 'search';
   return 'click-action';
+}
+
+// Extract tab bar / bottom navigation
+function extractTabBar(html) {
+  const tabBar = [];
+  // Pattern 1: bottom nav with links/buttons containing icons + labels
+  const navRegex = /<nav[^>]*>([\s\S]*?)<\/nav>/gi;
+  const footerRegex = /<footer[^>]*>([\s\S]*?)<\/footer>/gi;
+  
+  for (const regex of [navRegex, footerRegex]) {
+    let m;
+    while ((m = regex.exec(html)) !== null) {
+      const inner = m[1];
+      // Check if this looks like a tab bar (3+ items with icons)
+      const items = inner.match(/<(a|button|div)[^>]*>[\s\S]*?<\/(a|button|div)>/gi) || [];
+      if (items.length >= 2) {
+        for (const item of items) {
+          const label = item.replace(/<[^>]*>/g, '').trim();
+          const iconMatch = item.match(/>([a-z_]+)</);
+          const activeMatch = item.match(/text-primary|bg-primary|active|selected/i);
+          // Clean label: remove material icon name prefix (e.g. "settings\nAYARLAR" → "AYARLAR")
+          const cleanLabel = label.includes('\n') ? label.split('\n').pop().trim() : label;
+          if (cleanLabel && cleanLabel.length < 30) {
+            tabBar.push({
+              label: cleanLabel,
+              icon: iconMatch ? iconMatch[1] : null,
+              active: !!activeMatch,
+            });
+          }
+        }
+      }
+    }
+  }
+  return tabBar.length >= 2 ? tabBar : [];
 }
 
 // Main
@@ -176,5 +211,5 @@ const output = { generatedAt: new Date().toISOString(), screenCount: Object.keys
 writeFileSync(outputPath, JSON.stringify(output, null, 2));
 console.log(`DESIGN_DOM: ${Object.keys(screens).length} screens, ${outputPath}`);
 for (const [id, s] of Object.entries(screens)) {
-  console.log(`  ${s.title}: ${s.buttons.length} buttons, ${s.inputs.length} inputs, ${s.navLinks.length} links, ${s.sections.length} sections, ${s.icons.length} icons`);
+  console.log(`  ${s.title}: ${s.buttons.length} buttons, ${s.inputs.length} inputs, ${s.navLinks.length} links, ${s.sections.length} sections, ${s.icons.length} icons, ${(s.tabBar||[]).length} tabs`);
 }
