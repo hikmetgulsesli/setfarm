@@ -23,25 +23,39 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Load API key from .env
-function loadApiKey() {
+// Load API keys from .env (comma-separated for multi-key fallback)
+function loadApiKeys() {
+  const keys = [];
   const envPath = resolve(__dirname, '.env');
   try {
-    const content = readFileSync(envPath, 'utf-8');
-    for (const line of content.split('\n')) {
+    const c = readFileSync(envPath, 'utf-8');
+    for (const line of c.split('\n')) {
       const trimmed = line.trim();
       if (trimmed.startsWith('STITCH_API_KEY=')) {
-        return trimmed.slice('STITCH_API_KEY='.length).replace(/^["']|["']$/g, '');
+        const val = trimmed.slice('STITCH_API_KEY='.length).replace(/^["']|["']$/g, '');
+        keys.push(...val.split(',').map(k => k.trim()).filter(Boolean));
       }
     }
-  } catch {
-    // fall through
+  } catch { /* fall through */ }
+  if (keys.length === 0 && process.env.STITCH_API_KEY) {
+    keys.push(...process.env.STITCH_API_KEY.split(',').map(k => k.trim()).filter(Boolean));
   }
-  if (process.env.STITCH_API_KEY) return process.env.STITCH_API_KEY;
-  throw new Error('STITCH_API_KEY not found in .env or environment');
+  if (keys.length === 0) throw new Error('STITCH_API_KEY not found in .env or environment');
+  return keys;
 }
 
-const API_KEY = loadApiKey();
+const API_KEYS = loadApiKeys();
+let currentKeyIndex = 0;
+let API_KEY = API_KEYS[0];
+
+function rotateKey(reason) {
+  if (API_KEYS.length <= 1) return false;
+  const oldIdx = currentKeyIndex;
+  currentKeyIndex = (currentKeyIndex + 1) % API_KEYS.length;
+  API_KEY = API_KEYS[currentKeyIndex];
+  process.stderr.write('[stitch] Key ' + oldIdx + ' ' + reason + ' — rotating to key ' + currentKeyIndex + ' (' + API_KEYS.length + ' total)\n');
+  return true;
+}
 const MCP_ENDPOINT = 'https://stitch.googleapis.com/mcp';
 let requestId = 0;
 
@@ -67,11 +81,18 @@ async function rpc(method, params = {}) {
 
   if (!res.ok) {
     const text = await res.text();
+    if ((res.status === 429 || res.status === 403 || text.includes('RESOURCE_EXHAUSTED') || text.includes('quota')) && rotateKey('HTTP ' + res.status)) {
+      return rpc(method, params);
+    }
     throw new Error(`HTTP ${res.status}: ${text}`);
   }
 
   const json = await res.json();
   if (json.error) {
+    const msg = json.error.message || '';
+    if ((json.error.code === 429 || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota')) && rotateKey('RPC ' + json.error.code)) {
+      return rpc(method, params);
+    }
     throw new Error(`RPC error ${json.error.code}: ${json.error.message}`);
   }
   return json.result;
