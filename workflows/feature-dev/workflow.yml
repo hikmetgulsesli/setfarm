@@ -369,9 +369,12 @@ steps:
          - If multiple small PRD sections describe the same module → single story
 
       2. STORY SIZE RULE:
-         - Each story should be completable in 15-25 minutes
-         - Estimated 200-500 lines of code
-         - If a module needs 500+ lines → split (backend + frontend)
+         - Each story should be completable in 10-15 minutes
+         - Maximum 3 source files per story (excluding test files)
+         - Estimated 150-400 lines of code
+         - If a module needs 400+ lines → split into sub-stories
+         - NEVER combine: component + animation + test in one story
+         - Split complex UI: base component first, then interactions/animations
 
       3. TARGET STORY COUNT BY PRD SIZE (MANDATORY):
          - Tiny PRD (single page, no CRUD, no auth): 3-4 stories (setup + 1-2 feature + integration)

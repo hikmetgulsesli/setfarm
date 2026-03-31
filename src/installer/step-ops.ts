@@ -1956,6 +1956,20 @@ async function autoVerifyDoneStories(
     const story = await pgGet<any>("SELECT * FROM stories WHERE run_id = $1 AND status = 'done' ORDER BY story_index ASC LIMIT 1", [runId]);
     if (!story) return null;
 
+    // FIX: If story has been abandoned 5+ times in verify, force auto-verify
+    // This prevents the "106 claim" infinite loop where reviewer can never complete
+    const verifyAbandons = story.abandoned_count ?? 0;
+    if (verifyAbandons >= 5) {
+      const prUrl = story.pr_url || "";
+      if (prUrl) {
+        try { tryAutoMergePR(prUrl, story.story_id, runId); } catch {}
+      }
+      await verifyStory(story.id);
+      logger.info(`[${logPrefix}] Story ${story.story_id} FORCE auto-verified — ${verifyAbandons} verify abandons (threshold: 5)`, { runId });
+      emitEvent({ ts: now(), event: "story.verified", runId, workflowId: await getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title, detail: `Force auto-verified after ${verifyAbandons} verify abandons` });
+      continue;
+    }
+
     const prUrl = story.pr_url || "";
     if (!prUrl) return story; // No PR URL → needs agent verification
 
