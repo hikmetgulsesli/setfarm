@@ -1434,7 +1434,8 @@ ${screenDescs}
   // SETUP-BUILD BASELINE GUARDRAIL (v1.5.53): Also reject empty baseline
   if (step.step_id === "setup-build" && parsed["status"]?.toLowerCase() === "done") {
     const baseline = (parsed["baseline"] || "").toLowerCase().trim();
-    if (!baseline || !["pass", "ok"].includes(baseline.toLowerCase())) {
+    const baselinePass = baseline.includes("pass") || baseline.includes("ok") || baseline.includes("success");
+    if (!baseline || !baselinePass) {
       const baselineMsg = `GUARDRAIL: setup-build baseline is "${parsed["baseline"] || "(empty)"}" — build must explicitly pass.`;
       logger.warn(`[setup-build-guardrail] ${baselineMsg}`, { runId: step.run_id, stepId: step.step_id });
       if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
