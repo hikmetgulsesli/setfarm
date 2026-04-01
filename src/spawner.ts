@@ -40,8 +40,8 @@ function spawnAgent(agentId: string, wfId: string, role: string): void {
   logger.info(`[spawner] Spawning ${agentId} for ${wfId}/${role} (active: ${activeProcesses.size})`);
 
   const child = execFile(OPENCLAW_CLI, [
-    "session", "run", "--agent", agentId, "--isolated",
-    "--message", prompt, "--timeout-seconds", String(AGENT_TIMEOUT_SECONDS),
+    "agent", "--agent", agentId,
+    "--message", prompt, "--timeout", String(AGENT_TIMEOUT_SECONDS),
   ], {
     timeout: (AGENT_TIMEOUT_SECONDS + 60) * 1000,
     env: { ...process.env, DB_BACKEND: "postgres" },
