@@ -12,7 +12,6 @@ import { pgGet, pgQuery } from "./db-pg.js";
 import { buildPollingPrompt } from "./installer/agent-cron.js";
 import { loadWorkflowSpec } from "./installer/workflow-spec.js";
 import { resolveWorkflowDir } from "./installer/paths.js";
-import { logger } from "./lib/logger.js";
 
 const OPENCLAW_CLI = process.env.OPENCLAW_CLI || "/home/setrox/.local/bin/openclaw";
 const POLL_INTERVAL_MS = 30_000;
@@ -31,13 +30,17 @@ function resolveAgentId(wfId: string, role: string, mapping: Record<string, stri
 }
 
 function spawnAgent(agentId: string, wfId: string, role: string): void {
-  const key = `${wfId}:${role}:${agentId}:${Date.now()}`;
+  const key = `${wfId}:${role}:${agentId}`;
+  if (activeProcesses.has(key)) {
+    console.log(`[spawner] Already running: ${key}, skip`);
+    return;
+  }
   if (activeProcesses.size >= MAX_CONCURRENT) {
-    logger.info(`[spawner] At capacity (${activeProcesses.size}/${MAX_CONCURRENT}), skip ${agentId}`);
+    console.log(`[spawner] At capacity (${activeProcesses.size}/${MAX_CONCURRENT}), skip ${agentId}`);
     return;
   }
   const prompt = buildPollingPrompt(wfId, role, agentId);
-  logger.info(`[spawner] Spawning ${agentId} for ${wfId}/${role} (active: ${activeProcesses.size})`);
+  console.log(`[spawner] Spawning ${agentId} for ${wfId}/${role} (active: ${activeProcesses.size})`);
 
   const child = execFile(OPENCLAW_CLI, [
     "agent", "--agent", agentId,
@@ -48,8 +51,8 @@ function spawnAgent(agentId: string, wfId: string, role: string): void {
     maxBuffer: 10 * 1024 * 1024,
   }, (err) => {
     activeProcesses.delete(key);
-    if (err) logger.warn(`[spawner] ${agentId} exited: ${err.message}`);
-    else logger.info(`[spawner] ${agentId} completed`);
+    if (err) console.warn(`[spawner] ${agentId} exited: ${err.message}`);
+    else console.log(`[spawner] ${agentId} completed`);
   });
   if (child.pid) activeProcesses.set(key, child);
 }
@@ -65,7 +68,7 @@ async function handleStepPending(payload: { agentId: string; runId: string; step
     const wf = await loadWorkflowSpec(resolveWorkflowDir(wfId));
     const agents = resolveAgentId(wfId, role, wf.agent_mapping ?? {});
     if (agents[0]) spawnAgent(agents[0], wfId, role);
-  } catch (err) { logger.error(`[spawner] step handler: ${String(err)}`); }
+  } catch (err) { console.error(`[spawner] step handler: ${String(err)}`); }
 }
 
 async function handleStoryPending(payload: { role: string; runId: string; storyId: string }) {
@@ -82,10 +85,10 @@ async function handleStoryPending(payload: { role: string; runId: string; storyI
     const loopStep = await pgGet<{ loop_config: string }>("SELECT loop_config FROM steps WHERE run_id = $1 AND type = 'loop' AND status = 'running' LIMIT 1", [runId]);
     const parallelCount = loopStep?.loop_config ? JSON.parse(loopStep.loop_config).parallelCount || 3 : 3;
     const slots = parallelCount - running;
-    if (slots <= 0) { logger.info(`[spawner] No slots for ${wfId}/${role} (${running}/${parallelCount})`); return; }
+    if (slots <= 0) { console.log(`[spawner] No slots for ${wfId}/${role} (${running}/${parallelCount})`); return; }
     const n = Math.min(slots, agents.length);
     for (let i = 0; i < n; i++) spawnAgent(agents[i % agents.length], wfId, role);
-  } catch (err) { logger.error(`[spawner] story handler: ${String(err)}`); }
+  } catch (err) { console.error(`[spawner] story handler: ${String(err)}`); }
 }
 
 async function pollForPendingWork() {
@@ -96,20 +99,20 @@ async function pollForPendingWork() {
     );
     for (const s of steps) await handleStepPending({ agentId: s.agent_id, runId: s.run_id, stepId: s.step_id });
     const stories = await pgQuery<{ run_id: string; story_id: string }>(
-      "SELECT DISTINCT s.run_id, s.story_id FROM stories s JOIN runs r ON r.id = s.run_id WHERE s.status = 'pending' AND r.status = 'running' ORDER BY s.story_index ASC LIMIT 10"
+      "SELECT s.run_id, s.story_id FROM stories s JOIN runs r ON r.id = s.run_id WHERE s.status = 'pending' AND r.status = 'running' ORDER BY s.story_index ASC LIMIT 10"
     );
     for (const st of stories) await handleStoryPending({ role: "developer", runId: st.run_id, storyId: st.story_id });
-  } catch (err) { logger.error(`[spawner] poll: ${String(err)}`); }
+  } catch (err) { console.error(`[spawner] poll: ${String(err)}`); }
 }
 
 async function main() {
   fs.mkdirSync(path.dirname(PID_FILE), { recursive: true });
   fs.writeFileSync(PID_FILE, String(process.pid));
-  logger.info(`[spawner] Starting (PID ${process.pid})`);
+  console.log(`[spawner] Starting (PID ${process.pid})`);
 
   const shutdown = () => {
     shuttingDown = true;
-    logger.info(`[spawner] Shutting down (${activeProcesses.size} active)`);
+    console.log(`[spawner] Shutting down (${activeProcesses.size} active)`);
     for (const [, child] of activeProcesses) { try { child.kill("SIGTERM"); } catch {} }
     try { fs.unlinkSync(PID_FILE); } catch {}
     setTimeout(() => process.exit(0), 5000);
@@ -127,10 +130,10 @@ async function main() {
     try { handleStoryPending(JSON.parse(msg)); } catch {}
   });
 
-  logger.info("[spawner] Listening for step_pending and story_pending events");
+  console.log("[spawner] Listening for step_pending and story_pending events");
   setInterval(pollForPendingWork, POLL_INTERVAL_MS);
   await pollForPendingWork();
-  logger.info("[spawner] Ready");
+  console.log("[spawner] Ready");
 }
 
-main().catch((err) => { logger.error(`[spawner] Fatal: ${String(err)}`); process.exit(1); });
+main().catch((err) => { console.error(`[spawner] Fatal: ${String(err)}`); process.exit(1); });
