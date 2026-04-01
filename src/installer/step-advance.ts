@@ -75,7 +75,7 @@ export async function advancePipeline(runId: string): Promise<{ advanced: boolea
         // NOTIFY spawner daemon about new pending step
         try {
           const { pgRun } = await import("../db-pg.js");
-          await pgRun("SELECT pg_notify(step_pending, $1)", [JSON.stringify({ agentId: next.step_id, runId, stepId: next.step_id })]);
+          await pgRun("SELECT pg_notify('step_pending', $1)", [JSON.stringify({ agentId: next.step_id, runId, stepId: next.step_id })]);
         } catch {}
       }, 2000);
       return { advanced: true, runCompleted: false };
