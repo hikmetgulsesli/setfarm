@@ -96,6 +96,9 @@ export const OPTIONAL_TEMPLATE_VARS = [
   "screen_map",
   "story_screens",
   "stitch_html",
+  "design_dom",
+  "design_fidelity_feedback",
+  "design_warning",
   // Database
   "database_url",
   "db_host",
