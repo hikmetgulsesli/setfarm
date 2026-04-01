@@ -65,17 +65,19 @@ export async function advancePipeline(runId: string): Promise<{ advanced: boolea
       );
       emitEvent({ ts: now(), event: "pipeline.advanced", runId, workflowId: wfId, stepId: next.step_id });
       emitEvent({ ts: now(), event: "step.pending", runId, workflowId: wfId, stepId: next.step_id });
-      // Demand-based crons: schedule AFTER tx commits (syncActiveCrons needs committed state)
-      try {
-        // Run after short delay to ensure tx commits first
-        setTimeout(async () => { try { await syncActiveCrons(runId, wfId || ""); } catch {} }, 1000);
-      } catch (e) {
-        logger.warn(`[advance] syncActiveCrons failed, retrying in 5s: ${String(e)}`, {});
-        setTimeout(async () => {
-          try { // Run after short delay to ensure tx commits first
-        setTimeout(async () => { try { await syncActiveCrons(runId, wfId || ""); } catch {} }, 1000); } catch (e2) { logger.error(`[advance] syncActiveCrons retry failed: ${String(e2)}`, {}); }
-        }, 5000);
-      }
+      // Demand-based crons + event-driven NOTIFY
+      setTimeout(async () => {
+        try {
+          await syncActiveCrons(runId, wfId || "");
+        } catch (e) {
+          logger.warn(`[advance] syncActiveCrons failed: ${String(e)}`, {});
+        }
+        // NOTIFY spawner daemon about new pending step
+        try {
+          const { pgRun } = await import("../db-pg.js");
+          await pgRun("SELECT pg_notify(step_pending, $1)", [JSON.stringify({ agentId: next.step_id, runId, stepId: next.step_id })]);
+        } catch {}
+      }, 2000);
       return { advanced: true, runCompleted: false };
     } else {
       await completeRun(runId);

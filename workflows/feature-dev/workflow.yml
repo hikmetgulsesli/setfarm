@@ -636,13 +636,12 @@ steps:
       over: stories
       completion: all_done
       fresh_session: true
-      verify_each: true
-      verify_step: verify
+      merge_strategy: direct-merge
       parallel_count: 6
     input: |
       !include critical-preamble.md
 
-      Implement ONE user story. Create a PR for review.
+      Implement ONE user story. Commit and push your changes to the story branch.
 
       DİL KURALI (ZORUNLU): Tüm UI içeriği (buton etiketleri, başlıklar, placeholder'lar, hata mesajları, menü öğeleri) TÜRKÇE olacak. Sadece teknik terimler (API, CSS, component adları) orijinal kalabilir. Kullanıcı farklı dil belirtmedikçe HER ŞEY TÜRKÇE.
       Stitch HTML'deki İngilizce metinler dahil — implementasyona geçerken Türkçeye çevir.
@@ -882,21 +881,7 @@ steps:
       9. Push:
          git push -u origin "$STORY_BRANCH"
 
-      10. Create PR:
-          PR_URL=$(gh pr create --base {{branch}} --head "$STORY_BRANCH" \
-            --title "feat: {{current_story_id}} - {{current_story_title}}" \
-            --body "$(cat <<'PRBODY'
-          ## Story
-          {{current_story}}
-
-          ## Changes
-          <describe what you implemented>
-
-          ## Tests
-          <describe what tests you wrote>
-          PRBODY
-          )")
-          echo "PR created: $PR_URL"
+      10. DO NOT create a PR. The merge queue will handle merging automatically.
 
       11. Write detailed progress to progress-{{run_id}}.txt:
           === {{current_story_id}}: {{current_story_title}} ===
@@ -910,12 +895,11 @@ steps:
       ============================================================
       STATUS: done
       STORY_BRANCH: <exact branch name, e.g. a1b2c3d4-US-001>
-      PR_URL: <full PR URL from gh pr create>
       CHANGES: <what you implemented>
       TESTS: <what tests you wrote>
 
       STORY_BRANCH must be the exact branch name you created and pushed.
-      PR_URL must be the URL returned by gh pr create.
+      DO NOT create a PR — the pipeline handles merging automatically.
       ============================================================
     expects: "STATUS: done"
     max_retries: 5
@@ -927,22 +911,16 @@ steps:
     input: |
       !include critical-preamble.md
 
-      Verify the developer's story implementation by reading PR review comments,
-      fixing issues, then merging the PR.
+      Verify the combined feature branch implementation. All stories have been
+      merged into the feature branch. Review the combined PR and ensure everything works.
 
       TASK: {{task}}
       REPO: {{repo}}
       BRANCH: {{branch}}
-      STORY_BRANCH: {{story_branch}}
-      PR_URL: {{pr_url}}
-      CHANGES: {{changes}}
+      FINAL_PR: {{final_pr}}
       BUILD_CMD: {{build_cmd}}
       TEST_CMD: {{test_cmd}}
       LINT_CMD: {{lint_cmd}}
-      CURRENT STORY: {{current_story}}
-      STORY_SCREENS: {{story_screens}}
-      DESIGN_FIDELITY_FEEDBACK: {{design_fidelity_feedback}}
-      DESIGN_WARNING: {{design_warning}}
       PROGRESS LOG: {{progress}}
 
       PREVIOUS FAILURE (if retrying — YOU MUST FIX THESE ISSUES FIRST before doing anything else):
@@ -957,31 +935,24 @@ steps:
       INVALID fields (will error): headSha, mergeableState, statusCheckRollup.
       To check mergeable status: gh pr view URL --json mergeable --jq '.mergeable'
 
-      === VERIFY + FIX + MERGE WORKFLOW ===
+      === COMBINED VERIFY + FIX + MERGE WORKFLOW ===
 
       STEP 0 — Fix previous failures (MANDATORY if PREVIOUS FAILURE is non-empty):
       If previous_failure contains QUALITY GATE or GUARDRAIL errors:
       1. cd {{repo}}
-      2. Check if story branch exists:
-         git fetch origin
-         if git rev-parse --verify origin/{{story_branch}} >/dev/null 2>&1; then
-           git checkout {{story_branch}} && git pull origin {{story_branch}}
-         else
-           # PR already merged — fix directly on feature branch
-           git checkout {{branch}} && git pull origin {{branch}}
-         fi
+      2. git checkout {{branch}} && git pull origin {{branch}}
       2b. If checkout fails with "local changes would be overwritten":
-           git stash --include-untracked && git checkout {{story_branch}} && git stash pop 2>/dev/null || true
+           git stash --include-untracked && git checkout {{branch}} && git stash pop 2>/dev/null || true
       3. Read each error message carefully and fix the code in the specified files
          - dead_link_hash: Replace href="#" with real routes (e.g. /terms, /privacy)
          - hardcoded_user_data: Replace fake names in placeholders with generic text
          - Any other error: read the file and line number, fix the issue
-      4. git add -A && git commit -m "fix: address quality gate issues for {{current_story_id}}"
-      5. git push
+      4. git add -A && git commit -m "fix: address quality gate issues"
+      5. git push origin {{branch}}
       6. Then continue with STEP 1
 
 
-      STEP 1 — Checkout and read PR reviews:
+      STEP 1 — Checkout and review combined PR:
       1. cd into {{repo}}
       2. Clean files that block checkout/rebase:
          git clean -fd node_modules/.vite 2>/dev/null || true
@@ -989,33 +960,21 @@ steps:
          rm -f .setfarm-step-output.txt 2>/dev/null || true
          git checkout -- .setfarm-step-output.txt 2>/dev/null || true
       3. git fetch origin
-      4. git checkout {{story_branch}} && git pull origin {{story_branch}}
+      4. git checkout {{branch}} && git pull origin {{branch}}
          If checkout fails with "local changes would be overwritten":
-           git stash && git checkout {{story_branch}} && git pull origin {{story_branch}} && git stash pop 2>/dev/null || true
-      4. Get PR number and read review comments:
-         PR_NUM=$(gh pr view "{{pr_url}}" --json number --jq '.number' 2>/dev/null || echo "")
-         if [ -z "$PR_NUM" ]; then
-           # PR may not exist yet or URL is invalid — skip review reading
-           echo "No PR found at {{pr_url}} — will do own quality review"
-         else
-           REVIEWS=$(gh pr view "{{pr_url}}" --json reviews --jq '.reviews[].body' 2>/dev/null || echo "")
-           COMMENTS=$(gh pr view "{{pr_url}}" --json comments --jq '.comments[].body' 2>/dev/null || echo "")
-           REPO_SLUG=$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || echo "")
-           if [ -n "$REPO_SLUG" ]; then
-             REVIEW_COMMENTS=$(gh api "repos/$REPO_SLUG/pulls/$PR_NUM/comments" --jq '.[].body' 2>/dev/null || echo "")
-           fi
+           git stash && git checkout {{branch}} && git pull origin {{branch}} && git stash pop 2>/dev/null || true
+      5. Read the combined PR diff to understand all changes:
+         if [ -n "{{final_pr}}" ]; then
+           gh pr view "{{final_pr}}" --json additions,deletions,changedFiles 2>/dev/null || true
+           gh pr diff "{{final_pr}}" 2>/dev/null | head -500
          fi
-      5. If external reviews exist → read them and proceed to STEP 2
-         If NO reviews exist → skip to STEP 3 (do your own quality review instead)
-         Do NOT retry waiting for reviews — you already waited 5 minutes. Proceed with your own judgment.
+      6. Proceed to STEP 2
 
-      STEP 2 — Fix review issues (only if external reviews exist):
-      1. Read ALL review suggestions and comments carefully
-      2. If reviews mention issues or suggestions → fix ALL of them
-      3. Run lint: {{lint_cmd}} → fix any lint errors
-      4. Run build: {{build_cmd}} → fix any build errors
-      5. Run test: {{test_cmd}} → fix any test failures
-      6. If fixes were needed:
+      STEP 2 — Quality review of combined feature:
+      1. Run lint: {{lint_cmd}} → fix any lint errors
+      2. Run build: {{build_cmd}} → fix any build errors
+      3. Run test: {{test_cmd}} → fix any test failures
+      4. If fixes were needed:
          git add -A && git commit -m "fix: address review comments for {{current_story_id}}"
          git push
 
@@ -1024,6 +983,7 @@ steps:
          - Code exists (not just TODOs/placeholders)
          - Tests were written for this story
          - No hardcoded secrets, .env not committed
+         git add -A && git commit -m "fix: quality issues" && git push origin {{branch}} 2>/dev/null || true
       1.5. Stitch design compliance (if stitch/ exists):
          - CRITICAL: stitch/design-tokens.css IMPORT edilmis mi kontrol et:
            grep -rE "@import.*design-tokens|import.*design-tokens" src/ app/ styles/ 2>/dev/null
@@ -1193,39 +1153,41 @@ steps:
          sleep 1
          Run build: {{build_cmd}} → fix errors
       7. Run test: {{test_cmd}} → fix failures
-      8. git push --force-with-lease
+      8. git push origin {{branch}} --force-with-lease
 
       STEP 5 — Merge PR:
-      1. Verify PR exists and is open:
-         PR_STATE=$(gh pr view "{{pr_url}}" --json state --jq '.state' 2>/dev/null || echo "UNKNOWN")
-         if [ "$PR_STATE" = "MERGED" ]; then
-           echo "PR already merged — nothing to do"
-           # Skip to STATUS: done
-         elif [ "$PR_STATE" = "UNKNOWN" ] || [ "$PR_STATE" = "CLOSED" ]; then
-           # PR doesn't exist or is closed — push and create
-           git push -u origin {{story_branch}} 2>/dev/null || true
-           gh pr create --base {{branch}} --head {{story_branch}} --title "{{current_story_id}}" --body "Auto-created by verify step" 2>/dev/null || true
-           PR_STATE="OPEN"
+      1. Ensure PR exists:
+         FINAL_PR="{{final_pr}}"
+         if [ -z "$FINAL_PR" ]; then
+           echo "No final_pr in context — creating PR from feature branch"
+           FINAL_PR=$(gh pr create --base main --head {{branch}}              --title "feat: {{task}}"              --body "Combined feature implementation — auto-created by verify step" 2>/dev/null || echo "")
+           if [ -z "$FINAL_PR" ]; then
+             FINAL_PR=$(gh pr list --head {{branch}} --base main --state open --json url --jq '.[0].url' 2>/dev/null || echo "")
+           fi
          fi
-      2. If PR is open, add comment and merge:
-         if [ "$PR_STATE" = "OPEN" ]; then
-           gh pr comment "{{pr_url}}" --body "Verified: lint/build/test pass." 2>/dev/null || true
-           gh pr merge "{{pr_url}}" --squash --delete-branch 2>/dev/null || {
-             echo "Merge failed — retrying after rebase"
-             git fetch origin && git rebase origin/{{branch}} 2>/dev/null || git rebase --abort 2>/dev/null
-             git push --force-with-lease 2>/dev/null || git push 2>/dev/null || true
-             gh pr merge "{{pr_url}}" --squash --delete-branch 2>/dev/null || {
-               echo "Merge still failing — trying merge commit instead of squash"
-               gh pr merge "{{pr_url}}" --merge --delete-branch 2>/dev/null || true
+         if [ -z "$FINAL_PR" ]; then
+           echo "WARNING: Could not find or create PR — continuing anyway"
+         fi
+      2. If PR is open, merge it:
+         if [ -n "$FINAL_PR" ]; then
+           FINAL_PR_STATE=$(gh pr view "$FINAL_PR" --json state --jq '.state' 2>/dev/null || echo "UNKNOWN")
+           if [ "$FINAL_PR_STATE" = "MERGED" ]; then
+             echo "PR already merged — nothing to do"
+           elif [ "$FINAL_PR_STATE" = "OPEN" ]; then
+             gh pr comment "$FINAL_PR" --body "Verified: lint/build/test pass." 2>/dev/null || true
+             gh pr merge "$FINAL_PR" --squash --delete-branch 2>/dev/null || {
+               echo "Squash merge failed — trying merge commit"
+               gh pr merge "$FINAL_PR" --merge --delete-branch 2>/dev/null || true
              }
-           }
+           fi
          fi
       3. Verify PR is actually merged:
-         FINAL_STATE=$(gh pr view "{{pr_url}}" --json state --jq '.state' 2>/dev/null || echo "UNKNOWN")
-         if [ "$FINAL_STATE" != "MERGED" ]; then
-           echo "WARNING: PR state is $FINAL_STATE after merge attempt"
-           # One more try
-           gh pr merge "{{pr_url}}" --squash --delete-branch 2>/dev/null ||              gh pr merge "{{pr_url}}" --merge --delete-branch 2>/dev/null ||              echo "PR merge failed — will be auto-merged by medic"
+         if [ -n "$FINAL_PR" ]; then
+           MERGED_STATE=$(gh pr view "$FINAL_PR" --json state --jq '.state' 2>/dev/null || echo "UNKNOWN")
+           if [ "$MERGED_STATE" != "MERGED" ]; then
+             echo "WARNING: PR state is $MERGED_STATE after merge attempt"
+             gh pr merge "$FINAL_PR" --squash --delete-branch 2>/dev/null || gh pr merge "$FINAL_PR" --merge --delete-branch 2>/dev/null || echo "PR merge failed"
+           fi
          fi
       4. Reply STATUS: done
 
@@ -1233,13 +1195,12 @@ steps:
       Reply STATUS: retry with issues list.
 
       ESCALATION MODE (retry count >= 3):
-      If this story has been retried 3+ times, DO NOT send back to developer.
-      Instead:
-      1. Read ALL previous error output and verify feedback
+      If retried 3+ times:
+      1. Read ALL previous error output
       2. Fix the code YOURSELF — you have full access to the repo
       3. Run lint+build+test
       4. If you fix it → commit, push, merge PR → STATUS: done
-      5. If you truly cannot fix it → STATUS: skip (story will be skipped, others continue)
+      5. If you truly cannot fix it → STATUS: skip
 
       ============================================================
       MANDATORY OUTPUT FORMAT
@@ -1253,16 +1214,14 @@ steps:
       ISSUES:
       - <what's wrong>
 
-      Or if escalation and unfixable:
+      Or if unfixable:
       STATUS: skip
-      REASON: <why this story cannot be completed>
+      REASON: <why>
       ============================================================
     expects: "STATUS: done"
+    max_retries: 5
     on_fail:
-      retry_step: implement
-      max_retries: 5
-      on_exhausted:
-        escalate_to: human
+      escalate_to: human
 
 
   - id: security-gate

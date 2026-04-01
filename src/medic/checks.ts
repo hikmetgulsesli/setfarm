@@ -5,6 +5,17 @@ import { pgGet, pgQuery, pgRun, now } from "../db-pg.js";
 import { getMaxRoleTimeoutSeconds } from "../installer/install.js";
 import { logger } from "../lib/logger.js";
 import { existsSync } from "fs";
+import { execFileSync } from "node:child_process";
+import os from "node:os";
+
+/** systemctl --user wrapper with XDG_RUNTIME_DIR for crontab compat */
+function systemctlUser(...args: string[]): string {
+  const uid = os.userInfo().uid;
+  return execFileSync("systemctl", ["--user", ...args], {
+    encoding: "utf-8", timeout: 5000,
+    env: { ...process.env, XDG_RUNTIME_DIR: `/run/user/${uid}`, DBUS_SESSION_BUS_ADDRESS: `unix:path=/run/user/${uid}/bus` },
+  });
+}
 import { join } from "path";
 const DISABLED_DIR = join(process.env.HOME || "/home/setrox", ".openclaw/disabled-services");
 
@@ -503,7 +514,43 @@ export async function checkStalledWorkflowCrons(): Promise<MedicFinding[]> {
       ? Date.now() - new Date(lastActivityTs).getTime()
       : CIRCUIT_BREAKER_THRESHOLD_MS + 1; // no activity at all = stalled
 
-    if (age <= CIRCUIT_BREAKER_THRESHOLD_MS) continue;
+    // Under-capacity check: running < parallelCount with pending work
+    if (age <= CIRCUIT_BREAKER_THRESHOLD_MS) {
+      // Activity is recent, but check if we are under-capacity
+      const loopStep = await pgGet<{ loop_config: string | null }>(
+        "SELECT loop_config FROM steps WHERE run_id IN (SELECT id FROM runs WHERE workflow_id = $1 AND status = running) AND type = loop AND status = running LIMIT 1",
+        [workflow_id]
+      );
+      const parallelCount = loopStep?.loop_config ? (JSON.parse(loopStep.loop_config).parallelCount || 3) : 3;
+      const runningStories = await pgGet<{ cnt: string }>(
+        "SELECT COUNT(*) as cnt FROM stories WHERE run_id IN (SELECT id FROM runs WHERE workflow_id = $1 AND status = running) AND status = running",
+        [workflow_id]
+      );
+      const pendingStories = await pgGet<{ cnt: string }>(
+        "SELECT COUNT(*) as cnt FROM stories WHERE run_id IN (SELECT id FROM runs WHERE workflow_id = $1 AND status = running) AND status = pending",
+        [workflow_id]
+      );
+      const runningCnt = parseInt(runningStories?.cnt || "0", 10);
+      const pendingCnt = parseInt(pendingStories?.cnt || "0", 10);
+
+      if (pendingCnt > 0 && runningCnt < parallelCount) {
+        // Check cooldown (2min since last recreate)
+        const recentFix = await pgGet<{ ts: string | null }>(
+          "SELECT MAX(checked_at) as ts FROM medic_checks WHERE details LIKE %under_capacity% AND checked_at > NOW() - INTERVAL 2 minutes"
+        );
+        if (!recentFix?.ts) {
+          findings.push({
+            check: "under_capacity",
+            severity: "warning" as MedicSeverity,
+            message: `Under-capacity: ${runningCnt}/${parallelCount} running, ${pendingCnt} pending in "${workflow_id}" — force recreating crons`,
+            action: "recreate_crons" as MedicActionType,
+            workflowId: workflow_id,
+            remediated: false,
+          });
+        }
+      }
+      continue;
+    }
 
     // Cooldown: don't re-fire if crons were already recreated recently
     let recentRecreateTs: string | null;
@@ -536,7 +583,6 @@ export async function checkStalledWorkflowCrons(): Promise<MedicFinding[]> {
 
 // ── Check: Offline Services ────────────────────────────────────────
 
-import { execFileSync } from "node:child_process";
 
 const SERVICE_RESTART_COOLDOWN_MS = 5 * 60 * 1000; // 5 min cooldown — reduced from 10min between restarts
 
@@ -574,18 +620,12 @@ export async function checkOfflineServices(): Promise<MedicFinding[]> {
       if (existsSync(join(DISABLED_DIR, serviceName))) continue;
 
       try {
-        execFileSync("systemctl", ["--user", "is-active", serviceName], {
-          encoding: "utf-8",
-          timeout: 5000,
-        });
+        systemctlUser("is-active", serviceName);
       } catch (err: any) {
         const stdout = (err.stdout ?? "").trim();
         if (stdout === "inactive" || stdout === "dead" || stdout === "failed") {
           try {
-            execFileSync("systemctl", ["--user", "cat", serviceName], {
-              encoding: "utf-8",
-              timeout: 5000,
-            });
+            systemctlUser("cat", serviceName);
 
             // Cooldown: skip if we already restarted this service recently
             let recentRestartTs: string | null;

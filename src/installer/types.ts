@@ -46,6 +46,8 @@ export type LoopConfig = {
   verifyEach?: boolean;
   verifyStep?: string;
   parallelCount?: number;
+  /** "pr-each" (default): per-story PRs + verify_each. "direct-merge": merge queue + single PR. */
+  mergeStrategy?: "pr-each" | "direct-merge";
 };
 
 export type WorkflowStep = {

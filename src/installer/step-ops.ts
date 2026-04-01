@@ -17,6 +17,7 @@ import {
 import { getPRState, tryReopenPR, tryAutoMergePR, findPrByBranch, resolveClosedPR } from "./pr-state.js";
 import { failStep } from "./step-fail.js";
 import { advancePipeline, checkLoopContinuation } from "./step-advance.js";
+import { runMergeQueue } from "./merge-queue-ops.js";
 
 // ── Re-exports from extracted modules (backwards compat for cli.ts, medic.ts) ──
 export { resolveTemplate, parseOutputKeyValues } from "./context-ops.js";
@@ -1713,8 +1714,27 @@ ${screenDescs}
 
     // Mark current story done or skipped + persist PR context for verify_each
     // FIX: Remove context fallback to prevent cross-contamination between parallel stories
-    const storyPrUrl = parsed["pr_url"] || "";
+    let storyPrUrl = parsed["pr_url"] || "";
     const storyBranchName = parsed["story_branch"] || "";
+    // FIX: Validate PR URL belongs to correct repo (cross-contamination guard)
+    if (storyPrUrl && context["repo"]) {
+      const expectedRepo = context["repo"].split("/").pop() || "";
+      if (expectedRepo && !storyPrUrl.includes(expectedRepo)) {
+        logger.error(`[cross-repo] Story ${storyRow?.story_id} PR ${storyPrUrl} does not match repo ${expectedRepo}`, { runId: step.run_id });
+        storyPrUrl = "";
+      }
+    }
+    // FIX: Prevent duplicate PR URL assignment (cross-contamination between parallel stories)
+    if (storyPrUrl && storyRow?.story_id) {
+      const duplicatePr = await pgGet<{ story_id: string }>(
+        "SELECT story_id FROM stories WHERE run_id = $1 AND pr_url = $2 AND story_id != $3",
+        [step.run_id, storyPrUrl, storyRow.story_id],
+      );
+      if (duplicatePr) {
+        logger.error(`[duplicate-pr] PR ${storyPrUrl} already assigned to ${duplicatePr.story_id}, clearing for ${storyRow.story_id}`, { runId: step.run_id });
+        storyPrUrl = "";
+      }
+    }
     await pgRun("UPDATE stories SET status = $1, output = $2, pr_url = $3, story_branch = $4, updated_at = $5 WHERE id = $6", [storyStatus, output, storyPrUrl, storyBranchName, now(), step.current_story_id]);
     emitEvent({ ts: now(), event: storyEvent as import("./events.js").EventType, runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, storyId: storyRow?.story_id, storyTitle: storyRow?.title });
     logger.info(`Story ${storyStatus}: ${storyRow?.story_id} — ${storyRow?.title}`, { runId: step.run_id, stepId: step.step_id });
@@ -1753,6 +1773,59 @@ ${screenDescs}
     await pgRun("UPDATE steps SET current_story_id = NULL, output = $1, updated_at = $2 WHERE id = $3", [output, now(), step.id]);
 
     const loopConfig: LoopConfig | null = step.loop_config ? JSON.parse(step.loop_config) : null;
+
+    // DIRECT-MERGE: No per-story PRs — merge queue runs after all stories complete
+    if (loopConfig?.mergeStrategy === "direct-merge") {
+      // Check if all stories are done (no pending/running left)
+      const activeCount = await pgGet<{ count: string }>(
+        "SELECT COUNT(*) as count FROM stories WHERE run_id = $1 AND status IN ('pending', 'running')",
+        [step.run_id],
+      );
+      const active = parseInt(activeCount?.count || "0", 10);
+      if (active === 0) {
+        // All stories done — run merge queue
+        logger.info(`[direct-merge] All stories done, starting merge queue`, { runId: step.run_id });
+        const repoPath = context["repo"] || "";
+        const featureBranch = context["branch"] || "";
+        if (repoPath && featureBranch) {
+          try {
+            const mqResult = await runMergeQueue(step.run_id, repoPath, featureBranch);
+            logger.info(`[direct-merge] Merge queue complete: ${mqResult.merged.length} merged, ${mqResult.conflicted.length} conflicts`, { runId: step.run_id });
+            // Mark loop step done and advance
+            await pgRun("UPDATE steps SET status = 'done', output = $1, updated_at = $2 WHERE id = $3", [
+              `STATUS: done\nMERGED: ${mqResult.merged.join(', ')}\nCONFLICTS: ${mqResult.conflicted.join(', ')}\nFINAL_PR: ${mqResult.prUrl || 'none'}`,
+              now(), step.id,
+            ]);
+            // Set final_pr in context for verify step
+            if (mqResult.prUrl) {
+              context["final_pr"] = mqResult.prUrl;
+              await updateRunContext(step.run_id, context);
+            }
+            return advancePipeline(step.run_id);
+          } catch (mqErr) {
+            logger.error(`[direct-merge] Merge queue failed: ${String(mqErr)}`, { runId: step.run_id });
+            // Merge queue failed — mark step as failed so on_fail can retry
+            await pgRun("UPDATE steps SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3", [
+              `STATUS: failed
+ERROR: Merge queue failed: ${String(mqErr)}`,
+              now(), step.id,
+            ]);
+            return advancePipeline(step.run_id);
+          }
+        } else {
+          // Missing repo or branch context — fail step
+          logger.error(`[direct-merge] Missing repo/branch context for merge queue`, { runId: step.run_id });
+          await pgRun("UPDATE steps SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3", [
+            `STATUS: failed
+ERROR: Missing repo or branch context for merge queue`,
+            now(), step.id,
+          ]);
+          return advancePipeline(step.run_id);
+        }
+      }
+      // More stories pending — keep loop running
+      return { advanced: false, runCompleted: false };
+    }
 
     // T8: verify_each flow — set verify step to pending
     if (loopConfig?.verifyEach && loopConfig.verifyStep) {

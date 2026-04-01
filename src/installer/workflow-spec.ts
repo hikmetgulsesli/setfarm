@@ -123,6 +123,7 @@ function parseLoopConfig(raw: any): LoopConfig {
     verifyEach: raw.verify_each ?? raw.verifyEach,
     verifyStep: raw.verify_step ?? raw.verifyStep,
     parallelCount: raw.parallel_count ?? raw.parallelCount,
+    mergeStrategy: raw.merge_strategy ?? raw.mergeStrategy,
   };
 }
 

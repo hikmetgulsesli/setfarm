@@ -62,7 +62,7 @@ On failure: ${dbEnv}/usr/bin/node ${cli} step fail "<the stepId from claim JSON>
 Rules: NO_WORK/complete/fail → SESSION OVER. Never skip peek. Never run workflow stop/uninstall/sessions_spawn. Write output to /tmp/setfarm-output-${outputFileId}.txt, use --file flag. Output must be KEY: VALUE lines, NOT JSON.`;
 }
 
-export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
+export async function setupAgentCrons(workflow: WorkflowSpec, onlyAgentIds?: Set<string>): Promise<void> {
   // Always remove existing crons first to prevent duplicates
   // Gateway API creates new crons even if same name exists
   // DISABLED: await removeAgentCrons(workflow.id); // Removal destabilizes gateway scheduler
@@ -92,6 +92,8 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
 
   for (let i = 0; i < agents.length; i++) {
     const agent = agents[i];
+    // Skip agents that already have crons (only create missing ones)
+    if (onlyAgentIds && !onlyAgentIds.has(agent.id)) continue;
     const anchorMs = i * 60_000; // stagger by 60s to prevent gateway OOM // stagger by 15s each
     const cronName = `setfarm/${workflow.id}/${agent.id}`;
     // Use mapped OpenClaw agent ID if available, otherwise fall back to workflow agent ID
@@ -183,11 +185,18 @@ async function countActiveRuns(workflowId: string): Promise<number> {
 /**
  * Check if crons already exist for a workflow.
  */
-async function workflowCronsExist(workflowId: string): Promise<boolean> {
+async function getExistingCronAgentIds(workflowId: string): Promise<Set<string>> {
   const result = await listCronJobs();
-  if (!result.ok || !result.jobs) return false;
+  if (!result.ok || !result.jobs) return new Set();
   const prefix = `setfarm/${workflowId}/`;
-  return result.jobs.some((j) => j.name.startsWith(prefix));
+  const ids = new Set<string>();
+  for (const job of result.jobs) {
+    if (job.name.startsWith(prefix)) {
+      const agentPart = job.name.slice(prefix.length).replace(/-\d+$/, "");
+      ids.add(agentPart);
+    }
+  }
+  return ids;
 }
 
 /**
@@ -195,10 +204,11 @@ async function workflowCronsExist(workflowId: string): Promise<boolean> {
  * No-ops if crons already exist (another run of the same workflow is active).
  */
 export async function ensureWorkflowCrons(workflow: WorkflowSpec): Promise<void> {
-  if (await workflowCronsExist(workflow.id)) {
-    // Crons already exist — skip to prevent anchor-reset loop (#48 fix)
-    // Use `workflow ensure-crons <name>` CLI to force-recreate when config changes.
-    // Demand-based: sync crons to match active steps instead of blindly recreating all
+  const existingAgentIds = await getExistingCronAgentIds(workflow.id);
+  const expectedAgentIds = workflow.agents.map((a) => a.id);
+  const missingAgentIds = expectedAgentIds.filter((id) => !existingAgentIds.has(id));
+
+  if (missingAgentIds.length === 0) {
     try {
       const activeRun = await pgGet<{ id: string; workflow_id: string }>(
         "SELECT id, workflow_id FROM runs WHERE workflow_id = $1 AND status = 'running' ORDER BY created_at DESC LIMIT 1",
@@ -211,13 +221,14 @@ export async function ensureWorkflowCrons(workflow: WorkflowSpec): Promise<void>
     return;
   }
 
-  // Preflight: verify cron tool is accessible before attempting to create jobs
+  logger.info(`[ensureWorkflowCrons] ${missingAgentIds.length} missing crons for ${workflow.id}: ${missingAgentIds.join(", ")}`, {});
+
   const preflight = await checkCronToolAvailable();
   if (!preflight.ok) {
     throw new Error(preflight.error!);
   }
 
-  await setupAgentCrons(workflow);
+  await setupAgentCrons(workflow, new Set(missingAgentIds));
 }
 
 /**
@@ -502,4 +513,35 @@ export async function syncActiveCrons(runId: string, workflowId: string): Promis
   } catch (err) {
     logger.warn(`[syncActiveCrons] Failed: ${String(err)}`, { runId });
   }
+}
+
+
+/**
+ * Nuclear recovery: remove + create all crons for active workflows.
+ * Called on gateway startup and by medic when crons are stale.
+ */
+
+/**
+ * Nuclear recovery: remove + create all crons for active workflows.
+ */
+export async function recoverActiveWorkflowCrons(): Promise<void> {
+  try {
+    const activeRuns = await pgQuery<{ id: string; workflow_id: string }>(
+      "SELECT id, workflow_id FROM runs WHERE status = 'running' ORDER BY created_at DESC", []
+    );
+    if (activeRuns.length === 0) { logger.info("[startup-recovery] No active runs"); return; }
+    const workflowIds = [...new Set(activeRuns.map(r => r.workflow_id))];
+    logger.info(`[startup-recovery] ${activeRuns.length} active run(s), ${workflowIds.length} workflow(s)`, {});
+    const { resolveWorkflowDir } = await import("./paths.js");
+    for (const wfId of workflowIds) {
+      try {
+        await removeAgentCrons(wfId);
+        await new Promise(r => setTimeout(r, 2000));
+        const { loadWorkflowSpec: loadWf } = await import("./workflow-spec.js");
+        const wf = await loadWf(resolveWorkflowDir(wfId));
+        await setupAgentCrons(wf);
+        logger.info(`[startup-recovery] Nuclear recreate done for ${wfId}`, {});
+      } catch (err) { logger.error(`[startup-recovery] Failed for ${wfId}: ${String(err)}`, {}); }
+    }
+  } catch (err) { logger.error(`[startup-recovery] Fatal: ${String(err)}`, {}); }
 }

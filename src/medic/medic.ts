@@ -22,6 +22,16 @@ import {
 import { completeStep } from "../installer/step-ops.js";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
+import os from "node:os";
+
+/** systemctl --user wrapper with XDG_RUNTIME_DIR for crontab compat */
+function systemctlUser(...args: string[]): string {
+  const uid = os.userInfo().uid;
+  return execFileSync("systemctl", ["--user", ...args], {
+    encoding: "utf-8", timeout: 30000,
+    env: { ...process.env, XDG_RUNTIME_DIR: `/run/user/${uid}`, DBUS_SESSION_BUS_ADDRESS: `unix:path=/run/user/${uid}/bus` },
+  });
+}
 import { logger } from "../lib/logger.js";
 
 // ── DB Migration ────────────────────────────────────────────────────
@@ -123,12 +133,12 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
       // For restart_gateway we need the DB query for activeWfs
       if (finding.action === "restart_gateway") {
         try {
-          const uptimeOut = execFileSync("systemctl", ["--user", "show", "openclaw-gateway", "--property=ActiveEnterTimestamp"], { encoding: "utf-8", timeout: 5000 }).trim();
+          const uptimeOut = systemctlUser("show", "openclaw-gateway", "--property=ActiveEnterTimestamp").trim();
           const tsMatch = uptimeOut.match(/ActiveEnterTimestamp=(.+)/);
           if (tsMatch) { const uptimeMs = Date.now() - new Date(tsMatch[1]).getTime(); if (uptimeMs < 30 * 60 * 1000) { return false; } }
         } catch {}
         try {
-          execFileSync("systemctl", ["--user", "restart", "openclaw-gateway"], { encoding: "utf-8", timeout: 30000 });
+          systemctlUser("restart", "openclaw-gateway");
           try {
             const { setTimeout: sleep } = await import("timers/promises");
             await sleep(5000);
@@ -142,7 +152,7 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
       }
       if (finding.action === "restart_service") {
         if (!finding.serviceName) return false;
-        try { execFileSync("systemctl", ["--user", "start", finding.serviceName], { encoding: "utf-8", timeout: 10000 }); emitEvent({ ts: now(), event: "step.done" as EventType, runId: finding.runId ?? "", detail: "Medic: restarted " + finding.serviceName }); return true; } catch { return false; }
+        try { systemctlUser("start", finding.serviceName); emitEvent({ ts: now(), event: "step.done" as EventType, runId: finding.runId ?? "", detail: "Medic: restarted " + finding.serviceName }); return true; } catch { return false; }
       }
       if (finding.action === "recreate_crons") {
         const wfId = finding.workflowId ?? finding.message.match(/workflow "([^"]+)"/)?.[1];

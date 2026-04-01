@@ -4,6 +4,7 @@
 import { createAgentCronJob, deleteCronJob, listCronJobs } from "../installer/gateway-api.js";
 import { resolveSetfarmCli } from "../installer/paths.js";
 import { readOpenClawConfig, writeOpenClawConfig } from "../installer/openclaw-config.js";
+import { recoverActiveWorkflowCrons } from "../installer/agent-cron.js";
 
 const MEDIC_CRON_NAME = "setfarm/medic";
 const MEDIC_EVERY_MS = 5 * 60 * 1000; // 5 minutes
@@ -63,6 +64,9 @@ async function removeMedicAgent(): Promise<void> {
 }
 
 export async function installMedicCron(): Promise<{ ok: boolean; error?: string }> {
+  // Startup recovery: nuclear recreate crons for active runs
+  try { await recoverActiveWorkflowCrons(); } catch {}
+
   // Check if already installed
   const existing = await findMedicCronJob();
   if (existing) {
