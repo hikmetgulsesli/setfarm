@@ -23,10 +23,12 @@ const activeProcesses = new Map<string, ChildProcess>();
 let shuttingDown = false;
 
 function resolveAgentId(wfId: string, role: string, mapping: Record<string, string | string[]>): string[] {
+  // For parallel roles (developer, reviewer), use mapped agents (koda, flux, etc.)
   const m = mapping[role];
   if (Array.isArray(m)) return m;
-  if (m) return [m];
-  return [role];
+  // For single-agent roles, use the workflow-scoped agent ID (feature-dev_designer)
+  // because gateway registers agents as {workflow}_{role}, not the mapped name
+  return [`${wfId}_${role}`];
 }
 
 function spawnAgent(agentId: string, wfId: string, role: string): void {
