@@ -1,6 +1,4 @@
 import os from "node:os";
-import fs from "node:fs";
-import path from "node:path";
 import crypto from "node:crypto";
 import { loadWorkflowSpec } from "./workflow-spec.js";
 import { resolveWorkflowDir } from "./paths.js";
@@ -64,25 +62,6 @@ export async function runWorkflow(params: {
       throw new Error(
         `Already running: Run #${existingRun.run_number} (${existingRun.id}) for repo ${repoPath}. Cancel it first or wait for completion.`
       );
-    }
-  }
-
-  // Clean stale project directory from cancelled/failed runs (same project name, no active run)
-  const projectMatch = params.taskTitle.match(/Proje:\s*(\S+)/i);
-  if (projectMatch) {
-    const projectName = projectMatch[1];
-    const projectPath = path.join(os.homedir(), "projects", projectName);
-    if (fs.existsSync(projectPath)) {
-      const otherActive = await pgGet<{ id: string }>(
-        "SELECT id FROM runs WHERE status = 'running' AND task LIKE $1 LIMIT 1",
-        [`%${projectName}%`]
-      );
-      if (!otherActive) {
-        try {
-          fs.rmSync(projectPath, { recursive: true, force: true });
-          logger.info(`[run] Cleaned stale project directory: ${projectPath}`, {});
-        } catch (e) { logger.warn(`[run] Failed to clean stale project: ${e}`, {}); }
-      }
     }
   }
 
