@@ -54,8 +54,17 @@ export async function verifyStory(storyId: string): Promise<void> {
 }
 
 export async function skipFailedStories(runId: string): Promise<void> {
-  await pgRun("UPDATE stories SET status = 'skipped', updated_at = $1 WHERE run_id = $2 AND status = 'failed'",
-    [now(), runId]);
+  // Preserve failure reason in output before skipping
+  const failed = await pgQuery<{ id: string; output: string | null; story_id: string }>(
+    "SELECT id, output, story_id FROM stories WHERE run_id = $1 AND status = 'failed'", [runId]
+  );
+  for (const s of failed) {
+    const skipReason = s.output
+      ? `SKIPPED (was failed): ${s.output}`
+      : `SKIPPED: Story ${s.story_id} failed with no diagnostic — likely empty workdir or agent timeout`;
+    await pgRun("UPDATE stories SET status = 'skipped', output = $1, updated_at = $2 WHERE id = $3",
+      [skipReason, now(), s.id]);
+  }
 }
 
 export async function countStoriesByStatus(runId: string, status: string): Promise<number> {

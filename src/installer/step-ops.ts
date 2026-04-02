@@ -1054,6 +1054,17 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
 
       // GIT WORKTREE ISOLATION: Create OUTSIDE transaction to avoid holding DB
       // lock during slow git operations.
+      // GUARD: Repo path MUST exist — without it, agent works in wrong directory
+      if (!context["repo"]) {
+        const noRepoReason = "MISSING_REPO: context['repo'] is empty — cannot implement story without project path";
+        logger.error(`[claim] ${noRepoReason} (story=${nextStory.story_id})`, { runId: step.run_id });
+        await pgRun("UPDATE stories SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3",
+          [noRepoReason, now(), nextStory.id]);
+        await pgRun("UPDATE steps SET current_story_id = NULL, updated_at = $1 WHERE id = $2", [now(), step.id]);
+        try { await pgRun("UPDATE claim_log SET outcome = 'failed', diagnostic = $1 WHERE story_id = $2 AND outcome IS NULL", [noRepoReason, nextStory.story_id]); } catch {}
+        emitEvent({ ts: now(), event: "story.failed", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, detail: noRepoReason });
+        return { found: false };
+      }
       let storyWorkdir = "";
       if (context["repo"]) {
         storyWorkdir = createStoryWorktree(context["repo"], storyBranch, context["branch"] || "master", agentId);
@@ -1067,7 +1078,7 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
         emitEvent({ ts: now(), event: "story.failed", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, storyId: nextStory.story_id, storyTitle: nextStory.title, detail: wtReason });
         return { found: false };
       }
-      context["story_workdir"] = storyWorkdir || context["repo"] || "";
+      context["story_workdir"] = storyWorkdir || context["repo"];
 
       // v1.5.50: Record claim in claim_log + update story claim metadata
       const claimNow = now();
@@ -1109,11 +1120,26 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
           await pgRun("UPDATE stories SET status = 'pending', retry_count = retry_count + 1, output = $1, updated_at = $2 WHERE id = $3", [reason + " — retrying once", now(), nextStory.id]);
           await pgRun("UPDATE steps SET current_story_id = NULL, updated_at = $1 WHERE id = $2", [now(), step.id]);
           if (context["repo"]) removeStoryWorktree(context["repo"], storyBranch, agentId);
+          try { await pgRun("UPDATE claim_log SET outcome = 'failed', diagnostic = $1 WHERE story_id = $2 AND outcome IS NULL", [reason, nextStory.story_id]); } catch {}
           logger.info(`[missing-input] Story ${nextStory.story_id} will retry — possible WAL lag`, { runId: step.run_id });
         }
         return { found: false };
       }
 
+
+      // GUARD: Empty critical variables — catches "" values that missing-input guard misses
+      const CRITICAL_STORY_VARS = ["repo", "story_workdir", "branch"];
+      const emptyVars = CRITICAL_STORY_VARS.filter(v => v in context && context[v] !== undefined && context[v].trim() === "");
+      if (emptyVars.length > 0) {
+        const emptyReason = `EMPTY_CRITICAL_VARS: [${emptyVars.join(", ")}] are empty — cannot implement story`;
+        logger.warn(`[claim] ${emptyReason} (story=${nextStory.story_id})`, { runId: step.run_id });
+        await pgRun("UPDATE stories SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3",
+          [emptyReason, now(), nextStory.id]);
+        await pgRun("UPDATE steps SET current_story_id = NULL, updated_at = $1 WHERE id = $2", [now(), step.id]);
+        try { await pgRun("UPDATE claim_log SET outcome = 'failed', diagnostic = $1 WHERE story_id = $2 AND outcome IS NULL", [emptyReason, nextStory.story_id]); } catch {}
+        if (context["repo"]) removeStoryWorktree(context["repo"], storyBranch, agentId);
+        return { found: false };
+      }
 
       return { found: true, stepId: step.id, runId: step.run_id, resolvedInput };
     }
