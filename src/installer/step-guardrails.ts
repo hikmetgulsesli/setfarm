@@ -765,3 +765,107 @@ export function checkStoryDesignCompliance(
 
   return `DESIGN UYUMSUZLUK:\n${issues.map(i => "• " + i).join("\n")}\nDÜZELT: stitch/design-tokens.css'i import et, hardcoded renkleri var(--*) ile değiştir.`;
 }
+
+
+// ── Import Consistency & Duplicate Directory Guard ───────────────────
+
+/**
+ * Detect duplicate directories that differ only in plural form (e.g., context/ vs contexts/).
+ * Also checks for import inconsistencies where the same logical module is imported
+ * from different paths across files.
+ */
+export function checkImportConsistency(repoPath: string): string | null {
+  const srcDir = path.join(repoPath, "src");
+  if (!fs.existsSync(srcDir)) return null;
+
+  const issues: string[] = [];
+
+  // 1. Duplicate directory detection (singular vs plural, typos)
+  function findDuplicateDirs(dir: string, depth: number): void {
+    if (depth > 3) return;
+    let entries: string[];
+    try { entries = fs.readdirSync(dir); } catch { return; }
+    
+    const dirs = entries.filter(e => {
+      try { return fs.statSync(path.join(dir, e)).isDirectory(); } catch { return false; }
+    });
+
+    // Check for similar directory names
+    for (let i = 0; i < dirs.length; i++) {
+      for (let j = i + 1; j < dirs.length; j++) {
+        const a = dirs[i]!.toLowerCase();
+        const b = dirs[j]!.toLowerCase();
+        // Singular/plural match (context vs contexts, util vs utils, type vs types, etc.)
+        if (a + "s" === b || b + "s" === a || a + "es" === b || b + "es" === a) {
+          const relDir = path.relative(repoPath, dir);
+          issues.push(`DUPLICATE DIRECTORY: ${relDir}/${dirs[i]} vs ${relDir}/${dirs[j]} — agents created both singular and plural variants. Consolidate into one.`);
+        }
+      }
+    }
+
+    for (const d of dirs) {
+      if (d !== "node_modules" && !d.startsWith(".")) {
+        findDuplicateDirs(path.join(dir, d), depth + 1);
+      }
+    }
+  }
+
+  findDuplicateDirs(srcDir, 0);
+
+  // 2. Import path consistency — check that same-named exports come from same path
+  const importMap = new Map<string, Set<string>>(); // exportName -> Set<importPaths>
+  function scanImports(dir: string, depth: number): void {
+    if (depth > 4) return;
+    let entries: string[];
+    try { entries = fs.readdirSync(dir); } catch { return; }
+    
+    for (const e of entries) {
+      const full = path.join(dir, e);
+      let stat;
+      try { stat = fs.statSync(full); } catch { continue; }
+      
+      if (stat.isDirectory() && e !== "node_modules" && !e.startsWith(".")) {
+        scanImports(full, depth + 1);
+        continue;
+      }
+      
+      if (!e.endsWith(".tsx") && !e.endsWith(".ts")) continue;
+      if (e.endsWith(".test.tsx") || e.endsWith(".test.ts") || e.endsWith(".d.ts")) continue;
+      
+      let fileContent: string;
+      try { fileContent = fs.readFileSync(full, "utf-8"); } catch { continue; }
+      
+      // Match: import { X } from './path' or import { X } from '../path'
+      const importRegex = /import\s+\{([^}]+)\}\s+from\s+['"](\.[^'"]+)['"]/g;
+      let m;
+      while ((m = importRegex.exec(fileContent)) !== null) {
+        const names = m[1]!.split(",").map(n => n.trim().split(/\s+as\s+/)[0]!.trim()).filter(Boolean);
+        const importPath = m[2]!;
+        for (const name of names) {
+          if (!importMap.has(name)) importMap.set(name, new Set());
+          // Normalize: resolve relative to file location
+          const resolved = path.resolve(path.dirname(full), importPath);
+          const relResolved = path.relative(repoPath, resolved);
+          importMap.get(name)!.add(relResolved);
+        }
+      }
+    }
+  }
+
+  scanImports(srcDir, 0);
+
+  // Find exports imported from multiple different paths
+  for (const [name, paths] of importMap) {
+    if (paths.size > 1) {
+      // Filter: only flag if paths look like they should be the same module (same filename)
+      const basenames = [...paths].map(p => path.basename(p));
+      const uniqueBasenames = new Set(basenames);
+      if (uniqueBasenames.size === 1) {
+        issues.push(`IMPORT INCONSISTENCY: "${name}" is imported from ${paths.size} different paths: ${[...paths].join(", ")} — all files should import from the same module.`);
+      }
+    }
+  }
+
+  if (issues.length === 0) return null;
+  return "GUARDRAIL FAIL: Import consistency check found issues:\n" + issues.join("\n");
+}

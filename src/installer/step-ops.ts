@@ -30,7 +30,7 @@ export { failStep } from "./step-fail.js";
 import { resolveTemplate, parseOutputKeyValues, readProgressFile, readProjectMemory, updateProjectMemory, getProjectTree, getInstalledPackages, getSharedCode, getRecentStoryCode, getComponentRegistry, getApiRoutes } from "./context-ops.js";
 import { getStories, formatStoryForTemplate, formatCompletedStories, parseAndInsertStories } from "./story-ops.js";
 import { createStoryWorktree, removeStoryWorktree } from "./worktree-ops.js";
-import { computeHasFrontendChanges, checkTestFailures, checkQualityGate, processDesignCompletion, processSetupCompletion, processSetupDesignContracts, processBrowserCheck, processDesignFidelityCheck, checkStoryDesignCompliance } from "./step-guardrails.js";
+import { computeHasFrontendChanges, checkTestFailures, checkQualityGate, processDesignCompletion, processSetupCompletion, processSetupDesignContracts, processBrowserCheck, processDesignFidelityCheck, checkStoryDesignCompliance, checkImportConsistency } from "./step-guardrails.js";
 import { cleanupAbandonedSteps as _cleanupAbandonedSteps, scheduleRunCronTeardown } from "./cleanup-ops.js";
 import {
   getRunStatus, getRunContext, updateRunContext, failRun,
@@ -137,6 +137,53 @@ type StepRow = {
   retry_count: number;
   output: string | null;
 };
+
+
+// ── Source Tree Injection ────────────────────────────────────────────
+
+/**
+ * Generate a compact directory tree of src/ to inject into story context.
+ * Helps agents discover existing directories and avoid creating duplicates
+ * (e.g., contexts/ when context/ already exists).
+ */
+function generateSrcTree(repoPath: string): string {
+  if (!repoPath || !fs.existsSync(repoPath)) return "";
+  const srcDir = path.join(repoPath, "src");
+  if (!fs.existsSync(srcDir)) return "";
+  
+  const lines: string[] = [];
+  function walk(dir: string, prefix: string, depth: number) {
+    if (depth > 4) return; // max 4 levels deep
+    let entries: string[];
+    try {
+      entries = fs.readdirSync(dir).filter(e => 
+        !e.startsWith(".") && e !== "node_modules" && !e.endsWith(".test.tsx") && !e.endsWith(".test.ts")
+      ).sort();
+    } catch { return; }
+    
+    const dirs = entries.filter(e => {
+      try { return fs.statSync(path.join(dir, e)).isDirectory(); } catch { return false; }
+    });
+    const files = entries.filter(e => {
+      try { return fs.statSync(path.join(dir, e)).isFile(); } catch { return false; }
+    });
+    
+    for (const f of files) lines.push(prefix + f);
+    for (const d of dirs) {
+      lines.push(prefix + d + "/");
+      walk(path.join(dir, d), prefix + "  ", depth + 1);
+    }
+  }
+  
+  walk(srcDir, "  ", 0);
+  if (lines.length === 0) return "";
+  if (lines.length > 80) {
+    // Too large — only show directories
+    const dirLines = lines.filter(l => l.trimEnd().endsWith("/"));
+    return "src/\n" + dirLines.join("\n");
+  }
+  return "src/\n" + lines.join("\n");
+}
 
 // ── Extracted helpers (private, called only from claimStep) ──────────
 
@@ -409,6 +456,15 @@ async function injectStoryContext(
   context["pr_url"] = "";
   context["story_branch"] = "";
   context["verify_feedback"] = "";
+
+  // Inject source tree so agent knows existing file structure (prevents duplicate dirs)
+  const repoPath = context["repo"] || context["REPO"] || "";
+  if (repoPath && !context["src_tree"]) {
+    const srcTree = generateSrcTree(repoPath);
+    if (srcTree) {
+      context["src_tree"] = srcTree;
+    }
+  }
 
   // Resolve story_screens from SCREEN_MAP
   await resolveStoryScreens(story.storyId, context, step.run_id, "story-claim");
@@ -1573,6 +1629,20 @@ ${screenDescs}
       if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
       await failStep(stepId, fidelityErr);
       return { advanced: false, runCompleted: false };
+    }
+  }
+
+  // Import Consistency Check (verify + final-test — BLOCKING on duplicate dirs/imports)
+  if ((step.step_id === "verify" || step.step_id === "final-test") && parsed["status"]?.toLowerCase() === "done") {
+    const repoPath = context["repo"] || context["REPO"] || "";
+    if (repoPath) {
+      const importErr = checkImportConsistency(repoPath);
+      if (importErr) {
+        logger.warn(`[import-consistency-gate] Blocking: ${importErr}`, { runId: step.run_id, stepId: step.step_id });
+        if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
+        await failStep(stepId, importErr);
+        return { advanced: false, runCompleted: false };
+      }
     }
   }
 

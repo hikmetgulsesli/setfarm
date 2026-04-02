@@ -95,6 +95,7 @@ export const OPTIONAL_TEMPLATE_VARS = [
   "layout_skeleton",
   "screen_map",
   "story_screens",
+  "src_tree",
   "stitch_html",
   "design_fidelity_feedback",
   "design_warning",
