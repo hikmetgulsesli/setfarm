@@ -468,13 +468,15 @@ export async function syncActiveCrons(runId: string, workflowId: string): Promis
     const prefix = `setfarm/${workflowId}/`;
     const existingCrons = cronResult.jobs.filter((j: any) => j.name.startsWith(prefix));
 
-    // 5. SKIP removal — deleting crons destabilizes gateway scheduler
-    //    Parse role from cron name (not agentId — listCronJobs may not return it)
+    // 5. Remove crons for roles that are no longer needed (step done/waiting)
+    //    Only remove setfarm workflow crons, not other crons
     let removed = 0;
     for (const cron of existingCrons) {
       const cronRole = extractRoleFromCronName(cron.name, prefix);
       if (!neededRoles.has(cronRole)) {
-        // DISABLED: try { await deleteCronJob(cron.id); removed++; } catch {}
+        try { await deleteCronJob(cron.id); removed++; } catch (e) {
+          logger.warn("[syncActiveCrons] Failed to remove idle cron: " + String(e), { runId });
+        }
       }
     }
 
