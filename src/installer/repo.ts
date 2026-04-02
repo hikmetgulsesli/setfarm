@@ -18,7 +18,13 @@ export async function getRunStatus(runId: string): Promise<string | undefined> {
 
 export async function getRunContext(runId: string): Promise<Record<string, string>> {
   const row = await pgGet<{ context: string }>("SELECT context FROM runs WHERE id = $1", [runId]);
-  return row ? JSON.parse(row.context) : {};
+  if (!row) return {};
+  const parsed = JSON.parse(row.context);
+  // Guard: if context was stored as array (legacy/corruption), extract first element
+  if (Array.isArray(parsed)) {
+    return (parsed[0] && typeof parsed[0] === 'object') ? parsed[0] : {};
+  }
+  return parsed;
 }
 
 export async function updateRunContext(runId: string, context: Record<string, string>): Promise<void> {
