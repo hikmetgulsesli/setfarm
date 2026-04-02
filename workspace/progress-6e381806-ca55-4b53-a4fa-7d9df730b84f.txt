@@ -1,0 +1,30 @@
+=== US-005: Virtual Keyboard Component ===
+COMPLETED: 2026-03-30T13:52:00Z
+FILES CHANGED:
+- wordle-game/src/components/Keyboard.tsx
+- wordle-game/src/components/Key.tsx
+- wordle-game/src/components/__tests__/Keyboard.test.tsx
+- wordle-game/src/components/__tests__/Key.test.tsx
+- wordle-game/src/hooks/useGame.ts
+- wordle-game/src/types/game.ts
+- wordle-game/src/components/GameBoard.tsx
+- wordle-game/src/components/Tile.tsx
+- wordle-game/src/App.tsx
+- wordle-game/package.json
+- wordle-game/vite.config.ts
+- wordle-game/tailwind.config.js
+- wordle-game/tsconfig.json
+
+KEY DECISIONS:
+- Used React hooks (useGame) for state management instead of Zustand for simpler Wordle game
+- Implemented Turkish QWERTY layout with all Turkish characters (Ç, Ş, Ğ, Ü, Ö, İ, I)
+- Used Framer Motion for key press animations (scale effect)
+- Color coding: green (correct), yellow (present), gray (absent)
+- ENTER triggers submitGuess, BACKSPACE triggers deleteLetter
+- Physical keyboard support via useEffect with keydown listener
+- Comprehensive test coverage with Vitest + React Testing Library
+
+DEPENDENCIES ADDED:
+- framer-motion (animations)
+- lucide-react (icons)
+- vitest + @testing-library/react (testing)

@@ -1,0 +1,1923 @@
+# PR-based workflow — each story creates a PR, verifier reviews + merges.
+# v12.0: Design-first pipeline. PRD → screens → stories → setup → code.
+id: feature-dev
+name: Feature Development Workflow
+version: 12.0
+description: |
+  Design-first pipeline: PLAN → DESIGN → STORIES → SETUP-REPO → SETUP-BUILD → IMPLEMENT →
+  VERIFY → SECURITY-GATE → FINAL-TEST → DEPLOY.
+  Plan step produces PRD only (no stories). Design step generates screens
+  from PRD via Stitch (no screen limit). Stories step decomposes PRD into
+  user stories using SCREEN_MAP for screen↔story binding.
+  Developer creates PR per story, verifier reviews + merges.
+  Failed stories are skipped — other stories continue.
+
+agent_mapping:
+  planner: main
+  setup-repo: atlas
+  setup-build: atlas
+  designer: mert
+  developer: [koda, flux, cipher, prism, lux, nexus]
+  reviewer: [sentinel, iris]
+  tester: [sentinel, iris]
+  security-gate: [sentinel, iris]
+  deployer: atlas
+  qa-tester: [sentinel, iris]
+
+cron:
+  interval_ms: 120000  # 2 minutes
+
+polling:
+  model: minimax/MiniMax-M2.7
+  timeoutSeconds: 1800
+
+agents:
+  - id: planner
+    name: Planner
+    role: analysis
+    description: Decomposes tasks into ordered user stories based on PRD functional modules.
+    workspace:
+      baseDir: agents/planner
+      files:
+        AGENTS.md: agents/planner/AGENTS.md
+        SOUL.md: agents/planner/SOUL.md
+        IDENTITY.md: agents/planner/IDENTITY.md
+
+  - id: setup-repo
+    name: Setup Repo
+    role: coding
+    description: Creates repo, GitHub remote, downloads Stitch designs, pushes branch.
+    workspace:
+      baseDir: agents/setup
+      files:
+        AGENTS.md: ../../agents/shared/setup/AGENTS.md
+        SOUL.md: ../../agents/shared/setup/SOUL.md
+        IDENTITY.md: ../../agents/shared/setup/IDENTITY.md
+
+  - id: setup-build
+    name: Setup Build
+    role: coding
+    description: Installs dependencies, establishes build baseline, configures lint.
+    workspace:
+      baseDir: agents/setup
+      files:
+        AGENTS.md: ../../agents/shared/setup/AGENTS.md
+        SOUL.md: ../../agents/shared/setup/SOUL.md
+        IDENTITY.md: ../../agents/shared/setup/IDENTITY.md
+
+  - id: developer
+    name: Developer
+    role: coding
+    description: Implements features per story, creates PR for each.
+    workspace:
+      baseDir: agents/developer
+      files:
+        AGENTS.md: agents/developer/AGENTS.md
+        SOUL.md: agents/developer/SOUL.md
+        IDENTITY.md: agents/developer/IDENTITY.md
+
+  - id: reviewer
+    name: Reviewer
+    role: verification
+    description: Reads PR review comments, fixes issues, merges PR.
+    workspace:
+      baseDir: agents/reviewer
+      files:
+        AGENTS.md: agents/reviewer/AGENTS.md
+        SOUL.md: agents/reviewer/SOUL.md
+        IDENTITY.md: agents/reviewer/IDENTITY.md
+
+  - id: tester
+    name: Tester
+    role: testing
+    description: Integration testing and final PR to main.
+    workspace:
+      baseDir: agents/tester
+      files:
+        AGENTS.md: agents/tester/AGENTS.md
+        SOUL.md: agents/tester/SOUL.md
+        IDENTITY.md: agents/tester/IDENTITY.md
+
+  - id: security-gate
+    name: Security Gate
+    role: verification
+    description: Scans code for security vulnerabilities before final testing.
+    workspace:
+      baseDir: agents/security-gate
+      files:
+        AGENTS.md: agents/security-gate/AGENTS.md
+        SOUL.md: agents/security-gate/SOUL.md
+        IDENTITY.md: agents/security-gate/IDENTITY.md
+
+  - id: qa-tester
+    name: QA Tester
+    role: coding
+    description: Stitch-driven browser QA testing — verifies every screen, button, form, and API.
+    workspace:
+      baseDir: agents/qa-tester
+      files:
+        AGENTS.md: agents/qa-tester/AGENTS.md
+        SOUL.md: agents/qa-tester/SOUL.md
+        IDENTITY.md: agents/qa-tester/IDENTITY.md
+
+  - id: deployer
+    name: Deployer
+    role: coding
+    description: Deploys completed projects — creates systemd service, registers in Mission Control, sets up Cloudflare tunnel.
+    workspace:
+      baseDir: agents/deployer
+      files:
+        AGENTS.md: agents/deployer/AGENTS.md
+        SOUL.md: agents/deployer/SOUL.md
+        IDENTITY.md: agents/deployer/IDENTITY.md
+
+  - id: designer
+    name: Designer
+    role: coding
+    description: Generates UI designs via Stitch API and saves to project.
+    workspace:
+      baseDir: agents/designer
+      files:
+        AGENTS.md: agents/designer/AGENTS.md
+        SOUL.md: agents/designer/SOUL.md
+        IDENTITY.md: agents/designer/IDENTITY.md
+
+steps:
+  - id: plan
+    agent: planner
+    input: |
+      Analyze the following task and produce a detailed PRD (Product Requirements Document).
+      Do NOT create stories yet — the design step will generate screen designs first,
+      then the stories step will decompose based on both PRD and screen designs.
+
+      TASK:
+      {{task}}
+
+      Instructions:
+      1. Explore the codebase (if repo exists) to understand the stack, conventions, and patterns
+      2. Read references/brainstorming-protocol.md for architectural decision-making
+      3. Write a comprehensive PRD covering:
+         - Project overview and goals
+         - Target platform (web/mobile/desktop)
+         - Functional requirements (all features, pages, modules)
+         - Technical requirements (stack, DB, APIs, auth)
+         - UI/UX requirements (pages, screens, interactions)
+         - Non-functional requirements (performance, security)
+         - If the task is a game/oyun: specify game type, physics model, input keys,
+           state machine states, and require window.game state exposure
+      4. The PRD must be detailed enough for a designer to identify ALL screens
+         and for a developer to implement without ambiguity
+
+      === MANDATORY: SCREEN TABLE IN PRD ===
+      The PRD MUST end with a "## Ekranlar (Screens)" section containing a numbered table:
+      | # | Ekran Adı | Tür | Açıklama |
+      |---|-----------|-----|----------|
+      | 1 | Ana Dashboard | dashboard | KPI kartları, son aktiviteler |
+      | 2 | Müşteri Listesi | list-view | Arama, filtre, pagination |
+      ...
+
+      MINIMUM SCREEN COUNT by project type:
+      - Landing page / static site: 3-5
+      - Game (web/mobile): 5-8
+      - Dashboard / analytics: 8-15
+      - CRUD application: 10-15
+      - CRM / ERP / SaaS: 20-35
+      - E-commerce: 25-40
+
+      MANDATORY SCREENS for CRUD entities:
+      Each entity (customer, quotation, product, etc.) requires minimum 3 screens:
+      1. List view (search, filter, pagination)
+      2. Detail view (all info, related data, actions)
+      3. Form (create/edit, validation)
+
+      Each report type = 1 separate screen (not a single "reports" page).
+
+      Standard screens that MUST be included:
+      - Login page
+      - Settings (profile, notifications, appearance, security)
+      - 404 / Error page
+      - Empty states (when lists are empty)
+
+      If the PRD screen table has FEWER screens than the minimum for the project type,
+      add the missing screens before outputting the PRD.
+      CRITICAL: Even simple single-page apps MUST have at least 3 screens (e.g. main view, error state, empty state).
+      PRD_SCREEN_COUNT below 3 will be REJECTED by the pipeline guardrail.
+
+      5. Determine the repo path and branch name
+         CRITICAL REPO PATH RULE: The repo path MUST be $HOME/projects/<slug>
+         where <slug> is derived from the task description (Turkish chars removed, lowercase, hyphens).
+         Example: "Basit hesap makinesi" → $HOME/projects/basit-hesap-makinesi
+         NEVER use a different base directory. NEVER translate the project name to English.
+         Use the EXACT words from the task, just slugified.
+
+      PREVIOUS FAILURE (if retrying — READ THIS AND FIX THE ISSUE):
+      {{previous_failure}}
+
+      ============================================================
+      === DATABASE REQUIREMENT ===
+      Analyze the project and decide if it needs a database:
+      - Static sites, portfolios, landing pages, games → DB_REQUIRED: none
+      - Apps with user data, CRUD, auth → DB_REQUIRED: postgres
+      - Simple local storage apps → DB_REQUIRED: none
+      If unsure, default to none. The pipeline will provision DB only when DB_REQUIRED is postgres.
+
+      MANDATORY OUTPUT FORMAT — PIPELINE WILL BREAK IF YOU SKIP ANY KEY
+      ============================================================
+      STATUS: done
+      REPO: <exact repo path, e.g. $HOME/projects/myproject>
+      BRANCH: <branch name, e.g. feature-name>
+      PRD:
+      <full PRD text — include all sections, pages, features, technical details>
+      PRD_SCREEN_COUNT: <number of rows in the Ekranlar/Screens table>
+      DB_REQUIRED: <none|postgres|sqlite>
+      ============================================================
+    expects: "STATUS: done"
+    max_retries: 2
+    on_fail:
+      escalate_to: human
+
+  - id: design
+    agent: designer
+    input: |
+      !include critical-preamble.md
+
+      Generate professional UI designs for all frontend screens using Stitch.
+      You work from the PRD — stories do not exist yet. Identify screens from the PRD.
+
+      LANGUAGE RULE: All screen prompts sent to Stitch MUST use Turkish text content.
+      Button labels, menu items, headings, placeholder text, error messages — everything
+      the user sees on screen must be in Turkish. Example: "Hesapla" not "Calculate",
+      "Ayarlar" not "Settings", "Geri Sayım" not "Countdown".
+      Only technical terms (API, CSS, HTML) stay in English.
+
+      TASK: {{task}}
+      PRD: {{prd}}
+
+      === DEVICE TYPE ===
+      - "mobile/React Native/Expo/iOS/Android" in TASK → MOBILE
+      - "tablet/iPad" in TASK → TABLET
+      - Otherwise → DESKTOP
+
+      === STITCH API ===
+      Script: $HOME/.openclaw/setfarm-repo/scripts/stitch-api.mjs
+
+      STEP 1 — Get or create Stitch project:
+      STITCH_SCRIPT="$HOME/.openclaw/setfarm-repo/scripts/stitch-api.mjs"
+      PROJECT_NAME=$(basename {{repo}})
+      REPO_PATH="{{repo}}"
+
+      # Reuse existing project if .stitch file exists in repo (prevents duplicates on retry runs)
+      if [ -f "$REPO_PATH/.stitch" ]; then
+        PROJECT_ID=$(cat "$REPO_PATH/.stitch" | jq -r '.projectId // empty')
+      fi
+      if [ -z "$PROJECT_ID" ]; then
+        RESULT=$(node "$STITCH_SCRIPT" create-project "$PROJECT_NAME")
+        PROJECT_ID=$(echo "$RESULT" | jq -r '.projectId')
+        # Persist for future runs (mkdir -p in case repo doesn't exist yet)
+        mkdir -p "$REPO_PATH"
+        echo "{\"projectId\": \"$PROJECT_ID\", \"name\": \"$PROJECT_NAME\", \"updatedAt\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" > "$REPO_PATH/.stitch"
+      fi
+      echo "Stitch project ID: $PROJECT_ID"
+
+      === DESIGN SYSTEM SELECTION (YOUR RESPONSIBILITY) ===
+      Read references/design-standards.md for available palettes and font pairs.
+      Choose a cohesive design direction for this project:
+      - aesthetic direction: (minimal, brutalist, luxury, editorial, industrial, organic, playful, corporate)
+      - color palette matching the project's domain (from the 8 palettes in the reference)
+      - font pair (heading + body) from the 10-pair reference table
+      - icon library: Lucide React or Heroicons
+      - NEVER choose: Inter, Roboto, Arial, system-ui fonts
+      - NEVER choose: purple gradient as primary aesthetic
+      - NEVER plan for emoji icons
+
+      === SCREEN IDENTIFICATION (from PRD — YOUR RESPONSIBILITY) ===
+      Read the PRD carefully and identify ALL unique screens the project needs:
+      1. Each unique page/view = 1 screen entry
+      2. Categories: landing, dashboard, list-view, detail-view, form, settings, game-hud, game-over, etc.
+      3. MANDATORY: Generate ALL screens listed in the PRD's "Ekranlar" table.
+         The SCREENS_GENERATED count must be >= the number of rows in the PRD screen table.
+         If any screen from the PRD table is missing, the design step FAILS.
+      4. Backend-only project (0 UI) → set SCREENS_GENERATED: 0 and skip to output
+
+      STEP 2 — Generate screens (ALWAYS generate fresh for this project):
+      For each unique screen you identified:
+      a. Build detailed prompt from screen name, type, description + your chosen design_system colors/fonts
+      b. Use generate-screen-safe with screenId as identifier:
+         node "$STITCH_SCRIPT" generate-screen-safe "$PROJECT_ID" "<prompt>" "<screen.name>" <DEVICE> GEMINI_3_1_PRO
+      c. If result has "skipped: true" → screen already exists (OK, continue to next)
+      d. Otherwise, parse screens from response
+      e. ALWAYS save the screenId from each call (even skipped ones have screenId in response)
+
+      STEP 3 — Collect SCREEN_MAP (MANDATORY — even if all screens were reused/skipped):
+      After generating all screens, you MUST build SCREEN_MAP for the output.
+      If any screens were skipped (reused), get the full list:
+        node "$STITCH_SCRIPT" list-screens "$PROJECT_ID"
+      This returns ALL screens with their screenId, name, and metadata.
+      Use this data to build the SCREEN_MAP JSON array in your output.
+      NEVER skip SCREEN_MAP output. Without it, the entire pipeline breaks.
+
+      STEP 3.5 — Extract DESIGN.md:
+      After all screens are generated, extract the project's design system:
+        cd "$REPO_PATH"
+        node "$STITCH_SCRIPT" get-design-md "$PROJECT_ID" "$REPO_PATH"
+      This saves DESIGN.md to the repo root. The implement step will use it for visual consistency.
+
+      NOTE: Do NOT commit to git — the repo may not exist yet. The setup step will
+      download HTML files from Stitch and commit them.
+
+      === FONT MAP (design-standards → Stitch enum) ===
+      Space Grotesk → SPACE_GROTESK | DM Sans → DM_SANS | Sora → SORA
+      Nunito Sans → NUNITO_SANS | Plus Jakarta Sans → PLUS_JAKARTA_SANS
+      Work Sans → WORK_SANS | Manrope → MANROPE | Source Sans 3 → SOURCE_SANS_THREE
+      Geist → GEIST | IBM Plex Sans → IBM_PLEX_SANS | Montserrat → MONTSERRAT
+      (Fontshare → closest: EPILOGUE or LEXEND)
+
+      === RETRY ===
+      Fail → retry 2x. At least 1 screen required, else STATUS: retry.
+      Backend-only project (0 UI) → STATUS: done, SCREENS_GENERATED: 0
+
+      ============================================================
+      MANDATORY OUTPUT FORMAT
+      ============================================================
+      STATUS: done
+      STITCH_PROJECT_ID: <id>
+      DEVICE_TYPE: <DESKTOP|MOBILE|TABLET>
+      SCREENS_GENERATED: <count>
+      DESIGN_SYSTEM:
+        aesthetic: <direction>
+        palette: <name>
+        heading_font: <font>
+        body_font: <font>
+        icon_library: <library>
+      SCREEN_MAP:
+      [
+        {
+          "screenId": "<ACTUAL stitch screen ID from generate-screen-safe response, e.g. 11b4576160e0442d>",
+          "name": "Main Dashboard",
+          "type": "dashboard",
+          "description": "Primary overview screen"
+        }
+      ]
+      IMPORTANT: screenId MUST be the real Stitch ID returned by generate-screen-safe
+      (the hex string from the API response), NOT a made-up ID like SCR-001.
+      Parse it from the generate-screen-safe JSON output: response.screens[0].screenId
+      If screens were reused, get IDs via: node "$STITCH_SCRIPT" list-screens "$PROJECT_ID"
+
+      CRITICAL: SCREEN_MAP is MANDATORY. If you output STATUS: done without SCREEN_MAP,
+      the pipeline guardrail will REJECT your output and force a retry.
+      Even if screens were reused/skipped, you MUST output SCREEN_MAP with real IDs.
+
+      DESIGN_MD: <path to DESIGN.md or "none" if backend-only>
+      DESIGN_NOTES: <summary>
+      ============================================================
+    expects: "STATUS: done"
+    max_retries: 3
+    on_fail:
+      escalate_to: human
+
+  - id: stories
+    agent: planner
+    input: |
+      Read the PRD and SCREEN_MAP from the design step, then decompose the PRD into
+      ordered user stories. Each story must reference screens from SCREEN_MAP.
+
+      LANGUAGE RULE: All user-facing text in stories (titles, descriptions, acceptance criteria)
+      must be in English for developer clarity, BUT any UI text referenced in acceptance criteria
+      (button labels, headings, placeholders) must specify the Turkish version.
+      Example: "Button text must be 'Hesapla' (not 'Calculate')"
+
+      TASK: {{task}}
+      PRD: {{prd}}
+      REPO: {{repo}}
+      BRANCH: {{branch}}
+      SCREEN_MAP: {{screen_map}}
+      DESIGN_SYSTEM: {{design_system}}
+
+      PREVIOUS FAILURE (if retrying — READ THIS AND FIX THE ISSUE):
+      {{previous_failure}}
+
+      Instructions:
+      1. Read the PRD thoroughly to understand all features, pages, and modules
+      2. Read SCREEN_MAP to understand which screens were designed
+      3. Read references/brainstorming-protocol.md for architectural decision-making
+      4. Break the PRD into FUNCTIONAL MODULE based stories (see rules below)
+      5. Map each story to its relevant screen(s) from SCREEN_MAP using screenId
+      6. Order by dependency: design tokens first, then schema/DB, backend, frontend, integration
+      7. Each story must fit in one developer session (one context window)
+      8. Every acceptance criterion must be mechanically verifiable
+      9. Always include "Typecheck passes" as the last criterion in every story
+      10. Every story MUST include test criteria — "Tests for [feature] pass"
+
+      STORY CREATION RULES:
+
+      1. FUNCTIONAL MODULE BASED DECOMPOSITION:
+         - PRD section count != story count
+         - Each story = one functional module (model + API + UI + tests)
+         - If a PRD section has multiple independent modules → separate stories
+         - If multiple small PRD sections describe the same module → single story
+
+      2. STORY SIZE RULE:
+         - Each story should be completable in 15-25 minutes
+         - Estimated 200-500 lines of code
+         - If a module needs 500+ lines → split (backend + frontend)
+
+      3. TARGET STORY COUNT BY PRD SIZE (MANDATORY — scale up for complex projects):
+         - Small PRD (< 100 lines, simple app): 6-10 stories
+         - Medium PRD (100-400 lines, moderate complexity): 12-20 stories
+         - Large PRD (400+ lines, complex app with auth/CRUD/dashboard): 20-35 stories
+         - Very Large PRD (enterprise, multi-role, reporting): 30-50 stories
+         IMPORTANT: Every page/module in the PRD MUST have its own story.
+         Never use placeholder pages like 'yakinda eklenecek'. If the PRD
+         describes a module, it MUST be fully implemented in a story.
+
+      4. STORY CONTENT MUST BE RICH:
+         - What the functional module does (full description)
+         - DB tables/models (if applicable)
+         - API endpoints (if applicable)
+         - UI components (if applicable)
+         - Test requirements (MANDATORY for every story)
+         - screens: which screenId(s) from SCREEN_MAP this story implements
+
+      5. ORDERING (by dependency):
+         - 1st: Project setup + design tokens + DB schema
+         - 2nd: Auth + user management
+         - 3rd: Core backend modules (independent ones can run in parallel)
+         - 4th: Frontend modules
+         - 5th: Integrations + dashboard
+
+      6. MANDATORY INTEGRATION STORY (LAST STORY):
+         - The LAST story MUST be an integration/wiring story
+         - Title: "Integration wiring and end-to-end verification"
+         - This story depends_on ALL other stories
+         - Acceptance criteria MUST include:
+           a) All components from src/components/ are imported and rendered in their pages
+           b) All routes/pages are navigable (no dead routes)
+           c) All interactive elements (buttons, forms, links) trigger real functionality
+           d) No placeholder text ("Coming soon", "Game Started!", "TODO", etc.)
+           e) State transitions work end-to-end (e.g. menu -> game -> pause -> game over)
+           f) Canvas/game/chart renders actual content, not static text
+           g) window.game object is exposed with player state, score, and game state
+           h) Keyboard input (Space/ArrowUp) causes visible state change within 100ms
+           i) No Math.random() in render loop — random values seeded at init
+           j) Single state machine
+           k) Remove all orphan/dead code files created by individual stories that are
+              no longer needed after integration (e.g. standalone components replaced by
+              unified modules, duplicate utility files, unused story-specific helpers) — not dual string+object tracking
+         - This story WIRES everything together - without it, components exist in isolation
+
+      7. INTEGRATION STORY MUST CLEAN DEAD CODE:
+         - The integration story acceptance criteria MUST include:
+           "Remove all orphan/dead code files from previous stories that were
+           superseded by integration wiring. If story X created helper.ts but
+           integration replaces it with a unified module, delete helper.ts."
+         - This prevents file bloat from incremental story development.
+
+      SHARED FILE CONFLICT PREVENTION (CRITICAL):
+      Stories run in parallel worktrees. If 2 stories modify the same file,
+      merge conflicts WILL occur and waste retries. Rules:
+      - package.json: ONLY the FIRST story (US-001 setup) should add dependencies.
+        All other stories MUST NOT run npm install or modify package.json.
+        If a story needs a new dependency, add it to US-001's acceptance criteria.
+      - Shared type files (types/*.ts): Define ALL types in US-001. Later stories
+        MUST import existing types, never create overlapping type definitions.
+      - Config files (tsconfig.json, tailwind.config.*, vite.config.*): ONLY US-001.
+      - If 2 stories MUST touch the same file, use depends_on so they run sequentially.
+
+      DO NOT:
+      - Create micro-stories ("Create user model" separate, "Create user API" separate → WRONG)
+      - Make stories for non-code sections (metrics, risks, timeline)
+      - Create stories that take longer than 30 minutes
+      - Have multiple stories modify package.json, tsconfig.json, or shared type files
+
+      ============================================================
+      MANDATORY OUTPUT FORMAT — PIPELINE WILL BREAK IF YOU SKIP ANY KEY
+      ============================================================
+      STATUS: done
+      STORIES_JSON:
+      [
+        {
+          "id": "US-001",
+          "title": "Short title",
+          "description": "What this story implements — full functional module description",
+          "acceptanceCriteria": ["Criterion 1", "Tests pass", "Typecheck passes"],
+          "depends_on": [],
+          "screens": ["SCR-001"]
+        }
+      ]
+
+      DEPENDENCY RULES (depends_on field):
+      - Foundation stories (setup, design tokens, DB schema): depends_on: [] (no dependencies)
+      - Page/feature stories: depends_on: ["US-001"] (depend on foundation)
+      - Integration stories (navigation, routing, final tests): depends_on: ["US-002", "US-003"]
+      - Stories with depends_on will NOT start until ALL listed stories are complete
+      - ALWAYS add depends_on for stories that reference other stories' output
+
+      SCREEN_MAP:
+      <output the SCREEN_MAP again, but now with "stories" field added to each screen>
+      [
+        {
+          "screenId": "SCR-001",
+          "name": "Main Dashboard",
+          "type": "dashboard",
+          "description": "Primary overview screen",
+          "stories": ["US-001", "US-003"]
+        }
+      ]
+      ============================================================
+    expects: "STATUS: done"
+    max_retries: 2
+    on_fail:
+      escalate_to: human
+
+  - id: setup-repo
+    agent: setup-repo
+    input: |
+      !include critical-preamble.md
+
+      Set up the repository and download design assets.
+      Run this single command to do everything:
+
+      bash $HOME/.openclaw/setfarm-repo/scripts/setup-repo.sh {{repo}} {{branch}} {{stitch_project_id}} '{{screen_map}}'
+
+      The script handles: git init, GitHub remote, .gitignore, branch, stitch download, push.
+
+      After setup-repo.sh completes successfully, also extract DESIGN.md:
+        STITCH_SCRIPT="$HOME/.openclaw/setfarm-repo/scripts/stitch-api.mjs"
+        if [ -n "{{stitch_project_id}}" ] && [ "{{stitch_project_id}}" != "undefined" ]; then
+          cd "{{repo}}"
+          node "$STITCH_SCRIPT" get-design-md "{{stitch_project_id}}" "{{repo}}"
+          if [ -f "{{repo}}/DESIGN.md" ]; then
+            git add DESIGN.md && git commit -m "design: add DESIGN.md from Stitch" || true
+            git push origin {{branch}} || true
+          fi
+        fi
+
+      Report the script output as your output. If it prints STATUS: fail, report STATUS: fail.
+
+      ============================================================
+      MANDATORY OUTPUT FORMAT
+      ============================================================
+      STATUS: done
+      EXISTING_CODE: <true/false>
+      ============================================================
+    expects: "STATUS: done"
+    max_retries: 4
+    on_fail:
+      escalate_to: human
+
+  - id: setup-build
+    agent: setup-build
+    input: |
+      !include critical-preamble.md
+
+      Install dependencies, establish build baseline, and configure lint.
+
+      TASK: {{task}}
+      REPO: {{repo}}
+      BRANCH: {{branch}}
+
+      Instructions:
+      1. cd {{repo}} && git checkout {{branch}}
+
+      PROJECT SCAFFOLDING (if no package.json exists):
+      If there is NO package.json in the repo root, you MUST scaffold the project.
+      Use TECH_STACK from plan context: {{tech_stack}}
+      CRITICAL: Always scaffold IN the current directory (use . not project name).
+      CRITICAL: You are ALREADY inside the repo directory. Do NOT create a subdirectory.
+
+      STITCH ASSET PROTECTION (CRITICAL — do this BEFORE scaffolding):
+      Scaffold tools (create-next-app, create-vite, etc.) DELETE all existing files in the directory.
+      You MUST backup stitch/ and other design assets BEFORE running any scaffold command:
+        mkdir -p /tmp/_stitch_backup_$(basename {{repo}})
+        cp -r stitch/ /tmp/_stitch_backup_$(basename {{repo}})/ 2>/dev/null || true
+        cp .stitch /tmp/_stitch_backup_$(basename {{repo}})/ 2>/dev/null || true
+        cp DESIGN.md /tmp/_stitch_backup_$(basename {{repo}})/ 2>/dev/null || true
+        cp -r references/ /tmp/_stitch_backup_$(basename {{repo}})/ 2>/dev/null || true
+      After scaffolding completes, RESTORE them:
+        cp -r /tmp/_stitch_backup_$(basename {{repo}})/stitch/ . 2>/dev/null || true
+        cp /tmp/_stitch_backup_$(basename {{repo}})/.stitch . 2>/dev/null || true
+        cp /tmp/_stitch_backup_$(basename {{repo}})/DESIGN.md . 2>/dev/null || true
+        cp -r /tmp/_stitch_backup_$(basename {{repo}})/references/ . 2>/dev/null || true
+        rm -rf /tmp/_stitch_backup_$(basename {{repo}})
+      VERIFY: ls stitch/*.html — stitch files must exist after scaffolding.
+
+      Commands by TECH_STACK:
+      - nextjs:        npx create-next-app@latest . --typescript --tailwind --eslint --app --no-src-dir --import-alias "@/*" --yes
+      - vite-react:    npm create vite@latest . -- --template react-ts && npm install
+      - vanilla-ts:    npm init -y && npm install -D typescript
+      - node-express:  npm init -y && npm install express && npm install -D typescript @types/express @types/node
+      - react-native:  npx react-native init . --template react-native-template-typescript
+
+      After scaffolding, continue with steps below.
+      VERIFY: ls package.json — if missing, scaffolding failed.
+
+      2. Read package.json to understand the project stack
+      3. Install any additional dependencies needed: npm install
+
+      FRONTEND BUNDLER SETUP (MANDATORY for browser-targeted TypeScript projects):
+      After installing dependencies, check if the project needs a bundler:
+      - If package.json exists AND has TypeScript (.ts/.tsx files in src/) AND the project
+        targets a browser (has index.html, or uses React/Canvas/DOM APIs):
+        a. Check if a bundler already exists in devDependencies (vite, esbuild, webpack, parcel, rollup)
+        b. If NO bundler found: install esbuild, configure build script
+        c. If bundler already exists: verify build script produces a working bundle
+      - If project is Node.js backend only: skip this step
+      - NEVER use "tsc" alone as the build command for browser-targeted projects
+
+      4. Run build to establish baseline
+      5. Run tests if test script exists
+      6. Commit any setup changes: git add -A && git commit -m "chore: setup build baseline" || true
+      7. Push: git push origin {{branch}}
+
+      !include lint-setup.md
+
+      ============================================================
+      MANDATORY OUTPUT FORMAT
+      ============================================================
+      STATUS: done
+      BUILD_CMD: <e.g. npm run build>
+      TEST_CMD: <e.g. npm test>
+      LINT_CMD: <e.g. npm run lint>
+      CI_NOTES: <brief>
+      BASELINE: <status>
+      ============================================================
+    expects: "STATUS: done"
+    max_retries: 4
+    on_fail:
+      escalate_to: human
+
+
+  - id: implement
+    agent: developer
+    type: loop
+    loop:
+      over: stories
+      completion: all_done
+      fresh_session: true
+      verify_each: true
+      verify_step: verify
+      parallel_count: 6
+    input: |
+      !include critical-preamble.md
+
+      Implement ONE user story. Create a PR for review.
+
+      LANGUAGE RULE: All user-facing text (buttons, labels, headings, placeholders,
+      error messages, tooltips) MUST be in Turkish unless the task explicitly says otherwise.
+      Code comments and variable names stay in English.
+
+      TASK: {{task}}
+      REPO: {{repo}}
+      WORKDIR: {{story_workdir}}
+      BRANCH: {{branch}}
+      BUILD_CMD: {{build_cmd}}
+      TEST_CMD: {{test_cmd}}
+      LINT_CMD: {{lint_cmd}}
+
+      CRITICAL: You MUST `cd {{story_workdir}}` FIRST before ANY action. ALL commands,
+      file reads, and file writes MUST use WORKDIR as the working directory.
+      NEVER run commands from your default workspace — always cd to WORKDIR first.
+      The branch is already checked out. node_modules is symlinked from REPO.
+
+      NEXT.JS CONFIG RULE: If next.config.ts exists, do NOT add unknown options.
+      Valid options: reactStrictMode, images, env, experimental, output, distDir.
+      NEVER add: appDir (removed in Next 14+), swcMinify (default in Next 14+),
+      transpilePackages (use experimental instead). If build says "Invalid next.config.ts",
+      read the error and remove the invalid option.
+
+      DEPENDENCY RULE: NEVER use `npx <package>` or run a CLI tool without first verifying
+      the package is installed. If you need tailwindcss, run `npm install -D tailwindcss`
+      BEFORE `npx tailwindcss init`. If you need postcss, install it first. Check package.json
+      devDependencies before assuming any tool is available.
+
+      SHARED FILE RULE: Do NOT modify package.json unless this is the setup story (US-001).
+      All dependencies should already be installed by the setup story. If a dependency is
+      truly missing (e.g. build fails with "Cannot find module X"):
+      1. Run `npm install <pkg>` in the MAIN REPO ({{repo}}), not the worktree
+         cd {{repo}} && npm install <pkg> && cd {{story_workdir}}
+      2. The worktree's node_modules symlink will pick it up automatically
+      3. Do NOT commit package.json changes from the worktree — they cause merge conflicts
+      Common missing packages: lucide-react, recharts, react-router-dom, chart.js, @types/*
+
+      !include story-loop-context.md
+
+      DESIGN DATA (if available):
+      STITCH_PROJECT_ID: {{stitch_project_id}}
+      DESIGN_MANIFEST: {{design_manifest}}
+      DESIGN_TOKENS: {{design_tokens}}
+      STORY_SCREENS: {{story_screens}}
+
+      DESIGN.MD INTEGRATION (MANDATORY if file exists):
+      If DESIGN.md exists at the repo root, read it before writing any UI code.
+      Follow its design system guidelines (colors, typography, spacing, component
+      patterns) when implementing UI components. DESIGN.md is the authoritative
+      source for visual consistency across all screens and stories.
+
+      PREVIOUS FAILURE (if retrying — READ THIS FIRST and avoid the same mistake):
+      {{previous_failure}}
+
+      BEFORE writing code:
+      0. If PREVIOUS FAILURE is non-empty: analyze what went wrong. The previous attempt
+         timed out or crashed. Common causes: infinite loop, hanging process, excessive
+         file I/O, or memory exhaustion. Adjust your approach to avoid the same failure.
+      1. Read the FULL story description and ALL acceptance criteria before coding
+      2. Read references/design-standards.md + references/backend-standards.md + references/react-best-practices.md
+      3. Read references/web-guidelines.md for accessibility and interaction rules
+      4. If project uses Next.js, read references/next-best-practices.md
+
+      SCREEN BINDING (MANDATORY — do this before writing any code):
+      IF STORY_SCREENS is non-empty:
+        a. Parse the JSON array — these are the exact screens this story must implement
+        b. For each screen: read {{story_workdir}}/stitch/<screenId>.html for layout reference
+        c. Read {{story_workdir}}/stitch/design-tokens.css for colors/fonts/spacing
+        d. Implementation MUST match Stitch design (layout, colors, fonts)
+        e. NEVER use fonts/colors NOT in design-tokens.css
+        f. You MUST @import or copy {{story_workdir}}/stitch/design-tokens.css into your main CSS file — do NOT recreate tokens
+        g. {{story_workdir}}/stitch/design-tokens.css is the SINGLE SOURCE OF TRUTH for all design values
+      IF STORY_SCREENS is empty (fallback):
+        a. If stitch/ directory exists:
+           - Read {{story_workdir}}/stitch/DESIGN_MANIFEST.json to find this story's screen
+           - Read {{story_workdir}}/stitch/<story-id>.html for layout reference
+           - Read {{story_workdir}}/stitch/design-tokens.css for colors/fonts/spacing
+           - Implementation MUST match Stitch design (layout, colors, fonts)
+           - NEVER use fonts/colors NOT in design-tokens.css
+           - You MUST @import or copy {{story_workdir}}/stitch/design-tokens.css into your main CSS file
+           - stitch/design-tokens.css is the SINGLE SOURCE OF TRUTH for all design values
+      === CRITICAL: NO STITCH = NO CODE ===
+      If a page/screen you need to implement does NOT have a corresponding Stitch HTML in stitch/:
+      - Do NOT create the page with mock data or placeholder content
+      - Instead, add it to the MISSING_SCREENS list in your output
+      - Only implement pages that have Stitch HTML reference
+      This prevents mock data accumulation and ensures design-code consistency.
+
+      STITCH COMPONENT IMPORT RULES (MANDATORY — NO EXCEPTIONS):
+      1. If stitch/ directory has screen HTML files, there MUST be corresponding React components in components/
+      2. These screen components MUST be imported and rendered in the main page (app/page.tsx or equivalent)
+      3. NEVER create inline/duplicate overlay or screen implementations in page files
+      4. NEVER write game state overlays (start, pause, game-over) directly inside page.tsx — ALWAYS use dedicated components
+      5. If a component exists in components/ that matches a Stitch screen, you MUST use it — do NOT recreate it
+      6. After implementation, verify: every file in stitch/DESIGN_MANIFEST.json screens has a matching import in the render tree
+
+      FRAMEWORK-AWARE DESIGN INTEGRATION (MANDATORY):
+      1. NEXT.JS (app/ dir varsa):
+         - app/layout.tsx ASLA silme/boslaltma
+         - app/globals.css'in BASINA: @import "../stitch/design-tokens.css"
+         - Font loading: next/font veya Google Fonts <link>
+         - Component logic page.tsx'e DEGIL components/ klasorune
+      2. REACT (Vite/CRA):
+         - src/index.css veya src/main.tsx'de design-tokens.css import et
+         - React Router ile navigation (Stitch link hedeflerine esle)
+      3. GENEL KURALLAR:
+         - design-tokens.css IMPORT edilir, copy-paste YAPILMAZ
+         - var(--property-name) ile kullan
+         - design-tokens.css disinda --font-*, --color-* tanimlama YASAK
+         - Mevcut CSS dosyalarini SILME — @import ekle
+
+      !include game-dev-rules.md
+
+
+      !include design-first.md
+
+      !include db-context.md
+
+      !include browser-verification.md
+
+      === WORKFLOW ===
+
+      1. Read progress-{{run_id}}.txt to understand what previous stories implemented
+
+      2. cd into WORKDIR
+
+      3. Create story branch from feature branch:
+         cd {{repo}} && git stash --include-untracked 2>/dev/null || true
+         git checkout {{branch}} && git pull origin {{branch}}
+         RUN_SHORT=$(echo "{{run_id}}" | cut -c1-8)
+         STORY_BRANCH="${RUN_SHORT}-{{current_story_id}}"
+         git checkout -b "$STORY_BRANCH"
+
+      4. Implement the story fully:
+         - Write tests for EVERY acceptance criterion
+         - Implement the functional module completely
+         - No TODOs, no placeholders, no shortcuts
+         - Use REALISTIC demo content: real Turkish names (Elif Yılmaz, Ahmet Kaya), real-looking emails (elif@reelforge.com), meaningful descriptions. NEVER use John Doe, Jane Smith, Lorem ipsum, test@test.com, foo@bar, example@, dummy, sample data. If data will come from API later, use realistic placeholder that looks like production.
+
+      5-7. SELF-FIX LOOP (up to 3 cycles — do NOT give up after first failure):
+         for CYCLE in 1 2 3; do
+           echo "=== Verification cycle $CYCLE ==="
+           LINT_OK=true; BUILD_OK=true; TEST_OK=true
+
+           # Lint — always auto-fix first, then check
+           npx eslint --fix "src/**/*.{ts,tsx}" 2>/dev/null || npx eslint --fix "app/**/*.{ts,tsx}" 2>/dev/null || true
+           {{lint_cmd}} 2>&1 || { LINT_OK=false; echo "Lint failed after auto-fix — manual fix needed"; }
+           if [ "$LINT_OK" = "false" ]; then
+             LINT_OUT=$({{lint_cmd}} 2>&1) || true
+             echo "$LINT_OUT"
+             # Read each error line (file:line:col error message), open the file, fix the issue
+             # Common fixes: remove unused imports, add missing types, fix naming
+           fi
+
+           # Build
+           {{build_cmd}} 2>&1 || { BUILD_OK=false; echo "Build failed — fixing..."; }
+           if [ "$BUILD_OK" = "false" ]; then
+             BUILD_OUT=$({{build_cmd}} 2>&1) || true
+             echo "$BUILD_OUT"
+             # Common fix patterns:
+             # "Cannot find module 'vitest'" → exclude test files from tsconfig build:
+             #   Add "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"] to tsconfig.json
+             #   OR add "types": ["vitest/globals"] to compilerOptions
+             # "Cannot find module 'X'" → npm install X in {{repo}}
+             # "'X' is declared but never used" → remove unused import
+             # Fix each error, then re-run build
+           fi
+
+           # Test
+           {{test_cmd}} 2>&1 || { TEST_OK=false; echo "Tests failed — fixing..."; }
+           if [ "$TEST_OK" = "false" ]; then
+             TEST_OUT=$({{test_cmd}} 2>&1) || true
+             echo "$TEST_OUT"
+             # Read failing test output and fix the code or tests
+           fi
+
+           if [ "$LINT_OK" = "true" ] && [ "$BUILD_OK" = "true" ] && [ "$TEST_OK" = "true" ]; then
+             echo "All checks pass on cycle $CYCLE"
+             break
+           fi
+
+           if [ "$CYCLE" = "3" ]; then
+             echo "WARNING: Still failing after 3 fix cycles — committing best effort"
+           fi
+         done
+
+         IMPORTANT: Do NOT report STATUS: retry just because lint/build/test failed once.
+         You MUST attempt to fix the issue yourself. Read the error output carefully,
+         identify the root cause, edit the file, and re-run. Only report STATUS: retry
+         if you have genuinely tried 3 fix cycles and the error is truly unfixable
+         (e.g. missing external API, infrastructure issue, dependency conflict).
+
+      8. Commit (exclude runtime files):
+         rm -f .setfarm-step-output.txt 2>/dev/null || true
+         git add -A && git commit -m "feat: {{current_story_id}} - {{current_story_title}}"
+
+      9. Push:
+         git push -u origin "$STORY_BRANCH"
+
+      10. Create PR:
+          PR_URL=$(gh pr create --base {{branch}} --head "$STORY_BRANCH" \
+            --title "feat: {{current_story_id}} - {{current_story_title}}" \
+            --body "$(cat <<'PRBODY'
+          ## Story
+          {{current_story}}
+
+          ## Changes
+          <describe what you implemented>
+
+          ## Tests
+          <describe what tests you wrote>
+          PRBODY
+          )")
+          echo "PR created: $PR_URL"
+
+      11. Write detailed progress to progress-{{run_id}}.txt:
+          === {{current_story_id}}: {{current_story_title}} ===
+          COMPLETED: $(date -Iseconds)
+          FILES CHANGED: <list of files>
+          KEY DECISIONS: <architectural decisions made>
+          DEPENDENCIES ADDED: <if any>
+
+      ============================================================
+      MANDATORY OUTPUT FORMAT
+      ============================================================
+      STATUS: done
+      STORY_BRANCH: <exact branch name, e.g. a1b2c3d4-US-001>
+      PR_URL: <full PR URL from gh pr create>
+      CHANGES: <what you implemented>
+      TESTS: <what tests you wrote>
+
+      STORY_BRANCH must be the exact branch name you created and pushed.
+      PR_URL must be the URL returned by gh pr create.
+      ============================================================
+    expects: "STATUS: done"
+    max_retries: 5
+    on_fail:
+      escalate_to: human
+
+  - id: verify
+    agent: reviewer
+    input: |
+      !include critical-preamble.md
+
+      Verify the developer's story implementation by reading PR review comments,
+      fixing issues, then merging the PR.
+
+      TASK: {{task}}
+      REPO: {{repo}}
+      BRANCH: {{branch}}
+      STORY_BRANCH: {{story_branch}}
+      PR_URL: {{pr_url}}
+      CHANGES: {{changes}}
+      BUILD_CMD: {{build_cmd}}
+      TEST_CMD: {{test_cmd}}
+      LINT_CMD: {{lint_cmd}}
+      CURRENT STORY: {{current_story}}
+      STORY_SCREENS: {{story_screens}}
+      DESIGN_FIDELITY_FEEDBACK: {{design_fidelity_feedback}}
+      DESIGN_WARNING: {{design_warning}}
+      PROGRESS LOG: {{progress}}
+
+      PREVIOUS FAILURE (if retrying — YOU MUST FIX THESE ISSUES FIRST before doing anything else):
+      {{previous_failure}}
+
+      GIT COMMIT RULE: ALWAYS use `git commit -m "message"`. NEVER use bare `git commit`
+      without -m flag — the server has no terminal editor (EDITOR unset), bare commit will fail.
+
+      GH CLI NOTE: Only use valid --json fields. Common valid fields:
+      number, title, state, body, url, headRefName, baseRefName, reviews, comments,
+      additions, deletions, changedFiles, mergeable, createdAt, closedAt, mergedAt.
+      INVALID fields (will error): headSha, mergeableState, statusCheckRollup.
+      To check mergeable status: gh pr view URL --json mergeable --jq '.mergeable'
+
+      === VERIFY + FIX + MERGE WORKFLOW ===
+
+      STEP 0 — Fix previous failures (MANDATORY if PREVIOUS FAILURE is non-empty):
+      If previous_failure contains QUALITY GATE or GUARDRAIL errors:
+      1. cd {{repo}}
+      2. Check if story branch exists:
+         git fetch origin
+         if git rev-parse --verify origin/{{story_branch}} >/dev/null 2>&1; then
+           git checkout {{story_branch}} && git pull origin {{story_branch}}
+         else
+           # PR already merged — fix directly on feature branch
+           git checkout {{branch}} && git pull origin {{branch}}
+         fi
+      2b. If checkout fails with "local changes would be overwritten":
+           git stash --include-untracked && git checkout {{story_branch}} && git stash pop 2>/dev/null || true
+      3. Read each error message carefully and fix the code in the specified files
+         - dead_link_hash: Replace href="#" with real routes (e.g. /terms, /privacy)
+         - hardcoded_user_data: Replace fake names in placeholders with generic text
+         - Any other error: read the file and line number, fix the issue
+      4. git add -A && git commit -m "fix: address quality gate issues for {{current_story_id}}"
+      5. git push
+      6. Then continue with STEP 1
+
+
+      STEP 1 — Checkout and read PR reviews:
+      1. cd into {{repo}}
+      2. Clean files that block checkout/rebase:
+         git clean -fd node_modules/.vite 2>/dev/null || true
+         git checkout -- node_modules/.vite 2>/dev/null || true
+         rm -f .setfarm-step-output.txt 2>/dev/null || true
+         git checkout -- .setfarm-step-output.txt 2>/dev/null || true
+      3. git fetch origin
+      4. git checkout {{story_branch}} && git pull origin {{story_branch}}
+         If checkout fails with "local changes would be overwritten":
+           git stash && git checkout {{story_branch}} && git pull origin {{story_branch}} && git stash pop 2>/dev/null || true
+      4. Get PR number and read review comments:
+         PR_NUM=$(gh pr view "{{pr_url}}" --json number --jq '.number' 2>/dev/null || echo "")
+         if [ -z "$PR_NUM" ]; then
+           # PR may not exist yet or URL is invalid — skip review reading
+           echo "No PR found at {{pr_url}} — will do own quality review"
+         else
+           REVIEWS=$(gh pr view "{{pr_url}}" --json reviews --jq '.reviews[].body' 2>/dev/null || echo "")
+           COMMENTS=$(gh pr view "{{pr_url}}" --json comments --jq '.comments[].body' 2>/dev/null || echo "")
+           REPO_SLUG=$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || echo "")
+           if [ -n "$REPO_SLUG" ]; then
+             REVIEW_COMMENTS=$(gh api "repos/$REPO_SLUG/pulls/$PR_NUM/comments" --jq '.[].body' 2>/dev/null || echo "")
+           fi
+         fi
+      5. If external reviews exist → read them and proceed to STEP 2
+         If NO reviews exist → skip to STEP 3 (do your own quality review instead)
+         Do NOT retry waiting for reviews — you already waited 5 minutes. Proceed with your own judgment.
+
+      STEP 2 — Fix review issues (only if external reviews exist):
+      1. Read ALL review suggestions and comments carefully
+      2. If reviews mention issues or suggestions → fix ALL of them
+      3. Run lint: {{lint_cmd}} → fix any lint errors
+      4. Run build: {{build_cmd}} → fix any build errors
+      5. Run test: {{test_cmd}} → fix any test failures
+      6. If fixes were needed:
+         git add -A && git commit -m "fix: address review comments for {{current_story_id}}"
+         git push
+
+      STEP 3 — Quality + Design check (always do this, whether or not external reviews exist):
+      1. Review the code changes yourself:
+         - Code exists (not just TODOs/placeholders)
+         - Tests were written for this story
+         - No hardcoded secrets, .env not committed
+      1.5. Stitch design compliance (if stitch/ exists):
+         - CRITICAL: stitch/design-tokens.css IMPORT edilmis mi kontrol et:
+           grep -rE "@import.*design-tokens|import.*design-tokens" src/ app/ styles/ 2>/dev/null
+           Bulunamazsa → FAIL (agent duzeltmeli)
+         - Check CSS vars from stitch/design-tokens.css are used
+         - FAIL if main CSS file has custom tokens that duplicate stitch/design-tokens.css values (agent must not recreate tokens)
+         - Duplicate CSS var kontrolu:
+           grep -rE "^\s*--" src/ app/ styles/ 2>/dev/null | grep -v design-tokens
+           design-tokens.css'deki var'larla eslesen varsa → FAIL
+         - grep hardcoded colors not in design-tokens → WARN
+         - Verify fonts match stitch/DESIGN_MANIFEST.json
+      1.55. Layout structure compliance (screen-based if STORY_SCREENS available):
+         IF STORY_SCREENS is non-empty:
+           Parse the JSON array. For each screen in STORY_SCREENS:
+           - Read stitch/<screenId>.html for expected DOM structure
+           - For each top-level section with a class name in stitch HTML,
+             verify a matching container/component exists in implementation:
+             a. grep for class name (kebab-case) or component name (PascalCase)
+             b. FAIL if a major section is completely missing (e.g. .score-board, .game-container)
+             c. WARN if container nesting is significantly different
+           - Check layout type preserved:
+             a. If stitch uses flex layout -> implementation should use flex (not float/table)
+             b. If stitch uses grid -> implementation should use grid
+         IF STORY_SCREENS is empty (fallback):
+           - Read stitch/<story-html>.html for expected DOM structure
+           - For each top-level section with a class name in stitch HTML,
+             verify a matching container/component exists in implementation:
+             a. grep for class name (kebab-case) or component name (PascalCase)
+             b. FAIL if a major section is completely missing
+             c. WARN if container nesting is significantly different
+           - Check layout type preserved (flex->flex, grid->grid)
+         - This checks STRUCTURE not pixel-perfection
+      1.57. Web Interface Guidelines compliance:
+         - grep for anti-patterns: transition: all, outline-none without focus replacement, div onClick without button
+         - Verify all images have explicit width and height attributes
+         - Verify all icon-only buttons have aria-label
+         - Verify form inputs have associated labels
+         - WARN on any violations found
+      1.56. Stitch component import verification (if stitch/ exists):
+         - List all screen HTML files in stitch/ directory
+         - For each screen, verify a corresponding React component exists in components/
+         - CRITICAL: Verify that each screen component is IMPORTED in app/page.tsx (or main entry)
+         - grep for inline overlay/modal implementations in page.tsx — if found, FAIL
+         - Patterns to flag: gameState conditions rendering plain text overlays without component imports
+         - FAIL REASON: "Stitch screen components exist but are not imported in render tree — inline duplicates detected"
+      1.6. Completeness checks (CRITICAL - FAIL if any found):
+         - grep -rE "coming soon|Coming Soon|placeholder|TODO.*implement|work in progress" --include="*.tsx" --include="*.ts" . → FAIL if found as visible UI text content
+         - If stitch/DESIGN_MANIFEST.json exists: for each screen listed, verify a corresponding component or page implements it (search by title keywords). Missing screen = FAIL.
+         - DEAD CODE CHECK: List all .js/.ts/.tsx files in src/components/ or stitch/. For each, verify it is imported somewhere. If a module exists but is never imported in the entry point (page.tsx, index.html, App.tsx) → WARN and import it or remove it.
+         - INTEGRATION WIRING: If this is the last story (integration story), verify ALL previously created component modules are imported and rendered in the main entry point. Do NOT reimplement functionality inline — use the existing modules.
+         - DEAD CODE CLEANUP (integration story only): After wiring, find and DELETE orphan files:
+           * Files in src/components/ that are not imported anywhere
+           * Duplicate utility/helper files superseded by unified modules
+           * Story-specific standalone files replaced by integrated versions
+           Run: find src/ -name "*.tsx" -o -name "*.ts" | while read f; do basename=$(basename "$f" .tsx); grep -rq "$basename" src/ --include="*.tsx" --include="*.ts" -l | grep -v "$f" || echo "ORPHAN: $f"; done
+         - DESIGN FIDELITY: If DESIGN_FIDELITY_FEEDBACK is non-empty, read each issue and fix. Missing buttons, nav links, or inputs from Stitch design MUST be added to the implementation.
+         - grep -rE "blue-[0-9]+/[0-9]+" components/ → WARN: likely hardcoded Tailwind color — check if it belongs in design-tokens instead
+      1.68. Mock data detection (CRITICAL — FAIL if found):
+         Search all .tsx/.ts/.jsx files for mock/hardcoded data patterns:
+         - grep -rE "useState\(\[\{.*name:.*John|Jane|test|demo" --include="*.tsx" --include="*.ts" . → FAIL
+         - grep -rE "const (mock|fake|dummy|sample|hardcoded)" --include="*.tsx" --include="*.ts" . → FAIL
+         - grep -rE "setTimeout\(.*router\.(push|replace)" --include="*.tsx" . → FAIL (fake form submit)
+         - grep -rE "customers/[0-9]|products/[0-9]|users/[0-9]" --include="*.tsx" . → FAIL (hardcoded integer IDs instead of UUIDs)
+         If any of these patterns are found, the developer used mock data instead of real API integration.
+         FIX: replace with actual API calls (fetch from /api/...) or FAIL the story.
+      1.65. Stitch HTML uyumluluk kontrolü (ZORUNLU — stitch/ varsa):
+         IF stitch/ directory exists AND STORY_SCREENS is non-empty:
+           For each screen in STORY_SCREENS:
+           a. Count top-level sections in stitch/<screenId>.html:
+              STITCH_SECTIONS=$(grep -cE "<(section|header|footer|nav|main|div class)" stitch/<screenId>.html 2>/dev/null || echo "0")
+           b. Count corresponding sections in implementation code:
+              CODE_SECTIONS=$(grep -crE "<(section|header|footer|nav|main|div className)" src/ app/ components/ 2>/dev/null | awk -F: '{sum+=$NF}END{print sum}')
+           c. If CODE_SECTIONS < STITCH_SECTIONS * 0.7 → FAIL: "Stitch HTML %70 eşleşme altında — eksik bölümler var"
+           d. grep -rE "placeholder|TODO|coming soon|Coming Soon|yakında" src/ app/ components/ → FAIL if found in JSX content
+           e. Count code lines for this story's main component:
+              If component < 80 lines BUT stitch HTML > 200 lines → FAIL: "Component çok kısa — Stitch HTML tam dönüştürülmemiş"
+      1.65. Stitch HTML uyumluluk kontrolü (ZORUNLU — stitch/ varsa):
+         IF stitch/ directory exists AND STORY_SCREENS is non-empty:
+           For each screen in STORY_SCREENS:
+           a. Count top-level sections in stitch/<screenId>.html:
+              STITCH_SECTIONS=$(grep -cE "<(section|header|footer|nav|main|div class)" stitch/<screenId>.html 2>/dev/null || echo "0")
+           b. Count corresponding sections in implementation code:
+              CODE_SECTIONS=$(grep -crE "<(section|header|footer|nav|main|div className)" src/ app/ components/ 2>/dev/null | awk -F: '{sum+=$NF}END{print sum}')
+           c. If CODE_SECTIONS < STITCH_SECTIONS * 0.7 → FAIL: "Stitch HTML %70 eşleşme altında — eksik bölümler var"
+           d. grep -rE "placeholder|TODO|coming soon|Coming Soon|yakında" src/ app/ components/ → FAIL if found in JSX content
+           e. Count code lines for this story's main component:
+              If component < 80 lines BUT stitch HTML > 200 lines → FAIL: "Component çok kısa — Stitch HTML tam dönüştürülmemiş"
+      1.7. UI Contract compliance (if stitch/UI_CONTRACT.json exists):
+         - Read UI_CONTRACT.json and verify each element is implemented:
+         - Navigation links → matching Route/page components exist
+         - Buttons → matching onClick handlers exist (not empty)
+         - Inputs → controlled state (onChange + value/checked)
+         - package.json dependencies match contract requirements (router, DnD)
+         - Hardcoded demo names replaced with dynamic props/state
+      2. Frontend design checks (if any .css/.tsx changed):
+         - grep -rE "font-family.*system-ui|font-family.*Roboto|font-family.*Arial|font-family.*Inter" src/ → FAIL if found (banned fonts)
+         - grep -rE "fonts\.googleapis\.com|next/font" src/ → FAIL if missing (no font import)
+         - grep -rE "\-\-font-heading|\-\-font-body" src/ → FAIL if missing (no font vars)
+         - grep -rE "transition:\s*all" src/ → FAIL if found
+         - grep -rE "grid-cols-3" src/ → WARN (check asymmetry manually)
+         If any FAIL → fix yourself, commit, push before proceeding
+      3. Run lint: {{lint_cmd}} → fix any lint errors
+      4. Run build: {{build_cmd}} → fix any build errors
+      5. Run test: {{test_cmd}} → fix any test failures
+      6. If you found issues and fixed them:
+         git add -A && git commit -m "fix: quality + design improvements for {{current_story_id}}"
+         git push
+
+
+      STEP 3.5 — Runtime Smoke Test (MANDATORY for web projects):
+      Run the Playwright smoke test to catch runtime errors, missing DOM elements,
+      JS exceptions, and blank pages that unit tests and build checks miss.
+
+      1. Run the smoke test:
+         ```bash
+         SMOKE_RESULT=$(node $HOME/.openclaw/setfarm-repo/scripts/smoke-test.mjs "{{repo}}" 2>&1)
+         SMOKE_EXIT=$?
+         echo "$SMOKE_RESULT"
+         ```
+      2. Parse the result JSON:
+         - If status is "pass" OR "warn" with 0 failures: continue to STEP 4
+         - If exit code 0 (pass): continue to STEP 4
+         - If exit code 1 but status is "warn" and failures array is empty: this is a
+           false positive — continue to STEP 4 (warn means non-critical issues only)
+         - If exit code 1 with actual failures: read the failures array and FIX each issue
+           - "JS Exception: ..." → find and fix the runtime error in code
+           - "Console Error: ..." → fix missing imports, broken references, module issues
+           - "Page appears blank" → ensure the app renders visible content
+           After fixing: run lint+build+test, commit, push, then re-run smoke test
+         - If exit code 2 (script error) or status "skip": continue to STEP 4 (non-web project)
+      3. FAIL the verify step if smoke test fails after 2 fix attempts:
+         STATUS: retry with ISSUES listing the smoke test failures
+
+      STEP 4 — Rebase onto latest feature branch (prevents merge conflicts):
+      1. Clean unstaged files that block rebase:
+         rm -f .setfarm-step-output.txt 2>/dev/null || true
+         git checkout -- .setfarm-step-output.txt 2>/dev/null || true
+         git clean -fd node_modules/.vite 2>/dev/null || true
+      2. git fetch origin
+      3. Try rebase:
+         git rebase origin/{{branch}} 2>&1
+         REBASE_EXIT=$?
+      4. If rebase succeeds (exit 0): continue to lint/build/test
+      5. If rebase conflicts occur (exit != 0):
+         a. Check conflicted files: git diff --name-only --diff-filter=U
+         b. For each conflicted file:
+            - If it's package.json: accept theirs (feature branch), then re-add your dependency changes
+              git checkout --theirs package.json && git add package.json
+            - If it's a shared type file (types/*.ts): merge both additions manually
+            - For other files: read carefully, keep BOTH changes where possible
+         c. git add <resolved files> && git rebase --continue
+         d. If rebase is still stuck after 2 attempts:
+            git rebase --abort
+            # Fall back to merge instead of rebase
+            git merge origin/{{branch}} --no-edit 2>&1 || {
+              # If merge also conflicts, resolve the same way
+              git checkout --theirs package.json 2>/dev/null && git add package.json 2>/dev/null
+              git checkout --theirs package-lock.json 2>/dev/null && git add package-lock.json 2>/dev/null
+              git add -A && git commit --no-edit 2>/dev/null || true
+            }
+      5. Run lint: {{lint_cmd}} → fix errors
+      6. Kill stale build processes before running build:
+         pkill -f "next build" 2>/dev/null || true
+         sleep 1
+         Run build: {{build_cmd}} → fix errors
+      7. Run test: {{test_cmd}} → fix failures
+      8. git push --force-with-lease
+
+      STEP 5 — Merge PR:
+      1. Verify PR exists and is open:
+         PR_STATE=$(gh pr view "{{pr_url}}" --json state --jq '.state' 2>/dev/null || echo "UNKNOWN")
+         if [ "$PR_STATE" = "MERGED" ]; then
+           echo "PR already merged — nothing to do"
+           # Skip to STATUS: done
+         elif [ "$PR_STATE" = "UNKNOWN" ] || [ "$PR_STATE" = "CLOSED" ]; then
+           # PR doesn't exist or is closed — push and create
+           git push -u origin {{story_branch}} 2>/dev/null || true
+           gh pr create --base {{branch}} --head {{story_branch}} --title "{{current_story_id}}" --body "Auto-created by verify step" 2>/dev/null || true
+           PR_STATE="OPEN"
+         fi
+      2. If PR is open, add comment and merge:
+         if [ "$PR_STATE" = "OPEN" ]; then
+           gh pr comment "{{pr_url}}" --body "Verified: lint/build/test pass." 2>/dev/null || true
+           gh pr merge "{{pr_url}}" --squash --delete-branch 2>/dev/null || {
+             echo "Merge failed — retrying after rebase"
+             git fetch origin && git rebase origin/{{branch}} 2>/dev/null || git rebase --abort 2>/dev/null
+             git push --force-with-lease 2>/dev/null || git push 2>/dev/null || true
+             gh pr merge "{{pr_url}}" --squash --delete-branch 2>/dev/null || {
+               echo "Merge still failing — trying merge commit instead of squash"
+               gh pr merge "{{pr_url}}" --merge --delete-branch 2>/dev/null || true
+             }
+           }
+         fi
+      3. Verify PR is actually merged:
+         FINAL_STATE=$(gh pr view "{{pr_url}}" --json state --jq '.state' 2>/dev/null || echo "UNKNOWN")
+         if [ "$FINAL_STATE" != "MERGED" ]; then
+           echo "WARNING: PR state is $FINAL_STATE after merge attempt"
+           # One more try
+           gh pr merge "{{pr_url}}" --squash --delete-branch 2>/dev/null ||              gh pr merge "{{pr_url}}" --merge --delete-branch 2>/dev/null ||              echo "PR merge failed — will be auto-merged by medic"
+         fi
+      4. Reply STATUS: done
+
+      If build/test FAILS and you cannot fix:
+      Reply STATUS: retry with issues list.
+
+      ESCALATION MODE (retry count >= 3):
+      If this story has been retried 3+ times, DO NOT send back to developer.
+      Instead:
+      1. Read ALL previous error output and verify feedback
+      2. Fix the code YOURSELF — you have full access to the repo
+      3. Run lint+build+test
+      4. If you fix it → commit, push, merge PR → STATUS: done
+      5. If you truly cannot fix it → STATUS: skip (story will be skipped, others continue)
+
+      ============================================================
+      MANDATORY OUTPUT FORMAT
+      ============================================================
+      STATUS: done
+      VERIFIED: <what you confirmed>
+      MERGED: true
+
+      Or if issues found:
+      STATUS: retry
+      ISSUES:
+      - <what's wrong>
+
+      Or if escalation and unfixable:
+      STATUS: skip
+      REASON: <why this story cannot be completed>
+      ============================================================
+    expects: "STATUS: done"
+    on_fail:
+      retry_step: implement
+      max_retries: 5
+      on_exhausted:
+        escalate_to: human
+
+
+  - id: security-gate
+    agent: security-gate
+    input: |
+      Scan the feature branch for security vulnerabilities.
+
+      REPO: {{repo}}
+      BRANCH: {{branch}}
+
+      1. cd {{repo}} && git checkout {{branch}} && git pull
+      2. Run: git diff main...HEAD
+      3. Scan ALL changed files for:
+         - Hardcoded secrets (API keys, tokens, passwords, .env values in code)
+         - SQL injection (string concatenation in queries)
+         - XSS (unsanitized user input in HTML/JSX)
+         - Command injection (unsanitized input in exec/spawn)
+         - Overly permissive operations (chmod 777, rm -rf /, wildcard deletes)
+         - Missing input validation on API endpoints
+         - Error handling leaking stack traces to users
+         - Auth/authz bypasses
+         - AI code smells (TODO placeholders, lorem ipsum, hardcoded test data in prod)
+      4. Run project linters if available: {{lint_cmd}}
+      5. Check for .env files in git: git ls-files | grep -i .env
+
+      OUTPUT:
+      - If clean: STATUS: done + SECURITY_REPORT: pass + SECURITY_NOTES: <summary>
+      - If issues found but fixable: Fix them, commit, push, then STATUS: done
+      - If critical unfixable issues: STATUS: retry + SECURITY_ISSUES: <list>
+
+      ============================================================
+      MANDATORY OUTPUT FORMAT
+      ============================================================
+      STATUS: done
+      SECURITY_REPORT: <pass/warn>
+      SECURITY_NOTES: <findings summary or "No issues found">
+      ============================================================
+    expects: "STATUS: done"
+    on_fail:
+      retry_step: implement
+      max_retries: 2
+      on_exhausted:
+        escalate_to: human
+
+  - id: qa-test
+    agent: qa-tester
+    input: |
+      !include critical-preamble.md
+
+      Perform comprehensive browser-based QA testing on the deployed application.
+      Test EVERY screen from the Stitch design manifest.
+
+      TASK: {{task}}
+      REPO: {{repo}}
+      BRANCH: {{branch}}
+      BUILD_CMD: {{build_cmd}}
+      TEST_CMD: {{test_cmd}}
+
+      === SETUP ===
+
+      1. cd {{repo}} && git checkout {{branch}} && git pull
+      2. Read stitch/DESIGN_MANIFEST.json → list all screens
+      3. Read stitch/design-tokens.css → expected colors, fonts
+      4. Read .env.test or .env.local or .env → TEST_EMAIL, TEST_PASSWORD
+      5. Build: {{build_cmd}}
+      6. Start dev server (find available port, start in background):
+         PORT=$(shuf -i 9200-9299 -n 1)
+         npx next start -p $PORT &
+         SERVER_PID=$!
+         sleep 5
+      7. Open browser: agent-browser open http://localhost:$PORT
+
+      === AUTH ===
+
+      If login page is detected:
+      1. agent-browser fill 'input[type="email"]' "$TEST_EMAIL"
+      2. agent-browser fill 'input[type="password"]' "$TEST_PASSWORD"
+      3. agent-browser click 'button[type="submit"]'
+      4. Wait 3 seconds, verify redirect to dashboard/home
+      If no login page → skip
+
+      === SCREEN-BY-SCREEN TESTING ===
+
+      For EACH screen in DESIGN_MANIFEST.json:
+
+      A. NAVIGATION
+         - Determine the route for this screen (from screen name/type mapping)
+         - agent-browser open http://localhost:$PORT/<route>
+         - Wait 2 seconds for page load
+         - agent-browser screenshot {{repo}}/qa-screenshots/<screen-name>.png
+
+      B. PAGE EXISTENCE CHECK
+         - agent-browser snapshot → check for headings, buttons, or content
+         - If page is blank or shows 404 → CRITICAL: "Screen '<name>' has no corresponding page"
+
+      C. STITCH DESIGN COMPLIANCE
+         - Read stitch/<screenFile>.html for this screen
+         - Count sections/cards in Stitch HTML vs actual page DOM
+         - agent-browser eval: check computed font-family matches design-tokens.css
+         - agent-browser eval: check computed primary color matches design-tokens.css
+         - agent-browser eval: check for emoji icons (BANNED — must use SVG/icon-font)
+         - Report differences as HIGH severity
+
+      D. BUTTON TESTING (max 10 buttons per page)
+         - agent-browser snapshot → list all buttons
+         - For each button:
+           * Inject collectors via agent-browser eval:
+             window.__qa_net=[];window.__qa_err=[];
+             var origFetch=window.fetch;
+             window.fetch=function(){var a=arguments;return origFetch.apply(this,a).then(function(r){window.__qa_net.push({url:String(a[0]),status:r.status});return r})};
+             window.addEventListener("error",function(e){window.__qa_err.push(e.message)});
+           * agent-browser click '<button selector>'
+           * Wait 2 seconds for async response
+           * Check: DOM changed (new elements/text), OR network request fired, OR modal opened
+           * Check: no 4xx/5xx in window.__qa_net
+           * Check: no JS errors in window.__qa_err
+           * If button did nothing → HIGH: "Button '<text>' is non-functional"
+           * If button caused 5xx → CRITICAL: "Button '<text>' causes server error"
+
+      E. FORM TESTING (if forms found on page)
+         - agent-browser snapshot → list all input fields
+         - Fill each input with realistic Turkish test data:
+           * email: "test@firma.com.tr"
+           * text/name: "Test Musteri A.S."
+           * number/currency: "15000"
+           * date: today's date
+           * select: pick first non-placeholder option
+           * textarea: "QA test aciklamasi — bu alan otomatik doldurulmustur."
+         - Click submit button
+         - Wait 3 seconds
+         - Check: page redirected, OR success toast appeared, OR error message shown
+         - Check: no 5xx responses in network
+         - If form does nothing on submit → CRITICAL: "Form submit is non-functional"
+
+      F. MOCK DATA DETECTION
+         - agent-browser eval: scan all visible text on page for:
+           * English placeholder names: "John Doe", "Jane Smith", "Acme Corp"
+           * Lorem ipsum text
+           * Test emails: "test@test.com", "user@example.com"
+           * Placeholder text: "Coming soon", "TODO", "placeholder", "yakinda", "lorem"
+           * Empty tables/lists (0 data rows but should have data)
+         - If found → CRITICAL: "Mock/placeholder data detected: '<matched text>'"
+
+      G. LINK VALIDATION
+         - agent-browser snapshot → list all internal links (same origin)
+         - For each unique internal link (max 15):
+           * Navigate to link href
+           * Check: not 404, not blank page
+           * Navigate back
+         - Report broken links as HIGH severity
+
+      H. CONSOLE ERROR CHECK
+         - agent-browser eval: check for console errors collected during testing
+         - Report uncaught errors as MEDIUM severity
+
+      === CROSS-PAGE TESTS ===
+
+      1. CRUD FLOW (if applicable — check if create/edit forms exist):
+         - Navigate to list page
+         - Click "Create/Ekle/Yeni" button
+         - Fill form with test data, submit
+         - Verify entity appears in list
+         - Click entity to go to detail page
+         - Click "Edit/Duzenle" button
+         - Modify a field, save
+         - Verify change persisted
+         - Report issues
+
+      2. NAVIGATION CONSISTENCY:
+         - Visit 5 different pages
+         - Verify sidebar/navbar is identical on each page
+         - Report inconsistencies as HIGH
+
+      3. DARK MODE (if theme toggle exists):
+         - Find and click theme toggle
+         - Visit 3 different pages
+         - Check for white backgrounds or unreadable text on dark bg
+         - Switch back to default theme
+         - Report issues as MEDIUM
+
+      === FIX CYCLE (MANDATORY if CRITICAL/HIGH issues found, max 2 rounds) ===
+
+      After completing all screen tests, if you found CRITICAL or HIGH issues
+      (non-functional buttons, broken forms, missing wiring, dead clicks):
+
+      ROUND 1:
+      1. For each CRITICAL/HIGH issue:
+         a. Read the source file containing the broken element
+         b. Identify the root cause:
+            - Missing onClick/onSubmit handler
+            - Handler exists but empty or no-op
+            - Modal/dialog component not rendered
+            - State not connected to UI
+            - Event handler not imported or wired
+         c. Fix the code: add the missing wiring, connect handlers, render components
+         d. Keep fixes minimal: just make the feature work, no refactoring
+      2. git add -A && git commit -m "qa: fix non-functional UI elements" && git push
+      3. Rebuild: {{build_cmd}}
+      4. Restart dev server, re-test ONLY the previously broken elements
+      5. Update issue status in QA_REPORT.md (FIXED or STILL_BROKEN)
+
+      ROUND 2 (only if Round 1 left unresolved issues):
+      1. Re-examine the code with fresh eyes
+      2. Try alternative fix approach
+      3. Rebuild, re-test, commit, push
+      4. If still broken: mark as UNRESOLVED in report, continue
+
+      CRITICAL: Do NOT skip this cycle. Finding bugs without fixing them is NOT acceptable.
+      You have coding access. READ the code, UNDERSTAND the bug, FIX it, TEST it.
+
+            === CLEANUP ===
+
+      1. agent-browser close
+      2. kill $SERVER_PID (if started)
+
+      === REPORT ===
+
+      Write {{repo}}/QA_REPORT.md with this structure:
+
+      # QA Test Report
+      **Date**: <date>
+      **Branch**: {{branch}}
+      **Screens Tested**: <N>/<total from DESIGN_MANIFEST>
+      **Issues Found**: <N>
+
+      ## Summary
+      | Severity | Count |
+      |----------|-------|
+      | CRITICAL | X |
+      | HIGH     | X |
+      | MEDIUM   | X |
+      | LOW      | X |
+
+      ## Screen Results
+      | # | Screen | Route | Status | Issues |
+      |---|--------|-------|--------|--------|
+      | 1 | Screen Name | /route | PASS/FAIL | count |
+      ...
+
+      ## Issues Detail
+      ### CRITICAL
+      1. [Page Name] Description of issue
+      ...
+      ### HIGH
+      1. [Page Name] Description of issue
+      ...
+
+      Then: git add QA_REPORT.md qa-screenshots/ && git commit -m "qa: browser test report" && git push
+
+      ============================================================
+      MANDATORY OUTPUT FORMAT
+      ============================================================
+      STATUS: done
+      QA_CRITICAL_COUNT: <number>
+      QA_HIGH_COUNT: <number>
+      QA_TOTAL_ISSUES: <number>
+      QA_SCREENS_TESTED: <number>
+      QA_SCREENS_PASSED: <number>
+      QA_REPORT: |
+        <full report text — include all screen results and issues>
+      ============================================================
+    expects: "STATUS: done"
+    max_retries: 1
+    on_fail:
+      escalate_to: human
+
+  - id: final-test
+    agent: tester
+    input: |
+      !include critical-preamble.md
+
+      Integration testing on merged feature branch, then create final PR to main.
+
+      CRITICAL IDENTITY RULE:
+      You are a QA TESTER, NOT a security scanner. Do NOT run security scans,
+      vulnerability checks, or dependency audits. The security-gate step already
+      did that. Your ONLY job is:
+      1. Integration testing (lint, build, test)
+      2. Runtime smoke test via smoke-test.mjs (MANDATORY)
+      3. Create final PR to main
+
+      TASK: {{task}}
+      REPO: {{repo}}
+      BRANCH: {{branch}}
+      BUILD_CMD: {{build_cmd}}
+      TEST_CMD: {{test_cmd}}
+      LINT_CMD: {{lint_cmd}}
+      PROGRESS LOG: {{progress}}
+      SECURITY_NOTES: {{security_notes}}
+
+      === INTEGRATION TEST + PR WORKFLOW ===
+
+      STEP 0 — Merge any remaining open story PRs (cleanup from verify failures):
+      1. cd into {{repo}}
+      2. git checkout {{branch}} && git pull origin {{branch}}
+      3. Check for unmerged story PRs targeting this branch:
+         OPEN_STORY_PRS=$(gh pr list --base {{branch}} --state open --json number,headRefName -q '.[].number' 2>/dev/null || echo "")
+         for pr_num in $OPEN_STORY_PRS; do
+           echo "Attempting to merge remaining PR #$pr_num"
+           PR_BRANCH=$(gh pr view "$pr_num" --json headRefName -q '.headRefName')
+           git fetch origin "$PR_BRANCH" 2>/dev/null || continue
+           git checkout "$PR_BRANCH" 2>/dev/null || continue
+           git rebase origin/{{branch}} || { git rebase --abort; git checkout {{branch}}; continue; }
+           git push --force-with-lease 2>/dev/null || { git checkout {{branch}}; continue; }
+           gh pr merge "$pr_num" --squash --delete-branch 2>/dev/null || true
+           git checkout {{branch}} && git pull origin {{branch}}
+         done
+      4. git checkout {{branch}} && git pull origin {{branch}}
+
+      STEP 1 — Verify:
+      1. cd into {{repo}}
+      2. git checkout {{branch}} && git pull origin {{branch}}
+      3. Lint: {{lint_cmd}}
+      4. Build: {{build_cmd}}
+      5. Tests: {{test_cmd}}
+
+      STEP 2 — Integration wiring verification (CRITICAL):
+      1. Check cross-story integration issues
+      2. Verify ALL components in src/components/ are actually imported and rendered:
+         - List all .tsx/.jsx files in src/components/ (exclude index, types, utils)
+         - For each component, verify it appears in at least one page/layout import
+         - If a component exists but is never imported, it is DEAD CODE — wire it in
+      3. Verify ALL routes are functional:
+         - Check src/app/*/page.tsx (or pages/*.tsx) — each must render real content
+         - No route should show placeholder text (Coming soon, TODO, Game Started!, etc.)
+      4. Verify interactive elements work:
+         - Buttons must trigger real state changes, not show static placeholder text
+         - Navigation links must lead to real pages
+         - Canvas/game elements must render actual content after interaction
+      5. Fix any issues found, commit and push
+
+      STEP 2.5 — Runtime Smoke Test v2 (MANDATORY — NOT OPTIONAL):
+      This is the MOST IMPORTANT step. Without smoke test output, the step CANNOT pass.
+      Do NOT replace this with a security scan. Run the actual smoke-test.mjs script.
+      1. Build the project: {{build_cmd}}
+      2. Run smoke test:
+         SMOKE_RESULT=$(node $HOME/.openclaw/setfarm-repo/scripts/smoke-test.mjs "{{repo}}" 2>&1)
+         SMOKE_EXIT=$?
+         echo "$SMOKE_RESULT"
+      3. The smoke test checks:
+         - Every discovered route (not just /)
+         - Button clicks and state transitions
+         - Placeholder content detection (Coming soon, Game Started!, TODO, etc.)
+         - Component wiring (files in src/components/ that are never imported)
+         - Canvas presence after Start/Play buttons
+      4. If smoke test fails (exit 1): READ the failures JSON carefully, fix EACH issue:
+         - PLACEHOLDER failures: replace static text with actual component rendering
+         - WIRING failures: import and render the unused component in the correct page
+         - JS Exception: fix the runtime error
+         - Blank page: check route rendering
+         Rebuild and re-test after each fix.
+      5. If smoke test errors/skips (exit 2 or status "skip"): continue
+      6. FAIL the final-test step if smoke test still fails after fixes
+
+      STEP 3 — Create final PR to main AND merge:
+      1. Create PR:
+         FINAL_PR=$(gh pr create --base main --head {{branch}} --title "feat: complete {{branch}} feature" --body "Feature branch {{branch}} — all stories implemented and tested.")
+         echo "Created final PR: $FINAL_PR"
+      2. Merge: gh pr merge "$FINAL_PR" --squash --delete-branch
+      3. Close orphan PRs:
+         OPEN_PRS=$(gh pr list --base {{branch}} --state open --json number -q '.[].number')
+         for pr_num in $OPEN_PRS; do gh pr close "$pr_num" --delete-branch 2>/dev/null || true; done
+
+      If build/tests FAIL: fix issues, commit, push, retry. Only STATUS: retry if truly stuck.
+
+      ============================================================
+      MANDATORY OUTPUT FORMAT
+      ============================================================
+      STATUS: done
+      RESULTS: <test outcomes>
+      SMOKE_TEST_RESULT: <pass/fail/skip/error>
+      FINAL_PR: <URL>
+
+      Or: STATUS: retry / FAILURES: <list>
+      IMPORTANT: If SMOKE_TEST_RESULT key is missing, step will be retried.
+      ============================================================
+    expects: "STATUS: done"
+    on_fail:
+      max_retries: 2
+      on_exhausted:
+        escalate_to: human
+
+  - id: deploy
+    agent: deployer
+    input: |
+      !include critical-preamble.md
+
+      Deploy the completed project to production (if applicable).
+
+      TASK: {{task}}
+      REPO: {{repo}}
+      BRANCH: main
+      BUILD_CMD: {{build_cmd}}
+      FINAL_PR: {{final_pr}}
+      RUN_ID: {{run_id}}
+
+      === STEP 0: CLASSIFY TASK TYPE ===
+
+      Read the TASK description and REPO path carefully.
+      Classify into one of these categories:
+
+      CATEGORY A — NEW WEB PROJECT:
+        Signals: new repo created during this run, task describes a new app/site/dashboard,
+        repo is NOT already in ~/projects/, no existing systemd service for it.
+
+      CATEGORY B — NEW MOBILE APP:
+        Signals: package.json has react-native/expo/flutter dependency,
+        task mentions "mobile", "React Native", "Expo", "Flutter", "iOS", "Android".
+
+      CATEGORY C — EXISTING PROJECT UPDATE:
+        Signals: repo is ALREADY under ~/projects/ (or ~/mobile/ for mobile),
+        project is ALREADY registered in Mission Control
+        (check: curl -s http://127.0.0.1:3080/api/projects | grep -q "$(basename {{repo}})")
+
+      CATEGORY D — LIBRARY / SKILL / TOOL:
+        Signals: task mentions "install", "kur", "library", "fork", "skill", "tool", "CLI",
+        repo is under ~/libs/ or should be,
+        no web server / no port / no frontend.
+
+      CATEGORY E — NO DEPLOY NEEDED:
+        Signals: task is purely analytical, documentation, or config change,
+        no runnable artifact produced.
+
+      ══════════════════════════════════════════════════════════
+      Based on category, follow the matching path below.
+      ══════════════════════════════════════════════════════════
+
+      ┌─────────────────────────────────────────────────────────┐
+      │              CATEGORY A: NEW WEB PROJECT                │
+      └─────────────────────────────────────────────────────────┘
+
+      A1 — Determine PORT (priority order — ALWAYS prefer existing port):
+      1. Existing systemd service: grep -oP 'PORT=\K[0-9]+' ~/.config/systemd/user/$(basename REPO).service
+      2. Existing server code or .env: grep PORT from REPO/server/index.ts or REPO/.env
+      3. Task text ("port: XXXX" or "Frontend port: XXXX")
+      4. Last resort only: PORT=$(curl -s http://127.0.0.1:3080/api/projects/next-port | jq -r '.port')
+      CRITICAL: Never assign a new port if the service already has one configured.
+      PORT GUARDRAIL: After determining PORT, validate it follows the convention:
+        - Frontend ports MUST be in range 3500-3599 (e.g. 3536, 3549)
+        - Backend ports MUST be in range 4500-4599 (e.g. 4519)
+        - REJECT framework defaults: 5173 (Vite), 3000 (Next.js/Express/CRA), 4200 (Angular),
+          8080 (generic), 8000 (Django/FastAPI), 4000 (Remix), 1234 (Parcel), 8888 (Jupyter),
+          5000 (Flask), 8001 (uvicorn), 9000 (PHP), 4321 (Astro), 5500 (LiveServer),
+          ANY port outside 3500-3599 (frontend) or 4500-4599 (backend) range
+        - If PORT is outside the valid range or is a framework default, OVERRIDE it:
+          PORT=$(curl -s http://127.0.0.1:3080/api/projects/next-port | jq -r ".port")
+        - Also fix any hardcoded port in the project: package.json scripts, vite.config, .env, server files.
+
+      A2 — Move to ~/projects/:
+      PROJECT_NAME=$(basename {{repo}})
+      TARGET_DIR="$HOME/projects/$PROJECT_NAME"
+      if [ "{{repo}}" != "$TARGET_DIR" ] && [ ! -d "$TARGET_DIR" ]; then
+        mv {{repo}} $TARGET_DIR
+        ln -sfn $TARGET_DIR {{repo}} 2>/dev/null || true
+      fi
+      REPO_DIR="$TARGET_DIR"
+
+      A3 — Build:
+      cd $REPO_DIR && npm install --production=false 2>/dev/null || true
+      {{build_cmd}}
+
+      A3.5 — Check for duplicate system-level service (CRITICAL):
+      If a system-level service exists for this project, it MUST be disabled first:
+        sudo systemctl is-active ${PROJECT_NAME}.service 2>/dev/null && sudo systemctl disable --now ${PROJECT_NAME}.service
+        sudo rm -f /etc/systemd/system/${PROJECT_NAME}.service 2>/dev/null
+        sudo systemctl daemon-reload 2>/dev/null
+      This prevents port conflicts and restart loops from having both system and user services.
+
+      A4 — Create systemd service:
+      Detect type from project files:
+        - next.config with output:'export' → STATIC: serve dist -l $PORT -s
+        - next.config without export → NEXTJS: npx next start -p $PORT
+        - server/dist/index.js or dist/index.js → NODEJS: node dist/index.js
+        - Fallback → npm start with PORT env
+
+      Write ~/.config/systemd/user/${PROJECT_NAME}.service:
+      ```
+      [Unit]
+      Description=$PROJECT_NAME
+      After=network.target
+
+      [Service]
+      Type=simple
+      WorkingDirectory=$REPO_DIR
+      ExecStart=<based on type above>
+      Restart=on-failure
+      RestartSec=5
+      KillMode=mixed
+      TimeoutStopSec=5
+      Environment=NODE_ENV=production
+
+      [Install]
+      WantedBy=default.target
+      ```
+      systemctl --user daemon-reload && systemctl --user enable --now ${PROJECT_NAME}.service
+
+      A5 — Health check (MANDATORY — 5 attempts with retry):
+      PRE-FLIGHT: Before starting the service, verify:
+        1. Port is free: ! ss -tlnp | grep -q ":$PORT " || echo "PORT $PORT IN USE — stop conflicting service first"
+        2. Service file exists: test -f ~/.config/systemd/user/${PROJECT_NAME}.service
+        3. WorkingDirectory exists: test -d $REPO_DIR
+
+      After starting service, run health check with 5 retries:
+      for i in 1 2 3 4 5; do
+        sleep 5
+        if curl -sf http://127.0.0.1:$PORT/ > /dev/null 2>&1; then
+          echo "Health check passed (attempt $i)"
+          break
+        fi
+        echo "Health check failed (attempt $i/5)"
+        if [ $i -eq 5 ]; then
+          echo "DEPLOY FAILED: Service not responding after 5 attempts"
+          journalctl --user -u ${PROJECT_NAME}.service -n 30 --no-pager
+          systemctl --user status ${PROJECT_NAME}.service
+          # Try to diagnose and fix
+          systemctl --user restart ${PROJECT_NAME}.service
+          sleep 5
+          curl -sf http://127.0.0.1:$PORT/ > /dev/null 2>&1 || echo "Still failing after restart"
+        fi
+      done
+
+      A6 — Register in Mission Control (MANDATORY — verify it worked):
+      GITHUB_URL=$(cd $REPO_DIR && git remote get-url origin 2>/dev/null | sed 's/.git$//' || echo "")
+      GITHUB_SLUG=$(echo "$GITHUB_URL" | sed 's|https://github.com/||')
+      # Detect stack from package.json
+      STACK_JSON=$(cd $REPO_DIR && node -e "const p=require('./package.json'); const d={...p.dependencies,...p.devDependencies}; const s=[]; if(d.react)s.push('React'); if(d.next)s.push('Next.js'); if(d.express)s.push('Express'); if(d.vite)s.push('Vite'); if(d.typescript)s.push('TypeScript'); if(d.tailwindcss||d['@tailwindcss/postcss'])s.push('Tailwind CSS'); console.log(JSON.stringify(s))" 2>/dev/null || echo '[]')
+
+      # Step 1: Create project
+      curl -sf -X POST http://127.0.0.1:3080/api/projects         -H 'Content-Type: application/json'         -d "{"name":"$PROJECT_NAME","description":"{{task}}","repo":"$REPO_DIR","port":$PORT,"domain":"${PROJECT_NAME}.setrox.com.tr","github":"$GITHUB_SLUG"}"
+
+      # Step 2: Verify registration — FAIL if not found
+      MC_CHECK=$(curl -sf http://127.0.0.1:3080/api/projects/$PROJECT_NAME 2>/dev/null | grep -c '"id"' || echo "0")
+      if [ "$MC_CHECK" = "0" ]; then
+        echo "ERROR: MC registration failed — project not found after POST. Retrying..."
+        curl -sf -X POST http://127.0.0.1:3080/api/projects           -H 'Content-Type: application/json'           -d "{"name":"$PROJECT_NAME","description":"{{task}}","repo":"$REPO_DIR","port":$PORT,"domain":"${PROJECT_NAME}.setrox.com.tr","github":"$GITHUB_SLUG"}"
+      fi
+
+      A7 — Cloudflare Tunnel + DNS:
+      HOSTNAME="${PROJECT_NAME}.setrox.com.tr"
+      CF_TUNNEL_ID="92d8df83-3623-4850-ba41-29126106d020"
+      GUARDRAIL: HOSTNAME must be simple like "space-shooter.setrox.com.tr" (no path segments like repo/projects/fr).
+      If HOSTNAME contains more than one hyphen-separated word before .setrox.com.tr, you are doing it WRONG.
+      HOSTNAME must equal "{{repo}}.setrox.com.tr" — nothing else. Do NOT derive it from the full path.
+
+      a) Add tunnel ingress + DNS (MUST use this script, never edit config.yml directly):
+      sudo bash $HOME/.openclaw/scripts/tunnel-add.sh "$HOSTNAME" "$PORT"
+      This script safely: adds ingress rule, validates YAML, rolls back on error,
+      restarts cloudflared, and creates DNS CNAME.
+      IMPORTANT: Do NOT manually edit /etc/cloudflared/config.yml or use sed on it.
+
+      c) Cloudflare Access is already configured as wildcard (*.setrox.com.tr).
+         New subdomains are automatically protected — no per-project action needed.
+
+      → OUTPUT: DEPLOY_TYPE=new-web, all fields filled.
+
+      ┌─────────────────────────────────────────────────────────┐
+      │              CATEGORY B: NEW MOBILE APP                 │
+      └─────────────────────────────────────────────────────────┘
+
+      B1 — Move to ~/mobile/:
+      TARGET_DIR="$HOME/mobile/$PROJECT_NAME"
+      Move if not already there (same logic as A2).
+
+      B2 — Install deps:
+      cd $REPO_DIR && npm install 2>/dev/null || true
+
+      B3 — Register in Mission Control:
+      POST → type "mobile", emoji "📱"
+      PATCH → repo, stack, github, workflowRunId, createdBy, completedAt
+      (NO ports, NO service, NO domain)
+
+      → OUTPUT: DEPLOY_TYPE=new-mobile, SERVICE_NAME=none, PORT=none, DOMAIN=none.
+
+      ┌─────────────────────────────────────────────────────────┐
+      │           CATEGORY C: EXISTING PROJECT UPDATE           │
+      └─────────────────────────────────────────────────────────┘
+
+      C1 — Pull latest and rebuild:
+      cd {{repo}} && git checkout main && git pull
+      {{build_cmd}}
+
+      C2 — Restart service (if web):
+      SERVICE_NAME=$(basename {{repo}}).service
+      systemctl --user restart $SERVICE_NAME 2>/dev/null || true
+
+      C3 — Health check (if web):
+      Detect port from MC: curl -s http://127.0.0.1:3080/api/projects/$(basename {{repo}}) | jq '.ports.frontend'
+      curl -sf http://127.0.0.1:$PORT/ > /dev/null
+
+      C3.5 — Ensure DNS exists (MANDATORY for web projects):
+      HOSTNAME="${PROJECT_NAME}.setrox.com.tr"
+      # Check if tunnel ingress exists for this hostname
+      if ! grep -q "$HOSTNAME" /etc/cloudflared/config.yml 2>/dev/null; then
+        echo "DNS/tunnel missing for $HOSTNAME — creating..."
+        sudo bash $HOME/.openclaw/scripts/tunnel-add.sh "$HOSTNAME" "$PORT"
+      else
+        echo "Tunnel ingress exists for $HOSTNAME, verifying DNS..."
+        sudo bash $HOME/.openclaw/scripts/tunnel-add.sh "$HOSTNAME" "$PORT"
+      fi
+
+      C4 — Update MC metadata (ALWAYS update, even if project exists):
+      PROJECT_NAME=$(basename {{repo}})
+      GITHUB_URL=$(cd {{repo}} && git remote get-url origin 2>/dev/null | sed 's/.git$//' || echo "")
+      GITHUB_SLUG=$(echo "$GITHUB_URL" | sed 's|https://github.com/||')
+      SERVICE_NAME="${PROJECT_NAME}.service"
+      STACK_JSON=$(cd {{repo}} && node -e "const p=require('./package.json'); const d={...p.dependencies,...p.devDependencies}; const s=[]; if(d.react)s.push('React'); if(d.next)s.push('Next.js'); if(d.express)s.push('Express'); if(d.vite)s.push('Vite'); if(d.typescript)s.push('TypeScript'); if(d.tailwindcss||d['@tailwindcss/postcss'])s.push('Tailwind CSS'); console.log(JSON.stringify(s))" 2>/dev/null || echo '[]')
+      
+      # Check if project exists in MC; if not, register it first
+      MC_CHECK=$(curl -sf http://127.0.0.1:3080/api/projects/$PROJECT_NAME 2>/dev/null | grep -c '"id"' || echo "0")
+      if [ "$MC_CHECK" = "0" ]; then
+        echo "Project not in MC — registering..."
+        curl -sf -X POST http://127.0.0.1:3080/api/projects \
+          -H 'Content-Type: application/json' \
+          -d '{"name":"'$PROJECT_NAME'","description":"{{task}}","repo":"{{repo}}","domain":"'$PROJECT_NAME'.setrox.com.tr","github":"'$GITHUB_SLUG'"}'
+      fi
+      
+      # ALWAYS PATCH with current port, service, stack, checklist
+      # This ensures MC is complete even if project was pre-registered by setup step
+      curl -sf -X PATCH http://127.0.0.1:3080/api/projects/$PROJECT_NAME \
+        -H 'Content-Type: application/json' \
+        -d '{"ports":{"frontend":'$PORT'},"service":"'$PROJECT_NAME'","serviceStatus":"running","stack":'$STACK_JSON',"checklist":[{"id":"task-received","label":"Gorev iletildi","completed":true},{"id":"github-repo","label":"GitHub repo olusturuldu","completed":true},{"id":"dns-setup","label":"Cloudflare DNS ve subdomain olusturuldu","completed":true},{"id":"added-to-projects","label":"Projeler bolumune eklendi","completed":true},{"id":"ports-assigned","label":"Portlar belirlendi","completed":true},{"id":"setup-run","label":"Setup calistirildi","completed":true},{"id":"dev-started","label":"Gelistirici calismaya basladi","completed":true},{"id":"test-review","label":"Test ve review tamamlandi","completed":true}]}'
+      
+      # Verify PATCH worked
+      MC_PORT=$(curl -sf http://127.0.0.1:3080/api/projects/$PROJECT_NAME 2>/dev/null | python3 -c "import json,sys; p=json.load(sys.stdin); print(p.get('ports',{}).get('frontend',''))" 2>/dev/null || echo "")
+      if [ -z "$MC_PORT" ] || [ "$MC_PORT" = "None" ]; then
+        echo "WARNING: MC PATCH may have failed — port not set after update"
+      else
+        echo "MC updated: port=$MC_PORT, service=$PROJECT_NAME"
+      fi
+      
+      → OUTPUT: DEPLOY_TYPE=update, existing service restarted.
+
+      ┌─────────────────────────────────────────────────────────┐
+      │           CATEGORY D: LIBRARY / SKILL / TOOL            │
+      └─────────────────────────────────────────────────────────┘
+
+      D1 — Ensure correct location:
+      If repo is NOT under ~/libs/, move it there:
+        TARGET_DIR="$HOME/libs/$PROJECT_NAME"
+        mv {{repo}} $TARGET_DIR 2>/dev/null || true
+
+      D2 — Install/build if needed:
+      cd $TARGET_DIR
+      npm install 2>/dev/null || pip install -e . 2>/dev/null || true
+      If build script exists: run it.
+
+      D3 — NO Mission Control registration (libs are not projects).
+      D4 — NO systemd service, NO tunnel, NO port.
+
+      → OUTPUT: DEPLOY_TYPE=library, SERVICE_NAME=none, PORT=none, DOMAIN=none, MC_PROJECT_ID=none.
+
+      ┌─────────────────────────────────────────────────────────┐
+      │            CATEGORY E: NO DEPLOY NEEDED                 │
+      └─────────────────────────────────────────────────────────┘
+
+      Nothing to deploy. Just report done.
+
+      → OUTPUT: DEPLOY_TYPE=skip, all fields "none".
+
+      ============================================================
+      MANDATORY OUTPUT FORMAT
+      ============================================================
+      STATUS: done
+      DEPLOY_TYPE: <new-web|new-mobile|update|library|skip>
+      SERVICE_NAME: <name.service|none>
+      SERVICE_STATUS: <active|restarted|none>
+      PORT: <number|none>
+      DOMAIN: <hostname.setrox.com.tr|none>
+      MC_PROJECT_ID: <id|none>
+      HEALTH_CHECK: <200|n/a>
+      DEPLOY_NOTES: <summary of what was done>
+
+      Or if deployment fails:
+      STATUS: retry
+      DEPLOY_ERRORS:
+      - <what went wrong>
+      ============================================================
+    expects: "STATUS: done"
+    max_retries: 3
+    on_fail:
+      escalate_to: human
+

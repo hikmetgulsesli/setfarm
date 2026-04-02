@@ -1,0 +1,1 @@
+{"runId":"a5b683fe-95be-4bfb-9889-68d59a35e177","repo":"/home/setrox/projects/hikmetgulsesli-com","branch":"feature/prd-v3","outputs":{"prdPath":"docs/PRD.md"},"commit":"28dba95","screenCount":8}

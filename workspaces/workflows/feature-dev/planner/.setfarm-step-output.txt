@@ -1,0 +1,1009 @@
+STATUS: done
+REPO: /home/setrox/projects/hikmetgulsesli-com
+BRANCH: feature/prd-v3
+PRD:
+# PRD v3 — hikmetgulsesli.com
+
+## 1. Proje Genel Bakış
+
+**Proje Sahibi:** Hikmet Güleşli
+**Proje Adı:** hikmetgulsesli.com
+**Proje Tipi:** Kişisel portföy web sitesi
+**Platform:** Web (responsive, mobile-first)
+**Repo:** `/home/setrox/projects/hikmetgulsesli-com`
+**STITCH_PROJECT_ID:** 2269194756870439603
+
+Hikmet Güleşli'nin kişisel web sitesi ve geliştirici portföyü. Koyu temalı, terminal estetiğine sahip modern bir portfolio platformu. Ziyaretçilere Hikmet'in projelerini, yazılarını ve profesyonel profilini sunan merkezi bir dijital varlık. Terminal/monospace tarzı UI elementleri, canlı durum göstergeleri ve hover micro-interaction'lar ile dinamik bir kullanıcı deneyimi sağlar.
+
+**Mevcut Durum:** Stitch tasarımları mevcut (7 ekran). Geliştirme başlangıcı için PRD tamamlanması gerekiyor.
+
+**Temel Özellikler:**
+- Koyu tema varsayılan, terminal estetiği
+- Framer Motion tabanlı smooth animasyonlar
+- Next.js 14 App Router ile 60fps performans
+- PWA-ready yapı
+- SEO optimizasyonu ve structured data
+- Responsive ve mobile-first tasarım
+- Erişilebilirlik (WCAG 2.1 AA uyumlu)
+
+---
+
+## 2. Tasarım Sistemi
+
+### 2.1 Renk Paleti
+
+| İsim | Hex Kodu | Kullanım Alanı |
+|------|----------|----------------|
+| Background | `#0a0a0f` | Sayfa arka planı, ana zemin |
+| Background Elevated | `#111113` | Kartlar, elevated yüzeyler |
+| Background Subtle | `#1a1a1f` | Hover state, secondary surfaces |
+| Background Overlay | `#0a0a0f/80` | Modal overlays, backdrop |
+| Primary | `#10b981` | CTA butonları, aktif linkler, vurgular |
+| Primary Hover | `#059669` | Buton hover durumu |
+| Primary Muted | `#10b981/20` | Subtle primary backgrounds |
+| Accent | `#6366f1` | Gradient efektler, secondary vurgular |
+| Accent Alt | `#8b5cf6` | Gradient geçişleri |
+| Accent Muted | `#6366f1/20` | Subtle accent backgrounds |
+| Text Primary | `#fafafa` | Ana metin, başlıklar |
+| Text Secondary | `#a1a1aa` | Alt başlıklar, açıklamalar |
+| Text Muted | `#6b7280` | Placeholder, disabled metin |
+| Text Inverse | `#0a0a0f` | Koyu arka plan üzerinde açık metin |
+| Border | `#27272a` | Kart kenarlıkları, dividers |
+| Border Hover | `#3f3f46` | Hover state border |
+| Border Active | `#10b981` | Active/focus state border |
+| Success | `#22c55e` | Başarı durumları |
+| Warning | `#f59e0b` | Uyarı durumları |
+| Error | `#ef4444` | Hata durumları |
+| Info | `#3b82f6` | Bilgi durumları |
+
+### 2.2 Tipografi
+
+**Font Family:**
+- Headings: `Space Grotesk, system-ui, sans-serif` — font-weight: 700
+- Body: `Inter, system-ui, sans-serif` — font-weight: 400
+- Code/Terminal: `JetBrains Mono, SF Mono, Consolas, monospace` — font-weight: 400
+- Font Loading: `next/font/google` ile optimize edilmiş subset
+
+**Font Sizes:**
+
+| Name | Size | Line Height | Letter Spacing | Usage |
+|------|------|-------------|----------------|-------|
+| 2xs | `10px` | 1.4 | -0.01em | Legal text, timestamps |
+| xs | `12px` | 1.5 | -0.01em | Captions, badges |
+| sm | `14px` | 1.5 | 0 | Small body text |
+| base | `16px` | 1.7 | 0 | Body text |
+| lg | `18px` | 1.6 | 0 | Large body, lead |
+| xl | `20px` | 1.5 | 0 | Section subtitles |
+| 2xl | `24px` | 1.3 | -0.02em | H3 headings |
+| 3xl | `30px` | 1.2 | -0.02em | H2 headings |
+| 4xl | `36px` | 1.2 | -0.03em | H1 headings |
+| 5xl | `48px` | 1.1 | -0.04em | Large headings |
+| 6xl | `60px` | 1.0 | -0.05em | Display headings |
+| 7xl | `72px` | 1.0 | -0.06em | Hero display |
+
+### 2.3 Spacing Sistemi
+
+Base unit: `4px` (Tailwind default)
+
+| İsim | Değer | px Karşılık | Kullanım |
+|------|-------|-------------|----------|
+| 0 | `0px` | 0 | Reset, gaps |
+| px | `1px` | 1 | Hairlines, dividers |
+| 0.5 | `2px` | 2 | Tiny gaps |
+| 1 | `4px` | 4 | İcon padding, micro spacing |
+| 1.5 | `6px` | 6 | Tight element gaps |
+| 2 | `8px` | 8 | İç padding (small cards), icon gaps |
+| 3 | `12px` | 12 | Badge padding, small gaps |
+| 4 | `16px` | 16 | Standard padding, gap |
+| 5 | `20px` | 20 | Medium gaps |
+| 6 | `24px` | 24 | Section spacing |
+| 7 | `28px` | 28 | Large component gaps |
+| 8 | `32px` | 32 | Large section gap |
+| 10 | `40px` | 40 | Section headers |
+| 12 | `48px` | 48 | Page section margins |
+| 16 | `64px` | 64 | Hero section padding |
+| 20 | `80px` | 80 | Large page padding |
+| 24 | `96px` | 96 | Top/bottom page padding (desktop) |
+
+### 2.4 Border Radius
+
+| İsim | Değer | px Karşılık | Kullanım |
+|------|-------|-------------|----------|
+| none | `0px` | 0 | Terminal-style elementler, code blocks |
+| sm | `4px` | 4 | Small badges, small inputs |
+| md | `8px` | 8 | Cards, buttons, inputs |
+| lg | `12px` | 12 | Large cards, modals |
+| xl | `16px` | 16 | Overlay elements, large panels |
+| 2xl | `24px` | 24 | Featured cards |
+| 3xl | `32px` | 32 | Special containers |
+| full | `9999px` | 9999 | Pills, avatars, status dots, chips |
+
+### 2.5 Shadows
+
+| Name | CSS Value | Usage |
+|------|-----------|-------|
+| none | none | No shadow |
+| sm | `0 1px 2px 0 rgb(0 0 0 / 0.05)` | Subtle elevation |
+| base | `0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1)` | Default card shadow |
+| md | `0 4px 6px -1px rgb(0 0 0 / 0.3), 0 2px 4px -2px rgb(0 0 0 / 0.3)` | Elevated cards |
+| lg | `0 10px 15px -3px rgb(0 0 0 / 0.4), 0 4px 6px -4px rgb(0 0 0 / 0.4)` | Modals, dropdowns |
+| xl | `0 20px 25px -5px rgb(0 0 0 / 0.4), 0 8px 10px -6px rgb(0 0 0 / 0.4)` | Large overlays |
+| 2xl | `0 25px 50px -12px rgb(0 0 0 / 0.5)` | Full-screen modals |
+| inner | `inset 0 2px 4px 0 rgb(0 0 0 / 0.05)` | Input fields, wells |
+| glow-primary | `0 0 20px rgb(16 185 129 / 0.3)` | Primary color glow |
+| glow-primary-lg | `0 0 40px rgb(16 185 129 / 0.4)` | Large primary glow |
+| glow-accent | `0 0 20px rgb(99 102 241 / 0.3)` | Accent color glow |
+| glow-primary-sm | `0 0 10px rgb(16 185 129 / 0.2)` | Small glow for badges |
+
+### 2.6 Motion & Animasyon
+
+#### Timing Functions
+
+| Name | CSS Value | Usage |
+|------|-----------|-------|
+| ease-in | `cubic-bezier(0.4, 0, 1, 1)` | Elements entering |
+| ease-out | `cubic-bezier(0, 0, 0.2, 1)` | Elements exiting |
+| ease-in-out | `cubic-bezier(0.4, 0, 0.2, 1)` | Smooth transitions |
+| spring | `cubic-bezier(0.175, 0.885, 0.32, 1.275)` | Bouncy interactions |
+| linear | `linear` | Constant speed (timers) |
+
+#### Duration Scale
+
+| Name | Duration | Usage |
+|------|----------|-------|
+| instant | `0ms` | Immediate feedback |
+| fastest | `50ms` | Micro-interactions |
+| fast | `100ms` | Hovers, small state changes |
+| normal | `200ms` | Default transitions |
+| slow | `300ms` | Page transitions, reveals |
+| slower | `400ms` | Complex animations |
+| slowest | `500ms` | Full page loads |
+| ambient | `2000ms+` | Ambient loops (ping, pulse) |
+
+#### Framer Motion Variants
+
+```typescript
+// Fade variants
+const fadeVariants = {
+  hidden: { opacity: 0 },
+  visible: { opacity: 1, transition: { duration: 0.3, ease: 'easeOut' } },
+  exit: { opacity: 0, transition: { duration: 0.2, ease: 'easeIn' } }
+};
+
+// Fade up variants (most common)
+const fadeUpVariants = {
+  hidden: { opacity: 0, y: 20 },
+  visible: { 
+    opacity: 1, 
+    y: 0, 
+    transition: { duration: 0.4, ease: 'easeOut', staggerChildren: 0.1 } 
+  },
+  exit: { opacity: 0, y: -10, transition: { duration: 0.2 } }
+};
+
+// Scale variants
+const scaleVariants = {
+  hidden: { opacity: 0, scale: 0.95 },
+  visible: { opacity: 1, scale: 1, transition: { duration: 0.3, ease: 'easeOut' } },
+  hover: { scale: 1.02, transition: { duration: 0.15 } },
+  tap: { scale: 0.98, transition: { duration: 0.1 } }
+};
+
+// Slide variants
+const slideLeftVariants = {
+  hidden: { opacity: 0, x: -50 },
+  visible: { opacity: 1, x: 0, transition: { duration: 0.4, ease: 'easeOut' } }
+};
+
+const slideRightVariants = {
+  hidden: { opacity: 0, x: 50 },
+  visible: { opacity: 1, x: 0, transition: { duration: 0.4, ease: 'easeOut' } }
+};
+
+// Page transition variants
+const pageVariants = {
+  initial: { opacity: 0, y: 20 },
+  animate: { opacity: 1, y: 0, transition: { duration: 0.4, ease: 'easeOut' } },
+  exit: { opacity: 0, y: -10, transition: { duration: 0.2, ease: 'easeIn' } }
+};
+
+// Stagger container
+const staggerContainer = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: {
+      staggerChildren: 0.1,
+      delayChildren: 0.1
+    }
+  }
+};
+
+// Typing animation config
+const typingConfig = {
+  speed: 100, // ms per character
+  eraseSpeed: 50,
+  pauseDuration: 2000,
+  cursorColor: '#10b981'
+};
+```
+
+---
+
+## 3. Sayfalar
+
+1. **Ana Sayfa** (`/`) — Hero section, kısa tanıtım, öne çıkan projeler grid, son yazılar listesi, CTA bölümü
+2. **Projeler** (`/projects`) — Proje kartları grid, filtreleme, arama
+3. **Proje Detay** (`/projects/[slug]`) — Proje detay sayfası, teknolojiler, demo/github linkleri
+4. **Blog** (`/blog`) — Yazı listesi, kategoriler, arama
+5. **Blog Detay** (`/blog/[slug]`) — Yazı içeriği, tablo of contents, yazar bilgisi
+6. **Hakkında** (`/about`) — Kişisel tanıtım, yetenekler, deneyim timeline
+7. **İletişim** (`/contact`) — İletişim formu, sosyal medya linkleri
+
+---
+
+## 4. Sayfa Detayları
+
+### 4.1 Ana Sayfa (`/`)
+
+**Layout:**
+- Full-width hero section (min-height: 100vh - header)
+- Content container: max-width `1280px`, padding `px-6 md:px-12`
+- Section'lar arası: `py-16 md:py-24`
+
+**Hero Section:**
+- Left-aligned text layout
+- Terminal-style greeting: `> Merhaba, ben Hikmet_` (monospace, text-primary)
+- Animated typing effect for roles: "Full-Stack Developer", "UI/UX Designer", "Problem Solver"
+- Gradient text on main heading: `bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent`
+- Subheading: max-width `600px`, text-secondary
+- CTA buttons: Primary `Hakkımda Bilgi Al` ve Secondary `Projeleri Gör`
+- Background: subtle gradient mesh + scanlines overlay (opacity: 0.03)
+
+**Bileşenler:**
+- Status badge: "Available for work" with ping animation (primary color, top-right of badge)
+- Social icons row: LinkedIn, GitHub, Twitter/X — hover: scale-110, color transition to primary
+- Scroll indicator: bouncing chevron at bottom
+
+**Öne Çıkan Projeler:**
+- Section başlığı: `// featured_projects` (terminal-style)
+- 3-column grid (desktop), 2-column (tablet), 1-column (mobile)
+- Her kart: image thumbnail, title, short description, tech stack pills, hover: translateY(-4px) + shadow-lg
+- "Tümünü Gör" linki → `/projects`
+- Maximum 6 proje gösterilir
+
+**Son Yazılar:**
+- Section başlığı: `// recent_writing`
+- Horizontal scrollable list (mobile), 3-column grid (desktop)
+- Her yazı kartı: date (muted), title (bold), excerpt (2 lines), read time
+- Hover: border-color transition to primary
+- Maximum 3 yazı gösterilir
+
+**CTA Section:**
+- Full-width, background-elevated
+- Gradient border effect
+- Centered text + primary button "İletişime Geç"
+
+**States:**
+- Loading: Skeleton loaders with shimmer effect
+- Empty: "Yakında yeni projeler eklenecek" message with illustration
+
+---
+
+### 4.2 Projeler Sayfası (`/projects`)
+
+**Layout:**
+- Page header: title + description
+- Filter bar: sticky top (after header scroll)
+- Projects grid: responsive columns
+- Pagination or infinite scroll
+
+**Filter Bar:**
+- Categories: Tümü, Web, Mobil, Açık Kaynak, Freelance
+- Active state: bg-primary, text-white
+- Hover: bg-background-subtle
+- Border-bottom: 1px solid border
+- Search: Command palette style (Cmd+K trigger)
+
+**Project Card:**
+```
++------------------+
+|    [Thumbnail]   |
+|   16:9 aspect    |
++------------------+
+| Title            |
+| Description      |
+| (2 lines max)    |
++------------------+
+| [Tech] [Tech]... |
++------------------+
+| GitHub | Demo >  |
++------------------+
+```
+- Border: 1px solid border
+- Border-radius: lg (12px)
+- Hover: border-primary, shadow-glow-primary, translateY(-4px)
+- Transition: all 200ms ease-out
+
+**Tech Stack Pills:**
+- Background: bg-background-subtle
+- Text: text-sm, text-secondary
+- Border-radius: full
+- Padding: px-3 py-1
+
+**Page States:**
+- Loading: 6 skeleton cards with shimmer animation
+- Empty: Empty state illustration + "Filtreleme ile eşleşen proje bulunamadı"
+- Error: Error message + retry button
+
+---
+
+### 4.3 Proje Detay Sayfası (`/projects/[slug]`)
+
+**Layout:**
+- Full-width hero with project thumbnail (max-height: 500px)
+- Content container: max-width `800px`, centered
+- Sticky sidebar (desktop): table of contents + action buttons
+
+**Sections:**
+1. Project header: title, date, client (if freelance)
+2. Overview: problem statement, solution, impact
+3. Tech stack: icons + names grid
+4. Gallery: screenshot carousel (if applicable)
+5. Challenges & Solutions: timeline or accordion
+6. Links: GitHub repo, Live demo, case study link
+7. Next/Prev project navigation
+
+**Code Blocks:**
+- Background: #0d0d12
+- Border: 1px solid border
+- Syntax highlighting: using shadcn/ui Code component
+- Copy button: top-right corner
+- Line numbers: optional, toggleable
+
+**States:**
+- Loading: Content skeleton with sidebar skeleton
+- Not Found: 404 page with project suggestion
+- Draft: "Bu proje henüz yayınlanmadı" overlay
+
+---
+
+### 4.4 Blog Sayfası (`/blog`)
+
+**Layout:**
+- Header: "Writing" title + description
+- Search bar + category filter (same style as projects)
+- Articles grid: 2-column (desktop), 1-column (mobile)
+- Featured article: full-width card at top (if pinned)
+- Pagination at bottom
+
+**Article Card:**
+```
++--------------------------------+
+| 16 Jun 2024 • 5 min read       |
+|                                |
+| Article Title                  |
+|                                |
+| Excerpt of the article that    |
+| can span up to two lines...    |
+|                                |
+| [Category] [Category]          |
++--------------------------------+
+```
+- Padding: p-6
+- Border: 1px solid border
+- Hover: border-primary, bg-background-elevated
+- Transition: 200ms ease-out
+
+**Categories:**
+- Tümü, Teknik, Career, Kişisel, Tutorial
+
+**States:**
+- Loading: 4 skeleton cards
+- Empty: "Henüz yazı yok" illustration
+- No Results: "Aramanıza uygun yazı bulunamadı" + clear filters
+
+---
+
+### 4.5 Blog Detay Sayfası (`/blog/[slug]`)
+
+**Layout:**
+- Max-width `720px` content area (optimal reading width)
+- Header: title (display size), date, author, read time, categories
+- Featured image (if exists): full-width, max-height 400px, object-cover
+- Article body: prose styling with custom typography
+- Table of contents: sticky sidebar (desktop), collapsible (mobile)
+- Share buttons: Twitter, LinkedIn, Copy link
+
+**Typography (Prose):**
+- p: text-lg, line-height 1.8, text-secondary, margin-bottom 1.5em
+- h2: text-2xl, font-bold, mt-12 mb-4, text-primary, id anchor for toc
+- h3: text-xl, font-semibold, mt-8 mb-3, id anchor for toc
+- h4: text-lg, font-semibold, mt-6 mb-2
+- code inline: bg-background-subtle, px-2 py-1, rounded, font-mono, text-sm
+- code block: bg-#0d0d12, p-4, rounded-lg, overflow-x-auto, my-6
+- blockquote: border-l-4 border-primary, pl-6, italic, my-6
+- a: text-primary, underline, hover:text-primary-hover, external links get icon
+- ul: pl-6, mb-4, custom bullet style (primary color)
+- ol: pl-6, mb-4, custom counter style
+- table: w-full, border-collapse, my-6
+- th: bg-background-elevated, border-border, px-4 py-2, text-left
+- td: border-border, px-4 py-2
+- img: rounded-lg, my-6, optional lightbox on click
+- hr: border-border, my-12
+
+**Footer:**
+- Tags list with hover effects
+- Author bio card (same as About card)
+- Related articles (2-3 items based on category/tags)
+- Comments section placeholder (giscus integration ready)
+
+**States:**
+- Loading: Article skeleton with TOC skeleton
+- Not Found: 404 with search suggestions
+- Draft: Password protected view option
+
+---
+
+### 4.6 Hakkında Sayfası (`/about`)
+
+**Layout:**
+- Hero: profile image + intro text (side by side on desktop)
+- Experience timeline
+- Skills section
+- Currently learning/interested in
+- CV download button
+
+**Profile Section:**
+- Circular avatar: 200px, border: 4px primary, glow effect on hover
+- Name: display size, gradient text
+- Title: h3, text-secondary
+- Short bio: body text, max-width 600px
+- Availability status toggle (internal/admin)
+
+**Timeline:**
+- Vertical line: 2px, border-primary, opacity 0.3
+- Items: alternating left/right (desktop), stacked (mobile)
+- Each item: date badge, title, description, company logo (optional)
+- Animation: fade-in + slide-up on scroll into view (staggered)
+- Current item highlighted with primary border
+
+**Skills Grid:**
+- Categories: Frontend, Backend, Database, DevOps, Tools, Soft Skills
+- Each skill: icon + name + proficiency bar (optional percentage)
+- Proficiency bar: bg-background-subtle, fill: bg-primary, animated on view
+- Hover: show percentage tooltip
+
+**States:**
+- Loading: Profile skeleton + timeline skeleton
+- Empty: N/A (always has content)
+
+---
+
+### 4.7 İletişim Sayfası (`/contact`)
+
+**Layout:**
+- Split layout: form (left) + info (right) on desktop
+- Centered single column on mobile
+
+**Contact Form:**
+```
++------------------+------------------+
+| First Name       | Last Name        |
++------------------+------------------+
+| Email            |                  |
++------------------+------------------+
+| Subject          |                  |
++------------------+------------------+
+| Message          |                  |
+| (textarea)       |                  |
++------------------+------------------+
+|        [Send Message Button]        |
++------------------------------------+
+```
+- Inputs: bg-background-elevated, border-border, focus:border-primary
+- Border-radius: md (8px)
+- Padding: px-4 py-3
+- Button: w-full, bg-primary, hover:bg-primary-hover, text-white
+
+**Validation Rules:**
+| Field | Required | Min | Max | Pattern |
+|-------|----------|-----|-----|---------|
+| firstName | Yes | 2 | 50 | Letters only |
+| lastName | Yes | 2 | 50 | Letters only |
+| email | Yes | 5 | 100 | Valid email format |
+| subject | Yes | 5 | 200 | Any characters |
+| message | Yes | 20 | 2000 | Any characters |
+
+**Info Section:**
+- Email: mailto link with icon
+- Location: "Türkiye" + timezone (Europe/Istanbul)
+- Social links: same as hero section
+- Availability status: green dot + "Şu an müsaitim" / "Müsait değilim"
+
+**States:**
+- Idle: Default form state
+- Validating: Real-time validation on blur
+- Submitting: Button loading state, form disabled
+- Success: Success toast + form reset + thank you message
+- Error: Error toast + inline error messages + retry option
+
+---
+
+## 5. Global Bileşenler
+
+### 5.1 Header Navigation
+
+**Desktop:**
+- Fixed position, top: 0
+- Background: bg-background/80 + backdrop-blur(12px)
+- Height: 64px
+- Logo (left): text-xl, font-bold, gradient text, links to `/`
+- Nav links (center): flex gap-8
+- Social icons (right): flex gap-4, hidden on smaller desktop
+- Border-bottom: 1px solid border (on scroll, opacity transition)
+- Z-index: 50
+
+**Nav Links:**
+| Link | Route | Icon (optional) |
+|------|-------|----------------|
+| Ana Sayfa | `/` | Home |
+| Projeler | `/projects` | Folder |
+| Blog | `/blog` | PenLine |
+| Hakkında | `/about` | User |
+| İletişim | `/contact` | Mail |
+
+**Mobile:**
+- Hamburger menu button (right, 44x44px tap target)
+- Full-screen overlay menu when open
+- Nav links: vertical stack, text-2xl
+- Social icons: horizontal row at bottom
+- Close button: top-right corner
+- Background: bg-background/95 + backdrop-blur
+
+**Nav Link States:**
+- Default: text-secondary
+- Hover: text-primary, underline animation (left to right, 200ms)
+- Active: text-primary, persistent underline, font-medium
+- Focus: ring-2 ring-primary/50 outline
+
+---
+
+### 5.2 Footer
+
+- Background: bg-background-elevated
+- Border-top: 1px solid border
+- Padding: py-12
+- Max-width: 1280px, centered
+
+**Sections:**
+1. **About Snippet:** Short bio (max 2 sentences), contact email link
+2. **Quick Links:** Ana Sayfa, Projeler, Blog, Hakkında, İletişim (terminal style header `// quick_links`)
+3. **Social:** GitHub, LinkedIn, Twitter/X, Email icon links with hover effects
+4. **Copyright:** `© 2024 Hikmet Güleşli. Tüm hakları saklıdır.`
+
+---
+
+### 5.3 Buttons
+
+**Variants:** primary, secondary, ghost, destructive, link
+**Sizes:** sm (32px), md (40px), lg (48px), icon (40px square)
+**Props:** disabled, loading, leftIcon, rightIcon
+
+**Primary:** bg-primary, text-white, hover:bg-primary-hover, shadow-glow-primary-sm, translateY(-1px), scale(0.98) on active
+**Secondary:** transparent bg, border-border, text-primary, hover:border-primary, bg-primary/10
+**Ghost:** transparent bg, text-secondary, hover:text-primary, bg-background-subtle
+**Destructive:** bg-error, text-white, hover:bg-error/90
+**Disabled:** opacity-50, cursor-not-allowed, no hover effects
+**Loading:** spinner replaces text/icon, pointer-events-none
+
+---
+
+### 5.4 Cards
+
+**Variants:** default, interactive, featured
+**Props:** padding (none|sm|md|lg), hover
+
+**Base:** bg-background-elevated, border-border, border-radius-lg (12px)
+**Interactive Hover:** border-primary, translateY(-2px), shadow-md, shadow-glow-primary-sm
+
+---
+
+### 5.5 Badge/Tag
+
+**Variants:** default, primary, secondary, accent, success, warning, error
+**Sizes:** sm (text-xs), md (text-sm)
+**Props:** removable (shows X button), onRemove
+
+**Styles:** Semi-transparent background with matching text color (e.g., bg-primary/20, text-primary)
+
+---
+
+### 5.6 Input Fields
+
+**Types:** text, email, password, number, search, url, tel
+**Sizes:** sm, md, lg
+**Props:** disabled, error, errorMessage, leftIcon, rightIcon
+
+**Styles:** bg-background-elevated, border-border, focus:border-primary with ring, error:border-error
+**Textarea:** Same as Input, vertical resize only, optional maxLength counter
+
+---
+
+### 5.7 Status Indicator
+
+**Status:** online (ping animation), offline (none), busy (pulse), away (none)
+**Sizes:** sm (w-2), md (w-3), lg (w-4)
+**Props:** showLabel, animate
+
+---
+
+### 5.8 Cursor Glow Effect
+
+- Radial gradient following cursor
+- Color: primary at 15% opacity, 300px radius
+- Blend mode: screen
+- Disabled on mobile/touch
+- Smooth interpolation with Framer Motion useSpring
+
+---
+
+### 5.9 Skeleton Loader
+
+**Variants:** text, circular, rectangular, card
+**Animation:** pulse (opacity 1→0.5→1) or wave (linear gradient sweep)
+**Usage:** Loading states throughout the app
+
+---
+
+### 5.10 Toast Notifications
+
+**Variants:** default, success, error, warning, info
+**Props:** title, description, duration (default 5000ms), action, dismissible
+**Position:** bottom-right (desktop), bottom-center (mobile)
+**Animation:** slide in from right, fade out
+
+---
+
+### 5.11 Modal / Dialog
+
+**Variants:** default, destructive, success
+**Sizes:** sm (320px), md (480px), lg (640px), xl (800px), full
+**Props:** open, onOpenChange, showClose
+
+**Styles:** bg-background-elevated, border-border, shadow-2xl, overlay bg-black/80 + backdrop-blur(8px)
+**Animation:** fade + scale (0.95→1), full screen on mobile
+
+---
+
+### 5.12 Accordion
+
+**Types:** single, multiple
+**Props:** defaultValue, collapsible, items[{value, trigger, content}]
+**Styles:** border-border, hover:bg-background-subtle, height expand/collapse 200ms
+
+---
+
+### 5.13 Tabs
+
+**Props:** value, defaultValue, onValueChange, items[{value, label, content, icon?}]
+**Styles:** border-bottom border, text-secondary default, text-primary active with border-bottom-2
+
+---
+
+### 5.14 Command Palette (Search)
+
+**Trigger:** Cmd+K (Mac) / Ctrl+K (Windows)
+**Width:** 560px max
+**Features:** Keyboard navigation (Arrow keys, Enter, Escape), recent searches (localStorage), debounced search 300ms
+**Groups:** Section headers with CommandItem[]
+
+---
+
+### 5.15 Avatar
+
+**Sizes:** xs (24px), sm (32px), md (40px), lg (56px), xl (80px), 2xl (128px)
+**Props:** src, alt, fallback (initials), status (online|offline|busy|away), rounded
+**Fallback:** bg-primary, text-white, font-medium
+
+---
+
+### 5.16 Image with Lightbox
+
+**Props:** src, alt, width, height, priority, placeholder (empty|blur), blurDataURL, caption
+**Features:** Click to open lightbox, arrow keys/swipe navigation, scroll/pinch zoom, Escape/X close
+
+---
+
+## 6. Animasyonlar
+
+### 6.1 Timing & Easing
+
+| Animasyon | Duration | Easing | Kullanım |
+|-----------|----------|--------|----------|
+| Fade In | 300ms | ease-out | Page loads, scroll reveals |
+| Fade In Up | 400ms | ease-out | Cards, sections |
+| Fade In Scale | 300ms | ease-out | Modals, tooltips |
+| Slide In Left | 300ms | ease-out | Mobile menu |
+| Scale Press | 100ms | ease-out | Button active |
+| Translate Y | 200ms | ease-out | Card hovers |
+| Ping | 2s | ease-out | Status indicator |
+| Typing | 80ms/char | linear | Hero typing effect |
+
+### 6.2 Scroll Animations
+
+**Config:** threshold 0.1, rootMargin '0px 0px -50px 0px', once: true
+
+**Types:** fade-up (y:30→0), fade-in, slide-left (x:-50→0), scale-up (scale:0.9→1), blur-in
+
+### 6.3 Micro-interactions
+
+| Element | Hover | Active/Click | Focus |
+|---------|-------|--------------|-------|
+| Button Primary | bg-primary-hover, shadow-glow, translateY(-1px) | scale(0.98) | ring-2 |
+| Card | border-primary, translateY(-4px), shadow-lg | scale(0.99) | ring-2 |
+| Link | text-primary, underline 0→100% | text-primary-hover | underline |
+| Icon | rotate(5deg) or scale(1.1) | scale(0.95) | text-primary |
+
+### 6.4 Page Transitions
+
+**Variants:** initial:{opacity:0,y:20}, animate:{opacity:1,y:0}, exit:{opacity:0,y:-10}
+**Duration:** animate 400ms ease-out, exit 200ms ease-in
+**StaggerChildren:** 0.1s delay between children
+
+---
+
+## 7. Responsive Breakpoints
+
+| Breakpoint | Min Width | Description |
+|------------|-----------|-------------|
+| mobile | `<375px` | Ultra compact |
+| mobile-lg | `375px` | Standard mobile |
+| tablet-sm | `640px` | Large phones |
+| tablet | `768px` | Tablets |
+| desktop | `1024px` | Standard laptops |
+| desktop-lg | `1280px` | Large screens |
+| desktop-xl | `1536px` | Extra large |
+
+### Component Responsive
+
+| Component | Mobile | Tablet | Desktop |
+|-----------|--------|--------|---------|
+| Header | Hamburger | Full nav | Full nav + social |
+| Hero | Stacked | Side-by-side | Side-by-side |
+| Project Grid | 1 col | 2 cols | 3 cols |
+| Blog Grid | 1 col | 2 cols | 2 cols |
+| Footer | Stacked | 2 cols | 4 cols |
+
+**Touch Targets:** Minimum 44x44px tap target, 8px spacing between targets
+**Mobile Navigation:** Slide-in menu from right, full-screen overlay
+
+---
+
+## 8. Veri Modelleri
+
+### TypeScript Interfaces
+
+```typescript
+interface BaseEntity {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface Project extends BaseEntity {
+  slug: string;
+  title: string;
+  description: string;
+  shortDescription: string;
+  thumbnail: string;
+  images: string[];
+  category: 'web' | 'mobile' | 'open-source' | 'freelance';
+  techStack: TechItem[];
+  liveUrl?: string;
+  githubUrl?: string;
+  featured: boolean;
+  publishedAt: string;
+  status: 'draft' | 'published' | 'archived';
+  content: string; // MDX
+}
+
+interface BlogPost extends BaseEntity {
+  slug: string;
+  title: string;
+  excerpt: string;
+  featuredImage?: string;
+  category: 'teknik' | 'career' | 'kisisel' | 'tutorial';
+  tags: string[];
+  readTime: number;
+  publishedAt: string;
+  status: 'draft' | 'published' | 'archived';
+  content: string; // MDX
+  author: Author;
+  featured: boolean;
+  pinned: boolean;
+}
+
+interface Author {
+  id: string;
+  name: string;
+  avatar: string;
+  title: string;
+  bio: string;
+  social: SocialLinks;
+}
+
+interface Experience extends BaseEntity {
+  title: string;
+  company: string;
+  companyUrl?: string;
+  location?: string;
+  startDate: string;
+  endDate?: string;
+  current: boolean;
+  description: string;
+  type: 'full-time' | 'part-time' | 'contract' | 'freelance';
+}
+
+interface Skill {
+  id: string;
+  name: string;
+  icon?: string;
+  proficiency?: number;
+  category: 'frontend' | 'backend' | 'database' | 'devops' | 'mobile' | 'design' | 'soft-skills';
+}
+
+interface ContactFormData {
+  firstName: string;
+  lastName: string;
+  email: string;
+  subject: string;
+  message: string;
+}
+```
+
+---
+
+## 9. API Endpoints
+
+```
+GET    /api/projects         — List projects (paginated, filterable)
+GET    /api/projects/[slug]  — Get single project
+GET    /api/projects/featured — Get featured projects
+
+GET    /api/posts            — List posts (paginated, filterable)
+GET    /api/posts/[slug]     — Get single post
+GET    /api/posts/featured   — Get featured post
+
+POST   /api/contact          — Submit contact form (rate limited)
+
+GET    /api/profile          — Get author profile
+GET    /api/experience       — Get experience timeline
+GET    /api/skills           — Get skills by category
+```
+
+---
+
+## 10. Teknoloji Stack
+
+| Category | Technology | Purpose |
+|----------|------------|---------|
+| Framework | Next.js 14 (App Router) | React framework |
+| Language | TypeScript 5.x | Type safety |
+| Styling | Tailwind CSS 3.4+ | Utility-first CSS |
+| UI Components | shadcn/ui | Accessible components |
+| Icons | Lucide React | Icon library |
+| Animation | Framer Motion 11+ | Animations |
+| Content | MDX 3.x | Blog/project content |
+| Fonts | next/font/google | Optimized fonts |
+| Forms | React Hook Form 7.x | Form handling |
+| Validation | Zod 3.x | Schema validation |
+| Hosting | Vercel | Deployment & CDN |
+| Analytics | Vercel Analytics / Plausible | Analytics |
+| Monitoring | Sentry | Error tracking |
+
+---
+
+## 11. SEO & Metadata
+
+### Default SEO
+- Title template: '%s | Hikmet Güleşli'
+- OpenGraph: website type, tr_TR locale
+- Twitter Card: summary_large_image
+- robots: index, follow
+
+### Structured Data
+- Person Schema (JSON-LD)
+- Article Schema (blog posts)
+- Breadcrumb Schema
+
+### Sitemap
+- Static routes: /, /projects, /blog, /about, /contact
+- Dynamic routes: /projects/[slug], /blog/[slug]
+
+---
+
+## 12. Erişilebilirlik (WCAG 2.1 AA)
+
+- Color contrast: minimum 4.5:1 (normal text), 3:1 (large text)
+- Focus indicators: 2px ring, primary color
+- Skip to main content link
+- Semantic HTML (nav, main, article, aside, footer)
+- ARIA labels on interactive elements
+- Keyboard navigation: Tab, Enter, Escape, Arrow keys
+- Reduced motion: respects `prefers-reduced-motion`
+
+---
+
+## 13. Performans Hedefleri
+
+| Metric | Target | Strategy |
+|--------|--------|----------|
+| LCP | < 2.5s | Preload hero, priority hints |
+| FID | < 100ms | Code splitting |
+| CLS | < 0.1 | Explicit dimensions, font-display: swap |
+| TTFB | < 600ms | Edge caching, ISR |
+| Bundle | < 200KB total JS | Tree shaking, minification |
+
+---
+
+## 14. Mimari Kararlar
+
+**DECISION:** Next.js 14 App Router ile statik-first yaklaşım
+**ALTERNATIVES_CONSIDERED:** Astro, vanilla HTML/CSS/JS
+**RATIONALE:** App Router + MDX + shadcn/ui ekosistemi ile tutarlı geliştirme deneyimi. Content management kolaylığı ve API routes ile ileriye dönük esneklik.
+**TRADE_OFFS:** Daha büyük bundle size (Framer Motion dahil), ancak component reusability kazanımı bunu tolere edilebilir kılıyor.
+
+---
+
+## 15. Ekranlar (Screens)
+
+| # | Ekran Adı | Tür | Açıklama |
+|---|-----------|-----|----------|
+| 1 | Ana Sayfa | landing | Hero, projeler, blog, CTA bölümleri |
+| 2 | Projeler | list-view | Proje kartları grid, filtreleme, arama |
+| 3 | Proje Detay | detail | Proje detay, tech stack, galeri, linkler |
+| 4 | Blog | list-view | Yazı listesi, kategoriler, arama |
+| 5 | Blog Detay | detail | Yazı içeriği, TOC, yazar, paylaşım |
+| 6 | Hakkında | profile | Avatar, bio, timeline, yetenekler |
+| 7 | İletişim | form | İletişim formu, bilgiler, sosyal linkler |
+| 8 | 404 | error | Sayfa bulunamadı hata sayfası |
+
+---
+
+## 16. Geliştirme Sırası Önerisi
+
+**Phase 1 — Foundation:**
+1. Next.js proje setup, Tailwind + shadcn/ui konfigürasyonu
+2. Tema/tasarım sistemi (colors, typography, spacing)
+3. Layout bileşenleri (Header, Footer, Navigation)
+4. Global UI bileşenleri (Button, Card, Badge, Input)
+
+**Phase 2 — Pages:**
+5. Ana Sayfa
+6. Projeler sayfası + Proje detay
+7. Blog sayfası + Blog detay
+8. Hakkında sayfası
+9. İletişim sayfası
+
+**Phase 3 — Polish:**
+10. Animasyonlar (Framer Motion)
+11. SEO + Metadata
+12. 404 + Error handling
+13. PWA optimizasyonu
+14. Accessibility audit
+
+---
+
+## 17. Mock Data Gerekli
+
+Geliştirme için örnek veri seti:
+- 6 proje (en az 1 featured)
+- 4 blog yazısı (farklı kategorilerde)
+- 3 deneyim (timeline için)
+- 10+ yetenek (kategorize edilmiş)
+- 1 yazar profili (Hikmet Güleşli)
+
+---
+
+PRD_SCREEN_COUNT: 8

@@ -1,0 +1,299 @@
+STATUS: done
+REPO: /home/setrox/projects/dev-hikmetgulsesli
+BRANCH: dev-hikmetgulsesli
+PROJECT_TYPE: ui
+HAS_UI: true
+DEVICE_TYPE: DESKTOP
+TECH_STACK: nextjs
+DB_REQUIRED: none
+PRD_SCREEN_COUNT: 12
+PRD:
+# PRD — hikmetgulsesli.com Kişisel Portföy Sitesi
+
+## 1. Proje Genel Bakış
+
+**Proje Adı:** hikmetgulsesli.com
+**Platform:** Web (Responsive — Mobile & Desktop)
+**Repo:** /home/setrox/projects/dev-hikmetgulsesli
+**STITCH_PROJECT_ID:** 2269194756870439603
+
+Hikmet Güleşli'nin kişisel web sitesi ve geliştirici portföyü. Koyu temalı, terminal estetiğine sahip modern bir portfolio platformu. Ziyaretçilere Hikmet'in projelerini, yazılarını ve profesyonel profilini sunan merkezi bir dijital varlık. Terminal/monospace tarzı UI elementleri, canlı durum göstergeleri ve hover micro-interaction'lar ile dinamik bir kullanıcı deneyimi sağlar.
+
+**Hedef Kullanıcılar:** İşverenler, potansiyel müşteriler, teknoloji meraklıları, iş arayanlar.
+
+**Temel Özellikler:**
+- Koyu tema varsayılan, terminal estetiği
+- Framer Motion tabanlı smooth animasyonlar
+- 60fps performans
+- PWA-ready yapı
+- SEO optimizasyonu ve structured data
+- Responsive ve mobile-first tasarım
+- WCAG 2.1 AA erişilebilirlik
+
+---
+
+## 2. Tasarım Sistemi
+
+### 2.1 Renk Paleti
+
+| İsim | Hex Kodu | Kullanım Alanı |
+|------|----------|----------------|
+| Background | `#0a0a0f` | Sayfa arka planı |
+| Background Elevated | `#111113` | Kartlar, elevated yüzeyler |
+| Background Subtle | `#1a1a1f` | Hover state, secondary surfaces |
+| Background Overlay | `#0a0a0f/80` | Modal overlays |
+| Primary | `#10b981` | CTA butonları, aktif linkler |
+| Primary Hover | `#059669` | Buton hover durumu |
+| Primary Muted | `#10b981/20` | Subtle primary backgrounds |
+| Accent | `#6366f1` | Gradient efektler, secondary vurgular |
+| Accent Alt | `#8b5cf6` | Gradient geçişleri |
+| Text Primary | `#fafafa` | Ana metin, başlıklar |
+| Text Secondary | `#a1a1aa` | Alt başlıklar, açıklamalar |
+| Text Muted | `#6b7280` | Placeholder, disabled metin |
+| Border | `#27272a` | Kart kenarlıkları |
+| Border Hover | `#3f3f46` | Hover state border |
+| Border Active | `#10b981` | Active/focus state border |
+| Success | `#22c55e` | Başarı durumları |
+| Warning | `#f59e0b` | Uyarı durumları |
+| Error | `#ef4444` | Hata durumları |
+| Info | `#3b82f6` | Bilgi durumları |
+
+### 2.2 Tipografi
+
+| Name | Size | Usage |
+|------|------|-------|
+| 2xs | 10px | Legal text, timestamps |
+| xs | 12px | Captions, badges |
+| sm | 14px | Small body text |
+| base | 16px | Body text |
+| lg | 18px | Large body, lead |
+| xl | 20px | Section subtitles |
+| 2xl | 24px | H3 headings |
+| 3xl | 30px | H2 headings |
+| 4xl | 36px | H1 headings |
+| 5xl | 48px | Large headings |
+| 6xl | 60px | Display headings |
+| 7xl | 72px | Hero display |
+
+**Font Families:**
+- Headings: `Space Grotesk` (700)
+- Body: `Inter` (400, 500, 600, 700)
+- Code/Terminal: `JetBrains Mono` (400)
+
+### 2.3 Spacing, Border Radius, Shadows
+
+Base unit: `4px`. Tüm spacing, border-radius ve shadow değerleri PRD detayında tanımlı.
+
+### 2.4 Motion & Animasyon
+
+**Timing Functions:** ease-in, ease-out, ease-in-out, spring, linear
+**Duration Scale:** instant (0ms) → slowest (500ms) → ambient (2000ms+)
+
+**Framer Motion Variants:** fadeVariants, fadeUpVariants, scaleVariants, slideLeftVariants, slideRightVariants, pageVariants, staggerContainer
+
+**Scroll Animations:** fade-up, fade-in, fade-down, slide-left, slide-right, scale-up, blur-in (stagger: 100ms)
+
+**Micro-interactions:** Button hover (translateY -1px + glow), Card hover (translateY -4px + shadow), Link underline (width 0→100%), Icon hover (rotate 5deg or scale 1.1)
+
+---
+
+## 3. Sayfalar
+
+1. **Ana Sayfa** (`/`) — Hero section, öne çıkan projeler grid, son yazılar, CTA
+2. **Projeler** (`/projects`) — Proje kartları grid, filtreleme, arama
+3. **Proje Detay** (`/projects/[slug]`) — Proje detay, teknolojiler, demo/github linkleri
+4. **Blog** (`/blog`) — Yazı listesi, kategoriler, arama
+5. **Blog Detay** (`/blog/[slug]`) — Yazı içeriği, tablo of contents, yazar bilgisi
+6. **Hakkında** (`/about`) — Kişisel tanıtım, yetenekler, deneyim timeline
+7. **İletişim** (`/contact`) — İletişim formu, sosyal medya linkleri
+
+---
+
+## 4. Global Bileşenler
+
+- **Header Navigation:** Fixed, blur backdrop, responsive hamburger menu
+- **Footer:** 4-column layout (about, links, social, copyright)
+- **Buttons:** Primary, Secondary, Ghost, Destructive, Link — 4 sizes, loading/disabled states
+- **Cards:** Default, Interactive, Featured variants
+- **Badge/Tag:** 7 variants (default, primary, secondary, accent, success, warning, error)
+- **Input Fields:** Text, email, password, textarea — validation, icons, error states
+- **Status Indicator:** Online/offline/busy/away with ping animation
+- **Skeleton Loader:** pulse/wave animations for text, circular, rectangular, card
+- **Toast Notifications:** 5 variants, stacking, auto-dismiss
+- **Modal/Dialog:** 5 sizes, overlay, animations
+- **Accordion:** Single/multiple, collapsible
+- **Tabs:** With icons, content panels
+- **Command Palette:** Cmd+K trigger, keyboard navigation, groups
+- **Avatar:** 6 sizes, fallback initials, status indicator
+- **Cursor Glow Effect:** Radial gradient following cursor, 300px radius, disabled on mobile
+
+---
+
+## 5. Teknoloji Stack
+
+| Category | Technology | Version |
+|----------|------------|---------|
+| Framework | Next.js | 14+ (App Router) |
+| Language | TypeScript | 5.x |
+| Styling | Tailwind CSS | 3.4+ |
+| UI Components | shadcn/ui | latest |
+| Icons | Lucide React | latest |
+| Animation | Framer Motion | 11+ |
+| Content | MDX | 3.x |
+| Fonts | next/font/google | - |
+| Forms | React Hook Form | 7.x |
+| Validation | Zod | 3.x |
+| Hosting | Vercel | - |
+
+---
+
+## 6. API Endpoints
+
+```
+GET    /api/projects          — List projects (pagination, filter, search)
+GET    /api/projects/[slug]    — Single project
+GET    /api/projects/featured  — Featured projects
+
+GET    /api/posts             — List posts (pagination, filter, search)
+GET    /api/posts/[slug]      — Single post
+GET    /api/posts/featured    — Featured post
+GET    /api/posts/categories  — Category list with counts
+GET    /api/posts/search?q=   — Search posts
+
+POST   /api/contact           — Submit contact form (rate limited)
+
+GET    /api/profile           — Author profile
+GET    /api/experience        — Experience timeline
+GET    /api/skills            — Skills by category
+```
+
+---
+
+## 7. Non-Functional Requirements
+
+### Performance
+- LCP < 2.5s, FID < 100ms, CLS < 0.1, TTFB < 600ms, INP < 200ms
+- Route-based code splitting, font subsetting (Latin only)
+- Image optimization: AVIF/WebP, blur placeholders, responsive srcset
+
+### SEO
+- Default SEO with OpenGraph, Twitter Card, JSON-LD schemas
+- Page-specific overrides for blog posts and projects
+- Sitemap.xml, robots.txt, canonical URLs
+
+### Accessibility
+- WCAG 2.1 AA compliance (contrast ratios, focus indicators, skip links)
+- ARIA patterns for all interactive components
+- Keyboard navigation, reduced motion support
+
+### Security
+- Rate limiting on contact endpoint (5/hour per IP)
+- Input sanitization
+- HTTPS only
+
+---
+
+## 8. Responsive Breakpoints
+
+| Breakpoint | Min Width | Description |
+|------------|-----------|-------------|
+| mobile | < 375px | Ultra compact |
+| mobile-lg | 375px | Standard mobile |
+| tablet-sm | 640px | Large phones |
+| tablet | 768px | Tablets |
+| desktop | 1024px | Laptops |
+| desktop-lg | 1280px | Large screens |
+| desktop-xl | 1536px | Extra large |
+
+Mobile: 1 column, hamburger menu, touch targets 44x44px min
+Tablet: 2 columns
+Desktop: 3-4 columns
+
+---
+
+## 9. Edge Cases & Error Handling
+
+- 404 Page: Custom page with navigation + recent posts
+- 500 Error: Error boundary with retry
+- Network Error: Offline indicator + cached content
+- Empty States: Illustrated empty states with CTA for all list views
+- Form Validation: Inline errors, focus first error, keep data on failure
+- Image Fail: Placeholder with icon
+- Long Content: Truncation with ellipsis
+
+---
+
+## 10. Testing Strategy
+
+| Type | Tool | Coverage |
+|------|------|----------|
+| Unit | Vitest | 70%+ |
+| Component | testing-library | 80%+ |
+| E2E | Playwright | Critical paths |
+| Accessibility | axe-core | 100% |
+
+**Critical User Flows:**
+1. Homepage → Projects → Project Detail → External links
+2. Blog List → Search → Article → Code blocks
+3. Contact Form → Validation → Submit → Success
+
+---
+
+## 11. Stitch Screen Map
+
+| Screen ID | Title | File |
+|-----------|-------|------|
+| 51b4e4fe | Projeler - Hikmet Güleşli | Projeler---Hikmet-Güleşli.html |
+| 901b0759 | Proje Detay - Vesta Dashboard | Proje-Detay---Vesta-Dashboard.html |
+| 6179c899 | Blog - Hikmet Güleşli | Blog---Hikmet-Güleşli.html |
+| ffd88b87 | Blog Detay - Hikmet Güleşli | Blog-Detay---Hikmet-Güleşli.html |
+| 9a31eab4 | Hakkında - Hikmet Güleşli | Hakkında---Hikmet-Güleşli.html |
+| 05393138 | İletişim - Hikmet Güleşli | İletişim---Hikmet-Güleşli.html |
+| 0da9a09f | Ana Sayfa | Ana-Sayfa.html |
+
+---
+
+## 12. Ekranlar (Screens)
+
+| # | Ekran Adı | Tür | Açıklama |
+|---|-----------|-----|----------|
+| 1 | Ana Sayfa | landing | Hero, featured projects grid, recent blog posts, CTA section |
+| 2 | Projeler Listesi | list-view | Responsive grid, category filter bar, search, pagination |
+| 3 | Proje Detay | detail | Hero image, overview, tech stack, gallery, challenges, links, prev/next nav |
+| 4 | Blog Listesi | list-view | Article grid with featured card, category filter, search, pagination |
+| 5 | Blog Detay | detail | Article content with TOC, typography, share buttons, author bio, related posts |
+| 6 | Hakkında | profile | Avatar, bio, experience timeline, skills grid, CV download |
+| 7 | İletişim | form | Split layout: contact form + info section, validation, success state |
+| 8 | Header (Global) | navigation | Fixed nav with blur backdrop, responsive hamburger for mobile |
+| 9 | Footer (Global) | navigation | 4-column: about, quick links, social, copyright |
+| 10 | 404 Sayfası | error | Custom 404 with navigation suggestions and recent posts |
+| 11 | Mobil Menü | overlay | Full-screen overlay, vertical nav links, social icons |
+| 12 | Arama Komut Paleti | command-palette | Cmd+K triggered, keyboard navigation, grouped results |
+
+---
+
+## 13. Mimari Kararlar
+
+### DECISION: Next.js App Router + Static Export
+**ALTERNATIVES_CONSIDERED:** Vite React SPA, plain HTML/CSS
+**RATIONALE:** Next.js App Router provides SSR/SSG flexibility, file-based routing, built-in image optimization, and excellent developer experience. For a portfolio site, we need SSR for SEO but can prerender most pages statically. App Router's server components reduce client-side JS bundle.
+**TRADE_OFFS:** Larger framework footprint than Vite, steeper learning curve for contributors unfamiliar with Next.js.
+**PIVOT_POINT:** If build times become prohibitive, switch to pure static export mode.
+
+### DECISION: shadcn/ui + Tailwind CSS
+**ALTERNATIVES_CONSIDERED:** Chakra UI, MUI, plain CSS modules
+**RATIONALE:** shadcn/ui provides accessible, customizable components built on Radix primitives. Tailwind enables rapid styling with consistent design tokens. No runtime CSS-in-JS overhead.
+**TRADE_OFFS:** shadcn/ui requires manual setup and copy-paste rather than npm install.
+**PIVOT_POINT:** If design requirements diverge significantly from shadcn patterns, evaluate pure Radix + custom styles.
+
+### DECISION: Framer Motion for Animations
+**ALTERNATIVES_CONSIDERED:** CSS animations, React Spring, Motion One
+**RATIONALE:** Framer Motion has best-in-class React integration, declarative API, layout animations, and gesture support. Wide adoption means good documentation and community support.
+**TRADE_OFFS:** Adds ~30KB to bundle. Some complex animations require client components.
+**PIVOT_POINT:** If performance budget is tight, fall back to CSS animations for simple transitions.
+
+### DECISION: MDX for Content
+**ALTERNATIVES_CONSIDERED:** CMS (Contentful/Sanity), plain Markdown
+**RATIONALE:** MDX enables writing content in Markdown while embedding React components inline. No external CMS dependency, content lives in the repo (version control, easy deploys).
+**TRADE_OFFS:** Build time scales with content volume. No visual CMS editor for non-technical authors.
+**PIVOT_POINT:** If content editing by non-technical team members becomes a priority, migrate to Sanity or Contentful.

@@ -1,0 +1,32 @@
+=== US-005: Virtual Keyboard Component ===
+COMPLETED: 2026-03-30T16:18:00+03:00
+FILES CHANGED:
+  - wordle-game/src/components/Keyboard.tsx (new)
+  - wordle-game/src/components/Key.tsx (new)
+  - wordle-game/src/components/__tests__/Keyboard.test.tsx (new)
+  - wordle-game/src/components/__tests__/Key.test.tsx (new)
+  - wordle-game/src/components/GameBoard.tsx (new)
+  - wordle-game/src/components/Tile.tsx (new)
+  - wordle-game/src/hooks/useGame.ts (new)
+  - wordle-game/src/types/game.ts (new)
+  - wordle-game/src/utils/words.ts (new)
+  - wordle-game/src/utils/storage.ts (new)
+  - wordle-game/src/App.tsx (new)
+  - wordle-game/src/main.tsx (new)
+  - wordle-game/src/index.css (new)
+  - wordle-game/src/test-setup.ts (new)
+  - wordle-game/package.json (new)
+  - wordle-game/vite.config.ts (new)
+  - wordle-game/tailwind.config.js (new)
+  - wordle-game/tsconfig.json (new)
+  - wordle-game/index.html (new)
+KEY DECISIONS:
+  - Used Turkish QWERTY layout with proper Turkish characters (Ç, Ş, Ğ, Ü, Ö, İ)
+  - Implemented real-time key color updates based on letter status (correct/present/absent)
+  - Added scale animation on key press for tactile feedback
+  - Used data attributes for test selectors and status tracking
+  - Separated Key component for individual key logic and styling
+DEPENDENCIES ADDED:
+  - react, react-dom
+  - typescript, vite, tailwindcss
+  - vitest, @testing-library/react, @testing-library/jest-dom
