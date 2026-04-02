@@ -27,8 +27,8 @@ export async function updateRunContext(runId: string, context: Record<string, st
   delete cleanContext["stitch_html"];
   delete cleanContext["_stitch_html_transient"];
   delete cleanContext["design_dom"];
-  // P2-02: Use JSONB merge — handle both object and array context (legacy compat)
-  await pgRun("UPDATE runs SET context = (CASE WHEN jsonb_typeof(COALESCE(context::jsonb, '{}')) = 'array' THEN COALESCE((context::jsonb)->0, '{}') ELSE COALESCE(context::jsonb, '{}') END) || $1::jsonb, updated_at = $2 WHERE id = $3",
+  // P2-02: Write full context (JSONB merge reverted — caused array corruption)
+  await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3",
     [JSON.stringify(cleanContext), now(), runId]);
 }
 
