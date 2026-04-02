@@ -1802,26 +1802,18 @@ ${screenDescs}
       storyStatus = STORY_STATUS.DONE; storyEvent = "story.done";
     }
 
-    // Design compliance check — only for the LAST story (integration wiring)
-    // Earlier stories may not have design-tokens imported yet — that is expected.
-    // The integration story is responsible for wiring everything together.
+    // Design compliance check — only for implement step, done stories
     if (step.step_id === "implement" && storyStatus === STORY_STATUS.DONE) {
-      const pendingStories = await pgGet<{ cnt: number }>("SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status IN ('pending', 'running')", [step.run_id]);
-      const isLastStory = (pendingStories?.cnt ?? 0) === 0;
-      if (isLastStory) {
-        const designIssue = checkStoryDesignCompliance(context);
-        if (designIssue) {
-          const storyRetry = storyRow ? await pgGet<{ retry_count: number }>("SELECT retry_count FROM stories WHERE story_id = $1 AND run_id = $2", [storyRow.story_id, step.run_id]) : null;
-          if ((storyRetry?.retry_count ?? 0) < 2) {
-            logger.warn(`[design-compliance] Last story ${storyRow?.story_id} failed design check — retry`, { runId: step.run_id });
-            context["previous_failure"] = `DESIGN COMPLIANCE: ${designIssue}`;
-            await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
-            await failStep(stepId, designIssue);
-            return { advanced: false, runCompleted: false };
-          } else {
-            logger.warn(`[design-compliance] Last story design issues (advisory): ${designIssue}`, { runId: step.run_id });
-          }
-        }
+      const designIssue = checkStoryDesignCompliance(context);
+      if (designIssue && step.retry_count < step.max_retries) {
+        logger.warn(`[design-compliance] Story ${storyRow?.story_id} failed design check — soft retry`, { runId: step.run_id });
+        context["previous_failure"] = `DESIGN COMPLIANCE: ${designIssue}`;
+        await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
+        await failStep(stepId, designIssue);
+        return { advanced: false, runCompleted: false };
+      } else if (designIssue) {
+        // Max retries — log warning but let story pass (advisory)
+        logger.warn(`[design-compliance] Story ${storyRow?.story_id} design issues (max retries reached, advisory): ${designIssue}`, { runId: step.run_id });
       }
     }
 
