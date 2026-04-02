@@ -66,18 +66,16 @@ export async function advancePipeline(runId: string): Promise<{ advanced: boolea
       emitEvent({ ts: now(), event: "pipeline.advanced", runId, workflowId: wfId, stepId: next.step_id });
       emitEvent({ ts: now(), event: "step.pending", runId, workflowId: wfId, stepId: next.step_id });
       // Demand-based crons + event-driven NOTIFY
-      setTimeout(async () => {
-        try {
-          await syncActiveCrons(runId, wfId || "");
-        } catch (e) {
-          logger.warn(`[advance] syncActiveCrons failed: ${String(e)}`, {});
-        }
-        // NOTIFY spawner daemon about new pending step
-        try {
-          const { pgRun } = await import("../db-pg.js");
-          await pgRun("SELECT pg_notify('step_pending', $1)", [JSON.stringify({ agentId: next.step_id, runId, stepId: next.step_id })]);
-        } catch {}
-      }, 2000);
+      // P1-06: Sync crons and notify immediately (no 2s delay)
+      try {
+        await syncActiveCrons(runId, wfId || "");
+      } catch (e) {
+        logger.warn(`[advance] syncActiveCrons failed: ${String(e)}`, {});
+      }
+      try {
+        const { pgRun } = await import("../db-pg.js");
+        await pgRun("SELECT pg_notify('step_pending', $1)", [JSON.stringify({ agentId: next.step_id, runId, stepId: next.step_id })]);
+      } catch {}
       return { advanced: true, runCompleted: false };
     } else {
       await completeRun(runId);
@@ -140,7 +138,7 @@ export async function checkLoopContinuation(runId: string, loopStepId: string): 
       const unverifiedStory = await findStoryByStatus(runId, "done") as { id: string } | undefined;
       if (unverifiedStory) {
         await pgRun(
-          "UPDATE steps SET status = 'pending', updated_at = $1 WHERE run_id = $2 AND step_id = $3 AND status IN ('waiting', 'done')",
+          "UPDATE steps SET status = 'pending', updated_at = $1 WHERE run_id = $2 AND step_id = $3 AND status IN ('waiting', 'done', 'pending')",
           [now(), runId, lcForCheck.verifyStep]
         );
         logger.info(`Loop has unverified stories — keeping verify active`, { runId });
@@ -148,6 +146,12 @@ export async function checkLoopContinuation(runId: string, loopStepId: string): 
       }
     }
   }
+
+  // Count failed stories BEFORE skip conversion (P1-05)
+  const preSkipFailedRows = await pgQuery<{ cnt: string }>(
+    "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status = 'failed'", [runId]
+  );
+  const originalFailedCount = parseInt(preSkipFailedRows[0]?.cnt || "0", 10);
 
   const failedStory = await findStoryByStatus(runId, "failed") as { id: string } | undefined;
   if (failedStory) {
@@ -168,8 +172,8 @@ export async function checkLoopContinuation(runId: string, loopStepId: string): 
 STORIES_TOTAL: ${totalCount}
 STORIES_VERIFIED: ${verifiedCount}
 STORIES_SKIPPED: ${skippedCount}
-STORIES_FAILED: ${failedCount}
-SUMMARY: ${verifiedCount}/${totalCount} stories verified, ${skippedCount} skipped, ${failedCount} failed`;
+STORIES_FAILED: ${originalFailedCount}
+SUMMARY: ${verifiedCount}/${totalCount} stories verified, ${skippedCount} skipped (${originalFailedCount} originally failed)`;
 
   // Early worktree cleanup
   await cleanupWorktrees(runId);

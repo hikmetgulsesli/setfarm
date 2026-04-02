@@ -76,7 +76,7 @@ export async function pgMigrate(): Promise<void> {
 
 export async function pgNextRunNumber(): Promise<number> {
   const row = await pgGet<{ next: number }>(
-    "SELECT COALESCE(MAX(run_number), 0) + 1 AS next FROM runs"
+    "SELECT nextval('runs_run_number_seq'::regclass) AS next"
   );
   return row?.next ?? 1;
 }
@@ -101,3 +101,7 @@ export async function pgClose(): Promise<void> {
 
 /** ISO timestamp — single source of truth for all modules */
 export const now = (): string => new Date().toISOString();
+
+// P4-05: Graceful shutdown
+process.on("SIGTERM", () => { pgClose().catch(() => {}); });
+process.on("SIGINT", () => { pgClose().catch(() => {}); });

@@ -22,8 +22,14 @@ export async function getRunContext(runId: string): Promise<Record<string, strin
 }
 
 export async function updateRunContext(runId: string, context: Record<string, string>): Promise<void> {
-  await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3",
-    [JSON.stringify(context), now(), runId]);
+  // P2-08: Remove transient fields before persisting (prevent context bloat)
+  const cleanContext = { ...context };
+  delete cleanContext["stitch_html"];
+  delete cleanContext["_stitch_html_transient"];
+  delete cleanContext["design_dom"];
+  // P2-02: Use JSONB merge to prevent last-writer-wins in parallel story execution
+  await pgRun("UPDATE runs SET context = COALESCE(context::jsonb, '{}'::jsonb) || $1::jsonb, updated_at = $2 WHERE id = $3",
+    [JSON.stringify(cleanContext), now(), runId]);
 }
 
 export async function failRun(runId: string): Promise<void> {

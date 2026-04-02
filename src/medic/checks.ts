@@ -518,16 +518,16 @@ export async function checkStalledWorkflowCrons(): Promise<MedicFinding[]> {
     if (age <= CIRCUIT_BREAKER_THRESHOLD_MS) {
       // Activity is recent, but check if we are under-capacity
       const loopStep = await pgGet<{ loop_config: string | null }>(
-        "SELECT loop_config FROM steps WHERE run_id IN (SELECT id FROM runs WHERE workflow_id = $1 AND status = running) AND type = loop AND status = running LIMIT 1",
+        "SELECT loop_config FROM steps WHERE run_id IN (SELECT id FROM runs WHERE workflow_id = $1 AND status = 'running') AND type = 'loop' AND status = 'running' LIMIT 1",
         [workflow_id]
       );
       const parallelCount = loopStep?.loop_config ? (JSON.parse(loopStep.loop_config).parallelCount || 3) : 3;
       const runningStories = await pgGet<{ cnt: string }>(
-        "SELECT COUNT(*) as cnt FROM stories WHERE run_id IN (SELECT id FROM runs WHERE workflow_id = $1 AND status = running) AND status = running",
+        "SELECT COUNT(*) as cnt FROM stories WHERE run_id IN (SELECT id FROM runs WHERE workflow_id = $1 AND status = 'running') AND status = 'running'" ,
         [workflow_id]
       );
       const pendingStories = await pgGet<{ cnt: string }>(
-        "SELECT COUNT(*) as cnt FROM stories WHERE run_id IN (SELECT id FROM runs WHERE workflow_id = $1 AND status = running) AND status = pending",
+        "SELECT COUNT(*) as cnt FROM stories WHERE run_id IN (SELECT id FROM runs WHERE workflow_id = $1 AND status = 'running') AND status = 'pending'" ,
         [workflow_id]
       );
       const runningCnt = parseInt(runningStories?.cnt || "0", 10);
@@ -536,7 +536,7 @@ export async function checkStalledWorkflowCrons(): Promise<MedicFinding[]> {
       if (pendingCnt > 0 && runningCnt < parallelCount) {
         // Check cooldown (2min since last recreate)
         const recentFix = await pgGet<{ ts: string | null }>(
-          "SELECT MAX(checked_at) as ts FROM medic_checks WHERE details LIKE %under_capacity% AND checked_at > NOW() - INTERVAL 2 minutes"
+          "SELECT MAX(checked_at) as ts FROM medic_checks WHERE details LIKE '%under_capacity%' AND checked_at > NOW() - INTERVAL '2 minutes'"
         );
         if (!recentFix?.ts) {
           findings.push({

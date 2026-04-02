@@ -20,3 +20,13 @@ wrk/
 .setfarm-*.txt
 .setfarm-*.json
 prd-*.md
+
+# Faz8: Security cleanup
+.env
+scripts/.env
+.stitch-screens-*.json
+.setfarm-step-output.txt
+tmp/
+wordle-game/
+workspace/
+feature-dev/

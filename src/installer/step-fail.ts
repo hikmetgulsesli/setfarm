@@ -154,7 +154,7 @@ async function handleSingleStepFailurePG(
       emitEvent({ ts: now(), event: "step.skipped", runId: step.run_id, workflowId: wfId2, stepId: workflowStepId, detail: `Retries exhausted — skipped: ${error}` });
       logger.warn(`[failStep] Non-critical step ${workflowStepId} skipped after ${newRetryCount} retries — pipeline continues`, { runId: step.run_id });
       const { advancePipeline } = await import("./step-advance.js");
-      advancePipeline(step.run_id);
+      await advancePipeline(step.run_id);
       return { retrying: false, runFailed: false };
     }
   } else {
@@ -174,7 +174,7 @@ async function fireFallbackRetryCron(
     const agentRole = step.agent_id.includes("_") ? step.agent_id.split("_").pop()! : step.agent_id;
     const mappedAgents = [...DEFAULT_DEVELOPER_AGENTS];
     const fallbackAgent = mappedAgents[newRetry % mappedAgents.length];
-    const cronName = `setfarm/fallback-retry/${storyRow?.story_id || "unknown"}-r${newRetry}`;
+    const cronName = `setfarm/fallback-retry/${Date.now()}-${storyRow?.story_id || "unknown"}-r${newRetry}`;
     const pollingPrompt = buildPollingPrompt(wfId2, agentRole);
     execFileSync("openclaw", [
       "cron", "add",

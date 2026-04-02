@@ -15,7 +15,7 @@ export type PRState = "MERGED" | "OPEN" | "CLOSED" | "UNKNOWN";
 
 // ── PR State Cache (prevents redundant gh calls across cron cycles) ──
 
-const PR_STATE_CACHE_TTL_MS = 60_000; // 60 seconds
+const PR_STATE_CACHE_TTL_MS = 15_000; // P2-11: Reduced from 60s to 15s to prevent stale PR data
 const _prStateCache = new Map<string, { state: PRState; ts: number }>();
 
 function getCachedPRState(prUrl: string): PRState | null {

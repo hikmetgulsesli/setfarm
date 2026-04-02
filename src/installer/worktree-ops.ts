@@ -99,6 +99,9 @@ export function copyStitchToWorktree(repo: string, worktreeDir: string): void {
 // ── Worktree CRUD ───────────────────────────────────────────────────
 
 export function createStoryWorktree(repo: string, storyId: string, baseBranch: string, agentId?: string): string {
+  // P2-03: Prune orphaned worktrees before creating new ones
+  try { execFileSync("git", ["worktree", "prune"], { cwd: repo, timeout: 5000, stdio: ["pipe", "pipe", "pipe"] }); } catch {}
+
   const worktreeBase = resolveWorktreeBaseDir(repo, agentId);
   const worktreeDir = path.join(worktreeBase, storyId.toLowerCase());
 

@@ -75,6 +75,10 @@ export async function peekStep(agentId: string): Promise<PeekResult> {
         try {
           const output = fs.readFileSync(filePath, 'utf-8').trim();
           if (!output.includes('STATUS:')) continue;
+          // P2-06: Skip if file is older than current run (cross-contamination guard)
+          const fileStat = fs.statSync(filePath);
+          const fileAge = Date.now() - fileStat.mtimeMs;
+          if (fileAge > 1800000) { fs.unlinkSync(filePath); continue; } // older than 30min = stale
           // Find any running step for this agent role that could match
           const runningStep = await pgGet<{ id: string; step_id: string; run_id: string }>(
             `SELECT s.id, s.step_id, s.run_id FROM steps s JOIN runs r ON r.id = s.run_id
@@ -210,7 +214,7 @@ async function autoCompleteDesignStep(step: StepRow, db: any, htmlFiles: string[
   const dOutput = `STATUS: done\nSTITCH_PROJECT_ID: ${projectId}\nSCREENS_GENERATED: ${htmlFiles.length}\nDESIGN_NOTES: Reused ${htmlFiles.length} screens (auto-skip)`;
   await pgRun("UPDATE steps SET status = 'done', output = $1, updated_at = $2 WHERE id = $3", [dOutput, now(), step.id]);
   logger.info(`[design-dedup] Auto-skipped design — reusing ${htmlFiles.length} screens (project ${projectId})`, { runId: step.run_id });
-  advancePipeline(step.run_id);
+  await advancePipeline(step.run_id);
   return true;
 }
 
@@ -357,7 +361,7 @@ async function autoCompleteStoriesWithPRs(
       }
 
       if (prFound && prUrl) {
-          await pgRun("UPDATE stories SET status = 'done', pr_url = $1, story_branch = $2, updated_at = $3 WHERE id = $4", [prUrl, storyBranchForCheck, now(), rs.id]);
+          await pgRun("UPDATE stories SET status = 'done', pr_url = $1, story_branch = $2, updated_at = $3 WHERE id = $4 AND status = 'pending'", [prUrl, storyBranchForCheck, now(), rs.id]);
           await pgRun("UPDATE steps SET current_story_id = NULL, updated_at = $1 WHERE id = $2 AND current_story_id = $3", [now(), step.id, rs.id]);
         logger.info(`[claim-auto-complete] Story ${rs.story_id} auto-completed — PR exists: ${prUrl}`, { runId: step.run_id });
         emitEvent({ ts: now(), event: "story.done", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, storyId: rs.story_id, storyTitle: rs.title, detail: `Auto-completed — PR exists (${prUrl})` });
@@ -488,6 +492,9 @@ async function injectStoryContext(
       }
       if (stitchHtmlContent) {
         context["stitch_html"] = stitchHtmlContent;
+        // P2-08: Don't persist stitch_html to DB context (prevents 200K+ blob growth)
+        // It will be used in resolvedInput but deleted before updateRunContext
+        context["_stitch_html_transient"] = "true";
         logger.info(`[stitch-html-inject] Injected ${storyScreensParsed.length} screen HTML(s) into context for story ${story.storyId} (${stitchHtmlContent.length} chars)`, { runId: step.run_id });
       }
     }
@@ -938,12 +945,7 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
 
       // Story selection + claim must be atomic to prevent
       // two parallel crons from selecting the same story (race condition fix #4)
-      let _txOpen = true;
-      const _rollbackEarly = () => {
-        if (_txOpen) {
-          _txOpen = false;
-        }
-      };
+      // P2-01: Fake transaction removed — claim uses RETURNING for atomicity
 
       // Find next pending story with dependency check
       const pendingStories = await pgQuery<any>("SELECT * FROM stories WHERE run_id = $1 AND status = 'pending' ORDER BY story_index ASC", [step.run_id]);
@@ -972,7 +974,7 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
       }
 
       if (!nextStory) {
-        _rollbackEarly();
+        // (removed: fake transaction cleanup)
         const failedStory = await findStoryByStatus(step.run_id, "failed") as { id: string } | undefined;
 
         if (failedStory) {
@@ -985,7 +987,8 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
         // Check if other stories are still running in parallel
         const runningStory = await pgGet<{ id: string }>("SELECT id FROM stories WHERE run_id = $1 AND status = 'running'", [step.run_id]);
         if (runningStory) {
-          _rollbackEarly(); return { found: false }; // Other stories still running, wait for them
+          // (removed: fake transaction cleanup)
+        return { found: false }; // Other stories still running, wait for them
         }
 
         // DEPENDENCY DEADLOCK GUARD: pending stories exist but all blocked by deps — FAIL RUN (v1.5.53)
@@ -1030,7 +1033,7 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
         // No pending, running, or failed stories — mark step done and advance
         await pgRun("UPDATE steps SET status = 'done', updated_at = $1 WHERE id = $2", [now(), step.id]);
         emitEvent({ ts: now(), event: "step.done", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId });
-        advancePipeline(step.run_id);
+        await advancePipeline(step.run_id);
         return { found: false };
       }
 
@@ -1038,7 +1041,8 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
       const runningStoryCount = { cnt: await countStoriesByStatus(step.run_id, "running") };
       const parallelLimit = loopConfig?.parallelCount ?? 3;
       if (runningStoryCount.cnt >= parallelLimit) {
-        _rollbackEarly(); return { found: false }; // At capacity, wait for running stories to finish
+        // (removed: fake transaction cleanup)
+        return { found: false }; // At capacity, wait for running stories to finish
       }
 
       // Claim the story with optimistic lock — only succeeds if still pending (prevents double-claim)
@@ -1047,10 +1051,11 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
       if (!claimResult) {
         // Another agent claimed this story between SELECT and UPDATE — retry next cycle
         logger.info(`[claim] Story ${nextStory.story_id} already claimed by another agent — skipping`, { runId: step.run_id });
-        _rollbackEarly(); return { found: false };
+        // (removed: fake transaction cleanup)
+        return { found: false };
       }
       await pgRun("UPDATE steps SET status = 'running', current_story_id = \$1, updated_at = \$2 WHERE id = \$3", [nextStory.id, now(), step.id]);
-      _txOpen = false;
+      // (removed: fake transaction flag)
 
       // GIT WORKTREE ISOLATION: Create OUTSIDE transaction to avoid holding DB
       // lock during slow git operations.

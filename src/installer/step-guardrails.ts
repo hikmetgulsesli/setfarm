@@ -118,9 +118,9 @@ export async function processDesignCompletion(
     if (needsRecovery && stitchProjectId) {
       logger.warn(`[design-guardrail] SCREEN_MAP missing or invalid. Auto-recovering from Stitch API (project ${stitchProjectId})...`, { runId });
       try {
-        const { execSync } = require("child_process");
-        const stitchScript = require("path").join(process.env.HOME || "", ".openclaw/setfarm-repo/scripts/stitch-api.mjs");
-        const raw = execSync(`node "${stitchScript}" list-screens "${stitchProjectId}"`, { encoding: "utf8", timeout: 30000 });
+        // P2-10: Use execFileSync instead of execSync to prevent shell injection
+        const stitchScript = path.join(process.env.HOME || "", ".openclaw/setfarm-repo/scripts/stitch-api.mjs");
+        const raw = execFileSync("node", [stitchScript, "list-screens", stitchProjectId], { encoding: "utf8", timeout: 30000 });
         const screens = JSON.parse(raw);
         if (Array.isArray(screens) && screens.length > 0) {
           const screenMap = screens.map((s: any) => ({
@@ -731,7 +731,7 @@ export function checkStoryDesignCompliance(
 
   // 1. design-tokens.css imported/referenced?
   try {
-    const result = execFileSync("grep", ["-rl", "design-tokens", srcDir], {
+    const result = execFileSync("grep", ["-rl", "design-tokens", srcDir, "--include=*.ts", "--include=*.tsx", "--include=*.jsx", "--include=*.js", "--include=*.css", "--include=*.scss"], {
       encoding: "utf-8",
       timeout: 5000,
       stdio: ["pipe", "pipe", "pipe"],
@@ -739,8 +739,20 @@ export function checkStoryDesignCompliance(
     if (!result) {
       issues.push("design-tokens.css hiçbir dosyada import/referans edilmemiş");
     }
-  } catch {
-    issues.push("design-tokens.css hiçbir dosyada import/referans edilmemiş");
+  } catch (err: any) {
+    // P2-04b: exit code 1 = no matches (genuine miss), code 2 = grep error
+    if (err?.status === 2) {
+      logger.warn('[design-compliance] grep error (not a match issue)', {});
+    }
+    // Check CSS entry files as fallback before reporting
+    const cssEntries = ['index.css', 'main.css', 'App.css', 'global.css', 'globals.css'];
+    const hasEntryImport = cssEntries.some((f: string) => {
+      try { return fs.existsSync(path.join(srcDir, f)) && fs.readFileSync(path.join(srcDir, f), 'utf-8').includes('design-tokens'); }
+      catch { return false; }
+    });
+    if (!hasEntryImport) {
+      issues.push("design-tokens.css hiçbir dosyada import/referans edilmemiş");
+    }
   }
 
   // 2. Too many hardcoded hex colors?
