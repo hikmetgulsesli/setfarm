@@ -74,7 +74,7 @@ async function handleLoopStepFailurePG(
 
   if (newRetry > story.max_retries) {
     await pgBegin(async (sql) => {
-      await sql`UPDATE stories SET status = 'failed', retry_count = ${newRetry}, updated_at = ${now()} WHERE id = ${story.id}`;
+      await sql`UPDATE stories SET status = 'failed', retry_count = ${newRetry}, output = ${error}, updated_at = ${now()} WHERE id = ${story.id}`;
       await sql`UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = ${now()} WHERE id = ${stepId}`;
       try { await sql`UPDATE claim_log SET outcome = 'failed', duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at)) * 1000 AS INTEGER), diagnostic = ${error} WHERE story_id = ${storyRow?.story_id || ""} AND outcome IS NULL`; } catch (e) { logger.warn("[claim-log] update failed: " + String(e), {}); }
     });
@@ -85,7 +85,7 @@ async function handleLoopStepFailurePG(
   }
 
   await pgBegin(async (sql) => {
-    await sql`UPDATE stories SET status = 'pending', retry_count = ${newRetry}, updated_at = ${now()} WHERE id = ${story.id}`;
+    await sql`UPDATE stories SET status = 'pending', retry_count = ${newRetry}, output = ${error}, updated_at = ${now()} WHERE id = ${story.id}`;
     await sql`UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = ${now()} WHERE id = ${stepId}`;
     try { await sql`UPDATE claim_log SET outcome = 'failed', duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at)) * 1000 AS INTEGER), diagnostic = ${error} WHERE story_id = ${storyRow?.story_id || ""} AND outcome IS NULL`; } catch (e) { logger.warn("[claim-log] update failed: " + String(e), {}); }
   });
