@@ -99,7 +99,11 @@ async function handleLoopStepFailurePG(
 
 // ── Single step failure (PG) ─────────────────────────────────────────
 
-const CRITICAL_STEPS = new Set(["deploy", "plan", "setup-repo", "setup-build", "stories"]);
+const CRITICAL_STEPS = new Set(["deploy", "plan", "setup-repo", "setup-build", "stories", "final-test", "qa-test", "security-gate", "verify"]);
+
+/** Quality gate steps get boosted max_retries so agents have more chances to fix issues */
+const QUALITY_GATE_STEPS = new Set(["final-test", "qa-test", "security-gate", "verify"]);
+const QUALITY_GATE_MIN_RETRIES = 4;
 
 async function handleSingleStepFailurePG(
   stepId: string,
@@ -110,6 +114,13 @@ async function handleSingleStepFailurePG(
 
   const stepRow = await pgGet<{ step_id: string }>("SELECT step_id FROM steps WHERE id = $1", [stepId]);
   const workflowStepId = stepRow?.step_id || "";
+
+  // Boost max_retries for quality gate steps so agents get more chances to fix issues
+  if (QUALITY_GATE_STEPS.has(workflowStepId) && step.max_retries < QUALITY_GATE_MIN_RETRIES) {
+    step.max_retries = QUALITY_GATE_MIN_RETRIES;
+    await pgRun("UPDATE steps SET max_retries = $1 WHERE id = $2", [QUALITY_GATE_MIN_RETRIES, stepId]);
+    logger.info(`[failStep] Boosted max_retries to ${QUALITY_GATE_MIN_RETRIES} for quality gate step ${workflowStepId}`, { runId: step.run_id });
+  }
 
   await pgBegin(async (sql) => {
     if (newRetryCount > step.max_retries) {
@@ -124,7 +135,7 @@ async function handleSingleStepFailurePG(
         try { await sql`UPDATE claim_log SET outcome = 'skipped', duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at)) * 1000 AS INTEGER), diagnostic = ${error} WHERE run_id = ${step.run_id} AND step_id = ${stepId} AND story_id IS NULL AND outcome IS NULL`; } catch (e) { logger.warn("[claim-log] update failed: " + String(e), {}); }
       }
     } else {
-      await sql`UPDATE steps SET status = 'pending', retry_count = ${newRetryCount}, updated_at = ${now()} WHERE id = ${stepId}`;
+      await sql`UPDATE steps SET status = 'pending', retry_count = ${newRetryCount}, output = ${error}, updated_at = ${now()} WHERE id = ${stepId}`;
       try { await sql`UPDATE claim_log SET outcome = 'failed', duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at)) * 1000 AS INTEGER), diagnostic = ${error} WHERE run_id = ${step.run_id} AND step_id = ${stepId} AND story_id IS NULL AND outcome IS NULL`; } catch (e) { logger.warn("[claim-log] update failed: " + String(e), {}); }
     }
   });

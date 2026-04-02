@@ -134,6 +134,8 @@ type StepRow = {
   type: string;
   loop_config: string | null;
   step_status: string;
+  retry_count: number;
+  output: string | null;
 };
 
 // ── Extracted helpers (private, called only from claimStep) ──────────
@@ -598,6 +600,12 @@ async function claimSingleStep(
     await pgRun("INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at) VALUES ($1, $2, NULL, $3, $4)", [step.run_id, step.step_id, agentId, now()]);
   } catch (e) { logger.warn(`[claim-log] Failed to record claim: ${String(e)}`, { runId: step.run_id }); }
 
+  // Inject previous failure context so agent knows what to fix on retry
+  if (step.retry_count > 0 && step.output) {
+    context["previous_failure"] = step.output;
+    logger.info(`[claim] Injected previous_failure for retry ${step.retry_count} of ${step.step_id}`, { runId: step.run_id });
+  }
+
   // #260: Default optional template vars to prevent MISSING_INPUT_GUARD false positives
   for (const v of OPTIONAL_TEMPLATE_VARS) {
     if (!context[v]) context[v] = "";
@@ -823,8 +831,8 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
   } catch (e) { logger.warn(`[output-recovery] Check failed: ${String(e)}`, {}); }
 
   // Allow claiming from both pending AND running loop steps (parallel story execution)
-  const step = await pgGet<{ id: string; step_id: string; run_id: string; input_template: string; type: string; loop_config: string | null; step_status: string }>(
-        `SELECT s.id, s.step_id, s.run_id, s.input_template, s.type, s.loop_config, s.status as step_status
+  const step = await pgGet<StepRow>(
+        `SELECT s.id, s.step_id, s.run_id, s.input_template, s.type, s.loop_config, s.status as step_status, s.retry_count, s.output
          FROM steps s
          JOIN runs r ON r.id = s.run_id
          WHERE s.agent_id = $1
