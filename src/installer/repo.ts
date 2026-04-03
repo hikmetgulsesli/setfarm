@@ -18,24 +18,12 @@ export async function getRunStatus(runId: string): Promise<string | undefined> {
 
 export async function getRunContext(runId: string): Promise<Record<string, string>> {
   const row = await pgGet<{ context: string }>("SELECT context FROM runs WHERE id = $1", [runId]);
-  if (!row) return {};
-  const parsed = JSON.parse(row.context);
-  // Guard: if context was stored as array (legacy/corruption), extract first element
-  if (Array.isArray(parsed)) {
-    return (parsed[0] && typeof parsed[0] === 'object') ? parsed[0] : {};
-  }
-  return parsed;
+  return row ? JSON.parse(row.context) : {};
 }
 
 export async function updateRunContext(runId: string, context: Record<string, string>): Promise<void> {
-  // P2-08: Remove transient fields before persisting (prevent context bloat)
-  const cleanContext = { ...context };
-  delete cleanContext["stitch_html"];
-  delete cleanContext["_stitch_html_transient"];
-  delete cleanContext["design_dom"];
-  // P2-02: Write full context (JSONB merge reverted — caused array corruption)
   await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3",
-    [JSON.stringify(cleanContext), now(), runId]);
+    [JSON.stringify(context), now(), runId]);
 }
 
 export async function failRun(runId: string): Promise<void> {
@@ -66,11 +54,16 @@ export async function verifyStory(storyId: string): Promise<void> {
 }
 
 export async function skipFailedStories(runId: string): Promise<void> {
-  // Preserve failure reason in output before skipping
-  const failed = await pgQuery<{ id: string; output: string | null; story_id: string }>(
-    "SELECT id, output, story_id FROM stories WHERE run_id = $1 AND status = 'failed'", [runId]
+  // Only skip stories that have exhausted their retries — re-queue others
+  const failed = await pgQuery<{ id: string; output: string | null; story_id: string; retry_count: number; max_retries: number }>(
+    "SELECT id, output, story_id, retry_count, max_retries FROM stories WHERE run_id = $1 AND status = 'failed'", [runId]
   );
   for (const s of failed) {
+    if (s.retry_count < s.max_retries) {
+      // Still has retries left — re-queue instead of skipping
+      await pgRun("UPDATE stories SET status = 'pending', updated_at = $1 WHERE id = $2", [now(), s.id]);
+      continue;
+    }
     const skipReason = s.output
       ? `SKIPPED (was failed): ${s.output}`
       : `SKIPPED: Story ${s.story_id} failed with no diagnostic — likely empty workdir or agent timeout`;

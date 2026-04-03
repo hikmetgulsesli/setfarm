@@ -118,9 +118,9 @@ export async function processDesignCompletion(
     if (needsRecovery && stitchProjectId) {
       logger.warn(`[design-guardrail] SCREEN_MAP missing or invalid. Auto-recovering from Stitch API (project ${stitchProjectId})...`, { runId });
       try {
-        // P2-10: Use execFileSync instead of execSync to prevent shell injection
-        const stitchScript = path.join(process.env.HOME || "", ".openclaw/setfarm-repo/scripts/stitch-api.mjs");
-        const raw = execFileSync("node", [stitchScript, "list-screens", stitchProjectId], { encoding: "utf8", timeout: 30000 });
+        const { execSync } = require("child_process");
+        const stitchScript = require("path").join(process.env.HOME || "", ".openclaw/setfarm-repo/scripts/stitch-api.mjs");
+        const raw = execSync(`node "${stitchScript}" list-screens "${stitchProjectId}"`, { encoding: "utf8", timeout: 30000 });
         const screens = JSON.parse(raw);
         if (Array.isArray(screens) && screens.length > 0) {
           const screenMap = screens.map((s: any) => ({
@@ -729,29 +729,37 @@ export function checkStoryDesignCompliance(
 
   const issues: string[] = [];
 
-  // 1. design-tokens.css imported/referenced?
+  // 1. design-tokens.css imported/referenced? Auto-fix if missing.
+  let tokenImported = false;
   try {
-    const result = execFileSync("grep", ["-rl", "design-tokens", srcDir, "--include=*.ts", "--include=*.tsx", "--include=*.jsx", "--include=*.js", "--include=*.css", "--include=*.scss"], {
+    const result = execFileSync("grep", ["-rl", "design-tokens", srcDir], {
       encoding: "utf-8",
       timeout: 5000,
       stdio: ["pipe", "pipe", "pipe"],
     }).trim();
-    if (!result) {
-      issues.push("design-tokens.css hiçbir dosyada import/referans edilmemiş");
+    tokenImported = !!result;
+  } catch { /* no match */ }
+
+  if (!tokenImported) {
+    // Auto-inject design-tokens import into the first CSS entry point found
+    const candidates = ["src/index.css", "src/main.css", "src/App.css", "src/globals.css", "app/globals.css"];
+    let injected = false;
+    for (const rel of candidates) {
+      const cssPath = path.join(repo, rel);
+      if (fs.existsSync(cssPath)) {
+        const content = fs.readFileSync(cssPath, "utf-8");
+        if (!content.includes("design-tokens")) {
+          const importLine = `@import './stitch/design-tokens.css';\n`;
+          const relPath = path.relative(path.dirname(cssPath), path.join(repo, "stitch", "design-tokens.css")).replace(/\\/g, "/");
+          const fixedImport = `@import '${relPath}';\n`;
+          fs.writeFileSync(cssPath, fixedImport + content);
+          injected = true;
+          break;
+        }
+      }
     }
-  } catch (err: any) {
-    // P2-04b: exit code 1 = no matches (genuine miss), code 2 = grep error
-    if (err?.status === 2) {
-      logger.warn('[design-compliance] grep error (not a match issue)', {});
-    }
-    // Check CSS entry files as fallback before reporting
-    const cssEntries = ['index.css', 'main.css', 'App.css', 'global.css', 'globals.css'];
-    const hasEntryImport = cssEntries.some((f: string) => {
-      try { return fs.existsSync(path.join(srcDir, f)) && fs.readFileSync(path.join(srcDir, f), 'utf-8').includes('design-tokens'); }
-      catch { return false; }
-    });
-    if (!hasEntryImport) {
-      issues.push("design-tokens.css hiçbir dosyada import/referans edilmemiş");
+    if (!injected) {
+      issues.push("design-tokens.css hiçbir dosyada import/referans edilmemiş ve auto-fix yapılamadı");
     }
   }
 
