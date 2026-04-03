@@ -104,7 +104,7 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
       const SAME_ERROR_LIMIT = 3;
 
       if (step.output && newCount >= SAME_ERROR_LIMIT) {
-        const recentChecks = await pgQuery<{ detail: string }>("SELECT detail FROM medic_checks WHERE run_id = $1 AND step_id = $2 AND action = 'reset_step' ORDER BY checked_at DESC LIMIT $3", [finding.runId || "", finding.stepId || "", SAME_ERROR_LIMIT]);
+        const recentChecks = await pgQuery<{ details: string }>("SELECT details FROM medic_checks WHERE details LIKE $1 AND details LIKE '%reset_step%' ORDER BY checked_at DESC LIMIT $2", [`%${finding.stepId}%`, SAME_ERROR_LIMIT]);
         if (recentChecks.length >= SAME_ERROR_LIMIT - 1) {
           logger.error(`[medic] Same-error circuit breaker: step ${finding.stepId} reset ${newCount}x`, { runId: finding.runId });
           await pgRun("UPDATE steps SET status = 'failed', output = $1, abandoned_count = $2, updated_at = $3 WHERE id = $4", ["Medic: same error repeated " + newCount + " times — circuit breaker. Last output: " + (step.output || "").substring(0, 300), newCount, now(), finding.stepId]);
@@ -195,17 +195,17 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
       if (loopStep?.loop_config) {
         const lc = JSON.parse(loopStep.loop_config);
         if (lc.verifyEach && lc.verifyStep === failedStep.step_id) {
-          await pgRun("UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = GREATEST(retry_count - 1, 0), updated_at = $1 WHERE id = $2", [now(), loopStep.id]);
-          await pgRun("UPDATE steps SET status = 'waiting', current_story_id = NULL, retry_count = GREATEST(retry_count - 1, 0), updated_at = $1 WHERE id = $2", [now(), failedStep.id]);
+          await pgRun("UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = 0, updated_at = $1 WHERE id = $2", [now(), loopStep.id]);
+          await pgRun("UPDATE steps SET status = 'waiting', current_story_id = NULL, retry_count = 0, updated_at = $1 WHERE id = $2", [now(), failedStep.id]);
           await pgRun("UPDATE stories SET status = 'pending', updated_at = $1 WHERE run_id = $2 AND status = 'failed'", [now(), run.id]);
         }
       } else {
         if (failedStep.type === "loop") {
           const failedStory = await pgGet<{ id: string }>("SELECT id FROM stories WHERE run_id = $1 AND status = 'failed' ORDER BY story_index ASC LIMIT 1", [run.id]);
           if (failedStory) { await pgRun("UPDATE stories SET status = 'pending', updated_at = $1 WHERE id = $2", [now(), failedStory.id]); }
-          await pgRun("UPDATE steps SET retry_count = GREATEST(retry_count - 1, 0) WHERE run_id = $1 AND type = 'loop'", [run.id]);
+          await pgRun("UPDATE steps SET retry_count = 0 WHERE run_id = $1 AND type = 'loop'", [run.id]);
         }
-        await pgRun("UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = GREATEST(retry_count - 1, 0), updated_at = $1 WHERE id = $2", [now(), failedStep.id]);
+        await pgRun("UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = 0, updated_at = $1 WHERE id = $2", [now(), failedStep.id]);
       }
 
       await pgRun("UPDATE runs SET status = 'running', updated_at = $1 WHERE id = $2 AND status = 'resuming'", [now(), run.id]);
@@ -355,7 +355,7 @@ export async function runMedicCheck(): Promise<MedicCheckResult> {
   try { const cronResult = await listCronJobs(); if (cronResult.ok && cronResult.jobs) { findings.push(...await checkOrphanedCrons(cronResult.jobs.filter(j => j.name.startsWith("setfarm/")))); } } catch (err) { console.warn("listCronJobs failed:", String(err)); }
 
   let actionsTaken = 0;
-  for (const finding of findings) { if (finding.action !== "none") { const success = await remediate(finding); if (success) { finding.remediated = true; actionsTaken++; } } }
+  for (const finding of findings) { if (finding.action !== "none") { try { const success = await remediate(finding); if (success) { finding.remediated = true; actionsTaken++; } } catch (err) { logger.error(`[medic] remediate failed for ${finding.action} (${finding.check}): ${String(err)}`, { runId: finding.runId }); } } }
 
   const parts: string[] = [];
   if (findings.length === 0) { parts.push("All clear — no issues found"); } else { const critical = findings.filter(f => f.severity === "critical").length; const warnings = findings.filter(f => f.severity === "warning").length; if (critical > 0) parts.push(`${critical} critical`); if (warnings > 0) parts.push(`${warnings} warning(s)`); if (actionsTaken > 0) parts.push(`${actionsTaken} auto-fixed`); }
