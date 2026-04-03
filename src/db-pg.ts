@@ -13,7 +13,8 @@ let _sql: ReturnType<typeof postgres> | null = null;
 
 function getSql() {
   if (!_sql) {
-    const url = process.env.SETFARM_PG_URL || DEFAULT_PG_URL;
+    // Sanitize URL: strip anything after the DB name (e.g. stray env vars appended by gateway)
+    let url = (process.env.SETFARM_PG_URL || DEFAULT_PG_URL).split(/\s+/)[0];
     _sql = postgres(url, {
       max: 20,
       idle_timeout: 5,

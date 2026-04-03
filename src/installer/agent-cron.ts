@@ -33,16 +33,13 @@ export function buildPollingPrompt(workflowId: string, agentId: string, gatewayA
   // e.g. koda, flux, cipher each write to their own file
   const outputFileId = gatewayAgentId || fullAgentId;
   const cli = resolveSetfarmCli();
-  // Pass DB_BACKEND to agent sessions — gateway env doesn't propagate to cron exec tool
-  const dbEnv = "DB_BACKEND=postgres ";
-
   // Compact prompt — minimizes tokens on NO_WORK (majority of calls)
   return `Workflow agent. Peek→Claim→Work→Complete.
 
-1. ${dbEnv}/usr/bin/node ${cli} step peek "${fullAgentId}"
+1. /usr/bin/node ${cli} step peek "${fullAgentId}"
    NO_WORK → reply "HEARTBEAT_OK", STOP.
 
-2. ${dbEnv}/usr/bin/node ${cli} step claim "${fullAgentId}"
+2. /usr/bin/node ${cli} step claim "${fullAgentId}"
    NO_WORK → "HEARTBEAT_OK", STOP.
    JSON output contains {"stepId":"<UUID>","runId":"<UUID>","input":"..."}.
    CRITICAL: Save the "stepId" value (NOT "runId"). You MUST use stepId for complete/fail.
@@ -54,8 +51,8 @@ cat <<'SETFARM_EOF' > /tmp/setfarm-output-${outputFileId}.txt
 STATUS: done
 <other keys as specified in step input>
 SETFARM_EOF
-${dbEnv}/usr/bin/node ${cli} step complete "<the stepId from claim JSON>" --file /tmp/setfarm-output-${outputFileId}.txt
-On failure: ${dbEnv}/usr/bin/node ${cli} step fail "<the stepId from claim JSON>" "reason"
+/usr/bin/node ${cli} step complete "<the stepId from claim JSON>" --file /tmp/setfarm-output-${outputFileId}.txt
+On failure: /usr/bin/node ${cli} step fail "<the stepId from claim JSON>" "reason"
 
 5. STOP. Reply "HEARTBEAT_OK". No more tool calls.
 

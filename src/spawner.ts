@@ -49,7 +49,7 @@ function spawnAgent(agentId: string, wfId: string, role: string): void {
     "--message", prompt, "--timeout", String(AGENT_TIMEOUT_SECONDS),
   ], {
     timeout: (AGENT_TIMEOUT_SECONDS + 60) * 1000,
-    env: { ...process.env, DB_BACKEND: "postgres" },
+    env: { ...process.env },
     maxBuffer: 10 * 1024 * 1024,
   }, (err) => {
     activeProcesses.delete(key);
