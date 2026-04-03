@@ -624,6 +624,15 @@ async function main() {
           [now(), run.id]
         );
 
+        // Reset downstream failed steps to waiting
+        const verifyStepIndex = await pgGet<{ step_index: number }>("SELECT step_index FROM steps WHERE id = $1", [failedStep.id]);
+        if (verifyStepIndex) {
+          await pgRun(
+            "UPDATE steps SET status = 'waiting', retry_count = 0, abandoned_count = 0, output = NULL, updated_at = $1 WHERE run_id = $2 AND step_index > $3 AND status = 'failed'",
+            [now(), run.id, verifyStepIndex.step_index]
+          );
+        }
+
         // Reset run to running
         await pgRun(
           "UPDATE runs SET status = 'running', updated_at = $1 WHERE id = $2",
@@ -662,9 +671,18 @@ async function main() {
 
     // Reset step to pending
     await pgRun(
-      "UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = 0, updated_at = $1 WHERE id = $2",
+      "UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = 0, abandoned_count = 0, updated_at = $1 WHERE id = $2",
       [now(), failedStep.id]
     );
+
+    // Reset downstream failed steps to waiting (so pipeline can advance after this step completes)
+    const failedStepIndex = await pgGet<{ step_index: number }>("SELECT step_index FROM steps WHERE id = $1", [failedStep.id]);
+    if (failedStepIndex) {
+      await pgRun(
+        "UPDATE steps SET status = 'waiting', retry_count = 0, abandoned_count = 0, output = NULL, updated_at = $1 WHERE run_id = $2 AND step_index > $3 AND status = 'failed'",
+        [now(), run.id, failedStepIndex.step_index]
+      );
+    }
 
     // Reset run to running
     await pgRun(
