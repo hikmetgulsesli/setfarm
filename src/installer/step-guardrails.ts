@@ -763,7 +763,41 @@ export function checkStoryDesignCompliance(
     }
   }
 
-  // 2. Too many hardcoded hex colors?
+  // 2. Tailwind used in CSS but not installed? Auto-fix.
+  try {
+    const cssFiles = execFileSync("grep", ["-rl", "@tailwind", srcDir, "--include=*.css"], {
+      encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+    if (cssFiles) {
+      const pkgPath = path.join(repo, "package.json");
+      if (fs.existsSync(pkgPath)) {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+        const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
+        if (!allDeps["tailwindcss"] && !allDeps["@tailwindcss/vite"] && !allDeps["@tailwindcss/postcss"]) {
+          // Auto-install tailwind + postcss
+          try {
+            execFileSync("npm", ["install", "-D", "tailwindcss", "@tailwindcss/postcss", "autoprefixer"], {
+              cwd: repo, timeout: 60000, stdio: "pipe",
+            });
+            // Create postcss.config.js if missing
+            const postcssPath = path.join(repo, "postcss.config.js");
+            if (!fs.existsSync(postcssPath)) {
+              fs.writeFileSync(postcssPath, `export default {\n  plugins: {\n    '@tailwindcss/postcss': {},\n    autoprefixer: {},\n  },\n};\n`);
+            }
+            // Create tailwind.config.js if missing
+            const twPath = path.join(repo, "tailwind.config.js");
+            if (!fs.existsSync(twPath)) {
+              fs.writeFileSync(twPath, `/** @type {import('tailwindcss').Config} */\nexport default {\n  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],\n  theme: { extend: {} },\n  plugins: [],\n};\n`);
+            }
+          } catch (installErr) {
+            issues.push("Tailwind CSS kullanılıyor ama yüklenemedi: " + String(installErr));
+          }
+        }
+      }
+    }
+  } catch { /* no @tailwind directives */ }
+
+  // 3. Too many hardcoded hex colors?
   try {
     const hexResult = execFileSync("grep", [
       "-roh", "#[0-9a-fA-F]\\{3,8\\}",
