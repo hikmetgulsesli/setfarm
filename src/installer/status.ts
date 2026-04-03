@@ -102,6 +102,32 @@ export async function stopWorkflow(query: string): Promise<StopWorkflowResult> {
   );
   const cancelledSteps = result.changes;
   await teardownWorkflowCronsIfIdle(run.workflow_id);
+
+  // Clean up MC project + tunnel if deploy didn't complete
+  try {
+    const planStep = await pgGet<{ output: string }>("SELECT output FROM steps WHERE run_id = $1 AND step_id = 'plan'", [run.id]);
+    const repoMatch = planStep?.output?.match(/^REPO:\s*(.+)$/m);
+    if (repoMatch) {
+      const projectName = repoMatch[1].trim().split("/").filter(Boolean).pop();
+      if (projectName) {
+        // Remove from MC projects.json
+        try {
+          const { execFileSync } = await import("child_process");
+          execFileSync("curl", ["-sf", "-X", "DELETE", `http://127.0.0.1:3080/api/projects/${projectName}`,
+            "-H", "Content-Type: application/json", "-d", JSON.stringify({ confirmName: projectName })],
+            { timeout: 10000, stdio: "pipe" });
+        } catch { /* MC might not have it */ }
+        // Remove tunnel entry
+        try {
+          const { execFileSync } = await import("child_process");
+          const tunnelScript = `${process.env.HOME}/.openclaw/scripts/tunnel-remove.sh`;
+          execFileSync("sudo", ["bash", tunnelScript, `${projectName}.setrox.com.tr`],
+            { timeout: 15000, stdio: "pipe" });
+        } catch { /* tunnel might not exist */ }
+      }
+    }
+  } catch { /* best effort cleanup */ }
+
   emitEvent({ ts: now(), event: "run.failed", runId: run.id, workflowId: run.workflow_id, detail: "Cancelled by user" });
   return { status: "ok", runId: run.id, workflowId: run.workflow_id, cancelledSteps };
 }
