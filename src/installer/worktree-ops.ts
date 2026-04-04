@@ -168,6 +168,14 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
           throw reuse_err;
         }
       }
+      // Rebase onto latest base branch to incorporate merged PRs
+      try {
+        execFileSync("git", ["rebase", baseBranch], { cwd: worktreeDir, timeout: 30000, stdio: "pipe" });
+        logger.info(`[worktree] Rebased ${storyId} onto ${baseBranch}`, {});
+      } catch (rebaseErr) {
+        try { execFileSync("git", ["rebase", "--abort"], { cwd: worktreeDir, timeout: 5000, stdio: "pipe" }); } catch {}
+        logger.warn(`[worktree] Rebase failed for ${storyId}, continuing with stale branch`, {});
+      }
       logger.info(`[worktree] Resumed ${storyId} branch with existing commits`, {});
     } else {
       // Create fresh worktree with new branch from base

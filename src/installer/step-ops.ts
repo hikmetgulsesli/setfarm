@@ -649,7 +649,7 @@ async function claimSingleStep(
 ): Promise<ClaimResult> {
   // Item 6: Single step — atomic claim with changes check to prevent race condition
   let _claimChanges: number;
-  const _cr = await pgRun("UPDATE steps SET status = 'running', updated_at = $1 WHERE id = $2 AND status = 'pending'", [now(), step.id]);
+  const _cr = await pgRun("UPDATE steps SET status = 'running', started_at = NOW(), updated_at = $1 WHERE id = $2 AND status = 'pending'", [now(), step.id]);
   _claimChanges = _cr.changes;
   if (_claimChanges === 0) {
     // Already claimed by another cron — return no work
@@ -665,8 +665,12 @@ async function claimSingleStep(
 
   // Inject previous failure context so agent knows what to fix on retry
   if (step.retry_count > 0 && step.output) {
+    const { classifyError } = await import("./error-taxonomy.js");
+    const classified = classifyError(step.output);
     context["previous_failure"] = step.output;
-    logger.info(`[claim] Injected previous_failure for retry ${step.retry_count} of ${step.step_id}`, { runId: step.run_id });
+    context["failure_category"] = classified.category;
+    context["failure_suggestion"] = classified.suggestion;
+    logger.info(`[claim] Injected previous_failure (${classified.category}) for retry ${step.retry_count} of ${step.step_id}`, { runId: step.run_id });
   }
 
   // #260: Default optional template vars to prevent MISSING_INPUT_GUARD false positives
@@ -1047,7 +1051,7 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
 
       // Claim the story with optimistic lock — only succeeds if still pending (prevents double-claim)
       const storyBranch = nextStory.story_id.toLowerCase();
-      const claimResult = await pgGet<{ id: string }>("UPDATE stories SET status = 'running', updated_at = $1 WHERE id = $2 AND status = 'pending' RETURNING id", [now(), nextStory.id]);
+      const claimResult = await pgGet<{ id: string }>("UPDATE stories SET status = 'running', started_at = NOW(), updated_at = $1 WHERE id = $2 AND status = 'pending' RETURNING id", [now(), nextStory.id]);
       if (!claimResult) {
         // Another agent claimed this story between SELECT and UPDATE — retry next cycle
         logger.info(`[claim] Story ${nextStory.story_id} already claimed by another agent — skipping`, { runId: step.run_id });
@@ -1856,7 +1860,9 @@ ${screenDescs}
 
     // B2: Record step_metrics for SLA tracking
     try {
-      await pgRun("INSERT INTO step_metrics (run_id, step_name, agent_id, claimed_at, completed_at, duration_ms, outcome, created_at) VALUES ($1, $2, $3, $4, NOW(), EXTRACT(EPOCH FROM NOW() - $5::timestamptz) * 1000, 'completed', NOW())", [step.run_id, step.step_id, step.agent_id || "", now(), now()]);
+      const claimTs = await pgGet<{ claimed_at: string }>("SELECT claimed_at FROM claim_log WHERE step_id = $1 AND outcome IS NULL ORDER BY claimed_at DESC LIMIT 1", [step.step_id]);
+      const actualClaimedAt = claimTs?.claimed_at || now();
+      await pgRun("INSERT INTO step_metrics (run_id, step_name, agent_id, claimed_at, completed_at, duration_ms, outcome, created_at) VALUES ($1, $2, $3, $4, NOW(), EXTRACT(EPOCH FROM NOW() - $5::timestamptz) * 1000, 'completed', NOW())", [step.run_id, step.step_id, step.agent_id || "", actualClaimedAt, actualClaimedAt]);
     } catch (e) { logger.warn(`[step-metrics] insert failed: ${String(e)}`, { runId: step.run_id }); }
 
 

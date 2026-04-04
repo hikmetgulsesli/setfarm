@@ -73,8 +73,9 @@ export async function advancePipeline(runId: string): Promise<{ advanced: boolea
         logger.warn(`[advance] syncActiveCrons failed: ${String(e)}`, {});
       }
       try {
-        const { pgRun } = await import("../db-pg.js");
-        await pgRun("SELECT pg_notify('step_pending', $1)", [JSON.stringify({ agentId: next.step_id, runId, stepId: next.step_id })]);
+        const { pgRun: _pgRun } = await import("../db-pg.js");
+        const stepAgent = await pgGet<{ agent_id: string }>("SELECT agent_id FROM steps WHERE id = $1", [next.id]);
+        await _pgRun("SELECT pg_notify('step_pending', $1)", [JSON.stringify({ agentId: stepAgent?.agent_id || next.step_id, runId, stepId: next.step_id })]);
       } catch {}
       return { advanced: true, runCompleted: false };
     } else {
