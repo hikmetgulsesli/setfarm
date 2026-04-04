@@ -22,7 +22,7 @@ export async function getRunContext(runId: string): Promise<Record<string, strin
 }
 
 export async function updateRunContext(runId: string, context: Record<string, string>): Promise<void> {
-  await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3",
+  await pgRun("UPDATE runs SET context = COALESCE(context::jsonb, '{}'::jsonb) || $1::jsonb, updated_at = $2 WHERE id = $3",
     [JSON.stringify(context), now(), runId]);
 }
 

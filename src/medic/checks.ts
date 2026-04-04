@@ -632,7 +632,7 @@ export async function checkOfflineServices(): Promise<MedicFinding[]> {
             const recentRestart = await pgGet<{ ts: string | null }>(`
               SELECT MAX(checked_at) as ts FROM medic_checks
               WHERE details LIKE '%offline_service%'
-                AND details LIKE '%recreate_crons%'
+                AND details LIKE '%restart_service%'
                 AND details LIKE $1
                 AND checked_at > NOW() - INTERVAL '10 minutes'
             `, [`%${serviceName}%`]);
@@ -884,7 +884,6 @@ export async function checkProviderFailure(): Promise<MedicFinding[]> {
     const row = await pgGet<{ cnt: string }>(`
       SELECT COUNT(*) as cnt FROM medic_checks
       WHERE details LIKE '%reset_step%'
-        AND details LIKE '%recreate_crons%'
         AND EXTRACT(EPOCH FROM NOW() - checked_at::timestamptz) * 1000 < $1
     `, [PROVIDER_FAIL_WINDOW_MS]);
     recentAbandonsCnt = Number(row?.cnt ?? 0);

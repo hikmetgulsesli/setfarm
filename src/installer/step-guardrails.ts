@@ -118,9 +118,8 @@ export async function processDesignCompletion(
     if (needsRecovery && stitchProjectId) {
       logger.warn(`[design-guardrail] SCREEN_MAP missing or invalid. Auto-recovering from Stitch API (project ${stitchProjectId})...`, { runId });
       try {
-        const { execSync } = require("child_process");
-        const stitchScript = require("path").join(process.env.HOME || "", ".openclaw/setfarm-repo/scripts/stitch-api.mjs");
-        const raw = execSync(`node "${stitchScript}" list-screens "${stitchProjectId}"`, { encoding: "utf8", timeout: 30000 });
+        const stitchScript = path.join(process.env.HOME || "", ".openclaw/setfarm-repo/scripts/stitch-api.mjs");
+        const raw = execFileSync("node", [stitchScript, "list-screens", stitchProjectId], { encoding: "utf8", timeout: 30000 });
         const screens = JSON.parse(raw);
         if (Array.isArray(screens) && screens.length > 0) {
           const screenMap = screens.map((s: any) => ({
@@ -738,7 +737,13 @@ export function checkStoryDesignCompliance(
       stdio: ["pipe", "pipe", "pipe"],
     }).trim();
     tokenImported = !!result;
-  } catch { /* no match */ }
+  } catch (err: any) {
+    // grep exit 1 = no match (expected). Exit 2+ = real error — skip check.
+    if (err.status !== undefined && err.status !== 1) {
+      logger.warn(`[design-compliance] grep failed with status ${err.status}: ${err.message}`, {});
+      return null;
+    }
+  }
 
   if (!tokenImported) {
     // Auto-inject design-tokens import into the first CSS entry point found

@@ -45,8 +45,8 @@ import {
  * Wrapper: calls cleanup-ops.cleanupAbandonedSteps with advancePipeline callback.
  * Maintains the original zero-arg signature for backwards compatibility.
  */
-export function cleanupAbandonedSteps(): void {
-  _cleanupAbandonedSteps(advancePipeline);
+export async function cleanupAbandonedSteps(): Promise<void> {
+  await _cleanupAbandonedSteps(advancePipeline);
 }
 
 async function getWorkflowId(runId: string): Promise<string | undefined> {
@@ -600,7 +600,7 @@ async function injectVerifyContext(
     // All stories auto-verified — no agent work needed, advance pipeline
     await pgRun("UPDATE steps SET status = 'waiting', updated_at = $1 WHERE id = $2", [now(), step.id]);
     logger.info(`[claim-auto-verify] All stories auto-verified, triggering pipeline advancement`, { runId: step.run_id });
-    try { checkLoopContinuation(step.run_id, loopStepForVerify.id); } catch (e) { logger.error("[claim-auto-verify] checkLoopContinuation failed: " + String(e), { runId: step.run_id }); }
+    try { await checkLoopContinuation(step.run_id, loopStepForVerify.id); } catch (e) { logger.error("[claim-auto-verify] checkLoopContinuation failed: " + String(e), { runId: step.run_id }); }
     return false;
   }
 
@@ -766,7 +766,7 @@ All visible text must be in Turkish. Use a dark, modern theme.`);
           } catch (e) { logger.warn(`[design-preclaim] download-all failed (attempt ${dlRetry + 1}/3): ${e}`, { runId: step.run_id }); }
           if (htmlCount === 0 && dlRetry < 2) {
             logger.info(`[design-preclaim] 0 HTML after download, waiting 30s before retry ${dlRetry + 2}/3`, { runId: step.run_id });
-            execFileSync("sleep", ["30"]);
+            await new Promise(r => setTimeout(r, 30000));
           }
         }
 
@@ -855,7 +855,7 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
   // Throttle cleanup: run at most once every 5 minutes across all agents
   const epochMs = Date.now();
   if (epochMs - lastCleanupTime >= CLEANUP_THROTTLE_MS) {
-    cleanupAbandonedSteps();
+    await cleanupAbandonedSteps();
     lastCleanupTime = epochMs;
   }
 
@@ -1292,8 +1292,8 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
               const _hasStitch = fs.existsSync(_stitchDir) || fs.existsSync(_stitchFile);
               if (_hasStitch) {
                 fs.mkdirSync(_bkDir, { recursive: true });
-                fs.cpSync(_stitchDir, path.join(_bkDir, "stitch"), { recursive: true });
-                fs.copyFileSync(_stitchFile, path.join(_bkDir, ".stitch"));
+                if (fs.existsSync(_stitchDir)) fs.cpSync(_stitchDir, path.join(_bkDir, "stitch"), { recursive: true });
+                if (fs.existsSync(_stitchFile)) fs.copyFileSync(_stitchFile, path.join(_bkDir, ".stitch"));
               }
               execFileSync("git", ["checkout", "--orphan", "__fresh__"], { cwd: repoPath, timeout: 5000 });
               execFileSync("git", ["rm", "-rf", "."], { cwd: repoPath, timeout: 5000 });
@@ -2100,6 +2100,7 @@ async function handleVerifyEachCompletion(
     if (nextUnverifiedStory.output) {
       const storyOut = parseOutputKeyValues(nextUnverifiedStory.output);
       for (const [key, value] of Object.entries(storyOut)) {
+        if (PROTECTED_CONTEXT_KEYS.has(key) && context[key]) continue;
         context[key] = value;
       }
     }

@@ -119,7 +119,7 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
         return true;
       }
 
-      await pgRun("UPDATE steps SET status = 'pending', abandoned_count = $1, updated_at = $2 WHERE id = $3", [newCount, now(), finding.stepId]);
+      await pgRun("UPDATE steps SET status = 'pending', abandoned_count = $1, retry_count = retry_count + 1, updated_at = $2 WHERE id = $3", [newCount, now(), finding.stepId]);
       if (finding.runId) { emitEvent({ ts: now(), event: "step.timeout" as EventType, runId: finding.runId, stepId: finding.stepId, detail: `Medic: reset stuck step (abandon ${newCount}/${MAX_STEP_ABANDONS})` }); }
       return true;
     }
@@ -195,17 +195,17 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
       if (loopStep?.loop_config) {
         const lc = JSON.parse(loopStep.loop_config);
         if (lc.verifyEach && lc.verifyStep === failedStep.step_id) {
-          await pgRun("UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = 0, updated_at = $1 WHERE id = $2", [now(), loopStep.id]);
-          await pgRun("UPDATE steps SET status = 'waiting', current_story_id = NULL, retry_count = 0, updated_at = $1 WHERE id = $2", [now(), failedStep.id]);
+          await pgRun("UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = GREATEST(retry_count - 1, 0), updated_at = $1 WHERE id = $2", [now(), loopStep.id]);
+          await pgRun("UPDATE steps SET status = 'waiting', current_story_id = NULL, retry_count = GREATEST(retry_count - 1, 0), updated_at = $1 WHERE id = $2", [now(), failedStep.id]);
           await pgRun("UPDATE stories SET status = 'pending', updated_at = $1 WHERE run_id = $2 AND status = 'failed'", [now(), run.id]);
         }
       } else {
         if (failedStep.type === "loop") {
           const failedStory = await pgGet<{ id: string }>("SELECT id FROM stories WHERE run_id = $1 AND status = 'failed' ORDER BY story_index ASC LIMIT 1", [run.id]);
           if (failedStory) { await pgRun("UPDATE stories SET status = 'pending', updated_at = $1 WHERE id = $2", [now(), failedStory.id]); }
-          await pgRun("UPDATE steps SET retry_count = 0 WHERE run_id = $1 AND type = 'loop'", [run.id]);
+          await pgRun("UPDATE steps SET retry_count = GREATEST(retry_count - 1, 0) WHERE run_id = $1 AND type = 'loop'", [run.id]);
         }
-        await pgRun("UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = 0, updated_at = $1 WHERE id = $2", [now(), failedStep.id]);
+        await pgRun("UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = GREATEST(retry_count - 1, 0), updated_at = $1 WHERE id = $2", [now(), failedStep.id]);
       }
 
       await pgRun("UPDATE runs SET status = 'running', updated_at = $1 WHERE id = $2 AND status = 'resuming'", [now(), run.id]);

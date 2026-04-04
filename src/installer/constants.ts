@@ -8,22 +8,22 @@
 // ── Abandoned Step Detection ────────────────────────────────────────
 
 /** Base threshold for detecting abandoned steps (first abandon) */
-export const BASE_ABANDONED_THRESHOLD_MS = 600_000; // 10 min
+export const BASE_ABANDONED_THRESHOLD_MS = 1_200_000; // 20 min (aligned with agent timeout)
 
 /** Faster threshold for repeat abandonments */
-export const FAST_ABANDONED_THRESHOLD_MS = 300_000; // 5 min
+export const FAST_ABANDONED_THRESHOLD_MS = 600_000; // 10 min
 
 /** Max abandon resets before failing the step/story permanently */
-export const MAX_ABANDON_RESETS = 10;
+export const MAX_ABANDON_RESETS = 3;
 
 /** Steps that need longer abandon thresholds (Stitch API, complex builds) */
 export const SLOW_STEP_IDS = new Set(["design", "implement", "setup-repo", "setup-build"]);
 
 /** Extended threshold for slow steps (first abandon) */
-export const SLOW_ABANDONED_THRESHOLD_MS = 900_000; // 15 min
+export const SLOW_ABANDONED_THRESHOLD_MS = 2_400_000; // 40 min (aligned with coding agent timeout)
 
 /** Extended fast threshold for slow steps (repeat abandons) */
-export const SLOW_FAST_ABANDONED_THRESHOLD_MS = 600_000; // 10 min
+export const SLOW_FAST_ABANDONED_THRESHOLD_MS = 1_200_000; // 20 min
 
 // ── Cleanup Throttle ────────────────────────────────────────────────
 
@@ -126,9 +126,6 @@ export const OPTIONAL_TEMPLATE_VARS = [
   // Browser
   "browser_dom_snapshot",
   "browser_check_result",
-  // Design fidelity
-  "design_fidelity_feedback",
-  "design_warning",
 ] as const;
 
 

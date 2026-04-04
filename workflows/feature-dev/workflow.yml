@@ -1060,17 +1060,6 @@ steps:
            d. grep -rE "placeholder|TODO|coming soon|Coming Soon|yakında" src/ app/ components/ → FAIL if found in JSX content
            e. Count code lines for this story's main component:
               If component < 80 lines BUT stitch HTML > 200 lines → FAIL: "Component çok kısa — Stitch HTML tam dönüştürülmemiş"
-      1.65. Stitch HTML uyumluluk kontrolü (ZORUNLU — stitch/ varsa):
-         IF stitch/ directory exists AND STORY_SCREENS is non-empty:
-           For each screen in STORY_SCREENS:
-           a. Count top-level sections in stitch/<screenId>.html:
-              STITCH_SECTIONS=$(grep -cE "<(section|header|footer|nav|main|div class)" stitch/<screenId>.html 2>/dev/null || echo "0")
-           b. Count corresponding sections in implementation code:
-              CODE_SECTIONS=$(grep -crE "<(section|header|footer|nav|main|div className)" src/ app/ components/ 2>/dev/null | awk -F: '{sum+=$NF}END{print sum}')
-           c. If CODE_SECTIONS < STITCH_SECTIONS * 0.7 → FAIL: "Stitch HTML %70 eşleşme altında — eksik bölümler var"
-           d. grep -rE "placeholder|TODO|coming soon|Coming Soon|yakında" src/ app/ components/ → FAIL if found in JSX content
-           e. Count code lines for this story's main component:
-              If component < 80 lines BUT stitch HTML > 200 lines → FAIL: "Component çok kısa — Stitch HTML tam dönüştürülmemiş"
       1.7. UI Contract compliance (if stitch/UI_CONTRACT.json exists):
          - Read UI_CONTRACT.json and verify each element is implemented:
          - Navigation links → matching Route/page components exist

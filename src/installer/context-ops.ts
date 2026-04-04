@@ -29,21 +29,22 @@ export function expandTilde(p: string): string {
  * Resolve {{key}} placeholders in a template against a context object.
  */
 export function resolveTemplate(template: string, context: Record<string, string>): string {
+  // Work on a shallow copy to avoid mutating the input context
+  const ctx = { ...context };
   // Auto-resolve prd from prd_path if prd is missing but prd_path exists
-  if (!context["prd"] && context["prd_path"]) {
+  if (!ctx["prd"] && ctx["prd_path"]) {
     try {
-      const fs = require("fs");
-      const prdPath = context["prd_path"];
+      const prdPath = ctx["prd_path"];
       if (fs.existsSync(prdPath)) {
-        context["prd"] = fs.readFileSync(prdPath, "utf-8");
+        ctx["prd"] = fs.readFileSync(prdPath, "utf-8");
       }
     } catch {}
   }
   // Supports {{key}}, {{key|default_value}}, and {{key.sub}}
   return template.replace(/\{\{(\w+(?:\.\w+)*)(?:\|([^}]*))?\}\}/g, (_match, key: string, defaultVal?: string) => {
-    if (key in context) return context[key];
+    if (key in ctx) return ctx[key];
     const lower = key.toLowerCase();
-    if (lower in context) return context[lower];
+    if (lower in ctx) return ctx[lower];
     // If a default was provided via {{key|default}}, use it instead of [missing:]
     if (defaultVal !== undefined) return defaultVal;
     return `[missing: ${key}]`;
