@@ -5,7 +5,7 @@
  * Each function wraps a single query call — no business logic.
  */
 
-import { pgGet, pgQuery, pgRun, now } from "../db-pg.js";
+import { pgGet, pgQuery, pgRun, pgBegin, now } from "../db-pg.js";
 import { logger } from "../lib/logger.js";
 
 
@@ -22,9 +22,14 @@ export async function getRunContext(runId: string): Promise<Record<string, strin
 }
 
 export async function updateRunContext(runId: string, context: Record<string, string>): Promise<void> {
-  // Ensure existing context is a JSON object (not array) before merging
-  await pgRun("UPDATE runs SET context = (CASE WHEN jsonb_typeof(context::jsonb) = 'object' THEN context::jsonb ELSE '{}'::jsonb END) || $1::jsonb, updated_at = $2 WHERE id = $3",
-    [JSON.stringify(context), now(), runId]);
+  // Atomic read-merge-write inside transaction to prevent race conditions
+  await pgBegin(async (sql) => {
+    const row = await sql.unsafe("SELECT context FROM runs WHERE id = $1 FOR UPDATE", [runId]);
+    const existing = row[0]?.context ? (typeof row[0].context === "string" ? JSON.parse(row[0].context) : row[0].context) : {};
+    const base = Array.isArray(existing) ? {} : existing;
+    const merged = { ...base, ...context };
+    await sql.unsafe("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(merged), now(), runId]);
+  });
 }
 
 export async function failRun(runId: string): Promise<void> {
