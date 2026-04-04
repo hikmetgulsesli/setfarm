@@ -572,7 +572,11 @@ async function injectStoryContext(
 
   // v1.5.50: Inject previous_failure from prior abandon output
   if (nextStory.output && (nextStory.abandoned_count > 0 || nextStory.retry_count > 0)) {
+    const { classifyError } = await import("./error-taxonomy.js");
+    const classified = classifyError(nextStory.output);
     context["previous_failure"] = nextStory.output;
+    context["failure_category"] = classified.category;
+    context["failure_suggestion"] = classified.suggestion;
   }
 }
 
@@ -630,7 +634,7 @@ async function injectVerifyContext(
   // Resolve story_screens from SCREEN_MAP for verify_each
   await resolveStoryScreens(nextUnverified.story_id, context, step.run_id, "verify-claim");
 
-  await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
+  await pgRun("UPDATE runs SET context = COALESCE(context::jsonb, '{}'::jsonb) || $1::jsonb, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
   logger.info(`Verify step: injected story ${nextUnverified.story_id} context`, { runId: step.run_id });
 
   return true;
@@ -1225,7 +1229,7 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
   // which previously skipped the context save — losing parsed output keys.
   // v1.5.47: Snapshot context before save so guardrail failures can rollback bad values.
   const prevContextJson = await pgGet<{ context: string }>("SELECT context FROM runs WHERE id = $1", [step.run_id]);
-  await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
+  await pgRun("UPDATE runs SET context = COALESCE(context::jsonb, '{}'::jsonb) || $1::jsonb, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
 
   // PLAN STEP PRD GUARDRAIL (v1.5.53): Plan must output a meaningful PRD
   if (step.step_id === "plan") {
@@ -1329,8 +1333,12 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
     if (testFailMsg && step.retry_count < step.max_retries) {
       logger.warn(`Test guardrail triggered — soft retry with fix instructions`, { runId: step.run_id, stepId: step.step_id });
       // Inject failure details as previous_failure so agent knows what to fix
+      const { classifyError: _ce1 } = await import("./error-taxonomy.js");
+      const _cl1 = _ce1(testFailMsg);
       context["previous_failure"] = `TEST GUARDRAIL: ${testFailMsg}`;
-      await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
+      context["failure_category"] = _cl1.category;
+      context["failure_suggestion"] = _cl1.suggestion;
+      await pgRun("UPDATE runs SET context = COALESCE(context::jsonb, '{}'::jsonb) || $1::jsonb, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
       await failStep(stepId, testFailMsg);
       return { advanced: false, runCompleted: false };
     } else if (testFailMsg) {
@@ -1350,8 +1358,12 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
     const qgMsg = checkQualityGate(step.step_id, qgPath);
     if (qgMsg && step.retry_count < step.max_retries) {
       logger.warn(`[quality-gate] Soft retry with fix instructions`, { runId: step.run_id, stepId: step.step_id });
+      const { classifyError: _ce2 } = await import("./error-taxonomy.js");
+      const _cl2 = _ce2(qgMsg);
       context["previous_failure"] = `QUALITY GATE: ${qgMsg}`;
-      await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
+      context["failure_category"] = _cl2.category;
+      context["failure_suggestion"] = _cl2.suggestion;
+      await pgRun("UPDATE runs SET context = COALESCE(context::jsonb, '{}'::jsonb) || $1::jsonb, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
       await failStep(stepId, qgMsg);
       return { advanced: false, runCompleted: false };
     } else if (qgMsg) {
@@ -1692,7 +1704,7 @@ ${screenDescs}
     }
   }
 
-  await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
+  await pgRun("UPDATE runs SET context = COALESCE(context::jsonb, '{}'::jsonb) || $1::jsonb, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
 
   // T5: Parse STORIES_JSON from output (any step, typically the planner)
   await parseAndInsertStories(output, step.run_id);
@@ -1754,7 +1766,7 @@ ${screenDescs}
             });
           }
           context["screen_map"] = JSON.stringify(screenMap);
-          await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
+          await pgRun("UPDATE runs SET context = COALESCE(context::jsonb, '{}'::jsonb) || $1::jsonb, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
           logger.info(`[screen-map-guardrail] Auto-generated SCREEN_MAP with ${screenMap.length} screen(s) from ${autoStories.length} stories (stories step fallback)`, { runId: step.run_id });
         }
       }
@@ -1816,8 +1828,12 @@ ${screenDescs}
       const designIssue = checkStoryDesignCompliance(context);
       if (designIssue && step.retry_count < step.max_retries) {
         logger.warn(`[design-compliance] Story ${storyRow?.story_id} failed design check — soft retry`, { runId: step.run_id });
+        const { classifyError: _ce3 } = await import("./error-taxonomy.js");
+        const _cl3 = _ce3(designIssue);
         context["previous_failure"] = `DESIGN COMPLIANCE: ${designIssue}`;
-        await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
+        context["failure_category"] = _cl3.category;
+        context["failure_suggestion"] = _cl3.suggestion;
+        await pgRun("UPDATE runs SET context = COALESCE(context::jsonb, '{}'::jsonb) || $1::jsonb, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
         await failStep(stepId, designIssue);
         return { advanced: false, runCompleted: false };
       } else if (designIssue) {
