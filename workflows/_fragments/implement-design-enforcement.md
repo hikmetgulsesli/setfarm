@@ -16,3 +16,22 @@ DESIGN ENFORCEMENT (frontend stories — MANDATORY checklist before commit):
   Before commit: grep -rn 'href="#"' src/ — if ANY match found, you MUST fix them all.
 - HANDLERS: NEVER use onClick={() => {}} or onChange={() => {}} — empty handlers are banned.
   Every interactive element MUST have a real handler, even if it just logs or shows a toast.
+
+STITCH COMPONENT IMPORT RULES (NO EXCEPTIONS):
+1. If stitch/ has screen HTML files, there MUST be matching React components in components/
+2. Screen components MUST be imported and rendered in the main page (app/page.tsx or equivalent)
+3. NEVER create inline/duplicate overlay or screen implementations in page files
+4. If a component exists in components/ matching a Stitch screen, you MUST use it — do NOT recreate it
+5. After implementation, verify: every screen in DESIGN_MANIFEST.json has a matching import in the render tree
+
+FRAMEWORK-AWARE DESIGN TOKEN INTEGRATION:
+1. NEXT.JS (app/ dir): app/globals.css BAŞINA @import "../stitch/design-tokens.css"
+2. REACT (Vite/CRA): src/index.css veya src/main.tsx'de design-tokens.css import et
+3. RULES: design-tokens.css IMPORT edilir (copy-paste YAPILMAZ), var(--property-name) ile kullan,
+   design-tokens.css dışında --font-*, --color-* tanımlama YASAK, mevcut CSS dosyalarını SILME
+
+NO STITCH = NO CODE:
+If a page does NOT have a corresponding Stitch HTML in stitch/:
+- Do NOT create it with mock data or placeholder content
+- Add it to MISSING_SCREENS list in output
+- Only implement pages that have Stitch HTML reference

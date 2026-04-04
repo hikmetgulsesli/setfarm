@@ -745,53 +745,9 @@ steps:
       3. Read references/web-guidelines.md for accessibility and interaction rules
       4. If project uses Next.js, read references/next-best-practices.md
 
-      SCREEN BINDING (MANDATORY — do this before writing any code):
-      IF STORY_SCREENS is non-empty:
-        a. Parse the JSON array — these are the exact screens this story must implement
-        b. For each screen: read {{story_workdir}}/stitch/<screenId>.html for layout reference
-        c. Read {{story_workdir}}/stitch/design-tokens.css for colors/fonts/spacing
-        d. Implementation MUST match Stitch design (layout, colors, fonts)
-        e. NEVER use fonts/colors NOT in design-tokens.css
-        f. You MUST @import or copy {{story_workdir}}/stitch/design-tokens.css into your main CSS file — do NOT recreate tokens
-        g. {{story_workdir}}/stitch/design-tokens.css is the SINGLE SOURCE OF TRUTH for all design values
-      IF STORY_SCREENS is empty (fallback):
-        a. If stitch/ directory exists:
-           - Read {{story_workdir}}/stitch/DESIGN_MANIFEST.json to find this story's screen
-           - Read {{story_workdir}}/stitch/<story-id>.html for layout reference
-           - Read {{story_workdir}}/stitch/design-tokens.css for colors/fonts/spacing
-           - Implementation MUST match Stitch design (layout, colors, fonts)
-           - NEVER use fonts/colors NOT in design-tokens.css
-           - You MUST @import or copy {{story_workdir}}/stitch/design-tokens.css into your main CSS file
-           - stitch/design-tokens.css is the SINGLE SOURCE OF TRUTH for all design values
-      === CRITICAL: NO STITCH = NO CODE ===
-      If a page/screen you need to implement does NOT have a corresponding Stitch HTML in stitch/:
-      - Do NOT create the page with mock data or placeholder content
-      - Instead, add it to the MISSING_SCREENS list in your output
-      - Only implement pages that have Stitch HTML reference
-      This prevents mock data accumulation and ensures design-code consistency.
+      !include implement-stitch-rules.md
 
-      STITCH COMPONENT IMPORT RULES (MANDATORY — NO EXCEPTIONS):
-      1. If stitch/ directory has screen HTML files, there MUST be corresponding React components in components/
-      2. These screen components MUST be imported and rendered in the main page (app/page.tsx or equivalent)
-      3. NEVER create inline/duplicate overlay or screen implementations in page files
-      4. NEVER write game state overlays (start, pause, game-over) directly inside page.tsx — ALWAYS use dedicated components
-      5. If a component exists in components/ that matches a Stitch screen, you MUST use it — do NOT recreate it
-      6. After implementation, verify: every file in stitch/DESIGN_MANIFEST.json screens has a matching import in the render tree
-
-      FRAMEWORK-AWARE DESIGN INTEGRATION (MANDATORY):
-      1. NEXT.JS (app/ dir varsa):
-         - app/layout.tsx ASLA silme/boslaltma
-         - app/globals.css'in BASINA: @import "../stitch/design-tokens.css"
-         - Font loading: next/font veya Google Fonts <link>
-         - Component logic page.tsx'e DEGIL components/ klasorune
-      2. REACT (Vite/CRA):
-         - src/index.css veya src/main.tsx'de design-tokens.css import et
-         - React Router ile navigation (Stitch link hedeflerine esle)
-      3. GENEL KURALLAR:
-         - design-tokens.css IMPORT edilir, copy-paste YAPILMAZ
-         - var(--property-name) ile kullan
-         - design-tokens.css disinda --font-*, --color-* tanimlama YASAK
-         - Mevcut CSS dosyalarini SILME — @import ekle
+      !include implement-design-enforcement.md
 
       !include game-dev-rules.md
 
