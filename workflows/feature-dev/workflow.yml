@@ -271,6 +271,18 @@ steps:
       - "tablet/iPad" in TASK → TABLET
       - Otherwise → DESKTOP
 
+      === MOBILE VIEWPORT NOTE ===
+      When DEVICE_TYPE is MOBILE:
+      - All screen designs MUST target 375x812 viewport (iPhone standard)
+      - Use safe area insets (top: 44px, bottom: 34px) for notch devices
+      - Touch targets minimum 44x44px
+      - Bottom navigation bar height: 56px (Material) or 49px (iOS tab bar)
+      - Font sizes: minimum 14px body text for mobile readability
+      - Design must account for thumb-reachable zones (bottom 60% of screen)
+      When DEVICE_TYPE is TABLET:
+      - Target 768x1024 viewport (iPad standard)
+      - Consider split-view and multitasking layouts
+
       === STITCH EKRANLARI PIPELINE TARAFINDAN ÜRETİLDİ ===
 
       Pipeline PRD'yi Stitch'e gönderdi ve tüm ekranları otomatik üretti.
@@ -571,6 +583,19 @@ steps:
       - vanilla-ts:    npm init -y && npm install -D typescript
       - node-express:  npm init -y && npm install express && npm install -D typescript @types/express @types/node
       - react-native:  npx react-native init . --template react-native-template-typescript
+      - expo:          npx create-expo-app . -t expo-template-blank-typescript && npx expo install expo-router expo-status-bar
+
+      MOBILE SCAFFOLDING (TECH_STACK = react-native OR expo):
+      If TECH_STACK is "react-native" or "expo", apply these additional steps:
+      1. Detect which framework: check if task/PRD mentions "Expo" → use expo scaffold
+         Otherwise → use react-native scaffold
+      2. For Expo projects, also install common mobile deps:
+         npx expo install react-native-safe-area-context react-native-screens
+      3. Create app.json / app.config.ts if not present (Expo needs this)
+      4. Skip FRONTEND BUNDLER SETUP — React Native/Expo have their own bundler (Metro)
+      5. Build verification: npx expo doctor 2>/dev/null || npx react-native doctor 2>/dev/null || true
+      6. The project dir should be ~/mobile/<name>/ not ~/projects/<name>/
+         (deploy step handles the move, but setup-build should NOT assume ~/projects/ path)
 
       After scaffolding, IMMEDIATELY create .gitignore (scaffold tools often skip this):
       cat > .gitignore << 'GITIGNORE'
@@ -1574,6 +1599,7 @@ steps:
 
       CATEGORY B — NEW MOBILE APP:
         Signals: package.json has react-native/expo/flutter dependency,
+        TECH_STACK is "react-native" or "expo",
         task mentions "mobile", "React Native", "Expo", "Flutter", "iOS", "Android".
 
       CATEGORY C — EXISTING PROJECT UPDATE:
@@ -1726,19 +1752,66 @@ steps:
       │              CATEGORY B: NEW MOBILE APP                 │
       └─────────────────────────────────────────────────────────┘
 
-      B1 — Move to ~/mobile/:
+      B1 — Move to ~/mobile/ (NOT ~/projects/):
+      PROJECT_NAME=$(basename {{repo}})
       TARGET_DIR="$HOME/mobile/$PROJECT_NAME"
-      Move if not already there (same logic as A2).
+      if [ "{{repo}}" != "$TARGET_DIR" ] && [ ! -d "$TARGET_DIR" ]; then
+        mkdir -p "$HOME/mobile"
+        mv {{repo}} $TARGET_DIR
+        ln -sfn $TARGET_DIR {{repo}} 2>/dev/null || true
+      fi
+      REPO_DIR="$TARGET_DIR"
+      IMPORTANT: Mobile apps go to ~/mobile/, NEVER to ~/projects/.
 
       B2 — Install deps:
       cd $REPO_DIR && npm install 2>/dev/null || true
 
-      B3 — Register in Mission Control:
-      POST → type "mobile", emoji "📱"
-      PATCH → repo, stack, github, workflowRunId, createdBy, completedAt
-      (NO ports, NO service, NO domain)
+      B3 — Detect mobile framework and verify:
+      IS_EXPO=$(cd $REPO_DIR && node -e "try{const p=require('./package.json');console.log(p.dependencies?.expo?'yes':'no')}catch{console.log('no')}" 2>/dev/null || echo "no")
+      IS_RN=$(cd $REPO_DIR && node -e "try{const p=require('./package.json');console.log(p.dependencies?.['react-native']?'yes':'no')}catch{console.log('no')}" 2>/dev/null || echo "no")
 
-      → OUTPUT: DEPLOY_TYPE=new-mobile, SERVICE_NAME=none, PORT=none, DOMAIN=none.
+      If Expo: run `npx expo doctor` to verify setup
+      If React Native: run `npx react-native doctor` to check environment
+
+      B4 — Register in Mission Control (type: "mobile"):
+      GITHUB_URL=$(cd $REPO_DIR && git remote get-url origin 2>/dev/null | sed 's/.git$//' || echo "")
+      GITHUB_SLUG=$(echo "$GITHUB_URL" | sed 's|https://github.com/||')
+      STACK_JSON=$(cd $REPO_DIR && node -e "const p=require('./package.json'); const d={...p.dependencies,...p.devDependencies}; const s=[]; if(d['react-native'])s.push('React Native'); if(d.expo)s.push('Expo'); if(d.react)s.push('React'); if(d.typescript)s.push('TypeScript'); if(d.flutter)s.push('Flutter'); console.log(JSON.stringify(s))" 2>/dev/null || echo '[]')
+
+      # Create project with type "mobile"
+      curl -sf -X POST http://127.0.0.1:3080/api/projects \
+        -H 'Content-Type: application/json' \
+        -d '{"name":"'$PROJECT_NAME'","description":"{{task}}","type":"mobile","emoji":"📱","repo":"'$REPO_DIR'","github":"'$GITHUB_SLUG'"}'
+
+      # PATCH with stack and metadata (NO ports, NO service, NO domain)
+      curl -sf -X PATCH http://127.0.0.1:3080/api/projects/$PROJECT_NAME \
+        -H 'Content-Type: application/json' \
+        -d '{"stack":'$STACK_JSON',"type":"mobile","workflowRunId":"{{run_id}}","completedAt":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}'
+
+      # Verify MC registration
+      MC_CHECK=$(curl -sf http://127.0.0.1:3080/api/projects/$PROJECT_NAME 2>/dev/null | grep -c '"id"' || echo "0")
+      if [ "$MC_CHECK" = "0" ]; then
+        echo "WARNING: MC registration may have failed for mobile project $PROJECT_NAME"
+      fi
+
+      B5 — NO systemd service, NO port assignment, NO tunnel/DNS:
+      Mobile apps do not run as server processes. Skip A4-A7 entirely.
+
+      B6 — Generate QR code info for Expo Go testing:
+      If IS_EXPO=yes:
+        echo "=== EXPO GO TESTING ==="
+        echo "To test on physical device:"
+        echo "  1. cd $REPO_DIR"
+        echo "  2. npx expo start"
+        echo "  3. Scan QR code with Expo Go app (iOS/Android)"
+        echo "  Local dev URL: exp://$(hostname -I | awk '{print $1}'):8081"
+        echo "========================"
+        EXPO_QR_INFO="Run 'npx expo start' in $REPO_DIR and scan QR with Expo Go"
+      else
+        EXPO_QR_INFO="n/a (not an Expo project)"
+      fi
+
+      → OUTPUT: DEPLOY_TYPE=new-mobile, SERVICE_NAME=none, PORT=none, DOMAIN=none, EXPO_QR=${EXPO_QR_INFO}.
 
       ┌─────────────────────────────────────────────────────────┐
       │           CATEGORY C: EXISTING PROJECT UPDATE           │

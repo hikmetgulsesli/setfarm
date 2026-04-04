@@ -151,3 +151,21 @@ export async function findActiveLoop(runId: string): Promise<{ id: string } | un
 export async function findVerifyStepByStepId(runId: string, stepId: string): Promise<{ id: string } | undefined> {
   return await pgGet<{ id: string }>("SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1", [runId, stepId]);
 }
+
+// ── Step Transition Recording ──────────────────────────────────────
+
+/**
+ * Record a step status transition in step_transitions table.
+ * Best-effort — failures are silently logged to avoid breaking the pipeline.
+ */
+export async function recordStepTransition(
+  stepId: string, runId: string, fromStatus: string | null, toStatus: string,
+  agentId?: string, triggeredBy?: string, metadata?: Record<string, any>
+): Promise<void> {
+  try {
+    await pgRun(
+      "INSERT INTO step_transitions (step_id, run_id, from_status, to_status, agent_id, triggered_by, metadata) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+      [stepId, runId, fromStatus, toStatus, agentId || null, triggeredBy || null, metadata ? JSON.stringify(metadata) : null]
+    );
+  } catch (e) { /* best effort — don't break pipeline */ }
+}

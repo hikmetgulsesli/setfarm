@@ -9,6 +9,7 @@ import { readRecentLogs } from "../lib/logger.js";
 import { getRecentEvents, getRunEvents, type SetfarmEvent } from "../installer/events.js";
 import { startDaemon, stopDaemon, getDaemonStatus, isRunning } from "../server/daemonctl.js";
 import { claimStep, completeStep, failStep, getStories, peekStep } from "../installer/step-ops.js";
+import { recordStepTransition } from "../installer/repo.js";
 import { ensureCliSymlink } from "../installer/symlink.js";
 import { runMedicCheck, getMedicStatus, getRecentMedicChecks } from "../medic/medic.js";
 import { pgQuery, pgGet, pgRun, pgClose, now } from "../db-pg.js";
@@ -613,11 +614,13 @@ async function main() {
           "UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = 0, updated_at = $1 WHERE id = $2",
           [now(), loopStep.id]
         );
+        await recordStepTransition(loopStep.id, run.id, "failed", "pending", undefined, "cli:resume:verifyEach");
         // Reset verify step to waiting (fires after developer completes)
         await pgRun(
           "UPDATE steps SET status = 'waiting', current_story_id = NULL, retry_count = 0, updated_at = $1 WHERE id = $2",
           [now(), failedStep.id]
         );
+        await recordStepTransition(failedStep.id, run.id, "failed", "waiting", undefined, "cli:resume:verifyEach");
         // Reset any failed stories to pending
         await pgRun(
           "UPDATE stories SET status = 'pending', updated_at = $1 WHERE run_id = $2 AND status = 'failed'",
@@ -674,6 +677,7 @@ async function main() {
       "UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = 0, abandoned_count = 0, updated_at = $1 WHERE id = $2",
       [now(), failedStep.id]
     );
+    await recordStepTransition(failedStep.id, run.id, "failed", "pending", undefined, "cli:resume");
 
     // Reset downstream failed steps to waiting (so pipeline can advance after this step completes)
     const failedStepIndex = await pgGet<{ step_index: number }>("SELECT step_index FROM steps WHERE id = $1", [failedStep.id]);

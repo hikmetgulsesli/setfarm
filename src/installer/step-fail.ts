@@ -17,6 +17,7 @@ import {
 } from "./constants.js";
 import {
   getRunContext, getWorkflowId, getStoryInfo,
+  recordStepTransition,
 } from "./repo.js";
 import { removeStoryWorktree } from "./worktree-ops.js";
 import { scheduleRunCronTeardown } from "./cleanup-ops.js";
@@ -78,6 +79,7 @@ async function handleLoopStepFailurePG(
       await sql`UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = ${now()} WHERE id = ${stepId}`;
       try { await sql`UPDATE claim_log SET outcome = 'failed', duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at)) * 1000 AS INTEGER), diagnostic = ${error} WHERE story_id = ${storyRow?.story_id || ""} AND outcome IS NULL`; } catch (e) { logger.warn("[claim-log] update failed: " + String(e), {}); }
     });
+    await recordStepTransition(stepId, step.run_id, "running", "pending", step.agent_id, "failStep:loopStoryExhausted", { storyId: storyRow?.story_id, retry: newRetry });
     const wfId = await getWorkflowId(step.run_id);
     emitEvent({ ts: now(), event: "story.failed", runId: step.run_id, workflowId: wfId, stepId: stepId, storyId: storyRow?.story_id, storyTitle: storyRow?.title, detail: `Story retries exhausted (${newRetry}/${story.max_retries}) — loop continues` });
     logger.info(`[failStep] Story ${storyRow?.story_id} retries exhausted — marked failed, loop continues`, { runId: step.run_id });
@@ -89,6 +91,7 @@ async function handleLoopStepFailurePG(
     await sql`UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = ${now()} WHERE id = ${stepId}`;
     try { await sql`UPDATE claim_log SET outcome = 'failed', duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at)) * 1000 AS INTEGER), diagnostic = ${error} WHERE story_id = ${storyRow?.story_id || ""} AND outcome IS NULL`; } catch (e) { logger.warn("[claim-log] update failed: " + String(e), {}); }
   });
+  await recordStepTransition(stepId, step.run_id, "running", "pending", step.agent_id, "failStep:loopStoryRetry", { storyId: storyRow?.story_id, retry: newRetry });
 
   if (newRetry >= STORY_FALLBACK_RETRY_THRESHOLD) {
     fireFallbackRetryCron(step, storyRow, newRetry);
@@ -144,12 +147,14 @@ async function handleSingleStepFailurePG(
   if (newRetryCount > step.max_retries) {
     const isCritical = CRITICAL_STEPS.has(workflowStepId);
     if (isCritical) {
+      await recordStepTransition(stepId, step.run_id, "running", "failed", step.agent_id, "failStep:critical", { error, retry: newRetryCount });
       const wfId2 = await getWorkflowId(step.run_id);
       emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId2, stepId: stepId, detail: error });
       emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId2, detail: "Critical step retries exhausted" });
       scheduleRunCronTeardown(step.run_id);
       return { retrying: false, runFailed: true };
     } else {
+      await recordStepTransition(stepId, step.run_id, "running", "skipped", step.agent_id, "failStep:nonCritical", { error, retry: newRetryCount });
       const wfId2 = await getWorkflowId(step.run_id);
       emitEvent({ ts: now(), event: "step.skipped", runId: step.run_id, workflowId: wfId2, stepId: workflowStepId, detail: `Retries exhausted — skipped: ${error}` });
       logger.warn(`[failStep] Non-critical step ${workflowStepId} skipped after ${newRetryCount} retries — pipeline continues`, { runId: step.run_id });
@@ -158,6 +163,7 @@ async function handleSingleStepFailurePG(
       return { retrying: false, runFailed: false };
     }
   } else {
+    await recordStepTransition(stepId, step.run_id, "running", "pending", step.agent_id, "failStep:retry", { error, retry: newRetryCount });
     return { retrying: true, runFailed: false };
   }
 }

@@ -8,6 +8,7 @@
  * execFileSync is safe against shell injection as it does not invoke a shell.
  */
 import { pgQuery, pgGet, pgRun, pgExec, pgBegin, now } from "../db-pg.js";
+import { recordStepTransition } from "../installer/repo.js";
 import { emitEvent, type EventType } from "../installer/events.js";
 import { teardownWorkflowCronsIfIdle, ensureWorkflowCrons, removeAgentCrons, setupAgentCrons, expectedCronCount, actualCronCount, repairAgentCrons, syncActiveCrons } from "../installer/agent-cron.js";
 import { loadWorkflowSpec } from "../installer/workflow-spec.js";
@@ -108,6 +109,7 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
         if (recentChecks.length >= SAME_ERROR_LIMIT - 1) {
           logger.error(`[medic] Same-error circuit breaker: step ${finding.stepId} reset ${newCount}x`, { runId: finding.runId });
           await pgRun("UPDATE steps SET status = 'failed', output = $1, abandoned_count = $2, updated_at = $3 WHERE id = $4", ["Medic: same error repeated " + newCount + " times — circuit breaker. Last output: " + (step.output || "").substring(0, 300), newCount, now(), finding.stepId]);
+          await recordStepTransition(finding.stepId, finding.runId || "", "running", "failed", undefined, "medic:circuitBreaker", { abandonCount: newCount });
           if (finding.runId) { await pgRun("UPDATE runs SET status = 'failed', updated_at = $1 WHERE id = $2", [now(), finding.runId]); emitEvent({ ts: now(), event: "run.failed" as EventType, runId: finding.runId, detail: "Medic: same-error circuit breaker on step " + (finding.stepId || "") }); }
           return true;
         }
@@ -115,11 +117,13 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
 
       if (newCount >= MAX_STEP_ABANDONS) {
         await pgRun("UPDATE steps SET status = 'failed', output = 'Medic: abandoned too many times', abandoned_count = $1, updated_at = $2 WHERE id = $3", [newCount, now(), finding.stepId]);
+        await recordStepTransition(finding.stepId, finding.runId || "", "running", "failed", undefined, "medic:abandonLimit", { abandonCount: newCount });
         if (finding.runId) { await pgRun("UPDATE runs SET status = 'failed', updated_at = $1 WHERE id = $2", [now(), finding.runId]); emitEvent({ ts: now(), event: "run.failed" as EventType, runId: finding.runId, detail: "Medic: step abandoned too many times" }); }
         return true;
       }
 
       await pgRun("UPDATE steps SET status = 'pending', abandoned_count = $1, retry_count = retry_count + 1, updated_at = $2 WHERE id = $3", [newCount, now(), finding.stepId]);
+      await recordStepTransition(finding.stepId, finding.runId || "", "running", "pending", undefined, "medic:resetStep", { abandonCount: newCount });
       if (finding.runId) { emitEvent({ ts: now(), event: "step.timeout" as EventType, runId: finding.runId, stepId: finding.stepId, detail: `Medic: reset stuck step (abandon ${newCount}/${MAX_STEP_ABANDONS})` }); }
       return true;
     }
@@ -169,8 +173,11 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
       if (!finding.runId) return false;
       const run = await pgGet<{ status: string; workflow_id: string }>("SELECT status, workflow_id FROM runs WHERE id = $1", [finding.runId]);
       if (!run || run.status !== "running") return false;
+      // Record transitions for all active steps before failing them
+      const activeStepsForFail = await pgQuery<{ id: string; status: string }>("SELECT id, status FROM steps WHERE run_id = $1 AND status IN ('waiting', 'pending', 'running')", [finding.runId]);
       await pgRun("UPDATE runs SET status = 'failed', updated_at = $1 WHERE id = $2", [now(), finding.runId]);
       await pgRun("UPDATE steps SET status = 'failed', output = 'Medic: run marked as dead', updated_at = $1 WHERE run_id = $2 AND status IN ('waiting', 'pending', 'running')", [now(), finding.runId]);
+      for (const s of activeStepsForFail) { await recordStepTransition(s.id, finding.runId, s.status, "failed", undefined, "medic:failRun"); }
       emitEvent({ ts: now(), event: "run.failed" as EventType, runId: finding.runId, workflowId: run.workflow_id, detail: "Medic: zombie run" });
       try { await teardownWorkflowCronsIfIdle(run.workflow_id); } catch {}
       return true;

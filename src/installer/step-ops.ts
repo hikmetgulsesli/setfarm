@@ -39,6 +39,7 @@ import {
   findStoryByStatus, getStoryInfo,
   setStepStatus, failStepWithOutput,
   findLoopStep, findActiveLoop,
+  recordStepTransition,
 } from "./repo.js";
 
 /**
@@ -659,6 +660,7 @@ async function claimSingleStep(
     // Already claimed by another cron — return no work
     return { found: false };
   }
+  await recordStepTransition(step.id, step.run_id, "pending", "running", agentId, "claimSingleStep");
   emitEvent({ ts: now(), event: "step.running", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId });
   logger.info(`Step claimed by ${agentId}`, { runId: step.run_id, stepId: step.step_id });
 
@@ -1063,6 +1065,7 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
         return { found: false };
       }
       await pgRun("UPDATE steps SET status = 'running', current_story_id = \$1, updated_at = \$2 WHERE id = \$3", [nextStory.id, now(), step.id]);
+      await recordStepTransition(step.id, step.run_id, "pending", "running", agentId, "claimLoopStep", { storyId: nextStory.story_id });
       // (removed: fake transaction flag)
 
       // GIT WORKTREE ISOLATION: Create OUTSIDE transaction to avoid holding DB
@@ -1997,6 +2000,7 @@ ERROR: Missing repo or branch context for merge queue`,
     logger.info(`Step already completed, skipping duplicate`, { runId: step.run_id, stepId: step.step_id });
     return { advanced: false, runCompleted: false };
   }
+  await recordStepTransition(stepId, step.run_id, "running", "done", step.agent_id, "completeStep");
   emitEvent({ ts: now(), event: "step.done", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id });
   logger.info(`Step completed: ${step.step_id}`, { runId: step.run_id, stepId: step.step_id });
 
@@ -2048,6 +2052,7 @@ async function handleVerifyEachCompletion(
   // Only proceed if we are the one that transitions it from running → waiting.
   const _pgChanged = await pgRun("UPDATE steps SET status = 'waiting', output = $1, updated_at = $2 WHERE id = $3 AND status = 'running'", [output, now(), verifyStep.id]);
   if (_pgChanged.changes === 0) { return { advanced: false, runCompleted: false }; }
+  await recordStepTransition(verifyStep.id, verifyStep.run_id, "running", "waiting", undefined, "handleVerifyEachCompletion");
 
   // Identify the story being verified: output first (most reliable), then context (v1.5.53)
   let verifiedStoryId = parsedOutput["current_story_id"] || context["current_story_id"];

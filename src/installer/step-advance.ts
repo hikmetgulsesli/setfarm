@@ -13,6 +13,7 @@ import { emitEvent } from "./events.js";
 import {
   getRunStatus, getWorkflowId, completeRun,
   findStoryByStatus, skipFailedStories,
+  recordStepTransition,
 } from "./repo.js";
 import { archiveRunProgress, scheduleRunCronTeardown, cleanupLocalBranches } from "./cleanup-ops.js";
 import { cleanupWorktrees, cleanAgentWorkspace } from "./worktree-ops.js";
@@ -63,6 +64,7 @@ export async function advancePipeline(runId: string): Promise<{ advanced: boolea
         "UPDATE steps SET status = 'pending', updated_at = $1 WHERE id = $2",
         [now(), next.id]
       );
+      await recordStepTransition(next.id, runId, "waiting", "pending", undefined, "advancePipeline");
       emitEvent({ ts: now(), event: "pipeline.advanced", runId, workflowId: wfId, stepId: next.step_id });
       emitEvent({ ts: now(), event: "step.pending", runId, workflowId: wfId, stepId: next.step_id });
       // Demand-based crons + event-driven NOTIFY
@@ -119,6 +121,7 @@ export async function checkLoopContinuation(runId: string, loopStepId: string): 
         "UPDATE steps SET status = 'pending', updated_at = $1 WHERE id = $2",
         [now(), loopStepId]
       );
+      await recordStepTransition(loopStepId, runId, loopStatus?.status || null, "pending", undefined, "checkLoopContinuation:moreStories");
     }
     return { advanced: false, runCompleted: false };
   }

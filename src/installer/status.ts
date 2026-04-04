@@ -1,6 +1,7 @@
 import { pgQuery, pgGet, pgRun, now } from "../db-pg.js";
 import { teardownWorkflowCronsIfIdle } from "./agent-cron.js";
 import { emitEvent } from "./events.js";
+import { recordStepTransition } from "./repo.js";
 
 export type RunInfo = {
   id: string;
@@ -95,11 +96,14 @@ export async function stopWorkflow(query: string): Promise<StopWorkflowResult> {
   if (run.status === "completed" || run.status === "cancelled") {
     return { status: "already_done", message: `Run ${run.id.slice(0, 8)} is already "${run.status}".` };
   }
+  // Record transitions for all active steps before cancelling
+  const activeStepsForCancel = await pgQuery<{ id: string; status: string }>("SELECT id, status FROM steps WHERE run_id = $1 AND status IN ('waiting', 'pending', 'running')", [run.id]);
   await pgRun("UPDATE runs SET status = 'cancelled', updated_at = $1 WHERE id = $2", [now(), run.id]);
   const result = await pgRun(
     "UPDATE steps SET status = 'failed', output = 'Cancelled by user', updated_at = $1 WHERE run_id = $2 AND status IN ('waiting', 'pending', 'running')",
     [now(), run.id]
   );
+  for (const s of activeStepsForCancel) { await recordStepTransition(s.id, run.id, s.status, "failed", undefined, "stopWorkflow:cancelled"); }
   const cancelledSteps = result.changes;
   await teardownWorkflowCronsIfIdle(run.workflow_id);
 

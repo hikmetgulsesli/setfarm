@@ -23,7 +23,7 @@ import {
   STEP_STATUS,
 } from "./constants.js";
 import { autoSaveWorktree } from "./worktree-ops.js";
-import { getWorkflowId, getRunContext, failRun } from "./repo.js";
+import { getWorkflowId, getRunContext, failRun, recordStepTransition } from "./repo.js";
 import { getAgentWorkspacePath } from "./worktree-ops.js";
 
 // ── Helper ──────────────────────────────────────────────────────────
@@ -121,6 +121,7 @@ export async function cleanupAbandonedSteps(advancePipeline: (runId: string) => 
             await pgRun("UPDATE stories SET output = $1 WHERE id = $2 AND (output IS NULL OR output = '')", [diagnostic, story.id]);
             await pgRun("UPDATE stories SET status = 'failed', abandoned_count = $1, updated_at = $2 WHERE id = $3", [newAbandonCount, abandonedAt, story.id]);
             await pgRun("UPDATE steps SET status = 'failed', output = 'Story abandoned and abandon limit reached', current_story_id = NULL, updated_at = $1 WHERE id = $2", [abandonedAt, step.id]);
+            await recordStepTransition(step.id, step.run_id, "running", "failed", step.agent_id, "cleanup:storyAbandonLimit", { storyId: story.story_id, abandonCount: newAbandonCount });
             try { await pgRun("UPDATE claim_log SET outcome = 'abandoned', abandoned_at = $1, duration_ms = $2, diagnostic = $3 WHERE story_id = $4 AND outcome IS NULL", [abandonedAt, durationMin * 60000, diagnostic, story.story_id]); } catch (e) { logger.warn("[cleanup] claim_log update failed: " + String(e), { runId: step.run_id }); }
             await failRun(step.run_id);
             emitEvent({ ts: now(), event: "story.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, storyId: story.story_id, storyTitle: story.title, detail: `Abandoned — ${diagnostic}` });
@@ -132,6 +133,7 @@ export async function cleanupAbandonedSteps(advancePipeline: (runId: string) => 
             await pgRun("UPDATE stories SET output = $1 WHERE id = $2 AND (output IS NULL OR output = '')", [diagnostic, story.id]);
             await pgRun("UPDATE stories SET status = 'pending', abandoned_count = $1, retry_count = retry_count + 1, updated_at = $2 WHERE id = $3", [newAbandonCount, abandonedAt, story.id]);
             await pgRun("UPDATE steps SET status = 'pending', current_story_id = NULL, abandoned_count = $1, retry_count = retry_count + 1, updated_at = $2 WHERE id = $3", [newAbandonCount, abandonedAt, step.id]);
+            await recordStepTransition(step.id, step.run_id, "running", "pending", step.agent_id, "cleanup:storyAbandoned", { storyId: story.story_id, abandonCount: newAbandonCount });
             try { await pgRun("UPDATE claim_log SET outcome = 'abandoned', abandoned_at = $1, duration_ms = $2, diagnostic = $3 WHERE story_id = $4 AND outcome IS NULL", [abandonedAt, durationMin * 60000, diagnostic, story.story_id]); } catch (e) { logger.warn("[cleanup] claim_log update failed: " + String(e), { runId: step.run_id }); }
             emitEvent({ ts: now(), event: "step.timeout", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: `Story ${story.story_id} abandoned — ${diagnostic}` });
             logger.info(`Abandoned step reset to pending (story abandon ${newAbandonCount})`, { runId: step.run_id, stepId: step.step_id });
@@ -146,6 +148,7 @@ export async function cleanupAbandonedSteps(advancePipeline: (runId: string) => 
 
       if (newAbandonCount >= MAX_ABANDON_RESETS) {
         await pgRun("UPDATE steps SET status = 'failed', output = $1, abandoned_count = $2, updated_at = $3 WHERE id = $4", [singleDiagnostic, newAbandonCount, now(), step.id]);
+        await recordStepTransition(step.id, step.run_id, "running", "failed", step.agent_id, "cleanup:abandonLimit", { abandonCount: newAbandonCount });
         await pgRun("UPDATE runs SET status = 'failed', updated_at = $1 WHERE id = $2", [now(), step.run_id]);
         try { await pgRun("UPDATE claim_log SET outcome = 'abandoned', abandoned_at = $1, diagnostic = $2 WHERE run_id = $3 AND step_id = $4 AND outcome IS NULL", [now(), singleDiagnostic, step.run_id, step.step_id]); } catch (e) { logger.warn("[cleanup] claim_log update failed: " + String(e), { runId: step.run_id }); }
         const wfId = await getWorkflowId(step.run_id);
@@ -155,6 +158,7 @@ export async function cleanupAbandonedSteps(advancePipeline: (runId: string) => 
         scheduleRunCronTeardown(step.run_id);
       } else {
         await pgRun("UPDATE steps SET status = 'pending', abandoned_count = $1, retry_count = retry_count + 1, updated_at = $2 WHERE id = $3", [newAbandonCount, now(), step.id]);
+        await recordStepTransition(step.id, step.run_id, "running", "pending", step.agent_id, "cleanup:abandoned", { abandonCount: newAbandonCount });
         try { await pgRun("UPDATE claim_log SET outcome = 'abandoned', abandoned_at = $1, diagnostic = $2 WHERE run_id = $3 AND step_id = $4 AND outcome IS NULL", [now(), singleDiagnostic, step.run_id, step.step_id]); } catch (e) { logger.warn("[cleanup] claim_log update failed: " + String(e), { runId: step.run_id }); }
         emitEvent({ ts: now(), event: "step.timeout", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, detail: `Reset to pending — ${singleDiagnostic}` });
       }
