@@ -22,7 +22,8 @@ export async function getRunContext(runId: string): Promise<Record<string, strin
 }
 
 export async function updateRunContext(runId: string, context: Record<string, string>): Promise<void> {
-  await pgRun("UPDATE runs SET context = COALESCE(context::jsonb, '{}'::jsonb) || $1::jsonb, updated_at = $2 WHERE id = $3",
+  // Ensure existing context is a JSON object (not array) before merging
+  await pgRun("UPDATE runs SET context = (CASE WHEN jsonb_typeof(context::jsonb) = 'object' THEN context::jsonb ELSE '{}'::jsonb END) || $1::jsonb, updated_at = $2 WHERE id = $3",
     [JSON.stringify(context), now(), runId]);
 }
 
