@@ -91,6 +91,7 @@ async function findOpenclawBinary(): Promise<string> {
 
   // 2. Check common global install locations
   const candidates = [
+    path.join(os.homedir(), ".local", "bin", "openclaw"),
     path.join(os.homedir(), ".npm-global", "bin", "openclaw"),
     "/usr/local/bin/openclaw",
     "/opt/homebrew/bin/openclaw",
