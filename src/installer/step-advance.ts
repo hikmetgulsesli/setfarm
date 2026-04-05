@@ -159,9 +159,11 @@ export async function checkLoopContinuation(runId: string, loopStepId: string): 
 
   const failedStory = await findStoryByStatus(runId, "failed") as { id: string } | undefined;
   if (failedStory) {
-    await skipFailedStories(runId);
-    const wfId = await getWorkflowId(runId);
-    emitEvent({ ts: now(), event: "story.skipped", runId, workflowId: wfId, stepId: loopStepId, detail: "Failed stories skipped — loop continues" });
+    const skipped = await skipFailedStories(runId);
+    if (skipped > 0) {
+      const wfId = await getWorkflowId(runId);
+      emitEvent({ ts: now(), event: "story.skipped", runId, workflowId: wfId, stepId: loopStepId, detail: `${skipped} story skipped (retries exhausted)` });
+    }
   }
 
   // All stories verified/skipped — mark loop step done

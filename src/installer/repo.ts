@@ -59,8 +59,9 @@ export async function verifyStory(storyId: string): Promise<void> {
     [now(), storyId]);
 }
 
-export async function skipFailedStories(runId: string): Promise<void> {
-  // Only skip stories that have exhausted their retries — re-queue others
+export async function skipFailedStories(runId: string): Promise<number> {
+  // Only skip stories that have exhausted their retries — leave others as 'failed'
+  let skippedCount = 0;
   const failed = await pgQuery<{ id: string; output: string | null; story_id: string; retry_count: number; max_retries: number }>(
     "SELECT id, output, story_id, retry_count, max_retries FROM stories WHERE run_id = $1 AND status = 'failed'", [runId]
   );
@@ -75,7 +76,9 @@ export async function skipFailedStories(runId: string): Promise<void> {
       : `SKIPPED: Story ${s.story_id} failed with no diagnostic — likely empty workdir or agent timeout`;
     await pgRun("UPDATE stories SET status = 'skipped', output = $1, updated_at = $2 WHERE id = $3",
       [skipReason, now(), s.id]);
+    skippedCount++;
   }
+  return skippedCount;
 }
 
 export async function countStoriesByStatus(runId: string, status: string): Promise<number> {

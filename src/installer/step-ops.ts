@@ -1012,10 +1012,11 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
         const failedStory = await findStoryByStatus(step.run_id, "failed") as { id: string } | undefined;
 
         if (failedStory) {
-          // v9.0: Skip failed stories instead of failing the loop
-          await skipFailedStories(step.run_id);
-          const wfId = await getWorkflowId(step.run_id);
-          emitEvent({ ts: now(), event: "story.skipped", runId: step.run_id, workflowId: wfId, stepId: step.id, agentId: agentId, detail: "Failed stories skipped — loop continues" });
+          const skipped = await skipFailedStories(step.run_id);
+          if (skipped > 0) {
+            const wfId = await getWorkflowId(step.run_id);
+            emitEvent({ ts: now(), event: "story.skipped", runId: step.run_id, workflowId: wfId, stepId: step.id, agentId: agentId, detail: `${skipped} story skipped (retries exhausted)` });
+          }
         }
 
         // Check if other stories are still running in parallel
