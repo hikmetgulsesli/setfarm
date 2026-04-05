@@ -14,7 +14,7 @@ export const BASE_ABANDONED_THRESHOLD_MS = 600_000; // 20 min (aligned with agen
 export const FAST_ABANDONED_THRESHOLD_MS = 300_000; // 10 min
 
 /** Max abandon resets before failing the step/story permanently */
-export const MAX_ABANDON_RESETS = 3;
+export const MAX_ABANDON_RESETS = 5;
 
 /** Steps that need longer abandon thresholds (Stitch API, complex builds) */
 export const SLOW_STEP_IDS = new Set(["design", "implement", "setup-repo", "setup-build"]);
