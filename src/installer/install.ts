@@ -284,7 +284,9 @@ export async function installWorkflow(params: { workflowId: string }): Promise<W
       const merged = { ...existing, ...mcpConfig };
       await fs.writeFile(settingsPath, `${JSON.stringify(merged, null, 2)}\n`, "utf-8");
     }
-  } catch {}
+  } catch (mcpErr) {
+    logger.warn(`[install] MCP config injection failed: ${String(mcpErr)}`, {});
+  }
 
   await updateMainAgentGuidance();
   await installSetfarmSkill();

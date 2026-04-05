@@ -96,14 +96,19 @@ export async function getNextPendingStory(runId: string): Promise<any | undefine
   return await pgGet("SELECT * FROM stories WHERE run_id = $1 AND status = 'pending' AND (abandoned_count IS NULL OR abandoned_count < 3) ORDER BY story_index ASC LIMIT 1", [runId]);
 }
 
-export async function claimNextStory(runId: string, agentId: string): Promise<any | undefined> {
+export async function claimNextStory(runId: string, agentId: string, eligibleStoryId?: string): Promise<any | undefined> {
   return await pgBegin(async (sql) => {
-    const rows = await sql.unsafe(
-      `SELECT id, story_id, title, story_index, output, retry_count, max_retries, abandoned_count
-       FROM stories WHERE run_id = $1 AND status = 'pending'
-       ORDER BY story_index ASC LIMIT 1 FOR UPDATE SKIP LOCKED`,
-      [runId]
-    );
+    // If a specific dependency-eligible story ID is provided, claim that one.
+    // Otherwise fall back to first pending story by index.
+    const query = eligibleStoryId
+      ? `SELECT id, story_id, title, story_index, output, retry_count, max_retries, abandoned_count
+         FROM stories WHERE run_id = $1 AND id = $2 AND status = 'pending'
+         FOR UPDATE SKIP LOCKED`
+      : `SELECT id, story_id, title, story_index, output, retry_count, max_retries, abandoned_count
+         FROM stories WHERE run_id = $1 AND status = 'pending'
+         ORDER BY story_index ASC LIMIT 1 FOR UPDATE SKIP LOCKED`;
+    const params = eligibleStoryId ? [runId, eligibleStoryId] : [runId];
+    const rows = await sql.unsafe(query, params);
     const story = rows[0] as any;
     if (!story) return undefined;
 

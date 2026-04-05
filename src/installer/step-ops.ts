@@ -1080,8 +1080,9 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
       }
 
       // Atomic story claim with FOR UPDATE SKIP LOCKED — prevents double-claim race condition
+      // Pass dependency-checked story ID to respect story ordering
       const { claimNextStory } = await import("./repo.js");
-      const claimedStory = await claimNextStory(step.run_id, agentId);
+      const claimedStory = await claimNextStory(step.run_id, agentId, nextStory?.id);
       if (!claimedStory) {
         // No pending stories available (all locked or done)
         logger.info(`[claim] No pending stories available to claim — all locked or done`, { runId: step.run_id });
