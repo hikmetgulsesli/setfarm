@@ -894,18 +894,18 @@ export function checkStoryDesignCompliance(
     const realHardcoded = new Set([...uniqueColors].filter(c => !safeColors.has(c.toLowerCase())));
 
     if (realHardcoded.size > 5) {
-      // Don't fail — inject available token names so agent can fix on retry
-      let tokenList = "";
+      // Don't fail — inject token mapping into context so agent sees it on every claim
       try {
         const tokensPath = path.join(repo, "stitch", "design-tokens.css");
         if (fs.existsSync(tokensPath)) {
           const tokens = fs.readFileSync(tokensPath, "utf-8");
-          const tokenNames = [...tokens.matchAll(/--([a-z][a-z0-9-]*)\s*:/g)].map(m => `var(--${m[1]})`).slice(0, 20);
-          tokenList = ` Use these: ${tokenNames.join(", ")}`;
+          const tokenEntries = [...tokens.matchAll(/--([a-z][a-z0-9-]*)\s*:\s*([^;]+);/g)]
+            .map(m => `var(--${m[1]}) = ${m[2].trim()}`)
+            .slice(0, 25);
+          context["design_token_mapping"] = `AVAILABLE DESIGN TOKENS (use these instead of hardcoded hex colors):\n${tokenEntries.join("\n")}`;
         }
       } catch {}
-      // Advisory only — don't block, just inform agent for next attempt
-      logger.warn(`[design-compliance] ${realHardcoded.size} hardcoded colors found.${tokenList}`, {});
+      logger.warn(`[design-compliance] ${realHardcoded.size} hardcoded colors — token mapping injected into context`, {});
     }
   } catch { /* no matches is fine */ }
 
