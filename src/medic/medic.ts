@@ -125,6 +125,13 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
       await pgRun("UPDATE steps SET status = 'pending', abandoned_count = $1, retry_count = retry_count + 1, updated_at = $2 WHERE id = $3", [newCount, now(), finding.stepId]);
       await recordStepTransition(finding.stepId, finding.runId || "", "running", "pending", undefined, "medic:resetStep", { abandonCount: newCount });
       if (finding.runId) { emitEvent({ ts: now(), event: "step.timeout" as EventType, runId: finding.runId, stepId: finding.stepId, detail: `Medic: reset stuck step (abandon ${newCount}/${MAX_STEP_ABANDONS})` }); }
+      // Immediately recreate crons after reset — dont wait for next medic cycle
+      try {
+        if (finding.runId) {
+          const run = await pgGet<{ workflow_id: string }>("SELECT workflow_id FROM runs WHERE id = $1", [finding.runId]);
+          if (run) await syncActiveCrons(finding.runId, run.workflow_id);
+        }
+      } catch {}
       return true;
     }
 
