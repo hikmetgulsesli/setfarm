@@ -808,8 +808,11 @@ steps:
          git checkout -b "$STORY_BRANCH"
 
       4. Implement the story fully:
-         - Write tests for EVERY acceptance criterion
+         - Write tests for EVERY acceptance criterion (see TEST GUIDE below)
          - Implement the functional module completely
+
+      TEST GUIDE (if available — follow this to write tests):
+      {{test_generation_prompt}}
          - No TODOs, no placeholders, no shortcuts
          - Use REALISTIC demo content: real Turkish names (Elif Yılmaz, Ahmet Kaya), real-looking emails (elif@reelforge.com), meaningful descriptions. NEVER use John Doe, Jane Smith, Lorem ipsum, test@test.com, foo@bar, example@, dummy, sample data. If data will come from API later, use realistic placeholder that looks like production.
 

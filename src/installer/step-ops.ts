@@ -1138,6 +1138,16 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
       // Inject story context (template vars, screen_map, optional vars, previous_failure)
       await injectStoryContext(nextStory, step, context);
 
+      // Inject test generation prompt so agent writes tests alongside implementation
+      if (step.step_id === "implement") {
+        try {
+          const { buildTestGenerationPrompt } = await import("./test-generation.js");
+          const techStack = context["tech_stack"] || "react";
+          const acceptanceCriteria = nextStory.title || "";
+          context["test_generation_prompt"] = buildTestGenerationPrompt(nextStory.title, acceptanceCriteria, techStack);
+        } catch {}
+      }
+
       let resolvedInput = resolveTemplate(step.input_template, context);
 
       // Item 7: MISSING_INPUT_GUARD inside claim flow (v1.5.53: retry once before failing run)

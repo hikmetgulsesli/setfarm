@@ -135,6 +135,8 @@ export const OPTIONAL_TEMPLATE_VARS = [
   "detected_platform",
   // Phased development (opt-in)
   "implement_phase",
+  // Test generation prompt
+  "test_generation_prompt",
 ] as const;
 
 
