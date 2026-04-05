@@ -107,6 +107,13 @@ function extractElements(html, screenId) {
     result.icons.push(match[1]);
   }
   result.icons = [...new Set(result.icons)];
+  // Also add clickable icons as buttons — settings, share, menu etc are interactive
+  const clickableIcons = ["settings", "share", "menu", "more_vert", "more_horiz", "close", "arrow_back", "arrow_forward", "search", "filter_list", "edit", "delete", "add", "remove", "refresh", "visibility", "notifications", "person", "home", "info", "help", "logout", "login", "favorite", "bookmark", "download", "upload", "palette", "dark_mode", "light_mode", "language", "tune"];
+  for (const icon of result.icons) {
+    if (clickableIcons.includes(icon) || icon.includes("arrow") || icon.includes("chevron")) {
+      result.buttons.push({ label: icon, classes: [], icon: icon, action: "click-action" });
+    }
+  }
 
   // Extract images
   const imgRegex = /<img\s[^>]*src="([^"]*)"[^>]*>/gi;
