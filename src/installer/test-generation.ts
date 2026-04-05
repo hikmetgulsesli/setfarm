@@ -99,6 +99,25 @@ function extractTestErrors(output: string): string {
   return errorLines.slice(0, 10).join("\n").slice(0, 1000);
 }
 
+export function buildTestGenerationPrompt(storyTitle: string, acceptanceCriteria: string, techStack: string): string {
+  return `Generate test file for this story:
+
+STORY: ${storyTitle}
+ACCEPTANCE CRITERIA:
+${acceptanceCriteria}
+
+TECH STACK: ${techStack}
+
+Requirements:
+1. Test each acceptance criterion
+2. Include edge cases (empty input, invalid data, boundary values)
+3. Test error states
+4. Use the project's existing test framework
+5. Write complete, runnable test code
+
+Output ONLY the test file content — no explanations.`;
+}
+
 export function buildTestFixPrompt(result: TestRunResult): string {
   return `TEST FAILURES DETECTED — FIX THESE BEFORE COMPLETING:
 

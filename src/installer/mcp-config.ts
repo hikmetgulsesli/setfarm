@@ -18,6 +18,11 @@ export function getDefaultMcpServers(): Record<string, McpServerConfig> {
       command: "npx",
       args: ["-y", "@upstash/context7-mcp@latest"],
     },
+    "github": {
+      command: "npx",
+      args: ["-y", "@modelcontextprotocol/server-github"],
+      env: { GITHUB_PERSONAL_ACCESS_TOKEN: process.env.GITHUB_TOKEN || "" },
+    },
   };
 }
 
@@ -27,6 +32,11 @@ export function getMcpServersForRole(role: AgentRole): Record<string, McpServerC
 
   // All roles get context7 for documentation lookup
   servers["context7"] = defaults["context7"];
+
+  // Coding and PR roles get GitHub server for repo operations
+  if (role === "coding" || role === "pr" || role === "verification") {
+    servers["github"] = defaults["github"];
+  }
 
   return servers;
 }

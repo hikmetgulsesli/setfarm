@@ -963,6 +963,16 @@ export function checkPhaseGate(repoPath: string, phase: string): string | null {
                        fs.existsSync(path.join(srcDir, "types.ts")) ||
                        fs.existsSync(path.join(srcDir, "lib", "types.ts"));
       if (!hasTypes) return "Phase 1 (Foundation) incomplete: No type definitions found in src/types or src/lib/types.ts";
+
+      // Check: files with actual interface/type definitions exist (not just empty dirs)
+      try {
+        const grepOut = execFileSync("grep", ["-rl", "--include=*.ts", "--include=*.tsx", "-E", "\\binterface\\b|\\btype\\b", srcDir], {
+          encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"]
+        }).trim();
+        if (!grepOut) return "Phase 1 (Foundation) incomplete: No files with interface or type definitions found";
+      } catch {
+        return "Phase 1 (Foundation) incomplete: No files with interface or type definitions found";
+      }
       return null; // Pass
     }
     case "core": {
@@ -973,6 +983,26 @@ export function checkPhaseGate(repoPath: string, phase: string): string | null {
         }).trim().split("\n").filter(Boolean);
         if (files.length < 3) return "Phase 2 (Core) incomplete: Less than 3 TypeScript files";
       } catch { /* ignore find errors */ }
+
+      // Check: at least 1 file with exported functions
+      try {
+        const exportOut = execFileSync("grep", ["-rl", "--include=*.ts", "--include=*.tsx", "-E", "export\\s+(async\\s+)?function", srcDir], {
+          encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"]
+        }).trim();
+        if (!exportOut) return "Phase 2 (Core) incomplete: No exported functions found — need at least 1 file with export function";
+      } catch {
+        return "Phase 2 (Core) incomplete: No exported functions found — need at least 1 file with export function";
+      }
+
+      // Check: at least 1 file importing from a local module
+      try {
+        const importOut = execFileSync("grep", ["-rl", "--include=*.ts", "--include=*.tsx", "-E", "from\\s+['\"]\\./|from\\s+['\"]\\.\\./" , srcDir], {
+          encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"]
+        }).trim();
+        if (!importOut) return "Phase 2 (Core) incomplete: No local imports found — modules should import from each other";
+      } catch {
+        return "Phase 2 (Core) incomplete: No local imports found — modules should import from each other";
+      }
       return null;
     }
     case "ui": {
