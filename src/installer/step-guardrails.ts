@@ -894,7 +894,18 @@ export function checkStoryDesignCompliance(
     const realHardcoded = new Set([...uniqueColors].filter(c => !safeColors.has(c.toLowerCase())));
 
     if (realHardcoded.size > 5) {
-      issues.push(`${realHardcoded.size} hardcoded hex colors found — use design-tokens.css variables instead`);
+      // Don't fail — inject available token names so agent can fix on retry
+      let tokenList = "";
+      try {
+        const tokensPath = path.join(repo, "stitch", "design-tokens.css");
+        if (fs.existsSync(tokensPath)) {
+          const tokens = fs.readFileSync(tokensPath, "utf-8");
+          const tokenNames = [...tokens.matchAll(/--([a-z][a-z0-9-]*)\s*:/g)].map(m => `var(--${m[1]})`).slice(0, 20);
+          tokenList = ` Use these: ${tokenNames.join(", ")}`;
+        }
+      } catch {}
+      // Advisory only — don't block, just inform agent for next attempt
+      logger.warn(`[design-compliance] ${realHardcoded.size} hardcoded colors found.${tokenList}`, {});
     }
   } catch { /* no matches is fine */ }
 

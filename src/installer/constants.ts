@@ -17,7 +17,7 @@ export const FAST_ABANDONED_THRESHOLD_MS = 300_000; // 10 min
 export const MAX_ABANDON_RESETS = 5;
 
 /** Steps that need longer abandon thresholds (Stitch API, complex builds) */
-export const SLOW_STEP_IDS = new Set(["design", "implement", "setup-repo", "setup-build"]);
+export const SLOW_STEP_IDS = new Set(["implement", "setup-repo", "setup-build"]);
 
 /** Extended threshold for slow steps (first abandon) */
 export const SLOW_ABANDONED_THRESHOLD_MS = 900_000; // 40 min (aligned with coding agent timeout)
