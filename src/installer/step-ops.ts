@@ -425,6 +425,8 @@ async function injectStoryContext(
 ): Promise<void> {
   // FIX #5: Clear stale story context at claim time (not just completeStep)
   // Prevents cross-contamination when parallel stories share the same run context
+  // ISSUE-1: Preserve story_branch if it was set by pipeline (worktree creation)
+  const pipelineStoryBranch = context["story_branch"] || "";
   delete context["pr_url"];
   delete context["story_branch"];
   delete context["current_story_id"];
@@ -459,7 +461,8 @@ async function injectStoryContext(
 
   // FIX: Clear stale story-specific context from previous story to prevent cross-contamination
   context["pr_url"] = "";
-  context["story_branch"] = "";
+  // ISSUE-1: Restore pipeline-set story_branch (from worktree) instead of blanking it
+  context["story_branch"] = pipelineStoryBranch;
   context["verify_feedback"] = "";
 
   // Inject source tree so agent knows existing file structure (prevents duplicate dirs)
@@ -1091,8 +1094,10 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
       }
       // Use the atomically claimed story for all subsequent operations
       nextStory = claimedStory;
-      const storyBranch = nextStory.story_id.toLowerCase();
-      await pgRun("UPDATE steps SET status = 'running', current_story_id = \$1, updated_at = \$2 WHERE id = \$3", [nextStory.id, now(), step.id]);
+      // ISSUE-1 FIX: Use {runIdPrefix}-{storyId} for branch name to prevent collisions across runs
+      const storyRunPrefix = step.run_id.slice(0, 8);
+      const storyBranch = `${storyRunPrefix}-${nextStory.story_id}`.toLowerCase();
+      await pgRun("UPDATE steps SET status = 'running', current_story_id = $1, started_at = COALESCE(started_at, NOW()), updated_at = $2 WHERE id = $3", [nextStory.id, now(), step.id]);
       await recordStepTransition(step.id, step.run_id, "pending", "running", agentId, "claimLoopStep", { storyId: nextStory.story_id });
       // (removed: fake transaction flag)
 
@@ -1123,6 +1128,25 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
         return { found: false };
       }
       context["story_workdir"] = storyWorkdir || context["repo"];
+
+      // ISSUE-1 FIX: Read ACTUAL git branch from worktree and inject into context
+      // This ensures the agent uses the correct branch name instead of creating its own
+      const actualWorktreeDir = storyWorkdir || context["repo"];
+      try {
+        const actualBranch = execFileSync("git", ["branch", "--show-current"], {
+          cwd: actualWorktreeDir, encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
+        }).trim();
+        if (actualBranch) {
+          context["story_branch"] = actualBranch;
+          // Also persist to stories table so verify step can reference it
+          await pgRun("UPDATE stories SET story_branch = $1 WHERE id = $2", [actualBranch, nextStory.id]);
+          logger.info(`[story-branch] Set story_branch=${actualBranch} from worktree (story=${nextStory.story_id})`, { runId: step.run_id });
+        }
+      } catch (branchErr) {
+        // Fallback: use the computed branch name
+        context["story_branch"] = storyBranch;
+        logger.warn(`[story-branch] Could not read branch from worktree, using computed: ${storyBranch}`, { runId: step.run_id });
+      }
 
       // v1.5.50: Record claim in claim_log + update story claim metadata
       const claimNow = now();
@@ -1697,6 +1721,25 @@ ${screenDescs}
       }
     }
 
+    // ISSUE-3 FIX: Verify main branch has source code (package.json)
+    // If feature→main merge (Issue 2 guardrail) worked, main should have all source.
+    // This is a safety check — warns but doesn't block deploy.
+    const deployRepoPath = context["repo"] || "";
+    if (deployRepoPath) {
+      try {
+        const mainHasPackageJson = execFileSync("git", ["show", "main:package.json"], {
+          cwd: deployRepoPath, timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
+        }).toString().trim();
+        if (!mainHasPackageJson) {
+          logger.warn(`[deploy-guardrail] main branch missing package.json — source may not be merged`, { runId: step.run_id });
+        } else {
+          logger.info(`[deploy-guardrail] main branch source verification passed (package.json exists)`, { runId: step.run_id });
+        }
+      } catch {
+        logger.warn(`[deploy-guardrail] main branch source verification failed — package.json not found on main`, { runId: step.run_id });
+      }
+    }
+
     // Tunnel + DNS auto-create: ensure Cloudflare tunnel entry + DNS CNAME exist
     const projectName = context["repo"] ? path.basename(context["repo"]) : "";
     if (projectName && port) {
@@ -1795,6 +1838,57 @@ ${screenDescs}
       if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
       await failStep(stepId, "GUARDRAIL: final-test completed without SMOKE_TEST_RESULT. You MUST run smoke-test.mjs and include SMOKE_TEST_RESULT in your output.");
       return { advanced: false, runCompleted: false };
+    }
+  }
+
+  // ISSUE-2 FIX: Pipeline-level feature→main merge guarantee
+  // After final-test completes successfully, verify the feature branch is merged into main.
+  // Agents sometimes skip or silently fail the merge — this guardrail ensures it happens.
+  if (step.step_id === "final-test" && parsed["status"]?.toLowerCase() === "done") {
+    const mergeBranch = context["branch"] || "feature/initial-prd";
+    const mergeRepo = context["repo"] || "";
+    if (mergeRepo && mergeBranch) {
+      try {
+        // Check if an open PR exists for this branch → main
+        let prMerged = false;
+        try {
+          const prUrl = execFileSync("gh", ["pr", "list", "--head", mergeBranch, "--base", "main", "--state", "open", "--json", "url", "--jq", ".[0].url"], {
+            cwd: mergeRepo, encoding: "utf-8", timeout: 15000, stdio: ["pipe", "pipe", "pipe"],
+          }).trim();
+          if (prUrl) {
+            execFileSync("gh", ["pr", "merge", prUrl, "--squash", "--delete-branch"], {
+              cwd: mergeRepo, timeout: 30000, stdio: ["pipe", "pipe", "pipe"],
+            });
+            logger.info(`[final-test-merge-guardrail] PR merged via gh: ${prUrl}`, { runId: step.run_id });
+            prMerged = true;
+          }
+        } catch (ghErr) {
+          logger.warn(`[final-test-merge-guardrail] gh pr merge attempt failed: ${String(ghErr)}`, { runId: step.run_id });
+        }
+
+        // If no open PR was found/merged, try direct git merge
+        if (!prMerged) {
+          try {
+            // Check if branch is already merged into main
+            const mergeBase = execFileSync("git", ["merge-base", "--is-ancestor", mergeBranch, "main"], {
+              cwd: mergeRepo, timeout: 10000, stdio: ["pipe", "pipe", "pipe"],
+            });
+            logger.info(`[final-test-merge-guardrail] Branch ${mergeBranch} already merged into main`, { runId: step.run_id });
+          } catch {
+            // Not yet merged — do direct merge
+            try {
+              execFileSync("git", ["checkout", "main"], { cwd: mergeRepo, timeout: 10000, stdio: ["pipe", "pipe", "pipe"] });
+              execFileSync("git", ["merge", mergeBranch, "--no-ff", "-m", `Merge ${mergeBranch} into main`], { cwd: mergeRepo, timeout: 30000, stdio: ["pipe", "pipe", "pipe"] });
+              execFileSync("git", ["push", "origin", "main"], { cwd: mergeRepo, timeout: 15000, stdio: ["pipe", "pipe", "pipe"] });
+              logger.info(`[final-test-merge-guardrail] Direct merged ${mergeBranch} into main`, { runId: step.run_id });
+            } catch (directMergeErr) {
+              logger.warn(`[final-test-merge-guardrail] Direct merge failed: ${String(directMergeErr)}`, { runId: step.run_id });
+            }
+          }
+        }
+      } catch (mergeErr) {
+        logger.warn(`[final-test-merge-guardrail] Merge guardrail failed: ${String(mergeErr)}`, { runId: step.run_id });
+      }
     }
   }
 
@@ -2012,7 +2106,9 @@ ${screenDescs}
     // Mark current story done or skipped + persist PR context for verify_each
     // FIX: Remove context fallback to prevent cross-contamination between parallel stories
     let storyPrUrl = parsed["pr_url"] || "";
-    const storyBranchName = parsed["story_branch"] || "";
+    // ISSUE-1 FIX: Prefer pipeline-set branch (from DB) over agent's output (agents create wrong names)
+    const dbStoryBranch = await pgGet<{ story_branch: string }>("SELECT story_branch FROM stories WHERE id = $1", [step.current_story_id]);
+    const storyBranchName = dbStoryBranch?.story_branch || parsed["story_branch"] || context["story_branch"] || "";
     // FIX: Validate PR URL belongs to correct repo (cross-contamination guard)
     if (storyPrUrl && context["repo"]) {
       const expectedRepo = context["repo"].split("/").pop() || "";
@@ -2133,7 +2229,8 @@ ERROR: Missing repo or branch context for merge queue`,
       if (verifyStep) {
         // Only set verify to pending if not already pending/running (prevents race condition with parallel stories)
         await pgRun("UPDATE steps SET status = 'pending', updated_at = $1 WHERE id = $2 AND status IN ('waiting', 'done')", [now(), verifyStep.id]);
-        await pgRun("UPDATE steps SET status = 'running', updated_at = $1 WHERE id = $2", [now(), step.id]);
+        // ISSUE-4 FIX: Preserve started_at — only set on first transition to running
+        await pgRun("UPDATE steps SET status = 'running', started_at = COALESCE(started_at, NOW()), updated_at = $1 WHERE id = $2", [now(), step.id]);
         return { advanced: false, runCompleted: false };
       }
     }
