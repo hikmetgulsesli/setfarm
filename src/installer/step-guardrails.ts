@@ -816,6 +816,34 @@ export function checkStoryDesignCompliance(
     }
   } catch { /* no @tailwind directives */ }
 
+  // 2.5 Material Symbols font check — auto-inject if icons used but font link missing
+  try {
+    const hasIconUsage = execFileSync("grep", ["-rl", "material-symbols", srcDir, "--include=*.tsx", "--include=*.jsx", "--include=*.html"], {
+      encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+    if (hasIconUsage) {
+      // Check if font link exists
+      let fontLinkFound = false;
+      try {
+        execFileSync("grep", ["-rl", "Material+Symbols\\|Material.*Symbols", repo, "--include=*.html", "--include=*.tsx", "--include=*.css"], {
+          encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
+        });
+        fontLinkFound = true;
+      } catch {}
+      if (!fontLinkFound) {
+        // Auto-inject font link into index.html
+        const indexHtml = path.join(repo, "index.html");
+        if (fs.existsSync(indexHtml)) {
+          let html = fs.readFileSync(indexHtml, "utf-8");
+          if (!html.includes("Material+Symbols") && !html.includes("Material Symbols")) {
+            html = html.replace("</head>", '    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet" />\n  </head>');
+            fs.writeFileSync(indexHtml, html);
+          }
+        }
+      }
+    }
+  } catch {}
+
   // 3. Too many hardcoded hex colors?
   try {
     const hexResult = execFileSync("grep", [

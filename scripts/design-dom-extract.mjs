@@ -17,7 +17,7 @@ if (!stitchDir || !existsSync(stitchDir)) {
 
 // Simple HTML parser (regex-based, works for Stitch HTML which is well-structured)
 function extractElements(html, screenId) {
-  const result = { screenId, sections: [], buttons: [], inputs: [], navLinks: [], cards: [], icons: [], images: [], cssVars: {}, fonts: [], layoutHints: {} };
+  const result = { screenId, materialSymbolsRequired: false, sections: [], buttons: [], inputs: [], navLinks: [], cards: [], icons: [], images: [], cssVars: {}, fonts: [], layoutHints: {} };
 
   // Extract CSS custom properties from <style> and Tailwind config
   const styleMatches = html.matchAll(/--([a-zA-Z0-9_-]+)\s*:\s*([^;]+)/g);
@@ -107,11 +107,39 @@ function extractElements(html, screenId) {
     result.icons.push(match[1]);
   }
   result.icons = [...new Set(result.icons)];
+  if (result.icons.length > 0) {
+    result.materialSymbolsRequired = true;
+  }
   // Also add clickable icons as buttons — settings, share, menu etc are interactive
   const clickableIcons = ["settings", "share", "menu", "more_vert", "more_horiz", "close", "arrow_back", "arrow_forward", "search", "filter_list", "edit", "delete", "add", "remove", "refresh", "visibility", "notifications", "person", "home", "info", "help", "logout", "login", "favorite", "bookmark", "download", "upload", "palette", "dark_mode", "light_mode", "language", "tune"];
   for (const icon of result.icons) {
     if (clickableIcons.includes(icon) || icon.includes("arrow") || icon.includes("chevron")) {
       result.buttons.push({ label: icon, classes: [], icon: icon, action: "click-action" });
+    }
+  }
+
+  // Extract button routes from <a href> tags containing icons
+  const navLinkRegex = /<a\s+[^>]*href=["']([^"']+)["'][^>]*>[\s\S]*?<span[^>]*material[^>]*>([a-z_]+)<\/span>[\s\S]*?<\/a>/gi;
+  let routeMatch;
+  while ((routeMatch = navLinkRegex.exec(html)) !== null) {
+    const href = routeMatch[1];
+    const iconName = routeMatch[2];
+    // Find the button entry and add expectedRoute
+    const btn = result.buttons.find(b => b.label === iconName || b.icon === iconName);
+    if (btn) btn.expectedRoute = href;
+  }
+
+  // Infer routes from icon names if no explicit href found
+  const routeInference = {
+    settings: "/settings", home: "/", profile: "/profile", person: "/profile",
+    notifications: "/notifications", search: "/search", help: "/help",
+    info: "/about", history: "/history", favorite: "/favorites",
+    bookmark: "/bookmarks", logout: "/logout", login: "/login",
+  };
+  for (const btn of result.buttons) {
+    if (!btn.expectedRoute && routeInference[btn.icon || btn.label]) {
+      btn.expectedRoute = routeInference[btn.icon || btn.label];
+      btn.routeInferred = true;
     }
   }
 

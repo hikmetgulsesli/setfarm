@@ -1596,6 +1596,45 @@ ${screenDescs}
     }
   }
 
+  // Ensure Tailwind is installed if design requires it (BEFORE implement step)
+  if (step.step_id === "setup-build" && parsed["status"]?.toLowerCase() === "done") {
+    try {
+      const stitchDir = path.join(context["repo"] || "", "stitch");
+      if (fs.existsSync(stitchDir)) {
+        const htmlFiles = fs.readdirSync(stitchDir).filter(f => f.endsWith(".html"));
+        let needsTailwind = false;
+        for (const f of htmlFiles) {
+          const html = fs.readFileSync(path.join(stitchDir, f), "utf-8");
+          if (/\b(grid-cols-\d+|flex-\w+|gap-\d+|rounded-\w+|p[xy]?-\d+|m[xy]?-\d+|bg-\w+|text-\w+)\b/.test(html)) {
+            needsTailwind = true;
+            break;
+          }
+        }
+        if (needsTailwind) {
+          const repoPath = context["repo"] || "";
+          const pkg = JSON.parse(fs.readFileSync(path.join(repoPath, "package.json"), "utf-8"));
+          const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
+          if (!allDeps["tailwindcss"] && !allDeps["@tailwindcss/postcss"]) {
+            execFileSync("npm", ["install", "-D", "tailwindcss", "@tailwindcss/postcss", "autoprefixer"], {
+              cwd: repoPath, timeout: 60000, stdio: "pipe",
+            });
+            const postcssPath = path.join(repoPath, "postcss.config.js");
+            if (!fs.existsSync(postcssPath)) {
+              fs.writeFileSync(postcssPath, `export default {\n  plugins: {\n    '@tailwindcss/postcss': {},\n    autoprefixer: {},\n  },\n};\n`);
+            }
+            const twPath = path.join(repoPath, "tailwind.config.js");
+            if (!fs.existsSync(twPath)) {
+              fs.writeFileSync(twPath, `/** @type {import('tailwindcss').Config} */\nexport default {\n  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],\n  theme: { extend: {} },\n  plugins: [],\n};\n`);
+            }
+            logger.info("[setup-build] Auto-installed Tailwind (design requires it)", { runId: step.run_id });
+          }
+        }
+      }
+    } catch (e) {
+      logger.warn(`[setup-build] Tailwind auto-setup skipped: ${String(e)}`, { runId: step.run_id });
+    }
+  }
+
   // DEPLOY HEALTH CHECK GUARDRAIL (v1.5.53): Verify service is actually running after deploy
   if (step.step_id === "deploy" && parsed["status"]?.toLowerCase() === "done") {
     const port = context["port"] || parsed["port"] || "";

@@ -3,6 +3,10 @@ DESIGN ENFORCEMENT (frontend stories — MANDATORY checklist before commit):
   :root must have --font-heading and --font-body CSS vars.
   h1-h6 → var(--font-heading), body → var(--font-body).
   BANNED font-family values: system-ui, Roboto, Arial, Inter, Helvetica.
+  - If stitch/*.html or DESIGN_DOM contains Material Symbols icons (settings, menu, search etc), 
+    YOU MUST add this to index.html <head> or app/layout.tsx:
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet" />
+    Without this link, icons render as plain text like "settings" instead of ⚙️
 - COLORS: shadcn/ui → update globals.css --accent from default gray to palette accent.
   Keep HSL format. Do not leave shadcn boilerplate unchanged.
 - LAYOUT: Hero → asymmetric grid, NOT centered text-center single-column.
@@ -16,6 +20,10 @@ DESIGN ENFORCEMENT (frontend stories — MANDATORY checklist before commit):
   Before commit: grep -rn 'href="#"' src/ — if ANY match found, you MUST fix them all.
 - HANDLERS: NEVER use onClick={() => {}} or onChange={() => {}} — empty handlers are banned.
   Every interactive element MUST have a real handler, even if it just logs or shows a toast.
+  - Check DESIGN_DOM buttons for expectedRoute field. If a button has expectedRoute: "/settings",
+    implement it with React Router Link or onClick navigation to that route.
+  - For icon buttons (settings, profile, notifications), create the target page even if minimal.
+    A settings icon with no /settings page is WORSE than no settings icon at all.
 
 STITCH COMPONENT IMPORT RULES (NO EXCEPTIONS):
 1. If stitch/ has screen HTML files, there MUST be matching React components in components/
