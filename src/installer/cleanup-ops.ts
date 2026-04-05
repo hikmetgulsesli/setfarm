@@ -12,13 +12,14 @@ import { pgQuery, pgRun, pgGet, now } from "../db-pg.js";
 import type { LoopConfig } from "./types.js";
 import { logger } from "../lib/logger.js";
 import { emitEvent } from "./events.js";
-import { teardownWorkflowCronsIfIdle } from "./agent-cron.js";
+import { teardownWorkflowCronsIfIdle, syncActiveCrons } from "./agent-cron.js";
 import {
   BASE_ABANDONED_THRESHOLD_MS,
-  FAST_ABANDONED_THRESHOLD_MS,
   SLOW_STEP_IDS,
   SLOW_ABANDONED_THRESHOLD_MS,
   SLOW_FAST_ABANDONED_THRESHOLD_MS,
+  FAST_STEP_ABANDONED_THRESHOLD_MS,
+  FAST_STEP_FAST_ABANDONED_THRESHOLD_MS,
   MAX_ABANDON_RESETS,
   STEP_STATUS,
 } from "./constants.js";
@@ -64,13 +65,13 @@ export async function cleanupAbandonedSteps(advancePipeline: (runId: string) => 
          (abandoned_count = 0 AND EXTRACT(EPOCH FROM NOW() - updated_at::timestamptz) * 1000 > $1)
          OR (abandoned_count > 0 AND EXTRACT(EPOCH FROM NOW() - updated_at::timestamptz) * 1000 > $2)
        )`,
-      [BASE_ABANDONED_THRESHOLD_MS, FAST_ABANDONED_THRESHOLD_MS]
+      [FAST_STEP_ABANDONED_THRESHOLD_MS, FAST_STEP_FAST_ABANDONED_THRESHOLD_MS]
     );
 
     for (const step of abandonedSteps) {
       const isSlow = SLOW_STEP_IDS.has(step.step_id);
-      const baseThreshold = isSlow ? SLOW_ABANDONED_THRESHOLD_MS : BASE_ABANDONED_THRESHOLD_MS;
-      const fastThreshold = isSlow ? SLOW_FAST_ABANDONED_THRESHOLD_MS : FAST_ABANDONED_THRESHOLD_MS;
+      const baseThreshold = isSlow ? SLOW_ABANDONED_THRESHOLD_MS : FAST_STEP_ABANDONED_THRESHOLD_MS;
+      const fastThreshold = isSlow ? SLOW_FAST_ABANDONED_THRESHOLD_MS : FAST_STEP_FAST_ABANDONED_THRESHOLD_MS;
       const elapsedMs = (Date.now() - new Date(step.updated_at).getTime());
       const threshold = step.abandoned_count === 0 ? baseThreshold : fastThreshold;
       if (elapsedMs < threshold) continue;
@@ -137,6 +138,12 @@ export async function cleanupAbandonedSteps(advancePipeline: (runId: string) => 
             try { await pgRun("UPDATE claim_log SET outcome = 'abandoned', abandoned_at = $1, duration_ms = $2, diagnostic = $3 WHERE story_id = $4 AND outcome IS NULL", [abandonedAt, durationMin * 60000, diagnostic, story.story_id]); } catch (e) { logger.warn("[cleanup] claim_log update failed: " + String(e), { runId: step.run_id }); }
             emitEvent({ ts: now(), event: "step.timeout", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: `Story ${story.story_id} abandoned — ${diagnostic}` });
             logger.info(`Abandoned step reset to pending (story abandon ${newAbandonCount})`, { runId: step.run_id, stepId: step.step_id });
+            // Immediately recreate agent crons so the step is picked up without waiting for medic
+            try {
+              if (wfId) await syncActiveCrons(step.run_id, wfId);
+            } catch (cronErr) {
+              logger.debug(`[cleanup] Post-abandon cron sync failed: ${String(cronErr)}`, { runId: step.run_id });
+            }
           }
           continue;
         }
@@ -161,6 +168,13 @@ export async function cleanupAbandonedSteps(advancePipeline: (runId: string) => 
         await recordStepTransition(step.id, step.run_id, "running", "pending", step.agent_id, "cleanup:abandoned", { abandonCount: newAbandonCount });
         try { await pgRun("UPDATE claim_log SET outcome = 'abandoned', abandoned_at = $1, diagnostic = $2 WHERE run_id = $3 AND step_id = $4 AND outcome IS NULL", [now(), singleDiagnostic, step.run_id, step.step_id]); } catch (e) { logger.warn("[cleanup] claim_log update failed: " + String(e), { runId: step.run_id }); }
         emitEvent({ ts: now(), event: "step.timeout", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, detail: `Reset to pending — ${singleDiagnostic}` });
+        // Immediately recreate agent crons so the step is picked up without waiting for medic
+        try {
+          const wfId = await getWorkflowId(step.run_id);
+          if (wfId) await syncActiveCrons(step.run_id, wfId);
+        } catch (cronErr) {
+          logger.debug(`[cleanup] Post-abandon cron sync failed: ${String(cronErr)}`, { runId: step.run_id });
+        }
       }
     }
 

@@ -80,6 +80,38 @@ export function checkQualityGate(stepId: string, repoPath: string): string | nul
     } catch {}
   }
 
+  // 6. Stitch screen → component import validation (final-test/verify steps)
+  if ((stepId === "final-test" || stepId === "verify") && repoPath) {
+    try {
+      const manifestPath = path.join(repoPath, "stitch", "DESIGN_MANIFEST.json");
+      if (fs.existsSync(manifestPath)) {
+        const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+        const screens = manifest.screens || [];
+        const missingComponents: string[] = [];
+
+        for (const screen of screens) {
+          const screenName = screen.name || screen.title || "";
+          if (!screenName) continue;
+
+          // Check if any component file references this screen
+          try {
+            execFileSync("grep", ["-rl", screenName.replace(/\s+/g, ""),
+              path.join(repoPath, "src"), "--include=*.tsx", "--include=*.jsx"], {
+              encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
+            });
+          } catch {
+            missingComponents.push(screenName);
+          }
+        }
+
+        if (missingComponents.length > 0 && missingComponents.length < screens.length) {
+          // Only warn if SOME screens are missing (not all — that could be a different structure)
+          return `DESIGN FIDELITY: ${missingComponents.length}/${screens.length} Stitch screens have no matching component: ${missingComponents.join(", ")}`;
+        }
+      }
+    } catch {}
+  }
+
   return null;
 }
 
@@ -857,10 +889,35 @@ export function checkStoryDesignCompliance(
       stdio: ["pipe", "pipe", "pipe"],
     }).trim();
     const uniqueColors = new Set(hexResult.split("\n").filter(Boolean));
-    if (uniqueColors.size > 10) {
-      issues.push(`${uniqueColors.size} farklı hardcoded hex renk — design-tokens kullan`);
+    // Filter out common safe colors that don't need tokens
+    const safeColors = new Set(["#fff", "#000", "#ffffff", "#000000", "#fff0", "#0000"]);
+    const realHardcoded = new Set([...uniqueColors].filter(c => !safeColors.has(c.toLowerCase())));
+
+    if (realHardcoded.size > 5) {
+      issues.push(`${realHardcoded.size} hardcoded hex colors found — use design-tokens.css variables instead`);
     }
   } catch { /* no matches is fine */ }
+
+  // 5. Empty click handler detection
+  try {
+    const emptyHandlerResult = execFileSync("grep", [
+      "-rn",
+      "onClick={() => {}}\\|onClick={() => { }}\\|onClick={()=>{}}\\|onChange={() => {}}",
+      srcDir,
+      "--include=*.tsx", "--include=*.jsx"
+    ], {
+      encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+    if (emptyHandlerResult) {
+      const count = emptyHandlerResult.split("\n").length;
+      issues.push(`${count} empty click/change handler(s) found — implement real functionality`);
+    }
+  } catch (err: any) {
+    // grep exit 1 = no match (good — no empty handlers)
+    if (err.status !== undefined && err.status !== 1) {
+      logger.warn(`[design-compliance] empty handler grep failed: ${err.message}`, {});
+    }
+  }
 
   if (issues.length === 0) return null;
 

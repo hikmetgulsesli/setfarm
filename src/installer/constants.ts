@@ -25,6 +25,12 @@ export const SLOW_ABANDONED_THRESHOLD_MS = 900_000; // 40 min (aligned with codi
 /** Extended fast threshold for slow steps (repeat abandons) */
 export const SLOW_FAST_ABANDONED_THRESHOLD_MS = 600_000; // 20 min
 
+/** Fast step abandon threshold — verify, qa-test, security-gate, deploy finish in 1-2 min */
+export const FAST_STEP_ABANDONED_THRESHOLD_MS = 300_000; // 5 min
+
+/** Fast step repeat abandon threshold */
+export const FAST_STEP_FAST_ABANDONED_THRESHOLD_MS = 180_000; // 3 min
+
 // ── Cleanup Throttle ────────────────────────────────────────────────
 
 /** Throttle interval for cleanupAbandonedSteps (matches cron interval) */

@@ -5,6 +5,7 @@
  * Çıktı: DESIGN_DOM.json
  */
 import { readFileSync, writeFileSync, readdirSync, existsSync } from 'fs';
+import path from 'path';
 import { join, basename } from 'path';
 
 const stitchDir = process.argv[2];
@@ -16,14 +17,32 @@ if (!stitchDir || !existsSync(stitchDir)) {
 }
 
 // Simple HTML parser (regex-based, works for Stitch HTML which is well-structured)
-function extractElements(html, screenId) {
-  const result = { screenId, materialSymbolsRequired: false, sections: [], buttons: [], inputs: [], navLinks: [], cards: [], icons: [], images: [], cssVars: {}, fonts: [], layoutHints: {} };
+function extractElements(html, screenId, htmlPath) {
+  const result = { screenId, materialSymbolsRequired: false, sections: [], buttons: [], inputs: [], navLinks: [], cards: [], icons: [], images: [], cssVars: {}, colorPalette: {}, fonts: [], layoutHints: {} };
 
   // Extract CSS custom properties from <style> and Tailwind config
   const styleMatches = html.matchAll(/--([a-zA-Z0-9_-]+)\s*:\s*([^;]+)/g);
   for (const m of styleMatches) {
     result.cssVars[`--${m[1]}`] = m[2].trim();
   }
+
+  // Extract color palette from CSS custom properties
+  const colorVarRegex = /--color-([a-z-]+)\s*:\s*([^;]+);/gi;
+  let colorMatch;
+  while ((colorMatch = colorVarRegex.exec(html)) !== null) {
+    result.colorPalette[colorMatch[1]] = colorMatch[2].trim();
+  }
+
+  // Also extract from design-tokens.css if available in same directory
+  try {
+    const tokensPath = path.join(path.dirname(htmlPath), 'design-tokens.css');
+    if (existsSync(tokensPath)) {
+      const tokens = readFileSync(tokensPath, 'utf-8');
+      while ((colorMatch = colorVarRegex.exec(tokens)) !== null) {
+        result.colorPalette[colorMatch[1]] = colorMatch[2].trim();
+      }
+    }
+  } catch {}
 
   // Extract fonts from Google Fonts links
   const fontMatches = html.matchAll(/family=([A-Za-z+]+(?::[^&"']+)?)/g);
@@ -87,6 +106,18 @@ function extractElements(html, screenId) {
     }
   }
 
+  // Determine layout type from classes
+  function detectLayoutType(classes) {
+    if (classes.some(c => c.startsWith('grid-cols') || c === 'grid')) return 'grid';
+    if (classes.some(c => c === 'flex' || c.startsWith('flex-'))) {
+      const dir = classes.find(c => c === 'flex-col' || c === 'flex-column');
+      return dir ? 'flex-col' : 'flex-row';
+    }
+    if (classes.some(c => c === 'absolute' || c === 'fixed')) return 'absolute';
+    if (classes.some(c => c === 'relative')) return 'relative';
+    return 'block';
+  }
+
   // Extract sections/structural elements
   const sectionRegex = /<(section|header|footer|nav|main|aside|article)\s*[^>]*>([\s\S]*?)<\/\1>/gi;
   while ((match = sectionRegex.exec(html)) !== null) {
@@ -94,9 +125,11 @@ function extractElements(html, screenId) {
     const classMatch = match[0].match(/class="([^"]*)"/);
     const inner = match[2];
     const childCount = (inner.match(/<(div|section|article|li|tr)/gi) || []).length;
+    const classes = classMatch ? classMatch[1].split(/\s+/).filter(Boolean).slice(0, 10) : [];
     result.sections.push({
       tag,
-      classes: classMatch ? classMatch[1].split(/\s+/).filter(Boolean).slice(0, 10) : [],
+      layout: detectLayoutType(classes),
+      classes,
       childCount,
     });
   }
@@ -237,7 +270,7 @@ for (const file of htmlFiles) {
   const titleMatch = html.match(/<title>([^<]*)<\/title>/i);
   const title = manifestEntry?.title || titleMatch?.[1] || screenId;
   
-  const elements = extractElements(html, screenId);
+  const elements = extractElements(html, screenId, join(stitchDir, file));
   elements.title = title;
   screens[screenId] = elements;
 }
@@ -246,5 +279,5 @@ const output = { generatedAt: new Date().toISOString(), screenCount: Object.keys
 writeFileSync(outputPath, JSON.stringify(output, null, 2));
 console.log(`DESIGN_DOM: ${Object.keys(screens).length} screens, ${outputPath}`);
 for (const [id, s] of Object.entries(screens)) {
-  console.log(`  ${s.title}: ${s.buttons.length} buttons, ${s.inputs.length} inputs, ${s.navLinks.length} links, ${s.sections.length} sections, ${s.icons.length} icons, ${(s.tabBar||[]).length} tabs`);
+  console.log(`  ${s.title}: ${s.buttons.length} buttons, ${s.inputs.length} inputs, ${s.navLinks.length} links, ${s.sections.length} sections, ${s.icons.length} icons, ${(s.tabBar||[]).length} tabs, ${Object.keys(s.colorPalette||{}).length} colors`);
 }

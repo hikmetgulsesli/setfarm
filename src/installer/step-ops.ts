@@ -1889,6 +1889,22 @@ ${screenDescs}
       } catch (mergeErr) {
         logger.warn(`[final-test-merge-guardrail] Merge guardrail failed: ${String(mergeErr)}`, { runId: step.run_id });
       }
+
+      // After all merge attempts, verify main has source code
+      let mainHasSource = false;
+      try {
+        execFileSync("git", ["show", "main:package.json"], { cwd: mergeRepo, timeout: 5000, stdio: "pipe" });
+        mainHasSource = true;
+      } catch {}
+
+      if (!mainHasSource && step.retry_count < step.max_retries) {
+        context["previous_failure"] = "MERGE FAIL: Feature branch not merged into main. Main branch has no source code.";
+        context["failure_category"] = "MERGE_CONFLICT";
+        context["failure_suggestion"] = "Merge feature branch into main manually or resolve conflicts";
+        await updateRunContext(step.run_id, context);
+        await failStep(stepId, "Feature branch not merged into main — source code missing");
+        return { advanced: false, runCompleted: false };
+      }
     }
   }
 
