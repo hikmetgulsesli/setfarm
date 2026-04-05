@@ -1696,6 +1696,20 @@ ${screenDescs}
         }
       }
     }
+
+    // Tunnel + DNS auto-create: ensure Cloudflare tunnel entry + DNS CNAME exist
+    const projectName = context["repo"] ? path.basename(context["repo"]) : "";
+    if (projectName && port) {
+      try {
+        const hostname = `${projectName}.setrox.com.tr`;
+        execFileSync("sudo", ["bash", path.join(os.homedir(), ".openclaw/scripts/tunnel-add.sh"), hostname, String(port)], {
+          timeout: 30000, stdio: "pipe",
+        });
+        logger.info(`[deploy-guardrail] Tunnel + DNS ensured for ${hostname}:${port}`, { runId: step.run_id });
+      } catch (tunnelErr) {
+        logger.warn(`[deploy-guardrail] Tunnel/DNS setup failed: ${String(tunnelErr)}`, { runId: step.run_id });
+      }
+    }
   }
 
   // SCREEN_MAP Enforcement (design step) — design owns screen identification
