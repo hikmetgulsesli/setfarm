@@ -563,6 +563,16 @@ async function injectStoryContext(
     }
   }
 
+  // ── Platform-Specific Design Rules Injection ────────────────────────
+  if (step.step_id === "implement" || step.step_id === "verify") {
+    try {
+      const { detectPlatform, getDesignRules } = await import("./design-rules.js");
+      const platform = detectPlatform(context["repo"] || "");
+      context["design_rules"] = getDesignRules(platform);
+      context["detected_platform"] = platform;
+    } catch {}
+  }
+
   // Default optional template vars to prevent MISSING_INPUT_GUARD false positives (story-each flow)
   for (const v of OPTIONAL_TEMPLATE_VARS) {
     if (!context[v]) context[v] = "";
@@ -705,6 +715,20 @@ async function claimSingleStep(
   // story info from the oldest unverified 'done' story (not from stale context).
   if (!await injectVerifyContext(step, context, db)) {
     return { found: false };
+  }
+
+  // ═══ VERIFY PRE-FLIGHT: Static analysis for verify step speedup ═══
+  if (step.step_id === "verify" && context["repo"] && context["branch"]) {
+    try {
+      const { buildPreFlightReport, formatPreFlightForAgent } = await import("./static-analysis.js");
+      const report = buildPreFlightReport(context["repo"], context["branch"]);
+      context["preflight_analysis"] = formatPreFlightForAgent(report);
+      context["preflight_diff"] = report.diffSummary;
+      context["preflight_errors"] = report.eslintErrors + "\n" + report.tscErrors;
+      logger.info(`[preflight] Verify pre-flight: ${report.changedFiles.length} files, ${report.totalIssues} issue(s)`, { runId: step.run_id });
+    } catch (e) {
+      logger.warn(`[preflight] Skipped: ${String(e)}`, { runId: step.run_id });
+    }
   }
 
   // ═══ DESIGN PRE-CLAIM: Auto-generate Stitch screens from PRD ═══
@@ -1055,15 +1079,17 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
         return { found: false }; // At capacity, wait for running stories to finish
       }
 
-      // Claim the story with optimistic lock — only succeeds if still pending (prevents double-claim)
-      const storyBranch = nextStory.story_id.toLowerCase();
-      const claimResult = await pgGet<{ id: string }>("UPDATE stories SET status = 'running', started_at = NOW(), updated_at = $1 WHERE id = $2 AND status = 'pending' RETURNING id", [now(), nextStory.id]);
-      if (!claimResult) {
-        // Another agent claimed this story between SELECT and UPDATE — retry next cycle
-        logger.info(`[claim] Story ${nextStory.story_id} already claimed by another agent — skipping`, { runId: step.run_id });
-        // (removed: fake transaction cleanup)
+      // Atomic story claim with FOR UPDATE SKIP LOCKED — prevents double-claim race condition
+      const { claimNextStory } = await import("./repo.js");
+      const claimedStory = await claimNextStory(step.run_id, agentId);
+      if (!claimedStory) {
+        // No pending stories available (all locked or done)
+        logger.info(`[claim] No pending stories available to claim — all locked or done`, { runId: step.run_id });
         return { found: false };
       }
+      // Use the atomically claimed story for all subsequent operations
+      nextStory = claimedStory;
+      const storyBranch = nextStory.story_id.toLowerCase();
       await pgRun("UPDATE steps SET status = 'running', current_story_id = \$1, updated_at = \$2 WHERE id = \$3", [nextStory.id, now(), step.id]);
       await recordStepTransition(step.id, step.run_id, "pending", "running", agentId, "claimLoopStep", { storyId: nextStory.story_id });
       // (removed: fake transaction flag)
@@ -1826,6 +1852,51 @@ ${screenDescs}
       storyStatus = STORY_STATUS.DONE; storyEvent = "story.done";
     }
 
+    // PHASED DEVELOPMENT — opt-in via loop config `phases: true`
+    if (step.step_id === "implement" && storyStatus === STORY_STATUS.DONE && step.loop_config) {
+      try {
+        const lc = JSON.parse(step.loop_config);
+        if (lc.phases) {
+          const currentPhase = context["implement_phase"] || "foundation";
+          const phases = ["foundation", "core", "ui"];
+          const phaseIdx = phases.indexOf(currentPhase);
+
+          if (phaseIdx < phases.length - 1) {
+            // Check phase gate
+            const { checkPhaseGate } = await import("./step-guardrails.js");
+            const workdir = context["story_workdir"] || context["repo"] || "";
+            const gateResult = checkPhaseGate(workdir, currentPhase);
+
+            if (gateResult && step.retry_count < step.max_retries) {
+              // Phase gate failed — retry with fix instructions
+              context["previous_failure"] = `PHASE GATE (${currentPhase}): ${gateResult}`;
+              context["failure_category"] = "GUARDRAIL_FAIL";
+              await updateRunContext(step.run_id, context);
+              await failStep(stepId, gateResult);
+              logger.info(`[phased-dev] Phase gate failed for ${currentPhase}, retrying`, { runId: step.run_id });
+              return { advanced: false, runCompleted: false };
+            }
+
+            // Phase passed — advance to next phase
+            const nextPhase = phases[phaseIdx + 1];
+            context["implement_phase"] = nextPhase;
+            context["previous_failure"] = "";
+            await updateRunContext(step.run_id, context);
+
+            // Re-queue story as pending for next phase
+            await pgRun("UPDATE stories SET status = 'pending', updated_at = $1 WHERE id = $2",
+              [now(), step.current_story_id]);
+
+            logger.info(`[phased-dev] Phase ${currentPhase} complete, advancing to ${nextPhase}`, { runId: step.run_id });
+            return { advanced: false, runCompleted: false };
+          }
+          // Final phase (ui) — fall through to normal completion
+        }
+      } catch (e) {
+        logger.warn(`[phased-dev] Skipped: ${String(e)}`, { runId: step.run_id });
+      }
+    }
+
     // Design compliance check — only for implement step, done stories
     if (step.step_id === "implement" && storyStatus === STORY_STATUS.DONE) {
       const designIssue = checkStoryDesignCompliance(context);
@@ -1842,6 +1913,34 @@ ${screenDescs}
       } else if (designIssue) {
         // Max retries — log warning but let story pass (advisory)
         logger.warn(`[design-compliance] Story ${storyRow?.story_id} design issues (max retries reached, advisory): ${designIssue}`, { runId: step.run_id });
+      }
+    }
+
+    // TEST RUNNER — run project tests on implement story completion
+    if (step.step_id === "implement" && storyStatus === STORY_STATUS.DONE) {
+      try {
+        const { detectTestFramework, runTests, buildTestFixPrompt } = await import("./test-generation.js");
+        const testRepo = context["story_workdir"] || context["repo"] || "";
+        if (testRepo) {
+          const framework = detectTestFramework(testRepo);
+          if (framework.runner !== "none") {
+            const testResult = runTests(testRepo, framework);
+            if (!testResult.passed && step.retry_count < step.max_retries) {
+              const fixPrompt = buildTestFixPrompt(testResult);
+              logger.warn(`[test-runner] ${testResult.failedTests} test(s) failed for story ${storyRow?.story_id} — soft retry`, { runId: step.run_id });
+              context["previous_failure"] = `TEST RUNNER: ${fixPrompt}`;
+              context["failure_category"] = "TEST_FAIL";
+              context["failure_suggestion"] = "Fix the failing tests or the source code";
+              await updateRunContext(step.run_id, context);
+              await failStep(stepId, `${testResult.failedTests} test(s) failed`);
+              return { advanced: false, runCompleted: false };
+            } else if (!testResult.passed) {
+              logger.warn(`[test-runner] ${testResult.failedTests} test(s) failed (max retries reached, advisory) for story ${storyRow?.story_id}`, { runId: step.run_id });
+            }
+          }
+        }
+      } catch (e) {
+        logger.warn(`[test-runner] Skipped: ${String(e)}`, { runId: step.run_id });
       }
     }
 

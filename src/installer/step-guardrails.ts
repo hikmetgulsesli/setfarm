@@ -12,6 +12,7 @@ import { pgGet, pgRun, pgQuery, now } from "../db-pg.js";
 import { logger } from "../lib/logger.js";
 import { isFrontendChange } from "../lib/frontend-detect.js";
 import { runQualityChecks, formatQualityReport } from "./quality-gates.js";
+import { detectPlatform, checkDesignViolations } from "./design-rules.js";
 import { buildDesignContracts, generateUIContract, enrichStoriesWithDesignContract, validateDesignCompliance, generateLayoutSkeletons, checkCrossScreenConsistency, checkDesignFidelity, detectUnusedModules, reconcileDesignWithStories, checkIntegrationWiring } from "./design-contract.js";
 import { provisionDatabase, resolveDbType } from "./db-provision.js";
 import { runBrowserDomCheck } from "./browser-tools.js";
@@ -66,6 +67,19 @@ export function checkQualityGate(stepId: string, repoPath: string): string | nul
       }
     }
   }
+
+  // ── Platform Design Rule Violations ──────────────────────────────
+  if (stepId === "implement" && repoPath) {
+    try {
+      const platform = detectPlatform(repoPath);
+      const violations = checkDesignViolations(repoPath, platform);
+      const designErrors = violations.filter(v => v.severity === "error");
+      if (designErrors.length > 0) {
+        return `DESIGN RULE VIOLATION (${platform}):\n${designErrors.map(v => `  ${v.file}: ${v.message}`).join("\n")}`;
+      }
+    } catch {}
+  }
+
   return null;
 }
 
@@ -927,4 +941,45 @@ export function checkImportConsistency(repoPath: string): string | null {
 
   if (issues.length === 0) return null;
   return "GUARDRAIL FAIL: Import consistency check found issues:\n" + issues.join("\n");
+}
+
+// ── Phase Gate (Phased Development — opt-in) ────────────────────────
+
+/**
+ * Check phase gate for phased development.
+ * Returns failure message if the phase requirements are not met, null if passed.
+ * Only called when workflow has `phases: true` in loop config.
+ */
+export function checkPhaseGate(repoPath: string, phase: string): string | null {
+  if (!repoPath || !phase) return null;
+
+  const srcDir = path.join(repoPath, "src");
+  if (!fs.existsSync(srcDir)) return null;
+
+  switch (phase) {
+    case "foundation": {
+      // Check: type definitions exist, schema files present
+      const hasTypes = fs.existsSync(path.join(srcDir, "types")) ||
+                       fs.existsSync(path.join(srcDir, "types.ts")) ||
+                       fs.existsSync(path.join(srcDir, "lib", "types.ts"));
+      if (!hasTypes) return "Phase 1 (Foundation) incomplete: No type definitions found in src/types or src/lib/types.ts";
+      return null; // Pass
+    }
+    case "core": {
+      // Check: component/service files exist (at least 3 TS files)
+      try {
+        const files = execFileSync("find", [srcDir, "-name", "*.ts", "-o", "-name", "*.tsx"], {
+          encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"]
+        }).trim().split("\n").filter(Boolean);
+        if (files.length < 3) return "Phase 2 (Core) incomplete: Less than 3 TypeScript files";
+      } catch { /* ignore find errors */ }
+      return null;
+    }
+    case "ui": {
+      // Check: CSS/styling present, components directory exists
+      return null; // UI phase is checked by existing design compliance
+    }
+    default:
+      return null;
+  }
 }

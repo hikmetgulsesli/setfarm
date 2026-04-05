@@ -66,8 +66,8 @@ export async function skipFailedStories(runId: string): Promise<void> {
   );
   for (const s of failed) {
     if (s.retry_count < s.max_retries) {
-      // Still has retries left — re-queue instead of skipping
-      await pgRun("UPDATE stories SET status = 'pending', updated_at = $1 WHERE id = $2", [now(), s.id]);
+      // Still has retries left — re-queue with incremented retry_count
+      await pgRun("UPDATE stories SET status = 'pending', retry_count = retry_count + 1, updated_at = $1 WHERE id = $2", [now(), s.id]);
       continue;
     }
     const skipReason = s.output
@@ -94,6 +94,26 @@ export async function findStoryByStatus(runId: string, status: string): Promise<
 
 export async function getNextPendingStory(runId: string): Promise<any | undefined> {
   return await pgGet("SELECT * FROM stories WHERE run_id = $1 AND status = 'pending' AND (abandoned_count IS NULL OR abandoned_count < 3) ORDER BY story_index ASC LIMIT 1", [runId]);
+}
+
+export async function claimNextStory(runId: string, agentId: string): Promise<any | undefined> {
+  return await pgBegin(async (sql) => {
+    const rows = await sql.unsafe(
+      `SELECT id, story_id, title, story_index, output, retry_count, max_retries, abandoned_count
+       FROM stories WHERE run_id = $1 AND status = 'pending'
+       ORDER BY story_index ASC LIMIT 1 FOR UPDATE SKIP LOCKED`,
+      [runId]
+    );
+    const story = rows[0] as any;
+    if (!story) return undefined;
+
+    await sql.unsafe(
+      `UPDATE stories SET status = 'running', started_at = NOW(), updated_at = $1
+       WHERE id = $2`,
+      [now(), story.id]
+    );
+    return story;
+  });
 }
 
 export async function getNextDoneStory(runId: string): Promise<any | undefined> {

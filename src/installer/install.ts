@@ -266,6 +266,26 @@ export async function installWorkflow(params: { workflowId: string }): Promise<W
     upsertAgent(list, { ...agent, role });
   }
   await writeOpenClawConfig(configPath, config);
+
+  // Inject MCP server config into each agent's settings
+  try {
+    const { generateMcpSettingsJson } = await import("./mcp-config.js");
+    for (const agent of provisioned) {
+      const prefix = workflow.id + "_";
+      const localId = agent.id.startsWith(prefix) ? agent.id.slice(prefix.length) : agent.id;
+      const role = roleMap.get(localId) ?? inferRole(localId);
+      const mcpConfig = generateMcpSettingsJson(role);
+      const settingsPath = path.join(agent.agentDir, "settings.json");
+      let existing: Record<string, unknown> = {};
+      try {
+        const raw = await fs.readFile(settingsPath, "utf-8");
+        existing = JSON.parse(raw);
+      } catch {}
+      const merged = { ...existing, ...mcpConfig };
+      await fs.writeFile(settingsPath, `${JSON.stringify(merged, null, 2)}\n`, "utf-8");
+    }
+  } catch {}
+
   await updateMainAgentGuidance();
   await installSetfarmSkill();
   await writeWorkflowMetadata({ workflowDir, workflowId: workflow.id, source: `bundled:${params.workflowId}` });

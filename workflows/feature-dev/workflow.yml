@@ -761,6 +761,13 @@ steps:
       PREVIOUS FAILURE (if retrying — READ THIS FIRST and avoid the same mistake):
       {{previous_failure}}
 
+      IMPLEMENTATION PHASE (if phased development is enabled):
+      Current Phase: {{implement_phase}}
+      - foundation: Focus on types, interfaces, data models, API contracts ONLY
+      - core: Focus on business logic, services, state management ONLY
+      - ui: Focus on React components, styling, responsive design ONLY
+      If implement_phase is empty, implement everything in one pass (default behavior).
+
       BEFORE writing code:
       0. If PREVIOUS FAILURE is non-empty: analyze what went wrong. The previous attempt
          timed out or crashed. Common causes: infinite loop, hanging process, excessive
@@ -773,6 +780,8 @@ steps:
       !include implement-stitch-rules.md
 
       !include implement-design-enforcement.md
+
+      {{design_rules}}
 
       !include game-dev-rules.md
 
@@ -906,6 +915,15 @@ steps:
 
       PREVIOUS FAILURE (if retrying — YOU MUST FIX THESE ISSUES FIRST before doing anything else):
       {{previous_failure}}
+
+      PRE-FLIGHT ANALYSIS (automated static checks — review these FIRST):
+      {{preflight_analysis}}
+
+      Focus your review on:
+      1. Issues flagged by pre-flight (ESLint errors, TypeScript errors)
+      2. The git diff for logic/semantic issues
+      3. Design compliance (fonts, colors, design tokens)
+      DO NOT re-read entire files — the pre-flight already checked syntax/types.
 
       GIT COMMIT RULE: ALWAYS use `git commit -m "message"`. NEVER use bare `git commit`
       without -m flag — the server has no terminal editor (EDITOR unset), bare commit will fail.

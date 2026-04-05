@@ -126,6 +126,15 @@ export const OPTIONAL_TEMPLATE_VARS = [
   // Browser
   "browser_dom_snapshot",
   "browser_check_result",
+  // Pre-flight static analysis (verify step speedup)
+  "preflight_analysis",
+  "preflight_diff",
+  "preflight_errors",
+  // Platform-specific design rules (injected at implement/verify)
+  "design_rules",
+  "detected_platform",
+  // Phased development (opt-in)
+  "implement_phase",
 ] as const;
 
 
