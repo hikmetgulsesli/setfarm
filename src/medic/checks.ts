@@ -284,9 +284,9 @@ export async function checkOrphanedCrons(
  */
 // ── Check: Claimed But Not Progressing ────────────────────────────────
 
-const CLAIMED_STUCK_THRESHOLD_MS = 10 * 60 * 1000; // 10 min — for fast steps (plan, stories, etc.)
+const CLAIMED_STUCK_THRESHOLD_MS = 5 * 60 * 1000; // 10 min — for fast steps (plan, stories, etc.)
 const CLAIMED_STUCK_SLOW_THRESHOLD_MS = 12 * 60 * 1000; // 25 min — for slow steps (design, implement, setup)
-const SLOW_STEP_IDS_FOR_MEDIC = new Set(["design", "implement", "setup-repo", "setup-build"]);
+const SLOW_STEP_IDS_FOR_MEDIC = new Set(["implement", "setup-repo", "setup-build"]);
 
 /**
  * Find steps that were claimed (status='running') but haven't been updated
