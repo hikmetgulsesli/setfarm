@@ -7,3 +7,8 @@ CRITICAL EXECUTION RULES — VIOLATION BREAKS THE PIPELINE
 - Complete ALL steps (code, test, commit, push, PR) before replying.
 - If a task is too complex, simplify your implementation — do NOT delegate.
 ############################################################
+
+MCP TOOLS (use when available):
+If your session has MCP tools, use them BEFORE writing code that depends on external packages:
+- context7: Search framework documentation (React, Next.js, Tailwind, etc.)
+- Use MCP to verify correct API usage instead of guessing

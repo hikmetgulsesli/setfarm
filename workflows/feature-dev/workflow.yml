@@ -781,6 +781,8 @@ steps:
 
       !include implement-design-enforcement.md
 
+      !include platform-design-rules.md
+
       {{design_rules}}
 
       !include game-dev-rules.md
