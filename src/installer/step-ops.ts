@@ -1741,16 +1741,23 @@ ${screenDescs}
     }
 
     // Tunnel + DNS auto-create: ensure Cloudflare tunnel entry + DNS CNAME exist
-    const projectName = context["repo"] ? path.basename(context["repo"]) : "";
-    if (projectName && port) {
-      try {
-        const hostname = `${projectName}.setrox.com.tr`;
-        execFileSync("sudo", ["bash", path.join(os.homedir(), ".openclaw/scripts/tunnel-add.sh"), hostname, String(port)], {
-          timeout: 30000, stdio: "pipe",
-        });
-        logger.info(`[deploy-guardrail] Tunnel + DNS ensured for ${hostname}:${port}`, { runId: step.run_id });
-      } catch (tunnelErr) {
-        logger.warn(`[deploy-guardrail] Tunnel/DNS setup failed: ${String(tunnelErr)}`, { runId: step.run_id });
+    const deployProjectName = context["repo"] ? path.basename(context["repo"]) : "";
+    if (deployProjectName && port) {
+      const hostname = `${deployProjectName}.setrox.com.tr`;
+      let tunnelOk = false;
+      // Try sudo first, then non-sudo fallback
+      for (const cmd of [["sudo", "bash"], ["bash"]]) {
+        if (tunnelOk) break;
+        try {
+          execFileSync(cmd[0], [...cmd.slice(1), path.join(os.homedir(), ".openclaw/scripts/tunnel-add.sh"), hostname, String(port)], {
+            timeout: 30000, stdio: "pipe",
+          });
+          tunnelOk = true;
+          logger.info(`[deploy-guardrail] Tunnel + DNS ensured for ${hostname}:${port}`, { runId: step.run_id });
+        } catch {}
+      }
+      if (!tunnelOk) {
+        logger.warn(`[deploy-guardrail] Tunnel/DNS setup failed for ${hostname}`, { runId: step.run_id });
       }
     }
   }
