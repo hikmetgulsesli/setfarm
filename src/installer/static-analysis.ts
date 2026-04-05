@@ -56,7 +56,6 @@ export function runTscCheck(repoPath: string): string {
     execFileSync("npx", ["tsc", "--noEmit", "--pretty", "false", "--skipLibCheck"], {
       cwd: repoPath, encoding: "utf-8", timeout: 30000,
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, NODE_OPTIONS: "--max-old-space-size=256" },
     });
     return "";
   } catch (err: any) {
