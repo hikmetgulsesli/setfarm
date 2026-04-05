@@ -66,8 +66,8 @@ export async function skipFailedStories(runId: string): Promise<void> {
   );
   for (const s of failed) {
     if (s.retry_count < s.max_retries) {
-      // Still has retries left — re-queue with incremented retry_count
-      await pgRun("UPDATE stories SET status = 'pending', retry_count = retry_count + 1, updated_at = $1 WHERE id = $2", [now(), s.id]);
+      // Has retries left — leave as 'failed'. Do NOT re-queue to 'pending'.
+      // failStep already handles retry. Re-queuing here caused infinite loops.
       continue;
     }
     const skipReason = s.output
