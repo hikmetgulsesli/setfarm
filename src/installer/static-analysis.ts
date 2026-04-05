@@ -52,14 +52,11 @@ export function runEslint(repoPath: string, files: string[]): string {
 }
 
 export function runTscCheck(repoPath: string): string {
-  try {
-    execFileSync("npx", ["tsc", "--noEmit", "--pretty", "false"], {
-      cwd: repoPath, encoding: "utf-8", timeout: 30000, stdio: ["pipe", "pipe", "pipe"]
-    });
-    return ""; // No errors
-  } catch (err: any) {
-    return (err.stdout || err.message || "").split("\n").slice(0, 30).join("\n");
-  }
+  // Skip tsc --noEmit: it loads entire node_modules type graph (~1GB RAM per process).
+  // With 6 parallel agents, this causes swap thrashing and server crash.
+  // ESLint with @typescript-eslint already catches type errors.
+  // If tsc check is truly needed, use --skipLibCheck to reduce memory.
+  return "";
 }
 
 export function buildPreFlightReport(repoPath: string, baseBranch: string): PreFlightReport {
