@@ -59,26 +59,11 @@ export async function verifyStory(storyId: string): Promise<void> {
     [now(), storyId]);
 }
 
-export async function skipFailedStories(runId: string): Promise<number> {
-  // Only skip stories that have exhausted their retries — leave others as 'failed'
-  let skippedCount = 0;
-  const failed = await pgQuery<{ id: string; output: string | null; story_id: string; retry_count: number; max_retries: number }>(
-    "SELECT id, output, story_id, retry_count, max_retries FROM stories WHERE run_id = $1 AND status = 'failed'", [runId]
-  );
-  for (const s of failed) {
-    if (s.retry_count < s.max_retries) {
-      // Has retries left — leave as 'failed'. Do NOT re-queue to 'pending'.
-      // failStep already handles retry. Re-queuing here caused infinite loops.
-      continue;
-    }
-    const skipReason = s.output
-      ? `SKIPPED (was failed): ${s.output}`
-      : `SKIPPED: Story ${s.story_id} failed with no diagnostic — likely empty workdir or agent timeout`;
-    await pgRun("UPDATE stories SET status = 'skipped', output = $1, updated_at = $2 WHERE id = $3",
-      [skipReason, now(), s.id]);
-    skippedCount++;
-  }
-  return skippedCount;
+export async function skipFailedStories(_runId: string): Promise<number> {
+  // DISABLED: Never skip stories. Failed stories stay as 'failed' and get
+  // retried by failStep until max_retries exhausted. Then they stay 'failed'
+  // and the loop completes without them. No story is ever marked 'skipped'.
+  return 0;
 }
 
 export async function countStoriesByStatus(runId: string, status: string): Promise<number> {
