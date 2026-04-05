@@ -2082,7 +2082,7 @@ ${screenDescs}
     // Design compliance check — only for implement step, done stories
     if (step.step_id === "implement" && storyStatus === STORY_STATUS.DONE) {
       const designIssue = checkStoryDesignCompliance(context);
-      if (designIssue && step.retry_count < step.max_retries) {
+      if (designIssue && step.retry_count >= 2 && step.retry_count < step.max_retries) {
         logger.warn(`[design-compliance] Story ${storyRow?.story_id} failed design check — soft retry`, { runId: step.run_id });
         const { classifyError: _ce3 } = await import("./error-taxonomy.js");
         const _cl3 = _ce3(designIssue);
@@ -2092,6 +2092,9 @@ ${screenDescs}
         await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
         await failStep(stepId, designIssue);
         return { advanced: false, runCompleted: false };
+      } else if (designIssue && step.retry_count < 2) {
+        // First 1-2 attempts: warn only (advisory), let story pass
+        logger.warn(`[design-compliance] Story ${storyRow?.story_id} design issues (advisory, retry ${step.retry_count}): ${designIssue}`, { runId: step.run_id });
       } else if (designIssue) {
         // Max retries — log warning but let story pass (advisory)
         logger.warn(`[design-compliance] Story ${storyRow?.story_id} design issues (max retries reached, advisory): ${designIssue}`, { runId: step.run_id });
