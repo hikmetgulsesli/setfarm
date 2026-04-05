@@ -1129,6 +1129,26 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
       }
       context["story_workdir"] = storyWorkdir || context["repo"];
 
+      // Verify node_modules symlink is intact after worktree creation
+      if (storyWorkdir) {
+        const nmLink = path.join(storyWorkdir, "node_modules");
+        const nmSource = path.join(context["repo"] || "", "node_modules");
+        try {
+          const stat = fs.lstatSync(nmLink);
+          if (!stat.isSymbolicLink()) {
+            // node_modules exists but is NOT a symlink — delete and recreate
+            fs.rmSync(nmLink, { recursive: true, force: true });
+            fs.symlinkSync(nmSource, nmLink);
+            logger.info(`[worktree] Repaired node_modules symlink in ${storyWorkdir}`, { runId: step.run_id });
+          }
+        } catch {
+          // Doesn't exist — create symlink
+          if (fs.existsSync(nmSource)) {
+            try { fs.symlinkSync(nmSource, nmLink); } catch {}
+          }
+        }
+      }
+
       // ISSUE-1 FIX: Read ACTUAL git branch from worktree and inject into context
       // This ensures the agent uses the correct branch name instead of creating its own
       const actualWorktreeDir = storyWorkdir || context["repo"];
