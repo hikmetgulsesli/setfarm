@@ -2109,6 +2109,11 @@ ${screenDescs}
     // ISSUE-1 FIX: Prefer pipeline-set branch (from DB) over agent's output (agents create wrong names)
     const dbStoryBranch = await pgGet<{ story_branch: string }>("SELECT story_branch FROM stories WHERE id = $1", [step.current_story_id]);
     const storyBranchName = dbStoryBranch?.story_branch || parsed["story_branch"] || context["story_branch"] || "";
+    // Always inject DB branch into context so verify agent can find it
+    if (storyBranchName) {
+      context["story_branch"] = storyBranchName;
+      parsed["story_branch"] = storyBranchName;
+    }
     // FIX: Validate PR URL belongs to correct repo (cross-contamination guard)
     if (storyPrUrl && context["repo"]) {
       const expectedRepo = context["repo"].split("/").pop() || "";
