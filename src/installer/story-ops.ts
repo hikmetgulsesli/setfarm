@@ -92,7 +92,7 @@ export async function parseAndInsertStories(output: string, runId: string): Prom
     const firstLine = lines[startIdx].slice("STORIES_JSON:".length).trim();
     const jsonLines = [firstLine];
     for (let i = startIdx + 1; i < lines.length; i++) {
-      if (/^[A-Z_]+:\s/.test(lines[i])) break;
+      if (/^[A-Z_]+:(\s|$)/.test(lines[i])) break;
       jsonLines.push(lines[i]);
     }
     jsonText = jsonLines.join("\n").trim();
