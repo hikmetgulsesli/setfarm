@@ -31,6 +31,9 @@ export const FAST_STEP_ABANDONED_THRESHOLD_MS = 300_000; // 5 min
 /** Fast step repeat abandon threshold */
 export const FAST_STEP_FAST_ABANDONED_THRESHOLD_MS = 180_000; // 3 min
 
+
+/** Delay before verify step claims — waits for external PR review comments (Gemini, Copilot) */
+export const PR_REVIEW_DELAY_MS = 300_000; // 5 min
 // ── Cleanup Throttle ────────────────────────────────────────────────
 
 /** Throttle interval for cleanupAbandonedSteps (matches cron interval) */

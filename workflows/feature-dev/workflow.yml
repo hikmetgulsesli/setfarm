@@ -662,7 +662,7 @@ steps:
       completion: all_done
       fresh_session: true
       merge_strategy: direct-merge
-      parallel_count: 6
+      parallel_count: 1
     input: |
       !include critical-preamble.md
 
@@ -953,7 +953,30 @@ steps:
          - Any other error: read the file and line number, fix the issue
       4. git add -A && git commit -m "fix: address quality gate issues"
       5. git push origin {{branch}}
-      6. Then continue with STEP 1
+      6. Then continue with STEP 0.5
+
+
+      STEP 0.5 — Read PR review comments (MANDATORY if FINAL_PR exists):
+      External reviewers (GitHub Copilot, Gemini Code Review) post comments on PRs.
+      You MUST read and address these comments before merging.
+      1. If FINAL_PR is empty, skip to STEP 1
+      2. Read ALL review comments on the PR:
+         gh pr view "{{final_pr}}" --json reviews,comments --jq '.reviews[].body, .comments[].body' 2>/dev/null || true
+      3. Read inline/file-specific comments (Copilot posts these):
+         REPO_SLUG=$(echo "{{final_pr}}" | sed 's|.*github.com/||' | sed 's|/pull/.*||')
+         PR_NUM=$(echo "{{final_pr}}" | grep -oE '[0-9]+$')
+         gh api "repos/$REPO_SLUG/pulls/$PR_NUM/comments" --jq '.[] | "FILE: \(.path):\(.line // .original_line) — \(.body)"' 2>/dev/null || true
+      4. Categorize each comment:
+         - MUST FIX: bugs, logic errors, security issues, missing validation, type errors
+         - SHOULD FIX: code quality, naming, performance, accessibility
+         - INFO: praise, style preferences — acknowledge but no code change needed
+      5. For MUST FIX and SHOULD FIX comments:
+         a. Read the referenced file and line
+         b. Understand the suggestion
+         c. Apply the fix
+         d. git add -A && git commit -m "fix: address PR review comments"
+         e. git push origin {{branch}}
+      6. If NO comments found, that is OK — proceed to STEP 1
 
 
       STEP 1 — Checkout and review combined PR:

@@ -13,6 +13,7 @@ import {
   STORY_STATUS,
   PROTECTED_CONTEXT_KEYS,
   OPTIONAL_TEMPLATE_VARS,
+  PR_REVIEW_DELAY_MS,
 } from "./constants.js";
 import { getPRState, tryReopenPR, tryAutoMergePR, findPrByBranch, resolveClosedPR } from "./pr-state.js";
 import { failStep } from "./step-fail.js";
@@ -839,6 +840,20 @@ All visible text must be in Turkish. Use a dark, modern theme.`);
         } catch {}
 
         await updateRunContext(step.run_id, context);
+      }
+    }
+  }
+
+  // PR REVIEW DELAY GATE: Wait for external review comments (Gemini, Copilot) before verify claim
+  if (step.step_id === "verify" && context["final_pr"]) {
+    const verifyTiming = await pgGet<{ updated_at: string }>("SELECT updated_at FROM steps WHERE id = $1", [step.id]);
+    if (verifyTiming) {
+      const elapsed = Date.now() - new Date(verifyTiming.updated_at).getTime();
+      if (elapsed < PR_REVIEW_DELAY_MS) {
+        const remaining = Math.round((PR_REVIEW_DELAY_MS - elapsed) / 1000);
+        logger.info(`[review-delay] PR review delay: ${remaining}s remaining — deferring verify claim`, { runId: step.run_id, stepId: step.step_id });
+        await pgRun("UPDATE steps SET status = 'pending', updated_at = $1 WHERE id = $2", [now(), step.id]);
+        return { found: false };
       }
     }
   }
