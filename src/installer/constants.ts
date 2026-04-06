@@ -97,6 +97,7 @@ export const OPTIONAL_TEMPLATE_VARS = [
   "stitch_project_id",
   "design_manifest",
   "design_tokens",
+  "design_dom",
   "screens_generated",
   "device_type",
   "design_notes",
