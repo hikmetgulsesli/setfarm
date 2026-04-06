@@ -843,6 +843,10 @@ All visible text must be in Turkish. Use a dark, modern theme.`);
     }
   }
 
+  // Default optional template vars for non-story steps (design, security-gate, etc.)
+  for (const v of OPTIONAL_TEMPLATE_VARS) {
+    if (!context[v]) context[v] = "";
+  }
   let resolvedInput = resolveTemplate(step.input_template, context);
 
   // MISSING_INPUT_GUARD (v1.5.53): First miss -> retry step, second -> fail run.

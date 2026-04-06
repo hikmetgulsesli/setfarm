@@ -82,6 +82,7 @@ export const OPTIONAL_TEMPLATE_VARS = [
   "stories_remaining",
   "current_story",
   "current_story_id",
+  "story_workdir",
   "stories_json",
   "current_story_title",
   "final_pr",

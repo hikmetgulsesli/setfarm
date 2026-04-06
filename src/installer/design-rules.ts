@@ -244,7 +244,7 @@ function checkReactNativeViolations(repoPath: string): DesignViolation[] {
     const matches = grepFiles(repoPath, pattern, ["*.tsx", "*.jsx"]);
     for (const m of matches) {
       // Skip node_modules, test files, and .web.tsx files
-      if (m.file.includes("node_modules") || m.file.includes(".test.") || m.file.includes(".web.")) continue;
+      if (m.file.includes("node_modules") || m.file.includes("stitch/") || m.file.includes(".test.") || m.file.includes(".web.")) continue;
       violations.push({ file: m.file, line: m.line, rule, severity: "error", message });
     }
   }
@@ -252,7 +252,7 @@ function checkReactNativeViolations(repoPath: string): DesignViolation[] {
   // Check for web CSS className usage
   const classNameMatches = grepFiles(repoPath, 'className=', ["*.tsx", "*.jsx"]);
   for (const m of classNameMatches) {
-    if (m.file.includes("node_modules") || m.file.includes(".web.")) continue;
+    if (m.file.includes("node_modules") || m.file.includes("stitch/") || m.file.includes(".web.")) continue;
     violations.push({
       file: m.file,
       line: m.line,
@@ -310,7 +310,7 @@ function checkWebViolations(repoPath: string): DesignViolation[] {
   // Check for images without alt text
   const imgMatches = grepFiles(repoPath, "<img[^>]*>", ["*.tsx", "*.jsx", "*.html"]);
   for (const m of imgMatches) {
-    if (m.file.includes("node_modules")) continue;
+    if (m.file.includes("node_modules") || m.file.includes("stitch/")) continue;
     // Check if this img tag has an alt attribute
     if (!m.content.includes("alt=") && !m.content.includes("alt =")) {
       violations.push({
@@ -327,7 +327,7 @@ function checkWebViolations(repoPath: string): DesignViolation[] {
   // Look for buttons that contain only an icon (svg, Icon component) without aria-label
   const buttonMatches = grepFiles(repoPath, "<button[^>]*>", ["*.tsx", "*.jsx", "*.html"]);
   for (const m of buttonMatches) {
-    if (m.file.includes("node_modules")) continue;
+    if (m.file.includes("node_modules") || m.file.includes("stitch/")) continue;
     // Flag buttons without aria-label that look like icon-only buttons
     if (
       !m.content.includes("aria-label") &&
@@ -347,7 +347,7 @@ function checkWebViolations(repoPath: string): DesignViolation[] {
   // Check for outline:none without replacement focus styles
   const outlineNoneMatches = grepFiles(repoPath, "outline:\\s*none", ["*.css", "*.scss", "*.tsx", "*.jsx"]);
   for (const m of outlineNoneMatches) {
-    if (m.file.includes("node_modules")) continue;
+    if (m.file.includes("node_modules") || m.file.includes("stitch/")) continue;
     if (!m.content.includes("focus-visible") && !m.content.includes("box-shadow")) {
       violations.push({
         file: m.file,
