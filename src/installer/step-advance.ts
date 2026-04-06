@@ -218,7 +218,7 @@ VERIFICATION_SUMMARY: ${verifiedCount}/${totalCount} stories verified`;
 // Force auto-verifies all done stories, completes verify step, and advances pipeline.
 
 export async function autoVerifyAndAdvance(runId: string): Promise<boolean> {
-  const { tryAutoMergePR } = await import("./pr-state.js");
+  const { tryAutoMergePR, getPRState } = await import("./pr-state.js");
   const { verifyStory } = await import("./repo.js");
 
   // Find all done (but not verified) stories
@@ -230,15 +230,28 @@ export async function autoVerifyAndAdvance(runId: string): Promise<boolean> {
   if (doneStories.length === 0) return false;
 
   let verified = 0;
+  let skipped = 0;
   for (const story of doneStories) {
     if (story.pr_url) {
+      // Try to merge the PR first
       try { tryAutoMergePR(story.pr_url, story.story_id, runId); } catch {}
+      // CRITICAL: Verify PR actually merged — NEVER verify with open/unmerged PR
+      const prState = getPRState(story.pr_url);
+      if (prState !== "MERGED") {
+        logger.warn("[medic-auto-verify] PR not merged for " + story.story_id + " (state: " + prState + ") — skipping", { runId });
+        skipped++;
+        continue;
+      }
     }
     await verifyStory(story.id);
     verified++;
     const wfId = await getWorkflowId(runId);
-    emitEvent({ ts: now(), event: "story.verified" as any, runId, workflowId: wfId, storyId: story.story_id, detail: "Medic: force auto-verified (gateway stall recovery)" });
-    logger.info("[medic-auto-verify] Force verified story " + story.story_id, { runId });
+    emitEvent({ ts: now(), event: "story.verified" as any, runId, workflowId: wfId, storyId: story.story_id, detail: "Medic: force auto-verified (PR merged)" });
+    logger.info("[medic-auto-verify] Force verified story " + story.story_id + " (PR merged)", { runId });
+  }
+
+  if (skipped > 0) {
+    logger.warn("[medic-auto-verify] " + skipped + " stories skipped (PR not merged) — verify step NOT completed", { runId });
   }
 
   if (verified === 0) return false;
