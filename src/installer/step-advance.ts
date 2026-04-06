@@ -218,7 +218,7 @@ VERIFICATION_SUMMARY: ${verifiedCount}/${totalCount} stories verified`;
 // Force auto-verifies all done stories, completes verify step, and advances pipeline.
 
 export async function autoVerifyAndAdvance(runId: string): Promise<boolean> {
-  const { tryAutoMergePR, getPRState } = await import("./pr-state.js");
+  const { getPRState } = await import("./pr-state.js");
   const { verifyStory } = await import("./repo.js");
 
   // Find all done (but not verified) stories
@@ -233,12 +233,10 @@ export async function autoVerifyAndAdvance(runId: string): Promise<boolean> {
   let skipped = 0;
   for (const story of doneStories) {
     if (story.pr_url) {
-      // Try to merge the PR first
-      try { tryAutoMergePR(story.pr_url, story.story_id, runId); } catch {}
-      // CRITICAL: Verify PR actually merged — NEVER verify with open/unmerged PR
+      // NO auto-merge — PR review is mandatory (Gemini + Copilot comments must be addressed)
       const prState = getPRState(story.pr_url);
       if (prState !== "MERGED") {
-        logger.warn("[medic-auto-verify] PR not merged for " + story.story_id + " (state: " + prState + ") — skipping", { runId });
+        logger.warn("[medic-auto-verify] PR not merged for " + story.story_id + " (state: " + prState + ") — needs agent review", { runId });
         skipped++;
         continue;
       }

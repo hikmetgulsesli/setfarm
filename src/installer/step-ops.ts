@@ -2509,15 +2509,20 @@ async function autoVerifyDoneStories(
       [runId, verifyStepName]
     );
     const verifyStepAbandons = verifyStep?.abandoned_count ?? 0;
+    // Force auto-verify ONLY if PR is already merged (no auto-merge — PR review is mandatory)
     if (verifyStepAbandons >= 3) {
       const prUrl = story.pr_url || "";
       if (prUrl) {
-        try { tryAutoMergePR(prUrl, story.story_id, runId); } catch {}
+        const fvState = getPRState(prUrl);
+        if (fvState === "MERGED") {
+          await verifyStory(story.id);
+          logger.info(`[${logPrefix}] Story ${story.story_id} force-verified — PR already merged, verify abandoned ${verifyStepAbandons}x`, { runId });
+          emitEvent({ ts: now(), event: "story.verified", runId, workflowId: await getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title, detail: `Force-verified — PR merged, verify abandoned ${verifyStepAbandons}x` });
+          continue;
+        }
+        // PR not merged → agent must review comments, fix issues, then merge
+        logger.info(`[${logPrefix}] Story ${story.story_id} PR still ${fvState} — needs agent review (no auto-merge)`, { runId });
       }
-      await verifyStory(story.id);
-      logger.info(`[${logPrefix}] Story ${story.story_id} FORCE auto-verified — verify step abandoned ${verifyStepAbandons} times (threshold: 3)`, { runId });
-      emitEvent({ ts: now(), event: "story.verified", runId, workflowId: await getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title, detail: `Force auto-verified — verify step abandoned ${verifyStepAbandons} times` });
-      continue;
     }
 
     const prUrl = story.pr_url || "";
@@ -2572,16 +2577,9 @@ async function autoVerifyDoneStories(
       }
 
       if (prState === "OPEN") {
-        // Always try auto-merge for done stories with OPEN PRs.
-        // The verify agent already marked it "done" meaning quality checks passed.
-        // Waiting for abandon count wastes cycles — merge immediately.
-        if (tryAutoMergePR(prUrl, story.story_id, runId)) {
-          await verifyStory(story.id);
-          logger.info(`[${logPrefix}] Story ${story.story_id} auto-merged + verified — PR was OPEN (done story)`, { runId });
-          emitEvent({ ts: now(), event: "story.verified", runId, workflowId: await getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title, detail: "Auto-merged — done story with OPEN PR" });
-          continue;
-        }
-        // If auto-merge failed, still needs agent verification
+        // OPEN PR = needs agent review. Agent must read Gemini+Copilot comments,
+        // fix issues, then merge. No auto-merge — review is mandatory.
+        return story;
       }
     } catch (e) {
       logger.warn(`[${logPrefix}] PR state check failed for ${prUrl}: ${String(e)}`, { runId });
