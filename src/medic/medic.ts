@@ -115,6 +115,21 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
         }
       }
 
+      // VERIFY FORCE-VERIFY (2026-04-06): If verify step is stuck 3+ times, force auto-verify all done stories
+      // This catches gateway stall scenarios where the agent session never starts.
+      const stepRow = await pgGet<{ step_id: string; run_id: string }>("SELECT step_id, run_id FROM steps WHERE id = $1", [finding.stepId]);
+      if (stepRow && stepRow.step_id === "verify" && newCount >= 3) {
+        try {
+          const { autoVerifyAndAdvance } = await import("../installer/step-advance.js");
+          const advanced = await autoVerifyAndAdvance(stepRow.run_id);
+          if (advanced) {
+            logger.info("[medic] Force auto-verified all done stories for verify step", { runId: stepRow.run_id });
+            emitEvent({ ts: now(), event: "step.done" as EventType, runId: stepRow.run_id, stepId: finding.stepId, detail: "Medic: force auto-verified" });
+            return true;
+          }
+        } catch (e) { logger.warn("[medic] Force auto-verify failed: " + String(e), { runId: stepRow?.run_id }); }
+      }
+
       if (newCount >= MAX_STEP_ABANDONS) {
         await pgRun("UPDATE steps SET status = 'failed', output = 'Medic: abandoned too many times', abandoned_count = $1, updated_at = $2 WHERE id = $3", [newCount, now(), finding.stepId]);
         await recordStepTransition(finding.stepId, finding.runId || "", "running", "failed", undefined, "medic:abandonLimit", { abandonCount: newCount });

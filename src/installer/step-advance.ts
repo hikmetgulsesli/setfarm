@@ -212,3 +212,58 @@ VERIFICATION_SUMMARY: ${verifiedCount}/${totalCount} stories verified`;
   // advancePipeline has its own transaction — must stay outside our tx
   return advancePipeline(runId);
 }
+
+// ── autoVerifyAndAdvance (2026-04-06) ────────────────────────────────
+// Medic calls this when verify step is stuck 3+ times.
+// Force auto-verifies all done stories, completes verify step, and advances pipeline.
+
+export async function autoVerifyAndAdvance(runId: string): Promise<boolean> {
+  const { tryAutoMergePR } = await import("./pr-state.js");
+  const { verifyStory } = await import("./repo.js");
+
+  // Find all done (but not verified) stories
+  const doneStories = await pgQuery<{ id: string; story_id: string; pr_url: string | null }>(
+    "SELECT id, story_id, pr_url FROM stories WHERE run_id = $1 AND status = 'done'",
+    [runId]
+  );
+
+  if (doneStories.length === 0) return false;
+
+  let verified = 0;
+  for (const story of doneStories) {
+    if (story.pr_url) {
+      try { tryAutoMergePR(story.pr_url, story.story_id, runId); } catch {}
+    }
+    await verifyStory(story.id);
+    verified++;
+    const wfId = await getWorkflowId(runId);
+    emitEvent({ ts: now(), event: "story.verified" as any, runId, workflowId: wfId, storyId: story.story_id, detail: "Medic: force auto-verified (gateway stall recovery)" });
+    logger.info("[medic-auto-verify] Force verified story " + story.story_id, { runId });
+  }
+
+  if (verified === 0) return false;
+
+  // Complete verify step
+  const loopStep = await pgGet<{ loop_config: string | null }>(
+    "SELECT loop_config FROM steps WHERE run_id = $1 AND type = 'loop' LIMIT 1",
+    [runId]
+  );
+  if (loopStep?.loop_config) {
+    try {
+      const lc: LoopConfig = JSON.parse(loopStep.loop_config);
+      if (lc.verifyStep) {
+        const totalStories = await pgQuery<{ id: string }>("SELECT id FROM stories WHERE run_id = $1", [runId]);
+        const verifiedStories = await pgQuery<{ id: string }>("SELECT id FROM stories WHERE run_id = $1 AND status = 'verified'", [runId]);
+        const summary = "STATUS: done\nVERIFICATION_SUMMARY: " + verifiedStories.length + "/" + totalStories.length + " stories verified (medic force)";
+        await pgRun(
+          "UPDATE steps SET status = 'done', output = $1, updated_at = $2 WHERE run_id = $3 AND step_id = $4",
+          [summary, now(), runId, lc.verifyStep]
+        );
+      }
+    } catch {}
+  }
+
+  // Advance pipeline to next step
+  const result = await advancePipeline(runId);
+  return result.advanced || result.runCompleted;
+}

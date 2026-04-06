@@ -2496,11 +2496,17 @@ async function autoVerifyDoneStories(
     if (!story) return null;
 
     // FIX: If this story has been stuck in verify for too many cycles, force auto-verify.
-    // Count how many times the verify STEP (not story) has been claimed for this story.
-    // story.abandoned_count tracks implement abandons, not verify — so we use step claims.
-    const verifyStep = await pgGet<{ abandoned_count: number }>(
-      "SELECT abandoned_count FROM steps WHERE run_id = $1 AND step_id IN (SELECT step_id FROM steps WHERE run_id = $1 AND type = 'loop' AND loop_config LIKE '%verifyEach%') AND status IN ('running','pending') LIMIT 1",
+    // BUG FIX (2026-04-06): Old query was checking implement step's abandoned_count (always 0)
+    // instead of verify step. Now reads verifyStep name from loop_config and queries directly.
+    const loopStepRow = await pgGet<{ loop_config: string }>(
+      "SELECT loop_config FROM steps WHERE run_id = $1 AND type = 'loop' AND loop_config LIKE '%verifyEach%' LIMIT 1",
       [runId]
+    );
+    let verifyStepName = "verify";
+    try { verifyStepName = JSON.parse(loopStepRow?.loop_config || "{}").verifyStep || "verify"; } catch {}
+    const verifyStep = await pgGet<{ abandoned_count: number }>(
+      "SELECT abandoned_count FROM steps WHERE run_id = $1 AND step_id = $2 AND status IN ('running','pending','failed') LIMIT 1",
+      [runId, verifyStepName]
     );
     const verifyStepAbandons = verifyStep?.abandoned_count ?? 0;
     if (verifyStepAbandons >= 3) {
