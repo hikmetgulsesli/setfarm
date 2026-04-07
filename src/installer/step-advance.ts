@@ -12,7 +12,7 @@ import type { LoopConfig } from "./types.js";
 import { emitEvent } from "./events.js";
 import {
   getRunStatus, getWorkflowId, completeRun,
-  findStoryByStatus, skipFailedStories,
+  findStoryByStatus,
   recordStepTransition,
 } from "./repo.js";
 import { archiveRunProgress, scheduleRunCronTeardown, cleanupLocalBranches } from "./cleanup-ops.js";
@@ -157,13 +157,30 @@ export async function checkLoopContinuation(runId: string, loopStepId: string): 
   );
   const originalFailedCount = parseInt(preSkipFailedRows[0]?.cnt || "0", 10);
 
-  const failedStory = await findStoryByStatus(runId, "failed") as { id: string } | undefined;
-  if (failedStory) {
-    const skipped = await skipFailedStories(runId);
-    if (skipped > 0) {
-      const wfId = await getWorkflowId(runId);
-      emitEvent({ ts: now(), event: "story.skipped", runId, workflowId: wfId, stepId: loopStepId, detail: `${skipped} story skipped (retries exhausted)` });
-    }
+  // CRITICAL (2026-04-07): If ANY story failed, FAIL the entire run.
+  // Previously skipFailedStories converted failed → skipped and pipeline marched on,
+  // deploying broken apps. Quality requires all stories to succeed.
+  if (originalFailedCount > 0) {
+    const failedStoryRows = await pgQuery<{ story_id: string; title: string }>(
+      "SELECT story_id, title FROM stories WHERE run_id = $1 AND status = 'failed' ORDER BY story_index ASC",
+      [runId]
+    );
+    const failedList = failedStoryRows.map(s => `${s.story_id} (${s.title})`).join(", ");
+    const failReason = `Loop step failed — ${originalFailedCount} story/stories failed: ${failedList}`;
+    logger.error(`[checkLoopContinuation] ${failReason}`, { runId });
+
+    await pgRun(
+      "UPDATE steps SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3",
+      [failReason, now(), loopStepId]
+    );
+    await pgRun(
+      "UPDATE runs SET status = 'failed', updated_at = $1 WHERE id = $2",
+      [now(), runId]
+    );
+    const wfId = await getWorkflowId(runId);
+    emitEvent({ ts: now(), event: "step.failed" as any, runId, workflowId: wfId, stepId: loopStepId, detail: failReason });
+    emitEvent({ ts: now(), event: "run.failed" as any, runId, workflowId: wfId, detail: failReason });
+    return { advanced: false, runCompleted: false };
   }
 
   // All stories verified/skipped — mark loop step done
