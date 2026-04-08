@@ -845,17 +845,24 @@ All visible text must be in Turkish. Use a dark, modern theme.`);
   }
 
   // PR REVIEW DELAY GATE: Wait for external review comments (Gemini, Copilot) before verify claim
+  // BUG FIX: Previously used step.updated_at as baseline but updated it on every defer, resetting
+  // the timer infinitely. Now uses context["verify_pending_since"] as stable baseline.
   if (step.step_id === "verify" && context["final_pr"]) {
-    const verifyTiming = await pgGet<{ updated_at: string }>("SELECT updated_at FROM steps WHERE id = $1", [step.id]);
-    if (verifyTiming) {
-      const elapsed = Date.now() - new Date(verifyTiming.updated_at).getTime();
-      if (elapsed < PR_REVIEW_DELAY_MS) {
-        const remaining = Math.round((PR_REVIEW_DELAY_MS - elapsed) / 1000);
-        logger.info(`[review-delay] PR review delay: ${remaining}s remaining — deferring verify claim`, { runId: step.run_id, stepId: step.step_id });
-        await pgRun("UPDATE steps SET status = 'pending', updated_at = $1 WHERE id = $2", [now(), step.id]);
-        return { found: false };
-      }
+    if (!context["verify_pending_since"]) {
+      context["verify_pending_since"] = new Date().toISOString();
+      await updateRunContext(step.run_id, context);
     }
+    const elapsed = Date.now() - new Date(context["verify_pending_since"]).getTime();
+    if (elapsed < PR_REVIEW_DELAY_MS) {
+      const remaining = Math.round((PR_REVIEW_DELAY_MS - elapsed) / 1000);
+      logger.info(`[review-delay] PR review delay: ${remaining}s remaining — deferring verify claim`, { runId: step.run_id, stepId: step.step_id });
+      // Revert status to pending so next cron can retry — DO NOT touch updated_at
+      await pgRun("UPDATE steps SET status = 'pending' WHERE id = $1", [step.id]);
+      return { found: false };
+    }
+    // Delay passed — clean up marker so a future retry starts fresh
+    delete context["verify_pending_since"];
+    await updateRunContext(step.run_id, context);
   }
 
   // Default optional template vars for non-story steps (design, security-gate, etc.)

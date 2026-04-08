@@ -59,19 +59,35 @@ export function mergeStoryIntoFeature(
     }
   }
 
+  // Try to fetch story branch — track whether remote version exists
+  let remoteAvailable = true;
   try {
-    // Fetch story branch
     execFileSync("git", ["fetch", "origin", storyBranch], {
       cwd: repoPath, timeout: GIT_LONG_TIMEOUT, stdio: "pipe",
     });
   } catch {
     // Branch may not exist on remote (local-only worktree)
+    remoteAvailable = false;
     logger.warn(`[merge-queue] Cannot fetch ${storyBranch}, trying local merge`);
+  }
+
+  // BUG FIX: Resolve merge target correctly — previously always used origin/ prefix
+  // even when fetch failed, causing "branch not found" to be reported as conflict.
+  let mergeTarget = remoteAvailable ? `origin/${storyBranch}` : storyBranch;
+  if (!remoteAvailable) {
+    // Verify local branch exists before attempting merge
+    try {
+      execFileSync("git", ["rev-parse", "--verify", storyBranch], {
+        cwd: repoPath, timeout: 5000, stdio: "pipe",
+      });
+    } catch {
+      logger.warn(`[merge-queue] Local branch ${storyBranch} also missing — skipping merge`);
+      return { success: false, conflicts: [`branch-missing:${storyBranch}`] };
+    }
   }
 
   try {
     // Merge with --no-ff to preserve story boundary
-    const mergeTarget = `origin/${storyBranch}`;
     execFileSync("git", ["merge", "--no-ff", mergeTarget, "-m", commitMessage], {
       cwd: repoPath, timeout: GIT_LONG_TIMEOUT, stdio: "pipe",
     });

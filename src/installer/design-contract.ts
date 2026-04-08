@@ -1,8 +1,13 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { logger } from "../lib/logger.js";
 import { pgQuery, pgRun, now } from "../db-pg.js";
+
+// ESM __dirname polyfill (NodeNext doesn't provide it)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // --- Types ---
 
