@@ -2281,6 +2281,61 @@ ${screenDescs}
       }
     }
 
+    // SCOPE ENFORCEMENT (Wave 6 fix A — plan: reactive-frolicking-cupcake)
+    // Run #340 US-002 (Note store + localStorage) wrote 12 source files / 1328
+    // insertions including Settings.tsx (US-005 scope), NoteCard/NoteForm/Sidebar/
+    // TopNav (other stories' UI), proving that the prompt-only SCOPE BOUNDARIES
+    // section in the developer AGENTS.md was being ignored. Server-side check:
+    // count the source files this story branch touched vs the baseline branch tip,
+    // hard-fail when the count is implausible for a single story.
+    //
+    // Tiered enforcement:
+    //   - story_index == 0 (US-001 / setup story): no limit, expected to scaffold
+    //     project structure + baseline files
+    //   - story_index >= 1: hard fail if > 12 source files changed (the absolute
+    //     ceiling — even a complex feature should not exceed this), warn at > 8
+    //
+    // Source files = .tsx/.jsx/.ts/.js/.vue/.svelte/.css/.scss/.html, excluding
+    // build output, config, lockfiles, DESIGN.md, stitch assets, references.
+    if (step.step_id === "implement" && storyStatus === STORY_STATUS.DONE && storyRow?.story_id) {
+      try {
+        const wd = context["story_workdir"] || "";
+        const baseBr = context["branch"] || "";
+        // story_index is not on storyRow (getStoryInfo only returns id+title) — query it
+        const storyIdxRow = await pgGet<{ story_index: number }>("SELECT story_index FROM stories WHERE id = $1", [step.current_story_id]);
+        const isSetupStory = (storyIdxRow?.story_index ?? 99) === 0;
+        if (!isSetupStory && wd && baseBr && fs.existsSync(wd)) {
+          const diffOut = execFileSync("git", ["diff", "--name-only", `${baseBr}...HEAD`], {
+            cwd: wd, timeout: 10000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8",
+          }).trim();
+          const changedFiles = diffOut ? diffOut.split("\n").filter(Boolean) : [];
+          const SCOPE_EXTS = /\.(tsx?|jsx?|vue|svelte|css|scss|html)$/i;
+          const SCOPE_IGNORE = /^(node_modules\/|dist\/|\.next\/|build\/|coverage\/|stitch\/|references\/|DESIGN\.md|PROJECT_MEMORY\.md|\.gitignore|package(-lock)?\.json|tsconfig|vite\.config|tailwind\.config|postcss\.config|eslint\.config|README|index\.html$)/;
+          const sourceFiles = changedFiles.filter(f => SCOPE_EXTS.test(f) && !SCOPE_IGNORE.test(f));
+          context["story_changed_files"] = String(sourceFiles.length);
+          context["story_changed_paths"] = sourceFiles.slice(0, 50).join(",");
+
+          const HARD_LIMIT = 12;
+          const SOFT_LIMIT = 8;
+          if (sourceFiles.length > HARD_LIMIT && step.retry_count < step.max_retries) {
+            const scopeMsg = `SCOPE OVERFLOW: Story ${storyRow.story_id} (${storyRow.title}) modified ${sourceFiles.length} source files — hard limit is ${HARD_LIMIT}. Files: ${sourceFiles.slice(0, 15).join(", ")}. Limit your changes to the files this story actually owns. Most cross-cutting work belongs in OTHER stories. Reset the worktree (git reset --hard ${baseBr}) and re-implement with a tighter scope. If you genuinely need shared utility edits, list them in OUTPUT as SHARED_EDITS: <file> — <reason>.`;
+            logger.warn(`[scope-check] Story ${storyRow.story_id} OVERFLOWED scope: ${sourceFiles.length} files, hard fail`, { runId: step.run_id });
+            context["previous_failure"] = scopeMsg;
+            context["failure_category"] = "SCOPE_OVERFLOW";
+            context["failure_suggestion"] = "Reset worktree and re-implement with only the files this story owns";
+            await updateRunContext(step.run_id, context);
+            await failStep(stepId, scopeMsg);
+            return { advanced: false, runCompleted: false };
+          } else if (sourceFiles.length > SOFT_LIMIT) {
+            logger.warn(`[scope-check] Story ${storyRow.story_id} touched ${sourceFiles.length} files (soft limit ${SOFT_LIMIT}) — flagging for verify`, { runId: step.run_id });
+            context["scope_creep_warning"] = `Story ${storyRow.story_id} touched ${sourceFiles.length} files — above typical single-story scope`;
+          }
+        }
+      } catch (scopeErr) {
+        logger.warn(`[scope-check] Skipped for story ${storyRow.story_id}: ${String(scopeErr).slice(0, 150)}`, { runId: step.run_id });
+      }
+    }
+
     // Mark current story done or skipped + persist PR context for verify_each
     // FIX: Remove context fallback to prevent cross-contamination between parallel stories
     let storyPrUrl = parsed["pr_url"] || "";

@@ -70,12 +70,17 @@ export function checkTestFailures(output: string): string | null {
  * This list intentionally only covers fields the pipeline actually reads downstream;
  * cosmetic fields stay optional so this guardrail does not become noise. Fields
  * that already have dedicated guardrails (BASELINE in setup-build, SMOKE_TEST_RESULT
- * in final-test) are handled separately and do not appear here.
+ * in final-test, STORIES_JSON via parseAndInsertStories) are handled separately
+ * and do not appear here.
+ *
+ * IMPORTANT: only list fields that parseOutputKeyValues actually populates in
+ * the `parsed` object. STORIES_JSON is explicitly skipped by the line-based
+ * parser (context-ops.ts line 89) because it's a multi-line JSON read directly
+ * from raw output by parseAndInsertStories — listing it here causes a hard
+ * false-positive on every stories step (run #339 hit this on first deploy).
  */
 const REQUIRED_OUTPUT_FIELDS: Record<string, string[]> = {
   "plan": ["repo", "branch", "tech_stack"],
-  "design": ["screen_map"],
-  "stories": ["stories_json"],
   "setup-repo": ["existing_code"],
   "setup-build": ["build_cmd"],
 };
