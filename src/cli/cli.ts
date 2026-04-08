@@ -739,11 +739,17 @@ async function main() {
 
   if (action === "run") {
     let notifyUrl: string | undefined;
+    let forceQuota = false;
     const runArgs = args.slice(3);
     const nuIdx = runArgs.indexOf("--notify-url");
     if (nuIdx !== -1) {
       notifyUrl = runArgs[nuIdx + 1];
       runArgs.splice(nuIdx, 2);
+    }
+    const fqIdx = runArgs.indexOf("--force-quota");
+    if (fqIdx !== -1) {
+      forceQuota = true;
+      runArgs.splice(fqIdx, 1);
     }
     let taskTitle = runArgs.join(" ").trim();
     // E2BIG fix: if task starts with @, read from file
@@ -752,6 +758,67 @@ async function main() {
       taskTitle = readFileSync(taskTitle.slice(1), "utf8").trim();
     }
     if (!taskTitle) { process.stderr.write("Missing task title.\n"); printUsage(); process.exit(1); }
+
+    // Wave 7 (plan: reactive-frolicking-cupcake.md): Kimi quota pre-flight guard.
+    // Hits the MC kimi-quota endpoint (which queries Kimi Code billing in turn)
+    // and refuses to start a run if quota is critically low. Reason: runs #338-340
+    // wasted hours appearing as "gateway stalls" while developer agents were
+    // actually getting 403 every call from an exhausted weekly quota. The guard
+    // is bypassable with --force-quota for the case where you want a run anyway
+    // (e.g. workflows that don't use kimi at all). The check is best-effort —
+    // if the quota endpoint is unreachable we let the run through with a warning,
+    // we never block a run because of a transient MC API failure.
+    if (!forceQuota) {
+      try {
+        const http = await import("node:http");
+        const quotaUrl = process.env.MC_INTERNAL_URL
+          ? `${process.env.MC_INTERNAL_URL}/api/kimi-quota`
+          : "http://127.0.0.1:3080/api/kimi-quota";
+        const body = await new Promise<string>((resolve, reject) => {
+          const req = http.get(quotaUrl, { timeout: 3000 }, (res) => {
+            const chunks: Buffer[] = [];
+            res.on("data", (c: Buffer) => chunks.push(c));
+            res.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
+            res.on("error", reject);
+          });
+          req.on("timeout", () => { req.destroy(); reject(new Error("quota check timeout")); });
+          req.on("error", reject);
+        });
+        const data = JSON.parse(body);
+        const sev = data?.severity as string | undefined;
+        const snapshot = data?.snapshot;
+        if (sev === "exhausted") {
+          const w = snapshot?.weekly;
+          const r = snapshot?.rateWindow;
+          const resetMs = (w?.remaining === 0 ? w?.resetInMs : r?.resetInMs) || 0;
+          const resetMin = Math.max(1, Math.round(resetMs / 60000));
+          process.stderr.write(
+            `Kimi quota exhausted — refusing to start run.\n` +
+            `  Weekly: ${w?.used ?? "?"}/${w?.limit ?? "?"} remaining=${w?.remaining ?? "?"}\n` +
+            `  5h window: ${r?.used ?? "?"}/${r?.limit ?? "?"} remaining=${r?.remaining ?? "?"}\n` +
+            `  Resets in ~${resetMin} min.\n` +
+            `  Re-run with --force-quota to bypass (e.g. for non-Kimi workflows).\n`,
+          );
+          process.exit(2);
+        }
+        if (sev === "critical") {
+          const w = snapshot?.weekly;
+          const r = snapshot?.rateWindow;
+          process.stderr.write(
+            `Kimi quota critical — proceeding but expect failures.\n` +
+            `  Weekly remaining=${w?.remaining ?? "?"}, 5h remaining=${r?.remaining ?? "?"}\n` +
+            `  Use --force-quota to silence this warning.\n`,
+          );
+        } else if (sev === "warn") {
+          const w = snapshot?.weekly;
+          process.stderr.write(`Kimi quota warning: weekly remaining=${w?.remaining ?? "?"}\n`);
+        }
+      } catch (qErr) {
+        // Quota endpoint unreachable — log and continue (never block on transient failure)
+        process.stderr.write(`Kimi quota check skipped: ${(qErr as Error).message}\n`);
+      }
+    }
+
     const run = await runWorkflow({ workflowId: target, taskTitle, notifyUrl });
     process.stdout.write(
       [`Run: #${run.runNumber} (${run.id})`, `Workflow: ${run.workflowId}`, `Task: ${run.task}`, `Status: ${run.status}`].join("\n") + "\n",
