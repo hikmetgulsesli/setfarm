@@ -134,14 +134,38 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
   }
 
   try {
-    // MERGE_CONFLICT FIX: Fetch latest base branch before creating worktree.
-    // Without this, worktree is created from stale local base branch that
-    // doesn't include recently merged PRs from other stories.
+    // MERGE_CONFLICT FIX (run #338): Before creating a worktree, make sure the local
+    // base branch contains everything pushed so far — including the latest setup-build
+    // commit and any merged story PRs. Previously we used `git branch -f` which fails
+    // when base is checked out in the main worktree, leaving it stale. Now we fetch,
+    // then in the main repo do a hard reset of the base branch to origin so the new
+    // worktree's branch starts from the correct parent.
     try {
       execFileSync("git", ["fetch", "origin", baseBranch], { cwd: repo, timeout: 15000, stdio: "pipe" });
-      // Fast-forward local base branch to include merged PRs
-      execFileSync("git", ["branch", "-f", baseBranch, "origin/" + baseBranch], { cwd: repo, timeout: 5000, stdio: "pipe" });
-      logger.info(`[worktree] Synced ${baseBranch} to origin/${baseBranch} before creating worktree`, {});
+      // What is the current branch in the main worktree?
+      let mainCurrent = "";
+      try {
+        mainCurrent = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: repo, timeout: 5000, stdio: "pipe" }).toString().trim();
+      } catch {}
+      if (mainCurrent === baseBranch) {
+        // Base branch IS checked out in main repo — sync forward via pull --ff-only.
+        // If local has commits ahead of origin (e.g. setup-build just committed but
+        // hasn't been pushed yet), this is a no-op and we keep the local commit.
+        try {
+          execFileSync("git", ["pull", "origin", baseBranch, "--ff-only"], { cwd: repo, timeout: 15000, stdio: "pipe" });
+          logger.info(`[worktree] Pulled ${baseBranch} (ff-only) in main worktree before creating story worktree`, {});
+        } catch (pullErr) {
+          logger.warn(`[worktree] ff-only pull of ${baseBranch} failed (local may be ahead or diverged), continuing: ${String(pullErr).slice(0, 150)}`, {});
+        }
+      } else {
+        // Base branch not checked out anywhere — safe to hard-sync via branch -f
+        try {
+          execFileSync("git", ["branch", "-f", baseBranch, "origin/" + baseBranch], { cwd: repo, timeout: 5000, stdio: "pipe" });
+          logger.info(`[worktree] Synced ${baseBranch} to origin/${baseBranch} before creating worktree`, {});
+        } catch (brErr) {
+          logger.warn(`[worktree] branch -f ${baseBranch} failed: ${String(brErr).slice(0, 150)}`, {});
+        }
+      }
     } catch (fetchErr) {
       logger.warn(`[worktree] Could not sync base branch: ${String(fetchErr)}`, {});
     }

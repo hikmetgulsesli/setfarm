@@ -31,7 +31,7 @@ export { failStep } from "./step-fail.js";
 import { resolveTemplate, parseOutputKeyValues, readProgressFile, readProjectMemory, updateProjectMemory, getProjectTree, getInstalledPackages, getSharedCode, getRecentStoryCode, getComponentRegistry, getApiRoutes } from "./context-ops.js";
 import { getStories, formatStoryForTemplate, formatCompletedStories, parseAndInsertStories } from "./story-ops.js";
 import { createStoryWorktree, removeStoryWorktree } from "./worktree-ops.js";
-import { computeHasFrontendChanges, checkTestFailures, checkQualityGate, processDesignCompletion, processSetupCompletion, processSetupDesignContracts, processBrowserCheck, processDesignFidelityCheck, checkStoryDesignCompliance, checkImportConsistency } from "./step-guardrails.js";
+import { computeHasFrontendChanges, checkTestFailures, checkQualityGate, checkRequiredOutputFields, processDesignCompletion, processSetupCompletion, processSetupDesignContracts, processBrowserCheck, processDesignFidelityCheck, checkStoryDesignCompliance, checkImportConsistency } from "./step-guardrails.js";
 import { cleanupAbandonedSteps as _cleanupAbandonedSteps, scheduleRunCronTeardown } from "./cleanup-ops.js";
 import {
   getRunStatus, getRunContext, updateRunContext, failRun,
@@ -53,6 +53,23 @@ export async function cleanupAbandonedSteps(): Promise<void> {
 
 async function getWorkflowId(runId: string): Promise<string | undefined> {
   return await _getWorkflowId(runId);
+}
+
+/**
+ * Wave 5 fix #20 (plan: reactive-frolicking-cupcake): safe loop_config parser.
+ * Previously three call sites did `JSON.parse(step.loop_config)` without a
+ * try/catch. A corrupted or half-written loop_config row (possible during
+ * migrations or medic resets) would throw and crash the claim loop. This
+ * helper returns `null` on any error and logs the failure so we can see it.
+ */
+function parseLoopConfigSafe(raw: string | null, runId?: string): LoopConfig | null {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as LoopConfig;
+  } catch (e) {
+    logger.warn(`[loop-config] Failed to parse loop_config: ${String(e).slice(0, 150)}`, runId ? { runId } : {});
+    return null;
+  }
 }
 
 // ── Peek (lightweight work check) ───────────────────────────────────
@@ -362,11 +379,21 @@ async function autoCompleteStoriesWithPRs(
         }
       }
 
-      if (prFound && prUrl) {
+      // Wave 5 fix #19 (plan: reactive-frolicking-cupcake): validate PR URL
+      // format before auto-completing. Previously any non-empty string would
+      // auto-complete the story, which meant a malformed or placeholder URL
+      // could silently mark work as done. Require the github.com/owner/repo/pull/N
+      // shape, and also confirm it belongs to the expected repo.
+      const GH_PR_REGEX = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+(?:[?#].*)?$/i;
+      const expectedRepoName = (context["repo"] || "").split("/").pop() || "";
+      const prUrlValid = prUrl && GH_PR_REGEX.test(prUrl) && (!expectedRepoName || prUrl.includes(`/${expectedRepoName}/`));
+      if (prFound && prUrlValid) {
           await pgRun("UPDATE stories SET status = 'done', pr_url = $1, story_branch = $2, updated_at = $3 WHERE id = $4 AND status = 'pending'", [prUrl, storyBranchForCheck, now(), rs.id]);
           await pgRun("UPDATE steps SET current_story_id = NULL, updated_at = $1 WHERE id = $2 AND current_story_id = $3", [now(), step.id, rs.id]);
         logger.info(`[claim-auto-complete] Story ${rs.story_id} auto-completed — PR exists: ${prUrl}`, { runId: step.run_id });
         emitEvent({ ts: now(), event: "story.done", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, storyId: rs.story_id, storyTitle: rs.title, detail: `Auto-completed — PR exists (${prUrl})` });
+      } else if (prFound && !prUrlValid) {
+        logger.warn(`[claim-auto-complete] Story ${rs.story_id} has PR "${prUrl}" but format invalid or wrong repo — NOT auto-completing`, { runId: step.run_id });
       }
     } catch (e) {
       logger.warn(`[claim-auto-complete] PR check failed for story ${rs.story_id}: ${String(e)}`, { runId: step.run_id });
@@ -1000,7 +1027,7 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
 
   // T6: Loop step claim logic
   if (step.type === "loop") {
-    const loopConfig: LoopConfig | null = step.loop_config ? JSON.parse(step.loop_config) : null;
+    const loopConfig: LoopConfig | null = parseLoopConfigSafe(step.loop_config, step.run_id);
     if (loopConfig?.over === "stories") {
       // Auto-complete stories that already have a PR (open or merged)
       const runIdPrefix = step.run_id.slice(0, 8);
@@ -1038,15 +1065,16 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
 
       if (!nextStory) {
         // (removed: fake transaction cleanup)
+        // Wave 1 fix #2 (plan: reactive-frolicking-cupcake): previously, if there were no
+        // next pending stories but a failed story existed, we called skipFailedStories to
+        // convert failed → skipped so the loop could "finish" and the pipeline could march
+        // on. Commit 96dd442 removed the equivalent call from step-advance.ts with the
+        // message "fail run if any story fails — no more silent skip + broken deploy", but
+        // this claim-path copy was left behind, re-introducing the silent skip whenever a
+        // loop runs out of pending work while holding a failed story. We now leave failed
+        // stories in 'failed' status so the run-level guardrail in checkLoopContinuation
+        // fails the run instead of silently marching on.
         const failedStory = await findStoryByStatus(step.run_id, "failed") as { id: string } | undefined;
-
-        if (failedStory) {
-          const skipped = await skipFailedStories(step.run_id);
-          if (skipped > 0) {
-            const wfId = await getWorkflowId(step.run_id);
-            emitEvent({ ts: now(), event: "story.skipped", runId: step.run_id, workflowId: wfId, stepId: step.id, agentId: agentId, detail: `${skipped} story skipped (retries exhausted)` });
-          }
-        }
 
         // Check if other stories are still running in parallel
         const runningStory = await pgGet<{ id: string }>("SELECT id FROM stories WHERE run_id = $1 AND status = 'running'", [step.run_id]);
@@ -1123,37 +1151,49 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
       // ISSUE-1 FIX: Use {runIdPrefix}-{storyId} for branch name to prevent collisions across runs
       const storyRunPrefix = step.run_id.slice(0, 8);
       const storyBranch = `${storyRunPrefix}-${nextStory.story_id}`.toLowerCase();
-      await pgRun("UPDATE steps SET status = 'running', current_story_id = $1, started_at = COALESCE(started_at, NOW()), updated_at = $2 WHERE id = $3", [nextStory.id, now(), step.id]);
-      await recordStepTransition(step.id, step.run_id, "pending", "running", agentId, "claimLoopStep", { storyId: nextStory.story_id });
-      // (removed: fake transaction flag)
 
-      // GIT WORKTREE ISOLATION: Create OUTSIDE transaction to avoid holding DB
-      // lock during slow git operations.
+      // Wave 4 fix #10 (plan: reactive-frolicking-cupcake): previously we updated
+      // `steps.current_story_id` BEFORE creating the worktree. If the process died
+      // between the DB update and the worktree creation (gateway restart, OOM kill,
+      // agent crash), the DB pointed at a claimed story with no working directory
+      // and the only recovery was a medic reset. Now we create the worktree first —
+      // a pure filesystem operation with no DB side-effects — and only update
+      // `current_story_id` once we have a valid `storyWorkdir`. A crash in the
+      // filesystem phase leaves the step in its previous state and the next claim
+      // loop re-picks the story cleanly.
+
       // GUARD: Repo path MUST exist — without it, agent works in wrong directory
       if (!context["repo"]) {
         const noRepoReason = "MISSING_REPO: context['repo'] is empty — cannot implement story without project path";
         logger.error(`[claim] ${noRepoReason} (story=${nextStory.story_id})`, { runId: step.run_id });
         await pgRun("UPDATE stories SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3",
           [noRepoReason, now(), nextStory.id]);
-        await pgRun("UPDATE steps SET current_story_id = NULL, updated_at = $1 WHERE id = $2", [now(), step.id]);
         try { await pgRun("UPDATE claim_log SET outcome = 'failed', diagnostic = $1 WHERE story_id = $2 AND outcome IS NULL", [noRepoReason, nextStory.story_id]); } catch {}
         emitEvent({ ts: now(), event: "story.failed", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, detail: noRepoReason });
         return { found: false };
       }
-      let storyWorkdir = "";
-      if (context["repo"]) {
-        storyWorkdir = createStoryWorktree(context["repo"], storyBranch, context["branch"] || "master", agentId);
-      }
-      if (!storyWorkdir && context["repo"]) {
-        // Worktree creation failed — revert story claim
+
+      // GIT WORKTREE ISOLATION: Create OUTSIDE transaction to avoid holding DB
+      // lock during slow git operations. Done BEFORE the DB update so the DB
+      // never references a worktree that does not exist.
+      const storyWorkdir = createStoryWorktree(context["repo"], storyBranch, context["branch"] || "master", agentId);
+      if (!storyWorkdir) {
+        // Worktree creation failed — revert story claim, do not touch step state
         const wtReason = `Worktree creation failed for story ${nextStory.story_id} — cannot isolate parallel work`;
         logger.error(wtReason, { runId: step.run_id, stepId: step.step_id });
-        await pgRun("UPDATE stories SET status = 'failed', updated_at = $1 WHERE id = $2", [now(), nextStory.id]);
-        await pgRun("UPDATE steps SET current_story_id = NULL, updated_at = $1 WHERE id = $2", [now(), step.id]);
-        emitEvent({ ts: now(), event: "story.failed", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, storyId: nextStory.story_id, storyTitle: nextStory.title, detail: wtReason });
+        // Revert story to pending so the next claim loop can retry with a fresh worktree
+        // (not 'failed' — the story's own implementation was never attempted)
+        await pgRun("UPDATE stories SET status = 'pending', claimed_at = NULL, claimed_by = NULL, updated_at = $1 WHERE id = $2", [now(), nextStory.id]);
+        try { await pgRun("UPDATE claim_log SET outcome = 'failed', diagnostic = $1 WHERE story_id = $2 AND outcome IS NULL", [wtReason, nextStory.story_id]); } catch {}
+        emitEvent({ ts: now(), event: "story.retry", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, storyId: nextStory.story_id, storyTitle: nextStory.title, detail: wtReason });
         return { found: false };
       }
-      context["story_workdir"] = storyWorkdir || context["repo"];
+
+      // Worktree is ready — NOW update the step to point at the story.
+      await pgRun("UPDATE steps SET status = 'running', current_story_id = $1, started_at = COALESCE(started_at, NOW()), updated_at = $2 WHERE id = $3", [nextStory.id, now(), step.id]);
+      await recordStepTransition(step.id, step.run_id, "pending", "running", agentId, "claimLoopStep", { storyId: nextStory.story_id });
+
+      context["story_workdir"] = storyWorkdir;
 
       // Verify node_modules symlink is intact after worktree creation
       if (storyWorkdir) {
@@ -1183,13 +1223,17 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
           cwd: actualWorktreeDir, encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
         }).trim();
         if (actualBranch) {
-          context["story_branch"] = actualBranch;
+          // Wave 4 fix #11: force lowercase here too — git itself is case-sensitive
+          // on Linux, so a `US-005` branch and a `us-005` branch are genuinely distinct
+          // references and the merge queue ends up trying to merge only one of them.
+          const actualBranchLc = actualBranch.toLowerCase();
+          context["story_branch"] = actualBranchLc;
           // Also persist to stories table so verify step can reference it
-          await pgRun("UPDATE stories SET story_branch = $1 WHERE id = $2", [actualBranch, nextStory.id]);
-          logger.info(`[story-branch] Set story_branch=${actualBranch} from worktree (story=${nextStory.story_id})`, { runId: step.run_id });
+          await pgRun("UPDATE stories SET story_branch = $1 WHERE id = $2", [actualBranchLc, nextStory.id]);
+          logger.info(`[story-branch] Set story_branch=${actualBranchLc} from worktree (story=${nextStory.story_id})`, { runId: step.run_id });
         }
       } catch (branchErr) {
-        // Fallback: use the computed branch name
+        // Fallback: use the computed branch name (already lowercased on line 1126)
         context["story_branch"] = storyBranch;
         logger.warn(`[story-branch] Could not read branch from worktree, using computed: ${storyBranch}`, { runId: step.run_id });
       }
@@ -1438,6 +1482,21 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
     }
   }
 
+  // REQUIRED OUTPUT FIELDS GUARDRAIL (Wave 3 fix #12)
+  // Enforce that each step's agent output contains fields the pipeline actually
+  // reads downstream. If an agent reports STATUS: done but forgot BUILD_CMD or
+  // SCREEN_MAP, the pipeline previously advanced with undefined values and the
+  // failure surfaced much later (if at all). Catch it at the source.
+  if (parsed["status"]?.toLowerCase() === "done") {
+    const missingFieldsMsg = checkRequiredOutputFields(step.step_id, parsed);
+    if (missingFieldsMsg) {
+      logger.warn(`[required-fields-guardrail] ${missingFieldsMsg}`, { runId: step.run_id, stepId: step.step_id });
+      if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
+      await failStep(stepId, missingFieldsMsg);
+      return { advanced: false, runCompleted: false };
+    }
+  }
+
   // TEST FAILURE GUARDRAIL — soft retry with fix instructions instead of hard fail
   if (parsed["status"]?.toLowerCase() === "done") {
     const testFailMsg = checkTestFailures(output);
@@ -1653,10 +1712,37 @@ ${screenDescs}
     }
   }
 
-  // SETUP-BUILD BASELINE GUARDRAIL (v1.5.53): Also reject empty baseline
+  // SETUP-BUILD BASELINE GUARDRAIL (v1.5.53 + run #337 fix):
+  // Before failing for an empty/non-pass baseline, try to auto-derive it by running
+  // `npm run build` ourselves. Agents occasionally forget to include BASELINE: PASS
+  // even though the build works — don't burn a retry slot on that.
   if (step.step_id === "setup-build" && parsed["status"]?.toLowerCase() === "done") {
-    const baseline = (parsed["baseline"] || "").toLowerCase().trim();
-    const baselinePass = baseline.includes("pass") || baseline.includes("ok") || baseline.includes("success");
+    let baseline = (parsed["baseline"] || "").toLowerCase().trim();
+    let baselinePass = baseline.includes("pass") || baseline.includes("ok") || baseline.includes("success");
+    if (!baseline || !baselinePass) {
+      const repoPath = context["repo"] || "";
+      if (repoPath && fs.existsSync(path.join(repoPath, "package.json"))) {
+        try {
+          const pkgRaw = fs.readFileSync(path.join(repoPath, "package.json"), "utf-8");
+          const pkg = JSON.parse(pkgRaw);
+          if (pkg.scripts && pkg.scripts.build) {
+            logger.info(`[setup-build-autoderive] BASELINE missing — running 'npm run build' to verify`, { runId: step.run_id, stepId: step.step_id });
+            execFileSync("npm", ["run", "build"], { cwd: repoPath, timeout: 180000, stdio: "pipe" });
+            baseline = "pass (auto-derived)";
+            baselinePass = true;
+            parsed["baseline"] = baseline;
+            logger.info(`[setup-build-autoderive] Build passed — baseline auto-set`, { runId: step.run_id });
+          } else {
+            // No build script → nothing to verify, accept
+            baseline = "no build script (auto-derived)";
+            baselinePass = true;
+            parsed["baseline"] = baseline;
+          }
+        } catch (buildErr: any) {
+          logger.warn(`[setup-build-autoderive] Build failed during auto-derive: ${String(buildErr?.message || buildErr).slice(0, 200)}`, { runId: step.run_id });
+        }
+      }
+    }
     if (!baseline || !baselinePass) {
       const baselineMsg = `GUARDRAIL: setup-build baseline is "${parsed["baseline"] || "(empty)"}" — build must explicitly pass.`;
       logger.warn(`[setup-build-guardrail] ${baselineMsg}`, { runId: step.run_id, stepId: step.step_id });
@@ -1883,9 +1969,29 @@ ${screenDescs}
     }
   }
 
-  // SMOKE TEST GUARDRAIL (final-test): If agent skipped smoke test, retry
+  // SMOKE TEST GUARDRAIL (final-test): If agent skipped smoke test, try to run it
+  // ourselves before burning a retry slot. Agents frequently forget the smoke test
+  // even when the build is fine (run #337 final-test needed a full retry for this).
   if (step.step_id === "final-test" && parsed["status"]?.toLowerCase() === "done") {
-    const smokeResult = parsed["smoke_test_result"] || "";
+    let smokeResult = parsed["smoke_test_result"] || "";
+    if (!smokeResult) {
+      const repoPath = context["repo"] || "";
+      const smokeScript = path.join(os.homedir(), ".openclaw", "setfarm-repo", "scripts", "smoke-test.mjs");
+      if (repoPath && fs.existsSync(smokeScript)) {
+        try {
+          logger.info(`[final-test-autoderive] SMOKE_TEST_RESULT missing — running smoke-test.mjs`, { runId: step.run_id, stepId: step.step_id });
+          const smokeOut = execFileSync("node", [smokeScript, repoPath], { timeout: 240000, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+          // smoke-test.mjs prints a summary; accept any non-empty output as the result
+          smokeResult = (smokeOut || "").trim().slice(-2000) || "pass (auto-derived)";
+          parsed["smoke_test_result"] = smokeResult;
+          logger.info(`[final-test-autoderive] smoke-test auto-run succeeded`, { runId: step.run_id });
+        } catch (smokeErr: any) {
+          const errOut = String(smokeErr?.stdout || smokeErr?.stderr || smokeErr?.message || smokeErr).slice(0, 2000);
+          logger.warn(`[final-test-autoderive] smoke-test auto-run failed: ${errOut.slice(0, 200)}`, { runId: step.run_id });
+          // Leave smokeResult empty so the guardrail fires below
+        }
+      }
+    }
     if (!smokeResult) {
       logger.warn(`[final-test-guardrail] SMOKE_TEST_RESULT missing from final-test output — agent likely skipped smoke test. Retrying.`, { runId: step.run_id, stepId: step.step_id });
       if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
@@ -2180,11 +2286,39 @@ ${screenDescs}
     let storyPrUrl = parsed["pr_url"] || "";
     // ISSUE-1 FIX: Prefer pipeline-set branch (from DB) over agent's output (agents create wrong names)
     const dbStoryBranch = await pgGet<{ story_branch: string }>("SELECT story_branch FROM stories WHERE id = $1", [step.current_story_id]);
-    const storyBranchName = dbStoryBranch?.story_branch || parsed["story_branch"] || context["story_branch"] || "";
+    // Wave 4 fix #11 (plan: reactive-frolicking-cupcake): normalize story_branch to
+    // lowercase. Run #338 produced a `35b2cc22-US-005` (uppercase) branch alongside
+    // `35b2cc22-us-005` (lowercase) because createStoryWorktree uses toLowerCase()
+    // but the agent's STORY_BRANCH output was uppercase and wrote into the DB as-is.
+    // Normalize at every point where story_branch is read from agent output or passed
+    // to downstream steps.
+    const storyBranchName = (dbStoryBranch?.story_branch || parsed["story_branch"] || context["story_branch"] || "").toLowerCase();
     // Always inject DB branch into context so verify agent can find it
     if (storyBranchName) {
       context["story_branch"] = storyBranchName;
       parsed["story_branch"] = storyBranchName;
+    }
+    // CROSS-PROJECT CONTAMINATION GUARD (run #337 US-002 hallucination fix):
+    // Agent sessions occasionally carry context from a previous project and fabricate
+    // STORY_BRANCH / PR_URL fields pointing at a different repo. Detect that here and
+    // fail the step with corrective feedback — never let a fabricated output be marked done.
+    if (storyStatus !== STORY_STATUS.SKIPPED) {
+      const expectedRunPrefix = step.run_id.slice(0, 8);
+      const expectedRepoName = (context["repo"] || "").split("/").pop() || "";
+      const agentBranch = (parsed["story_branch"] || "").trim();
+      const agentPr = (parsed["pr_url"] || "").trim();
+      const branchMismatch = agentBranch && expectedRunPrefix && !agentBranch.toLowerCase().startsWith(expectedRunPrefix.toLowerCase()) && !agentBranch.toLowerCase().includes(expectedRunPrefix.toLowerCase());
+      const prMismatch = agentPr && expectedRepoName && !agentPr.includes(`/${expectedRepoName}/`) && !agentPr.includes(`/${expectedRepoName}.git/`);
+      if (branchMismatch || prMismatch) {
+        const details: string[] = [];
+        if (branchMismatch) details.push(`STORY_BRANCH "${agentBranch}" does not match run prefix "${expectedRunPrefix}"`);
+        if (prMismatch) details.push(`PR_URL "${agentPr}" does not reference repo "${expectedRepoName}"`);
+        const correctiveMsg = `CROSS-PROJECT CONTAMINATION: Agent output references a different project. ${details.join(". ")}. You must work in ${context["repo"] || "the assigned repo"} on story ${storyRow?.story_id} (${storyRow?.title}). Do NOT reference other repos, branches, or PRs. Re-do the work in the correct worktree.`;
+        logger.error(`[cross-project-guard] ${correctiveMsg}`, { runId: step.run_id, stepId: step.step_id });
+        if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
+        await failStep(stepId, correctiveMsg);
+        return { advanced: false, runCompleted: false };
+      }
     }
     // FIX: Validate PR URL belongs to correct repo (cross-contamination guard)
     if (storyPrUrl && context["repo"]) {
@@ -2239,12 +2373,31 @@ ${screenDescs}
     delete context["current_story_title"];
     delete context["current_story"];
     delete context["verify_feedback"];
+    // Wave 1 fix #3 (plan: reactive-frolicking-cupcake): previous_failure is set by
+    // failStep and guardrails when a story attempt fails, so the next retry sees its
+    // own past error. It is never cleared anywhere, so when the loop finishes this
+    // story and claims the NEXT one, the new story's agent inherits the previous
+    // story's error message and gets steered by it ("fix the calculator test" while
+    // implementing the settings page). Clear it here — story transition is the right
+    // boundary, not claim time (retries on the same story must keep seeing it).
+    delete context["previous_failure"];
     await updateRunContext(step.run_id, context);
 
     // Clear current_story_id, save output
     await pgRun("UPDATE steps SET current_story_id = NULL, output = $1, updated_at = $2 WHERE id = $3", [output, now(), step.id]);
 
-    const loopConfig: LoopConfig | null = step.loop_config ? JSON.parse(step.loop_config) : null;
+    const loopConfig: LoopConfig | null = parseLoopConfigSafe(step.loop_config, step.run_id);
+
+    // Wave 3 fix #18 (plan: reactive-frolicking-cupcake): make the loop completion
+    // merge strategies explicit. Two branches follow:
+    //   1. direct-merge — one batched PR via merge-queue at loop end. Used when
+    //      loopConfig.mergeStrategy === "direct-merge".
+    //   2. pr-each (default) — each story gets its own PR via the verify step
+    //      loop. Used when loopConfig.verifyEach === true. This is the implicit
+    //      default; there is no explicit "pr-each" string. If neither branch
+    //      matches, we fall through to checkLoopContinuation as a safety net.
+    // Any future strategy must be added as an explicit branch above the
+    // fall-through, not silently plumbed through.
 
     // DIRECT-MERGE: No per-story PRs — merge queue runs after all stories complete
     if (loopConfig?.mergeStrategy === "direct-merge") {

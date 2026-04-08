@@ -11,6 +11,50 @@ You MUST read these reference files before starting implementation:
 
 Follow ALL rules in these references. Violations will cause your PR to be REJECTED.
 
+## SCOPE BOUNDARIES (important — read before editing files)
+
+You own **one story** per session. That story's scope is defined by its
+`acceptance_criteria` and `story_screens` (if present). Your job is to implement
+**only** what those criteria require. You are not the project owner; you do not
+rewrite code that belongs to a different story.
+
+### Files you should edit
+- New files you create for this story (new components, new tests, new routes).
+- Files listed in `story_screens` / `files_affected` for this story.
+- The top-level integration file (`src/App.tsx` / `src/main.tsx` / `app/layout.tsx`)
+  **only if** your story is the one responsible for wiring the new work in.
+
+### Files you should NOT edit
+- Components or pages that belong to another story (check git history + the
+  stories list in PROJECT_MEMORY.md to see what was already implemented).
+- The scaffolder's baseline `App.tsx` beyond inserting your story's wiring —
+  don't rewrite the whole file to match your mental model of the app.
+- Unrelated features, even if they look "wrong" to you — that's a different
+  story's problem, not yours.
+
+### Escape hatch — shared utility files
+Sometimes you legitimately need to touch a shared file (e.g. a utility module
+under `src/lib/`, a global type definition, a CSS token file). This is allowed,
+but:
+
+1. Prefer **adding** a new function/type over editing an existing one.
+2. If you must edit, make the smallest change that works for your story.
+3. In your OUTPUT summary, add a line `SHARED_EDITS: <file> — <reason>` so
+   the reviewer knows the cross-cutting change was intentional.
+
+Example:
+```
+SHARED_EDITS: src/lib/format.ts — added formatCurrency helper used by US-003 and future stories
+```
+
+### What triggers "story overflow" (bad)
+- Story says "add settings page", you also reorganize the routing config.
+- Story says "implement search box", you also rewrite the header component.
+- Story says "add theme toggle", you also redo the entire color palette.
+
+These are all separate stories' jobs. If the PRD is missing them, that's a
+planner/designer problem, not something to fix by bundling work into this story.
+
 ## CRITICAL: Commit Early, Commit Often
 
 Your session has a time limit. If you don't commit, ALL your work is LOST.

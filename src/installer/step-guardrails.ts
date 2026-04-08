@@ -27,6 +27,8 @@ import { TEST_FAIL_PATTERNS, GIT_DIFF_TIMEOUT } from "./constants.js";
 export function checkTestFailures(output: string): string | null {
   // Fix 4: Don't flag test failures if no test framework is installed
   // (agent may have tried to run tests but none existed — false positive)
+  // Expanded for vitest/npm-script absent cases — run #337 US-002 hit "26 test failures"
+  // on a project that never had vitest installed.
   const noTestsPatterns = [
     /no tests? found/i,
     /no test suites? found/i,
@@ -35,6 +37,13 @@ export function checkTestFailures(output: string): string | null {
     /Cannot find module.*jest/i,
     /Cannot find module.*vitest/i,
     /ERR_MODULE_NOT_FOUND.*test/i,
+    /sh:.*vitest.*not found/i,
+    /sh:.*jest.*not found/i,
+    /npm error.*Missing script:\s*"?test"?/i,
+    /npm ERR!.*Missing script:\s*"?test"?/i,
+    /Missing script:\s*"?test"?/i,
+    /no test specified/i,
+    /Error: no test specified/i,
   ];
   for (const noTestPat of noTestsPatterns) {
     if (noTestPat.test(output)) return null;
@@ -48,6 +57,48 @@ export function checkTestFailures(output: string): string | null {
     }
   }
   return null;
+}
+
+// ── Required Output Fields ──────────────────────────────────────────
+
+/**
+ * Wave 3 fix #12 (plan: reactive-frolicking-cupcake): enforce that each step's
+ * agent output contains the fields documented as MANDATORY in its prompt. Silent
+ * success on a missing field was possible before this — e.g. setup-build could
+ * return without BUILD_CMD and the loop would march on with an undefined value.
+ *
+ * This list intentionally only covers fields the pipeline actually reads downstream;
+ * cosmetic fields stay optional so this guardrail does not become noise. Fields
+ * that already have dedicated guardrails (BASELINE in setup-build, SMOKE_TEST_RESULT
+ * in final-test) are handled separately and do not appear here.
+ */
+const REQUIRED_OUTPUT_FIELDS: Record<string, string[]> = {
+  "plan": ["repo", "branch", "tech_stack"],
+  "design": ["screen_map"],
+  "stories": ["stories_json"],
+  "setup-repo": ["existing_code"],
+  "setup-build": ["build_cmd"],
+};
+
+/**
+ * Check that the parsed agent output includes every field the pipeline needs.
+ * Returns a failure message if any required field is missing/empty, else null.
+ */
+export function checkRequiredOutputFields(stepId: string, parsed: Record<string, string>): string | null {
+  // Only enforce on done — failed/skipped outputs are handled by other logic
+  if ((parsed["status"] || "").toLowerCase() !== "done") return null;
+
+  const required = REQUIRED_OUTPUT_FIELDS[stepId];
+  if (!required || required.length === 0) return null;
+
+  const missing: string[] = [];
+  for (const field of required) {
+    const v = (parsed[field] || "").trim();
+    if (!v) missing.push(field.toUpperCase());
+  }
+  if (missing.length === 0) return null;
+
+  return `GUARDRAIL: ${stepId} completed with STATUS: done but required output field(s) missing: ${missing.join(", ")}. Add them to your OUTPUT block and retry.`;
 }
 
 // ── Quality Gate ────────────────────────────────────────────────────

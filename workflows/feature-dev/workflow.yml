@@ -552,6 +552,32 @@ steps:
       REPO: {{repo}}
       BRANCH: {{branch}}
 
+      ============================================================
+      HARD SCOPE LIMIT — READ BEFORE TOUCHING ANYTHING
+      ============================================================
+      You are the SETUP agent. You set up the PROJECT SKELETON ONLY.
+      You do NOT implement any feature code from the PRD or DESIGN.md.
+      The implement step (after you) is where features are written by developer agents.
+
+      ALLOWED file changes in this step:
+        - package.json, package-lock.json, yarn.lock, pnpm-lock.yaml
+        - tsconfig*.json, vite.config.*, next.config.*, webpack.config.*
+        - postcss.config.*, tailwind.config.*, eslint.config.*, .prettierrc*
+        - .gitignore, .env.example
+        - Files created automatically by the scaffolder (create-vite, create-next-app, etc.)
+
+      FORBIDDEN in this step — DO NOT TOUCH:
+        - src/App.tsx, src/App.jsx, src/App.vue, src/App.svelte  (keep scaffolder default)
+        - Any new components in src/components/, src/pages/, src/routes/, src/screens/
+        - Any feature code, calculator/todo/timer logic, UI layouts
+        - index.html body content beyond what the scaffolder generates
+      If the scaffolder's default App.tsx (e.g. the Vite counter) is "wrong" for the PRD,
+      THAT IS FINE — leave it alone. The implement step replaces it per user story.
+
+      Your baseline commit MUST contain ONLY: scaffold output + config + deps + stitch assets.
+      If you find yourself writing JSX for the PRD's feature, STOP — that's the implement step's job.
+      ============================================================
+
       Instructions:
       1. cd {{repo}} && git checkout {{branch}}
 
@@ -1243,6 +1269,8 @@ steps:
   - id: security-gate
     agent: security-gate
     input: |
+      !include critical-preamble.md
+
       Scan the feature branch for security vulnerabilities.
 
       REPO: {{repo}}

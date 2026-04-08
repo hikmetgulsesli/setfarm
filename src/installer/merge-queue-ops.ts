@@ -115,7 +115,25 @@ export function mergeStoryIntoFeature(
       });
     } catch { /* ignore */ }
 
-    return { success: false, conflicts };
+    // CONFLICT AUTO-RESOLVE (run #338 fix): story branches diverge from baseline and
+    // conflict on scaffolder files. The story branch is the latest version of the work
+    // for its scope, so prefer its side. Retry with -X theirs before giving up.
+    try {
+      logger.warn(`[merge-queue] Conflict on ${storyBranch}, retrying with -X theirs (conflicts: ${conflicts.join(", ").slice(0, 200)})`);
+      execFileSync("git", ["merge", "--no-ff", "-X", "theirs", mergeTarget, "-m", commitMessage], {
+        cwd: repoPath, timeout: GIT_LONG_TIMEOUT, stdio: "pipe",
+      });
+      execFileSync("git", ["push", "origin", featureBranch], {
+        cwd: repoPath, timeout: GIT_LONG_TIMEOUT, stdio: "pipe",
+      });
+      logger.info(`[merge-queue] Conflict auto-resolved with -X theirs for ${storyBranch}`);
+      return { success: true, conflicts: [] };
+    } catch (retryErr) {
+      // Even -X theirs couldn't resolve (likely delete/modify or add/add with no base)
+      try { execFileSync("git", ["merge", "--abort"], { cwd: repoPath, timeout: 5000, stdio: "pipe" }); } catch { /* ignore */ }
+      logger.error(`[merge-queue] -X theirs retry also failed for ${storyBranch}: ${String(retryErr).slice(0, 200)}`);
+      return { success: false, conflicts };
+    }
   }
 }
 
@@ -189,10 +207,14 @@ export async function runMergeQueue(
       });
       logger.info(`[merge-queue] Merged: ${story.story_id}`, { runId });
     } else {
+      // Run #338 fix: previously conflict only set merge_status, leaving story.status='done'.
+      // That let the pipeline silently proceed to deploy with partial work. Now mark the
+      // story as 'failed' so the "fail run if any story failed" guardrail (96dd442) catches
+      // it and surfaces the conflict as a run failure instead of burying it in the DB.
       result.conflicted.push(story.story_id);
       await pgRun(
-        "UPDATE stories SET merge_status = 'conflict', updated_at = $1 WHERE id = $2",
-        [now(), story.id],
+        "UPDATE stories SET merge_status = 'conflict', status = 'failed', output = COALESCE(output, '') || E'\\n\\nMERGE_CONFLICT: ' || $3, updated_at = $1 WHERE id = $2",
+        [now(), story.id, mergeResult.conflicts.join(", ")],
       );
       logger.warn(`[merge-queue] Conflict on ${story.story_id}: ${mergeResult.conflicts.join(', ')}`, { runId });
       emitEvent({
