@@ -29,6 +29,77 @@ import { join, basename, relative } from 'path';
 
 const args = process.argv.slice(2);
 const repoPath = args[0];
+
+// ── Phase 17 (static): Tailwind v4 compile sanity ─────────────────
+// Fails fast if src CSS imports tailwindcss but dist CSS has no compiled
+// utilities. Catches the "Vite plugin not wired" silent breakage that
+// ships unstyled pages despite a successful build (run #342 precedent).
+import { existsSync as _twExists, readFileSync as _twRead, readdirSync as _twReaddir, statSync as _twStat } from 'fs';
+import { join as _twJoin } from 'path';
+function checkTailwindCompiled(repo) {
+  try {
+    if (!repo || !_twExists(_twJoin(repo, 'src'))) return null;
+    const srcDir = _twJoin(repo, 'src');
+    let importsTailwind = false;
+    const walk = (d) => {
+      for (const e of _twReaddir(d)) {
+        const f = _twJoin(d, e);
+        try {
+          const st = _twStat(f);
+          if (st.isDirectory()) { walk(f); continue; }
+          if (!/\.css$/.test(f)) continue;
+          const c = _twRead(f, 'utf-8');
+          if (/@import\s+["']tailwindcss["']/.test(c) || /@tailwind\s+/.test(c)) {
+            importsTailwind = true;
+          }
+        } catch {}
+      }
+    };
+    walk(srcDir);
+    if (!importsTailwind) return null;
+    const distCandidates = ['dist/assets', 'dist', 'build/assets', 'build', '.next/static/css'];
+    let distCssFiles = [];
+    for (const rel of distCandidates) {
+      const d = _twJoin(repo, rel);
+      if (!_twExists(d)) continue;
+      try {
+        for (const e of _twReaddir(d)) {
+          if (e.endsWith('.css')) distCssFiles.push(_twJoin(d, e));
+        }
+      } catch {}
+    }
+    if (distCssFiles.length === 0) {
+      return { ok: false, reason: 'src CSS imports tailwindcss but no built CSS found in dist/build/.next' };
+    }
+    let hasUtilities = false;
+    for (const f of distCssFiles) {
+      const c = _twRead(f, 'utf-8');
+      if (/\.flex\s*\{|\.grid\s*\{|\.block\s*\{|\.hidden\s*\{|\.p-\d|\.m-\d|\.text-\w/.test(c)) {
+        hasUtilities = true; break;
+      }
+    }
+    if (!hasUtilities) {
+      return {
+        ok: false,
+        reason: 'src CSS imports tailwindcss but dist CSS has ZERO compiled utilities (.flex, .grid, .p-*, etc.). ' +
+                'Tailwind is being shipped raw — check @tailwindcss/vite plugin wiring in vite.config.*'
+      };
+    }
+    return { ok: true };
+  } catch (e) {
+    return null;
+  }
+}
+const _twCheck = checkTailwindCompiled(repoPath);
+if (_twCheck && !_twCheck.ok) {
+  console.log(JSON.stringify({
+    status: 'fail',
+    failures: ['[TAILWIND] ' + _twCheck.reason],
+    phase: 'tailwind-compile-sanity'
+  }));
+  process.exit(1);
+}
+
 if (!repoPath) { console.error('Usage: node smoke-test.mjs <repo-path> [--port PORT]'); process.exit(2); }
 
 const portArgIdx = args.indexOf('--port');

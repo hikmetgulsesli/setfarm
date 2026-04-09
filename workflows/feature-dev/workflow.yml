@@ -647,6 +647,42 @@ steps:
       2. Read package.json to understand the project stack
       3. Install any additional dependencies needed: npm install
 
+      TAILWIND v4 VITE PLUGIN WIRING (CRITICAL — prevents silent CSS breakage):
+      Tailwind v4 requires explicit Vite plugin registration. Without it, vite build
+      succeeds but ships the tailwindcss source file as raw CSS (no utilities compiled),
+      producing a completely unstyled page. This has happened before and shipped to prod
+      (run #342 hesap-makinesi-v3 — see git history fix/tailwind-v4-vite-plugin).
+
+      Detect and fix:
+        USES_TAILWIND=$(node -e "const p=require('./package.json');const d={...p.dependencies,...p.devDependencies};console.log(d.tailwindcss||d['@tailwindcss/postcss']||d['@tailwindcss/vite']?'yes':'no')" 2>/dev/null || echo no)
+        HAS_VITE_CFG=no
+        [ -f vite.config.ts ] && HAS_VITE_CFG=ts
+        [ -f vite.config.js ] && HAS_VITE_CFG=js
+
+      If USES_TAILWIND=yes AND HAS_VITE_CFG != no:
+        a. Install the plugin (idempotent): npm install -D @tailwindcss/vite
+        b. Check vite.config.* — if it does NOT already contain "@tailwindcss/vite",
+           rewrite the file to register the plugin alongside react():
+             cat > vite.config.$HAS_VITE_CFG <<'VITECFG'
+             import { defineConfig } from 'vite'
+             import react from '@vitejs/plugin-react'
+             import tailwindcss from '@tailwindcss/vite'
+             export default defineConfig({
+               plugins: [react(), tailwindcss()],
+             })
+             VITECFG
+        c. MANDATORY VERIFICATION: rebuild and assert utilities compiled:
+             npm run build
+             if ! grep -q "\.flex{" dist/assets/*.css 2>/dev/null; then
+               echo "ERROR: Tailwind v4 not compiling — .flex utility missing from dist CSS"
+               echo "This means @import tailwindcss is being shipped raw. Fix vite.config before continuing."
+               exit 1
+             fi
+             echo "Tailwind v4 compile verified: utilities present in dist CSS"
+
+      Note: the implement step (US-001 design tokens) adds @import "tailwindcss" to src/index.css.
+      We pre-wire the Vite plugin here so the first post-tokens build works out of the box.
+
       FRONTEND BUNDLER SETUP (MANDATORY for browser-targeted TypeScript projects):
       After installing dependencies, check if the project needs a bundler:
       - If package.json exists AND has TypeScript (.ts/.tsx files in src/) AND the project
@@ -1317,6 +1353,39 @@ steps:
 
       Perform comprehensive browser-based QA testing on the deployed application.
       Test EVERY screen from the Stitch design manifest.
+
+      ============================================================
+      BROWSER AVAILABILITY IS MANDATORY — NO STATIC FALLBACK ALLOWED
+      ============================================================
+      This step REQUIRES a working agent-browser. You MUST NOT fall back to
+      static analysis, source code reading, or self-reported PASS if browser
+      is unreachable. Historically agents have hallucinated PASS results by
+      writing "browser unavailable — static analysis only" in QA_REPORT.md
+      and a run shipped with zero CSS compiled because nothing was ever
+      visually verified (run #342 hesap-makinesi-v3).
+
+      Pre-flight check (run FIRST, before anything else):
+        if ! agent-browser --version >/dev/null 2>&1; then
+          echo "STATUS: blocked"
+          echo "BLOCK_REASON: agent-browser CLI not installed or not in PATH"
+          echo "QA_CRITICAL_COUNT: 0"
+          echo "QA_HIGH_COUNT: 0"
+          echo "QA_TOTAL_ISSUES: 0"
+          echo "QA_SCREENS_TESTED: 0"
+          echo "QA_SCREENS_PASSED: 0"
+          echo "QA_REPORT: BLOCKED — agent-browser unavailable, manual QA required"
+          exit 1
+        fi
+
+      If at ANY point during testing agent-browser commands consistently
+      return errors (gateway timeout, browser not responding, connection
+      refused to the dev server after 3 retries) — emit STATUS: blocked
+      and exit. DO NOT write a PASS report based on static reasoning.
+      Writing "browser unavailable — static analysis only" in QA_REPORT.md
+      is an explicit protocol violation. The step must either run the
+      browser checks or declare itself blocked.
+      ============================================================
+
 
       TASK: {{task}}
       REPO: {{repo}}
