@@ -2762,24 +2762,44 @@ ${screenDescs}
             }
             return advancePipeline(step.run_id);
           } catch (mqErr) {
-            logger.error(`[direct-merge] Merge queue failed: ${String(mqErr)}`, { runId: step.run_id });
-            // Merge queue failed — mark step as failed so on_fail can retry
+            // Wave 11 Bug G fix (plan: reactive-frolicking-cupcake.md, run #344 postmortem):
+            // runMergeQueue throws when too many stories hit conflicts (>= merged count).
+            // The previous code marked the step failed and called advancePipeline, which
+            // silently moved the pipeline to verify/qa-test/deploy even though implement
+            // was in failed state. Wave 8 Bug A fix was INSIDE the try block, so the throw
+            // path skipped it entirely. Run #344 caught it: implement=failed, but verify
+            // was still claimed 4 times in rapid succession (verify delay-loop) because
+            // advancePipeline happily moved forward. Now we directly fail the run —
+            // never call advancePipeline when the merge queue has thrown.
+            const mqErrMsg = String(mqErr);
+            logger.error(`[direct-merge] Merge queue threw — failing run: ${mqErrMsg}`, { runId: step.run_id });
+            const failMsg = `Merge queue aborted: ${mqErrMsg}. Too many story branches hit merge conflicts to recover automatically — inspect the stories table for which ones ended in status='failed' with merge_status='conflict', fix those branches manually, or restart the run with a cleaner PRD.`;
             await pgRun("UPDATE steps SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3", [
-              `STATUS: failed
-ERROR: Merge queue failed: ${String(mqErr)}`,
+              `STATUS: failed\nERROR: ${failMsg}`,
               now(), step.id,
             ]);
-            return advancePipeline(step.run_id);
+            await failRun(step.run_id);
+            const wfIdMQ = await getWorkflowId(step.run_id);
+            emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfIdMQ, stepId: step.step_id, detail: failMsg });
+            emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfIdMQ, detail: failMsg });
+            scheduleRunCronTeardown(step.run_id);
+            return { advanced: false, runCompleted: false };
           }
         } else {
-          // Missing repo or branch context — fail step
+          // Missing repo or branch context — fail the run directly, don't advance
+          // (Wave 11 Bug G: this path also advanced past a failed implement step)
           logger.error(`[direct-merge] Missing repo/branch context for merge queue`, { runId: step.run_id });
+          const missingMsg = "Missing repo or branch context for merge queue — implement step cannot complete";
           await pgRun("UPDATE steps SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3", [
-            `STATUS: failed
-ERROR: Missing repo or branch context for merge queue`,
+            `STATUS: failed\nERROR: ${missingMsg}`,
             now(), step.id,
           ]);
-          return advancePipeline(step.run_id);
+          await failRun(step.run_id);
+          const wfIdMissing = await getWorkflowId(step.run_id);
+          emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfIdMissing, stepId: step.step_id, detail: missingMsg });
+          emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfIdMissing, detail: missingMsg });
+          scheduleRunCronTeardown(step.run_id);
+          return { advanced: false, runCompleted: false };
         }
       }
       // More stories pending — keep loop running
