@@ -1692,6 +1692,36 @@ ${screenDescs}
         }
       }
     }
+
+    // #21 fix (plan: reactive-frolicking-cupcake.md): sync stitch_project_id back
+    // to MC's prds table. The MC dashboard's "View Design" link reads from
+    // prds.stitch_project_id, but that column only gets populated when the user
+    // creates a PRD via MC's preview flow (prd-generator.ts:475). For runs
+    // started via setfarm CLI directly, or for runs where the design step
+    // discovered/auto-created a Stitch project after the PRD already existed,
+    // the prds row stays empty and the dashboard shows "no design available".
+    // Setfarm shares the same Postgres database as MC, so we can write
+    // directly. Idempotent: only fills in NULL, never overwrites a value the
+    // PRD generator already set.
+    const prdsSyncProjId = context["stitch_project_id"] || "";
+    if (prdsSyncProjId) {
+      try {
+        const updateRes = await pgRun(
+          "UPDATE prds SET stitch_project_id = $1, updated_at = NOW() WHERE run_id = $2 AND (stitch_project_id IS NULL OR stitch_project_id = '')",
+          [prdsSyncProjId, step.run_id],
+        );
+        // pgRun returns the result; the underlying postgres client exposes count via .count
+        const affected = (updateRes as any)?.count ?? 0;
+        if (affected > 0) {
+          logger.info(`[design] Synced stitch_project_id=${prdsSyncProjId} to prds row for run ${step.run_id.slice(0, 8)}`, { runId: step.run_id });
+        }
+      } catch (syncErr) {
+        // Non-fatal: prds table may not exist (setfarm-only deployment) or
+        // schema may differ. Log and continue — never block the design step
+        // on a sync failure.
+        logger.warn(`[design] prds.stitch_project_id sync skipped: ${String(syncErr).slice(0, 200)}`, { runId: step.run_id });
+      }
+    }
   }
 
   // DB Auto-Provisioning (setup step)
