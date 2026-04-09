@@ -1964,6 +1964,46 @@ ${screenDescs}
     }
   }
 
+  // SETUP-BUILD APP.TSX SCAFFOLD-DEFAULT GUARDRAIL (Wave 10 Bug E)
+  // Fix #4 HARD SCOPE LIMIT is a prompt-level rule that says "leave src/App.tsx
+  // at the scaffolder default". Run #344 caught atlas violating it: the agent
+  // replaced the Vite counter App.tsx with a 4-line stub `function App() { return
+  // <div>Pomodoro App</div> }`. That's not feature code (so not as bad as #338's
+  // 202-line overreach) but it still means the implement step's US-001 sees a
+  // stripped baseline, not a real Vite starter, which feeds back into the 0-work
+  // shortcut chain (the developer agent sees "nothing to scaffold" and reports
+  // done with fake output).
+  //
+  // Server-side check: if setup-build finished and src/App.tsx doesn't look like
+  // a Vite default (missing ALL of the tell-tale imports), log a warning. We
+  // don't hard-fail — the Tailwind auto-install path legitimately modifies
+  // index.css and may touch App.tsx in edge cases — but we surface the drift
+  // so it's visible in the log and downstream tools can flag it.
+  if (step.step_id === "setup-build" && parsed["status"]?.toLowerCase() === "done") {
+    try {
+      const repoPath = context["repo"] || "";
+      const appTsxPath = path.join(repoPath, "src", "App.tsx");
+      if (repoPath && fs.existsSync(appTsxPath)) {
+        const appTsxContent = fs.readFileSync(appTsxPath, "utf-8");
+        const lineCount = appTsxContent.split("\n").length;
+        // Vite default React template characteristic signals (any ONE of these):
+        const hasReactLogo = /reactLogo|react\.svg|vite\.svg/i.test(appTsxContent);
+        const hasCountState = /useState\(0\)|count.*setCount|setCount.*count/i.test(appTsxContent);
+        const hasViteDemo = /count is|edit.*app\.tsx|HMR|vite \+ react/i.test(appTsxContent);
+        const looksLikeDefault = hasReactLogo || hasCountState || hasViteDemo;
+        if (!looksLikeDefault) {
+          const preview = appTsxContent.slice(0, 200).replace(/\s+/g, " ");
+          logger.warn(`[setup-build-scope] src/App.tsx does NOT match Vite scaffolder default after setup-build (${lineCount} lines, preview: "${preview}..."). Fix #4 HARD SCOPE LIMIT says the agent should leave the scaffolder default in place. The implement step's US-001 will work from this modified baseline.`, { runId: step.run_id });
+          // Record in context so verify/qa-test can see it downstream if needed
+          context["setup_build_app_tsx_drift"] = `lines=${lineCount},hasViteDefault=false`;
+          await updateRunContext(step.run_id, context);
+        }
+      }
+    } catch (appTsxErr) {
+      logger.warn(`[setup-build-scope] App.tsx drift check skipped: ${String(appTsxErr).slice(0, 150)}`, { runId: step.run_id });
+    }
+  }
+
   // DEPLOY HEALTH CHECK GUARDRAIL (v1.5.53): Verify service is actually running after deploy
   if (step.step_id === "deploy" && parsed["status"]?.toLowerCase() === "done") {
     const port = context["port"] || parsed["port"] || "";
@@ -2454,7 +2494,7 @@ ${screenDescs}
       }
     }
 
-    // SCOPE ENFORCEMENT (Wave 6 fix A — plan: reactive-frolicking-cupcake)
+    // SCOPE ENFORCEMENT (Wave 6 fix A + Wave 10 Bug D — plan: reactive-frolicking-cupcake)
     // Run #340 US-002 (Note store + localStorage) wrote 12 source files / 1328
     // insertions including Settings.tsx (US-005 scope), NoteCard/NoteForm/Sidebar/
     // TopNav (other stories' UI), proving that the prompt-only SCOPE BOUNDARIES
@@ -2465,8 +2505,17 @@ ${screenDescs}
     // Tiered enforcement:
     //   - story_index == 0 (US-001 / setup story): no limit, expected to scaffold
     //     project structure + baseline files
-    //   - story_index >= 1: hard fail if > 12 source files changed (the absolute
-    //     ceiling — even a complex feature should not exceed this), warn at > 8
+    //   - story_index >= 1:
+    //     * sourceFiles == 0 → HARD FAIL (Wave 10 Bug D — run #344 US-001 reported
+    //       STATUS: done in 3 seconds with setup-build's context fields as its own
+    //       output, never actually running the agent or making any code changes)
+    //     * sourceFiles > 12 → HARD FAIL (scope overflow, original Wave 6 Fix A)
+    //     * sourceFiles > 8 → soft warn + scope_creep_warning flag
+    //
+    // The 0-file floor is skipped for the setup story because US-001 ("Project
+    // setup design tokens") may legitimately be a no-op when setup-build already
+    // downloaded the stitch design tokens — but by convention the setup story
+    // has story_index == 0, so this is consistent with isSetupStory.
     //
     // Source files = .tsx/.jsx/.ts/.js/.vue/.svelte/.css/.scss/.html, excluding
     // build output, config, lockfiles, DESIGN.md, stitch assets, references.
@@ -2478,18 +2527,43 @@ ${screenDescs}
         const storyIdxRow = await pgGet<{ story_index: number }>("SELECT story_index FROM stories WHERE id = $1", [step.current_story_id]);
         const isSetupStory = (storyIdxRow?.story_index ?? 99) === 0;
         if (!isSetupStory && wd && baseBr && fs.existsSync(wd)) {
+          // Check ALL modifications: committed diff + uncommitted working-tree changes.
+          // A story that has uncommitted work is still "doing something" — we only
+          // want to fail when the worktree is completely untouched.
           const diffOut = execFileSync("git", ["diff", "--name-only", `${baseBr}...HEAD`], {
             cwd: wd, timeout: 10000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8",
           }).trim();
           const changedFiles = diffOut ? diffOut.split("\n").filter(Boolean) : [];
+          // Also include dirty working-tree changes (uncommitted) in the count
+          let dirtyFiles: string[] = [];
+          try {
+            const statusOut = execFileSync("git", ["status", "--porcelain"], {
+              cwd: wd, timeout: 5000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8",
+            }).trim();
+            dirtyFiles = statusOut ? statusOut.split("\n").map(l => l.slice(3).trim()).filter(Boolean) : [];
+          } catch {}
+          const allTouched = Array.from(new Set([...changedFiles, ...dirtyFiles]));
           const SCOPE_EXTS = /\.(tsx?|jsx?|vue|svelte|css|scss|html)$/i;
           const SCOPE_IGNORE = /^(node_modules\/|dist\/|\.next\/|build\/|coverage\/|stitch\/|references\/|DESIGN\.md|PROJECT_MEMORY\.md|\.gitignore|package(-lock)?\.json|tsconfig|vite\.config|tailwind\.config|postcss\.config|eslint\.config|README|index\.html$)/;
-          const sourceFiles = changedFiles.filter(f => SCOPE_EXTS.test(f) && !SCOPE_IGNORE.test(f));
+          const sourceFiles = allTouched.filter(f => SCOPE_EXTS.test(f) && !SCOPE_IGNORE.test(f));
           context["story_changed_files"] = String(sourceFiles.length);
           context["story_changed_paths"] = sourceFiles.slice(0, 50).join(",");
 
           const HARD_LIMIT = 12;
           const SOFT_LIMIT = 8;
+
+          // Wave 10 Bug D: zero-work floor. Fake-completed stories hit this.
+          if (sourceFiles.length === 0 && step.retry_count < step.max_retries) {
+            const zeroMsg = `NO WORK DETECTED: Story ${storyRow.story_id} (${storyRow.title}) reported STATUS: done but the worktree at ${wd} has ZERO source-file changes vs ${baseBr} (neither committed nor uncommitted). The agent appears to have shortcut the task — possibly by regurgitating context fields (BUILD_CMD, BASELINE, etc.) as its own output instead of actually implementing. Re-read the story's acceptance criteria, write the files it asks for, commit them with 'git add -A && git commit -m \"feat: ${storyRow.story_id} - ...\"', and only then report STATUS: done. If the story genuinely has no code to write (e.g. it was already covered by setup-build), you must still emit a CHANGES: line explaining why nothing was modified.`;
+            logger.warn(`[scope-check] Story ${storyRow.story_id} reported done with ZERO source changes — Bug D fire`, { runId: step.run_id });
+            context["previous_failure"] = zeroMsg;
+            context["failure_category"] = "NO_WORK";
+            context["failure_suggestion"] = "Actually implement the story — write files and commit them";
+            await updateRunContext(step.run_id, context);
+            await failStep(stepId, zeroMsg);
+            return { advanced: false, runCompleted: false };
+          }
+
           if (sourceFiles.length > HARD_LIMIT && step.retry_count < step.max_retries) {
             const scopeMsg = `SCOPE OVERFLOW: Story ${storyRow.story_id} (${storyRow.title}) modified ${sourceFiles.length} source files — hard limit is ${HARD_LIMIT}. Files: ${sourceFiles.slice(0, 15).join(", ")}. Limit your changes to the files this story actually owns. Most cross-cutting work belongs in OTHER stories. Reset the worktree (git reset --hard ${baseBr}) and re-implement with a tighter scope. If you genuinely need shared utility edits, list them in OUTPUT as SHARED_EDITS: <file> — <reason>.`;
             logger.warn(`[scope-check] Story ${storyRow.story_id} OVERFLOWED scope: ${sourceFiles.length} files, hard fail`, { runId: step.run_id });
