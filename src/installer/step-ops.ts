@@ -908,9 +908,9 @@ All visible text must be in Turkish. Use a dark, modern theme.`);
     const retryCount = stepRetry?.retry_count ?? 0;
     logger.warn(`${reason} (retry=${retryCount})`, { runId: step.run_id, stepId: step.step_id });
     if (retryCount > 0) {
-      // Second occurrence — fail run
+      // Second occurrence — fail run (Wave 13 J-2: mark terminal so medic won't revive)
       await pgRun("UPDATE steps SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3", [reason + " — failing run (retry exhausted)", now(), step.id]);
-      await pgRun("UPDATE runs SET status = 'failed', updated_at = $1 WHERE id = $2", [now(), step.run_id]);
+      await failRun(step.run_id, true);
       const wfId = await getWorkflowId(step.run_id);
       emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: reason });
       emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: reason });
@@ -1118,7 +1118,7 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
             await pgRun("UPDATE stories SET status = 'failed', output = 'Failed: dependency deadlock', updated_at = $1 WHERE id = $2", [now(), blocked.id]);
           }
           await pgRun("UPDATE steps SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3", [deadlockMsg, now(), step.id]);
-          await failRun(step.run_id);
+          await failRun(step.run_id, true);
           const wfIdDL = await getWorkflowId(step.run_id);
           emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfIdDL, stepId: step.step_id, detail: deadlockMsg });
           emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfIdDL, detail: deadlockMsg });
@@ -1132,7 +1132,7 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
           const noStoriesReason = "No stories exist — planner did not produce STORIES_JSON";
           logger.warn(noStoriesReason, { runId: step.run_id, stepId: step.step_id });
           await pgRun("UPDATE steps SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3", [noStoriesReason, now(), step.id]);
-          await pgRun("UPDATE runs SET status = 'failed', updated_at = $1 WHERE id = $2", [now(), step.run_id]);
+          await failRun(step.run_id, true);
           const wfId157 = await getWorkflowId(step.run_id);
           emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId157, stepId: step.step_id, detail: noStoriesReason });
           emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId157, detail: noStoriesReason });
@@ -1307,10 +1307,10 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
         logger.warn(`${reason} (story=${nextStory.story_id}, retry=${retryCount})`, { runId: step.run_id, stepId: step.step_id });
         // Reset the claimed story
         if (retryCount > 0) {
-          // Second occurrence — fail everything
+          // Second occurrence — fail everything (Wave 13 J-2: terminal flag)
           await pgRun("UPDATE stories SET status = 'failed', updated_at = $1 WHERE id = $2", [now(), nextStory.id]);
           await pgRun("UPDATE steps SET status = 'failed', output = $1, current_story_id = NULL, updated_at = $2 WHERE id = $3", [reason + " — failing run (retry exhausted)", now(), step.id]);
-          await pgRun("UPDATE runs SET status = 'failed', updated_at = $1 WHERE id = $2", [now(), step.run_id]);
+          await failRun(step.run_id, true);
           const wfId2 = await getWorkflowId(step.run_id);
           emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId2, stepId: step.step_id, detail: reason });
           emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId2, detail: reason });
@@ -1390,6 +1390,30 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
     context[key] = value;
   }
 
+  // Wave 13 Bug N (run #344 postmortem): dangerous command guard. In run #344
+  // multiple agents ran `rm -rf node_modules && npm install` inside their
+  // worktrees, which destroyed the node_modules symlink pointing at the main
+  // project and triggered cascading install failures. Others ran `git push
+  // --force` on feature branches. We can't stop the shell at invocation time,
+  // but agents tend to echo their commands into STDOUT for auditing — if we
+  // see one of these patterns in the output we fail the step immediately with
+  // corrective guidance, denying the success path and forcing a retry.
+  const DANGEROUS_CMDS: Array<{ rx: RegExp; label: string }> = [
+    { rx: /\brm\s+-[rf]+\s+[^|;&]*\bnode_modules\b/, label: "rm -rf node_modules" },
+    { rx: /\brm\s+-[rf]+\s+[^|;&]*\.vite\b/, label: "rm -rf .vite" },
+    { rx: /\bgit\s+push\s+--force\b/, label: "git push --force" },
+    { rx: /\bgit\s+reset\s+--hard\s+origin\/(main|master)\b/, label: "git reset --hard origin/main" },
+  ];
+  for (const { rx, label } of DANGEROUS_CMDS) {
+    const m = output.match(rx);
+    if (m) {
+      const snippet = m[0].slice(0, 120);
+      logger.error(`[dangerous-cmd] Blocked command pattern "${label}" in ${step.step_id} output: ${snippet}`, { runId: step.run_id });
+      await failStep(stepId, `DANGEROUS_COMMAND_DETECTED: "${snippet}". The "${label}" pattern is banned — node_modules is a symlink to the main repo so rm -rf breaks sibling worktrees, and force-push / hard-reset destroy history. Use 'git clean -fdx' for build artifacts, 'npm ci' for dependency reset, or push a revert commit instead. Re-implement the story without running that command.`);
+      return { advanced: false, runCompleted: false };
+    }
+  }
+
   // Expand tilde in repo path (Node.js fs does not expand ~)
   if (context["repo"]?.startsWith("~/")) {
     context["repo"] = context["repo"].replace(/^~\//, os.homedir() + "/");
@@ -1399,11 +1423,39 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
   }
 
   // FIX 1: Explicit fail interceptor — agent reported STATUS: fail/error
+  // Wave 13 Bug J-3 (run #344 postmortem): extend parser to handle "retry" and
+  // treat unknown status values as failures. Previously only fail/failed/error
+  // tripped the failStep path; "retry" (and anything else) silently fell through
+  // to the default "done" flow, so run #344's verify step was marked done even
+  // though Iris explicitly reported STATUS: retry with a list of blocking issues.
   const statusVal = parsed["status"]?.toLowerCase();
   if (statusVal === "fail" || statusVal === "failed" || statusVal === "error") {
     logger.warn(`Agent reported STATUS: ${parsed["status"]} — failing step`, { runId: step.run_id, stepId: step.step_id });
     await failStep(stepId, `Agent reported failure: ${parsed["status"]}. Output: ${output.slice(0, 500)}`);
     return { advanced: false, runCompleted: false };
+  }
+  if (statusVal === "retry") {
+    // Soft retry: failStep bounces the step back to pending and increments
+    // retry_count; if retries are exhausted the existing step-fail logic
+    // escalates to a terminal fail. Verify-each already handles this in its
+    // own path (step-ops.ts handleVerifyEachCompletion); this branch closes
+    // the gap for single-step verify (direct-merge workflows).
+    logger.warn(`[status-parser] Agent reported STATUS: retry — bouncing step to pending`, { runId: step.run_id, stepId: step.step_id });
+    await failStep(stepId, `Agent requested retry: ${output.slice(0, 500)}`);
+    return { advanced: false, runCompleted: false };
+  }
+  if (statusVal && statusVal !== "done" && statusVal !== "skip") {
+    // Whitelist: any explicit status other than done/skip/retry/fail is garbage
+    // and must fail loudly. This catches typos, hallucinations ("STATUS: ok"),
+    // and future agents that invent new status words without platform support.
+    logger.warn(`[status-parser] Agent reported unknown STATUS: "${parsed["status"]}" — treating as failure`, { runId: step.run_id, stepId: step.step_id });
+    await failStep(stepId, `Unknown STATUS: "${parsed["status"]}". Expected one of: done, skip, retry, fail.`);
+    return { advanced: false, runCompleted: false };
+  }
+  if (!statusVal) {
+    // Missing STATUS line — legacy agents still expect the default "done" flow,
+    // but surface a warning so we can tighten this later if needed.
+    logger.warn(`[status-parser] Missing STATUS in agent output — assuming done (legacy)`, { runId: step.run_id, stepId: step.step_id });
   }
 
   // FIX 6: Status is ephemeral — do not propagate upstream status to downstream steps
@@ -1863,6 +1915,43 @@ ${screenDescs}
       if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
       await failStep(stepId, baselineMsg);
       return { advanced: false, runCompleted: false };
+    }
+
+    // Wave 13 Bug O (run #344 postmortem): React 19 + @testing-library/react 15
+    // compat hell. Run #344's Koda agent hit "React.act is not a function" on
+    // every test run because npm install resolved to React 19.2 while the
+    // testing-library pin was 15.x. Agents are not equipped to diagnose peer
+    // dependency mismatches; they spin in install/test loops until the timeout
+    // kills them. Check the installed versions and fail setup-build with an
+    // actionable message before the implement loop ever starts.
+    const compatRepo = context["repo"] || "";
+    if (compatRepo && fs.existsSync(path.join(compatRepo, "package.json"))) {
+      try {
+        const pkg = JSON.parse(fs.readFileSync(path.join(compatRepo, "package.json"), "utf-8"));
+        const allDeps: Record<string, string> = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+        const reactRaw = allDeps["react"] || "";
+        const tlrRaw = allDeps["@testing-library/react"] || "";
+        const majorOf = (v: string) => {
+          const m = v.match(/\d+/);
+          return m ? parseInt(m[0], 10) : 0;
+        };
+        if (reactRaw && tlrRaw) {
+          const reactMajor = majorOf(reactRaw);
+          const tlrMajor = majorOf(tlrRaw);
+          if (reactMajor === 19 && tlrMajor < 16) {
+            const compatMsg = `REACT_COMPAT: React ${reactRaw} requires @testing-library/react ^16.0.0 (got ${tlrRaw}). React 19 moved act() from react-dom/test-utils into react itself and testing-library < 16 still calls the old path — tests will throw "React.act is not a function" in an infinite loop. Bump @testing-library/react to ^16.0.0 in devDependencies, run npm install, and re-report STATUS: done.`;
+            logger.warn(`[setup-build-compat] ${compatMsg}`, { runId: step.run_id });
+            if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
+            await failStep(stepId, compatMsg);
+            return { advanced: false, runCompleted: false };
+          }
+          if (reactMajor === 18 && tlrMajor > 14) {
+            logger.warn(`[setup-build-compat] React 18 + testing-library ${tlrRaw} detected — may still work but act() semantics differ`, { runId: step.run_id });
+          }
+        }
+      } catch (e) {
+        logger.warn(`[setup-build-compat] Could not evaluate React/testing-library compat: ${String(e).slice(0, 150)}`, { runId: step.run_id });
+      }
     }
   }
 
@@ -2363,7 +2452,7 @@ ${screenDescs}
         const noStoriesMsg = "Step completed but produced no STORIES_JSON — downstream loop would run with 0 stories";
         logger.warn(noStoriesMsg, { runId: step.run_id, stepId: step.step_id });
         await failStepWithOutput(step.id, noStoriesMsg);
-        await failRun(step.run_id);
+        await failRun(step.run_id, true);
         const wfId157b = await getWorkflowId(step.run_id);
         emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId157b, stepId: step.step_id, detail: noStoriesMsg });
         emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId157b, detail: noStoriesMsg });
@@ -2564,6 +2653,35 @@ ${screenDescs}
             return { advanced: false, runCompleted: false };
           }
 
+          // Wave 13 Bug P9 (run #344 postmortem): Wave 10 Bug D's zero-file check
+          // is bypassable by a single dummy commit (touch .gitkeep). Add a minimum
+          // insertion-count floor for stories that DID touch source files. A real
+          // story implementation always exceeds MIN_INSERTS even for tiny scopes;
+          // below that threshold is a stub that must be rewritten.
+          const MIN_INSERTS = 10;
+          if (sourceFiles.length > 0 && step.retry_count < step.max_retries) {
+            let inserts = 0;
+            try {
+              const shortstat = execFileSync("git", ["diff", "--shortstat", `${baseBr}...HEAD`, "--", ...sourceFiles], {
+                cwd: wd, timeout: 5000, stdio: "pipe",
+              }).toString().trim();
+              const mInserts = shortstat.match(/(\d+)\s+insertion/);
+              inserts = mInserts ? parseInt(mInserts[1], 10) : 0;
+            } catch (e) {
+              logger.warn(`[scope-check] Could not run git diff --shortstat for ${storyRow.story_id}: ${String(e).slice(0, 120)}`);
+            }
+            if (inserts > 0 && inserts < MIN_INSERTS) {
+              const stubMsg = `INSUFFICIENT_WORK: Story ${storyRow.story_id} (${storyRow.title}) changed ${sourceFiles.length} source file(s) but only added ${inserts} line(s) of code — minimum is ${MIN_INSERTS}. This looks like a stub commit (dummy .gitkeep, empty export, placeholder comment). Re-read the story's acceptance criteria and actually implement the requested functionality. The file counts bypass from a single touch is blocked — quality requires real code.`;
+              logger.warn(`[scope-check] Story ${storyRow.story_id} stub commit detected: ${inserts} inserts across ${sourceFiles.length} files`, { runId: step.run_id });
+              context["previous_failure"] = stubMsg;
+              context["failure_category"] = "INSUFFICIENT_WORK";
+              context["failure_suggestion"] = "Write substantive code — stubs are rejected";
+              await updateRunContext(step.run_id, context);
+              await failStep(stepId, stubMsg);
+              return { advanced: false, runCompleted: false };
+            }
+          }
+
           if (sourceFiles.length > HARD_LIMIT && step.retry_count < step.max_retries) {
             const scopeMsg = `SCOPE OVERFLOW: Story ${storyRow.story_id} (${storyRow.title}) modified ${sourceFiles.length} source files — hard limit is ${HARD_LIMIT}. Files: ${sourceFiles.slice(0, 15).join(", ")}. Limit your changes to the files this story actually owns. Most cross-cutting work belongs in OTHER stories. Reset the worktree (git reset --hard ${baseBr}) and re-implement with a tighter scope. If you genuinely need shared utility edits, list them in OUTPUT as SHARED_EDITS: <file> — <reason>.`;
             logger.warn(`[scope-check] Story ${storyRow.story_id} OVERFLOWED scope: ${sourceFiles.length} files, hard fail`, { runId: step.run_id });
@@ -2758,7 +2876,8 @@ ${screenDescs}
                 `STATUS: failed\nMERGE_QUEUE_RESULT: ${mqResult.merged.length} merged, ${mqResult.conflicted.length} conflicted\nFAILED_STORIES: ${failList}\nREASON: ${failMsg}`,
                 now(), step.id,
               ]);
-              await failRun(step.run_id);
+              // Wave 13 J-2: terminal flag — medic must not resume this run
+              await failRun(step.run_id, true);
               const wfIdF = await getWorkflowId(step.run_id);
               emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfIdF, stepId: step.step_id, detail: failMsg });
               emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfIdF, detail: failMsg });
@@ -2794,7 +2913,8 @@ ${screenDescs}
               `STATUS: failed\nERROR: ${failMsg}`,
               now(), step.id,
             ]);
-            await failRun(step.run_id);
+            // Wave 13 J-2: terminal flag — medic must not resume this run
+            await failRun(step.run_id, true);
             const wfIdMQ = await getWorkflowId(step.run_id);
             emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfIdMQ, stepId: step.step_id, detail: failMsg });
             emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfIdMQ, detail: failMsg });
@@ -2810,7 +2930,8 @@ ${screenDescs}
             `STATUS: failed\nERROR: ${missingMsg}`,
             now(), step.id,
           ]);
-          await failRun(step.run_id);
+          // Wave 13 J-2: terminal flag — medic must not resume this run
+          await failRun(step.run_id, true);
           const wfIdMissing = await getWorkflowId(step.run_id);
           emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfIdMissing, stepId: step.step_id, detail: missingMsg });
           emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfIdMissing, detail: missingMsg });
@@ -2941,10 +3062,10 @@ async function handleVerifyEachCompletion(
     if (retryStory) {
       const newRetry = retryStory.retry_count + 1;
       if (newRetry > retryStory.max_retries) {
-        // Story retries exhausted — fail everything
+        // Story retries exhausted — fail everything (Wave 13 J-2: terminal flag)
         await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, updated_at = $2 WHERE id = $3", [newRetry, now(), retryStory.id]);
         await setStepStatus(loopStepId, "failed");
-        await failRun(verifyStep.run_id);
+        await failRun(verifyStep.run_id, true);
         const wfId = await getWorkflowId(verifyStep.run_id);
         emitEvent({ ts: now(), event: "story.failed", runId: verifyStep.run_id, workflowId: wfId, stepId: verifyStep.step_id });
         emitEvent({ ts: now(), event: "run.failed", runId: verifyStep.run_id, workflowId: wfId, detail: "Verification retries exhausted" });

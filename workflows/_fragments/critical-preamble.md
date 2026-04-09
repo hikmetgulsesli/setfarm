@@ -8,6 +8,27 @@ CRITICAL EXECUTION RULES — VIOLATION BREAKS THE PIPELINE
 - If a task is too complex, simplify your implementation — do NOT delegate.
 ############################################################
 
+FIRST ACTION — CWD VERIFICATION (run #344 postmortem, Wave 13):
+Your process may start in a non-git scratch directory. Before ANY other
+command, you MUST change directory and verify you are in the right place.
+If you have a `{{story_workdir}}` value, that is your target. Otherwise
+use `{{repo}}`. Your first two shell commands MUST be:
+
+    cd "{{story_workdir}}" 2>/dev/null || cd "{{repo}}"
+    pwd && git rev-parse --show-toplevel 2>/dev/null || echo "NOT_A_GIT_REPO"
+
+The `pwd` output MUST match `{{story_workdir}}` (or `{{repo}}` if there is
+no story workdir). If it does not, STOP all work and report:
+
+    STATUS: retry
+    CWD_ERROR: pwd=<actual>, expected=<story_workdir_or_repo>
+
+Do NOT `git add`, `git commit`, `git push`, or write files until cwd matches.
+If `pwd` prints `~/.openclaw/setfarm-repo` or any path under `.openclaw/`
+you are in the wrong place — that is the platform source tree and writing
+there will corrupt the pipeline. Stop immediately and report the CWD_ERROR.
+############################################################
+
 NODE_MODULES RULE (CRITICAL — NEVER BREAK):
 - The worktree's node_modules is a SYMLINK to the main repo's node_modules
 - NEVER run `rm -rf node_modules` or `rm node_modules` — this breaks the symlink

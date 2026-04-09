@@ -32,9 +32,28 @@ export async function updateRunContext(runId: string, context: Record<string, st
   });
 }
 
-export async function failRun(runId: string): Promise<void> {
+/**
+ * Fail a run. When `terminal` is true the failure is marked in runs.meta so
+ * medic's resume_run action skips it. Wave 13 Bug J-2 (run #344 postmortem):
+ * previously any failed run — including intentional merge-queue aborts and
+ * retry-exhausted guards — could be revived by medic, which then re-advanced
+ * the pipeline past a dead implement step into verify/security-gate/qa-test.
+ * Intentional callers (step-ops.ts direct-merge failure paths, retry exhaust,
+ * missing-context guards) must pass terminal=true so the failure sticks.
+ */
+export async function failRun(runId: string, terminal = false): Promise<void> {
   await pgRun("UPDATE runs SET status = 'failed', updated_at = $1 WHERE id = $2",
     [now(), runId]);
+  if (!terminal) return;
+  try {
+    const row = await pgGet<{ meta: string | null }>("SELECT meta FROM runs WHERE id = $1", [runId]);
+    const meta = row?.meta ? JSON.parse(row.meta) : {};
+    meta.terminal_failure = true;
+    meta.terminal_marked_at = now();
+    await pgRun("UPDATE runs SET meta = $1 WHERE id = $2", [JSON.stringify(meta), runId]);
+  } catch (e) {
+    logger.warn(`[failRun] Could not persist terminal_failure flag for ${runId}: ${String(e)}`);
+  }
 }
 
 export async function completeRun(runId: string): Promise<void> {

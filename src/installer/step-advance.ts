@@ -60,6 +60,36 @@ export async function advancePipeline(runId: string): Promise<{ advanced: boolea
       if (priorRows[0]) {
         return { advanced: false, runCompleted: false };
       }
+
+      // Wave 13 Bug J-1 (run #344 postmortem): belt-and-suspenders guard against
+      // terminal failed prior steps. Even with failRun(terminal=true) + medic skip
+      // there are narrow windows where a failed prior step can coexist with a
+      // waiting next step — for example when a cron triggers advancePipeline
+      // between the pgRun() that marks the step failed and the failRun() that
+      // marks the run failed. If a prior step is failed AND out of retries, the
+      // pipeline must NOT advance — instead fail the run here and bail.
+      const terminalFailedRows = await sql.unsafe(
+        "SELECT id, step_id FROM steps WHERE run_id = $1 AND step_index < $2 AND status = 'failed' AND retry_count >= max_retries LIMIT 1",
+        [runId, next.step_index]
+      );
+      const terminalFailed = terminalFailedRows[0] as unknown as { id: string; step_id: string } | undefined;
+      if (terminalFailed) {
+        logger.error(`[advance] Refusing to advance run ${runId} — prior step ${terminalFailed.step_id} is terminally failed`);
+        await sql.unsafe("UPDATE runs SET status = 'failed', updated_at = $1 WHERE id = $2", [now(), runId]);
+        // Mark terminal so medic does not revive it
+        try {
+          const metaRow = await sql.unsafe("SELECT meta FROM runs WHERE id = $1", [runId]);
+          const metaStr = (metaRow[0] as any)?.meta as string | null | undefined;
+          const meta = metaStr ? JSON.parse(metaStr) : {};
+          meta.terminal_failure = true;
+          meta.terminal_marked_at = now();
+          meta.terminal_reason = `advancePipeline detected prior step ${terminalFailed.step_id} failed terminally`;
+          await sql.unsafe("UPDATE runs SET meta = $1 WHERE id = $2", [JSON.stringify(meta), runId]);
+        } catch { /* meta persistence is best-effort */ }
+        emitEvent({ ts: now(), event: "run.failed" as any, runId, workflowId: wfId, detail: `advancePipeline: prior step ${terminalFailed.step_id} terminally failed` });
+        scheduleRunCronTeardown(runId);
+        return { advanced: false, runCompleted: false };
+      }
       await sql.unsafe(
         "UPDATE steps SET status = 'pending', updated_at = $1 WHERE id = $2",
         [now(), next.id]

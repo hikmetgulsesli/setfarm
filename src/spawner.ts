@@ -19,6 +19,20 @@ const AGENT_TIMEOUT_SECONDS = 1800;
 const PID_FILE = path.join(os.homedir(), ".openclaw", "setfarm", "spawner.pid");
 const MAX_CONCURRENT = 8;
 
+// Wave 13 Bug M (run #344 postmortem): agent default cwd must NOT be the
+// setfarm-repo. Previously execFile inherited the spawner's cwd (the systemd
+// service's WorkingDirectory = ~/.openclaw/setfarm-repo). If the polling
+// prompt told the agent to `cd $story_workdir` and the agent skipped that
+// step, it would fall through to writing files, staging, committing and
+// pushing INSIDE setfarm-repo. Run #344 caught it: Prism wrote a 1067-line
+// pomodoro timer into src/lib/ and pushed it to setfarm-repo/main. The
+// Wave 12 cross-project guard now detects it in agent output, but this is
+// the proactive layer: start every agent in a non-git scratch directory so
+// stray `git` commands fail with "not a git repository" instead of silently
+// landing in the wrong repo.
+const AGENT_SAFE_CWD = path.join(os.homedir(), ".openclaw", "workspace", "agent-scratch");
+try { fs.mkdirSync(AGENT_SAFE_CWD, { recursive: true }); } catch { /* best-effort */ }
+
 const activeProcesses = new Map<string, ChildProcess>();
 let shuttingDown = false;
 
@@ -48,6 +62,7 @@ function spawnAgent(agentId: string, wfId: string, role: string): void {
     "agent", "--agent", agentId,
     "--message", prompt, "--timeout", String(AGENT_TIMEOUT_SECONDS),
   ], {
+    cwd: AGENT_SAFE_CWD,  // Wave 13 Bug M — start outside any git repo
     timeout: (AGENT_TIMEOUT_SECONDS + 60) * 1000,
     env: { ...process.env },
     maxBuffer: 10 * 1024 * 1024,

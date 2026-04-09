@@ -213,6 +213,20 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
 
     case "resume_run": {
       if (!finding.runId) return false;
+      // Wave 13 Bug J-2 defensive recheck: checks.ts already filters terminal_failure,
+      // but a race between finding generation and action application can leak through
+      // if failRun(runId, true) ran after the finding was queued. Re-read meta before
+      // claiming the run to make sure we never revive an intentionally-failed run.
+      const preCheck = await pgGet<{ meta: string | null }>("SELECT meta FROM runs WHERE id = $1", [finding.runId]);
+      if (preCheck?.meta) {
+        try {
+          const preMeta = JSON.parse(preCheck.meta);
+          if (preMeta.terminal_failure === true) {
+            logger.info(`[medic] resume_run skipped — terminal_failure set on ${finding.runId}`);
+            return false;
+          }
+        } catch { /* malformed meta is not a reason to resume */ }
+      }
       const resumeClaim = await pgRun("UPDATE runs SET status = 'resuming', updated_at = $1 WHERE id = $2 AND status = 'failed'", [now(), finding.runId]);
       if (resumeClaim.changes === 0) return false;
       const run = await pgGet<{ id: string; workflow_id: string; status: string; meta: string | null }>("SELECT id, workflow_id, status, meta FROM runs WHERE id = $1", [finding.runId]);

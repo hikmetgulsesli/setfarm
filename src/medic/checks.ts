@@ -370,6 +370,13 @@ export async function checkFailedRunsForResume(): Promise<MedicFinding[]> {
     const cooldownOk = (Date.now() - lastResume) > RESUME_COOLDOWN_MS;
     const updatedAge = Date.now() - new Date(run.updated_at).getTime();
 
+    // Wave 13 Bug J-2 (run #344 postmortem): skip runs that were intentionally
+    // failed by platform code (merge queue aborts, retry exhausted, missing
+    // context, dependency deadlock). Those callers set meta.terminal_failure
+    // via failRun(runId, true). Medic must not revive them — doing so is what
+    // let #344's verify/security-gate/qa-test march forward on a broken state.
+    if (meta.terminal_failure === true) continue;
+
     if (resumeCount >= RESUME_MAX_ATTEMPTS) continue;
     if (!cooldownOk) continue;
     if (updatedAge < 2 * 60 * 1000) continue; // wait 2 min for dust to settle

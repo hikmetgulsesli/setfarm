@@ -86,11 +86,55 @@ export function mergeStoryIntoFeature(
     }
   }
 
+  // Wave 13 Bug I (run #344 postmortem): reject empty story branches BEFORE merge.
+  // If the agent never committed real work, story_branch has zero commits ahead of
+  // the feature branch. `git merge` on such a branch returns "Already up to date"
+  // and we used to treat that as success — which is what let #344 report "2 merged"
+  // while the feature branch still only held the scaffold. rev-list --count catches
+  // it up front so the story is marked failed and the Wave 8 Bug A guardrail picks
+  // it up with an actionable message.
+  let commitsAhead = 0;
+  try {
+    const rlOut = execFileSync("git", ["rev-list", "--count", `${featureBranch}..${mergeTarget}`], {
+      cwd: repoPath, timeout: 5000, stdio: "pipe",
+    }).toString().trim();
+    commitsAhead = parseInt(rlOut, 10) || 0;
+  } catch (e) {
+    // rev-list can fail for unrelated histories; fall through to merge and let
+    // the post-merge SHA check catch a no-op.
+    logger.warn(`[merge-queue] rev-list failed for ${storyBranch}: ${String(e).slice(0, 150)}`);
+  }
+  if (commitsAhead === 0) {
+    logger.warn(`[merge-queue] ${storyBranch} has zero commits ahead of ${featureBranch} — agent did not commit any story work`);
+    return { success: false, conflicts: [`empty-branch:${storyBranch}`] };
+  }
+
+  // Capture feature branch HEAD BEFORE the merge so we can detect no-op merges
+  // (e.g. story branch diverged on non-tracked files only, or --ff resolved to
+  // an identity merge). A successful merge must advance the feature HEAD.
+  let headBefore = "";
+  try {
+    headBefore = execFileSync("git", ["rev-parse", featureBranch], {
+      cwd: repoPath, timeout: 5000, stdio: "pipe",
+    }).toString().trim();
+  } catch { /* push/verify still catches the outright failure case */ }
+
   try {
     // Merge with --no-ff to preserve story boundary
     execFileSync("git", ["merge", "--no-ff", mergeTarget, "-m", commitMessage], {
       cwd: repoPath, timeout: GIT_LONG_TIMEOUT, stdio: "pipe",
     });
+
+    // Wave 13 Bug I post-merge guard: feature HEAD must have advanced.
+    if (headBefore) {
+      const headAfter = execFileSync("git", ["rev-parse", featureBranch], {
+        cwd: repoPath, timeout: 5000, stdio: "pipe",
+      }).toString().trim();
+      if (headAfter === headBefore) {
+        logger.error(`[merge-queue] no-op merge: ${featureBranch} HEAD unchanged after merging ${storyBranch}`);
+        return { success: false, conflicts: [`no-op-merge:${storyBranch}`] };
+      }
+    }
 
     // Push the merged feature branch
     execFileSync("git", ["push", "origin", featureBranch], {
@@ -123,6 +167,16 @@ export function mergeStoryIntoFeature(
       execFileSync("git", ["merge", "--no-ff", "-X", "theirs", mergeTarget, "-m", commitMessage], {
         cwd: repoPath, timeout: GIT_LONG_TIMEOUT, stdio: "pipe",
       });
+      // Wave 13 Bug I post-merge guard (also in retry path): feature HEAD must advance.
+      if (headBefore) {
+        const headAfterRetry = execFileSync("git", ["rev-parse", featureBranch], {
+          cwd: repoPath, timeout: 5000, stdio: "pipe",
+        }).toString().trim();
+        if (headAfterRetry === headBefore) {
+          logger.error(`[merge-queue] no-op merge (retry path): ${featureBranch} HEAD unchanged after -X theirs merging ${storyBranch}`);
+          return { success: false, conflicts: [`no-op-merge:${storyBranch}`] };
+        }
+      }
       execFileSync("git", ["push", "origin", featureBranch], {
         cwd: repoPath, timeout: GIT_LONG_TIMEOUT, stdio: "pipe",
       });
