@@ -187,9 +187,32 @@ export async function parseAndInsertStories(output: string, runId: string): Prom
       // file set each story is allowed to touch (scope_files) plus optional
       // shared_files for cross-story collaboration (e.g. App.tsx wiring). The
       // post-implementation bleed check uses these to reject stories that wrote
-      // outside their declared scope. Missing fields default to NULL — in that
-      // case the check is skipped (backward compat).
-      const scopeFiles = Array.isArray(s.scope_files) ? JSON.stringify(s.scope_files) : null;
+      // outside their declared scope.
+      //
+      // Wave 14.1 (run #348 postmortem): most planner runs produce acceptance
+      // criteria that already name files like "src/components/X.tsx ..." but do
+      // NOT emit a top-level scope_files array. Rather than retrying planners
+      // until they obey the new contract, we auto-derive scope_files from the
+      // acceptance_criteria text with matchAll. Backward-compat (old stories
+      // still work), robust (planner just needs good AC), and progressive
+      // (when planners start emitting scope_files explicitly, that wins).
+      let scopeFiles: string | null = Array.isArray(s.scope_files) ? JSON.stringify(s.scope_files) : null;
+      if (!scopeFiles && Array.isArray(ac) && ac.length > 0) {
+        const acText = ac.join("\n");
+        const nestedPathRe = /(?:^|[\s"'`(])([a-z][\w./-]*\/[\w.-]+\.(?:tsx?|jsx?|css|scss|html|json|mjs|cjs))/gi;
+        const topLevelRe = /(?:^|[\s"'`(])(App\.tsx|main\.tsx|index\.html|index\.ts|index\.tsx|index\.css|package\.json|vite\.config\.(?:ts|js)|tailwind\.config\.(?:ts|js))\b/gi;
+        const derived = new Set<string>();
+        for (const match of acText.matchAll(nestedPathRe)) {
+          if (match[1]) derived.add(match[1]);
+        }
+        for (const match of acText.matchAll(topLevelRe)) {
+          if (match[1]) derived.add(match[1]);
+        }
+        if (derived.size > 0) {
+          scopeFiles = JSON.stringify([...derived]);
+          logger.info(`[scope-auto-derive] Story ${s.id}: derived ${derived.size} scope files from acceptance criteria (planner did not emit scope_files)`);
+        }
+      }
       const sharedFiles = Array.isArray(s.shared_files) ? JSON.stringify(s.shared_files) : null;
       const scopeDesc = typeof s.scope_description === "string" ? s.scope_description : null;
       await sql`INSERT INTO stories (id, run_id, story_index, story_id, title, description, acceptance_criteria, status, retry_count, max_retries, depends_on, scope_files, shared_files, scope_description, created_at, updated_at)

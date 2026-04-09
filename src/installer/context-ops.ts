@@ -150,39 +150,47 @@ export function applyOptionalDefaults(context: Record<string, string>): void {
 }
 
 /**
- * Wave 14 Bug K: prune context for a specific step before template resolution.
+ * Wave 14 Bug K: prune context before template resolution.
  *
- * - Strips PROTECTED_OUTBOUND_KEYS unconditionally (DB credentials, API keys)
- * - Keeps keys in STEP_CONTEXT_ALLOWLIST[_common] + STEP_CONTEXT_ALLOWLIST[stepId]
- * - Escape hatch: small (<500 chars), lowercase-only-named keys pass through
- *   to avoid breaking edge-case workflows that inject ad-hoc variables.
+ * Wave 14.1 HOTFIX (run #348 postmortem): the original implementation used a
+ * per-step allowlist from constants.STEP_CONTEXT_ALLOWLIST. Trouble is I did
+ * NOT audit each step's real input_template to verify every required variable
+ * was in the allowlist. setup-repo needs story_workdir + screen_map and both
+ * were missing — MISSING_INPUT_GUARD tripped, retries exhausted, run failed,
+ * cascade terminal fail. Every mid-complexity project run was broken by this.
  *
- * Pruning is claim-scope only — the DB-persisted `runs.context` is NOT touched.
- * Only the resolved agent prompt is trimmed.
+ * Revised behaviour: only strip PROTECTED_OUTBOUND_KEYS (DB credentials, API
+ * keys). This preserves the Wave 14 security fix (no more db_password leaking
+ * into verify/security-gate/qa-test agent prompts) but gives up the token-
+ * economy/bloat-trim payoff until the allowlist can be properly audited
+ * against every step template in a later wave.
+ *
+ * STEP_CONTEXT_ALLOWLIST is kept in constants.ts as a reference for future
+ * reactivation once each step's template variables have been catalogued.
+ *
+ * Pruning is claim-scope only — runs.context in DB is untouched. Only the
+ * agent prompt is trimmed.
+ *
+ * @param context the run context map
+ * @param _stepId kept in signature for future per-step behaviour; ignored by
+ *                the Wave 14.1 PROTECTED-only implementation
  */
 export function pruneContextForStep(
   context: Record<string, string>,
-  stepId: string,
+  _stepId: string,
 ): Record<string, string> {
-  const commonKeys = STEP_CONTEXT_ALLOWLIST["_common"] || [];
-  const stepKeys = STEP_CONTEXT_ALLOWLIST[stepId] || [];
-  const allowlist = new Set<string>([...commonKeys, ...stepKeys]);
-
+  // Touch the unused parameter to satisfy strict lint without changing callers.
+  void _stepId;
+  // Touch the allowlist import so TypeScript does not complain that it is unused
+  // while still keeping the export in constants.ts available for the future
+  // allowlist-based pruning implementation.
+  void STEP_CONTEXT_ALLOWLIST;
   const pruned: Record<string, string> = {};
   for (const [key, value] of Object.entries(context)) {
-    // Always strip protected keys — no exceptions
     if (PROTECTED_OUTBOUND_KEYS.has(key) || PROTECTED_OUTBOUND_KEYS.has(key.toLowerCase())) {
       continue;
     }
-    // Allowlist whitelist
-    if (allowlist.has(key)) {
-      pruned[key] = value;
-      continue;
-    }
-    // Escape hatch: small simple-named keys (e.g. ad-hoc workflow variables)
-    if (value && value.length < 500 && /^[a-z_][a-z0-9_]*$/.test(key)) {
-      pruned[key] = value;
-    }
+    pruned[key] = value;
   }
   return pruned;
 }
