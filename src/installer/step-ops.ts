@@ -1029,6 +1029,33 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
   if (step.type === "loop") {
     const loopConfig: LoopConfig | null = parseLoopConfigSafe(step.loop_config, step.run_id);
     if (loopConfig?.over === "stories") {
+      // Bug C fix (plan: reactive-frolicking-cupcake.md, run #342 postmortem):
+      // Capture the base branch's commit SHA on the FIRST claim of the implement
+      // loop and store it in context. All story worktrees in this loop must be
+      // created from the SAME commit, even if setup-build later writes more
+      // commits to the same branch (which run #342 actually did — there was a
+      // 269c2df setup-build commit, then a 9c26285 follow-up after the agent
+      // already reported done; US-001's worktree was on 269c2df while US-002+
+      // were on 9c26285, and the merge queue then conflicted on package.json
+      // because the bases diverged).
+      //
+      // Once captured, the value is sticky for the lifetime of the implement
+      // step. createStoryWorktree consumes it via context["implement_base_commit"].
+      if (context["repo"] && context["branch"] && !context["implement_base_commit"]) {
+        try {
+          const sha = execFileSync("git", ["rev-parse", context["branch"]], {
+            cwd: context["repo"], encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
+          }).trim();
+          if (/^[0-9a-f]{40}$/i.test(sha)) {
+            context["implement_base_commit"] = sha;
+            await updateRunContext(step.run_id, context);
+            logger.info(`[implement] Captured base commit ${sha.slice(0, 8)} from ${context["branch"]} — all story worktrees will be created from this SHA`, { runId: step.run_id });
+          }
+        } catch (e) {
+          logger.warn(`[implement] Could not capture base commit for ${context["branch"]}: ${String(e).slice(0, 150)}`, { runId: step.run_id });
+        }
+      }
+
       // Auto-complete stories that already have a PR (open or merged)
       const runIdPrefix = step.run_id.slice(0, 8);
       await autoCompleteStoriesWithPRs(step, runIdPrefix, context, null);
@@ -1176,7 +1203,13 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
       // GIT WORKTREE ISOLATION: Create OUTSIDE transaction to avoid holding DB
       // lock during slow git operations. Done BEFORE the DB update so the DB
       // never references a worktree that does not exist.
-      const storyWorkdir = createStoryWorktree(context["repo"], storyBranch, context["branch"] || "master", agentId);
+      //
+      // Bug C fix: pass the captured implement_base_commit (a SHA) instead of
+      // the branch name when present. createStoryWorktree treats SHA inputs as
+      // pinned references and skips the fetch+force-update dance, ensuring all
+      // sibling worktrees in this implement loop share the same parent commit.
+      const baseRef = context["implement_base_commit"] || context["branch"] || "master";
+      const storyWorkdir = createStoryWorktree(context["repo"], storyBranch, baseRef, agentId);
       if (!storyWorkdir) {
         // Worktree creation failed — revert story claim, do not touch step state
         const wtReason = `Worktree creation failed for story ${nextStory.story_id} — cannot isolate parallel work`;
@@ -1770,7 +1803,56 @@ ${screenDescs}
           const repoPath = context["repo"] || "";
           const pkg = JSON.parse(fs.readFileSync(path.join(repoPath, "package.json"), "utf-8"));
           const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
-          if (!allDeps["tailwindcss"] && !allDeps["@tailwindcss/postcss"]) {
+          // Bug B fix (plan: reactive-frolicking-cupcake.md, run #342 postmortem):
+          // Tailwind v4 ships TWO bundler integrations and they are NOT interchangeable:
+          //   - @tailwindcss/vite for Vite projects (registered in vite.config.ts plugins)
+          //   - @tailwindcss/postcss for PostCSS-driven projects (Next.js, etc.)
+          // The previous code installed only @tailwindcss/postcss and wrote a postcss.config.js,
+          // which silently fails on Vite projects: the build "succeeds" but @import "tailwindcss"
+          // is treated as a raw CSS import, no utilities are emitted, and the deployed page
+          // renders unstyled. Run #342 hit this exactly — user had to ship a manual fix
+          // (commit cd3a34f) to add @tailwindcss/vite. Now we detect Vite first and pick
+          // the right integration.
+          const isVite = !!(allDeps["vite"] || fs.existsSync(path.join(repoPath, "vite.config.ts")) || fs.existsSync(path.join(repoPath, "vite.config.js")));
+          if (isVite) {
+            // Vite path: install @tailwindcss/vite, register it in vite.config.{ts,js}
+            if (!allDeps["@tailwindcss/vite"]) {
+              execFileSync("npm", ["install", "-D", "tailwindcss", "@tailwindcss/vite"], {
+                cwd: repoPath, timeout: 60000, stdio: "pipe",
+              });
+              // Register in vite.config — handle both ts and js, preserve user customizations
+              const viteConfigCandidates = ["vite.config.ts", "vite.config.js", "vite.config.mts", "vite.config.mjs"];
+              const viteConfigPath = viteConfigCandidates.map(n => path.join(repoPath, n)).find(p => fs.existsSync(p));
+              if (viteConfigPath) {
+                let cfg = fs.readFileSync(viteConfigPath, "utf-8");
+                if (!cfg.includes("@tailwindcss/vite")) {
+                  // Add import (after the last existing import)
+                  const importLine = "import tailwindcss from '@tailwindcss/vite'\n";
+                  const lastImportMatch = cfg.match(/(^import .+?\n)+/m);
+                  if (lastImportMatch) {
+                    const idx = lastImportMatch.index! + lastImportMatch[0].length;
+                    cfg = cfg.slice(0, idx) + importLine + cfg.slice(idx);
+                  } else {
+                    cfg = importLine + cfg;
+                  }
+                  // Inject tailwindcss() into the plugins array. Two common shapes:
+                  //   plugins: [react()]              -> plugins: [react(), tailwindcss()]
+                  //   plugins: [react(), other()]     -> plugins: [react(), other(), tailwindcss()]
+                  cfg = cfg.replace(/plugins:\s*\[([^\]]*)\]/, (_m, inner) => {
+                    const trimmed = inner.trim();
+                    if (trimmed.includes("tailwindcss()")) return `plugins: [${inner}]`;
+                    if (trimmed.length === 0) return "plugins: [tailwindcss()]";
+                    return `plugins: [${inner.replace(/\s*$/, "")}, tailwindcss()]`;
+                  });
+                  fs.writeFileSync(viteConfigPath, cfg);
+                  logger.info(`[setup-build] Registered @tailwindcss/vite in ${path.basename(viteConfigPath)}`, { runId: step.run_id });
+                }
+              } else {
+                logger.warn(`[setup-build] @tailwindcss/vite installed but no vite.config.* found — manual registration required`, { runId: step.run_id });
+              }
+            }
+          } else if (!allDeps["tailwindcss"] && !allDeps["@tailwindcss/postcss"]) {
+            // Non-Vite path (Next.js, plain webpack, etc.): keep PostCSS pipeline
             execFileSync("npm", ["install", "-D", "tailwindcss", "@tailwindcss/postcss", "autoprefixer"], {
               cwd: repoPath, timeout: 60000, stdio: "pipe",
             });
@@ -1782,8 +1864,18 @@ ${screenDescs}
             if (!fs.existsSync(twPath)) {
               fs.writeFileSync(twPath, `/** @type {import('tailwindcss').Config} */\nexport default {\n  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],\n  theme: { extend: {} },\n  plugins: [],\n};\n`);
             }
-            logger.info("[setup-build] Auto-installed Tailwind (design requires it)", { runId: step.run_id });
           }
+          // Common: ensure src/index.css contains the Tailwind v4 directive so the
+          // bundler actually pulls in the framework. Vite needs this in the entry CSS.
+          const indexCssPath = path.join(repoPath, "src", "index.css");
+          if (fs.existsSync(indexCssPath)) {
+            const css = fs.readFileSync(indexCssPath, "utf-8");
+            if (!css.includes("@import \"tailwindcss\"") && !css.includes("@import 'tailwindcss'") && !css.includes("@tailwind base")) {
+              fs.writeFileSync(indexCssPath, `@import "tailwindcss";\n\n${css}`);
+              logger.info(`[setup-build] Added @import "tailwindcss" to src/index.css`, { runId: step.run_id });
+            }
+          }
+          logger.info(`[setup-build] Auto-installed Tailwind (design requires it, mode=${isVite ? "vite" : "postcss"})`, { runId: step.run_id });
         }
       }
     } catch (e) {
@@ -2471,6 +2563,38 @@ ${screenDescs}
           try {
             const mqResult = await runMergeQueue(step.run_id, repoPath, featureBranch);
             logger.info(`[direct-merge] Merge queue complete: ${mqResult.merged.length} merged, ${mqResult.conflicted.length} conflicts`, { runId: step.run_id });
+
+            // Bug A fix (plan: reactive-frolicking-cupcake.md, run #342 postmortem):
+            // Wave 1 #2 removed skipFailedStories from the claim path so the
+            // checkLoopContinuation guardrail (96dd442) could fail the run on any
+            // failed story. But the direct-merge code path bypasses checkLoopContinuation
+            // entirely — runMergeQueue marks conflicted stories as failed (Wave 1 #8)
+            // and we then jump straight to advancePipeline. Result: implement step
+            // gets marked done and verify/qa-test/deploy all run on a broken state.
+            // Run #342 caught this with US-001 + US-003 in 'failed' status while the
+            // run sat at 'completed' and PR #2 was merged anyway. Now we explicitly
+            // count failed stories AFTER the merge queue and short-circuit to a run
+            // failure instead of advancing the pipeline.
+            const failedStories = await pgQuery<{ story_id: string; title: string }>(
+              "SELECT story_id, title FROM stories WHERE run_id = $1 AND status = 'failed' ORDER BY story_index",
+              [step.run_id],
+            );
+            if (failedStories.length > 0) {
+              const failList = failedStories.map(s => `${s.story_id} (${s.title})`).join(", ");
+              const failMsg = `Direct-merge complete but ${failedStories.length} story(s) failed: ${failList}. Run cannot proceed with broken stories — verify, qa-test, deploy would all be on partial work. Resolve the merge conflicts manually, mark stories verified, and resume the run, or restart with a clean PRD.`;
+              logger.error(`[direct-merge] ${failMsg}`, { runId: step.run_id });
+              await pgRun("UPDATE steps SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3", [
+                `STATUS: failed\nMERGE_QUEUE_RESULT: ${mqResult.merged.length} merged, ${mqResult.conflicted.length} conflicted\nFAILED_STORIES: ${failList}\nREASON: ${failMsg}`,
+                now(), step.id,
+              ]);
+              await failRun(step.run_id);
+              const wfIdF = await getWorkflowId(step.run_id);
+              emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfIdF, stepId: step.step_id, detail: failMsg });
+              emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfIdF, detail: failMsg });
+              scheduleRunCronTeardown(step.run_id);
+              return { advanced: false, runCompleted: false };
+            }
+
             // Mark loop step done and advance
             await pgRun("UPDATE steps SET status = 'done', output = $1, updated_at = $2 WHERE id = $3", [
               `STATUS: done\nMERGED: ${mqResult.merged.join(', ')}\nCONFLICTS: ${mqResult.conflicted.join(', ')}\nFINAL_PR: ${mqResult.prUrl || 'none'}`,

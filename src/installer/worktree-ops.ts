@@ -133,41 +133,52 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
     }
   }
 
+  // Bug C fix (plan: reactive-frolicking-cupcake.md, run #342): caller may pass
+  // a 40-char SHA instead of a branch name to PIN every story worktree in the
+  // implement loop to the same parent commit. When we get a SHA, the fetch +
+  // branch-sync dance below is wrong (you can't `git branch -f <sha> origin/<sha>`)
+  // — skip it and go straight to creating the worktree from the explicit ref.
+  const baseIsSha = /^[0-9a-f]{40}$/i.test(baseBranch);
+
   try {
-    // MERGE_CONFLICT FIX (run #338): Before creating a worktree, make sure the local
-    // base branch contains everything pushed so far — including the latest setup-build
-    // commit and any merged story PRs. Previously we used `git branch -f` which fails
-    // when base is checked out in the main worktree, leaving it stale. Now we fetch,
-    // then in the main repo do a hard reset of the base branch to origin so the new
-    // worktree's branch starts from the correct parent.
-    try {
-      execFileSync("git", ["fetch", "origin", baseBranch], { cwd: repo, timeout: 15000, stdio: "pipe" });
-      // What is the current branch in the main worktree?
-      let mainCurrent = "";
+    if (!baseIsSha) {
+      // MERGE_CONFLICT FIX (run #338): Before creating a worktree, make sure the local
+      // base branch contains everything pushed so far — including the latest setup-build
+      // commit and any merged story PRs. Previously we used `git branch -f` which fails
+      // when base is checked out in the main worktree, leaving it stale. Now we fetch,
+      // then in the main repo do a hard reset of the base branch to origin so the new
+      // worktree's branch starts from the correct parent.
       try {
-        mainCurrent = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: repo, timeout: 5000, stdio: "pipe" }).toString().trim();
-      } catch {}
-      if (mainCurrent === baseBranch) {
-        // Base branch IS checked out in main repo — sync forward via pull --ff-only.
-        // If local has commits ahead of origin (e.g. setup-build just committed but
-        // hasn't been pushed yet), this is a no-op and we keep the local commit.
+        execFileSync("git", ["fetch", "origin", baseBranch], { cwd: repo, timeout: 15000, stdio: "pipe" });
+        // What is the current branch in the main worktree?
+        let mainCurrent = "";
         try {
-          execFileSync("git", ["pull", "origin", baseBranch, "--ff-only"], { cwd: repo, timeout: 15000, stdio: "pipe" });
-          logger.info(`[worktree] Pulled ${baseBranch} (ff-only) in main worktree before creating story worktree`, {});
-        } catch (pullErr) {
-          logger.warn(`[worktree] ff-only pull of ${baseBranch} failed (local may be ahead or diverged), continuing: ${String(pullErr).slice(0, 150)}`, {});
+          mainCurrent = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: repo, timeout: 5000, stdio: "pipe" }).toString().trim();
+        } catch {}
+        if (mainCurrent === baseBranch) {
+          // Base branch IS checked out in main repo — sync forward via pull --ff-only.
+          // If local has commits ahead of origin (e.g. setup-build just committed but
+          // hasn't been pushed yet), this is a no-op and we keep the local commit.
+          try {
+            execFileSync("git", ["pull", "origin", baseBranch, "--ff-only"], { cwd: repo, timeout: 15000, stdio: "pipe" });
+            logger.info(`[worktree] Pulled ${baseBranch} (ff-only) in main worktree before creating story worktree`, {});
+          } catch (pullErr) {
+            logger.warn(`[worktree] ff-only pull of ${baseBranch} failed (local may be ahead or diverged), continuing: ${String(pullErr).slice(0, 150)}`, {});
+          }
+        } else {
+          // Base branch not checked out anywhere — safe to hard-sync via branch -f
+          try {
+            execFileSync("git", ["branch", "-f", baseBranch, "origin/" + baseBranch], { cwd: repo, timeout: 5000, stdio: "pipe" });
+            logger.info(`[worktree] Synced ${baseBranch} to origin/${baseBranch} before creating worktree`, {});
+          } catch (brErr) {
+            logger.warn(`[worktree] branch -f ${baseBranch} failed: ${String(brErr).slice(0, 150)}`, {});
+          }
         }
-      } else {
-        // Base branch not checked out anywhere — safe to hard-sync via branch -f
-        try {
-          execFileSync("git", ["branch", "-f", baseBranch, "origin/" + baseBranch], { cwd: repo, timeout: 5000, stdio: "pipe" });
-          logger.info(`[worktree] Synced ${baseBranch} to origin/${baseBranch} before creating worktree`, {});
-        } catch (brErr) {
-          logger.warn(`[worktree] branch -f ${baseBranch} failed: ${String(brErr).slice(0, 150)}`, {});
-        }
+      } catch (fetchErr) {
+        logger.warn(`[worktree] Could not sync base branch: ${String(fetchErr)}`, {});
       }
-    } catch (fetchErr) {
-      logger.warn(`[worktree] Could not sync base branch: ${String(fetchErr)}`, {});
+    } else {
+      logger.info(`[worktree] Pinned base SHA ${baseBranch.slice(0, 8)} — skipping branch sync, creating worktree directly from commit`, {});
     }
 
     // Check if story branch already exists (may have WIP commits from previous session)
@@ -192,13 +203,21 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
           throw reuse_err;
         }
       }
-      // Rebase onto latest base branch to incorporate merged PRs
-      try {
-        execFileSync("git", ["rebase", baseBranch], { cwd: worktreeDir, timeout: 30000, stdio: "pipe" });
-        logger.info(`[worktree] Rebased ${storyId} onto ${baseBranch}`, {});
-      } catch (rebaseErr) {
-        try { execFileSync("git", ["rebase", "--abort"], { cwd: worktreeDir, timeout: 5000, stdio: "pipe" }); } catch {}
-        logger.warn(`[worktree] Rebase failed for ${storyId}, continuing with stale branch`, {});
+      // Rebase onto latest base branch to incorporate merged PRs.
+      // Bug C fix: skip rebase when base is a pinned SHA — we want every story
+      // worktree in the loop to STAY at that SHA, not drift forward as siblings
+      // get merged. The rebase here is for the case where the base is a moving
+      // branch reference that may have advanced between abandon and resume.
+      if (!baseIsSha) {
+        try {
+          execFileSync("git", ["rebase", baseBranch], { cwd: worktreeDir, timeout: 30000, stdio: "pipe" });
+          logger.info(`[worktree] Rebased ${storyId} onto ${baseBranch}`, {});
+        } catch (rebaseErr) {
+          try { execFileSync("git", ["rebase", "--abort"], { cwd: worktreeDir, timeout: 5000, stdio: "pipe" }); } catch {}
+          logger.warn(`[worktree] Rebase failed for ${storyId}, continuing with stale branch`, {});
+        }
+      } else {
+        logger.info(`[worktree] Pinned SHA base — skipping rebase for ${storyId}`, {});
       }
       logger.info(`[worktree] Resumed ${storyId} branch with existing commits`, {});
     } else {
