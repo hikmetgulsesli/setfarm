@@ -1515,12 +1515,63 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
     }
   }
 
-  // REQUIRED OUTPUT FIELDS GUARDRAIL (Wave 3 fix #12)
+  // REQUIRED OUTPUT FIELDS GUARDRAIL (Wave 3 fix #12 + Wave 9 auto-derive)
   // Enforce that each step's agent output contains fields the pipeline actually
-  // reads downstream. If an agent reports STATUS: done but forgot BUILD_CMD or
-  // SCREEN_MAP, the pipeline previously advanced with undefined values and the
-  // failure surfaced much later (if at all). Catch it at the source.
+  // reads downstream. Wave 9 addition: before firing the guardrail, try to
+  // auto-derive missing fields from filesystem/package.json state so agents
+  // that copy only the tail of a script's output (and skip EXISTING_CODE /
+  // BUILD_CMD on the last line) don't burn a retry slot. Run #344 proved
+  // this: every single run was eating one retry on both setup-repo and
+  // setup-build for exactly this reason — the script emitted the field but
+  // the agent forwarded only STATUS: done. The derivation is conservative —
+  // only fills when a reliable source exists, otherwise the guardrail still
+  // fires and the agent gets a chance to correct.
   if (parsed["status"]?.toLowerCase() === "done") {
+    // Wave 9 — setup-repo EXISTING_CODE: derive from filesystem state
+    if (step.step_id === "setup-repo" && !parsed["existing_code"]) {
+      const repoPath = context["repo"] || "";
+      if (repoPath && fs.existsSync(repoPath)) {
+        // "Existing code" = the repo already had a package.json before setup-repo ran.
+        // setup-repo.sh only scaffolds if package.json is absent, so presence at this
+        // point means the repo was pre-existing. Fall back to false (clean scaffold).
+        const hasPkg = fs.existsSync(path.join(repoPath, "package.json"));
+        // Additionally, if git log shows more than the baseline commits (initial +
+        // .gitignore + DESIGN.md + optional setup-build), treat as existing.
+        let commitCount = 0;
+        try {
+          commitCount = parseInt(execFileSync("git", ["rev-list", "--count", "HEAD"], {
+            cwd: repoPath, encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
+          }).trim(), 10) || 0;
+        } catch {}
+        const derived = hasPkg && commitCount > 5 ? "true" : "false";
+        parsed["existing_code"] = derived;
+        logger.info(`[required-fields-autoderive] setup-repo EXISTING_CODE=${derived} (pkg=${hasPkg}, commits=${commitCount})`, { runId: step.run_id });
+      }
+    }
+    // Wave 9 — setup-build BUILD_CMD: derive from package.json scripts
+    if (step.step_id === "setup-build" && !parsed["build_cmd"]) {
+      const repoPath = context["repo"] || "";
+      if (repoPath) {
+        try {
+          const pkgPath = path.join(repoPath, "package.json");
+          if (fs.existsSync(pkgPath)) {
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+            const scripts = (pkg && pkg.scripts) || {};
+            let derived = "";
+            if (scripts.build) derived = "npm run build";
+            else if (scripts.start) derived = "npm start";
+            else if (scripts.dev) derived = "npm run dev";
+            if (derived) {
+              parsed["build_cmd"] = derived;
+              logger.info(`[required-fields-autoderive] setup-build BUILD_CMD="${derived}" (from package.json scripts)`, { runId: step.run_id });
+            }
+          }
+        } catch (derErr) {
+          logger.warn(`[required-fields-autoderive] setup-build BUILD_CMD derivation failed: ${String(derErr).slice(0, 150)}`, { runId: step.run_id });
+        }
+      }
+    }
+
     const missingFieldsMsg = checkRequiredOutputFields(step.step_id, parsed);
     if (missingFieldsMsg) {
       logger.warn(`[required-fields-guardrail] ${missingFieldsMsg}`, { runId: step.run_id, stepId: step.step_id });
