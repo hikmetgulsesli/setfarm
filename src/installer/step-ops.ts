@@ -2586,6 +2586,20 @@ ${screenDescs}
     // Mark current story done or skipped + persist PR context for verify_each
     // FIX: Remove context fallback to prevent cross-contamination between parallel stories
     let storyPrUrl = parsed["pr_url"] || "";
+
+    // Wave 12 Bug H fix (plan: reactive-frolicking-cupcake.md, run #344 postmortem):
+    // Capture the agent's ORIGINAL STORY_BRANCH and PR_URL claims BEFORE any overwrite
+    // below. Wave 1 Fix #3 cross-project guard (further down) was reading
+    // parsed["story_branch"] AFTER the DB-value overwrite, so any divergence between
+    // the agent's claim and the expected branch was erased before the check ran. Run
+    // #344 caught it: prism committed pomodoro timer code into the SETFARM-REPO (cwd
+    // confusion, agent never 'cd'd to story_workdir), reported STORY_BRANCH: main,
+    // but the guard saw "d1605a46-us-002" (DB value) and happily passed. The work
+    // landed as a 1067-line commit inside ~/.openclaw/setfarm-repo which had to be
+    // reverted manually.
+    const agentOriginalBranch = (parsed["story_branch"] || "").trim();
+    const agentOriginalPr = (parsed["pr_url"] || "").trim();
+
     // ISSUE-1 FIX: Prefer pipeline-set branch (from DB) over agent's output (agents create wrong names)
     const dbStoryBranch = await pgGet<{ story_branch: string }>("SELECT story_branch FROM stories WHERE id = $1", [step.current_story_id]);
     // Wave 4 fix #11 (plan: reactive-frolicking-cupcake): normalize story_branch to
@@ -2600,21 +2614,23 @@ ${screenDescs}
       context["story_branch"] = storyBranchName;
       parsed["story_branch"] = storyBranchName;
     }
-    // CROSS-PROJECT CONTAMINATION GUARD (run #337 US-002 hallucination fix):
+    // CROSS-PROJECT CONTAMINATION GUARD (run #337 US-002 hallucination fix + Wave 12 Bug H):
     // Agent sessions occasionally carry context from a previous project and fabricate
     // STORY_BRANCH / PR_URL fields pointing at a different repo. Detect that here and
     // fail the step with corrective feedback — never let a fabricated output be marked done.
+    // Wave 12 Bug H: now uses the ORIGINAL agent claims captured above, not the
+    // DB-overwritten values. Also runs for ALL statuses except SKIPPED (not just DONE)
+    // so it still catches a cross-project commit even when the story reported failed
+    // (e.g. run #344 US-002 hit 'test(s) failed' first which masked the branch mismatch).
     if (storyStatus !== STORY_STATUS.SKIPPED) {
       const expectedRunPrefix = step.run_id.slice(0, 8);
       const expectedRepoName = (context["repo"] || "").split("/").pop() || "";
-      const agentBranch = (parsed["story_branch"] || "").trim();
-      const agentPr = (parsed["pr_url"] || "").trim();
-      const branchMismatch = agentBranch && expectedRunPrefix && !agentBranch.toLowerCase().startsWith(expectedRunPrefix.toLowerCase()) && !agentBranch.toLowerCase().includes(expectedRunPrefix.toLowerCase());
-      const prMismatch = agentPr && expectedRepoName && !agentPr.includes(`/${expectedRepoName}/`) && !agentPr.includes(`/${expectedRepoName}.git/`);
+      const branchMismatch = agentOriginalBranch && expectedRunPrefix && !agentOriginalBranch.toLowerCase().startsWith(expectedRunPrefix.toLowerCase()) && !agentOriginalBranch.toLowerCase().includes(expectedRunPrefix.toLowerCase());
+      const prMismatch = agentOriginalPr && expectedRepoName && !agentOriginalPr.includes(`/${expectedRepoName}/`) && !agentOriginalPr.includes(`/${expectedRepoName}.git/`);
       if (branchMismatch || prMismatch) {
         const details: string[] = [];
-        if (branchMismatch) details.push(`STORY_BRANCH "${agentBranch}" does not match run prefix "${expectedRunPrefix}"`);
-        if (prMismatch) details.push(`PR_URL "${agentPr}" does not reference repo "${expectedRepoName}"`);
+        if (branchMismatch) details.push(`STORY_BRANCH "${agentOriginalBranch}" does not match run prefix "${expectedRunPrefix}"`);
+        if (prMismatch) details.push(`PR_URL "${agentOriginalPr}" does not reference repo "${expectedRepoName}"`);
         const correctiveMsg = `CROSS-PROJECT CONTAMINATION: Agent output references a different project. ${details.join(". ")}. You must work in ${context["repo"] || "the assigned repo"} on story ${storyRow?.story_id} (${storyRow?.title}). Do NOT reference other repos, branches, or PRs. Re-do the work in the correct worktree.`;
         logger.error(`[cross-project-guard] ${correctiveMsg}`, { runId: step.run_id, stepId: step.step_id });
         if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
