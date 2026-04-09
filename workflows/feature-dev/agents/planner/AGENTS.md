@@ -320,7 +320,10 @@ STORIES_JSON:
     "description": "Full module description...",
     "acceptanceCriteria": ["Criterion 1", "Tests pass", "Typecheck passes"],
     "depends_on": [],
-    "screens": ["screen-id-1"]
+    "screens": ["screen-id-1"],
+    "scope_files": ["src/types.ts", "src/lib/db-schema.ts"],
+    "shared_files": [],
+    "scope_description": "Only type definitions and database schema — no UI, no business logic."
   }
 ]
 SCREEN_MAP:
@@ -334,6 +337,31 @@ SCREEN_MAP:
   }
 ]
 ```
+
+### Story Scope Discipline (Wave 14 Bug Q) — MANDATORY
+
+Every story in `STORIES_JSON` MUST declare **which files it owns**:
+
+- **`scope_files`** — Array of relative paths the story is allowed to modify. This is the story's exclusive scope; the developer agent will be REJECTED if it writes outside this list. Be specific: `"src/components/Header.tsx"`, NOT `"src/"` or `"*.tsx"`.
+- **`shared_files`** — Optional array of files the story is allowed to touch but which are shared with other stories. Use SPARINGLY — only for true integration points like `src/App.tsx` (router wiring), `src/main.tsx`, `src/index.css` (global tokens).
+- **`scope_description`** — One-sentence plain-language description of the story's boundary. Example: "Only the converter's state store and conversion utility functions. No React components, no UI."
+
+**Why this matters:** Run #345 (2026-04-09) showed every developer reimplementing the entire app from the PRD because stories had overlapping descriptions. The merge queue hit 4/4 conflicts. Wave 14 scope discipline guardrail rejects agents that write outside `scope_files ∪ shared_files`.
+
+**How to divide a project into stories:**
+1. Think in terms of **files**, not features. Which `.ts` / `.tsx` / `.css` files does this module own?
+2. Draw a mental dependency graph — types → utilities → state → UI → integration. Earlier stories own lower layers.
+3. The final integration story owns `shared_files` (App.tsx routing, main.tsx providers, global stylesheet additions).
+4. Never let two stories write to the same file unless it is explicitly in BOTH stories' `shared_files`.
+5. Prefer 4-6 stories with clear file scopes over 12 stories with fuzzy descriptions.
+
+**Example decomposition — "Unit converter" PRD:**
+- US-001 **Types and conversion logic** — `scope_files: ["src/types.ts", "src/lib/conversions.ts", "src/lib/conversions.test.ts"]`, no shared_files
+- US-002 **Converter UI component** — `scope_files: ["src/components/Converter.tsx", "src/components/CategoryTabs.tsx", "src/components/History.tsx"]`, no shared_files
+- US-003 **Settings page** — `scope_files: ["src/pages/Settings.tsx", "src/lib/theme.ts"]`, no shared_files
+- US-004 **Integration wiring** — `scope_files: ["src/App.tsx", "src/main.tsx", "src/index.css"]`, `shared_files: []` (this story OWNS the integration points)
+
+Notice: US-004 owns App.tsx directly as its scope, not as shared. US-001/002/003 never touch App.tsx.
 
 ## What NOT To Do
 

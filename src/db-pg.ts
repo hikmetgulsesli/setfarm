@@ -71,6 +71,21 @@ export async function pgMigrate(): Promise<void> {
   if (!tableNames.has('runs')) {
     throw new Error('PostgreSQL setfarm schema not found. Run migration script first.');
   }
+
+  // Wave 14 Bug Q: idempotent ALTER for story scope discipline
+  // Each story now carries an explicit scope_files list (JSON array) + optional
+  // shared_files list for cross-story collaboration. The post-implementation
+  // bleed check rejects stories that modify files outside their declared scope.
+  // IF NOT EXISTS keeps this safe across restarts — no-op when already applied.
+  try {
+    await s`ALTER TABLE stories ADD COLUMN IF NOT EXISTS scope_files TEXT`;
+    await s`ALTER TABLE stories ADD COLUMN IF NOT EXISTS shared_files TEXT`;
+    await s`ALTER TABLE stories ADD COLUMN IF NOT EXISTS scope_description TEXT`;
+  } catch (e) {
+    // Migration failures should not prevent gateway start — log but continue.
+    // eslint-disable-next-line no-console
+    console.warn('[pgMigrate] Wave 14 Bug Q ALTER failed (likely already applied):', String(e).slice(0, 200));
+  }
 }
 
 // ── Utility functions ──

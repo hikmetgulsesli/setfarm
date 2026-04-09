@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { pgGet, pgQuery } from "../db-pg.js";
 import { logger } from "../lib/logger.js";
-import { OPTIONAL_TEMPLATE_VARS, PROTECTED_CONTEXT_KEYS, PROJECT_MEMORY_MAX_LINES } from "./constants.js";
+import { OPTIONAL_TEMPLATE_VARS, PROTECTED_CONTEXT_KEYS, PROJECT_MEMORY_MAX_LINES, STEP_CONTEXT_ALLOWLIST, PROTECTED_OUTBOUND_KEYS } from "./constants.js";
 import { getAgentWorkspacePath } from "./worktree-ops.js";
 
 // ── Path Utilities ────────────────────────────────────────────────
@@ -147,6 +147,44 @@ export function applyOptionalDefaults(context: Record<string, string>): void {
   for (const v of OPTIONAL_TEMPLATE_VARS) {
     if (!context[v]) context[v] = "";
   }
+}
+
+/**
+ * Wave 14 Bug K: prune context for a specific step before template resolution.
+ *
+ * - Strips PROTECTED_OUTBOUND_KEYS unconditionally (DB credentials, API keys)
+ * - Keeps keys in STEP_CONTEXT_ALLOWLIST[_common] + STEP_CONTEXT_ALLOWLIST[stepId]
+ * - Escape hatch: small (<500 chars), lowercase-only-named keys pass through
+ *   to avoid breaking edge-case workflows that inject ad-hoc variables.
+ *
+ * Pruning is claim-scope only — the DB-persisted `runs.context` is NOT touched.
+ * Only the resolved agent prompt is trimmed.
+ */
+export function pruneContextForStep(
+  context: Record<string, string>,
+  stepId: string,
+): Record<string, string> {
+  const commonKeys = STEP_CONTEXT_ALLOWLIST["_common"] || [];
+  const stepKeys = STEP_CONTEXT_ALLOWLIST[stepId] || [];
+  const allowlist = new Set<string>([...commonKeys, ...stepKeys]);
+
+  const pruned: Record<string, string> = {};
+  for (const [key, value] of Object.entries(context)) {
+    // Always strip protected keys — no exceptions
+    if (PROTECTED_OUTBOUND_KEYS.has(key) || PROTECTED_OUTBOUND_KEYS.has(key.toLowerCase())) {
+      continue;
+    }
+    // Allowlist whitelist
+    if (allowlist.has(key)) {
+      pruned[key] = value;
+      continue;
+    }
+    // Escape hatch: small simple-named keys (e.g. ad-hoc workflow variables)
+    if (value && value.length < 500 && /^[a-z_][a-z0-9_]*$/.test(key)) {
+      pruned[key] = value;
+    }
+  }
+  return pruned;
 }
 
 // ── Progress File ───────────────────────────────────────────────────

@@ -153,6 +153,70 @@ export const OPTIONAL_TEMPLATE_VARS = [
 ] as const;
 
 
+// ── Per-Step Context Allowlist (Wave 14 Bug K) ──────────────────────
+
+/**
+ * Per-step context allowlist. Keys NOT in the allowlist are pruned from
+ * the context object BEFORE input_template resolution. Pruning is claim-scope
+ * only — DB storage is unaffected. Prevents bloat leak (stitch_html, design_dom,
+ * recent_stories_code injected at implement time) from drowning verify /
+ * security-gate / qa-test / deploy steps in ~29K useless tokens.
+ *
+ * Wave 14 Bug K: discovered in run #344 postmortem — verify step received 115KB
+ * of context, template referenced ~1.5KB. Rest was dead weight + DB credentials.
+ */
+export const STEP_CONTEXT_ALLOWLIST: Record<string, string[]> = {
+  // Keys every step gets regardless of id
+  _common: [
+    "task", "repo", "branch", "build_cmd", "test_cmd", "lint_cmd",
+    "progress", "previous_failure", "failure_category", "failure_suggestion",
+    "project_memory", "tech_stack",
+  ],
+  plan: ["prd", "prd_path"],
+  design: ["prd", "screen_map_seed", "design_notes_seed", "device_type"],
+  stories: ["prd", "screen_map", "design_tokens", "design_manifest", "stitch_project_id"],
+  "setup-repo": ["prd", "design_tokens"],
+  "setup-build": ["prd", "baseline", "design_tokens", "design_system"],
+  implement: [
+    "story_workdir", "story_branch", "current_story_id", "current_story",
+    "current_story_title", "stories_json", "stories_remaining", "completed_stories",
+    "stitch_html", "design_dom", "design_tokens", "design_manifest",
+    "design_token_mapping", "design_notes", "design_rules", "design_fidelity_feedback",
+    "screen_map", "story_screens", "ui_contract", "layout_skeleton",
+    "recent_stories_code", "src_tree", "project_tree", "component_registry",
+    "api_routes", "installed_packages", "shared_code",
+    "implement_phase", "scope_creep_warning", "test_generation_prompt",
+    "detected_platform",
+    // Wave 14 Bug Q scope discipline
+    "story_scope_files", "story_scope_description", "story_shared_files",
+  ],
+  verify: [
+    "final_pr", "current_story_id", "current_story", "current_story_title",
+    "preflight_analysis", "preflight_diff", "preflight_errors",
+    "verify_feedback", "stories_json", "completed_stories",
+  ],
+  "security-gate": ["final_pr", "security_notes"],
+  "qa-test": ["final_pr", "dev_server_port"],
+  "final-test": ["final_pr", "dev_server_port", "browser_check_result"],
+  deploy: ["final_pr", "deploy_url"],
+};
+
+/**
+ * PROTECTED outbound keys — NEVER injected into any agent prompt.
+ * Wave 14 Bug K: discovered DB credentials leaking into verify context during
+ * #344 analysis. These must be stripped unconditionally, regardless of allowlist.
+ */
+export const PROTECTED_OUTBOUND_KEYS = new Set<string>([
+  // DB credentials
+  "db_host", "db_port", "db_user", "db_password", "db_url",
+  "database_url", "pg_url", "SETFARM_PG_URL",
+  // API keys (defense-in-depth — these shouldn't be in context anyway)
+  "api_key", "token", "secret",
+  "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "MOONSHOT_API_KEY",
+  "ZAI_API_KEY", "XAI_API_KEY", "GOOGLE_API_KEY",
+  "MINIMAX_API_KEY", "KIMI_API_KEY", "OPENCODE_API_KEY", "BRAVE_API_KEY",
+]);
+
 // ── Story Retry / Model Fallback ────────────────────────────────────
 
 /** Default max retries per story (was 3, raised to 5) */

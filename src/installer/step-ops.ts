@@ -28,7 +28,7 @@ export { archiveRunProgress } from "./cleanup-ops.js";
 export { failStep } from "./step-fail.js";
 
 // ── Imports from extracted modules (used internally) ──
-import { resolveTemplate, parseOutputKeyValues, readProgressFile, readProjectMemory, updateProjectMemory, getProjectTree, getInstalledPackages, getSharedCode, getRecentStoryCode, getComponentRegistry, getApiRoutes } from "./context-ops.js";
+import { resolveTemplate, parseOutputKeyValues, readProgressFile, readProjectMemory, updateProjectMemory, getProjectTree, getInstalledPackages, getSharedCode, getRecentStoryCode, getComponentRegistry, getApiRoutes, pruneContextForStep } from "./context-ops.js";
 import { getStories, formatStoryForTemplate, formatCompletedStories, parseAndInsertStories } from "./story-ops.js";
 import { createStoryWorktree, removeStoryWorktree } from "./worktree-ops.js";
 import { computeHasFrontendChanges, checkTestFailures, checkQualityGate, checkRequiredOutputFields, processDesignCompletion, processSetupCompletion, processSetupDesignContracts, processBrowserCheck, processDesignFidelityCheck, checkStoryDesignCompliance, checkImportConsistency } from "./step-guardrails.js";
@@ -487,6 +487,40 @@ async function injectStoryContext(
   context["progress"] = await readProgressFile(step.run_id);
   context["project_memory"] = await readProjectMemory(context);
 
+  // Wave 14 Bug Q: inject story scope discipline. These come from the planner's
+  // STORIES_JSON (scope_files / shared_files / scope_description). Empty when
+  // planner did not provide them — developer prompt then falls back to legacy
+  // "implement the acceptance criteria" mode. The post-implementation bleed
+  // check in completeStep uses these to reject out-of-scope writes.
+  try {
+    const scopeRow = await pgGet<{ scope_files: string; shared_files: string; scope_description: string }>(
+      "SELECT scope_files, shared_files, scope_description FROM stories WHERE id = $1",
+      [nextStory.id]
+    );
+    if (scopeRow?.scope_files) {
+      try {
+        const list = JSON.parse(scopeRow.scope_files);
+        if (Array.isArray(list) && list.length > 0) {
+          context["story_scope_files"] = list.join(", ");
+        }
+      } catch { /* ignore malformed */ }
+    }
+    if (scopeRow?.shared_files) {
+      try {
+        const list = JSON.parse(scopeRow.shared_files);
+        if (Array.isArray(list) && list.length > 0) {
+          context["story_shared_files"] = list.join(", ");
+        }
+      } catch { /* ignore malformed */ }
+    }
+    if (scopeRow?.scope_description) {
+      context["story_scope_description"] = scopeRow.scope_description;
+    }
+  } catch (e) {
+    // Column may not exist on very old schemas — degrade gracefully
+    logger.debug(`[scope-inject] Could not read story scope columns: ${String(e).slice(0, 120)}`);
+  }
+
   // FIX: Clear stale story-specific context from previous story to prevent cross-contamination
   context["pr_url"] = "";
   // ISSUE-1: Restore pipeline-set story_branch (from worktree) instead of blanking it
@@ -896,7 +930,17 @@ All visible text must be in Turkish. Use a dark, modern theme.`);
   for (const v of OPTIONAL_TEMPLATE_VARS) {
     if (!context[v]) context[v] = "";
   }
-  let resolvedInput = resolveTemplate(step.input_template, context);
+  // Wave 14 Bug K: per-step context allowlist. Strips PROTECTED keys (DB
+  // credentials, API tokens) and non-allowlisted bloat before template
+  // resolution. DB-persisted run.context is untouched — only the agent
+  // prompt is trimmed. See constants.ts STEP_CONTEXT_ALLOWLIST for the list.
+  const prunedContextSingle = pruneContextForStep(context, step.step_id);
+  const contextBytesBefore = JSON.stringify(context).length;
+  const contextBytesAfter = JSON.stringify(prunedContextSingle).length;
+  if (contextBytesBefore > contextBytesAfter + 1000) {
+    logger.info(`[context-prune] ${step.step_id}: ${contextBytesBefore}→${contextBytesAfter} bytes (${Math.round((1 - contextBytesAfter / contextBytesBefore) * 100)}% trimmed)`, { runId: step.run_id });
+  }
+  let resolvedInput = resolveTemplate(step.input_template, prunedContextSingle);
 
   // MISSING_INPUT_GUARD (v1.5.53): First miss -> retry step, second -> fail run.
   // WAL race condition can cause false positives — one retry absorbs that.
@@ -1296,7 +1340,17 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
         } catch {}
       }
 
-      let resolvedInput = resolveTemplate(step.input_template, context);
+      // Wave 14 Bug K: per-step context allowlist for loop (story-each) claims.
+      // Loop steps inject heavy design context (stitch_html, design_dom, etc.)
+      // which only implement needs. Downstream loop steps (verify-each if used,
+      // or single-step verify after the loop) should not see that bloat.
+      const prunedContextLoop = pruneContextForStep(context, step.step_id);
+      const loopBytesBefore = JSON.stringify(context).length;
+      const loopBytesAfter = JSON.stringify(prunedContextLoop).length;
+      if (loopBytesBefore > loopBytesAfter + 1000) {
+        logger.info(`[context-prune] ${step.step_id} (loop story=${nextStory.story_id}): ${loopBytesBefore}→${loopBytesAfter} bytes (${Math.round((1 - loopBytesAfter / loopBytesBefore) * 100)}% trimmed)`, { runId: step.run_id });
+      }
+      let resolvedInput = resolveTemplate(step.input_template, prunedContextLoop);
 
       // Item 7: MISSING_INPUT_GUARD inside claim flow (v1.5.53: retry once before failing run)
       const allMissing = [...new Set([...resolvedInput.matchAll(/\[missing:\s*(\w+)\]/gi)].map(m => m[1].toLowerCase()))];
@@ -1924,33 +1978,30 @@ ${screenDescs}
     // dependency mismatches; they spin in install/test loops until the timeout
     // kills them. Check the installed versions and fail setup-build with an
     // actionable message before the implement loop ever starts.
+    // Wave 14: replaces Wave 13 Bug O hard-coded React 19 check with a data-driven
+    // engine that loads rules from src/installer/compat-rules.json. Adding a new
+    // compat rule (Next.js 15 + React 18, Vite 5 + Node 18, etc.) is now a
+    // JSON-only change.
     const compatRepo = context["repo"] || "";
     if (compatRepo && fs.existsSync(path.join(compatRepo, "package.json"))) {
       try {
         const pkg = JSON.parse(fs.readFileSync(path.join(compatRepo, "package.json"), "utf-8"));
-        const allDeps: Record<string, string> = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
-        const reactRaw = allDeps["react"] || "";
-        const tlrRaw = allDeps["@testing-library/react"] || "";
-        const majorOf = (v: string) => {
-          const m = v.match(/\d+/);
-          return m ? parseInt(m[0], 10) : 0;
-        };
-        if (reactRaw && tlrRaw) {
-          const reactMajor = majorOf(reactRaw);
-          const tlrMajor = majorOf(tlrRaw);
-          if (reactMajor === 19 && tlrMajor < 16) {
-            const compatMsg = `REACT_COMPAT: React ${reactRaw} requires @testing-library/react ^16.0.0 (got ${tlrRaw}). React 19 moved act() from react-dom/test-utils into react itself and testing-library < 16 still calls the old path — tests will throw "React.act is not a function" in an infinite loop. Bump @testing-library/react to ^16.0.0 in devDependencies, run npm install, and re-report STATUS: done.`;
-            logger.warn(`[setup-build-compat] ${compatMsg}`, { runId: step.run_id });
-            if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
-            await failStep(stepId, compatMsg);
-            return { advanced: false, runCompleted: false };
-          }
-          if (reactMajor === 18 && tlrMajor > 14) {
-            logger.warn(`[setup-build-compat] React 18 + testing-library ${tlrRaw} detected — may still work but act() semantics differ`, { runId: step.run_id });
-          }
+        const { evaluateCompat } = await import("./compat-engine.js");
+        const { fails, warns } = evaluateCompat(pkg, "setup-build");
+        for (const w of warns) {
+          logger.warn(`[setup-build-compat] ${w.id}: ${w.resolvedMessage}`, { runId: step.run_id });
+        }
+        if (fails.length > 0) {
+          const header = fails.length === 1
+            ? fails[0].resolvedMessage
+            : `COMPAT_VIOLATIONS (${fails.length} rule(s)):\n\n` + fails.map(f => `[${f.id}] ${f.resolvedMessage}`).join("\n\n");
+          logger.warn(`[setup-build-compat] ${header}`, { runId: step.run_id });
+          if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
+          await failStep(stepId, header);
+          return { advanced: false, runCompleted: false };
         }
       } catch (e) {
-        logger.warn(`[setup-build-compat] Could not evaluate React/testing-library compat: ${String(e).slice(0, 150)}`, { runId: step.run_id });
+        logger.warn(`[setup-build-compat] Could not evaluate compat rules: ${String(e).slice(0, 150)}`, { runId: step.run_id });
       }
     }
   }
@@ -2679,6 +2730,45 @@ ${screenDescs}
               await updateRunContext(step.run_id, context);
               await failStep(stepId, stubMsg);
               return { advanced: false, runCompleted: false };
+            }
+          }
+
+          // Wave 14 Bug Q (run #345 postmortem): story scope bleed detection.
+          // When the planner declared SCOPE_FILES (+ optional SHARED_FILES) for
+          // this story, every source file the agent touched MUST be in that set.
+          // #345 caught every developer agent reimplementing the entire app
+          // regardless of which story they claimed — all 4 story branches held
+          // conflicting copies of types.ts / App.tsx / component tree, and the
+          // merge queue hit 4/4 conflicts. This check rejects that pattern at
+          // the story boundary so the merge queue never sees overlapping work.
+          if (sourceFiles.length > 0 && storyRow && step.retry_count < step.max_retries) {
+            const scopeRow = await pgGet<{ scope_files: string | null; shared_files: string | null }>(
+              "SELECT scope_files, shared_files FROM stories WHERE run_id = $1 AND story_id = $2",
+              [step.run_id, storyRow.story_id]
+            );
+            if (scopeRow?.scope_files) {
+              let allowed: Set<string> = new Set();
+              try {
+                const scope = JSON.parse(scopeRow.scope_files || "[]");
+                const shared = JSON.parse(scopeRow.shared_files || "[]");
+                if (Array.isArray(scope)) scope.forEach((f: any) => typeof f === "string" && allowed.add(f));
+                if (Array.isArray(shared)) shared.forEach((f: any) => typeof f === "string" && allowed.add(f));
+              } catch { /* ignore malformed JSON */ }
+              if (allowed.size > 0) {
+                const outOfScope = sourceFiles.filter(f => !allowed.has(f));
+                if (outOfScope.length > 0) {
+                  const allowedList = [...allowed].slice(0, 15).join(", ");
+                  const oosList = outOfScope.slice(0, 10).join(", ");
+                  const bleedMsg = `SCOPE_BLEED: Story ${storyRow.story_id} (${storyRow.title}) modified ${outOfScope.length} file(s) outside its declared SCOPE_FILES. Out-of-scope: ${oosList}. Allowed (SCOPE_FILES + SHARED_FILES): ${allowedList}. Each story must stay within its own file scope — do not reimplement the entire app from the PRD. If you genuinely need to edit a shared file (App.tsx, index.ts, main.tsx), the planner must list it in SHARED_FILES first. Reset the worktree ('git reset --hard ${baseBr}') and only modify files from your SCOPE_FILES list.`;
+                  logger.warn(`[scope-bleed] Story ${storyRow.story_id} touched ${outOfScope.length} out-of-scope files: ${oosList}`, { runId: step.run_id });
+                  context["previous_failure"] = bleedMsg;
+                  context["failure_category"] = "SCOPE_BLEED";
+                  context["failure_suggestion"] = "Only modify files declared in your SCOPE_FILES";
+                  await updateRunContext(step.run_id, context);
+                  await failStep(stepId, bleedMsg);
+                  return { advanced: false, runCompleted: false };
+                }
+              }
             }
           }
 

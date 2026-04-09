@@ -183,8 +183,17 @@ export async function parseAndInsertStories(output: string, runId: string): Prom
       const s = stories[i];
       const ac = s.acceptanceCriteria ?? s.acceptance_criteria;
       const dependsOn = Array.isArray(s.depends_on) ? JSON.stringify(s.depends_on) : null;
-      await sql`INSERT INTO stories (id, run_id, story_index, story_id, title, description, acceptance_criteria, status, retry_count, max_retries, depends_on, created_at, updated_at)
-        VALUES (${crypto.randomUUID()}, ${runId}, ${i}, ${s.id}, ${s.title}, ${s.description}, ${JSON.stringify(ac)}, 'pending', 0, 5, ${dependsOn}, ${ts}, ${ts})`;
+      // Wave 14 Bug Q: story scope discipline. Planner may declare the exact
+      // file set each story is allowed to touch (scope_files) plus optional
+      // shared_files for cross-story collaboration (e.g. App.tsx wiring). The
+      // post-implementation bleed check uses these to reject stories that wrote
+      // outside their declared scope. Missing fields default to NULL — in that
+      // case the check is skipped (backward compat).
+      const scopeFiles = Array.isArray(s.scope_files) ? JSON.stringify(s.scope_files) : null;
+      const sharedFiles = Array.isArray(s.shared_files) ? JSON.stringify(s.shared_files) : null;
+      const scopeDesc = typeof s.scope_description === "string" ? s.scope_description : null;
+      await sql`INSERT INTO stories (id, run_id, story_index, story_id, title, description, acceptance_criteria, status, retry_count, max_retries, depends_on, scope_files, shared_files, scope_description, created_at, updated_at)
+        VALUES (${crypto.randomUUID()}, ${runId}, ${i}, ${s.id}, ${s.title}, ${s.description}, ${JSON.stringify(ac)}, 'pending', 0, 5, ${dependsOn}, ${scopeFiles}, ${sharedFiles}, ${scopeDesc}, ${ts}, ${ts})`;
     }
   });
 }
