@@ -187,6 +187,36 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
       execFileSync("git", ["rev-parse", "--verify", storyId.toLowerCase()], { cwd: repo, timeout: 5000, stdio: "pipe" });
       branchExists = true;
     } catch (e) { /* branch not found — expected */ }
+    // CRITICAL (run #354 postmortem): auto-save uncommitted work BEFORE removing the
+    // worktree. Agent writes files and runs tests (passing!) but gets killed by timeout
+    // before committing. The worktree removal then destroys all that work. By auto-
+    // committing and pushing here, the next claim's smart reset fetches the saved work
+    // from origin and the agent's effort is preserved instead of silently discarded.
+    if (fs.existsSync(worktreeDir) && fs.existsSync(path.join(worktreeDir, ".git"))) {
+      try {
+        const status = execFileSync("git", ["status", "--porcelain"], {
+          cwd: worktreeDir, timeout: 5000, stdio: "pipe",
+        }).toString().trim();
+        if (status) {
+          execFileSync("git", ["add", "-A"], { cwd: worktreeDir, timeout: 5000, stdio: "pipe" });
+          execFileSync("git", ["commit", "-m", "wip: auto-save before worktree reset (agent timed out)"], {
+            cwd: worktreeDir, timeout: 10000, stdio: "pipe",
+          });
+          try {
+            execFileSync("git", ["push", "-u", "origin", storyId.toLowerCase()], {
+              cwd: worktreeDir, timeout: 15000, stdio: "pipe",
+            });
+            logger.info(`[worktree] Auto-saved ${status.split("\\n").length} uncommitted file(s) before reset for ${storyId}`, {});
+          } catch (pushErr) {
+            logger.warn(`[worktree] Auto-save commit created but push failed: ${String(pushErr).slice(0, 150)}`, {});
+          }
+        }
+      } catch (saveErr) {
+        // Best-effort — don't block worktree recreation on save failure
+        logger.warn(`[worktree] Auto-save failed for ${storyId}: ${String(saveErr).slice(0, 150)}`, {});
+      }
+    }
+
     // Remove leftover worktree dir if exists (but branch is preserved above)
     try { execFileSync("git", ["worktree", "remove", worktreeDir, "--force"], { cwd: repo, timeout: 10000, stdio: "pipe" }); } catch (e) { logger.warn(`[worktree] leftover remove failed: ${String(e)}`, {}); }
     try { execFileSync("git", ["worktree", "prune"], { cwd: repo, timeout: 5000, stdio: "pipe" }); } catch (e) { logger.warn(`[worktree] prune failed: ${String(e)}`, {}); }
