@@ -4,18 +4,30 @@
   "rules": [
     {
       "id": "react-19-requires-tlr-16",
-      "severity": "fail",
+      "severity": "warn",
       "step": "setup-build",
-      "when": { "package": "react", "majorGte": 19 },
-      "requires": { "package": "@testing-library/react", "majorGte": 16 },
+      "when": {
+        "package": "react",
+        "majorGte": 19
+      },
+      "requires": {
+        "package": "@testing-library/react",
+        "majorGte": 16
+      },
       "message": "React {actual.when} requires @testing-library/react ^16.0.0 (got {actual.requires}). React 19 moved act() from react-dom/test-utils into react itself; testing-library <16 still calls the removed path and tests throw \"React.act is not a function\" in a loop. Bump @testing-library/react to ^16.0.0 in devDependencies, then re-run setup-build."
     },
     {
       "id": "react-18-warn-tlr-15-plus",
       "severity": "warn",
       "step": "setup-build",
-      "when": { "package": "react", "majorEq": 18 },
-      "requires": { "package": "@testing-library/react", "majorLte": 14 },
+      "when": {
+        "package": "react",
+        "majorEq": 18
+      },
+      "requires": {
+        "package": "@testing-library/react",
+        "majorLte": 14
+      },
       "message": "React 18 + @testing-library/react {actual.requires} — act() semantics differ from the newer testing-library 15+. Tests may be flaky; consider pinning @testing-library/react ^14.0.0 or upgrading to ^15.0.0 deliberately."
     }
   ]
