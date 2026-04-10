@@ -191,7 +191,21 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
     try { execFileSync("git", ["worktree", "remove", worktreeDir, "--force"], { cwd: repo, timeout: 10000, stdio: "pipe" }); } catch (e) { logger.warn(`[worktree] leftover remove failed: ${String(e)}`, {}); }
     try { execFileSync("git", ["worktree", "prune"], { cwd: repo, timeout: 5000, stdio: "pipe" }); } catch (e) { logger.warn(`[worktree] prune failed: ${String(e)}`, {}); }
     if (branchExists) {
-      // Reuse existing branch (preserves WIP commits from abandoned sessions)
+      // Wave 13+ (run #352 postmortem): reset story branch to base before re-creating
+      // worktree. Previous design preserved WIP commits from abandoned sessions, but
+      // in practice each agent writes different API names / file structures. The next
+      // agent inherits the half-done code, gets confused by stale exports, and burns
+      // all its retries trying to reconcile mismatched types (addToHistory vs addRecord,
+      // setTheme vs setDark). A clean slate gives the retry a fighting chance. The old
+      // WIP is still recoverable via reflog if needed for forensics.
+      try {
+        execFileSync("git", ["branch", "-f", storyId.toLowerCase(), baseBranch], {
+          cwd: repo, timeout: 5000, stdio: "pipe",
+        });
+        logger.info(`[worktree] Reset story branch ${storyId} to ${baseBranch} (clean slate for retry)`, {});
+      } catch (resetErr) {
+        logger.warn(`[worktree] Could not reset story branch to base: ${String(resetErr).slice(0, 150)}`, {});
+      }
       try {
         execFileSync("git", ["worktree", "add", worktreeDir, storyId.toLowerCase()], { cwd: repo, timeout: 30000, stdio: "pipe" });
       } catch (reuse_err: any) {

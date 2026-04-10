@@ -1482,7 +1482,12 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
   // tripped the failStep path; "retry" (and anything else) silently fell through
   // to the default "done" flow, so run #344's verify step was marked done even
   // though Iris explicitly reported STATUS: retry with a list of blocking issues.
-  const statusVal = parsed["status"]?.toLowerCase();
+  // Wave 13+ hotfix: parseOutputKeyValues can leak trailing lines into the
+  // STATUS value when agent output lacks blank separators. Run #352 US-003:
+  // parsed["status"] = "done\nstepId: ..." instead of just "done".
+  // Fix: trim and extract only the first word from the status value.
+  const rawStatus = (parsed["status"] || "").trim();
+  const statusVal = (rawStatus.indexOf("\n") >= 0 ? rawStatus.slice(0, rawStatus.indexOf("\n")).trim() : rawStatus).split(/\s/)[0].toLowerCase() || undefined;
   if (statusVal === "fail" || statusVal === "failed" || statusVal === "error") {
     logger.warn(`Agent reported STATUS: ${parsed["status"]} — failing step`, { runId: step.run_id, stepId: step.step_id });
     await failStep(stepId, `Agent reported failure: ${parsed["status"]}. Output: ${output.slice(0, 500)}`);
@@ -2529,7 +2534,12 @@ ${screenDescs}
     const storyRow = await getStoryInfo(step.current_story_id);
 
     // v9.0: Check agent STATUS — skip, fail/error (defense-in-depth), or done
-    const statusVal = parsed["status"]?.toLowerCase();
+    // Wave 13+ hotfix: parseOutputKeyValues can leak trailing lines into the
+    // STATUS value when agent output lacks blank separators. Run #352 US-003:
+    // parsed["status"] = "done\nstepId: ..." instead of just "done".
+    // Fix: trim and extract only the first word from the status value.
+    const rawStatus = (parsed["status"] || "").trim();
+    const statusVal = (rawStatus.indexOf("\n") >= 0 ? rawStatus.slice(0, rawStatus.indexOf("\n")).trim() : rawStatus).split(/\s/)[0].toLowerCase() || undefined;
     let storyStatus: string, storyEvent: string;
     if (statusVal === "fail" || statusVal === "failed" || statusVal === "error") {
       storyStatus = STORY_STATUS.FAILED; storyEvent = "story.failed";
