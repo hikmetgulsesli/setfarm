@@ -119,11 +119,17 @@ export async function claimNextStory(runId: string, agentId: string, eligibleSto
     const story = rows[0] as any;
     if (!story) return undefined;
 
+    // Wave 14 Bug L: increment claim_generation on every claim. The completeStep
+    // path checks the agent's reported generation against DB — stale agents
+    // (from a previous claim that was abandoned/timed-out) get rejected.
     await sql.unsafe(
-      `UPDATE stories SET status = 'running', started_at = NOW(), updated_at = $1
+      `UPDATE stories SET status = 'running', claim_generation = COALESCE(claim_generation, 0) + 1, started_at = NOW(), updated_at = $1
        WHERE id = $2`,
       [now(), story.id]
     );
+    // Read back the new generation so caller can inject it into agent context
+    const genRow = await sql.unsafe("SELECT claim_generation FROM stories WHERE id = $1", [story.id]);
+    story.claim_generation = (genRow[0] as any)?.claim_generation ?? 0;
     return story;
   });
 }

@@ -1327,6 +1327,11 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
       emitEvent({ ts: now(), event: "story.started", runId: step.run_id, workflowId: wfId, stepId: step.step_id, agentId: agentId, storyId: nextStory.story_id, storyTitle: nextStory.title });
       logger.info(`Story started: ${nextStory.story_id} — ${nextStory.title}`, { runId: step.run_id, stepId: step.step_id });
 
+      // Wave 14 Bug L: inject claim_generation into context so completeStep can
+      // verify the agent that reports done is the SAME agent that claimed the story.
+      // Stale agents (from a previous abandoned claim) report done with an old gen.
+      context["claim_generation"] = String(nextStory.claim_generation ?? 0);
+
       // Inject story context (template vars, screen_map, optional vars, previous_failure)
       await injectStoryContext(nextStory, step, context);
 
@@ -2530,6 +2535,16 @@ ${screenDescs}
   }
 
   if (step.type === "loop" && step.current_story_id) {
+    // Wave 14 Bug L: stale claim guard. If story was re-claimed (timeout + re-claim),
+    // the original agent may still report done with the old claim_generation. Reject it.
+    const agentGen = parseInt(parsed["claim_generation"] || context["claim_generation"] || "0", 10);
+    const dbGenRow = await pgGet<{ claim_generation: number }>("SELECT claim_generation FROM stories WHERE id = $1", [step.current_story_id]);
+    const dbGen = dbGenRow?.claim_generation ?? 0;
+    if (agentGen > 0 && dbGen > 0 && agentGen < dbGen) {
+      logger.warn(`[stale-claim] Agent reported claim_generation=${agentGen}, DB has ${dbGen} — rejecting stale output`, { runId: step.run_id, stepId: step.step_id });
+      return { advanced: false, runCompleted: false };
+    }
+
     // Look up story info for event
     const storyRow = await getStoryInfo(step.current_story_id);
 

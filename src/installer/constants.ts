@@ -196,7 +196,7 @@ export const STEP_CONTEXT_ALLOWLIST: Record<string, string[]> = {
     "implement_phase", "scope_creep_warning", "test_generation_prompt",
     "detected_platform", "implement_base_commit",
     "story_scope_files", "story_scope_description", "story_shared_files",
-    "verify_feedback",
+    "verify_feedback", "claim_generation",
   ],
   verify: [
     "current_story_id", "current_story", "current_story_title",
