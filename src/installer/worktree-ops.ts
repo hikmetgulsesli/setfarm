@@ -191,20 +191,33 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
     try { execFileSync("git", ["worktree", "remove", worktreeDir, "--force"], { cwd: repo, timeout: 10000, stdio: "pipe" }); } catch (e) { logger.warn(`[worktree] leftover remove failed: ${String(e)}`, {}); }
     try { execFileSync("git", ["worktree", "prune"], { cwd: repo, timeout: 5000, stdio: "pipe" }); } catch (e) { logger.warn(`[worktree] prune failed: ${String(e)}`, {}); }
     if (branchExists) {
-      // Wave 13+ (run #352 postmortem): reset story branch to base before re-creating
-      // worktree. Previous design preserved WIP commits from abandoned sessions, but
-      // in practice each agent writes different API names / file structures. The next
-      // agent inherits the half-done code, gets confused by stale exports, and burns
-      // all its retries trying to reconcile mismatched types (addToHistory vs addRecord,
-      // setTheme vs setDark). A clean slate gives the retry a fighting chance. The old
-      // WIP is still recoverable via reflog if needed for forensics.
+      // Wave 13++ (run #353 postmortem): smart reset — prefer origin WIP over clean slate.
+      // Pure clean-slate (branch -f to base) killed pushed WIP from timed-out agents:
+      //   Agent A pushes commit → timeout → story pending → Agent B claims → clean slate
+      //   resets branch to base → Agent A's pushed work vanishes → zero-work guard fires.
+      // Fix: fetch origin/storyBranch first. If it exists (agent pushed before timeout),
+      // reset to origin (preserves pushed WIP). If no remote branch, reset to base (clean
+      // slate for genuinely fresh starts). This balances "don't inherit stale half-done
+      // code from a DIFFERENT agent" with "don't discard pushed work from the SAME story".
+      let resetTarget = baseBranch;
       try {
-        execFileSync("git", ["branch", "-f", storyId.toLowerCase(), baseBranch], {
+        execFileSync("git", ["fetch", "origin", storyId.toLowerCase()], {
+          cwd: repo, timeout: 10000, stdio: "pipe",
+        });
+        // Remote branch exists — agent pushed work before timeout. Use it.
+        resetTarget = "origin/" + storyId.toLowerCase();
+        logger.info(`[worktree] Found remote ${storyId} — will reset to origin (preserving pushed WIP)`, {});
+      } catch {
+        // No remote branch — first claim or agent never pushed. Clean slate.
+        logger.info(`[worktree] No remote ${storyId} — will reset to ${baseBranch} (clean slate)`, {});
+      }
+      try {
+        execFileSync("git", ["branch", "-f", storyId.toLowerCase(), resetTarget], {
           cwd: repo, timeout: 5000, stdio: "pipe",
         });
-        logger.info(`[worktree] Reset story branch ${storyId} to ${baseBranch} (clean slate for retry)`, {});
+        logger.info(`[worktree] Reset story branch ${storyId} to ${resetTarget}`, {});
       } catch (resetErr) {
-        logger.warn(`[worktree] Could not reset story branch to base: ${String(resetErr).slice(0, 150)}`, {});
+        logger.warn(`[worktree] Could not reset story branch: ${String(resetErr).slice(0, 150)}`, {});
       }
       try {
         execFileSync("git", ["worktree", "add", worktreeDir, storyId.toLowerCase()], { cwd: repo, timeout: 30000, stdio: "pipe" });
