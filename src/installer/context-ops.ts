@@ -125,7 +125,7 @@ export function mergeContextSafe(
   for (const [key, value] of Object.entries(parsed)) {
     if (PROTECTED_CONTEXT_KEYS.has(key) && context[key]) {
       logger.warn(`[context] Blocked overwrite of protected key "${key}" (current: "${context[key]}", attempted: "${value}")`, { runId: opts?.runId ?? "" });
-      continue;
+      continue; // skip copying the original value — blank was set above
     }
     context[key] = value;
   }
@@ -188,7 +188,14 @@ export function pruneContextForStep(
   const pruned: Record<string, string> = {};
   for (const [key, value] of Object.entries(context)) {
     if (PROTECTED_OUTBOUND_KEYS.has(key) || PROTECTED_OUTBOUND_KEYS.has(key.toLowerCase())) {
-      continue;
+      // Wave 13+: blank the value instead of dropping the key entirely.
+      // Dropping causes resolveTemplate to emit [missing: key] which trips the
+      // MISSING_INPUT_GUARD on projects that have DB template vars in their
+      // input_template even when no DB is needed (frontend-only PRDs).
+      // By keeping the key with an empty value the template resolves cleanly
+      // and the agent never sees the real credential.
+      pruned[key] = "";
+      continue; // skip copying the original value — blank was set above
     }
     pruned[key] = value;
   }
