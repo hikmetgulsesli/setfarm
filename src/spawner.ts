@@ -68,17 +68,16 @@ function spawnAgent(agentId: string, wfId: string, role: string): void {
     // ALL secrets (API keys, DB password, master URLs) to every agent child process.
     // Agents can run `printenv` and see everything. OpenClaw gateway handles API key
     // resolution internally — agents do not need direct key access.
-    env: {
-      PATH: process.env.PATH,
-      HOME: process.env.HOME,
-      TERM: process.env.TERM || "xterm-256color",
-      LANG: process.env.LANG || "en_US.UTF-8",
-      NODE_PATH: process.env.NODE_PATH,
-      XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR,
-      DBUS_SESSION_BUS_ADDRESS: process.env.DBUS_SESSION_BUS_ADDRESS,
-      // OpenClaw needs these for gateway communication (not API keys)
-      OPENCLAW_AUTO_APPROVE: "1",
-    },
+    // Security: denylist DB credentials from agent env. Keep everything
+    // else — OpenClaw CLI needs many env vars and allowlist is too fragile.
+    env: (() => {
+      const e: Record<string, string | undefined> = { ...process.env, OPENCLAW_AUTO_APPROVE: "1" };
+      // Denylist: strip DB credentials only
+      for (const k of ["SETFARM_PG_URL", "MASTER_POSTGRES_URL", "MASTER_MARIADB_URL", "MASTER_MONGODB_URL"]) {
+        delete e[k];
+      }
+      return e;
+    })(),
     maxBuffer: 10 * 1024 * 1024,
   }, (err) => {
     activeProcesses.delete(key);
