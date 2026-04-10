@@ -179,41 +179,47 @@ export function pruneContextForStep(
   context: Record<string, string>,
   stepId: string,
 ): Record<string, string> {
-  // Wave 14 Bug K: per-step allowlist pruning now ACTIVE.
-  // Allowlist audited against workflow.yml + agents/*/AGENTS.md + _fragments/*.md.
-  // Keys not in (_common ∪ step-specific) are dropped from the agent prompt.
-  // DB credentials are blanked (not dropped) to avoid MISSING_INPUT_GUARD.
+  // Wave 14 Bug K rev2: DENYLIST approach instead of allowlist.
+  // Allowlist was fragile — every missing key caused MISSING_INPUT_GUARD failures
+  // (design_system in stories, etc.). Denylist is safe: pass everything EXCEPT
+  // known heavy keys that only specific steps need. This still achieves the
+  // token reduction goal (~45KB trimmed from verify/qa-test/deploy) without
+  // risking template resolution failures.
   //
-  // Previous Wave 14.1 disabled this because setup-repo was missing story_workdir
-  // and screen_map in the allowlist → MISSING_INPUT_GUARD tripped. That's fixed
-  // now — _common includes all fragment vars, each step's list is complete.
+  // Heavy keys and which steps need them:
+  //   stitch_html (~20KB)        → implement only
+  //   design_dom (~15KB)         → implement only
+  //   recent_stories_code (~10KB)→ implement only
+  //   shared_code (~5KB)         → implement only
+  //   component_registry (~3KB)  → implement only
+  //   project_tree (~2KB)        → implement only
+  //   src_tree (~2KB)            → implement only
 
-  const commonKeys = new Set(STEP_CONTEXT_ALLOWLIST._common || []);
-  const stepKeys = new Set(STEP_CONTEXT_ALLOWLIST[stepId] || []);
-  const allowed = new Set([...commonKeys, ...stepKeys]);
+  const HEAVY_KEYS_IMPLEMENT_ONLY = new Set([
+    "stitch_html", "design_dom", "recent_stories_code",
+    "shared_code", "component_registry", "project_tree", "src_tree",
+    "api_routes", "installed_packages",
+  ]);
 
   const pruned: Record<string, string> = {};
-  let prunedCount = 0;
+  let prunedBytes = 0;
 
   for (const [key, value] of Object.entries(context)) {
-    // PROTECTED keys: blank (not drop) — template {{db_host}} resolves to ""
+    // PROTECTED keys: blank (not drop)
     if (PROTECTED_OUTBOUND_KEYS.has(key) || PROTECTED_OUTBOUND_KEYS.has(key.toLowerCase())) {
       pruned[key] = "";
       continue;
     }
-    // Allowlist check
-    if (allowed.has(key)) {
-      pruned[key] = value;
-    } else {
-      // Not in allowlist — drop from agent prompt (still in DB context)
-      prunedCount++;
+    // Heavy keys: only pass to implement step
+    if (HEAVY_KEYS_IMPLEMENT_ONLY.has(key) && stepId !== "implement") {
+      prunedBytes += value.length;
+      continue;
     }
+    pruned[key] = value;
   }
 
-  if (prunedCount > 0) {
-    const beforeBytes = JSON.stringify(context).length;
-    const afterBytes = JSON.stringify(pruned).length;
-    logger.info(`[context-prune] ${stepId}: pruned ${prunedCount} keys, ${beforeBytes}→${afterBytes} bytes (${Math.round((1 - afterBytes / beforeBytes) * 100)}% trimmed)`, {});
+  if (prunedBytes > 1000) {
+    logger.info(`[context-prune] ${stepId}: trimmed ${Math.round(prunedBytes / 1024)}KB of implement-only context`, {});
   }
 
   return pruned;
