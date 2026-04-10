@@ -72,6 +72,15 @@ function parseDbUrl(url: string): ParsedUrl {
 
 // --- Name sanitizer ---
 
+// Security audit S-2: escape SQL identifiers (double-quote context)
+function escapeIdent(name: string): string {
+  return name.replace(/"/g, '""');
+}
+// Security audit S-2: escape SQL string literals (single-quote context)
+function escapeLiteral(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
 function sanitizeDbName(name: string): string {
   return name
     .toLowerCase()
@@ -125,19 +134,25 @@ function provisionPostgres(master: ParsedUrl, dbName: string, dbUser: string, db
   // Escape single quotes in password for SQL string literals
   const escapedPass = dbPass.replace(/'/g, "''");
 
-  // Create role if not exists, update password if exists
+  // Security audit S-2: escape identifiers and literals to prevent SQL injection
+  const safeUser = escapeIdent(dbUser);
+  const safeName = escapeIdent(dbName);
+  const safePass = escapeLiteral(escapedPass);
+
+  // Strict validation: only allow [a-z0-9_] for DB names and users
+  if (!/^[a-z0-9_]+$/.test(dbUser)) throw new Error(`Invalid dbUser: ${dbUser}`);
+  if (!/^[a-z0-9_]+$/.test(dbName)) throw new Error(`Invalid dbName: ${dbName}`);
+
   execFileSync("psql", [...connArgs, "-c",
-    `DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${dbUser}') THEN CREATE ROLE "${dbUser}" WITH LOGIN PASSWORD '${escapedPass}'; ELSE ALTER ROLE "${dbUser}" WITH PASSWORD '${escapedPass}'; END IF; END $$;`
+    `DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${dbUser}') THEN CREATE ROLE "${safeUser}" WITH LOGIN PASSWORD '${safePass}'; ELSE ALTER ROLE "${safeUser}" WITH PASSWORD '${safePass}'; END IF; END $$;`
   ], { timeout: 15000, stdio: "pipe", env: pgEnv });
 
-  // Create database if not exists
   execFileSync("psql", [...connArgs, "-c",
-    `DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_database WHERE datname = '${dbName}') THEN EXECUTE 'CREATE DATABASE "${dbName}" OWNER "${dbUser}"'; END IF; END $$;`
+    `DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_database WHERE datname = '${dbName}') THEN EXECUTE 'CREATE DATABASE "${safeName}" OWNER "${safeUser}"'; END IF; END $$;`
   ], { timeout: 15000, stdio: "pipe", env: pgEnv });
 
-  // Grant privileges
   execFileSync("psql", [...connArgs, "-c",
-    `GRANT ALL PRIVILEGES ON DATABASE "${dbName}" TO "${dbUser}";`
+    `GRANT ALL PRIVILEGES ON DATABASE "${safeName}" TO "${safeUser}";`
   ], { timeout: 10000, stdio: "pipe", env: pgEnv });
 }
 
@@ -150,9 +165,9 @@ function provisionMysql(master: ParsedUrl, dbName: string, dbUser: string, dbPas
     `-u`, master.username,
     // MYSQL_PWD env var used instead of --password= (security: prevents /proc/*/cmdline exposure)
     `-e`,
-    `CREATE DATABASE IF NOT EXISTS \`${dbName}\`; ` +
-    `CREATE USER IF NOT EXISTS '${dbUser}'@'%' IDENTIFIED BY '${dbPass}'; ` +
-    `GRANT ALL PRIVILEGES ON \`${dbName}\`.* TO '${dbUser}'@'%'; ` +
+    `CREATE DATABASE IF NOT EXISTS \`${dbName.replace(/`/g, "``")}\`; ` +
+    `CREATE USER IF NOT EXISTS '${escapeLiteral(dbUser)}'@'%' IDENTIFIED BY '${escapeLiteral(dbPass)}'; ` +
+    `GRANT ALL PRIVILEGES ON \`${dbName.replace(/`/g, "``")}\`.* TO '${escapeLiteral(dbUser)}'@'%'; ` +
     `FLUSH PRIVILEGES;`
   ];
 
@@ -164,13 +179,14 @@ function provisionMysql(master: ParsedUrl, dbName: string, dbUser: string, dbPas
 function provisionMongodb(master: ParsedUrl, dbName: string, dbUser: string, dbPass: string): void {
   const connStr = `mongodb://${master.username}:${master.password}@${master.host}:${master.port}`;
 
+  // Security audit S-9: use JSON.stringify for MongoDB script values
   const script = `
-    db = db.getSiblingDB('${dbName}');
-    if (db.getUsers({filter: {user: '${dbUser}'}}).users.length === 0) {
+    db = db.getSiblingDB(${JSON.stringify(dbName)});
+    if (db.getUsers({filter: {user: ${JSON.stringify(dbUser)}}}).users.length === 0) {
       db.createUser({
-        user: '${dbUser}',
-        pwd: '${dbPass}',
-        roles: [{role: 'readWrite', db: '${dbName}'}]
+        user: ${JSON.stringify(dbUser)},
+        pwd: ${JSON.stringify(dbPass)},
+        roles: [{role: 'readWrite', db: ${JSON.stringify(dbName)}}]
       });
     }
   `;

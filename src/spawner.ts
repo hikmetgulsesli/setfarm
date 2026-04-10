@@ -64,7 +64,21 @@ function spawnAgent(agentId: string, wfId: string, role: string): void {
   ], {
     cwd: AGENT_SAFE_CWD,  // Wave 13 Bug M — start outside any git repo
     timeout: (AGENT_TIMEOUT_SECONDS + 60) * 1000,
-    env: { ...process.env },
+    // Security audit S-1: explicit env allowlist. Previous `{...process.env}` leaked
+    // ALL secrets (API keys, DB password, master URLs) to every agent child process.
+    // Agents can run `printenv` and see everything. OpenClaw gateway handles API key
+    // resolution internally — agents do not need direct key access.
+    env: {
+      PATH: process.env.PATH,
+      HOME: process.env.HOME,
+      TERM: process.env.TERM || "xterm-256color",
+      LANG: process.env.LANG || "en_US.UTF-8",
+      NODE_PATH: process.env.NODE_PATH,
+      XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR,
+      DBUS_SESSION_BUS_ADDRESS: process.env.DBUS_SESSION_BUS_ADDRESS,
+      // OpenClaw needs these for gateway communication (not API keys)
+      OPENCLAW_AUTO_APPROVE: "1",
+    },
     maxBuffer: 10 * 1024 * 1024,
   }, (err) => {
     activeProcesses.delete(key);

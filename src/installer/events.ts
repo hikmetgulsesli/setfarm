@@ -65,11 +65,36 @@ async function getNotifyUrl(runId: string): Promise<string | null> {
   }
 }
 
+// Security audit S-5: block SSRF via notify_url targeting private/internal IPs
+function isPrivateUrl(urlStr: string): boolean {
+  try {
+    const parsed = new URL(urlStr);
+    const host = parsed.hostname.toLowerCase();
+    if (host === "localhost" || host === "127.0.0.1" || host === "::1") return true;
+    if (host === "0.0.0.0" || host.endsWith(".local")) return true;
+    // Cloud metadata
+    if (host === "169.254.169.254" || host === "metadata.google.internal") return true;
+    // RFC 1918 private ranges
+    const parts = host.split(".").map(Number);
+    if (parts.length === 4 && !parts.some(isNaN)) {
+      if (parts[0] === 10) return true;
+      if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+      if (parts[0] === 192 && parts[1] === 168) return true;
+      if (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127) return true; // Tailscale CGNAT
+    }
+    return false;
+  } catch { return true; } // malformed URL → block
+}
+
 function fireWebhook(evt: SetfarmEvent): void {
   getNotifyUrl(evt.runId).then((raw) => {
     if (!raw) return;
     try {
       let url = raw;
+      if (isPrivateUrl(url)) {
+        console.warn(`[webhook] Blocked private/internal URL: ${url.slice(0, 80)}`);
+        return;
+      }
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       const hashIdx = url.indexOf("#auth=");
       if (hashIdx !== -1) {
