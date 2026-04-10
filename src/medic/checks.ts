@@ -284,15 +284,28 @@ export async function checkOrphanedCrons(
  */
 // ── Check: Claimed But Not Progressing ────────────────────────────────
 
-const CLAIMED_STUCK_THRESHOLD_MS = 5 * 60 * 1000; // 10 min — for fast steps (plan, stories, etc.)
-const CLAIMED_STUCK_SLOW_THRESHOLD_MS = 12 * 60 * 1000; // 25 min — for slow steps (design, implement, setup)
-const SLOW_STEP_IDS_FOR_MEDIC = new Set(["implement", "setup-repo", "setup-build", "design", "verify", "final-test"]);
+// Per-step stuck threshold based on actual observed completion times.
+// Replaces the binary fast/slow split that caused false abandons on design (6-8min)
+// while being too generous for plan (30-60s).
+const STEP_STUCK_THRESHOLD_MS: Record<string, number> = {
+  plan:            3 * 60 * 1000,   //  3dk — PRD parse, hızlı
+  design:         10 * 60 * 1000,   // 10dk — Stitch API ekran üretimi (6-8dk tipik)
+  stories:         3 * 60 * 1000,   //  3dk — story JSON üretimi
+  "setup-repo":    5 * 60 * 1000,   //  5dk — git clone + branch
+  "setup-build":   8 * 60 * 1000,   //  8dk — npm install + build + lint
+  implement:      25 * 60 * 1000,   // 25dk — gerçek kodlama, test, commit
+  verify:         12 * 60 * 1000,   // 12dk — PR review + fix
+  "security-gate": 5 * 60 * 1000,   //  5dk — security scan
+  "qa-test":      10 * 60 * 1000,   // 10dk — browser test
+  "final-test":   15 * 60 * 1000,   // 15dk — e2e + integration
+  deploy:          5 * 60 * 1000,   //  5dk — deploy + DNS
+};
+const DEFAULT_STEP_STUCK_THRESHOLD_MS = 5 * 60 * 1000; // fallback
 
 /**
  * Find steps that were claimed (status='running') but haven't been updated
- * within a short threshold. This catches Phase 2 sub-agents that never started
- * or crashed immediately after spawn — much faster than the full role timeout.
- * Slow steps (design, implement, setup) get 25min threshold instead of 10min.
+ * within their per-step threshold. Uses STEP_STUCK_THRESHOLD_MS map so each
+ * pipeline step gets a timeout matching its actual workload.
  */
 export async function checkClaimedButStuck(): Promise<MedicFinding[]> {
   const findings: MedicFinding[] = [];
@@ -302,6 +315,8 @@ export async function checkClaimedButStuck(): Promise<MedicFinding[]> {
     updated_at: string; abandoned_count: number; workflow_id: string;
   }>;
 
+  // Query with minimum threshold (3min) to get candidates, then filter per-step
+  const MIN_THRESHOLD_MS = 3 * 60 * 1000;
   stuck = await pgQuery(`
     SELECT s.id, s.step_id, s.run_id, s.agent_id, s.updated_at, s.abandoned_count,
            r.workflow_id
@@ -311,13 +326,14 @@ export async function checkClaimedButStuck(): Promise<MedicFinding[]> {
       AND r.status IN ('running', 'resuming')
       AND EXTRACT(EPOCH FROM NOW() - s.updated_at::timestamptz) * 1000 > $1
       AND EXTRACT(EPOCH FROM NOW() - s.updated_at::timestamptz) * 1000 < $2
-  `, [CLAIMED_STUCK_THRESHOLD_MS, MAX_ROLE_TIMEOUT_MS]);
+  `, [MIN_THRESHOLD_MS, MAX_ROLE_TIMEOUT_MS]);
 
   for (const step of stuck) {
     const elapsedMs = Date.now() - new Date(step.updated_at).getTime();
-    // Slow steps get longer threshold — design/implement genuinely need 15-25 min
-    if (SLOW_STEP_IDS_FOR_MEDIC.has(step.step_id) && elapsedMs < CLAIMED_STUCK_SLOW_THRESHOLD_MS) {
-      continue; // Not stuck yet — still within slow step threshold
+    // Per-step threshold — each step gets its own timeout
+    const stepThreshold = STEP_STUCK_THRESHOLD_MS[step.step_id] ?? DEFAULT_STEP_STUCK_THRESHOLD_MS;
+    if (elapsedMs < stepThreshold) {
+      continue; // Not stuck yet — still within this step's threshold
     }
     const ageMin = Math.round(elapsedMs / 60000);
     findings.push({
@@ -489,7 +505,7 @@ export async function checkStalledWorkflowCrons(): Promise<MedicFinding[]> {
       JOIN runs r ON r.id = st.run_id
       WHERE r.workflow_id = $1 AND r.status IN ('running', 'resuming') AND st.status = 'running'
         AND EXTRACT(EPOCH FROM NOW() - st.updated_at::timestamptz) * 1000 < $2
-    `, [workflow_id, CLAIMED_STUCK_THRESHOLD_MS]);
+    `, [workflow_id, DEFAULT_STEP_STUCK_THRESHOLD_MS]);
     runningStoriesCnt = Number(rs?.cnt ?? 0);
 
     const rst = await pgGet<{ cnt: string }>(`
@@ -497,7 +513,7 @@ export async function checkStalledWorkflowCrons(): Promise<MedicFinding[]> {
       JOIN runs r ON r.id = s.run_id
       WHERE r.workflow_id = $1 AND r.status IN ('running', 'resuming') AND s.status = 'running'
         AND EXTRACT(EPOCH FROM NOW() - s.updated_at::timestamptz) * 1000 < $2
-    `, [workflow_id, CLAIMED_STUCK_THRESHOLD_MS]);
+    `, [workflow_id, DEFAULT_STEP_STUCK_THRESHOLD_MS]);
     runningStepsCnt = Number(rst?.cnt ?? 0);
 
     if (runningStoriesCnt > 0 || runningStepsCnt > 0) continue; // agents are busy — crons are fine
