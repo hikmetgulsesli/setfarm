@@ -166,39 +166,48 @@ export const OPTIONAL_TEMPLATE_VARS = [
  * of context, template referenced ~1.5KB. Rest was dead weight + DB credentials.
  */
 export const STEP_CONTEXT_ALLOWLIST: Record<string, string[]> = {
-  // Keys every step gets regardless of id
+  // Keys every step gets regardless of step_id — covers fragment placeholders
+  // (critical-preamble.md, db-context.md) and common workflow vars.
+  // Audited against: workflow.yml, agents/*/AGENTS.md, _fragments/*.md
   _common: [
     "task", "repo", "branch", "build_cmd", "test_cmd", "lint_cmd",
     "progress", "previous_failure", "failure_category", "failure_suggestion",
-    "project_memory", "tech_stack",
+    "project_memory", "tech_stack", "run_id",
+    // Fragment vars (pr, story branch, workdir) — may be empty in non-story steps
+    "pr_url", "story_branch", "story_workdir", "final_pr",
+    // DB context fragment — always blank (PROTECTED_OUTBOUND_KEYS) but template
+    // references them, so they must be in allowlist to avoid [missing:] guard.
+    "database_url", "db_host", "db_port", "db_name", "db_user", "db_password",
+    "db_type", "db_required", "db_url",
   ],
   plan: ["prd", "prd_path"],
-  design: ["prd", "screen_map_seed", "design_notes_seed", "device_type"],
+  design: ["prd", "screen_map_seed", "design_notes_seed", "device_type", "stitch_project_id"],
   stories: ["prd", "screen_map", "design_tokens", "design_manifest", "stitch_project_id"],
-  "setup-repo": ["prd", "design_tokens"],
+  "setup-repo": ["prd", "design_tokens", "screen_map"],
   "setup-build": ["prd", "baseline", "design_tokens", "design_system"],
   implement: [
-    "story_workdir", "story_branch", "current_story_id", "current_story",
-    "current_story_title", "stories_json", "stories_remaining", "completed_stories",
+    "current_story_id", "current_story", "current_story_title",
+    "stories_json", "stories_remaining", "completed_stories",
     "stitch_html", "design_dom", "design_tokens", "design_manifest",
     "design_token_mapping", "design_notes", "design_rules", "design_fidelity_feedback",
     "screen_map", "story_screens", "ui_contract", "layout_skeleton",
     "recent_stories_code", "src_tree", "project_tree", "component_registry",
     "api_routes", "installed_packages", "shared_code",
     "implement_phase", "scope_creep_warning", "test_generation_prompt",
-    "detected_platform",
-    // Wave 14 Bug Q scope discipline
+    "detected_platform", "implement_base_commit",
     "story_scope_files", "story_scope_description", "story_shared_files",
+    "verify_feedback",
   ],
   verify: [
-    "final_pr", "current_story_id", "current_story", "current_story_title",
+    "current_story_id", "current_story", "current_story_title",
     "preflight_analysis", "preflight_diff", "preflight_errors",
     "verify_feedback", "stories_json", "completed_stories",
+    "screen_map", "design_tokens",
   ],
-  "security-gate": ["final_pr", "security_notes"],
-  "qa-test": ["final_pr", "dev_server_port"],
-  "final-test": ["final_pr", "dev_server_port", "browser_check_result"],
-  deploy: ["final_pr", "deploy_url"],
+  "security-gate": ["security_notes"],
+  "qa-test": ["dev_server_port", "project_name", "date"],
+  "final-test": ["dev_server_port", "browser_check_result"],
+  deploy: ["deploy_url"],
 };
 
 /**

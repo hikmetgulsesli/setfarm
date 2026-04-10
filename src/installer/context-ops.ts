@@ -177,28 +177,45 @@ export function applyOptionalDefaults(context: Record<string, string>): void {
  */
 export function pruneContextForStep(
   context: Record<string, string>,
-  _stepId: string,
+  stepId: string,
 ): Record<string, string> {
-  // Touch the unused parameter to satisfy strict lint without changing callers.
-  void _stepId;
-  // Touch the allowlist import so TypeScript does not complain that it is unused
-  // while still keeping the export in constants.ts available for the future
-  // allowlist-based pruning implementation.
-  void STEP_CONTEXT_ALLOWLIST;
+  // Wave 14 Bug K: per-step allowlist pruning now ACTIVE.
+  // Allowlist audited against workflow.yml + agents/*/AGENTS.md + _fragments/*.md.
+  // Keys not in (_common ∪ step-specific) are dropped from the agent prompt.
+  // DB credentials are blanked (not dropped) to avoid MISSING_INPUT_GUARD.
+  //
+  // Previous Wave 14.1 disabled this because setup-repo was missing story_workdir
+  // and screen_map in the allowlist → MISSING_INPUT_GUARD tripped. That's fixed
+  // now — _common includes all fragment vars, each step's list is complete.
+
+  const commonKeys = new Set(STEP_CONTEXT_ALLOWLIST._common || []);
+  const stepKeys = new Set(STEP_CONTEXT_ALLOWLIST[stepId] || []);
+  const allowed = new Set([...commonKeys, ...stepKeys]);
+
   const pruned: Record<string, string> = {};
+  let prunedCount = 0;
+
   for (const [key, value] of Object.entries(context)) {
+    // PROTECTED keys: blank (not drop) — template {{db_host}} resolves to ""
     if (PROTECTED_OUTBOUND_KEYS.has(key) || PROTECTED_OUTBOUND_KEYS.has(key.toLowerCase())) {
-      // Wave 13+: blank the value instead of dropping the key entirely.
-      // Dropping causes resolveTemplate to emit [missing: key] which trips the
-      // MISSING_INPUT_GUARD on projects that have DB template vars in their
-      // input_template even when no DB is needed (frontend-only PRDs).
-      // By keeping the key with an empty value the template resolves cleanly
-      // and the agent never sees the real credential.
       pruned[key] = "";
-      continue; // skip copying the original value — blank was set above
+      continue;
     }
-    pruned[key] = value;
+    // Allowlist check
+    if (allowed.has(key)) {
+      pruned[key] = value;
+    } else {
+      // Not in allowlist — drop from agent prompt (still in DB context)
+      prunedCount++;
+    }
   }
+
+  if (prunedCount > 0) {
+    const beforeBytes = JSON.stringify(context).length;
+    const afterBytes = JSON.stringify(pruned).length;
+    logger.info(`[context-prune] ${stepId}: pruned ${prunedCount} keys, ${beforeBytes}→${afterBytes} bytes (${Math.round((1 - afterBytes / beforeBytes) * 100)}% trimmed)`, {});
+  }
+
   return pruned;
 }
 
