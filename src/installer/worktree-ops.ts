@@ -187,60 +187,19 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
       execFileSync("git", ["rev-parse", "--verify", storyId.toLowerCase()], { cwd: repo, timeout: 5000, stdio: "pipe" });
       branchExists = true;
     } catch (e) { /* branch not found — expected */ }
-    // CRITICAL (run #354 postmortem): auto-save uncommitted work BEFORE removing the
-    // worktree. Agent writes files and runs tests (passing!) but gets killed by timeout
-    // before committing. The worktree removal then destroys all that work. By auto-
-    // committing and pushing here, the next claim's smart reset fetches the saved work
-    // from origin and the agent's effort is preserved instead of silently discarded.
-    if (fs.existsSync(worktreeDir) && fs.existsSync(path.join(worktreeDir, ".git"))) {
-      try {
-        const status = execFileSync("git", ["status", "--porcelain"], {
-          cwd: worktreeDir, timeout: 5000, stdio: "pipe",
-        }).toString().trim();
-        if (status) {
-          execFileSync("git", ["add", "-A"], { cwd: worktreeDir, timeout: 5000, stdio: "pipe" });
-          execFileSync("git", ["commit", "-m", "wip: auto-save before worktree reset (agent timed out)"], {
-            cwd: worktreeDir, timeout: 10000, stdio: "pipe",
-          });
-          try {
-            execFileSync("git", ["push", "-u", "origin", storyId.toLowerCase()], {
-              cwd: worktreeDir, timeout: 15000, stdio: "pipe",
-            });
-            logger.info(`[worktree] Auto-saved ${status.split("\\n").length} uncommitted file(s) before reset for ${storyId}`, {});
-          } catch (pushErr) {
-            logger.warn(`[worktree] Auto-save commit created but push failed: ${String(pushErr).slice(0, 150)}`, {});
-          }
-        }
-      } catch (saveErr) {
-        // Best-effort — don't block worktree recreation on save failure
-        logger.warn(`[worktree] Auto-save failed for ${storyId}: ${String(saveErr).slice(0, 150)}`, {});
-      }
-    }
+    // Wave 13b: safe removal (auto-save + push + remove) via single function
+    saveAndRemoveWorktree(repo, worktreeDir, storyId.toLowerCase());
 
-    // Remove leftover worktree dir if exists (but branch is preserved above)
-    try { execFileSync("git", ["worktree", "remove", worktreeDir, "--force"], { cwd: repo, timeout: 10000, stdio: "pipe" }); } catch (e) { logger.warn(`[worktree] leftover remove failed: ${String(e)}`, {}); }
-    try { execFileSync("git", ["worktree", "prune"], { cwd: repo, timeout: 5000, stdio: "pipe" }); } catch (e) { logger.warn(`[worktree] prune failed: ${String(e)}`, {}); }
     if (branchExists) {
-      // Wave 13++ (run #353 postmortem): smart reset — prefer origin WIP over clean slate.
-      // Pure clean-slate (branch -f to base) killed pushed WIP from timed-out agents:
-      //   Agent A pushes commit → timeout → story pending → Agent B claims → clean slate
-      //   resets branch to base → Agent A's pushed work vanishes → zero-work guard fires.
-      // Fix: fetch origin/storyBranch first. If it exists (agent pushed before timeout),
-      // reset to origin (preserves pushed WIP). If no remote branch, reset to base (clean
-      // slate for genuinely fresh starts). This balances "don't inherit stale half-done
-      // code from a DIFFERENT agent" with "don't discard pushed work from the SAME story".
+      // Prefer origin (includes auto-saved WIP from timed-out agents).
+      // If no remote branch, reset to base (clean slate for first claim).
       let resetTarget = baseBranch;
       try {
         execFileSync("git", ["fetch", "origin", storyId.toLowerCase()], {
           cwd: repo, timeout: 10000, stdio: "pipe",
         });
-        // Remote branch exists — agent pushed work before timeout. Use it.
         resetTarget = "origin/" + storyId.toLowerCase();
-        logger.info(`[worktree] Found remote ${storyId} — will reset to origin (preserving pushed WIP)`, {});
-      } catch {
-        // No remote branch — first claim or agent never pushed. Clean slate.
-        logger.info(`[worktree] No remote ${storyId} — will reset to ${baseBranch} (clean slate)`, {});
-      }
+      } catch { /* no remote branch — clean slate */ }
       try {
         execFileSync("git", ["branch", "-f", storyId.toLowerCase(), resetTarget], {
           cwd: repo, timeout: 5000, stdio: "pipe",
@@ -348,6 +307,54 @@ export function findWorktreeDir(repo: string, storyId: string, agentId?: string)
   return null;
 }
 
+/**
+ * Wave 13b: Single source of truth for worktree removal.
+ * ALWAYS auto-saves uncommitted work (commit + push) before destroying anything.
+ * Every code path that removes a worktree MUST call this function.
+ *
+ * Why push: agent timeout kills the process before it commits. Uncommitted files
+ * stay in the worktree dir. If we only commit (no push), the next createStoryWorktree
+ * resets the branch to origin (which has no commit) → work lost. Push ensures the
+ * next claim's `git fetch origin storyBranch` finds the saved work.
+ */
+export function saveAndRemoveWorktree(repo: string, worktreeDir: string, storyBranch: string): void {
+  if (!fs.existsSync(worktreeDir)) return;
+
+  // 1. Auto-save uncommitted work (commit + push)
+  try {
+    const gitFile = path.join(worktreeDir, ".git");
+    if (fs.existsSync(gitFile)) {
+      const status = execFileSync("git", ["status", "--porcelain"], {
+        cwd: worktreeDir, timeout: 5000, stdio: "pipe",
+      }).toString().trim();
+      if (status) {
+        const fileCount = status.split("\n").length;
+        execFileSync("git", ["add", "-A"], { cwd: worktreeDir, timeout: 5000, stdio: "pipe" });
+        execFileSync("git", ["commit", "-m", `wip: auto-save ${fileCount} file(s) before worktree removal`], {
+          cwd: worktreeDir, timeout: 10000, stdio: "pipe",
+        });
+        try {
+          execFileSync("git", ["push", "-u", "origin", storyBranch.toLowerCase()], {
+            cwd: worktreeDir, timeout: 15000, stdio: "pipe",
+          });
+          logger.info(`[worktree] Auto-saved + pushed ${fileCount} uncommitted file(s) for ${storyBranch}`, {});
+        } catch (pushErr) {
+          logger.warn(`[worktree] Auto-save committed but push failed for ${storyBranch}: ${String(pushErr).slice(0, 150)}`, {});
+        }
+      }
+    }
+  } catch (saveErr) {
+    logger.warn(`[worktree] Auto-save failed for ${storyBranch}: ${String(saveErr).slice(0, 150)}`, {});
+  }
+
+  // 2. Remove node_modules symlink (git worktree remove can't handle symlinks)
+  try { fs.unlinkSync(path.join(worktreeDir, "node_modules")); } catch {}
+
+  // 3. Remove worktree + prune
+  try { execFileSync("git", ["worktree", "remove", worktreeDir, "--force"], { cwd: repo, timeout: 10000, stdio: "pipe" }); } catch {}
+  try { execFileSync("git", ["worktree", "prune"], { cwd: repo, timeout: 5000, stdio: "pipe" }); } catch {}
+}
+
 /** Auto-save uncommitted changes in a worktree without removing it (used on abandon) */
 export function autoSaveWorktree(repo: string, storyId: string, agentId?: string): void {
   const worktreeDir = findWorktreeDir(repo, storyId, agentId) || path.join(repo, ".worktrees", storyId.toLowerCase());
@@ -355,40 +362,27 @@ export function autoSaveWorktree(repo: string, storyId: string, agentId?: string
     if (!fs.existsSync(worktreeDir)) return;
     const status = execFileSync("git", ["status", "--porcelain"], { cwd: worktreeDir, timeout: 5000, stdio: "pipe" }).toString().trim();
     if (status) {
+      const fileCount = status.split("\n").length;
       execFileSync("git", ["add", "-A"], { cwd: worktreeDir, timeout: 10000, stdio: "pipe" });
-      execFileSync("git", ["commit", "-m", `wip: auto-save on abandon (${storyId})`], { cwd: worktreeDir, timeout: 10000, stdio: "pipe" });
-      logger.info(`[worktree] Auto-saved uncommitted changes on abandon for ${storyId}`, {});
+      execFileSync("git", ["commit", "-m", `wip: auto-save ${fileCount} file(s) on abandon (${storyId})`], { cwd: worktreeDir, timeout: 10000, stdio: "pipe" });
+      try {
+        execFileSync("git", ["push", "-u", "origin", storyId.toLowerCase()], { cwd: worktreeDir, timeout: 15000, stdio: "pipe" });
+        logger.info(`[worktree] Auto-saved + pushed ${fileCount} file(s) on abandon for ${storyId}`, {});
+      } catch (pushErr) {
+        logger.warn(`[worktree] Auto-save committed but push failed on abandon for ${storyId}: ${String(pushErr).slice(0, 100)}`, {});
+      }
     }
   } catch (err) {
-    logger.warn(`[worktree] Auto-save failed for ${storyId}: ${String(err)}`, {});
+    logger.warn(`[worktree] Auto-save failed for ${storyId}: ${String(err).slice(0, 150)}`, {});
   }
 }
 
 export function removeStoryWorktree(repo: string, storyId: string, agentId?: string): void {
   const worktreeDir = findWorktreeDir(repo, storyId, agentId) || path.join(repo, ".worktrees", storyId.toLowerCase());
   try {
-    // Rescue uncommitted changes before removing worktree
-    if (fs.existsSync(worktreeDir)) {
-      try {
-        const status = execFileSync("git", ["status", "--porcelain"], { cwd: worktreeDir, timeout: 5000, stdio: "pipe" }).toString().trim();
-        if (status) {
-          // Uncommitted work exists — commit it as WIP so next session can continue
-          execFileSync("git", ["add", "-A"], { cwd: worktreeDir, timeout: 10000, stdio: "pipe" });
-          execFileSync("git", ["commit", "-m", `wip: auto-save before session end (${storyId})`], { cwd: worktreeDir, timeout: 10000, stdio: "pipe" });
-          logger.info(`[worktree] Auto-saved uncommitted changes in ${storyId}`, {});
-        }
-      } catch {
-        // Best effort — if commit fails, we still remove the worktree
-      }
-    }
-    // Remove node_modules symlink first (git worktree remove doesn't handle symlinks well)
-    const nmLink = path.join(worktreeDir, "node_modules");
-    try { fs.unlinkSync(nmLink); } catch (e) { logger.warn(`[worktree] symlink unlink failed: ${String(e)}`, {}); }
-    execFileSync("git", ["worktree", "remove", worktreeDir, "--force"], { cwd: repo, timeout: 10000, stdio: "pipe" });
-    execFileSync("git", ["worktree", "prune"], { cwd: repo, timeout: 5000, stdio: "pipe" });
+    saveAndRemoveWorktree(repo, worktreeDir, storyId);
     logger.info(`[worktree] Removed ${worktreeDir}`, {});
   } catch (err: any) {
-    // Item 12: Log worktree cleanup errors instead of silently swallowing
     logger.error(`[worktree] Failed to remove ${worktreeDir}: ${(err.message || "").slice(0, 200)}`, {});
   }
 }
