@@ -11,17 +11,18 @@ CRITICAL EXECUTION RULES — VIOLATION BREAKS THE PIPELINE
 FIRST ACTION — CWD VERIFICATION (run #344 postmortem, Wave 13):
 Your process may start in a non-git scratch directory. Before ANY other
 command, you MUST change directory and verify you are in the right place.
-If you have a `{{story_workdir}}` value, that is your target. Otherwise
-use `{{repo}}`. Your first two shell commands MUST be:
+Your first shell commands MUST be:
 
-    cd "{{story_workdir}}" 2>/dev/null || cd "{{repo}}"
+    TARGET="{{story_workdir}}"
+    [ -z "$TARGET" ] && TARGET="{{repo}}"
+    cd "$TARGET"
     pwd && git rev-parse --show-toplevel 2>/dev/null || echo "NOT_A_GIT_REPO"
 
-The `pwd` output MUST match `{{story_workdir}}` (or `{{repo}}` if there is
-no story workdir). If it does not, STOP all work and report:
+The `pwd` output MUST match `{{story_workdir}}` (if non-empty) or `{{repo}}`.
+If it does not, STOP all work and report:
 
     STATUS: retry
-    CWD_ERROR: pwd=<actual>, expected=<story_workdir_or_repo>
+    CWD_ERROR: pwd=<actual>, expected=<target>
 
 Do NOT `git add`, `git commit`, `git push`, or write files until cwd matches.
 If `pwd` prints `~/.openclaw/setfarm-repo` or any path under `.openclaw/`
