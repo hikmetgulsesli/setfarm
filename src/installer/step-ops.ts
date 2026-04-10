@@ -2765,7 +2765,24 @@ ${screenDescs}
                 if (Array.isArray(shared)) shared.forEach((f: any) => typeof f === "string" && allowed.add(f));
               } catch { /* ignore malformed JSON */ }
               if (allowed.size > 0) {
-                const outOfScope = sourceFiles.filter(f => !allowed.has(f));
+                // Wave 13+ (run #352 postmortem): implicit shared file patterns.
+                // Every story legitimately touches entry points (App.tsx, main.tsx),
+                // type definitions (types.ts), test files (*.test.tsx), and global
+                // styles (index.css). Planners rarely include these in SHARED_FILES
+                // because they're "obviously shared", but the scope guard rejects
+                // them causing 6-retry loops on every story. Instead of requiring
+                // planners to enumerate these, treat them as implicitly allowed.
+                const IMPLICIT_SHARED = [
+                  /^src\/(App|main|index)\.(tsx?|css|jsx?|scss)$/,
+                  /^src\/types(\.(tsx?|d\.ts))?$/,
+                  /^src\/types\/.*\.(tsx?|d\.ts)$/,
+                  /\.test\.(tsx?|jsx?)$/,
+                  /\.spec\.(tsx?|jsx?)$/,
+                  /^src\/setupTests\.(tsx?|js)$/,
+                  /\.d\.ts$/,
+                ];
+                const isImplicitShared = (f: string) => IMPLICIT_SHARED.some(p => p.test(f));
+                const outOfScope = sourceFiles.filter(f => !allowed.has(f) && !isImplicitShared(f));
                 if (outOfScope.length > 0) {
                   const allowedList = [...allowed].slice(0, 15).join(", ");
                   const oosList = outOfScope.slice(0, 10).join(", ");
