@@ -60,7 +60,7 @@ function spawnAgent(agentId: string, wfId: string, role: string): void {
 
   const child = execFile(OPENCLAW_CLI, [
     "agent", "--agent", agentId,
-    "--message", prompt, "--timeout", String(AGENT_TIMEOUT_SECONDS),
+    "--message", prompt, "--timeout-seconds", String(AGENT_TIMEOUT_SECONDS),
   ], {
     cwd: AGENT_SAFE_CWD,  // Wave 13 Bug M — start outside any git repo
     timeout: (AGENT_TIMEOUT_SECONDS + 60) * 1000,
