@@ -34,7 +34,17 @@ export function buildPollingPrompt(workflowId: string, agentId: string, gatewayA
   const outputFileId = gatewayAgentId || fullAgentId;
   const cli = resolveSetfarmCli();
   // Compact prompt — minimizes tokens on NO_WORK (majority of calls)
+  // cuddly-sleeping-quail: force safe cwd before anything else. Cron-spawned
+  // agents inherit the gateway default cwd which often lands in
+  // ~/.openclaw/setfarm-repo — step claim / file writes from there corrupt
+  // the platform source tree (run #385 postmortem: prism ran `cd setfarm-repo
+  // && step claim` under cron, killed at 22:49). agent-scratch is not a git
+  // repo so stray `git` commands fail loudly instead of silently corrupting.
   return `Workflow agent. Peek→Claim→Work→Complete.
+
+0. FIRST RUN THIS (mandatory sandbox anchor):
+   mkdir -p ~/.openclaw/workspace/agent-scratch && cd ~/.openclaw/workspace/agent-scratch && pwd
+   If pwd does not print a path ending in /agent-scratch, STOP and reply "HEARTBEAT_OK".
 
 1. /usr/bin/node ${cli} step peek "${fullAgentId}"
    NO_WORK → reply "HEARTBEAT_OK", STOP.
