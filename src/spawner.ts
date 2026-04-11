@@ -94,8 +94,16 @@ function spawnAgent(agentId: string, wfId: string, role: string): void {
   try { fs.mkdirSync(path.dirname(transcriptPath), { recursive: true }); } catch {}
   try { fs.writeFileSync(transcriptPath, "[spawner] " + new Date().toISOString() + " " + wfId + "/" + role + " agent=" + agentId + "\n"); } catch {}
 
+  // cuddly-sleeping-quail: unique session-id per spawn. Without this the gateway
+  // routes every call into the persistent default session (agent:main:main) and
+  // the agent's conversation history piles up across spawns until it just emits
+  // intro lines without running any bash. Cron-spawned agents avoid this via
+  // `sessionTarget: "isolated"` in the cron config; we get the same effect here
+  // by passing --session-id with a unique value per spawn.
+  const sessionId = "spawner-" + agentId + "-" + Date.now() + "-" + Math.random().toString(36).slice(2, 10);
   const child = execFile(OPENCLAW_CLI, [
     "agent", "--agent", agentId,
+    "--session-id", sessionId,
     "--message", prompt, "--timeout", String(AGENT_TIMEOUT_SECONDS),
   ], {
     cwd: AGENT_SAFE_CWD,  // Wave 13 Bug M — start outside any git repo
