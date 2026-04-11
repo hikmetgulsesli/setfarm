@@ -80,8 +80,15 @@ function spawnAgent(agentId: string, wfId: string, role: string): void {
   const prompt = buildPollingPrompt(wfId, role, agentId);
   console.log("[spawner] Spawning " + agentId + " for " + wfId + "/" + role + " (active: " + activeProcesses.size + ")");
 
-  // cuddly-sleeping-quail: capture agent stdout/stderr to a transcript file for
-  // post-hoc NO_WORK diagnosis. One file per spawn.
+  // cuddly-sleeping-quail: clear stale /tmp output file before spawning. Prevents
+  // the recycle bug where a new run picked up the previous run's output content
+  // because the agent never wrote a fresh file (it just called `step complete
+  // --file` against the stale path). Run #380 vs #381 plan outputs were
+  // bit-by-bit identical (MD5 e16d765c...) — proof that no fresh work happened.
+  const stalePath = path.join("/tmp", "setfarm-output-" + agentId + ".txt");
+  try { fs.unlinkSync(stalePath); } catch { /* didnt exist, fine */ }
+
+  // capture agent stdout/stderr to a transcript file for post-hoc diagnosis.
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
   const transcriptPath = path.join(TRANSCRIPT_ROOT, wfId, agentId + "-" + ts + ".log");
   try { fs.mkdirSync(path.dirname(transcriptPath), { recursive: true }); } catch {}

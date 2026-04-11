@@ -396,8 +396,34 @@ async function main() {
         // --file /path/to/output.txt — most reliable, no piping needed
         const fs = await import("node:fs");
         const filePath = args[fileIdx + 1];
-        try { output = fs.readFileSync(filePath, "utf-8").trim(); }
-        catch (e) { process.stderr.write(`Cannot read file ${filePath}: ${e}\n`); process.exit(1); }
+        try {
+          // cuddly-sleeping-quail: file freshness check. The file MUST have been
+          // written during this step's lifetime. If mtime is older than the step
+          // started_at, the agent is recycling a previous run's output and the
+          // step would silently "pass" with stale content. Reject loudly so the
+          // agent must produce a fresh file.
+          const fileStat = fs.statSync(filePath);
+          const stepRow = await pgGet<{ started_at: string | null; status: string }>(
+            "SELECT started_at, status FROM steps WHERE id = $1",
+            [target]
+          );
+          if (stepRow?.started_at) {
+            const stepStartedMs = new Date(stepRow.started_at).getTime();
+            const fileMtimeMs = fileStat.mtimeMs;
+            // 5 second grace window for clock skew
+            if (fileMtimeMs < stepStartedMs - 5000) {
+              const ageSec = Math.round((stepStartedMs - fileMtimeMs) / 1000);
+              process.stderr.write(`FILE_STALE: ${filePath} mtime is ${ageSec}s older than step started_at. The agent is recycling a previous run's output. Write a fresh file and retry.\n`);
+              process.exit(3);
+            }
+          }
+          output = fs.readFileSync(filePath, "utf-8").trim();
+        }
+        catch (e) {
+          if (String(e).includes("FILE_STALE")) throw e;
+          process.stderr.write(`Cannot read file ${filePath}: ${e}\n`);
+          process.exit(1);
+        }
       } else {
         output = args.slice(3).filter(a => a !== "--file").join(" ").trim();
       }
