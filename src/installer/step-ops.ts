@@ -357,7 +357,7 @@ async function autoCompleteStoriesWithPRs(
   const autoCompleteStories = await pgQuery<any>("SELECT * FROM stories WHERE run_id = $1 AND status = 'pending' ORDER BY story_index ASC", [step.run_id]);
   for (const rs of autoCompleteStories) {
     // Build expected branch: {runId_prefix}-{STORY_ID} e.g. "433ff7a1-US-001"
-    const storyBranchForCheck = rs.story_branch || `${runIdPrefix}-${rs.story_id}`;
+    const storyBranchForCheck = (rs.story_branch || `${runIdPrefix}-${rs.story_id}`).toLowerCase();
     const existingPrUrl = rs.pr_url || "";
 
     try {
@@ -2443,6 +2443,26 @@ ${screenDescs}
       logger.warn(`[stories-guardrail] ${noStoriesMsg}`, { runId: step.run_id });
       if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
       await failStep(stepId, noStoriesMsg);
+      return { advanced: false, runCompleted: false };
+    }
+
+    // cuddly-sleeping-quail: every non-setup story MUST declare scope_files. An
+    // empty scope_files means developer agents have no bounds and every story
+    // writes the same files (package.json, App.tsx, main.tsx). The merge queue
+    // then dies with 4/4 conflicts — run #384 failure mode. Setup story
+    // (story_index 0) is exempt because it owns all configuration.
+    const missingScopeRows = await pgQuery<{ story_id: string }>(
+      "SELECT story_id FROM stories WHERE run_id = $1 AND story_index > 0 AND (scope_files IS NULL OR scope_files = '' OR scope_files = '[]')",
+      [step.run_id]
+    );
+    if (missingScopeRows.length > 0) {
+      const missingIds = missingScopeRows.map(r => r.story_id).join(", ");
+      const scopeErr = `GUARDRAIL: ${missingScopeRows.length} story/stories missing scope_files (${missingIds}). Every non-setup story MUST declare scope_files listing the source files it will create or modify. Empty scope_files causes merge conflicts because developers write whatever they want. Re-output STORIES_JSON with scope_files populated for each story.`;
+      logger.warn(`[stories-guardrail] ${scopeErr}`, { runId: step.run_id });
+      if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
+      // Clean up the stories inserted this attempt so retry starts fresh
+      await pgRun("DELETE FROM stories WHERE run_id = $1", [step.run_id]);
+      await failStep(stepId, scopeErr);
       return { advanced: false, runCompleted: false };
     }
   }

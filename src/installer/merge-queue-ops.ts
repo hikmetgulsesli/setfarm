@@ -241,7 +241,7 @@ export async function runMergeQueue(
       continue;
     }
 
-    const storyBranch = story.story_branch || `${runId.slice(0, 8)}-${story.story_id}`;
+    const storyBranch = (story.story_branch || `${runId.slice(0, 8)}-${story.story_id}`).toLowerCase();
     const commitMsg = `merge: ${story.story_id} - ${story.title}`;
 
     logger.info(`[merge-queue] Merging ${story.story_id} (${storyBranch} → ${featureBranch})`, { runId });

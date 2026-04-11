@@ -477,9 +477,29 @@ steps:
           "description": "What this story implements — full functional module description",
           "acceptanceCriteria": ["Criterion 1", "Tests pass", "Typecheck passes"],
           "depends_on": [],
-          "screens": ["SCR-001"]
+          "screens": ["SCR-001"],
+          "scope_files": ["src/components/Calculator.tsx", "src/hooks/useCalc.ts"],
+          "shared_files": []
         }
       ]
+
+      SCOPE_FILES FIELD (MANDATORY — prevents merge conflicts):
+      Every story MUST declare "scope_files" — the exhaustive list of source files
+      this story will create or modify. Agents are BLOCKED from touching files
+      outside this list during implementation. If two stories need the same file,
+      put the owner in scope_files and add the file to the OTHER story's
+      "shared_files" (read-only reference, no writes).
+      - US-001 (setup) scope_files should include package.json, vite.config.*,
+        tsconfig.json, tailwind.config.*, index.html, src/main.*, src/index.css,
+        and any shared types/tokens — the setup story OWNS all config.
+      - Feature stories: list every component/hook/util file the story creates.
+        Do NOT leave scope_files empty. An empty scope_files list means the
+        pipeline WILL REJECT your output.
+      - shared_files: files the story READS from other stories but does not
+        write (e.g. types defined in US-001). Implementation is read-only.
+      - The integration story (last) can list App.tsx and src/main.tsx as
+        scope_files — it is the final wirer.
+      The merge queue uses scope_files to plan a conflict-free merge order.
 
       DEPENDENCY RULES (depends_on field):
       - Foundation stories (setup, design tokens, DB schema): depends_on: [] (no dependencies)
