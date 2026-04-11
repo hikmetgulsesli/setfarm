@@ -49,23 +49,29 @@ export function buildPollingPrompt(workflowId: string, agentId: string, gatewayA
 1. /usr/bin/node ${cli} step peek "${fullAgentId}"
    NO_WORK → reply "HEARTBEAT_OK", STOP.
 
-2. /usr/bin/node ${cli} step claim "${fullAgentId}"
-   NO_WORK → "HEARTBEAT_OK", STOP.
-   JSON output contains {"stepId":"<UUID>","runId":"<UUID>","input":"..."}.
-   CRITICAL: Save the "stepId" value (NOT "runId"). You MUST use stepId for complete/fail.
+2. CLAIM the step and save the JSON to a file in one shot:
+   /usr/bin/node ${cli} step claim "${fullAgentId}" > /tmp/claim-${outputFileId}.json
+   If the file content is "NO_WORK" → reply "HEARTBEAT_OK", STOP.
 
-3. Parse the claim JSON "input" field. Extract the working directory:
-   - If input has a non-empty "story_workdir" → that is your WORKDIR
-   - Else if input has "repo" → that is your WORKDIR
-   - Else stay in ~/.openclaw/workspace/agent-scratch
+3. EXTRACT the step id and working directory via jq (DO NOT parse by hand):
+   STEP_ID=$(jq -r '.stepId // empty' /tmp/claim-${outputFileId}.json)
+   WORKDIR=$(jq -r '.input.story_workdir // .input.repo // empty' /tmp/claim-${outputFileId}.json)
+   [ -z "$STEP_ID" ] && { echo "HEARTBEAT_OK"; exit 0; }
+   [ -z "$WORKDIR" ] && WORKDIR="$HOME/.openclaw/workspace/agent-scratch"
    cd "$WORKDIR" && pwd
-   If pwd starts with ~/.openclaw/setfarm-repo, STOP and reply
-   STATUS: fatal / FATAL: platform_path_touched
-   All subsequent commands MUST run from WORKDIR. Never run npx/npm init —
-   the repo is already set up by setup-repo and setup-build; you only modify
-   files inside it.
+   case "$(pwd)" in
+     $HOME/.openclaw/setfarm-repo*) echo "STATUS: fatal"; echo "FATAL: platform_path_touched"; exit 1;;
+   esac
+   Save STEP_ID — you need it for step complete/fail. The claim JSON is in
+   /tmp/claim-${outputFileId}.json if you need other fields (input.prd,
+   input.task, input.scope_files, etc.). Read it with:
+     cat /tmp/claim-${outputFileId}.json
+     jq -r '.input.task' /tmp/claim-${outputFileId}.json
+     jq -r '.input.prd' /tmp/claim-${outputFileId}.json
 
-4. Do the work described in "input". No narration. Stay in WORKDIR.
+4. Do the work described in the claim input. No narration. Stay in WORKDIR.
+   Never run npx/npm init — setup-repo and setup-build already scaffolded
+   the project. You only modify files inside WORKDIR.
 
 5. Write output in KEY: VALUE format (NOT JSON) to /tmp, then complete:
 cat <<'SETFARM_EOF' > /tmp/setfarm-output-${outputFileId}.txt
