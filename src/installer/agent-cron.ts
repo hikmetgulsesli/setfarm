@@ -42,9 +42,9 @@ export function buildPollingPrompt(workflowId: string, agentId: string, gatewayA
   // repo so stray `git` commands fail loudly instead of silently corrupting.
   return `Workflow agent. Peek→Claim→Work→Complete.
 
-0. FIRST RUN THIS (mandatory sandbox anchor):
-   mkdir -p ~/.openclaw/workspace/agent-scratch && cd ~/.openclaw/workspace/agent-scratch && pwd
-   If pwd does not print a path ending in /agent-scratch, STOP and reply "HEARTBEAT_OK".
+0. SAFE SHELL START (fallback cwd — claim will move you elsewhere):
+   mkdir -p ~/.openclaw/workspace/agent-scratch && cd ~/.openclaw/workspace/agent-scratch
+   NEVER run commands from ~/.openclaw/setfarm-repo (platform source tree).
 
 1. /usr/bin/node ${cli} step peek "${fullAgentId}"
    NO_WORK → reply "HEARTBEAT_OK", STOP.
@@ -54,9 +54,20 @@ export function buildPollingPrompt(workflowId: string, agentId: string, gatewayA
    JSON output contains {"stepId":"<UUID>","runId":"<UUID>","input":"..."}.
    CRITICAL: Save the "stepId" value (NOT "runId"). You MUST use stepId for complete/fail.
 
-3. Do the work described in "input". No narration.
+3. Parse the claim JSON "input" field. Extract the working directory:
+   - If input has a non-empty "story_workdir" → that is your WORKDIR
+   - Else if input has "repo" → that is your WORKDIR
+   - Else stay in ~/.openclaw/workspace/agent-scratch
+   cd "$WORKDIR" && pwd
+   If pwd starts with ~/.openclaw/setfarm-repo, STOP and reply
+   STATUS: fatal / FATAL: platform_path_touched
+   All subsequent commands MUST run from WORKDIR. Never run npx/npm init —
+   the repo is already set up by setup-repo and setup-build; you only modify
+   files inside it.
 
-4. Write output in KEY: VALUE format (NOT JSON) to /tmp, then complete:
+4. Do the work described in "input". No narration. Stay in WORKDIR.
+
+5. Write output in KEY: VALUE format (NOT JSON) to /tmp, then complete:
 cat <<'SETFARM_EOF' > /tmp/setfarm-output-${outputFileId}.txt
 STATUS: done
 <other keys as specified in step input>
@@ -64,7 +75,7 @@ SETFARM_EOF
 /usr/bin/node ${cli} step complete "<the stepId from claim JSON>" --file /tmp/setfarm-output-${outputFileId}.txt
 On failure: /usr/bin/node ${cli} step fail "<the stepId from claim JSON>" "reason"
 
-5. STOP. Reply "HEARTBEAT_OK". No more tool calls.
+6. STOP. Reply "HEARTBEAT_OK". No more tool calls.
 
 Rules: NO_WORK/complete/fail → SESSION OVER. Never skip peek. Never run workflow stop/uninstall/sessions_spawn. Write output to /tmp/setfarm-output-${outputFileId}.txt, use --file flag. Output must be KEY: VALUE lines, NOT JSON.`;
 }
