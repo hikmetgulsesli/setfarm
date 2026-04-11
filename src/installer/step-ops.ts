@@ -2717,6 +2717,47 @@ ${screenDescs}
           const HARD_LIMIT = 12;
           const SOFT_LIMIT = 8;
 
+          // cuddly-sleeping-quail: scope_files existence gate. Runs before Wave 10 D
+          // because it gives a more specific error message when the agent declared a
+          // scope but never wrote the files. This catches the "fake-done" pattern
+          // where run #377 US-005 / US-006 were marked done with zero matching files
+          // in the worktree.
+          if (step.retry_count < step.max_retries) {
+            const declRow = await pgGet<{ scope_files: string | null }>(
+              "SELECT scope_files FROM stories WHERE id = $1",
+              [step.current_story_id]
+            );
+            if (declRow?.scope_files) {
+              let declared: string[] = [];
+              try {
+                const parsed = JSON.parse(declRow.scope_files || "[]");
+                if (Array.isArray(parsed)) declared = parsed.filter((f: any) => typeof f === "string");
+              } catch { declared = []; }
+              if (declared.length > 0) {
+                const missing: string[] = [];
+                const present: string[] = [];
+                for (const rel of declared) {
+                  const abs = require("node:path").join(wd, rel);
+                  try {
+                    const st = fs.statSync(abs);
+                    if (st.isFile() && st.size > 0) present.push(rel); else missing.push(rel);
+                  } catch { missing.push(rel); }
+                }
+                const required = Math.ceil(declared.length * 0.6);
+                if (present.length < required) {
+                  const gateMsg = `SCOPE_FILE_MISSING: Story ${storyRow.story_id} (${storyRow.title}) declared scope_files=${JSON.stringify(declared)} but only ${present.length}/${declared.length} exist as non-empty files in the worktree. Missing: ${missing.join(", ") || "none"}. You reported STATUS: done but the files you promised to write do not exist. Re-read the story acceptance criteria, actually create the files, git add+commit them, and re-report.`;
+                  logger.warn(`[scope-files-gate] Story ${storyRow.story_id} declared scope but files missing — ${present.length}/${declared.length} present`, { runId: step.run_id });
+                  context["previous_failure"] = gateMsg;
+                  context["failure_category"] = "NO_WORK";
+                  context["failure_suggestion"] = "Write the files listed in your scope_files declaration";
+                  await updateRunContext(step.run_id, context);
+                  await failStep(stepId, gateMsg);
+                  return { advanced: false, runCompleted: false };
+                }
+              }
+            }
+          }
+
           // Wave 10 Bug D: zero-work floor. Fake-completed stories hit this.
           if (sourceFiles.length === 0 && step.retry_count < step.max_retries) {
             const zeroMsg = `NO WORK DETECTED: Story ${storyRow.story_id} (${storyRow.title}) reported STATUS: done but the worktree at ${wd} has ZERO source-file changes vs ${baseBr} (neither committed nor uncommitted). The agent appears to have shortcut the task — possibly by regurgitating context fields (BUILD_CMD, BASELINE, etc.) as its own output instead of actually implementing. Re-read the story's acceptance criteria, write the files it asks for, commit them with 'git add -A && git commit -m \"feat: ${storyRow.story_id} - ...\"', and only then report STATUS: done. If the story genuinely has no code to write (e.g. it was already covered by setup-build), you must still emit a CHANGES: line explaining why nothing was modified.`;

@@ -30,8 +30,25 @@ const MAX_CONCURRENT = 8;
 // the proactive layer: start every agent in a non-git scratch directory so
 // stray `git` commands fail with "not a git repository" instead of silently
 // landing in the wrong repo.
+const SETFARM_SRC = path.resolve(process.env.SETFARM_REPO_DIR || path.join(os.homedir(), ".openclaw", "setfarm-repo"));
 const AGENT_SAFE_CWD = path.join(os.homedir(), ".openclaw", "workspace", "agent-scratch");
+const TRANSCRIPT_ROOT = path.join(os.homedir(), ".openclaw", "workspace", "transcripts");
+
+function assertAgentCwdSafe(): void {
+  // cuddly-sleeping-quail: refuse to spawn agents inside the platform source tree.
+  // A misconfigured cwd has historically corrupted setfarm-repo itself (agents
+  // writing project code into src/, committing to a story branch, then npm run
+  // build rebuilt dist/ from the stale checkout). This is the last-line check —
+  // runtime-guard + write-build-info stop it earlier; this stops any spawner
+  // that bypassed those.
+  const resolved = path.resolve(AGENT_SAFE_CWD);
+  if (resolved === SETFARM_SRC || resolved.startsWith(SETFARM_SRC + path.sep)) {
+    throw new Error("SELF_CONTAIN_VIOLATION: AGENT_SAFE_CWD (" + resolved + ") resolves inside platform source tree (" + SETFARM_SRC + "). Refusing to spawn agents — they would corrupt setfarm-repo.");
+  }
+}
 try { fs.mkdirSync(AGENT_SAFE_CWD, { recursive: true }); } catch { /* best-effort */ }
+try { fs.mkdirSync(TRANSCRIPT_ROOT, { recursive: true }); } catch { /* best-effort */ }
+assertAgentCwdSafe();
 
 const activeProcesses = new Map<string, ChildProcess>();
 let shuttingDown = false;
@@ -56,7 +73,14 @@ function spawnAgent(agentId: string, wfId: string, role: string): void {
     return;
   }
   const prompt = buildPollingPrompt(wfId, role, agentId);
-  console.log(`[spawner] Spawning ${agentId} for ${wfId}/${role} (active: ${activeProcesses.size})`);
+  console.log("[spawner] Spawning " + agentId + " for " + wfId + "/" + role + " (active: " + activeProcesses.size + ")");
+
+  // cuddly-sleeping-quail: capture agent stdout/stderr to a transcript file for
+  // post-hoc NO_WORK diagnosis. One file per spawn.
+  const ts = new Date().toISOString().replace(/[:.]/g, "-");
+  const transcriptPath = path.join(TRANSCRIPT_ROOT, wfId, agentId + "-" + ts + ".log");
+  try { fs.mkdirSync(path.dirname(transcriptPath), { recursive: true }); } catch {}
+  try { fs.writeFileSync(transcriptPath, "[spawner] " + new Date().toISOString() + " " + wfId + "/" + role + " agent=" + agentId + "\n"); } catch {}
 
   const child = execFile(OPENCLAW_CLI, [
     "agent", "--agent", agentId,
@@ -79,10 +103,18 @@ function spawnAgent(agentId: string, wfId: string, role: string): void {
       return e;
     })(),
     maxBuffer: 10 * 1024 * 1024,
-  }, (err) => {
+  }, (err, stdout, stderr) => {
     activeProcesses.delete(key);
-    if (err) console.warn(`[spawner] ${agentId} exited: ${err.message}`);
-    else console.log(`[spawner] ${agentId} completed`);
+    try {
+      let body = "";
+      if (stdout) body += "--- STDOUT ---\n" + String(stdout) + "\n";
+      if (stderr) body += "--- STDERR ---\n" + String(stderr) + "\n";
+      if (err) body += "--- EXIT ---\n" + String((err as any).message || err) + "\n";
+      body += "--- FINISHED " + new Date().toISOString() + " ---\n";
+      fs.appendFileSync(transcriptPath, body);
+    } catch (e) { console.warn("[spawner] transcript write failed: " + String(e)); }
+    if (err) console.warn("[spawner] " + agentId + " exited: " + ((err as any).message || err) + " (transcript: " + transcriptPath + ")");
+    else console.log("[spawner] " + agentId + " completed (transcript: " + transcriptPath + ")");
   });
   if (child.pid) activeProcesses.set(key, child);
 }

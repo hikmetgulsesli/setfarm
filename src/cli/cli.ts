@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { assertRuntimeIntegrityOrExit } from "./runtime-guard.js";
 import { installWorkflow } from "../installer/install.js";
 import { uninstallAllWorkflows, uninstallWorkflow, checkActiveRuns } from "../installer/uninstall.js";
 import { getWorkflowStatus, listRuns, stopWorkflow } from "../installer/status.js";
@@ -113,6 +114,7 @@ function printUsage() {
 }
 
 async function main() {
+  assertRuntimeIntegrityOrExit();
   const args = process.argv.slice(2);
   const [group, action, target] = args;
 
