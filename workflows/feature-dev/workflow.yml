@@ -16,7 +16,7 @@ agent_mapping:
   planner: main
   setup-repo: atlas
   setup-build: atlas
-  designer: mert
+  designer: prism
   developer: [koda, flux, cipher, prism, lux, nexus]
   reviewer: [sentinel, iris]
   tester: [sentinel, iris]
