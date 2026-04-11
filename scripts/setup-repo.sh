@@ -26,6 +26,16 @@ fi
 # 2. GitHub remote (with duplicate-name fallback)
 PROJECT_NAME=$(basename "$REPO")
 if ! git remote -v 2>/dev/null | grep -q origin; then
+  # cuddly-sleeping-quail: gh repo create --push requires at least one commit.
+  # If this is a fresh `git init` with no commits, create a README and commit
+  # so --push has something to push. Run #389 postmortem: empty dir → git init
+  # → gh repo create --push → "no commits found" → FATAL.
+  if ! git rev-parse --verify HEAD >/dev/null 2>&1; then
+    [ -f README.md ] || echo "# $PROJECT_NAME" > README.md
+    [ -f .gitignore ] || printf "node_modules/\ndist/\n.env\n" > .gitignore
+    git add README.md .gitignore 2>/dev/null || true
+    git commit -m "chore: initial commit" >/dev/null 2>&1 || true
+  fi
   if OUTPUT=$(gh repo create "hikmetgulsesli/$PROJECT_NAME" --public --source . --remote origin --push 2>&1); then
     echo "GitHub repo created: hikmetgulsesli/$PROJECT_NAME"
   else
