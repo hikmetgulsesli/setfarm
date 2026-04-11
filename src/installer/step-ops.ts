@@ -2848,8 +2848,12 @@ ${screenDescs}
                 // because they're "obviously shared", but the scope guard rejects
                 // them causing 6-retry loops on every story. Instead of requiring
                 // planners to enumerate these, treat them as implicitly allowed.
+                // cuddly-sleeping-quail (run #392 postmortem): removed App/main/index
+                // from implicit shared. They caused 4/4 merge conflicts when every
+                // developer wrote its own App.tsx. The planner puts App.tsx/main.tsx
+                // in the integration story's scope_files — only that story should
+                // touch them. Test files stay implicit because they're per-story.
                 const IMPLICIT_SHARED = [
-                  /^src\/(App|main|index)\.(tsx?|css|jsx?|scss)$/,
                   /^src\/types(\.(tsx?|d\.ts))?$/,
                   /^src\/types\/.*\.(tsx?|d\.ts)$/,
                   /\.test\.(tsx?|jsx?)$/,
