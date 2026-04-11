@@ -54,11 +54,16 @@ const activeProcesses = new Map<string, ChildProcess>();
 let shuttingDown = false;
 
 function resolveAgentId(wfId: string, role: string, mapping: Record<string, string | string[]>): string[] {
-  // For parallel roles (developer, reviewer), use mapped agents (koda, flux, etc.)
+  // cuddly-sleeping-quail: respect agent_mapping the same way agent-cron does.
+  // Previously this fell back to `${wfId}_${role}` for single-string mappings,
+  // which is NOT a registered gateway agent ID — gateway agents are named in
+  // openclaw config (main, mert, atlas, koda, ...). The fallback caused two
+  // concurrent processes to claim the same step (cron used the mapped name,
+  // spawner used the bogus fallback) and write competing /tmp output files.
+  // Run #379 plan retry 0/1 hit this race; only retry 2 caught the cron output.
   const m = mapping[role];
   if (Array.isArray(m)) return m;
-  // For single-agent roles, use the workflow-scoped agent ID (feature-dev_designer)
-  // because gateway registers agents as {workflow}_{role}, not the mapped name
+  if (typeof m === "string" && m.length > 0) return [m];
   return [`${wfId}_${role}`];
 }
 
