@@ -33,7 +33,7 @@ export async function advancePipeline(runId: string): Promise<{ advanced: boolea
     return { advanced: false, runCompleted: false };
   }
 
-  return await pgBegin(async (sql) => {
+  const _txResult: any = await pgBegin(async (sql) => {
     const nextRows = await sql.unsafe(
       "SELECT id, step_id, step_index FROM steps WHERE run_id = $1 AND status = 'waiting' ORDER BY step_index ASC LIMIT 1",
       [runId]
@@ -97,19 +97,12 @@ export async function advancePipeline(runId: string): Promise<{ advanced: boolea
       await recordStepTransition(next.id, runId, "waiting", "pending", undefined, "advancePipeline");
       emitEvent({ ts: now(), event: "pipeline.advanced", runId, workflowId: wfId, stepId: next.step_id });
       emitEvent({ ts: now(), event: "step.pending", runId, workflowId: wfId, stepId: next.step_id });
-      // Demand-based crons + event-driven NOTIFY
-      // P1-06: Sync crons and notify immediately (no 2s delay)
-      try {
-        await syncActiveCrons(runId, wfId || "");
-      } catch (e) {
-        logger.warn(`[advance] syncActiveCrons failed: ${String(e)}`, {});
-      }
-      try {
-        const { pgRun: _pgRun } = await import("../db-pg.js");
-        const stepAgent = await pgGet<{ agent_id: string }>("SELECT agent_id FROM steps WHERE id = $1", [next.id]);
-        await _pgRun("SELECT pg_notify('step_pending', $1)", [JSON.stringify({ agentId: stepAgent?.agent_id || next.step_id, runId, stepId: next.step_id })]);
-      } catch {}
-      return { advanced: true, runCompleted: false };
+      // cuddly-sleeping-quail (run #393 postmortem): syncActiveCrons and
+      // pg_notify used to run INSIDE this transaction, but they read via
+      // pgQuery on a separate connection that cannot see the uncommitted
+      // UPDATE above. Return a flag and defer those calls until the outer
+      // caller runs them AFTER the transaction commits.
+      return { advanced: true, runCompleted: false, _postCommit: { kind: "sync", nextStepId: next.id, nextAgentId: next.step_id, wfId: wfId || "" } } as any;
     } else {
       await completeRun(runId);
       emitEvent({ ts: now(), event: "run.completed", runId, workflowId: wfId });
@@ -128,6 +121,25 @@ export async function advancePipeline(runId: string): Promise<{ advanced: boolea
       return { advanced: false, runCompleted: true };
     }
   });
+
+  // cuddly-sleeping-quail: post-commit sync (outside transaction so reads see fresh state)
+  if (_txResult && (_txResult as any)._postCommit) {
+    const pc = (_txResult as any)._postCommit;
+    if (pc.kind === "sync") {
+      try {
+        await syncActiveCrons(runId, pc.wfId);
+      } catch (e) {
+        logger.warn(`[advance] syncActiveCrons failed: ${String(e)}`, {});
+      }
+      try {
+        const { pgRun: _pgRun } = await import("../db-pg.js");
+        const stepAgent = await pgGet<{ agent_id: string }>("SELECT agent_id FROM steps WHERE id = $1", [pc.nextStepId]);
+        await _pgRun("SELECT pg_notify('step_pending', $1)", [JSON.stringify({ agentId: stepAgent?.agent_id || pc.nextAgentId, runId, stepId: pc.nextAgentId })]);
+      } catch {}
+    }
+    delete (_txResult as any)._postCommit;
+  }
+  return _txResult;
 }
 
 // ── checkLoopContinuation ────────────────────────────────────────────
