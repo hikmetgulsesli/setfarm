@@ -51,22 +51,7 @@ export async function runWorkflow(params: {
   const runNumber = await pgNextRunNumber();
   const notifyUrl = params.notifyUrl ?? workflow.notifications?.url ?? null;
 
-  // cuddly-sleeping-quail: race guard — reject duplicate runs with the EXACT
-  // same task title started within 10 seconds. Catches double-click, background
-  // task retries, and ssh hangs that fired twice (run #398). Task-level scoped
-  // so parallel runs of DIFFERENT projects using the same workflow are still
-  // allowed — only identical task strings within the race window are blocked.
-  const raceGuard = await pgGet<{ id: string; run_number: number; created_at: string }>(
-    "SELECT id, run_number, created_at::text FROM runs WHERE workflow_id = $1 AND status = 'running' AND task = $2 AND created_at > now() - interval '10 seconds' ORDER BY created_at DESC LIMIT 1",
-    [workflow.id, params.taskTitle]
-  );
-  if (raceGuard) {
-    throw new Error(
-      `RACE_GUARD: Run #${raceGuard.run_number} (${raceGuard.id}) with the same task title started less than 10 seconds ago (${raceGuard.created_at}). Duplicate start blocked. If the previous run is stuck, cancel it with: setfarm workflow stop ${raceGuard.id.slice(0, 8)} --force`
-    );
-  }
-
-  // Duplicate run guard (legacy — matches tasks with Repo: prefix)
+  // Duplicate run guard
   const repoMatch = params.taskTitle.match(/Repo:\s*(\S+)/i);
   if (repoMatch) {
     const repoPath = repoMatch[1].replace(/~/g, os.homedir());
