@@ -2740,7 +2740,22 @@ ${screenDescs}
     // build output, config, lockfiles, DESIGN.md, stitch assets, references.
     if (step.step_id === "implement" && storyStatus === STORY_STATUS.DONE && storyRow?.story_id) {
       try {
-        const wd = context["story_workdir"] || "";
+        // cuddly-sleeping-quail (run #402): context["story_workdir"] is WRONG during
+        // parallel story execution — the last-claimed story overwrites it, so scope
+        // check of an earlier story reads the WRONG worktree. Fix: derive the worktree
+        // path directly from the story branch name (same logic as worktree-ops.ts).
+        const storyBranchRow = await pgGet<{ story_branch: string | null }>(
+          "SELECT story_branch FROM stories WHERE id = $1", [step.current_story_id]
+        );
+        const storyBranchForWd = storyBranchRow?.story_branch || "";
+        let wd = "";
+        if (storyBranchForWd) {
+          const worktreeBase = path.join(os.homedir(), ".openclaw", "workspaces", "workflows", "feature-dev", "agents", "developer", "story-worktrees");
+          const candidateWd = path.join(worktreeBase, storyBranchForWd);
+          wd = fs.existsSync(candidateWd) ? candidateWd : (context["story_workdir"] || "");
+        } else {
+          wd = context["story_workdir"] || "";
+        }
         const baseBr = context["branch"] || "";
         // story_index is not on storyRow (getStoryInfo only returns id+title) — query it
         const storyIdxRow = await pgGet<{ story_index: number }>("SELECT story_index FROM stories WHERE id = $1", [step.current_story_id]);
