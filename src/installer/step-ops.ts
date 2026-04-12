@@ -1399,18 +1399,19 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
             if (mergedCount > 0) {
               logger.info(`[dep-merge] Merged ${mergedCount}/${depBranches.length} dependency branches into ${nextStory.story_id}`, { runId: step.run_id });
             }
-            // Expand shared_files with ALL dependency scope_files so scope-bleed
-            // check allows integration story to touch them. Without this, the
-            // scope check rejects every dependency file the agent modifies.
+            // Expand shared_files with ALL other stories' scope_files (transitive).
+            // Direct deps are insufficient: US-004 depends on US-002/003 but also
+            // needs US-001's files (index.css, tokens). Instead of computing
+            // transitive closure, just include all stories' scope_files.
             const depScopeFiles: string[] = [];
-            for (const depId of deps) {
-              const depRow = await pgGet<{ scope_files: string | null }>(
-                "SELECT scope_files FROM stories WHERE run_id = $1 AND story_id = $2",
-                [step.run_id, depId]
-              );
-              if (depRow?.scope_files) {
+            const allStoryScopes = await pgQuery<{ scope_files: string | null; story_id: string }>(
+              "SELECT scope_files, story_id FROM stories WHERE run_id = $1 AND story_id != $2",
+              [step.run_id, nextStory.story_id]
+            );
+            for (const row of allStoryScopes) {
+              if (row?.scope_files) {
                 try {
-                  const files: string[] = JSON.parse(depRow.scope_files);
+                  const files: string[] = JSON.parse(row.scope_files);
                   if (Array.isArray(files)) depScopeFiles.push(...files);
                 } catch {}
               }
