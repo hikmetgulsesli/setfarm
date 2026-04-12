@@ -206,11 +206,22 @@ steps:
       PRD_SCREEN_COUNT below 3 will be REJECTED by the pipeline guardrail.
 
       5. Determine the repo path and branch name
-         CRITICAL REPO PATH RULE: The repo path MUST be $HOME/projects/<slug>
-         where <slug> is derived from the task description (Turkish chars removed, lowercase, hyphens).
-         Example: "Basit hesap makinesi" → $HOME/projects/basit-hesap-makinesi
-         NEVER use a different base directory. NEVER translate the project name to English.
-         Use the EXACT words from the task, just slugified.
+         CRITICAL REPO PATH RULE: The repo path MUST be $HOME/projects/<slug>.
+         The slug comes from the token following "Proje:" in the task description.
+         Extract that token VERBATIM — numbers, hyphens, and suffixes are part
+         of the name. Only transform: lowercase + Turkish chars (ç→c, ğ→g, ı→i,
+         ö→o, ş→s, ü→u) + replace spaces with hyphens. Never trim trailing
+         digits, never drop suffixes like "-v2" or "-53259", never translate.
+
+         Examples:
+           "Proje: hesap-makinesi"         → $HOME/projects/hesap-makinesi
+           "Proje: hesap-makinesi-53259"   → $HOME/projects/hesap-makinesi-53259
+           "Proje: todo-v3"                → $HOME/projects/todo-v3
+           "Proje: Basit Hesap Makinesi"   → $HOME/projects/basit-hesap-makinesi
+
+         If the token looks like "<name>-<digits>" it is a random run suffix for
+         isolation — preserve the digits. NEVER use a different base directory.
+         NEVER translate the project name to English.
 
       PREVIOUS FAILURE (if retrying — READ THIS AND FIX THE ISSUE):
       {{previous_failure}}
