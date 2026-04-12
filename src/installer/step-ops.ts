@@ -1363,6 +1363,41 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
         await pgRun("UPDATE stories SET claimed_at = $1, claimed_by = $2 WHERE id = $3", [claimNow, agentId, nextStory.id]);
       } catch (e) { logger.warn(`[claim-log] Failed to record claim: ${String(e)}`, { runId: step.run_id }); }
 
+      // v2026.4.12: Merge dependency branches into worktree for integration stories.
+      // Stories with depends_on start from implement_base_commit (empty project).
+      // Without this, the agent sees no code from prior stories and reimplements
+      // everything, causing scope-bleed on 10+ files (run #408 US-004 failure mode).
+      if (nextStory.depends_on && storyWorkdir) {
+        try {
+          const deps: string[] = JSON.parse(nextStory.depends_on);
+          if (deps.length > 0) {
+            const depBranches = await pgQuery<{ story_branch: string; story_id: string }>(
+              "SELECT story_branch, story_id FROM stories WHERE run_id = $1 AND story_id = ANY($2) AND status = 'done' AND story_branch IS NOT NULL",
+              [step.run_id, deps]
+            );
+            let mergedCount = 0;
+            for (const dep of depBranches) {
+              try {
+                execFileSync("git", ["merge", "--no-ff", "--no-edit", "-m", `merge dependency ${dep.story_id}`, dep.story_branch], {
+                  cwd: storyWorkdir, timeout: 30000, stdio: ["pipe", "pipe", "pipe"],
+                });
+                mergedCount++;
+                logger.info(`[dep-merge] Merged ${dep.story_id} (${dep.story_branch}) into ${nextStory.story_id} worktree`, { runId: step.run_id });
+              } catch (mergeErr) {
+                // Merge conflict — abort and log, agent will work without this dependency's code
+                try { execFileSync("git", ["merge", "--abort"], { cwd: storyWorkdir, timeout: 5000, stdio: ["pipe", "pipe", "pipe"] }); } catch {}
+                logger.warn(`[dep-merge] Conflict merging ${dep.story_id} into ${nextStory.story_id} — skipped`, { runId: step.run_id });
+              }
+            }
+            if (mergedCount > 0) {
+              logger.info(`[dep-merge] Merged ${mergedCount}/${depBranches.length} dependency branches into ${nextStory.story_id}`, { runId: step.run_id });
+            }
+          }
+        } catch (e) {
+          logger.warn(`[dep-merge] Failed to process depends_on for ${nextStory.story_id}: ${String(e).slice(0, 200)}`, { runId: step.run_id });
+        }
+      }
+
       const wfId = await getWorkflowId(step.run_id);
       emitEvent({ ts: now(), event: "step.running", runId: step.run_id, workflowId: wfId, stepId: step.step_id, agentId: agentId });
       emitEvent({ ts: now(), event: "story.started", runId: step.run_id, workflowId: wfId, stepId: step.step_id, agentId: agentId, storyId: nextStory.story_id, storyTitle: nextStory.title });
