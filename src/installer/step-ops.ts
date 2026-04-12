@@ -2935,8 +2935,11 @@ ${screenDescs}
           context["story_changed_files"] = String(sourceFiles.length);
           context["story_changed_paths"] = sourceFiles.slice(0, 50).join(",");
 
-          const HARD_LIMIT = 12;
-          const SOFT_LIMIT = 8;
+          // Stories with depends_on touch more files (dep-merge + integration wiring)
+          const _depRow = await pgGet<{ depends_on: string | null }>("SELECT depends_on FROM stories WHERE id = $1", [step.current_story_id]);
+          const _hasDeps = _depRow?.depends_on && _depRow.depends_on !== "[]" && _depRow.depends_on !== "null";
+          const HARD_LIMIT = _hasDeps ? 30 : 12;
+          const SOFT_LIMIT = _hasDeps ? 20 : 8;
 
           // cuddly-sleeping-quail: scope_files existence gate. Runs before Wave 10 D
           // because it gives a more specific error message when the agent declared a
