@@ -516,6 +516,21 @@ async function injectStoryContext(
     if (scopeRow?.scope_description) {
       context["story_scope_description"] = scopeRow.scope_description;
     }
+    // 5-model consensus: write .story-scope-files to worktree for pre-commit hook
+    if (context["story_scope_files"] && context["story_workdir"]) {
+      try {
+        const scopeList = context["story_scope_files"].split(", ");
+        // Add IMPLICIT_SHARED patterns
+        const implicitFiles = ["vitest.config.ts","vitest.config.js","jest.config.ts","jest.config.js","src/test/setup.ts","src/test/utils.ts","src/setupTests.ts"];
+        const allAllowed = [...new Set([...scopeList, ...implicitFiles])];
+        // Also allow *.test.tsx and *.spec.tsx (wildcard — hook uses grep -qxF so these wont match, but test files are caught by the hook logic)
+        fs.writeFileSync(path.join(context["story_workdir"], ".story-scope-files"), allAllowed.join("\n") + "\n");
+      } catch {}
+    }
+    // 5-model consensus: always inject scope_reminder (even on first attempt)
+    if (context["story_scope_files"]) {
+      context["scope_reminder"] = "SCOPE ENFORCEMENT: You may ONLY write files in [" + context["story_scope_files"] + "]. Test files (*.test.tsx) and test config (vitest.config.ts, src/test/setup.ts) are also allowed. App.tsx, main.tsx, index.css are FORBIDDEN unless in your scope_files. Violation = instant SCOPE_BLEED rejection.";
+    }
   } catch (e) {
     // Column may not exist on very old schemas — degrade gracefully
     logger.debug(`[scope-inject] Could not read story scope columns: ${String(e).slice(0, 120)}`);
