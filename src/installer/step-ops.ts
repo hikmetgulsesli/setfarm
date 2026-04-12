@@ -535,9 +535,11 @@ async function injectStoryContext(
     if (context["story_scope_files"] && context["story_workdir"]) {
       try {
         const scopeList = context["story_scope_files"].split(", ");
+        // v2026.4.13: Include shared_files so dep-merge expanded files are allowed by hook
+        const sharedList = context["story_shared_files"] ? context["story_shared_files"].split(", ") : [];
         // Add IMPLICIT_SHARED patterns
         const implicitFiles = ["vitest.config.ts","vitest.config.js","jest.config.ts","jest.config.js","src/test/setup.ts","src/test/utils.ts","src/setupTests.ts"];
-        const allAllowed = [...new Set([...scopeList, ...implicitFiles])];
+        const allAllowed = [...new Set([...scopeList, ...sharedList, ...implicitFiles])];
         // Also allow *.test.tsx and *.spec.tsx (wildcard — hook uses grep -qxF so these wont match, but test files are caught by the hook logic)
         fs.writeFileSync(path.join(context["story_workdir"], ".story-scope-files"), allAllowed.join("\n") + "\n");
       } catch {}
