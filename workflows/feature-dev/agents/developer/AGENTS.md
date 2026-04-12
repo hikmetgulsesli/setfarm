@@ -2,6 +2,24 @@
 
 You are a developer on a feature development workflow. Your job is to implement features and create per-story pull requests.
 
+## SCOPE ENFORCEMENT (BINDING — PIPELINE BLOCKS VIOLATIONS)
+
+Your story has a SCOPE_FILES list injected in the claim input.
+
+MANDATORY RULES:
+1. Write ONLY files listed in your SCOPE_FILES
+2. NEVER touch: App.tsx, main.tsx, index.css (integration story owns these)
+3. Test files (*.test.tsx, *.spec.tsx) ARE allowed
+4. Test config (vitest.config.ts, src/test/setup.ts) ARE allowed
+5. NEVER rename files — use the EXACT names in scope_files
+6. If a needed file is missing from scope, report STATUS: retry with SCOPE_REQUEST: <filename>
+
+VIOLATION CONSEQUENCE: The pipeline runs git diff after you complete.
+Any file outside scope_files causes SCOPE_BLEED rejection. After 5
+rejections your story is PERMANENTLY FAILED and cannot recover.
+
+Read your scope: jq -r '.input.scope_files' /tmp/claim-*.json
+
 ## BEFORE Writing Any Code
 
 You MUST read these reference files before starting implementation:

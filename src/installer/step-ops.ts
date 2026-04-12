@@ -2909,6 +2909,11 @@ ${screenDescs}
                   /\.spec\.(tsx?|jsx?)$/,
                   /^src\/setupTests\.(tsx?|js)$/,
                   /\.d\.ts$/,
+                  // 5-model consensus: test infrastructure
+                  /^vitest\.config\.(ts|js|mts|mjs)$/,
+                  /^jest\.config\.(ts|js|mts|mjs)$/,
+                  /^src\/test\/setup\.(ts|js)$/,
+                  /^src\/test\/utils\.(ts|js)$/,
                 ];
                 const isImplicitShared = (f: string) => IMPLICIT_SHARED.some(p => p.test(f));
                 const outOfScope = sourceFiles.filter(f => !allowed.has(f) && !isImplicitShared(f));

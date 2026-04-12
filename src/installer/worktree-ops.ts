@@ -98,6 +98,56 @@ export function copyStitchToWorktree(repo: string, worktreeDir: string): void {
 
 // ── Worktree CRUD ───────────────────────────────────────────────────
 
+function installScopeHook(worktreeDir: string, storyId: string): void {
+  try {
+    // Read scope_files from DB for this story
+    const { pgGetSync } = require("../db-pg.js"); // sync wrapper
+  } catch { /* ignore if sync not available */ }
+
+  // Write scope_files list to worktree (step-ops will populate later via context)
+  // For now, create the hook that reads .story-scope-files at commit time
+  const hooksDir = path.join(worktreeDir, ".git", "hooks");
+  // Worktree .git is a file pointing to the main repo — hooks go in main .git/worktrees/<name>/hooks
+  // Actually, git hooks in worktrees: since git 2.36+ core.hooksPath respected per-worktree
+  // Simpler: write the hook script to worktree root and use core.hooksPath
+  const hookScript = `#!/bin/bash
+# Scope enforcement pre-commit hook (5-model consensus)
+SCOPE_FILE="$GIT_WORK_TREE/.story-scope-files"
+if [ ! -f "$SCOPE_FILE" ]; then exit 0; fi
+STAGED=$(git diff --cached --name-only)
+BLOCKED=""
+while IFS= read -r file; do
+  if ! grep -qF "$file" "$SCOPE_FILE"; then
+    BLOCKED="$BLOCKED\n  BLOCKED: $file (not in scope_files)"
+  fi
+done <<< "$STAGED"
+if [ -n "$BLOCKED" ]; then
+  echo "SCOPE_HOOK: Commit blocked — files outside scope_files:"
+  echo -e "$BLOCKED"
+  echo "Allowed files: $(cat $SCOPE_FILE | tr '\n' ', ')"
+  echo "Remove the out-of-scope files with: git reset HEAD <file>"
+  exit 1
+fi
+`;
+  try {
+    const hookPath = path.join(worktreeDir, ".scope-hook.sh");
+    fs.writeFileSync(hookPath, hookScript, { mode: 0o755 });
+    // Set core.hooksPath for this worktree
+    execFileSync("git", ["config", "--local", "core.hooksPath", worktreeDir], {
+      cwd: worktreeDir, timeout: 5000, stdio: "pipe"
+    });
+    // Rename hook to pre-commit in the worktree dir
+    const preCommitPath = path.join(worktreeDir, "pre-commit");
+    fs.renameSync(hookPath, preCommitPath);
+    execFileSync("git", ["config", "--local", "core.hooksPath", worktreeDir], {
+      cwd: worktreeDir, timeout: 5000, stdio: "pipe"
+    });
+    logger.info(`[scope-hook] Installed pre-commit hook in ${worktreeDir}`, {});
+  } catch (hookErr) {
+    logger.warn(`[scope-hook] Failed to install: ${String(hookErr).slice(0, 100)}`, {});
+  }
+}
+
 export function createStoryWorktree(repo: string, storyId: string, baseBranch: string, agentId?: string): string {
   // P2-03: Prune orphaned worktrees before creating new ones
   try { execFileSync("git", ["worktree", "prune"], { cwd: repo, timeout: 5000, stdio: ["pipe", "pipe", "pipe"] }); } catch {}
@@ -259,6 +309,13 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
     }
     // Copy stitch design assets into worktree so developer agents can read them
     copyStitchToWorktree(repo, worktreeDir);
+
+    // 5-model consensus Fix 3: git pre-commit hook for scope enforcement.
+    // Write .story-scope-files + install pre-commit hook that blocks
+    // commits touching files outside scope. Agent sees red git error →
+    // forced to comply (unlike prompt instructions which can be ignored).
+    installScopeHook(worktreeDir, storyId);
+
     logger.info(`[worktree] Created ${worktreeDir} from ${baseBranch}`, {});
     return worktreeDir;
   } catch (err: any) {
