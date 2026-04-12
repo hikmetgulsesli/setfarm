@@ -1382,18 +1382,34 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
               );
               if (row) depBranches.push(row);
             }
+            // Use git checkout (not merge) to copy files WITHOUT merge commits.
+            // Merge commits cause merge-queue conflicts because the same changes
+            // appear on multiple branches. checkout just updates the working tree.
             let mergedCount = 0;
             for (const dep of depBranches) {
               try {
-                execFileSync("git", ["merge", "--no-ff", "--no-edit", "-m", `merge dependency ${dep.story_id}`, dep.story_branch], {
-                  cwd: storyWorkdir, timeout: 30000, stdio: ["pipe", "pipe", "pipe"],
+                // Get list of files changed in the dep branch vs base
+                const diffOutput = execFileSync("git", ["diff", "--name-only", baseRef, dep.story_branch], {
+                  cwd: storyWorkdir, encoding: "utf-8", timeout: 10000, stdio: ["pipe", "pipe", "pipe"],
+                }).trim();
+                if (!diffOutput) continue;
+                const depFiles = diffOutput.split("\n").filter(f => f.length > 0);
+                // Checkout each file from the dep branch into working tree
+                for (const f of depFiles) {
+                  try {
+                    execFileSync("git", ["checkout", dep.story_branch, "--", f], {
+                      cwd: storyWorkdir, timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
+                    });
+                  } catch { /* file may not exist in worktree path, skip */ }
+                }
+                // Unstage all — files exist in working tree but NOT committed
+                execFileSync("git", ["reset", "HEAD"], {
+                  cwd: storyWorkdir, timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
                 });
                 mergedCount++;
-                logger.info(`[dep-merge] Merged ${dep.story_id} (${dep.story_branch}) into ${nextStory.story_id} worktree`, { runId: step.run_id });
+                logger.info(`[dep-merge] Copied ${depFiles.length} files from ${dep.story_id} (${dep.story_branch}) into ${nextStory.story_id} worktree (no merge commit)`, { runId: step.run_id });
               } catch (mergeErr) {
-                // Merge conflict — abort and log, agent will work without this dependency's code
-                try { execFileSync("git", ["merge", "--abort"], { cwd: storyWorkdir, timeout: 5000, stdio: ["pipe", "pipe", "pipe"] }); } catch {}
-                logger.warn(`[dep-merge] Conflict merging ${dep.story_id} into ${nextStory.story_id} — skipped`, { runId: step.run_id });
+                logger.warn(`[dep-merge] Failed copying ${dep.story_id} into ${nextStory.story_id}: ${String(mergeErr).slice(0, 150)}`, { runId: step.run_id });
               }
             }
             if (mergedCount > 0) {
