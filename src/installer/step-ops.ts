@@ -1371,10 +1371,15 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
         try {
           const deps: string[] = JSON.parse(nextStory.depends_on);
           if (deps.length > 0) {
-            const depBranches = await pgQuery<{ story_branch: string; story_id: string }>(
-              "SELECT story_branch, story_id FROM stories WHERE run_id = $1 AND story_id = ANY($2) AND status = 'done' AND story_branch IS NOT NULL",
-              [step.run_id, deps]
-            );
+            // Query each dep individually — ANY($2) with JS arrays unreliable in porsager/postgres
+            const depBranches: { story_branch: string; story_id: string }[] = [];
+            for (const depId of deps) {
+              const row = await pgGet<{ story_branch: string; story_id: string }>(
+                "SELECT story_branch, story_id FROM stories WHERE run_id = $1 AND story_id = $2 AND status = 'done' AND story_branch IS NOT NULL",
+                [step.run_id, depId]
+              );
+              if (row) depBranches.push(row);
+            }
             let mergedCount = 0;
             for (const dep of depBranches) {
               try {
