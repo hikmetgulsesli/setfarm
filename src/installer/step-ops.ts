@@ -1397,6 +1397,32 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
             if (mergedCount > 0) {
               logger.info(`[dep-merge] Merged ${mergedCount}/${depBranches.length} dependency branches into ${nextStory.story_id}`, { runId: step.run_id });
             }
+            // Expand shared_files with ALL dependency scope_files so scope-bleed
+            // check allows integration story to touch them. Without this, the
+            // scope check rejects every dependency file the agent modifies.
+            const depScopeFiles: string[] = [];
+            for (const depId of deps) {
+              const depRow = await pgGet<{ scope_files: string | null }>(
+                "SELECT scope_files FROM stories WHERE run_id = $1 AND story_id = $2",
+                [step.run_id, depId]
+              );
+              if (depRow?.scope_files) {
+                try {
+                  const files: string[] = JSON.parse(depRow.scope_files);
+                  if (Array.isArray(files)) depScopeFiles.push(...files);
+                } catch {}
+              }
+            }
+            if (depScopeFiles.length > 0) {
+              const currentShared: string[] = JSON.parse(nextStory.shared_files || "[]").filter((f: any) => typeof f === "string");
+              const expandedShared = [...new Set([...currentShared, ...depScopeFiles])];
+              await pgRun(
+                "UPDATE stories SET shared_files = $1, updated_at = $2 WHERE id = $3",
+                [JSON.stringify(expandedShared), now(), nextStory.id]
+              );
+              nextStory.shared_files = JSON.stringify(expandedShared);
+              logger.info(`[dep-merge] Expanded ${nextStory.story_id} shared_files with ${depScopeFiles.length} dependency scope files`, { runId: step.run_id });
+            }
           }
         } catch (e) {
           logger.warn(`[dep-merge] Failed to process depends_on for ${nextStory.story_id}: ${String(e).slice(0, 200)}`, { runId: step.run_id });
