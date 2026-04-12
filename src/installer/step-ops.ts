@@ -2791,7 +2791,7 @@ ${screenDescs}
                 const missing: string[] = [];
                 const present: string[] = [];
                 for (const rel of declared) {
-                  const abs = require("node:path").join(wd, rel);
+                  const abs = path.join(wd, rel);
                   try {
                     const st = fs.statSync(abs);
                     if (st.isFile() && st.size > 0) present.push(rel); else missing.push(rel);
