@@ -497,9 +497,20 @@ steps:
       SCOPE_FILES FIELD (MANDATORY — prevents merge conflicts):
       Every story MUST declare "scope_files" — the exhaustive list of source files
       this story will create or modify. Agents are BLOCKED from touching files
-      outside this list during implementation. If two stories need the same file,
-      put the owner in scope_files and add the file to the OTHER story's
-      "shared_files" (read-only reference, no writes).
+      outside this list during implementation.
+
+      CRITICAL OVERLAP RULE: Each file must appear in EXACTLY ONE story's
+      scope_files. The pipeline REJECTS overlapping scope_files. If two stories
+      need the same file, only the PRIMARY OWNER keeps it in scope_files — the
+      other story puts it in shared_files (read-only reference, no writes).
+
+      Common overlap mistakes to AVOID:
+      - src/App.tsx in BOTH setup (US-001) AND integration (last story) → WRONG.
+        Put App.tsx ONLY in the integration story's scope_files.
+      - src/types/X.ts in BOTH setup AND a feature story → WRONG.
+        Put types in setup (US-001) scope_files, feature story uses shared_files.
+      - src/index.css in multiple stories → WRONG.
+        Put index.css in setup (US-001) scope_files only.
       - US-001 (setup) scope_files should include package.json, vite.config.*,
         tsconfig.json, tailwind.config.*, index.html, src/main.*, src/index.css,
         and any shared types/tokens — the setup story OWNS all config.

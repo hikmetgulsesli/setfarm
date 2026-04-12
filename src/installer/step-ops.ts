@@ -2460,9 +2460,43 @@ ${screenDescs}
       const scopeErr = `GUARDRAIL: ${missingScopeRows.length} story/stories missing scope_files (${missingIds}). Every non-setup story MUST declare scope_files listing the source files it will create or modify. Empty scope_files causes merge conflicts because developers write whatever they want. Re-output STORIES_JSON with scope_files populated for each story.`;
       logger.warn(`[stories-guardrail] ${scopeErr}`, { runId: step.run_id });
       if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
-      // Clean up the stories inserted this attempt so retry starts fresh
       await pgRun("DELETE FROM stories WHERE run_id = $1", [step.run_id]);
       await failStep(stepId, scopeErr);
+      return { advanced: false, runCompleted: false };
+    }
+
+    // cuddly-sleeping-quail (run #398 postmortem): scope_files OVERLAP detection.
+    // If two stories declare the same file in their scope_files, the merge queue
+    // will hit a conflict because both branches modify the same file. The planner
+    // must assign each file to exactly ONE story's scope_files; other stories that
+    // need the file should list it in shared_files (read-only reference).
+    const allScopeRows = await pgQuery<{ story_id: string; scope_files: string | null }>(
+      "SELECT story_id, scope_files FROM stories WHERE run_id = $1 ORDER BY story_index",
+      [step.run_id]
+    );
+    const fileOwner: Record<string, string> = {};
+    const overlaps: string[] = [];
+    for (const row of allScopeRows) {
+      if (!row.scope_files) continue;
+      try {
+        const files: string[] = JSON.parse(row.scope_files);
+        if (!Array.isArray(files)) continue;
+        for (const f of files) {
+          if (typeof f !== "string") continue;
+          if (fileOwner[f]) {
+            overlaps.push(`${f} → ${fileOwner[f]} + ${row.story_id}`);
+          } else {
+            fileOwner[f] = row.story_id;
+          }
+        }
+      } catch { /* skip malformed */ }
+    }
+    if (overlaps.length > 0) {
+      const overlapErr = `GUARDRAIL: scope_files OVERLAP detected — ${overlaps.length} file(s) appear in multiple stories' scope_files: ${overlaps.slice(0, 10).join("; ")}. Each source file must belong to EXACTLY ONE story's scope_files. If two stories need the same file, only the PRIMARY OWNER keeps it in scope_files — the other story moves it to shared_files (read-only reference). Fix the overlapping files and re-output STORIES_JSON.`;
+      logger.warn(`[stories-guardrail] scope_files overlap: ${overlaps.join("; ")}`, { runId: step.run_id });
+      if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
+      await pgRun("DELETE FROM stories WHERE run_id = $1", [step.run_id]);
+      await failStep(stepId, overlapErr);
       return { advanced: false, runCompleted: false };
     }
   }
