@@ -963,6 +963,12 @@ All visible text must be in Turkish. Use a dark, modern theme.`);
   if (contextBytesBefore > contextBytesAfter + 1000) {
     logger.info(`[context-prune] ${step.step_id}: ${contextBytesBefore}→${contextBytesAfter} bytes (${Math.round((1 - contextBytesAfter / contextBytesBefore) * 100)}% trimmed)`, { runId: step.run_id });
   }
+  // P1 fix (5-model consensus): default reminder for stories/plan on first attempt
+  if (step.retry_count === 0 && (step.step_id === "stories" || step.step_id === "plan")) {
+    if (!prunedContextSingle["previous_failure"]) {
+      prunedContextSingle["previous_failure"] = "REMINDER: Output MUST include ALL mandatory fields. For stories: STORIES_JSON array with scope_files per story (NO overlapping files). For plan: PRD (min 500 chars) + REPO + TECH_STACK + PRD_SCREEN_COUNT. Missing = instant REJECT.";
+    }
+  }
   let resolvedInput = resolveTemplate(step.input_template, prunedContextSingle);
 
   // MISSING_INPUT_GUARD (v1.5.53): First miss -> retry step, second -> fail run.
