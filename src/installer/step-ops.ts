@@ -118,6 +118,13 @@ export async function peekStep(agentId: string): Promise<PeekResult> {
               logger.info(`[peek-recovery] Skipping orphan recovery for design step — pre-claim handles it`, { runId: runningStep.run_id });
               continue;
             }
+            // v2026.4.12: Skip orphan recovery for stories step if output lacks STORIES_JSON.
+            // Orphaned output from previous step (plan) gets picked up and auto-completes
+            // stories with 0 stories, wasting a retry attempt.
+            if (runningStep.step_id === 'stories' && !output.includes('STORIES_JSON')) {
+              logger.info(`[peek-recovery] Skipping orphan recovery for stories step — output lacks STORIES_JSON`, { runId: runningStep.run_id });
+              continue;
+            }
             logger.info(`[peek-recovery] Found orphaned output ${fileName} for ${runningStep.step_id} (${agentId}) — auto-completing`, { runId: runningStep.run_id });
             try {
               const { completeStep } = await import("./step-ops.js");
@@ -1040,6 +1047,11 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
           // Skip orphan recovery for design step — pre-claim generates screens, recovery would corrupt output
           if (runningStep.step_id === 'design') {
             logger.info(`[output-recovery] Skipping orphan recovery for design step — pre-claim handles it`, { runId: runningStep.run_id });
+            continue;
+          }
+          // v2026.4.12: Skip stories step if output lacks STORIES_JSON — prevents 0-stories auto-complete
+          if (runningStep.step_id === 'stories' && !recoveryOutput.includes('STORIES_JSON')) {
+            logger.info(`[output-recovery] Skipping orphan recovery for stories step — output lacks STORIES_JSON`, { runId: runningStep.run_id });
             continue;
           }
           logger.info(`[output-recovery] Found orphaned ${fileName} for ${runningStep.step_id} — auto-completing`, { runId: runningStep.run_id });
@@ -2495,16 +2507,16 @@ ${screenDescs}
     }
 
     // cuddly-sleeping-quail (run #398 postmortem): scope_files OVERLAP detection.
-    // If two stories declare the same file in their scope_files, the merge queue
-    // will hit a conflict because both branches modify the same file. The planner
-    // must assign each file to exactly ONE story's scope_files; other stories that
-    // need the file should list it in shared_files (read-only reference).
-    const allScopeRows = await pgQuery<{ story_id: string; scope_files: string | null }>(
-      "SELECT story_id, scope_files FROM stories WHERE run_id = $1 ORDER BY story_index",
+    // v2026.4.12: Auto-fix overlaps instead of failing — keep file in first story
+    // (lowest story_index), move to shared_files for subsequent stories. This
+    // prevents 3-retry terminal failures when planner can’t avoid overlap.
+    const allScopeRows = await pgQuery<{ story_id: string; scope_files: string | null; shared_files: string | null; story_index: number }>(
+      "SELECT story_id, scope_files, shared_files, story_index FROM stories WHERE run_id = $1 ORDER BY story_index",
       [step.run_id]
     );
     const fileOwner: Record<string, string> = {};
     const overlaps: string[] = [];
+    const storyFixMap: Record<string, { removeFromScope: string[]; addToShared: string[] }> = {};
     for (const row of allScopeRows) {
       if (!row.scope_files) continue;
       try {
@@ -2513,7 +2525,11 @@ ${screenDescs}
         for (const f of files) {
           if (typeof f !== "string") continue;
           if (fileOwner[f]) {
-            overlaps.push(`${f} → ${fileOwner[f]} + ${row.story_id}`);
+            overlaps.push(`${f} \u2192 ${fileOwner[f]} + ${row.story_id}`);
+            // Auto-fix: remove from this story's scope, add to shared
+            if (!storyFixMap[row.story_id]) storyFixMap[row.story_id] = { removeFromScope: [], addToShared: [] };
+            storyFixMap[row.story_id].removeFromScope.push(f);
+            storyFixMap[row.story_id].addToShared.push(f);
           } else {
             fileOwner[f] = row.story_id;
           }
@@ -2521,12 +2537,25 @@ ${screenDescs}
       } catch { /* skip malformed */ }
     }
     if (overlaps.length > 0) {
-      const overlapErr = `GUARDRAIL: scope_files OVERLAP detected — ${overlaps.length} file(s) appear in multiple stories' scope_files: ${overlaps.slice(0, 10).join("; ")}. Each source file must belong to EXACTLY ONE story's scope_files. If two stories need the same file, only the PRIMARY OWNER keeps it in scope_files — the other story moves it to shared_files (read-only reference). Fix the overlapping files and re-output STORIES_JSON.`;
-      logger.warn(`[stories-guardrail] scope_files overlap: ${overlaps.join("; ")}`, { runId: step.run_id });
-      if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
-      await pgRun("DELETE FROM stories WHERE run_id = $1", [step.run_id]);
-      await failStep(stepId, overlapErr);
-      return { advanced: false, runCompleted: false };
+      logger.warn(`[stories-guardrail] scope_files overlap AUTO-FIXED: ${overlaps.join("; ")}`, { runId: step.run_id });
+      // Apply fixes to DB — move overlapping files from scope_files to shared_files
+      for (const row of allScopeRows) {
+        const fix = storyFixMap[row.story_id];
+        if (!fix) continue;
+        try {
+          const scopeFiles: string[] = JSON.parse(row.scope_files || "[]");
+          const sharedFiles: string[] = JSON.parse(row.shared_files || "[]");
+          const newScope = scopeFiles.filter(f => !fix.removeFromScope.includes(f));
+          const newShared = [...new Set([...sharedFiles, ...fix.addToShared])];
+          await pgRun(
+            "UPDATE stories SET scope_files = $1, shared_files = $2, updated_at = $3 WHERE run_id = $4 AND story_id = $5",
+            [JSON.stringify(newScope), JSON.stringify(newShared), now(), step.run_id, row.story_id]
+          );
+          logger.info(`[stories-guardrail] Auto-fixed ${row.story_id}: removed ${fix.removeFromScope.length} from scope, added to shared`, { runId: step.run_id });
+        } catch (e) {
+          logger.warn(`[stories-guardrail] Auto-fix DB update failed for ${row.story_id}: ${String(e)}`, { runId: step.run_id });
+        }
+      }
     }
   }
 

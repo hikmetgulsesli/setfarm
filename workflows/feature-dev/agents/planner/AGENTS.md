@@ -363,6 +363,25 @@ Every story in `STORIES_JSON` MUST declare **which files it owns**:
 
 Notice: US-004 owns App.tsx directly as its scope, not as shared. US-001/002/003 never touch App.tsx.
 
+### BANNED FROM scope_files (except integration story)
+
+These entry-point files cause merge conflicts when assigned to multiple stories. ONLY the **integration/wiring story** (always the LAST story) may include them in scope_files:
+
+| File Pattern | Reason |
+|---|---|
+| `src/App.tsx` / `src/App.jsx` | Root component — integration story only |
+| `src/main.tsx` / `src/main.jsx` | Entry point — integration story only |
+| `src/index.css` / `src/App.css` | Global styles — integration story only |
+| `src/index.tsx` / `src/index.jsx` | Entry point — integration story only |
+| `package.json` | Setup story (US-001) only |
+| `tsconfig.json` | Setup story (US-001) only |
+| `vite.config.*` / `next.config.*` | Setup story (US-001) only |
+| `tailwind.config.*` | Setup story (US-001) only |
+
+**If any non-integration story needs to READ these files** (e.g., to understand routing), list them in that story's `shared_files` (read-only reference), NOT in `scope_files`.
+
+**Pipeline enforcement:** The stories guardrail auto-detects scope_files overlap and auto-fixes it by moving duplicates to shared_files. But this is a safety net — the planner should get it right the first time to avoid wasted retries.
+
 ## What NOT To Do
 
 - Do NOT write code -- you are a planner, not a developer
