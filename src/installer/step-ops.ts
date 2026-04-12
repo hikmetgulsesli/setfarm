@@ -1406,8 +1406,17 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
                 execFileSync("git", ["reset", "HEAD"], {
                   cwd: storyWorkdir, timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
                 });
+                // Mark dep files as assume-unchanged so git ignores them for
+                // commit/diff. Without this, agent commits dep files → scope overflow.
+                for (const f of depFiles) {
+                  try {
+                    execFileSync("git", ["update-index", "--assume-unchanged", f], {
+                      cwd: storyWorkdir, timeout: 3000, stdio: ["pipe", "pipe", "pipe"],
+                    });
+                  } catch { /* file may not exist */ }
+                }
                 mergedCount++;
-                logger.info(`[dep-merge] Copied ${depFiles.length} files from ${dep.story_id} (${dep.story_branch}) into ${nextStory.story_id} worktree (no merge commit)`, { runId: step.run_id });
+                logger.info(`[dep-merge] Copied ${depFiles.length} files from ${dep.story_id} (${dep.story_branch}) into ${nextStory.story_id} worktree (assume-unchanged)`, { runId: step.run_id });
               } catch (mergeErr) {
                 logger.warn(`[dep-merge] Failed copying ${dep.story_id} into ${nextStory.story_id}: ${String(mergeErr).slice(0, 150)}`, { runId: step.run_id });
               }
