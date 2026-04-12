@@ -105,6 +105,14 @@ export async function peekStep(agentId: string): Promise<PeekResult> {
              LIMIT 1`, [agentId]
           );
           if (runningStep) {
+            // peek-recovery FILE_STALE: skip file from previous step
+            const _prt = await pgGet<{ started_at: string | null }>(
+              "SELECT started_at FROM steps WHERE id = $1", [runningStep.id]
+            );
+            if (_prt?.started_at && fileStat.mtimeMs < new Date(_prt.started_at).getTime() - 5000) {
+              logger.info(`[peek-recovery] Skipping stale ${fileName} (before step start)`, { runId: runningStep.run_id });
+              continue;
+            }
             // Skip orphan recovery for design step — pre-claim generates screens, recovery would corrupt output
             if (runningStep.step_id === 'design') {
               logger.info(`[peek-recovery] Skipping orphan recovery for design step — pre-claim handles it`, { runId: runningStep.run_id });
@@ -3251,6 +3259,12 @@ ${screenDescs}
   await recordStepTransition(stepId, step.run_id, "running", "done", step.agent_id, "completeStep");
   emitEvent({ ts: now(), event: "step.done", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id });
   logger.info(`Step completed: ${step.step_id}`, { runId: step.run_id, stepId: step.step_id });
+
+  // Post-complete: delete /tmp output files to prevent peek-recovery cross-step contamination
+  try {
+    const _tmpFiles = fs.readdirSync("/tmp").filter(f => f.startsWith("setfarm-output-") && f.endsWith(".txt"));
+    for (const _f of _tmpFiles) { try { fs.unlinkSync("/tmp/" + _f); } catch {} }
+  } catch {}
 
   // v1.5.50: Resolve claim_log outcome for single step
   try {
