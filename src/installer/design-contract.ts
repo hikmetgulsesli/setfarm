@@ -1160,14 +1160,15 @@ export function checkIntegrationWiring(repoPath: string): string[] {
     path.join(repoPath, "stitch", "index.html"), path.join(repoPath, "index.html"),
   ];
 
-  let entryContent = "";
+  const allEntryContents: string[] = [];
   let entryPath = "";
   for (const ep of entryPaths) {
     if (fs.existsSync(ep)) {
-      try { entryContent = fs.readFileSync(ep, "utf-8"); entryPath = ep; break; } catch { /* ignore */ }
+      try { allEntryContents.push(fs.readFileSync(ep, "utf-8")); if (!entryPath) entryPath = ep; } catch { /* ignore */ }
     }
   }
-  if (!entryContent) return [];
+  if (allEntryContents.length === 0) return [];
+  const entryContent = allEntryContents.join("\n");
 
   const componentDirs = [
     path.join(repoPath, "src", "components"), path.join(repoPath, "components"),
