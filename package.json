@@ -10,7 +10,7 @@
     "setfarm": "dist/cli/cli.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && cp src/server/index.html dist/server/index.html && cp src/installer/compat-rules.json dist/installer/compat-rules.json && chmod +x dist/cli/cli.js && node scripts/inject-version.js",
+    "build": "tsc -p tsconfig.json && cp src/server/index.html dist/server/index.html && cp src/installer/compat-rules.json dist/installer/compat-rules.json && mkdir -p dist/installer/prompts && cp src/installer/prompts/*.md dist/installer/prompts/ && chmod +x dist/cli/cli.js && node scripts/inject-version.js",
     "start": "node dist/cli/cli.js",
     "test": "node --import tsx --test tests/*.test.ts",
     "prebuild": "node scripts/write-build-info.mjs"

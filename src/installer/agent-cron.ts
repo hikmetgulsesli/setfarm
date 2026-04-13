@@ -3,6 +3,29 @@ import type { WorkflowSpec, AgentMapping } from "./types.js";
 import { resolveSetfarmCli } from "./paths.js";
 import { pgGet, pgQuery } from "../db-pg.js";
 import { logger } from "../lib/logger.js";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+// Load polling prompt template once at module init (reload on gateway restart only)
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+let _pollingPromptTemplate: string | null = null;
+function loadPollingPromptTemplate(): string {
+  if (_pollingPromptTemplate) return _pollingPromptTemplate;
+  // Try multiple paths: dist/installer/prompts/, src/installer/prompts/
+  const candidates = [
+    path.join(__dirname, "prompts", "polling-prompt.md"),
+    path.join(__dirname, "..", "..", "src", "installer", "prompts", "polling-prompt.md"),
+  ];
+  for (const p of candidates) {
+    try {
+      _pollingPromptTemplate = fs.readFileSync(p, "utf-8");
+      logger.info(`[polling-prompt] Loaded template from ${p}`);
+      return _pollingPromptTemplate;
+    } catch { /* try next */ }
+  }
+  throw new Error("polling-prompt.md not found in any candidate path");
+}
 
 const DEFAULT_EVERY_MS = 30_000; // 2 min — safe with demand-based crons // 4 minutes
 const DEFAULT_AGENT_TIMEOUT_SECONDS = 30 * 60; // 30 minutes
@@ -30,60 +53,15 @@ const DEFAULT_POLLING_MODEL = "minimax/MiniMax-M2.7";
 export function buildPollingPrompt(workflowId: string, agentId: string, gatewayAgentId?: string): string {
   const fullAgentId = `${workflowId}_${agentId}`;
   // Use gateway agent ID for output file to prevent cross-agent contamination
-  // e.g. koda, flux, cipher each write to their own file
   const outputFileId = gatewayAgentId || fullAgentId;
   const cli = resolveSetfarmCli();
-  // Compact prompt — minimizes tokens on NO_WORK (majority of calls)
-  // cuddly-sleeping-quail: force safe cwd before anything else. Cron-spawned
-  // agents inherit the gateway default cwd which often lands in
-  // ~/.openclaw/setfarm-repo — step claim / file writes from there corrupt
-  // the platform source tree (run #385 postmortem: prism ran `cd setfarm-repo
-  // && step claim` under cron, killed at 22:49). agent-scratch is not a git
-  // repo so stray `git` commands fail loudly instead of silently corrupting.
-  return `Workflow agent. Peek→Claim→Work→Complete.
-
-0. SAFE SHELL START (fallback cwd — claim will move you elsewhere):
-   mkdir -p ~/.openclaw/workspace/agent-scratch && cd ~/.openclaw/workspace/agent-scratch
-   NEVER run commands from ~/.openclaw/setfarm-repo (platform source tree).
-
-1. /usr/bin/node ${cli} step peek "${fullAgentId}"
-   NO_WORK → reply "HEARTBEAT_OK", STOP.
-
-2. CLAIM the step and save the JSON to a file in one shot:
-   /usr/bin/node ${cli} step claim "${fullAgentId}"${gatewayAgentId ? ` --caller ${gatewayAgentId}` : ""} > /tmp/claim-${outputFileId}.json
-   If the file content is "NO_WORK" → reply "HEARTBEAT_OK", STOP.
-
-3. EXTRACT the step id and working directory via jq (DO NOT parse by hand):
-   STEP_ID=$(jq -r '.stepId // empty' /tmp/claim-${outputFileId}.json)
-   WORKDIR=$(jq -r '.input.story_workdir // .input.repo // empty' /tmp/claim-${outputFileId}.json)
-   [ -z "$STEP_ID" ] && { echo "HEARTBEAT_OK"; exit 0; }
-   [ -z "$WORKDIR" ] && WORKDIR="$HOME/.openclaw/workspace/agent-scratch"
-   cd "$WORKDIR" && pwd
-   case "$(pwd)" in
-     $HOME/.openclaw/setfarm-repo*) echo "STATUS: fatal"; echo "FATAL: platform_path_touched"; exit 1;;
-   esac
-   Save STEP_ID — you need it for step complete/fail. The claim JSON is in
-   /tmp/claim-${outputFileId}.json if you need other fields (input.prd,
-   input.task, input.scope_files, etc.). Read it with:
-     cat /tmp/claim-${outputFileId}.json
-     jq -r '.input.task' /tmp/claim-${outputFileId}.json
-     jq -r '.input.prd' /tmp/claim-${outputFileId}.json
-
-4. Do the work described in the claim input. No narration. Stay in WORKDIR.
-   Never run npx/npm init — setup-repo and setup-build already scaffolded
-   the project. You only modify files inside WORKDIR.
-
-5. Write output in KEY: VALUE format (NOT JSON) to /tmp, then complete:
-cat <<'SETFARM_EOF' > /tmp/setfarm-output-${outputFileId}.txt
-STATUS: done
-<other keys as specified in step input>
-SETFARM_EOF
-/usr/bin/node ${cli} step complete "<the stepId from claim JSON>" --file /tmp/setfarm-output-${outputFileId}.txt
-On failure: /usr/bin/node ${cli} step fail "<the stepId from claim JSON>" "reason"
-
-6. STOP. Reply "HEARTBEAT_OK". No more tool calls.
-
-Rules: NO_WORK/complete/fail → SESSION OVER. Never skip peek. Never run workflow stop/uninstall/sessions_spawn. Write output to /tmp/setfarm-output-${outputFileId}.txt, use --file flag. Output must be KEY: VALUE lines, NOT JSON.`;
+  const callerFlag = gatewayAgentId ? ` --caller ${gatewayAgentId}` : "";
+  // Template-based prompt — source in src/installer/prompts/polling-prompt.md
+  return loadPollingPromptTemplate()
+    .replace(/\{\{CLI\}\}/g, cli)
+    .replace(/\{\{FULL_AGENT_ID\}\}/g, fullAgentId)
+    .replace(/\{\{OUTPUT_FILE_ID\}\}/g, outputFileId)
+    .replace(/\{\{CALLER_FLAG\}\}/g, callerFlag);
 }
 
 export async function setupAgentCrons(workflow: WorkflowSpec, onlyAgentIds?: Set<string>): Promise<void> {

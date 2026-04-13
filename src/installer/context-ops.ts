@@ -332,41 +332,72 @@ export function updateProjectMemory(
 
 // ── Smart Context Injection ─────────────────────────────────────────
 
+// Context cache: 5 min TTL per workdir. Same developer, same project during
+// implement loop — repeated getProjectTree/getInstalledPackages calls are wasteful.
+// Cache key: workdir path. Auto-expires after TTL.
+const CONTEXT_CACHE_TTL_MS = 5 * 60 * 1000;
+const _projectTreeCache = new Map<string, { value: string; ts: number }>();
+const _packagesCache = new Map<string, { value: string; ts: number }>();
+
+function getCached(cache: Map<string, { value: string; ts: number }>, key: string): string | null {
+  const entry = cache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > CONTEXT_CACHE_TTL_MS) {
+    cache.delete(key);
+    return null;
+  }
+  return entry.value;
+}
+
+function setCached(cache: Map<string, { value: string; ts: number }>, key: string, value: string): void {
+  cache.set(key, { value, ts: Date.now() });
+}
+
 /**
  * Layer 1: Project file tree (src/ or app/, max 100 lines).
  * Lets the agent know which files already exist — prevents recreating them.
+ * Cached per workdir for 5min (same developer, same project during implement loop).
  */
 export function getProjectTree(workdir: string): string {
+  const cached = getCached(_projectTreeCache, workdir);
+  if (cached !== null) return cached;
   try {
     const srcDir = path.join(workdir, "src");
     const appDir = path.join(workdir, "app");
     const targetDir = fs.existsSync(srcDir) ? srcDir : fs.existsSync(appDir) ? appDir : "";
-    if (!targetDir) return "";
+    if (!targetDir) { setCached(_projectTreeCache, workdir, ""); return ""; }
     const tree = execFileSync("find", [targetDir, "-type", "f",
       "-not", "-path", "*/node_modules/*",
       "-not", "-path", "*/.git/*",
       "-not", "-path", "*/stitch/*",
     ], { encoding: "utf-8", timeout: 5000 });
-    return tree.trim().split("\n")
+    const result = tree.trim().split("\n")
       .map(f => f.replace(workdir + "/", ""))
       .slice(0, 100)
       .join("\n");
+    setCached(_projectTreeCache, workdir, result);
+    return result;
   } catch { return ""; }
 }
 
 /**
  * Layer 2: Installed packages from package.json dependencies.
  * Prevents unnecessary npm install and module-not-found errors.
+ * Cached per workdir for 5min.
  */
 export function getInstalledPackages(workdir: string): string {
+  const cached = getCached(_packagesCache, workdir);
+  if (cached !== null) return cached;
   const pkgPath = path.join(workdir, "package.json");
-  if (!fs.existsSync(pkgPath)) return "";
+  if (!fs.existsSync(pkgPath)) { setCached(_packagesCache, workdir, ""); return ""; }
   try {
     const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
     const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-    return Object.entries(deps)
+    const result = Object.entries(deps)
       .map(([name, ver]) => `${name}: ${ver}`)
       .join("\n");
+    setCached(_packagesCache, workdir, result);
+    return result;
   } catch { return ""; }
 }
 

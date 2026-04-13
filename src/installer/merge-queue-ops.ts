@@ -342,7 +342,7 @@ export async function runMergeQueue(
             await updateRunContext(runId, context);
             logger.info(`[merge-queue] Using existing PR: ${existingPr}`, { runId });
           }
-        } catch { /* ignore */ }
+        } catch (e) { logger.warn(`[merge-queue] Could not find existing PR: ${String(e).slice(0, 100)}`, { runId }); }
       } else {
         logger.error(`[merge-queue] Failed to create PR: ${errStr}`, { runId });
       }
