@@ -136,7 +136,7 @@ export async function peekStep(agentId: string): Promise<PeekResult> {
               logger.warn(`[peek-recovery] Auto-complete failed for ${fileName}: ${String(e)}`, { runId: runningStep.run_id });
             }
           }
-        } catch { /* single file read failed, continue */ }
+        } catch (e) { logger.debug(`[output-recovery] File read failed: ${String(e).slice(0, 100)}`); }
       }
     } catch (e) { /* non-fatal — /tmp read failed */ }
 
@@ -284,8 +284,8 @@ async function handleDesignDedup(step: StepRow, db: any): Promise<boolean> {
       const STALE_TOLERANCE_MS = 60000;
       if (stitchUpdatedAt < (runCreatedAt - STALE_TOLERANCE_MS)) {
         logger.info(`[design-dedup] .stitch is stale (written ${dData.updatedAt}, run started ${runRow?.created_at}) — deleting to force fresh design`, { runId: step.run_id });
-        try { fs.unlinkSync(dStitchFile); } catch {}
-        try { fs.rmSync(dStitchDir, { recursive: true, force: true }); } catch {}
+        try { fs.unlinkSync(dStitchFile); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
+        try { fs.rmSync(dStitchDir, { recursive: true, force: true }); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
         return false;
       }
 
@@ -335,7 +335,7 @@ async function handleDeployEnvGuard(step: StepRow): Promise<void> {
         if (allDeps["prisma"] || allDeps["@prisma/client"] || allDeps["drizzle-orm"] || allDeps["typeorm"]) {
           envLines.push(`DATABASE_URL=postgresql://${dbUser}:${dbPass}@${dbHost}:${dbPort}/${dbName}`);
         }
-      } catch {}
+      } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
     }
   }
   // NextAuth secret
@@ -350,7 +350,7 @@ async function handleDeployEnvGuard(step: StepRow): Promise<void> {
         envLines.push(`NEXTAUTH_SECRET=${secret}`);
         envLines.push(`NEXTAUTH_URL=https://${hostname}.setrox.com.tr`);
       }
-    } catch {}
+    } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
   }
   if (envLines.length > 0) {
     fs.writeFileSync(path.join(repoPath, ".env"), envLines.join("\n") + "\n");
@@ -518,7 +518,7 @@ async function injectStoryContext(
         if (Array.isArray(list) && list.length > 0) {
           context["story_scope_files"] = list.join(", ");
         }
-      } catch { /* ignore malformed */ }
+      } catch (e) { logger.debug(`[context] Malformed JSON: ${String(e).slice(0, 80)}`); }
     }
     if (scopeRow?.shared_files) {
       try {
@@ -526,7 +526,7 @@ async function injectStoryContext(
         if (Array.isArray(list) && list.length > 0) {
           context["story_shared_files"] = list.join(", ");
         }
-      } catch { /* ignore malformed */ }
+      } catch (e) { logger.debug(`[context] Malformed JSON: ${String(e).slice(0, 80)}`); }
     }
     if (scopeRow?.scope_description) {
       context["story_scope_description"] = scopeRow.scope_description;
@@ -540,7 +540,7 @@ async function injectStoryContext(
             .map(([filePath, sig]) => `${filePath}:\n${sig}`)
             .join("\n\n");
         }
-      } catch { /* ignore malformed */ }
+      } catch (e) { logger.debug(`[context] Malformed JSON: ${String(e).slice(0, 80)}`); }
     }
     // 5-model consensus: write .story-scope-files to worktree for pre-commit hook
     if (context["story_scope_files"] && context["story_workdir"]) {
@@ -553,7 +553,7 @@ async function injectStoryContext(
         const allAllowed = [...new Set([...scopeList, ...sharedList, ...implicitFiles])];
         // Also allow *.test.tsx and *.spec.tsx (wildcard — hook uses grep -qxF so these wont match, but test files are caught by the hook logic)
         fs.writeFileSync(path.join(context["story_workdir"], ".story-scope-files"), allAllowed.join("\n") + "\n");
-      } catch {}
+      } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
     }
     // 5-model consensus: always inject scope_reminder (even on first attempt)
     if (context["story_scope_files"]) {
@@ -629,7 +629,7 @@ async function injectStoryContext(
         context["design_dom"] = domJson.length > 8000 ? domJson.substring(0, 8000) + "...(truncated)" : domJson;
       }
     }
-  } catch {}
+  } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
 
   // ── Smart Context Injection — only for implement step ───────────
   if (step.step_id === "implement") {
@@ -678,7 +678,7 @@ async function injectStoryContext(
       const platform = detectPlatform(context["repo"] || "");
       context["design_rules"] = getDesignRules(platform);
       context["detected_platform"] = platform;
-    } catch {}
+    } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
   }
 
   // Default optional template vars to prevent MISSING_INPUT_GUARD false positives (story-each flow)
@@ -856,12 +856,12 @@ async function claimSingleStep(
       try {
         const dotStitch = path.join(dRepo, ".stitch");
         if (fs.existsSync(dotStitch)) projId = JSON.parse(fs.readFileSync(dotStitch, "utf-8")).projectId || "";
-      } catch {}
+      } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
       if (!projId) {
         try {
           const ensureOut = execFileSync("node", [stitchScript, "ensure-project", path.basename(dRepo), dRepo],
             { encoding: "utf-8", timeout: 30000, cwd: dRepo });
-          try { projId = JSON.parse(ensureOut).projectId || ""; } catch {}
+          try { projId = JSON.parse(ensureOut).projectId || ""; } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
         } catch (e) { logger.warn(`[design-preclaim] ensure-project failed: ${e}`, { runId: step.run_id }); }
       }
 
@@ -889,7 +889,7 @@ All visible text must be in Turkish. Use a dark, modern theme.`);
           const genOut = execFileSync("node", [stitchScript, "generate-all-screens", projId, promptFile, deviceType, "GEMINI_3_1_PRO"],
             { encoding: "utf-8", timeout: 600000, cwd: dRepo });
           let genResult: any = {};
-          try { genResult = JSON.parse(genOut); } catch {}
+          try { genResult = JSON.parse(genOut); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
           logger.info(`[design-preclaim] Generated ${genResult.total || 0} screens in ${genResult.elapsedSeconds || "?"}s`, { runId: step.run_id });
         } catch (e) { logger.warn(`[design-preclaim] generate-all-screens failed: ${e}`, { runId: step.run_id }); }
 
@@ -900,7 +900,7 @@ All visible text must be in Turkish. Use a dark, modern theme.`);
             const dlOut = execFileSync("node", [stitchScript, "download-all", projId, dStitchDir],
               { encoding: "utf-8", timeout: 180000, cwd: dRepo });
             let dlResult: any = {};
-            try { dlResult = JSON.parse(dlOut); } catch {}
+            try { dlResult = JSON.parse(dlOut); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
             htmlCount = fs.readdirSync(dStitchDir).filter((f: string) => f.endsWith(".html")).length;
             logger.info(`[design-preclaim] Downloaded ${dlResult.downloaded || 0}/${dlResult.total || 0} screens (${htmlCount} HTML files, attempt ${dlRetry + 1}/3)`, { runId: step.run_id });
             context["screens_generated"] = String(dlResult.downloaded || 0);
@@ -926,7 +926,7 @@ All visible text must be in Turkish. Use a dark, modern theme.`);
                     try {
                       const resp = execFileSync("curl", ["-sL", "-o", hp, "--max-time", "30", s.htmlUrl], { timeout: 35000 });
                       if (fs.existsSync(hp) && fs.statSync(hp).size > 100) htmlCount++;
-                    } catch {}
+                    } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
                   }
                 }
               }
@@ -941,7 +941,7 @@ All visible text must be in Turkish. Use a dark, modern theme.`);
           if (fs.existsSync(domScript)) {
             execFileSync("node", [domScript, dStitchDir], { encoding: "utf-8", timeout: 30000 });
           }
-        } catch {}
+        } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
 
         await updateRunContext(step.run_id, context);
       }
@@ -1077,7 +1077,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
             logger.warn(`[output-recovery] Auto-complete failed for ${fileName}: ${String(e)}`, { runId: runningStep.run_id });
           }
         }
-      } catch { /* single file failed */ }
+      } catch (e) { logger.debug(`[output-recovery] Single file failed: ${String(e).slice(0, 80)}`); }
     }
   } catch (e) { logger.warn(`[output-recovery] Check failed: ${String(e)}`, {}); }
 
@@ -1327,7 +1327,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
         logger.error(`[claim] ${noRepoReason} (story=${nextStory.story_id})`, { runId: step.run_id });
         await pgRun("UPDATE stories SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3",
           [noRepoReason, now(), nextStory.id]);
-        try { await pgRun("UPDATE claim_log SET outcome = 'failed', diagnostic = $1 WHERE story_id = $2 AND outcome IS NULL", [noRepoReason, nextStory.story_id]); } catch {}
+        try { await pgRun("UPDATE claim_log SET outcome = 'failed', diagnostic = $1 WHERE story_id = $2 AND outcome IS NULL", [noRepoReason, nextStory.story_id]); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
         emitEvent({ ts: now(), event: "story.failed", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, detail: noRepoReason });
         return { found: false };
       }
@@ -1349,7 +1349,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
         // Revert story to pending so the next claim loop can retry with a fresh worktree
         // (not 'failed' — the story's own implementation was never attempted)
         await pgRun("UPDATE stories SET status = 'pending', claimed_at = NULL, claimed_by = NULL, updated_at = $1 WHERE id = $2", [now(), nextStory.id]);
-        try { await pgRun("UPDATE claim_log SET outcome = 'failed', diagnostic = $1 WHERE story_id = $2 AND outcome IS NULL", [wtReason, nextStory.story_id]); } catch {}
+        try { await pgRun("UPDATE claim_log SET outcome = 'failed', diagnostic = $1 WHERE story_id = $2 AND outcome IS NULL", [wtReason, nextStory.story_id]); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
         emitEvent({ ts: now(), event: "story.retry", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, storyId: nextStory.story_id, storyTitle: nextStory.title, detail: wtReason });
         return { found: false };
       }
@@ -1375,7 +1375,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
         } catch {
           // Doesn't exist — create symlink
           if (fs.existsSync(nmSource)) {
-            try { fs.symlinkSync(nmSource, nmLink); } catch {}
+            try { fs.symlinkSync(nmSource, nmLink); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
           }
         }
       }
@@ -1445,7 +1445,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
                     execFileSync("git", ["checkout", dep.story_branch, "--", f], {
                       cwd: storyWorkdir, timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
                     });
-                  } catch { /* file may not exist in worktree path, skip */ }
+                  } catch (e) { logger.debug(`[worktree] File not in worktree: ${String(e).slice(0, 80)}`); }
                 }
                 // Unstage all — files exist in working tree but NOT committed
                 execFileSync("git", ["reset", "HEAD"], {
@@ -1458,7 +1458,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
                     execFileSync("git", ["update-index", "--assume-unchanged", f], {
                       cwd: storyWorkdir, timeout: 3000, stdio: ["pipe", "pipe", "pipe"],
                     });
-                  } catch { /* file may not exist */ }
+                  } catch (e) { logger.debug(`[worktree] File not found: ${String(e).slice(0, 80)}`); }
                 }
                 mergedCount++;
                 logger.info(`[dep-merge] Copied ${depFiles.length} files from ${dep.story_id} (${dep.story_branch}) into ${nextStory.story_id} worktree (assume-unchanged)`, { runId: step.run_id });
@@ -1483,7 +1483,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
                 try {
                   const files: string[] = JSON.parse(row.scope_files);
                   if (Array.isArray(files)) depScopeFiles.push(...files);
-                } catch {}
+                } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
               }
             }
             if (depScopeFiles.length > 0) {
@@ -1522,7 +1522,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
           const techStack = context["tech_stack"] || "react";
           const acceptanceCriteria = nextStory.title || "";
           context["test_generation_prompt"] = buildTestGenerationPrompt(nextStory.title, acceptanceCriteria, techStack);
-        } catch {}
+        } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
       }
 
       // Wave 14 Bug K: per-step context allowlist for loop (story-each) claims.
@@ -1560,7 +1560,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
           await pgRun("UPDATE stories SET status = 'pending', retry_count = retry_count + 1, output = $1, updated_at = $2 WHERE id = $3", [reason + " — retrying once", now(), nextStory.id]);
           await pgRun("UPDATE steps SET current_story_id = NULL, updated_at = $1 WHERE id = $2", [now(), step.id]);
           if (context["repo"]) removeStoryWorktree(context["repo"], storyBranch, agentId);
-          try { await pgRun("UPDATE claim_log SET outcome = 'failed', diagnostic = $1 WHERE story_id = $2 AND outcome IS NULL", [reason, nextStory.story_id]); } catch {}
+          try { await pgRun("UPDATE claim_log SET outcome = 'failed', diagnostic = $1 WHERE story_id = $2 AND outcome IS NULL", [reason, nextStory.story_id]); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
           logger.info(`[missing-input] Story ${nextStory.story_id} will retry — possible WAL lag`, { runId: step.run_id });
         }
         return { found: false };
@@ -1576,7 +1576,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
         await pgRun("UPDATE stories SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3",
           [emptyReason, now(), nextStory.id]);
         await pgRun("UPDATE steps SET current_story_id = NULL, updated_at = $1 WHERE id = $2", [now(), step.id]);
-        try { await pgRun("UPDATE claim_log SET outcome = 'failed', diagnostic = $1 WHERE story_id = $2 AND outcome IS NULL", [emptyReason, nextStory.story_id]); } catch {}
+        try { await pgRun("UPDATE claim_log SET outcome = 'failed', diagnostic = $1 WHERE story_id = $2 AND outcome IS NULL", [emptyReason, nextStory.story_id]); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
         if (context["repo"]) removeStoryWorktree(context["repo"], storyBranch, agentId);
         return { found: false };
       }
@@ -1727,7 +1727,7 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
           context["prd"] = prdContent;
           parsed["prd"] = prdContent;
         }
-      } catch {}
+      } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
     }
     if (prdVal.length < 100) {
       const prdErr = `GUARDRAIL: Plan step completed but PRD is ${prdVal.length < 1 ? "empty" : "too short (" + prdVal.length + " chars)"}. Plan must output a meaningful PRD.`;
@@ -1792,8 +1792,8 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
               execFileSync("git", ["clean", "-fd"], { cwd: repoPath, timeout: 5000 });
               // Restore stitch after git reset
               if (_hasStitch) {
-                try { fs.cpSync(path.join(_bkDir, "stitch"), _stitchDir, { recursive: true }); } catch {}
-                try { fs.copyFileSync(path.join(_bkDir, ".stitch"), _stitchFile); } catch {}
+                try { fs.cpSync(path.join(_bkDir, "stitch"), _stitchDir, { recursive: true }); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
+                try { fs.copyFileSync(path.join(_bkDir, ".stitch"), _stitchFile); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
                 fs.rmSync(_bkDir, { recursive: true, force: true });
               }
               fs.writeFileSync(path.join(repoPath, "README.md"), "# Project\n");
@@ -1838,7 +1838,7 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
           commitCount = parseInt(execFileSync("git", ["rev-list", "--count", "HEAD"], {
             cwd: repoPath, encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
           }).trim(), 10) || 0;
-        } catch {}
+        } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
         const derived = hasPkg && commitCount > 5 ? "true" : "false";
         parsed["existing_code"] = derived;
         logger.info(`[required-fields-autoderive] setup-repo EXISTING_CODE=${derived} (pkg=${hasPkg}, commits=${commitCount})`, { runId: step.run_id });
@@ -1949,7 +1949,7 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
       try {
         const ensureOut = execFileSync("node", [stitchScript, "ensure-project", projectName, dRepo], { encoding: "utf-8", timeout: 30000, cwd: dRepo });
         let ensureResult: any = {};
-        try { ensureResult = JSON.parse(ensureOut); } catch {}
+        try { ensureResult = JSON.parse(ensureOut); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
         dProjId = ensureResult.projectId || "";
         if (dProjId) {
           context["stitch_project_id"] = dProjId;
@@ -1968,7 +1968,7 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
         const existingHtmlCount = fs.existsSync(dStitchDir)
           ? fs.readdirSync(dStitchDir).filter((f: string) => f.endsWith(".html")).length : 0;
         let screenMapArr: any[] = [];
-        try { screenMapArr = JSON.parse(dScreenMap); } catch {}
+        try { screenMapArr = JSON.parse(dScreenMap); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
         if (screenMapArr.length > 0 && existingHtmlCount === 0) {
           const designSystem = context["design_system"] || "";
           const task = context["task"] || "";
@@ -2008,7 +2008,7 @@ ${screenDescs}
           try {
             const genOut = execFileSync("node", [stitchScript, "generate-all-screens", dProjId, promptFile, deviceType, "GEMINI_3_1_PRO"], { encoding: "utf-8", timeout: 600000, cwd: dRepo });
             let genResult: any = {};
-            try { genResult = JSON.parse(genOut); } catch {}
+            try { genResult = JSON.parse(genOut); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
             logger.info(`[design-generate] Generated ${genResult.total || 0} screens in ${genResult.elapsedSeconds || "?"}s`, { runId: step.run_id });
           } catch (genErr) {
             logger.warn(`[design-generate] generate-all-screens failed: ${genErr}`, { runId: step.run_id });
@@ -2020,7 +2020,7 @@ ${screenDescs}
         try {
           const dlOut = execFileSync("node", [stitchScript, "download-all", dProjId, dStitchDir], { encoding: "utf-8", timeout: 180000, cwd: dRepo });
           let dlResult: any = {};
-          try { dlResult = JSON.parse(dlOut); } catch {}
+          try { dlResult = JSON.parse(dlOut); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
           logger.info(`[design-download] Downloaded ${dlResult.downloaded || 0}/${dlResult.total || 0} screens`, { runId: step.run_id });
         } catch (dlErr) {
           logger.warn(`[design-download] Batch download failed: ${dlErr}`, { runId: step.run_id });
@@ -2033,7 +2033,7 @@ ${screenDescs}
           logger.error(`[design-download] ${failMsg}`, { runId: step.run_id });
           // Remove stale .stitch so retry creates fresh project
           const staleStitch = path.join(dRepo, ".stitch");
-          if (fs.existsSync(staleStitch)) { try { fs.unlinkSync(staleStitch); } catch {} }
+          if (fs.existsSync(staleStitch)) { try { fs.unlinkSync(staleStitch); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); } }
           await failStep(stepId, failMsg);
           return { advanced: false, runCompleted: false };
         }
@@ -2118,7 +2118,7 @@ ${screenDescs}
           context["branch"] = "main";
           await updateRunContext(step.run_id, context);
         }
-      } catch {}
+      } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
     }
   }
 
@@ -2447,7 +2447,7 @@ ${screenDescs}
           });
           tunnelOk = true;
           logger.info(`[deploy-guardrail] Tunnel + DNS ensured for ${hostname}:${port}`, { runId: step.run_id });
-        } catch {}
+        } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
       }
       if (!tunnelOk) {
         logger.warn(`[deploy-guardrail] Tunnel/DNS setup failed for ${hostname}`, { runId: step.run_id });
@@ -2615,7 +2615,7 @@ ${screenDescs}
       try {
         execFileSync("git", ["show", "main:package.json"], { cwd: mergeRepo, timeout: 5000, stdio: "pipe" });
         mainHasSource = true;
-      } catch {}
+      } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
 
       if (!mainHasSource && step.retry_count < step.max_retries) {
         context["previous_failure"] = "MERGE FAIL: Feature branch not merged into main. Main branch has no source code.";
@@ -2691,7 +2691,7 @@ ${screenDescs}
             fileOwner[f] = row.story_id;
           }
         }
-      } catch { /* skip malformed */ }
+      } catch (e) { logger.debug(`[parse] Skip malformed: ${String(e).slice(0, 80)}`); }
     }
     if (overlaps.length > 0) {
       logger.warn(`[stories-guardrail] scope_files overlap AUTO-FIXED: ${overlaps.join("; ")}`, { runId: step.run_id });
@@ -2990,7 +2990,7 @@ ${screenDescs}
               cwd: wd, timeout: 5000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8",
             }).trim();
             dirtyFiles = statusOut ? statusOut.split("\n").map(l => l.slice(3).trim()).filter(Boolean) : [];
-          } catch {}
+          } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
           const allTouched = Array.from(new Set([...changedFiles, ...dirtyFiles]));
           const SCOPE_EXTS = /\.(tsx?|jsx?|vue|svelte|css|scss|html)$/i;
           const SCOPE_IGNORE = /^(node_modules\/|dist\/|\.next\/|build\/|coverage\/|stitch\/|references\/|DESIGN\.md|PROJECT_MEMORY\.md|\.gitignore|package(-lock)?\.json|tsconfig|vite\.config|tailwind\.config|postcss\.config|eslint\.config|README|index\.html$)/;
@@ -3106,7 +3106,7 @@ ${screenDescs}
                 const shared = JSON.parse(scopeRow.shared_files || "[]");
                 if (Array.isArray(scope)) scope.forEach((f: any) => typeof f === "string" && allowed.add(f));
                 if (Array.isArray(shared)) shared.forEach((f: any) => typeof f === "string" && allowed.add(f));
-              } catch { /* ignore malformed JSON */ }
+              } catch (e) { logger.debug(`[guardrail] Malformed JSON: ${String(e).slice(0, 80)}`); }
               if (allowed.size > 0) {
                 // Wave 13+ (run #352 postmortem): implicit shared file patterns.
                 // Every story legitimately touches entry points (App.tsx, main.tsx),
@@ -3458,8 +3458,8 @@ ${screenDescs}
   // Post-complete: delete /tmp output files to prevent peek-recovery cross-step contamination
   try {
     const _tmpFiles = fs.readdirSync("/tmp").filter(f => f.startsWith("setfarm-output-") && f.endsWith(".txt"));
-    for (const _f of _tmpFiles) { try { fs.unlinkSync("/tmp/" + _f); } catch {} }
-  } catch {}
+    for (const _f of _tmpFiles) { try { fs.unlinkSync("/tmp/" + _f); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); } }
+  } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
 
   // v1.5.50: Resolve claim_log outcome for single step
   try {
@@ -3644,7 +3644,7 @@ async function autoVerifyDoneStories(
       [runId]
     );
     let verifyStepName = "verify";
-    try { verifyStepName = JSON.parse(loopStepRow?.loop_config || "{}").verifyStep || "verify"; } catch {}
+    try { verifyStepName = JSON.parse(loopStepRow?.loop_config || "{}").verifyStep || "verify"; } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
     const verifyStep = await pgGet<{ abandoned_count: number }>(
       "SELECT abandoned_count FROM steps WHERE run_id = $1 AND step_id = $2 AND status IN ('running','pending','failed') LIMIT 1",
       [runId, verifyStepName]

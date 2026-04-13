@@ -432,49 +432,26 @@ steps:
          - 4th: Frontend modules
          - 5th: Integrations + dashboard
 
-      6. MANDATORY INTEGRATION STORY (LAST STORY):
-         - The LAST story MUST be an integration/wiring story
-         - Title: "Integration wiring and end-to-end verification"
-         - This story depends_on ALL other stories
-         - Acceptance criteria MUST include:
-           a) All components from src/components/ are imported and rendered in their pages
-           b) All routes/pages are navigable (no dead routes)
-           c) All interactive elements (buttons, forms, links) trigger real functionality
-           d) No placeholder text ("Coming soon", "Game Started!", "TODO", etc.)
-           e) State transitions work end-to-end (e.g. menu -> game -> pause -> game over)
-           f) Canvas/game/chart renders actual content, not static text
-           g) window.game object is exposed with player state, score, and game state
-           h) Keyboard input (Space/ArrowUp) causes visible state change within 100ms
-           i) No Math.random() in render loop — random values seeded at init
-           j) Single state machine
-           k) Remove all orphan/dead code files created by individual stories that are
-              no longer needed after integration (e.g. standalone components replaced by
-              unified modules, duplicate utility files, unused story-specific helpers) — not dual string+object tracking
-         - This story WIRES everything together - without it, components exist in isolation
+      6. FINAL STORY — VERIFICATION & CLEANUP (lightweight):
+         - The LAST story verifies all components are wired and cleans dead code
+         - Accept criteria: all routes navigable, no orphan files, no placeholder text
+         - The SAME developer wrote all stories — integration happened naturally
+         - Focus: verify routing works, remove unused files, smoke test all pages
+         - This is a QUICK verification pass, NOT a rewrite
 
-      7. INTEGRATION STORY MUST CLEAN DEAD CODE:
-         - The integration story acceptance criteria MUST include:
-           "Remove all orphan/dead code files from previous stories that were
-           superseded by integration wiring. If story X created helper.ts but
-           integration replaces it with a unified module, delete helper.ts."
-         - This prevents file bloat from incremental story development.
-
-      SHARED FILE CONFLICT PREVENTION (CRITICAL):
-      Stories run in parallel worktrees. If 2 stories modify the same file,
-      merge conflicts WILL occur and waste retries. Rules:
-      - package.json: ONLY the FIRST story (US-001 setup) should add dependencies.
-        All other stories MUST NOT run npm install or modify package.json.
-        If a story needs a new dependency, add it to US-001's acceptance criteria.
-      - Shared type files (types/*.ts): Define ALL types in US-001. Later stories
-        MUST import existing types, never create overlapping type definitions.
-      - Config files (tsconfig.json, tailwind.config.*, vite.config.*): ONLY US-001.
-      - If 2 stories MUST touch the same file, use depends_on so they run sequentially.
+      SINGLE DEVELOPER MODE:
+      All stories are implemented by the SAME developer sequentially in one branch.
+      - No merge conflicts (one developer, one branch)
+      - No scope_files enforcement (developer owns all files)
+      - depends_on is for ORDERING only (sequential execution)
+      - file_skeletons are guidelines (same developer has full context)
+      - App.tsx, main.tsx, index.css can be modified in ANY story
+      - Each story should leave the project in a BUILDABLE state (tsc + vite build pass)
 
       DO NOT:
       - Create micro-stories ("Create user model" separate, "Create user API" separate → WRONG)
       - Make stories for non-code sections (metrics, risks, timeline)
       - Create stories that take longer than 30 minutes
-      - Have multiple stories modify package.json, tsconfig.json, or shared type files
 
       ============================================================
       MANDATORY OUTPUT FORMAT — PIPELINE WILL BREAK IF YOU SKIP ANY KEY
