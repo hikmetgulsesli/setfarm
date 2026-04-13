@@ -1034,7 +1034,7 @@ let lastCleanupTime = 0;
 /**
  * Find and claim a pending step for an agent, returning the resolved input.
  */
-export async function claimStep(agentId: string): Promise<ClaimResult> {
+export async function claimStep(agentId: string, callerGatewayAgent?: string): Promise<ClaimResult> {
   // Throttle cleanup: run at most once every 5 minutes across all agents
   const epochMs = Date.now();
   if (epochMs - lastCleanupTime >= CLEANUP_THROTTLE_MS) {
@@ -1252,6 +1252,35 @@ export async function claimStep(agentId: string): Promise<ClaimResult> {
         emitEvent({ ts: now(), event: "step.done", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId });
         await advancePipeline(step.run_id);
         return { found: false };
+      }
+
+      // ── DEVELOPER RESERVATION: one developer per project ──
+      // When a developer agent claims an implement step, the system locks that
+      // developer to this run. Other developers skip this run, and this developer
+      // skips other runs. Developers are released when the run completes/fails.
+      if (callerGatewayAgent) {
+        const runDev = await pgGet<{ assigned_developer: string | null }>(
+          "SELECT assigned_developer FROM runs WHERE id = $1", [step.run_id]
+        );
+        if (!runDev?.assigned_developer) {
+          // No developer assigned yet — check if THIS developer is free
+          const busyRun = await pgGet<{ id: string }>(
+            "SELECT id FROM runs WHERE status = 'running' AND assigned_developer = $1",
+            [callerGatewayAgent]
+          );
+          if (busyRun) {
+            // This developer is already assigned to another run — skip
+            return { found: false };
+          }
+          // Assign this developer to the run
+          await pgRun("UPDATE runs SET assigned_developer = $1 WHERE id = $2",
+            [callerGatewayAgent, step.run_id]);
+          logger.info(`[developer-reservation] Assigned ${callerGatewayAgent} to run ${step.run_id.slice(0, 8)}`, { runId: step.run_id });
+        } else if (runDev.assigned_developer !== callerGatewayAgent) {
+          // Another developer is assigned to this run — skip
+          return { found: false };
+        }
+        // else: this developer is already assigned to this run — proceed
       }
 
       // PARALLEL LIMIT: Don't exceed max concurrent running stories

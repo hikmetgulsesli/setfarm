@@ -50,7 +50,7 @@ export function buildPollingPrompt(workflowId: string, agentId: string, gatewayA
    NO_WORK → reply "HEARTBEAT_OK", STOP.
 
 2. CLAIM the step and save the JSON to a file in one shot:
-   /usr/bin/node ${cli} step claim "${fullAgentId}" > /tmp/claim-${outputFileId}.json
+   /usr/bin/node ${cli} step claim "${fullAgentId}"${gatewayAgentId ? ` --caller ${gatewayAgentId}` : ""} > /tmp/claim-${outputFileId}.json
    If the file content is "NO_WORK" → reply "HEARTBEAT_OK", STOP.
 
 3. EXTRACT the step id and working directory via jq (DO NOT parse by hand):

@@ -379,7 +379,9 @@ async function main() {
     }
     if (action === "claim") {
       if (!target) { process.stderr.write("Missing agent-id.\n"); process.exit(1); }
-      const result = await claimStep(target);
+      const callerIdx = args.indexOf("--caller");
+      const callerAgent = callerIdx !== -1 ? args[callerIdx + 1] : undefined;
+      const result = await claimStep(target, callerAgent);
       if (!result.found) {
         process.stdout.write("NO_WORK\n");
       } else {
