@@ -799,6 +799,16 @@ steps:
       TEST_CMD: {{test_cmd}}
       LINT_CMD: {{lint_cmd}}
 
+      *** PRE-GENERATED JSX SCREENS ***
+      Check src/screens/ for AUTO-GENERATED React components from Stitch HTML.
+      If src/screens/*.tsx exist, you MUST use them as your starting point:
+      - Import the screen component and render it
+      - DO NOT rewrite the layout or CSS — it is pixel-perfect from Stitch
+      - Only ADD: useState hooks, onClick handlers, onChange handlers, keyboard listeners
+      - Replace hardcoded "0" or placeholder text with state variables
+      - See src/screens/SCREEN_INDEX.json for the full list of screens
+      If you rewrite layout from scratch instead of using src/screens/, your code will be REJECTED.
+
       *** MANDATORY WORKING DIRECTORY ***
       Your working directory is WORKDIR ({{story_workdir}}). This is a git worktree
       isolated for this story. You MUST `cd {{story_workdir}}` as your FIRST command.
