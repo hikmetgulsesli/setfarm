@@ -490,7 +490,11 @@ steps:
           "depends_on": [],
           "screens": ["SCR-001"],
           "scope_files": ["src/components/Calculator.tsx", "src/hooks/useCalc.ts"],
-          "shared_files": []
+          "shared_files": [],
+          "file_skeletons": {
+            "src/components/Calculator.tsx": "interface CalculatorProps { onResult: (n: number) => void }\nexport function Calculator(props: CalculatorProps): JSX.Element",
+            "src/hooks/useCalc.ts": "export function useCalc(): { value: number; add: (n: number) => void; reset: () => void }"
+          }
         }
       ]
 
@@ -522,6 +526,17 @@ steps:
       - The integration story (last) can list App.tsx and src/main.tsx as
         scope_files — it is the final wirer.
       The merge queue uses scope_files to plan a conflict-free merge order.
+
+      FILE_SKELETONS FIELD (MANDATORY — guides agent implementation):
+      Every story MUST declare "file_skeletons" — a map of file path to its
+      skeleton code (exports, interfaces, function signatures, props types).
+      The agent MUST follow these skeletons exactly:
+      - Use the SAME export names, prop types, and function signatures
+      - Do NOT rename exports or change the public API
+      - Do NOT create extra files not in scope_files
+      - Fill in the implementation inside the skeleton structure
+      This ensures stories connect to each other without integration failures.
+      The integration story skeleton should show all imports from other stories.
 
       DEPENDENCY RULES (depends_on field):
       - Foundation stories (setup, design tokens, DB schema): depends_on: [] (no dependencies)
@@ -874,6 +889,14 @@ steps:
       - core: Focus on business logic, services, state management ONLY
       - ui: Focus on React components, styling, responsive design ONLY
       If implement_phase is empty, implement everything in one pass (default behavior).
+
+      FILE SKELETONS (follow these signatures exactly):
+      {{file_skeletons}}
+      These skeletons define the public API of each file. You MUST:
+      - Use the EXACT export names and function signatures shown above
+      - Implement the body of each function/component
+      - Do NOT rename exports, change props, or add files not listed
+      - Other stories depend on these exact signatures to wire together
 
       BEFORE writing code:
       0. If PREVIOUS FAILURE is non-empty: analyze what went wrong. The previous attempt
