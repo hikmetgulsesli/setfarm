@@ -1254,33 +1254,38 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
         return { found: false };
       }
 
-      // ── DEVELOPER RESERVATION: one developer per project ──
+      // ── DEVELOPER RESERVATION: one developer per project (atomic CAS) ──
       // When a developer agent claims an implement step, the system locks that
       // developer to this run. Other developers skip this run, and this developer
-      // skips other runs. Developers are released when the run completes/fails.
+      // skips other runs. Developers are released when the run completes/fails
+      // (query-based: WHERE status='running' filters out finished runs).
+      //
+      // Uses atomic UPDATE ... WHERE ... RETURNING to prevent TOCTOU race:
+      // two agents polling simultaneously cannot both assign themselves.
       if (callerGatewayAgent) {
-        const runDev = await pgGet<{ assigned_developer: string | null }>(
-          "SELECT assigned_developer FROM runs WHERE id = $1", [step.run_id]
+        // Atomic CAS: assign developer only if slot is empty AND developer is free
+        const claimed = await pgGet<{ assigned_developer: string }>(
+          `UPDATE runs SET assigned_developer = $1
+           WHERE id = $2 AND assigned_developer IS NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM runs WHERE status = 'running' AND assigned_developer = $1 AND id != $2
+           )
+           RETURNING assigned_developer`,
+          [callerGatewayAgent, step.run_id]
         );
-        if (!runDev?.assigned_developer) {
-          // No developer assigned yet — check if THIS developer is free
-          const busyRun = await pgGet<{ id: string }>(
-            "SELECT id FROM runs WHERE status = 'running' AND assigned_developer = $1",
-            [callerGatewayAgent]
+        if (!claimed) {
+          // CAS failed — either someone else got it, or this agent is busy elsewhere
+          const existing = await pgGet<{ assigned_developer: string | null }>(
+            "SELECT assigned_developer FROM runs WHERE id = $1", [step.run_id]
           );
-          if (busyRun) {
-            // This developer is already assigned to another run — skip
+          if (existing?.assigned_developer === callerGatewayAgent) {
+            // This agent is already assigned to this run — proceed (re-claim after retry)
+          } else {
             return { found: false };
           }
-          // Assign this developer to the run
-          await pgRun("UPDATE runs SET assigned_developer = $1 WHERE id = $2",
-            [callerGatewayAgent, step.run_id]);
+        } else {
           logger.info(`[developer-reservation] Assigned ${callerGatewayAgent} to run ${step.run_id.slice(0, 8)}`, { runId: step.run_id });
-        } else if (runDev.assigned_developer !== callerGatewayAgent) {
-          // Another developer is assigned to this run — skip
-          return { found: false };
         }
-        // else: this developer is already assigned to this run — proceed
       }
 
       // PARALLEL LIMIT: Don't exceed max concurrent running stories
