@@ -1077,6 +1077,78 @@ export function reconcileDesignWithStories(
 }
 
 
+
+// --- Duplicate Inline Code Detection ---
+
+/**
+ * Detect when component files exist in src/components/ but their functionality
+ * is duplicated inline in the entry point (e.g. App.tsx defines Button inline
+ * while src/components/Button.tsx also exists).
+ * Returns actionable messages for each duplicate found.
+ */
+export function checkDuplicateInlineCode(repoPath: string): string[] {
+  const issues: string[] = [];
+  const entryPaths = [
+    path.join(repoPath, "app", "page.tsx"), path.join(repoPath, "src", "App.tsx"),
+    path.join(repoPath, "src", "app", "page.tsx"), path.join(repoPath, "src", "main.tsx"),
+    path.join(repoPath, "src", "index.tsx"), path.join(repoPath, "pages", "index.tsx"),
+  ];
+
+  let entryContent = "";
+  let entryPath = "";
+  for (const ep of entryPaths) {
+    if (fs.existsSync(ep)) {
+      try { entryContent = fs.readFileSync(ep, "utf-8"); entryPath = ep; break; } catch { /* ignore */ }
+    }
+  }
+  if (!entryContent) return [];
+
+  const componentDirs = [
+    path.join(repoPath, "src", "components"), path.join(repoPath, "components"),
+    path.join(repoPath, "src", "features"), path.join(repoPath, "src", "modules"),
+  ];
+
+  const componentFiles: string[] = [];
+  for (const dir of componentDirs) {
+    if (!fs.existsSync(dir)) continue;
+    try {
+      componentFiles.push(...readdirRecursive(dir).filter(f => /\.(tsx?|jsx?)$/.test(f) && !/\.(test|spec|stories)\./i.test(f)));
+    } catch { /* ignore */ }
+  }
+
+  // Check if component name is defined inline in entry point
+  const funcDefPatterns = [
+    /(?:function|const|let|var)\s+(\w+)/g,       // function Foo or const Foo
+    /export\s+(?:default\s+)?(?:function|const)\s+(\w+)/g,
+  ];
+
+  const entryDefinedNames = new Set<string>();
+  for (const pat of funcDefPatterns) {
+    let m: RegExpExecArray | null;
+    const regex = new RegExp(pat.source, pat.flags);
+    while ((m = regex.exec(entryContent)) !== null) {
+      entryDefinedNames.add(m[1]);
+    }
+  }
+
+  for (const compFile of componentFiles) {
+    const baseName = path.basename(compFile).replace(/\.(tsx?|jsx?|mjs?)$/, "");
+    if (/^(index|utils|helpers|types|constants|config)$/i.test(baseName)) continue;
+
+    // Check if same-named component is defined inline in entry
+    if (entryDefinedNames.has(baseName)) {
+      const relComp = path.relative(repoPath, compFile);
+      const relEntry = path.relative(repoPath, entryPath);
+      issues.push(
+        `DUPLICATE: "${baseName}" is defined inline in ${relEntry} AND exists as ${relComp}. `
+        + `Delete ${relComp} (the entry point already has this code inline) OR refactor ${relEntry} to import from ${relComp} and remove the inline definition.`
+      );
+    }
+  }
+
+  return issues;
+}
+
 // --- Integration Story Module Verification ---
 
 export function checkIntegrationWiring(repoPath: string): string[] {

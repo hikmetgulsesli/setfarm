@@ -1,6 +1,6 @@
 Create final PR to main AND merge:
 1. Create PR:
-   FINAL_PR=$(gh pr create --base main --head {{branch}} --title "feat: complete {{branch}} feature" --body "Feature branch {{branch}} — all stories implemented and tested.")
+   FINAL_PR=$(gh pr create --base main --head {{branch}} --title "feat({{branch}}): {{task}}" --body "Feature branch {{branch}} — all stories implemented and tested.")
    if [ -z "$FINAL_PR" ]; then
      echo "FATAL: Could not create final PR to main"
      echo "STATUS: retry"

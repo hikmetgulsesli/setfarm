@@ -13,7 +13,7 @@ import { logger } from "../lib/logger.js";
 import { isFrontendChange } from "../lib/frontend-detect.js";
 import { runQualityChecks, formatQualityReport } from "./quality-gates.js";
 import { detectPlatform, checkDesignViolations } from "./design-rules.js";
-import { buildDesignContracts, generateUIContract, enrichStoriesWithDesignContract, validateDesignCompliance, generateLayoutSkeletons, checkCrossScreenConsistency, checkDesignFidelity, detectUnusedModules, reconcileDesignWithStories, checkIntegrationWiring } from "./design-contract.js";
+import { buildDesignContracts, generateUIContract, enrichStoriesWithDesignContract, validateDesignCompliance, generateLayoutSkeletons, checkCrossScreenConsistency, checkDesignFidelity, detectUnusedModules, reconcileDesignWithStories, checkIntegrationWiring, checkDuplicateInlineCode } from "./design-contract.js";
 import { provisionDatabase, resolveDbType } from "./db-provision.js";
 import { runBrowserDomCheck } from "./browser-tools.js";
 import { TEST_FAIL_PATTERNS, GIT_DIFF_TIMEOUT } from "./constants.js";
@@ -752,11 +752,23 @@ export async function processDesignFidelityCheck(
     const wiringIssues = checkIntegrationWiring(repoPath);
     if (wiringIssues.length > 0) {
       const report = wiringIssues.map(i => `  - ${i}`).join("\n");
-      feedbackParts.push(`INTEGRATION WIRING (modules not connected to entry point):\n${report}\nThe integration story must import and use ALL component modules.`);
+      feedbackParts.push(`INTEGRATION WIRING (modules not connected to entry point):\n${report}\nFIX REQUIRED: Either (a) refactor the entry point to import and use these component files, OR (b) delete the unused component files if their functionality is already inline in the entry point. Do NOT leave dead code.`);
       logger.warn(`[integration-wiring] ${wiringIssues.length} issue(s):\n${report}`, { runId });
     }
   } catch (e) {
     logger.warn(`[integration-wiring] Check skipped: ${String(e)}`, { runId });
+  }
+
+  // 4. Duplicate inline code detection
+  try {
+    const duplicateIssues = checkDuplicateInlineCode(repoPath);
+    if (duplicateIssues.length > 0) {
+      const report = duplicateIssues.map(i => `  - ${i}`).join("\n");
+      feedbackParts.push(`DUPLICATE CODE (same component exists both inline and as separate file):\n${report}\nClean up duplicates: keep ONE copy.`);
+      logger.warn(`[duplicate-code] ${duplicateIssues.length} issue(s):\n${report}`, { runId });
+    }
+  } catch (e) {
+    logger.warn(`[duplicate-code] Check skipped: ${String(e)}`, { runId });
   }
 
   // DOM Compare: DESIGN_DOM.json vs actual browser DOM
@@ -782,9 +794,12 @@ export async function processDesignFidelityCheck(
   }
 
   // BLOCKING: structural gaps or integration wiring errors fail the step
-  const structuralErrors = feedbackParts.filter(p => p.includes("Structural gap") || p.includes("INTEGRATION WIRING"));
+  const structuralErrors = feedbackParts.filter(p => p.includes("Structural gap") || p.includes("INTEGRATION WIRING") || p.includes("DUPLICATE CODE"));
   if (structuralErrors.length > 0) {
-    return `GUARDRAIL FAIL: Design fidelity check found critical issues:\n${structuralErrors.join("\n")}\nFix structural gaps and integration wiring before advancing.`;
+    return `GUARDRAIL FAIL: Design fidelity check found critical issues:\n${structuralErrors.join("\n")}\nACTION REQUIRED:
+1. If component files in src/components/ duplicate code already in the entry point (e.g. App.tsx), DELETE the unused files.
+2. If the entry point has inline code that should use the component files, REFACTOR to import them.
+3. Run lint + build after fixing to confirm no broken imports.`;
   }
 
   return null;

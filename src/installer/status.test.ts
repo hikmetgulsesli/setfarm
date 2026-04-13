@@ -86,7 +86,7 @@ describe("stopWorkflow", () => {
     );
     assert.equal(steps[0].status, "done"); // done step unchanged
     assert.equal(steps[0].output, "plan output"); // done step output unchanged
-    assert.equal(steps[1].status, "failed");
+    assert.equal(steps[1].status, "cancelled");
     assert.equal(steps[1].output, "Cancelled by user");
     assert.equal(steps[2].status, "failed");
     assert.equal(steps[2].output, "Cancelled by user");

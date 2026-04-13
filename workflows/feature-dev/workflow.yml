@@ -1280,7 +1280,7 @@ steps:
          FINAL_PR="{{final_pr}}"
          if [ -z "$FINAL_PR" ]; then
            echo "No final_pr in context — creating PR from feature branch"
-           FINAL_PR=$(gh pr create --base main --head {{branch}}              --title "feat: {{task}}"              --body "Combined feature implementation — auto-created by verify step" 2>/dev/null || echo "")
+           FINAL_PR=$(gh pr create --base main --head {{branch}}              --title "feat({{branch}}): {{task}}"              --body "Combined feature implementation — auto-created by verify step" 2>/dev/null || echo "")
            if [ -z "$FINAL_PR" ]; then
              FINAL_PR=$(gh pr list --head {{branch}} --base main --state open --json url --jq '.[0].url' 2>/dev/null || echo "")
            fi
@@ -1733,7 +1733,7 @@ steps:
 
       STEP 3 — Create final PR to main AND merge:
       1. Create PR:
-         FINAL_PR=$(gh pr create --base main --head {{branch}} --title "feat: complete {{branch}} feature" --body "Feature branch {{branch}} — all stories implemented and tested.")
+         FINAL_PR=$(gh pr create --base main --head {{branch}} --title "feat({{branch}}): {{task}}" --body "Feature branch {{branch}} — all stories implemented and tested.")
          echo "Created final PR: $FINAL_PR"
       2. Merge: gh pr merge "$FINAL_PR" --squash --delete-branch
       3. Close orphan PRs:
