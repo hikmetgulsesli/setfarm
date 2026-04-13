@@ -777,17 +777,20 @@ steps:
       "Current Tally", "Settings", "Home" gibi İngilizce metinler YASAK. Placeholder, aria-label, title, error mesajları dahil.
 
       TASK: {{task}}
-      REPO: {{repo}}
       WORKDIR: {{story_workdir}}
+      MAIN_REPO: {{repo}}
       BRANCH: {{branch}}
       BUILD_CMD: {{build_cmd}}
       TEST_CMD: {{test_cmd}}
       LINT_CMD: {{lint_cmd}}
 
-      CRITICAL: You MUST `cd {{story_workdir}}` FIRST before ANY action. ALL commands,
-      file reads, and file writes MUST use WORKDIR as the working directory.
-      NEVER run commands from your default workspace — always cd to WORKDIR first.
-      The branch is already checked out. node_modules is symlinked from REPO.
+      *** MANDATORY WORKING DIRECTORY ***
+      Your working directory is WORKDIR ({{story_workdir}}). This is a git worktree
+      isolated for this story. You MUST `cd {{story_workdir}}` as your FIRST command.
+      ALL file reads, writes, git operations, lint, build, and test MUST run from WORKDIR.
+      NEVER `cd {{repo}}` — that is the shared main repo and other stories may be using it.
+      MAIN_REPO is only for `npm install` if a dependency is missing.
+      The branch is already checked out. node_modules is symlinked from MAIN_REPO.
 
       NEXT.JS CONFIG RULE: If next.config.ts exists, do NOT add unknown options.
       Valid options: reactStrictMode, images, env, experimental, output, distDir.
