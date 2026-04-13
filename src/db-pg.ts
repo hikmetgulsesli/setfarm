@@ -16,7 +16,7 @@ function getSql() {
     // Sanitize URL: strip anything after the DB name (e.g. stray env vars appended by gateway)
     let url = (process.env.SETFARM_PG_URL || DEFAULT_PG_URL).split(/\s+/)[0];
     _sql = postgres(url, {
-      max: 20,
+      max: 50,
       idle_timeout: 5,
       onnotice: () => {},
       connect_timeout: 10,
@@ -84,6 +84,9 @@ export async function pgMigrate(): Promise<void> {
     await s`ALTER TABLE stories ADD COLUMN IF NOT EXISTS file_skeletons TEXT`;
     // Developer reservation: one developer per project, locked until run completes
     await s`ALTER TABLE runs ADD COLUMN IF NOT EXISTS assigned_developer TEXT`;
+    // Performance indexes for claim queries (6 concurrent projects)
+    await s`CREATE INDEX IF NOT EXISTS idx_steps_agent_status ON steps(agent_id, status) WHERE status IN ('pending', 'running')`;
+    await s`CREATE INDEX IF NOT EXISTS idx_runs_status_dev ON runs(status, assigned_developer) WHERE status = 'running'`;
   } catch (e) {
     // Migration failures should not prevent gateway start — log but continue.
     // eslint-disable-next-line no-console

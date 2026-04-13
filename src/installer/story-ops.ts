@@ -196,23 +196,10 @@ export async function parseAndInsertStories(output: string, runId: string): Prom
       // acceptance_criteria text with matchAll. Backward-compat (old stories
       // still work), robust (planner just needs good AC), and progressive
       // (when planners start emitting scope_files explicitly, that wins).
-      let scopeFiles: string | null = Array.isArray(s.scope_files) ? JSON.stringify(s.scope_files) : null;
-      if (!scopeFiles && Array.isArray(ac) && ac.length > 0) {
-        const acText = ac.join("\n");
-        const nestedPathRe = /(?:^|[\s"'`(])([a-z][\w./-]*\/[\w.-]+\.(?:tsx?|jsx?|css|scss|html|json|mjs|cjs))/gi;
-        const topLevelRe = /(?:^|[\s"'`(])(App\.tsx|main\.tsx|index\.html|index\.ts|index\.tsx|index\.css|package\.json|vite\.config\.(?:ts|js)|tailwind\.config\.(?:ts|js))\b/gi;
-        const derived = new Set<string>();
-        for (const match of acText.matchAll(nestedPathRe)) {
-          if (match[1]) derived.add(match[1]);
-        }
-        for (const match of acText.matchAll(topLevelRe)) {
-          if (match[1]) derived.add(match[1]);
-        }
-        if (derived.size > 0) {
-          scopeFiles = JSON.stringify([...derived]);
-          logger.info(`[scope-auto-derive] Story ${s.id}: derived ${derived.size} scope files from acceptance criteria (planner did not emit scope_files)`);
-        }
-      }
+      // Single developer mode: scope_files are informational, not enforced.
+      // Regex-based auto-derive removed — caused false positives and scope_bleed rejections.
+      // If planner provides scope_files explicitly, we store them for reference.
+      const scopeFiles: string | null = Array.isArray(s.scope_files) ? JSON.stringify(s.scope_files) : null;
       const sharedFiles = Array.isArray(s.shared_files) ? JSON.stringify(s.shared_files) : null;
       const scopeDesc = typeof s.scope_description === "string" ? s.scope_description : null;
       const fileSkeletons = s.file_skeletons && typeof s.file_skeletons === "object" ? JSON.stringify(s.file_skeletons) : null;

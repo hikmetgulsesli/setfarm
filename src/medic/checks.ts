@@ -1032,6 +1032,7 @@ export async function runSyncChecks(): Promise<MedicFinding[]> {
     ...await checkGatewayStalling(),
     ...await checkProviderFailure(),
     ...await checkOrphanedBrowserProcesses(),
+    ...await checkStuckWaitingSteps(),
   ];
 }
 
