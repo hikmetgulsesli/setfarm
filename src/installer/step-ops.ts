@@ -2119,6 +2119,24 @@ ${screenDescs}
         }
       }
     }
+    // AUTO-GENERATE JSX screens from Stitch HTML (stitch-to-jsx)
+    if (baselinePass) {
+      const stitchManifest = path.join(context["repo"] || "", "stitch", "DESIGN_MANIFEST.json");
+      if (fs.existsSync(stitchManifest)) {
+        try {
+          const scriptPath = path.join(process.env.HOME || "", ".openclaw", "setfarm-repo", "scripts", "stitch-to-jsx.mjs");
+          if (fs.existsSync(scriptPath)) {
+            execFileSync("node", [scriptPath, context["repo"]], { timeout: 30000, stdio: "pipe" });
+            // Commit generated screens so worktrees can access them
+            execFileSync("git", ["add", "src/screens/"], { cwd: context["repo"], timeout: 5000, stdio: "pipe" });
+            execFileSync("git", ["commit", "-m", "chore: auto-generate JSX screens from Stitch HTML"], { cwd: context["repo"], timeout: 10000, stdio: "pipe" });
+            logger.info(`[stitch-to-jsx] Generated JSX screens from Stitch HTML`, { runId: step.run_id });
+          }
+        } catch (e) {
+          logger.warn(`[stitch-to-jsx] Failed: ${String(e).slice(0, 200)}`, { runId: step.run_id });
+        }
+      }
+    }
     if (!baseline || !baselinePass) {
       const baselineMsg = `GUARDRAIL: setup-build baseline is "${parsed["baseline"] || "(empty)"}" — build must explicitly pass.`;
       logger.warn(`[setup-build-guardrail] ${baselineMsg}`, { runId: step.run_id, stepId: step.step_id });
