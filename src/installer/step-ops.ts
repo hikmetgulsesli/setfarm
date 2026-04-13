@@ -508,8 +508,8 @@ async function injectStoryContext(
   // "implement the acceptance criteria" mode. The post-implementation bleed
   // check in completeStep uses these to reject out-of-scope writes.
   try {
-    const scopeRow = await pgGet<{ scope_files: string; shared_files: string; scope_description: string }>(
-      "SELECT scope_files, shared_files, scope_description FROM stories WHERE id = $1",
+    const scopeRow = await pgGet<{ scope_files: string; shared_files: string; scope_description: string; file_skeletons: string }>(
+      "SELECT scope_files, shared_files, scope_description, file_skeletons FROM stories WHERE id = $1",
       [nextStory.id]
     );
     if (scopeRow?.scope_files) {
@@ -530,6 +530,17 @@ async function injectStoryContext(
     }
     if (scopeRow?.scope_description) {
       context["story_scope_description"] = scopeRow.scope_description;
+    }
+    // file_skeletons: function signatures from stories step to guide implementation
+    if (scopeRow?.file_skeletons) {
+      try {
+        const skeletons = JSON.parse(scopeRow.file_skeletons);
+        if (typeof skeletons === "object" && Object.keys(skeletons).length > 0) {
+          context["file_skeletons"] = Object.entries(skeletons)
+            .map(([filePath, sig]) => `${filePath}:\n${sig}`)
+            .join("\n\n");
+        }
+      } catch { /* ignore malformed */ }
     }
     // 5-model consensus: write .story-scope-files to worktree for pre-commit hook
     if (context["story_scope_files"] && context["story_workdir"]) {

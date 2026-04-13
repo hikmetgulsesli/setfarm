@@ -81,6 +81,7 @@ export async function pgMigrate(): Promise<void> {
     await s`ALTER TABLE stories ADD COLUMN IF NOT EXISTS scope_files TEXT`;
     await s`ALTER TABLE stories ADD COLUMN IF NOT EXISTS shared_files TEXT`;
     await s`ALTER TABLE stories ADD COLUMN IF NOT EXISTS scope_description TEXT`;
+    await s`ALTER TABLE stories ADD COLUMN IF NOT EXISTS file_skeletons TEXT`;
   } catch (e) {
     // Migration failures should not prevent gateway start — log but continue.
     // eslint-disable-next-line no-console

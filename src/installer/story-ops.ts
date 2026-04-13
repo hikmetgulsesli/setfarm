@@ -215,8 +215,9 @@ export async function parseAndInsertStories(output: string, runId: string): Prom
       }
       const sharedFiles = Array.isArray(s.shared_files) ? JSON.stringify(s.shared_files) : null;
       const scopeDesc = typeof s.scope_description === "string" ? s.scope_description : null;
-      await sql`INSERT INTO stories (id, run_id, story_index, story_id, title, description, acceptance_criteria, status, retry_count, max_retries, depends_on, scope_files, shared_files, scope_description, created_at, updated_at)
-        VALUES (${crypto.randomUUID()}, ${runId}, ${i}, ${s.id}, ${s.title}, ${s.description}, ${JSON.stringify(ac)}, 'pending', 0, 5, ${dependsOn}, ${scopeFiles}, ${sharedFiles}, ${scopeDesc}, ${ts}, ${ts})`;
+      const fileSkeletons = s.file_skeletons && typeof s.file_skeletons === "object" ? JSON.stringify(s.file_skeletons) : null;
+      await sql`INSERT INTO stories (id, run_id, story_index, story_id, title, description, acceptance_criteria, status, retry_count, max_retries, depends_on, scope_files, shared_files, scope_description, file_skeletons, created_at, updated_at)
+        VALUES (${crypto.randomUUID()}, ${runId}, ${i}, ${s.id}, ${s.title}, ${s.description}, ${JSON.stringify(ac)}, 'pending', 0, 5, ${dependsOn}, ${scopeFiles}, ${sharedFiles}, ${scopeDesc}, ${fileSkeletons}, ${ts}, ${ts})`;
     }
   });
 }
