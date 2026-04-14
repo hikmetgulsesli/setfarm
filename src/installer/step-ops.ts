@@ -43,6 +43,42 @@ import {
   recordStepTransition,
 } from "./repo.js";
 
+// ── Predicted screen file helpers (2026-04-14 SCOPE_BLEED fix) ──
+// Mirrors scripts/stitch-to-jsx.mjs toComponentName() — MUST stay in sync.
+// Planner was hallucinating English paths (src/pages/GameScreen.tsx) while
+// stitch-to-jsx produced Turkish paths (src/screens/OyunEkrani.tsx), causing
+// SCOPE_BLEED loops. This helper lets stories step inject the real future
+// paths before planner generates scope_files.
+function toComponentNameForStitch(title: string): string {
+  return title
+    .replace(/[ıİ]/g, "i").replace(/[şŞ]/g, "s").replace(/[çÇ]/g, "c")
+    .replace(/[ğĞ]/g, "g").replace(/[üÜ]/g, "u").replace(/[öÖ]/g, "o")
+    .replace(/[^a-zA-Z0-9\s]/g, "")
+    .split(/\s+/).filter(w => w.length > 0)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join("");
+}
+
+function computePredictedScreenFiles(repoPath: string): Array<{ screenId: string; title: string; filePath: string }> {
+  if (!repoPath) return [];
+  const manifestPath = path.join(repoPath, "stitch", "DESIGN_MANIFEST.json");
+  if (!fs.existsSync(manifestPath)) return [];
+  try {
+    const raw = fs.readFileSync(manifestPath, "utf-8");
+    const manifest = JSON.parse(raw);
+    if (!Array.isArray(manifest)) return [];
+    return manifest
+      .filter((s: any) => s?.title && s?.screenId)
+      .map((s: any) => {
+        const name = toComponentNameForStitch(String(s.title));
+        return { screenId: String(s.screenId), title: String(s.title), filePath: name ? `src/screens/${name}.tsx` : "" };
+      })
+      .filter(s => s.filePath !== "");
+  } catch (e) {
+    logger.warn(`[predicted-screens] Failed to parse DESIGN_MANIFEST.json: ${String(e).slice(0, 120)}`);
+    return [];
+  }
+}
+
 /**
  * Wrapper: calls cleanup-ops.cleanupAbandonedSteps with advancePipeline callback.
  * Maintains the original zero-arg signature for backwards compatibility.
@@ -825,6 +861,16 @@ async function claimSingleStep(
       acceptanceCriteria: s.acceptanceCriteria,
     }));
     context["stories_json"] = JSON.stringify(storiesForTemplate, null, 2);
+  }
+
+  // Stories step: inject predicted screen file paths so planner doesn't
+  // invent English/fake paths. See computePredictedScreenFiles above.
+  if (step.step_id === "stories" && context["repo"]) {
+    const predictedScreens = computePredictedScreenFiles(context["repo"]);
+    if (predictedScreens.length > 0) {
+      context["predicted_screen_files"] = JSON.stringify(predictedScreens, null, 2);
+      logger.info(`[predicted-screens] Injected ${predictedScreens.length} predicted screen path(s) for stories step`, { runId: step.run_id });
+    }
   }
 
   // BUG FIX: If this is a verify step for a verify_each loop, inject the correct
@@ -2744,6 +2790,75 @@ ${screenDescs}
           logger.info(`[stories-guardrail] Auto-fixed ${row.story_id}: removed ${fix.removeFromScope.length} from scope, added to shared`, { runId: step.run_id });
         } catch (e) {
           logger.warn(`[stories-guardrail] Auto-fix DB update failed for ${row.story_id}: ${String(e)}`, { runId: step.run_id });
+        }
+      }
+    }
+
+    // 2026-04-14 fix: hallucinated screen path detection + screen owner check.
+    // Planner was inventing English paths (src/pages/GameScreen.tsx) that never
+    // exist because stitch-to-jsx produces src/screens/OyunEkrani.tsx. Detect
+    // these and fail fast. Also enforce exactly-one-owner-per-screen to prevent
+    // merge conflicts (#428, #430).
+    const predictedScreens = computePredictedScreenFiles(context["repo"] || "");
+    if (predictedScreens.length > 0) {
+      const validScreenPaths = new Set(predictedScreens.map(s => s.filePath));
+      const hallucinatedPaths: Array<{ story: string; path: string }> = [];
+      const screenOwners: Record<string, string[]> = {};
+
+      for (const row of allScopeRows) {
+        let scope: string[] = [];
+        let shared: string[] = [];
+        try { scope = JSON.parse(row.scope_files || "[]"); } catch { scope = []; }
+        try { shared = JSON.parse(row.shared_files || "[]"); } catch { shared = []; }
+
+        for (const f of [...scope, ...shared]) {
+          if (typeof f !== "string") continue;
+          // Screen-like hallucinated path: src/pages/, src/views/, src/components/screens/
+          if (/^src\/(pages|views|components\/screens)\/[A-Z][^/]*\.tsx?$/.test(f) && !validScreenPaths.has(f)) {
+            hallucinatedPaths.push({ story: row.story_id, path: f });
+          }
+        }
+        for (const f of scope) {
+          if (typeof f === "string" && validScreenPaths.has(f)) {
+            if (!screenOwners[f]) screenOwners[f] = [];
+            screenOwners[f].push(row.story_id);
+          }
+        }
+      }
+
+      if (hallucinatedPaths.length > 0) {
+        const list = hallucinatedPaths.slice(0, 10).map(h => `${h.story}:${h.path}`).join(", ");
+        const validList = predictedScreens.slice(0, 10).map(s => s.filePath).join(", ");
+        const halluMsg = `GUARDRAIL: ${hallucinatedPaths.length} hallucinated screen path(s) (${list}). Stitch-to-JSX produces screens at src/screens/<TurkishName>.tsx. Valid paths: ${validList}. Use PREDICTED_SCREEN_FILES exactly — do NOT invent English paths like src/pages/GameScreen.tsx.`;
+        logger.warn(`[stories-guardrail] Hallucinated screen paths: ${list}`, { runId: step.run_id });
+        if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
+        await pgRun("DELETE FROM stories WHERE run_id = $1", [step.run_id]);
+        await failStep(stepId, halluMsg);
+        return { advanced: false, runCompleted: false };
+      }
+
+      // Multi-owner screen auto-fix: keep first owner (lowest story_index),
+      // move to shared_files for subsequent. Prevents merge conflicts.
+      const multiOwned = Object.entries(screenOwners).filter(([_, owners]) => owners.length > 1);
+      if (multiOwned.length > 0) {
+        const summary = multiOwned.slice(0, 5).map(([f, o]) => `${f} → [${o.join(", ")}]`).join("; ");
+        logger.warn(`[stories-guardrail] Multi-owned screens auto-fixed: ${summary}`, { runId: step.run_id });
+        for (const [file, owners] of multiOwned) {
+          const losers = owners.slice(1);
+          for (const loser of losers) {
+            const row = allScopeRows.find(r => r.story_id === loser);
+            if (!row) continue;
+            try {
+              const scope = JSON.parse(row.scope_files || "[]").filter((f: string) => f !== file);
+              const shared = [...new Set([...JSON.parse(row.shared_files || "[]"), file])];
+              await pgRun(
+                "UPDATE stories SET scope_files = $1, shared_files = $2, updated_at = $3 WHERE run_id = $4 AND story_id = $5",
+                [JSON.stringify(scope), JSON.stringify(shared), now(), step.run_id, loser]
+              );
+            } catch (e) {
+              logger.warn(`[stories-guardrail] Multi-owner fix DB update failed for ${loser}: ${String(e)}`, { runId: step.run_id });
+            }
+          }
         }
       }
     }

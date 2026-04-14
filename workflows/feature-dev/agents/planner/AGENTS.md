@@ -363,6 +363,31 @@ Every story in `STORIES_JSON` MUST declare **which files it owns**:
 
 Notice: US-004 owns App.tsx directly as its scope, not as shared. US-001/002/003 never touch App.tsx.
 
+### SCREEN FILES — Stitch-to-JSX Üretimi (2026-04-14 MANDATORY)
+
+Stitch-to-JSX her screen için `src/screens/<ComponentName>.tsx` üretir. `ComponentName`, screen title'ından **Türkçe karakter transliterasyonuyla** türetilir:
+- "Oyun Ekranı" → `src/screens/OyunEkrani.tsx`
+- "Ana Menü" → `src/screens/AnaMenu.tsx`
+- "Sonuç Ekranı" → `src/screens/SonucEkrani.tsx`
+- "Zorluk Seçimi" → `src/screens/ZorlukSecimi.tsx`
+
+Stories step'e context ile `PREDICTED_SCREEN_FILES` listesi verilir — bu listede her screen için tam dosya yolu bulunur.
+
+**MUTLAK KURAL:** scope_files ve shared_files'a `PREDICTED_SCREEN_FILES` listesindeki **tam yolları** koy. Bu yasaklar:
+- `src/pages/GameScreen.tsx` (İngilizce hayali yol)
+- `src/views/MainMenu.tsx` (yanlış dizin)
+- `src/components/screens/...` (hayali yol)
+
+Bu yollar üretilmeyecek ve developer SCOPE_BLEED'e düşecek, 5 retry sonra abandon. Stories guardrail'ı hayali yolları algılayıp stories step'i failStep yapar.
+
+**Sahiplik kuralı:** Her screen dosyası **TAM OLARAK 1 story'nin scope_files'ında** olmalı. Diğer story'ler sadece okumak için shared_files'a ekleyebilir. İki story aynı screen'i scope_files'da sahiplenirse guardrail auto-fix yapar ama önce planner'ın doğru dağıtması beklenir.
+
+**Ekran dağıtım rehberi:**
+- Menü/liste ekranları → 1 story (navigation)
+- Ana fonksiyonel ekranlar (oyun, form, dashboard) → kendi story'leri
+- Sonuç/bildirim ekranları → ilgili fonksiyonel story ile birlikte
+- Ayarlar/profil ekranları → ayrı story (genellikle geç story)
+
 ### BANNED FROM scope_files (except integration story)
 
 These entry-point files cause merge conflicts when assigned to multiple stories. ONLY the **integration/wiring story** (always the LAST story) may include them in scope_files:
