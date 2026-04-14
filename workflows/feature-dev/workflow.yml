@@ -13,15 +13,19 @@ description: |
   Failed stories are skipped — other stories continue.
 
 agent_mapping:
-  planner: main
-  setup-repo: atlas
-  setup-build: atlas
-  designer: prism
+  # Expanded to pools 2026-04-14 — previous single-agent roles serialized
+  # across concurrent runs (10 projects waited on 1 main for plan, 1 atlas
+  # for setup/deploy, etc.). Added agents reuse existing pool members;
+  # each agent may cover multiple roles, polling independently per role.
+  planner: [main, nova, zeta]
+  setup-repo: [atlas, axon, helix]
+  setup-build: [atlas, axon, helix]
+  designer: [prism, helix, zeta]
   developer: [koda, flux, cipher, prism, lux, nexus, axon, nova, zeta, helix]
   reviewer: [sentinel, iris]
   tester: [sentinel, iris]
   security-gate: [sentinel, iris]
-  deployer: atlas
+  deployer: [atlas, helix]
   qa-tester: [sentinel, iris]
 
 cron:
