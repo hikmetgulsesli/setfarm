@@ -20,7 +20,7 @@ describe("03-stories step module", () => {
     assert.equal(storiesModule.id, "stories");
     assert.equal(storiesModule.type, "single");
     assert.equal(storiesModule.agentRole, "planner");
-    assert.equal(storiesModule.maxPromptSize, 12288);
+    assert.equal(storiesModule.maxPromptSize, 32768);
   });
 
   it("prompt includes scope_files and predicted_screen_files mentions", async () => {
