@@ -17,7 +17,7 @@ agent_mapping:
   setup-repo: atlas
   setup-build: atlas
   designer: prism
-  developer: [koda, flux, cipher, prism, lux, nexus]
+  developer: [koda, flux, cipher, prism, lux, nexus, axon, nova, zeta, helix]
   reviewer: [sentinel, iris]
   tester: [sentinel, iris]
   security-gate: [sentinel, iris]
