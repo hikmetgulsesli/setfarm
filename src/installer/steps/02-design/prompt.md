@@ -1,31 +1,35 @@
-DESIGN step — Stitch ekranlarını doğrula + SCREEN_MAP üret.
-
-Pipeline Stitch API ile ekranları SENİN İÇİN üretti — `stitch/` altında HTML dosyaları + `DESIGN_MANIFEST.json` var.
+DESIGN step — Stitch ekranları + tokens hazır, sen sadece DESIGN_SYSTEM rapor ver.
 
 ## Repo
 
 REPO: {{REPO}}
 PRD ekran sayısı: {{PRD_SCREEN_COUNT}}
 
-## Yapılacaklar
+## Hazır olan (pipeline tarafından üretildi)
 
-1. `stitch/` dizinindeki HTML dosyaları validate et (size > 500 bytes, Türkçe metin, dark mode)
-2. PRD ekran tablosuyla cross-reference yap
-3. `stitch/design-tokens.css` üret (renkler, fontlar, spacing)
-4. SCREEN_MAP üret (her ekran için screenId + name + type + description)
-5. DESIGN_SYSTEM kararını rapor et (aesthetic + palette + fonts)
-6. Aşağıdaki KEY: VALUE formatında çıktı ver
+- stitch/*.html, *.png — ekranlar
+- stitch/DESIGN_MANIFEST.json — screenId+title listesi
+- stitch/design-tokens.css + design-tokens.json — renkler/fontlar
+- SCREEN_MAP context'e otomatik enjekte edildi:
+
+```json
+{{SCREEN_MAP}}
+```
+
+## Senin işin
+
+1. `stitch/design-tokens.css` (veya `.json`) dosyasını oku
+2. DESIGN_SYSTEM JSON'unu üret (palette + fonts + aesthetic)
+3. SCREEN_MAP'i (yukarıdaki) çıktıya geri ver — değiştirme
+4. Aşağıdaki KEY: VALUE formatında çıktı yaz, sonra `step complete` çağır
 
 ## Çıktı
 
 ```
 STATUS: done
-DEVICE_TYPE: DESKTOP|TABLET|MOBILE
+DEVICE_TYPE: DESKTOP
 DESIGN_SYSTEM: <JSON>
-SCREEN_MAP:
-[
-  {"screenId": "<hash>", "name": "<Türkçe başlık>", "type": "<menu|...>", "description": "<1 cümle>"}
-]
+SCREEN_MAP: <yukarıdaki JSON aynısı>
 ```
 
 Detaylı kurallar: rules.md (aşağıda eklendi).

@@ -113,6 +113,53 @@ All visible text must be in Turkish. Use a dark, modern theme.`;
     }
   } catch (e) { logger.debug(`[module:design preclaim] design-dom-extract: ${String(e).slice(0, 80)}`); }
 
+  // 6. AUTO-GENERATE SCREEN_MAP from DESIGN_MANIFEST.json so the agent only
+  //    has to confirm + emit DESIGN_SYSTEM. Without this the agent spends
+  //    6-10min building SCREEN_MAP entry-by-entry — pure waste, manifest
+  //    already has every field we need.
+  const manifestPath = path.join(stitchDir, "DESIGN_MANIFEST.json");
+  if (fs.existsSync(manifestPath)) {
+    try {
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+      if (Array.isArray(manifest)) {
+        const screenMap = manifest
+          .filter((s: any) => s?.screenId && s?.title)
+          .map((s: any) => ({
+            screenId: String(s.screenId),
+            name: String(s.title),
+            type: classifyScreenType(String(s.title)),
+            description: String(s.title) + " ekranı",
+          }));
+        if (screenMap.length > 0) {
+          ctx.context["screen_map"] = JSON.stringify(screenMap);
+          logger.info(`[module:design preclaim] auto-generated SCREEN_MAP with ${screenMap.length} entries`, { runId: ctx.runId });
+        }
+      }
+    } catch (e) {
+      logger.warn(`[module:design preclaim] SCREEN_MAP auto-generate failed: ${String(e).slice(0, 200)}`, { runId: ctx.runId });
+    }
+  }
+}
+
+// Lightweight screen-type heuristic from Turkish title keywords.
+// The agent can override in its output if a more specific type is needed,
+// but defaults are good enough for stories step's screen→story binding.
+function classifyScreenType(title: string): string {
+  const t = title.toLowerCase();
+  if (/(menü|menu|ana sayfa|home|landing)/.test(t)) return "menu";
+  if (/(liste|list|katalog)/.test(t)) return "list-view";
+  if (/(detay|detail)/.test(t)) return "detail";
+  if (/(form|yeni|ekle|düzenle|edit|add)/.test(t)) return "form";
+  if (/(ayar|setting|profil|profile)/.test(t)) return "settings";
+  if (/(sonuç|result|skor|score)/.test(t)) return "result";
+  if (/(oyun|game|play)/.test(t)) return "game";
+  if (/(seçim|select|seviye|level|zorluk)/.test(t)) return "selection";
+  if (/(bilgi|info|hakkında|nasıl|how)/.test(t)) return "info";
+  if (/(boş|empty|404|hata|error)/.test(t)) return "error";
+  if (/(yükle|upload)/.test(t)) return "form";
+  return "app-screen";
+}
+
   // 4b. Tracking-file fallback: direct curl from cached URLs if download-all returned 0
   if (htmlCount === 0) {
     const trackFile = path.join(repo, ".stitch-screens-" + projId + ".json");

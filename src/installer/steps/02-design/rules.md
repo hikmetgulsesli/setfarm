@@ -1,74 +1,90 @@
 # DESIGN Step — Kurallar
 
-Pipeline Stitch API ile ekranları **otomatik üretir** (preClaim hook). Senin işin: doğrula, sınıflandır, design token'ları çıkar.
+Pipeline her şeyi hazırladı:
+- Stitch ekranları üretildi (`stitch/*.html`, `*.png`)
+- `stitch/DESIGN_MANIFEST.json` (screenId+title liste)
+- `stitch/DESIGN_DOM.json` (element-level)
+- `stitch/design-tokens.css` + `design-tokens.json` (renkler, fontlar)
+- `SCREEN_MAP` context'e otomatik enjekte edildi (manifest'ten)
+
+Senin işin **tek karar**: DESIGN_SYSTEM raporu (aesthetic + palette + fonts).
 
 ## Yapma — DO NOT
 
-- Stitch API'yi sen çağırma (`generate-screen`, `create-project`, `list-screens` YASAK)
-- Yeni HTML üretme — sadece `stitch/` altındaki dosyaları doğrula
-- Layout/CSS değiştirme — Stitch çıktısı sabit baseline
-- Kod yazma — design step'in çıktısı SCREEN_MAP + DESIGN_SYSTEM
+- Stitch API çağırma (zaten üretildi)
+- HTML/CSS değiştirme
+- SCREEN_MAP elle yazma — pipeline auto-generated
+- design-tokens.css üretme (Stitch zaten verdi)
 
-## Phase 1: Inputs
+## Yapılacaklar
 
-1. PRD'yi oku (özellikle `## Ekranlar` tablosu)
-2. `references/design-standards.md` — palette, font, anti-pattern
-3. `stitch/` dizinindeki HTML dosyaları (DESIGN_MANIFEST.json)
-4. Device type belirle: mobil → `MOBILE`, tablet → `TABLET`, varsayılan → `DESKTOP`
+1. `stitch/design-tokens.css` veya `design-tokens.json` dosyalarını oku
+2. Renk paleti, font ailesi, aesthetic'i çıkar
+3. DESIGN_SYSTEM JSON üret (aşağıdaki schema)
+4. (Opsiyonel) SCREEN_MAP'i context'ten al, type'larda override gerekiyorsa düzelt
+5. Output ver
 
-## Phase 2: Validate
+## DESIGN_SYSTEM Schema
 
-Her HTML için:
-- Boyut > 500 bytes (küçükse download fail)
-- Renk değerleri palette'le tutarlı
-- Font familyleri seçilen font pair'le aynı (Inter/Roboto/Arial YASAK)
-- Türkçe metin (İngilizce default değil)
-- Dark mode CSS (`prefers-color-scheme: dark` veya `[data-theme="dark"]`)
-- Layout PRD ekran açıklamasıyla eşleşiyor
+```json
+{
+  "aesthetic": "minimal|brutalist|luxury|editorial|industrial|organic|playful|corporate",
+  "palette": {
+    "primary": "#hex",
+    "secondary": "#hex",
+    "background": "#hex",
+    "surface": "#hex",
+    "text": "#hex",
+    "border": "#hex",
+    "success": "#hex",
+    "error": "#hex",
+    "warning": "#hex"
+  },
+  "typography": {
+    "heading": "Font Name",
+    "body": "Font Name"
+  },
+  "iconLibrary": "lucide|heroicons",
+  "borderRadius": "4|8|12|16",
+  "spacing": "4|8|16|24|32|48|64"
+}
+```
 
-PRD ekran tablosu ile cross-reference: eksik ekran var mı, fazla ekran var mı?
+## Aesthetic Seçim Rehberi
 
-## Phase 3: Tutarlılık
-
-Tüm ekranlar için:
-- Heading + body font tutarlı
-- Primary/accent/surface renkleri eşleşiyor
-- Spacing scale (4/8/16/24/32/48/64 px)
-- Border-radius, shadow, button/card pattern'leri tutarlı
-- Hover/focus state tanımlı, transition 150-200ms
-
-## Phase 4: Design Tokens
-
-İlk HTML'den CSS custom properties çıkar → `stitch/design-tokens.css`:
-- `--color-*` (primary, accent, bg, surface, text, border)
-- `--font-*` (heading, body, mono)
-- `--spacing-*`, `--radius-*`, `--shadow-*`
-
-## Phase 5: SCREEN_MAP
-
-Her ekran için:
-- `screenId` (Stitch'ten gelen, hash)
-- `name` (PRD'deki Türkçe başlık)
-- `type` (`menu | list-view | detail | form | dashboard | game | settings | result | info | error`)
-- `description` (1 cümle, ne için)
-
-PRD'deki tüm ekranlar dahil olmalı.
+design-tokens'tan çıkardığın görsel karaktere göre:
+- **minimal**: bol whitespace, sade renk (1-2), sans-serif body
+- **brutalist**: kalın font, yüksek kontrast, geometrik
+- **luxury**: serif heading, koyu palette + altın aksent
+- **editorial**: serif heading, columns, typography vurgu
+- **industrial**: monospace, technical, blueprint
+- **organic**: yumuşak köşeler, doğal renkler, akıcı font
+- **playful**: parlak renkler, yuvarlak köşeler, friendly
+- **corporate**: mavi tonlar, professional, serious
 
 ## Output Format
 
 ```
 STATUS: done
 DEVICE_TYPE: DESKTOP|TABLET|MOBILE
-DESIGN_SYSTEM: <aesthetic + palette + fonts JSON>
+DESIGN_SYSTEM:
+{
+  "aesthetic": "...",
+  "palette": { ... },
+  "typography": { ... },
+  ...
+}
 SCREEN_MAP:
 [
-  {"screenId": "...", "name": "Ana Menü", "type": "menu", "description": "..."}
+  {"screenId": "...", "name": "...", "type": "...", "description": "..."}
 ]
 ```
 
-## Yapma
+SCREEN_MAP context'te zaten dolu — sadece olduğu gibi geri verirsin (Türkçe screen isimleri ve type'lar pipeline'da otomatik atandı).
 
-- DESIGN_MANIFEST.json üzerinden DUPLICATE oluşturma
-- Her HTML için ayrı ayrı Stitch API çağırma
-- Layout/CSS değiştirip kaydetme
-- İngilizce screen adı (PRD'deki Türkçe başlığı kullan)
+## Yanlış output örneği (yapma)
+
+- "DESIGN_SYSTEM not generated yet, working on it..." (yarım iş)
+- Stitch API'a yeni çağrı yapma (yasak)
+- SCREEN_MAP'i sıfırdan yazma (pipeline'a saygı)
+- HTML dosyalarını editleyip kaydetme (immutable baseline)
