@@ -39,6 +39,9 @@ export interface StepModule {
   type: "single" | "loop";
   agentRole: string;
 
+  // Optional: heavy work BEFORE the agent claims (e.g. design step calls
+  // Stitch API to generate screens, so the agent only sees the result).
+  preClaim?(ctx: ClaimContext): Promise<void>;
   injectContext(ctx: ClaimContext): Promise<void>;
   buildPrompt(ctx: PromptContext): string;
   // Optional: mutate parsed in-place (e.g. auto-fix REPO path) before validation

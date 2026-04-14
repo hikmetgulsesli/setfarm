@@ -893,114 +893,8 @@ async function claimSingleStep(
     }
   }
 
-  // ═══ DESIGN PRE-CLAIM: Auto-generate Stitch screens from PRD ═══
-  if (step.step_id === "design") {
-    const dRepo = context["repo"] || context["REPO"] || "";
-    const dPrd = context["prd"] || context["PRD"] || "";
-    const dStitchDir = dRepo ? path.join(dRepo, "stitch") : "";
-    const existingHtml = dStitchDir && fs.existsSync(dStitchDir)
-      ? fs.readdirSync(dStitchDir).filter((f: string) => f.endsWith(".html")).length : 0;
-
-    if (dRepo && dPrd && existingHtml === 0) {
-      const stitchScript = path.join(os.homedir(), ".openclaw/setfarm-repo/scripts/stitch-api.mjs");
-      fs.mkdirSync(dStitchDir, { recursive: true });
-
-      // 1. Ensure Stitch project
-      let projId = "";
-      try {
-        const dotStitch = path.join(dRepo, ".stitch");
-        if (fs.existsSync(dotStitch)) projId = JSON.parse(fs.readFileSync(dotStitch, "utf-8")).projectId || "";
-      } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
-      if (!projId) {
-        try {
-          const ensureOut = execFileSync("node", [stitchScript, "ensure-project", path.basename(dRepo), dRepo],
-            { encoding: "utf-8", timeout: 30000, cwd: dRepo });
-          try { projId = JSON.parse(ensureOut).projectId || ""; } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
-        } catch (e) { logger.warn(`[design-preclaim] ensure-project failed: ${e}`, { runId: step.run_id }); }
-      }
-
-      if (projId) {
-        context["stitch_project_id"] = projId;
-        // 2. Write PRD as Stitch prompt
-        const promptFile = path.join(dStitchDir, ".generate-prompt.txt");
-        const deviceType = context["device_type"] || "DESKTOP";
-        fs.writeFileSync(promptFile, dPrd + `
-
-Generate a SEPARATE screen design for EVERY page, view, modal, dialog, tab panel, and settings screen described in this PRD. Do NOT skip ANY screen — even if it seems minor.
-
-MANDATORY SCREENS:
-- If the PRD mentions "settings" or "ayarlar" → generate a Settings screen
-- If the PRD mentions tabs or bottom navigation → generate EACH tab view as a separate screen
-- If the PRD mentions modals (statistics, help, share, confirmation) → generate each as a separate screen
-- If the PRD mentions error states, empty states, loading states → generate those too
-- Generate at least as many screens as there are distinct views/pages/modals in the PRD
-
-All visible text must be in Turkish. Use a dark, modern theme.`);
-        logger.info(`[design-preclaim] Generating screens from PRD via generate-all-screens (project: ${projId})`, { runId: step.run_id });
-
-        // 3. generate-all-screens
-        try {
-          const genOut = execFileSync("node", [stitchScript, "generate-all-screens", projId, promptFile, deviceType, "GEMINI_3_1_PRO"],
-            { encoding: "utf-8", timeout: 600000, cwd: dRepo });
-          let genResult: any = {};
-          try { genResult = JSON.parse(genOut); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
-          logger.info(`[design-preclaim] Generated ${genResult.total || 0} screens in ${genResult.elapsedSeconds || "?"}s`, { runId: step.run_id });
-        } catch (e) { logger.warn(`[design-preclaim] generate-all-screens failed: ${e}`, { runId: step.run_id }); }
-
-        // 4. download-all — retry if 0 HTML (Stitch API can have delay after generation)
-        let htmlCount = 0;
-        for (let dlRetry = 0; dlRetry < 3; dlRetry++) {
-          try {
-            const dlOut = execFileSync("node", [stitchScript, "download-all", projId, dStitchDir],
-              { encoding: "utf-8", timeout: 180000, cwd: dRepo });
-            let dlResult: any = {};
-            try { dlResult = JSON.parse(dlOut); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
-            htmlCount = fs.readdirSync(dStitchDir).filter((f: string) => f.endsWith(".html")).length;
-            logger.info(`[design-preclaim] Downloaded ${dlResult.downloaded || 0}/${dlResult.total || 0} screens (${htmlCount} HTML files, attempt ${dlRetry + 1}/3)`, { runId: step.run_id });
-            context["screens_generated"] = String(dlResult.downloaded || 0);
-            if (htmlCount > 0) break;
-          } catch (e) { logger.warn(`[design-preclaim] download-all failed (attempt ${dlRetry + 1}/3): ${e}`, { runId: step.run_id }); }
-          if (htmlCount === 0 && dlRetry < 2) {
-            logger.info(`[design-preclaim] 0 HTML after download, waiting 30s before retry ${dlRetry + 2}/3`, { runId: step.run_id });
-            await new Promise(r => setTimeout(r, 30000));
-          }
-        }
-
-        // 4b. Fallback: if still 0 HTML, try direct download from tracking file URLs
-        if (htmlCount === 0) {
-          const trackFile = path.join(dRepo, ".stitch-screens-" + projId + ".json");
-          if (fs.existsSync(trackFile)) {
-            try {
-              const tracked = JSON.parse(fs.readFileSync(trackFile, "utf-8"));
-              logger.info(`[design-preclaim] Trying direct download from tracking file (${tracked.length} entries)`, { runId: step.run_id });
-              for (const s of tracked) {
-                if (s.htmlUrl) {
-                  const hp = path.join(dStitchDir, (s.screenId || "unknown") + ".html");
-                  if (!fs.existsSync(hp)) {
-                    try {
-                      const resp = execFileSync("curl", ["-sL", "-o", hp, "--max-time", "30", s.htmlUrl], { timeout: 35000 });
-                      if (fs.existsSync(hp) && fs.statSync(hp).size > 100) htmlCount++;
-                    } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
-                  }
-                }
-              }
-              logger.info(`[design-preclaim] Tracking fallback: ${htmlCount} HTML files recovered`, { runId: step.run_id });
-            } catch (e) { logger.warn(`[design-preclaim] Tracking fallback failed: ${e}`, { runId: step.run_id }); }
-          }
-        }
-
-        // 5. Generate DESIGN_DOM.json
-        try {
-          const domScript = path.join(os.homedir(), ".openclaw/setfarm-repo/scripts/design-dom-extract.mjs");
-          if (fs.existsSync(domScript)) {
-            execFileSync("node", [domScript, dStitchDir], { encoding: "utf-8", timeout: 30000 });
-          }
-        } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
-
-        await updateRunContext(step.run_id, context);
-      }
-    }
-  }
+  // (Design pre-claim moved to src/installer/steps/02-design/preclaim.ts —
+  // invoked by the step-module delegation block below as module.preClaim.)
 
   // PR REVIEW DELAY GATE: Wait for external review comments (Gemini, Copilot) before verify claim
   // BUG FIX: Previously used step.updated_at as baseline but updated it on every defer, resetting
@@ -1046,20 +940,31 @@ All visible text must be in Turkish. Use a dark, modern theme.`);
     }
   }
 
-  // Step module claim-side delegation (v2026-04-14). Let the module inject any
-  // context it owns — same pruned context object is passed, so changes flow
-  // through to the agent's resolved prompt.
+  // Step module claim-side delegation (v2026-04-14). Order:
+  //   1. preClaim — heavy work BEFORE agent claims (Stitch API for design step)
+  //   2. injectContext — inject step-specific context vars
+  // Both share the same pruned context object so changes flow into the agent's
+  // resolved prompt below.
   try {
     const _modRegistry = await import("./steps/registry.js");
     const _stepModule = _modRegistry.get(step.step_id);
     if (_stepModule) {
-      await _stepModule.injectContext({
+      const _modCtx = {
         runId: step.run_id,
         stepId: step.step_id,
         task: prunedContextSingle["task"] || prunedContextSingle["TASK"] || "",
         retryCount: step.retry_count,
         context: prunedContextSingle,
-      });
+      };
+      if (_stepModule.preClaim) {
+        try {
+          await _stepModule.preClaim(_modCtx);
+          await updateRunContext(step.run_id, prunedContextSingle);
+        } catch (_pce) {
+          logger.warn(`[step-module] ${_stepModule.id} preClaim failed (non-fatal): ${String(_pce).slice(0, 200)}`, { runId: step.run_id });
+        }
+      }
+      await _stepModule.injectContext(_modCtx);
     }
   } catch (_ie) {
     logger.warn(`[step-module] injectContext failed: ${String(_ie).slice(0, 200)}`, { runId: step.run_id });
@@ -2033,16 +1938,9 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
     }
   }
 
-  // Design Contract + Rules (design step)
+  // Design Contract + Rules — moved to 02-design/guards.ts onComplete (called via step-module delegation).
+  // The download fallback below stays as belt-and-suspenders if the module's preClaim missed something.
   if (step.step_id === "design" && parsed["status"]?.toLowerCase() === "done") {
-    const designErr = await processDesignCompletion(step.run_id, context);
-    if (designErr) {
-      logger.warn(`[design-guardrail] Failed`, { runId: step.run_id, stepId: step.step_id });
-      if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
-      await failStep(stepId, designErr);
-      return { advanced: false, runCompleted: false };
-    }
-
     // Immediately download Stitch HTML after design completes (don't wait for setup-repo)
     const dRepo = context["repo"] || context["REPO"] || "";
     let dProjId = context["stitch_project_id"] || "";
