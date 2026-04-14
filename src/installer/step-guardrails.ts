@@ -79,8 +79,8 @@ export function checkTestFailures(output: string): string | null {
  * from raw output by parseAndInsertStories — listing it here causes a hard
  * false-positive on every stories step (run #339 hit this on first deploy).
  */
+// "plan" moved to src/installer/steps/01-plan/guards.ts (StepModule.validateOutput owns full field list)
 const REQUIRED_OUTPUT_FIELDS: Record<string, string[]> = {
-  "plan": ["repo", "branch", "tech_stack"],
   "setup-repo": ["existing_code"],
   "setup-build": ["build_cmd"],
 };
