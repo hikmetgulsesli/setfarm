@@ -863,15 +863,8 @@ async function claimSingleStep(
     context["stories_json"] = JSON.stringify(storiesForTemplate, null, 2);
   }
 
-  // Stories step: inject predicted screen file paths so planner doesn't
-  // invent English/fake paths. See computePredictedScreenFiles above.
-  if (step.step_id === "stories" && context["repo"]) {
-    const predictedScreens = computePredictedScreenFiles(context["repo"]);
-    if (predictedScreens.length > 0) {
-      context["predicted_screen_files"] = JSON.stringify(predictedScreens, null, 2);
-      logger.info(`[predicted-screens] Injected ${predictedScreens.length} predicted screen path(s) for stories step`, { runId: step.run_id });
-    }
-  }
+  // (Stories predicted_screen_files inject moved to 03-stories/context.ts —
+  // invoked via the step-module claim delegation block.)
 
   // BUG FIX: If this is a verify step for a verify_each loop, inject the correct
   // story info from the oldest unverified 'done' story (not from stale context).
@@ -931,14 +924,9 @@ async function claimSingleStep(
   if (contextBytesBefore > contextBytesAfter + 1000) {
     logger.info(`[context-prune] ${step.step_id}: ${contextBytesBefore}→${contextBytesAfter} bytes (${Math.round((1 - contextBytesAfter / contextBytesBefore) * 100)}% trimmed)`, { runId: step.run_id });
   }
-  // P1 fix (5-model consensus): default reminder for stories on first attempt.
-  // (Plan step reminder is owned by the plan module's injectContext — see
-  // step-module claim delegation below.)
-  if (step.retry_count === 0 && step.step_id === "stories") {
-    if (!prunedContextSingle["previous_failure"]) {
-      prunedContextSingle["previous_failure"] = "REMINDER: Output MUST include ALL mandatory fields. For stories: STORIES_JSON array with scope_files per story (NO overlapping files). Missing = instant REJECT.";
-    }
-  }
+  // (Stories first-attempt reminder moved to 03-stories/context.ts — invoked
+  // via the step-module claim delegation block below.)
+  // (Plan step reminder is owned by the plan module's injectContext.)
 
   // Step module claim-side delegation (v2026-04-14). Order:
   //   1. preClaim — heavy work BEFORE agent claims (Stitch API for design step)
@@ -1765,10 +1753,16 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
       }
       if (_stepModule.onComplete) {
         try {
-          await _stepModule.onComplete({ runId: step.run_id, stepId: step.step_id, parsed, context });
+          await _stepModule.onComplete({ runId: step.run_id, stepId: step.step_id, parsed, context, rawOutput: output });
           logger.info(`[step-module] ${_stepModule.id} onComplete ok`, { runId: step.run_id });
         } catch (_oe) {
-          logger.warn(`[step-module] ${_stepModule.id} onComplete error (non-fatal): ${String(_oe).slice(0, 200)}`, { runId: step.run_id });
+          // Module onComplete threw — treat as fatal guardrail rejection (e.g. stories
+          // 0-stories, missing scope_files, hallucinated screen path).
+          const _msg = `GUARDRAIL [module:${_stepModule.id}]: ${String(_oe instanceof Error ? _oe.message : _oe).slice(0, 400)}`;
+          logger.warn(`[step-module] ${_msg}`, { runId: step.run_id });
+          if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
+          await failStep(stepId, _msg);
+          return { advanced: false, runCompleted: false };
         }
       }
     }
@@ -2637,160 +2631,9 @@ ${screenDescs}
 
   await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
 
-  // T5: Parse STORIES_JSON from output (any step, typically the planner)
-  await parseAndInsertStories(output, step.run_id);
-
-  // STORIES STEP EARLY GUARD (v1.5.53): Catch 0 stories immediately instead of wasting setup time
-  if (step.step_id === "stories" && parsed["status"]?.toLowerCase() === "done") {
-    const storyCount = await countAllStories(step.run_id);
-    if (storyCount === 0) {
-      const noStoriesMsg = "GUARDRAIL: Stories step completed with STATUS: done but produced 0 stories — STORIES_JSON missing or empty";
-      logger.warn(`[stories-guardrail] ${noStoriesMsg}`, { runId: step.run_id });
-      if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
-      await failStep(stepId, noStoriesMsg);
-      return { advanced: false, runCompleted: false };
-    }
-
-    // cuddly-sleeping-quail: every non-setup story MUST declare scope_files. An
-    // empty scope_files means developer agents have no bounds and every story
-    // writes the same files (package.json, App.tsx, main.tsx). The merge queue
-    // then dies with 4/4 conflicts — run #384 failure mode. Setup story
-    // (story_index 0) is exempt because it owns all configuration.
-    const missingScopeRows = await pgQuery<{ story_id: string }>(
-      "SELECT story_id FROM stories WHERE run_id = $1 AND story_index > 0 AND (scope_files IS NULL OR scope_files = '' OR scope_files = '[]')",
-      [step.run_id]
-    );
-    if (missingScopeRows.length > 0) {
-      const missingIds = missingScopeRows.map(r => r.story_id).join(", ");
-      const scopeErr = `GUARDRAIL: ${missingScopeRows.length} story/stories missing scope_files (${missingIds}). Every non-setup story MUST declare scope_files listing the source files it will create or modify. Empty scope_files causes merge conflicts because developers write whatever they want. Re-output STORIES_JSON with scope_files populated for each story.`;
-      logger.warn(`[stories-guardrail] ${scopeErr}`, { runId: step.run_id });
-      if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
-      await pgRun("DELETE FROM stories WHERE run_id = $1", [step.run_id]);
-      await failStep(stepId, scopeErr);
-      return { advanced: false, runCompleted: false };
-    }
-
-    // cuddly-sleeping-quail (run #398 postmortem): scope_files OVERLAP detection.
-    // v2026.4.12: Auto-fix overlaps instead of failing — keep file in first story
-    // (lowest story_index), move to shared_files for subsequent stories. This
-    // prevents 3-retry terminal failures when planner can’t avoid overlap.
-    const allScopeRows = await pgQuery<{ story_id: string; scope_files: string | null; shared_files: string | null; story_index: number }>(
-      "SELECT story_id, scope_files, shared_files, story_index FROM stories WHERE run_id = $1 ORDER BY story_index",
-      [step.run_id]
-    );
-    const fileOwner: Record<string, string> = {};
-    const overlaps: string[] = [];
-    const storyFixMap: Record<string, { removeFromScope: string[]; addToShared: string[] }> = {};
-    for (const row of allScopeRows) {
-      if (!row.scope_files) continue;
-      try {
-        const files: string[] = JSON.parse(row.scope_files);
-        if (!Array.isArray(files)) continue;
-        for (const f of files) {
-          if (typeof f !== "string") continue;
-          if (fileOwner[f]) {
-            overlaps.push(`${f} \u2192 ${fileOwner[f]} + ${row.story_id}`);
-            // Auto-fix: remove from this story's scope, add to shared
-            if (!storyFixMap[row.story_id]) storyFixMap[row.story_id] = { removeFromScope: [], addToShared: [] };
-            storyFixMap[row.story_id].removeFromScope.push(f);
-            storyFixMap[row.story_id].addToShared.push(f);
-          } else {
-            fileOwner[f] = row.story_id;
-          }
-        }
-      } catch (e) { logger.debug(`[parse] Skip malformed: ${String(e).slice(0, 80)}`); }
-    }
-    if (overlaps.length > 0) {
-      logger.warn(`[stories-guardrail] scope_files overlap AUTO-FIXED: ${overlaps.join("; ")}`, { runId: step.run_id });
-      // Apply fixes to DB — move overlapping files from scope_files to shared_files
-      for (const row of allScopeRows) {
-        const fix = storyFixMap[row.story_id];
-        if (!fix) continue;
-        try {
-          const scopeFiles: string[] = JSON.parse(row.scope_files || "[]");
-          const sharedFiles: string[] = JSON.parse(row.shared_files || "[]");
-          const newScope = scopeFiles.filter(f => !fix.removeFromScope.includes(f));
-          const newShared = [...new Set([...sharedFiles, ...fix.addToShared])];
-          await pgRun(
-            "UPDATE stories SET scope_files = $1, shared_files = $2, updated_at = $3 WHERE run_id = $4 AND story_id = $5",
-            [JSON.stringify(newScope), JSON.stringify(newShared), now(), step.run_id, row.story_id]
-          );
-          logger.info(`[stories-guardrail] Auto-fixed ${row.story_id}: removed ${fix.removeFromScope.length} from scope, added to shared`, { runId: step.run_id });
-        } catch (e) {
-          logger.warn(`[stories-guardrail] Auto-fix DB update failed for ${row.story_id}: ${String(e)}`, { runId: step.run_id });
-        }
-      }
-    }
-
-    // 2026-04-14 fix: hallucinated screen path detection + screen owner check.
-    // Planner was inventing English paths (src/pages/GameScreen.tsx) that never
-    // exist because stitch-to-jsx produces src/screens/OyunEkrani.tsx. Detect
-    // these and fail fast. Also enforce exactly-one-owner-per-screen to prevent
-    // merge conflicts (#428, #430).
-    const predictedScreens = computePredictedScreenFiles(context["repo"] || "");
-    if (predictedScreens.length > 0) {
-      const validScreenPaths = new Set(predictedScreens.map(s => s.filePath));
-      const hallucinatedPaths: Array<{ story: string; path: string }> = [];
-      const screenOwners: Record<string, string[]> = {};
-
-      for (const row of allScopeRows) {
-        let scope: string[] = [];
-        let shared: string[] = [];
-        try { scope = JSON.parse(row.scope_files || "[]"); } catch { scope = []; }
-        try { shared = JSON.parse(row.shared_files || "[]"); } catch { shared = []; }
-
-        for (const f of [...scope, ...shared]) {
-          if (typeof f !== "string") continue;
-          // Screen-like hallucinated path: src/pages/, src/views/, src/components/screens/
-          if (/^src\/(pages|views|components\/screens)\/[A-Z][^/]*\.tsx?$/.test(f) && !validScreenPaths.has(f)) {
-            hallucinatedPaths.push({ story: row.story_id, path: f });
-          }
-        }
-        for (const f of scope) {
-          if (typeof f === "string" && validScreenPaths.has(f)) {
-            if (!screenOwners[f]) screenOwners[f] = [];
-            screenOwners[f].push(row.story_id);
-          }
-        }
-      }
-
-      if (hallucinatedPaths.length > 0) {
-        const list = hallucinatedPaths.slice(0, 10).map(h => `${h.story}:${h.path}`).join(", ");
-        const validList = predictedScreens.slice(0, 10).map(s => s.filePath).join(", ");
-        const halluMsg = `GUARDRAIL: ${hallucinatedPaths.length} hallucinated screen path(s) (${list}). Stitch-to-JSX produces screens at src/screens/<TurkishName>.tsx. Valid paths: ${validList}. Use PREDICTED_SCREEN_FILES exactly — do NOT invent English paths like src/pages/GameScreen.tsx.`;
-        logger.warn(`[stories-guardrail] Hallucinated screen paths: ${list}`, { runId: step.run_id });
-        if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
-        await pgRun("DELETE FROM stories WHERE run_id = $1", [step.run_id]);
-        await failStep(stepId, halluMsg);
-        return { advanced: false, runCompleted: false };
-      }
-
-      // Multi-owner screen auto-fix: keep first owner (lowest story_index),
-      // move to shared_files for subsequent. Prevents merge conflicts.
-      const multiOwned = Object.entries(screenOwners).filter(([_, owners]) => owners.length > 1);
-      if (multiOwned.length > 0) {
-        const summary = multiOwned.slice(0, 5).map(([f, o]) => `${f} → [${o.join(", ")}]`).join("; ");
-        logger.warn(`[stories-guardrail] Multi-owned screens auto-fixed: ${summary}`, { runId: step.run_id });
-        for (const [file, owners] of multiOwned) {
-          const losers = owners.slice(1);
-          for (const loser of losers) {
-            const row = allScopeRows.find(r => r.story_id === loser);
-            if (!row) continue;
-            try {
-              const scope = JSON.parse(row.scope_files || "[]").filter((f: string) => f !== file);
-              const shared = [...new Set([...JSON.parse(row.shared_files || "[]"), file])];
-              await pgRun(
-                "UPDATE stories SET scope_files = $1, shared_files = $2, updated_at = $3 WHERE run_id = $4 AND story_id = $5",
-                [JSON.stringify(scope), JSON.stringify(shared), now(), step.run_id, loser]
-              );
-            } catch (e) {
-              logger.warn(`[stories-guardrail] Multi-owner fix DB update failed for ${loser}: ${String(e)}`, { runId: step.run_id });
-            }
-          }
-        }
-      }
-    }
-  }
+  // (parseAndInsertStories + 0-stories + scope_files + overlap + hallucinated-path
+  //  + multi-owner guardrails moved to 03-stories/guards.ts onComplete — invoked
+  //  via step-module delegation block above.)
 
   // Auto-generate SCREEN_MAP if stories step did not produce one with story mappings (fallback)
   // v12.0: stories step should output SCREEN_MAP with stories field, but if it doesn't, auto-generate

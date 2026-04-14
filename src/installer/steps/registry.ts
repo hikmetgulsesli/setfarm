@@ -1,6 +1,7 @@
 import type { StepModule } from "./types.js";
 import { planModule } from "./01-plan/module.js";
 import { designModule } from "./02-design/module.js";
+import { storiesModule } from "./03-stories/module.js";
 
 const modules = new Map<string, StepModule>();
 
@@ -11,6 +12,7 @@ function register(m: StepModule): void {
 
 register(planModule);
 register(designModule);
+register(storiesModule);
 
 export function get(id: string): StepModule | undefined {
   return modules.get(id);

@@ -1,0 +1,165 @@
+import type { ParsedOutput, ValidationResult, CompleteContext } from "../types.js";
+import { pgQuery, pgRun, now } from "../../../db-pg.js";
+import { logger } from "../../../lib/logger.js";
+import { parseAndInsertStories } from "../../story-ops.js";
+import { computePredictedScreenFiles } from "./context.js";
+
+// validateOutput is intentionally minimal at the field level — STORIES_JSON
+// arrives as multi-line raw text (not in parsed[]) and is ingested by
+// parseAndInsertStories during onComplete. Module-level checks here catch
+// only the most obvious agent failure modes.
+export function validateOutput(parsed: ParsedOutput): ValidationResult {
+  const errors: string[] = [];
+  if ((parsed.status || "").toLowerCase() !== "done") {
+    errors.push(`STATUS must be 'done' (got: '${parsed.status || ""}')`);
+  }
+  return { ok: errors.length === 0, errors };
+}
+
+// onComplete owns the full stories guardrail chain. Failures fail the step
+// (return early); auto-fixes mutate the DB in-place. The pipeline expects
+// stories already inserted into the DB before this runs (parseAndInsertStories
+// is called from completeStep before reaching here).
+export async function onComplete(ctx: CompleteContext): Promise<void> {
+  const { runId, parsed, context, rawOutput } = ctx;
+
+  // 0. Parse + insert STORIES_JSON from raw output (line-based parsed[] can't
+  //    capture multi-line JSON). No-op if rawOutput missing or no STORIES_JSON.
+  if (rawOutput) {
+    try {
+      await parseAndInsertStories(rawOutput, runId);
+    } catch (e) {
+      const msg = `parseAndInsertStories failed: ${String(e instanceof Error ? e.message : e).slice(0, 200)}`;
+      logger.warn(`[module:stories] ${msg}`, { runId });
+      throw new Error(msg);
+    }
+  }
+
+  // 1. 0-stories check — no stories in DB after parsing means a malformed output
+  const countRow = await pgQuery<{ cnt: string }>("SELECT COUNT(*)::text as cnt FROM stories WHERE run_id = $1", [runId]);
+  const storyCount = parseInt(countRow[0]?.cnt || "0", 10);
+  if (storyCount === 0) {
+    const msg = "GUARDRAIL: Stories step completed with STATUS: done but produced 0 stories — STORIES_JSON missing or empty";
+    logger.warn(`[module:stories] ${msg}`, { runId });
+    throw new Error(msg);
+  }
+
+  // 2. missing scope_files (story_index > 0 — setup story exempt)
+  const missingScope = await pgQuery<{ story_id: string }>(
+    "SELECT story_id FROM stories WHERE run_id = $1 AND story_index > 0 AND (scope_files IS NULL OR scope_files = '' OR scope_files = '[]')",
+    [runId]
+  );
+  if (missingScope.length > 0) {
+    const ids = missingScope.map(r => r.story_id).join(", ");
+    const msg = `GUARDRAIL: ${missingScope.length} story/stories missing scope_files (${ids}). Every non-setup story MUST declare scope_files. Re-output STORIES_JSON with scope_files populated.`;
+    logger.warn(`[module:stories] ${msg}`, { runId });
+    await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);
+    throw new Error(msg);
+  }
+
+  // 3. scope_files overlap auto-fix (keep first owner by story_index, move
+  //    duplicates from later stories to their shared_files)
+  const allRows = await pgQuery<{ story_id: string; scope_files: string | null; shared_files: string | null; story_index: number }>(
+    "SELECT story_id, scope_files, shared_files, story_index FROM stories WHERE run_id = $1 ORDER BY story_index",
+    [runId]
+  );
+  const fileOwner: Record<string, string> = {};
+  const fixMap: Record<string, { remove: string[]; add: string[] }> = {};
+  const overlaps: string[] = [];
+  for (const row of allRows) {
+    if (!row.scope_files) continue;
+    let files: string[] = [];
+    try { files = JSON.parse(row.scope_files); } catch { continue; }
+    if (!Array.isArray(files)) continue;
+    for (const f of files) {
+      if (typeof f !== "string") continue;
+      if (fileOwner[f]) {
+        overlaps.push(`${f} \u2192 ${fileOwner[f]} + ${row.story_id}`);
+        if (!fixMap[row.story_id]) fixMap[row.story_id] = { remove: [], add: [] };
+        fixMap[row.story_id].remove.push(f);
+        fixMap[row.story_id].add.push(f);
+      } else {
+        fileOwner[f] = row.story_id;
+      }
+    }
+  }
+  if (overlaps.length > 0) {
+    logger.warn(`[module:stories] scope_files overlap auto-fixed: ${overlaps.join("; ")}`, { runId });
+    for (const row of allRows) {
+      const fix = fixMap[row.story_id];
+      if (!fix) continue;
+      try {
+        const scope: string[] = JSON.parse(row.scope_files || "[]");
+        const shared: string[] = JSON.parse(row.shared_files || "[]");
+        const newScope = scope.filter(f => !fix.remove.includes(f));
+        const newShared = [...new Set([...shared, ...fix.add])];
+        await pgRun(
+          "UPDATE stories SET scope_files = $1, shared_files = $2, updated_at = $3 WHERE run_id = $4 AND story_id = $5",
+          [JSON.stringify(newScope), JSON.stringify(newShared), now(), runId, row.story_id]
+        );
+      } catch (e) {
+        logger.warn(`[module:stories] overlap fix update failed for ${row.story_id}: ${String(e).slice(0, 120)}`, { runId });
+      }
+    }
+  }
+
+  // 4. hallucinated screen path detection + 5. multi-owner auto-fix
+  //    (only if Stitch design manifest exists — predicts screen file paths)
+  const predictedScreens = computePredictedScreenFiles(context["repo"] || "");
+  if (predictedScreens.length === 0) return;
+
+  const validScreenPaths = new Set(predictedScreens.map(s => s.filePath));
+  const hallucinated: Array<{ story: string; path: string }> = [];
+  const screenOwners: Record<string, string[]> = {};
+
+  for (const row of allRows) {
+    let scope: string[] = []; let shared: string[] = [];
+    try { scope = JSON.parse(row.scope_files || "[]"); } catch { scope = []; }
+    try { shared = JSON.parse(row.shared_files || "[]"); } catch { shared = []; }
+
+    for (const f of [...scope, ...shared]) {
+      if (typeof f !== "string") continue;
+      if (/^src\/(pages|views|components\/screens)\/[A-Z][^/]*\.tsx?$/.test(f) && !validScreenPaths.has(f)) {
+        hallucinated.push({ story: row.story_id, path: f });
+      }
+    }
+    for (const f of scope) {
+      if (typeof f === "string" && validScreenPaths.has(f)) {
+        if (!screenOwners[f]) screenOwners[f] = [];
+        screenOwners[f].push(row.story_id);
+      }
+    }
+  }
+
+  if (hallucinated.length > 0) {
+    const list = hallucinated.slice(0, 10).map(h => `${h.story}:${h.path}`).join(", ");
+    const validList = predictedScreens.slice(0, 10).map(s => s.filePath).join(", ");
+    const msg = `GUARDRAIL: ${hallucinated.length} hallucinated screen path(s) (${list}). Stitch produces src/screens/<TurkishName>.tsx. Valid: ${validList}. Use PREDICTED_SCREEN_FILES.`;
+    logger.warn(`[module:stories] ${msg}`, { runId });
+    await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);
+    throw new Error(msg);
+  }
+
+  const multiOwned = Object.entries(screenOwners).filter(([_, owners]) => owners.length > 1);
+  if (multiOwned.length > 0) {
+    const summary = multiOwned.slice(0, 5).map(([f, o]) => `${f} → [${o.join(", ")}]`).join("; ");
+    logger.warn(`[module:stories] multi-owned screens auto-fixed: ${summary}`, { runId });
+    for (const [file, owners] of multiOwned) {
+      const losers = owners.slice(1);
+      for (const loser of losers) {
+        const row = allRows.find(r => r.story_id === loser);
+        if (!row) continue;
+        try {
+          const scope = JSON.parse(row.scope_files || "[]").filter((f: string) => f !== file);
+          const shared = [...new Set([...JSON.parse(row.shared_files || "[]"), file])];
+          await pgRun(
+            "UPDATE stories SET scope_files = $1, shared_files = $2, updated_at = $3 WHERE run_id = $4 AND story_id = $5",
+            [JSON.stringify(scope), JSON.stringify(shared), now(), runId, loser]
+          );
+        } catch (e) {
+          logger.warn(`[module:stories] multi-owner fix failed for ${loser}: ${String(e).slice(0, 120)}`, { runId });
+        }
+      }
+    }
+  }
+}
