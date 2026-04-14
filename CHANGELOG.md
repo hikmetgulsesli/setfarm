@@ -4,6 +4,21 @@ Büyük değişiklikler ve session notları. Git commit'leri için `git log`.
 
 ---
 
+### Hotfix (2026-04-14 08:45 TR): Claim Starvation Bug
+
+**Sorun:** 3 paralel run implement step'te pending iken, nefes-39489 (Run #432) 28+ dakika claim edilmedi. Free developer'lar her polling'de NO_WORK aldı.
+
+**Kök neden:** claimStep SELECT sorgusu LIMIT 1 ile tek implement step dönüyor. 3 step aynı step_index=5, hepsi pending, tiebreaker yok. Postgres rastgele satır döndü. Başka dev'e atanmış run'ın step'i geldiğinde downstream CAS fail oluyor ve caller NO_WORK dönüyor — diğer run'lara bakmadan. Assigned dev kendi run'ını bile alamıyor.
+
+**Fix (commit f0389b0):**
+- Query caller-aware: implement step'lerde diğer dev'e atanmış run'lar filtrelenir
+- ORDER BY: own-run (0) > unassigned (1) > others (2)
+- Non-implement step'ler etkilenmez (step_id <> implement short-circuit)
+
+**Doğrulama:** Patch sonrası nexus ilk cron tick'te nefes'i claim etti (workflow.log 05:45:37Z).
+
+---
+
 ## 2026-04-14 — Tek Developer Modeli + Pipeline Güvenilirliği
 
 ### Büyük Değişiklik: Tek Developer / Proje Modeli
