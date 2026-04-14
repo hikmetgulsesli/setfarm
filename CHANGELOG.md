@@ -4,6 +4,29 @@ Büyük değişiklikler ve session notları. Git commit'leri için `git log`.
 
 ---
 
+### Hotfix (2026-04-14 19:24 TR): SCOPE_BLEED Path Mismatch — Stitch-to-JSX Koordinasyon
+
+**Sorun:** Son 15 run'ın 9'u failed. Live DB analizi 4 ayrı kök sebep çıkardı:
+1. Kimi+MiniMax+Zai üçlü çakılması (#434, #420-#427 — transient)
+2. Merge conflict cascade (#428, #430)
+3. **SCOPE_BLEED döngüsü** (#425, #424, #433 US-002 altı kez retry)
+4. Cross-project contamination (#431 — zaten fix'lendi 77c33a0)
+
+**Kök neden (3):** `scripts/stitch-to-jsx.mjs` screen title'ını (Türkçe) `toComponentName()` ile transliterate ederek `src/screens/OyunEkrani.tsx` üretiyor. Planner ise story scope_files'a İngilizce hayali yollar koyuyor (`src/pages/GameScreen.tsx`). Developer ya Türkçe dosyayı modifiye ederek scope bleed'e düşüyor ya da İngilizce dosyayı oluşturarak routing'i kırıyor. 6 retry sonrası abandon.
+
+**Fix (commit d714043):**
+- `computePredictedScreenFiles()`: DESIGN_MANIFEST.json okur, `toComponentName` mirror'ı ile Stitch'in üreteceği tam yolları hesaplar
+- Stories step context'ine `predicted_screen_files` inject edilir (planner görür)
+- Post-complete guardrail: `src/pages/`, `src/views/`, `src/components/screens/` altında PREDICTED_SCREEN_FILES'ta olmayan screen-like yolları tespit eder, failStep + öneri mesajı
+- Multi-owner auto-fix: her screen tam 1 story tarafından scope_files'da sahiplenilir, fazlası shared_files'a taşınır (merge conflict #428/#430'u önler)
+- Planner AGENTS.md'ye Türkçe transliterasyon örnekleri ve MUTLAK kural eklendi
+
+**Güvenlik:** Pure addition (140+, 0-). DESIGN_MANIFEST.json yoksa helper `[]` döner, guardrail no-op — backward compatible.
+
+**Doğrulama:** Run #435 kelime-tahmin-17697 başlatıldı (çok-ekranlı test case: Ana Menü, Zorluk Seçimi, Oyun, Sonuç, Ayarlar, Bilgi). Stories step'te predicted_screen_files injection + scope_files doğrulama gözlenecek.
+
+---
+
 ### Hotfix (2026-04-14 09:54 TR): Peek-Recovery Cross-Project Contamination
 
 **Sorun:** Yemek-42206 (Run #431) 09:40'ta US-001 abandon limit (5/5) ile fail oldu. Log'da "CROSS-PROJECT CONTAMINATION: STORY_BRANCH 0eb0562c-us-003 does not match run prefix b1e1b32c".
