@@ -4,6 +4,23 @@ Büyük değişiklikler ve session notları. Git commit'leri için `git log`.
 
 ---
 
+### Hotfix (2026-04-14 09:54 TR): Peek-Recovery Cross-Project Contamination
+
+**Sorun:** Yemek-42206 (Run #431) 09:40'ta US-001 abandon limit (5/5) ile fail oldu. Log'da "CROSS-PROJECT CONTAMINATION: STORY_BRANCH 0eb0562c-us-003 does not match run prefix b1e1b32c".
+
+**Kök neden:** `peekStep` + `claimStep` recovery blokları `/tmp/setfarm-output-*.txt` tüm dosyaları tarıyordu. Pool agent (feature-dev_developer) olarak polling yapan lux, koda'nın (artık fail olmuş renk-koru'dan kalma) stale `setfarm-output-koda.txt` dosyasını yakaladı ve yemek'in running implement step'ine auto-complete etti. Cross-project-guard yakaladı ama step 5 kez toggle olmuştu.
+
+**Fix (commit 77c33a0):**
+- `peekStep` signature'a `callerGatewayAgent?: string` eklendi
+- Recovery blokları caller verildiğinde SADECE `/tmp/setfarm-output-<caller>.txt` kontrol ediyor
+- CLI peek handler `--caller` flag parse ediyor
+- polling-prompt.md peek komutuna `{{CALLER_FLAG}}` eklendi
+- Non-pool agent'lar (planner/designer) eski davranışı korur
+
+**Doğrulama:** `ensure-crons feature-dev` + stale tmp cleanup sonrası peek komutları artık `--caller <name>` ile çalışıyor.
+
+---
+
 ### Hotfix (2026-04-14 08:45 TR): Claim Starvation Bug
 
 **Sorun:** 3 paralel run implement step'te pending iken, nefes-39489 (Run #432) 28+ dakika claim edilmedi. Free developer'lar her polling'de NO_WORK aldı.
