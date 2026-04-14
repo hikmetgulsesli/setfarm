@@ -104,6 +104,29 @@ All visible text must be in Turkish. Use a dark, modern theme.`;
     }
   }
 
+  // 4b. Tracking-file fallback: direct curl from cached URLs if download-all returned 0
+  if (htmlCount === 0) {
+    const trackFile = path.join(repo, ".stitch-screens-" + projId + ".json");
+    if (fs.existsSync(trackFile)) {
+      try {
+        const tracked = JSON.parse(fs.readFileSync(trackFile, "utf-8"));
+        logger.info(`[module:design preclaim] Tracking-file fallback: ${tracked.length} entries`, { runId: ctx.runId });
+        for (const s of tracked) {
+          if (!s.htmlUrl) continue;
+          const dest = path.join(stitchDir, (s.screenId || "unknown") + ".html");
+          if (fs.existsSync(dest)) continue;
+          try {
+            execFileSync("curl", ["-sL", "-o", dest, "--max-time", "30", s.htmlUrl], { timeout: 35000 });
+            if (fs.existsSync(dest) && fs.statSync(dest).size > 100) htmlCount++;
+          } catch (e) { logger.debug(`[module:design preclaim] curl: ${String(e).slice(0, 80)}`); }
+        }
+        logger.info(`[module:design preclaim] Tracking fallback recovered ${htmlCount} HTML files`, { runId: ctx.runId });
+      } catch (e) {
+        logger.warn(`[module:design preclaim] Tracking fallback failed: ${String(e).slice(0, 200)}`, { runId: ctx.runId });
+      }
+    }
+  }
+
   // 5. DESIGN_DOM.json extraction — element-level info for downstream context.
   //    Best-effort, non-blocking.
   try {
@@ -158,28 +181,4 @@ function classifyScreenType(title: string): string {
   if (/(boş|empty|404|hata|error)/.test(t)) return "error";
   if (/(yükle|upload)/.test(t)) return "form";
   return "app-screen";
-}
-
-  // 4b. Tracking-file fallback: direct curl from cached URLs if download-all returned 0
-  if (htmlCount === 0) {
-    const trackFile = path.join(repo, ".stitch-screens-" + projId + ".json");
-    if (fs.existsSync(trackFile)) {
-      try {
-        const tracked = JSON.parse(fs.readFileSync(trackFile, "utf-8"));
-        logger.info(`[module:design preclaim] Tracking-file fallback: ${tracked.length} entries`, { runId: ctx.runId });
-        for (const s of tracked) {
-          if (!s.htmlUrl) continue;
-          const dest = path.join(stitchDir, (s.screenId || "unknown") + ".html");
-          if (fs.existsSync(dest)) continue;
-          try {
-            execFileSync("curl", ["-sL", "-o", dest, "--max-time", "30", s.htmlUrl], { timeout: 35000 });
-            if (fs.existsSync(dest) && fs.statSync(dest).size > 100) htmlCount++;
-          } catch (e) { logger.debug(`[module:design preclaim] curl: ${String(e).slice(0, 80)}`); }
-        }
-        logger.info(`[module:design preclaim] Tracking fallback recovered ${htmlCount} HTML files`, { runId: ctx.runId });
-      } catch (e) {
-        logger.warn(`[module:design preclaim] Tracking fallback failed: ${String(e).slice(0, 200)}`, { runId: ctx.runId });
-      }
-    }
-  }
 }
