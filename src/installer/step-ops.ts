@@ -1082,6 +1082,15 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
   } catch (e) { logger.warn(`[output-recovery] Check failed: ${String(e)}`, {}); }
 
   // Allow claiming from both pending AND running loop steps (parallel story execution)
+  //
+  // DEVELOPER-POOL AWARE SELECTION:
+  // For implement steps (the only pool-based step), restrict candidates to runs
+  // that are either unassigned or assigned to THIS caller. Without this filter,
+  // the LIMIT 1 could return a step belonging to another developer's run; the
+  // downstream CAS would then fail and the caller would return NO_WORK even
+  // though another claimable run exists (starvation bug — 2026-04-14 postmortem).
+  // Also prefer own-run (0), then unassigned (1), so an already-reserved
+  // developer resumes their own work before picking up a new one.
   const step = await pgGet<StepRow>(
         `SELECT s.id, s.step_id, s.run_id, s.input_template, s.type, s.loop_config, s.status as step_status, s.retry_count, s.output
          FROM steps s
@@ -1089,6 +1098,12 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
          WHERE s.agent_id = $1
            AND (s.status = 'pending' OR (s.status = 'running' AND s.type = 'loop'))
            AND r.status NOT IN ('failed', 'cancelled')
+           AND (
+             $2::text IS NULL
+             OR s.step_id <> 'implement'
+             OR r.assigned_developer IS NULL
+             OR r.assigned_developer = $2
+           )
            AND NOT EXISTS (
              SELECT 1 FROM steps prev
              WHERE prev.run_id = s.run_id
@@ -1096,8 +1111,14 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
                AND prev.status NOT IN ('done', 'failed', 'skipped', 'verified')
                AND NOT (prev.type = 'loop' AND prev.status = 'running')
            )
-         ORDER BY s.step_index ASC, s.status ASC
-         LIMIT 1`, [agentId]);
+         ORDER BY
+           CASE
+             WHEN $2::text IS NOT NULL AND r.assigned_developer = $2 THEN 0
+             WHEN r.assigned_developer IS NULL THEN 1
+             ELSE 2
+           END,
+           s.step_index ASC, s.status ASC
+         LIMIT 1`, [agentId, callerGatewayAgent ?? null]);
 
   if (!step) return { found: false };
 
