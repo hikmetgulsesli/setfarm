@@ -1794,59 +1794,15 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
   const prevContextJson = await pgGet<{ context: string }>("SELECT context FROM runs WHERE id = $1", [step.run_id]);
   await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
 
-  // PLAN STEP PRD GUARDRAIL (v1.5.53): Plan must output a meaningful PRD
-  if (step.step_id === "plan") {
-    // Auto-resolve prd from prd_path if inline prd is missing
-    let prdVal = (parsed["prd"] || context["prd"] || "").trim();
-    if (prdVal.length < 100 && context["prd_path"]) {
-      try {
-        const prdContent = fs.readFileSync(context["prd_path"], "utf-8").trim();
-        if (prdContent.length >= 100) {
-          prdVal = prdContent;
-          context["prd"] = prdContent;
-          parsed["prd"] = prdContent;
-        }
-      } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
-    }
-    if (prdVal.length < 100) {
-      const prdErr = `GUARDRAIL: Plan step completed but PRD is ${prdVal.length < 1 ? "empty" : "too short (" + prdVal.length + " chars)"}. Plan must output a meaningful PRD.`;
-      logger.warn(`[plan-guardrail] ${prdErr}`, { runId: step.run_id });
-      if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
-      await failStep(stepId, prdErr);
-      return { advanced: false, runCompleted: false };
-    }
-
-    // PRD_SCREEN_COUNT guardrail: minimum 3 screens
-    const screenCount = parseInt(parsed["prd_screen_count"] || context["prd_screen_count"] || "0", 10);
-    if (screenCount > 0 && screenCount < 3) {
-      const scErr = `GUARDRAIL: PRD has only ${screenCount} screen(s). Minimum is 3 (main view + error state + empty/alternate state). Add missing screens to PRD Ekranlar table and update PRD_SCREEN_COUNT.`;
-      logger.warn(`[plan-guardrail] ${scErr}`, { runId: step.run_id });
-      if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
-      await failStep(stepId, scErr);
-      return { advanced: false, runCompleted: false };
-    }
-
-    // REPO path guardrail: must be under $HOME/projects/
-    const repoVal = (parsed["repo"] || context["repo"] || "").trim();
-    const projectsDir = path.join(os.homedir(), "projects");
-    if (repoVal && !repoVal.startsWith(projectsDir)) {
-      // Auto-fix: extract last segment and put under $HOME/projects/
-      const slug = repoVal.split("/").filter(Boolean).pop() || "project";
-      const fixedRepo = path.join(projectsDir, slug);
-      parsed["repo"] = fixedRepo;
-      context["repo"] = fixedRepo;
-      logger.warn(`[plan-guardrail] REPO auto-fixed: ${repoVal} → ${fixedRepo}`, { runId: step.run_id });
-    }
-  }
-
-  // Step module delegation (v2026-04-14 pilot: plan).
-  // If a StepModule is registered for this step, run its validateOutput
-  // (additive — on top of legacy guardrails) and onComplete (side effects,
-  // e.g. PRD persistence). Other steps fall through untouched.
+  // Step module delegation (v2026-04-14).
+  // Registered modules OWN their step's validation and side effects.
+  // Order: normalize (mutate parsed) → validateOutput (reject on fail) → onComplete (side effects).
+  // Unregistered steps fall through to legacy guardrails below.
   {
     const _modRegistry = await import("./steps/registry.js");
     const _stepModule = _modRegistry.get(step.step_id);
     if (_stepModule) {
+      if (_stepModule.normalize) _stepModule.normalize(parsed);
       const _result = _stepModule.validateOutput(parsed);
       if (!_result.ok) {
         const _modErr = `GUARDRAIL [module:${_stepModule.id}]: ${_result.errors.join("; ")}`;

@@ -1,5 +1,6 @@
+import os from "node:os";
+import path from "node:path";
 import type { ParsedOutput, ValidationResult, CompleteContext } from "../types.js";
-import { pgRun, now } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
 
 const VALID_TECH_STACKS = new Set([
@@ -14,6 +15,19 @@ const VALID_DB_REQUIRED = new Set(["none", "postgres", "sqlite"]);
 
 const MIN_PRD_LENGTH = 500;
 const MIN_SCREEN_COUNT = 3;
+
+// Normalize REPO path: if agent returns a path outside $HOME/projects, slug it
+// under $HOME/projects/<slug>. Runs before validation so the fixed value passes.
+export function normalize(parsed: ParsedOutput): void {
+  const repo = (parsed.repo || "").trim();
+  if (!repo) return;
+  const projectsDir = path.join(os.homedir(), "projects");
+  if (!repo.startsWith(projectsDir) && !/^[/$~]/.test(repo)) {
+    const slug = repo.split("/").filter(Boolean).pop() || "project";
+    parsed.repo = path.join(projectsDir, slug);
+    logger.warn(`[module:plan] REPO normalized: ${repo} -> ${parsed.repo}`);
+  }
+}
 
 export function validateOutput(parsed: ParsedOutput): ValidationResult {
   const errors: string[] = [];
@@ -56,41 +70,14 @@ export function validateOutput(parsed: ParsedOutput): ValidationResult {
   return { ok: errors.length === 0, errors };
 }
 
+// Side effect: stamp parsed values into the shared run context so downstream
+// steps (design, stories, setup) read them from context["repo"] etc.
 export async function onComplete(ctx: CompleteContext): Promise<void> {
-  const { runId, parsed, context } = ctx;
-
-  // Persist context keys used by downstream steps
+  const { parsed, context } = ctx;
   context["repo"] = parsed.repo || "";
   context["branch"] = parsed.branch || "";
   context["tech_stack"] = (parsed.tech_stack || "").toLowerCase();
   context["prd"] = parsed.prd || "";
   context["prd_screen_count"] = parsed.prd_screen_count || "";
   context["db_required"] = (parsed.db_required || "").toLowerCase();
-
-  // Best-effort PRD persistence. Missing prds table is not fatal — the
-  // pipeline continues via context. The MC dashboard reads from prds when
-  // the row exists. Non-blocking: a DB hiccup shouldn't fail the step.
-  try {
-    await pgRun(
-      `INSERT INTO prds (run_id, content, screen_count, tech_stack, db_required, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $6)
-       ON CONFLICT (run_id) DO UPDATE SET
-         content = EXCLUDED.content,
-         screen_count = EXCLUDED.screen_count,
-         tech_stack = EXCLUDED.tech_stack,
-         db_required = EXCLUDED.db_required,
-         updated_at = EXCLUDED.updated_at`,
-      [
-        runId,
-        parsed.prd || "",
-        parseInt(parsed.prd_screen_count || "0", 10),
-        (parsed.tech_stack || "").toLowerCase(),
-        (parsed.db_required || "").toLowerCase(),
-        now(),
-      ]
-    );
-    logger.info(`[module:plan] PRD persisted for run ${runId}`, { runId });
-  } catch (e) {
-    logger.warn(`[module:plan] PRD persist skipped: ${String(e).slice(0, 200)}`, { runId });
-  }
 }

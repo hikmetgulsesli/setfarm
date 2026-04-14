@@ -40,6 +40,8 @@ export interface StepModule {
 
   injectContext(ctx: ClaimContext): Promise<void>;
   buildPrompt(ctx: PromptContext): string;
+  // Optional: mutate parsed in-place (e.g. auto-fix REPO path) before validation
+  normalize?(parsed: ParsedOutput): void;
   validateOutput(parsed: ParsedOutput): ValidationResult;
   onComplete?(ctx: CompleteContext): Promise<void>;
 
