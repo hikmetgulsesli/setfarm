@@ -1,11 +1,26 @@
 STORIES step — PRD'yi user story listesi olarak parçala.
 
-## Inputs (context'ten)
+## REPO
 
-- PRD: Plan step çıktısı (full text)
-- SCREEN_MAP: Design step çıktısı (screen ID + Türkçe başlık + tip)
-- DESIGN_SYSTEM: Design step seçimi (font, palette, aesthetic)
-- PREDICTED_SCREEN_FILES: Stitch-to-JSX'in üreteceği tam dosya yolları (`src/screens/<TurkishName>.tsx`)
+{{REPO}}
+
+## PRD
+
+{{PRD}}
+
+## SCREEN_MAP
+
+{{SCREEN_MAP}}
+
+## DESIGN_SYSTEM
+
+{{DESIGN_SYSTEM}}
+
+## PREDICTED_SCREEN_FILES
+
+Stitch-to-JSX'in üreteceği tam dosya yolları — scope_files'ta BU YOLLARI kullan.
+
+{{PREDICTED_SCREEN_FILES}}
 
 ## Yapılacaklar
 

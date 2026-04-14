@@ -9,10 +9,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const promptTemplate = fs.readFileSync(path.join(__dirname, "prompt.md"), "utf-8");
 const rulesBody = fs.readFileSync(path.join(__dirname, "rules.md"), "utf-8");
 
-function buildPrompt(_ctx: PromptContext): string {
-  // Stories prompt is static — context vars (PRD, screen_map, predicted_screen_files)
-  // arrive via the resolved input_template, not via template substitution here.
-  return `${promptTemplate}\n\n---\n\n# Kurallar\n\n${rulesBody}`;
+function buildPrompt(ctx: PromptContext): string {
+  const c = ctx.context;
+  const resolved = promptTemplate
+    .replace(/\{\{REPO\}\}/g, c["repo"] || c["REPO"] || "")
+    .replace(/\{\{PRD\}\}/g, c["prd"] || c["PRD"] || "")
+    .replace(/\{\{SCREEN_MAP\}\}/g, c["screen_map"] || c["SCREEN_MAP"] || "[]")
+    .replace(/\{\{DESIGN_SYSTEM\}\}/g, c["design_system"] || c["DESIGN_SYSTEM"] || "{}")
+    .replace(/\{\{PREDICTED_SCREEN_FILES\}\}/g, c["predicted_screen_files"] || "[]");
+  return `${resolved}\n\n---\n\n# Kurallar\n\n${rulesBody}`;
 }
 
 export const storiesModule: StepModule = {
@@ -24,5 +29,6 @@ export const storiesModule: StepModule = {
   validateOutput,
   onComplete,
   requiredOutputFields: ["STATUS"],
-  maxPromptSize: 12288,
+  // Includes resolved PRD (~3-5KB) + SCREEN_MAP (~2KB) + rules (~3KB)
+  maxPromptSize: 32768,
 };
