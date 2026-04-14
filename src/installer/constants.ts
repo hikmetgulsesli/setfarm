@@ -7,11 +7,13 @@
 
 // ── Abandoned Step Detection ────────────────────────────────────────
 
-/** Base threshold for detecting abandoned steps (first abandon) */
-export const BASE_ABANDONED_THRESHOLD_MS = 600_000; // 20 min (aligned with agent timeout)
+/** Base threshold for detecting abandoned steps (first abandon).
+ *  Was 600_000 (10min) but the comment said 20min — values were halved at
+ *  some point and comments never updated. R1 storm symptom traces here. */
+export const BASE_ABANDONED_THRESHOLD_MS = 1_200_000; // 20 min (aligned with agent timeout)
 
 /** Faster threshold for repeat abandonments */
-export const FAST_ABANDONED_THRESHOLD_MS = 300_000; // 10 min
+export const FAST_ABANDONED_THRESHOLD_MS = 600_000; // 10 min
 
 /** Max abandon resets before failing the step/story permanently */
 export const MAX_ABANDON_RESETS = 5;
@@ -19,11 +21,12 @@ export const MAX_ABANDON_RESETS = 5;
 /** Steps that need longer abandon thresholds (Stitch API, complex builds) */
 export const SLOW_STEP_IDS = new Set(["design", "implement", "setup-repo", "setup-build"]);
 
-/** Extended threshold for slow steps (first abandon) */
-export const SLOW_ABANDONED_THRESHOLD_MS = 900_000; // 40 min (aligned with coding agent timeout)
+/** Extended threshold for slow steps (first abandon).
+ *  Was 900_000 (15min) but comment said 40min — same halving bug. */
+export const SLOW_ABANDONED_THRESHOLD_MS = 2_400_000; // 40 min (aligned with coding agent timeout)
 
 /** Extended fast threshold for slow steps (repeat abandons) */
-export const SLOW_FAST_ABANDONED_THRESHOLD_MS = 600_000; // 20 min
+export const SLOW_FAST_ABANDONED_THRESHOLD_MS = 1_200_000; // 20 min
 
 /** Fast step abandon threshold — verify, qa-test, security-gate, deploy finish in 1-2 min */
 export const FAST_STEP_ABANDONED_THRESHOLD_MS = 300_000; // 5 min
