@@ -81,14 +81,22 @@ export type PeekResult = "HAS_WORK" | "NO_WORK";
  * Unlike claimStep(), this runs a single cheap COUNT query — no cleanup, no context resolution.
  * Returns "HAS_WORK" if any pending/waiting steps exist, "NO_WORK" otherwise.
  */
-export async function peekStep(agentId: string): Promise<PeekResult> {
+export async function peekStep(agentId: string, callerGatewayAgent?: string): Promise<PeekResult> {
     // OUTPUT RECOVERY at peek time: if a previous session wrote output but died before
     // completing, recover it now. This prevents the "peek→NO_WORK→loop forever" problem
     // where claimStep's recovery never runs because peek returns NO_WORK first.
     // Scans ALL output files in /tmp — each parallel agent writes to its own file
     // (e.g. setfarm-output-koda.txt, setfarm-output-flux.txt)
     try {
-      const tmpFiles = fs.readdirSync('/tmp').filter(f => f.startsWith('setfarm-output-') && f.endsWith('.txt'));
+      // FIX (2026-04-14 cross-contamination): when a caller is specified
+      // (pool-based agents always pass --caller), ONLY inspect this caller's
+      // own output file. The previous readdir-everything scan let an assigned
+      // developer's stale /tmp/setfarm-output-<other>.txt get auto-completed
+      // into a DIFFERENT run's implement step — e.g. lux polling for yemek
+      // picked up koda's leftover renk-koru output (workflow.log 06:22:07).
+      const tmpFiles = callerGatewayAgent
+        ? (fs.existsSync(`/tmp/setfarm-output-${callerGatewayAgent}.txt`) ? [`setfarm-output-${callerGatewayAgent}.txt`] : [])
+        : fs.readdirSync('/tmp').filter(f => f.startsWith('setfarm-output-') && f.endsWith('.txt'));
       for (const fileName of tmpFiles) {
         const filePath = `/tmp/${fileName}`;
         try {
@@ -1045,7 +1053,11 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
   // OUTPUT RECOVERY: If a previous agent session died after writing output but before completing,
   // recover the output. Scans all setfarm-output-*.txt files (each parallel agent has its own).
   try {
-    const tmpFiles = fs.readdirSync('/tmp').filter(f => f.startsWith('setfarm-output-') && f.endsWith('.txt'));
+    // FIX (2026-04-14 cross-contamination): restrict to caller-owned tmp file
+    // when callerGatewayAgent is provided. See peekStep for rationale.
+    const tmpFiles = callerGatewayAgent
+      ? (fs.existsSync(`/tmp/setfarm-output-${callerGatewayAgent}.txt`) ? [`setfarm-output-${callerGatewayAgent}.txt`] : [])
+      : fs.readdirSync('/tmp').filter(f => f.startsWith('setfarm-output-') && f.endsWith('.txt'));
     for (const fileName of tmpFiles) {
       const filePath = `/tmp/${fileName}`;
       try {

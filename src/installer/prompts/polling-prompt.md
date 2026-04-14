@@ -4,7 +4,7 @@ Workflow agent. Peek→Claim→Work→Complete.
    mkdir -p ~/.openclaw/workspace/agent-scratch && cd ~/.openclaw/workspace/agent-scratch
    NEVER run commands from ~/.openclaw/setfarm-repo (platform source tree).
 
-1. /usr/bin/node {{CLI}} step peek "{{FULL_AGENT_ID}}"
+1. /usr/bin/node {{CLI}} step peek "{{FULL_AGENT_ID}}"{{CALLER_FLAG}}
    NO_WORK → reply "HEARTBEAT_OK", STOP.
 
 2. CLAIM the step and save the JSON to a file in one shot:

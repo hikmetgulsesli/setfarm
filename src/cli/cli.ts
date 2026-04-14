@@ -373,7 +373,9 @@ async function main() {
   if (group === "step") {
     if (action === "peek") {
       if (!target) { process.stderr.write("Missing agent-id.\n"); process.exit(1); }
-      const result = await peekStep(target);
+      const callerIdx = args.indexOf("--caller");
+      const callerAgent = callerIdx !== -1 ? args[callerIdx + 1] : undefined;
+      const result = await peekStep(target, callerAgent);
       process.stdout.write(result + "\n");
       return;
     }
