@@ -1773,56 +1773,9 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
     }
   }
 
-  // REPO DEDUP GUARDRAIL (plan step) — if repo dir has existing code, auto-suffix or reset
-  if (step.step_id === "plan" && parsed["status"]?.toLowerCase() === "done") {
-    const repoPath = context["repo"] || context["REPO"] || "";
-    if (repoPath) {
-      try {
-        
-        
-        if (fs.existsSync(path.join(repoPath, ".git"))) {
-          let commitCount = 0;
-          try {
-            const out = execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: repoPath, timeout: 5000 }).toString().trim();
-            commitCount = parseInt(out, 10) || 0;
-          } catch (gitErr: any) { logger.debug("git rev-list failed: " + (gitErr?.message || "")); }
-          if (commitCount > 2) {
-            const priorRun = await pgGet<{ id: string }>("SELECT id FROM runs WHERE status IN ('completed','cancelled','failed') AND context LIKE $1 AND id != $2 LIMIT 1", [`%${repoPath}%`, step.run_id]);
-            // Clean in-place: same directory, fresh start (no suffix — keeps resume working)
-            {
-              // Backup stitch before git reset
-              const _stitchDir = path.join(repoPath, "stitch");
-              const _stitchFile = path.join(repoPath, ".stitch");
-              const _bkDir = path.join(repoPath, "..", ".stitch-bk-" + Date.now());
-              const _hasStitch = fs.existsSync(_stitchDir) || fs.existsSync(_stitchFile);
-              if (_hasStitch) {
-                fs.mkdirSync(_bkDir, { recursive: true });
-                if (fs.existsSync(_stitchDir)) fs.cpSync(_stitchDir, path.join(_bkDir, "stitch"), { recursive: true });
-                if (fs.existsSync(_stitchFile)) fs.copyFileSync(_stitchFile, path.join(_bkDir, ".stitch"));
-              }
-              execFileSync("git", ["checkout", "--orphan", "__fresh__"], { cwd: repoPath, timeout: 5000 });
-              execFileSync("git", ["rm", "-rf", "."], { cwd: repoPath, timeout: 5000 });
-              execFileSync("git", ["clean", "-fd"], { cwd: repoPath, timeout: 5000 });
-              // Restore stitch after git reset
-              if (_hasStitch) {
-                try { fs.cpSync(path.join(_bkDir, "stitch"), _stitchDir, { recursive: true }); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
-                try { fs.copyFileSync(path.join(_bkDir, ".stitch"), _stitchFile); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
-                fs.rmSync(_bkDir, { recursive: true, force: true });
-              }
-              fs.writeFileSync(path.join(repoPath, "README.md"), "# Project\n");
-              execFileSync("git", ["add", "."], { cwd: repoPath, timeout: 5000 });
-              execFileSync("git", ["commit", "-m", "initial"], { cwd: repoPath, timeout: 5000 });
-              try { execFileSync("git", ["branch", "-D", "main"], { cwd: repoPath, timeout: 5000 }); } catch (e) { logger.warn(`[repo-dedup] branch -D main failed (expected if not exists): ${String(e)}`, {}); }
-              execFileSync("git", ["branch", "-m", "main"], { cwd: repoPath, timeout: 5000 });
-              logger.info(`[repo-dedup] Reset existing repo ${repoPath} (${commitCount} commits, no prior completed run)`, { runId: step.run_id });
-            }
-          }
-        }
-      } catch (e: any) {
-        logger.warn(`[repo-dedup] Error: ${e.message}`, { runId: step.run_id });
-      }
-    }
-  }
+  // (Legacy REPO DEDUP for plan moved to 01-plan/guards.ts normalize() —
+  //  bug fix: stitch is now WIPED during reset (was preserved, causing run #445
+  //  to inherit 5-day-old stitch from a prior task). Module owns it now.)
 
   // REQUIRED OUTPUT FIELDS GUARDRAIL (Wave 3 fix #12 + Wave 9 auto-derive)
   // Enforce that each step's agent output contains fields the pipeline actually
