@@ -18,21 +18,35 @@ const VALID_DB_REQUIRED = new Set(["none", "postgres", "sqlite"]);
 const MIN_PRD_LENGTH = 500;
 const MIN_SCREEN_COUNT = 3;
 
-// Normalize REPO path: (1) ensure $HOME/projects/ prefix, (2) if path collides
-// with an existing repo from a prior run, hard-reset to clean slate INCLUDING
-// stitch/. Keeping old stitch from a previous task is the bug behind run #445
-// — design preClaim sees existing HTML and skips, agent validates stale screens.
+// Normalize REPO path: (1) expand $HOME/~ literals (agents often paste the
+// template verbatim — fs.existsSync('$HOME/...') is always false otherwise),
+// (2) ensure $HOME/projects/ prefix, (3) if path collides with an existing
+// repo from a prior run, hard-reset to clean slate INCLUDING stitch/.
 export function normalize(parsed: ParsedOutput): void {
   let repo = (parsed.repo || "").trim();
   if (!repo) return;
-  const projectsDir = path.join(os.homedir(), "projects");
+  const home = os.homedir();
+  const projectsDir = path.join(home, "projects");
 
-  // (1) Path normalization
-  if (!repo.startsWith(projectsDir) && !/^[/$~]/.test(repo)) {
+  // (1) Variable expansion — agent literal '$HOME/projects/foo' or '~/projects/foo'
+  if (repo.startsWith("$HOME/") || repo === "$HOME") {
+    repo = home + repo.slice(5);
+  } else if (repo.startsWith("~/") || repo === "~") {
+    repo = home + repo.slice(1);
+  } else if (repo.includes("$HOME")) {
+    repo = repo.replace(/\$HOME/g, home);
+  }
+  if (repo !== parsed.repo) {
+    parsed.repo = repo;
+    logger.warn(`[module:plan] REPO expanded: ${repo}`);
+  }
+
+  // (2) Path normalization — slug under $HOME/projects/ if absolute path is elsewhere
+  if (!repo.startsWith(projectsDir) && !path.isAbsolute(repo)) {
     const slug = repo.split("/").filter(Boolean).pop() || "project";
     repo = path.join(projectsDir, slug);
     parsed.repo = repo;
-    logger.warn(`[module:plan] REPO normalized: ${parsed.repo}`);
+    logger.warn(`[module:plan] REPO normalized: ${repo}`);
   }
 
   // (2) Collision reset — if a previous run left this dir with >2 commits, wipe it
