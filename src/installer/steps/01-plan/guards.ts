@@ -15,7 +15,7 @@ const VALID_TECH_STACKS = new Set([
 
 const VALID_DB_REQUIRED = new Set(["none", "postgres", "sqlite"]);
 
-const MIN_PRD_LENGTH = 500;
+const MIN_PRD_LENGTH = 2000;
 const MIN_SCREEN_COUNT = 3;
 
 // Normalize REPO path: (1) expand $HOME/~ literals (agents often paste the
