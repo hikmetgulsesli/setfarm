@@ -1066,6 +1066,32 @@ All visible text must be in Turkish. Use a dark, modern theme.`);
   }
   let resolvedInput = resolveTemplate(step.input_template, prunedContextSingle);
 
+  // Step module takeover: if a module is registered for this step, its
+  // buildPrompt() replaces the workflow.yml input_template output. This is
+  // how the module's prompt.md + rules.md actually reach the agent (Faz 2
+  // of the module pilot — without this, AGENTS.md stays the source of truth
+  // and the module's prompt sits unused).
+  try {
+    const _modRegistryP = await import("./steps/registry.js");
+    const _stepModuleP = _modRegistryP.get(step.step_id);
+    if (_stepModuleP) {
+      const _modulePrompt = _stepModuleP.buildPrompt({
+        runId: step.run_id,
+        task: prunedContextSingle["task"] || prunedContextSingle["TASK"] || "",
+        context: prunedContextSingle,
+      });
+      if (_modulePrompt && _modulePrompt.length > 0) {
+        if (_modulePrompt.length > _stepModuleP.maxPromptSize) {
+          logger.warn(`[step-module] ${_stepModuleP.id} prompt ${_modulePrompt.length} > budget ${_stepModuleP.maxPromptSize} — using anyway, investigate`, { runId: step.run_id });
+        }
+        resolvedInput = _modulePrompt;
+        logger.info(`[step-module] ${_stepModuleP.id} buildPrompt override (${_modulePrompt.length}b)`, { runId: step.run_id });
+      }
+    }
+  } catch (_pe) {
+    logger.warn(`[step-module] buildPrompt failed (falling back to template): ${String(_pe).slice(0, 200)}`, { runId: step.run_id });
+  }
+
   // MISSING_INPUT_GUARD (v1.5.53): First miss -> retry step, second -> fail run.
   // WAL race condition can cause false positives — one retry absorbs that.
   const allMissing = [...new Set([...resolvedInput.matchAll(/\[missing:\s*(\w+)\]/gi)].map(m => m[1].toLowerCase()))];

@@ -24,52 +24,7 @@ You are the Planner agent. You run in two pipeline steps: `plan` (PRD generation
 
 ## Step-by-Step Execution Flow
 
-### PLAN Step (PRD Generation)
-
-1. **Explore the codebase** (if repo exists):
-   - `ls` the repo root, read `package.json`, `tsconfig.json`, key source files
-   - Identify existing stack, conventions, patterns
-   - Note existing DB schema, API routes, component structure
-
-2. **Read reference files:**
-   - `references/design-standards.md` -- color palettes, font pairs, layout rules
-   - `references/brainstorming-protocol.md` -- architectural decision framework
-   - `references/backend-standards.md` -- DB, API, error handling patterns
-
-3. **Select design system** (MANDATORY for frontend projects):
-   - Choose aesthetic direction from: minimal, brutalist, luxury, editorial, industrial, organic, playful, corporate
-   - Choose color palette from the 8 domain-specific palettes in design-standards.md
-   - Choose font pair from the 10 approved pairs (see Font Pair Table below)
-   - Choose icon library: Lucide React or Heroicons (NEVER emoji)
-
-4. **Select tech stack:**
-   - Simple SPA, game, utility, dashboard, portfolio --> `vite-react`
-   - SSR/SEO needed, blog, e-commerce, multi-page content site --> `nextjs`
-   - No UI, API only --> `node-express`
-   - CLI tool, no frontend --> `vanilla-ts`
-   - Mobile app --> `react-native`
-
-5. **Determine database requirement:**
-   - Static sites, games, landing pages --> `none`
-   - CRUD apps, auth, user data --> `postgres`
-   - Simple client-side storage --> `none`
-
-6. **Write the PRD** with all required sections:
-   - Project overview and goals
-   - Target platform
-   - Functional requirements (every feature, page, module)
-   - Technical requirements (stack, DB, APIs, auth)
-   - UI/UX requirements (pages, screens, interactions)
-   - Non-functional requirements (performance, security)
-   - Screen table (MANDATORY -- see Screen Table Rules)
-
-7. **Determine repo path and branch:**
-   - REPO: `$HOME/projects/<slug>` where slug is derived from the task (Turkish chars removed, lowercase, hyphens)
-   - BRANCH: `feature-<descriptive-name>`
-   - Example: "Basit hesap makinesi" --> `$HOME/projects/basit-hesap-makinesi`
-   - NEVER translate the project name to English
-
-8. **Output** in the mandatory format with all required keys.
+<!-- PLAN Step (PRD Generation) moved to src/installer/steps/01-plan/rules.md (StepModule owns plan prompt) -->
 
 ### STORIES Step (Story Decomposition)
 
@@ -103,45 +58,7 @@ You are the Planner agent. You run in two pipeline steps: `plan` (PRD generation
 
 6. **Output** in the mandatory format with STORIES_JSON and updated SCREEN_MAP.
 
-## Screen Table Rules (MANDATORY in PRD)
-
-The PRD MUST end with a `## Ekranlar (Screens)` section:
-
-```markdown
-| # | Ekran Adi | Tur | Aciklama |
-|---|-----------|-----|----------|
-| 1 | Ana Dashboard | dashboard | KPI kartlari, son aktiviteler |
-| 2 | Musteri Listesi | list-view | Arama, filtre, pagination |
-```
-
-### Minimum Screen Counts by Project Type
-
-| Project Type | Min Screens | Example Screens |
-|-------------|-------------|-----------------|
-| Landing page / static site | 3-5 | Home, About, Contact, 404 |
-| Game (web/mobile) | 5-8 | Menu, Game, Pause, Game Over, Leaderboard, Settings |
-| Dashboard / analytics | 8-15 | Overview, Charts, Tables, Filters, Detail, Settings |
-| CRUD application | 10-15 | List + Detail + Form per entity, Dashboard, Settings |
-| CRM / ERP / SaaS | 20-35 | Per-entity CRUD, Reports, Admin, Dashboard |
-| E-commerce | 25-40 | Catalog, Product, Cart, Checkout, Orders, Profile |
-
-### Mandatory CRUD Screens
-
-Each entity (customer, product, order, etc.) requires minimum 3 screens:
-1. **List view** -- search, filter, pagination
-2. **Detail view** -- all info, related data, actions
-3. **Form** -- create/edit with validation
-
-### Standard Screens (ALWAYS include)
-
-- Login page (if app has auth)
-- Settings (profile, notifications, appearance, security)
-- 404 / Error page
-- Empty states (when lists are empty)
-
-### PRD_SCREEN_COUNT Guardrail
-
-If screen count < 3, the pipeline will REJECT the output. Even simple single-page apps need: main view, error state, empty state.
+<!-- Screen Table Rules moved to src/installer/steps/01-plan/rules.md (StepModule owns plan prompt) -->
 
 ## Story Sizing Rules
 
@@ -297,17 +214,7 @@ ALL user-facing text in the PRD must specify Turkish versions:
 
 ## Output Format
 
-### Plan Step Output
-```
-STATUS: done
-REPO: $HOME/projects/<slug>
-BRANCH: feature-<name>
-TECH_STACK: vite-react|nextjs|vanilla-ts|node-express|react-native
-PRD:
-<full PRD text>
-PRD_SCREEN_COUNT: <number>
-DB_REQUIRED: none|postgres|sqlite
-```
+<!-- Plan Step Output moved to src/installer/steps/01-plan/rules.md (StepModule owns plan prompt) -->
 
 ### Stories Step Output
 ```
