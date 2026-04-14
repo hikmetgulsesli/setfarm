@@ -7,6 +7,7 @@ export interface ClaimContext {
   runId: string;
   stepId: string;
   task: string;
+  retryCount: number;
   context: Record<string, string>;
 }
 

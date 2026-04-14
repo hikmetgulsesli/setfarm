@@ -1037,11 +1037,32 @@ All visible text must be in Turkish. Use a dark, modern theme.`);
   if (contextBytesBefore > contextBytesAfter + 1000) {
     logger.info(`[context-prune] ${step.step_id}: ${contextBytesBefore}→${contextBytesAfter} bytes (${Math.round((1 - contextBytesAfter / contextBytesBefore) * 100)}% trimmed)`, { runId: step.run_id });
   }
-  // P1 fix (5-model consensus): default reminder for stories/plan on first attempt
-  if (step.retry_count === 0 && (step.step_id === "stories" || step.step_id === "plan")) {
+  // P1 fix (5-model consensus): default reminder for stories on first attempt.
+  // (Plan step reminder is owned by the plan module's injectContext — see
+  // step-module claim delegation below.)
+  if (step.retry_count === 0 && step.step_id === "stories") {
     if (!prunedContextSingle["previous_failure"]) {
-      prunedContextSingle["previous_failure"] = "REMINDER: Output MUST include ALL mandatory fields. For stories: STORIES_JSON array with scope_files per story (NO overlapping files). For plan: PRD (min 500 chars) + REPO + TECH_STACK + PRD_SCREEN_COUNT. Missing = instant REJECT.";
+      prunedContextSingle["previous_failure"] = "REMINDER: Output MUST include ALL mandatory fields. For stories: STORIES_JSON array with scope_files per story (NO overlapping files). Missing = instant REJECT.";
     }
+  }
+
+  // Step module claim-side delegation (v2026-04-14). Let the module inject any
+  // context it owns — same pruned context object is passed, so changes flow
+  // through to the agent's resolved prompt.
+  try {
+    const _modRegistry = await import("./steps/registry.js");
+    const _stepModule = _modRegistry.get(step.step_id);
+    if (_stepModule) {
+      await _stepModule.injectContext({
+        runId: step.run_id,
+        stepId: step.step_id,
+        task: prunedContextSingle["task"] || prunedContextSingle["TASK"] || "",
+        retryCount: step.retry_count,
+        context: prunedContextSingle,
+      });
+    }
+  } catch (_ie) {
+    logger.warn(`[step-module] injectContext failed: ${String(_ie).slice(0, 200)}`, { runId: step.run_id });
   }
   let resolvedInput = resolveTemplate(step.input_template, prunedContextSingle);
 
