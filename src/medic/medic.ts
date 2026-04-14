@@ -183,7 +183,28 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
       if (finding.action === "recreate_crons") {
         const wfId = finding.workflowId ?? finding.message.match(/workflow "([^"]+)"/)?.[1];
         if (!wfId) return false;
-        try { await removeAgentCrons(wfId); const workflowDir = resolveWorkflowDir(wfId); const workflow = await loadWorkflowSpec(workflowDir); await setupAgentCrons(workflow); emitEvent({ ts: now(), event: "run.resumed" as EventType, runId: finding.runId ?? "", workflowId: wfId, detail: `Medic: force-recreated crons for "${wfId}"` }); return true; } catch { return false; }
+        // Cooldown: don't force-recreate more than once per 5 min. Without this,
+        // transient gateway state glitches trigger back-to-back recreates
+        // (observed: 3-5s apart), spamming run.resumed events.
+        const RECREATE_COOLDOWN_MS = 5 * 60 * 1000;
+        try {
+          const lastRecreate = await pgGet<{ checked_at: string }>(
+            "SELECT checked_at FROM medic_checks WHERE summary LIKE 'Cron recreate:%' ORDER BY checked_at DESC LIMIT 1"
+          );
+          if (lastRecreate && (Date.now() - new Date(lastRecreate.checked_at).getTime()) < RECREATE_COOLDOWN_MS) {
+            logger.info(`[medic] recreate_crons skipped (cooldown) for "${wfId}"`, {});
+            return false;
+          }
+        } catch {}
+        try {
+          await removeAgentCrons(wfId);
+          const workflowDir = resolveWorkflowDir(wfId);
+          const workflow = await loadWorkflowSpec(workflowDir);
+          await setupAgentCrons(workflow);
+          await logCronRecreate("finding", wfId);
+          emitEvent({ ts: now(), event: "run.resumed" as EventType, runId: finding.runId ?? "", workflowId: wfId, detail: `Medic: force-recreated crons for "${wfId}"` });
+          return true;
+        } catch { return false; }
       }
       if (finding.action === "kill_browser_sessions") {
         try { const { killOrphanedBrowserSessions } = await import("../installer/browser-tools.js"); const killed = killOrphanedBrowserSessions(); if (killed > 0) { emitEvent({ ts: now(), event: "step.done" as EventType, runId: finding.runId ?? "", detail: `Medic: killed ${killed} orphaned Chromium` }); return true; } return false; } catch { return false; }
