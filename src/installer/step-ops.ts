@@ -948,12 +948,11 @@ async function claimSingleStep(
         try {
           await _stepModule.preClaim(_modCtx);
           await updateRunContext(step.run_id, prunedContextSingle);
-          // Refresh started_at so medic measures agent runtime, NOT preClaim
-          // duration. Without this, design step (preClaim ~10min Stitch
-          // generation) gets abandoned at minute 11 even though the agent
-          // hasn't started yet.
-          await pgRun("UPDATE steps SET started_at = $1 WHERE id = $2", [now(), step.id]);
-          logger.info(`[step-module] ${_stepModule.id} preClaim ok — started_at refreshed`, { runId: step.run_id });
+          // Refresh both started_at AND updated_at so medic's checkClaimedButStuck
+          // measures agent runtime, not preClaim duration. (Medic uses updated_at
+          // — not started_at — so we must touch updated_at too.)
+          await pgRun("UPDATE steps SET started_at = $1, updated_at = $1 WHERE id = $2", [now(), step.id]);
+          logger.info(`[step-module] ${_stepModule.id} preClaim ok — timestamps refreshed`, { runId: step.run_id });
         } catch (_pce) {
           logger.warn(`[step-module] ${_stepModule.id} preClaim failed (non-fatal): ${String(_pce).slice(0, 200)}`, { runId: step.run_id });
         }

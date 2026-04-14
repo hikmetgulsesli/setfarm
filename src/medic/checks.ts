@@ -287,18 +287,23 @@ export async function checkOrphanedCrons(
 // Per-step stuck threshold based on actual observed completion times.
 // Replaces the binary fast/slow split that caused false abandons on design (6-8min)
 // while being too generous for plan (30-60s).
+// 2026-04-14: design/setup-build/qa-test thresholds widened — observed real
+// runtime exceeded the prior values, causing systemic R1 storm. Stitch
+// preClaim alone takes 8-12dk before the agent even starts, so design needs
+// 25dk minimum. Plan/stories doubled as a safety margin since module prompts
+// occasionally hit provider rate-limit retries.
 const STEP_STUCK_THRESHOLD_MS: Record<string, number> = {
-  plan:            3 * 60 * 1000,   //  3dk — PRD parse, hızlı
-  design:         10 * 60 * 1000,   // 10dk — Stitch API ekran üretimi (6-8dk tipik)
-  stories:         3 * 60 * 1000,   //  3dk — story JSON üretimi
-  "setup-repo":    5 * 60 * 1000,   //  5dk — git clone + branch
-  "setup-build":   8 * 60 * 1000,   //  8dk — npm install + build + lint
-  implement:      25 * 60 * 1000,   // 25dk — gerçek kodlama, test, commit
-  verify:         12 * 60 * 1000,   // 12dk — PR review + fix
-  "security-gate": 5 * 60 * 1000,   //  5dk — security scan
-  "qa-test":      10 * 60 * 1000,   // 10dk — browser test
-  "final-test":   15 * 60 * 1000,   // 15dk — e2e + integration
-  deploy:          5 * 60 * 1000,   //  5dk — deploy + DNS
+  plan:            6 * 60 * 1000,   //  6dk — PRD parse + provider retry tolerance
+  design:         25 * 60 * 1000,   // 25dk — Stitch preClaim (8-12dk) + agent validate (5-8dk)
+  stories:         6 * 60 * 1000,   //  6dk — story JSON üretimi + retry
+  "setup-repo":    8 * 60 * 1000,   //  8dk — git clone + branch + npm init
+  "setup-build":  15 * 60 * 1000,   // 15dk — npm install + build + lint (cold install)
+  implement:      30 * 60 * 1000,   // 30dk — kodlama + test + commit
+  verify:         15 * 60 * 1000,   // 15dk — PR review + fix
+  "security-gate": 8 * 60 * 1000,   //  8dk — security scan
+  "qa-test":      15 * 60 * 1000,   // 15dk — browser test
+  "final-test":   20 * 60 * 1000,   // 20dk — e2e + integration
+  deploy:          8 * 60 * 1000,   //  8dk — deploy + DNS
 };
 const DEFAULT_STEP_STUCK_THRESHOLD_MS = 5 * 60 * 1000; // fallback
 
