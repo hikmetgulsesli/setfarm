@@ -136,16 +136,18 @@ All visible text must be in Turkish. Use a dark, modern theme.`;
     }
   } catch (e) { logger.debug(`[module:design preclaim] design-dom-extract: ${String(e).slice(0, 80)}`); }
 
-  // 6. AUTO-GENERATE SCREEN_MAP from DESIGN_MANIFEST.json so the agent only
-  //    has to confirm + emit DESIGN_SYSTEM. Without this the agent spends
-  //    6-10min building SCREEN_MAP entry-by-entry — pure waste, manifest
-  //    already has every field we need.
+  // 6. AUTO-GENERATE SCREEN_MAP. Prefer DESIGN_MANIFEST.json (rich metadata);
+  //    fall back to scanning stitch/*.html when manifest didn't make it (Stitch
+  //    download-all sometimes returns HTML without writing manifest — observed
+  //    in run #449). Either way the agent gets a populated SCREEN_MAP and only
+  //    has to emit DESIGN_SYSTEM.
   const manifestPath = path.join(stitchDir, "DESIGN_MANIFEST.json");
+  let screenMap: Array<{ screenId: string; name: string; type: string; description: string }> = [];
   if (fs.existsSync(manifestPath)) {
     try {
       const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
       if (Array.isArray(manifest)) {
-        const screenMap = manifest
+        screenMap = manifest
           .filter((s: any) => s?.screenId && s?.title)
           .map((s: any) => ({
             screenId: String(s.screenId),
@@ -153,14 +155,51 @@ All visible text must be in Turkish. Use a dark, modern theme.`;
             type: classifyScreenType(String(s.title)),
             description: String(s.title) + " ekranı",
           }));
-        if (screenMap.length > 0) {
-          ctx.context["screen_map"] = JSON.stringify(screenMap);
-          logger.info(`[module:design preclaim] auto-generated SCREEN_MAP with ${screenMap.length} entries`, { runId: ctx.runId });
+      }
+    } catch (e) {
+      logger.warn(`[module:design preclaim] manifest parse failed: ${String(e).slice(0, 200)}`, { runId: ctx.runId });
+    }
+  }
+  // Fallback: scan stitch/*.html, derive name from <title> tag (or screenId)
+  if (screenMap.length === 0 && fs.existsSync(stitchDir)) {
+    try {
+      const htmlFiles = fs.readdirSync(stitchDir).filter(f => f.endsWith(".html") && !f.startsWith("."));
+      for (const file of htmlFiles) {
+        const screenId = file.replace(/\.html$/, "");
+        let title = screenId;
+        try {
+          const html = fs.readFileSync(path.join(stitchDir, file), "utf-8").slice(0, 4000);
+          const m = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+          if (m) title = m[1].trim();
+        } catch {}
+        screenMap.push({
+          screenId,
+          name: title || screenId,
+          type: classifyScreenType(title),
+          description: title + " ekranı",
+        });
+      }
+      if (screenMap.length > 0) {
+        // Synthesize manifest so downstream code (agent prompt examples, etc.) works
+        try {
+          fs.writeFileSync(manifestPath, JSON.stringify(
+            screenMap.map(s => ({ screenId: s.screenId, title: s.name, htmlFile: s.screenId + ".html", deviceType: ctx.context["device_type"] || "DESKTOP" })),
+            null, 2
+          ));
+          logger.info(`[module:design preclaim] manifest synthesized from ${screenMap.length} HTML files`, { runId: ctx.runId });
+        } catch (e) {
+          logger.warn(`[module:design preclaim] manifest synthesize failed: ${String(e).slice(0, 200)}`, { runId: ctx.runId });
         }
       }
     } catch (e) {
-      logger.warn(`[module:design preclaim] SCREEN_MAP auto-generate failed: ${String(e).slice(0, 200)}`, { runId: ctx.runId });
+      logger.warn(`[module:design preclaim] HTML fallback failed: ${String(e).slice(0, 200)}`, { runId: ctx.runId });
     }
+  }
+  if (screenMap.length > 0) {
+    ctx.context["screen_map"] = JSON.stringify(screenMap);
+    logger.info(`[module:design preclaim] SCREEN_MAP injected (${screenMap.length} entries)`, { runId: ctx.runId });
+  } else {
+    logger.warn(`[module:design preclaim] SCREEN_MAP could not be generated — agent will see empty list`, { runId: ctx.runId });
   }
 }
 
