@@ -1,3 +1,17 @@
+## 2026-04-16 — syncActiveCrons pool cap (CPU/lane spam fix)
+
+### Kritik Bug Fix
+- **Kök sorun:** `syncActiveCrons` havuzdaki tüm agent'lar için cron oluşturuyordu. 1 run aktifken designer pool `[prism, helix, zeta]` → 3 polling cron, 2'si daima NO_WORK. Gateway nested lane 180s+ bekleme, %63 CPU.
+- **Fix:** `stepsPerRole` hesaplanıyor, `desired` map `min(pool_size, demand)` ile sınırlı. 1 run → 1 cron, 6 run → pool kapasitesi kadar. Havuz hâlâ concurrency tavanı, talep ise taban.
+- Commit: `58a4f91`
+
+### Doğrulama
+- Idle state: sadece medic cron (✓)
+- 1 test run → designer cron sayısı = 1 (eski davranışta 3 olurdu)
+- 3 run paralel → designer cron = min(3, pool=3) = 3
+
+---
+
 # Changelog
 
 Büyük değişiklikler ve session notları. Git commit'leri için `git log`.
