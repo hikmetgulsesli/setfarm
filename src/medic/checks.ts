@@ -293,17 +293,17 @@ export async function checkOrphanedCrons(
 // 25dk minimum. Plan/stories doubled as a safety margin since module prompts
 // occasionally hit provider rate-limit retries.
 const STEP_STUCK_THRESHOLD_MS: Record<string, number> = {
-  plan:            6 * 60 * 1000,   //  6dk — PRD parse + provider retry tolerance
+  plan:           10 * 60 * 1000,   // 10dk — PRD production + enrichment + provider retry (2026-04-16: 6→10 after #454)
   design:         25 * 60 * 1000,   // 25dk — Stitch preClaim (8-12dk) + agent validate (5-8dk)
-  stories:         6 * 60 * 1000,   //  6dk — story JSON üretimi + retry
-  "setup-repo":    8 * 60 * 1000,   //  8dk — git clone + branch + npm init
-  "setup-build":  15 * 60 * 1000,   // 15dk — npm install + build + lint (cold install)
+  stories:        10 * 60 * 1000,   // 10dk — story JSON üretimi + predicted_screens (2026-04-16: 6→10)
+  "setup-repo":   10 * 60 * 1000,   // 10dk — setup-repo.sh + DB + contracts
+  "setup-build":  20 * 60 * 1000,   // 20dk — npm install + compat + build + tailwind + stitch-to-jsx
   implement:      30 * 60 * 1000,   // 30dk — kodlama + test + commit
   verify:         15 * 60 * 1000,   // 15dk — PR review + fix
-  "security-gate": 8 * 60 * 1000,   //  8dk — security scan
+  "security-gate":10 * 60 * 1000,   // 10dk — security scan
   "qa-test":      15 * 60 * 1000,   // 15dk — browser test
   "final-test":   20 * 60 * 1000,   // 20dk — e2e + integration
-  deploy:          8 * 60 * 1000,   //  8dk — deploy + DNS
+  deploy:         10 * 60 * 1000,   // 10dk — deploy + DNS
 };
 const DEFAULT_STEP_STUCK_THRESHOLD_MS = 5 * 60 * 1000; // fallback
 
