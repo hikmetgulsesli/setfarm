@@ -407,8 +407,9 @@ export async function repairAgentCrons(workflow: WorkflowSpec): Promise<{ added:
  */
 export async function syncActiveCrons(runId: string, workflowId: string): Promise<void> {
   try {
-    // 1. Find steps that NEED crons across ALL active runs of this workflow
-    //    (not just the given run — parallel runs share the same cron pool)
+    // Pending step instances across all running runs. Each row = one unit of
+    // demand. Capping cron pool at demand stops idle pool members from
+    // polling an empty queue (was the root cause of gateway lane spam).
     const activeSteps = await pgQuery<{ agent_id: string; step_id: string; status: string; type: string; loop_config: string | null }>(
       `SELECT DISTINCT s.agent_id, s.step_id, s.status, s.type, s.loop_config
        FROM steps s JOIN runs r ON r.id = s.run_id
@@ -419,99 +420,85 @@ export async function syncActiveCrons(runId: string, workflowId: string): Promis
 
     if (activeSteps.length === 0) return;
 
-    // 2. Load workflow spec to resolve agent_mapping (role -> gateway agent IDs)
     const { resolveWorkflowDir } = await import("./paths.js");
     const { loadWorkflowSpec } = await import("./workflow-spec.js");
     const workflowDir = resolveWorkflowDir(workflowId);
     const workflow = await loadWorkflowSpec(workflowDir);
     const agentMapping: Record<string, string | string[]> = workflow.agent_mapping ?? {};
 
-    // 3. Build set of GATEWAY agent IDs that need crons
-    const neededGatewayAgents = new Set<string>();
+    // Count pending step instances per role (role -> demand count).
+    const stepsPerRole = new Map<string, number>();
     const neededRoles = new Set<string>();
 
     for (const step of activeSteps) {
-      // Extract role from agent_id: "feature-dev_developer" -> "developer"
       const role = step.agent_id.replace(workflowId + '_', '');
       neededRoles.add(role);
+      stepsPerRole.set(role, (stepsPerRole.get(role) ?? 0) + 1);
 
-      // Resolve via agent_mapping to actual gateway agent IDs
-      const mapped = agentMapping[role];
-      if (Array.isArray(mapped)) {
-        for (const a of mapped) neededGatewayAgents.add(a);
-      } else if (mapped) {
-        neededGatewayAgents.add(mapped);
-      } else {
-        neededGatewayAgents.add(role); // fallback: use role name as agent ID
-      }
-
-      // For loop steps with verify_each, also keep the verify agent active
       if (step.type === 'loop' && step.loop_config) {
         try {
           const lc = JSON.parse(step.loop_config);
           if (lc.verifyEach && lc.verifyStep) {
             const verifyRole = lc.verifyStep.replace(workflowId + '_', '');
             neededRoles.add(verifyRole);
-            const verifyMapped = agentMapping[verifyRole];
-            if (Array.isArray(verifyMapped)) {
-              for (const a of verifyMapped) neededGatewayAgents.add(a);
-            } else if (verifyMapped) {
-              neededGatewayAgents.add(verifyMapped);
-            }
+            stepsPerRole.set(verifyRole, (stepsPerRole.get(verifyRole) ?? 0) + 1);
           }
         } catch {}
       }
     }
 
-    // 4. Get current gateway crons for this workflow
+    // Desired cron map, capped at min(pool size, demand).
+    // Single pending designer step → 1 cron, not 3.
+    const desired = new Map<string, string>();
+    for (const role of neededRoles) {
+      const mapped = agentMapping[role];
+      const pool: string[] = Array.isArray(mapped) ? mapped : mapped ? [mapped] : [role];
+      const need = Math.min(pool.length, Math.max(1, stepsPerRole.get(role) ?? 1));
+      for (let i = 0; i < need; i++) {
+        const name = i === 0 ? `setfarm/${workflowId}/${role}` : `setfarm/${workflowId}/${role}-${i + 1}`;
+        desired.set(name, pool[i]);
+      }
+    }
+
     const cronResult = await listCronJobs();
     if (!cronResult.ok || !cronResult.jobs) return;
 
     const prefix = `setfarm/${workflowId}/`;
     const existingCrons = cronResult.jobs.filter((j: any) => j.name.startsWith(prefix));
 
-    // 5. Remove crons for roles that are no longer needed (step done/waiting)
-    //    Only remove setfarm workflow crons, not other crons
+    // Remove crons not in desired: role no longer needed, or pool shrunk to match demand.
     let removed = 0;
     for (const cron of existingCrons) {
-      const cronRole = extractRoleFromCronName(cron.name, prefix);
-      if (!neededRoles.has(cronRole)) {
+      if (!desired.has(cron.name)) {
         try { await deleteCronJob(cron.id); removed++; } catch (e) {
-          logger.warn("[syncActiveCrons] Failed to remove idle cron: " + String(e), { runId });
+          logger.warn("[syncActiveCrons] Failed to remove cron: " + String(e), { runId });
         }
       }
     }
 
-    // 6. Check if needed roles are missing crons — recreate from workflow spec
-    const existingRoles = new Set(existingCrons.map((c: any) => extractRoleFromCronName(c.name, prefix)));
+    const existingNames = new Set(existingCrons.map((c: any) => c.name));
+    const everyMs = (workflow as any).cron?.interval_ms ?? DEFAULT_EVERY_MS;
     let added = 0;
-    for (const role of neededRoles) {
-      if (existingRoles.has(role)) continue; // Role already has cron(s)
-
-      const mapped = agentMapping[role];
-      const agents: string[] = Array.isArray(mapped) ? mapped : mapped ? [mapped] : [role];
-
-      for (let i = 0; i < agents.length; i++) {
-
-        const cronName = i === 0
-          ? `setfarm/${workflowId}/${role}`
-          : `setfarm/${workflowId}/${role}-${i + 1}`;
-        const prompt = buildPollingPrompt(workflowId, role, agents[i]);
-
-        await createAgentCronJob({
-          name: cronName,
-          schedule: { kind: "every", everyMs: (workflow as any).cron?.interval_ms ?? DEFAULT_EVERY_MS, anchorMs: i * 60_000 },
-          sessionTarget: "isolated",
-          agentId: agents[i],
-          payload: { kind: "agentTurn", message: prompt, timeoutSeconds: DEFAULT_AGENT_TIMEOUT_SECONDS },
-          delivery: { mode: "none", channel: "telegram" },
-          enabled: true,
-        });
-        added++;
-      }
+    for (const [name, agentId] of desired) {
+      if (existingNames.has(name)) continue;
+      const role = extractRoleFromCronName(name, prefix);
+      const suffixMatch = name.match(/-(\d+)$/);
+      const idx = suffixMatch ? parseInt(suffixMatch[1], 10) - 1 : 0;
+      const prompt = buildPollingPrompt(workflowId, role, agentId);
+      await createAgentCronJob({
+        name,
+        schedule: { kind: "every", everyMs, anchorMs: idx * 60_000 },
+        sessionTarget: "isolated",
+        agentId,
+        payload: { kind: "agentTurn", message: prompt, timeoutSeconds: DEFAULT_AGENT_TIMEOUT_SECONDS },
+        delivery: { mode: "none", channel: "telegram" },
+        enabled: true,
+      });
+      added++;
     }
 
     if (removed > 0 || added > 0) {
+      const neededGatewayAgents = new Set(desired.values());
       logger.info(`[syncActiveCrons] Removed ${removed} idle, added ${added} needed — ${neededGatewayAgents.size} active agents for roles [${[...neededRoles].join(',')}]`, { runId });
     }
   } catch (err) {
