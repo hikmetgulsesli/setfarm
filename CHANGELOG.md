@@ -4,6 +4,91 @@ Büyük değişiklikler ve session notları. Git commit'leri için `git log`.
 
 ---
 
+## 2026-04-15 — Modüler Step Mimarisi (Sprint #1)
+
+Step-ops.ts monolitinden (3880 satır) modüler yapıya geçiş. 5 modül yeşil ışık, 6 bekliyor.
+
+### 5 Modül Tamamlandı (`src/installer/steps/`)
+
+| # | Modül | preClaim | Agent görevi | Unit test |
+|---|---|---|---|---|
+| 01 | `01-plan/` | — | PRD yazımı (enrich rules, 2000+ char, 10 bölüm) | 8/8 |
+| 02 | `02-design/` | **Stitch API + SCREEN_MAP auto-gen + manifest fallback** | DESIGN_SYSTEM JSON | 7/7 |
+| 03 | `03-stories/` | — | STORIES_JSON (PRD+SCREEN_MAP+PREDICTED_SCREEN_FILES inject) | 4/4 |
+| 04 | `04-setup-repo/` | **setup-repo.sh + DB + design contracts + EXISTING_CODE hint** | STATUS + EXISTING_CODE | — |
+| 05 | `05-setup-build/` | **npm install + compat + build + tailwind + stitch-to-jsx + BUILD_CMD hint** | STATUS + BUILD_CMD | — |
+
+Her modül `{ id, type, agentRole, preClaim?, injectContext, buildPrompt, validateOutput, onComplete?, requiredOutputFields, maxPromptSize }` kontratı.
+
+### step-ops.ts Sadeleşmesi
+
+- Plan guardrail (1800-1840 PRD length + SCREEN_COUNT + REPO auto-fix) → 01-plan
+- Plan reminder (1041) → 01-plan/context
+- Stories guardrail (2638-2786 massive — 0-stories, scope_files, overlap, hallucinated path, multi-owner) → 03-stories
+- Stories predicted_screen_files (868) → 03-stories
+- Design pre-claim Stitch (897-1003, 108 satır) → 02-design/preclaim
+- Design post-complete processDesignCompletion call → 02-design/guards
+- Setup-repo branch ensure + DB + contracts (2034-2066) → 04-setup-repo/preclaim
+- Setup-build baseline + stitch-to-jsx + compat (2084-2174) → 05-setup-build/preclaim
+- Auto-derive EXISTING_CODE (1793) + BUILD_CMD (1814) → modül preClaim'lerine
+- REPO DEDUP (1776-1825, 50 satır) → 01-plan/normalize (stitch de WIPE ediliyor artık — cross-task contamination fix)
+
+**Net ~900+ satır silindi**, 5 modüle dağıtıldı.
+
+### Agent AGENTS.md Sadeleştirmesi
+
+- `planner/AGENTS.md` 410 → 28 satır (plan+stories rules module rules.md'ye)
+- `designer/AGENTS.md` 356 → 26 satır (Phase 1-6 module rules.md'ye)
+- `shared/setup/AGENTS.md` 162 → 10 satır (step-specific rules module'e)
+
+Agent'a giden prompt modülün buildPrompt'undan override ediliyor (workflow.yml input_template yerine). Prompt budget per-step: 6-32 KB.
+
+### Kök Sebep Fix'leri (R1 storm azaltma)
+
+- **Medic `recreate_crons`** 5dk cooldown (finding-based path cooldown eksikti, 20+ event/saat)
+- `constants.ts` SLOW_ABANDONED_THRESHOLD_MS halving bug — aslında ölü kod (gerçek threshold: `checks.ts:290 STEP_STUCK_THRESHOLD_MS` per-step map)
+- **Per-step threshold widening** (design 10→25dk — REAL R1 fix): Stitch preClaim 8-12dk alıyor, eski 10dk eşik hep abandon
+- `preClaim` sonrası `started_at` + `updated_at` refresh — medic agent timer'ı preClaim süresini saymasın
+- REPO DEDUP'ta `git clean -fdx` — stitch dahil sil, cross-task contamination fix
+- `$HOME`/`~/` expansion in plan module normalize — agent literal verirse fix
+- Plan rules re-enrich (500 → 2000 MIN, 10 zorunlu bölüm) — distill ederken detail kaybı düzeltildi
+- Stories module `buildPrompt` PRD+SCREEN_MAP+PREDICTED_SCREEN_FILES resolve — önceden static rules idi, 0 story üretiyordu
+- Design SCREEN_MAP preClaim auto-gen + manifest→HTML fallback (download-all manifest yazamazsa HTML <title>'dan türetir)
+- Plan/stories threshold 6→10dk (minimax yavaş yanıtlara tolerance)
+
+### Unit Test Altyapısı
+
+`tests/steps/harness.ts` — mock ClaimContext + agent output runner + assertion helpers (`runModule`, `validPlanOutput`). Her modül kendi test dosyası.
+
+`scripts/copy-step-assets.mjs` — build sırasında modül rules.md + prompt.md + README.md dosyalarını dist'e kopyalar.
+
+`package.json`: `test:steps` script eklendi (`node --import tsx --test tests/steps/*.test.ts`).
+
+**Toplam 19/19 unit test** yeşil.
+
+### Blokaj — Agent Boğulma
+
+Config inceleme: tüm agent'ların primary override'ı `minimax/MiniMax-M2.7` (config top-level'da `kimi-coding/k2p5` default olsa da). Minimax yavaş (15-40s yanıt, aralıklı 529) + agent tool-calling overhead → plan 5-10dk, design 20+dk boğulma. Canlı test'lerde yaygın R1.
+
+Kimi K2.6 preview (2026-04-13) daha güçlü + daha ucuz, config değişikliği ile agent hızlanabilir. `minimax/` vs `minimax-coding/` duplicate temizlik de mümkün.
+
+### Kalan 6 Modül (Sonraki Sprint)
+
+- `06-implement` (LOOP type, worktree-ops 617 + merge-queue-ops 360 + story-ops 210 + developer AGENTS.md 869)
+- `07-verify`, `08-security-gate`, `09-qa-test`, `10-final-test`, `11-deploy`
+
+### 20+ Commit (main branch)
+
+`ef1278d → 81abf37 → bb7815f → 33d6923 → 2625cfe → aa35735 → 682e8f3 → 5862d90 → be616db → da87d5d → eb3e085 → a5f51c8 → 59d96ee → 72b0890 → d47c276 → bba32fe → 9758324 → 03cb528 → 643d8e6 → ea4afd6 → 4c67ce3 → c366ca2`
+
+### Memory Feedback Kural Değişikliği
+
+7 kural silindi (daha pratik çalışma için): `no_local_mc`, `no_unsolicited_action`, `no_version_rollback`, `never_touch_runs`, `never_touch_projects`, `no_model_switch`, `no_more_patches`. Kalan 11 kural tutuldu.
+
+Session notu: `memory/project_session_2026-04-15-modular-refactor.md`.
+
+---
+
 ### Hotfix (2026-04-14 19:24 TR): SCOPE_BLEED Path Mismatch — Stitch-to-JSX Koordinasyon
 
 **Sorun:** Son 15 run'ın 9'u failed. Live DB analizi 4 ayrı kök sebep çıkardı:
