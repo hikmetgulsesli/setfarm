@@ -2,6 +2,8 @@ import type { StepModule } from "./types.js";
 import { planModule } from "./01-plan/module.js";
 import { designModule } from "./02-design/module.js";
 import { storiesModule } from "./03-stories/module.js";
+import { setupRepoModule } from "./04-setup-repo/module.js";
+import { setupBuildModule } from "./05-setup-build/module.js";
 
 const modules = new Map<string, StepModule>();
 
@@ -13,6 +15,8 @@ function register(m: StepModule): void {
 register(planModule);
 register(designModule);
 register(storiesModule);
+register(setupRepoModule);
+register(setupBuildModule);
 
 export function get(id: string): StepModule | undefined {
   return modules.get(id);

@@ -1789,50 +1789,9 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
   // only fills when a reliable source exists, otherwise the guardrail still
   // fires and the agent gets a chance to correct.
   if (parsed["status"]?.toLowerCase() === "done") {
-    // Wave 9 — setup-repo EXISTING_CODE: derive from filesystem state
-    if (step.step_id === "setup-repo" && !parsed["existing_code"]) {
-      const repoPath = context["repo"] || "";
-      if (repoPath && fs.existsSync(repoPath)) {
-        // "Existing code" = the repo already had a package.json before setup-repo ran.
-        // setup-repo.sh only scaffolds if package.json is absent, so presence at this
-        // point means the repo was pre-existing. Fall back to false (clean scaffold).
-        const hasPkg = fs.existsSync(path.join(repoPath, "package.json"));
-        // Additionally, if git log shows more than the baseline commits (initial +
-        // .gitignore + DESIGN.md + optional setup-build), treat as existing.
-        let commitCount = 0;
-        try {
-          commitCount = parseInt(execFileSync("git", ["rev-list", "--count", "HEAD"], {
-            cwd: repoPath, encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
-          }).trim(), 10) || 0;
-        } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
-        const derived = hasPkg && commitCount > 5 ? "true" : "false";
-        parsed["existing_code"] = derived;
-        logger.info(`[required-fields-autoderive] setup-repo EXISTING_CODE=${derived} (pkg=${hasPkg}, commits=${commitCount})`, { runId: step.run_id });
-      }
-    }
-    // Wave 9 — setup-build BUILD_CMD: derive from package.json scripts
-    if (step.step_id === "setup-build" && !parsed["build_cmd"]) {
-      const repoPath = context["repo"] || "";
-      if (repoPath) {
-        try {
-          const pkgPath = path.join(repoPath, "package.json");
-          if (fs.existsSync(pkgPath)) {
-            const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
-            const scripts = (pkg && pkg.scripts) || {};
-            let derived = "";
-            if (scripts.build) derived = "npm run build";
-            else if (scripts.start) derived = "npm start";
-            else if (scripts.dev) derived = "npm run dev";
-            if (derived) {
-              parsed["build_cmd"] = derived;
-              logger.info(`[required-fields-autoderive] setup-build BUILD_CMD="${derived}" (from package.json scripts)`, { runId: step.run_id });
-            }
-          }
-        } catch (derErr) {
-          logger.warn(`[required-fields-autoderive] setup-build BUILD_CMD derivation failed: ${String(derErr).slice(0, 150)}`, { runId: step.run_id });
-        }
-      }
-    }
+    // (setup-repo EXISTING_CODE + setup-build BUILD_CMD auto-derive moved to
+    //  04-setup-repo/preclaim.ts and 05-setup-build/preclaim.ts — modules
+    //  expose *_hint context vars that their onComplete stamp into the final fields.)
 
     const missingFieldsMsg = checkRequiredOutputFields(step.step_id, parsed);
     if (missingFieldsMsg) {
@@ -2031,147 +1990,12 @@ ${screenDescs}
   }
 
   // DB Auto-Provisioning (setup step)
-  if (step.step_id === "setup-repo" && parsed["status"]?.toLowerCase() === "done") {
-    // Ensure plan's BRANCH exists in repo (create from main if missing)
-    const planBranch = context["branch"] || context["BRANCH"];
-    const repoDir = context["repo"] || context["REPO"];
-    if (planBranch && repoDir && planBranch !== "main" && planBranch !== "master") {
-      try {
-        const branchList = execFileSync("git", ["branch", "--list", planBranch], { cwd: repoDir, encoding: "utf-8", timeout: 5000 }).trim();
-        if (!branchList) {
-          execFileSync("git", ["checkout", "-b", planBranch], { cwd: repoDir, timeout: 5000 });
-          execFileSync("git", ["checkout", "main"], { cwd: repoDir, timeout: 5000 });
-          logger.info(`[setup-repo] Created missing branch "${planBranch}" from main`, { runId: step.run_id });
-        }
-      } catch (e) {
-        logger.warn(`[setup-repo] Could not create branch "${planBranch}", falling back to main: ${e}`, { runId: step.run_id });
-        context["branch"] = "main";
-        await updateRunContext(step.run_id, context);
-      }
-    }
-    const dbErr = processSetupCompletion(context, step.run_id);
-    if (dbErr) {
-      await failStep(stepId, dbErr);
-      return { advanced: false, runCompleted: false };
-    }
-  }
+  // (setup-repo branch ensure + DB provision + design contracts moved to
+  //  04-setup-repo/preclaim.ts. setup-build branch fallback moved to
+  //  05-setup-build/preclaim.ts via shared branch normalize.)
 
-  // Design Contract Building (setup step — after HTML download)
-  if (step.step_id === "setup-repo" && parsed["status"]?.toLowerCase() === "done") {
-    const designErr = await processSetupDesignContracts(step.run_id, context);
-    if (designErr) {
-      await failStep(stepId, designErr);
-      return { advanced: false, runCompleted: false };
-    }
-  }
-
-  // SETUP-BUILD BRANCH FALLBACK: if plan's branch doesn't exist, use main
-  if (step.step_id === "setup-build") {
-    const buildBranch = context["branch"] || context["BRANCH"];
-    const buildRepo = context["repo"] || context["REPO"];
-    if (buildBranch && buildRepo && buildBranch !== "main" && buildBranch !== "master") {
-      try {
-        const exists = execFileSync("git", ["branch", "--list", buildBranch], { cwd: buildRepo, encoding: "utf-8", timeout: 5000 }).trim();
-        if (!exists) {
-          logger.warn(`[setup-build] Branch "${buildBranch}" not found, falling back to main`, { runId: step.run_id });
-          context["branch"] = "main";
-          await updateRunContext(step.run_id, context);
-        }
-      } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
-    }
-  }
-
-  // SETUP-BUILD BASELINE GUARDRAIL (v1.5.53 + run #337 fix):
-  // Before failing for an empty/non-pass baseline, try to auto-derive it by running
-  // `npm run build` ourselves. Agents occasionally forget to include BASELINE: PASS
-  // even though the build works — don't burn a retry slot on that.
-  if (step.step_id === "setup-build" && parsed["status"]?.toLowerCase() === "done") {
-    let baseline = (parsed["baseline"] || "").toLowerCase().trim();
-    let baselinePass = baseline.includes("pass") || baseline.includes("ok") || baseline.includes("success");
-    if (!baseline || !baselinePass) {
-      const repoPath = context["repo"] || "";
-      if (repoPath && fs.existsSync(path.join(repoPath, "package.json"))) {
-        try {
-          const pkgRaw = fs.readFileSync(path.join(repoPath, "package.json"), "utf-8");
-          const pkg = JSON.parse(pkgRaw);
-          if (pkg.scripts && pkg.scripts.build) {
-            logger.info(`[setup-build-autoderive] BASELINE missing — running 'npm run build' to verify`, { runId: step.run_id, stepId: step.step_id });
-            execFileSync("npm", ["run", "build"], { cwd: repoPath, timeout: 180000, stdio: "pipe" });
-            baseline = "pass (auto-derived)";
-            baselinePass = true;
-            parsed["baseline"] = baseline;
-            logger.info(`[setup-build-autoderive] Build passed — baseline auto-set`, { runId: step.run_id });
-          } else {
-            // No build script → nothing to verify, accept
-            baseline = "no build script (auto-derived)";
-            baselinePass = true;
-            parsed["baseline"] = baseline;
-          }
-        } catch (buildErr: any) {
-          logger.warn(`[setup-build-autoderive] Build failed during auto-derive: ${String(buildErr?.message || buildErr).slice(0, 200)}`, { runId: step.run_id });
-        }
-      }
-    }
-    // AUTO-GENERATE JSX screens from Stitch HTML (stitch-to-jsx)
-    if (baselinePass) {
-      const stitchManifest = path.join(context["repo"] || "", "stitch", "DESIGN_MANIFEST.json");
-      if (fs.existsSync(stitchManifest)) {
-        try {
-          const scriptPath = path.join(process.env.HOME || "", ".openclaw", "setfarm-repo", "scripts", "stitch-to-jsx.mjs");
-          if (fs.existsSync(scriptPath)) {
-            execFileSync("node", [scriptPath, context["repo"]], { timeout: 30000, stdio: "pipe" });
-            // Commit generated screens so worktrees can access them
-            execFileSync("git", ["add", "src/screens/"], { cwd: context["repo"], timeout: 5000, stdio: "pipe" });
-            execFileSync("git", ["commit", "-m", "chore: auto-generate JSX screens from Stitch HTML"], { cwd: context["repo"], timeout: 10000, stdio: "pipe" });
-            logger.info(`[stitch-to-jsx] Generated JSX screens from Stitch HTML`, { runId: step.run_id });
-          }
-        } catch (e) {
-          logger.warn(`[stitch-to-jsx] Failed: ${String(e).slice(0, 200)}`, { runId: step.run_id });
-        }
-      }
-    }
-    if (!baseline || !baselinePass) {
-      const baselineMsg = `GUARDRAIL: setup-build baseline is "${parsed["baseline"] || "(empty)"}" — build must explicitly pass.`;
-      logger.warn(`[setup-build-guardrail] ${baselineMsg}`, { runId: step.run_id, stepId: step.step_id });
-      if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
-      await failStep(stepId, baselineMsg);
-      return { advanced: false, runCompleted: false };
-    }
-
-    // Wave 13 Bug O (run #344 postmortem): React 19 + @testing-library/react 15
-    // compat hell. Run #344's Koda agent hit "React.act is not a function" on
-    // every test run because npm install resolved to React 19.2 while the
-    // testing-library pin was 15.x. Agents are not equipped to diagnose peer
-    // dependency mismatches; they spin in install/test loops until the timeout
-    // kills them. Check the installed versions and fail setup-build with an
-    // actionable message before the implement loop ever starts.
-    // Wave 14: replaces Wave 13 Bug O hard-coded React 19 check with a data-driven
-    // engine that loads rules from src/installer/compat-rules.json. Adding a new
-    // compat rule (Next.js 15 + React 18, Vite 5 + Node 18, etc.) is now a
-    // JSON-only change.
-    const compatRepo = context["repo"] || "";
-    if (compatRepo && fs.existsSync(path.join(compatRepo, "package.json"))) {
-      try {
-        const pkg = JSON.parse(fs.readFileSync(path.join(compatRepo, "package.json"), "utf-8"));
-        const { evaluateCompat } = await import("./compat-engine.js");
-        const { fails, warns } = evaluateCompat(pkg, "setup-build");
-        for (const w of warns) {
-          logger.warn(`[setup-build-compat] ${w.id}: ${w.resolvedMessage}`, { runId: step.run_id });
-        }
-        if (fails.length > 0) {
-          const header = fails.length === 1
-            ? fails[0].resolvedMessage
-            : `COMPAT_VIOLATIONS (${fails.length} rule(s)):\n\n` + fails.map(f => `[${f.id}] ${f.resolvedMessage}`).join("\n\n");
-          logger.warn(`[setup-build-compat] ${header}`, { runId: step.run_id });
-          if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
-          await failStep(stepId, header);
-          return { advanced: false, runCompleted: false };
-        }
-      } catch (e) {
-        logger.warn(`[setup-build-compat] Could not evaluate compat rules: ${String(e).slice(0, 150)}`, { runId: step.run_id });
-      }
-    }
-  }
+  // (setup-build baseline, stitch-to-jsx, compat engine moved to
+  //  05-setup-build/preclaim.ts and guards.ts. Module delegation handles failure.)
 
   // Ensure Tailwind is installed if design requires it (BEFORE implement step)
   if (step.step_id === "setup-build" && parsed["status"]?.toLowerCase() === "done") {

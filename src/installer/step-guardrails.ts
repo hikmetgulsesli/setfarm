@@ -79,11 +79,10 @@ export function checkTestFailures(output: string): string | null {
  * from raw output by parseAndInsertStories — listing it here causes a hard
  * false-positive on every stories step (run #339 hit this on first deploy).
  */
-// "plan" moved to src/installer/steps/01-plan/guards.ts (StepModule.validateOutput owns full field list)
-const REQUIRED_OUTPUT_FIELDS: Record<string, string[]> = {
-  "setup-repo": ["existing_code"],
-  "setup-build": ["build_cmd"],
-};
+// "plan" moved to src/installer/steps/01-plan/guards.ts
+// "setup-repo" + "setup-build" moved to src/installer/steps/04-setup-repo/ and 05-setup-build/
+// (each module's onComplete stamps EXISTING_CODE/BUILD_CMD from the preClaim hint)
+const REQUIRED_OUTPUT_FIELDS: Record<string, string[]> = {};
 
 /**
  * Check that the parsed agent output includes every field the pipeline needs.
