@@ -4,6 +4,7 @@ import { designModule } from "./02-design/module.js";
 import { storiesModule } from "./03-stories/module.js";
 import { setupRepoModule } from "./04-setup-repo/module.js";
 import { setupBuildModule } from "./05-setup-build/module.js";
+import { implementModule } from "./06-implement/module.js";
 
 const modules = new Map<string, StepModule>();
 
@@ -17,6 +18,7 @@ register(designModule);
 register(storiesModule);
 register(setupRepoModule);
 register(setupBuildModule);
+register(implementModule);
 
 export function get(id: string): StepModule | undefined {
   return modules.get(id);
