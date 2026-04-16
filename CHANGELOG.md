@@ -1,3 +1,36 @@
+## 2026-04-17 — Gateway Performance Fix (CPU + Memory Leak)
+
+### Büyük Değişiklik — Gateway Şişme Kökü Teşhisi
+Kullanıcı tespit etti: "gateway şişince yavaşlıyor, restart edince düzeliyor". 6 custom "yama" ayarı zincirleme CPU + RAM drain üretiyordu.
+
+### Kök Sebep Zinciri (önce→sonra)
+
+| Ayar | Önceki | Sonraki | Neden |
+|---|---|---|---|
+| `defaults.subagents.maxConcurrent` | 16 | 6 | i5-6500T 4-core oversubscription → CPU 100% |
+| `defaults.subagents.archiveAfterMinutes` | 60 | 15 | Agent session 1 saat RAM'de tutuluyor |
+| `defaults.memorySearch.enabled` | true (Ollama) | false | Her agent turn'da Ollama `/v1/embeddings` → CPU drain |
+| `defaults.contextPruning.mode` | off | cache-ttl | Session sınırsız büyüme = gateway memory leak |
+| `main (arya).memorySearch` | (yok) | Google Gemini `text-embedding-004` | Arya memory korunur, CPU drain olmadan |
+| `hooks.openviking.config.autoIndex` | true | false | Her tool call HTTP noise |
+
+### Schema Gotcha'ları
+- `defaults.contextPruning.cacheTtlMinutes` — schema reddediyor, sadece `mode` yeterli
+- `agents.list[].contextPruning` — agent-level override YOK (schema hatası)
+- OpenAI embedding alternatifi: kullanıcı hesabı yok → Google Gemini tercih
+
+### Canlı Doğrulama (#472 sepet-65285)
+- Plan **42 saniye** (en hızlı ölçüm — önceki 55s-1m50s)
+- Gateway memory **1.1G stabil** (önceki 1.7G peak 2.4G, %54 düşüş)
+- Lane wait exceeded **YOK** (önceki 40-180s)
+- Ollama çağrısı **SIFIR** (önceki 100+ event/dk)
+
+### Dosya Değişiklikleri
+- `~/.openclaw/openclaw.json` — defaults + main agent + hooks
+- Backup: `~/.openclaw/backups/20260417-0131-perf-fix/`
+
+---
+
 ## 2026-04-17 — Darboğaz Fix + Kimi Model Fix (Production-Ready)
 
 ### Büyük Değişiklik — feature-dev Pipeline Production Ready
