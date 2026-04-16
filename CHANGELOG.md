@@ -1,3 +1,62 @@
+## 2026-04-16 — 07-verify Modül + Model Fix + Sistem Teyidi
+
+### Büyük Değişiklik — Sistem Stabilizasyonu
+OpenClaw 2026.4.14 + agent model atamaları fix sonrası feature-dev pipeline ilk kez uçtan-uca sağlıklı çalıştı. Önceki 20+ dakika stuck olan plan/design step'leri 1-3 dakikaya indi.
+
+### Model Atama Fix'leri
+Karmaşa tespit edildi ve düzeltildi:
+
+**Öncesi:**
+- `feature-dev_setup/tester/verifier/security-gate` → `MiniMax-M2.5` (ESKİ, API'da yok)
+- `feature-dev_qa-tester` → models.json **YOK**
+- `feature-dev_developer` → `MiniMax-M2.5` (kullanıcı kimi ister)
+- Bireysel developer'lar (koda/flux/cipher/prism/lux/nexus) → minimax primary, kimi 3. sıra
+
+**Sonrası:**
+- 5 agent → planner template (`MiniMax-M2.7`) kopyalandı
+- qa-tester için config oluşturuldu
+- Developer pool + feature-dev_developer → moonshot provider ilk sıra (kimi-k2.5 primary denemesi)
+- Gateway log teyit: `[gateway] agent model: kimi/k2p5`
+
+Backup: `~/.openclaw/backups/agent-models-20260416-231007` + `~/.openclaw/backups/devs-20260416-231758`
+
+### Yeni Modül — 07-verify
+
+Pattern: 06-implement (minimum viable). Step-ops.ts verify mantığı (injectVerifyContext + pre-flight static analysis + PR review delay) step-ops.ts'te kalıyor — verify_each loop mekanizmasına bağlı, tam refactor için daha derin çalışma gerekli.
+
+**Dosyalar (7):**
+- `src/installer/steps/07-verify/module.ts` (id=verify, type=single, agentRole=reviewer, maxPromptSize=16384)
+- `src/installer/steps/07-verify/guards.ts` (normalize first-word + validateOutput STATUS kontrol)
+- `src/installer/steps/07-verify/context.ts` (no-op şimdilik)
+- `src/installer/steps/07-verify/prompt.md` (reviewer template)
+- `src/installer/steps/07-verify/rules.md` (retry tetikleri, pass kriterleri, FEEDBACK formatı)
+- `src/installer/steps/registry.ts` (verifyModule register)
+- `tests/steps/07-verify.test.ts` (13 test case)
+
+### Test Coverage
+- **59/59 yeşil** (46 → 59, +13 test)
+- 7 modül test suite: 01-plan (8) + 02-design (7) + 03-stories (4) + 04-setup-repo (7) + 05-setup-build (9) + 06-implement (11) + 07-verify (13)
+
+### Canlı Sistem Teyidi — #467 sayac-33213
+- plan DONE 1m50s ✓ (MiniMax-M2.7)
+- design DONE **2m44s** ✓ (önceki 20+ dk stuck'lara göre 10x hızlanma)
+- stories DONE 1m13s ✓
+- setup-repo DONE 37s ✓ (önceki instant-fail'in çözümü)
+- setup-build DONE 15s ✓
+- implement US-001 DONE 10dk ✓ (developer koda — worktree'de App.tsx + 8 component + testler)
+- 5 story'nin 1'i tam bitti, diğerleri sırada
+
+### Kalan İş
+- 08-security-gate, 09-qa-test, 10-final-test, 11-deploy hâlâ step-ops.ts içinde inline
+- step-ops.ts 3238 satır (07-verify registry eklemesi +1 import)
+- Provider-order-primary mekanizmasının kesin doğrulaması (hâlâ minimax mı düşer bakalım, implement story'leri başarılı tamamlanırsa teyit)
+
+### Doğrulama
+- `npm run test:steps` — 59/59 pass (578ms)
+- Fresh `#467` pipeline 5 modül + US-001 başarısı
+
+---
+
 ## 2026-04-16 — Test Coverage Genişletme: 04/05/06 Modülleri
 
 ### Büyük Değişiklik — Modüler Refactor Test Kapsamı
