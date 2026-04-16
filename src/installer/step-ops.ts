@@ -2629,241 +2629,46 @@ ${screenDescs}
       }
     }
 
-    // SCOPE ENFORCEMENT (Wave 6 fix A + Wave 10 Bug D — plan: reactive-frolicking-cupcake)
-    // Run #340 US-002 (Note store + localStorage) wrote 12 source files / 1328
-    // insertions including Settings.tsx (US-005 scope), NoteCard/NoteForm/Sidebar/
-    // TopNav (other stories' UI), proving that the prompt-only SCOPE BOUNDARIES
-    // section in the developer AGENTS.md was being ignored. Server-side check:
-    // count the source files this story branch touched vs the baseline branch tip,
-    // hard-fail when the count is implausible for a single story.
-    //
-    // Tiered enforcement:
-    //   - story_index == 0 (US-001 / setup story): no limit, expected to scaffold
-    //     project structure + baseline files
-    //   - story_index >= 1:
-    //     * sourceFiles == 0 → HARD FAIL (Wave 10 Bug D — run #344 US-001 reported
-    //       STATUS: done in 3 seconds with setup-build's context fields as its own
-    //       output, never actually running the agent or making any code changes)
-    //     * sourceFiles > 12 → HARD FAIL (scope overflow, original Wave 6 Fix A)
-    //     * sourceFiles > 8 → soft warn + scope_creep_warning flag
-    //
-    // The 0-file floor is skipped for the setup story because US-001 ("Project
-    // setup design tokens") may legitimately be a no-op when setup-build already
-    // downloaded the stitch design tokens — but by convention the setup story
-    // has story_index == 0, so this is consistent with isSetupStory.
-    //
-    // Source files = .tsx/.jsx/.ts/.js/.vue/.svelte/.css/.scss/.html, excluding
-    // build output, config, lockfiles, DESIGN.md, stitch assets, references.
+    // SCOPE ENFORCEMENT — delegated to 06-implement/guards.ts
+    // (Wave 6 fix A, Wave 10 Bug D, Wave 13 Bug P9, Wave 14 Bug Q)
     if (step.step_id === "implement" && storyStatus === STORY_STATUS.DONE && storyRow?.story_id) {
       try {
-        // cuddly-sleeping-quail (run #402): context["story_workdir"] is WRONG during
-        // parallel story execution — the last-claimed story overwrites it, so scope
-        // check of an earlier story reads the WRONG worktree. Fix: derive the worktree
-        // path directly from the story branch name (same logic as worktree-ops.ts).
-        const storyBranchRow = await pgGet<{ story_branch: string | null }>(
-          "SELECT story_branch FROM stories WHERE id = $1", [step.current_story_id]
-        );
-        const storyBranchForWd = storyBranchRow?.story_branch || "";
-        let wd = "";
-        if (storyBranchForWd) {
-          const worktreeBase = path.join(os.homedir(), ".openclaw", "workspaces", "workflows", "feature-dev", "agents", "developer", "story-worktrees");
-          const candidateWd = path.join(worktreeBase, storyBranchForWd);
-          wd = fs.existsSync(candidateWd) ? candidateWd : (context["story_workdir"] || "");
-        } else {
-          wd = context["story_workdir"] || "";
-        }
-        const baseBr = context["branch"] || "";
-        // story_index is not on storyRow (getStoryInfo only returns id+title) — query it
+        const { resolveStoryWorktree, checkScopeFilesGate, checkScopeEnforcement } = await import("./steps/06-implement/guards.js");
         const storyIdxRow = await pgGet<{ story_index: number }>("SELECT story_index FROM stories WHERE id = $1", [step.current_story_id]);
         const isSetupStory = (storyIdxRow?.story_index ?? 99) === 0;
+        const wd = await resolveStoryWorktree(step.current_story_id, context["story_workdir"] || "");
+        const baseBr = context["branch"] || "";
+
         if (!isSetupStory && wd && baseBr && fs.existsSync(wd)) {
-          // Check ALL modifications: committed diff + uncommitted working-tree changes.
-          // A story that has uncommitted work is still "doing something" — we only
-          // want to fail when the worktree is completely untouched.
-          const diffOut = execFileSync("git", ["diff", "--name-only", `${baseBr}...HEAD`], {
-            cwd: wd, timeout: 10000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8",
-          }).trim();
-          const changedFiles = diffOut ? diffOut.split("\n").filter(Boolean) : [];
-          // Also include dirty working-tree changes (uncommitted) in the count
-          let dirtyFiles: string[] = [];
-          try {
-            const statusOut = execFileSync("git", ["status", "--porcelain"], {
-              cwd: wd, timeout: 5000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8",
-            }).trim();
-            dirtyFiles = statusOut ? statusOut.split("\n").map(l => l.slice(3).trim()).filter(Boolean) : [];
-          } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
-          const allTouched = Array.from(new Set([...changedFiles, ...dirtyFiles]));
-          const SCOPE_EXTS = /\.(tsx?|jsx?|vue|svelte|css|scss|html)$/i;
-          const SCOPE_IGNORE = /^(node_modules\/|dist\/|\.next\/|build\/|coverage\/|stitch\/|references\/|DESIGN\.md|PROJECT_MEMORY\.md|\.gitignore|package(-lock)?\.json|tsconfig|vite\.config|tailwind\.config|postcss\.config|eslint\.config|README|index\.html$)/;
-          const sourceFiles = allTouched.filter(f => SCOPE_EXTS.test(f) && !SCOPE_IGNORE.test(f));
-          context["story_changed_files"] = String(sourceFiles.length);
-          context["story_changed_paths"] = sourceFiles.slice(0, 50).join(",");
-
-          // Stories with depends_on touch more files (dep-merge + integration wiring)
-          const _depRow = await pgGet<{ depends_on: string | null }>("SELECT depends_on FROM stories WHERE id = $1", [step.current_story_id]);
-          const _hasDeps = _depRow?.depends_on && _depRow.depends_on !== "[]" && _depRow.depends_on !== "null";
-          const HARD_LIMIT = _hasDeps ? 30 : 12;
-          const SOFT_LIMIT = _hasDeps ? 20 : 8;
-
-          // cuddly-sleeping-quail: scope_files existence gate. Runs before Wave 10 D
-          // because it gives a more specific error message when the agent declared a
-          // scope but never wrote the files. This catches the "fake-done" pattern
-          // where run #377 US-005 / US-006 were marked done with zero matching files
-          // in the worktree.
+          // Scope files existence gate (declared files must exist in worktree)
           if (step.retry_count < step.max_retries) {
-            const declRow = await pgGet<{ scope_files: string | null }>(
-              "SELECT scope_files FROM stories WHERE id = $1",
-              [step.current_story_id]
-            );
-            if (declRow?.scope_files) {
-              let declared: string[] = [];
-              try {
-                const parsed = JSON.parse(declRow.scope_files || "[]");
-                if (Array.isArray(parsed)) declared = parsed.filter((f: any) => typeof f === "string");
-              } catch { declared = []; }
-              if (declared.length > 0) {
-                const missing: string[] = [];
-                const present: string[] = [];
-                for (const rel of declared) {
-                  const abs = path.join(wd, rel);
-                  try {
-                    const st = fs.statSync(abs);
-                    if (st.isFile() && st.size > 0) present.push(rel); else missing.push(rel);
-                  } catch { missing.push(rel); }
-                }
-                const required = Math.ceil(declared.length * 0.6);
-                if (present.length < required) {
-                  const gateMsg = `SCOPE_FILE_MISSING: Story ${storyRow.story_id} (${storyRow.title}) declared scope_files=${JSON.stringify(declared)} but only ${present.length}/${declared.length} exist as non-empty files in the worktree. Missing: ${missing.join(", ") || "none"}. You reported STATUS: done but the files you promised to write do not exist. Re-read the story acceptance criteria, actually create the files, git add+commit them, and re-report.`;
-                  logger.warn(`[scope-files-gate] Story ${storyRow.story_id} declared scope but files missing — ${present.length}/${declared.length} present`, { runId: step.run_id });
-                  context["previous_failure"] = gateMsg;
-                  context["failure_category"] = "NO_WORK";
-                  context["failure_suggestion"] = "Write the files listed in your scope_files declaration";
-                  await updateRunContext(step.run_id, context);
-                  await failStep(stepId, gateMsg);
-                  return { advanced: false, runCompleted: false };
-                }
-              }
-            }
-          }
-
-          // Wave 10 Bug D: zero-work floor. Fake-completed stories hit this.
-          if (sourceFiles.length === 0 && step.retry_count < step.max_retries) {
-            const zeroMsg = `NO WORK DETECTED: Story ${storyRow.story_id} (${storyRow.title}) reported STATUS: done but the worktree at ${wd} has ZERO source-file changes vs ${baseBr} (neither committed nor uncommitted). The agent appears to have shortcut the task — possibly by regurgitating context fields (BUILD_CMD, BASELINE, etc.) as its own output instead of actually implementing. Re-read the story's acceptance criteria, write the files it asks for, commit them with 'git add -A && git commit -m \"feat: ${storyRow.story_id} - ...\"', and only then report STATUS: done. If the story genuinely has no code to write (e.g. it was already covered by setup-build), you must still emit a CHANGES: line explaining why nothing was modified.`;
-            logger.warn(`[scope-check] Story ${storyRow.story_id} reported done with ZERO source changes — Bug D fire`, { runId: step.run_id });
-            context["previous_failure"] = zeroMsg;
-            context["failure_category"] = "NO_WORK";
-            context["failure_suggestion"] = "Actually implement the story — write files and commit them";
-            await updateRunContext(step.run_id, context);
-            await failStep(stepId, zeroMsg);
-            return { advanced: false, runCompleted: false };
-          }
-
-          // Wave 13 Bug P9 (run #344 postmortem): Wave 10 Bug D's zero-file check
-          // is bypassable by a single dummy commit (touch .gitkeep). Add a minimum
-          // insertion-count floor for stories that DID touch source files. A real
-          // story implementation always exceeds MIN_INSERTS even for tiny scopes;
-          // below that threshold is a stub that must be rewritten.
-          const MIN_INSERTS = 10;
-          if (sourceFiles.length > 0 && step.retry_count < step.max_retries) {
-            let inserts = 0;
-            try {
-              const shortstat = execFileSync("git", ["diff", "--shortstat", `${baseBr}...HEAD`, "--", ...sourceFiles], {
-                cwd: wd, timeout: 5000, stdio: "pipe",
-              }).toString().trim();
-              const mInserts = shortstat.match(/(\d+)\s+insertion/);
-              inserts = mInserts ? parseInt(mInserts[1], 10) : 0;
-            } catch (e) {
-              logger.warn(`[scope-check] Could not run git diff --shortstat for ${storyRow.story_id}: ${String(e).slice(0, 120)}`);
-            }
-            if (inserts > 0 && inserts < MIN_INSERTS) {
-              const stubMsg = `INSUFFICIENT_WORK: Story ${storyRow.story_id} (${storyRow.title}) changed ${sourceFiles.length} source file(s) but only added ${inserts} line(s) of code — minimum is ${MIN_INSERTS}. This looks like a stub commit (dummy .gitkeep, empty export, placeholder comment). Re-read the story's acceptance criteria and actually implement the requested functionality. The file counts bypass from a single touch is blocked — quality requires real code.`;
-              logger.warn(`[scope-check] Story ${storyRow.story_id} stub commit detected: ${inserts} inserts across ${sourceFiles.length} files`, { runId: step.run_id });
-              context["previous_failure"] = stubMsg;
-              context["failure_category"] = "INSUFFICIENT_WORK";
-              context["failure_suggestion"] = "Write substantive code — stubs are rejected";
+            const sfGate = await checkScopeFilesGate(storyRow.story_id, step.current_story_id, storyRow.title, wd);
+            if (!sfGate.passed) {
+              context["previous_failure"] = sfGate.reason!;
+              context["failure_category"] = sfGate.category!;
+              context["failure_suggestion"] = sfGate.suggestion!;
               await updateRunContext(step.run_id, context);
-              await failStep(stepId, stubMsg);
+              await failStep(stepId, sfGate.reason!);
               return { advanced: false, runCompleted: false };
             }
           }
 
-          // Wave 14 Bug Q (run #345 postmortem): story scope bleed detection.
-          // When the planner declared SCOPE_FILES (+ optional SHARED_FILES) for
-          // this story, every source file the agent touched MUST be in that set.
-          // #345 caught every developer agent reimplementing the entire app
-          // regardless of which story they claimed — all 4 story branches held
-          // conflicting copies of types.ts / App.tsx / component tree, and the
-          // merge queue hit 4/4 conflicts. This check rejects that pattern at
-          // the story boundary so the merge queue never sees overlapping work.
-          if (sourceFiles.length > 0 && storyRow && step.retry_count < step.max_retries) {
-            const scopeRow = await pgGet<{ scope_files: string | null; shared_files: string | null }>(
-              "SELECT scope_files, shared_files FROM stories WHERE run_id = $1 AND story_id = $2",
-              [step.run_id, storyRow.story_id]
-            );
-            if (scopeRow?.scope_files) {
-              let allowed: Set<string> = new Set();
-              try {
-                const scope = JSON.parse(scopeRow.scope_files || "[]");
-                const shared = JSON.parse(scopeRow.shared_files || "[]");
-                if (Array.isArray(scope)) scope.forEach((f: any) => typeof f === "string" && allowed.add(f));
-                if (Array.isArray(shared)) shared.forEach((f: any) => typeof f === "string" && allowed.add(f));
-              } catch (e) { logger.debug(`[guardrail] Malformed JSON: ${String(e).slice(0, 80)}`); }
-              if (allowed.size > 0) {
-                // Wave 13+ (run #352 postmortem): implicit shared file patterns.
-                // Every story legitimately touches entry points (App.tsx, main.tsx),
-                // type definitions (types.ts), test files (*.test.tsx), and global
-                // styles (index.css). Planners rarely include these in SHARED_FILES
-                // because they're "obviously shared", but the scope guard rejects
-                // them causing 6-retry loops on every story. Instead of requiring
-                // planners to enumerate these, treat them as implicitly allowed.
-                // cuddly-sleeping-quail (run #392 postmortem): removed App/main/index
-                // from implicit shared. They caused 4/4 merge conflicts when every
-                // developer wrote its own App.tsx. The planner puts App.tsx/main.tsx
-                // in the integration story's scope_files — only that story should
-                // touch them. Test files stay implicit because they're per-story.
-                const IMPLICIT_SHARED = [
-                  /^src\/types(\.(tsx?|d\.ts))?$/,
-                  /^src\/types\/.*\.(tsx?|d\.ts)$/,
-                  /\.test\.(tsx?|jsx?)$/,
-                  /\.spec\.(tsx?|jsx?)$/,
-                  /^src\/setupTests\.(tsx?|js)$/,
-                  /\.d\.ts$/,
-                  // 5-model consensus: test infrastructure
-                  /^vitest\.config\.(ts|js|mts|mjs)$/,
-                  /^jest\.config\.(ts|js|mts|mjs)$/,
-                  /^src\/test\/setup\.(ts|js)$/,
-                  /^src\/test\/utils\.(ts|js)$/,
-                ];
-                const isImplicitShared = (f: string) => IMPLICIT_SHARED.some(p => p.test(f));
-                const outOfScope = sourceFiles.filter(f => !allowed.has(f) && !isImplicitShared(f));
-                if (outOfScope.length > 0) {
-                  const allowedList = [...allowed].slice(0, 15).join(", ");
-                  const oosList = outOfScope.slice(0, 10).join(", ");
-                  const bleedMsg = `SCOPE_BLEED: Story ${storyRow.story_id} (${storyRow.title}) modified ${outOfScope.length} file(s) outside its declared SCOPE_FILES. Out-of-scope: ${oosList}. Allowed (SCOPE_FILES + SHARED_FILES): ${allowedList}. Each story must stay within its own file scope — do not reimplement the entire app from the PRD. If you genuinely need to edit a shared file (App.tsx, index.ts, main.tsx), the planner must list it in SHARED_FILES first. Reset the worktree ('git reset --hard ${baseBr}') and only modify files from your SCOPE_FILES list.`;
-                  logger.warn(`[scope-bleed] Story ${storyRow.story_id} touched ${outOfScope.length} out-of-scope files: ${oosList}`, { runId: step.run_id });
-                  context["previous_failure"] = bleedMsg;
-                  context["failure_category"] = "SCOPE_BLEED";
-                  context["failure_suggestion"] = "Only modify files declared in your SCOPE_FILES";
-                  await updateRunContext(step.run_id, context);
-                  await failStep(stepId, bleedMsg);
-                  return { advanced: false, runCompleted: false };
-                }
-              }
-            }
-          }
-
-          if (sourceFiles.length > HARD_LIMIT && step.retry_count < step.max_retries) {
-            const scopeMsg = `SCOPE OVERFLOW: Story ${storyRow.story_id} (${storyRow.title}) modified ${sourceFiles.length} source files — hard limit is ${HARD_LIMIT}. Files: ${sourceFiles.slice(0, 15).join(", ")}. Limit your changes to the files this story actually owns. Most cross-cutting work belongs in OTHER stories. Reset the worktree (git reset --hard ${baseBr}) and re-implement with a tighter scope. If you genuinely need shared utility edits, list them in OUTPUT as SHARED_EDITS: <file> — <reason>.`;
-            logger.warn(`[scope-check] Story ${storyRow.story_id} OVERFLOWED scope: ${sourceFiles.length} files, hard fail`, { runId: step.run_id });
-            context["previous_failure"] = scopeMsg;
-            context["failure_category"] = "SCOPE_OVERFLOW";
-            context["failure_suggestion"] = "Reset worktree and re-implement with only the files this story owns";
+          // Zero-work, stub, scope bleed, scope overflow checks
+          const scopeResult = await checkScopeEnforcement(
+            storyRow.story_id, step.current_story_id, storyRow.title,
+            wd, baseBr, step.retry_count, step.max_retries,
+          );
+          if (!scopeResult.passed && scopeResult.category) {
+            context["previous_failure"] = scopeResult.reason!;
+            context["failure_category"] = scopeResult.category;
+            context["failure_suggestion"] = scopeResult.suggestion!;
             await updateRunContext(step.run_id, context);
-            await failStep(stepId, scopeMsg);
+            await failStep(stepId, scopeResult.reason!);
             return { advanced: false, runCompleted: false };
-          } else if (sourceFiles.length > SOFT_LIMIT) {
-            logger.warn(`[scope-check] Story ${storyRow.story_id} touched ${sourceFiles.length} files (soft limit ${SOFT_LIMIT}) — flagging for verify`, { runId: step.run_id });
-            context["scope_creep_warning"] = `Story ${storyRow.story_id} touched ${sourceFiles.length} files — above typical single-story scope`;
+          }
+          // Soft warning (scope creep flag for verify step)
+          if (scopeResult.reason && scopeResult.passed) {
+            context["scope_creep_warning"] = scopeResult.reason;
           }
         }
       } catch (scopeErr) {
