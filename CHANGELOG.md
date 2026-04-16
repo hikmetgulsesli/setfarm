@@ -1,3 +1,43 @@
+## 2026-04-16 — Test Coverage Genişletme: 04/05/06 Modülleri
+
+### Büyük Değişiklik — Modüler Refactor Test Kapsamı
+Daha önce sadece 01-plan/02-design/03-stories için unit test vardı (19 test). 04-setup-repo, 05-setup-build ve 06-implement modülleri için 27 yeni test eklendi. Toplam step modül testleri **19 → 46** (%142 artış).
+
+### Teknik Değişiklikler
+
+**tests/steps/04-setup-repo.test.ts (7 test):**
+- Module metadata (id, type, agentRole, maxPromptSize=6144, preClaim/onComplete varlığı)
+- buildPrompt: REPO/BRANCH/TECH_STACK/DB_REQUIRED substitution + defaults + budget guard
+- validateOutput: STATUS required, "done" bekleniyor (case-insensitive)
+
+**tests/steps/05-setup-build.test.ts (9 test):**
+- Module metadata + buildPrompt (REPO/TECH_STACK/BUILD_CMD_HINT)
+- onComplete: parsed.build_cmd → context.build_cmd stamp, build_cmd_hint fallback, "npm run build" final fallback
+- onComplete: compat_fail throw (`COMPAT: ...`), baseline_fail throw (`BASELINE: ...`)
+
+**tests/steps/06-implement.test.ts (11 test):**
+- Module metadata (id=implement, type=loop, agentRole=developer, maxPromptSize=32768)
+- buildPrompt returns empty (AGENTS.md 869 satırlık loop template'e delegasyon kasıtlı)
+- injectContext no-op (gerçek iş injectStoryContext'te, story-selection sonrası)
+- validateOutput: STATUS required, STATUS=done && (CHANGES|STORY_BRANCH) kuralı
+- normalize: first-word extract, lowercase, multi-line leak fix (Wave 13+)
+
+### Sanity Check Bulguları
+
+- **MC ↔ setfarm event uyumu:** DB `step_id` değerleri + module.id HEPSİ bare ("plan", "design", "implement"...). MC `discord-notify.ts` aynı bare format bekliyor. **Uyum var, kod değişikliği gerekmedi.**
+- **OpenClaw v2026.4.14** teyit edildi (memory notu stale idi).
+- **#464 run cancelled** — eski cron artefaktı, `setfarm workflow stop 3edc2d09 --force`.
+
+### Doğrulama
+- `npm run test:steps` — 46/46 pass, 0 fail (498ms)
+- 6 modül (01-06) yeşil
+
+### Kalan İş
+- 07-verify, 08-security-gate, 09-qa-test, 10-final-test, 11-deploy hâlâ step-ops.ts içinde inline (3238 satır kaldı)
+- step-ops.ts legacy kod temizliği (delegasyon sonrası ölü versiyon kalıntıları olabilir)
+
+---
+
 ## 2026-04-16 — 06-implement Modül + Phase 2 Scope Delegation
 
 ### Büyük Değişiklik — Implement Step Modülü
