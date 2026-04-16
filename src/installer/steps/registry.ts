@@ -8,6 +8,8 @@ import { implementModule } from "./06-implement/module.js";
 import { verifyModule } from "./07-verify/module.js";
 import { securityGateModule } from "./08-security-gate/module.js";
 import { qaTestModule } from "./09-qa-test/module.js";
+import { finalTestModule } from "./10-final-test/module.js";
+import { deployModule } from "./11-deploy/module.js";
 
 const modules = new Map<string, StepModule>();
 
@@ -25,6 +27,8 @@ register(implementModule);
 register(verifyModule);
 register(securityGateModule);
 register(qaTestModule);
+register(finalTestModule);
+register(deployModule);
 
 export function get(id: string): StepModule | undefined {
   return modules.get(id);
