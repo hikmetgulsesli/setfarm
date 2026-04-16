@@ -1,3 +1,33 @@
+## 2026-04-16 — 06-implement Modül + Phase 2 Scope Delegation
+
+### Büyük Değişiklik — Implement Step Modülü
+Step-ops.ts monolitinden 06-implement modülüne extraction devam ediyor. Phase 1: modül dosyaları, Phase 2: scope enforcement delegation.
+
+### Teknik Değişiklikler
+
+**06-implement modül (e778304):**
+-  (252 satır): injectStoryContext — story context, scope discipline, stitch HTML, design DOM, smart context
+-  (219 satır): normalize, validateOutput, checkScopeFilesGate, checkScopeEnforcement, resolveStoryWorktree
+-  (51 satır): StepModule kaydı (loop type, developer)
+-  + : Developer agent prompt ve kurallar
+- : implementModule eklendi
+
+**Phase 2 scope delegation (81fe982):**
+- step-ops.ts loop block'undaki 215 satırlık inline scope enforcement → 38 satırlık guards.ts delegation
+- Wave 6/10/13/14 scope guard'lar korundu (zero-work, stub, scope bleed, overflow, scope_files gate)
+- step-ops.ts: 3433 → 3238 satır (-195)
+
+**Cron pool cap (58a4f91):**
+- syncActiveCrons demand-based pool cap: 1 run → 1 cron, N run → min(N, pool) cron
+- Gateway CPU %63 → %27
+
+### Doğrulama
+- Run #457/#458/#459: 5 modül (plan→setup-build) 3/3 yeşil
+- Run #462: 5 modül yeşil + implement 2/6 story done (scope guard delegation çalışıyor)
+- Gateway idle: sadece medic cron (demand-cap doğrulandı)
+
+---
+
 ## 2026-04-16 — syncActiveCrons pool cap (CPU/lane spam fix)
 
 ### Kritik Bug Fix
