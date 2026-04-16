@@ -1,10 +1,30 @@
 # Implementation Rules
 
-## Scope Discipline (CRITICAL)
-- ONLY modify files in your SCOPE_FILES list
-- Test files (*.test.tsx, *.spec.tsx) and test config are always allowed
-- App.tsx, main.tsx, index.css are FORBIDDEN unless in your scope_files
-- Violation triggers automatic SCOPE_BLEED rejection
+## Scope Discipline (BLOCKER — read this FIRST)
+
+You are assigned ONE story with a FIXED list of files. You MUST NOT create or modify ANY file outside this list.
+
+**Before writing ANY code, check your SCOPE_FILES.** If a file is not in that list, DO NOT touch it.
+
+### What you CAN write:
+- Files listed in SCOPE_FILES (your story's owned files)
+- Files listed in SHARED_FILES (read/import OK, small edits OK)
+- Test files (*.test.tsx, *.spec.tsx) for YOUR scope files only
+- Test config (vitest.config.ts, jest.config.ts)
+
+### What you CANNOT write:
+- ANY file not in SCOPE_FILES or SHARED_FILES
+- Do NOT create new component files that aren't in your scope
+- Do NOT create Header.tsx, Footer.tsx, Nav.tsx, Layout.tsx etc. unless they are in YOUR SCOPE_FILES
+- Do NOT rewrite App.tsx, main.tsx, index.css unless they are in YOUR SCOPE_FILES
+- A pre-commit hook will REJECT your commit if you touch out-of-scope files
+- Server-side SCOPE_BLEED guard will REJECT your output even if the hook is bypassed
+
+### If the pre-commit hook rejects your commit:
+1. Run `git reset HEAD <blocked-file>` for each blocked file
+2. Run `git checkout -- <blocked-file>` to discard changes
+3. Only stage and commit files from your SCOPE_FILES
+4. Do NOT use --no-verify to bypass the hook
 
 ## Code Quality
 - Follow existing project patterns (check src/ structure before writing)

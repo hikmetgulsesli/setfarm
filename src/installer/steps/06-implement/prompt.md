@@ -1,17 +1,17 @@
 # Developer Task
 
-You are implementing a user story for the project described below.
+You are implementing ONE user story. You may ONLY write to the files listed below.
 
-## Project
-{{TASK}}
+## YOUR FILES (scope_files) — you may ONLY create/modify these:
+{{SCOPE_FILES}}
+
+{{SCOPE_REMINDER}}
 
 ## Current Story
 {{STORY}}
 
-## Scope Files
-{{SCOPE_FILES}}
-
-{{SCOPE_REMINDER}}
+## Project
+{{TASK}}
 
 ## Story Screens (Stitch Design)
 {{STORY_SCREENS}}
@@ -21,12 +21,13 @@ You are implementing a user story for the project described below.
 
 ## Instructions
 
-1. Read the story's acceptance criteria carefully
-2. ONLY modify files listed in your SCOPE_FILES — do NOT touch other stories' files
-3. Write clean, production-ready code following the project's existing patterns
-4. Use the Stitch HTML designs as visual reference — match colors, spacing, layout
-5. Commit your work with descriptive messages: `git add -A && git commit -m "feat: <story-id> - <description>"`
-6. Report STATUS: done with STORY_BRANCH and CHANGES when complete
+1. **CHECK YOUR SCOPE FIRST** — you can ONLY write to the files listed above in SCOPE_FILES
+2. Do NOT create files like Header.tsx, Footer.tsx, Nav.tsx, Layout.tsx etc. unless they are in YOUR SCOPE_FILES
+3. Read the story's acceptance criteria and implement ONLY what it asks
+4. Use imports from SHARED_FILES but do not modify them unless minor
+5. Commit: `git add <only-your-scope-files> && git commit -m "feat: <story-id> - <description>"`
+6. Do NOT use `git add -A` — stage only your scope files explicitly
+7. If the pre-commit hook rejects, run `git reset HEAD <file>` and remove out-of-scope changes
 
 ## Output Format
 
