@@ -1,3 +1,64 @@
+## 2026-04-17 — Darboğaz Fix + Kimi Model Fix (Production-Ready)
+
+### Büyük Değişiklik — feature-dev Pipeline Production Ready
+3 paralel run testi iki ciddi blokajı kanıtladı ve kök nedenler teşhis edilerek canlı doğrulandı. Bundan böyle concurrent run senaryosu darboğaz-free.
+
+### Darboğaz Fix — Workflow Pool Genişletme (Konfigürasyon Sync)
+
+**Sorun**: Aktif `~/.openclaw/workspace/workflows/feature-dev/workflow.yml` stale — 4 rolde tek agent:
+- planner: main (tek) → 3 concurrent run 16+dk plan kuyruğu
+- designer: mert (tek)
+- setup-repo/setup-build/deployer: atlas (tek, 3 rol için)
+
+**Çözüm**: Setfarm template (`~/.openclaw/setfarm/workflows/feature-dev/workflow.yml`) ZATEN genişletilmiş pool'lara sahip. Tek komut sync:
+```bash
+cp ~/.openclaw/setfarm/workflows/feature-dev/workflow.yml ~/.openclaw/workspace/workflows/feature-dev/workflow.yml
+```
+
+**Yeni pool**:
+- planner: [main, nova, zeta]
+- setup-repo: [atlas, axon, helix]
+- setup-build: [atlas, axon, helix]
+- designer: [prism, helix, zeta]
+- developer: [koda, flux, cipher, prism, lux, nexus, axon, nova, zeta, helix] — 10 agent
+- deployer: [atlas, helix]
+
+**Kanıt**: Fix sonrası #470 plan **55 saniye** (önceki 11-16 dk kuyruğundan 12-18x hızlanma).
+
+### Kimi Model Fix — API Key Format Teşhisi (Kritik Gotcha)
+
+**Sorun zinciri**:
+1. 3 Explore agent source analizi: workflow.yml `polling.model` cron payload'a konmuyor. Gerçek model seçimi `~/.openclaw/openclaw.json agents.list[].model.primary`.
+2. İlk deneme: 11 developer agent `moonshot/kimi-k2.5` → Gateway HTTP 401 Invalid Authentication → fallback MiniMax-M2.7.
+3. **Root cause**: `openclaw.json env.MOONSHOT_API_KEY` değeri `sk-kimi-...` ile başlıyor — yani kimi.com formatı, moonshot.ai değil. Moonshot endpoint reddediyor.
+4. Doğru format: `kimi-coding/k2p5`. Agent models.json'ında `kimi-coding` provider `apiKey: "sk-kimi-..."` inline — aynı key doğru endpoint'e gidiyor.
+
+**Çözüm**: Python script ile 11 developer agent (koda, flux, cipher, prism, lux, nexus, axon, nova, zeta, helix, feature-dev_developer) model.primary → `kimi-coding/k2p5`.
+
+**Kanıt**: Fix sonrası `live_events`:
+- prism agent model=k2p5, 46 event (4 dakikada)
+- Gateway log: 401/fallback/kimi error **YOK**
+
+### Gateway + Config Değişiklikleri
+
+- `~/.openclaw/openclaw.json` — 11 developer agent model.primary güncelleme
+- `~/.openclaw/workspace/workflows/feature-dev/workflow.yml` — setfarm template sync (pool genişletme)
+- `systemctl --user restart openclaw-gateway` + `setfarm workflow ensure-crons feature-dev`
+- Backup: `~/.openclaw/backups/20260417-0038-plan-apply/`
+
+### Memory + Gotcha
+
+- `memory/project_session_2026-04-17-darbogaz-kimi-fix.md` — tam session notu
+- `memory/gotcha_moonshot_key_is_kimi_format.md` — API key format yanıltıcı isim uyarısı
+
+### Doğrulama
+- #470 plan 55s ✓
+- prism/k2p5 canlı çağrı ✓
+- 97/97 unit test yeşil (kod değişimi yok, config fix)
+- Gateway restart sonrası sistem stabil
+
+---
+
 ## 2026-04-16 — 07-verify Modül + Model Fix + Sistem Teyidi
 
 ### Büyük Değişiklik — Sistem Stabilizasyonu
