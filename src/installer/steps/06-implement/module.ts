@@ -9,22 +9,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const promptTemplate = fs.readFileSync(path.join(__dirname, "prompt.md"), "utf-8");
 const rulesBody = fs.readFileSync(path.join(__dirname, "rules.md"), "utf-8");
 
-function buildPrompt(ctx: PromptContext): string {
-  const story = ctx.context["current_story"] || "";
-  const scope = ctx.context["story_scope_files"] || "";
-  const scopeReminder = ctx.context["scope_reminder"] || "";
-  const designRules = ctx.context["design_rules"] || "";
-  const storyScreens = ctx.context["story_screens"] || "";
-
-  let prompt = promptTemplate
-    .replace(/\{\{TASK\}\}/g, ctx.task)
-    .replace(/\{\{STORY\}\}/g, story)
-    .replace(/\{\{SCOPE_FILES\}\}/g, scope)
-    .replace(/\{\{SCOPE_REMINDER\}\}/g, scopeReminder)
-    .replace(/\{\{DESIGN_RULES\}\}/g, designRules)
-    .replace(/\{\{STORY_SCREENS\}\}/g, storyScreens);
-
-  return `${prompt}\n\n---\n\n# Kurallar\n\n${rulesBody}`;
+function buildPrompt(_ctx: PromptContext): string {
+  // Implement is a loop step — the real prompt comes from AGENTS.md via
+  // workflow.yml input_template, enriched by injectStoryContext in the
+  // loop claim path. Returning empty string preserves the 869-line
+  // AGENTS.md template instead of replacing it with a thin skeleton.
+  // The rules.md scope enforcement is injected via context["scope_reminder"]
+  // by injectStoryContext, so it still reaches the agent.
+  return "";
 }
 
 async function injectContext(ctx: ClaimContext): Promise<void> {
