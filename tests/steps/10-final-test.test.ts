@@ -49,14 +49,9 @@ describe("10-final-test step module", () => {
     assert.equal(validateOutput({ status: "skip" } as ParsedOutput).ok, true);
   });
 
-  it("validateOutput requires test_failures/feedback/issues/smoke for retry", () => {
-    const r1 = validateOutput({ status: "retry" } as ParsedOutput);
-    assert.equal(r1.ok, false);
-    assert.ok(r1.errors.some(e => e.includes("TEST_FAILURES")));
-
-    assert.equal(validateOutput({ status: "retry", test_failures: "Phase 3 build fail" } as ParsedOutput).ok, true);
-    assert.equal(validateOutput({ status: "retry", smoke_test_result: "fail: Phase 8" } as ParsedOutput).ok, true);
-    assert.equal(validateOutput({ status: "retry", feedback: "tsc errors" } as ParsedOutput).ok, true);
+  it("validateOutput accepts retry without extra fields (enforcement upstream in step-ops)", () => {
+    assert.equal(validateOutput({ status: "retry" } as ParsedOutput).ok, true);
+    assert.equal(validateOutput({ status: "retry", test_failures: "Phase 3 fail" } as ParsedOutput).ok, true);
   });
 
   it("validateOutput rejects unknown STATUS", () => {

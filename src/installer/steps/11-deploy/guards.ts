@@ -15,13 +15,10 @@ export function validateOutput(parsed: ParsedOutput): ValidationResult {
   if (!status) {
     errors.push("Missing STATUS field");
   } else if (!ALLOWED_STATUS.has(status)) {
-    errors.push(`Unknown STATUS: "${parsed["status"]}". Expected one of: done, retry, skip, fail.`);
+    errors.push(`Unknown STATUS: "${parsed["status"]}". Expected one of: done, retry, skip, fail, failed, error.`);
   }
   if (status === "done" && !parsed["deploy_url"] && !parsed["systemd_unit"] && !parsed["port"]) {
-    errors.push("STATUS: done requires DEPLOY_URL, SYSTEMD_UNIT, or PORT field so ops can verify");
-  }
-  if (status === "retry" && !parsed["feedback"] && !parsed["issues"] && !parsed["errors"]) {
-    errors.push("STATUS: retry requires FEEDBACK, ISSUES, or ERRORS field explaining why deploy aborted");
+    errors.push("STATUS: done requires at least one deploy marker: DEPLOY_URL, SYSTEMD_UNIT, or PORT");
   }
   return { ok: errors.length === 0, errors };
 }

@@ -58,13 +58,9 @@ describe("11-deploy step module", () => {
     assert.equal(validateOutput({ status: "done", port: "4812" } as ParsedOutput).ok, true);
   });
 
-  it("validateOutput retry requires feedback/issues/errors", () => {
-    const r1 = validateOutput({ status: "retry" } as ParsedOutput);
-    assert.equal(r1.ok, false);
-    assert.ok(r1.errors.some(e => e.includes("FEEDBACK")));
-
-    assert.equal(validateOutput({ status: "retry", errors: "port 4812 in use" } as ParsedOutput).ok, true);
-    assert.equal(validateOutput({ status: "retry", feedback: "nginx -t fail" } as ParsedOutput).ok, true);
+  it("validateOutput accepts retry without extra fields (enforcement upstream in step-ops)", () => {
+    assert.equal(validateOutput({ status: "retry" } as ParsedOutput).ok, true);
+    assert.equal(validateOutput({ status: "retry", errors: "port busy" } as ParsedOutput).ok, true);
   });
 
   it("validateOutput accepts STATUS: skip", () => {

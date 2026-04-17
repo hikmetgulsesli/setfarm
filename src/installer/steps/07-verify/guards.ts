@@ -15,10 +15,7 @@ export function validateOutput(parsed: ParsedOutput): ValidationResult {
   if (!status) {
     errors.push("Missing STATUS field");
   } else if (!ALLOWED_STATUS.has(status)) {
-    errors.push(`Unknown STATUS: "${parsed["status"]}". Expected one of: done, retry, skip, fail.`);
-  }
-  if (status === "retry" && !parsed["feedback"] && !parsed["verify_feedback"] && !parsed["issues"]) {
-    errors.push("STATUS: retry requires FEEDBACK or VERIFY_FEEDBACK or ISSUES field explaining what blocks completion");
+    errors.push(`Unknown STATUS: "${parsed["status"]}". Expected one of: done, retry, skip, fail, failed, error.`);
   }
   return { ok: errors.length === 0, errors };
 }

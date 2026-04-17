@@ -29,4 +29,4 @@ SYSTEMD_UNIT: <proje>.service
 PORT: <port>
 ```
 
-STATUS: done için DEPLOY_URL veya SYSTEMD_UNIT zorunlu.
+STATUS: done için en az bir deploy kanıtı zorunlu: `DEPLOY_URL`, `SYSTEMD_UNIT` veya `PORT` (biri yeterli).

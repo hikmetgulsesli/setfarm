@@ -15,12 +15,7 @@ export function validateOutput(parsed: ParsedOutput): ValidationResult {
   if (!status) {
     errors.push("Missing STATUS field");
   } else if (!ALLOWED_STATUS.has(status)) {
-    errors.push(`Unknown STATUS: "${parsed["status"]}". Expected one of: done, retry, skip, fail.`);
-  }
-  // STATUS: done requires smoke_test_result field (step-ops auto-derives if missing, but the agent should surface it)
-  // STATUS: retry requires structured failure reason
-  if (status === "retry" && !parsed["test_failures"] && !parsed["feedback"] && !parsed["issues"] && !parsed["smoke_test_result"]) {
-    errors.push("STATUS: retry requires TEST_FAILURES, FEEDBACK, ISSUES, or SMOKE_TEST_RESULT field explaining blocker");
+    errors.push(`Unknown STATUS: "${parsed["status"]}". Expected one of: done, retry, skip, fail, failed, error.`);
   }
   return { ok: errors.length === 0, errors };
 }

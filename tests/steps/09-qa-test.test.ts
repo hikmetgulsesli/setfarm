@@ -51,16 +51,9 @@ describe("09-qa-test step module", () => {
     assert.equal(validateOutput({ status: "skip" } as ParsedOutput).ok, true);
   });
 
-  it("validateOutput requires test_failures/issues/feedback for retry", () => {
-    const r1 = validateOutput({ status: "retry" } as ParsedOutput);
-    assert.equal(r1.ok, false);
-    assert.ok(r1.errors.some(e => e.includes("TEST_FAILURES")));
-
-    const r2 = validateOutput({ status: "retry", test_failures: "Counter button broken" } as ParsedOutput);
-    assert.equal(r2.ok, true);
-
-    const r3 = validateOutput({ status: "retry", feedback: "layout overflow" } as ParsedOutput);
-    assert.equal(r3.ok, true);
+  it("validateOutput accepts retry without extra fields (enforcement upstream in step-ops)", () => {
+    assert.equal(validateOutput({ status: "retry" } as ParsedOutput).ok, true);
+    assert.equal(validateOutput({ status: "retry", test_failures: "x" } as ParsedOutput).ok, true);
   });
 
   it("validateOutput rejects unknown STATUS", () => {

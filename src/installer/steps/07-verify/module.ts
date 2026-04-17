@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { StepModule, PromptContext } from "../types.js";
+import { resolveTemplate } from "../_shared/prompt-resolver.js";
 import { injectContext } from "./context.js";
 import { normalize, validateOutput } from "./guards.js";
 
@@ -12,14 +13,15 @@ const rulesBody = fs.readFileSync(path.join(__dirname, "rules.md"), "utf-8");
 
 function buildPrompt(ctx: PromptContext): string {
   const c = ctx.context;
-  const resolved = promptTemplate
-    .replace(/\{\{REPO\}\}/g, c["repo"] || "")
-    .replace(/\{\{BRANCH\}\}/g, c["branch"] || "main")
-    .replace(/\{\{CURRENT_STORY\}\}/g, c["current_story"] || "")
-    .replace(/\{\{PR_URL\}\}/g, c["pr_url"] || c["final_pr"] || "")
-    .replace(/\{\{PREFLIGHT_ANALYSIS\}\}/g, c["preflight_analysis"] || "(no pre-flight run)")
-    .replace(/\{\{STORIES_JSON\}\}/g, c["stories_json"] || "[]")
-    .replace(/\{\{PROGRESS\}\}/g, c["progress"] || "");
+  const resolved = resolveTemplate(promptTemplate, {
+    REPO: c["repo"] || "",
+    BRANCH: c["branch"] || "main",
+    CURRENT_STORY: c["current_story"] || "",
+    PR_URL: c["pr_url"] || c["final_pr"] || "",
+    PREFLIGHT_ANALYSIS: c["preflight_analysis"] || "(no pre-flight run)",
+    STORIES_JSON: c["stories_json"] || "[]",
+    PROGRESS: c["progress"] || "",
+  });
   return `${resolved}\n\n---\n\n# Kurallar\n\n${rulesBody}`;
 }
 

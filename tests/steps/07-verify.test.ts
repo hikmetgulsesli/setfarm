@@ -90,19 +90,12 @@ describe("07-verify step module", () => {
     assert.equal(validateOutput({ status: "skip" } as ParsedOutput).ok, true);
   });
 
-  it("validateOutput accepts STATUS: retry ONLY with feedback field", () => {
-    const r1 = validateOutput({ status: "retry" } as ParsedOutput);
-    assert.equal(r1.ok, false);
-    assert.ok(r1.errors.some(e => e.includes("FEEDBACK")));
-
-    const r2 = validateOutput({ status: "retry", feedback: "App.tsx missing import" } as ParsedOutput);
-    assert.equal(r2.ok, true);
-
-    const r3 = validateOutput({ status: "retry", verify_feedback: "tsc error at line 12" } as ParsedOutput);
-    assert.equal(r3.ok, true);
-
-    const r4 = validateOutput({ status: "retry", issues: "missing test coverage" } as ParsedOutput);
-    assert.equal(r4.ok, true);
+  it("validateOutput accepts STATUS: retry without extra fields (retry handled upstream in step-ops)", () => {
+    // Note: step-ops.ts early-returns on STATUS: retry before module delegation,
+    // so module.validateOutput() never runs for retry. We accept it here for
+    // API symmetry and unit-test clarity; enforcement lives upstream.
+    assert.equal(validateOutput({ status: "retry" } as ParsedOutput).ok, true);
+    assert.equal(validateOutput({ status: "retry", feedback: "x" } as ParsedOutput).ok, true);
   });
 
   it("validateOutput rejects unknown STATUS values", () => {

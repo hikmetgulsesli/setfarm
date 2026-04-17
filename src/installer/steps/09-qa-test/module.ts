@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { StepModule, PromptContext } from "../types.js";
+import { resolveTemplate } from "../_shared/prompt-resolver.js";
 import { injectContext } from "./context.js";
 import { normalize, validateOutput } from "./guards.js";
 
@@ -12,12 +13,13 @@ const rulesBody = fs.readFileSync(path.join(__dirname, "rules.md"), "utf-8");
 
 function buildPrompt(ctx: PromptContext): string {
   const c = ctx.context;
-  const resolved = promptTemplate
-    .replace(/\{\{REPO\}\}/g, c["repo"] || "")
-    .replace(/\{\{BRANCH\}\}/g, c["branch"] || "main")
-    .replace(/\{\{STORIES_JSON\}\}/g, c["stories_json"] || "[]")
-    .replace(/\{\{FINAL_PR\}\}/g, c["final_pr"] || c["pr_url"] || "")
-    .replace(/\{\{PROGRESS\}\}/g, c["progress"] || "");
+  const resolved = resolveTemplate(promptTemplate, {
+    REPO: c["repo"] || "",
+    BRANCH: c["branch"] || "main",
+    STORIES_JSON: c["stories_json"] || "[]",
+    FINAL_PR: c["final_pr"] || c["pr_url"] || "",
+    PROGRESS: c["progress"] || "",
+  });
   return `${resolved}\n\n---\n\n# Kurallar\n\n${rulesBody}`;
 }
 

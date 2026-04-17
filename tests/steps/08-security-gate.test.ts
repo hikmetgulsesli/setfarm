@@ -54,16 +54,9 @@ describe("08-security-gate step module", () => {
     assert.equal(validateOutput({ status: "done" } as ParsedOutput).ok, true);
   });
 
-  it("validateOutput requires vulnerabilities/issues/findings for retry", () => {
-    const r1 = validateOutput({ status: "retry" } as ParsedOutput);
-    assert.equal(r1.ok, false);
-    assert.ok(r1.errors.some(e => e.includes("VULNERABILITIES")));
-
-    const r2 = validateOutput({ status: "retry", vulnerabilities: "hardcoded API key in config" } as ParsedOutput);
-    assert.equal(r2.ok, true);
-
-    const r3 = validateOutput({ status: "retry", findings: "review needed" } as ParsedOutput);
-    assert.equal(r3.ok, true);
+  it("validateOutput accepts retry/fail without extra fields (enforcement upstream in step-ops)", () => {
+    assert.equal(validateOutput({ status: "retry" } as ParsedOutput).ok, true);
+    assert.equal(validateOutput({ status: "fail" } as ParsedOutput).ok, true);
   });
 
   it("validateOutput rejects unknown STATUS", () => {

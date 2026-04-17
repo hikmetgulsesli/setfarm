@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { StepModule, PromptContext } from "../types.js";
+import { resolveTemplate } from "../_shared/prompt-resolver.js";
 import { injectContext } from "./context.js";
 import { normalize, validateOutput } from "./guards.js";
 
@@ -12,14 +13,15 @@ const rulesBody = fs.readFileSync(path.join(__dirname, "rules.md"), "utf-8");
 
 function buildPrompt(ctx: PromptContext): string {
   const c = ctx.context;
-  const projectName = (c["repo"] || "").split("/").pop() || "";
-  const resolved = promptTemplate
-    .replace(/\{\{REPO\}\}/g, c["repo"] || "")
-    .replace(/\{\{PROJECT_NAME\}\}/g, projectName)
-    .replace(/\{\{BUILD_CMD\}\}/g, c["build_cmd"] || "npm run build")
-    .replace(/\{\{TECH_STACK\}\}/g, c["tech_stack"] || "vite-react")
-    .replace(/\{\{FINAL_PR\}\}/g, c["final_pr"] || c["pr_url"] || "")
-    .replace(/\{\{PROGRESS\}\}/g, c["progress"] || "");
+  const projectName = (c["repo"] || "").replace(/\/+$/, "").split("/").pop() || "";
+  const resolved = resolveTemplate(promptTemplate, {
+    REPO: c["repo"] || "",
+    PROJECT_NAME: projectName,
+    BUILD_CMD: c["build_cmd"] || "npm run build",
+    TECH_STACK: c["tech_stack"] || "vite-react",
+    FINAL_PR: c["final_pr"] || c["pr_url"] || "",
+    PROGRESS: c["progress"] || "",
+  });
   return `${resolved}\n\n---\n\n# Kurallar\n\n${rulesBody}`;
 }
 

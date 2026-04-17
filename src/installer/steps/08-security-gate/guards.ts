@@ -15,10 +15,7 @@ export function validateOutput(parsed: ParsedOutput): ValidationResult {
   if (!status) {
     errors.push("Missing STATUS field");
   } else if (!ALLOWED_STATUS.has(status)) {
-    errors.push(`Unknown STATUS: "${parsed["status"]}". Expected one of: done, retry, skip, fail.`);
-  }
-  if ((status === "retry" || status === "fail") && !parsed["vulnerabilities"] && !parsed["issues"] && !parsed["findings"]) {
-    errors.push("STATUS: retry/fail requires VULNERABILITIES, ISSUES, or FINDINGS field listing security concerns");
+    errors.push(`Unknown STATUS: "${parsed["status"]}". Expected one of: done, retry, skip, fail, failed, error.`);
   }
   return { ok: errors.length === 0, errors };
 }
