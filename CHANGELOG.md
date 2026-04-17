@@ -1,3 +1,196 @@
+## 2026-04-17 — Gateway Performance Fix (CPU + Memory Leak)
+
+### Büyük Değişiklik — Gateway Şişme Kökü Teşhisi
+Kullanıcı tespit etti: "gateway şişince yavaşlıyor, restart edince düzeliyor". 6 custom "yama" ayarı zincirleme CPU + RAM drain üretiyordu.
+
+### Kök Sebep Zinciri (önce→sonra)
+
+| Ayar | Önceki | Sonraki | Neden |
+|---|---|---|---|
+| `defaults.subagents.maxConcurrent` | 16 | 6 | i5-6500T 4-core oversubscription → CPU 100% |
+| `defaults.subagents.archiveAfterMinutes` | 60 | 15 | Agent session 1 saat RAM'de tutuluyor |
+| `defaults.memorySearch.enabled` | true (Ollama) | false | Her agent turn'da Ollama `/v1/embeddings` → CPU drain |
+| `defaults.contextPruning.mode` | off | cache-ttl | Session sınırsız büyüme = gateway memory leak |
+| `main (arya).memorySearch` | (yok) | Google Gemini `text-embedding-004` | Arya memory korunur, CPU drain olmadan |
+| `hooks.openviking.config.autoIndex` | true | false | Her tool call HTTP noise |
+
+### Schema Gotcha'ları
+- `defaults.contextPruning.cacheTtlMinutes` — schema reddediyor, sadece `mode` yeterli
+- `agents.list[].contextPruning` — agent-level override YOK (schema hatası)
+- OpenAI embedding alternatifi: kullanıcı hesabı yok → Google Gemini tercih
+
+### Canlı Doğrulama (#472 sepet-65285)
+- Plan **42 saniye** (en hızlı ölçüm — önceki 55s-1m50s)
+- Gateway memory **1.1G stabil** (önceki 1.7G peak 2.4G, %54 düşüş)
+- Lane wait exceeded **YOK** (önceki 40-180s)
+- Ollama çağrısı **SIFIR** (önceki 100+ event/dk)
+
+### Dosya Değişiklikleri
+- `~/.openclaw/openclaw.json` — defaults + main agent + hooks
+- Backup: `~/.openclaw/backups/20260417-0131-perf-fix/`
+
+---
+
+## 2026-04-17 — Darboğaz Fix + Kimi Model Fix (Production-Ready)
+
+### Büyük Değişiklik — feature-dev Pipeline Production Ready
+3 paralel run testi iki ciddi blokajı kanıtladı ve kök nedenler teşhis edilerek canlı doğrulandı. Bundan böyle concurrent run senaryosu darboğaz-free.
+
+### Darboğaz Fix — Workflow Pool Genişletme (Konfigürasyon Sync)
+
+**Sorun**: Aktif `~/.openclaw/workspace/workflows/feature-dev/workflow.yml` stale — 4 rolde tek agent:
+- planner: main (tek) → 3 concurrent run 16+dk plan kuyruğu
+- designer: mert (tek)
+- setup-repo/setup-build/deployer: atlas (tek, 3 rol için)
+
+**Çözüm**: Setfarm template (`~/.openclaw/setfarm/workflows/feature-dev/workflow.yml`) ZATEN genişletilmiş pool'lara sahip. Tek komut sync:
+```bash
+cp ~/.openclaw/setfarm/workflows/feature-dev/workflow.yml ~/.openclaw/workspace/workflows/feature-dev/workflow.yml
+```
+
+**Yeni pool**:
+- planner: [main, nova, zeta]
+- setup-repo: [atlas, axon, helix]
+- setup-build: [atlas, axon, helix]
+- designer: [prism, helix, zeta]
+- developer: [koda, flux, cipher, prism, lux, nexus, axon, nova, zeta, helix] — 10 agent
+- deployer: [atlas, helix]
+
+**Kanıt**: Fix sonrası #470 plan **55 saniye** (önceki 11-16 dk kuyruğundan 12-18x hızlanma).
+
+### Kimi Model Fix — API Key Format Teşhisi (Kritik Gotcha)
+
+**Sorun zinciri**:
+1. 3 Explore agent source analizi: workflow.yml `polling.model` cron payload'a konmuyor. Gerçek model seçimi `~/.openclaw/openclaw.json agents.list[].model.primary`.
+2. İlk deneme: 11 developer agent `moonshot/kimi-k2.5` → Gateway HTTP 401 Invalid Authentication → fallback MiniMax-M2.7.
+3. **Root cause**: `openclaw.json env.MOONSHOT_API_KEY` değeri `sk-kimi-...` ile başlıyor — yani kimi.com formatı, moonshot.ai değil. Moonshot endpoint reddediyor.
+4. Doğru format: `kimi-coding/k2p5`. Agent models.json'ında `kimi-coding` provider `apiKey: "sk-kimi-..."` inline — aynı key doğru endpoint'e gidiyor.
+
+**Çözüm**: Python script ile 11 developer agent (koda, flux, cipher, prism, lux, nexus, axon, nova, zeta, helix, feature-dev_developer) model.primary → `kimi-coding/k2p5`.
+
+**Kanıt**: Fix sonrası `live_events`:
+- prism agent model=k2p5, 46 event (4 dakikada)
+- Gateway log: 401/fallback/kimi error **YOK**
+
+### Gateway + Config Değişiklikleri
+
+- `~/.openclaw/openclaw.json` — 11 developer agent model.primary güncelleme
+- `~/.openclaw/workspace/workflows/feature-dev/workflow.yml` — setfarm template sync (pool genişletme)
+- `systemctl --user restart openclaw-gateway` + `setfarm workflow ensure-crons feature-dev`
+- Backup: `~/.openclaw/backups/20260417-0038-plan-apply/`
+
+### Memory + Gotcha
+
+- `memory/project_session_2026-04-17-darbogaz-kimi-fix.md` — tam session notu
+- `memory/gotcha_moonshot_key_is_kimi_format.md` — API key format yanıltıcı isim uyarısı
+
+### Doğrulama
+- #470 plan 55s ✓
+- prism/k2p5 canlı çağrı ✓
+- 97/97 unit test yeşil (kod değişimi yok, config fix)
+- Gateway restart sonrası sistem stabil
+
+---
+
+## 2026-04-16 — 07-verify Modül + Model Fix + Sistem Teyidi
+
+### Büyük Değişiklik — Sistem Stabilizasyonu
+OpenClaw 2026.4.14 + agent model atamaları fix sonrası feature-dev pipeline ilk kez uçtan-uca sağlıklı çalıştı. Önceki 20+ dakika stuck olan plan/design step'leri 1-3 dakikaya indi.
+
+### Model Atama Fix'leri
+Karmaşa tespit edildi ve düzeltildi:
+
+**Öncesi:**
+- `feature-dev_setup/tester/verifier/security-gate` → `MiniMax-M2.5` (ESKİ, API'da yok)
+- `feature-dev_qa-tester` → models.json **YOK**
+- `feature-dev_developer` → `MiniMax-M2.5` (kullanıcı kimi ister)
+- Bireysel developer'lar (koda/flux/cipher/prism/lux/nexus) → minimax primary, kimi 3. sıra
+
+**Sonrası:**
+- 5 agent → planner template (`MiniMax-M2.7`) kopyalandı
+- qa-tester için config oluşturuldu
+- Developer pool + feature-dev_developer → moonshot provider ilk sıra (kimi-k2.5 primary denemesi)
+- Gateway log teyit: `[gateway] agent model: kimi/k2p5`
+
+Backup: `~/.openclaw/backups/agent-models-20260416-231007` + `~/.openclaw/backups/devs-20260416-231758`
+
+### Yeni Modül — 07-verify
+
+Pattern: 06-implement (minimum viable). Step-ops.ts verify mantığı (injectVerifyContext + pre-flight static analysis + PR review delay) step-ops.ts'te kalıyor — verify_each loop mekanizmasına bağlı, tam refactor için daha derin çalışma gerekli.
+
+**Dosyalar (7):**
+- `src/installer/steps/07-verify/module.ts` (id=verify, type=single, agentRole=reviewer, maxPromptSize=16384)
+- `src/installer/steps/07-verify/guards.ts` (normalize first-word + validateOutput STATUS kontrol)
+- `src/installer/steps/07-verify/context.ts` (no-op şimdilik)
+- `src/installer/steps/07-verify/prompt.md` (reviewer template)
+- `src/installer/steps/07-verify/rules.md` (retry tetikleri, pass kriterleri, FEEDBACK formatı)
+- `src/installer/steps/registry.ts` (verifyModule register)
+- `tests/steps/07-verify.test.ts` (13 test case)
+
+### Test Coverage
+- **59/59 yeşil** (46 → 59, +13 test)
+- 7 modül test suite: 01-plan (8) + 02-design (7) + 03-stories (4) + 04-setup-repo (7) + 05-setup-build (9) + 06-implement (11) + 07-verify (13)
+
+### Canlı Sistem Teyidi — #467 sayac-33213
+- plan DONE 1m50s ✓ (MiniMax-M2.7)
+- design DONE **2m44s** ✓ (önceki 20+ dk stuck'lara göre 10x hızlanma)
+- stories DONE 1m13s ✓
+- setup-repo DONE 37s ✓ (önceki instant-fail'in çözümü)
+- setup-build DONE 15s ✓
+- implement US-001 DONE 10dk ✓ (developer koda — worktree'de App.tsx + 8 component + testler)
+- 5 story'nin 1'i tam bitti, diğerleri sırada
+
+### Kalan İş
+- 08-security-gate, 09-qa-test, 10-final-test, 11-deploy hâlâ step-ops.ts içinde inline
+- step-ops.ts 3238 satır (07-verify registry eklemesi +1 import)
+- Provider-order-primary mekanizmasının kesin doğrulaması (hâlâ minimax mı düşer bakalım, implement story'leri başarılı tamamlanırsa teyit)
+
+### Doğrulama
+- `npm run test:steps` — 59/59 pass (578ms)
+- Fresh `#467` pipeline 5 modül + US-001 başarısı
+
+---
+
+## 2026-04-16 — Test Coverage Genişletme: 04/05/06 Modülleri
+
+### Büyük Değişiklik — Modüler Refactor Test Kapsamı
+Daha önce sadece 01-plan/02-design/03-stories için unit test vardı (19 test). 04-setup-repo, 05-setup-build ve 06-implement modülleri için 27 yeni test eklendi. Toplam step modül testleri **19 → 46** (%142 artış).
+
+### Teknik Değişiklikler
+
+**tests/steps/04-setup-repo.test.ts (7 test):**
+- Module metadata (id, type, agentRole, maxPromptSize=6144, preClaim/onComplete varlığı)
+- buildPrompt: REPO/BRANCH/TECH_STACK/DB_REQUIRED substitution + defaults + budget guard
+- validateOutput: STATUS required, "done" bekleniyor (case-insensitive)
+
+**tests/steps/05-setup-build.test.ts (9 test):**
+- Module metadata + buildPrompt (REPO/TECH_STACK/BUILD_CMD_HINT)
+- onComplete: parsed.build_cmd → context.build_cmd stamp, build_cmd_hint fallback, "npm run build" final fallback
+- onComplete: compat_fail throw (`COMPAT: ...`), baseline_fail throw (`BASELINE: ...`)
+
+**tests/steps/06-implement.test.ts (11 test):**
+- Module metadata (id=implement, type=loop, agentRole=developer, maxPromptSize=32768)
+- buildPrompt returns empty (AGENTS.md 869 satırlık loop template'e delegasyon kasıtlı)
+- injectContext no-op (gerçek iş injectStoryContext'te, story-selection sonrası)
+- validateOutput: STATUS required, STATUS=done && (CHANGES|STORY_BRANCH) kuralı
+- normalize: first-word extract, lowercase, multi-line leak fix (Wave 13+)
+
+### Sanity Check Bulguları
+
+- **MC ↔ setfarm event uyumu:** DB `step_id` değerleri + module.id HEPSİ bare ("plan", "design", "implement"...). MC `discord-notify.ts` aynı bare format bekliyor. **Uyum var, kod değişikliği gerekmedi.**
+- **OpenClaw v2026.4.14** teyit edildi (memory notu stale idi).
+- **#464 run cancelled** — eski cron artefaktı, `setfarm workflow stop 3edc2d09 --force`.
+
+### Doğrulama
+- `npm run test:steps` — 46/46 pass, 0 fail (498ms)
+- 6 modül (01-06) yeşil
+
+### Kalan İş
+- 07-verify, 08-security-gate, 09-qa-test, 10-final-test, 11-deploy hâlâ step-ops.ts içinde inline (3238 satır kaldı)
+- step-ops.ts legacy kod temizliği (delegasyon sonrası ölü versiyon kalıntıları olabilir)
+
+---
+
 ## 2026-04-16 — 06-implement Modül + Phase 2 Scope Delegation
 
 ### Büyük Değişiklik — Implement Step Modülü
