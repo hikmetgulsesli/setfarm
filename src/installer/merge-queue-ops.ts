@@ -27,6 +27,68 @@ export interface MergeQueueResult {
   prUrl: string | null;
 }
 
+// ── Case-Variant Probe (Wave 15 Bug J) ──────────────────────────────
+
+/**
+ * When a story branch is empty (zero commits ahead of feature), check whether
+ * the agent committed to a case-variant of the branch name. This happens when
+ * the agent's prompt injected the story_id in its original case (US-001) while
+ * setfarm's createStoryWorktree forced lowercase (us-001), and the agent ran
+ * `git checkout -b` using the uppercase form instead of honoring the worktree.
+ *
+ * Returns the first non-empty variant found, or null.
+ */
+function findCaseVariantWithCommits(
+  repoPath: string,
+  storyBranch: string,
+  featureBranch: string,
+): { ref: string; commits: number } | null {
+  const candidates: string[] = [];
+  // Variant 1: uppercase the story-id suffix (last two dash segments).
+  // Format: {runIdPrefix}-{storyKind}-{storyNum}  e.g.  cae03c94-us-001 → cae03c94-US-001
+  const parts = storyBranch.split("-");
+  if (parts.length >= 3) {
+    const prefix = parts.slice(0, -2).join("-");
+    const suffix = parts.slice(-2).join("-").toUpperCase();
+    candidates.push(`${prefix}-${suffix}`);
+  }
+  // Variant 2: fully uppercase story-id portion only (handles hex prefixes safely)
+  if (parts.length >= 2) {
+    const prefix = parts.slice(0, -1).join("-");
+    const last = parts[parts.length - 1].toUpperCase();
+    const v = `${prefix}-${last}`;
+    if (!candidates.includes(v)) candidates.push(v);
+  }
+
+  for (const cand of candidates) {
+    if (cand === storyBranch) continue;
+    // Resolve candidate: prefer local branch, fall back to origin/
+    let ref: string | null = null;
+    try {
+      execFileSync("git", ["rev-parse", "--verify", cand], {
+        cwd: repoPath, timeout: 3000, stdio: "pipe",
+      });
+      ref = cand;
+    } catch { /* try remote */ }
+    if (!ref) {
+      try {
+        execFileSync("git", ["rev-parse", "--verify", `origin/${cand}`], {
+          cwd: repoPath, timeout: 3000, stdio: "pipe",
+        });
+        ref = `origin/${cand}`;
+      } catch { continue; }
+    }
+    try {
+      const out = execFileSync("git", ["rev-list", "--count", `${featureBranch}..${ref}`], {
+        cwd: repoPath, timeout: 5000, stdio: "pipe",
+      }).toString().trim();
+      const count = parseInt(out, 10) || 0;
+      if (count > 0) return { ref, commits: count };
+    } catch { /* continue to next variant */ }
+  }
+  return null;
+}
+
 // ── Single Story Merge ──────────────────────────────────────────────
 
 /**
@@ -105,8 +167,19 @@ export function mergeStoryIntoFeature(
     logger.warn(`[merge-queue] rev-list failed for ${storyBranch}: ${String(e).slice(0, 150)}`);
   }
   if (commitsAhead === 0) {
-    logger.warn(`[merge-queue] ${storyBranch} has zero commits ahead of ${featureBranch} — agent did not commit any story work`);
-    return { success: false, conflicts: [`empty-branch:${storyBranch}`] };
+    // Wave 15 Bug J (run #480 postmortem): agents may commit to a case-variant
+    // branch (e.g. setfarm created `cae03c94-us-001` lowercase, but agent ran
+    // `git checkout -b cae03c94-US-001` preserving PRD story-id case). Probe
+    // known variants before giving up — if a non-empty variant exists, merge it.
+    const variant = findCaseVariantWithCommits(repoPath, storyBranch, featureBranch);
+    if (variant) {
+      logger.warn(`[merge-queue] case-variant rescue: ${storyBranch} empty, merging ${variant.ref} (${variant.commits} commits ahead)`);
+      mergeTarget = variant.ref;
+      commitsAhead = variant.commits;
+    } else {
+      logger.warn(`[merge-queue] ${storyBranch} has zero commits ahead of ${featureBranch} — agent did not commit any story work`);
+      return { success: false, conflicts: [`empty-branch:${storyBranch}`] };
+    }
   }
 
   // Capture feature branch HEAD BEFORE the merge so we can detect no-op merges
