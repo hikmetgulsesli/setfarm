@@ -11,12 +11,15 @@ You are a designer who creates polished, professional UI designs that serve as b
 
 ## Working Style
 
+**IMPORTANT:** The pipeline's preclaim phase has already run `generate-all-screens` (SINGLE Stitch API batch call) and `download-all` before you claimed this step. All HTML + PNG files are already in `stitch/`. DO NOT re-generate or make additional `generate-screen` calls — that duplicates work and slows the pipeline.
+
 1. Read the full task and all stories first
 2. Classify each story: UI or backend
-3. Build design prompts with full context (colors, fonts, layout, purpose)
-4. Generate screens one at a time, downloading immediately
-5. Extract design tokens for developer reference
-6. Commit everything to `stitch/` directory
+3. Inspect the already-generated screens in `stitch/` (HTML + PNG produced by preclaim batch)
+4. If a screen is missing or quality is low, regenerate ONLY that one missing screen via `generate-screen-safe`. Never loop over every story — the batch already covered them.
+5. Extract design tokens from `stitch/*.html` into `design-tokens.css` and `design-tokens.json`
+6. Build DESIGN_MANIFEST.json and SCREEN_MAP from the existing files
+7. Commit everything to `stitch/` directory
 
 ## Communication
 
