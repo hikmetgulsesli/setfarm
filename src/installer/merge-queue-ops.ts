@@ -27,64 +27,71 @@ export interface MergeQueueResult {
   prUrl: string | null;
 }
 
-// ── Case-Variant Probe (Wave 15 Bug J) ──────────────────────────────
+// ── Fuzzy Story-Branch Probe (Wave 15 Bug J / Wave 16 generalization) ───
 
 /**
- * When a story branch is empty (zero commits ahead of feature), check whether
- * the agent committed to a case-variant of the branch name. This happens when
- * the agent's prompt injected the story_id in its original case (US-001) while
- * setfarm's createStoryWorktree forced lowercase (us-001), and the agent ran
- * `git checkout -b` using the uppercase form instead of honoring the worktree.
+ * When the declared story branch is empty (zero commits ahead of feature),
+ * scan ALL local + remote refs whose name shares the run-id prefix and whose
+ * story-id suffix fuzzy-matches the declared branch (case-insensitive, dash /
+ * underscore agnostic). Pick the first non-empty one.
  *
- * Returns the first non-empty variant found, or null.
+ * Handles every observed agent naming divergence without per-case wiring:
+ *   declared: abc12345-us-001
+ *   agent wrote any of: abc12345-US-001, abc12345-us_001, abc12345-us001,
+ *                       abc12345-Us-001, origin/abc12345-US-001, ...
+ *
+ * Returns the first non-empty match, or null.
  */
-function findCaseVariantWithCommits(
+function findMatchingBranchWithCommits(
   repoPath: string,
   storyBranch: string,
   featureBranch: string,
 ): { ref: string; commits: number } | null {
-  const candidates: string[] = [];
-  // Variant 1: uppercase the story-id suffix (last two dash segments).
-  // Format: {runIdPrefix}-{storyKind}-{storyNum}  e.g.  cae03c94-us-001 → cae03c94-US-001
   const parts = storyBranch.split("-");
-  if (parts.length >= 3) {
-    const prefix = parts.slice(0, -2).join("-");
-    const suffix = parts.slice(-2).join("-").toUpperCase();
-    candidates.push(`${prefix}-${suffix}`);
-  }
-  // Variant 2: fully uppercase story-id portion only (handles hex prefixes safely)
-  if (parts.length >= 2) {
-    const prefix = parts.slice(0, -1).join("-");
-    const last = parts[parts.length - 1].toUpperCase();
-    const v = `${prefix}-${last}`;
-    if (!candidates.includes(v)) candidates.push(v);
+  if (parts.length < 2) return null;
+  const runPrefix = parts[0].toLowerCase();
+  const storyIdCompact = parts.slice(1).join("").toLowerCase(); // "us" + "001" → "us001"
+  const declaredLc = storyBranch.toLowerCase();
+
+  let refs: string[] = [];
+  try {
+    const out = execFileSync(
+      "git",
+      ["for-each-ref", "--format=%(refname:short)", "refs/heads/", "refs/remotes/origin/"],
+      { cwd: repoPath, timeout: 5000, stdio: "pipe" },
+    ).toString().trim();
+    refs = out.split("\n").filter(Boolean);
+  } catch { return null; }
+
+  // Same-run refs whose suffix (after run prefix, stripped of -/_) matches story-id
+  const candidates = refs.filter(ref => {
+    const base = ref.replace(/^origin\//, "").toLowerCase();
+    if (base === declaredLc) return false;                  // already tried
+    if (!base.startsWith(runPrefix + "-")) return false;    // different run
+    const suffix = base.slice(runPrefix.length + 1).replace(/[-_]/g, "");
+    return suffix === storyIdCompact;
+  });
+
+  // Deduplicate local+remote pairs — prefer local (faster merge target)
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  for (const r of candidates) {
+    const bare = r.replace(/^origin\//, "");
+    if (seen.has(bare)) continue;
+    seen.add(bare);
+    // Emit local first if the same bare name also exists locally
+    if (candidates.includes(bare)) ordered.push(bare);
+    else ordered.push(r);
   }
 
-  for (const cand of candidates) {
-    if (cand === storyBranch) continue;
-    // Resolve candidate: prefer local branch, fall back to origin/
-    let ref: string | null = null;
-    try {
-      execFileSync("git", ["rev-parse", "--verify", cand], {
-        cwd: repoPath, timeout: 3000, stdio: "pipe",
-      });
-      ref = cand;
-    } catch { /* try remote */ }
-    if (!ref) {
-      try {
-        execFileSync("git", ["rev-parse", "--verify", `origin/${cand}`], {
-          cwd: repoPath, timeout: 3000, stdio: "pipe",
-        });
-        ref = `origin/${cand}`;
-      } catch { continue; }
-    }
+  for (const ref of ordered) {
     try {
       const out = execFileSync("git", ["rev-list", "--count", `${featureBranch}..${ref}`], {
         cwd: repoPath, timeout: 5000, stdio: "pipe",
       }).toString().trim();
       const count = parseInt(out, 10) || 0;
       if (count > 0) return { ref, commits: count };
-    } catch { /* continue to next variant */ }
+    } catch { /* bad ref — continue */ }
   }
   return null;
 }
@@ -167,15 +174,14 @@ export function mergeStoryIntoFeature(
     logger.warn(`[merge-queue] rev-list failed for ${storyBranch}: ${String(e).slice(0, 150)}`);
   }
   if (commitsAhead === 0) {
-    // Wave 15 Bug J (run #480 postmortem): agents may commit to a case-variant
-    // branch (e.g. setfarm created `cae03c94-us-001` lowercase, but agent ran
-    // `git checkout -b cae03c94-US-001` preserving PRD story-id case). Probe
-    // known variants before giving up — if a non-empty variant exists, merge it.
-    const variant = findCaseVariantWithCommits(repoPath, storyBranch, featureBranch);
-    if (variant) {
-      logger.warn(`[merge-queue] case-variant rescue: ${storyBranch} empty, merging ${variant.ref} (${variant.commits} commits ahead)`);
-      mergeTarget = variant.ref;
-      commitsAhead = variant.commits;
+    // Wave 16 (run #488 postmortem): scan ALL refs matching run_id + story_id
+    // (case/separator fuzzy). Covers every naming divergence agents produce
+    // without per-case wiring. Non-empty winner → merge, none → real empty.
+    const match = findMatchingBranchWithCommits(repoPath, storyBranch, featureBranch);
+    if (match) {
+      logger.warn(`[merge-queue] fuzzy-ref rescue: ${storyBranch} empty, merging ${match.ref} (${match.commits} commits ahead)`);
+      mergeTarget = match.ref;
+      commitsAhead = match.commits;
     } else {
       logger.warn(`[merge-queue] ${storyBranch} has zero commits ahead of ${featureBranch} — agent did not commit any story work`);
       return { success: false, conflicts: [`empty-branch:${storyBranch}`] };
