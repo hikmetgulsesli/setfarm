@@ -423,7 +423,7 @@ export async function checkFailedRunsForResume(): Promise<MedicFinding[]> {
 
 // ── Check: Orphaned Stories (#225) ──────────────────────────────────
 
-const STORY_STUCK_THRESHOLD_MS = 10 * 60 * 1000; // 10 min (Wave 15: was 20min, shortened to reduce user-visible stall from streaming-parser miss)
+const STORY_STUCK_THRESHOLD_MS = 20 * 60 * 1000; // 20 min (Wave 16 revert: 10min was too aggressive — coding stories need headroom)
 
 /**
  * Find stories stuck in 'running' state for too long.
