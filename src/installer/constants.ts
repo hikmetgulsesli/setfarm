@@ -8,12 +8,14 @@
 // ── Abandoned Step Detection ────────────────────────────────────────
 
 /** Base threshold for detecting abandoned steps (first abandon).
- *  Was 600_000 (10min) but the comment said 20min — values were halved at
- *  some point and comments never updated. R1 storm symptom traces here. */
-export const BASE_ABANDONED_THRESHOLD_MS = 1_200_000; // 20 min (aligned with agent timeout)
+ *  Lowered from 20min to 5min (Wave 15): OpenClaw streaming parser often fails
+ *  to deliver the terminal tool_use after the agent has written STATUS: done
+ *  to the DB output column. Medic auto-complete kicks in once the step is
+ *  flagged; shorter threshold = shorter user-visible stall. */
+export const BASE_ABANDONED_THRESHOLD_MS = 300_000; // 5 min
 
 /** Faster threshold for repeat abandonments */
-export const FAST_ABANDONED_THRESHOLD_MS = 600_000; // 10 min
+export const FAST_ABANDONED_THRESHOLD_MS = 180_000; // 3 min
 
 /** Max abandon resets before failing the step/story permanently */
 export const MAX_ABANDON_RESETS = 5;
