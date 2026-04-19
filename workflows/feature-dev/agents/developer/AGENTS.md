@@ -99,6 +99,12 @@ CHANGES: <one-line summary of what you implemented>
 Past run #496 US-003 retry 1: agent wrote only STATUS: done, guardrail
 rejected, story re-dispatched, wasted a full attempt. Do not repeat.
 
+## STACK-SPECIFIC RULES (auto-detected from project structure)
+
+Detected stack: **{{detected_stack}}**
+
+{{stack_rules}}
+
 ## STITCH DIRECTORY — HARD RULE (prevents EISDIR retry loops)
 
 The repo has a `stitch/` **DIRECTORY** (not a file) containing Stitch design artifacts:
