@@ -2659,6 +2659,41 @@ ${screenDescs}
             wd, baseBr, step.retry_count, step.max_retries,
           );
           if (!scopeResult.passed && scopeResult.category) {
+            // SCOPE_BLEED cleanup: revert out-of-scope files to baseline so the
+            // next retry doesn't inherit them. Without this, the offending
+            // commit stays on the branch; when the story later merges, those
+            // files collide with other stories that own them (observed run
+            // #496 US-001 merge conflict — US-002 bleed left US-001's files
+            // in US-002's branch, merge-queue rejected clean US-001 branch).
+            if (scopeResult.category === "SCOPE_BLEED" && scopeResult.outOfScope && scopeResult.outOfScope.length > 0 && wd && baseBr) {
+              try {
+                const outOfScopeFiles = scopeResult.outOfScope;
+                for (const file of outOfScopeFiles) {
+                  try {
+                    execFileSync("git", ["checkout", baseBr, "--", file], {
+                      cwd: wd, timeout: 10000, stdio: ["pipe", "pipe", "pipe"],
+                    });
+                  } catch (checkoutErr) {
+                    // File may not exist on baseBr (new file added by bleed)
+                    try {
+                      execFileSync("git", ["rm", "-f", file], {
+                        cwd: wd, timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
+                      });
+                    } catch { /* best effort */ }
+                  }
+                }
+                // Amend HEAD commit to drop the now-reverted files
+                try {
+                  execFileSync("git", ["commit", "--amend", "--no-edit", "--allow-empty"], {
+                    cwd: wd, timeout: 10000, stdio: ["pipe", "pipe", "pipe"],
+                    env: { ...process.env, GIT_COMMITTER_NAME: "Moltclaw AI", GIT_COMMITTER_EMAIL: "setrox@moltclaw.local" },
+                  });
+                } catch { /* best effort */ }
+                logger.info(`[scope-bleed-cleanup] Reverted ${outOfScopeFiles.length} out-of-scope file(s) in ${storyRow.story_id}: ${outOfScopeFiles.slice(0, 5).join(", ")}`, { runId: step.run_id });
+              } catch (cleanupErr) {
+                logger.warn(`[scope-bleed-cleanup] Failed: ${String(cleanupErr).slice(0, 200)}`, { runId: step.run_id });
+              }
+            }
             context["previous_failure"] = scopeResult.reason!;
             context["failure_category"] = scopeResult.category;
             context["failure_suggestion"] = scopeResult.suggestion!;

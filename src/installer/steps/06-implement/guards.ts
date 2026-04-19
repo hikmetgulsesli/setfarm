@@ -39,6 +39,7 @@ export interface ScopeCheckResult {
   reason?: string;
   category?: string;
   suggestion?: string;
+  outOfScope?: string[];
 }
 
 /**
@@ -195,6 +196,7 @@ export async function checkScopeEnforcement(
             reason: `SCOPE_BLEED: Story ${storyId} (${storyTitle}) modified ${outOfScope.length} file(s) outside declared SCOPE_FILES. Out-of-scope: ${oosList}. Allowed: ${allowedList}. Each story must stay within its own file scope.`,
             category: "SCOPE_BLEED",
             suggestion: "Only modify files declared in your SCOPE_FILES",
+            outOfScope,
           };
         }
       }
