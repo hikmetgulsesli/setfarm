@@ -29,8 +29,17 @@ PRD + SCREEN_MAP + DESIGN_SYSTEM'i okuyup user story listesi üret. Her story do
 
 - 15-25 dakika / story
 - 200-500 LOC / story
-- Max 3-4 dosya / story
+- **MIN 3, MAX 6 dosya / story** (YASAK: tek dosyalık story — model 1-file scope verdiğinde "tam app yaz" refleksi gösteriyor, SCOPE_BLEED döngüsüne giriyor)
 - Max 5 acceptance criteria / story (fazlaysa böl)
+
+### Feature-complete paketleme kuralı
+
+Her story **bağımsız çalışır bir feature dilimi** olmalı. Tek component değil:
+- Ana component(ler) + hook(lar) + type(lar) + test (3-6 dosya toplam)
+- Ya da ekran + ona bağlı tüm destek dosyaları
+- Single-file (örn `CounterDisplay.tsx` tek başına) = HATA — modeli paradox'a sokar
+
+Eğer bir feature doğal olarak 1 dosyaysa, yakınındaki ilgili dosyalarla birleştirip tek story yap.
 
 Çok büyük örnekler:
 - "Tüm dashboard'u yap" → ayrı: KPI kartları, aktivite akışı, grafikler, filtreler
