@@ -135,7 +135,7 @@ export async function injectStoryContext(
       const stack = detectStack(context["repo"] || "");
       context["detected_stack"] = stack;
       context["stack_rules"] = STACK_RULES[stack].pitfalls;
-      logger.info(`[stack-rules] detected=${stack} rules_len=${STACK_RULES[stack].pitfalls.length}`, { runId });
+      logger.info(`[stack-rules] detected=${stack} rules_len=${STACK_RULES[stack].pitfalls.length}`, { runId: step.run_id });
     } catch (e) { logger.debug(`[stack-rules] ${String(e).slice(0, 80)}`); }
   }
 
