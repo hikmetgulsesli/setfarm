@@ -140,6 +140,37 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
     throw new Error(msg);
   }
 
+  // 7. Vite-aware shared-file auto-include (prevents main.tsx SCOPE_BLEED).
+  //    When a story owns App.tsx, main.tsx MUST be in shared_files — in Vite
+  //    projects these two files are siblings and developers reflexively
+  //    touch main.tsx when wiring App (add StrictMode, change mount root,
+  //    adjust import path). Observed on runs #494, #496 US-002 — identical
+  //    SCOPE_BLEED on main.tsx. Same logic for index.html (root-level Vite
+  //    entry), since scaffolding often edits its <title> or script ref.
+  const VITE_SIBLINGS: Array<[string, string]> = [
+    ["src/App.tsx", "src/main.tsx"],
+    ["src/App.tsx", "index.html"],
+  ];
+  for (const row of allRows) {
+    let scope: string[] = []; let shared: string[] = [];
+    try { scope = JSON.parse(row.scope_files || "[]"); } catch { continue; }
+    try { shared = JSON.parse(row.shared_files || "[]"); } catch { shared = []; }
+    const added: string[] = [];
+    for (const [owner, sibling] of VITE_SIBLINGS) {
+      if (scope.includes(owner) && !scope.includes(sibling) && !shared.includes(sibling)) {
+        shared.push(sibling);
+        added.push(sibling);
+      }
+    }
+    if (added.length > 0) {
+      await pgRun(
+        "UPDATE stories SET shared_files = $1, updated_at = $2 WHERE run_id = $3 AND story_id = $4",
+        [JSON.stringify(shared), now(), runId, row.story_id]
+      );
+      logger.info(`[module:stories] Vite-aware auto-shared for ${row.story_id}: ${added.join(", ")}`, { runId });
+    }
+  }
+
   const multiOwned = Object.entries(screenOwners).filter(([_, owners]) => owners.length > 1);
   if (multiOwned.length > 0) {
     const summary = multiOwned.slice(0, 5).map(([f, o]) => `${f} → [${o.join(", ")}]`).join("; ");
