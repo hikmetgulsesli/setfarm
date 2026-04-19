@@ -20,6 +20,23 @@ rejections your story is PERMANENTLY FAILED and cannot recover.
 
 Read your scope: jq -r '.input.scope_files' /tmp/claim-*.json
 
+$(awk {printf
+## STITCH DIRECTORY — HARD RULE (prevents EISDIR retry loops)
+
+The repo has a `stitch/` **DIRECTORY** (not a file) containing Stitch design artifacts:
+- `stitch/DESIGN_MANIFEST.json` — list of screens + their screenIds
+- `stitch/DESIGN_DOM.json` — element-level DOM extraction (already injected into your prompt as `design_dom`)
+- `stitch/<screenId>.html` — each screen as a static HTML file (already injected per your story as `stitch_html`)
+- `stitch/<screenId>.png` — reference screenshot
+- `stitch/design-tokens.css` — auto-generated CSS custom properties
+- `stitch/design-tokens.json` — raw token values
+
+**CRITICAL — DO NOT loop on this:**
+- NEVER call `Read` on the path `stitch` or `stitch/` directly. It is a DIRECTORY — `Read` will return `EISDIR: illegal operation on a directory`. Each failed read wastes a tool turn; repeated reads create a retry LOOP that burns the step timeout.
+- If you need to know what is in `stitch/`, use `Glob` with `stitch/*` (listing) or `Grep` across HTML files. Do NOT blindly `Read("stitch")`.
+- If you see `EISDIR`, STOP retrying the same path. Append `/<screenId>.html` or switch to `Glob`.
+- All screens you need for your story are already injected above as `stitch_html`. You usually do NOT need to read `stitch/` at all.
+
 ## BEFORE Writing Any Code
 
 You MUST read these reference files before starting implementation:
