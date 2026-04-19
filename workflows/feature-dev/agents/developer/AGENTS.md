@@ -77,13 +77,27 @@ Past run #459 US-007: branch from wrong run, rejected, wasted 15min.
 
 ### Summary — Minimax Survival Checklist
 
-Before outputting STATUS, verify all four:
+Before outputting STATUS, verify all FIVE:
 1. [ ] Every file I wrote is in SCOPE_FILES (no "helpful" wrappers)
 2. [ ] Every file in SCOPE_FILES exists and is non-empty in my worktree
 3. [ ] My `pwd` is the correct story-worktree
 4. [ ] My STORY_BRANCH matches the current run prefix
+5. [ ] My output has BOTH STORY_BRANCH and CHANGES lines alongside STATUS
 
 If ANY is unchecked, STATUS: fail with REASON.
+
+### Failure Mode 5: BARE STATUS output (GUARDRAIL reject)
+
+If you write `STATUS: done` WITHOUT also writing STORY_BRANCH and CHANGES, the implement-module guardrail rejects your work and retries the story. Minimal valid DONE output:
+
+```
+STATUS: done
+STORY_BRANCH: <your-current-branch-name-lowercase>
+CHANGES: <one-line summary of what you implemented>
+```
+
+Past run #496 US-003 retry 1: agent wrote only STATUS: done, guardrail
+rejected, story re-dispatched, wasted a full attempt. Do not repeat.
 
 ## STITCH DIRECTORY — HARD RULE (prevents EISDIR retry loops)
 
