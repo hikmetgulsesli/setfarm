@@ -29,6 +29,7 @@ const OPTIONAL_TEMPLATE_VARS = [
   "project_tree", "installed_packages", "shared_code", "recent_stories_code",
   "component_registry", "api_routes", "design_rules", "detected_platform",
   "previous_failure", "failure_category", "failure_suggestion", "verify_feedback",
+  "detected_stack", "stack_rules",
 ];
 
 /**
@@ -125,6 +126,17 @@ export async function injectStoryContext(
       context["design_rules"] = getDesignRules(platform);
       context["detected_platform"] = platform;
     } catch (e) { logger.debug(`[design-rules] ${String(e).slice(0, 80)}`); }
+
+    // Stack-aware rules (finer-grained than platform; covers vite vs next,
+    // Vite sibling pairs, Flutter main/app, iOS App struct). Complements
+    // design-rules.ts with framework-specific bleed-prevention guidance.
+    try {
+      const { detectStack, STACK_RULES } = await import("./stack-rules.js");
+      const stack = detectStack(context["repo"] || "");
+      context["detected_stack"] = stack;
+      context["stack_rules"] = STACK_RULES[stack].pitfalls;
+      logger.info(`[stack-rules] detected=${stack} rules_len=${STACK_RULES[stack].pitfalls.length}`, { runId });
+    } catch (e) { logger.debug(`[stack-rules] ${String(e).slice(0, 80)}`); }
   }
 
   // Default optional template vars

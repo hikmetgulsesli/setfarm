@@ -140,17 +140,16 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
     throw new Error(msg);
   }
 
-  // 7. Vite-aware shared-file auto-include (prevents main.tsx SCOPE_BLEED).
-  //    When a story owns App.tsx, main.tsx MUST be in shared_files — in Vite
-  //    projects these two files are siblings and developers reflexively
-  //    touch main.tsx when wiring App (add StrictMode, change mount root,
-  //    adjust import path). Observed on runs #494, #496 US-002 — identical
-  //    SCOPE_BLEED on main.tsx. Same logic for index.html (root-level Vite
-  //    entry), since scaffolding often edits its <title> or script ref.
-  const VITE_SIBLINGS: Array<[string, string]> = [
-    ["src/App.tsx", "src/main.tsx"],
-    ["src/App.tsx", "index.html"],
-  ];
+  // 7. Stack-aware sibling auto-include (prevents sibling-file SCOPE_BLEED).
+  //    When a story owns an entry file (e.g. App.tsx in Vite, page.tsx in
+  //    Next, ContentView.swift in iOS), the sibling MUST be in shared_files
+  //    because developers reflexively touch it when wiring (imports, mount,
+  //    root layout). Stack detected from repo structure; rules come from
+  //    stack-rules.ts. Runs #494/#496 US-002 observed identical SCOPE_BLEED
+  //    on src/main.tsx before this guard.
+  const { detectStack, STACK_RULES } = await import("../06-implement/stack-rules.js");
+  const detectedStack = detectStack(context["repo"] || "");
+  const VITE_SIBLINGS: Array<[string, string]> = STACK_RULES[detectedStack].siblings;
   for (const row of allRows) {
     let scope: string[] = []; let shared: string[] = [];
     try { scope = JSON.parse(row.scope_files || "[]"); } catch { continue; }
