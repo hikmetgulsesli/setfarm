@@ -753,7 +753,7 @@ export async function checkOrphanedInTerminalRuns(): Promise<MedicFinding[]> {
 // ── Check: Gateway Stalling ─────────────────────────────────────────
 
 const GATEWAY_RESTART_COOLDOWN_MS = 8 * 60 * 1000; // 8 min cooldown between gateway restarts
-const GATEWAY_STALL_WINDOW_MS = 5 * 60 * 1000; // 5 min window — reduced from 10min to check recreate count
+const GATEWAY_STALL_WINDOW_MS = 20 * 60 * 1000; // 20 min window — accommodates long dev claim sessions (minimax M2.7 can take 8-10 min for a single story)
 const GATEWAY_STALL_RECREATE_THRESHOLD = 2; // 2+ recreates in window = stalling
 
 /**
