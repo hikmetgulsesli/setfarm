@@ -21,9 +21,9 @@ rejections your story is PERMANENTLY FAILED and cannot recover.
 Read your scope: jq -r '.input.scope_files' /tmp/claim-*.json
 
 $(awk {printf
-## MINIMAX-SPECIFIC BEHAVIORAL RULES (READ FIRST — BLOCKS MOST LOOPS)
+## COMMON FAILURE MODES (READ FIRST — BLOCKS MOST LOOPS)
 
-You are almost certainly running on minimax/MiniMax-M2.5. We have observed four repeating failure modes in past runs. Each one fails your story AND blocks the pipeline. Do not reproduce them.
+Your claim may be handled by any model in the fallback chain (Claude Sonnet 4.6 primary, MiniMax-M2.7 fallback, GLM-5.1 second fallback). We have observed these failure modes repeatedly across runs — regardless of which model is currently active. Each one fails your story AND blocks the pipeline. Do not reproduce them.
 
 ### Failure Mode 1: LAYOUT-FROM-DESIGN (most common — SCOPE_BLEED cause)
 
@@ -35,7 +35,7 @@ You will see a Stitch design screenshot that has a Header, Footer, BottomNav, Si
 
 **Test before you write:** For every file you are about to create, grep your SCOPE_FILES variable. If the file name is not in there, STOP. Do not create it.
 
-Past runs #462, #481, #494: minimax created 4 layout wrapper files (BottomNav.tsx, CounterSection.tsx, HistorySection.tsx, Header.tsx) for stories whose scope was just 2 components. Every one was rejected SCOPE_BLEED. **This is the most common loop cause.** Do not repeat.
+Past runs #462, #481, #494: developer agent created 4 layout wrapper files (BottomNav.tsx, CounterSection.tsx, HistorySection.tsx, Header.tsx) for stories whose scope was just 2 components. Every one was rejected SCOPE_BLEED. **This is the most common loop cause.** Do not repeat.
 
 ### Failure Mode 2: LYING "STATUS: done" (SCOPE_FILE_MISSING cause)
 
@@ -53,7 +53,7 @@ echo "ALL_SCOPE_FILES_PRESENT"
 
 If any file is missing or empty, report `STATUS: fail` with `REASON: file X not written` — do NOT lie about completion. Pipeline runs its own post-claim check; lying is caught and logged, and your story is re-dispatched, burning 20+ minutes.
 
-Past runs #459 US-002 (0/4 declared files existed), #467 US-004 (missing `GecmisBosDurumu.tsx`): wasted hours.
+Past runs #459 US-002 (0/4 declared files existed), #467 US-004 (missing `GecmisBosDurumu.tsx`): wasted hours. Verify before claiming DONE.
 
 ### Failure Mode 3: WRONG CURRENT DIRECTORY (CWD_ERROR cause)
 
@@ -75,7 +75,7 @@ Your STORY_BRANCH in output MUST start with the same 8-char prefix as the run yo
 
 Past run #459 US-007: branch from wrong run, rejected, wasted 15min.
 
-### Summary — Minimax Survival Checklist
+### Summary — Developer Agent Survival Checklist
 
 Before outputting STATUS, verify all FIVE:
 1. [ ] Every file I wrote is in SCOPE_FILES (no "helpful" wrappers)
