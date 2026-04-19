@@ -15,6 +15,14 @@
 - `src/installer/install.ts` -- installWorkflow artik `overwriteFiles:true` ile cagiriyor. Fresh workspace files her reinstall'da. (commit ed7d617)
 - `~/.openclaw/openclaw.json` -- `feature-dev_qa-tester.model` = minimax/MiniMax-M2.7 + zai/glm-5.1 fallback. Backup: `openclaw.json.bak-20260419-debug`.
 
+### Ek Fix (ayni turda, config-level)
+- **Session store temizligi:** 146 birikmis cron session sessions.list operasyonunu 7-23 saniyeye cikariyordu (sessions.patch collision penceresini genisletiyordu). Settings:
+  - `session.maintenance.pruneAfter`: 7d -> 1d (Arya main korunuyor, 25h+ cron sessions pruned)
+  - `cron.sessionRetention`: 24h -> 2h
+  - `agents.defaults.subagents.archiveAfterMinutes`: 60 -> 15
+- `openclaw sessions cleanup --all-agents --enforce` manuel calistirildi: 117 stale session pruned, sessions.json 14MB -> 2.4MB (%83 kucuk).
+- Beklenen etki: `workflow-agent-<agent>` label collision frekansi dusecek (collision window kucuk sessions.json yazimi hizli).
+
 ### Kesfedilen Ama Bu Turda Duzeltilmemis
 - Session label collision (`label already in use: workflow-agent-koda`) -- OpenClaw gateway sessions.patch INVALID_REQUEST, cron tekrar fire olunca eski isolated session henuz kapanmamissa cakisma. Bu platform-level, sonraki turda medic'e stuck session kill eklenecek.
 - Minimax surface_error timeout -- primary model bazen yanit vermiyor, fallback chain'e dusmeden "surface_error" karari veriliyor. Failover mantigi incelenecek.
