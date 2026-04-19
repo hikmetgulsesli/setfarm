@@ -312,7 +312,12 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
       } else {
         await pgRun("UPDATE stories SET status = 'pending', abandoned_count = $1, updated_at = $2 WHERE id = $3", [newCount, now(), finding.storyId]);
         await pgRun("UPDATE steps SET current_story_id = NULL, updated_at = $1 WHERE run_id = $2 AND type = 'loop' AND current_story_id = $3", [now(), story.run_id, finding.storyId]);
-        emitEvent({ ts: now(), event: "step.timeout" as EventType, runId: story.run_id, detail: `Medic: orphaned story reset (abandon ${newCount}/${MAX_STORY_ABANDONS})` });
+        // Clear assigned_developer so any cron in the pool can pick up the abandoned
+        // story. Without this, if the originally-assigned dev's cron is gone (gateway
+        // restart, pool resync, etc) the run deadlocks — no other caller matches
+        // runs.assigned_developer and every poll returns NO_WORK. Observed run #497.
+        await pgRun("UPDATE runs SET assigned_developer = NULL, updated_at = $1 WHERE id = $2", [now(), story.run_id]);
+        emitEvent({ ts: now(), event: "step.timeout" as EventType, runId: story.run_id, detail: `Medic: orphaned story reset (abandon ${newCount}/${MAX_STORY_ABANDONS}), assigned_developer cleared` });
       }
       return true;
     }
