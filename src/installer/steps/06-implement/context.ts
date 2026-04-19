@@ -202,7 +202,9 @@ async function injectScopeContext(nextStory: any, context: Record<string, string
         const sharedList = context["story_shared_files"] ? context["story_shared_files"].split(", ") : [];
         const implicitFiles = ["vitest.config.ts","vitest.config.js","jest.config.ts","jest.config.js","src/test/setup.ts","src/test/utils.ts","src/setupTests.ts"];
         const allAllowed = [...new Set([...scopeList, ...sharedList, ...implicitFiles])];
-        fs.writeFileSync(path.join(context["story_workdir"], ".story-scope-files"), allAllowed.join("\n") + "\n");
+        const scopeFilePath = path.join(context["story_workdir"], ".story-scope-files");
+        fs.writeFileSync(scopeFilePath, allAllowed.join("\n") + "\n");
+        try { fs.chmodSync(scopeFilePath, 0o444); } catch { /* best effort */ }
       } catch (e) { logger.debug(`[scope-file] ${String(e).slice(0, 80)}`); }
     }
     if (context["story_scope_files"]) {
