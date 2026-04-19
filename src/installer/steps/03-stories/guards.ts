@@ -57,6 +57,33 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
     throw new Error(msg);
   }
 
+  // 2b. Story granularity: MIN 3 files per story (integration/setup exempted).
+  //     Single-file scopes trigger "complete the design" model reflex →
+  //     SCOPE_BLEED loop. Observed run #494 (4/6 stories with 1 file each).
+  const granularityRows = await pgQuery<{ story_id: string; scope_files: string | null; story_index: number }>(
+    "SELECT story_id, scope_files, story_index FROM stories WHERE run_id = $1 ORDER BY story_index",
+    [runId]
+  );
+  const tooSmall: string[] = [];
+  for (const row of granularityRows) {
+    if (!row.scope_files) continue;
+    let files: string[] = [];
+    try { files = JSON.parse(row.scope_files); } catch { continue; }
+    if (!Array.isArray(files) || files.length === 0) continue;
+    // Setup story (index 0) and integration story (App.tsx-containing) can be smaller
+    const isIntegration = files.some(f => typeof f === "string" && (f === "src/App.tsx" || f === "src/App.jsx" || f === "src/main.tsx" || f === "src/main.jsx" || f === "src/index.tsx" || f === "src/index.jsx" || f === "index.html"));
+    if (files.length < 3 && row.story_index > 0 && !isIntegration) {
+      tooSmall.push(`${row.story_id}(${files.length})`);
+    }
+  }
+  if (tooSmall.length > 0) {
+    const list = tooSmall.join(", ");
+    const msg = `GUARDRAIL: ${tooSmall.length} story/stories have fewer than 3 scope_files: ${list}. Each non-setup/non-integration story MUST contain 3-6 files (feature-complete slice — component + hook + test + type + utility). Single-file stories cause model to write full-app refleks → SCOPE_BLEED infinite loop. Re-output STORIES_JSON merging single-file scopes with adjacent related files.`;
+    logger.warn(`[module:stories] ${msg}`, { runId });
+    await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);
+    throw new Error(msg);
+  }
+
   // 3. scope_files overlap auto-fix (keep first owner by story_index, move
   //    duplicates from later stories to their shared_files)
   const allRows = await pgQuery<{ story_id: string; scope_files: string | null; shared_files: string | null; story_index: number }>(
