@@ -1,3 +1,30 @@
+## 2026-04-19 — Impl/Install Loop Root-Cause Fixes
+
+### Sorun Dokumu
+- Dev agent 24 saatte 16+ kez Read("stitch") cagirdi -> EISDIR: illegal operation on a directory. Ayni path tekrar tekrar okunuyor, tool turn yakiliyor, 30dk step timeout'una yaklasiyordu.
+- `setfarm workflow install feature-dev` AGENTS.md/IDENTITY.md/SOUL.md workspace kopyalarini overwrite ETMIYORDU. Repo'daki loop fix'leri runtime'a ulasmiyordu -- config drift.
+- `feature-dev_qa-tester` agent'in `model` alani `null`. QA step'ine gelince patlayacakti.
+
+### Kok Sebep
+1. `stitch/` bir klasor. AGENTS.md'de `stitch/<screenId>.html oku` diye gecse de model bazen direkt `stitch` path'i okumaya calisiyor. Prompt'ta hicbir yerde "stitch klasordur, direkt okuma" uyarisi yoktu.
+2. `provisionAgents()` varsayilan `overwriteFiles:false`. Her yeniden install sessizce mevcut dosyalari atliyordu.
+3. `feature-dev_qa-tester` config drift -- muhtemelen manuel duzenleme sirasinda model silinmis.
+
+### Uygulanan Fixler
+- `workflows/feature-dev/agents/developer/AGENTS.md` -- bas tarafa "STITCH DIRECTORY -- HARD RULE" bolumu. Icerik: stitch klasor icerigi listesi, `Read(stitch)` yasagi, EISDIR gorulurse durma talimati, per-story HTML'lerin zaten prompt'a inject edildigi hatirlatmasi. (commit 302df48)
+- `src/installer/install.ts` -- installWorkflow artik `overwriteFiles:true` ile cagiriyor. Fresh workspace files her reinstall'da. (commit ed7d617)
+- `~/.openclaw/openclaw.json` -- `feature-dev_qa-tester.model` = minimax/MiniMax-M2.7 + zai/glm-5.1 fallback. Backup: `openclaw.json.bak-20260419-debug`.
+
+### Kesfedilen Ama Bu Turda Duzeltilmemis
+- Session label collision (`label already in use: workflow-agent-koda`) -- OpenClaw gateway sessions.patch INVALID_REQUEST, cron tekrar fire olunca eski isolated session henuz kapanmamissa cakisma. Bu platform-level, sonraki turda medic'e stuck session kill eklenecek.
+- Minimax surface_error timeout -- primary model bazen yanit vermiyor, fallback chain'e dusmeden "surface_error" karari veriliyor. Failover mantigi incelenecek.
+- xAI 429 (kredi bitti) -- x_search, code_execution toollari xai'yi cagiriyor. Agent model chainlerinde xai yok ama tool provider olarak kayitli. Quota restore olana kadar devre disi birakilmali.
+
+### Dogrulama
+- `setfarm workflow install feature-dev` sonrasi `grep -c "STITCH DIRECTORY" workspaces/.../developer/AGENTS.md` -> 1 (onceki 0).
+- Medic still running, gateway stabil, aktif run yok.
+- Sonraki feature-dev run'da EISDIR loop'un kaybolmasi beklenir.
+
 ## 2026-04-17 — Gateway Performance Fix (CPU + Memory Leak)
 
 ### Büyük Değişiklik — Gateway Şişme Kökü Teşhisi
