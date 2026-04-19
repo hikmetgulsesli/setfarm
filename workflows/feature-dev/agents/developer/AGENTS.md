@@ -21,6 +21,70 @@ rejections your story is PERMANENTLY FAILED and cannot recover.
 Read your scope: jq -r '.input.scope_files' /tmp/claim-*.json
 
 $(awk {printf
+## MINIMAX-SPECIFIC BEHAVIORAL RULES (READ FIRST — BLOCKS MOST LOOPS)
+
+You are almost certainly running on minimax/MiniMax-M2.5. We have observed four repeating failure modes in past runs. Each one fails your story AND blocks the pipeline. Do not reproduce them.
+
+### Failure Mode 1: LAYOUT-FROM-DESIGN (most common — SCOPE_BLEED cause)
+
+You will see a Stitch design screenshot that has a Header, Footer, BottomNav, Sidebar, CounterSection, HistorySection, or similar layout chrome. **YOUR STORY DOES NOT OWN THAT CHROME.** The integration story (the last one, usually US-003 or US-00N where N is the story count) owns `src/App.tsx` and wires everything together — inline. You do NOT:
+
+- Create `Header.tsx` / `Footer.tsx` / `Nav.tsx` / `BottomNav.tsx` / `Sidebar.tsx` / `Layout.tsx` / `*Section.tsx` / `*Container.tsx` / `*Wrapper.tsx` / `*Provider.tsx` **unless those literal filenames appear in your SCOPE_FILES list**.
+- Add ANY component beyond SCOPE_FILES to "complete the design". The design is reference. Your scope is law.
+- Touch `src/main.tsx` unless it is in your SCOPE_FILES. It is integration-story territory.
+
+**Test before you write:** For every file you are about to create, grep your SCOPE_FILES variable. If the file name is not in there, STOP. Do not create it.
+
+Past runs #462, #481, #494: minimax created 4 layout wrapper files (BottomNav.tsx, CounterSection.tsx, HistorySection.tsx, Header.tsx) for stories whose scope was just 2 components. Every one was rejected SCOPE_BLEED. **This is the most common loop cause.** Do not repeat.
+
+### Failure Mode 2: LYING "STATUS: done" (SCOPE_FILE_MISSING cause)
+
+You MUST NOT write `STATUS: done` unless every file in SCOPE_FILES exists as a non-empty regular file in your current worktree. Before outputting STATUS, run this literal check:
+
+```bash
+for f in $(echo "$SCOPE_FILES" | tr ',' ' '); do
+  if [ ! -s "$f" ]; then
+    echo "MISSING_OR_EMPTY: $f"
+    exit 1
+  fi
+done
+echo "ALL_SCOPE_FILES_PRESENT"
+```
+
+If any file is missing or empty, report `STATUS: fail` with `REASON: file X not written` — do NOT lie about completion. Pipeline runs its own post-claim check; lying is caught and logged, and your story is re-dispatched, burning 20+ minutes.
+
+Past runs #459 US-002 (0/4 declared files existed), #467 US-004 (missing `GecmisBosDurumu.tsx`): wasted hours.
+
+### Failure Mode 3: WRONG CURRENT DIRECTORY (CWD_ERROR cause)
+
+First three commands of every story, no exceptions:
+
+```bash
+pwd                                # MUST end with story-worktrees/<prefix>-us-<nnn>/
+git branch --show-current          # MUST match the worktree name
+ls stitch/ 2>/dev/null | head -20  # sanity: stitch/ is a DIRECTORY, not a file
+```
+
+If `pwd` is `/home/setrox/.openclaw/workspace/agent-scratch` or anything NOT matching `story-worktrees/<hash>-us-<n>`, you are in the WRONG place. The claim response tells you the correct worktree path — `cd` there before touching anything. Writing files in the wrong directory = files are NEVER merged, story fails CWD_ERROR.
+
+Past run #491 US-001: entire story written in agent-scratch, zero files merged.
+
+### Failure Mode 4: CROSS-PROJECT CONTAMINATION
+
+Your STORY_BRANCH in output MUST start with the same 8-char prefix as the run you are in. The claim response includes `run_id` — the first 8 characters ARE the prefix. If your branch is `24a57a3b-us-007` but the run prefix is `ed333fe2`, your output gets rejected and the story re-dispatched. Do not paste output from a prior run; do not reference another project's repo or branch.
+
+Past run #459 US-007: branch from wrong run, rejected, wasted 15min.
+
+### Summary — Minimax Survival Checklist
+
+Before outputting STATUS, verify all four:
+1. [ ] Every file I wrote is in SCOPE_FILES (no "helpful" wrappers)
+2. [ ] Every file in SCOPE_FILES exists and is non-empty in my worktree
+3. [ ] My `pwd` is the correct story-worktree
+4. [ ] My STORY_BRANCH matches the current run prefix
+
+If ANY is unchecked, STATUS: fail with REASON.
+
 ## STITCH DIRECTORY — HARD RULE (prevents EISDIR retry loops)
 
 The repo has a `stitch/` **DIRECTORY** (not a file) containing Stitch design artifacts:
