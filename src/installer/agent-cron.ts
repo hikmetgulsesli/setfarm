@@ -430,10 +430,27 @@ export async function syncActiveCrons(runId: string, workflowId: string): Promis
     const stepsPerRole = new Map<string, number>();
     const neededRoles = new Set<string>();
 
+    // Loop steps (implement) have ONE row in steps table but fan out into
+    // N story rows. Count pending+running stories for each loop step so
+    // demand reflects actual parallel work, not the single loop row.
+    // Without this, a 10-dev pool for 10 stories gets capped at 1 cron,
+    // forcing serial execution. Fix 2026-04-19.
+    let loopDemand = 0;
+    if (activeSteps.some((s: any) => s.type === 'loop')) {
+      try {
+        const row = await pgGet<{ cnt: number }>(
+          `SELECT COUNT(*)::int AS cnt FROM stories WHERE run_id = $1 AND status IN ('pending', 'running')`,
+          [runId]
+        );
+        loopDemand = row?.cnt ?? 0;
+      } catch { /* best effort */ }
+    }
+
     for (const step of activeSteps) {
       const role = step.agent_id.replace(workflowId + '_', '');
       neededRoles.add(role);
-      stepsPerRole.set(role, (stepsPerRole.get(role) ?? 0) + 1);
+      const delta = (step.type === 'loop' && loopDemand > 0) ? loopDemand : 1;
+      stepsPerRole.set(role, (stepsPerRole.get(role) ?? 0) + delta);
 
       if (step.type === 'loop' && step.loop_config) {
         try {
