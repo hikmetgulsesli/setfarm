@@ -2785,6 +2785,67 @@ ${screenDescs}
         storyPrUrl = "";
       }
     }
+    // AUTO-PR (2026-04-21): Systemic PR creation — never rely on agent to run gh pr create.
+    // If story is DONE and has a pushed branch but no PR URL, system opens PR on main.
+    // Runs per-story so each logical unit gets its own PR for isolated review.
+    if (
+      storyStatus === STORY_STATUS.DONE &&
+      !storyPrUrl &&
+      storyBranchName &&
+      context["repo"] &&
+      storyBranchName.toLowerCase() !== (context["branch"] || "").toLowerCase()
+    ) {
+      const autoRepo = context["repo"];
+      const autoBase = context["branch"] || "main";
+      try {
+        // Ensure branch is pushed (idempotent)
+        try {
+          execFileSync("git", ["push", "-u", "origin", storyBranchName], {
+            cwd: autoRepo, timeout: 30000, stdio: ["pipe", "pipe", "pipe"],
+          });
+        } catch (pushErr) {
+          logger.warn(`[auto-pr] push failed for ${storyBranchName}: ${String(pushErr).slice(0, 200)}`, { runId: step.run_id });
+        }
+
+        // Check for existing PR (any state) to avoid duplicate creation
+        let existingPr = "";
+        try {
+          existingPr = execFileSync("gh", ["pr", "list", "--head", storyBranchName, "--state", "all", "--json", "url", "--jq", ".[0].url // \"\""], {
+            cwd: autoRepo, timeout: 15000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8",
+          }).toString().trim();
+        } catch (listErr) {
+          logger.warn(`[auto-pr] pr list failed: ${String(listErr).slice(0, 150)}`, { runId: step.run_id });
+        }
+
+        if (existingPr) {
+          storyPrUrl = existingPr;
+          logger.info(`[auto-pr] Reusing existing PR ${existingPr} for story ${storyRow?.story_id}`, { runId: step.run_id });
+        } else {
+          const prTitle = `feat: ${storyRow?.story_id || "story"} - ${(storyRow?.title || "").slice(0, 70)}`;
+          const changesRaw = (parsed["changes"] || output || "").toString().slice(0, 1500);
+          const prBody = `## Story\n${storyRow?.story_id || ""}: ${storyRow?.title || ""}\n\n## Changes\n${changesRaw}\n\n_Auto-created by setfarm after story completion._`;
+          try {
+            const prOut = execFileSync("gh", ["pr", "create", "--base", autoBase, "--head", storyBranchName, "--title", prTitle, "--body", prBody], {
+              cwd: autoRepo, timeout: 30000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8",
+            }).toString().trim();
+            const urlMatch = prOut.match(/https?:\/\/github\.com\/\S+/);
+            if (urlMatch) {
+              storyPrUrl = urlMatch[0];
+              parsed["pr_url"] = storyPrUrl;
+              context["pr_url"] = storyPrUrl;
+              logger.info(`[auto-pr] Created PR ${storyPrUrl} for story ${storyRow?.story_id}`, { runId: step.run_id });
+            } else {
+              logger.warn(`[auto-pr] gh pr create returned no URL. Output: ${prOut.slice(0, 300)}`, { runId: step.run_id });
+            }
+          } catch (createErr) {
+            logger.warn(`[auto-pr] gh pr create failed for ${storyBranchName}: ${String(createErr).slice(0, 400)}`, { runId: step.run_id });
+          }
+        }
+      } catch (autoErr) {
+        logger.warn(`[auto-pr] unexpected: ${String(autoErr).slice(0, 200)}`, { runId: step.run_id });
+      }
+    }
+
     await pgRun("UPDATE stories SET status = $1, output = $2, pr_url = $3, story_branch = $4, updated_at = $5 WHERE id = $6", [storyStatus, output, storyPrUrl, storyBranchName, now(), step.current_story_id]);
     emitEvent({ ts: now(), event: storyEvent as import("./events.js").EventType, runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, storyId: storyRow?.story_id, storyTitle: storyRow?.title });
     logger.info(`Story ${storyStatus}: ${storyRow?.story_id} — ${storyRow?.title}`, { runId: step.run_id, stepId: step.step_id });
