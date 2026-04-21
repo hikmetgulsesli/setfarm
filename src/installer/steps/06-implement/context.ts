@@ -191,7 +191,7 @@ async function injectScopeContext(nextStory: any, context: Record<string, string
         const allAllowed = [...new Set([...scopeList, ...sharedList, ...implicitFiles])];
         const scopeFilePath = path.join(context["story_workdir"], ".story-scope-files");
         fs.writeFileSync(scopeFilePath, allAllowed.join("\n") + "\n");
-        try { fs.chmodSync(scopeFilePath, 0o444); } catch { /* best effort */ }
+        try { fs.chmodSync(scopeFilePath, 0o664); } catch { /* best effort */ }
       } catch (e) { logger.debug(`[scope-file] ${String(e).slice(0, 80)}`); }
     }
     if (context["story_scope_files"]) {

@@ -596,7 +596,7 @@ async function injectStoryContext(
         const implicitFiles = ["vitest.config.ts","vitest.config.js","jest.config.ts","jest.config.js","src/test/setup.ts","src/test/utils.ts","src/setupTests.ts"];
         const allAllowed = [...new Set([...scopeList, ...sharedList, ...implicitFiles])];
         // Also allow *.test.tsx and *.spec.tsx (wildcard — hook uses grep -qxF so these wont match, but test files are caught by the hook logic)
-        const _scopeFP = path.join(context["story_workdir"], ".story-scope-files"); fs.writeFileSync(_scopeFP, allAllowed.join("\n") + "\n"); try { fs.chmodSync(_scopeFP, 0o444); } catch { /* best effort */ }
+        const _scopeFP = path.join(context["story_workdir"], ".story-scope-files"); fs.writeFileSync(_scopeFP, allAllowed.join("\n") + "\n"); try { fs.chmodSync(_scopeFP, 0o664); } catch { /* best effort */ }
       } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
     }
     // 5-model consensus: always inject scope_reminder (even on first attempt)
