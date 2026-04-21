@@ -198,6 +198,39 @@ export function mergeStoryIntoFeature(
     }).toString().trim();
   } catch { /* push/verify still catches the outright failure case */ }
 
+  // REBASE BEFORE MERGE (2026-04-22): rebase story branch on current feature HEAD
+  // so sequential merges don't conflict on shared files. If rebase fails, the
+  // conflict is still exposed by the subsequent merge attempt + -X theirs retry.
+  try {
+    // Only try rebase if mergeTarget is a local branch (not origin/ remote ref)
+    if (mergeTarget === storyBranch) {
+      execFileSync("git", ["checkout", storyBranch], {
+        cwd: repoPath, timeout: GIT_LONG_TIMEOUT, stdio: "pipe",
+      });
+      execFileSync("git", ["rebase", featureBranch], {
+        cwd: repoPath, timeout: GIT_LONG_TIMEOUT, stdio: "pipe",
+      });
+      logger.info(`[merge-queue] Rebased ${storyBranch} onto ${featureBranch} before merge`);
+      // Return to feature branch for the merge
+      execFileSync("git", ["checkout", featureBranch], {
+        cwd: repoPath, timeout: GIT_LONG_TIMEOUT, stdio: "pipe",
+      });
+    }
+  } catch (rebaseErr) {
+    // Abort rebase if in progress, restore clean state
+    try {
+      execFileSync("git", ["rebase", "--abort"], {
+        cwd: repoPath, timeout: 5000, stdio: "pipe",
+      });
+    } catch { /* no rebase in progress */ }
+    try {
+      execFileSync("git", ["checkout", featureBranch], {
+        cwd: repoPath, timeout: 5000, stdio: "pipe",
+      });
+    } catch { /* best effort */ }
+    logger.warn(`[merge-queue] Rebase failed for ${storyBranch}, continuing with merge + -X theirs fallback: ${String(rebaseErr).slice(0, 200)}`);
+  }
+
   try {
     // Merge with --no-ff to preserve story boundary
     execFileSync("git", ["merge", "--no-ff", mergeTarget, "-m", commitMessage], {
