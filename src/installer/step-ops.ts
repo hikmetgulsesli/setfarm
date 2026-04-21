@@ -184,15 +184,37 @@ export async function peekStep(agentId: string, callerGatewayAgent?: string): Pr
       }
     } catch (e) { /* non-fatal — /tmp read failed */ }
 
+    // AUTO-PR/peek-claim race fix (2026-04-21): peek must match claim's semantics.
+    // Claim returns NO_WORK when all pending stories are dep-blocked AND running stories
+    // exist. Peek was previously permissive (just checked "pending exists") — causing
+    // infinite HAS_WORK→claim NO_WORK cycle that burned agent sessions with no progress.
     const row = await pgGet<{ cnt: number }>(
       `SELECT COUNT(*) as cnt FROM steps s
        JOIN runs r ON r.id = s.run_id
        WHERE s.agent_id = $1 AND r.status = 'running'
          AND (
            s.status = 'pending'
-           OR (s.status = 'running' AND s.type = 'loop'
-               AND (EXISTS (SELECT 1 FROM stories st WHERE st.run_id = s.run_id AND st.status = 'pending')
-                    OR EXISTS (SELECT 1 FROM stories st WHERE st.run_id = s.run_id AND st.status = 'done')))
+           OR (s.status = 'running' AND s.type = 'loop' AND (
+             EXISTS (
+               SELECT 1 FROM stories st
+               WHERE st.run_id = s.run_id AND st.status = 'pending'
+                 AND NOT EXISTS (
+                   SELECT 1 FROM jsonb_array_elements_text(
+                     CASE
+                       WHEN st.depends_on IS NULL OR st.depends_on = 'null' OR st.depends_on = ''
+                       THEN '[]'::jsonb
+                       ELSE st.depends_on::jsonb
+                     END
+                   ) AS dep
+                   WHERE NOT EXISTS (
+                     SELECT 1 FROM stories d
+                     WHERE d.run_id = s.run_id AND d.story_id = dep
+                       AND d.status IN ('done', 'failed', 'verified', 'skipped')
+                   )
+                 )
+             )
+             OR EXISTS (SELECT 1 FROM stories st WHERE st.run_id = s.run_id AND st.status = 'done')
+           ))
          )`, [agentId]
     );
     return (row?.cnt ?? 0) > 0 ? "HAS_WORK" : "NO_WORK";
