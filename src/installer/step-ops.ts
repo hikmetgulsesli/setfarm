@@ -2683,6 +2683,11 @@ ${screenDescs}
             // #496 US-001 merge conflict — US-002 bleed left US-001's files
             // in US-002's branch, merge-queue rejected clean US-001 branch).
             if (scopeResult.category === "SCOPE_BLEED" && scopeResult.outOfScope && scopeResult.outOfScope.length > 0 && wd && baseBr) {
+              // SILENT REVERT (2026-04-22): cleanup out-of-scope files + amend commit.
+              // Pink Elephant: failing with feedback "Integration files belong to integration
+              // story" makes LLMs repeat the bleed. Silent cleanup preserves scope-clean commit
+              // and lets story continue to DONE → auto-PR → verify reviews.
+              let cleanupOk = false;
               try {
                 const outOfScopeFiles = scopeResult.outOfScope;
                 for (const file of outOfScopeFiles) {
@@ -2691,7 +2696,6 @@ ${screenDescs}
                       cwd: wd, timeout: 10000, stdio: ["pipe", "pipe", "pipe"],
                     });
                   } catch (checkoutErr) {
-                    // File may not exist on baseBr (new file added by bleed)
                     try {
                       execFileSync("git", ["rm", "-f", file], {
                         cwd: wd, timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
@@ -2699,24 +2703,40 @@ ${screenDescs}
                     } catch { /* best effort */ }
                   }
                 }
-                // Amend HEAD commit to drop the now-reverted files
                 try {
                   execFileSync("git", ["commit", "--amend", "--no-edit", "--allow-empty"], {
                     cwd: wd, timeout: 10000, stdio: ["pipe", "pipe", "pipe"],
                     env: { ...process.env, GIT_COMMITTER_NAME: "Moltclaw AI", GIT_COMMITTER_EMAIL: "setrox@moltclaw.local" },
                   });
+                  cleanupOk = true;
                 } catch { /* best effort */ }
-                logger.info(`[scope-bleed-cleanup] Reverted ${outOfScopeFiles.length} out-of-scope file(s) in ${storyRow.story_id}: ${outOfScopeFiles.slice(0, 5).join(", ")}`, { runId: step.run_id });
+                logger.warn(`[scope-bleed-silent] Reverted ${outOfScopeFiles.length} out-of-scope file(s) in ${storyRow.story_id}: ${outOfScopeFiles.slice(0, 5).join(", ")} — story kept DONE`, { runId: step.run_id });
               } catch (cleanupErr) {
-                logger.warn(`[scope-bleed-cleanup] Failed: ${String(cleanupErr).slice(0, 200)}`, { runId: step.run_id });
+                logger.warn(`[scope-bleed-silent] Cleanup failed: ${String(cleanupErr).slice(0, 200)}`, { runId: step.run_id });
               }
+              if (cleanupOk) {
+                // Cleanup succeeded — continue as if scope was clean. No retry, no feedback.
+                context["scope_bleed_warning"] = `Silently reverted ${scopeResult.outOfScope.length} out-of-scope file(s): ${scopeResult.outOfScope.slice(0, 3).join(", ")}`;
+                await updateRunContext(step.run_id, context);
+                // Fall through — don't failStep, let story complete normally.
+              } else {
+                // Cleanup failed — fall back to original behavior (fail + retry).
+                context["previous_failure"] = scopeResult.reason!;
+                context["failure_category"] = scopeResult.category;
+                context["failure_suggestion"] = scopeResult.suggestion!;
+                await updateRunContext(step.run_id, context);
+                await failStep(stepId, scopeResult.reason!);
+                return { advanced: false, runCompleted: false };
+              }
+            } else {
+              // Non-SCOPE_BLEED or no outOfScope list — original fail behavior
+              context["previous_failure"] = scopeResult.reason!;
+              context["failure_category"] = scopeResult.category;
+              context["failure_suggestion"] = scopeResult.suggestion!;
+              await updateRunContext(step.run_id, context);
+              await failStep(stepId, scopeResult.reason!);
+              return { advanced: false, runCompleted: false };
             }
-            context["previous_failure"] = scopeResult.reason!;
-            context["failure_category"] = scopeResult.category;
-            context["failure_suggestion"] = scopeResult.suggestion!;
-            await updateRunContext(step.run_id, context);
-            await failStep(stepId, scopeResult.reason!);
-            return { advanced: false, runCompleted: false };
           }
           // Soft warning (scope creep flag for verify step)
           if (scopeResult.reason && scopeResult.passed) {
