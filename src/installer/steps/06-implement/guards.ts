@@ -193,7 +193,7 @@ export async function checkScopeEnforcement(
           const oosList = outOfScope.slice(0, 10).join(", ");
           return {
             passed: false,
-            reason: `SCOPE_BLEED: Story ${storyId} (${storyTitle}) modified ${outOfScope.length} file(s) outside declared SCOPE_FILES. Out-of-scope: ${oosList}. Allowed: ${allowedList}. Each story must stay within its own file scope.`,
+            reason: `SCOPE_BLEED: Story ${storyId} modified ${outOfScope.length} file(s) outside its SCOPE_FILES list. Re-read your SCOPE_FILES in the claim input and modify ONLY those files. Revert all other changes. Integration files (App.tsx, main.tsx, routing) belong to the integration story, not yours.`,
             category: "SCOPE_BLEED",
             suggestion: "Only modify files declared in your SCOPE_FILES",
             outOfScope,
