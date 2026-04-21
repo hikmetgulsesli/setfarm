@@ -202,20 +202,28 @@ export function mergeStoryIntoFeature(
   // so sequential merges don't conflict on shared files. If rebase fails, the
   // conflict is still exposed by the subsequent merge attempt + -X theirs retry.
   try {
-    // Only try rebase if mergeTarget is a local branch (not origin/ remote ref)
-    if (mergeTarget === storyBranch) {
-      execFileSync("git", ["checkout", storyBranch], {
+    // Create/reset local branch from mergeTarget (handles both local and origin/ refs)
+    execFileSync("git", ["checkout", "-B", storyBranch, mergeTarget], {
+      cwd: repoPath, timeout: GIT_LONG_TIMEOUT, stdio: "pipe",
+    });
+    execFileSync("git", ["rebase", featureBranch], {
+      cwd: repoPath, timeout: GIT_LONG_TIMEOUT, stdio: "pipe",
+    });
+    // Force-push rebased branch so remote matches (keeps PR in sync)
+    try {
+      execFileSync("git", ["push", "--force-with-lease", "origin", storyBranch], {
         cwd: repoPath, timeout: GIT_LONG_TIMEOUT, stdio: "pipe",
       });
-      execFileSync("git", ["rebase", featureBranch], {
-        cwd: repoPath, timeout: GIT_LONG_TIMEOUT, stdio: "pipe",
-      });
-      logger.info(`[merge-queue] Rebased ${storyBranch} onto ${featureBranch} before merge`);
-      // Return to feature branch for the merge
-      execFileSync("git", ["checkout", featureBranch], {
-        cwd: repoPath, timeout: GIT_LONG_TIMEOUT, stdio: "pipe",
-      });
+    } catch (pushErr) {
+      logger.warn(`[merge-queue] Rebase push failed for ${storyBranch}: ${String(pushErr).slice(0, 150)}`);
     }
+    logger.info(`[merge-queue] Rebased ${storyBranch} onto ${featureBranch} before merge`);
+    // Use local ref for subsequent merge (already at rebased tip)
+    mergeTarget = storyBranch;
+    // Return to feature branch for the merge
+    execFileSync("git", ["checkout", featureBranch], {
+      cwd: repoPath, timeout: GIT_LONG_TIMEOUT, stdio: "pipe",
+    });
   } catch (rebaseErr) {
     // Abort rebase if in progress, restore clean state
     try {
