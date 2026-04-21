@@ -21,7 +21,7 @@ agent_mapping:
   setup-repo: [atlas, axon, helix]
   setup-build: [atlas, axon, helix]
   designer: [prism, helix, zeta]
-  developer: [koda, flux, cipher, prism, lux, nexus, axon, nova, zeta, helix]
+  developer: [koda]  # Single agent — sequential story implementation (2026-04-21 single-dir architecture)
   reviewer: [sentinel, iris]
   tester: [sentinel, iris]
   security-gate: [sentinel, iris]

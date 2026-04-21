@@ -21,7 +21,19 @@ You are implementing ONE user story. You may ONLY write to the files listed belo
 
 ## Instructions
 
-1. **DO NOT create a new branch.** Your working directory is ALREADY on the correct story branch — a git worktree was prepared for you by setfarm. Run `git branch --show-current` to see it; use that exact name as-is (it is always lowercase, e.g. `abc12345-us-001`). NEVER run `git checkout -b` with a different case (e.g. `US-001` uppercase) — merge-back will fail because your commits would live on an orphan branch.
+1. **WORKING DIRECTORY AND BRANCH (CRITICAL — single-directory architecture).** Everything happens in ONE directory: `{{REPO}}`. No worktree, no sub-dir, no alternate path.
+
+   - **Every bash command prefix:** `cd "{{REPO}}" && ...`. Do NOT cd anywhere else.
+   - **Branch:** The entire run uses ONE branch: `{{STORY_BRANCH}}`. Your first command: `cd "{{REPO}}" && git checkout "{{STORY_BRANCH}}"` (if already on it, no-op).
+   - **NEVER run** `git checkout -b` or `git branch -m` — no branch create, no rename.
+   - **Scaffold tools** (`npm create vite`, `npx create-next-app`, `npx create-expo-app`, `npx react-native init`, `flutter create`, `dotnet new`, `cargo new`, etc.) MAY auto-switch the branch. After ANY scaffold command, run `git checkout "{{STORY_BRANCH}}"` to return.
+   - **Before every `git commit` and `git push`:** verify `git branch --show-current` equals `{{STORY_BRANCH}}`.
+   - **PR flow (end of story — required):**
+     1. `cd "{{REPO}}" && git add -A && git commit -m "feat: {{CURRENT_STORY_ID}} — <summary>"`
+     2. `git push origin "{{STORY_BRANCH}}"`
+     3. `gh pr create --base main --head "{{STORY_BRANCH}}" --title "{{CURRENT_STORY_ID}}: <short title>" --body "<what + how>"` → capture PR URL
+     4. `gh pr merge <pr_number> --auto --squash` — enables auto-merge when review passes
+     5. Emit `PR_URL: <url>` in your STATUS block.
 
 2. **ABSOLUTE SCOPE DISCIPLINE — READ THIS TWICE.** The SCOPE_FILES list above is EXHAUSTIVE. Every file needed by every story was pre-planned into SOME story's scope. If a file you think is "needed" is NOT in your SCOPE_FILES:
    - It does NOT belong to your story. Another story owns it.

@@ -94,8 +94,12 @@ export async function injectStoryContext(
 
   // Clear stale story-specific context from previous story
   context["pr_url"] = "";
-  context["story_branch"] = pipelineStoryBranch;
+  // Single-directory + single-run-branch architecture (2026-04-21):
+  // All stories commit to the run-branch (runId), all work happens in main repo (no worktree).
+  context["story_branch"] = step.run_id;
+  context["story_workdir"] = context["repo"] || "";
   context["verify_feedback"] = "";
+  void pipelineStoryBranch; // legacy
 
   // Inject source tree
   const repoPath = context["repo"] || context["REPO"] || "";

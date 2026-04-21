@@ -14,7 +14,14 @@ import { processSetupCompletion, processSetupDesignContracts } from "../../step-
 // Agent then only confirms + emits EXISTING_CODE.
 export async function preClaim(ctx: ClaimContext): Promise<void> {
   const repo = ctx.context["repo"] || ctx.context["REPO"] || "";
-  const branch = ctx.context["branch"] || ctx.context["BRANCH"] || "main";
+  // Tek run-branch mimarisi (2026-04-21): her run tek branch (runId), her story bu branch uzerine commit
+  const planBranch = ctx.context["branch"] || ctx.context["BRANCH"] || "";
+  const branch = ctx.runId;
+  ctx.context["branch"] = branch;
+  ctx.context["BRANCH"] = branch;
+  if (planBranch && planBranch !== branch && planBranch !== "main") {
+    logger.info(`[module:setup-repo preclaim] plan branch ${planBranch} ignored, using run-branch ${branch}`, { runId: ctx.runId });
+  }
   const techStack = ctx.context["tech_stack"] || ctx.context["TECH_STACK"] || "vite-react";
   if (!repo) {
     logger.warn(`[module:setup-repo preclaim] skipped — no repo in context`, { runId: ctx.runId });
