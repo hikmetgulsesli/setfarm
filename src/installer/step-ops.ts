@@ -2610,17 +2610,12 @@ ${screenDescs}
           const framework = detectTestFramework(testRepo);
           if (framework.runner !== "none") {
             const testResult = runTests(testRepo, framework);
-            if (!testResult.passed && step.retry_count < step.max_retries) {
-              const fixPrompt = buildTestFixPrompt(testResult);
-              logger.warn(`[test-runner] ${testResult.failedTests} test(s) failed for story ${storyRow?.story_id} — soft retry`, { runId: step.run_id });
-              context["previous_failure"] = `TEST RUNNER: ${fixPrompt}`;
-              context["failure_category"] = "TEST_FAIL";
-              context["failure_suggestion"] = "Fix the failing tests or the source code";
+            if (!testResult.passed) {
+              // 2026-04-21: WARN-ONLY. Test failures no longer fail story — verify step catches them
+              // via PR review. Avoids infinite retry loop when agent keeps producing flaky/failing tests.
+              logger.warn(`[test-runner] ${testResult.failedTests} test(s) failed for story ${storyRow?.story_id} (advisory, not blocking)`, { runId: step.run_id });
+              context["test_warnings"] = `${testResult.failedTests} test(s) failed — see verify step review`;
               await updateRunContext(step.run_id, context);
-              await failStep(stepId, `${testResult.failedTests} test(s) failed`);
-              return { advanced: false, runCompleted: false };
-            } else if (!testResult.passed) {
-              logger.warn(`[test-runner] ${testResult.failedTests} test(s) failed (max retries reached, advisory) for story ${storyRow?.story_id}`, { runId: step.run_id });
             }
           }
         }
