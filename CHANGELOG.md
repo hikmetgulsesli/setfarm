@@ -1,3 +1,33 @@
+## 2026-04-22 — 5 Fix Entegrasyonu + Merge Conflict Darbogazi (Run #523)
+
+### Onceki Durum (Run #518, #520, #522)
+- US-001 DONE ama PR acilmiyor, sonra US-002 sonsuz retry dongusunde (peek/claim race + SCOPE_BLEED Pink Elephant)
+- 4 retry x 4 story = 16 bosa agent session
+
+### Bu Turdaki Fixler
+- **Fix 4 commit `6730082`** — peek dep-check: peek logic claim ile uyumlu. HAS_WORK -> claim NO_WORK infinite cycle kirildi. US-002 retry=0 direkt ilerledi (onceki run'larda retry=2 stuck).
+- **Fix 5 commit `3341e48`** — SCOPE_BLEED silent revert: cleanup basariliysa failStep cagirmiyor. Pink Elephant feedback agent'a geri dondurulmuyor. US-003 retry=3 silent-revert DONE.
+
+### Run #523 Sonuc (sayac-9674691)
+- **4/4 story DONE + 4 auto-PR acildi:**
+  - PR #1 US-001 retry=0 (auto-PR ilk deneme)
+  - PR #2 US-002 retry=1
+  - PR #3 US-003 retry=3 (silent-revert devreye girdi)
+  - PR #4 US-004 retry=2
+- **2 MERGED:** US-002, US-003 merge-queue tarafindan main'e alindi.
+- **Run failed** at merge-queue: Too many conflicts 2 of 4 — aborting. US-001 ve US-004 App.tsx gibi shared file'larda catisti.
+
+### Kesfedilen Yeni Darbogaz
+- **Merge-queue conflict threshold**: direct-merge stratejisi parallel story'ler shared file'lari ayni anda modifiye edince catisma uretiyor. 2/4 esigi asilinca run abort. integration story US-004 ile diger story'ler ayni dosyalara dokundugu icin kacinilmaz catisma.
+- Cozum onerileri sonraki session: a) US-004 deps tanimliyla zaten son calisir ama direct-merge parallel yapiyor, serialize gerek b) merge-queue 3-way merge c) integration story'yi ayri step'te calistir
+
+### 5 Fix Ozet dist build canli
+1. `e8d0c95` auto-PR creation agent bypass
+2. `2b415d5` chmod 0o664 .story-scope-files agent-writable
+3. `3e0c3ad` test warn-only verify step review eder
+4. `6730082` peek dep-check claim ile uyumlu
+5. `3341e48` SCOPE_BLEED silent revert Pink Elephant mitigation
+
 ## 2026-04-21 — Auto-PR Sistemsel Fix + Zincirleme Stall Bulgulari
 
 ### Sorun
