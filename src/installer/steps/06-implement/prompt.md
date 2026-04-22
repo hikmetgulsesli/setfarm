@@ -35,14 +35,12 @@ You are implementing ONE user story. You may ONLY write to the files listed belo
      4. `gh pr merge <pr_number> --auto --squash` — enables auto-merge when review passes
      5. Emit `PR_URL: <url>` in your STATUS block.
 
-2. **ABSOLUTE SCOPE DISCIPLINE — READ THIS TWICE.** The SCOPE_FILES list above is EXHAUSTIVE. Every file needed by every story was pre-planned into SOME story's scope. If a file you think is "needed" is NOT in your SCOPE_FILES:
-   - It does NOT belong to your story. Another story owns it.
-   - DO NOT create it. DO NOT write "infrastructure" or "wrapper" or "layout" files that weren't planned.
-   - Common forbidden creations: `Header.tsx`, `Footer.tsx`, `Nav.tsx`, `BottomNav.tsx`, `Layout.tsx`, `Sidebar.tsx`, `*Section.tsx` (e.g. `CounterSection.tsx`, `HistorySection.tsx`), `*Container.tsx`, `*Wrapper.tsx`, `*Provider.tsx` — unless they are LITERALLY in your SCOPE_FILES list.
-   - If your scope is `CounterDisplay.tsx + CounterControls.tsx`, you write ONLY those TWO components. Do NOT wrap them in a new `CounterSection.tsx`. The integration story (usually the last story, e.g. `App.tsx`/`main.tsx`) will assemble them — that is not your job.
-   - You may IMPORT from SHARED_FILES (read-only reference) but NEVER create brand-new sibling files.
+2. **ABSOLUTE SCOPE DISCIPLINE.** Write ONLY the files listed in SCOPE_FILES. That list is exhaustive for your story; every file the project needs was pre-planned into some story's scope.
+   - Your job is ONLY the files above. Every other file already belongs to another story.
+   - Read from SHARED_FILES for import context; do not modify them and do not create sibling files next to them.
+   - Assembly of components into pages/layouts happens in the integration story (the last story, which owns `App.tsx`/`main.tsx`). If your scope is a set of components, write just those components — do not wrap them into a new parent file.
 
-3. **If the design screenshot shows a Header or BottomNav but you weren't given that file in scope** — do not panic and do not create it. Another story owns it, or it will be implemented inline in the integration story. Your job is the slice you were assigned, nothing more.
+3. **Design reference, not file assignment.** The Stitch design may show elements that are not in your SCOPE_FILES (e.g. a Header when your scope is a counter component). Use the design as reference for visual style, spacing and interaction of your scope files only. Do not create the other elements — another story owns them.
 
 4. Read the story's acceptance criteria and implement ONLY what it asks
 5. Use imports from SHARED_FILES but do not modify them unless minor
