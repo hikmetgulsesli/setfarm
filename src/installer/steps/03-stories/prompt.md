@@ -1,5 +1,11 @@
 STORIES step — PRD'yi user story listesi olarak parçala.
 
+## Önceki Deneme Uyarısı (varsa dikkat et)
+
+{{PREVIOUS_FAILURE}}
+
+---
+
 ## REPO
 
 {{REPO}}
