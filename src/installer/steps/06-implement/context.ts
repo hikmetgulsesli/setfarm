@@ -9,7 +9,7 @@ import path from "node:path";
 import os from "node:os";
 import { pgGet, pgQuery } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
-import { getStories, getCurrentStory, formatStoryForTemplate, formatCompletedStories } from "../../story-ops.js";
+import { getStories, getCurrentStory, formatStoryForTemplate, formatCompletedStories, formatStoryRoadmap } from "../../story-ops.js";
 import type { Story } from "../../types.js";
 
 const STORY_STATUS = {
@@ -23,7 +23,7 @@ const STORY_STATUS = {
 
 // Template vars that may be empty but must exist to prevent MISSING_INPUT_GUARD
 const OPTIONAL_TEMPLATE_VARS = [
-  "completed_stories", "stories_remaining", "progress", "project_memory",
+  "completed_stories", "story_roadmap", "stories_remaining", "progress", "project_memory",
   "story_scope_files", "story_shared_files", "story_scope_description",
   "file_skeletons", "scope_reminder", "stitch_html", "design_dom",
   "project_tree", "installed_packages", "shared_code", "recent_stories_code",
@@ -85,6 +85,7 @@ export async function injectStoryContext(
   context["current_story_id"] = story.storyId;
   context["current_story_title"] = story.title;
   context["completed_stories"] = formatCompletedStories(allStories);
+  context["story_roadmap"] = await formatStoryRoadmap(step.run_id, story.storyId);
   context["stories_remaining"] = String(pendingCount);
   context["progress"] = await helpers.readProgressFile(step.run_id);
   context["project_memory"] = await helpers.readProjectMemory(context);

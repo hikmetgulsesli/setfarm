@@ -7,6 +7,13 @@ You are implementing ONE user story. You may ONLY write to the files listed belo
 
 {{SCOPE_REMINDER}}
 
+## Story Roadmap (all stories in this run)
+{{STORY_ROADMAP}}
+
+> The files listed under each "✓ DONE" story are already written — do not re-create them, do not modify them.
+> The files under "□ PENDING" stories belong to future stories — leave them for those.
+> Files under "→ CURRENT" are YOUR scope.
+
 ## Current Story
 {{STORY}}
 

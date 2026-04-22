@@ -66,6 +66,34 @@ export function formatCompletedStories(stories: Story[]): string {
   return completed.map(s => `- ${s.storyId}: ${s.title} [${s.status}]`).join("\n");
 }
 
+/**
+ * Zengin completed/planned stories ozeti — her story icin scope_files listesi dahil.
+ * Agent'a "US-001 zaten X dosyalarini yazdi, sen yazma" bilgisini verir.
+ * Scope bleed paradoksu icin kritik.
+ */
+export async function formatStoryRoadmap(runId: string, currentStoryId: string): Promise<string> {
+  const rows = await pgQuery<{
+    story_id: string; title: string; status: string;
+    scope_files: string | null; shared_files: string | null;
+  }>(
+    "SELECT story_id, title, status, scope_files, shared_files FROM stories WHERE run_id = $1 ORDER BY story_index",
+    [runId]
+  );
+  if (rows.length === 0) return "(no stories)";
+
+  const lines: string[] = [];
+  for (const r of rows) {
+    const isCurrent = r.story_id === currentStoryId;
+    const marker = isCurrent ? "→ CURRENT" : r.status === "done" || r.status === "verified" ? "✓ DONE" : r.status === "failed" ? "✗ FAILED" : "□ " + r.status.toUpperCase();
+    let scope: string[] = [];
+    try { scope = JSON.parse(r.scope_files || "[]"); } catch {}
+    const scopeStr = scope.length > 0 ? scope.join(", ") : "(no scope declared)";
+    lines.push(`${marker} ${r.story_id}: ${r.title}`);
+    lines.push(`    Files: ${scopeStr}`);
+  }
+  return lines.join("\n");
+}
+
 // ── STORIES_JSON Parsing ────────────────────────────────────────────
 
 /**
