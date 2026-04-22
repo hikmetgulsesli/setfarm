@@ -32,7 +32,34 @@ Stitch-to-JSX'in üreteceği tam dosya yolları — scope_files'ta BU YOLLARI ku
 6. SCREEN_MAP'i güncelle (her ekran için `stories` alanı)
 7. Aşağıdaki KEY: VALUE formatında çıktı ver
 
-## Çıktı
+## Örnek Story (referans — yapıyı kopyala)
+
+```
+{
+  "id": "US-002",
+  "title": "Sayaç Core — değer, artır/azalt, reset",
+  "description": "Ana sayaç mantığı: değer state, increment/decrement/reset işlemleri, localStorage persistence",
+  "acceptanceCriteria": [
+    "Kullanıcı + butonuna tıklayınca değer artmalı",
+    "Kullanıcı - butonuna tıklayınca değer azalmalı",
+    "Reset butonu değeri 0'a dönsürmeli",
+    "Sayfa yenilenince son değer korunmalı"
+  ],
+  "depends_on": [],
+  "screens": ["SCR-001"],
+  "scope_files": [
+    "src/hooks/useCounter.ts",
+    "src/components/Counter.tsx",
+    "src/screens/AnaSayaSayac.tsx"
+  ],
+  "shared_files": ["src/types/index.ts"],
+  "scope_description": "Hook + component + screen = 3 dosya tam feature-slice"
+}
+```
+
+Her story EN AZ 3 dosya içermelidir (hook + component + test, VEYA component + type + screen gibi). Tek-dosya story YASAK.
+
+## Çıktı Formatı
 
 ```
 STATUS: done
