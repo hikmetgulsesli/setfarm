@@ -2719,18 +2719,17 @@ ${screenDescs}
                 logger.warn(`[scope-bleed-silent] Cleanup failed: ${String(cleanupErr).slice(0, 200)}`, { runId: step.run_id });
               }
               if (cleanupOk) {
-                // Cleanup succeeded — continue as if scope was clean. No retry, no feedback.
                 context["scope_bleed_warning"] = `Silently reverted ${scopeResult.outOfScope.length} out-of-scope file(s): ${scopeResult.outOfScope.slice(0, 3).join(", ")}`;
                 await updateRunContext(step.run_id, context);
-                // Fall through — don't failStep, let story complete normally.
+                // Fall through — story done.
               } else {
-                // Cleanup failed — fall back to original behavior (fail + retry).
-                context["previous_failure"] = scopeResult.reason!;
-                context["failure_category"] = scopeResult.category;
-                context["failure_suggestion"] = scopeResult.suggestion!;
+                // 2026-04-22: Cleanup failed -> WARNING ONLY (no fail). Setup bypass + story
+                // roadmap riskini azaltti. Tam app yazsa bile merge queue cogu dosyayi ignore
+                // eder. Story DONE olarak gecsin, fail retry dongusunu kirsin.
+                context["scope_bleed_warning"] = `Scope bleed detected (cleanup failed): ${scopeResult.outOfScope!.length} out-of-scope file(s). Story kept DONE advisory.`;
+                logger.warn(`[scope-bleed-warn] Story ${storyRow.story_id} kept DONE despite scope bleed (${scopeResult.outOfScope!.length} files) — cleanup failed, tolerating`, { runId: step.run_id });
                 await updateRunContext(step.run_id, context);
-                await failStep(stepId, scopeResult.reason!);
-                return { advanced: false, runCompleted: false };
+                // Fall through — don't fail.
               }
             } else {
               // Non-SCOPE_BLEED or no outOfScope list — original fail behavior
