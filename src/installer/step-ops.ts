@@ -2651,12 +2651,16 @@ ${screenDescs}
     if (step.step_id === "implement" && storyStatus === STORY_STATUS.DONE && storyRow?.story_id) {
       try {
         const { resolveStoryWorktree, checkScopeFilesGate, checkScopeEnforcement } = await import("./steps/06-implement/guards.js");
-        const storyIdxRow = await pgGet<{ story_index: number }>("SELECT story_index FROM stories WHERE id = $1", [step.current_story_id]);
-        const isSetupStory = (storyIdxRow?.story_index ?? 99) === 0;
         const wd = await resolveStoryWorktree(step.current_story_id, context["story_workdir"] || "");
         const baseBr = context["branch"] || "";
 
-        if (!isSetupStory && wd && baseBr && fs.existsSync(wd)) {
+        // 2026-04-22: Setup story (story_index === 0) bypass KALDIRILDI.
+        // Eski davranis: setup story scope check'e tabi degildi -> agent tam app yaziyordu
+        // -> sonraki story'ler "dosya zaten yazilmis" SCOPE_FILE_MISSING aliyordu.
+        // Artik tum story'ler scope check'e tabi. Config dosyalari (package.json, vite.config,
+        // tailwind.config, postcss.config, tsconfig.json vb.) zaten guards.ts SCOPE_IGNORE
+        // regex'inde ignore ediliyor, setup story rahatlikla calisir.
+        if (wd && baseBr && fs.existsSync(wd)) {
           // Scope files existence gate (declared files must exist in worktree)
           if (step.retry_count < step.max_retries) {
             const sfGate = await checkScopeFilesGate(storyRow.story_id, step.current_story_id, storyRow.title, wd);
