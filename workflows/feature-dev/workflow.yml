@@ -762,7 +762,7 @@ steps:
       completion: all_done
       fresh_session: true
       merge_strategy: direct-merge
-      parallel_count: 3
+      parallel_count: 1
     input: |
       !include critical-preamble.md
 
