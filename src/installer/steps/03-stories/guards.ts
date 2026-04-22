@@ -80,10 +80,11 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
   }
   if (tooSmall.length > 0) {
     const list = tooSmall.join(", ");
-    const msg = `GUARDRAIL: ${tooSmall.length} story/stories have fewer than 3 scope_files: ${list}. Each non-setup/non-integration story MUST contain 2+ files (coupled pair or feature-complete slice). Single-file stories cause model to write full-app refleks → SCOPE_BLEED infinite loop. Re-output STORIES_JSON merging single-file scopes with related files.`;
-    logger.warn(`[module:stories] ${msg}`, { runId });
-    await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);
-    throw new Error(msg);
+    // 2026-04-22: Hard reject -> warning-only. Setup bypass (d40973f) + story roadmap
+    // (0aced72) zaten scope bleed riskini azaltti. Hard reject kimi planner'i infinite
+    // retry'a sokuyordu. Agent karari gecerli kalsin, single-file story'ler tolere
+    // edilsin (worst case: one extra story, not full-app scope bleed).
+    logger.warn(`[module:stories] ADVISORY: ${tooSmall.length} story/stories have few scope_files: ${list}. Allowed — guard is now warning-only.`, { runId });
   }
 
   // 3. scope_files overlap auto-fix (keep first owner by story_index, move
