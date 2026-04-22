@@ -74,16 +74,25 @@ async function handleLoopStepFailurePG(
   }
 
   if (newRetry > story.max_retries) {
+    // 2026-04-22 policy change: any story retry-exhaust fails the entire run immediately.
+    // Previously loop continued with other stories, allowing pipeline to reach merge-queue
+    // with partial work; downstream verify/qa/deploy then ran on a broken feature set.
+    // Fail-fast at the first unrecoverable story is simpler and matches user intent.
+    const runFailReason = `Story ${storyRow?.story_id} retries exhausted (${newRetry}/${story.max_retries}): ${error}`;
     await pgBegin(async (sql) => {
       await sql`UPDATE stories SET status = 'failed', retry_count = ${newRetry}, output = ${error}, updated_at = ${now()} WHERE id = ${story.id}`;
-      await sql`UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = ${now()} WHERE id = ${stepId}`;
+      await sql`UPDATE steps SET status = 'failed', output = ${runFailReason}, current_story_id = NULL, updated_at = ${now()} WHERE id = ${stepId}`;
+      await sql`UPDATE runs SET status = 'failed', updated_at = ${now()} WHERE id = ${step.run_id}`;
       try { await sql`UPDATE claim_log SET outcome = 'failed', duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at)) * 1000 AS INTEGER), diagnostic = ${error} WHERE story_id = ${storyRow?.story_id || ""} AND outcome IS NULL`; } catch (e) { logger.warn("[claim-log] update failed: " + String(e), {}); }
     });
-    await recordStepTransition(stepId, step.run_id, "running", "pending", step.agent_id, "failStep:loopStoryExhausted", { storyId: storyRow?.story_id, retry: newRetry });
+    await recordStepTransition(stepId, step.run_id, "running", "failed", step.agent_id, "failStep:loopStoryExhausted", { storyId: storyRow?.story_id, retry: newRetry });
     const wfId = await getWorkflowId(step.run_id);
-    emitEvent({ ts: now(), event: "story.failed", runId: step.run_id, workflowId: wfId, stepId: stepId, storyId: storyRow?.story_id, storyTitle: storyRow?.title, detail: `Story retries exhausted (${newRetry}/${story.max_retries}) — loop continues` });
-    logger.info(`[failStep] Story ${storyRow?.story_id} retries exhausted — marked failed, loop continues`, { runId: step.run_id });
-    return { retrying: false, runFailed: false };
+    emitEvent({ ts: now(), event: "story.failed", runId: step.run_id, workflowId: wfId, stepId: stepId, storyId: storyRow?.story_id, storyTitle: storyRow?.title, detail: `Story retries exhausted (${newRetry}/${story.max_retries}) — failing run` });
+    emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: stepId, detail: runFailReason });
+    emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: runFailReason });
+    scheduleRunCronTeardown(step.run_id);
+    logger.warn(`[failStep] Story ${storyRow?.story_id} retries exhausted — failing run (policy: fail-fast on unrecoverable story)`, { runId: step.run_id });
+    return { retrying: false, runFailed: true };
   }
 
   await pgBegin(async (sql) => {
