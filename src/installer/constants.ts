@@ -211,6 +211,8 @@ export const STEP_CONTEXT_ALLOWLIST: Record<string, string[]> = {
     "preflight_analysis", "preflight_diff", "preflight_errors",
     "verify_feedback", "stories_json", "completed_stories",
     "screen_map", "design_tokens",
+    "pr_comments", "pr_check_state", "pr_mergeable",
+    "playwright_report",
   ],
   "security-gate": ["security_notes"],
   "qa-test": ["dev_server_port", "project_name", "date"],
