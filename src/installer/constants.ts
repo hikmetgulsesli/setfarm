@@ -157,6 +157,14 @@ export const OPTIONAL_TEMPLATE_VARS = [
   "test_generation_prompt",
   // Design token mapping (injected when hardcoded colors detected)
   "design_token_mapping",
+  // Stories step DOM preview (P0.1 — planner per-screen element summary)
+  "design_dom_preview",
+  "predicted_screen_files",
+  // Verify step PR + Playwright (Sprint 5)
+  "pr_comments",
+  "pr_check_state",
+  "pr_mergeable",
+  "playwright_report",
 ] as const;
 
 

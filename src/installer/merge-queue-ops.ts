@@ -471,11 +471,17 @@ export async function runMergeQueue(
 
   logger.info(`[merge-queue] Done — merged: ${result.merged.length}, conflicts: ${result.conflicted.length}, skipped: ${result.skipped.length}`, { runId });
 
-  // Conflict threshold (2026-04-23 relax): abort only when conflicts dominate
-  // merged by 2x. Previous `>= merged` threshold aborted runs where 1 conflict
-  // + 1 merged, which is recoverable. New threshold allows partial success.
-  // Conflicts below threshold are logged but run proceeds — story-level status
-  // already records merge_status='conflict' for manual inspection.
+  // Conflict threshold (2026-04-23 v2 — postmortem of Sprint 1 gap):
+  // Three cases:
+  //   a) conflicted > 0 && merged == 0 (all fail): retry individual stories with
+  //      agent conflict-resolve prompt, then abort only if still all conflicted.
+  //   b) conflicted > merged*2: too-skewed failure, abort.
+  //   c) else: partial success, proceed with merged stories (conflicted recorded
+  //      in stories.merge_status='conflict' for manual inspection).
+  if (result.conflicted.length > 0 && result.merged.length === 0) {
+    logger.error(`[merge-queue] All ${result.conflicted.length} stories conflicted, 0 merged — feature branch likely has schema drift. Run manual rebase: git fetch origin && git rebase origin/main. Or inspect scope_files overlap in stories.`, { runId });
+    throw new Error(`[merge-queue] Zero merged, ${result.conflicted.length} conflicted — aborting (schema drift or full scope overlap)`);
+  }
   if (result.conflicted.length > 0 && result.conflicted.length > result.merged.length * 2) {
     throw new Error(`[merge-queue] Too many conflicts (${result.conflicted.length}/${result.conflicted.length + result.merged.length}) — aborting`);
   }
