@@ -296,8 +296,20 @@ export function updateProjectMemory(
     }
 
     const files = parsed["FILES_CHANGED"] || parsed["CHANGES"] || "";
-    const statusLabel = storyStatus === "skipped" ? "skipped" : storyStatus === "verified" ? "verified" : "done";
-    const storyEntry = `### ${storyId}: ${storyTitle} [${statusLabel}]\n- Files: ${files || "(see PR)"}\n`;
+    const statusLabel = storyStatus === "failed" ? "failed" : storyStatus === "skipped" ? "skipped" : storyStatus === "verified" ? "verified" : "done";
+
+    // 2026-04-23: Failure enrichment — agent writes FAILURE_CATEGORY/FAILURE_REASON/SUGGESTION
+    // for failed stories. Next story sees these via PROJECT_MEMORY and avoids same pit.
+    const failureCategory = parsed["FAILURE_CATEGORY"] || parsed["REASON"] || "";
+    const failureReason = parsed["FAILURE_REASON"] || parsed["ERROR"] || "";
+    const suggestion = parsed["SUGGESTION"] || parsed["NEXT_STEP"] || "";
+
+    let storyEntry = `### ${storyId}: ${storyTitle} [${statusLabel}]\n- Files: ${files || "(see PR)"}\n`;
+    if (statusLabel === "failed") {
+      if (failureCategory) storyEntry += `- Failure category: ${failureCategory}\n`;
+      if (failureReason) storyEntry += `- Failure reason: ${failureReason.slice(0, 240)}\n`;
+      if (suggestion) storyEntry += `- Suggestion for next stories: ${suggestion.slice(0, 240)}\n`;
+    }
 
     // Check if this story already exists in the memory
     const escapedId = storyId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -325,8 +337,54 @@ export function updateProjectMemory(
 
     fs.writeFileSync(memoryPath, content, "utf-8");
     logger.info(`Updated PROJECT_MEMORY.md for ${storyId} in ${repo}`);
+
+    // 2026-04-23: Also maintain project-root CLAUDE.md for Claude CLI auto-load.
+    // Claude CLI reads CLAUDE.md at session start — gives next session full context
+    // without manual include. PROJECT_MEMORY.md stays canonical; CLAUDE.md mirrors
+    // key sections with a session-friendly preamble.
+    writeProjectClaudeMd(repo, context, content);
   } catch (err) {
     logger.warn(`Failed to update PROJECT_MEMORY.md: ${err}`);
+  }
+}
+
+/**
+ * Write CLAUDE.md at project root so Claude CLI auto-loads session context.
+ * Mirrors Story Log from PROJECT_MEMORY.md + adds Project Context preamble.
+ */
+function writeProjectClaudeMd(repo: string, context: Record<string, string>, memoryContent: string): void {
+  try {
+    const claudePath = path.join(repo, "CLAUDE.md");
+    const techStack = context["tech_stack"] || "unknown";
+    const task = (context["task"] || "").slice(0, 400);
+    const branch = context["branch"] || "main";
+
+    const preamble = `# Project Context (auto-generated — Claude CLI session primer)
+
+**Tech stack**: ${techStack}
+**Branch**: ${branch}
+**Original task**: ${task || "(not recorded)"}
+
+> Bu dosya setfarm tarafından her story tamamlandığında güncellenir.
+> Canonical kaynak: PROJECT_MEMORY.md (aynı dizinde).
+
+## Scope Discipline
+
+- Story'ler sırayla işleniyor. Her story'nin scope_files'ı dışına yazma.
+- Mevcut dosyaları değiştireceksen SHARED_FILES listesindekileri değiştir, diğerlerine dokunma.
+- Önceki story'lerin fail_reason'larına dikkat — aynı pit'e düşme (aşağıdaki Story Log'a bak).
+
+`;
+
+    // Extract "## Completed Stories" section from memory content
+    const storyLogMatch = memoryContent.match(/## Completed Stories[\s\S]*/);
+    const storyLog = storyLogMatch ? storyLogMatch[0] : "## Completed Stories\n(none yet)\n";
+
+    const full = preamble + storyLog;
+    fs.writeFileSync(claudePath, full, "utf-8");
+    logger.info(`Updated CLAUDE.md at project root ${repo}`);
+  } catch (err) {
+    logger.warn(`Failed to write CLAUDE.md: ${err}`);
   }
 }
 

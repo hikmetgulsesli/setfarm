@@ -128,7 +128,7 @@ export async function checkStalledRuns(): Promise<MedicFinding[]> {
       // Auto-fail runs stalled for 6+ hours
       await pgRun("UPDATE runs SET status = 'failed', updated_at = $1 WHERE id = $2 AND status IN ('running', 'resuming')",
         [now(), run.id]);
-      await pgRun("UPDATE steps SET status = 'failed', output = 'Auto-failed: run stalled for ' || $1 || ' minutes', updated_at = $2 WHERE run_id = $3 AND status NOT IN ('done', 'failed')",
+      await pgRun("UPDATE steps SET status = 'skipped', output = 'Skipped: run stalled for ' || $1 || ' minutes (cascade)', updated_at = $2 WHERE run_id = $3 AND status NOT IN ('done', 'failed', 'skipped')",
         [String(ageMin), now(), run.id]);
       findings.push({
         check: "stalled_runs",
@@ -162,7 +162,7 @@ export async function checkStalledRuns(): Promise<MedicFinding[]> {
   for (const run of stuckResuming) {
     await pgRun("UPDATE runs SET status = 'failed', updated_at = $1 WHERE id = $2",
       [now(), run.id]);
-    await pgRun("UPDATE steps SET status = 'failed', output = 'Auto-failed: run stuck in resuming state', updated_at = $1 WHERE run_id = $2 AND status NOT IN ('done', 'failed')",
+    await pgRun("UPDATE steps SET status = 'skipped', output = 'Skipped: run stuck in resuming state (cascade)', updated_at = $1 WHERE run_id = $2 AND status NOT IN ('done', 'failed', 'skipped')",
       [now(), run.id]);
     findings.push({
       check: "stalled_runs",
@@ -712,12 +712,15 @@ export async function checkOrphanedInTerminalRuns(): Promise<MedicFinding[]> {
   `);
 
   for (const step of orphanSteps) {
-    await pgRun("UPDATE steps SET status = 'failed', output = 'Auto-failed: run is ' || $1, updated_at = $2 WHERE id = $3",
+    // 2026-04-23: mark cascade orphans as 'skipped' not 'failed' — these steps
+    // never ran (upstream fail/cancel), they are not real failures. Keeps
+    // per-step success rate stats honest (failed = real errors only, not cascade).
+    await pgRun("UPDATE steps SET status = 'skipped', output = 'Skipped: run is ' || $1 || ' (cascade, never ran)', updated_at = $2 WHERE id = $3",
       [step.run_status, now(), step.id]);
     findings.push({
       check: "orphaned_in_terminal_run",
       severity: "warning",
-      message: `Step ${step.step_id} was '${step.status}' in ${step.run_status} run ${step.run_id} — auto-failed`,
+      message: `Step ${step.step_id} was '${step.status}' in ${step.run_status} run ${step.run_id} — cascade skipped`,
       action: "none",
       runId: step.run_id,
       stepId: step.id,

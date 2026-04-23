@@ -92,6 +92,23 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
       const step = await pgGet<{ abandoned_count: number; output: string | null; status: string }>("SELECT abandoned_count, output, status FROM steps WHERE id = $1", [finding.stepId]);
       if (!step) return false;
 
+      // Alive check (2026-04-23): agent may be writing to /tmp/setfarm-progress-<runId>.txt
+      // every ~5min. If progress file is fresh (<2min old), agent is alive — skip reset.
+      if (step.status === "running" && finding.runId) {
+        try {
+          const fs = await import("node:fs");
+          const progressPath = `/tmp/setfarm-progress-${finding.runId}.txt`;
+          if (fs.existsSync(progressPath)) {
+            const stat = fs.statSync(progressPath);
+            const ageMs = Date.now() - stat.mtimeMs;
+            if (ageMs < 2 * 60 * 1000) {
+              logger.info(`[medic] Alive check PASS: ${progressPath} updated ${Math.round(ageMs/1000)}s ago — skipping reset`, { runId: finding.runId, stepId: finding.stepId });
+              return false;
+            }
+          }
+        } catch { /* fall through */ }
+      }
+
       // Auto-complete if agent wrote STATUS: done to step.output
       if (step.status === "running" && step.output) {
         const statusMatch = step.output.match(/^\s*STATUS:\s*(\w+)/im);
