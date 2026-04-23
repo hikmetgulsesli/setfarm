@@ -92,19 +92,42 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
       const step = await pgGet<{ abandoned_count: number; output: string | null; status: string }>("SELECT abandoned_count, output, status FROM steps WHERE id = $1", [finding.stepId]);
       if (!step) return false;
 
+      // Auto-complete if agent wrote STATUS: done to step.output
       if (step.status === "running" && step.output) {
-        const statusMatch = step.output.match(/^STATUS:\s*(.+)$/im);
+        const statusMatch = step.output.match(/^\s*STATUS:\s*(\w+)/im);
         const statusVal = statusMatch?.[1]?.trim().toLowerCase();
-        if (statusVal && ["done", "pass", "passed", "verified"].includes(statusVal)) {
+        if (statusVal && ["done", "pass", "passed", "verified", "skip", "skipped"].includes(statusVal)) {
           try { const result = await completeStep(finding.stepId, step.output); if (result.advanced || result.runCompleted) { emitEvent({ ts: now(), event: "step.done" as EventType, runId: finding.runId ?? "", stepId: finding.stepId, detail: "Medic: auto-completed stuck step (output had STATUS: done)" }); return true; } } catch (err) { /* fall through */ }
         }
       }
 
       const newCount = (step.abandoned_count ?? 0) + 1;
       const MAX_STEP_ABANDONS = 10;
-      const SAME_ERROR_LIMIT = 3;
+      const SAME_ERROR_LIMIT = 5; // 2026-04-23: 3→5 (too aggressive; false positives on kimi multi-turn)
 
+      // Circuit breaker disk fallback (2026-04-23): before firing, scan /tmp
+      // for agent output files. Agent may have written STATUS: done to disk
+      // but step.output didn't get written back (gateway stall, crash recovery).
       if (step.output && newCount >= SAME_ERROR_LIMIT) {
+        try {
+          const fs = await import("node:fs");
+          const path = await import("node:path");
+          const files = fs.readdirSync("/tmp").filter(f => f.startsWith(`setfarm-output-`) && f.includes(finding.stepId || ""));
+          for (const f of files) {
+            const content = fs.readFileSync(path.join("/tmp", f), "utf-8");
+            if (/^\s*STATUS:\s*(done|pass|passed|verified)\b/im.test(content)) {
+              try {
+                const result = await completeStep(finding.stepId, content);
+                if (result.advanced || result.runCompleted) {
+                  logger.info(`[medic] Disk-fallback auto-complete: found STATUS: done in /tmp/${f}`, { runId: finding.runId, stepId: finding.stepId });
+                  emitEvent({ ts: now(), event: "step.done" as EventType, runId: finding.runId ?? "", stepId: finding.stepId, detail: `Medic: disk-fallback auto-complete (/tmp/${f})` });
+                  return true;
+                }
+              } catch { /* try next file */ }
+            }
+          }
+        } catch (fsErr) { logger.warn(`[medic] Disk fallback scan failed: ${String(fsErr).slice(0, 100)}`, { runId: finding.runId }); }
+
         const recentChecks = await pgQuery<{ details: string }>("SELECT details FROM medic_checks WHERE details LIKE $1 AND details LIKE '%reset_step%' ORDER BY checked_at DESC LIMIT $2", [`%${finding.stepId}%`, SAME_ERROR_LIMIT]);
         if (recentChecks.length >= SAME_ERROR_LIMIT - 1) {
           logger.error(`[medic] Same-error circuit breaker: step ${finding.stepId} reset ${newCount}x`, { runId: finding.runId });

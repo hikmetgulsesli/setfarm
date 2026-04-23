@@ -471,9 +471,16 @@ export async function runMergeQueue(
 
   logger.info(`[merge-queue] Done — merged: ${result.merged.length}, conflicts: ${result.conflicted.length}, skipped: ${result.skipped.length}`, { runId });
 
-  // Conflict threshold: if majority of stories conflicted, something is fundamentally wrong
-  if (result.conflicted.length > 0 && result.conflicted.length >= result.merged.length) {
+  // Conflict threshold (2026-04-23 relax): abort only when conflicts dominate
+  // merged by 2x. Previous `>= merged` threshold aborted runs where 1 conflict
+  // + 1 merged, which is recoverable. New threshold allows partial success.
+  // Conflicts below threshold are logged but run proceeds — story-level status
+  // already records merge_status='conflict' for manual inspection.
+  if (result.conflicted.length > 0 && result.conflicted.length > result.merged.length * 2) {
     throw new Error(`[merge-queue] Too many conflicts (${result.conflicted.length}/${result.conflicted.length + result.merged.length}) — aborting`);
+  }
+  if (result.conflicted.length > 0) {
+    logger.warn(`[merge-queue] ${result.conflicted.length} conflicts survived — proceeding with ${result.merged.length} merged stories`, { runId });
   }
 
   return result;

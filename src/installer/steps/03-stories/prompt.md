@@ -22,6 +22,14 @@ Stitch-to-JSX'in üreteceği tam dosya yolları — scope_files'ta BU YOLLARI ku
 
 {{PREDICTED_SCREEN_FILES}}
 
+## DESIGN_DOM_PREVIEW
+
+Her ekranın element özeti (button/input listesi). scope_files seçerken bu bilgiyi kullan —
+ekranın hangi component/hook'ları gerektirdiğini tahmin etmek için. Aynı button ≥2 ekranda
+varsa shared_files'a koy.
+
+{{DESIGN_DOM_PREVIEW}}
+
 ## Yapılacaklar
 
 1. PRD'yi modüllere böl (independent functional units)
@@ -29,8 +37,10 @@ Stitch-to-JSX'in üreteceği tam dosya yolları — scope_files'ta BU YOLLARI ku
 3. Her ekran (SCREEN_MAP'ten) tam 1 story tarafından scope'lansın
 4. Bağımlılık: US-001 = setup+schema, son story = integration wiring
 5. scope_files dosyaları PREDICTED_SCREEN_FILES'tan kullan (hayali yol YASAK)
-6. SCREEN_MAP'i güncelle (her ekran için `stories` alanı)
-7. Aşağıdaki KEY: VALUE formatında çıktı ver
+6. DESIGN_DOM_PREVIEW'deki button/input sayısına göre scope_files'ı genişlet — 10+ element olan ekran muhtemelen ≥2 ek component (hook + util) gerektirir
+7. Ortak component'leri (Button, Input, Modal tekrarı) shared_files'a yaz
+8. SCREEN_MAP'i güncelle (her ekran için `stories` alanı)
+9. Aşağıdaki KEY: VALUE formatında çıktı ver
 
 ## Örnek Story (referans — yapıyı kopyala)
 
@@ -58,6 +68,18 @@ Stitch-to-JSX'in üreteceği tam dosya yolları — scope_files'ta BU YOLLARI ku
 ```
 
 Her story EN AZ 3 dosya içermelidir (hook + component + test, VEYA component + type + screen gibi). Tek-dosya story YASAK.
+
+**OPSİYONEL ama önerilen**: Her scope_files dosyası için `file_skeletons` objesi ekle
+(key = dosya yolu, value = 1-cümle rol özeti). Implement agent'ı bu iskeletten çalışarak
+çakışmayı önler. Örnek:
+
+```
+"file_skeletons": {
+  "src/hooks/useCounter.ts": "Counter state + increment/decrement/reset + localStorage sync",
+  "src/components/Counter.tsx": "Display value + button triggers",
+  "src/screens/AnaSayfa.tsx": "Ana sayfa kapsayıcısı — Counter'ı render eder"
+}
+```
 
 ## Çıktı Formatı
 

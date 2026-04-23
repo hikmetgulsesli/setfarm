@@ -189,7 +189,7 @@ export const STEP_CONTEXT_ALLOWLIST: Record<string, string[]> = {
   ],
   plan: ["prd", "prd_path"],
   design: ["prd", "screen_map_seed", "design_notes_seed", "device_type", "stitch_project_id"],
-  stories: ["prd", "screen_map", "design_tokens", "design_manifest", "stitch_project_id"],
+  stories: ["prd", "screen_map", "design_tokens", "design_system", "design_manifest", "design_dom_preview", "predicted_screen_files", "stitch_project_id"],
   "setup-repo": ["prd", "design_tokens", "screen_map"],
   "setup-build": ["prd", "baseline", "design_tokens", "design_system"],
   implement: [
