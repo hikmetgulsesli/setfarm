@@ -294,7 +294,7 @@ export async function checkOrphanedCrons(
 // occasionally hit provider rate-limit retries.
 const STEP_STUCK_THRESHOLD_MS: Record<string, number> = {
   plan:           10 * 60 * 1000,   // 10dk — PRD production + enrichment + provider retry (2026-04-16: 6→10 after #454)
-  design:         25 * 60 * 1000,   // 25dk — Stitch preClaim (8-12dk) + agent validate (5-8dk)
+  design:         10 * 60 * 1000,   // 10dk (2026-04-24 lower from 25 — Stitch preClaim now ~3dk, agent validate <5dk. User feedback: impl should reach within 10min total; 25dk too generous let stuck sessions linger)
   stories:        10 * 60 * 1000,   // 10dk — story JSON üretimi + predicted_screens (2026-04-16: 6→10)
   "setup-repo":   10 * 60 * 1000,   // 10dk — setup-repo.sh + DB + contracts
   "setup-build":  20 * 60 * 1000,   // 20dk — npm install + compat + build + tailwind + stitch-to-jsx
