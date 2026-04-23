@@ -72,13 +72,17 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
     if (!Array.isArray(files) || files.length === 0) continue;
     // Setup story (index 0) and integration story (App.tsx-containing) can be smaller
     const isIntegration = files.some(f => typeof f === "string" && (f === "src/App.tsx" || f === "src/App.jsx" || f === "src/main.tsx" || f === "src/main.jsx" || f === "src/index.tsx" || f === "src/index.jsx" || f === "index.html"));
-    if (files.length < 3 && row.story_index > 0 && !isIntegration) {
+    // 2026-04-24: MIN 3 -> MIN 2. hook+component pairs natural 2-file slice,
+    // MIN 3 caused planner retry loops. Sprint 1 DOM_PREVIEW gives planner
+    // better scope awareness. Single-file stories still rejected (full-app
+    // scope_bleed risk preserved).
+    if (files.length < 2 && row.story_index > 0 && !isIntegration) {
       tooSmall.push(`${row.story_id}(${files.length})`);
     }
   }
   if (tooSmall.length > 0) {
     const list = tooSmall.join(", ");
-    const msg = `GUARDRAIL: ${tooSmall.length} story/stories have fewer than 3 scope_files: ${list}. Each non-setup/non-integration story MUST contain 3-6 files (feature-complete slice — component + hook + test + type + utility). Single-file stories cause model to write full-app refleks → SCOPE_BLEED infinite loop. Re-output STORIES_JSON merging single-file scopes with adjacent related files.`;
+    const msg = `GUARDRAIL: ${tooSmall.length} story/stories have fewer than 2 scope_files: ${list}. Each non-setup/non-integration story MUST contain 2-6 files. Single-file stories cause model to write full-app refleks → SCOPE_BLEED infinite loop. Re-output STORIES_JSON merging single-file scopes with adjacent related files.`;
     logger.warn(`[module:stories] ${msg}`, { runId });
     await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);
     throw new Error(msg);
