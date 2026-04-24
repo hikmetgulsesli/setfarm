@@ -39,7 +39,7 @@ varsa shared_files'a koy.
    - Son story: integration wiring (App.tsx, routes, layout)
 3. **Context bloat önleme**: Her story implement edilirken model scaffold+test+commit yapmalı. Büyük story = model context overflow = session ölür. Story ne kadar dar, o kadar sağlam.
 4. Her ekran (SCREEN_MAP'ten) tam 1 story tarafından scope'lansın. scope_files'a PREDICTED_SCREEN_FILES'tan al (hayali yol YASAK).
-5. DESIGN_DOM_PREVIEW'deki button/input sayısına göre scope ayar: 15+ element ekran = story'yi alt-component'lere böl (form ayrı, list ayrı).
+5. DESIGN_DOM_PREVIEW'deki button/input yapısına göre scope ayar — ekran birden fazla konsepti birleştiriyorsa (form + list + detail gibi) her konsept ayrı story. Element sayısına değil, yapısal ayırıma göre böl.
 6. Ortak component'leri (Button, Input, Modal tekrar) shared_files'a yaz.
 7. SCREEN_MAP'i güncelle (her ekran için `stories` alanı).
 8. Aşağıdaki KEY: VALUE formatında çıktı ver.
@@ -69,7 +69,7 @@ varsa shared_files'a koy.
 }
 ```
 
-Her story konsept-bazlı — tek feature-slice veya tek yapı. Tek-dosya story YASAK, 6+ dosyalı story de YASAK (context bloat). Doğal sınır: 2-5 dosya.
+Her story konsept-bazlı böl — **tek ana yapı**: bir hook, bir component-family, bir screen-flow, VEYA bir utility-module. Birden fazla konseptin birleştiği story YASAK. Dosya sayısı konsept gerektiği kadar — 1, 3, 10, 15 farketmez. Kural yok, yapıya sadakat.
 
 **OPSİYONEL ama önerilen**: Her scope_files dosyası için `file_skeletons` objesi ekle
 (key = dosya yolu, value = 1-cümle rol özeti). Implement agent'ı bu iskeletten çalışarak
