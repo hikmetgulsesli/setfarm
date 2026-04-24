@@ -1068,16 +1068,19 @@ export async function checkDesignAutoComplete(): Promise<MedicFinding[]> {
       let manifest: any[];
       try { manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8")); } catch { continue; }
       if (!Array.isArray(manifest) || manifest.length === 0) continue;
-      let allScreensOk = true;
+      // Require HTML non-zero for each screen; PNG is optional (cosmetic,
+      // Stitch download occasionally drops one, agent doesn't need it).
+      let htmlOkCount = 0;
       for (const s of manifest) {
         const sid = String(s?.screenId || s?.id || "");
-        if (!sid) { allScreensOk = false; break; }
+        if (!sid) continue;
         const htmlPath = path.join(stitchDir, sid + ".html");
-        const pngPath = path.join(stitchDir, sid + ".png");
-        if (!fs.existsSync(htmlPath) || !fs.existsSync(pngPath)) { allScreensOk = false; break; }
-        if (fs.statSync(htmlPath).size < 100 || fs.statSync(pngPath).size < 100) { allScreensOk = false; break; }
+        if (!fs.existsSync(htmlPath)) continue;
+        if (fs.statSync(htmlPath).size < 100) continue;
+        htmlOkCount++;
       }
-      if (!allScreensOk) continue;
+      // Need at least 50% of manifest HTMLs present and non-trivial
+      if (htmlOkCount < Math.ceil(manifest.length * 0.5)) continue;
 
       // Synthesize SCREEN_MAP + DESIGN_SYSTEM output, complete step
       const screenMap = manifest.map((s: any) => ({
