@@ -31,6 +31,7 @@ export type MedicActionType =
   | "restart_gateway"
   | "kill_browser_sessions"
   | "advance_pipeline"
+  | "auto_complete_step"
   | "none";
 
 export interface MedicFinding {
@@ -45,6 +46,8 @@ export interface MedicFinding {
   workflowId?: string;
   /** Whether the medic auto-remediated this */
   serviceName?: string;
+  /** Extra data for action handler (e.g. auto-complete output) */
+  meta?: Record<string, any>;
   remediated: boolean;
 }
 
@@ -1026,6 +1029,94 @@ export async function checkCascadingFailures(db: any, logger: any): Promise<{ de
   return { detected };
 }
 
+// ── Check: Design Auto-Complete (2026-04-24) ─────────────────────────
+// When preclaim (scripts/stitch-api.mjs) has produced all design assets,
+// the agent's only job is to output SCREEN_MAP/STATUS. If agent session
+// hangs/exits without completion marker, this check auto-completes the step.
+// Requires: DESIGN_MANIFEST.json + DESIGN_DOM.json + every manifest screen's
+// HTML + PNG, all non-zero size. Guard: step running >=2min (give agent a
+// chance). Additive — does not replace existing checks.
+export async function checkDesignAutoComplete(): Promise<MedicFinding[]> {
+  const findings: MedicFinding[] = [];
+  try {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const rows = await pgQuery<{ id: string; run_id: string; started_at: string | null }>(
+      `SELECT s.id, s.run_id, s.started_at FROM steps s
+       JOIN runs r ON r.id = s.run_id
+       WHERE s.step_id = 'design' AND s.status = 'running'
+         AND r.status = 'running'
+         AND s.started_at IS NOT NULL
+         AND EXTRACT(EPOCH FROM (NOW() - s.started_at)) > 120`,
+      []
+    );
+    for (const row of rows) {
+      const ctxRow = await pgGet<{ context: string }>("SELECT context FROM runs WHERE id = $1", [row.run_id]);
+      if (!ctxRow) continue;
+      let repo = "";
+      try { const ctx = JSON.parse(ctxRow.context || "{}"); repo = ctx.repo || ""; } catch { continue; }
+      if (!repo) continue;
+      const stitchDir = path.join(repo.replace(/^~/, process.env.HOME || ""), "stitch");
+      const manifestPath = path.join(stitchDir, "DESIGN_MANIFEST.json");
+      const domPath = path.join(stitchDir, "DESIGN_DOM.json");
+      if (!fs.existsSync(manifestPath) || !fs.existsSync(domPath)) continue;
+      const mSize = fs.statSync(manifestPath).size;
+      const dSize = fs.statSync(domPath).size;
+      if (mSize < 50 || dSize < 50) continue;
+
+      // Parse manifest, verify every screen has non-zero HTML + PNG
+      let manifest: any[];
+      try { manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8")); } catch { continue; }
+      if (!Array.isArray(manifest) || manifest.length === 0) continue;
+      let allScreensOk = true;
+      for (const s of manifest) {
+        const sid = String(s?.screenId || s?.id || "");
+        if (!sid) { allScreensOk = false; break; }
+        const htmlPath = path.join(stitchDir, sid + ".html");
+        const pngPath = path.join(stitchDir, sid + ".png");
+        if (!fs.existsSync(htmlPath) || !fs.existsSync(pngPath)) { allScreensOk = false; break; }
+        if (fs.statSync(htmlPath).size < 100 || fs.statSync(pngPath).size < 100) { allScreensOk = false; break; }
+      }
+      if (!allScreensOk) continue;
+
+      // Synthesize SCREEN_MAP + DESIGN_SYSTEM output, complete step
+      const screenMap = manifest.map((s: any) => ({
+        screenId: s.screenId || s.id,
+        name: s.title || s.name || "",
+        type: s.type || "page",
+        description: s.description || "",
+        htmlFile: "stitch/" + (s.screenId || s.id) + ".html",
+        stories: []
+      }));
+      const tokensPath = path.join(stitchDir, "design-tokens.json");
+      let designSystem: any = {};
+      try { if (fs.existsSync(tokensPath)) designSystem = JSON.parse(fs.readFileSync(tokensPath, "utf-8")); } catch {}
+      const output = [
+        "STATUS: done",
+        "SCREEN_MAP: " + JSON.stringify(screenMap),
+        "DESIGN_SYSTEM: " + JSON.stringify(designSystem),
+        "SCREENS_GENERATED: " + manifest.length,
+        "AUTO_COMPLETED: medic-design-auto (preclaim assets ready, agent bypass)"
+      ].join("\n");
+
+      logger.info(`[medic:design-auto] Auto-completing design step ${row.id}: ${manifest.length} screens ready in ${stitchDir}`, { runId: row.run_id, stepId: row.id });
+      findings.push({
+        check: "design_auto_complete",
+        severity: "info",
+        message: `Design step ${row.id} auto-completed from preclaim assets (${manifest.length} screens in ${stitchDir})`,
+        action: "auto_complete_step",
+        runId: row.run_id,
+        stepId: row.id,
+        meta: { output },
+        remediated: false,
+      });
+    }
+  } catch (e) {
+    logger.warn(`[medic:design-auto] check failed: ${String(e).slice(0, 200)}`, {});
+  }
+  return findings;
+}
+
 export async function runSyncChecks(): Promise<MedicFinding[]> {
   return [
     ...await checkOrphanedInTerminalRuns(),
@@ -1041,6 +1132,7 @@ export async function runSyncChecks(): Promise<MedicFinding[]> {
     ...await checkProviderFailure(),
     ...await checkOrphanedBrowserProcesses(),
     ...await checkStuckWaitingSteps(),
+    ...await checkDesignAutoComplete(),
   ];
 }
 

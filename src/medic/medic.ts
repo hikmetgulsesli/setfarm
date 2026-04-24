@@ -378,6 +378,26 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
       }
     }
 
+    case "auto_complete_step": {
+      if (!finding.stepId) return false;
+      const output = finding.meta?.output;
+      if (!output || typeof output !== "string") {
+        logger.warn(`[medic] auto_complete_step missing meta.output for step ${finding.stepId}`, {});
+        return false;
+      }
+      try {
+        const result = await completeStep(finding.stepId, output);
+        if (result.advanced || result.runCompleted) {
+          emitEvent({ ts: now(), event: "step.done" as EventType, runId: finding.runId ?? "", stepId: finding.stepId, detail: `Medic: auto-completed ${finding.check} from preclaim assets` });
+          logger.info(`[medic] auto-completed step ${finding.stepId} via ${finding.check}`, { runId: finding.runId, stepId: finding.stepId });
+          return true;
+        }
+      } catch (err) {
+        logger.warn(`[medic] auto_complete_step failed for ${finding.stepId}: ${String(err).slice(0, 200)}`, {});
+      }
+      return false;
+    }
+
     case "none":
     default:
       return false;
