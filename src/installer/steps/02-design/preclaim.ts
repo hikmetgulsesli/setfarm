@@ -235,9 +235,10 @@ All visible text must be in Turkish. Use a dark, modern theme.`;
     }
     let designSystem: any = {};
     try { if (fs.existsSync(tokensPath)) designSystem = JSON.parse(fs.readFileSync(tokensPath, "utf-8")); } catch {}
+    const deviceType = ctx.context["device_type"] || "DESKTOP";
     const output = [
       "STATUS: done",
-      "DEVICE_TYPE: DESKTOP",
+      "DEVICE_TYPE: " + deviceType,
       "DESIGN_SYSTEM: " + JSON.stringify(designSystem),
       "SCREEN_MAP: " + JSON.stringify(screenMap),
       "SCREENS_GENERATED: " + manifest.length,
