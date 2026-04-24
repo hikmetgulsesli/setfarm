@@ -32,15 +32,17 @@ varsa shared_files'a koy.
 
 ## Yapılacaklar
 
-1. PRD'yi modüllere böl (independent functional units)
-2. Her modül için 1 story yaz (model + API + UI + test)
-3. Her ekran (SCREEN_MAP'ten) tam 1 story tarafından scope'lansın
-4. Bağımlılık: US-001 = setup+schema, son story = integration wiring
-5. scope_files dosyaları PREDICTED_SCREEN_FILES'tan kullan (hayali yol YASAK)
-6. DESIGN_DOM_PREVIEW'deki button/input sayısına göre scope_files'ı genişlet — 10+ element olan ekran muhtemelen ≥2 ek component (hook + util) gerektirir
-7. Ortak component'leri (Button, Input, Modal tekrarı) shared_files'a yaz
-8. SCREEN_MAP'i güncelle (her ekran için `stories` alanı)
-9. Aşağıdaki KEY: VALUE formatında çıktı ver
+1. **TEK ANA YAPI / STORY**. Her story bir konsept: bir component-family VEYA bir hook+utility VEYA bir screen+flow. ASLA birden fazla konsept bir story'de birleşme.
+2. **Setup ayrı, feature ayrı, integration ayrı**:
+   - US-001: SADECE proje kurulumu (scaffold, package.json, configs, types file). Feature kodu YOK.
+   - US-002..N: Her biri tek feature (1 hook+test VEYA 1 component+test+style VEYA 1 screen+routing)
+   - Son story: integration wiring (App.tsx, routes, layout)
+3. **Context bloat önleme**: Her story implement edilirken model scaffold+test+commit yapmalı. Büyük story = model context overflow = session ölür. Story ne kadar dar, o kadar sağlam.
+4. Her ekran (SCREEN_MAP'ten) tam 1 story tarafından scope'lansın. scope_files'a PREDICTED_SCREEN_FILES'tan al (hayali yol YASAK).
+5. DESIGN_DOM_PREVIEW'deki button/input sayısına göre scope ayar: 15+ element ekran = story'yi alt-component'lere böl (form ayrı, list ayrı).
+6. Ortak component'leri (Button, Input, Modal tekrar) shared_files'a yaz.
+7. SCREEN_MAP'i güncelle (her ekran için `stories` alanı).
+8. Aşağıdaki KEY: VALUE formatında çıktı ver.
 
 ## Örnek Story (referans — yapıyı kopyala)
 
@@ -67,7 +69,7 @@ varsa shared_files'a koy.
 }
 ```
 
-Her story EN AZ 3 dosya içermelidir (hook + component + test, VEYA component + type + screen gibi). Tek-dosya story YASAK.
+Her story konsept-bazlı — tek feature-slice veya tek yapı. Tek-dosya story YASAK, 6+ dosyalı story de YASAK (context bloat). Doğal sınır: 2-5 dosya.
 
 **OPSİYONEL ama önerilen**: Her scope_files dosyası için `file_skeletons` objesi ekle
 (key = dosya yolu, value = 1-cümle rol özeti). Implement agent'ı bu iskeletten çalışarak
