@@ -201,6 +201,54 @@ All visible text must be in Turkish. Use a dark, modern theme.`;
   } else {
     logger.warn(`[module:design preclaim] SCREEN_MAP could not be generated — agent will see empty list`, { runId: ctx.runId });
   }
+
+  // Auto-complete (2026-04-24): if all required design assets are present,
+  // skip agent turn entirely and complete step directly. Stitch preclaim
+  // produced everything the downstream needs (SCREEN_MAP, DESIGN_DOM,
+  // design-tokens, HTMLs). Agent only adds overhead + retry risk.
+  // Guards: >=50% HTMLs present (PNG optional), DOM + manifest + tokens exist.
+  try {
+    const fs = await import("node:fs");
+    const p = await import("node:path");
+    const repoRaw = ctx.context["repo"] || "";
+    const repo = repoRaw.replace(/^~/, process.env.HOME || "");
+    if (!repo || screenMap.length === 0) return;
+    const stitchDir = p.join(repo, "stitch");
+    const domPath = p.join(stitchDir, "DESIGN_DOM.json");
+    const tokensPath = p.join(stitchDir, "design-tokens.json");
+    const manifestPath = p.join(stitchDir, "DESIGN_MANIFEST.json");
+    if (!fs.existsSync(domPath) || !fs.existsSync(manifestPath)) return;
+    if (fs.statSync(domPath).size < 50 || fs.statSync(manifestPath).size < 50) return;
+    let manifest: any[];
+    try { manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8")); } catch { return; }
+    if (!Array.isArray(manifest) || manifest.length === 0) return;
+    let htmlOkCount = 0;
+    for (const s of manifest) {
+      const sid = String(s?.screenId || s?.id || "");
+      if (!sid) continue;
+      const htmlPath = p.join(stitchDir, sid + ".html");
+      if (fs.existsSync(htmlPath) && fs.statSync(htmlPath).size >= 100) htmlOkCount++;
+    }
+    if (htmlOkCount < Math.ceil(manifest.length * 0.5)) {
+      logger.warn(`[module:design preclaim] auto-complete skipped: only ${htmlOkCount}/${manifest.length} HTMLs ready`, { runId: ctx.runId });
+      return;
+    }
+    let designSystem: any = {};
+    try { if (fs.existsSync(tokensPath)) designSystem = JSON.parse(fs.readFileSync(tokensPath, "utf-8")); } catch {}
+    const output = [
+      "STATUS: done",
+      "DEVICE_TYPE: DESKTOP",
+      "DESIGN_SYSTEM: " + JSON.stringify(designSystem),
+      "SCREEN_MAP: " + JSON.stringify(screenMap),
+      "SCREENS_GENERATED: " + manifest.length,
+      "AUTO_COMPLETED: design-preclaim (all assets ready, agent bypass)"
+    ].join("\n");
+    const { completeStep } = await import("../../step-ops.js");
+    await completeStep(ctx.stepId, output);
+    logger.info(`[module:design preclaim] AUTO-COMPLETED step ${ctx.stepId} (${manifest.length} screens, ${htmlOkCount} HTMLs, agent bypassed)`, { runId: ctx.runId, stepId: ctx.stepId });
+  } catch (e) {
+    logger.warn(`[module:design preclaim] auto-complete failed (falling back to agent): ${String(e).slice(0, 200)}`, { runId: ctx.runId });
+  }
 }
 
 // Lightweight screen-type heuristic from Turkish title keywords.
