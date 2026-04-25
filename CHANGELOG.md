@@ -4,6 +4,7 @@
 - Claim selection now includes running steps, with running work preferred before new pending work. Loop story idempotency already existed; this extends the same protection to single steps such as design.
 - Story worktree scope hooks now allow test files and common test config paths by pattern, matching the implement prompt. Hook helper files (`pre-commit`, `.story-scope-files`, `references`, `node_modules`) are added to the worktree git exclude so they do not pollute `git status`.
 - Implement scope-file existence guard now treats `scope_files` as an ownership boundary instead of requiring every listed companion file to exist. It still fails no-work outputs, but valid stories that implement the primary file without optional sibling CSS no longer burn retries.
+- Implement agent preamble now forbids `npm install` in both story worktrees and the shared main repo. Missing dependencies must be reported as `MISSING_DEPENDENCY` instead of dirtying `package.json`/`package-lock.json` mid-story.
 
 ## 2026-04-25 - OpenClaw Stability + Medic Timer
 

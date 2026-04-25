@@ -33,9 +33,11 @@ there will corrupt the pipeline. Stop immediately and report the CWD_ERROR.
 NODE_MODULES RULE (CRITICAL — NEVER BREAK):
 - The worktree's node_modules is a SYMLINK to the main repo's node_modules
 - NEVER run `rm -rf node_modules` or `rm node_modules` — this breaks the symlink
-- NEVER run `npm install` in the worktree — install in the MAIN REPO instead
-- If you need a new package: `cd {{repo}} && npm install <pkg> && cd {{story_workdir}}`
-- The worktree symlink will automatically pick up new packages
+- NEVER run `npm install` in the worktree.
+- NEVER run `npm install` in the MAIN REPO during implement. It dirties the shared repo and breaks later stories.
+- If a package is missing, STOP and report:
+  STATUS: fail
+  REASON: MISSING_DEPENDENCY <package-name>
 - If node_modules appears empty or broken, do NOT delete it — report the error
 
 GIT COMMIT RULE (CRITICAL — Wave 6 fix B, plan: reactive-frolicking-cupcake):
@@ -53,8 +55,7 @@ survive the kill, but uncommitted work is lost. Therefore:
 
 WORKDIR DISCIPLINE (CRITICAL):
 - Every bash command MUST run from `{{story_workdir}}` (cd to it before any work).
-- The ONLY exception is `npm install <pkg>` in the main repo, which goes to
-  `{{repo}}` per the NODE_MODULES rule above.
+- There is NO exception for dependency install during implement. Missing packages are reported, not installed.
 - NEVER cd to other projects under `~/projects/<other>` — your work is isolated
   to your worktree. If you find yourself running `find / -name ...` or
   `ls ~/projects/`, STOP — you are lost. Re-read your task description.
