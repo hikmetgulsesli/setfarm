@@ -44,7 +44,10 @@ export interface ScopeCheckResult {
 
 /**
  * Check scope_files declaration against actual worktree files.
- * Returns failure if declared files are missing (>40% absent).
+ * scope_files is an ownership boundary, not a promise that every listed file
+ * must be created. Fail only when too little of the declared scope exists,
+ * which catches no-work/hallucinated-output without forcing optional sibling
+ * CSS or test helper files into every story.
  */
 export async function checkScopeFilesGate(
   storyId: string,
@@ -74,13 +77,13 @@ export async function checkScopeFilesGate(
       if (st.isFile() && st.size > 0) present.push(rel); else missing.push(rel);
     } catch { missing.push(rel); }
   }
-  const required = Math.ceil(declared.length * 0.6);
+  const required = Math.max(1, Math.ceil(declared.length * 0.5));
   if (present.length < required) {
     return {
       passed: false,
-      reason: `SCOPE_FILE_MISSING: Story ${storyId} (${storyTitle}) declared scope_files=${JSON.stringify(declared)} but only ${present.length}/${declared.length} exist as non-empty files. Missing: ${missing.join(", ") || "none"}. You reported STATUS: done but the files you promised to write do not exist.`,
+      reason: `SCOPE_FILE_MISSING: Story ${storyId} (${storyTitle}) declared scope_files=${JSON.stringify(declared)} but only ${present.length}/${declared.length} exist as non-empty files (required at least ${required}). Missing: ${missing.join(", ") || "none"}. You reported STATUS: done but too little of the owned scope exists.`,
       category: "NO_WORK",
-      suggestion: "Write the files listed in your scope_files declaration",
+      suggestion: "Write meaningful code in at least the primary files listed in scope_files",
     };
   }
   return { passed: true };

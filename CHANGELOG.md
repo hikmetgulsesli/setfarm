@@ -3,6 +3,7 @@
 - Normal non-loop steps now reissue an already-running claim for the same agent role instead of returning `NO_WORK`. This prevents models that accidentally run `step claim` twice from overwriting `/tmp/claim-*-spawner.json` and leaving plan/design/stories/setup steps stuck in `running`.
 - Claim selection now includes running steps, with running work preferred before new pending work. Loop story idempotency already existed; this extends the same protection to single steps such as design.
 - Story worktree scope hooks now allow test files and common test config paths by pattern, matching the implement prompt. Hook helper files (`pre-commit`, `.story-scope-files`, `references`, `node_modules`) are added to the worktree git exclude so they do not pollute `git status`.
+- Implement scope-file existence guard now treats `scope_files` as an ownership boundary instead of requiring every listed companion file to exist. It still fails no-work outputs, but valid stories that implement the primary file without optional sibling CSS no longer burn retries.
 
 ## 2026-04-25 - OpenClaw Stability + Medic Timer
 
