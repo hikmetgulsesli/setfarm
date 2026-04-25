@@ -13,7 +13,7 @@ Workflow agent. Peek→Claim→Work→Complete.
 
 3. EXTRACT the step id and working directory via jq (DO NOT parse by hand):
    STEP_ID=$(jq -r '.stepId // empty' /tmp/claim-{{OUTPUT_FILE_ID}}.json)
-   WORKDIR=$(jq -r '.input.story_workdir // .input.repo // empty' /tmp/claim-{{OUTPUT_FILE_ID}}.json)
+   WORKDIR=$(jq -r 'if (.input | type) == "object" then (.input.story_workdir // .input.repo // "") else "" end' /tmp/claim-{{OUTPUT_FILE_ID}}.json)
    [ -z "$STEP_ID" ] && { echo "HEARTBEAT_OK"; exit 0; }
    [ -z "$WORKDIR" ] && WORKDIR="$HOME/.openclaw/workspace/agent-scratch"
    cd "$WORKDIR" && pwd
@@ -24,12 +24,16 @@ Workflow agent. Peek→Claim→Work→Complete.
    /tmp/claim-{{OUTPUT_FILE_ID}}.json if you need other fields (input.prd,
    input.task, input.scope_files, etc.). Read it with:
      cat /tmp/claim-{{OUTPUT_FILE_ID}}.json
-     jq -r '.input.task' /tmp/claim-{{OUTPUT_FILE_ID}}.json
-     jq -r '.input.prd' /tmp/claim-{{OUTPUT_FILE_ID}}.json
+     jq -r 'if (.input | type) == "object" then (.input.task // "") else .input end' /tmp/claim-{{OUTPUT_FILE_ID}}.json
+     jq -r 'if (.input | type) == "object" then (.input.prd // "") else "" end' /tmp/claim-{{OUTPUT_FILE_ID}}.json
+   If `.input` is a string, treat it as the step instructions. Object fields
+   such as `input.repo`, `input.story_workdir`, and `input.scope_files` only
+   exist on claims that explicitly include them.
 
-4. Do the work described in the claim input. No narration. Stay in WORKDIR.
-   Never run npx/npm init — setup-repo and setup-build already scaffolded
-   the project. You only modify files inside WORKDIR.
+4. Do the work described in the claim input. No narration. Stay in WORKDIR when
+   a project workdir exists. For implement/verify/test/deploy claims, setup-repo
+   and setup-build should already have scaffolded the project. For plan/design/
+   stories/setup-* claims, setup may not exist yet; follow the claim input.
 
 5. Write output in KEY: VALUE format (NOT JSON) to /tmp, then complete:
 cat <<'SETFARM_EOF' > /tmp/setfarm-output-{{OUTPUT_FILE_ID}}.txt

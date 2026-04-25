@@ -1,5 +1,7 @@
 ## 2026-04-25 - OpenClaw Stability + Medic Timer
 
+- Spawner now starts story/developer agents only while the implement loop step is running, preventing premature developer sessions during setup and avoiding concurrent OpenClaw plugin bootstrap races.
+- Generic polling prompts now handle string vs object claim input safely and no longer assume setup has already completed for plan/design/stories/setup steps.
 - Gateway agent crons are now opt-in via `SETFARM_ENABLE_GATEWAY_AGENT_CRONS=1`; the systemd spawner owns workflow execution by default. This prevents spawner+cron duplicate agent sessions from sharing `/tmp/claim-*` files and leaving steps stuck in `running`.
 - Spawner claim/output file ids now use a `-spawner` suffix so optional cron fallback sessions cannot overwrite an active spawner claim file.
 - `feature-dev` agent mapping now targets role-specific `feature-dev_*` agents instead of generic pool agents, so each step gets its correct workspace and avoids onboarding/context bleed.

@@ -160,11 +160,15 @@ async function handleStoryPending(payload: { role: string; runId: string; storyI
   if (!run) return;
   const wfId = run.workflow_id;
   try {
+    const loopStep = await pgGet<{ loop_config: string | null }>("SELECT loop_config FROM steps WHERE run_id = $1 AND type = 'loop' AND status = 'running' LIMIT 1", [runId]);
+    if (!loopStep) {
+      console.log(`[spawner] Story pending but loop step not running for ${wfId}/${role}, skip`);
+      return;
+    }
     const wf = await loadWorkflowSpec(resolveWorkflowDir(wfId));
     const agents = resolveAgentId(wfId, role, wf.agent_mapping ?? {});
     const cnt = await pgGet<{ cnt: string }>("SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status = 'running'", [runId]);
     const running = parseInt(cnt?.cnt || "0", 10);
-    const loopStep = await pgGet<{ loop_config: string }>("SELECT loop_config FROM steps WHERE run_id = $1 AND type = 'loop' AND status = 'running' LIMIT 1", [runId]);
     const parallelCount = loopStep?.loop_config ? JSON.parse(loopStep.loop_config).parallelCount || 3 : 3;
     const slots = parallelCount - running;
     if (slots <= 0) { console.log(`[spawner] No slots for ${wfId}/${role} (${running}/${parallelCount})`); return; }
@@ -181,7 +185,7 @@ async function pollForPendingWork() {
     );
     for (const s of steps) await handleStepPending({ agentId: s.agent_id, runId: s.run_id, stepId: s.step_id });
     const stories = await pgQuery<{ run_id: string; story_id: string }>(
-      "SELECT s.run_id, s.story_id FROM stories s JOIN runs r ON r.id = s.run_id WHERE s.status = 'pending' AND r.status = 'running' ORDER BY s.story_index ASC LIMIT 10"
+      "SELECT s.run_id, s.story_id FROM stories s JOIN runs r ON r.id = s.run_id WHERE s.status = 'pending' AND r.status = 'running' AND EXISTS (SELECT 1 FROM steps loop_step WHERE loop_step.run_id = s.run_id AND loop_step.type = 'loop' AND loop_step.status = 'running') ORDER BY s.story_index ASC LIMIT 10"
     );
     for (const st of stories) await handleStoryPending({ role: "developer", runId: st.run_id, storyId: st.story_id });
   } catch (err) { console.error(`[spawner] poll: ${String(err)}`); }
