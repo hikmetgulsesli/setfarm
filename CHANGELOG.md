@@ -7,6 +7,9 @@
 - Implement agent preamble now forbids `npm install` in both story worktrees and the shared main repo. Missing dependencies must be reported as `MISSING_DEPENDENCY` instead of dirtying `package.json`/`package-lock.json` mid-story.
 - Story worktree creation now isolates a dirty shared main repo by auto-stashing uncommitted changes before creating the next story branch, preventing accidental main-repo edits from leaking into later stories.
 - Medic cron recovery checks now no-op when gateway agent crons are disabled and the event-driven spawner owns execution. This removes bogus `0/0 crons recreated` events and prevents stale cron-health findings from restarting the gateway during active story work.
+- Implement story prompts and context now preserve the pipeline-created `story_workdir` and lowercase `story_branch` instead of telling developers to create their own branch from the shared repo. This prevents uppercase/lowercase branch splits, stale PR heads, and main-repo contamination between stories.
+- `shared_files` are now treated as read-only context instead of writable scope. Commit hooks and scope guards allow writes only to `scope_files` plus test helper files, preventing stories from editing future/integration files just because the planner listed them as shared references.
+- Medic terminal-run cleanup now excludes already-skipped steps, preventing the same old failed runs from being reported as newly fixed on every watchdog cycle.
 
 ## 2026-04-25 - OpenClaw Stability + Medic Timer
 

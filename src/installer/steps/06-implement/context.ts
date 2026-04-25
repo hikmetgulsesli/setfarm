@@ -57,6 +57,7 @@ export async function injectStoryContext(
   // Clear stale story context at claim time (not just completeStep).
   // Prevents cross-contamination when parallel stories share the same run context.
   const pipelineStoryBranch = context["story_branch"] || "";
+  const pipelineStoryWorkdir = context["story_workdir"] || context["repo"] || "";
   delete context["pr_url"];
   delete context["story_branch"];
   delete context["current_story_id"];
@@ -93,17 +94,15 @@ export async function injectStoryContext(
   // Story scope discipline injection (from planner's STORIES_JSON)
   await injectScopeContext(nextStory, context);
 
-  // Clear stale story-specific context from previous story
+  // Clear stale story-specific context from previous story, then restore the
+  // pipeline-owned worktree values set by the loop claim path.
   context["pr_url"] = "";
-  // Single-directory + single-run-branch architecture (2026-04-21):
-  // All stories commit to the run-branch (runId), all work happens in main repo (no worktree).
-  context["story_branch"] = step.run_id;
-  context["story_workdir"] = context["repo"] || "";
+  context["story_branch"] = pipelineStoryBranch || `${step.run_id.slice(0, 8)}-${story.storyId}`.toLowerCase();
+  context["story_workdir"] = pipelineStoryWorkdir;
   context["verify_feedback"] = "";
-  void pipelineStoryBranch; // legacy
 
   // Inject source tree
-  const repoPath = context["repo"] || context["REPO"] || "";
+  const repoPath = context["story_workdir"] || context["repo"] || context["REPO"] || "";
   if (repoPath && !context["src_tree"]) {
     const srcTree = helpers.generateSrcTree(repoPath);
     if (srcTree) context["src_tree"] = srcTree;
@@ -187,9 +186,8 @@ async function injectScopeContext(nextStory: any, context: Record<string, string
     if (context["story_scope_files"] && context["story_workdir"]) {
       try {
         const scopeList = context["story_scope_files"].split(", ");
-        const sharedList = context["story_shared_files"] ? context["story_shared_files"].split(", ") : [];
         const implicitFiles = ["vitest.config.ts","vitest.config.js","jest.config.ts","jest.config.js","src/test/setup.ts","src/test/utils.ts","src/setupTests.ts"];
-        const allAllowed = [...new Set([...scopeList, ...sharedList, ...implicitFiles])];
+        const allAllowed = [...new Set([...scopeList, ...implicitFiles])];
         const scopeFilePath = path.join(context["story_workdir"], ".story-scope-files");
         fs.writeFileSync(scopeFilePath, allAllowed.join("\n") + "\n");
         try { fs.chmodSync(scopeFilePath, 0o664); } catch { /* best effort */ }

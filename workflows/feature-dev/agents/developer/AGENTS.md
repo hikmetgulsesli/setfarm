@@ -44,9 +44,9 @@ Your context now carries these fields (when the planner declared them):
 - **`{{story_scope_files}}`** — comma-separated list of files you are ALLOWED
   to create or modify. Everything outside this list is REJECTED by the
   platform after the step completes (even if you commit it).
-- **`{{story_shared_files}}`** — additional files you are allowed to touch,
-  shared with other stories (typically `src/App.tsx`, `src/main.tsx`, global
-  CSS). Only present when the planner explicitly marks them.
+- **`{{story_shared_files}}`** — read-only files you may inspect/import from
+  other stories. They are NOT writable. If you edit them, the platform rejects
+  the commit unless they also appear in `story_scope_files`.
 - **`{{story_scope_description}}`** — one-sentence boundary description from
   the planner.
 
@@ -133,63 +133,44 @@ git add -A && git commit -m "wip: [description of what you just did]"
 4. After writing tests → commit
 5. After fixing build/lint errors → commit
 
-**Final commit:** rename the last WIP commit or create a clean commit + push + PR.
+**Final commit:** create a clean commit and push the prepared branch. Do not create a PR.
 
 If your session ends before you finish, your committed work is preserved and the next session continues from there. Uncommitted work is PERMANENTLY LOST.
 
-## Per-Story PR Workflow
+## Per-Story Branch Workflow
 
-Each story you implement gets its **own branch and pull request**. This is the core workflow:
+Each story you implement gets its own isolated git worktree and branch. The
+pipeline creates both before your session starts.
 
 ### 1. Prepare
 ```bash
-cd {{repo}}
-git checkout {{branch}}          # Feature branch
-git pull origin {{branch}}       # Get latest (includes merged story PRs)
+cd "{{story_workdir}}"
+STORY_BRANCH="{{story_branch}}"
+test "$(git branch --show-current)" = "$STORY_BRANCH"
 ```
 
-### 2. Create Story Branch
-```bash
-# Branch name: story-id + short title
-STORY_BRANCH="{{current_story_id}}-short-description"
-git checkout -b "$STORY_BRANCH"
-```
+Never run `git checkout -b`, `git branch -m`, or create a replacement branch.
+Never work from `{{repo}}`; that is the shared main repo.
 
-### 3. Implement + Test
+### 2. Implement + Test
 - Implement the story following all standards
 - Write tests for the story's functionality
 - Run build and tests to confirm they pass
 
-### 4. Commit + Push
+### 3. Commit + Push
 ```bash
 git add -A
 git commit -m "feat: {{current_story_id}} - {{current_story_title}}"
 git push -u origin "$STORY_BRANCH"
 ```
 
-### 5. Create Pull Request
-```bash
-gh pr create \
-  --base {{branch}} \
-  --head "$STORY_BRANCH" \
-  --title "feat: {{current_story_id}} - {{current_story_title}}" \
-  --body "## Story
-{{current_story_id}}: {{current_story_title}}
+Do not create a PR. The pipeline opens or reuses the PR from the branch recorded
+in the database. If you create a second branch, the PR will point at stale code.
 
-## Changes
-- What you implemented
-
-## Tests
-- What tests you wrote"
-```
-
-**IMPORTANT:** The PR target is the **feature branch** (`{{branch}}`), NOT `main`.
-
-### 6. Report
+### 4. Report
 ```
 STATUS: done
-STORY_BRANCH: the branch name
-PR: the PR URL
+STORY_BRANCH: {{story_branch}}
 CHANGES: what you implemented
 TESTS: what tests you wrote
 ```

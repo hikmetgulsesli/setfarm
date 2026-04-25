@@ -795,8 +795,8 @@ steps:
       isolated for this story. You MUST `cd {{story_workdir}}` as your FIRST command.
       ALL file reads, writes, git operations, lint, build, and test MUST run from WORKDIR.
       NEVER `cd {{repo}}` — that is the shared main repo and other stories may be using it.
-      MAIN_REPO is only for `npm install` if a dependency is missing.
-      The branch is already checked out. node_modules is symlinked from MAIN_REPO.
+      MAIN_REPO is read-only during implement. The branch is already checked out
+      in WORKDIR. node_modules is symlinked from MAIN_REPO.
 
       NEXT.JS CONFIG RULE: If next.config.ts exists, do NOT add unknown options.
       Valid options: reactStrictMode, images, env, experimental, output, distDir.
@@ -805,17 +805,15 @@ steps:
       read the error and remove the invalid option.
 
       DEPENDENCY RULE: NEVER use `npx <package>` or run a CLI tool without first verifying
-      the package is installed. If you need tailwindcss, run `npm install -D tailwindcss`
-      BEFORE `npx tailwindcss init`. If you need postcss, install it first. Check package.json
-      devDependencies before assuming any tool is available.
+      the package is installed. Check package.json devDependencies before assuming any
+      tool is available. If a required package is missing, report MISSING_DEPENDENCY;
+      setup/build owns dependency installation.
 
       SHARED FILE RULE: Do NOT modify package.json unless this is the setup story (US-001).
-      All dependencies should already be installed by the setup story. If a dependency is
-      truly missing (e.g. build fails with "Cannot find module X"):
-      1. Run `npm install <pkg>` in the MAIN REPO ({{repo}}), not the worktree
-         cd {{repo}} && npm install <pkg> && cd {{story_workdir}}
-      2. The worktree's node_modules symlink will pick it up automatically
-      3. Do NOT commit package.json changes from the worktree — they cause merge conflicts
+      All dependencies should already be installed by setup-build or the setup story.
+      If a dependency is truly missing (e.g. build fails with "Cannot find module X"),
+      output STATUS: retry with MISSING_DEPENDENCY: <pkg>. NEVER run npm install in
+      WORKDIR or MAIN_REPO during implement.
       Common missing packages: lucide-react, recharts, react-router-dom, chart.js, @types/*
 
       !include story-loop-context.md
@@ -921,12 +919,18 @@ steps:
 
       2. cd into WORKDIR
 
-      3. Create story branch from feature branch:
-         cd {{repo}} && git stash --include-untracked 2>/dev/null || true
-         git checkout {{branch}} && git pull origin {{branch}}
-         RUN_SHORT=$(echo "{{run_id}}" | cut -c1-8)
-         STORY_BRANCH="${RUN_SHORT}-{{current_story_id}}"
-         git checkout -b "$STORY_BRANCH"
+      3. Use the prepared story branch only:
+         cd "{{story_workdir}}"
+         STORY_BRANCH="{{story_branch}}"
+         CURRENT_BRANCH=$(git branch --show-current)
+         test "$CURRENT_BRANCH" = "$STORY_BRANCH" || {
+           echo "WRONG_BRANCH: expected $STORY_BRANCH but got $CURRENT_BRANCH"
+           exit 1
+         }
+
+         Do NOT run git checkout -b, git branch -m, or create another branch.
+         Do NOT checkout {{branch}} from MAIN_REPO. The pipeline already created
+         the correct isolated worktree and branch for this story.
 
       4. Implement the story fully:
          - Write tests for EVERY acceptance criterion (see TEST GUIDE below)
@@ -961,7 +965,7 @@ steps:
              # "Cannot find module 'vitest'" → exclude test files from tsconfig build:
              #   Add "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"] to tsconfig.json
              #   OR add "types": ["vitest/globals"] to compilerOptions
-             # "Cannot find module 'X'" → npm install X in {{repo}}
+             # "Cannot find module 'X'" → report MISSING_DEPENDENCY instead of installing
              # "'X' is declared but never used" → remove unused import
              # Fix each error, then re-run build
            fi
@@ -994,7 +998,7 @@ steps:
          rm -f .setfarm-step-output.txt 2>/dev/null || true
          git add -A && git commit -m "feat: {{current_story_id}} - {{current_story_title}}"
 
-      9. Push:
+      9. Push the prepared branch:
          git push -u origin "$STORY_BRANCH"
 
       10. DO NOT create a PR. The merge queue will handle merging automatically.
@@ -1010,7 +1014,7 @@ steps:
       MANDATORY OUTPUT FORMAT
       ============================================================
       STATUS: done
-      STORY_BRANCH: <exact branch name, e.g. a1b2c3d4-US-001>
+      STORY_BRANCH: <exact branch name, e.g. a1b2c3d4-us-001>
       CHANGES: <what you implemented>
       TESTS: <what tests you wrote>
 

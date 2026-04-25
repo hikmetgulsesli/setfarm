@@ -164,17 +164,15 @@ export async function checkScopeEnforcement(
 
   // Scope bleed detection
   if (sourceFiles.length > 0 && retryCount < maxRetries) {
-    const scopeRow = await pgGet<{ scope_files: string | null; shared_files: string | null }>(
-      "SELECT scope_files, shared_files FROM stories WHERE id = $1",
+    const scopeRow = await pgGet<{ scope_files: string | null }>(
+      "SELECT scope_files FROM stories WHERE id = $1",
       [currentStoryDbId]
     );
     if (scopeRow?.scope_files) {
       const allowed = new Set<string>();
       try {
         const scope = JSON.parse(scopeRow.scope_files || "[]");
-        const shared = JSON.parse(scopeRow.shared_files || "[]");
         if (Array.isArray(scope)) scope.forEach((f: any) => typeof f === "string" && allowed.add(f));
-        if (Array.isArray(shared)) shared.forEach((f: any) => typeof f === "string" && allowed.add(f));
       } catch {}
       if (allowed.size > 0) {
         const IMPLICIT_SHARED = [

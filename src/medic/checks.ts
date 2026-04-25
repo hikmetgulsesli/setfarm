@@ -698,7 +698,7 @@ export async function checkOfflineServices(): Promise<MedicFinding[]> {
 
 /**
  * Find steps and stories that are still in active states but belong to
- * cancelled/failed runs. These should be moved to 'failed' to prevent
+ * cancelled/failed runs. These should be moved to terminal states to prevent
  * medic from repeatedly processing them.
  */
 export async function checkOrphanedInTerminalRuns(): Promise<MedicFinding[]> {
@@ -711,7 +711,7 @@ export async function checkOrphanedInTerminalRuns(): Promise<MedicFinding[]> {
     SELECT s.id, s.step_id, s.run_id, s.status, r.status as run_status
     FROM steps s JOIN runs r ON s.run_id = r.id
     WHERE r.status IN ('cancelled', 'failed')
-    AND s.status NOT IN ('done', 'failed')
+    AND s.status NOT IN ('done', 'failed', 'skipped')
   `);
 
   for (const step of orphanSteps) {
