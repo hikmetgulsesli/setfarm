@@ -10,6 +10,8 @@ Workflow agent. Peek→Claim→Work→Complete.
 2. CLAIM the step and save the JSON to a file in one shot:
    /usr/bin/node {{CLI}} step claim "{{FULL_AGENT_ID}}"{{CALLER_FLAG}} > /tmp/claim-{{OUTPUT_FILE_ID}}.json
    If the file content is "NO_WORK" → reply "HEARTBEAT_OK", STOP.
+   Do not run `step claim` more than once. Empty stdout is expected because
+   output is redirected to the claim file; continue to extraction.
 
 3. EXTRACT the step id and working directory via jq (DO NOT parse by hand):
    STEP_ID=$(jq -r '.stepId // empty' /tmp/claim-{{OUTPUT_FILE_ID}}.json)

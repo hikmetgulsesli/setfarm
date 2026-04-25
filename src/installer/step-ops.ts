@@ -30,7 +30,7 @@ export { failStep } from "./step-fail.js";
 // ── Imports from extracted modules (used internally) ──
 import { resolveTemplate, parseOutputKeyValues, readProgressFile, readProjectMemory, updateProjectMemory, getProjectTree, getInstalledPackages, getSharedCode, getRecentStoryCode, getComponentRegistry, getApiRoutes, pruneContextForStep } from "./context-ops.js";
 import { getStories, formatStoryForTemplate, formatCompletedStories, parseAndInsertStories } from "./story-ops.js";
-import { createStoryWorktree, removeStoryWorktree } from "./worktree-ops.js";
+import { createStoryWorktree, removeStoryWorktree, findWorktreeDir } from "./worktree-ops.js";
 import { computeHasFrontendChanges, checkTestFailures, checkQualityGate, checkRequiredOutputFields, processDesignCompletion, processSetupCompletion, processSetupDesignContracts, processBrowserCheck, processDesignFidelityCheck, checkStoryDesignCompliance, checkImportConsistency } from "./step-guardrails.js";
 import { cleanupAbandonedSteps as _cleanupAbandonedSteps, scheduleRunCronTeardown } from "./cleanup-ops.js";
 import {
@@ -238,6 +238,7 @@ type StepRow = {
   type: string;
   loop_config: string | null;
   step_status: string;
+  current_story_id: string | null;
   retry_count: number;
   output: string | null;
 };
@@ -1117,7 +1118,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
   // Also prefer own-run (0), then unassigned (1), so an already-reserved
   // developer resumes their own work before picking up a new one.
   const step = await pgGet<StepRow>(
-        `SELECT s.id, s.step_id, s.run_id, s.input_template, s.type, s.loop_config, s.status as step_status, s.retry_count, s.output
+        `SELECT s.id, s.step_id, s.run_id, s.input_template, s.type, s.loop_config, s.status as step_status, s.current_story_id, s.retry_count, s.output
          FROM steps s
          JOIN runs r ON r.id = s.run_id
          WHERE s.agent_id = $1
@@ -1197,6 +1198,36 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
           }
         } catch (e) {
           logger.warn(`[implement] Could not capture base commit for ${context["branch"]}: ${String(e).slice(0, 150)}`, { runId: step.run_id });
+        }
+      }
+
+      // Idempotent loop claim: some agents may accidentally run `step claim` twice.
+      // The first call moves the story to running; the second used to return NO_WORK
+      // and overwrite the claim file, leaving the story orphaned. Re-issue the same
+      // running story to this role instead of burning the claim.
+      if (step.current_story_id) {
+        const runningStory = await pgGet<any>("SELECT * FROM stories WHERE id = $1 AND run_id = $2 AND status = 'running'", [step.current_story_id, step.run_id]);
+        if (runningStory && (!runningStory.claimed_by || runningStory.claimed_by === agentId)) {
+          const storyBranch = (runningStory.story_branch || `${step.run_id.slice(0, 8)}-${runningStory.story_id}`).toLowerCase();
+          context["story_branch"] = storyBranch;
+          if (context["repo"]) {
+            const storyWorkdir = findWorktreeDir(context["repo"], storyBranch, agentId) || findWorktreeDir(context["repo"], runningStory.story_id, agentId) || "";
+            if (storyWorkdir) context["story_workdir"] = storyWorkdir;
+          }
+          context["claim_generation"] = String(runningStory.claim_generation ?? 0);
+          await injectStoryContext(runningStory, step, context);
+          if (step.step_id === "implement") {
+            try {
+              const { buildTestGenerationPrompt } = await import("./test-generation.js");
+              const techStack = context["tech_stack"] || "react";
+              const acceptanceCriteria = runningStory.title || "";
+              context["test_generation_prompt"] = buildTestGenerationPrompt(runningStory.title, acceptanceCriteria, techStack);
+            } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
+          }
+          const prunedContextLoop = pruneContextForStep(context, step.step_id);
+          const resolvedInput = resolveTemplate(step.input_template, prunedContextLoop);
+          logger.info(`[claim-idempotent] Re-issued running story ${runningStory.story_id} to ${agentId}`, { runId: step.run_id, stepId: step.step_id });
+          return { found: true, stepId: step.id, runId: step.run_id, resolvedInput };
         }
       }
 
