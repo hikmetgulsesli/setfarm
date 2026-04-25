@@ -18,6 +18,7 @@ const POLL_INTERVAL_MS = 30_000;
 const AGENT_TIMEOUT_SECONDS = 1800;
 const PID_FILE = path.join(os.homedir(), ".openclaw", "setfarm", "spawner.pid");
 const MAX_CONCURRENT = 8;
+const SPAWN_STAGGER_MS = parseInt(process.env.SETFARM_SPAWN_STAGGER_MS || "12000", 10);
 
 // Wave 13 Bug M (run #344 postmortem): agent default cwd must NOT be the
 // setfarm-repo. Previously execFile inherited the spawner's cwd (the systemd
@@ -51,7 +52,9 @@ try { fs.mkdirSync(TRANSCRIPT_ROOT, { recursive: true }); } catch { /* best-effo
 assertAgentCwdSafe();
 
 const activeProcesses = new Map<string, ChildProcess>();
+const queuedSpawns = new Set<string>();
 let shuttingDown = false;
+let nextSpawnEarliest = 0;
 
 function resolveAgentId(wfId: string, role: string, mapping: Record<string, string | string[]>): string[] {
   // cuddly-sleeping-quail: respect agent_mapping the same way agent-cron does.
@@ -68,6 +71,28 @@ function resolveAgentId(wfId: string, role: string, mapping: Record<string, stri
 }
 
 function spawnAgent(agentId: string, wfId: string, role: string): void {
+  const key = `${wfId}:${role}:${agentId}`;
+  if (activeProcesses.has(key)) {
+    console.log(`[spawner] Already running: ${key}, skip`);
+    return;
+  }
+  if (queuedSpawns.has(key)) {
+    console.log(`[spawner] Already queued: ${key}, skip`);
+    return;
+  }
+  const nowMs = Date.now();
+  const delayMs = Math.max(0, nextSpawnEarliest - nowMs);
+  nextSpawnEarliest = nowMs + delayMs + SPAWN_STAGGER_MS;
+  queuedSpawns.add(key);
+  if (delayMs > 0) console.log(`[spawner] Queueing ${key} for ${delayMs}ms to avoid OpenClaw plugin-cache races`);
+  setTimeout(() => {
+    queuedSpawns.delete(key);
+    if (shuttingDown) return;
+    spawnAgentNow(agentId, wfId, role);
+  }, delayMs);
+}
+
+function spawnAgentNow(agentId: string, wfId: string, role: string): void {
   const key = `${wfId}:${role}:${agentId}`;
   if (activeProcesses.has(key)) {
     console.log(`[spawner] Already running: ${key}, skip`);
@@ -165,11 +190,22 @@ async function handleStoryPending(payload: { role: string; runId: string; storyI
       console.log(`[spawner] Story pending but loop step not running for ${wfId}/${role}, skip`);
       return;
     }
+    const loopConfig = loopStep.loop_config ? JSON.parse(loopStep.loop_config) : {};
+    if (loopConfig.verifyEach && loopConfig.verifyStep) {
+      const awaitingVerify = await pgGet<{ cnt: string }>(
+        "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status = 'done'",
+        [runId],
+      );
+      if (parseInt(awaitingVerify?.cnt || "0", 10) > 0) {
+        console.log(`[spawner] Story pending but ${awaitingVerify?.cnt || "0"} done story/stories await verify; skip developer for ${wfId}`);
+        return;
+      }
+    }
     const wf = await loadWorkflowSpec(resolveWorkflowDir(wfId));
     const agents = resolveAgentId(wfId, role, wf.agent_mapping ?? {});
     const cnt = await pgGet<{ cnt: string }>("SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status = 'running'", [runId]);
     const running = parseInt(cnt?.cnt || "0", 10);
-    const parallelCount = loopStep?.loop_config ? JSON.parse(loopStep.loop_config).parallelCount || 3 : 3;
+    const parallelCount = loopConfig.parallelCount || 3;
     const slots = parallelCount - running;
     if (slots <= 0) { console.log(`[spawner] No slots for ${wfId}/${role} (${running}/${parallelCount})`); return; }
     const n = Math.min(slots, agents.length);

@@ -2,6 +2,8 @@
 
 - `feature-dev` now uses `verify_each` with `merge_strategy: pr-each` so only one story is implemented, reviewed, merged into `main`, and locally synced before the next story is claimed.
 - Implement claims now block while any story is `done` and awaiting verify, preventing US-002/US-003 from branching before US-001's PR has landed.
+- Spawner now also refuses to start developer agents while a `verify_each` run has `done` stories awaiting PR verification, so pending future stories no longer burn model sessions early.
+- Spawner starts OpenClaw agent processes with a short stagger window to avoid concurrent plugin runtime cache setup races such as `discord ENOTEMPTY`.
 - pr-each story worktrees now start from `main` instead of the pinned feature branch SHA; direct-merge keeps the old pinned-base behavior.
 - Setup-build now publishes the scaffold/build baseline to `main` before implement starts, so the first story PR has the correct base.
 - Verify now refuses to mark a story verified unless its PR is actually `MERGED`, then syncs local `main` from `origin/main`.
