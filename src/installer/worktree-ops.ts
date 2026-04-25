@@ -76,6 +76,50 @@ function stashDirtyMainRepo(repo: string, storyId: string): void {
   }
 }
 
+/**
+ * Bring a local base branch up to date with origin before creating the next
+ * story worktree or after a PR merge. This keeps the project repo's local main
+ * aligned with the branch future stories will use as their parent.
+ */
+export function syncBaseBranch(repo: string, baseBranch = "main"): boolean {
+  if (!repo || !baseBranch || /^[0-9a-f]{40}$/i.test(baseBranch)) return true;
+  try { stashDirtyMainRepo(repo, `sync-${baseBranch}`); } catch {}
+
+  try {
+    execFileSync("git", ["fetch", "origin", baseBranch], {
+      cwd: repo, timeout: 15000, stdio: "pipe",
+    });
+  } catch (fetchErr) {
+    logger.warn(`[worktree] Could not fetch origin/${baseBranch}: ${String(fetchErr).slice(0, 150)}`, {});
+    return false;
+  }
+
+  let current = "";
+  try {
+    current = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+      cwd: repo, timeout: 5000, stdio: "pipe",
+    }).toString().trim();
+  } catch {}
+
+  try {
+    if (current === baseBranch) {
+      execFileSync("git", ["pull", "origin", baseBranch, "--ff-only"], {
+        cwd: repo, timeout: 15000, stdio: "pipe",
+      });
+      logger.info(`[worktree] Pulled ${baseBranch} (ff-only) in main worktree`, {});
+    } else {
+      execFileSync("git", ["branch", "-f", baseBranch, `origin/${baseBranch}`], {
+        cwd: repo, timeout: 5000, stdio: "pipe",
+      });
+      logger.info(`[worktree] Synced ${baseBranch} to origin/${baseBranch}`, {});
+    }
+    return true;
+  } catch (syncErr) {
+    logger.warn(`[worktree] Could not sync ${baseBranch} to origin/${baseBranch}: ${String(syncErr).slice(0, 150)}`, {});
+    return false;
+  }
+}
+
 // ── Stitch Asset Copy ───────────────────────────────────────────────
 
 /** Copy stitch/ design assets from main repo into worktree so developers can reference them */
@@ -251,35 +295,7 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
       // when base is checked out in the main worktree, leaving it stale. Now we fetch,
       // then in the main repo do a hard reset of the base branch to origin so the new
       // worktree's branch starts from the correct parent.
-      try {
-        execFileSync("git", ["fetch", "origin", baseBranch], { cwd: repo, timeout: 15000, stdio: "pipe" });
-        // What is the current branch in the main worktree?
-        let mainCurrent = "";
-        try {
-          mainCurrent = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: repo, timeout: 5000, stdio: "pipe" }).toString().trim();
-        } catch {}
-        if (mainCurrent === baseBranch) {
-          // Base branch IS checked out in main repo — sync forward via pull --ff-only.
-          // If local has commits ahead of origin (e.g. setup-build just committed but
-          // hasn't been pushed yet), this is a no-op and we keep the local commit.
-          try {
-            execFileSync("git", ["pull", "origin", baseBranch, "--ff-only"], { cwd: repo, timeout: 15000, stdio: "pipe" });
-            logger.info(`[worktree] Pulled ${baseBranch} (ff-only) in main worktree before creating story worktree`, {});
-          } catch (pullErr) {
-            logger.warn(`[worktree] ff-only pull of ${baseBranch} failed (local may be ahead or diverged), continuing: ${String(pullErr).slice(0, 150)}`, {});
-          }
-        } else {
-          // Base branch not checked out anywhere — safe to hard-sync via branch -f
-          try {
-            execFileSync("git", ["branch", "-f", baseBranch, "origin/" + baseBranch], { cwd: repo, timeout: 5000, stdio: "pipe" });
-            logger.info(`[worktree] Synced ${baseBranch} to origin/${baseBranch} before creating worktree`, {});
-          } catch (brErr) {
-            logger.warn(`[worktree] branch -f ${baseBranch} failed: ${String(brErr).slice(0, 150)}`, {});
-          }
-        }
-      } catch (fetchErr) {
-        logger.warn(`[worktree] Could not sync base branch: ${String(fetchErr)}`, {});
-      }
+      syncBaseBranch(repo, baseBranch);
     } else {
       logger.info(`[worktree] Pinned base SHA ${baseBranch.slice(0, 8)} — skipping branch sync, creating worktree directly from commit`, {});
     }

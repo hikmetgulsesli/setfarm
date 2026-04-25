@@ -1,3 +1,12 @@
+## 2026-04-26 - Story PR Gate Serial Main Flow
+
+- `feature-dev` now uses `verify_each` with `merge_strategy: pr-each` so only one story is implemented, reviewed, merged into `main`, and locally synced before the next story is claimed.
+- Implement claims now block while any story is `done` and awaiting verify, preventing US-002/US-003 from branching before US-001's PR has landed.
+- pr-each story worktrees now start from `main` instead of the pinned feature branch SHA; direct-merge keeps the old pinned-base behavior.
+- Setup-build now publishes the scaffold/build baseline to `main` before implement starts, so the first story PR has the correct base.
+- Verify now refuses to mark a story verified unless its PR is actually `MERGED`, then syncs local `main` from `origin/main`.
+- Auto-created story PRs now target `main` in pr-each mode, and worktree cleanup uses the real story branch name.
+
 ## 2026-04-26 - Single Step Claim Idempotency
 
 - Normal non-loop steps now reissue an already-running claim for the same agent role instead of returning `NO_WORK`. This prevents models that accidentally run `step claim` twice from overwriting `/tmp/claim-*-spawner.json` and leaving plan/design/stories/setup steps stuck in `running`.

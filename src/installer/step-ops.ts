@@ -30,7 +30,7 @@ export { failStep } from "./step-fail.js";
 // ── Imports from extracted modules (used internally) ──
 import { resolveTemplate, parseOutputKeyValues, readProgressFile, readProjectMemory, updateProjectMemory, getProjectTree, getInstalledPackages, getSharedCode, getRecentStoryCode, getComponentRegistry, getApiRoutes, pruneContextForStep } from "./context-ops.js";
 import { getStories, formatStoryForTemplate, formatCompletedStories, parseAndInsertStories } from "./story-ops.js";
-import { createStoryWorktree, removeStoryWorktree, findWorktreeDir } from "./worktree-ops.js";
+import { createStoryWorktree, removeStoryWorktree, findWorktreeDir, syncBaseBranch } from "./worktree-ops.js";
 import { computeHasFrontendChanges, checkTestFailures, checkQualityGate, checkRequiredOutputFields, processDesignCompletion, processSetupCompletion, processSetupDesignContracts, processBrowserCheck, processDesignFidelityCheck, checkStoryDesignCompliance, checkImportConsistency } from "./step-guardrails.js";
 import { cleanupAbandonedSteps as _cleanupAbandonedSteps, scheduleRunCronTeardown } from "./cleanup-ops.js";
 import {
@@ -105,6 +105,60 @@ function parseLoopConfigSafe(raw: string | null, runId?: string): LoopConfig | n
   } catch (e) {
     logger.warn(`[loop-config] Failed to parse loop_config: ${String(e).slice(0, 150)}`, runId ? { runId } : {});
     return null;
+  }
+}
+
+function publishSetupBaselineToMain(repo: string, runBranch: string, runId: string): boolean {
+  if (!repo) return false;
+  try {
+    const current = execFileSync("git", ["branch", "--show-current"], {
+      cwd: repo, encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+    if (runBranch && current !== runBranch) {
+      execFileSync("git", ["checkout", runBranch], {
+        cwd: repo, timeout: 10000, stdio: ["pipe", "pipe", "pipe"],
+      });
+    }
+
+    try {
+      const dirty = execFileSync("git", ["status", "--porcelain"], {
+        cwd: repo, encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
+      }).trim();
+      if (dirty) {
+        execFileSync("git", ["add", "-A"], { cwd: repo, timeout: 10000, stdio: ["pipe", "pipe", "pipe"] });
+        execFileSync("git", ["commit", "-m", "chore: finalize setup baseline"], {
+          cwd: repo,
+          timeout: 20000,
+          stdio: ["pipe", "pipe", "pipe"],
+          env: { ...process.env, GIT_COMMITTER_NAME: "Moltclaw AI", GIT_COMMITTER_EMAIL: "setrox@moltclaw.local" },
+        });
+      }
+    } catch { /* nothing to commit is fine */ }
+
+    if (runBranch) {
+      try {
+        execFileSync("git", ["push", "origin", runBranch], {
+          cwd: repo, timeout: 30000, stdio: ["pipe", "pipe", "pipe"],
+        });
+      } catch (pushBranchErr) {
+        logger.warn(`[setup-build] Could not push setup branch ${runBranch}: ${String(pushBranchErr).slice(0, 180)}`, { runId });
+      }
+    }
+
+    execFileSync("git", ["push", "origin", "HEAD:main"], {
+      cwd: repo, timeout: 30000, stdio: ["pipe", "pipe", "pipe"],
+    });
+    try {
+      execFileSync("git", ["branch", "-f", "main", "HEAD"], {
+        cwd: repo, timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
+      });
+    } catch {}
+    syncBaseBranch(repo, "main");
+    logger.info(`[setup-build] Published setup baseline to main; story PRs will branch from main`, { runId });
+    return true;
+  } catch (e) {
+    logger.warn(`[setup-build] Could not publish setup baseline to main: ${String(e).slice(0, 220)}`, { runId });
+    return false;
   }
 }
 
@@ -931,7 +985,13 @@ async function claimSingleStep(
   // PR REVIEW DELAY GATE: Wait for external review comments (Gemini, Copilot) before verify claim
   // BUG FIX: Previously used step.updated_at as baseline but updated it on every defer, resetting
   // the timer infinitely. Now uses context["verify_pending_since"] as stable baseline.
-  if (step.step_id === "verify" && context["final_pr"]) {
+  const reviewPrUrl = context["final_pr"] || context["pr_url"] || "";
+  if (step.step_id === "verify" && reviewPrUrl) {
+    if (context["verify_pending_pr_url"] !== reviewPrUrl) {
+      context["verify_pending_pr_url"] = reviewPrUrl;
+      context["verify_pending_since"] = new Date().toISOString();
+      await updateRunContext(step.run_id, context);
+    }
     if (!context["verify_pending_since"]) {
       context["verify_pending_since"] = new Date().toISOString();
       await updateRunContext(step.run_id, context);
@@ -946,6 +1006,7 @@ async function claimSingleStep(
     }
     // Delay passed — clean up marker so a future retry starts fresh
     delete context["verify_pending_since"];
+    delete context["verify_pending_pr_url"];
     await updateRunContext(step.run_id, context);
   }
 
@@ -1191,6 +1252,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
   if (step.type === "loop") {
     const loopConfig: LoopConfig | null = parseLoopConfigSafe(step.loop_config, step.run_id);
     if (loopConfig?.over === "stories") {
+      const isPrEach = loopConfig?.mergeStrategy === "pr-each" || !!loopConfig?.verifyEach;
       // Bug C fix (plan: reactive-frolicking-cupcake.md, run #342 postmortem):
       // Capture the base branch's commit SHA on the FIRST claim of the implement
       // loop and store it in context. All story worktrees in this loop must be
@@ -1201,9 +1263,14 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
       // were on 9c26285, and the merge queue then conflicted on package.json
       // because the bases diverged).
       //
-      // Once captured, the value is sticky for the lifetime of the implement
-      // step. createStoryWorktree consumes it via context["implement_base_commit"].
-      if (context["repo"] && context["branch"] && !context["implement_base_commit"]) {
+      // Once captured, the value is sticky for the lifetime of a direct-merge
+      // implement step. pr-each intentionally uses moving main after each PR merge.
+      if (isPrEach && context["implement_base_commit"]) {
+        delete context["implement_base_commit"];
+        await updateRunContext(step.run_id, context);
+        logger.info(`[implement] Cleared pinned base commit because pr-each uses main after each merge`, { runId: step.run_id });
+      }
+      if (!isPrEach && context["repo"] && context["branch"] && !context["implement_base_commit"]) {
         try {
           const sha = execFileSync("git", ["rev-parse", context["branch"]], {
             cwd: context["repo"], encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
@@ -1251,6 +1318,25 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
       // Auto-complete stories that already have a PR (open or merged)
       const runIdPrefix = step.run_id.slice(0, 8);
       await autoCompleteStoriesWithPRs(step, runIdPrefix, context, null);
+
+      // pr-each means strict serial delivery: a story with status=done must be
+      // reviewed, fixed, merged into main, and marked verified before the next
+      // story can be claimed. This prevents US-002/US-003 from branching from a
+      // stale baseline while US-001's PR is still open.
+      if (loopConfig?.verifyEach && loopConfig.verifyStep) {
+        const awaitingVerify = await pgGet<{ cnt: string }>(
+          "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status = 'done'",
+          [step.run_id],
+        );
+        if (parseInt(awaitingVerify?.cnt || "0", 10) > 0) {
+          await pgRun(
+            "UPDATE steps SET status = 'pending', updated_at = $1 WHERE run_id = $2 AND step_id = $3 AND status IN ('waiting','done','pending')",
+            [now(), step.run_id, loopConfig.verifyStep],
+          );
+          logger.info(`[pr-each] Waiting for done story PR verification before claiming next story`, { runId: step.run_id });
+          return { found: false };
+        }
+      }
 
       // Story selection + claim must be atomic to prevent
       // two parallel crons from selecting the same story (race condition fix #4)
@@ -1430,11 +1516,11 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
       // lock during slow git operations. Done BEFORE the DB update so the DB
       // never references a worktree that does not exist.
       //
-      // Bug C fix: pass the captured implement_base_commit (a SHA) instead of
-      // the branch name when present. createStoryWorktree treats SHA inputs as
-      // pinned references and skips the fetch+force-update dance, ensuring all
-      // sibling worktrees in this implement loop share the same parent commit.
-      const baseRef = context["implement_base_commit"] || context["branch"] || "master";
+      // direct-merge pins all sibling stories to one feature-branch commit.
+      // pr-each is different: each story starts from the latest main after the
+      // previous story PR was merged and local main was synced.
+      const baseRef = isPrEach ? "main" : (context["implement_base_commit"] || context["branch"] || "master");
+      if (isPrEach && context["repo"]) syncBaseBranch(context["repo"], "main");
       const storyWorkdir = createStoryWorktree(context["repo"], storyBranch, baseRef, agentId);
       if (!storyWorkdir) {
         // Worktree creation failed — revert story claim, do not touch step state
@@ -1453,6 +1539,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
       await recordStepTransition(step.id, step.run_id, "pending", "running", agentId, "claimLoopStep", { storyId: nextStory.story_id });
 
       context["story_workdir"] = storyWorkdir;
+      context["story_base_ref"] = baseRef;
 
       // Verify node_modules symlink is intact after worktree creation
       if (storyWorkdir) {
@@ -1516,7 +1603,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
             const depBranches: { story_branch: string; story_id: string }[] = [];
             for (const depId of deps) {
               const row = await pgGet<{ story_branch: string; story_id: string }>(
-                "SELECT story_branch, story_id FROM stories WHERE run_id = $1 AND story_id = $2 AND status = 'done' AND story_branch IS NOT NULL",
+                "SELECT story_branch, story_id FROM stories WHERE run_id = $1 AND story_id = $2 AND status IN ('done','verified') AND story_branch IS NOT NULL",
                 [step.run_id, depId]
               );
               if (row) depBranches.push(row);
@@ -2205,6 +2292,18 @@ ${screenDescs}
     }
   }
 
+  // pr-each story branches target main, so setup-build must publish the clean
+  // scaffold/build baseline to main before implement starts. Without this,
+  // US-001 branches from an empty/stale main and every later PR collides.
+  if (step.step_id === "setup-build" && parsed["status"]?.toLowerCase() === "done") {
+    const baselinePublished = publishSetupBaselineToMain(context["repo"] || "", context["branch"] || "", step.run_id);
+    if (!baselinePublished) {
+      const reason = "SETUP_BASELINE_MAIN_SYNC_FAILED: setup-build could not publish the baseline to main. pr-each implement cannot start safely until main contains the scaffold/build baseline.";
+      await failStep(stepId, reason);
+      return { advanced: false, runCompleted: false };
+    }
+  }
+
   // DEPLOY HEALTH CHECK GUARDRAIL (v1.5.53): Verify service is actually running after deploy
   if (step.step_id === "deploy" && parsed["status"]?.toLowerCase() === "done") {
     const port = context["port"] || parsed["port"] || "";
@@ -2700,7 +2799,8 @@ ${screenDescs}
       try {
         const { resolveStoryWorktree, checkScopeFilesGate, checkScopeEnforcement } = await import("./steps/06-implement/guards.js");
         const wd = await resolveStoryWorktree(step.current_story_id, context["story_workdir"] || "");
-        const baseBr = context["branch"] || "";
+        const scopeLoopConfig = parseLoopConfigSafe(step.loop_config, step.run_id);
+        const baseBr = context["story_base_ref"] || ((scopeLoopConfig?.mergeStrategy === "pr-each" || scopeLoopConfig?.verifyEach) ? "main" : (context["branch"] || ""));
 
         // 2026-04-22: Setup story (story_index === 0) bypass KALDIRILDI.
         // Eski davranis: setup story scope check'e tabi degildi -> agent tam app yaziyordu
@@ -2884,7 +2984,8 @@ ${screenDescs}
       storyBranchName.toLowerCase() !== (context["branch"] || "").toLowerCase()
     ) {
       const autoRepo = context["repo"];
-      const autoBase = context["branch"] || "main";
+      const autoLoopConfig = parseLoopConfigSafe(step.loop_config, step.run_id);
+      const autoBase = (autoLoopConfig?.mergeStrategy === "pr-each" || autoLoopConfig?.verifyEach) ? "main" : (context["branch"] || "main");
       try {
         // Ensure branch is pushed (idempotent)
         try {
@@ -2958,7 +3059,7 @@ ${screenDescs}
     }
     // Clean up: remove worktree (auto-saves uncommitted changes before removal)
     if (storyRow?.story_id && context["repo"]) {
-      removeStoryWorktree(context["repo"], storyRow.story_id, step.agent_id);
+      removeStoryWorktree(context["repo"], storyBranchName || storyRow.story_id, step.agent_id);
     }
 
     // FIX: Clear story-specific context to prevent cross-contamination between parallel stories
@@ -2967,6 +3068,7 @@ ${screenDescs}
     delete context["current_story_id"];
     delete context["current_story_title"];
     delete context["current_story"];
+    delete context["story_base_ref"];
     delete context["verify_feedback"];
     // Wave 1 fix #3 (plan: reactive-frolicking-cupcake): previous_failure is set by
     // failStep and guardrails when a story attempt fails, so the next retry sees its
@@ -3255,8 +3357,32 @@ async function handleVerifyEachCompletion(
 
   // Verify PASSED — mark the verified story as 'verified' (not just 'done')
   if (verifiedStoryId) {
-    const verifiedRow = await pgGet<{ id: string }>("SELECT id FROM stories WHERE run_id = $1 AND story_id = $2 AND status = 'done' LIMIT 1", [verifyStep.run_id, verifiedStoryId]);
+    const verifiedRow = await pgGet<{ id: string; pr_url: string | null; story_branch: string | null }>(
+      "SELECT id, pr_url, story_branch FROM stories WHERE run_id = $1 AND story_id = $2 AND status = 'done' LIMIT 1",
+      [verifyStep.run_id, verifiedStoryId],
+    );
     if (verifiedRow) {
+      if (!verifiedRow.pr_url) {
+        context["previous_failure"] = `PR_MISSING: ${verifiedStoryId} cannot be verified until a PR exists and is merged into main.`;
+        context["current_story_id"] = verifiedStoryId;
+        if (verifiedRow.story_branch) context["story_branch"] = verifiedRow.story_branch;
+        await updateRunContext(verifyStep.run_id, context);
+        await setStepStatus(verifyStep.id, "pending");
+        logger.warn(`[verify] ${verifiedStoryId} reported done but has no PR URL — keeping verify pending`, { runId: verifyStep.run_id });
+        return { advanced: false, runCompleted: false };
+      }
+      const prState = getPRState(verifiedRow.pr_url);
+      if (prState !== "MERGED") {
+        context["previous_failure"] = `PR_NOT_MERGED: ${verifiedStoryId} PR is ${prState}. Address review comments/checks, merge ${verifiedRow.pr_url} into main, then report STATUS: done.`;
+        context["pr_url"] = verifiedRow.pr_url;
+        context["current_story_id"] = verifiedStoryId;
+        if (verifiedRow.story_branch) context["story_branch"] = verifiedRow.story_branch;
+        await updateRunContext(verifyStep.run_id, context);
+        await setStepStatus(verifyStep.id, "pending");
+        logger.warn(`[verify] ${verifiedStoryId} PR is ${prState}, not MERGED — keeping verify pending`, { runId: verifyStep.run_id });
+        return { advanced: false, runCompleted: false };
+      }
+      if (context["repo"]) syncBaseBranch(context["repo"], "main");
       await verifyStory(verifiedRow.id);
       logger.info(`Story verified: ${verifiedStoryId}`, { runId: verifyStep.run_id });
     }
@@ -3346,6 +3472,7 @@ async function autoVerifyDoneStories(
       if (prUrl) {
         const fvState = getPRState(prUrl);
         if (fvState === "MERGED") {
+          if (context["repo"]) syncBaseBranch(context["repo"], "main");
           await verifyStory(story.id);
           logger.info(`[${logPrefix}] Story ${story.story_id} force-verified — PR already merged, verify abandoned ${verifyStepAbandons}x`, { runId });
           emitEvent({ ts: now(), event: "story.verified", runId, workflowId: await getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title, detail: `Force-verified — PR merged, verify abandoned ${verifyStepAbandons}x` });
@@ -3365,6 +3492,7 @@ async function autoVerifyDoneStories(
       if (prState === "MERGED") {
         // Advisory quality check — auto-verify regardless (downstream steps catch issues)
         const repoPath = context["repo"] || context["REPO"] || "";
+        if (repoPath) syncBaseBranch(repoPath, "main");
         if (repoPath) {
           try {
             const issues = runQualityChecks(repoPath);
@@ -3393,6 +3521,7 @@ async function autoVerifyDoneStories(
           logger.info(`[${logPrefix}] Found alternative PR for ${story.story_id}: ${resolution.alternativePrUrl}`, { runId });
           continue; // Re-check with updated PR
         } else if (resolution.contentInBaseBranch) {
+          if (repoPath) syncBaseBranch(repoPath, "main");
           await verifyStory(story.id);
           logger.info(`[${logPrefix}] Story ${story.story_id} auto-verified — CLOSED PR content in base branch`, { runId });
           emitEvent({ ts: now(), event: "story.verified", runId, workflowId: await getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title, detail: "Auto-verified — CLOSED PR content in base branch" });

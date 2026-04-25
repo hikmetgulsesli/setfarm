@@ -17,10 +17,18 @@ function buildPrompt(ctx: PromptContext): string {
     REPO: c["repo"] || "",
     BRANCH: c["branch"] || "main",
     CURRENT_STORY: c["current_story"] || "",
+    CURRENT_STORY_ID: c["current_story_id"] || "",
     PR_URL: c["pr_url"] || c["final_pr"] || "",
+    BUILD_CMD: c["build_cmd"] || "npm run build",
+    TEST_CMD: c["test_cmd"] || "true",
+    LINT_CMD: c["lint_cmd"] || "true",
     PREFLIGHT_ANALYSIS: c["preflight_analysis"] || "(no pre-flight run)",
     STORIES_JSON: c["stories_json"] || "[]",
     PROGRESS: c["progress"] || "",
+    PR_COMMENTS: c["pr_comments"] || "",
+    PR_CHECK_STATE: c["pr_check_state"] || "",
+    PR_MERGEABLE: c["pr_mergeable"] || "",
+    PLAYWRIGHT_REPORT: c["playwright_report"] || "",
   });
   return `${resolved}\n\n---\n\n# Kurallar\n\n${rulesBody}`;
 }

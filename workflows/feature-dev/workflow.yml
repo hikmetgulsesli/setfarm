@@ -761,12 +761,16 @@ steps:
       over: stories
       completion: all_done
       fresh_session: true
-      merge_strategy: direct-merge
+      verify_each: true
+      verify_step: verify
+      merge_strategy: pr-each
       parallel_count: 1
     input: |
       !include critical-preamble.md
 
-      Implement ONE user story. Commit and push your changes to the story branch.
+      Implement ONE user story. Commit and push your changes to the prepared story branch.
+      The pipeline will create a PR to main, wait for review, merge it, sync local main,
+      and only then claim the next story.
 
       DİL KURALI (ZORUNLU): Tüm UI içeriği (buton etiketleri, başlıklar, placeholder'lar, hata mesajları, menü öğeleri) TÜRKÇE olacak. Sadece teknik terimler (API, CSS, component adları) orijinal kalabilir. Kullanıcı farklı dil belirtmedikçe HER ŞEY TÜRKÇE.
       Stitch HTML'deki İngilizce metinler dahil — implementasyona geçerken Türkçeye çevir.
@@ -1001,7 +1005,9 @@ steps:
       9. Push the prepared branch:
          git push -u origin "$STORY_BRANCH"
 
-      10. DO NOT create a PR. The merge queue will handle merging automatically.
+      10. DO NOT create a PR. The pipeline opens one PR per story to main after this output.
+          The next story will not start until that PR is reviewed, fixed, merged, and
+          local main is synced.
 
       11. Write detailed progress to progress-{{run_id}}.txt:
           === {{current_story_id}}: {{current_story_title}} ===
@@ -1018,8 +1024,8 @@ steps:
       CHANGES: <what you implemented>
       TESTS: <what tests you wrote>
 
-      STORY_BRANCH must be the exact branch name you created and pushed.
-      DO NOT create a PR — the pipeline handles merging automatically.
+      STORY_BRANCH must be the exact prepared branch name you used and pushed.
+      DO NOT create a PR — the pipeline handles the story PR gate automatically.
       ============================================================
     expects: "STATUS: done"
     max_retries: 5
