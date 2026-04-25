@@ -166,12 +166,29 @@ function spawnAgentNow(agentId: string, wfId: string, role: string): void {
 
 async function handleStepPending(payload: { agentId: string; runId: string; stepId: string }) {
   if (shuttingDown) return;
-  const { agentId, runId } = payload;
+  const { agentId, runId, stepId } = payload;
   const run = await pgGet<{ workflow_id: string }>("SELECT workflow_id FROM runs WHERE id = $1", [runId]);
   if (!run) return;
   const wfId = run.workflow_id;
   const role = agentId.replace(`${wfId}_`, "");
   try {
+    const pendingStep = await pgGet<{ type: string; loop_config: string | null }>(
+      "SELECT type, loop_config FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1",
+      [runId, stepId],
+    );
+    if (pendingStep?.type === "loop" && pendingStep.loop_config) {
+      const loopConfig = JSON.parse(pendingStep.loop_config);
+      if (loopConfig.verifyEach && loopConfig.verifyStep) {
+        const awaitingVerify = await pgGet<{ cnt: string }>(
+          "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status = 'done'",
+          [runId],
+        );
+        if (parseInt(awaitingVerify?.cnt || "0", 10) > 0) {
+          console.log(`[spawner] Loop pending but ${awaitingVerify?.cnt || "0"} done story/stories await verify; skip ${wfId}/${role}`);
+          return;
+        }
+      }
+    }
     const wf = await loadWorkflowSpec(resolveWorkflowDir(wfId));
     const agents = resolveAgentId(wfId, role, wf.agent_mapping ?? {});
     if (agents[0]) spawnAgent(agents[0], wfId, role);
@@ -217,7 +234,21 @@ async function pollForPendingWork() {
   if (shuttingDown) return;
   try {
     const steps = await pgQuery<{ agent_id: string; run_id: string; step_id: string }>(
-      "SELECT s.agent_id, s.run_id, s.step_id FROM steps s JOIN runs r ON r.id = s.run_id WHERE s.status = 'pending' AND r.status = 'running' ORDER BY s.step_index ASC LIMIT 5"
+      `SELECT s.agent_id, s.run_id, s.step_id
+       FROM steps s
+       JOIN runs r ON r.id = s.run_id
+       WHERE s.status = 'pending'
+         AND r.status = 'running'
+         AND NOT (
+           s.type = 'loop'
+           AND COALESCE(s.loop_config::jsonb, '{}'::jsonb) @> '{"verifyEach":true}'::jsonb
+           AND EXISTS (
+             SELECT 1 FROM stories done_st
+             WHERE done_st.run_id = s.run_id AND done_st.status = 'done'
+           )
+         )
+       ORDER BY s.step_index ASC
+       LIMIT 5`
     );
     for (const s of steps) await handleStepPending({ agentId: s.agent_id, runId: s.run_id, stepId: s.step_id });
     const stories = await pgQuery<{ run_id: string; story_id: string }>(

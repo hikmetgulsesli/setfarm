@@ -10,6 +10,8 @@
 - Verify now refuses to mark a story verified unless its PR is actually `MERGED`, then syncs local `main` from `origin/main`.
 - Auto-created story PRs now target `main` in pr-each mode, and worktree cleanup uses the real story branch name.
 - Developer peek/poll now also respects the pr-each verify gate, so pending future stories do not spawn or burn sessions while an earlier `done` story still needs PR review/merge.
+- Verify review-delay now skips the wait when GitHub already has review comments or failing checks on the PR, avoiding empty reviewer sessions for older PRs.
+- Pending loop-step spawns now obey the same verify gate, closing the `step_pending` path that could start a developer before the previous PR was marked verified.
 
 ## 2026-04-26 - Single Step Claim Idempotency
 

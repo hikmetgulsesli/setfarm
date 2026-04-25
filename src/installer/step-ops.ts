@@ -253,7 +253,14 @@ export async function peekStep(agentId: string, callerGatewayAgent?: string): Pr
        JOIN runs r ON r.id = s.run_id
        WHERE s.agent_id = $1 AND r.status = 'running'
          AND (
-           s.status = 'pending'
+          (
+            s.status = 'pending'
+            AND NOT (
+              s.type = 'loop'
+              AND COALESCE(s.loop_config::jsonb, '{}'::jsonb) @> '{"verifyEach":true}'::jsonb
+              AND EXISTS (SELECT 1 FROM stories done_st WHERE done_st.run_id = s.run_id AND done_st.status = 'done')
+            )
+          )
           OR (s.status = 'running' AND s.type = 'loop' AND (
             (
               EXISTS (
@@ -1002,6 +1009,20 @@ async function claimSingleStep(
   // the timer infinitely. Now uses context["verify_pending_since"] as stable baseline.
   const reviewPrUrl = context["final_pr"] || context["pr_url"] || "";
   if (step.step_id === "verify" && reviewPrUrl) {
+    let hasReviewSignal = false;
+    try {
+      const { fetchPrState, formatPrCommentsForAgent } = await import("./steps/07-verify/pr-comments.js");
+      const state = await fetchPrState(reviewPrUrl, context["repo_full"] || "");
+      if (state) {
+        const formatted = formatPrCommentsForAgent(state);
+        if (formatted) context["pr_comments"] = formatted;
+        context["pr_check_state"] = state.checksStatus || "";
+        context["pr_mergeable"] = state.mergeable || "";
+        hasReviewSignal = state.comments.length > 0 || state.checksStatus === "failing";
+      }
+    } catch (e) {
+      logger.warn(`[review-delay] PR signal check failed: ${String(e).slice(0, 160)}`, { runId: step.run_id, stepId: step.step_id });
+    }
     if (context["verify_pending_pr_url"] !== reviewPrUrl) {
       context["verify_pending_pr_url"] = reviewPrUrl;
       context["verify_pending_since"] = new Date().toISOString();
@@ -1012,12 +1033,15 @@ async function claimSingleStep(
       await updateRunContext(step.run_id, context);
     }
     const elapsed = Date.now() - new Date(context["verify_pending_since"]).getTime();
-    if (elapsed < PR_REVIEW_DELAY_MS) {
+    if (!hasReviewSignal && elapsed < PR_REVIEW_DELAY_MS) {
       const remaining = Math.round((PR_REVIEW_DELAY_MS - elapsed) / 1000);
       logger.info(`[review-delay] PR review delay: ${remaining}s remaining — deferring verify claim`, { runId: step.run_id, stepId: step.step_id });
       // Revert status to pending so next cron can retry — DO NOT touch updated_at
       await pgRun("UPDATE steps SET status = 'pending' WHERE id = $1", [step.id]);
       return { found: false };
+    }
+    if (hasReviewSignal) {
+      logger.info(`[review-delay] PR already has review/check signal — skipping wait`, { runId: step.run_id, stepId: step.step_id });
     }
     // Delay passed — clean up marker so a future retry starts fresh
     delete context["verify_pending_since"];
