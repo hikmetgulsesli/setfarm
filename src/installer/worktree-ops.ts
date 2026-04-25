@@ -120,6 +120,14 @@ SCOPE_FILE=".story-scope-files"
 if [ ! -f "$SCOPE_FILE" ]; then exit 0; fi
 BLOCKED=""
 for file in $(git diff --cached --name-only); do
+  case "$file" in
+    *.test.ts|*.test.tsx|*.spec.ts|*.spec.tsx|src/test/*|src/setupTests.ts|vitest.config.ts|vitest.config.js|jest.config.ts|jest.config.js)
+      continue
+      ;;
+    .story-scope-files|pre-commit|references|node_modules)
+      continue
+      ;;
+  esac
   if ! grep -qxF "$file" "$SCOPE_FILE"; then
     BLOCKED="$BLOCKED  BLOCKED: $file\n"
   fi
@@ -141,6 +149,21 @@ fi
     execFileSync("git", ["config", "core.hooksPath", worktreeDir], {
       cwd: worktreeDir, timeout: 5000, stdio: "pipe"
     });
+    try {
+      const excludePath = execFileSync("git", ["rev-parse", "--git-path", "info/exclude"], {
+        cwd: worktreeDir, encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
+      }).trim();
+      const ignoreLines = [".story-scope-files", "pre-commit", "references", "node_modules"];
+      let existing = "";
+      try { existing = fs.existsSync(excludePath) ? fs.readFileSync(excludePath, "utf-8") : ""; } catch {}
+      const missing = ignoreLines.filter(line => !existing.split(/\r?\n/).includes(line));
+      if (missing.length > 0) {
+        fs.mkdirSync(path.dirname(excludePath), { recursive: true });
+        fs.appendFileSync(excludePath, (existing.endsWith("\n") || existing.length === 0 ? "" : "\n") + missing.join("\n") + "\n");
+      }
+    } catch (excludeErr) {
+      logger.warn(`[scope-hook] Failed to update git exclude: ${String(excludeErr).slice(0, 100)}`, {});
+    }
     logger.info(`[scope-hook] Installed pre-commit hook in ${worktreeDir}`, {});
   } catch (hookErr) {
     logger.warn(`[scope-hook] Failed to install: ${String(hookErr).slice(0, 100)}`, {});
