@@ -9,6 +9,7 @@
 - Setup baseline publishing now removes any tracked `node_modules` entry from Git before pushing `main`, preventing dependency symlinks/directories from leaking into story PRs.
 - Verify now refuses to mark a story verified unless its PR is actually `MERGED`, then syncs local `main` from `origin/main`.
 - Auto-created story PRs now target `main` in pr-each mode, and worktree cleanup uses the real story branch name.
+- Developer peek/poll now also respects the pr-each verify gate, so pending future stories do not spawn or burn sessions while an earlier `done` story still needs PR review/merge.
 
 ## 2026-04-26 - Single Step Claim Idempotency
 

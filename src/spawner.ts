@@ -221,7 +221,30 @@ async function pollForPendingWork() {
     );
     for (const s of steps) await handleStepPending({ agentId: s.agent_id, runId: s.run_id, stepId: s.step_id });
     const stories = await pgQuery<{ run_id: string; story_id: string }>(
-      "SELECT s.run_id, s.story_id FROM stories s JOIN runs r ON r.id = s.run_id WHERE s.status = 'pending' AND r.status = 'running' AND EXISTS (SELECT 1 FROM steps loop_step WHERE loop_step.run_id = s.run_id AND loop_step.type = 'loop' AND loop_step.status = 'running') ORDER BY s.story_index ASC LIMIT 10"
+      `SELECT s.run_id, s.story_id
+       FROM stories s
+       JOIN runs r ON r.id = s.run_id
+       WHERE s.status = 'pending'
+         AND r.status = 'running'
+         AND EXISTS (
+           SELECT 1 FROM steps loop_step
+           WHERE loop_step.run_id = s.run_id
+             AND loop_step.type = 'loop'
+             AND loop_step.status = 'running'
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM steps loop_step
+           WHERE loop_step.run_id = s.run_id
+             AND loop_step.type = 'loop'
+             AND loop_step.status = 'running'
+             AND COALESCE(loop_step.loop_config::jsonb, '{}'::jsonb) @> '{"verifyEach":true}'::jsonb
+             AND EXISTS (
+               SELECT 1 FROM stories done_st
+               WHERE done_st.run_id = s.run_id AND done_st.status = 'done'
+             )
+         )
+       ORDER BY s.story_index ASC
+       LIMIT 10`
     );
     for (const st of stories) await handleStoryPending({ role: "developer", runId: st.run_id, storyId: st.story_id });
   } catch (err) { console.error(`[spawner] poll: ${String(err)}`); }

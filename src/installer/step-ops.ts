@@ -254,27 +254,36 @@ export async function peekStep(agentId: string, callerGatewayAgent?: string): Pr
        WHERE s.agent_id = $1 AND r.status = 'running'
          AND (
            s.status = 'pending'
-           OR (s.status = 'running' AND s.type = 'loop' AND (
-             EXISTS (
-               SELECT 1 FROM stories st
-               WHERE st.run_id = s.run_id AND st.status = 'pending'
-                 AND NOT EXISTS (
-                   SELECT 1 FROM jsonb_array_elements_text(
-                     CASE
-                       WHEN st.depends_on IS NULL OR st.depends_on = 'null' OR st.depends_on = ''
-                       THEN '[]'::jsonb
-                       ELSE st.depends_on::jsonb
-                     END
-                   ) AS dep
-                   WHERE NOT EXISTS (
-                     SELECT 1 FROM stories d
-                     WHERE d.run_id = s.run_id AND d.story_id = dep
-                       AND d.status IN ('done', 'failed', 'verified', 'skipped')
-                   )
-                 )
-             )
-             OR EXISTS (SELECT 1 FROM stories st WHERE st.run_id = s.run_id AND st.status = 'done')
-           ))
+          OR (s.status = 'running' AND s.type = 'loop' AND (
+            (
+              EXISTS (
+                SELECT 1 FROM stories st
+                WHERE st.run_id = s.run_id AND st.status = 'pending'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM jsonb_array_elements_text(
+                      CASE
+                        WHEN st.depends_on IS NULL OR st.depends_on = 'null' OR st.depends_on = ''
+                        THEN '[]'::jsonb
+                        ELSE st.depends_on::jsonb
+                      END
+                    ) AS dep
+                    WHERE NOT EXISTS (
+                      SELECT 1 FROM stories d
+                      WHERE d.run_id = s.run_id AND d.story_id = dep
+                        AND d.status IN ('done', 'failed', 'verified', 'skipped')
+                    )
+                  )
+              )
+              AND NOT (
+                COALESCE(s.loop_config::jsonb, '{}'::jsonb) @> '{"verifyEach":true}'::jsonb
+                AND EXISTS (SELECT 1 FROM stories done_st WHERE done_st.run_id = s.run_id AND done_st.status = 'done')
+              )
+            )
+            OR (
+              NOT (COALESCE(s.loop_config::jsonb, '{}'::jsonb) @> '{"verifyEach":true}'::jsonb)
+              AND EXISTS (SELECT 1 FROM stories st WHERE st.run_id = s.run_id AND st.status = 'done')
+            )
+          ))
          )`, [agentId]
     );
     return (row?.cnt ?? 0) > 0 ? "HAS_WORK" : "NO_WORK";
