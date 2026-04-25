@@ -77,7 +77,7 @@ function spawnAgent(agentId: string, wfId: string, role: string): void {
     console.log(`[spawner] At capacity (${activeProcesses.size}/${MAX_CONCURRENT}), skip ${agentId}`);
     return;
   }
-  const prompt = buildPollingPrompt(wfId, role, agentId);
+  const prompt = buildPollingPrompt(wfId, role, agentId, `${agentId}-spawner`);
   console.log("[spawner] Spawning " + agentId + " for " + wfId + "/" + role + " (active: " + activeProcesses.size + ")");
 
   // cuddly-sleeping-quail: clear stale /tmp output file before spawning. Prevents

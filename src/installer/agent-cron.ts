@@ -41,6 +41,10 @@ function extractRoleFromCronName(name: string, prefix: string): string {
 }
 const DEFAULT_POLLING_MODEL = "minimax/MiniMax-M2.7";
 
+export function gatewayAgentCronsEnabled(): boolean {
+  return /^(1|true|yes)$/i.test(process.env.SETFARM_ENABLE_GATEWAY_AGENT_CRONS ?? "");
+}
+
 /**
  * Build inline execution prompt — no sessions_spawn.
  *
@@ -50,10 +54,11 @@ const DEFAULT_POLLING_MODEL = "minimax/MiniMax-M2.7";
  * Before (v1.1): peek → claim → sessions_spawn(work) → [spawn dies] → orphan
  * After  (v1.2): peek → claim → do work inline → step complete → done
  */
-export function buildPollingPrompt(workflowId: string, agentId: string, gatewayAgentId?: string): string {
+export function buildPollingPrompt(workflowId: string, agentId: string, gatewayAgentId?: string, outputFileIdOverride?: string): string {
   const fullAgentId = `${workflowId}_${agentId}`;
-  // Use gateway agent ID for output file to prevent cross-agent contamination
-  const outputFileId = gatewayAgentId || fullAgentId;
+  // Use a caller-scoped output file id; spawner may override it to avoid
+  // collisions with gateway cron fallback sessions for the same agent.
+  const outputFileId = outputFileIdOverride || gatewayAgentId || fullAgentId;
   const cli = resolveSetfarmCli();
   const callerFlag = gatewayAgentId ? ` --caller ${gatewayAgentId}` : "";
   // Template-based prompt — source in src/installer/prompts/polling-prompt.md
@@ -65,6 +70,10 @@ export function buildPollingPrompt(workflowId: string, agentId: string, gatewayA
 }
 
 export async function setupAgentCrons(workflow: WorkflowSpec, onlyAgentIds?: Set<string>): Promise<void> {
+  if (!gatewayAgentCronsEnabled()) {
+    logger.info(`[setupAgentCrons] Gateway agent crons disabled; event-driven spawner owns ${workflow.id}`, {});
+    return;
+  }
   // Always remove existing crons first to prevent duplicates
   // Gateway API creates new crons even if same name exists
   // DISABLED: await removeAgentCrons(workflow.id); // Removal destabilizes gateway scheduler
@@ -206,6 +215,11 @@ async function getExistingCronAgentIds(workflowId: string): Promise<Set<string>>
  * No-ops if crons already exist (another run of the same workflow is active).
  */
 export async function ensureWorkflowCrons(workflow: WorkflowSpec): Promise<void> {
+  if (!gatewayAgentCronsEnabled()) {
+    await removeAgentCrons(workflow.id);
+    logger.info(`[ensureWorkflowCrons] Gateway agent crons disabled; event-driven spawner owns ${workflow.id}`, {});
+    return;
+  }
   const existingAgentIds = await getExistingCronAgentIds(workflow.id);
   const expectedAgentIds = workflow.agents.map((a) => a.id);
   const missingAgentIds = expectedAgentIds.filter((id) => !existingAgentIds.has(id));
@@ -274,6 +288,7 @@ const PARALLEL_AGENTS_SET = new Set(["developer", "reviewer", "verifier"]);
  * Used by medic to detect partial cron loss.
  */
 export function expectedCronCount(workflow: WorkflowSpec): number {
+  if (!gatewayAgentCronsEnabled()) return 0;
   const agentMapping: AgentMapping = workflow.agent_mapping ?? {};
   let count = 0;
   for (const agent of workflow.agents) {
@@ -303,6 +318,11 @@ export async function actualCronCount(workflowId: string): Promise<number> {
  * Does NOT touch existing crons — prevents anchor-reset loop.
  */
 export async function repairAgentCrons(workflow: WorkflowSpec): Promise<{ added: number; removed: number }> {
+  if (!gatewayAgentCronsEnabled()) {
+    await removeAgentCrons(workflow.id);
+    logger.info(`[repairAgentCrons] Gateway agent crons disabled; removed stale crons for ${workflow.id}`, {});
+    return { added: 0, removed: 0 };
+  }
   const result = await listCronJobs();
   if (!result.ok || !result.jobs) throw new Error("Cannot list crons for repair");
 
@@ -406,6 +426,10 @@ export async function repairAgentCrons(workflow: WorkflowSpec): Promise<{ added:
  * only 1-6 crons exist at any time — matching the active pipeline phase.
  */
 export async function syncActiveCrons(runId: string, workflowId: string): Promise<void> {
+  if (!gatewayAgentCronsEnabled()) {
+    await removeAgentCrons(workflowId);
+    return;
+  }
   try {
     // Pending step instances across all running runs. Each row = one unit of
     // demand. Capping cron pool at demand stops idle pool members from
@@ -533,6 +557,10 @@ export async function syncActiveCrons(runId: string, workflowId: string): Promis
  * Nuclear recovery: remove + create all crons for active workflows.
  */
 export async function recoverActiveWorkflowCrons(): Promise<void> {
+  if (!gatewayAgentCronsEnabled()) {
+    logger.info("[startup-recovery] Gateway agent crons disabled; event-driven spawner owns active runs", {});
+    return;
+  }
   try {
     const activeRuns = await pgQuery<{ id: string; workflow_id: string }>(
       "SELECT id, workflow_id FROM runs WHERE status = 'running' ORDER BY created_at DESC", []

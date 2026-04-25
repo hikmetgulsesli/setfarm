@@ -1,5 +1,7 @@
 ## 2026-04-25 - OpenClaw Stability + Medic Timer
 
+- Gateway agent crons are now opt-in via `SETFARM_ENABLE_GATEWAY_AGENT_CRONS=1`; the systemd spawner owns workflow execution by default. This prevents spawner+cron duplicate agent sessions from sharing `/tmp/claim-*` files and leaving steps stuck in `running`.
+- Spawner claim/output file ids now use a `-spawner` suffix so optional cron fallback sessions cannot overwrite an active spawner claim file.
 - `feature-dev` agent mapping now targets role-specific `feature-dev_*` agents instead of generic pool agents, so each step gets its correct workspace and avoids onboarding/context bleed.
 - Setfarm Medic no longer runs as an OpenClaw agent cron. `setfarm medic install` migrates the legacy `setfarm/medic` cron away and installs a user `systemd` timer that runs `node dist/cli/cli.js medic run` every 5 minutes, with DB env loaded from a private env file.
 - Systemd Medic disables OpenClaw CLI fallback and reads cron state from `~/.openclaw/cron/jobs.json` when gateway HTTP is unavailable, preventing stuck `openclaw cron list` helper processes during gateway startup/restart.
