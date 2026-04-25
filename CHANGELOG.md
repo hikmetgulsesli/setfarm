@@ -12,6 +12,7 @@
 - Developer peek/poll now also respects the pr-each verify gate, so pending future stories do not spawn or burn sessions while an earlier `done` story still needs PR review/merge.
 - Verify review-delay now skips the wait when GitHub already has review comments or failing checks on the PR, avoiding empty reviewer sessions for older PRs.
 - Pending loop-step spawns now obey the same verify gate, closing the `step_pending` path that could start a developer before the previous PR was marked verified.
+- Verify claims can now pass a pending pr-each implement loop when `done` stories await PR verification, so the reviewer is not starved by the loop it is supposed to unblock.
 
 ## 2026-04-26 - Single Step Claim Idempotency
 

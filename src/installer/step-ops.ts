@@ -1248,11 +1248,18 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
            )
            AND NOT EXISTS (
              SELECT 1 FROM steps prev
-             WHERE prev.run_id = s.run_id
-               AND prev.step_index < s.step_index
-               AND prev.status NOT IN ('done', 'failed', 'skipped', 'verified')
-               AND NOT (prev.type = 'loop' AND prev.status = 'running')
-           )
+	             WHERE prev.run_id = s.run_id
+	               AND prev.step_index < s.step_index
+	               AND prev.status NOT IN ('done', 'failed', 'skipped', 'verified')
+	               AND NOT (prev.type = 'loop' AND prev.status = 'running')
+	               AND NOT (
+	                 prev.type = 'loop'
+	                 AND prev.status = 'pending'
+	                 AND COALESCE(prev.loop_config::jsonb, '{}'::jsonb) @> '{"verifyEach":true}'::jsonb
+	                 AND COALESCE(prev.loop_config::jsonb ->> 'verifyStep', '') = s.step_id
+	                 AND EXISTS (SELECT 1 FROM stories done_st WHERE done_st.run_id = s.run_id AND done_st.status = 'done')
+	               )
+	           )
          ORDER BY
            CASE
              WHEN s.status = 'running' THEN 0
