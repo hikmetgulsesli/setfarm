@@ -846,22 +846,29 @@ async function claimSingleStep(
   context: Record<string, string>,
   db: any,
 ): Promise<ClaimResult> {
-  // Item 6: Single step — atomic claim with changes check to prevent race condition
-  let _claimChanges: number;
-  const _cr = await pgRun("UPDATE steps SET status = 'running', started_at = NOW(), updated_at = $1 WHERE id = $2 AND status = 'pending'", [now(), step.id]);
-  _claimChanges = _cr.changes;
-  if (_claimChanges === 0) {
-    // Already claimed by another cron — return no work
-    return { found: false };
-  }
-  await recordStepTransition(step.id, step.run_id, "pending", "running", agentId, "claimSingleStep");
-  emitEvent({ ts: now(), event: "step.running", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId });
-  logger.info(`Step claimed by ${agentId}`, { runId: step.run_id, stepId: step.step_id });
+  // Single-step idempotency: some models run `step claim` twice and overwrite
+  // their claim file. If this role already owns a running non-loop step, reissue
+  // the same claim instead of returning NO_WORK and orphaning the step.
+  if (step.step_status === "running") {
+    logger.info(`[claim-idempotent] Re-issued running step ${step.step_id} to ${agentId}`, { runId: step.run_id, stepId: step.step_id });
+  } else {
+    // Item 6: Single step — atomic claim with changes check to prevent race condition
+    let _claimChanges: number;
+    const _cr = await pgRun("UPDATE steps SET status = 'running', started_at = NOW(), updated_at = $1 WHERE id = $2 AND status = 'pending'", [now(), step.id]);
+    _claimChanges = _cr.changes;
+    if (_claimChanges === 0) {
+      // Already claimed by another cron — return no work
+      return { found: false };
+    }
+    await recordStepTransition(step.id, step.run_id, "pending", "running", agentId, "claimSingleStep");
+    emitEvent({ ts: now(), event: "step.running", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId });
+    logger.info(`Step claimed by ${agentId}`, { runId: step.run_id, stepId: step.step_id });
 
-  // v1.5.50: Record single step claim in claim_log
-  try {
-    await pgRun("INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at) VALUES ($1, $2, NULL, $3, $4)", [step.run_id, step.step_id, agentId, now()]);
-  } catch (e) { logger.warn(`[claim-log] Failed to record claim: ${String(e)}`, { runId: step.run_id }); }
+    // v1.5.50: Record single step claim in claim_log
+    try {
+      await pgRun("INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at) VALUES ($1, $2, NULL, $3, $4)", [step.run_id, step.step_id, agentId, now()]);
+    } catch (e) { logger.warn(`[claim-log] Failed to record claim: ${String(e)}`, { runId: step.run_id }); }
+  }
 
   // Inject previous failure context so agent knows what to fix on retry
   if (step.retry_count > 0 && step.output) {
@@ -1131,7 +1138,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
          FROM steps s
          JOIN runs r ON r.id = s.run_id
          WHERE s.agent_id = $1
-           AND (s.status = 'pending' OR (s.status = 'running' AND s.type = 'loop'))
+           AND (s.status = 'pending' OR s.status = 'running')
            AND r.status NOT IN ('failed', 'cancelled')
            AND (
              $2::text IS NULL
@@ -1148,6 +1155,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
            )
          ORDER BY
            CASE
+             WHEN s.status = 'running' THEN 0
              WHEN $2::text IS NOT NULL AND r.assigned_developer = $2 THEN 0
              WHEN r.assigned_developer IS NULL THEN 1
              ELSE 2
@@ -3411,4 +3419,3 @@ async function autoVerifyDoneStories(
     return story; // Needs agent verification
   }
 }
-

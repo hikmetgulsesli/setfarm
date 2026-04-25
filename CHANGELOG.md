@@ -1,3 +1,8 @@
+## 2026-04-26 - Single Step Claim Idempotency
+
+- Normal non-loop steps now reissue an already-running claim for the same agent role instead of returning `NO_WORK`. This prevents models that accidentally run `step claim` twice from overwriting `/tmp/claim-*-spawner.json` and leaving plan/design/stories/setup steps stuck in `running`.
+- Claim selection now includes running steps, with running work preferred before new pending work. Loop story idempotency already existed; this extends the same protection to single steps such as design.
+
 ## 2026-04-25 - OpenClaw Stability + Medic Timer
 
 - Fresh Vite/React repos are now scaffolded in setup-repo and dependencies are installed/committed in setup-build, so implement stories no longer have to create package/config/App/main from scratch.
