@@ -1,3 +1,9 @@
+## 2026-04-25 - OpenClaw Stability + Medic Timer
+
+- `feature-dev` agent mapping now targets role-specific `feature-dev_*` agents instead of generic pool agents, so each step gets its correct workspace and avoids onboarding/context bleed.
+- Setfarm Medic no longer runs as an OpenClaw agent cron. `setfarm medic install` migrates the legacy `setfarm/medic` cron away and installs a user `systemd` timer that runs `node dist/cli/cli.js medic run` every 5 minutes, with DB env loaded from a private env file.
+- OpenClaw session defaults tightened for future installs: `cron.sessionRetention=4h`, `session.maintenance.pruneAfter=2d`, `maxEntries=500`, `rotateBytes=10mb`.
+
 ## 2026-04-22 — 5 Fix Entegrasyonu + Merge Conflict Darbogazi (Run #523)
 
 ### Onceki Durum (Run #518, #520, #522)

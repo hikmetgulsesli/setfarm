@@ -50,10 +50,10 @@ function ensureMainAgentInList(
 // Note: sessions_spawn DENIED — sub-agent delivery broken, agents must work inline
 const ALWAYS_DENY = ["gateway", "cron", "message", "nodes", "canvas", "sessions_send", "agents"];
 
-const DEFAULT_CRON_SESSION_RETENTION = "24h";
+const DEFAULT_CRON_SESSION_RETENTION = "4h";
 const DEFAULT_SESSION_MAINTENANCE = {
   mode: "enforce",
-  pruneAfter: "7d",
+  pruneAfter: "2d",
   maxEntries: 500,
   rotateBytes: "10mb",
 } as const;

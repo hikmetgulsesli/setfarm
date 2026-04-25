@@ -17,16 +17,16 @@ agent_mapping:
   # across concurrent runs (10 projects waited on 1 main for plan, 1 atlas
   # for setup/deploy, etc.). Added agents reuse existing pool members;
   # each agent may cover multiple roles, polling independently per role.
-  planner: [main, nova, zeta]
-  setup-repo: [atlas, axon, helix]
-  setup-build: [atlas, axon, helix]
-  designer: [prism, helix, zeta]
-  developer: [koda]  # Single agent — sequential story implementation (2026-04-21 single-dir architecture)
-  reviewer: [sentinel, iris]
-  tester: [sentinel, iris]
-  security-gate: [sentinel, iris]
-  deployer: [atlas, helix]
-  qa-tester: [sentinel, iris]
+  planner: [feature-dev_planner]
+  setup-repo: [feature-dev_setup-repo]
+  setup-build: [feature-dev_setup-build]
+  designer: [feature-dev_designer]
+  developer: [feature-dev_developer]  # Single agent - role workspace, no generic onboarding context
+  reviewer: [feature-dev_reviewer]
+  tester: [feature-dev_tester]
+  security-gate: [feature-dev_security-gate]
+  deployer: [feature-dev_deployer]
+  qa-tester: [feature-dev_qa-tester]
 
 cron:
   interval_ms: 30000  # 1 minute
@@ -2123,4 +2123,3 @@ steps:
     max_retries: 3
     on_fail:
       escalate_to: human
-
