@@ -28,15 +28,15 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     return;
   }
 
-  // 1. Run setup-repo.sh — idempotent (script creates .git, initial commits, remote, story branch, stitch download)
-  // Script signature: setup-repo.sh <REPO> <BRANCH> <STITCH_PROJECT_ID> <SCREEN_MAP>
-  // Always runs — script self-skips repeat work. Running when !package.json was wrong (script never creates it; scaffold happens in implement).
+  // 1. Run setup-repo.sh — idempotent (script creates .git, baseline scaffold,
+  // remote, run branch, references, and Stitch assets).
+  // Script signature: setup-repo.sh <REPO> <BRANCH> <STITCH_PROJECT_ID> <SCREEN_MAP> <TECH_STACK>
   const script = path.join(os.homedir(), ".openclaw/setfarm-repo/scripts/setup-repo.sh");
   const stitchProjectId = ctx.context["stitch_project_id"] || ctx.context["STITCH_PROJECT_ID"] || "";
   const screenMap = ctx.context["screen_map"] || ctx.context["SCREEN_MAP"] || "";
   if (fs.existsSync(script)) {
     try {
-      execFileSync("bash", [script, repo, branch, String(stitchProjectId), String(screenMap)], { encoding: "utf-8", timeout: 180000 });
+      execFileSync("bash", [script, repo, branch, String(stitchProjectId), String(screenMap), String(techStack)], { encoding: "utf-8", timeout: 180000 });
       logger.info(`[module:setup-repo preclaim] setup-repo.sh ran (stack=${techStack}, branch=${branch})`, { runId: ctx.runId });
     } catch (e) {
       logger.warn(`[module:setup-repo preclaim] setup-repo.sh failed: ${String(e).slice(0, 300)}`, { runId: ctx.runId });

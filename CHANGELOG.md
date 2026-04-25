@@ -1,5 +1,7 @@
 ## 2026-04-25 - OpenClaw Stability + Medic Timer
 
+- Fresh Vite/React repos are now scaffolded in setup-repo and dependencies are installed/committed in setup-build, so implement stories no longer have to create package/config/App/main from scratch.
+- Story worktrees now link `references/`, design dedup refuses incomplete PRD screen sets, design preclaim completes by DB step UUID, and `step stories` accepts run-number/UUID prefixes.
 - Loop story claims are now idempotent for running stories, so an agent that accidentally runs `step claim` twice gets the same running story instead of overwriting its claim file with `NO_WORK`.
 - Spawner now starts story/developer agents only while the implement loop step is running, preventing premature developer sessions during setup and avoiding concurrent OpenClaw plugin bootstrap races.
 - Generic polling prompts now handle string vs object claim input safely and no longer assume setup has already completed for plan/design/stories/setup steps.

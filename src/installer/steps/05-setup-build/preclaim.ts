@@ -14,18 +14,29 @@ import { logger } from "../../../lib/logger.js";
 export async function preClaim(ctx: ClaimContext): Promise<void> {
   const repo = ctx.context["repo"] || ctx.context["REPO"] || "";
   if (!repo || !fs.existsSync(path.join(repo, "package.json"))) {
-    logger.warn(`[module:setup-build preclaim] skipped — no package.json`, { runId: ctx.runId });
+    const msg = "package.json missing after setup-repo — baseline scaffold did not run";
+    logger.warn(`[module:setup-build preclaim] ${msg}`, { runId: ctx.runId });
+    ctx.context["baseline_fail"] = msg;
     return;
   }
 
   // 1. npm install (skip if node_modules already present — idempotent)
+  let installedDeps = false;
   if (!fs.existsSync(path.join(repo, "node_modules"))) {
     try {
       execFileSync("npm", ["install"], { cwd: repo, timeout: 300000, stdio: "pipe" });
+      installedDeps = true;
       logger.info(`[module:setup-build preclaim] npm install ok`, { runId: ctx.runId });
     } catch (e) {
       logger.warn(`[module:setup-build preclaim] npm install failed: ${String(e).slice(0, 200)}`, { runId: ctx.runId });
+      ctx.context["baseline_fail"] = `npm install failed: ${String(e).slice(0, 300)}`;
     }
+  }
+  if (installedDeps) {
+    try {
+      execFileSync("git", ["add", "package-lock.json"], { cwd: repo, timeout: 5000, stdio: "pipe" });
+      execFileSync("git", ["commit", "-m", "chore: install baseline dependencies"], { cwd: repo, timeout: 10000, stdio: "pipe" });
+    } catch { /* nothing to commit is fine */ }
   }
 
   // 2. Compat engine check (fail fast before build so errors are actionable)

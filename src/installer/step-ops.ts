@@ -298,13 +298,22 @@ function generateSrcTree(repoPath: string): string {
  */
 async function autoCompleteDesignStep(step: StepRow, db: any, htmlFiles: string[], projectId: string): Promise<boolean> {
   const dRepoPath = (await getRunContext(step.run_id))["repo"] || "";
+  const dCtx = await getRunContext(step.run_id);
+  const prdScreenCount = dCtx["prd_screen_count"] ? parseInt(dCtx["prd_screen_count"], 10) : 0;
+  if (prdScreenCount > 0 && htmlFiles.length < prdScreenCount) {
+    logger.warn(`[design-dedup] Existing design incomplete: ${htmlFiles.length}/${prdScreenCount} screens — clearing cache to force regeneration`, { runId: step.run_id });
+    if (dRepoPath) {
+      try { fs.rmSync(path.join(dRepoPath, "stitch"), { recursive: true, force: true }); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
+      try { fs.unlinkSync(path.join(dRepoPath, ".stitch")); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
+    }
+    return false;
+  }
   const dScreenMap = htmlFiles.map((f: string) => ({
     screenId: f.replace(".html", ""),
     name: f.replace(".html", ""),
     type: "page",
     description: f.replace(".html", ""),
   }));
-  const dCtx = await getRunContext(step.run_id);
   dCtx["stitch_project_id"] = projectId;
   dCtx["screens_generated"] = String(htmlFiles.length);
   dCtx["screen_map"] = JSON.stringify(dScreenMap);

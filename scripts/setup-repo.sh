@@ -7,6 +7,7 @@ REPO="$1"
 BRANCH="$2"
 STITCH_PROJECT_ID="$3"
 SCREEN_MAP="$4"
+TECH_STACK="${5:-vite-react}"
 STITCH_SCRIPT="$HOME/.openclaw/setfarm-repo/scripts/stitch-api.mjs"
 
 EXISTING_CODE=false
@@ -196,7 +197,204 @@ yarn-error.log*
 GITIGNORE
 git add .gitignore && git commit -m "chore: add .gitignore" 2>/dev/null || true
 
-# Remove any accidentally tracked gitignored files (dist/, node_modules/, etc.)
+# 4.5. Scaffold baseline app for fresh JS/TS projects.
+# Implement stories should not create package/config/App/main from scratch. That
+# baseline belongs here so setup-build can install deps and every story worktree
+# gets a stable node_modules symlink from the main repo.
+if [ ! -f package.json ]; then
+  case "$TECH_STACK" in
+    vite-react|react|web)
+      mkdir -p src/types src/hooks
+      cat > package.json <<'EOF'
+{
+  "name": "setfarm-app",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "vitest",
+    "test:run": "vitest run"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "vite": "^5.3.5"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.4.8",
+    "@testing-library/react": "^16.0.1",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "autoprefixer": "^10.4.20",
+    "jsdom": "^24.1.1",
+    "postcss": "^8.4.41",
+    "tailwindcss": "^3.4.10",
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.5"
+  }
+}
+EOF
+      cat > index.html <<'EOF'
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Notlar</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+EOF
+      cat > tsconfig.json <<'EOF'
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["DOM", "DOM.Iterable", "ES2020"],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "module": "ESNext",
+    "moduleResolution": "Node",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx"
+  },
+  "include": ["src"],
+  "references": [{ "path": "./tsconfig.node.json" }]
+}
+EOF
+      cat > tsconfig.node.json <<'EOF'
+{
+  "compilerOptions": {
+    "composite": true,
+    "module": "ESNext",
+    "moduleResolution": "Node",
+    "allowSyntheticDefaultImports": true
+  },
+  "include": ["vite.config.ts", "vitest.config.ts"]
+}
+EOF
+      cat > vite.config.ts <<'EOF'
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+
+export default defineConfig({
+  plugins: [react()],
+});
+EOF
+      cat > postcss.config.js <<'EOF'
+export default {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+};
+EOF
+      cat > tailwind.config.js <<'EOF'
+/** @type {import('tailwindcss').Config} */
+export default {
+  content: ['./index.html', './src/**/*.{ts,tsx}'],
+  theme: { extend: {} },
+  plugins: [],
+};
+EOF
+      cat > src/main.tsx <<'EOF'
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App';
+import './index.css';
+
+ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+);
+EOF
+      cat > src/App.tsx <<'EOF'
+export default function App() {
+  return <main className="min-h-screen bg-slate-50 text-slate-950" />;
+}
+EOF
+      cat > src/index.css <<'EOF'
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+EOF
+      cat > src/types/index.ts <<'EOF'
+export type NoteStatus = 'active' | 'completed';
+
+export interface Note {
+  id: string;
+  title: string;
+  content: string;
+  status: NoteStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+EOF
+      cat > src/hooks/useNotes.ts <<'EOF'
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { Note } from '../types';
+
+const STORAGE_KEY = 'setfarm-notlar';
+
+export function useNotes() {
+  const [notes, setNotes] = useState<Note[]>(() => {
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      return raw ? JSON.parse(raw) as Note[] : [];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(notes));
+  }, [notes]);
+
+  const completedCount = useMemo(() => notes.filter((note) => note.status === 'completed').length, [notes]);
+
+  const addNote = useCallback((title: string, content: string) => {
+    const now = new Date().toISOString();
+    setNotes((current) => [{ id: crypto.randomUUID(), title, content, status: 'active', createdAt: now, updatedAt: now }, ...current]);
+  }, []);
+
+  return { notes, completedCount, addNote };
+}
+EOF
+      git add package.json index.html tsconfig.json tsconfig.node.json vite.config.ts postcss.config.js tailwind.config.js src/
+      git commit -m "chore: scaffold vite react app" 2>/dev/null || true
+      ;;
+    *)
+      echo "WARN: no automatic scaffold for TECH_STACK=$TECH_STACK"
+      ;;
+  esac
+fi
+
+# Remove any accidentally tracked gitignored files (dist/, node_modules, etc.)
 git rm -r --cached dist/ 2>/dev/null || true
 git rm -r --cached node_modules/ 2>/dev/null || true
 git rm --cached .setfarm-step-output.txt 2>/dev/null || true

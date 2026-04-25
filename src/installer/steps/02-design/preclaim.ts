@@ -4,6 +4,7 @@ import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import type { ClaimContext } from "../types.js";
 import { logger } from "../../../lib/logger.js";
+import { pgGet } from "../../../db-pg.js";
 
 // Heavy work BEFORE agent claims the design step:
 // 1. ensure-project (Stitch project for this repo)
@@ -245,8 +246,10 @@ All visible text must be in Turkish. Use a dark, modern theme.`;
       "AUTO_COMPLETED: design-preclaim (all assets ready, agent bypass)"
     ].join("\n");
     const { completeStep } = await import("../../step-ops.js");
-    await completeStep(ctx.stepId, output);
-    logger.info(`[module:design preclaim] AUTO-COMPLETED step ${ctx.stepId} (${manifest.length} screens, ${htmlOkCount} HTMLs, agent bypassed)`, { runId: ctx.runId, stepId: ctx.stepId });
+    const stepRow = await pgGet<{ id: string }>("SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1", [ctx.runId, ctx.stepId]);
+    const stepDbId = stepRow?.id || ctx.stepId;
+    await completeStep(stepDbId, output);
+    logger.info(`[module:design preclaim] AUTO-COMPLETED step ${ctx.stepId} (${manifest.length} screens, ${htmlOkCount} HTMLs, agent bypassed)`, { runId: ctx.runId, stepId: stepDbId });
   } catch (e) {
     logger.warn(`[module:design preclaim] auto-complete failed (falling back to agent): ${String(e).slice(0, 200)}`, { runId: ctx.runId });
   }

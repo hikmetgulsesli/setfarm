@@ -49,6 +49,18 @@ export function resolveWorktreeBaseDir(repo: string, agentId?: string): string {
 // ── Stitch Asset Copy ───────────────────────────────────────────────
 
 /** Copy stitch/ design assets from main repo into worktree so developers can reference them */
+function ensureReferencesLink(repo: string, worktreeDir: string): void {
+  const refsSrc = path.join(repo, "references");
+  const refsDst = path.join(worktreeDir, "references");
+  if (!fs.existsSync(refsSrc) || fs.existsSync(refsDst)) return;
+  try {
+    fs.symlinkSync(refsSrc, refsDst, "dir");
+    logger.info(`[worktree] Linked references/ into worktree`, {});
+  } catch (e) {
+    logger.warn(`[worktree] Failed to link references/: ${String(e).slice(0, 100)}`, {});
+  }
+}
+
 export function copyStitchToWorktree(repo: string, worktreeDir: string): void {
   try {
     const stitchDst = path.join(worktreeDir, "stitch");
@@ -294,8 +306,9 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
     if (fs.existsSync(nmSrc) && !fs.existsSync(nmDst)) {
       fs.symlinkSync(nmSrc, nmDst);
     }
-    // Copy stitch design assets into worktree so developer agents can read them
+    // Copy design/reference assets into worktree so developer agents can read them
     copyStitchToWorktree(repo, worktreeDir);
+    ensureReferencesLink(repo, worktreeDir);
 
     // 5-model consensus Fix 3: git pre-commit hook for scope enforcement.
     // Write .story-scope-files + install pre-commit hook that blocks
@@ -325,6 +338,8 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
         fs.symlinkSync(nmSrc, nmDst);
       }
       copyStitchToWorktree(repo, worktreeDir);
+      ensureReferencesLink(repo, worktreeDir);
+      installScopeHook(worktreeDir, storyId);
       logger.info(`[worktree] Created ${worktreeDir} (existing branch)`, {});
       return worktreeDir;
     } catch (err2: any) {

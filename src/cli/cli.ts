@@ -454,7 +454,16 @@ async function main() {
     }
     if (action === "stories") {
       if (!target) { process.stderr.write("Missing run-id.\n"); process.exit(1); }
-      const stories = await getStories(target);
+      let runId = target;
+      let run: { id: string } | undefined;
+      if (/^\d+$/.test(target)) {
+        run = await pgGet<{ id: string }>("SELECT id FROM runs WHERE run_number = $1 LIMIT 1", [parseInt(target, 10)]);
+      }
+      if (!run) {
+        run = await pgGet<{ id: string }>("SELECT id FROM runs WHERE id = $1 OR id LIKE $2 ORDER BY created_at DESC LIMIT 1", [target, `${target}%`]);
+      }
+      if (run?.id) runId = run.id;
+      const stories = await getStories(runId);
       if (stories.length === 0) { console.log("No stories found for this run."); return; }
       for (const s of stories) {
         const retryInfo = s.retryCount > 0 ? ` (retry ${s.retryCount})` : "";
