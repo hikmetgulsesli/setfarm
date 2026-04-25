@@ -121,6 +121,12 @@ function publishSetupBaselineToMain(repo: string, runBranch: string, runId: stri
     }
 
     try {
+      execFileSync("git", ["rm", "-r", "--cached", "--ignore-unmatch", "node_modules"], {
+        cwd: repo, timeout: 10000, stdio: ["pipe", "pipe", "pipe"],
+      });
+    } catch {}
+
+    try {
       const dirty = execFileSync("git", ["status", "--porcelain"], {
         cwd: repo, encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
       }).trim();
