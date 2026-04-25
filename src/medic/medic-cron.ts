@@ -67,6 +67,7 @@ Type=oneshot
 WorkingDirectory=${repoRoot}
 Environment=HOME=${os.homedir()}
 Environment=SETFARM_MEDIC_SYSTEMD=1
+Environment=SETFARM_DISABLE_OPENCLAW_CLI_FALLBACK=1
 EnvironmentFile=-${envFilePath()}
 ExecStart=/usr/bin/env node ${cliPath} medic run
 `;

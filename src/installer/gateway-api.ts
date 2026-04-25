@@ -112,6 +112,10 @@ async function findOpenclawBinary(): Promise<string> {
 /** Run an openclaw CLI command and return stdout. */
 function runCli(args: string[]): Promise<string> {
   return new Promise(async (resolve, reject) => {
+    if (DISABLE_CLI_FALLBACK) {
+      reject(new Error("OpenClaw CLI fallback disabled for this process"));
+      return;
+    }
     const bin = await findOpenclawBinary();
     const finalArgs = bin === "npx" ? ["openclaw", ...args] : args;
     execFile(bin, finalArgs, { timeout: 30_000 }, (err, stdout, stderr) => {
@@ -123,6 +127,7 @@ function runCli(args: string[]): Promise<string> {
 
 const UPDATE_HINT =
   `This may be fixed by updating OpenClaw: npm update -g openclaw`;
+const DISABLE_CLI_FALLBACK = process.env.SETFARM_DISABLE_OPENCLAW_CLI_FALLBACK === "1";
 
 // ---------------------------------------------------------------------------
 // Cron operations — HTTP first, CLI fallback
@@ -261,6 +266,12 @@ export async function checkCronToolAvailable(): Promise<{ ok: boolean; error?: s
     logger.debug(`[gateway-api] HTTP preflight failed, trying CLI: ${e}`, {});
   }
 
+  if (DISABLE_CLI_FALLBACK) {
+    const fileResult = await listCronJobsFromFile();
+    if (fileResult) return { ok: true };
+    return { ok: false, error: `Cannot access cron: gateway HTTP unavailable and OpenClaw CLI fallback is disabled. ${UPDATE_HINT}` };
+  }
+
   // Try CLI fallback
   try {
     await runCli(["cron", "list", "--json"]);
@@ -278,6 +289,13 @@ export async function listCronJobs(): Promise<{ ok: boolean; jobs?: Array<{ id: 
   // --- Try HTTP first ---
   const httpResult = await listCronJobsHTTP();
   if (httpResult !== null) return httpResult;
+
+  const fileResult = await listCronJobsFromFile();
+  if (fileResult) return fileResult;
+
+  if (DISABLE_CLI_FALLBACK) {
+    return { ok: false, error: `Gateway HTTP unavailable and OpenClaw CLI fallback is disabled. ${UPDATE_HINT}` };
+  }
 
   // --- CLI fallback ---
   try {
@@ -328,6 +346,20 @@ async function listCronJobsHTTP(): Promise<{ ok: boolean; jobs?: Array<{ id: str
     return { ok: true, jobs };
   } catch (e) {
     logger.debug(`[gateway-api] HTTP listCronJobs failed, returning null for CLI fallback: ${e}`, {});
+    return null;
+  }
+}
+
+async function listCronJobsFromFile(): Promise<{ ok: boolean; jobs?: Array<{ id: string; name: string }>; error?: string } | null> {
+  try {
+    const raw = await fs.readFile(path.join(os.homedir(), ".openclaw", "cron", "jobs.json"), "utf-8");
+    const parsed = JSON.parse(raw);
+    const jobs = (Array.isArray(parsed) ? parsed : parsed.jobs ?? [])
+      .filter((job: any) => job && typeof job.name === "string")
+      .map((job: any) => ({ id: String(job.id ?? job.name), name: job.name, state: job.state }));
+    return { ok: true, jobs };
+  } catch (e) {
+    logger.debug(`[gateway-api] cron jobs file unavailable: ${e}`, {});
     return null;
   }
 }
