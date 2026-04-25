@@ -46,6 +46,36 @@ export function resolveWorktreeBaseDir(repo: string, agentId?: string): string {
   return base;
 }
 
+function stashDirtyMainRepo(repo: string, storyId: string): void {
+  try {
+    const status = execFileSync("git", ["status", "--porcelain"], {
+      cwd: repo,
+      encoding: "utf-8",
+      timeout: 5000,
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+    if (!status) return;
+
+    const branch = execFileSync("git", ["branch", "--show-current"], {
+      cwd: repo,
+      encoding: "utf-8",
+      timeout: 5000,
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim() || "unknown";
+    const summary = status.split(/\r?\n/).slice(0, 12).join("; ");
+    const stashName = `setfarm-auto-stash before ${storyId} on ${branch} ${new Date().toISOString()}`;
+
+    execFileSync("git", ["stash", "push", "-u", "-m", stashName], {
+      cwd: repo,
+      timeout: 20000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    logger.warn(`[worktree] Main repo was dirty before story ${storyId}; stashed to isolate next story: ${summary}`, {});
+  } catch (e) {
+    logger.warn(`[worktree] Failed dirty-main isolation before ${storyId}: ${String(e).slice(0, 160)}`, {});
+  }
+}
+
 // ── Stitch Asset Copy ───────────────────────────────────────────────
 
 /** Copy stitch/ design assets from main repo into worktree so developers can reference them */
@@ -173,6 +203,7 @@ fi
 export function createStoryWorktree(repo: string, storyId: string, baseBranch: string, agentId?: string): string {
   // P2-03: Prune orphaned worktrees before creating new ones
   try { execFileSync("git", ["worktree", "prune"], { cwd: repo, timeout: 5000, stdio: ["pipe", "pipe", "pipe"] }); } catch {}
+  stashDirtyMainRepo(repo, storyId);
 
   const worktreeBase = resolveWorktreeBaseDir(repo, agentId);
   const worktreeDir = path.join(worktreeBase, storyId.toLowerCase());
