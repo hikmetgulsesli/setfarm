@@ -10,7 +10,7 @@
 import { pgQuery, pgGet, pgRun, pgExec, pgBegin, now } from "../db-pg.js";
 import { recordStepTransition } from "../installer/repo.js";
 import { emitEvent, type EventType } from "../installer/events.js";
-import { teardownWorkflowCronsIfIdle, ensureWorkflowCrons, removeAgentCrons, setupAgentCrons, expectedCronCount, actualCronCount, repairAgentCrons, syncActiveCrons } from "../installer/agent-cron.js";
+import { teardownWorkflowCronsIfIdle, ensureWorkflowCrons, removeAgentCrons, setupAgentCrons, expectedCronCount, actualCronCount, repairAgentCrons, syncActiveCrons, gatewayAgentCronsEnabled } from "../installer/agent-cron.js";
 import { loadWorkflowSpec } from "../installer/workflow-spec.js";
 import { resolveWorkflowDir, resolveSetfarmCli } from "../installer/paths.js";
 import { listCronJobs } from "../installer/gateway-api.js";
@@ -223,6 +223,10 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
       if (finding.action === "recreate_crons") {
         const wfId = finding.workflowId ?? finding.message.match(/workflow "([^"]+)"/)?.[1];
         if (!wfId) return false;
+        if (!gatewayAgentCronsEnabled()) {
+          logger.info(`[medic] recreate_crons skipped; event-driven spawner owns "${wfId}"`, {});
+          return false;
+        }
         // Cooldown: don't force-recreate more than once per 5 min. Without this,
         // transient gateway state glitches trigger back-to-back recreates
         // (observed: 3-5s apart), spamming run.resumed events.
@@ -415,6 +419,8 @@ async function logCronRecreate(reason: string, workflowId: string): Promise<void
 }
 
 export async function restoreActiveRunCrons(): Promise<number> {
+  if (!gatewayAgentCronsEnabled()) return 0;
+
   const RECREATE_COOLDOWN_MS = 5 * 60 * 1000;
   try { const lastRecreate = await pgGet<{ checked_at: string }>("SELECT checked_at FROM medic_checks WHERE summary LIKE 'Cron recreate:%' ORDER BY checked_at DESC LIMIT 1"); if (lastRecreate && (Date.now() - new Date(lastRecreate.checked_at).getTime()) < RECREATE_COOLDOWN_MS) return 0; } catch {}
   const activeRuns = await pgQuery<{ workflow_id: string }>("SELECT DISTINCT workflow_id FROM runs WHERE status = 'running'");
@@ -479,9 +485,15 @@ export async function runMedicCheck(): Promise<MedicCheckResult> {
   await ensureMedicTables();
   try { await restoreActiveRunCrons(); } catch (e) { logger.warn(`[medic] restoreActiveRunCrons failed: ${String(e)}`, {}); }
 
-  const findings: MedicFinding[] = await runSyncChecks();
+  let findings: MedicFinding[] = await runSyncChecks();
+  if (!gatewayAgentCronsEnabled()) {
+    const spawnerOwnedChecks = new Set(["stalled_workflow_crons", "under_capacity", "gateway_stalling"]);
+    findings = findings.filter(f => !spawnerOwnedChecks.has(f.check));
+  }
   try { findings.push(...await checkStuckWaitingSteps()); } catch (e) { logger.warn(`[medic] checkStuckWaitingSteps failed: ${String(e)}`, {}); }
-  try { const cronResult = await listCronJobs(); if (cronResult.ok && cronResult.jobs) { findings.push(...await checkOrphanedCrons(cronResult.jobs.filter(j => j.name.startsWith("setfarm/")))); } } catch (err) { console.warn("listCronJobs failed:", String(err)); }
+  if (gatewayAgentCronsEnabled()) {
+    try { const cronResult = await listCronJobs(); if (cronResult.ok && cronResult.jobs) { findings.push(...await checkOrphanedCrons(cronResult.jobs.filter(j => j.name.startsWith("setfarm/")))); } } catch (err) { console.warn("listCronJobs failed:", String(err)); }
+  }
 
   let actionsTaken = 0;
   for (const finding of findings) { if (finding.action !== "none") { try { const success = await remediate(finding); if (success) { finding.remediated = true; actionsTaken++; } } catch (err) { logger.error(`[medic] remediate failed for ${finding.action} (${finding.check}): ${String(err)}`, { runId: finding.runId }); } } }

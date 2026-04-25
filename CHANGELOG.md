@@ -6,6 +6,7 @@
 - Implement scope-file existence guard now treats `scope_files` as an ownership boundary instead of requiring every listed companion file to exist. It still fails no-work outputs, but valid stories that implement the primary file without optional sibling CSS no longer burn retries.
 - Implement agent preamble now forbids `npm install` in both story worktrees and the shared main repo. Missing dependencies must be reported as `MISSING_DEPENDENCY` instead of dirtying `package.json`/`package-lock.json` mid-story.
 - Story worktree creation now isolates a dirty shared main repo by auto-stashing uncommitted changes before creating the next story branch, preventing accidental main-repo edits from leaking into later stories.
+- Medic cron recovery checks now no-op when gateway agent crons are disabled and the event-driven spawner owns execution. This removes bogus `0/0 crons recreated` events and prevents stale cron-health findings from restarting the gateway during active story work.
 
 ## 2026-04-25 - OpenClaw Stability + Medic Timer
 
