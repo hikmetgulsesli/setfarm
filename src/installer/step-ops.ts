@@ -1970,8 +1970,12 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
     }
   }
 
-  // Guard: don't process completions for failed runs
-  if (await getRunStatus(step.run_id) === RUN_STATUS.FAILED) {
+  // Guard: don't process late completions for terminal runs. Agents can keep
+  // running after a user cancellation until their OpenClaw session is reaped;
+  // accepting their output would mutate context/stories after the run is dead.
+  const runStatus = await getRunStatus(step.run_id);
+  if (runStatus === RUN_STATUS.FAILED || runStatus === RUN_STATUS.CANCELLED) {
+    logger.warn(`[completeStep] Ignoring late completion for terminal run (${runStatus})`, { runId: step.run_id, stepId: step.step_id });
     return { advanced: false, runCompleted: false };
   }
 

@@ -76,6 +76,40 @@ export type StopWorkflowResult =
   | { status: "not_found"; message: string }
   | { status: "already_done"; message: string };
 
+async function notifyRunCancelled(run: RunInfo): Promise<void> {
+  try {
+    await pgRun("SELECT pg_notify('run_cancelled', $1)", [
+      JSON.stringify({ runId: run.id, workflowId: run.workflow_id }),
+    ]);
+  } catch {
+    // best effort; DB state remains authoritative
+  }
+}
+
+async function cancelActiveRunState(run: RunInfo): Promise<number> {
+  const activeStepsForCancel = await pgQuery<{ id: string; status: string }>(
+    "SELECT id, status FROM steps WHERE run_id = $1 AND status IN ('waiting', 'pending', 'running')",
+    [run.id]
+  );
+
+  await pgRun("UPDATE runs SET status = 'cancelled', updated_at = $1 WHERE id = $2", [now(), run.id]);
+  const result = await pgRun(
+    "UPDATE steps SET status = 'cancelled', output = COALESCE(output, 'Cancelled by user'), current_story_id = NULL, updated_at = $1 WHERE run_id = $2 AND status IN ('waiting', 'pending', 'running')",
+    [now(), run.id]
+  );
+  await pgRun(
+    "UPDATE stories SET status = 'skipped', output = COALESCE(output, 'Cancelled by user'), updated_at = $1 WHERE run_id = $2 AND status IN ('pending', 'running')",
+    [now(), run.id]
+  );
+  for (const s of activeStepsForCancel) {
+    await recordStepTransition(s.id, run.id, s.status, "cancelled", undefined, "stopWorkflow:cancelled");
+  }
+
+  await teardownWorkflowCronsIfIdle(run.workflow_id, { graceMs: 0 });
+  await notifyRunCancelled(run);
+  return result.changes;
+}
+
 export async function stopWorkflow(query: string): Promise<StopWorkflowResult> {
   let run = await pgGet<RunInfo>("SELECT * FROM runs WHERE id = $1", [query]);
   if (!run) {
@@ -93,23 +127,13 @@ export async function stopWorkflow(query: string): Promise<StopWorkflowResult> {
         : "No workflow runs found.",
     };
   }
-  if (run.status === "completed" || run.status === "cancelled") {
+  if (run.status === "completed") {
     return { status: "already_done", message: `Run ${run.id.slice(0, 8)} is already "${run.status}".` };
   }
-  // Record transitions for all active steps before cancelling
-  const activeStepsForCancel = await pgQuery<{ id: string; status: string }>("SELECT id, status FROM steps WHERE run_id = $1 AND status IN ('waiting', 'pending', 'running')", [run.id]);
-  await pgRun("UPDATE runs SET status = 'cancelled', updated_at = $1 WHERE id = $2", [now(), run.id]);
-  const result = await pgRun(
-    "UPDATE steps SET status = 'failed', output = 'Cancelled by user', updated_at = $1 WHERE run_id = $2 AND status IN ('waiting', 'pending', 'running')",
-    [now(), run.id]
-  );
-  await pgRun(
-    "UPDATE stories SET status = 'skipped', output = COALESCE(output, 'Cancelled by user'), updated_at = $1 WHERE run_id = $2 AND status IN ('pending', 'running')",
-    [now(), run.id]
-  );
-  for (const s of activeStepsForCancel) { await recordStepTransition(s.id, run.id, s.status, "cancelled", undefined, "stopWorkflow:cancelled"); }
-  const cancelledSteps = result.changes;
-  await teardownWorkflowCronsIfIdle(run.workflow_id, { graceMs: 0 });
+  const cancelledSteps = await cancelActiveRunState(run);
+  if (run.status === "cancelled" && cancelledSteps === 0) {
+    return { status: "already_done", message: `Run ${run.id.slice(0, 8)} is already "${run.status}".` };
+  }
 
   // Clean up MC project + tunnel if deploy didn't complete
   try {
@@ -136,6 +160,6 @@ export async function stopWorkflow(query: string): Promise<StopWorkflowResult> {
     }
   } catch { /* best effort cleanup */ }
 
-  emitEvent({ ts: now(), event: "run.failed", runId: run.id, workflowId: run.workflow_id, detail: "Cancelled by user" });
+  emitEvent({ ts: now(), event: "run.cancelled", runId: run.id, workflowId: run.workflow_id, detail: "Cancelled by user" });
   return { status: "ok", runId: run.id, workflowId: run.workflow_id, cancelledSteps };
 }

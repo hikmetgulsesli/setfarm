@@ -294,6 +294,7 @@ export const STEP_STATUS = {
   RUNNING: "running",
   DONE: "done",
   FAILED: "failed",
+  CANCELLED: "cancelled",
   SKIPPED: "skipped",
   WAITING: "waiting",
 } as const;

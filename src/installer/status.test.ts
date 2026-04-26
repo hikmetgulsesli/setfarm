@@ -88,9 +88,9 @@ describe("stopWorkflow", () => {
     assert.equal(steps[0].output, "plan output"); // done step output unchanged
     assert.equal(steps[1].status, "cancelled");
     assert.equal(steps[1].output, "Cancelled by user");
-    assert.equal(steps[2].status, "failed");
+    assert.equal(steps[2].status, "cancelled");
     assert.equal(steps[2].output, "Cancelled by user");
-    assert.equal(steps[3].status, "failed");
+    assert.equal(steps[3].status, "cancelled");
     assert.equal(steps[3].output, "Cancelled by user");
   });
 
@@ -131,6 +131,32 @@ describe("stopWorkflow", () => {
     assert.equal(result.status, "already_done");
     if (result.status !== "already_done") return;
     assert.ok(result.message.includes("cancelled"));
+  });
+
+  it("cleans up active steps in an already cancelled run", async () => {
+    const runId = crypto.randomUUID();
+    testRunIds.push(runId);
+    await createTestRun({
+      runId,
+      workflowId: "test-wf-cancel-cleanup",
+      status: "cancelled",
+      steps: [
+        { stepId: "plan", status: "done", output: "plan output" },
+        { stepId: "implement", status: "running" },
+      ],
+    });
+
+    const result = await stopWorkflow(runId);
+    assert.equal(result.status, "ok");
+    if (result.status !== "ok") return;
+    assert.equal(result.cancelledSteps, 1);
+
+    const step = await pgGet<{ status: string; output: string | null }>(
+      "SELECT status, output FROM steps WHERE run_id = $1 AND step_id = 'implement'",
+      [runId]
+    );
+    assert.equal(step?.status, "cancelled");
+    assert.equal(step?.output, "Cancelled by user");
   });
 
   it("supports prefix matching with first 8 chars of UUID", async () => {
@@ -178,7 +204,7 @@ describe("stopWorkflow", () => {
     assert.equal(steps[0].output, "original output");
     assert.equal(steps[1].status, "done");
     assert.equal(steps[1].output, "also done");
-    assert.equal(steps[2].status, "failed");
+    assert.equal(steps[2].status, "cancelled");
     assert.equal(steps[2].output, "Cancelled by user");
   });
 });

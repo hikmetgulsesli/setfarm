@@ -4,7 +4,7 @@
  * and immediately spawns agent sessions via openclaw CLI.
  */
 import postgres from "postgres";
-import { execFile, type ChildProcess } from "node:child_process";
+import { execFile, execFileSync, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -52,7 +52,16 @@ try { fs.mkdirSync(AGENT_SAFE_CWD, { recursive: true }); } catch { /* best-effor
 try { fs.mkdirSync(TRANSCRIPT_ROOT, { recursive: true }); } catch { /* best-effort */ }
 assertAgentCwdSafe();
 
-const activeProcesses = new Map<string, ChildProcess>();
+type ActiveProcess = {
+  child: ChildProcess;
+  runId: string;
+  stepId: string;
+  agentId: string;
+  wfId: string;
+  role: string;
+};
+
+const activeProcesses = new Map<string, ActiveProcess>();
 const queuedSpawns = new Set<string>();
 let shuttingDown = false;
 let nextSpawnEarliest = 0;
@@ -124,6 +133,19 @@ Rules: no subagents, no background delegation, no PR actions unless claim explic
 
 function compactExitReason(err: unknown): string {
   return String((err as any)?.message || err || "unknown error").replace(/\s+/g, " ").slice(0, 700);
+}
+
+function killProcessTree(pid: number | undefined, signal: NodeJS.Signals = "SIGTERM"): void {
+  if (!pid) return;
+  try {
+    const out = execFileSync("pgrep", ["-P", String(pid)], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    for (const childPid of out.split(/\s+/).filter(Boolean)) {
+      killProcessTree(Number(childPid), signal);
+    }
+  } catch {
+    // no children or pgrep unavailable
+  }
+  try { process.kill(pid, signal); } catch { /* already dead */ }
 }
 
 async function failClaimIfStillRunning(stepId: string, agentId: string, wfId: string, role: string, transcriptPath: string, err: unknown): Promise<void> {
@@ -247,7 +269,23 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     }
     else console.log("[spawner] " + agentId + " completed (transcript: " + transcriptPath + ")");
   });
-  if (child.pid) activeProcesses.set(key, child);
+  if (child.pid && claim.runId && claim.stepId) {
+    activeProcesses.set(key, { child, runId: claim.runId, stepId: claim.stepId, agentId, wfId, role });
+  }
+}
+
+function cancelRunAgents(runId: string): void {
+  let killed = 0;
+  for (const [key, active] of activeProcesses) {
+    if (active.runId !== runId) continue;
+    killed++;
+    console.log(`[spawner] Cancelling active agent ${key} for run ${runId.slice(0, 8)}`);
+    killProcessTree(active.child.pid, "SIGTERM");
+    setTimeout(() => killProcessTree(active.child.pid, "SIGKILL"), 5000);
+  }
+  if (killed === 0) {
+    console.log(`[spawner] Run ${runId.slice(0, 8)} cancelled; no active agent process found`);
+  }
 }
 
 async function handleStepPending(payload: { agentId: string; runId: string; stepId: string }) {
@@ -403,7 +441,7 @@ async function main() {
   const shutdown = () => {
     shuttingDown = true;
     console.log(`[spawner] Shutting down (${activeProcesses.size} active)`);
-    for (const [, child] of activeProcesses) { try { child.kill("SIGTERM"); } catch {} }
+    for (const [, active] of activeProcesses) { killProcessTree(active.child.pid, "SIGTERM"); }
     try { fs.unlinkSync(PID_FILE); } catch {}
     setTimeout(() => process.exit(0), 5000);
   };
@@ -418,6 +456,12 @@ async function main() {
   });
   await listener.listen("story_pending", (msg) => {
     try { handleStoryPending(JSON.parse(msg)); } catch {}
+  });
+  await listener.listen("run_cancelled", (msg) => {
+    try {
+      const payload = JSON.parse(msg);
+      if (payload?.runId) cancelRunAgents(String(payload.runId));
+    } catch {}
   });
 
   console.log("[spawner] Listening for step_pending and story_pending events");
