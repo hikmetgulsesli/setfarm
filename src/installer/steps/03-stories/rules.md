@@ -100,6 +100,13 @@ Diğer story'ler bunları okuma referansı için `shared_files`'a koyabilir, sco
 - "Form validation: zorunlu alan boşken submit YASAK, hata gösterilir"
 - "Tests pass" + "Typecheck passes" (her story sonunda zorunlu)
 
+### UI Behavior Contract
+
+- `UI_BEHAVIOR_CONTRACT` varsa her button/link/input en az bir story acceptance criterion içinde geçmeli.
+- Criterion sadece "buton var" dememeli; davranışı yazmalı: route değişimi, panel/dialog açılması, state/localStorage değişimi, filter/search sonucu, validation feedback.
+- Icon-only kontroller için hem görünen/erişilebilir isim hem ikon anlamı kullanılmalı: `Ayarlar/settings`, `Kayıtlar/history`, `Artır/add`, `Azalt/remove`, `Sıfırla/restart_alt`.
+- PRD'de olmayan ama Stitch'te aktif görünen settings/history/profile gibi kontroller de boş bırakılamaz. Ya gerçek davranışla story'ye girer ya da acceptance criterion içinde disabled/hidden kararı açıkça yazılır.
+
 Kötü (belirsiz):
 - "Tasarım modern olur" (subjektif)
 - "Performans iyi" (ölçülemez)

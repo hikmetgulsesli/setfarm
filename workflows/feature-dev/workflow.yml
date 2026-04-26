@@ -863,6 +863,9 @@ steps:
       Read only the screen ids listed in STORY_SCREENS. Do NOT paste or process the
       full project DOM in the session.
 
+      UI BEHAVIOR CONTRACT (from Stitch DOM — mandatory):
+      {{ui_behavior_contract}}
+
       DESIGN DOM RULES (MANDATORY — FOLLOW EXACTLY):
       - Every in-scope button in this story's DESIGN_DOM screen(s) must exist in code with the same label and icon
       - Every in-scope input must have the same type and placeholder

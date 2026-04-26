@@ -38,6 +38,16 @@ varsa shared_files'a koy.
 
 {{DESIGN_DOM_PREVIEW}}
 
+## UI_BEHAVIOR_CONTRACT
+
+Stitch DOM extractor'ın çıkardığı davranış kontratı. Kodlama başlamadan ÖNCE bu kontratı
+story acceptanceCriteria içine dağıt. Her satır için tam bir owner story olmalı:
+trigger label/icon + beklenen görünür davranış. Settings/history/profile gibi PRD'de açıkça
+yazmayan ama Stitch'te görünen kontroller de ya gerçek route/panel/dialog açmalı ya da story'de
+bilinçli disabled/hidden kararı olarak belirtilmeli. Aktif görünen buton boş bırakılamaz.
+
+{{UI_BEHAVIOR_CONTRACT}}
+
 ## Yapılacaklar
 
 0. **PROJE KONSEPTİ KİLİTLİ**. Story title/description/acceptanceCriteria PRD ve kullanıcı task'ındaki ana domain kelimelerini korumalı. Sayaç projesinden oyun, not projesinden CRM, şirket sayfasından todo app uydurmak YASAK. Emin değilsen PRD'deki ürün adını ve ana aksiyonları aynen kullan.
@@ -50,8 +60,9 @@ varsa shared_files'a koy.
 4. Her ekran (SCREEN_MAP'ten) tam 1 story tarafından scope'lansın. scope_files'a PREDICTED_SCREEN_FILES'tan al (hayali yol YASAK).
 5. DESIGN_DOM_PREVIEW'deki button/input yapısına göre scope ayar — ekran birden fazla konsepti birleştiriyorsa (form + list + detail gibi) her konsept ayrı story. Element sayısına değil, yapısal ayırıma göre böl.
 6. Ortak component'leri (Button, Input, Modal tekrar) shared_files'a yaz.
-7. SCREEN_MAP'i güncelle (her ekran için `stories` alanı).
-8. Aşağıdaki KEY: VALUE formatında çıktı ver.
+7. UI_BEHAVIOR_CONTRACT'teki her button/link/input için acceptanceCriteria yaz. Kriterler mekanik olmalı: `"Ayarlar" icon button opens settings panel`, `"Kayıtlar" navigates to history/logs`, `"Artır" increases visible count` gibi.
+8. SCREEN_MAP'i güncelle (her ekran için `stories` alanı).
+9. Aşağıdaki KEY: VALUE formatında çıktı ver.
 
 ## Story Şeması (referans — alanları doldur, örnek isimleri kopyalama)
 

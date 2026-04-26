@@ -1,8 +1,19 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { storiesModule } from "../../dist/installer/steps/03-stories/module.js";
-import { extractExplicitMaxStories } from "../../dist/installer/steps/03-stories/context.js";
-import { detectStorySemanticDrift, extractStoryDomainTerms } from "../../dist/installer/steps/03-stories/guards.js";
+import {
+  collectUiBehaviorRequirements,
+  computeUiBehaviorContract,
+  extractExplicitMaxStories,
+} from "../../dist/installer/steps/03-stories/context.js";
+import {
+  detectStorySemanticDrift,
+  detectUiBehaviorContractGaps,
+  extractStoryDomainTerms,
+} from "../../dist/installer/steps/03-stories/guards.js";
 import { normalizeScopeFilesForStory } from "../../dist/installer/story-ops.js";
 import { runModule } from "./harness.js";
 
@@ -90,6 +101,76 @@ describe("03-stories step module", () => {
       }]
     );
     assert.equal(err, null);
+  });
+
+  it("builds a UI behavior contract from DESIGN_DOM", () => {
+    const repo = mkdtempSync(path.join(tmpdir(), "setfarm-dom-"));
+    try {
+      mkdirSync(path.join(repo, "stitch"));
+      writeFileSync(path.join(repo, "stitch", "DESIGN_DOM.json"), JSON.stringify({
+        screens: {
+          "SCR-001": {
+            title: "Ana",
+            behaviorContract: [
+              { kind: "button", label: "Ayarlar", icon: "settings", route: "/settings", expectedBehavior: "navigate:/settings" },
+              { kind: "button", label: "Artır", icon: "add", action: "increment", expectedBehavior: "increase visible value" },
+            ],
+          },
+        },
+      }));
+
+      const reqs = collectUiBehaviorRequirements(repo);
+      assert.equal(reqs.length, 2);
+      const contract = computeUiBehaviorContract(repo);
+      assert.match(contract, /Ayarlar/);
+      assert.match(contract, /Artır/);
+      assert.match(contract, /navigate:\/settings/);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects stories that do not cover Stitch behavior controls", () => {
+    const repo = mkdtempSync(path.join(tmpdir(), "setfarm-dom-"));
+    try {
+      mkdirSync(path.join(repo, "stitch"));
+      writeFileSync(path.join(repo, "stitch", "DESIGN_DOM.json"), JSON.stringify({
+        screens: {
+          "SCR-001": {
+            title: "Ana",
+            behaviorContract: [
+              { kind: "button", label: "Ayarlar", icon: "settings", route: "/settings", expectedBehavior: "navigate:/settings" },
+              { kind: "button", label: "Artır", icon: "add", action: "increment", expectedBehavior: "increase visible value" },
+            ],
+          },
+        },
+      }));
+
+      const missing = detectUiBehaviorContractGaps(repo, [{
+        story_id: "US-001",
+        title: "Sayaç — ana ekran",
+        description: "Sayaç değeri görüntülenir.",
+        acceptance_criteria: JSON.stringify(["Artır butonu sayacı artırır"]),
+        scope_description: "Ana sayaç akışı",
+        scope_files: JSON.stringify(["src/screens/Ana.tsx"]),
+      }]);
+      assert.match(missing || "", /Ayarlar/);
+
+      const ok = detectUiBehaviorContractGaps(repo, [{
+        story_id: "US-001",
+        title: "Sayaç — ana ekran ve ayarlar",
+        description: "Ayarlar paneli ve sayaç artırma akışı uygulanır.",
+        acceptance_criteria: JSON.stringify([
+          "Ayarlar/settings ikon butonu /settings paneline gider.",
+          "Artır butonu sayaç değerini artırır.",
+        ]),
+        scope_description: "Ana sayaç ve ayarlar akışı",
+        scope_files: JSON.stringify(["src/screens/Ana.tsx"]),
+      }]);
+      assert.equal(ok, null);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 
   it("adds frontend integration files to a single-story frontend scope", () => {

@@ -70,7 +70,7 @@ export function parseDesignHTML(html: string, screenId?: string): DesignContract
   const linkRe = /<a\s[^>]*href=["']([^"']*)["'][^>]*>(.*?)<\/a>/gis;
   while ((m = linkRe.exec(html)) !== null) {
     const href = m[1];
-    const label = stripTags(m[2]).trim();
+    const label = cleanInteractiveLabel(m[2], m[0]);
     if (!label) continue;
     const el: InteractiveElement = { type: "link", label, href, line: lineOf(m.index) };
     elements.push(el);
@@ -78,21 +78,11 @@ export function parseDesignHTML(html: string, screenId?: string): DesignContract
   }
 
   // Buttons: <button ...>text</button>
-  const btnRe = /<button[^>]*>(.*?)<\/button>/gis;
+  const btnRe = /<button([^>]*)>(.*?)<\/button>/gis;
   while ((m = btnRe.exec(html)) !== null) {
-    const label = stripTags(m[1]).trim();
+    const label = cleanInteractiveLabel(m[2], m[1]);
     if (!label) continue;
     const el: InteractiveElement = { type: "button", label, line: lineOf(m.index) };
-    elements.push(el);
-    buttons.push(el);
-  }
-
-  // Material Symbols icon buttons: <span class="material-symbols...">icon_name</span>
-  const iconBtnRe = /<span\s+class=["'][^"']*material-symbols[^"']*["'][^>]*>([^<]+)<\/span>/gis;
-  while ((m = iconBtnRe.exec(html)) !== null) {
-    const label = m[1].trim();
-    if (!label) continue;
-    const el: InteractiveElement = { type: "button", label: `[icon: ${label}]`, line: lineOf(m.index) };
     elements.push(el);
     buttons.push(el);
   }
@@ -434,6 +424,34 @@ export function validateDesignCompliance(repoPath: string): string[] {
 
 function stripTags(str: string): string {
   return str.replace(/<[^>]*>/g, "");
+}
+
+function extractAttr(attrs: string, name: string): string {
+  const re = new RegExp(`${name}=["']([^"']+)["']`, "i");
+  return attrs.match(re)?.[1]?.trim() || "";
+}
+
+function materialIconNames(html: string): string[] {
+  const icons: string[] = [];
+  const iconRe = /<span\s+class=["'][^"']*material[^"']*["'][^>]*>([^<]+)<\/span>/gis;
+  let m: RegExpExecArray | null;
+  while ((m = iconRe.exec(html)) !== null) {
+    const icon = m[1].trim();
+    if (icon) icons.push(icon);
+  }
+  return [...new Set(icons)];
+}
+
+function cleanInteractiveLabel(innerHtml: string, attrs: string): string {
+  const icons = materialIconNames(innerHtml);
+  let label = stripTags(innerHtml).replace(/\s+/g, " ").trim();
+  for (const icon of icons) {
+    const escaped = icon.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    label = label.replace(new RegExp(`(^|\\s)${escaped}(?=\\s|$)`, "gi"), " ");
+  }
+  label = label.replace(/\s+/g, " ").trim();
+  const explicit = extractAttr(attrs, "aria-label") || extractAttr(attrs, "title") || extractAttr(attrs, "name") || extractAttr(attrs, "id");
+  return (label || explicit || icons[0] || "").trim();
 }
 
 function extractTitle(html: string): string {

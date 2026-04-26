@@ -64,9 +64,155 @@ export function computePredictedScreenFiles(repoPath: string): Array<{ screenId:
   }
 }
 
+export interface UiBehaviorRequirement {
+  screenId: string;
+  screenTitle: string;
+  kind: "button" | "link" | "input";
+  label: string;
+  icon?: string;
+  action?: string;
+  route?: string;
+  expectedBehavior: string;
+}
+
+export function normalizeUiBehaviorText(text: string): string {
+  return String(text || "")
+    .replace(/[İ]/g, "I").replace(/[ı]/g, "i")
+    .toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[ıİ]/g, "i").replace(/[şŞ]/g, "s").replace(/[çÇ]/g, "c")
+    .replace(/[ğĞ]/g, "g").replace(/[üÜ]/g, "u").replace(/[öÖ]/g, "o")
+    .replace(/[^a-z0-9/]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function controlLabel(item: any): string {
+  const raw = String(item?.label || item?.text || item?.placeholder || item?.name || item?.icon || item?.href || "").trim();
+  const icon = String(item?.icon || "").trim();
+  if (!raw) return icon;
+  if (!icon) return raw.replace(/\s+/g, " ").trim();
+  return raw
+    .split(/\s+/)
+    .filter((part) => normalizeUiBehaviorText(part) !== normalizeUiBehaviorText(icon))
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim() || icon;
+}
+
+function inferExpectedBehavior(item: any, kind: UiBehaviorRequirement["kind"]): string {
+  if (kind === "link") return `navigate:${item?.href || item?.route || "target page"}`;
+  if (kind === "input") return "controlled value with onChange; validate when submitted";
+  if (item?.expectedBehavior) return String(item.expectedBehavior);
+  if (item?.expectedRoute || item?.route) return `navigate:${item.expectedRoute || item.route}`;
+  switch (String(item?.action || "")) {
+    case "increment": return "increase visible value/state";
+    case "decrement": return "decrease visible value/state";
+    case "reset": return "reset visible value/state";
+    case "form-submit": return "validate inputs and submit/apply changes";
+    case "create": return "open create flow or add item/state";
+    case "edit": return "open edit/update flow";
+    case "search": return "filter/search visible results";
+    case "destructive": return "perform action with confirmation or visible feedback";
+    default: return "produce visible DOM/state/URL feedback; never empty onClick";
+  }
+}
+
+export function collectUiBehaviorRequirements(repoPath: string): UiBehaviorRequirement[] {
+  if (!repoPath) return [];
+  const domPath = path.join(repoPath, "stitch", "DESIGN_DOM.json");
+  if (!fs.existsSync(domPath)) return [];
+  try {
+    const dom = JSON.parse(fs.readFileSync(domPath, "utf-8"));
+    const screens = dom?.screens || dom;
+    if (!screens || typeof screens !== "object") return [];
+
+    const reqs: UiBehaviorRequirement[] = [];
+    const seen = new Set<string>();
+    for (const [screenId, sd] of Object.entries(screens as Record<string, any>)) {
+      const screenTitle = String(sd?.title || screenId);
+      const add = (kind: UiBehaviorRequirement["kind"], item: any) => {
+        const label = controlLabel(item);
+        const icon = item?.icon ? String(item.icon) : undefined;
+        const route = item?.route || item?.href || item?.expectedRoute;
+        if (!label && !icon && !route) return;
+        const req: UiBehaviorRequirement = {
+          screenId,
+          screenTitle,
+          kind,
+          label: label || icon || route,
+          icon,
+          action: item?.action ? String(item.action) : undefined,
+          route: route ? String(route) : undefined,
+          expectedBehavior: inferExpectedBehavior(item, kind),
+        };
+        const key = [
+          req.screenId, req.kind, normalizeUiBehaviorText(req.label),
+          normalizeUiBehaviorText(req.icon || ""), normalizeUiBehaviorText(req.route || ""),
+        ].join("|");
+        if (seen.has(key)) return;
+        seen.add(key);
+        reqs.push(req);
+      };
+
+      if (Array.isArray(sd?.behaviorContract)) {
+        for (const item of sd.behaviorContract) {
+          if (item?.kind === "link") add("link", item);
+          else if (item?.kind === "input") add("input", item);
+          else add("button", item);
+        }
+      } else {
+        for (const item of Array.isArray(sd?.navLinks) ? sd.navLinks : []) add("link", item);
+        for (const item of Array.isArray(sd?.buttons) ? sd.buttons : []) add("button", item);
+        for (const item of Array.isArray(sd?.inputs) ? sd.inputs : []) add("input", item);
+      }
+    }
+    return reqs;
+  } catch (e) {
+    logger.warn(`[module:stories] UI behavior contract parse failed: ${String(e).slice(0, 120)}`);
+    return [];
+  }
+}
+
+export function computeUiBehaviorContract(repoPath: string): string {
+  const reqs = collectUiBehaviorRequirements(repoPath);
+  if (reqs.length === 0) return "";
+  const lines = [
+    "Every control below MUST be owned by a story acceptance criterion before coding starts.",
+    "Each criterion must state the exact trigger label/icon and the visible behavior.",
+  ];
+  let currentScreen = "";
+  let totalBytes = lines.join("\n").length;
+  const BUDGET = 6000;
+  for (const req of reqs) {
+    const screenLine = `- ${req.screenId} (${req.screenTitle})`;
+    if (currentScreen !== req.screenId) {
+      if (totalBytes + screenLine.length > BUDGET) break;
+      lines.push(screenLine);
+      totalBytes += screenLine.length + 1;
+      currentScreen = req.screenId;
+    }
+    const bits = [
+      `${req.kind} "${req.label}"`,
+      req.icon ? `icon=${req.icon}` : "",
+      req.action ? `action=${req.action}` : "",
+      req.route ? `route=${req.route}` : "",
+      `expects=${req.expectedBehavior}`,
+    ].filter(Boolean);
+    const line = `  - ${bits.join("; ")}`;
+    if (totalBytes + line.length > BUDGET) {
+      lines.push("  - ...(truncated; read stitch/DESIGN_DOM.json for full behavior contract)");
+      break;
+    }
+    lines.push(line);
+    totalBytes += line.length + 1;
+  }
+  return lines.join("\n");
+}
+
 // Compact DESIGN_DOM summary for the stories planner. Full DOM is too big
-// (~50-200KB) — planner only needs element counts + button/input labels to
-// decide scope_files accurately. Cap at ~4KB total.
+// (~50-200KB) — planner needs element counts + behavior labels to decide
+// scope_files accurately. Cap at ~4KB total.
 export function computeDesignDomPreview(repoPath: string): string {
   if (!repoPath) return "";
   const domPath = path.join(repoPath, "stitch", "DESIGN_DOM.json");
@@ -83,11 +229,14 @@ export function computeDesignDomPreview(repoPath: string): string {
 
     for (const [screenId, sd] of Object.entries(screens as Record<string, any>)) {
       if (totalBytes >= BUDGET) break;
-      const buttons: string[] = Array.isArray(sd?.buttons) ? sd.buttons.map((b: any) => typeof b === "string" ? b : b?.label || b?.text || "").filter(Boolean).slice(0, 8) : [];
-      const inputs: string[] = Array.isArray(sd?.inputs) ? sd.inputs.map((i: any) => typeof i === "string" ? i : i?.placeholder || i?.label || i?.name || "").filter(Boolean).slice(0, 6) : [];
+      const buttons: string[] = Array.isArray(sd?.buttons) ? sd.buttons.map((b: any) => typeof b === "string" ? b : controlLabel(b)).filter(Boolean).slice(0, 8) : [];
+      const inputs: string[] = Array.isArray(sd?.inputs) ? sd.inputs.map((i: any) => typeof i === "string" ? i : controlLabel(i)).filter(Boolean).slice(0, 6) : [];
+      const behavior: string[] = Array.isArray(sd?.behaviorContract)
+        ? sd.behaviorContract.map((b: any) => `${b.kind || "button"}:${controlLabel(b)}->${b.expectedBehavior || b.action || b.route || ""}`).filter(Boolean).slice(0, 6)
+        : [];
       const elementCount = (sd?.elements?.length) || (buttons.length + inputs.length) || 0;
       const title = sd?.title || screenId;
-      const line = `- ${screenId} (${title}): ${elementCount} elements, buttons=[${buttons.join(", ")}], inputs=[${inputs.join(", ")}]`;
+      const line = `- ${screenId} (${title}): ${elementCount} elements, buttons=[${buttons.join(", ")}], inputs=[${inputs.join(", ")}], behavior=[${behavior.join(" | ")}]`;
       if (totalBytes + line.length > BUDGET) break;
       entries.push(line);
       totalBytes += line.length + 1;
@@ -118,6 +267,11 @@ export async function injectContext(ctx: ClaimContext): Promise<void> {
   if (domPreview) {
     ctx.context["design_dom_preview"] = domPreview;
     logger.info(`[module:stories] Injected DESIGN_DOM preview (${domPreview.length} bytes)`, { runId: ctx.runId });
+  }
+  const behaviorContract = computeUiBehaviorContract(repo);
+  if (behaviorContract) {
+    ctx.context["ui_behavior_contract"] = behaviorContract;
+    logger.info(`[module:stories] Injected UI behavior contract (${behaviorContract.length} bytes)`, { runId: ctx.runId });
   }
   if (ctx.retryCount === 0 && !ctx.context["previous_failure"]) {
     ctx.context["previous_failure"] = FIRST_ATTEMPT_REMINDER;

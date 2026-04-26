@@ -11,10 +11,12 @@ import { pgGet, pgQuery } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
 import { getStories, getCurrentStory, formatStoryForTemplate, formatCompletedStories, formatStoryRoadmap } from "../../story-ops.js";
 import type { Story } from "../../types.js";
+import { collectUiBehaviorRequirements, type UiBehaviorRequirement } from "../03-stories/context.js";
 
 const STITCH_HTML_EXCERPT_CHARS = 2500;
 const STITCH_HTML_TOTAL_CHARS = 6000;
 const DESIGN_DOM_EXCERPT_CHARS = 3000;
+const UI_BEHAVIOR_CONTRACT_CHARS = 4500;
 
 const STORY_STATUS = {
   PENDING: "pending",
@@ -30,6 +32,7 @@ const OPTIONAL_TEMPLATE_VARS = [
   "completed_stories", "story_roadmap", "stories_remaining", "progress", "project_memory",
   "story_scope_files", "story_shared_files", "story_scope_description",
   "file_skeletons", "scope_reminder", "stitch_html", "design_dom",
+  "ui_behavior_contract",
   "project_tree", "installed_packages", "shared_code", "recent_stories_code",
   "component_registry", "api_routes", "design_rules", "detected_platform",
   "previous_failure", "failure_category", "failure_suggestion", "verify_feedback",
@@ -120,6 +123,10 @@ export async function injectStoryContext(
 
   // Inject DESIGN_DOM for element-level coding guidance
   injectDesignDom(context);
+
+  // Inject explicit behavior requirements from Stitch controls for this story's
+  // screens. This is the prevention layer before smoke-test catches dead UI.
+  injectUiBehaviorContract(context);
 
   // Smart Context Injection (implement-only)
   if (step.step_id === "implement") {
@@ -259,6 +266,67 @@ function injectDesignDom(context: Record<string, string>): void {
       }
     }
   } catch (e) { logger.debug(`[design-dom] ${String(e).slice(0, 80)}`); }
+}
+
+function renderUiBehaviorContract(reqs: UiBehaviorRequirement[]): string {
+  if (reqs.length === 0) return "";
+  const lines = [
+    "Every control below is from Stitch DOM and MUST be implemented in this story when its screen is in scope.",
+    "Each control needs real visible behavior: route/panel/dialog/state change/form validation. Empty onClick is forbidden.",
+  ];
+  let currentScreen = "";
+  let totalBytes = lines.join("\n").length;
+  for (const req of reqs) {
+    const screenLine = `- ${req.screenId} (${req.screenTitle})`;
+    if (currentScreen !== req.screenId) {
+      if (totalBytes + screenLine.length > UI_BEHAVIOR_CONTRACT_CHARS) break;
+      lines.push(screenLine);
+      totalBytes += screenLine.length + 1;
+      currentScreen = req.screenId;
+    }
+    const bits = [
+      `${req.kind} "${req.label}"`,
+      req.icon ? `icon=${req.icon}` : "",
+      req.action ? `action=${req.action}` : "",
+      req.route ? `route=${req.route}` : "",
+      `expects=${req.expectedBehavior}`,
+    ].filter(Boolean);
+    const line = `  - ${bits.join("; ")}`;
+    if (totalBytes + line.length > UI_BEHAVIOR_CONTRACT_CHARS) {
+      lines.push("  - ...(truncated; read stitch/DESIGN_DOM.json for the full behavior contract)");
+      break;
+    }
+    lines.push(line);
+    totalBytes += line.length + 1;
+  }
+  return lines.join("\n");
+}
+
+function injectUiBehaviorContract(context: Record<string, string>): void {
+  try {
+    const repoPath = context["repo"] || context["REPO"] || "";
+    if (!repoPath) return;
+    const reqs = collectUiBehaviorRequirements(repoPath);
+    if (reqs.length === 0) return;
+
+    let storyScreenIds = new Set<string>();
+    try {
+      const storyScreens = JSON.parse(context["story_screens"] || "[]");
+      if (Array.isArray(storyScreens)) {
+        storyScreenIds = new Set(storyScreens.map((s: any) => String(s?.screenId || "")).filter(Boolean));
+      }
+    } catch {
+      storyScreenIds = new Set<string>();
+    }
+
+    const scopedReqs = storyScreenIds.size > 0
+      ? reqs.filter(r => storyScreenIds.has(r.screenId))
+      : reqs;
+    const contract = renderUiBehaviorContract(scopedReqs.length > 0 ? scopedReqs : reqs);
+    if (contract) context["ui_behavior_contract"] = contract;
+  } catch (e) {
+    logger.debug(`[ui-behavior-contract] ${String(e).slice(0, 100)}`);
+  }
 }
 
 async function injectSmartContext(

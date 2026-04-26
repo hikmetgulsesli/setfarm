@@ -2,7 +2,12 @@ import type { ParsedOutput, ValidationResult, CompleteContext } from "../types.j
 import { pgQuery, pgRun, now } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
 import { parseAndInsertStories } from "../../story-ops.js";
-import { computePredictedScreenFiles } from "./context.js";
+import {
+  collectUiBehaviorRequirements,
+  computePredictedScreenFiles,
+  normalizeUiBehaviorText,
+  type UiBehaviorRequirement,
+} from "./context.js";
 
 // validateOutput is intentionally minimal at the field level — STORIES_JSON
 // arrives as multi-line raw text (not in parsed[]) and is ingested by
@@ -47,7 +52,10 @@ const SEMANTIC_SYNONYM_GROUPS = [
 
 function normalizeSemanticText(text: string): string {
   return String(text || "")
+    .replace(/[İ]/g, "I")
+    .replace(/[ı]/g, "i")
     .toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .replace(/[ıİ]/g, "i")
     .replace(/[şŞ]/g, "s")
     .replace(/[çÇ]/g, "c")
@@ -127,6 +135,95 @@ export function detectStorySemanticDrift(
   return `GUARDRAIL: Story semantic drift detected for ${storyIds}. Stories do not preserve task/PRD domain terms. Missing terms: ${missing}. Re-output STORIES_JSON using the original product concept and actions from PRD/task.`;
 }
 
+const UI_BEHAVIOR_STOP_WORDS = new Set([
+  "action", "aktif", "aria", "button", "buton", "click", "control", "deger",
+  "div", "dom", "feedback", "flow", "href", "icon", "input", "islem", "item",
+  "label", "link", "modal", "navigate", "onchange", "onclick", "page", "panel",
+  "state", "submit", "target", "trigger", "url", "value", "visible", "circle", "alt",
+]);
+
+const UI_BEHAVIOR_SYNONYM_GROUPS = [
+  ["settings", "setting", "ayar", "ayarlar", "tune"],
+  ["history", "gecmis", "kayit", "kayitlar", "logs", "log"],
+  ["profile", "profil", "person", "account", "hesap", "kullanici"],
+  ["home", "ana", "anasayfa", "dashboard"],
+  ["search", "ara", "arama", "filtre", "filter"],
+  ["add", "add_circle", "plus", "ekle", "yeni", "olustur", "create"],
+  ["artir", "arttir", "increase", "increment", "plus"],
+  ["remove", "minus", "azalt", "decrease", "decrement"],
+  ["reset", "restart", "restart_alt", "sifirla"],
+  ["save", "kaydet", "submit", "gonder"],
+  ["delete", "sil", "kaldir", "trash"],
+  ["close", "kapat", "iptal", "cancel", "dismiss"],
+  ["note", "notes", "not", "notlar"],
+  ["counter", "sayac", "tally"],
+  ["notification", "notifications", "bildirim", "bildirimler"],
+  ["favorite", "favorites", "favori"],
+  ["bookmark", "bookmarks", "yerimi"],
+];
+
+function uiBehaviorTokens(text: string): string[] {
+  return normalizeUiBehaviorText(text)
+    .split(/[ /]+/)
+    .map(t => t.trim())
+    .filter(t => t.length >= 2 && !UI_BEHAVIOR_STOP_WORDS.has(t));
+}
+
+function expandUiBehaviorTerm(term: string): string[] {
+  const normalized = normalizeUiBehaviorText(term).replace(/\s+/g, "_");
+  const group = UI_BEHAVIOR_SYNONYM_GROUPS.find(g => g.includes(normalized));
+  return group ? group : [normalized];
+}
+
+function requirementTerms(req: UiBehaviorRequirement): string[] {
+  const raw = [
+    req.label,
+    req.icon || "",
+    req.action || "",
+    req.route || "",
+  ].join(" ");
+  const expanded = uiBehaviorTokens(raw).flatMap(expandUiBehaviorTerm);
+  return [...new Set(expanded.filter(t => t.length >= 2 && !UI_BEHAVIOR_STOP_WORDS.has(t)))];
+}
+
+function formatUiBehaviorRequirement(req: UiBehaviorRequirement): string {
+  return [
+    `${req.screenId}:${req.kind} "${req.label}"`,
+    req.icon ? `icon=${req.icon}` : "",
+    req.route ? `route=${req.route}` : "",
+    req.action ? `action=${req.action}` : "",
+  ].filter(Boolean).join(" ");
+}
+
+export function detectUiBehaviorContractGaps(
+  repoPath: string,
+  stories: SemanticStoryInput[],
+): string | null {
+  const requirements = collectUiBehaviorRequirements(repoPath);
+  if (requirements.length === 0 || stories.length === 0) return null;
+
+  const storyText = stories.map(s => [
+    s.title || "",
+    s.description || "",
+    s.scope_description || "",
+    parseStoryJsonField(s.acceptance_criteria),
+    parseStoryJsonField(s.scope_files),
+  ].join(" ")).join(" ");
+  const storyTokens = new Set(uiBehaviorTokens(storyText).flatMap(expandUiBehaviorTerm));
+
+  const missing: UiBehaviorRequirement[] = [];
+  for (const req of requirements) {
+    const terms = requirementTerms(req);
+    if (terms.length === 0) continue;
+    if (!terms.some(t => storyTokens.has(t))) missing.push(req);
+  }
+  if (missing.length === 0) return null;
+
+  const list = missing.slice(0, 10).map(formatUiBehaviorRequirement).join("; ");
+  const suffix = missing.length > 10 ? `; +${missing.length - 10} more` : "";
+  return `GUARDRAIL: UI_BEHAVIOR_CONTRACT coverage missing for ${missing.length} control(s): ${list}${suffix}. Re-output STORIES_JSON so acceptanceCriteria names each missing Stitch control and its visible behavior before coding starts.`;
+}
+
 // onComplete owns the full stories guardrail chain. Failures fail the step
 // (return early); auto-fixes mutate the DB in-place. The pipeline expects
 // stories already inserted into the DB before this runs (parseAndInsertStories
@@ -175,6 +272,13 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
     logger.warn(`[module:stories] ${semanticErr}`, { runId });
     await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);
     throw new Error(semanticErr);
+  }
+
+  const uiBehaviorErr = detectUiBehaviorContractGaps(context["repo"] || context["REPO"] || "", semanticRows);
+  if (uiBehaviorErr) {
+    logger.warn(`[module:stories] ${uiBehaviorErr}`, { runId });
+    await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);
+    throw new Error(uiBehaviorErr);
   }
 
   // 2. missing scope_files (story_index > 0 — setup story exempt)
