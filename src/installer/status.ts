@@ -111,7 +111,13 @@ async function cancelActiveRunState(run: RunInfo): Promise<number> {
 }
 
 export async function stopWorkflow(query: string): Promise<StopWorkflowResult> {
-  let run = await pgGet<RunInfo>("SELECT * FROM runs WHERE id = $1", [query]);
+  let run: RunInfo | undefined;
+  if (/^\d+$/.test(query)) {
+    run = await pgGet<RunInfo>("SELECT * FROM runs WHERE run_number = $1 LIMIT 1", [parseInt(query, 10)]);
+  }
+  if (!run) {
+    run = await pgGet<RunInfo>("SELECT * FROM runs WHERE id = $1", [query]);
+  }
   if (!run) {
     run = await pgGet<RunInfo>("SELECT * FROM runs WHERE id LIKE $1 || '%' ORDER BY created_at DESC LIMIT 1", [query]);
   }

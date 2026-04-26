@@ -8,14 +8,15 @@ import type { StopWorkflowResult } from "./status.js";
 // Helper to create a test run with steps
 async function createTestRun(opts: {
   runId: string;
+  runNumber?: number | null;
   workflowId: string;
   status?: string;
   steps?: Array<{ stepId: string; status: string; output?: string | null }>;
 }) {
   const ts = now();
   await pgRun(
-    "INSERT INTO runs (id, workflow_id, task, status, context, created_at, updated_at) VALUES ($1, $2, $3, $4, '{}', $5, $6)",
-    [opts.runId, opts.workflowId, "test task", opts.status ?? "running", ts, ts]
+    "INSERT INTO runs (id, run_number, workflow_id, task, status, context, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, '{}', $6, $7)",
+    [opts.runId, opts.runNumber ?? null, opts.workflowId, "test task", opts.status ?? "running", ts, ts]
   );
 
   if (opts.steps) {
@@ -175,6 +176,38 @@ describe("stopWorkflow", () => {
     if (result.status !== "ok") return;
     assert.equal(result.runId, runId);
     assert.equal(result.cancelledSteps, 1);
+  });
+
+  it("prefers numeric run_number over UUID prefix", async () => {
+    const runNumber = 990000 + Math.floor(Math.random() * 10000);
+    const query = String(runNumber);
+    const prefixRunId = `${query}-prefix-shadow-run`;
+    const numberedRunId = crypto.randomUUID();
+    testRunIds.push(prefixRunId, numberedRunId);
+
+    await createTestRun({
+      runId: prefixRunId,
+      workflowId: "test-wf-prefix-shadow",
+      status: "running",
+      steps: [{ stepId: "shadow", status: "pending" }],
+    });
+    await createTestRun({
+      runId: numberedRunId,
+      runNumber,
+      workflowId: "test-wf-numbered",
+      status: "running",
+      steps: [{ stepId: "target", status: "pending" }],
+    });
+
+    const result = await stopWorkflow(query);
+    assert.equal(result.status, "ok");
+    if (result.status !== "ok") return;
+    assert.equal(result.runId, numberedRunId);
+
+    const shadow = await pgGet<{ status: string }>("SELECT status FROM runs WHERE id = $1", [prefixRunId]);
+    const target = await pgGet<{ status: string }>("SELECT status FROM runs WHERE id = $1", [numberedRunId]);
+    assert.equal(shadow?.status, "running");
+    assert.equal(target?.status, "cancelled");
   });
 
   it("does NOT change done steps to failed", async () => {
