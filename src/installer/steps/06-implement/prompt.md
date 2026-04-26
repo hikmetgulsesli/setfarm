@@ -49,7 +49,7 @@ You are implementing ONE user story. You may ONLY write to the files listed belo
    - If acceptance criteria conflict with existing tests, make the smallest compatible change and keep both old and new behavior working.
    - Before committing, run `git diff` and verify the diff contains only this story's required changes.
 
-3. **Design reference, not file assignment.** The Stitch design may show elements that are not in your SCOPE_FILES (e.g. a Header when your scope is a counter component). Use the design as reference for visual style, spacing and interaction of your scope files only. Do not create the other elements — another story owns them.
+3. **Design reference, not file assignment.** The Stitch design may show elements that are not in your SCOPE_FILES (for example, a shared header while your scope is one screen component). Use the design as reference for visual style, spacing and interaction of your scope files only. Do not create the other elements — another story owns them.
 
 4. Read the story's acceptance criteria and implement ONLY what it asks
 5. Use imports from SHARED_FILES for context only; do not modify shared files unless they are also listed in SCOPE_FILES.
