@@ -197,7 +197,7 @@ export async function checkScopeEnforcement(
 
   const allTouched = Array.from(new Set([...changedFiles, ...dirtyFiles]));
   const sourceFiles = allTouched.filter(f => SCOPE_EXTS.test(f) && !SCOPE_IGNORE.test(f));
-  const forbiddenArtifacts = allTouched.filter(f => /^(QA_REPORT\.md|qa-report\.(md|json|txt)|smoke-(home|after-click)\.png)$/i.test(f));
+  const forbiddenArtifacts = allTouched.filter(f => /^(QA_REPORT\.md|qa-report\.(md|json|txt)|smoke-(home|after-click)\.png|index\.html|package(-lock)?\.json|vite\.config\.[cm]?[jt]s|tailwind\.config\.[cm]?[jt]s|postcss\.config\.[cm]?[jt]s|eslint\.config\.[cm]?[jt]s)$/i.test(f));
   if (forbiddenArtifacts.length > 0 && retryCount < maxRetries) {
     return {
       passed: false,
