@@ -136,6 +136,56 @@ describe("External skill installation", () => {
     });
   });
 
+  it("resolves shared bundled bootstrap files and links references", async () => {
+    const mod = await import("../dist/installer/agent-provision.js");
+    const workflowDir = path.join(tmpDir, "installed", "workflows", "feature-dev");
+    const bundledRoot = path.join(tmpDir, "package");
+    const bundledSourceDir = path.join(bundledRoot, "workflows", "feature-dev");
+    const sharedDir = path.join(bundledRoot, "agents", "shared", "setup");
+    const referencesDir = path.join(bundledRoot, "references");
+    await fs.mkdir(workflowDir, { recursive: true });
+    await fs.mkdir(bundledSourceDir, { recursive: true });
+    await fs.mkdir(sharedDir, { recursive: true });
+    await fs.mkdir(referencesDir, { recursive: true });
+    await fs.writeFile(path.join(sharedDir, "AGENTS.md"), "# Shared setup agent");
+    await fs.writeFile(path.join(referencesDir, "design-standards.md"), "# Design standards");
+
+    const workflow = {
+      id: "test-wf-shared",
+      name: "Test",
+      steps: [],
+      agents: [
+        {
+          id: "setup",
+          role: "setup",
+          workspace: {
+            baseDir: "agents/setup",
+            skills: [],
+            files: {
+              "AGENTS.md": "../../agents/shared/setup/AGENTS.md",
+            },
+          },
+        },
+      ],
+    };
+
+    const results = await mod.provisionAgents({
+      workflow: workflow as any,
+      workflowDir,
+      bundledSourceDir,
+      installSkill: false,
+    });
+
+    const agentsMd = await fs.readFile(path.join(results[0].workspaceDir, "AGENTS.md"), "utf-8");
+    assert.equal(agentsMd, "# Shared setup agent");
+
+    const referencesLink = path.join(results[0].workspaceDir, "references");
+    const linkStat = await fs.lstat(referencesLink);
+    assert.equal(linkStat.isSymbolicLink(), true);
+    const linkTarget = await fs.readlink(referencesLink);
+    assert.equal(path.resolve(results[0].workspaceDir, linkTarget), referencesDir);
+  });
+
   it("does not interfere with setfarm-workflows skill (bundled)", async () => {
     const mod = await import("../dist/installer/agent-provision.js");
     const workflowDir = path.join(tmpDir, "workflow");

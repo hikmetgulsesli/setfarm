@@ -27,6 +27,104 @@ async function ensureDir(dir: string): Promise<void> {
   await fs.mkdir(dir, { recursive: true });
 }
 
+function isWithinDir(parent: string, candidate: string): boolean {
+  const relative = path.relative(path.resolve(parent), path.resolve(candidate));
+  return relative === "" || (!!relative && !relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resolveBundledRoot(bundledSourceDir?: string): string | null {
+  return bundledSourceDir ? path.resolve(bundledSourceDir, "..", "..") : null;
+}
+
+async function resolveBootstrapSource(params: {
+  agentId: string;
+  relativePath: string;
+  workflowDir: string;
+  bundledSourceDir?: string;
+}): Promise<string> {
+  const candidates: Array<{ source: string; allowedRoot: string }> = [
+    {
+      source: path.resolve(params.workflowDir, params.relativePath),
+      allowedRoot: path.resolve(params.workflowDir),
+    },
+  ];
+
+  const bundledRoot = resolveBundledRoot(params.bundledSourceDir);
+  if (params.bundledSourceDir && bundledRoot) {
+    candidates.push({
+      source: path.resolve(params.bundledSourceDir, params.relativePath),
+      allowedRoot: bundledRoot,
+    });
+  }
+
+  let blocked = false;
+  for (const candidate of candidates) {
+    if (!isWithinDir(candidate.allowedRoot, candidate.source)) {
+      blocked = true;
+      continue;
+    }
+    if (await pathExists(candidate.source)) {
+      return candidate.source;
+    }
+  }
+
+  if (blocked) {
+    logger.warn(`[agent-provision] Path traversal blocked: ${params.relativePath}`, {});
+  }
+  throw new Error(`Missing bootstrap file for agent "${params.agentId}": ${params.relativePath}`);
+}
+
+async function ensureReferencesLink(params: {
+  workflowDir: string;
+  bundledSourceDir?: string;
+  workspaceDir: string;
+}): Promise<void> {
+  const candidates = [
+    params.bundledSourceDir ? path.join(resolveBundledRoot(params.bundledSourceDir) || "", "references") : "",
+    path.resolve(params.workflowDir, "..", "..", "references"),
+  ].filter(Boolean);
+
+  let resolvedSource = "";
+  for (const candidate of candidates) {
+    if (await pathExists(candidate)) {
+      resolvedSource = candidate;
+      break;
+    }
+  }
+  if (!resolvedSource) return;
+
+  const destination = path.join(params.workspaceDir, "references");
+  try {
+    const current = await fs.lstat(destination);
+    if (current.isSymbolicLink()) {
+      const target = await fs.readlink(destination);
+      const absoluteTarget = path.resolve(path.dirname(destination), target);
+      if (absoluteTarget === path.resolve(resolvedSource)) return;
+      await fs.rm(destination, { force: true });
+    } else {
+      return;
+    }
+  } catch {
+    // Missing link is expected on first install.
+  }
+
+  try {
+    await fs.symlink(resolvedSource, destination, "dir");
+    logger.info(`[agent-provision] Linked references/ into ${params.workspaceDir}`, {});
+  } catch (e) {
+    logger.warn(`[agent-provision] Failed to link references/: ${String(e).slice(0, 120)}`, {});
+  }
+}
+
 function resolveWorkspaceDir(params: {
   workflowId: string;
   agent: WorkflowAgent;
@@ -55,35 +153,21 @@ export async function provisionAgents(params: {
     await ensureDir(workspaceDir);
 
     for (const [fileName, relativePath] of Object.entries(agent.workspace.files)) {
-      // Try the installed workflow dir first, then fall back to the bundled source
-      // (handles relative paths like ../../agents/shared/ that escape the workflow dir)
-      let source = path.resolve(params.workflowDir, relativePath);
-    // Path traversal guard: source must be within workflowDir or bundled source
-    const normalizedSource = path.normalize(source);
-    if (!normalizedSource.startsWith(path.normalize(params.workflowDir)) &&
-        !normalizedSource.startsWith(path.normalize(params.bundledSourceDir || ""))) {
-      logger.warn(`[agent-provision] Path traversal blocked: ${relativePath}`, {});
-      continue;
-    }
-      try {
-        await fs.access(source);
-      } catch (e) {
-        logger.debug(`[agent-provision] Source file not found, trying bundled: ${relativePath}`, {});
-        if (params.bundledSourceDir) {
-          source = path.resolve(params.bundledSourceDir, relativePath);
-          try {
-            await fs.access(source);
-          } catch (e2) {
-            logger.debug(`[agent-provision] Bundled source also not found: ${relativePath}`, {});
-            throw new Error(`Missing bootstrap file for agent "${agent.id}": ${relativePath}`);
-          }
-        } else {
-          throw new Error(`Missing bootstrap file for agent "${agent.id}": ${relativePath}`);
-        }
-      }
+      const source = await resolveBootstrapSource({
+        agentId: agent.id,
+        relativePath,
+        workflowDir: params.workflowDir,
+        bundledSourceDir: params.bundledSourceDir,
+      });
       const destination = path.join(workspaceDir, fileName);
       await writeWorkflowFile({ destination, source, overwrite });
     }
+
+    await ensureReferencesLink({
+      workflowDir: params.workflowDir,
+      bundledSourceDir: params.bundledSourceDir,
+      workspaceDir,
+    });
 
     if (agent.workspace.skills?.length) {
       const skillsDir = path.join(workspaceDir, "skills");

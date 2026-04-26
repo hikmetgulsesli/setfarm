@@ -376,34 +376,113 @@ function generateSrcTree(repoPath: string): string {
  * Auto-complete design step with existing HTML files.
  * Shared by .stitch dedup and PRD Generator cache path.
  */
+const MIN_STITCH_HTML_BYTES = 1000;
+
+function isReusableStitchHtml(filePath: string): boolean {
+  try {
+    if (!fs.existsSync(filePath)) return false;
+    if (fs.statSync(filePath).size < MIN_STITCH_HTML_BYTES) return false;
+    const head = fs.readFileSync(filePath, "utf-8").slice(0, 4000).toLowerCase();
+    if (!head.includes("<html") && !head.includes("<!doctype")) return false;
+    if (head.includes("empty html") || head.includes("design not generated")) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isPrdPseudoDesignScreen(screen: any): boolean {
+  const title = String(screen?.title || screen?.name || "").trim().toLowerCase();
+  const htmlFile = String(screen?.htmlFile || "").trim().toLowerCase();
+  return /^prd(?:\b|[:\s-])/.test(title) || /^prd(?:\b|[:\s-])/.test(htmlFile);
+}
+
+function reusableDesignScreens(repoPath: string, htmlFiles: string[]): Array<{ screenId: string; name: string }> {
+  const stitchDir = path.join(repoPath, "stitch");
+  const manifestPath = path.join(stitchDir, "DESIGN_MANIFEST.json");
+  if (fs.existsSync(manifestPath)) {
+    try {
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+      if (Array.isArray(manifest)) {
+        return manifest
+          .filter((screen: any) => !isPrdPseudoDesignScreen(screen))
+          .filter((screen: any) => {
+            const sid = String(screen?.screenId || screen?.id || "");
+            return sid && isReusableStitchHtml(path.join(stitchDir, sid + ".html"));
+          })
+          .map((screen: any) => ({
+            screenId: String(screen.screenId || screen.id),
+            name: String(screen.title || screen.name || screen.screenId || screen.id),
+          }));
+      }
+    } catch (e) {
+      logger.warn(`[design-dedup] Manifest parse failed: ${String(e).slice(0, 120)}`, {});
+    }
+  }
+
+  return htmlFiles
+    .filter((file: string) => isReusableStitchHtml(path.join(stitchDir, file)))
+    .map((file: string) => ({
+      screenId: file.replace(".html", ""),
+      name: file.replace(".html", ""),
+    }));
+}
+
+function expectedDesignScreenCount(repoPath: string): number {
+  const manifestPath = path.join(repoPath, "stitch", "DESIGN_MANIFEST.json");
+  if (!fs.existsSync(manifestPath)) return 0;
+  try {
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+    if (!Array.isArray(manifest)) return 0;
+    return manifest.filter((screen: any) => !isPrdPseudoDesignScreen(screen)).length;
+  } catch {
+    return 0;
+  }
+}
+
 async function autoCompleteDesignStep(step: StepRow, db: any, htmlFiles: string[], projectId: string): Promise<boolean> {
   const dRepoPath = (await getRunContext(step.run_id))["repo"] || "";
   const dCtx = await getRunContext(step.run_id);
+  if (!dRepoPath) return false;
+
+  const reusableScreens = reusableDesignScreens(dRepoPath, htmlFiles);
+  const expectedFromManifest = expectedDesignScreenCount(dRepoPath);
+  if (expectedFromManifest > 0 && reusableScreens.length < expectedFromManifest) {
+    logger.warn(`[design-dedup] Existing design incomplete: ${reusableScreens.length}/${expectedFromManifest} valid HTMLs — waiting for generation`, { runId: step.run_id });
+    return false;
+  }
+
   const prdScreenCount = dCtx["prd_screen_count"] ? parseInt(dCtx["prd_screen_count"], 10) : 0;
-  if (prdScreenCount > 0 && htmlFiles.length < prdScreenCount) {
-    logger.warn(`[design-dedup] Existing design incomplete: ${htmlFiles.length}/${prdScreenCount} screens — clearing cache to force regeneration`, { runId: step.run_id });
+  if (prdScreenCount > 0 && reusableScreens.length < prdScreenCount) {
+    logger.warn(`[design-dedup] Existing design incomplete: ${reusableScreens.length}/${prdScreenCount} valid screens — clearing cache to force regeneration`, { runId: step.run_id });
     if (dRepoPath) {
       try { fs.rmSync(path.join(dRepoPath, "stitch"), { recursive: true, force: true }); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
       try { fs.unlinkSync(path.join(dRepoPath, ".stitch")); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
     }
     return false;
   }
-  const dScreenMap = htmlFiles.map((f: string) => ({
-    screenId: f.replace(".html", ""),
-    name: f.replace(".html", ""),
+
+  if (reusableScreens.length === 0) {
+    logger.warn(`[design-dedup] Existing design has no valid HTMLs — waiting for generation`, { runId: step.run_id });
+    return false;
+  }
+
+  const dScreenMap = reusableScreens.map((screen) => ({
+    screenId: screen.screenId,
+    name: screen.name,
     type: "page",
-    description: f.replace(".html", ""),
+    description: screen.name,
   }));
   dCtx["stitch_project_id"] = projectId;
-  dCtx["screens_generated"] = String(htmlFiles.length);
+  dCtx["screens_generated"] = String(reusableScreens.length);
   dCtx["screen_map"] = JSON.stringify(dScreenMap);
   dCtx["device_type"] = dCtx["device_type"] || "DESKTOP";
   dCtx["design_system"] = dCtx["design_system"] || "reused from existing designs";
-  dCtx["design_notes"] = `Reused ${htmlFiles.length} existing screen designs`;
+  dCtx["design_notes"] = `Reused ${reusableScreens.length} existing screen designs`;
   await updateRunContext(step.run_id, dCtx);
-  const dOutput = `STATUS: done\nSTITCH_PROJECT_ID: ${projectId}\nSCREENS_GENERATED: ${htmlFiles.length}\nDESIGN_NOTES: Reused ${htmlFiles.length} screens (auto-skip)`;
+  const dOutput = `STATUS: done\nSTITCH_PROJECT_ID: ${projectId}\nSCREENS_GENERATED: ${reusableScreens.length}\nDESIGN_NOTES: Reused ${reusableScreens.length} screens (auto-skip)`;
   await pgRun("UPDATE steps SET status = 'done', output = $1, updated_at = $2 WHERE id = $3", [dOutput, now(), step.id]);
-  logger.info(`[design-dedup] Auto-skipped design — reusing ${htmlFiles.length} screens (project ${projectId})`, { runId: step.run_id });
+  logger.info(`[design-dedup] Auto-skipped design — reusing ${reusableScreens.length} valid screens (project ${projectId})`, { runId: step.run_id });
   await advancePipeline(step.run_id);
   return true;
 }
