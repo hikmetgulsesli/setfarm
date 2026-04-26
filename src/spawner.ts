@@ -84,9 +84,9 @@ OUTPUT_FILE: /tmp/setfarm-output-${outputFileId}.txt
 1. Do NOT run step peek or step claim. Do NOT overwrite CLAIM_FILE. Extract claim data:
    CLAIM_FILE=${claimFile}
    STEP_ID=$(jq -r '.stepId // empty' "$CLAIM_FILE")
-   WORKDIR=$(jq -r "if (.input | type) == \"object\" then (.input.story_workdir // .input.repo // \"\") else \"\" end" "$CLAIM_FILE")
+   WORKDIR=$(jq -r 'if (.input | type) == "object" then (.input.story_workdir // .input.repo // "") else "" end' "$CLAIM_FILE")
    if [ -z "$WORKDIR" ]; then
-     WORKDIR=$(jq -r "if (.input | type) == \"string\" then .input else \"\" end" "$CLAIM_FILE" | sed -n "s/^WORKDIR:[[:space:]]*//p; s/^REPO:[[:space:]]*//p" | head -1)
+     WORKDIR=$(jq -r 'if (.input | type) == "string" then .input else "" end' "$CLAIM_FILE" | sed -n "s/^WORKDIR:[[:space:]]*//p; s/^REPO:[[:space:]]*//p" | head -1)
    fi
    [ -z "$STEP_ID" ] && { echo "HEARTBEAT_OK"; exit 0; }
    [ -z "$WORKDIR" ] && WORKDIR="$HOME/.openclaw/workspace/agent-scratch"
@@ -96,8 +96,8 @@ OUTPUT_FILE: /tmp/setfarm-output-${outputFileId}.txt
    esac
 
 2. Read the claim input from CLAIM_FILE. Prefer targeted reads, for example:
-   jq -r "if (.input | type) == \"object\" then (.input.task // \"\") else .input end" "$CLAIM_FILE"
-   jq -r "if (.input | type) == \"object\" then (.input.prd // \"\") else \"\" end" "$CLAIM_FILE"
+   jq -r 'if (.input | type) == "object" then (.input.task // "") else .input end' "$CLAIM_FILE"
+   jq -r 'if (.input | type) == "object" then (.input.prd // "") else "" end' "$CLAIM_FILE"
 
 3. Do the requested ${wfId}/${role} work from WORKDIR. Stay in WORKDIR.
 
