@@ -7,6 +7,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { execFileSync } from "node:child_process";
 import { pgQuery, pgRun, pgGet, now } from "../db-pg.js";
 import type { LoopConfig } from "./types.js";
@@ -28,6 +29,185 @@ import { getWorkflowId, getRunContext, failRun, recordStepTransition } from "./r
 import { getAgentWorkspacePath } from "./worktree-ops.js";
 
 // ── Helper ──────────────────────────────────────────────────────────
+
+const PROJECT_ARTIFACT_PATHS = [
+  "QA_REPORT.md",
+  "qa-report.md",
+  "qa-report.json",
+  "qa-report.txt",
+  "qa-debug.cjs",
+  "qa-full-test.cjs",
+  "qa-test*.cjs",
+  "smoke-home.png",
+  "smoke-after-click.png",
+];
+
+const TRANSIENT_PREVIEW_PORTS = new Set(["4173", "5173", "5174"]);
+
+type ProcessRow = {
+  pid: number;
+  ppid: number;
+  command: string;
+};
+
+function isSafeProjectDir(repoPath: string): boolean {
+  if (!repoPath || !path.isAbsolute(repoPath)) return false;
+  const resolved = path.resolve(repoPath);
+  if (resolved === "/" || resolved === os.homedir() || resolved === path.join(os.homedir(), ".openclaw", "setfarm-repo")) return false;
+  return fs.existsSync(resolved);
+}
+
+function getProjectDirs(context: Record<string, string>): string[] {
+  const dirs = new Set<string>();
+  for (const key of ["repo", "REPO", "story_workdir"]) {
+    const value = context[key];
+    if (value && isSafeProjectDir(value)) dirs.add(path.resolve(value));
+  }
+  return [...dirs];
+}
+
+function cleanupUntrackedProjectArtifacts(repoPath: string): number {
+  if (!fs.existsSync(path.join(repoPath, ".git"))) return 0;
+  let files: string[] = [];
+  try {
+    const out = execFileSync("git", ["ls-files", "--others", "--exclude-standard", "--", ...PROJECT_ARTIFACT_PATHS], {
+      cwd: repoPath,
+      timeout: 10_000,
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    files = out ? out.split(/\n+/).filter(Boolean) : [];
+  } catch {
+    return 0;
+  }
+
+  let removed = 0;
+  for (const rel of files) {
+    const abs = path.resolve(repoPath, rel);
+    if (abs !== repoPath && !abs.startsWith(repoPath + path.sep)) continue;
+    try {
+      const st = fs.statSync(abs);
+      if (st.isFile() || st.isSymbolicLink()) {
+        fs.unlinkSync(abs);
+        removed++;
+      }
+    } catch { /* already gone */ }
+  }
+  return removed;
+}
+
+function parseProcessRows(): ProcessRow[] {
+  let out = "";
+  try {
+    out = execFileSync("ps", ["-eo", "pid=,ppid=,command="], {
+      timeout: 10_000,
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
+    return [];
+  }
+  return out.split("\n").map((line) => {
+    const match = line.trim().match(/^(\d+)\s+(\d+)\s+([\s\S]+)$/);
+    if (!match) return null;
+    return { pid: Number(match[1]), ppid: Number(match[2]), command: match[3] };
+  }).filter((row): row is ProcessRow => !!row && row.pid > 0);
+}
+
+function collectDescendants(pid: number, childrenByParent: Map<number, ProcessRow[]>, out: Set<number>): void {
+  const children = childrenByParent.get(pid) || [];
+  for (const child of children) {
+    if (out.has(child.pid)) continue;
+    out.add(child.pid);
+    collectDescendants(child.pid, childrenByParent, out);
+  }
+}
+
+function hasAllowedTransientPort(command: string, ports: Set<string>): boolean {
+  for (const port of ports) {
+    const escaped = port.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`(?:--port(?:=|\\s+)|-p\\s+)${escaped}\\b`).test(command)) return true;
+  }
+  return false;
+}
+
+function isTransientPreviewCommand(command: string, repoPath: string, ports: Set<string>): boolean {
+  if (!command.includes(repoPath)) return false;
+  if (!hasAllowedTransientPort(command, ports)) return false;
+  return /\b(vite|next)\b[\s\S]{0,80}\b(dev|preview|start)\b|\bnpx\s+vite\b|\bnpm\s+exec\s+vite\b/.test(command);
+}
+
+function reapTransientPreviewProcesses(repoPath: string, ports: Set<string>): number {
+  const rows = parseProcessRows();
+  if (rows.length === 0) return 0;
+
+  const byPid = new Map(rows.map((row) => [row.pid, row]));
+  const childrenByParent = new Map<number, ProcessRow[]>();
+  for (const row of rows) {
+    const children = childrenByParent.get(row.ppid) || [];
+    children.push(row);
+    childrenByParent.set(row.ppid, children);
+  }
+
+  const targets = new Set<number>();
+  for (const row of rows) {
+    if (!isTransientPreviewCommand(row.command, repoPath, ports)) continue;
+    targets.add(row.pid);
+    collectDescendants(row.pid, childrenByParent, targets);
+
+    let parent = byPid.get(row.ppid);
+    while (parent && parent.pid !== 1 && parent.pid !== process.pid) {
+      if (!/\b(npm|npx|node|sh|bash)\b/.test(parent.command) || !/\b(vite|npm exec|npx|sh -c|bash -c)\b/.test(parent.command)) break;
+      targets.add(parent.pid);
+      parent = byPid.get(parent.ppid);
+    }
+  }
+
+  if (targets.size === 0) return 0;
+  const ordered = [...targets].sort((a, b) => b - a);
+  for (const pid of ordered) {
+    try { process.kill(pid, "SIGTERM"); } catch { /* already dead */ }
+  }
+  const deadline = Date.now() + 1200;
+  while (Date.now() < deadline) {
+    let anyAlive = false;
+    for (const pid of ordered) {
+      try { process.kill(pid, 0); anyAlive = true; break; } catch { /* dead */ }
+    }
+    if (!anyAlive) break;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+  }
+  for (const pid of ordered) {
+    try { process.kill(pid, "SIGKILL"); } catch { /* already dead */ }
+  }
+  return targets.size;
+}
+
+export async function cleanupProjectEphemera(
+  runId: string,
+  reason = "step-cleanup",
+  explicitContext?: Record<string, string>,
+): Promise<void> {
+  try {
+    const context = explicitContext || await getRunContext(runId);
+    const ports = new Set(TRANSIENT_PREVIEW_PORTS);
+    const devPort = context["dev_server_port"];
+    if (devPort && /^\d+$/.test(devPort)) ports.add(devPort);
+
+    let artifactCount = 0;
+    let processCount = 0;
+    for (const repoPath of getProjectDirs(context)) {
+      artifactCount += cleanupUntrackedProjectArtifacts(repoPath);
+      processCount += reapTransientPreviewProcesses(repoPath, ports);
+    }
+
+    if (artifactCount || processCount) {
+      logger.info(`[project-cleanup] ${reason}: removed ${artifactCount} artifact(s), reaped ${processCount} transient preview process(es)`, { runId });
+    }
+  } catch (err) {
+    logger.warn(`[project-cleanup] ${reason} failed: ${String(err).slice(0, 300)}`, { runId });
+  }
+}
 
 /**
  * Fire-and-forget cron teardown when a run ends.

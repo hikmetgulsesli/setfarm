@@ -33,7 +33,7 @@ import { resolveTemplate, parseOutputKeyValues, readProgressFile, readProjectMem
 import { getStories, formatStoryForTemplate, formatCompletedStories, parseAndInsertStories } from "./story-ops.js";
 import { createStoryWorktree, removeStoryWorktree, findWorktreeDir, syncBaseBranch } from "./worktree-ops.js";
 import { computeHasFrontendChanges, checkTestFailures, checkQualityGate, checkRequiredOutputFields, processDesignCompletion, processSetupCompletion, processSetupDesignContracts, processBrowserCheck, processDesignFidelityCheck, checkStoryDesignCompliance, checkImportConsistency } from "./step-guardrails.js";
-import { cleanupAbandonedSteps as _cleanupAbandonedSteps, scheduleRunCronTeardown } from "./cleanup-ops.js";
+import { cleanupAbandonedSteps as _cleanupAbandonedSteps, cleanupProjectEphemera, scheduleRunCronTeardown } from "./cleanup-ops.js";
 import {
   getRunStatus, getRunContext, updateRunContext, failRun,
   getWorkflowId as _getWorkflowId,
@@ -3397,6 +3397,7 @@ ${screenDescs}
     if (storyRow && storyStatus !== STORY_STATUS.SKIPPED) {
       await updateProjectMemory(context, storyRow.story_id, storyRow.title, storyStatus, output);
     }
+    await cleanupProjectEphemera(step.run_id, `story-complete:${storyRow?.story_id || "unknown"}`, context);
     // Clean up: remove worktree (auto-saves uncommitted changes before removal)
     if (storyRow?.story_id && context["repo"]) {
       removeStoryWorktree(context["repo"], storyBranchName || storyRow.story_id, step.agent_id);
@@ -3592,6 +3593,8 @@ ${screenDescs}
     const _tmpFiles = fs.readdirSync("/tmp").filter(f => f.startsWith("setfarm-output-") && f.endsWith(".txt"));
     for (const _f of _tmpFiles) { try { fs.unlinkSync("/tmp/" + _f); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); } }
   } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
+
+  await cleanupProjectEphemera(step.run_id, `step-complete:${step.step_id}`, context);
 
   // v1.5.50: Resolve claim_log outcome for single step
   try {

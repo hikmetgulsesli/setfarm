@@ -20,7 +20,7 @@ import {
   recordStepTransition,
 } from "./repo.js";
 import { removeStoryWorktree } from "./worktree-ops.js";
-import { scheduleRunCronTeardown } from "./cleanup-ops.js";
+import { cleanupProjectEphemera, scheduleRunCronTeardown } from "./cleanup-ops.js";
 
 // ── failStep ─────────────────────────────────────────────────────────
 
@@ -70,6 +70,7 @@ async function handleLoopStepFailurePG(
 
   if (storyRow?.story_id) {
     const ctx = await getRunContext(step.run_id);
+    await cleanupProjectEphemera(step.run_id, `story-fail:${storyRow.story_id}`, ctx);
     if (ctx.repo) removeStoryWorktree(ctx.repo, storyRow.story_id, step.agent_id);
   }
 
@@ -151,6 +152,8 @@ async function handleSingleStepFailurePG(
       try { await sql`UPDATE claim_log SET outcome = 'failed', duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at)) * 1000 AS INTEGER), diagnostic = ${error} WHERE run_id = ${step.run_id} AND step_id = ${stepId} AND story_id IS NULL AND outcome IS NULL`; } catch (e) { logger.warn("[claim-log] update failed: " + String(e), {}); }
     }
   });
+
+  await cleanupProjectEphemera(step.run_id, `step-fail:${workflowStepId || stepId}`);
 
   // Post-transaction side effects
   if (newRetryCount > step.max_retries) {
