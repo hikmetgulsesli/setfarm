@@ -257,8 +257,8 @@ You work on **ONE user story per session**. A fresh session is started for each 
 
 1. Read `progress.txt` — especially the **Codebase Patterns** section at the top
 2. Read reference files: design-standards.md, backend-standards.md, web-guidelines.md
-3. Checkout the feature branch, pull latest (includes previously merged story PRs)
-4. Create story branch from feature branch
+3. Use the prepared worktree and prepared story branch from the claim
+4. Verify `git branch --show-current` equals `{{story_branch}}`
 5. Implement the story
 6. Build + test
 7. Commit and push the prepared story branch. Do not create a PR; Setfarm opens the story PR.
@@ -303,7 +303,7 @@ If you discover a reusable pattern, add it to the `## Codebase Patterns` section
 ### Verify Feedback
 
 If the verifier rejects your PR, you will receive feedback in your task input. Address every issue the verifier raised:
-1. Checkout your story branch again
+1. Verify you are still on your prepared story branch
 2. Fix the issues
 3. Commit, push (this updates the existing PR)
 4. Report STATUS: done with the same PR URL

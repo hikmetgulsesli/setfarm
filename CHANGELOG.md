@@ -18,6 +18,9 @@
 - Verify PR context now includes inline review comments plus `mergeStateStatus`, and merge/conflict signals skip the review-delay wait.
 - Polling prompts now extract `WORKDIR` from string claim inputs that include `REPO:` or the verify prompt's project-root line, so reviewer/tester agents do not fall back to scratch and then mutate the shared repo blindly.
 - Spawner now opportunistically auto-verifies `done` stories whose PRs are already merged, so an externally/manual-merged PR does not leave verify stuck until a model session completes.
+- Feature-dev implement claims now expose `STORY_BRANCH` separately from `RUN_BRANCH`, removing the misleading `BRANCH: <run uuid>` field that caused agents to create uppercase or stale replacement branches.
+- The shared critical preamble no longer tells agents to complete a PR step unless that agent explicitly owns PR creation, so developer claims no longer contradict the pr-each pipeline gate.
+- Story worktree pre-commit hooks now also verify the current branch matches `.story-branch`, rejecting commits on replacement branches before stale code can be pushed or PR'd.
 
 ## 2026-04-26 - Single Step Claim Idempotency
 

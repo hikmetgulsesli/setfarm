@@ -9,7 +9,9 @@ description: |
   Plan step produces PRD only (no stories). Design step generates screens
   from PRD via Stitch (no screen limit). Stories step decomposes PRD into
   user stories using SCREEN_MAP for screen↔story binding.
-  Developer creates PR per story, verifier reviews + merges.
+  Developer commits and pushes the prepared story branch. The pipeline creates
+  each story PR to main, verifier reviews + merges, then local main is synced
+  before the next story is claimed.
   Failed stories are skipped — other stories continue.
 
 agent_mapping:
@@ -72,7 +74,7 @@ agents:
   - id: developer
     name: Developer
     role: coding
-    description: Implements features per story, creates PR for each.
+    description: Implements features per story on prepared branches. Setfarm owns PR creation.
     workspace:
       baseDir: agents/developer
       files:
@@ -779,7 +781,8 @@ steps:
       TASK: {{task}}
       WORKDIR: {{story_workdir}}
       MAIN_REPO: {{repo}}
-      BRANCH: {{branch}}
+      STORY_BRANCH: {{story_branch}}
+      RUN_BRANCH: {{branch}}
       BUILD_CMD: {{build_cmd}}
       TEST_CMD: {{test_cmd}}
       LINT_CMD: {{lint_cmd}}
@@ -799,8 +802,8 @@ steps:
       isolated for this story. You MUST `cd {{story_workdir}}` as your FIRST command.
       ALL file reads, writes, git operations, lint, build, and test MUST run from WORKDIR.
       NEVER `cd {{repo}}` — that is the shared main repo and other stories may be using it.
-      MAIN_REPO is read-only during implement. The branch is already checked out
-      in WORKDIR. node_modules is symlinked from MAIN_REPO.
+      MAIN_REPO is read-only during implement. STORY_BRANCH is already checked
+      out in WORKDIR. node_modules is symlinked from MAIN_REPO.
 
       NEXT.JS CONFIG RULE: If next.config.ts exists, do NOT add unknown options.
       Valid options: reactStrictMode, images, env, experimental, output, distDir.
@@ -933,7 +936,7 @@ steps:
          }
 
          Do NOT run git checkout -b, git branch -m, or create another branch.
-         Do NOT checkout {{branch}} from MAIN_REPO. The pipeline already created
+         Do NOT checkout RUN_BRANCH (`{{branch}}`) from MAIN_REPO. The pipeline already created
          the correct isolated worktree and branch for this story.
 
       4. Implement the story fully:

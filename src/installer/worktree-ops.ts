@@ -191,6 +191,20 @@ function installScopeHook(worktreeDir: string, storyId: string): void {
   const hookScript = `#!/bin/bash
 # Scope enforcement pre-commit hook (5-model consensus)
 SCOPE_FILE=".story-scope-files"
+BRANCH_FILE=".story-branch"
+if [ -f "$BRANCH_FILE" ]; then
+  EXPECTED_BRANCH="$(cat "$BRANCH_FILE" | tr -d '[:space:]')"
+  ACTUAL_BRANCH="$(git branch --show-current)"
+  if [ -n "$EXPECTED_BRANCH" ] && [ "$ACTUAL_BRANCH" != "$EXPECTED_BRANCH" ]; then
+    echo ""
+    echo "BRANCH_HOOK: Commit REJECTED — wrong branch"
+    echo "Expected: $EXPECTED_BRANCH"
+    echo "Actual:   $ACTUAL_BRANCH"
+    echo "Fix: git checkout $EXPECTED_BRANCH"
+    echo ""
+    exit 1
+  fi
+fi
 if [ ! -f "$SCOPE_FILE" ]; then exit 0; fi
 BLOCKED=""
 for file in $(git diff --cached --name-only); do
@@ -198,7 +212,7 @@ for file in $(git diff --cached --name-only); do
     *.test.ts|*.test.tsx|*.spec.ts|*.spec.tsx|src/test/*|src/setupTests.ts|vitest.config.ts|vitest.config.js|jest.config.ts|jest.config.js)
       continue
       ;;
-    .story-scope-files|pre-commit|references|node_modules)
+    .story-scope-files|.story-branch|pre-commit|references|node_modules)
       continue
       ;;
   esac
@@ -219,6 +233,7 @@ fi
   try {
     // Write hook to worktree root as pre-commit, set core.hooksPath
     const hookPath = path.join(worktreeDir, "pre-commit");
+    fs.writeFileSync(path.join(worktreeDir, ".story-branch"), storyId.toLowerCase() + "\n");
     fs.writeFileSync(hookPath, hookScript, { mode: 0o755 });
     execFileSync("git", ["config", "core.hooksPath", worktreeDir], {
       cwd: worktreeDir, timeout: 5000, stdio: "pipe"
@@ -227,7 +242,7 @@ fi
       const excludePath = execFileSync("git", ["rev-parse", "--git-path", "info/exclude"], {
         cwd: worktreeDir, encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
       }).trim();
-      const ignoreLines = [".story-scope-files", "pre-commit", "references", "node_modules"];
+      const ignoreLines = [".story-scope-files", ".story-branch", "pre-commit", "references", "node_modules"];
       let existing = "";
       try { existing = fs.existsSync(excludePath) ? fs.readFileSync(excludePath, "utf-8") : ""; } catch {}
       const missing = ignoreLines.filter(line => !existing.split(/\r?\n/).includes(line));
