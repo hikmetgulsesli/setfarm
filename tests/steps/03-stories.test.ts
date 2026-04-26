@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { storiesModule } from "../../dist/installer/steps/03-stories/module.js";
+import { extractExplicitMaxStories } from "../../dist/installer/steps/03-stories/context.js";
 import { runModule } from "./harness.js";
 
 describe("03-stories step module", () => {
@@ -28,5 +29,13 @@ describe("03-stories step module", () => {
     assert.ok(result.prompt.includes("scope_files"), "prompt should mention scope_files");
     assert.ok(result.prompt.includes("PREDICTED_SCREEN_FILES"), "prompt should mention predicted screens");
     assert.ok(result.prompt.includes("STORIES_JSON"), "prompt should mention STORIES_JSON");
+  });
+
+  it("extracts explicit Turkish and English story caps", () => {
+    assert.equal(extractExplicitMaxStories("Maksimum 1 story üret."), 1);
+    assert.equal(extractExplicitMaxStories("maks 2 adet story olsun"), 2);
+    assert.equal(extractExplicitMaxStories("En çok 3 story yaz"), 3);
+    assert.equal(extractExplicitMaxStories("4 stories maximum"), 4);
+    assert.equal(extractExplicitMaxStories("story listesi üret"), null);
   });
 });

@@ -9,11 +9,12 @@ const FIRST_ATTEMPT_REMINDER =
   "shared_files, scope_description. Hayali screen yolu (src/pages/*.tsx) YASAK — " +
   "PREDICTED_SCREEN_FILES context'ten kullan. Missing = instant REJECT.";
 
-function extractExplicitMaxStories(text: string): number | null {
+export function extractExplicitMaxStories(text: string): number | null {
   const patterns = [
-    /\ben\s+fazla\s+(\d+)\s+(?:k[iı]sa\s+)?(?:user\s+)?stor(?:y|ies)\b/i,
+    /\ben\s+(?:fazla|çok)\s+(\d+)\s+(?:adet\s+)?(?:k[iı]sa\s+)?(?:user\s+)?stor(?:y|ies)\b/i,
+    /\b(?:maksimum|maks|azami)\s+(\d+)\s+(?:adet\s+)?(?:k[iı]sa\s+)?(?:user\s+)?stor(?:y|ies)\b/i,
     /\bmax(?:imum)?\s+(\d+)\s+(?:user\s+)?stor(?:y|ies)\b/i,
-    /\b(\d+)\s+(?:user\s+)?stor(?:y|ies)\s+(?:max|maximum)\b/i,
+    /\b(\d+)\s+(?:adet\s+)?(?:user\s+)?stor(?:y|ies)\s+(?:max|maximum|maksimum|maks|azami)\b/i,
   ];
   for (const pattern of patterns) {
     const m = text.match(pattern);
