@@ -280,6 +280,7 @@ export function updateProjectMemory(
   if (!repo) return;
 
   try {
+    ensureProjectMemoryGitExclude(repo);
     const memoryPath = path.join(repo, "PROJECT_MEMORY.md");
     let content = "";
     if (fs.existsSync(memoryPath)) {
@@ -345,6 +346,25 @@ export function updateProjectMemory(
     writeProjectClaudeMd(repo, context, content);
   } catch (err) {
     logger.warn(`Failed to update PROJECT_MEMORY.md: ${err}`);
+  }
+}
+
+function ensureProjectMemoryGitExclude(repo: string): void {
+  try {
+    const gitDir = path.join(repo, ".git");
+    if (!fs.existsSync(gitDir)) return;
+    const infoDir = path.join(gitDir, "info");
+    fs.mkdirSync(infoDir, { recursive: true });
+    const excludePath = path.join(infoDir, "exclude");
+    const existing = fs.existsSync(excludePath) ? fs.readFileSync(excludePath, "utf-8") : "";
+    const required = ["PROJECT_MEMORY.md", "CLAUDE.md"];
+    const missing = required.filter(entry => !existing.split(/\r?\n/).includes(entry));
+    if (missing.length === 0) return;
+    const prefix = existing && !existing.endsWith("\n") ? "\n" : "";
+    fs.appendFileSync(excludePath, `${prefix}${missing.join("\n")}\n`, "utf-8");
+    logger.info(`Updated git info exclude for project memory files in ${repo}`);
+  } catch (err) {
+    logger.warn(`Failed to update project memory git exclude: ${err}`);
   }
 }
 

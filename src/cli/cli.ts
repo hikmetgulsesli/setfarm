@@ -593,10 +593,12 @@ async function main() {
     const stories = await getStories(run.id);
     if (stories.length > 0) {
       const done = stories.filter((s) => s.status === "done").length;
+      const verified = stories.filter((s) => s.status === "verified").length;
+      const complete = done + verified;
       const running = stories.filter((s) => s.status === "running").length;
       const failed = stories.filter((s) => s.status === "failed").length;
       const skipped = stories.filter((s) => s.status === "skipped").length;
-      lines.push("", `Stories: ${done}/${stories.length} done${running ? `, ${running} running` : ""}${skipped ? `, ${skipped} skipped` : ""}${failed ? `, ${failed} failed` : ""}`);
+      lines.push("", `Stories: ${complete}/${stories.length} complete${verified ? `, ${verified} verified` : ""}${running ? `, ${running} running` : ""}${skipped ? `, ${skipped} skipped` : ""}${failed ? `, ${failed} failed` : ""}`);
       for (const s of stories) {
         lines.push(`  ${s.storyId.padEnd(8)} [${s.status.padEnd(7)}] ${s.title}`);
       }
@@ -876,4 +878,3 @@ main().catch((err) => {
   process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
   process.exit(1);
 });
-

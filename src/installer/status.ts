@@ -103,9 +103,13 @@ export async function stopWorkflow(query: string): Promise<StopWorkflowResult> {
     "UPDATE steps SET status = 'failed', output = 'Cancelled by user', updated_at = $1 WHERE run_id = $2 AND status IN ('waiting', 'pending', 'running')",
     [now(), run.id]
   );
+  await pgRun(
+    "UPDATE stories SET status = 'skipped', output = COALESCE(output, 'Cancelled by user'), updated_at = $1 WHERE run_id = $2 AND status IN ('pending', 'running')",
+    [now(), run.id]
+  );
   for (const s of activeStepsForCancel) { await recordStepTransition(s.id, run.id, s.status, "cancelled", undefined, "stopWorkflow:cancelled"); }
   const cancelledSteps = result.changes;
-  await teardownWorkflowCronsIfIdle(run.workflow_id);
+  await teardownWorkflowCronsIfIdle(run.workflow_id, { graceMs: 0 });
 
   // Clean up MC project + tunnel if deploy didn't complete
   try {

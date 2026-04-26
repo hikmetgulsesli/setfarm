@@ -254,12 +254,20 @@ export async function ensureWorkflowCrons(workflow: WorkflowSpec): Promise<void>
  */
 const TEARDOWN_GRACE_MS = 5 * 60 * 1000; // 5 minutes
 
-export async function teardownWorkflowCronsIfIdle(workflowId: string): Promise<void> {
+export async function teardownWorkflowCronsIfIdle(workflowId: string, opts: { graceMs?: number } = {}): Promise<void> {
   const active = await countActiveRuns(workflowId);
   if (active > 0) return;
 
+  if (!gatewayAgentCronsEnabled()) {
+    logger.info(`[teardown] Gateway agent crons disabled; event-driven spawner owns ${workflowId}`, {});
+    return;
+  }
+
   // Grace period: wait 5min, then re-check. If a new run started, keep crons.
-  await new Promise(r => setTimeout(r, TEARDOWN_GRACE_MS));
+  const graceMs = opts.graceMs ?? TEARDOWN_GRACE_MS;
+  if (graceMs > 0) {
+    await new Promise(r => setTimeout(r, graceMs));
+  }
 
   // Re-check after grace period — new run may have started
   const activeAfterGrace = await countActiveRuns(workflowId);
