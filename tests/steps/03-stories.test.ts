@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { storiesModule } from "../../dist/installer/steps/03-stories/module.js";
 import { extractExplicitMaxStories } from "../../dist/installer/steps/03-stories/context.js";
 import { detectStorySemanticDrift, extractStoryDomainTerms } from "../../dist/installer/steps/03-stories/guards.js";
+import { normalizeScopeFilesForStory } from "../../dist/installer/story-ops.js";
 import { runModule } from "./harness.js";
 
 describe("03-stories step module", () => {
@@ -89,5 +90,45 @@ describe("03-stories step module", () => {
       }]
     );
     assert.equal(err, null);
+  });
+
+  it("adds frontend integration files to a single-story frontend scope", () => {
+    const scope = normalizeScopeFilesForStory([
+      "src/hooks/useCounter.ts",
+      "src/components/CounterControls/CounterControls.tsx",
+      "src/screens/AnaSayfaSayacEkrani.tsx",
+    ], 1);
+
+    assert.deepEqual(scope, [
+      "src/hooks/useCounter.ts",
+      "src/components/CounterControls/CounterControls.tsx",
+      "src/screens/AnaSayfaSayacEkrani.tsx",
+      "src/App.tsx",
+      "src/App.css",
+      "src/main.tsx",
+      "src/index.css",
+    ]);
+  });
+
+  it("does not add integration files to multi-story scopes", () => {
+    const scope = normalizeScopeFilesForStory([
+      "src/components/CounterControls/CounterControls.tsx",
+    ], 3);
+
+    assert.deepEqual(scope, [
+      "src/components/CounterControls/CounterControls.tsx",
+    ]);
+  });
+
+  it("does not add frontend integration files to non-frontend scopes", () => {
+    const scope = normalizeScopeFilesForStory([
+      "src/server/routes/counter.ts",
+      "src/services/counter.ts",
+    ], 1);
+
+    assert.deepEqual(scope, [
+      "src/server/routes/counter.ts",
+      "src/services/counter.ts",
+    ]);
   });
 });

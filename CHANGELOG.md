@@ -11,6 +11,7 @@
 - Implement scope overflow limits now scale from planner-declared `scope_files`, so an explicitly capped single-story run is not rejected merely because the planned story legitimately owns more than 12 files.
 - Implement completion now runs `npm run build` when a package build script exists, blocking TypeScript/module failures inside the implement retry loop instead of leaking broken code to verify/QA.
 - Spawner now fails/retries still-running claims even when `openclaw agent` exits with code 0 without calling `setfarm step complete/fail`, preventing HEARTBEAT-only exits from leaving loop steps stuck until medic recovery.
+- Single-story frontend scopes now automatically include `src/App.tsx`, `src/App.css`, `src/main.tsx`, and `src/index.css`, so capped one-story runs can wire the generated UI without triggering scope bleed or leaving the app shell blank.
 - Prepared-claim and polling preambles now reject placeholder paths such as `$HOME/projects/<slug>` or `[missing:*]` before `cd`, preventing agents from treating PRD examples as real workdirs.
 - Frontend-change detection now verifies both `main`/`origin/main` and the target branch before running `git diff`, removing noisy `main..branch` fatal logs while a story branch is not created yet.
 - Implement context now sends small Stitch/DOM excerpts plus file paths instead of large raw HTML/DOM blobs, and feature-dev prompts require reading only current-story Stitch files from disk. This reduces Kimi/MiniMax prompt bloat and gateway memory pressure.

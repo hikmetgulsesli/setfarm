@@ -96,6 +96,47 @@ export async function formatStoryRoadmap(runId: string, currentStoryId: string):
 
 // ── STORIES_JSON Parsing ────────────────────────────────────────────
 
+const SINGLE_STORY_FRONTEND_INTEGRATION_FILES = [
+  "src/App.tsx",
+  "src/App.css",
+  "src/main.tsx",
+  "src/index.css",
+];
+
+function isFrontendSurfaceFile(file: string): boolean {
+  return (
+    file.startsWith("src/screens/") ||
+    file.startsWith("src/components/") ||
+    file.endsWith(".tsx") ||
+    file.endsWith(".jsx")
+  );
+}
+
+export function normalizeScopeFilesForStory(scopeFiles: unknown, storyCount: number): string[] | null {
+  if (!Array.isArray(scopeFiles)) return null;
+
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of scopeFiles) {
+    if (typeof raw !== "string") continue;
+    const file = raw.trim();
+    if (!file || seen.has(file)) continue;
+    seen.add(file);
+    normalized.push(file);
+  }
+
+  if (storyCount === 1 && normalized.some(isFrontendSurfaceFile)) {
+    for (const file of SINGLE_STORY_FRONTEND_INTEGRATION_FILES) {
+      if (!seen.has(file)) {
+        seen.add(file);
+        normalized.push(file);
+      }
+    }
+  }
+
+  return normalized;
+}
+
 /**
  * Parse STORIES_JSON from step output and insert stories into the DB.
  */
@@ -227,7 +268,8 @@ export async function parseAndInsertStories(output: string, runId: string): Prom
       // Single developer mode: scope_files are informational, not enforced.
       // Regex-based auto-derive removed — caused false positives and scope_bleed rejections.
       // If planner provides scope_files explicitly, we store them for reference.
-      const scopeFiles: string | null = Array.isArray(s.scope_files) ? JSON.stringify(s.scope_files) : null;
+      const normalizedScopeFiles = normalizeScopeFilesForStory(s.scope_files, stories.length);
+      const scopeFiles: string | null = normalizedScopeFiles ? JSON.stringify(normalizedScopeFiles) : null;
       const sharedFiles = Array.isArray(s.shared_files) ? JSON.stringify(s.shared_files) : null;
       const scopeDesc = typeof s.scope_description === "string" ? s.scope_description : null;
       const fileSkeletons = s.file_skeletons && typeof s.file_skeletons === "object" ? JSON.stringify(s.file_skeletons) : null;
