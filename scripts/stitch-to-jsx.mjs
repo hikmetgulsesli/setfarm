@@ -41,15 +41,50 @@ function findScreenHtml(screen) {
   return candidates.map(file => path.join(stitchDir, file)).find(isValidStitchHtml);
 }
 
+const JSX_ATTRIBUTE_MAP = {
+  "accept-charset": "acceptCharset",
+  "class": "className",
+  "for": "htmlFor",
+  "tabindex": "tabIndex",
+  "viewbox": "viewBox",
+  "preserveaspectratio": "preserveAspectRatio",
+  "stroke-width": "strokeWidth",
+  "stroke-linecap": "strokeLinecap",
+  "stroke-linejoin": "strokeLinejoin",
+  "stroke-miterlimit": "strokeMiterlimit",
+  "stroke-dasharray": "strokeDasharray",
+  "stroke-dashoffset": "strokeDashoffset",
+  "stroke-opacity": "strokeOpacity",
+  "fill-rule": "fillRule",
+  "fill-opacity": "fillOpacity",
+  "clip-rule": "clipRule",
+  "stop-color": "stopColor",
+  "stop-opacity": "stopOpacity",
+  "font-family": "fontFamily",
+  "font-size": "fontSize",
+  "font-weight": "fontWeight",
+  "xlink:href": "xlinkHref",
+  "xmlns:xlink": "xmlnsXlink",
+};
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizeJsxAttributeNames(input) {
+  let out = input;
+  for (const [htmlAttr, jsxAttr] of Object.entries(JSX_ATTRIBUTE_MAP)) {
+    out = out.replace(new RegExp(`\\b${escapeRegExp(htmlAttr)}=`, "gi"), `${jsxAttr}=`);
+  }
+  return out;
+}
+
 function htmlToJsx(html) {
-  return html
+  return normalizeJsxAttributeNames(html)
     .replace(/<(img|br|hr|input|meta|link)([^>]*?)>/gi, (_, tag, attrs) => {
       const cleanAttrs = String(attrs || "").replace(/\/\s*$/, "").trimEnd();
       return `<${tag}${cleanAttrs} />`;
     })
-    .replace(/\bclass="/g, "className=\"")
-    .replace(/\bfor="/g, "htmlFor=\"")
-    .replace(/\btabindex="/g, "tabIndex=\"")
     .replace(/<!--(.*?)-->/g, "{/* $1 */}")
     .replace(/<script[\s\S]*?<\/script>/gi, "")
     .replace(/<link[^>]*\/?\s*>/gi, "")

@@ -66,4 +66,40 @@ describe("stitch-to-jsx", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it("normalizes SVG attributes into JSX names", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-svg-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "loading-screen", title: "Yükleme Ekranı" },
+      ]));
+      writeHtml(path.join(stitchDir, "loading-screen.html"), `
+        <main>
+          <svg viewbox="0 0 24 24" xmlns:xlink="http://www.w3.org/1999/xlink">
+            <circle stroke-width="3" stroke-linecap="round"></circle>
+            <path fill-rule="evenodd" clip-rule="evenodd" xlink:href="#shape"></path>
+          </svg>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "YuklemeEkrani.tsx"), "utf-8");
+      assert.match(code, /viewBox=/);
+      assert.match(code, /xmlnsXlink=/);
+      assert.match(code, /strokeWidth=/);
+      assert.match(code, /strokeLinecap=/);
+      assert.match(code, /fillRule=/);
+      assert.match(code, /clipRule=/);
+      assert.match(code, /xlinkHref=/);
+      assert.doesNotMatch(code, /viewbox=|stroke-width=|fill-rule=|clip-rule=|xlink:href=/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
