@@ -1989,7 +1989,13 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
               if (row?.scope_files) {
                 try {
                   const files: string[] = JSON.parse(row.scope_files);
-                  if (Array.isArray(files)) depScopeFiles.push(...files);
+                  if (Array.isArray(files)) {
+                    for (const f of files) {
+                      if (typeof f !== "string") continue;
+                      if (!fs.existsSync(path.join(storyWorkdir, f))) continue;
+                      depScopeFiles.push(f);
+                    }
+                  }
                 } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
               }
             }
