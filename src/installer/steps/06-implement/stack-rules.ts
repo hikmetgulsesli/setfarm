@@ -3,8 +3,8 @@
  * developer agent prompt. Complements design-rules.ts (platform-level)
  * with finer framework-level distinctions (vite vs next, etc).
  *
- * Why: a story-owning src/App.tsx in a Vite project treats src/main.tsx
- * as a sibling (Vite entry). The same rule is irrelevant for a Next.js
+ * Why: a story owning one Vite entry file often needs guidance about the
+ * adjacent app-shell files. The same rule is irrelevant for a Next.js
  * project where app/layout.tsx is the sibling, and has no analogue in
  * SwiftUI (App struct + ContentView). Hard-coding Vite assumptions into
  * stories/guards.ts VITE_SIBLINGS created SCOPE_BLEED amplification when
@@ -79,8 +79,8 @@ export const STACK_RULES: Record<Stack, StackRuleSet> = {
     ],
     pitfalls: `## REACT + VITE STACK RULES
 
-- \`src/main.tsx\` (or \`src/main.jsx\`) is Vite's entry point. It calls \`createRoot().render(<App />)\`. If your scope owns \`src/App.tsx\`, \`main.tsx\` is treated as a SHARED sibling — you may import from it but do NOT declare it as an OWNED file, and do NOT touch it unless the planner explicitly gave it.
-- \`index.html\` is the Vite root HTML. Same sibling rule as main.tsx.
+- \`src/main.tsx\` (or \`src/main.jsx\`) is Vite's entry point. It calls \`createRoot().render(<App />)\`. If it is listed in SCOPE_FILES, it is yours to wire. If it is not listed in SCOPE_FILES, treat it as read-only context.
+- \`index.html\` is the Vite root HTML. Same rule: edit only when it is listed in SCOPE_FILES.
 - \`vite.config.ts\` and \`tailwind.config.js\` are baselined by setup-build. Do not modify unless in your SCOPE_FILES — cross-story drift here causes merge conflicts.
 - Prefer ESM imports (\`import ...\`), not \`require()\`.
 - Tailwind class names must reference design tokens (\`bg-primary\`, \`text-on-surface\`, etc) — see design-tokens.css. No raw hex.

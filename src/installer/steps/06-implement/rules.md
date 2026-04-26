@@ -8,7 +8,7 @@ You are assigned ONE story with a FIXED list of files. You MUST NOT create or mo
 
 ### What you CAN write:
 - Files listed in SCOPE_FILES (your story's owned files)
-- Files listed in SHARED_FILES (read/import OK, small edits OK)
+- Files listed in SHARED_FILES are read/import context only; do not edit them unless they are also listed in SCOPE_FILES
 - Test files (*.test.tsx, *.spec.tsx) for YOUR scope files only
 - Test config (vitest.config.ts, jest.config.ts)
 

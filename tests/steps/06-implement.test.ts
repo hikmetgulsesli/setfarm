@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { implementModule } from "../../dist/installer/steps/06-implement/module.js";
 import { checkBuildGate, computeScopeFileLimits, detectPackageBuildCommand, normalize, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
+import { STACK_RULES } from "../../dist/installer/steps/06-implement/stack-rules.js";
 import type { ParsedOutput } from "../../dist/installer/steps/types.js";
 
 describe("06-implement step module", () => {
@@ -14,6 +15,19 @@ describe("06-implement step module", () => {
     assert.equal(implementModule.agentRole, "developer");
     assert.equal(implementModule.maxPromptSize, 32768);
     assert.deepEqual(implementModule.requiredOutputFields, ["STATUS"]);
+  });
+
+  it("rules treat shared files as read-only context", () => {
+    const rules = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/rules.md"), "utf-8");
+    assert.ok(rules.includes("SHARED_FILES are read/import context only"));
+    assert.equal(rules.includes("small edits OK"), false);
+  });
+
+  it("React Vite stack rules allow main.tsx only when scoped", () => {
+    const rules = STACK_RULES["react-vite"].pitfalls;
+    assert.ok(rules.includes("If it is listed in SCOPE_FILES, it is yours to wire"));
+    assert.ok(rules.includes("If it is not listed in SCOPE_FILES, treat it as read-only context"));
+    assert.equal(rules.includes("do NOT declare it as an OWNED file"), false);
   });
 
   it("buildPrompt returns empty string — loop delegates to AGENTS.md", () => {
