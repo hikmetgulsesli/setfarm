@@ -23,6 +23,7 @@
 - Story worktree pre-commit hooks now also verify the current branch matches `.story-branch`, rejecting commits on replacement branches before stale code can be pushed or PR'd.
 - Fresh Vite projects now use `test: "vitest run"` with `test:watch` separated, and test detection/reviewer prompts force non-watch Vitest commands so verify agents cannot hang forever in watch mode.
 - Implement prompts now explicitly preserve DONE-story behavior/tests, and the implement guard rejects large unexplained test deletions as `REGRESSION_RISK`, preventing agents from erasing prior story coverage while wiring integration stories.
+- Event-driven spawner now pre-claims work itself and starts agents with a prepared claim file, so model sessions no longer burn time/tokens deciding to run `step peek`/`step claim` before actual work starts.
 
 ## 2026-04-26 - Single Step Claim Idempotency
 

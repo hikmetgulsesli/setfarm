@@ -9,9 +9,9 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { pgGet, pgQuery } from "./db-pg.js";
-import { buildPollingPrompt } from "./installer/agent-cron.js";
 import { loadWorkflowSpec } from "./installer/workflow-spec.js";
-import { resolveWorkflowDir } from "./installer/paths.js";
+import { resolveWorkflowDir, resolveSetfarmCli } from "./installer/paths.js";
+import { claimStep } from "./installer/step-ops.js";
 
 const OPENCLAW_CLI = process.env.OPENCLAW_CLI || "/home/setrox/.local/bin/openclaw";
 const POLL_INTERVAL_MS = 30_000;
@@ -70,6 +70,48 @@ function resolveAgentId(wfId: string, role: string, mapping: Record<string, stri
   return [`${wfId}_${role}`];
 }
 
+function buildPreclaimedPrompt(wfId: string, role: string, agentId: string, outputFileId: string, claimFile: string): string {
+  const cli = resolveSetfarmCli();
+  return `Workflow agent. Claim already prepared by Setfarm spawner. Work in this session only.
+
+CLAIM_FILE: ${claimFile}
+OUTPUT_FILE: /tmp/setfarm-output-${outputFileId}.txt
+
+0. SAFE SHELL START:
+   mkdir -p ~/.openclaw/workspace/agent-scratch && cd ~/.openclaw/workspace/agent-scratch
+   NEVER work from ~/.openclaw/setfarm-repo.
+
+1. Do NOT run step peek or step claim. Do NOT overwrite CLAIM_FILE. Extract claim data:
+   CLAIM_FILE=${claimFile}
+   STEP_ID=$(jq -r '.stepId // empty' "$CLAIM_FILE")
+   WORKDIR=$(jq -r "if (.input | type) == \"object\" then (.input.story_workdir // .input.repo // \"\") else \"\" end" "$CLAIM_FILE")
+   if [ -z "$WORKDIR" ]; then
+     WORKDIR=$(jq -r "if (.input | type) == \"string\" then .input else \"\" end" "$CLAIM_FILE" | sed -n "s/^WORKDIR:[[:space:]]*//p; s/^REPO:[[:space:]]*//p" | head -1)
+   fi
+   [ -z "$STEP_ID" ] && { echo "HEARTBEAT_OK"; exit 0; }
+   [ -z "$WORKDIR" ] && WORKDIR="$HOME/.openclaw/workspace/agent-scratch"
+   cd "$WORKDIR" && pwd
+   case "$(pwd)" in
+     $HOME/.openclaw/setfarm-repo*) echo "STATUS: fatal"; echo "FATAL: platform_path_touched"; exit 1;;
+   esac
+
+2. Read the claim input from CLAIM_FILE. Prefer targeted reads, for example:
+   jq -r "if (.input | type) == \"object\" then (.input.task // \"\") else .input end" "$CLAIM_FILE"
+   jq -r "if (.input | type) == \"object\" then (.input.prd // \"\") else \"\" end" "$CLAIM_FILE"
+
+3. Do the requested ${wfId}/${role} work from WORKDIR. Stay in WORKDIR.
+
+4. Write KEY: VALUE output, then complete:
+cat <<'SETFARM_EOF' > /tmp/setfarm-output-${outputFileId}.txt
+STATUS: done
+<other keys required by the claim input>
+SETFARM_EOF
+${cli} step complete "$STEP_ID" --file /tmp/setfarm-output-${outputFileId}.txt
+
+On failure: ${cli} step fail "$STEP_ID" "reason"
+After complete/fail, reply HEARTBEAT_OK and stop.
+Rules: no subagents, no background delegation, no PR actions unless claim explicitly owns PR work.`;
+}
 function spawnAgent(agentId: string, wfId: string, role: string): void {
   const key = `${wfId}:${role}:${agentId}`;
   if (activeProcesses.has(key)) {
@@ -88,11 +130,11 @@ function spawnAgent(agentId: string, wfId: string, role: string): void {
   setTimeout(() => {
     queuedSpawns.delete(key);
     if (shuttingDown) return;
-    spawnAgentNow(agentId, wfId, role);
+    void spawnAgentNow(agentId, wfId, role);
   }, delayMs);
 }
 
-function spawnAgentNow(agentId: string, wfId: string, role: string): void {
+async function spawnAgentNow(agentId: string, wfId: string, role: string): Promise<void> {
   const key = `${wfId}:${role}:${agentId}`;
   if (activeProcesses.has(key)) {
     console.log(`[spawner] Already running: ${key}, skip`);
@@ -102,17 +144,28 @@ function spawnAgentNow(agentId: string, wfId: string, role: string): void {
     console.log(`[spawner] At capacity (${activeProcesses.size}/${MAX_CONCURRENT}), skip ${agentId}`);
     return;
   }
-  const prompt = buildPollingPrompt(wfId, role, agentId, `${agentId}-spawner`);
-  console.log("[spawner] Spawning " + agentId + " for " + wfId + "/" + role + " (active: " + activeProcesses.size + ")");
-
-  // cuddly-sleeping-quail: clear stale /tmp output file before spawning. Prevents
-  // the recycle bug where a new run picked up the previous run's output content
-  // because the agent never wrote a fresh file (it just called `step complete
-  // --file` against the stale path). Run #380 vs #381 plan outputs were
-  // bit-by-bit identical (MD5 e16d765c...) — proof that no fresh work happened.
-  const stalePath = path.join("/tmp", "setfarm-output-" + agentId + ".txt");
+  const outputFileId = agentId + "-spawner";
+  const claimFile = path.join("/tmp", "claim-" + outputFileId + ".json");
+  const stalePath = path.join("/tmp", "setfarm-output-" + outputFileId + ".txt");
   try { fs.unlinkSync(stalePath); } catch { /* didnt exist, fine */ }
+  try { fs.unlinkSync(claimFile); } catch { /* didnt exist, fine */ }
 
+  const fullAgentId = `${wfId}_${role}`;
+  let claim: Awaited<ReturnType<typeof claimStep>>;
+  try {
+    claim = await claimStep(fullAgentId, agentId);
+  } catch (err) {
+    console.warn("[spawner] claim failed for " + fullAgentId + ": " + String(err));
+    return;
+  }
+  if (!claim.found) {
+    console.log("[spawner] No claimable work for " + fullAgentId + ", skip spawn");
+    return;
+  }
+  fs.writeFileSync(claimFile, JSON.stringify({ stepId: claim.stepId, runId: claim.runId, input: claim.resolvedInput }) + "\n");
+
+  const prompt = buildPreclaimedPrompt(wfId, role, agentId, outputFileId, claimFile);
+  console.log("[spawner] Spawning " + agentId + " for " + wfId + "/" + role + " after pre-claim (active: " + activeProcesses.size + ")");
   // capture agent stdout/stderr to a transcript file for post-hoc diagnosis.
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
   const transcriptPath = path.join(TRANSCRIPT_ROOT, wfId, agentId + "-" + ts + ".log");
