@@ -51,6 +51,11 @@ const DESIGN_DOM_EXCERPT_CHARS = 3000;
 const QUALITY_FIX_STEPS = new Set(["qa-test", "final-test"]);
 const QA_FIX_SOURCE_EXT = /\.(tsx?|jsx?|css|scss|vue|svelte)$/i;
 const QA_FIX_IGNORE = /^(node_modules\/|dist\/|build\/|\.next\/|coverage\/|stitch\/|references\/)|(^|\/)(package(-lock)?\.json|tsconfig[^/]*\.json|vite\.config\.[^/]+|tailwind\.config\.[^/]+|postcss\.config\.[^/]+|eslint\.config\.[^/]+|index\.html)$/;
+const SMOKE_INFRA_FAILURE = /\b(agent-browser|browser control|playwright|chromium|chrome)\b[\s\S]{0,240}\b(ETIMEDOUT|ECONNREFUSED|ECONNRESET|EPIPE|timed out|timeout)\b/i;
+
+function isSmokeInfrastructureFailure(failure: string): boolean {
+  return SMOKE_INFRA_FAILURE.test(failure);
+}
 
 function collectQaFixScopeFiles(repoPath: string): string[] {
   const srcDir = path.join(repoPath, "src");
@@ -2760,6 +2765,12 @@ ${screenDescs}
       }
     }
     if (smokeFailure) {
+      if (isSmokeInfrastructureFailure(smokeFailure)) {
+        logger.warn(`[final-test-smoke-gate] smoke infra failure; retrying final-test instead of creating QA-FIX: ${smokeFailure.slice(0, 200)}`, { runId: step.run_id });
+        if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
+        await failStep(stepId, `INFRA: final-test smoke browser infrastructure failed; retry final-test, do not modify app code.\n${smokeFailure}`);
+        return { advanced: false, runCompleted: false };
+      }
       if (await routeQualityFailureToImplement(step, `SYSTEM_SMOKE_FAILURE:\n${smokeFailure}`, context)) {
         return { advanced: false, runCompleted: false };
       }
