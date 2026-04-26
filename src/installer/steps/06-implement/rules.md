@@ -41,7 +41,7 @@ You are assigned ONE story with a FIXED list of files. You MUST NOT create or mo
 - CSS: use Tailwind classes matching the Stitch design tokens
 
 ## Git Hygiene
-- Commit early and often with descriptive messages
+- Commit once at the end after implementation and local checks pass. Use `/tmp/setfarm-progress-<run>.txt` checkpoints for long work, not partial git commits.
 - Format: `feat: <story-id> - <description>`
 - Do NOT force push or rewrite history
 - Do NOT modify package.json dependencies unless the story requires it

@@ -2,7 +2,7 @@
 
 ## Önce oku
 
-1. `PREFLIGHT_ANALYSIS` içinde ESLint/tsc hataları varsa: blocking issue. STATUS: retry + FEEDBACK: hataları listele.
+1. `PREFLIGHT_ANALYSIS` içinde gerçek ESLint/tsc hataları varsa: blocking issue. `ESLint couldn't find an eslint.config` / config-yok durumu blocking değildir; config ekleme.
 2. `CURRENT_STORY.acceptanceCriteria` içindeki her maddeyi kod üzerinden doğrula — pasif kabul etme.
 3. `DESIGN_DOM.json` varsa screen tasarımıyla karşılaştır (semantic element check).
 

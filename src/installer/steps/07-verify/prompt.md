@@ -33,6 +33,7 @@ Görev: Tek bir story PR'ını kontrol et, review/CI yorumlarını düzelt, PR'�
    - `git checkout -B "$HEAD_BRANCH" "origin/$HEAD_BRANCH"`.
    - Local branch diverged ise `git pull` ile merge etme; `origin/$HEAD_BRANCH` kaynak gerçektir.
 6. `{{PR_COMMENTS}}`, review body'leri, inline comments, failing checks, `{{PREFLIGHT_ANALYSIS}}`, `{{PLAYWRIGHT_REPORT}}` içindeki gerçek sorunları düzelt.
+   - ESLint config yoksa bu gerçek lint hatası değildir; story scope'u açıkça istemedikçe yeni ESLint config'i oluşturma.
 7. Düzeltme yaptıysan:
    - `git add <changed-files>`
    - `git commit -m "fix(review): address {{CURRENT_STORY_ID}} feedback"`
@@ -44,7 +45,7 @@ Görev: Tek bir story PR'ını kontrol et, review/CI yorumlarını düzelt, PR'�
    - Vitest için watch komutu çalıştırma. `npm test` script'i `vitest` ise
      onun yerine `npm run test:run` veya `npx vitest run` kullan.
      Yasak: çıplak `vitest`, watch modunda bekler ve verify step'i kilitler.
-   Hata varsa düzelt, commit/push et. Altyapı komutu boşsa atla.
+   Hata varsa düzelt, commit/push et. Aynı failing komutu kod/test değişikliği yapmadan ikinci kez çalıştırma; önce hatalı dosyayı oku ve hedefli fix yap. Altyapı komutu boşsa veya `true` ise atla.
 9. PR'a kısa comment at: `gh pr comment "{{PR_URL}}" --body "Verified: review feedback addressed, checks run."`
 10. PR'ı merge et:
     - önce `gh pr merge "{{PR_URL}}" --squash --delete-branch`
@@ -56,6 +57,7 @@ Görev: Tek bir story PR'ını kontrol et, review/CI yorumlarını düzelt, PR'�
     - `git checkout main`
     - `git pull --ff-only origin main`
     - `git status --short` temiz olmalı.
+    - `*.bak`, `*.tmp`, editör backup dosyaları ve geçici test çıktıları bırakma.
 
 ## Output
 

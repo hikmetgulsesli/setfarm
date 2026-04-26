@@ -12,6 +12,7 @@ import { pgGet, pgQuery } from "./db-pg.js";
 import { loadWorkflowSpec } from "./installer/workflow-spec.js";
 import { resolveWorkflowDir, resolveSetfarmCli } from "./installer/paths.js";
 import { claimStep } from "./installer/step-ops.js";
+import { failStep } from "./installer/step-fail.js";
 
 const OPENCLAW_CLI = process.env.OPENCLAW_CLI || "/home/setrox/.local/bin/openclaw";
 const POLL_INTERVAL_MS = 30_000;
@@ -112,6 +113,27 @@ On failure: ${cli} step fail "$STEP_ID" "reason"
 After complete/fail, reply HEARTBEAT_OK and stop.
 Rules: no subagents, no background delegation, no PR actions unless claim explicitly owns PR work.`;
 }
+
+function compactExitReason(err: unknown): string {
+  return String((err as any)?.message || err || "unknown error").replace(/\s+/g, " ").slice(0, 700);
+}
+
+async function failClaimIfStillRunning(stepId: string, agentId: string, wfId: string, role: string, transcriptPath: string, err: unknown): Promise<void> {
+  try {
+    const row = await pgGet<{ status: string; step_id: string }>(
+      "SELECT status, step_id FROM steps WHERE id = $1 LIMIT 1",
+      [stepId],
+    );
+    if (!row || row.status !== "running") return;
+
+    const reason = `AGENT_PROCESS_EXITED: ${agentId} exited before completing ${wfId}/${role}. ${compactExitReason(err)}. Transcript: ${transcriptPath}`;
+    console.warn(`[spawner] failing still-running claim ${stepId} (${row.step_id}) after agent exit`);
+    await failStep(stepId, reason);
+  } catch (failErr) {
+    console.warn(`[spawner] failed to mark exited agent claim as failed: ${String(failErr).slice(0, 300)}`);
+  }
+}
+
 function spawnAgent(agentId: string, wfId: string, role: string): void {
   const key = `${wfId}:${role}:${agentId}`;
   if (activeProcesses.has(key)) {
@@ -211,7 +233,10 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
       body += "--- FINISHED " + new Date().toISOString() + " ---\n";
       fs.appendFileSync(transcriptPath, body);
     } catch (e) { console.warn("[spawner] transcript write failed: " + String(e)); }
-    if (err) console.warn("[spawner] " + agentId + " exited: " + ((err as any).message || err) + " (transcript: " + transcriptPath + ")");
+    if (err) {
+      console.warn("[spawner] " + agentId + " exited: " + ((err as any).message || err) + " (transcript: " + transcriptPath + ")");
+      if (!shuttingDown && claim.stepId) void failClaimIfStillRunning(claim.stepId, agentId, wfId, role, transcriptPath, err);
+    }
     else console.log("[spawner] " + agentId + " completed (transcript: " + transcriptPath + ")");
   });
   if (child.pid) activeProcesses.set(key, child);

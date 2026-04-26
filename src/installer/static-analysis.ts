@@ -47,7 +47,12 @@ export function runEslint(repoPath: string, files: string[]): string {
     return result.trim().slice(0, 2000);
   } catch (err: any) {
     // ESLint exits with 1 on lint errors — that's expected
-    return (err.stdout || err.message || "").slice(0, 2000);
+    const output = `${err.stdout || ""}\n${err.stderr || ""}\n${err.message || ""}`;
+    if (/couldn't find an eslint\.config/i.test(output) || /no eslint configuration found/i.test(output)) {
+      logger.info("[preflight] ESLint skipped: no config file found", {});
+      return "";
+    }
+    return output.trim().slice(0, 2000);
   }
 }
 

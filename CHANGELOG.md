@@ -1,5 +1,9 @@
 ## 2026-04-26 - Story PR Gate Serial Main Flow
 
+- Spawner now marks still-running claims as failed/retryable when an OpenClaw agent process exits before `step complete`, so crashed Kimi/MiniMax sessions no longer leave steps stuck until medic timeout.
+- Story worktree removal now also pushes already-committed local WIP, preserving useful partial commits from killed agents before a retry recreates the worktree.
+- Verify preflight now treats "ESLint config not found" as lint-unconfigured instead of a blocking ESLint error, preventing reviewers from adding out-of-scope config just to satisfy preflight.
+- Implement prompts now require one final commit after local checks instead of early partial commits; verify prompts now forbid repeated identical failing test reruns without a code/test change and require cleanup of backup files.
 - `feature-dev` now uses `verify_each` with `merge_strategy: pr-each` so only one story is implemented, reviewed, merged into `main`, and locally synced before the next story is claimed.
 - Implement claims now block while any story is `done` and awaiting verify, preventing US-002/US-003 from branching before US-001's PR has landed.
 - Spawner now also refuses to start developer agents while a `verify_each` run has `done` stories awaiting PR verification, so pending future stories no longer burn model sessions early.

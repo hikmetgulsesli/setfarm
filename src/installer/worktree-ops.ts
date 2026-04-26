@@ -465,6 +465,7 @@ export function saveAndRemoveWorktree(repo: string, worktreeDir: string, storyBr
   if (!fs.existsSync(worktreeDir)) return;
 
   // 1. Auto-save uncommitted work (commit + push)
+  let pushed = false;
   try {
     const gitFile = path.join(worktreeDir, ".git");
     if (fs.existsSync(gitFile)) {
@@ -481,6 +482,7 @@ export function saveAndRemoveWorktree(repo: string, worktreeDir: string, storyBr
           execFileSync("git", ["push", "-u", "origin", storyBranch.toLowerCase()], {
             cwd: worktreeDir, timeout: 15000, stdio: "pipe",
           });
+          pushed = true;
           logger.info(`[worktree] Auto-saved + pushed ${fileCount} uncommitted file(s) for ${storyBranch}`, {});
         } catch (pushErr) {
           logger.warn(`[worktree] Auto-save committed but push failed for ${storyBranch}: ${String(pushErr).slice(0, 150)}`, {});
@@ -489,6 +491,25 @@ export function saveAndRemoveWorktree(repo: string, worktreeDir: string, storyBr
     }
   } catch (saveErr) {
     logger.warn(`[worktree] Auto-save failed for ${storyBranch}: ${String(saveErr).slice(0, 150)}`, {});
+  }
+
+  // Preserve already-committed local WIP too. A killed agent can leave a clean
+  // worktree with commits that were never pushed; removing the worktree without
+  // this push loses useful retry context.
+  if (!pushed) {
+    try {
+      const branch = execFileSync("git", ["branch", "--show-current"], {
+        cwd: worktreeDir, timeout: 5000, stdio: "pipe",
+      }).toString().trim();
+      if (branch && branch.toLowerCase() === storyBranch.toLowerCase()) {
+        execFileSync("git", ["push", "-u", "origin", storyBranch.toLowerCase()], {
+          cwd: worktreeDir, timeout: 15000, stdio: "pipe",
+        });
+        logger.info(`[worktree] Pushed existing local commits for ${storyBranch} before worktree removal`, {});
+      }
+    } catch (pushErr) {
+      logger.warn(`[worktree] Existing-commit push skipped/failed for ${storyBranch}: ${String(pushErr).slice(0, 150)}`, {});
+    }
   }
 
   // 2. Remove node_modules symlink (git worktree remove can't handle symlinks)

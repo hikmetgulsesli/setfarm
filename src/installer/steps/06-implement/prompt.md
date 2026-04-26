@@ -35,6 +35,7 @@ You are implementing ONE user story. You may ONLY write to the files listed belo
    - **NEVER run** `git checkout -b`, `git branch -m`, or create/rename a branch.
    - **NEVER run** dependency install commands during implement. If a dependency is missing, report it.
    - **Before every `git commit` and `git push`:** verify `git branch --show-current` equals `{{STORY_BRANCH}}`.
+   - **Do not commit midway.** Finish code + local checks first, then make one final story commit and push `{{STORY_BRANCH}}`.
    - **End of story:** commit only your scope files and push `{{STORY_BRANCH}}`. Do NOT create or merge a PR; the pipeline owns the PR gate.
 
 2. **ABSOLUTE SCOPE DISCIPLINE.** Write ONLY the files listed in SCOPE_FILES. That list is exhaustive for your story; every file the project needs was pre-planned into some story's scope.
@@ -50,12 +51,13 @@ You are implementing ONE user story. You may ONLY write to the files listed belo
 3. **Design reference, not file assignment.** The Stitch design may show elements that are not in your SCOPE_FILES (e.g. a Header when your scope is a counter component). Use the design as reference for visual style, spacing and interaction of your scope files only. Do not create the other elements — another story owns them.
 
 4. Read the story's acceptance criteria and implement ONLY what it asks
-5. Use imports from SHARED_FILES but do not modify them unless minor
-6. Commit on the CURRENT branch (do not switch branches): `git add <only-your-scope-files> && git commit -m "feat: <story-id> - <description>"`
-7. Do NOT use `git add -A` — stage only your scope files explicitly
-8. If the pre-commit hook rejects, run `git reset HEAD <file>` and remove out-of-scope changes. Do NOT bypass with `--no-verify`.
+5. Use imports from SHARED_FILES for context only; do not modify shared files unless they are also listed in SCOPE_FILES.
+6. Before committing, run available local checks. Prefer `npm run build`; for Vitest use `npm run test:run` or `npx vitest run` instead of watch-mode `npm test` when needed. If a script is missing, say so in CHANGES.
+7. Commit once on the CURRENT branch (do not switch branches): `git add <only-your-scope-files> && git commit -m "feat: <story-id> - <description>"`
+8. Do NOT use `git add -A` — stage only your scope files explicitly
+9. If the pre-commit hook rejects, run `git reset HEAD <file>` and remove out-of-scope changes. Do NOT bypass with `--no-verify`.
 
-9. **CHECKPOINT (her ~5dk bir, REQUIRED).** Uzun implementasyonlarda her 5 dakikada bir progress kaydı yaz:
+10. **CHECKPOINT (her ~5dk bir, REQUIRED).** Uzun implementasyonlarda her 5 dakikada bir progress kaydı yaz:
    ```bash
    echo "[$(date +%H:%M:%S)] <kısa durum: hangi dosyayı yazıyorsun, kaç dosya tamamlandı>" >> /tmp/setfarm-progress-{{RUN_ID}}.txt
    ```
