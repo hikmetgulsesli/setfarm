@@ -1,7 +1,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { implementModule } from "../../dist/installer/steps/06-implement/module.js";
-import { computeScopeFileLimits, normalize, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
+import { checkBuildGate, computeScopeFileLimits, detectPackageBuildCommand, normalize, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
 import type { ParsedOutput } from "../../dist/installer/steps/types.js";
 
 describe("06-implement step module", () => {
@@ -93,5 +96,30 @@ describe("06-implement step module", () => {
     const { hardLimit, softLimit } = computeScopeFileLimits(false, declaredScope);
     assert.ok(hardLimit >= 22, `hard limit ${hardLimit} should cover declared files plus test helpers`);
     assert.ok(softLimit >= 16, `soft limit ${softLimit} should scale with hard limit`);
+  });
+
+  it("detects package build scripts for implement build gate", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-build-gate-"));
+    try {
+      fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({ scripts: { build: "node -e \"process.exit(0)\"" } }));
+      assert.deepEqual(detectPackageBuildCommand(tmp), ["npm", "run", "build"]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("fails implement build gate when npm run build fails", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-build-gate-"));
+    try {
+      fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({
+        scripts: { build: "node -e \"console.error('synthetic build failure'); process.exit(2)\"" },
+      }));
+      const result = checkBuildGate("US-001", "Failing Build", tmp, 0, 3);
+      assert.equal(result.passed, false);
+      assert.equal(result.category, "BUILD_FAILED");
+      assert.match(result.reason || "", /synthetic build failure|Command failed/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });

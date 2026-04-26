@@ -2897,7 +2897,7 @@ ${screenDescs}
     // (Wave 6 fix A, Wave 10 Bug D, Wave 13 Bug P9, Wave 14 Bug Q)
     if (step.step_id === "implement" && storyStatus === STORY_STATUS.DONE && storyRow?.story_id) {
       try {
-        const { resolveStoryWorktree, checkScopeFilesGate, checkScopeEnforcement } = await import("./steps/06-implement/guards.js");
+        const { resolveStoryWorktree, checkScopeFilesGate, checkScopeEnforcement, checkBuildGate } = await import("./steps/06-implement/guards.js");
         const wd = await resolveStoryWorktree(step.current_story_id, context["story_workdir"] || "");
         const scopeLoopConfig = parseLoopConfigSafe(step.loop_config, step.run_id);
         const baseBr = context["story_base_ref"] || ((scopeLoopConfig?.mergeStrategy === "pr-each" || scopeLoopConfig?.verifyEach) ? "main" : (context["branch"] || ""));
@@ -2992,6 +2992,23 @@ ${screenDescs}
           // Soft warning (scope creep flag for verify step)
           if (scopeResult.reason && scopeResult.passed) {
             context["scope_creep_warning"] = scopeResult.reason;
+          }
+
+          // Build gate: prompts ask agents to run local checks, but models can
+          // still report done with unresolved TypeScript/module errors. Block
+          // story completion here so compile failures retry inside implement
+          // instead of leaking forward to verify/QA.
+          const buildResult = checkBuildGate(
+            storyRow.story_id, storyRow.title,
+            wd, step.retry_count, step.max_retries,
+          );
+          if (!buildResult.passed && buildResult.category) {
+            context["previous_failure"] = buildResult.reason!;
+            context["failure_category"] = buildResult.category;
+            context["failure_suggestion"] = buildResult.suggestion!;
+            await updateRunContext(step.run_id, context);
+            await failStep(stepId, buildResult.reason!);
+            return { advanced: false, runCompleted: false };
           }
         }
       } catch (scopeErr) {

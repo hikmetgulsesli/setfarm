@@ -65,6 +65,58 @@ export function computeScopeFileLimits(hasDeps: boolean, declaredScopeFiles: str
   return { hardLimit, softLimit };
 }
 
+export function detectPackageBuildCommand(workdir: string): string[] | null {
+  try {
+    const pkgPath = path.join(workdir, "package.json");
+    if (!fs.existsSync(pkgPath)) return null;
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+    if (pkg?.scripts?.build) return ["npm", "run", "build"];
+  } catch {}
+  return null;
+}
+
+function summarizeBuildFailure(err: any): string {
+  const raw = `${err?.stdout || ""}\n${err?.stderr || ""}\n${err?.message || ""}`;
+  return raw
+    .split("\n")
+    .map((line: string) => line.trimEnd())
+    .filter(Boolean)
+    .slice(-40)
+    .join("\n")
+    .slice(0, 3000);
+}
+
+export function checkBuildGate(
+  storyId: string,
+  storyTitle: string,
+  workdir: string,
+  retryCount: number,
+  maxRetries: number,
+): ScopeCheckResult {
+  if (!workdir || retryCount >= maxRetries) return { passed: true };
+  const cmd = detectPackageBuildCommand(workdir);
+  if (!cmd) return { passed: true };
+
+  try {
+    execFileSync(cmd[0], cmd.slice(1), {
+      cwd: workdir,
+      timeout: 120000,
+      stdio: ["pipe", "pipe", "pipe"],
+      encoding: "utf-8",
+      env: { ...process.env, CI: "true" },
+    });
+    return { passed: true };
+  } catch (err: any) {
+    const summary = summarizeBuildFailure(err);
+    return {
+      passed: false,
+      reason: `BUILD_FAILED: Story ${storyId} (${storyTitle}) reported STATUS: done but npm run build failed.\n${summary}`,
+      category: "BUILD_FAILED",
+      suggestion: "Fix TypeScript/build errors in the story worktree, then run npm run build before completing",
+    };
+  }
+}
+
 /**
  * Check scope_files declaration against actual worktree files.
  * scope_files is an ownership boundary, not a promise that every listed file
