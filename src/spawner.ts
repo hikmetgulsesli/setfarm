@@ -267,7 +267,19 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
       console.warn("[spawner] " + agentId + " exited: " + ((err as any).message || err) + " (transcript: " + transcriptPath + ")");
       if (!shuttingDown && claim.stepId) void failClaimIfStillRunning(claim.stepId, agentId, wfId, role, transcriptPath, err);
     }
-    else console.log("[spawner] " + agentId + " completed (transcript: " + transcriptPath + ")");
+    else {
+      console.log("[spawner] " + agentId + " completed (transcript: " + transcriptPath + ")");
+      if (!shuttingDown && claim.stepId) {
+        void failClaimIfStillRunning(
+          claim.stepId,
+          agentId,
+          wfId,
+          role,
+          transcriptPath,
+          new Error("agent exited with code 0 without calling setfarm step complete/fail"),
+        );
+      }
+    }
   });
   if (child.pid && claim.runId && claim.stepId) {
     activeProcesses.set(key, { child, runId: claim.runId, stepId: claim.stepId, agentId, wfId, role });
