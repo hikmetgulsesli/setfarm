@@ -28,12 +28,19 @@ function countValidStitchHtml(stitchDir: string): number {
     .filter(f => isValidStitchHtml(path.join(stitchDir, f))).length;
 }
 
+function isPrdPseudoScreen(screen: any): boolean {
+  const title = String(screen?.title || screen?.name || "").trim().toLowerCase();
+  const htmlFile = String(screen?.htmlFile || "").trim().toLowerCase();
+  return /^prd(?:\b|[:\s-])/.test(title) || /^prd(?:\b|[:\s-])/.test(htmlFile);
+}
+
 function manifestHtmlCounts(stitchDir: string): { total: number; valid: number } {
   const manifestPath = path.join(stitchDir, "DESIGN_MANIFEST.json");
   if (!fs.existsSync(manifestPath)) return { total: 0, valid: countValidStitchHtml(stitchDir) };
   try {
-    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
-    if (!Array.isArray(manifest)) return { total: 0, valid: countValidStitchHtml(stitchDir) };
+    const manifestRaw = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+    if (!Array.isArray(manifestRaw)) return { total: 0, valid: countValidStitchHtml(stitchDir) };
+    const manifest = manifestRaw.filter(s => !isPrdPseudoScreen(s));
     let valid = 0;
     for (const s of manifest) {
       const sid = String(s?.screenId || s?.id || "");
@@ -140,8 +147,9 @@ All visible text must be in Turkish. Use a dark, modern theme.`;
         { encoding: "utf-8", timeout: 180000, cwd: repo });
       let dlResult: any = {};
       try { dlResult = JSON.parse(dlOut); } catch (e) { logger.debug(`[module:design preclaim] dl parse: ${String(e).slice(0, 80)}`); }
-      const total = Number(dlResult.total || 0);
-      htmlCount = countValidStitchHtml(stitchDir);
+      const manifestCounts = manifestHtmlCounts(stitchDir);
+      const total = manifestCounts.total || Number(dlResult.total || 0);
+      htmlCount = manifestCounts.total ? manifestCounts.valid : countValidStitchHtml(stitchDir);
       logger.info(`[module:design preclaim] Downloaded ${dlResult.downloaded || 0}/${total || 0} (${htmlCount} valid HTML, attempt ${attempt + 1}/3)`, { runId: ctx.runId });
       ctx.context["screens_generated"] = String(htmlCount);
       if (htmlCount > 0 && (!total || htmlCount >= total)) break;
@@ -198,6 +206,7 @@ All visible text must be in Turkish. Use a dark, modern theme.`;
       const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
       if (Array.isArray(manifest)) {
         screenMap = manifest
+          .filter((s: any) => !isPrdPseudoScreen(s))
           .filter((s: any) => s?.screenId && s?.title)
           .map((s: any) => ({
             screenId: String(s.screenId),
@@ -222,6 +231,7 @@ All visible text must be in Turkish. Use a dark, modern theme.`;
           const m = html.match(/<title[^>]*>([^<]+)<\/title>/i);
           if (m) title = m[1].trim();
         } catch {}
+        if (/^prd(?:\b|[:\s-])/i.test(title)) continue;
         screenMap.push({
           screenId,
           name: title || screenId,
@@ -272,6 +282,8 @@ All visible text must be in Turkish. Use a dark, modern theme.`;
     let manifest: any[];
     try { manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8")); } catch { return; }
     if (!Array.isArray(manifest) || manifest.length === 0) return;
+    manifest = manifest.filter((s: any) => !isPrdPseudoScreen(s));
+    if (manifest.length === 0) return;
     let htmlOkCount = 0;
     for (const s of manifest) {
       const sid = String(s?.screenId || s?.id || "");
