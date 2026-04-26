@@ -8,6 +8,7 @@
 - `workflow stop <number>` now resolves numeric input as a run number before UUID-prefix matching, matching `workflow status` behavior and preventing accidental cancellation of older UUID-prefix runs.
 - Vite scaffold generation is now project-neutral: package name and HTML title come from the repo slug, no note-app hook/types are generated, fresh repos initialize `main` directly, and setup-build recognizes the neutral App baseline.
 - Setup-build and late guardrails no longer add a second Tailwind integration after the Tailwind v3/PostCSS scaffold is already built; missing Tailwind setup is handled in preclaim and build-verified before implement.
+- Implement scope overflow limits now scale from planner-declared `scope_files`, so an explicitly capped single-story run is not rejected merely because the planned story legitimately owns more than 12 files.
 - Prepared-claim and polling preambles now reject placeholder paths such as `$HOME/projects/<slug>` or `[missing:*]` before `cd`, preventing agents from treating PRD examples as real workdirs.
 - Frontend-change detection now verifies both `main`/`origin/main` and the target branch before running `git diff`, removing noisy `main..branch` fatal logs while a story branch is not created yet.
 - Implement context now sends small Stitch/DOM excerpts plus file paths instead of large raw HTML/DOM blobs, and feature-dev prompts require reading only current-story Stitch files from disk. This reduces Kimi/MiniMax prompt bloat and gateway memory pressure.

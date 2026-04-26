@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { implementModule } from "../../dist/installer/steps/06-implement/module.js";
-import { normalize, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
+import { computeScopeFileLimits, normalize, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
 import type { ParsedOutput } from "../../dist/installer/steps/types.js";
 
 describe("06-implement step module", () => {
@@ -68,5 +68,30 @@ describe("06-implement step module", () => {
     const parsed = { changes: "x" } as ParsedOutput;
     normalize(parsed);
     assert.equal(parsed["status"], undefined);
+  });
+
+  it("expands scope overflow limits for large planner-owned single-story scopes", () => {
+    const declaredScope = [
+      "src/screens/AnaSayfaSayac.tsx",
+      "src/screens/HataDurumuSessizFallback.tsx",
+      "src/screens/BaslangicDurumuBos.tsx",
+      "src/components/CounterDisplay/CounterDisplay.tsx",
+      "src/components/CounterDisplay/CounterDisplay.module.css",
+      "src/components/ActionButtons/ActionButtons.tsx",
+      "src/components/ActionButtons/ActionButtons.module.css",
+      "src/components/ResetButton/ResetButton.tsx",
+      "src/components/ResetButton/ResetButton.module.css",
+      "src/hooks/useCounter.ts",
+      "src/types/counter.ts",
+      "src/utils/storage.ts",
+      "src/App.tsx",
+      "src/App.css",
+      "src/main.tsx",
+      "src/index.css",
+    ];
+
+    const { hardLimit, softLimit } = computeScopeFileLimits(false, declaredScope);
+    assert.ok(hardLimit >= 22, `hard limit ${hardLimit} should cover declared files plus test helpers`);
+    assert.ok(softLimit >= 16, `soft limit ${softLimit} should scale with hard limit`);
   });
 });

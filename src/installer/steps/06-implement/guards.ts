@@ -42,6 +42,29 @@ export interface ScopeCheckResult {
   outOfScope?: string[];
 }
 
+const SCOPE_EXTS = /\.(tsx?|jsx?|vue|svelte|css|scss|html)$/i;
+const SCOPE_IGNORE = /^(node_modules\/|dist\/|\.next\/|build\/|coverage\/|stitch\/|references\/|DESIGN\.md|PROJECT_MEMORY\.md|\.gitignore|package(-lock)?\.json|tsconfig|vite\.config|tailwind\.config|postcss\.config|eslint\.config|README|index\.html$)/;
+
+function parseScopeFiles(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.filter((f: any) => typeof f === "string");
+  } catch {}
+  return [];
+}
+
+export function computeScopeFileLimits(hasDeps: boolean, declaredScopeFiles: string[]): { hardLimit: number; softLimit: number } {
+  const baseHardLimit = hasDeps ? 30 : 12;
+  const baseSoftLimit = hasDeps ? 20 : 8;
+  const ceiling = hasDeps ? 50 : 30;
+  const declaredSourceCount = declaredScopeFiles.filter(f => SCOPE_EXTS.test(f) && !SCOPE_IGNORE.test(f)).length;
+  const dynamicHardLimit = declaredSourceCount > 0 ? Math.min(ceiling, declaredSourceCount + 6) : baseHardLimit;
+  const hardLimit = Math.max(baseHardLimit, dynamicHardLimit);
+  const softLimit = Math.max(baseSoftLimit, Math.ceil(hardLimit * 0.7));
+  return { hardLimit, softLimit };
+}
+
 /**
  * Check scope_files declaration against actual worktree files.
  * scope_files is an ownership boundary, not a promise that every listed file
@@ -121,15 +144,17 @@ export async function checkScopeEnforcement(
   } catch {}
 
   const allTouched = Array.from(new Set([...changedFiles, ...dirtyFiles]));
-  const SCOPE_EXTS = /\.(tsx?|jsx?|vue|svelte|css|scss|html)$/i;
-  const SCOPE_IGNORE = /^(node_modules\/|dist\/|\.next\/|build\/|coverage\/|stitch\/|references\/|DESIGN\.md|PROJECT_MEMORY\.md|\.gitignore|package(-lock)?\.json|tsconfig|vite\.config|tailwind\.config|postcss\.config|eslint\.config|README|index\.html$)/;
   const sourceFiles = allTouched.filter(f => SCOPE_EXTS.test(f) && !SCOPE_IGNORE.test(f));
 
   // Dependencies increase limits
   const depRow = await pgGet<{ depends_on: string | null }>("SELECT depends_on FROM stories WHERE id = $1", [currentStoryDbId]);
   const hasDeps = depRow?.depends_on && depRow.depends_on !== "[]" && depRow.depends_on !== "null";
-  const HARD_LIMIT = hasDeps ? 30 : 12;
-  const SOFT_LIMIT = hasDeps ? 20 : 8;
+  const scopeRow = await pgGet<{ scope_files: string | null }>(
+    "SELECT scope_files FROM stories WHERE id = $1",
+    [currentStoryDbId]
+  );
+  const declaredScopeFiles = parseScopeFiles(scopeRow?.scope_files);
+  const { hardLimit: HARD_LIMIT, softLimit: SOFT_LIMIT } = computeScopeFileLimits(!!hasDeps, declaredScopeFiles);
 
   // Zero-work floor
   if (sourceFiles.length === 0 && retryCount < maxRetries) {
@@ -164,16 +189,9 @@ export async function checkScopeEnforcement(
 
   // Scope bleed detection
   if (sourceFiles.length > 0 && retryCount < maxRetries) {
-    const scopeRow = await pgGet<{ scope_files: string | null }>(
-      "SELECT scope_files FROM stories WHERE id = $1",
-      [currentStoryDbId]
-    );
-    if (scopeRow?.scope_files) {
+    if (declaredScopeFiles.length > 0) {
       const allowed = new Set<string>();
-      try {
-        const scope = JSON.parse(scopeRow.scope_files || "[]");
-        if (Array.isArray(scope)) scope.forEach((f: any) => typeof f === "string" && allowed.add(f));
-      } catch {}
+      declaredScopeFiles.forEach(f => allowed.add(f));
       if (allowed.size > 0) {
         const IMPLICIT_SHARED = [
           /^src\/types(\.(tsx?|d\.ts))?$/,
