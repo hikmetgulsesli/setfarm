@@ -927,15 +927,15 @@ export function checkStoryDesignCompliance(
         const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
         const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
         if (!allDeps["tailwindcss"] && !allDeps["@tailwindcss/vite"] && !allDeps["@tailwindcss/postcss"]) {
-          // Auto-install tailwind + postcss
+          // Auto-install the setup baseline Tailwind path: v3 + PostCSS.
           try {
-            execFileSync("npm", ["install", "-D", "tailwindcss", "@tailwindcss/postcss", "autoprefixer"], {
+            execFileSync("npm", ["install", "-D", "tailwindcss@^3.4.19", "postcss@^8.4.41", "autoprefixer@^10.4.20"], {
               cwd: repo, timeout: 60000, stdio: "pipe",
             });
             // Create postcss.config.js if missing
             const postcssPath = path.join(repo, "postcss.config.js");
             if (!fs.existsSync(postcssPath)) {
-              fs.writeFileSync(postcssPath, `export default {\n  plugins: {\n    '@tailwindcss/postcss': {},\n    autoprefixer: {},\n  },\n};\n`);
+              fs.writeFileSync(postcssPath, `export default {\n  plugins: {\n    tailwindcss: {},\n    autoprefixer: {},\n  },\n};\n`);
             }
             // Create tailwind.config.js if missing
             const twPath = path.join(repo, "tailwind.config.js");

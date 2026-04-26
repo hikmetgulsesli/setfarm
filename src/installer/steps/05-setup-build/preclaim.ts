@@ -24,11 +24,52 @@ function isPrdPseudoHtmlFile(fileName: string): boolean {
   return /\bprd\b/.test(fileName.toLowerCase());
 }
 
+function ensureFile(filePath: string, content: string): boolean {
+  if (fs.existsSync(filePath)) return false;
+  fs.writeFileSync(filePath, content);
+  return true;
+}
+
+function ensureTailwindV3Files(repo: string): void {
+  ensureFile(path.join(repo, "postcss.config.js"), `export default {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+};
+`);
+  ensureFile(path.join(repo, "tailwind.config.js"), `/** @type {import('tailwindcss').Config} */
+export default {
+  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
+  theme: { extend: {} },
+  plugins: [],
+};
+`);
+
+  const cssCandidates = [
+    path.join(repo, "src", "index.css"),
+    path.join(repo, "src", "main.css"),
+    path.join(repo, "src", "App.css"),
+    path.join(repo, "app", "globals.css"),
+  ];
+  const cssPath = cssCandidates.find(p => fs.existsSync(p)) || (fs.existsSync(path.join(repo, "src")) ? path.join(repo, "src", "index.css") : "");
+  if (!cssPath) return;
+  if (!fs.existsSync(cssPath)) fs.writeFileSync(cssPath, "");
+  const css = fs.readFileSync(cssPath, "utf-8");
+  if (!/@tailwind\s+base\b/.test(css) && !/@import\s+["']tailwindcss["']/.test(css)) {
+    fs.writeFileSync(cssPath, `@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+${css}`);
+  }
+}
+
 // Heavy work before agent:
 // 1. npm install (idempotent — skip if node_modules exists)
 // 2. npm run build — baseline verification
 // 3. Compat engine (fail fast on React 19 / testing-library mismatches)
-// 4. Tailwind install (when stitch uses tailwind classes)
+// 4. Tailwind install/config (when Stitch uses utility classes)
 // 5. stitch-to-jsx → src/screens/<TurkishName>.tsx + commit
 export async function preClaim(ctx: ClaimContext): Promise<void> {
   const repo = ctx.context["repo"] || ctx.context["REPO"] || "";
@@ -97,7 +138,10 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   }
   ctx.context["build_cmd_hint"] = buildCmd;
 
-  // 4. Tailwind install (if stitch HTML uses tailwind classes)
+  // 4. Tailwind install/config (if Stitch HTML uses utility classes).
+  // Keep the setup-repo baseline on one path: Tailwind v3 + PostCSS. A later
+  // setup-build completion hook used to add @tailwindcss/vite on top of this,
+  // which produced mixed integrations in generated apps.
   try {
     const stitchDir = path.join(repo, "stitch");
     if (fs.existsSync(stitchDir)) {
@@ -114,16 +158,32 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       }
       if (needsTailwind) {
         const pkg = JSON.parse(fs.readFileSync(path.join(repo, "package.json"), "utf-8"));
-        const hasTW = (pkg.dependencies?.tailwindcss || pkg.devDependencies?.tailwindcss);
-        if (!hasTW) {
+        const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
+        const tailwindSpec = String(allDeps["tailwindcss"] || "");
+        const usesTailwindV4 = !!(
+          allDeps["@tailwindcss/vite"] ||
+          allDeps["@tailwindcss/postcss"] ||
+          tailwindSpec === "latest" ||
+          /(^|[~^<>= ])4\./.test(tailwindSpec)
+        );
+        if (!allDeps["tailwindcss"]) {
           try {
-            execFileSync("npm", ["install", "-D", "tailwindcss", "postcss", "autoprefixer"],
+            execFileSync("npm", ["install", "-D", "tailwindcss@^3.4.19", "postcss@^8.4.41", "autoprefixer@^10.4.20"],
               { cwd: repo, timeout: 120000, stdio: "pipe" });
             logger.info(`[module:setup-build preclaim] tailwind installed`, { runId: ctx.runId });
           } catch (e) {
             logger.warn(`[module:setup-build preclaim] tailwind install failed: ${String(e).slice(0, 200)}`, { runId: ctx.runId });
           }
         }
+        if (!usesTailwindV4) ensureTailwindV3Files(repo);
+        try {
+          const commitPaths = ["package.json", "package-lock.json", "postcss.config.js", "tailwind.config.js", "src/index.css", "src/main.css", "src/App.css", "app/globals.css"]
+            .filter(p => fs.existsSync(path.join(repo, p)));
+          if (commitPaths.length > 0) {
+            execFileSync("git", ["add", ...commitPaths], { cwd: repo, timeout: 5000, stdio: "pipe" });
+            execFileSync("git", ["commit", "-m", "chore: configure tailwind baseline"], { cwd: repo, timeout: 10000, stdio: "pipe" });
+          }
+        } catch { /* nothing to commit is fine */ }
       }
     }
   } catch (e) {

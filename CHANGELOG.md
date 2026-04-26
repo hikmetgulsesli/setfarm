@@ -7,6 +7,7 @@
 - Workflow cancellation now rejects late `step complete` writes for cancelled runs, marks active steps as `cancelled`, and notifies the event spawner to terminate matching OpenClaw agent process trees instead of leaving stuck gateway sessions behind.
 - `workflow stop <number>` now resolves numeric input as a run number before UUID-prefix matching, matching `workflow status` behavior and preventing accidental cancellation of older UUID-prefix runs.
 - Vite scaffold generation is now project-neutral: package name and HTML title come from the repo slug, no note-app hook/types are generated, fresh repos initialize `main` directly, and setup-build recognizes the neutral App baseline.
+- Setup-build and late guardrails no longer add a second Tailwind integration after the Tailwind v3/PostCSS scaffold is already built; missing Tailwind setup is handled in preclaim and build-verified before implement.
 - Prepared-claim and polling preambles now reject placeholder paths such as `$HOME/projects/<slug>` or `[missing:*]` before `cd`, preventing agents from treating PRD examples as real workdirs.
 - Frontend-change detection now verifies both `main`/`origin/main` and the target branch before running `git diff`, removing noisy `main..branch` fatal logs while a story branch is not created yet.
 - Implement context now sends small Stitch/DOM excerpts plus file paths instead of large raw HTML/DOM blobs, and feature-dev prompts require reading only current-story Stitch files from disk. This reduces Kimi/MiniMax prompt bloat and gateway memory pressure.

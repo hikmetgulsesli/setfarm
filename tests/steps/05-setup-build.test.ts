@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import { setupBuildModule } from "../../dist/installer/steps/05-setup-build/module.js";
 import { onComplete } from "../../dist/installer/steps/05-setup-build/guards.js";
 import type { ParsedOutput, CompleteContext } from "../../dist/installer/steps/types.js";
@@ -46,6 +47,16 @@ describe("05-setup-build step module", () => {
     assert.equal(setupBuildModule.validateOutput({ status: "done" } as ParsedOutput).ok, true);
     assert.equal(setupBuildModule.validateOutput({ status: "retry" } as ParsedOutput).ok, false);
     assert.equal(setupBuildModule.validateOutput({} as ParsedOutput).ok, false);
+  });
+
+  it("does not add a second Tailwind/Vite integration after setup-build", () => {
+    const stepOps = fs.readFileSync("src/installer/step-ops.ts", "utf-8");
+    const preclaim = fs.readFileSync("src/installer/steps/05-setup-build/preclaim.ts", "utf-8");
+    const guardrails = fs.readFileSync("src/installer/step-guardrails.ts", "utf-8");
+    assert.equal(stepOps.includes("@tailwindcss/vite"), false, "setup-build completion should not mutate Vite/Tailwind after preclaim build checks");
+    assert.ok(preclaim.includes("tailwindcss@^3.4.19"), "missing Tailwind setup should use the v3 PostCSS baseline");
+    assert.ok(guardrails.includes("tailwindcss@^3.4.19"), "late Tailwind guardrails should use the same v3 PostCSS baseline");
+    assert.ok(guardrails.includes("tailwindcss: {}"), "late PostCSS fallback should not generate a Tailwind v4 plugin config");
   });
 
   it("onComplete stamps build_cmd from parsed output", async () => {
