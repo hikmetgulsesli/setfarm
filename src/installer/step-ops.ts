@@ -1659,6 +1659,15 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
               );
               if (row) depBranches.push(row);
             }
+            const storyScopeFiles = new Set<string>();
+            try {
+              const parsedScopeFiles = JSON.parse(nextStory.scope_files || "[]");
+              if (Array.isArray(parsedScopeFiles)) {
+                for (const f of parsedScopeFiles) {
+                  if (typeof f === "string" && f.trim()) storyScopeFiles.add(f.trim());
+                }
+              }
+            } catch (e) { logger.debug(`[dep-merge] Failed parsing scope_files: ${String(e).slice(0, 80)}`); }
             // Use git checkout (not merge) to copy files WITHOUT merge commits.
             // Merge commits cause merge-queue conflicts because the same changes
             // appear on multiple branches. checkout just updates the working tree.
@@ -1683,17 +1692,38 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
                 execFileSync("git", ["reset", "HEAD"], {
                   cwd: storyWorkdir, timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
                 });
-                // Mark dep files as assume-unchanged so git ignores them for
-                // commit/diff. Without this, agent commits dep files → scope overflow.
+                // Mark dependency files as assume-unchanged so git ignores them
+                // for commit/diff. Keep current-story scope files trackable:
+                // integration stories often need to edit a file originally
+                // introduced by a dependency, and hiding those edits makes PRs
+                // miss required source changes.
+                let ignoredDepFileCount = 0;
+                let editableDepFileCount = 0;
                 for (const f of depFiles) {
+                  if (storyScopeFiles.has(f)) {
+                    try {
+                      execFileSync("git", ["update-index", "--no-assume-unchanged", "--no-skip-worktree", f], {
+                        cwd: storyWorkdir, timeout: 3000, stdio: ["pipe", "pipe", "pipe"],
+                      });
+                    } catch {
+                      try {
+                        execFileSync("git", ["update-index", "--no-assume-unchanged", f], {
+                          cwd: storyWorkdir, timeout: 3000, stdio: ["pipe", "pipe", "pipe"],
+                        });
+                      } catch (e) { logger.debug(`[worktree] Could not clear index flags: ${String(e).slice(0, 80)}`); }
+                    }
+                    editableDepFileCount++;
+                    continue;
+                  }
                   try {
                     execFileSync("git", ["update-index", "--assume-unchanged", f], {
                       cwd: storyWorkdir, timeout: 3000, stdio: ["pipe", "pipe", "pipe"],
                     });
+                    ignoredDepFileCount++;
                   } catch (e) { logger.debug(`[worktree] File not found: ${String(e).slice(0, 80)}`); }
                 }
                 mergedCount++;
-                logger.info(`[dep-merge] Copied ${depFiles.length} files from ${dep.story_id} (${dep.story_branch}) into ${nextStory.story_id} worktree (assume-unchanged)`, { runId: step.run_id });
+                logger.info(`[dep-merge] Copied ${depFiles.length} files from ${dep.story_id} (${dep.story_branch}) into ${nextStory.story_id} worktree (${ignoredDepFileCount} assume-unchanged, ${editableDepFileCount} editable scope files)`, { runId: step.run_id });
               } catch (mergeErr) {
                 logger.warn(`[dep-merge] Failed copying ${dep.story_id} into ${nextStory.story_id}: ${String(mergeErr).slice(0, 150)}`, { runId: step.run_id });
               }

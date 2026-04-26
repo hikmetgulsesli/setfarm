@@ -25,6 +25,7 @@
 - Implement prompts now explicitly preserve DONE-story behavior/tests, and the implement guard rejects large unexplained test deletions as `REGRESSION_RISK`, preventing agents from erasing prior story coverage while wiring integration stories.
 - Event-driven spawner now pre-claims work itself and starts agents with a prepared claim file, so model sessions no longer burn time/tokens deciding to run `step peek`/`step claim` before actual work starts.
 - Spawner pre-claim prompt now uses shell-safe jq quoting so prepared-claim agents can extract `WORKDIR` and `STEP_ID` without copying broken commands.
+- Dependency-merge now keeps current-story `scope_files` trackable instead of marking them `assume-unchanged`, so integration stories can edit dependency-owned files such as `src/App.tsx` and still include those edits in the PR.
 
 ## 2026-04-26 - Single Step Claim Idempotency
 
