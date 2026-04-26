@@ -97,6 +97,9 @@ describe("03-stories step module", () => {
       "src/hooks/useCounter.ts",
       "src/components/CounterControls/CounterControls.tsx",
       "src/screens/AnaSayfaSayacEkrani.tsx",
+      "package.json",
+      "tsconfig.json",
+      "vite.config.ts",
     ], 1);
 
     assert.deepEqual(scope, [
@@ -104,6 +107,28 @@ describe("03-stories step module", () => {
       "src/components/CounterControls/CounterControls.tsx",
       "src/screens/AnaSayfaSayacEkrani.tsx",
       "src/App.tsx",
+      "src/App.css",
+      "src/main.tsx",
+      "src/index.css",
+    ]);
+  });
+
+  it("removes setup-owned toolchain files from frontend story scopes", () => {
+    const scope = normalizeScopeFilesForStory([
+      "src/App.tsx",
+      "src/screens/AnaSayfa.tsx",
+      "package.json",
+      "package-lock.json",
+      "tsconfig.app.json",
+      "vite.config.ts",
+      "tailwind.config.js",
+      "postcss.config.js",
+      "index.html",
+    ], 1);
+
+    assert.deepEqual(scope, [
+      "src/App.tsx",
+      "src/screens/AnaSayfa.tsx",
       "src/App.css",
       "src/main.tsx",
       "src/index.css",

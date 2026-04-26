@@ -103,6 +103,20 @@ const SINGLE_STORY_FRONTEND_INTEGRATION_FILES = [
   "src/index.css",
 ];
 
+const SETUP_OWNED_FRONTEND_TOOLCHAIN_PATTERNS = [
+  /^package(?:-lock)?\.json$/,
+  /^pnpm-lock\.yaml$/,
+  /^yarn\.lock$/,
+  /^bun\.lockb?$/,
+  /^tsconfig(?:\.[^.]+)?\.json$/,
+  /^vite\.config\.[cm]?[jt]s$/,
+  /^tailwind\.config\.[cm]?[jt]s$/,
+  /^postcss\.config\.[cm]?[jt]s$/,
+  /^eslint\.config\.[cm]?[jt]s$/,
+  /^\.eslintrc(?:\.[cm]?[jt]s|\.json)?$/,
+  /^index\.html$/,
+];
+
 function isFrontendSurfaceFile(file: string): boolean {
   return (
     file.startsWith("src/screens/") ||
@@ -110,6 +124,10 @@ function isFrontendSurfaceFile(file: string): boolean {
     file.endsWith(".tsx") ||
     file.endsWith(".jsx")
   );
+}
+
+function isSetupOwnedFrontendToolchainFile(file: string): boolean {
+  return SETUP_OWNED_FRONTEND_TOOLCHAIN_PATTERNS.some((pattern) => pattern.test(file));
 }
 
 export function normalizeScopeFilesForStory(scopeFiles: unknown, storyCount: number): string[] | null {
@@ -125,7 +143,17 @@ export function normalizeScopeFilesForStory(scopeFiles: unknown, storyCount: num
     normalized.push(file);
   }
 
-  if (storyCount === 1 && normalized.some(isFrontendSurfaceFile)) {
+  const hasFrontendSurface = normalized.some(isFrontendSurfaceFile);
+  if (hasFrontendSurface) {
+    for (let i = normalized.length - 1; i >= 0; i--) {
+      if (isSetupOwnedFrontendToolchainFile(normalized[i])) {
+        seen.delete(normalized[i]);
+        normalized.splice(i, 1);
+      }
+    }
+  }
+
+  if (storyCount === 1 && hasFrontendSurface) {
     for (const file of SINGLE_STORY_FRONTEND_INTEGRATION_FILES) {
       if (!seen.has(file)) {
         seen.add(file);
