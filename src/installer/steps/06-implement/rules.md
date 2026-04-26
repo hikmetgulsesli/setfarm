@@ -26,6 +26,14 @@ You are assigned ONE story with a FIXED list of files. You MUST NOT create or mo
 3. Only stage and commit files from your SCOPE_FILES
 4. Do NOT use --no-verify to bypass the hook
 
+## Regression Safety
+- DONE story behavior is contract. Preserve existing features unless this story explicitly replaces them.
+- Existing tests are contract. Do not delete, skip, or weaken them to pass the current story.
+- Add tests for the current story without removing previous story coverage.
+- Do not add speculative UI such as profile, archive, settings, navigation, or dashboards unless listed in acceptance criteria.
+- If a current acceptance criterion appears to conflict with previous behavior, implement the smallest compatible change and keep the full test suite green.
+- Review `git diff` before committing; the diff should explain itself as this story only.
+
 ## Code Quality
 - Follow existing project patterns (check src/ structure before writing)
 - Use TypeScript types — no `any` unless wrapping external data

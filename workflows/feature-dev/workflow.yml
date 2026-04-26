@@ -942,6 +942,15 @@ steps:
       4. Implement the story fully:
          - Write tests for EVERY acceptance criterion (see TEST GUIDE below)
          - Implement the functional module completely
+         - Preserve DONE story behavior and tests. Existing tests are accepted
+           product contract, not disposable scaffolding.
+         - Do NOT delete, skip, or weaken existing tests to make your new code
+           pass. Fix the implementation instead.
+         - Do NOT add speculative UI such as profile, archive, settings,
+           navigation, dashboards, or demo panels unless this story explicitly
+           asks for them.
+         - Before committing, run `git diff` and remove anything that does not
+           directly serve this story's acceptance criteria.
 
       TEST GUIDE (if available — follow this to write tests):
       {{test_generation_prompt}}

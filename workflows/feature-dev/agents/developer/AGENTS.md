@@ -115,6 +115,15 @@ SHARED_EDITS: src/lib/format.ts — added formatCurrency helper used by US-003 a
 These are all separate stories' jobs. If the PRD is missing them, that's a
 planner/designer problem, not something to fix by bundling work into this story.
 
+### Regression contract
+
+- DONE stories are accepted product behavior. Preserve them.
+- Existing tests are accepted contract. Do not delete, skip, or weaken them to make your current story pass.
+- Add or update tests only for this story's acceptance criteria.
+- Do not add speculative features such as profile, archive, settings, navigation, dashboards, or demo panels unless the current story explicitly asks for them.
+- If current acceptance criteria and existing behavior conflict, make the smallest compatible change and keep the full suite green.
+- Before committing, inspect `git diff` and remove changes that do not directly belong to this story.
+
 ## CRITICAL: Commit Early, Commit Often
 
 Your session has a time limit. If you don't commit, ALL your work is LOST.

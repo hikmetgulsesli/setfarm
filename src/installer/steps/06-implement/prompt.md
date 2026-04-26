@@ -41,6 +41,11 @@ You are implementing ONE user story. You may ONLY write to the files listed belo
    - Your job is ONLY the files above. Every other file already belongs to another story.
    - Read from SHARED_FILES for import context; do not modify them and do not create sibling files next to them.
    - Assembly of components into pages/layouts happens in the integration story (the last story, which owns `App.tsx`/`main.tsx`). If your scope is a set of components, write just those components — do not wrap them into a new parent file.
+   - Preserve all behavior and tests from DONE stories. Existing tests are accepted contract, not disposable scaffolding.
+   - Do not delete or weaken existing tests to make your new code pass. Fix the implementation instead.
+   - Do not add navigation, profile, archive, settings, demo panels, or other UI unless this story explicitly asks for them.
+   - If acceptance criteria conflict with existing tests, make the smallest compatible change and keep both old and new behavior working.
+   - Before committing, run `git diff` and verify the diff contains only this story's required changes.
 
 3. **Design reference, not file assignment.** The Stitch design may show elements that are not in your SCOPE_FILES (e.g. a Header when your scope is a counter component). Use the design as reference for visual style, spacing and interaction of your scope files only. Do not create the other elements — another story owns them.
 

@@ -204,6 +204,48 @@ export async function checkScopeEnforcement(
     }
   }
 
+  // Regression guard: implementation stories may add or adjust tests, but they
+  // must not delete a large chunk of prior tests just to make a new story pass.
+  // This catches the common App.tsx integration failure mode where the agent
+  // removes accepted search/form/card tests while adding unrelated UI.
+  const testFiles = sourceFiles.filter(f => /\.(test|spec)\.(tsx?|jsx?)$/i.test(f));
+  if (testFiles.length > 0 && retryCount < maxRetries) {
+    let storyText = storyTitle;
+    try {
+      const storyRow = await pgGet<{ description: string | null; acceptance_criteria: string | null }>(
+        "SELECT description, acceptance_criteria FROM stories WHERE id = $1",
+        [currentStoryDbId]
+      );
+      storyText += "\n" + (storyRow?.description || "") + "\n" + (storyRow?.acceptance_criteria || "");
+    } catch {}
+
+    const explicitDeletionStory = /\b(remove|delete|drop|cleanup|replace|rewrite|migrate|rename|sil|kaldir|temizle)\b/i.test(storyText);
+    if (!explicitDeletionStory) {
+      const heavyDeletes: string[] = [];
+      try {
+        const numstat = execFileSync("git", ["diff", "--numstat", baseBranch, "--", ...testFiles], {
+          cwd: workdir, timeout: 5000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8",
+        }).trim();
+        for (const line of numstat.split("\n").filter(Boolean)) {
+          const [addedRaw, deletedRaw, file] = line.split("\t");
+          const added = Number.parseInt(addedRaw || "0", 10) || 0;
+          const deleted = Number.parseInt(deletedRaw || "0", 10) || 0;
+          if (deleted >= 20 && deleted > Math.max(added * 2, added + 10)) {
+            heavyDeletes.push(`${file}: -${deleted}/+${added}`);
+          }
+        }
+      } catch {}
+      if (heavyDeletes.length > 0) {
+        return {
+          passed: false,
+          reason: `REGRESSION_RISK: Story ${storyId} deleted substantial existing test coverage without an explicit deletion/migration requirement. Deleted tests usually represent accepted previous-story behavior. Files: ${heavyDeletes.slice(0, 8).join(", ")}`,
+          category: "REGRESSION_RISK",
+          suggestion: "Restore prior tests and make the new implementation pass them; only change tests for this story's new acceptance criteria",
+        };
+      }
+    }
+  }
+
   // Hard overflow
   if (sourceFiles.length > HARD_LIMIT && retryCount < maxRetries) {
     return {
