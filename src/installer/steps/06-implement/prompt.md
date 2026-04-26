@@ -37,6 +37,7 @@ You are implementing ONE user story. You may ONLY write to the files listed belo
    - **Before every `git commit` and `git push`:** verify `git branch --show-current` equals `{{STORY_BRANCH}}`.
    - **Do not commit midway.** Finish code + local checks first, then make one final story commit and push `{{STORY_BRANCH}}`.
    - **End of story:** commit only your scope files and push `{{STORY_BRANCH}}`. Do NOT create or merge a PR; the pipeline owns the PR gate.
+   - **Toolchain freeze:** do not inspect, rewrite, upgrade, or debate Vite/Tailwind/TypeScript/test config unless a local build/test command actually fails. If checks pass, leave config untouched.
 
 2. **ABSOLUTE SCOPE DISCIPLINE.** Write ONLY the files listed in SCOPE_FILES. That list is exhaustive for your story; every file the project needs was pre-planned into some story's scope.
    - Your job is ONLY the files above. Every other file already belongs to another story.
@@ -53,7 +54,7 @@ You are implementing ONE user story. You may ONLY write to the files listed belo
 4. Read the story's acceptance criteria and implement ONLY what it asks
 5. Use imports from SHARED_FILES for context only; do not modify shared files unless they are also listed in SCOPE_FILES.
 6. Before committing, run available local checks. Prefer `npm run build`; for Vitest use `npm run test:run` or `npx vitest run` instead of watch-mode `npm test` when needed. If a script is missing, say so in CHANGES.
-7. Commit once on the CURRENT branch (do not switch branches): `git add <only-your-scope-files> && git commit -m "feat: <story-id> - <description>"`
+7. Commit once on the CURRENT branch (do not switch branches): stage only files from `.story-scope-files`, then `git commit -m "feat: <story-id> - <description>"`
 8. Do NOT use `git add -A` — stage only your scope files explicitly
 9. If the pre-commit hook rejects, run `git reset HEAD <file>` and remove out-of-scope changes. Do NOT bypass with `--no-verify`.
 

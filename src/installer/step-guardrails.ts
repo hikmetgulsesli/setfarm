@@ -817,12 +817,33 @@ export async function processDesignFidelityCheck(
 
 // ── Frontend Change Detection ───────────────────────────────────────
 
+function gitRefExists(repo: string, ref: string): boolean {
+  try {
+    execFileSync("git", ["rev-parse", "--verify", "--quiet", ref], {
+      cwd: repo,
+      timeout: 5000,
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function computeHasFrontendChanges(repo: string, branch: string): string {
   try {
-    const output = execFileSync("git", ["diff", "--name-only", `main..${branch}`], {
+    const targetRef = (branch || "").trim();
+    if (!repo || !targetRef || !fs.existsSync(repo)) return "false";
+    const baseRef = gitRefExists(repo, "main")
+      ? "main"
+      : (gitRefExists(repo, "origin/main") ? "origin/main" : "");
+    if (!baseRef || !gitRefExists(repo, targetRef)) return "false";
+
+    const output = execFileSync("git", ["diff", "--name-only", `${baseRef}..${targetRef}`], {
       cwd: repo,
       encoding: "utf-8",
       timeout: GIT_DIFF_TIMEOUT,
+      stdio: ["ignore", "pipe", "ignore"],
     });
     const files = output.trim().split("\n").filter(f => f.length > 0);
     return isFrontendChange(files) ? "true" : "false";

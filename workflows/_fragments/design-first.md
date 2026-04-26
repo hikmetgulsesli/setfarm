@@ -1,17 +1,24 @@
 # DESIGN-FIRST (ZORUNLU)
 
-Aşağıdaki STITCH HTML bu sayfanın TASARIMINI gösterir. Bu layout'u AYNEN uygula.
-design-tokens.css'i @import et. Kendi renk/font tanımlama YAPMA.
-Uymazsan story REJECT edilecek.
+Aşağıdaki Stitch dosyaları tasarım kaynağıdır. Prompt'a bütün HTML basılmaz;
+gerekli ekranı WORKDIR içinde dosyadan oku. Sadece mevcut story'nin scope_files
+dosyalarını yaz.
 
-STITCH HTML (BU LAYOUT'U KOPYALA):
-{{stitch_html}}
+STORY SCREENS:
+{{story_screens}}
+
+STITCH FILES TO READ:
+- stitch/DESIGN_MANIFEST.json
+- stitch/design-tokens.css
+- stitch/DESIGN_DOM.json
+- STORY_SCREENS içindeki ilgili stitch/*.html dosyaları
 
 DESIGN TOKENS:
 {{design_tokens}}
 
-DESIGN DOM (extract edilmis element listesi):
-{{design_dom}}
+DESIGN DOM:
+Prompt excerpt'i kısadır. Tam yapı gerektiğinde sadece bu story ekranlarını
+stitch/DESIGN_DOM.json içinden oku; tüm proje DOM'unu prompt'a kopyalama.
 
 UI CONTRACT (auto-generated from Stitch design — EVERY element MUST work):
 {{ui_contract}}

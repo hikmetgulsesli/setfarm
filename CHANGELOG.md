@@ -1,5 +1,9 @@
 ## 2026-04-26 - Story PR Gate Serial Main Flow
 
+- Prepared-claim and polling preambles now reject placeholder paths such as `$HOME/projects/<slug>` or `[missing:*]` before `cd`, preventing agents from treating PRD examples as real workdirs.
+- Frontend-change detection now verifies both `main`/`origin/main` and the target branch before running `git diff`, removing noisy `main..branch` fatal logs while a story branch is not created yet.
+- Implement context now sends small Stitch/DOM excerpts plus file paths instead of large raw HTML/DOM blobs, and feature-dev prompts require reading only current-story Stitch files from disk. This reduces Kimi/MiniMax prompt bloat and gateway memory pressure.
+- Developer prompts now freeze toolchain config after setup, avoid uninstalled `npx eslint`, and stage only `.story-scope-files` plus test files instead of `git add -A`, reducing scope bleed and config-churn loops.
 - Final-test now detects `pr-each` / `verify_each` runs, syncs `main`, and skips the stale run-branch merge guard so completed story PRs remain the source of truth.
 - QA and final-test prompts now require testing the merged `main` branch in pr-each flows, and final-test falls back to the platform smoke script when a project-local script is absent.
 - Deploy prompts now require Mission Control project upserts using repo basename plus `ports.frontend`, preventing duplicate failed project cards and `ports.web` metadata drift.

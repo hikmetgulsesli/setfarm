@@ -816,6 +816,11 @@ steps:
       tool is available. If a required package is missing, report MISSING_DEPENDENCY;
       setup/build owns dependency installation.
 
+      TOOLCHAIN FREEZE: package.json, Vite, Tailwind, TypeScript and test config are
+      already prepared by setup/setup-build. Do NOT analyze, rewrite, upgrade, or
+      debate toolchain config unless an actual local command fails. If build/test
+      already passes, keep config untouched and implement only the story scope.
+
       SHARED FILE RULE: Do NOT modify package.json unless this is the setup story (US-001).
       All dependencies should already be installed by setup-build or the setup story.
       If a dependency is truly missing (e.g. build fails with "Cannot find module X"),
@@ -853,13 +858,15 @@ steps:
       DESIGN_TOKENS: {{design_tokens}}
       STORY_SCREENS: {{story_screens}}
 
-      DESIGN DOM (element-level structure — HER ELEMENTI BIREBIR KODLA):
-      {{design_dom}}
+      DESIGN DOM:
+      Use stitch/DESIGN_DOM.json from WORKDIR when element-level detail is needed.
+      Read only the screen ids listed in STORY_SCREENS. Do NOT paste or process the
+      full project DOM in the session.
 
       DESIGN DOM RULES (MANDATORY — FOLLOW EXACTLY):
-      - Every button in DESIGN_DOM must exist in code with the EXACT SAME label and icon
-      - Every input must have the same type and placeholder
-      - Every nav link must route to the correct page/modal
+      - Every in-scope button in this story's DESIGN_DOM screen(s) must exist in code with the same label and icon
+      - Every in-scope input must have the same type and placeholder
+      - Every in-scope nav link must route to the correct page/modal
       - Section count and structure must match
       - Adapt CSS classes to var(--token) format
       - NEVER change button labels from Stitch (if Stitch says ENTER, code must say ENTER — not GÖNDER)
@@ -962,8 +969,10 @@ steps:
            echo "=== Verification cycle $CYCLE ==="
            LINT_OK=true; BUILD_OK=true; TEST_OK=true
 
-           # Lint — always auto-fix first, then check
-           npx eslint --fix "src/**/*.{ts,tsx}" 2>/dev/null || npx eslint --fix "app/**/*.{ts,tsx}" 2>/dev/null || true
+           # Lint — auto-fix only when eslint is already installed
+           if node -e "const p=require('./package.json'); process.exit((p.devDependencies&&p.devDependencies.eslint)||(p.dependencies&&p.dependencies.eslint)?0:1)" 2>/dev/null; then
+             npx eslint --fix "src/**/*.{ts,tsx}" 2>/dev/null || npx eslint --fix "app/**/*.{ts,tsx}" 2>/dev/null || true
+           fi
            {{lint_cmd}} 2>&1 || { LINT_OK=false; echo "Lint failed after auto-fix — manual fix needed"; }
            if [ "$LINT_OK" = "false" ]; then
              LINT_OUT=$({{lint_cmd}} 2>&1) || true
@@ -1012,7 +1021,14 @@ steps:
 
       8. Commit (exclude runtime files):
          rm -f .setfarm-step-output.txt 2>/dev/null || true
-         git add -A && git commit -m "feat: {{current_story_id}} - {{current_story_title}}"
+         while IFS= read -r f; do
+           [ -z "$f" ] && continue
+           [ -e "$f" ] || [ -L "$f" ] || continue
+           git add -- "$f"
+         done < .story-scope-files
+         git ls-files --modified --others --exclude-standard -- ':(glob)**/*.test.ts' ':(glob)**/*.test.tsx' ':(glob)**/*.spec.ts' ':(glob)**/*.spec.tsx' | xargs -r git add --
+         git diff --cached --quiet && { echo "NO_SCOPED_CHANGES_STAGED"; git status --short; exit 1; }
+         git commit -m "feat: {{current_story_id}} - {{current_story_title}}"
 
       9. Push the prepared branch:
          git push -u origin "$STORY_BRANCH"

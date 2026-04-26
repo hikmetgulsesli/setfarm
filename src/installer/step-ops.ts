@@ -43,6 +43,10 @@ import {
   recordStepTransition,
 } from "./repo.js";
 
+const STITCH_HTML_EXCERPT_CHARS = 2500;
+const STITCH_HTML_TOTAL_CHARS = 6000;
+const DESIGN_DOM_EXCERPT_CHARS = 3000;
+
 // ── Predicted screen file helpers (2026-04-14 SCOPE_BLEED fix) ──
 // Mirrors scripts/stitch-to-jsx.mjs toComponentName() — MUST stay in sync.
 // Planner was hallucinating English paths (src/pages/GameScreen.tsx) while
@@ -746,9 +750,15 @@ async function injectStoryContext(
         const htmlFile = path.join(repoPath, screen.htmlFile || `stitch/${screen.screenId}.html`);
         if (fs.existsSync(htmlFile)) {
           const html = fs.readFileSync(htmlFile, "utf-8");
-          // Truncate if too large (max 15K chars per screen, ~4K tokens)
-          const truncated = html.length > 15000 ? html.slice(0, 15000) + "\n<!-- ...truncated -->" : html;
-          stitchHtmlContent += `\n<!-- STITCH SCREEN: ${screen.name || screen.screenId} -->\n${truncated}\n`;
+          const excerpt = html.replace(/\s+/g, " ").trim();
+          const truncated = excerpt.length > STITCH_HTML_EXCERPT_CHARS
+            ? excerpt.slice(0, STITCH_HTML_EXCERPT_CHARS) + " ...(truncated; read file for full HTML)"
+            : excerpt;
+          stitchHtmlContent += `\nSTITCH SCREEN: ${screen.name || screen.screenId}\nFILE: ${screen.htmlFile || `stitch/${screen.screenId}.html`}\nHTML_EXCERPT: ${truncated}\n`;
+          if (stitchHtmlContent.length > STITCH_HTML_TOTAL_CHARS) {
+            stitchHtmlContent = stitchHtmlContent.slice(0, STITCH_HTML_TOTAL_CHARS) + "\n...(truncated; read stitch files for full design)\n";
+            break;
+          }
         }
       }
       if (stitchHtmlContent) {
@@ -778,7 +788,9 @@ async function injectStoryContext(
         }
         const domToInject = Object.keys(filteredScreens).length > 0 ? filteredScreens : fullDom.screens;
         const domJson = JSON.stringify(domToInject);
-        context["design_dom"] = domJson.length > 8000 ? domJson.substring(0, 8000) + "...(truncated)" : domJson;
+        context["design_dom"] = domJson.length > DESIGN_DOM_EXCERPT_CHARS
+          ? domJson.substring(0, DESIGN_DOM_EXCERPT_CHARS) + "...(truncated; read stitch/DESIGN_DOM.json for full DOM)"
+          : domJson;
       }
     }
   } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }

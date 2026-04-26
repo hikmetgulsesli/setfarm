@@ -90,7 +90,15 @@ OUTPUT_FILE: /tmp/setfarm-output-${outputFileId}.txt
      WORKDIR=$(jq -r 'if (.input | type) == "string" then .input else "" end' "$CLAIM_FILE" | sed -n "s/^WORKDIR:[[:space:]]*//p; s/^REPO:[[:space:]]*//p" | head -1)
    fi
    [ -z "$STEP_ID" ] && { echo "HEARTBEAT_OK"; exit 0; }
+   case "$WORKDIR" in
+     ""|*"<"*|*">"*|*"[missing:"*|*'$HOME'*|~*) WORKDIR="" ;;
+   esac
+   case "$WORKDIR" in
+     /*) ;;
+     *) WORKDIR="" ;;
+   esac
    [ -z "$WORKDIR" ] && WORKDIR="$HOME/.openclaw/workspace/agent-scratch"
+   mkdir -p "$WORKDIR"
    cd "$WORKDIR" && pwd
    case "$(pwd)" in
      $HOME/.openclaw/setfarm-repo*) echo "STATUS: fatal"; echo "FATAL: platform_path_touched"; exit 1;;
