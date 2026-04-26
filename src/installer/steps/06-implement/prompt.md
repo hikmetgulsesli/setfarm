@@ -53,12 +53,13 @@ You are implementing ONE user story. You may ONLY write to the files listed belo
 
 4. Read the story's acceptance criteria and implement ONLY what it asks
 5. Use imports from SHARED_FILES for context only; do not modify shared files unless they are also listed in SCOPE_FILES.
-6. Before committing, run available local checks. Prefer `npm run build`; for Vitest use `npm run test:run` or `npx vitest run` instead of watch-mode `npm test` when needed. If a script is missing, say so in CHANGES.
-7. Commit once on the CURRENT branch (do not switch branches): stage only files from `.story-scope-files`, then `git commit -m "feat: <story-id> - <description>"`
-8. Do NOT use `git add -A` — stage only your scope files explicitly
-9. If the pre-commit hook rejects, run `git reset HEAD <file>` and remove out-of-scope changes. Do NOT bypass with `--no-verify`.
+6. Every native `<button>` you create must have real behavior: `onClick`, `type="submit"`, `disabled`/`aria-disabled`, or explicit `data-smoke-ignore`. Icon-only header/nav/settings/history buttons must change visible state, open a panel/dialog, navigate, or be disabled. Decorative icons must not be rendered as `<button>`.
+7. Before committing, run available local checks. Prefer `npm run build`; for Vitest use `npm run test:run` or `npx vitest run` instead of watch-mode `npm test` when needed. If a script is missing, say so in CHANGES.
+8. Commit once on the CURRENT branch (do not switch branches): stage only files from `.story-scope-files`, then `git commit -m "feat: <story-id> - <description>"`
+9. Do NOT use `git add -A` — stage only your scope files explicitly
+10. If the pre-commit hook rejects, run `git reset HEAD <file>` and remove out-of-scope changes. Do NOT bypass with `--no-verify`.
 
-10. **CHECKPOINT (her ~5dk bir, REQUIRED).** Uzun implementasyonlarda her 5 dakikada bir progress kaydı yaz:
+11. **CHECKPOINT (her ~5dk bir, REQUIRED).** Uzun implementasyonlarda her 5 dakikada bir progress kaydı yaz:
    ```bash
    echo "[$(date +%H:%M:%S)] <kısa durum: hangi dosyayı yazıyorsun, kaç dosya tamamlandı>" >> /tmp/setfarm-progress-{{RUN_ID}}.txt
    ```

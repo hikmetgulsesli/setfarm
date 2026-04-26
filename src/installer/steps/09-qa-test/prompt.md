@@ -26,6 +26,7 @@ Görev: Verify + security-gate'ten geçmiş projeyi browser'da açarak fonksiyon
 5. **Dark mode** destekliyorsa geçişi test et
 6. **Klavye nav**: Tab ile tüm interactive öğelere ulaşılabilir
 7. **Console**: warning/error var mı
+8. **Icon-only controls**: header/nav/settings/history/add/reset gibi metinsiz veya ikon-only butonları da tıkla. Tıklama görünür state, dialog/panel, URL, localStorage/app state veya DOM değişimi üretmüyorsa `STATUS: retry`.
 
 Dev server başlatırsan PID'ini kaydet ve çıkmadan önce mutlaka kapat (`trap 'kill $PID 2>/dev/null || true' EXIT`). QA agent testten sonra açık `vite`/`serve` prosesi bırakmamalı.
 

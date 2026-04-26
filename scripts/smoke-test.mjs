@@ -246,6 +246,72 @@ function checkEntryPointImports(repo) {
   return issues;
 }
 
+// ── Phase 1c: Native button wiring validation ─────────────────────────
+// Catches visible controls that render as buttons but have no behavior.
+// Decorative controls must not use <button>; intentional inert buttons can
+// opt out with disabled, aria-disabled, or data-smoke-ignore.
+function checkNativeButtonWiring(repo) {
+  const issues = [];
+  const seen = new Set();
+  const roots = ['src', 'app', 'pages', 'components']
+    .map(d => join(repo, d))
+    .filter(d => existsSync(d));
+
+  function attrValue(tag, name) {
+    const re = new RegExp("\\b" + name + "\\s*=\\s*([\"'])(.*?)\\1", "i");
+    const m = tag.match(re);
+    return m ? m[2] : '';
+  }
+
+  function buttonLabel(tag, inner) {
+    const explicit = attrValue(tag, 'aria-label') || attrValue(tag, 'title') || attrValue(tag, 'data-testid');
+    if (explicit) return explicit.trim().replace(/\s+/g, ' ').slice(0, 60);
+    const text = (inner || '')
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/\{[^}]*\}/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return text.slice(0, 60);
+  }
+
+  for (const root of roots) {
+    walkDir(root, f => {
+      if (!/\.(tsx?|jsx?)$/.test(f)) return;
+      if (/\.(test|spec)\.(tsx?|jsx?)$/.test(f)) return;
+      if (seen.has(f)) return;
+      seen.add(f);
+
+      let content = '';
+      try { content = readFileSync(f, 'utf-8'); } catch { return; }
+
+      const re = /<button\b([^>]*)>([\s\S]*?)<\/button>/gi;
+      let m;
+      while ((m = re.exec(content)) !== null) {
+        const tag = '<button' + m[1] + '>';
+        const inner = m[2] || '';
+        const line = content.slice(0, m.index).split('\n').length;
+
+        const hasHandler = /\bonClick\s*=/.test(tag);
+        const isSubmit = /\btype\s*=\s*(["'])submit\1/i.test(tag);
+        const isDisabled = /\bdisabled(?:\s*=|\s|>)/i.test(tag) || /\baria-disabled\s*=\s*(["']true["']|\{true\})/i.test(tag);
+        const ignored = /\bdata-smoke-ignore(?:\s*=|\s|>)/i.test(tag);
+        const hasSpreadProps = /\{\s*\.\.\./.test(tag);
+
+        if (hasHandler || isSubmit || isDisabled || ignored || hasSpreadProps) continue;
+
+        const label = buttonLabel(tag, inner);
+        issues.push(
+          relative(repo, f) + ':' + line +
+          ' button' + (label ? ' "' + label + '"' : '') +
+          ' has no onClick/type="submit"/disabled/data-smoke-ignore'
+        );
+      }
+    });
+  }
+
+  return issues;
+}
+
 // ── Phase 2: Browser Test ───────────────────────────────────────────
 
 function parseSnapshot(text) {
@@ -335,7 +401,7 @@ function isPageNonBlank(snap) {
 
 /** Get JS error count from injected collector */
 function getJsErrorCount() {
-  const result = abOk('eval', 'return window.__smoke_errors?.length || 0');
+  const result = abOk('eval', 'window.__smoke_errors?.length || 0');
   return parseInt(result || '0', 10) || 0;
 }
 
@@ -373,6 +439,117 @@ async function smartRetry(fn, maxRetries = 2, baseMs = 1500) {
 }
 
 const SKIP_BUTTON_RE = /^(close|dismiss|cancel|x|\u00d7|\u2715|\u2716)$/i;
+
+const BUTTON_AUDIT_EVAL =
+  `((function(limit) {
+    function labelFor(btn, idx) {
+      var explicit = btn.getAttribute("aria-label") ||
+        btn.getAttribute("title") ||
+        btn.getAttribute("data-testid") ||
+        btn.getAttribute("name") ||
+        "";
+      var text = (btn.textContent || "").replace(/\\s+/g, " ").trim();
+      var icon = "";
+      var iconEl = btn.querySelector("[data-icon], svg[aria-label], svg title, .material-symbols-outlined, [class*=icon]");
+      if (iconEl) {
+        icon = iconEl.getAttribute("data-icon") ||
+          iconEl.getAttribute("aria-label") ||
+          iconEl.textContent ||
+          iconEl.className ||
+          "";
+      }
+      return String(explicit || text || icon || ("button#" + (idx + 1))).replace(/\\s+/g, " ").trim().substring(0, 80);
+    }
+    function skipButton(btn, label) {
+      if (btn.disabled || btn.getAttribute("aria-disabled") === "true" || btn.hasAttribute("data-smoke-ignore")) return true;
+      if (/^(close|dismiss|cancel|x|\\u00d7|\\u2715|\\u2716)$/i.test(label)) return true;
+      var r = btn.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) return true;
+      return false;
+    }
+    function safeState() {
+      var s = {};
+      ["app", "store", "state", "__APP_STATE__", "game", "gameState"].forEach(function(k) {
+        try {
+          if (window[k] !== undefined) {
+            if (typeof window[k] === "function") return;
+            s[k] = JSON.stringify(window[k]).substring(0, 1000);
+          }
+        } catch(e) { s[k] = "exists"; }
+      });
+      return JSON.stringify(s);
+    }
+    function controlsState() {
+      return Array.from(document.querySelectorAll("button, [role=button]")).map(function(el, idx) {
+        var label = labelFor(el, idx);
+        return [
+          label,
+          el.getAttribute("aria-expanded") || "",
+          el.getAttribute("aria-pressed") || "",
+          el.getAttribute("aria-selected") || "",
+          el.className || "",
+          el.disabled ? "disabled" : "",
+          (el.textContent || "").trim()
+        ].join(":");
+      }).join("|");
+    }
+    function snap() {
+      var active = document.activeElement;
+      return {
+        htmlLen: document.body.innerHTML.length,
+        text: document.body.innerText.substring(0, 5000),
+        url: location.href,
+        state: safeState(),
+        controls: controlsState(),
+        active: active ? (active.tagName + ":" + (active.getAttribute("aria-label") || active.textContent || "").trim()) : ""
+      };
+    }
+    function changed(a, b, mutated) {
+      return mutated ||
+        a.htmlLen !== b.htmlLen ||
+        a.text !== b.text ||
+        a.url !== b.url ||
+        a.state !== b.state ||
+        a.controls !== b.controls ||
+        a.active !== b.active;
+    }
+    var all = Array.from(document.querySelectorAll("button:not([disabled]), [role=button]:not([disabled])"));
+    var candidates = all.map(function(btn, idx) {
+      return { btn: btn, label: labelFor(btn, idx), idx: idx };
+    }).filter(function(item) {
+      return !skipButton(item.btn, item.label);
+    }).slice(0, limit);
+    var issues = [];
+    var tested = [];
+    var i = 0;
+    function next() {
+      if (i >= candidates.length) return Promise.resolve({ issues: issues, tested: tested });
+      var item = candidates[i++];
+      var before = snap();
+      var mutated = false;
+      var obs = new MutationObserver(function() { mutated = true; });
+      try { obs.observe(document.body, { childList:true, subtree:true, attributes:true, characterData:true }); } catch(e) {}
+      tested.push(item.label);
+      try {
+        item.btn.click();
+      } catch(e) {
+        try { obs.disconnect(); } catch(_) {}
+        issues.push({ type: "button-click-error", detail: item.label + " threw " + e.message });
+        return next();
+      }
+      return new Promise(function(resolve) {
+        setTimeout(function() {
+          try { obs.disconnect(); } catch(_) {}
+          var after = snap();
+          if (!changed(before, after, mutated)) {
+            issues.push({ type: "dead-button", detail: item.label + " (no DOM/state/url change)" });
+          }
+          resolve(next());
+        }, 450);
+      });
+    }
+    return next();
+  })(12))`;
 
 // Try to authenticate if app requires login
 async function tryAuth(baseUrl, repoPath) {
@@ -465,6 +642,8 @@ async function main() {
   for (const w of wiringIssues) failures.push('WIRING: ' + w);
   const importIssues = checkEntryPointImports(repoPath);
   for (const i of importIssues) failures.push('IMPORT: ' + i);
+  const buttonWiringIssues = checkNativeButtonWiring(repoPath);
+  for (const b of buttonWiringIssues) failures.push('UNWIRED_BUTTON: ' + b);
 
   // ── Phase 2: Browser (homepage + primary action) ──
   const port = requestedPort > 0 ? requestedPort : 9100 + Math.floor(Math.random()*900);
@@ -566,32 +745,11 @@ async function main() {
         if (rp.buttons.length > 0) {
           injectErrorCollector();
           const routeBtnJson = abOk('eval',
-            'return JSON.stringify((function() {' +
-            '  var issues = [];' +
-            '  var btns = document.querySelectorAll("button:not([disabled]), [role=button]:not([disabled])");' +
-            '  var tested = 0;' +
-            '  btns.forEach(function(btn) {' +
-            '    if (tested >= 3) return;' +
-            '    var text = (btn.textContent||"").trim().substring(0,30);' +
-            '    if (!text || /^(close|dismiss|cancel|x|\\u00d7)$/i.test(text)) return;' +
-            '    tested++;' +
-            '    var mutated = false;' +
-            '    var obs = new MutationObserver(function() { mutated = true; });' +
-            '    obs.observe(document.body, {childList:true, subtree:true, attributes:true, characterData:true});' +
-            '    try { btn.click(); } catch(e) {}' +
-            '    var start = Date.now();' +
-            '    while (Date.now() - start < 500) {}' +
-            '    obs.disconnect();' +
-            '    if (!mutated) {' +
-            '      issues.push({type:"dead-button", detail: text});' +
-            '    }' +
-            '  });' +
-            '  return issues;' +
-            '})()'
+            BUTTON_AUDIT_EVAL
           );
           try {
-            const routeBtnIssues = JSON.parse(routeBtnJson || '[]');
-            for (const i of routeBtnIssues) {
+            const routeBtnAudit = JSON.parse(routeBtnJson || '{"issues":[]}');
+            for (const i of routeBtnAudit.issues || []) {
               failures.push('[' + route + '] dead-button: "' + i.detail + '"');
             }
           } catch {}
@@ -616,11 +774,9 @@ async function main() {
 
         // Get all links via eval (hrefs)
         const linksJson = abOk('eval',
-          'return JSON.stringify(' +
             'Array.from(document.querySelectorAll("a[href]"))' +
             '.map(a => ({text: a.textContent?.trim() || "", href: a.getAttribute("href")}))' +
-            '.filter(l => l.href && !l.href.startsWith("mailto:") && !l.href.startsWith("tel:") && !l.href.startsWith("javascript:"))' +
-          ')'
+            '.filter(l => l.href && !l.href.startsWith("mailto:") && !l.href.startsWith("tel:") && !l.href.startsWith("javascript:"))'
         );
 
         let allLinks = [];
@@ -721,7 +877,7 @@ async function main() {
           }
 
           // Check for network errors after button click
-          const netErrors = abOk('eval', 'return JSON.stringify(window.__smoke_network_errors || [])');
+          const netErrors = abOk('eval', 'window.__smoke_network_errors || []');
           try {
             const netArr = JSON.parse(netErrors || '[]');
             if (netArr.length > 0) {
@@ -807,7 +963,7 @@ async function main() {
       // ── Phase 6: Accessibility Basics ─────────────────────────
       try {
         const a11yJson = abOk('eval',
-          'return JSON.stringify((function() {' +
+          '(function() {' +
           '  var issues = [];' +
           '  document.querySelectorAll("img").forEach(function(img) {' +
           '    if (!img.getAttribute("alt") && !img.getAttribute("role")) {' +
@@ -867,7 +1023,7 @@ async function main() {
         injectErrorCollector();
 
         const visualJson = abOk('eval',
-          'return JSON.stringify((function() {' +
+          '(function() {' +
           '  var issues = [];' +
           '  document.querySelectorAll("svg").forEach(function(svg) {' +
           '    var r = svg.getBoundingClientRect();' +
@@ -882,9 +1038,11 @@ async function main() {
           '  document.querySelectorAll(iconSel).forEach(function(el) {' +
           '    var r = el.getBoundingClientRect();' +
           '    var cs = window.getComputedStyle(el);' +
-          '    if (r.width === 0 && r.height === 0) {' +
+          '    if (cs.display === "none" || cs.visibility === "hidden") return;' +
+          '    var txt = (el.textContent||"").trim();' +
+          '    if (r.width === 0 && r.height === 0 && !txt) {' +
           '      issues.push({type:"font-icon-zero", detail: el.className});' +
-          '    } else if (cs.content === "none" || cs.content === "normal" || cs.content === "") {' +
+          '    } else if (!txt && (cs.content === "none" || cs.content === "normal" || cs.content === "")) {' +
           '      var ff = cs.fontFamily || "";' +
           '      if (/awesome|material|icon/i.test(ff)) {' +
           '        issues.push({type:"font-icon-empty", detail: el.className + " (" + ff.split(",")[0] + ")"});' +
@@ -941,7 +1099,7 @@ async function main() {
       // ── Phase 8: Layout & UX Glitches ─────────────────────────
       try {
         const layoutJson = abOk('eval',
-          'return JSON.stringify((function() {' +
+          '(function() {' +
           '  var issues = [];' +
           '  if (document.documentElement.scrollWidth > window.innerWidth + 5) {' +
           '    issues.push({type:"h-overflow", detail: "scrollW=" + document.documentElement.scrollWidth + " vp=" + window.innerWidth});' +
@@ -982,7 +1140,7 @@ async function main() {
       // ── Phase 9: Network Silent Failures ──────────────────────
       let networkErrors = [];
       try {
-        const netJson = abOk('eval', 'return JSON.stringify(window.__smoke_network_errors || [])');
+        const netJson = abOk('eval', 'window.__smoke_network_errors || []');
         try { networkErrors = JSON.parse(netJson || '[]'); } catch {}
         if (Array.isArray(networkErrors) && networkErrors.length > 0) {
           networkErrors = networkErrors.slice(0, 20);
@@ -994,7 +1152,7 @@ async function main() {
 
       // ── Phase 10 (collect): Gather console errors ─────────────
       try {
-        const errJson = abOk('eval', 'return JSON.stringify(window.__smoke_errors || [])');
+        const errJson = abOk('eval', 'window.__smoke_errors || []');
         try {
           const errors = JSON.parse(errJson || '[]');
           if (Array.isArray(errors) && errors.length > 0) {
@@ -1010,7 +1168,7 @@ async function main() {
         await sleep(1000);
 
         const hydroJson = abOk('eval',
-          'return JSON.stringify((function() {' +
+          '(function() {' +
           '  var issues = [];' +
           '  var start = performance.now();' +
           '  var btns = document.querySelectorAll("button, [role=button]");' +
@@ -1059,7 +1217,7 @@ async function main() {
       // ── Phase 13: Content Sanity (Hallucination Checker) ──────
       try {
         const contentJson = abOk('eval',
-          'return JSON.stringify((function() {' +
+          '(function() {' +
           '  var issues = [];' +
           '  var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);' +
           '  var hallucinationRe = /\\b(undefined|null|NaN|\\[object Object\\]|lorem ipsum|TODO:|FIXME:|HACK:|XXX:)\\b/i;' +
@@ -1116,33 +1274,15 @@ async function main() {
         injectErrorCollector();
 
         const uxJson = abOk('eval',
-          'return JSON.stringify((function() {' +
-          '  var issues = [];' +
-          '  var btns = document.querySelectorAll("button:not([disabled]), [role=button]:not([disabled])");' +
-          '  var tested = 0;' +
-          '  btns.forEach(function(btn) {' +
-          '    if (tested >= 5) return;' +
-          '    var text = (btn.textContent||"").trim().substring(0,30);' +
-          '    if (!text || /^(close|dismiss|cancel|x|\\u00d7)$/i.test(text)) return;' +
-          '    tested++;' +
-          '    var snapshot = document.body.innerHTML.length;' +
-          '    var mutated = false;' +
-          '    var obs = new MutationObserver(function() { mutated = true; });' +
-          '    obs.observe(document.body, {childList:true, subtree:true, attributes:true, characterData:true});' +
-          '    try { btn.click(); } catch(e) {}' +
-          '    var start = Date.now();' +
-          '    while (Date.now() - start < 2000) {}' +
-          '    obs.disconnect();' +
-          '    if (!mutated) {' +
-          '      issues.push({type:"dead-button", detail: text + " (0% DOM change)"});' +
-          '    }' +
-          '  });' +
-          '  return issues;' +
-          '})()'
+          BUTTON_AUDIT_EVAL
         );
 
         let uxIssues = [];
-        try { uxIssues = JSON.parse(uxJson || '[]'); } catch {}
+        try {
+          const uxAudit = JSON.parse(uxJson || '{"issues":[]}');
+          uxIssues = uxAudit.issues || [];
+          buttonsChecked += (uxAudit.tested || []).length;
+        } catch {}
 
         if (Array.isArray(uxIssues) && uxIssues.length > 0) {
           for (const i of uxIssues) {
@@ -1195,12 +1335,12 @@ async function main() {
           '    },' +
           '    snap: function() { return { text: this.domText(), pixels: this.pixels(), state: this.state(), url: location.href + location.hash }; }' +
           '  };' +
-          '})(); return "ok"'
+          '})(); "ok"'
         );
 
         // Step 1: Detect interactivity + capture T0
         const detectJson = abOk('eval',
-          'return JSON.stringify((function() {' +
+          '(function() {' +
           '  var canvas = document.querySelector("canvas");' +
           '  var hasKeyHint = document.body.innerText.match(/press (space|enter|any key|start)|arrow keys|wasd|jump|duck|space to/i);' +
           '  if (!canvas && !hasKeyHint) return {skip: true, reason: "no canvas or keyboard hints"};' +
@@ -1218,7 +1358,7 @@ async function main() {
 
           // Step 3: Capture T1 (control) — detect ambient changes
           const controlJson = abOk('eval',
-            'return JSON.stringify((function() {' +
+            '(function() {' +
             '  var h = window.__p15h, t0 = window.__p15_t0;' +
             '  if (!t0) return {skip: true};' +
             '  window.__p15_t1 = h.snap();' +
@@ -1255,7 +1395,7 @@ async function main() {
             '      document.dispatchEvent(new KeyboardEvent("keyup", opts));' +
             '    });' +
             '  }, 100);' +
-            '})(); return "ok"'
+            '})(); "ok"'
           );
 
           // Step 5: Wait for game loop to process inputs
@@ -1263,7 +1403,7 @@ async function main() {
 
           // Step 6: Capture T2, compare with T1, apply ambient discount
           const afterJson = abOk('eval',
-            'return JSON.stringify((function() {' +
+            '(function() {' +
             '  var h = window.__p15h, t1 = window.__p15_t1;' +
             '  if (!t1) return {skip: true};' +
             '  var t2 = h.snap();' +
@@ -1411,6 +1551,7 @@ async function main() {
   const fidelityCount = failures.filter(f => f.startsWith('[FIDELITY]')).length;
   if (fidelityCount > 0) confidence -= 35;
   if (wiringIssues.length > 0) confidence -= 20;
+  if (buttonWiringIssues.length > 0) confidence -= 35;
   if (linksBroken > 0) confidence -= 10;
   confidence = Math.max(0, confidence);
 
@@ -1421,6 +1562,8 @@ async function main() {
     routes,
     componentWiringIssues: wiringIssues.length,
     wiringDetails: wiringIssues,
+    buttonWiringIssues: buttonWiringIssues.length,
+    buttonWiringDetails: buttonWiringIssues,
     linksChecked,
     linksBroken,
     buttonsChecked,
