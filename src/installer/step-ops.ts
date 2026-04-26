@@ -1,6 +1,7 @@
 import { pgQuery, pgGet, pgRun, pgExec, pgBegin, now } from "../db-pg.js";
 import type { LoopConfig, Story } from "./types.js";
 import { execFileSync } from "node:child_process";
+import crypto from "node:crypto";
 import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
@@ -46,6 +47,152 @@ import {
 const STITCH_HTML_EXCERPT_CHARS = 2500;
 const STITCH_HTML_TOTAL_CHARS = 6000;
 const DESIGN_DOM_EXCERPT_CHARS = 3000;
+
+const QUALITY_FIX_STEPS = new Set(["qa-test", "final-test"]);
+const QA_FIX_SOURCE_EXT = /\.(tsx?|jsx?|css|scss|vue|svelte)$/i;
+const QA_FIX_IGNORE = /^(node_modules\/|dist\/|build\/|\.next\/|coverage\/|stitch\/|references\/)|(^|\/)(package(-lock)?\.json|tsconfig[^/]*\.json|vite\.config\.[^/]+|tailwind\.config\.[^/]+|postcss\.config\.[^/]+|eslint\.config\.[^/]+|index\.html)$/;
+
+function collectQaFixScopeFiles(repoPath: string): string[] {
+  const srcDir = path.join(repoPath, "src");
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    let entries: fs.Dirent[] = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      const abs = path.join(dir, entry.name);
+      const rel = path.relative(repoPath, abs).replace(/\\/g, "/");
+      if (entry.isDirectory()) {
+        if (!QA_FIX_IGNORE.test(rel + "/")) walk(abs);
+        continue;
+      }
+      if (QA_FIX_SOURCE_EXT.test(rel) && !QA_FIX_IGNORE.test(rel)) out.push(rel);
+    }
+  };
+  if (fs.existsSync(srcDir)) walk(srcDir);
+  return [...new Set(out)].sort();
+}
+
+async function routeQualityFailureToImplement(
+  step: { id: string; run_id: string; step_id: string; step_index: number; agent_id: string },
+  output: string,
+  context: Record<string, string>,
+): Promise<boolean> {
+  if (!QUALITY_FIX_STEPS.has(step.step_id)) return false;
+
+  const loopStep = await pgGet<{ id: string; step_index: number; status: string; loop_config: string | null }>(
+    "SELECT id, step_index, status, loop_config FROM steps WHERE run_id = $1 AND step_id = 'implement' AND type = 'loop' LIMIT 1",
+    [step.run_id],
+  );
+  if (!loopStep) return false;
+
+  let loopConfig: Partial<LoopConfig> = {};
+  try { loopConfig = JSON.parse(loopStep.loop_config || "{}"); } catch {}
+  if (loopConfig.over && loopConfig.over !== "stories") return false;
+
+  const existingActiveFix = await pgGet<{ id: string; story_id: string }>(
+    "SELECT id, story_id FROM stories WHERE run_id = $1 AND story_id LIKE 'QA-FIX-%' AND status IN ('pending','running') ORDER BY story_index DESC LIMIT 1",
+    [step.run_id],
+  );
+
+  const failure = output.slice(0, 6000);
+  const repoPath = context["repo"] || context["REPO"] || "";
+  let scopeFiles = repoPath ? collectQaFixScopeFiles(repoPath) : [];
+  if (scopeFiles.length === 0) {
+    const scopeRows = await pgQuery<{ scope_files: string | null }>(
+      "SELECT scope_files FROM stories WHERE run_id = $1 AND scope_files IS NOT NULL ORDER BY story_index",
+      [step.run_id],
+    );
+    const fromStories: string[] = [];
+    for (const row of scopeRows) {
+      try {
+        const parsed = JSON.parse(row.scope_files || "[]");
+        if (Array.isArray(parsed)) fromStories.push(...parsed.filter((f: any) => typeof f === "string"));
+      } catch {}
+    }
+    scopeFiles = [...new Set(fromStories)].sort();
+  }
+
+  const priorStories = await pgQuery<{ story_id: string }>(
+    "SELECT story_id FROM stories WHERE run_id = $1 AND status IN ('done','verified','skipped') ORDER BY story_index",
+    [step.run_id],
+  );
+  const dependsOn = priorStories.map((s) => s.story_id).filter(Boolean);
+
+  let fixStoryId = existingActiveFix?.story_id || "";
+  if (!existingActiveFix) {
+    const nextMeta = await pgGet<{ cnt: string; max_idx: number | null }>(
+      "SELECT COUNT(*)::text as cnt, MAX(story_index) as max_idx FROM stories WHERE run_id = $1",
+      [step.run_id],
+    );
+    const existingFixCount = await pgGet<{ cnt: string }>(
+      "SELECT COUNT(*)::text as cnt FROM stories WHERE run_id = $1 AND story_id LIKE 'QA-FIX-%'",
+      [step.run_id],
+    );
+    const n = parseInt(existingFixCount?.cnt || "0", 10) + 1;
+    fixStoryId = `QA-FIX-${String(n).padStart(3, "0")}`;
+    const storyIndex = (nextMeta?.max_idx ?? -1) + 1;
+    const title = `QA fix — ${step.step_id} runtime failures`;
+    const description = [
+      `Downstream ${step.step_id} found runtime/acceptance failures after story PRs were merged.`,
+      "Fix only the reported failures on current main. Do not add unrelated features or redesign the app.",
+      "Run npm run build and the platform smoke test before reporting STATUS: done.",
+      "",
+      "Failure report:",
+      failure,
+    ].join("\n");
+    const acceptance = [
+      "All reported QA/final-test failures are fixed in the rendered app.",
+      "npm run build passes on current main.",
+      "Platform smoke-test passes without blank page, dead button, console, network, or layout failures.",
+      "No unrelated toolchain/config churn is introduced.",
+    ];
+    await pgRun(
+      `INSERT INTO stories (id, run_id, story_index, story_id, title, description, acceptance_criteria, status, retry_count, max_retries, depends_on, scope_files, shared_files, scope_description, created_at, updated_at, output)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', 0, 4, $8, $9, $10, $11, $12, $12, $13)`,
+      [
+        crypto.randomUUID(),
+        step.run_id,
+        storyIndex,
+        fixStoryId,
+        title,
+        description,
+        JSON.stringify(acceptance),
+        dependsOn.length > 0 ? JSON.stringify(dependsOn) : null,
+        scopeFiles.length > 0 ? JSON.stringify(scopeFiles) : null,
+        scopeFiles.length > 0 ? JSON.stringify(scopeFiles) : null,
+        `QA/final fix scope derived from existing source files after ${step.step_id} failure.`,
+        now(),
+        failure,
+      ],
+    );
+  }
+
+  delete context["status"];
+  context["previous_failure"] = `DOWNSTREAM_QUALITY_FAILURE from ${step.step_id}:\n${failure}`;
+  context["failure_category"] = "DOWNSTREAM_QUALITY_FAILURE";
+  context["failure_suggestion"] = "Return to implement, fix the generated QA-FIX story on current main, then let verify/security/QA/final/deploy rerun.";
+  context["current_story_id"] = fixStoryId;
+  await updateRunContext(step.run_id, context);
+
+  await pgBegin(async (sql) => {
+    await sql.unsafe(
+      "UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = $1 WHERE id = $2",
+      [now(), loopStep.id],
+    );
+    await sql.unsafe(
+      "UPDATE steps SET status = 'waiting', retry_count = 0, current_story_id = NULL, updated_at = $1 WHERE run_id = $2 AND step_index > $3",
+      [now(), step.run_id, loopStep.step_index],
+    );
+  });
+
+  await recordStepTransition(loopStep.id, step.run_id, loopStep.status, "pending", undefined, "qualityFailure:routeToImplement", { storyId: fixStoryId, fromStep: step.step_id });
+  await recordStepTransition(step.id, step.run_id, "running", "waiting", step.agent_id, "qualityFailure:routeToImplement", { storyId: fixStoryId });
+  const wfId = await _getWorkflowId(step.run_id);
+  emitEvent({ ts: now(), event: "story.retry", runId: step.run_id, workflowId: wfId, stepId: "implement", storyId: fixStoryId, detail: `Created ${fixStoryId} from ${step.step_id} failure` });
+  emitEvent({ ts: now(), event: "step.pending", runId: step.run_id, workflowId: wfId, stepId: "implement", detail: `Downstream quality failure routed to ${fixStoryId}` });
+  logger.warn(`[quality-fix] Routed ${step.step_id} failure back to implement via ${fixStoryId}`, { runId: step.run_id });
+  return true;
+}
 
 // ── Predicted screen file helpers (2026-04-14 SCOPE_BLEED fix) ──
 // Mirrors scripts/stitch-to-jsx.mjs toComponentName() — MUST stay in sync.
@@ -2048,6 +2195,9 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
     // escalates to a terminal fail. Verify-each already handles this in its
     // own path (step-ops.ts handleVerifyEachCompletion); this branch closes
     // the gap for single-step verify (direct-merge workflows).
+    if (await routeQualityFailureToImplement(step, output, context)) {
+      return { advanced: false, runCompleted: false };
+    }
     logger.warn(`[status-parser] Agent reported STATUS: retry — bouncing step to pending`, { runId: step.run_id, stepId: step.step_id });
     await failStep(stepId, `Agent requested retry: ${output.slice(0, 500)}`);
     return { advanced: false, runCompleted: false };
@@ -2557,28 +2707,59 @@ ${screenDescs}
     }
   }
 
-  // SMOKE TEST GUARDRAIL (final-test): If agent skipped smoke test, try to run it
-  // ourselves before burning a retry slot. Agents frequently forget the smoke test
-  // even when the build is fine (run #337 final-test needed a full retry for this).
+  // SMOKE TEST GUARDRAIL (final-test): run the platform smoke test ourselves.
+  // Agent-reported smoke output is useful context, but the gate must not trust
+  // the model for runtime checks such as dead buttons, blank pages, and console
+  // failures. This keeps final-test deterministic even when the tester skips or
+  // misreports the smoke script.
   if (step.step_id === "final-test" && parsed["status"]?.toLowerCase() === "done") {
     let smokeResult = parsed["smoke_test_result"] || "";
-    if (!smokeResult) {
-      const repoPath = context["repo"] || "";
-      const smokeScript = path.join(os.homedir(), ".openclaw", "setfarm-repo", "scripts", "smoke-test.mjs");
-      if (repoPath && fs.existsSync(smokeScript)) {
+    const repoPath = context["repo"] || "";
+    const smokeScript = path.join(os.homedir(), ".openclaw", "setfarm-repo", "scripts", "smoke-test.mjs");
+    let smokeFailure = "";
+    if (repoPath && fs.existsSync(smokeScript)) {
+      try {
+        let isPrEachFinal = false;
         try {
-          logger.info(`[final-test-autoderive] SMOKE_TEST_RESULT missing — running smoke-test.mjs`, { runId: step.run_id, stepId: step.step_id });
-          const smokeOut = execFileSync("node", [smokeScript, repoPath], { timeout: 240000, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
-          // smoke-test.mjs prints a summary; accept any non-empty output as the result
-          smokeResult = (smokeOut || "").trim().slice(-2000) || "pass (auto-derived)";
-          parsed["smoke_test_result"] = smokeResult;
-          logger.info(`[final-test-autoderive] smoke-test auto-run succeeded`, { runId: step.run_id });
-        } catch (smokeErr: any) {
-          const errOut = String(smokeErr?.stdout || smokeErr?.stderr || smokeErr?.message || smokeErr).slice(0, 2000);
-          logger.warn(`[final-test-autoderive] smoke-test auto-run failed: ${errOut.slice(0, 200)}`, { runId: step.run_id });
-          // Leave smokeResult empty so the guardrail fires below
+          const loopRow = await pgGet<{ loop_config?: any }>(
+            "SELECT loop_config FROM steps WHERE run_id = $1 AND type = 'loop' AND loop_config IS NOT NULL LIMIT 1",
+            [step.run_id]
+          );
+          const loopConfigRaw = loopRow?.loop_config;
+          const loopConfig = typeof loopConfigRaw === "string" ? JSON.parse(loopConfigRaw || "{}") : (loopConfigRaw || {});
+          isPrEachFinal = loopConfig?.mergeStrategy === "pr-each" || !!loopConfig?.verifyEach;
+        } catch (loopErr) {
+          logger.warn(`[final-test-smoke-gate] loop_config lookup failed: ${String(loopErr).slice(0, 160)}`, { runId: step.run_id });
         }
+
+        if (isPrEachFinal) {
+          try {
+            execFileSync("git", ["checkout", "main"], { cwd: repoPath, timeout: 10000, stdio: ["pipe", "pipe", "pipe"] });
+            execFileSync("git", ["pull", "--ff-only", "origin", "main"], { cwd: repoPath, timeout: 30000, stdio: ["pipe", "pipe", "pipe"] });
+          } catch (syncErr) {
+            logger.warn(`[final-test-smoke-gate] main sync before smoke failed: ${String(syncErr).slice(0, 200)}`, { runId: step.run_id });
+          }
+        }
+
+        logger.info(`[final-test-smoke-gate] Running smoke-test.mjs as system gate`, { runId: step.run_id, stepId: step.step_id });
+        const smokeOut = execFileSync("node", [smokeScript, repoPath], { timeout: 240000, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+        smokeResult = (smokeOut || "").trim().slice(-2000) || "pass (system smoke gate)";
+        parsed["smoke_test_result"] = smokeResult;
+        logger.info(`[final-test-smoke-gate] smoke-test passed`, { runId: step.run_id });
+      } catch (smokeErr: any) {
+        smokeFailure = String(smokeErr?.stdout || smokeErr?.stderr || smokeErr?.message || smokeErr).slice(0, 2000);
+        smokeResult = smokeResult || smokeFailure;
+        parsed["smoke_test_result"] = smokeResult;
+        logger.warn(`[final-test-smoke-gate] smoke-test failed: ${smokeFailure.slice(0, 200)}`, { runId: step.run_id });
       }
+    }
+    if (smokeFailure) {
+      if (await routeQualityFailureToImplement(step, `SYSTEM_SMOKE_FAILURE:\n${smokeFailure}`, context)) {
+        return { advanced: false, runCompleted: false };
+      }
+      if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
+      await failStep(stepId, `GUARDRAIL: final-test system smoke test failed. Fix runtime issues and retry.\n${smokeFailure}`);
+      return { advanced: false, runCompleted: false };
     }
     if (!smokeResult) {
       logger.warn(`[final-test-guardrail] SMOKE_TEST_RESULT missing from final-test output — agent likely skipped smoke test. Retrying.`, { runId: step.run_id, stepId: step.step_id });

@@ -164,6 +164,34 @@ async function failClaimIfStillRunning(stepId: string, agentId: string, wfId: st
   }
 }
 
+async function reapFinishedClaims(): Promise<void> {
+  for (const [key, active] of activeProcesses) {
+    try {
+      const row = await pgGet<{ step_status: string; run_status: string; step_id: string }>(
+        `SELECT s.status as step_status, r.status as run_status, s.step_id
+         FROM steps s
+         JOIN runs r ON r.id = s.run_id
+         WHERE s.id = $1
+         LIMIT 1`,
+        [active.stepId],
+      );
+      if (!row) {
+        console.warn(`[spawner] Reaping ${key}: claimed step disappeared`);
+      } else if (row.run_status === "running" && row.step_status === "running") {
+        continue;
+      } else {
+        console.log(`[spawner] Reaping ${key}: step ${row.step_id} is ${row.step_status}, run is ${row.run_status}`);
+      }
+
+      killProcessTree(active.child.pid, "SIGTERM");
+      setTimeout(() => killProcessTree(active.child.pid, "SIGKILL"), 5000);
+      activeProcesses.delete(key);
+    } catch (err) {
+      console.warn(`[spawner] reap finished claim ${key}: ${String(err).slice(0, 300)}`);
+    }
+  }
+}
+
 function spawnAgent(agentId: string, wfId: string, role: string): void {
   const key = `${wfId}:${role}:${agentId}`;
   if (activeProcesses.has(key)) {
@@ -396,6 +424,7 @@ async function autoVerifyMergedPrEachStories() {
 async function pollForPendingWork() {
   if (shuttingDown) return;
   try {
+    await reapFinishedClaims();
     await autoVerifyMergedPrEachStories();
     const steps = await pgQuery<{ agent_id: string; run_id: string; step_id: string }>(
       `SELECT s.agent_id, s.run_id, s.step_id
