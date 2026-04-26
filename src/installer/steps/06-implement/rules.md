@@ -37,12 +37,13 @@ You are assigned ONE story with a FIXED list of files. You MUST NOT create or mo
 - Format: `feat: <story-id> - <description>`
 - Do NOT force push or rewrite history
 - Do NOT modify package.json dependencies unless the story requires it
+- Do NOT create, edit, merge, retarget, or close GitHub PRs. Setfarm creates the story PR after completion.
 
 ## Output Contract
 - STATUS: done | fail | skip
 - STORY_BRANCH: the exact branch name (lowercase)
 - CHANGES: human-readable summary of implemented features
-- PR_URL: GitHub PR URL if created (optional)
+- PR_URL: leave empty; Setfarm creates/reuses the story PR with base `main`
 
 ## Anti-Patterns (Auto-Rejected)
 - Zero source file changes → NO_WORK rejection

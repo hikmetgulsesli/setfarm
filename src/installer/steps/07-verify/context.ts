@@ -24,6 +24,7 @@ export async function injectContext(ctx: ClaimContext): Promise<void> {
           ctx.context["pr_comments"] = formatted;
           ctx.context["pr_check_state"] = state.checksStatus || "";
           ctx.context["pr_mergeable"] = state.mergeable || "";
+          ctx.context["pr_merge_state_status"] = state.mergeStateStatus || "";
           logger.info(`[verify] PR comments injected (${state.comments.length} total, checks=${state.checksStatus})`, { runId: ctx.runId });
         }
       }

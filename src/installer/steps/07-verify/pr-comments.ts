@@ -25,12 +25,15 @@ export interface PrComment {
   body: string;
   createdAt: string;
   state?: string; // review state: APPROVED, CHANGES_REQUESTED, COMMENTED
+  path?: string;
+  line?: number;
   kind: "issue" | "review" | "review-comment";
 }
 
 export interface PrState {
   state: "OPEN" | "CLOSED" | "MERGED";
   mergeable?: string;
+  mergeStateStatus?: string;
   checksStatus?: string;
   comments: PrComment[];
 }
@@ -66,7 +69,7 @@ export async function fetchPrState(prUrl: string, fallbackRepo?: string): Promis
     const { stdout } = await execFileAsync("gh", [
       "pr", "view", parsed.number,
       "--repo", `${parsed.owner}/${parsed.repo}`,
-      "--json", "state,mergeable,statusCheckRollup,comments,reviews",
+      "--json", "state,mergeable,mergeStateStatus,statusCheckRollup,comments,reviews",
     ], { timeout: 30000 });
 
     const data = JSON.parse(stdout);
@@ -91,6 +94,27 @@ export async function fetchPrState(prUrl: string, fallbackRepo?: string): Promis
         kind: "review",
       });
     }
+    try {
+      const { stdout: inlineStdout } = await execFileAsync("gh", [
+        "api", `repos/${parsed.owner}/${parsed.repo}/pulls/${parsed.number}/comments`,
+      ], { timeout: 30000 });
+      const inline = JSON.parse(inlineStdout);
+      if (Array.isArray(inline)) {
+        for (const c of inline) {
+          comments.push({
+            id: `review-comment-${c.id || Math.random().toString(36).slice(2)}`,
+            author: c.user?.login || "unknown",
+            body: c.body || "",
+            createdAt: c.created_at || "",
+            path: c.path || "",
+            line: typeof c.line === "number" ? c.line : (typeof c.original_line === "number" ? c.original_line : undefined),
+            kind: "review-comment",
+          });
+        }
+      }
+    } catch (inlineErr: any) {
+      logger.warn(`[pr-comments] inline review comment fetch failed for ${ref}: ${String(inlineErr?.message || inlineErr).slice(0, 160)}`);
+    }
 
     const rollup = Array.isArray(data.statusCheckRollup) ? data.statusCheckRollup : [];
     const anyFailing = rollup.some((s: any) => s?.conclusion === "FAILURE" || s?.state === "FAILURE");
@@ -100,6 +124,7 @@ export async function fetchPrState(prUrl: string, fallbackRepo?: string): Promis
     return {
       state: data.state,
       mergeable: data.mergeable,
+      mergeStateStatus: data.mergeStateStatus,
       checksStatus,
       comments,
     };
@@ -128,13 +153,14 @@ export function formatPrCommentsForAgent(state: PrState): string {
   const lines = [
     `## PR Comments (${actionable.length} actionable)`,
     "",
-    `PR state: ${state.state}, checks: ${state.checksStatus || "unknown"}, mergeable: ${state.mergeable || "unknown"}`,
+    `PR state: ${state.state}, checks: ${state.checksStatus || "unknown"}, mergeable: ${state.mergeable || "unknown"}, mergeStateStatus: ${state.mergeStateStatus || "unknown"}`,
     "",
   ];
   for (const c of actionable.slice(0, 20)) {
     const body = c.body.trim().replace(/\s+/g, " ").slice(0, 400);
     const tag = c.state ? `[${c.kind}:${c.state}]` : `[${c.kind}]`;
-    lines.push(`- ${tag} @${c.author}: ${body}`);
+    const loc = c.path ? ` ${c.path}${c.line ? `:${c.line}` : ""}` : "";
+    lines.push(`- ${tag}${loc} @${c.author}: ${body}`);
   }
   lines.push("");
   lines.push("Her comment için uygun fix'i aynı branch'e push et, sonra yorumu addresslediğini belirt.");

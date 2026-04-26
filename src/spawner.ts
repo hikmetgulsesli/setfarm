@@ -230,9 +230,37 @@ async function handleStoryPending(payload: { role: string; runId: string; storyI
   } catch (err) { console.error(`[spawner] story handler: ${String(err)}`); }
 }
 
+async function autoVerifyMergedPrEachStories() {
+  try {
+    const rows = await pgQuery<{ run_id: string; context: string | null }>(
+      `SELECT DISTINCT r.id as run_id, r.context
+       FROM runs r
+       JOIN steps loop_step ON loop_step.run_id = r.id
+       WHERE r.status = 'running'
+         AND loop_step.type = 'loop'
+         AND COALESCE(loop_step.loop_config::jsonb, '{}'::jsonb) @> '{"verifyEach":true}'::jsonb
+         AND EXISTS (
+           SELECT 1 FROM stories st
+           WHERE st.run_id = r.id AND st.status = 'done' AND st.pr_url IS NOT NULL
+         )
+       LIMIT 10`
+    );
+    if (rows.length === 0) return;
+    const { autoVerifyDoneStories } = await import("./installer/step-ops.js");
+    for (const row of rows) {
+      let context: Record<string, string> = {};
+      try { context = row.context ? JSON.parse(row.context) : {}; } catch {}
+      await autoVerifyDoneStories(row.run_id, context, "spawner-auto-verify");
+    }
+  } catch (err) {
+    console.error(`[spawner] auto-verify merged PRs: ${String(err)}`);
+  }
+}
+
 async function pollForPendingWork() {
   if (shuttingDown) return;
   try {
+    await autoVerifyMergedPrEachStories();
     const steps = await pgQuery<{ agent_id: string; run_id: string; step_id: string }>(
       `SELECT s.agent_id, s.run_id, s.step_id
        FROM steps s

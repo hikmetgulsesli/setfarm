@@ -1018,7 +1018,12 @@ async function claimSingleStep(
         if (formatted) context["pr_comments"] = formatted;
         context["pr_check_state"] = state.checksStatus || "";
         context["pr_mergeable"] = state.mergeable || "";
-        hasReviewSignal = state.comments.length > 0 || state.checksStatus === "failing";
+        context["pr_merge_state_status"] = state.mergeStateStatus || "";
+        hasReviewSignal =
+          state.comments.length > 0 ||
+          state.checksStatus === "failing" ||
+          state.mergeable === "CONFLICTING" ||
+          ["DIRTY", "BLOCKED"].includes(state.mergeStateStatus || "");
       }
     } catch (e) {
       logger.warn(`[review-delay] PR signal check failed: ${String(e).slice(0, 160)}`, { runId: step.run_id, stepId: step.step_id });
@@ -3019,6 +3024,32 @@ ${screenDescs}
         storyPrUrl = "";
       }
     }
+
+    // PR-EACH BASE GUARD: Developer agents must not create PRs, but some still
+    // do. If they create one against the run branch, retarget it to main before
+    // verify sees it; otherwise the story can merge into the wrong branch and
+    // the next story starts from stale local main.
+    const storyLoopConfig = parseLoopConfigSafe(step.loop_config, step.run_id);
+    const requiredPrBase = (storyLoopConfig?.mergeStrategy === "pr-each" || storyLoopConfig?.verifyEach) ? "main" : "";
+    if (storyStatus === STORY_STATUS.DONE && storyPrUrl && requiredPrBase && context["repo"]) {
+      try {
+        const infoRaw = execFileSync("gh", ["pr", "view", storyPrUrl, "--json", "baseRefName,url"], {
+          cwd: context["repo"], timeout: 15_000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8",
+        }).toString();
+        const info = JSON.parse(infoRaw);
+        const currentBase = String(info.baseRefName || "");
+        if (currentBase && currentBase !== requiredPrBase) {
+          const m = String(info.url || storyPrUrl).match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
+          if (!m) throw new Error(`cannot parse PR URL ${storyPrUrl}`);
+          execFileSync("gh", ["api", "-X", "PATCH", `repos/${m[1]}/${m[2]}/pulls/${m[3]}`, "-f", `base=${requiredPrBase}`], {
+            cwd: context["repo"], timeout: 30_000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8",
+          });
+          logger.warn(`[pr-base-guard] Retargeted ${storyPrUrl} from ${currentBase} to ${requiredPrBase} for ${storyRow?.story_id}`, { runId: step.run_id });
+        }
+      } catch (baseErr) {
+        logger.warn(`[pr-base-guard] Could not validate/retarget ${storyPrUrl}: ${String(baseErr).slice(0, 220)}`, { runId: step.run_id });
+      }
+    }
     // AUTO-PR (2026-04-21): Systemic PR creation — never rely on agent to run gh pr create.
     // If story is DONE and has a pushed branch but no PR URL, system opens PR on main.
     // Runs per-story so each logical unit gets its own PR for isolated review.
@@ -3030,8 +3061,7 @@ ${screenDescs}
       storyBranchName.toLowerCase() !== (context["branch"] || "").toLowerCase()
     ) {
       const autoRepo = context["repo"];
-      const autoLoopConfig = parseLoopConfigSafe(step.loop_config, step.run_id);
-      const autoBase = (autoLoopConfig?.mergeStrategy === "pr-each" || autoLoopConfig?.verifyEach) ? "main" : (context["branch"] || "main");
+      const autoBase = requiredPrBase || (context["branch"] || "main");
       try {
         // Ensure branch is pushed (idempotent)
         try {
@@ -3483,7 +3513,7 @@ const MAX_AUTO_VERIFY_ITERATIONS = 5;
  * Auto-verify 'done' stories whose PRs are already merged/closed-with-ancestry.
  * Returns the first story that still needs agent verification, or null if all auto-verified.
  */
-async function autoVerifyDoneStories(
+export async function autoVerifyDoneStories(
   runId: string,
   context: Record<string, string>,
   logPrefix: string,

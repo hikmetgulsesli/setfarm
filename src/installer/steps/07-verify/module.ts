@@ -28,6 +28,7 @@ function buildPrompt(ctx: PromptContext): string {
     PR_COMMENTS: c["pr_comments"] || "",
     PR_CHECK_STATE: c["pr_check_state"] || "",
     PR_MERGEABLE: c["pr_mergeable"] || "",
+    PR_MERGE_STATE_STATUS: c["pr_merge_state_status"] || "",
     PLAYWRIGHT_REPORT: c["playwright_report"] || "",
   });
   return `${resolved}\n\n---\n\n# Kurallar\n\n${rulesBody}`;

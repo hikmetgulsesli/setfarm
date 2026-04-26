@@ -16,6 +16,11 @@ Workflow agent. Peek→Claim→Work→Complete.
 3. EXTRACT the step id and working directory via jq (DO NOT parse by hand):
    STEP_ID=$(jq -r '.stepId // empty' /tmp/claim-{{OUTPUT_FILE_ID}}.json)
    WORKDIR=$(jq -r 'if (.input | type) == "object" then (.input.story_workdir // .input.repo // "") else "" end' /tmp/claim-{{OUTPUT_FILE_ID}}.json)
+   if [ -z "$WORKDIR" ]; then
+     WORKDIR=$(jq -r 'if (.input | type) == "string" then .input else "" end' /tmp/claim-{{OUTPUT_FILE_ID}}.json \
+       | sed -n 's/^- `\?\(\/[^` ]*\)`\? — proje kök dizini.*/\1/p; s/^REPO:[[:space:]]*\(\/[^[:space:]]*\).*/\1/p' \
+       | head -1)
+   fi
    [ -z "$STEP_ID" ] && { echo "HEARTBEAT_OK"; exit 0; }
    [ -z "$WORKDIR" ] && WORKDIR="$HOME/.openclaw/workspace/agent-scratch"
    cd "$WORKDIR" && pwd

@@ -167,6 +167,16 @@ git push -u origin "$STORY_BRANCH"
 Do not create a PR. The pipeline opens or reuses the PR from the branch recorded
 in the database. If you create a second branch, the PR will point at stale code.
 
+Forbidden in developer sessions:
+
+- `gh pr create`
+- `gh pr edit`
+- `gh pr merge`
+- any PR base selection
+
+If you need a PR URL, leave `PR_URL` empty. Setfarm creates or reuses one with
+base `main` after your step completes.
+
 ### 4. Report
 ```
 STATUS: done
@@ -251,7 +261,7 @@ You work on **ONE user story per session**. A fresh session is started for each 
 4. Create story branch from feature branch
 5. Implement the story
 6. Build + test
-7. Commit, push, create PR
+7. Commit and push the prepared story branch. Do not create a PR; Setfarm opens the story PR.
 8. Append to `progress.txt`
 9. Update **Codebase Patterns** if you found reusable patterns
 10. Update `AGENTS.md` if you learned something structural about the codebase

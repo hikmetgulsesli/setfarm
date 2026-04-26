@@ -13,6 +13,11 @@
 - Verify review-delay now skips the wait when GitHub already has review comments or failing checks on the PR, avoiding empty reviewer sessions for older PRs.
 - Pending loop-step spawns now obey the same verify gate, closing the `step_pending` path that could start a developer before the previous PR was marked verified.
 - Verify claims can now pass a pending pr-each implement loop when `done` stories await PR verification, so the reviewer is not starved by the loop it is supposed to unblock.
+- Developer instructions now remove the remaining "create PR" contradiction and explicitly forbid `gh pr create/edit/merge`; developers only commit and push the prepared story branch.
+- Story completion now validates any agent-created PR and retargets it to `main` in pr-each mode before verify sees it, preventing PRs against the run branch.
+- Verify PR context now includes inline review comments plus `mergeStateStatus`, and merge/conflict signals skip the review-delay wait.
+- Polling prompts now extract `WORKDIR` from string claim inputs that include `REPO:` or the verify prompt's project-root line, so reviewer/tester agents do not fall back to scratch and then mutate the shared repo blindly.
+- Spawner now opportunistically auto-verifies `done` stories whose PRs are already merged, so an externally/manual-merged PR does not leave verify stuck until a model session completes.
 
 ## 2026-04-26 - Single Step Claim Idempotency
 
