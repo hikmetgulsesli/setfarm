@@ -43,7 +43,10 @@ function findScreenHtml(screen) {
 
 function htmlToJsx(html) {
   return html
-    .replace(/<(img|br|hr|input|meta|link)([^>]*?)>/gi, "<$1$2 />")
+    .replace(/<(img|br|hr|input|meta|link)([^>]*?)>/gi, (_, tag, attrs) => {
+      const cleanAttrs = String(attrs || "").replace(/\/\s*$/, "").trimEnd();
+      return `<${tag}${cleanAttrs} />`;
+    })
     .replace(/\bclass="/g, "className=\"")
     .replace(/\bfor="/g, "htmlFor=\"")
     .replace(/\btabindex="/g, "tabIndex=\"")

@@ -43,4 +43,27 @@ describe("stitch-to-jsx", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it("normalizes already self-closed void tags into valid JSX", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-void-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "error-screen", title: "Hata Durumu" },
+      ]));
+      writeHtml(path.join(stitchDir, "error-screen.html"), "<main><p>Hata<br/>Tekrar dene</p></main>");
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "HataDurumu.tsx"), "utf-8");
+      assert.match(code, /Hata<br \/>Tekrar dene/);
+      assert.doesNotMatch(code, /<br\/ \/>/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });

@@ -142,9 +142,21 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
           execFileSync("git", ["commit", "-m", "chore: auto-generate JSX screens from Stitch HTML"], { cwd: repo, timeout: 10000, stdio: "pipe" });
         } catch { /* nothing to commit is fine */ }
         logger.info(`[module:setup-build preclaim] stitch-to-jsx ok`, { runId: ctx.runId });
+        try {
+          const pkg = JSON.parse(fs.readFileSync(path.join(repo, "package.json"), "utf-8"));
+          if (pkg.scripts?.build) {
+            execFileSync("npm", ["run", "build"], { cwd: repo, timeout: 180000, stdio: "pipe" });
+            logger.info(`[module:setup-build preclaim] post-stitch build ok`, { runId: ctx.runId });
+          }
+        } catch (e) {
+          const msg = `npm run build failed after stitch-to-jsx: ${String(e).slice(0, 300)}`;
+          logger.warn(`[module:setup-build preclaim] ${msg}`, { runId: ctx.runId });
+          ctx.context["baseline_fail"] = msg;
+        }
       }
     } catch (e) {
       logger.warn(`[module:setup-build preclaim] stitch-to-jsx failed: ${String(e).slice(0, 200)}`, { runId: ctx.runId });
+      ctx.context["baseline_fail"] = `stitch-to-jsx failed: ${String(e).slice(0, 300)}`;
     }
   }
 }
