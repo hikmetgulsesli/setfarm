@@ -12,8 +12,19 @@ Görev: QA-test sonrası son doğrulama. `npm run build` + `scripts/smoke-test.m
 
 ## Kontroller
 
+0. **Main sync**: `merge_strategy: pr-each` / `verify_each` akışında final-test eski run branch'i merge etmez. Önce `main`'i güncelle ve sadece merge edilmiş `main` üzerinde test et:
+   - `cd {{REPO}}`
+   - `git fetch origin main`
+   - `git checkout main`
+   - `git pull --ff-only origin main`
 1. **Build pass**: `npm run build` temiz, warning 0-5 arası kabul, error 0
-2. **Smoke test**: `node scripts/smoke-test.mjs <repo>` — 16-fazlı Vibe Guard (Phase 16: Design Fidelity)
+2. **Smoke test**: platform smoke script'iyle çalıştır:
+   ```bash
+   SMOKE_SCRIPT="$HOME/.openclaw/setfarm-repo/scripts/smoke-test.mjs"
+   [ -f scripts/smoke-test.mjs ] && SMOKE_SCRIPT="$PWD/scripts/smoke-test.mjs"
+   node "$SMOKE_SCRIPT" "$PWD"
+   ```
+   — 16-fazlı Vibe Guard (Phase 16: Design Fidelity)
 3. **Design fidelity**: structural/wiring gap varsa blocking (step-ops otomatik düşürür)
 4. **Import consistency**: duplicate dir/import yoksa (step-ops otomatik kontrol eder)
 5. **Main branch clean**: implement branch merge sonrası main üzerinde bozulma yok

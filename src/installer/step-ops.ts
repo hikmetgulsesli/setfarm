@@ -2601,41 +2601,64 @@ ${screenDescs}
     const mergeBranch = context["branch"] || "feature/initial-prd";
     const mergeRepo = context["repo"] || "";
     if (mergeRepo && mergeBranch) {
+      let isPrEachFinal = false;
       try {
-        // Check if an open PR exists for this branch → main
-        let prMerged = false;
-        try {
-          const prUrl = execFileSync("gh", ["pr", "list", "--head", mergeBranch, "--base", "main", "--state", "open", "--json", "url", "--jq", ".[0].url"], {
-            cwd: mergeRepo, encoding: "utf-8", timeout: 15000, stdio: ["pipe", "pipe", "pipe"],
-          }).trim();
-          if (prUrl) {
-            execFileSync("gh", ["pr", "merge", prUrl, "--squash", "--delete-branch"], {
-              cwd: mergeRepo, timeout: 30000, stdio: ["pipe", "pipe", "pipe"],
-            });
-            logger.info(`[final-test-merge-guardrail] PR merged via gh: ${prUrl}`, { runId: step.run_id });
-            prMerged = true;
-          }
-        } catch (ghErr) {
-          logger.warn(`[final-test-merge-guardrail] gh pr merge attempt failed: ${String(ghErr)}`, { runId: step.run_id });
-        }
+        const loopRow = await pgGet<{ loop_config?: any }>(
+          "SELECT loop_config FROM steps WHERE run_id = $1 AND type = 'loop' AND loop_config IS NOT NULL LIMIT 1",
+          [step.run_id]
+        );
+        const loopConfigRaw = loopRow?.loop_config;
+        const loopConfig = typeof loopConfigRaw === "string" ? JSON.parse(loopConfigRaw || "{}") : (loopConfigRaw || {});
+        isPrEachFinal = loopConfig?.mergeStrategy === "pr-each" || !!loopConfig?.verifyEach;
+      } catch (loopErr) {
+        logger.warn(`[final-test-merge-guardrail] loop_config lookup failed: ${String(loopErr).slice(0, 160)}`, { runId: step.run_id });
+      }
 
-        // If no open PR was found/merged, try direct git merge
-        if (!prMerged) {
+      try {
+        if (isPrEachFinal) {
           try {
-            // Check if branch is already merged into main
-            const mergeBase = execFileSync("git", ["merge-base", "--is-ancestor", mergeBranch, "main"], {
-              cwd: mergeRepo, timeout: 10000, stdio: ["pipe", "pipe", "pipe"],
-            });
-            logger.info(`[final-test-merge-guardrail] Branch ${mergeBranch} already merged into main`, { runId: step.run_id });
-          } catch {
-            // Not yet merged — do direct merge
+            execFileSync("git", ["checkout", "main"], { cwd: mergeRepo, timeout: 10000, stdio: ["pipe", "pipe", "pipe"] });
+            execFileSync("git", ["pull", "--ff-only", "origin", "main"], { cwd: mergeRepo, timeout: 30000, stdio: ["pipe", "pipe", "pipe"] });
+            logger.info(`[final-test-merge-guardrail] pr-each flow detected; synced main and skipped stale run-branch merge`, { runId: step.run_id });
+          } catch (syncErr) {
+            logger.warn(`[final-test-merge-guardrail] pr-each main sync failed: ${String(syncErr)}`, { runId: step.run_id });
+          }
+        } else {
+          // Check if an open PR exists for this branch → main
+          let prMerged = false;
+          try {
+            const prUrl = execFileSync("gh", ["pr", "list", "--head", mergeBranch, "--base", "main", "--state", "open", "--json", "url", "--jq", ".[0].url"], {
+              cwd: mergeRepo, encoding: "utf-8", timeout: 15000, stdio: ["pipe", "pipe", "pipe"],
+            }).trim();
+            if (prUrl) {
+              execFileSync("gh", ["pr", "merge", prUrl, "--squash", "--delete-branch"], {
+                cwd: mergeRepo, timeout: 30000, stdio: ["pipe", "pipe", "pipe"],
+              });
+              logger.info(`[final-test-merge-guardrail] PR merged via gh: ${prUrl}`, { runId: step.run_id });
+              prMerged = true;
+            }
+          } catch (ghErr) {
+            logger.warn(`[final-test-merge-guardrail] gh pr merge attempt failed: ${String(ghErr)}`, { runId: step.run_id });
+          }
+
+          // If no open PR was found/merged, try direct git merge
+          if (!prMerged) {
             try {
-              execFileSync("git", ["checkout", "main"], { cwd: mergeRepo, timeout: 10000, stdio: ["pipe", "pipe", "pipe"] });
-              execFileSync("git", ["merge", mergeBranch, "--no-ff", "-m", `Merge ${mergeBranch} into main`], { cwd: mergeRepo, timeout: 30000, stdio: ["pipe", "pipe", "pipe"] });
-              execFileSync("git", ["push", "origin", "main"], { cwd: mergeRepo, timeout: 15000, stdio: ["pipe", "pipe", "pipe"] });
-              logger.info(`[final-test-merge-guardrail] Direct merged ${mergeBranch} into main`, { runId: step.run_id });
-            } catch (directMergeErr) {
-              logger.warn(`[final-test-merge-guardrail] Direct merge failed: ${String(directMergeErr)}`, { runId: step.run_id });
+              // Check if branch is already merged into main
+              execFileSync("git", ["merge-base", "--is-ancestor", mergeBranch, "main"], {
+                cwd: mergeRepo, timeout: 10000, stdio: ["pipe", "pipe", "pipe"],
+              });
+              logger.info(`[final-test-merge-guardrail] Branch ${mergeBranch} already merged into main`, { runId: step.run_id });
+            } catch {
+              // Not yet merged — do direct merge
+              try {
+                execFileSync("git", ["checkout", "main"], { cwd: mergeRepo, timeout: 10000, stdio: ["pipe", "pipe", "pipe"] });
+                execFileSync("git", ["merge", mergeBranch, "--no-ff", "-m", `Merge ${mergeBranch} into main`], { cwd: mergeRepo, timeout: 30000, stdio: ["pipe", "pipe", "pipe"] });
+                execFileSync("git", ["push", "origin", "main"], { cwd: mergeRepo, timeout: 15000, stdio: ["pipe", "pipe", "pipe"] });
+                logger.info(`[final-test-merge-guardrail] Direct merged ${mergeBranch} into main`, { runId: step.run_id });
+              } catch (directMergeErr) {
+                logger.warn(`[final-test-merge-guardrail] Direct merge failed: ${String(directMergeErr)}`, { runId: step.run_id });
+              }
             }
           }
         }
@@ -2653,7 +2676,9 @@ ${screenDescs}
       if (!mainHasSource && step.retry_count < step.max_retries) {
         context["previous_failure"] = "MERGE FAIL: Feature branch not merged into main. Main branch has no source code.";
         context["failure_category"] = "MERGE_CONFLICT";
-        context["failure_suggestion"] = "Merge feature branch into main manually or resolve conflicts";
+        context["failure_suggestion"] = isPrEachFinal
+          ? "pr-each flow should already have story PRs merged; sync origin/main or inspect missing package.json"
+          : "Merge feature branch into main manually or resolve conflicts";
         await updateRunContext(step.run_id, context);
         await failStep(stepId, "Feature branch not merged into main — source code missing");
         return { advanced: false, runCompleted: false };

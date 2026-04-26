@@ -17,7 +17,9 @@
 
 ## Fail kriterleri (STATUS: fail)
 
-Sadece onarılamaz durumlar: corrupt node_modules, disk full, smoke-test.mjs script'i bulunamıyor. Normal bug → retry.
+Sadece onarılamaz durumlar: corrupt node_modules, disk full, hem proje-local `scripts/smoke-test.mjs` hem de platform `$HOME/.openclaw/setfarm-repo/scripts/smoke-test.mjs` bulunamıyor. Normal bug → retry.
+
+Proje içinde `scripts/smoke-test.mjs` yoksa bu tek başına fail sebebi değildir; platform smoke script'i kullanılmalı.
 
 ## Skip kriterleri (STATUS: skip)
 

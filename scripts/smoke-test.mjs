@@ -291,6 +291,40 @@ function startServer(dir, port) {
   });
 }
 
+let activeServerProc = null;
+
+function waitForProcessExit(proc, ms) {
+  return new Promise(resolve => {
+    if (!proc || proc.exitCode !== null || proc.signalCode) return resolve();
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      resolve();
+    };
+    proc.once('exit', finish);
+    setTimeout(finish, ms);
+  });
+}
+
+async function stopServer(proc) {
+  if (!proc || proc.exitCode !== null || proc.signalCode) return;
+  try { proc.kill('SIGTERM'); } catch {}
+  await waitForProcessExit(proc, 1500);
+  if (proc.exitCode === null && !proc.signalCode) {
+    try { proc.kill('SIGKILL'); } catch {}
+    await waitForProcessExit(proc, 500);
+  }
+}
+
+function stopServerAndExit(signal) {
+  const code = signal === 'SIGINT' ? 130 : 143;
+  stopServer(activeServerProc).finally(() => process.exit(code));
+}
+
+process.once('SIGINT', () => stopServerAndExit('SIGINT'));
+process.once('SIGTERM', () => stopServerAndExit('SIGTERM'));
+
 // ── Phase helpers ───────────────────────────────────────────────────
 
 /** Check if page is non-blank (has content in accessibility tree) */
@@ -440,6 +474,7 @@ async function main() {
     // Start server only if we need to
     if (requestedPort <= 0) {
       serverProc = await startServer(serveDir, port);
+      activeServerProc = serverProc;
     }
     const baseUrl = 'http://localhost:' + port;
 
@@ -1285,7 +1320,8 @@ async function main() {
     ab('close');
   }
 
-  if (serverProc) serverProc.kill();
+  await stopServer(serverProc);
+  activeServerProc = null;
 
 
   // ── Phase 16: Design Fidelity (Stitch DESIGN_DOM vs actual) ──────

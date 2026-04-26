@@ -19,6 +19,21 @@ Görev: Final-test'ten geçmiş projeyi sunucuya deploy et. systemd unit yaz/kay
 4. **Cloudflare tunnel**: hostname routing ekle (mevcut 37 subdomain yapısı)
 5. **systemd enable + start**: `systemctl --user enable --now <proje>`
 6. **Health check**: HTTP GET kök sayfa 200 dönmeli
+7. **Mission Control project metadata**: deploy başarılıysa MC'ye repo basename'i ile tek proje kaydı yaz/güncelle. Tam görev başlığından proje id üretme.
+   - Project id/name: `basename "{{REPO}}"`
+   - Port alanı: **sadece** `ports.frontend` kullan. `ports.web` yazma.
+   - Payload alanları:
+     - `id`, `name`: repo basename
+     - `repo`: `{{REPO}}`
+     - `status`: `active`
+     - `ports`: `{ "frontend": <PORT> }`
+     - `domain`: `<subdomain>.setrox.com.tr`
+     - `service`: `<proje>.service`
+     - `github`: varsa origin GitHub URL
+     - `runId` / `workflowRunId` / `setfarmRunId`: claim/context içinde varsa mevcut run id
+     - `completedAt`: ISO timestamp
+   - Önce `POST http://127.0.0.1:3080/api/projects`; aynı proje varsa `PATCH http://127.0.0.1:3080/api/projects/<project-id>` ile güncelle.
+   - MC güncellemesi deploy'u bozmasın; HTTP hata olursa `ISSUES` içinde raporla ama çalışan systemd servisini geri alma.
 
 ## Output formatı
 
