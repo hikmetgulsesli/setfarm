@@ -197,6 +197,16 @@ export async function checkScopeEnforcement(
 
   const allTouched = Array.from(new Set([...changedFiles, ...dirtyFiles]));
   const sourceFiles = allTouched.filter(f => SCOPE_EXTS.test(f) && !SCOPE_IGNORE.test(f));
+  const forbiddenArtifacts = allTouched.filter(f => /^(QA_REPORT\.md|qa-report\.(md|json|txt)|smoke-(home|after-click)\.png)$/i.test(f));
+  if (forbiddenArtifacts.length > 0 && retryCount < maxRetries) {
+    return {
+      passed: false,
+      reason: `SCOPE_BLEED: Story ${storyId} committed QA/test artifact(s) that do not belong in product code: ${forbiddenArtifacts.join(", ")}. Remove these files/commits and keep reports in step output, not in the repo.`,
+      category: "SCOPE_BLEED",
+      suggestion: "Remove QA report/smoke artifact files from the story branch before completing",
+      outOfScope: forbiddenArtifacts,
+    };
+  }
 
   // Dependencies increase limits
   const depRow = await pgGet<{ depends_on: string | null }>("SELECT depends_on FROM stories WHERE id = $1", [currentStoryDbId]);

@@ -103,10 +103,29 @@ export function syncBaseBranch(repo: string, baseBranch = "main"): boolean {
 
   try {
     if (current === baseBranch) {
-      execFileSync("git", ["pull", "origin", baseBranch, "--ff-only"], {
-        cwd: repo, timeout: 15000, stdio: "pipe",
-      });
-      logger.info(`[worktree] Pulled ${baseBranch} (ff-only) in main worktree`, {});
+      let localOnly = 0;
+      let originOnly = 0;
+      try {
+        const counts = execFileSync("git", ["rev-list", "--left-right", "--count", `origin/${baseBranch}...${baseBranch}`], {
+          cwd: repo, timeout: 5000, stdio: "pipe",
+        }).toString().trim().split(/\s+/);
+        originOnly = parseInt(counts[0] || "0", 10) || 0;
+        localOnly = parseInt(counts[1] || "0", 10) || 0;
+      } catch {}
+      if (localOnly > 0) {
+        execFileSync("git", ["reset", "--hard", `origin/${baseBranch}`], {
+          cwd: repo, timeout: 15000, stdio: "pipe",
+        });
+        logger.warn(`[worktree] Hard-synced ${baseBranch} to origin/${baseBranch}; dropped ${localOnly} local-only commit(s) from managed base`, {});
+      } else {
+        execFileSync("git", ["pull", "origin", baseBranch, "--ff-only"], {
+          cwd: repo, timeout: 15000, stdio: "pipe",
+        });
+        logger.info(`[worktree] Pulled ${baseBranch} (ff-only) in main worktree`, {});
+      }
+      if (originOnly > 0) {
+        logger.info(`[worktree] ${baseBranch} received ${originOnly} origin commit(s) during sync`, {});
+      }
     } else {
       execFileSync("git", ["branch", "-f", baseBranch, `origin/${baseBranch}`], {
         cwd: repo, timeout: 5000, stdio: "pipe",

@@ -18,6 +18,7 @@ Görev: Verify + security-gate'ten geçmiş projeyi browser'da açarak fonksiyon
    - `git checkout main`
    - `git pull --ff-only origin main`
    - test/build komutlarını bu güncel `main` üzerinden çalıştır.
+   - QA raporu için commit/push yapma; bulguları sadece step output'taki `TEST_FAILURES` ve `ISSUES` alanlarına yaz.
 1. **Build + dev server** başarıyla ayağa kalkıyor mu
 2. **Ana akış** (happy path) her story'nin acceptance criteria'sını geçiyor mu
 3. **Edge case'ler**: boş state, uzun metin, hızlı tıklama, localStorage silme

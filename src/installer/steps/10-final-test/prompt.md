@@ -17,6 +17,7 @@ Görev: QA-test sonrası son doğrulama. `npm run build` + `scripts/smoke-test.m
    - `git fetch origin main`
    - `git checkout main`
    - `git pull --ff-only origin main`
+   - Final test raporu için commit/push yapma; sonuçları sadece `SMOKE_TEST_RESULT` ve `TEST_FAILURES` alanlarına yaz.
 1. **Build pass**: `npm run build` temiz, warning 0-5 arası kabul, error 0
 2. **Smoke test**: platform smoke script'iyle çalıştır:
    ```bash

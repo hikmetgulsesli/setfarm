@@ -18,6 +18,7 @@
 - Spawner now periodically reaps active OpenClaw process trees whose claimed step is no longer `running`, preventing completed verify/security/QA agents from continuing to consume CPU/RAM after `step complete`.
 - Final-test now runs the platform `smoke-test.mjs` itself as a system gate, so dead buttons, blank pages, console errors, and other runtime failures cannot pass based only on a model-reported smoke summary.
 - QA/final-test runtime failures now create a scoped `QA-FIX-*` story and route the run back through implement, verify, security, QA, final, and deploy instead of blindly retrying the tester step without code changes.
+- Managed project `main` sync now hard-aligns local `main` with `origin/main` when local-only commits exist, and implement scope checks reject QA report/smoke artifact files from story branches.
 - Prepared-claim and polling preambles now reject placeholder paths such as `$HOME/projects/<slug>` or `[missing:*]` before `cd`, preventing agents from treating PRD examples as real workdirs.
 - Frontend-change detection now verifies both `main`/`origin/main` and the target branch before running `git diff`, removing noisy `main..branch` fatal logs while a story branch is not created yet.
 - Implement context now sends small Stitch/DOM excerpts plus file paths instead of large raw HTML/DOM blobs, and feature-dev prompts require reading only current-story Stitch files from disk. This reduces Kimi/MiniMax prompt bloat and gateway memory pressure.
