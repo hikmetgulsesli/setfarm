@@ -30,9 +30,9 @@ Proje içinde `scripts/smoke-test.mjs` yoksa bu tek başına fail sebebi değild
 
 ```
 TEST_FAILURES:
-- Phase 3 (build): tsc error at src/App.tsx:42 "Property 'notes' does not exist on type"
-- Phase 8 (a11y): CounterDisplay element'inde aria-live="polite" eksik
-- Phase 16 (design fidelity): SCREEN_MAP'teki "Geçmiş Boş Durumu" ekranı render edilmemiş
+- Phase 3 (build): tsc error at src/App.tsx:42 "Property '<domainField>' does not exist on type"
+- Phase 8 (a11y): Ana interactive component'te aria-live/focus davranışı eksik
+- Phase 16 (design fidelity): SCREEN_MAP'teki bir ekran render edilmemiş
 ```
 
 ## SMOKE_TEST_RESULT

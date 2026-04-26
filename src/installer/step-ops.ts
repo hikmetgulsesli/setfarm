@@ -2437,21 +2437,10 @@ ${screenDescs}
     }
   }
 
-  // SETUP-BUILD APP.TSX SCAFFOLD-DEFAULT GUARDRAIL (Wave 10 Bug E)
-  // Fix #4 HARD SCOPE LIMIT is a prompt-level rule that says "leave src/App.tsx
-  // at the scaffolder default". Run #344 caught atlas violating it: the agent
-  // replaced the Vite counter App.tsx with a 4-line stub `function App() { return
-  // <div>Pomodoro App</div> }`. That's not feature code (so not as bad as #338's
-  // 202-line overreach) but it still means the implement step's US-001 sees a
-  // stripped baseline, not a real Vite starter, which feeds back into the 0-work
-  // shortcut chain (the developer agent sees "nothing to scaffold" and reports
-  // done with fake output).
-  //
-  // Server-side check: if setup-build finished and src/App.tsx doesn't look like
-  // a Vite default (missing ALL of the tell-tale imports), log a warning. We
-  // don't hard-fail — the Tailwind auto-install path legitimately modifies
-  // index.css and may touch App.tsx in edge cases — but we surface the drift
-  // so it's visible in the log and downstream tools can flag it.
+  // SETUP-BUILD APP.TSX SCAFFOLD BASELINE GUARDRAIL.
+  // setup-repo creates a neutral App.tsx marked with data-setfarm-root="baseline".
+  // If setup-build or its agent rewrites App.tsx before implement, surface it so
+  // downstream reviewers can catch feature code leaking into the baseline.
   if (step.step_id === "setup-build" && parsed["status"]?.toLowerCase() === "done") {
     try {
       const repoPath = context["repo"] || "";
@@ -2459,16 +2448,17 @@ ${screenDescs}
       if (repoPath && fs.existsSync(appTsxPath)) {
         const appTsxContent = fs.readFileSync(appTsxPath, "utf-8");
         const lineCount = appTsxContent.split("\n").length;
-        // Vite default React template characteristic signals (any ONE of these):
+        // Accept either Setfarm's neutral baseline or older Vite starter signals.
+        const hasSetfarmBaseline = /data-setfarm-root=["']baseline["']/.test(appTsxContent);
         const hasReactLogo = /reactLogo|react\.svg|vite\.svg/i.test(appTsxContent);
         const hasCountState = /useState\(0\)|count.*setCount|setCount.*count/i.test(appTsxContent);
         const hasViteDemo = /count is|edit.*app\.tsx|HMR|vite \+ react/i.test(appTsxContent);
-        const looksLikeDefault = hasReactLogo || hasCountState || hasViteDemo;
+        const looksLikeDefault = hasSetfarmBaseline || hasReactLogo || hasCountState || hasViteDemo;
         if (!looksLikeDefault) {
           const preview = appTsxContent.slice(0, 200).replace(/\s+/g, " ");
-          logger.warn(`[setup-build-scope] src/App.tsx does NOT match Vite scaffolder default after setup-build (${lineCount} lines, preview: "${preview}..."). Fix #4 HARD SCOPE LIMIT says the agent should leave the scaffolder default in place. The implement step's US-001 will work from this modified baseline.`, { runId: step.run_id });
+          logger.warn(`[setup-build-scope] src/App.tsx does NOT match setup scaffold baseline after setup-build (${lineCount} lines, preview: "${preview}..."). Implement will start from this modified baseline.`, { runId: step.run_id });
           // Record in context so verify/qa-test can see it downstream if needed
-          context["setup_build_app_tsx_drift"] = `lines=${lineCount},hasViteDefault=false`;
+          context["setup_build_app_tsx_drift"] = `lines=${lineCount},hasSetupBaseline=false`;
           await updateRunContext(step.run_id, context);
         }
       }

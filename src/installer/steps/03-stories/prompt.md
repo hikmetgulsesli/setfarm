@@ -53,28 +53,30 @@ varsa shared_files'a koy.
 7. SCREEN_MAP'i güncelle (her ekran için `stories` alanı).
 8. Aşağıdaki KEY: VALUE formatında çıktı ver.
 
-## Örnek Story (referans — yapıyı kopyala)
+## Story Şeması (referans — alanları doldur, örnek isimleri kopyalama)
+
+`<...>` içindeki placeholder'ları gerçek PRD domain adları ve PREDICTED_SCREEN_FILES
+yollarıyla değiştir. Çıktıya `<domain>` veya `<PredictedScreenName>` aynen yazmak HATA.
 
 ```
 {
   "id": "US-002",
-  "title": "Sayaç Core — değer, artır/azalt, reset",
-  "description": "Ana sayaç mantığı: değer state, increment/decrement/reset işlemleri, localStorage persistence",
+  "title": "<PRD domain> — tek fonksiyonel slice",
+  "description": "PRD'deki gerçek domain aksiyonlarını kapsayan net iş parçası",
   "acceptanceCriteria": [
-    "Kullanıcı + butonuna tıklayınca değer artmalı",
-    "Kullanıcı - butonuna tıklayınca değer azalmalı",
-    "Reset butonu değeri 0'a dönsürmeli",
-    "Sayfa yenilenince son değer korunmalı"
+    "PRD'deki birinci kabul kriteri kodla karşılanmalı",
+    "İlgili UI aksiyonu gerçek state/veri değişikliği üretmeli",
+    "Gerekli persistence/API/validation davranışı doğrulanmalı"
   ],
   "depends_on": [],
   "screens": ["SCR-001"],
   "scope_files": [
-    "src/hooks/useCounter.ts",
-    "src/components/Counter.tsx",
-    "src/screens/AnaSayaSayac.tsx"
+    "src/features/<domain>/<domain>State.ts",
+    "src/components/<DomainPanel>.tsx",
+    "src/screens/<PredictedScreenName>.tsx"
   ],
   "shared_files": ["src/types/index.ts"],
-  "scope_description": "Hook + component + screen = 3 dosya tam feature-slice"
+  "scope_description": "State/helper + component family + ilgili screen-flow"
 }
 ```
 
@@ -86,9 +88,9 @@ Her story konsept-bazlı böl — **tek ana yapı**: bir hook, bir component-fam
 
 ```
 "file_skeletons": {
-  "src/hooks/useCounter.ts": "Counter state + increment/decrement/reset + localStorage sync",
-  "src/components/Counter.tsx": "Display value + button triggers",
-  "src/screens/AnaSayfa.tsx": "Ana sayfa kapsayıcısı — Counter'ı render eder"
+  "src/features/<domain>/<domain>State.ts": "PRD domain state + actions + persistence/API boundary",
+  "src/components/<DomainPanel>.tsx": "PRD domain UI controls + event handlers",
+  "src/screens/<PredictedScreenName>.tsx": "PREDICTED_SCREEN_FILES içindeki gerçek screen dosyasını domain component ile bağlar"
 }
 ```
 

@@ -30,7 +30,7 @@ describe("07-verify step module", () => {
         branch: "feature-sayac",
         pr_url: "https://github.com/u/r/pull/42",
         preflight_analysis: "3 files changed, 0 ESLint errors",
-        current_story: "US-002: Counter state",
+        current_story: "US-002: Domain state",
       },
     });
     assert.ok(prompt.includes("$HOME/projects/sayac-12345"));

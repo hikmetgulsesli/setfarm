@@ -27,7 +27,7 @@ Her madde: screen/component + aksiyon + beklenen vs actual.
 
 ```
 TEST_FAILURES:
-- Ana Sayaç ekranında "Artır" button tıklandığında değer artmıyor (beklenen: +1, actual: unchanged). Console: "Cannot read property 'value' of null"
-- History listesi reload sonrası boşalıyor (beklenen: localStorage restore, actual: [])
-- Mobile viewport'ta CounterDisplay %150 overflow — horizontal scroll
+- Ana akış ekranında birincil buton tıklandığında beklenen state değişmiyor (beklenen: PRD aksiyonu tamamlandı, actual: unchanged). Console: "Cannot read property 'value' of null"
+- Liste/form state'i reload sonrası kayboluyor (beklenen: persistence restore, actual: empty)
+- Mobile viewport'ta ana bileşen %150 overflow — horizontal scroll
 ```

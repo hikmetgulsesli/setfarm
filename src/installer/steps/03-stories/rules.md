@@ -37,7 +37,7 @@ PRD + SCREEN_MAP + DESIGN_SYSTEM'i okuyup user story listesi üret. Her story do
 Her story **bağımsız çalışır bir feature dilimi** olmalı. Tek component değil:
 - Ana component(ler) + hook(lar) + type(lar) + test (3-6 dosya toplam)
 - Ya da ekran + ona bağlı tüm destek dosyaları
-- Single-file (örn `CounterDisplay.tsx` tek başına) = HATA — modeli paradox'a sokar
+- Single-file (örn sadece bir display component dosyası) = HATA — modeli paradox'a sokar
 
 Eğer bir feature doğal olarak 1 dosyaysa, yakınındaki ilgili dosyalarla birleştirip tek story yap.
 

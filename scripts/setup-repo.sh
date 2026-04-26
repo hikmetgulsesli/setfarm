@@ -20,12 +20,14 @@ if [ -d "$REPO/.git" ]; then
 else
   mkdir -p "$REPO"
   cd "$REPO"
-  git init
+  git init -b main 2>/dev/null || { git init && git branch -M main 2>/dev/null || true; }
   echo "Initialized new repo at $REPO"
 fi
 
 # 2. GitHub remote (with duplicate-name fallback)
 PROJECT_NAME=$(basename "$REPO")
+PACKAGE_NAME=$(printf "%s" "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._-]+/-/g; s/^-+//; s/-+$//')
+[ -n "$PACKAGE_NAME" ] || PACKAGE_NAME="setfarm-app"
 if ! git remote -v 2>/dev/null | grep -q origin; then
   # cuddly-sleeping-quail: gh repo create --push requires at least one commit.
   # If this is a fresh `git init` with no commits, create a README and commit
@@ -204,10 +206,10 @@ git add .gitignore && git commit -m "chore: add .gitignore" 2>/dev/null || true
 if [ ! -f package.json ]; then
   case "$TECH_STACK" in
     vite-react|react|web)
-      mkdir -p src/types src/hooks
-      cat > package.json <<'EOF'
+      mkdir -p src
+      cat > package.json <<EOF
 {
-  "name": "setfarm-app",
+  "name": "$PACKAGE_NAME",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -238,13 +240,13 @@ if [ ! -f package.json ]; then
   }
 }
 EOF
-      cat > index.html <<'EOF'
+      cat > index.html <<EOF
 <!doctype html>
 <html lang="tr">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Notlar</title>
+    <title>$PROJECT_NAME</title>
   </head>
   <body>
     <div id="root"></div>
@@ -324,7 +326,7 @@ ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
 EOF
       cat > src/App.tsx <<'EOF'
 export default function App() {
-  return <main className="min-h-screen bg-slate-50 text-slate-950" />;
+  return <main data-setfarm-root="baseline" className="min-h-screen bg-slate-50 text-slate-950" />;
 }
 EOF
       cat > src/index.css <<'EOF'
@@ -341,48 +343,6 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
-}
-EOF
-      cat > src/types/index.ts <<'EOF'
-export type NoteStatus = 'active' | 'completed';
-
-export interface Note {
-  id: string;
-  title: string;
-  content: string;
-  status: NoteStatus;
-  createdAt: string;
-  updatedAt: string;
-}
-EOF
-      cat > src/hooks/useNotes.ts <<'EOF'
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { Note } from '../types';
-
-const STORAGE_KEY = 'setfarm-notlar';
-
-export function useNotes() {
-  const [notes, setNotes] = useState<Note[]>(() => {
-    try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
-      return raw ? JSON.parse(raw) as Note[] : [];
-    } catch {
-      return [];
-    }
-  });
-
-  useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(notes));
-  }, [notes]);
-
-  const completedCount = useMemo(() => notes.filter((note) => note.status === 'completed').length, [notes]);
-
-  const addNote = useCallback((title: string, content: string) => {
-    const now = new Date().toISOString();
-    setNotes((current) => [{ id: crypto.randomUUID(), title, content, status: 'active', createdAt: now, updatedAt: now }, ...current]);
-  }, []);
-
-  return { notes, completedCount, addNote };
 }
 EOF
       git add package.json index.html tsconfig.json tsconfig.node.json vite.config.ts postcss.config.js tailwind.config.js src/

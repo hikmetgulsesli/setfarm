@@ -33,7 +33,7 @@ retry/fail için 1-3 madde halinde, developer'ın doğrudan aksiyon alacağı ne
 ```
 FEEDBACK:
 - src/App.tsx:42 — useEffect dependency array eksik (exhaustive-deps ESLint ihlali)
-- CounterDisplay component'i tests/CounterDisplay.test.tsx olmadan submit edildi — story AC-3 test coverage istiyor
+- Story'nin ana bileşeni test coverage olmadan submit edildi — story AC-3 test coverage istiyor
 - Design token --color-primary yerine #3B82F6 hardcoded (index.css:12)
 ```
 

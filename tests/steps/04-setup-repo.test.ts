@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import { setupRepoModule } from "../../dist/installer/steps/04-setup-repo/module.js";
 import type { ParsedOutput } from "../../dist/installer/steps/types.js";
 
@@ -65,5 +66,17 @@ describe("04-setup-repo step module", () => {
   it("validateOutput accepts STATUS: done (case-insensitive)", () => {
     assert.equal(setupRepoModule.validateOutput({ status: "done" } as ParsedOutput).ok, true);
     assert.equal(setupRepoModule.validateOutput({ status: "DONE" } as ParsedOutput).ok, true);
+  });
+
+  it("vite scaffold template is project-neutral", () => {
+    const script = fs.readFileSync("scripts/setup-repo.sh", "utf-8");
+    assert.ok(script.includes('git init -b main'), "fresh repos should initialize main directly");
+    assert.ok(script.includes('"name": "$PACKAGE_NAME"'), "package name should come from project slug");
+    assert.ok(script.includes("<title>$PROJECT_NAME</title>"), "HTML title should come from project slug");
+    assert.ok(script.includes('data-setfarm-root="baseline"'), "App baseline should be machine-detectable");
+    assert.equal(script.includes("<title>Notlar</title>"), false);
+    assert.equal(script.includes("useNotes"), false);
+    assert.equal(script.includes("NoteStatus"), false);
+    assert.equal(script.includes("setfarm-notlar"), false);
   });
 });
