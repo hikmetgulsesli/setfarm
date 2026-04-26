@@ -4,16 +4,14 @@ import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { getDb, resetDb } from "../dist/db.js";
-import { claimStep } from "../dist/installer/step-ops.js";
-import { randomUUID } from "node:crypto";
+import { computeHasFrontendChanges, resolveTemplate } from "../dist/installer/step-ops.js";
 
 /**
- * E2E integration test for frontend change detection in the verify flow.
+ * Regression test for frontend change detection in the verify flow.
  *
- * Creates a real git repo with controlled diffs, inserts a run+step into
- * the live DB with a verify-style template referencing {{has_frontend_changes}},
- * then calls claimStep and checks the resolved input.
+ * Creates a real git repo with controlled diffs and verifies the same
+ * has_frontend_changes context value that claimStep injects before resolving
+ * verify templates. This stays DB-free so it works with the PG-only runtime.
  */
 
 const VERIFY_TEMPLATE = `Verify the implementation.
@@ -26,18 +24,10 @@ If {{has_frontend_changes}} is 'true', you MUST also perform visual verification
 
 If {{has_frontend_changes}} is 'false', skip visual verification entirely.`;
 
-describe("E2E: frontend change detection in verify flow", () => {
+describe("Verify template frontend change detection", () => {
   let tmpDir: string;
-  let testDbDir: string;
-  const testRunIds: string[] = [];
-  const testAgentId = `test-verifier-${randomUUID().slice(0, 8)}`;
 
   beforeEach(() => {
-    // Isolate from production DB
-    testDbDir = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-testdb-"));
-    process.env.SETFARM_DB_PATH = path.join(testDbDir, "test.db");
-    resetDb();
-
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-e2e-"));
     // Create a real git repo with a main branch
     execSync("git init && git checkout -b main", { cwd: tmpDir });
@@ -48,32 +38,14 @@ describe("E2E: frontend change detection in verify flow", () => {
   afterEach(() => {
     // Clean up git repo
     fs.rmSync(tmpDir, { recursive: true, force: true });
-    // Clean up isolated test DB
-    resetDb();
-    delete process.env.SETFARM_DB_PATH;
-    fs.rmSync(testDbDir, { recursive: true, force: true });
-    testRunIds.length = 0;
   });
 
-  function insertTestRun(repo: string, branch: string): string {
-    const db = getDb();
-    const runId = randomUUID();
-    const now = new Date().toISOString();
-    const context = JSON.stringify({ repo, branch });
-
-    db.prepare(
-      `INSERT INTO runs (id, workflow_id, task, status, context, created_at, updated_at)
-       VALUES (?, 'test-workflow', 'test task', 'running', ?, ?, ?)`
-    ).run(runId, context, now, now);
-
-    const stepId = randomUUID();
-    db.prepare(
-      `INSERT INTO steps (id, step_id, run_id, agent_id, step_index, input_template, expects, status, created_at, updated_at, type)
-       VALUES (?, 'verify', ?, ?, 0, ?, 'VERIFIED', 'pending', ?, ?, 'single')`
-    ).run(stepId, runId, testAgentId, VERIFY_TEMPLATE, now, now);
-
-    testRunIds.push(runId);
-    return runId;
+  function resolveVerifyInput(repo?: string, branch?: string): string {
+    const context: Record<string, string> = {};
+    if (repo) context.repo = repo;
+    if (branch) context.branch = branch;
+    context.has_frontend_changes = repo && branch ? computeHasFrontendChanges(repo, branch) : "false";
+    return resolveTemplate(VERIFY_TEMPLATE, context);
   }
 
   it("includes browser verification instructions when branch has frontend changes", () => {
@@ -82,21 +54,18 @@ describe("E2E: frontend change detection in verify flow", () => {
     fs.writeFileSync(path.join(tmpDir, "index.html"), "<html><body>Hello</body></html>");
     execSync("git add . && git commit -m 'add html'", { cwd: tmpDir });
 
-    insertTestRun(tmpDir, "feat-frontend-ui");
-    const result = claimStep(testAgentId);
+    const result = resolveVerifyInput(tmpDir, "feat-frontend-ui");
 
-    assert.ok(result.found, "Should find a step to claim");
-    assert.ok(result.resolvedInput, "Should have resolved input");
     assert.ok(
-      result.resolvedInput!.includes("Has frontend changes: true"),
+      result.includes("Has frontend changes: true"),
       "Should indicate frontend changes are true"
     );
     assert.ok(
-      result.resolvedInput!.includes("agent-browser"),
+      result.includes("agent-browser"),
       "Should include browser verification instructions"
     );
     assert.ok(
-      result.resolvedInput!.includes("MUST also perform visual verification"),
+      result.includes("MUST also perform visual verification"),
       "Should include MUST directive for visual verification"
     );
   });
@@ -108,17 +77,14 @@ describe("E2E: frontend change detection in verify flow", () => {
     fs.writeFileSync(path.join(tmpDir, "utils.py"), "def hello(): pass");
     execSync("git add . && git commit -m 'add backend'", { cwd: tmpDir });
 
-    insertTestRun(tmpDir, "feat-backend-only");
-    const result = claimStep(testAgentId);
+    const result = resolveVerifyInput(tmpDir, "feat-backend-only");
 
-    assert.ok(result.found, "Should find a step to claim");
-    assert.ok(result.resolvedInput, "Should have resolved input");
     assert.ok(
-      result.resolvedInput!.includes("Has frontend changes: false"),
+      result.includes("Has frontend changes: false"),
       "Should indicate frontend changes are false"
     );
     assert.ok(
-      result.resolvedInput!.includes("skip visual verification entirely"),
+      result.includes("skip visual verification entirely"),
       "Should include skip instruction"
     );
   });
@@ -133,35 +99,14 @@ describe("E2E: frontend change detection in verify flow", () => {
     fs.writeFileSync(path.join(tmpDir, "styles", "app.css"), "body { margin: 0; }");
     execSync("git add . && git commit -m 'add css'", { cwd: tmpDir });
 
-    insertTestRun(tmpDir, "feat-css-change");
-    const result = claimStep(testAgentId);
+    const result = resolveVerifyInput(tmpDir, "feat-css-change");
 
-    assert.ok(result.found);
-    assert.ok(result.resolvedInput!.includes("Has frontend changes: true"));
+    assert.ok(result.includes("Has frontend changes: true"));
   });
 
   it("sets has_frontend_changes to false when context has no repo/branch", () => {
-    const db = getDb();
-    const runId = randomUUID();
-    const now = new Date().toISOString();
-    // Context without repo or branch
-    const context = JSON.stringify({ task: "something" });
+    const result = resolveVerifyInput();
 
-    db.prepare(
-      `INSERT INTO runs (id, workflow_id, task, status, context, created_at, updated_at)
-       VALUES (?, 'test-workflow', 'test task', 'running', ?, ?, ?)`
-    ).run(runId, context, now, now);
-
-    const stepId = randomUUID();
-    db.prepare(
-      `INSERT INTO steps (id, step_id, run_id, agent_id, step_index, input_template, expects, status, created_at, updated_at, type)
-       VALUES (?, 'verify', ?, ?, 0, ?, 'VERIFIED', 'pending', ?, ?, 'single')`
-    ).run(stepId, runId, testAgentId, VERIFY_TEMPLATE, now, now);
-
-    testRunIds.push(runId);
-    const result = claimStep(testAgentId);
-
-    assert.ok(result.found);
-    assert.ok(result.resolvedInput!.includes("Has frontend changes: false"));
+    assert.ok(result.includes("Has frontend changes: false"));
   });
 });

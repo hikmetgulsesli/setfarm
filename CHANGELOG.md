@@ -4,6 +4,7 @@
 - QA and final-test prompts now require testing the merged `main` branch in pr-each flows, and final-test falls back to the platform smoke script when a project-local script is absent.
 - Deploy prompts now require Mission Control project upserts using repo basename plus `ports.frontend`, preventing duplicate failed project cards and `ports.web` metadata drift.
 - Platform smoke-test now traps termination and closes its spawned `serve` process with SIGTERM/SIGKILL cleanup, reducing leaked local servers after test retries.
+- Frontend-change and peek-step regression tests now match the PG-only async runtime, removing obsolete SQLite `dist/db.js` and missing `await` failures from the suite.
 - Spawner now marks still-running claims as failed/retryable when an OpenClaw agent process exits before `step complete`, so crashed Kimi/MiniMax sessions no longer leave steps stuck until medic timeout.
 - Story worktree removal now also pushes already-committed local WIP, preserving useful partial commits from killed agents before a retry recreates the worktree.
 - Verify preflight now treats "ESLint config not found" as lint-unconfigured instead of a blocking ESLint error, preventing reviewers from adding out-of-scope config just to satisfy preflight.

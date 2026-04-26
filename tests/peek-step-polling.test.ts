@@ -129,7 +129,7 @@ describe("peekStep - lightweight work check", () => {
   it("returns NO_WORK when agent has no steps at all", async () => {
     // Fresh import to pick up new DB path
     const { peekStep } = await import("../dist/installer/step-ops.js");
-    const result = peekStep("nonexistent-agent");
+    const result = await peekStep("nonexistent-agent");
     assert.equal(result, "NO_WORK");
   });
 });
