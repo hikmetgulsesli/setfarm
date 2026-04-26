@@ -17,7 +17,8 @@ function buildPrompt(ctx: PromptContext): string {
     .replace(/\{\{SCREEN_MAP\}\}/g, c["screen_map"] || c["SCREEN_MAP"] || "[]")
     .replace(/\{\{DESIGN_SYSTEM\}\}/g, c["design_system"] || c["DESIGN_SYSTEM"] || "{}")
     .replace(/\{\{STORY_COUNT_HINT\}\}/g, c["story_count_hint"] || "NO_EXPLICIT_LIMIT")
-    .replace(/\{\{PREDICTED_SCREEN_FILES\}\}/g, c["predicted_screen_files"] || "[]");
+    .replace(/\{\{PREDICTED_SCREEN_FILES\}\}/g, c["predicted_screen_files"] || "[]")
+    .replace(/\{\{DESIGN_DOM_PREVIEW\}\}/g, c["design_dom_preview"] || "(none)");
   return `${resolved}\n\n---\n\n# Kurallar\n\n${rulesBody}`;
 }
 

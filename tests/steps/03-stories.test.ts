@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { storiesModule } from "../../dist/installer/steps/03-stories/module.js";
 import { extractExplicitMaxStories } from "../../dist/installer/steps/03-stories/context.js";
+import { detectStorySemanticDrift, extractStoryDomainTerms } from "../../dist/installer/steps/03-stories/guards.js";
 import { runModule } from "./harness.js";
 
 describe("03-stories step module", () => {
@@ -28,6 +29,8 @@ describe("03-stories step module", () => {
     const result = await runModule(storiesModule, "Test", { status: "done" });
     assert.ok(result.prompt.includes("scope_files"), "prompt should mention scope_files");
     assert.ok(result.prompt.includes("PREDICTED_SCREEN_FILES"), "prompt should mention predicted screens");
+    assert.ok(result.prompt.includes("DESIGN_DOM_PREVIEW"), "prompt should mention design DOM preview section");
+    assert.equal(result.prompt.includes("{{DESIGN_DOM_PREVIEW}}"), false, "prompt should resolve design DOM placeholder");
     assert.ok(result.prompt.includes("STORIES_JSON"), "prompt should mention STORIES_JSON");
   });
 
@@ -37,5 +40,52 @@ describe("03-stories step module", () => {
     assert.equal(extractExplicitMaxStories("En çok 3 story yaz"), 3);
     assert.equal(extractExplicitMaxStories("4 stories maximum"), 4);
     assert.equal(extractExplicitMaxStories("story listesi üret"), null);
+  });
+
+  it("extracts stable domain terms from task and PRD", () => {
+    const terms = extractStoryDomainTerms(
+      "Basit sayaç uygulaması: arttır, azalt, sıfırla, değer localStorage içinde saklansın.",
+      "Sayaç değeri görüntülenir. Kullanıcı Arttır, Azalt ve Sıfırla butonlarını kullanır."
+    );
+    assert.ok(terms.includes("sayac"));
+    assert.ok(terms.includes("arttir"));
+    assert.ok(terms.includes("azalt"));
+    assert.ok(terms.includes("sifirla"));
+  });
+
+  it("rejects stories that drift into another project concept", () => {
+    const err = detectStorySemanticDrift(
+      {
+        task: "Basit sayaç uygulaması: arttır, azalt, sıfırla, değer localStorage içinde saklansın.",
+        prd: "Sayaç değeri gösterilir. Arttır, azalt ve sıfırla aksiyonları desteklenir.",
+      },
+      [{
+        story_id: "US-001",
+        title: "Renk Koru — Kurulum ve Tüm Oyun Akışı",
+        description: "Renk körlüğü testi uygulaması: seviye seçimi ve Ishihara oyun döngüsü.",
+        acceptance_criteria: JSON.stringify(["Başla butonu seviye seçimine geçer", "10 soru sonunda skor gösterilir"]),
+        scope_description: "Tek story oyun akışı",
+        scope_files: JSON.stringify(["src/hooks/useGame.ts", "src/components/IshiharaCircle.tsx"]),
+      }]
+    );
+    assert.match(err || "", /semantic drift/i);
+  });
+
+  it("accepts stories that preserve the original project concept", () => {
+    const err = detectStorySemanticDrift(
+      {
+        task: "Basit sayaç uygulaması: arttır, azalt, sıfırla, değer localStorage içinde saklansın.",
+        prd: "Sayaç değeri gösterilir. Arttır, azalt ve sıfırla aksiyonları desteklenir.",
+      },
+      [{
+        story_id: "US-001",
+        title: "Sayaç — kurulum, UI ve localStorage akışı",
+        description: "Sayaç değeri, arttır, azalt ve sıfırla aksiyonları tek story içinde uygulanır.",
+        acceptance_criteria: JSON.stringify(["Arttır butonu sayacı artırır", "Azalt butonu sayacı azaltır", "Sıfırla butonu sayacı sıfırlar"]),
+        scope_description: "Tek story sayaç akışı",
+        scope_files: JSON.stringify(["src/hooks/useCounter.ts", "src/screens/AnaSayfa.tsx"]),
+      }]
+    );
+    assert.equal(err, null);
   });
 });

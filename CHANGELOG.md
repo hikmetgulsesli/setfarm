@@ -3,6 +3,7 @@
 - PRD pseudo screens and invalid placeholder Stitch HTML are now filtered consistently across design reuse, design contracts, story context, setup-build Tailwind detection, and `stitch-to-jsx`, preventing generated `*Prd.tsx` files and broken JSX from reaching implement.
 - `stitch-to-jsx` now normalizes already-self-closed void tags such as `<br/>` into valid JSX and setup-build reruns `npm run build` after screen generation, blocking broken generated screens before implement starts.
 - Story cap parsing now recognizes Turkish phrases such as `Maksimum 1 story`, `maks 2 adet story`, and `en çok 3 story`, so smoke and user-requested capped runs do not expand into multi-story plans.
+- Stories now receive the compact DESIGN_DOM preview in the prompt and reject semantic drift when generated stories no longer preserve the original task/PRD domain terms, preventing stale cross-project concepts from reaching implement.
 - Prepared-claim and polling preambles now reject placeholder paths such as `$HOME/projects/<slug>` or `[missing:*]` before `cd`, preventing agents from treating PRD examples as real workdirs.
 - Frontend-change detection now verifies both `main`/`origin/main` and the target branch before running `git diff`, removing noisy `main..branch` fatal logs while a story branch is not created yet.
 - Implement context now sends small Stitch/DOM excerpts plus file paths instead of large raw HTML/DOM blobs, and feature-dev prompts require reading only current-story Stitch files from disk. This reduces Kimi/MiniMax prompt bloat and gateway memory pressure.

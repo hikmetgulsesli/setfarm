@@ -40,6 +40,7 @@ varsa shared_files'a koy.
 
 ## Yapılacaklar
 
+0. **PROJE KONSEPTİ KİLİTLİ**. Story title/description/acceptanceCriteria PRD ve kullanıcı task'ındaki ana domain kelimelerini korumalı. Sayaç projesinden oyun, not projesinden CRM, şirket sayfasından todo app uydurmak YASAK. Emin değilsen PRD'deki ürün adını ve ana aksiyonları aynen kullan.
 1. **TEK ANA YAPI / STORY**. Her story bir konsept: bir component-family VEYA bir hook+utility VEYA bir screen+flow. ASLA birden fazla konsept bir story'de birleşme.
 2. **Setup ayrı, feature ayrı, integration ayrı**:
    - US-001: SADECE proje kurulumu (scaffold, package.json, configs, types file). Feature kodu YOK.

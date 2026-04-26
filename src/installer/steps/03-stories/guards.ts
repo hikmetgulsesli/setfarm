@@ -22,6 +22,111 @@ function getExplicitMaxStories(context: Record<string, string>): number | null {
   return Number.isInteger(n) && n > 0 && n < 50 ? n : null;
 }
 
+const SEMANTIC_STOP_WORDS = new Set([
+  "about", "adet", "agent", "ana", "app", "application", "arac", "asama", "basic", "basit",
+  "bir", "bircok", "butun", "cihaz", "codlama", "css", "daha", "de", "deploy", "dev",
+  "dizin", "dogrulama", "dosya", "ekran", "fazla", "frontend", "gereken", "gerekirse",
+  "gerekli", "github", "html", "icin", "icinde", "ile", "ise", "javascript", "kisa",
+  "kod", "kodlama", "kurulum", "local", "localstorage", "maks", "maksimum", "minimal",
+  "next", "nextjs", "node", "olan", "olarak", "olacak", "olsun", "platform", "prd",
+  "proje", "react", "repo", "screen", "setup", "smoke", "static", "story", "tailwind",
+  "tek", "temel", "test", "testidir", "tests", "typescript", "typecheck", "ui", "user",
+  "uygulama", "uygulamasi", "veya", "vite", "web", "yeni", "yok",
+]);
+
+const SEMANTIC_SYNONYM_GROUPS = [
+  ["sayac", "sayaci", "sayacin", "sayaclar", "counter"],
+  ["arttir", "artir", "increment", "increase"],
+  ["azalt", "decrement", "decrease"],
+  ["sifirla", "reset"],
+  ["not", "notlar", "notes", "note"],
+  ["arama", "ara", "search"],
+  ["gorev", "todo", "task"],
+  ["oyun", "game"],
+];
+
+function normalizeSemanticText(text: string): string {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/[ıİ]/g, "i")
+    .replace(/[şŞ]/g, "s")
+    .replace(/[çÇ]/g, "c")
+    .replace(/[ğĞ]/g, "g")
+    .replace(/[üÜ]/g, "u")
+    .replace(/[öÖ]/g, "o");
+}
+
+function canonicalSemanticToken(token: string): string {
+  for (const group of SEMANTIC_SYNONYM_GROUPS) {
+    if (group.includes(token)) return group[0];
+  }
+  return token;
+}
+
+function semanticTokens(text: string): string[] {
+  const normalized = normalizeSemanticText(text);
+  const raw = normalized.match(/[a-z0-9]{3,}/g) || [];
+  const out: string[] = [];
+  for (const token of raw) {
+    if (/\d/.test(token)) continue;
+    if (SEMANTIC_STOP_WORDS.has(token)) continue;
+    out.push(canonicalSemanticToken(token));
+  }
+  return [...new Set(out)];
+}
+
+export function extractStoryDomainTerms(taskText: string, prdText: string): string[] {
+  const taskTerms = semanticTokens(taskText);
+  const prdTerms = new Set(semanticTokens(prdText));
+  const source = prdTerms.size > 0 ? taskTerms.filter(t => prdTerms.has(t)) : taskTerms;
+  return [...new Set(source)].slice(0, 12);
+}
+
+export interface SemanticStoryInput {
+  story_id?: string;
+  title?: string | null;
+  description?: string | null;
+  acceptance_criteria?: string | null;
+  scope_description?: string | null;
+  scope_files?: string | null;
+}
+
+function parseStoryJsonField(raw: string | null | undefined): string {
+  if (!raw) return "";
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.join(" ");
+    if (parsed && typeof parsed === "object") return Object.values(parsed as Record<string, unknown>).join(" ");
+  } catch {
+    // fall through to raw text
+  }
+  return String(raw);
+}
+
+export function detectStorySemanticDrift(
+  context: { task?: string; prd?: string; PRD?: string },
+  stories: SemanticStoryInput[],
+): string | null {
+  const domainTerms = extractStoryDomainTerms(context.task || "", context.prd || context.PRD || "");
+  if (domainTerms.length < 2 || stories.length === 0) return null;
+
+  const storyText = stories.map(s => [
+    s.title || "",
+    s.description || "",
+    s.scope_description || "",
+    parseStoryJsonField(s.acceptance_criteria),
+    parseStoryJsonField(s.scope_files),
+  ].join(" ")).join(" ");
+  const storyTerms = new Set(semanticTokens(storyText));
+  const hits = domainTerms.filter(t => storyTerms.has(t));
+  const minHits = Math.min(2, domainTerms.length);
+  if (hits.length >= minHits) return null;
+
+  const missing = domainTerms.filter(t => !storyTerms.has(t)).slice(0, 8).join(", ");
+  const storyIds = stories.map(s => s.story_id).filter(Boolean).join(", ") || "unknown";
+  return `GUARDRAIL: Story semantic drift detected for ${storyIds}. Stories do not preserve task/PRD domain terms. Missing terms: ${missing}. Re-output STORIES_JSON using the original product concept and actions from PRD/task.`;
+}
+
 // onComplete owns the full stories guardrail chain. Failures fail the step
 // (return early); auto-fixes mutate the DB in-place. The pipeline expects
 // stories already inserted into the DB before this runs (parseAndInsertStories
@@ -56,6 +161,20 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
     logger.warn(`[module:stories] ${msg}`, { runId });
     await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);
     throw new Error(msg);
+  }
+
+  const semanticRows = await pgQuery<SemanticStoryInput>(
+    "SELECT story_id, title, description, acceptance_criteria, scope_description, scope_files FROM stories WHERE run_id = $1 ORDER BY story_index",
+    [runId]
+  );
+  const semanticErr = detectStorySemanticDrift(
+    { task: context["task"] || "", prd: context["prd"] || context["PRD"] || "" },
+    semanticRows
+  );
+  if (semanticErr) {
+    logger.warn(`[module:stories] ${semanticErr}`, { runId });
+    await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);
+    throw new Error(semanticErr);
   }
 
   // 2. missing scope_files (story_index > 0 — setup story exempt)
