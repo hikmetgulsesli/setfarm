@@ -9,6 +9,20 @@ const FIRST_ATTEMPT_REMINDER =
   "shared_files, scope_description. Hayali screen yolu (src/pages/*.tsx) YASAK — " +
   "PREDICTED_SCREEN_FILES context'ten kullan. Missing = instant REJECT.";
 
+function extractExplicitMaxStories(text: string): number | null {
+  const patterns = [
+    /\ben\s+fazla\s+(\d+)\s+(?:k[iı]sa\s+)?(?:user\s+)?stor(?:y|ies)\b/i,
+    /\bmax(?:imum)?\s+(\d+)\s+(?:user\s+)?stor(?:y|ies)\b/i,
+    /\b(\d+)\s+(?:user\s+)?stor(?:y|ies)\s+(?:max|maximum)\b/i,
+  ];
+  for (const pattern of patterns) {
+    const m = text.match(pattern);
+    const n = m ? Number(m[1]) : 0;
+    if (Number.isInteger(n) && n > 0 && n < 50) return n;
+  }
+  return null;
+}
+
 // Mirror of scripts/stitch-to-jsx.mjs toComponentName. Used to predict the
 // final screen file paths (src/screens/<TurkishName>.tsx) before stitch-to-jsx
 // runs in setup-build, so the stories planner uses correct paths in scope_files.
@@ -78,6 +92,14 @@ export function computeDesignDomPreview(repoPath: string): string {
 }
 
 export async function injectContext(ctx: ClaimContext): Promise<void> {
+  const maxStories = extractExplicitMaxStories(`${ctx.task || ""}\n${ctx.context["task"] || ""}\n${ctx.context["prd"] || ""}`);
+  if (maxStories) {
+    ctx.context["story_count_hint"] = `MAX_STORIES=${maxStories} (explicit user cap; includes setup and integration)`;
+    logger.info(`[module:stories] Injected explicit story cap: ${maxStories}`, { runId: ctx.runId });
+  } else {
+    ctx.context["story_count_hint"] = "NO_EXPLICIT_LIMIT";
+  }
+
   const repo = ctx.context["repo"] || "";
   const predictedScreens = computePredictedScreenFiles(repo);
   if (predictedScreens.length > 0) {

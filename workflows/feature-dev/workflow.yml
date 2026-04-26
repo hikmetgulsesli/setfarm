@@ -929,7 +929,8 @@ steps:
 
       === WORKFLOW ===
 
-      1. Read progress-{{run_id}}.txt to understand what previous stories implemented
+      1. Read the injected PROGRESS LOG and PROJECT MEMORY above to understand what previous stories implemented.
+         Do NOT try to read `progress-{{run_id}}.txt` from WORKDIR; that file is not stored in the story worktree.
 
       2. cd into WORKDIR
 
@@ -1037,12 +1038,14 @@ steps:
           The next story will not start until that PR is reviewed, fixed, merged, and
           local main is synced.
 
-      11. Write detailed progress to progress-{{run_id}}.txt:
-          === {{current_story_id}}: {{current_story_title}} ===
-          COMPLETED: $(date -Iseconds)
-          FILES CHANGED: <list of files>
-          KEY DECISIONS: <architectural decisions made>
-          DEPENDENCIES ADDED: <if any>
+      11. Write detailed progress to `/tmp/setfarm-progress-{{run_id}}.txt`:
+          {
+            echo "=== {{current_story_id}}: {{current_story_title}} ==="
+            echo "COMPLETED: $(date -Iseconds)"
+            echo "FILES CHANGED: <list of files>"
+            echo "KEY DECISIONS: <architectural decisions made>"
+            echo "DEPENDENCIES ADDED: <if any>"
+          } >> /tmp/setfarm-progress-{{run_id}}.txt
 
       ============================================================
       MANDATORY OUTPUT FORMAT

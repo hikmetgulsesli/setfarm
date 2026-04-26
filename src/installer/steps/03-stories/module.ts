@@ -16,6 +16,7 @@ function buildPrompt(ctx: PromptContext): string {
     .replace(/\{\{PRD\}\}/g, c["prd"] || c["PRD"] || "")
     .replace(/\{\{SCREEN_MAP\}\}/g, c["screen_map"] || c["SCREEN_MAP"] || "[]")
     .replace(/\{\{DESIGN_SYSTEM\}\}/g, c["design_system"] || c["DESIGN_SYSTEM"] || "{}")
+    .replace(/\{\{STORY_COUNT_HINT\}\}/g, c["story_count_hint"] || "NO_EXPLICIT_LIMIT")
     .replace(/\{\{PREDICTED_SCREEN_FILES\}\}/g, c["predicted_screen_files"] || "[]");
   return `${resolved}\n\n---\n\n# Kurallar\n\n${rulesBody}`;
 }

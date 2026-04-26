@@ -1000,10 +1000,11 @@ async function claimSingleStep(
   }
 
   // ═══ VERIFY PRE-FLIGHT: Static analysis for verify step speedup ═══
-  if (step.step_id === "verify" && context["repo"] && context["branch"]) {
+  if (step.step_id === "verify" && context["repo"] && (context["story_branch"] || context["branch"])) {
     try {
       const { buildPreFlightReport, formatPreFlightForAgent } = await import("./static-analysis.js");
-      const report = buildPreFlightReport(context["repo"], context["branch"]);
+      const analysisBranch = context["story_branch"] || context["branch"];
+      const report = buildPreFlightReport(context["repo"], analysisBranch);
       context["preflight_analysis"] = formatPreFlightForAgent(report);
       context["preflight_diff"] = report.diffSummary;
       context["preflight_errors"] = report.eslintErrors + "\n" + report.tscErrors;
@@ -1109,6 +1110,11 @@ async function claimSingleStep(
           // — not started_at — so we must touch updated_at too.)
           await pgRun("UPDATE steps SET started_at = $1, updated_at = $1 WHERE id = $2", [now(), step.id]);
           logger.info(`[step-module] ${_stepModule.id} preClaim ok — timestamps refreshed`, { runId: step.run_id });
+          const postPreClaimStep = await pgGet<{ status: string }>("SELECT status FROM steps WHERE id = $1", [step.id]);
+          if (postPreClaimStep && postPreClaimStep.status !== "running") {
+            logger.info(`[step-module] ${_stepModule.id} preClaim changed step status to ${postPreClaimStep.status}; skipping agent spawn`, { runId: step.run_id, stepId: step.step_id });
+            return { found: false };
+          }
         } catch (_pce) {
           logger.warn(`[step-module] ${_stepModule.id} preClaim failed (non-fatal): ${String(_pce).slice(0, 200)}`, { runId: step.run_id });
         }

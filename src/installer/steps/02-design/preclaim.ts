@@ -6,6 +6,45 @@ import type { ClaimContext } from "../types.js";
 import { logger } from "../../../lib/logger.js";
 import { pgGet } from "../../../db-pg.js";
 
+const MIN_STITCH_HTML_BYTES = 1000;
+
+function isValidStitchHtml(filePath: string): boolean {
+  try {
+    if (!fs.existsSync(filePath)) return false;
+    if (fs.statSync(filePath).size < MIN_STITCH_HTML_BYTES) return false;
+    const head = fs.readFileSync(filePath, "utf-8").slice(0, 4000).toLowerCase();
+    if (!head.includes("<html") && !head.includes("<!doctype")) return false;
+    if (head.includes("empty html") || head.includes("design not generated")) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function countValidStitchHtml(stitchDir: string): number {
+  if (!stitchDir || !fs.existsSync(stitchDir)) return 0;
+  return fs.readdirSync(stitchDir)
+    .filter(f => f.endsWith(".html"))
+    .filter(f => isValidStitchHtml(path.join(stitchDir, f))).length;
+}
+
+function manifestHtmlCounts(stitchDir: string): { total: number; valid: number } {
+  const manifestPath = path.join(stitchDir, "DESIGN_MANIFEST.json");
+  if (!fs.existsSync(manifestPath)) return { total: 0, valid: countValidStitchHtml(stitchDir) };
+  try {
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+    if (!Array.isArray(manifest)) return { total: 0, valid: countValidStitchHtml(stitchDir) };
+    let valid = 0;
+    for (const s of manifest) {
+      const sid = String(s?.screenId || s?.id || "");
+      if (sid && isValidStitchHtml(path.join(stitchDir, sid + ".html"))) valid++;
+    }
+    return { total: manifest.length, valid };
+  } catch {
+    return { total: 0, valid: countValidStitchHtml(stitchDir) };
+  }
+}
+
 // Heavy work BEFORE agent claims the design step:
 // 1. ensure-project (Stitch project for this repo)
 // 2. write PRD as Stitch prompt
@@ -23,9 +62,18 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   const existingHtml = fs.existsSync(stitchDir)
     ? fs.readdirSync(stitchDir).filter(f => f.endsWith(".html")).length
     : 0;
-  if (existingHtml > 0) {
-    logger.info(`[module:design preclaim] Skip — ${existingHtml} HTML already in ${stitchDir}`, { runId: ctx.runId });
+  const existingCounts = manifestHtmlCounts(stitchDir);
+  if (existingHtml > 0 && existingCounts.valid > 0 && (existingCounts.total === 0 || existingCounts.valid >= existingCounts.total)) {
+    logger.info(`[module:design preclaim] Skip — ${existingCounts.valid}/${existingCounts.total || existingCounts.valid} valid HTML already in ${stitchDir}`, { runId: ctx.runId });
     return;
+  } else if (existingHtml > 0) {
+    logger.warn(`[module:design preclaim] Existing stitch HTML incomplete/invalid (${existingCounts.valid}/${existingCounts.total || existingHtml} valid), regenerating`, { runId: ctx.runId });
+    try {
+      for (const file of fs.readdirSync(stitchDir).filter(f => f.endsWith(".html"))) {
+        const htmlPath = path.join(stitchDir, file);
+        if (!isValidStitchHtml(htmlPath)) fs.rmSync(htmlPath, { force: true });
+      }
+    } catch {}
   }
 
   const stitchScript = path.join(os.homedir(), ".openclaw/setfarm-repo/scripts/stitch-api.mjs");
@@ -92,15 +140,16 @@ All visible text must be in Turkish. Use a dark, modern theme.`;
         { encoding: "utf-8", timeout: 180000, cwd: repo });
       let dlResult: any = {};
       try { dlResult = JSON.parse(dlOut); } catch (e) { logger.debug(`[module:design preclaim] dl parse: ${String(e).slice(0, 80)}`); }
-      htmlCount = fs.readdirSync(stitchDir).filter(f => f.endsWith(".html")).length;
-      logger.info(`[module:design preclaim] Downloaded ${dlResult.downloaded || 0}/${dlResult.total || 0} (${htmlCount} HTML, attempt ${attempt + 1}/3)`, { runId: ctx.runId });
-      ctx.context["screens_generated"] = String(dlResult.downloaded || 0);
-      if (htmlCount > 0) break;
+      const total = Number(dlResult.total || 0);
+      htmlCount = countValidStitchHtml(stitchDir);
+      logger.info(`[module:design preclaim] Downloaded ${dlResult.downloaded || 0}/${total || 0} (${htmlCount} valid HTML, attempt ${attempt + 1}/3)`, { runId: ctx.runId });
+      ctx.context["screens_generated"] = String(htmlCount);
+      if (htmlCount > 0 && (!total || htmlCount >= total)) break;
     } catch (e) {
       logger.warn(`[module:design preclaim] download-all failed (attempt ${attempt + 1}/3): ${String(e).slice(0, 200)}`, { runId: ctx.runId });
     }
-    if (htmlCount === 0 && attempt < 2) {
-      logger.info(`[module:design preclaim] 0 HTML, waiting 30s before retry`, { runId: ctx.runId });
+    if (attempt < 2) {
+      logger.info(`[module:design preclaim] HTML incomplete (${htmlCount} valid), waiting 30s before retry`, { runId: ctx.runId });
       await new Promise(r => setTimeout(r, 30000));
     }
   }
@@ -115,10 +164,10 @@ All visible text must be in Turkish. Use a dark, modern theme.`;
         for (const s of tracked) {
           if (!s.htmlUrl) continue;
           const dest = path.join(stitchDir, (s.screenId || "unknown") + ".html");
-          if (fs.existsSync(dest)) continue;
+          if (fs.existsSync(dest) && isValidStitchHtml(dest)) continue;
           try {
             execFileSync("curl", ["-sL", "-o", dest, "--max-time", "30", s.htmlUrl], { timeout: 35000 });
-            if (fs.existsSync(dest) && fs.statSync(dest).size > 100) htmlCount++;
+            if (isValidStitchHtml(dest)) htmlCount++;
           } catch (e) { logger.debug(`[module:design preclaim] curl: ${String(e).slice(0, 80)}`); }
         }
         logger.info(`[module:design preclaim] Tracking fallback recovered ${htmlCount} HTML files`, { runId: ctx.runId });
@@ -164,7 +213,7 @@ All visible text must be in Turkish. Use a dark, modern theme.`;
   // Fallback: scan stitch/*.html, derive name from <title> tag (or screenId)
   if (screenMap.length === 0 && fs.existsSync(stitchDir)) {
     try {
-      const htmlFiles = fs.readdirSync(stitchDir).filter(f => f.endsWith(".html") && !f.startsWith("."));
+      const htmlFiles = fs.readdirSync(stitchDir).filter(f => f.endsWith(".html") && !f.startsWith(".") && isValidStitchHtml(path.join(stitchDir, f)));
       for (const file of htmlFiles) {
         const screenId = file.replace(/\.html$/, "");
         let title = screenId;
@@ -228,10 +277,10 @@ All visible text must be in Turkish. Use a dark, modern theme.`;
       const sid = String(s?.screenId || s?.id || "");
       if (!sid) continue;
       const htmlPath = p.join(stitchDir, sid + ".html");
-      if (fs.existsSync(htmlPath) && fs.statSync(htmlPath).size >= 100) htmlOkCount++;
+      if (isValidStitchHtml(htmlPath)) htmlOkCount++;
     }
-    if (htmlOkCount < Math.ceil(manifest.length * 0.5)) {
-      logger.warn(`[module:design preclaim] auto-complete skipped: only ${htmlOkCount}/${manifest.length} HTMLs ready`, { runId: ctx.runId });
+    if (htmlOkCount < manifest.length) {
+      logger.warn(`[module:design preclaim] auto-complete skipped: only ${htmlOkCount}/${manifest.length} valid HTMLs ready`, { runId: ctx.runId });
       return;
     }
     let designSystem: any = {};

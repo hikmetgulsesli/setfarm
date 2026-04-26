@@ -16,6 +16,14 @@ STORIES step — PRD'yi user story listesi olarak parçala.
 
 {{DESIGN_SYSTEM}}
 
+## USER STORY LIMIT
+
+{{STORY_COUNT_HINT}}
+
+If this says `MAX_STORIES=N`, total STORIES_JSON length MUST be <= N,
+including setup and integration. Combine small concerns into the nearest
+functional story instead of exceeding the explicit user cap.
+
 ## PREDICTED_SCREEN_FILES
 
 Stitch-to-JSX'in üreteceği tam dosya yolları — scope_files'ta BU YOLLARI kullan.

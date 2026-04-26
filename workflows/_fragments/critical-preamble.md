@@ -44,12 +44,15 @@ NODE_MODULES RULE (CRITICAL — NEVER BREAK):
 GIT COMMIT RULE (CRITICAL — Wave 6 fix B, plan: reactive-frolicking-cupcake):
 Your session can be killed by a gateway stall AT ANY MOMENT. Your worktree files
 survive the kill, but uncommitted work is lost. Therefore:
-- Commit AFTER every meaningful change with a NEW commit, e.g.
-    git add -A && git commit -m "wip: <what you just did>"
+- For story implement worktrees, follow the step-specific scope staging rule:
+  stage only files listed in `.story-scope-files`, then make the final story commit.
+- For non-story steps, commit meaningful completed changes with an explicit file list.
+- Avoid `git add -A` unless the current step explicitly says it owns every changed file.
 - NEVER use `git commit --amend` in the worktree. Amend rewrites the previous
   commit, and if the amend itself is interrupted by a stall, you lose BOTH
   the previous commit and the new work. Always create a new commit instead.
-- It is fine to have many WIP commits. The pipeline squashes them later.
+- It is fine to have multiple small commits if the step allows it. The pipeline
+  squashes story PRs later.
 - If a verifier asks for a "clean history", do NOT amend — let the merge
   queue / squash-merge handle it at the end.
 - Rule of thumb: commit every time you create or finish editing a file.

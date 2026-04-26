@@ -16,6 +16,12 @@ export function validateOutput(parsed: ParsedOutput): ValidationResult {
   return { ok: errors.length === 0, errors };
 }
 
+function getExplicitMaxStories(context: Record<string, string>): number | null {
+  const m = String(context["story_count_hint"] || "").match(/MAX_STORIES=(\d+)/);
+  const n = m ? Number(m[1]) : 0;
+  return Number.isInteger(n) && n > 0 && n < 50 ? n : null;
+}
+
 // onComplete owns the full stories guardrail chain. Failures fail the step
 // (return early); auto-fixes mutate the DB in-place. The pipeline expects
 // stories already inserted into the DB before this runs (parseAndInsertStories
@@ -41,6 +47,14 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
   if (storyCount === 0) {
     const msg = "GUARDRAIL: Stories step completed with STATUS: done but produced 0 stories — STORIES_JSON missing or empty";
     logger.warn(`[module:stories] ${msg}`, { runId });
+    throw new Error(msg);
+  }
+
+  const explicitMaxStories = getExplicitMaxStories(context);
+  if (explicitMaxStories && storyCount > explicitMaxStories) {
+    const msg = `GUARDRAIL: Stories step produced ${storyCount} stories but user explicitly capped at ${explicitMaxStories}. Combine small concerns and re-output STORIES_JSON within MAX_STORIES.`;
+    logger.warn(`[module:stories] ${msg}`, { runId });
+    await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);
     throw new Error(msg);
   }
 
