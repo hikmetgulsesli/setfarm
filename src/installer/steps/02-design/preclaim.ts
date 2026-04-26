@@ -31,7 +31,7 @@ function countValidStitchHtml(stitchDir: string): number {
 function isPrdPseudoScreen(screen: any): boolean {
   const title = String(screen?.title || screen?.name || "").trim().toLowerCase();
   const htmlFile = String(screen?.htmlFile || "").trim().toLowerCase();
-  return /^prd(?:\b|[:\s-])/.test(title) || /^prd(?:\b|[:\s-])/.test(htmlFile);
+  return /\bprd\b/.test(title) || /\bprd\b/.test(htmlFile);
 }
 
 function manifestHtmlCounts(stitchDir: string): { total: number; valid: number } {

@@ -35,6 +35,12 @@ function toComponentNameForStitch(title: string): string {
     .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join("");
 }
 
+function isPrdPseudoScreen(screen: any): boolean {
+  const title = String(screen?.title || screen?.name || "").trim().toLowerCase();
+  const htmlFile = String(screen?.htmlFile || "").trim().toLowerCase();
+  return /\bprd\b/.test(title) || /\bprd\b/.test(htmlFile);
+}
+
 export function computePredictedScreenFiles(repoPath: string): Array<{ screenId: string; title: string; filePath: string }> {
   if (!repoPath) return [];
   const manifestPath = path.join(repoPath, "stitch", "DESIGN_MANIFEST.json");
@@ -44,6 +50,7 @@ export function computePredictedScreenFiles(repoPath: string): Array<{ screenId:
     const manifest = JSON.parse(raw);
     if (!Array.isArray(manifest)) return [];
     return manifest
+      .filter((s: any) => !isPrdPseudoScreen(s))
       .filter((s: any) => s?.title && s?.screenId)
       .map((s: any) => {
         const name = toComponentNameForStitch(String(s.title));

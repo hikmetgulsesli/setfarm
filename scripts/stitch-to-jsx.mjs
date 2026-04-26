@@ -12,6 +12,34 @@ if (!fs.existsSync(manifestPath)) { console.log("No DESIGN_MANIFEST.json — ski
 const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
 const screensDir = path.join(repoPath, "src", "screens");
 fs.mkdirSync(screensDir, { recursive: true });
+const MIN_STITCH_HTML_BYTES = 1000;
+
+function isPrdPseudoScreen(screen) {
+  const title = String(screen?.title || screen?.name || "").trim().toLowerCase();
+  const htmlFile = String(screen?.htmlFile || "").trim().toLowerCase();
+  return /\bprd\b/.test(title) || /\bprd\b/.test(htmlFile);
+}
+
+function isValidStitchHtml(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return false;
+    if (fs.statSync(filePath).size < MIN_STITCH_HTML_BYTES) return false;
+    const head = fs.readFileSync(filePath, "utf-8").slice(0, 4000).toLowerCase();
+    if (!head.includes("<html") && !head.includes("<!doctype")) return false;
+    if (head.includes("empty html") || head.includes("design not generated")) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function findScreenHtml(screen) {
+  const candidates = [
+    screen?.htmlFile,
+    screen?.screenId ? `${screen.screenId}.html` : "",
+  ].filter(Boolean);
+  return candidates.map(file => path.join(stitchDir, file)).find(isValidStitchHtml);
+}
 
 function htmlToJsx(html) {
   return html
@@ -48,12 +76,14 @@ function toComponentName(title) {
 
 const screenIndex = [];
 for (const screen of manifest) {
-  const htmlFile = path.join(stitchDir, screen.screenId + ".html");
-  if (!fs.existsSync(htmlFile)) { console.warn("  SKIP:", screen.title); continue; }
+  if (isPrdPseudoScreen(screen)) { console.warn("  SKIP PRD:", screen.title); continue; }
+  const htmlFile = findScreenHtml(screen);
+  if (!htmlFile) { console.warn("  SKIP invalid/missing HTML:", screen.title); continue; }
   const raw = fs.readFileSync(htmlFile, "utf-8");
   const body = extractBody(raw);
   const jsx = htmlToJsx(body);
   const name = toComponentName(screen.title);
+  if (!name) { console.warn("  SKIP empty component name:", screen.title); continue; }
   const buttons = [...body.matchAll(/<button[^>]*>/gi)].length;
   const inputs = [...body.matchAll(/<input[^>]*>/gi)].length;
   const links = [...body.matchAll(/<a\s[^>]*>/gi)].length;

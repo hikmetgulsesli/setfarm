@@ -5,6 +5,25 @@ import { execFileSync } from "node:child_process";
 import type { ClaimContext } from "../types.js";
 import { logger } from "../../../lib/logger.js";
 
+const MIN_STITCH_HTML_BYTES = 1000;
+
+function isReusableStitchHtml(filePath: string): boolean {
+  try {
+    if (!fs.existsSync(filePath)) return false;
+    if (fs.statSync(filePath).size < MIN_STITCH_HTML_BYTES) return false;
+    const head = fs.readFileSync(filePath, "utf-8").slice(0, 4000).toLowerCase();
+    if (!head.includes("<html") && !head.includes("<!doctype")) return false;
+    if (head.includes("empty html") || head.includes("design not generated")) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isPrdPseudoHtmlFile(fileName: string): boolean {
+  return /\bprd\b/.test(fileName.toLowerCase());
+}
+
 // Heavy work before agent:
 // 1. npm install (idempotent — skip if node_modules exists)
 // 2. npm run build — baseline verification
@@ -82,7 +101,9 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   try {
     const stitchDir = path.join(repo, "stitch");
     if (fs.existsSync(stitchDir)) {
-      const htmlFiles = fs.readdirSync(stitchDir).filter(f => f.endsWith(".html"));
+      const htmlFiles = fs.readdirSync(stitchDir)
+        .filter(f => f.endsWith(".html") && !isPrdPseudoHtmlFile(f))
+        .filter(f => isReusableStitchHtml(path.join(stitchDir, f)));
       let needsTailwind = false;
       for (const f of htmlFiles) {
         const html = fs.readFileSync(path.join(stitchDir, f), "utf-8");

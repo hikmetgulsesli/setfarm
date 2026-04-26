@@ -71,6 +71,7 @@ function computePredictedScreenFiles(repoPath: string): Array<{ screenId: string
     const manifest = JSON.parse(raw);
     if (!Array.isArray(manifest)) return [];
     return manifest
+      .filter((s: any) => !isPrdPseudoDesignScreen(s))
       .filter((s: any) => s?.title && s?.screenId)
       .map((s: any) => {
         const name = toComponentNameForStitch(String(s.title));
@@ -394,7 +395,7 @@ function isReusableStitchHtml(filePath: string): boolean {
 function isPrdPseudoDesignScreen(screen: any): boolean {
   const title = String(screen?.title || screen?.name || "").trim().toLowerCase();
   const htmlFile = String(screen?.htmlFile || "").trim().toLowerCase();
-  return /^prd(?:\b|[:\s-])/.test(title) || /^prd(?:\b|[:\s-])/.test(htmlFile);
+  return /\bprd\b/.test(title) || /\bprd\b/.test(htmlFile);
 }
 
 function reusableDesignScreens(repoPath: string, htmlFiles: string[]): Array<{ screenId: string; name: string }> {
@@ -2337,7 +2338,9 @@ ${screenDescs}
     try {
       const stitchDir = path.join(context["repo"] || "", "stitch");
       if (fs.existsSync(stitchDir)) {
-        const htmlFiles = fs.readdirSync(stitchDir).filter(f => f.endsWith(".html"));
+        const htmlFiles = fs.readdirSync(stitchDir)
+          .filter(f => f.endsWith(".html") && !/\bprd\b/.test(f.toLowerCase()))
+          .filter(f => isReusableStitchHtml(path.join(stitchDir, f)));
         let needsTailwind = false;
         for (const f of htmlFiles) {
           const html = fs.readFileSync(path.join(stitchDir, f), "utf-8");

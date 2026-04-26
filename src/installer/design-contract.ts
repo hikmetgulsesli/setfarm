@@ -155,6 +155,26 @@ export function parseDesignHTML(html: string, screenId?: string): DesignContract
 }
 
 // --- Build contracts from DESIGN_MANIFEST.json ---
+const MIN_STITCH_HTML_BYTES = 1000;
+
+function isPrdPseudoScreen(screen: any): boolean {
+  const title = String(screen?.title || screen?.name || "").trim().toLowerCase();
+  const htmlFile = String(screen?.htmlFile || "").trim().toLowerCase();
+  return /\bprd\b/.test(title) || /\bprd\b/.test(htmlFile);
+}
+
+function isValidStitchHtml(filePath: string): boolean {
+  try {
+    if (!fs.existsSync(filePath)) return false;
+    if (fs.statSync(filePath).size < MIN_STITCH_HTML_BYTES) return false;
+    const head = fs.readFileSync(filePath, "utf-8").slice(0, 4000).toLowerCase();
+    if (!head.includes("<html") && !head.includes("<!doctype")) return false;
+    if (head.includes("empty html") || head.includes("design not generated")) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export function buildDesignContracts(repoPath: string): DesignContract[] {
   const stitchDir = path.join(repoPath, "stitch");
@@ -171,14 +191,17 @@ export function buildDesignContracts(repoPath: string): DesignContract[] {
 
     const screens = Array.isArray(manifest) ? manifest : (manifest.screens || manifest.pages || []);
     for (const screen of screens) {
+      if (isPrdPseudoScreen(screen)) continue;
       const htmlFile = screen.htmlFile || screen.html || screen.file || `${screen.id || screen.screenId || screen.name}.html`;
-      const htmlPath = path.join(stitchDir, htmlFile);
-      if (!fs.existsSync(htmlPath)) continue;
+      const screenId = screen.screenId || screen.id || screen.name;
+      const candidates = [...new Set([htmlFile, screenId ? `${screenId}.html` : ""].filter(Boolean))];
+      const htmlPath = candidates.map(file => path.join(stitchDir, file)).find(isValidStitchHtml);
+      if (!htmlPath) continue;
 
       const html = fs.readFileSync(htmlPath, "utf-8");
       if (!html.trim()) continue; // Skip 0-byte files
 
-      const contract = parseDesignHTML(html, screen.screenId || screen.id || screen.name);
+      const contract = parseDesignHTML(html, screenId);
       contract.screenTitle = screen.title || screen.name || contract.screenTitle;
       if (screen.device) contract.deviceType = screen.device.toUpperCase() as any;
       contracts.push(contract);
@@ -201,9 +224,12 @@ function parseAllHTMLFiles(stitchDir: string): DesignContract[] {
   try {
     const files = fs.readdirSync(stitchDir).filter(f => f.endsWith(".html"));
     for (const file of files) {
-      const html = fs.readFileSync(path.join(stitchDir, file), "utf-8");
+      const htmlPath = path.join(stitchDir, file);
+      if (!isValidStitchHtml(htmlPath)) continue;
+      const html = fs.readFileSync(htmlPath, "utf-8");
       if (!html.trim()) continue;
       const screenId = path.basename(file, ".html");
+      if (/\bprd\b/i.test(screenId)) continue;
       contracts.push(parseDesignHTML(html, screenId));
     }
   } catch (err) {
