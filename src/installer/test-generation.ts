@@ -28,11 +28,17 @@ export function detectTestFramework(repoPath: string): TestFramework {
     const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
     const scripts = pkg.scripts || {};
 
-    if (allDeps["vitest"]) return { runner: "vitest", command: "npx vitest run --reporter=verbose" };
+    if (allDeps["vitest"]) {
+      if (scripts["test:run"]) return { runner: "vitest", command: "npm run test:run -- --reporter=verbose" };
+      return { runner: "vitest", command: "npx vitest run --reporter=verbose" };
+    }
     if (allDeps["jest"] || allDeps["@jest/core"]) return { runner: "jest", command: "npx jest --forceExit --detectOpenHandles" };
     if (allDeps["@playwright/test"]) return { runner: "playwright", command: "npx playwright test --reporter=list" };
     if (allDeps["detox"]) return { runner: "detox", command: "npx detox test" };
     if (scripts.test && scripts.test !== "echo \"Error: no test specified\" && exit 1") {
+      if (String(scripts.test).trim() === "vitest") {
+        return { runner: "vitest", command: "npx vitest run --reporter=verbose" };
+      }
       return { runner: "vitest", command: "npm test" };
     }
     return { runner: "none", command: "" };

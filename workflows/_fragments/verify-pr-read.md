@@ -20,6 +20,8 @@ STEP 2 — Fix review issues (only if external reviews exist):
 3. Run lint: {{lint_cmd}} → fix any lint errors
 4. Run build: {{build_cmd}} → fix any build errors
 5. Run test: {{test_cmd}} → fix any test failures
+   - If the project uses Vitest, use `npm run test:run` or `npx vitest run`.
+   - Never run bare `vitest` or `npm test` when `npm test` maps to `vitest`; that starts watch mode and blocks the verifier.
 6. If fixes were needed:
    git add -A && git commit -m "fix: address review comments for {{current_story_id}}"
    git push

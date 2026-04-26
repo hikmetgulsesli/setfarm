@@ -21,6 +21,7 @@
 - Feature-dev implement claims now expose `STORY_BRANCH` separately from `RUN_BRANCH`, removing the misleading `BRANCH: <run uuid>` field that caused agents to create uppercase or stale replacement branches.
 - The shared critical preamble no longer tells agents to complete a PR step unless that agent explicitly owns PR creation, so developer claims no longer contradict the pr-each pipeline gate.
 - Story worktree pre-commit hooks now also verify the current branch matches `.story-branch`, rejecting commits on replacement branches before stale code can be pushed or PR'd.
+- Fresh Vite projects now use `test: "vitest run"` with `test:watch` separated, and test detection/reviewer prompts force non-watch Vitest commands so verify agents cannot hang forever in watch mode.
 
 ## 2026-04-26 - Single Step Claim Idempotency
 

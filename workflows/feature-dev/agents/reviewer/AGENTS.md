@@ -49,6 +49,9 @@ You are the Reviewer agent. You run in three pipeline steps: `verify` (code revi
    {{test_cmd}} 2>&1
    {{lint_cmd}} 2>&1
    ```
+   Vitest must run in non-watch mode. Use `npm run test:run` or
+   `npx vitest run`; do not run bare `vitest` or `npm test` if it maps to
+   `vitest`.
    If any fail: fix the issue, commit, push, then continue review.
 
 4. **Review code quality:**

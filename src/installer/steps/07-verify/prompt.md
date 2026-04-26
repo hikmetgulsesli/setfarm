@@ -41,6 +41,9 @@ Görev: Tek bir story PR'ını kontrol et, review/CI yorumlarını düzelt, PR'�
    - `{{LINT_CMD}}`
    - `{{BUILD_CMD}}`
    - `{{TEST_CMD}}`
+   - Vitest için watch komutu çalıştırma. `npm test` script'i `vitest` ise
+     onun yerine `npm run test:run` veya `npx vitest run` kullan.
+     Yasak: çıplak `vitest`, watch modunda bekler ve verify step'i kilitler.
    Hata varsa düzelt, commit/push et. Altyapı komutu boşsa atla.
 9. PR'a kısa comment at: `gh pr comment "{{PR_URL}}" --body "Verified: review feedback addressed, checks run."`
 10. PR'ı merge et:
