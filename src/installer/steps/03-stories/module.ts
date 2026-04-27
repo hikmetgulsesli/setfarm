@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { StepModule, PromptContext } from "../types.js";
+import { preClaim } from "./preclaim.js";
 import { injectContext } from "./context.js";
 import { validateOutput, onComplete } from "./guards.js";
 
@@ -27,6 +28,7 @@ export const storiesModule: StepModule = {
   id: "stories",
   type: "single",
   agentRole: "planner",
+  preClaim,
   injectContext,
   buildPrompt,
   validateOutput,

@@ -1,0 +1,124 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { execFileSync } from "node:child_process";
+import type { ClaimContext } from "../types.js";
+import { pgGet } from "../../../db-pg.js";
+import { logger } from "../../../lib/logger.js";
+import { resolveSetfarmCli } from "../../paths.js";
+import {
+  collectUiBehaviorRequirements,
+  computePredictedScreenFiles,
+  extractExplicitMaxStories,
+} from "./context.js";
+
+function compactText(text: string, fallback: string): string {
+  const s = String(text || "").replace(/\s+/g, " ").trim();
+  return s ? s.slice(0, 180) : fallback;
+}
+
+function loadScreenMap(repo: string): any[] {
+  const p = path.join(repo, "stitch", "SCREEN_MAP.json");
+  if (!fs.existsSync(p)) return [];
+  try {
+    const parsed = JSON.parse(fs.readFileSync(p, "utf-8"));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function buildAcceptanceCriteria(repo: string): string[] {
+  const reqs = collectUiBehaviorRequirements(repo);
+  const criteria = reqs.slice(0, 30).map((req) => {
+    const trigger = [req.label, req.icon ? `icon ${req.icon}` : ""].filter(Boolean).join(" / ");
+    return `${req.screenTitle}: ${req.kind} \"${trigger}\" must produce visible behavior: ${req.expectedBehavior}.`;
+  });
+  criteria.push("All visible active buttons/icons from Stitch screens have non-empty handlers or an explicit disabled/hidden state.");
+  criteria.push("Counter actions update visible state and persist through localStorage reloads.");
+  criteria.push("Notes/history/create/settings flows are wired into the main app shell and remain responsive on desktop and mobile.");
+  return unique(criteria).slice(0, 40);
+}
+
+export async function preClaim(ctx: ClaimContext): Promise<void> {
+  const maxStories = extractExplicitMaxStories(`${ctx.task || ""}\n${ctx.context["task"] || ""}\n${ctx.context["prd"] || ""}`);
+  if (maxStories !== 1) return;
+
+  const existing = await pgGet<{ cnt: string }>("SELECT COUNT(*)::text as cnt FROM stories WHERE run_id = $1", [ctx.runId]);
+  if (Number(existing?.cnt || 0) > 0) return;
+
+  const repo = ctx.context["repo"] || ctx.context["REPO"] || "";
+  if (!repo) return;
+  const predicted = computePredictedScreenFiles(repo);
+  if (predicted.length === 0) return;
+
+  const screenMap = loadScreenMap(repo);
+  const screenIds = unique(predicted.map((s) => s.screenId));
+  const screenFiles = unique(predicted.map((s) => s.filePath));
+  const scopeFiles = unique([
+    ...screenFiles,
+    "src/App.tsx",
+    "src/App.css",
+    "src/main.tsx",
+    "src/index.css",
+    "src/types/index.ts",
+    "src/features/app/usePersistentAppState.ts",
+    "src/components/AppShell.tsx",
+    "src/components/SettingsPanel.tsx",
+    "src/components/ConfirmDialog.tsx",
+    "src/components/CounterPanel.tsx",
+    "src/components/NotesPanel.tsx",
+  ]);
+
+  const product = compactText(ctx.context["project_name"] || ctx.context["task"] || ctx.task, "Uygulama");
+  const story = {
+    id: "US-001",
+    title: `${product} - complete single-story implementation`,
+    description: "Single explicit-cap story covering app state, visible controls, generated screens, settings/history/create flows, persistence, and integration wiring.",
+    acceptanceCriteria: buildAcceptanceCriteria(repo),
+    depends_on: [],
+    screens: screenIds,
+    scope_files: scopeFiles,
+    shared_files: [],
+    scope_description: "One-story explicit user cap: implement all generated screens, shared app state, localStorage persistence, visible button/icon behavior, and App integration together.",
+    file_skeletons: Object.fromEntries(scopeFiles.map((f) => [f, f.startsWith("src/screens/") ? "Generated Stitch screen wired to shared app state and behavior handlers." : "Shared single-story app implementation file."])),
+  };
+
+  const mappedScreens = (screenMap.length > 0 ? screenMap : predicted.map((s) => ({
+    screenId: s.screenId,
+    name: s.title,
+    type: "screen",
+    description: s.title,
+  }))).map((s: any) => ({
+    screenId: s.screenId || s.id,
+    name: s.name || s.title || s.screenId || s.id,
+    type: s.type || "screen",
+    description: s.description || s.name || s.title || "Generated screen",
+    stories: ["US-001"],
+  })).filter((s: any) => s.screenId);
+
+  const step = await pgGet<{ id: string }>("SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1", [ctx.runId, ctx.stepId]);
+  if (!step?.id) return;
+
+  const outPath = path.join(os.tmpdir(), `setfarm-auto-stories-${ctx.runId}.txt`);
+  const output = [
+    "STATUS: done",
+    "STORIES_JSON:",
+    JSON.stringify([story], null, 2),
+    "SCREEN_MAP:",
+    JSON.stringify(mappedScreens, null, 2),
+    "",
+  ].join("\n");
+  fs.writeFileSync(outPath, output, "utf-8");
+
+  logger.info(`[module:stories preclaim] Auto-completing explicit MAX_STORIES=1 with ${screenIds.length} screen(s)`, { runId: ctx.runId });
+  execFileSync("/usr/bin/node", [resolveSetfarmCli(), "step", "complete", step.id, "--file", outPath], {
+    cwd: repo,
+    timeout: 120000,
+    stdio: "pipe",
+  });
+}

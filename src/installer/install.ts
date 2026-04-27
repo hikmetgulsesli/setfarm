@@ -58,16 +58,15 @@ const WORKFLOW_AGENT_SKILLS = ["setfarm-workflows"];
 const WORKFLOW_AGENT_SKILLS_LIMITS = { maxSkillsPromptChars: 1200 } as const;
 const MINIMAX_OPENAI_PROVIDER_ID = "minimax-openai";
 const MINIMAX_OPENAI_MODEL_REF = `${MINIMAX_OPENAI_PROVIDER_ID}/MiniMax-M2.7`;
-const MINIMAX_ANTHROPIC_MODEL_REF = "minimax/MiniMax-M2.7";
 const KIMI_CODING_MODEL_REF = "kimi-coding/kimi-for-coding";
 const WORKFLOW_LLM_IDLE_TIMEOUT_SECONDS = 8;
 const MINIMAX_AGENT_MODEL = {
   primary: MINIMAX_OPENAI_MODEL_REF,
-  fallbacks: [KIMI_CODING_MODEL_REF, MINIMAX_ANTHROPIC_MODEL_REF],
+  fallbacks: [KIMI_CODING_MODEL_REF],
 } as const;
 const DEVELOPER_AGENT_MODEL = {
   primary: KIMI_CODING_MODEL_REF,
-  fallbacks: [MINIMAX_OPENAI_MODEL_REF, MINIMAX_ANTHROPIC_MODEL_REF],
+  fallbacks: [MINIMAX_OPENAI_MODEL_REF],
 } as const;
 
 const DEFAULT_CRON_SESSION_RETENTION = "4h";
