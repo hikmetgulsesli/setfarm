@@ -287,12 +287,8 @@ async function failClaimIfStillRunning(stepId: string, agentId: string, wfId: st
     );
     if (!row || row.status !== "running") return;
 
-    if (
-      row.type === "loop" &&
-      isCleanZeroExit(err) &&
-      await loopStoryCompletedAfter(row.run_id, agentId, row.current_story_id, startedAtMs)
-    ) {
-      console.log(`[spawner] ${agentId} exited cleanly after completing a loop story for ${wfId}/${role}; keeping loop ${row.step_id} running`);
+    if (row.type === "loop" && await loopStoryCompletedAfter(row.run_id, agentId, row.current_story_id, startedAtMs)) {
+      console.log(`[spawner] ${agentId} exited after completing a loop story for ${wfId}/${role}; keeping loop ${row.step_id} running (${compactExitReason(err)})`);
       return;
     }
 
