@@ -159,13 +159,21 @@ function normalizeJsxAttributeValues(input) {
   return out;
 }
 
+function normalizeHtmlComments(input) {
+  return input.replace(/<!--([\s\S]*?)-->/g, (_, body) => {
+    const cleaned = String(body || "")
+      .replace(/\*\//g, "* /")
+      .trim();
+    return cleaned ? `{/* ${cleaned} */}` : "{/* */}";
+  });
+}
+
 function htmlToJsx(html) {
-  return normalizeJsxAttributeValues(normalizeJsxAttributeNames(html))
+  return normalizeHtmlComments(normalizeJsxAttributeValues(normalizeJsxAttributeNames(html)))
     .replace(/<(img|br|hr|input|meta|link)([^>]*?)>/gi, (_, tag, attrs) => {
       const cleanAttrs = String(attrs || "").replace(/\/\s*$/, "").trimEnd();
       return `<${tag}${cleanAttrs} />`;
     })
-    .replace(/<!--(.*?)-->/g, "{/* $1 */}")
     .replace(/<script[\s\S]*?<\/script>/gi, "")
     .replace(/<link[^>]*\/?\s*>/gi, "")
     .replace(/<meta[^>]*\/?\s*>/gi, "")

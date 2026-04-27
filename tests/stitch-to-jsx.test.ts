@@ -136,4 +136,36 @@ describe("stitch-to-jsx", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it("normalizes multiline HTML comments before JSX parsing", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-comments-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "history-screen", title: "Kayıtlar Ekranı" },
+      ]));
+      writeHtml(path.join(stitchDir, "history-screen.html"), `
+        <main>
+          <!--
+            <div class="hidden">
+              <span>Geçmiş Boş</span>
+            </div>
+          -->
+          <section>Kayıtlar</section>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "KayitlarEkrani.tsx"), "utf-8");
+      assert.match(code, /\{\/\*[\s\S]*Geçmiş Boş[\s\S]*\*\/\}/);
+      assert.doesNotMatch(code, /<!--|-->/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });

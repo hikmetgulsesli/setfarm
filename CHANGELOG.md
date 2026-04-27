@@ -1,5 +1,6 @@
 ## 2026-04-27 - Stitch JSX Baseline Hardening
 
+- `stitch-to-jsx` now normalizes multiline HTML comments into JSX comments before parsing, preventing hidden/reference Stitch blocks from breaking TypeScript with raw `<!-- -->` inside generated `.tsx` screens.
 - `stitch-to-jsx` now converts React numeric/boolean attributes such as `rows`, `maxLength`, `tabIndex`, `readOnly`, and `disabled` into valid JSX values, preventing setup-build failures from generated Stitch screens.
 - Setup-build preclaim failures now preserve command exit status plus stdout/stderr in `baseline_fail`, so TypeScript/build errors are visible in the pipeline instead of collapsing into a generic `Command failed`.
 - Added regression coverage for Stitch-generated textarea/button attributes and setup-build actionable process-error reporting.
