@@ -127,11 +127,29 @@ const issues = [];
 page.on('console', msg => { if (msg.type() === 'error') issues.push({ type: 'console_error', detail: msg.text().slice(0, 200) }); });
 try {
   await page.goto('${server.url}', { timeout: 15000, waitUntil: 'networkidle' });
-  // Click all visible buttons, catch handler errors
+  function fingerprint() {
+    return JSON.stringify({
+      url: location.href,
+      text: document.body.innerText.replace(/\\s+/g, ' ').slice(0, 4000),
+      html: document.body.innerHTML.replace(/\\s+/g, ' ').slice(0, 4000),
+      active: document.activeElement?.tagName || ''
+    });
+  }
+  function labelFor(el) {
+    return (el.getAttribute('aria-label') || el.textContent || el.getAttribute('title') || el.outerHTML || '?').replace(/\\s+/g, ' ').slice(0, 120);
+  }
+  // Click all visible buttons. A click that produces no visible URL/text/DOM/focus
+  // change is treated as dead unless the element is explicitly disabled/ignored.
   const buttons = await page.locator('button:visible').all();
-  for (const b of buttons.slice(0, 10)) {
-    try { await b.click({ timeout: 3000 }); await page.waitForTimeout(200); }
-    catch (e) { const label = await b.textContent().catch(() => '?'); issues.push({ type: 'dead_button', detail: \`\${label || '?'}: \${String(e).slice(0, 120)}\` }); }
+  for (const b of buttons.slice(0, 30)) {
+    const ignored = await b.evaluate(el => el.hasAttribute('data-smoke-ignore') || el.hasAttribute('disabled') || el.getAttribute('aria-disabled') === 'true').catch(() => false);
+    if (ignored) continue;
+    const before = await page.evaluate(fingerprint);
+    let label = '?';
+    try { label = await b.evaluate(labelFor); await b.click({ timeout: 3000 }); await page.waitForTimeout(300); }
+    catch (e) { issues.push({ type: 'dead_button', detail: \`\${label || '?'}: \${String(e).slice(0, 120)}\` }); continue; }
+    const after = await page.evaluate(fingerprint);
+    if (before === after) issues.push({ type: 'dead_button', detail: \`\${label || '?'}: click produced no visible state, route, focus, or DOM change\` });
   }
 } catch (e) { issues.push({ type: 'preview_failed', detail: String(e).slice(0, 200) }); }
 await browser.close();
