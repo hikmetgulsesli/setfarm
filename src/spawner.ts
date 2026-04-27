@@ -303,8 +303,8 @@ async function failClaimIfStillRunning(stepId: string, agentId: string, wfId: st
 async function reapFinishedClaims(): Promise<void> {
   for (const [key, active] of activeProcesses) {
     try {
-      const row = await pgGet<{ step_status: string; run_status: string; step_id: string }>(
-        `SELECT s.status as step_status, r.status as run_status, s.step_id
+      const row = await pgGet<{ step_status: string; run_status: string; step_id: string; run_id: string; type: string; current_story_id: string | null }>(
+        `SELECT s.status as step_status, r.status as run_status, s.step_id, s.run_id, s.type, s.current_story_id
          FROM steps s
          JOIN runs r ON r.id = s.run_id
          WHERE s.id = $1
@@ -325,6 +325,13 @@ async function reapFinishedClaims(): Promise<void> {
         const ageMs = Date.now() - active.startedAtMs;
         const thresholdMs = stuckThresholdMs(active.role);
         if (ageMs < thresholdMs) continue;
+
+        if (row.type === "loop" && await loopStoryCompletedAfter(row.run_id, active.agentId, row.current_story_id, active.startedAtMs)) {
+          console.log(`[spawner] Reaping completed loop agent ${key}: story completed before watchdog threshold`);
+          terminateActiveProcess(active, "watchdog-completed-loop");
+          activeProcesses.delete(key);
+          continue;
+        }
 
         const reason = `AGENT_PROCESS_STUCK: ${active.agentId} kept ${active.wfId}/${active.role} running for ${formatDurationMs(ageMs)} without step complete/fail; killed by spawner watchdog. Transcript: ${active.transcriptPath}`;
         console.warn(`[spawner] ${reason}`);
