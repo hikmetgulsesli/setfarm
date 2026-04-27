@@ -4,7 +4,7 @@
  * and immediately spawns agent sessions via openclaw CLI.
  */
 import postgres from "postgres";
-import { execFile, execFileSync, type ChildProcess } from "node:child_process";
+import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -335,13 +335,15 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   // by passing --session-id with a unique value per spawn.
   const sessionId = "spawner-" + agentId + "-" + Date.now() + "-" + Math.random().toString(36).slice(2, 10);
   const sessionKey = buildSessionKey(agentId, sessionId);
-  const child = execFile(OPENCLAW_CLI, [
+  const childArgs = [
     "agent", "--json", "--agent", agentId,
     "--session-id", sessionId,
     "--message", prompt, "--timeout", String(AGENT_TIMEOUT_SECONDS),
-  ], {
+  ];
+  const outFd = fs.openSync(transcriptPath, "a");
+  const errFd = fs.openSync(transcriptPath, "a");
+  const child = spawn(OPENCLAW_CLI, childArgs, {
     cwd: AGENT_SAFE_CWD,  // Wave 13 Bug M — start outside any git repo
-    timeout: (AGENT_TIMEOUT_SECONDS + 60) * 1000,
     // Security audit S-1: explicit env allowlist. Previous `{...process.env}` leaked
     // ALL secrets (API keys, DB password, master URLs) to every agent child process.
     // Agents can run `printenv` and see everything. OpenClaw gateway handles API key
@@ -351,18 +353,45 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     env: (() => {
       return buildOpenClawChildEnv();
     })(),
-    maxBuffer: 10 * 1024 * 1024,
-  }, (err, stdout, stderr) => {
+    stdio: ["ignore", outFd, errFd],
+  });
+  let processExited = false;
+  const closeTranscriptFds = () => {
+    try { fs.closeSync(outFd); } catch {}
+    try { fs.closeSync(errFd); } catch {}
+  };
+  const hardTimeout = setTimeout(() => {
+    if (processExited) return;
+    try {
+      fs.appendFileSync(transcriptPath, `--- HARD TIMEOUT ${new Date().toISOString()} ---\nopenclaw agent exceeded ${AGENT_TIMEOUT_SECONDS + 60}s\n`);
+    } catch {}
+    terminateActiveProcess(
+      { child, runId: claim.runId || "", stepId: claim.stepId || "", agentId, wfId, role, startedAtMs: Date.now(), transcriptPath, sessionId, sessionKey },
+      "spawn-hard-timeout",
+    );
+  }, (AGENT_TIMEOUT_SECONDS + 60) * 1000);
+  child.once("error", (err) => {
+    processExited = true;
+    clearTimeout(hardTimeout);
+    closeTranscriptFds();
     const isCurrentProcess = activeProcesses.get(key)?.child === child;
     if (isCurrentProcess) activeProcesses.delete(key);
     try {
-      let body = "";
-      if (stdout) body += "--- STDOUT ---\n" + String(stdout) + "\n";
-      if (stderr) body += "--- STDERR ---\n" + String(stderr) + "\n";
-      if (err) body += "--- EXIT ---\n" + String((err as any).message || err) + "\n";
-      body += "--- FINISHED " + new Date().toISOString() + " ---\n";
-      fs.appendFileSync(transcriptPath, body);
+      fs.appendFileSync(transcriptPath, "--- SPAWN ERROR ---\n" + String((err as any).message || err) + "\n--- FINISHED " + new Date().toISOString() + " ---\n");
     } catch (e) { console.warn("[spawner] transcript write failed: " + String(e)); }
+    console.warn("[spawner] " + agentId + " spawn error: " + ((err as any).message || err) + " (transcript: " + transcriptPath + ")");
+    if (isCurrentProcess && !shuttingDown && claim.stepId) void failClaimIfStillRunning(claim.stepId, agentId, wfId, role, transcriptPath, err);
+  });
+  child.once("exit", (code, signal) => {
+    processExited = true;
+    clearTimeout(hardTimeout);
+    closeTranscriptFds();
+    const isCurrentProcess = activeProcesses.get(key)?.child === child;
+    if (isCurrentProcess) activeProcesses.delete(key);
+    try {
+      fs.appendFileSync(transcriptPath, `--- EXIT code=${code ?? ""} signal=${signal ?? ""} ---\n--- FINISHED ${new Date().toISOString()} ---\n`);
+    } catch (e) { console.warn("[spawner] transcript write failed: " + String(e)); }
+    const err = code === 0 ? null : new Error(`openclaw agent exited code=${code ?? ""} signal=${signal ?? ""}`);
     if (err) {
       console.warn("[spawner] " + agentId + " exited: " + ((err as any).message || err) + " (transcript: " + transcriptPath + ")");
       if (isCurrentProcess && !shuttingDown && claim.stepId) void failClaimIfStillRunning(claim.stepId, agentId, wfId, role, transcriptPath, err);
@@ -580,7 +609,7 @@ async function main() {
   const shutdown = () => {
     shuttingDown = true;
     console.log(`[spawner] Shutting down (${activeProcesses.size} active)`);
-    for (const [, active] of activeProcesses) { killProcessTree(active.child.pid, "SIGTERM"); }
+    for (const [, active] of activeProcesses) { terminateActiveProcess(active, "spawner-shutdown"); }
     try { fs.unlinkSync(PID_FILE); } catch {}
     setTimeout(() => process.exit(0), 5000);
   };

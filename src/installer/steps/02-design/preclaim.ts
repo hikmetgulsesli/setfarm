@@ -1,12 +1,29 @@
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import type { ClaimContext } from "../types.js";
 import { logger } from "../../../lib/logger.js";
 import { pgGet } from "../../../db-pg.js";
 
 const MIN_STITCH_HTML_BYTES = 1000;
+
+function execFileText(command: string, args: string[], options: { cwd?: string; timeout?: number } = {}): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, {
+      encoding: "utf-8",
+      maxBuffer: 20 * 1024 * 1024,
+      ...options,
+    }, (err, stdout, stderr) => {
+      if (err) {
+        const detail = String(stderr || stdout || (err as any).message || err).replace(/\s+/g, " ").slice(0, 1000);
+        reject(new Error(detail));
+        return;
+      }
+      resolve(String(stdout || ""));
+    });
+  });
+}
 
 function isValidStitchHtml(filePath: string): boolean {
   try {
@@ -97,8 +114,8 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
 
   if (!projId) {
     try {
-      const out = execFileSync("node", [stitchScript, "ensure-project", path.basename(repo), repo],
-        { encoding: "utf-8", timeout: 30000, cwd: repo });
+      const out = await execFileText("node", [stitchScript, "ensure-project", path.basename(repo), repo],
+        { timeout: 30000, cwd: repo });
       try { projId = JSON.parse(out).projectId || ""; } catch (e) { logger.debug(`[module:design preclaim] parse: ${String(e).slice(0, 80)}`); }
     } catch (e) { logger.warn(`[module:design preclaim] ensure-project failed: ${String(e).slice(0, 200)}`, { runId: ctx.runId }); }
   }
@@ -130,8 +147,8 @@ All visible text must be in Turkish. Use a dark, modern theme.`;
 
   // 3. generate-all-screens (single batch call)
   try {
-    const genOut = execFileSync("node", [stitchScript, "generate-all-screens", projId, promptFile, deviceType, "GEMINI_3_1_PRO"],
-      { encoding: "utf-8", timeout: 600000, cwd: repo });
+    const genOut = await execFileText("node", [stitchScript, "generate-all-screens", projId, promptFile, deviceType, "GEMINI_3_1_PRO"],
+      { timeout: 600000, cwd: repo });
     let genResult: any = {};
     try { genResult = JSON.parse(genOut); } catch (e) { logger.debug(`[module:design preclaim] gen parse: ${String(e).slice(0, 80)}`); }
     logger.info(`[module:design preclaim] Generated ${genResult.total || 0} screens in ${genResult.elapsedSeconds || "?"}s`, { runId: ctx.runId });
@@ -143,8 +160,8 @@ All visible text must be in Turkish. Use a dark, modern theme.`;
   let htmlCount = 0;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const dlOut = execFileSync("node", [stitchScript, "download-all", projId, stitchDir],
-        { encoding: "utf-8", timeout: 180000, cwd: repo });
+      const dlOut = await execFileText("node", [stitchScript, "download-all", projId, stitchDir],
+        { timeout: 180000, cwd: repo });
       let dlResult: any = {};
       try { dlResult = JSON.parse(dlOut); } catch (e) { logger.debug(`[module:design preclaim] dl parse: ${String(e).slice(0, 80)}`); }
       const manifestCounts = manifestHtmlCounts(stitchDir);
@@ -174,7 +191,7 @@ All visible text must be in Turkish. Use a dark, modern theme.`;
           const dest = path.join(stitchDir, (s.screenId || "unknown") + ".html");
           if (fs.existsSync(dest) && isValidStitchHtml(dest)) continue;
           try {
-            execFileSync("curl", ["-sL", "-o", dest, "--max-time", "30", s.htmlUrl], { timeout: 35000 });
+            await execFileText("curl", ["-sL", "-o", dest, "--max-time", "30", s.htmlUrl], { timeout: 35000 });
             if (isValidStitchHtml(dest)) htmlCount++;
           } catch (e) { logger.debug(`[module:design preclaim] curl: ${String(e).slice(0, 80)}`); }
         }
@@ -190,7 +207,7 @@ All visible text must be in Turkish. Use a dark, modern theme.`;
   try {
     const domScript = path.join(os.homedir(), ".openclaw/setfarm-repo/scripts/design-dom-extract.mjs");
     if (fs.existsSync(domScript)) {
-      execFileSync("node", [domScript, stitchDir], { encoding: "utf-8", timeout: 30000 });
+      await execFileText("node", [domScript, stitchDir], { timeout: 30000 });
     }
   } catch (e) { logger.debug(`[module:design preclaim] design-dom-extract: ${String(e).slice(0, 80)}`); }
 
