@@ -23,6 +23,7 @@ const SPAWN_STAGGER_MS = parseInt(process.env.SETFARM_SPAWN_STAGGER_MS || "12000
 const NON_DEVELOPER_STUCK_MS = parsePositiveInt(process.env.SETFARM_AGENT_STUCK_MS, 5 * 60_000);
 const DEVELOPER_STUCK_MS = parsePositiveInt(process.env.SETFARM_DEVELOPER_AGENT_STUCK_MS, 8 * 60_000);
 const STARTUP_RUNNING_GRACE_MS = parsePositiveInt(process.env.SETFARM_STARTUP_RUNNING_GRACE_MS, 0);
+const QA_AGENT_STUCK_MS = parsePositiveInt(process.env.SETFARM_QA_AGENT_STUCK_MS, 12 * 60_000);
 
 // Wave 13 Bug M (run #344 postmortem): agent default cwd must NOT be the
 // setfarm-repo. Previously execFile inherited the spawner's cwd (the systemd
@@ -64,6 +65,8 @@ type ActiveProcess = {
   role: string;
   startedAtMs: number;
   transcriptPath: string;
+  sessionId: string;
+  sessionKey: string;
 };
 
 const activeProcesses = new Map<string, ActiveProcess>();
@@ -84,7 +87,20 @@ function formatDurationMs(ms: number): string {
 }
 
 function stuckThresholdMs(role: string): number {
+  if (role.includes("qa") || role.includes("test")) return QA_AGENT_STUCK_MS;
   return role === "developer" ? DEVELOPER_STUCK_MS : NON_DEVELOPER_STUCK_MS;
+}
+
+function buildOpenClawChildEnv(): NodeJS.ProcessEnv {
+  const e: Record<string, string | undefined> = { ...process.env, OPENCLAW_AUTO_APPROVE: "1" };
+  for (const k of ["SETFARM_PG_URL", "MASTER_POSTGRES_URL", "MASTER_MARIADB_URL", "MASTER_MONGODB_URL"]) {
+    delete e[k];
+  }
+  return e as NodeJS.ProcessEnv;
+}
+
+function buildSessionKey(agentId: string, sessionId: string): string {
+  return `agent:${agentId}:explicit:${sessionId}`;
 }
 
 function resolveAgentId(wfId: string, role: string, mapping: Record<string, string | string[]>): string[] {
@@ -142,13 +158,52 @@ function killProcessTree(pid: number | undefined, signal: NodeJS.Signals = "SIGT
   try { process.kill(pid, signal); } catch { /* already dead */ }
 }
 
+function cancelOpenClawTask(lookup: string, context: string): void {
+  if (!lookup) return;
+  execFile(OPENCLAW_CLI, ["tasks", "cancel", lookup], {
+    cwd: AGENT_SAFE_CWD,
+    timeout: 20_000,
+    env: buildOpenClawChildEnv(),
+    maxBuffer: 2 * 1024 * 1024,
+  }, (err, stdout, stderr) => {
+    if (err) {
+      const msg = compactExitReason(stderr || stdout || (err as any).message || err);
+      console.warn(`[spawner] OpenClaw task cancel failed for ${lookup} (${context}): ${msg}`);
+      return;
+    }
+    console.log(`[spawner] OpenClaw task cancelled for ${lookup} (${context})`);
+  });
+}
+
+function terminateActiveProcess(active: ActiveProcess, context: string): void {
+  cancelOpenClawTask(active.sessionKey, context);
+  killProcessTree(active.child.pid, "SIGTERM");
+  setTimeout(() => killProcessTree(active.child.pid, "SIGKILL"), 5000);
+}
+
+function readProcessArgs(pid: number): string {
+  try {
+    return execFileSync("ps", ["-o", "args=", "-p", String(pid)], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch {
+    return "";
+  }
+}
+
+function extractSpawnerSessionKeyFromArgs(args: string): string {
+  const agent = args.match(/--agent\s+(\S+)/)?.[1];
+  const sessionId = args.match(/--session-id\s+(\S+)/)?.[1];
+  return agent && sessionId ? buildSessionKey(agent, sessionId) : "";
+}
+
 function killStartupOrphanSpawnerAgents(): void {
   try {
     const out = execFileSync("pgrep", ["-f", "openclaw.*agent.*--session-id spawner-"], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
     for (const pidRaw of out.split(/\s+/).filter(Boolean)) {
       const pid = Number(pidRaw);
       if (!Number.isFinite(pid) || pid === process.pid) continue;
-      console.warn(`[spawner] killing orphan spawner OpenClaw process pid=${pid}`);
+      const sessionKey = extractSpawnerSessionKeyFromArgs(readProcessArgs(pid));
+      console.warn(`[spawner] killing orphan spawner OpenClaw process pid=${pid}${sessionKey ? " session=" + sessionKey : ""}`);
+      if (sessionKey) cancelOpenClawTask(sessionKey, "startup-orphan");
       killProcessTree(pid, "SIGTERM");
       setTimeout(() => killProcessTree(pid, "SIGKILL"), 5000);
     }
@@ -196,8 +251,7 @@ async function reapFinishedClaims(): Promise<void> {
         try { fs.appendFileSync(active.transcriptPath, `--- WATCHDOG ${new Date().toISOString()} ---
 ${reason}
 `); } catch {}
-        killProcessTree(active.child.pid, "SIGTERM");
-        setTimeout(() => killProcessTree(active.child.pid, "SIGKILL"), 5000);
+        terminateActiveProcess(active, "watchdog-stuck");
         activeProcesses.delete(key);
         await failStep(active.stepId, reason);
         continue;
@@ -205,8 +259,7 @@ ${reason}
         console.log(`[spawner] Reaping ${key}: step ${row.step_id} is ${row.step_status}, run is ${row.run_status}`);
       }
 
-      killProcessTree(active.child.pid, "SIGTERM");
-      setTimeout(() => killProcessTree(active.child.pid, "SIGKILL"), 5000);
+      terminateActiveProcess(active, "reap-finished");
       activeProcesses.delete(key);
     } catch (err) {
       console.warn(`[spawner] reap finished claim ${key}: ${String(err).slice(0, 300)}`);
@@ -281,6 +334,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   // `sessionTarget: "isolated"` in the cron config; we get the same effect here
   // by passing --session-id with a unique value per spawn.
   const sessionId = "spawner-" + agentId + "-" + Date.now() + "-" + Math.random().toString(36).slice(2, 10);
+  const sessionKey = buildSessionKey(agentId, sessionId);
   const child = execFile(OPENCLAW_CLI, [
     "agent", "--json", "--agent", agentId,
     "--session-id", sessionId,
@@ -295,16 +349,12 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     // Security: denylist DB credentials from agent env. Keep everything
     // else — OpenClaw CLI needs many env vars and allowlist is too fragile.
     env: (() => {
-      const e: Record<string, string | undefined> = { ...process.env, OPENCLAW_AUTO_APPROVE: "1" };
-      // Denylist: strip DB credentials only
-      for (const k of ["SETFARM_PG_URL", "MASTER_POSTGRES_URL", "MASTER_MARIADB_URL", "MASTER_MONGODB_URL"]) {
-        delete e[k];
-      }
-      return e;
+      return buildOpenClawChildEnv();
     })(),
     maxBuffer: 10 * 1024 * 1024,
   }, (err, stdout, stderr) => {
-    activeProcesses.delete(key);
+    const isCurrentProcess = activeProcesses.get(key)?.child === child;
+    if (isCurrentProcess) activeProcesses.delete(key);
     try {
       let body = "";
       if (stdout) body += "--- STDOUT ---\n" + String(stdout) + "\n";
@@ -315,11 +365,11 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     } catch (e) { console.warn("[spawner] transcript write failed: " + String(e)); }
     if (err) {
       console.warn("[spawner] " + agentId + " exited: " + ((err as any).message || err) + " (transcript: " + transcriptPath + ")");
-      if (!shuttingDown && claim.stepId) void failClaimIfStillRunning(claim.stepId, agentId, wfId, role, transcriptPath, err);
+      if (isCurrentProcess && !shuttingDown && claim.stepId) void failClaimIfStillRunning(claim.stepId, agentId, wfId, role, transcriptPath, err);
     }
     else {
       console.log("[spawner] " + agentId + " completed (transcript: " + transcriptPath + ")");
-      if (!shuttingDown && claim.stepId) {
+      if (isCurrentProcess && !shuttingDown && claim.stepId) {
         void failClaimIfStillRunning(
           claim.stepId,
           agentId,
@@ -332,7 +382,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     }
   });
   if (child.pid && claim.runId && claim.stepId) {
-    activeProcesses.set(key, { child, runId: claim.runId, stepId: claim.stepId, agentId, wfId, role, startedAtMs: Date.now(), transcriptPath });
+    activeProcesses.set(key, { child, runId: claim.runId, stepId: claim.stepId, agentId, wfId, role, startedAtMs: Date.now(), transcriptPath, sessionId, sessionKey });
   }
 }
 
@@ -367,8 +417,7 @@ function cancelRunAgents(runId: string): void {
     if (active.runId !== runId) continue;
     killed++;
     console.log(`[spawner] Cancelling active agent ${key} for run ${runId.slice(0, 8)}`);
-    killProcessTree(active.child.pid, "SIGTERM");
-    setTimeout(() => killProcessTree(active.child.pid, "SIGKILL"), 5000);
+    terminateActiveProcess(active, "run-cancelled");
   }
   if (killed === 0) {
     console.log(`[spawner] Run ${runId.slice(0, 8)} cancelled; no active agent process found`);

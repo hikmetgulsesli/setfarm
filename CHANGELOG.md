@@ -9,6 +9,8 @@
 - Workflow-installed agent fallbacks no longer include the legacy Anthropic-compatible `minimax/MiniMax-M2.7` route; agents use the OpenAI-compatible MiniMax provider and Kimi only.
 - Event spawner now kills orphaned spawner-owned OpenClaw processes on restart, fails stale running claims, and watchdog-fails active claims that exceed per-role runtime limits without step complete / step fail, so model timeouts no longer leave runs stuck in running.
 - Prepared-claim prompts are shorter and command-first, reducing heavy implement prompt overhead while preserving safe workdir, step complete, and step fail rules.
+- Spawner process termination now also cancels the matching OpenClaw task/session key and ignores stale child callbacks after a retry has already spawned a replacement, preventing duplicate QA/developer children and persistent gateway running task buildup.
+- QA and test roles now use a longer watchdog budget than lightweight non-developer roles, so browser/runtime checks are not killed at the same threshold as quick planning/security checks.
 
 ## 2026-04-27 - Stitch JSX Baseline Hardening
 
