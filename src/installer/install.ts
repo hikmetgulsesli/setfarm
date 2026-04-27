@@ -48,7 +48,16 @@ function ensureMainAgentInList(
 
 // ── Shared deny list: things no workflow agent should ever touch ──
 // Note: sessions_spawn DENIED — sub-agent delivery broken, agents must work inline
-const ALWAYS_DENY = ["gateway", "cron", "message", "nodes", "canvas", "sessions_send", "agents"];
+const ALWAYS_DENY = [
+  "gateway", "cron", "message", "nodes", "canvas", "sessions_send", "agents",
+  "sessions_list", "sessions_history", "sessions_spawn", "sessions_yield", "session_status", "subagents",
+  "image_generate", "music_generate", "video_generate",
+];
+const WEB_TOOL_DENY = ["web_search", "web_fetch"];
+const WORKFLOW_AGENT_SKILLS = ["setfarm-workflows"];
+const WORKFLOW_AGENT_SKILLS_LIMITS = { maxSkillsPromptChars: 1200 } as const;
+const MINIMAX_AGENT_MODEL = { primary: "minimax/MiniMax-M2.7", fallbacks: ["kimi-coding/kimi-for-coding"] } as const;
+const DEVELOPER_AGENT_MODEL = { primary: "kimi-coding/kimi-for-coding", fallbacks: ["minimax/MiniMax-M2.7"] } as const;
 
 const DEFAULT_CRON_SESSION_RETENTION = "4h";
 const DEFAULT_SESSION_MAINTENANCE = {
@@ -80,6 +89,7 @@ const ROLE_POLICIES: Record<AgentRole, { profile?: string; alsoAllow?: string[];
       ...ALWAYS_DENY,
       "write", "edit", "apply_patch",  // no file modification
       "image", "tts",                  // unnecessary
+      ...WEB_TOOL_DENY,                 // no web/search in read-only planning
       "group:ui",                      // no browser/canvas
     ],
     timeoutSeconds: TIMEOUT_20_MIN,  // codebase exploration + reasoning
@@ -91,6 +101,7 @@ const ROLE_POLICIES: Record<AgentRole, { profile?: string; alsoAllow?: string[];
     deny: [
       ...ALWAYS_DENY,
       "image", "tts",                  // unnecessary
+      ...WEB_TOOL_DENY,                 // no web/search during coding claims
       "group:ui",                      // no browser/canvas
     ],
     timeoutSeconds: TIMEOUT_60_MIN,  // implements code + build + tests (v1.5.53: needs 60min)
@@ -103,6 +114,7 @@ const ROLE_POLICIES: Record<AgentRole, { profile?: string; alsoAllow?: string[];
       ...ALWAYS_DENY,
       "write", "edit", "apply_patch",  // cannot modify code it's verifying
       "image", "tts",                  // unnecessary
+      ...WEB_TOOL_DENY,                 // no web/search in verification
       "group:ui",                      // no browser/canvas
     ],
     timeoutSeconds: TIMEOUT_20_MIN,  // code review + runs tests
@@ -127,6 +139,7 @@ const ROLE_POLICIES: Record<AgentRole, { profile?: string; alsoAllow?: string[];
       ...ALWAYS_DENY,
       "write", "edit", "apply_patch",  // no file modification
       "image", "tts",                  // unnecessary
+      ...WEB_TOOL_DENY,                 // no web/search in PR step
       "group:ui",                      // no browser/canvas
     ],
     timeoutSeconds: TIMEOUT_20_MIN,  // quick task, no special-casing
@@ -188,6 +201,17 @@ function ensureCronSessionRetention(config: OpenClawConfig): void {
   }
 }
 
+function ensureExecConfig(config: OpenClawConfig): void {
+  if (!config.tools) config.tools = {};
+  const tools = config.tools as Record<string, any>;
+  if (!tools.exec || typeof tools.exec !== "object") tools.exec = {};
+  tools.exec.host = "auto";
+  tools.exec.security = "full";
+  if (tools.exec.ask === undefined) tools.exec.ask = "off";
+  if (!tools.fs || typeof tools.fs !== "object") tools.fs = {};
+  tools.fs.workspaceOnly = false;
+}
+
 function ensureSessionMaintenance(config: OpenClawConfig): void {
   if (!config.session) config.session = {};
   if (!config.session.maintenance) {
@@ -207,6 +231,11 @@ function ensureSessionMaintenance(config: OpenClawConfig): void {
   }
 }
 
+function defaultModelForAgent(agentId: string): Record<string, unknown> {
+  const localId = agentId.includes("_") ? agentId.split("_").pop() || agentId : agentId;
+  return localId === "developer" ? { ...DEVELOPER_AGENT_MODEL } : { ...MINIMAX_AGENT_MODEL };
+}
+
 function upsertAgent(
   list: Array<Record<string, unknown>>,
   agent: { id: string; name?: string; model?: string; timeoutSeconds?: number; workspaceDir: string; agentDir: string; role: AgentRole },
@@ -221,8 +250,10 @@ function upsertAgent(
     agentDir: agent.agentDir,
     tools: buildToolsConfig(agent.role),
     subagents: SUBAGENT_POLICY,
+    skills: WORKFLOW_AGENT_SKILLS,
+    skillsLimits: WORKFLOW_AGENT_SKILLS_LIMITS,
   };
-  if (agent.model) payload.model = agent.model;
+  payload.model = agent.model ?? defaultModelForAgent(agent.id);
   // Note: timeoutSeconds is NOT written to the agent config entry because
   // OpenClaw's agent schema uses .strict() and rejects unknown keys.
   // Timeouts are applied via cron job payload.timeoutSeconds instead.
@@ -248,6 +279,7 @@ export async function installWorkflow(params: { workflowId: string }): Promise<W
 
   const { path: configPath, config } = await readOpenClawConfig();
   ensureCronSessionRetention(config);
+  ensureExecConfig(config);
   ensureSessionMaintenance(config);
   const list = ensureAgentList(config);
   ensureMainAgentInList(list, config);

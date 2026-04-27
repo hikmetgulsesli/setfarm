@@ -83,6 +83,19 @@ export function validateConfig(raw: unknown): ConfigValidationError[] {
     });
   }
 
+  // Rule 3b: exec.host must be "auto" when configured.
+  // OpenClaw agents sometimes request host=auto for tool calls; host=gateway
+  // rejects those calls and can prevent Setfarm step complete/fail commands.
+  const execHost = config?.tools?.exec?.host;
+  if (execHost !== undefined && execHost !== "auto") {
+    errors.push({
+      path: "tools.exec.host",
+      expected: '"auto"',
+      actual: JSON.stringify(execHost),
+      severity: "error",
+    });
+  }
+
   // Rule 4: No model may use "default" as its value
   // Causes silent fallback failures in gateway
   const agents = config?.agents?.list;
