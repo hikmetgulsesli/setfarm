@@ -537,6 +537,34 @@ async function failStaleRunningClaimsFromPreviousSpawner(): Promise<void> {
   }
 }
 
+async function releaseActiveProcessForShutdown(active: ActiveProcess): Promise<void> {
+  if (!active.stepId) return;
+  try {
+    const row = await pgGet<{ type: string; current_story_id: string | null }>(
+      "SELECT type, current_story_id FROM steps WHERE id = $1 AND status = 'running' LIMIT 1",
+      [active.stepId],
+    );
+    if (!row) return;
+    if (row.type === "loop" && row.current_story_id) {
+      await pgRun(
+        "UPDATE stories SET status = 'pending', claimed_by = NULL, updated_at = NOW() WHERE id = $1 AND status = 'running'",
+        [row.current_story_id],
+      );
+      await pgRun(
+        "UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = NOW() WHERE id = $1 AND status = 'running'",
+        [active.stepId],
+      );
+      console.log(`[spawner] released active loop claim for shutdown: ${active.agentId} ${active.wfId}/${active.role}`);
+      return;
+    }
+
+    await pgRun("UPDATE steps SET status = 'pending', updated_at = NOW() WHERE id = $1 AND status = 'running'", [active.stepId]);
+    console.log(`[spawner] released active step claim for shutdown: ${active.agentId} ${active.wfId}/${active.role}`);
+  } catch (err) {
+    console.warn(`[spawner] failed to release active claim during shutdown: ${String(err).slice(0, 300)}`);
+  }
+}
+
 function cancelRunAgents(runId: string): void {
   let killed = 0;
   for (const [key, active] of activeProcesses) {
@@ -712,7 +740,10 @@ async function main() {
   const shutdown = () => {
     shuttingDown = true;
     console.log(`[spawner] Shutting down (${activeProcesses.size} active)`);
-    for (const [, active] of activeProcesses) { terminateActiveProcess(active, "spawner-shutdown"); }
+    for (const [, active] of activeProcesses) {
+      void releaseActiveProcessForShutdown(active);
+      terminateActiveProcess(active, "spawner-shutdown");
+    }
     try { fs.unlinkSync(PID_FILE); } catch {}
     setTimeout(() => process.exit(0), 5000);
   };
