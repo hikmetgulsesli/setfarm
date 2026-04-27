@@ -268,7 +268,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   // by passing --session-id with a unique value per spawn.
   const sessionId = "spawner-" + agentId + "-" + Date.now() + "-" + Math.random().toString(36).slice(2, 10);
   const child = execFile(OPENCLAW_CLI, [
-    "agent", "--agent", agentId,
+    "agent", "--json", "--agent", agentId,
     "--session-id", sessionId,
     "--message", prompt, "--timeout", String(AGENT_TIMEOUT_SECONDS),
   ], {
