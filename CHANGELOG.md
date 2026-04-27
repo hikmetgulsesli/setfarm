@@ -1,3 +1,9 @@
+## 2026-04-27 - Stitch JSX Baseline Hardening
+
+- `stitch-to-jsx` now converts React numeric/boolean attributes such as `rows`, `maxLength`, `tabIndex`, `readOnly`, and `disabled` into valid JSX values, preventing setup-build failures from generated Stitch screens.
+- Setup-build preclaim failures now preserve command exit status plus stdout/stderr in `baseline_fail`, so TypeScript/build errors are visible in the pipeline instead of collapsing into a generic `Command failed`.
+- Added regression coverage for Stitch-generated textarea/button attributes and setup-build actionable process-error reporting.
+
 ## 2026-04-26 - Story PR Gate Serial Main Flow
 
 - PRD pseudo screens and invalid placeholder Stitch HTML are now filtered consistently across design reuse, design contracts, story context, setup-build Tailwind detection, and `stitch-to-jsx`, preventing generated `*Prd.tsx` files and broken JSX from reaching implement.

@@ -30,6 +30,29 @@ function ensureFile(filePath: string, content: string): boolean {
   return true;
 }
 
+function cleanProcessText(value: unknown): string {
+  const text = Buffer.isBuffer(value) ? value.toString("utf-8") : String(value || "");
+  return text
+    .replace(/\x1b\[[0-9;]*m/g, "")
+    .replace(/\r/g, "")
+    .trim();
+}
+
+function formatProcessFailure(error: unknown, max = 1200): string {
+  const e = error as { status?: unknown; signal?: unknown; stdout?: unknown; stderr?: unknown; message?: unknown };
+  const parts: string[] = [];
+  const status = e?.status !== undefined ? `exit=${e.status}` : "";
+  const signal = e?.signal ? `signal=${String(e.signal)}` : "";
+  const header = [status, signal].filter(Boolean).join(" ");
+  if (header) parts.push(header);
+  const stderr = cleanProcessText(e?.stderr);
+  const stdout = cleanProcessText(e?.stdout);
+  if (stderr) parts.push(`stderr:\n${stderr}`);
+  if (stdout) parts.push(`stdout:\n${stdout}`);
+  if (parts.length === 0 && e?.message) parts.push(cleanProcessText(e.message));
+  return parts.join("\n\n").slice(0, max);
+}
+
 function ensureTailwindV3Files(repo: string): void {
   ensureFile(path.join(repo, "postcss.config.js"), `export default {
   plugins: {
@@ -88,8 +111,9 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       installedDeps = true;
       logger.info(`[module:setup-build preclaim] npm install ok`, { runId: ctx.runId });
     } catch (e) {
-      logger.warn(`[module:setup-build preclaim] npm install failed: ${String(e).slice(0, 200)}`, { runId: ctx.runId });
-      ctx.context["baseline_fail"] = `npm install failed: ${String(e).slice(0, 300)}`;
+      const details = formatProcessFailure(e);
+      logger.warn(`[module:setup-build preclaim] npm install failed: ${details.slice(0, 300)}`, { runId: ctx.runId });
+      ctx.context["baseline_fail"] = `npm install failed:\n${details}`;
     }
   }
   if (installedDeps) {
@@ -127,8 +151,9 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
         execFileSync("npm", ["run", "build"], { cwd: repo, timeout: 180000, stdio: "pipe" });
         logger.info(`[module:setup-build preclaim] build baseline ok`, { runId: ctx.runId });
       } catch (e) {
-        logger.warn(`[module:setup-build preclaim] baseline build failed: ${String(e).slice(0, 200)}`, { runId: ctx.runId });
-        ctx.context["baseline_fail"] = String(e).slice(0, 400);
+        const details = formatProcessFailure(e);
+        logger.warn(`[module:setup-build preclaim] baseline build failed: ${details.slice(0, 300)}`, { runId: ctx.runId });
+        ctx.context["baseline_fail"] = details;
       }
     } else {
       buildCmd = "(no build script)";
@@ -172,7 +197,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
               { cwd: repo, timeout: 120000, stdio: "pipe" });
             logger.info(`[module:setup-build preclaim] tailwind installed`, { runId: ctx.runId });
           } catch (e) {
-            logger.warn(`[module:setup-build preclaim] tailwind install failed: ${String(e).slice(0, 200)}`, { runId: ctx.runId });
+            logger.warn(`[module:setup-build preclaim] tailwind install failed: ${formatProcessFailure(e, 500)}`, { runId: ctx.runId });
           }
         }
         if (!usesTailwindV4) ensureTailwindV3Files(repo);
@@ -209,14 +234,15 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
             logger.info(`[module:setup-build preclaim] post-stitch build ok`, { runId: ctx.runId });
           }
         } catch (e) {
-          const msg = `npm run build failed after stitch-to-jsx: ${String(e).slice(0, 300)}`;
+          const msg = `npm run build failed after stitch-to-jsx:\n${formatProcessFailure(e)}`;
           logger.warn(`[module:setup-build preclaim] ${msg}`, { runId: ctx.runId });
           ctx.context["baseline_fail"] = msg;
         }
       }
     } catch (e) {
-      logger.warn(`[module:setup-build preclaim] stitch-to-jsx failed: ${String(e).slice(0, 200)}`, { runId: ctx.runId });
-      ctx.context["baseline_fail"] = `stitch-to-jsx failed: ${String(e).slice(0, 300)}`;
+      const details = formatProcessFailure(e);
+      logger.warn(`[module:setup-build preclaim] stitch-to-jsx failed: ${details.slice(0, 300)}`, { runId: ctx.runId });
+      ctx.context["baseline_fail"] = `stitch-to-jsx failed:\n${details}`;
     }
   }
 }

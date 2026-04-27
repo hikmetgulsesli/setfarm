@@ -59,6 +59,13 @@ describe("05-setup-build step module", () => {
     assert.ok(guardrails.includes("tailwindcss: {}"), "late PostCSS fallback should not generate a Tailwind v4 plugin config");
   });
 
+  it("records actionable process stderr when setup-build preclaim fails", () => {
+    const preclaim = fs.readFileSync("src/installer/steps/05-setup-build/preclaim.ts", "utf-8");
+    assert.ok(preclaim.includes("formatProcessFailure"), "preclaim should preserve stdout/stderr from failed commands");
+    assert.ok(preclaim.includes("stderr:"), "preclaim failures should include stderr labels");
+    assert.ok(preclaim.includes("npm run build failed after stitch-to-jsx:\\n"), "post-stitch build failures should keep the real compiler output");
+  });
+
   it("onComplete stamps build_cmd from parsed output", async () => {
     const context: Record<string, string> = {};
     const ctx: CompleteContext = {

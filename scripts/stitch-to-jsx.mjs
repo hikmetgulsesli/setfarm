@@ -43,9 +43,31 @@ function findScreenHtml(screen) {
 
 const JSX_ATTRIBUTE_MAP = {
   "accept-charset": "acceptCharset",
+  "allowfullscreen": "allowFullScreen",
+  "autocomplete": "autoComplete",
+  "autofocus": "autoFocus",
   "class": "className",
+  "colspan": "colSpan",
+  "contenteditable": "contentEditable",
+  "crossorigin": "crossOrigin",
+  "datetime": "dateTime",
+  "enctype": "encType",
   "for": "htmlFor",
+  "formaction": "formAction",
+  "formenctype": "formEncType",
+  "formmethod": "formMethod",
+  "formnovalidate": "formNoValidate",
+  "formtarget": "formTarget",
+  "http-equiv": "httpEquiv",
+  "maxlength": "maxLength",
+  "minlength": "minLength",
+  "novalidate": "noValidate",
+  "playsinline": "playsInline",
+  "readonly": "readOnly",
+  "rowspan": "rowSpan",
+  "srcset": "srcSet",
   "tabindex": "tabIndex",
+  "usemap": "useMap",
   "viewbox": "viewBox",
   "preserveaspectratio": "preserveAspectRatio",
   "stroke-width": "strokeWidth",
@@ -67,6 +89,43 @@ const JSX_ATTRIBUTE_MAP = {
   "xmlns:xlink": "xmlnsXlink",
 };
 
+const NUMERIC_JSX_ATTRIBUTES = new Set([
+  "colSpan",
+  "cols",
+  "maxLength",
+  "minLength",
+  "rowSpan",
+  "rows",
+  "size",
+  "span",
+  "start",
+  "tabIndex",
+]);
+
+const BOOLEAN_JSX_ATTRIBUTES = new Set([
+  "allowFullScreen",
+  "async",
+  "autoFocus",
+  "autoPlay",
+  "checked",
+  "controls",
+  "default",
+  "defer",
+  "disabled",
+  "formNoValidate",
+  "hidden",
+  "loop",
+  "multiple",
+  "muted",
+  "noValidate",
+  "open",
+  "playsInline",
+  "readOnly",
+  "required",
+  "reversed",
+  "selected",
+]);
+
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -79,8 +138,29 @@ function normalizeJsxAttributeNames(input) {
   return out;
 }
 
+function normalizeJsxAttributeValues(input) {
+  let out = input;
+  for (const attr of NUMERIC_JSX_ATTRIBUTES) {
+    out = out.replace(
+      new RegExp(`\\b${escapeRegExp(attr)}=["'](-?\\d+(?:\\.\\d+)?)["']`, "g"),
+      `${attr}={$1}`,
+    );
+  }
+  for (const attr of BOOLEAN_JSX_ATTRIBUTES) {
+    out = out.replace(
+      new RegExp(`\\b${escapeRegExp(attr)}=["'](?:true|${escapeRegExp(attr)})["']`, "gi"),
+      `${attr}={true}`,
+    );
+    out = out.replace(
+      new RegExp(`\\b${escapeRegExp(attr)}=["']false["']`, "gi"),
+      `${attr}={false}`,
+    );
+  }
+  return out;
+}
+
 function htmlToJsx(html) {
-  return normalizeJsxAttributeNames(html)
+  return normalizeJsxAttributeValues(normalizeJsxAttributeNames(html))
     .replace(/<(img|br|hr|input|meta|link)([^>]*?)>/gi, (_, tag, attrs) => {
       const cleanAttrs = String(attrs || "").replace(/\/\s*$/, "").trimEnd();
       return `<${tag}${cleanAttrs} />`;
