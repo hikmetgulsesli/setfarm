@@ -56,8 +56,19 @@ const ALWAYS_DENY = [
 const WEB_TOOL_DENY = ["web_search", "web_fetch"];
 const WORKFLOW_AGENT_SKILLS = ["setfarm-workflows"];
 const WORKFLOW_AGENT_SKILLS_LIMITS = { maxSkillsPromptChars: 1200 } as const;
-const MINIMAX_AGENT_MODEL = { primary: "minimax/MiniMax-M2.7", fallbacks: ["kimi-coding/kimi-for-coding"] } as const;
-const DEVELOPER_AGENT_MODEL = { primary: "kimi-coding/kimi-for-coding", fallbacks: ["minimax/MiniMax-M2.7"] } as const;
+const MINIMAX_OPENAI_PROVIDER_ID = "minimax-openai";
+const MINIMAX_OPENAI_MODEL_REF = `${MINIMAX_OPENAI_PROVIDER_ID}/MiniMax-M2.7`;
+const MINIMAX_ANTHROPIC_MODEL_REF = "minimax/MiniMax-M2.7";
+const KIMI_CODING_MODEL_REF = "kimi-coding/kimi-for-coding";
+const WORKFLOW_LLM_IDLE_TIMEOUT_SECONDS = 8;
+const MINIMAX_AGENT_MODEL = {
+  primary: MINIMAX_OPENAI_MODEL_REF,
+  fallbacks: [KIMI_CODING_MODEL_REF, MINIMAX_ANTHROPIC_MODEL_REF],
+} as const;
+const DEVELOPER_AGENT_MODEL = {
+  primary: KIMI_CODING_MODEL_REF,
+  fallbacks: [MINIMAX_OPENAI_MODEL_REF, MINIMAX_ANTHROPIC_MODEL_REF],
+} as const;
 
 const DEFAULT_CRON_SESSION_RETENTION = "4h";
 const DEFAULT_SESSION_MAINTENANCE = {
@@ -212,6 +223,55 @@ function ensureExecConfig(config: OpenClawConfig): void {
   tools.fs.workspaceOnly = false;
 }
 
+function ensureWorkflowLlmConfig(config: OpenClawConfig): void {
+  if (!config.agents) config.agents = {};
+  if (!config.agents.defaults) config.agents.defaults = {};
+  const defaults = config.agents.defaults as Record<string, any>;
+  if (!defaults.llm || typeof defaults.llm !== "object") defaults.llm = {};
+  const current = defaults.llm.idleTimeoutSeconds;
+  if (current !== WORKFLOW_LLM_IDLE_TIMEOUT_SECONDS) {
+    defaults.llm.idleTimeoutSeconds = WORKFLOW_LLM_IDLE_TIMEOUT_SECONDS;
+  }
+}
+
+function ensureMinimaxOpenAIProvider(config: OpenClawConfig): void {
+  const root = config as Record<string, any>;
+  if (!root.models || typeof root.models !== "object") root.models = {};
+  if (!root.models.providers || typeof root.models.providers !== "object") root.models.providers = {};
+  const providers = root.models.providers as Record<string, any>;
+  const source = providers.minimax;
+  const existing = providers[MINIMAX_OPENAI_PROVIDER_ID];
+  const apiKey = existing?.apiKey ?? source?.apiKey;
+  if (!apiKey) return;
+  providers[MINIMAX_OPENAI_PROVIDER_ID] = {
+    ...(existing && typeof existing === "object" ? existing : {}),
+    baseUrl: "https://api.minimax.io/v1",
+    apiKey,
+    api: "openai-completions",
+    authHeader: true,
+    models: [
+      {
+        id: "MiniMax-M2.7",
+        name: "MiniMax M2.7 (OpenAI compat)",
+        reasoning: false,
+        input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 200000,
+        maxTokens: 16384,
+      },
+      {
+        id: "MiniMax-M2.7-lightning",
+        name: "MiniMax M2.7 Lightning (OpenAI compat)",
+        reasoning: false,
+        input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 200000,
+        maxTokens: 16384,
+      },
+    ],
+  };
+}
+
 function ensureSessionMaintenance(config: OpenClawConfig): void {
   if (!config.session) config.session = {};
   if (!config.session.maintenance) {
@@ -280,6 +340,8 @@ export async function installWorkflow(params: { workflowId: string }): Promise<W
   const { path: configPath, config } = await readOpenClawConfig();
   ensureCronSessionRetention(config);
   ensureExecConfig(config);
+  ensureWorkflowLlmConfig(config);
+  ensureMinimaxOpenAIProvider(config);
   ensureSessionMaintenance(config);
   const list = ensureAgentList(config);
   ensureMainAgentInList(list, config);

@@ -25,10 +25,16 @@ export type OpenClawConfig = {
       sandbox?: {
         mode?: string;
       };
+      llm?: {
+        idleTimeoutSeconds?: number;
+      };
     };
     list?: Array<Record<string, unknown>>;
   };
   tools?: Record<string, unknown>;
+  models?: {
+    providers?: Record<string, unknown>;
+  };
   providers?: Record<string, unknown>;
 };
 
