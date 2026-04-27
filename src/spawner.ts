@@ -20,6 +20,9 @@ const AGENT_TIMEOUT_SECONDS = 1800;
 const PID_FILE = path.join(os.homedir(), ".openclaw", "setfarm", "spawner.pid");
 const MAX_CONCURRENT = 8;
 const SPAWN_STAGGER_MS = parseInt(process.env.SETFARM_SPAWN_STAGGER_MS || "12000", 10);
+const NON_DEVELOPER_STUCK_MS = parsePositiveInt(process.env.SETFARM_AGENT_STUCK_MS, 5 * 60_000);
+const DEVELOPER_STUCK_MS = parsePositiveInt(process.env.SETFARM_DEVELOPER_AGENT_STUCK_MS, 8 * 60_000);
+const STARTUP_RUNNING_GRACE_MS = parsePositiveInt(process.env.SETFARM_STARTUP_RUNNING_GRACE_MS, 0);
 
 // Wave 13 Bug M (run #344 postmortem): agent default cwd must NOT be the
 // setfarm-repo. Previously execFile inherited the spawner's cwd (the systemd
@@ -59,12 +62,30 @@ type ActiveProcess = {
   agentId: string;
   wfId: string;
   role: string;
+  startedAtMs: number;
+  transcriptPath: string;
 };
 
 const activeProcesses = new Map<string, ActiveProcess>();
 const queuedSpawns = new Set<string>();
 let shuttingDown = false;
 let nextSpawnEarliest = 0;
+
+function parsePositiveInt(raw: string | undefined, fallback: number): number {
+  const parsed = parseInt(raw || "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function formatDurationMs(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return minutes > 0 ? `${minutes}m${rest}s` : `${rest}s`;
+}
+
+function stuckThresholdMs(role: string): number {
+  return role === "developer" ? DEVELOPER_STUCK_MS : NON_DEVELOPER_STUCK_MS;
+}
 
 function resolveAgentId(wfId: string, role: string, mapping: Record<string, string | string[]>): string[] {
   // cuddly-sleeping-quail: respect agent_mapping the same way agent-cron does.
@@ -83,60 +104,25 @@ function resolveAgentId(wfId: string, role: string, mapping: Record<string, stri
 function buildPreclaimedPrompt(wfId: string, role: string, agentId: string, outputFileId: string, claimFile: string): string {
   const cli = resolveSetfarmCli();
   const cliCommand = "/usr/bin/node " + cli;
-  return `Workflow agent. Claim already prepared by Setfarm spawner. Work in this session only.
+  return `Setfarm claim ready. First action MUST be exec. No prose or HEARTBEAT before exec.
 
-CRITICAL PROTOCOL:
-- Do not answer in prose before using the exec tool. Your first action must be an exec command.
-- Do not say "I will", "Let me", or plain HEARTBEAT_OK as a chat reply before step complete/fail.
-- HEARTBEAT_OK is allowed only after an exec command has run setfarm step complete or setfarm step fail.
-- If you cannot complete the claim, run setfarm step fail with the real STEP_ID.
-- A response that describes work without running commands is invalid and will be retried.
+CLAIM_FILE=${claimFile}
+OUTPUT_FILE=/tmp/setfarm-output-${outputFileId}.txt
 
-CLAIM_FILE: ${claimFile}
-OUTPUT_FILE: /tmp/setfarm-output-${outputFileId}.txt
+First exec command should start with:
+CLAIM_FILE='${claimFile}'; OUTPUT_FILE='/tmp/setfarm-output-${outputFileId}.txt'; STEP_ID=$(jq -r '.stepId // empty' "$CLAIM_FILE"); WORKDIR=$(jq -r 'if (.input|type)=="object" then (.input.story_workdir // .input.repo // "") else "" end' "$CLAIM_FILE"); if [ -z "$WORKDIR" ]; then WORKDIR=$(jq -r 'if (.input|type)=="string" then .input else "" end' "$CLAIM_FILE" | sed -n 's/^WORKDIR:[[:space:]]*//p; s/^REPO:[[:space:]]*//p' | head -1); fi; case "$WORKDIR" in ""|*"<"*|*">"*|*"[missing:"*|*'$HOME'*|~*) WORKDIR="$HOME/.openclaw/workspace/agent-scratch";; esac; mkdir -p "$WORKDIR"; cd "$WORKDIR"; case "$(pwd)" in "$HOME"/.openclaw/setfarm-repo*) echo FATAL_PLATFORM_CWD; exit 1;; esac; printf 'STEP_ID=%s\nWORKDIR=%s\n' "$STEP_ID" "$(pwd)"; jq -r 'if (.input|type)=="object" then (.input.task // .input.current_story_title // .input.story_title // "") else .input end' "$CLAIM_FILE" | head -c 1200; echo
 
-0. SAFE SHELL START:
-   mkdir -p ~/.openclaw/workspace/agent-scratch && cd ~/.openclaw/workspace/agent-scratch
-   NEVER work from ~/.openclaw/setfarm-repo.
+Do ${wfId}/${role} work in WORKDIR only. Read CLAIM_FILE for exact requirements. Do NOT run step peek/claim. No subagents/background delegation. No PR actions unless claim explicitly owns PR work.
 
-1. Do NOT run step peek or step claim. Do NOT overwrite CLAIM_FILE. Extract claim data:
-   CLAIM_FILE=${claimFile}
-   STEP_ID=$(jq -r '.stepId // empty' "$CLAIM_FILE")
-   WORKDIR=$(jq -r 'if (.input | type) == "object" then (.input.story_workdir // .input.repo // "") else "" end' "$CLAIM_FILE")
-   if [ -z "$WORKDIR" ]; then
-     WORKDIR=$(jq -r 'if (.input | type) == "string" then .input else "" end' "$CLAIM_FILE" | sed -n "s/^WORKDIR:[[:space:]]*//p; s/^REPO:[[:space:]]*//p" | head -1)
-   fi
-   [ -z "$STEP_ID" ] && { echo "HEARTBEAT_OK"; exit 0; }
-   case "$WORKDIR" in
-     ""|*"<"*|*">"*|*"[missing:"*|*'$HOME'*|~*) WORKDIR="" ;;
-   esac
-   case "$WORKDIR" in
-     /*) ;;
-     *) WORKDIR="" ;;
-   esac
-   [ -z "$WORKDIR" ] && WORKDIR="$HOME/.openclaw/workspace/agent-scratch"
-   mkdir -p "$WORKDIR"
-   cd "$WORKDIR" && pwd
-   case "$(pwd)" in
-     $HOME/.openclaw/setfarm-repo*) echo "STATUS: fatal"; echo "FATAL: platform_path_touched"; exit 1;;
-   esac
-
-2. Read the claim input from CLAIM_FILE. Prefer targeted reads, for example:
-   jq -r 'if (.input | type) == "object" then (.input.task // "") else .input end' "$CLAIM_FILE"
-   jq -r 'if (.input | type) == "object" then (.input.prd // "") else "" end' "$CLAIM_FILE"
-
-3. Do the requested ${wfId}/${role} work from WORKDIR. Stay in WORKDIR.
-
-4. Write KEY: VALUE output, then complete:
-cat <<'SETFARM_EOF' > /tmp/setfarm-output-${outputFileId}.txt
+Complete with:
+cat > /tmp/setfarm-output-${outputFileId}.txt <<'SETFARM_EOF'
 STATUS: done
-<other keys required by the claim input>
+<required claim output keys>
 SETFARM_EOF
 ${cliCommand} step complete "$STEP_ID" --file /tmp/setfarm-output-${outputFileId}.txt
 
-On failure: ${cliCommand} step fail "$STEP_ID" "reason"
-After complete/fail, reply HEARTBEAT_OK and stop.
-Rules: no subagents, no background delegation, no PR actions unless claim explicitly owns PR work.`;
+Fail with: ${cliCommand} step fail "$STEP_ID" "specific reason"
+After complete/fail, reply HEARTBEAT_OK and stop.`;
 }
 
 function compactExitReason(err: unknown): string {
@@ -154,6 +140,21 @@ function killProcessTree(pid: number | undefined, signal: NodeJS.Signals = "SIGT
     // no children or pgrep unavailable
   }
   try { process.kill(pid, signal); } catch { /* already dead */ }
+}
+
+function killStartupOrphanSpawnerAgents(): void {
+  try {
+    const out = execFileSync("pgrep", ["-f", "openclaw.*agent.*--session-id spawner-"], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    for (const pidRaw of out.split(/\s+/).filter(Boolean)) {
+      const pid = Number(pidRaw);
+      if (!Number.isFinite(pid) || pid === process.pid) continue;
+      console.warn(`[spawner] killing orphan spawner OpenClaw process pid=${pid}`);
+      killProcessTree(pid, "SIGTERM");
+      setTimeout(() => killProcessTree(pid, "SIGKILL"), 5000);
+    }
+  } catch {
+    // no orphan spawner-owned openclaw processes
+  }
 }
 
 async function failClaimIfStillRunning(stepId: string, agentId: string, wfId: string, role: string, transcriptPath: string, err: unknown): Promise<void> {
@@ -186,6 +187,19 @@ async function reapFinishedClaims(): Promise<void> {
       if (!row) {
         console.warn(`[spawner] Reaping ${key}: claimed step disappeared`);
       } else if (row.run_status === "running" && row.step_status === "running") {
+        const ageMs = Date.now() - active.startedAtMs;
+        const thresholdMs = stuckThresholdMs(active.role);
+        if (ageMs < thresholdMs) continue;
+
+        const reason = `AGENT_PROCESS_STUCK: ${active.agentId} kept ${active.wfId}/${active.role} running for ${formatDurationMs(ageMs)} without step complete/fail; killed by spawner watchdog. Transcript: ${active.transcriptPath}`;
+        console.warn(`[spawner] ${reason}`);
+        try { fs.appendFileSync(active.transcriptPath, `--- WATCHDOG ${new Date().toISOString()} ---
+${reason}
+`); } catch {}
+        killProcessTree(active.child.pid, "SIGTERM");
+        setTimeout(() => killProcessTree(active.child.pid, "SIGKILL"), 5000);
+        activeProcesses.delete(key);
+        await failStep(active.stepId, reason);
         continue;
       } else {
         console.log(`[spawner] Reaping ${key}: step ${row.step_id} is ${row.step_status}, run is ${row.run_status}`);
@@ -318,7 +332,32 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     }
   });
   if (child.pid && claim.runId && claim.stepId) {
-    activeProcesses.set(key, { child, runId: claim.runId, stepId: claim.stepId, agentId, wfId, role });
+    activeProcesses.set(key, { child, runId: claim.runId, stepId: claim.stepId, agentId, wfId, role, startedAtMs: Date.now(), transcriptPath });
+  }
+}
+
+
+async function failStaleRunningClaimsFromPreviousSpawner(): Promise<void> {
+  try {
+    const graceSeconds = Math.max(0, Math.ceil(STARTUP_RUNNING_GRACE_MS / 1000));
+    const rows = await pgQuery<{ id: string; step_id: string; agent_id: string; run_number: number; updated_at: string }>(
+      `SELECT s.id, s.step_id, s.agent_id, r.run_number, s.updated_at
+       FROM steps s
+       JOIN runs r ON r.id = s.run_id
+       WHERE s.status = 'running'
+         AND r.status = 'running'
+         AND s.updated_at <= NOW() - ($1::int * interval '1 second')
+       ORDER BY s.updated_at ASC
+       LIMIT 20`,
+      [graceSeconds],
+    );
+    for (const row of rows) {
+      const reason = `AGENT_PROCESS_ORPHANED: spawner restarted with no active process for run #${row.run_number} ${row.step_id} (${row.agent_id}); retrying running claim last updated ${row.updated_at}`;
+      console.warn(`[spawner] ${reason}`);
+      await failStep(row.id, reason);
+    }
+  } catch (err) {
+    console.warn(`[spawner] startup running claim recovery failed: ${String(err).slice(0, 300)}`);
   }
 }
 
@@ -486,6 +525,8 @@ async function main() {
   fs.mkdirSync(path.dirname(PID_FILE), { recursive: true });
   fs.writeFileSync(PID_FILE, String(process.pid));
   console.log(`[spawner] Starting (PID ${process.pid})`);
+  killStartupOrphanSpawnerAgents();
+  await failStaleRunningClaimsFromPreviousSpawner();
 
   const shutdown = () => {
     shuttingDown = true;

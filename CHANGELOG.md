@@ -7,6 +7,8 @@
 - Event spawner preclaimed prompts now require exec-first completion, use `/usr/bin/node dist/cli/cli.js step complete/fail`, and invoke `openclaw agent --json`, preventing agents from copying a non-executable CLI path or hanging forever in non-JSON CLI mode after the gateway has already answered.
 - Explicit `MAX_STORIES=1` runs now auto-complete the stories step from Stitch screen metadata into one comprehensive `US-001`, so capped smoke projects do not depend on a model generating story JSON.
 - Workflow-installed agent fallbacks no longer include the legacy Anthropic-compatible `minimax/MiniMax-M2.7` route; agents use the OpenAI-compatible MiniMax provider and Kimi only.
+- Event spawner now kills orphaned spawner-owned OpenClaw processes on restart, fails stale running claims, and watchdog-fails active claims that exceed per-role runtime limits without step complete / step fail, so model timeouts no longer leave runs stuck in running.
+- Prepared-claim prompts are shorter and command-first, reducing heavy implement prompt overhead while preserving safe workdir, step complete, and step fail rules.
 
 ## 2026-04-27 - Stitch JSX Baseline Hardening
 
