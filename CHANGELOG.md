@@ -4,6 +4,7 @@
 - Non-developer workflow agents now use `minimax-openai/MiniMax-M2.7` primary with Kimi and the legacy Anthropic-compatible MiniMax provider as fallbacks; developer agents keep Kimi primary with the OpenAI-compatible MiniMax fallback.
 - Workflow install now pins `agents.defaults.llm.idleTimeoutSeconds` to 8 seconds so completed MiniMax responses flush promptly instead of waiting on long OpenClaw idle windows.
 - Workflow polling defaults, feature-dev/ui-refactor/daily-standup polling models, and story retry fallback now also use `minimax-openai/MiniMax-M2.7`, preventing cron/fallback paths from regressing to the slower Anthropic-compatible MiniMax provider.
+- Event spawner preclaimed prompts now require exec-first completion and use `/usr/bin/node dist/cli/cli.js step complete/fail`, preventing agents from copying a non-executable CLI path and exiting with HEARTBEAT_OK before completing the step.
 
 ## 2026-04-27 - Stitch JSX Baseline Hardening
 

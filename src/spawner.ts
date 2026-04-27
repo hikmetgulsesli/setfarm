@@ -82,6 +82,7 @@ function resolveAgentId(wfId: string, role: string, mapping: Record<string, stri
 
 function buildPreclaimedPrompt(wfId: string, role: string, agentId: string, outputFileId: string, claimFile: string): string {
   const cli = resolveSetfarmCli();
+  const cliCommand = "/usr/bin/node " + cli;
   return `Workflow agent. Claim already prepared by Setfarm spawner. Work in this session only.
 
 CRITICAL PROTOCOL:
@@ -131,9 +132,9 @@ cat <<'SETFARM_EOF' > /tmp/setfarm-output-${outputFileId}.txt
 STATUS: done
 <other keys required by the claim input>
 SETFARM_EOF
-${cli} step complete "$STEP_ID" --file /tmp/setfarm-output-${outputFileId}.txt
+${cliCommand} step complete "$STEP_ID" --file /tmp/setfarm-output-${outputFileId}.txt
 
-On failure: ${cli} step fail "$STEP_ID" "reason"
+On failure: ${cliCommand} step fail "$STEP_ID" "reason"
 After complete/fail, reply HEARTBEAT_OK and stop.
 Rules: no subagents, no background delegation, no PR actions unless claim explicitly owns PR work.`;
 }
