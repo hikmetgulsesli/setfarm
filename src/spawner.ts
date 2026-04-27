@@ -8,7 +8,7 @@ import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_pro
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { pgGet, pgQuery } from "./db-pg.js";
+import { pgGet, pgQuery, pgRun } from "./db-pg.js";
 import { loadWorkflowSpec } from "./installer/workflow-spec.js";
 import { resolveWorkflowDir, resolveSetfarmCli } from "./installer/paths.js";
 import { PR_REVIEW_DELAY_MS } from "./installer/constants.js";
@@ -160,6 +160,10 @@ function compactExitReason(err: unknown): string {
   return String((err as any)?.message || err || "unknown error").replace(/\s+/g, " ").slice(0, 700);
 }
 
+function isCleanZeroExit(err: unknown): boolean {
+  return /code\s*=?\s*0|exited with code 0/i.test(compactExitReason(err));
+}
+
 function killProcessTree(pid: number | undefined, signal: NodeJS.Signals = "SIGTERM"): void {
   if (!pid) return;
   try {
@@ -227,13 +231,70 @@ function killStartupOrphanSpawnerAgents(): void {
   }
 }
 
-async function failClaimIfStillRunning(stepId: string, agentId: string, wfId: string, role: string, transcriptPath: string, err: unknown): Promise<void> {
+async function loopStoryCompletedAfter(runId: string, agentId: string, currentStoryId: string | null, startedAtMs?: number): Promise<boolean> {
+  const startedAt = new Date(startedAtMs || Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  if (currentStoryId) {
+    const current = await pgGet<{ status: string }>(
+      "SELECT status FROM stories WHERE id = $1 AND run_id = $2 LIMIT 1",
+      [currentStoryId, runId],
+    );
+    if (current && ["done", "verified"].includes(current.status)) return true;
+  }
+
+  const completed = await pgGet<{ story_id: string }>(
+    `SELECT story_id
+     FROM stories
+     WHERE run_id = $1
+       AND claimed_by = $2
+       AND status IN ('done', 'verified')
+       AND updated_at >= $3
+     ORDER BY updated_at DESC
+     LIMIT 1`,
+    [runId, agentId, startedAt],
+  );
+  return !!completed;
+}
+
+async function verifyEachHasDoneStory(runId: string, verifyStepId: string): Promise<boolean> {
+  const loopStep = await pgGet<{ loop_config: string | null }>(
+    `SELECT loop_config
+     FROM steps
+     WHERE run_id = $1 AND type = 'loop' AND loop_config LIKE '%verifyEach%'
+     LIMIT 1`,
+    [runId],
+  );
+  if (!loopStep?.loop_config) return true;
+
   try {
-    const row = await pgGet<{ status: string; step_id: string }>(
-      "SELECT status, step_id FROM steps WHERE id = $1 LIMIT 1",
+    const cfg = JSON.parse(loopStep.loop_config);
+    if (!cfg?.verifyEach || (cfg.verifyStep || "verify") !== verifyStepId) return true;
+  } catch {
+    return true;
+  }
+
+  const waiting = await pgGet<{ cnt: string }>(
+    "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status = 'done'",
+    [runId],
+  );
+  return parseInt(waiting?.cnt || "0", 10) > 0;
+}
+
+async function failClaimIfStillRunning(stepId: string, agentId: string, wfId: string, role: string, transcriptPath: string, err: unknown, startedAtMs?: number): Promise<void> {
+  try {
+    const row = await pgGet<{ status: string; step_id: string; run_id: string; type: string; current_story_id: string | null }>(
+      "SELECT status, step_id, run_id, type, current_story_id FROM steps WHERE id = $1 LIMIT 1",
       [stepId],
     );
     if (!row || row.status !== "running") return;
+
+    if (
+      row.type === "loop" &&
+      isCleanZeroExit(err) &&
+      await loopStoryCompletedAfter(row.run_id, agentId, row.current_story_id, startedAtMs)
+    ) {
+      console.log(`[spawner] ${agentId} exited cleanly after completing a loop story for ${wfId}/${role}; keeping loop ${row.step_id} running`);
+      return;
+    }
 
     const reason = `AGENT_PROCESS_EXITED: ${agentId} exited before completing ${wfId}/${role}. ${compactExitReason(err)}. Transcript: ${transcriptPath}`;
     console.warn(`[spawner] failing still-running claim ${stepId} (${row.step_id}) after agent exit`);
@@ -257,6 +318,14 @@ async function reapFinishedClaims(): Promise<void> {
       if (!row) {
         console.warn(`[spawner] Reaping ${key}: claimed step disappeared`);
       } else if (row.run_status === "running" && row.step_status === "running") {
+        if (row.step_id === "verify" && !await verifyEachHasDoneStory(active.runId, row.step_id)) {
+          console.log(`[spawner] Reaping stale verify agent ${key}: no done story awaits verify`);
+          terminateActiveProcess(active, "verify-no-done-story");
+          activeProcesses.delete(key);
+          await pgRun("UPDATE steps SET status = 'waiting', updated_at = NOW() WHERE id = $1 AND status = 'running'", [active.stepId]);
+          continue;
+        }
+
         const ageMs = Date.now() - active.startedAtMs;
         const thresholdMs = stuckThresholdMs(active.role);
         if (ageMs < thresholdMs) continue;
@@ -370,6 +439,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     })(),
     stdio: ["ignore", outFd, errFd],
   });
+  const startedAtMs = Date.now();
   let processExited = false;
   const closeTranscriptFds = () => {
     try { fs.closeSync(outFd); } catch {}
@@ -381,7 +451,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
       fs.appendFileSync(transcriptPath, `--- HARD TIMEOUT ${new Date().toISOString()} ---\nopenclaw agent exceeded ${AGENT_TIMEOUT_SECONDS + 60}s\n`);
     } catch {}
     terminateActiveProcess(
-      { child, runId: claim.runId || "", stepId: claim.stepId || "", agentId, wfId, role, startedAtMs: Date.now(), transcriptPath, sessionId, sessionKey },
+      { child, runId: claim.runId || "", stepId: claim.stepId || "", agentId, wfId, role, startedAtMs, transcriptPath, sessionId, sessionKey },
       "spawn-hard-timeout",
     );
   }, (AGENT_TIMEOUT_SECONDS + 60) * 1000);
@@ -395,7 +465,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
       fs.appendFileSync(transcriptPath, "--- SPAWN ERROR ---\n" + String((err as any).message || err) + "\n--- FINISHED " + new Date().toISOString() + " ---\n");
     } catch (e) { console.warn("[spawner] transcript write failed: " + String(e)); }
     console.warn("[spawner] " + agentId + " spawn error: " + ((err as any).message || err) + " (transcript: " + transcriptPath + ")");
-    if (isCurrentProcess && !shuttingDown && claim.stepId) void failClaimIfStillRunning(claim.stepId, agentId, wfId, role, transcriptPath, err);
+    if (isCurrentProcess && !shuttingDown && claim.stepId) void failClaimIfStillRunning(claim.stepId, agentId, wfId, role, transcriptPath, err, startedAtMs);
   });
   child.once("exit", (code, signal) => {
     processExited = true;
@@ -409,7 +479,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     const err = code === 0 ? null : new Error(`openclaw agent exited code=${code ?? ""} signal=${signal ?? ""}`);
     if (err) {
       console.warn("[spawner] " + agentId + " exited: " + ((err as any).message || err) + " (transcript: " + transcriptPath + ")");
-      if (isCurrentProcess && !shuttingDown && claim.stepId) void failClaimIfStillRunning(claim.stepId, agentId, wfId, role, transcriptPath, err);
+      if (isCurrentProcess && !shuttingDown && claim.stepId) void failClaimIfStillRunning(claim.stepId, agentId, wfId, role, transcriptPath, err, startedAtMs);
     }
     else {
       console.log("[spawner] " + agentId + " completed (transcript: " + transcriptPath + ")");
@@ -421,12 +491,13 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
           role,
           transcriptPath,
           new Error("agent exited with code 0 without calling setfarm step complete/fail"),
+          startedAtMs,
         );
       }
     }
   });
   if (child.pid && claim.runId && claim.stepId) {
-    activeProcesses.set(key, { child, runId: claim.runId, stepId: claim.stepId, agentId, wfId, role, startedAtMs: Date.now(), transcriptPath, sessionId, sessionKey });
+    activeProcesses.set(key, { child, runId: claim.runId, stepId: claim.stepId, agentId, wfId, role, startedAtMs, transcriptPath, sessionId, sessionKey });
   }
 }
 
