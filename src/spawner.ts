@@ -11,6 +11,7 @@ import os from "node:os";
 import { pgGet, pgQuery } from "./db-pg.js";
 import { loadWorkflowSpec } from "./installer/workflow-spec.js";
 import { resolveWorkflowDir, resolveSetfarmCli } from "./installer/paths.js";
+import { PR_REVIEW_DELAY_MS } from "./installer/constants.js";
 import { claimStep } from "./installer/step-ops.js";
 import { failStep } from "./installer/step-fail.js";
 
@@ -89,6 +90,20 @@ function formatDurationMs(ms: number): string {
 function stuckThresholdMs(role: string): number {
   if (role.includes("qa") || role.includes("test")) return QA_AGENT_STUCK_MS;
   return role === "developer" ? DEVELOPER_STUCK_MS : NON_DEVELOPER_STUCK_MS;
+}
+
+function isVerifyReviewDelayActive(stepId: string, runContext: string | null): boolean {
+  if (stepId !== "verify" || !runContext) return false;
+  try {
+    const context = JSON.parse(runContext);
+    const sinceRaw = context?.verify_pending_since;
+    const prUrl = context?.verify_pending_pr_url;
+    if (!sinceRaw || !prUrl) return false;
+    const sinceMs = new Date(String(sinceRaw)).getTime();
+    return Number.isFinite(sinceMs) && Date.now() - sinceMs < PR_REVIEW_DELAY_MS;
+  } catch {
+    return false;
+  }
 }
 
 function buildOpenClawChildEnv(): NodeJS.ProcessEnv {
@@ -551,8 +566,8 @@ async function pollForPendingWork() {
   try {
     await reapFinishedClaims();
     await autoVerifyMergedPrEachStories();
-    const steps = await pgQuery<{ agent_id: string; run_id: string; step_id: string }>(
-      `SELECT s.agent_id, s.run_id, s.step_id
+    const steps = await pgQuery<{ agent_id: string; run_id: string; step_id: string; context: string | null }>(
+      `SELECT s.agent_id, s.run_id, s.step_id, r.context
        FROM steps s
        JOIN runs r ON r.id = s.run_id
        WHERE s.status = 'pending'
@@ -568,7 +583,13 @@ async function pollForPendingWork() {
        ORDER BY s.step_index ASC
        LIMIT 5`
     );
-    for (const s of steps) await handleStepPending({ agentId: s.agent_id, runId: s.run_id, stepId: s.step_id });
+    for (const s of steps) {
+      if (isVerifyReviewDelayActive(s.step_id, s.context)) {
+        console.log(`[spawner] Verify review delay active for run ${s.run_id.slice(0, 8)}; skip spawn`);
+        continue;
+      }
+      await handleStepPending({ agentId: s.agent_id, runId: s.run_id, stepId: s.step_id });
+    }
     const stories = await pgQuery<{ run_id: string; story_id: string }>(
       `SELECT s.run_id, s.story_id
        FROM stories s
