@@ -39,7 +39,7 @@ function extractRoleFromCronName(name: string, prefix: string): string {
   const match = suffix.match(/^(.+)-(\d+)$/);
   return match ? match[1] : suffix;
 }
-const DEFAULT_POLLING_MODEL = "minimax/MiniMax-M2.7";
+const DEFAULT_POLLING_MODEL = "minimax-openai/MiniMax-M2.7";
 
 export function gatewayAgentCronsEnabled(): boolean {
   return /^(1|true|yes)$/i.test(process.env.SETFARM_ENABLE_GATEWAY_AGENT_CRONS ?? "");

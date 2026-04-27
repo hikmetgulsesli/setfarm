@@ -104,7 +104,7 @@ export function validateConfig(raw: unknown): ConfigValidationError[] {
       if (agent?.model === "default") {
         errors.push({
           path: `agents.list[${agent.id ?? "?"}].model`,
-          expected: "explicit model name (e.g. minimax/MiniMax-M2.7)",
+          expected: "explicit model name (e.g. minimax-openai/MiniMax-M2.7)",
           actual: '"default"',
           severity: "error",
         });

@@ -20,9 +20,9 @@ describe("polling timeout sync across all workflows", () => {
     assert.equal(spec.polling?.timeoutSeconds, 1800);
   });
 
-  it("feature-dev workflow polling.model is minimax/MiniMax-M2.7", async () => {
+  it("feature-dev workflow polling.model is minimax-openai/MiniMax-M2.7", async () => {
     const spec = await loadWorkflowSpec(path.resolve("workflows", "feature-dev"));
-    assert.equal(spec.polling?.model, "minimax/MiniMax-M2.7");
+    assert.equal(spec.polling?.model, "minimax-openai/MiniMax-M2.7");
   });
 
   it("security-audit workflow polling.timeoutSeconds matches workflow.yml", async () => {

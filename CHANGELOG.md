@@ -3,6 +3,7 @@
 - Workflow install now provisions a `minimax-openai` provider that uses MiniMax's OpenAI-compatible endpoint while reusing the existing MiniMax API key reference.
 - Non-developer workflow agents now use `minimax-openai/MiniMax-M2.7` primary with Kimi and the legacy Anthropic-compatible MiniMax provider as fallbacks; developer agents keep Kimi primary with the OpenAI-compatible MiniMax fallback.
 - Workflow install now pins `agents.defaults.llm.idleTimeoutSeconds` to 8 seconds so completed MiniMax responses flush promptly instead of waiting on long OpenClaw idle windows.
+- Workflow polling defaults, feature-dev/ui-refactor/daily-standup polling models, and story retry fallback now also use `minimax-openai/MiniMax-M2.7`, preventing cron/fallback paths from regressing to the slower Anthropic-compatible MiniMax provider.
 
 ## 2026-04-27 - Stitch JSX Baseline Hardening
 

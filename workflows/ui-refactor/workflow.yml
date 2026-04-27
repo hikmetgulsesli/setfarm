@@ -20,7 +20,7 @@ cron:
   interval_ms: 240000  # 4 minutes
 
 polling:
-  model: minimax/MiniMax-M2.7
+  model: minimax-openai/MiniMax-M2.7
   timeoutSeconds: 1800
 
 notifications:
