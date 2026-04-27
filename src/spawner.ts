@@ -505,8 +505,8 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
 async function failStaleRunningClaimsFromPreviousSpawner(): Promise<void> {
   try {
     const graceSeconds = Math.max(0, Math.ceil(STARTUP_RUNNING_GRACE_MS / 1000));
-    const rows = await pgQuery<{ id: string; step_id: string; agent_id: string; run_number: number; updated_at: string }>(
-      `SELECT s.id, s.step_id, s.agent_id, r.run_number, s.updated_at
+    const rows = await pgQuery<{ id: string; step_id: string; agent_id: string; run_id: string; run_number: number; updated_at: string }>(
+      `SELECT s.id, s.step_id, s.agent_id, s.run_id, r.run_number, s.updated_at
        FROM steps s
        JOIN runs r ON r.id = s.run_id
        WHERE s.status = 'running'
@@ -517,6 +517,21 @@ async function failStaleRunningClaimsFromPreviousSpawner(): Promise<void> {
       [graceSeconds],
     );
     for (const row of rows) {
+      if (row.step_id === "implement") {
+        const doneStory = await pgGet<{ story_id: string }>(
+          "SELECT story_id FROM stories WHERE run_id = $1 AND status = 'done' ORDER BY updated_at DESC LIMIT 1",
+          [row.run_id],
+        );
+        if (doneStory) {
+          console.log(`[spawner] preserving orphaned implement loop for run #${row.run_number}: story ${doneStory.story_id} awaits verify`);
+          continue;
+        }
+      }
+      if (row.step_id === "verify" && !await verifyEachHasDoneStory(row.run_id, row.step_id)) {
+        console.log(`[spawner] clearing orphaned verify for run #${row.run_number}: no done story awaits verify`);
+        await pgRun("UPDATE steps SET status = 'waiting', updated_at = NOW() WHERE id = $1 AND status = 'running'", [row.id]);
+        continue;
+      }
       const reason = `AGENT_PROCESS_ORPHANED: spawner restarted with no active process for run #${row.run_number} ${row.step_id} (${row.agent_id}); retrying running claim last updated ${row.updated_at}`;
       console.warn(`[spawner] ${reason}`);
       await failStep(row.id, reason);
