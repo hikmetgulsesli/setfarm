@@ -84,6 +84,13 @@ function buildPreclaimedPrompt(wfId: string, role: string, agentId: string, outp
   const cli = resolveSetfarmCli();
   return `Workflow agent. Claim already prepared by Setfarm spawner. Work in this session only.
 
+CRITICAL PROTOCOL:
+- Do not answer in prose before using the exec tool. Your first action must be an exec command.
+- Do not say "I will", "Let me", or plain HEARTBEAT_OK as a chat reply before step complete/fail.
+- HEARTBEAT_OK is allowed only after an exec command has run setfarm step complete or setfarm step fail.
+- If you cannot complete the claim, run setfarm step fail with the real STEP_ID.
+- A response that describes work without running commands is invalid and will be retried.
+
 CLAIM_FILE: ${claimFile}
 OUTPUT_FILE: /tmp/setfarm-output-${outputFileId}.txt
 
