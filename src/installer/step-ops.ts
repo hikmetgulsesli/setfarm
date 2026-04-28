@@ -57,6 +57,27 @@ function isSmokeInfrastructureFailure(failure: string): boolean {
   return SMOKE_INFRA_FAILURE.test(failure);
 }
 
+function runSystemSmokeGate(repoPath: string, runId: string, stepId: string): { ok: boolean; output: string; failure: string; infraFailure: boolean } {
+  const smokeScript = path.join(os.homedir(), ".openclaw", "setfarm-repo", "scripts", "smoke-test.mjs");
+  if (!repoPath || !fs.existsSync(repoPath) || !fs.existsSync(smokeScript)) {
+    return { ok: true, output: "skip (smoke script or repo missing)", failure: "", infraFailure: false };
+  }
+
+  try {
+    logger.info(`[system-smoke-gate] Running smoke-test.mjs`, { runId, stepId });
+    const output = execFileSync("node", [smokeScript, repoPath], {
+      cwd: repoPath,
+      timeout: 240_000,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+    return { ok: true, output: output.slice(-2000) || "pass (system smoke gate)", failure: "", infraFailure: false };
+  } catch (err) {
+    const failure = formatExecFailure(err, 6000);
+    return { ok: false, output: "", failure, infraFailure: isSmokeInfrastructureFailure(failure) };
+  }
+}
+
 function collectQaFixScopeFiles(repoPath: string): string[] {
   const srcDir = path.join(repoPath, "src");
   const out: string[] = [];
@@ -82,7 +103,8 @@ async function routeQualityFailureToImplement(
   output: string,
   context: Record<string, string>,
 ): Promise<boolean> {
-  if (!QUALITY_FIX_STEPS.has(step.step_id)) return false;
+  const isVerifySystemSmokeFailure = step.step_id === "verify" && output.startsWith("SYSTEM_SMOKE_FAILURE:");
+  if (!QUALITY_FIX_STEPS.has(step.step_id) && !isVerifySystemSmokeFailure) return false;
 
   const loopStep = await pgGet<{ id: string; step_index: number; status: string; loop_config: string | null }>(
     "SELECT id, step_index, status, loop_config FROM steps WHERE run_id = $1 AND step_id = 'implement' AND type = 'loop' LIMIT 1",
@@ -3816,7 +3838,40 @@ async function handleVerifyEachCompletion(
         logger.warn(`[verify] ${verifiedStoryId} PR is ${prState}, not MERGED — keeping verify pending`, { runId: verifyStep.run_id });
         return { advanced: false, runCompleted: false };
       }
-      if (context["repo"]) syncBaseBranch(context["repo"], "main");
+
+      const repoPath = context["repo"] || context["REPO"] || "";
+      if (repoPath) {
+        syncBaseBranch(repoPath, "main");
+        const smokeGate = runSystemSmokeGate(repoPath, verifyStep.run_id, verifyStep.step_id);
+        if (!smokeGate.ok) {
+          const failure = smokeGate.failure || "unknown smoke-test failure";
+          context["previous_failure"] = `VERIFY_SYSTEM_SMOKE_FAILURE for ${verifiedStoryId}:\n${failure}`;
+          context["current_story_id"] = verifiedStoryId;
+          context["failure_category"] = smokeGate.infraFailure ? "SMOKE_INFRA_FAILURE" : "VERIFY_SYSTEM_SMOKE_FAILURE";
+          await updateRunContext(verifyStep.run_id, context);
+
+          if (smokeGate.infraFailure) {
+            await setStepStatus(verifyStep.id, "pending");
+            logger.warn(`[verify-smoke-gate] Infra failure; retrying verify without code changes: ${failure.slice(0, 200)}`, { runId: verifyStep.run_id });
+            return { advanced: false, runCompleted: false };
+          }
+
+          if (await routeQualityFailureToImplement(
+            { id: verifyStep.id, run_id: verifyStep.run_id, step_id: verifyStep.step_id, step_index: verifyStep.step_index, agent_id: "" },
+            `SYSTEM_SMOKE_FAILURE:\n${failure}`,
+            context,
+          )) {
+            logger.warn(`[verify-smoke-gate] Routed smoke failure for ${verifiedStoryId} back to implement`, { runId: verifyStep.run_id });
+            return { advanced: false, runCompleted: false };
+          }
+
+          await setStepStatus(verifyStep.id, "pending");
+          logger.warn(`[verify-smoke-gate] Smoke failed but route-to-implement was unavailable: ${failure.slice(0, 200)}`, { runId: verifyStep.run_id });
+          return { advanced: false, runCompleted: false };
+        }
+        context["smoke_test_result"] = smokeGate.output;
+      }
+
       await verifyStory(verifiedRow.id);
       logger.info(`Story verified: ${verifiedStoryId}`, { runId: verifyStep.run_id });
     }
