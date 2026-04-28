@@ -411,16 +411,18 @@ async function reapFinishedClaims(): Promise<void> {
           continue;
         }
 
-        const ageMs = Date.now() - active.startedAtMs;
-        const thresholdMs = stuckThresholdMs(active.role);
-        if (ageMs < thresholdMs) continue;
-
-        if (row.type === "loop" && await loopStoryCompletedAfter(row.run_id, active.agentId, row.current_story_id, active.startedAtMs)) {
-          console.log(`[spawner] Reaping completed loop agent ${key}: story completed before watchdog threshold`);
-          terminateActiveProcess(active, "watchdog-completed-loop");
+        const loopStoryDone = row.type === "loop"
+          && await loopStoryCompletedAfter(row.run_id, active.agentId, row.current_story_id, active.startedAtMs);
+        if (loopStoryDone) {
+          console.log(`[spawner] Reaping completed loop agent ${key}: story completed; terminating leftover agent process`);
+          terminateActiveProcess(active, "completed-loop-story");
           activeProcesses.delete(key);
           continue;
         }
+
+        const ageMs = Date.now() - active.startedAtMs;
+        const thresholdMs = stuckThresholdMs(active.role);
+        if (ageMs < thresholdMs) continue;
 
         const reason = `AGENT_PROCESS_STUCK: ${active.agentId} kept ${active.wfId}/${active.role} running for ${formatDurationMs(ageMs)} without step complete/fail; killed by spawner watchdog. Transcript: ${active.transcriptPath}`;
         console.warn(`[spawner] ${reason}`);
