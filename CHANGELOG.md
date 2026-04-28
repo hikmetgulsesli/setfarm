@@ -1,4 +1,5 @@
 ## Unreleased
+- Event-spawner claims now supply legacy `OUTPUT_FILE_ID` template values, preventing implement steps from failing before the developer agent starts.
 - Spawner gateway readiness now also ignores delayed WhatsApp/Telegram/browser/Gmail sidecars after warmup; workflow agents no longer wait for chat-channel reconnects.
 - Single-step claims now re-issue orphaned `running` steps instead of leaving design/setup/QA steps stuck when a claim is made but no agent process remains.
 - Spawner readiness now treats delayed OpenClaw startup sidecars as non-blocking after gateway warmup, so Setfarm agents can start without waiting on WhatsApp/Telegram/browser sidecar readiness.

@@ -76,6 +76,9 @@ export const PROTECTED_CONTEXT_KEYS = new Set([
  *   - step-ops.ts line 1010 (OPTIONAL_VARS — single-step flow)
  */
 export const OPTIONAL_TEMPLATE_VARS = [
+  // Runtime output file id (used by legacy polling templates and event spawner claims)
+  "output_file_id",
+  "OUTPUT_FILE_ID",
   // Verify/progress
   "verify_feedback",
   "previous_failure",

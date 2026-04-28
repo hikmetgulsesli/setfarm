@@ -502,6 +502,11 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     console.log("[spawner] No claimable work for " + fullAgentId + ", skip spawn");
     return;
   }
+  if (typeof claim.resolvedInput === "string") {
+    claim.resolvedInput = claim.resolvedInput
+      .replace(/\[missing:\s*output_file_id\]/gi, outputFileId)
+      .replace(/\[missing:\s*OUTPUT_FILE_ID\]/g, outputFileId);
+  }
   fs.writeFileSync(claimFile, JSON.stringify({ stepId: claim.stepId, runId: claim.runId, input: claim.resolvedInput }) + "\n");
 
   const prompt = buildPreclaimedPrompt(wfId, role, agentId, outputFileId, claimFile);
