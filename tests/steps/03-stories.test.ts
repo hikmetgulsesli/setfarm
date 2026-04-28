@@ -17,6 +17,7 @@ import {
   detectStorySemanticDrift,
   detectUiBehaviorContractGaps,
   extractStoryDomainTerms,
+  planUiBehaviorCriteriaInjections,
 } from "../../dist/installer/steps/03-stories/guards.js";
 import { normalizeScopeFilesForStory } from "../../dist/installer/story-ops.js";
 import { runModule } from "./harness.js";
@@ -207,6 +208,45 @@ describe("03-stories step module", () => {
         scope_files: JSON.stringify(["src/screens/Ana.tsx"]),
       }]);
       assert.equal(ok, null);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("plans UI behavior criteria injection for missing Stitch controls", () => {
+    const repo = mkdtempSync(path.join(tmpdir(), "setfarm-dom-"));
+    try {
+      mkdirSync(path.join(repo, "stitch"));
+      writeFileSync(path.join(repo, "stitch", "DESIGN_DOM.json"), JSON.stringify({
+        screens: {
+          "SCR-001": {
+            title: "Ana",
+            behaviorContract: [
+              { kind: "button", label: "Ayarlar", icon: "settings", route: "/settings", expectedBehavior: "open settings panel" },
+              { kind: "button", label: "Artır", icon: "add", action: "increment", expectedBehavior: "increase visible value" },
+            ],
+          },
+        },
+      }));
+      writeFileSync(path.join(repo, "stitch", "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "SCR-001", title: "Ana" },
+      ]));
+
+      const updates = planUiBehaviorCriteriaInjections(repo, [{
+        story_id: "US-001",
+        story_index: 1,
+        title: "Sayaç — ana ekran",
+        description: "Sayaç değeri görüntülenir.",
+        acceptance_criteria: JSON.stringify(["Artır butonu sayacı artırır"]),
+        scope_description: "Ana sayaç akışı",
+        scope_files: JSON.stringify(["src/screens/Ana.tsx"]),
+      }]);
+
+      const additions = updates.get("US-001") || [];
+      assert.equal(additions.length, 1);
+      assert.match(additions[0], /UI_BEHAVIOR_CONTRACT/);
+      assert.match(additions[0], /Ayarlar/);
+      assert.match(additions[0], /open settings panel/);
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }

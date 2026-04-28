@@ -4040,7 +4040,7 @@ export async function autoVerifyDoneStories(
   while (true) {
     if (++count > MAX_AUTO_VERIFY_ITERATIONS) {
       logger.info(`[${logPrefix}] Hit MAX_AUTO_VERIFY (${MAX_AUTO_VERIFY_ITERATIONS}) — deferring remaining stories to next cycle`, { runId });
-      return null; // Treat as "all done for now"
+      return pgGet<any>("SELECT * FROM stories WHERE run_id = $1 AND status = 'done' ORDER BY story_index ASC LIMIT 1", [runId]);
     }
     const story = await pgGet<any>("SELECT * FROM stories WHERE run_id = $1 AND status = 'done' ORDER BY story_index ASC LIMIT 1", [runId]);
     if (!story) return null;

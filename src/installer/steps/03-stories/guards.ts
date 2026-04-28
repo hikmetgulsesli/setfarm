@@ -92,11 +92,13 @@ export function extractStoryDomainTerms(taskText: string, prdText: string): stri
 
 export interface SemanticStoryInput {
   story_id?: string;
+  story_index?: number;
   title?: string | null;
   description?: string | null;
   acceptance_criteria?: string | null;
   scope_description?: string | null;
   scope_files?: string | null;
+  shared_files?: string | null;
 }
 
 function parseStoryJsonField(raw: string | null | undefined): string {
@@ -195,12 +197,12 @@ function formatUiBehaviorRequirement(req: UiBehaviorRequirement): string {
   ].filter(Boolean).join(" ");
 }
 
-export function detectUiBehaviorContractGaps(
+function findMissingUiBehaviorRequirements(
   repoPath: string,
   stories: SemanticStoryInput[],
-): string | null {
+): UiBehaviorRequirement[] {
   const requirements = collectUiBehaviorRequirements(repoPath);
-  if (requirements.length === 0 || stories.length === 0) return null;
+  if (requirements.length === 0 || stories.length === 0) return [];
 
   const storyText = stories.map(s => [
     s.title || "",
@@ -217,11 +219,126 @@ export function detectUiBehaviorContractGaps(
     if (terms.length === 0) continue;
     if (!terms.some(t => storyTokens.has(t))) missing.push(req);
   }
+  return missing;
+}
+
+export function detectUiBehaviorContractGaps(
+  repoPath: string,
+  stories: SemanticStoryInput[],
+): string | null {
+  const missing = findMissingUiBehaviorRequirements(repoPath, stories);
   if (missing.length === 0) return null;
 
   const list = missing.slice(0, 10).map(formatUiBehaviorRequirement).join("; ");
   const suffix = missing.length > 10 ? `; +${missing.length - 10} more` : "";
   return `GUARDRAIL: UI_BEHAVIOR_CONTRACT coverage missing for ${missing.length} control(s): ${list}${suffix}. Re-output STORIES_JSON so acceptanceCriteria names each missing Stitch control and its visible behavior before coding starts.`;
+}
+
+function parseStringArray(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function behaviorCriterion(req: UiBehaviorRequirement): string {
+  const details = [
+    `${req.kind} "${req.label}"`,
+    req.icon ? `icon=${req.icon}` : "",
+    req.action ? `action=${req.action}` : "",
+    req.route ? `route=${req.route}` : "",
+  ].filter(Boolean).join("; ");
+  return `[UI_BEHAVIOR_CONTRACT] ${req.screenId} (${req.screenTitle}) ${details} must ${req.expectedBehavior}.`;
+}
+
+function scoreStoryForRequirement(
+  story: SemanticStoryInput,
+  req: UiBehaviorRequirement,
+  screenFileById: Map<string, string>,
+): number {
+  let score = 0;
+  const scope = parseStringArray(story.scope_files);
+  const shared = parseStringArray(story.shared_files);
+  const screenFile = screenFileById.get(req.screenId);
+  if (screenFile && scope.includes(screenFile)) score += 100;
+  if (screenFile && shared.includes(screenFile)) score += 50;
+  if ((story.story_index ?? 0) > 0) score += 10; // avoid setup story when possible
+
+  const storyTokens = new Set(uiBehaviorTokens([
+    story.title || "",
+    story.description || "",
+    story.scope_description || "",
+    parseStoryJsonField(story.acceptance_criteria),
+    parseStoryJsonField(story.scope_files),
+  ].join(" ")).flatMap(expandUiBehaviorTerm));
+  for (const term of requirementTerms(req)) {
+    if (storyTokens.has(term)) score += 4;
+  }
+  return score;
+}
+
+export function planUiBehaviorCriteriaInjections(
+  repoPath: string,
+  stories: SemanticStoryInput[],
+): Map<string, string[]> {
+  const missing = findMissingUiBehaviorRequirements(repoPath, stories);
+  if (missing.length === 0) return new Map();
+
+  const screenFileById = new Map(computePredictedScreenFiles(repoPath).map((s) => [s.screenId, s.filePath]));
+  const updates = new Map<string, string[]>();
+
+  for (const req of missing) {
+    const owner = [...stories]
+      .sort((a, b) => {
+        const scoreDiff = scoreStoryForRequirement(b, req, screenFileById) - scoreStoryForRequirement(a, req, screenFileById);
+        if (scoreDiff !== 0) return scoreDiff;
+        return (a.story_index ?? 0) - (b.story_index ?? 0);
+      })[0];
+    if (!owner?.story_id) continue;
+    const existing = updates.get(owner.story_id) || [];
+    existing.push(behaviorCriterion(req));
+    updates.set(owner.story_id, existing);
+  }
+  return updates;
+}
+
+async function autoInjectUiBehaviorCriteria(
+  runId: string,
+  repoPath: string,
+  stories: SemanticStoryInput[],
+): Promise<number> {
+  const updates = planUiBehaviorCriteriaInjections(repoPath, stories);
+
+  let injected = 0;
+  for (const story of stories) {
+    if (!story.story_id) continue;
+    const additions = updates.get(story.story_id);
+    if (!additions?.length) continue;
+    const acceptance = parseStringArray(story.acceptance_criteria);
+    const normalizedExisting = new Set(acceptance.map(normalizeUiBehaviorText));
+    const next = [...acceptance];
+    for (const item of additions) {
+      const key = normalizeUiBehaviorText(item);
+      if (!normalizedExisting.has(key)) {
+        next.push(item);
+        normalizedExisting.add(key);
+        injected++;
+      }
+    }
+    if (next.length !== acceptance.length) {
+      await pgRun(
+        "UPDATE stories SET acceptance_criteria = $1, updated_at = $2 WHERE run_id = $3 AND story_id = $4",
+        [JSON.stringify(next), now(), runId, story.story_id],
+      );
+    }
+  }
+  if (injected > 0) {
+    logger.info(`[module:stories] Auto-injected ${injected} UI behavior acceptance criterion/criteria from DESIGN_DOM`, { runId });
+  }
+  return injected;
 }
 
 // onComplete owns the full stories guardrail chain. Failures fail the step
@@ -260,8 +377,8 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
     throw new Error(msg);
   }
 
-  const semanticRows = await pgQuery<SemanticStoryInput>(
-    "SELECT story_id, title, description, acceptance_criteria, scope_description, scope_files FROM stories WHERE run_id = $1 ORDER BY story_index",
+  let semanticRows = await pgQuery<SemanticStoryInput>(
+    "SELECT story_index, story_id, title, description, acceptance_criteria, scope_description, scope_files, shared_files FROM stories WHERE run_id = $1 ORDER BY story_index",
     [runId]
   );
   const semanticErr = detectStorySemanticDrift(
@@ -274,7 +391,13 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
     throw new Error(semanticErr);
   }
 
-  const uiBehaviorErr = detectUiBehaviorContractGaps(context["repo"] || context["REPO"] || "", semanticRows);
+  const repoPath = context["repo"] || context["REPO"] || "";
+  await autoInjectUiBehaviorCriteria(runId, repoPath, semanticRows);
+  semanticRows = await pgQuery<SemanticStoryInput>(
+    "SELECT story_index, story_id, title, description, acceptance_criteria, scope_description, scope_files, shared_files FROM stories WHERE run_id = $1 ORDER BY story_index",
+    [runId]
+  );
+  const uiBehaviorErr = detectUiBehaviorContractGaps(repoPath, semanticRows);
   if (uiBehaviorErr) {
     logger.warn(`[module:stories] ${uiBehaviorErr}`, { runId });
     await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);
