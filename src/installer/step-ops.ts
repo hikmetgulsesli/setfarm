@@ -1495,7 +1495,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
          WHERE s.agent_id = $1
            AND (
              s.status = 'pending'
-             OR (s.status = 'running' AND s.type = 'loop')
+             OR s.status = 'running'
            )
            AND r.status NOT IN ('failed', 'cancelled')
            AND (
@@ -1520,7 +1520,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
 	           )
          ORDER BY
            CASE
-             WHEN s.status = 'running' AND s.type = 'loop' THEN 0
+             WHEN s.status = 'running' THEN 0
              WHEN $2::text IS NOT NULL AND r.assigned_developer = $2 THEN 0
              WHEN r.assigned_developer IS NULL THEN 1
              ELSE 2

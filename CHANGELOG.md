@@ -1,4 +1,6 @@
 ## Unreleased
+- Spawner gateway readiness now also ignores delayed WhatsApp/Telegram/browser/Gmail sidecars after warmup; workflow agents no longer wait for chat-channel reconnects.
+- Single-step claims now re-issue orphaned `running` steps instead of leaving design/setup/QA steps stuck when a claim is made but no agent process remains.
 - Spawner readiness now treats delayed OpenClaw startup sidecars as non-blocking after gateway warmup, so Setfarm agents can start without waiting on WhatsApp/Telegram/browser sidecar readiness.
 - Routed planner/story agents through Kimi-first model selection because MiniMax planner calls can stall inside the OpenClaw gateway even when direct API checks are healthy.
 - Expanded project cleanup to reap orphan preview/serve processes by real process cwd while preserving systemd-managed deployed app services.
