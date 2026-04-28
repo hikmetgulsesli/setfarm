@@ -1528,7 +1528,7 @@ async function claimSingleStep(
           }
           if (mergedPreClaimKeys.length > 0) {
             await updateRunContext(step.run_id, context);
-            logger.info(`[step-module] ${_stepModule.id} merged ${mergedPreClaimKeys.length} preClaim context update(s) without persisting prompt prune`, { runId: step.run_id, keys: mergedPreClaimKeys.slice(0, 12) });
+            logger.info(`[step-module] ${_stepModule.id} merged ${mergedPreClaimKeys.length} preClaim context update(s) without persisting prompt prune: ${mergedPreClaimKeys.slice(0, 12).join(", ")}`, { runId: step.run_id });
           }
           // Refresh both started_at AND updated_at so medic's checkClaimedButStuck
           // measures agent runtime, not preClaim duration. (Medic uses updated_at
