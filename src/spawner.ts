@@ -380,18 +380,81 @@ async function failClaimIfStillRunning(stepId: string, agentId: string, wfId: st
       "SELECT status, step_id, run_id, type, current_story_id FROM steps WHERE id = $1 LIMIT 1",
       [stepId],
     );
-    if (!row || row.status !== "running") return;
+    if (!row) return;
 
     if (row.type === "loop" && await loopStoryCompletedAfter(row.run_id, agentId, row.current_story_id, startedAtMs)) {
       console.log(`[spawner] ${agentId} exited after completing a loop story for ${wfId}/${role}; keeping loop ${row.step_id} running (${compactExitReason(err)})`);
       return;
     }
 
+    if (row.type === "loop" && row.status !== "running") {
+      const requeued = await requeueOrphanedStoryClaim(row.run_id, row.step_id, agentId, `agent exited while loop step was ${row.status}: ${compactExitReason(err)}`);
+      if (requeued) return;
+    }
+
+    if (row.status !== "running") return;
+
     const reason = `AGENT_PROCESS_EXITED: ${agentId} exited before completing ${wfId}/${role}. ${compactExitReason(err)}. Transcript: ${transcriptPath}`;
     console.warn(`[spawner] failing still-running claim ${stepId} (${row.step_id}) after agent exit`);
     await failStep(stepId, reason);
   } catch (failErr) {
     console.warn(`[spawner] failed to mark exited agent claim as failed: ${String(failErr).slice(0, 300)}`);
+  }
+}
+
+async function requeueOrphanedStoryClaim(runId: string, stepId: string, agentId: string, diagnostic: string): Promise<boolean> {
+  const row = await pgGet<{ id: string; story_id: string }>(
+    `SELECT st.id, st.story_id
+     FROM stories st
+     JOIN claim_log cl ON cl.run_id = st.run_id AND cl.story_id = st.story_id
+     WHERE st.run_id = $1
+       AND st.status = 'running'
+       AND cl.step_id = $2
+       AND cl.agent_id = $3
+       AND cl.outcome IS NULL
+     ORDER BY cl.claimed_at DESC
+     LIMIT 1`,
+    [runId, stepId, agentId],
+  );
+  if (!row) return false;
+
+  await pgRun("UPDATE stories SET status = 'pending', claimed_by = NULL, updated_at = NOW() WHERE id = $1 AND status = 'running'", [row.id]);
+  await pgRun("UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = NOW() WHERE run_id = $1 AND step_id = $2 AND status IN ('pending','running','waiting')", [runId, stepId]);
+  await pgRun("UPDATE claim_log SET outcome = 'infra_retry', abandoned_at = NOW(), diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND story_id = $4 AND agent_id = $5 AND outcome IS NULL", [diagnostic, runId, stepId, row.story_id, agentId]);
+  console.warn(`[spawner] requeued orphaned story claim ${row.story_id} for ${agentId}: ${diagnostic.slice(0, 180)}`);
+  return true;
+}
+
+async function requeueOrphanedRunningStories(): Promise<void> {
+  const rows = await pgQuery<{ story_db_id: string; story_id: string; run_id: string; run_number: number; step_db_id: string | null; step_id: string | null; step_status: string | null; agent_id: string | null }>(
+    `SELECT st.id as story_db_id, st.story_id, st.run_id, r.run_number,
+            loop_step.id as step_db_id, loop_step.step_id, loop_step.status as step_status,
+            cl.agent_id
+     FROM stories st
+     JOIN runs r ON r.id = st.run_id
+     LEFT JOIN claim_log cl ON cl.run_id = st.run_id AND cl.story_id = st.story_id AND cl.outcome IS NULL
+     LEFT JOIN steps loop_step ON loop_step.run_id = st.run_id AND loop_step.type = 'loop'
+     WHERE st.status = 'running'
+       AND r.status = 'running'
+       AND (
+         loop_step.id IS NULL
+         OR loop_step.status <> 'running'
+         OR loop_step.current_story_id IS DISTINCT FROM st.id
+       )
+     ORDER BY st.updated_at ASC
+     LIMIT 20`
+  );
+
+  for (const row of rows) {
+    const diagnostic = `ORPHANED_RUNNING_STORY: ${row.story_id} was running but loop step ${row.step_id || "(missing)"} is ${row.step_status || "(missing)"} or no longer points at story`;
+    await pgRun("UPDATE stories SET status = 'pending', claimed_by = NULL, updated_at = NOW() WHERE id = $1 AND status = 'running'", [row.story_db_id]);
+    if (row.step_db_id) {
+      await pgRun("UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = NOW() WHERE id = $1 AND status IN ('pending','waiting','running')", [row.step_db_id]);
+    }
+    if (row.agent_id) {
+      await pgRun("UPDATE claim_log SET outcome = 'infra_retry', abandoned_at = NOW(), diagnostic = $1 WHERE run_id = $2 AND story_id = $3 AND agent_id = $4 AND outcome IS NULL", [diagnostic, row.run_id, row.story_id, row.agent_id]);
+    }
+    console.warn(`[spawner] requeued orphaned running story for run #${row.run_number}: ${row.story_id}`);
   }
 }
 
@@ -856,6 +919,7 @@ async function pollForPendingWork() {
   if (shuttingDown) return;
   try {
     await reapFinishedClaims();
+    await requeueOrphanedRunningStories();
     await autoVerifyMergedPrEachStories();
     await advanceCompletedVerifyEachLoops();
     const steps = await pgQuery<{ agent_id: string; run_id: string; step_id: string; context: string | null }>(
@@ -918,6 +982,7 @@ async function main() {
   console.log(`[spawner] Starting (PID ${process.pid})`);
   killStartupOrphanSpawnerAgents();
   await failStaleRunningClaimsFromPreviousSpawner();
+  await requeueOrphanedRunningStories();
 
   const shutdown = () => {
     shuttingDown = true;
