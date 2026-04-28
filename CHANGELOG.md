@@ -1,4 +1,5 @@
 ## Unreleased
+- Spawner reaper now detects terminal or zombie OpenClaw child processes and immediately recovers the still-running claim, preventing dead agent processes from leaving verify/QA steps stuck until manual intervention.
 - Spawner PR-each auto-verify now skips runs whose verify step is already pending/running and reactivates verify when a merged-PR smoke gate still needs human/model review, preventing repeated smoke-test loops from starving reviewer spawn.
 - Project cleanup now reaps deleted Setfarm story-worktree Vite/esbuild process trees and runs once on spawner startup for active runs, preventing stale preview servers from lingering in the OpenClaw gateway cgroup.
 - Medic verify auto-advance now refuses to complete the verify step when any done story was skipped by PR/smoke checks, preventing partial force-verification from advancing downstream.

@@ -269,6 +269,24 @@ function killProcessTree(pid: number | undefined, signal: NodeJS.Signals = "SIGT
   try { process.kill(pid, signal); } catch { /* already dead */ }
 }
 
+function childProcessTerminalReason(child: ChildProcess): string | null {
+  if (child.exitCode !== null) return `exitCode=${child.exitCode}`;
+  if (child.signalCode !== null) return `signal=${child.signalCode}`;
+  if (!child.pid) return "missing pid";
+  try {
+    const stat = execFileSync("ps", ["-o", "stat=", "-p", String(child.pid)], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 1000,
+    }).trim();
+    if (!stat) return "pid not found";
+    if (stat.startsWith("Z")) return `zombie stat=${stat}`;
+  } catch {
+    return "pid not found";
+  }
+  return null;
+}
+
 function cancelOpenClawTask(lookup: string, context: string): void {
   if (!lookup) return;
   execFile(OPENCLAW_CLI, ["tasks", "cancel", lookup], {
@@ -488,6 +506,19 @@ async function reapFinishedClaims(): Promise<void> {
       if (!row) {
         console.warn(`[spawner] Reaping ${key}: claimed step disappeared`);
       } else if (row.run_status === "running" && row.step_status === "running") {
+        const terminalReason = childProcessTerminalReason(active.child);
+        if (terminalReason) {
+          const reason = `AGENT_PROCESS_TERMINAL: ${active.agentId} process ended while ${active.wfId}/${active.role} was still running (${terminalReason}); recovering claim. Transcript: ${active.transcriptPath}`;
+          console.warn(`[spawner] ${reason}`);
+          try { fs.appendFileSync(active.transcriptPath, `--- PROCESS TERMINAL ${new Date().toISOString()} ---
+${reason}
+`); } catch {}
+          cancelOpenClawTask(active.sessionKey, "process-terminal");
+          activeProcesses.delete(key);
+          await failClaimIfStillRunning(active.stepId, active.agentId, active.wfId, active.role, active.transcriptPath, new Error(reason), active.startedAtMs);
+          continue;
+        }
+
         if (row.step_id === "verify" && !await verifyEachHasDoneStory(active.runId, row.step_id)) {
           console.log(`[spawner] Reaping stale verify agent ${key}: no done story awaits verify`);
           terminateActiveProcess(active, "verify-no-done-story");
