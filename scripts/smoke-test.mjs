@@ -312,6 +312,26 @@ function checkNativeButtonWiring(repo) {
   return issues;
 }
 
+function minRequiredDesignControls(expected) {
+  if (!expected || expected <= 0) return 0;
+  if (expected <= 3) return expected;
+  return Math.ceil(expected * 0.8);
+}
+
+function countSourceControls(srcContent) {
+  return {
+    buttons: (
+      (srcContent.match(/<button\b/gi) || []).length +
+      (srcContent.match(/<Button\b/g) || []).length +
+      (srcContent.match(/\brole\s*=\s*["']button["']/gi) || []).length
+    ),
+    inputs: (
+      (srcContent.match(/<input\b|<textarea\b|<select\b/gi) || []).length +
+      (srcContent.match(/<Input\b|<Textarea\b|<Select\b/g) || []).length
+    ),
+  };
+}
+
 // ── Phase 2: Browser Test ───────────────────────────────────────────
 
 function parseSnapshot(text) {
@@ -1472,8 +1492,20 @@ async function main() {
     if (existsSync(designDomPath)) {
       try {
         const dom = JSON.parse(readFileSync(designDomPath, 'utf-8'));
-        const totalButtons = Object.values(dom.screens || {}).reduce((sum, s) => sum + (s.buttons?.length || 0), 0);
-        const totalInputs = Object.values(dom.screens || {}).reduce((sum, s) => sum + (s.inputs?.length || 0), 0);
+        const totalButtons = Object.values(dom.screens || {}).reduce((sum, s) => {
+          const direct = s.buttons?.length || 0;
+          const contract = Array.isArray(s.behaviorContract)
+            ? s.behaviorContract.filter(i => (i?.kind || 'button') === 'button').length
+            : 0;
+          return sum + Math.max(direct, contract);
+        }, 0);
+        const totalInputs = Object.values(dom.screens || {}).reduce((sum, s) => {
+          const direct = s.inputs?.length || 0;
+          const contract = Array.isArray(s.behaviorContract)
+            ? s.behaviorContract.filter(i => i?.kind === 'input').length
+            : 0;
+          return sum + Math.max(direct, contract);
+        }, 0);
         const totalSections = Object.values(dom.screens || {}).reduce((sum, s) => sum + (s.sections?.length || 0), 0);
 
         // Check source for element implementation
@@ -1484,14 +1516,15 @@ async function main() {
             .map(f => readFileSync(join(srcDir, f), 'utf-8'))
             .join('\n');
 
-          const actualButtons = (srcContent.match(/<button/gi) || []).length;
-          const actualInputs = (srcContent.match(/<input|<textarea|<select/gi) || []).length;
+          const actual = countSourceControls(srcContent);
+          const minButtons = minRequiredDesignControls(totalButtons);
+          const minInputs = minRequiredDesignControls(totalInputs);
 
-          if (totalButtons > 0 && actualButtons < totalButtons * 0.3) {
-            failures.push('[FIDELITY] Buttons: design has ' + totalButtons + ', code has ' + actualButtons);
+          if (totalButtons > 0 && actual.buttons < minButtons) {
+            failures.push('[FIDELITY] Buttons: design has ' + totalButtons + ', code has ' + actual.buttons + ' (minimum required ' + minButtons + ')');
           }
-          if (totalInputs > 0 && actualInputs < totalInputs * 0.3) {
-            failures.push('[FIDELITY] Inputs: design has ' + totalInputs + ', code has ' + actualInputs);
+          if (totalInputs > 0 && actual.inputs < minInputs) {
+            failures.push('[FIDELITY] Inputs: design has ' + totalInputs + ', code has ' + actual.inputs + ' (minimum required ' + minInputs + ')');
           }
         }
       } catch (e) {

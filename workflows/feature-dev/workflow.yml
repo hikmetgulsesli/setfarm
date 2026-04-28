@@ -5,14 +5,14 @@ name: Feature Development Workflow
 version: 12.0
 description: |
   Design-first pipeline: PLAN → DESIGN → STORIES → SETUP-REPO → SETUP-BUILD → IMPLEMENT →
-  VERIFY → SECURITY-GATE → FINAL-TEST → DEPLOY.
+  VERIFY → SECURITY-GATE → QA-TEST → FINAL-TEST → DEPLOY.
   Plan step produces PRD only (no stories). Design step generates screens
   from PRD via Stitch (no screen limit). Stories step decomposes PRD into
   user stories using SCREEN_MAP for screen↔story binding.
   Developer commits and pushes the prepared story branch. The pipeline creates
   each story PR to main, verifier reviews + merges, then local main is synced
   before the next story is claimed.
-  Failed stories are skipped — other stories continue.
+  Failed stories stop the run; downstream QA/final failures route through scoped QA-FIX stories and loop-guard instead of deploying partial work.
 
 agent_mapping:
   # Expanded to pools 2026-04-14 — previous single-agent roles serialized
@@ -200,16 +200,18 @@ steps:
 
       Each report type = 1 separate screen (not a single "reports" page).
 
-      Standard screens that MUST be included:
-      - Login page
-      - Settings (profile, notifications, appearance, security)
-      - 404 / Error page
-      - Empty states (when lists are empty)
+      Standard screens are CONDITIONAL, not universal:
+      - Login page only if the task requires accounts, admin access, private data, or authentication.
+      - Settings/profile/preferences only if the task explicitly needs user/configuration preferences.
+      - 404 / Error page for routed multi-page apps; simple single-view utilities may use inline error states.
+      - Empty states only for list/search/data views where empty data is a real state.
 
       If the PRD screen table has FEWER screens than the minimum for the project type,
-      add the missing screens before outputting the PRD.
-      CRITICAL: Even simple single-page apps MUST have at least 3 screens (e.g. main view, error state, empty state).
-      PRD_SCREEN_COUNT below 3 will be REJECTED by the pipeline guardrail.
+      add only genuinely required product screens before outputting the PRD.
+      Simple single-page utilities must still satisfy PRD_SCREEN_COUNT >= 3, but those
+      rows should be the primary view plus real inline state views (empty/error/success/help)
+      that fit the product. Do not invent login/settings/history/profile screens for
+      smoke/simple apps just to satisfy a generic checklist.
 
       5. Determine the repo path and branch name
          CRITICAL REPO PATH RULE: The repo path MUST be $HOME/projects/<slug>.
