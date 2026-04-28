@@ -122,4 +122,4 @@ SCREEN_MAP:
 ]
 ```
 
-Detaylı kurallar: rules.md (aşağıda eklendi).
+Detaylı kurallar bu promptun altındaki `Kurallar` bölümünde gömülü olarak verilir; `rules.md` dosyasını okumaya çalışma.

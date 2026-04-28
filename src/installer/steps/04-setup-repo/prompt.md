@@ -27,4 +27,4 @@ STATUS: done
 EXISTING_CODE: false
 ```
 
-Detaylı kurallar: rules.md (aşağıda).
+Detaylı kurallar bu promptun altındaki `Kurallar` bölümünde gömülü olarak verilir; `rules.md` dosyasını okumaya çalışma.

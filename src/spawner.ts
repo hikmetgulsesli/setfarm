@@ -492,6 +492,9 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     "--session-id", sessionId,
     "--message", prompt, "--timeout", String(AGENT_TIMEOUT_SECONDS),
   ];
+  try {
+    fs.appendFileSync(transcriptPath, `[spawner] openclaw_cli=${OPENCLAW_CLI} session_id=${sessionId} session_key=${sessionKey} timeout=${AGENT_TIMEOUT_SECONDS}s cwd=${AGENT_SAFE_CWD}\n`);
+  } catch {}
   const outFd = fs.openSync(transcriptPath, "a");
   const errFd = fs.openSync(transcriptPath, "a");
   const child = spawn(OPENCLAW_CLI, childArgs, {

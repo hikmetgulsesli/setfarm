@@ -32,4 +32,4 @@ DESIGN_SYSTEM: <JSON>
 SCREEN_MAP: <yukarıdaki JSON aynısı>
 ```
 
-Detaylı kurallar: rules.md (aşağıda eklendi).
+Detaylı kurallar bu promptun altındaki `Kurallar` bölümünde gömülü olarak verilir; `rules.md` dosyasını okumaya çalışma.

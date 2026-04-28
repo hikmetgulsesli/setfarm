@@ -1,6 +1,6 @@
 PLAN step — {{TASK}}
 
-Görevinden bir PRD (ürün gereksinimleri) üret ve teknik kararları ver. Ayrıntılı kurallar: `rules.md`.
+Görevinden bir PRD (ürün gereksinimleri) üret ve teknik kararları ver. Kurallar bu promptun altındaki `Kurallar` bölümünde gömülü olarak verilir; `rules.md` dosyasını okumaya çalışma.
 
 ## Görev
 

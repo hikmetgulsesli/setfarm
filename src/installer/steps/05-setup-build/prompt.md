@@ -25,4 +25,4 @@ STATUS: done
 BUILD_CMD: npm run build
 ```
 
-Detaylı kurallar: rules.md (aşağıda).
+Detaylı kurallar bu promptun altındaki `Kurallar` bölümünde gömülü olarak verilir; `rules.md` dosyasını okumaya çalışma.
