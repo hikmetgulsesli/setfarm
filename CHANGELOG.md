@@ -1,3 +1,8 @@
+## 2026-04-28 - Spawner timeout and spawn queue hardening
+
+- Spawner watchdog defaults now allow MiniMax primary timeout plus Kimi fallback time before killing active claims: 12m for non-developer agents, 15m for developer, and 18m for QA/test roles.
+- Spawn queue dispatch now calls `spawnAgentNow` exactly once per queued key, removing duplicate pre-claim races and misleading no-claim logs.
+
 ## 2026-04-27 - MiniMax OpenAI-compatible routing
 
 - Workflow install now provisions a `minimax-openai` provider that uses MiniMax's OpenAI-compatible endpoint while reusing the existing MiniMax API key reference.
