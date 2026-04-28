@@ -104,8 +104,8 @@ Diğer story'ler bunları okuma referansı için `shared_files`'a koyabilir, sco
 
 - `UI_BEHAVIOR_CONTRACT` varsa her button/link/input en az bir story acceptance criterion içinde geçmeli.
 - Criterion sadece "buton var" dememeli; davranışı yazmalı: route değişimi, panel/dialog açılması, state/localStorage değişimi, filter/search sonucu, validation feedback.
-- Icon-only kontroller için hem görünen/erişilebilir isim hem ikon anlamı kullanılmalı: `Ayarlar/settings`, `Kayıtlar/history`, `Artır/add`, `Azalt/remove`, `Sıfırla/restart_alt`.
-- PRD'de olmayan ama Stitch'te aktif görünen settings/history/profile gibi kontroller de boş bırakılamaz. Ya gerçek davranışla story'ye girer ya da acceptance criterion içinde disabled/hidden kararı açıkça yazılır.
+- Icon-only kontroller için hem görünen/erişilebilir isim hem ikon anlamı kullanılmalı; örnek isim uydurma, PRD/Stitch/DESIGN_DOM içindeki gerçek label ve icon değerlerini kullan.
+- PRD'de olmayan ama Stitch'te aktif görünen kontroller de boş bırakılamaz. Ya projeye uygun gerçek davranışla story'ye girer ya da acceptance criterion içinde disabled/hidden kararı açıkça yazılır.
 
 Kötü (belirsiz):
 - "Tasarım modern olur" (subjektif)

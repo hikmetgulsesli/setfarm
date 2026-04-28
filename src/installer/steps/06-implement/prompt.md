@@ -45,7 +45,7 @@ You are implementing ONE user story. You may ONLY write to the files listed belo
    - Assembly of components into pages/layouts happens in the integration story (the last story, which owns `App.tsx`/`main.tsx`). If your scope is a set of components, write just those components — do not wrap them into a new parent file.
    - Preserve all behavior and tests from DONE stories. Existing tests are accepted contract, not disposable scaffolding.
    - Do not delete or weaken existing tests to make your new code pass. Fix the implementation instead.
-   - Do not add navigation, profile, archive, settings, demo panels, or other UI unless this story explicitly asks for them.
+   - Do not add speculative navigation, account, archive, configuration, demo panels, or other UI unless this story explicitly asks for them.
    - If acceptance criteria conflict with existing tests, make the smallest compatible change and keep both old and new behavior working.
    - Before committing, run `git diff` and verify the diff contains only this story's required changes.
 
@@ -53,7 +53,7 @@ You are implementing ONE user story. You may ONLY write to the files listed belo
 
 4. Read the story's acceptance criteria and implement ONLY what it asks
 5. Use imports from SHARED_FILES for context only; do not modify shared files unless they are also listed in SCOPE_FILES.
-6. Every native `<button>` you create must have real behavior: `onClick`, `type="submit"`, `disabled`/`aria-disabled`, or explicit `data-smoke-ignore`. Icon-only header/nav/settings/history buttons must change visible state, open a panel/dialog, navigate, or be disabled. Decorative icons must not be rendered as `<button>`.
+6. Every native `<button>` you create must have real behavior: `onClick`, `type="submit"`, `disabled`/`aria-disabled`, or explicit `data-smoke-ignore`. Icon-only controls must change visible state, open a project-specific panel/dialog, navigate, or be disabled. Decorative icons must not be rendered as `<button>`.
 7. Before committing, run available local checks. Prefer `npm run build`; for Vitest use `npm run test:run` or `npx vitest run` instead of watch-mode `npm test` when needed. If a script is missing, say so in CHANGES.
 8. Commit once on the CURRENT branch (do not switch branches): stage only files from `.story-scope-files`, then `git commit -m "feat: <story-id> - <description>"`
 9. Do NOT use `git add -A` — stage only your scope files explicitly

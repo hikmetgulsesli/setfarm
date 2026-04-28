@@ -32,16 +32,26 @@ function unique(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
 }
 
-function buildAcceptanceCriteria(repo: string): string[] {
+export function buildAcceptanceCriteria(repo: string): string[] {
   const reqs = collectUiBehaviorRequirements(repo);
   const criteria = reqs.slice(0, 30).map((req) => {
     const trigger = [req.label, req.icon ? `icon ${req.icon}` : ""].filter(Boolean).join(" / ");
     return `${req.screenTitle}: ${req.kind} \"${trigger}\" must produce visible behavior: ${req.expectedBehavior}.`;
   });
   criteria.push("All visible active buttons/icons from Stitch screens have non-empty handlers or an explicit disabled/hidden state.");
-  criteria.push("Counter actions update visible state and persist through localStorage reloads.");
-  criteria.push("Notes/history/create/settings flows are wired into the main app shell and remain responsive on desktop and mobile.");
+  criteria.push("All generated screens are wired into the app shell and remain responsive on desktop and mobile.");
+  criteria.push("Stateful interactions persist only when the PRD or DESIGN_DOM explicitly requires persistence; no unrelated demo flows are added.");
   return unique(criteria).slice(0, 40);
+}
+
+export function buildSingleStoryScopeFiles(screenFiles: string[]): string[] {
+  return unique([
+    ...screenFiles,
+    "src/App.tsx",
+    "src/App.css",
+    "src/main.tsx",
+    "src/index.css",
+  ]);
 }
 
 export async function preClaim(ctx: ClaimContext): Promise<void> {
@@ -59,32 +69,19 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   const screenMap = loadScreenMap(repo);
   const screenIds = unique(predicted.map((s) => s.screenId));
   const screenFiles = unique(predicted.map((s) => s.filePath));
-  const scopeFiles = unique([
-    ...screenFiles,
-    "src/App.tsx",
-    "src/App.css",
-    "src/main.tsx",
-    "src/index.css",
-    "src/types/index.ts",
-    "src/features/app/usePersistentAppState.ts",
-    "src/components/AppShell.tsx",
-    "src/components/SettingsPanel.tsx",
-    "src/components/ConfirmDialog.tsx",
-    "src/components/CounterPanel.tsx",
-    "src/components/NotesPanel.tsx",
-  ]);
+  const scopeFiles = buildSingleStoryScopeFiles(screenFiles);
 
   const product = compactText(ctx.context["project_name"] || ctx.context["task"] || ctx.task, "Uygulama");
   const story = {
     id: "US-001",
     title: `${product} - complete single-story implementation`,
-    description: "Single explicit-cap story covering app state, visible controls, generated screens, settings/history/create flows, persistence, and integration wiring.",
+    description: "Single explicit-cap story covering generated screens, app integration, visible controls, route/state behavior, and any persistence explicitly required by PRD/DESIGN_DOM.",
     acceptanceCriteria: buildAcceptanceCriteria(repo),
     depends_on: [],
     screens: screenIds,
     scope_files: scopeFiles,
     shared_files: [],
-    scope_description: "One-story explicit user cap: implement all generated screens, shared app state, localStorage persistence, visible button/icon behavior, and App integration together.",
+    scope_description: "One-story explicit user cap: implement all generated screens, visible button/icon behavior, app integration, and only the state/persistence behavior required by the project context.",
     file_skeletons: Object.fromEntries(scopeFiles.map((f) => [f, f.startsWith("src/screens/") ? "Generated Stitch screen wired to shared app state and behavior handlers." : "Shared single-story app implementation file."])),
   };
 

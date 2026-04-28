@@ -48,9 +48,9 @@ DİL (ZORUNLU): Tüm görünür metin TÜRKÇE. "Current Tally", "Settings", "Ho
 
 DESIGN CONTRACT RULES:
 1. Every navigation link MUST route to its page (install react-router-dom if needed)
-   Stitch'te bir buton veya link varsa (settings, history, profile vb.) ama o sayfa
-   PRD'de yoksa — projeye uygun basit bir sayfa ÜRET. Boş bırakma, console.log yazma.
-   Örn: settings butonu varsa → tema, dil, bildirim gibi ayarlar sayfası oluştur.
+   Stitch'te bir buton veya link varsa ama hedef sayfa/panel PRD'de yoksa,
+   önce projeye uygun gerçek davranış üret; gerçekten kapsam dışıysa kontrolü açıkça disabled/hidden yap.
+   Boş bırakma, console.log yazma, örnek sayfa/panel isimleri uydurma.
 2. Every button MUST have a functional onClick handler — state değiştirmeli,
    modal/drawer açmalı, veya route değiştirmeli. console.log() YASAK.
 3. Every input MUST have onChange and controlled state

@@ -1,4 +1,5 @@
 ## Unreleased
+- Explicit `MAX_STORIES=1` auto-story generation and frontend prompts no longer inject counter/notes/settings-specific criteria or component paths into unrelated projects; generated story scope now stays project-neutral and follows Stitch/DOM requirements.
 - Step complete/fail runId fallback now refuses ambiguous active runs instead of resolving to the first active step, preventing late agent output from closing the wrong phase when implement and verify overlap.
 - Spawner reaper now detects terminal or zombie OpenClaw child processes and immediately recovers the still-running claim, preventing dead agent processes from leaving verify/QA steps stuck until manual intervention.
 - Spawner PR-each auto-verify now skips runs whose verify step is already pending/running and reactivates verify when a merged-PR smoke gate still needs human/model review, preventing repeated smoke-test loops from starving reviewer spawn.

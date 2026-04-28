@@ -10,6 +10,10 @@ import {
   extractExplicitMaxStories,
 } from "../../dist/installer/steps/03-stories/context.js";
 import {
+  buildAcceptanceCriteria,
+  buildSingleStoryScopeFiles,
+} from "../../dist/installer/steps/03-stories/preclaim.js";
+import {
   detectStorySemanticDrift,
   detectUiBehaviorContractGaps,
   extractStoryDomainTerms,
@@ -65,6 +69,41 @@ describe("03-stories step module", () => {
     assert.ok(terms.includes("arttir"));
     assert.ok(terms.includes("azalt"));
     assert.ok(terms.includes("sifirla"));
+  });
+
+  it("single-story auto scope stays project-neutral", () => {
+    const repo = mkdtempSync(path.join(tmpdir(), "setfarm-dom-"));
+    try {
+      mkdirSync(path.join(repo, "stitch"));
+      writeFileSync(path.join(repo, "stitch", "DESIGN_DOM.json"), JSON.stringify({
+        screens: {
+          "SCR-001": {
+            title: "Ana",
+            behaviorContract: [
+              { kind: "button", label: "Başlat", icon: "play_arrow", action: "start", expectedBehavior: "start visible workflow" },
+              { kind: "button", label: "Durdur", icon: "stop", action: "stop", expectedBehavior: "stop visible workflow" },
+            ],
+          },
+        },
+      }));
+
+      const criteriaText = buildAcceptanceCriteria(repo).join("\n").toLowerCase();
+      assert.equal(criteriaText.includes("counter"), false);
+      assert.equal(criteriaText.includes("notes"), false);
+      assert.equal(criteriaText.includes("settings"), false);
+
+      const scope = buildSingleStoryScopeFiles(["src/screens/Ana.tsx"]);
+      assert.deepEqual(scope, [
+        "src/screens/Ana.tsx",
+        "src/App.tsx",
+        "src/App.css",
+        "src/main.tsx",
+        "src/index.css",
+      ]);
+      assert.equal(scope.some((file) => /CounterPanel|NotesPanel|SettingsPanel|usePersistentAppState/.test(file)), false);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 
   it("rejects stories that drift into another project concept", () => {

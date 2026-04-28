@@ -26,7 +26,7 @@ Görev: Verify + security-gate'ten geçmiş projeyi browser'da açarak fonksiyon
 5. **Dark mode** destekliyorsa geçişi test et
 6. **Klavye nav**: Tab ile tüm interactive öğelere ulaşılabilir
 7. **Console**: warning/error var mı
-8. **Icon-only controls**: header/nav/settings/history/add/reset gibi metinsiz veya ikon-only butonları da tıkla. Tıklama görünür state, dialog/panel, URL, localStorage/app state veya DOM değişimi üretmüyorsa `STATUS: retry`.
+8. **Icon-only controls**: metinsiz veya ikon-only butonları da tıkla. Tıklama görünür state, dialog/panel, URL, localStorage/app state veya DOM değişimi üretmüyorsa `STATUS: retry`.
 
 ## Zorunlu dev-server lifecycle
 
