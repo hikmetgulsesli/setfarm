@@ -125,7 +125,7 @@ function parseProcessRows(): ProcessRow[] {
 
 function readProcessCwd(pid: number): string | undefined {
   if (process.platform !== "linux") return undefined;
-  try { return fs.realpathSync(`/proc/${pid}/cwd`); } catch { return undefined; }
+  try { return fs.readlinkSync(`/proc/${pid}/cwd`); } catch { return undefined; }
 }
 
 function readProcessCgroup(pid: number): string | undefined {
