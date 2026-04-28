@@ -24,6 +24,7 @@ const MAX_CONCURRENT = 8;
 const SPAWN_STAGGER_MS = parseInt(process.env.SETFARM_SPAWN_STAGGER_MS || "12000", 10);
 const NON_DEVELOPER_STUCK_MS = parsePositiveInt(process.env.SETFARM_AGENT_STUCK_MS, 12 * 60_000);
 const DEVELOPER_STUCK_MS = parsePositiveInt(process.env.SETFARM_DEVELOPER_AGENT_STUCK_MS, 15 * 60_000);
+const QA_FIX_AGENT_STUCK_MS = parsePositiveInt(process.env.SETFARM_QA_FIX_AGENT_STUCK_MS, 8 * 60_000);
 const STARTUP_RUNNING_GRACE_MS = parsePositiveInt(process.env.SETFARM_STARTUP_RUNNING_GRACE_MS, 0);
 const QA_AGENT_STUCK_MS = parsePositiveInt(process.env.SETFARM_QA_AGENT_STUCK_MS, 18 * 60_000);
 const GATEWAY_HEALTH_URL = process.env.OPENCLAW_GATEWAY_HEALTH_URL || "http://127.0.0.1:18789/health";
@@ -99,7 +100,8 @@ function formatDurationMs(ms: number): string {
   return minutes > 0 ? `${minutes}m${rest}s` : `${rest}s`;
 }
 
-function stuckThresholdMs(role: string): number {
+function stuckThresholdMs(role: string, storyId?: string | null): number {
+  if (storyId?.startsWith("QA-FIX-")) return QA_FIX_AGENT_STUCK_MS;
   if (role.includes("qa") || role.includes("test")) return QA_AGENT_STUCK_MS;
   return role === "developer" ? DEVELOPER_STUCK_MS : NON_DEVELOPER_STUCK_MS;
 }
@@ -461,10 +463,11 @@ async function requeueOrphanedRunningStories(): Promise<void> {
 async function reapFinishedClaims(): Promise<void> {
   for (const [key, active] of activeProcesses) {
     try {
-      const row = await pgGet<{ step_status: string; run_status: string; step_id: string; run_id: string; type: string; current_story_id: string | null }>(
-        `SELECT s.status as step_status, r.status as run_status, s.step_id, s.run_id, s.type, s.current_story_id
+      const row = await pgGet<{ step_status: string; run_status: string; step_id: string; run_id: string; type: string; current_story_id: string | null; story_id: string | null }>(
+        `SELECT s.status as step_status, r.status as run_status, s.step_id, s.run_id, s.type, s.current_story_id, st.story_id
          FROM steps s
          JOIN runs r ON r.id = s.run_id
+         LEFT JOIN stories st ON st.id = s.current_story_id
          WHERE s.id = $1
          LIMIT 1`,
         [active.stepId],
@@ -490,7 +493,7 @@ async function reapFinishedClaims(): Promise<void> {
         }
 
         const ageMs = Date.now() - active.startedAtMs;
-        const thresholdMs = stuckThresholdMs(active.role);
+        const thresholdMs = stuckThresholdMs(active.role, row.story_id);
         if (ageMs < thresholdMs) continue;
 
         const reason = `AGENT_PROCESS_STUCK: ${active.agentId} kept ${active.wfId}/${active.role} running for ${formatDurationMs(ageMs)} without step complete/fail; killed by spawner watchdog. Transcript: ${active.transcriptPath}`;
