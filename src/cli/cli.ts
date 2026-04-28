@@ -643,6 +643,10 @@ async function main() {
           [now(), failedStory.id]
         );
       }
+      await pgRun(
+        "UPDATE stories SET status = 'pending', retry_count = 0, claimed_by = NULL, updated_at = $1 WHERE run_id = $2 AND status IN ('failed', 'skipped') AND pr_url IS NULL",
+        [now(), run.id]
+      );
       await pgRun("UPDATE steps SET retry_count = 0 WHERE run_id = $1 AND type = 'loop'", [run.id]);
     }
 
