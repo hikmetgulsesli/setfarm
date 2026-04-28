@@ -82,6 +82,7 @@ type ActiveProcess = {
 
 const activeProcesses = new Map<string, ActiveProcess>();
 const queuedSpawns = new Set<string>();
+const claimingSpawns = new Set<string>();
 let shuttingDown = false;
 let nextSpawnEarliest = 0;
 
@@ -444,8 +445,8 @@ ${reason}
 
 function spawnAgent(agentId: string, wfId: string, role: string): void {
   const key = `${wfId}:${role}:${agentId}`;
-  if (activeProcesses.has(key)) {
-    console.log(`[spawner] Already running: ${key}, skip`);
+  if (activeProcesses.has(key) || claimingSpawns.has(key)) {
+    console.log(`[spawner] Already running/claiming: ${key}, skip`);
     return;
   }
   if (queuedSpawns.has(key)) {
@@ -466,8 +467,8 @@ function spawnAgent(agentId: string, wfId: string, role: string): void {
 
 async function spawnAgentNow(agentId: string, wfId: string, role: string): Promise<void> {
   const key = `${wfId}:${role}:${agentId}`;
-  if (activeProcesses.has(key)) {
-    console.log(`[spawner] Already running: ${key}, skip`);
+  if (activeProcesses.has(key) || claimingSpawns.has(key)) {
+    console.log(`[spawner] Already running/claiming: ${key}, skip`);
     return;
   }
   if (activeProcesses.size >= MAX_CONCURRENT) {
@@ -484,6 +485,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     }, gatewayReadiness.retryAfterMs);
     return;
   }
+  claimingSpawns.add(key);
   const outputFileId = agentId + "-spawner";
   const claimFile = path.join("/tmp", "claim-" + outputFileId + ".json");
   const stalePath = path.join("/tmp", "setfarm-output-" + outputFileId + ".txt");
@@ -495,10 +497,12 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   try {
     claim = await claimStep(fullAgentId, agentId);
   } catch (err) {
+    claimingSpawns.delete(key);
     console.warn("[spawner] claim failed for " + fullAgentId + ": " + String(err));
     return;
   }
   if (!claim.found) {
+    claimingSpawns.delete(key);
     console.log("[spawner] No claimable work for " + fullAgentId + ", skip spawn");
     return;
   }
@@ -514,6 +518,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   // capture agent stdout/stderr to a transcript file for post-hoc diagnosis.
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
   const transcriptPath = path.join(TRANSCRIPT_ROOT, wfId, agentId + "-" + ts + ".log");
+  claimingSpawns.delete(key);
   try { fs.mkdirSync(path.dirname(transcriptPath), { recursive: true }); } catch {}
   try { fs.writeFileSync(transcriptPath, "[spawner] " + new Date().toISOString() + " " + wfId + "/" + role + " agent=" + agentId + "\n"); } catch {}
 

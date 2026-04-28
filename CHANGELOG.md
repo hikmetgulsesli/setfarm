@@ -1,4 +1,5 @@
 ## Unreleased
+- Spawner now locks the claim/preclaim phase per workflow role, preventing duplicate Stitch generation or duplicate setup-build agents before an OpenClaw process is registered.
 - Event-spawner claims now supply legacy `OUTPUT_FILE_ID` template values, preventing implement steps from failing before the developer agent starts.
 - Spawner gateway readiness now also ignores delayed WhatsApp/Telegram/browser/Gmail sidecars after warmup; workflow agents no longer wait for chat-channel reconnects.
 - Single-step claims now re-issue orphaned `running` steps instead of leaving design/setup/QA steps stuck when a claim is made but no agent process remains.
