@@ -1,4 +1,6 @@
 ## Unreleased
+- Verify auto-verify paths now run the system smoke gate before marking merged stories verified, preventing broken apps from being pushed downstream just because the PR is already merged.
+- QA/final/verify quality-fix routing now has a loop guard: repeated matching failures or more than 4 generated `QA-FIX-*` stories fail the run for root-cause inspection instead of creating endless repair stories.
 - QA test step can now auto-complete via the system smoke-test preclaim gate, avoiding model-managed dev-server/browser hangs.
 - Spawner cleanup now reaps QA/final-test preview servers in the project cwd across ports 5173-5189 when an agent is terminated.
 - QA prompt now provides a bounded dev-server lifecycle shell template and forbids malformed one-line server checks that leave Vite processes running silently.

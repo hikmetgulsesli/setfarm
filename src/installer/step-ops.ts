@@ -52,9 +52,26 @@ const QUALITY_FIX_STEPS = new Set(["qa-test", "final-test"]);
 const QA_FIX_SOURCE_EXT = /\.(tsx?|jsx?|css|scss|vue|svelte)$/i;
 const QA_FIX_IGNORE = /^(node_modules\/|dist\/|build\/|\.next\/|coverage\/|stitch\/|references\/)|(^|\/)(package(-lock)?\.json|tsconfig[^/]*\.json|vite\.config\.[^/]+|tailwind\.config\.[^/]+|postcss\.config\.[^/]+|eslint\.config\.[^/]+|index\.html)$/;
 const SMOKE_INFRA_FAILURE = /\b(agent-browser|browser control|playwright|chromium|chrome)\b[\s\S]{0,240}\b(ETIMEDOUT|ECONNREFUSED|ECONNRESET|EPIPE|timed out|timeout)\b/i;
+const QA_FIX_MAX_STORIES = Math.max(1, parseInt(process.env.SETFARM_QA_FIX_MAX_STORIES || "4", 10) || 4);
+const QA_FIX_REPEAT_LIMIT = Math.max(1, parseInt(process.env.SETFARM_QA_FIX_REPEAT_LIMIT || "2", 10) || 2);
 
 function isSmokeInfrastructureFailure(failure: string): boolean {
   return SMOKE_INFRA_FAILURE.test(failure);
+}
+
+function qualityFailureFingerprint(failure: string): string {
+  const normalized = failure
+    .replace(/QA-FIX-\d+/gi, "QA-FIX")
+    .replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/gi, "<uuid>")
+    .replace(/#[0-9]+/g, "#<n>")
+    .replace(/\b\d{1,2}:\d{2}(:\d{2})?\b/g, "<time>")
+    .replace(/\b\d{4}-\d{2}-\d{2}\b/g, "<date>")
+    .replace(/https?:\/\/\S+/g, "<url>")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase()
+    .slice(0, 3000);
+  return crypto.createHash("sha1").update(normalized).digest("hex");
 }
 
 function runSystemSmokeGate(repoPath: string, runId: string, stepId: string): { ok: boolean; output: string; failure: string; infraFailure: boolean } {
@@ -76,6 +93,38 @@ function runSystemSmokeGate(repoPath: string, runId: string, stepId: string): { 
     const failure = formatExecFailure(err, 6000);
     return { ok: false, output: "", failure, infraFailure: isSmokeInfrastructureFailure(failure) };
   }
+}
+
+async function ensureSystemSmokeBeforeAutoVerify(
+  runId: string,
+  context: Record<string, string>,
+  logPrefix: string,
+  story: { story_id: string },
+): Promise<boolean> {
+  const repoPath = context["repo"] || context["REPO"] || "";
+  if (!repoPath) return true;
+
+  syncBaseBranch(repoPath, "main");
+  const smokeGate = runSystemSmokeGate(repoPath, runId, "verify");
+  if (smokeGate.ok) {
+    context["smoke_test_result"] = smokeGate.output;
+    await updateRunContext(runId, context);
+    return true;
+  }
+
+  const failure = smokeGate.failure || "unknown smoke-test failure";
+  context["previous_failure"] = `VERIFY_SYSTEM_SMOKE_FAILURE for ${story.story_id}:\n${failure}`;
+  context["current_story_id"] = story.story_id;
+  context["failure_category"] = smokeGate.infraFailure ? "SMOKE_INFRA_FAILURE" : "VERIFY_SYSTEM_SMOKE_FAILURE";
+  await updateRunContext(runId, context);
+
+  if (smokeGate.infraFailure) {
+    logger.warn(`[${logPrefix}-smoke-gate] Infra failure; not auto-verifying ${story.story_id}: ${failure.slice(0, 200)}`, { runId });
+    return false;
+  }
+
+  logger.warn(`[${logPrefix}-smoke-gate] Smoke failed; blocked auto-verify for ${story.story_id}: ${failure.slice(0, 200)}`, { runId });
+  return false;
 }
 
 function collectQaFixScopeFiles(repoPath: string): string[] {
@@ -122,6 +171,41 @@ async function routeQualityFailureToImplement(
   );
 
   const failure = output.slice(0, 6000);
+  const existingFixCount = await pgGet<{ cnt: string }>(
+    "SELECT COUNT(*)::text as cnt FROM stories WHERE run_id = $1 AND story_id LIKE 'QA-FIX-%'",
+    [step.run_id],
+  );
+  const existingFixCountNum = parseInt(existingFixCount?.cnt || "0", 10) || 0;
+  const fingerprint = qualityFailureFingerprint(failure);
+  const priorFingerprint = context["quality_failure_fingerprint"] || "";
+  const repeatCount = priorFingerprint === fingerprint
+    ? (parseInt(context["quality_failure_repeat_count"] || "0", 10) || 0) + 1
+    : 1;
+  context["quality_failure_fingerprint"] = fingerprint;
+  context["quality_failure_repeat_count"] = String(repeatCount);
+
+  if (!existingActiveFix && (existingFixCountNum >= QA_FIX_MAX_STORIES || repeatCount > QA_FIX_REPEAT_LIMIT)) {
+    const reason = [
+      "QUALITY_FIX_LOOP_GUARD:",
+      `Refusing to create another QA-FIX story after ${existingFixCountNum} existing QA-FIX stories and ${repeatCount} repeated matching failure(s).`,
+      "The pipeline is cycling on downstream quality failures. Stop the run and inspect the root cause instead of generating more repair stories.",
+      "",
+      "Failure report:",
+      failure.slice(0, 3000),
+    ].join("\n");
+    context["previous_failure"] = reason;
+    context["failure_category"] = "QUALITY_FIX_LOOP_GUARD";
+    context["failure_suggestion"] = "Inspect the app and Setfarm guards; do not create another QA-FIX story for this same failure.";
+    await updateRunContext(step.run_id, context);
+    await failStepWithOutput(step.id, reason);
+    await failRun(step.run_id, true);
+    const wfId = await _getWorkflowId(step.run_id);
+    emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: reason.slice(0, 500) });
+    emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: "QUALITY_FIX_LOOP_GUARD" });
+    logger.error(`[quality-fix] Loop guard tripped for ${step.step_id}; refusing more QA-FIX stories`, { runId: step.run_id });
+    return true;
+  }
+
   const repoPath = context["repo"] || context["REPO"] || "";
   let scopeFiles = repoPath ? collectQaFixScopeFiles(repoPath) : [];
   if (scopeFiles.length === 0) {
@@ -151,11 +235,7 @@ async function routeQualityFailureToImplement(
       "SELECT COUNT(*)::text as cnt, MAX(story_index) as max_idx FROM stories WHERE run_id = $1",
       [step.run_id],
     );
-    const existingFixCount = await pgGet<{ cnt: string }>(
-      "SELECT COUNT(*)::text as cnt FROM stories WHERE run_id = $1 AND story_id LIKE 'QA-FIX-%'",
-      [step.run_id],
-    );
-    const n = parseInt(existingFixCount?.cnt || "0", 10) + 1;
+    const n = existingFixCountNum + 1;
     fixStoryId = `QA-FIX-${String(n).padStart(3, "0")}`;
     const storyIndex = (nextMeta?.max_idx ?? -1) + 1;
     const title = `QA fix — ${step.step_id} runtime failures`;
@@ -3961,7 +4041,7 @@ export async function autoVerifyDoneStories(
       if (prUrl) {
         const fvState = getPRState(prUrl);
         if (fvState === "MERGED") {
-          if (context["repo"]) syncBaseBranch(context["repo"], "main");
+          if (!(await ensureSystemSmokeBeforeAutoVerify(runId, context, logPrefix, story))) return story;
           await verifyStory(story.id);
           logger.info(`[${logPrefix}] Story ${story.story_id} force-verified — PR already merged, verify abandoned ${verifyStepAbandons}x`, { runId });
           emitEvent({ ts: now(), event: "story.verified", runId, workflowId: await getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title, detail: `Force-verified — PR merged, verify abandoned ${verifyStepAbandons}x` });
@@ -3979,7 +4059,8 @@ export async function autoVerifyDoneStories(
       const prState = getPRState(prUrl);
 
       if (prState === "MERGED") {
-        // Advisory quality check — auto-verify regardless (downstream steps catch issues)
+        // A merged PR is not enough; run the same smoke gate normal verify uses
+        // before marking the story verified.
         const repoPath = context["repo"] || context["REPO"] || "";
         if (repoPath) syncBaseBranch(repoPath, "main");
         if (repoPath) {
@@ -3987,12 +4068,13 @@ export async function autoVerifyDoneStories(
             const issues = runQualityChecks(repoPath);
             const errors = issues.filter(i => i.severity === "error");
             if (errors.length > 0) {
-              logger.warn(`[${logPrefix}-quality] PR merged — quality gate has ${errors.length} error(s) but auto-verifying anyway:\n${formatQualityReport(issues)}`, { runId });
+              logger.warn(`[${logPrefix}-quality] PR merged — quality gate has ${errors.length} error(s); smoke gate must pass before auto-verify:\n${formatQualityReport(issues)}`, { runId });
             }
           } catch (qErr) {
             logger.warn(`[${logPrefix}] runQualityChecks threw: ${String(qErr)}`, { runId });
           }
         }
+        if (!(await ensureSystemSmokeBeforeAutoVerify(runId, context, logPrefix, story))) return story;
         await verifyStory(story.id);
         logger.info(`[${logPrefix}] Story ${story.story_id} auto-verified — PR merged`, { runId });
         emitEvent({ ts: now(), event: "story.verified", runId, workflowId: await getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title });
@@ -4010,7 +4092,7 @@ export async function autoVerifyDoneStories(
           logger.info(`[${logPrefix}] Found alternative PR for ${story.story_id}: ${resolution.alternativePrUrl}`, { runId });
           continue; // Re-check with updated PR
         } else if (resolution.contentInBaseBranch) {
-          if (repoPath) syncBaseBranch(repoPath, "main");
+          if (!(await ensureSystemSmokeBeforeAutoVerify(runId, context, logPrefix, story))) return story;
           await verifyStory(story.id);
           logger.info(`[${logPrefix}] Story ${story.story_id} auto-verified — CLOSED PR content in base branch`, { runId });
           emitEvent({ ts: now(), event: "story.verified", runId, workflowId: await getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title, detail: "Auto-verified — CLOSED PR content in base branch" });

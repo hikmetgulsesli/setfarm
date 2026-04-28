@@ -7,6 +7,10 @@
  */
 
 import { pgGet, pgQuery, pgRun, pgExec, pgBegin, now } from "../db-pg.js";
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { logger } from "../lib/logger.js";
 import type { LoopConfig } from "./types.js";
 import { emitEvent } from "./events.js";
@@ -16,9 +20,28 @@ import {
   recordStepTransition,
 } from "./repo.js";
 import { archiveRunProgress, scheduleRunCronTeardown, cleanupLocalBranches } from "./cleanup-ops.js";
-import { cleanupWorktrees, cleanAgentWorkspace } from "./worktree-ops.js";
+import { cleanupWorktrees, cleanAgentWorkspace, syncBaseBranch } from "./worktree-ops.js";
 import { RUN_STATUS, STEP_STATUS, STORY_STATUS } from "./constants.js";
 import { syncActiveCrons } from "./agent-cron.js";
+
+function runMedicAutoVerifySmokeGate(repoPath: string, runId: string, storyId: string): boolean {
+  const smokeScript = path.join(os.homedir(), ".openclaw", "setfarm-repo", "scripts", "smoke-test.mjs");
+  if (!repoPath || !fs.existsSync(repoPath) || !fs.existsSync(smokeScript)) return true;
+  try {
+    syncBaseBranch(repoPath, "main");
+    execFileSync("node", [smokeScript, repoPath], {
+      cwd: repoPath,
+      timeout: 240_000,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    return true;
+  } catch (err: any) {
+    const failure = String(err?.stdout || err?.stderr || err?.message || err).slice(0, 800);
+    logger.warn(`[medic-auto-verify] Smoke gate blocked force-verify for ${storyId}: ${failure}`, { runId });
+    return false;
+  }
+}
 
 // ── advancePipeline ──────────────────────────────────────────────────
 
@@ -288,6 +311,13 @@ export async function autoVerifyAndAdvance(runId: string): Promise<boolean> {
 
   if (doneStories.length === 0) return false;
 
+  const ctxRow = await pgGet<{ context: string | null }>("SELECT context FROM runs WHERE id = $1", [runId]);
+  let repoPath = "";
+  try {
+    const ctx = ctxRow?.context ? JSON.parse(ctxRow.context) : {};
+    repoPath = ctx.repo || ctx.REPO || "";
+  } catch {}
+
   let verified = 0;
   let skipped = 0;
   for (const story of doneStories) {
@@ -299,6 +329,10 @@ export async function autoVerifyAndAdvance(runId: string): Promise<boolean> {
         skipped++;
         continue;
       }
+    }
+    if (!runMedicAutoVerifySmokeGate(repoPath, runId, story.story_id)) {
+      skipped++;
+      continue;
     }
     await verifyStory(story.id);
     verified++;
