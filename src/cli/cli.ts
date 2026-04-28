@@ -639,7 +639,7 @@ async function main() {
       const failedStory = await pgGet<{ id: string }>("SELECT id FROM stories WHERE run_id = $1 AND status = 'failed' ORDER BY story_index ASC LIMIT 1", [run.id]);
       if (failedStory) {
         await pgRun(
-          "UPDATE stories SET status = 'pending', updated_at = $1 WHERE id = $2",
+          "UPDATE stories SET status = 'pending', retry_count = 0, claimed_by = NULL, updated_at = $1 WHERE id = $2",
           [now(), failedStory.id]
         );
       }
@@ -722,11 +722,12 @@ async function main() {
     );
     await recordStepTransition(failedStep.id, run.id, "failed", "pending", undefined, "cli:resume");
 
-    // Reset downstream failed steps to waiting (so pipeline can advance after this step completes)
+    // Reset downstream terminal steps to waiting (so pipeline can advance after this step completes).
+    // Failed runs often cascade non-run steps to skipped/failed; leaving those terminal blocks resume.
     const failedStepIndex = await pgGet<{ step_index: number }>("SELECT step_index FROM steps WHERE id = $1", [failedStep.id]);
     if (failedStepIndex) {
       await pgRun(
-        "UPDATE steps SET status = 'waiting', retry_count = 0, abandoned_count = 0, output = NULL, updated_at = $1 WHERE run_id = $2 AND step_index > $3 AND status = 'failed'",
+        "UPDATE steps SET status = 'waiting', retry_count = 0, abandoned_count = 0, output = NULL, updated_at = $1 WHERE run_id = $2 AND step_index > $3 AND status IN ('failed', 'skipped')",
         [now(), run.id, failedStepIndex.step_index]
       );
     }
