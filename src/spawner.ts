@@ -786,10 +786,39 @@ async function handleStoryPending(payload: { role: string; runId: string; storyI
   } catch (err) { console.error(`[spawner] story handler: ${String(err)}`); }
 }
 
+async function advanceCompletedVerifyEachLoops(): Promise<void> {
+  const rows = await pgQuery<{ run_id: string; loop_step_id: string }>(
+    `SELECT r.id as run_id, loop_step.id as loop_step_id
+     FROM runs r
+     JOIN steps loop_step ON loop_step.run_id = r.id
+     WHERE r.status = 'running'
+       AND loop_step.type = 'loop'
+       AND loop_step.status = 'running'
+       AND COALESCE(loop_step.loop_config::jsonb, '{}'::jsonb) @> '{"verifyEach":true}'::jsonb
+       AND EXISTS (
+         SELECT 1 FROM stories any_st
+         WHERE any_st.run_id = r.id
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM stories st
+         WHERE st.run_id = r.id
+           AND st.status IN ('pending', 'running', 'done', 'failed')
+       )
+     ORDER BY loop_step.updated_at ASC
+     LIMIT 10`
+  );
+  if (rows.length === 0) return;
+  const { checkLoopContinuation } = await import("./installer/step-advance.js");
+  for (const row of rows) {
+    console.log(`[spawner] Advancing completed verify-each loop for run ${row.run_id.slice(0, 8)}`);
+    await checkLoopContinuation(row.run_id, row.loop_step_id);
+  }
+}
+
 async function autoVerifyMergedPrEachStories() {
   try {
-    const rows = await pgQuery<{ run_id: string; context: string | null }>(
-      `SELECT DISTINCT r.id as run_id, r.context
+    const rows = await pgQuery<{ run_id: string; context: string | null; loop_step_id: string }>(
+      `SELECT DISTINCT r.id as run_id, r.context, loop_step.id as loop_step_id
        FROM runs r
        JOIN steps loop_step ON loop_step.run_id = r.id
        WHERE r.status = 'running'
@@ -803,10 +832,14 @@ async function autoVerifyMergedPrEachStories() {
     );
     if (rows.length === 0) return;
     const { autoVerifyDoneStories } = await import("./installer/step-ops.js");
+    const { checkLoopContinuation } = await import("./installer/step-advance.js");
     for (const row of rows) {
       let context: Record<string, string> = {};
       try { context = row.context ? JSON.parse(row.context) : {}; } catch {}
-      await autoVerifyDoneStories(row.run_id, context, "spawner-auto-verify");
+      const nextUnverified = await autoVerifyDoneStories(row.run_id, context, "spawner-auto-verify");
+      if (!nextUnverified) {
+        await checkLoopContinuation(row.run_id, row.loop_step_id);
+      }
     }
   } catch (err) {
     console.error(`[spawner] auto-verify merged PRs: ${String(err)}`);
@@ -818,6 +851,7 @@ async function pollForPendingWork() {
   try {
     await reapFinishedClaims();
     await autoVerifyMergedPrEachStories();
+    await advanceCompletedVerifyEachLoops();
     const steps = await pgQuery<{ agent_id: string; run_id: string; step_id: string; context: string | null }>(
       `SELECT s.agent_id, s.run_id, s.step_id, r.context
        FROM steps s
