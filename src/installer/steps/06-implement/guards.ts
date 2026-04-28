@@ -228,8 +228,10 @@ export async function checkScopeEnforcement(
     };
   }
 
-  // Minimum insertion count (anti-stub)
-  const MIN_INSERTS = 10;
+  // Anti-stub check is intentionally advisory. Small QA fixes often change a
+  // color token, aria label, handler, import, or dependency in fewer than ten
+  // inserted lines. Zero-work, scope, build, and smoke gates catch real no-op
+  // completions without forcing agents to pad code.
   if (sourceFiles.length > 0 && retryCount < maxRetries) {
     let inserts = 0;
     try {
@@ -239,13 +241,8 @@ export async function checkScopeEnforcement(
       const mInserts = shortstat.match(/(\d+)\s+insertion/);
       inserts = mInserts ? parseInt(mInserts[1], 10) : 0;
     } catch {}
-    if (inserts > 0 && inserts < MIN_INSERTS) {
-      return {
-        passed: false,
-        reason: `INSUFFICIENT_WORK: Story ${storyId} (${storyTitle}) changed ${sourceFiles.length} source file(s) but only added ${inserts} line(s) — minimum is ${MIN_INSERTS}. This looks like a stub commit.`,
-        category: "INSUFFICIENT_WORK",
-        suggestion: "Write substantive code — stubs are rejected",
-      };
+    if (inserts > 0 && inserts < 10) {
+      logger.warn(`[scope-check] Story ${storyId} has a small source diff (${inserts} insertion(s)); allowing and relying on build/smoke gates`, {});
     }
   }
 

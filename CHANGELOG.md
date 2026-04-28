@@ -1,4 +1,5 @@
 ## Unreleased
+- Implement scope guard no longer rejects small source diffs solely for having fewer than 10 inserted lines; build/smoke/scope gates now decide whether a tiny QA fix is real.
 - Verify auto-verify paths now run the system smoke gate before marking merged stories verified, preventing broken apps from being pushed downstream just because the PR is already merged.
 - QA/final/verify quality-fix routing now has a loop guard: repeated matching failures or more than 4 generated `QA-FIX-*` stories fail the run for root-cause inspection instead of creating endless repair stories.
 - QA test step can now auto-complete via the system smoke-test preclaim gate, avoiding model-managed dev-server/browser hangs.
