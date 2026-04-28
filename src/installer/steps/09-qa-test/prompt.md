@@ -28,7 +28,30 @@ Görev: Verify + security-gate'ten geçmiş projeyi browser'da açarak fonksiyon
 7. **Console**: warning/error var mı
 8. **Icon-only controls**: header/nav/settings/history/add/reset gibi metinsiz veya ikon-only butonları da tıkla. Tıklama görünür state, dialog/panel, URL, localStorage/app state veya DOM değişimi üretmüyorsa `STATUS: retry`.
 
-Dev server başlatırsan PID'ini kaydet ve çıkmadan önce mutlaka kapat (`trap 'kill $PID 2>/dev/null || true' EXIT`). QA agent testten sonra açık `vite`/`serve` prosesi bırakmamalı.
+## Zorunlu dev-server lifecycle
+
+Dev server'i kontrolsuz `npm run dev & ...` seklinde baslatma. Asagidaki kalibi kullan; `trap` ayni shell icinde tanimlanmali, her komut `;` veya yeni satirla ayrilmali, en sonda server kapanmali:
+
+```bash
+cd {{REPO}}
+git fetch origin main
+git checkout main
+git pull --ff-only origin main
+npm run build
+PORT=5173
+LOG=/tmp/setfarm-qa-devserver-{{BRANCH}}.log
+( npm run dev -- --host 127.0.0.1 --port "$PORT" >"$LOG" 2>&1 ) &
+DEV_PID=$!
+trap 'kill "$DEV_PID" 2>/dev/null || true; wait "$DEV_PID" 2>/dev/null || true' EXIT
+for i in $(seq 1 30); do
+  curl -sf "http://127.0.0.1:$PORT/" >/dev/null && break
+  sleep 1
+done
+curl -sf "http://127.0.0.1:$PORT/" >/dev/null || { echo "SERVER_FAIL"; tail -80 "$LOG"; exit 1; }
+# Browser/DOM checks here. Finish within 10 minutes.
+```
+
+Yasak: `sleep` sonrasi satir ayirmadan `curl ... echo ...` yazmak; bu shell'i bozar ve QA step'i sessizce asili birakir. QA agent testten sonra acik `vite`/`serve` prosesi birakmamali.
 
 ## Output formatı
 
