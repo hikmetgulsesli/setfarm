@@ -54,6 +54,19 @@ export async function failStep(stepId: string, error: string): Promise<{ retryin
 
 // ── Loop step failure (PG) ───────────────────────────────────────────
 
+function isTransientAgentInfrastructureFailure(error: string): boolean {
+  const normalized = error.toLowerCase();
+  return (
+    normalized.includes("llm request timed out") ||
+    normalized.includes("fallbacksummaryerror: all models failed") ||
+    normalized.includes("failovererror") ||
+    normalized.includes("gatewayclientrequesterror") ||
+    normalized.includes("agent_process_stuck") ||
+    normalized.includes("agent_process_orphaned") ||
+    normalized.includes("task is already terminal")
+  );
+}
+
 async function handleLoopStepFailurePG(
   stepId: string,
   step: { run_id: string; retry_count: number; max_retries: number; type: string; current_story_id: string | null; agent_id: string },
@@ -66,6 +79,17 @@ async function handleLoopStepFailurePG(
   if (!story) return handleSingleStepFailurePG(stepId, step, error);
 
   const storyRow = await getStoryInfo(step.current_story_id!);
+  if (isTransientAgentInfrastructureFailure(error)) {
+    await pgBegin(async (sql) => {
+      await sql`UPDATE stories SET status = 'pending', output = ${error}, claimed_by = NULL, updated_at = ${now()} WHERE id = ${story.id}`;
+      await sql`UPDATE steps SET status = 'pending', current_story_id = NULL, output = ${error}, updated_at = ${now()} WHERE id = ${stepId}`;
+      try { await sql`UPDATE claim_log SET outcome = 'infra_retry', duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at)) * 1000 AS INTEGER), diagnostic = ${error} WHERE story_id = ${storyRow?.story_id || ""} AND outcome IS NULL`; } catch (e) { logger.warn("[claim-log] update failed: " + String(e), {}); }
+    });
+    await recordStepTransition(stepId, step.run_id, "running", "pending", step.agent_id, "failStep:loopInfraRetry", { storyId: storyRow?.story_id, error: error.slice(0, 300) });
+    logger.warn(`[failStep] Transient agent/model failure for ${storyRow?.story_id}; requeued without consuming story retry`, { runId: step.run_id });
+    return { retrying: true, runFailed: false };
+  }
+
   const newRetry = story.retry_count + 1;
 
   if (storyRow?.story_id) {
