@@ -342,7 +342,8 @@ export async function autoVerifyAndAdvance(runId: string): Promise<boolean> {
   }
 
   if (skipped > 0) {
-    logger.warn("[medic-auto-verify] " + skipped + " stories skipped (PR not merged) — verify step NOT completed", { runId });
+    logger.warn("[medic-auto-verify] " + skipped + " story/stories still need normal verify — verify step NOT completed", { runId });
+    return false;
   }
 
   if (verified === 0) return false;

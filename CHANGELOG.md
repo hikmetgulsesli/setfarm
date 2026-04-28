@@ -1,4 +1,5 @@
 ## Unreleased
+- Medic verify auto-advance now refuses to complete the verify step when any done story was skipped by PR/smoke checks, preventing partial force-verification from advancing downstream.
 - Step module `preClaim` now merges only changed context keys back into the full run context instead of persisting the pruned prompt context, preventing non-implement steps from deleting Stitch/DOM/code context from the database.
 - Implement scope guard no longer rejects small source diffs solely for having fewer than 10 inserted lines; build/smoke/scope gates now decide whether a tiny QA fix is real.
 - Verify auto-verify paths now run the system smoke gate before marking merged stories verified, preventing broken apps from being pushed downstream just because the PR is already merged.
