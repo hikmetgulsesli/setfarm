@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import type { StepModule, PromptContext } from "../types.js";
 import { resolveTemplate } from "../_shared/prompt-resolver.js";
 import { injectContext } from "./context.js";
+import { preClaim } from "./preclaim.js";
 import { normalize, validateOutput } from "./guards.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -27,6 +28,7 @@ export const qaTestModule: StepModule = {
   id: "qa-test",
   type: "single",
   agentRole: "qa-tester",
+  preClaim,
   injectContext,
   buildPrompt,
   normalize,
