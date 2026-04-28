@@ -1,13 +1,16 @@
 BEFORE writing code:
-1. Read the FULL story description and ALL acceptance criteria before coding
-2. Read references/design-standards.md + references/backend-standards.md
+1. Read the story task and acceptance criteria from the claim via jq only; do not
+   print the full claim JSON.
+2. Do NOT read full references/*.md files during implement. The mandatory rules
+   are already embedded in this prompt. If blocked on a specific rule, read only
+   the matching heading with rg/sed and cap output to 80 lines.
 3. If stitch/ directory exists:
-   a. Read stitch/DESIGN_MANIFEST.json → find this story's screen
-   b. Read stitch/<story-id>.html for layout reference
-   c. Read stitch/design-tokens.css for colors/fonts/spacing
+   a. Read stitch/DESIGN_MANIFEST.json only to identify/count screens
+   b. Read only the stitch/*.html files for STORY_SCREENS / current scope
+   c. Read stitch/design-tokens.css only enough to import it and confirm token names
    d. Implementation MUST match Stitch design (layout, colors, fonts)
    e. NEVER use fonts/colors NOT in design-tokens.css
-   f. You MUST @import or copy stitch/design-tokens.css into your main CSS file — do NOT recreate tokens.
+   f. You MUST @import stitch/design-tokens.css from the main CSS entry — do NOT copy or recreate tokens.
    g. stitch/design-tokens.css is the SINGLE SOURCE OF TRUTH for all design values.
 
 SCREEN COVERAGE RULE (CRITICAL):

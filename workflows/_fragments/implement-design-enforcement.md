@@ -19,11 +19,14 @@ DESIGN ENFORCEMENT (frontend stories — MANDATORY checklist before commit):
   If a sidebar/navbar has navigation items, EVERY item MUST have a working href.
   Before commit: grep -rn 'href="#"' src/ — if ANY match found, you MUST fix them all.
 - HANDLERS: NEVER use onClick={() => {}} or onChange={() => {}} — empty handlers are banned.
-  Every interactive element MUST have a real handler, even if it just logs or shows a toast.
+  Every interactive element MUST have a real user-visible effect: change state, submit data,
+  open/close a modal or drawer, update storage, or navigate to a real route. console.log,
+  alert-only, and toast-only handlers do NOT count as functional behavior.
   - Check DESIGN_DOM buttons for expectedRoute field. If a button has expectedRoute: "/settings",
     implement it with React Router Link or onClick navigation to that route.
-  - For icon buttons (settings, profile, notifications), create the target page even if minimal.
-    A settings icon with no /settings page is WORSE than no settings icon at all.
+  - For icon buttons (settings, profile, notifications), create a working route or an in-screen
+    modal/drawer that preserves the Stitch layout. A visible icon button with no user-visible
+    result is a blocking implementation failure.
 
 STITCH COMPONENT IMPORT RULES (NO EXCEPTIONS):
 1. If stitch/ has screen HTML files, there MUST be matching React components in components/

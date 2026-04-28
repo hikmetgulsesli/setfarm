@@ -451,7 +451,7 @@ export function getProjectTree(workdir: string): string {
     ], { encoding: "utf-8", timeout: 5000 });
     const result = tree.trim().split("\n")
       .map(f => f.replace(workdir + "/", ""))
-      .slice(0, 100)
+      .slice(0, 60)
       .join("\n");
     setCached(_projectTreeCache, workdir, result);
     return result;
@@ -517,7 +517,7 @@ export function getSharedCode(workdir: string): string {
       }
     } catch { /* find failed */ }
   }
-  return result.slice(0, 40000); // Max ~10K token
+  return result.slice(0, 12000); // Keep implement prompt compact; agent can read specific files on demand
 }
 
 /**
@@ -532,7 +532,7 @@ export async function getRecentStoryCode(
     stories = await pgQuery<{ story_id: string; story_branch: string; title: string }>(
       `SELECT story_id, story_branch, title FROM stories
        WHERE run_id = $1 AND status IN ('done','verified') AND story_id != $2
-       ORDER BY updated_at DESC LIMIT 3`, [runId, currentStoryId]);
+       ORDER BY updated_at DESC LIMIT 2`, [runId, currentStoryId]);
   } catch { return ""; }
 
   let content = "";
@@ -546,15 +546,15 @@ export async function getRecentStoryCode(
       const changedFiles = execFileSync("git", [
         "diff", "--name-only", `main...${s.story_branch}`, "--", "src/", "app/"
       ], { cwd: repoPath, encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"] })
-        .trim().split("\n").filter(Boolean).slice(0, 5);
+        .trim().split("\n").filter(Boolean).slice(0, 3);
 
       let storyCode = `\n// ─── ${s.story_id}: ${s.title} ───\n`;
       for (const f of changedFiles) {
         try {
           const code = execFileSync("git", ["show", `${s.story_branch}:${f}`],
             { cwd: repoPath, encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"] });
-          const truncated = code.length > 3000
-            ? code.slice(0, 3000) + "\n// ...truncated"
+          const truncated = code.length > 1800
+            ? code.slice(0, 1800) + "\n// ...truncated"
             : code;
           storyCode += `// --- ${f} ---\n${truncated}\n`;
         } catch { /* file not in branch */ }
@@ -562,7 +562,7 @@ export async function getRecentStoryCode(
       content += storyCode;
     } catch { /* branch not found */ }
   }
-  return content.slice(0, 60000); // Max ~15K token
+  return content.slice(0, 16000); // Keep previous-story context bounded
 }
 
 /**
@@ -576,7 +576,7 @@ export function getComponentRegistry(workdir: string): string {
       "--include=*.tsx", "--include=*.jsx", "--include=*.ts",
     ], { encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"] });
 
-    const files = result.trim().split("\n").filter(Boolean).slice(0, 30);
+    const files = result.trim().split("\n").filter(Boolean).slice(0, 20);
     let registry = "";
     for (const f of files) {
       try {
@@ -586,7 +586,7 @@ export function getComponentRegistry(workdir: string): string {
         registry += `${f.replace(workdir + "/", "")}:\n${exports}\n\n`;
       } catch { /* no exports */ }
     }
-    return registry.slice(0, 12000); // Max ~3K token
+    return registry.slice(0, 8000); // Compact registry
   } catch { return ""; }
 }
 
@@ -602,6 +602,6 @@ export function getApiRoutes(workdir: string): string {
       path.join(workdir, "src"),
       "--include=*.ts", "--include=*.tsx", "--include=*.js", "--include=*.py",
     ], { encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"] });
-    return result.slice(0, 8000); // Max ~2K token
+    return result.slice(0, 5000); // Compact route summary
   } catch { return ""; }
 }

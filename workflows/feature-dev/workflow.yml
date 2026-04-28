@@ -907,11 +907,19 @@ steps:
       BEFORE writing code:
       0. If PREVIOUS FAILURE is non-empty: analyze what went wrong. The previous attempt
          timed out or crashed. Common causes: infinite loop, hanging process, excessive
-         file I/O, or memory exhaustion. Adjust your approach to avoid the same failure.
-      1. Read the FULL story description and ALL acceptance criteria before coding
-      2. Read references/design-standards.md + references/backend-standards.md + references/react-best-practices.md
-      3. Read references/web-guidelines.md for accessibility and interaction rules
-      4. If project uses Next.js, read references/next-best-practices.md
+         file I/O, context overflow, or memory exhaustion. Adjust your approach to avoid
+         the same failure.
+      1. Read the story description and acceptance criteria from the claim with jq.
+         Do NOT cat the full claim JSON. Do NOT paste large prompt/context files into
+         the session.
+      2. Do NOT read full references/design-standards.md, backend-standards.md,
+         react-best-practices.md, web-guidelines.md, or next-best-practices.md during
+         implement. Their mandatory parts are already embedded in this prompt. If a
+         specific rule is needed, search the exact heading with rg and read at most
+         80 lines.
+      3. Read only the files you will edit plus the in-scope Stitch screen files.
+         Avoid broad recursive reads of src/, references/, node_modules/, dist/, or
+         all stitch HTML.
 
       !include implement-stitch-rules.md
 
@@ -968,60 +976,56 @@ steps:
          - No TODOs, no placeholders, no shortcuts
          - Use REALISTIC demo content: real Turkish names (Elif Yılmaz, Ahmet Kaya), real-looking emails (elif@reelforge.com), meaningful descriptions. NEVER use John Doe, Jane Smith, Lorem ipsum, test@test.com, foo@bar, example@, dummy, sample data. If data will come from API later, use realistic placeholder that looks like production.
 
-      5-7. SELF-FIX LOOP (up to 3 cycles — do NOT give up after first failure):
-         for CYCLE in 1 2 3; do
+      5-7. SELF-FIX LOOP (up to 2 cycles — keep context compact):
+         IMPORTANT: Never paste full lint/build/test output into the session.
+         Always redirect output to /tmp logs and inspect only focused excerpts.
+
+         run_limited() {
+           NAME="$1"; shift
+           LOG="/tmp/setfarm-${NAME}-{{OUTPUT_FILE_ID}}-${CYCLE}.log"
+           "$@" > "$LOG" 2>&1
+           CODE=$?
+           if [ "$CODE" != "0" ]; then
+             echo "${NAME} failed (exit $CODE). Log: $LOG"
+             echo "--- ${NAME} first 40 lines ---"; sed -n '1,40p' "$LOG"
+             echo "--- ${NAME} last 120 lines ---"; tail -120 "$LOG"
+           fi
+           return "$CODE"
+         }
+
+         for CYCLE in 1 2; do
            echo "=== Verification cycle $CYCLE ==="
            LINT_OK=true; BUILD_OK=true; TEST_OK=true
 
            # Lint — auto-fix only when eslint is already installed
            if node -e "const p=require('./package.json'); process.exit((p.devDependencies&&p.devDependencies.eslint)||(p.dependencies&&p.dependencies.eslint)?0:1)" 2>/dev/null; then
-             npx eslint --fix "src/**/*.{ts,tsx}" 2>/dev/null || npx eslint --fix "app/**/*.{ts,tsx}" 2>/dev/null || true
+             npx eslint --fix "src/**/*.{ts,tsx}" >/tmp/setfarm-eslint-fix-{{OUTPUT_FILE_ID}}-${CYCLE}.log 2>&1 || true
            fi
-           {{lint_cmd}} 2>&1 || { LINT_OK=false; echo "Lint failed after auto-fix — manual fix needed"; }
-           if [ "$LINT_OK" = "false" ]; then
-             LINT_OUT=$({{lint_cmd}} 2>&1) || true
-             echo "$LINT_OUT"
-             # Read each error line (file:line:col error message), open the file, fix the issue
-             # Common fixes: remove unused imports, add missing types, fix naming
-           fi
+           run_limited lint bash -lc '{{lint_cmd}}' || LINT_OK=false
 
            # Build
-           {{build_cmd}} 2>&1 || { BUILD_OK=false; echo "Build failed — fixing..."; }
-           if [ "$BUILD_OK" = "false" ]; then
-             BUILD_OUT=$({{build_cmd}} 2>&1) || true
-             echo "$BUILD_OUT"
-             # Common fix patterns:
-             # "Cannot find module 'vitest'" → exclude test files from tsconfig build:
-             #   Add "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"] to tsconfig.json
-             #   OR add "types": ["vitest/globals"] to compilerOptions
-             # "Cannot find module 'X'" → report MISSING_DEPENDENCY instead of installing
-             # "'X' is declared but never used" → remove unused import
-             # Fix each error, then re-run build
-           fi
+           run_limited build bash -lc '{{build_cmd}}' || BUILD_OK=false
 
            # Test
-           {{test_cmd}} 2>&1 || { TEST_OK=false; echo "Tests failed — fixing..."; }
-           if [ "$TEST_OK" = "false" ]; then
-             TEST_OUT=$({{test_cmd}} 2>&1) || true
-             echo "$TEST_OUT"
-             # Read failing test output and fix the code or tests
-           fi
+           run_limited test bash -lc '{{test_cmd}}' || TEST_OK=false
 
            if [ "$LINT_OK" = "true" ] && [ "$BUILD_OK" = "true" ] && [ "$TEST_OK" = "true" ]; then
              echo "All checks pass on cycle $CYCLE"
              break
            fi
 
-           if [ "$CYCLE" = "3" ]; then
-             echo "WARNING: Still failing after 3 fix cycles — committing best effort"
+           # Fix root causes from the limited log excerpt. Open exact file:line only.
+           # Do NOT rerun commands just to print more output; inspect the saved log with rg/sed.
+           if [ "$CYCLE" = "2" ]; then
+             echo "WARNING: Still failing after 2 fix cycles — commit only if acceptance criteria are implemented and failures are non-blocking"
            fi
          done
 
          IMPORTANT: Do NOT report STATUS: retry just because lint/build/test failed once.
-         You MUST attempt to fix the issue yourself. Read the error output carefully,
-         identify the root cause, edit the file, and re-run. Only report STATUS: retry
-         if you have genuinely tried 3 fix cycles and the error is truly unfixable
-         (e.g. missing external API, infrastructure issue, dependency conflict).
+         You MUST attempt to fix the issue yourself using focused log excerpts.
+         Only report STATUS: retry if you have genuinely tried 2 fix cycles and the
+         error is truly unfixable (missing dependency, infrastructure failure,
+         external API issue, or context/tool failure).
 
       8. Commit (exclude runtime files):
          rm -f .setfarm-step-output.txt 2>/dev/null || true

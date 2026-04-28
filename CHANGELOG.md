@@ -1,3 +1,10 @@
+## 2026-04-28 - Implement context overflow hardening
+
+- Implement agents now avoid printing full claim JSON, large reference files, and broad Stitch/DOM content into the model session; prompts require jq-based field extraction and scoped file reads.
+- Smart context injection now caps project tree, shared code, previous story code, component registry, and API route summaries more aggressively so developer sessions start smaller and read exact files on demand.
+- Developer self-fix loops now keep lint/build/test output in /tmp logs and show bounded excerpts only, preventing repeated failing test output from inflating Kimi/MiniMax sessions.
+- Frontend handler rules now require visible state/modal/route/storage effects; console.log, alert-only, and toast-only handlers no longer count as functional buttons.
+
 ## 2026-04-28 - Spawner timeout and spawn queue hardening
 
 - Spawner watchdog defaults now allow MiniMax primary timeout plus Kimi fallback time before killing active claims: 12m for non-developer agents, 15m for developer, and 18m for QA/test roles.

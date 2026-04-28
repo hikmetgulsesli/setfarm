@@ -36,14 +36,16 @@ Workflow agent. Peek→Claim→Work→Complete.
      $HOME/.openclaw/setfarm-repo*) echo "STATUS: fatal"; echo "FATAL: platform_path_touched"; exit 1;;
    esac
    Save STEP_ID — you need it for step complete/fail. The claim JSON is in
-   /tmp/claim-{{OUTPUT_FILE_ID}}.json if you need other fields (input.prd,
-   input.task, input.scope_files, etc.). Read it with:
-     cat /tmp/claim-{{OUTPUT_FILE_ID}}.json
+   /tmp/claim-{{OUTPUT_FILE_ID}}.json if you need other fields. Do NOT print
+   the full claim JSON into the session. It can be large and can cause model
+   context overflow. Extract only the exact field you need with jq:
      jq -r 'if (.input | type) == "object" then (.input.task // "") else .input end' /tmp/claim-{{OUTPUT_FILE_ID}}.json
-     jq -r 'if (.input | type) == "object" then (.input.prd // "") else "" end' /tmp/claim-{{OUTPUT_FILE_ID}}.json
-   If `.input` is a string, treat it as the step instructions. Object fields
-   such as `input.repo`, `input.story_workdir`, and `input.scope_files` only
-   exist on claims that explicitly include them.
+     jq -r 'if (.input | type) == "object" then (.input.scope_files // [])[] else empty end' /tmp/claim-{{OUTPUT_FILE_ID}}.json
+     jq -r 'if (.input | type) == "object" then (.input.story_screens // "") else "" end' /tmp/claim-{{OUTPUT_FILE_ID}}.json
+   Only use cat/head/sed on the claim file when jq cannot answer the question,
+   and cap output with head -120. If `.input` is a string, treat it as the
+   step instructions. Object fields such as `input.repo`, `input.story_workdir`,
+   and `input.scope_files` only exist on claims that explicitly include them.
 
 4. Do the work described in the claim input. No narration. Stay in WORKDIR when
    a project workdir exists. For implement/verify/test/deploy claims, setup-repo
