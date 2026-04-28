@@ -1,4 +1,5 @@
 ## Unreleased
+- Expanded project cleanup to reap orphan preview/serve processes by real process cwd while preserving systemd-managed deployed app services.
 - Added workflow agent model timeout defaults so MiniMax/Kimi agent calls do not fail on OpenClaw gateway short implicit timeout before provider responses can complete.
 
 ## 2026-04-28 - Implement context overflow hardening

@@ -48,6 +48,8 @@ type ProcessRow = {
   pid: number;
   ppid: number;
   command: string;
+  cwd?: string;
+  cgroup?: string;
 };
 
 function isSafeProjectDir(repoPath: string): boolean {
@@ -107,11 +109,28 @@ function parseProcessRows(): ProcessRow[] {
   } catch {
     return [];
   }
-  return out.split("\n").map((line) => {
+  return out.split("\n").map((line): ProcessRow | null => {
     const match = line.trim().match(/^(\d+)\s+(\d+)\s+([\s\S]+)$/);
     if (!match) return null;
-    return { pid: Number(match[1]), ppid: Number(match[2]), command: match[3] };
+    const pid = Number(match[1]);
+    return {
+      pid,
+      ppid: Number(match[2]),
+      command: match[3],
+      cwd: readProcessCwd(pid),
+      cgroup: readProcessCgroup(pid),
+    };
   }).filter((row): row is ProcessRow => !!row && row.pid > 0);
+}
+
+function readProcessCwd(pid: number): string | undefined {
+  if (process.platform !== "linux") return undefined;
+  try { return fs.realpathSync(`/proc/${pid}/cwd`); } catch { return undefined; }
+}
+
+function readProcessCgroup(pid: number): string | undefined {
+  if (process.platform !== "linux") return undefined;
+  try { return fs.readFileSync(`/proc/${pid}/cgroup`, "utf-8").trim().split("\n").pop(); } catch { return undefined; }
 }
 
 function collectDescendants(pid: number, childrenByParent: Map<number, ProcessRow[]>, out: Set<number>): void {
@@ -126,15 +145,32 @@ function collectDescendants(pid: number, childrenByParent: Map<number, ProcessRo
 function hasAllowedTransientPort(command: string, ports: Set<string>): boolean {
   for (const port of ports) {
     const escaped = port.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    if (new RegExp(`(?:--port(?:=|\\s+)|-p\\s+)${escaped}\\b`).test(command)) return true;
+    if (new RegExp(`(?:--port(?:=|\\s+)|-p\\s+|-l\\s+|--listen(?:=|\\s+))${escaped}\\b`).test(command)) return true;
   }
   return false;
 }
 
-function isTransientPreviewCommand(command: string, repoPath: string, ports: Set<string>): boolean {
-  if (!command.includes(repoPath)) return false;
+function isPathInside(child: string | undefined, parent: string): boolean {
+  if (!child) return false;
+  const resolvedChild = path.resolve(child);
+  const resolvedParent = path.resolve(parent);
+  return resolvedChild === resolvedParent || resolvedChild.startsWith(resolvedParent + path.sep);
+}
+
+function isManagedProjectService(row: ProcessRow): boolean {
+  const cgroup = row.cgroup || "";
+  if (!/\.service\b/.test(cgroup)) return false;
+  // Agent-spawned preview processes inherit Setfarm/OpenClaw service cgroups;
+  // deployed apps have their own project service cgroup and must be preserved.
+  return !/(setfarm-spawner|openclaw-gateway)\.service\b/.test(cgroup);
+}
+
+function isTransientPreviewCommand(row: ProcessRow, repoPath: string, ports: Set<string>): boolean {
+  const command = row.command;
+  if (!command.includes(repoPath) && !isPathInside(row.cwd, repoPath)) return false;
+  if (isManagedProjectService(row)) return false;
   if (!hasAllowedTransientPort(command, ports)) return false;
-  return /\b(vite|next)\b[\s\S]{0,80}\b(dev|preview|start)\b|\bnpx\s+vite\b|\bnpm\s+exec\s+vite\b/.test(command);
+  return /\b(vite|next)\b[\s\S]{0,80}\b(dev|preview|start)\b|\bnpx\s+vite\b|\bnpm\s+exec\s+vite\b|\bserve\b[\s\S]{0,80}\bdist\b/.test(command);
 }
 
 function reapTransientPreviewProcesses(repoPath: string, ports: Set<string>): number {
@@ -151,7 +187,7 @@ function reapTransientPreviewProcesses(repoPath: string, ports: Set<string>): nu
 
   const targets = new Set<number>();
   for (const row of rows) {
-    if (!isTransientPreviewCommand(row.command, repoPath, ports)) continue;
+    if (!isTransientPreviewCommand(row, repoPath, ports)) continue;
     targets.add(row.pid);
     collectDescendants(row.pid, childrenByParent, targets);
 
