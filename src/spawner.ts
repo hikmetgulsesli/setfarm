@@ -99,7 +99,17 @@ async function isGatewayReady(): Promise<boolean> {
   const timeout = setTimeout(() => controller.abort(), 2000);
   try {
     const res = await fetch(GATEWAY_HEALTH_URL, { signal: controller.signal });
-    return res.ok;
+    if (!res.ok) return false;
+    const text = await res.text();
+    if (!text.trim()) return true;
+    try {
+      const body = JSON.parse(text);
+      if (typeof body.ready === "boolean") return body.ready === true;
+      if (typeof body.ok === "boolean") return body.ok === true;
+    } catch {
+      // Some gateway endpoints return plain text/html after readiness. Treat 2xx as ready.
+    }
+    return true;
   } catch {
     return false;
   } finally {
