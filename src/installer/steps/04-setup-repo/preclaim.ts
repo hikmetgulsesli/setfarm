@@ -55,6 +55,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     } catch (e) {
       logger.warn(`[module:setup-repo preclaim] branch ensure failed — fallback to main: ${String(e).slice(0, 200)}`, { runId: ctx.runId });
       ctx.context["branch"] = "main";
+      ctx.context["BRANCH"] = "main";
     }
   }
 

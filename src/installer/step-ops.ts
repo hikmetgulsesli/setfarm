@@ -265,16 +265,79 @@ function parseLoopConfigSafe(raw: string | null, runId?: string): LoopConfig | n
   }
 }
 
+function formatExecFailure(e: unknown, max = 900): string {
+  const err = e as any;
+  const parts = [String(err?.message || e || "unknown error")];
+  const stderr = err?.stderr ? String(err.stderr).trim() : "";
+  const stdout = err?.stdout ? String(err.stdout).trim() : "";
+  if (stderr) parts.push(`stderr: ${stderr}`);
+  if (stdout) parts.push(`stdout: ${stdout}`);
+  return parts.join(" | ").replace(/\s+/g, " ").slice(0, max);
+}
+
+function uniqueNonEmpty(values: Array<string | undefined | null>): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of values) {
+    const value = String(raw || "").trim();
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
+
+function currentGitBranch(repo: string): string {
+  try {
+    return execFileSync("git", ["branch", "--show-current"], {
+      cwd: repo, encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+  } catch {
+    return "";
+  }
+}
+
+function gitBranchExists(repo: string, branch: string): boolean {
+  if (!repo || !branch || /^[0-9a-f]{40}$/i.test(branch)) return false;
+  try {
+    execFileSync("git", ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], {
+      cwd: repo, timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function normalizeRunBranchContext(context: Record<string, string>, runId: string, repo: string): string {
+  const current = repo ? currentGitBranch(repo) : "";
+  const candidates = uniqueNonEmpty([runId, context["BRANCH"], context["branch"], current]);
+  const branch = candidates.find((b) => repo && gitBranchExists(repo, b)) || current || context["BRANCH"] || context["branch"] || runId;
+  if (branch) {
+    if (context["branch"] !== branch || context["BRANCH"] !== branch) {
+      logger.warn(`[branch-normalize] Canonicalized run branch to ${branch} (branch=${context["branch"] || ""}, BRANCH=${context["BRANCH"] || ""}, current=${current || ""})`, { runId });
+    }
+    context["branch"] = branch;
+    context["BRANCH"] = branch;
+  }
+  return branch;
+}
+
 function publishSetupBaselineToMain(repo: string, runBranch: string, runId: string): boolean {
   if (!repo) return false;
   try {
-    const current = execFileSync("git", ["branch", "--show-current"], {
-      cwd: repo, encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
-    }).trim();
-    if (runBranch && current !== runBranch) {
-      execFileSync("git", ["checkout", runBranch], {
-        cwd: repo, timeout: 10000, stdio: ["pipe", "pipe", "pipe"],
-      });
+    const initialCurrent = currentGitBranch(repo);
+    const branchCandidates = uniqueNonEmpty([runId, runBranch, initialCurrent]);
+    const publishBranch = branchCandidates.find((b) => gitBranchExists(repo, b)) || initialCurrent;
+
+    if (publishBranch && initialCurrent !== publishBranch) {
+      try {
+        execFileSync("git", ["checkout", publishBranch], {
+          cwd: repo, timeout: 10000, stdio: ["pipe", "pipe", "pipe"],
+        });
+      } catch (checkoutErr) {
+        throw new Error(`checkout ${publishBranch} failed: ${formatExecFailure(checkoutErr)}`);
+      }
     }
 
     try {
@@ -296,31 +359,47 @@ function publishSetupBaselineToMain(repo: string, runBranch: string, runId: stri
           env: { ...process.env, GIT_COMMITTER_NAME: "Moltclaw AI", GIT_COMMITTER_EMAIL: "setrox@moltclaw.local" },
         });
       }
-    } catch { /* nothing to commit is fine */ }
+    } catch (commitErr) {
+      logger.warn(`[setup-build] Baseline commit step skipped/failed: ${formatExecFailure(commitErr, 300)}`, { runId });
+    }
 
-    if (runBranch) {
+    const current = currentGitBranch(repo) || publishBranch;
+    if (current) {
       try {
-        execFileSync("git", ["push", "origin", runBranch], {
+        execFileSync("git", ["push", "origin", current], {
           cwd: repo, timeout: 30000, stdio: ["pipe", "pipe", "pipe"],
         });
       } catch (pushBranchErr) {
-        logger.warn(`[setup-build] Could not push setup branch ${runBranch}: ${String(pushBranchErr).slice(0, 180)}`, { runId });
+        logger.warn(`[setup-build] Could not push setup branch ${current}: ${formatExecFailure(pushBranchErr, 500)}`, { runId });
       }
     }
 
-    execFileSync("git", ["push", "origin", "HEAD:main"], {
-      cwd: repo, timeout: 30000, stdio: ["pipe", "pipe", "pipe"],
-    });
+    try {
+      execFileSync("git", ["push", "origin", "HEAD:main"], {
+        cwd: repo, timeout: 30000, stdio: ["pipe", "pipe", "pipe"],
+      });
+    } catch (pushMainErr) {
+      try {
+        execFileSync("git", ["fetch", "origin", "main"], { cwd: repo, timeout: 15000, stdio: ["pipe", "pipe", "pipe"] });
+        execFileSync("git", ["merge-base", "--is-ancestor", "origin/main", "HEAD"], { cwd: repo, timeout: 5000, stdio: ["pipe", "pipe", "pipe"] });
+        execFileSync("git", ["push", "origin", "HEAD:main"], { cwd: repo, timeout: 30000, stdio: ["pipe", "pipe", "pipe"] });
+      } catch (retryErr) {
+        throw new Error(`push HEAD:main failed: ${formatExecFailure(pushMainErr)}; retry failed: ${formatExecFailure(retryErr)}`);
+      }
+    }
+
     try {
       execFileSync("git", ["branch", "-f", "main", "HEAD"], {
         cwd: repo, timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
       });
-    } catch {}
+    } catch (branchErr) {
+      logger.warn(`[setup-build] Could not fast-set local main to setup baseline: ${formatExecFailure(branchErr, 400)}`, { runId });
+    }
     syncBaseBranch(repo, "main");
-    logger.info(`[setup-build] Published setup baseline to main; story PRs will branch from main`, { runId });
+    logger.info(`[setup-build] Published setup baseline to main from ${current || "HEAD"}; story PRs will branch from main`, { runId });
     return true;
   } catch (e) {
-    logger.warn(`[setup-build] Could not publish setup baseline to main: ${String(e).slice(0, 220)}`, { runId });
+    logger.warn(`[setup-build] Could not publish setup baseline to main: ${formatExecFailure(e)}`, { runId });
     return false;
   }
 }
@@ -467,6 +546,7 @@ type StepRow = {
   id: string;
   step_id: string;
   run_id: string;
+  step_index: number;
   input_template: string;
   type: string;
   loop_config: string | null;
@@ -1489,7 +1569,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
   // Also prefer own-run (0), then unassigned (1), so an already-reserved
   // developer resumes their own work before picking up a new one.
   const step = await pgGet<StepRow>(
-        `SELECT s.id, s.step_id, s.run_id, s.input_template, s.type, s.loop_config, s.status as step_status, s.current_story_id, s.retry_count, s.output
+        `SELECT s.id, s.step_id, s.run_id, s.step_index, s.input_template, s.type, s.loop_config, s.status as step_status, s.current_story_id, s.retry_count, s.output
          FROM steps s
          JOIN runs r ON r.id = s.run_id
          WHERE s.agent_id = $1
@@ -1544,6 +1624,12 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
 
   // Always inject run_id so templates can use {{run_id}} (e.g. for scoped progress files)
   context["run_id"] = step.run_id;
+
+  // Keep branch aliases canonical after setup-repo. A stale lowercase `branch`
+  // with a newer uppercase `BRANCH` can make setup-build publish from the wrong ref.
+  if (step.step_index >= 4 && context["repo"]) {
+    normalizeRunBranchContext(context, step.run_id, context["repo"]);
+  }
 
   // Compute has_frontend_changes from git diff when repo and branch are available
   if (context["repo"] && context["branch"]) {
@@ -2535,7 +2621,9 @@ ${screenDescs}
   // scaffold/build baseline to main before implement starts. Without this,
   // US-001 branches from an empty/stale main and every later PR collides.
   if (step.step_id === "setup-build" && parsed["status"]?.toLowerCase() === "done") {
-    const baselinePublished = publishSetupBaselineToMain(context["repo"] || "", context["branch"] || "", step.run_id);
+    const setupBranch = normalizeRunBranchContext(context, step.run_id, context["repo"] || "");
+    await updateRunContext(step.run_id, context);
+    const baselinePublished = publishSetupBaselineToMain(context["repo"] || "", setupBranch, step.run_id);
     if (!baselinePublished) {
       const reason = "SETUP_BASELINE_MAIN_SYNC_FAILED: setup-build could not publish the baseline to main. pr-each implement cannot start safely until main contains the scaffold/build baseline.";
       await failStep(stepId, reason);

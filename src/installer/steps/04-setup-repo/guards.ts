@@ -11,7 +11,10 @@ export function validateOutput(parsed: ParsedOutput): ValidationResult {
 }
 
 export async function onComplete(ctx: CompleteContext): Promise<void> {
-  const { parsed, context } = ctx;
+  const { parsed, context, runId } = ctx;
+  const canonicalBranch = context["BRANCH"] || context["branch"] || runId;
+  context["branch"] = canonicalBranch;
+  context["BRANCH"] = canonicalBranch;
   const existing = (parsed.existing_code || context["existing_code_hint"] || "false").toLowerCase();
   context["existing_code"] = existing === "true" ? "true" : "false";
 }
