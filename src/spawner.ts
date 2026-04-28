@@ -460,6 +460,19 @@ async function requeueOrphanedRunningStories(): Promise<void> {
   }
 }
 
+async function cleanupRunningRunEphemeraOnStartup(): Promise<void> {
+  try {
+    const rows = await pgQuery<{ id: string }>(
+      "SELECT id FROM runs WHERE status = 'running' ORDER BY updated_at DESC LIMIT 20",
+    );
+    for (const row of rows) {
+      await cleanupProjectEphemera(row.id, "spawner-startup");
+    }
+  } catch (err) {
+    console.warn(`[spawner] startup project cleanup failed: ${String(err).slice(0, 300)}`);
+  }
+}
+
 async function reapFinishedClaims(): Promise<void> {
   for (const [key, active] of activeProcesses) {
     try {
@@ -986,6 +999,7 @@ async function main() {
   killStartupOrphanSpawnerAgents();
   await failStaleRunningClaimsFromPreviousSpawner();
   await requeueOrphanedRunningStories();
+  await cleanupRunningRunEphemeraOnStartup();
 
   const shutdown = () => {
     shuttingDown = true;

@@ -167,8 +167,20 @@ function isManagedProjectService(row: ProcessRow): boolean {
 
 function isTransientPreviewCommand(row: ProcessRow, repoPath: string, ports: Set<string>): boolean {
   const command = row.command;
-  if (!command.includes(repoPath) && !isPathInside(row.cwd, repoPath)) return false;
+  const cwd = row.cwd || "";
   if (isManagedProjectService(row)) return false;
+  // Deleted Setfarm story worktrees cannot be valid active project servers.
+  // Agents sometimes leave Vite/esbuild behind after git worktree removal; those
+  // processes keep the OpenClaw gateway cgroup hot and are not tied to the
+  // standard preview port range.
+  if (
+    /\bstory-worktrees\b/.test(cwd) &&
+    /\(deleted\)$/.test(cwd) &&
+    /\b(vite|esbuild|npm|npx|node|sh|bash)\b/.test(command)
+  ) {
+    return true;
+  }
+  if (!command.includes(repoPath) && !isPathInside(row.cwd, repoPath)) return false;
   if (!hasAllowedTransientPort(command, ports)) return false;
   return /\b(vite|next)\b[\s\S]{0,80}\b(dev|preview|start)\b|\bnpx\s+vite\b|\bnpm\s+exec\s+vite\b|\bserve\b[\s\S]{0,80}\bdist\b/.test(command);
 }
