@@ -26,6 +26,7 @@ const DEVELOPER_STUCK_MS = parsePositiveInt(process.env.SETFARM_DEVELOPER_AGENT_
 const STARTUP_RUNNING_GRACE_MS = parsePositiveInt(process.env.SETFARM_STARTUP_RUNNING_GRACE_MS, 0);
 const QA_AGENT_STUCK_MS = parsePositiveInt(process.env.SETFARM_QA_AGENT_STUCK_MS, 12 * 60_000);
 const GATEWAY_HEALTH_URL = process.env.OPENCLAW_GATEWAY_HEALTH_URL || "http://127.0.0.1:18789/health";
+const GATEWAY_READY_URL = process.env.OPENCLAW_GATEWAY_READY_URL || GATEWAY_HEALTH_URL.replace(/\/health\/?$/, "/ready");
 const GATEWAY_PRESPAWN_RETRY_MS = parsePositiveInt(process.env.SETFARM_GATEWAY_PRESPAWN_RETRY_MS, 10_000);
 const GATEWAY_WARMUP_MS = parsePositiveInt(process.env.SETFARM_GATEWAY_WARMUP_MS, 150_000);
 const spawnerStartedAtMs = Date.now();
@@ -96,24 +97,51 @@ function stuckThresholdMs(role: string): number {
   return role === "developer" ? DEVELOPER_STUCK_MS : NON_DEVELOPER_STUCK_MS;
 }
 
-async function isGatewayReady(): Promise<boolean> {
+type GatewayReadiness = {
+  ready: boolean;
+  reason: string;
+  retryAfterMs: number;
+};
+
+async function getGatewayReadiness(): Promise<GatewayReadiness> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 2000);
+  const timeout = setTimeout(() => controller.abort(), 3000);
   try {
-    const res = await fetch(GATEWAY_HEALTH_URL, { signal: controller.signal });
-    if (!res.ok) return false;
-    const text = await res.text();
-    if (!text.trim()) return true;
-    try {
-      const body = JSON.parse(text);
-      if (typeof body.ready === "boolean") return body.ready === true;
-      if (typeof body.ok === "boolean") return body.ok === true;
-    } catch {
-      // Some gateway endpoints return plain text/html after readiness. Treat 2xx as ready.
+    const res = await fetch(GATEWAY_READY_URL, { signal: controller.signal });
+    if (!res.ok) {
+      return { ready: false, reason: `ready endpoint returned HTTP ${res.status}`, retryAfterMs: GATEWAY_PRESPAWN_RETRY_MS };
     }
-    return true;
-  } catch {
-    return false;
+    const text = await res.text();
+    let body: { ready?: boolean; ok?: boolean; uptimeMs?: number; failing?: unknown } = {};
+    if (text.trim()) {
+      try {
+        body = JSON.parse(text);
+      } catch {
+        // Some gateway endpoints return plain text/html after readiness. Treat 2xx as ready.
+      }
+    }
+    if (body.ready === false) {
+      return { ready: false, reason: `gateway reports not ready`, retryAfterMs: GATEWAY_PRESPAWN_RETRY_MS };
+    }
+    if (typeof body.uptimeMs === "number" && Number.isFinite(body.uptimeMs) && body.uptimeMs < GATEWAY_WARMUP_MS) {
+      const remainingMs = GATEWAY_WARMUP_MS - body.uptimeMs;
+      const retryAfterMs = Math.min(Math.max(remainingMs, GATEWAY_PRESPAWN_RETRY_MS), GATEWAY_WARMUP_MS);
+      return { ready: false, reason: `gateway warmup active for ${formatDurationMs(remainingMs)}`, retryAfterMs };
+    }
+    if (typeof body.uptimeMs !== "number") {
+      const processWarmupRemainingMs = GATEWAY_WARMUP_MS - (Date.now() - spawnerStartedAtMs);
+      if (processWarmupRemainingMs > 0) {
+        const retryAfterMs = Math.min(Math.max(processWarmupRemainingMs, GATEWAY_PRESPAWN_RETRY_MS), GATEWAY_WARMUP_MS);
+        return { ready: false, reason: `spawner warmup fallback active for ${formatDurationMs(processWarmupRemainingMs)}`, retryAfterMs };
+      }
+    }
+    if (body.ready === true || body.ok === true || !text.trim()) {
+      return { ready: true, reason: "ready", retryAfterMs: 0 };
+    }
+    return { ready: true, reason: "ready endpoint returned HTTP 2xx", retryAfterMs: 0 };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ready: false, reason: `ready endpoint unavailable: ${message}`, retryAfterMs: GATEWAY_PRESPAWN_RETRY_MS };
   } finally {
     clearTimeout(timeout);
   }
@@ -413,24 +441,14 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     console.log(`[spawner] At capacity (${activeProcesses.size}/${MAX_CONCURRENT}), skip ${agentId}`);
     return;
   }
-  const gatewayWarmupRemainingMs = GATEWAY_WARMUP_MS - (Date.now() - spawnerStartedAtMs);
-  if (gatewayWarmupRemainingMs > 0) {
-    const delayMs = Math.min(Math.max(gatewayWarmupRemainingMs, GATEWAY_PRESPAWN_RETRY_MS), GATEWAY_WARMUP_MS);
-    console.warn(`[spawner] Gateway warmup active; delaying ${key} for ${delayMs}ms`);
+  const gatewayReadiness = await getGatewayReadiness();
+  if (!gatewayReadiness.ready) {
+    console.warn(`[spawner] Gateway not ready (${gatewayReadiness.reason}; ${GATEWAY_READY_URL}); delaying ${key} for ${gatewayReadiness.retryAfterMs}ms`);
     queuedSpawns.add(key);
     setTimeout(() => {
       queuedSpawns.delete(key);
       if (!shuttingDown) void spawnAgentNow(agentId, wfId, role);
-    }, delayMs);
-    return;
-  }
-  if (!(await isGatewayReady())) {
-    console.warn(`[spawner] Gateway not live (${GATEWAY_HEALTH_URL}); delaying ${key} for ${GATEWAY_PRESPAWN_RETRY_MS}ms`);
-    queuedSpawns.add(key);
-    setTimeout(() => {
-      queuedSpawns.delete(key);
-      if (!shuttingDown) void spawnAgentNow(agentId, wfId, role);
-    }, GATEWAY_PRESPAWN_RETRY_MS);
+    }, gatewayReadiness.retryAfterMs);
     return;
   }
   const outputFileId = agentId + "-spawner";
