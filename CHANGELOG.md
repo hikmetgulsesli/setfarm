@@ -1,4 +1,5 @@
 ## Unreleased
+- Routed planner/story agents through Kimi-first model selection because MiniMax planner calls can stall inside the OpenClaw gateway even when direct API checks are healthy.
 - Expanded project cleanup to reap orphan preview/serve processes by real process cwd while preserving systemd-managed deployed app services.
 - Added workflow agent model timeout defaults so MiniMax/Kimi agent calls do not fail on OpenClaw gateway short implicit timeout before provider responses can complete.
 

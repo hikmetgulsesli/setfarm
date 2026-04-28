@@ -66,7 +66,7 @@ const MINIMAX_AGENT_MODEL = {
   fallbacks: [KIMI_CODING_MODEL_REF],
   timeoutMs: WORKFLOW_MODEL_TIMEOUT_MS,
 } as const;
-const DEVELOPER_AGENT_MODEL = {
+const KIMI_FIRST_AGENT_MODEL = {
   primary: KIMI_CODING_MODEL_REF,
   fallbacks: [MINIMAX_OPENAI_MODEL_REF],
   timeoutMs: WORKFLOW_MODEL_TIMEOUT_MS,
@@ -295,7 +295,7 @@ function ensureSessionMaintenance(config: OpenClawConfig): void {
 
 function defaultModelForAgent(agentId: string): Record<string, unknown> {
   const localId = agentId.includes("_") ? agentId.split("_").pop() || agentId : agentId;
-  return localId === "developer" ? { ...DEVELOPER_AGENT_MODEL } : { ...MINIMAX_AGENT_MODEL };
+  return ["developer", "planner"].includes(localId) ? { ...KIMI_FIRST_AGENT_MODEL } : { ...MINIMAX_AGENT_MODEL };
 }
 
 function upsertAgent(
