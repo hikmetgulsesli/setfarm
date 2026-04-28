@@ -1,3 +1,6 @@
+## Unreleased
+- Added workflow agent model timeout defaults so MiniMax/Kimi agent calls do not fail on OpenClaw gateway short implicit timeout before provider responses can complete.
+
 ## 2026-04-28 - Implement context overflow hardening
 
 - Implement agents now avoid printing full claim JSON, large reference files, and broad Stitch/DOM content into the model session; prompts require jq-based field extraction and scoped file reads.
