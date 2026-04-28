@@ -25,6 +25,8 @@ const NON_DEVELOPER_STUCK_MS = parsePositiveInt(process.env.SETFARM_AGENT_STUCK_
 const DEVELOPER_STUCK_MS = parsePositiveInt(process.env.SETFARM_DEVELOPER_AGENT_STUCK_MS, 8 * 60_000);
 const STARTUP_RUNNING_GRACE_MS = parsePositiveInt(process.env.SETFARM_STARTUP_RUNNING_GRACE_MS, 0);
 const QA_AGENT_STUCK_MS = parsePositiveInt(process.env.SETFARM_QA_AGENT_STUCK_MS, 12 * 60_000);
+const GATEWAY_HEALTH_URL = process.env.OPENCLAW_GATEWAY_HEALTH_URL || "http://127.0.0.1:18789/health";
+const GATEWAY_PRESPAWN_RETRY_MS = parsePositiveInt(process.env.SETFARM_GATEWAY_PRESPAWN_RETRY_MS, 10_000);
 
 // Wave 13 Bug M (run #344 postmortem): agent default cwd must NOT be the
 // setfarm-repo. Previously execFile inherited the spawner's cwd (the systemd
@@ -90,6 +92,19 @@ function formatDurationMs(ms: number): string {
 function stuckThresholdMs(role: string): number {
   if (role.includes("qa") || role.includes("test")) return QA_AGENT_STUCK_MS;
   return role === "developer" ? DEVELOPER_STUCK_MS : NON_DEVELOPER_STUCK_MS;
+}
+
+async function isGatewayReady(): Promise<boolean> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2000);
+  try {
+    const res = await fetch(GATEWAY_HEALTH_URL, { signal: controller.signal });
+    return res.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function isVerifyReviewDelayActive(stepId: string, runContext: string | null): boolean {
@@ -384,6 +399,15 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   }
   if (activeProcesses.size >= MAX_CONCURRENT) {
     console.log(`[spawner] At capacity (${activeProcesses.size}/${MAX_CONCURRENT}), skip ${agentId}`);
+    return;
+  }
+  if (!(await isGatewayReady())) {
+    console.warn(`[spawner] Gateway not ready (${GATEWAY_HEALTH_URL}); delaying ${key} for ${GATEWAY_PRESPAWN_RETRY_MS}ms`);
+    queuedSpawns.add(key);
+    setTimeout(() => {
+      queuedSpawns.delete(key);
+      if (!shuttingDown) void spawnAgentNow(agentId, wfId, role);
+    }, GATEWAY_PRESPAWN_RETRY_MS);
     return;
   }
   const outputFileId = agentId + "-spawner";

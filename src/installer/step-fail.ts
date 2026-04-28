@@ -61,6 +61,11 @@ function isTransientAgentInfrastructureFailure(error: string): boolean {
     normalized.includes("fallbacksummaryerror: all models failed") ||
     normalized.includes("failovererror") ||
     normalized.includes("gatewayclientrequesterror") ||
+    normalized.includes("gateway closed") ||
+    normalized.includes("abnormal closure") ||
+    normalized.includes("gateway not yet ready") ||
+    normalized.includes("discarded invalid tool result middleware output") ||
+    normalized.includes("openclaw agent exited") ||
     normalized.includes("agent_process_stuck") ||
     normalized.includes("agent_process_orphaned") ||
     normalized.includes("task is already terminal")
