@@ -2320,11 +2320,24 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
   let step = await pgGet<StepRow>("SELECT id, run_id, step_id, step_index, type, loop_config, current_story_id, agent_id, retry_count, max_retries FROM steps WHERE id = $1", [stepId]);
 
   if (!step) {
-    // Fallback: agent may have passed runId instead of stepId — find the active step for this run
-    const fallbackStep = await pgGet<StepRow>(`SELECT id, run_id, step_id, step_index, type, loop_config, current_story_id, agent_id, retry_count, max_retries FROM steps WHERE run_id = $1 AND status IN ('running', 'pending') ORDER BY step_index ASC LIMIT 1`, [stepId]);
-    if (fallbackStep) {
-      logger.warn(`[completeStep] Agent passed runId "${stepId}" instead of stepId — resolved to step "${fallbackStep.id}" (${fallbackStep.step_id})`, { runId: fallbackStep.run_id });
-      step = fallbackStep;
+    // Compatibility fallback: older prompts sometimes passed runId instead of
+    // stepId. Only resolve it when exactly one active step exists; choosing the
+    // first active step can complete/fail the wrong phase when implement and
+    // verify overlap in verifyEach mode.
+    const fallbackSteps = await pgQuery<StepRow>(
+      `SELECT id, run_id, step_id, step_index, type, loop_config, current_story_id, agent_id, retry_count, max_retries
+       FROM steps
+       WHERE run_id = $1 AND status IN ('running', 'pending')
+       ORDER BY step_index ASC
+       LIMIT 2`,
+      [stepId],
+    );
+    if (fallbackSteps.length === 1) {
+      step = fallbackSteps[0];
+      logger.warn(`[completeStep] Agent passed runId "${stepId}" instead of stepId — resolved to only active step "${step.id}" (${step.step_id})`, { runId: step.run_id });
+    } else if (fallbackSteps.length > 1) {
+      const active = fallbackSteps.map((s) => `${s.step_id}:${s.id}`).join(", ");
+      throw new Error(`Ambiguous step id: "${stepId}" is a runId with multiple active steps (${active}). Agent must pass the exact stepId from claim JSON.`);
     } else {
       throw new Error(`Step not found: ${stepId}`);
     }

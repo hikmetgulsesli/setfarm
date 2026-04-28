@@ -6,7 +6,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { pgGet, pgRun, pgExec, pgBegin, now } from "../db-pg.js";
+import { pgGet, pgQuery, pgRun, pgExec, pgBegin, now } from "../db-pg.js";
 import { logger } from "../lib/logger.js";
 import { emitEvent } from "./events.js";
 import { buildPollingPrompt } from "./agent-cron.js";
@@ -34,13 +34,19 @@ export async function failStep(stepId: string, error: string): Promise<{ retryin
   );
 
   if (!step) {
-    const fallbackStep = await pgGet<FailStepRow>(
+    const fallbackSteps = await pgQuery<FailStepRow>(
       `SELECT id, run_id, retry_count, max_retries, type, current_story_id, agent_id
-       FROM steps WHERE run_id = $1 AND status IN ('running', 'pending') ORDER BY step_index ASC LIMIT 1`, [stepId]
+       FROM steps
+       WHERE run_id = $1 AND status IN ('running', 'pending')
+       ORDER BY step_index ASC
+       LIMIT 2`,
+      [stepId],
     );
-    if (fallbackStep) {
-      stepId = fallbackStep.id;
-      step = fallbackStep;
+    if (fallbackSteps.length === 1) {
+      stepId = fallbackSteps[0].id;
+      step = fallbackSteps[0];
+    } else if (fallbackSteps.length > 1) {
+      throw new Error(`Ambiguous step id: "${stepId}" is a runId with multiple active steps. Agent must pass the exact stepId from claim JSON.`);
     } else {
       throw new Error(`Step not found: ${stepId}`);
     }
