@@ -223,7 +223,7 @@ async function fireFallbackRetryCron(
     const fallbackAgent = mappedAgents[newRetry % mappedAgents.length];
     const cronName = `setfarm/fallback-retry/${Date.now()}-${storyRow?.story_id || "unknown"}-r${newRetry}`;
     const pollingPrompt = buildPollingPrompt(wfId2, agentRole, fallbackAgent);
-    execFileSync("openclaw", [
+    execFileSync(process.env.OPENCLAW_CLI || "/home/setrox/.local/bin/openclaw", [
       "cron", "add",
       "--name", cronName,
       "--agent", fallbackAgent,

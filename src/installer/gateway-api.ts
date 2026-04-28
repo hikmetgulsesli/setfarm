@@ -76,26 +76,17 @@ async function getGatewayConfig(): Promise<GatewayConfig> {
 
 let cachedBinary: string | null = null;
 
-/** Locate the openclaw binary. Checks PATH, then ~/.npm-global/bin, then npx. */
+/** Locate the openclaw binary. Prefer the user-local install used by systemd services. */
 async function findOpenclawBinary(): Promise<string> {
   if (cachedBinary) return cachedBinary;
 
-  // 1. Check PATH via `which`
-  const fromPath = await new Promise<string | null>((resolve) => {
-    execFile("which", ["openclaw"], (err, stdout) => {
-      if (!err && stdout.trim()) resolve(stdout.trim());
-      else resolve(null);
-    });
-  });
-  if (fromPath) { cachedBinary = fromPath; return fromPath; }
-
-  // 2. Check common global install locations
   const candidates = [
+    process.env.OPENCLAW_CLI,
     path.join(os.homedir(), ".local", "bin", "openclaw"),
     path.join(os.homedir(), ".npm-global", "bin", "openclaw"),
     "/usr/local/bin/openclaw",
     "/opt/homebrew/bin/openclaw",
-  ];
+  ].filter(Boolean) as string[];
   for (const c of candidates) {
     try {
       await fs.access(c, 0o1 /* fs.constants.X_OK */);
@@ -104,7 +95,15 @@ async function findOpenclawBinary(): Promise<string> {
     } catch (e) { logger.debug(`[gateway-api] Binary candidate not accessible: ${c}`, {}); }
   }
 
-  // 3. Fall back to npx
+  // Last resort: PATH lookup, then npx. Avoid preferring stale /usr/bin over ~/.local/bin.
+  const fromPath = await new Promise<string | null>((resolve) => {
+    execFile("which", ["openclaw"], (err, stdout) => {
+      if (!err && stdout.trim()) resolve(stdout.trim());
+      else resolve(null);
+    });
+  });
+  if (fromPath) { cachedBinary = fromPath; return fromPath; }
+
   cachedBinary = "npx";
   return "npx";
 }
