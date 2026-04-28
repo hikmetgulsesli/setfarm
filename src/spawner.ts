@@ -14,6 +14,7 @@ import { resolveWorkflowDir, resolveSetfarmCli } from "./installer/paths.js";
 import { PR_REVIEW_DELAY_MS } from "./installer/constants.js";
 import { claimStep } from "./installer/step-ops.js";
 import { failStep } from "./installer/step-fail.js";
+import { cleanupProjectEphemera } from "./installer/cleanup-ops.js";
 
 const OPENCLAW_CLI = process.env.OPENCLAW_CLI || "/home/setrox/.local/bin/openclaw";
 const POLL_INTERVAL_MS = 30_000;
@@ -287,6 +288,11 @@ function terminateActiveProcess(active: ActiveProcess, context: string): void {
   cancelOpenClawTask(active.sessionKey, context);
   killProcessTree(active.child.pid, "SIGTERM");
   setTimeout(() => killProcessTree(active.child.pid, "SIGKILL"), 5000);
+  if (["qa-tester", "tester", "final-tester"].some((role) => active.role.includes(role) || active.agentId.includes(role))) {
+    setTimeout(() => {
+      void cleanupProjectEphemera(active.runId, `spawner-${context}-${active.role}`);
+    }, 1500);
+  }
 }
 
 function readProcessArgs(pid: number): string {

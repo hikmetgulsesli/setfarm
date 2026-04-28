@@ -42,7 +42,7 @@ const PROJECT_ARTIFACT_PATHS = [
   "smoke-after-click.png",
 ];
 
-const TRANSIENT_PREVIEW_PORTS = new Set(["4173", "5173", "5174"]);
+const TRANSIENT_PREVIEW_PORTS = new Set(["4173", ...Array.from({ length: 17 }, (_, idx) => String(5173 + idx))]);
 
 type ProcessRow = {
   pid: number;

@@ -1,4 +1,5 @@
 ## Unreleased
+- Spawner cleanup now reaps QA/final-test preview servers in the project cwd across ports 5173-5189 when an agent is terminated.
 - QA prompt now provides a bounded dev-server lifecycle shell template and forbids malformed one-line server checks that leave Vite processes running silently.
 - Spawner now advances verify-each loop steps after auto-verifying the final merged story, preventing runs from sitting with all stories verified but implement still running.
 - Spawner now terminates leftover loop-agent processes as soon as their story is already done/verified, reducing stuck OpenClaw sessions after successful implement/verify work.
