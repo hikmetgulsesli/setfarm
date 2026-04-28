@@ -902,13 +902,20 @@ async function advanceCompletedVerifyEachLoops(): Promise<void> {
 
 async function autoVerifyMergedPrEachStories() {
   try {
-    const rows = await pgQuery<{ run_id: string; context: string | null; loop_step_id: string }>(
+    const rows = await pgQuery<{ run_id: string; context: string | null; loop_step_id: string; loop_config: string | null }>(
       `SELECT DISTINCT r.id as run_id, r.context, loop_step.id as loop_step_id
+              , loop_step.loop_config
        FROM runs r
        JOIN steps loop_step ON loop_step.run_id = r.id
        WHERE r.status = 'running'
          AND loop_step.type = 'loop'
          AND COALESCE(loop_step.loop_config::jsonb, '{}'::jsonb) @> '{"verifyEach":true}'::jsonb
+         AND NOT EXISTS (
+           SELECT 1 FROM steps verify_step
+           WHERE verify_step.run_id = r.id
+             AND verify_step.step_id = COALESCE(loop_step.loop_config::jsonb->>'verifyStep', 'verify')
+             AND verify_step.status IN ('pending', 'running')
+         )
          AND EXISTS (
            SELECT 1 FROM stories st
            WHERE st.run_id = r.id AND st.status = 'done' AND st.pr_url IS NOT NULL
@@ -924,6 +931,13 @@ async function autoVerifyMergedPrEachStories() {
       const nextUnverified = await autoVerifyDoneStories(row.run_id, context, "spawner-auto-verify");
       if (!nextUnverified) {
         await checkLoopContinuation(row.run_id, row.loop_step_id);
+      } else {
+        let verifyStepName = "verify";
+        try { verifyStepName = JSON.parse(row.loop_config || "{}").verifyStep || "verify"; } catch {}
+        await pgRun(
+          "UPDATE steps SET status = 'pending', updated_at = NOW() WHERE run_id = $1 AND step_id = $2 AND status IN ('waiting', 'done', 'pending')",
+          [row.run_id, verifyStepName],
+        );
       }
     }
   } catch (err) {

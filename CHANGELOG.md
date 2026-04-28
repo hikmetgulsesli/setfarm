@@ -1,4 +1,5 @@
 ## Unreleased
+- Spawner PR-each auto-verify now skips runs whose verify step is already pending/running and reactivates verify when a merged-PR smoke gate still needs human/model review, preventing repeated smoke-test loops from starving reviewer spawn.
 - Project cleanup now reaps deleted Setfarm story-worktree Vite/esbuild process trees and runs once on spawner startup for active runs, preventing stale preview servers from lingering in the OpenClaw gateway cgroup.
 - Medic verify auto-advance now refuses to complete the verify step when any done story was skipped by PR/smoke checks, preventing partial force-verification from advancing downstream.
 - Step module `preClaim` now merges only changed context keys back into the full run context instead of persisting the pruned prompt context, preventing non-implement steps from deleting Stitch/DOM/code context from the database.
