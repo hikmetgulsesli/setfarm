@@ -21,7 +21,7 @@ function formatFailure(error: unknown): string {
   if (stdout) parts.push(`stdout:\n${stdout}`);
   if (stderr) parts.push(`stderr:\n${stderr}`);
   if (parts.length === 0 && e?.message) parts.push(cleanProcessText(e.message));
-  return parts.join("\n\n").slice(0, 5000);
+  return parts.join("\n\n").slice(0, 6000);
 }
 
 function firstJsonObject(text: string): any | null {
@@ -56,13 +56,13 @@ function summarizeSmoke(result: any): string[] {
 export async function preClaim(ctx: ClaimContext): Promise<void> {
   const repo = (ctx.context["repo"] || ctx.context["REPO"] || "").replace(/^~/, os.homedir());
   if (!repo || !fs.existsSync(repo)) {
-    logger.warn(`[module:qa preclaim] skipped - repo missing: ${repo || "(empty)"}`, { runId: ctx.runId });
+    logger.warn(`[module:final-test preclaim] skipped - repo missing: ${repo || "(empty)"}`, { runId: ctx.runId });
     return;
   }
 
   const smokeScript = path.join(os.homedir(), ".openclaw", "setfarm-repo", "scripts", "smoke-test.mjs");
   if (!fs.existsSync(smokeScript)) {
-    logger.warn("[module:qa preclaim] skipped - smoke-test.mjs missing", { runId: ctx.runId });
+    logger.warn("[module:final-test preclaim] skipped - smoke-test.mjs missing", { runId: ctx.runId });
     return;
   }
 
@@ -70,13 +70,13 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     execFileSync("git", ["checkout", "main"], { cwd: repo, timeout: 10_000, stdio: ["pipe", "pipe", "pipe"] });
     execFileSync("git", ["pull", "--ff-only", "origin", "main"], { cwd: repo, timeout: 30_000, stdio: ["pipe", "pipe", "pipe"] });
   } catch (syncErr) {
-    logger.warn(`[module:qa preclaim] main sync warning: ${formatFailure(syncErr).slice(0, 300)}`, { runId: ctx.runId });
+    logger.warn(`[module:final-test preclaim] main sync warning: ${formatFailure(syncErr).slice(0, 300)}`, { runId: ctx.runId });
   }
 
   let output = "";
   let failed = false;
   try {
-    logger.info(`[module:qa preclaim] Running system smoke gate in ${repo}`, { runId: ctx.runId });
+    logger.info(`[module:final-test preclaim] Running system smoke gate in ${repo}`, { runId: ctx.runId });
     output = execFileSync("node", [smokeScript, repo], { cwd: repo, timeout: 240_000, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
   } catch (err) {
     failed = true;
@@ -86,9 +86,13 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   const parsed = firstJsonObject(output);
   const smokeStatus = parsed?.status ? String(parsed.status).toLowerCase() : "";
   const status = failed || smokeStatus === "fail" ? "retry" : (smokeStatus === "skip" ? "skip" : "done");
+  const smokeSummary = smokeStatus
+    ? `${smokeStatus} (system smoke gate)`
+    : (output.trim().split(/\n/).filter(Boolean).slice(-1)[0] || "pass (system smoke gate)").slice(0, 500);
   const lines = [
     `STATUS: ${status}`,
-    "QA_GATE: system-smoke-preclaim",
+    `SMOKE_TEST_RESULT: ${smokeSummary}`,
+    "FINAL_GATE: system-smoke-preclaim",
     ...summarizeSmoke(parsed),
   ];
   if (!parsed) {
@@ -98,10 +102,10 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
 
   const step = await pgGet<{ id: string }>("SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1", [ctx.runId, ctx.stepId]);
   if (!step?.id) {
-    throw new Error(`qa preclaim could not resolve step id for ${ctx.runId}/${ctx.stepId}`);
+    throw new Error(`final-test preclaim could not resolve step id for ${ctx.runId}/${ctx.stepId}`);
   }
 
   const { completeStep } = await import("../../step-ops.js");
   await completeStep(step.id, lines.join("\n"));
-  logger.info(`[module:qa preclaim] AUTO-COMPLETED qa-test via system smoke (${status})`, { runId: ctx.runId, stepId: ctx.stepId });
+  logger.info(`[module:final-test preclaim] AUTO-COMPLETED final-test via system smoke (${status})`, { runId: ctx.runId, stepId: ctx.stepId });
 }

@@ -5,6 +5,7 @@ import type { StepModule, PromptContext } from "../types.js";
 import { resolveTemplate } from "../_shared/prompt-resolver.js";
 import { injectContext } from "./context.js";
 import { normalize, validateOutput } from "./guards.js";
+import { preClaim } from "./preclaim.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -27,6 +28,7 @@ export const finalTestModule: StepModule = {
   id: "final-test",
   type: "single",
   agentRole: "tester",
+  preClaim,
   injectContext,
   buildPrompt,
   normalize,
