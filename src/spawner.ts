@@ -28,7 +28,12 @@ const QA_AGENT_STUCK_MS = parsePositiveInt(process.env.SETFARM_QA_AGENT_STUCK_MS
 const GATEWAY_HEALTH_URL = process.env.OPENCLAW_GATEWAY_HEALTH_URL || "http://127.0.0.1:18789/health";
 const GATEWAY_READY_URL = process.env.OPENCLAW_GATEWAY_READY_URL || GATEWAY_HEALTH_URL.replace(/\/health\/?$/, "/ready");
 const GATEWAY_PRESPAWN_RETRY_MS = parsePositiveInt(process.env.SETFARM_GATEWAY_PRESPAWN_RETRY_MS, 10_000);
-const GATEWAY_WARMUP_MS = parsePositiveInt(process.env.SETFARM_GATEWAY_WARMUP_MS, 150_000);
+const GATEWAY_WARMUP_MS = parsePositiveInt(process.env.SETFARM_GATEWAY_WARMUP_MS, 45_000);
+const GATEWAY_SIDECAR_BYPASS_AFTER_MS = parsePositiveInt(process.env.SETFARM_GATEWAY_SIDECAR_BYPASS_AFTER_MS, 30_000);
+const GATEWAY_IGNORABLE_FAILING = new Set((process.env.SETFARM_GATEWAY_IGNORABLE_FAILING || "startup-sidecars")
+  .split(",")
+  .map((item) => item.trim())
+  .filter(Boolean));
 const spawnerStartedAtMs = Date.now();
 
 // Wave 13 Bug M (run #344 postmortem): agent default cwd must NOT be the
@@ -97,22 +102,37 @@ function stuckThresholdMs(role: string): number {
   return role === "developer" ? DEVELOPER_STUCK_MS : NON_DEVELOPER_STUCK_MS;
 }
 
+type GatewayReadyBody = { ready?: boolean; ok?: boolean; uptimeMs?: number; failing?: unknown };
+
 type GatewayReadiness = {
   ready: boolean;
   reason: string;
   retryAfterMs: number;
 };
 
+function gatewayFailingList(body: GatewayReadyBody): string[] {
+  return Array.isArray(body.failing) ? body.failing.map((item) => String(item)).filter(Boolean) : [];
+}
+
+function hasOnlyIgnorableGatewayFailures(body: GatewayReadyBody): boolean {
+  const failing = gatewayFailingList(body);
+  return failing.length > 0 && failing.every((item) => GATEWAY_IGNORABLE_FAILING.has(item));
+}
+
+function canBypassGatewaySidecars(body: GatewayReadyBody): boolean {
+  return hasOnlyIgnorableGatewayFailures(body)
+    && typeof body.uptimeMs === "number"
+    && Number.isFinite(body.uptimeMs)
+    && body.uptimeMs >= GATEWAY_SIDECAR_BYPASS_AFTER_MS;
+}
+
 async function getGatewayReadiness(): Promise<GatewayReadiness> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 3000);
   try {
     const res = await fetch(GATEWAY_READY_URL, { signal: controller.signal });
-    if (!res.ok) {
-      return { ready: false, reason: `ready endpoint returned HTTP ${res.status}`, retryAfterMs: GATEWAY_PRESPAWN_RETRY_MS };
-    }
     const text = await res.text();
-    let body: { ready?: boolean; ok?: boolean; uptimeMs?: number; failing?: unknown } = {};
+    let body: GatewayReadyBody = {};
     if (text.trim()) {
       try {
         body = JSON.parse(text);
@@ -120,8 +140,21 @@ async function getGatewayReadiness(): Promise<GatewayReadiness> {
         // Some gateway endpoints return plain text/html after readiness. Treat 2xx as ready.
       }
     }
+    if (!res.ok) {
+      if (canBypassGatewaySidecars(body)) {
+        return { ready: true, reason: `agent-ready; ignoring gateway sidecars: ${gatewayFailingList(body).join(",")}`, retryAfterMs: 0 };
+      }
+      const failing = gatewayFailingList(body);
+      const suffix = failing.length ? `; failing=${failing.join(",")}` : "";
+      return { ready: false, reason: `ready endpoint returned HTTP ${res.status}${suffix}`, retryAfterMs: GATEWAY_PRESPAWN_RETRY_MS };
+    }
     if (body.ready === false) {
-      return { ready: false, reason: `gateway reports not ready`, retryAfterMs: GATEWAY_PRESPAWN_RETRY_MS };
+      if (canBypassGatewaySidecars(body)) {
+        return { ready: true, reason: `agent-ready; ignoring gateway sidecars: ${gatewayFailingList(body).join(",")}`, retryAfterMs: 0 };
+      }
+      const failing = gatewayFailingList(body);
+      const suffix = failing.length ? `; failing=${failing.join(",")}` : "";
+      return { ready: false, reason: `gateway reports not ready${suffix}`, retryAfterMs: GATEWAY_PRESPAWN_RETRY_MS };
     }
     if (typeof body.uptimeMs === "number" && Number.isFinite(body.uptimeMs) && body.uptimeMs < GATEWAY_WARMUP_MS) {
       const remainingMs = GATEWAY_WARMUP_MS - body.uptimeMs;
