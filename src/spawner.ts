@@ -211,6 +211,11 @@ function activeProcessHasVisibleOutput(active: ActiveProcess): boolean {
   return fileSize(active.outputPath) > 0;
 }
 
+function activeProcessHasStartupActivity(active: ActiveProcess): boolean {
+  if (activeProcessHasVisibleOutput(active)) return true;
+  return activeProcessLastActivityMs(active) > active.startedAtMs + 1000;
+}
+
 function activeProcessLastActivityMs(active: ActiveProcess): number {
   let lastActivityMs = active.startedAtMs;
   for (const filePath of [active.transcriptPath, active.sessionJsonlPath]) {
@@ -979,7 +984,7 @@ ${reason}
         }
 
         const ageMs = Date.now() - active.startedAtMs;
-        if (ageMs >= AGENT_STARTUP_SILENCE_MS && !activeProcessHasVisibleOutput(active)) {
+        if (ageMs >= AGENT_STARTUP_SILENCE_MS && !activeProcessHasStartupActivity(active)) {
           const reason = `AGENT_STARTUP_SILENT: ${active.agentId} kept ${active.wfId}/${active.role} running for ${formatDurationMs(ageMs)} without transcript/output; OpenClaw session likely stuck before first model/tool turn. Transcript: ${active.transcriptPath}`;
           console.warn(`[spawner] ${reason}`);
           try { fs.appendFileSync(active.transcriptPath, `--- STARTUP SILENCE ${new Date().toISOString()} ---
