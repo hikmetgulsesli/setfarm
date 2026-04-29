@@ -41,6 +41,7 @@ const GATEWAY_READY_URL = process.env.OPENCLAW_GATEWAY_READY_URL || GATEWAY_HEAL
 const GATEWAY_PRESPAWN_RETRY_MS = parsePositiveInt(process.env.SETFARM_GATEWAY_PRESPAWN_RETRY_MS, 10_000);
 const GATEWAY_WARMUP_MS = parsePositiveInt(process.env.SETFARM_GATEWAY_WARMUP_MS, 45_000);
 const GATEWAY_SIDECAR_BYPASS_AFTER_MS = parsePositiveInt(process.env.SETFARM_GATEWAY_SIDECAR_BYPASS_AFTER_MS, 30_000);
+const GATEWAY_TIMEOUT_BYPASS_AFTER_MS = parsePositiveInt(process.env.SETFARM_GATEWAY_TIMEOUT_BYPASS_AFTER_MS, 2 * 60_000);
 const GATEWAY_PRESPAWN_RESTART_AFTER_MS = parsePositiveInt(process.env.SETFARM_GATEWAY_PRESPAWN_RESTART_AFTER_MS, 90_000);
 const GATEWAY_PRESPAWN_RESTART_COOLDOWN_MS = parsePositiveInt(process.env.SETFARM_GATEWAY_PRESPAWN_RESTART_COOLDOWN_MS, 5 * 60_000);
 const GATEWAY_IGNORABLE_FAILING = new Set((process.env.SETFARM_GATEWAY_IGNORABLE_FAILING || "startup-sidecars,whatsapp,telegram,browser,gmail")
@@ -325,6 +326,9 @@ async function getGatewayReadiness(): Promise<GatewayReadiness> {
       // Fall through to the original readiness failure.
     } finally {
       clearTimeout(healthTimeout);
+    }
+    if (gatewayNotReadySinceMs !== null && Date.now() - gatewayNotReadySinceMs >= GATEWAY_TIMEOUT_BYPASS_AFTER_MS) {
+      return { ready: true, reason: `gateway probe timeout bypass after ${formatDurationMs(Date.now() - gatewayNotReadySinceMs)}: ${message}`, retryAfterMs: 0 };
     }
     return { ready: false, reason: `ready endpoint unavailable: ${message}`, retryAfterMs: GATEWAY_PRESPAWN_RETRY_MS };
   } finally {
@@ -1070,7 +1074,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     }, gatewayReadiness.retryAfterMs);
     return;
   }
-  noteGatewayReady();
+  if (!gatewayReadiness.reason.startsWith("gateway probe timeout bypass")) noteGatewayReady();
   claimingSpawns.add(key);
   const spawnId = Date.now() + "-" + Math.random().toString(36).slice(2, 10);
   const outputFileId = agentId + "-spawner-" + spawnId;
