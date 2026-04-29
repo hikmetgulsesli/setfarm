@@ -125,4 +125,29 @@ describe("05-setup-build step module", () => {
       /BASELINE: npm run build failed/
     );
   });
+
+  it("onComplete clears stale baseline_fail when the current build passes", async () => {
+    const tmp = fs.mkdtempSync("/tmp/setfarm-setup-build-");
+    try {
+      fs.writeFileSync(`${tmp}/package.json`, JSON.stringify({
+        scripts: { build: "node -e \"process.exit(0)\"" },
+      }));
+      const context: Record<string, string> = {
+        repo: tmp,
+        baseline_fail: "previous generated JSX failed",
+      };
+
+      await onComplete({
+        runId: "r1",
+        stepId: "setup-build",
+        parsed: { status: "done", build_cmd: "npm run build" } as ParsedOutput,
+        context,
+      });
+
+      assert.equal(context["baseline_fail"], undefined);
+      assert.equal(context["build_cmd"], "npm run build");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });

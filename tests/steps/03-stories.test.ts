@@ -47,6 +47,8 @@ describe("03-stories step module", () => {
     assert.ok(result.prompt.includes("scope_files"), "prompt should mention scope_files");
     assert.ok(result.prompt.includes("PREDICTED_SCREEN_FILES"), "prompt should mention predicted screens");
     assert.ok(result.prompt.includes("DESIGN_DOM_PREVIEW"), "prompt should mention design DOM preview section");
+    assert.match(result.prompt, /setup-repo/);
+    assert.match(result.prompt, /Do NOT read `.*\/PRD\.md`/);
     assert.equal(result.prompt.includes("{{DESIGN_DOM_PREVIEW}}"), false, "prompt should resolve design DOM placeholder");
     assert.ok(result.prompt.includes("STORIES_JSON"), "prompt should mention STORIES_JSON");
     assert.equal(result.prompt.includes("src/hooks/useCounter.ts"), false, "prompt should not bias output toward a counter scaffold path");

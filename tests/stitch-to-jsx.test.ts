@@ -114,6 +114,7 @@ describe("stitch-to-jsx", () => {
       writeHtml(path.join(stitchDir, "modal-screen.html"), `
         <main>
           <label for="note">Not</label>
+          <input type="checkbox" checked="" required="">
           <textarea id="note" rows="3" maxlength="120" readonly="true"></textarea>
           <button tabindex="0" disabled="false">Kaydet</button>
         </main>
@@ -128,10 +129,12 @@ describe("stitch-to-jsx", () => {
       assert.match(code, /htmlFor="note"/);
       assert.match(code, /rows=\{3\}/);
       assert.match(code, /maxLength=\{120\}/);
+      assert.match(code, /checked=\{true\}/);
+      assert.match(code, /required=\{true\}/);
       assert.match(code, /readOnly=\{true\}/);
       assert.match(code, /tabIndex=\{0\}/);
       assert.match(code, /disabled=\{false\}/);
-      assert.doesNotMatch(code, /rows="3"|maxlength=|readonly=|tabindex=/);
+      assert.doesNotMatch(code, /rows="3"|maxlength=|checked=""|required=""|readonly=|tabindex=/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

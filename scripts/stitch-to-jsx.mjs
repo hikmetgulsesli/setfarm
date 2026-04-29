@@ -148,6 +148,10 @@ function normalizeJsxAttributeValues(input) {
   }
   for (const attr of BOOLEAN_JSX_ATTRIBUTES) {
     out = out.replace(
+      new RegExp(`\\b${escapeRegExp(attr)}=["']\\s*["']`, "gi"),
+      `${attr}={true}`,
+    );
+    out = out.replace(
       new RegExp(`\\b${escapeRegExp(attr)}=["'](?:true|${escapeRegExp(attr)})["']`, "gi"),
       `${attr}={true}`,
     );

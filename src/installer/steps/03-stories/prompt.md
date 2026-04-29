@@ -4,6 +4,13 @@ STORIES step — PRD'yi user story listesi olarak parçala.
 
 {{REPO}}
 
+Repo lifecycle note: `stories` runs before `setup-repo` and before the
+project repository is guaranteed to exist on disk. Treat this path as a future
+target path only. Do NOT read `{{REPO}}/PRD.md`, package files, or source files
+for required input. Use the embedded PRD, SCREEN_MAP, PREDICTED_SCREEN_FILES,
+DESIGN_DOM_PREVIEW, and UI_BEHAVIOR_CONTRACT in this claim as the source of
+truth.
+
 ## PRD
 
 {{PRD}}

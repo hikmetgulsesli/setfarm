@@ -9,6 +9,11 @@ PRD + SCREEN_MAP + DESIGN_SYSTEM'i okuyup user story listesi üret. Her story do
 - `design_system` — Design step seçimi (font, palette)
 - `predicted_screen_files` — context'te verilir; her screen için tam dosya yolu (`src/screens/<TurkishName>.tsx`)
 
+Not: Stories step `setup-repo` öncesinde çalışır. Repo yolu henüz oluşturulmamış
+olabilir; `REPO/PRD.md`, `package.json` veya kaynak dosyaları zorunlu input
+değildir. PRD ve tasarım bilgisi claim içinde gömülü gelir; stories planlaması
+bu gömülü inputlardan yapılmalıdır.
+
 ## Story Format (zorunlu alanlar per story)
 
 ```json
