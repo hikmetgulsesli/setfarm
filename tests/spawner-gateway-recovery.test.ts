@@ -56,6 +56,16 @@ describe("spawner gateway recovery wiring", () => {
     assert.doesNotMatch(source, /const outputFileId = agentId \+ "-spawner";/);
   });
 
+  it("starts agents in the claimed story worktree when one is available", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /function safeAgentCwdFromClaimInput\(input: unknown\): string/);
+    assert.match(source, /"story_workdir",\s*"repo",\s*"REPO",\s*"workdir",\s*"WORKDIR"/);
+    assert.match(source, /resolved === SETFARM_SRC \|\| resolved\.startsWith\(SETFARM_SRC \+ path\.sep\)/);
+    assert.match(source, /const spawnCwd = safeAgentCwdFromClaimInput\(claim\.resolvedInput\)/);
+    assert.match(source, /cwd: spawnCwd/);
+    assert.match(source, /cwd=\$\{spawnCwd\}/);
+  });
+
   it("cancels lingering OpenClaw task records by task id after session-key cancel", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /function cancelLingeringOpenClawTasksForLookup\(lookup: string,\s*context: string\)/);

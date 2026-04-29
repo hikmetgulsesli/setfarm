@@ -83,6 +83,50 @@ try { fs.mkdirSync(AGENT_SAFE_CWD, { recursive: true }); } catch { /* best-effor
 try { fs.mkdirSync(TRANSCRIPT_ROOT, { recursive: true }); } catch { /* best-effort */ }
 assertAgentCwdSafe();
 
+function safeAgentCwdFromCandidate(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  let candidate = raw.trim();
+  if (!candidate || candidate.includes("<") || candidate.includes(">") || candidate.includes("[missing:")) return null;
+  if (candidate.startsWith("~/")) candidate = path.join(os.homedir(), candidate.slice(2));
+  if (candidate.includes("$HOME") || candidate.startsWith("~")) return null;
+  if (!path.isAbsolute(candidate)) return null;
+
+  const resolved = path.resolve(candidate);
+  if (resolved === SETFARM_SRC || resolved.startsWith(SETFARM_SRC + path.sep)) return null;
+  try {
+    if (!fs.statSync(resolved).isDirectory()) return null;
+  } catch {
+    return null;
+  }
+  return resolved;
+}
+
+function safeAgentCwdFromClaimInput(input: unknown): string {
+  if (input && typeof input === "object" && !Array.isArray(input)) {
+    const record = input as Record<string, unknown>;
+    for (const key of ["story_workdir", "repo", "REPO", "workdir", "WORKDIR"]) {
+      const resolved = safeAgentCwdFromCandidate(record[key]);
+      if (resolved) return resolved;
+    }
+    return AGENT_SAFE_CWD;
+  }
+
+  if (typeof input === "string") {
+    try {
+      const parsed = JSON.parse(input) as unknown;
+      const resolved = safeAgentCwdFromClaimInput(parsed);
+      if (resolved !== AGENT_SAFE_CWD) return resolved;
+    } catch {}
+
+    for (const match of input.matchAll(/(?:story_workdir|WORKDIR|REPO|repo)\s*[:=]\s*([^\s"'`]+)/g)) {
+      const resolved = safeAgentCwdFromCandidate(match[1]);
+      if (resolved) return resolved;
+    }
+  }
+
+  return AGENT_SAFE_CWD;
+}
+
 type ActiveProcess = {
   child: ChildProcess;
   runId: string;
@@ -1018,18 +1062,19 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   // paths across retries lets old and new attempts overwrite each other's handoff.
   const sessionId = "spawner-" + agentId + "-" + spawnId;
   const sessionKey = buildSessionKey(agentId, sessionId);
+  const spawnCwd = safeAgentCwdFromClaimInput(claim.resolvedInput);
   const childArgs = [
     "agent", "--json", "--agent", agentId,
     "--session-id", sessionId,
     "--message", prompt, "--timeout", String(AGENT_TIMEOUT_SECONDS),
   ];
   try {
-    fs.appendFileSync(transcriptPath, `[spawner] openclaw_cli=${OPENCLAW_CLI} session_id=${sessionId} session_key=${sessionKey} timeout=${AGENT_TIMEOUT_SECONDS}s cwd=${AGENT_SAFE_CWD}\n`);
+    fs.appendFileSync(transcriptPath, `[spawner] openclaw_cli=${OPENCLAW_CLI} session_id=${sessionId} session_key=${sessionKey} timeout=${AGENT_TIMEOUT_SECONDS}s cwd=${spawnCwd}\n`);
   } catch {}
   const outFd = fs.openSync(transcriptPath, "a");
   const errFd = fs.openSync(transcriptPath, "a");
   const child = spawn(OPENCLAW_CLI, childArgs, {
-    cwd: AGENT_SAFE_CWD,  // Wave 13 Bug M — start outside any git repo
+    cwd: spawnCwd,  // Use the claimed worktree when available so relative tool paths resolve correctly.
     // Security audit S-1: explicit env allowlist. Previous `{...process.env}` leaked
     // ALL secrets (API keys, DB password, master URLs) to every agent child process.
     // Agents can run `printenv` and see everything. OpenClaw gateway handles API key
