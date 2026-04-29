@@ -86,7 +86,7 @@ function printUsage() {
       "setfarm workflow runs                List all workflow runs",
       "setfarm workflow resume <run-id>     Resume a failed run from where it left off",
       "setfarm workflow stop <run-id>        Stop/cancel a running workflow",
-      "setfarm workflow ensure-crons <name>  Recreate agent crons for a workflow",
+      "setfarm workflow ensure-crons <name>  Ensure workflow scheduler for a workflow",
       "",
       "setfarm dashboard [start] [--port N]   Start dashboard daemon (default: 3333)",
       "setfarm dashboard stop                  Stop dashboard daemon",
@@ -775,9 +775,14 @@ async function main() {
   if (action === "ensure-crons") {
     const { loadWorkflowSpec } = await import("../installer/workflow-spec.js");
     const { resolveWorkflowDir } = await import("../installer/paths.js");
-    const { setupAgentCrons, removeAgentCrons } = await import("../installer/agent-cron.js");
+    const { setupAgentCrons, removeAgentCrons, gatewayAgentCronsEnabled } = await import("../installer/agent-cron.js");
     const workflowDir = resolveWorkflowDir(target);
     const workflow = await loadWorkflowSpec(workflowDir);
+    if (!gatewayAgentCronsEnabled()) {
+      await removeAgentCrons(target);
+      console.log(`Gateway agent crons disabled; event-driven spawner owns workflow "${target}".`);
+      return;
+    }
     // Force recreate: remove existing then create fresh
     await removeAgentCrons(target);
     await setupAgentCrons(workflow);

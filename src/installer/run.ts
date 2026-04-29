@@ -107,6 +107,19 @@ export async function runWorkflow(params: {
   }
 
   emitEvent({ ts: now(), event: "run.started", runId, workflowId: workflow.id });
+  const firstStep = workflow.steps[0];
+  if (firstStep) {
+    const payload = JSON.stringify({
+      agentId: `${workflow.id}_${firstStep.agent}`,
+      runId,
+      stepId: firstStep.id,
+    });
+    try {
+      await pgRun("SELECT pg_notify('step_pending', $1)", [payload]);
+    } catch (err) {
+      logger.warn(`[run] step_pending notify failed for run ${runId}: ${err}`, {});
+    }
+  }
 
   logger.info(`Run started: "${params.taskTitle}"`, {
     workflowId: workflow.id,

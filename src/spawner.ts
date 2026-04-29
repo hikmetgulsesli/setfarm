@@ -32,11 +32,16 @@ const GATEWAY_READY_URL = process.env.OPENCLAW_GATEWAY_READY_URL || GATEWAY_HEAL
 const GATEWAY_PRESPAWN_RETRY_MS = parsePositiveInt(process.env.SETFARM_GATEWAY_PRESPAWN_RETRY_MS, 10_000);
 const GATEWAY_WARMUP_MS = parsePositiveInt(process.env.SETFARM_GATEWAY_WARMUP_MS, 45_000);
 const GATEWAY_SIDECAR_BYPASS_AFTER_MS = parsePositiveInt(process.env.SETFARM_GATEWAY_SIDECAR_BYPASS_AFTER_MS, 30_000);
+const GATEWAY_PRESPAWN_RESTART_AFTER_MS = parsePositiveInt(process.env.SETFARM_GATEWAY_PRESPAWN_RESTART_AFTER_MS, 90_000);
+const GATEWAY_PRESPAWN_RESTART_COOLDOWN_MS = parsePositiveInt(process.env.SETFARM_GATEWAY_PRESPAWN_RESTART_COOLDOWN_MS, 5 * 60_000);
 const GATEWAY_IGNORABLE_FAILING = new Set((process.env.SETFARM_GATEWAY_IGNORABLE_FAILING || "startup-sidecars,whatsapp,telegram,browser,gmail")
   .split(",")
   .map((item) => item.trim())
   .filter(Boolean));
 const spawnerStartedAtMs = Date.now();
+let gatewayNotReadySinceMs: number | null = null;
+let gatewayRestartInFlight = false;
+let lastGatewayPrespawnRestartMs = 0;
 
 // Wave 13 Bug M (run #344 postmortem): agent default cwd must NOT be the
 // setfarm-repo. Previously execFile inherited the spawner's cwd (the systemd
@@ -184,10 +189,50 @@ async function getGatewayReadiness(): Promise<GatewayReadiness> {
   }
 }
 
+function noteGatewayReady(): void {
+  gatewayNotReadySinceMs = null;
+}
+
+function maybeRestartGatewayForReadiness(reason: string, key: string): void {
+  const nowMs = Date.now();
+  if (gatewayNotReadySinceMs === null) gatewayNotReadySinceMs = nowMs;
+  const notReadyAgeMs = nowMs - gatewayNotReadySinceMs;
+  if (notReadyAgeMs < GATEWAY_PRESPAWN_RESTART_AFTER_MS) return;
+  if (gatewayRestartInFlight) return;
+  if (activeProcesses.size > 0) return;
+  if (nowMs - lastGatewayPrespawnRestartMs < GATEWAY_PRESPAWN_RESTART_COOLDOWN_MS) return;
+
+  gatewayRestartInFlight = true;
+  lastGatewayPrespawnRestartMs = nowMs;
+  console.warn(`[spawner] Gateway not ready for ${formatDurationMs(notReadyAgeMs)} before ${key}; restarting openclaw-gateway. reason=${reason}`);
+  execFile("systemctl", ["--user", "restart", "openclaw-gateway"], { timeout: 20_000 }, (err, stdout, stderr) => {
+    gatewayRestartInFlight = false;
+    if (err) {
+      const msg = compactExitReason(stderr || stdout || (err as any).message || err);
+      console.warn(`[spawner] gateway prespawn restart failed: ${msg}`);
+      return;
+    }
+    gatewayNotReadySinceMs = null;
+    console.log("[spawner] gateway prespawn restart completed");
+  });
+}
+
+function hasCachedVerifyReviewSignal(context: Record<string, unknown>): boolean {
+  const comments = String(context.pr_comments || "").trim();
+  const checksStatus = String(context.pr_check_state || "");
+  const mergeable = String(context.pr_mergeable || "");
+  const mergeStateStatus = String(context.pr_merge_state_status || "");
+  return comments.length > 0
+    || checksStatus === "failing"
+    || mergeable === "CONFLICTING"
+    || ["DIRTY", "BLOCKED"].includes(mergeStateStatus);
+}
+
 function isVerifyReviewDelayActive(stepId: string, runContext: string | null): boolean {
   if (stepId !== "verify" || !runContext) return false;
   try {
     const context = JSON.parse(runContext);
+    if (hasCachedVerifyReviewSignal(context)) return false;
     const sinceRaw = context?.verify_pending_since;
     const prUrl = context?.verify_pending_pr_url;
     if (!sinceRaw || !prUrl) return false;
@@ -595,6 +640,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   }
   const gatewayReadiness = await getGatewayReadiness();
   if (!gatewayReadiness.ready) {
+    maybeRestartGatewayForReadiness(gatewayReadiness.reason, key);
     console.warn(`[spawner] Gateway not ready (${gatewayReadiness.reason}; ${GATEWAY_READY_URL}); delaying ${key} for ${gatewayReadiness.retryAfterMs}ms`);
     queuedSpawns.add(key);
     setTimeout(() => {
@@ -603,6 +649,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     }, gatewayReadiness.retryAfterMs);
     return;
   }
+  noteGatewayReady();
   claimingSpawns.add(key);
   const outputFileId = agentId + "-spawner";
   const claimFile = path.join("/tmp", "claim-" + outputFileId + ".json");
