@@ -43,6 +43,24 @@ function runMedicAutoVerifySmokeGate(repoPath: string, runId: string, storyId: s
   }
 }
 
+function clearPrEachDownstreamContext(context: Record<string, any>): Record<string, any> {
+  const next = { ...context };
+  next["branch"] = "main";
+  next["BRANCH"] = "main";
+  delete next["story_branch"];
+  delete next["STORY_BRANCH"];
+  delete next["story_workdir"];
+  delete next["pr_url"];
+  delete next["PR_URL"];
+  delete next["final_pr"];
+  delete next["current_story_id"];
+  delete next["current_story"];
+  delete next["previous_failure"];
+  delete next["failure_category"];
+  delete next["failure_suggestion"];
+  return next;
+}
+
 // ── advancePipeline ──────────────────────────────────────────────────
 
 /**
@@ -266,6 +284,13 @@ SUMMARY: ${verifiedCount}/${totalCount} stories verified, ${skippedCount} skippe
   // Early worktree cleanup
   await cleanupWorktrees(runId);
 
+  const loopStepRow = await pgGet<{ loop_config: string | null; run_id: string }>(
+    "SELECT loop_config, run_id FROM steps WHERE id = $1",
+    [loopStepId],
+  );
+  let loopConfig: LoopConfig | null = null;
+  try { loopConfig = loopStepRow?.loop_config ? JSON.parse(loopStepRow.loop_config) : null; } catch {}
+
   // Atomic: mark loop done + verify done must happen together
   await pgBegin(async (sql) => {
     await sql.unsafe(
@@ -274,20 +299,26 @@ SUMMARY: ${verifiedCount}/${totalCount} stories verified, ${skippedCount} skippe
     );
 
     // Also mark verify step done if it exists
-    const loopStepRow = await sql.unsafe(
-      "SELECT loop_config, run_id FROM steps WHERE id = $1", [loopStepId]
-    );
-    const loopStep = loopStepRow[0] as unknown as { loop_config: string | null; run_id: string } | undefined;
-    if (loopStep?.loop_config) {
-      const lc: LoopConfig = JSON.parse(loopStep.loop_config);
-      if (lc.verifyEach && lc.verifyStep) {
-        const verifySummary = `STATUS: done
+    if (loopConfig?.verifyEach && loopConfig.verifyStep) {
+      const verifySummary = `STATUS: done
 VERIFICATION_SUMMARY: ${verifiedCount}/${totalCount} stories verified`;
-        await sql.unsafe(
-          "UPDATE steps SET status = 'done', output = $1, updated_at = $2 WHERE run_id = $3 AND step_id = $4",
-          [verifySummary, now(), runId, lc.verifyStep]
-        );
-      }
+      await sql.unsafe(
+        "UPDATE steps SET status = 'done', output = $1, updated_at = $2 WHERE run_id = $3 AND step_id = $4",
+        [verifySummary, now(), runId, loopConfig.verifyStep]
+      );
+    }
+
+    if (loopConfig?.verifyEach || loopConfig?.mergeStrategy === "pr-each") {
+      const runRows = await sql.unsafe("SELECT context FROM runs WHERE id = $1", [runId]);
+      const runRow = runRows[0] as unknown as { context: string | null } | undefined;
+      let context: Record<string, any> = {};
+      try { context = JSON.parse(runRow?.context || "{}"); } catch {}
+      const nextContext = clearPrEachDownstreamContext(context);
+      await sql.unsafe(
+        "UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3",
+        [JSON.stringify(nextContext), now(), runId],
+      );
+      logger.info(`[checkLoopContinuation] pr-each loop complete; downstream branch context set to main`, { runId });
     }
   });
 
