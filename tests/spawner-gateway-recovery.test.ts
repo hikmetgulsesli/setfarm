@@ -55,4 +55,15 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /const sessionId = "spawner-" \+ agentId \+ "-" \+ spawnId/);
     assert.doesNotMatch(source, /const outputFileId = agentId \+ "-spawner";/);
   });
+
+  it("cancels lingering OpenClaw task records by task id after session-key cancel", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /function cancelLingeringOpenClawTasksForLookup\(lookup: string,\s*context: string\)/);
+    assert.match(source, /\["tasks",\s*"list",\s*"--status",\s*"running",\s*"--runtime",\s*"cli",\s*"--json"\]/);
+    assert.match(source, /task\.requesterSessionKey === lookup/);
+    assert.match(source, /task\.ownerKey === lookup/);
+    assert.match(source, /task\.childSessionKey === lookup/);
+    assert.match(source, /cancelOpenClawTaskId\(taskId,\s*context,\s*lookup\)/);
+    assert.match(source, /setTimeout\(\(\) => cancelLingeringOpenClawTasksForLookup\(lookup,\s*context\),\s*1500\)/);
+  });
 });

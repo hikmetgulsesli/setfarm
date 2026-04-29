@@ -91,6 +91,15 @@ type ActiveProcess = {
   sessionKey: string;
 };
 
+type OpenClawTaskRecord = {
+  taskId?: string;
+  status?: string;
+  runtime?: string;
+  requesterSessionKey?: string;
+  ownerKey?: string;
+  childSessionKey?: string;
+};
+
 const activeProcesses = new Map<string, ActiveProcess>();
 const queuedSpawns = new Set<string>();
 const claimingSpawns = new Set<string>();
@@ -344,6 +353,67 @@ function childProcessTerminalReason(child: ChildProcess): string | null {
   return null;
 }
 
+function parseOpenClawTaskList(stdout: string): OpenClawTaskRecord[] {
+  const parsed = JSON.parse(stdout || "{}") as { tasks?: OpenClawTaskRecord[] } | OpenClawTaskRecord[];
+  if (Array.isArray(parsed)) return parsed;
+  return Array.isArray(parsed.tasks) ? parsed.tasks : [];
+}
+
+function taskBelongsToLookup(task: OpenClawTaskRecord, lookup: string): boolean {
+  return task.requesterSessionKey === lookup || task.ownerKey === lookup || task.childSessionKey === lookup;
+}
+
+function cancelOpenClawTaskId(taskId: string, context: string, originalLookup: string): void {
+  execFile(OPENCLAW_CLI, ["tasks", "cancel", taskId], {
+    cwd: AGENT_SAFE_CWD,
+    timeout: 20_000,
+    env: buildOpenClawChildEnv(),
+    maxBuffer: 2 * 1024 * 1024,
+  }, (err, stdout, stderr) => {
+    if (err) {
+      const msg = compactExitReason(stderr || stdout || (err as any).message || err);
+      console.warn(`[spawner] OpenClaw lingering taskId cancel failed for ${taskId} from ${originalLookup} (${context}): ${msg}`);
+      return;
+    }
+    console.log(`[spawner] OpenClaw lingering taskId cancelled for ${taskId} from ${originalLookup} (${context})`);
+  });
+}
+
+function cancelLingeringOpenClawTasksForLookup(lookup: string, context: string): void {
+  if (!lookup) return;
+  execFile(OPENCLAW_CLI, ["tasks", "list", "--status", "running", "--runtime", "cli", "--json"], {
+    cwd: AGENT_SAFE_CWD,
+    timeout: 20_000,
+    env: buildOpenClawChildEnv(),
+    maxBuffer: 4 * 1024 * 1024,
+  }, (err, stdout, stderr) => {
+    if (err) {
+      const msg = compactExitReason(stderr || stdout || (err as any).message || err);
+      console.warn(`[spawner] OpenClaw lingering task list failed for ${lookup} (${context}): ${msg}`);
+      return;
+    }
+
+    let tasks: OpenClawTaskRecord[];
+    try {
+      tasks = parseOpenClawTaskList(stdout);
+    } catch (parseErr) {
+      console.warn(`[spawner] OpenClaw lingering task list parse failed for ${lookup} (${context}): ${compactExitReason(parseErr)}`);
+      return;
+    }
+
+    const seen = new Set<string>();
+    for (const task of tasks) {
+      const taskId = task.taskId?.trim();
+      if (!taskId || taskId === lookup || seen.has(taskId)) continue;
+      if (task.status && task.status !== "running") continue;
+      if (task.runtime && task.runtime !== "cli") continue;
+      if (!taskBelongsToLookup(task, lookup)) continue;
+      seen.add(taskId);
+      cancelOpenClawTaskId(taskId, context, lookup);
+    }
+  });
+}
+
 function cancelOpenClawTask(lookup: string, context: string): void {
   if (!lookup) return;
   execFile(OPENCLAW_CLI, ["tasks", "cancel", lookup], {
@@ -355,9 +425,11 @@ function cancelOpenClawTask(lookup: string, context: string): void {
     if (err) {
       const msg = compactExitReason(stderr || stdout || (err as any).message || err);
       console.warn(`[spawner] OpenClaw task cancel failed for ${lookup} (${context}): ${msg}`);
+      cancelLingeringOpenClawTasksForLookup(lookup, context);
       return;
     }
     console.log(`[spawner] OpenClaw task cancelled for ${lookup} (${context})`);
+    setTimeout(() => cancelLingeringOpenClawTasksForLookup(lookup, context), 1500);
   });
 }
 
