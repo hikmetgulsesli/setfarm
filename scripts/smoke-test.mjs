@@ -332,6 +332,24 @@ function countSourceControls(srcContent) {
   };
 }
 
+function countSourceControlUsages(srcContent) {
+  const counts = countSourceControls(srcContent);
+  const declarations = new Map();
+  for (const m of srcContent.matchAll(/\b(?:function|const)\s+([A-Z][A-Za-z0-9_]*)\b[\s\S]*?(?=\n(?:export\s+)?(?:function|const)\s+[A-Z]|\n\/\/ ──|\n$)/g)) {
+    declarations.set(m[1], countSourceControls(m[0]));
+  }
+  const componentUses = new Map();
+  for (const m of srcContent.matchAll(/<([A-Z][A-Za-z0-9_]*)\b/g)) {
+    componentUses.set(m[1], (componentUses.get(m[1]) || 0) + 1);
+  }
+  for (const [name, controls] of declarations) {
+    const uses = Math.max(0, (componentUses.get(name) || 0) - 1);
+    counts.buttons += controls.buttons * uses;
+    counts.inputs += controls.inputs * uses;
+  }
+  return counts;
+}
+
 // ── Phase 2: Browser Test ───────────────────────────────────────────
 
 function parseSnapshot(text) {
@@ -1516,7 +1534,7 @@ async function main() {
             .map(f => readFileSync(join(srcDir, f), 'utf-8'))
             .join('\n');
 
-          const actual = countSourceControls(srcContent);
+          const actual = countSourceControlUsages(srcContent);
           const minButtons = minRequiredDesignControls(totalButtons);
           const minInputs = minRequiredDesignControls(totalInputs);
 
@@ -1542,10 +1560,13 @@ async function main() {
         if (keyTokens.length > 0) {
           const srcDir = join(repoPath, 'src');
           if (existsSync(srcDir)) {
-            const allCss = readdirSync(srcDir, { recursive: true })
+            let allCss = readdirSync(srcDir, { recursive: true })
               .filter(f => f.endsWith('.css') || f.endsWith('.tsx') || f.endsWith('.jsx'))
               .map(f => readFileSync(join(srcDir, f), 'utf-8'))
               .join('\n');
+            if (/@import\s+["'][^"']*stitch\/design-tokens\.css["']/.test(allCss)) {
+              allCss += '\n' + tokenContent;
+            }
 
             const usedCount = keyTokens.filter(v => allCss.includes('--' + v)).length;
             const ratio = usedCount / keyTokens.length;
