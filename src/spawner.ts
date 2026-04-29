@@ -64,6 +64,7 @@ let lastGatewayPrespawnRestartMs = 0;
 const SETFARM_SRC = path.resolve(process.env.SETFARM_REPO_DIR || path.join(os.homedir(), ".openclaw", "setfarm-repo"));
 const AGENT_SAFE_CWD = path.join(os.homedir(), ".openclaw", "workspace", "agent-scratch");
 const TRANSCRIPT_ROOT = path.join(os.homedir(), ".openclaw", "workspace", "transcripts");
+const OPENCLAW_AGENTS_ROOT = path.join(os.homedir(), ".openclaw", "agents");
 
 function assertAgentCwdSafe(): void {
   // cuddly-sleeping-quail: refuse to spawn agents inside the platform source tree.
@@ -101,6 +102,14 @@ type OpenClawTaskRecord = {
   requesterSessionKey?: string;
   ownerKey?: string;
   childSessionKey?: string;
+};
+
+type OpenClawSessionIndexRecord = {
+  sessionId?: string;
+  sessionFile?: string;
+  status?: string;
+  updatedAt?: number;
+  abortedLastRun?: boolean;
 };
 
 const activeProcesses = new Map<string, ActiveProcess>();
@@ -401,6 +410,65 @@ function activeSessionKeyExclusionSql(): string {
   ].join(" ");
 }
 
+function activeSessionKeys(): Set<string> {
+  return new Set([...activeProcesses.values()].map((active) => active.sessionKey).filter(Boolean));
+}
+
+function cleanupStaleSetfarmOpenClawSessionRecordsSync(context: string): number {
+  const activeKeys = activeSessionKeys();
+  const now = Date.now();
+  let changed = 0;
+
+  let agentDirs: string[] = [];
+  try {
+    agentDirs = fs.readdirSync(OPENCLAW_AGENTS_ROOT);
+  } catch {
+    return 0;
+  }
+
+  for (const agentDir of agentDirs) {
+    const sessionsPath = path.join(OPENCLAW_AGENTS_ROOT, agentDir, "sessions", "sessions.json");
+    let parsed: Record<string, OpenClawSessionIndexRecord>;
+    try {
+      parsed = JSON.parse(fs.readFileSync(sessionsPath, "utf-8")) as Record<string, OpenClawSessionIndexRecord>;
+    } catch {
+      continue;
+    }
+
+    let fileChanged = false;
+    for (const [sessionKey, record] of Object.entries(parsed)) {
+      if (!isSetfarmSpawnerSessionKey(sessionKey)) continue;
+      if (activeKeys.has(sessionKey)) continue;
+      if (record?.status !== "running") continue;
+      record.status = "timeout";
+      record.abortedLastRun = true;
+      record.updatedAt = now;
+      fileChanged = true;
+      changed += 1;
+
+      if (record.sessionFile) {
+        try { fs.unlinkSync(`${record.sessionFile}.lock`); } catch {}
+      } else if (record.sessionId) {
+        const lockPath = path.join(OPENCLAW_AGENTS_ROOT, agentDir, "sessions", `${record.sessionId}.jsonl.lock`);
+        try { fs.unlinkSync(lockPath); } catch {}
+      }
+    }
+
+    if (fileChanged) {
+      try {
+        fs.writeFileSync(sessionsPath, JSON.stringify(parsed, null, 2) + "\n");
+      } catch (err) {
+        console.warn(`[spawner] stale OpenClaw session sweep failed for ${sessionsPath} (${context}): ${compactExitReason(err)}`);
+      }
+    }
+  }
+
+  if (changed > 0) {
+    console.warn(`[spawner] OpenClaw stale session sweep marked ${changed} session record(s) timeout (${context})`);
+  }
+  return changed;
+}
+
 function markStaleSetfarmOpenClawTaskRecordsCancelledSync(context: string): number {
   const now = Date.now();
   const message = `Cancelled by Setfarm spawner stale sweep (${context}).`;
@@ -520,6 +588,7 @@ function cancelLingeringOpenClawTasksForLookup(lookup: string, context: string):
 }
 
 function cleanupStaleSetfarmOpenClawTaskRecords(context: string): void {
+  cleanupStaleSetfarmOpenClawSessionRecordsSync(context);
   markStaleSetfarmOpenClawTaskRecordsCancelledSync(context);
 }
 

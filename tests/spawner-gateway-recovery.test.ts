@@ -83,4 +83,17 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /cleanupStaleSetfarmOpenClawTaskRecords\("prespawn"\)/);
     assert.match(source, /setInterval\(\(\) => cleanupStaleSetfarmOpenClawTaskRecords\("interval"\),\s*OPENCLAW_STALE_TASK_SWEEP_MS\)/);
   });
+
+  it("marks stale OpenClaw session index records timed out before spawning", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /OPENCLAW_AGENTS_ROOT/);
+    assert.match(source, /type OpenClawSessionIndexRecord/);
+    assert.match(source, /function cleanupStaleSetfarmOpenClawSessionRecordsSync\(context: string\): number/);
+    assert.match(source, /activeSessionKeys\(\)/);
+    assert.match(source, /record\.status = "timeout"/);
+    assert.match(source, /record\.abortedLastRun = true/);
+    assert.match(source, /\.jsonl\.lock/);
+    assert.match(source, /fs\.writeFileSync\(sessionsPath,\s*JSON\.stringify\(parsed,\s*null,\s*2\) \+ "\\n"\)/);
+    assert.match(source, /cleanupStaleSetfarmOpenClawSessionRecordsSync\(context\)/);
+  });
 });
