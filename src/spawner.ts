@@ -32,6 +32,7 @@ const DEVELOPER_STUCK_MS = parsePositiveInt(process.env.SETFARM_DEVELOPER_AGENT_
 const QA_FIX_AGENT_STUCK_MS = parsePositiveInt(process.env.SETFARM_QA_FIX_AGENT_STUCK_MS, 8 * 60_000);
 const STARTUP_RUNNING_GRACE_MS = parsePositiveInt(process.env.SETFARM_STARTUP_RUNNING_GRACE_MS, 0);
 const QA_AGENT_STUCK_MS = parsePositiveInt(process.env.SETFARM_QA_AGENT_STUCK_MS, 18 * 60_000);
+const AGENT_ACTIVITY_GRACE_MS = parsePositiveInt(process.env.SETFARM_AGENT_ACTIVITY_GRACE_MS, 4 * 60_000);
 const OPENCLAW_TASK_REGISTRY_SETTLE_MS = parsePositiveInt(process.env.SETFARM_OPENCLAW_TASK_REGISTRY_SETTLE_MS, 2000);
 const OPENCLAW_STALE_TASK_SWEEP_MS = parsePositiveInt(process.env.SETFARM_OPENCLAW_STALE_TASK_SWEEP_MS, 2 * 60_000);
 const GATEWAY_HEALTH_URL = process.env.OPENCLAW_GATEWAY_HEALTH_URL || "http://127.0.0.1:18789/health";
@@ -138,6 +139,7 @@ type ActiveProcess = {
   transcriptPath: string;
   sessionId: string;
   sessionKey: string;
+  sessionJsonlPath: string;
 };
 
 type OpenClawTaskRecord = {
@@ -184,6 +186,21 @@ function stuckThresholdMs(role: string, storyId?: string | null): number {
   if (storyId?.startsWith("QA-FIX-")) return QA_FIX_AGENT_STUCK_MS;
   if (role.includes("qa") || role.includes("test")) return QA_AGENT_STUCK_MS;
   return role === "developer" ? DEVELOPER_STUCK_MS : NON_DEVELOPER_STUCK_MS;
+}
+
+function agentSessionJsonlPath(agentId: string, sessionId: string): string {
+  return path.join(OPENCLAW_AGENTS_ROOT, agentId, "sessions", `${sessionId}.jsonl`);
+}
+
+function activeProcessLastActivityMs(active: ActiveProcess): number {
+  let lastActivityMs = active.startedAtMs;
+  for (const filePath of [active.transcriptPath, active.sessionJsonlPath]) {
+    try {
+      const mtimeMs = fs.statSync(filePath).mtimeMs;
+      if (Number.isFinite(mtimeMs) && mtimeMs > lastActivityMs) lastActivityMs = mtimeMs;
+    } catch {}
+  }
+  return lastActivityMs;
 }
 
 type GatewayReadyBody = { ready?: boolean; ok?: boolean; uptimeMs?: number; failing?: unknown };
@@ -943,7 +960,13 @@ ${reason}
         const thresholdMs = stuckThresholdMs(active.role, row.story_id);
         if (ageMs < thresholdMs) continue;
 
-        const reason = `AGENT_PROCESS_STUCK: ${active.agentId} kept ${active.wfId}/${active.role} running for ${formatDurationMs(ageMs)} without step complete/fail; killed by spawner watchdog. Transcript: ${active.transcriptPath}`;
+        const idleMs = Date.now() - activeProcessLastActivityMs(active);
+        if (idleMs < AGENT_ACTIVITY_GRACE_MS) {
+          console.log(`[spawner] ${active.agentId} exceeded ${formatDurationMs(thresholdMs)} but is active (last activity ${formatDurationMs(idleMs)} ago); watchdog deferred`);
+          continue;
+        }
+
+        const reason = `AGENT_PROCESS_STUCK: ${active.agentId} kept ${active.wfId}/${active.role} running for ${formatDurationMs(ageMs)} without step complete/fail and no agent activity for ${formatDurationMs(idleMs)}; killed by spawner watchdog. Transcript: ${active.transcriptPath}`;
         console.warn(`[spawner] ${reason}`);
         try { fs.appendFileSync(active.transcriptPath, `--- WATCHDOG ${new Date().toISOString()} ---
 ${reason}
@@ -1062,6 +1085,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   // paths across retries lets old and new attempts overwrite each other's handoff.
   const sessionId = "spawner-" + agentId + "-" + spawnId;
   const sessionKey = buildSessionKey(agentId, sessionId);
+  const sessionJsonlPath = agentSessionJsonlPath(agentId, sessionId);
   const spawnCwd = safeAgentCwdFromClaimInput(claim.resolvedInput);
   const childArgs = [
     "agent", "--json", "--agent", agentId,
@@ -1098,7 +1122,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
       fs.appendFileSync(transcriptPath, `--- HARD TIMEOUT ${new Date().toISOString()} ---\nopenclaw agent exceeded ${AGENT_TIMEOUT_SECONDS + 60}s\n`);
     } catch {}
     terminateActiveProcess(
-      { child, runId: claim.runId || "", stepId: claim.stepId || "", agentId, wfId, role, startedAtMs, transcriptPath, sessionId, sessionKey },
+      { child, runId: claim.runId || "", stepId: claim.stepId || "", agentId, wfId, role, startedAtMs, transcriptPath, sessionId, sessionKey, sessionJsonlPath },
       "spawn-hard-timeout",
     );
   }, (AGENT_TIMEOUT_SECONDS + 60) * 1000);
@@ -1144,7 +1168,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     }
   });
   if (child.pid && claim.runId && claim.stepId) {
-    activeProcesses.set(key, { child, runId: claim.runId, stepId: claim.stepId, agentId, wfId, role, startedAtMs, transcriptPath, sessionId, sessionKey });
+    activeProcesses.set(key, { child, runId: claim.runId, stepId: claim.stepId, agentId, wfId, role, startedAtMs, transcriptPath, sessionId, sessionKey, sessionJsonlPath });
   }
 }
 
