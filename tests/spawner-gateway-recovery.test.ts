@@ -20,6 +20,21 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /maybeRestartGatewayForReadiness\(gatewayReadiness\.reason,\s*key\)/);
   });
 
+  it("falls back to gateway health when readiness probe times out", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /fetch\(GATEWAY_HEALTH_URL/);
+    assert.match(source, /ready endpoint unavailable \(\$\{message\}\); health endpoint returned HTTP 2xx/);
+  });
+
+  it("defers background workflows while foreground runs are active", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /SETFARM_BACKGROUND_WORKFLOWS \|\| "daily-standup"/);
+    assert.match(source, /function isBackgroundWorkflow\(wfId: string\)/);
+    assert.match(source, /async function shouldDeferBackgroundWorkflow\(wfId: string\)/);
+    assert.match(source, /await shouldDeferBackgroundWorkflow\(wfId\)/);
+    assert.match(source, /Deferring background workflow/);
+  });
+
   it("does not claim gateway cron recreation in event-driven spawner mode", () => {
     const source = fs.readFileSync(path.join(root, "src", "cli", "cli.ts"), "utf-8");
     assert.match(source, /gatewayAgentCronsEnabled/);

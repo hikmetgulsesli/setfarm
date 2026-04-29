@@ -21,6 +21,11 @@ const AGENT_TIMEOUT_SECONDS = 1800;
 const PID_FILE = path.join(os.homedir(), ".openclaw", "setfarm", "spawner.pid");
 const MAX_CONCURRENT = 8;
 const SPAWN_STAGGER_MS = parseInt(process.env.SETFARM_SPAWN_STAGGER_MS || "12000", 10);
+const WORKFLOW_DEFER_RETRY_MS = parsePositiveInt(process.env.SETFARM_WORKFLOW_DEFER_RETRY_MS, POLL_INTERVAL_MS);
+const BACKGROUND_WORKFLOWS = new Set((process.env.SETFARM_BACKGROUND_WORKFLOWS || "daily-standup")
+  .split(",")
+  .map((item) => item.trim())
+  .filter(Boolean));
 const NON_DEVELOPER_STUCK_MS = parsePositiveInt(process.env.SETFARM_AGENT_STUCK_MS, 12 * 60_000);
 const DEVELOPER_STUCK_MS = parsePositiveInt(process.env.SETFARM_DEVELOPER_AGENT_STUCK_MS, 15 * 60_000);
 const QA_FIX_AGENT_STUCK_MS = parsePositiveInt(process.env.SETFARM_QA_FIX_AGENT_STUCK_MS, 8 * 60_000);
@@ -118,6 +123,19 @@ type GatewayReadiness = {
   retryAfterMs: number;
 };
 
+function isBackgroundWorkflow(wfId: string): boolean {
+  return BACKGROUND_WORKFLOWS.has(wfId);
+}
+
+async function shouldDeferBackgroundWorkflow(wfId: string): Promise<boolean> {
+  if (!isBackgroundWorkflow(wfId)) return false;
+  const row = await pgGet<{ cnt: string }>(
+    "SELECT COUNT(*) as cnt FROM runs WHERE status = 'running' AND workflow_id <> ALL($1::text[])",
+    [[...BACKGROUND_WORKFLOWS]],
+  );
+  return parseInt(row?.cnt || "0", 10) > 0;
+}
+
 function gatewayFailingList(body: GatewayReadyBody): string[] {
   return Array.isArray(body.failing) ? body.failing.map((item) => String(item)).filter(Boolean) : [];
 }
@@ -182,6 +200,27 @@ async function getGatewayReadiness(): Promise<GatewayReadiness> {
     return { ready: true, reason: "ready endpoint returned HTTP 2xx", retryAfterMs: 0 };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    const healthController = new AbortController();
+    const healthTimeout = setTimeout(() => healthController.abort(), 2000);
+    try {
+      const healthRes = await fetch(GATEWAY_HEALTH_URL, { signal: healthController.signal });
+      const healthText = await healthRes.text();
+      let healthBody: GatewayReadyBody = {};
+      if (healthText.trim()) {
+        try {
+          healthBody = JSON.parse(healthText);
+        } catch {
+          // Plain text health responses are acceptable when HTTP status is 2xx.
+        }
+      }
+      if (healthRes.ok && healthBody.ok !== false && healthBody.ready !== false) {
+        return { ready: true, reason: `ready endpoint unavailable (${message}); health endpoint returned HTTP 2xx`, retryAfterMs: 0 };
+      }
+    } catch {
+      // Fall through to the original readiness failure.
+    } finally {
+      clearTimeout(healthTimeout);
+    }
     return { ready: false, reason: `ready endpoint unavailable: ${message}`, retryAfterMs: GATEWAY_PRESPAWN_RETRY_MS };
   } finally {
     clearTimeout(timeout);
@@ -605,6 +644,15 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   const key = `${wfId}:${role}:${agentId}`;
   if (activeProcesses.has(key) || claimingSpawns.has(key)) {
     console.log(`[spawner] Already running/claiming: ${key}, skip`);
+    return;
+  }
+  if (await shouldDeferBackgroundWorkflow(wfId)) {
+    console.log(`[spawner] Deferring background workflow ${wfId}/${role}; foreground run is active`);
+    queuedSpawns.add(key);
+    setTimeout(() => {
+      queuedSpawns.delete(key);
+      if (!shuttingDown) void spawnAgentNow(agentId, wfId, role);
+    }, WORKFLOW_DEFER_RETRY_MS);
     return;
   }
   if (activeProcesses.size >= MAX_CONCURRENT) {
