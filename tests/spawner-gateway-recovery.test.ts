@@ -26,10 +26,10 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /event-driven spawner owns workflow/);
   });
 
-  it("does not suppress verify spawns when cached PR feedback already exists", () => {
+  it("delegates verify review-delay decisions to claimStep", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
-    assert.match(source, /function hasCachedVerifyReviewSignal/);
-    assert.match(source, /context\.pr_comments/);
-    assert.match(source, /hasCachedVerifyReviewSignal\(context\)\) return false/);
+    assert.doesNotMatch(source, /isVerifyReviewDelayActive/);
+    assert.doesNotMatch(source, /Verify review delay active/);
+    assert.match(source, /claim = await claimStep\(fullAgentId,\s*agentId\)/);
   });
 });
