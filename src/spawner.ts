@@ -49,6 +49,7 @@ const spawnerStartedAtMs = Date.now();
 let gatewayNotReadySinceMs: number | null = null;
 let gatewayRestartInFlight = false;
 let lastGatewayPrespawnRestartMs = 0;
+let lastGatewayCleanupRestartMs = 0;
 
 // Wave 13 Bug M (run #344 postmortem): agent default cwd must NOT be the
 // setfarm-repo. Previously execFile inherited the spawner's cwd (the systemd
@@ -110,6 +111,11 @@ type OpenClawSessionIndexRecord = {
   status?: string;
   updatedAt?: number;
   abortedLastRun?: boolean;
+};
+
+type OpenClawCleanupResult = {
+  sessions: number;
+  tasks: number;
 };
 
 const activeProcesses = new Map<string, ActiveProcess>();
@@ -414,10 +420,26 @@ function activeSessionKeys(): Set<string> {
   return new Set([...activeProcesses.values()].map((active) => active.sessionKey).filter(Boolean));
 }
 
+function cleanupOpenClawSessionLockSync(agentDir: string, record: OpenClawSessionIndexRecord): boolean {
+  const candidates = new Set<string>();
+  if (record.sessionFile) candidates.add(`${record.sessionFile}.lock`);
+  if (record.sessionId) candidates.add(path.join(OPENCLAW_AGENTS_ROOT, agentDir, "sessions", `${record.sessionId}.jsonl.lock`));
+
+  let removed = false;
+  for (const lockPath of candidates) {
+    try {
+      fs.unlinkSync(lockPath);
+      removed = true;
+    } catch {}
+  }
+  return removed;
+}
+
 function cleanupStaleSetfarmOpenClawSessionRecordsSync(context: string): number {
   const activeKeys = activeSessionKeys();
   const now = Date.now();
   let changed = 0;
+  let locksRemoved = 0;
 
   let agentDirs: string[] = [];
   try {
@@ -439,19 +461,13 @@ function cleanupStaleSetfarmOpenClawSessionRecordsSync(context: string): number 
     for (const [sessionKey, record] of Object.entries(parsed)) {
       if (!isSetfarmSpawnerSessionKey(sessionKey)) continue;
       if (activeKeys.has(sessionKey)) continue;
+      if (cleanupOpenClawSessionLockSync(agentDir, record)) locksRemoved += 1;
       if (record?.status !== "running") continue;
       record.status = "timeout";
       record.abortedLastRun = true;
       record.updatedAt = now;
       fileChanged = true;
       changed += 1;
-
-      if (record.sessionFile) {
-        try { fs.unlinkSync(`${record.sessionFile}.lock`); } catch {}
-      } else if (record.sessionId) {
-        const lockPath = path.join(OPENCLAW_AGENTS_ROOT, agentDir, "sessions", `${record.sessionId}.jsonl.lock`);
-        try { fs.unlinkSync(lockPath); } catch {}
-      }
     }
 
     if (fileChanged) {
@@ -465,6 +481,9 @@ function cleanupStaleSetfarmOpenClawSessionRecordsSync(context: string): number 
 
   if (changed > 0) {
     console.warn(`[spawner] OpenClaw stale session sweep marked ${changed} session record(s) timeout (${context})`);
+  }
+  if (locksRemoved > 0) {
+    console.warn(`[spawner] OpenClaw stale session sweep removed ${locksRemoved} transcript lock(s) (${context})`);
   }
   return changed;
 }
@@ -587,9 +606,42 @@ function cancelLingeringOpenClawTasksForLookup(lookup: string, context: string):
   });
 }
 
-function cleanupStaleSetfarmOpenClawTaskRecords(context: string): void {
-  cleanupStaleSetfarmOpenClawSessionRecordsSync(context);
-  markStaleSetfarmOpenClawTaskRecordsCancelledSync(context);
+function cleanupStaleSetfarmOpenClawTaskRecords(context: string): OpenClawCleanupResult {
+  const sessions = cleanupStaleSetfarmOpenClawSessionRecordsSync(context);
+  const tasks = markStaleSetfarmOpenClawTaskRecordsCancelledSync(context);
+  return { sessions, tasks };
+}
+
+async function restartGatewayAfterOpenClawCleanup(context: string, result: OpenClawCleanupResult): Promise<boolean> {
+  const changed = result.sessions + result.tasks;
+  if (changed === 0) return false;
+  if (gatewayRestartInFlight) return false;
+  if (activeProcesses.size > 0) {
+    console.warn(`[spawner] gateway restart after stale OpenClaw cleanup deferred; ${activeProcesses.size} active process(es) (${context})`);
+    return false;
+  }
+  const nowMs = Date.now();
+  if (nowMs - lastGatewayCleanupRestartMs < GATEWAY_PRESPAWN_RESTART_COOLDOWN_MS) return false;
+
+  gatewayRestartInFlight = true;
+  lastGatewayCleanupRestartMs = nowMs;
+  console.warn(`[spawner] restarting openclaw-gateway after stale OpenClaw cleanup (${context}): sessions=${result.sessions} tasks=${result.tasks}`);
+  const restarted = await new Promise<boolean>((resolve) => {
+    execFile("systemctl", ["--user", "restart", "openclaw-gateway"], { timeout: 20_000 }, (err, stdout, stderr) => {
+      if (err) {
+        const msg = compactExitReason(stderr || stdout || (err as any).message || err);
+        console.warn(`[spawner] gateway stale-cleanup restart failed: ${msg}`);
+        resolve(false);
+        return;
+      }
+      gatewayNotReadySinceMs = null;
+      console.log("[spawner] gateway stale-cleanup restart completed");
+      resolve(true);
+    });
+  });
+  gatewayRestartInFlight = false;
+  if (restarted) cleanupStaleSetfarmOpenClawTaskRecords(`${context}-post-gateway-restart`);
+  return restarted;
 }
 
 function cancelOpenClawTask(lookup: string, context: string): void {
@@ -905,7 +957,8 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     }, WORKFLOW_DEFER_RETRY_MS);
     return;
   }
-  cleanupStaleSetfarmOpenClawTaskRecords("prespawn");
+  const openClawCleanup = cleanupStaleSetfarmOpenClawTaskRecords("prespawn");
+  await restartGatewayAfterOpenClawCleanup("prespawn", openClawCleanup);
   if (activeProcesses.size >= MAX_CONCURRENT) {
     console.log(`[spawner] At capacity (${activeProcesses.size}/${MAX_CONCURRENT}), skip ${agentId}`);
     return;
@@ -1358,7 +1411,7 @@ async function main() {
   await failStaleRunningClaimsFromPreviousSpawner();
   await requeueOrphanedRunningStories();
   await cleanupRunningRunEphemeraOnStartup();
-  cleanupStaleSetfarmOpenClawTaskRecords("startup");
+  await restartGatewayAfterOpenClawCleanup("startup", cleanupStaleSetfarmOpenClawTaskRecords("startup"));
 
   const shutdown = () => {
     shuttingDown = true;
@@ -1391,7 +1444,10 @@ async function main() {
 
   console.log("[spawner] Listening for step_pending and story_pending events");
   setInterval(pollForPendingWork, POLL_INTERVAL_MS);
-  setInterval(() => cleanupStaleSetfarmOpenClawTaskRecords("interval"), OPENCLAW_STALE_TASK_SWEEP_MS);
+  setInterval(() => {
+    const result = cleanupStaleSetfarmOpenClawTaskRecords("interval");
+    void restartGatewayAfterOpenClawCleanup("interval", result);
+  }, OPENCLAW_STALE_TASK_SWEEP_MS);
   await pollForPendingWork();
   console.log("[spawner] Ready");
 }

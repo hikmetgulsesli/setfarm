@@ -81,19 +81,35 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /markStaleSetfarmOpenClawTaskRecordsCancelledSync\(context\)/);
     assert.match(source, /cleanupStaleSetfarmOpenClawTaskRecords\("startup"\)/);
     assert.match(source, /cleanupStaleSetfarmOpenClawTaskRecords\("prespawn"\)/);
-    assert.match(source, /setInterval\(\(\) => cleanupStaleSetfarmOpenClawTaskRecords\("interval"\),\s*OPENCLAW_STALE_TASK_SWEEP_MS\)/);
+    assert.match(source, /const result = cleanupStaleSetfarmOpenClawTaskRecords\("interval"\)/);
+    assert.match(source, /void restartGatewayAfterOpenClawCleanup\("interval",\s*result\)/);
   });
 
   it("marks stale OpenClaw session index records timed out before spawning", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /OPENCLAW_AGENTS_ROOT/);
     assert.match(source, /type OpenClawSessionIndexRecord/);
+    assert.match(source, /function cleanupOpenClawSessionLockSync\(agentDir: string,\s*record: OpenClawSessionIndexRecord\): boolean/);
     assert.match(source, /function cleanupStaleSetfarmOpenClawSessionRecordsSync\(context: string\): number/);
     assert.match(source, /activeSessionKeys\(\)/);
+    assert.match(source, /cleanupOpenClawSessionLockSync\(agentDir,\s*record\)/);
     assert.match(source, /record\.status = "timeout"/);
     assert.match(source, /record\.abortedLastRun = true/);
     assert.match(source, /\.jsonl\.lock/);
     assert.match(source, /fs\.writeFileSync\(sessionsPath,\s*JSON\.stringify\(parsed,\s*null,\s*2\) \+ "\\n"\)/);
     assert.match(source, /cleanupStaleSetfarmOpenClawSessionRecordsSync\(context\)/);
+  });
+
+  it("restarts the gateway after stale OpenClaw cleanup when no Setfarm agent is active", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /type OpenClawCleanupResult/);
+    assert.match(source, /function cleanupStaleSetfarmOpenClawTaskRecords\(context: string\): OpenClawCleanupResult/);
+    assert.match(source, /async function restartGatewayAfterOpenClawCleanup\(context: string,\s*result: OpenClawCleanupResult\): Promise<boolean>/);
+    assert.match(source, /activeProcesses\.size > 0/);
+    assert.match(source, /\["--user",\s*"restart",\s*"openclaw-gateway"\]/);
+    assert.match(source, /gateway stale-cleanup restart completed/);
+    assert.match(source, /cleanupStaleSetfarmOpenClawTaskRecords\(`\$\{context\}-post-gateway-restart`\)/);
+    assert.match(source, /await restartGatewayAfterOpenClawCleanup\("startup",\s*cleanupStaleSetfarmOpenClawTaskRecords\("startup"\)\)/);
+    assert.match(source, /await restartGatewayAfterOpenClawCleanup\("prespawn",\s*openClawCleanup\)/);
   });
 });
