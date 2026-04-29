@@ -1059,23 +1059,25 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     return;
   }
   const openClawCleanup = cleanupStaleSetfarmOpenClawTaskRecords("prespawn");
-  await restartGatewayAfterOpenClawCleanup("prespawn", openClawCleanup);
+  if (!OPENCLAW_AGENT_LOCAL) await restartGatewayAfterOpenClawCleanup("prespawn", openClawCleanup);
   if (activeProcesses.size >= MAX_CONCURRENT) {
     console.log(`[spawner] At capacity (${activeProcesses.size}/${MAX_CONCURRENT}), skip ${agentId}`);
     return;
   }
-  const gatewayReadiness = await getGatewayReadiness();
-  if (!gatewayReadiness.ready) {
-    maybeRestartGatewayForReadiness(gatewayReadiness.reason, key);
-    console.warn(`[spawner] Gateway not ready (${gatewayReadiness.reason}; ${GATEWAY_READY_URL}); delaying ${key} for ${gatewayReadiness.retryAfterMs}ms`);
-    queuedSpawns.add(key);
-    setTimeout(() => {
-      queuedSpawns.delete(key);
-      if (!shuttingDown) void spawnAgentNow(agentId, wfId, role);
-    }, gatewayReadiness.retryAfterMs);
-    return;
+  if (!OPENCLAW_AGENT_LOCAL) {
+    const gatewayReadiness = await getGatewayReadiness();
+    if (!gatewayReadiness.ready) {
+      maybeRestartGatewayForReadiness(gatewayReadiness.reason, key);
+      console.warn(`[spawner] Gateway not ready (${gatewayReadiness.reason}; ${GATEWAY_READY_URL}); delaying ${key} for ${gatewayReadiness.retryAfterMs}ms`);
+      queuedSpawns.add(key);
+      setTimeout(() => {
+        queuedSpawns.delete(key);
+        if (!shuttingDown) void spawnAgentNow(agentId, wfId, role);
+      }, gatewayReadiness.retryAfterMs);
+      return;
+    }
+    if (!gatewayReadiness.reason.startsWith("gateway probe timeout bypass")) noteGatewayReady();
   }
-  if (!gatewayReadiness.reason.startsWith("gateway probe timeout bypass")) noteGatewayReady();
   claimingSpawns.add(key);
   const spawnId = Date.now() + "-" + Math.random().toString(36).slice(2, 10);
   const outputFileId = agentId + "-spawner-" + spawnId;
