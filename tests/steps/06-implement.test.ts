@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { implementModule } from "../../dist/installer/steps/06-implement/module.js";
 import { checkBuildGate, computeScopeFileLimits, detectPackageBuildCommand, normalize, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
+import { decideStorySystemSmokeGate } from "../../dist/installer/step-ops.js";
 import { STACK_RULES } from "../../dist/installer/steps/06-implement/stack-rules.js";
 import type { ParsedOutput } from "../../dist/installer/steps/types.js";
 
@@ -135,5 +136,50 @@ describe("06-implement step module", () => {
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
+  });
+
+  it("defers full system smoke until later UI story owns the app surface", () => {
+    const decision = decideStorySystemSmokeGate("US-001", [
+      {
+        story_id: "US-001",
+        story_index: 0,
+        status: "done",
+        scope_files: JSON.stringify(["src/types/habit.ts", "src/hooks/useLocalStorage.ts"]),
+      },
+      {
+        story_id: "US-002",
+        story_index: 1,
+        status: "pending",
+        scope_files: JSON.stringify(["src/screens/AnaSayfa.tsx", "src/App.tsx"]),
+      },
+    ]);
+
+    assert.equal(decision.run, false);
+    assert.match(decision.reason, /US-002/);
+  });
+
+  it("runs full system smoke for the last pending UI boundary story", () => {
+    const decision = decideStorySystemSmokeGate("US-003", [
+      {
+        story_id: "US-001",
+        story_index: 0,
+        status: "verified",
+        scope_files: JSON.stringify(["src/types/habit.ts"]),
+      },
+      {
+        story_id: "US-002",
+        story_index: 1,
+        status: "verified",
+        scope_files: JSON.stringify(["src/screens/AnaSayfa.tsx"]),
+      },
+      {
+        story_id: "US-003",
+        story_index: 2,
+        status: "done",
+        scope_files: JSON.stringify(["src/App.tsx", "src/main.tsx", "src/index.css"]),
+      },
+    ]);
+
+    assert.equal(decision.run, true);
   });
 });

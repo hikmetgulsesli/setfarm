@@ -1,4 +1,5 @@
 ## Unreleased
+- Verify-each now defers full app `smoke-test.mjs` until the current or final UI/integration story owns route/screen/entry files, so setup-only stories can merge without creating premature QA-FIX loops while final UI smoke still catches dead buttons.
 - Planner PRD instructions now stop forcing login/settings/history-style support screens into simple utilities unless the task actually requires them; simple apps use product-relevant state screens to satisfy the three-screen guard.
 - Platform smoke fidelity now requires most Stitch/DESIGN_DOM controls to exist in source instead of accepting a 30% element-count match, catching missing designed buttons/inputs earlier in QA/final gates.
 - Stories step now auto-injects missing `UI_BEHAVIOR_CONTRACT` acceptance criteria from Stitch/DOM into the owning story before re-running coverage checks, preventing model wording misses from failing story generation while still preserving button/input behavior requirements.

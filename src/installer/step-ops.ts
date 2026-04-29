@@ -59,6 +59,81 @@ function isSmokeInfrastructureFailure(failure: string): boolean {
   return SMOKE_INFRA_FAILURE.test(failure);
 }
 
+type StorySmokeRow = {
+  story_id: string;
+  story_index: number;
+  status: string;
+  scope_files: string | null;
+};
+
+type StorySmokeDecision = { run: boolean; reason: string };
+
+function parseScopeFileList(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter((file): file is string => typeof file === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function isSystemSmokeBoundaryFile(file: string): boolean {
+  const normalized = file.replace(/\\/g, "/");
+  return (
+    /^src\/screens\//.test(normalized) ||
+    /^src\/app\//.test(normalized) ||
+    /^src\/pages\//.test(normalized) ||
+    /^app\//.test(normalized) ||
+    /^pages\//.test(normalized) ||
+    /^src\/App\.(tsx?|jsx?)$/.test(normalized) ||
+    /^src\/main\.(tsx?|jsx?)$/.test(normalized) ||
+    /^src\/index\.(tsx?|jsx?|css)$/.test(normalized)
+  );
+}
+
+function ownsSystemSmokeBoundary(row: Pick<StorySmokeRow, "scope_files">): boolean {
+  return parseScopeFileList(row.scope_files).some(isSystemSmokeBoundaryFile);
+}
+
+export function decideStorySystemSmokeGate(storyId: string, rows: StorySmokeRow[]): StorySmokeDecision {
+  const current = rows.find(row => row.story_id === storyId);
+  if (!current) {
+    return { run: true, reason: `story ${storyId} not found; running smoke gate conservatively` };
+  }
+
+  const laterUiStory = rows.find(row =>
+    row.story_index > current.story_index &&
+    !["verified", "skipped", "failed"].includes(row.status) &&
+    ownsSystemSmokeBoundary(row)
+  );
+  if (laterUiStory) {
+    return {
+      run: false,
+      reason: `deferred until later UI/integration story ${laterUiStory.story_id}`,
+    };
+  }
+
+  if (!ownsSystemSmokeBoundary(current)) {
+    return {
+      run: false,
+      reason: `${storyId} owns no route/screen/entry files`,
+    };
+  }
+
+  return { run: true, reason: `${storyId} is the last pending UI/integration boundary` };
+}
+
+async function shouldRunStorySystemSmokeGate(runId: string, storyId: string): Promise<StorySmokeDecision> {
+  const rows = await pgQuery<StorySmokeRow>(
+    "SELECT story_id, story_index, status, scope_files FROM stories WHERE run_id = $1 ORDER BY story_index ASC",
+    [runId],
+  );
+  return decideStorySystemSmokeGate(storyId, rows);
+}
+
 function qualityFailureFingerprint(failure: string): string {
   const normalized = failure
     .replace(/QA-FIX-\d+/gi, "QA-FIX")
@@ -105,6 +180,14 @@ async function ensureSystemSmokeBeforeAutoVerify(
   if (!repoPath) return true;
 
   syncBaseBranch(repoPath, "main");
+  const decision = await shouldRunStorySystemSmokeGate(runId, story.story_id);
+  if (!decision.run) {
+    context["smoke_test_result"] = `deferred for ${story.story_id}: ${decision.reason}`;
+    await updateRunContext(runId, context);
+    logger.info(`[${logPrefix}-smoke-gate] Deferred system smoke for ${story.story_id}: ${decision.reason}`, { runId });
+    return true;
+  }
+
   const smokeGate = runSystemSmokeGate(repoPath, runId, "verify");
   if (smokeGate.ok) {
     context["smoke_test_result"] = smokeGate.output;
@@ -3946,6 +4029,11 @@ async function handleVerifyEachCompletion(
       const repoPath = context["repo"] || context["REPO"] || "";
       if (repoPath) {
         syncBaseBranch(repoPath, "main");
+        const smokeDecision = await shouldRunStorySystemSmokeGate(verifyStep.run_id, verifiedStoryId);
+        if (!smokeDecision.run) {
+          context["smoke_test_result"] = `deferred for ${verifiedStoryId}: ${smokeDecision.reason}`;
+          logger.info(`[verify-smoke-gate] Deferred system smoke for ${verifiedStoryId}: ${smokeDecision.reason}`, { runId: verifyStep.run_id });
+        } else {
         const smokeGate = runSystemSmokeGate(repoPath, verifyStep.run_id, verifyStep.step_id);
         if (!smokeGate.ok) {
           const failure = smokeGate.failure || "unknown smoke-test failure";
@@ -3974,6 +4062,7 @@ async function handleVerifyEachCompletion(
           return { advanced: false, runCompleted: false };
         }
         context["smoke_test_result"] = smokeGate.output;
+        }
       }
 
       await verifyStory(verifiedRow.id);
