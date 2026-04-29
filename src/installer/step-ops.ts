@@ -170,6 +170,27 @@ function runSystemSmokeGate(repoPath: string, runId: string, stepId: string): { 
   }
 }
 
+async function confirmFailedSystemSmokeGate(
+  repoPath: string,
+  runId: string,
+  stepId: string,
+  context: Record<string, string>,
+  logPrefix: string,
+  firstFailure: string,
+): Promise<{ ok: boolean; output: string; failure: string; infraFailure: boolean }> {
+  logger.warn(`[${logPrefix}] Smoke failed; re-running once before routing to QA-FIX: ${firstFailure.slice(0, 200)}`, { runId });
+  syncBaseBranch(repoPath, "main");
+  const confirmGate = runSystemSmokeGate(repoPath, runId, `${stepId}-confirm`);
+  if (confirmGate.ok) {
+    context["smoke_test_result"] = `pass after confirm rerun (first smoke failure treated as transient)\n${confirmGate.output}`;
+    delete context["previous_failure"];
+    delete context["failure_category"];
+    await updateRunContext(runId, context);
+    logger.warn(`[${logPrefix}] Smoke failure did not reproduce; suppressing QA-FIX route`, { runId });
+  }
+  return confirmGate;
+}
+
 async function ensureSystemSmokeBeforeAutoVerify(
   runId: string,
   context: Record<string, string>,
@@ -195,16 +216,25 @@ async function ensureSystemSmokeBeforeAutoVerify(
     return true;
   }
 
-  const failure = smokeGate.failure || "unknown smoke-test failure";
-  context["previous_failure"] = `VERIFY_SYSTEM_SMOKE_FAILURE for ${story.story_id}:\n${failure}`;
-  context["current_story_id"] = story.story_id;
-  context["failure_category"] = smokeGate.infraFailure ? "SMOKE_INFRA_FAILURE" : "VERIFY_SYSTEM_SMOKE_FAILURE";
-  await updateRunContext(runId, context);
+  let failure = smokeGate.failure || "unknown smoke-test failure";
 
   if (smokeGate.infraFailure) {
+    context["previous_failure"] = `VERIFY_SYSTEM_SMOKE_FAILURE for ${story.story_id}:\n${failure}`;
+    context["current_story_id"] = story.story_id;
+    context["failure_category"] = "SMOKE_INFRA_FAILURE";
+    await updateRunContext(runId, context);
     logger.warn(`[${logPrefix}-smoke-gate] Infra failure; not auto-verifying ${story.story_id}: ${failure.slice(0, 200)}`, { runId });
     return false;
   }
+
+  const confirmGate = await confirmFailedSystemSmokeGate(repoPath, runId, "verify", context, `${logPrefix}-smoke-gate`, failure);
+  if (confirmGate.ok) return true;
+  failure = confirmGate.failure || failure;
+
+  context["previous_failure"] = `VERIFY_SYSTEM_SMOKE_FAILURE for ${story.story_id}:\n${failure}`;
+  context["current_story_id"] = story.story_id;
+  context["failure_category"] = confirmGate.infraFailure ? "SMOKE_INFRA_FAILURE" : "VERIFY_SYSTEM_SMOKE_FAILURE";
+  await updateRunContext(runId, context);
 
   logger.warn(`[${logPrefix}-smoke-gate] Smoke failed; blocked auto-verify for ${story.story_id}: ${failure.slice(0, 200)}`, { runId });
   return false;
@@ -4034,34 +4064,58 @@ async function handleVerifyEachCompletion(
           context["smoke_test_result"] = `deferred for ${verifiedStoryId}: ${smokeDecision.reason}`;
           logger.info(`[verify-smoke-gate] Deferred system smoke for ${verifiedStoryId}: ${smokeDecision.reason}`, { runId: verifyStep.run_id });
         } else {
-        const smokeGate = runSystemSmokeGate(repoPath, verifyStep.run_id, verifyStep.step_id);
-        if (!smokeGate.ok) {
-          const failure = smokeGate.failure || "unknown smoke-test failure";
-          context["previous_failure"] = `VERIFY_SYSTEM_SMOKE_FAILURE for ${verifiedStoryId}:\n${failure}`;
-          context["current_story_id"] = verifiedStoryId;
-          context["failure_category"] = smokeGate.infraFailure ? "SMOKE_INFRA_FAILURE" : "VERIFY_SYSTEM_SMOKE_FAILURE";
-          await updateRunContext(verifyStep.run_id, context);
+          const smokeGate = runSystemSmokeGate(repoPath, verifyStep.run_id, verifyStep.step_id);
+          if (!smokeGate.ok) {
+            let failure = smokeGate.failure || "unknown smoke-test failure";
 
-          if (smokeGate.infraFailure) {
-            await setStepStatus(verifyStep.id, "pending");
-            logger.warn(`[verify-smoke-gate] Infra failure; retrying verify without code changes: ${failure.slice(0, 200)}`, { runId: verifyStep.run_id });
-            return { advanced: false, runCompleted: false };
+            if (smokeGate.infraFailure) {
+              context["previous_failure"] = `VERIFY_SYSTEM_SMOKE_FAILURE for ${verifiedStoryId}:\n${failure}`;
+              context["current_story_id"] = verifiedStoryId;
+              context["failure_category"] = "SMOKE_INFRA_FAILURE";
+              await updateRunContext(verifyStep.run_id, context);
+              await setStepStatus(verifyStep.id, "pending");
+              logger.warn(`[verify-smoke-gate] Infra failure; retrying verify without code changes: ${failure.slice(0, 200)}`, { runId: verifyStep.run_id });
+              return { advanced: false, runCompleted: false };
+            }
+
+            const confirmGate = await confirmFailedSystemSmokeGate(
+              repoPath,
+              verifyStep.run_id,
+              verifyStep.step_id,
+              context,
+              "verify-smoke-gate",
+              failure,
+            );
+
+            if (!confirmGate.ok) {
+              failure = confirmGate.failure || failure;
+              context["previous_failure"] = `VERIFY_SYSTEM_SMOKE_FAILURE for ${verifiedStoryId}:\n${failure}`;
+              context["current_story_id"] = verifiedStoryId;
+              context["failure_category"] = confirmGate.infraFailure ? "SMOKE_INFRA_FAILURE" : "VERIFY_SYSTEM_SMOKE_FAILURE";
+              await updateRunContext(verifyStep.run_id, context);
+
+              if (confirmGate.infraFailure) {
+                await setStepStatus(verifyStep.id, "pending");
+                logger.warn(`[verify-smoke-gate] Confirm smoke hit infra failure; retrying verify without code changes: ${failure.slice(0, 200)}`, { runId: verifyStep.run_id });
+                return { advanced: false, runCompleted: false };
+              }
+
+              if (await routeQualityFailureToImplement(
+                { id: verifyStep.id, run_id: verifyStep.run_id, step_id: verifyStep.step_id, step_index: verifyStep.step_index, agent_id: "" },
+                `SYSTEM_SMOKE_FAILURE:\n${failure}`,
+                context,
+              )) {
+                logger.warn(`[verify-smoke-gate] Routed confirmed smoke failure for ${verifiedStoryId} back to implement`, { runId: verifyStep.run_id });
+                return { advanced: false, runCompleted: false };
+              }
+
+              await setStepStatus(verifyStep.id, "pending");
+              logger.warn(`[verify-smoke-gate] Confirmed smoke failed but route-to-implement was unavailable: ${failure.slice(0, 200)}`, { runId: verifyStep.run_id });
+              return { advanced: false, runCompleted: false };
+            }
+          } else {
+            context["smoke_test_result"] = smokeGate.output;
           }
-
-          if (await routeQualityFailureToImplement(
-            { id: verifyStep.id, run_id: verifyStep.run_id, step_id: verifyStep.step_id, step_index: verifyStep.step_index, agent_id: "" },
-            `SYSTEM_SMOKE_FAILURE:\n${failure}`,
-            context,
-          )) {
-            logger.warn(`[verify-smoke-gate] Routed smoke failure for ${verifiedStoryId} back to implement`, { runId: verifyStep.run_id });
-            return { advanced: false, runCompleted: false };
-          }
-
-          await setStepStatus(verifyStep.id, "pending");
-          logger.warn(`[verify-smoke-gate] Smoke failed but route-to-implement was unavailable: ${failure.slice(0, 200)}`, { runId: verifyStep.run_id });
-          return { advanced: false, runCompleted: false };
-        }
-        context["smoke_test_result"] = smokeGate.output;
         }
       }
 
