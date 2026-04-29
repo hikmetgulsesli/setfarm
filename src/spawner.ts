@@ -33,6 +33,7 @@ const QA_FIX_AGENT_STUCK_MS = parsePositiveInt(process.env.SETFARM_QA_FIX_AGENT_
 const STARTUP_RUNNING_GRACE_MS = parsePositiveInt(process.env.SETFARM_STARTUP_RUNNING_GRACE_MS, 0);
 const QA_AGENT_STUCK_MS = parsePositiveInt(process.env.SETFARM_QA_AGENT_STUCK_MS, 18 * 60_000);
 const AGENT_ACTIVITY_GRACE_MS = parsePositiveInt(process.env.SETFARM_AGENT_ACTIVITY_GRACE_MS, 4 * 60_000);
+const AGENT_STARTUP_SILENCE_MS = parsePositiveInt(process.env.SETFARM_AGENT_STARTUP_SILENCE_MS, 4 * 60_000);
 const OPENCLAW_TASK_REGISTRY_SETTLE_MS = parsePositiveInt(process.env.SETFARM_OPENCLAW_TASK_REGISTRY_SETTLE_MS, 2000);
 const OPENCLAW_STALE_TASK_SWEEP_MS = parsePositiveInt(process.env.SETFARM_OPENCLAW_STALE_TASK_SWEEP_MS, 2 * 60_000);
 const GATEWAY_HEALTH_URL = process.env.OPENCLAW_GATEWAY_HEALTH_URL || "http://127.0.0.1:18789/health";
@@ -137,6 +138,8 @@ type ActiveProcess = {
   role: string;
   startedAtMs: number;
   transcriptPath: string;
+  initialTranscriptSize: number;
+  outputPath: string;
   sessionId: string;
   sessionKey: string;
   sessionJsonlPath: string;
@@ -190,6 +193,20 @@ function stuckThresholdMs(role: string, storyId?: string | null): number {
 
 function agentSessionJsonlPath(agentId: string, sessionId: string): string {
   return path.join(OPENCLAW_AGENTS_ROOT, agentId, "sessions", `${sessionId}.jsonl`);
+}
+
+function fileSize(filePath: string): number {
+  try {
+    const stat = fs.statSync(filePath);
+    return Number.isFinite(stat.size) ? stat.size : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function activeProcessHasVisibleOutput(active: ActiveProcess): boolean {
+  if (fileSize(active.transcriptPath) > active.initialTranscriptSize) return true;
+  return fileSize(active.outputPath) > 0;
 }
 
 function activeProcessLastActivityMs(active: ActiveProcess): number {
@@ -957,6 +974,18 @@ ${reason}
         }
 
         const ageMs = Date.now() - active.startedAtMs;
+        if (ageMs >= AGENT_STARTUP_SILENCE_MS && !activeProcessHasVisibleOutput(active)) {
+          const reason = `AGENT_STARTUP_SILENT: ${active.agentId} kept ${active.wfId}/${active.role} running for ${formatDurationMs(ageMs)} without transcript/output; OpenClaw session likely stuck before first model/tool turn. Transcript: ${active.transcriptPath}`;
+          console.warn(`[spawner] ${reason}`);
+          try { fs.appendFileSync(active.transcriptPath, `--- STARTUP SILENCE ${new Date().toISOString()} ---
+${reason}
+`); } catch {}
+          terminateActiveProcess(active, "startup-silent");
+          activeProcesses.delete(key);
+          await failStep(active.stepId, reason);
+          continue;
+        }
+
         const thresholdMs = stuckThresholdMs(active.role, row.story_id);
         if (ageMs < thresholdMs) continue;
 
@@ -1111,6 +1140,22 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     stdio: ["ignore", outFd, errFd],
   });
   const startedAtMs = Date.now();
+  const initialTranscriptSize = fileSize(transcriptPath);
+  const activeProcess: ActiveProcess = {
+    child,
+    runId: claim.runId || "",
+    stepId: claim.stepId || "",
+    agentId,
+    wfId,
+    role,
+    startedAtMs,
+    transcriptPath,
+    initialTranscriptSize,
+    outputPath: stalePath,
+    sessionId,
+    sessionKey,
+    sessionJsonlPath,
+  };
   let processExited = false;
   const closeTranscriptFds = () => {
     try { fs.closeSync(outFd); } catch {}
@@ -1121,10 +1166,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     try {
       fs.appendFileSync(transcriptPath, `--- HARD TIMEOUT ${new Date().toISOString()} ---\nopenclaw agent exceeded ${AGENT_TIMEOUT_SECONDS + 60}s\n`);
     } catch {}
-    terminateActiveProcess(
-      { child, runId: claim.runId || "", stepId: claim.stepId || "", agentId, wfId, role, startedAtMs, transcriptPath, sessionId, sessionKey, sessionJsonlPath },
-      "spawn-hard-timeout",
-    );
+    terminateActiveProcess(activeProcess, "spawn-hard-timeout");
   }, (AGENT_TIMEOUT_SECONDS + 60) * 1000);
   child.once("error", (err) => {
     processExited = true;
@@ -1168,7 +1210,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     }
   });
   if (child.pid && claim.runId && claim.stepId) {
-    activeProcesses.set(key, { child, runId: claim.runId, stepId: claim.stepId, agentId, wfId, role, startedAtMs, transcriptPath, sessionId, sessionKey, sessionJsonlPath });
+    activeProcesses.set(key, activeProcess);
   }
 }
 
