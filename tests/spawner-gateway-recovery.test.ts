@@ -110,6 +110,14 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /cleanupStaleSetfarmOpenClawSessionRecordsSync\(context\)/);
   });
 
+  it("does not reap an active agent immediately when the claimed step leaves running", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /REAP_FINISHED_ACTIVE_GRACE_MS/);
+    assert.match(source, /function activeProcessIdleMs\(active: ActiveProcess\): number/);
+    assert.match(source, /row\.run_status === "running" && idleMs < REAP_FINISHED_ACTIVE_GRACE_MS/);
+    assert.match(source, /Deferring reap for/);
+  });
+
   it("restarts the gateway after stale OpenClaw cleanup when no Setfarm agent is active", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /type OpenClawCleanupResult/);

@@ -34,6 +34,7 @@ const STARTUP_RUNNING_GRACE_MS = parsePositiveInt(process.env.SETFARM_STARTUP_RU
 const QA_AGENT_STUCK_MS = parsePositiveInt(process.env.SETFARM_QA_AGENT_STUCK_MS, 18 * 60_000);
 const AGENT_ACTIVITY_GRACE_MS = parsePositiveInt(process.env.SETFARM_AGENT_ACTIVITY_GRACE_MS, 4 * 60_000);
 const AGENT_STARTUP_SILENCE_MS = parsePositiveInt(process.env.SETFARM_AGENT_STARTUP_SILENCE_MS, 4 * 60_000);
+const REAP_FINISHED_ACTIVE_GRACE_MS = parsePositiveInt(process.env.SETFARM_REAP_FINISHED_ACTIVE_GRACE_MS, 60_000);
 const OPENCLAW_TASK_REGISTRY_SETTLE_MS = parsePositiveInt(process.env.SETFARM_OPENCLAW_TASK_REGISTRY_SETTLE_MS, 2000);
 const OPENCLAW_STALE_TASK_SWEEP_MS = parsePositiveInt(process.env.SETFARM_OPENCLAW_STALE_TASK_SWEEP_MS, 2 * 60_000);
 const OPENCLAW_AGENT_LOCAL = process.env.SETFARM_OPENCLAW_AGENT_LOCAL !== "0";
@@ -218,13 +219,17 @@ function activeProcessHasStartupActivity(active: ActiveProcess): boolean {
 
 function activeProcessLastActivityMs(active: ActiveProcess): number {
   let lastActivityMs = active.startedAtMs;
-  for (const filePath of [active.transcriptPath, active.sessionJsonlPath]) {
+  for (const filePath of [active.transcriptPath, active.sessionJsonlPath, active.outputPath]) {
     try {
       const mtimeMs = fs.statSync(filePath).mtimeMs;
       if (Number.isFinite(mtimeMs) && mtimeMs > lastActivityMs) lastActivityMs = mtimeMs;
     } catch {}
   }
   return lastActivityMs;
+}
+
+function activeProcessIdleMs(active: ActiveProcess): number {
+  return Date.now() - activeProcessLastActivityMs(active);
 }
 
 type GatewayReadyBody = { ready?: boolean; ok?: boolean; uptimeMs?: number; failing?: unknown };
@@ -1015,6 +1020,11 @@ ${reason}
         await failStep(active.stepId, reason);
         continue;
       } else {
+        const idleMs = activeProcessIdleMs(active);
+        if (row.run_status === "running" && idleMs < REAP_FINISHED_ACTIVE_GRACE_MS) {
+          console.log(`[spawner] Deferring reap for ${key}: step ${row.step_id} is ${row.step_status}, run is ${row.run_status}, but agent was active ${formatDurationMs(idleMs)} ago`);
+          continue;
+        }
         console.log(`[spawner] Reaping ${key}: step ${row.step_id} is ${row.step_status}, run is ${row.run_status}`);
       }
 
