@@ -388,6 +388,54 @@ function sqliteString(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
+function activeSessionKeyExclusionSql(): string {
+  const activeKeys = [...activeProcesses.values()].map((active) => active.sessionKey).filter(Boolean);
+  if (activeKeys.length === 0) return "";
+  const values = activeKeys.map(sqliteString).join(", ");
+  return [
+    "AND NOT (",
+    `COALESCE(requester_session_key, '') IN (${values})`,
+    `OR COALESCE(owner_key, '') IN (${values})`,
+    `OR COALESCE(child_session_key, '') IN (${values})`,
+    ")",
+  ].join(" ");
+}
+
+function markStaleSetfarmOpenClawTaskRecordsCancelledSync(context: string): number {
+  const now = Date.now();
+  const message = `Cancelled by Setfarm spawner stale sweep (${context}).`;
+  const sql = [
+    "UPDATE task_runs",
+    `SET status = 'cancelled', ended_at = ${now}, last_event_at = ${now}, error = ${sqliteString(message)}`,
+    "WHERE runtime = 'cli'",
+    "AND status = 'running'",
+    "AND (",
+    "requester_session_key GLOB 'agent:*:explicit:spawner-*'",
+    "OR owner_key GLOB 'agent:*:explicit:spawner-*'",
+    "OR child_session_key GLOB 'agent:*:explicit:spawner-*'",
+    ")",
+    activeSessionKeyExclusionSql(),
+    ";",
+    "SELECT changes();",
+  ].join(" ");
+  try {
+    const stdout = execFileSync("sqlite3", [OPENCLAW_TASKS_DB, sql], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 10_000,
+      maxBuffer: 1024 * 1024,
+    });
+    const changed = parseInt(String(stdout || "").trim().split(/\s+/).pop() || "0", 10);
+    if (changed > 0) {
+      console.warn(`[spawner] OpenClaw stale task sweep marked ${changed} task record(s) cancelled (${context})`);
+    }
+    return Number.isFinite(changed) ? changed : 0;
+  } catch (err) {
+    console.warn(`[spawner] OpenClaw stale task sweep failed (${context}): ${compactExitReason(err)}`);
+    return 0;
+  }
+}
+
 function markOpenClawTaskRecordCancelled(taskId: string, lookup: string, context: string): void {
   const now = Date.now();
   const message = "Cancelled by Setfarm spawner after OpenClaw runtime cancel left CLI task running.";
@@ -412,6 +460,8 @@ function markOpenClawTaskRecordCancelled(taskId: string, lookup: string, context
     const changed = parseInt(String(stdout || "").trim().split(/\s+/).pop() || "0", 10);
     if (changed > 0) {
       console.warn(`[spawner] OpenClaw registry fallback marked ${taskId} cancelled for ${lookup} (${context})`);
+    } else {
+      console.warn(`[spawner] OpenClaw registry fallback no-op for ${taskId} from ${lookup} (${context})`);
     }
   });
 }
@@ -470,35 +520,7 @@ function cancelLingeringOpenClawTasksForLookup(lookup: string, context: string):
 }
 
 function cleanupStaleSetfarmOpenClawTaskRecords(context: string): void {
-  execFile(OPENCLAW_CLI, ["tasks", "list", "--status", "running", "--runtime", "cli", "--json"], {
-    cwd: AGENT_SAFE_CWD,
-    timeout: 20_000,
-    env: buildOpenClawChildEnv(),
-    maxBuffer: 4 * 1024 * 1024,
-  }, (err, stdout, stderr) => {
-    if (err) {
-      const msg = compactExitReason(stderr || stdout || (err as any).message || err);
-      console.warn(`[spawner] stale OpenClaw task sweep list failed (${context}): ${msg}`);
-      return;
-    }
-
-    let tasks: OpenClawTaskRecord[];
-    try {
-      tasks = parseOpenClawTaskList(stdout);
-    } catch (parseErr) {
-      console.warn(`[spawner] stale OpenClaw task sweep parse failed (${context}): ${compactExitReason(parseErr)}`);
-      return;
-    }
-
-    for (const task of tasks) {
-      const taskId = task.taskId?.trim();
-      if (!taskId || task.status !== "running" || task.runtime !== "cli") continue;
-      if (isTaskForActiveProcess(task)) continue;
-      const sessionKey = taskSessionKeys(task).find(isSetfarmSpawnerSessionKey);
-      if (!sessionKey) continue;
-      cancelOpenClawTaskId(taskId, `stale-${context}`, sessionKey);
-    }
-  });
+  markStaleSetfarmOpenClawTaskRecordsCancelledSync(context);
 }
 
 function cancelOpenClawTask(lookup: string, context: string): void {
@@ -814,6 +836,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     }, WORKFLOW_DEFER_RETRY_MS);
     return;
   }
+  cleanupStaleSetfarmOpenClawTaskRecords("prespawn");
   if (activeProcesses.size >= MAX_CONCURRENT) {
     console.log(`[spawner] At capacity (${activeProcesses.size}/${MAX_CONCURRENT}), skip ${agentId}`);
     return;

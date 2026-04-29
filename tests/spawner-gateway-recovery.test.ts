@@ -74,10 +74,13 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /UPDATE task_runs/);
     assert.match(source, /status = 'cancelled'/);
     assert.match(source, /requester_session_key = \$\{sqliteString\(lookup\)\}/);
+    assert.match(source, /function markStaleSetfarmOpenClawTaskRecordsCancelledSync\(context: string\)/);
+    assert.match(source, /requester_session_key GLOB 'agent:\*:explicit:spawner-\*'/);
+    assert.match(source, /function activeSessionKeyExclusionSql\(\)/);
     assert.match(source, /function cleanupStaleSetfarmOpenClawTaskRecords\(context: string\)/);
-    assert.match(source, /isSetfarmSpawnerSessionKey/);
-    assert.match(source, /isTaskForActiveProcess\(task\)/);
+    assert.match(source, /markStaleSetfarmOpenClawTaskRecordsCancelledSync\(context\)/);
     assert.match(source, /cleanupStaleSetfarmOpenClawTaskRecords\("startup"\)/);
+    assert.match(source, /cleanupStaleSetfarmOpenClawTaskRecords\("prespawn"\)/);
     assert.match(source, /setInterval\(\(\) => cleanupStaleSetfarmOpenClawTaskRecords\("interval"\),\s*OPENCLAW_STALE_TASK_SWEEP_MS\)/);
   });
 });
