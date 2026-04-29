@@ -36,6 +36,7 @@ const AGENT_ACTIVITY_GRACE_MS = parsePositiveInt(process.env.SETFARM_AGENT_ACTIV
 const AGENT_STARTUP_SILENCE_MS = parsePositiveInt(process.env.SETFARM_AGENT_STARTUP_SILENCE_MS, 4 * 60_000);
 const OPENCLAW_TASK_REGISTRY_SETTLE_MS = parsePositiveInt(process.env.SETFARM_OPENCLAW_TASK_REGISTRY_SETTLE_MS, 2000);
 const OPENCLAW_STALE_TASK_SWEEP_MS = parsePositiveInt(process.env.SETFARM_OPENCLAW_STALE_TASK_SWEEP_MS, 2 * 60_000);
+const OPENCLAW_AGENT_LOCAL = process.env.SETFARM_OPENCLAW_AGENT_LOCAL !== "0";
 const GATEWAY_HEALTH_URL = process.env.OPENCLAW_GATEWAY_HEALTH_URL || "http://127.0.0.1:18789/health";
 const GATEWAY_READY_URL = process.env.OPENCLAW_GATEWAY_READY_URL || GATEWAY_HEALTH_URL.replace(/\/health\/?$/, "/ready");
 const GATEWAY_PRESPAWN_RETRY_MS = parsePositiveInt(process.env.SETFARM_GATEWAY_PRESPAWN_RETRY_MS, 10_000);
@@ -1122,6 +1123,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   const spawnCwd = safeAgentCwdFromClaimInput(claim.resolvedInput);
   const childArgs = [
     "agent", "--json", "--agent", agentId,
+    ...(OPENCLAW_AGENT_LOCAL ? ["--local"] : []),
     "--session-id", sessionId,
     "--message", prompt, "--timeout", String(AGENT_TIMEOUT_SECONDS),
   ];
