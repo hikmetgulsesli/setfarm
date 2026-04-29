@@ -66,4 +66,18 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /cancelOpenClawTaskId\(taskId,\s*context,\s*lookup\)/);
     assert.match(source, /setTimeout\(\(\) => cancelLingeringOpenClawTasksForLookup\(lookup,\s*context\),\s*1500\)/);
   });
+
+  it("sweeps stale Setfarm-owned OpenClaw CLI task records when runtime cancel does not close the registry", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /OPENCLAW_TASKS_DB/);
+    assert.match(source, /function markOpenClawTaskRecordCancelled\(taskId: string,\s*lookup: string,\s*context: string\)/);
+    assert.match(source, /UPDATE task_runs/);
+    assert.match(source, /status = 'cancelled'/);
+    assert.match(source, /requester_session_key = \$\{sqliteString\(lookup\)\}/);
+    assert.match(source, /function cleanupStaleSetfarmOpenClawTaskRecords\(context: string\)/);
+    assert.match(source, /isSetfarmSpawnerSessionKey/);
+    assert.match(source, /isTaskForActiveProcess\(task\)/);
+    assert.match(source, /cleanupStaleSetfarmOpenClawTaskRecords\("startup"\)/);
+    assert.match(source, /setInterval\(\(\) => cleanupStaleSetfarmOpenClawTaskRecords\("interval"\),\s*OPENCLAW_STALE_TASK_SWEEP_MS\)/);
+  });
 });

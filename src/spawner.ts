@@ -16,6 +16,7 @@ import { failStep } from "./installer/step-fail.js";
 import { cleanupProjectEphemera } from "./installer/cleanup-ops.js";
 
 const OPENCLAW_CLI = process.env.OPENCLAW_CLI || "/home/setrox/.local/bin/openclaw";
+const OPENCLAW_TASKS_DB = process.env.OPENCLAW_TASKS_DB || path.join(os.homedir(), ".openclaw", "tasks", "runs.sqlite");
 const POLL_INTERVAL_MS = 30_000;
 const AGENT_TIMEOUT_SECONDS = 1800;
 const PID_FILE = path.join(os.homedir(), ".openclaw", "setfarm", "spawner.pid");
@@ -31,6 +32,8 @@ const DEVELOPER_STUCK_MS = parsePositiveInt(process.env.SETFARM_DEVELOPER_AGENT_
 const QA_FIX_AGENT_STUCK_MS = parsePositiveInt(process.env.SETFARM_QA_FIX_AGENT_STUCK_MS, 8 * 60_000);
 const STARTUP_RUNNING_GRACE_MS = parsePositiveInt(process.env.SETFARM_STARTUP_RUNNING_GRACE_MS, 0);
 const QA_AGENT_STUCK_MS = parsePositiveInt(process.env.SETFARM_QA_AGENT_STUCK_MS, 18 * 60_000);
+const OPENCLAW_TASK_REGISTRY_SETTLE_MS = parsePositiveInt(process.env.SETFARM_OPENCLAW_TASK_REGISTRY_SETTLE_MS, 2000);
+const OPENCLAW_STALE_TASK_SWEEP_MS = parsePositiveInt(process.env.SETFARM_OPENCLAW_STALE_TASK_SWEEP_MS, 2 * 60_000);
 const GATEWAY_HEALTH_URL = process.env.OPENCLAW_GATEWAY_HEALTH_URL || "http://127.0.0.1:18789/health";
 const GATEWAY_READY_URL = process.env.OPENCLAW_GATEWAY_READY_URL || GATEWAY_HEALTH_URL.replace(/\/health\/?$/, "/ready");
 const GATEWAY_PRESPAWN_RETRY_MS = parsePositiveInt(process.env.SETFARM_GATEWAY_PRESPAWN_RETRY_MS, 10_000);
@@ -363,6 +366,56 @@ function taskBelongsToLookup(task: OpenClawTaskRecord, lookup: string): boolean 
   return task.requesterSessionKey === lookup || task.ownerKey === lookup || task.childSessionKey === lookup;
 }
 
+function taskSessionKeys(task: OpenClawTaskRecord): string[] {
+  return [task.requesterSessionKey, task.ownerKey, task.childSessionKey]
+    .map((value) => value?.trim())
+    .filter((value): value is string => Boolean(value));
+}
+
+function isSetfarmSpawnerSessionKey(sessionKey: string): boolean {
+  return /^agent:[^:]+:explicit:spawner-/.test(sessionKey);
+}
+
+function isTaskForActiveProcess(task: OpenClawTaskRecord): boolean {
+  const keys = taskSessionKeys(task);
+  for (const active of activeProcesses.values()) {
+    if (keys.includes(active.sessionKey)) return true;
+  }
+  return false;
+}
+
+function sqliteString(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+function markOpenClawTaskRecordCancelled(taskId: string, lookup: string, context: string): void {
+  const now = Date.now();
+  const message = "Cancelled by Setfarm spawner after OpenClaw runtime cancel left CLI task running.";
+  const sql = [
+    "UPDATE task_runs",
+    `SET status = 'cancelled', ended_at = ${now}, last_event_at = ${now}, error = ${sqliteString(message)}`,
+    `WHERE task_id = ${sqliteString(taskId)}`,
+    "AND runtime = 'cli'",
+    "AND status = 'running'",
+    `AND (requester_session_key = ${sqliteString(lookup)} OR owner_key = ${sqliteString(lookup)} OR child_session_key = ${sqliteString(lookup)});`,
+    "SELECT changes();",
+  ].join(" ");
+  execFile("sqlite3", [OPENCLAW_TASKS_DB, sql], {
+    timeout: 10_000,
+    maxBuffer: 1024 * 1024,
+  }, (err, stdout, stderr) => {
+    if (err) {
+      const msg = compactExitReason(stderr || stdout || (err as any).message || err);
+      console.warn(`[spawner] OpenClaw registry fallback failed for ${taskId} from ${lookup} (${context}): ${msg}`);
+      return;
+    }
+    const changed = parseInt(String(stdout || "").trim().split(/\s+/).pop() || "0", 10);
+    if (changed > 0) {
+      console.warn(`[spawner] OpenClaw registry fallback marked ${taskId} cancelled for ${lookup} (${context})`);
+    }
+  });
+}
+
 function cancelOpenClawTaskId(taskId: string, context: string, originalLookup: string): void {
   execFile(OPENCLAW_CLI, ["tasks", "cancel", taskId], {
     cwd: AGENT_SAFE_CWD,
@@ -373,9 +426,11 @@ function cancelOpenClawTaskId(taskId: string, context: string, originalLookup: s
     if (err) {
       const msg = compactExitReason(stderr || stdout || (err as any).message || err);
       console.warn(`[spawner] OpenClaw lingering taskId cancel failed for ${taskId} from ${originalLookup} (${context}): ${msg}`);
+      setTimeout(() => markOpenClawTaskRecordCancelled(taskId, originalLookup, context), OPENCLAW_TASK_REGISTRY_SETTLE_MS);
       return;
     }
     console.log(`[spawner] OpenClaw lingering taskId cancelled for ${taskId} from ${originalLookup} (${context})`);
+    setTimeout(() => markOpenClawTaskRecordCancelled(taskId, originalLookup, context), OPENCLAW_TASK_REGISTRY_SETTLE_MS);
   });
 }
 
@@ -410,6 +465,38 @@ function cancelLingeringOpenClawTasksForLookup(lookup: string, context: string):
       if (!taskBelongsToLookup(task, lookup)) continue;
       seen.add(taskId);
       cancelOpenClawTaskId(taskId, context, lookup);
+    }
+  });
+}
+
+function cleanupStaleSetfarmOpenClawTaskRecords(context: string): void {
+  execFile(OPENCLAW_CLI, ["tasks", "list", "--status", "running", "--runtime", "cli", "--json"], {
+    cwd: AGENT_SAFE_CWD,
+    timeout: 20_000,
+    env: buildOpenClawChildEnv(),
+    maxBuffer: 4 * 1024 * 1024,
+  }, (err, stdout, stderr) => {
+    if (err) {
+      const msg = compactExitReason(stderr || stdout || (err as any).message || err);
+      console.warn(`[spawner] stale OpenClaw task sweep list failed (${context}): ${msg}`);
+      return;
+    }
+
+    let tasks: OpenClawTaskRecord[];
+    try {
+      tasks = parseOpenClawTaskList(stdout);
+    } catch (parseErr) {
+      console.warn(`[spawner] stale OpenClaw task sweep parse failed (${context}): ${compactExitReason(parseErr)}`);
+      return;
+    }
+
+    for (const task of tasks) {
+      const taskId = task.taskId?.trim();
+      if (!taskId || task.status !== "running" || task.runtime !== "cli") continue;
+      if (isTaskForActiveProcess(task)) continue;
+      const sessionKey = taskSessionKeys(task).find(isSetfarmSpawnerSessionKey);
+      if (!sessionKey) continue;
+      cancelOpenClawTaskId(taskId, `stale-${context}`, sessionKey);
     }
   });
 }
@@ -1179,6 +1266,7 @@ async function main() {
   await failStaleRunningClaimsFromPreviousSpawner();
   await requeueOrphanedRunningStories();
   await cleanupRunningRunEphemeraOnStartup();
+  cleanupStaleSetfarmOpenClawTaskRecords("startup");
 
   const shutdown = () => {
     shuttingDown = true;
@@ -1211,6 +1299,7 @@ async function main() {
 
   console.log("[spawner] Listening for step_pending and story_pending events");
   setInterval(pollForPendingWork, POLL_INTERVAL_MS);
+  setInterval(() => cleanupStaleSetfarmOpenClawTaskRecords("interval"), OPENCLAW_STALE_TASK_SWEEP_MS);
   await pollForPendingWork();
   console.log("[spawner] Ready");
 }
