@@ -624,7 +624,8 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   }
   noteGatewayReady();
   claimingSpawns.add(key);
-  const outputFileId = agentId + "-spawner";
+  const spawnId = Date.now() + "-" + Math.random().toString(36).slice(2, 10);
+  const outputFileId = agentId + "-spawner-" + spawnId;
   const claimFile = path.join("/tmp", "claim-" + outputFileId + ".json");
   const stalePath = path.join("/tmp", "setfarm-output-" + outputFileId + ".txt");
   try { fs.unlinkSync(stalePath); } catch { /* didnt exist, fine */ }
@@ -660,13 +661,10 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   try { fs.mkdirSync(path.dirname(transcriptPath), { recursive: true }); } catch {}
   try { fs.writeFileSync(transcriptPath, "[spawner] " + new Date().toISOString() + " " + wfId + "/" + role + " agent=" + agentId + "\n"); } catch {}
 
-  // cuddly-sleeping-quail: unique session-id per spawn. Without this the gateway
-  // routes every call into the persistent default session (agent:main:main) and
-  // the agent's conversation history piles up across spawns until it just emits
-  // intro lines without running any bash. Cron-spawned agents avoid this via
-  // `sessionTarget: "isolated"` in the cron config; we get the same effect here
-  // by passing --session-id with a unique value per spawn.
-  const sessionId = "spawner-" + agentId + "-" + Date.now() + "-" + Math.random().toString(36).slice(2, 10);
+  // Use the same per-spawn id for the gateway session and /tmp handoff files.
+  // A reaped child can still have late gateway activity; sharing claim/output
+  // paths across retries lets old and new attempts overwrite each other's handoff.
+  const sessionId = "spawner-" + agentId + "-" + spawnId;
   const sessionKey = buildSessionKey(agentId, sessionId);
   const childArgs = [
     "agent", "--json", "--agent", agentId,

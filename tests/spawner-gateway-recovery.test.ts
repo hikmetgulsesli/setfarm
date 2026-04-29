@@ -32,4 +32,12 @@ describe("spawner gateway recovery wiring", () => {
     assert.doesNotMatch(source, /Verify review delay active/);
     assert.match(source, /claim = await claimStep\(fullAgentId,\s*agentId\)/);
   });
+
+  it("uses per-spawn handoff files for retry isolation", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /const spawnId = Date\.now\(\) \+ "-" \+ Math\.random\(\)\.toString\(36\)\.slice\(2,\s*10\)/);
+    assert.match(source, /const outputFileId = agentId \+ "-spawner-" \+ spawnId/);
+    assert.match(source, /const sessionId = "spawner-" \+ agentId \+ "-" \+ spawnId/);
+    assert.doesNotMatch(source, /const outputFileId = agentId \+ "-spawner";/);
+  });
 });
