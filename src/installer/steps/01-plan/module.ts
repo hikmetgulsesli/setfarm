@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import type { StepModule, PromptContext } from "../types.js";
 import { injectContext } from "./context.js";
 import { normalize, validateOutput, onComplete } from "./guards.js";
+import { preClaim } from "./preclaim.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -22,6 +23,7 @@ export const planModule: StepModule = {
   id: "plan",
   type: "single",
   agentRole: "planner",
+  preClaim,
   injectContext,
   buildPrompt,
   normalize,

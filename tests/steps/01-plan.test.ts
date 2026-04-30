@@ -1,7 +1,21 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { planModule } from "../../dist/installer/steps/01-plan/module.js";
+import { buildAutoPlanOutput, slugify } from "../../dist/installer/steps/01-plan/preclaim.js";
 import { runModule, validPlanOutput } from "./harness.js";
+
+function parsePlanOutput(output: string) {
+  const field = (key: string) => output.match(new RegExp(`^${key}:\\s*(.*)$`, "m"))?.[1]?.trim() || "";
+  return {
+    status: field("STATUS"),
+    repo: field("REPO"),
+    branch: field("BRANCH"),
+    tech_stack: field("TECH_STACK"),
+    prd: output.match(/^PRD:\n([\s\S]*?)\nPRD_SCREEN_COUNT:/m)?.[1] || "",
+    prd_screen_count: field("PRD_SCREEN_COUNT"),
+    db_required: field("DB_REQUIRED"),
+  };
+}
 
 describe("01-plan step module", () => {
   it("happy path: prompt under budget + validation ok + context populated", async () => {
@@ -63,6 +77,7 @@ describe("01-plan step module", () => {
     assert.equal(planModule.id, "plan");
     assert.equal(planModule.type, "single");
     assert.equal(planModule.agentRole, "planner");
+    assert.equal(typeof planModule.preClaim, "function");
     assert.equal(planModule.maxPromptSize, 8192);
     assert.deepEqual(planModule.requiredOutputFields, [
       "STATUS", "REPO", "BRANCH", "TECH_STACK", "PRD", "PRD_SCREEN_COUNT", "DB_REQUIRED"
@@ -87,5 +102,27 @@ describe("01-plan step module", () => {
     );
     assert.equal(result.validation.ok, false);
     assert.ok(result.validation.errors.some(e => e.includes("DB_REQUIRED")));
+  });
+
+  it("auto-plan output is valid, bounded, and derives repo from Proje line", () => {
+    const output = buildAutoPlanOutput([
+      "Proje: lead-triage-0430",
+      "Platform: web React 18 Vite TypeScript.",
+      "Lead ekleme, pipeline, insights, settings ve profil paneli olan localStorage uygulamasi yap.",
+    ].join("\n"));
+    const parsed = parsePlanOutput(output);
+    planModule.normalize?.(parsed);
+    const validation = planModule.validateOutput(parsed);
+
+    assert.equal(validation.ok, true, validation.errors.join("; "));
+    assert.equal(parsed.repo.endsWith("/projects/lead-triage-0430"), true);
+    assert.equal(parsed.tech_stack, "vite-react");
+    assert.equal(parsed.db_required, "none");
+    assert.ok(parsed.prd.length >= 2000, `PRD too short: ${parsed.prd.length}`);
+    assert.ok(output.length < 7000, `auto-plan output should stay compact, got ${output.length}`);
+  });
+
+  it("slugify transliterates Turkish project names", () => {
+    assert.equal(slugify("Çağrı İzleme Ürün Şeması"), "cagri-izleme-urun-semasi");
   });
 });
