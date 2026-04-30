@@ -7,10 +7,12 @@ import { storiesModule } from "../../dist/installer/steps/03-stories/module.js";
 import {
   collectUiBehaviorRequirements,
   computeUiBehaviorContract,
+  computePredictedScreenFiles,
   extractExplicitMaxStories,
 } from "../../dist/installer/steps/03-stories/context.js";
 import {
   buildAcceptanceCriteria,
+  buildAutoStoriesOutput,
   buildSingleStoryScopeFiles,
 } from "../../dist/installer/steps/03-stories/preclaim.js";
 import {
@@ -104,6 +106,55 @@ describe("03-stories step module", () => {
         "src/index.css",
       ]);
       assert.equal(scope.some((file) => /CounterPanel|NotesPanel|SettingsPanel|usePersistentAppState/.test(file)), false);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("auto-builds multi-story output from Stitch screens without planner bias", () => {
+    const repo = mkdtempSync(path.join(tmpdir(), "setfarm-stories-"));
+    try {
+      mkdirSync(path.join(repo, "stitch"));
+      writeFileSync(path.join(repo, "stitch", "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "SCR-001", title: "Leads" },
+        { screenId: "SCR-002", title: "Pipeline" },
+        { screenId: "SCR-003", title: "Profil Paneli" },
+        { screenId: "SCR-004", title: "Storage Hata Durumu" },
+      ]));
+      writeFileSync(path.join(repo, "stitch", "DESIGN_DOM.json"), JSON.stringify({
+        screens: {
+          "SCR-001": {
+            title: "Leads",
+            behaviorContract: [
+              { kind: "button", label: "Yeni Lead", icon: "plus", action: "create", expectedBehavior: "open add lead form" },
+            ],
+          },
+          "SCR-003": {
+            title: "Profil Paneli",
+            behaviorContract: [
+              { kind: "button", label: "Profil", icon: "user", action: "open", expectedBehavior: "open profile panel" },
+            ],
+          },
+        },
+      }));
+
+      const predicted = computePredictedScreenFiles(repo);
+      const output = buildAutoStoriesOutput({
+        repo,
+        task: "Freelancer lead triage CRM uygulaması",
+        predicted,
+      });
+
+      const storiesJson = output.match(/STORIES_JSON:\n([\s\S]*?)\nSCREEN_MAP:/)?.[1] || "[]";
+      const stories = JSON.parse(storiesJson);
+      assert.equal(stories.length, 5);
+      assert.equal(stories[0].scope_files.includes("src/App.tsx"), true);
+      assert.equal(stories[1].scope_files.includes("src/screens/Leads.tsx"), true);
+      assert.equal(stories.some((s: any) => s.scope_files.includes("src/screens/ProfilPaneli.tsx")), true);
+      assert.equal(stories.slice(1).every((s: any) => s.shared_files.includes("src/App.tsx")), true);
+      assert.match(output, /Yeni Lead/);
+      assert.match(output, /Profil/);
+      assert.equal(output.includes("CounterPanel"), false);
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }

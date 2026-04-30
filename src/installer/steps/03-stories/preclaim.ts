@@ -1,16 +1,46 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
 import type { ClaimContext } from "../types.js";
 import { pgGet } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
-import { resolveSetfarmCli } from "../../paths.js";
 import {
   collectUiBehaviorRequirements,
   computePredictedScreenFiles,
   extractExplicitMaxStories,
+  type UiBehaviorRequirement,
 } from "./context.js";
+
+type PredictedScreen = ReturnType<typeof computePredictedScreenFiles>[number];
+
+interface StoryDraft {
+  id: string;
+  title: string;
+  description: string;
+  acceptanceCriteria: string[];
+  depends_on: string[];
+  screens: string[];
+  scope_files: string[];
+  shared_files: string[];
+  scope_description: string;
+  file_skeletons: Record<string, string>;
+}
+
+interface StoryGroup {
+  key: "primary" | "metrics" | "settings" | "support";
+  title: string;
+  description: string;
+  screens: PredictedScreen[];
+}
+
+const APP_SCOPE_FILES = [
+  "src/App.tsx",
+  "src/App.css",
+  "src/main.tsx",
+  "src/index.css",
+  "src/types/domain.ts",
+  "src/hooks/useAppState.ts",
+  "src/utils/storage.ts",
+];
 
 function compactText(text: string, fallback: string): string {
   const s = String(text || "").replace(/\s+/g, " ").trim();
@@ -44,6 +74,23 @@ export function buildAcceptanceCriteria(repo: string): string[] {
   return unique(criteria).slice(0, 40);
 }
 
+function behaviorCriterion(req: UiBehaviorRequirement): string {
+  const trigger = [req.label, req.icon ? `icon ${req.icon}` : ""].filter(Boolean).join(" / ");
+  return `${req.screenTitle}: ${req.kind} "${trigger}" must produce visible behavior: ${req.expectedBehavior}.`;
+}
+
+function buildAcceptanceCriteriaForScreens(repo: string, screenIds: string[], fallbackTitle: string): string[] {
+  const screenSet = new Set(screenIds);
+  const criteria = collectUiBehaviorRequirements(repo)
+    .filter((req) => screenSet.has(req.screenId))
+    .map(behaviorCriterion);
+
+  criteria.push(`${fallbackTitle}: all visible active controls have non-empty handlers or an explicit disabled/hidden state.`);
+  criteria.push(`${fallbackTitle}: screen state changes are visible in the DOM and remain responsive on desktop and mobile.`);
+  criteria.push(`${fallbackTitle}: no product control uses data-smoke-ignore to bypass smoke checks.`);
+  return unique(criteria);
+}
+
 export function buildSingleStoryScopeFiles(screenFiles: string[]): string[] {
   return unique([
     ...screenFiles,
@@ -54,9 +101,179 @@ export function buildSingleStoryScopeFiles(screenFiles: string[]): string[] {
   ]);
 }
 
+function screenBucket(screen: PredictedScreen): StoryGroup["key"] {
+  const text = `${screen.screenId} ${screen.title} ${screen.filePath}`.toLowerCase();
+  if (/ayar|setting|profil|profile|account|hesap|preference|tercih|user|kullanici/.test(text)) return "settings";
+  if (/insight|istatistik|stat|metric|dashboard|rapor|report|pipeline|kanban|board|analiz/.test(text)) return "metrics";
+  if (/hata|error|storage|bos|empty|fallback|support|yardim|help/.test(text)) return "support";
+  return "primary";
+}
+
+function chooseScreenGroups(predicted: PredictedScreen[], maxStories: number | null): StoryGroup[] {
+  const cap = maxStories && maxStories > 1 ? Math.max(1, Math.min(maxStories - 1, 4)) : 4;
+  const groups: StoryGroup[] = [
+    {
+      key: "primary",
+      title: "Primary workflow screens",
+      description: "Main list/detail/form workflow screens and direct user actions.",
+      screens: [],
+    },
+    {
+      key: "metrics",
+      title: "Pipeline, metrics and status screens",
+      description: "Operational board, dashboard, summary, reporting and status views.",
+      screens: [],
+    },
+    {
+      key: "settings",
+      title: "Settings, profile and account screens",
+      description: "Profile/account controls, preferences, toggles and close/back behavior.",
+      screens: [],
+    },
+    {
+      key: "support",
+      title: "Empty, error and supporting states",
+      description: "Empty, loading, storage-error, retry and recovery states.",
+      screens: [],
+    },
+  ];
+
+  const byKey = new Map(groups.map((group) => [group.key, group]));
+  for (const screen of predicted) {
+    byKey.get(screenBucket(screen))?.screens.push(screen);
+  }
+
+  const nonEmpty = groups.filter((group) => group.screens.length > 0);
+  if (nonEmpty.length === 0) return [];
+  if (nonEmpty.length <= cap) return nonEmpty;
+
+  const kept = nonEmpty.slice(0, cap);
+  const overflow = nonEmpty.slice(cap).flatMap((group) => group.screens);
+  kept[kept.length - 1].screens.push(...overflow);
+  return kept;
+}
+
+function fileSkeletons(files: string[], screenFiles: Set<string>): Record<string, string> {
+  return Object.fromEntries(files.map((file) => [
+    file,
+    screenFiles.has(file)
+      ? "Generated Stitch screen wired to shared app state and visible behavior handlers."
+      : "Shared app state, integration, styling, or persistence implementation file.",
+  ]));
+}
+
+function buildScreenMap(screenMap: any[], predicted: PredictedScreen[], stories: StoryDraft[]): any[] {
+  const screenToStories = new Map<string, string[]>();
+  for (const story of stories) {
+    for (const screenId of story.screens) {
+      const current = screenToStories.get(screenId) || [];
+      current.push(story.id);
+      screenToStories.set(screenId, current);
+    }
+  }
+
+  return (screenMap.length > 0 ? screenMap : predicted.map((s) => ({
+    screenId: s.screenId,
+    name: s.title,
+    type: "screen",
+    description: s.title,
+  }))).map((s: any) => {
+    const screenId = s.screenId || s.id;
+    return {
+      screenId,
+      name: s.name || s.title || screenId,
+      type: s.type || "screen",
+      description: s.description || s.name || s.title || "Generated screen",
+      stories: screenToStories.get(screenId) || [],
+    };
+  }).filter((s: any) => s.screenId);
+}
+
+export function buildAutoStoriesOutput(params: {
+  repo: string;
+  task?: string;
+  context?: Record<string, string>;
+  predicted: PredictedScreen[];
+  screenMap?: any[];
+  maxStories?: number | null;
+}): string {
+  const { repo, predicted, screenMap = [], maxStories = null } = params;
+  const product = compactText(params.context?.["project_name"] || params.context?.["task"] || params.task || "", "Uygulama");
+  const screenFiles = unique(predicted.map((s) => s.filePath));
+  const screenFileSet = new Set(screenFiles);
+
+  let stories: StoryDraft[];
+  if (maxStories === 1) {
+    const scopeFiles = buildSingleStoryScopeFiles(screenFiles);
+    stories = [{
+      id: "US-001",
+      title: `${product} - complete single-story implementation`,
+      description: "Single explicit-cap story covering generated screens, app integration, visible controls, route/state behavior, and any persistence explicitly required by PRD/DESIGN_DOM.",
+      acceptanceCriteria: buildAcceptanceCriteria(repo),
+      depends_on: [],
+      screens: unique(predicted.map((s) => s.screenId)),
+      scope_files: scopeFiles,
+      shared_files: [],
+      scope_description: "One-story explicit user cap: implement all generated screens, visible button/icon behavior, app integration, and only the state/persistence behavior required by the project context.",
+      file_skeletons: fileSkeletons(scopeFiles, screenFileSet),
+    }];
+  } else {
+    const groups = chooseScreenGroups(predicted, maxStories);
+    const appStory: StoryDraft = {
+      id: "US-001",
+      title: `${product} - app shell, state and persistence`,
+      description: "Build the shared application shell, navigation state, domain types, persistence helpers, profile/settings panel wiring, and smoke-visible window.app state used by generated screens.",
+      acceptanceCriteria: [
+        "App shell wires every generated Stitch screen into one coherent application flow; first screen is the actual product surface, not a landing page.",
+        "Shared state exposes visible active screen, selected item, storage status, last error, active panel, and item count through window.app.",
+        "Profile/account icon opens a visible panel/drawer/page and close/back controls visibly dismiss it.",
+        "localStorage success, corrupted JSON, retry, and clear-data paths produce visible DOM feedback when persistence is required.",
+        "No product control uses data-smoke-ignore; inactive controls are disabled/hidden explicitly.",
+      ],
+      depends_on: [],
+      screens: unique(predicted.map((s) => s.screenId)),
+      scope_files: APP_SCOPE_FILES,
+      shared_files: [],
+      scope_description: "Shared app integration and state ownership for all generated screens.",
+      file_skeletons: fileSkeletons(APP_SCOPE_FILES, screenFileSet),
+    };
+
+    stories = [appStory];
+    groups.forEach((group, index) => {
+      const id = `US-${String(index + 2).padStart(3, "0")}`;
+      const groupScreenFiles = unique(group.screens.map((s) => s.filePath));
+      const groupScreenIds = unique(group.screens.map((s) => s.screenId));
+      const scopeFiles = unique(groupScreenFiles);
+      stories.push({
+        id,
+        title: `${product} - ${group.title}`,
+        description: `${group.description} Implement the owned generated screens with visible form, navigation, filtering, retry, toggle, and selection behavior from DESIGN_DOM.`,
+        acceptanceCriteria: buildAcceptanceCriteriaForScreens(repo, groupScreenIds, group.title),
+        depends_on: ["US-001"],
+        screens: groupScreenIds,
+        scope_files: scopeFiles,
+        shared_files: APP_SCOPE_FILES,
+        scope_description: `${group.title}: own only ${scopeFiles.join(", ")}; use shared app state files without taking ownership.`,
+        file_skeletons: fileSkeletons(scopeFiles, screenFileSet),
+      });
+    });
+  }
+
+  const mappedScreens = buildScreenMap(screenMap, predicted, stories);
+  return [
+    "STATUS: done",
+    "STORIES_JSON:",
+    JSON.stringify(stories, null, 2),
+    "SCREEN_MAP:",
+    JSON.stringify(mappedScreens, null, 2),
+    "",
+  ].join("\n");
+}
+
 export async function preClaim(ctx: ClaimContext): Promise<void> {
+  if (process.env.SETFARM_DISABLE_AUTO_STORIES === "1") return;
+
   const maxStories = extractExplicitMaxStories(`${ctx.task || ""}\n${ctx.context["task"] || ""}\n${ctx.context["prd"] || ""}`);
-  if (maxStories !== 1) return;
 
   const existing = await pgGet<{ cnt: string }>("SELECT COUNT(*)::text as cnt FROM stories WHERE run_id = $1", [ctx.runId]);
   if (Number(existing?.cnt || 0) > 0) return;
@@ -67,55 +284,22 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   if (predicted.length === 0) return;
 
   const screenMap = loadScreenMap(repo);
-  const screenIds = unique(predicted.map((s) => s.screenId));
-  const screenFiles = unique(predicted.map((s) => s.filePath));
-  const scopeFiles = buildSingleStoryScopeFiles(screenFiles);
-
-  const product = compactText(ctx.context["project_name"] || ctx.context["task"] || ctx.task, "Uygulama");
-  const story = {
-    id: "US-001",
-    title: `${product} - complete single-story implementation`,
-    description: "Single explicit-cap story covering generated screens, app integration, visible controls, route/state behavior, and any persistence explicitly required by PRD/DESIGN_DOM.",
-    acceptanceCriteria: buildAcceptanceCriteria(repo),
-    depends_on: [],
-    screens: screenIds,
-    scope_files: scopeFiles,
-    shared_files: [],
-    scope_description: "One-story explicit user cap: implement all generated screens, visible button/icon behavior, app integration, and only the state/persistence behavior required by the project context.",
-    file_skeletons: Object.fromEntries(scopeFiles.map((f) => [f, f.startsWith("src/screens/") ? "Generated Stitch screen wired to shared app state and behavior handlers." : "Shared single-story app implementation file."])),
-  };
-
-  const mappedScreens = (screenMap.length > 0 ? screenMap : predicted.map((s) => ({
-    screenId: s.screenId,
-    name: s.title,
-    type: "screen",
-    description: s.title,
-  }))).map((s: any) => ({
-    screenId: s.screenId || s.id,
-    name: s.name || s.title || s.screenId || s.id,
-    type: s.type || "screen",
-    description: s.description || s.name || s.title || "Generated screen",
-    stories: ["US-001"],
-  })).filter((s: any) => s.screenId);
+  const output = buildAutoStoriesOutput({
+    repo,
+    task: ctx.task,
+    context: ctx.context,
+    predicted,
+    screenMap,
+    maxStories,
+  });
 
   const step = await pgGet<{ id: string }>("SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1", [ctx.runId, ctx.stepId]);
   if (!step?.id) return;
 
-  const outPath = path.join(os.tmpdir(), `setfarm-auto-stories-${ctx.runId}.txt`);
-  const output = [
-    "STATUS: done",
-    "STORIES_JSON:",
-    JSON.stringify([story], null, 2),
-    "SCREEN_MAP:",
-    JSON.stringify(mappedScreens, null, 2),
-    "",
-  ].join("\n");
-  fs.writeFileSync(outPath, output, "utf-8");
-
-  logger.info(`[module:stories preclaim] Auto-completing explicit MAX_STORIES=1 with ${screenIds.length} screen(s)`, { runId: ctx.runId });
-  execFileSync("/usr/bin/node", [resolveSetfarmCli(), "step", "complete", step.id, "--file", outPath], {
-    cwd: repo,
-    timeout: 120000,
-    stdio: "pipe",
+  const { completeStep } = await import("../../step-ops.js");
+  await completeStep(step.id, output);
+  logger.info(`[module:stories preclaim] AUTO-COMPLETED stories without planner agent (${predicted.length} screen(s), ${Buffer.byteLength(output, "utf-8")} bytes)`, {
+    runId: ctx.runId,
+    stepId: ctx.stepId,
   });
 }
