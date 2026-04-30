@@ -141,9 +141,22 @@ describe("06-implement step module", () => {
       "src/screens/ProfilPaneli.tsx",
     ];
 
-    const { hardLimit, softLimit } = computeScopeFileLimits(false, appScope, sharedScreens);
-    assert.ok(hardLimit >= 21, `hard limit ${hardLimit} should cover app shell plus shared Stitch screens and test helpers`);
-    assert.ok(softLimit >= 15, `soft limit ${softLimit} should scale with shared file count`);
+    const withoutImplicit = computeScopeFileLimits(false, appScope, sharedScreens);
+    assert.ok(withoutImplicit.hardLimit < 24, `pre-implicit hard limit ${withoutImplicit.hardLimit} should show why implicit files matter`);
+
+    const implicitTestAndConfig = [
+      "src/App.test.tsx",
+      "src/hooks/useAppState.test.ts",
+      "src/test/storage.test.ts",
+      "src/test/setup.ts",
+      "src/setupTests.ts",
+      "vitest.config.ts",
+      "jest.config.ts",
+      "jest.config.js",
+    ];
+    const { hardLimit, softLimit } = computeScopeFileLimits(false, appScope, sharedScreens, implicitTestAndConfig);
+    assert.ok(hardLimit >= 24, `hard limit ${hardLimit} should cover app shell, shared Stitch screens, and implicit test/config files`);
+    assert.ok(softLimit >= 16, `soft limit ${softLimit} should scale with shared and implicit file count`);
   });
 
   it("detects package build scripts for implement build gate", () => {

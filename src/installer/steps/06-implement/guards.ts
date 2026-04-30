@@ -44,6 +44,22 @@ export interface ScopeCheckResult {
 
 const SCOPE_EXTS = /\.(tsx?|jsx?|vue|svelte|css|scss|html)$/i;
 const SCOPE_IGNORE = /^(node_modules\/|dist\/|\.next\/|build\/|coverage\/|stitch\/|references\/|DESIGN\.md|PROJECT_MEMORY\.md|\.gitignore|package(-lock)?\.json|tsconfig|vite\.config|tailwind\.config|postcss\.config|eslint\.config|README|index\.html$)/;
+const IMPLICIT_SHARED_PATTERNS = [
+  /^src\/types(\.(tsx?|d\.ts))?$/,
+  /^src\/types\/.*\.(tsx?|d\.ts)$/,
+  /\.test\.(tsx?|jsx?)$/,
+  /\.spec\.(tsx?|jsx?)$/,
+  /^src\/setupTests\.(tsx?|js)$/,
+  /\.d\.ts$/,
+  /^vitest\.config\.(ts|js|mts|mjs)$/,
+  /^jest\.config\.(ts|js|mts|mjs)$/,
+  /^src\/test\/setup\.(ts|js)$/,
+  /^src\/test\/utils\.(ts|js)$/,
+];
+
+function isImplicitSharedSourceFile(f: string): boolean {
+  return IMPLICIT_SHARED_PATTERNS.some(p => p.test(f));
+}
 
 function parseScopeFiles(raw: string | null | undefined): string[] {
   if (!raw) return [];
@@ -54,11 +70,11 @@ function parseScopeFiles(raw: string | null | undefined): string[] {
   return [];
 }
 
-export function computeScopeFileLimits(hasDeps: boolean, declaredScopeFiles: string[], declaredSharedFiles: string[] = []): { hardLimit: number; softLimit: number } {
+export function computeScopeFileLimits(hasDeps: boolean, declaredScopeFiles: string[], declaredSharedFiles: string[] = [], implicitTouchedFiles: string[] = []): { hardLimit: number; softLimit: number } {
   const baseHardLimit = hasDeps ? 30 : 12;
   const baseSoftLimit = hasDeps ? 20 : 8;
   const ceiling = hasDeps ? 50 : 30;
-  const declaredSourceCount = [...new Set([...declaredScopeFiles, ...declaredSharedFiles])].filter(f => SCOPE_EXTS.test(f) && !SCOPE_IGNORE.test(f)).length;
+  const declaredSourceCount = [...new Set([...declaredScopeFiles, ...declaredSharedFiles, ...implicitTouchedFiles])].filter(f => SCOPE_EXTS.test(f) && !SCOPE_IGNORE.test(f)).length;
   const dynamicHardLimit = declaredSourceCount > 0 ? Math.min(ceiling, declaredSourceCount + 6) : baseHardLimit;
   const hardLimit = Math.max(baseHardLimit, dynamicHardLimit);
   const softLimit = Math.max(baseSoftLimit, Math.ceil(hardLimit * 0.7));
@@ -217,7 +233,8 @@ export async function checkScopeEnforcement(
   );
   const declaredScopeFiles = parseScopeFiles(scopeRow?.scope_files);
   const declaredSharedFiles = parseScopeFiles(scopeRow?.shared_files);
-  const { hardLimit: HARD_LIMIT, softLimit: SOFT_LIMIT } = computeScopeFileLimits(!!hasDeps, declaredScopeFiles, declaredSharedFiles);
+  const implicitSourceFiles = sourceFiles.filter(isImplicitSharedSourceFile);
+  const { hardLimit: HARD_LIMIT, softLimit: SOFT_LIMIT } = computeScopeFileLimits(!!hasDeps, declaredScopeFiles, declaredSharedFiles, implicitSourceFiles);
 
   // Zero-work floor
   if (sourceFiles.length === 0 && retryCount < maxRetries) {
@@ -254,20 +271,7 @@ export async function checkScopeEnforcement(
       declaredScopeFiles.forEach(f => allowed.add(f));
       declaredSharedFiles.forEach(f => allowed.add(f));
       if (allowed.size > 0) {
-        const IMPLICIT_SHARED = [
-          /^src\/types(\.(tsx?|d\.ts))?$/,
-          /^src\/types\/.*\.(tsx?|d\.ts)$/,
-          /\.test\.(tsx?|jsx?)$/,
-          /\.spec\.(tsx?|jsx?)$/,
-          /^src\/setupTests\.(tsx?|js)$/,
-          /\.d\.ts$/,
-          /^vitest\.config\.(ts|js|mts|mjs)$/,
-          /^jest\.config\.(ts|js|mts|mjs)$/,
-          /^src\/test\/setup\.(ts|js)$/,
-          /^src\/test\/utils\.(ts|js)$/,
-        ];
-        const isImplicitShared = (f: string) => IMPLICIT_SHARED.some(p => p.test(f));
-        const outOfScope = sourceFiles.filter(f => !allowed.has(f) && !isImplicitShared(f));
+        const outOfScope = sourceFiles.filter(f => !allowed.has(f) && !isImplicitSharedSourceFile(f));
         if (outOfScope.length > 0) {
           const allowedList = [...allowed].slice(0, 15).join(", ");
           const oosList = outOfScope.slice(0, 10).join(", ");
