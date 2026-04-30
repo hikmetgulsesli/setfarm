@@ -11,7 +11,7 @@ import os from "node:os";
 import { pgGet, pgQuery, pgRun } from "./db-pg.js";
 import { loadWorkflowSpec } from "./installer/workflow-spec.js";
 import { resolveWorkflowDir, resolveSetfarmCli } from "./installer/paths.js";
-import { claimStep } from "./installer/step-ops.js";
+import { claimStep, completeStep } from "./installer/step-ops.js";
 import { failStep } from "./installer/step-fail.js";
 import { cleanupProjectEphemera } from "./installer/cleanup-ops.js";
 
@@ -37,6 +37,7 @@ const AGENT_STARTUP_SILENCE_MS = parsePositiveInt(process.env.SETFARM_AGENT_STAR
 const REAP_FINISHED_ACTIVE_GRACE_MS = parsePositiveInt(process.env.SETFARM_REAP_FINISHED_ACTIVE_GRACE_MS, 60_000);
 const OPENCLAW_TASK_REGISTRY_SETTLE_MS = parsePositiveInt(process.env.SETFARM_OPENCLAW_TASK_REGISTRY_SETTLE_MS, 2000);
 const OPENCLAW_STALE_TASK_SWEEP_MS = parsePositiveInt(process.env.SETFARM_OPENCLAW_STALE_TASK_SWEEP_MS, 2 * 60_000);
+const IMPLEMENT_EXIT_RECOVERY_BUILD_TIMEOUT_MS = parsePositiveInt(process.env.SETFARM_IMPLEMENT_EXIT_RECOVERY_BUILD_TIMEOUT_MS, 120_000);
 const OPENCLAW_AGENT_LOCAL = process.env.SETFARM_OPENCLAW_AGENT_LOCAL !== "0";
 const GATEWAY_HEALTH_URL = process.env.OPENCLAW_GATEWAY_HEALTH_URL || "http://127.0.0.1:18789/health";
 const GATEWAY_READY_URL = process.env.OPENCLAW_GATEWAY_READY_URL || GATEWAY_HEALTH_URL.replace(/\/health\/?$/, "/ready");
@@ -143,6 +144,7 @@ type ActiveProcess = {
   transcriptPath: string;
   initialTranscriptSize: number;
   outputPath: string;
+  spawnCwd: string;
   sessionId: string;
   sessionKey: string;
   sessionJsonlPath: string;
@@ -822,6 +824,165 @@ async function loopStoryCompletedAfter(runId: string, agentId: string, currentSt
   return !!completed;
 }
 
+type RunningStepRow = {
+  status: string;
+  step_id: string;
+  run_id: string;
+  type: string;
+  current_story_id: string | null;
+};
+
+function gitOutput(cwd: string, args: string[], timeoutMs = 10_000): string | null {
+  try {
+    return execFileSync("git", args, {
+      cwd,
+      encoding: "utf-8",
+      timeout: timeoutMs,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function buildScriptExists(workdir: string): boolean {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(workdir, "package.json"), "utf-8"));
+    return typeof pkg?.scripts?.build === "string" && pkg.scripts.build.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function sourceDiffFiles(workdir: string, baseRef: string): string[] {
+  const raw = gitOutput(workdir, [
+    "diff", "--name-only", `${baseRef}...HEAD`, "--",
+    "src", "app", "components", "lib", "pages", "public",
+    "index.html", "package.json", "package-lock.json",
+    "vite.config.ts", "vite.config.js", "tsconfig.json",
+    "tailwind.config.ts", "tailwind.config.js", "postcss.config.js",
+    "eslint.config.js", "vitest.config.ts", "vitest.config.js",
+    "jest.config.ts", "jest.config.js",
+  ]);
+  return raw ? raw.split("\n").map((line) => line.trim()).filter(Boolean) : [];
+}
+
+function findDiffBaseRef(workdir: string): string | null {
+  for (const ref of ["main", "origin/main", "HEAD~1"]) {
+    if (!gitOutput(workdir, ["rev-parse", "--verify", ref])) continue;
+    const aheadRaw = gitOutput(workdir, ["rev-list", "--count", `${ref}..HEAD`]);
+    const ahead = Number(aheadRaw || "0");
+    if (!Number.isFinite(ahead) || ahead <= 0) continue;
+    if (sourceDiffFiles(workdir, ref).length > 0) return ref;
+  }
+  return null;
+}
+
+function findWorktreeByBranch(repo: string, storyBranch: string): string | null {
+  const raw = gitOutput(repo, ["worktree", "list", "--porcelain"]);
+  if (!raw) return null;
+  let worktree = "";
+  for (const line of raw.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      worktree = line.slice("worktree ".length).trim();
+      continue;
+    }
+    if (line.startsWith("branch ")) {
+      const branch = line.slice("branch ".length).trim().split("/").pop()?.toLowerCase() || "";
+      if (branch === storyBranch.toLowerCase()) return safeAgentCwdFromCandidate(worktree);
+    }
+  }
+  return null;
+}
+
+function runBuildGate(workdir: string): boolean {
+  if (!buildScriptExists(workdir)) return false;
+  try {
+    execFileSync("npm", ["run", "build"], {
+      cwd: workdir,
+      timeout: IMPLEMENT_EXIT_RECOVERY_BUILD_TIMEOUT_MS,
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, CI: "true" },
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function tryRecoverExitedImplementWork(
+  stepDbId: string,
+  row: RunningStepRow,
+  agentId: string,
+  transcriptPath: string,
+  err: unknown,
+  claimedCwd?: string,
+): Promise<boolean> {
+  const exitReason = compactExitReason(err);
+  const recoverableExit =
+    exitReason.includes("without calling setfarm step complete/fail") ||
+    exitReason.includes("AGENT_STARTUP_SILENT") ||
+    exitReason.includes("AGENT_PROCESS_STUCK") ||
+    exitReason.includes("AGENT_PROCESS_TERMINAL");
+  if (!recoverableExit) return false;
+  if (row.status !== "running" || row.type !== "loop" || row.step_id !== "implement" || !row.current_story_id) return false;
+
+  const story = await pgGet<{ id: string; story_id: string; title: string; story_branch: string | null; status: string; claimed_by: string | null }>(
+    "SELECT id, story_id, title, story_branch, status, claimed_by FROM stories WHERE id = $1 AND run_id = $2 LIMIT 1",
+    [row.current_story_id, row.run_id],
+  );
+  if (!story || story.status !== "running") return false;
+  if (story.claimed_by && story.claimed_by !== agentId) return false;
+
+  const storyBranch = (story.story_branch || `${row.run_id.slice(0, 8)}-${story.story_id}`).toLowerCase();
+  const contextRow = await pgGet<{ context: string | null }>("SELECT context FROM runs WHERE id = $1 LIMIT 1", [row.run_id]);
+  let context: Record<string, string> = {};
+  try {
+    context = contextRow?.context ? JSON.parse(contextRow.context) : {};
+  } catch {
+    context = {};
+  }
+
+  const workdirCandidates = [
+    safeAgentCwdFromCandidate(claimedCwd),
+    safeAgentCwdFromCandidate(context["story_workdir"]),
+    context["repo"] ? findWorktreeByBranch(context["repo"], storyBranch) : null,
+  ].filter((candidate): candidate is string => !!candidate);
+  const workdir = [...new Set(workdirCandidates)].find((candidate) => {
+    const branch = gitOutput(candidate, ["branch", "--show-current"]);
+    return branch?.toLowerCase() === storyBranch;
+  });
+  if (!workdir) return false;
+
+  const baseRef = findDiffBaseRef(workdir);
+  if (!baseRef) return false;
+  if (!runBuildGate(workdir)) return false;
+
+  context["story_workdir"] = workdir;
+  context["story_branch"] = storyBranch;
+  await pgRun("UPDATE runs SET context = $1, updated_at = NOW() WHERE id = $2", [JSON.stringify(context), row.run_id]);
+
+  const changedFiles = sourceDiffFiles(workdir, baseRef).slice(0, 20);
+  const recoveryOutput = [
+    "STATUS: done",
+    `STORY_BRANCH: ${storyBranch}`,
+    `CHANGES: Recovered ${story.story_id} after agent exited with build-passing committed work on ${storyBranch}.`,
+    "BUILD_CMD: npm run build",
+    "RECOVERY: agent-exit-build-passing",
+    `TRANSCRIPT: ${transcriptPath}`,
+    `CHANGED_FILES: ${changedFiles.join(", ")}`,
+  ].join("\n");
+
+  const result = await completeStep(stepDbId, recoveryOutput);
+  if (!result.advanced && !result.runCompleted) {
+    const refreshed = await pgGet<{ status: string }>("SELECT status FROM stories WHERE id = $1 LIMIT 1", [story.id]);
+    if (!["done", "verified"].includes(refreshed?.status || "")) return false;
+  }
+  console.warn(`[spawner] recovered exited implement story ${story.story_id} for ${agentId}: build passed in ${workdir}`);
+  return true;
+}
+
 async function verifyEachHasDoneStory(runId: string, verifyStepId: string): Promise<boolean> {
   const loopStep = await pgGet<{ loop_config: string | null }>(
     `SELECT loop_config
@@ -846,7 +1007,7 @@ async function verifyEachHasDoneStory(runId: string, verifyStepId: string): Prom
   return parseInt(waiting?.cnt || "0", 10) > 0;
 }
 
-async function failClaimIfStillRunning(stepId: string, agentId: string, wfId: string, role: string, transcriptPath: string, err: unknown, startedAtMs?: number): Promise<void> {
+async function failClaimIfStillRunning(stepId: string, agentId: string, wfId: string, role: string, transcriptPath: string, err: unknown, startedAtMs?: number, claimedCwd?: string): Promise<void> {
   try {
     const row = await pgGet<{ status: string; step_id: string; run_id: string; type: string; current_story_id: string | null }>(
       "SELECT status, step_id, run_id, type, current_story_id FROM steps WHERE id = $1 LIMIT 1",
@@ -857,6 +1018,14 @@ async function failClaimIfStillRunning(stepId: string, agentId: string, wfId: st
     if (row.type === "loop" && await loopStoryCompletedAfter(row.run_id, agentId, row.current_story_id, startedAtMs)) {
       console.log(`[spawner] ${agentId} exited after completing a loop story for ${wfId}/${role}; keeping loop ${row.step_id} running (${compactExitReason(err)})`);
       return;
+    }
+
+    if (row.status === "running") {
+      try {
+        if (await tryRecoverExitedImplementWork(stepId, row, agentId, transcriptPath, err, claimedCwd)) return;
+      } catch (recoveryErr) {
+        console.warn(`[spawner] exited implement recovery failed for ${wfId}/${role}: ${String(recoveryErr).slice(0, 300)}`);
+      }
     }
 
     if (row.type === "loop" && row.status !== "running") {
@@ -967,7 +1136,7 @@ ${reason}
 `); } catch {}
           cancelOpenClawTask(active.sessionKey, "process-terminal");
           activeProcesses.delete(key);
-          await failClaimIfStillRunning(active.stepId, active.agentId, active.wfId, active.role, active.transcriptPath, new Error(reason), active.startedAtMs);
+          await failClaimIfStillRunning(active.stepId, active.agentId, active.wfId, active.role, active.transcriptPath, new Error(reason), active.startedAtMs, active.spawnCwd);
           continue;
         }
 
@@ -997,7 +1166,7 @@ ${reason}
 `); } catch {}
           terminateActiveProcess(active, "startup-silent");
           activeProcesses.delete(key);
-          await failStep(active.stepId, reason);
+          await failClaimIfStillRunning(active.stepId, active.agentId, active.wfId, active.role, active.transcriptPath, new Error(reason), active.startedAtMs, active.spawnCwd);
           continue;
         }
 
@@ -1017,7 +1186,7 @@ ${reason}
 `); } catch {}
         terminateActiveProcess(active, "watchdog-stuck");
         activeProcesses.delete(key);
-        await failStep(active.stepId, reason);
+        await failClaimIfStillRunning(active.stepId, active.agentId, active.wfId, active.role, active.transcriptPath, new Error(reason), active.startedAtMs, active.spawnCwd);
         continue;
       } else {
         const idleMs = activeProcessIdleMs(active);
@@ -1175,6 +1344,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     transcriptPath,
     initialTranscriptSize,
     outputPath: stalePath,
+    spawnCwd,
     sessionId,
     sessionKey,
     sessionJsonlPath,
@@ -1201,7 +1371,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
       fs.appendFileSync(transcriptPath, "--- SPAWN ERROR ---\n" + String((err as any).message || err) + "\n--- FINISHED " + new Date().toISOString() + " ---\n");
     } catch (e) { console.warn("[spawner] transcript write failed: " + String(e)); }
     console.warn("[spawner] " + agentId + " spawn error: " + ((err as any).message || err) + " (transcript: " + transcriptPath + ")");
-    if (isCurrentProcess && !shuttingDown && claim.stepId) void failClaimIfStillRunning(claim.stepId, agentId, wfId, role, transcriptPath, err, startedAtMs);
+    if (isCurrentProcess && !shuttingDown && claim.stepId) void failClaimIfStillRunning(claim.stepId, agentId, wfId, role, transcriptPath, err, startedAtMs, spawnCwd);
   });
   child.once("exit", (code, signal) => {
     processExited = true;
@@ -1215,7 +1385,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     const err = code === 0 ? null : new Error(`openclaw agent exited code=${code ?? ""} signal=${signal ?? ""}`);
     if (err) {
       console.warn("[spawner] " + agentId + " exited: " + ((err as any).message || err) + " (transcript: " + transcriptPath + ")");
-      if (isCurrentProcess && !shuttingDown && claim.stepId) void failClaimIfStillRunning(claim.stepId, agentId, wfId, role, transcriptPath, err, startedAtMs);
+      if (isCurrentProcess && !shuttingDown && claim.stepId) void failClaimIfStillRunning(claim.stepId, agentId, wfId, role, transcriptPath, err, startedAtMs, spawnCwd);
     }
     else {
       console.log("[spawner] " + agentId + " completed (transcript: " + transcriptPath + ")");
@@ -1228,6 +1398,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
           transcriptPath,
           new Error("agent exited with code 0 without calling setfarm step complete/fail"),
           startedAtMs,
+          spawnCwd,
         );
       }
     }

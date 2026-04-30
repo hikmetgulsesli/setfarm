@@ -118,6 +118,20 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /Deferring reap for/);
   });
 
+  it("recovers build-passing implement work when an agent exits without step completion", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /tryRecoverExitedImplementWork/);
+    assert.match(source, /without calling setfarm step complete\/fail/);
+    assert.match(source, /row\.step_id !== "implement"/);
+    assert.match(source, /findDiffBaseRef\(workdir\)/);
+    assert.match(source, /runBuildGate\(workdir\)/);
+    assert.match(source, /RECOVERY: agent-exit-build-passing/);
+    assert.match(source, /await completeStep\(stepDbId,\s*recoveryOutput\)/);
+    assert.match(source, /exitReason\.includes\("AGENT_STARTUP_SILENT"\)/);
+    assert.match(source, /exitReason\.includes\("AGENT_PROCESS_STUCK"\)/);
+    assert.match(source, /failClaimIfStillRunning\(active\.stepId,\s*active\.agentId,\s*active\.wfId,\s*active\.role,\s*active\.transcriptPath,\s*new Error\(reason\),\s*active\.startedAtMs,\s*active\.spawnCwd\)/);
+  });
+
   it("restarts the gateway after stale OpenClaw cleanup when no Setfarm agent is active", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /type OpenClawCleanupResult/);
