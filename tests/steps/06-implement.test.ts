@@ -24,6 +24,13 @@ describe("06-implement step module", () => {
     assert.equal(rules.includes("small edits OK"), false);
   });
 
+  it("scope gate treats shared_files as completion-allowed files", () => {
+    const source = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/guards.js"), "utf-8");
+    assert.match(source, /SELECT scope_files, shared_files FROM stories WHERE id/);
+    assert.match(source, /const declaredSharedFiles = parseScopeFiles\(scopeRow\?\.shared_files\)/);
+    assert.match(source, /declaredSharedFiles\.forEach\(f => allowed\.add\(f\)\)/);
+  });
+
   it("React Vite stack rules allow main.tsx only when scoped", () => {
     const rules = STACK_RULES["react-vite"].pitfalls;
     assert.ok(rules.includes("If it is listed in SCOPE_FILES, it is yours to wire"));

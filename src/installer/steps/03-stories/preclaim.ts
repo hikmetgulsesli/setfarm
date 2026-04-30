@@ -240,8 +240,8 @@ export function buildAutoStoriesOutput(params: {
       depends_on: [],
       screens: unique(predicted.map((s) => s.screenId)),
       scope_files: APP_SCOPE_FILES,
-      shared_files: [],
-      scope_description: "Shared app integration and state ownership for all generated screens.",
+      shared_files: screenFiles,
+      scope_description: "Shared app integration and state ownership for all generated screens. Generated src/screens files are shared/allowed here only for handler/context wiring required to connect Stitch screens to app state; later screen stories remain the primary owners for detailed screen behavior.",
       file_skeletons: fileSkeletons(APP_SCOPE_FILES, screenFileSet),
     };
 

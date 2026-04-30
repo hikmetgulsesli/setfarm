@@ -211,11 +211,12 @@ export async function checkScopeEnforcement(
   // Dependencies increase limits
   const depRow = await pgGet<{ depends_on: string | null }>("SELECT depends_on FROM stories WHERE id = $1", [currentStoryDbId]);
   const hasDeps = depRow?.depends_on && depRow.depends_on !== "[]" && depRow.depends_on !== "null";
-  const scopeRow = await pgGet<{ scope_files: string | null }>(
-    "SELECT scope_files FROM stories WHERE id = $1",
+  const scopeRow = await pgGet<{ scope_files: string | null; shared_files: string | null }>(
+    "SELECT scope_files, shared_files FROM stories WHERE id = $1",
     [currentStoryDbId]
   );
   const declaredScopeFiles = parseScopeFiles(scopeRow?.scope_files);
+  const declaredSharedFiles = parseScopeFiles(scopeRow?.shared_files);
   const { hardLimit: HARD_LIMIT, softLimit: SOFT_LIMIT } = computeScopeFileLimits(!!hasDeps, declaredScopeFiles);
 
   // Zero-work floor
@@ -251,6 +252,7 @@ export async function checkScopeEnforcement(
     if (declaredScopeFiles.length > 0) {
       const allowed = new Set<string>();
       declaredScopeFiles.forEach(f => allowed.add(f));
+      declaredSharedFiles.forEach(f => allowed.add(f));
       if (allowed.size > 0) {
         const IMPLICIT_SHARED = [
           /^src\/types(\.(tsx?|d\.ts))?$/,
