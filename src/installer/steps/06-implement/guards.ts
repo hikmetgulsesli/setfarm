@@ -54,11 +54,11 @@ function parseScopeFiles(raw: string | null | undefined): string[] {
   return [];
 }
 
-export function computeScopeFileLimits(hasDeps: boolean, declaredScopeFiles: string[]): { hardLimit: number; softLimit: number } {
+export function computeScopeFileLimits(hasDeps: boolean, declaredScopeFiles: string[], declaredSharedFiles: string[] = []): { hardLimit: number; softLimit: number } {
   const baseHardLimit = hasDeps ? 30 : 12;
   const baseSoftLimit = hasDeps ? 20 : 8;
   const ceiling = hasDeps ? 50 : 30;
-  const declaredSourceCount = declaredScopeFiles.filter(f => SCOPE_EXTS.test(f) && !SCOPE_IGNORE.test(f)).length;
+  const declaredSourceCount = [...new Set([...declaredScopeFiles, ...declaredSharedFiles])].filter(f => SCOPE_EXTS.test(f) && !SCOPE_IGNORE.test(f)).length;
   const dynamicHardLimit = declaredSourceCount > 0 ? Math.min(ceiling, declaredSourceCount + 6) : baseHardLimit;
   const hardLimit = Math.max(baseHardLimit, dynamicHardLimit);
   const softLimit = Math.max(baseSoftLimit, Math.ceil(hardLimit * 0.7));
@@ -217,7 +217,7 @@ export async function checkScopeEnforcement(
   );
   const declaredScopeFiles = parseScopeFiles(scopeRow?.scope_files);
   const declaredSharedFiles = parseScopeFiles(scopeRow?.shared_files);
-  const { hardLimit: HARD_LIMIT, softLimit: SOFT_LIMIT } = computeScopeFileLimits(!!hasDeps, declaredScopeFiles);
+  const { hardLimit: HARD_LIMIT, softLimit: SOFT_LIMIT } = computeScopeFileLimits(!!hasDeps, declaredScopeFiles, declaredSharedFiles);
 
   // Zero-work floor
   if (sourceFiles.length === 0 && retryCount < maxRetries) {

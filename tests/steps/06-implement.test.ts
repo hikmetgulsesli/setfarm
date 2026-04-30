@@ -120,6 +120,32 @@ describe("06-implement step module", () => {
     assert.ok(softLimit >= 16, `soft limit ${softLimit} should scale with hard limit`);
   });
 
+  it("expands scope overflow limits for shared Stitch screen wiring", () => {
+    const appScope = [
+      "src/App.tsx",
+      "src/App.css",
+      "src/main.tsx",
+      "src/index.css",
+      "src/types/domain.ts",
+      "src/hooks/useAppState.ts",
+      "src/utils/storage.ts",
+    ];
+    const sharedScreens = [
+      "src/screens/AdayEkleduzenle.tsx",
+      "src/screens/AdaylarLeads.tsx",
+      "src/screens/AnalizlerInsights.tsx",
+      "src/screens/AyarlarSettings.tsx",
+      "src/screens/BosDurumEmptyState.tsx",
+      "src/screens/HataDurumuErrorState.tsx",
+      "src/screens/PipelineBoard.tsx",
+      "src/screens/ProfilPaneli.tsx",
+    ];
+
+    const { hardLimit, softLimit } = computeScopeFileLimits(false, appScope, sharedScreens);
+    assert.ok(hardLimit >= 21, `hard limit ${hardLimit} should cover app shell plus shared Stitch screens and test helpers`);
+    assert.ok(softLimit >= 15, `soft limit ${softLimit} should scale with shared file count`);
+  });
+
   it("detects package build scripts for implement build gate", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-build-gate-"));
     try {
