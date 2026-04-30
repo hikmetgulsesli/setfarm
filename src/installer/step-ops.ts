@@ -538,6 +538,38 @@ function normalizeRunBranchContext(context: Record<string, string>, runId: strin
   return branch;
 }
 
+function setLocalMainAuthoritative(repo: string, enabled: boolean, runId: string): void {
+  try {
+    if (enabled) {
+      execFileSync("git", ["config", "setfarm.localMainAuthoritative", "true"], {
+        cwd: repo, timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
+      });
+    } else {
+      execFileSync("git", ["config", "--unset", "setfarm.localMainAuthoritative"], {
+        cwd: repo, timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
+      });
+    }
+  } catch (configErr) {
+    if (enabled) {
+      logger.warn(`[setup-build] Could not mark local main authoritative: ${formatExecFailure(configErr, 300)}`, { runId });
+    }
+  }
+}
+
+function pointLocalMainAtHead(repo: string, runId: string): boolean {
+  const current = currentGitBranch(repo);
+  if (current === "main") return true;
+  try {
+    execFileSync("git", ["branch", "-f", "main", "HEAD"], {
+      cwd: repo, timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
+    });
+    return true;
+  } catch (branchErr) {
+    logger.warn(`[setup-build] Could not fast-set local main to setup baseline: ${formatExecFailure(branchErr, 400)}`, { runId });
+    return false;
+  }
+}
+
 function publishSetupBaselineToMain(repo: string, runBranch: string, runId: string): boolean {
   if (!repo) return false;
   try {
@@ -599,17 +631,18 @@ function publishSetupBaselineToMain(repo: string, runBranch: string, runId: stri
         execFileSync("git", ["merge-base", "--is-ancestor", "origin/main", "HEAD"], { cwd: repo, timeout: 5000, stdio: ["pipe", "pipe", "pipe"] });
         execFileSync("git", ["push", "origin", "HEAD:main"], { cwd: repo, timeout: 30000, stdio: ["pipe", "pipe", "pipe"] });
       } catch (retryErr) {
-        throw new Error(`push HEAD:main failed: ${formatExecFailure(pushMainErr)}; retry failed: ${formatExecFailure(retryErr)}`);
+        if (!pointLocalMainAtHead(repo, runId)) {
+          throw new Error(`push HEAD:main failed: ${formatExecFailure(pushMainErr)}; retry failed: ${formatExecFailure(retryErr)}`);
+        }
+        setLocalMainAuthoritative(repo, true, runId);
+        logger.warn(`[setup-build] Remote main publish failed; using local main baseline for implement worktrees: ${formatExecFailure(pushMainErr, 500)}; retry failed: ${formatExecFailure(retryErr, 500)}`, { runId });
+        logger.info(`[setup-build] Published setup baseline to local main from ${current || "HEAD"}; story worktrees will branch from local main`, { runId });
+        return true;
       }
     }
 
-    try {
-      execFileSync("git", ["branch", "-f", "main", "HEAD"], {
-        cwd: repo, timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
-      });
-    } catch (branchErr) {
-      logger.warn(`[setup-build] Could not fast-set local main to setup baseline: ${formatExecFailure(branchErr, 400)}`, { runId });
-    }
+    pointLocalMainAtHead(repo, runId);
+    setLocalMainAuthoritative(repo, false, runId);
     syncBaseBranch(repo, "main");
     logger.info(`[setup-build] Published setup baseline to main from ${current || "HEAD"}; story PRs will branch from main`, { runId });
     return true;

@@ -15,6 +15,22 @@ describe("05-setup-build step module", () => {
     assert.ok(typeof setupBuildModule.preClaim === "function");
   });
 
+  it("preClaim supports auto-completion instead of setup-build agent handoff", () => {
+    const preclaim = fs.readFileSync("src/installer/steps/05-setup-build/preclaim.ts", "utf-8");
+    assert.ok(preclaim.includes("SETFARM_DISABLE_AUTO_SETUP_BUILD"), "auto-complete should have an opt-out env guard");
+    assert.ok(preclaim.includes("AUTO-COMPLETED setup-build"), "setup-build should complete in preClaim when baseline checks pass");
+    assert.ok(preclaim.includes("completeStep(step.id, output)"), "preClaim should use the normal completeStep path");
+  });
+
+  it("setup baseline can fall back to local main without retry loops", () => {
+    const stepOps = fs.readFileSync("src/installer/step-ops.ts", "utf-8");
+    const worktreeOps = fs.readFileSync("src/installer/worktree-ops.ts", "utf-8");
+    assert.ok(stepOps.includes("setfarm.localMainAuthoritative"), "setup-build should persist local-main fallback state");
+    assert.ok(stepOps.includes("Remote main publish failed; using local main baseline"), "remote publish failure should not force setup-build retry");
+    assert.ok(worktreeOps.includes("origin/main has not caught up"), "worktree creation should preserve local baseline fallback");
+    assert.ok(worktreeOps.includes("returning to normal main sync"), "fallback should clear once remote main contains the baseline");
+  });
+
   it("buildPrompt substitutes REPO/TECH_STACK/BUILD_CMD_HINT from context", () => {
     const prompt = setupBuildModule.buildPrompt({
       runId: "r1",

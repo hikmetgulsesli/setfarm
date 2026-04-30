@@ -83,6 +83,35 @@ function stashDirtyMainRepo(repo: string, storyId: string): void {
  */
 export function syncBaseBranch(repo: string, baseBranch = "main"): boolean {
   if (!repo || !baseBranch || /^[0-9a-f]{40}$/i.test(baseBranch)) return true;
+  if (baseBranch === "main") {
+    try {
+      const authoritative = execFileSync("git", ["config", "--bool", "--get", "setfarm.localMainAuthoritative"], {
+        cwd: repo, timeout: 5000, stdio: "pipe",
+      }).toString().trim();
+      if (authoritative === "true") {
+        execFileSync("git", ["show-ref", "--verify", "--quiet", "refs/heads/main"], {
+          cwd: repo, timeout: 5000, stdio: "pipe",
+        });
+        try {
+          execFileSync("git", ["fetch", "origin", "main"], {
+            cwd: repo, timeout: 15000, stdio: "pipe",
+          });
+          execFileSync("git", ["merge-base", "--is-ancestor", "main", "origin/main"], {
+            cwd: repo, timeout: 5000, stdio: "pipe",
+          });
+          try {
+            execFileSync("git", ["config", "--unset", "setfarm.localMainAuthoritative"], {
+              cwd: repo, timeout: 5000, stdio: "pipe",
+            });
+          } catch {}
+          logger.info(`[worktree] origin/main contains local setup baseline; returning to normal main sync`, {});
+        } catch {
+          logger.warn(`[worktree] Using local main as authoritative setup baseline; origin/main has not caught up`, {});
+          return true;
+        }
+      }
+    } catch {}
+  }
   try { stashDirtyMainRepo(repo, `sync-${baseBranch}`); } catch {}
 
   try {

@@ -3,6 +3,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import type { ClaimContext } from "../types.js";
+import { pgGet } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
 
 const MIN_STITCH_HTML_BYTES = 1000;
@@ -95,6 +96,8 @@ ${css}`);
 // 4. Tailwind install/config (when Stitch uses utility classes)
 // 5. stitch-to-jsx → src/screens/<TurkishName>.tsx + commit
 export async function preClaim(ctx: ClaimContext): Promise<void> {
+  if (process.env.SETFARM_DISABLE_AUTO_SETUP_BUILD === "1") return;
+
   const repo = ctx.context["repo"] || ctx.context["REPO"] || "";
   if (!repo || !fs.existsSync(path.join(repo, "package.json"))) {
     const msg = "package.json missing after setup-repo — baseline scaffold did not run";
@@ -244,5 +247,25 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       logger.warn(`[module:setup-build preclaim] stitch-to-jsx failed: ${details.slice(0, 300)}`, { runId: ctx.runId });
       ctx.context["baseline_fail"] = `stitch-to-jsx failed:\n${details}`;
     }
+  }
+
+  if (!ctx.context["baseline_fail"] && !ctx.context["compat_fail"]) {
+    const step = await pgGet<{ id: string }>(
+      "SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1",
+      [ctx.runId, ctx.stepId],
+    );
+    if (!step?.id) return;
+
+    const output = [
+      "STATUS: done",
+      `BUILD_CMD: ${ctx.context["build_cmd_hint"] || buildCmd || "npm run build"}`,
+      "",
+    ].join("\n");
+    const { completeStep } = await import("../../step-ops.js");
+    await completeStep(step.id, output);
+    logger.info(`[module:setup-build preclaim] AUTO-COMPLETED setup-build without setup-build agent`, {
+      runId: ctx.runId,
+      stepId: ctx.stepId,
+    });
   }
 }
