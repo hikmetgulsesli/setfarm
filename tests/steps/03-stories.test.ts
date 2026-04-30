@@ -148,6 +148,7 @@ describe("03-stories step module", () => {
       const storiesJson = output.match(/STORIES_JSON:\n([\s\S]*?)\nSCREEN_MAP:/)?.[1] || "[]";
       const stories = JSON.parse(storiesJson);
       assert.equal(stories.length, 5);
+      assert.match(stories[0].title, /^Freelancer lead triage CRM uygulaması -/);
       assert.equal(stories[0].scope_files.includes("src/App.tsx"), true);
       assert.equal(stories[1].scope_files.includes("src/screens/Leads.tsx"), true);
       assert.equal(stories.some((s: any) => s.scope_files.includes("src/screens/ProfilPaneli.tsx")), true);

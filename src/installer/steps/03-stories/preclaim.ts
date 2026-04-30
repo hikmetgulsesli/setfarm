@@ -47,6 +47,13 @@ function compactText(text: string, fallback: string): string {
   return s ? s.slice(0, 180) : fallback;
 }
 
+function extractProjectLabel(text: string, fallback: string): string {
+  const raw = String(text || "");
+  const projectLine = raw.match(/(?:^|\n)\s*Proje\s*:\s*([^\n]+)/i)?.[1]?.trim();
+  const candidate = projectLine || raw.split(/\n+/).map((line) => line.trim()).find(Boolean) || "";
+  return compactText(candidate.replace(/^Proje\s*:\s*/i, ""), fallback);
+}
+
 function loadScreenMap(repo: string): any[] {
   const p = path.join(repo, "stitch", "SCREEN_MAP.json");
   if (!fs.existsSync(p)) return [];
@@ -198,7 +205,7 @@ export function buildAutoStoriesOutput(params: {
   maxStories?: number | null;
 }): string {
   const { repo, predicted, screenMap = [], maxStories = null } = params;
-  const product = compactText(params.context?.["project_name"] || params.context?.["task"] || params.task || "", "Uygulama");
+  const product = extractProjectLabel(params.context?.["project_name"] || params.context?.["task"] || params.task || "", "Uygulama");
   const screenFiles = unique(predicted.map((s) => s.filePath));
   const screenFileSet = new Set(screenFiles);
 
