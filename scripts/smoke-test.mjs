@@ -26,9 +26,11 @@
 import { execFileSync, spawn } from 'child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { join, basename, relative } from 'path';
+import { pathToFileURL } from 'url';
 
 const args = process.argv.slice(2);
 const repoPath = args[0];
+const isCli = Boolean(process.argv[1]) && import.meta.url === pathToFileURL(process.argv[1]).href;
 
 // ── Phase 17 (static): Tailwind v4 compile sanity ─────────────────
 // Fails fast if src CSS imports tailwindcss but dist CSS has no compiled
@@ -91,7 +93,7 @@ function checkTailwindCompiled(repo) {
   }
 }
 const _twCheck = checkTailwindCompiled(repoPath);
-if (_twCheck && !_twCheck.ok) {
+if (isCli && _twCheck && !_twCheck.ok) {
   console.log(JSON.stringify({
     status: 'fail',
     failures: ['[TAILWIND] ' + _twCheck.reason],
@@ -100,7 +102,7 @@ if (_twCheck && !_twCheck.ok) {
   process.exit(1);
 }
 
-if (!repoPath) { console.error('Usage: node smoke-test.mjs <repo-path> [--port PORT]'); process.exit(2); }
+if (isCli && !repoPath) { console.error('Usage: node smoke-test.mjs <repo-path> [--port PORT]'); process.exit(2); }
 
 const portArgIdx = args.indexOf('--port');
 const requestedPort = portArgIdx !== -1 ? parseInt(args[portArgIdx + 1], 10) : 0;
@@ -195,8 +197,9 @@ function checkComponentWiring(repo) {
 }
 
 // ── Phase 1b: Entry Point Import Validation ─────────────────────────
-// Checks that all static imports in entry files resolve to actual exports
-// in target files. Catches "does not provide an export named X" errors.
+// Checks that all static value imports in entry files resolve to actual value
+// exports in target files. Type-only imports/exports are erased by the TS
+// compiler, so they must not be treated as runtime wiring failures.
 function checkEntryPointImports(repo) {
   const issues = [];
   const entries = [
@@ -210,11 +213,15 @@ function checkEntryPointImports(repo) {
     let content;
     try { content = readFileSync(fp, "utf-8"); } catch { continue; }
 
-    // Match: import { X, Y } from "./target"
-    const importRe = /import\s*\{([^}]+)\}\s*from\s*['"](\.\/.+?)['"];?/g;
+    // Match value imports only: import { X, Y } from "./target"
+    const importRe = /import\s+(?!type\b)\{([^}]+)\}\s*from\s*['"](\.\/.+?)['"];?/g;
     let m;
     while ((m = importRe.exec(content)) !== null) {
-      const names = m[1].split(",").map(n => n.trim().split(/\s+as\s+/)[0].trim()).filter(Boolean);
+      const names = m[1].split(",")
+        .map(n => n.trim())
+        .filter(n => n && !/^type\b/.test(n))
+        .map(n => n.split(/\s+as\s+/)[0].trim())
+        .filter(Boolean);
       const specifier = m[2];
 
       // Resolve target file
@@ -233,7 +240,7 @@ function checkEntryPointImports(repo) {
       for (const name of names) {
         // JS identifiers are safe for regex (letters, digits, _, $)
         const pat1 = new RegExp('export\\s+(function|const|let|var|class)\\s+' + name + '\\b');
-        const pat2 = new RegExp('export\\s*\\{[^}]*\\b' + name + '\\b[^}]*\\}');
+        const pat2 = new RegExp('export\\s*\\{(?![^}]*\\btype\\s+' + name + '\\b)[^}]*\\b' + name + '\\b[^}]*\\}');
         if (!pat1.test(targetContent) && !pat2.test(targetContent)) {
           issues.push(
             relative(repo, fp) + ': imports "' + name + '" from "' + specifier +
@@ -248,8 +255,9 @@ function checkEntryPointImports(repo) {
 
 // ── Phase 1c: Native button wiring validation ─────────────────────────
 // Catches visible controls that render as buttons but have no behavior.
-// Decorative controls must not use <button>; intentional inert buttons can
-// opt out with disabled, aria-disabled, or data-smoke-ignore.
+// Decorative controls must not use <button>; intentional inert buttons must
+// use disabled or aria-disabled. data-smoke-ignore is not accepted here because
+// previous runs hid real product controls from smoke checks.
 function checkNativeButtonWiring(repo) {
   const issues = [];
   const seen = new Set();
@@ -294,16 +302,15 @@ function checkNativeButtonWiring(repo) {
         const hasHandler = /\bonClick\s*=/.test(tag);
         const isSubmit = /\btype\s*=\s*(["'])submit\1/i.test(tag);
         const isDisabled = /\bdisabled(?:\s*=|\s|>)/i.test(tag) || /\baria-disabled\s*=\s*(["']true["']|\{true\})/i.test(tag);
-        const ignored = /\bdata-smoke-ignore(?:\s*=|\s|>)/i.test(tag);
         const hasSpreadProps = /\{\s*\.\.\./.test(tag);
 
-        if (hasHandler || isSubmit || isDisabled || ignored || hasSpreadProps) continue;
+        if (hasHandler || isSubmit || isDisabled || hasSpreadProps) continue;
 
         const label = buttonLabel(tag, inner);
         issues.push(
           relative(repo, f) + ':' + line +
           ' button' + (label ? ' "' + label + '"' : '') +
-          ' has no onClick/type="submit"/disabled/data-smoke-ignore'
+          ' has no onClick/type="submit"/disabled/aria-disabled'
         );
       }
     });
@@ -499,7 +506,7 @@ const BUTTON_AUDIT_EVAL =
       return String(explicit || text || icon || ("button#" + (idx + 1))).replace(/\\s+/g, " ").trim().substring(0, 80);
     }
     function skipButton(btn, label) {
-      if (btn.disabled || btn.getAttribute("aria-disabled") === "true" || btn.hasAttribute("data-smoke-ignore")) return true;
+      if (btn.disabled || btn.getAttribute("aria-disabled") === "true") return true;
       if (/^(close|dismiss|cancel|x|\\u00d7|\\u2715|\\u2716)$/i.test(label)) return true;
       var r = btn.getBoundingClientRect();
       if (r.width === 0 || r.height === 0) return true;
@@ -1638,4 +1645,8 @@ async function main() {
   process.exit(failures.length > 0 ? 1 : 0);
 }
 
-main();
+export { checkEntryPointImports, checkNativeButtonWiring };
+
+if (isCli) {
+  main();
+}
