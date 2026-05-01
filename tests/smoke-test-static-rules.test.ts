@@ -91,4 +91,10 @@ describe("smoke-test static rules", () => {
     assert.equal(smokeScript.includes('hasAttribute("data-smoke-ignore")'), false);
     assert.equal(verifyScript.includes("hasAttribute('data-smoke-ignore')"), false);
   });
+
+  it("does not report stale DOM button references as dead buttons", () => {
+    const smokeScript = fs.readFileSync(path.join(process.cwd(), "scripts/smoke-test.mjs"), "utf-8");
+
+    assert.match(smokeScript, /!item\.btn\.isConnected\s*\|\|\s*skipButton\(item\.btn,\s*item\.label\)/);
+  });
 });

@@ -570,12 +570,16 @@ const BUTTON_AUDIT_EVAL =
     function next() {
       if (i >= candidates.length) return Promise.resolve({ issues: issues, tested: tested });
       var item = candidates[i++];
+      if (!item.btn.isConnected || skipButton(item.btn, item.label)) {
+        return next();
+      }
       var before = snap();
       var mutated = false;
       var obs = new MutationObserver(function() { mutated = true; });
       try { obs.observe(document.body, { childList:true, subtree:true, attributes:true, characterData:true }); } catch(e) {}
       tested.push(item.label);
       try {
+        try { item.btn.scrollIntoView({ block: "center", inline: "center" }); } catch(_) {}
         item.btn.click();
       } catch(e) {
         try { obs.disconnect(); } catch(_) {}
