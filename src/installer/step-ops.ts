@@ -774,6 +774,21 @@ export async function peekStep(agentId: string, callerGatewayAgent?: string): Pr
       `SELECT COUNT(*) as cnt FROM steps s
        JOIN runs r ON r.id = s.run_id
        WHERE s.agent_id = $1 AND r.status = 'running'
+         AND NOT EXISTS (
+           SELECT 1 FROM steps prev
+           WHERE prev.run_id = s.run_id
+             AND prev.step_index < s.step_index
+             AND prev.status NOT IN ('done', 'failed', 'skipped', 'verified')
+             AND NOT (prev.type = 'loop' AND prev.status = 'running')
+             AND NOT (
+               prev.type = 'loop'
+               AND prev.status = 'pending'
+               AND COALESCE(prev.loop_config::jsonb, '{}'::jsonb) @> '{"verifyEach":true}'::jsonb
+               AND COALESCE(prev.loop_config::jsonb ->> 'verifyStep', '') = s.step_id
+               AND EXISTS (SELECT 1 FROM stories done_st WHERE done_st.run_id = s.run_id AND done_st.status = 'done')
+               AND NOT EXISTS (SELECT 1 FROM stories fix_st WHERE fix_st.run_id = s.run_id AND fix_st.story_id LIKE 'QA-FIX-%' AND fix_st.status IN ('pending', 'running'))
+             )
+         )
          AND (
           (
             s.status = 'pending'
@@ -781,6 +796,7 @@ export async function peekStep(agentId: string, callerGatewayAgent?: string): Pr
               s.type = 'loop'
               AND COALESCE(s.loop_config::jsonb, '{}'::jsonb) @> '{"verifyEach":true}'::jsonb
               AND EXISTS (SELECT 1 FROM stories done_st WHERE done_st.run_id = s.run_id AND done_st.status = 'done')
+              AND NOT EXISTS (SELECT 1 FROM stories fix_st WHERE fix_st.run_id = s.run_id AND fix_st.story_id LIKE 'QA-FIX-%' AND fix_st.status IN ('pending', 'running'))
             )
           )
           OR (s.status = 'running' AND s.type = 'loop' AND (
@@ -806,6 +822,7 @@ export async function peekStep(agentId: string, callerGatewayAgent?: string): Pr
               AND NOT (
                 COALESCE(s.loop_config::jsonb, '{}'::jsonb) @> '{"verifyEach":true}'::jsonb
                 AND EXISTS (SELECT 1 FROM stories done_st WHERE done_st.run_id = s.run_id AND done_st.status = 'done')
+                AND NOT EXISTS (SELECT 1 FROM stories fix_st WHERE fix_st.run_id = s.run_id AND fix_st.story_id LIKE 'QA-FIX-%' AND fix_st.status IN ('pending', 'running'))
               )
             )
             OR (
@@ -1958,6 +1975,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
 	                 AND COALESCE(prev.loop_config::jsonb, '{}'::jsonb) @> '{"verifyEach":true}'::jsonb
 	                 AND COALESCE(prev.loop_config::jsonb ->> 'verifyStep', '') = s.step_id
 	                 AND EXISTS (SELECT 1 FROM stories done_st WHERE done_st.run_id = s.run_id AND done_st.status = 'done')
+	                 AND NOT EXISTS (SELECT 1 FROM stories fix_st WHERE fix_st.run_id = s.run_id AND fix_st.story_id LIKE 'QA-FIX-%' AND fix_st.status IN ('pending', 'running'))
 	               )
 	           )
          ORDER BY

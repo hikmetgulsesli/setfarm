@@ -27,6 +27,24 @@ function handleVerifyEachSource(): string {
   return source.slice(start, end);
 }
 
+function claimStepSelectionSource(): string {
+  const source = fs.readFileSync(path.join(root, "src", "installer", "step-ops.ts"), "utf-8");
+  const start = source.indexOf("const step = await pgGet<StepRow>(");
+  const end = source.indexOf("if (!step) return { found: false };", start);
+  assert.notEqual(start, -1, "claimStep selection source not found");
+  assert.notEqual(end, -1, "claimStep selection end not found");
+  return source.slice(start, end);
+}
+
+function peekStepSource(): string {
+  const source = fs.readFileSync(path.join(root, "src", "installer", "step-ops.ts"), "utf-8");
+  const start = source.indexOf("export async function peekStep(");
+  const end = source.indexOf("// ── Claim", start);
+  assert.notEqual(start, -1, "peekStep source not found");
+  assert.notEqual(end, -1, "peekStep end not found");
+  return source.slice(start, end);
+}
+
 describe("single-step claim_log lifecycle", () => {
   it("records single-step handoff before heavy preClaim and closes no-spawn exits", () => {
     const source = claimSingleStepSource();
@@ -118,6 +136,21 @@ describe("single-step claim_log lifecycle", () => {
     assert.ok(claimUpdate < emitEvent, "claim_log closes before route event returns control to spawner");
     assert.match(routeSource, /quality failure routed to \$\{fixStoryId\}/);
     assert.match(routeSource, /WHERE run_id = \$2 AND step_id = \$3 AND story_id IS NULL AND outcome IS NULL/);
+  });
+
+  it("blocks verify-each claims while an active QA-FIX story is pending", () => {
+    const claimSource = claimStepSelectionSource();
+    const peekSource = peekStepSource();
+    const activeQaFixGuard = /NOT EXISTS \(SELECT 1 FROM stories fix_st WHERE fix_st\.run_id = s\.run_id AND fix_st\.story_id LIKE 'QA-FIX-%' AND fix_st\.status IN \('pending', 'running'\)\)/;
+
+    assert.match(claimSource, activeQaFixGuard);
+    assert.match(peekSource, activeQaFixGuard);
+    assert.match(peekSource, /prev\.step_index < s\.step_index/);
+    assert.match(peekSource, /COALESCE\(prev\.loop_config::jsonb ->> 'verifyStep', ''\) = s\.step_id/);
+    assert.ok(
+      claimSource.indexOf("fix_st.story_id LIKE 'QA-FIX-%'") > claimSource.indexOf("COALESCE(prev.loop_config::jsonb ->> 'verifyStep', '') = s.step_id"),
+      "claimStep should only suppress the verify-each previous-step bypass when an active QA-FIX exists",
+    );
   });
 
   it("closes single-step failure claims by workflow step id, not step UUID", () => {
