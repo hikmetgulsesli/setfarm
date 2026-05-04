@@ -34,6 +34,7 @@ import { getStories, formatStoryForTemplate, formatCompletedStories, parseAndIns
 import { createStoryWorktree, removeStoryWorktree, findWorktreeDir, syncBaseBranch } from "./worktree-ops.js";
 import { computeHasFrontendChanges, checkTestFailures, checkQualityGate, checkRequiredOutputFields, processDesignCompletion, processSetupCompletion, processSetupDesignContracts, processBrowserCheck, processDesignFidelityCheck, checkStoryDesignCompliance, checkImportConsistency } from "./step-guardrails.js";
 import { cleanupAbandonedSteps as _cleanupAbandonedSteps, cleanupProjectEphemera, scheduleRunCronTeardown } from "./cleanup-ops.js";
+import { isVerifyRetryQualityFailure } from "./verify-retry-routing.js";
 import {
   getRunStatus, getRunContext, updateRunContext, failRun,
   getWorkflowId as _getWorkflowId,
@@ -266,7 +267,8 @@ async function routeQualityFailureToImplement(
   context: Record<string, string>,
 ): Promise<boolean> {
   const isVerifySystemSmokeFailure = step.step_id === "verify" && output.startsWith("SYSTEM_SMOKE_FAILURE:");
-  if (!QUALITY_FIX_STEPS.has(step.step_id) && !isVerifySystemSmokeFailure) return false;
+  const isVerifyRetryFailure = step.step_id === "verify" && isVerifyRetryQualityFailure(output);
+  if (!QUALITY_FIX_STEPS.has(step.step_id) && !isVerifySystemSmokeFailure && !isVerifyRetryFailure) return false;
 
   const loopStep = await pgGet<{ id: string; step_index: number; status: string; loop_config: string | null }>(
     "SELECT id, step_index, status, loop_config FROM steps WHERE run_id = $1 AND step_id = 'implement' AND type = 'loop' LIMIT 1",
