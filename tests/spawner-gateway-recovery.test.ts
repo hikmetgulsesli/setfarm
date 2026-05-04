@@ -140,6 +140,14 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(releaseSource, /story_id = \$3 AND agent_id = \$4 AND outcome IS NULL/);
   });
 
+  it("enforces one open claim per run step story and agent at the database layer", () => {
+    const source = fs.readFileSync(path.join(root, "src", "db-pg.ts"), "utf-8");
+    assert.match(source, /idx_claim_log_open_single_unique/);
+    assert.match(source, /ON claim_log\(run_id, step_id, agent_id\) WHERE outcome IS NULL AND story_id IS NULL/);
+    assert.match(source, /idx_claim_log_open_story_unique/);
+    assert.match(source, /ON claim_log\(run_id, step_id, story_id, agent_id\) WHERE outcome IS NULL AND story_id IS NOT NULL/);
+  });
+
   it("recovers build-passing implement work when an agent exits without step completion", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /tryRecoverExitedImplementWork/);
