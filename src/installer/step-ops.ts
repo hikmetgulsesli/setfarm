@@ -451,6 +451,21 @@ function computePredictedScreenFiles(repoPath: string): Array<{ screenId: string
   }
 }
 
+function normalizedStatusFromStepOutput(output: string): string {
+  try {
+    const parsed = parseOutputKeyValues(output);
+    const raw = (parsed["status"] || "").trim();
+    return (raw.indexOf("\n") >= 0 ? raw.slice(0, raw.indexOf("\n")).trim() : raw).split(/\s/)[0].toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function isSuccessfulStepOutput(output: string): boolean {
+  const status = normalizedStatusFromStepOutput(output);
+  return status === "done" || status === "skip";
+}
+
 /**
  * Wrapper: calls cleanup-ops.cleanupAbandonedSteps with advancePipeline callback.
  * Maintains the original zero-arg signature for backwards compatibility.
@@ -1537,14 +1552,26 @@ async function claimSingleStep(
     shouldRecordSingleStepTransition = true;
   }
 
-  // Inject previous failure context so agent knows what to fix on retry
-  if (step.retry_count > 0 && step.output) {
+  // Inject previous failure context so agent knows what to fix on retry.
+  // Some verify-each retries intentionally leave the previous successful
+  // reviewer output on the step while context.previous_failure carries the
+  // real blocker (for example PR_NOT_MERGED). Do not replace that actionable
+  // failure with a stale STATUS: done report.
+  if (step.retry_count > 0) {
+    const existingFailure = (context["previous_failure"] || "").trim();
+    const stepOutputLooksSuccessful = step.output ? isSuccessfulStepOutput(step.output) : false;
+    const failureText = existingFailure || (!stepOutputLooksSuccessful ? (step.output || "").trim() : "");
     const { classifyError } = await import("./error-taxonomy.js");
-    const classified = classifyError(step.output);
-    context["previous_failure"] = step.output;
-    context["failure_category"] = classified.category;
-    context["failure_suggestion"] = classified.suggestion;
-    logger.info(`[claim] Injected previous_failure (${classified.category}) for retry ${step.retry_count} of ${step.step_id}`, { runId: step.run_id });
+    if (failureText) {
+      const classified = classifyError(failureText);
+      if (!existingFailure) context["previous_failure"] = failureText;
+      if (!context["failure_category"]) context["failure_category"] = classified.category;
+      if (!context["failure_suggestion"]) context["failure_suggestion"] = classified.suggestion;
+      const source = existingFailure ? "context" : "step-output";
+      logger.info(`[claim] Injected previous_failure from ${source} (${context["failure_category"] || classified.category}) for retry ${step.retry_count} of ${step.step_id}`, { runId: step.run_id });
+    } else if (step.output && stepOutputLooksSuccessful) {
+      logger.info(`[claim] Skipped successful step output as retry previous_failure for ${step.step_id}`, { runId: step.run_id });
+    }
   }
 
   // #260: Default optional template vars to prevent MISSING_INPUT_GUARD false positives

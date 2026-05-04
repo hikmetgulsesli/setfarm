@@ -14,6 +14,10 @@ function claimSingleStepSource(): string {
   return source.slice(start, end);
 }
 
+function stepOpsSource(): string {
+  return fs.readFileSync(path.join(root, "src", "installer", "step-ops.ts"), "utf-8");
+}
+
 function handleVerifyEachSource(): string {
   const source = fs.readFileSync(path.join(root, "src", "installer", "step-ops.ts"), "utf-8");
   const start = source.indexOf("async function handleVerifyEachCompletion(");
@@ -57,6 +61,19 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(source, /return \{ found: false \}/);
     assert.doesNotMatch(source, /shouldRecordSingleStepClaim = !existingOpenClaim/);
     assert.match(source, /shouldRecordSingleStepClaim = true/);
+  });
+
+  it("does not overwrite actionable retry context with stale successful output", () => {
+    const fullSource = stepOpsSource();
+    const source = claimSingleStepSource();
+    assert.match(fullSource, /function isSuccessfulStepOutput\(output: string\): boolean/);
+    assert.match(fullSource, /return status === "done" \|\| status === "skip"/);
+    assert.match(source, /const existingFailure = \(context\["previous_failure"\] \|\| ""\)\.trim\(\)/);
+    assert.match(source, /const stepOutputLooksSuccessful = step\.output \? isSuccessfulStepOutput\(step\.output\) : false/);
+    assert.match(source, /const failureText = existingFailure \|\| \(!stepOutputLooksSuccessful \? \(step\.output \|\| ""\)\.trim\(\) : ""\)/);
+    assert.match(source, /if \(!existingFailure\) context\["previous_failure"\] = failureText/);
+    assert.match(source, /Skipped successful step output as retry previous_failure/);
+    assert.doesNotMatch(source, /context\["previous_failure"\] = step\.output/);
   });
 
   it("resolves verify_each single-step claims when verify output is accepted", () => {
