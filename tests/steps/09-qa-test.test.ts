@@ -9,6 +9,7 @@ describe("09-qa-test step module", () => {
     assert.equal(qaTestModule.id, "qa-test");
     assert.equal(qaTestModule.type, "single");
     assert.equal(qaTestModule.agentRole, "qa-tester");
+    assert.equal(qaTestModule.preClaim, undefined);
     assert.equal(qaTestModule.maxPromptSize, 12288);
     assert.deepEqual(qaTestModule.requiredOutputFields, ["STATUS"]);
   });
@@ -34,6 +35,8 @@ describe("09-qa-test step module", () => {
     assert.ok(prompt.includes("feature-app"));
     assert.ok(prompt.includes("pull/9"));
     assert.ok(prompt.includes("happy path"));
+    assert.ok(prompt.includes("quality-reports/qa-test-1.md"));
+    assert.ok(prompt.includes("Route/link gezintisi"));
     assert.ok(prompt.includes("Kurallar"));
   });
 
@@ -46,14 +49,50 @@ describe("09-qa-test step module", () => {
     assert.equal(validateOutput({} as ParsedOutput).ok, false);
   });
 
-  it("validateOutput accepts STATUS: done|skip", () => {
-    assert.equal(validateOutput({ status: "done" } as ParsedOutput).ok, true);
-    assert.equal(validateOutput({ status: "skip" } as ParsedOutput).ok, true);
+  it("validateOutput rejects STATUS: done without QA evidence", () => {
+    const r = validateOutput({ status: "done" } as ParsedOutput);
+    assert.equal(r.ok, false);
+    assert.ok(r.errors.some(e => e.includes("QA_REPORT")));
   });
 
-  it("validateOutput accepts retry without extra fields (enforcement upstream in step-ops)", () => {
-    assert.equal(validateOutput({ status: "retry" } as ParsedOutput).ok, true);
-    assert.equal(validateOutput({ status: "retry", test_failures: "x" } as ParsedOutput).ok, true);
+  it("validateOutput accepts STATUS: done with QA evidence", () => {
+    assert.equal(validateOutput({
+      status: "done",
+      qa_report: "quality-reports/qa-test-1.md",
+      qa_screens_tested: "4",
+      qa_routes_tested: "3",
+      qa_interactions_tested: "12",
+      qa_total_issues: "0",
+    } as ParsedOutput).ok, true);
+  });
+
+  it("validateOutput rejects done with positive issue count", () => {
+    const r = validateOutput({
+      status: "done",
+      qa_report: "quality-reports/qa-test-1.md",
+      qa_screens_tested: "4",
+      qa_routes_tested: "3",
+      qa_interactions_tested: "12",
+      qa_total_issues: "1",
+    } as ParsedOutput);
+    assert.equal(r.ok, false);
+    assert.ok(r.errors.some(e => e.includes("QA_TOTAL_ISSUES")));
+  });
+
+  it("validateOutput requires skip reason", () => {
+    assert.equal(validateOutput({ status: "skip" } as ParsedOutput).ok, false);
+    assert.equal(validateOutput({ status: "skip", skip_reason: "Not a browser app" } as ParsedOutput).ok, true);
+  });
+
+  it("validateOutput rejects retry without batched findings", () => {
+    const r = validateOutput({ status: "retry" } as ParsedOutput);
+    assert.equal(r.ok, false);
+    assert.ok(r.errors.some(e => e.includes("batched QA findings")));
+  });
+
+  it("validateOutput accepts retry with batched findings", () => {
+    assert.equal(validateOutput({ status: "retry", qa_report: "quality-reports/qa-test-1.md", test_failures: "x" } as ParsedOutput).ok, true);
+    assert.equal(validateOutput({ status: "retry", qa_report_path: "quality-reports/qa-test-1.md", issues: "x", qa_total_issues: "2" } as ParsedOutput).ok, true);
   });
 
   it("validateOutput rejects unknown STATUS", () => {

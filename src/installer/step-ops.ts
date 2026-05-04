@@ -2556,6 +2556,20 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
   // Fix: trim and extract only the first word from the status value.
   const rawStatus = (parsed["status"] || "").trim();
   const statusVal = (rawStatus.indexOf("\n") >= 0 ? rawStatus.slice(0, rawStatus.indexOf("\n")).trim() : rawStatus).split(/\s/)[0].toLowerCase() || undefined;
+  if (step.step_id === "qa-test") {
+    const _modRegistry = await import("./steps/registry.js");
+    const _stepModule = _modRegistry.get(step.step_id);
+    if (_stepModule) {
+      if (_stepModule.normalize) _stepModule.normalize(parsed);
+      const _result = _stepModule.validateOutput(parsed);
+      if (!_result.ok) {
+        const _modErr = `GUARDRAIL [module:${_stepModule.id}]: ${_result.errors.join("; ")}`;
+        logger.warn(`[step-module] ${_modErr}`, { runId: step.run_id });
+        await failStep(stepId, _modErr);
+        return { advanced: false, runCompleted: false };
+      }
+    }
+  }
   if (statusVal === "fail" || statusVal === "failed" || statusVal === "error") {
     logger.warn(`Agent reported STATUS: ${parsed["status"]} — failing step`, { runId: step.run_id, stepId: step.step_id });
     await failStep(stepId, `Agent reported failure: ${parsed["status"]}. Output: ${output.slice(0, 500)}`);
