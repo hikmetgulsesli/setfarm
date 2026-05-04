@@ -124,6 +124,22 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /unhandled rejection/);
   });
 
+  it("closes active claim_log rows when shutdown releases a running step", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    const releaseStart = source.indexOf("async function releaseActiveProcessForShutdown(");
+    const releaseEnd = source.indexOf("function cancelRunAgents", releaseStart);
+    assert.notEqual(releaseStart, -1, "releaseActiveProcessForShutdown source not found");
+    assert.notEqual(releaseEnd, -1, "releaseActiveProcessForShutdown end not found");
+    const releaseSource = source.slice(releaseStart, releaseEnd);
+
+    assert.match(releaseSource, /SELECT run_id, step_id, type, current_story_id FROM steps/);
+    assert.match(releaseSource, /UPDATE claim_log SET outcome = 'infra_retry'/);
+    assert.match(releaseSource, /Spawner shutdown released active single-step claim/);
+    assert.match(releaseSource, /step_id = \$3 AND story_id IS NULL AND agent_id = \$4 AND outcome IS NULL/);
+    assert.match(releaseSource, /Spawner shutdown released active loop claim/);
+    assert.match(releaseSource, /story_id = \$3 AND agent_id = \$4 AND outcome IS NULL/);
+  });
+
   it("recovers build-passing implement work when an agent exits without step completion", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /tryRecoverExitedImplementWork/);

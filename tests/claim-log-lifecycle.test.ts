@@ -73,4 +73,17 @@ describe("single-step claim_log lifecycle", () => {
     assert.ok(claimUpdate < passedBranch, "claim_log must close before passed branch returns");
     assert.match(source, /WHERE run_id = \$1 AND step_id = \$2 AND story_id IS NULL AND outcome IS NULL/);
   });
+
+  it("closes single-step failure claims by workflow step id, not step UUID", () => {
+    const source = fs.readFileSync(path.join(root, "src", "installer", "step-fail.ts"), "utf-8");
+    const singleFailureStart = source.indexOf("async function handleSingleStepFailurePG(");
+    const singleFailureEnd = source.indexOf("// Post-transaction side effects", singleFailureStart);
+    assert.notEqual(singleFailureStart, -1, "handleSingleStepFailurePG source not found");
+    assert.notEqual(singleFailureEnd, -1, "handleSingleStepFailurePG transaction block not found");
+    const singleFailureSource = source.slice(singleFailureStart, singleFailureEnd);
+
+    assert.match(singleFailureSource, /const workflowStepId = stepRow\?\.step_id \|\| ""/);
+    assert.match(singleFailureSource, /step_id = \$\{workflowStepId\}/);
+    assert.doesNotMatch(singleFailureSource, /claim_log[\s\S]*step_id = \$\{stepId\}/);
+  });
 });

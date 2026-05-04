@@ -1517,8 +1517,8 @@ async function failStaleRunningClaimsFromPreviousSpawner(): Promise<void> {
 async function releaseActiveProcessForShutdown(active: ActiveProcess): Promise<void> {
   if (!active.stepId) return;
   try {
-    const row = await pgGet<{ type: string; current_story_id: string | null }>(
-      "SELECT type, current_story_id FROM steps WHERE id = $1 AND status = 'running' LIMIT 1",
+    const row = await pgGet<{ run_id: string; step_id: string; type: string; current_story_id: string | null }>(
+      "SELECT run_id, step_id, type, current_story_id FROM steps WHERE id = $1 AND status = 'running' LIMIT 1",
       [active.stepId],
     );
     if (!row) return;
@@ -1531,11 +1531,19 @@ async function releaseActiveProcessForShutdown(active: ActiveProcess): Promise<v
         "UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = NOW() WHERE id = $1 AND status = 'running'",
         [active.stepId],
       );
+      await pgRun(
+        "UPDATE claim_log SET outcome = 'infra_retry', abandoned_at = NOW(), duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at::timestamptz)) * 1000 AS INTEGER), diagnostic = $1 WHERE run_id = $2 AND story_id = $3 AND agent_id = $4 AND outcome IS NULL",
+        ["Spawner shutdown released active loop claim", row.run_id, row.current_story_id, active.agentId],
+      );
       console.log(`[spawner] released active loop claim for shutdown: ${active.agentId} ${active.wfId}/${active.role}`);
       return;
     }
 
     await pgRun("UPDATE steps SET status = 'pending', updated_at = NOW() WHERE id = $1 AND status = 'running'", [active.stepId]);
+    await pgRun(
+      "UPDATE claim_log SET outcome = 'infra_retry', abandoned_at = NOW(), duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at::timestamptz)) * 1000 AS INTEGER), diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND story_id IS NULL AND agent_id = $4 AND outcome IS NULL",
+      ["Spawner shutdown released active single-step claim", row.run_id, row.step_id, active.agentId],
+    );
     console.log(`[spawner] released active step claim for shutdown: ${active.agentId} ${active.wfId}/${active.role}`);
   } catch (err) {
     console.warn(`[spawner] failed to release active claim during shutdown: ${String(err).slice(0, 300)}`);
