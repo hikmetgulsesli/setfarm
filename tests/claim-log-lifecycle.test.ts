@@ -68,10 +68,12 @@ describe("single-step claim_log lifecycle", () => {
     const source = claimSingleStepSource();
     assert.match(fullSource, /function isSuccessfulStepOutput\(output: string\): boolean/);
     assert.match(fullSource, /return status === "done" \|\| status === "skip"/);
-    assert.match(source, /const existingFailure = \(context\["previous_failure"\] \|\| ""\)\.trim\(\)/);
+    assert.match(fullSource, /function sanitizedRetryFailureText\(text: string\): string/);
+    assert.match(fullSource, /PR_NOT_MERGED\|PR_MISSING\|VERIFY_SYSTEM_SMOKE_FAILURE/);
+    assert.match(source, /const existingFailure = sanitizedRetryFailureText\(context\["previous_failure"\] \|\| ""\)/);
     assert.match(source, /const stepOutputLooksSuccessful = step\.output \? isSuccessfulStepOutput\(step\.output\) : false/);
-    assert.match(source, /const failureText = existingFailure \|\| \(!stepOutputLooksSuccessful \? \(step\.output \|\| ""\)\.trim\(\) : ""\)/);
-    assert.match(source, /if \(!existingFailure\) context\["previous_failure"\] = failureText/);
+    assert.match(source, /const failureText = existingFailure \|\| \(!stepOutputLooksSuccessful \? sanitizedRetryFailureText\(step\.output \|\| ""\) : ""\)/);
+    assert.match(source, /if \(context\["previous_failure"\] !== failureText\) context\["previous_failure"\] = failureText/);
     assert.match(source, /Skipped successful step output as retry previous_failure/);
     assert.doesNotMatch(source, /context\["previous_failure"\] = step\.output/);
   });

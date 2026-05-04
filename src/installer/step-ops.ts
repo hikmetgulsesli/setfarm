@@ -466,6 +466,21 @@ function isSuccessfulStepOutput(output: string): boolean {
   return status === "done" || status === "skip";
 }
 
+function sanitizedRetryFailureText(text: string): string {
+  if (!text.trim()) return "";
+  const status = normalizedStatusFromStepOutput(text);
+  if (status !== "done" && status !== "skip") return text.trim();
+
+  const lines = text.split(/\r?\n/);
+  const actionableStart = lines.findIndex((line) =>
+    /\b(REMAINING|FAILURES?|ERRORS?|ISSUES?|BLOCKERS?|FEEDBACK|PREVIOUS_FAILURE|PR_NOT_MERGED|PR_MISSING|VERIFY_SYSTEM_SMOKE_FAILURE|SYSTEM_SMOKE_FAILURE|QUALITY GATE|GUARDRAIL)\b/i.test(line),
+  );
+  if (actionableStart >= 0) {
+    return lines.slice(actionableStart).join("\n").trim();
+  }
+  return "";
+}
+
 /**
  * Wrapper: calls cleanup-ops.cleanupAbandonedSteps with advancePipeline callback.
  * Maintains the original zero-arg signature for backwards compatibility.
@@ -1558,13 +1573,13 @@ async function claimSingleStep(
   // real blocker (for example PR_NOT_MERGED). Do not replace that actionable
   // failure with a stale STATUS: done report.
   if (step.retry_count > 0) {
-    const existingFailure = (context["previous_failure"] || "").trim();
+    const existingFailure = sanitizedRetryFailureText(context["previous_failure"] || "");
     const stepOutputLooksSuccessful = step.output ? isSuccessfulStepOutput(step.output) : false;
-    const failureText = existingFailure || (!stepOutputLooksSuccessful ? (step.output || "").trim() : "");
+    const failureText = existingFailure || (!stepOutputLooksSuccessful ? sanitizedRetryFailureText(step.output || "") : "");
     const { classifyError } = await import("./error-taxonomy.js");
     if (failureText) {
       const classified = classifyError(failureText);
-      if (!existingFailure) context["previous_failure"] = failureText;
+      if (context["previous_failure"] !== failureText) context["previous_failure"] = failureText;
       if (!context["failure_category"]) context["failure_category"] = classified.category;
       if (!context["failure_suggestion"]) context["failure_suggestion"] = classified.suggestion;
       const source = existingFailure ? "context" : "step-output";
