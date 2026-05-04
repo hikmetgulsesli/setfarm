@@ -54,6 +54,19 @@ function claimImplementLoopSource(): string {
   return source.slice(start, end);
 }
 
+function previousStepSelectionBypassSource(source: string): string {
+  const marker = source.indexOf("SELECT 1 FROM steps prev");
+  assert.notEqual(marker, -1, "previous-step selection bypass source not found");
+  const start = source.lastIndexOf("AND NOT EXISTS", marker);
+  assert.notEqual(start, -1, "previous-step selection bypass start not found");
+  const endCandidates = [
+    source.indexOf("ORDER BY", marker),
+    source.indexOf("AND (\n          (", marker),
+  ].filter((idx) => idx > marker);
+  const end = endCandidates.length > 0 ? Math.min(...endCandidates) : Math.min(source.length, marker + 2200);
+  return source.slice(start, end);
+}
+
 describe("single-step claim_log lifecycle", () => {
   it("records single-step handoff before heavy preClaim and closes no-spawn exits", () => {
     const source = claimSingleStepSource();
@@ -150,16 +163,27 @@ describe("single-step claim_log lifecycle", () => {
   it("blocks verify-each claims while an active QA-FIX story is pending", () => {
     const claimSource = claimStepSelectionSource();
     const peekSource = peekStepSource();
+    const claimBypassSource = previousStepSelectionBypassSource(claimSource);
+    const peekBypassSource = previousStepSelectionBypassSource(peekSource);
     const activeQaFixGuard = /NOT EXISTS \(SELECT 1 FROM stories fix_st WHERE fix_st\.run_id = s\.run_id AND fix_st\.story_id LIKE 'QA-FIX-%' AND fix_st\.status IN \('pending', 'running'\)\)/;
 
-    assert.match(claimSource, activeQaFixGuard);
-    assert.match(peekSource, activeQaFixGuard);
+    assert.match(claimBypassSource, activeQaFixGuard);
+    assert.match(peekBypassSource, activeQaFixGuard);
     assert.match(peekSource, /prev\.step_index < s\.step_index/);
     assert.match(peekSource, /COALESCE\(prev\.loop_config::jsonb ->> 'verifyStep', ''\) = s\.step_id/);
-    assert.ok(
-      claimSource.indexOf("fix_st.story_id LIKE 'QA-FIX-%'") > claimSource.indexOf("COALESCE(prev.loop_config::jsonb ->> 'verifyStep', '') = s.step_id"),
-      "claimStep should only suppress the verify-each previous-step bypass when an active QA-FIX exists",
+    assert.match(
+      claimBypassSource,
+      /prev\.type = 'loop'[\s\S]*prev\.status = 'running'[\s\S]*NOT EXISTS \(SELECT 1 FROM stories fix_st WHERE fix_st\.run_id = s\.run_id AND fix_st\.story_id LIKE 'QA-FIX-%'/,
+      "claimStep must not let verify bypass a running implement loop while an active QA-FIX exists",
     );
+    assert.match(
+      peekBypassSource,
+      /prev\.type = 'loop'[\s\S]*prev\.status = 'running'[\s\S]*NOT EXISTS \(SELECT 1 FROM stories fix_st WHERE fix_st\.run_id = s\.run_id AND fix_st\.story_id LIKE 'QA-FIX-%'/,
+      "peekStep must not advertise verify work while implement is actively repairing QA-FIX",
+    );
+    const pendingBypassStart = claimBypassSource.indexOf("prev.status = 'pending'");
+    const pendingBypass = claimBypassSource.slice(pendingBypassStart);
+    assert.match(pendingBypass, /COALESCE\(prev\.loop_config::jsonb ->> 'verifyStep', ''\) = s\.step_id[\s\S]*fix_st\.story_id LIKE 'QA-FIX-%'/);
   });
 
   it("allows implement to claim active QA-FIX stories even when older stories are done", () => {

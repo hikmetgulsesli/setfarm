@@ -779,7 +779,11 @@ export async function peekStep(agentId: string, callerGatewayAgent?: string): Pr
            WHERE prev.run_id = s.run_id
              AND prev.step_index < s.step_index
              AND prev.status NOT IN ('done', 'failed', 'skipped', 'verified')
-             AND NOT (prev.type = 'loop' AND prev.status = 'running')
+             AND NOT (
+               prev.type = 'loop'
+               AND prev.status = 'running'
+               AND NOT EXISTS (SELECT 1 FROM stories fix_st WHERE fix_st.run_id = s.run_id AND fix_st.story_id LIKE 'QA-FIX-%' AND fix_st.status IN ('pending', 'running'))
+             )
              AND NOT (
                prev.type = 'loop'
                AND prev.status = 'pending'
@@ -1968,7 +1972,11 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
 	             WHERE prev.run_id = s.run_id
 	               AND prev.step_index < s.step_index
 	               AND prev.status NOT IN ('done', 'failed', 'skipped', 'verified')
-	               AND NOT (prev.type = 'loop' AND prev.status = 'running')
+	               AND NOT (
+	                 prev.type = 'loop'
+	                 AND prev.status = 'running'
+	                 AND NOT EXISTS (SELECT 1 FROM stories fix_st WHERE fix_st.run_id = s.run_id AND fix_st.story_id LIKE 'QA-FIX-%' AND fix_st.status IN ('pending', 'running'))
+	               )
 	               AND NOT (
 	                 prev.type = 'loop'
 	                 AND prev.status = 'pending'
