@@ -197,6 +197,29 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(source, /parseInt\(awaitingVerify\?\.cnt \|\| "0", 10\) > 0 && parseInt\(activeQaFix\?\.cnt \|\| "0", 10\) === 0/);
   });
 
+  it("prioritizes QA-FIX stories before normal pending stories", () => {
+    const source = repoSource();
+    const stepOps = stepOpsSource();
+    const nextPendingStart = source.indexOf("export async function getNextPendingStory(");
+    const claimNextStart = source.indexOf("export async function claimNextStory(");
+    const claimNextEnd = source.indexOf("// Wave 14 Bug L", claimNextStart);
+    const implementSelectionStart = stepOps.indexOf("// Find next pending story with dependency check");
+    const implementSelectionEnd = stepOps.indexOf("let nextStory: any | undefined;", implementSelectionStart);
+    assert.notEqual(nextPendingStart, -1, "getNextPendingStory source not found");
+    assert.notEqual(claimNextStart, -1, "claimNextStory source not found");
+    assert.notEqual(claimNextEnd, -1, "claimNextStory query block not found");
+    assert.notEqual(implementSelectionStart, -1, "implement story selection source not found");
+    assert.notEqual(implementSelectionEnd, -1, "implement story selection end not found");
+
+    const nextPendingSource = source.slice(nextPendingStart, claimNextStart);
+    const claimNextSource = source.slice(claimNextStart, claimNextEnd);
+    const implementSelectionSource = stepOps.slice(implementSelectionStart, implementSelectionEnd);
+    const qaFixOrder = /ORDER BY CASE WHEN story_id LIKE 'QA-FIX-%' THEN 0 ELSE 1 END, story_index ASC/;
+    assert.match(nextPendingSource, qaFixOrder);
+    assert.match(claimNextSource, qaFixOrder);
+    assert.match(implementSelectionSource, qaFixOrder);
+  });
+
   it("closes single-step failure claims by workflow step id, not step UUID", () => {
     const source = fs.readFileSync(path.join(root, "src", "installer", "step-fail.ts"), "utf-8");
     const singleFailureStart = source.indexOf("async function handleSingleStepFailurePG(");

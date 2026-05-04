@@ -2125,7 +2125,12 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
       // P2-01: Fake transaction removed — claim uses RETURNING for atomicity
 
       // Find next pending story with dependency check
-      const pendingStories = await pgQuery<any>("SELECT * FROM stories WHERE run_id = $1 AND status = 'pending' ORDER BY story_index ASC", [step.run_id]);
+      const pendingStories = await pgQuery<any>(
+        `SELECT * FROM stories
+         WHERE run_id = $1 AND status = 'pending'
+         ORDER BY CASE WHEN story_id LIKE 'QA-FIX-%' THEN 0 ELSE 1 END, story_index ASC`,
+        [step.run_id],
+      );
 
       let nextStory: any | undefined;
       for (const candidate of pendingStories) {

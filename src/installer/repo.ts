@@ -100,7 +100,13 @@ export async function findStoryByStatus(runId: string, status: string): Promise<
 }
 
 export async function getNextPendingStory(runId: string): Promise<any | undefined> {
-  return await pgGet("SELECT * FROM stories WHERE run_id = $1 AND status = 'pending' AND (abandoned_count IS NULL OR abandoned_count < 3) ORDER BY story_index ASC LIMIT 1", [runId]);
+  return await pgGet(
+    `SELECT * FROM stories
+     WHERE run_id = $1 AND status = 'pending' AND (abandoned_count IS NULL OR abandoned_count < 3)
+     ORDER BY CASE WHEN story_id LIKE 'QA-FIX-%' THEN 0 ELSE 1 END, story_index ASC
+     LIMIT 1`,
+    [runId],
+  );
 }
 
 export async function claimNextStory(runId: string, agentId: string, eligibleStoryId?: string): Promise<any | undefined> {
@@ -113,7 +119,7 @@ export async function claimNextStory(runId: string, agentId: string, eligibleSto
          FOR UPDATE SKIP LOCKED`
       : `SELECT id, story_id, title, story_index, output, retry_count, max_retries, abandoned_count, depends_on, scope_files, shared_files, scope_description, file_skeletons
          FROM stories WHERE run_id = $1 AND status = 'pending'
-         ORDER BY story_index ASC LIMIT 1 FOR UPDATE SKIP LOCKED`;
+         ORDER BY CASE WHEN story_id LIKE 'QA-FIX-%' THEN 0 ELSE 1 END, story_index ASC LIMIT 1 FOR UPDATE SKIP LOCKED`;
     const params = eligibleStoryId ? [runId, eligibleStoryId] : [runId];
     const rows = await sql.unsafe(query, params);
     const story = rows[0] as any;
