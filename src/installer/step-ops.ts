@@ -4042,6 +4042,12 @@ async function handleVerifyEachCompletion(
   const _pgChanged = await pgRun("UPDATE steps SET status = 'waiting', output = $1, updated_at = $2 WHERE id = $3 AND status = 'running'", [output, now(), verifyStep.id]);
   if (_pgChanged.changes === 0) { return { advanced: false, runCompleted: false }; }
   await recordStepTransition(verifyStep.id, verifyStep.run_id, "running", "waiting", undefined, "handleVerifyEachCompletion");
+  try {
+    await pgRun(
+      "UPDATE claim_log SET outcome = 'completed', duration_ms = EXTRACT(EPOCH FROM NOW() - claimed_at::timestamptz) * 1000 WHERE run_id = $1 AND step_id = $2 AND story_id IS NULL AND outcome IS NULL",
+      [verifyStep.run_id, verifyStep.step_id],
+    );
+  } catch (e) { logger.warn(`[claim-log] Failed to resolve verify_each completion: ${String(e)}`, { runId: verifyStep.run_id }); }
 
   // Identify the story being verified: output first (most reliable), then context (v1.5.53)
   let verifiedStoryId = parsedOutput["current_story_id"] || context["current_story_id"];

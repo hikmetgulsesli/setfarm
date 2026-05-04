@@ -14,6 +14,15 @@ function claimSingleStepSource(): string {
   return source.slice(start, end);
 }
 
+function handleVerifyEachSource(): string {
+  const source = fs.readFileSync(path.join(root, "src", "installer", "step-ops.ts"), "utf-8");
+  const start = source.indexOf("async function handleVerifyEachCompletion(");
+  const end = source.indexOf("async function autoVerifyDoneStories(", start);
+  assert.notEqual(start, -1, "handleVerifyEachCompletion source not found");
+  assert.notEqual(end, -1, "handleVerifyEachCompletion end marker not found");
+  return source.slice(start, end);
+}
+
 describe("single-step claim_log lifecycle", () => {
   it("records single-step handoff observability only after defer gates pass", () => {
     const source = claimSingleStepSource();
@@ -45,5 +54,20 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(source, /SELECT id FROM claim_log WHERE run_id = \$1 AND step_id = \$2 AND story_id IS NULL AND agent_id = \$3 AND outcome IS NULL LIMIT 1/);
     assert.match(source, /shouldRecordSingleStepClaim = !existingOpenClaim/);
     assert.match(source, /shouldRecordSingleStepClaim = true/);
+  });
+
+  it("resolves verify_each single-step claims when verify output is accepted", () => {
+    const source = handleVerifyEachSource();
+    const acceptedOutputGuard = source.indexOf("UPDATE steps SET status = 'waiting'");
+    const duplicateGuard = source.indexOf("if (_pgChanged.changes === 0)");
+    const claimUpdate = source.indexOf("UPDATE claim_log SET outcome = 'completed'");
+    const retryBranch = source.indexOf("if (status === \"retry\")");
+    const passedBranch = source.indexOf("// Verify PASSED");
+
+    assert.ok(claimUpdate > acceptedOutputGuard, "claim_log must close after verify output atomically transitions the step");
+    assert.ok(claimUpdate > duplicateGuard, "claim_log must not close on duplicate/late verify completions");
+    assert.ok(claimUpdate < retryBranch, "claim_log must close before retry branch returns");
+    assert.ok(claimUpdate < passedBranch, "claim_log must close before passed branch returns");
+    assert.match(source, /WHERE run_id = \$1 AND step_id = \$2 AND story_id IS NULL AND outcome IS NULL/);
   });
 });
