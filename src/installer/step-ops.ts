@@ -1537,6 +1537,27 @@ async function claimSingleStep(
   let shouldRecordSingleStepClaim = false;
   let shouldRecordSingleStepTransition = false;
 
+  async function recordSingleStepHandoff(reason: string): Promise<void> {
+    if (shouldRecordSingleStepTransition) {
+      await recordStepTransition(step.id, step.run_id, "pending", "running", agentId, reason);
+      emitEvent({ ts: now(), event: "step.running", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId });
+      shouldRecordSingleStepTransition = false;
+    }
+    if (shouldRecordSingleStepClaim) {
+      try {
+        await pgRun("INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at) VALUES ($1, $2, NULL, $3, $4)", [step.run_id, step.step_id, agentId, now()]);
+      } catch (e) { logger.warn(`[claim-log] Failed to record claim: ${String(e)}`, { runId: step.run_id }); }
+      shouldRecordSingleStepClaim = false;
+    }
+  }
+
+  async function closeSingleStepHandoff(outcome: string, diagnostic: string): Promise<void> {
+    await pgRun(
+      "UPDATE claim_log SET outcome = $1, abandoned_at = NOW(), duration_ms = LEAST(CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at::timestamptz)) * 1000 AS BIGINT), 2147483647)::INTEGER, diagnostic = $2 WHERE run_id = $3 AND step_id = $4 AND story_id IS NULL AND agent_id = $5 AND outcome IS NULL",
+      [outcome, diagnostic.slice(0, 1000), step.run_id, step.step_id, agentId],
+    );
+  }
+
   // Single-step idempotency: some models run `step claim` twice and overwrite
   // their claim file. If this role already owns a running non-loop step, reissue
   // the same claim instead of returning NO_WORK and orphaning the step.
@@ -1714,6 +1735,11 @@ async function claimSingleStep(
   // via the step-module claim delegation block below.)
   // (Plan step reminder is owned by the plan module's injectContext.)
 
+  // Heavy module preClaim work can run before an agent process exists (for
+  // example design Stitch generation). Record the claim before that point so
+  // LiveDB/dashboard can see real activity instead of a bare running step.
+  await recordSingleStepHandoff("claimSingleStep:preClaim");
+
   // Step module claim-side delegation (v2026-04-14). Order:
   //   1. preClaim — heavy work BEFORE agent claims (Stitch API for design step)
   //   2. injectContext — inject step-specific context vars
@@ -1753,6 +1779,8 @@ async function claimSingleStep(
           const postPreClaimStep = await pgGet<{ status: string }>("SELECT status FROM steps WHERE id = $1", [step.id]);
           if (postPreClaimStep && postPreClaimStep.status !== "running") {
             logger.info(`[step-module] ${_stepModule.id} preClaim changed step status to ${postPreClaimStep.status}; skipping agent spawn`, { runId: step.run_id, stepId: step.step_id });
+            const outcome = postPreClaimStep.status === "cancelled" ? "cancelled" : postPreClaimStep.status === "failed" ? "failed" : "infra_retry";
+            await closeSingleStepHandoff(outcome, `preClaim changed step status to ${postPreClaimStep.status}; no agent spawned`);
             return { found: false };
           }
         } catch (_pce) {
@@ -1809,28 +1837,19 @@ async function claimSingleStep(
       emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: reason });
       emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: reason });
       scheduleRunCronTeardown(step.run_id);
+      await closeSingleStepHandoff("failed", reason + " — failing run (retry exhausted)");
     } else {
       // First occurrence — retry step (possible WAL lag)
       await pgRun("UPDATE steps SET status = 'pending', retry_count = retry_count + 1, output = $1, updated_at = $2 WHERE id = $3", [reason + " — retrying once", now(), step.id]);
       logger.info(`[missing-input] Step ${step.step_id} will retry — possible WAL lag`, { runId: step.run_id });
+      await closeSingleStepHandoff("infra_retry", reason + " — retrying once");
     }
     return { found: false };
   }
 
-  // Record observability only after every single-step defer/no-work gate has
-  // passed. PR review delay, auto-verify, module preClaim, and missing-input
-  // guards can all legitimately return NO_WORK after the DB step is touched;
-  // logging before this point leaves false running events or open claims
-  // without a spawned agent.
-  if (shouldRecordSingleStepTransition) {
-    await recordStepTransition(step.id, step.run_id, "pending", "running", agentId, "claimSingleStep");
-    emitEvent({ ts: now(), event: "step.running", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId });
-  }
-  if (shouldRecordSingleStepClaim) {
-    try {
-      await pgRun("INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at) VALUES ($1, $2, NULL, $3, $4)", [step.run_id, step.step_id, agentId, now()]);
-    } catch (e) { logger.warn(`[claim-log] Failed to record claim: ${String(e)}`, { runId: step.run_id }); }
-  }
+  // Ensure observability has been recorded before returning an agent handoff.
+  // Usually this is a no-op because heavy preClaim already opened the handoff.
+  await recordSingleStepHandoff("claimSingleStep");
 
   return {
     found: true,

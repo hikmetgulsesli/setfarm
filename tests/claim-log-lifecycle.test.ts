@@ -28,28 +28,37 @@ function handleVerifyEachSource(): string {
 }
 
 describe("single-step claim_log lifecycle", () => {
-  it("records single-step handoff observability only after defer gates pass", () => {
+  it("records single-step handoff before heavy preClaim and closes no-spawn exits", () => {
     const source = claimSingleStepSource();
     const claimInsert = source.indexOf("INSERT INTO claim_log");
     const transitionRecord = source.indexOf("recordStepTransition(step.id, step.run_id, \"pending\", \"running\"");
     const runningEvent = source.indexOf("event: \"step.running\"");
     const verifyContextGate = source.indexOf("injectVerifyContext");
     const reviewDelayGate = source.indexOf("PR REVIEW DELAY GATE");
-    const modulePreClaimGate = source.indexOf("preClaim changed step status");
+    const preClaimHandoff = source.indexOf("recordSingleStepHandoff(\"claimSingleStep:preClaim\")");
+    const finalHandoff = source.indexOf("recordSingleStepHandoff(\"claimSingleStep\")");
+    const modulePreClaimCall = source.indexOf("await _stepModule.preClaim");
+    const modulePreClaimNoSpawnGate = source.indexOf("preClaim changed step status");
     const missingInputGate = source.indexOf("MISSING_INPUT_GUARD");
+    const missingInputRetryClose = source.indexOf("closeSingleStepHandoff(\"infra_retry\"");
+    const missingInputFailClose = source.indexOf("closeSingleStepHandoff(\"failed\"");
     const handoffReturn = source.indexOf("return {\n    found: true");
 
-    assert.ok(claimInsert > verifyContextGate, "claim_log insert must run after verify auto/defer gate");
-    assert.ok(claimInsert > reviewDelayGate, "claim_log insert must run after PR review delay gate");
-    assert.ok(claimInsert > modulePreClaimGate, "claim_log insert must run after module preClaim no-spawn gate");
-    assert.ok(claimInsert > missingInputGate, "claim_log insert must run after missing-input no-spawn gate");
-    assert.ok(claimInsert < handoffReturn, "claim_log insert must run before handoff return");
-    assert.ok(transitionRecord > missingInputGate, "step transition must run only after no-spawn gates pass");
-    assert.ok(transitionRecord < handoffReturn, "step transition must run before handoff return");
-    assert.ok(runningEvent > missingInputGate, "step.running event must run only after no-spawn gates pass");
-    assert.ok(runningEvent < handoffReturn, "step.running event must run before handoff return");
-    assert.doesNotMatch(source.slice(0, missingInputGate), /INSERT INTO claim_log/);
-    assert.doesNotMatch(source.slice(0, missingInputGate), /event: "step\.running"/);
+    assert.notEqual(claimInsert, -1, "recordSingleStepHandoff must insert claim_log rows");
+    assert.notEqual(transitionRecord, -1, "recordSingleStepHandoff must record a step transition");
+    assert.notEqual(runningEvent, -1, "recordSingleStepHandoff must emit step.running");
+    assert.ok(preClaimHandoff > reviewDelayGate, "preClaim handoff must run after earlier defer gates");
+    assert.ok(preClaimHandoff > verifyContextGate, "preClaim handoff must run after verify auto/defer gate");
+    assert.ok(preClaimHandoff < modulePreClaimCall, "preClaim handoff must run before heavy module preClaim work");
+    assert.ok(finalHandoff > missingInputGate, "final handoff must remain after no-spawn guards as an idempotent fallback");
+    assert.ok(modulePreClaimNoSpawnGate > modulePreClaimCall, "preClaim no-spawn gate must be checked after preClaim");
+    assert.ok(missingInputRetryClose > missingInputGate, "missing-input retry path must close the preClaim handoff");
+    assert.ok(missingInputFailClose > missingInputGate, "missing-input failure path must close the preClaim handoff");
+    assert.ok(finalHandoff < handoffReturn, "final handoff must run before handoff return");
+    assert.match(source, /preClaim changed step status[\s\S]*closeSingleStepHandoff\(outcome/);
+    assert.doesNotMatch(source.slice(0, reviewDelayGate), /await recordSingleStepHandoff/);
+    assert.match(source, /shouldRecordSingleStepClaim = false/);
+    assert.match(source, /shouldRecordSingleStepTransition = false/);
   });
 
   it("does not duplicate idempotent running single-step claims", () => {
