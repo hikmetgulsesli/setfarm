@@ -63,12 +63,12 @@ describe("07-verify step module", () => {
   });
 
   it("source prompt keeps verify as a gatekeeper instead of a fixer", () => {
-    assert.ok(verifyPromptSource.includes("kod düzeltmez"));
+    assert.ok(verifyPromptSource.includes("does not fix code"));
     assert.ok(verifyPromptSource.includes("git commit"));
     assert.ok(verifyPromptSource.includes("git push"));
     assert.ok(verifyPromptSource.includes("STATUS: retry"));
-    assert.ok(verifyPromptSource.includes("STATUS: done` sadece PR gerçekten `MERGED`"));
-    assert.ok(verifyPromptSource.includes("8 dakika"));
+    assert.ok(verifyPromptSource.includes("STATUS: done` is allowed only after the PR is actually `MERGED`"));
+    assert.ok(verifyPromptSource.includes("8 minutes"));
   });
 
   it("buildPrompt stays within maxPromptSize for typical context", () => {
