@@ -164,6 +164,7 @@ export async function pgClose(): Promise<void> {
 /** ISO timestamp — single source of truth for all modules */
 export const now = (): string => new Date().toISOString();
 
-// P4-05: Graceful shutdown
-process.on("SIGTERM", () => { pgClose().catch(() => {}); });
-process.on("SIGINT", () => { pgClose().catch(() => {}); });
+export function installPgSignalHandlers(): void {
+  process.on("SIGTERM", () => { pgClose().catch(() => {}); });
+  process.on("SIGINT", () => { pgClose().catch(() => {}); });
+}

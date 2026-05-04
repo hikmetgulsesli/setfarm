@@ -126,8 +126,25 @@ describe("spawner gateway recovery wiring", () => {
 
   it("runs PostgreSQL migration guards before startup recovery", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
-    assert.match(source, /import \{ pgGet, pgMigrate, pgQuery, pgRun \} from "\.\/db-pg\.js"/);
+    assert.match(source, /import \{ pgClose, pgGet, pgMigrate, pgQuery, pgRun \} from "\.\/db-pg\.js"/);
     assert.match(source, /await pgMigrate\(\);\s*killStartupOrphanSpawnerAgents\(\);\s*await failStaleRunningClaimsFromPreviousSpawner\(\);/);
+  });
+
+  it("keeps PostgreSQL shutdown ordering under spawner control", () => {
+    const dbSource = fs.readFileSync(path.join(root, "src", "db-pg.ts"), "utf-8");
+    const spawnerSource = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    const shutdownStart = spawnerSource.indexOf("const shutdown = async () =>");
+    const shutdownEnd = spawnerSource.indexOf("process.on(\"SIGTERM\"", shutdownStart);
+    assert.notEqual(shutdownStart, -1, "async shutdown handler not found");
+    assert.notEqual(shutdownEnd, -1, "shutdown block end not found");
+    const shutdownSource = spawnerSource.slice(shutdownStart, shutdownEnd);
+
+    assert.match(dbSource, /export function installPgSignalHandlers\(\): void \{/);
+    assert.match(dbSource, /process\.on\("SIGTERM", \(\) => \{/);
+    assert.doesNotMatch(dbSource, /\/\/ P4-05: Graceful shutdown\nprocess\.on\("SIGTERM"/);
+    assert.match(shutdownSource, /await releaseActiveProcessForShutdown\(active\)/);
+    assert.match(shutdownSource, /await pgClose\(\)/);
+    assert.ok(shutdownSource.indexOf("await releaseActiveProcessForShutdown(active)") < shutdownSource.indexOf("await pgClose()"));
   });
 
   it("closes active claim_log rows when shutdown releases a running step", () => {
@@ -138,12 +155,13 @@ describe("spawner gateway recovery wiring", () => {
     assert.notEqual(releaseEnd, -1, "releaseActiveProcessForShutdown end not found");
     const releaseSource = source.slice(releaseStart, releaseEnd);
 
-    assert.match(releaseSource, /SELECT run_id, step_id, type, current_story_id FROM steps/);
+    assert.match(releaseSource, /LEFT JOIN stories st ON st\.id = s\.current_story_id/);
     assert.match(releaseSource, /UPDATE claim_log SET outcome = 'infra_retry'/);
     assert.match(releaseSource, /Spawner shutdown released active single-step claim/);
     assert.match(releaseSource, /step_id = \$3 AND story_id IS NULL AND agent_id = \$4 AND outcome IS NULL/);
     assert.match(releaseSource, /Spawner shutdown released active loop claim/);
-    assert.match(releaseSource, /story_id = \$3 AND agent_id = \$4 AND outcome IS NULL/);
+    assert.match(releaseSource, /step_id = \$3 AND story_id = \$4 AND agent_id = \$5 AND outcome IS NULL/);
+    assert.doesNotMatch(releaseSource, /story_id = \$3 AND agent_id = \$4 AND outcome IS NULL/);
   });
 
   it("enforces one open claim per run step story and agent at the database layer", () => {

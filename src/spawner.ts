@@ -8,7 +8,7 @@ import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_pro
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { pgGet, pgMigrate, pgQuery, pgRun } from "./db-pg.js";
+import { pgClose, pgGet, pgMigrate, pgQuery, pgRun } from "./db-pg.js";
 import { loadWorkflowSpec } from "./installer/workflow-spec.js";
 import { resolveWorkflowDir, resolveSetfarmCli } from "./installer/paths.js";
 import { claimStep, completeStep } from "./installer/step-ops.js";
@@ -1517,8 +1517,12 @@ async function failStaleRunningClaimsFromPreviousSpawner(): Promise<void> {
 async function releaseActiveProcessForShutdown(active: ActiveProcess): Promise<void> {
   if (!active.stepId) return;
   try {
-    const row = await pgGet<{ run_id: string; step_id: string; type: string; current_story_id: string | null }>(
-      "SELECT run_id, step_id, type, current_story_id FROM steps WHERE id = $1 AND status = 'running' LIMIT 1",
+    const row = await pgGet<{ run_id: string; step_id: string; type: string; current_story_id: string | null; story_id: string | null }>(
+      `SELECT s.run_id, s.step_id, s.type, s.current_story_id, st.story_id
+       FROM steps s
+       LEFT JOIN stories st ON st.id = s.current_story_id
+       WHERE s.id = $1 AND s.status = 'running'
+       LIMIT 1`,
       [active.stepId],
     );
     if (!row) return;
@@ -1532,8 +1536,8 @@ async function releaseActiveProcessForShutdown(active: ActiveProcess): Promise<v
         [active.stepId],
       );
       await pgRun(
-        "UPDATE claim_log SET outcome = 'infra_retry', abandoned_at = NOW(), duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at::timestamptz)) * 1000 AS INTEGER), diagnostic = $1 WHERE run_id = $2 AND story_id = $3 AND agent_id = $4 AND outcome IS NULL",
-        ["Spawner shutdown released active loop claim", row.run_id, row.current_story_id, active.agentId],
+        "UPDATE claim_log SET outcome = 'infra_retry', abandoned_at = NOW(), duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at::timestamptz)) * 1000 AS INTEGER), diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND story_id = $4 AND agent_id = $5 AND outcome IS NULL",
+        ["Spawner shutdown released active loop claim", row.run_id, row.step_id, row.story_id, active.agentId],
       );
       console.log(`[spawner] released active loop claim for shutdown: ${active.agentId} ${active.wfId}/${active.role}`);
       return;
@@ -1775,13 +1779,14 @@ async function main() {
   await cleanupRunningRunEphemeraOnStartup();
   await restartGatewayAfterOpenClawCleanup("startup", cleanupStaleSetfarmOpenClawTaskRecords("startup"));
 
-  const shutdown = () => {
+  const shutdown = async () => {
     shuttingDown = true;
     console.log(`[spawner] Shutting down (${activeProcesses.size} active)`);
     for (const [, active] of activeProcesses) {
-      void releaseActiveProcessForShutdown(active);
+      await releaseActiveProcessForShutdown(active);
       terminateActiveProcess(active, "spawner-shutdown");
     }
+    await pgClose();
     try { fs.unlinkSync(PID_FILE); } catch {}
     setTimeout(() => process.exit(0), 5000);
   };
