@@ -15,9 +15,11 @@ function claimSingleStepSource(): string {
 }
 
 describe("single-step claim_log lifecycle", () => {
-  it("records a claim only after single-step defer gates pass", () => {
+  it("records single-step handoff observability only after defer gates pass", () => {
     const source = claimSingleStepSource();
     const claimInsert = source.indexOf("INSERT INTO claim_log");
+    const transitionRecord = source.indexOf("recordStepTransition(step.id, step.run_id, \"pending\", \"running\"");
+    const runningEvent = source.indexOf("event: \"step.running\"");
     const verifyContextGate = source.indexOf("injectVerifyContext");
     const reviewDelayGate = source.indexOf("PR REVIEW DELAY GATE");
     const modulePreClaimGate = source.indexOf("preClaim changed step status");
@@ -29,7 +31,12 @@ describe("single-step claim_log lifecycle", () => {
     assert.ok(claimInsert > modulePreClaimGate, "claim_log insert must run after module preClaim no-spawn gate");
     assert.ok(claimInsert > missingInputGate, "claim_log insert must run after missing-input no-spawn gate");
     assert.ok(claimInsert < handoffReturn, "claim_log insert must run before handoff return");
+    assert.ok(transitionRecord > missingInputGate, "step transition must run only after no-spawn gates pass");
+    assert.ok(transitionRecord < handoffReturn, "step transition must run before handoff return");
+    assert.ok(runningEvent > missingInputGate, "step.running event must run only after no-spawn gates pass");
+    assert.ok(runningEvent < handoffReturn, "step.running event must run before handoff return");
     assert.doesNotMatch(source.slice(0, missingInputGate), /INSERT INTO claim_log/);
+    assert.doesNotMatch(source.slice(0, missingInputGate), /event: "step\.running"/);
   });
 
   it("does not duplicate idempotent running single-step claims", () => {

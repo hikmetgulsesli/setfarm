@@ -1497,6 +1497,7 @@ async function claimSingleStep(
   db: any,
 ): Promise<ClaimResult> {
   let shouldRecordSingleStepClaim = false;
+  let shouldRecordSingleStepTransition = false;
 
   // Single-step idempotency: some models run `step claim` twice and overwrite
   // their claim file. If this role already owns a running non-loop step, reissue
@@ -1517,10 +1518,9 @@ async function claimSingleStep(
       // Already claimed by another cron — return no work
       return { found: false };
     }
-    await recordStepTransition(step.id, step.run_id, "pending", "running", agentId, "claimSingleStep");
-    emitEvent({ ts: now(), event: "step.running", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId });
     logger.info(`Step claimed by ${agentId}`, { runId: step.run_id, stepId: step.step_id });
     shouldRecordSingleStepClaim = true;
+    shouldRecordSingleStepTransition = true;
   }
 
   // Inject previous failure context so agent knows what to fix on retry
@@ -1756,7 +1756,12 @@ async function claimSingleStep(
   // Record observability only after every single-step defer/no-work gate has
   // passed. PR review delay, auto-verify, module preClaim, and missing-input
   // guards can all legitimately return NO_WORK after the DB step is touched;
-  // logging before this point leaves open claims without a spawned agent.
+  // logging before this point leaves false running events or open claims
+  // without a spawned agent.
+  if (shouldRecordSingleStepTransition) {
+    await recordStepTransition(step.id, step.run_id, "pending", "running", agentId, "claimSingleStep");
+    emitEvent({ ts: now(), event: "step.running", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId });
+  }
   if (shouldRecordSingleStepClaim) {
     try {
       await pgRun("INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at) VALUES ($1, $2, NULL, $3, $4)", [step.run_id, step.step_id, agentId, now()]);
