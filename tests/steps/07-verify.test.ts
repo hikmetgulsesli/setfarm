@@ -1,8 +1,15 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { verifyModule } from "../../dist/installer/steps/07-verify/module.js";
 import { normalize, validateOutput } from "../../dist/installer/steps/07-verify/guards.js";
 import type { ParsedOutput } from "../../dist/installer/steps/types.js";
+
+const verifyPromptSource = readFileSync(
+  resolve(import.meta.dirname, "../../src/installer/steps/07-verify/prompt.md"),
+  "utf-8"
+);
 
 describe("07-verify step module", () => {
   it("module metadata is correct", () => {
@@ -53,6 +60,15 @@ describe("07-verify step module", () => {
   it("buildPrompt default PREFLIGHT notice when analysis not run", () => {
     const prompt = verifyModule.buildPrompt({ runId: "r1", task: "t", context: {} });
     assert.ok(prompt.includes("(no pre-flight run)"));
+  });
+
+  it("source prompt keeps verify as a gatekeeper instead of a fixer", () => {
+    assert.ok(verifyPromptSource.includes("kod düzeltmez"));
+    assert.ok(verifyPromptSource.includes("git commit"));
+    assert.ok(verifyPromptSource.includes("git push"));
+    assert.ok(verifyPromptSource.includes("STATUS: retry"));
+    assert.ok(verifyPromptSource.includes("STATUS: done` sadece PR gerçekten `MERGED`"));
+    assert.ok(verifyPromptSource.includes("8 dakika"));
   });
 
   it("buildPrompt stays within maxPromptSize for typical context", () => {

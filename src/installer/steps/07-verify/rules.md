@@ -1,5 +1,17 @@
 # Verify Agent Kuralları
 
+## Rol sınırı
+
+Verify agent kod düzeltmez. Kaynak dosya, test, CSS, config, package veya asset
+dosyası değiştirirse bu rol ihlalidir. Gerçek bir kusur bulduğunda doğrudan
+`STATUS: retry` döndürür; developer/implement adımı toplu fix yapar.
+
+Merge hariç yazma işlemi yapma. İzinli tek mutasyonlar:
+
+- PR base'i `main` değilse retarget etmek.
+- Tamamen temiz PR'ı merge etmek.
+- Merge öncesi kısa doğrulama yorumu yazmak.
+
 ## Önce oku
 
 1. `PREFLIGHT_ANALYSIS` içinde gerçek ESLint/tsc hataları varsa: blocking issue. `ESLint couldn't find an eslint.config` / config-yok durumu blocking değildir; config ekleme.
@@ -14,6 +26,13 @@
 - Test dosyası eksik (proje test gerektiriyorsa) veya testler çalışmıyor
 - Design token kullanım oranı düşük (inline hex/rgb/px fazla)
 - Erişilebilirlik: focus ring, ARIA, keyboard nav eksikliği
+- `PLAYWRIGHT_REPORT` içinde dead button, broken link, route drift, empty page,
+  overlay trap veya screenshot-visible layout break
+- PR açık ama merge koşulları sağlanmıyor: failing check, unresolved review,
+  conflict, dirty merge state veya PR branch'inde doğrulanmamış değişiklik
+
+Retry verirken kodu düzeltmeye çalışma; implement adımı için net dosya/semptom
+listesi üret.
 
 ## Pass (STATUS: done) için zorunlu
 
@@ -21,6 +40,10 @@
 - `npm run build` hatasız (preflight_errors boş)
 - TypeScript strict mode'da tsc temiz
 - Story branch ile main arasında sadece kendi scope_files'ında değişiklik (SCOPE_BLEED yok)
+- PR gerçekten `MERGED`
+- Local `main` `origin/main` ile güncel ve worktree temiz
+
+`STATUS: done` PR açıkken, merge denenmeden veya merge başarısızken yasaktır.
 
 ## Fail (STATUS: fail) sınırlı
 
