@@ -1496,10 +1496,17 @@ async function claimSingleStep(
   context: Record<string, string>,
   db: any,
 ): Promise<ClaimResult> {
+  let shouldRecordSingleStepClaim = false;
+
   // Single-step idempotency: some models run `step claim` twice and overwrite
   // their claim file. If this role already owns a running non-loop step, reissue
   // the same claim instead of returning NO_WORK and orphaning the step.
   if (step.step_status === "running") {
+    const existingOpenClaim = await pgGet<{ id: number }>(
+      "SELECT id FROM claim_log WHERE run_id = $1 AND step_id = $2 AND story_id IS NULL AND agent_id = $3 AND outcome IS NULL LIMIT 1",
+      [step.run_id, step.step_id, agentId],
+    );
+    shouldRecordSingleStepClaim = !existingOpenClaim;
     logger.info(`[claim-idempotent] Re-issued running step ${step.step_id} to ${agentId}`, { runId: step.run_id, stepId: step.step_id });
   } else {
     // Item 6: Single step — atomic claim with changes check to prevent race condition
@@ -1513,11 +1520,7 @@ async function claimSingleStep(
     await recordStepTransition(step.id, step.run_id, "pending", "running", agentId, "claimSingleStep");
     emitEvent({ ts: now(), event: "step.running", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId });
     logger.info(`Step claimed by ${agentId}`, { runId: step.run_id, stepId: step.step_id });
-
-    // v1.5.50: Record single step claim in claim_log
-    try {
-      await pgRun("INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at) VALUES ($1, $2, NULL, $3, $4)", [step.run_id, step.step_id, agentId, now()]);
-    } catch (e) { logger.warn(`[claim-log] Failed to record claim: ${String(e)}`, { runId: step.run_id }); }
+    shouldRecordSingleStepClaim = true;
   }
 
   // Inject previous failure context so agent knows what to fix on retry
@@ -1748,6 +1751,16 @@ async function claimSingleStep(
       logger.info(`[missing-input] Step ${step.step_id} will retry — possible WAL lag`, { runId: step.run_id });
     }
     return { found: false };
+  }
+
+  // Record observability only after every single-step defer/no-work gate has
+  // passed. PR review delay, auto-verify, module preClaim, and missing-input
+  // guards can all legitimately return NO_WORK after the DB step is touched;
+  // logging before this point leaves open claims without a spawned agent.
+  if (shouldRecordSingleStepClaim) {
+    try {
+      await pgRun("INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at) VALUES ($1, $2, NULL, $3, $4)", [step.run_id, step.step_id, agentId, now()]);
+    } catch (e) { logger.warn(`[claim-log] Failed to record claim: ${String(e)}`, { runId: step.run_id }); }
   }
 
   return {
