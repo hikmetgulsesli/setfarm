@@ -166,6 +166,11 @@ describe("spawner gateway recovery wiring", () => {
 
   it("enforces one open claim per run step story and agent at the database layer", () => {
     const source = fs.readFileSync(path.join(root, "src", "db-pg.ts"), "utf-8");
+    assert.match(source, /LEAST\(CAST\(EXTRACT\(EPOCH FROM \(NOW\(\) - cl\.claimed_at::timestamptz\)\) \* 1000 AS BIGINT\), 2147483647\)::INTEGER/);
+    assert.match(source, /pgMigrate closed orphan open claim without parent run/);
+    assert.match(source, /NOT EXISTS \(SELECT 1 FROM runs r WHERE r\.id = cl\.run_id\)/);
+    assert.match(source, /pgMigrate closed open claim for terminal run/);
+    assert.match(source, /r\.status NOT IN \('running', 'resuming'\)/);
     assert.match(source, /pgMigrate deduped duplicate open single-step claim/);
     assert.match(source, /PARTITION BY run_id, step_id, agent_id/);
     assert.match(source, /pgMigrate deduped duplicate open story claim/);

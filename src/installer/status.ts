@@ -102,7 +102,7 @@ async function cancelActiveRunState(run: RunInfo): Promise<{ cancelledSteps: num
     [now(), run.id]
   );
   const claimResult = await pgRun(
-    "UPDATE claim_log SET outcome = 'cancelled', abandoned_at = $1, duration_ms = CAST(EXTRACT(EPOCH FROM ($1::timestamptz - claimed_at::timestamptz)) * 1000 AS INTEGER), diagnostic = 'Workflow cancelled by user' WHERE run_id = $2 AND outcome IS NULL",
+    "UPDATE claim_log SET outcome = 'cancelled', abandoned_at = $1, duration_ms = LEAST(CAST(EXTRACT(EPOCH FROM ($1::timestamptz - claimed_at::timestamptz)) * 1000 AS BIGINT), 2147483647)::INTEGER, diagnostic = 'Workflow cancelled by user' WHERE run_id = $2 AND outcome IS NULL",
     [now(), run.id]
   );
   for (const s of activeStepsForCancel) {

@@ -88,6 +88,26 @@ export async function pgMigrate(): Promise<void> {
     await s`CREATE INDEX IF NOT EXISTS idx_steps_agent_status ON steps(agent_id, status) WHERE status IN ('pending', 'running')`;
     await s`CREATE INDEX IF NOT EXISTS idx_runs_status_dev ON runs(status, assigned_developer) WHERE status = 'running'`;
     await s`
+      UPDATE claim_log cl
+      SET outcome = 'abandoned',
+          abandoned_at = NOW(),
+          duration_ms = LEAST(CAST(EXTRACT(EPOCH FROM (NOW() - cl.claimed_at::timestamptz)) * 1000 AS BIGINT), 2147483647)::INTEGER,
+          diagnostic = 'pgMigrate closed orphan open claim without parent run'
+      WHERE cl.outcome IS NULL
+        AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.id = cl.run_id)
+    `;
+    await s`
+      UPDATE claim_log cl
+      SET outcome = CASE WHEN r.status = 'cancelled' THEN 'cancelled' ELSE 'abandoned' END,
+          abandoned_at = NOW(),
+          duration_ms = LEAST(CAST(EXTRACT(EPOCH FROM (NOW() - cl.claimed_at::timestamptz)) * 1000 AS BIGINT), 2147483647)::INTEGER,
+          diagnostic = 'pgMigrate closed open claim for terminal run ' || r.status
+      FROM runs r
+      WHERE cl.run_id = r.id
+        AND cl.outcome IS NULL
+        AND r.status NOT IN ('running', 'resuming')
+    `;
+    await s`
       WITH ranked AS (
         SELECT id,
                ROW_NUMBER() OVER (
@@ -100,7 +120,7 @@ export async function pgMigrate(): Promise<void> {
       UPDATE claim_log cl
       SET outcome = 'infra_retry',
           abandoned_at = NOW(),
-          duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - cl.claimed_at::timestamptz)) * 1000 AS INTEGER),
+          duration_ms = LEAST(CAST(EXTRACT(EPOCH FROM (NOW() - cl.claimed_at::timestamptz)) * 1000 AS BIGINT), 2147483647)::INTEGER,
           diagnostic = 'pgMigrate deduped duplicate open single-step claim'
       FROM ranked r
       WHERE cl.id = r.id AND r.rn > 1
@@ -118,7 +138,7 @@ export async function pgMigrate(): Promise<void> {
       UPDATE claim_log cl
       SET outcome = 'infra_retry',
           abandoned_at = NOW(),
-          duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - cl.claimed_at::timestamptz)) * 1000 AS INTEGER),
+          duration_ms = LEAST(CAST(EXTRACT(EPOCH FROM (NOW() - cl.claimed_at::timestamptz)) * 1000 AS BIGINT), 2147483647)::INTEGER,
           diagnostic = 'pgMigrate deduped duplicate open story claim'
       FROM ranked r
       WHERE cl.id = r.id AND r.rn > 1

@@ -213,6 +213,31 @@ describe("stopWorkflow", () => {
     assert.equal(openClaims?.cnt, "0");
   });
 
+  it("clamps cancelled claim durations to integer range", async () => {
+    const runId = crypto.randomUUID();
+    testRunIds.push(runId);
+    await createTestRun({
+      runId,
+      workflowId: "test-wf-old-claim-cleanup",
+      status: "cancelled",
+      steps: [{ stepId: "verify", status: "cancelled" }],
+    });
+    await pgRun(
+      "INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at) VALUES ($1, 'verify', NULL, 'feature-dev_reviewer', NOW() - INTERVAL '90 days')",
+      [runId]
+    );
+
+    const result = await stopWorkflow(runId);
+    assert.equal(result.status, "ok");
+
+    const claim = await pgGet<{ outcome: string | null; duration_ms: number | null }>(
+      "SELECT outcome, duration_ms FROM claim_log WHERE run_id = $1 AND step_id = 'verify'",
+      [runId]
+    );
+    assert.equal(claim?.outcome, "cancelled");
+    assert.equal(claim?.duration_ms, 2147483647);
+  });
+
   it("supports prefix matching with first 8 chars of UUID", async () => {
     const runId = crypto.randomUUID();
     testRunIds.push(runId);
