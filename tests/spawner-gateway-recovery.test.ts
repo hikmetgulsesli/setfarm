@@ -40,17 +40,27 @@ describe("spawner gateway recovery wiring", () => {
     const stepPendingStart = source.indexOf("async function handleStepPending(");
     const storyPendingStart = source.indexOf("async function handleStoryPending(");
     const storyPendingEnd = source.indexOf("async function advanceCompletedVerifyEachLoops", storyPendingStart);
+    const pollStart = source.indexOf("async function pollForPendingWork(");
+    const pollEnd = source.indexOf("async function main()", pollStart);
     assert.notEqual(stepPendingStart, -1, "handleStepPending source not found");
     assert.notEqual(storyPendingStart, -1, "handleStoryPending source not found");
     assert.notEqual(storyPendingEnd, -1, "handleStoryPending end not found");
+    assert.notEqual(pollStart, -1, "pollForPendingWork source not found");
+    assert.notEqual(pollEnd, -1, "pollForPendingWork end not found");
     const stepPendingSource = source.slice(stepPendingStart, storyPendingStart);
     const storyPendingSource = source.slice(storyPendingStart, storyPendingEnd);
+    const pollSource = source.slice(pollStart, pollEnd);
 
     for (const block of [stepPendingSource, storyPendingSource]) {
       assert.match(block, /const activeQaFix = await pgGet/);
       assert.match(block, /story_id LIKE 'QA-FIX-%'/);
       assert.match(block, /parseInt\(awaitingVerify\?\.cnt \|\| "0", 10\) > 0 && parseInt\(activeQaFix\?\.cnt \|\| "0", 10\) === 0/);
     }
+
+    const pollQaFixGuards = pollSource.match(/story_id LIKE 'QA-FIX-%'/g) || [];
+    assert.equal(pollQaFixGuards.length, 2, "polling queries must keep active QA-FIX work visible");
+    assert.match(pollSource, /fix_st\.run_id = s\.run_id/);
+    assert.match(pollSource, /fix_st\.status IN \('pending', 'running'\)/);
   });
 
   it("does not claim gateway cron recreation in event-driven spawner mode", () => {

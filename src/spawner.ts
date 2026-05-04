@@ -1740,6 +1740,12 @@ async function pollForPendingWork() {
              SELECT 1 FROM stories done_st
              WHERE done_st.run_id = s.run_id AND done_st.status = 'done'
            )
+           AND NOT EXISTS (
+             SELECT 1 FROM stories fix_st
+             WHERE fix_st.run_id = s.run_id
+               AND fix_st.story_id LIKE 'QA-FIX-%'
+               AND fix_st.status IN ('pending', 'running')
+           )
          )
        ORDER BY s.step_index ASC
        LIMIT 5`
@@ -1768,6 +1774,12 @@ async function pollForPendingWork() {
              AND EXISTS (
                SELECT 1 FROM stories done_st
                WHERE done_st.run_id = s.run_id AND done_st.status = 'done'
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM stories fix_st
+               WHERE fix_st.run_id = s.run_id
+                 AND fix_st.story_id LIKE 'QA-FIX-%'
+                 AND fix_st.status IN ('pending', 'running')
              )
          )
        ORDER BY s.story_index ASC
