@@ -87,6 +87,42 @@ export async function pgMigrate(): Promise<void> {
     // Performance indexes for claim queries (6 concurrent projects)
     await s`CREATE INDEX IF NOT EXISTS idx_steps_agent_status ON steps(agent_id, status) WHERE status IN ('pending', 'running')`;
     await s`CREATE INDEX IF NOT EXISTS idx_runs_status_dev ON runs(status, assigned_developer) WHERE status = 'running'`;
+    await s`
+      WITH ranked AS (
+        SELECT id,
+               ROW_NUMBER() OVER (
+                 PARTITION BY run_id, step_id, agent_id
+                 ORDER BY claimed_at DESC, created_at DESC, id DESC
+               ) AS rn
+        FROM claim_log
+        WHERE outcome IS NULL AND story_id IS NULL
+      )
+      UPDATE claim_log cl
+      SET outcome = 'infra_retry',
+          abandoned_at = NOW(),
+          duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - cl.claimed_at::timestamptz)) * 1000 AS INTEGER),
+          diagnostic = 'pgMigrate deduped duplicate open single-step claim'
+      FROM ranked r
+      WHERE cl.id = r.id AND r.rn > 1
+    `;
+    await s`
+      WITH ranked AS (
+        SELECT id,
+               ROW_NUMBER() OVER (
+                 PARTITION BY run_id, step_id, story_id, agent_id
+                 ORDER BY claimed_at DESC, created_at DESC, id DESC
+               ) AS rn
+        FROM claim_log
+        WHERE outcome IS NULL AND story_id IS NOT NULL
+      )
+      UPDATE claim_log cl
+      SET outcome = 'infra_retry',
+          abandoned_at = NOW(),
+          duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - cl.claimed_at::timestamptz)) * 1000 AS INTEGER),
+          diagnostic = 'pgMigrate deduped duplicate open story claim'
+      FROM ranked r
+      WHERE cl.id = r.id AND r.rn > 1
+    `;
     // Claim lifecycle invariant: one active claim per run/step/story/agent.
     // Two partial indexes are needed because PostgreSQL treats NULLs as distinct.
     await s`CREATE UNIQUE INDEX IF NOT EXISTS idx_claim_log_open_single_unique ON claim_log(run_id, step_id, agent_id) WHERE outcome IS NULL AND story_id IS NULL`;

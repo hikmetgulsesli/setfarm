@@ -142,6 +142,10 @@ describe("spawner gateway recovery wiring", () => {
 
   it("enforces one open claim per run step story and agent at the database layer", () => {
     const source = fs.readFileSync(path.join(root, "src", "db-pg.ts"), "utf-8");
+    assert.match(source, /pgMigrate deduped duplicate open single-step claim/);
+    assert.match(source, /PARTITION BY run_id, step_id, agent_id/);
+    assert.match(source, /pgMigrate deduped duplicate open story claim/);
+    assert.match(source, /PARTITION BY run_id, step_id, story_id, agent_id/);
     assert.match(source, /idx_claim_log_open_single_unique/);
     assert.match(source, /ON claim_log\(run_id, step_id, agent_id\) WHERE outcome IS NULL AND story_id IS NULL/);
     assert.match(source, /idx_claim_log_open_story_unique/);
