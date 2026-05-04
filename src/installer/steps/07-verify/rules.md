@@ -33,6 +33,9 @@ Do not mutate anything except:
 - Accessibility gaps: missing focus ring, ARIA, or keyboard navigation.
 - `PLAYWRIGHT_REPORT` contains dead button, broken link, route drift, empty
   page, overlay trap, or screenshot-visible layout break.
+- Current `main` still fails runtime/smoke/visual/accessibility checks. This is
+  a blocker even when the PR is already merged or the defect appears
+  pre-existing; route it back to implement as batched QA-FIX feedback.
 - PR is open but merge requirements are not met: failing check, unresolved
   review, conflict, dirty merge state, or unverified branch changes.
 
@@ -48,9 +51,13 @@ for the implement step.
   (`SCOPE_BLEED` absent).
 - PR is actually `MERGED`.
 - Local `main` is up to date with `origin/main` and the worktree is clean.
+- Current-main smoke/runtime/visual evidence is clean; no dead button, broken
+  link, blank page, low contrast, heading skip, console error, or dirty
+  worktree remains.
 
 `STATUS: done` is forbidden while the PR is still open, before merge is
-attempted, or after a failed merge.
+attempted, after a failed merge, or while current-main smoke/runtime defects
+remain.
 
 ## Fail (`STATUS: fail`) Is Rare
 

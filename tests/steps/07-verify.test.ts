@@ -68,6 +68,8 @@ describe("07-verify step module", () => {
     assert.ok(verifyPromptSource.includes("git push"));
     assert.ok(verifyPromptSource.includes("STATUS: retry"));
     assert.ok(verifyPromptSource.includes("STATUS: done` is allowed only after the PR is actually `MERGED`"));
+    assert.ok(verifyPromptSource.includes("Do not dismiss them as \"pre-existing\""));
+    assert.ok(verifyPromptSource.includes("current-main runtime/smoke evidence is clean"));
     assert.ok(verifyPromptSource.includes("8 minutes"));
   });
 

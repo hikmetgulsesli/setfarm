@@ -46,7 +46,8 @@ Allowed:
    - If `baseRefName` is not `main`, retarget the PR:
      `gh api -X PATCH repos/<owner>/<repo>/pulls/<num> -f base=main`.
 4. If the PR is not open:
-   - If it is `MERGED`, run `git checkout main && git pull --ff-only origin main`, then return `STATUS: done`.
+   - If it is `MERGED`, run `git checkout main && git pull --ff-only origin main`,
+     then still evaluate the build/test/smoke evidence below before returning.
    - Otherwise return `STATUS: retry` with the reason.
 5. Check out the PR branch:
    - `HEAD_BRANCH=$(gh pr view "{{PR_URL}}" --json headRefName --jq .headRefName)`
@@ -56,6 +57,10 @@ Allowed:
 6. Read review comments, failing checks, `{{PREFLIGHT_ANALYSIS}}`,
    `{{PLAYWRIGHT_REPORT}}`, and acceptance criteria.
    - If a real issue exists, do not fix it. Return `STATUS: retry`.
+   - Runtime/smoke/visual/accessibility failures on current `main` are still
+     blockers for this run. Do not dismiss them as "pre-existing" or "not
+     introduced by this PR"; report them so implement can create a batched
+     QA-FIX story.
    - Missing ESLint config is not a real lint failure; do not add config unless the story explicitly asks for it.
 7. Build/test/smoke verification:
    - `{{LINT_CMD}}`
@@ -95,6 +100,6 @@ STATUS: done|retry|skip|fail
 FEEDBACK: <short reason when retry/fail>
 ```
 
-`STATUS: done` is allowed only after the PR is actually `MERGED` and local
-`main` has been updated. For `STATUS: retry`, provide 1-5 actionable bullets;
-do not write long analysis.
+`STATUS: done` is allowed only after the PR is actually `MERGED`, local `main`
+has been updated, and current-main runtime/smoke evidence is clean. For
+`STATUS: retry`, provide 1-5 actionable bullets; do not write long analysis.
