@@ -118,6 +118,12 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /Deferring reap for/);
   });
 
+  it("logs transient async failures without crashing the event-driven spawner", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /process\.on\("unhandledRejection"/);
+    assert.match(source, /unhandled rejection/);
+  });
+
   it("recovers build-passing implement work when an agent exits without step completion", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /tryRecoverExitedImplementWork/);

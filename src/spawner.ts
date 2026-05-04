@@ -1753,6 +1753,10 @@ async function pollForPendingWork() {
 }
 
 async function main() {
+  process.on("unhandledRejection", (err) => {
+    console.warn(`[spawner] unhandled rejection: ${String(err).slice(0, 500)}`);
+  });
+
   fs.mkdirSync(path.dirname(PID_FILE), { recursive: true });
   fs.writeFileSync(PID_FILE, String(process.pid));
   console.log(`[spawner] Starting (PID ${process.pid})`);

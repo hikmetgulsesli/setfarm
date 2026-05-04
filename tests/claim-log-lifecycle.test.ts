@@ -52,7 +52,10 @@ describe("single-step claim_log lifecycle", () => {
     const source = claimSingleStepSource();
     assert.match(source, /let shouldRecordSingleStepClaim = false/);
     assert.match(source, /SELECT id FROM claim_log WHERE run_id = \$1 AND step_id = \$2 AND story_id IS NULL AND agent_id = \$3 AND outcome IS NULL LIMIT 1/);
-    assert.match(source, /shouldRecordSingleStepClaim = !existingOpenClaim/);
+    assert.match(source, /Requeued orphaned running step/);
+    assert.match(source, /NOT EXISTS \(\s*SELECT 1 FROM claim_log/);
+    assert.match(source, /return \{ found: false \}/);
+    assert.doesNotMatch(source, /shouldRecordSingleStepClaim = !existingOpenClaim/);
     assert.match(source, /shouldRecordSingleStepClaim = true/);
   });
 

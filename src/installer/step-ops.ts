@@ -1507,7 +1507,21 @@ async function claimSingleStep(
       "SELECT id FROM claim_log WHERE run_id = $1 AND step_id = $2 AND story_id IS NULL AND agent_id = $3 AND outcome IS NULL LIMIT 1",
       [step.run_id, step.step_id, agentId],
     );
-    shouldRecordSingleStepClaim = !existingOpenClaim;
+    if (!existingOpenClaim) {
+      await pgRun(
+        `UPDATE steps
+         SET status = 'pending', updated_at = $1
+         WHERE id = $2
+           AND status = 'running'
+           AND NOT EXISTS (
+             SELECT 1 FROM claim_log
+             WHERE run_id = $3 AND step_id = $4 AND story_id IS NULL AND outcome IS NULL
+           )`,
+        [now(), step.id, step.run_id, step.step_id],
+      );
+      logger.warn(`[claim-idempotent] Requeued orphaned running step ${step.step_id}; no open claim exists for ${agentId}`, { runId: step.run_id, stepId: step.step_id });
+      return { found: false };
+    }
     logger.info(`[claim-idempotent] Re-issued running step ${step.step_id} to ${agentId}`, { runId: step.run_id, stepId: step.step_id });
   } else {
     // Item 6: Single step — atomic claim with changes check to prevent race condition
