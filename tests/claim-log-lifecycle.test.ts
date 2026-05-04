@@ -93,6 +93,24 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(source, /WHERE run_id = \$1 AND step_id = \$2 AND story_id IS NULL AND outcome IS NULL/);
   });
 
+  it("closes downstream quality gate claims when routing back to implement", () => {
+    const source = stepOpsSource();
+    const start = source.indexOf("async function routeQualityFailureToImplement(");
+    const end = source.indexOf("// ── Predicted screen file helpers", start);
+    assert.notEqual(start, -1, "routeQualityFailureToImplement source not found");
+    assert.notEqual(end, -1, "routeQualityFailureToImplement end marker not found");
+    const routeSource = source.slice(start, end);
+
+    const routeTransition = routeSource.indexOf("qualityFailure:routeToImplement");
+    const claimUpdate = routeSource.indexOf("UPDATE claim_log SET outcome = 'completed'");
+    const emitEvent = routeSource.indexOf("event: \"story.retry\"");
+
+    assert.ok(claimUpdate > routeTransition, "claim_log closes after route transition is recorded");
+    assert.ok(claimUpdate < emitEvent, "claim_log closes before route event returns control to spawner");
+    assert.match(routeSource, /quality failure routed to \$\{fixStoryId\}/);
+    assert.match(routeSource, /WHERE run_id = \$2 AND step_id = \$3 AND story_id IS NULL AND outcome IS NULL/);
+  });
+
   it("closes single-step failure claims by workflow step id, not step UUID", () => {
     const source = fs.readFileSync(path.join(root, "src", "installer", "step-fail.ts"), "utf-8");
     const singleFailureStart = source.indexOf("async function handleSingleStepFailurePG(");

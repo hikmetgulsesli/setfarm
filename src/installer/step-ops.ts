@@ -409,6 +409,12 @@ async function routeQualityFailureToImplement(
 
   await recordStepTransition(loopStep.id, step.run_id, loopStep.status, "pending", undefined, "qualityFailure:routeToImplement", { storyId: fixStoryId, fromStep: step.step_id });
   await recordStepTransition(step.id, step.run_id, "running", "waiting", step.agent_id, "qualityFailure:routeToImplement", { storyId: fixStoryId });
+  try {
+    await pgRun(
+      "UPDATE claim_log SET outcome = 'completed', duration_ms = EXTRACT(EPOCH FROM NOW() - claimed_at::timestamptz) * 1000, diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND story_id IS NULL AND outcome IS NULL",
+      [`quality failure routed to ${fixStoryId}`, step.run_id, step.step_id],
+    );
+  } catch (e) { logger.warn(`[claim-log] Failed to close routed quality claim: ${String(e)}`, { runId: step.run_id }); }
   const wfId = await _getWorkflowId(step.run_id);
   emitEvent({ ts: now(), event: "story.retry", runId: step.run_id, workflowId: wfId, stepId: "implement", storyId: fixStoryId, detail: `Created ${fixStoryId} from ${step.step_id} failure` });
   emitEvent({ ts: now(), event: "step.pending", runId: step.run_id, workflowId: wfId, stepId: "implement", detail: `Downstream quality failure routed to ${fixStoryId}` });
