@@ -15,7 +15,7 @@ const MAX_EVENTS_SIZE = 10 * 1024 * 1024; // 10MB
 
 export type EventType =
   | "run.started" | "run.completed" | "run.failed" | "run.cancelled"
-  | "step.pending" | "step.running" | "step.done" | "step.failed" | "step.timeout" | "step.skipped"
+  | "step.pending" | "step.running" | "step.progress" | "step.done" | "step.failed" | "step.timeout" | "step.skipped"
   | "story.started" | "story.done" | "story.verified" | "story.retry" | "story.failed" | "story.skipped"
   | "pipeline.advanced";
 

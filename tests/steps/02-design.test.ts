@@ -1,7 +1,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { designModule } from "../../dist/installer/steps/02-design/module.js";
 import { runModule } from "./harness.js";
+
+function designPreclaimSource(): string {
+  return fs.readFileSync(path.resolve(import.meta.dirname, "../../src/installer/steps/02-design/preclaim.ts"), "utf-8");
+}
 
 function validDesignOutput(overrides: Record<string, string> = {}) {
   return {
@@ -60,5 +66,16 @@ describe("02-design step module", () => {
   it("missing DEVICE_TYPE allowed (defaults applied downstream)", async () => {
     const result = await runModule(designModule, "Test", validDesignOutput({ device_type: "" }));
     assert.ok(result.validation.ok);
+  });
+
+  it("preClaim records heartbeat progress while Stitch runs", () => {
+    const source = designPreclaimSource();
+    assert.match(source, /function execFileText[\s\S]*onProgress/);
+    assert.match(source, /function recordPreClaimProgress/);
+    assert.match(source, /event: "step\.progress"/);
+    assert.match(source, /UPDATE steps SET updated_at = \$1/);
+    assert.match(source, /UPDATE claim_log SET diagnostic = \$1/);
+    assert.match(source, /generate-all-screens[\s\S]*onProgress: \(\) => recordPreClaimProgress\(ctx, "Design preclaim: still generating Stitch screens"\)/);
+    assert.match(source, /download-all[\s\S]*onProgress: \(\) => recordPreClaimProgress\(ctx, `Design preclaim: still downloading Stitch HTML files/);
   });
 });

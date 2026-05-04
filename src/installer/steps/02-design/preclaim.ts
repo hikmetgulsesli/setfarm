@@ -4,17 +4,30 @@ import fs from "node:fs";
 import { execFile } from "node:child_process";
 import type { ClaimContext } from "../types.js";
 import { logger } from "../../../lib/logger.js";
-import { pgGet } from "../../../db-pg.js";
+import { now, pgGet, pgRun } from "../../../db-pg.js";
+import { emitEvent } from "../../events.js";
 
 const MIN_STITCH_HTML_BYTES = 1000;
 
-function execFileText(command: string, args: string[], options: { cwd?: string; timeout?: number } = {}): Promise<string> {
+type ExecFileTextOptions = {
+  cwd?: string;
+  timeout?: number;
+  onProgress?: () => void | Promise<void>;
+  progressIntervalMs?: number;
+};
+
+function execFileText(command: string, args: string[], options: ExecFileTextOptions = {}): Promise<string> {
   return new Promise((resolve, reject) => {
+    const { onProgress, progressIntervalMs = 30000, ...execOptions } = options;
+    const progressTimer = onProgress
+      ? setInterval(() => { Promise.resolve(onProgress()).catch(() => {}); }, progressIntervalMs)
+      : null;
     execFile(command, args, {
       encoding: "utf-8",
       maxBuffer: 20 * 1024 * 1024,
-      ...options,
+      ...execOptions,
     }, (err, stdout, stderr) => {
+      if (progressTimer) clearInterval(progressTimer);
       if (err) {
         const detail = String(stderr || stdout || (err as any).message || err).replace(/\s+/g, " ").slice(0, 1000);
         reject(new Error(detail));
@@ -23,6 +36,21 @@ function execFileText(command: string, args: string[], options: { cwd?: string; 
       resolve(String(stdout || ""));
     });
   });
+}
+
+async function recordPreClaimProgress(ctx: ClaimContext, detail: string): Promise<void> {
+  const safeDetail = detail.replace(/\s+/g, " ").slice(0, 500);
+  try {
+    const stepUpdate = await pgRun("UPDATE steps SET updated_at = $1 WHERE run_id = $2 AND step_id = $3 AND status = 'running'", [now(), ctx.runId, ctx.stepId]);
+    if (stepUpdate.changes === 0) return;
+    await pgRun(
+      "UPDATE claim_log SET diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND story_id IS NULL AND outcome IS NULL",
+      [safeDetail, ctx.runId, ctx.stepId],
+    );
+  } catch (e) {
+    logger.debug(`[module:design preclaim] progress heartbeat failed: ${String(e).slice(0, 120)}`);
+  }
+  emitEvent({ ts: now(), event: "step.progress", runId: ctx.runId, stepId: ctx.stepId, detail: safeDetail });
 }
 
 function isValidStitchHtml(filePath: string): boolean {
@@ -114,8 +142,9 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
 
   if (!projId) {
     try {
+      await recordPreClaimProgress(ctx, "Design preclaim: ensuring Stitch project");
       const out = await execFileText("node", [stitchScript, "ensure-project", path.basename(repo), repo],
-        { timeout: 30000, cwd: repo });
+        { timeout: 30000, cwd: repo, onProgress: () => recordPreClaimProgress(ctx, "Design preclaim: still ensuring Stitch project") });
       try { projId = JSON.parse(out).projectId || ""; } catch (e) { logger.debug(`[module:design preclaim] parse: ${String(e).slice(0, 80)}`); }
     } catch (e) { logger.warn(`[module:design preclaim] ensure-project failed: ${String(e).slice(0, 200)}`, { runId: ctx.runId }); }
   }
@@ -144,37 +173,44 @@ MANDATORY SCREENS:
 All visible text must be in Turkish. Use a dark, modern theme.`;
   fs.writeFileSync(promptFile, prd + screenPrimer);
   logger.info(`[module:design preclaim] Generating screens (project ${projId}, device ${deviceType})`, { runId: ctx.runId });
+  await recordPreClaimProgress(ctx, `Design preclaim: generating Stitch screens for ${deviceType}`);
 
   // 3. generate-all-screens (single batch call)
   try {
     const genOut = await execFileText("node", [stitchScript, "generate-all-screens", projId, promptFile, deviceType, "GEMINI_3_1_PRO"],
-      { timeout: 600000, cwd: repo });
+      { timeout: 600000, cwd: repo, onProgress: () => recordPreClaimProgress(ctx, "Design preclaim: still generating Stitch screens") });
     let genResult: any = {};
     try { genResult = JSON.parse(genOut); } catch (e) { logger.debug(`[module:design preclaim] gen parse: ${String(e).slice(0, 80)}`); }
     logger.info(`[module:design preclaim] Generated ${genResult.total || 0} screens in ${genResult.elapsedSeconds || "?"}s`, { runId: ctx.runId });
+    await recordPreClaimProgress(ctx, `Design preclaim: generated ${genResult.total || 0} Stitch screens`);
   } catch (e) {
     logger.warn(`[module:design preclaim] generate-all-screens failed: ${String(e).slice(0, 200)}`, { runId: ctx.runId });
+    await recordPreClaimProgress(ctx, "Design preclaim: Stitch generation failed, continuing to download/fallback");
   }
 
   // 4. download-all with 3 retries (Stitch API can lag after generation)
   let htmlCount = 0;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
+      await recordPreClaimProgress(ctx, `Design preclaim: downloading Stitch HTML files (attempt ${attempt + 1}/3)`);
       const dlOut = await execFileText("node", [stitchScript, "download-all", projId, stitchDir],
-        { timeout: 180000, cwd: repo });
+        { timeout: 180000, cwd: repo, onProgress: () => recordPreClaimProgress(ctx, `Design preclaim: still downloading Stitch HTML files (attempt ${attempt + 1}/3)`) });
       let dlResult: any = {};
       try { dlResult = JSON.parse(dlOut); } catch (e) { logger.debug(`[module:design preclaim] dl parse: ${String(e).slice(0, 80)}`); }
       const manifestCounts = manifestHtmlCounts(stitchDir);
       const total = manifestCounts.total || Number(dlResult.total || 0);
       htmlCount = manifestCounts.total ? manifestCounts.valid : countValidStitchHtml(stitchDir);
       logger.info(`[module:design preclaim] Downloaded ${dlResult.downloaded || 0}/${total || 0} (${htmlCount} valid HTML, attempt ${attempt + 1}/3)`, { runId: ctx.runId });
+      await recordPreClaimProgress(ctx, `Design preclaim: downloaded ${htmlCount}/${total || htmlCount || 0} valid Stitch HTML files`);
       ctx.context["screens_generated"] = String(htmlCount);
       if (htmlCount > 0 && (!total || htmlCount >= total)) break;
     } catch (e) {
       logger.warn(`[module:design preclaim] download-all failed (attempt ${attempt + 1}/3): ${String(e).slice(0, 200)}`, { runId: ctx.runId });
+      await recordPreClaimProgress(ctx, `Design preclaim: Stitch download failed on attempt ${attempt + 1}/3`);
     }
     if (attempt < 2) {
       logger.info(`[module:design preclaim] HTML incomplete (${htmlCount} valid), waiting 30s before retry`, { runId: ctx.runId });
+      await recordPreClaimProgress(ctx, `Design preclaim: waiting 30s before retry, ${htmlCount} valid HTML files so far`);
       await new Promise(r => setTimeout(r, 30000));
     }
   }
@@ -186,6 +222,7 @@ All visible text must be in Turkish. Use a dark, modern theme.`;
       try {
         const tracked = JSON.parse(fs.readFileSync(trackFile, "utf-8"));
         logger.info(`[module:design preclaim] Tracking-file fallback: ${tracked.length} entries`, { runId: ctx.runId });
+        await recordPreClaimProgress(ctx, `Design preclaim: using tracking-file fallback for ${tracked.length} Stitch screen entries`);
         for (const s of tracked) {
           if (!s.htmlUrl) continue;
           const dest = path.join(stitchDir, (s.screenId || "unknown") + ".html");
@@ -196,6 +233,7 @@ All visible text must be in Turkish. Use a dark, modern theme.`;
           } catch (e) { logger.debug(`[module:design preclaim] curl: ${String(e).slice(0, 80)}`); }
         }
         logger.info(`[module:design preclaim] Tracking fallback recovered ${htmlCount} HTML files`, { runId: ctx.runId });
+        await recordPreClaimProgress(ctx, `Design preclaim: tracking fallback recovered ${htmlCount} HTML files`);
       } catch (e) {
         logger.warn(`[module:design preclaim] Tracking fallback failed: ${String(e).slice(0, 200)}`, { runId: ctx.runId });
       }
@@ -207,6 +245,7 @@ All visible text must be in Turkish. Use a dark, modern theme.`;
   try {
     const domScript = path.join(os.homedir(), ".openclaw/setfarm-repo/scripts/design-dom-extract.mjs");
     if (fs.existsSync(domScript)) {
+      await recordPreClaimProgress(ctx, "Design preclaim: extracting DOM metadata from Stitch HTML");
       await execFileText("node", [domScript, stitchDir], { timeout: 30000 });
     }
   } catch (e) { logger.debug(`[module:design preclaim] design-dom-extract: ${String(e).slice(0, 80)}`); }
@@ -275,8 +314,10 @@ All visible text must be in Turkish. Use a dark, modern theme.`;
   if (screenMap.length > 0) {
     ctx.context["screen_map"] = JSON.stringify(screenMap);
     logger.info(`[module:design preclaim] SCREEN_MAP injected (${screenMap.length} entries)`, { runId: ctx.runId });
+    await recordPreClaimProgress(ctx, `Design preclaim: SCREEN_MAP ready with ${screenMap.length} entries`);
   } else {
     logger.warn(`[module:design preclaim] SCREEN_MAP could not be generated — agent will see empty list`, { runId: ctx.runId });
+    await recordPreClaimProgress(ctx, "Design preclaim: SCREEN_MAP could not be generated");
   }
 
   // Auto-complete (2026-04-24): if all required design assets are present,
@@ -326,6 +367,7 @@ All visible text must be in Turkish. Use a dark, modern theme.`;
     const { completeStep } = await import("../../step-ops.js");
     const stepRow = await pgGet<{ id: string }>("SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1", [ctx.runId, ctx.stepId]);
     const stepDbId = stepRow?.id || ctx.stepId;
+    await recordPreClaimProgress(ctx, `Design preclaim: auto-completing design with ${manifest.length} screens`);
     await completeStep(stepDbId, output);
     logger.info(`[module:design preclaim] AUTO-COMPLETED step ${ctx.stepId} (${manifest.length} screens, ${htmlOkCount} HTMLs, agent bypassed)`, { runId: ctx.runId, stepId: stepDbId });
   } catch (e) {
