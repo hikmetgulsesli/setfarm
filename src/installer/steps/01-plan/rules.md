@@ -1,8 +1,10 @@
-# PLAN Step — Kurallar
+# PLAN Step Rules
 
-PLAN step ÇIKTISI: detaylı PRD + teknik kararlar. PRD agent tarafından **iyi hazırlanırsa** sonraki adımlar (design, stories, implement) çok daha az retry alır. Yetersiz PRD = pipeline R1 fırtınası.
+The PLAN output is the run's product contract: detailed PRD plus technical
+decisions. A precise PRD reduces retries in design, stories, implementation,
+verify, and QA.
 
-## Zorunlu Çıktı Alanları
+## Required Output Fields
 
 ```
 STATUS: done
@@ -10,116 +12,120 @@ REPO: $HOME/projects/<slug>
 BRANCH: <branch-name>
 TECH_STACK: <vite-react|nextjs|vanilla-ts|node-express|react-native>
 PRD:
-<PRD gövdesi — en az 2000 karakter, Türkçe, aşağıdaki TÜM bölümleri içerir>
-PRD_SCREEN_COUNT: <Ekranlar tablosundaki satır sayısı, min 3>
+<PRD body — at least 2000 characters, English, includes every section below>
+PRD_SCREEN_COUNT: <number of rows in the Screens table, minimum 3>
 DB_REQUIRED: <none|postgres|sqlite>
 ```
 
-## PRD ZORUNLU BÖLÜMLER (her biri MUTLAKA olmalı)
+## Mandatory PRD Sections
 
-### 1. Genel Bakış
-- Ne olduğunu 2-3 cümlede özetle
-- Hedef kitle (kim kullanacak)
-- Türkçe arayüz vurgusu
+### 1. Overview
+- Summarize the product in 2-3 sentences.
+- Define the target users.
+- Define the user-facing language. If the task is Turkish and no other
+  language is specified, use Turkish UI copy; otherwise follow the task.
 
-### 2. Hedefler
-- 4-6 madde halinde projenin ana hedefleri
-- "Erişilebilir tasarım", "Mobil uyumlu", "Hızlı yükleme" gibi somut
+### 2. Goals
+- List 4-6 concrete product goals.
+- Include measurable goals such as accessibility, responsive behavior, and
+  loading performance.
 
-### 3. Tech Stack Detayı
-- Framework: React 18 / Next.js 14 / vb.
-- Build: Vite / Webpack
-- Styling: Tailwind / CSS Modules
-- State: useState/useReducer / Zustand / Redux
-- Storage: localStorage / IndexedDB / Postgres
-- Routing: React Router / Next.js routing
+### 3. Tech Stack Details
+- Framework: React 18 / Next.js 14 / etc.
+- Build: Vite / Webpack.
+- Styling: Tailwind / CSS Modules.
+- State: useState/useReducer / Zustand / Redux.
+- Storage: localStorage / IndexedDB / Postgres.
+- Routing: React Router / Next.js routing.
 
-### 4. Fonksiyonel Gereksinimler
-Her özellik için ayrı alt bölüm. Örnek:
+### 4. Functional Requirements
+Use one subsection per feature. Include exact behavior, validation, and visible
+state changes. Example:
 
 ```
-4.1 Fotoğraf Yükleme
-- Desteklenen formatlar: JPG, PNG, WEBP, GIF
-- Max boyut: 10 MB
-- Zorunlu/opsiyonel alanlar listesi
-- Hata mesajları (Türkçe, kullanıcıya gösterilen tam metin)
-- Başarı durumu davranışı
+4.1 Photo Upload
+- Supported formats: JPG, PNG, WEBP, GIF
+- Max size: 10 MB
+- Required and optional fields
+- Error messages shown to users
+- Success-state behavior
 
-4.2 Filtreleme
-- Hangi alanlardan filtrelenir
-- Default davranış (hepsini göster vb)
+4.2 Filtering
+- Which fields can be filtered
+- Default behavior
 ```
 
-### 5. Veri Modeli
-- Entity'ler: User, Photo, Category vb.
-- Her entity'nin alanları + tipleri
-- localStorage / DB schema şekli
+### 5. Data Model
+- Entities: User, Photo, Category, etc.
+- Fields and types for each entity.
+- localStorage or database schema.
 
-### 6. UI/UX Gereksinimleri
+### 6. UI/UX Requirements
 
-#### 6.1 Design System Seçimi (MANDATORY for frontend)
+#### 6.1 Design System Selection (mandatory for frontend)
 - **Aesthetic:** minimal | brutalist | luxury | editorial | industrial | organic | playful | corporate
-- **Renk Paleti:** Primary, Secondary, Background, Surface, Text, Border, Success, Error, Warning hex değerleri
-- **Tipografi:** Heading font + Body font (Font Pair table'dan)
-- **Icon Library:** Lucide React veya Heroicons (NEVER emoji)
+- **Color Palette:** Primary, Secondary, Background, Surface, Text, Border, Success, Error, Warning hex values
+- **Typography:** Heading font + Body font
+- **Icon Library:** Lucide React or Heroicons (NEVER emoji)
 
 #### 6.2 Spacing & Components
-- Spacing scale: 4/8/16/24/32/48/64 px
-- Border radius değerleri
-- Shadow tanımları
-- Buton/kart/form pattern'leri
+- Spacing scale: 4/8/16/24/32/48/64 px.
+- Border radius values.
+- Shadow definitions.
+- Button, card, and form patterns.
 
 ### 7. Non-Functional Requirements
 
-#### 7.1 Performans
-- İlk yükleme < 2 saniye
-- Sayfa geçişi < 100ms
-- Bundle size hedefi
+#### 7.1 Performance
+- Initial load under 2 seconds.
+- Page transitions under 100ms.
+- Bundle size target.
 
-#### 7.2 Erişilebilirlik (WCAG 2.1 AA)
-- Klavye navigasyonu tam destek
-- Screen reader uyumlu (ARIA labels)
-- Kontrast oranı >= 4.5:1 (text), 3:1 (large text)
-- Focus state tüm interactive elementlerde
-- Touch hedefleri >= 44x44 px
+#### 7.2 Accessibility (WCAG 2.1 AA)
+- Full keyboard navigation.
+- Screen reader support with ARIA labels.
+- Contrast ratio >= 4.5:1 for text, >= 3:1 for large text.
+- Focus states for every interactive element.
+- Touch targets >= 44x44 px.
 
-#### 7.3 Tarayıcı Desteği
+#### 7.3 Browser Support
 - Chrome 90+, Firefox 88+, Safari 14+, Edge 90+
 - iOS Safari 14+, Android Chrome 90+
 - Responsive: mobile 320px+ → desktop 1920px+
 
-### 8. Proje Yapısı
+### 8. Project Structure
 
 ```
 src/
-├── components/      # Reusable bileşenler
-├── screens/         # Ekran (page) bileşenleri — Türkçe isimle
+├── components/      # Reusable components
+├── screens/         # Screen/page components
 ├── hooks/           # Custom React hooks
-├── utils/           # Helper fonksiyonlar
-├── types/           # TypeScript tipleri
+├── utils/           # Helper functions
+├── types/           # TypeScript types
 ├── App.tsx
 └── main.tsx
 ```
 
-### 9. Window State (testing/dogfood için)
+### 9. Window State for Testing
 
 ```
 window.app = {
   state: '<idle|loading|error|...>',
-  // diğer önemli state alanları
+  // other important state fields
 }
 ```
 
-### 10. Ekranlar (zorunlu tablo)
+### 10. Screens (mandatory table)
 
 ```
-| # | Ekran Adı | Tür | Açıklama |
+| # | Screen Name | Type | Description |
 |---|-----------|-----|----------|
-| 1 | Ana Sayfa | dashboard | KPI kartları, son aktiviteler |
+| 1 | Dashboard | dashboard | KPI cards and recent activity |
 | 2 | ...
 ```
 
-**Min 3 satır.** Her satır benzersiz screen. Modal'lar, empty state'ler, error sayfaları da DAHIL.
+Minimum 3 rows. Every row must be a unique screen. Include modals, empty
+states, and error pages when they are product-relevant.
 
 ### Min Screen Counts
 - Landing/static: 3-5
@@ -128,43 +134,42 @@ window.app = {
 - CRUD app: 10-15
 - CRM/SaaS: 20-35
 
-## TECH_STACK Seçimi
+## TECH_STACK Selection
 
-- `vite-react`: SPA, oyun, dashboard, utility, portfolio (default)
-- `nextjs`: SSR/SEO, blog, e-ticaret, çok sayfalı içerik
+- `vite-react`: SPA, game, dashboard, utility, portfolio (default)
+- `nextjs`: SSR/SEO, blog, e-commerce, multi-page content
 - `vanilla-ts`: CLI, minimal web utility
-- `node-express`: Sadece API, UI yok
-- `react-native`: Mobil
+- `node-express`: API-only, no UI
+- `react-native`: Mobile
 
-Belirsizse `vite-react`. Görev framework belirtirse onu kullan.
+Use `vite-react` when unclear. If the task explicitly names a framework, use it.
 
 ## DB_REQUIRED
 
-- `none`: Static, portfolio, oyun, local-storage uygulama
-- `postgres`: User data, CRUD, auth gerektiren
-- `sqlite`: Sadece açıkça istenirse
+- `none`: Static, portfolio, game, local-storage app
+- `postgres`: User data, CRUD, auth, shared persisted data
+- `sqlite`: Only when explicitly requested
 
-Belirsizse `none`.
+Use `none` when unclear.
 
-## REPO ve BRANCH
+## REPO and BRANCH
 
-- REPO: `$HOME/projects/<slug>` — slug görev başlığından (kebab-case, Türkçe transliterasyonlu)
-- BRANCH: `feature-<name>` veya proje adı (kebab-case)
+- REPO: `$HOME/projects/<slug>` — slug from task title, kebab-case, ASCII.
+- BRANCH: `feature-<name>` or the project slug, kebab-case.
 
-## Türkçe UI Stil Kuralları
+## User-Facing Language Rules
 
-- Buton: "Kaydet", "Sil", "Düzenle", "Ekle", "Yükle", "Ara"
-- Menü: "Ana Sayfa", "Ayarlar", "Profil", "Çıkış"
-- Hata: "Lütfen zorunlu alanları doldurun", "Bu işlem geri alınamaz"
-- Placeholder: "Ara...", "E-posta adresiniz"
-- Boş durum: "Henüz veri yok", "Sonuç bulunamadı"
+- Pipeline instructions, story titles, technical reports, and output fields are English.
+- Visible application copy follows the user's requested language. For Turkish
+  tasks, use Turkish-visible UI copy.
+- Do not mix random English labels into a Turkish UI unless they are technical
+  terms or brand names.
 
-## Yapma
+## Do Not
 
-- Stories yazma — bir sonraki step'in işi
-- Kod yazma — sen planlayıcısın
-- Belirsiz "modern tasarım" gibi ifadeler — somut ol
-- Renk paleti vermeden geçme — tüm hex değerleri belirt
-- Erişilebilirlik bölümünü atlama
-- Min 3 ekran tablosu — boş bırakma
-- PRD < 2000 karakter — yetersiz
+- Do not write user stories; the next step owns that.
+- Do not write code.
+- Do not use vague phrases such as "modern design" without concrete choices.
+- Do not omit the color palette or accessibility section.
+- Do not output fewer than 3 screens.
+- Do not output a PRD shorter than 2000 characters.

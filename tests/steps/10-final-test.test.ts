@@ -32,7 +32,7 @@ describe("10-final-test step module", () => {
     assert.ok(prompt.includes("app-12345"));
     assert.ok(prompt.includes("smoke-test.mjs"));
     assert.ok(prompt.includes("Phase 16"));
-    assert.ok(prompt.includes("Kurallar"));
+    assert.ok(prompt.includes("Rules"));
   });
 
   it("buildPrompt stays within maxPromptSize", () => {

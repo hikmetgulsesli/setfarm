@@ -1,28 +1,28 @@
-# DESIGN Step — Kurallar
+# DESIGN Step Rules
 
-Pipeline her şeyi hazırladı:
-- Stitch ekranları üretildi (`stitch/*.html`, `*.png`)
-- `stitch/DESIGN_MANIFEST.json` (screenId+title liste)
-- `stitch/DESIGN_DOM.json` (element-level)
-- `stitch/design-tokens.css` + `design-tokens.json` (renkler, fontlar)
-- `SCREEN_MAP` context'e otomatik enjekte edildi (manifest'ten)
+The pipeline already prepared:
+- Stitch screens: `stitch/*.html`, `*.png`
+- `stitch/DESIGN_MANIFEST.json`
+- `stitch/DESIGN_DOM.json`
+- `stitch/design-tokens.css` and `design-tokens.json`
+- SCREEN_MAP from the manifest
 
-Senin işin **tek karar**: DESIGN_SYSTEM raporu (aesthetic + palette + fonts).
+Your single decision is DESIGN_SYSTEM: aesthetic, palette, fonts, icon library,
+radius, and spacing.
 
-## Yapma — DO NOT
+## Do Not
 
-- Stitch API çağırma (zaten üretildi)
-- HTML/CSS değiştirme
-- SCREEN_MAP elle yazma — pipeline auto-generated
-- design-tokens.css üretme (Stitch zaten verdi)
+- Do not call the Stitch API.
+- Do not edit HTML/CSS.
+- Do not hand-write SCREEN_MAP from scratch.
+- Do not regenerate design tokens.
 
-## Yapılacaklar
+## Work
 
-1. `stitch/design-tokens.css` veya `design-tokens.json` dosyalarını oku
-2. Renk paleti, font ailesi, aesthetic'i çıkar
-3. DESIGN_SYSTEM JSON üret (aşağıdaki schema)
-4. (Opsiyonel) SCREEN_MAP'i context'ten al, type'larda override gerekiyorsa düzelt
-5. Output ver
+1. Read `stitch/design-tokens.css` or `design-tokens.json`.
+2. Extract palette, font families, and aesthetic.
+3. Produce DESIGN_SYSTEM JSON using the schema below.
+4. Return output.
 
 ## DESIGN_SYSTEM Schema
 
@@ -50,17 +50,16 @@ Senin işin **tek karar**: DESIGN_SYSTEM raporu (aesthetic + palette + fonts).
 }
 ```
 
-## Aesthetic Seçim Rehberi
+## Aesthetic Guide
 
-design-tokens'tan çıkardığın görsel karaktere göre:
-- **minimal**: bol whitespace, sade renk (1-2), sans-serif body
-- **brutalist**: kalın font, yüksek kontrast, geometrik
-- **luxury**: serif heading, koyu palette + altın aksent
-- **editorial**: serif heading, columns, typography vurgu
-- **industrial**: monospace, technical, blueprint
-- **organic**: yumuşak köşeler, doğal renkler, akıcı font
-- **playful**: parlak renkler, yuvarlak köşeler, friendly
-- **corporate**: mavi tonlar, professional, serious
+- minimal: whitespace, restrained color, simple sans-serif
+- brutalist: bold type, high contrast, geometric
+- luxury: serif heading, dark palette, gold accent
+- editorial: serif heading, columns, typography emphasis
+- industrial: monospace, technical, blueprint-like
+- organic: soft radius, natural colors, flowing type
+- playful: bright colors, rounded corners, friendly
+- corporate: professional, serious, restrained
 
 ## Output Format
 
@@ -71,8 +70,7 @@ DESIGN_SYSTEM:
 {
   "aesthetic": "...",
   "palette": { ... },
-  "typography": { ... },
-  ...
+  "typography": { ... }
 }
 SCREEN_MAP:
 [
@@ -80,11 +78,7 @@ SCREEN_MAP:
 ]
 ```
 
-SCREEN_MAP context'te zaten dolu — sadece olduğu gibi geri verirsin (Türkçe screen isimleri ve type'lar pipeline'da otomatik atandı).
-
-## Yanlış output örneği (yapma)
-
-- "DESIGN_SYSTEM not generated yet, working on it..." (yarım iş)
-- Stitch API'a yeni çağrı yapma (yasak)
-- SCREEN_MAP'i sıfırdan yazma (pipeline'a saygı)
-- HTML dosyalarını editleyip kaydetme (immutable baseline)
+Wrong outputs:
+- "DESIGN_SYSTEM not generated yet, working on it..."
+- calling Stitch API again
+- editing baseline HTML files

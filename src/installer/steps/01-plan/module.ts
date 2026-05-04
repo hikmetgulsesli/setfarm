@@ -16,7 +16,7 @@ const rulesBody = fs.readFileSync(path.join(__dirname, "rules.md"), "utf-8");
 function buildPrompt(ctx: PromptContext): string {
   const task = ctx.context["task"] || ctx.task || "";
   const resolved = promptTemplate.replace(/\{\{TASK\}\}/g, task);
-  return `${resolved}\n\n---\n\n# Kurallar\n\n${rulesBody}`;
+  return `${resolved}\n\n---\n\n# Rules\n\n${rulesBody}`;
 }
 
 export const planModule: StepModule = {

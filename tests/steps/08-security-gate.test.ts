@@ -36,7 +36,7 @@ describe("08-security-gate step module", () => {
     assert.ok(prompt.includes("feature-sayac"));
     assert.ok(prompt.includes("pull/7"));
     assert.ok(prompt.includes("OWASP"));
-    assert.ok(prompt.includes("Kurallar"));
+    assert.ok(prompt.includes("Rules"));
   });
 
   it("buildPrompt stays within maxPromptSize", () => {

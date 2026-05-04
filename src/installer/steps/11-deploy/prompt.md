@@ -1,47 +1,43 @@
 # Deploy Step — Production Deploy Agent
 
-Görev: Final-test'ten geçmiş projeyi sunucuya deploy et. systemd unit yaz/kayıt, DNS subdomain ata, Cloudflare tunnel yapılandır, Nginx reverse proxy, TLS otomatik.
+Deploy the project that passed final-test. Configure systemd, choose a
+subdomain, configure tunnel/proxy, and health-check the live app.
 
-## Context değişkenleri
+## Context
 
-- `{{REPO}}` — proje kök dizini
-- `{{PROJECT_NAME}}` — proje adı (systemd unit + subdomain için)
-- `{{BUILD_CMD}}` — build komutu (setup-build'den gelen, örn. "npm run build")
-- `{{TECH_STACK}}` — vite-react vs
-- `{{FINAL_PR}}` — PR URL
-- `{{PROGRESS}}` — proje durumu
+- `{{REPO}}`: project root
+- `{{PROJECT_NAME}}`: project name for service/subdomain
+- `{{BUILD_CMD}}`: build command from setup-build
+- `{{TECH_STACK}}`: vite-react, nextjs, etc.
+- `{{FINAL_PR}}`: PR URL
+- `{{PROGRESS}}`: project status
 
-## Deploy adımları
+## Deploy Steps
 
-1. **Port tahsisi**: boşta bir 4xxx/5xxx port seç
-2. **systemd unit**: `~/.config/systemd/user/<proje>.service` yaz (ExecStart=node ..., WorkingDirectory=..., User=setrox)
-3. **Nginx config**: subdomain.setrox.com.tr → localhost:<port>
-4. **Cloudflare tunnel**: hostname routing ekle (mevcut 37 subdomain yapısı)
-5. **systemd enable + start**: `systemctl --user enable --now <proje>`
-6. **Health check**: HTTP GET kök sayfa 200 dönmeli
-7. **Mission Control project metadata**: deploy başarılıysa MC'ye repo basename'i ile tek proje kaydı yaz/güncelle. Tam görev başlığından proje id üretme.
-   - Project id/name: `basename "{{REPO}}"`
-   - Port alanı: **sadece** `ports.frontend` kullan. `ports.web` yazma.
-   - Payload alanları:
-     - `id`, `name`: repo basename
-     - `repo`: `{{REPO}}`
-     - `status`: `active`
-     - `ports`: `{ "frontend": <PORT> }`
-     - `domain`: `<subdomain>.setrox.com.tr`
-     - `service`: `<proje>.service`
-     - `github`: varsa origin GitHub URL
-     - `runId` / `workflowRunId` / `setfarmRunId`: claim/context içinde varsa mevcut run id
-     - `completedAt`: ISO timestamp
-   - Önce `POST http://127.0.0.1:3080/api/projects`; aynı proje varsa `PATCH http://127.0.0.1:3080/api/projects/<project-id>` ile güncelle.
-   - MC güncellemesi deploy'u bozmasın; HTTP hata olursa `ISSUES` içinde raporla ama çalışan systemd servisini geri alma.
+1. Allocate an unused 4xxx/5xxx port.
+2. Write user systemd unit: `~/.config/systemd/user/<project>.service`.
+3. Configure Nginx reverse proxy: subdomain.setrox.com.tr → localhost:<port>.
+4. Configure Cloudflare tunnel hostname routing.
+5. Run `systemctl --user enable --now <project>`.
+6. Health check root page; HTTP must be 200/301/302.
+7. Update Mission Control metadata only after successful deploy:
+   - Project id/name: `basename "{{REPO}}"`.
+   - Use only `ports.frontend`; do not write `ports.web`.
+   - Payload fields: `id`, `name`, `repo`, `status`, `ports`, `domain`,
+     `service`, `github`, run id fields if present, `completedAt`.
+   - First try `POST http://127.0.0.1:3080/api/projects`; if project exists,
+     `PATCH http://127.0.0.1:3080/api/projects/<project-id>`.
+   - Mission Control update failure must not roll back a working service; report
+     it in ISSUES.
 
-## Output formatı
+## Output Format
 
 ```
 STATUS: done|retry|skip|fail
 DEPLOY_URL: https://<subdomain>.setrox.com.tr
-SYSTEMD_UNIT: <proje>.service
+SYSTEMD_UNIT: <project>.service
 PORT: <port>
 ```
 
-STATUS: done için en az bir deploy kanıtı zorunlu: `DEPLOY_URL`, `SYSTEMD_UNIT` veya `PORT` (biri yeterli).
+For `STATUS: done`, at least one deploy proof is required: DEPLOY_URL,
+SYSTEMD_UNIT, or PORT.

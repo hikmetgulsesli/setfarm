@@ -36,10 +36,10 @@ STITCH COMPONENT IMPORT RULES (NO EXCEPTIONS):
 5. After implementation, verify: every screen in DESIGN_MANIFEST.json has a matching import in the render tree
 
 FRAMEWORK-AWARE DESIGN TOKEN INTEGRATION:
-1. NEXT.JS (app/ dir): app/globals.css BAŞINA @import "../stitch/design-tokens.css"
-2. REACT (Vite/CRA): src/index.css veya src/main.tsx'de design-tokens.css import et
-3. RULES: design-tokens.css IMPORT edilir (copy-paste YAPILMAZ), var(--property-name) ile kullan,
-   design-tokens.css dışında --font-*, --color-* tanımlama YASAK, mevcut CSS dosyalarını SILME
+1. NEXT.JS (app/ dir): add @import "../stitch/design-tokens.css" at the top of app/globals.css.
+2. REACT (Vite/CRA): import design-tokens.css from src/index.css or src/main.tsx.
+3. RULES: import design-tokens.css, do not copy-paste it. Use var(--property-name).
+   Do not define --font-* or --color-* outside design-tokens.css. Do not delete existing CSS files.
 
 NO STITCH = NO CODE:
 If a page does NOT have a corresponding Stitch HTML in stitch/:

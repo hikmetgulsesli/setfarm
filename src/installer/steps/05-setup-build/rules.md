@@ -1,19 +1,20 @@
-# SETUP-BUILD Step — Kurallar
+# SETUP-BUILD Step Rules
 
-Pipeline preClaim tüm heavy işi yaptı:
-- `npm install` (package.json'daki tüm deps)
-- `npm run build` (baseline doğrulama — başarılı olmalı)
-- Compat engine (React 19 + testing-library vb uyumsuzluk varsa fail)
-- Tailwind install (stitch/ HTML'lerinde tailwind class'ı varsa)
-- `stitch-to-jsx.mjs` (stitch/*.html → src/screens/*.tsx auto-gen)
-- Auto-commit (generated screens)
+Pipeline preClaim already did:
+- `npm install`
+- baseline `npm run build`
+- compatibility checks
+- Tailwind install when Stitch HTML needs Tailwind
+- `stitch-to-jsx.mjs`
+- generated-screen auto-commit
 
-Build hatası varsa preClaim fail olurdu — buraya geldiğin an build yeşil.
+If the build had failed, preClaim would have failed before this step. Reaching
+this prompt means the baseline is green.
 
-## Senin işin — TEK ADIM
+## Your Single Step
 
-1. BUILD_CMD'i belirt (context'te hint var: `{{BUILD_CMD_HINT}}`)
-2. Output yaz, `step complete` çağır
+1. Report BUILD_CMD. Usually this is `npm run build`.
+2. Output and call `step complete`.
 
 ## Output
 
@@ -22,13 +23,13 @@ STATUS: done
 BUILD_CMD: npm run build
 ```
 
-- `BUILD_CMD`: Çoğunlukla `npm run build`. package.json scripts.build yoksa `tsc -p tsconfig.json`. Vanilla-ts ise `tsc`. Backend-only ise boş olabilir.
+Use `tsc -p tsconfig.json` only when no package build script exists. Use `tsc`
+for vanilla TypeScript. Backend-only projects may leave it empty only when no
+build command exists.
 
-## Yapma
+## Do Not
 
-- `npm install` veya `npm run build` çalıştırma (preClaim yaptı)
-- package.json değiştirme (compat engine baktı)
-- src/ altında dosya oluşturma (implement step'in işi)
-- Stitch generation (design step'in işi)
-
-BUILD_CMD emin değilsen `npm run build` yaz — default doğru.
+- Do not run `npm install` or `npm run build`.
+- Do not change package.json.
+- Do not create files under src.
+- Do not run Stitch generation.

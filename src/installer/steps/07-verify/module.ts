@@ -31,7 +31,7 @@ function buildPrompt(ctx: PromptContext): string {
     PR_MERGE_STATE_STATUS: c["pr_merge_state_status"] || "",
     PLAYWRIGHT_REPORT: c["playwright_report"] || "",
   });
-  return `${resolved}\n\n---\n\n# Kurallar\n\n${rulesBody}`;
+  return `${resolved}\n\n---\n\n# Rules\n\n${rulesBody}`;
 }
 
 export const verifyModule: StepModule = {

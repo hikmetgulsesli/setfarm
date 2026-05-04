@@ -1,120 +1,114 @@
-# STORIES Step — Kurallar
+# STORIES Step Rules
 
-PRD + SCREEN_MAP + DESIGN_SYSTEM'i okuyup user story listesi üret. Her story dosya bazlı (model + API + UI + test). Modüller arası bağımlılık doğru, scope dosya çakışması yok.
+Read PRD + SCREEN_MAP + DESIGN_SYSTEM and produce a file-scoped user story
+list. Stories must be dependency-ordered, non-overlapping, and implementation
+ready.
 
 ## Inputs
 
-- `prd` — Plan step PRD
-- `screen_map` — Design step SCREEN_MAP (screenId+name+type)
-- `design_system` — Design step seçimi (font, palette)
-- `predicted_screen_files` — context'te verilir; her screen için tam dosya yolu (`src/screens/<TurkishName>.tsx`)
+- `prd`: Plan step PRD.
+- `screen_map`: Design step SCREEN_MAP.
+- `design_system`: Design step fonts, palette, and aesthetic.
+- `predicted_screen_files`: exact generated paths for each screen, e.g.
+  `src/screens/<ScreenName>.tsx`.
 
-Not: Stories step `setup-repo` öncesinde çalışır. Repo yolu henüz oluşturulmamış
-olabilir; `REPO/PRD.md`, `package.json` veya kaynak dosyaları zorunlu input
-değildir. PRD ve tasarım bilgisi claim içinde gömülü gelir; stories planlaması
-bu gömülü inputlardan yapılmalıdır.
+Stories runs before setup-repo. Do not depend on files inside REPO existing on
+disk. The embedded claim context is the source of truth.
 
-## Story Format (zorunlu alanlar per story)
+## Story Format
 
 ```json
 {
   "id": "US-001",
-  "title": "Türkçe başlık",
-  "description": "1-2 paragraf — DB tabloları, API endpoint'leri, UI bileşenleri",
-  "acceptanceCriteria": ["Kriter 1", "Tests pass", "Typecheck passes"],
-  "depends_on": ["US-X"] veya [],
+  "title": "English technical story title",
+  "description": "1-2 paragraphs covering model/API/UI/test work",
+  "acceptanceCriteria": ["Criterion 1", "Tests pass", "Typecheck passes"],
+  "depends_on": ["US-X"],
   "screens": ["screen-id-1"],
   "scope_files": ["src/lib/foo.ts", "src/screens/Bar.tsx"],
   "shared_files": ["src/App.tsx"],
-  "scope_description": "1 cümle — ne, ne değil"
+  "scope_description": "One sentence defining what this story owns"
 }
 ```
 
-## Story Boyutu — Hedef
+Story titles/descriptions/acceptance criteria are agent-facing and should be
+English. Visible UI copy requirements may specify the user's requested product
+language.
 
-- 15-25 dakika / story
-- 200-500 LOC / story
-- **MIN 3, MAX 6 dosya / story** (YASAK: tek dosyalık story — model 1-file scope verdiğinde "tam app yaz" refleksi gösteriyor, SCOPE_BLEED döngüsüne giriyor)
-- Max 5 acceptance criteria / story (fazlaysa böl)
+## Story Size Target
 
-### Feature-complete paketleme kuralı
+- 15-25 minutes per story.
+- 200-500 LOC per story.
+- Target 3-6 owned files per story.
+- Max 5 acceptance criteria per story; split if more are needed.
 
-Her story **bağımsız çalışır bir feature dilimi** olmalı. Tek component değil:
-- Ana component(ler) + hook(lar) + type(lar) + test (3-6 dosya toplam)
-- Ya da ekran + ona bağlı tüm destek dosyaları
-- Single-file (örn sadece bir display component dosyası) = HATA — modeli paradox'a sokar
+### Feature-Complete Packaging
 
-Eğer bir feature doğal olarak 1 dosyaysa, yakınındaki ilgili dosyalarla birleştirip tek story yap.
+Each story must be a working feature slice, not an isolated display file:
+- main component(s) + hook(s) + type(s) + tests, or
+- screen + all directly required support files, or
+- storage/API boundary + tests.
 
-Çok büyük örnekler:
-- "Tüm dashboard'u yap" → ayrı: KPI kartları, aktivite akışı, grafikler, filtreler
-- "Auth ekle" → schema+middleware, login UI, session
+If a feature naturally fits in one file, combine it with the nearest related
+state/test/screen file so implement does not infer "write the whole app".
 
-## Sıralama (depends_on)
+## Ordering
 
-1. **US-001:** Project setup + design tokens + DB schema (depends_on: [])
-2. US-002+: Core moduller (depends_on US-001)
-3. **Son story:** Integration wiring (App.tsx, main.tsx, index.css) — depends_on: tüm diğerleri
+1. US-001: project setup + design tokens + database schema if needed.
+2. US-002+: core modules and screen flows, depending on US-001.
+3. Final story: integration wiring: App.tsx, main.tsx, routes, index.css. It
+   depends on all feature stories.
 
-Geç story'ler erken story'lere bağlanır. Tersi YASAK.
+Later stories may depend on earlier stories. Earlier stories must not depend on
+later stories.
 
-## scope_files & shared_files
+## scope_files and shared_files
 
-- **`scope_files`**: Story'nin SADECE kendi modifiye edebileceği dosyalar. Liste dışı dosya = SCOPE_BLEED reject.
-- **`shared_files`**: Story'nin OKU/REFERANS amaçlı görebileceği shared dosyalar (örn. integration story'nin App.tsx'ı). Çok az kullan.
-- **`scope_description`**: 1 cümle — bu story nelere dokunur, nelere DOKUNMAZ.
+- `scope_files`: the only files that story may create or modify.
+- `shared_files`: read/import context only unless also listed in `scope_files`.
+- `scope_description`: one sentence saying what the story owns and does not own.
 
-### Çakışma kuralı
+Two stories must not share the same `scope_files` entry. Shared files belong to
+one owner story or the final integration story.
 
-İki story aynı dosyayı `scope_files`'a koyamaz. Pipeline `overlap auto-fix` ile ortak dosyayı birinin scope'undan siler, diğerinin shared_files'ına ekler. Önlem: planlama sırasında çakışma yapma.
+## Screen File Rules
 
-## SCREEN FILES — `predicted_screen_files` Kullanımı (MUTLAK)
+Use paths from PREDICTED_SCREEN_FILES exactly. Do not invent:
+- `src/pages/GameScreen.tsx`
+- `src/views/MainMenu.tsx`
+- `src/components/screens/...`
 
-Stitch-to-JSX `src/screens/<ComponentName>.tsx` üretir. Türkçe transliterasyon:
-- "Oyun Ekranı" → `src/screens/OyunEkrani.tsx`
-- "Ana Menü" → `src/screens/AnaMenu.tsx`
+Every screen is owned by exactly one story. Menus/lists, main functional
+screens, settings/profile, and result/notification flows should be distributed
+by product structure.
 
-Context'te `PREDICTED_SCREEN_FILES` listesi verilir. **scope_files'a TAM bu yolları koy.** YASAK:
-- `src/pages/GameScreen.tsx` (İngilizce hayali)
-- `src/views/MainMenu.tsx` (yanlış dizin)
-- `src/components/screens/...` (hayali yol)
+## Integration-Only Files
 
-Her screen tam 1 story tarafından scope'lanmalı. Dağıtım rehberi:
-- Menü/liste → 1 story
-- Ana fonksiyonel ekran → kendi story'si
-- Sonuç/bildirim → ilgili fonksiyonel story ile birlikte
-- Ayarlar/profil → ayrı geç story
-
-## SCREEN_MAP Update
-
-Stories step çıktısında SCREEN_MAP'i güncelle. Her ekran için `stories: ["US-N"]` ekle.
-
-## BANNED scope_files (entegrasyon hariç)
-
-Bu dosyalar SADECE integration story'nin scope_files'ında olabilir:
+These files may appear in `scope_files` only for US-001 or the final
+integration story:
 - `src/App.tsx`, `src/main.tsx`, `src/index.tsx`
 - `src/index.css`, `src/App.css`
 - `package.json`, `tsconfig.json`, `vite.config.*`, `next.config.*`, `tailwind.config.*`
 
-Diğer story'ler bunları okuma referansı için `shared_files`'a koyabilir, scope'a değil.
+Other stories may reference them in `shared_files` only.
 
 ## Acceptance Criteria
 
-İyi (mekanik doğrulanabilir):
-- "Kullanıcı X butonuna basınca Y görür"
-- "Form validation: zorunlu alan boşken submit YASAK, hata gösterilir"
-- "Tests pass" + "Typecheck passes" (her story sonunda zorunlu)
+Good criteria are mechanical and testable:
+- "When the user clicks X, Y becomes visible."
+- "Submitting with a missing required field is blocked and shows an error."
+- "State persists after reload."
+- "Tests pass and typecheck/build pass."
 
 ### UI Behavior Contract
 
-- `UI_BEHAVIOR_CONTRACT` varsa her button/link/input en az bir story acceptance criterion içinde geçmeli.
-- Criterion sadece "buton var" dememeli; davranışı yazmalı: route değişimi, panel/dialog açılması, state/localStorage değişimi, filter/search sonucu, validation feedback.
-- Icon-only kontroller için hem görünen/erişilebilir isim hem ikon anlamı kullanılmalı; örnek isim uydurma, PRD/Stitch/DESIGN_DOM içindeki gerçek label ve icon değerlerini kullan.
-- PRD'de olmayan ama Stitch'te aktif görünen kontroller de boş bırakılamaz. Ya projeye uygun gerçek davranışla story'ye girer ya da acceptance criterion içinde disabled/hidden kararı açıkça yazılır.
+If UI_BEHAVIOR_CONTRACT exists, every button/link/input must appear in at least
+one acceptance criterion. A criterion must describe behavior, not just presence:
+route change, panel/dialog open, state/localStorage change, search/filter
+result, validation feedback, or an intentional disabled/hidden state.
 
-Kötü (belirsiz):
-- "Tasarım modern olur" (subjektif)
-- "Performans iyi" (ölçülemez)
+Icon-only controls need an accessible name or icon meaning tied to a behavior.
+Do not invent unrelated example names.
 
 ## Output Format
 
@@ -130,11 +124,11 @@ SCREEN_MAP:
 ]
 ```
 
-## Yapma
+## Do Not
 
-- Plan step'inde verilmeyen TECH_STACK kararı yapma
-- Hayali screen yolları kullanma (PREDICTED_SCREEN_FILES kullan)
-- Çok büyük story (>500 LOC, >5 criteria) yazma
-- İki story aynı dosyayı scope_files'a koyma
-- 0 story, eksik scope_files, eksik scope_description
-- App.tsx'ı integration dışında bir story'ye scope_files'a koyma
+- Do not choose a new TECH_STACK.
+- Do not invent screen paths.
+- Do not create oversized stories.
+- Do not assign the same file to multiple stories.
+- Do not put App.tsx in a feature story.
+- Do not output zero stories or missing scope descriptions.

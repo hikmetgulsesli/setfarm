@@ -1,20 +1,26 @@
 PLAN step — {{TASK}}
 
-Görevinden bir PRD (ürün gereksinimleri) üret ve teknik kararları ver. Kurallar bu promptun altındaki `Kurallar` bölümünde gömülü olarak verilir; `rules.md` dosyasını okumaya çalışma.
+Create the product PRD and choose the technical defaults for this run. The
+agent-facing contract is English. User-facing application copy should follow
+the user's requested language; if the task is Turkish and no other language is
+specified, plan a Turkish UI while keeping all pipeline output keys in English.
 
-## Görev
+Do not read `rules.md`; the rules are embedded below.
+
+## Task
 
 {{TASK}}
 
-## Yapılacaklar
+## Work
 
-1. Görevi oku, ürünü anla
-2. PRD yaz (Türkçe, >=500 karakter, Ekranlar tablosu min 3 satır)
-3. TECH_STACK ve DB_REQUIRED seç
-4. REPO path ve BRANCH adı belirle
-5. Aşağıdaki formatta çıktı ver
+1. Read the task and identify the product concept.
+2. Write a detailed PRD in English, including an explicit user-facing language
+   decision.
+3. Choose TECH_STACK and DB_REQUIRED.
+4. Choose REPO path and BRANCH name.
+5. Return exactly the key-value output format below.
 
-## Çıktı Formatı
+## Output Format
 
 ```
 STATUS: done
@@ -22,9 +28,10 @@ REPO: $HOME/projects/<slug>
 BRANCH: <branch-name>
 TECH_STACK: <vite-react|nextjs|vanilla-ts|node-express|react-native>
 PRD:
-<PRD gövdesi>
-PRD_SCREEN_COUNT: <sayı>
+<PRD body>
+PRD_SCREEN_COUNT: <number>
 DB_REQUIRED: <none|postgres|sqlite>
 ```
 
-Her alan zorunlu. JSON değil, KEY: VALUE satırları. PRD çok satır olabilir, diğer alanlar tek satır.
+Every field is required. This is not JSON. Use KEY: VALUE lines. PRD may be
+multi-line; every other field is single-line.

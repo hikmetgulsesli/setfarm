@@ -1,35 +1,35 @@
-DESIGN step — Stitch ekranları + tokens hazır, sen sadece DESIGN_SYSTEM rapor ver.
+DESIGN step — Stitch screens and tokens are ready. Report DESIGN_SYSTEM only.
 
 ## Repo
 
 REPO: {{REPO}}
-PRD ekran sayısı: {{PRD_SCREEN_COUNT}}
+PRD screen count: {{PRD_SCREEN_COUNT}}
 
-## Hazır olan (pipeline tarafından üretildi)
+## Prepared by the pipeline
 
-- stitch/*.html, *.png — ekranlar
-- stitch/DESIGN_MANIFEST.json — screenId+title listesi
-- stitch/design-tokens.css + design-tokens.json — renkler/fontlar
-- SCREEN_MAP context'e otomatik enjekte edildi:
+- stitch/*.html and *.png screens
+- stitch/DESIGN_MANIFEST.json with screenId/title list
+- stitch/design-tokens.css and design-tokens.json with colors/fonts
+- SCREEN_MAP already injected into context:
 
 ```json
 {{SCREEN_MAP}}
 ```
 
-## Senin işin
+## Your Work
 
-1. `stitch/design-tokens.css` (veya `.json`) dosyasını oku
-2. DESIGN_SYSTEM JSON'unu üret (palette + fonts + aesthetic)
-3. SCREEN_MAP'i (yukarıdaki) çıktıya geri ver — değiştirme
-4. Aşağıdaki KEY: VALUE formatında çıktı yaz, sonra `step complete` çağır
+1. Read `stitch/design-tokens.css` or `.json`.
+2. Produce DESIGN_SYSTEM JSON: palette, fonts, aesthetic.
+3. Return the SCREEN_MAP above unchanged unless a type correction is necessary.
+4. Output the key-value format below, then call `step complete`.
 
-## Çıktı
+## Output
 
 ```
 STATUS: done
 DEVICE_TYPE: DESKTOP
 DESIGN_SYSTEM: <JSON>
-SCREEN_MAP: <yukarıdaki JSON aynısı>
+SCREEN_MAP: <same JSON from above>
 ```
 
-Detaylı kurallar bu promptun altındaki `Kurallar` bölümünde gömülü olarak verilir; `rules.md` dosyasını okumaya çalışma.
+Do not read `rules.md`; the rules are embedded below.

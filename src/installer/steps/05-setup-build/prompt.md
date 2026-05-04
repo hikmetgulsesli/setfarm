@@ -1,28 +1,28 @@
-SETUP-BUILD step — build hazır, onayla ve geç.
+SETUP-BUILD step — build baseline is ready. Confirm and complete.
 
-## Repo durumu
+## Repo State
 
 REPO: {{REPO}}
 TECH_STACK: {{TECH_STACK}}
-BUILD_CMD önerisi: {{BUILD_CMD_HINT}}
+BUILD_CMD hint: {{BUILD_CMD_HINT}}
 
-Pipeline preClaim'de şunları yaptı:
-- npm install (deps yüklendi)
-- npm run build (baseline yeşil)
-- Compat engine (React/Next uyumsuzlukları kontrol edildi)
-- Tailwind install (gerekiyorsa)
-- stitch-to-jsx ran → src/screens/*.tsx üretildi, commit'lendi
+Pipeline preClaim already did:
+- npm install
+- npm run build baseline
+- compatibility checks for React/Next/testing libraries
+- Tailwind install when needed
+- stitch-to-jsx generated `src/screens/*.tsx` and committed them
 
-## Yapılacaklar
+## Work
 
-1. BUILD_CMD değerini yaz (hint'i kullan veya karar ver)
-2. Çıktı ver, complete çağır
+1. Set BUILD_CMD from the hint or choose the correct build command.
+2. Output and call `step complete`.
 
-## Çıktı
+## Output
 
 ```
 STATUS: done
 BUILD_CMD: npm run build
 ```
 
-Detaylı kurallar bu promptun altındaki `Kurallar` bölümünde gömülü olarak verilir; `rules.md` dosyasını okumaya çalışma.
+Do not read `rules.md`; the rules are embedded below.

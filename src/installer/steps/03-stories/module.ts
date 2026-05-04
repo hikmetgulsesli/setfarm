@@ -21,7 +21,7 @@ function buildPrompt(ctx: PromptContext): string {
     .replace(/\{\{PREDICTED_SCREEN_FILES\}\}/g, c["predicted_screen_files"] || "[]")
     .replace(/\{\{UI_BEHAVIOR_CONTRACT\}\}/g, c["ui_behavior_contract"] || "(none)")
     .replace(/\{\{DESIGN_DOM_PREVIEW\}\}/g, c["design_dom_preview"] || "(none)");
-  return `${resolved}\n\n---\n\n# Kurallar\n\n${rulesBody}`;
+  return `${resolved}\n\n---\n\n# Rules\n\n${rulesBody}`;
 }
 
 export const storiesModule: StepModule = {

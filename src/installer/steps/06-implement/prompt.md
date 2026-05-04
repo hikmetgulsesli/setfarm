@@ -59,11 +59,13 @@ You are implementing ONE user story. You may ONLY write to the files listed belo
 9. Do NOT use `git add -A` — stage only your scope files explicitly
 10. If the pre-commit hook rejects, run `git reset HEAD <file>` and remove out-of-scope changes. Do NOT bypass with `--no-verify`.
 
-11. **CHECKPOINT (her ~5dk bir, REQUIRED).** Uzun implementasyonlarda her 5 dakikada bir progress kaydı yaz:
+11. **CHECKPOINT (about every 5 minutes, REQUIRED).** For long implementations,
+   write a short progress checkpoint every 5 minutes:
    ```bash
-   echo "[$(date +%H:%M:%S)] <kısa durum: hangi dosyayı yazıyorsun, kaç dosya tamamlandı>" >> /tmp/setfarm-progress-{{RUN_ID}}.txt
+   echo "[$(date +%H:%M:%S)] <short status: file being edited, files completed>" >> /tmp/setfarm-progress-{{RUN_ID}}.txt
    ```
-   Medic bu dosyayı "alive" sinyali olarak okur — çok sık checkpoint yazarsan medic stuck-step timeout'unu ertelemez, gerçekten ilerlediğini görür. Checkpoint yazmak 1 saniye sürer, story'nin timeout ile kesilme riskini ciddi azaltır.
+   Medic reads this file as an alive/progress signal. A checkpoint must reflect
+   real progress; spammy checkpoints do not postpone stuck-step timeout.
 
 ## Output Format
 

@@ -18,7 +18,7 @@ Workflow agent. Peek→Claim→Work→Complete.
    WORKDIR=$(jq -r 'if (.input | type) == "object" then (.input.story_workdir // .input.repo // "") else "" end' /tmp/claim-{{OUTPUT_FILE_ID}}.json)
    if [ -z "$WORKDIR" ]; then
      WORKDIR=$(jq -r 'if (.input | type) == "string" then .input else "" end' /tmp/claim-{{OUTPUT_FILE_ID}}.json \
-       | sed -n 's/^- `\?\(\/[^` ]*\)`\? — proje kök dizini.*/\1/p; s/^REPO:[[:space:]]*\(\/[^[:space:]]*\).*/\1/p' \
+       | sed -n 's/^- `\?\(\/[^` ]*\)`\?.*/\1/p; s/^REPO:[[:space:]]*\(\/[^[:space:]]*\).*/\1/p' \
        | head -1)
    fi
    [ -z "$STEP_ID" ] && { echo "HEARTBEAT_OK"; exit 0; }

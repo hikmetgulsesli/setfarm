@@ -1,30 +1,31 @@
-SETUP-REPO step — repo hazır, onayla ve geç.
+SETUP-REPO step — repo is prepared. Confirm and complete.
 
-## Repo durumu
+## Repo State
 
 REPO: {{REPO}}
 BRANCH: {{BRANCH}}
 TECH_STACK: {{TECH_STACK}}
 DB_REQUIRED: {{DB_REQUIRED}}
 
-Pipeline preClaim'de şunları yaptı:
+Pipeline preClaim already did:
 - git init + main branch
-- {{BRANCH}} branch'ı açıldı (main'den)
-- Scaffold ({{TECH_STACK}}): package.json, config dosyaları
-- DB provision ({{DB_REQUIRED}} ise)
-- Design contract'lar (stitch/DESIGN_MANIFEST.json'dan)
+- created {{BRANCH}} from main
+- scaffolded {{TECH_STACK}} files: package.json and config files
+- provisioned DB when DB_REQUIRED requires it
+- built design contracts from stitch/DESIGN_MANIFEST.json
 
-## Yapılacaklar
+## Work
 
-1. `ls -la {{REPO}}` ile kontrol et
-2. EXISTING_CODE true/false belirle (git log çok commit varsa true, yeni scaffold ise false)
-3. Çıktı ver, complete çağır
+1. Check `ls -la {{REPO}}`.
+2. Decide EXISTING_CODE true/false. Use true only for a real pre-existing repo
+   with meaningful prior commit history.
+3. Output and call `step complete`.
 
-## Çıktı
+## Output
 
 ```
 STATUS: done
 EXISTING_CODE: false
 ```
 
-Detaylı kurallar bu promptun altındaki `Kurallar` bölümünde gömülü olarak verilir; `rules.md` dosyasını okumaya çalışma.
+Do not read `rules.md`; the rules are embedded below.

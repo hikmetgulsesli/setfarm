@@ -1,36 +1,36 @@
-# Security Gate Kuralları
+# Security Gate Rules
 
-## Retry tetikleri (STATUS: retry)
+## Retry Triggers
 
-- Hardcoded secret (API key, JWT secret, bcrypt salt)
-- Unsafe HTML render (user input escape edilmeden DOM'a enjekte ediliyor)
-- SQL string concat, raw `exec`/`spawn` user input
-- Auth bypass: `if (user)` ama user null-check eksik
-- CORS `*` wildcard + credentials
-- localStorage'da plain password/token
-- eval/Function constructor dinamik input
+- Hardcoded secret: API key, JWT secret, bcrypt salt, token.
+- Unsafe HTML render of user input.
+- SQL string concat or raw exec/spawn fed by user input.
+- Auth bypass or missing authorization check.
+- CORS wildcard with credentials.
+- Plain password/token in localStorage.
+- eval/Function constructor with dynamic input.
 
-## Pass kriterleri (STATUS: done)
+## Pass Criteria
 
-- Hiçbir hardcoded secret yok (env veya secret manager kullanılıyor)
-- User input düzgün escape/sanitize edilmiş
-- Auth flow'da client-side trust yok
-- Dependencies audit temiz (veya kritik fail yok)
+- No hardcoded secrets.
+- User input is escaped/sanitized at unsafe sinks.
+- No client-side-only auth trust for protected actions.
+- No critical dependency or configuration failure.
 
-## Skip kriterleri (STATUS: skip)
+## Skip Criteria
 
-- Proje dosya üretmediyse (zero-work)
-- Sadece docs/config değişimi ise
+- Project produced no code.
+- Documentation/config-only change.
 
-## VULNERABILITIES formatı
+## VULNERABILITIES Format
 
-Her madde: dosya:satır + kategori + kısa açıklama.
+Each item: file:line + category + short actionable explanation.
 
 ```
 VULNERABILITIES:
-- src/api/users.ts:42 — SQL Injection: `query(\`SELECT * FROM users WHERE id=${req.params.id}\`)` — parametrize et
-- .env.example:5 — Hardcoded JWT secret "supersecret123" committed — rotate + .gitignore
-- src/ui/RichText.tsx:18 — XSS via unsafe HTML sink (user.bio render edilmeden önce DOMPurify kullan)
+- src/api/users.ts:42 — SQL Injection: raw string interpolation in query; use parameters.
+- .env.example:5 — Secret leak: committed JWT secret; rotate and remove.
+- src/ui/RichText.tsx:18 — XSS: unsafe HTML sink; sanitize before render.
 ```
 
-Aksiyon edilebilir tek satır maddeler. Uzun explanation yazma.
+Keep findings one-line and actionable.

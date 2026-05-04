@@ -1,39 +1,52 @@
-# QA Test Step — Browser & Functional Test Agent
+# QA Test Step — Browser, Visual, and Functional Test Agent
 
-Görev: Verify + security-gate'ten geçmiş projeyi browser'da açarak fonksiyonel ve görsel kalite testleri yap. Acceptance criteria'nın canlı runtime'da çalıştığını teyit et. Kod düzeltme yapma; tek tek retry üretme. Önce tüm bulguları tek QA raporunda topla.
+Test the project after verify and security-gate. Open the live app in a browser,
+prove that acceptance criteria work at runtime, traverse routes and controls,
+capture screenshots, and write one batch QA report. Do not edit application
+code. Do not stop on the first issue; finish the sweep, then report all issues
+together so implement can fix them in one batch.
 
-## Context değişkenleri
+## Context
 
-- `{{REPO}}` — proje kök dizini
-- `{{BRANCH}}` — feature branch
-- `{{STORIES_JSON}}` — implement edilen story'ler
-- `{{FINAL_PR}}` — PR URL
-- `{{PROGRESS}}` — proje durumu
+- `{{REPO}}`: project root
+- `{{BRANCH}}`: feature branch
+- `{{STORIES_JSON}}`: implemented stories
+- `{{FINAL_PR}}`: PR URL
+- `{{PROGRESS}}`: project status
 
-## Test senaryoları
+## Test Scenarios
 
-0. **Branch policy**: `merge_strategy: pr-each` / `verify_each` akışında QA testleri artık eski run branch'i üzerinde değil, merge edilmiş `main` üzerinde yapılır. Teste başlamadan önce:
+0. **Branch policy**: for `merge_strategy: pr-each` / `verify_each`, QA runs on
+   merged `main`, not on the old run branch:
    - `cd {{REPO}}`
    - `git fetch origin main`
    - `git checkout main`
    - `git pull --ff-only origin main`
-   - test/build komutlarını bu güncel `main` üzerinden çalıştır.
-   - QA raporu için commit/push yapma; uygulama kodunu değiştirme. Bulguları repo içinde `quality-reports/qa-test-1.md` dosyasına yaz ve step output'ta `QA_REPORT` ile bildir.
-1. **Build + dev server** başarıyla ayağa kalkıyor mu
-2. **Ana akış** (happy path) her story'nin acceptance criteria'sını geçiyor mu
-3. **Route/link gezintisi**: görünen tüm linkler, sidebar/topbar sekmeleri, hash route'ları ve geri dönüşler kaybolmadan çalışıyor mu
-4. **Buton/işlev matrisi**: görünen tüm button, icon-button, toggle, checkbox, form submit, modal aç/kapat ve sil/iptal aksiyonları gerçek state/DOM/URL/localStorage değişimi üretiyor mu
-5. **Edge case'ler**: boş state, uzun metin, hızlı tıklama, localStorage silme
-6. **Responsive**: mobil viewport (375x667) ve desktop (1440x900) test
-7. **Stitch/tasarım uyumu**: `stitch/` veya tasarım referansı varsa çalışan sayfanın ana layout, token/class, spacing, modal ve navigation uyumunu kontrol et
-8. **Dark mode** destekliyorsa geçişi test et
-9. **Klavye nav**: Tab ile tüm interactive öğelere ulaşılabilir
-10. **Console**: warning/error var mı
-11. **Icon-only controls**: metinsiz veya ikon-only butonları da tıkla. Tıklama görünür state, dialog/panel, URL, localStorage/app state veya DOM değişimi üretmüyorsa `STATUS: retry`.
+   - run build/test commands on this current `main`.
+   - do not commit or push QA findings. Write `quality-reports/qa-test-1.md`
+     and reference it in step output as `QA_REPORT`.
+1. Build and dev server start cleanly.
+2. Main happy path satisfies every story acceptance criterion.
+3. Route/link traversal: every visible link, sidebar item, topbar tab, hash
+   route, and back/return path works without losing the user.
+4. Interaction matrix: every visible button, icon-button, toggle, checkbox,
+   form submit, modal open/close, delete/cancel, and navigation action produces
+   real URL/DOM/state/localStorage change or is intentionally disabled.
+5. Edge cases: empty state, long text, rapid clicks, localStorage cleared.
+6. Responsive: desktop 1440x900 and mobile 375x667.
+7. Design/Stitch fit: if `stitch/` or another reference exists, compare the
+   running app against the reference for layout, tokens/classes, spacing,
+   modal/sidebar/header behavior, and major visual hierarchy.
+8. Dark mode if supported.
+9. Keyboard navigation: Tab reaches every interactive element.
+10. Console: capture warnings/errors.
+11. Icon-only controls: click them too. If click does not change visible state,
+    dialog/panel, URL, localStorage/app state, or DOM, return `STATUS: retry`.
 
-## Zorunlu dev-server lifecycle
+## Required Dev-Server Lifecycle
 
-Dev server'i kontrolsuz `npm run dev & ...` seklinde baslatma. Asagidaki kalibi kullan; `trap` ayni shell icinde tanimlanmali, her komut `;` veya yeni satirla ayrilmali, en sonda server kapanmali:
+Do not start the dev server with uncontrolled `npm run dev & ...`. Use this
+pattern. The `trap` must be in the same shell and the server must shut down:
 
 ```bash
 cd {{REPO}}
@@ -54,35 +67,40 @@ curl -sf "http://127.0.0.1:$PORT/" >/dev/null || { echo "SERVER_FAIL"; tail -80 
 # Browser/DOM checks here. Finish within 10 minutes.
 ```
 
-Yasak: `sleep` sonrasi satir ayirmadan `curl ... echo ...` yazmak; bu shell'i bozar ve QA step'i sessizce asili birakir. QA agent testten sonra acik `vite`/`serve` prosesi birakmamali.
+Do not leave `vite`, `serve`, or Chromium processes running after the test.
 
-## Zorunlu QA raporu
+## Required QA Report
 
-`quality-reports/qa-test-1.md` dosyası oluştur. Klasör yoksa oluştur. Rapor aşağıdaki bölümleri içermeli:
+Create `quality-reports/qa-test-1.md`. Create the directory if needed. The
+report must contain:
 
-- `Summary`: kısa karar
-- `Environment`: commit/branch, build komutu, test komutu, dev server portu
-- `Routes Tested`: her route/link, beklenen ve gözlenen sonuç
-- `Interactions Tested`: her buton/link/form/toggle/modal için selector veya görünür adı, aksiyon, sonuç
-- `Screenshots`: desktop ve mobil screenshot dosya yolları
-- `Console`: error/warning özeti
-- `Visual/Layout Findings`: taşma, overlap, raw CSS/token, modal/sidebar/header sorunları
-- `Functional Findings`: bozuk link, no-op buton, hatalı state, kaybolan route, çalışmayan kaydet/sil/geri dönüş
-- `Batch Fix Plan`: implement ajanının tek batch halinde düzelteceği maddeler
+- `Summary`: decision and confidence.
+- `Environment`: commit/branch, build command, test command, dev server port.
+- `Routes Tested`: each route/link, expected result, observed result.
+- `Interactions Tested`: selector or visible name, action, result for every
+  button/link/form/toggle/modal.
+- `Screenshots`: desktop and mobile screenshot paths.
+- `Console`: warning/error summary.
+- `Visual/Layout Findings`: overflow, overlap, raw CSS/token, modal/sidebar/header issues.
+- `Functional Findings`: broken link, no-op button, wrong state, lost route,
+  failing save/delete/back behavior.
+- `Batch Fix Plan`: items for the implement agent to fix in one pass.
 
-Rapor tek tek retry yaratmak için değil, toplu fix girdisi olmak için yazılmalı. Küçük bir bulgu bulunca durma; önce kapsamlı taramayı bitir.
+This report is a batch-fix input, not a reason to create one retry per issue.
 
-## Output formatı
+## Output Format
 
 ```
 STATUS: done|retry|skip|fail
 QA_REPORT: quality-reports/qa-test-1.md
-QA_SCREENS_TESTED: <sayı>
-QA_ROUTES_TESTED: <sayı>
-QA_INTERACTIONS_TESTED: <sayı>
-QA_TOTAL_ISSUES: <sayı>
-TEST_FAILURES: <STATUS retry ise batch bulgu listesi>
-ISSUES: <opsiyonel ek gözlemler>
+QA_SCREENS_TESTED: <number>
+QA_ROUTES_TESTED: <number>
+QA_INTERACTIONS_TESTED: <number>
+QA_TOTAL_ISSUES: <number>
+TEST_FAILURES: <batch issue list when STATUS is retry>
+ISSUES: <optional extra observations>
 ```
 
-`STATUS: done` sadece QA raporu yazıldıysa ve route/screen/interaction kanıtı verildiyse kullanılabilir. `STATUS: retry` kullanıyorsan `TEST_FAILURES` veya `ISSUES` alanında tüm bulguları batch halinde ver; uygulama kodunu kendin düzeltme.
+Use `STATUS: done` only when the report exists and includes route, screen, and
+interaction evidence. If using `STATUS: retry`, put all findings into
+TEST_FAILURES or ISSUES as one batch.

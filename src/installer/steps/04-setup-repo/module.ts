@@ -17,7 +17,7 @@ function buildPrompt(ctx: PromptContext): string {
     .replace(/\{\{BRANCH\}\}/g, c["branch"] || "main")
     .replace(/\{\{TECH_STACK\}\}/g, c["tech_stack"] || "vite-react")
     .replace(/\{\{DB_REQUIRED\}\}/g, c["db_required"] || "none");
-  return `${resolved}\n\n---\n\n# Kurallar\n\n${rulesBody}`;
+  return `${resolved}\n\n---\n\n# Rules\n\n${rulesBody}`;
 }
 
 export const setupRepoModule: StepModule = {

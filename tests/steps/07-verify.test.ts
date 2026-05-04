@@ -45,7 +45,7 @@ describe("07-verify step module", () => {
     assert.ok(prompt.includes("https://github.com/u/r/pull/42"));
     assert.ok(prompt.includes("3 files changed"));
     assert.ok(prompt.includes("US-002"));
-    assert.ok(prompt.includes("Kurallar"));
+    assert.ok(prompt.includes("Rules"));
   });
 
   it("buildPrompt falls back to final_pr when pr_url missing", () => {

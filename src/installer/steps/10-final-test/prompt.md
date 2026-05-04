@@ -1,41 +1,45 @@
 # Final Test Step — End-to-End Smoke Agent
 
-Görev: QA-test sonrası son doğrulama. `npm run build` + `scripts/smoke-test.mjs` çıktısını değerlendir, merge-ready mi karar ver. Verify + qa-test'ten farklı olarak bu aşama **merge-gate** — fail ederse sonraki deploy step'i ASLA çalışmaz.
+Final validation after QA-test. Run and evaluate `npm run build` and
+`scripts/smoke-test.mjs`, then decide whether the project is merge-ready. This
+is the merge gate; if it fails, deploy must not run.
 
-## Context değişkenleri
+## Context
 
-- `{{REPO}}` — proje kök dizini
-- `{{BRANCH}}` — feature branch (merge öncesi)
-- `{{FINAL_PR}}` — final PR URL (varsa)
-- `{{STORIES_JSON}}` — tüm story'ler
-- `{{PROGRESS}}` — proje durumu
+- `{{REPO}}`: project root
+- `{{BRANCH}}`: feature branch before merge
+- `{{FINAL_PR}}`: final PR URL when present
+- `{{STORIES_JSON}}`: all stories
+- `{{PROGRESS}}`: project status
 
-## Kontroller
+## Checks
 
-0. **Main sync**: `merge_strategy: pr-each` / `verify_each` akışında final-test eski run branch'i merge etmez. Önce `main`'i güncelle ve sadece merge edilmiş `main` üzerinde test et:
+0. **Main sync**: for `merge_strategy: pr-each` / `verify_each`, final-test
+   tests merged `main`, not the old run branch:
    - `cd {{REPO}}`
    - `git fetch origin main`
    - `git checkout main`
    - `git pull --ff-only origin main`
-   - Final test raporu için commit/push yapma; sonuçları sadece `SMOKE_TEST_RESULT` ve `TEST_FAILURES` alanlarına yaz.
-1. **Build pass**: `npm run build` temiz, warning 0-5 arası kabul, error 0
-2. **Smoke test**: platform smoke script'iyle çalıştır:
+   - do not commit/push final-test output.
+1. **Build pass**: `npm run build` exits 0. Errors are not acceptable; small
+   warnings are acceptable only when clearly harmless.
+2. **Smoke test**:
    ```bash
    SMOKE_SCRIPT="$HOME/.openclaw/setfarm-repo/scripts/smoke-test.mjs"
    [ -f scripts/smoke-test.mjs ] && SMOKE_SCRIPT="$PWD/scripts/smoke-test.mjs"
    node "$SMOKE_SCRIPT" "$PWD"
    ```
-   — 16-fazlı Vibe Guard (Phase 16: Design Fidelity)
-3. **Design fidelity**: structural/wiring gap varsa blocking (step-ops otomatik düşürür)
-4. **Import consistency**: duplicate dir/import yoksa (step-ops otomatik kontrol eder)
-5. **Main branch clean**: implement branch merge sonrası main üzerinde bozulma yok
+3. **Design fidelity**: structural/wiring gaps are blocking.
+4. **Import consistency**: no duplicate import dirs or broken imports.
+5. **Main branch clean**: merged main is not broken.
 
-## Output formatı
+## Output Format
 
 ```
 STATUS: done|retry|skip|fail
-SMOKE_TEST_RESULT: <summary line from smoke-test.mjs, e.g. "pass (16/16 phases)" or "fail: Phase 3 build">
-TEST_FAILURES: <retry/fail ise liste>
+SMOKE_TEST_RESULT: <summary line, e.g. "pass (16/16 phases)" or "fail: Phase 3 build">
+TEST_FAILURES: <list when retry/fail>
 ```
 
-STATUS: done SMOKE_TEST_RESULT zorunlu. Agent script çıktısını tail'dan kopyala.
+`STATUS: done` requires SMOKE_TEST_RESULT. Copy the final smoke summary or write
+a concise equivalent.

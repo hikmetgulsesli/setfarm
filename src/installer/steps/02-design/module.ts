@@ -16,7 +16,7 @@ function buildPrompt(ctx: PromptContext): string {
   const resolved = promptTemplate
     .replace(/\{\{REPO\}\}/g, repo)
     .replace(/\{\{PRD_SCREEN_COUNT\}\}/g, screenCount);
-  return `${resolved}\n\n---\n\n# Kurallar\n\n${rulesBody}`;
+  return `${resolved}\n\n---\n\n# Rules\n\n${rulesBody}`;
 }
 
 export const designModule: StepModule = {

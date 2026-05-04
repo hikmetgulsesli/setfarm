@@ -16,7 +16,7 @@ function buildPrompt(ctx: PromptContext): string {
     .replace(/\{\{REPO\}\}/g, c["repo"] || "")
     .replace(/\{\{TECH_STACK\}\}/g, c["tech_stack"] || "vite-react")
     .replace(/\{\{BUILD_CMD_HINT\}\}/g, c["build_cmd_hint"] || "npm run build");
-  return `${resolved}\n\n---\n\n# Kurallar\n\n${rulesBody}`;
+  return `${resolved}\n\n---\n\n# Rules\n\n${rulesBody}`;
 }
 
 export const setupBuildModule: StepModule = {

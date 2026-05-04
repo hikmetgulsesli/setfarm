@@ -44,7 +44,7 @@ describe("05-setup-build step module", () => {
     assert.ok(prompt.includes("$HOME/projects/testapp-12345"));
     assert.ok(prompt.includes("vite-react"));
     assert.ok(prompt.includes("npm run build"));
-    assert.ok(prompt.includes("Kurallar"));
+    assert.ok(prompt.includes("Rules"));
   });
 
   it("buildPrompt stays within maxPromptSize for typical inputs", () => {

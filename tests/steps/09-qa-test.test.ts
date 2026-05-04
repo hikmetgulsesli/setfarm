@@ -36,8 +36,8 @@ describe("09-qa-test step module", () => {
     assert.ok(prompt.includes("pull/9"));
     assert.ok(prompt.includes("happy path"));
     assert.ok(prompt.includes("quality-reports/qa-test-1.md"));
-    assert.ok(prompt.includes("Route/link gezintisi"));
-    assert.ok(prompt.includes("Kurallar"));
+    assert.ok(prompt.includes("Route/link traversal"));
+    assert.ok(prompt.includes("Rules"));
   });
 
   it("buildPrompt within maxPromptSize", () => {

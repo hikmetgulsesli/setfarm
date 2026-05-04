@@ -30,7 +30,7 @@ describe("04-setup-repo step module", () => {
     assert.ok(prompt.includes("feature-testapp"));
     assert.ok(prompt.includes("vite-react"));
     assert.ok(prompt.includes("postgres"));
-    assert.ok(prompt.includes("Kurallar"));
+    assert.ok(prompt.includes("Rules"));
   });
 
   it("buildPrompt uses defaults when context keys missing", () => {

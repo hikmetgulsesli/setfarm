@@ -27,7 +27,7 @@ describe("11-deploy step module", () => {
     assert.ok(prompt.includes("pomodoro-58131"));
     assert.ok(prompt.includes("npm run build"));
     assert.ok(prompt.includes("systemd"));
-    assert.ok(prompt.includes("Kurallar"));
+    assert.ok(prompt.includes("Rules"));
   });
 
   it("buildPrompt default BUILD_CMD when missing", () => {

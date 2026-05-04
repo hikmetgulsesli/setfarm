@@ -1,42 +1,42 @@
-# Deploy Kuralları
+# Deploy Rules
 
-## Pass kriterleri (STATUS: done)
+## Pass Criteria
 
-- systemd unit `systemctl --user is-active` → active
-- HTTP health check 200
-- DEPLOY_URL canlı erişilebilir (curl -Is → 200/301/302)
-- Build artifact `dist/` dolu ve serve ediliyor
+- systemd unit is active.
+- HTTP health check returns 200/301/302.
+- DEPLOY_URL is live.
+- Build artifact exists and is being served.
 
-## Retry tetikleri (STATUS: retry)
+## Retry Triggers
 
-- systemd unit fail (journalctl log'da ExecStart hata)
-- Port çakışması (aynı port başka serviste)
-- Nginx config syntax error (`nginx -t` fail)
-- Cloudflare tunnel DNS propagation beklemede (5+ dk)
-- Health check 5xx döndürüyor
+- systemd unit fails.
+- Port collision.
+- Nginx config syntax error.
+- Cloudflare tunnel/DNS propagation still pending after reasonable wait.
+- Health check returns 5xx.
 
-## Fail kriterleri (STATUS: fail)
+## Fail Criteria
 
-- Disk full veya sunucu erişilemez
-- systemd unit çalışmaya başladı ama 3+ restart loop (`Restart=always` triggered)
-- Geri dönülemez config bozulması (Nginx main config bozuldu)
+- Disk full or server unreachable.
+- Service enters 3+ restart loop.
+- Irrecoverable config corruption.
 
-## Skip kriterleri (STATUS: skip)
+## Skip Criteria
 
-- Proje library-only (deploy edilecek frontend yok)
-- User local-only test istedi (PRD'de deploy_required: false)
+- Library-only project with no deployable frontend.
+- User requested local-only testing.
 
-## systemd unit template
+## systemd Unit Template
 
 ```
 [Unit]
-Description=<proje>
+Description=<project>
 After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/setrox/projects/<proje>
-ExecStart=/usr/bin/node dist/server.js (veya "npx vite preview --port <port>")
+WorkingDirectory=/home/setrox/projects/<project>
+ExecStart=/usr/bin/node dist/server.js
 Restart=on-failure
 RestartSec=10
 Environment=NODE_ENV=production
@@ -46,9 +46,12 @@ Environment=PORT=<port>
 WantedBy=default.target
 ```
 
-## Dikkat
+For Vite static apps, preview/serve may be used instead of `node dist/server.js`
+when that is the correct runtime command.
 
-- Port 3333 MC için rezerve — kullanma
-- `systemctl --user enable` kullan, `sudo systemctl` değil
-- Subdomain isim collision kontrol et (existing 37 subdomain listesi mevcut)
-- Kırmızı nokta: Rezerve DB port (5432 PostgreSQL), 8443 gateway
+## Watchouts
+
+- Port 3333 is reserved for Mission Control.
+- Use `systemctl --user enable`, not sudo systemctl.
+- Check subdomain collision.
+- Reserved ports: 5432 PostgreSQL, 8443 gateway.

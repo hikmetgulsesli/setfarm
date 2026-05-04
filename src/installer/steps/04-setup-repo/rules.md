@@ -1,17 +1,17 @@
-# SETUP-REPO Step — Kurallar
+# SETUP-REPO Step Rules
 
-Pipeline tüm heavy işi preClaim'de yaptı:
-- `setup-repo.sh` çalıştı (git init + branch + scaffold)
-- PRD'deki BRANCH oluşturuldu (yoksa main'den)
-- PostgreSQL provision (DB_REQUIRED=postgres ise)
-- Design contract'lar inşa edildi (stitch HTML'lerden tablo/component/route)
-- Scaffold: package.json, tsconfig, vite.config, tailwind.config (TECH_STACK'e göre)
+The pipeline already did the heavy work:
+- ran setup-repo.sh
+- created the planned branch
+- provisioned PostgreSQL when DB_REQUIRED=postgres
+- built design contracts from Stitch HTML
+- scaffolded package/config files for TECH_STACK
 
-## Senin işin — TEK ADIM
+## Your Single Step
 
-1. `ls -la {{REPO}}` ile dizini kontrol et (package.json var mı)
-2. Aşağıdaki KEY: VALUE formatında çıktı ver
-3. `step complete` çağır
+1. Confirm the repo directory exists and has the expected scaffold.
+2. Output the key-value format.
+3. Call `step complete`.
 
 ## Output
 
@@ -20,14 +20,14 @@ STATUS: done
 EXISTING_CODE: false|true
 ```
 
-- `EXISTING_CODE: false` — repo yeni scaffold edildi (çoğu durumda)
-- `EXISTING_CODE: true` — repo pre-existing (git rev-list count > 5)
+- `false`: fresh scaffold, the usual case.
+- `true`: real pre-existing repo with prior meaningful history.
 
-## Yapma
+## Do Not
 
-- git komutları çalıştırma (preClaim halletti)
-- npm install çağırma (setup-build step'in işi)
-- scaffold dosyalarına dokunma (next step'teki agent'lar yazacak)
-- Stitch API çağırma
+- Do not run git commands.
+- Do not run npm install.
+- Do not edit scaffold files.
+- Do not call Stitch API.
 
-EXISTING_CODE gerçekten emin değilsen `false` seç — güvenli default.
+If unsure, choose `EXISTING_CODE: false`.

@@ -21,7 +21,7 @@ function buildPrompt(ctx: PromptContext): string {
     STORIES_JSON: c["stories_json"] || "[]",
     PROGRESS: c["progress"] || "",
   });
-  return `${resolved}\n\n---\n\n# Kurallar\n\n${rulesBody}`;
+  return `${resolved}\n\n---\n\n# Rules\n\n${rulesBody}`;
 }
 
 export const finalTestModule: StepModule = {
