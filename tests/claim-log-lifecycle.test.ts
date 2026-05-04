@@ -45,6 +45,15 @@ function peekStepSource(): string {
   return source.slice(start, end);
 }
 
+function claimImplementLoopSource(): string {
+  const source = fs.readFileSync(path.join(root, "src", "installer", "step-ops.ts"), "utf-8");
+  const start = source.indexOf("// pr-each means strict serial delivery");
+  const end = source.indexOf("// Story selection + claim must be atomic", start);
+  assert.notEqual(start, -1, "claim implement verifyEach wait source not found");
+  assert.notEqual(end, -1, "claim implement verifyEach wait end not found");
+  return source.slice(start, end);
+}
+
 describe("single-step claim_log lifecycle", () => {
   it("records single-step handoff before heavy preClaim and closes no-spawn exits", () => {
     const source = claimSingleStepSource();
@@ -151,6 +160,13 @@ describe("single-step claim_log lifecycle", () => {
       claimSource.indexOf("fix_st.story_id LIKE 'QA-FIX-%'") > claimSource.indexOf("COALESCE(prev.loop_config::jsonb ->> 'verifyStep', '') = s.step_id"),
       "claimStep should only suppress the verify-each previous-step bypass when an active QA-FIX exists",
     );
+  });
+
+  it("allows implement to claim active QA-FIX stories even when older stories are done", () => {
+    const source = claimImplementLoopSource();
+    assert.match(source, /const activeQaFix = await pgGet/);
+    assert.match(source, /story_id LIKE 'QA-FIX-%'/);
+    assert.match(source, /parseInt\(awaitingVerify\?\.cnt \|\| "0", 10\) > 0 && parseInt\(activeQaFix\?\.cnt \|\| "0", 10\) === 0/);
   });
 
   it("closes single-step failure claims by workflow step id, not step UUID", () => {

@@ -1591,7 +1591,11 @@ async function handleStepPending(payload: { agentId: string; runId: string; step
           "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status = 'done'",
           [runId],
         );
-        if (parseInt(awaitingVerify?.cnt || "0", 10) > 0) {
+        const activeQaFix = await pgGet<{ cnt: string }>(
+          "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND story_id LIKE 'QA-FIX-%' AND status IN ('pending', 'running')",
+          [runId],
+        );
+        if (parseInt(awaitingVerify?.cnt || "0", 10) > 0 && parseInt(activeQaFix?.cnt || "0", 10) === 0) {
           console.log(`[spawner] Loop pending but ${awaitingVerify?.cnt || "0"} done story/stories await verify; skip ${wfId}/${role}`);
           return;
         }
@@ -1621,7 +1625,11 @@ async function handleStoryPending(payload: { role: string; runId: string; storyI
         "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status = 'done'",
         [runId],
       );
-      if (parseInt(awaitingVerify?.cnt || "0", 10) > 0) {
+      const activeQaFix = await pgGet<{ cnt: string }>(
+        "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND story_id LIKE 'QA-FIX-%' AND status IN ('pending', 'running')",
+        [runId],
+      );
+      if (parseInt(awaitingVerify?.cnt || "0", 10) > 0 && parseInt(activeQaFix?.cnt || "0", 10) === 0) {
         console.log(`[spawner] Story pending but ${awaitingVerify?.cnt || "0"} done story/stories await verify; skip developer for ${wfId}`);
         return;
       }

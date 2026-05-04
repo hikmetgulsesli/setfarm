@@ -2098,7 +2098,11 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
           "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status = 'done'",
           [step.run_id],
         );
-        if (parseInt(awaitingVerify?.cnt || "0", 10) > 0) {
+        const activeQaFix = await pgGet<{ cnt: string }>(
+          "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND story_id LIKE 'QA-FIX-%' AND status IN ('pending', 'running')",
+          [step.run_id],
+        );
+        if (parseInt(awaitingVerify?.cnt || "0", 10) > 0 && parseInt(activeQaFix?.cnt || "0", 10) === 0) {
           await pgRun(
             "UPDATE steps SET status = 'pending', updated_at = $1 WHERE run_id = $2 AND step_id = $3 AND status IN ('waiting','done','pending')",
             [now(), step.run_id, loopConfig.verifyStep],

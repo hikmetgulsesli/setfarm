@@ -35,6 +35,24 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /Deferring background workflow/);
   });
 
+  it("does not defer active QA-FIX implement work behind older done stories", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    const stepPendingStart = source.indexOf("async function handleStepPending(");
+    const storyPendingStart = source.indexOf("async function handleStoryPending(");
+    const storyPendingEnd = source.indexOf("async function advanceCompletedVerifyEachLoops", storyPendingStart);
+    assert.notEqual(stepPendingStart, -1, "handleStepPending source not found");
+    assert.notEqual(storyPendingStart, -1, "handleStoryPending source not found");
+    assert.notEqual(storyPendingEnd, -1, "handleStoryPending end not found");
+    const stepPendingSource = source.slice(stepPendingStart, storyPendingStart);
+    const storyPendingSource = source.slice(storyPendingStart, storyPendingEnd);
+
+    for (const block of [stepPendingSource, storyPendingSource]) {
+      assert.match(block, /const activeQaFix = await pgGet/);
+      assert.match(block, /story_id LIKE 'QA-FIX-%'/);
+      assert.match(block, /parseInt\(awaitingVerify\?\.cnt \|\| "0", 10\) > 0 && parseInt\(activeQaFix\?\.cnt \|\| "0", 10\) === 0/);
+    }
+  });
+
   it("does not claim gateway cron recreation in event-driven spawner mode", () => {
     const source = fs.readFileSync(path.join(root, "src", "cli", "cli.ts"), "utf-8");
     assert.match(source, /gatewayAgentCronsEnabled/);
