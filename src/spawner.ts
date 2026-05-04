@@ -8,7 +8,7 @@ import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_pro
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { pgGet, pgQuery, pgRun } from "./db-pg.js";
+import { pgGet, pgMigrate, pgQuery, pgRun } from "./db-pg.js";
 import { loadWorkflowSpec } from "./installer/workflow-spec.js";
 import { resolveWorkflowDir, resolveSetfarmCli } from "./installer/paths.js";
 import { claimStep, completeStep } from "./installer/step-ops.js";
@@ -1768,6 +1768,7 @@ async function main() {
   fs.mkdirSync(path.dirname(PID_FILE), { recursive: true });
   fs.writeFileSync(PID_FILE, String(process.pid));
   console.log(`[spawner] Starting (PID ${process.pid})`);
+  await pgMigrate();
   killStartupOrphanSpawnerAgents();
   await failStaleRunningClaimsFromPreviousSpawner();
   await requeueOrphanedRunningStories();

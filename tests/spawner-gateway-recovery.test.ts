@@ -124,6 +124,12 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /unhandled rejection/);
   });
 
+  it("runs PostgreSQL migration guards before startup recovery", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /import \{ pgGet, pgMigrate, pgQuery, pgRun \} from "\.\/db-pg\.js"/);
+    assert.match(source, /await pgMigrate\(\);\s*killStartupOrphanSpawnerAgents\(\);\s*await failStaleRunningClaimsFromPreviousSpawner\(\);/);
+  });
+
   it("closes active claim_log rows when shutdown releases a running step", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     const releaseStart = source.indexOf("async function releaseActiveProcessForShutdown(");
