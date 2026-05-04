@@ -86,7 +86,7 @@ async function notifyRunCancelled(run: RunInfo): Promise<void> {
   }
 }
 
-async function cancelActiveRunState(run: RunInfo): Promise<number> {
+async function cancelActiveRunState(run: RunInfo): Promise<{ cancelledSteps: number; closedClaims: number }> {
   const activeStepsForCancel = await pgQuery<{ id: string; status: string }>(
     "SELECT id, status FROM steps WHERE run_id = $1 AND status IN ('waiting', 'pending', 'running')",
     [run.id]
@@ -101,13 +101,17 @@ async function cancelActiveRunState(run: RunInfo): Promise<number> {
     "UPDATE stories SET status = 'skipped', output = COALESCE(output, 'Cancelled by user'), updated_at = $1 WHERE run_id = $2 AND status IN ('pending', 'running')",
     [now(), run.id]
   );
+  const claimResult = await pgRun(
+    "UPDATE claim_log SET outcome = 'cancelled', abandoned_at = $1, duration_ms = CAST(EXTRACT(EPOCH FROM ($1::timestamptz - claimed_at::timestamptz)) * 1000 AS INTEGER), diagnostic = 'Workflow cancelled by user' WHERE run_id = $2 AND outcome IS NULL",
+    [now(), run.id]
+  );
   for (const s of activeStepsForCancel) {
     await recordStepTransition(s.id, run.id, s.status, "cancelled", undefined, "stopWorkflow:cancelled");
   }
 
   await teardownWorkflowCronsIfIdle(run.workflow_id, { graceMs: 0 });
   await notifyRunCancelled(run);
-  return result.changes;
+  return { cancelledSteps: result.changes, closedClaims: claimResult.changes };
 }
 
 export async function stopWorkflow(query: string): Promise<StopWorkflowResult> {
@@ -136,8 +140,8 @@ export async function stopWorkflow(query: string): Promise<StopWorkflowResult> {
   if (run.status === "completed") {
     return { status: "already_done", message: `Run ${run.id.slice(0, 8)} is already "${run.status}".` };
   }
-  const cancelledSteps = await cancelActiveRunState(run);
-  if (run.status === "cancelled" && cancelledSteps === 0) {
+  const { cancelledSteps, closedClaims } = await cancelActiveRunState(run);
+  if (run.status === "cancelled" && cancelledSteps === 0 && closedClaims === 0) {
     return { status: "already_done", message: `Run ${run.id.slice(0, 8)} is already "${run.status}".` };
   }
 

@@ -42,6 +42,7 @@ async function createTestRun(opts: {
 
 // Helper to clean up a test run and its steps
 async function cleanupTestRun(runId: string) {
+  await pgRun("DELETE FROM claim_log WHERE run_id = $1", [runId]);
   await pgRun("DELETE FROM steps WHERE run_id = $1", [runId]);
   await pgRun("DELETE FROM runs WHERE id = $1", [runId]);
 }
@@ -158,6 +159,58 @@ describe("stopWorkflow", () => {
     );
     assert.equal(step?.status, "cancelled");
     assert.equal(step?.output, "Cancelled by user");
+  });
+
+  it("closes open claim_log rows when stopping a workflow", async () => {
+    const runId = crypto.randomUUID();
+    testRunIds.push(runId);
+    await createTestRun({
+      runId,
+      workflowId: "test-wf-claim-cleanup",
+      status: "running",
+      steps: [{ stepId: "verify", status: "running" }],
+    });
+    await pgRun(
+      "INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at) VALUES ($1, 'verify', NULL, 'feature-dev_reviewer', $2)",
+      [runId, now()]
+    );
+
+    const result = await stopWorkflow(runId);
+    assert.equal(result.status, "ok");
+
+    const claim = await pgGet<{ outcome: string | null; diagnostic: string | null; duration_ms: number | null }>(
+      "SELECT outcome, diagnostic, duration_ms FROM claim_log WHERE run_id = $1 AND step_id = 'verify'",
+      [runId]
+    );
+    assert.equal(claim?.outcome, "cancelled");
+    assert.equal(claim?.diagnostic, "Workflow cancelled by user");
+    assert.ok((claim?.duration_ms ?? -1) >= 0);
+  });
+
+  it("closes open claim_log rows left behind on an already cancelled run", async () => {
+    const runId = crypto.randomUUID();
+    testRunIds.push(runId);
+    await createTestRun({
+      runId,
+      workflowId: "test-wf-cancelled-claim-cleanup",
+      status: "cancelled",
+      steps: [{ stepId: "verify", status: "cancelled" }],
+    });
+    await pgRun(
+      "INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at) VALUES ($1, 'verify', NULL, 'feature-dev_reviewer', $2)",
+      [runId, now()]
+    );
+
+    const result = await stopWorkflow(runId);
+    assert.equal(result.status, "ok");
+    if (result.status !== "ok") return;
+    assert.equal(result.cancelledSteps, 0);
+
+    const openClaims = await pgGet<{ cnt: string }>(
+      "SELECT COUNT(*) AS cnt FROM claim_log WHERE run_id = $1 AND outcome IS NULL",
+      [runId]
+    );
+    assert.equal(openClaims?.cnt, "0");
   });
 
   it("supports prefix matching with first 8 chars of UUID", async () => {
