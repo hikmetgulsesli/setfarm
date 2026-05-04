@@ -174,8 +174,26 @@ export async function setStepStatusConditional(stepId: string, newStatus: string
 }
 
 export async function failStepWithOutput(stepId: string, output: string): Promise<void> {
-  await pgRun("UPDATE steps SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3",
-    [output, now(), stepId]);
+  const step = await pgGet<{ run_id: string; step_id: string }>(
+    "SELECT run_id, step_id FROM steps WHERE id = $1 LIMIT 1",
+    [stepId],
+  );
+  await pgBegin(async (sql) => {
+    await sql`UPDATE steps SET status = 'failed', output = ${output}, updated_at = ${now()} WHERE id = ${stepId}`;
+    if (step) {
+      await sql`
+        UPDATE claim_log
+        SET outcome = 'failed',
+            abandoned_at = NOW(),
+            duration_ms = LEAST(CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at::timestamptz)) * 1000 AS BIGINT), 2147483647)::INTEGER,
+            diagnostic = ${output.slice(0, 1000)}
+        WHERE run_id = ${step.run_id}
+          AND step_id = ${step.step_id}
+          AND story_id IS NULL
+          AND outcome IS NULL
+      `;
+    }
+  });
 }
 
 export async function clearStepStory(stepId: string, output: string): Promise<void> {

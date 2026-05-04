@@ -18,6 +18,10 @@ function stepOpsSource(): string {
   return fs.readFileSync(path.join(root, "src", "installer", "step-ops.ts"), "utf-8");
 }
 
+function repoSource(): string {
+  return fs.readFileSync(path.join(root, "src", "installer", "repo.ts"), "utf-8");
+}
+
 function handleVerifyEachSource(): string {
   const source = fs.readFileSync(path.join(root, "src", "installer", "step-ops.ts"), "utf-8");
   const start = source.indexOf("async function handleVerifyEachCompletion(");
@@ -204,5 +208,23 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(singleFailureSource, /const workflowStepId = stepRow\?\.step_id \|\| ""/);
     assert.match(singleFailureSource, /step_id = \$\{workflowStepId\}/);
     assert.doesNotMatch(singleFailureSource, /claim_log[\s\S]*step_id = \$\{stepId\}/);
+  });
+
+  it("closes terminal failStepWithOutput claims by workflow step id", () => {
+    const source = repoSource();
+    const start = source.indexOf("export async function failStepWithOutput(");
+    const end = source.indexOf("export async function clearStepStory(", start);
+    assert.notEqual(start, -1, "failStepWithOutput source not found");
+    assert.notEqual(end, -1, "failStepWithOutput end not found");
+    const failSource = source.slice(start, end);
+
+    assert.match(failSource, /SELECT run_id, step_id FROM steps WHERE id = \$1 LIMIT 1/);
+    assert.match(failSource, /UPDATE steps SET status = 'failed'/);
+    assert.match(failSource, /UPDATE claim_log/);
+    assert.match(failSource, /outcome = 'failed'/);
+    assert.match(failSource, /step_id = \$\{step\.step_id\}/);
+    assert.match(failSource, /story_id IS NULL/);
+    assert.match(failSource, /outcome IS NULL/);
+    assert.doesNotMatch(failSource, /claim_log[\s\S]*step_id = \$\{stepId\}/);
   });
 });
