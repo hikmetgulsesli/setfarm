@@ -68,6 +68,10 @@ Allowed:
    - `{{TEST_CMD}}`
    - Never run Vitest in watch mode. If `npm test` maps to `vitest`, use
      `npm run test:run` or `npx vitest run` instead.
+   - Run test commands with a clean test environment. If `NODE_ENV` is
+     `production`, unset it or run with `NODE_ENV=test`; React/Vitest tests
+     failing only because production React disables `act()` are environment
+     failures, not source defects.
    - Skip empty or `true` infrastructure commands.
    - Run each command at most once. If it fails, return `STATUS: retry`.
 8. Final blocker check before merge:

@@ -384,6 +384,11 @@ function buildOpenClawChildEnv(): NodeJS.ProcessEnv {
   for (const k of ["SETFARM_PG_URL", "MASTER_POSTGRES_URL", "MASTER_MARIADB_URL", "MASTER_MONGODB_URL"]) {
     delete e[k];
   }
+  // Project agents run build, test, and verification commands. A global
+  // NODE_ENV=production from the service environment makes React/Vitest load
+  // production React, which breaks Testing Library's act() and creates false
+  // QA failures. Let package scripts or explicit commands set NODE_ENV.
+  delete e["NODE_ENV"];
   return e as NodeJS.ProcessEnv;
 }
 

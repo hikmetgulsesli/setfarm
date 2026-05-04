@@ -29,6 +29,10 @@ Do not mutate anything except:
   levels but the code has 2.
 - Broken imports, unknown symbols, or TypeScript compile failure.
 - Missing test file when the project requires tests, or tests do not run.
+- Test commands must run under a test/development environment. If `NODE_ENV`
+  is globally `production` and React/Vitest fails with production `act()`
+  errors, verify once with `NODE_ENV` unset or `NODE_ENV=test` before routing
+  a retry; do not treat the leaked environment as a story defect.
 - Low design-token usage: too much hardcoded inline hex/rgb/px.
 - Accessibility gaps: missing focus ring, ARIA, or keyboard navigation.
 - `PLAYWRIGHT_REPORT` contains dead button, broken link, route drift, empty

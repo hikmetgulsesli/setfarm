@@ -66,6 +66,18 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /cwd=\$\{spawnCwd\}/);
   });
 
+  it("does not leak service NODE_ENV into spawned project agents", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    const envStart = source.indexOf("function buildOpenClawChildEnv");
+    const envEnd = source.indexOf("function buildSessionKey", envStart);
+    assert.notEqual(envStart, -1, "buildOpenClawChildEnv source not found");
+    assert.notEqual(envEnd, -1, "buildOpenClawChildEnv end not found");
+    const envSource = source.slice(envStart, envEnd);
+
+    assert.match(envSource, /delete e\["NODE_ENV"\]/);
+    assert.match(envSource, /OPENCLAW_AUTO_APPROVE: "1"/);
+  });
+
   it("cancels lingering OpenClaw task records by task id after session-key cancel", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /function cancelLingeringOpenClawTasksForLookup\(lookup: string,\s*context: string\)/);
