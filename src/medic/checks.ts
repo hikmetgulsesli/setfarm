@@ -447,7 +447,14 @@ export async function checkOrphanedStories(): Promise<MedicFinding[]> {
     WHERE st.status = 'running'
       AND r.status IN ('running', 'resuming')
       AND EXTRACT(EPOCH FROM NOW() - st.updated_at::timestamptz) * 1000 > $1
-  `, [STORY_STUCK_THRESHOLD_MS]);
+      AND NOT EXISTS (
+        SELECT 1 FROM claim_log cl
+        WHERE cl.run_id = st.run_id
+          AND cl.story_id = st.story_id
+          AND cl.outcome IS NULL
+          AND EXTRACT(EPOCH FROM NOW() - cl.claimed_at::timestamptz) * 1000 <= $2
+      )
+  `, [STORY_STUCK_THRESHOLD_MS, MAX_ROLE_TIMEOUT_MS]);
 
   for (const story of stuck) {
     const ageMin = Math.round(

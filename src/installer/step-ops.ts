@@ -786,6 +786,8 @@ interface ClaimResult {
   found: boolean;
   stepId?: string;
   runId?: string;
+  storyId?: string;
+  storyDbId?: string;
   resolvedInput?: string;
 }
 
@@ -1960,7 +1962,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
           const prunedContextLoop = pruneContextForStep(context, step.step_id);
           const resolvedInput = resolveTemplate(step.input_template, prunedContextLoop);
           logger.info(`[claim-idempotent] Re-issued running story ${runningStory.story_id} to ${agentId}`, { runId: step.run_id, stepId: step.step_id });
-          return { found: true, stepId: step.id, runId: step.run_id, resolvedInput };
+          return { found: true, stepId: step.id, runId: step.run_id, storyId: runningStory.story_id, storyDbId: runningStory.id, resolvedInput };
         }
       }
 
@@ -2447,7 +2449,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
         return { found: false };
       }
 
-      return { found: true, stepId: step.id, runId: step.run_id, resolvedInput };
+      return { found: true, stepId: step.id, runId: step.run_id, storyId: nextStory.story_id, storyDbId: nextStory.id, resolvedInput };
     }
   }
 

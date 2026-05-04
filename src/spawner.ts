@@ -137,6 +137,8 @@ type ActiveProcess = {
   child: ChildProcess;
   runId: string;
   stepId: string;
+  storyId?: string;
+  storyDbId?: string;
   agentId: string;
   wfId: string;
   role: string;
@@ -1066,6 +1068,31 @@ async function requeueOrphanedStoryClaim(runId: string, stepId: string, agentId:
   return true;
 }
 
+async function requeueOpenStoryClaim(runId: string, stepId: string, storyId: string, agentId: string, diagnostic: string): Promise<boolean> {
+  const row = await pgGet<{ story_db_id: string | null; story_status: string | null; claim_story_id: string }>(
+    `SELECT st.id as story_db_id, st.status as story_status, cl.story_id as claim_story_id
+     FROM claim_log cl
+     LEFT JOIN stories st ON st.run_id = cl.run_id AND st.story_id = cl.story_id
+     WHERE cl.run_id = $1
+       AND cl.step_id = $2
+       AND cl.story_id = $3
+       AND cl.agent_id = $4
+       AND cl.outcome IS NULL
+     ORDER BY cl.claimed_at DESC
+     LIMIT 1`,
+    [runId, stepId, storyId, agentId],
+  );
+  if (!row) return false;
+
+  if (row.story_db_id) {
+    await pgRun("UPDATE stories SET status = 'pending', claimed_by = NULL, updated_at = NOW() WHERE id = $1 AND status IN ('running','pending')", [row.story_db_id]);
+  }
+  await pgRun("UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = NOW() WHERE run_id = $1 AND step_id = $2 AND status IN ('pending','running','waiting')", [runId, stepId]);
+  await pgRun("UPDATE claim_log SET outcome = 'infra_retry', abandoned_at = NOW(), diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND story_id = $4 AND agent_id = $5 AND outcome IS NULL", [diagnostic, runId, stepId, storyId, agentId]);
+  console.warn(`[spawner] requeued open story claim ${storyId} for ${agentId}: ${diagnostic.slice(0, 180)}`);
+  return true;
+}
+
 async function requeueOrphanedRunningStories(): Promise<void> {
   const rows = await pgQuery<{ story_db_id: string; story_id: string; run_id: string; run_number: number; step_db_id: string | null; step_id: string | null; step_status: string | null; agent_id: string | null }>(
     `SELECT st.id as story_db_id, st.story_id, st.run_id, r.run_number,
@@ -1115,8 +1142,8 @@ async function cleanupRunningRunEphemeraOnStartup(): Promise<void> {
 async function reapFinishedClaims(): Promise<void> {
   for (const [key, active] of activeProcesses) {
     try {
-      const row = await pgGet<{ step_status: string; run_status: string; step_id: string; run_id: string; type: string; current_story_id: string | null; story_id: string | null }>(
-        `SELECT s.status as step_status, r.status as run_status, s.step_id, s.run_id, s.type, s.current_story_id, st.story_id
+      const row = await pgGet<{ step_status: string; run_status: string; step_id: string; run_id: string; type: string; current_story_id: string | null; story_id: string | null; story_status: string | null }>(
+        `SELECT s.status as step_status, r.status as run_status, s.step_id, s.run_id, s.type, s.current_story_id, st.story_id, st.status as story_status
          FROM steps s
          JOIN runs r ON r.id = s.run_id
          LEFT JOIN stories st ON st.id = s.current_story_id
@@ -1138,6 +1165,21 @@ ${reason}
           activeProcesses.delete(key);
           await failClaimIfStillRunning(active.stepId, active.agentId, active.wfId, active.role, active.transcriptPath, new Error(reason), active.startedAtMs, active.spawnCwd);
           continue;
+        }
+
+        if (active.storyId && row.type === "loop" && row.step_id === "implement") {
+          const storyStillOwned = row.current_story_id === active.storyDbId
+            && row.story_id === active.storyId
+            && row.story_status === "running";
+          if (!storyStillOwned) {
+            const reason = `AGENT_STORY_STATE_MISMATCH: ${active.agentId} is still running ${active.storyId}, but loop step points at ${row.story_id || "(none)"} (${row.story_status || "no-story"}); requeueing stale claim. Transcript: ${active.transcriptPath}`;
+            console.warn(`[spawner] ${reason}`);
+            try { fs.appendFileSync(active.transcriptPath, `--- STORY STATE MISMATCH ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
+            terminateActiveProcess(active, "story-state-mismatch");
+            activeProcesses.delete(key);
+            await requeueOpenStoryClaim(active.runId, row.step_id, active.storyId, active.agentId, reason);
+            continue;
+          }
         }
 
         if (row.step_id === "verify" && !await verifyEachHasDoneStory(active.runId, row.step_id)) {
@@ -1337,6 +1379,8 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     child,
     runId: claim.runId || "",
     stepId: claim.stepId || "",
+    storyId: claim.storyId,
+    storyDbId: claim.storyDbId,
     agentId,
     wfId,
     role,

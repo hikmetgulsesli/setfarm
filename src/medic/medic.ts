@@ -352,10 +352,16 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
       const MAX_STORY_ABANDONS = 10;
       if (newCount >= MAX_STORY_ABANDONS) {
         await pgRun("UPDATE stories SET status = 'failed', abandoned_count = $1, output = 'Medic: abandoned too many times — failed', updated_at = $2 WHERE id = $3", [newCount, now(), finding.storyId]);
+        if (storyMeta?.story_id) {
+          await pgRun("UPDATE claim_log SET outcome = 'abandoned', abandoned_at = $1, diagnostic = $2 WHERE run_id = $3 AND story_id = $4 AND outcome IS NULL", [now(), `Medic: story abandoned ${newCount} times`, story.run_id, storyMeta.story_id]);
+        }
         emitEvent({ ts: now(), event: "story.failed" as EventType, runId: story.run_id, detail: `Medic: story abandoned ${newCount} times` });
       } else {
         await pgRun("UPDATE stories SET status = 'pending', abandoned_count = $1, updated_at = $2 WHERE id = $3", [newCount, now(), finding.storyId]);
         await pgRun("UPDATE steps SET current_story_id = NULL, updated_at = $1 WHERE run_id = $2 AND type = 'loop' AND current_story_id = $3", [now(), story.run_id, finding.storyId]);
+        if (storyMeta?.story_id) {
+          await pgRun("UPDATE claim_log SET outcome = 'infra_retry', abandoned_at = $1, diagnostic = $2 WHERE run_id = $3 AND story_id = $4 AND outcome IS NULL", [now(), `Medic: orphaned story reset (abandon ${newCount}/${MAX_STORY_ABANDONS})`, story.run_id, storyMeta.story_id]);
+        }
         // Clear assigned_developer so any cron in the pool can pick up the abandoned
         // story. Without this, if the originally-assigned dev's cron is gone (gateway
         // restart, pool resync, etc) the run deadlocks — no other caller matches
