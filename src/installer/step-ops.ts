@@ -2847,6 +2847,7 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
       if (_stepModule.onComplete) {
         try {
           await _stepModule.onComplete({ runId: step.run_id, stepId: step.step_id, parsed, context, rawOutput: output });
+          await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
           logger.info(`[step-module] ${_stepModule.id} onComplete ok`, { runId: step.run_id });
         } catch (_oe) {
           // Module onComplete threw — treat as fatal guardrail rejection (e.g. stories

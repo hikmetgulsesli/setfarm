@@ -3,6 +3,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import type { ClaimContext } from "../types.js";
+import { pgGet } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
 import { processSetupCompletion, processSetupDesignContracts } from "../../step-guardrails.js";
 
@@ -13,6 +14,8 @@ import { processSetupCompletion, processSetupDesignContracts } from "../../step-
 // 4. Design contracts from stitch HTML (processSetupDesignContracts)
 // Agent then only confirms + emits EXISTING_CODE.
 export async function preClaim(ctx: ClaimContext): Promise<void> {
+  if (process.env.SETFARM_DISABLE_AUTO_SETUP_REPO === "1") return;
+
   const repo = ctx.context["repo"] || ctx.context["REPO"] || "";
   // Tek run-branch mimarisi (2026-04-21): her run tek branch (runId), her story bu branch uzerine commit
   const planBranch = ctx.context["branch"] || ctx.context["BRANCH"] || "";
@@ -27,6 +30,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     logger.warn(`[module:setup-repo preclaim] skipped — no repo in context`, { runId: ctx.runId });
     return;
   }
+  let setupRepoFailed = false;
 
   // 1. Run setup-repo.sh — idempotent (script creates .git, baseline scaffold,
   // remote, run branch, references, and Stitch assets).
@@ -39,6 +43,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       execFileSync("bash", [script, repo, branch, String(stitchProjectId), String(screenMap), String(techStack)], { encoding: "utf-8", timeout: 180000 });
       logger.info(`[module:setup-repo preclaim] setup-repo.sh ran (stack=${techStack}, branch=${branch})`, { runId: ctx.runId });
     } catch (e) {
+      setupRepoFailed = true;
       logger.warn(`[module:setup-repo preclaim] setup-repo.sh failed: ${String(e).slice(0, 300)}`, { runId: ctx.runId });
     }
   }
@@ -92,5 +97,28 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     }
   } catch (e) {
     logger.debug(`[module:setup-repo preclaim] existing_code hint: ${String(e).slice(0, 80)}`);
+  }
+
+  const repoReady = fs.existsSync(repo)
+    && fs.existsSync(path.join(repo, ".git"))
+    && fs.existsSync(path.join(repo, "package.json"));
+  if (!setupRepoFailed && repoReady) {
+    const step = await pgGet<{ id: string }>(
+      "SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1",
+      [ctx.runId, ctx.stepId],
+    );
+    if (!step?.id) return;
+
+    const output = [
+      "STATUS: done",
+      `EXISTING_CODE: ${ctx.context["existing_code_hint"] || "false"}`,
+      "",
+    ].join("\n");
+    const { completeStep } = await import("../../step-ops.js");
+    await completeStep(step.id, output);
+    logger.info(`[module:setup-repo preclaim] AUTO-COMPLETED setup-repo without setup-repo agent`, {
+      runId: ctx.runId,
+      stepId: ctx.stepId,
+    });
   }
 }

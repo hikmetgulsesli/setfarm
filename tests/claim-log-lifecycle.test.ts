@@ -169,6 +169,19 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(source, /WHERE run_id = \$1 AND step_id = \$2 AND story_id IS NULL AND outcome IS NULL/);
   });
 
+  it("persists module onComplete context before continuing guardrails", () => {
+    const source = stepOpsSource();
+    const moduleStart = source.indexOf("if (_stepModule.onComplete)");
+    const moduleEnd = source.indexOf("// (Legacy REPO DEDUP", moduleStart);
+    assert.notEqual(moduleStart, -1, "module onComplete block not found");
+    assert.notEqual(moduleEnd, -1, "module onComplete block end not found");
+    const moduleSource = source.slice(moduleStart, moduleEnd);
+
+    const onComplete = moduleSource.indexOf("_stepModule.onComplete");
+    const persist = moduleSource.indexOf("UPDATE runs SET context = $1");
+    assert.ok(persist > onComplete, "module onComplete context mutations must be persisted");
+  });
+
   it("closes downstream quality gate claims when routing back to implement", () => {
     const source = stepOpsSource();
     const start = source.indexOf("async function routeQualityFailureToImplement(");

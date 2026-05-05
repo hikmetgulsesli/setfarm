@@ -68,6 +68,29 @@ describe("04-setup-repo step module", () => {
     assert.equal(setupRepoModule.validateOutput({ status: "DONE" } as ParsedOutput).ok, true);
   });
 
+  it("preClaim supports auto-completion instead of setup-repo agent handoff", () => {
+    const preclaim = fs.readFileSync("src/installer/steps/04-setup-repo/preclaim.ts", "utf-8");
+    assert.ok(preclaim.includes("SETFARM_DISABLE_AUTO_SETUP_REPO"), "auto-complete should have an opt-out env guard");
+    assert.ok(preclaim.includes("AUTO-COMPLETED setup-repo"), "setup-repo should complete in preClaim when the repo is ready");
+    assert.ok(preclaim.includes("completeStep(step.id, output)"), "preClaim should use the normal completeStep path");
+    assert.ok(preclaim.includes("repoReady"), "auto-complete must require a real prepared repo");
+  });
+
+  it("onComplete canonicalizes setup-repo branch to the run id", async () => {
+    const { onComplete } = await import("../../dist/installer/steps/04-setup-repo/guards.js");
+    const context: Record<string, string> = { branch: "feature-long-plan-branch", BRANCH: "feature-long-plan-branch" };
+    await onComplete({
+      runId: "run-123",
+      stepId: "setup-repo",
+      parsed: { status: "done", existing_code: "false" } as ParsedOutput,
+      context,
+    });
+
+    assert.equal(context.branch, "run-123");
+    assert.equal(context.BRANCH, "run-123");
+    assert.equal(context.existing_code, "false");
+  });
+
   it("vite scaffold template is project-neutral", () => {
     const script = fs.readFileSync("scripts/setup-repo.sh", "utf-8");
     assert.ok(script.includes('git init -b main'), "fresh repos should initialize main directly");
