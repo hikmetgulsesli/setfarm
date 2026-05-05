@@ -57,6 +57,9 @@ Allowed:
 6. Read review comments, failing checks, `{{PREFLIGHT_ANALYSIS}}`,
    `{{PLAYWRIGHT_REPORT}}`, and acceptance criteria.
    - If a real issue exists, do not fix it. Return `STATUS: retry`.
+   - First blocker wins. After finding a real build, test, smoke, review,
+     acceptance, or merge blocker, stop investigating and return
+     `STATUS: retry` with concise evidence.
    - Runtime/smoke/visual/accessibility failures on current `main` are still
      blockers for this run. Do not dismiss them as "pre-existing" or "not
      introduced by this PR"; report them so implement can create a batched
@@ -73,7 +76,8 @@ Allowed:
      failing only because production React disables `act()` are environment
      failures, not source defects.
    - Skip empty or `true` infrastructure commands.
-   - Run each command at most once. If it fails, return `STATUS: retry`.
+   - Run each command at most once. If it fails, immediately return
+     `STATUS: retry`; do not run extra commands to "get the full picture".
 8. Final blocker check before merge:
    - PR state must be `OPEN`.
    - There must be no blocking review comments, failing checks, smoke failures,
@@ -82,7 +86,8 @@ Allowed:
 9. If the PR is fully clean:
    - `gh pr comment "{{PR_URL}}" --body "Verified: build/test/smoke checked; merging."`
    - `gh pr merge "{{PR_URL}}" --squash --delete-branch`
-   - If merge fails, return `STATUS: retry` with the blocker reason.
+   - If merge fails, immediately return `STATUS: retry` with the blocker
+     reason. Do not inspect, rebase, resolve, or repair merge conflicts.
 10. Confirm merge:
     - `gh pr view "{{PR_URL}}" --json state --jq .state` must return `MERGED`.
 11. Update local main:

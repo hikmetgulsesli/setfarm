@@ -27,6 +27,7 @@ const BACKGROUND_WORKFLOWS = new Set((process.env.SETFARM_BACKGROUND_WORKFLOWS |
   .split(",")
   .map((item) => item.trim())
   .filter(Boolean));
+const VERIFY_AGENT_HARD_TIMEOUT_MS = parsePositiveInt(process.env.SETFARM_VERIFY_AGENT_HARD_TIMEOUT_MS, 10 * 60_000);
 const NON_DEVELOPER_STUCK_MS = parsePositiveInt(process.env.SETFARM_AGENT_STUCK_MS, 12 * 60_000);
 const DEVELOPER_STUCK_MS = parsePositiveInt(process.env.SETFARM_DEVELOPER_AGENT_STUCK_MS, 15 * 60_000);
 const QA_FIX_AGENT_STUCK_MS = parsePositiveInt(process.env.SETFARM_QA_FIX_AGENT_STUCK_MS, 8 * 60_000);
@@ -777,6 +778,20 @@ function terminateActiveProcess(active: ActiveProcess, context: string): void {
   }
 }
 
+async function retryActiveSingleStepClaim(active: ActiveProcess, stepIdName: string, diagnostic: string): Promise<void> {
+  await pgRun(
+    "UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = retry_count + 1, updated_at = NOW() WHERE id = $1 AND status = 'running'",
+    [active.stepId],
+  );
+  await pgRun(
+    "UPDATE claim_log SET outcome = 'infra_retry', abandoned_at = NOW(), duration_ms = LEAST(CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at::timestamptz)) * 1000 AS BIGINT), 2147483647)::INTEGER, diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND story_id IS NULL AND agent_id = $4 AND outcome IS NULL",
+    [diagnostic, active.runId, stepIdName, active.agentId],
+  );
+  await pgRun("SELECT pg_notify('step_pending', $1)", [
+    JSON.stringify({ agentId: `${active.wfId}_${active.role}`, runId: active.runId, stepId: stepIdName }),
+  ]);
+}
+
 function readProcessArgs(pid: number): string {
   try {
     return execFileSync("ps", ["-o", "args=", "-p", String(pid)], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
@@ -1206,6 +1221,16 @@ ${reason}
         }
 
         const ageMs = Date.now() - active.startedAtMs;
+        if (row.step_id === "verify" && ageMs >= VERIFY_AGENT_HARD_TIMEOUT_MS) {
+          const reason = `VERIFY_AGENT_HARD_TIMEOUT: ${active.agentId} kept ${active.wfId}/${active.role} running for ${formatDurationMs(ageMs)} without completing verify; retrying the verify step instead of leaving an open claim. Transcript: ${active.transcriptPath}`;
+          console.warn(`[spawner] ${reason}`);
+          try { fs.appendFileSync(active.transcriptPath, `--- VERIFY HARD TIMEOUT ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
+          terminateActiveProcess(active, "verify-hard-timeout");
+          activeProcesses.delete(key);
+          await retryActiveSingleStepClaim(active, row.step_id, reason);
+          continue;
+        }
+
         if (ageMs >= AGENT_STARTUP_SILENCE_MS && !activeProcessHasStartupActivity(active)) {
           const reason = `AGENT_STARTUP_SILENT: ${active.agentId} kept ${active.wfId}/${active.role} running for ${formatDurationMs(ageMs)} without transcript/output; OpenClaw session likely stuck before first model/tool turn. Transcript: ${active.transcriptPath}`;
           console.warn(`[spawner] ${reason}`);

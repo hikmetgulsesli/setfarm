@@ -43,6 +43,10 @@ Do not mutate anything except:
 - PR is open but merge requirements are not met: failing check, unresolved
   review, conflict, dirty merge state, or unverified branch changes.
 
+Stop at the first real blocker. After a build/test/smoke/review/merge blocker
+is proven, do not continue investigating for more issues; return
+`STATUS: retry` with the concise evidence already collected.
+
 When returning retry, do not fix the code. Produce a clear file/symptom list
 for the implement step.
 

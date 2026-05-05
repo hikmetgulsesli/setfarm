@@ -242,6 +242,30 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /failClaimIfStillRunning\(active\.stepId,\s*active\.agentId,\s*active\.wfId,\s*active\.role,\s*active\.transcriptPath,\s*new Error\(reason\),\s*active\.startedAtMs,\s*active\.spawnCwd\)/);
   });
 
+  it("hard-times out verify agents as an infra retry instead of leaving open claims", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /VERIFY_AGENT_HARD_TIMEOUT_MS/);
+    assert.match(source, /SETFARM_VERIFY_AGENT_HARD_TIMEOUT_MS/);
+    assert.match(source, /async function retryActiveSingleStepClaim/);
+    assert.match(source, /VERIFY_AGENT_HARD_TIMEOUT/);
+    assert.match(source, /row\.step_id === "verify" && ageMs >= VERIFY_AGENT_HARD_TIMEOUT_MS/);
+    assert.match(source, /terminateActiveProcess\(active,\s*"verify-hard-timeout"\)/);
+    assert.match(source, /await retryActiveSingleStepClaim\(active,\s*row\.step_id,\s*reason\)/);
+    assert.match(source, /UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = retry_count \+ 1/);
+    assert.match(source, /UPDATE claim_log SET outcome = 'infra_retry'/);
+    assert.match(source, /pg_notify\('step_pending'/);
+  });
+
+  it("tells verify agents to fail fast on first blocker", () => {
+    const prompt = fs.readFileSync(path.join(root, "src", "installer", "steps", "07-verify", "prompt.md"), "utf-8");
+    const rules = fs.readFileSync(path.join(root, "src", "installer", "steps", "07-verify", "rules.md"), "utf-8");
+    assert.match(prompt, /First blocker wins/);
+    assert.match(prompt, /immediately return\s+`STATUS: retry`; do not run extra commands/);
+    assert.match(prompt, /If merge fails, immediately return `STATUS: retry`/);
+    assert.match(prompt, /Do not inspect, rebase, resolve, or repair merge conflicts/);
+    assert.match(rules, /Stop at the first real blocker/);
+  });
+
   it("restarts the gateway after stale OpenClaw cleanup when no Setfarm agent is active", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /type OpenClawCleanupResult/);
