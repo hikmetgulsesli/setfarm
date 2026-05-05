@@ -148,6 +148,17 @@ describe("01-plan step module", () => {
     assert.doesNotMatch(output, /Arayuz Turkce|Ekran Adi|Hata Durumu|Bos Durum|Ayarlar/);
   });
 
+  it("keeps Project inline descriptions out of the repo slug", () => {
+    const output = buildAutoPlanOutput(
+      "Project: retry-feedback-lab-0505 Build a browser-based React/Vite TypeScript operations console.",
+    );
+    const parsed = parsePlanOutput(output);
+    planModule.normalize?.(parsed);
+
+    assert.equal(parsed.repo.endsWith("/projects/retry-feedback-lab-0505"), true);
+    assert.equal(parsed.branch, "feature-retry-feedback-lab-0505");
+  });
+
   it("infers UI language without letting English tasks become Turkish by default", () => {
     assert.equal(inferUiLanguage("Project: signal desk\nBuild an English app."), "English");
     assert.equal(inferUiLanguage("Proje: not panosu\nBasit not tutma uygulaması yap."), "English");

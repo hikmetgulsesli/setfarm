@@ -29,7 +29,12 @@ export function slugify(input: string): string {
 
 function extractProjectName(task: string): string {
   const projectLine = task.match(/(?:^|\n)\s*(?:Project|Proje)\s*:\s*([^\n]+)/i)?.[1]?.trim();
-  if (projectLine) return projectLine;
+  if (projectLine) {
+    const inlineTaskStart = projectLine.match(
+      /^(.+?)\s+(?:build|create|make|develop|implement|design|write|add|fix|yap|olustur|oluştur|kur|gelistir|geliştir)\b/i,
+    );
+    return (inlineTaskStart?.[1] || projectLine).trim();
+  }
   const firstLine = task.split(/\n+/).map(line => line.trim()).find(Boolean) || "setfarm-project";
   return firstLine.replace(/^(?:Project|Proje)\s*:\s*/i, "").slice(0, 80);
 }
