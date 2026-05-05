@@ -11,6 +11,7 @@ import { pgGet, pgQuery } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
 import { getStories, getCurrentStory, formatStoryForTemplate, formatCompletedStories, formatStoryRoadmap } from "../../story-ops.js";
 import type { Story } from "../../types.js";
+import { parseOutputKeyValues } from "../../context-ops.js";
 import { collectUiBehaviorRequirements, type UiBehaviorRequirement } from "../03-stories/context.js";
 
 const STITCH_HTML_EXCERPT_CHARS = 2500;
@@ -38,6 +39,31 @@ const OPTIONAL_TEMPLATE_VARS = [
   "previous_failure", "failure_category", "failure_suggestion", "verify_feedback",
   "detected_stack", "stack_rules",
 ];
+
+function normalizedStatusFromStepOutput(output: string): string {
+  try {
+    const parsed = parseOutputKeyValues(output);
+    const raw = (parsed["status"] || "").trim();
+    return (raw.indexOf("\n") >= 0 ? raw.slice(0, raw.indexOf("\n")).trim() : raw).split(/\s/)[0].toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function sanitizedRetryFailureText(text: string): string {
+  if (!text.trim()) return "";
+  const status = normalizedStatusFromStepOutput(text);
+  if (status !== "done" && status !== "skip") return text.trim();
+
+  const lines = text.split(/\r?\n/);
+  const actionableStart = lines.findIndex((line) =>
+    /\b(REMAINING|FAILURES?|ERRORS?|ISSUES?|BLOCKERS?|FEEDBACK|PREVIOUS_FAILURE|PR_NOT_MERGED|PR_MISSING|VERIFY_SYSTEM_SMOKE_FAILURE|SYSTEM_SMOKE_FAILURE|QUALITY GATE|GUARDRAIL)\b/i.test(line),
+  );
+  if (actionableStart >= 0) {
+    return lines.slice(actionableStart).join("\n").trim();
+  }
+  return "";
+}
 
 /**
  * Inject story-level context into the run context for the developer agent.
@@ -85,6 +111,9 @@ export async function injectStoryContext(
     retryCount: nextStory.retry_count,
     maxRetries: nextStory.max_retries,
   };
+  const retryFailureText = nextStory.output && (nextStory.abandoned_count > 0 || nextStory.retry_count > 0)
+    ? sanitizedRetryFailureText(nextStory.output)
+    : "";
 
   const allStories = await getStories(step.run_id);
   const pendingCount = allStories.filter((s: any) => s.status === STORY_STATUS.PENDING || s.status === STORY_STATUS.RUNNING).length;
@@ -106,7 +135,7 @@ export async function injectStoryContext(
   context["pr_url"] = "";
   context["story_branch"] = pipelineStoryBranch || `${step.run_id.slice(0, 8)}-${story.storyId}`.toLowerCase();
   context["story_workdir"] = pipelineStoryWorkdir;
-  context["verify_feedback"] = "";
+  context["verify_feedback"] = retryFailureText;
 
   // Inject source tree
   const repoPath = context["story_workdir"] || context["repo"] || context["REPO"] || "";
@@ -144,6 +173,17 @@ export async function injectStoryContext(
 
   }
 
+  // Inject previous_failure from prior abandon/verify-retry output before
+  // persisting context, otherwise the next developer claim can render blank
+  // retry feedback.
+  if (retryFailureText) {
+    const { classifyError } = await import("../../error-taxonomy.js");
+    const classified = classifyError(retryFailureText);
+    context["previous_failure"] = retryFailureText;
+    context["failure_category"] = classified.category;
+    context["failure_suggestion"] = classified.suggestion;
+  }
+
   // Default optional template vars
   for (const v of OPTIONAL_TEMPLATE_VARS) {
     if (!context[v]) context[v] = "";
@@ -151,15 +191,6 @@ export async function injectStoryContext(
 
   // Persist story context to DB
   await helpers.updateRunContext(step.run_id, context);
-
-  // Inject previous_failure from prior abandon output
-  if (nextStory.output && (nextStory.abandoned_count > 0 || nextStory.retry_count > 0)) {
-    const { classifyError } = await import("../../error-taxonomy.js");
-    const classified = classifyError(nextStory.output);
-    context["previous_failure"] = nextStory.output;
-    context["failure_category"] = classified.category;
-    context["failure_suggestion"] = classified.suggestion;
-  }
 }
 
 // ── Internal helpers ───────────────────────────────────────────────

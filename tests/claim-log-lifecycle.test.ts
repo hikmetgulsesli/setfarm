@@ -31,6 +31,15 @@ function handleVerifyEachSource(): string {
   return source.slice(start, end);
 }
 
+function implementContextSource(): string {
+  const source = fs.readFileSync(path.join(root, "src", "installer", "steps", "06-implement", "context.ts"), "utf-8");
+  const start = source.indexOf("export async function injectStoryContext(");
+  const end = source.indexOf("// ── Internal helpers", start);
+  assert.notEqual(start, -1, "extracted injectStoryContext not found");
+  assert.notEqual(end, -1, "extracted injectStoryContext end not found");
+  return source.slice(start, end);
+}
+
 function claimStepSelectionSource(): string {
   const source = fs.readFileSync(path.join(root, "src", "installer", "step-ops.ts"), "utf-8");
   const start = source.indexOf("const step = await pgGet<StepRow>(");
@@ -218,6 +227,48 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(retrySource, /if \(!verifyEachRetryHandledLater\)/);
     assert.match(retrySource, /routeQualityFailureToImplement\(step, output, context\)/);
     assert.match(unknownSource, /!\(statusVal === "retry" && verifyEachRetryHandledLater\)/);
+  });
+
+  it("persists verify-each retry feedback onto the story and retry context", () => {
+    const source = handleVerifyEachSource();
+    const retryStart = source.indexOf("if (status === \"retry\")");
+    const passedStart = source.indexOf("// Verify PASSED", retryStart);
+    assert.notEqual(retryStart, -1, "verify-each retry branch not found");
+    assert.notEqual(passedStart, -1, "verify-each passed branch not found");
+    const retrySource = source.slice(retryStart, passedStart);
+
+    assert.match(retrySource, /const issues = context\["issues"\] \?\? output/);
+    assert.match(retrySource, /context\["verify_feedback"\] = issues/);
+    assert.match(retrySource, /context\["previous_failure"\] = issues/);
+    assert.match(retrySource, /isVerifyRetryMergeBlocker\(issues\)/);
+    assert.match(retrySource, /UPDATE stories SET status = 'pending', retry_count = \$1, output = \$2, updated_at = \$3 WHERE id = \$4/);
+    assert.match(retrySource, /UPDATE stories SET status = 'failed', retry_count = \$1, output = \$2, updated_at = \$3 WHERE id = \$4/);
+    assert.match(retrySource, /await updateRunContext\(verifyStep\.run_id, context\)/);
+  });
+
+  it("injects stored verify retry feedback before developer claim context is persisted", () => {
+    const stepOps = stepOpsSource();
+    const stepOpsStart = stepOps.indexOf("async function injectStoryContext(");
+    const stepOpsEnd = stepOps.indexOf("async function injectVerifyContext(", stepOpsStart);
+    assert.notEqual(stepOpsStart, -1, "step-ops injectStoryContext not found");
+    assert.notEqual(stepOpsEnd, -1, "step-ops injectStoryContext end not found");
+    const stepOpsInject = stepOps.slice(stepOpsStart, stepOpsEnd);
+
+    const extracted = implementContextSource();
+    for (const [source, persistMarker] of [
+      [stepOpsInject, "await updateRunContext(step.run_id, context)"],
+      [extracted, "await helpers.updateRunContext(step.run_id, context)"],
+    ] as Array<[string, string]>) {
+      const retryFailure = source.indexOf("const retryFailureText = nextStory.output");
+      const verifyFeedback = source.indexOf("context[\"verify_feedback\"] = retryFailureText");
+      const previousFailure = source.indexOf("context[\"previous_failure\"] = retryFailureText");
+      const persist = source.indexOf(persistMarker);
+      assert.ok(retryFailure >= 0, "retry failure text must be derived from story output");
+      assert.ok(verifyFeedback > retryFailure, "verify_feedback must be restored from story output");
+      assert.ok(previousFailure > verifyFeedback, "previous_failure must be restored from retry feedback");
+      assert.ok(persist > previousFailure, "context must be persisted after retry feedback injection");
+      assert.doesNotMatch(source, /context\["verify_feedback"\] = ""/);
+    }
   });
 
   it("blocks verify-each claims while an active QA-FIX story is pending", () => {

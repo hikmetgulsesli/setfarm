@@ -163,7 +163,7 @@ export function formatPrCommentsForAgent(state: PrState): string {
     lines.push(`- ${tag}${loc} @${c.author}: ${body}`);
   }
   lines.push("");
-  lines.push("Her comment için uygun fix'i aynı branch'e push et, sonra yorumu addresslediğini belirt.");
+  lines.push("For each comment, push the appropriate fix to the same branch, then state that the comment was addressed.");
   return lines.join("\n");
 }
 

@@ -4,10 +4,10 @@ import type { ClaimContext } from "../types.js";
 import { logger } from "../../../lib/logger.js";
 
 const FIRST_ATTEMPT_REMINDER =
-  "REMINDER: STORIES_JSON array zorunlu. Her story: id, title, description, " +
+  "REMINDER: STORIES_JSON array is required. Each story needs: id, title, description, " +
   "acceptanceCriteria, depends_on, screens, scope_files (NO overlapping files), " +
-  "shared_files, scope_description. Hayali screen yolu (src/pages/*.tsx) YASAK — " +
-  "PREDICTED_SCREEN_FILES context'ten kullan. Missing = instant REJECT.";
+  "shared_files, scope_description. Do not invent screen paths such as src/pages/*.tsx. " +
+  "Use PREDICTED_SCREEN_FILES from context. Missing fields = instant REJECT.";
 
 export function extractExplicitMaxStories(text: string): number | null {
   const patterns = [

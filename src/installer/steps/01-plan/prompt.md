@@ -3,7 +3,7 @@ PLAN step — {{TASK}}
 Create the product PRD and choose the technical defaults for this run. The
 agent-facing contract is English. User-facing application copy must follow
 UI_LANGUAGE. Default UI_LANGUAGE to English unless the user explicitly requests
-Turkish or writes the product request in Turkish.
+Turkish UI.
 
 Do not read `rules.md`; the rules are embedded below.
 

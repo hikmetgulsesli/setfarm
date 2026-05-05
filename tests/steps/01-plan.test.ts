@@ -119,7 +119,7 @@ describe("01-plan step module", () => {
     assert.equal(validation.ok, true, validation.errors.join("; "));
     assert.equal(parsed.repo.endsWith("/projects/lead-triage-0430"), true);
     assert.equal(parsed.tech_stack, "vite-react");
-    assert.equal(parsed.ui_language, "Turkish");
+    assert.equal(parsed.ui_language, "English");
     assert.equal(parsed.db_required, "none");
     assert.ok(parsed.prd.length >= 2000, `PRD too short: ${parsed.prd.length}`);
     assert.ok(output.length < 7000, `auto-plan output should stay compact, got ${output.length}`);
@@ -150,6 +150,7 @@ describe("01-plan step module", () => {
 
   it("infers UI language without letting English tasks become Turkish by default", () => {
     assert.equal(inferUiLanguage("Project: signal desk\nBuild an English app."), "English");
-    assert.equal(inferUiLanguage("Proje: not panosu\nBasit not tutma uygulaması yap."), "Turkish");
+    assert.equal(inferUiLanguage("Proje: not panosu\nBasit not tutma uygulaması yap."), "English");
+    assert.equal(inferUiLanguage("Proje: not panosu\nTurkce UI ile basit not tutma uygulamasi yap."), "Turkish");
   });
 });

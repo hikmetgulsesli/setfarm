@@ -1311,6 +1311,9 @@ async function injectStoryContext(
     retryCount: nextStory.retry_count,
     maxRetries: nextStory.max_retries,
   };
+  const retryFailureText = nextStory.output && (nextStory.abandoned_count > 0 || nextStory.retry_count > 0)
+    ? sanitizedRetryFailureText(nextStory.output)
+    : "";
 
   const allStories = await getStories(step.run_id);
   const pendingCount = allStories.filter(s => s.status === STORY_STATUS.PENDING || s.status === STORY_STATUS.RUNNING).length;
@@ -1389,7 +1392,7 @@ async function injectStoryContext(
   context["pr_url"] = "";
   // ISSUE-1: Restore pipeline-set story_branch (from worktree) instead of blanking it
   context["story_branch"] = pipelineStoryBranch;
-  context["verify_feedback"] = "";
+  context["verify_feedback"] = retryFailureText;
 
   // Inject source tree so agent knows existing file structure (prevents duplicate dirs)
   const repoPath = context["repo"] || context["REPO"] || "";
@@ -1510,22 +1513,24 @@ async function injectStoryContext(
     } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
   }
 
+  // v1.5.50: Inject previous_failure from prior abandon/verify-retry output.
+  // Persist this before the developer claim is rendered so retry feedback cannot
+  // be lost between verify_each and the next story attempt.
+  if (retryFailureText) {
+    const { classifyError } = await import("./error-taxonomy.js");
+    const classified = classifyError(retryFailureText);
+    context["previous_failure"] = retryFailureText;
+    context["failure_category"] = classified.category;
+    context["failure_suggestion"] = classified.suggestion;
+  }
+
   // Default optional template vars to prevent MISSING_INPUT_GUARD false positives (story-each flow)
   for (const v of OPTIONAL_TEMPLATE_VARS) {
     if (!context[v]) context[v] = "";
   }
 
-  // Persist story context vars to DB so verify_each steps can access them
+  // Persist story context vars to DB so verify_each/developer claims can access them.
   await updateRunContext(step.run_id, context);
-
-  // v1.5.50: Inject previous_failure from prior abandon output
-  if (nextStory.output && (nextStory.abandoned_count > 0 || nextStory.retry_count > 0)) {
-    const { classifyError } = await import("./error-taxonomy.js");
-    const classified = classifyError(nextStory.output);
-    context["previous_failure"] = nextStory.output;
-    context["failure_category"] = classified.category;
-    context["failure_suggestion"] = classified.suggestion;
-  }
 }
 
 /**
@@ -4265,9 +4270,20 @@ async function handleVerifyEachCompletion(
 
     if (retryStory) {
       const newRetry = retryStory.retry_count + 1;
+      const issues = context["issues"] ?? output;
+      const failureCategory = isVerifyRetryMergeBlocker(issues) ? "VERIFY_MERGE_BLOCKER" : undefined;
+      const failureSuggestion = failureCategory
+        ? "Resolve the conflicting PR/story branch state in the same story branch, push it, and do not route this to QA-FIX."
+        : undefined;
+      context["verify_feedback"] = issues;
+      context["previous_failure"] = issues;
+      if (failureCategory) context["failure_category"] = failureCategory;
+      if (failureSuggestion) context["failure_suggestion"] = failureSuggestion;
+
       if (newRetry > retryStory.max_retries) {
         // Story retries exhausted — fail everything (Wave 13 J-2: terminal flag)
-        await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, updated_at = $2 WHERE id = $3", [newRetry, now(), retryStory.id]);
+        await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [newRetry, issues, now(), retryStory.id]);
+        await updateRunContext(verifyStep.run_id, context);
         await setStepStatus(loopStepId, "failed");
         await failRun(verifyStep.run_id, true);
         const wfId = await getWorkflowId(verifyStep.run_id);
@@ -4278,11 +4294,7 @@ async function handleVerifyEachCompletion(
       }
 
       // Set story back to pending for retry
-      await pgRun("UPDATE stories SET status = 'pending', retry_count = $1, updated_at = $2 WHERE id = $3", [newRetry, now(), retryStory.id]);
-
-      // Store verify feedback
-      const issues = context["issues"] ?? output;
-      context["verify_feedback"] = issues;
+      await pgRun("UPDATE stories SET status = 'pending', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [newRetry, issues, now(), retryStory.id]);
       emitEvent({ ts: now(), event: "story.retry", runId: verifyStep.run_id, workflowId: await getWorkflowId(verifyStep.run_id), stepId: verifyStep.step_id, detail: issues });
       await updateRunContext(verifyStep.run_id, context);
     }

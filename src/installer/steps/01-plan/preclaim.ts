@@ -54,8 +54,6 @@ export function inferUiLanguage(task: string): string {
   const normalized = transliterate(task).toLowerCase();
   if (/\b(english|ingilizce)\b/.test(normalized)) return "English";
   if (/\b(turkish|turkce)\b/.test(normalized)) return "Turkish";
-  if (/[ĞğÜüŞşİıÖöÇç]/.test(task)) return "Turkish";
-  if (/\b(uygulama|ekran|kullanici|gorev|ayarlar|profil|not tutma|cizim|oyun)\b/.test(normalized)) return "Turkish";
   return "English";
 }
 

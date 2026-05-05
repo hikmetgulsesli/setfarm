@@ -24,7 +24,7 @@ DB_REQUIRED: <none|postgres|sqlite>
 - Summarize the product in 2-3 sentences.
 - Define the target users.
 - Define UI_LANGUAGE. Default to English unless the user explicitly requests
-  Turkish or writes the product request in Turkish.
+  Turkish UI.
 
 ### 2. Goals
 - List 4-6 concrete product goals.
