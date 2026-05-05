@@ -53,14 +53,19 @@ describe("spawner gateway recovery wiring", () => {
 
     for (const block of [stepPendingSource, storyPendingSource]) {
       assert.match(block, /const activeQaFix = await pgGet/);
+      assert.match(block, /const activeStory = await pgGet/);
       assert.match(block, /story_id LIKE 'QA-FIX-%'/);
-      assert.match(block, /parseInt\(awaitingVerify\?\.cnt \|\| "0", 10\) > 0 && parseInt\(activeQaFix\?\.cnt \|\| "0", 10\) === 0/);
+      assert.match(block, /parseInt\(awaitingVerify\?\.cnt \|\| "0", 10\) > 0 && parseInt\(activeStory\?\.cnt \|\| "0", 10\) === 0 && parseInt\(activeQaFix\?\.cnt \|\| "0", 10\) === 0/);
     }
 
     const pollQaFixGuards = pollSource.match(/story_id LIKE 'QA-FIX-%'/g) || [];
     assert.equal(pollQaFixGuards.length, 2, "polling queries must keep active QA-FIX work visible");
+    const pollActiveStoryGuards = pollSource.match(/stories active_st/g) || [];
+    assert.equal(pollActiveStoryGuards.length, 2, "polling queries must keep retried active stories visible");
     assert.match(pollSource, /fix_st\.run_id = s\.run_id/);
     assert.match(pollSource, /fix_st\.status IN \('pending', 'running'\)/);
+    assert.match(pollSource, /active_st\.run_id = s\.run_id/);
+    assert.match(pollSource, /active_st\.status IN \('pending', 'running'\)/);
   });
 
   it("does not claim gateway cron recreation in event-driven spawner mode", () => {

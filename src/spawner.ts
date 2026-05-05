@@ -1596,7 +1596,11 @@ async function handleStepPending(payload: { agentId: string; runId: string; step
           "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND story_id LIKE 'QA-FIX-%' AND status IN ('pending', 'running')",
           [runId],
         );
-        if (parseInt(awaitingVerify?.cnt || "0", 10) > 0 && parseInt(activeQaFix?.cnt || "0", 10) === 0) {
+        const activeStory = await pgGet<{ cnt: string }>(
+          "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status IN ('pending', 'running')",
+          [runId],
+        );
+        if (parseInt(awaitingVerify?.cnt || "0", 10) > 0 && parseInt(activeStory?.cnt || "0", 10) === 0 && parseInt(activeQaFix?.cnt || "0", 10) === 0) {
           console.log(`[spawner] Loop pending but ${awaitingVerify?.cnt || "0"} done story/stories await verify; skip ${wfId}/${role}`);
           return;
         }
@@ -1630,7 +1634,11 @@ async function handleStoryPending(payload: { role: string; runId: string; storyI
         "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND story_id LIKE 'QA-FIX-%' AND status IN ('pending', 'running')",
         [runId],
       );
-      if (parseInt(awaitingVerify?.cnt || "0", 10) > 0 && parseInt(activeQaFix?.cnt || "0", 10) === 0) {
+      const activeStory = await pgGet<{ cnt: string }>(
+        "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status IN ('pending', 'running')",
+        [runId],
+      );
+      if (parseInt(awaitingVerify?.cnt || "0", 10) > 0 && parseInt(activeStory?.cnt || "0", 10) === 0 && parseInt(activeQaFix?.cnt || "0", 10) === 0) {
         console.log(`[spawner] Story pending but ${awaitingVerify?.cnt || "0"} done story/stories await verify; skip developer for ${wfId}`);
         return;
       }
@@ -1742,6 +1750,11 @@ async function pollForPendingWork() {
              WHERE done_st.run_id = s.run_id AND done_st.status = 'done'
            )
            AND NOT EXISTS (
+             SELECT 1 FROM stories active_st
+             WHERE active_st.run_id = s.run_id
+               AND active_st.status IN ('pending', 'running')
+           )
+           AND NOT EXISTS (
              SELECT 1 FROM stories fix_st
              WHERE fix_st.run_id = s.run_id
                AND fix_st.story_id LIKE 'QA-FIX-%'
@@ -1775,6 +1788,11 @@ async function pollForPendingWork() {
              AND EXISTS (
                SELECT 1 FROM stories done_st
                WHERE done_st.run_id = s.run_id AND done_st.status = 'done'
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM stories active_st
+               WHERE active_st.run_id = s.run_id
+                 AND active_st.status IN ('pending', 'running')
              )
              AND NOT EXISTS (
                SELECT 1 FROM stories fix_st
