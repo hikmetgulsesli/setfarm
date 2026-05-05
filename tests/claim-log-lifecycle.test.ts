@@ -237,6 +237,26 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(pendingBypass, /COALESCE\(prev\.loop_config::jsonb ->> 'verifyStep', ''\) = s\.step_id[\s\S]*fix_st\.story_id LIKE 'QA-FIX-%'/);
   });
 
+  it("keeps verify blocked and implement visible after a verify-each story retry", () => {
+    const claimSource = claimStepSelectionSource();
+    const peekSource = peekStepSource();
+    const claimBypassSource = previousStepSelectionBypassSource(claimSource);
+    const peekBypassSource = previousStepSelectionBypassSource(peekSource);
+    const activeStoryGuard = /NOT EXISTS \(SELECT 1 FROM stories active_st WHERE active_st\.run_id = s\.run_id AND active_st\.status IN \('pending', 'running'\)\)/;
+
+    const claimPendingBypass = claimBypassSource.slice(claimBypassSource.indexOf("prev.status = 'pending'"));
+    const peekPendingBypass = peekBypassSource.slice(peekBypassSource.indexOf("prev.status = 'pending'"));
+    assert.match(claimPendingBypass, activeStoryGuard);
+    assert.match(peekPendingBypass, activeStoryGuard);
+
+    const pendingLoopStart = peekSource.indexOf("s.status = 'pending'");
+    const runningLoopStart = peekSource.indexOf("OR (s.status = 'running'", pendingLoopStart);
+    assert.notEqual(pendingLoopStart, -1, "peek pending-loop source not found");
+    assert.notEqual(runningLoopStart, -1, "peek running-loop source not found");
+    const pendingLoopSource = peekSource.slice(pendingLoopStart, runningLoopStart);
+    assert.match(pendingLoopSource, activeStoryGuard);
+  });
+
   it("allows implement to claim active QA-FIX stories even when older stories are done", () => {
     const source = claimImplementLoopSource();
     assert.match(source, /const activeQaFix = await pgGet/);
