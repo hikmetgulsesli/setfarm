@@ -22,6 +22,17 @@ describe("05-setup-build step module", () => {
     assert.ok(preclaim.includes("completeStep(step.id, output)"), "preClaim should use the normal completeStep path");
   });
 
+  it("preClaim re-evaluates stale setup-build failure flags before auto-complete", () => {
+    const preclaim = fs.readFileSync("src/installer/steps/05-setup-build/preclaim.ts", "utf-8");
+    const repoReady = preclaim.indexOf("package.json");
+    const clearBaseline = preclaim.indexOf("delete ctx.context[\"baseline_fail\"]");
+    const clearCompat = preclaim.indexOf("delete ctx.context[\"compat_fail\"]");
+    const autoComplete = preclaim.indexOf("AUTO-COMPLETED setup-build");
+    assert.ok(clearBaseline > repoReady, "baseline_fail should be cleared after repo readiness is confirmed");
+    assert.ok(clearCompat > clearBaseline, "compat_fail should be cleared with stale baseline state");
+    assert.ok(autoComplete > clearCompat, "stale failure flags must be cleared before auto-complete decision");
+  });
+
   it("setup baseline can fall back to local main without retry loops", () => {
     const stepOps = fs.readFileSync("src/installer/step-ops.ts", "utf-8");
     const worktreeOps = fs.readFileSync("src/installer/worktree-ops.ts", "utf-8");

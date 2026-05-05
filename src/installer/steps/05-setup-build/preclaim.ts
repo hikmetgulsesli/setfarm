@@ -105,6 +105,11 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     ctx.context["baseline_fail"] = msg;
     return;
   }
+  // A previous setup-build attempt may have stored baseline_fail/compat_fail in
+  // run context. Re-evaluate from the current repo state on every preClaim so a
+  // later successful build can auto-complete instead of spawning a stuck agent.
+  delete ctx.context["baseline_fail"];
+  delete ctx.context["compat_fail"];
 
   // 1. npm install (skip if node_modules already present — idempotent)
   let installedDeps = false;
