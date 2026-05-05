@@ -76,6 +76,56 @@ function stashDirtyMainRepo(repo: string, storyId: string): void {
   }
 }
 
+function checkoutRefInMainWorktree(repo: string, ref: string, reason: string): boolean {
+  if (!ref) return false;
+  const refIsSha = /^[0-9a-f]{40}$/i.test(ref);
+  try {
+    if (refIsSha) {
+      execFileSync("git", ["checkout", "--detach", ref], {
+        cwd: repo, timeout: 15000, stdio: "pipe",
+      });
+      logger.warn(`[worktree] Detached main worktree at ${ref.slice(0, 8)} to ${reason}`, {});
+      return true;
+    }
+
+    execFileSync("git", ["checkout", ref], {
+      cwd: repo, timeout: 15000, stdio: "pipe",
+    });
+    logger.info(`[worktree] Checked out ${ref} in main worktree to ${reason}`, {});
+    return true;
+  } catch (checkoutErr) {
+    try {
+      const fallbackRef = refIsSha ? ref : `origin/${ref}`;
+      const resolved = execFileSync("git", ["rev-parse", fallbackRef], {
+        cwd: repo, timeout: 5000, stdio: "pipe",
+      }).toString().trim();
+      execFileSync("git", ["checkout", "--detach", resolved], {
+        cwd: repo, timeout: 15000, stdio: "pipe",
+      });
+      logger.warn(`[worktree] Could not checkout ${ref}; detached main worktree at ${resolved.slice(0, 8)} to ${reason}`, {});
+      return true;
+    } catch (detachErr) {
+      logger.warn(`[worktree] Could not move main worktree to ${ref} for ${reason}: ${String(checkoutErr).slice(0, 120)}; detach failed: ${String(detachErr).slice(0, 120)}`, {});
+      return false;
+    }
+  }
+}
+
+function releaseMainWorktreeBranch(repo: string, branchName: string, fallbackRef: string): boolean {
+  if (!branchName) return true;
+  let current = "";
+  try {
+    current = execFileSync("git", ["branch", "--show-current"], {
+      cwd: repo, timeout: 5000, stdio: "pipe",
+    }).toString().trim();
+  } catch {}
+  if (current.toLowerCase() !== branchName.toLowerCase()) return true;
+
+  try { stashDirtyMainRepo(repo, `release-${branchName}`); } catch {}
+  logger.warn(`[worktree] Main repo is currently on story branch ${branchName}; moving away before creating isolated worktree`, {});
+  return checkoutRefInMainWorktree(repo, fallbackRef, `release story branch ${branchName}`);
+}
+
 /**
  * Bring a local base branch up to date with origin before creating the next
  * story worktree or after a PR merge. This keeps the project repo's local main
@@ -159,6 +209,7 @@ export function syncBaseBranch(repo: string, baseBranch = "main"): boolean {
       execFileSync("git", ["branch", "-f", baseBranch, `origin/${baseBranch}`], {
         cwd: repo, timeout: 5000, stdio: "pipe",
       });
+      checkoutRefInMainWorktree(repo, baseBranch, `sync ${baseBranch}`);
       logger.info(`[worktree] Synced ${baseBranch} to origin/${baseBranch}`, {});
     }
     return true;
@@ -362,6 +413,8 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
     } else {
       logger.info(`[worktree] Pinned base SHA ${baseBranch.slice(0, 8)} — skipping branch sync, creating worktree directly from commit`, {});
     }
+
+    releaseMainWorktreeBranch(repo, storyId.toLowerCase(), baseBranch);
 
     // Check if story branch already exists (may have WIP commits from previous session)
     let branchExists = false;
