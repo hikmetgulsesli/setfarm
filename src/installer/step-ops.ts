@@ -16,7 +16,7 @@ import {
   OPTIONAL_TEMPLATE_VARS,
   PR_REVIEW_DELAY_MS,
 } from "./constants.js";
-import { getPRState, tryReopenPR, tryAutoMergePR, findPrByBranch, resolveClosedPR } from "./pr-state.js";
+import { getPRState, invalidatePRStateCache, tryReopenPR, tryAutoMergePR, findPrByBranch, resolveClosedPR } from "./pr-state.js";
 import { failStep } from "./step-fail.js";
 import { advancePipeline, checkLoopContinuation } from "./step-advance.js";
 import { runMergeQueue } from "./merge-queue-ops.js";
@@ -1557,6 +1557,11 @@ async function injectVerifyContext(
   const nextUnverified = await autoVerifyDoneStories(step.run_id, context, "claim-auto-verify", { autoMergeOpen: true });
 
   if (!nextUnverified) {
+    if (context["verify_quality_failure_routed"]) {
+      await updateRunContext(step.run_id, context);
+      logger.warn(`[claim-auto-verify] Routed verify smoke failure to implement; suppressing reviewer claim`, { runId: step.run_id });
+      return false;
+    }
     // All stories auto-verified — no agent work needed, advance pipeline
     await pgRun("UPDATE steps SET status = 'waiting', updated_at = $1 WHERE id = $2", [now(), step.id]);
     logger.info(`[claim-auto-verify] All stories auto-verified, triggering pipeline advancement`, { runId: step.run_id });
@@ -4236,6 +4241,11 @@ async function handleVerifyEachCompletion(
   }
 
   const status = parsedOutput["status"]?.toLowerCase() || context["status"]?.toLowerCase();
+  const reportedMergedPrUrl = parsedOutput["merged_pr"] || "";
+  if (reportedMergedPrUrl) {
+    invalidatePRStateCache(reportedMergedPrUrl);
+    context["pr_url"] = reportedMergedPrUrl;
+  }
 
   // Atomic guard: prevent parallel crons from double-completing the same verify step.
   // Only proceed if we are the one that transitions it from running → waiting.
@@ -4251,6 +4261,17 @@ async function handleVerifyEachCompletion(
 
   // Identify the story being verified: output first (most reliable), then context (v1.5.53)
   let verifiedStoryId = parsedOutput["current_story_id"] || context["current_story_id"];
+  if (!verifiedStoryId && reportedMergedPrUrl) {
+    const byPr = await pgGet<{ story_id: string }>(
+      "SELECT story_id FROM stories WHERE run_id = $1 AND pr_url = $2 AND status = 'done' LIMIT 1",
+      [verifyStep.run_id, reportedMergedPrUrl],
+    );
+    if (byPr) {
+      verifiedStoryId = byPr.story_id;
+      logger.info(`[verify] current_story_id missing, matched merged PR to story: ${byPr.story_id}`, { runId: verifyStep.run_id });
+    }
+  }
+
   if (!verifiedStoryId) {
     // Fallback: find the most recent 'done' story
     const lastDone = await pgGet<{ story_id: string }>("SELECT story_id FROM stories WHERE run_id = $1 AND status = 'done' ORDER BY updated_at DESC LIMIT 1", [verifyStep.run_id]);
@@ -4411,6 +4432,12 @@ async function handleVerifyEachCompletion(
   // Auto-verify 'done' stories whose PRs are already merged (prevents redundant verify cycles)
   const nextUnverifiedStory = await autoVerifyDoneStories(verifyStep.run_id, context, "handleVerifyEach");
 
+  if (context["verify_quality_failure_routed"]) {
+    await updateRunContext(verifyStep.run_id, context);
+    logger.warn(`[handleVerifyEach] Routed verify smoke failure to implement; not cycling reviewer`, { runId: verifyStep.run_id });
+    return { advanced: false, runCompleted: false };
+  }
+
   if (nextUnverifiedStory) {
     // More stories need verification — inject next story's info and cycle verify
     if (nextUnverifiedStory.output) {
@@ -4477,18 +4504,39 @@ export async function autoVerifyDoneStories(
     );
     let verifyStepName = "verify";
     try { verifyStepName = JSON.parse(loopStepRow?.loop_config || "{}").verifyStep || "verify"; } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
-    const verifyStep = await pgGet<{ abandoned_count: number }>(
-      "SELECT abandoned_count FROM steps WHERE run_id = $1 AND step_id = $2 AND status IN ('running','pending','failed') LIMIT 1",
+    const verifyStep = await pgGet<{ id: string; step_index: number; agent_id: string | null; status: string; abandoned_count: number }>(
+      "SELECT id, step_index, agent_id, status, abandoned_count FROM steps WHERE run_id = $1 AND step_id = $2 AND status IN ('running','pending','failed','waiting') LIMIT 1",
       [runId, verifyStepName]
     );
     const verifyStepAbandons = verifyStep?.abandoned_count ?? 0;
+    const routeAutoVerifySmokeFailure = async (): Promise<boolean> => {
+      if (context["failure_category"] !== "VERIFY_SYSTEM_SMOKE_FAILURE" || !verifyStep) return false;
+      const failure = context["previous_failure"] || `VERIFY_SYSTEM_SMOKE_FAILURE for ${story.story_id}`;
+      const routed = await routeQualityFailureToImplement(
+        {
+          id: verifyStep.id,
+          run_id: runId,
+          step_id: verifyStepName,
+          step_index: verifyStep.step_index,
+          agent_id: verifyStep.agent_id || "",
+        },
+        `SYSTEM_SMOKE_FAILURE:
+${failure}`,
+        context,
+      );
+      if (routed) context["verify_quality_failure_routed"] = story.story_id;
+      return routed;
+    };
     // Force auto-verify ONLY if PR is already merged (no auto-merge — PR review is mandatory)
     if (verifyStepAbandons >= 3) {
       const prUrl = story.pr_url || "";
       if (prUrl) {
         const fvState = getPRState(prUrl);
         if (fvState === "MERGED") {
-          if (!(await ensureSystemSmokeBeforeAutoVerify(runId, context, logPrefix, story))) return story;
+          if (!(await ensureSystemSmokeBeforeAutoVerify(runId, context, logPrefix, story))) {
+            if (await routeAutoVerifySmokeFailure()) return null;
+            return story;
+          }
           await verifyStory(story.id);
           logger.info(`[${logPrefix}] Story ${story.story_id} force-verified — PR already merged, verify abandoned ${verifyStepAbandons}x`, { runId });
           emitEvent({ ts: now(), event: "story.verified", runId, workflowId: await getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title, detail: `Force-verified — PR merged, verify abandoned ${verifyStepAbandons}x` });
@@ -4521,7 +4569,10 @@ export async function autoVerifyDoneStories(
             logger.warn(`[${logPrefix}] runQualityChecks threw: ${String(qErr)}`, { runId });
           }
         }
-        if (!(await ensureSystemSmokeBeforeAutoVerify(runId, context, logPrefix, story))) return story;
+        if (!(await ensureSystemSmokeBeforeAutoVerify(runId, context, logPrefix, story))) {
+          if (await routeAutoVerifySmokeFailure()) return null;
+          return story;
+        }
         await verifyStory(story.id);
         logger.info(`[${logPrefix}] Story ${story.story_id} auto-verified — PR merged`, { runId });
         emitEvent({ ts: now(), event: "story.verified", runId, workflowId: await getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title });
@@ -4539,7 +4590,10 @@ export async function autoVerifyDoneStories(
           logger.info(`[${logPrefix}] Found alternative PR for ${story.story_id}: ${resolution.alternativePrUrl}`, { runId });
           continue; // Re-check with updated PR
         } else if (resolution.contentInBaseBranch) {
-          if (!(await ensureSystemSmokeBeforeAutoVerify(runId, context, logPrefix, story))) return story;
+          if (!(await ensureSystemSmokeBeforeAutoVerify(runId, context, logPrefix, story))) {
+            if (await routeAutoVerifySmokeFailure()) return null;
+            return story;
+          }
           await verifyStory(story.id);
           logger.info(`[${logPrefix}] Story ${story.story_id} auto-verified — CLOSED PR content in base branch`, { runId });
           emitEvent({ ts: now(), event: "story.verified", runId, workflowId: await getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title, detail: "Auto-verified — CLOSED PR content in base branch" });

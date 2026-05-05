@@ -31,6 +31,14 @@ function handleVerifyEachSource(): string {
   return source.slice(start, end);
 }
 
+
+function autoVerifyDoneStoriesSource(): string {
+  const source = fs.readFileSync(path.join(root, "src", "installer", "step-ops.ts"), "utf-8");
+  const start = source.indexOf("export async function autoVerifyDoneStories(");
+  assert.notEqual(start, -1, "autoVerifyDoneStories source not found");
+  return source.slice(start);
+}
+
 function implementContextSource(): string {
   const source = fs.readFileSync(path.join(root, "src", "installer", "steps", "06-implement", "context.ts"), "utf-8");
   const start = source.indexOf("export async function injectStoryContext(");
@@ -257,6 +265,21 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(retrySource, /UPDATE stories SET status = 'pending', retry_count = \$1, output = \$2, updated_at = \$3 WHERE id = \$4/);
     assert.match(retrySource, /UPDATE stories SET status = 'failed', retry_count = \$1, output = \$2, updated_at = \$3 WHERE id = \$4/);
     assert.match(retrySource, /await updateRunContext\(verifyStep\.run_id, context\)/);
+  });
+
+
+  it("routes auto-verify smoke quality failures back to implement", () => {
+    const autoSource = autoVerifyDoneStoriesSource();
+    const handleSource = handleVerifyEachSource();
+    const fullSource = stepOpsSource();
+
+    assert.match(autoSource, /failure_category"\] !== "VERIFY_SYSTEM_SMOKE_FAILURE"/);
+    assert.match(autoSource, /routeQualityFailureToImplement\(/);
+    assert.match(autoSource, /SYSTEM_SMOKE_FAILURE:/);
+    assert.match(autoSource, /verify_quality_failure_routed/);
+    assert.match(autoSource, /status IN \('running','pending','failed','waiting'\)/);
+    assert.match(handleSource, /Routed verify smoke failure to implement; not cycling reviewer/);
+    assert.match(fullSource, /Routed verify smoke failure to implement; suppressing reviewer claim/);
   });
 
   it("injects stored verify retry feedback before developer claim context is persisted", () => {
