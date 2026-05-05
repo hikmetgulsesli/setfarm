@@ -242,6 +242,19 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /failClaimIfStillRunning\(active\.stepId,\s*active\.agentId,\s*active\.wfId,\s*active\.role,\s*active\.transcriptPath,\s*new Error\(reason\),\s*active\.startedAtMs,\s*active\.spawnCwd\)/);
   });
 
+  it("treats CPU progress as agent activity before watchdog kills a process", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /lastCpuTicks\?: number/);
+    assert.match(source, /lastCpuActivityMs\?: number/);
+    assert.match(source, /function readProcessCpuTicks/);
+    assert.match(source, /\/proc\/\$\{pid\}\/stat/);
+    assert.match(source, /function refreshActiveProcessCpuActivity/);
+    assert.match(source, /ticks > active\.lastCpuTicks/);
+    assert.match(source, /active\.lastCpuActivityMs = Date\.now\(\)/);
+    assert.match(source, /let lastActivityMs = refreshActiveProcessCpuActivity\(active\)/);
+    assert.match(source, /lastCpuTicks: readProcessCpuTicks\(child\.pid\) \?\? undefined/);
+  });
+
   it("hard-times out verify agents as an infra retry instead of leaving open claims", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /VERIFY_AGENT_HARD_TIMEOUT_MS/);

@@ -151,6 +151,8 @@ type ActiveProcess = {
   sessionId: string;
   sessionKey: string;
   sessionJsonlPath: string;
+  lastCpuTicks?: number;
+  lastCpuActivityMs?: number;
 };
 
 type OpenClawTaskRecord = {
@@ -222,8 +224,38 @@ function activeProcessHasStartupActivity(active: ActiveProcess): boolean {
   return activeProcessLastActivityMs(active) > active.startedAtMs + 1000;
 }
 
+function readProcessCpuTicks(pid: number | undefined): number | null {
+  if (!pid || process.platform !== "linux") return null;
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf-8");
+    const endComm = stat.lastIndexOf(")");
+    if (endComm < 0) return null;
+    const fields = stat.slice(endComm + 2).trim().split(/\s+/);
+    const userTicks = Number(fields[11]);
+    const systemTicks = Number(fields[12]);
+    if (!Number.isFinite(userTicks) || !Number.isFinite(systemTicks)) return null;
+    return userTicks + systemTicks;
+  } catch {
+    return null;
+  }
+}
+
+function refreshActiveProcessCpuActivity(active: ActiveProcess): number {
+  const ticks = readProcessCpuTicks(active.child.pid);
+  if (ticks === null) return active.lastCpuActivityMs || active.startedAtMs;
+  if (active.lastCpuTicks === undefined) {
+    active.lastCpuTicks = ticks;
+    return active.lastCpuActivityMs || active.startedAtMs;
+  }
+  if (ticks > active.lastCpuTicks) {
+    active.lastCpuTicks = ticks;
+    active.lastCpuActivityMs = Date.now();
+  }
+  return active.lastCpuActivityMs || active.startedAtMs;
+}
+
 function activeProcessLastActivityMs(active: ActiveProcess): number {
-  let lastActivityMs = active.startedAtMs;
+  let lastActivityMs = refreshActiveProcessCpuActivity(active);
   for (const filePath of [active.transcriptPath, active.sessionJsonlPath, active.outputPath]) {
     try {
       const mtimeMs = fs.statSync(filePath).mtimeMs;
@@ -1423,6 +1455,8 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     sessionId,
     sessionKey,
     sessionJsonlPath,
+    lastCpuTicks: readProcessCpuTicks(child.pid) ?? undefined,
+    lastCpuActivityMs: startedAtMs,
   };
   let processExited = false;
   const closeTranscriptFds = () => {
