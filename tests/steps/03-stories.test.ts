@@ -104,6 +104,7 @@ describe("03-stories step module", () => {
         "src/App.css",
         "src/main.tsx",
         "src/index.css",
+        "src/contexts/AppContext.tsx",
       ]);
       assert.equal(scope.some((file) => /CounterPanel|NotesPanel|SettingsPanel|usePersistentAppState/.test(file)), false);
     } finally {
@@ -150,6 +151,7 @@ describe("03-stories step module", () => {
       assert.equal(stories.length, 5);
       assert.match(stories[0].title, /^Freelancer lead triage CRM uygulaması -/);
       assert.equal(stories[0].scope_files.includes("src/App.tsx"), true);
+      assert.equal(stories[0].scope_files.includes("src/contexts/AppContext.tsx"), true);
       assert.equal(stories[0].shared_files.includes("src/screens/Leads.tsx"), true);
       assert.equal(stories[0].shared_files.includes("src/screens/ProfilPaneli.tsx"), true);
       assert.equal(stories[1].scope_files.includes("src/screens/Leads.tsx"), true);
@@ -326,6 +328,7 @@ describe("03-stories step module", () => {
       "src/App.css",
       "src/main.tsx",
       "src/index.css",
+      "src/contexts/AppContext.tsx",
     ]);
   });
 
@@ -348,6 +351,7 @@ describe("03-stories step module", () => {
       "src/App.css",
       "src/main.tsx",
       "src/index.css",
+      "src/contexts/AppContext.tsx",
     ]);
   });
 

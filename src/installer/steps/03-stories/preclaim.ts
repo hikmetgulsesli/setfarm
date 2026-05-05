@@ -37,6 +37,7 @@ const APP_SCOPE_FILES = [
   "src/App.css",
   "src/main.tsx",
   "src/index.css",
+  "src/contexts/AppContext.tsx",
   "src/types/domain.ts",
   "src/hooks/useAppState.ts",
   "src/utils/storage.ts",
@@ -105,6 +106,7 @@ export function buildSingleStoryScopeFiles(screenFiles: string[]): string[] {
     "src/App.css",
     "src/main.tsx",
     "src/index.css",
+    "src/contexts/AppContext.tsx",
   ]);
 }
 

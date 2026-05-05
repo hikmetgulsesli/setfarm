@@ -101,6 +101,7 @@ const SINGLE_STORY_FRONTEND_INTEGRATION_FILES = [
   "src/App.css",
   "src/main.tsx",
   "src/index.css",
+  "src/contexts/AppContext.tsx",
 ];
 
 const SETUP_OWNED_FRONTEND_TOOLCHAIN_PATTERNS = [
