@@ -89,6 +89,15 @@ const JSX_ATTRIBUTE_MAP = {
   "xmlns:xlink": "xmlnsXlink",
 };
 
+const JSX_TAG_MAP = {
+  "lineargradient": "linearGradient",
+  "radialgradient": "radialGradient",
+  "clippath": "clipPath",
+  "foreignobject": "foreignObject",
+  "textpath": "textPath",
+  "pattern": "pattern",
+};
+
 const NUMERIC_JSX_ATTRIBUTES = new Set([
   "colSpan",
   "cols",
@@ -138,6 +147,15 @@ function normalizeJsxAttributeNames(input) {
   return out;
 }
 
+function normalizeJsxTagNames(input) {
+  let out = input;
+  for (const [htmlTag, jsxTag] of Object.entries(JSX_TAG_MAP)) {
+    out = out.replace(new RegExp(`<\\s*${escapeRegExp(htmlTag)}\\b`, "gi"), `<${jsxTag}`);
+    out = out.replace(new RegExp(`<\\/\\s*${escapeRegExp(htmlTag)}\\s*>`, "gi"), `</${jsxTag}>`);
+  }
+  return out;
+}
+
 function normalizeJsxAttributeValues(input) {
   let out = input;
   for (const attr of NUMERIC_JSX_ATTRIBUTES) {
@@ -173,7 +191,7 @@ function normalizeHtmlComments(input) {
 }
 
 function htmlToJsx(html) {
-  return normalizeHtmlComments(normalizeJsxAttributeValues(normalizeJsxAttributeNames(html)))
+  return normalizeHtmlComments(normalizeJsxAttributeValues(normalizeJsxAttributeNames(normalizeJsxTagNames(html))))
     .replace(/<(img|br|hr|input|meta|link)([^>]*?)>/gi, (_, tag, attrs) => {
       const cleanAttrs = String(attrs || "").replace(/\/\s*$/, "").trimEnd();
       return `<${tag}${cleanAttrs} />`;

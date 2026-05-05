@@ -78,6 +78,13 @@ describe("stitch-to-jsx", () => {
       writeHtml(path.join(stitchDir, "loading-screen.html"), `
         <main>
           <svg viewbox="0 0 24 24" xmlns:xlink="http://www.w3.org/1999/xlink">
+            <defs>
+              <lineargradient id="a"><stop stop-color="#fff"></stop></lineargradient>
+              <radialgradient id="b"></radialgradient>
+              <clippath id="c"><path></path></clippath>
+              <foreignobject></foreignobject>
+              <textpath href="#label">Label</textpath>
+            </defs>
             <circle stroke-width="3" stroke-linecap="round"></circle>
             <path fill-rule="evenodd" clip-rule="evenodd" xlink:href="#shape"></path>
           </svg>
@@ -96,8 +103,14 @@ describe("stitch-to-jsx", () => {
       assert.match(code, /strokeLinecap=/);
       assert.match(code, /fillRule=/);
       assert.match(code, /clipRule=/);
+      assert.match(code, /<linearGradient/);
+      assert.match(code, /<\/linearGradient>/);
+      assert.match(code, /<radialGradient/);
+      assert.match(code, /<clipPath/);
+      assert.match(code, /<foreignObject/);
+      assert.match(code, /<textPath/);
       assert.match(code, /xlinkHref=/);
-      assert.doesNotMatch(code, /viewbox=|stroke-width=|fill-rule=|clip-rule=|xlink:href=/);
+      assert.doesNotMatch(code, /viewbox=|stroke-width=|fill-rule=|clip-rule=|xlink:href=|lineargradient|radialgradient|clippath|foreignobject|textpath/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
