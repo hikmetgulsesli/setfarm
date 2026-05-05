@@ -258,6 +258,17 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(claimPendingBypass, activeStoryGuard);
     assert.match(peekPendingBypass, activeStoryGuard);
 
+    const claimRunningStart = claimBypassSource.indexOf("prev.status = 'running'");
+    const peekRunningStart = peekBypassSource.indexOf("prev.status = 'running'");
+    assert.notEqual(claimRunningStart, -1, "claim running-loop bypass source not found");
+    assert.notEqual(peekRunningStart, -1, "peek running-loop bypass source not found");
+    const claimRunningBypass = claimBypassSource.slice(claimRunningStart, claimBypassSource.indexOf("prev.status = 'pending'"));
+    const peekRunningBypass = peekBypassSource.slice(peekRunningStart, peekBypassSource.indexOf("prev.status = 'pending'"));
+    assert.match(claimRunningBypass, activeStoryGuard);
+    assert.match(peekRunningBypass, activeStoryGuard);
+    assert.match(claimRunningBypass, /COALESCE\(prev\.loop_config::jsonb ->> 'verifyStep', ''\) = s\.step_id/);
+    assert.match(peekRunningBypass, /COALESCE\(prev\.loop_config::jsonb ->> 'verifyStep', ''\) = s\.step_id/);
+
     const pendingLoopStart = peekSource.indexOf("s.status = 'pending'");
     const runningLoopStart = peekSource.indexOf("OR (s.status = 'running'", pendingLoopStart);
     assert.notEqual(pendingLoopStart, -1, "peek pending-loop source not found");
