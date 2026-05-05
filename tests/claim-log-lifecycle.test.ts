@@ -275,10 +275,17 @@ describe("single-step claim_log lifecycle", () => {
       const retryFailure = source.indexOf("const retryFailureText = nextStory.output");
       const verifyFeedback = source.indexOf("context[\"verify_feedback\"] = retryFailureText");
       const previousFailure = source.indexOf("context[\"previous_failure\"] = retryFailureText");
+      const clearPreviousFailure = source.indexOf("delete context[\"previous_failure\"]");
+      const clearFailureCategory = source.indexOf("delete context[\"failure_category\"]");
+      const clearFailureSuggestion = source.indexOf("delete context[\"failure_suggestion\"]");
       const persist = source.indexOf(persistMarker);
       assert.ok(retryFailure >= 0, "retry failure text must be derived from story output");
+      assert.ok(clearPreviousFailure >= 0, "stale previous_failure must be cleared at new story claim");
+      assert.ok(clearFailureCategory > clearPreviousFailure, "stale failure_category must be cleared with previous_failure");
+      assert.ok(clearFailureSuggestion > clearFailureCategory, "stale failure_suggestion must be cleared with previous_failure");
       assert.ok(verifyFeedback > retryFailure, "verify_feedback must be restored from story output");
       assert.ok(previousFailure > verifyFeedback, "previous_failure must be restored from retry feedback");
+      assert.ok(previousFailure > clearFailureSuggestion, "previous_failure must only be restored after stale failure context is cleared");
       assert.ok(persist > previousFailure, "context must be persisted after retry feedback injection");
       assert.doesNotMatch(source, /context\["verify_feedback"\] = ""/);
     }

@@ -1297,6 +1297,9 @@ async function injectStoryContext(
   delete context["current_story_title"];
   delete context["current_story"];
   delete context["verify_feedback"];
+  delete context["previous_failure"];
+  delete context["failure_category"];
+  delete context["failure_suggestion"];
 
   const story: Story = {
     id: nextStory.id,
