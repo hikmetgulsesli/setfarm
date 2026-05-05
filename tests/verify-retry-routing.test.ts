@@ -81,4 +81,17 @@ describe("verify retry routing", () => {
     assert.equal(isVerifyRetryQualityFailure(output), true);
     assert.equal(isVerifyRetryMergeBlocker(output), false);
   });
+
+  it("routes mixed quality findings with PR dirty notes back to implement", () => {
+    const output = [
+      "STATUS: retry",
+      "FEEDBACK:",
+      "- src/screens/YeniGorevEkleDuzenle.tsx:105 — UNRESOLVED: new Date(estimatedStart).toISOString() still introduces a timezone shift bug.",
+      "- PR merge state: CONFLICTING / DIRTY — must be resolved before merge.",
+      "- npm run build passes.",
+    ].join("\n");
+
+    assert.equal(isVerifyRetryQualityFailure(output), true);
+    assert.equal(isVerifyRetryMergeBlocker(output), false);
+  });
 });
