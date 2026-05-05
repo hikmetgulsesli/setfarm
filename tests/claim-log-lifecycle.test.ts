@@ -278,8 +278,27 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(autoSource, /SYSTEM_SMOKE_FAILURE:/);
     assert.match(autoSource, /verify_quality_failure_routed/);
     assert.match(autoSource, /status IN \('running','pending','failed','waiting'\)/);
+    assert.match(autoSource, /ORDER BY CASE WHEN story_id LIKE 'QA-FIX-%' THEN 0 ELSE 1 END, story_index ASC LIMIT 1/);
     assert.match(handleSource, /Routed verify smoke failure to implement; not cycling reviewer/);
     assert.match(fullSource, /Routed verify smoke failure to implement; suppressing reviewer claim/);
+  });
+
+  it("does not let stale verify context override the current done story", () => {
+    const handleSource = handleVerifyEachSource();
+    const identifyStart = handleSource.indexOf("// Identify the story being verified.");
+    const retryStart = handleSource.indexOf("if (status === \"retry\")", identifyStart);
+    assert.notEqual(identifyStart, -1, "verify target selection block not found");
+    assert.notEqual(retryStart, -1, "verify retry branch not found");
+    const identifySource = handleSource.slice(identifyStart, retryStart);
+
+    const byPr = identifySource.indexOf("SELECT story_id FROM stories WHERE run_id = $1 AND pr_url = $2 AND status = 'done' LIMIT 1");
+    const byReported = identifySource.indexOf("SELECT story_id FROM stories WHERE run_id = $1 AND story_id = $2 AND status = 'done' LIMIT 1");
+    const byContext = identifySource.indexOf("Ignoring stale context current_story_id");
+
+    assert.ok(byPr >= 0, "verify should first match a reported merged PR to a done story");
+    assert.ok(byReported > byPr, "reported current_story_id should be checked after PR URL");
+    assert.ok(byContext > byReported, "context current_story_id should be treated as the weakest/stale source");
+    assert.doesNotMatch(identifySource, /parsedOutput\["current_story_id"\] \|\| context\["current_story_id"\]/);
   });
 
   it("injects stored verify retry feedback before developer claim context is persisted", () => {

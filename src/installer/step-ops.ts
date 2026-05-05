@@ -4259,9 +4259,12 @@ async function handleVerifyEachCompletion(
     );
   } catch (e) { logger.warn(`[claim-log] Failed to resolve verify_each completion: ${String(e)}`, { runId: verifyStep.run_id }); }
 
-  // Identify the story being verified: output first (most reliable), then context (v1.5.53)
-  let verifiedStoryId = parsedOutput["current_story_id"] || context["current_story_id"];
-  if (!verifiedStoryId && reportedMergedPrUrl) {
+  // Identify the story being verified. PR URL is strongest, then an explicitly
+  // reported/current story only if it is still a done story. Context can be
+  // stale after QA-FIX routing, so never let it point verify back at an already
+  // verified story.
+  let verifiedStoryId = "";
+  if (reportedMergedPrUrl) {
     const byPr = await pgGet<{ story_id: string }>(
       "SELECT story_id FROM stories WHERE run_id = $1 AND pr_url = $2 AND status = 'done' LIMIT 1",
       [verifyStep.run_id, reportedMergedPrUrl],
@@ -4269,6 +4272,30 @@ async function handleVerifyEachCompletion(
     if (byPr) {
       verifiedStoryId = byPr.story_id;
       logger.info(`[verify] current_story_id missing, matched merged PR to story: ${byPr.story_id}`, { runId: verifyStep.run_id });
+    }
+  }
+  const reportedStoryId = parsedOutput["current_story_id"] || "";
+  if (!verifiedStoryId && reportedStoryId) {
+    const byReportedStory = await pgGet<{ story_id: string }>(
+      "SELECT story_id FROM stories WHERE run_id = $1 AND story_id = $2 AND status = 'done' LIMIT 1",
+      [verifyStep.run_id, reportedStoryId],
+    );
+    if (byReportedStory) {
+      verifiedStoryId = byReportedStory.story_id;
+    } else {
+      logger.warn(`[verify] Ignoring reported current_story_id ${reportedStoryId}; story is not status=done`, { runId: verifyStep.run_id });
+    }
+  }
+  const contextStoryId = context["current_story_id"] || "";
+  if (!verifiedStoryId && contextStoryId) {
+    const byContextStory = await pgGet<{ story_id: string }>(
+      "SELECT story_id FROM stories WHERE run_id = $1 AND story_id = $2 AND status = 'done' LIMIT 1",
+      [verifyStep.run_id, contextStoryId],
+    );
+    if (byContextStory) {
+      verifiedStoryId = byContextStory.story_id;
+    } else {
+      logger.warn(`[verify] Ignoring stale context current_story_id ${contextStoryId}; story is not status=done`, { runId: verifyStep.run_id });
     }
   }
 
@@ -4490,9 +4517,15 @@ export async function autoVerifyDoneStories(
   while (true) {
     if (++count > MAX_AUTO_VERIFY_ITERATIONS) {
       logger.info(`[${logPrefix}] Hit MAX_AUTO_VERIFY (${MAX_AUTO_VERIFY_ITERATIONS}) — deferring remaining stories to next cycle`, { runId });
-      return pgGet<any>("SELECT * FROM stories WHERE run_id = $1 AND status = 'done' ORDER BY story_index ASC LIMIT 1", [runId]);
+      return pgGet<any>(
+        "SELECT * FROM stories WHERE run_id = $1 AND status = 'done' ORDER BY CASE WHEN story_id LIKE 'QA-FIX-%' THEN 0 ELSE 1 END, story_index ASC LIMIT 1",
+        [runId],
+      );
     }
-    const story = await pgGet<any>("SELECT * FROM stories WHERE run_id = $1 AND status = 'done' ORDER BY story_index ASC LIMIT 1", [runId]);
+    const story = await pgGet<any>(
+      "SELECT * FROM stories WHERE run_id = $1 AND status = 'done' ORDER BY CASE WHEN story_id LIKE 'QA-FIX-%' THEN 0 ELSE 1 END, story_index ASC LIMIT 1",
+      [runId],
+    );
     if (!story) return null;
 
     // FIX: If this story has been stuck in verify for too many cycles, force auto-verify.
