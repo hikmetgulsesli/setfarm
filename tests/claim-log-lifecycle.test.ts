@@ -286,7 +286,21 @@ describe("single-step claim_log lifecycle", () => {
     const source = claimImplementLoopSource();
     assert.match(source, /const activeQaFix = await pgGet/);
     assert.match(source, /story_id LIKE 'QA-FIX-%'/);
-    assert.match(source, /parseInt\(awaitingVerify\?\.cnt \|\| "0", 10\) > 0 && parseInt\(activeQaFix\?\.cnt \|\| "0", 10\) === 0/);
+    assert.match(source, /parseInt\(awaitingVerify\?\.cnt \|\| "0", 10\) > 0[\s\S]*parseInt\(activeQaFix\?\.cnt \|\| "0", 10\) === 0/);
+  });
+
+  it("allows implement to claim retried stories even when stale done stories await verify", () => {
+    const source = claimImplementLoopSource();
+    const activeRetry = source.indexOf("const activeRetriedStory = await pgGet");
+    const awaitingVerify = source.indexOf("const awaitingVerify = await pgGet");
+    const waitGate = source.indexOf("parseInt(activeRetriedStory?.cnt || \"0\", 10) === 0");
+
+    assert.notEqual(activeRetry, -1, "active retried story guard not found");
+    assert.notEqual(awaitingVerify, -1, "awaiting verify lookup not found");
+    assert.notEqual(waitGate, -1, "verify wait gate must check active retried stories");
+    assert.ok(activeRetry < awaitingVerify, "active retry guard should be computed before verify wait decision");
+    assert.ok(awaitingVerify < waitGate, "active retry guard must affect the pr-each wait gate");
+    assert.match(source, /status IN \('pending', 'running'\) AND retry_count > 0/);
   });
 
   it("prioritizes QA-FIX stories before normal pending stories", () => {

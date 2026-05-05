@@ -2150,6 +2150,10 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
       // story can be claimed. This prevents US-002/US-003 from branching from a
       // stale baseline while US-001's PR is still open.
       if (loopConfig?.verifyEach && loopConfig.verifyStep) {
+        const activeRetriedStory = await pgGet<{ cnt: string }>(
+          "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status IN ('pending', 'running') AND retry_count > 0",
+          [step.run_id],
+        );
         const awaitingVerify = await pgGet<{ cnt: string }>(
           "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status = 'done'",
           [step.run_id],
@@ -2158,7 +2162,11 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
           "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND story_id LIKE 'QA-FIX-%' AND status IN ('pending', 'running')",
           [step.run_id],
         );
-        if (parseInt(awaitingVerify?.cnt || "0", 10) > 0 && parseInt(activeQaFix?.cnt || "0", 10) === 0) {
+        if (
+          parseInt(awaitingVerify?.cnt || "0", 10) > 0
+          && parseInt(activeQaFix?.cnt || "0", 10) === 0
+          && parseInt(activeRetriedStory?.cnt || "0", 10) === 0
+        ) {
           await pgRun(
             "UPDATE steps SET status = 'pending', updated_at = $1 WHERE run_id = $2 AND step_id = $3 AND status IN ('waiting','done','pending')",
             [now(), step.run_id, loopConfig.verifyStep],
