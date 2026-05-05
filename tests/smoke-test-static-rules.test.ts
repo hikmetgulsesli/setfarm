@@ -97,4 +97,12 @@ describe("smoke-test static rules", () => {
 
     assert.match(smokeScript, /!item\.btn\.isConnected\s*\|\|\s*skipButton\(item\.btn,\s*item\.label\)/);
   });
+
+  it("exits successfully for warning-only smoke results", () => {
+    const smokeScript = fs.readFileSync(path.join(process.cwd(), "scripts/smoke-test.mjs"), "utf-8");
+
+    assert.match(smokeScript, /status: failures\.length === 0 \? 'pass' : \(confidence >= 70 \? 'warn' : 'fail'\)/);
+    assert.match(smokeScript, /process\.exit\(result\.status === 'fail' \? 1 : 0\)/);
+    assert.doesNotMatch(smokeScript, /process\.exit\(failures\.length > 0 \? 1 : 0\)/);
+  });
 });

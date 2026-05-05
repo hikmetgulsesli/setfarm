@@ -1646,7 +1646,7 @@ async function main() {
   };
 
   console.log(JSON.stringify(result, null, 2));
-  process.exit(failures.length > 0 ? 1 : 0);
+  process.exit(result.status === 'fail' ? 1 : 0);
 }
 
 export { checkEntryPointImports, checkNativeButtonWiring };
