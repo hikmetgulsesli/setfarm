@@ -78,4 +78,11 @@ describe("02-design step module", () => {
     assert.match(source, /generate-all-screens[\s\S]*onProgress: \(\) => recordPreClaimProgress\(ctx, "Design preclaim: still generating Stitch screens"\)/);
     assert.match(source, /download-all[\s\S]*onProgress: \(\) => recordPreClaimProgress\(ctx, `Design preclaim: still downloading Stitch HTML files/);
   });
+
+  it("preClaim uses UI_LANGUAGE instead of a hard-coded Turkish Stitch prompt", () => {
+    const source = designPreclaimSource();
+    assert.match(source, /const uiLanguage = ctx\.context\["ui_language"\]/);
+    assert.match(source, /All visible application text must be in \$\{uiLanguage\}/);
+    assert.doesNotMatch(source, /All visible text must be in Turkish|Turkish language/);
+  });
 });

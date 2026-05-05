@@ -65,6 +65,7 @@ export function validPlanOutput(overrides: Partial<ParsedOutput> = {}): ParsedOu
     repo: "$HOME/projects/test-app-12345",
     branch: "feature-test-app",
     tech_stack: "vite-react",
+    ui_language: "English",
     prd: "# Test App PRD — Not Tutma Uygulaması\n\n" +
       "## 1. Genel Bakış\n" +
       "Bireysel kullanıcılar için Türkçe basit not tutma uygulaması. Notlar oluşturulabilir, düzenlenebilir, silinebilir ve tamamlandı olarak işaretlenebilir. Filtreleme ve arama özellikleri mevcut. Tüm veriler local storage'da kalıcı olarak tutulur.\n\n" +

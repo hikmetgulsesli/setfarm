@@ -159,6 +159,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   // 2. Write PRD + mandatory-screens primer as Stitch prompt
   const promptFile = path.join(stitchDir, ".generate-prompt.txt");
   const deviceType = ctx.context["device_type"] || "DESKTOP";
+  const uiLanguage = ctx.context["ui_language"] || ctx.context["UI_LANGUAGE"] || "English";
   const screenPrimer = `
 
 Generate a SEPARATE screen design for EVERY page, view, modal, dialog, tab panel, and settings screen described in this PRD. Do NOT skip ANY screen — even if it seems minor.
@@ -170,7 +171,7 @@ MANDATORY SCREENS:
 - If the PRD mentions error states, empty states, loading states → generate those too
 - Generate at least as many screens as there are distinct views/pages/modals in the PRD
 
-All visible text must be in Turkish. Use a dark, modern theme.`;
+All visible application text must be in ${uiLanguage}. Keep screen metadata, generated source identifiers, and technical labels in English unless that text is visibly shown to users. Use a dark, modern theme.`;
   fs.writeFileSync(promptFile, prd + screenPrimer);
   logger.info(`[module:design preclaim] Generating screens (project ${projId}, device ${deviceType})`, { runId: ctx.runId });
   await recordPreClaimProgress(ctx, `Design preclaim: generating Stitch screens for ${deviceType}`);

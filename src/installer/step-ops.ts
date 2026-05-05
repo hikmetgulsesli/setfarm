@@ -2935,6 +2935,7 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
           const designSystem = context["design_system"] || "";
           const task = context["task"] || "";
           const deviceType = context["device_type"] || "DESKTOP";
+          const uiLanguage = context["ui_language"] || context["UI_LANGUAGE"] || "English";
 
           // Build multi-screen prompt with FULL PRD
           const prd = context["prd"] || context["PRD"] || "";
@@ -2957,7 +2958,8 @@ ${designSystem}
 ${screenDescs}
 
 === RULES ===
-- All visible text (buttons, labels, headings, placeholders, menu items) MUST be in Turkish language.
+- All visible application text (buttons, labels, headings, placeholders, menu items) MUST be in ${uiLanguage}.
+- Keep screen metadata, generated source identifiers, and technical labels in English unless that text is visibly shown to users.
 - Use Material Symbols icons.
 - Consistent design system across ALL screens.
 - Each screen must be a complete, detailed, production-ready UI design.

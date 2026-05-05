@@ -29,6 +29,6 @@ export const planModule: StepModule = {
   normalize,
   validateOutput,
   onComplete,
-  requiredOutputFields: ["STATUS", "REPO", "BRANCH", "TECH_STACK", "PRD", "PRD_SCREEN_COUNT", "DB_REQUIRED"],
+  requiredOutputFields: ["STATUS", "REPO", "BRANCH", "TECH_STACK", "UI_LANGUAGE", "PRD", "PRD_SCREEN_COUNT", "DB_REQUIRED"],
   maxPromptSize: 8192,
 };

@@ -14,6 +14,7 @@ const VALID_TECH_STACKS = new Set([
 ]);
 
 const VALID_DB_REQUIRED = new Set(["none", "postgres", "sqlite"]);
+const VALID_UI_LANGUAGES = new Set(["english", "turkish"]);
 
 const MIN_PRD_LENGTH = 2000;
 const MIN_SCREEN_COUNT = 3;
@@ -112,6 +113,11 @@ export function validateOutput(parsed: ParsedOutput): ValidationResult {
     errors.push(`DB_REQUIRED must be one of ${[...VALID_DB_REQUIRED].join(", ")} (got: '${dbRequired}')`);
   }
 
+  const uiLanguage = (parsed.ui_language || "").toLowerCase();
+  if (!VALID_UI_LANGUAGES.has(uiLanguage)) {
+    errors.push(`UI_LANGUAGE must be one of ${[...VALID_UI_LANGUAGES].join(", ")} (got: '${uiLanguage}')`);
+  }
+
   return { ok: errors.length === 0, errors };
 }
 
@@ -125,4 +131,5 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
   context["prd"] = parsed.prd || "";
   context["prd_screen_count"] = parsed.prd_screen_count || "";
   context["db_required"] = (parsed.db_required || "").toLowerCase();
+  context["ui_language"] = parsed.ui_language || "English";
 }
