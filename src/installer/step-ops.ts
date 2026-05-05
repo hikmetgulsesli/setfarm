@@ -541,6 +541,15 @@ function parseLoopConfigSafe(raw: string | null, runId?: string): LoopConfig | n
   }
 }
 
+async function isVerifyEachVerifyStep(step: { run_id: string; step_id: string }): Promise<boolean> {
+  const loopStep = await pgGet<{ loop_config: string | null }>(
+    "SELECT loop_config FROM steps WHERE run_id = $1 AND type = 'loop' AND step_id = 'implement' LIMIT 1",
+    [step.run_id],
+  );
+  const loopConfig = parseLoopConfigSafe(loopStep?.loop_config || null, step.run_id);
+  return !!(loopConfig?.verifyEach && (loopConfig.verifyStep || "verify") === step.step_id);
+}
+
 function formatExecFailure(e: unknown, max = 900): string {
   const err = e as any;
   const parts = [String(err?.message || e || "unknown error")];
@@ -2743,20 +2752,25 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
     await failStep(stepId, `Agent reported failure: ${parsed["status"]}. Output: ${output.slice(0, 500)}`);
     return { advanced: false, runCompleted: false };
   }
+  let verifyEachRetryHandledLater = false;
   if (statusVal === "retry") {
     // Soft retry: failStep bounces the step back to pending and increments
     // retry_count; if retries are exhausted the existing step-fail logic
     // escalates to a terminal fail. Verify-each already handles this in its
     // own path (step-ops.ts handleVerifyEachCompletion); this branch closes
     // the gap for single-step verify (direct-merge workflows).
-    if (await routeQualityFailureToImplement(step, output, context)) {
+    verifyEachRetryHandledLater = await isVerifyEachVerifyStep(step);
+    if (!verifyEachRetryHandledLater) {
+      if (await routeQualityFailureToImplement(step, output, context)) {
+        return { advanced: false, runCompleted: false };
+      }
+      logger.warn(`[status-parser] Agent reported STATUS: retry — bouncing step to pending`, { runId: step.run_id, stepId: step.step_id });
+      await failStep(stepId, `Agent requested retry: ${output.slice(0, 500)}`);
       return { advanced: false, runCompleted: false };
     }
-    logger.warn(`[status-parser] Agent reported STATUS: retry — bouncing step to pending`, { runId: step.run_id, stepId: step.step_id });
-    await failStep(stepId, `Agent requested retry: ${output.slice(0, 500)}`);
-    return { advanced: false, runCompleted: false };
+    logger.info(`[status-parser] Verify-each retry will be handled by story retry path`, { runId: step.run_id, stepId: step.step_id });
   }
-  if (statusVal && statusVal !== "done" && statusVal !== "skip") {
+  if (statusVal && statusVal !== "done" && statusVal !== "skip" && !(statusVal === "retry" && verifyEachRetryHandledLater)) {
     // Whitelist: any explicit status other than done/skip/retry/fail is garbage
     // and must fail loudly. This catches typos, hallucinations ("STATUS: ok"),
     // and future agents that invent new status words without platform support.

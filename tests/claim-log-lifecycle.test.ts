@@ -186,6 +186,31 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(routeSource, /await failRun\(step\.run_id, true\)/);
   });
 
+  it("lets verify-each retry output use the story retry path instead of QA-FIX", () => {
+    const source = stepOpsSource();
+    const helperStart = source.indexOf("async function isVerifyEachVerifyStep(");
+    const completeStart = source.indexOf("export async function completeStep(");
+    const retryStart = source.indexOf("if (statusVal === \"retry\")", completeStart);
+    const unknownStart = source.indexOf("if (statusVal && statusVal !== \"done\"", retryStart);
+    const loopDispatch = source.indexOf("return await handleVerifyEachCompletion", unknownStart);
+    assert.notEqual(helperStart, -1, "isVerifyEachVerifyStep helper not found");
+    assert.notEqual(retryStart, -1, "STATUS retry branch not found");
+    assert.notEqual(unknownStart, -1, "unknown status guard not found");
+    assert.notEqual(loopDispatch, -1, "verify-each completion dispatch not found");
+
+    const helperSource = source.slice(helperStart, completeStart);
+    const retrySource = source.slice(retryStart, unknownStart);
+    const unknownSource = source.slice(unknownStart, loopDispatch);
+
+    assert.match(helperSource, /step_id = 'implement'/);
+    assert.match(helperSource, /loopConfig\?\.verifyEach/);
+    assert.match(helperSource, /\(loopConfig\.verifyStep \|\| "verify"\) === step\.step_id/);
+    assert.match(retrySource, /verifyEachRetryHandledLater = await isVerifyEachVerifyStep\(step\)/);
+    assert.match(retrySource, /if \(!verifyEachRetryHandledLater\)/);
+    assert.match(retrySource, /routeQualityFailureToImplement\(step, output, context\)/);
+    assert.match(unknownSource, /!\(statusVal === "retry" && verifyEachRetryHandledLater\)/);
+  });
+
   it("blocks verify-each claims while an active QA-FIX story is pending", () => {
     const claimSource = claimStepSelectionSource();
     const peekSource = peekStepSource();
