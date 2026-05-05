@@ -261,7 +261,7 @@ function collectQaFixScopeFiles(repoPath: string): string[] {
   return [...new Set(out)].sort();
 }
 
-async function routeQualityFailureToImplement(
+export async function routeQualityFailureToImplement(
   step: { id: string; run_id: string; step_id: string; step_index: number; agent_id: string },
   output: string,
   context: Record<string, string>,

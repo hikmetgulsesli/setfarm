@@ -28,6 +28,17 @@ describe("verify retry routing", () => {
     assert.equal(isVerifyRetryQualityFailure(output), true);
   });
 
+  it("routes blocking review comments about functional defects back to implement", () => {
+    const output = [
+      "STATUS: retry",
+      "FEEDBACK:",
+      "- 5 review comments not addressed: form init, mode prop, status preservation, onEdit handler, unused props.",
+    ].join("\n");
+
+    assert.equal(isVerifyRetryQualityFailure(output), true);
+    assert.equal(isVerifyRetryMergeBlocker(output), false);
+  });
+
   it("does not route pure PR merge waiting back to implement", () => {
     const output = [
       "STATUS: retry",

@@ -28,14 +28,14 @@ import { cleanupProjectEphemera, scheduleRunCronTeardown } from "./cleanup-ops.j
  * Fail a step, with retry logic. For loop steps, applies per-story retry.
  */
 export async function failStep(stepId: string, error: string): Promise<{ retrying: boolean; runFailed: boolean }> {
-  type FailStepRow = { id: string; run_id: string; retry_count: number; max_retries: number; type: string; current_story_id: string | null; agent_id: string };
+  type FailStepRow = { id: string; run_id: string; step_index: number; retry_count: number; max_retries: number; type: string; current_story_id: string | null; agent_id: string };
   let step = await pgGet<FailStepRow>(
-    "SELECT id, run_id, retry_count, max_retries, type, current_story_id, agent_id FROM steps WHERE id = $1", [stepId]
+    "SELECT id, run_id, step_index, retry_count, max_retries, type, current_story_id, agent_id FROM steps WHERE id = $1", [stepId]
   );
 
   if (!step) {
     const fallbackSteps = await pgQuery<FailStepRow>(
-      `SELECT id, run_id, retry_count, max_retries, type, current_story_id, agent_id
+      `SELECT id, run_id, step_index, retry_count, max_retries, type, current_story_id, agent_id
        FROM steps
        WHERE run_id = $1 AND status IN ('running', 'pending')
        ORDER BY step_index ASC
@@ -80,7 +80,7 @@ function isTransientAgentInfrastructureFailure(error: string): boolean {
 
 async function handleLoopStepFailurePG(
   stepId: string,
-  step: { run_id: string; retry_count: number; max_retries: number; type: string; current_story_id: string | null; agent_id: string },
+  step: { run_id: string; step_index: number; retry_count: number; max_retries: number; type: string; current_story_id: string | null; agent_id: string },
   error: string,
 ): Promise<{ retrying: boolean; runFailed: boolean }> {
   const story = await pgGet<{ id: string; retry_count: number; max_retries: number }>(
@@ -153,15 +153,68 @@ const CRITICAL_STEPS = new Set(["deploy", "plan", "setup-repo", "setup-build", "
 const QUALITY_GATE_STEPS = new Set(["final-test", "qa-test", "security-gate", "verify"]);
 const QUALITY_GATE_MIN_RETRIES = 4;
 
+function formatVerifyFailureAsRetryOutput(error: string): string {
+  const trimmed = error.trim() || "Verify requested retry without details.";
+  if (/^\s*STATUS\s*:\s*retry\b/i.test(trimmed) || /^SYSTEM_SMOKE_FAILURE:/i.test(trimmed)) {
+    return trimmed;
+  }
+  const bullets = trimmed
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => `- ${line}`)
+    .join("\n");
+  return `STATUS: retry\nFEEDBACK:\n${bullets || `- ${trimmed}`}`;
+}
+
+async function routeVerifyEachFailureToImplement(
+  stepId: string,
+  step: { run_id: string; step_index: number; agent_id: string },
+  workflowStepId: string,
+  error: string,
+): Promise<boolean> {
+  if (workflowStepId !== "verify") return false;
+  if (isTransientAgentInfrastructureFailure(error)) return false;
+
+  const loopStep = await pgGet<{ loop_config: string | null }>(
+    "SELECT loop_config FROM steps WHERE run_id = $1 AND type = 'loop' AND step_id = 'implement' LIMIT 1",
+    [step.run_id],
+  );
+  if (!loopStep?.loop_config) return false;
+
+  let loopConfig: { verifyEach?: boolean; verifyStep?: string } = {};
+  try { loopConfig = JSON.parse(loopStep.loop_config); } catch { return false; }
+  if (!loopConfig.verifyEach || (loopConfig.verifyStep || "verify") !== workflowStepId) return false;
+
+  const doneStory = await pgGet<{ id: string }>(
+    "SELECT id FROM stories WHERE run_id = $1 AND status = 'done' ORDER BY story_index ASC LIMIT 1",
+    [step.run_id],
+  );
+  if (!doneStory) return false;
+
+  const context = await getRunContext(step.run_id);
+  const retryOutput = formatVerifyFailureAsRetryOutput(error);
+  const { routeQualityFailureToImplement } = await import("./step-ops.js");
+  return routeQualityFailureToImplement(
+    { id: stepId, run_id: step.run_id, step_id: workflowStepId, step_index: step.step_index, agent_id: step.agent_id },
+    retryOutput,
+    context,
+  );
+}
+
 async function handleSingleStepFailurePG(
   stepId: string,
-  step: { run_id: string; retry_count: number; max_retries: number; type: string; current_story_id: string | null; agent_id: string },
+  step: { run_id: string; step_index: number; retry_count: number; max_retries: number; type: string; current_story_id: string | null; agent_id: string },
   error: string,
 ): Promise<{ retrying: boolean; runFailed: boolean }> {
   const newRetryCount = step.retry_count + 1;
 
   const stepRow = await pgGet<{ step_id: string }>("SELECT step_id FROM steps WHERE id = $1", [stepId]);
   const workflowStepId = stepRow?.step_id || "";
+
+  if (await routeVerifyEachFailureToImplement(stepId, step, workflowStepId, error)) {
+    return { retrying: true, runFailed: false };
+  }
 
   // Boost max_retries for quality gate steps so agents get more chances to fix issues
   if (QUALITY_GATE_STEPS.has(workflowStepId) && step.max_retries < QUALITY_GATE_MIN_RETRIES) {

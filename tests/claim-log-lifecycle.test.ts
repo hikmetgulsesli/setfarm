@@ -250,6 +250,30 @@ describe("single-step claim_log lifecycle", () => {
     assert.doesNotMatch(singleFailureSource, /claim_log[\s\S]*step_id = \$\{stepId\}/);
   });
 
+  it("routes verify-each step fail quality reports back to implement", () => {
+    const source = fs.readFileSync(path.join(root, "src", "installer", "step-fail.ts"), "utf-8");
+    const helperStart = source.indexOf("function formatVerifyFailureAsRetryOutput(");
+    const routeStart = source.indexOf("async function routeVerifyEachFailureToImplement(");
+    const singleFailureStart = source.indexOf("async function handleSingleStepFailurePG(");
+    assert.notEqual(helperStart, -1, "formatVerifyFailureAsRetryOutput source not found");
+    assert.notEqual(routeStart, -1, "routeVerifyEachFailureToImplement source not found");
+    assert.notEqual(singleFailureStart, -1, "handleSingleStepFailurePG source not found");
+    const helperSource = source.slice(helperStart, routeStart);
+    const routeSource = source.slice(routeStart, singleFailureStart);
+    const singleFailureSource = source.slice(singleFailureStart, source.indexOf("  // Boost max_retries", singleFailureStart));
+
+    assert.match(helperSource, /STATUS: retry/);
+    assert.match(routeSource, /workflowStepId !== "verify"/);
+    assert.match(routeSource, /isTransientAgentInfrastructureFailure\(error\)/);
+    assert.match(routeSource, /type = 'loop' AND step_id = 'implement'/);
+    assert.match(routeSource, /loopConfig\.verifyEach/);
+    assert.match(routeSource, /loopConfig\.verifyStep \|\| "verify"/);
+    assert.match(routeSource, /status = 'done'/);
+    assert.match(routeSource, /formatVerifyFailureAsRetryOutput\(error\)/);
+    assert.match(routeSource, /routeQualityFailureToImplement/);
+    assert.match(singleFailureSource, /routeVerifyEachFailureToImplement\(stepId, step, workflowStepId, error\)/);
+  });
+
   it("closes terminal failStepWithOutput claims by workflow step id", () => {
     const source = repoSource();
     const start = source.indexOf("export async function failStepWithOutput(");

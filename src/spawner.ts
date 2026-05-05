@@ -422,6 +422,7 @@ First exec command should start with:
 CLAIM_FILE='${claimFile}'; OUTPUT_FILE='/tmp/setfarm-output-${outputFileId}.txt'; STEP_ID=$(jq -r '.stepId // empty' "$CLAIM_FILE"); WORKDIR=$(jq -r 'if (.input|type)=="object" then (.input.story_workdir // .input.repo // "") else "" end' "$CLAIM_FILE"); if [ -z "$WORKDIR" ]; then WORKDIR=$(jq -r 'if (.input|type)=="string" then .input else "" end' "$CLAIM_FILE" | sed -n 's/^WORKDIR:[[:space:]]*//p; s/^REPO:[[:space:]]*//p' | head -1); fi; case "$WORKDIR" in ""|*"<"*|*">"*|*"[missing:"*|*'$HOME'*|~*) WORKDIR="$HOME/.openclaw/workspace/agent-scratch";; esac; mkdir -p "$WORKDIR"; cd "$WORKDIR"; case "$(pwd)" in "$HOME"/.openclaw/setfarm-repo*) echo FATAL_PLATFORM_CWD; exit 1;; esac; printf 'STEP_ID=%s\nWORKDIR=%s\n' "$STEP_ID" "$(pwd)"; jq -r 'if (.input|type)=="object" then (.input.task // .input.current_story_title // .input.story_title // "") else .input end' "$CLAIM_FILE" | head -c 1200; echo
 
 Do ${wfId}/${role} work in WORKDIR only. Read CLAIM_FILE for exact requirements. Do NOT run step peek/claim. No subagents/background delegation. No PR actions unless claim explicitly owns PR work.
+For normal quality findings in verify/review/QA/final-test, do NOT use step fail. Write STATUS: retry with concise findings and call step complete so the platform can route the batched fix back to implement. Use step fail only for infrastructure/unrecoverable execution failures.
 
 Complete with:
 cat > /tmp/setfarm-output-${outputFileId}.txt <<'SETFARM_EOF'
