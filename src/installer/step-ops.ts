@@ -1640,6 +1640,11 @@ async function claimSingleStep(
     shouldRecordSingleStepTransition = true;
   }
 
+  // Record the handoff before claim-side gates such as verify context injection
+  // and PR review delay. Those gates can do real work or defer the claim before
+  // an agent process exists, so LiveDB must not show a bare running step.
+  await recordSingleStepHandoff("claimSingleStep:atomic");
+
   // Inject previous failure context so agent knows what to fix on retry.
   // Some verify-each retries intentionally leave the previous successful
   // reviewer output on the step while context.previous_failure carries the
@@ -1690,6 +1695,7 @@ async function claimSingleStep(
   // BUG FIX: If this is a verify step for a verify_each loop, inject the correct
   // story info from the oldest unverified 'done' story (not from stale context).
   if (!await injectVerifyContext(step, context, db)) {
+    await closeSingleStepHandoff("completed", "verify_each auto-verified or advanced without agent spawn");
     return { found: false };
   }
 
@@ -1750,6 +1756,7 @@ async function claimSingleStep(
       logger.info(`[review-delay] PR review delay: ${remaining}s remaining — deferring verify claim`, { runId: step.run_id, stepId: step.step_id });
       // Revert status to pending so next cron can retry — DO NOT touch updated_at
       await pgRun("UPDATE steps SET status = 'pending' WHERE id = $1", [step.id]);
+      await closeSingleStepHandoff("infra_retry", `PR review delay deferral; ${remaining}s remaining before agent spawn`);
       return { found: false };
     }
     if (hasReviewSignal) {

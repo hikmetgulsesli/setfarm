@@ -72,13 +72,16 @@ function previousStepSelectionBypassSource(source: string): string {
 }
 
 describe("single-step claim_log lifecycle", () => {
-  it("records single-step handoff before heavy preClaim and closes no-spawn exits", () => {
+  it("records single-step handoff before claim-side gates and closes no-spawn exits", () => {
     const source = claimSingleStepSource();
     const claimInsert = source.indexOf("INSERT INTO claim_log");
     const transitionRecord = source.indexOf("recordStepTransition(step.id, step.run_id, \"pending\", \"running\"");
     const runningEvent = source.indexOf("event: \"step.running\"");
+    const atomicHandoff = source.indexOf("recordSingleStepHandoff(\"claimSingleStep:atomic\")");
     const verifyContextGate = source.indexOf("injectVerifyContext");
+    const verifyAutoClose = source.indexOf("verify_each auto-verified or advanced without agent spawn");
     const reviewDelayGate = source.indexOf("PR REVIEW DELAY GATE");
+    const reviewDelayClose = source.indexOf("PR review delay deferral");
     const preClaimHandoff = source.indexOf("recordSingleStepHandoff(\"claimSingleStep:preClaim\")");
     const finalHandoff = source.indexOf("recordSingleStepHandoff(\"claimSingleStep\")");
     const modulePreClaimCall = source.indexOf("await _stepModule.preClaim");
@@ -91,8 +94,11 @@ describe("single-step claim_log lifecycle", () => {
     assert.notEqual(claimInsert, -1, "recordSingleStepHandoff must insert claim_log rows");
     assert.notEqual(transitionRecord, -1, "recordSingleStepHandoff must record a step transition");
     assert.notEqual(runningEvent, -1, "recordSingleStepHandoff must emit step.running");
-    assert.ok(preClaimHandoff > reviewDelayGate, "preClaim handoff must run after earlier defer gates");
-    assert.ok(preClaimHandoff > verifyContextGate, "preClaim handoff must run after verify auto/defer gate");
+    assert.notEqual(atomicHandoff, -1, "atomic handoff must be recorded immediately after DB claim");
+    assert.ok(atomicHandoff < verifyContextGate, "atomic handoff must run before verify auto/defer gate");
+    assert.ok(atomicHandoff < reviewDelayGate, "atomic handoff must run before earlier defer gates");
+    assert.ok(verifyAutoClose > verifyContextGate, "verify auto/no-agent path must close the early handoff");
+    assert.ok(reviewDelayClose > reviewDelayGate, "review-delay no-agent path must close the early handoff");
     assert.ok(preClaimHandoff < modulePreClaimCall, "preClaim handoff must run before heavy module preClaim work");
     assert.ok(finalHandoff > missingInputGate, "final handoff must remain after no-spawn guards as an idempotent fallback");
     assert.ok(modulePreClaimNoSpawnGate > modulePreClaimCall, "preClaim no-spawn gate must be checked after preClaim");
@@ -100,7 +106,6 @@ describe("single-step claim_log lifecycle", () => {
     assert.ok(missingInputFailClose > missingInputGate, "missing-input failure path must close the preClaim handoff");
     assert.ok(finalHandoff < handoffReturn, "final handoff must run before handoff return");
     assert.match(source, /preClaim changed step status[\s\S]*closeSingleStepHandoff\(outcome/);
-    assert.doesNotMatch(source.slice(0, reviewDelayGate), /await recordSingleStepHandoff/);
     assert.match(source, /shouldRecordSingleStepClaim = false/);
     assert.match(source, /shouldRecordSingleStepTransition = false/);
   });
