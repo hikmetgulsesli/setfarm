@@ -164,6 +164,23 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(routeSource, /WHERE run_id = \$2 AND step_id = \$3 AND story_id IS NULL AND outcome IS NULL/);
   });
 
+  it("fails verify merge blockers before creating QA-FIX stories", () => {
+    const source = stepOpsSource();
+    const start = source.indexOf("async function routeQualityFailureToImplement(");
+    const end = source.indexOf("// ── Predicted screen file helpers", start);
+    assert.notEqual(start, -1, "routeQualityFailureToImplement source not found");
+    assert.notEqual(end, -1, "routeQualityFailureToImplement end marker not found");
+    const routeSource = source.slice(start, end);
+
+    const blockerGuard = routeSource.indexOf("isVerifyRetryMergeBlocker(output)");
+    const qaFixLookup = routeSource.indexOf("story_id LIKE 'QA-FIX-%'");
+    assert.ok(blockerGuard > 0, "verify merge blocker guard must be present");
+    assert.ok(blockerGuard < qaFixLookup, "merge blockers must fail before QA-FIX lookup/creation");
+    assert.match(routeSource, /VERIFY_MERGE_BLOCKER/);
+    assert.match(routeSource, /do not route this to QA-FIX/);
+    assert.match(routeSource, /await failRun\(step\.run_id, true\)/);
+  });
+
   it("blocks verify-each claims while an active QA-FIX story is pending", () => {
     const claimSource = claimStepSelectionSource();
     const peekSource = peekStepSource();

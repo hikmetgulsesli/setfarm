@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { isVerifyRetryQualityFailure } from "../dist/installer/verify-retry-routing.js";
+import { isVerifyRetryMergeBlocker, isVerifyRetryQualityFailure } from "../dist/installer/verify-retry-routing.js";
 
 describe("verify retry routing", () => {
   it("routes actionable verify retry reports back to implement", () => {
@@ -45,5 +45,29 @@ describe("verify retry routing", () => {
 
   it("preserves explicit system smoke routing", () => {
     assert.equal(isVerifyRetryQualityFailure("SYSTEM_SMOKE_FAILURE:\nblank page after load"), true);
+  });
+
+  it("classifies unmergeable PR retry reports separately from QA-FIX", () => {
+    const output = [
+      "STATUS: retry",
+      "FEEDBACK:",
+      "- PR #2 is CONFLICTING/DIRTY: merge conflicts in src/hooks/useAppState.ts.",
+      "- Resolve conflict markers before rerunning verify.",
+    ].join("\n");
+
+    assert.equal(isVerifyRetryQualityFailure(output), true);
+    assert.equal(isVerifyRetryMergeBlocker(output), true);
+  });
+
+  it("does not classify normal app quality retry reports as merge blockers", () => {
+    const output = [
+      "STATUS: retry",
+      "FEEDBACK:",
+      "- Screenshot shows the profile drawer overlapping the dashboard.",
+      "- Button click does not open the create dialog.",
+    ].join("\n");
+
+    assert.equal(isVerifyRetryQualityFailure(output), true);
+    assert.equal(isVerifyRetryMergeBlocker(output), false);
   });
 });

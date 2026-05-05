@@ -34,7 +34,7 @@ import { getStories, formatStoryForTemplate, formatCompletedStories, parseAndIns
 import { createStoryWorktree, removeStoryWorktree, findWorktreeDir, syncBaseBranch } from "./worktree-ops.js";
 import { computeHasFrontendChanges, checkTestFailures, checkQualityGate, checkRequiredOutputFields, processDesignCompletion, processSetupCompletion, processSetupDesignContracts, processBrowserCheck, processDesignFidelityCheck, checkStoryDesignCompliance, checkImportConsistency } from "./step-guardrails.js";
 import { cleanupAbandonedSteps as _cleanupAbandonedSteps, cleanupProjectEphemera, scheduleRunCronTeardown } from "./cleanup-ops.js";
-import { isVerifyRetryQualityFailure } from "./verify-retry-routing.js";
+import { isVerifyRetryMergeBlocker, isVerifyRetryQualityFailure } from "./verify-retry-routing.js";
 import {
   getRunStatus, getRunContext, updateRunContext, failRun,
   getWorkflowId as _getWorkflowId,
@@ -280,12 +280,35 @@ async function routeQualityFailureToImplement(
   try { loopConfig = JSON.parse(loopStep.loop_config || "{}"); } catch {}
   if (loopConfig.over && loopConfig.over !== "stories") return false;
 
+  const failure = output.slice(0, 6000);
+  if (isVerifyRetryFailure && isVerifyRetryMergeBlocker(output)) {
+    const reason = [
+      "VERIFY_MERGE_BLOCKER:",
+      "Verify reported an unmergeable PR state (CONFLICTING/DIRTY/BLOCKED, merge conflicts, or conflict markers).",
+      "This is not a downstream app-quality defect, so Setfarm will not create another QA-FIX story.",
+      "Resolve the story/PR branch merge conflict or restart with a clean branch set before continuing.",
+      "",
+      "Failure report:",
+      failure.slice(0, 3000),
+    ].join("\n");
+    context["previous_failure"] = reason;
+    context["failure_category"] = "VERIFY_MERGE_BLOCKER";
+    context["failure_suggestion"] = "Resolve the conflicting PR/story branch state; do not route this to QA-FIX.";
+    await updateRunContext(step.run_id, context);
+    await failStepWithOutput(step.id, reason);
+    await failRun(step.run_id, true);
+    const wfId = await _getWorkflowId(step.run_id);
+    emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: reason.slice(0, 500) });
+    emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: "VERIFY_MERGE_BLOCKER" });
+    logger.error(`[quality-fix] Verify merge blocker detected for ${step.step_id}; refusing QA-FIX routing`, { runId: step.run_id });
+    return true;
+  }
+
   const existingActiveFix = await pgGet<{ id: string; story_id: string }>(
     "SELECT id, story_id FROM stories WHERE run_id = $1 AND story_id LIKE 'QA-FIX-%' AND status IN ('pending','running') ORDER BY story_index DESC LIMIT 1",
     [step.run_id],
   );
 
-  const failure = output.slice(0, 6000);
   const existingFixCount = await pgGet<{ cnt: string }>(
     "SELECT COUNT(*)::text as cnt FROM stories WHERE run_id = $1 AND story_id LIKE 'QA-FIX-%'",
     [step.run_id],
