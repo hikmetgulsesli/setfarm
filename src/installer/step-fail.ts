@@ -147,7 +147,7 @@ async function handleLoopStepFailurePG(
 
 // ── Single step failure (PG) ─────────────────────────────────────────
 
-const CRITICAL_STEPS = new Set(["deploy", "plan", "setup-repo", "setup-build", "stories", "final-test", "qa-test", "security-gate", "verify"]);
+const CRITICAL_STEPS = new Set(["deploy", "plan", "design", "setup-repo", "setup-build", "stories", "final-test", "qa-test", "security-gate", "verify"]);
 
 /** Quality gate steps get boosted max_retries so agents have more chances to fix issues */
 const QUALITY_GATE_STEPS = new Set(["final-test", "qa-test", "security-gate", "verify"]);

@@ -53,6 +53,24 @@ async function recordPreClaimProgress(ctx: ClaimContext, detail: string): Promis
   emitEvent({ ts: now(), event: "step.progress", runId: ctx.runId, stepId: ctx.stepId, detail: safeDetail });
 }
 
+async function failDesignPreclaim(ctx: ClaimContext, error: string): Promise<void> {
+  const safeError = error.replace(/\s+/g, " ").slice(0, 1000);
+  ctx.context["design_asset_error"] = safeError;
+  ctx.context["screens_generated"] = "0";
+  await recordPreClaimProgress(ctx, safeError);
+
+  const step = await pgGet<{ id: string }>(
+    "SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1",
+    [ctx.runId, ctx.stepId],
+  );
+  if (!step?.id) {
+    throw new Error(`design preclaim could not resolve step id for ${ctx.runId}/${ctx.stepId}`);
+  }
+
+  const { failStep } = await import("../../step-fail.js");
+  await failStep(step.id, safeError);
+}
+
 function isValidStitchHtml(filePath: string): boolean {
   try {
     if (!fs.existsSync(filePath)) return false;
@@ -150,7 +168,9 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   }
 
   if (!projId) {
-    logger.warn(`[module:design preclaim] no Stitch project — skipping generation, agent will see empty stitch/`, { runId: ctx.runId });
+    const error = "DESIGN_ASSET_GENERATION_FAILED: Stitch project could not be created; design assets are unavailable.";
+    logger.warn(`[module:design preclaim] ${error}`, { runId: ctx.runId });
+    await failDesignPreclaim(ctx, error);
     return;
   }
 
@@ -269,7 +289,7 @@ All visible application text must be in ${uiLanguage}. Keep screen metadata, gen
             screenId: String(s.screenId),
             name: String(s.title),
             type: classifyScreenType(String(s.title)),
-            description: String(s.title) + " ekranı",
+            description: String(s.title) + " screen",
           }));
       }
     } catch (e) {
@@ -293,7 +313,7 @@ All visible application text must be in ${uiLanguage}. Keep screen metadata, gen
           screenId,
           name: title || screenId,
           type: classifyScreenType(title),
-          description: title + " ekranı",
+          description: title + " screen",
         });
       }
       if (screenMap.length > 0) {
@@ -317,8 +337,10 @@ All visible application text must be in ${uiLanguage}. Keep screen metadata, gen
     logger.info(`[module:design preclaim] SCREEN_MAP injected (${screenMap.length} entries)`, { runId: ctx.runId });
     await recordPreClaimProgress(ctx, `Design preclaim: SCREEN_MAP ready with ${screenMap.length} entries`);
   } else {
-    logger.warn(`[module:design preclaim] SCREEN_MAP could not be generated — agent will see empty list`, { runId: ctx.runId });
-    await recordPreClaimProgress(ctx, "Design preclaim: SCREEN_MAP could not be generated");
+    const error = "DESIGN_ASSET_GENERATION_FAILED: Stitch generation/download produced 0 valid HTML screens; SCREEN_MAP unavailable. Do not continue to implementation without design assets.";
+    logger.warn(`[module:design preclaim] ${error}`, { runId: ctx.runId });
+    await failDesignPreclaim(ctx, error);
+    return;
   }
 
   // Auto-complete (2026-04-24): if all required design assets are present,

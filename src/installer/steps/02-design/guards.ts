@@ -18,16 +18,17 @@ export function validateOutput(parsed: ParsedOutput): ValidationResult {
     errors.push(`DEVICE_TYPE must be one of ${[...VALID_DEVICE_TYPES].join(", ")} (got: '${parsed.device_type}')`);
   }
 
-  // SCREEN_MAP is optional at module level — pipeline has stronger fallbacks
-  // (processDesignCompletion auto-recovers from Stitch API). We only fail
-  // here on glaring agent-side errors.
   const screenMapRaw = parsed.screen_map || "";
-  if (screenMapRaw) {
+  if (!screenMapRaw.trim()) {
+    errors.push("SCREEN_MAP is required for design completion");
+  } else {
     try {
       const sm = JSON.parse(screenMapRaw);
       if (!Array.isArray(sm)) {
         errors.push("SCREEN_MAP must be a JSON array");
-      } else if (sm.length > 0) {
+      } else if (sm.length === 0) {
+        errors.push("SCREEN_MAP must include at least one screen");
+      } else {
         for (const [i, entry] of sm.entries()) {
           if (!entry || typeof entry !== "object" || !entry.screenId || !entry.name) {
             errors.push(`SCREEN_MAP[${i}] missing required screenId or name`);

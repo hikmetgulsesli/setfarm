@@ -3197,7 +3197,9 @@ ${screenDescs}
     logger.info(`[screen-map-guardrail] Entering design step guardrail check`, { runId: step.run_id });
     let screenMapErr: string | null = null;
     const screenMapRaw = context["screen_map"];
-    if (screenMapRaw) {
+    if (!screenMapRaw || !screenMapRaw.trim()) {
+      screenMapErr = "GUARDRAIL: SCREEN_MAP is required. Design assets were not generated; retry design generation before implementation.";
+    } else {
       try {
         const sm = JSON.parse(screenMapRaw);
         if (!Array.isArray(sm) || sm.length === 0) {

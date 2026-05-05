@@ -50,9 +50,16 @@ describe("02-design step module", () => {
     assert.ok(result.validation.errors.some(e => e.includes("screenId or name")));
   });
 
-  it("SCREEN_MAP empty array passes (pipeline auto-recovers)", async () => {
+  it("SCREEN_MAP empty array rejected", async () => {
     const result = await runModule(designModule, "Test", validDesignOutput({ screen_map: "[]" }));
-    assert.ok(result.validation.ok, `unexpectedly failed: ${result.validation.errors.join("; ")}`);
+    assert.equal(result.validation.ok, false);
+    assert.ok(result.validation.errors.some(e => e.includes("SCREEN_MAP")));
+  });
+
+  it("missing SCREEN_MAP rejected", async () => {
+    const result = await runModule(designModule, "Test", validDesignOutput({ screen_map: "" }));
+    assert.equal(result.validation.ok, false);
+    assert.ok(result.validation.errors.some(e => e.includes("SCREEN_MAP is required")));
   });
 
   it("module metadata correct", () => {
@@ -84,5 +91,13 @@ describe("02-design step module", () => {
     assert.match(source, /const uiLanguage = ctx\.context\["ui_language"\]/);
     assert.match(source, /All visible application text must be in \$\{uiLanguage\}/);
     assert.doesNotMatch(source, /All visible text must be in Turkish|Turkish language/);
+  });
+
+  it("preClaim fails instead of handing empty design assets to the agent", () => {
+    const source = designPreclaimSource();
+    assert.match(source, /DESIGN_ASSET_GENERATION_FAILED/);
+    assert.match(source, /function failDesignPreclaim/);
+    assert.match(source, /await failStep\(step\.id, safeError\)/);
+    assert.doesNotMatch(source, /agent will see empty/);
   });
 });
