@@ -1182,6 +1182,12 @@ async function autoCompleteStoriesWithPRs(
 ): Promise<void> {
   const autoCompleteStories = await pgQuery<any>("SELECT * FROM stories WHERE run_id = $1 AND status = 'pending' ORDER BY story_index ASC", [step.run_id]);
   for (const rs of autoCompleteStories) {
+    const retryCount = Number(rs.retry_count || 0);
+    if (retryCount > 0) {
+      logger.info(`[claim-auto-complete] Story ${rs.story_id} has retry_count=${retryCount}; skipping stale PR auto-complete so implement can apply verify feedback`, { runId: step.run_id });
+      continue;
+    }
+
     // Build expected branch: {runId_prefix}-{STORY_ID} e.g. "433ff7a1-US-001"
     const storyBranchForCheck = (rs.story_branch || `${runIdPrefix}-${rs.story_id}`).toLowerCase();
     const existingPrUrl = rs.pr_url || "";

@@ -58,6 +58,15 @@ function claimImplementLoopSource(): string {
   return source.slice(start, end);
 }
 
+function autoCompleteStoriesWithPRsSource(): string {
+  const source = fs.readFileSync(path.join(root, "src", "installer", "step-ops.ts"), "utf-8");
+  const start = source.indexOf("async function autoCompleteStoriesWithPRs(");
+  const end = source.indexOf("async function resolveStoryScreens(", start);
+  assert.notEqual(start, -1, "autoCompleteStoriesWithPRs source not found");
+  assert.notEqual(end, -1, "autoCompleteStoriesWithPRs end not found");
+  return source.slice(start, end);
+}
+
 function previousStepSelectionBypassSource(source: string): string {
   const marker = source.indexOf("SELECT 1 FROM steps prev");
   assert.notEqual(marker, -1, "previous-step selection bypass source not found");
@@ -255,6 +264,22 @@ describe("single-step claim_log lifecycle", () => {
     assert.notEqual(runningLoopStart, -1, "peek running-loop source not found");
     const pendingLoopSource = peekSource.slice(pendingLoopStart, runningLoopStart);
     assert.match(pendingLoopSource, activeStoryGuard);
+  });
+
+  it("does not auto-complete retried stories from stale PRs", () => {
+    const source = autoCompleteStoriesWithPRsSource();
+    const retryGuard = source.indexOf("Number(rs.retry_count || 0)");
+    const stalePrSkip = source.indexOf("skipping stale PR auto-complete");
+    const prCompletion = source.indexOf("if (prFound && prUrlValid)");
+    const doneUpdate = source.indexOf("UPDATE stories SET status = 'done'");
+
+    assert.notEqual(retryGuard, -1, "retry_count guard not found");
+    assert.notEqual(stalePrSkip, -1, "stale PR skip log not found");
+    assert.notEqual(prCompletion, -1, "PR completion branch not found");
+    assert.notEqual(doneUpdate, -1, "story done update not found");
+    assert.ok(retryGuard < prCompletion, "retry guard must run before PR completion");
+    assert.ok(stalePrSkip < doneUpdate, "retried stories must be skipped before status=done update");
+    assert.match(source, /if \(retryCount > 0\) \{[\s\S]*continue;/);
   });
 
   it("allows implement to claim active QA-FIX stories even when older stories are done", () => {
