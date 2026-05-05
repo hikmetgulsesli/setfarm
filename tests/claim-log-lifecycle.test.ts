@@ -242,7 +242,7 @@ describe("single-step claim_log lifecycle", () => {
     const peekSource = peekStepSource();
     const claimBypassSource = previousStepSelectionBypassSource(claimSource);
     const peekBypassSource = previousStepSelectionBypassSource(peekSource);
-    const activeStoryGuard = /NOT EXISTS \(SELECT 1 FROM stories active_st WHERE active_st\.run_id = s\.run_id AND active_st\.status IN \('pending', 'running'\)\)/;
+    const activeStoryGuard = /NOT EXISTS \(SELECT 1 FROM stories active_st WHERE active_st\.run_id = s\.run_id AND active_st\.status IN \('pending', 'running'\) AND active_st\.retry_count > 0\)/;
 
     const claimPendingBypass = claimBypassSource.slice(claimBypassSource.indexOf("prev.status = 'pending'"));
     const peekPendingBypass = peekBypassSource.slice(peekBypassSource.indexOf("prev.status = 'pending'"));

@@ -1597,7 +1597,7 @@ async function handleStepPending(payload: { agentId: string; runId: string; step
           [runId],
         );
         const activeStory = await pgGet<{ cnt: string }>(
-          "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status IN ('pending', 'running')",
+          "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status IN ('pending', 'running') AND retry_count > 0",
           [runId],
         );
         if (parseInt(awaitingVerify?.cnt || "0", 10) > 0 && parseInt(activeStory?.cnt || "0", 10) === 0 && parseInt(activeQaFix?.cnt || "0", 10) === 0) {
@@ -1635,7 +1635,7 @@ async function handleStoryPending(payload: { role: string; runId: string; storyI
         [runId],
       );
       const activeStory = await pgGet<{ cnt: string }>(
-        "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status IN ('pending', 'running')",
+        "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status IN ('pending', 'running') AND retry_count > 0",
         [runId],
       );
       if (parseInt(awaitingVerify?.cnt || "0", 10) > 0 && parseInt(activeStory?.cnt || "0", 10) === 0 && parseInt(activeQaFix?.cnt || "0", 10) === 0) {
@@ -1753,6 +1753,7 @@ async function pollForPendingWork() {
              SELECT 1 FROM stories active_st
              WHERE active_st.run_id = s.run_id
                AND active_st.status IN ('pending', 'running')
+               AND active_st.retry_count > 0
            )
            AND NOT EXISTS (
              SELECT 1 FROM stories fix_st
@@ -1793,6 +1794,7 @@ async function pollForPendingWork() {
                SELECT 1 FROM stories active_st
                WHERE active_st.run_id = s.run_id
                  AND active_st.status IN ('pending', 'running')
+                 AND active_st.retry_count > 0
              )
              AND NOT EXISTS (
                SELECT 1 FROM stories fix_st
