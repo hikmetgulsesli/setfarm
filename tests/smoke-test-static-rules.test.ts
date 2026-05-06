@@ -105,4 +105,14 @@ describe("smoke-test static rules", () => {
     assert.match(smokeScript, /process\.exit\(result\.status === 'fail' \? 1 : 0\)/);
     assert.doesNotMatch(smokeScript, /process\.exit\(failures\.length > 0 \? 1 : 0\)/);
   });
+
+  it("blocks QA-FIX completion while platform smoke still fails", () => {
+    const guardSource = fs.readFileSync(path.join(process.cwd(), "src/installer/steps/06-implement/guards.ts"), "utf-8");
+    const stepOpsSource = fs.readFileSync(path.join(process.cwd(), "src/installer/step-ops.ts"), "utf-8");
+
+    assert.match(guardSource, /export function checkQaFixSmokeGate/);
+    assert.match(guardSource, /QA_FIX_SMOKE_STILL_FAILING/);
+    assert.match(guardSource, /scripts", "smoke-test\.mjs"/);
+    assert.match(stepOpsSource, /checkQaFixSmokeGate\(storyRow\.story_id, storyRow\.title, wd\)/);
+  });
 });

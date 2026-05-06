@@ -133,6 +133,76 @@ export function checkBuildGate(
   }
 }
 
+
+function cleanupSmokeArtifacts(workdir: string): void {
+  for (const name of ["smoke-home.png", "smoke-after-click.png"]) {
+    try { fs.rmSync(path.join(workdir, name), { force: true }); } catch {}
+  }
+}
+
+function summarizeSmokeFailure(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return "smoke-test exited non-zero without output";
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    const lines: string[] = [];
+    if (parsed.status) lines.push(`status=${parsed.status}`);
+    if (typeof parsed.confidence === "number") lines.push(`confidence=${parsed.confidence}`);
+    if (typeof parsed.buttonWiringIssues === "number") lines.push(`buttonWiringIssues=${parsed.buttonWiringIssues}`);
+    if (Array.isArray(parsed.buttonWiringDetails) && parsed.buttonWiringDetails.length > 0) {
+      lines.push("buttonWiringDetails:");
+      for (const detail of parsed.buttonWiringDetails.slice(0, 12)) lines.push(`- ${detail}`);
+    }
+    if (Array.isArray(parsed.consoleErrors) && parsed.consoleErrors.length > 0) {
+      lines.push("consoleErrors:");
+      for (const detail of parsed.consoleErrors.slice(0, 8)) lines.push(`- ${detail}`);
+    }
+    if (Array.isArray(parsed.failures) && parsed.failures.length > 0) {
+      lines.push("failures:");
+      for (const failure of parsed.failures.slice(0, 16)) lines.push(`- ${failure}`);
+    }
+    return (lines.join("\n") || trimmed).slice(0, 3000);
+  } catch {}
+
+  return trimmed
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+    .slice(-80)
+    .join("\n")
+    .slice(0, 3000);
+}
+
+export function checkQaFixSmokeGate(storyId: string, storyTitle: string, workdir: string): ScopeCheckResult {
+  if (!/^QA-FIX-\d+/i.test(storyId)) return { passed: true };
+  if (!workdir || !fs.existsSync(workdir)) return { passed: true };
+
+  const smokeScript = path.join(os.homedir(), ".openclaw", "setfarm-repo", "scripts", "smoke-test.mjs");
+  if (!fs.existsSync(smokeScript)) return { passed: true };
+
+  try {
+    execFileSync("node", [smokeScript, workdir], {
+      cwd: workdir,
+      timeout: 180000,
+      stdio: ["pipe", "pipe", "pipe"],
+      encoding: "utf-8",
+      env: { ...process.env, CI: "true" },
+    });
+    cleanupSmokeArtifacts(workdir);
+    return { passed: true };
+  } catch (err: any) {
+    const summary = summarizeSmokeFailure(`${err?.stdout || ""}\n${err?.stderr || ""}\n${err?.message || ""}`);
+    cleanupSmokeArtifacts(workdir);
+    return {
+      passed: false,
+      reason: `QA_FIX_SMOKE_STILL_FAILING: Story ${storyId} (${storyTitle}) reported STATUS: done but platform smoke-test still fails on the story worktree.\n${summary}`,
+      category: "QA_FIX_SMOKE_STILL_FAILING",
+      suggestion: "Fix every reported UNWIRED_BUTTON, blank page, console, network, hydration, and layout failure before reporting STATUS: done. Disabled placeholder controls must use disabled or aria-disabled; active controls need real behavior.",
+    };
+  }
+}
+
 /**
  * Check scope_files declaration against actual worktree files.
  * scope_files is an ownership boundary, not a promise that every listed file

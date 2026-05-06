@@ -3697,7 +3697,7 @@ ${screenDescs}
     // (Wave 6 fix A, Wave 10 Bug D, Wave 13 Bug P9, Wave 14 Bug Q)
     if (step.step_id === "implement" && storyStatus === STORY_STATUS.DONE && storyRow?.story_id) {
       try {
-        const { resolveStoryWorktree, checkScopeFilesGate, checkScopeEnforcement, checkBuildGate } = await import("./steps/06-implement/guards.js");
+        const { resolveStoryWorktree, checkScopeFilesGate, checkScopeEnforcement, checkBuildGate, checkQaFixSmokeGate } = await import("./steps/06-implement/guards.js");
         const wd = await resolveStoryWorktree(step.current_story_id, context["story_workdir"] || "");
         const scopeLoopConfig = parseLoopConfigSafe(step.loop_config, step.run_id);
         const baseBr = context["story_base_ref"] || ((scopeLoopConfig?.mergeStrategy === "pr-each" || scopeLoopConfig?.verifyEach) ? "main" : (context["branch"] || ""));
@@ -3808,6 +3808,23 @@ ${screenDescs}
             context["failure_suggestion"] = buildResult.suggestion!;
             await updateRunContext(step.run_id, context);
             await failStep(stepId, buildResult.reason!);
+            return { advanced: false, runCompleted: false };
+          }
+
+
+          // QA-FIX smoke gate: downstream runtime-fix stories are created from
+          // concrete smoke failures. Do not let an agent mark the QA-FIX done
+          // while the same platform smoke test still fails on its worktree;
+          // otherwise the run burns verify cycles and eventually fails with
+          // retry exhaustion instead of giving the developer the exact failing
+          // controls to patch.
+          const qaSmokeResult = checkQaFixSmokeGate(storyRow.story_id, storyRow.title, wd);
+          if (!qaSmokeResult.passed && qaSmokeResult.category) {
+            context["previous_failure"] = qaSmokeResult.reason!;
+            context["failure_category"] = qaSmokeResult.category;
+            context["failure_suggestion"] = qaSmokeResult.suggestion!;
+            await updateRunContext(step.run_id, context);
+            await failStep(stepId, qaSmokeResult.reason!);
             return { advanced: false, runCompleted: false };
           }
         }
