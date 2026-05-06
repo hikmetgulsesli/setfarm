@@ -190,8 +190,23 @@ function normalizeHtmlComments(input) {
   });
 }
 
+
+function escapeTemplateLiteralContent(input) {
+  return String(input || "")
+    .replace(/\\/g, "\\\\")
+    .replace(/`/g, "\\`")
+    .replace(/\$\{/g, "\\${");
+}
+
+function normalizeStyleTagChildren(input) {
+  return input.replace(/<style\b([^>]*)>([\s\S]*?)<\/style>/gi, (_, attrs, css) => {
+    const cleanAttrs = String(attrs || "").trimEnd();
+    return `<style${cleanAttrs}>{\`${escapeTemplateLiteralContent(css)}\`}</style>`;
+  });
+}
+
 function htmlToJsx(html) {
-  return normalizeHtmlComments(normalizeJsxAttributeValues(normalizeJsxAttributeNames(normalizeJsxTagNames(html))))
+  let out = normalizeJsxAttributeValues(normalizeJsxAttributeNames(normalizeJsxTagNames(html)))
     .replace(/<(img|br|hr|input|meta|link)([^>]*?)>/gi, (_, tag, attrs) => {
       const cleanAttrs = String(attrs || "").replace(/\/\s*$/, "").trimEnd();
       return `<${tag}${cleanAttrs} />`;
@@ -207,6 +222,8 @@ function htmlToJsx(html) {
       });
       return "style={{" + pairs.join(", ") + "}}";
     });
+  out = normalizeStyleTagChildren(out);
+  return normalizeHtmlComments(out);
 }
 
 function extractBody(html) {

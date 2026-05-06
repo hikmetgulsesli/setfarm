@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import ts from "typescript";
 
 function writeHtml(filePath: string, body: string): void {
   const filler = "<p>design-token</p>".repeat(80);
@@ -184,4 +185,45 @@ describe("stitch-to-jsx", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it("wraps style tag CSS so braces do not break JSX parsing", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-style-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "calendar-screen", title: "Calendar Picker" },
+      ]));
+      writeHtml(path.join(stitchDir, "calendar-screen.html"), `
+        <main>
+          <input type="date">
+          <style>
+            ::-webkit-calendar-picker-indicator { opacity: 0; cursor: pointer; }
+          </style>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "CalendarPicker.tsx"), "utf-8");
+      assert.match(code, /<style>\{`[\s\S]*::-webkit-calendar-picker-indicator \{ opacity: 0; cursor: pointer; \}[\s\S]*`\}<\/style>/);
+
+      const transpiled = ts.transpileModule(code, {
+        compilerOptions: {
+          jsx: ts.JsxEmit.ReactJSX,
+          module: ts.ModuleKind.ESNext,
+          target: ts.ScriptTarget.ES2020,
+        },
+        reportDiagnostics: true,
+      });
+      const errors = (transpiled.diagnostics || []).filter(d => d.category === ts.DiagnosticCategory.Error);
+      assert.deepEqual(errors.map(d => d.messageText), []);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
 });
