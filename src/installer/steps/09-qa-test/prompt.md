@@ -73,6 +73,17 @@ server, write the QA report and Setfarm output with the failure evidence, then
 complete the step with `STATUS: retry` or `STATUS: fail`; do not loop through
 alternate server strategies.
 
+Use bounded browser commands. Every `agent-browser` invocation must be wrapped
+with a shell timeout, for example `timeout 12s agent-browser snapshot -i` and
+`timeout 12s agent-browser click @e2`. If a click/fill/screenshot times out,
+record that selector and continue the sweep; do not leave the step blocked on a
+single browser action. Prefer `agent-browser snapshot -i` and click the returned
+`@eN` refs. Do not click snapshot text rendered as `[ref=e2]` with selectors like
+`button[ref=e2]`, and do not use ambiguous bare text clicks such as
+`agent-browser click "Close Profile"`. For semantic clicks, use CSS role/text
+selectors that the CLI supports, such as `button:has-text('Close Profile')`, or
+use DOM `agent-browser eval` to click and verify visible URL/DOM/state changes.
+
 ```bash
 RUN_LABEL="$(basename "{{REPO}}" | tr -c 'A-Za-z0-9_.-' '-')"
 QA_RUN_SCRIPT="/tmp/setfarm-qa-run-${RUN_LABEL}.sh"
@@ -109,8 +120,9 @@ grep -q "Local:.*127.0.0.1:$PORT" "$LOG" || { echo "SERVER_FAIL: dev server did 
 echo "DEV_SERVER_URL=http://127.0.0.1:$PORT"
 # Browser/DOM checks here, before this script exits. Finish within 10 minutes.
 # Example:
-#   agent-browser open "http://127.0.0.1:$PORT/"
-#   agent-browser snapshot
+#   timeout 12s agent-browser open "http://127.0.0.1:$PORT/"
+#   timeout 12s agent-browser snapshot -i
+#   timeout 12s agent-browser click @e2
 #   node /home/setrox/.openclaw/setfarm-repo/scripts/smoke-test.mjs "$(pwd)"
 SETFARM_QA_RUN
 bash "$QA_RUN_SCRIPT"
