@@ -55,7 +55,9 @@ already occupied, fail fast instead of letting Vite silently move to 5174/5175
 and testing the wrong server instance.
 
 ```bash
-cat >/tmp/setfarm-qa-run-{{BRANCH}}.sh <<'SETFARM_QA_RUN'
+RUN_LABEL="$(basename "{{REPO}}" | tr -c 'A-Za-z0-9_.-' '-')"
+QA_RUN_SCRIPT="/tmp/setfarm-qa-run-${RUN_LABEL}.sh"
+cat >"$QA_RUN_SCRIPT" <<'SETFARM_QA_RUN'
 #!/usr/bin/env bash
 set -euo pipefail
 cd {{REPO}}
@@ -64,7 +66,8 @@ git checkout main
 git pull --ff-only origin main
 npm run build
 PORT=5173
-LOG=/tmp/setfarm-qa-devserver-{{BRANCH}}.log
+RUN_LABEL="$(basename "$(pwd)" | tr -c 'A-Za-z0-9_.-' '-')"
+LOG="/tmp/setfarm-qa-devserver-${RUN_LABEL}.log"
 : >"$LOG"
 setsid npm run dev -- --host 127.0.0.1 --port "$PORT" --strictPort >"$LOG" 2>&1 &
 DEV_PID=$!
@@ -87,7 +90,7 @@ grep -q "Local:.*127.0.0.1:$PORT" "$LOG" || { echo "SERVER_FAIL: dev server did 
 echo "DEV_SERVER_URL=http://127.0.0.1:$PORT"
 # Browser/DOM checks here. Finish within 10 minutes.
 SETFARM_QA_RUN
-bash /tmp/setfarm-qa-run-{{BRANCH}}.sh
+bash "$QA_RUN_SCRIPT"
 ```
 
 Do not leave `vite`, `serve`, or Chromium processes running after the test.
