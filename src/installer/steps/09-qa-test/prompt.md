@@ -48,11 +48,14 @@ together so implement can fix them in one batch.
 Do not start the dev server with uncontrolled `npm run dev & ...`. Do not
 compress this lifecycle into a one-line `&& ... & DEV_PID=$! ...` command: `&`
 will background the preceding shell list, lose `PORT`/`LOG`, and make readiness
-checks test the wrong process. Put the lifecycle in one shell script or one
-multi-line exec exactly like this. The `trap` must be in the same shell and the
-server process group must shut down. `--strictPort` is required: if port 5173 is
-already occupied, fail fast instead of letting Vite silently move to 5174/5175
-and testing the wrong server instance.
+checks test the wrong process. Put the lifecycle and all browser checks in one
+multi-line exec shell. Do not run this script merely to print `DEV_SERVER_URL`
+and then run `agent-browser` in a later exec: the `trap` will shut the server
+down before the browser can connect. Keep every `agent-browser`/Playwright call
+inside this same script while the Vite process is alive. The `trap` must be in
+the same shell and the server process group must shut down. `--strictPort` is
+required: if port 5173 is already occupied, fail fast instead of letting Vite
+silently move to 5174/5175 and testing the wrong server instance.
 
 ```bash
 RUN_LABEL="$(basename "{{REPO}}" | tr -c 'A-Za-z0-9_.-' '-')"
@@ -88,7 +91,11 @@ done
 curl -sf "http://127.0.0.1:$PORT/" >/dev/null || { echo "SERVER_FAIL"; tail -80 "$LOG"; exit 1; }
 grep -q "Local:.*127.0.0.1:$PORT" "$LOG" || { echo "SERVER_FAIL: dev server did not bind requested port $PORT"; tail -80 "$LOG"; exit 1; }
 echo "DEV_SERVER_URL=http://127.0.0.1:$PORT"
-# Browser/DOM checks here. Finish within 10 minutes.
+# Browser/DOM checks here, before this script exits. Finish within 10 minutes.
+# Example:
+#   agent-browser open "http://127.0.0.1:$PORT/"
+#   agent-browser snapshot
+#   node /home/setrox/.openclaw/setfarm-repo/scripts/smoke-test.mjs "$(pwd)"
 SETFARM_QA_RUN
 bash "$QA_RUN_SCRIPT"
 ```
