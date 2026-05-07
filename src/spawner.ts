@@ -32,7 +32,7 @@ const NON_DEVELOPER_STUCK_MS = parsePositiveInt(process.env.SETFARM_AGENT_STUCK_
 const DEVELOPER_STUCK_MS = parsePositiveInt(process.env.SETFARM_DEVELOPER_AGENT_STUCK_MS, 15 * 60_000);
 const QA_FIX_AGENT_STUCK_MS = parsePositiveInt(process.env.SETFARM_QA_FIX_AGENT_STUCK_MS, 8 * 60_000);
 const STARTUP_RUNNING_GRACE_MS = parsePositiveInt(process.env.SETFARM_STARTUP_RUNNING_GRACE_MS, 0);
-const QA_AGENT_STUCK_MS = parsePositiveInt(process.env.SETFARM_QA_AGENT_STUCK_MS, 18 * 60_000);
+const QA_AGENT_STUCK_MS = parsePositiveInt(process.env.SETFARM_QA_AGENT_STUCK_MS, 6 * 60_000);
 const AGENT_ACTIVITY_GRACE_MS = parsePositiveInt(process.env.SETFARM_AGENT_ACTIVITY_GRACE_MS, 4 * 60_000);
 const AGENT_STARTUP_SILENCE_MS = parsePositiveInt(process.env.SETFARM_AGENT_STARTUP_SILENCE_MS, 4 * 60_000);
 const REAP_FINISHED_ACTIVE_GRACE_MS = parsePositiveInt(process.env.SETFARM_REAP_FINISHED_ACTIVE_GRACE_MS, 60_000);
@@ -201,6 +201,11 @@ function stuckThresholdMs(role: string, storyId?: string | null): number {
   return role === "developer" ? DEVELOPER_STUCK_MS : NON_DEVELOPER_STUCK_MS;
 }
 
+function isTerminalTestRole(role: string, agentId = ""): boolean {
+  const value = `${role} ${agentId}`.toLowerCase();
+  return value.includes("qa") || value.includes("tester") || value.includes("test");
+}
+
 function agentSessionJsonlPath(agentId: string, sessionId: string): string {
   return path.join(OPENCLAW_AGENTS_ROOT, agentId, "sessions", `${sessionId}.jsonl`);
 }
@@ -255,7 +260,10 @@ function refreshActiveProcessCpuActivity(active: ActiveProcess): number {
 }
 
 function activeProcessLastActivityMs(active: ActiveProcess): number {
-  let lastActivityMs = refreshActiveProcessCpuActivity(active);
+  let lastActivityMs = active.startedAtMs;
+  if (!isTerminalTestRole(active.role, active.agentId)) {
+    lastActivityMs = refreshActiveProcessCpuActivity(active);
+  }
   for (const filePath of [active.transcriptPath, active.sessionJsonlPath, active.outputPath]) {
     try {
       const mtimeMs = fs.statSync(filePath).mtimeMs;

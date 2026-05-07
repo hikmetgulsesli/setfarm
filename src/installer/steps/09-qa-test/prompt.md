@@ -65,6 +65,14 @@ port 5173 is occupied, report `STATUS: retry` or `STATUS: fail` with the owner
 PID from `lsof -nP -iTCP:5173 -sTCP:LISTEN`; do not kill unrelated processes.
 Only stop the Vite process group that this script starts via `DEV_PID`.
 
+Use this lifecycle template for the runtime server. Do not replace it with
+`npm run preview`, `npx serve`, `serve dist`, or a separate background server
+exec: those commands often shut down when the shell exits or test a different
+artifact than the Vite app under review. If the template cannot start the
+server, write the QA report and Setfarm output with the failure evidence, then
+complete the step with `STATUS: retry` or `STATUS: fail`; do not loop through
+alternate server strategies.
+
 ```bash
 RUN_LABEL="$(basename "{{REPO}}" | tr -c 'A-Za-z0-9_.-' '-')"
 QA_RUN_SCRIPT="/tmp/setfarm-qa-run-${RUN_LABEL}.sh"
