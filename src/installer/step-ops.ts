@@ -19,7 +19,7 @@ import {
 import { getPRState, invalidatePRStateCache, tryReopenPR, tryAutoMergePR, findPrByBranch, resolveClosedPR } from "./pr-state.js";
 import { failStep } from "./step-fail.js";
 import { advancePipeline, checkLoopContinuation } from "./step-advance.js";
-import { runMergeQueue } from "./merge-queue-ops.js";
+import { mergeStoryIntoFeature, runMergeQueue } from "./merge-queue-ops.js";
 
 // ── Re-exports from extracted modules (backwards compat for cli.ts, medic.ts) ──
 export { resolveTemplate, parseOutputKeyValues } from "./context-ops.js";
@@ -55,6 +55,10 @@ const QA_FIX_IGNORE = /^(node_modules\/|dist\/|build\/|\.next\/|coverage\/|stitc
 const SMOKE_INFRA_FAILURE = /\b(agent-browser|browser control|playwright|chromium|chrome)\b[\s\S]{0,240}\b(ETIMEDOUT|ECONNREFUSED|ECONNRESET|EPIPE|timed out|timeout)\b/i;
 const QA_FIX_MAX_STORIES = Math.max(1, parseInt(process.env.SETFARM_QA_FIX_MAX_STORIES || "4", 10) || 4);
 const QA_FIX_REPEAT_LIMIT = Math.max(1, parseInt(process.env.SETFARM_QA_FIX_REPEAT_LIMIT || "2", 10) || 2);
+
+function isQaFixStoryId(storyId: string | null | undefined): boolean {
+  return /^QA-FIX-\d+$/i.test((storyId || "").trim());
+}
 
 function isSmokeInfrastructureFailure(failure: string): boolean {
   return SMOKE_INFRA_FAILURE.test(failure);
@@ -3836,6 +3840,8 @@ ${screenDescs}
     // Mark current story done or skipped + persist PR context for verify_each
     // FIX: Remove context fallback to prevent cross-contamination between parallel stories
     let storyPrUrl = parsed["pr_url"] || "";
+    let storyMergeStatus: string | null = null;
+    const storyIsQaFix = isQaFixStoryId(storyRow?.story_id);
 
     // Wave 12 Bug H fix (plan: reactive-frolicking-cupcake.md, run #344 postmortem):
     // Capture the agent's ORIGINAL STORY_BRANCH and PR_URL claims BEFORE any overwrite
@@ -3905,6 +3911,89 @@ ${screenDescs}
       if (duplicatePr) {
         logger.error(`[duplicate-pr] PR ${storyPrUrl} already assigned to ${duplicatePr.story_id}, clearing for ${storyRow.story_id}`, { runId: step.run_id });
         storyPrUrl = "";
+      }
+    }
+
+    // QA-FIX stories are generated from already-confirmed runtime smoke failures.
+    // They must land on main before final verification reruns; opening a PR and
+    // leaving it unmerged makes final verify test stale main and route the same
+    // fixed failures back into another QA-FIX loop.
+    if (storyStatus === STORY_STATUS.DONE && storyIsQaFix) {
+      const repoPath = context["repo"] || "";
+      if (!repoPath || !storyBranchName) {
+        const mergeMsg = `QA_FIX_MERGE_BLOCKED: ${storyRow?.story_id || "QA-FIX"} completed but repo/story_branch is missing, so its fixes cannot be applied to main.`;
+        context["previous_failure"] = mergeMsg;
+        context["failure_category"] = "QA_FIX_MERGE_BLOCKED";
+        context["failure_suggestion"] = "Complete the QA-FIX in the assigned story branch so Setfarm can merge it into main before final verification.";
+        await updateRunContext(step.run_id, context);
+        await failStep(stepId, mergeMsg);
+        return { advanced: false, runCompleted: false };
+      }
+
+      try {
+        const dirty = execFileSync("git", ["status", "--porcelain"], {
+          cwd: repoPath, timeout: 10000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8",
+        }).trim();
+        if (dirty) {
+          const mergeMsg = `QA_FIX_MERGE_BLOCKED: ${repoPath} has uncommitted changes, refusing to merge ${storyBranchName} into main.`;
+          context["previous_failure"] = mergeMsg;
+          context["failure_category"] = "QA_FIX_MERGE_BLOCKED";
+          context["failure_suggestion"] = "Clean the project repo git state or preserve the changes in a commit, then retry the QA-FIX story.";
+          await updateRunContext(step.run_id, context);
+          await failStep(stepId, mergeMsg);
+          return { advanced: false, runCompleted: false };
+        }
+
+        try {
+          execFileSync("git", ["push", "-u", "origin", storyBranchName], {
+            cwd: repoPath, timeout: 30000, stdio: ["pipe", "pipe", "pipe"],
+          });
+        } catch (pushErr) {
+          logger.warn(`[qa-fix-merge] push failed for ${storyBranchName}: ${String(pushErr).slice(0, 220)}`, { runId: step.run_id });
+        }
+
+        const mergeResult = mergeStoryIntoFeature(
+          repoPath,
+          storyBranchName,
+          "main",
+          `merge: ${storyRow?.story_id || "QA-FIX"} - ${(storyRow?.title || "runtime smoke fixes").slice(0, 80)}`,
+        );
+
+        if (!mergeResult.success) {
+          const mergeMsg = `QA_FIX_MERGE_FAILED: ${storyRow?.story_id || "QA-FIX"} branch ${storyBranchName} could not merge into main. Conflicts: ${mergeResult.conflicts.join(", ") || "unknown"}`;
+          context["previous_failure"] = mergeMsg;
+          context["failure_category"] = "QA_FIX_MERGE_FAILED";
+          context["failure_suggestion"] = "Resolve the merge conflict in the QA-FIX branch against main, then report STATUS: done again.";
+          await updateRunContext(step.run_id, context);
+          await failStep(stepId, mergeMsg);
+          return { advanced: false, runCompleted: false };
+        }
+
+        storyStatus = STORY_STATUS.VERIFIED;
+        storyEvent = "story.verified";
+        storyMergeStatus = "merged";
+        context["qa_fix_merged_to_main"] = `${storyRow?.story_id || "QA-FIX"}:${storyBranchName}`;
+
+        if (storyPrUrl) {
+          try {
+            execFileSync("gh", ["pr", "close", storyPrUrl, "--comment", "Merged directly into main by Setfarm after QA-FIX smoke gate passed."], {
+              cwd: repoPath, timeout: 30000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8",
+            });
+          } catch (closeErr) {
+            logger.warn(`[qa-fix-merge] could not close stale QA-FIX PR ${storyPrUrl}: ${String(closeErr).slice(0, 220)}`, { runId: step.run_id });
+          }
+          storyPrUrl = "";
+        }
+
+        logger.info(`[qa-fix-merge] Merged ${storyRow?.story_id} (${storyBranchName}) directly into main`, { runId: step.run_id });
+      } catch (mergeErr) {
+        const mergeMsg = `QA_FIX_MERGE_ERROR: ${String(mergeErr).slice(0, 500)}`;
+        context["previous_failure"] = mergeMsg;
+        context["failure_category"] = "QA_FIX_MERGE_ERROR";
+        context["failure_suggestion"] = "Inspect the QA-FIX branch and main repo git state, then retry the same QA-FIX story.";
+        await updateRunContext(step.run_id, context);
+        await failStep(stepId, mergeMsg);
+        return { advanced: false, runCompleted: false };
       }
     }
 
@@ -3994,7 +4083,7 @@ ${screenDescs}
       }
     }
 
-    await pgRun("UPDATE stories SET status = $1, output = $2, pr_url = $3, story_branch = $4, updated_at = $5 WHERE id = $6", [storyStatus, output, storyPrUrl, storyBranchName, now(), step.current_story_id]);
+    await pgRun("UPDATE stories SET status = $1, output = $2, pr_url = $3, story_branch = $4, updated_at = $5, merge_status = COALESCE($7, merge_status) WHERE id = $6", [storyStatus, output, storyPrUrl, storyBranchName, now(), step.current_story_id, storyMergeStatus]);
     emitEvent({ ts: now(), event: storyEvent as import("./events.js").EventType, runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, storyId: storyRow?.story_id, storyTitle: storyRow?.title });
     logger.info(`Story ${storyStatus}: ${storyRow?.story_id} — ${storyRow?.title}`, { runId: step.run_id, stepId: step.step_id });
 
@@ -4165,7 +4254,7 @@ ${screenDescs}
     }
 
     // T8: verify_each flow — set verify step to pending
-    if (loopConfig?.verifyEach && loopConfig.verifyStep) {
+    if (loopConfig?.verifyEach && loopConfig.verifyStep && !(storyIsQaFix && storyStatus === STORY_STATUS.VERIFIED)) {
       const verifyStep = await pgGet<{ id: string }>("SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1", [step.run_id, loopConfig.verifyStep]);
 
       if (verifyStep) {
