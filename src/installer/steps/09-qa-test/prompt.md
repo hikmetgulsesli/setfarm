@@ -45,13 +45,19 @@ together so implement can fix them in one batch.
 
 ## Required Dev-Server Lifecycle
 
-Do not start the dev server with uncontrolled `npm run dev & ...`. Use this
-pattern. The `trap` must be in the same shell and the server process group must
-shut down. `--strictPort` is required: if port 5173 is already occupied, fail
-fast instead of letting Vite silently move to 5174/5175 and testing the wrong
-server instance.
+Do not start the dev server with uncontrolled `npm run dev & ...`. Do not
+compress this lifecycle into a one-line `&& ... & DEV_PID=$! ...` command: `&`
+will background the preceding shell list, lose `PORT`/`LOG`, and make readiness
+checks test the wrong process. Put the lifecycle in one shell script or one
+multi-line exec exactly like this. The `trap` must be in the same shell and the
+server process group must shut down. `--strictPort` is required: if port 5173 is
+already occupied, fail fast instead of letting Vite silently move to 5174/5175
+and testing the wrong server instance.
 
 ```bash
+cat >/tmp/setfarm-qa-run-{{BRANCH}}.sh <<'SETFARM_QA_RUN'
+#!/usr/bin/env bash
+set -euo pipefail
 cd {{REPO}}
 git fetch origin main
 git checkout main
@@ -59,9 +65,14 @@ git pull --ff-only origin main
 npm run build
 PORT=5173
 LOG=/tmp/setfarm-qa-devserver-{{BRANCH}}.log
+: >"$LOG"
 setsid npm run dev -- --host 127.0.0.1 --port "$PORT" --strictPort >"$LOG" 2>&1 &
 DEV_PID=$!
-trap 'kill -- "-$DEV_PID" 2>/dev/null || kill "$DEV_PID" 2>/dev/null || true; wait "$DEV_PID" 2>/dev/null || true' EXIT
+cleanup() {
+  kill -- "-$DEV_PID" 2>/dev/null || kill "$DEV_PID" 2>/dev/null || true
+  wait "$DEV_PID" 2>/dev/null || true
+}
+trap cleanup EXIT
 for i in $(seq 1 30); do
   if ! kill -0 "$DEV_PID" 2>/dev/null; then
     echo "SERVER_FAIL: dev server exited before binding $PORT"
@@ -73,7 +84,10 @@ for i in $(seq 1 30); do
 done
 curl -sf "http://127.0.0.1:$PORT/" >/dev/null || { echo "SERVER_FAIL"; tail -80 "$LOG"; exit 1; }
 grep -q "Local:.*127.0.0.1:$PORT" "$LOG" || { echo "SERVER_FAIL: dev server did not bind requested port $PORT"; tail -80 "$LOG"; exit 1; }
+echo "DEV_SERVER_URL=http://127.0.0.1:$PORT"
 # Browser/DOM checks here. Finish within 10 minutes.
+SETFARM_QA_RUN
+bash /tmp/setfarm-qa-run-{{BRANCH}}.sh
 ```
 
 Do not leave `vite`, `serve`, or Chromium processes running after the test.
