@@ -1295,11 +1295,14 @@ ${reason}
         continue;
       } else {
         const idleMs = activeProcessIdleMs(active);
-        if (row.run_status === "running" && idleMs < REAP_FINISHED_ACTIVE_GRACE_MS) {
+        if (row.run_status === "running" && row.step_status !== "running") {
+          console.warn(`[spawner] Reaping stale active process immediately for ${key}: step ${row.step_id} is ${row.step_status}, run is ${row.run_status}; retry must not wait on old process activity`);
+        } else if (row.run_status === "running" && idleMs < REAP_FINISHED_ACTIVE_GRACE_MS) {
           console.log(`[spawner] Deferring reap for ${key}: step ${row.step_id} is ${row.step_status}, run is ${row.run_status}, but agent was active ${formatDurationMs(idleMs)} ago`);
           continue;
+        } else {
+          console.log(`[spawner] Reaping ${key}: step ${row.step_id} is ${row.step_status}, run is ${row.run_status}`);
         }
-        console.log(`[spawner] Reaping ${key}: step ${row.step_id} is ${row.step_status}, run is ${row.run_status}`);
       }
 
       terminateActiveProcess(active, "reap-finished");
