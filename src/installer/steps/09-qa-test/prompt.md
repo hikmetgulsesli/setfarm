@@ -46,7 +46,10 @@ together so implement can fix them in one batch.
 ## Required Dev-Server Lifecycle
 
 Do not start the dev server with uncontrolled `npm run dev & ...`. Use this
-pattern. The `trap` must be in the same shell and the server must shut down:
+pattern. The `trap` must be in the same shell and the server process group must
+shut down. `--strictPort` is required: if port 5173 is already occupied, fail
+fast instead of letting Vite silently move to 5174/5175 and testing the wrong
+server instance.
 
 ```bash
 cd {{REPO}}
@@ -56,14 +59,20 @@ git pull --ff-only origin main
 npm run build
 PORT=5173
 LOG=/tmp/setfarm-qa-devserver-{{BRANCH}}.log
-( npm run dev -- --host 127.0.0.1 --port "$PORT" >"$LOG" 2>&1 ) &
+setsid npm run dev -- --host 127.0.0.1 --port "$PORT" --strictPort >"$LOG" 2>&1 &
 DEV_PID=$!
-trap 'kill "$DEV_PID" 2>/dev/null || true; wait "$DEV_PID" 2>/dev/null || true' EXIT
+trap 'kill -- "-$DEV_PID" 2>/dev/null || kill "$DEV_PID" 2>/dev/null || true; wait "$DEV_PID" 2>/dev/null || true' EXIT
 for i in $(seq 1 30); do
+  if ! kill -0 "$DEV_PID" 2>/dev/null; then
+    echo "SERVER_FAIL: dev server exited before binding $PORT"
+    tail -80 "$LOG"
+    exit 1
+  fi
   curl -sf "http://127.0.0.1:$PORT/" >/dev/null && break
   sleep 1
 done
 curl -sf "http://127.0.0.1:$PORT/" >/dev/null || { echo "SERVER_FAIL"; tail -80 "$LOG"; exit 1; }
+grep -q "Local:.*127.0.0.1:$PORT" "$LOG" || { echo "SERVER_FAIL: dev server did not bind requested port $PORT"; tail -80 "$LOG"; exit 1; }
 # Browser/DOM checks here. Finish within 10 minutes.
 ```
 
