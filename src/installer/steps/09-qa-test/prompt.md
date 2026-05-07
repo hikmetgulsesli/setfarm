@@ -57,6 +57,14 @@ the same shell and the server process group must shut down. `--strictPort` is
 required: if port 5173 is already occupied, fail fast instead of letting Vite
 silently move to 5174/5175 and testing the wrong server instance.
 
+Do not use broad process cleanup commands such as `pkill -f vite`,
+`pgrep -f vite`, `killall vite`, or `kill $(pgrep -f ...)`. Those patterns can
+match the QA shell command itself because the command text contains `vite`,
+causing the agent to kill its own exec before it writes the Setfarm output. If
+port 5173 is occupied, report `STATUS: retry` or `STATUS: fail` with the owner
+PID from `lsof -nP -iTCP:5173 -sTCP:LISTEN`; do not kill unrelated processes.
+Only stop the Vite process group that this script starts via `DEV_PID`.
+
 ```bash
 RUN_LABEL="$(basename "{{REPO}}" | tr -c 'A-Za-z0-9_.-' '-')"
 QA_RUN_SCRIPT="/tmp/setfarm-qa-run-${RUN_LABEL}.sh"
