@@ -38,6 +38,7 @@ const AGENT_STARTUP_SILENCE_MS = parsePositiveInt(process.env.SETFARM_AGENT_STAR
 const AGENT_SELF_LOOP_CHECK_AFTER_MS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_CHECK_AFTER_MS, 6 * 60_000);
 const AGENT_SELF_LOOP_MIN_ACTIONS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_ACTIONS, 7);
 const AGENT_SELF_LOOP_MIN_NOOP_EDITS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_NOOP_EDITS, 4);
+const AGENT_SELF_LOOP_MIN_REPEATED_FAILURES = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_REPEATED_FAILURES, 4);
 const REAP_FINISHED_ACTIVE_GRACE_MS = parsePositiveInt(process.env.SETFARM_REAP_FINISHED_ACTIVE_GRACE_MS, 60_000);
 const OPENCLAW_TASK_REGISTRY_SETTLE_MS = parsePositiveInt(process.env.SETFARM_OPENCLAW_TASK_REGISTRY_SETTLE_MS, 2000);
 const OPENCLAW_STALE_TASK_SWEEP_MS = parsePositiveInt(process.env.SETFARM_OPENCLAW_STALE_TASK_SWEEP_MS, 2 * 60_000);
@@ -187,6 +188,12 @@ type SessionFileStats = {
   noopEdits: number;
 };
 
+type SessionCommandStats = {
+  failures: number;
+  command: string;
+  signature: string;
+};
+
 const activeProcesses = new Map<string, ActiveProcess>();
 const queuedSpawns = new Set<string>();
 const claimingSpawns = new Set<string>();
@@ -300,9 +307,9 @@ function extractSessionText(content: unknown): string {
     .join("\n");
 }
 
-function extractToolCalls(content: unknown): Array<{ name: string; path: string }> {
+function extractToolCalls(content: unknown): Array<{ name: string; path: string; command: string }> {
   if (!Array.isArray(content)) return [];
-  const calls: Array<{ name: string; path: string }> = [];
+  const calls: Array<{ name: string; path: string; command: string }> = [];
   for (const part of content as any[]) {
     if (!part || typeof part !== "object") continue;
     const type = String(part.type || "");
@@ -310,9 +317,35 @@ function extractToolCalls(content: unknown): Array<{ name: string; path: string 
     const name = String(part.name || part.toolName || "");
     const args = part.arguments || part.input || {};
     const candidate = typeof args.path === "string" ? args.path : "";
-    calls.push({ name, path: candidate });
+    const command = typeof args.command === "string" ? args.command : "";
+    calls.push({ name, path: candidate, command });
   }
   return calls;
+}
+
+function normalizedSessionCommand(command: string): string {
+  const compact = command.replace(/\s+/g, " " ).trim();
+  if (!compact) return "";
+  if (!/\b(vitest|npm\s+(run\s+)?test|pnpm\s+test|yarn\s+test|bun\s+test|playwright|npm\s+run\s+build|tsc)\b/i.test(compact)) return "";
+  return compact
+    .replace(/\/home\/setrox\/\.openclaw\/workspaces\/workflows\/[^ ]+/g, "<workdir>")
+    .replace(/--reporter(=|\s+)\S+/g, "--reporter")
+    .replace(/\|\s*(tail|head)\s+-\d+.*$/i, "")
+    .replace(/\|\s*grep\b.*$/i, "")
+    .slice(0, 220);
+}
+
+function sessionFailureSignature(text: string): string {
+  const clean = text.replace(/\x1b\[[0-9;]*m/g, " " ).replace(/\s+/g, " " ).trim();
+  if (!/(FAIL|Failed Tests|Tests?\s+\d+\s+failed|AssertionError|TestingLibraryElementError|ReferenceError|TypeError|error TS\d+)/i.test(clean)) return "";
+  const pieces = [
+    clean.match(/FAIL\s+[^|]{0,260}/i)?.[0],
+    clean.match(/(AssertionError|TestingLibraryElementError|ReferenceError|TypeError|error TS\d+)[^|]{0,180}/i)?.[0],
+    clean.match(/Tests?\s+\d+\s+failed[^|]{0,80}/i)?.[0],
+    clean.match(/Unable to find[^|]{0,180}/i)?.[0],
+    clean.match(/expected[^|]{0,120}/i)?.[0],
+  ].filter(Boolean);
+  return pieces.join(" | " ).slice(0, 420);
 }
 
 function repeatedSessionFileLoop(active: ActiveProcess): { detected: boolean; reason: string } {
@@ -326,7 +359,9 @@ function repeatedSessionFileLoop(active: ActiveProcess): { detected: boolean; re
   }
 
   const fileStats = new Map<string, SessionFileStats>();
+  const commandStats = new Map<string, SessionCommandStats>();
   let currentToolPath = "";
+  let currentCommand = "";
   for (const line of lines) {
     let event: any;
     try { event = JSON.parse(line); } catch { continue; }
@@ -336,6 +371,12 @@ function repeatedSessionFileLoop(active: ActiveProcess): { detected: boolean; re
 
     if (role === "assistant") {
       for (const call of extractToolCalls(content)) {
+        if (call.name === "exec") {
+          currentCommand = normalizedSessionCommand(call.command);
+          currentToolPath = "";
+          continue;
+        }
+        currentCommand = "";
         if (call.name !== "write" && call.name !== "edit") continue;
         const target = call.path || currentToolPath;
         if (!target) continue;
@@ -351,10 +392,31 @@ function repeatedSessionFileLoop(active: ActiveProcess): { detected: boolean; re
 
     if (role === "toolResult") {
       const text = extractSessionText(content);
+      if (currentCommand) {
+        const signature = sessionFailureSignature(text);
+        if (signature) {
+          const key = currentCommand + " => " + signature;
+          const stats = commandStats.get(key) || { failures: 0, command: currentCommand, signature };
+          stats.failures += 1;
+          commandStats.set(key, stats);
+        }
+      }
       if (!/No changes made/i.test(text) || !currentToolPath) continue;
       const stats = fileStats.get(currentToolPath) || { actions: 0, writes: 0, edits: 0, noopEdits: 0 };
       stats.noopEdits += 1;
       fileStats.set(currentToolPath, stats);
+    }
+  }
+
+  for (const stats of commandStats.values()) {
+    if (stats.failures >= AGENT_SELF_LOOP_MIN_REPEATED_FAILURES) {
+      return {
+        detected: true,
+        reason: "AGENT_SELF_LOOP: repeated failing command output" +
+          " (failures=" + stats.failures +
+          ", command=" + stats.command +
+          ", signature=" + stats.signature + ")",
+      };
     }
   }
 
