@@ -1377,18 +1377,18 @@ async function injectStoryContext(
     if (context["story_scope_files"] && context["story_workdir"]) {
       try {
         const scopeList = context["story_scope_files"].split(", ");
-        // v2026.4.13: Include shared_files so dep-merge expanded files are allowed by hook
-        const sharedList = context["story_shared_files"] ? context["story_shared_files"].split(", ") : [];
+        // shared_files are read/import context only. Do not make them writable;
+        // otherwise integration stories can commit later stories' screen files.
         // Add IMPLICIT_SHARED patterns
         const implicitFiles = ["vitest.config.ts","vitest.config.js","jest.config.ts","jest.config.js","src/test/setup.ts","src/test/utils.ts","src/setupTests.ts"];
-        const allAllowed = [...new Set([...scopeList, ...sharedList, ...implicitFiles])];
+        const allAllowed = [...new Set([...scopeList, ...implicitFiles])];
         // Also allow *.test.tsx and *.spec.tsx (wildcard — hook uses grep -qxF so these wont match, but test files are caught by the hook logic)
         const _scopeFP = path.join(context["story_workdir"], ".story-scope-files"); fs.writeFileSync(_scopeFP, allAllowed.join("\n") + "\n"); try { fs.chmodSync(_scopeFP, 0o664); } catch { /* best effort */ }
       } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
     }
     // 5-model consensus: always inject scope_reminder (even on first attempt)
     if (context["story_scope_files"]) {
-      context["scope_reminder"] = "SCOPE ENFORCEMENT: You may ONLY write files in [" + context["story_scope_files"] + "]. Test files (*.test.tsx) and test config (vitest.config.ts, src/test/setup.ts) are also allowed. App.tsx, main.tsx, index.css are FORBIDDEN unless in your scope_files. Violation = instant SCOPE_BLEED rejection.";
+      context["scope_reminder"] = "SCOPE ENFORCEMENT: You may ONLY write files in [" + context["story_scope_files"] + "]. shared_files are read-only/import context unless also listed in scope_files. Test files (*.test.tsx) and test config (vitest.config.ts, src/test/setup.ts) are also allowed. App.tsx, main.tsx, index.css are FORBIDDEN unless in your scope_files. Violation = instant SCOPE_BLEED rejection.";
     }
   } catch (e) {
     // Column may not exist on very old schemas — degrade gracefully

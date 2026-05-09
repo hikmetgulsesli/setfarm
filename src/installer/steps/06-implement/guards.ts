@@ -74,7 +74,7 @@ export function computeScopeFileLimits(hasDeps: boolean, declaredScopeFiles: str
   const baseHardLimit = hasDeps ? 30 : 12;
   const baseSoftLimit = hasDeps ? 20 : 8;
   const ceiling = hasDeps ? 50 : 30;
-  const declaredSourceCount = [...new Set([...declaredScopeFiles, ...declaredSharedFiles, ...implicitTouchedFiles])].filter(f => SCOPE_EXTS.test(f) && !SCOPE_IGNORE.test(f)).length;
+  const declaredSourceCount = [...new Set([...declaredScopeFiles, ...implicitTouchedFiles])].filter(f => SCOPE_EXTS.test(f) && !SCOPE_IGNORE.test(f)).length;
   const dynamicHardLimit = declaredSourceCount > 0 ? Math.min(ceiling, declaredSourceCount + 6) : baseHardLimit;
   const hardLimit = Math.max(baseHardLimit, dynamicHardLimit);
   const softLimit = Math.max(baseSoftLimit, Math.ceil(hardLimit * 0.7));
@@ -339,7 +339,6 @@ export async function checkScopeEnforcement(
     if (declaredScopeFiles.length > 0) {
       const allowed = new Set<string>();
       declaredScopeFiles.forEach(f => allowed.add(f));
-      declaredSharedFiles.forEach(f => allowed.add(f));
       if (allowed.size > 0) {
         const outOfScope = sourceFiles.filter(f => !allowed.has(f) && !isImplicitSharedSourceFile(f));
         if (outOfScope.length > 0) {
@@ -347,7 +346,7 @@ export async function checkScopeEnforcement(
           const oosList = outOfScope.slice(0, 10).join(", ");
           return {
             passed: false,
-            reason: `SCOPE_BLEED: Story ${storyId} modified ${outOfScope.length} file(s) outside its SCOPE_FILES list. Re-read your SCOPE_FILES in the claim input and modify ONLY those files. Revert all other changes. Integration files (App.tsx, main.tsx, routing) belong to the integration story, not yours.`,
+            reason: `SCOPE_BLEED: Story ${storyId} modified ${outOfScope.length} file(s) outside its SCOPE_FILES list. shared_files are read-only/import context unless also listed in scope_files. Re-read your SCOPE_FILES in the claim input and modify ONLY those files. Revert all other changes. Integration files (App.tsx, main.tsx, routing) belong to the integration story, not yours.`,
             category: "SCOPE_BLEED",
             suggestion: "Only modify files declared in your SCOPE_FILES",
             outOfScope,

@@ -286,7 +286,7 @@ export function copyStitchToWorktree(repo: string, worktreeDir: string): void {
 function installScopeHook(worktreeDir: string, storyId: string): void {
   // 5-model consensus: git pre-commit hook that blocks commits touching files
   // outside scope_files. The .story-scope-files file is written by step-ops.ts
-  // at claim time with the story's declared scope + IMPLICIT_SHARED patterns.
+  // at claim time with the story's writable scope + test/config exceptions.
   const hookScript = `#!/bin/bash
 # Scope enforcement pre-commit hook (5-model consensus)
 SCOPE_FILE=".story-scope-files"
