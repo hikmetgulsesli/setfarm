@@ -17,7 +17,8 @@ const MIN_STITCH_HTML_BYTES = 1000;
 function isPrdPseudoScreen(screen) {
   const title = String(screen?.title || screen?.name || "").trim().toLowerCase();
   const htmlFile = String(screen?.htmlFile || "").trim().toLowerCase();
-  return /\bprd\b/.test(title) || /\bprd\b/.test(htmlFile);
+  const screenId = String(screen?.screenId || screen?.id || "").trim().toLowerCase();
+  return /\b(?:prd|requirements?)\b/.test(`${screenId} ${title} ${htmlFile}`);
 }
 
 function isValidStitchHtml(filePath) {

@@ -409,7 +409,7 @@ function extractTabBar(html) {
 }
 
 function isPrdPseudoScreen(screenId, title, file) {
-  return /\bprd\b/i.test(`${screenId || ''} ${title || ''} ${file || ''}`);
+  return /\b(?:prd|requirements?)\b/i.test(`${screenId || ''} ${title || ''} ${file || ''}`);
 }
 
 // Main

@@ -36,10 +36,11 @@ function toComponentNameForStitch(title: string): string {
     .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join("");
 }
 
-function isPrdPseudoScreen(screen: any): boolean {
+export function isPrdPseudoScreen(screen: any): boolean {
   const title = String(screen?.title || screen?.name || "").trim().toLowerCase();
   const htmlFile = String(screen?.htmlFile || "").trim().toLowerCase();
-  return /\bprd\b/.test(title) || /\bprd\b/.test(htmlFile);
+  const screenId = String(screen?.screenId || screen?.id || "").trim().toLowerCase();
+  return /\b(?:prd|requirements?)\b/.test(`${screenId} ${title} ${htmlFile}`);
 }
 
 export function computePredictedScreenFiles(repoPath: string): Array<{ screenId: string; title: string; filePath: string }> {
@@ -130,7 +131,8 @@ export function collectUiBehaviorRequirements(repoPath: string): UiBehaviorRequi
     const reqs: UiBehaviorRequirement[] = [];
     const seen = new Set<string>();
     for (const [screenId, sd] of Object.entries(screens as Record<string, any>)) {
-      const screenTitle = String(sd?.title || screenId);
+      const screenTitle = String(sd?.title || sd?.name || screenId);
+      if (isPrdPseudoScreen({ screenId, title: screenTitle })) continue;
       const add = (kind: UiBehaviorRequirement["kind"], item: any) => {
         const label = controlLabel(item);
         const icon = item?.icon ? String(item.icon) : undefined;
@@ -229,13 +231,14 @@ export function computeDesignDomPreview(repoPath: string): string {
 
     for (const [screenId, sd] of Object.entries(screens as Record<string, any>)) {
       if (totalBytes >= BUDGET) break;
+      const title = sd?.title || sd?.name || screenId;
+      if (isPrdPseudoScreen({ screenId, title })) continue;
       const buttons: string[] = Array.isArray(sd?.buttons) ? sd.buttons.map((b: any) => typeof b === "string" ? b : controlLabel(b)).filter(Boolean).slice(0, 8) : [];
       const inputs: string[] = Array.isArray(sd?.inputs) ? sd.inputs.map((i: any) => typeof i === "string" ? i : controlLabel(i)).filter(Boolean).slice(0, 6) : [];
       const behavior: string[] = Array.isArray(sd?.behaviorContract)
         ? sd.behaviorContract.map((b: any) => `${b.kind || "button"}:${controlLabel(b)}->${b.expectedBehavior || b.action || b.route || ""}`).filter(Boolean).slice(0, 6)
         : [];
       const elementCount = (sd?.elements?.length) || (buttons.length + inputs.length) || 0;
-      const title = sd?.title || screenId;
       const line = `- ${screenId} (${title}): ${elementCount} elements, buttons=[${buttons.join(", ")}], inputs=[${inputs.join(", ")}], behavior=[${behavior.join(" | ")}]`;
       if (totalBytes + line.length > BUDGET) break;
       entries.push(line);

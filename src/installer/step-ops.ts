@@ -978,7 +978,8 @@ function isReusableStitchHtml(filePath: string): boolean {
 function isPrdPseudoDesignScreen(screen: any): boolean {
   const title = String(screen?.title || screen?.name || "").trim().toLowerCase();
   const htmlFile = String(screen?.htmlFile || "").trim().toLowerCase();
-  return /\b(?:prd|requirements?)\b/.test(title) || /\b(?:prd|requirements?)\b/.test(htmlFile);
+  const screenId = String(screen?.screenId || screen?.id || "").trim().toLowerCase();
+  return /\b(?:prd|requirements?)\b/.test(`${screenId} ${title} ${htmlFile}`);
 }
 
 function reusableDesignScreens(repoPath: string, htmlFiles: string[]): Array<{ screenId: string; name: string }> {

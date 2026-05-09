@@ -7,6 +7,7 @@ import {
   collectUiBehaviorRequirements,
   computePredictedScreenFiles,
   extractExplicitMaxStories,
+  isPrdPseudoScreen,
   type UiBehaviorRequirement,
 } from "./context.js";
 
@@ -65,7 +66,7 @@ function loadScreenMap(repo: string): any[] {
   if (!fs.existsSync(p)) return [];
   try {
     const parsed = JSON.parse(fs.readFileSync(p, "utf-8"));
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed) ? parsed.filter((screen: any) => !isPrdPseudoScreen(screen)) : [];
   } catch {
     return [];
   }
@@ -186,7 +187,7 @@ function buildScreenMap(screenMap: any[], predicted: PredictedScreen[], stories:
     }
   }
 
-  return (screenMap.length > 0 ? screenMap : predicted.map((s) => ({
+  return (screenMap.length > 0 ? screenMap.filter((screen: any) => !isPrdPseudoScreen(screen)) : predicted.map((s) => ({
     screenId: s.screenId,
     name: s.title,
     type: "screen",
