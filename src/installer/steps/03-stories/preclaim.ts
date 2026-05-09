@@ -50,9 +50,14 @@ function compactText(text: string, fallback: string): string {
 
 function extractProjectLabel(text: string, fallback: string): string {
   const raw = String(text || "");
-  const projectLine = raw.match(/(?:^|\n)\s*Proje\s*:\s*([^\n]+)/i)?.[1]?.trim();
+  const projectLine = raw.match(/(?:^|\n)\s*(?:Proje|Project)\s*:\s*([^\n]+)/i)?.[1]?.trim();
   const candidate = projectLine || raw.split(/\n+/).map((line) => line.trim()).find(Boolean) || "";
-  return compactText(candidate.replace(/^Proje\s*:\s*/i, ""), fallback);
+  const cleaned = candidate
+    .replace(/^(?:Proje|Project)\s*:\s*/i, "")
+    .replace(/\s+(?:Build|Create|Make|Implement|Platform|React|Vite|TypeScript)\b[\s\S]*$/i, "")
+    .replace(/[.;:,\-\s]+$/g, "")
+    .trim();
+  return compactText(cleaned, fallback);
 }
 
 function loadScreenMap(repo: string): any[] {
@@ -243,7 +248,7 @@ export function buildAutoStoriesOutput(params: {
       screens: unique(predicted.map((s) => s.screenId)),
       scope_files: APP_SCOPE_FILES,
       shared_files: screenFiles,
-      scope_description: "Shared app integration and state ownership for all generated screens. Generated src/screens files are shared/allowed here only for handler/context wiring required to connect Stitch screens to app state; later screen stories remain the primary owners for detailed screen behavior.",
+      scope_description: "Shared app integration and state ownership. Generated src/screens files are read-only shared context here; screen stories own all edits to those files.",
       file_skeletons: fileSkeletons(APP_SCOPE_FILES, screenFileSet),
     };
 
