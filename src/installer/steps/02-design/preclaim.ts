@@ -94,7 +94,7 @@ function countValidStitchHtml(stitchDir: string): number {
 function isPrdPseudoScreen(screen: any): boolean {
   const title = String(screen?.title || screen?.name || "").trim().toLowerCase();
   const htmlFile = String(screen?.htmlFile || "").trim().toLowerCase();
-  return /\bprd\b/.test(title) || /\bprd\b/.test(htmlFile);
+  return /\b(?:prd|requirements?)\b/.test(title) || /\b(?:prd|requirements?)\b/.test(htmlFile);
 }
 
 function manifestHtmlCounts(stitchDir: string): { total: number; valid: number } {
