@@ -35,6 +35,9 @@ const STARTUP_RUNNING_GRACE_MS = parsePositiveInt(process.env.SETFARM_STARTUP_RU
 const QA_AGENT_STUCK_MS = parsePositiveInt(process.env.SETFARM_QA_AGENT_STUCK_MS, 6 * 60_000);
 const AGENT_ACTIVITY_GRACE_MS = parsePositiveInt(process.env.SETFARM_AGENT_ACTIVITY_GRACE_MS, 4 * 60_000);
 const AGENT_STARTUP_SILENCE_MS = parsePositiveInt(process.env.SETFARM_AGENT_STARTUP_SILENCE_MS, 4 * 60_000);
+const AGENT_SELF_LOOP_CHECK_AFTER_MS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_CHECK_AFTER_MS, 6 * 60_000);
+const AGENT_SELF_LOOP_MIN_ACTIONS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_ACTIONS, 7);
+const AGENT_SELF_LOOP_MIN_NOOP_EDITS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_NOOP_EDITS, 4);
 const REAP_FINISHED_ACTIVE_GRACE_MS = parsePositiveInt(process.env.SETFARM_REAP_FINISHED_ACTIVE_GRACE_MS, 60_000);
 const OPENCLAW_TASK_REGISTRY_SETTLE_MS = parsePositiveInt(process.env.SETFARM_OPENCLAW_TASK_REGISTRY_SETTLE_MS, 2000);
 const OPENCLAW_STALE_TASK_SWEEP_MS = parsePositiveInt(process.env.SETFARM_OPENCLAW_STALE_TASK_SWEEP_MS, 2 * 60_000);
@@ -177,6 +180,13 @@ type OpenClawCleanupResult = {
   tasks: number;
 };
 
+type SessionFileStats = {
+  actions: number;
+  writes: number;
+  edits: number;
+  noopEdits: number;
+};
+
 const activeProcesses = new Map<string, ActiveProcess>();
 const queuedSpawns = new Set<string>();
 const claimingSpawns = new Set<string>();
@@ -275,6 +285,93 @@ function activeProcessLastActivityMs(active: ActiveProcess): number {
 
 function activeProcessIdleMs(active: ActiveProcess): number {
   return Date.now() - activeProcessLastActivityMs(active);
+}
+
+function extractSessionText(content: unknown): string {
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part: any) => {
+      if (!part || typeof part !== "object") return "";
+      if (typeof part.text === "string") return part.text;
+      if (typeof part.content === "string") return part.content;
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function extractToolCalls(content: unknown): Array<{ name: string; path: string }> {
+  if (!Array.isArray(content)) return [];
+  const calls: Array<{ name: string; path: string }> = [];
+  for (const part of content as any[]) {
+    if (!part || typeof part !== "object") continue;
+    const type = String(part.type || "");
+    if (type !== "toolCall" && type !== "tool_use") continue;
+    const name = String(part.name || part.toolName || "");
+    const args = part.arguments || part.input || {};
+    const candidate = typeof args.path === "string" ? args.path : "";
+    calls.push({ name, path: candidate });
+  }
+  return calls;
+}
+
+function repeatedSessionFileLoop(active: ActiveProcess): { detected: boolean; reason: string } {
+  let lines: string[];
+  try {
+    const raw = fs.readFileSync(active.sessionJsonlPath, "utf-8").trim();
+    if (!raw) return { detected: false, reason: "" };
+    lines = raw.split(/\n/).filter(Boolean).slice(-120);
+  } catch {
+    return { detected: false, reason: "" };
+  }
+
+  const fileStats = new Map<string, SessionFileStats>();
+  let currentToolPath = "";
+  for (const line of lines) {
+    let event: any;
+    try { event = JSON.parse(line); } catch { continue; }
+    const message = event?.message || {};
+    const role = String(message.role || "");
+    const content = message.content;
+
+    if (role === "assistant") {
+      for (const call of extractToolCalls(content)) {
+        if (call.name !== "write" && call.name !== "edit") continue;
+        const target = call.path || currentToolPath;
+        if (!target) continue;
+        const stats = fileStats.get(target) || { actions: 0, writes: 0, edits: 0, noopEdits: 0 };
+        stats.actions += 1;
+        if (call.name === "write") stats.writes += 1;
+        if (call.name === "edit") stats.edits += 1;
+        fileStats.set(target, stats);
+        currentToolPath = target;
+      }
+      continue;
+    }
+
+    if (role === "toolResult") {
+      const text = extractSessionText(content);
+      if (!/No changes made/i.test(text) || !currentToolPath) continue;
+      const stats = fileStats.get(currentToolPath) || { actions: 0, writes: 0, edits: 0, noopEdits: 0 };
+      stats.noopEdits += 1;
+      fileStats.set(currentToolPath, stats);
+    }
+  }
+
+  for (const [filePath, stats] of fileStats) {
+    if (stats.actions >= AGENT_SELF_LOOP_MIN_ACTIONS && stats.noopEdits >= AGENT_SELF_LOOP_MIN_NOOP_EDITS) {
+      const rel = filePath.replace(/^\/home\/setrox\//, "~/");
+      return {
+        detected: true,
+        reason: "AGENT_SELF_LOOP: repeated write/edit no-op loop on " + rel +
+          " (actions=" + stats.actions +
+          ", writes=" + stats.writes +
+          ", edits=" + stats.edits +
+          ", noop_edits=" + stats.noopEdits + ")",
+      };
+    }
+  }
+  return { detected: false, reason: "" };
 }
 
 type GatewayReadyBody = { ready?: boolean; ok?: boolean; uptimeMs?: number; failing?: unknown };
@@ -1281,6 +1378,24 @@ ${reason}
           activeProcesses.delete(key);
           await failClaimIfStillRunning(active.stepId, active.agentId, active.wfId, active.role, active.transcriptPath, new Error(reason), active.startedAtMs, active.spawnCwd);
           continue;
+        }
+
+        if (ageMs >= AGENT_SELF_LOOP_CHECK_AFTER_MS && !isTerminalTestRole(active.role, active.agentId)) {
+          const loop = repeatedSessionFileLoop(active);
+          if (loop.detected) {
+            const reason = loop.reason + "; retrying " + active.wfId + "/" + active.role +
+              " instead of waiting on synthetic session activity. Transcript: " + active.transcriptPath;
+            console.warn("[spawner] " + reason);
+            try { fs.appendFileSync(active.transcriptPath, "--- SELF LOOP " + new Date().toISOString() + " ---\n" + reason + "\n"); } catch {}
+            terminateActiveProcess(active, "self-loop");
+            activeProcesses.delete(key);
+            if (row.type === "loop" && active.storyId) {
+              await requeueOpenStoryClaim(active.runId, row.step_id, active.storyId, active.agentId, reason);
+            } else {
+              await retryActiveSingleStepClaim(active, row.step_id, reason);
+            }
+            continue;
+          }
         }
 
         const thresholdMs = stuckThresholdMs(active.role, row.story_id);
