@@ -41,6 +41,7 @@ const AGENT_SELF_LOOP_MIN_NOOP_EDITS = parsePositiveInt(process.env.SETFARM_AGEN
 const AGENT_SELF_LOOP_MIN_REPEATED_FAILURES = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_REPEATED_FAILURES, 4);
 const AGENT_SELF_LOOP_MIN_REPEATED_COMMANDS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_REPEATED_COMMANDS, 8);
 const REAP_FINISHED_ACTIVE_GRACE_MS = parsePositiveInt(process.env.SETFARM_REAP_FINISHED_ACTIVE_GRACE_MS, 60_000);
+const ORPHANED_SINGLE_STEP_CLAIM_MS = parsePositiveInt(process.env.SETFARM_ORPHANED_SINGLE_STEP_CLAIM_MS, 2 * 60_000);
 const OPENCLAW_TASK_REGISTRY_SETTLE_MS = parsePositiveInt(process.env.SETFARM_OPENCLAW_TASK_REGISTRY_SETTLE_MS, 2000);
 const OPENCLAW_STALE_TASK_SWEEP_MS = parsePositiveInt(process.env.SETFARM_OPENCLAW_STALE_TASK_SWEEP_MS, 2 * 60_000);
 const IMPLEMENT_EXIT_RECOVERY_BUILD_TIMEOUT_MS = parsePositiveInt(process.env.SETFARM_IMPLEMENT_EXIT_RECOVERY_BUILD_TIMEOUT_MS, 120_000);
@@ -386,6 +387,7 @@ const queuedSpawns = new Set<string>();
 const claimingSpawns = new Set<string>();
 let shuttingDown = false;
 let nextSpawnEarliest = 0;
+let claimMaintenanceInFlight = false;
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
   const parsed = parseInt(raw || "", 10);
@@ -1612,6 +1614,67 @@ async function requeueOrphanedRunningStories(): Promise<void> {
   }
 }
 
+async function requeueUntrackedRunningSingleStepClaims(): Promise<void> {
+  const thresholdMs = Math.max(0, ORPHANED_SINGLE_STEP_CLAIM_MS);
+  const rows = await pgQuery<{ step_db_id: string; step_id: string; run_id: string; run_number: number; agent_id: string; claimed_at: string }>(
+    `SELECT s.id as step_db_id, s.step_id, s.run_id, r.run_number, s.agent_id, cl.claimed_at
+     FROM steps s
+     JOIN runs r ON r.id = s.run_id
+     JOIN claim_log cl
+       ON cl.run_id = s.run_id
+      AND cl.step_id = s.step_id
+      AND cl.story_id IS NULL
+      AND cl.agent_id = s.agent_id
+      AND cl.outcome IS NULL
+     WHERE s.status = 'running'
+       AND s.type <> 'loop'
+       AND r.status = 'running'
+       AND cl.claimed_at <= NOW() - ($1::int * interval '1 millisecond')
+     ORDER BY cl.claimed_at ASC
+     LIMIT 20`,
+    [thresholdMs],
+  );
+
+  for (const row of rows) {
+    const tracked = Array.from(activeProcesses.values()).some((active) =>
+      active.runId === row.run_id
+      && active.stepId === row.step_db_id
+      && active.agentId === row.agent_id
+    );
+    if (tracked) continue;
+
+    const claimedAtMs = new Date(row.claimed_at).getTime();
+    const ageMs = Number.isFinite(claimedAtMs) ? Date.now() - claimedAtMs : thresholdMs;
+    const diagnostic = `UNTRACKED_RUNNING_SINGLE_STEP: ${row.agent_id} has an open ${row.step_id} claim for ${formatDurationMs(ageMs)} but no active spawner process is tracking it; retrying instead of leaving the run idle.`;
+    await pgRun(
+      "UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = retry_count + 1, updated_at = NOW() WHERE id = $1 AND status = 'running'",
+      [row.step_db_id],
+    );
+    await pgRun(
+      "UPDATE claim_log SET outcome = 'infra_retry', abandoned_at = NOW(), duration_ms = LEAST(CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at::timestamptz)) * 1000 AS BIGINT), 2147483647)::INTEGER, diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND story_id IS NULL AND agent_id = $4 AND outcome IS NULL",
+      [diagnostic, row.run_id, row.step_id, row.agent_id],
+    );
+    await pgRun("SELECT pg_notify('step_pending', $1)", [
+      JSON.stringify({ agentId: row.agent_id, runId: row.run_id, stepId: row.step_id }),
+    ]);
+    console.warn(`[spawner] requeued untracked single-step claim for run #${row.run_number}: ${row.step_id}/${row.agent_id}`);
+  }
+}
+
+async function runClaimMaintenance(): Promise<void> {
+  if (shuttingDown || claimMaintenanceInFlight) return;
+  claimMaintenanceInFlight = true;
+  try {
+    await reapFinishedClaims();
+    await requeueOrphanedRunningStories();
+    await requeueUntrackedRunningSingleStepClaims();
+  } catch (err) {
+    console.warn(`[spawner] claim maintenance failed: ${String(err).slice(0, 300)}`);
+  } finally {
+    claimMaintenanceInFlight = false;
+  }
+}
+
 async function cleanupRunningRunEphemeraOnStartup(): Promise<void> {
   try {
     const rows = await pgQuery<{ id: string }>(
@@ -2253,8 +2316,7 @@ async function autoVerifyMergedPrEachStories() {
 async function pollForPendingWork() {
   if (shuttingDown) return;
   try {
-    await reapFinishedClaims();
-    await requeueOrphanedRunningStories();
+    await runClaimMaintenance();
     await cleanupRunningRunOrphanedToolWorkers();
     await autoVerifyMergedPrEachStories();
     await advanceCompletedVerifyEachLoops();
@@ -2379,6 +2441,7 @@ async function main() {
 
   console.log("[spawner] Listening for step_pending and story_pending events");
   setInterval(pollForPendingWork, POLL_INTERVAL_MS);
+  setInterval(() => { void runClaimMaintenance(); }, Math.min(POLL_INTERVAL_MS, 10_000));
   setInterval(() => {
     const result = cleanupStaleSetfarmOpenClawTaskRecords("interval");
     void restartGatewayAfterOpenClawCleanup("interval", result);

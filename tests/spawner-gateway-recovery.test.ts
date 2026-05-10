@@ -294,6 +294,20 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /pg_notify\('step_pending'/);
   });
 
+  it("retries running single-step claims that are no longer tracked by the spawner", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /ORPHANED_SINGLE_STEP_CLAIM_MS/);
+    assert.match(source, /async function requeueUntrackedRunningSingleStepClaims/);
+    assert.match(source, /s\.status = 'running'/);
+    assert.match(source, /s\.type <> 'loop'/);
+    assert.match(source, /cl\.story_id IS NULL/);
+    assert.match(source, /Array\.from\(activeProcesses\.values\(\)\)\.some/);
+    assert.match(source, /UNTRACKED_RUNNING_SINGLE_STEP/);
+    assert.match(source, /UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = retry_count \+ 1/);
+    assert.match(source, /UPDATE claim_log SET outcome = 'infra_retry'/);
+    assert.match(source, /setInterval\(\(\) => \{ void runClaimMaintenance\(\); \}, Math\.min\(POLL_INTERVAL_MS, 10_000\)\)/);
+  });
+
   it("tells verify agents to fail fast on first blocker", () => {
     const prompt = fs.readFileSync(path.join(root, "src", "installer", "steps", "07-verify", "prompt.md"), "utf-8");
     const rules = fs.readFileSync(path.join(root, "src", "installer", "steps", "07-verify", "rules.md"), "utf-8");
