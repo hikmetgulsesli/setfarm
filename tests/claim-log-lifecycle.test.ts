@@ -310,6 +310,29 @@ describe("single-step claim_log lifecycle", () => {
     assert.doesNotMatch(identifySource, /parsedOutput\["current_story_id"\] \|\| context\["current_story_id"\]/);
   });
 
+  it("auto-merges an approved open PR before marking verify-each complete", () => {
+    const handleSource = handleVerifyEachSource();
+    const passedStart = handleSource.indexOf("// Verify PASSED");
+    const smokeStart = handleSource.indexOf("const repoPath = context[\"repo\"] || context[\"REPO\"] || \"\";", passedStart);
+    assert.notEqual(passedStart, -1, "verify-each passed branch not found");
+    assert.notEqual(smokeStart, -1, "verify smoke branch not found");
+    const passedSource = handleSource.slice(passedStart, smokeStart);
+
+    const mutableState = passedSource.indexOf("let prState = getPRState(verifiedRow.pr_url)");
+    const openGuard = passedSource.indexOf("if (prState === \"OPEN\")", mutableState);
+    const autoMerge = passedSource.indexOf("tryAutoMergePR(verifiedRow.pr_url, verifiedStoryId, verifyStep.run_id)", openGuard);
+    const invalidate = passedSource.indexOf("invalidatePRStateCache(verifiedRow.pr_url)", autoMerge);
+    const recheck = passedSource.indexOf("prState = getPRState(verifiedRow.pr_url)", invalidate);
+    const notMergedGuard = passedSource.indexOf("if (prState !== \"MERGED\")", recheck);
+
+    assert.ok(mutableState >= 0, "PR state must be mutable so merge can be rechecked");
+    assert.ok(openGuard > mutableState, "open PR guard must run after state lookup");
+    assert.ok(autoMerge > openGuard, "approved open PR should use existing auto-merge helper");
+    assert.ok(invalidate > autoMerge, "PR state cache must be invalidated after merge");
+    assert.ok(recheck > invalidate, "PR state must be rechecked after merge");
+    assert.ok(notMergedGuard > recheck, "not-merged guard should use post-merge state");
+  });
+
   it("injects stored verify retry feedback before developer claim context is persisted", () => {
     const stepOps = stepOpsSource();
     const stepOpsStart = stepOps.indexOf("async function injectStoryContext(");

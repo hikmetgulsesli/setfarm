@@ -4594,7 +4594,14 @@ async function handleVerifyEachCompletion(
         logger.warn(`[verify] ${verifiedStoryId} reported done but has no PR URL — keeping verify pending`, { runId: verifyStep.run_id });
         return { advanced: false, runCompleted: false };
       }
-      const prState = getPRState(verifiedRow.pr_url);
+      let prState = getPRState(verifiedRow.pr_url);
+      if (prState === "OPEN") {
+        const merged = tryAutoMergePR(verifiedRow.pr_url, verifiedStoryId, verifyStep.run_id);
+        if (merged) {
+          invalidatePRStateCache(verifiedRow.pr_url);
+          prState = getPRState(verifiedRow.pr_url);
+        }
+      }
       if (prState !== "MERGED") {
         context["previous_failure"] = `PR_NOT_MERGED: ${verifiedStoryId} PR is ${prState}. Address review comments/checks, merge ${verifiedRow.pr_url} into main, then report STATUS: done.`;
         context["pr_url"] = verifiedRow.pr_url;
