@@ -159,6 +159,21 @@ describe("01-plan step module", () => {
     assert.equal(parsed.branch, "feature-retry-feedback-lab-0505");
   });
 
+  it("auto-plan uses Next.js project structure when TECH_STACK is nextjs", () => {
+    const output = buildAutoPlanOutput(
+      "Project: seo-tetris-0511 Build a Next.js browser Tetris game with settings and restart flow.",
+    );
+    const parsed = parsePlanOutput(output);
+    planModule.normalize?.(parsed);
+    const validation = planModule.validateOutput(parsed);
+
+    assert.equal(validation.ok, true, validation.errors.join("; "));
+    assert.equal(parsed.tech_stack, "nextjs");
+    assert.match(parsed.prd, /src\/app\/page\.tsx/);
+    assert.match(parsed.prd, /Do not introduce a Vite-style src\/main\.tsx entrypoint/);
+    assert.doesNotMatch(parsed.prd, /Use src\/components, src\/screens, src\/hooks, src\/utils, src\/types, src\/App\.tsx, and src\/main\.tsx/);
+  });
+
   it("infers UI language without letting English tasks become Turkish by default", () => {
     assert.equal(inferUiLanguage("Project: signal desk\nBuild an English app."), "English");
     assert.equal(inferUiLanguage("Proje: not panosu\nBasit not tutma uygulaması yap."), "English");

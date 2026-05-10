@@ -149,6 +149,24 @@ function platformLineForStack(stack: string): string {
   return "Framework: React 18 + Vite + TypeScript.";
 }
 
+function projectStructureForStack(stack: string): string {
+  if (stack === "nextjs") {
+    return [
+      "Use the Next.js app router structure: src/app/layout.tsx, src/app/page.tsx, src/app/globals.css, src/components, src/screens, src/hooks, src/utils, and src/types.",
+      "Do not introduce a Vite-style src/main.tsx entrypoint. Use src/App.tsx only as an optional client component imported by src/app/page.tsx.",
+      "Client interactivity belongs behind 'use client' boundaries; server files must not use browser APIs directly.",
+      "Stitch HTML screens are translated into the app/page workflow after setup/build; no generated design screen should remain unused.",
+    ].join("\n");
+  }
+  if (stack === "react-native") {
+    return "Use src/components, src/screens, src/hooks, src/utils, src/types, and a mobile app entry. Keep navigation and native state boundaries explicit.";
+  }
+  if (stack === "node-express") {
+    return "Use src/routes, src/controllers, src/services, src/types, and src/server.ts. Keep API handlers separate from business logic.";
+  }
+  return "Use src/components, src/screens, src/hooks, src/utils, src/types, src/App.tsx, and src/main.tsx. Stitch HTML screens are translated into the App workflow after setup/build; no generated design screen should remain unused.";
+}
+
 export function buildAutoPlanOutput(task: string): string {
   const rawProjectName = extractProjectName(task);
   const projectName = humanizeProjectName(rawProjectName);
@@ -221,7 +239,7 @@ export function buildAutoPlanOutput(task: string): string {
     "- Error handling: storage and form errors are visible, retryable, and clearable.",
     "",
     "## Project Structure",
-    "Use src/components, src/screens, src/hooks, src/utils, src/types, src/App.tsx, and src/main.tsx. Stitch HTML screens are translated into the App workflow after setup/build; no generated design screen should remain unused.",
+    projectStructureForStack(stack),
     "",
     "## Window State",
     "window.app = { state, screen, lastError, storageStatus, itemCount, activePanel } exposes the main dogfood and test state.",
