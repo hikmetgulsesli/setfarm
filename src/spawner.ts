@@ -134,6 +134,11 @@ function safeAgentCwdFromClaimInput(input: unknown): string {
       const resolved = safeAgentCwdFromCandidate(match[1]);
       if (resolved) return resolved;
     }
+
+    for (const match of input.matchAll(/`?(\/home\/setrox\/projects\/[A-Za-z0-9._-]+)`?/g)) {
+      const resolved = safeAgentCwdFromCandidate(match[1]);
+      if (resolved) return resolved;
+    }
   }
 
   return AGENT_SAFE_CWD;
