@@ -36,6 +36,12 @@ if [ "$TECH_STACK_RAW" != "$TECH_STACK" ]; then
   echo "Normalized TECH_STACK: $TECH_STACK_RAW -> $TECH_STACK"
 fi
 
+clean_branch_tracking() {
+  local branch="$1"
+  git config --unset-all "branch.$branch.remote" 2>/dev/null || true
+  git config --unset-all "branch.$branch.merge" 2>/dev/null || true
+}
+
 # 1. Create repo if needed
 if [ -d "$REPO/.git" ]; then
   echo "Repo already exists at $REPO"
@@ -89,6 +95,7 @@ fi
 
 # 3. Main branch
 git branch -M main 2>/dev/null || true
+clean_branch_tracking main
 # Commit existing files (stitch/, README, etc.) if any, otherwise empty commit
 git add -A 2>/dev/null || true
 git diff --cached --quiet && git commit --allow-empty -m "chore: initial commit" 2>/dev/null || true
@@ -526,6 +533,7 @@ git diff --cached --quiet || git commit -m "chore: untrack gitignored files" 2>/
 
 # 5. Feature branch
 git checkout -b "$BRANCH" 2>/dev/null || git checkout "$BRANCH" 2>/dev/null || true
+clean_branch_tracking "$BRANCH"
 
 # 6. References symlink
 ln -sfn "$HOME/.openclaw/setfarm-repo/references" references 2>/dev/null || true
