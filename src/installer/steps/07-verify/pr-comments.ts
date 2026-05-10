@@ -27,6 +27,8 @@ export interface PrComment {
   state?: string; // review state: APPROVED, CHANGES_REQUESTED, COMMENTED
   path?: string;
   line?: number;
+  originalLine?: number;
+  outdated?: boolean;
   kind: "issue" | "review" | "review-comment";
 }
 
@@ -107,7 +109,9 @@ export async function fetchPrState(prUrl: string, fallbackRepo?: string): Promis
             body: c.body || "",
             createdAt: c.created_at || "",
             path: c.path || "",
-            line: typeof c.line === "number" ? c.line : (typeof c.original_line === "number" ? c.original_line : undefined),
+            line: typeof c.line === "number" ? c.line : undefined,
+            originalLine: typeof c.original_line === "number" ? c.original_line : undefined,
+            outdated: typeof c.line !== "number",
             kind: "review-comment",
           });
         }
@@ -143,6 +147,11 @@ export function formatPrCommentsForAgent(state: PrState): string {
 
   const actionable = state.comments.filter(c => {
     if (!c.body || c.body.trim().length < 5) return false;
+    // GitHub keeps old inline review comments after a branch moves. When the
+    // current line is gone, `line` is null and only `original_line` remains.
+    // Treat those as historical context; otherwise verify agents re-route
+    // fixed/stale comments as fresh blockers.
+    if (c.kind === "review-comment" && c.outdated) return false;
     // Skip bot-generated auto-merge notifications and similar noise
     if (/^(auto-merge|automerge|merge conflict|ci)\b/i.test(c.body.trim())) return false;
     return true;
