@@ -93,11 +93,13 @@ describe("02-design step module", () => {
     assert.doesNotMatch(source, /All visible text must be in Turkish|Turkish language/);
   });
 
-  it("preClaim fails instead of handing empty design assets to the agent", () => {
+  it("preClaim generates local fallback design assets when Stitch returns no HTML", () => {
     const source = designPreclaimSource();
-    assert.match(source, /DESIGN_ASSET_GENERATION_FAILED/);
-    assert.match(source, /function failDesignPreclaim/);
-    assert.match(source, /await failStep\(step\.id, safeError\)/);
+    assert.match(source, /function createFallbackDesignAssets/);
+    assert.match(source, /Design preclaim: generated fallback design assets/);
+    assert.match(source, /SCREEN_MAP\.json/);
+    assert.match(source, /UI_CONTRACT\.json/);
+    assert.match(source, /Main Menu/);
     assert.doesNotMatch(source, /agent will see empty/);
   });
 });
