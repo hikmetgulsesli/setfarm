@@ -94,9 +94,12 @@ describe("04-setup-repo step module", () => {
   it("vite scaffold template is project-neutral", () => {
     const script = fs.readFileSync("scripts/setup-repo.sh", "utf-8");
     assert.ok(script.includes('git init -b main'), "fresh repos should initialize main directly");
+    assert.ok(script.includes("normalize_stack()"), "setup-repo should normalize planner TECH_STACK labels");
+    assert.ok(script.includes("react-vite-typescript"), "React/Vite/TypeScript labels should map to vite-react");
     assert.ok(script.includes('"name": "$PACKAGE_NAME"'), "package name should come from project slug");
     assert.ok(script.includes("<title>$PROJECT_NAME</title>"), "HTML title should come from project slug");
     assert.ok(script.includes('data-setfarm-root="baseline"'), "App baseline should be machine-detectable");
+    assert.ok(script.includes("baseline scaffold did not create package.json"), "fresh frontend repos must fail if scaffold is missing");
     assert.equal(script.includes("<title>Notlar</title>"), false);
     assert.equal(script.includes("useNotes"), false);
     assert.equal(script.includes("NoteStatus"), false);

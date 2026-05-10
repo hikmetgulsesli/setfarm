@@ -12,6 +12,30 @@ STITCH_SCRIPT="$HOME/.openclaw/setfarm-repo/scripts/stitch-api.mjs"
 
 EXISTING_CODE=false
 
+normalize_stack() {
+  local raw
+  raw=$(printf "%s" "${1:-vite-react}" | tr '[:upper:]' '[:lower:]')
+  raw=$(printf "%s" "$raw" | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')
+  case "$raw" in
+    vite-react|react-vite|react-vite-typescript|vite-react-typescript|react-ts-vite|vite-ts-react|react-typescript-vite|web|react)
+      printf "vite-react"
+      ;;
+    *)
+      if printf "%s" "$raw" | grep -Eq '(^|-)vite(-|$)' && printf "%s" "$raw" | grep -Eq '(^|-)react(-|$)'; then
+        printf "vite-react"
+      else
+        printf "%s" "$raw"
+      fi
+      ;;
+  esac
+}
+
+TECH_STACK_RAW="$TECH_STACK"
+TECH_STACK=$(normalize_stack "$TECH_STACK")
+if [ "$TECH_STACK_RAW" != "$TECH_STACK" ]; then
+  echo "Normalized TECH_STACK: $TECH_STACK_RAW -> $TECH_STACK"
+fi
+
 # 1. Create repo if needed
 if [ -d "$REPO/.git" ]; then
   echo "Repo already exists at $REPO"
@@ -349,9 +373,17 @@ EOF
       git commit -m "chore: scaffold vite react app" 2>/dev/null || true
       ;;
     *)
-      echo "WARN: no automatic scaffold for TECH_STACK=$TECH_STACK"
+      echo "FATAL: no automatic scaffold for TECH_STACK=$TECH_STACK_RAW (normalized: $TECH_STACK)"
+      echo "STATUS: fail"
+      exit 1
       ;;
   esac
+fi
+
+if [ ! -f package.json ]; then
+  echo "FATAL: baseline scaffold did not create package.json for TECH_STACK=$TECH_STACK_RAW (normalized: $TECH_STACK)"
+  echo "STATUS: fail"
+  exit 1
 fi
 
 # Remove any accidentally tracked gitignored files (dist/, node_modules, etc.)
