@@ -85,6 +85,37 @@ function parseScopeFileList(raw: string | null | undefined): string[] {
   }
 }
 
+function getImplicitScopeFiles(workdir: string): string[] {
+  const files = [
+    "vitest.config.ts",
+    "vitest.config.js",
+    "jest.config.ts",
+    "jest.config.js",
+    "src/test/setup.ts",
+    "src/test/utils.ts",
+    "src/setupTests.ts",
+  ];
+
+  const typeDir = path.join(workdir, "src", "types");
+  try {
+    if (fs.existsSync(typeDir)) {
+      for (const entry of fs.readdirSync(typeDir)) {
+        if (/\.(tsx?|d\.ts)$/.test(entry)) {
+          files.push(path.posix.join("src/types", entry));
+        }
+      }
+    }
+  } catch {
+    // Best effort; missing type files should not block claim setup.
+  }
+
+  for (const typeFile of ["src/types.ts", "src/types.d.ts"]) {
+    if (fs.existsSync(path.join(workdir, typeFile))) files.push(typeFile);
+  }
+
+  return [...new Set(files)];
+}
+
 function isSystemSmokeBoundaryFile(file: string): boolean {
   const normalized = file.replace(/\\/g, "/");
   return (
@@ -1380,8 +1411,10 @@ async function injectStoryContext(
         const scopeList = context["story_scope_files"].split(", ");
         // shared_files are read/import context only. Do not make them writable;
         // otherwise integration stories can commit later stories' screen files.
-        // Add IMPLICIT_SHARED patterns
-        const implicitFiles = ["vitest.config.ts","vitest.config.js","jest.config.ts","jest.config.js","src/test/setup.ts","src/test/utils.ts","src/setupTests.ts"];
+        // Keep pre-commit scope in sync with the final scope guard's implicit
+        // allowances. Screen stories often need shared type updates for state
+        // wiring, and final guard already treats src/types/* as safe shared API.
+        const implicitFiles = getImplicitScopeFiles(context["story_workdir"]);
         const allAllowed = [...new Set([...scopeList, ...implicitFiles])];
         // Also allow *.test.tsx and *.spec.tsx (wildcard — hook uses grep -qxF so these wont match, but test files are caught by the hook logic)
         const _scopeFP = path.join(context["story_workdir"], ".story-scope-files"); fs.writeFileSync(_scopeFP, allAllowed.join("\n") + "\n"); try { fs.chmodSync(_scopeFP, 0o664); } catch { /* best effort */ }
@@ -1389,7 +1422,7 @@ async function injectStoryContext(
     }
     // 5-model consensus: always inject scope_reminder (even on first attempt)
     if (context["story_scope_files"]) {
-      context["scope_reminder"] = "SCOPE ENFORCEMENT: You may ONLY write files in [" + context["story_scope_files"] + "]. shared_files are read-only/import context unless also listed in scope_files. Test files (*.test.tsx) and test config (vitest.config.ts, src/test/setup.ts) are also allowed. App.tsx, main.tsx, index.css are FORBIDDEN unless in your scope_files. Violation = instant SCOPE_BLEED rejection.";
+      context["scope_reminder"] = "SCOPE ENFORCEMENT: You may ONLY write files in [" + context["story_scope_files"] + "]. shared_files are read-only/import context unless also listed in scope_files. Test files (*.test.tsx), test config, and src/types/* shared API files are also allowed when required by your scoped screens. App.tsx, main.tsx, index.css are FORBIDDEN unless in your scope_files. Violation = instant SCOPE_BLEED rejection.";
     }
   } catch (e) {
     // Column may not exist on very old schemas — degrade gracefully

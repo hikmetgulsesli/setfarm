@@ -308,7 +308,7 @@ if [ ! -f "$SCOPE_FILE" ]; then exit 0; fi
 BLOCKED=""
 for file in $(git diff --cached --name-only); do
   case "$file" in
-    *.test.ts|*.test.tsx|*.spec.ts|*.spec.tsx|src/test/*|src/setupTests.ts|vitest.config.ts|vitest.config.js|jest.config.ts|jest.config.js)
+    *.test.ts|*.test.tsx|*.spec.ts|*.spec.tsx|src/test/*|src/setupTests.ts|src/types.ts|src/types.d.ts|src/types/*|vitest.config.ts|vitest.config.js|jest.config.ts|jest.config.js)
       continue
       ;;
     .story-scope-files|.story-branch|pre-commit|references|node_modules)
