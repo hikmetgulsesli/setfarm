@@ -2077,6 +2077,19 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
              OR r.assigned_developer IS NULL
              OR r.assigned_developer = $2
            )
+           AND NOT (
+             s.step_id = 'verify'
+             AND r.context::jsonb ? 'verify_pending_since'
+             AND r.context::jsonb ? 'verify_pending_pr_url'
+             AND (r.context::jsonb ->> 'verify_pending_since')::timestamptz > NOW() - ($3::int * interval '1 millisecond')
+             AND NOT EXISTS (
+               SELECT 1 FROM stories verify_done_st
+               WHERE verify_done_st.run_id = s.run_id
+                 AND verify_done_st.status = 'done'
+                 AND verify_done_st.pr_url IS NOT NULL
+                 AND verify_done_st.pr_url <> (r.context::jsonb ->> 'verify_pending_pr_url')
+             )
+           )
            AND NOT EXISTS (
              SELECT 1 FROM steps prev
 	             WHERE prev.run_id = s.run_id
@@ -2109,7 +2122,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
              ELSE 2
            END,
            s.step_index ASC, s.status ASC
-         LIMIT 1`, [agentId, callerGatewayAgent ?? null]);
+         LIMIT 1`, [agentId, callerGatewayAgent ?? null, PR_REVIEW_DELAY_MS]);
 
   if (!step) return { found: false };
 

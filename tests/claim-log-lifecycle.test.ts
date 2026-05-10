@@ -147,6 +147,15 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(source, /shouldRecordSingleStepClaim = true/);
   });
 
+  it("does not repeatedly claim verify during the PR review delay window", () => {
+    const fullSource = stepOpsSource();
+    assert.match(fullSource, /r\.context::jsonb \? 'verify_pending_since'/);
+    assert.match(fullSource, /r\.context::jsonb \? 'verify_pending_pr_url'/);
+    assert.match(fullSource, /\(r\.context::jsonb ->> 'verify_pending_since'\)::timestamptz > NOW\(\) - \(\$3::int \* interval '1 millisecond'\)/);
+    assert.match(fullSource, /verify_done_st\.pr_url <> \(r\.context::jsonb ->> 'verify_pending_pr_url'\)/);
+    assert.match(fullSource, /LIMIT 1`, \[agentId, callerGatewayAgent \?\? null, PR_REVIEW_DELAY_MS\]/);
+  });
+
   it("does not overwrite actionable retry context with stale successful output", () => {
     const fullSource = stepOpsSource();
     const source = claimSingleStepSource();
