@@ -77,7 +77,7 @@ function humanizeProjectName(input: string): string {
 function inferTechStack(task: string): string {
   const lower = task.toLowerCase();
   if (/\breact native\b|mobil uygulama|mobile app/.test(lower)) return "react-native";
-  if (/\bnext(js)?\b|seo|ssr/.test(lower)) return "nextjs";
+  if (/\bnext\s*(?:\.?js|js)\b|\bnextjs\b|\bseo\b|\bssr\b/.test(lower)) return "nextjs";
   if (/\bnode\b|\bexpress\b|api only|sadece api/.test(lower)) return "node-express";
   if (/\bvanilla\b|frameworksiz|plain ts/.test(lower)) return "vanilla-ts";
   return DEFAULT_STACK;
