@@ -295,7 +295,8 @@ function ensureSessionMaintenance(config: OpenClawConfig): void {
 
 function defaultModelForAgent(agentId: string): Record<string, unknown> {
   const localId = agentId.includes("_") ? agentId.split("_").pop() || agentId : agentId;
-  return ["developer", "planner"].includes(localId) ? { ...KIMI_FIRST_AGENT_MODEL } : { ...MINIMAX_AGENT_MODEL };
+  if (["security-gate", "setup-build", "setup-repo"].includes(localId)) return { ...MINIMAX_AGENT_MODEL };
+  return { ...KIMI_FIRST_AGENT_MODEL };
 }
 
 function upsertAgent(
