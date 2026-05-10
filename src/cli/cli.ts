@@ -16,7 +16,7 @@ import { runMedicCheck, getMedicStatus, getRecentMedicChecks } from "../medic/me
 import { pgQuery, pgGet, pgRun, pgClose, now } from "../db-pg.js";
 import { installMedicCron, uninstallMedicCron, isMedicCronInstalled } from "../medic/medic-cron.js";
 import { execSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -30,6 +30,36 @@ function getVersion(): string {
     return pkg.version ?? "unknown";
   } catch {
     return "unknown";
+  }
+}
+
+function isLikelyOutputFileArg(arg: string): boolean {
+  return arg.startsWith("/") || arg.startsWith("./") || arg.startsWith("../") || /\.(md|out|txt)$/i.test(arg);
+}
+
+async function readFreshStepOutputFile(stepId: string, filePath: string): Promise<string> {
+  try {
+    // File output is the safest completion path, but stale files can make an
+    // agent accidentally pass an old result. Keep the same freshness check for
+    // --file and positional file-path use.
+    const fileStat = statSync(filePath);
+    const stepRow = await pgGet<{ started_at: string | null; status: string }>(
+      "SELECT started_at, status FROM steps WHERE id = $1",
+      [stepId],
+    );
+    if (stepRow?.started_at) {
+      const stepStartedMs = new Date(stepRow.started_at).getTime();
+      const fileMtimeMs = fileStat.mtimeMs;
+      if (fileMtimeMs < stepStartedMs - 5000) {
+        const ageSec = Math.round((stepStartedMs - fileMtimeMs) / 1000);
+        process.stderr.write(`FILE_STALE: ${filePath} mtime is ${ageSec}s older than step started_at. The agent is recycling a previous run's output. Write a fresh file and retry.\n`);
+        process.exit(3);
+      }
+    }
+    return readFileSync(filePath, "utf-8").trim();
+  } catch (e) {
+    process.stderr.write(`Cannot read file ${filePath}: ${e}\n`);
+    process.exit(1);
   }
 }
 
@@ -94,7 +124,7 @@ function printUsage() {
       "",
       "setfarm step peek <agent-id>        Lightweight check for pending work (HAS_WORK or NO_WORK)",
       "setfarm step claim <agent-id>       Claim pending step, output resolved input as JSON",
-      "setfarm step complete <step-id>      Complete step (reads output from stdin)",
+      "setfarm step complete <step-id> [--file <path>|<path>]  Complete step from file, args, or stdin",
       "setfarm step fail <step-id> <error>  Fail step with retry logic",
       "setfarm step stories <run-id>       List stories for a run",
       "",
@@ -393,43 +423,22 @@ async function main() {
     }
     if (action === "complete") {
       if (!target) { process.stderr.write("Missing step-id.\n"); process.exit(1); }
-      // Read output from --file flag, args, or stdin (in priority order)
+      // Read output from --file flag, a positional file path, args, or stdin.
       let output = "";
       const fileIdx = args.indexOf("--file");
       if (fileIdx !== -1 && args[fileIdx + 1]) {
-        // --file /path/to/output.txt — most reliable, no piping needed
-        const fs = await import("node:fs");
-        const filePath = args[fileIdx + 1];
-        try {
-          // cuddly-sleeping-quail: file freshness check. The file MUST have been
-          // written during this step's lifetime. If mtime is older than the step
-          // started_at, the agent is recycling a previous run's output and the
-          // step would silently "pass" with stale content. Reject loudly so the
-          // agent must produce a fresh file.
-          const fileStat = fs.statSync(filePath);
-          const stepRow = await pgGet<{ started_at: string | null; status: string }>(
-            "SELECT started_at, status FROM steps WHERE id = $1",
-            [target]
-          );
-          if (stepRow?.started_at) {
-            const stepStartedMs = new Date(stepRow.started_at).getTime();
-            const fileMtimeMs = fileStat.mtimeMs;
-            // 5 second grace window for clock skew
-            if (fileMtimeMs < stepStartedMs - 5000) {
-              const ageSec = Math.round((stepStartedMs - fileMtimeMs) / 1000);
-              process.stderr.write(`FILE_STALE: ${filePath} mtime is ${ageSec}s older than step started_at. The agent is recycling a previous run's output. Write a fresh file and retry.\n`);
-              process.exit(3);
-            }
-          }
-          output = fs.readFileSync(filePath, "utf-8").trim();
-        }
-        catch (e) {
-          if (String(e).includes("FILE_STALE")) throw e;
-          process.stderr.write(`Cannot read file ${filePath}: ${e}\n`);
-          process.exit(1);
-        }
+        output = await readFreshStepOutputFile(target, args[fileIdx + 1]);
       } else {
-        output = args.slice(3).filter(a => a !== "--file").join(" ").trim();
+        const outputArgs = args.slice(3).filter(a => a !== "--file");
+        if (outputArgs.length === 1 && isLikelyOutputFileArg(outputArgs[0])) {
+          if (!existsSync(outputArgs[0])) {
+            process.stderr.write(`Cannot read file ${outputArgs[0]}: file does not exist. Use stdin for literal one-argument output.\n`);
+            process.exit(1);
+          }
+          output = await readFreshStepOutputFile(target, outputArgs[0]);
+        } else {
+          output = outputArgs.join(" ").trim();
+        }
       }
       if (!output) {
         // Read from stdin (piped input) — fallback

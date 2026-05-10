@@ -76,6 +76,15 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /event-driven spawner owns workflow/);
   });
 
+  it("accepts positional output file paths for step completion", () => {
+    const source = fs.readFileSync(path.join(root, "src", "cli", "cli.ts"), "utf-8");
+    assert.match(source, /function isLikelyOutputFileArg/);
+    assert.match(source, /async function readFreshStepOutputFile/);
+    assert.match(source, /outputArgs\.length === 1 && isLikelyOutputFileArg\(outputArgs\[0\]\)/);
+    assert.match(source, /Cannot read file \$\{outputArgs\[0\]\}: file does not exist\. Use stdin for literal one-argument output\./);
+    assert.match(source, /await readFreshStepOutputFile\(target,\s*outputArgs\[0\]\)/);
+  });
+
   it("delegates verify review-delay decisions to claimStep", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.doesNotMatch(source, /isVerifyReviewDelayActive/);
