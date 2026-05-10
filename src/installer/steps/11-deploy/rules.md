@@ -55,3 +55,9 @@ when that is the correct runtime command.
 - Use `systemctl --user enable`, not sudo systemctl.
 - Check subdomain collision.
 - Reserved ports: 5432 PostgreSQL, 8443 gateway.
+- Mission Control `domain` must be hostname-only, for example
+  `<project>.setrox.com.tr`; never write `https://...`, `http://...`,
+  `https//...`, paths, or trailing slashes into the `domain` field.
+- Mission Control `displayName` must be a human-readable product name, not the
+  kebab-case repo slug. Example: `field-service-control-0510` becomes
+  `Field Service Control`.

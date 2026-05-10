@@ -7,6 +7,8 @@ subdomain, configure tunnel/proxy, and health-check the live app.
 
 - `{{REPO}}`: project root
 - `{{PROJECT_NAME}}`: project name for service/subdomain
+- `{{PROJECT_DISPLAY_NAME}}`: human-readable product name for UI/project cards
+- `{{HOSTNAME}}`: canonical hostname, without protocol
 - `{{BUILD_CMD}}`: build command from setup-build
 - `{{TECH_STACK}}`: vite-react, nextjs, etc.
 - `{{FINAL_PR}}`: PR URL
@@ -22,9 +24,13 @@ subdomain, configure tunnel/proxy, and health-check the live app.
 6. Health check root page; HTTP must be 200/301/302.
 7. Update Mission Control metadata only after successful deploy:
    - Project id/name: `basename "{{REPO}}"`.
+   - `displayName`: `{{PROJECT_DISPLAY_NAME}}`.
+   - `summary`: one concise product-purpose sentence, not the raw task string.
    - Use only `ports.frontend`; do not write `ports.web`.
-   - Payload fields: `id`, `name`, `repo`, `status`, `ports`, `domain`,
-     `service`, `github`, run id fields if present, `completedAt`.
+   - `domain` MUST be hostname-only: `{{HOSTNAME}}`.
+   - Never put `http://`, `https://`, slashes, paths, or `https//` in `domain`.
+   - Payload fields: `id`, `name`, `displayName`, `summary`, `repo`, `status`,
+     `ports`, `domain`, `service`, `github`, run id fields if present, `completedAt`.
    - First try `POST http://127.0.0.1:3080/api/projects`; if project exists,
      `PATCH http://127.0.0.1:3080/api/projects/<project-id>`.
    - Mission Control update failure must not roll back a working service; report
@@ -34,7 +40,7 @@ subdomain, configure tunnel/proxy, and health-check the live app.
 
 ```
 STATUS: done|retry|skip|fail
-DEPLOY_URL: https://<subdomain>.setrox.com.tr
+DEPLOY_URL: https://{{HOSTNAME}}
 SYSTEMD_UNIT: <project>.service
 PORT: <port>
 ```

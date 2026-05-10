@@ -49,6 +49,35 @@ function compactText(text: string, fallback: string): string {
   return s ? s.slice(0, 180) : fallback;
 }
 
+function humanizeProjectLabel(input: string, fallback: string): string {
+  const cleaned = String(input || "")
+    .replace(/^(?:Proje|Project)\s*:\s*/i, "")
+    .replace(/\s+(?:Build|Create|Make|Implement|Design|Write|Add|Fix|Yap|Olustur|Oluştur|Kur|Gelistir|Geliştir)\b[\s\S]*$/i, "")
+    .replace(/\s+(?:React|Vite|TypeScript|Tailwind|Next\.?js|Node\.?js)\b[\s\S]*$/i, "")
+    .replace(/[.;:,\-\s]+$/g, "")
+    .trim();
+
+  if (!cleaned) return fallback;
+  const hasSlugShape = /[-_]/.test(cleaned) || /^[a-z0-9]+$/.test(cleaned);
+  if (!hasSlugShape) return compactText(cleaned, fallback);
+
+  const words = cleaned
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .split(/[^a-zA-Z0-9]+/)
+    .filter((word) => word && !/^\d{4,8}$/.test(word));
+  if (words.length === 0) return compactText(cleaned, fallback);
+
+  const acronyms = new Set(["api", "crm", "erp", "hr", "ui", "ux", "ai", "qa", "iot"]);
+  return compactText(words.map((word) => {
+    const lower = word.toLowerCase();
+    if (acronyms.has(lower)) return lower.toUpperCase();
+    if (lower === "rootfix") return "Root Fix";
+    if (lower === "scopefix") return "Scope Fix";
+    return lower.charAt(0).toUpperCase() + lower.slice(1);
+  }).join(" "), fallback);
+}
+
 function extractProjectLabel(text: string, fallback: string): string {
   const raw = String(text || "");
   const projectLine = raw.match(/(?:^|\n)\s*(?:Proje|Project)\s*:\s*([^\n]+)/i)?.[1]?.trim();
@@ -58,7 +87,7 @@ function extractProjectLabel(text: string, fallback: string): string {
     .replace(/\s+(?:Build|Create|Make|Implement|Platform|React|Vite|TypeScript)\b[\s\S]*$/i, "")
     .replace(/[.;:,\-\s]+$/g, "")
     .trim();
-  return compactText(cleaned, fallback);
+  return humanizeProjectLabel(cleaned, fallback);
 }
 
 function loadScreenMap(repo: string): any[] {
@@ -213,7 +242,10 @@ export function buildAutoStoriesOutput(params: {
   maxStories?: number | null;
 }): string {
   const { repo, predicted, screenMap = [], maxStories = null } = params;
-  const product = extractProjectLabel(params.context?.["project_name"] || params.context?.["task"] || params.task || "", "Uygulama");
+  const product = extractProjectLabel(
+    params.context?.["project_display_name"] || params.context?.["project_name"] || params.context?.["project_slug"] || params.context?.["task"] || params.task || "",
+    "Uygulama",
+  );
   const screenFiles = unique(predicted.map((s) => s.filePath));
   const screenFileSet = new Set(screenFiles);
 

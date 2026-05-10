@@ -39,6 +39,41 @@ function extractProjectName(task: string): string {
   return firstLine.replace(/^(?:Project|Proje)\s*:\s*/i, "").slice(0, 80);
 }
 
+function humanizeProjectName(input: string): string {
+  const cleaned = String(input || "")
+    .replace(/^(?:Project|Proje)\s*:\s*/i, "")
+    .replace(/\s+(?:build|create|make|develop|implement|design|write|add|fix|yap|olustur|oluştur|kur|gelistir|geliştir)\b[\s\S]*$/i, "")
+    .replace(/\s+(?:React|Vite|TypeScript|Tailwind|Next\.?js|Node\.?js)\b[\s\S]*$/i, "")
+    .replace(/[.;:,\-\s]+$/g, "")
+    .trim();
+
+  if (!cleaned) return "Setfarm Project";
+
+  const normalized = transliterate(cleaned);
+  const hasSlugShape = /[-_]/.test(normalized) || /^[a-z0-9]+$/.test(normalized);
+  if (!hasSlugShape) {
+    return cleaned.replace(/\s+/g, " ").trim().slice(0, 80);
+  }
+
+  const words = normalized
+    .split(/[^a-zA-Z0-9]+/)
+    .filter((word) => word && !/^\d{4,8}$/.test(word));
+
+  if (words.length === 0) return cleaned.slice(0, 80);
+
+  const acronyms = new Set(["api", "crm", "erp", "hr", "ui", "ux", "ai", "qa", "iot"]);
+  return words
+    .map((word) => {
+      const lower = word.toLowerCase();
+      if (acronyms.has(lower)) return lower.toUpperCase();
+      if (lower === "rootfix") return "Root Fix";
+      if (lower === "scopefix") return "Scope Fix";
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
+    })
+    .join(" ")
+    .slice(0, 80);
+}
+
 function inferTechStack(task: string): string {
   const lower = task.toLowerCase();
   if (/\breact native\b|mobil uygulama|mobile app/.test(lower)) return "react-native";
@@ -115,8 +150,9 @@ function platformLineForStack(stack: string): string {
 }
 
 export function buildAutoPlanOutput(task: string): string {
-  const projectName = extractProjectName(task);
-  const slug = slugify(projectName);
+  const rawProjectName = extractProjectName(task);
+  const projectName = humanizeProjectName(rawProjectName);
+  const slug = slugify(rawProjectName);
   const stack = inferTechStack(task);
   const dbRequired = inferDbRequired(task);
   const uiLanguage = inferUiLanguage(task);
@@ -131,6 +167,8 @@ export function buildAutoPlanOutput(task: string): string {
 
   return [
     "STATUS: done",
+    `PROJECT_SLUG: ${slug}`,
+    `PROJECT_DISPLAY_NAME: ${projectName}`,
     `REPO: ${repo}`,
     `BRANCH: ${branch}`,
     `TECH_STACK: ${stack}`,

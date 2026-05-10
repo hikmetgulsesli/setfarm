@@ -56,6 +56,61 @@ const SMOKE_INFRA_FAILURE = /\b(agent-browser|browser control|playwright|chromiu
 const QA_FIX_MAX_STORIES = Math.max(1, parseInt(process.env.SETFARM_QA_FIX_MAX_STORIES || "4", 10) || 4);
 const QA_FIX_REPEAT_LIMIT = Math.max(1, parseInt(process.env.SETFARM_QA_FIX_REPEAT_LIMIT || "2", 10) || 2);
 
+function humanizeProjectDisplayName(input: string): string {
+  const cleaned = String(input || "")
+    .replace(/^(?:Project|Proje)\s*:\s*/i, "")
+    .replace(/\s+(?:build|create|make|develop|implement|design|write|add|fix|yap|olustur|oluştur|kur|gelistir|geliştir)\b[\s\S]*$/i, "")
+    .replace(/\s+(?:React|Vite|TypeScript|Tailwind|Next\.?js|Node\.?js)\b[\s\S]*$/i, "")
+    .replace(/[.;:,\-\s]+$/g, "")
+    .trim();
+  const source = cleaned || input || "Setfarm Project";
+  const words = source
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .split(/[^a-zA-Z0-9]+/)
+    .filter((word) => word && !/^\d{4,8}$/.test(word));
+  if (words.length === 0) return String(source).slice(0, 80);
+
+  const acronyms = new Set(["api", "crm", "erp", "hr", "ui", "ux", "ai", "qa", "iot"]);
+  return words.map((word) => {
+    const lower = word.toLowerCase();
+    if (acronyms.has(lower)) return lower.toUpperCase();
+    if (lower === "rootfix") return "Root Fix";
+    if (lower === "scopefix") return "Scope Fix";
+    return lower.charAt(0).toUpperCase() + lower.slice(1);
+  }).join(" ").slice(0, 80);
+}
+
+function normalizeMissionControlHostname(input: string, fallbackProjectName: string): string {
+  const fallback = `${fallbackProjectName}.setrox.com.tr`;
+  let value = String(input || "").trim();
+  if (!value) return fallback;
+
+  value = value
+    .replace(/^https?:\/\/https?:\/\//i, "https://")
+    .replace(/^https?:\/\/https\/\//i, "https://")
+    .replace(/^https?:\/\/http\/\//i, "http://")
+    .replace(/^https\/\//i, "https://")
+    .replace(/^http\/\//i, "http://");
+
+  try {
+    const withProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(value) ? value : `https://${value}`;
+    const parsed = new URL(withProtocol);
+    value = parsed.hostname;
+  } catch {
+    value = value.split(/[/?#]/)[0];
+  }
+
+  value = value
+    .replace(/^https?:\/\//i, "")
+    .replace(/^https?\/\//i, "")
+    .replace(/\/.*$/, "")
+    .replace(/:+$/, "")
+    .toLowerCase();
+
+  return /^[a-z0-9.-]+$/.test(value) && value.includes(".") ? value : fallback;
+}
+
 function isQaFixStoryId(storyId: string | null | undefined): boolean {
   return /^QA-FIX-\d+$/i.test((storyId || "").trim());
 }
@@ -3298,7 +3353,7 @@ ${screenDescs}
 
     // MC registration guardrail: verify project is registered in Mission Control
     const deployType = parsed["deploy_type"] || "";
-    if (deployType === "new-web" || deployType === "new-mobile" || deployType === "update") {
+    if (!deployType || deployType === "new-web" || deployType === "new-mobile" || deployType === "update") {
       const projectName = context["repo"] ? path.basename(context["repo"]) : "";
       if (projectName) {
         try {
@@ -3308,6 +3363,41 @@ ${screenDescs}
           if (!mcData.id) {
             deployErr = `GUARDRAIL: Project "${projectName}" not found in Mission Control after deploy. MC registration failed.`;
           } else {
+            const expectedDomain = `${projectName}.setrox.com.tr`;
+            const canonicalDomain = normalizeMissionControlHostname(mcData.domain || parsed["deploy_url"] || expectedDomain, projectName);
+            const rawDisplayName = mcData.displayName || mcData.display_name || context["project_display_name"] || context["project_name"] || projectName;
+            const canonicalDisplayName = humanizeProjectDisplayName(rawDisplayName);
+            const needsPatch =
+              mcData.domain !== canonicalDomain ||
+              !mcData.displayName ||
+              mcData.displayName === projectName ||
+              mcData.displayName === mcData.name;
+
+            if (needsPatch) {
+              const patchBody = JSON.stringify({
+                displayName: canonicalDisplayName,
+                domain: canonicalDomain,
+              });
+              execFileSync("curl", [
+                "-sf",
+                "--max-time",
+                "5",
+                "-X",
+                "PATCH",
+                `http://127.0.0.1:3080/api/projects/${projectName}`,
+                "-H",
+                "Content-Type: application/json",
+                "-d",
+                patchBody,
+              ], { timeout: 10_000, stdio: "pipe" });
+
+              const patchedRaw = execFileSync("curl", ["-sf", "--max-time", "5", `http://127.0.0.1:3080/api/projects/${projectName}`],
+                { timeout: 10_000, stdio: "pipe" }).toString().trim();
+              const patched = JSON.parse(patchedRaw);
+              if (patched.domain !== canonicalDomain) {
+                deployErr = `GUARDRAIL: Mission Control domain normalization failed for "${projectName}" (expected ${canonicalDomain}, got ${patched.domain || "empty"}).`;
+              }
+            }
             logger.info(`[deploy-guardrail] MC registration verified: ${projectName}`, { runId: step.run_id });
           }
         } catch {
