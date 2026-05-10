@@ -417,6 +417,7 @@ export async function cleanupAbandonedSteps(advancePipeline: (runId: string) => 
           } catch (e) {
             logger.warn(`[cleanup] auto-save worktree failed: ${String(e)}`, { runId: step.run_id });
           }
+          await cleanupProjectEphemera(step.run_id, `story-abandoned:${story.story_id}`);
 
           const newAbandonCount = (story.abandoned_count ?? 0) + 1;
           const wfId = await getWorkflowId(step.run_id);
@@ -459,6 +460,7 @@ export async function cleanupAbandonedSteps(advancePipeline: (runId: string) => 
       // Single steps
       const newAbandonCount = (step.abandoned_count ?? 0) + 1;
       const singleDiagnostic = `ABANDONED: Agent ${step.agent_id} timed out. No completion signal received. Attempt ${newAbandonCount}/${MAX_ABANDON_RESETS}.`;
+      await cleanupProjectEphemera(step.run_id, `step-abandoned:${step.step_id}`);
 
       if (newAbandonCount >= MAX_ABANDON_RESETS) {
         await pgRun("UPDATE steps SET status = 'failed', output = $1, abandoned_count = $2, updated_at = $3 WHERE id = $4", [singleDiagnostic, newAbandonCount, now(), step.id]);
@@ -493,6 +495,7 @@ export async function cleanupAbandonedSteps(advancePipeline: (runId: string) => 
 
     for (const story of abandonedStories) {
       await pgRun("UPDATE stories SET status = 'pending', abandoned_count = abandoned_count + 1, retry_count = retry_count + 1, updated_at = $1 WHERE id = $2", [now(), story.id]);
+      await cleanupProjectEphemera(story.run_id, `story-abandoned:${story.id}`);
     }
 
     // Recover stuck pipelines
