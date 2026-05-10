@@ -120,6 +120,17 @@ function ab(...cmdArgs) {
 function abOk(...a) { const r = ab(...a); return r.startsWith('__ERR__') ? null : r; }
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+function parseEvalJson(raw, fallback) {
+  if (!raw) return fallback;
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed !== 'string') return parsed;
+    try { return JSON.parse(parsed); } catch { return fallback; }
+  } catch {
+    return fallback;
+  }
+}
+
 // ── Filesystem helpers ──────────────────────────────────────────────
 function walkDir(dir, cb) {
   try {
@@ -861,12 +872,10 @@ async function main() {
           const routeBtnJson = abOk('eval',
             BUTTON_AUDIT_EVAL
           );
-          try {
-            const routeBtnAudit = JSON.parse(routeBtnJson || '{"issues":[]}');
-            for (const i of routeBtnAudit.issues || []) {
-              failures.push('[' + route + '] dead-button: "' + i.detail + '"');
-            }
-          } catch {}
+          const routeBtnAudit = parseEvalJson(routeBtnJson, {issues: []});
+          for (const i of routeBtnAudit.issues || []) {
+            failures.push('[' + route + '] dead-button: "' + i.detail + '"');
+          }
           // Check for JS errors after clicking
           const errCount = getJsErrorCount();
           if (errCount > 0) {
@@ -906,7 +915,7 @@ async function main() {
           '})'
         );
         try {
-          const routeInfo = JSON.parse(routeInfoRaw || '{}');
+          const routeInfo = parseEvalJson(routeInfoRaw, {});
           const expectedHash = hashRoute.toLowerCase();
           const actualHash = String(routeInfo.hash || '').toLowerCase();
           const screen = String(routeInfo.screen || '').toLowerCase();
@@ -937,8 +946,7 @@ async function main() {
             '.filter(l => l.href && !l.href.startsWith("mailto:") && !l.href.startsWith("tel:") && !l.href.startsWith("javascript:"))'
         );
 
-        let allLinks = [];
-        try { allLinks = JSON.parse(linksJson || '[]'); } catch {}
+        let allLinks = parseEvalJson(linksJson, []);
 
         // Filter to internal links only
         const internalLinks = allLinks.filter(l => {
@@ -1037,7 +1045,7 @@ async function main() {
           // Check for network errors after button click
           const netErrors = abOk('eval', 'window.__smoke_network_errors || []');
           try {
-            const netArr = JSON.parse(netErrors || '[]');
+            const netArr = parseEvalJson(netErrors, []);
             if (netArr.length > 0) {
               for (const ne of netArr) {
                 failures.push('[BTN] "' + btn + '" triggered network error: ' + ne);
@@ -1158,8 +1166,7 @@ async function main() {
           '})()'
         );
 
-        let a11yIssues = [];
-        try { a11yIssues = JSON.parse(a11yJson || '[]'); } catch {}
+        let a11yIssues = parseEvalJson(a11yJson, []);
 
         if (Array.isArray(a11yIssues) && a11yIssues.length > 0) {
           const byType = {};
@@ -1238,8 +1245,7 @@ async function main() {
           '})()'
         );
 
-        let visualIssues = [];
-        try { visualIssues = JSON.parse(visualJson || '[]'); } catch {}
+        let visualIssues = parseEvalJson(visualJson, []);
 
         if (Array.isArray(visualIssues) && visualIssues.length > 0) {
           const byType = {};
@@ -1283,8 +1289,7 @@ async function main() {
           '})()'
         );
 
-        let layoutIssues = [];
-        try { layoutIssues = JSON.parse(layoutJson || '[]'); } catch {}
+        let layoutIssues = parseEvalJson(layoutJson, []);
 
         if (Array.isArray(layoutIssues) && layoutIssues.length > 0) {
           for (const i of layoutIssues) {
@@ -1299,7 +1304,7 @@ async function main() {
       let networkErrors = [];
       try {
         const netJson = abOk('eval', 'window.__smoke_network_errors || []');
-        try { networkErrors = JSON.parse(netJson || '[]'); } catch {}
+        networkErrors = parseEvalJson(netJson, []);
         if (Array.isArray(networkErrors) && networkErrors.length > 0) {
           networkErrors = networkErrors.slice(0, 20);
           failures.push('[NETWORK] ' + networkErrors.length + ' silent API failure(s): ' + networkErrors.slice(0, 3).join('; '));
@@ -1312,7 +1317,7 @@ async function main() {
       try {
         const errJson = abOk('eval', 'window.__smoke_errors || []');
         try {
-          const errors = JSON.parse(errJson || '[]');
+          const errors = parseEvalJson(errJson, []);
           if (Array.isArray(errors) && errors.length > 0) {
             consoleErrors = errors.slice(0, 20);
             failures.push('[CONSOLE] ' + errors.length + ' JS error(s) collected: ' + errors.slice(0, 3).join('; '));
@@ -1360,8 +1365,7 @@ async function main() {
           '})()'
         );
 
-        let hydroIssues = [];
-        try { hydroIssues = JSON.parse(hydroJson || '[]'); } catch {}
+        let hydroIssues = parseEvalJson(hydroJson, []);
 
         if (Array.isArray(hydroIssues) && hydroIssues.length > 0) {
           for (const i of hydroIssues) {
@@ -1409,8 +1413,7 @@ async function main() {
           '})()'
         );
 
-        let contentIssues = [];
-        try { contentIssues = JSON.parse(contentJson || '[]'); } catch {}
+        let contentIssues = parseEvalJson(contentJson, []);
 
         if (Array.isArray(contentIssues) && contentIssues.length > 0) {
           const byType = {};
@@ -1436,11 +1439,9 @@ async function main() {
         );
 
         let uxIssues = [];
-        try {
-          const uxAudit = JSON.parse(uxJson || '{"issues":[]}');
-          uxIssues = uxAudit.issues || [];
-          buttonsChecked += (uxAudit.tested || []).length;
-        } catch {}
+        const uxAudit = parseEvalJson(uxJson, {issues: [], tested: []});
+        uxIssues = uxAudit.issues || [];
+        buttonsChecked += (uxAudit.tested || []).length;
 
         if (Array.isArray(uxIssues) && uxIssues.length > 0) {
           for (const i of uxIssues) {
@@ -1507,8 +1508,7 @@ async function main() {
           '})()'
         );
 
-        let detectResult = null;
-        try { detectResult = JSON.parse(detectJson || 'null'); } catch {}
+        let detectResult = parseEvalJson(detectJson, null);
 
         if (detectResult && !detectResult.skip) {
           // Step 2: Control wait — NO input, same duration as input test
@@ -1530,8 +1530,7 @@ async function main() {
             '})()'
           );
 
-          let controlResult = null;
-          try { controlResult = JSON.parse(controlJson || 'null'); } catch {}
+          let controlResult = parseEvalJson(controlJson, null);
           if (!controlResult || controlResult.skip) controlResult = { ambientPixels: false, ambientText: false, ambientState: false, ambientUrl: false };
 
           // Step 4: Dispatch keyboard inputs (from T1 baseline)
@@ -1574,8 +1573,7 @@ async function main() {
             '})()'
           );
 
-          let interactResult = null;
-          try { interactResult = JSON.parse(afterJson || 'null'); } catch {}
+          let interactResult = parseEvalJson(afterJson, null);
 
           if (interactResult && !interactResult.skip) {
             const s = interactResult.signals;
