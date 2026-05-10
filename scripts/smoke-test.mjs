@@ -239,6 +239,275 @@ function normalizeSnapshotText(text) {
     .slice(0, 6000);
 }
 
+function routeTokenFromLabel(label) {
+  const text = String(label || "").toLowerCase();
+  if (/\b(settings?|configuration|preferences?)\b/.test(text)) return "settings";
+  if (/\b(insights?|analytics?|reports?|metrics?)\b/.test(text)) return "insights";
+  if (/\b(dashboard|overview|home)\b/.test(text)) return "dashboard";
+  if (/\b(profile|account|user)\b/.test(text)) return "profile";
+  if (/\b(details?|view details?|open)\b/.test(text)) return "detail";
+  if (/\b(create|new|add|log|report)\b/.test(text) && /\b(incident|record|ticket|case|task|item|project)\b/.test(text)) return "create";
+  if (/\b(save|submit|send|create|add|report|kaydet|gonder)\b/.test(text)) return "save";
+  if (/\b(cancel|back|return|close)\b/.test(text)) return "cancel";
+  if (/\b(clear|reset|delete|remove)\b/.test(text)) return "destructive";
+  return "";
+}
+
+function expectedTextForIntent(intent) {
+  if (intent === "settings") return /setting|configuration|preferences|workspace|notification|data management/i;
+  if (intent === "insights") return /insight|analytics|metric|report|trend|allocation|response/i;
+  if (intent === "dashboard") return /dashboard|overview|active|incident|status|summary/i;
+  if (intent === "profile") return /profile|account|operator|user|session|accessibility/i;
+  if (intent === "detail") return /detail|summary|incident|status|assign|export|location/i;
+  if (intent === "create") return /new|create|add|log|report|record|title|description|save/i;
+  return null;
+}
+
+function intentMatchesRoute(intent, routeText) {
+  const route = String(routeText || "").toLowerCase();
+  if (!intent || !route) return false;
+  if (intent === "detail") return /detail|summary|view/.test(route);
+  if (intent === "create") return /new|create|add|report|record/.test(route);
+  return route.includes(intent);
+}
+
+const FLOW_AUDIT_EVAL =
+  `((async function(limit) {
+    function sleep(ms) { return new Promise(function(resolve) { setTimeout(resolve, ms); }); }
+    function labelFor(el, idx) {
+      var explicit = el.getAttribute("aria-label") ||
+        el.getAttribute("title") ||
+        el.getAttribute("data-testid") ||
+        el.getAttribute("name") ||
+        "";
+      var text = (el.textContent || "").replace(/\\s+/g, " ").trim();
+      var icon = "";
+      var iconEl = el.querySelector("[data-icon], svg[aria-label], svg title, .material-symbols-outlined, [class*=icon]");
+      if (iconEl) {
+        icon = iconEl.getAttribute("data-icon") ||
+          iconEl.getAttribute("aria-label") ||
+          iconEl.textContent ||
+          iconEl.className ||
+          "";
+      }
+      return String(explicit || text || icon || ("control#" + (idx + 1))).replace(/\\s+/g, " ").trim().substring(0, 100);
+    }
+    function intentFor(label) {
+      var text = String(label || "").toLowerCase();
+      if (/\\b(settings?|configuration|preferences?)\\b/.test(text)) return "settings";
+      if (/\\b(insights?|analytics?|reports?|metrics?)\\b/.test(text)) return "insights";
+      if (/\\b(dashboard|overview|home)\\b/.test(text)) return "dashboard";
+      if (/\\b(profile|account|user)\\b/.test(text)) return "profile";
+      if (/\\b(details?|view details?|open)\\b/.test(text)) return "detail";
+      if (/\\b(create|new|add|log|report)\\b/.test(text) && /\\b(incident|record|ticket|case|task|item|project)\\b/.test(text)) return "create";
+      if (/\\b(save|submit|send|create|add|report|kaydet|gonder)\\b/.test(text)) return "save";
+      if (/\\b(cancel|back|return|close)\\b/.test(text)) return "cancel";
+      return "";
+    }
+    function appRoute() {
+      try {
+        var app = window.app || {};
+        var st = app.state || {};
+        return String(st.screen || st.route || st.currentRoute || app.screen || app.route || app.currentScreen || "");
+      } catch(e) { return ""; }
+    }
+    function appCounts() {
+      try {
+        var st = (window.app && window.app.state) || {};
+        return {
+          incidents: Array.isArray(st.incidents) ? st.incidents.length : null,
+          records: Array.isArray(st.records) ? st.records.length : null,
+          items: Array.isArray(st.items) ? st.items.length : null,
+          tasks: Array.isArray(st.tasks) ? st.tasks.length : null
+        };
+      } catch(e) {
+        return { incidents:null, records:null, items:null, tasks:null };
+      }
+    }
+    function countIncreased(before, after) {
+      return ["incidents","records","items","tasks"].some(function(k) {
+        return typeof before[k] === "number" && typeof after[k] === "number" && after[k] > before[k];
+      });
+    }
+    function headings() {
+      return Array.from(document.querySelectorAll("h1,h2,h3,[role=heading]"))
+        .map(function(el) { return (el.textContent || "").replace(/\\s+/g, " ").trim(); })
+        .filter(Boolean)
+        .slice(0, 12);
+    }
+    function text() {
+      return (document.body && document.body.innerText || "").replace(/\\s+/g, " ").trim().substring(0, 3000);
+    }
+    function controls() {
+      return Array.from(document.querySelectorAll("button:not([disabled]), [role=button]:not([aria-disabled=true]), a[href]"))
+        .map(function(el, idx) { return { el: el, label: labelFor(el, idx), idx: idx }; })
+        .filter(function(item) {
+          var r = item.el.getBoundingClientRect();
+          if (r.width === 0 || r.height === 0) return false;
+          if (/^(close|dismiss|x|\\u00d7|\\u2715|\\u2716)$/i.test(item.label)) return false;
+          return !!intentFor(item.label);
+        });
+    }
+    function snapshot() {
+      return {
+        href: location.href,
+        hash: location.hash,
+        route: appRoute(),
+        text: text(),
+        headings: headings(),
+        counts: appCounts(),
+        inputs: document.querySelectorAll("input:not([type=hidden]), textarea, select").length,
+        forms: document.querySelectorAll("form").length
+      };
+    }
+    function routeMatches(intent, route) {
+      route = String(route || "").toLowerCase();
+      if (!intent || !route) return false;
+      if (intent === "detail") return /detail|summary|view/.test(route);
+      if (intent === "create") return /new|create|add|report|record/.test(route);
+      return route.indexOf(intent) >= 0;
+    }
+    function textMatches(intent, bodyText) {
+      if (intent === "settings") return /setting|configuration|preferences|workspace|notification|data management/i.test(bodyText);
+      if (intent === "insights") return /insight|analytics|metric|report|trend|allocation|response/i.test(bodyText);
+      if (intent === "dashboard") return /dashboard|overview|active|incident|status|summary/i.test(bodyText);
+      if (intent === "profile") return /profile|account|operator|user|session|accessibility/i.test(bodyText);
+      if (intent === "detail") return /detail|summary|incident|status|assign|export|location/i.test(bodyText);
+      if (intent === "create") return /new|create|add|log|report|record|title|description|save/i.test(bodyText);
+      return false;
+    }
+    function fillForm() {
+      var inputs = Array.from(document.querySelectorAll("input:not([type=hidden]), textarea"));
+      var filled = 0;
+      inputs.forEach(function(input, idx) {
+        if (input.disabled || input.readOnly) return;
+        var label = ((input.getAttribute("aria-label") || input.getAttribute("placeholder") || input.name || input.id || "") + " " + idx).toLowerCase();
+        var value = "Smoke Flow " + Date.now();
+        if (/email/.test(label) || input.type === "email") value = "smoke@example.com";
+        if (/phone|tel/.test(label) || input.type === "tel") value = "5551234567";
+        if (/number|qty|count/.test(label) || input.type === "number") value = "3";
+        if (/location|address|sector/.test(label)) value = "Smoke Sector 9";
+        if (/description|note|detail|summary/.test(label)) value = "Smoke flow audit generated this record.";
+        try {
+          var proto = input instanceof HTMLTextAreaElement ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+          var setter = Object.getOwnPropertyDescriptor(proto, "value") && Object.getOwnPropertyDescriptor(proto, "value").set;
+          if (setter) setter.call(input, value); else input.value = value;
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+          filled++;
+        } catch(e) {}
+      });
+      return filled;
+    }
+    async function goHome(startHref) {
+      try {
+        if (window.app && typeof window.app.dispatch === "function") {
+          window.app.dispatch({ type: "NAVIGATE", screen: "dashboard" });
+        }
+      } catch(e) {}
+      try {
+        history.pushState(null, "", startHref);
+        window.dispatchEvent(new HashChangeEvent("hashchange"));
+      } catch(e) {}
+      await sleep(350);
+    }
+    function findCurrentControl(plan) {
+      var current = controls();
+      var exact = current.find(function(item) { return item.label === plan.label; });
+      if (exact) return exact;
+      return current.find(function(item) { return intentFor(item.label) === plan.intent; }) || null;
+    }
+    async function completeCreateFlow(beforeCounts) {
+      var filled = fillForm();
+      await sleep(120);
+      var saveBtn = Array.from(document.querySelectorAll("button,[role=button]")).find(function(el) {
+        return /save|submit|send|create|add|report|kaydet|gonder/i.test(labelFor(el, 0));
+      });
+      if (!saveBtn) return { ok: false, reason: "create form has no save/submit button" };
+      var saveBefore = snapshot();
+      try { saveBtn.scrollIntoView({ block: "center", inline: "center" }); } catch(e) {}
+      try { saveBtn.click(); } catch(e) { return { ok: false, reason: "save threw " + e.message }; }
+      await sleep(1000);
+      var saveAfter = snapshot();
+      var ok = filled > 0 && (
+        countIncreased(beforeCounts, saveAfter.counts) ||
+        countIncreased(saveBefore.counts, saveAfter.counts) ||
+        saveAfter.route !== saveBefore.route ||
+        /success|saved|created|reported|added/i.test(saveAfter.text)
+      );
+      return { ok: ok, reason: ok ? "" : "create form did not persist a record, navigate, or show success" };
+    }
+    var issues = [];
+    var tested = [];
+    var start = snapshot();
+    var selected = [];
+    var seen = {};
+    controls().forEach(function(item) {
+      var intent = intentFor(item.label);
+      if (!intent || seen[intent]) return;
+      if (intent === "destructive") return;
+      seen[intent] = true;
+      selected.push({ label: item.label, intent: intent });
+    });
+    selected = selected.slice(0, limit);
+    for (var i = 0; i < selected.length; i++) {
+      var plan = selected[i];
+      await goHome(start.href);
+      var item = findCurrentControl(plan);
+      if (!item || !item.el || !item.el.isConnected) {
+        issues.push({ type:"flow-control-missing", detail:plan.label + " (" + plan.intent + ") disappeared before it could be tested" });
+        continue;
+      }
+      var intent = plan.intent;
+      var before = snapshot();
+      tested.push({ label: item.label, intent: intent });
+      try { item.el.scrollIntoView({ block: "center", inline: "center" }); } catch(e) {}
+      try { item.el.click(); } catch(e) {
+        issues.push({ type:"flow-click-error", detail:item.label + " threw " + e.message });
+        continue;
+      }
+      await sleep(700);
+      var after = snapshot();
+      var ok = false;
+      if (["settings","insights","dashboard","profile","detail","create"].indexOf(intent) >= 0) {
+        ok = routeMatches(intent, after.route) || routeMatches(intent, after.hash) || textMatches(intent, after.text);
+        if (intent === "create") {
+          ok = ok && (after.inputs > before.inputs || after.forms > before.forms || textMatches(intent, after.text));
+          if (ok) {
+            var createResult = await completeCreateFlow(before.counts);
+            ok = createResult.ok;
+            if (!ok) {
+              issues.push({ type:"flow-create-save-failed", detail:item.label + " opened create flow but " + createResult.reason });
+            }
+          }
+        }
+      } else if (intent === "cancel") {
+        ok = after.href !== before.href || after.route !== before.route || after.text !== before.text;
+      } else if (intent === "save") {
+        var filled = fillForm();
+        await sleep(100);
+        var saveBefore = snapshot();
+        var saveBtn = item.el.isConnected ? item.el : Array.from(document.querySelectorAll("button,[role=button]")).find(function(el) {
+          return /save|submit|send|create|add|report|kaydet|gonder/i.test(labelFor(el, 0));
+        });
+        if (saveBtn) {
+          try { saveBtn.click(); } catch(e) {}
+          await sleep(900);
+        }
+        var saveAfter = snapshot();
+        ok = filled === 0 || countIncreased(saveBefore.counts, saveAfter.counts) || saveAfter.route !== saveBefore.route || /success|saved|created|reported|added/i.test(saveAfter.text);
+        after = saveAfter;
+      }
+      if (!ok) {
+        issues.push({
+          type: "flow-no-visible-result",
+          detail: item.label + " expected " + intent + " flow; route/hash/text/form state did not confirm it"
+        });
+      }
+    }
+    return { issues: issues, tested: tested };
+  })(8))`;
+
 function checkComponentWiring(repo) {
   const issues = [];
   const componentFiles = [];
@@ -385,6 +654,130 @@ function checkNativeButtonWiring(repo) {
           relative(repo, f) + ':' + line +
           ' button' + (label ? ' "' + label + '"' : '') +
           ' has no onClick/type="submit"/disabled/aria-disabled'
+        );
+      }
+    });
+  }
+
+  return issues;
+}
+
+// ── Phase 1d: Semantic interaction validation ───────────────────────
+// A click target that is not a native control can pass visual smoke while
+// remaining broken for keyboard users and shallow test suites. Treat those as
+// product defects unless the element implements the full button contract.
+function checkSemanticClickTargets(repo) {
+  const issues = [];
+  const seen = new Set();
+  const roots = ['src', 'app', 'pages', 'components']
+    .map(d => join(repo, d))
+    .filter(d => existsSync(d));
+  const nativeInteractive = new Set([
+    'a', 'button', 'input', 'select', 'textarea', 'summary', 'option', 'label',
+  ]);
+
+  function hasButtonRole(tag) {
+    return /\brole\s*=\s*(["'])button\1/i.test(tag) ||
+      /\brole\s*=\s*\{\s*(["'])button\1\s*\}/i.test(tag);
+  }
+
+  function hasFocusableTabIndex(tag) {
+    return /\btabIndex\s*=\s*(["'])0\1/i.test(tag) ||
+      /\btabIndex\s*=\s*\{\s*0\s*\}/i.test(tag);
+  }
+
+  function openingTags(content) {
+    const tags = [];
+    for (let i = 0; i < content.length; i++) {
+      if (content[i] !== '<') continue;
+      const next = content[i + 1] || '';
+      if (!/[a-z]/.test(next)) continue;
+
+      let j = i + 1;
+      while (j < content.length && /[a-z0-9:-]/i.test(content[j])) j++;
+      const name = content.slice(i + 1, j).toLowerCase();
+      let quote = null;
+      let braceDepth = 0;
+      for (; j < content.length; j++) {
+        const ch = content[j];
+        if (quote) {
+          if (ch === quote && content[j - 1] !== '\\') quote = null;
+          continue;
+        }
+        if (ch === '"' || ch === "'" || ch === '`') { quote = ch; continue; }
+        if (ch === '{') { braceDepth++; continue; }
+        if (ch === '}') { braceDepth = Math.max(0, braceDepth - 1); continue; }
+        if (ch === '>' && braceDepth === 0) break;
+      }
+      if (j >= content.length) continue;
+      tags.push({ name, text: content.slice(i, j + 1), index: i });
+      i = j;
+    }
+    return tags;
+  }
+
+  for (const root of roots) {
+    walkDir(root, f => {
+      if (!/\.(tsx?|jsx?)$/.test(f)) return;
+      if (/\.(test|spec)\.(tsx?|jsx?)$/.test(f)) return;
+      if (seen.has(f)) return;
+      seen.add(f);
+
+      let content = '';
+      try { content = readFileSync(f, 'utf-8'); } catch { return; }
+
+      for (const tag of openingTags(content)) {
+        if (!/\bonClick\s*=/.test(tag.text)) continue;
+        if (nativeInteractive.has(tag.name)) continue;
+
+        const keyboardAccessible = hasButtonRole(tag.text) &&
+          hasFocusableTabIndex(tag.text) &&
+          /\bonKey(?:Down|Up|Press)\s*=/.test(tag.text);
+        if (keyboardAccessible) continue;
+
+        const line = content.slice(0, tag.index).split('\n').length;
+        issues.push(
+          relative(repo, f) + ':' + line +
+          ' <' + tag.name + '> has onClick but is not a native or keyboard-accessible control; ' +
+          'use <button>/<a> or add role="button", tabIndex={0}, and Enter/Space handling'
+        );
+      }
+    });
+  }
+
+  return issues;
+}
+
+// ── Phase 1e: Interaction test quality validation ───────────────────
+// A click wrapped only in not.toThrow proves the handler did not crash, not
+// that navigation, modal state, persistence, or visible content changed.
+function checkWeakInteractionAssertions(repo) {
+  const issues = [];
+  const seen = new Set();
+  const roots = ['src', 'app', 'pages', 'components', 'test', 'tests', '__tests__']
+    .map(d => join(repo, d))
+    .filter(d => existsSync(d));
+
+  for (const root of roots) {
+    walkDir(root, f => {
+      if (!/\.(test|spec)\.(tsx?|jsx?)$/.test(f)) return;
+      if (seen.has(f)) return;
+      seen.add(f);
+
+      let content = '';
+      try { content = readFileSync(f, 'utf-8'); } catch { return; }
+      if (!/\b(?:fireEvent|userEvent)\.click\b/.test(content)) return;
+
+      const notToThrowRe = /\.not\.toThrow\s*\(/g;
+      let m;
+      while ((m = notToThrowRe.exec(content)) !== null) {
+        const nearby = content.slice(Math.max(0, m.index - 700), Math.min(content.length, m.index + 120));
+        if (!/\b(?:fireEvent|userEvent)\.click\b/.test(nearby)) continue;
+
+        const line = content.slice(0, m.index).split('\n').length;
+        issues.push(
+          relative(repo, f) + ':' + line +
+          ' click assertion uses not.toThrow only; assert the post-click UI state, route, callback, or saved data'
         );
       }
     });
@@ -758,6 +1151,8 @@ async function main() {
   let buttonsChecked = 0;
   let formsChecked = 0;
   let consoleErrors = [];
+  let flowsChecked = 0;
+  let flowIssues = [];
 
   // ── Phase 1: Static ──
   const routes = discoverRoutes(repoPath);
@@ -768,6 +1163,10 @@ async function main() {
   for (const i of importIssues) failures.push('IMPORT: ' + i);
   const buttonWiringIssues = checkNativeButtonWiring(repoPath);
   for (const b of buttonWiringIssues) failures.push('UNWIRED_BUTTON: ' + b);
+  const semanticClickIssues = checkSemanticClickTargets(repoPath);
+  for (const s of semanticClickIssues) failures.push('NON_SEMANTIC_CLICK_TARGET: ' + s);
+  const weakInteractionIssues = checkWeakInteractionAssertions(repoPath);
+  for (const t of weakInteractionIssues) failures.push('[TEST] WEAK_INTERACTION_ASSERTION: ' + t);
 
   // ── Phase 2: Browser (homepage + primary action) ──
   const port = requestedPort > 0 ? requestedPort : 9100 + Math.floor(Math.random()*900);
@@ -1452,6 +1851,27 @@ async function main() {
         failures.push('[UX] Phase 14 error: ' + e.message);
       }
 
+      // ── Phase 14b: Intentional Flow Verification ───────────────
+      // Dead-button checks prove a click changed something. This phase verifies
+      // that project controls with recognizable intent changed the expected
+      // route, visible screen, form, or record state.
+      try {
+        ab('open', baseUrl);
+        await sleep(1500);
+        injectErrorCollector();
+
+        const flowJson = abOk('eval', FLOW_AUDIT_EVAL);
+        const flowAudit = parseEvalJson(flowJson, { issues: [], tested: [] });
+        flowIssues = Array.isArray(flowAudit.issues) ? flowAudit.issues : [];
+        flowsChecked += Array.isArray(flowAudit.tested) ? flowAudit.tested.length : 0;
+
+        for (const i of flowIssues) {
+          failures.push('[FLOW] ' + i.type + ': ' + i.detail);
+        }
+      } catch (e) {
+        failures.push('[FLOW] Phase 14b error: ' + e.message);
+      }
+
 
       // ── Phase 15: Interactive State Verification ─────────────────
       // v3: Control-group approach — detects ambient animation (e.g. bouncing sprites)
@@ -1710,7 +2130,9 @@ async function main() {
   const hydrationCount = failures.filter(f => f.startsWith('[HYDRATION]')).length;
   const contentCount = failures.filter(f => f.startsWith('[CONTENT]')).length;
   const uxCount = failures.filter(f => f.startsWith('[UX]')).length;
+  const flowCount = failures.filter(f => f.startsWith('[FLOW]')).length;
   const interactCount = failures.filter(f => f.startsWith('[INTERACT]')).length;
+  const testCount = failures.filter(f => f.startsWith('[TEST]')).length;
   if (consoleCount > 0) confidence -= 40;
   if (networkCount > 0) confidence -= 30;
   if (layoutCount > 0) confidence -= 20;
@@ -1719,11 +2141,14 @@ async function main() {
   if (hydrationCount > 0) confidence -= 15;
   if (contentCount > 0) confidence -= 15;
   if (uxCount > 0) confidence -= 10;
+  if (flowCount > 0) confidence -= 40;
   if (interactCount > 0) confidence -= 40;
   const fidelityCount = failures.filter(f => f.startsWith('[FIDELITY]')).length;
   if (fidelityCount > 0) confidence -= 35;
   if (wiringIssues.length > 0) confidence -= 20;
   if (buttonWiringIssues.length > 0) confidence -= 35;
+  if (semanticClickIssues.length > 0) confidence -= 35;
+  if (testCount > 0) confidence -= 20;
   if (linksBroken > 0) confidence -= 10;
   confidence = Math.max(0, confidence);
 
@@ -1738,10 +2163,17 @@ async function main() {
     wiringDetails: wiringIssues,
     buttonWiringIssues: buttonWiringIssues.length,
     buttonWiringDetails: buttonWiringIssues,
+    semanticClickIssues: semanticClickIssues.length,
+    semanticClickDetails: semanticClickIssues,
+    weakInteractionAssertions: weakInteractionIssues.length,
+    weakInteractionDetails: weakInteractionIssues,
     linksChecked,
     linksBroken,
     buttonsChecked,
     formsChecked,
+    flowsChecked,
+    flowIssues: flowCount,
+    flowDetails: flowIssues,
     a11yIssues: a11yCount,
     visualIssues: visualCount,
     layoutIssues: layoutCount,
@@ -1750,6 +2182,7 @@ async function main() {
     contentIssues: contentCount,
     uxDeadEnds: uxCount,
     interactIssues: interactCount,
+    testIssues: testCount,
     consoleErrors,
     failures,
   };
@@ -1758,7 +2191,12 @@ async function main() {
   process.exit(failures.length > 0 ? 1 : 0);
 }
 
-export { checkEntryPointImports, checkNativeButtonWiring };
+export {
+  checkEntryPointImports,
+  checkNativeButtonWiring,
+  checkSemanticClickTargets,
+  checkWeakInteractionAssertions,
+};
 
 if (isCli) {
   main();

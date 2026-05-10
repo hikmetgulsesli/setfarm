@@ -44,8 +44,12 @@ function summarizeSmoke(result: any): string[] {
   if (result.routesDiscovered !== undefined) lines.push(`ROUTES_DISCOVERED: ${result.routesDiscovered}`);
   if (result.buttonsChecked !== undefined) lines.push(`BUTTONS_CHECKED: ${result.buttonsChecked}`);
   if (result.formsChecked !== undefined) lines.push(`FORMS_CHECKED: ${result.formsChecked}`);
+  if (result.flowsChecked !== undefined) lines.push(`FLOWS_CHECKED: ${result.flowsChecked}`);
   if (result.buttonWiringIssues !== undefined) lines.push(`BUTTON_WIRING_ISSUES: ${result.buttonWiringIssues}`);
+  if (result.semanticClickIssues !== undefined) lines.push(`SEMANTIC_CLICK_ISSUES: ${result.semanticClickIssues}`);
+  if (result.weakInteractionAssertions !== undefined) lines.push(`WEAK_INTERACTION_ASSERTIONS: ${result.weakInteractionAssertions}`);
   if (result.uxDeadEnds !== undefined) lines.push(`UX_DEAD_ENDS: ${result.uxDeadEnds}`);
+  if (result.flowIssues !== undefined) lines.push(`FLOW_ISSUES: ${result.flowIssues}`);
   if (Array.isArray(result.failures) && result.failures.length > 0) {
     lines.push("TEST_FAILURES:");
     for (const failure of result.failures.slice(0, 20)) lines.push(`- ${String(failure).replace(/\n/g, " ").slice(0, 500)}`);
@@ -83,6 +87,10 @@ function buildQaReport(repo: string, result: any, rawOutput: string, status: str
     `- Hash routes discovered: ${String(result?.hashRoutesDiscovered ?? 0)}`,
     `- Buttons checked: ${String(result?.buttonsChecked ?? 0)}`,
     `- Forms checked: ${String(result?.formsChecked ?? 0)}`,
+    `- Flows checked: ${String(result?.flowsChecked ?? 0)}`,
+    `- Flow issues: ${String(result?.flowIssues ?? 0)}`,
+    `- Semantic click issues: ${String(result?.semanticClickIssues ?? 0)}`,
+    `- Weak interaction assertions: ${String(result?.weakInteractionAssertions ?? 0)}`,
     `- Failure count: ${String(failures.length)}`,
     "",
     "## Findings",
