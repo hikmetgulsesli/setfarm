@@ -100,6 +100,18 @@ const JSX_TAG_MAP = {
 };
 
 const NUMERIC_JSX_ATTRIBUTES = new Set([
+  "aria-colcount",
+  "aria-colindex",
+  "aria-colspan",
+  "aria-level",
+  "aria-posinset",
+  "aria-rowcount",
+  "aria-rowindex",
+  "aria-rowspan",
+  "aria-setsize",
+  "aria-valuemax",
+  "aria-valuemin",
+  "aria-valuenow",
   "colSpan",
   "cols",
   "maxLength",

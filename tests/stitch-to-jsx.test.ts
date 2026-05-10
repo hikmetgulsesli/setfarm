@@ -130,6 +130,7 @@ describe("stitch-to-jsx", () => {
           <label for="note">Not</label>
           <input type="checkbox" checked="" required="">
           <textarea id="note" rows="3" maxlength="120" readonly="true"></textarea>
+          <div role="slider" aria-valuemin="0" aria-valuemax="10" aria-valuenow="8" aria-level="2"></div>
           <button tabindex="0" disabled="false">Kaydet</button>
         </main>
       `);
@@ -146,9 +147,13 @@ describe("stitch-to-jsx", () => {
       assert.match(code, /checked=\{true\}/);
       assert.match(code, /required=\{true\}/);
       assert.match(code, /readOnly=\{true\}/);
+      assert.match(code, /aria-valuemin=\{0\}/);
+      assert.match(code, /aria-valuemax=\{10\}/);
+      assert.match(code, /aria-valuenow=\{8\}/);
+      assert.match(code, /aria-level=\{2\}/);
       assert.match(code, /tabIndex=\{0\}/);
       assert.match(code, /disabled=\{false\}/);
-      assert.doesNotMatch(code, /rows="3"|maxlength=|checked=""|required=""|readonly=|tabindex=/);
+      assert.doesNotMatch(code, /rows="3"|maxlength=|checked=""|required=""|readonly=|aria-valuemin="0"|aria-valuemax="10"|aria-valuenow="8"|aria-level="2"|tabindex=/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
