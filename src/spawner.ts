@@ -1426,6 +1426,15 @@ async function reapFinishedClaims(): Promise<void> {
       if (!row) {
         console.warn(`[spawner] Reaping ${key}: claimed step disappeared`);
       } else if (row.run_status === "running" && row.step_status === "running") {
+        const loopStoryDone = row.type === "loop"
+          && await loopStoryCompletedAfter(row.run_id, active.agentId, active.storyId || row.current_story_id, active.startedAtMs);
+        if (loopStoryDone) {
+          console.log(`[spawner] Reaping completed loop agent ${key}: story completed; terminating leftover agent process`);
+          terminateActiveProcess(active, "completed-loop-story");
+          activeProcesses.delete(key);
+          continue;
+        }
+
         const terminalReason = childProcessTerminalReason(active.child);
         if (terminalReason) {
           const reason = `AGENT_PROCESS_TERMINAL: ${active.agentId} process ended while ${active.wfId}/${active.role} was still running (${terminalReason}); recovering claim. Transcript: ${active.transcriptPath}`;
@@ -1459,15 +1468,6 @@ ${reason}
           terminateActiveProcess(active, "verify-no-done-story");
           activeProcesses.delete(key);
           await pgRun("UPDATE steps SET status = 'waiting', updated_at = NOW() WHERE id = $1 AND status = 'running'", [active.stepId]);
-          continue;
-        }
-
-        const loopStoryDone = row.type === "loop"
-          && await loopStoryCompletedAfter(row.run_id, active.agentId, row.current_story_id, active.startedAtMs);
-        if (loopStoryDone) {
-          console.log(`[spawner] Reaping completed loop agent ${key}: story completed; terminating leftover agent process`);
-          terminateActiveProcess(active, "completed-loop-story");
-          activeProcesses.delete(key);
           continue;
         }
 
