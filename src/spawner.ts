@@ -144,6 +144,182 @@ function safeAgentCwdFromClaimInput(input: unknown): string {
   return AGENT_SAFE_CWD;
 }
 
+type InlineSecurityFinding = {
+  file: string;
+  line: number;
+  category: string;
+  message: string;
+};
+
+function isSecurityGateRole(role: string, agentId: string): boolean {
+  return role === "security-gate" || agentId.endsWith("_security-gate") || agentId === "security-gate";
+}
+
+function gitTrackedFiles(repo: string): string[] {
+  try {
+    return execFileSync("git", ["ls-files"], {
+      cwd: repo,
+      timeout: 15_000,
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: 4 * 1024 * 1024,
+    })
+      .split(/\r?\n/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function isSecurityScanCandidate(file: string): boolean {
+  if (/(^|\/)(node_modules|dist|build|coverage|\.git|\.next|\.nuxt|out)\//.test(file)) return false;
+  if (/(^|\/)(package-lock|pnpm-lock|yarn\.lock|bun\.lockb)$/.test(file)) return false;
+  if (/\.(png|jpe?g|gif|webp|avif|ico|woff2?|ttf|otf|mp4|mov|zip|gz|pdf)$/i.test(file)) return false;
+  return /\.(tsx?|jsx?|mjs|cjs|json|env|ya?ml|toml|css|html|md)$/i.test(file);
+}
+
+function runInlineSecurityScan(repo: string): { findings: InlineSecurityFinding[]; scanned: number } {
+  const tracked = gitTrackedFiles(repo).filter(isSecurityScanCandidate).slice(0, 1500);
+  const findings: InlineSecurityFinding[] = [];
+  let scanned = 0;
+
+  for (const file of tracked) {
+    const fullPath = path.join(repo, file);
+    let stat: ReturnType<typeof fs.statSync>;
+    try { stat = fs.statSync(fullPath); } catch { continue; }
+    if (!stat.isFile() || stat.size > 800_000) continue;
+
+    let content = "";
+    try { content = fs.readFileSync(fullPath, "utf-8"); } catch { continue; }
+    scanned++;
+    const lines = content.split(/\r?\n/);
+    const fileHasSanitizer = /\b(DOMPurify|sanitizeHtml|sanitize)\b/.test(content);
+
+    lines.forEach((line, index) => {
+      const lineNo = index + 1;
+      if (findings.length >= 60) return;
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("//") || trimmed.startsWith("*")) return;
+
+      if (/\bdangerouslySetInnerHTML\b/.test(line) && !fileHasSanitizer) {
+        findings.push({
+          file,
+          line: lineNo,
+          category: "XSS",
+          message: "dangerouslySetInnerHTML without an obvious sanitizer in the file.",
+        });
+      }
+      if (/\binnerHTML\s*=/.test(line) && !fileHasSanitizer) {
+        findings.push({
+          file,
+          line: lineNo,
+          category: "XSS",
+          message: "innerHTML assignment without an obvious sanitizer in the file.",
+        });
+      }
+      if (/\beval\s*\(|\bnew\s+Function\s*\(/.test(line)) {
+        findings.push({
+          file,
+          line: lineNo,
+          category: "Code Injection",
+          message: "dynamic code execution is present.",
+        });
+      }
+      if (/\blocalStorage\.setItem\s*\([^)]*(password|token|secret|api[_-]?key)/i.test(line)) {
+        findings.push({
+          file,
+          line: lineNo,
+          category: "Sensitive Storage",
+          message: "password/token/secret-like value is written to localStorage.",
+        });
+      }
+      if (/\b(api[_-]?key|secret|token|password|private[_-]?key)\b\s*[:=]\s*["'][A-Za-z0-9_./+=-]{24,}["']/i.test(line)) {
+        findings.push({
+          file,
+          line: lineNo,
+          category: "Secret Leak",
+          message: "hardcoded credential-like value detected.",
+        });
+      }
+    });
+  }
+
+  return { findings, scanned };
+}
+
+function formatInlineSecurityOutput(repo: string): string {
+  if (!repo || repo === AGENT_SAFE_CWD || !fs.existsSync(repo)) {
+    return [
+      "STATUS: skip",
+      "VULNERABILITIES:",
+      "- none",
+      "FINDINGS:",
+      "- Security gate skipped: no project repository was available in the claim context.",
+    ].join("\n");
+  }
+
+  const { findings, scanned } = runInlineSecurityScan(repo);
+  if (findings.length > 0) {
+    return [
+      "STATUS: retry",
+      "VULNERABILITIES:",
+      ...findings.slice(0, 25).map((f) => `- ${f.file}:${f.line} — ${f.category}: ${f.message}`),
+      "FINDINGS:",
+      `- Inline read-only security scan checked ${scanned} tracked text file(s).`,
+    ].join("\n");
+  }
+
+  return [
+    "STATUS: done",
+    "VULNERABILITIES:",
+    "- none",
+    "FINDINGS:",
+    `- Inline read-only security scan checked ${scanned} tracked text file(s).`,
+    "- No hardcoded secrets, unsafe HTML sinks, dynamic code execution, or sensitive localStorage writes were detected by the static gate.",
+  ].join("\n");
+}
+
+async function completeInlineSecurityGateIfApplicable(params: {
+  role: string;
+  agentId: string;
+  wfId: string;
+  key: string;
+  claim: Awaited<ReturnType<typeof claimStep>>;
+  repo: string;
+  transcriptPath: string;
+}): Promise<boolean> {
+  const { role, agentId, wfId, key, claim, repo, transcriptPath } = params;
+  if (!isSecurityGateRole(role, agentId)) return false;
+
+  claimingSpawns.delete(key);
+  const stepId = claim.stepId;
+  try { fs.mkdirSync(path.dirname(transcriptPath), { recursive: true }); } catch {}
+  try {
+    fs.writeFileSync(transcriptPath, "[spawner] " + new Date().toISOString() + " " + wfId + "/" + role + " agent=" + agentId + "\n");
+    fs.appendFileSync(transcriptPath, `[spawner] inline_security_gate=true cwd=${repo}\n`);
+  } catch {}
+
+  if (!stepId) {
+    try { fs.appendFileSync(transcriptPath, "--- INLINE ERROR ---\nMissing claimed step id for inline security gate.\n"); } catch {}
+    return true;
+  }
+
+  const output = formatInlineSecurityOutput(repo);
+  try {
+    fs.appendFileSync(transcriptPath, output + "\n");
+    const result = await completeStep(stepId, output);
+    fs.appendFileSync(transcriptPath, `--- INLINE COMPLETE ${new Date().toISOString()} ${JSON.stringify(result)} ---\n`);
+    console.log(`[spawner] completed ${agentId} inline for ${wfId}/${role} (transcript: ${transcriptPath})`);
+  } catch (err) {
+    const reason = `INLINE_SECURITY_GATE_FAILED: ${compactExitReason(err)}. Transcript: ${transcriptPath}`;
+    try { fs.appendFileSync(transcriptPath, `--- INLINE ERROR ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
+    console.warn(`[spawner] ${reason}`);
+    await failStep(stepId, reason);
+  }
+  return true;
+}
+
 type ActiveProcess = {
   child: ChildProcess;
   runId: string;
@@ -1674,11 +1850,16 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   }
   fs.writeFileSync(claimFile, JSON.stringify({ stepId: claim.stepId, runId: claim.runId, input: claim.resolvedInput }) + "\n");
 
-  const prompt = buildPreclaimedPrompt(wfId, role, agentId, outputFileId, claimFile);
-  console.log("[spawner] Spawning " + agentId + " for " + wfId + "/" + role + " after pre-claim (active: " + activeProcesses.size + ")");
   // capture agent stdout/stderr to a transcript file for post-hoc diagnosis.
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
   const transcriptPath = path.join(TRANSCRIPT_ROOT, wfId, agentId + "-" + ts + ".log");
+  const spawnCwd = safeAgentCwdFromClaimInput(claim.resolvedInput);
+  if (await completeInlineSecurityGateIfApplicable({ role, agentId, wfId, key, claim, repo: spawnCwd, transcriptPath })) {
+    return;
+  }
+
+  const prompt = buildPreclaimedPrompt(wfId, role, agentId, outputFileId, claimFile);
+  console.log("[spawner] Spawning " + agentId + " for " + wfId + "/" + role + " after pre-claim (active: " + activeProcesses.size + ")");
   claimingSpawns.delete(key);
   try { fs.mkdirSync(path.dirname(transcriptPath), { recursive: true }); } catch {}
   try { fs.writeFileSync(transcriptPath, "[spawner] " + new Date().toISOString() + " " + wfId + "/" + role + " agent=" + agentId + "\n"); } catch {}
@@ -1689,7 +1870,6 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   const sessionId = "spawner-" + agentId + "-" + spawnId;
   const sessionKey = buildSessionKey(agentId, sessionId);
   const sessionJsonlPath = agentSessionJsonlPath(agentId, sessionId);
-  const spawnCwd = safeAgentCwdFromClaimInput(claim.resolvedInput);
   const childArgs = [
     "agent", "--json", "--agent", agentId,
     ...(OPENCLAW_AGENT_LOCAL ? ["--local"] : []),

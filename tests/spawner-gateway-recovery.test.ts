@@ -91,6 +91,21 @@ describe("spawner gateway recovery wiring", () => {
     assert.doesNotMatch(source, /const outputFileId = agentId \+ "-spawner";/);
   });
 
+  it("completes security-gate inline before spawning an agent process", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    const spawnStart = source.indexOf("async function spawnAgentNow");
+    const promptBuild = source.indexOf("const prompt = buildPreclaimedPrompt", spawnStart);
+    const inlineGate = source.indexOf("completeInlineSecurityGateIfApplicable", spawnStart);
+    assert.notEqual(spawnStart, -1, "spawnAgentNow source not found");
+    assert.notEqual(promptBuild, -1, "prompt build source not found");
+    assert.notEqual(inlineGate, -1, "inline security gate source not found");
+    assert.ok(inlineGate > spawnStart && inlineGate < promptBuild, "security-gate must complete inline before any agent prompt is built");
+    assert.match(source, /function isSecurityGateRole\(role: string,\s*agentId: string\)/);
+    assert.match(source, /function runInlineSecurityScan\(repo: string\)/);
+    assert.match(source, /const stepId = claim\.stepId/);
+    assert.match(source, /await completeStep\(stepId,\s*output\)/);
+  });
+
   it("starts agents in the claimed story worktree when one is available", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /function safeAgentCwdFromClaimInput\(input: unknown\): string/);
@@ -239,7 +254,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /await completeStep\(stepDbId,\s*recoveryOutput\)/);
     assert.match(source, /exitReason\.includes\("AGENT_STARTUP_SILENT"\)/);
     assert.match(source, /exitReason\.includes\("AGENT_PROCESS_STUCK"\)/);
-    assert.match(source, /failClaimIfStillRunning\(active\.stepId,\s*active\.agentId,\s*active\.wfId,\s*active\.role,\s*active\.transcriptPath,\s*new Error\(reason\),\s*active\.startedAtMs,\s*active\.spawnCwd\)/);
+    assert.match(source, /failClaimIfStillRunning\(active\.stepId,\s*active\.agentId,\s*active\.wfId,\s*active\.role,\s*active\.transcriptPath,\s*new Error\(reason\),\s*active\.startedAtMs,\s*active\.spawnCwd,\s*active\.outputPath\)/);
   });
 
   it("treats CPU progress as agent activity before watchdog kills a process", () => {
@@ -251,7 +266,8 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /function refreshActiveProcessCpuActivity/);
     assert.match(source, /ticks > active\.lastCpuTicks/);
     assert.match(source, /active\.lastCpuActivityMs = Date\.now\(\)/);
-    assert.match(source, /let lastActivityMs = refreshActiveProcessCpuActivity\(active\)/);
+    assert.match(source, /let lastActivityMs = active\.startedAtMs/);
+    assert.match(source, /lastActivityMs = refreshActiveProcessCpuActivity\(active\)/);
     assert.match(source, /lastCpuTicks: readProcessCpuTicks\(child\.pid\) \?\? undefined/);
   });
 
