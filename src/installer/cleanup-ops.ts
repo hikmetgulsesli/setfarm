@@ -343,7 +343,7 @@ function reapTransientProjectToolProcesses(repoPath: string, runId: string): num
   return terminateProcessSet(targets);
 }
 
-async function cleanupRunningRunOrphanedToolWorkers(): Promise<void> {
+export async function cleanupRunningRunOrphanedToolWorkers(): Promise<void> {
   try {
     const runs = await pgQuery<{ id: string }>(
       "SELECT id FROM runs WHERE status = 'running' ORDER BY updated_at DESC LIMIT 30"
