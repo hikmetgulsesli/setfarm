@@ -35,14 +35,15 @@ const STARTUP_RUNNING_GRACE_MS = parsePositiveInt(process.env.SETFARM_STARTUP_RU
 const QA_AGENT_STUCK_MS = parsePositiveInt(process.env.SETFARM_QA_AGENT_STUCK_MS, 6 * 60_000);
 const AGENT_ACTIVITY_GRACE_MS = parsePositiveInt(process.env.SETFARM_AGENT_ACTIVITY_GRACE_MS, 4 * 60_000);
 const AGENT_STARTUP_SILENCE_MS = parsePositiveInt(process.env.SETFARM_AGENT_STARTUP_SILENCE_MS, 4 * 60_000);
+const AGENT_SELF_LOOP_CHECK_AFTER_MS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_CHECK_AFTER_MS, 6 * 60_000);
+const AGENT_SELF_LOOP_MIN_ACTIONS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_ACTIONS, 7);
+const AGENT_SELF_LOOP_MIN_NOOP_EDITS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_NOOP_EDITS, 4);
+const AGENT_SELF_LOOP_MIN_REPEATED_FAILURES = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_REPEATED_FAILURES, 4);
+const AGENT_SELF_LOOP_MIN_REPEATED_COMMANDS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_REPEATED_COMMANDS, 8);
 const REAP_FINISHED_ACTIVE_GRACE_MS = parsePositiveInt(process.env.SETFARM_REAP_FINISHED_ACTIVE_GRACE_MS, 60_000);
 const OPENCLAW_TASK_REGISTRY_SETTLE_MS = parsePositiveInt(process.env.SETFARM_OPENCLAW_TASK_REGISTRY_SETTLE_MS, 2000);
 const OPENCLAW_STALE_TASK_SWEEP_MS = parsePositiveInt(process.env.SETFARM_OPENCLAW_STALE_TASK_SWEEP_MS, 2 * 60_000);
 const IMPLEMENT_EXIT_RECOVERY_BUILD_TIMEOUT_MS = parsePositiveInt(process.env.SETFARM_IMPLEMENT_EXIT_RECOVERY_BUILD_TIMEOUT_MS, 120_000);
-const IMPLEMENT_ACTIVE_RECOVERY_MIN_AGE_MS = parsePositiveInt(process.env.SETFARM_IMPLEMENT_ACTIVE_RECOVERY_MIN_AGE_MS, 8 * 60_000);
-const IMPLEMENT_ACTIVE_RECOVERY_FILE_IDLE_MS = parsePositiveInt(process.env.SETFARM_IMPLEMENT_ACTIVE_RECOVERY_FILE_IDLE_MS, 2 * 60_000);
-const IMPLEMENT_NO_DIFF_RETRY_MIN_AGE_MS = parsePositiveInt(process.env.SETFARM_IMPLEMENT_NO_DIFF_RETRY_MIN_AGE_MS, 8 * 60_000);
-const IMPLEMENT_NO_DIFF_RETRY_FILE_IDLE_MS = parsePositiveInt(process.env.SETFARM_IMPLEMENT_NO_DIFF_RETRY_FILE_IDLE_MS, 2 * 60_000);
 const OPENCLAW_AGENT_LOCAL = process.env.SETFARM_OPENCLAW_AGENT_LOCAL !== "0";
 const GATEWAY_HEALTH_URL = process.env.OPENCLAW_GATEWAY_HEALTH_URL || "http://127.0.0.1:18789/health";
 const GATEWAY_READY_URL = process.env.OPENCLAW_GATEWAY_READY_URL || GATEWAY_HEALTH_URL.replace(/\/health\/?$/, "/ready");
@@ -133,6 +134,11 @@ function safeAgentCwdFromClaimInput(input: unknown): string {
       const resolved = safeAgentCwdFromCandidate(match[1]);
       if (resolved) return resolved;
     }
+
+    for (const match of input.matchAll(/`?(\/home\/setrox\/projects\/[A-Za-z0-9._-]+)`?/g)) {
+      const resolved = safeAgentCwdFromCandidate(match[1]);
+      if (resolved) return resolved;
+    }
   }
 
   return AGENT_SAFE_CWD;
@@ -179,6 +185,24 @@ type OpenClawSessionIndexRecord = {
 type OpenClawCleanupResult = {
   sessions: number;
   tasks: number;
+};
+
+type SessionFileStats = {
+  actions: number;
+  writes: number;
+  edits: number;
+  noopEdits: number;
+};
+
+type SessionCommandStats = {
+  failures: number;
+  command: string;
+  signature: string;
+};
+
+type SessionCommandCallStats = {
+  calls: number;
+  command: string;
 };
 
 const activeProcesses = new Map<string, ActiveProcess>();
@@ -229,7 +253,8 @@ function activeProcessHasVisibleOutput(active: ActiveProcess): boolean {
 }
 
 function activeProcessHasStartupActivity(active: ActiveProcess): boolean {
-  return activeProcessHasVisibleOutput(active);
+  if (activeProcessHasVisibleOutput(active)) return true;
+  return activeProcessLastActivityMs(active) > active.startedAtMs + 1000;
 }
 
 function readProcessCpuTicks(pid: number | undefined): number | null {
@@ -276,23 +301,189 @@ function activeProcessLastActivityMs(active: ActiveProcess): number {
   return lastActivityMs;
 }
 
-function activeProcessLastFileActivityMs(active: ActiveProcess): number {
-  let lastActivityMs = active.startedAtMs;
-  for (const filePath of [active.transcriptPath, active.sessionJsonlPath, active.outputPath]) {
-    try {
-      const mtimeMs = fs.statSync(filePath).mtimeMs;
-      if (Number.isFinite(mtimeMs) && mtimeMs > lastActivityMs) lastActivityMs = mtimeMs;
-    } catch {}
-  }
-  return lastActivityMs;
-}
-
 function activeProcessIdleMs(active: ActiveProcess): number {
   return Date.now() - activeProcessLastActivityMs(active);
 }
 
-function activeProcessFileIdleMs(active: ActiveProcess): number {
-  return Date.now() - activeProcessLastFileActivityMs(active);
+function extractSessionText(content: unknown): string {
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part: any) => {
+      if (!part || typeof part !== "object") return "";
+      if (typeof part.text === "string") return part.text;
+      if (typeof part.content === "string") return part.content;
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function extractToolCalls(content: unknown): Array<{ name: string; path: string; command: string }> {
+  if (!Array.isArray(content)) return [];
+  const calls: Array<{ name: string; path: string; command: string }> = [];
+  for (const part of content as any[]) {
+    if (!part || typeof part !== "object") continue;
+    const type = String(part.type || "");
+    if (type !== "toolCall" && type !== "tool_use") continue;
+    const name = String(part.name || part.toolName || "");
+    const args = part.arguments || part.input || {};
+    const candidate = typeof args.path === "string" ? args.path : "";
+    const command = typeof args.command === "string" ? args.command : "";
+    calls.push({ name, path: candidate, command });
+  }
+  return calls;
+}
+
+function normalizedSessionCommand(command: string): string {
+  const compact = command.replace(/\s+/g, " " ).trim();
+  if (!compact) return "";
+  if (!/\b(vitest|npm\s+(run\s+)?test|pnpm\s+test|yarn\s+test|bun\s+test|playwright|npm\s+run\s+build|tsc)\b/i.test(compact)) return "";
+  return compact
+    .replace(/\/home\/setrox\/\.openclaw\/workspaces\/workflows\/[^ ]+/g, "<workdir>")
+    .replace(/--reporter(=|\s+)\S+/g, "--reporter")
+    .replace(/\|\s*(tail|head)\s+-\d+.*$/i, "")
+    .replace(/\|\s*grep\b.*$/i, "")
+    .slice(0, 220);
+}
+
+function sessionFailureSignature(text: string): string {
+  const clean = text.replace(/\x1b\[[0-9;]*m/g, " " ).replace(/\s+/g, " " ).trim();
+  if (!/(FAIL|Failed Tests|Tests?\s+\d+\s+failed|AssertionError|TestingLibraryElementError|ReferenceError|TypeError|error TS\d+)/i.test(clean)) return "";
+  const pieces = [
+    clean.match(/FAIL\s+[^|]{0,260}/i)?.[0],
+    clean.match(/(AssertionError|TestingLibraryElementError|ReferenceError|TypeError|error TS\d+)[^|]{0,180}/i)?.[0],
+    clean.match(/Tests?\s+\d+\s+failed[^|]{0,80}/i)?.[0],
+    clean.match(/Unable to find[^|]{0,180}/i)?.[0],
+    clean.match(/expected[^|]{0,120}/i)?.[0],
+  ].filter(Boolean);
+  return pieces.join(" | " ).slice(0, 420);
+}
+
+function repeatedTranscriptToolLoop(active: ActiveProcess): { detected: boolean; reason: string } {
+  try {
+    const tail = fs.readFileSync(active.transcriptPath, "utf-8").slice(-120_000);
+    let maxRepeats = 0;
+    for (const match of tail.matchAll(/Loop warning: exec called (\d+) times with identical arguments/gi)) {
+      const repeats = parseInt(match[1] || "", 10);
+      if (Number.isFinite(repeats) && repeats > maxRepeats) maxRepeats = repeats;
+    }
+    if (maxRepeats >= AGENT_SELF_LOOP_MIN_REPEATED_COMMANDS) {
+      return {
+        detected: true,
+        reason: "AGENT_SELF_LOOP: OpenClaw reported repeated identical exec calls" +
+          " (repeats=" + maxRepeats + ")",
+      };
+    }
+  } catch {}
+  return { detected: false, reason: "" };
+}
+
+function repeatedSessionFileLoop(active: ActiveProcess): { detected: boolean; reason: string } {
+  const transcriptLoop = repeatedTranscriptToolLoop(active);
+  if (transcriptLoop.detected) return transcriptLoop;
+
+  let lines: string[];
+  try {
+    const raw = fs.readFileSync(active.sessionJsonlPath, "utf-8").trim();
+    if (!raw) return { detected: false, reason: "" };
+    lines = raw.split(/\n/).filter(Boolean).slice(-120);
+  } catch {
+    return { detected: false, reason: "" };
+  }
+
+  const fileStats = new Map<string, SessionFileStats>();
+  const commandCallStats = new Map<string, SessionCommandCallStats>();
+  const commandStats = new Map<string, SessionCommandStats>();
+  let currentToolPath = "";
+  let currentCommand = "";
+  for (const line of lines) {
+    let event: any;
+    try { event = JSON.parse(line); } catch { continue; }
+    const message = event?.message || {};
+    const role = String(message.role || "");
+    const content = message.content;
+
+    if (role === "assistant") {
+      for (const call of extractToolCalls(content)) {
+        if (call.name === "exec") {
+          currentCommand = normalizedSessionCommand(call.command);
+          currentToolPath = "";
+          if (currentCommand) {
+            const stats = commandCallStats.get(currentCommand) || { calls: 0, command: currentCommand };
+            stats.calls += 1;
+            commandCallStats.set(currentCommand, stats);
+          }
+          continue;
+        }
+        currentCommand = "";
+        if (call.name !== "write" && call.name !== "edit") continue;
+        const target = call.path || currentToolPath;
+        if (!target) continue;
+        const stats = fileStats.get(target) || { actions: 0, writes: 0, edits: 0, noopEdits: 0 };
+        stats.actions += 1;
+        if (call.name === "write") stats.writes += 1;
+        if (call.name === "edit") stats.edits += 1;
+        fileStats.set(target, stats);
+        currentToolPath = target;
+      }
+      continue;
+    }
+
+    if (role === "toolResult") {
+      const text = extractSessionText(content);
+      if (currentCommand) {
+        const signature = sessionFailureSignature(text);
+        if (signature) {
+          const key = currentCommand + " => " + signature;
+          const stats = commandStats.get(key) || { failures: 0, command: currentCommand, signature };
+          stats.failures += 1;
+          commandStats.set(key, stats);
+        }
+      }
+      if (!/No changes made/i.test(text) || !currentToolPath) continue;
+      const stats = fileStats.get(currentToolPath) || { actions: 0, writes: 0, edits: 0, noopEdits: 0 };
+      stats.noopEdits += 1;
+      fileStats.set(currentToolPath, stats);
+    }
+  }
+
+  for (const stats of commandCallStats.values()) {
+    if (stats.calls >= AGENT_SELF_LOOP_MIN_REPEATED_COMMANDS) {
+      return {
+        detected: true,
+        reason: "AGENT_SELF_LOOP: repeated identical test/build command" +
+          " (calls=" + stats.calls +
+          ", command=" + stats.command + ")",
+      };
+    }
+  }
+
+  for (const stats of commandStats.values()) {
+    if (stats.failures >= AGENT_SELF_LOOP_MIN_REPEATED_FAILURES) {
+      return {
+        detected: true,
+        reason: "AGENT_SELF_LOOP: repeated failing command output" +
+          " (failures=" + stats.failures +
+          ", command=" + stats.command +
+          ", signature=" + stats.signature + ")",
+      };
+    }
+  }
+
+  for (const [filePath, stats] of fileStats) {
+    if (stats.actions >= AGENT_SELF_LOOP_MIN_ACTIONS && stats.noopEdits >= AGENT_SELF_LOOP_MIN_NOOP_EDITS) {
+      const rel = filePath.replace(/^\/home\/setrox\//, "~/");
+      return {
+        detected: true,
+        reason: "AGENT_SELF_LOOP: repeated write/edit no-op loop on " + rel +
+          " (actions=" + stats.actions +
+          ", writes=" + stats.writes +
+          ", edits=" + stats.edits +
+          ", noop_edits=" + stats.noopEdits + ")",
+      };
+    }
+  }
+  return { detected: false, reason: "" };
 }
 
 type GatewayReadyBody = { ready?: boolean; ok?: boolean; uptimeMs?: number; failing?: unknown };
@@ -480,7 +671,9 @@ OUTPUT_FILE=/tmp/setfarm-output-${outputFileId}.txt
 First exec command should start with:
 CLAIM_FILE='${claimFile}'; OUTPUT_FILE='/tmp/setfarm-output-${outputFileId}.txt'; STEP_ID=$(jq -r '.stepId // empty' "$CLAIM_FILE"); WORKDIR=$(jq -r 'if (.input|type)=="object" then (.input.story_workdir // .input.repo // "") else "" end' "$CLAIM_FILE"); if [ -z "$WORKDIR" ]; then WORKDIR=$(jq -r 'if (.input|type)=="string" then .input else "" end' "$CLAIM_FILE" | sed -n 's/^WORKDIR:[[:space:]]*//p; s/^REPO:[[:space:]]*//p' | head -1); fi; case "$WORKDIR" in ""|*"<"*|*">"*|*"[missing:"*|*'$HOME'*|~*) WORKDIR="$HOME/.openclaw/workspace/agent-scratch";; esac; mkdir -p "$WORKDIR"; cd "$WORKDIR"; case "$(pwd)" in "$HOME"/.openclaw/setfarm-repo*) echo FATAL_PLATFORM_CWD; exit 1;; esac; printf 'STEP_ID=%s\nWORKDIR=%s\n' "$STEP_ID" "$(pwd)"; jq -r 'if (.input|type)=="object" then (.input.task // .input.current_story_title // .input.story_title // "") else .input end' "$CLAIM_FILE" | head -c 1200; echo
 
-Do ${wfId}/${role} work in WORKDIR only. Read the claim at ${claimFile} for exact requirements. Do not rely on CLAIM_FILE or OUTPUT_FILE shell variables persisting across separate exec calls; each exec starts a fresh shell. If you need the claim again, use the literal path ${claimFile}. Write final output to the literal path /tmp/setfarm-output-${outputFileId}.txt. Do NOT run step peek/claim. No subagents/background delegation. No PR actions unless claim explicitly owns PR work.
+Do ${wfId}/${role} work in WORKDIR only. Read the claim at ${claimFile} for exact requirements.
+Important: OpenClaw read/edit/write tools resolve relative paths against the configured agent workspace, not the shell cwd. When using read/edit/write tools for project files, use absolute paths under WORKDIR, for example "$WORKDIR/src/App.tsx". For exec commands, start each command with the WORKDIR extraction snippet above or pass workdir="$WORKDIR" after resolving it.
+Do not rely on CLAIM_FILE, OUTPUT_FILE, STEP_ID, or WORKDIR shell variables persisting across separate exec calls; each exec starts a fresh shell. If you need the claim again, use the literal path ${claimFile}. Write final output to the literal path /tmp/setfarm-output-${outputFileId}.txt. Do NOT run step peek/claim. No subagents/background delegation. No PR actions unless claim explicitly owns PR work.
 For normal quality findings in verify/review/QA/final-test, do NOT use step fail. Write STATUS: retry with concise findings and call step complete so the platform can route the batched fix back to implement. Use step fail only for infrastructure/unrecoverable execution failures.
 
 Complete with:
@@ -992,90 +1185,25 @@ function runBuildGate(workdir: string): boolean {
   }
 }
 
-function worktreeIsClean(workdir: string): boolean {
-  const status = gitOutput(workdir, ["status", "--porcelain"]);
-  return status !== null && status.trim().length === 0;
-}
-
-function currentBranch(workdir: string): string | null {
-  return gitOutput(workdir, ["branch", "--show-current"]);
-}
-
-function parseScopeFiles(raw: unknown): string[] {
-  if (Array.isArray(raw)) return raw.map(String).map(normalizeRepoPath).filter(Boolean);
-  if (typeof raw !== "string" || !raw.trim()) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.map(String).map(normalizeRepoPath).filter(Boolean) : [];
-  } catch {
-    return raw.split(/[\n,]/).map(normalizeRepoPath).filter(Boolean);
-  }
-}
-
-function normalizeRepoPath(value: string): string {
-  return String(value || "").replace(/\\/g, "/").replace(/^\.\//, "").trim();
-}
-
-function changedFilesTouchStoryScope(changedFiles: string[], scopeFilesRaw: unknown): boolean {
-  const scopeFiles = parseScopeFiles(scopeFilesRaw);
-  if (scopeFiles.length === 0) return true;
-  const changed = changedFiles.map(normalizeRepoPath).filter(Boolean);
-  return changed.some((file) => scopeFiles.some((scope) => file === scope || file.startsWith(scope.replace(/\/?$/, "/"))));
-}
-
-async function tryRequeueNoDiffImplementWork(
-  active: ActiveProcess,
-  row: RunningStepRow,
-): Promise<boolean> {
-  if (row.status !== "running" || row.type !== "loop" || row.step_id !== "implement" || !row.current_story_id || !active.storyId) return false;
-
-  const ageMs = Date.now() - active.startedAtMs;
-  if (ageMs < IMPLEMENT_NO_DIFF_RETRY_MIN_AGE_MS) return false;
-
-  const fileIdleMs = activeProcessFileIdleMs(active);
-  if (fileIdleMs < IMPLEMENT_NO_DIFF_RETRY_FILE_IDLE_MS) return false;
-
-  const workdir = safeAgentCwdFromCandidate(active.spawnCwd);
-  if (!workdir || !fs.existsSync(path.join(workdir, ".git"))) return false;
-  if (!worktreeIsClean(workdir)) return false;
-
-  const story = await pgGet<{ story_id: string; story_branch: string | null; status: string; claimed_by: string | null; scope_files: string | null }>(
-    "SELECT story_id, story_branch, status, claimed_by, scope_files FROM stories WHERE id = $1 AND run_id = $2 LIMIT 1",
-    [row.current_story_id, row.run_id],
-  );
-  if (!story || story.status !== "running") return false;
-  if (story.story_id !== active.storyId) return false;
-  if (story.claimed_by && story.claimed_by !== active.agentId) return false;
-
-  const storyBranch = (story.story_branch || `${row.run_id.slice(0, 8)}-${story.story_id}`).toLowerCase();
-  if (currentBranch(workdir)?.toLowerCase() !== storyBranch) return false;
-
-  const baseRef = findDiffBaseRef(workdir);
-  const changedFiles = baseRef ? sourceDiffFiles(workdir, baseRef) : [];
-  if (changedFilesTouchStoryScope(changedFiles, story.scope_files)) return false;
-
-  const reason = `AGENT_PROCESS_NO_SCOPED_DIFF_IDLE: ${active.agentId} kept ${active.wfId}/${active.role} running for ${formatDurationMs(ageMs)} without producing committed changes in ${story.story_id} scope and with no transcript/output activity for ${formatDurationMs(fileIdleMs)}; requeueing story instead of failing the run. Changed files: ${changedFiles.slice(0, 12).join(", ") || "(none)"}. Transcript: ${active.transcriptPath}`;
-  console.warn(`[spawner] ${reason}`);
-  try { fs.appendFileSync(active.transcriptPath, `--- NO-DIFF IMPLEMENT RETRY ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
-  terminateActiveProcess(active, "active-implement-no-diff-idle");
-  await new Promise((resolve) => setTimeout(resolve, 1500));
-  return requeueOpenStoryClaim(active.runId, row.step_id, active.storyId, active.agentId, reason);
-}
-
-async function recoverBuildPassingImplementWork(
+async function tryRecoverExitedImplementWork(
   stepDbId: string,
   row: RunningStepRow,
   agentId: string,
   transcriptPath: string,
-  recoveryKind: string,
-  recoveryDetail: string,
+  err: unknown,
   claimedCwd?: string,
-  beforeComplete?: () => Promise<void>,
 ): Promise<boolean> {
+  const exitReason = compactExitReason(err);
+  const recoverableExit =
+    exitReason.includes("without calling setfarm step complete/fail") ||
+    exitReason.includes("AGENT_STARTUP_SILENT") ||
+    exitReason.includes("AGENT_PROCESS_STUCK") ||
+    exitReason.includes("AGENT_PROCESS_TERMINAL");
+  if (!recoverableExit) return false;
   if (row.status !== "running" || row.type !== "loop" || row.step_id !== "implement" || !row.current_story_id) return false;
 
-  const story = await pgGet<{ id: string; story_id: string; title: string; story_branch: string | null; status: string; claimed_by: string | null; scope_files: string | null }>(
-    "SELECT id, story_id, title, story_branch, status, claimed_by, scope_files FROM stories WHERE id = $1 AND run_id = $2 LIMIT 1",
+  const story = await pgGet<{ id: string; story_id: string; title: string; story_branch: string | null; status: string; claimed_by: string | null }>(
+    "SELECT id, story_id, title, story_branch, status, claimed_by FROM stories WHERE id = $1 AND run_id = $2 LIMIT 1",
     [row.current_story_id, row.run_id],
   );
   if (!story || story.status !== "running") return false;
@@ -1103,28 +1231,21 @@ async function recoverBuildPassingImplementWork(
 
   const baseRef = findDiffBaseRef(workdir);
   if (!baseRef) return false;
-  const changedFiles = sourceDiffFiles(workdir, baseRef);
-  if (!changedFilesTouchStoryScope(changedFiles, story.scope_files)) return false;
-  if (!worktreeIsClean(workdir)) return false;
-  if (!runBuildGate(workdir)) return false;
-
-  if (beforeComplete) await beforeComplete();
-  if (!worktreeIsClean(workdir)) return false;
   if (!runBuildGate(workdir)) return false;
 
   context["story_workdir"] = workdir;
   context["story_branch"] = storyBranch;
   await pgRun("UPDATE runs SET context = $1, updated_at = NOW() WHERE id = $2", [JSON.stringify(context), row.run_id]);
 
+  const changedFiles = sourceDiffFiles(workdir, baseRef).slice(0, 20);
   const recoveryOutput = [
     "STATUS: done",
     `STORY_BRANCH: ${storyBranch}`,
-    `CHANGES: Recovered ${story.story_id} from build-passing committed work on ${storyBranch}.`,
+    `CHANGES: Recovered ${story.story_id} after agent exited with build-passing committed work on ${storyBranch}.`,
     "BUILD_CMD: npm run build",
-    `RECOVERY: ${recoveryKind}`,
-    `RECOVERY_DETAIL: ${recoveryDetail}`,
+    "RECOVERY: agent-exit-build-passing",
     `TRANSCRIPT: ${transcriptPath}`,
-    `CHANGED_FILES: ${changedFiles.slice(0, 20).join(", ")}`,
+    `CHANGED_FILES: ${changedFiles.join(", ")}`,
   ].join("\n");
 
   const result = await completeStep(stepDbId, recoveryOutput);
@@ -1132,62 +1253,8 @@ async function recoverBuildPassingImplementWork(
     const refreshed = await pgGet<{ status: string }>("SELECT status FROM stories WHERE id = $1 LIMIT 1", [story.id]);
     if (!["done", "verified"].includes(refreshed?.status || "")) return false;
   }
-  console.warn(`[spawner] recovered implement story ${story.story_id} for ${agentId}: ${recoveryKind}; build passed in ${workdir}`);
+  console.warn(`[spawner] recovered exited implement story ${story.story_id} for ${agentId}: build passed in ${workdir}`);
   return true;
-}
-
-async function tryRecoverExitedImplementWork(
-  stepDbId: string,
-  row: RunningStepRow,
-  agentId: string,
-  transcriptPath: string,
-  err: unknown,
-  claimedCwd?: string,
-): Promise<boolean> {
-  const exitReason = compactExitReason(err);
-  const recoverableExit =
-    exitReason.includes("without calling setfarm step complete/fail") ||
-    exitReason.includes("AGENT_STARTUP_SILENT") ||
-    exitReason.includes("AGENT_PROCESS_STUCK") ||
-    exitReason.includes("AGENT_PROCESS_TERMINAL");
-  if (!recoverableExit) return false;
-  return recoverBuildPassingImplementWork(
-    stepDbId,
-    row,
-    agentId,
-    transcriptPath,
-    "agent-exit-build-passing",
-    exitReason,
-    claimedCwd,
-  );
-}
-
-async function tryRecoverActiveBuildPassingImplementWork(
-  active: ActiveProcess,
-  row: RunningStepRow,
-): Promise<boolean> {
-  const ageMs = Date.now() - active.startedAtMs;
-  if (ageMs < IMPLEMENT_ACTIVE_RECOVERY_MIN_AGE_MS) return false;
-
-  const fileIdleMs = activeProcessFileIdleMs(active);
-  if (fileIdleMs < IMPLEMENT_ACTIVE_RECOVERY_FILE_IDLE_MS) return false;
-
-  const reason = `AGENT_PROCESS_BUILD_PASSING_IDLE: ${active.agentId} kept ${active.wfId}/${active.role} running for ${formatDurationMs(ageMs)} after producing a clean, build-passing implement worktree with no transcript/output activity for ${formatDurationMs(fileIdleMs)}; completing the story and terminating leftover agent. Transcript: ${active.transcriptPath}`;
-  return recoverBuildPassingImplementWork(
-    active.stepId,
-    row,
-    active.agentId,
-    active.transcriptPath,
-    "active-agent-build-passing-idle",
-    reason,
-    active.spawnCwd,
-    async () => {
-      console.warn(`[spawner] ${reason}`);
-      try { fs.appendFileSync(active.transcriptPath, `--- ACTIVE IMPLEMENT RECOVERY ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
-      terminateActiveProcess(active, "active-implement-recovery");
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-    },
-  );
 }
 
 async function verifyEachHasDoneStory(runId: string, verifyStepId: string): Promise<boolean> {
@@ -1395,22 +1462,6 @@ ${reason}
           continue;
         }
 
-        const runningStep: RunningStepRow = {
-          status: row.step_status,
-          step_id: row.step_id,
-          run_id: row.run_id,
-          type: row.type,
-          current_story_id: row.current_story_id,
-        };
-        if (await tryRecoverActiveBuildPassingImplementWork(active, runningStep)) {
-          activeProcesses.delete(key);
-          continue;
-        }
-        if (await tryRequeueNoDiffImplementWork(active, runningStep)) {
-          activeProcesses.delete(key);
-          continue;
-        }
-
         const loopStoryDone = row.type === "loop"
           && await loopStoryCompletedAfter(row.run_id, active.agentId, row.current_story_id, active.startedAtMs);
         if (loopStoryDone) {
@@ -1441,6 +1492,24 @@ ${reason}
           activeProcesses.delete(key);
           await failClaimIfStillRunning(active.stepId, active.agentId, active.wfId, active.role, active.transcriptPath, new Error(reason), active.startedAtMs, active.spawnCwd);
           continue;
+        }
+
+        if (ageMs >= AGENT_SELF_LOOP_CHECK_AFTER_MS && !isTerminalTestRole(active.role, active.agentId)) {
+          const loop = repeatedSessionFileLoop(active);
+          if (loop.detected) {
+            const reason = loop.reason + "; retrying " + active.wfId + "/" + active.role +
+              " instead of waiting on synthetic session activity. Transcript: " + active.transcriptPath;
+            console.warn("[spawner] " + reason);
+            try { fs.appendFileSync(active.transcriptPath, "--- SELF LOOP " + new Date().toISOString() + " ---\n" + reason + "\n"); } catch {}
+            terminateActiveProcess(active, "self-loop");
+            activeProcesses.delete(key);
+            if (row.type === "loop" && active.storyId) {
+              await requeueOpenStoryClaim(active.runId, row.step_id, active.storyId, active.agentId, reason);
+            } else {
+              await retryActiveSingleStepClaim(active, row.step_id, reason);
+            }
+            continue;
+          }
         }
 
         const thresholdMs = stuckThresholdMs(active.role, row.story_id);
@@ -1753,8 +1822,8 @@ async function failStaleRunningClaimsFromPreviousSpawner(): Promise<void> {
 async function releaseActiveProcessForShutdown(active: ActiveProcess): Promise<void> {
   if (!active.stepId) return;
   try {
-    const row = await pgGet<{ status: string; run_id: string; step_id: string; type: string; current_story_id: string | null; story_id: string | null }>(
-      `SELECT s.status, s.run_id, s.step_id, s.type, s.current_story_id, st.story_id
+    const row = await pgGet<{ run_id: string; step_id: string; type: string; current_story_id: string | null; story_id: string | null }>(
+      `SELECT s.run_id, s.step_id, s.type, s.current_story_id, st.story_id
        FROM steps s
        LEFT JOIN stories st ON st.id = s.current_story_id
        WHERE s.id = $1 AND s.status = 'running'
@@ -1762,32 +1831,6 @@ async function releaseActiveProcessForShutdown(active: ActiveProcess): Promise<v
       [active.stepId],
     );
     if (!row) return;
-    if (row.type === "loop" && row.step_id === "implement" && row.current_story_id) {
-      const runningStep: RunningStepRow = {
-        status: row.status,
-        step_id: row.step_id,
-        run_id: row.run_id,
-        type: row.type,
-        current_story_id: row.current_story_id,
-      };
-      const recovered = await recoverBuildPassingImplementWork(
-        active.stepId,
-        runningStep,
-        active.agentId,
-        active.transcriptPath,
-        "spawner-shutdown-build-passing",
-        "Spawner shutdown found clean, build-passing committed work and completed the story instead of requeueing it.",
-        active.spawnCwd,
-        async () => {
-          terminateActiveProcess(active, "shutdown-implement-recovery");
-          await new Promise((resolve) => setTimeout(resolve, 1500));
-        },
-      );
-      if (recovered) {
-        console.log(`[spawner] completed active implement claim during shutdown: ${active.agentId} ${active.wfId}/${active.role}`);
-        return;
-      }
-    }
     if (row.type === "loop" && row.current_story_id) {
       await pgRun(
         "UPDATE stories SET status = 'pending', claimed_by = NULL, updated_at = NOW() WHERE id = $1 AND status = 'running'",
