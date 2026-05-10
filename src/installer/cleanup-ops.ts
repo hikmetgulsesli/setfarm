@@ -142,6 +142,28 @@ function collectDescendants(pid: number, childrenByParent: Map<number, ProcessRo
   }
 }
 
+function terminateProcessSet(targets: Set<number>): number {
+  const ordered = [...targets].filter((pid) => pid > 1 && pid !== process.pid).sort((a, b) => b - a);
+  if (ordered.length === 0) return 0;
+
+  for (const pid of ordered) {
+    try { process.kill(pid, "SIGTERM"); } catch { /* already dead */ }
+  }
+  const deadline = Date.now() + 1200;
+  while (Date.now() < deadline) {
+    let anyAlive = false;
+    for (const pid of ordered) {
+      try { process.kill(pid, 0); anyAlive = true; break; } catch { /* dead */ }
+    }
+    if (!anyAlive) break;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+  }
+  for (const pid of ordered) {
+    try { process.kill(pid, "SIGKILL"); } catch { /* already dead */ }
+  }
+  return ordered.length;
+}
+
 function hasAllowedTransientPort(command: string, ports: Set<string>): boolean {
   for (const port of ports) {
     const escaped = port.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -150,9 +172,13 @@ function hasAllowedTransientPort(command: string, ports: Set<string>): boolean {
   return false;
 }
 
+function normalizeProcessPath(value: string | undefined): string | undefined {
+  return value?.replace(/\s+\(deleted\)$/, "");
+}
+
 function isPathInside(child: string | undefined, parent: string): boolean {
   if (!child) return false;
-  const resolvedChild = path.resolve(child);
+  const resolvedChild = path.resolve(normalizeProcessPath(child) || child);
   const resolvedParent = path.resolve(parent);
   return resolvedChild === resolvedParent || resolvedChild.startsWith(resolvedParent + path.sep);
 }
@@ -163,6 +189,10 @@ function isManagedProjectService(row: ProcessRow): boolean {
   // Agent-spawned preview processes inherit Setfarm/OpenClaw service cgroups;
   // deployed apps have their own project service cgroup and must be preserved.
   return !/(setfarm-spawner|openclaw-gateway)\.service\b/.test(cgroup);
+}
+
+function isSetfarmOwnedProcess(row: ProcessRow): boolean {
+  return /(setfarm-spawner|openclaw-gateway)\.service\b/.test(row.cgroup || "");
 }
 
 function isTransientPreviewCommand(row: ProcessRow, repoPath: string, ports: Set<string>): boolean {
@@ -183,6 +213,40 @@ function isTransientPreviewCommand(row: ProcessRow, repoPath: string, ports: Set
   if (!command.includes(repoPath) && !isPathInside(row.cwd, repoPath)) return false;
   if (!hasAllowedTransientPort(command, ports)) return false;
   return /\b(vite|next)\b[\s\S]{0,80}\b(dev|preview|start)\b|\bnpx\s+vite\b|\bnpm\s+exec\s+vite\b|\bserve\b[\s\S]{0,80}\bdist\b/.test(command);
+}
+
+function isRunScopedStoryWorktree(value: string | undefined, runId: string): boolean {
+  const runPrefix = runId.slice(0, 8);
+  const normalized = normalizeProcessPath(value);
+  if (!normalized || runPrefix.length < 8) return false;
+  return normalized.includes(`${path.sep}story-worktrees${path.sep}`) && path.basename(normalized).startsWith(runPrefix);
+}
+
+function isProcessScopedToProject(row: ProcessRow, repoPath: string, runId: string): boolean {
+  const command = row.command;
+  return (
+    command.includes(repoPath) ||
+    isPathInside(row.cwd, repoPath) ||
+    isRunScopedStoryWorktree(row.cwd, runId) ||
+    command.includes(runId.slice(0, 8))
+  );
+}
+
+function isTransientProjectToolCommand(row: ProcessRow, repoPath: string, runId: string): boolean {
+  if (!isSetfarmOwnedProcess(row)) return false;
+  if (isManagedProjectService(row)) return false;
+  if (!isProcessScopedToProject(row, repoPath, runId)) return false;
+
+  const command = row.command;
+  return (
+    /^node \(vitest(?: \d+)?\)$/.test(command) ||
+    /\b(npx\s+vitest|npm\s+exec\s+vitest|pnpm\s+vitest|yarn\s+vitest|bunx\s+vitest|vitest)\b/.test(command) ||
+    /\bnode\b[\s\S]{0,200}\bvitest\b/.test(command) ||
+    /\bvite\b[\s\S]{0,120}\bbuild\b/.test(command) ||
+    /\bnode\b[\s\S]{0,200}\/vite(?:\.js)?\b[\s\S]{0,120}\bbuild\b/.test(command) ||
+    /\b(vue-tsc|tsc)\b[\s\S]{0,120}\b(--noEmit|-b|-p|--project)\b/.test(command) ||
+    /\bnode\b[\s\S]{0,200}\/(?:vue-tsc|tsc)(?:\.js)?\b[\s\S]{0,120}\b(--noEmit|-b|-p|--project)?\b/.test(command)
+  );
 }
 
 function reapTransientPreviewProcesses(repoPath: string, ports: Set<string>): number {
@@ -211,24 +275,38 @@ function reapTransientPreviewProcesses(repoPath: string, ports: Set<string>): nu
     }
   }
 
-  if (targets.size === 0) return 0;
-  const ordered = [...targets].sort((a, b) => b - a);
-  for (const pid of ordered) {
-    try { process.kill(pid, "SIGTERM"); } catch { /* already dead */ }
+  return terminateProcessSet(targets);
+}
+
+function reapTransientProjectToolProcesses(repoPath: string, runId: string): number {
+  const rows = parseProcessRows();
+  if (rows.length === 0) return 0;
+
+  const byPid = new Map(rows.map((row) => [row.pid, row]));
+  const childrenByParent = new Map<number, ProcessRow[]>();
+  for (const row of rows) {
+    const children = childrenByParent.get(row.ppid) || [];
+    children.push(row);
+    childrenByParent.set(row.ppid, children);
   }
-  const deadline = Date.now() + 1200;
-  while (Date.now() < deadline) {
-    let anyAlive = false;
-    for (const pid of ordered) {
-      try { process.kill(pid, 0); anyAlive = true; break; } catch { /* dead */ }
+
+  const targets = new Set<number>();
+  for (const row of rows) {
+    if (!isTransientProjectToolCommand(row, repoPath, runId)) continue;
+    targets.add(row.pid);
+    collectDescendants(row.pid, childrenByParent, targets);
+
+    let parent = byPid.get(row.ppid);
+    while (parent && parent.pid !== 1 && parent.pid !== process.pid) {
+      if (!isSetfarmOwnedProcess(parent)) break;
+      if (!isProcessScopedToProject(parent, repoPath, runId)) break;
+      if (!/\b(npm|npx|node|sh|bash|bun|bunx|pnpm|yarn)\b/.test(parent.command)) break;
+      targets.add(parent.pid);
+      parent = byPid.get(parent.ppid);
     }
-    if (!anyAlive) break;
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
   }
-  for (const pid of ordered) {
-    try { process.kill(pid, "SIGKILL"); } catch { /* already dead */ }
-  }
-  return targets.size;
+
+  return terminateProcessSet(targets);
 }
 
 export async function cleanupProjectEphemera(
@@ -247,10 +325,11 @@ export async function cleanupProjectEphemera(
     for (const repoPath of getProjectDirs(context)) {
       artifactCount += cleanupUntrackedProjectArtifacts(repoPath);
       processCount += reapTransientPreviewProcesses(repoPath, ports);
+      processCount += reapTransientProjectToolProcesses(repoPath, runId);
     }
 
     if (artifactCount || processCount) {
-      logger.info(`[project-cleanup] ${reason}: removed ${artifactCount} artifact(s), reaped ${processCount} transient preview process(es)`, { runId });
+      logger.info(`[project-cleanup] ${reason}: removed ${artifactCount} artifact(s), reaped ${processCount} transient process(es)`, { runId });
     }
   } catch (err) {
     logger.warn(`[project-cleanup] ${reason} failed: ${String(err).slice(0, 300)}`, { runId });
