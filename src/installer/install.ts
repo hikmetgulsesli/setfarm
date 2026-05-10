@@ -59,7 +59,6 @@ const WORKFLOW_AGENT_SKILLS_LIMITS = { maxSkillsPromptChars: 1200 } as const;
 const MINIMAX_OPENAI_PROVIDER_ID = "minimax-openai";
 const MINIMAX_OPENAI_MODEL_REF = `${MINIMAX_OPENAI_PROVIDER_ID}/MiniMax-M2.7`;
 const KIMI_CODING_MODEL_REF = "kimi-coding/kimi-for-coding";
-const WORKFLOW_LLM_IDLE_TIMEOUT_SECONDS = 8;
 const WORKFLOW_MODEL_TIMEOUT_MS = 10 * 60 * 1000;
 const MINIMAX_AGENT_MODEL = {
   primary: MINIMAX_OPENAI_MODEL_REF,
@@ -77,7 +76,6 @@ const DEFAULT_SESSION_MAINTENANCE = {
   mode: "enforce",
   pruneAfter: "2d",
   maxEntries: 500,
-  rotateBytes: "10mb",
 } as const;
 
 /**
@@ -225,17 +223,6 @@ function ensureExecConfig(config: OpenClawConfig): void {
   tools.fs.workspaceOnly = false;
 }
 
-function ensureWorkflowLlmConfig(config: OpenClawConfig): void {
-  if (!config.agents) config.agents = {};
-  if (!config.agents.defaults) config.agents.defaults = {};
-  const defaults = config.agents.defaults as Record<string, any>;
-  if (!defaults.llm || typeof defaults.llm !== "object") defaults.llm = {};
-  const current = defaults.llm.idleTimeoutSeconds;
-  if (current !== WORKFLOW_LLM_IDLE_TIMEOUT_SECONDS) {
-    defaults.llm.idleTimeoutSeconds = WORKFLOW_LLM_IDLE_TIMEOUT_SECONDS;
-  }
-}
-
 function ensureMinimaxOpenAIProvider(config: OpenClawConfig): void {
   const root = config as Record<string, any>;
   if (!root.models || typeof root.models !== "object") root.models = {};
@@ -288,9 +275,7 @@ function ensureSessionMaintenance(config: OpenClawConfig): void {
   if (maintenance.maxEntries === undefined) {
     maintenance.maxEntries = DEFAULT_SESSION_MAINTENANCE.maxEntries;
   }
-  if (maintenance.rotateBytes === undefined) {
-    maintenance.rotateBytes = DEFAULT_SESSION_MAINTENANCE.rotateBytes;
-  }
+  delete (maintenance as Record<string, unknown>).rotateBytes;
 }
 
 function defaultModelForAgent(agentId: string): Record<string, unknown> {
@@ -343,7 +328,6 @@ export async function installWorkflow(params: { workflowId: string }): Promise<W
   const { path: configPath, config } = await readOpenClawConfig();
   ensureCronSessionRetention(config);
   ensureExecConfig(config);
-  ensureWorkflowLlmConfig(config);
   ensureMinimaxOpenAIProvider(config);
   ensureSessionMaintenance(config);
   const list = ensureAgentList(config);

@@ -157,12 +157,13 @@ export async function uninstallAllWorkflows(): Promise<void> {
   }
   if (config.session?.maintenance) {
     const maintenance = config.session.maintenance;
+    const rotateBytes = (maintenance as Record<string, unknown>).rotateBytes;
     const matchesDefaults =
       maintenance.mode === DEFAULT_SESSION_MAINTENANCE.mode &&
       (maintenance.pruneAfter === DEFAULT_SESSION_MAINTENANCE.pruneAfter ||
         maintenance.pruneDays === undefined) &&
       maintenance.maxEntries === DEFAULT_SESSION_MAINTENANCE.maxEntries &&
-      maintenance.rotateBytes === DEFAULT_SESSION_MAINTENANCE.rotateBytes;
+      (rotateBytes === undefined || rotateBytes === DEFAULT_SESSION_MAINTENANCE.rotateBytes);
     if (matchesDefaults) {
       delete config.session.maintenance;
       if (Object.keys(config.session).length === 0) {

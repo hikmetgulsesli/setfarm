@@ -14,7 +14,6 @@ export type OpenClawConfig = {
       pruneAfter?: string | number;
       pruneDays?: number;
       maxEntries?: number;
-      rotateBytes?: number | string;
     };
   };
   agents?: {
@@ -24,9 +23,6 @@ export type OpenClawConfig = {
       };
       sandbox?: {
         mode?: string;
-      };
-      llm?: {
-        idleTimeoutSeconds?: number;
       };
     };
     list?: Array<Record<string, unknown>>;
