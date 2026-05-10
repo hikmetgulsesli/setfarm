@@ -49,7 +49,7 @@ const STITCH_HTML_EXCERPT_CHARS = 2500;
 const STITCH_HTML_TOTAL_CHARS = 6000;
 const DESIGN_DOM_EXCERPT_CHARS = 3000;
 
-const QUALITY_FIX_STEPS = new Set(["qa-test", "final-test"]);
+const QUALITY_FIX_STEPS = new Set(["security-gate", "qa-test", "final-test"]);
 const QA_FIX_SOURCE_EXT = /\.(tsx?|jsx?|css|scss|vue|svelte)$/i;
 const QA_FIX_IGNORE = /^(node_modules\/|dist\/|build\/|\.next\/|coverage\/|stitch\/|references\/)|(^|\/)(package(-lock)?\.json|tsconfig[^/]*\.json|vite\.config\.[^/]+|tailwind\.config\.[^/]+|postcss\.config\.[^/]+|eslint\.config\.[^/]+|index\.html)$/;
 const SMOKE_INFRA_FAILURE = /\b(agent-browser|browser control|playwright|chromium|chrome)\b[\s\S]{0,240}\b(ETIMEDOUT|ECONNREFUSED|ECONNRESET|EPIPE|timed out|timeout)\b/i;

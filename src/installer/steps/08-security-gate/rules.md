@@ -1,5 +1,12 @@
 # Security Gate Rules
 
+## Role Boundary
+
+Security gate is read-only. Do not edit source, tests, CSS, config, package,
+assets, or generated files. Do not run `git add`, `git commit`, `git push`,
+`gh pr`, or merge commands. If any security issue needs a code change, return
+`STATUS: retry`; the implement step owns the fix.
+
 ## Retry Triggers
 
 - Hardcoded secret: API key, JWT secret, bcrypt salt, token.

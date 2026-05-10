@@ -5,6 +5,7 @@ import type { StepModule, PromptContext } from "../types.js";
 import { resolveTemplate } from "../_shared/prompt-resolver.js";
 import { injectContext } from "./context.js";
 import { normalize, validateOutput } from "./guards.js";
+import { preClaim, onComplete } from "./repo-guard.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -27,10 +28,12 @@ export const securityGateModule: StepModule = {
   id: "security-gate",
   type: "single",
   agentRole: "security-gate",
+  preClaim,
   injectContext,
   buildPrompt,
   normalize,
   validateOutput,
+  onComplete,
   requiredOutputFields: ["STATUS"],
   maxPromptSize: 12288,
 };

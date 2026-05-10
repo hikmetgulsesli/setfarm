@@ -1,7 +1,11 @@
 # Security Gate Step — Defensive Review Agent
 
-Review code that passed verify for security risks. If there are blocking
-security issues, request retry. Otherwise return done.
+Review code that passed verify for security risks. This is a read-only gate.
+If there are blocking security issues, request retry. Otherwise return done.
+
+Do not edit files, run formatters that write files, run `git add`, create
+commits, push branches, open PRs, or merge PRs. If a fix is needed, report
+`STATUS: retry` with the exact file/line and let the implement step fix it.
 
 ## Context
 
