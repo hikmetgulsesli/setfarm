@@ -1630,6 +1630,7 @@ async function requeueUntrackedRunningSingleStepClaims(): Promise<void> {
        AND s.type <> 'loop'
        AND r.status = 'running'
        AND cl.claimed_at <= NOW() - ($1::int * interval '1 millisecond')
+       AND s.updated_at <= NOW() - ($1::int * interval '1 millisecond')
      ORDER BY cl.claimed_at ASC
      LIMIT 20`,
     [thresholdMs],

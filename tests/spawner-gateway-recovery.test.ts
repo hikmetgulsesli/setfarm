@@ -301,6 +301,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /s\.status = 'running'/);
     assert.match(source, /s\.type <> 'loop'/);
     assert.match(source, /cl\.story_id IS NULL/);
+    assert.match(source, /s\.updated_at <= NOW\(\) - \(\$1::int \* interval '1 millisecond'\)/);
     assert.match(source, /Array\.from\(activeProcesses\.values\(\)\)\.some/);
     assert.match(source, /UNTRACKED_RUNNING_SINGLE_STEP/);
     assert.match(source, /UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = retry_count \+ 1/);
