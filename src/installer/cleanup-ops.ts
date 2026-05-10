@@ -239,7 +239,7 @@ function isTransientProjectToolCommand(row: ProcessRow, repoPath: string, runId:
 
   const command = row.command;
   return (
-    /^node \(vitest(?: \d+)?\)$/.test(command) ||
+    isVitestWorkerCommand(command) ||
     /\b(npx\s+vitest|npm\s+exec\s+vitest|pnpm\s+vitest|yarn\s+vitest|bunx\s+vitest|vitest)\b/.test(command) ||
     /\bnode\b[\s\S]{0,200}\bvitest\b/.test(command) ||
     /\bvite\b[\s\S]{0,120}\bbuild\b/.test(command) ||
@@ -247,6 +247,26 @@ function isTransientProjectToolCommand(row: ProcessRow, repoPath: string, runId:
     /\b(vue-tsc|tsc)\b[\s\S]{0,120}\b(--noEmit|-b|-p|--project)\b/.test(command) ||
     /\bnode\b[\s\S]{0,200}\/(?:vue-tsc|tsc)(?:\.js)?\b[\s\S]{0,120}\b(--noEmit|-b|-p|--project)?\b/.test(command)
   );
+}
+
+function isVitestWorkerCommand(command: string): boolean {
+  return /^node \(vitest(?: \d+)?\)$/.test(command);
+}
+
+function isVitestSupervisorCommand(command: string): boolean {
+  return (
+    isVitestWorkerCommand(command) ||
+    /\b(npx\s+vitest|npm\s+exec\s+vitest|pnpm\s+vitest|yarn\s+vitest|bunx\s+vitest|vitest\s+run)\b/.test(command) ||
+    /\b(sh|bash)\s+-c\b[\s\S]{0,200}\bvitest\b/.test(command) ||
+    /\bnode\b[\s\S]{0,200}\bvitest\b/.test(command)
+  );
+}
+
+function isOrphanedProjectToolWorker(row: ProcessRow, byPid: Map<number, ProcessRow>): boolean {
+  if (!isVitestWorkerCommand(row.command)) return false;
+  const parent = byPid.get(row.ppid);
+  if (!parent || parent.pid === 1) return true;
+  return !isVitestSupervisorCommand(parent.command);
 }
 
 function reapTransientPreviewProcesses(repoPath: string, ports: Set<string>): number {
@@ -275,6 +295,20 @@ function reapTransientPreviewProcesses(repoPath: string, ports: Set<string>): nu
     }
   }
 
+  return terminateProcessSet(targets);
+}
+
+function reapOrphanedProjectToolWorkers(repoPath: string, runId: string): number {
+  const rows = parseProcessRows();
+  if (rows.length === 0) return 0;
+
+  const byPid = new Map(rows.map((row) => [row.pid, row]));
+  const targets = new Set<number>();
+  for (const row of rows) {
+    if (!isTransientProjectToolCommand(row, repoPath, runId)) continue;
+    if (!isOrphanedProjectToolWorker(row, byPid)) continue;
+    targets.add(row.pid);
+  }
   return terminateProcessSet(targets);
 }
 
@@ -307,6 +341,26 @@ function reapTransientProjectToolProcesses(repoPath: string, runId: string): num
   }
 
   return terminateProcessSet(targets);
+}
+
+async function cleanupRunningRunOrphanedToolWorkers(): Promise<void> {
+  try {
+    const runs = await pgQuery<{ id: string }>(
+      "SELECT id FROM runs WHERE status = 'running' ORDER BY updated_at DESC LIMIT 30"
+    );
+    for (const run of runs) {
+      const context = await getRunContext(run.id);
+      let processCount = 0;
+      for (const repoPath of getProjectDirs(context)) {
+        processCount += reapOrphanedProjectToolWorkers(repoPath, run.id);
+      }
+      if (processCount) {
+        logger.info(`[project-cleanup] orphan-sweep: reaped ${processCount} orphaned tool worker(s)`, { runId: run.id });
+      }
+    }
+  } catch (err) {
+    logger.warn(`[project-cleanup] orphan-sweep failed: ${String(err).slice(0, 300)}`, {});
+  }
 }
 
 export async function cleanupProjectEphemera(
@@ -362,6 +416,8 @@ export function scheduleRunCronTeardown(runId: string): void {
  * Uses advancePipeline callback to avoid circular dependency with step-ops.ts.
  */
 export async function cleanupAbandonedSteps(advancePipeline: (runId: string) => Promise<{ advanced: boolean; runCompleted: boolean }> | { advanced: boolean; runCompleted: boolean }): Promise<void> {
+    await cleanupRunningRunOrphanedToolWorkers();
+
     const abandonedSteps = await pgQuery<{
       id: string; step_id: string; run_id: string; retry_count: number; max_retries: number;
       type: string; current_story_id: string | null; loop_config: string | null;
