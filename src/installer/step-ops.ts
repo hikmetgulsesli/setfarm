@@ -1679,10 +1679,10 @@ async function claimSingleStep(
     shouldRecordSingleStepTransition = true;
   }
 
-  // Record the handoff before claim-side gates such as verify context injection
-  // and PR review delay. Those gates can do real work or defer the claim before
-  // an agent process exists, so LiveDB must not show a bare running step.
-  await recordSingleStepHandoff("claimSingleStep:atomic");
+  // Do not publish a LiveDB claim until claim-side deferrals pass. Verify PR
+  // review delay can intentionally retry every few seconds before spawning an
+  // agent; recording those as claimed steps floods activity/claim_log even
+  // though no reviewer process exists yet.
 
   // Inject previous failure context so agent knows what to fix on retry.
   // Some verify-each retries intentionally leave the previous successful
@@ -1734,6 +1734,10 @@ async function claimSingleStep(
   // BUG FIX: If this is a verify step for a verify_each loop, inject the correct
   // story info from the oldest unverified 'done' story (not from stale context).
   if (!await injectVerifyContext(step, context, db)) {
+    await pgRun(
+      "UPDATE steps SET status = 'pending', updated_at = $1 WHERE id = $2 AND status = 'running'",
+      [now(), step.id],
+    );
     await closeSingleStepHandoff("completed", "verify_each auto-verified or advanced without agent spawn");
     return { found: false };
   }
@@ -1806,6 +1810,9 @@ async function claimSingleStep(
     delete context["verify_pending_pr_url"];
     await updateRunContext(step.run_id, context);
   }
+
+  // Claim-side gates are done; this is the actual handoff to an agent process.
+  await recordSingleStepHandoff("claimSingleStep:atomic");
 
   // Default optional template vars for non-story steps (design, security-gate, etc.)
   for (const v of OPTIONAL_TEMPLATE_VARS) {
