@@ -372,6 +372,138 @@ EOF
       git add package.json index.html tsconfig.json tsconfig.node.json vite.config.ts postcss.config.js tailwind.config.js src/
       git commit -m "chore: scaffold vite react app" 2>/dev/null || true
       ;;
+    nextjs)
+      mkdir -p src/app
+      cat > package.json <<EOF
+{
+  "name": "$PACKAGE_NAME",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "next": "^14.2.5",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.0",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.41",
+    "tailwindcss": "^3.4.10",
+    "typescript": "^5.5.4"
+  }
+}
+EOF
+      cat > next.config.mjs <<'EOF'
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  reactStrictMode: true,
+};
+
+export default nextConfig;
+EOF
+      cat > tsconfig.json <<'EOF'
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "plugins": [{ "name": "next" }]
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules"]
+}
+EOF
+      cat > next-env.d.ts <<'EOF'
+/// <reference types="next" />
+/// <reference types="next/image-types/global" />
+
+// NOTE: This file should not be edited.
+EOF
+      cat > postcss.config.js <<'EOF'
+export default {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+};
+EOF
+      cat > tailwind.config.js <<'EOF'
+/** @type {import('tailwindcss').Config} */
+export default {
+  content: ['./src/app/**/*.{ts,tsx}', './src/components/**/*.{ts,tsx}', './src/screens/**/*.{ts,tsx}'],
+  theme: { extend: {} },
+  plugins: [],
+};
+EOF
+      cat > src/app/layout.tsx <<EOF
+import type { Metadata } from "next";
+import type { ReactNode } from "react";
+import "./globals.css";
+
+export const metadata: Metadata = {
+  title: "$PROJECT_NAME",
+  description: "Setfarm generated application",
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: ReactNode;
+}>) {
+  return (
+    <html lang="en">
+      <body>{children}</body>
+    </html>
+  );
+}
+EOF
+      cat > src/app/page.tsx <<'EOF'
+export default function Home() {
+  return <main data-setfarm-root="baseline" className="min-h-screen bg-slate-50 text-slate-950" />;
+}
+EOF
+      cat > src/app/globals.css <<'EOF'
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+EOF
+      git add package.json next.config.mjs tsconfig.json next-env.d.ts postcss.config.js tailwind.config.js src/
+      git commit -m "chore: scaffold nextjs app" 2>/dev/null || true
+      ;;
     *)
       echo "FATAL: no automatic scaffold for TECH_STACK=$TECH_STACK_RAW (normalized: $TECH_STACK)"
       echo "STATUS: fail"

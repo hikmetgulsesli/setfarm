@@ -96,6 +96,8 @@ describe("04-setup-repo step module", () => {
     assert.ok(script.includes('git init -b main'), "fresh repos should initialize main directly");
     assert.ok(script.includes("normalize_stack()"), "setup-repo should normalize planner TECH_STACK labels");
     assert.ok(script.includes("react-vite-typescript"), "React/Vite/TypeScript labels should map to vite-react");
+    assert.ok(script.includes("nextjs)"), "Next.js should have a first-class scaffold case");
+    assert.ok(script.includes('"build": "next build"'), "Next.js scaffold should build with next build");
     assert.ok(script.includes('"name": "$PACKAGE_NAME"'), "package name should come from project slug");
     assert.ok(script.includes("<title>$PROJECT_NAME</title>"), "HTML title should come from project slug");
     assert.ok(script.includes('data-setfarm-root="baseline"'), "App baseline should be machine-detectable");
