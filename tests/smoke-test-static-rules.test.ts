@@ -3,7 +3,12 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { checkEntryPointImports, checkNativeButtonWiring } from "../scripts/smoke-test.mjs";
+import {
+  checkEntryPointImports,
+  checkNativeButtonWiring,
+  checkSemanticClickTargets,
+  checkWeakInteractionAssertions,
+} from "../scripts/smoke-test.mjs";
 
 function withRepo(fn: (repo: string) => void) {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-smoke-static-"));
@@ -78,6 +83,48 @@ describe("smoke-test static rules", () => {
       ].join("\n"));
 
       assert.deepEqual(checkNativeButtonWiring(repo), []);
+    });
+  });
+
+  it("rejects non-semantic onClick targets", () => {
+    withRepo(repo => {
+      fs.writeFileSync(path.join(repo, "src", "App.tsx"), [
+        "export function App() {",
+        '  return <div onClick={() => {}}>Open settings</div>;',
+        "}",
+      ].join("\n"));
+
+      const issues = checkSemanticClickTargets(repo);
+      assert.equal(issues.length, 1);
+      assert.match(issues[0], /<div> has onClick but is not a native or keyboard-accessible control/);
+    });
+  });
+
+  it("allows fully keyboard-accessible custom click targets", () => {
+    withRepo(repo => {
+      fs.writeFileSync(path.join(repo, "src", "App.tsx"), [
+        "export function App() {",
+        '  return <div role="button" tabIndex={0} onKeyDown={() => {}} onClick={() => {}}>Open settings</div>;',
+        "}",
+      ].join("\n"));
+
+      assert.deepEqual(checkSemanticClickTargets(repo), []);
+    });
+  });
+
+  it("rejects click tests that only assert not.toThrow", () => {
+    withRepo(repo => {
+      fs.writeFileSync(path.join(repo, "src", "App.test.tsx"), [
+        'import { fireEvent } from "@testing-library/react";',
+        'it("settings button is clickable", () => {',
+        "  const settings = document.createElement('button');",
+        "  expect(() => fireEvent.click(settings)).not.toThrow();",
+        "});",
+      ].join("\n"));
+
+      const issues = checkWeakInteractionAssertions(repo);
+      assert.equal(issues.length, 1);
+      assert.match(issues[0], /click assertion uses not\.toThrow only/);
     });
   });
 
