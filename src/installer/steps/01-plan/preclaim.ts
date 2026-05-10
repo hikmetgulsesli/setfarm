@@ -6,6 +6,8 @@ import type { ClaimContext } from "../types.js";
 
 const DEFAULT_STACK = "vite-react";
 
+type ProjectKind = "game" | "product";
+
 function transliterate(input: string): string {
   return input
     .replace(/[Ğğ]/g, "g")
@@ -90,6 +92,14 @@ function inferDbRequired(task: string): string {
   return "none";
 }
 
+function inferProjectKind(task: string): ProjectKind {
+  const lower = transliterate(task).toLowerCase();
+  if (/\b(game|oyun|tetris|tetromino|puzzle|arcade|score|level|lines?|pause|resume|restart|keyboard controls?)\b/.test(lower)) {
+    return "game";
+  }
+  return "product";
+}
+
 export function inferUiLanguage(task: string): string {
   const normalized = transliterate(task).toLowerCase();
   if (/\b(english|ingilizce)\b/.test(normalized)) return "English";
@@ -122,11 +132,13 @@ function screensForTask(task: string): Array<{ name: string; type: string; descr
   }
   if (/game|oyun/.test(lower)) {
     return [
-      { name: "Playfield", type: "play", description: "Playable main scene, score, and primary controls." },
-      { name: "Main Menu", type: "menu", description: "Start game, difficulty, settings, and resume actions." },
-      { name: "Results", type: "result", description: "Win/loss outcome, replay, and return-to-menu actions." },
-      { name: "Settings", type: "settings", description: "Audio, difficulty, and control preferences." },
-      { name: "Help", type: "help", description: "Short rules plus keyboard and touch explanations." },
+      { name: "Game Board", type: "play", description: "Playable main scene with the board, active piece, score, level, lines, and primary controls." },
+      { name: "Next Piece Preview", type: "status", description: "Upcoming piece queue preview derived from the same game state that spawns pieces." },
+      { name: "Main Menu", type: "menu", description: "Start, resume, restart, and difficulty actions." },
+      { name: "Pause Overlay", type: "overlay", description: "Paused state with resume, restart, and return-to-menu actions." },
+      { name: "Game Over", type: "result", description: "Final score, level, lines cleared, replay, and return-to-menu actions." },
+      { name: "Controls Help", type: "help", description: "Keyboard and touch controls plus short rules." },
+      { name: "Game Options", type: "settings", description: "Audio, speed/difficulty, and control preferences when requested." },
     ];
   }
   return [
@@ -174,6 +186,7 @@ export function buildAutoPlanOutput(task: string): string {
   const stack = inferTechStack(task);
   const dbRequired = inferDbRequired(task);
   const uiLanguage = inferUiLanguage(task);
+  const projectKind = inferProjectKind(task);
   const repo = path.join(os.homedir(), "projects", slug);
   const branch = `feature-${slug}`.slice(0, 80).replace(/-+$/g, "");
   const bullets = taskBullets(task);
@@ -182,6 +195,88 @@ export function buildAutoPlanOutput(task: string): string {
     .map((screen, idx) => `| ${idx + 1} | ${screen.name} | ${screen.type} | ${screen.description} |`)
     .join("\n");
   const requirementRows = bullets.map((line, idx) => `- R${idx + 1}: ${line}`).join("\n");
+
+  const goals = projectKind === "game"
+    ? [
+      "- Provide a working first-load playable game surface, not a landing page or generic dashboard.",
+      "- Ensure Start, Pause, Resume, Restart, keyboard/touch controls, and game-over actions visibly change the game state.",
+      "- Keep gameplay state single-sourced so score, board, active piece, next piece preview, pause, and game-over UI cannot drift.",
+      "- Avoid text overflow, incoherent overlap, dead controls, and broken mobile controls on desktop and mobile.",
+      "- Expose deterministic game state so smoke, final-test, and deploy gates can verify actual post-click and post-keyboard behavior.",
+    ]
+    : [
+      "- Provide a working first-load experience with populated, empty, loading, and error states.",
+      "- Ensure every visible button and icon button triggers a real route, state change, panel, modal, or form behavior.",
+      "- Avoid text overflow, incoherent overlap, dead controls, and broken back navigation on mobile and desktop.",
+      "- Persist data through localStorage or the chosen data layer with visible error, retry, and reset behavior.",
+      "- Expose deterministic state so smoke, final-test, and deploy gates can verify the application surface.",
+    ];
+
+  const functionalRequirements = projectKind === "game"
+    ? [
+      requirementRows,
+      "- Gameplay controls provide visible post-action state changes for click/touch and keyboard input.",
+      "- Pause/resume freezes and restarts the game loop without spawning duplicate timers.",
+      "- Restart resets the board, active piece, next queue, score, level, lines, and game-over state consistently.",
+      "- Product controls must not use data-smoke-ignore; intentionally unavailable controls are disabled or aria-disabled.",
+    ]
+    : [
+      requirementRows,
+      "- Forms provide required-field validation and visible error messages.",
+      "- Filtering, search, create, edit, delete, profile, settings, retry, and clear actions produce visible state changes in smoke tests.",
+      "- Product controls must not use data-smoke-ignore; intentionally unavailable controls are disabled or aria-disabled.",
+    ];
+
+  const dataModel = projectKind === "game"
+    ? [
+      "- Game state includes board grid, active piece, next piece queue/preview, score, level, lines, status, paused, and gameOver fields.",
+      "- The next piece preview is derived from the same queue used by piece spawning; do not keep a divergent ref or duplicate source of truth.",
+      "- Timers and repeated input use stable callbacks/effects so interval setup does not thrash every frame.",
+      "- Persistence is limited to high score and explicit preferences unless the task asks for saved games.",
+      "- Corrupt persisted high-score/preferences data shows visible recovery feedback instead of silently resetting when persistence is used.",
+    ]
+    : [
+      "- Entity fields are defined as TypeScript types that match the task domain.",
+      "- Every persisted record includes id, createdAt, and updatedAt.",
+      "- Global preferences such as settings and profile data are separated from domain entity state.",
+      "- Storage schema is versioned; corrupt JSON shows a visible error state instead of silently resetting.",
+    ];
+
+  const uiRequirements = projectKind === "game"
+    ? [
+      `- User-facing language: ${uiLanguage}.`,
+      "- Aesthetic: focused game UI with a clear playfield, readable score/status panels, and controls that do not compete with gameplay.",
+      "- Palette: high-contrast board cells, distinct tetromino colors, Background #0F172A, Surface #111827, Text #F8FAFC, Border #334155, Success #22C55E, Error #F43F5E, Warning #F59E0B.",
+      "- Typography: system sans; compact status labels use small but readable headings.",
+      "- Components: stable board dimensions, visible focus rings, and 44x44px touch targets for mobile controls.",
+      "- Do not add profile/account panels unless the user explicitly asks for account features.",
+    ]
+    : [
+      `- User-facing language: ${uiLanguage}.`,
+      "- Aesthetic: corporate/minimal, quiet, scannable, and appropriate for repeated product use.",
+      "- Palette: Primary #2563EB, Secondary #475569, Background #F8FAFC, Surface #FFFFFF, Text #0F172A, Border #E2E8F0, Success #16A34A, Error #DC2626, Warning #D97706.",
+      "- Typography: Inter or system sans; compact panels use small but readable headings.",
+      "- Components: cards at 8px radius or less, clear focus rings, and 44x44px touch targets.",
+      "- The profile/account icon must open a panel, drawer, or page with close/back behavior.",
+    ];
+
+  const nonFunctional = projectKind === "game"
+    ? [
+      "- Performance: target first load under 2s and stable frame/input handling without duplicate intervals.",
+      "- Accessibility: WCAG 2.1 AA, keyboard controls, aria-labels, focus states, and sufficient contrast.",
+      "- Responsive: support 320px mobile widths through desktop with a stable board aspect ratio and non-overlapping controls.",
+      "- Error handling: storage/preferences errors are visible, retryable, and clearable when persistence is used.",
+    ]
+    : [
+      "- Performance: target first load under 2s and client state transitions under 100ms.",
+      "- Accessibility: WCAG 2.1 AA, keyboard navigation, aria-labels, focus states, and sufficient contrast.",
+      "- Responsive: support 320px mobile widths through desktop with stacking, grid, or scrollable columns.",
+      "- Error handling: storage and form errors are visible, retryable, and clearable.",
+    ];
+
+  const windowState = projectKind === "game"
+    ? "window.app = { state: { screen, status, score, level, lines, activePiece, nextPiece, paused, gameOver, storageStatus, lastError }, dispatch } exposes current gameplay and test state."
+    : "window.app = { state, screen, lastError, storageStatus, itemCount, activePanel } exposes the main dogfood and test state.";
 
   return [
     "STATUS: done",
@@ -198,51 +293,37 @@ export function buildAutoPlanOutput(task: string): string {
     `${projectName} turns the user's request into a directly usable application. The first screen is not a landing page; it is the real workflow surface where the user can inspect data, take actions, and recover from empty or error states. User-facing copy language: ${uiLanguage}. Pipeline metadata, story titles, component identifiers, and technical reports remain English.`,
     "",
     "## Goals",
-    "- Provide a working first-load experience with populated, empty, loading, and error states.",
-    "- Ensure every visible button and icon button triggers a real route, state change, panel, modal, or form behavior.",
-    "- Avoid text overflow, incoherent overlap, dead controls, and broken back navigation on mobile and desktop.",
-    "- Persist data through localStorage or the chosen data layer with visible error, retry, and reset behavior.",
-    "- Expose deterministic state so smoke, final-test, and deploy gates can verify the application surface.",
+    ...goals,
     "",
     "## Technical Decisions",
     `- ${platformLineForStack(stack)}`,
-    "- Styling: Tailwind CSS or plain CSS modules with a restrained product-tool visual system.",
+    projectKind === "game"
+      ? "- Styling: Tailwind CSS or plain CSS modules with stable board sizing, clear status panels, and responsive controls."
+      : "- Styling: Tailwind CSS or plain CSS modules with a restrained product-tool visual system.",
     "- State: React state plus reducer/context; avoid an extra global-state library for small apps.",
-    `- Storage: ${dbRequired === "none" ? "localStorage with visible retry and clear actions for persistence failures" : dbRequired}.`,
+    `- Storage: ${projectKind === "game" && dbRequired === "none" ? "localStorage only for high score/preferences when used, with visible recovery for corrupt data" : dbRequired === "none" ? "localStorage with visible retry and clear actions for persistence failures" : dbRequired}.`,
     "- Icons: Lucide React; do not use emoji as controls.",
-    "- Test surface: expose state, active screen, errors, counters, and active panel under window.app.",
+    projectKind === "game"
+      ? "- Test surface: expose score, level, lines, status, paused/gameOver, activePiece, nextPiece, storageStatus, and lastError under window.app."
+      : "- Test surface: expose state, active screen, errors, counters, and active panel under window.app.",
     "",
     "## Functional Requirements",
-    requirementRows,
-    "- Forms provide required-field validation and visible error messages.",
-    "- Filtering, search, create, edit, delete, profile, settings, retry, and clear actions produce visible state changes in smoke tests.",
-    "- Product controls must not use data-smoke-ignore; intentionally unavailable controls are disabled or aria-disabled.",
+    ...functionalRequirements,
     "",
     "## Data Model",
-    "- Entity fields are defined as TypeScript types that match the task domain.",
-    "- Every persisted record includes id, createdAt, and updatedAt.",
-    "- Global preferences such as settings and profile data are separated from domain entity state.",
-    "- Storage schema is versioned; corrupt JSON shows a visible error state instead of silently resetting.",
+    ...dataModel,
     "",
     "## UI/UX Requirements",
-    `- User-facing language: ${uiLanguage}.`,
-    "- Aesthetic: corporate/minimal, quiet, scannable, and appropriate for repeated product use.",
-    "- Palette: Primary #2563EB, Secondary #475569, Background #F8FAFC, Surface #FFFFFF, Text #0F172A, Border #E2E8F0, Success #16A34A, Error #DC2626, Warning #D97706.",
-    "- Typography: Inter or system sans; compact panels use small but readable headings.",
-    "- Components: cards at 8px radius or less, clear focus rings, and 44x44px touch targets.",
-    "- The profile/account icon must open a panel, drawer, or page with close/back behavior.",
+    ...uiRequirements,
     "",
     "## Non-Functional",
-    "- Performance: target first load under 2s and client state transitions under 100ms.",
-    "- Accessibility: WCAG 2.1 AA, keyboard navigation, aria-labels, focus states, and sufficient contrast.",
-    "- Responsive: support 320px mobile widths through desktop with stacking, grid, or scrollable columns.",
-    "- Error handling: storage and form errors are visible, retryable, and clearable.",
+    ...nonFunctional,
     "",
     "## Project Structure",
     projectStructureForStack(stack),
     "",
     "## Window State",
-    "window.app = { state, screen, lastError, storageStatus, itemCount, activePanel } exposes the main dogfood and test state.",
+    windowState,
     "",
     "## Screens",
     "| # | Screen Name | Type | Description |",

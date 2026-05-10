@@ -71,12 +71,19 @@ You are implementing ONE user story. You may ONLY write to the files listed belo
    `userEvent.click` as the only assertion. After every click in a test, assert
    the visible UI state, route/hash, dialog/panel presence, callback call,
    validation message, localStorage/state change, or saved data.
-8. Before committing, run available local checks. Prefer `npm run build`; for Vitest use `npm run test:run` or `npx vitest run` instead of watch-mode `npm test` when needed. If a script is missing, say so in CHANGES.
-9. Commit once on the CURRENT branch (do not switch branches): stage only files from `.story-scope-files`, then `git commit -m "feat: <story-id> - <description>"`
-10. Do NOT use `git add -A` — stage only your scope files explicitly
-11. If the pre-commit hook rejects, run `git reset HEAD <file>` and remove out-of-scope changes. Do NOT bypass with `--no-verify`.
+8. If the story acceptance criteria or PRD mention `window.app`, implement it
+   as a real runtime test bridge, not documentation. Assign `window.app` from
+   a React effect or equivalent update point and keep its fields current after
+   state changes. For games this includes score/status/level/lines/paused/
+   gameOver/activePiece/nextPiece; for product apps this includes active
+   screen/route, selected record, counts, storage status, last error, and active
+   panel where those concepts exist.
+9. Before committing, run available local checks. Prefer `npm run build`; for Vitest use `npm run test:run` or `npx vitest run` instead of watch-mode `npm test` when needed. If a script is missing, say so in CHANGES.
+10. Commit once on the CURRENT branch (do not switch branches): stage only files from `.story-scope-files`, then `git commit -m "feat: <story-id> - <description>"`
+11. Do NOT use `git add -A` — stage only your scope files explicitly
+12. If the pre-commit hook rejects, run `git reset HEAD <file>` and remove out-of-scope changes. Do NOT bypass with `--no-verify`.
 
-12. **CHECKPOINT (about every 5 minutes, REQUIRED).** For long implementations,
+13. **CHECKPOINT (about every 5 minutes, REQUIRED).** For long implementations,
    write a short progress checkpoint every 5 minutes:
    ```bash
    echo "[$(date +%H:%M:%S)] <short status: file being edited, files completed>" >> /tmp/setfarm-progress-{{RUN_ID}}.txt

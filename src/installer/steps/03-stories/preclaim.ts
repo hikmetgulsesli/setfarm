@@ -12,6 +12,7 @@ import {
 } from "./context.js";
 
 type PredictedScreen = ReturnType<typeof computePredictedScreenFiles>[number];
+type ProjectKind = "game" | "product";
 
 interface StoryDraft {
   id: string;
@@ -90,6 +91,31 @@ function extractProjectLabel(text: string, fallback: string): string {
   return humanizeProjectLabel(cleaned, fallback);
 }
 
+function inferProjectKind(params: {
+  task?: string;
+  context?: Record<string, string>;
+  predicted?: PredictedScreen[];
+  screenMap?: any[];
+}): ProjectKind {
+  const screenText = [
+    ...(params.predicted || []).map((screen) => `${screen.screenId} ${screen.title} ${screen.filePath}`),
+    ...(params.screenMap || []).map((screen: any) => `${screen?.screenId || screen?.id || ""} ${screen?.title || screen?.name || ""} ${screen?.type || ""} ${screen?.description || ""}`),
+  ].join(" ");
+  const text = [
+    params.task || "",
+    params.context?.["task"] || "",
+    params.context?.["prd"] || "",
+    params.context?.["project_name"] || "",
+    params.context?.["project_slug"] || "",
+    screenText,
+  ].join(" ").toLowerCase();
+
+  if (/\b(game|oyun|tetris|tetromino|puzzle|arcade|score|level|lines?|pause|resume|restart|keyboard controls?|playfield|game board|next piece)\b/.test(text)) {
+    return "game";
+  }
+  return "product";
+}
+
 function loadScreenMap(repo: string): any[] {
   const p = path.join(repo, "stitch", "SCREEN_MAP.json");
   if (!fs.existsSync(p)) return [];
@@ -145,17 +171,51 @@ export function buildSingleStoryScopeFiles(screenFiles: string[]): string[] {
   ]);
 }
 
-function screenBucket(screen: PredictedScreen): StoryGroup["key"] {
+function screenBucket(screen: PredictedScreen, projectKind: ProjectKind): StoryGroup["key"] {
   const text = `${screen.screenId} ${screen.title} ${screen.filePath}`.toLowerCase();
+  if (projectKind === "game") {
+    if (/ayar|setting|option|control|difficulty|audio|preferences?|tercih/.test(text)) return "settings";
+    if (/score|level|line|stat|status|preview|next|queue|hud|metric/.test(text)) return "metrics";
+    if (/hata|error|bos|empty|fallback|support|yardim|help|gameover|game over|result|pause|paused/.test(text)) return "support";
+    return "primary";
+  }
   if (/ayar|setting|profil|profile|account|hesap|preference|tercih|user|kullanici/.test(text)) return "settings";
   if (/insight|istatistik|stat|metric|dashboard|rapor|report|pipeline|kanban|board|analiz/.test(text)) return "metrics";
   if (/hata|error|storage|bos|empty|fallback|support|yardim|help/.test(text)) return "support";
   return "primary";
 }
 
-function chooseScreenGroups(predicted: PredictedScreen[], maxStories: number | null): StoryGroup[] {
-  const cap = maxStories && maxStories > 1 ? Math.max(1, Math.min(maxStories - 1, 4)) : 4;
-  const groups: StoryGroup[] = [
+function groupTemplates(projectKind: ProjectKind): StoryGroup[] {
+  if (projectKind === "game") {
+    return [
+      {
+        key: "primary",
+        title: "Playable gameplay screens",
+        description: "Game board, main menu, direct gameplay controls, and primary player actions.",
+        screens: [],
+      },
+      {
+        key: "metrics",
+        title: "Score, preview and status screens",
+        description: "Score, level, line count, next-piece preview, queue/status, and HUD behavior.",
+        screens: [],
+      },
+      {
+        key: "settings",
+        title: "Game options and controls screens",
+        description: "Difficulty, audio, keyboard/touch controls, and option toggles.",
+        screens: [],
+      },
+      {
+        key: "support",
+        title: "Pause, game-over and help states",
+        description: "Pause overlay, game-over/restart, help, empty, error, retry and recovery states.",
+        screens: [],
+      },
+    ];
+  }
+
+  return [
     {
       key: "primary",
       title: "Primary workflow screens",
@@ -181,10 +241,15 @@ function chooseScreenGroups(predicted: PredictedScreen[], maxStories: number | n
       screens: [],
     },
   ];
+}
+
+function chooseScreenGroups(predicted: PredictedScreen[], maxStories: number | null, projectKind: ProjectKind): StoryGroup[] {
+  const cap = maxStories && maxStories > 1 ? Math.max(1, Math.min(maxStories - 1, 4)) : 4;
+  const groups = groupTemplates(projectKind);
 
   const byKey = new Map(groups.map((group) => [group.key, group]));
   for (const screen of predicted) {
-    byKey.get(screenBucket(screen))?.screens.push(screen);
+    byKey.get(screenBucket(screen, projectKind))?.screens.push(screen);
   }
 
   const nonEmpty = groups.filter((group) => group.screens.length > 0);
@@ -195,6 +260,57 @@ function chooseScreenGroups(predicted: PredictedScreen[], maxStories: number | n
   const overflow = nonEmpty.slice(cap).flatMap((group) => group.screens);
   kept[kept.length - 1].screens.push(...overflow);
   return kept;
+}
+
+function appStoryDraft(params: {
+  product: string;
+  predicted: PredictedScreen[];
+  screenFiles: string[];
+  screenFileSet: Set<string>;
+  projectKind: ProjectKind;
+}): StoryDraft {
+  const screens = unique(params.predicted.map((s) => s.screenId));
+  if (params.projectKind === "game") {
+    return {
+      id: "US-001",
+      title: `${params.product} - game engine, state and test bridge`,
+      description: "Build the shared game shell, reducer/state model, keyboard/touch input wiring, persistence helper boundaries, and smoke-visible window.app game state used by generated screens.",
+      acceptanceCriteria: [
+        "App shell renders the playable game surface first, not a generic landing page or dashboard.",
+        "Shared game state exposes visible screen, status, score, level, lines, active piece, next piece, paused/gameOver, storage status, and last error through window.app.",
+        "Start, pause, resume, restart, keyboard controls, and touch/click controls produce visible gameplay state changes.",
+        "Next piece preview is derived from the same queue/source of truth used by piece spawning; no ref-only or duplicated preview state can drift.",
+        "Game loop timers and repeated input use stable effects/callbacks so intervals do not restart every frame and pause/game-over stops movement.",
+        "Persistence is limited to high score/preferences unless explicitly requested; corrupted persisted data produces visible recovery feedback when persistence is used.",
+        "No product control uses data-smoke-ignore; inactive controls are disabled/hidden explicitly.",
+      ],
+      depends_on: [],
+      screens,
+      scope_files: APP_SCOPE_FILES,
+      shared_files: params.screenFiles,
+      scope_description: "Shared game integration and state ownership. Generated src/screens files are read-only shared context here; screen stories own all edits to those files.",
+      file_skeletons: fileSkeletons(APP_SCOPE_FILES, params.screenFileSet),
+    };
+  }
+
+  return {
+    id: "US-001",
+    title: `${params.product} - app shell, state and persistence`,
+    description: "Build the shared application shell, navigation state, domain types, persistence helpers, profile/settings panel wiring, and smoke-visible window.app state used by generated screens.",
+    acceptanceCriteria: [
+      "App shell wires every generated Stitch screen into one coherent application flow; first screen is the actual product surface, not a landing page.",
+      "Shared state exposes visible active screen, selected item, storage status, last error, active panel, and item count through window.app.",
+      "Profile/account icon opens a visible panel/drawer/page and close/back controls visibly dismiss it.",
+      "localStorage success, corrupted JSON, retry, and clear-data paths produce visible DOM feedback when persistence is required.",
+      "No product control uses data-smoke-ignore; inactive controls are disabled/hidden explicitly.",
+    ],
+    depends_on: [],
+    screens,
+    scope_files: APP_SCOPE_FILES,
+    shared_files: params.screenFiles,
+    scope_description: "Shared app integration and state ownership. Generated src/screens files are read-only shared context here; screen stories own all edits to those files.",
+    file_skeletons: fileSkeletons(APP_SCOPE_FILES, params.screenFileSet),
+  };
 }
 
 function fileSkeletons(files: string[], screenFiles: Set<string>): Record<string, string> {
@@ -248,6 +364,7 @@ export function buildAutoStoriesOutput(params: {
   );
   const screenFiles = unique(predicted.map((s) => s.filePath));
   const screenFileSet = new Set(screenFiles);
+  const projectKind = inferProjectKind(params);
 
   let stories: StoryDraft[];
   if (maxStories === 1) {
@@ -265,25 +382,8 @@ export function buildAutoStoriesOutput(params: {
       file_skeletons: fileSkeletons(scopeFiles, screenFileSet),
     }];
   } else {
-    const groups = chooseScreenGroups(predicted, maxStories);
-    const appStory: StoryDraft = {
-      id: "US-001",
-      title: `${product} - app shell, state and persistence`,
-      description: "Build the shared application shell, navigation state, domain types, persistence helpers, profile/settings panel wiring, and smoke-visible window.app state used by generated screens.",
-      acceptanceCriteria: [
-        "App shell wires every generated Stitch screen into one coherent application flow; first screen is the actual product surface, not a landing page.",
-        "Shared state exposes visible active screen, selected item, storage status, last error, active panel, and item count through window.app.",
-        "Profile/account icon opens a visible panel/drawer/page and close/back controls visibly dismiss it.",
-        "localStorage success, corrupted JSON, retry, and clear-data paths produce visible DOM feedback when persistence is required.",
-        "No product control uses data-smoke-ignore; inactive controls are disabled/hidden explicitly.",
-      ],
-      depends_on: [],
-      screens: unique(predicted.map((s) => s.screenId)),
-      scope_files: APP_SCOPE_FILES,
-      shared_files: screenFiles,
-      scope_description: "Shared app integration and state ownership. Generated src/screens files are read-only shared context here; screen stories own all edits to those files.",
-      file_skeletons: fileSkeletons(APP_SCOPE_FILES, screenFileSet),
-    };
+    const groups = chooseScreenGroups(predicted, maxStories, projectKind);
+    const appStory = appStoryDraft({ product, predicted, screenFiles, screenFileSet, projectKind });
 
     stories = [appStory];
     groups.forEach((group, index) => {

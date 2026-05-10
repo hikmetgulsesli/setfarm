@@ -188,6 +188,25 @@ describe("01-plan step module", () => {
     assert.doesNotMatch(parsed.prd, /Next\.js app router structure/);
   });
 
+  it("auto-plan emits a game-specific contract instead of product CRUD/profile requirements", () => {
+    const output = buildAutoPlanOutput(
+      "Project: tetris-game-0511 Build a browser Tetris game with next piece preview, score, level, lines, pause/resume, restart, keyboard controls, and game over flow.",
+    );
+    const parsed = parsePlanOutput(output);
+    planModule.normalize?.(parsed);
+    const validation = planModule.validateOutput(parsed);
+
+    assert.equal(validation.ok, true, validation.errors.join("; "));
+    assert.equal(parsed.tech_stack, "vite-react");
+    assert.match(parsed.prd, /\| 1 \| Game Board \| play \|/);
+    assert.match(parsed.prd, /next piece preview is derived from the same queue used by piece spawning/i);
+    assert.match(parsed.prd, /duplicate timers/i);
+    assert.match(parsed.prd, /window\.app = \{ state: \{ screen, status, score, level, lines, activePiece, nextPiece/);
+    assert.doesNotMatch(parsed.prd, /Filtering, search, create, edit, delete, profile/i);
+    assert.doesNotMatch(parsed.prd, /profile\/account icon/i);
+    assert.doesNotMatch(parsed.prd, /Every persisted record includes id, createdAt, and updatedAt/i);
+  });
+
   it("infers UI language without letting English tasks become Turkish by default", () => {
     assert.equal(inferUiLanguage("Project: signal desk\nBuild an English app."), "English");
     assert.equal(inferUiLanguage("Proje: not panosu\nBasit not tutma uygulaması yap."), "English");

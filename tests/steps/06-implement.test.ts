@@ -38,6 +38,13 @@ describe("06-implement step module", () => {
     assert.equal(rules.includes("do NOT declare it as an OWNED file"), false);
   });
 
+  it("prompt requires runtime window.app bridge when accepted by story contract", () => {
+    const prompt = fs.readFileSync(path.join(process.cwd(), "src/installer/steps/06-implement/prompt.md"), "utf-8");
+    assert.match(prompt, /implement it\s+as a real runtime test bridge/i);
+    assert.match(prompt, /score\/status\/level\/lines\/paused\/\s+gameOver\/activePiece\/nextPiece/i);
+    assert.match(prompt, /active\s+screen\/route, selected record, counts, storage status, last error/i);
+  });
+
   it("buildPrompt returns empty string — loop delegates to AGENTS.md", () => {
     const result = implementModule.buildPrompt({ runId: "r1", task: "anything", context: { repo: "/x" } });
     assert.equal(result, "");

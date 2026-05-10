@@ -165,6 +165,59 @@ describe("03-stories step module", () => {
     }
   });
 
+  it("auto-builds game stories without product profile/account bias", () => {
+    const repo = mkdtempSync(path.join(tmpdir(), "setfarm-game-stories-"));
+    try {
+      mkdirSync(path.join(repo, "stitch"));
+      writeFileSync(path.join(repo, "stitch", "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "SCR-001", title: "Game Board" },
+        { screenId: "SCR-002", title: "Next Piece Preview" },
+        { screenId: "SCR-003", title: "Game Options" },
+        { screenId: "SCR-004", title: "Game Over" },
+      ]));
+      writeFileSync(path.join(repo, "stitch", "DESIGN_DOM.json"), JSON.stringify({
+        screens: {
+          "SCR-001": {
+            title: "Game Board",
+            behaviorContract: [
+              { kind: "button", label: "Start", icon: "play", action: "start", expectedBehavior: "start falling pieces" },
+              { kind: "button", label: "Pause", icon: "pause", action: "pause", expectedBehavior: "freeze the game loop" },
+            ],
+          },
+          "SCR-004": {
+            title: "Game Over",
+            behaviorContract: [
+              { kind: "button", label: "Restart", icon: "rotate-cw", action: "restart", expectedBehavior: "reset board and score" },
+            ],
+          },
+        },
+      }));
+
+      const predicted = computePredictedScreenFiles(repo);
+      const output = buildAutoStoriesOutput({
+        repo,
+        task: "Project: tetris-game-0511 Build a browser Tetris game with next piece preview, score, level, lines, pause/resume, restart, and keyboard controls.",
+        predicted,
+      });
+
+      const storiesJson = output.match(/STORIES_JSON:\n([\s\S]*?)\nSCREEN_MAP:/)?.[1] || "[]";
+      const stories = JSON.parse(storiesJson);
+      const allText = JSON.stringify(stories);
+
+      assert.match(stories[0].title, /game engine, state and test bridge$/);
+      assert.match(stories[0].description, /shared game shell/);
+      assert.match(allText, /Next piece preview is derived from the same queue\/source of truth/);
+      assert.match(allText, /Game options and controls screens/);
+      assert.match(allText, /Pause, game-over and help states/);
+      assert.doesNotMatch(allText, /profile\/account/i);
+      assert.doesNotMatch(allText, /Settings, profile and account screens/);
+      assert.equal(stories[0].scope_files.includes("src/hooks/useAppState.ts"), true);
+      assert.equal(stories[0].shared_files.includes("src/screens/GameBoard.tsx"), true);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
   it("rejects stories that drift into another project concept", () => {
     const err = detectStorySemanticDrift(
       {
