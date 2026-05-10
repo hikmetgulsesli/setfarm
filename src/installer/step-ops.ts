@@ -1796,15 +1796,19 @@ async function claimSingleStep(
   // PR REVIEW DELAY GATE: Wait for external review comments (Gemini, Copilot) before verify claim
   // BUG FIX: Previously used step.updated_at as baseline but updated it on every defer, resetting
   // the timer infinitely. Now uses context["verify_pending_since"] as stable baseline.
-  const reviewPrUrl = context["final_pr"] || context["pr_url"] || "";
+  const reviewPrUrl = context["pr_url"] || context["final_pr"] || "";
   if (step.step_id === "verify" && reviewPrUrl) {
     let hasReviewSignal = false;
+    context["pr_comments"] = "";
+    context["pr_check_state"] = "";
+    context["pr_mergeable"] = "";
+    context["pr_merge_state_status"] = "";
     try {
       const { fetchPrState, formatPrCommentsForAgent } = await import("./steps/07-verify/pr-comments.js");
       const state = await fetchPrState(reviewPrUrl, context["repo_full"] || "");
       if (state) {
         const formatted = formatPrCommentsForAgent(state);
-        if (formatted) context["pr_comments"] = formatted;
+        context["pr_comments"] = formatted || "";
         context["pr_check_state"] = state.checksStatus || "";
         context["pr_mergeable"] = state.mergeable || "";
         context["pr_merge_state_status"] = state.mergeStateStatus || "";

@@ -8,25 +8,29 @@ import { logger } from "../../../lib/logger.js";
 // loop_config, story selection, pipeline advancement).
 //
 // What this module adds (2026-04-23): PR comment fetch + format injection.
-// When a final_pr is present, fetch Copilot/human review comments via `gh`
+// When a story PR is present, fetch Copilot/human review comments via `gh`
 // CLI and expose them as context["pr_comments"] so verify prompt can ask
 // the agent to address each feedback point before auto-merge.
 export async function injectContext(ctx: ClaimContext): Promise<void> {
-  // PR comments (when final_pr is present)
-  const prUrl = ctx.context["final_pr"] || ctx.context["pr_url"] || "";
+  // PR comments. Prefer the current story PR over a stale final_pr from earlier
+  // merge-queue/final-test state, otherwise old PR comments can leak into the
+  // next story verification claim.
+  const prUrl = ctx.context["pr_url"] || ctx.context["final_pr"] || "";
   const repoFull = ctx.context["repo_full"] || "";
+  ctx.context["pr_comments"] = "";
+  ctx.context["pr_check_state"] = "";
+  ctx.context["pr_mergeable"] = "";
+  ctx.context["pr_merge_state_status"] = "";
   if (prUrl) {
     try {
       const state = await fetchPrState(prUrl, repoFull);
       if (state) {
         const formatted = formatPrCommentsForAgent(state);
-        if (formatted) {
-          ctx.context["pr_comments"] = formatted;
-          ctx.context["pr_check_state"] = state.checksStatus || "";
-          ctx.context["pr_mergeable"] = state.mergeable || "";
-          ctx.context["pr_merge_state_status"] = state.mergeStateStatus || "";
-          logger.info(`[verify] PR comments injected (${state.comments.length} total, checks=${state.checksStatus})`, { runId: ctx.runId });
-        }
+        ctx.context["pr_comments"] = formatted || "";
+        ctx.context["pr_check_state"] = state.checksStatus || "";
+        ctx.context["pr_mergeable"] = state.mergeable || "";
+        ctx.context["pr_merge_state_status"] = state.mergeStateStatus || "";
+        logger.info(`[verify] PR comments injected (${state.comments.length} total, checks=${state.checksStatus})`, { runId: ctx.runId });
       }
     } catch (e) {
       logger.warn(`[verify] PR comment fetch failed (non-fatal): ${String(e).slice(0, 160)}`, { runId: ctx.runId });
