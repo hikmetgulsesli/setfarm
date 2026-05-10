@@ -39,6 +39,7 @@ const AGENT_SELF_LOOP_CHECK_AFTER_MS = parsePositiveInt(process.env.SETFARM_AGEN
 const AGENT_SELF_LOOP_MIN_ACTIONS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_ACTIONS, 7);
 const AGENT_SELF_LOOP_MIN_NOOP_EDITS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_NOOP_EDITS, 4);
 const AGENT_SELF_LOOP_MIN_REPEATED_FAILURES = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_REPEATED_FAILURES, 4);
+const AGENT_SELF_LOOP_MIN_REPEATED_COMMANDS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_REPEATED_COMMANDS, 8);
 const REAP_FINISHED_ACTIVE_GRACE_MS = parsePositiveInt(process.env.SETFARM_REAP_FINISHED_ACTIVE_GRACE_MS, 60_000);
 const OPENCLAW_TASK_REGISTRY_SETTLE_MS = parsePositiveInt(process.env.SETFARM_OPENCLAW_TASK_REGISTRY_SETTLE_MS, 2000);
 const OPENCLAW_STALE_TASK_SWEEP_MS = parsePositiveInt(process.env.SETFARM_OPENCLAW_STALE_TASK_SWEEP_MS, 2 * 60_000);
@@ -192,6 +193,11 @@ type SessionCommandStats = {
   failures: number;
   command: string;
   signature: string;
+};
+
+type SessionCommandCallStats = {
+  calls: number;
+  command: string;
 };
 
 const activeProcesses = new Map<string, ActiveProcess>();
@@ -348,7 +354,29 @@ function sessionFailureSignature(text: string): string {
   return pieces.join(" | " ).slice(0, 420);
 }
 
+function repeatedTranscriptToolLoop(active: ActiveProcess): { detected: boolean; reason: string } {
+  try {
+    const tail = fs.readFileSync(active.transcriptPath, "utf-8").slice(-120_000);
+    let maxRepeats = 0;
+    for (const match of tail.matchAll(/Loop warning: exec called (\d+) times with identical arguments/gi)) {
+      const repeats = parseInt(match[1] || "", 10);
+      if (Number.isFinite(repeats) && repeats > maxRepeats) maxRepeats = repeats;
+    }
+    if (maxRepeats >= AGENT_SELF_LOOP_MIN_REPEATED_COMMANDS) {
+      return {
+        detected: true,
+        reason: "AGENT_SELF_LOOP: OpenClaw reported repeated identical exec calls" +
+          " (repeats=" + maxRepeats + ")",
+      };
+    }
+  } catch {}
+  return { detected: false, reason: "" };
+}
+
 function repeatedSessionFileLoop(active: ActiveProcess): { detected: boolean; reason: string } {
+  const transcriptLoop = repeatedTranscriptToolLoop(active);
+  if (transcriptLoop.detected) return transcriptLoop;
+
   let lines: string[];
   try {
     const raw = fs.readFileSync(active.sessionJsonlPath, "utf-8").trim();
@@ -359,6 +387,7 @@ function repeatedSessionFileLoop(active: ActiveProcess): { detected: boolean; re
   }
 
   const fileStats = new Map<string, SessionFileStats>();
+  const commandCallStats = new Map<string, SessionCommandCallStats>();
   const commandStats = new Map<string, SessionCommandStats>();
   let currentToolPath = "";
   let currentCommand = "";
@@ -374,6 +403,11 @@ function repeatedSessionFileLoop(active: ActiveProcess): { detected: boolean; re
         if (call.name === "exec") {
           currentCommand = normalizedSessionCommand(call.command);
           currentToolPath = "";
+          if (currentCommand) {
+            const stats = commandCallStats.get(currentCommand) || { calls: 0, command: currentCommand };
+            stats.calls += 1;
+            commandCallStats.set(currentCommand, stats);
+          }
           continue;
         }
         currentCommand = "";
@@ -405,6 +439,17 @@ function repeatedSessionFileLoop(active: ActiveProcess): { detected: boolean; re
       const stats = fileStats.get(currentToolPath) || { actions: 0, writes: 0, edits: 0, noopEdits: 0 };
       stats.noopEdits += 1;
       fileStats.set(currentToolPath, stats);
+    }
+  }
+
+  for (const stats of commandCallStats.values()) {
+    if (stats.calls >= AGENT_SELF_LOOP_MIN_REPEATED_COMMANDS) {
+      return {
+        detected: true,
+        reason: "AGENT_SELF_LOOP: repeated identical test/build command" +
+          " (calls=" + stats.calls +
+          ", command=" + stats.command + ")",
+      };
     }
   }
 
