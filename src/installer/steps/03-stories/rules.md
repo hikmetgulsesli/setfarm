@@ -109,6 +109,10 @@ result, validation feedback, or an intentional disabled/hidden state.
 
 Icon-only controls need an accessible name or icon meaning tied to a behavior.
 Do not invent unrelated example names.
+Every interactive acceptance criterion must be verifiable after the action:
+name the expected route/hash, visible panel/dialog, data/state change,
+validation message, or intentional disabled state. Do not write criteria that
+only say a control is present or clickable.
 
 ## Output Format
 

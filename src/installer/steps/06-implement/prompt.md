@@ -53,13 +53,30 @@ You are implementing ONE user story. You may ONLY write to the files listed belo
 
 4. Read the story's acceptance criteria and implement ONLY what it asks
 5. Use imports from SHARED_FILES for context only; do not modify shared files unless they are also listed in SCOPE_FILES.
-6. Every native `<button>` you create must have real behavior: `onClick`, `type="submit"`, or `disabled`/`aria-disabled` for intentionally unavailable controls. Do not use `data-smoke-ignore` to hide product controls from smoke checks. Icon-only controls must change visible state, open a project-specific panel/dialog, navigate, or be disabled. Decorative icons must not be rendered as `<button>`.
-7. Before committing, run available local checks. Prefer `npm run build`; for Vitest use `npm run test:run` or `npx vitest run` instead of watch-mode `npm test` when needed. If a script is missing, say so in CHANGES.
-8. Commit once on the CURRENT branch (do not switch branches): stage only files from `.story-scope-files`, then `git commit -m "feat: <story-id> - <description>"`
-9. Do NOT use `git add -A` — stage only your scope files explicitly
-10. If the pre-commit hook rejects, run `git reset HEAD <file>` and remove out-of-scope changes. Do NOT bypass with `--no-verify`.
+6. Every interactive control you create must be a real semantic control.
+   - Use `<button>` for actions and `<a href>`/router links for navigation.
+   - Do not put `onClick` on `<div>`, `<span>`, `<li>`, headings, or layout
+     containers. If an existing component absolutely requires a non-native
+     element, it must include `role="button"`, `tabIndex={0}`, and Enter/Space
+     keyboard handling in the same element.
+   - Every native `<button>` must have real behavior: `onClick`,
+     `type="submit"`, or `disabled`/`aria-disabled` for intentionally
+     unavailable controls.
+   - Do not use `data-smoke-ignore` to hide product controls from smoke checks.
+     Icon-only controls must have an accessible name and must change visible
+     state, open a project-specific panel/dialog, navigate, or be disabled.
+     Decorative icons must not be rendered as `<button>`.
+7. Interaction tests must prove the post-click result. Do not write
+   `expect(() => fireEvent.click(...)).not.toThrow()` or the same pattern with
+   `userEvent.click` as the only assertion. After every click in a test, assert
+   the visible UI state, route/hash, dialog/panel presence, callback call,
+   validation message, localStorage/state change, or saved data.
+8. Before committing, run available local checks. Prefer `npm run build`; for Vitest use `npm run test:run` or `npx vitest run` instead of watch-mode `npm test` when needed. If a script is missing, say so in CHANGES.
+9. Commit once on the CURRENT branch (do not switch branches): stage only files from `.story-scope-files`, then `git commit -m "feat: <story-id> - <description>"`
+10. Do NOT use `git add -A` — stage only your scope files explicitly
+11. If the pre-commit hook rejects, run `git reset HEAD <file>` and remove out-of-scope changes. Do NOT bypass with `--no-verify`.
 
-11. **CHECKPOINT (about every 5 minutes, REQUIRED).** For long implementations,
+12. **CHECKPOINT (about every 5 minutes, REQUIRED).** For long implementations,
    write a short progress checkpoint every 5 minutes:
    ```bash
    echo "[$(date +%H:%M:%S)] <short status: file being edited, files completed>" >> /tmp/setfarm-progress-{{RUN_ID}}.txt

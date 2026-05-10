@@ -32,6 +32,9 @@ together so implement can fix them in one batch.
 4. Interaction matrix: every visible button, icon-button, toggle, checkbox,
    form submit, modal open/close, delete/cancel, and navigation action produces
    real URL/DOM/state/localStorage change or is intentionally disabled.
+   Treat `not.toThrow` click assertions as no evidence; QA must verify the
+   actual post-click route, visible screen, dialog/panel, saved record,
+   validation message, or state/localStorage change.
 5. Edge cases: empty state, long text, rapid clicks, localStorage cleared.
 6. Responsive: desktop 1440x900 and mobile 375x667.
 7. Design/Stitch fit: if `stitch/` or another reference exists, compare the
@@ -42,6 +45,10 @@ together so implement can fix them in one batch.
 10. Console: capture warnings/errors.
 11. Icon-only controls: click them too. If click does not change visible state,
     dialog/panel, URL, localStorage/app state, or DOM, return `STATUS: retry`.
+12. Semantic controls: if source contains `onClick` on non-native elements
+    such as `div`, `span`, `li`, headings, or layout containers without
+    `role="button"`, `tabIndex={0}`, and keyboard handling, return
+    `STATUS: retry`.
 
 ## Required Dev-Server Lifecycle
 
@@ -145,6 +152,8 @@ report must contain:
 - `Visual/Layout Findings`: overflow, overlap, raw CSS/token, modal/sidebar/header issues.
 - `Functional Findings`: broken link, no-op button, wrong state, lost route,
   failing save/delete/back behavior.
+- `Semantic/Test Findings`: non-semantic click targets and tests that only
+  assert `not.toThrow` after a click.
 - `Batch Fix Plan`: items for the implement agent to fix in one pass.
 
 This report is a batch-fix input, not a reason to create one retry per issue.

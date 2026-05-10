@@ -15,6 +15,8 @@
 - Design fidelity failure.
 - Smoke output contains a clear FAIL.
 - Runtime smoke finds broken route/link/button behavior.
+- Smoke output reports `SEMANTIC_CLICK_ISSUES`, `WEAK_INTERACTION_ASSERTIONS`,
+  `semanticClickIssues`, or `weakInteractionAssertions` greater than 0.
 
 ## Fail Criteria
 
