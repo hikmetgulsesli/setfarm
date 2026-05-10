@@ -53,6 +53,45 @@ function summarizeSmoke(result: any): string[] {
   return lines;
 }
 
+function numericField(result: any, key: string, fallback = 0): number {
+  const value = Number(result?.[key]);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function countArrayField(result: any, key: string): number {
+  const value = result?.[key];
+  return Array.isArray(value) ? value.length : 0;
+}
+
+function buildQaReport(repo: string, result: any, rawOutput: string, status: string): string {
+  const reportDir = path.join(repo, "quality-reports");
+  fs.mkdirSync(reportDir, { recursive: true });
+  const reportPath = path.join(reportDir, "qa-smoke-preclaim.md");
+  const failures: string[] = Array.isArray(result?.failures)
+    ? result.failures.map((item: unknown) => String(item).replace(/\n/g, " "))
+    : [rawOutput.slice(0, 3000).replace(/\n/g, " ")].filter(Boolean);
+  const lines = [
+    "# QA Smoke Preclaim Report",
+    "",
+    `Status: ${status.toUpperCase()}`,
+    `Generated: ${new Date().toISOString()}`,
+    "",
+    "## Summary",
+    `- Smoke status: ${String(result?.status || status)}`,
+    `- Confidence: ${String(result?.confidence ?? "unknown")}`,
+    `- Routes discovered: ${String(result?.routesDiscovered ?? 0)}`,
+    `- Hash routes discovered: ${String(result?.hashRoutesDiscovered ?? 0)}`,
+    `- Buttons checked: ${String(result?.buttonsChecked ?? 0)}`,
+    `- Forms checked: ${String(result?.formsChecked ?? 0)}`,
+    `- Failure count: ${String(failures.length)}`,
+    "",
+    "## Findings",
+    ...(failures.length > 0 ? failures.slice(0, 40).map((failure) => `- ${failure}`) : ["- None"]),
+  ];
+  fs.writeFileSync(reportPath, lines.join("\n") + "\n");
+  return path.relative(repo, reportPath).replace(/\\/g, "/");
+}
+
 export async function preClaim(ctx: ClaimContext): Promise<void> {
   const repo = (ctx.context["repo"] || ctx.context["REPO"] || "").replace(/^~/, os.homedir());
   if (!repo || !fs.existsSync(repo)) {
@@ -85,9 +124,25 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
 
   const parsed = firstJsonObject(output);
   const smokeStatus = parsed?.status ? String(parsed.status).toLowerCase() : "";
-  const status = failed || smokeStatus === "fail" ? "retry" : (smokeStatus === "skip" ? "skip" : "done");
+  const failureCount = countArrayField(parsed, "failures");
+  const status = failed || smokeStatus === "fail" || failureCount > 0 ? "retry" : (smokeStatus === "skip" ? "skip" : "done");
+  const issueCount = status === "retry" ? Math.max(failureCount, 1) : failureCount;
+  const reportPath = buildQaReport(repo, parsed, output, status);
+  const routesTested = Math.max(
+    1,
+    numericField(parsed, "routesDiscovered"),
+    countArrayField(parsed, "routes"),
+    countArrayField(parsed, "hashRoutes"),
+  );
+  const screensTested = Math.max(routesTested, numericField(parsed, "screensDiscovered"));
+  const interactionsTested = numericField(parsed, "buttonsChecked") + numericField(parsed, "formsChecked");
   const lines = [
     `STATUS: ${status}`,
+    `QA_REPORT: ${reportPath}`,
+    `QA_SCREENS_TESTED: ${screensTested}`,
+    `QA_ROUTES_TESTED: ${routesTested}`,
+    `QA_INTERACTIONS_TESTED: ${interactionsTested}`,
+    `QA_TOTAL_ISSUES: ${issueCount}`,
     "QA_GATE: system-smoke-preclaim",
     ...summarizeSmoke(parsed),
   ];
