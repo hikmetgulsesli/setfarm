@@ -52,7 +52,7 @@ const DESIGN_DOM_EXCERPT_CHARS = 3000;
 const QUALITY_FIX_STEPS = new Set(["security-gate", "qa-test", "final-test"]);
 const QA_FIX_SOURCE_EXT = /\.(tsx?|jsx?|css|scss|vue|svelte)$/i;
 const QA_FIX_IGNORE = /^(node_modules\/|dist\/|build\/|\.next\/|coverage\/|stitch\/|references\/)|(^|\/)(package(-lock)?\.json|tsconfig[^/]*\.json|vite\.config\.[^/]+|tailwind\.config\.[^/]+|postcss\.config\.[^/]+|eslint\.config\.[^/]+|index\.html)$/;
-const SMOKE_INFRA_FAILURE = /\b(agent-browser|browser control|playwright|chromium|chrome)\b[\s\S]{0,240}\b(ETIMEDOUT|ECONNREFUSED|ECONNRESET|EPIPE|timed out|timeout)\b/i;
+const SMOKE_INFRA_FAILURE = /\b(agent-browser|browser control|playwright|chromium|chrome|page\.goto|browser|context|target page)\b[\s\S]{0,320}\b(ETIMEDOUT|ECONNREFUSED|ECONNRESET|EPIPE|timed out|timeout|target page|context or browser has been closed|browser has been closed|target closed|protocol error)\b/i;
 const QA_FIX_MAX_STORIES = Math.max(1, parseInt(process.env.SETFARM_QA_FIX_MAX_STORIES || "4", 10) || 4);
 const QA_FIX_REPEAT_LIMIT = Math.max(1, parseInt(process.env.SETFARM_QA_FIX_REPEAT_LIMIT || "2", 10) || 2);
 
@@ -2974,6 +2974,11 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
     // the gap for single-step verify (direct-merge workflows).
     verifyEachRetryHandledLater = await isVerifyEachVerifyStep(step);
     if (!verifyEachRetryHandledLater) {
+      if ((step.step_id === "qa-test" || step.step_id === "final-test" || step.step_id === "verify") && isSmokeInfrastructureFailure(output)) {
+        logger.warn(`[status-parser] Smoke/browser infra retry for ${step.step_id}; retrying step without QA-FIX routing`, { runId: step.run_id, stepId: step.step_id });
+        await failStep(stepId, `INFRA: smoke browser infrastructure failed; retry ${step.step_id}, do not modify app code.\n${output.slice(0, 2000)}`);
+        return { advanced: false, runCompleted: false };
+      }
       if (await routeQualityFailureToImplement(step, output, context)) {
         return { advanced: false, runCompleted: false };
       }
