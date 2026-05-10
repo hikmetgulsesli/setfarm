@@ -165,6 +165,69 @@ function discoverRoutes(repo) {
   return routes;
 }
 
+function normalizeRouteToken(value) {
+  return String(value || "")
+    .replace(/\.(tsx?|jsx?)$/i, "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .toLowerCase()
+    .replace(/[^a-z0-9/]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function discoverHashRoutes(repo) {
+  const routes = new Set();
+  const add = (route) => {
+    const clean = String(route || "").trim().replace(/^#/, "").replace(/^\//, "");
+    if (!clean || clean === "dashboard" || clean === "home") return;
+    if (/^(javascript|mailto|tel):/i.test(clean)) return;
+    routes.add("#" + clean);
+  };
+
+  const screenDir = join(repo, "src", "screens");
+  if (existsSync(screenDir)) {
+    const screenMap = new Map([
+      ["create-edit-record", "create"],
+      ["create-edit", "create"],
+      ["service-detail", "service/1"],
+      ["insights-analytics", "insights"],
+      ["user-profile", "profile"],
+      ["empty-state", "empty"],
+      ["system-error-state", "error"],
+    ]);
+    walkDir(screenDir, f => {
+      if (!/\.(tsx?|jsx?)$/.test(f) || /\.(test|spec)\.(tsx?|jsx?)$/i.test(f)) return;
+      const token = normalizeRouteToken(basename(f));
+      add(screenMap.get(token) || token.replace(/-screen$/, ""));
+    });
+  }
+
+  const sourceRoots = ["src", "app", "pages", "components"]
+    .map(d => join(repo, d))
+    .filter(d => existsSync(d));
+  for (const root of sourceRoots) {
+    walkDir(root, f => {
+      if (!/\.(tsx?|jsx?)$/.test(f) || /\.(test|spec)\.(tsx?|jsx?)$/i.test(f)) return;
+      let content = "";
+      try { content = readFileSync(f, "utf-8"); } catch { return; }
+      for (const m of content.matchAll(/\bnavigate\s*\(\s*["']([^"']+)["']/g)) add(m[1]);
+      for (const m of content.matchAll(/\bhref\s*=\s*["']#([^"']+)["']/g)) add(m[1]);
+      for (const m of content.matchAll(/\blocation\.hash\s*=\s*["']#?([^"']+)["']/g)) add(m[1]);
+    });
+  }
+
+  return [...routes].slice(0, 20);
+}
+
+function normalizeSnapshotText(text) {
+  return String(text || "")
+    .replace(/\[ref=\w+\]/g, "[ref]")
+    .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g, "TIME")
+    .replace(/\b\d{4}-\d{2}-\d{2}\b/g, "DATE")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 6000);
+}
+
 function checkComponentWiring(repo) {
   const issues = [];
   const componentFiles = [];
@@ -687,6 +750,7 @@ async function main() {
 
   // ── Phase 1: Static ──
   const routes = discoverRoutes(repoPath);
+  const hashRoutes = discoverHashRoutes(repoPath);
   const wiringIssues = checkComponentWiring(repoPath);
   for (const w of wiringIssues) failures.push('WIRING: ' + w);
   const importIssues = checkEntryPointImports(repoPath);
@@ -727,6 +791,7 @@ async function main() {
 
       const snap = abOk('snapshot') || '';
       const p = parseSnapshot(snap);
+      const homeSnapshotText = normalizeSnapshotText(snap);
 
       // Blank check
       if (!p.headings.length && !p.buttons.length && !p.links.length && !p.canvas) {
@@ -808,6 +873,50 @@ async function main() {
             failures.push('[' + route + '] ' + errCount + ' JS error(s) after button clicks');
           }
         }
+      }
+
+      // Vite/React SPAs commonly route generated screens through URL hashes.
+      // A broken hash router changes location.hash while leaving DOM and
+      // window.app state on the dashboard; catch that before QA-FIX can pass
+      // with only unit-test cleanup.
+      for (const hashRoute of hashRoutes) {
+        const rNav = ab('open', baseUrl + '/' + hashRoute);
+        if (rNav.startsWith('__ERR__')) {
+          failures.push('[' + hashRoute + '] Hash route failed to load');
+          continue;
+        }
+        await sleep(1200);
+        const hashSnap = abOk('snapshot') || '';
+        const hp = parseSnapshot(hashSnap);
+        if (!hp.headings.length && !hp.buttons.length && !hp.links.length && !hp.canvas) {
+          failures.push('[' + hashRoute + '] Hash route appears blank');
+          continue;
+        }
+
+        const routeSnapshotText = normalizeSnapshotText(hashSnap);
+        if (homeSnapshotText && routeSnapshotText === homeSnapshotText) {
+          failures.push('[' + hashRoute + '] Hash route did not change rendered content from homepage/dashboard');
+        }
+
+        const routeInfoRaw = abOk('eval',
+          'JSON.stringify({' +
+          'hash: location.hash,' +
+          'screen: (window.app && window.app.state && window.app.state.screen) || (window.app && window.app.screen) || null,' +
+          'selectedRecordId: (window.app && window.app.state && window.app.state.selectedRecordId) || (window.app && window.app.selectedRecordId) || null' +
+          '})'
+        );
+        try {
+          const routeInfo = JSON.parse(routeInfoRaw || '{}');
+          const expectedHash = hashRoute.toLowerCase();
+          const actualHash = String(routeInfo.hash || '').toLowerCase();
+          const screen = String(routeInfo.screen || '').toLowerCase();
+          if (actualHash !== expectedHash) {
+            failures.push('[' + hashRoute + '] Hash route did not persist in location.hash (actual: ' + (routeInfo.hash || 'empty') + ')');
+          }
+          if (screen === 'dashboard' && !/^#?(dashboard|records?|service-records?)$/i.test(hashRoute)) {
+            failures.push('[' + hashRoute + '] window.app state stayed on dashboard after hash navigation');
+          }
+        } catch {}
       }
 
       // ── Phase 3: Link Validation ──────────────────────────────────
@@ -1625,6 +1734,8 @@ async function main() {
     confidence,
     routesDiscovered: routes.length,
     routes,
+    hashRoutesDiscovered: hashRoutes.length,
+    hashRoutes,
     componentWiringIssues: wiringIssues.length,
     wiringDetails: wiringIssues,
     buttonWiringIssues: buttonWiringIssues.length,
@@ -1646,7 +1757,7 @@ async function main() {
   };
 
   console.log(JSON.stringify(result, null, 2));
-  process.exit(result.status === 'fail' ? 1 : 0);
+  process.exit(failures.length > 0 ? 1 : 0);
 }
 
 export { checkEntryPointImports, checkNativeButtonWiring };
