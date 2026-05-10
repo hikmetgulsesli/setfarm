@@ -89,6 +89,29 @@ ${css}`);
   }
 }
 
+function rerunSetupRepoScaffold(ctx: ClaimContext, repo: string): boolean {
+  const script = path.join(os.homedir(), ".openclaw/setfarm-repo/scripts/setup-repo.sh");
+  if (!fs.existsSync(script)) return false;
+  const branch = ctx.context["branch"] || ctx.context["BRANCH"] || ctx.runId;
+  const stitchProjectId = ctx.context["stitch_project_id"] || ctx.context["STITCH_PROJECT_ID"] || "";
+  const screenMap = ctx.context["screen_map"] || ctx.context["SCREEN_MAP"] || "";
+  const techStack = ctx.context["tech_stack"] || ctx.context["TECH_STACK"] || "vite-react";
+  try {
+    execFileSync("bash", [script, repo, String(branch), String(stitchProjectId), String(screenMap), String(techStack)], {
+      encoding: "utf-8",
+      timeout: 180000,
+      stdio: "pipe",
+    });
+    logger.info(`[module:setup-build preclaim] recovered missing package.json via setup-repo.sh`, { runId: ctx.runId });
+    return fs.existsSync(path.join(repo, "package.json"));
+  } catch (e) {
+    const details = formatProcessFailure(e, 600);
+    logger.warn(`[module:setup-build preclaim] setup-repo recovery failed: ${details.slice(0, 300)}`, { runId: ctx.runId });
+    ctx.context["baseline_fail"] = `setup-repo recovery failed:\n${details}`;
+    return false;
+  }
+}
+
 // Heavy work before agent:
 // 1. npm install (idempotent — skip if node_modules exists)
 // 2. npm run build — baseline verification
@@ -99,10 +122,19 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   if (process.env.SETFARM_DISABLE_AUTO_SETUP_BUILD === "1") return;
 
   const repo = ctx.context["repo"] || ctx.context["REPO"] || "";
-  if (!repo || !fs.existsSync(path.join(repo, "package.json"))) {
+  if (!repo) {
     const msg = "package.json missing after setup-repo — baseline scaffold did not run";
     logger.warn(`[module:setup-build preclaim] ${msg}`, { runId: ctx.runId });
     ctx.context["baseline_fail"] = msg;
+    return;
+  }
+  if (!fs.existsSync(path.join(repo, "package.json"))) {
+    rerunSetupRepoScaffold(ctx, repo);
+  }
+  if (!fs.existsSync(path.join(repo, "package.json"))) {
+    const msg = "package.json missing after setup-repo — baseline scaffold did not run";
+    logger.warn(`[module:setup-build preclaim] ${msg}`, { runId: ctx.runId });
+    ctx.context["baseline_fail"] ||= msg;
     return;
   }
   // A previous setup-build attempt may have stored baseline_fail/compat_fail in

@@ -22,6 +22,16 @@ describe("05-setup-build step module", () => {
     assert.ok(preclaim.includes("completeStep(step.id, output)"), "preClaim should use the normal completeStep path");
   });
 
+  it("preClaim recovers missing package.json by rerunning setup-repo scaffold", () => {
+    const preclaim = fs.readFileSync("src/installer/steps/05-setup-build/preclaim.ts", "utf-8");
+    const recovery = preclaim.indexOf("rerunSetupRepoScaffold");
+    const missingPackage = preclaim.indexOf("package.json missing after setup-repo");
+    const setupScript = preclaim.indexOf("setup-repo.sh");
+    assert.ok(recovery >= 0, "setup-build should have a setup-repo recovery path");
+    assert.ok(setupScript > recovery, "recovery path should call setup-repo.sh");
+    assert.ok(missingPackage > setupScript, "missing package failure should be reported only after recovery");
+  });
+
   it("preClaim re-evaluates stale setup-build failure flags before auto-complete", () => {
     const preclaim = fs.readFileSync("src/installer/steps/05-setup-build/preclaim.ts", "utf-8");
     const repoReady = preclaim.indexOf("package.json");
