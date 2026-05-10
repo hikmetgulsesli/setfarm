@@ -1098,6 +1098,42 @@ async function loopStoryCompletedAfter(runId: string, agentId: string, currentSt
   return !!completed;
 }
 
+async function completeRunningClaimFromOutputFile(stepId: string, agentId: string, outputPath?: string, startedAtMs?: number): Promise<boolean> {
+  if (!outputPath) return false;
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(outputPath);
+  } catch {
+    return false;
+  }
+  if (!stat.isFile() || stat.size <= 0) return false;
+  if (startedAtMs && stat.mtimeMs < startedAtMs - 5000) return false;
+
+  let output = "";
+  try {
+    output = fs.readFileSync(outputPath, "utf-8").trim();
+  } catch {
+    return false;
+  }
+  if (!/^STATUS\s*:/mi.test(output)) return false;
+
+  const row = await pgGet<{ status: string; step_id: string; run_id: string }>(
+    "SELECT status, step_id, run_id FROM steps WHERE id = $1 LIMIT 1",
+    [stepId],
+  );
+  if (!row || row.status !== "running") return false;
+
+  try {
+    const result = await completeStep(stepId, output);
+    try { fs.unlinkSync(outputPath); } catch {}
+    console.warn(`[spawner] recovered ${row.step_id} for ${agentId} from ${outputPath}; advanced=${result.advanced} runCompleted=${result.runCompleted}`);
+    return true;
+  } catch (err) {
+    console.warn(`[spawner] output-file recovery failed for ${row.step_id}/${agentId}: ${String(err).slice(0, 300)}`);
+    return false;
+  }
+}
+
 type RunningStepRow = {
   status: string;
   step_id: string;
@@ -1281,7 +1317,7 @@ async function verifyEachHasDoneStory(runId: string, verifyStepId: string): Prom
   return parseInt(waiting?.cnt || "0", 10) > 0;
 }
 
-async function failClaimIfStillRunning(stepId: string, agentId: string, wfId: string, role: string, transcriptPath: string, err: unknown, startedAtMs?: number, claimedCwd?: string): Promise<void> {
+async function failClaimIfStillRunning(stepId: string, agentId: string, wfId: string, role: string, transcriptPath: string, err: unknown, startedAtMs?: number, claimedCwd?: string, outputPath?: string): Promise<void> {
   try {
     const row = await pgGet<{ status: string; step_id: string; run_id: string; type: string; current_story_id: string | null }>(
       "SELECT status, step_id, run_id, type, current_story_id FROM steps WHERE id = $1 LIMIT 1",
@@ -1293,6 +1329,8 @@ async function failClaimIfStillRunning(stepId: string, agentId: string, wfId: st
       console.log(`[spawner] ${agentId} exited after completing a loop story for ${wfId}/${role}; keeping loop ${row.step_id} running (${compactExitReason(err)})`);
       return;
     }
+
+    if (row.status === "running" && await completeRunningClaimFromOutputFile(stepId, agentId, outputPath, startedAtMs)) return;
 
     if (row.status === "running") {
       try {
@@ -1444,7 +1482,7 @@ ${reason}
 `); } catch {}
           cancelOpenClawTask(active.sessionKey, "process-terminal");
           activeProcesses.delete(key);
-          await failClaimIfStillRunning(active.stepId, active.agentId, active.wfId, active.role, active.transcriptPath, new Error(reason), active.startedAtMs, active.spawnCwd);
+          await failClaimIfStillRunning(active.stepId, active.agentId, active.wfId, active.role, active.transcriptPath, new Error(reason), active.startedAtMs, active.spawnCwd, active.outputPath);
           continue;
         }
 
@@ -1490,7 +1528,7 @@ ${reason}
 `); } catch {}
           terminateActiveProcess(active, "startup-silent");
           activeProcesses.delete(key);
-          await failClaimIfStillRunning(active.stepId, active.agentId, active.wfId, active.role, active.transcriptPath, new Error(reason), active.startedAtMs, active.spawnCwd);
+          await failClaimIfStillRunning(active.stepId, active.agentId, active.wfId, active.role, active.transcriptPath, new Error(reason), active.startedAtMs, active.spawnCwd, active.outputPath);
           continue;
         }
 
@@ -1528,7 +1566,7 @@ ${reason}
 `); } catch {}
         terminateActiveProcess(active, "watchdog-stuck");
         activeProcesses.delete(key);
-        await failClaimIfStillRunning(active.stepId, active.agentId, active.wfId, active.role, active.transcriptPath, new Error(reason), active.startedAtMs, active.spawnCwd);
+        await failClaimIfStillRunning(active.stepId, active.agentId, active.wfId, active.role, active.transcriptPath, new Error(reason), active.startedAtMs, active.spawnCwd, active.outputPath);
         continue;
       } else {
         const idleMs = activeProcessIdleMs(active);
@@ -1720,7 +1758,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
       fs.appendFileSync(transcriptPath, "--- SPAWN ERROR ---\n" + String((err as any).message || err) + "\n--- FINISHED " + new Date().toISOString() + " ---\n");
     } catch (e) { console.warn("[spawner] transcript write failed: " + String(e)); }
     console.warn("[spawner] " + agentId + " spawn error: " + ((err as any).message || err) + " (transcript: " + transcriptPath + ")");
-    if (isCurrentProcess && !shuttingDown && claim.stepId) void failClaimIfStillRunning(claim.stepId, agentId, wfId, role, transcriptPath, err, startedAtMs, spawnCwd);
+    if (isCurrentProcess && !shuttingDown && claim.stepId) void failClaimIfStillRunning(claim.stepId, agentId, wfId, role, transcriptPath, err, startedAtMs, spawnCwd, stalePath);
   });
   child.once("exit", (code, signal) => {
     processExited = true;
@@ -1734,7 +1772,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     const err = code === 0 ? null : new Error(`openclaw agent exited code=${code ?? ""} signal=${signal ?? ""}`);
     if (err) {
       console.warn("[spawner] " + agentId + " exited: " + ((err as any).message || err) + " (transcript: " + transcriptPath + ")");
-      if (isCurrentProcess && !shuttingDown && claim.stepId) void failClaimIfStillRunning(claim.stepId, agentId, wfId, role, transcriptPath, err, startedAtMs, spawnCwd);
+      if (isCurrentProcess && !shuttingDown && claim.stepId) void failClaimIfStillRunning(claim.stepId, agentId, wfId, role, transcriptPath, err, startedAtMs, spawnCwd, stalePath);
     }
     else {
       console.log("[spawner] " + agentId + " completed (transcript: " + transcriptPath + ")");
@@ -1748,6 +1786,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
           new Error("agent exited with code 0 without calling setfarm step complete/fail"),
           startedAtMs,
           spawnCwd,
+          stalePath,
         );
       }
     }
