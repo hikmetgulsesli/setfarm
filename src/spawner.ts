@@ -1672,6 +1672,7 @@ ${reason}
             try { fs.appendFileSync(active.transcriptPath, `--- STORY STATE MISMATCH ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
             terminateActiveProcess(active, "story-state-mismatch");
             activeProcesses.delete(key);
+            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
             await requeueOpenStoryClaim(active.runId, row.step_id, active.storyId, active.agentId, reason);
             continue;
           }
@@ -1718,6 +1719,7 @@ ${reason}
             terminateActiveProcess(active, "self-loop");
             activeProcesses.delete(key);
             if (row.type === "loop" && active.storyId) {
+              if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
               await requeueOpenStoryClaim(active.runId, row.step_id, active.storyId, active.agentId, reason);
             } else {
               await retryActiveSingleStepClaim(active, row.step_id, reason);
@@ -2051,6 +2053,7 @@ async function releaseActiveProcessForShutdown(active: ActiveProcess): Promise<v
     );
     if (!row) return;
     if (row.type === "loop" && row.current_story_id) {
+      if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) return;
       await pgRun(
         "UPDATE stories SET status = 'pending', claimed_by = NULL, updated_at = NOW() WHERE id = $1 AND status = 'running'",
         [row.current_story_id],

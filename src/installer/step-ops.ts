@@ -1712,10 +1712,10 @@ async function claimSingleStep(
     shouldRecordSingleStepTransition = true;
   }
 
-  // Do not publish a LiveDB claim until claim-side deferrals pass. Verify PR
-  // review delay can intentionally retry every few seconds before spawning an
-  // agent; recording those as claimed steps floods activity/claim_log even
-  // though no reviewer process exists yet.
+  // Publish a LiveDB handoff immediately after the atomic DB claim. Claim-side
+  // deferrals below must close this row if no agent is spawned, otherwise a
+  // spawner restart can leave a running step with no observable owner.
+  await recordSingleStepHandoff("claimSingleStep:atomic");
 
   // Inject previous failure context so agent knows what to fix on retry.
   // Some verify-each retries intentionally leave the previous successful
@@ -1847,9 +1847,6 @@ async function claimSingleStep(
     delete context["verify_pending_pr_url"];
     await updateRunContext(step.run_id, context);
   }
-
-  // Claim-side gates are done; this is the actual handoff to an agent process.
-  await recordSingleStepHandoff("claimSingleStep:atomic");
 
   // Default optional template vars for non-story steps (design, security-gate, etc.)
   for (const v of OPTIONAL_TEMPLATE_VARS) {
@@ -2806,6 +2803,67 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
   }
   if (context["story_workdir"]?.startsWith("~/")) {
     context["story_workdir"] = context["story_workdir"].replace(/^~\//, os.homedir() + "/");
+  }
+
+  // Loop completion can arrive after a spawner restart/shutdown has cleared
+  // steps.current_story_id but before the agent's output is processed. Recover
+  // the story from explicit output fields instead of silently dropping a valid
+  // completion and re-claiming the same work.
+  if (step.type === "loop" && !step.current_story_id) {
+    const reportedStoryId = (parsed["story_id"] || "").trim();
+    const reportedBranch = (parsed["story_branch"] || context["story_branch"] || "").trim().toLowerCase();
+    if (reportedStoryId || reportedBranch) {
+      const runPrefix = step.run_id.slice(0, 8).toLowerCase();
+      const candidates = await pgQuery<any>(
+        `SELECT *
+         FROM stories
+         WHERE run_id = $1
+           AND status IN ('pending','running')
+           AND (
+             ($2 <> '' AND lower(story_id) = lower($2))
+             OR ($3 <> '' AND lower(COALESCE(story_branch, '')) = lower($3))
+             OR ($3 <> '' AND lower($3) = lower($4 || '-' || story_id))
+           )
+         ORDER BY CASE WHEN status = 'running' THEN 0 ELSE 1 END, story_index ASC
+         LIMIT 1`,
+        [step.run_id, reportedStoryId, reportedBranch, runPrefix],
+      );
+      const recoveredStory = candidates[0];
+      if (recoveredStory) {
+        const storyBranch = (recoveredStory.story_branch || reportedBranch || `${runPrefix}-${recoveredStory.story_id}`).toLowerCase();
+        let storyWorkdir = "";
+        if (context["repo"]) {
+          storyWorkdir = findWorktreeDir(context["repo"], storyBranch, step.agent_id)
+            || findWorktreeDir(context["repo"], recoveredStory.story_id, step.agent_id)
+            || "";
+          if (!storyWorkdir && storyBranch) {
+            storyWorkdir = createStoryWorktree(context["repo"], storyBranch, context["story_base_ref"] || "main", step.agent_id);
+          }
+        }
+        context["story_branch"] = storyBranch;
+        if (storyWorkdir) context["story_workdir"] = storyWorkdir;
+        await pgRun(
+          `UPDATE stories
+           SET status = 'running',
+               story_branch = COALESCE(NULLIF(story_branch, ''), $1),
+               claimed_at = COALESCE(claimed_at, NOW()),
+               claimed_by = COALESCE(claimed_by, $2),
+               updated_at = NOW()
+           WHERE id = $3 AND status IN ('pending','running')`,
+          [storyBranch, step.agent_id, recoveredStory.id],
+        );
+        await pgRun(
+          "UPDATE steps SET status = 'running', current_story_id = $1, updated_at = NOW() WHERE id = $2 AND current_story_id IS NULL",
+          [recoveredStory.id, step.id],
+        );
+        await recordStepTransition(step.id, step.run_id, null, "running", step.agent_id, "recoverLoopCompletionStory", { storyId: recoveredStory.story_id });
+        step = { ...step, current_story_id: recoveredStory.id };
+        recoveredStory.status = "running";
+        recoveredStory.story_branch = storyBranch;
+        await injectStoryContext(recoveredStory, step as any, context);
+        logger.warn(`[loop-recover] Restored current_story_id for ${recoveredStory.story_id} from completion output`, { runId: step.run_id, stepId: step.step_id });
+      }
+    }
   }
 
   // FIX 1: Explicit fail interceptor — agent reported STATUS: fail/error

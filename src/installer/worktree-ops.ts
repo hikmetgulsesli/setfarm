@@ -391,6 +391,38 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
     }
     if (shouldRemove) {
       try { fs.rmSync(worktreeDir, { recursive: true, force: true }); } catch (e) { logger.warn(`[worktree] Failed to remove stale worktree ${worktreeDir}: ${String(e)}`, {}); }
+    } else {
+      try {
+        const branch = execFileSync("git", ["branch", "--show-current"], {
+          cwd: worktreeDir, encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
+        }).trim().toLowerCase();
+        const expected = storyId.toLowerCase();
+        if (branch === expected) {
+          const nmSrc = path.join(repo, "node_modules");
+          const nmDst = path.join(worktreeDir, "node_modules");
+          if (fs.existsSync(nmSrc)) {
+            try {
+              const stat = fs.lstatSync(nmDst);
+              if (!stat.isSymbolicLink()) {
+                fs.rmSync(nmDst, { recursive: true, force: true });
+                fs.symlinkSync(nmSrc, nmDst);
+              }
+            } catch {
+              try { fs.symlinkSync(nmSrc, nmDst); } catch {}
+            }
+          }
+          copyStitchToWorktree(repo, worktreeDir);
+          ensureReferencesLink(repo, worktreeDir);
+          installScopeHook(worktreeDir, storyId);
+          logger.info(`[worktree] Reusing existing worktree ${worktreeDir} for ${storyId}`, {});
+          return worktreeDir;
+        }
+        logger.warn(`[worktree] Existing directory ${worktreeDir} is on branch ${branch || "(detached)"}, expected ${expected}; recreating`, {});
+        saveAndRemoveWorktree(repo, worktreeDir, storyId.toLowerCase());
+      } catch (e) {
+        logger.warn(`[worktree] Existing worktree ${worktreeDir} could not be validated: ${String(e).slice(0, 150)}; recreating`, {});
+        saveAndRemoveWorktree(repo, worktreeDir, storyId.toLowerCase());
+      }
     }
   }
 
