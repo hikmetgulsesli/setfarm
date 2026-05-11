@@ -3,11 +3,28 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { implementModule } from "../../dist/installer/steps/06-implement/module.js";
 import { checkBuildGate, computeScopeFileLimits, detectPackageBuildCommand, normalize, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
+import { cleanupOutOfScopeWorktreeFiles } from "../../dist/installer/steps/06-implement/context.js";
 import { decideStorySystemSmokeGate } from "../../dist/installer/step-ops.js";
 import { STACK_RULES } from "../../dist/installer/steps/06-implement/stack-rules.js";
 import type { ParsedOutput } from "../../dist/installer/steps/types.js";
+
+function git(cwd: string, args: string[]): string {
+  return execFileSync("git", args, {
+    cwd,
+    encoding: "utf-8",
+    timeout: 10000,
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "Setfarm Test",
+      GIT_AUTHOR_EMAIL: "setfarm-test@example.test",
+      GIT_COMMITTER_NAME: "Setfarm Test",
+      GIT_COMMITTER_EMAIL: "setfarm-test@example.test",
+    },
+  }).trim();
+}
 
 describe("06-implement step module", () => {
   it("module metadata is correct", () => {
@@ -30,6 +47,45 @@ describe("06-implement step module", () => {
     assert.match(source, /const declaredSharedFiles = parseScopeFiles\(scopeRow\?\.shared_files\)/);
     assert.doesNotMatch(source, /declaredSharedFiles\.forEach\(f => allowed\.add\(f\)\)/);
     assert.match(source, /void declaredSharedFiles/);
+  });
+
+  it("cleans dirty out-of-scope files before reusing a story worktree", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-scope-clean-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.mkdirSync(path.join(tmp, "src/utils"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), "export const app = 'base';\n");
+      fs.writeFileSync(path.join(tmp, "src/screens/GameBoard.tsx"), "export const board = 'base';\n");
+      fs.writeFileSync(path.join(tmp, "tsconfig.json"), "{}\n");
+      git(tmp, ["init", "-b", "main"]);
+      git(tmp, ["add", "."]);
+      git(tmp, ["commit", "-m", "baseline"]);
+
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), "export const app = 'allowed';\n");
+      fs.writeFileSync(path.join(tmp, "src/utils/storage.ts"), "export const storage = true;\n");
+      fs.writeFileSync(path.join(tmp, "src/screens/GameBoard.tsx"), "export const board = 'dirty';\n");
+      fs.writeFileSync(path.join(tmp, "src/screens/Extra.tsx"), "export const extra = true;\n");
+      fs.writeFileSync(path.join(tmp, "tsconfig.json"), "{\"dirty\":true}\n");
+
+      const cleaned = cleanupOutOfScopeWorktreeFiles(tmp, ["src/App.tsx", "src/utils/storage.ts"], "US-001", "run-test");
+
+      assert.ok(cleaned.includes("src/screens/GameBoard.tsx"));
+      assert.ok(cleaned.includes("src/screens/Extra.tsx"));
+      assert.ok(cleaned.includes("tsconfig.json"));
+      assert.equal(fs.readFileSync(path.join(tmp, "src/App.tsx"), "utf-8"), "export const app = 'allowed';\n");
+      assert.equal(fs.readFileSync(path.join(tmp, "src/utils/storage.ts"), "utf-8"), "export const storage = true;\n");
+      assert.equal(fs.readFileSync(path.join(tmp, "src/screens/GameBoard.tsx"), "utf-8"), "export const board = 'base';\n");
+      assert.equal(fs.existsSync(path.join(tmp, "src/screens/Extra.tsx")), false);
+      assert.equal(fs.readFileSync(path.join(tmp, "tsconfig.json"), "utf-8"), "{}\n");
+
+      const status = git(tmp, ["status", "--porcelain"]);
+      assert.match(status, /M src\/App\.tsx/);
+      assert.match(status, /\?\? src\/utils\//);
+      assert.doesNotMatch(status, /src\/screens/);
+      assert.doesNotMatch(status, /tsconfig/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("React Vite stack rules allow main.tsx only when scoped", () => {

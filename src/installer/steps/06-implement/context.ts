@@ -7,6 +7,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { execFileSync } from "node:child_process";
 import { pgGet, pgQuery } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
 import { getStories, getCurrentStory, formatStoryForTemplate, formatCompletedStories, formatStoryRoadmap } from "../../story-ops.js";
@@ -18,6 +19,19 @@ const STITCH_HTML_EXCERPT_CHARS = 2500;
 const STITCH_HTML_TOTAL_CHARS = 6000;
 const DESIGN_DOM_EXCERPT_CHARS = 3000;
 const UI_BEHAVIOR_CONTRACT_CHARS = 4500;
+
+const WORKTREE_METADATA_FILES = new Set([
+  ".story-scope-files",
+  ".story-branch",
+  "pre-commit",
+]);
+const WORKTREE_METADATA_PREFIXES = [
+  "node_modules/",
+  "references/",
+  "stitch/",
+  "dist/",
+  ".git/",
+];
 
 const STORY_STATUS = {
   PENDING: "pending",
@@ -236,6 +250,12 @@ async function injectScopeContext(nextStory: any, context: Record<string, string
         const scopeFilePath = path.join(context["story_workdir"], ".story-scope-files");
         fs.writeFileSync(scopeFilePath, allAllowed.join("\n") + "\n");
         try { fs.chmodSync(scopeFilePath, 0o664); } catch { /* best effort */ }
+        cleanupOutOfScopeWorktreeFiles(
+          context["story_workdir"],
+          allAllowed,
+          String(nextStory.story_id || nextStory.id || "story"),
+          String(nextStory.run_id || ""),
+        );
       } catch (e) { logger.debug(`[scope-file] ${String(e).slice(0, 80)}`); }
     }
     if (context["story_scope_files"]) {
@@ -244,6 +264,148 @@ async function injectScopeContext(nextStory: any, context: Record<string, string
   } catch (e) {
     logger.debug(`[scope-inject] Could not read story scope columns: ${String(e).slice(0, 120)}`);
   }
+}
+
+function normalizeRepoPath(raw: string): string {
+  return raw.trim().replace(/^"|"$/g, "").replace(/\\/g, "/").replace(/^\.\//, "");
+}
+
+function parsePorcelainStatus(output: string): Array<{ code: string; file: string }> {
+  const entries: Array<{ code: string; file: string }> = [];
+  for (const line of output.split(/\r?\n/)) {
+    if (!line.trim() || line.length < 4) continue;
+    const code = line.slice(0, 2);
+    const raw = line.slice(3).trim();
+    if (!raw) continue;
+    const parts = raw.includes(" -> ") ? raw.split(" -> ") : [raw];
+    for (const part of parts) {
+      const file = normalizeRepoPath(part);
+      if (file) entries.push({ code, file });
+    }
+  }
+  return entries;
+}
+
+function isAllowedWorktreePath(file: string, allowed: Set<string>): boolean {
+  if (allowed.has(file)) return true;
+  if (WORKTREE_METADATA_FILES.has(file)) return true;
+  return WORKTREE_METADATA_PREFIXES.some((prefix) => file === prefix.slice(0, -1) || file.startsWith(prefix));
+}
+
+function isTrackedInHead(workdir: string, file: string): boolean {
+  try {
+    execFileSync("git", ["cat-file", "-e", `HEAD:${file}`], {
+      cwd: workdir,
+      timeout: 5000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function listFilesRecursive(root: string, dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const abs = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      out.push(...listFilesRecursive(root, abs));
+    } else if (entry.isFile() || entry.isSymbolicLink()) {
+      out.push(path.relative(root, abs).replace(/\\/g, "/"));
+    }
+  }
+  return out;
+}
+
+function removeEmptyDirsUpTo(root: string, dir: string): void {
+  let current = dir;
+  const normalizedRoot = path.resolve(root);
+  while (path.resolve(current).startsWith(normalizedRoot) && path.resolve(current) !== normalizedRoot) {
+    try {
+      if (fs.readdirSync(current).length > 0) return;
+      fs.rmdirSync(current);
+      current = path.dirname(current);
+    } catch {
+      return;
+    }
+  }
+}
+
+export function cleanupOutOfScopeWorktreeFiles(
+  workdir: string,
+  allowedFiles: string[],
+  storyId = "story",
+  runId = "",
+): string[] {
+  if (!workdir || !fs.existsSync(workdir)) return [];
+  const gitPath = path.join(workdir, ".git");
+  if (!fs.existsSync(gitPath)) return [];
+
+  const allowed = new Set(allowedFiles.map(normalizeRepoPath).filter(Boolean));
+  if (allowed.size === 0) return [];
+
+  let status = "";
+  try {
+    status = execFileSync("git", ["status", "--porcelain"], {
+      cwd: workdir,
+      timeout: 5000,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+  } catch (e) {
+    logger.debug(`[scope-clean] Could not inspect ${storyId}: ${String(e).slice(0, 120)}`);
+    return [];
+  }
+  if (!status) return [];
+
+  const cleaned: string[] = [];
+  for (const entry of parsePorcelainStatus(status)) {
+    const file = entry.file;
+    if (isAllowedWorktreePath(file, allowed)) continue;
+
+    const abs = path.join(workdir, file);
+    try {
+      if (entry.code === "??" || !isTrackedInHead(workdir, file)) {
+        let removed = false;
+        if (fs.existsSync(abs) && fs.lstatSync(abs).isDirectory()) {
+          for (const child of listFilesRecursive(workdir, abs)) {
+            if (isAllowedWorktreePath(child, allowed)) continue;
+            fs.rmSync(path.join(workdir, child), { recursive: true, force: true });
+            removeEmptyDirsUpTo(workdir, path.dirname(path.join(workdir, child)));
+            cleaned.push(child);
+            removed = true;
+          }
+        } else {
+          fs.rmSync(abs, { recursive: true, force: true });
+          removed = true;
+        }
+        if (removed && !cleaned.includes(file)) cleaned.push(file);
+      } else {
+        try {
+          execFileSync("git", ["restore", "--staged", "--worktree", "--", file], {
+            cwd: workdir,
+            timeout: 10000,
+            stdio: ["pipe", "pipe", "pipe"],
+          });
+        } catch {
+          execFileSync("git", ["checkout", "HEAD", "--", file], {
+            cwd: workdir,
+            timeout: 10000,
+            stdio: ["pipe", "pipe", "pipe"],
+          });
+        }
+        cleaned.push(file);
+      }
+    } catch (e) {
+      logger.warn(`[scope-clean] Failed to clean out-of-scope file ${file} for ${storyId}: ${String(e).slice(0, 160)}`, { runId });
+    }
+  }
+
+  if (cleaned.length > 0) {
+    logger.warn(`[scope-clean] Cleaned ${cleaned.length} out-of-scope dirty file(s) before ${storyId} claim: ${cleaned.slice(0, 10).join(", ")}`, { runId });
+  }
+  return cleaned;
 }
 
 async function injectStitchHtml(context: Record<string, string>, runId: string, storyId: string): Promise<void> {
