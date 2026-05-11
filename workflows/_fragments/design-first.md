@@ -40,9 +40,13 @@ DESIGN ENFORCEMENT (MANDATORY):
   to the matching design token.
 - LAYOUT: preserve the Stitch flex/grid hierarchy and nesting.
 - NEVER: emoji icons, icon fonts, Material Symbols, purple gradients,
-  transition: all, href="#", empty handlers, console.log-only handlers.
+  transition: all, dead unhandled placeholder links, empty handlers,
+  console.log-only handlers.
 - ALWAYS: cursor-pointer on clickables, hover/focus states, focus-visible rings.
-- LINKS: every link must point to a real route.
+- LINKS: every visible link must navigate, change visible state, or be
+  intentionally disabled. Preserve generated Stitch `<a>` tags, className,
+  nesting and layout; do not replace anchors with `<span>` just to remove
+  `href="#"`.
 - HANDLERS: every handler must produce real product behavior.
 
 LANGUAGE:

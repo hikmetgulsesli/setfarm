@@ -14,6 +14,9 @@ const DESIGN_FIRST_MATERIAL_SYMBOLS_BLOCK =
 const STALE_GENERIC_DESIGN_FIX =
   /DÜZELT:\s*Kritik UI sözleşmesi hatalarını düzelt;\s*stitch\/design-tokens\.css'i import et,\s*hardcoded renkleri var\(--\*\) ile değiştir\./g;
 
+const STALE_HREF_HASH_LINK_BLOCK =
+  /- LINKS: NEVER use href="#" or href="javascript:void\(0\)" — these are dead links\.\n\s+Every <Link> and <a> MUST point to a real project-specific route from PRD\/Stitch\/DESIGN_DOM\.\n\s+If the destination page doesn't exist yet, create a minimal placeholder page with the route\.\n\s+If a sidebar\/navbar has navigation items, EVERY item MUST have a working href\.\n\s+Before commit: grep -rn 'href="#"' src\/ — if ANY match found, you MUST fix them all\./g;
+
 export function sanitizeAgentPromptContracts(input: string): string {
   let output = input;
 
@@ -41,7 +44,20 @@ export function sanitizeAgentPromptContracts(input: string): string {
 
   output = output
     .replace("- NEVER: emoji icons, purple gradients, transition:all", "- NEVER: emoji icons, icon fonts, Material Symbols, purple gradients, transition:all")
-    .replace("- NEVER: emoji icons, purple gradients, transition: all, href=\"#\", empty", "- NEVER: emoji icons, icon fonts, Material Symbols, purple gradients,\n  transition: all, href=\"#\", empty");
+    .replace("- NEVER: emoji icons, purple gradients, transition: all, href=\"#\", empty", "- NEVER: emoji icons, icon fonts, Material Symbols, purple gradients,\n  transition: all, dead unhandled placeholder links, empty");
+
+  output = output.replace(
+    STALE_HREF_HASH_LINK_BLOCK,
+    [
+      "- LINKS: never leave a dead, unhandled `href=\"#\"` or `href=\"javascript:void(0)\"`.",
+      "  Preserve generated Stitch `<a>` tags, className, nesting and layout.",
+      "  Do NOT replace anchors with `<span>`, `<div>`, or text-only elements.",
+      "  Prefer a real route when the route/page is in scope. If the target is out",
+      "  of scope, keep the `<a>` and add an `onClick`/keyboard-safe behavior that",
+      "  prevents default navigation and produces visible in-screen state, or mark",
+      "  it explicitly disabled/hidden when the story says it is unavailable.",
+    ].join("\n"),
+  );
 
   output = output.replace(
     STALE_GENERIC_DESIGN_FIX,

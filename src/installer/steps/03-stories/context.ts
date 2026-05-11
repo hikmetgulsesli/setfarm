@@ -102,7 +102,13 @@ function controlLabel(item: any): string {
 }
 
 function inferExpectedBehavior(item: any, kind: UiBehaviorRequirement["kind"]): string {
-  if (kind === "link") return `navigate:${item?.href || item?.route || "target page"}`;
+  if (kind === "link") {
+    const target = String(item?.href || item?.route || "").trim();
+    if (!target || target === "#" || /^javascript:/i.test(target)) {
+      return "preserve anchor semantics and provide visible state/disabled behavior; do not replace with span";
+    }
+    return `navigate:${target}`;
+  }
   if (kind === "input") return "controlled value with onChange; validate when submitted";
   if (item?.expectedBehavior) return String(item.expectedBehavior);
   if (item?.expectedRoute || item?.route) return `navigate:${item.expectedRoute || item.route}`;
@@ -136,7 +142,8 @@ export function collectUiBehaviorRequirements(repoPath: string): UiBehaviorRequi
       const add = (kind: UiBehaviorRequirement["kind"], item: any) => {
         const label = controlLabel(item);
         const icon = item?.icon ? String(item.icon) : undefined;
-        const route = item?.route || item?.href || item?.expectedRoute;
+        const rawRoute = String(item?.route || item?.href || item?.expectedRoute || "").trim();
+        const route = rawRoute && rawRoute !== "#" && !/^javascript:/i.test(rawRoute) ? rawRoute : "";
         if (!label && !icon && !route) return;
         const req: UiBehaviorRequirement = {
           screenId,

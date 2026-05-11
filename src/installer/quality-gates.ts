@@ -46,7 +46,7 @@ export function runQualityChecks(repoPath: string): QualityIssue[] {
           issues.push({
             rule,
             severity: "warning", // Fix 4: downgraded from error — advisory only
-            detail: `Found ${matches.length} dead link(s): ${pattern}`,
+            detail: `Found ${matches.length} placeholder link(s): ${pattern}. Preserve generated anchor tags/classes; add real route, visible in-screen behavior, or explicit disabled state instead of replacing anchors with spans.`,
             matches: matches.slice(0, 10),
           });
         }

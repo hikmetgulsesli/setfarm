@@ -16,4 +16,14 @@ describe("feature-dev design contract prompt", () => {
     assert.match(implement.input, /Do NOT add Material Symbols/);
     assert.match(implement.input, /replace them in source UI with inline\s+SVG components or an already-installed SVG icon library/);
   });
+
+  it("preserves generated Stitch anchor structure while fixing placeholder links", async () => {
+    const spec = await loadWorkflowSpec(WORKFLOW_DIR);
+    const implement = spec.steps.find(step => step.id === "implement");
+
+    assert.ok(implement, "implement step should exist");
+    assert.doesNotMatch(implement.input, /Before commit: grep -rn 'href="#'|EVERY item MUST have a working href/);
+    assert.match(implement.input, /Preserve generated Stitch `<a>` tags, className,\s+nesting and layout/);
+    assert.match(implement.input, /do not replace anchors with `<span>`/i);
+  });
 });

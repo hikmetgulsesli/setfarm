@@ -43,6 +43,23 @@ describe("agent prompt contracts", () => {
 
     assert.doesNotMatch(output, /Material\+Symbols\+Outlined|Copy every Stitch font link exactly|Kritik UI sözleşmesi|hardcoded renkleri/);
     assert.match(output, /Do not copy\s+Material Symbols, Material Icons, or any icon-font links/);
+    assert.match(output, /dead unhandled placeholder links/);
     assert.match(output, /Fix only the exact UI_CONTRACT lines above/);
+  });
+
+  it("rewrites stale href hash instructions without telling agents to change Stitch anchors into spans", () => {
+    const input = [
+      "- LINKS: NEVER use href=\"#\" or href=\"javascript:void(0)\" — these are dead links.",
+      "  Every <Link> and <a> MUST point to a real project-specific route from PRD/Stitch/DESIGN_DOM.",
+      "  If the destination page doesn't exist yet, create a minimal placeholder page with the route.",
+      "  If a sidebar/navbar has navigation items, EVERY item MUST have a working href.",
+      "  Before commit: grep -rn 'href=\"#\"' src/ — if ANY match found, you MUST fix them all.",
+    ].join("\n");
+
+    const output = sanitizeAgentPromptContracts(input);
+
+    assert.doesNotMatch(output, /grep -rn 'href="#'|EVERY item MUST have a working href/);
+    assert.match(output, /Preserve generated Stitch `<a>` tags, className, nesting and layout/);
+    assert.match(output, /Do NOT replace anchors with `<span>`/);
   });
 });

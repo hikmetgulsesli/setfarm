@@ -288,6 +288,35 @@ describe("03-stories step module", () => {
     }
   });
 
+  it("treats Stitch href hash links as placeholder anchors, not routes to replace with spans", () => {
+    const repo = mkdtempSync(path.join(tmpdir(), "setfarm-dom-hash-"));
+    try {
+      mkdirSync(path.join(repo, "stitch"));
+      writeFileSync(path.join(repo, "stitch", "DESIGN_DOM.json"), JSON.stringify({
+        screens: {
+          "SCR-001": {
+            title: "Main Menu",
+            behaviorContract: [
+              { kind: "link", label: "GAME", href: "#" },
+            ],
+          },
+        },
+      }));
+
+      const [req] = collectUiBehaviorRequirements(repo);
+      assert.equal(req.kind, "link");
+      assert.equal(req.route, undefined);
+      assert.match(req.expectedBehavior, /preserve anchor semantics/);
+      assert.match(req.expectedBehavior, /do not replace with span/);
+
+      const contract = computeUiBehaviorContract(repo);
+      assert.doesNotMatch(contract, /navigate:#|route=#/);
+      assert.match(contract, /preserve anchor semantics/);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
   it("rejects stories that do not cover Stitch behavior controls", () => {
     const repo = mkdtempSync(path.join(tmpdir(), "setfarm-dom-"));
     try {
