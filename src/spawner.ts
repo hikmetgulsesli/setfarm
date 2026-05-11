@@ -847,7 +847,7 @@ CLAIM_FILE=${claimFile}
 OUTPUT_FILE=/tmp/setfarm-output-${outputFileId}.txt
 
 First exec command should start with:
-CLAIM_FILE='${claimFile}'; OUTPUT_FILE='/tmp/setfarm-output-${outputFileId}.txt'; STEP_ID=$(jq -r '.stepId // empty' "$CLAIM_FILE"); WORKDIR=$(jq -r 'if (.input|type)=="object" then (.input.story_workdir // .input.repo // "") else "" end' "$CLAIM_FILE"); if [ -z "$WORKDIR" ]; then WORKDIR=$(jq -r 'if (.input|type)=="string" then .input else "" end' "$CLAIM_FILE" | sed -n 's/^WORKDIR:[[:space:]]*//p; s/^REPO:[[:space:]]*//p' | head -1); fi; case "$WORKDIR" in ""|*"<"*|*">"*|*"[missing:"*|*'$HOME'*|~*) WORKDIR="$HOME/.openclaw/workspace/agent-scratch";; esac; mkdir -p "$WORKDIR"; cd "$WORKDIR"; case "$(pwd)" in "$HOME"/.openclaw/setfarm-repo*) echo FATAL_PLATFORM_CWD; exit 1;; esac; printf 'STEP_ID=%s\nWORKDIR=%s\n' "$STEP_ID" "$(pwd)"; jq -r 'if (.input|type)=="object" then (.input.task // .input.current_story_title // .input.story_title // "") else .input end' "$CLAIM_FILE" | head -c 1200; echo
+CLAIM_FILE='${claimFile}'; OUTPUT_FILE='/tmp/setfarm-output-${outputFileId}.txt'; STEP_ID=$(jq -r '.stepId // empty' "$CLAIM_FILE"); WORKDIR=$(jq -r '(.workdir // .repo // (if (.input|type)=="object" then (.input.story_workdir // .input.repo // "") else "" end) // "")' "$CLAIM_FILE"); if [ -z "$WORKDIR" ]; then WORKDIR=$(jq -r 'if (.input|type)=="string" then .input else "" end' "$CLAIM_FILE" | tr -d '\\140' | sed -n 's/^WORKDIR:[[:space:]]*//p; s/^REPO:[[:space:]]*//p; s/.*\\(\\/home\\/setrox\\/projects\\/[^ ]*\\).*/\\1/p' | head -1); fi; case "$WORKDIR" in ""|*"<"*|*">"*|*"[missing:"*|*'$HOME'*|~*) WORKDIR="$HOME/.openclaw/workspace/agent-scratch";; esac; mkdir -p "$WORKDIR"; cd "$WORKDIR"; case "$(pwd)" in "$HOME"/.openclaw/setfarm-repo*) echo FATAL_PLATFORM_CWD; exit 1;; esac; printf 'STEP_ID=%s\nWORKDIR=%s\n' "$STEP_ID" "$(pwd)"; jq -r 'if (.input|type)=="object" then (.input.task // .input.current_story_title // .input.story_title // "") else .input end' "$CLAIM_FILE" | head -c 1200; echo
 
 Do ${wfId}/${role} work in WORKDIR only. Read the claim at ${claimFile} for exact requirements.
 Important: OpenClaw read/edit/write tools resolve relative paths against the configured agent workspace, not the shell cwd. When using read/edit/write tools for project files, use absolute paths under WORKDIR, for example "$WORKDIR/src/App.tsx". For exec commands, start each command with the WORKDIR extraction snippet above or pass workdir="$WORKDIR" after resolving it.
@@ -1914,12 +1914,12 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
       .replace(/\[missing:\s*output_file_id\]/gi, outputFileId)
       .replace(/\[missing:\s*OUTPUT_FILE_ID\]/g, outputFileId);
   }
-  fs.writeFileSync(claimFile, JSON.stringify({ stepId: claim.stepId, runId: claim.runId, input: claim.resolvedInput }) + "\n");
+  const spawnCwd = safeAgentCwdFromClaimInput(claim.resolvedInput);
+  fs.writeFileSync(claimFile, JSON.stringify({ stepId: claim.stepId, runId: claim.runId, workdir: spawnCwd, repo: spawnCwd, input: claim.resolvedInput }) + "\n");
 
   // capture agent stdout/stderr to a transcript file for post-hoc diagnosis.
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
   const transcriptPath = path.join(TRANSCRIPT_ROOT, wfId, agentId + "-" + ts + ".log");
-  const spawnCwd = safeAgentCwdFromClaimInput(claim.resolvedInput);
   if (await completeInlineSecurityGateIfApplicable({ role, agentId, wfId, key, claim, repo: spawnCwd, transcriptPath })) {
     return;
   }

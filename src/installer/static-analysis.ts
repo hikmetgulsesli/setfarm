@@ -17,9 +17,13 @@ export interface PreFlightReport {
   totalIssues: number;
 }
 
-export function getChangedFiles(repoPath: string, baseBranch: string): string[] {
+function diffRange(baseRef: string, headRef = "HEAD"): string {
+  return `${baseRef}...${headRef}`;
+}
+
+export function getChangedFiles(repoPath: string, baseBranch: string, headRef = "HEAD"): string[] {
   try {
-    const output = execFileSync("git", ["diff", "--name-only", `${baseBranch}...HEAD`], {
+    const output = execFileSync("git", ["diff", "--name-only", diffRange(baseBranch, headRef)], {
       cwd: repoPath, encoding: "utf-8", timeout: 10000, stdio: ["pipe", "pipe", "pipe"]
     }).trim();
     return output ? output.split("\n").filter(f => f.endsWith(".ts") || f.endsWith(".tsx") || f.endsWith(".js") || f.endsWith(".jsx") || f.endsWith(".css")) : [];
@@ -28,9 +32,9 @@ export function getChangedFiles(repoPath: string, baseBranch: string): string[] 
   }
 }
 
-export function getDiffSummary(repoPath: string, baseBranch: string): string {
+export function getDiffSummary(repoPath: string, baseBranch: string, headRef = "HEAD"): string {
   try {
-    return execFileSync("git", ["diff", "--stat", `${baseBranch}...HEAD`], {
+    return execFileSync("git", ["diff", "--stat", diffRange(baseBranch, headRef)], {
       cwd: repoPath, encoding: "utf-8", timeout: 10000, stdio: ["pipe", "pipe", "pipe"]
     }).trim().slice(0, 3000);
   } catch {
@@ -68,9 +72,9 @@ export function runTscCheck(repoPath: string): string {
   }
 }
 
-export function buildPreFlightReport(repoPath: string, baseBranch: string): PreFlightReport {
-  const changedFiles = getChangedFiles(repoPath, baseBranch);
-  const diffSummary = getDiffSummary(repoPath, baseBranch);
+export function buildPreFlightReport(repoPath: string, baseBranch: string, headRef = "HEAD"): PreFlightReport {
+  const changedFiles = getChangedFiles(repoPath, baseBranch, headRef);
+  const diffSummary = getDiffSummary(repoPath, baseBranch, headRef);
   const eslintErrors = runEslint(repoPath, changedFiles);
   const tscErrors = runTscCheck(repoPath);
 

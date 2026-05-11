@@ -119,8 +119,11 @@ describe("spawner gateway recovery wiring", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /function safeAgentCwdFromClaimInput\(input: unknown\): string/);
     assert.match(source, /"story_workdir",\s*"repo",\s*"REPO",\s*"workdir",\s*"WORKDIR"/);
+    assert.match(source, /\\\/home\\\/setrox\\\/projects\\\//);
     assert.match(source, /resolved === SETFARM_SRC \|\| resolved\.startsWith\(SETFARM_SRC \+ path\.sep\)/);
     assert.match(source, /const spawnCwd = safeAgentCwdFromClaimInput\(claim\.resolvedInput\)/);
+    assert.match(source, /JSON\.stringify\(\{ stepId: claim\.stepId, runId: claim\.runId, workdir: spawnCwd, repo: spawnCwd, input: claim\.resolvedInput \}\)/);
+    assert.match(source, /\.workdir \/\/ \.repo \/\/ \(if \(\.input\|type\)=="object"/);
     assert.match(source, /cwd: spawnCwd/);
     assert.match(source, /cwd=\$\{spawnCwd\}/);
   });

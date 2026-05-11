@@ -1842,7 +1842,25 @@ async function claimSingleStep(
     try {
       const { buildPreFlightReport, formatPreFlightForAgent } = await import("./static-analysis.js");
       const analysisBranch = context["story_branch"] || context["branch"];
-      const report = buildPreFlightReport(context["repo"], analysisBranch);
+      const repoPath = context["repo"];
+      if (analysisBranch && analysisBranch !== "main") {
+        try {
+          execFileSync("git", ["fetch", "--prune", "origin", "main", analysisBranch], {
+            cwd: repoPath,
+            timeout: 30_000,
+            stdio: ["ignore", "ignore", "ignore"],
+          });
+          execFileSync("git", ["checkout", "-B", analysisBranch, `origin/${analysisBranch}`], {
+            cwd: repoPath,
+            timeout: 30_000,
+            stdio: ["ignore", "ignore", "ignore"],
+          });
+        } catch (checkoutErr) {
+          logger.warn(`[preflight] Could not prepare PR branch ${analysisBranch}: ${String(checkoutErr).slice(0, 220)}`, { runId: step.run_id });
+        }
+      }
+      const baseRef = analysisBranch && analysisBranch !== "main" ? "origin/main" : "main";
+      const report = buildPreFlightReport(repoPath, baseRef, "HEAD");
       context["preflight_analysis"] = formatPreFlightForAgent(report);
       context["preflight_diff"] = report.diffSummary;
       context["preflight_errors"] = report.eslintErrors + "\n" + report.tscErrors;

@@ -156,6 +156,15 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(fullSource, /LIMIT 1`, \[agentId, callerGatewayAgent \?\? null, PR_REVIEW_DELAY_MS\]/);
   });
 
+  it("runs verify preflight against the PR branch diff, not story branch against itself", () => {
+    const fullSource = stepOpsSource();
+    assert.match(fullSource, /execFileSync\("git", \["fetch", "--prune", "origin", "main", analysisBranch\]/);
+    assert.match(fullSource, /execFileSync\("git", \["checkout", "-B", analysisBranch, `origin\/\$\{analysisBranch\}`\]/);
+    assert.match(fullSource, /const baseRef = analysisBranch && analysisBranch !== "main" \? "origin\/main" : "main"/);
+    assert.match(fullSource, /buildPreFlightReport\(repoPath, baseRef, "HEAD"\)/);
+    assert.doesNotMatch(fullSource, /buildPreFlightReport\(context\["repo"\], analysisBranch\)/);
+  });
+
   it("does not overwrite actionable retry context with stale successful output", () => {
     const fullSource = stepOpsSource();
     const source = claimSingleStepSource();
