@@ -105,7 +105,7 @@ export function runProjectContractChecks(repoPath: string, files: string[]): str
 
     const materialPattern = /\bmaterial-symbols(?:-outlined)?\b|\bmaterial-icons\b|Material\+Symbols|Material Symbols/i;
     if (materialPattern.test(content)) {
-      issues.push(`${rel}:${lineFor(content, materialPattern)} — UI_CONTRACT: Material Symbols/icon fonts are not allowed; use lucide-react or Heroicons SVG components.`);
+      issues.push(`${rel}:${lineFor(content, materialPattern)} — UI_CONTRACT: Material Symbols/icon fonts are not allowed; replace with inline SVG components or an already-installed SVG icon library.`);
     }
 
     const transitionAllPattern = /\btransition-all\b|transition\s*:\s*all\b/i;
@@ -115,7 +115,7 @@ export function runProjectContractChecks(repoPath: string, files: string[]): str
 
     const emojiPattern = /[\u{1F300}-\u{1FAFF}]/u;
     if (emojiPattern.test(content)) {
-      issues.push(`${rel}:${lineFor(content, emojiPattern)} — UI_CONTRACT: emoji icons are not allowed in source UI; use lucide-react or Heroicons SVG components.`);
+      issues.push(`${rel}:${lineFor(content, emojiPattern)} — UI_CONTRACT: emoji icons are not allowed in source UI; replace with inline SVG components or an already-installed SVG icon library.`);
     }
 
     const fontDecl = /(?:^|[;{]\s*)font-family\s*:\s*([^;]+);/gim;
