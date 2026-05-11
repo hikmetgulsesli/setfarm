@@ -155,7 +155,9 @@ function storyGroupDescription(group: StoryGroup): string {
   const titles = unique(group.screens.map(screenDisplayTitle));
   const owned = titles.length > 0 ? titles.join(", ") : group.title;
   const plural = titles.length === 1 ? "screen" : "screens";
-  return `Implement only the owned generated ${plural}: ${owned}. Wire visible controls declared for those ${plural} in DESIGN_DOM. Do not implement broader ${group.key} behavior unless it is present in these owned screens, and do not edit shared app files or sibling screen groups.`;
+  const demonstrative = titles.length === 1 ? "that screen" : "those screens";
+  const pronoun = titles.length === 1 ? "it" : "these owned screens";
+  return `Implement only the owned generated ${plural}: ${owned}. Wire visible controls declared for ${demonstrative} in DESIGN_DOM. Do not implement broader ${group.key} behavior unless it is present in ${pronoun}, and do not edit shared app files or sibling screen groups.`;
 }
 
 export function buildAcceptanceCriteria(repo: string): string[] {

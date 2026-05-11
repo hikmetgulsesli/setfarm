@@ -228,6 +228,8 @@ describe("03-stories step module", () => {
         nextPreviewStory.description,
         nextPreviewStory.scope_description,
       ].join("\n"), /\b(score|status|hud|level|line count|queue)\b/i);
+      assert.doesNotMatch(nextPreviewStory.description, /those screen/i);
+      assert.match(nextPreviewStory.description, /that screen/);
       assert.equal(stories[0].scope_files.includes("src/hooks/useAppState.ts"), true);
       assert.equal(stories[0].shared_files.includes("src/screens/GameBoard.tsx"), true);
     } finally {
