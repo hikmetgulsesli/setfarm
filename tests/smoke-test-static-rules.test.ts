@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  discoverHashRoutes,
   checkEntryPointImports,
   checkNativeButtonWiring,
   checkSemanticClickTargets,
@@ -61,6 +62,55 @@ describe("smoke-test static rules", () => {
       const issues = checkEntryPointImports(repo);
       assert.equal(issues.length, 1);
       assert.match(issues[0], /imports "AppView".*but target does not export it/);
+    });
+  });
+
+  it("resolves TypeScript barrel directory imports from index files", () => {
+    withRepo(repo => {
+      fs.mkdirSync(path.join(repo, "src", "screens"), { recursive: true });
+      fs.writeFileSync(path.join(repo, "src", "App.tsx"), [
+        'import { MainMenu } from "./screens";',
+        "export function App() { return <MainMenu />; }",
+      ].join("\n"));
+      fs.writeFileSync(path.join(repo, "src", "screens", "index.ts"), 'export { MainMenu } from "./MainMenu";\n');
+
+      assert.deepEqual(checkEntryPointImports(repo), []);
+    });
+  });
+
+  it("does not invent hash routes for state-rendered screen directories", () => {
+    withRepo(repo => {
+      fs.mkdirSync(path.join(repo, "src", "screens"), { recursive: true });
+      fs.writeFileSync(path.join(repo, "src", "App.tsx"), [
+        'import { MainMenu, GameOptions } from "./screens";',
+        "export function App() {",
+        "  const phase = 'menu';",
+        "  return phase === 'menu' ? <MainMenu /> : <GameOptions />;",
+        "}",
+      ].join("\n"));
+      fs.writeFileSync(path.join(repo, "src", "screens", "MainMenu.tsx"), "export function MainMenu() { return null; }\n");
+      fs.writeFileSync(path.join(repo, "src", "screens", "GameOptions.tsx"), "export function GameOptions() { return null; }\n");
+      fs.writeFileSync(path.join(repo, "src", "screens", "index.ts"), [
+        'export { MainMenu } from "./MainMenu";',
+        'export { GameOptions } from "./GameOptions";',
+      ].join("\n"));
+
+      assert.deepEqual(discoverHashRoutes(repo), []);
+    });
+  });
+
+  it("still derives screen hash routes when the app has explicit hash navigation", () => {
+    withRepo(repo => {
+      fs.mkdirSync(path.join(repo, "src", "screens"), { recursive: true });
+      fs.writeFileSync(path.join(repo, "src", "App.tsx"), [
+        "export function App() {",
+        "  location.hash = '#settings';",
+        "  return null;",
+        "}",
+      ].join("\n"));
+      fs.writeFileSync(path.join(repo, "src", "screens", "GameOptions.tsx"), "export function GameOptions() { return null; }\n");
+
+      assert.deepEqual(discoverHashRoutes(repo).sort(), ["#game-options", "#settings"]);
     });
   });
 
@@ -151,6 +201,13 @@ describe("smoke-test static rules", () => {
     assert.match(smokeScript, /status: failures\.length === 0 \? 'pass' : \(confidence >= 70 \? 'warn' : 'fail'\)/);
     assert.match(smokeScript, /process\.exit\(result\.status === 'fail' \? 1 : 0\)/);
     assert.doesNotMatch(smokeScript, /process\.exit\(failures\.length > 0 \? 1 : 0\)/);
+  });
+
+  it("ignores SVGs hidden by responsive ancestors in visual smoke", () => {
+    const smokeScript = fs.readFileSync(path.join(process.cwd(), "scripts/smoke-test.mjs"), "utf-8");
+
+    assert.match(smokeScript, /function hiddenByAncestor/);
+    assert.match(smokeScript, /if \(hiddenByAncestor\(svg\)\) return;/);
   });
 
   it("blocks QA-FIX completion while platform smoke still fails", () => {

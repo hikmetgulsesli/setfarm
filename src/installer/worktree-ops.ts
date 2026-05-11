@@ -55,6 +55,12 @@ function stashDirtyMainRepo(repo: string, storyId: string): void {
       stdio: ["pipe", "pipe", "pipe"],
     }).trim();
     if (!status) return;
+    const relevantStatus = status
+      .split(/\r?\n/)
+      .filter(line => !/^\S\S\s+\.worktrees(?:\/|$)/.test(line) && !/^\?\?\s+\.worktrees(?:\/|$)/.test(line))
+      .join("\n")
+      .trim();
+    if (!relevantStatus) return;
 
     const branch = execFileSync("git", ["branch", "--show-current"], {
       cwd: repo,
@@ -62,7 +68,7 @@ function stashDirtyMainRepo(repo: string, storyId: string): void {
       timeout: 5000,
       stdio: ["pipe", "pipe", "pipe"],
     }).trim() || "unknown";
-    const summary = status.split(/\r?\n/).slice(0, 12).join("; ");
+    const summary = relevantStatus.split(/\r?\n/).slice(0, 12).join("; ");
     const stashName = `setfarm-auto-stash before ${storyId} on ${branch} ${new Date().toISOString()}`;
 
     execFileSync("git", ["stash", "push", "-u", "-m", stashName], {
@@ -73,6 +79,14 @@ function stashDirtyMainRepo(repo: string, storyId: string): void {
     logger.warn(`[worktree] Main repo was dirty before story ${storyId}; stashed to isolate next story: ${summary}`, {});
   } catch (e) {
     logger.warn(`[worktree] Failed dirty-main isolation before ${storyId}: ${String(e).slice(0, 160)}`, {});
+  }
+}
+
+function sameFilesystemPath(a: string, b: string): boolean {
+  try {
+    return fs.realpathSync.native(a) === fs.realpathSync.native(b);
+  } catch {
+    return path.resolve(a) === path.resolve(b);
   }
 }
 
@@ -379,7 +393,7 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
         const m = gitContent.match(/gitdir:\s*(.+?)\/.git\/worktrees\//);
         if (m) {
           const worktreeRepo = m[1];
-          if (path.resolve(worktreeRepo) !== path.resolve(repo)) {
+          if (!sameFilesystemPath(worktreeRepo, repo)) {
             shouldRemove = true;
             logger.info(`[worktree] Stale cross-project worktree: ${worktreeDir} belongs to ${worktreeRepo}, current repo is ${repo}`, {});
           }
@@ -398,27 +412,53 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
         }).trim().toLowerCase();
         const expected = storyId.toLowerCase();
         if (branch === expected) {
-          const nmSrc = path.join(repo, "node_modules");
-          const nmDst = path.join(worktreeDir, "node_modules");
-          if (fs.existsSync(nmSrc)) {
+          const status = execFileSync("git", ["status", "--porcelain"], {
+            cwd: worktreeDir, encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
+          }).trim();
+          if (status) {
+            const summary = status.split(/\r?\n/).slice(0, 12).join("; ");
+            const stashName = `setfarm-auto-stash dirty story worktree before ${storyId} ${new Date().toISOString()}`;
             try {
-              const stat = fs.lstatSync(nmDst);
-              if (!stat.isSymbolicLink()) {
-                fs.rmSync(nmDst, { recursive: true, force: true });
-                fs.symlinkSync(nmSrc, nmDst);
-              }
-            } catch {
-              try { fs.symlinkSync(nmSrc, nmDst); } catch {}
+              execFileSync("git", ["stash", "push", "-u", "-m", stashName], {
+                cwd: worktreeDir, timeout: 20000, stdio: ["pipe", "pipe", "pipe"],
+              });
+              execFileSync("git", ["reset", "--hard", "HEAD"], {
+                cwd: worktreeDir, timeout: 10000, stdio: ["pipe", "pipe", "pipe"],
+              });
+              execFileSync("git", ["clean", "-fd"], {
+                cwd: worktreeDir, timeout: 10000, stdio: ["pipe", "pipe", "pipe"],
+              });
+              logger.warn(`[worktree] Existing worktree ${worktreeDir} for ${storyId} was dirty; stashed and cleaned before claim: ${summary}`, {});
+            } catch (cleanErr) {
+              logger.warn(`[worktree] Dirty worktree clean failed for ${storyId}: ${String(cleanErr).slice(0, 150)}; recreating`, {});
+              saveAndRemoveWorktree(repo, worktreeDir, expected);
             }
           }
-          copyStitchToWorktree(repo, worktreeDir);
-          ensureReferencesLink(repo, worktreeDir);
-          installScopeHook(worktreeDir, storyId);
-          logger.info(`[worktree] Reusing existing worktree ${worktreeDir} for ${storyId}`, {});
-          return worktreeDir;
+          if (fs.existsSync(worktreeDir)) {
+            const nmSrc = path.join(repo, "node_modules");
+            const nmDst = path.join(worktreeDir, "node_modules");
+            if (fs.existsSync(nmSrc)) {
+              try {
+                const stat = fs.lstatSync(nmDst);
+                if (!stat.isSymbolicLink()) {
+                  fs.rmSync(nmDst, { recursive: true, force: true });
+                  fs.symlinkSync(nmSrc, nmDst);
+                }
+              } catch {
+                try { fs.symlinkSync(nmSrc, nmDst); } catch {}
+              }
+            }
+            copyStitchToWorktree(repo, worktreeDir);
+            ensureReferencesLink(repo, worktreeDir);
+            installScopeHook(worktreeDir, storyId);
+            logger.info(`[worktree] Reusing existing worktree ${worktreeDir} for ${storyId}`, {});
+            return worktreeDir;
+          }
+          logger.warn(`[worktree] Existing worktree ${worktreeDir} disappeared while cleaning ${storyId}; recreating`, {});
+        } else {
+          logger.warn(`[worktree] Existing directory ${worktreeDir} is on branch ${branch || "(detached)"}, expected ${expected}; recreating`, {});
+          saveAndRemoveWorktree(repo, worktreeDir, storyId.toLowerCase());
         }
-        logger.warn(`[worktree] Existing directory ${worktreeDir} is on branch ${branch || "(detached)"}, expected ${expected}; recreating`, {});
-        saveAndRemoveWorktree(repo, worktreeDir, storyId.toLowerCase());
       } catch (e) {
         logger.warn(`[worktree] Existing worktree ${worktreeDir} could not be validated: ${String(e).slice(0, 150)}; recreating`, {});
         saveAndRemoveWorktree(repo, worktreeDir, storyId.toLowerCase());

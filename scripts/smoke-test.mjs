@@ -194,8 +194,28 @@ function discoverHashRoutes(repo) {
     routes.add("#" + clean);
   };
 
+  const sourceRoots = ["src", "app", "pages", "components"]
+    .map(d => join(repo, d))
+    .filter(d => existsSync(d));
+  let hasExplicitHashRouting = false;
+  for (const root of sourceRoots) {
+    walkDir(root, f => {
+      if (!/\.(tsx?|jsx?)$/.test(f) || /\.(test|spec)\.(tsx?|jsx?)$/i.test(f)) return;
+      let content = "";
+      try { content = readFileSync(f, "utf-8"); } catch { return; }
+      if (/\b(HashRouter|createHashRouter|hashchange|location\.hash)\b/.test(content) ||
+          /\bnavigate\s*\(\s*["'][^"']+["']/.test(content) ||
+          /\bhref\s*=\s*["']#/.test(content)) {
+        hasExplicitHashRouting = true;
+      }
+      for (const m of content.matchAll(/\bnavigate\s*\(\s*["']([^"']+)["']/g)) add(m[1]);
+      for (const m of content.matchAll(/\bhref\s*=\s*["']#([^"']+)["']/g)) add(m[1]);
+      for (const m of content.matchAll(/\blocation\.hash\s*=\s*["']#?([^"']+)["']/g)) add(m[1]);
+    });
+  }
+
   const screenDir = join(repo, "src", "screens");
-  if (existsSync(screenDir)) {
+  if (hasExplicitHashRouting && existsSync(screenDir)) {
     const screenMap = new Map([
       ["create-edit-record", "create"],
       ["create-edit", "create"],
@@ -209,20 +229,6 @@ function discoverHashRoutes(repo) {
       if (!/\.(tsx?|jsx?)$/.test(f) || /\.(test|spec)\.(tsx?|jsx?)$/i.test(f)) return;
       const token = normalizeRouteToken(basename(f));
       add(screenMap.get(token) || token.replace(/-screen$/, ""));
-    });
-  }
-
-  const sourceRoots = ["src", "app", "pages", "components"]
-    .map(d => join(repo, d))
-    .filter(d => existsSync(d));
-  for (const root of sourceRoots) {
-    walkDir(root, f => {
-      if (!/\.(tsx?|jsx?)$/.test(f) || /\.(test|spec)\.(tsx?|jsx?)$/i.test(f)) return;
-      let content = "";
-      try { content = readFileSync(f, "utf-8"); } catch { return; }
-      for (const m of content.matchAll(/\bnavigate\s*\(\s*["']([^"']+)["']/g)) add(m[1]);
-      for (const m of content.matchAll(/\bhref\s*=\s*["']#([^"']+)["']/g)) add(m[1]);
-      for (const m of content.matchAll(/\blocation\.hash\s*=\s*["']#?([^"']+)["']/g)) add(m[1]);
     });
   }
 
@@ -574,6 +580,12 @@ function checkEntryPointImports(repo) {
       for (const ext of ["", ".js", ".ts", ".jsx", ".tsx", ".mjs"]) {
         const candidate = join(dir, specifier + ext);
         try { targetContent = readFileSync(candidate, "utf-8"); targetPath = candidate; break; } catch {}
+      }
+      if (!targetPath) {
+        for (const ext of [".js", ".ts", ".jsx", ".tsx", ".mjs"]) {
+          const candidate = join(dir, specifier, "index" + ext);
+          try { targetContent = readFileSync(candidate, "utf-8"); targetPath = candidate; break; } catch {}
+        }
       }
       if (!targetPath) {
         issues.push(relative(repo, fp) + ': import from "' + specifier + '" — file not found');
@@ -1589,7 +1601,15 @@ async function main() {
         const visualJson = abOk('eval',
           '(function() {' +
           '  var issues = [];' +
+          '  function hiddenByAncestor(el) {' +
+          '    for (var n = el; n && n.nodeType === 1; n = n.parentElement) {' +
+          '      var cs = window.getComputedStyle(n);' +
+          '      if (cs.display === "none" || cs.visibility === "hidden" || cs.visibility === "collapse") return true;' +
+          '    }' +
+          '    return false;' +
+          '  }' +
           '  document.querySelectorAll("svg").forEach(function(svg) {' +
+          '    if (hiddenByAncestor(svg)) return;' +
           '    var r = svg.getBoundingClientRect();' +
           '    if (r.width === 0 || r.height === 0) {' +
           '      var cls = svg.getAttribute("class") || "";' +
@@ -2192,6 +2212,7 @@ async function main() {
 }
 
 export {
+  discoverHashRoutes,
   checkEntryPointImports,
   checkNativeButtonWiring,
   checkSemanticClickTargets,
