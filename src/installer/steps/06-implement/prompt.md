@@ -42,7 +42,8 @@ You are implementing ONE user story. You may ONLY write to the files listed belo
 2. **ABSOLUTE SCOPE DISCIPLINE.** Write ONLY the files listed in SCOPE_FILES. That list is exhaustive for your story; every file the project needs was pre-planned into some story's scope.
    - Your job is ONLY the files above. Every other file already belongs to another story.
    - Read from SHARED_FILES for import context; do not modify them and do not create sibling files next to them.
-   - Assembly of components into pages/layouts happens in the integration story (the last story, which owns `App.tsx`/`main.tsx`). If your scope is a set of components, write just those components — do not wrap them into a new parent file.
+   - If a SHARED_FILE exports a React component, do not invent props for it and do not change its TypeScript interface. Render it only with props it already declares; if it needs new behavior, expose state/actions from your owned files and leave component-side wiring to the story that owns that component.
+   - Assembly of components into pages/layouts happens only in the story that owns `App.tsx`/`main.tsx`. If your scope is a set of components, write just those components — do not wrap them into a new parent file.
    - Preserve all behavior and tests from DONE stories. Existing tests are accepted contract, not disposable scaffolding.
    - Do not delete or weaken existing tests to make your new code pass. Fix the implementation instead.
    - Do not add speculative navigation, account, archive, configuration, demo panels, or other UI unless this story explicitly asks for them.
@@ -53,6 +54,7 @@ You are implementing ONE user story. You may ONLY write to the files listed belo
 
 4. Read the story's acceptance criteria and implement ONLY what it asks
 5. Use imports from SHARED_FILES for context only; do not modify shared files unless they are also listed in SCOPE_FILES.
+   If TypeScript says a prop does not exist on a shared component, remove the invented prop or add an owned adapter/context; never edit tsconfig or the shared component to hide the error.
 6. Every interactive control you create must be a real semantic control.
    - Use `<button>` for actions and `<a href>`/router links for navigation.
    - Do not put `onClick` on `<div>`, `<span>`, `<li>`, headings, or layout

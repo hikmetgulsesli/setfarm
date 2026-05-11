@@ -13,10 +13,11 @@ You are assigned ONE story with a FIXED list of files. You MUST NOT create or mo
 - Test config (vitest.config.ts, jest.config.ts)
 
 ### What you CANNOT write:
-- ANY file not in SCOPE_FILES or SHARED_FILES
+- ANY file not in SCOPE_FILES, except scoped test files and test config listed above
 - Do NOT create new component files that aren't in your scope
 - Do NOT create Header.tsx, Footer.tsx, Nav.tsx, Layout.tsx etc. unless they are in YOUR SCOPE_FILES
 - Do NOT rewrite App.tsx, main.tsx, index.css unless they are in YOUR SCOPE_FILES
+- Do NOT invent props for components imported from SHARED_FILES. Render them with their declared props only, or expose owned context/actions for the owner story to consume later.
 - A pre-commit hook will REJECT your commit if you touch out-of-scope files
 - Server-side SCOPE_BLEED guard will REJECT your output even if the hook is bypassed
 

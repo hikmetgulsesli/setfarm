@@ -206,9 +206,13 @@ describe("03-stories step module", () => {
 
       assert.match(stories[0].title, /game engine, state and test bridge$/);
       assert.match(stories[0].description, /shared game shell/);
+      assert.match(stories[0].description, /without editing read-only screen components/);
       assert.match(allText, /Next piece preview is derived from the same queue\/source of truth/);
+      assert.match(allText, /does not pass invented props to generated shared screen components/);
+      assert.match(allText, /generated screen button wiring is owned by the screen stories/);
       assert.match(allText, /Game options and controls screens/);
       assert.match(allText, /Pause, game-over and help states/);
+      assert.doesNotMatch(allText, /touch\/click controls produce visible gameplay state changes/);
       assert.doesNotMatch(allText, /profile\/account/i);
       assert.doesNotMatch(allText, /Settings, profile and account screens/);
       assert.equal(stories[0].scope_files.includes("src/hooks/useAppState.ts"), true);

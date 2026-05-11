@@ -38,6 +38,7 @@ describe("06-implement step module", () => {
   it("rules treat shared files as read-only context", () => {
     const rules = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/rules.md"), "utf-8");
     assert.ok(rules.includes("SHARED_FILES are read/import context only"));
+    assert.ok(rules.includes("Do NOT invent props for components imported from SHARED_FILES"));
     assert.equal(rules.includes("small edits OK"), false);
   });
 
@@ -47,6 +48,9 @@ describe("06-implement step module", () => {
     assert.match(source, /const declaredSharedFiles = parseScopeFiles\(scopeRow\?\.shared_files\)/);
     assert.doesNotMatch(source, /declaredSharedFiles\.forEach\(f => allowed\.add\(f\)\)/);
     assert.match(source, /void declaredSharedFiles/);
+
+    const stepOps = fs.readFileSync(path.join(process.cwd(), "dist/installer/step-ops.js"), "utf-8");
+    assert.match(stepOps, /cleanupOutOfScopeWorktreeFiles/);
   });
 
   it("cleans dirty out-of-scope files before reusing a story worktree", () => {
@@ -100,6 +104,8 @@ describe("06-implement step module", () => {
     assert.match(prompt, /implement it\s+as a real runtime test bridge/i);
     assert.match(prompt, /score\/status\/level\/lines\/paused\/\s+gameOver\/activePiece\/nextPiece/i);
     assert.match(prompt, /active\s+screen\/route, selected record, counts, storage status, last error/i);
+    assert.match(prompt, /do not invent props/i);
+    assert.match(prompt, /If TypeScript says a prop does not exist on a shared component/i);
   });
 
   it("buildPrompt returns empty string — loop delegates to AGENTS.md", () => {

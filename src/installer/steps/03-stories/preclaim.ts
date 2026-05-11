@@ -274,11 +274,13 @@ function appStoryDraft(params: {
     return {
       id: "US-001",
       title: `${params.product} - game engine, state and test bridge`,
-      description: "Build the shared game shell, reducer/state model, keyboard/touch input wiring, persistence helper boundaries, and smoke-visible window.app game state used by generated screens.",
+      description: "Build the shared game shell, reducer/state model, keyboard input wiring, persistence helper boundaries, smoke-visible window.app game state, and context/actions used by generated screens without editing read-only screen components.",
       acceptanceCriteria: [
         "App shell renders the playable game surface first, not a generic landing page or dashboard.",
+        "App shell does not pass invented props to generated shared screen components; render read-only screens with their existing TypeScript props only.",
         "Shared game state exposes visible screen, status, score, level, lines, active piece, next piece, paused/gameOver, storage status, and last error through window.app.",
-        "Start, pause, resume, restart, keyboard controls, and touch/click controls produce visible gameplay state changes.",
+        "Start, pause, resume, restart, and game tick actions exist in owned state/context/window.app code; generated screen button wiring is owned by the screen stories.",
+        "Keyboard controls implemented in owned files produce visible gameplay state changes when the game is active.",
         "Next piece preview is derived from the same queue/source of truth used by piece spawning; no ref-only or duplicated preview state can drift.",
         "Game loop timers and repeated input use stable effects/callbacks so intervals do not restart every frame and pause/game-over stops movement.",
         "Persistence is limited to high score/preferences unless explicitly requested; corrupted persisted data produces visible recovery feedback when persistence is used.",
@@ -288,7 +290,7 @@ function appStoryDraft(params: {
       screens,
       scope_files: APP_SCOPE_FILES,
       shared_files: params.screenFiles,
-      scope_description: "Shared game integration and state ownership. Generated src/screens files are read-only shared context here; screen stories own all edits to those files.",
+      scope_description: "Shared game integration and state ownership. Generated src/screens files are read-only shared context here: do not edit them, do not change their prop interfaces, and do not pass props they do not already declare. Screen stories own all edits and button wiring for those files.",
       file_skeletons: fileSkeletons(APP_SCOPE_FILES, params.screenFileSet),
     };
   }

@@ -35,6 +35,7 @@ import { createStoryWorktree, removeStoryWorktree, findWorktreeDir, syncBaseBran
 import { computeHasFrontendChanges, checkTestFailures, checkQualityGate, checkRequiredOutputFields, processDesignCompletion, processSetupCompletion, processSetupDesignContracts, processBrowserCheck, processDesignFidelityCheck, checkStoryDesignCompliance, checkImportConsistency } from "./step-guardrails.js";
 import { cleanupAbandonedSteps as _cleanupAbandonedSteps, cleanupProjectEphemera, scheduleRunCronTeardown } from "./cleanup-ops.js";
 import { isVerifyRetryMergeBlocker, isVerifyRetryQualityFailure } from "./verify-retry-routing.js";
+import { cleanupOutOfScopeWorktreeFiles } from "./steps/06-implement/context.js";
 import {
   getRunStatus, getRunContext, updateRunContext, failRun,
   getWorkflowId as _getWorkflowId,
@@ -1473,6 +1474,12 @@ async function injectStoryContext(
         const allAllowed = [...new Set([...scopeList, ...implicitFiles])];
         // Also allow *.test.tsx and *.spec.tsx (wildcard — hook uses grep -qxF so these wont match, but test files are caught by the hook logic)
         const _scopeFP = path.join(context["story_workdir"], ".story-scope-files"); fs.writeFileSync(_scopeFP, allAllowed.join("\n") + "\n"); try { fs.chmodSync(_scopeFP, 0o664); } catch { /* best effort */ }
+        cleanupOutOfScopeWorktreeFiles(
+          context["story_workdir"],
+          allAllowed,
+          String(nextStory.story_id || nextStory.id || "story"),
+          step.run_id,
+        );
       } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
     }
     // 5-model consensus: always inject scope_reminder (even on first attempt)
