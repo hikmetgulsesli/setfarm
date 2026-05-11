@@ -39,6 +39,9 @@ describe("06-implement step module", () => {
     const rules = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/rules.md"), "utf-8");
     assert.ok(rules.includes("SHARED_FILES are read/import context only"));
     assert.ok(rules.includes("Do NOT invent props for components imported from SHARED_FILES"));
+    assert.ok(rules.includes("typed `actions` prop"));
+    assert.ok(rules.includes("textContent"));
+    assert.ok(rules.includes("Keep reducers/state transition functions pure"));
     assert.equal(rules.includes("small edits OK"), false);
   });
 
@@ -106,6 +109,9 @@ describe("06-implement step module", () => {
     assert.match(prompt, /active\s+screen\/route, selected record, counts, storage status, last error/i);
     assert.match(prompt, /do not invent props/i);
     assert.match(prompt, /If TypeScript says a prop does not exist on a shared component/i);
+    assert.match(prompt, /Generated Stitch screen components may declare an `actions` prop/i);
+    assert.match(prompt, /do not infer actions from `textContent`/i);
+    assert.match(prompt, /Reducers and state transition functions must be pure/i);
   });
 
   it("buildPrompt returns empty string — loop delegates to AGENTS.md", () => {

@@ -40,9 +40,64 @@ describe("stitch-to-jsx", () => {
       const index = JSON.parse(fs.readFileSync(path.join(screensDir, "SCREEN_INDEX.json"), "utf-8"));
       assert.deepEqual(index.map((s: any) => s.title), ["Ana Sayfa"]);
       assert.equal(index[0].buttons, 1);
+      assert.deepEqual(index[0].actions, [
+        { id: "ekle-1", kind: "button", label: "Ekle", index: 0 },
+      ]);
+
+      const code = fs.readFileSync(path.join(screensDir, "AnaSayfa.tsx"), "utf-8");
+      assert.match(code, /export type AnaSayfaActionId = "ekle-1";/);
+      assert.match(code, /actions\?: Partial<Record<AnaSayfaActionId, \(\) => void>>;/);
+      assert.match(code, /<button type="button" data-action-id="ekle-1" onClick=\{actions\?\.\["ekle-1"\]\}>Ekle<\/button>/);
 
       const barrel = fs.readFileSync(path.join(screensDir, "index.ts"), "utf-8");
-      assert.equal(barrel, 'export { AnaSayfa } from "./AnaSayfa";\n');
+      assert.equal(barrel, 'export { AnaSayfa } from "./AnaSayfa";\nexport type { AnaSayfaProps, AnaSayfaActionId } from "./AnaSayfa";\n');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("emits stable action ids for generated screen controls", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-actions-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "game-screen", title: "Game Board" },
+      ]));
+      writeHtml(path.join(stitchDir, "game-screen.html"), `
+        <main>
+          <button class="primary">Start Game</button>
+          <button aria-label="pause"><span>Pause</span></button>
+          <button type="submit">Restart</button>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "GameBoard.tsx"), "utf-8");
+      assert.match(code, /export type GameBoardActionId = "start-game-1" \| "pause-2" \| "restart-3";/);
+      assert.match(code, /export interface GameBoardProps/);
+      assert.match(code, /<button className="primary" type="button" data-action-id="start-game-1" onClick=\{actions\?\.\["start-game-1"\]\}>Start Game<\/button>/);
+      assert.match(code, /<button aria-label="pause" type="button" data-action-id="pause-2" onClick=\{actions\?\.\["pause-2"\]\}>/);
+      assert.match(code, /<button type="submit" data-action-id="restart-3" onClick=\{actions\?\.\["restart-3"\]\}>Restart<\/button>/);
+      assert.doesNotMatch(code, /textContent|innerText|querySelector/);
+
+      const index = JSON.parse(fs.readFileSync(path.join(tmp, "src", "screens", "SCREEN_INDEX.json"), "utf-8"));
+      assert.deepEqual(index[0].actions.map((action: any) => action.id), ["start-game-1", "pause-2", "restart-3"]);
+
+      const transpiled = ts.transpileModule(code, {
+        compilerOptions: {
+          jsx: ts.JsxEmit.ReactJSX,
+          module: ts.ModuleKind.ESNext,
+          target: ts.ScriptTarget.ES2020,
+        },
+        reportDiagnostics: true,
+      });
+      const errors = (transpiled.diagnostics || []).filter(d => d.category === ts.DiagnosticCategory.Error);
+      assert.deepEqual(errors.map(d => d.messageText), []);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

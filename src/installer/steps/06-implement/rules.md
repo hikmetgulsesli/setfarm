@@ -18,6 +18,7 @@ You are assigned ONE story with a FIXED list of files. You MUST NOT create or mo
 - Do NOT create Header.tsx, Footer.tsx, Nav.tsx, Layout.tsx etc. unless they are in YOUR SCOPE_FILES
 - Do NOT rewrite App.tsx, main.tsx, index.css unless they are in YOUR SCOPE_FILES
 - Do NOT invent props for components imported from SHARED_FILES. Render them with their declared props only, or expose owned context/actions for the owner story to consume later.
+- Generated Stitch screen components may expose a typed `actions` prop. Use those declared action IDs for wiring; do NOT route clicks by matching `textContent`, `innerText`, or DOM labels.
 - A pre-commit hook will REJECT your commit if you touch out-of-scope files
 - Server-side SCOPE_BLEED guard will REJECT your output even if the hook is bypassed
 
@@ -40,6 +41,7 @@ You are assigned ONE story with a FIXED list of files. You MUST NOT create or mo
 - Use TypeScript types — no `any` unless wrapping external data
 - Import from existing shared code before creating new utilities
 - CSS: use Tailwind classes matching the Stitch design tokens
+- Keep reducers/state transition functions pure: no localStorage, timers, DOM access, random mutable singletons, or mutation of existing state objects inside reducers. Run persistence and timers in effects/action wrappers.
 
 ## Git Hygiene
 - Commit once at the end after implementation and local checks pass. Use `/tmp/setfarm-progress-<run>.txt` checkpoints for long work, not partial git commits.

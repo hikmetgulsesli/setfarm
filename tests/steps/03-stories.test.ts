@@ -209,6 +209,9 @@ describe("03-stories step module", () => {
       assert.match(stories[0].description, /without editing read-only screen components/);
       assert.match(allText, /Next piece preview is derived from the same queue\/source of truth/);
       assert.match(allText, /does not pass invented props to generated shared screen components/);
+      assert.match(allText, /declared actions props\/action IDs from SCREEN_INDEX/);
+      assert.match(allText, /never through textContent\/DOM-label matching/);
+      assert.match(allText, /Reducer\/state transitions are pure and immutable/);
       assert.match(allText, /generated screen button wiring is owned by the screen stories/);
       assert.match(allText, /Game options and controls screens/);
       assert.match(allText, /Pause, game-over and help states/);

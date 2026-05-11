@@ -252,6 +252,66 @@ function toComponentName(title) {
     .split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join("");
 }
 
+function textFromHtml(input) {
+  return String(input || "")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "and")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, "\"")
+    .replace(/&#39;/gi, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function slugifyActionId(label, fallback) {
+  const normalized = String(label || "")
+    .replace(/[ıİ]/g, "i").replace(/[şŞ]/g, "s").replace(/[çÇ]/g, "c")
+    .replace(/[ğĞ]/g, "g").replace(/[üÜ]/g, "u").replace(/[öÖ]/g, "o")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48)
+    .replace(/-+$/g, "");
+  return normalized || fallback;
+}
+
+function uniqueActionId(actions, base, index) {
+  let id = `${base}-${index + 1}`;
+  let n = 2;
+  const used = new Set(actions.map((action) => action.id));
+  while (used.has(id)) {
+    id = `${base}-${index + 1}-${n++}`;
+  }
+  return id;
+}
+
+function annotateInteractiveElements(html) {
+  const actions = [];
+  let buttonIndex = 0;
+  const annotated = String(html || "").replace(/<button\b([^>]*)>([\s\S]*?)<\/button>/gi, (match, attrs, inner) => {
+    const index = buttonIndex++;
+    const label = textFromHtml(inner) || `Button ${index + 1}`;
+    const base = slugifyActionId(label, "button");
+    const id = uniqueActionId(actions, base, index);
+    actions.push({ id, kind: "button", label, index });
+
+    let cleanAttrs = String(attrs || "")
+      .replace(/\sdata-action-id=(?:"[^"]*"|'[^']*')/gi, "")
+      .replace(/\sonclick=(?:"[^"]*"|'[^']*')/gi, "")
+      .replace(/\sonClick=\{[^}]*\}/g, "");
+    if (!/\btype\s*=/.test(cleanAttrs)) cleanAttrs += ' type="button"';
+
+    return `<button${cleanAttrs} data-action-id="${id}" onClick={actions?.["${id}"]}>${inner}</button>`;
+  });
+  return { html: annotated, actions };
+}
+
 const screenIndex = [];
 for (const screen of manifest) {
   if (isPrdPseudoScreen(screen)) { console.warn("  SKIP PRD:", screen.title); continue; }
@@ -259,12 +319,17 @@ for (const screen of manifest) {
   if (!htmlFile) { console.warn("  SKIP invalid/missing HTML:", screen.title); continue; }
   const raw = fs.readFileSync(htmlFile, "utf-8");
   const body = extractBody(raw);
-  const jsx = htmlToJsx(body);
+  const { html: interactiveBody, actions } = annotateInteractiveElements(body);
+  const jsx = htmlToJsx(interactiveBody);
   const name = toComponentName(screen.title);
   if (!name) { console.warn("  SKIP empty component name:", screen.title); continue; }
   const buttons = [...body.matchAll(/<button[^>]*>/gi)].length;
   const inputs = [...body.matchAll(/<input[^>]*>/gi)].length;
   const links = [...body.matchAll(/<a\s[^>]*>/gi)].length;
+  const actionType = actions.length > 0 ? actions.map((action) => JSON.stringify(action.id)).join(" | ") : "never";
+  const functionSignature = actions.length > 0
+    ? `export function ${name}({ actions }: ${name}Props) {`
+    : `export function ${name}(_props: ${name}Props) {`;
 
   const code = `// AUTO-GENERATED from Stitch — DO NOT modify layout or CSS
 // Screen: ${screen.title}
@@ -272,14 +337,16 @@ for (const screen of manifest) {
 // AGENT INSTRUCTIONS:
 // 1. DO NOT change className values or layout structure
 // 2. Add useState for dynamic values (replace hardcoded text)
-// 3. Add onClick/onChange handlers to interactive elements
+// 3. Wire interactive controls through the typed actions prop
 // 4. Replace placeholder data with props/state
 
-import { useState } from "react";
+export type ${name}ActionId = ${actionType};
 
-interface ${name}Props {}
+export interface ${name}Props {
+  actions?: Partial<Record<${name}ActionId, () => void>>;
+}
 
-export function ${name}(props: ${name}Props) {
+${functionSignature}
   return (
     <>
 ${jsx.split("\n").map(l => "      " + l).join("\n")}
@@ -288,13 +355,16 @@ ${jsx.split("\n").map(l => "      " + l).join("\n")}
 }
 `;
   fs.writeFileSync(path.join(screensDir, name + ".tsx"), code);
-  screenIndex.push({ screenId: screen.screenId, title: screen.title, componentName: name, file: "src/screens/" + name + ".tsx", buttons, inputs, links });
+  screenIndex.push({ screenId: screen.screenId, title: screen.title, componentName: name, file: "src/screens/" + name + ".tsx", buttons, inputs, links, actions });
   console.log("  OK:", screen.title, "->", name + ".tsx", "(" + buttons + "btn," + inputs + "inp," + links + "lnk)");
 }
 
 fs.writeFileSync(path.join(screensDir, "SCREEN_INDEX.json"), JSON.stringify(screenIndex, null, 2));
 const barrel = screenIndex
-  .map((screen) => `export { ${screen.componentName} } from "./${screen.componentName}";`)
+  .map((screen) => [
+    `export { ${screen.componentName} } from "./${screen.componentName}";`,
+    `export type { ${screen.componentName}Props, ${screen.componentName}ActionId } from "./${screen.componentName}";`,
+  ].join("\n"))
   .join("\n");
 fs.writeFileSync(path.join(screensDir, "index.ts"), barrel ? `${barrel}\n` : "");
 console.log("Generated", screenIndex.length, "screen(s)");

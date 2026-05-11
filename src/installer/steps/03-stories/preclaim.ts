@@ -278,6 +278,8 @@ function appStoryDraft(params: {
       acceptanceCriteria: [
         "App shell renders the playable game surface first, not a generic landing page or dashboard.",
         "App shell does not pass invented props to generated shared screen components; render read-only screens with their existing TypeScript props only.",
+        "If App renders generated Stitch screens, it wires controls through declared actions props/action IDs from SCREEN_INDEX, never through textContent/DOM-label matching.",
+        "Reducer/state transitions are pure and immutable; persistence, timers, and DOM/test bridge side effects live in effects or action wrappers.",
         "Shared game state exposes visible screen, status, score, level, lines, active piece, next piece, paused/gameOver, storage status, and last error through window.app.",
         "Start, pause, resume, restart, and game tick actions exist in owned state/context/window.app code; generated screen button wiring is owned by the screen stories.",
         "Keyboard controls implemented in owned files produce visible gameplay state changes when the game is active.",
@@ -290,7 +292,7 @@ function appStoryDraft(params: {
       screens,
       scope_files: APP_SCOPE_FILES,
       shared_files: params.screenFiles,
-      scope_description: "Shared game integration and state ownership. Generated src/screens files are read-only shared context here: do not edit them, do not change their prop interfaces, and do not pass props they do not already declare. Screen stories own all edits and button wiring for those files.",
+      scope_description: "Shared game integration and state ownership. Generated src/screens files are read-only shared context here: do not edit them, do not change their prop interfaces, and do not pass props they do not already declare. If generated screens expose typed actions props, App may pass those declared action handlers; never use textContent or DOM-label matching for control routing. Screen stories own all edits and additional button wiring for those files.",
       file_skeletons: fileSkeletons(APP_SCOPE_FILES, params.screenFileSet),
     };
   }

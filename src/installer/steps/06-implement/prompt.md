@@ -43,6 +43,7 @@ You are implementing ONE user story. You may ONLY write to the files listed belo
    - Your job is ONLY the files above. Every other file already belongs to another story.
    - Read from SHARED_FILES for import context; do not modify them and do not create sibling files next to them.
    - If a SHARED_FILE exports a React component, do not invent props for it and do not change its TypeScript interface. Render it only with props it already declares; if it needs new behavior, expose state/actions from your owned files and leave component-side wiring to the story that owns that component.
+   - Generated Stitch screen components may declare an `actions` prop and `*ActionId` types. When you own app/screen assembly, wire controls through those declared action IDs from the component props or `src/screens/SCREEN_INDEX.json`; do not infer actions from `textContent`, `innerText`, DOM label matching, or `querySelector` heuristics.
    - Assembly of components into pages/layouts happens only in the story that owns `App.tsx`/`main.tsx`. If your scope is a set of components, write just those components — do not wrap them into a new parent file.
    - Preserve all behavior and tests from DONE stories. Existing tests are accepted contract, not disposable scaffolding.
    - Do not delete or weaken existing tests to make your new code pass. Fix the implementation instead.
@@ -68,6 +69,7 @@ You are implementing ONE user story. You may ONLY write to the files listed belo
      Icon-only controls must have an accessible name and must change visible
      state, open a project-specific panel/dialog, navigate, or be disabled.
      Decorative icons must not be rendered as `<button>`.
+   - If you render generated Stitch screens, use their typed `actions` prop for button behavior. Do not attach a parent click handler that branches on button text.
 7. Interaction tests must prove the post-click result. Do not write
    `expect(() => fireEvent.click(...)).not.toThrow()` or the same pattern with
    `userEvent.click` as the only assertion. After every click in a test, assert
@@ -80,6 +82,7 @@ You are implementing ONE user story. You may ONLY write to the files listed belo
    gameOver/activePiece/nextPiece; for product apps this includes active
    screen/route, selected record, counts, storage status, last error, and active
    panel where those concepts exist.
+   Reducers and state transition functions must be pure: no localStorage reads/writes, timers, DOM access, or mutation of existing state objects inside the reducer. Put persistence and timer side effects in effects or action wrappers, then dispatch plain state updates.
 9. Before committing, run available local checks. Prefer `npm run build`; for Vitest use `npm run test:run` or `npx vitest run` instead of watch-mode `npm test` when needed. If a script is missing, say so in CHANGES.
 10. Commit once on the CURRENT branch (do not switch branches): stage only files from `.story-scope-files`, then `git commit -m "feat: <story-id> - <description>"`
 11. Do NOT use `git add -A` — stage only your scope files explicitly
