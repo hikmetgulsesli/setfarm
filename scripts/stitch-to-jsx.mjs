@@ -319,14 +319,29 @@ function materialIconKey(inner) {
   return textFromHtml(inner).toLowerCase().replace(/\s+/g, "_");
 }
 
+function normalizeClassTokens(classValue) {
+  return String(classValue || "")
+    .split(/\s+/)
+    .map(cls => (cls === "transition-all" ? "transition-colors" : cls))
+    .filter(Boolean)
+    .join(" ");
+}
+
+function normalizeDesignClassAttributes(html) {
+  return String(html || "").replace(
+    /\b(class|className)=(["'])([^"']*)\2/gi,
+    (_match, attr, quote, value) => `${attr}=${quote}${normalizeClassTokens(value)}${quote}`,
+  );
+}
+
 function replaceMaterialSymbolSpans(html, lucideImports) {
   return String(html || "").replace(
-    /<span\b([^>]*)\bclass=(["'])([^"']*\b(?:material-symbols(?:-outlined)?|material-icons)\b[^"']*)\2([^>]*)>([\s\S]*?)<\/span>/gi,
-    (_match, beforeClass, _quote, classValue, afterClass, inner) => {
+    /<span\b([^>]*)\b(class|className)=(["'])([^"']*\b(?:material-symbols(?:-outlined)?|material-icons)\b[^"']*)\3([^>]*)>([\s\S]*?)<\/span>/gi,
+    (_match, beforeClass, _classAttr, _quote, classValue, afterClass, inner) => {
       const iconName = materialIconKey(inner);
       const component = MATERIAL_TO_LUCIDE[iconName] || "Circle";
       lucideImports.add(component);
-      const cleanedClass = String(classValue || "")
+      const cleanedClass = normalizeClassTokens(classValue)
         .split(/\s+/)
         .filter(cls => cls && cls !== "material-icons" && !cls.startsWith("material-symbols"))
         .join(" ");
@@ -390,7 +405,7 @@ for (const screen of manifest) {
   const raw = fs.readFileSync(htmlFile, "utf-8");
   const body = extractBody(raw);
   const lucideImports = new Set();
-  const normalizedBody = replaceMaterialSymbolSpans(body, lucideImports);
+  const normalizedBody = replaceMaterialSymbolSpans(normalizeDesignClassAttributes(body), lucideImports);
   const { html: interactiveBody, actions } = annotateInteractiveElements(normalizedBody);
   const jsx = htmlToJsx(interactiveBody);
   const name = toComponentName(screen.title);

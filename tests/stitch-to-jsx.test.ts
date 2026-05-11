@@ -113,8 +113,8 @@ describe("stitch-to-jsx", () => {
       ]));
       writeHtml(path.join(stitchDir, "controls-screen.html"), `
         <main>
-          <span class="material-symbols-outlined text-primary">warning</span>
-          <button><span class="material-symbols-outlined text-[18px]">rotate_right</span>Rotate</button>
+          <span class="material-symbols-outlined text-primary transition-all">warning</span>
+          <button class="transition-all"><span class="material-symbols-outlined text-[18px]">rotate_right</span>Rotate</button>
         </main>
       `);
 
@@ -125,9 +125,43 @@ describe("stitch-to-jsx", () => {
 
       const code = fs.readFileSync(path.join(tmp, "src", "screens", "ControlsHelp.tsx"), "utf-8");
       assert.match(code, /import \{ RotateCw, TriangleAlert \} from "lucide-react";/);
-      assert.match(code, /<TriangleAlert className="text-primary" aria-hidden=\{true\} focusable="false" \/>/);
+      assert.match(code, /<TriangleAlert className="text-primary transition-colors" aria-hidden=\{true\} focusable="false" \/>/);
       assert.match(code, /<RotateCw className="text-\[18px\]" aria-hidden=\{true\} focusable="false" \/>Rotate/);
+      assert.match(code, /<button className="transition-colors"/);
       assert.doesNotMatch(code, /material-symbols|Material Symbols|>warning<|>rotate_right</);
+      assert.doesNotMatch(code, /transition-all/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("handles JSX-style className Material Symbol markup from Stitch exports", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-jsx-icons-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "menu-screen", title: "Main Menu" },
+      ]));
+      writeHtml(path.join(stitchDir, "menu-screen.html"), `
+        <main>
+          <button className="transition-all">
+            <span className="material-symbols-outlined text-[20px]">play_arrow</span>
+            Play
+          </button>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "MainMenu.tsx"), "utf-8");
+      assert.match(code, /import \{ Play \} from "lucide-react";/);
+      assert.match(code, /<button className="transition-colors"/);
+      assert.match(code, /<Play className="text-\[20px\]" aria-hidden=\{true\} focusable="false" \/>/);
+      assert.doesNotMatch(code, /material-symbols|Material Symbols|>play_arrow<|transition-all/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
