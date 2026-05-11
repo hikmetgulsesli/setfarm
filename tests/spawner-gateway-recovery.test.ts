@@ -123,7 +123,8 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /resolved === SETFARM_SRC \|\| resolved\.startsWith\(SETFARM_SRC \+ path\.sep\)/);
     assert.match(source, /const spawnCwd = safeAgentCwdFromClaimInput\(claim\.resolvedInput\)/);
     assert.match(source, /JSON\.stringify\(\{ stepId: claim\.stepId, runId: claim\.runId, workdir: spawnCwd, repo: spawnCwd, input: claim\.resolvedInput \}\)/);
-    assert.match(source, /\.workdir \/\/ \.repo \/\/ \(if \(\.input\|type\)=="object"/);
+    assert.match(source, /buildResolvedClaimBootstrapScript\(\{/);
+    assert.match(source, /workdir: spawnCwd/);
     assert.match(source, /cwd: spawnCwd/);
     assert.match(source, /cwd=\$\{spawnCwd\}/);
   });
@@ -281,6 +282,20 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /let lastActivityMs = active\.startedAtMs/);
     assert.match(source, /lastActivityMs = refreshActiveProcessCpuActivity\(active\)/);
     assert.match(source, /lastCpuTicks: readProcessCpuTicks\(child\.pid\) \?\? undefined/);
+  });
+
+  it("writes running agent heartbeat output from session activity", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /SETFARM_AGENT_HEARTBEAT_MS/);
+    assert.match(source, /lastHeartbeatMs\?: number/);
+    assert.match(source, /lastHeartbeatSignature\?: string/);
+    assert.match(source, /function latestSessionActivitySummary/);
+    assert.match(source, /fs\.readFileSync\(active\.sessionJsonlPath,\s*"utf-8"\)\.slice\(-256_000\)/);
+    assert.match(source, /async function updateRunningStepHeartbeat/);
+    assert.match(source, /HEARTBEAT:/);
+    assert.match(source, /LAST_SESSION_ACTIVITY:/);
+    assert.match(source, /UPDATE steps SET output = \$1, updated_at = NOW\(\) WHERE id = \$2 AND status = 'running'/);
+    assert.match(source, /await updateRunningStepHeartbeat\(active,\s*row\.step_id,\s*ageMs\)/);
   });
 
   it("hard-times out verify agents as an infra retry instead of leaving open claims", () => {

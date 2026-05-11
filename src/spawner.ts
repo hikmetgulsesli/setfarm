@@ -35,6 +35,7 @@ const QA_FIX_AGENT_STUCK_MS = parsePositiveInt(process.env.SETFARM_QA_FIX_AGENT_
 const STARTUP_RUNNING_GRACE_MS = parsePositiveInt(process.env.SETFARM_STARTUP_RUNNING_GRACE_MS, 0);
 const QA_AGENT_STUCK_MS = parsePositiveInt(process.env.SETFARM_QA_AGENT_STUCK_MS, 6 * 60_000);
 const AGENT_ACTIVITY_GRACE_MS = parsePositiveInt(process.env.SETFARM_AGENT_ACTIVITY_GRACE_MS, 4 * 60_000);
+const AGENT_HEARTBEAT_MS = parsePositiveInt(process.env.SETFARM_AGENT_HEARTBEAT_MS, 60_000);
 const AGENT_STARTUP_SILENCE_MS = parsePositiveInt(process.env.SETFARM_AGENT_STARTUP_SILENCE_MS, 4 * 60_000);
 const AGENT_SELF_LOOP_CHECK_AFTER_MS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_CHECK_AFTER_MS, 6 * 60_000);
 const AGENT_SELF_LOOP_MIN_ACTIONS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_ACTIONS, 7);
@@ -341,6 +342,8 @@ type ActiveProcess = {
   sessionJsonlPath: string;
   lastCpuTicks?: number;
   lastCpuActivityMs?: number;
+  lastHeartbeatMs?: number;
+  lastHeartbeatSignature?: string;
 };
 
 type OpenClawTaskRecord = {
@@ -536,6 +539,77 @@ function sessionFailureSignature(text: string): string {
     clean.match(/expected[^|]{0,120}/i)?.[0],
   ].filter(Boolean);
   return pieces.join(" | " ).slice(0, 420);
+}
+
+function compactHeartbeatText(text: string): string {
+  return text
+    .replace(/\x1b\[[0-9;]*m/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 500);
+}
+
+function latestSessionActivitySummary(active: ActiveProcess): string {
+  let raw = "";
+  try {
+    raw = fs.readFileSync(active.sessionJsonlPath, "utf-8").slice(-256_000).trim();
+  } catch {
+    return "";
+  }
+  if (!raw) return "";
+
+  const lines = raw.split(/\n/).filter(Boolean).slice(-80);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let event: any;
+    try { event = JSON.parse(lines[i]); } catch { continue; }
+    const message = event?.message || {};
+    const role = String(message.role || "");
+    const content = message.content;
+
+    if (role === "toolResult") {
+      const text = compactHeartbeatText(extractSessionText(content));
+      if (text) return `tool result: ${text}`;
+      const toolName = String(message.toolName || "").trim();
+      if (toolName) return `tool result: ${toolName}`;
+      continue;
+    }
+
+    if (role === "assistant") {
+      const text = compactHeartbeatText(extractSessionText(content));
+      if (text) return `assistant: ${text}`;
+      const calls = extractToolCalls(content).map((call) => call.name).filter(Boolean);
+      if (calls.length > 0) return `assistant tool calls: ${calls.slice(0, 5).join(", ")}`;
+    }
+  }
+
+  return "";
+}
+
+async function updateRunningStepHeartbeat(active: ActiveProcess, stepIdName: string, ageMs: number): Promise<void> {
+  if (!active.stepId || Date.now() - (active.lastHeartbeatMs || 0) < AGENT_HEARTBEAT_MS) return;
+
+  const sessionSummary = latestSessionActivitySummary(active);
+  const signature = `${stepIdName}|${sessionSummary}|${Math.floor(ageMs / AGENT_HEARTBEAT_MS)}`;
+  if (!sessionSummary && active.lastHeartbeatSignature === signature) return;
+
+  const output = [
+    `HEARTBEAT: ${new Date().toISOString()}`,
+    `RUNNING: ${active.agentId} ${active.wfId}/${active.role} for ${formatDurationMs(ageMs)}`,
+    sessionSummary ? `LAST_SESSION_ACTIVITY: ${sessionSummary}` : "LAST_SESSION_ACTIVITY: no session output yet",
+    `TRANSCRIPT: ${active.transcriptPath}`,
+    `SESSION: ${active.sessionJsonlPath}`,
+  ].join("\n");
+
+  try {
+    await pgRun(
+      "UPDATE steps SET output = $1, updated_at = NOW() WHERE id = $2 AND status = 'running'",
+      [output, active.stepId],
+    );
+    active.lastHeartbeatMs = Date.now();
+    active.lastHeartbeatSignature = signature;
+  } catch (err) {
+    console.warn(`[spawner] failed heartbeat for ${active.agentId}: ${String(err).slice(0, 300)}`);
+  }
 }
 
 function repeatedTranscriptToolLoop(active: ActiveProcess): { detected: boolean; reason: string } {
@@ -1725,6 +1799,8 @@ ${reason}
         }
 
         const ageMs = Date.now() - active.startedAtMs;
+        await updateRunningStepHeartbeat(active, row.step_id, ageMs);
+
         if (row.step_id === "verify" && ageMs >= VERIFY_AGENT_HARD_TIMEOUT_MS) {
           const reason = `VERIFY_AGENT_HARD_TIMEOUT: ${active.agentId} kept ${active.wfId}/${active.role} running for ${formatDurationMs(ageMs)} without completing verify; retrying the verify step instead of leaving an open claim. Transcript: ${active.transcriptPath}`;
           console.warn(`[spawner] ${reason}`);
