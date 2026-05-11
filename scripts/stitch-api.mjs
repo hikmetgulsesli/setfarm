@@ -45,6 +45,63 @@ function normalizeGoogleFontFamily(raw) {
   return decoded.split(':')[0].trim();
 }
 
+function screenIdOf(screen) {
+  return String((screen?.name || '').replace(/^projects\/\d+\/screens\//, '') || screen?.id || screen?.screenId || '').trim();
+}
+
+function titleOf(screen) {
+  return String(screen?.title || screen?.displayName || screen?.name || screen?.screenId || 'Untitled').trim() || 'Untitled';
+}
+
+function htmlUrlOf(screen) {
+  return screen?.htmlUrl || screen?.htmlCode?.downloadUrl || screen?.html_code?.download_url || null;
+}
+
+function screenshotUrlOf(screen) {
+  return screen?.screenshotUrl || screen?.screenshot?.downloadUrl || screen?.screenshot?.download_url || null;
+}
+
+function readTrackedScreens(projectId) {
+  try {
+    const tracked = JSON.parse(readFileSync(resolve(process.cwd(), '.stitch-screens-' + projectId + '.json'), 'utf-8'));
+    return Array.isArray(tracked) ? tracked : [];
+  } catch {
+    return [];
+  }
+}
+
+function mergeTrackedScreens(projectId, screens) {
+  const byId = new Map();
+  const add = (screen) => {
+    const screenId = screenIdOf(screen);
+    if (!screenId) return;
+    const normalized = {
+      ...screen,
+      screenId,
+      title: titleOf(screen),
+      htmlUrl: htmlUrlOf(screen),
+      screenshotUrl: screenshotUrlOf(screen),
+    };
+    const existing = byId.get(screenId);
+    if (!existing) {
+      byId.set(screenId, normalized);
+      return;
+    }
+    byId.set(screenId, {
+      ...existing,
+      ...normalized,
+      title: existing.title || normalized.title,
+      htmlUrl: existing.htmlUrl || normalized.htmlUrl,
+      screenshotUrl: existing.screenshotUrl || normalized.screenshotUrl,
+      localHtml: existing.localHtml || normalized.localHtml || null,
+      localScreenshot: existing.localScreenshot || normalized.localScreenshot || null,
+    });
+  };
+  for (const screen of Array.isArray(screens) ? screens : []) add(screen);
+  for (const screen of readTrackedScreens(projectId)) add(screen);
+  return [...byId.values()];
+}
+
 // Load API key from .env
 function loadApiKey() {
   const envPath = resolve(__dirname, '.env');
@@ -774,15 +831,10 @@ const commands = {
     }
 
     // Fallback 2b: use local tracking file (most reliable -- has eager-downloaded HTML paths)
-    if (screens.length === 0) {
-      const trackingFile = resolve(process.cwd(), '.stitch-screens-' + projectId + '.json');
-      try {
-        const tracked = JSON.parse(readFileSync(trackingFile, 'utf-8'));
-        if (Array.isArray(tracked) && tracked.length > 0) {
-          screens = tracked;
-          process.stderr.write('Recovered ' + screens.length + ' screens from .stitch-screens.json fallback\n');
-        }
-      } catch {}
+    const beforeTrackingMerge = screens.length;
+    screens = mergeTrackedScreens(projectId, screens);
+    if (screens.length > beforeTrackingMerge) {
+      process.stderr.write('Merged ' + (screens.length - beforeTrackingMerge) + ' tracked screen(s) into manifest source\n');
     }
 
     // Fallback 3: if still empty, use provided screen IDs with get_screen
@@ -803,17 +855,18 @@ const commands = {
         } catch (e) { console.error('Warning: get_screen ' + sid + ' failed: ' + e.message); }
       }
     }
+    screens = mergeTrackedScreens(projectId, screens);
 
     const manifest = screens.map(s => {
-      const screenId = (s.name || '').replace(/^projects\/\d+\/screens\//, '') || s.id || s.screenId;
-      const title = s.title || s.displayName || 'Untitled';
+      const screenId = screenIdOf(s);
+      const title = titleOf(s);
       const localHtml = s.localHtml || null;
       return {
         screenId,
         title,
-        htmlFile: `${title.replace(/[^a-zA-Z0-9_-]/g, '-')}.html`,
+        htmlFile: `${screenId}.html`,
         deviceType: s.deviceType || s.device_type || 'DESKTOP',
-        htmlUrl: s.htmlUrl || s.htmlCode?.downloadUrl || s.html_code?.download_url || null,
+        htmlUrl: htmlUrlOf(s),
         localHtml,
       };
     });
@@ -1038,40 +1091,30 @@ const commands = {
       const r = await callTool('list_screens', { projectId });
       const rawScreens = parseScreenList(r);
       screenList = rawScreens.map(s => ({
-        screenId: (s.name || '').replace(/^projects\/\d+\/screens\//, '') || s.id || s.screenId,
-        title: s.title || s.displayName || '',
-        htmlUrl: s.htmlCode?.downloadUrl || s.html_code?.download_url || null,
-        screenshotUrl: s.screenshot?.downloadUrl || s.screenshot?.download_url || null,
+        screenId: screenIdOf(s),
+        title: titleOf(s),
+        htmlUrl: htmlUrlOf(s),
+        screenshotUrl: screenshotUrlOf(s),
       }));
     } catch {}
-    if (screenList.length === 0) {
-      try { const { readFileSync } = await import('fs'); const { resolve } = await import('path');
-        screenList = JSON.parse(readFileSync(resolve(process.cwd(), '.stitch-screens-' + projectId + '.json'), 'utf-8'));
-      } catch {}
-    }
-    // Merge tracking file URLs into screenList for entries missing htmlUrl
-    if (screenList.length > 0 && screenList.some(s => !s.htmlUrl)) {
-      try {
-        const { readFileSync: rfs } = await import('fs');
-        const { resolve: res } = await import('path');
-        const tracked = JSON.parse(rfs(res(process.cwd(), '.stitch-screens-' + projectId + '.json'), 'utf-8'));
-        const trackMap = new Map(tracked.map(t => [t.screenId, t]));
-        for (const s of screenList) {
-          if (!s.htmlUrl && trackMap.has(s.screenId)) {
-            s.htmlUrl = trackMap.get(s.screenId).htmlUrl;
-            s.screenshotUrl = s.screenshotUrl || trackMap.get(s.screenId).screenshotUrl;
-          }
-        }
-        process.stderr.write('Merged tracking URLs for ' + screenList.filter(s => s.htmlUrl).length + '/' + screenList.length + ' screens\n');
-      } catch {}
+    const initialCount = screenList.length;
+    screenList = mergeTrackedScreens(projectId, screenList);
+    if (screenList.length > initialCount) {
+      process.stderr.write('Merged ' + (screenList.length - initialCount) + ' tracked screen(s) into download list\n');
     }
     if (screenList.length === 0) {
       try {
         const pr = await callTool('get_project', { name: 'projects/' + projectId });
         if (pr && pr.content) for (const item of pr.content) { if (item.type === 'text') { try { const p = JSON.parse(item.text);
-          if (p.screenInstances) screenList = p.screenInstances.map(s => ({ screenId: (s.name || '').replace(/^projects\/\d+\/screens\//, ''), title: s.displayName || '', htmlUrl: s.htmlCode?.downloadUrl || null, screenshotUrl: s.screenshot?.downloadUrl || null }));
+          if (p.screenInstances) screenList = p.screenInstances.map(s => ({
+            screenId: screenIdOf(s),
+            title: titleOf(s),
+            htmlUrl: htmlUrlOf(s),
+            screenshotUrl: screenshotUrlOf(s),
+          }));
         } catch {} } }
       } catch {}
+      screenList = mergeTrackedScreens(projectId, screenList);
     }
     // Retry list-screens with delay (Stitch API can have delay after generation)
     for (let retry = 0; retry < 3 && screenList.length === 0; retry++) {
@@ -1081,11 +1124,12 @@ const commands = {
         const r = await callTool('list_screens', { projectId });
         const rawRetry = parseScreenList(r);
         screenList = rawRetry.map(s => ({
-          screenId: (s.name || '').replace(/^projects\/\d+\/screens\//, '') || s.id || s.screenId,
-          title: s.title || s.displayName || '',
-          htmlUrl: s.htmlCode?.downloadUrl || s.html_code?.download_url || null,
-          screenshotUrl: s.screenshot?.downloadUrl || s.screenshot?.download_url || null,
+          screenId: screenIdOf(s),
+          title: titleOf(s),
+          htmlUrl: htmlUrlOf(s),
+          screenshotUrl: screenshotUrlOf(s),
         }));
+        screenList = mergeTrackedScreens(projectId, screenList);
       } catch {}
     }
     if (screenList.length === 0) throw new Error('No screens found for project ' + projectId);
@@ -1094,14 +1138,20 @@ const commands = {
     for (let i = 0; i < screenList.length; i += 5) {
       const batch = screenList.slice(i, i + 5);
       await Promise.allSettled(batch.map(async (screen) => {
-        const sid = screen.screenId || screen.id || (screen.name || '').replace(/^projects\/\d+\/screens\//, '');
+        const sid = screenIdOf(screen);
         if (!sid) return;
         try {
           let htmlUrl = screen.htmlUrl, screenshotUrl = screen.screenshotUrl;
           if (!htmlUrl) { try { const sd = await callTool('get_screen', { projectId, screenId: sid, name: 'projects/' + projectId + '/screens/' + sid });
             if (sd && sd.content) for (const item of sd.content) { if (item.type === 'text') { try { const p = JSON.parse(item.text); htmlUrl = p.htmlCode?.downloadUrl || htmlUrl; screenshotUrl = p.screenshot?.downloadUrl || screenshotUrl; } catch {} } }
           } catch {} }
-          if (htmlUrl) { const hp = join(outputDir, sid + '.html'); if (!existsSync(hp)) { await downloadFile(htmlUrl, hp); process.stderr.write('  HTML: ' + sid + '\n'); } }
+          const hp = join(outputDir, sid + '.html');
+          if (htmlUrl) {
+            if (!existsSync(hp)) { await downloadFile(htmlUrl, hp); process.stderr.write('  HTML: ' + sid + '\n'); }
+          } else if (screen.localHtml && existsSync(screen.localHtml) && !existsSync(hp)) {
+            copyFileSync(screen.localHtml, hp);
+            process.stderr.write('  HTML-CACHE: ' + sid + '\n');
+          }
           if (screenshotUrl) { const pp = join(outputDir, sid + '.png'); if (!existsSync(pp)) { await downloadFile(screenshotUrl, pp); } }
           const htmlPath = join(outputDir, sid + '.html');
           const gotHtml = existsSync(htmlPath) && (await import('fs')).statSync(htmlPath).size > 100;
@@ -1147,21 +1197,37 @@ const commands = {
       let dlOk = 0, dlFail = 0;
       // Download in parallel (all at once since they are already generated)
       await Promise.allSettled(screens.map(async (s) => {
+        let localHtml = null;
+        let localScreenshot = null;
         try {
           if (s.htmlUrl) {
-            await downloadFile(s.htmlUrl, resolve(stitchDir, s.screenId + ".html"));
+            localHtml = resolve(stitchDir, s.screenId + ".html");
+            await downloadFile(s.htmlUrl, localHtml);
             process.stderr.write("  HTML: " + (s.title || s.screenId) + "\n");
           }
           if (s.screenshotUrl) {
-            await downloadFile(s.screenshotUrl, resolve(stitchDir, s.screenId + ".png"));
+            localScreenshot = resolve(stitchDir, s.screenId + ".png");
+            await downloadFile(s.screenshotUrl, localScreenshot);
           }
-          dlOk++;
+          if (localHtml) dlOk++;
+          else dlFail++;
         } catch (e) {
           process.stderr.write("  FAIL: " + (s.title || s.screenId) + " - " + e.message + "\n");
           dlFail++;
         }
-        if (!tracked.some(t => t.screenId === s.screenId)) {
-          tracked.push({ screenId: s.screenId, title: s.title || "", htmlUrl: s.htmlUrl || null, screenshotUrl: s.screenshotUrl || null });
+        const trackedIndex = tracked.findIndex(t => t.screenId === s.screenId);
+        const trackedEntry = { screenId: s.screenId, title: s.title || "", htmlUrl: s.htmlUrl || null, screenshotUrl: s.screenshotUrl || null, localHtml, localScreenshot };
+        if (trackedIndex === -1) {
+          tracked.push(trackedEntry);
+        } else {
+          tracked[trackedIndex] = {
+            ...tracked[trackedIndex],
+            title: tracked[trackedIndex].title || trackedEntry.title,
+            htmlUrl: tracked[trackedIndex].htmlUrl || trackedEntry.htmlUrl,
+            screenshotUrl: tracked[trackedIndex].screenshotUrl || trackedEntry.screenshotUrl,
+            localHtml: tracked[trackedIndex].localHtml || trackedEntry.localHtml,
+            localScreenshot: tracked[trackedIndex].localScreenshot || trackedEntry.localScreenshot,
+          };
         }
       }));
 
