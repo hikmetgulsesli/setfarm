@@ -103,6 +103,14 @@ describe("05-setup-build step module", () => {
     assert.ok(preclaim.includes("npm run build failed after stitch-to-jsx:\\n"), "post-stitch build failures should keep the real compiler output");
   });
 
+  it("commits Stitch runtime CSS generated alongside screens", () => {
+    const preclaim = fs.readFileSync("src/installer/steps/05-setup-build/preclaim.ts", "utf-8");
+    assert.ok(preclaim.includes("generatedPaths"), "setup-build should stage all generated Stitch artifacts together");
+    assert.ok(preclaim.includes("\"src/screens/\""), "generated screens should still be staged");
+    assert.ok(preclaim.includes("\"src/index.css\""), "stitch-to-jsx runtime CSS in src/index.css should be staged");
+    assert.ok(preclaim.includes("\"src/App.css\""), "alternate CSS entrypoints should be staged when updated");
+  });
+
   it("onComplete stamps build_cmd from parsed output", async () => {
     const context: Record<string, string> = {};
     const ctx: CompleteContext = {

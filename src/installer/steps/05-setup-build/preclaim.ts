@@ -263,7 +263,9 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       if (fs.existsSync(scriptPath)) {
         execFileSync("node", [scriptPath, repo], { timeout: 30000, stdio: "pipe" });
         try {
-          execFileSync("git", ["add", "src/screens/"], { cwd: repo, timeout: 5000, stdio: "pipe" });
+          const generatedPaths = ["src/screens/", "src/index.css", "src/main.css", "src/App.css", "app/globals.css"]
+            .filter(p => fs.existsSync(path.join(repo, p.replace(/\/$/, ""))));
+          execFileSync("git", ["add", ...generatedPaths], { cwd: repo, timeout: 5000, stdio: "pipe" });
           execFileSync("git", ["commit", "-m", "chore: auto-generate JSX screens from Stitch HTML"], { cwd: repo, timeout: 10000, stdio: "pipe" });
         } catch { /* nothing to commit is fine */ }
         logger.info(`[module:setup-build preclaim] stitch-to-jsx ok`, { runId: ctx.runId });

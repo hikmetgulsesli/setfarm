@@ -428,4 +428,46 @@ describe("stitch-to-jsx", () => {
     }
   });
 
+  it("writes runtime CSS for Stitch utility classes used by generated screens", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-runtime-css-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(path.join(tmp, "src"), { recursive: true });
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src", "index.css"), "@tailwind base;\n@tailwind components;\n@tailwind utilities;\n");
+      fs.writeFileSync(path.join(stitchDir, "design-tokens.css"), ":root { --color-background: #0f172a; }\n");
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "game-screen", title: "Game Board" },
+      ]));
+      writeHtml(path.join(stitchDir, "game-screen.html"), `
+        <main class="bg-grid px-gutter">
+          <div class="w-grid-block h-grid-block tetromino-i machined-border"></div>
+          <button class="min-touch h-touch-target text-label-sm font-label-sm neon-glow-red">Start</button>
+          <span class="ghost-piece text-display-lg font-display-lg"></span>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const css = fs.readFileSync(path.join(tmp, "src", "index.css"), "utf-8");
+      assert.match(css, /@import '\.\.\/stitch\/design-tokens\.css';/);
+      assert.equal((css.match(/SETFARM_STITCH_RUNTIME_UTILITIES_START/g) || []).length, 1);
+      assert.match(css, /\.text-label-sm \{ font-size: 0\.75rem; line-height: 1rem; \}/);
+      assert.match(css, /\.font-label-sm \{ font-weight: 600; letter-spacing: 0\.02em; \}/);
+      assert.match(css, /\.tetromino-i \{ background: var\(--tetromino-i, #38bdf8\);/);
+      assert.match(css, /\.w-grid-block \{ width: clamp\(1\.1rem, 5vw, 1\.85rem\); \}/);
+      assert.match(css, /\.min-touch \{ min-width: 44px; min-height: 44px; \}/);
+      assert.match(css, /\.bg-grid \{ background-image:/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
 });
