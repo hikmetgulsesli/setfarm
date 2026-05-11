@@ -62,4 +62,20 @@ describe("agent prompt contracts", () => {
     assert.match(output, /Preserve generated Stitch `<a>` tags, className, nesting and layout/);
     assert.match(output, /Do NOT replace anchors with `<span>`/);
   });
+
+  it("rewrites stale Design DOM nav/control rules that caused layout removal", () => {
+    const input = [
+      "DESIGN DOM RULES (MANDATORY — FOLLOW EXACTLY):",
+      "- Every in-scope nav link must route to the correct page/modal",
+      "- onClick={() => {}} is FORBIDDEN — if a button has no functionality, do not render it",
+    ].join("\n");
+
+    const output = sanitizeAgentPromptContracts(input);
+
+    assert.doesNotMatch(output, /nav link must route to the correct page\/modal|do not render it/);
+    assert.match(output, /preserve the generated `<a>` tag/);
+    assert.match(output, /do not replace it with `<span>`/);
+    assert.match(output, /Preserve generated control structure/);
+    assert.match(output, /Do not remove Stitch controls/);
+  });
 });

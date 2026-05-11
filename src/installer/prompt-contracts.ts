@@ -17,6 +17,12 @@ const STALE_GENERIC_DESIGN_FIX =
 const STALE_HREF_HASH_LINK_BLOCK =
   /- LINKS: NEVER use href="#" or href="javascript:void\(0\)" — these are dead links\.\n\s+Every <Link> and <a> MUST point to a real project-specific route from PRD\/Stitch\/DESIGN_DOM\.\n\s+If the destination page doesn't exist yet, create a minimal placeholder page with the route\.\n\s+If a sidebar\/navbar has navigation items, EVERY item MUST have a working href\.\n\s+Before commit: grep -rn 'href="#"' src\/ — if ANY match found, you MUST fix them all\./g;
 
+const STALE_DESIGN_DOM_NAV_RULE =
+  /- Every in-scope nav link must route to the correct page\/modal/g;
+
+const STALE_HIDE_UNWIRED_BUTTON_RULE =
+  /- onClick=\{\(\) => \{\}\} is FORBIDDEN — if a button has no functionality, do not render it/g;
+
 export function sanitizeAgentPromptContracts(input: string): string {
   let output = input;
 
@@ -56,6 +62,27 @@ export function sanitizeAgentPromptContracts(input: string): string {
       "  of scope, keep the `<a>` and add an `onClick`/keyboard-safe behavior that",
       "  prevents default navigation and produces visible in-screen state, or mark",
       "  it explicitly disabled/hidden when the story says it is unavailable.",
+    ].join("\n"),
+  );
+
+  output = output.replace(
+    STALE_DESIGN_DOM_NAV_RULE,
+    [
+      "- Every in-scope nav anchor must preserve the generated `<a>` tag,",
+      "  className, nesting and layout. If the target route is real and in scope,",
+      "  navigate there. If the target is a Stitch placeholder such as `#`, keep",
+      "  the anchor and add visible in-screen behavior or an explicit disabled",
+      "  state; do not replace it with `<span>`.",
+    ].join("\n"),
+  );
+
+  output = output.replace(
+    STALE_HIDE_UNWIRED_BUTTON_RULE,
+    [
+      "- onClick={() => {}} is FORBIDDEN. Preserve generated control structure;",
+      "  wire the control to visible behavior, or mark it explicitly disabled/hidden",
+      "  only when the story says it is unavailable. Do not remove Stitch controls",
+      "  just because behavior is not implemented yet.",
     ].join("\n"),
   );
 
