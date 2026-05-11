@@ -103,6 +103,36 @@ describe("stitch-to-jsx", () => {
     }
   });
 
+  it("converts Material Symbols spans into lucide-react SVG components", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-icons-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "controls-screen", title: "Controls Help" },
+      ]));
+      writeHtml(path.join(stitchDir, "controls-screen.html"), `
+        <main>
+          <span class="material-symbols-outlined text-primary">warning</span>
+          <button><span class="material-symbols-outlined text-[18px]">rotate_right</span>Rotate</button>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "ControlsHelp.tsx"), "utf-8");
+      assert.match(code, /import \{ RotateCw, TriangleAlert \} from "lucide-react";/);
+      assert.match(code, /<TriangleAlert className="text-primary" aria-hidden=\{true\} focusable="false" \/>/);
+      assert.match(code, /<RotateCw className="text-\[18px\]" aria-hidden=\{true\} focusable="false" \/>Rotate/);
+      assert.doesNotMatch(code, /material-symbols|Material Symbols|>warning<|>rotate_right</);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("normalizes already self-closed void tags into valid JSX", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-void-"));
     try {

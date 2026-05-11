@@ -16,6 +16,7 @@ import { detectPlatform, checkDesignViolations } from "./design-rules.js";
 import { buildDesignContracts, generateUIContract, enrichStoriesWithDesignContract, validateDesignCompliance, generateLayoutSkeletons, checkCrossScreenConsistency, checkDesignFidelity, detectUnusedModules, reconcileDesignWithStories, checkIntegrationWiring, checkDuplicateInlineCode } from "./design-contract.js";
 import { provisionDatabase, resolveDbType } from "./db-provision.js";
 import { runBrowserDomCheck } from "./browser-tools.js";
+import { runProjectContractChecks } from "./static-analysis.js";
 import { TEST_FAIL_PATTERNS, GIT_DIFF_TIMEOUT } from "./constants.js";
 
 // ── Test Failure Detection ──────────────────────────────────────────
@@ -876,6 +877,28 @@ export function checkStoryDesignCompliance(
 
   const issues: string[] = [];
 
+  const collectSourceFiles = (dir: string, out: string[] = []): string[] => {
+    let entries: string[];
+    try { entries = fs.readdirSync(dir); } catch { return out; }
+    for (const entry of entries) {
+      if (entry === "node_modules" || entry === "dist" || entry === "build" || entry.startsWith(".")) continue;
+      const full = path.join(dir, entry);
+      let stat: fs.Stats;
+      try { stat = fs.statSync(full); } catch { continue; }
+      if (stat.isDirectory()) {
+        collectSourceFiles(full, out);
+      } else if (/\.(ts|tsx|js|jsx|css|html)$/.test(entry)) {
+        out.push(path.relative(workdir, full).replace(/\\/g, "/"));
+      }
+    }
+    return out;
+  };
+
+  const contractErrors = runProjectContractChecks(workdir, collectSourceFiles(srcDir));
+  if (contractErrors) {
+    issues.push(`CRITICAL DESIGN CONTRACT:\n${contractErrors}`);
+  }
+
   // 1. design-tokens.css imported/referenced? Auto-fix if missing.
   let tokenImported = false;
   try {
@@ -950,34 +973,6 @@ export function checkStoryDesignCompliance(
     }
   } catch { /* no @tailwind directives */ }
 
-  // 2.5 Material Symbols font check — auto-inject if icons used but font link missing
-  try {
-    const hasIconUsage = execFileSync("grep", ["-rl", "material-symbols", srcDir, "--include=*.tsx", "--include=*.jsx", "--include=*.html"], {
-      encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
-    }).trim();
-    if (hasIconUsage) {
-      // Check if font link exists
-      let fontLinkFound = false;
-      try {
-        execFileSync("grep", ["-rl", "Material+Symbols\\|Material.*Symbols", repo, "--include=*.html", "--include=*.tsx", "--include=*.css"], {
-          encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
-        });
-        fontLinkFound = true;
-      } catch {}
-      if (!fontLinkFound) {
-        // Auto-inject font link into index.html
-        const indexHtml = path.join(repo, "index.html");
-        if (fs.existsSync(indexHtml)) {
-          let html = fs.readFileSync(indexHtml, "utf-8");
-          if (!html.includes("Material+Symbols") && !html.includes("Material Symbols")) {
-            html = html.replace("</head>", '    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet" />\n  </head>');
-            fs.writeFileSync(indexHtml, html);
-          }
-        }
-      }
-    }
-  } catch {}
-
   // 3. Too many hardcoded hex colors?
   try {
     const hexResult = execFileSync("grep", [
@@ -1034,7 +1029,7 @@ export function checkStoryDesignCompliance(
 
   if (issues.length === 0) return null;
 
-  return `DESIGN UYUMSUZLUK:\n${issues.map(i => "• " + i).join("\n")}\nDÜZELT: stitch/design-tokens.css'i import et, hardcoded renkleri var(--*) ile değiştir.`;
+  return `DESIGN UYUMSUZLUK:\n${issues.map(i => "• " + i).join("\n")}\nDÜZELT: Kritik UI sözleşmesi hatalarını düzelt; stitch/design-tokens.css'i import et, hardcoded renkleri var(--*) ile değiştir.`;
 }
 
 

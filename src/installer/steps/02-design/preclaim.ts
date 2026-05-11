@@ -269,8 +269,8 @@ function buildFallbackHtml(screen: ScreenMapEntry, screens: ScreenMapEntry[], ap
       --color-danger: #ff5c7a;
       --color-text: #eef4ff;
       --color-muted: #9ba8c7;
-      --font-heading: Inter, system-ui, sans-serif;
-      --font-body: Inter, system-ui, sans-serif;
+      --font-heading: "Hanken Grotesk", "Segoe UI", sans-serif;
+      --font-body: "Hanken Grotesk", "Segoe UI", sans-serif;
       --radius-card: 8px;
       --spacing-unit: 8px;
     }

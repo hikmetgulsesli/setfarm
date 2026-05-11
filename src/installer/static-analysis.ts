@@ -14,6 +14,7 @@ export interface PreFlightReport {
   diffSummary: string;
   eslintErrors: string;
   tscErrors: string;
+  contractErrors: string;
   totalIssues: number;
 }
 
@@ -26,7 +27,7 @@ export function getChangedFiles(repoPath: string, baseBranch: string, headRef = 
     const output = execFileSync("git", ["diff", "--name-only", diffRange(baseBranch, headRef)], {
       cwd: repoPath, encoding: "utf-8", timeout: 10000, stdio: ["pipe", "pipe", "pipe"]
     }).trim();
-    return output ? output.split("\n").filter(f => f.endsWith(".ts") || f.endsWith(".tsx") || f.endsWith(".js") || f.endsWith(".jsx") || f.endsWith(".css")) : [];
+    return output ? output.split("\n").filter(f => /\.(ts|tsx|js|jsx|css|html)$/.test(f)) : [];
   } catch {
     return [];
   }
@@ -72,15 +73,76 @@ export function runTscCheck(repoPath: string): string {
   }
 }
 
+function lineFor(content: string, pattern: RegExp): number {
+  const match = pattern.exec(content);
+  if (!match || match.index < 0) return 1;
+  return content.slice(0, match.index).split("\n").length;
+}
+
+function primaryFontFamily(value: string): string {
+  const [first] = value.split(",");
+  return (first || "")
+    .replace(/["']/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+export function runProjectContractChecks(repoPath: string, files: string[]): string {
+  const issues: string[] = [];
+  const sourceFiles = files
+    .filter(f => /\.(ts|tsx|js|jsx|css|html)$/.test(f))
+    .slice(0, 80);
+
+  for (const rel of sourceFiles) {
+    const abs = path.join(repoPath, rel);
+    let content = "";
+    try {
+      if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) continue;
+      content = fs.readFileSync(abs, "utf-8");
+    } catch {
+      continue;
+    }
+
+    const materialPattern = /\bmaterial-symbols(?:-outlined)?\b|\bmaterial-icons\b|Material\+Symbols|Material Symbols/i;
+    if (materialPattern.test(content)) {
+      issues.push(`${rel}:${lineFor(content, materialPattern)} — UI_CONTRACT: Material Symbols/icon fonts are not allowed; use lucide-react or Heroicons SVG components.`);
+    }
+
+    const transitionAllPattern = /\btransition-all\b|transition\s*:\s*all\b/i;
+    if (transitionAllPattern.test(content)) {
+      issues.push(`${rel}:${lineFor(content, transitionAllPattern)} — UI_CONTRACT: blanket transition-all is not allowed; use transition-colors, transition-transform, transition-opacity, or explicit CSS properties.`);
+    }
+
+    const emojiPattern = /[\u{1F300}-\u{1FAFF}]/u;
+    if (emojiPattern.test(content)) {
+      issues.push(`${rel}:${lineFor(content, emojiPattern)} — UI_CONTRACT: emoji icons are not allowed in source UI; use lucide-react or Heroicons SVG components.`);
+    }
+
+    const fontDecl = /(?:^|[;{]\s*)font-family\s*:\s*([^;]+);/gim;
+    let match: RegExpExecArray | null;
+    while ((match = fontDecl.exec(content)) !== null) {
+      const primary = primaryFontFamily(match[1] || "");
+      if (/^(inter|roboto|arial|helvetica|system-ui)$/.test(primary)) {
+        const line = content.slice(0, match.index).split("\n").length;
+        issues.push(`${rel}:${line} — UI_CONTRACT: banned primary font "${primary}" in font-family; use project design tokens or a distinctive approved font first.`);
+      }
+    }
+  }
+
+  return issues.slice(0, 30).join("\n");
+}
+
 export function buildPreFlightReport(repoPath: string, baseBranch: string, headRef = "HEAD"): PreFlightReport {
   const changedFiles = getChangedFiles(repoPath, baseBranch, headRef);
   const diffSummary = getDiffSummary(repoPath, baseBranch, headRef);
-  const eslintErrors = runEslint(repoPath, changedFiles);
+  const lintFiles = changedFiles.filter(f => /\.(ts|tsx|js|jsx)$/.test(f));
+  const eslintErrors = runEslint(repoPath, lintFiles);
   const tscErrors = runTscCheck(repoPath);
+  const contractErrors = runProjectContractChecks(repoPath, changedFiles);
 
-  const totalIssues = (eslintErrors.match(/\d+ problem/)?.[0] ? 1 : 0) + (tscErrors ? 1 : 0);
+  const totalIssues = (eslintErrors ? 1 : 0) + (tscErrors ? 1 : 0) + (contractErrors ? 1 : 0);
 
-  return { changedFiles, diffSummary, eslintErrors, tscErrors, totalIssues };
+  return { changedFiles, diffSummary, eslintErrors, tscErrors, contractErrors, totalIssues };
 }
 
 export function formatPreFlightForAgent(report: PreFlightReport): string {
@@ -100,6 +162,12 @@ export function formatPreFlightForAgent(report: PreFlightReport): string {
     parts.push(`\nTYPESCRIPT ERRORS:\n${report.tscErrors}`);
   } else {
     parts.push(`\nTYPESCRIPT: PASS (no errors)`);
+  }
+
+  if (report.contractErrors) {
+    parts.push(`\nUI CONTRACT ERRORS:\n${report.contractErrors}`);
+  } else {
+    parts.push(`\nUI CONTRACT: PASS (no deterministic violations)`);
   }
 
   return parts.join("\n");

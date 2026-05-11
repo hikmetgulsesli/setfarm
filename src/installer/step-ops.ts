@@ -1863,7 +1863,7 @@ async function claimSingleStep(
       const report = buildPreFlightReport(repoPath, baseRef, "HEAD");
       context["preflight_analysis"] = formatPreFlightForAgent(report);
       context["preflight_diff"] = report.diffSummary;
-      context["preflight_errors"] = report.eslintErrors + "\n" + report.tscErrors;
+      context["preflight_errors"] = [report.eslintErrors, report.tscErrors, report.contractErrors].filter(Boolean).join("\n");
       logger.info(`[preflight] Verify pre-flight: ${report.changedFiles.length} files, ${report.totalIssues} issue(s)`, { runId: step.run_id });
     } catch (e) {
       logger.warn(`[preflight] Skipped: ${String(e)}`, { runId: step.run_id });
@@ -3218,7 +3218,7 @@ ${screenDescs}
 === RULES ===
 - All visible application text (buttons, labels, headings, placeholders, menu items) MUST be in ${uiLanguage}.
 - Keep screen metadata, generated source identifiers, and technical labels in English unless that text is visibly shown to users.
-- Use Material Symbols icons.
+- Use simple inline SVG icons in generated HTML. Do not use emoji, icon fonts, Material Symbols, or icon ligature text.
 - Consistent design system across ALL screens.
 - Each screen must be a complete, detailed, production-ready UI design.
 - Dark theme with the colors specified in design system.`;
@@ -3891,7 +3891,8 @@ ${screenDescs}
     // Design compliance check — only for implement step, done stories
     if (step.step_id === "implement" && storyStatus === STORY_STATUS.DONE) {
       const designIssue = checkStoryDesignCompliance(context);
-      if (designIssue && step.retry_count >= 2 && step.retry_count < step.max_retries) {
+      const isCriticalDesignIssue = !!designIssue && /CRITICAL DESIGN CONTRACT/i.test(designIssue);
+      if (designIssue && (isCriticalDesignIssue || step.retry_count >= 2) && step.retry_count < step.max_retries) {
         logger.warn(`[design-compliance] Story ${storyRow?.story_id} failed design check — soft retry`, { runId: step.run_id });
         const { classifyError: _ce3 } = await import("./error-taxonomy.js");
         const _cl3 = _ce3(designIssue);

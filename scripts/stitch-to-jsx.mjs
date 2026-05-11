@@ -274,6 +274,69 @@ function textFromHtml(input) {
     .trim();
 }
 
+const MATERIAL_TO_LUCIDE = {
+  account_circle: "CircleUserRound",
+  add: "Plus",
+  arrow_back: "ArrowLeft",
+  arrow_downward: "ArrowDown",
+  arrow_forward: "ArrowRight",
+  arrow_left: "ArrowLeft",
+  arrow_right: "ArrowRight",
+  arrow_upward: "ArrowUp",
+  auto_awesome: "Sparkles",
+  calendar_month: "CalendarDays",
+  check: "Check",
+  chevron_left: "ChevronLeft",
+  chevron_right: "ChevronRight",
+  close: "X",
+  delete: "Trash2",
+  download: "Download",
+  edit: "Pencil",
+  exercise: "Dumbbell",
+  filter_list: "ListFilter",
+  gavel: "Gavel",
+  home: "Home",
+  info: "Info",
+  menu: "Menu",
+  more_horiz: "Ellipsis",
+  more_vert: "EllipsisVertical",
+  pause: "Pause",
+  person: "User",
+  play_arrow: "Play",
+  refresh: "RefreshCw",
+  rotate_right: "RotateCw",
+  save: "Save",
+  search: "Search",
+  settings: "Settings",
+  swords: "Swords",
+  touch_app: "HandPointer",
+  videogame_asset: "Gamepad2",
+  view_timeline: "Activity",
+  warning: "TriangleAlert",
+};
+
+function materialIconKey(inner) {
+  return textFromHtml(inner).toLowerCase().replace(/\s+/g, "_");
+}
+
+function replaceMaterialSymbolSpans(html, lucideImports) {
+  return String(html || "").replace(
+    /<span\b([^>]*)\bclass=(["'])([^"']*\b(?:material-symbols(?:-outlined)?|material-icons)\b[^"']*)\2([^>]*)>([\s\S]*?)<\/span>/gi,
+    (_match, beforeClass, _quote, classValue, afterClass, inner) => {
+      const iconName = materialIconKey(inner);
+      const component = MATERIAL_TO_LUCIDE[iconName] || "Circle";
+      lucideImports.add(component);
+      const cleanedClass = String(classValue || "")
+        .split(/\s+/)
+        .filter(cls => cls && cls !== "material-icons" && !cls.startsWith("material-symbols"))
+        .join(" ");
+      const attrs = `${beforeClass || ""}${afterClass || ""}`.trimEnd();
+      const classAttr = cleanedClass ? ` class="${cleanedClass}"` : "";
+      return `<${component}${attrs}${classAttr} aria-hidden="true" focusable="false" />`;
+    },
+  );
+}
+
 function slugifyActionId(label, fallback) {
   const normalized = String(label || "")
     .replace(/[ıİ]/g, "i").replace(/[şŞ]/g, "s").replace(/[çÇ]/g, "c")
@@ -326,7 +389,9 @@ for (const screen of manifest) {
   if (!htmlFile) { console.warn("  SKIP invalid/missing HTML:", screen.title); continue; }
   const raw = fs.readFileSync(htmlFile, "utf-8");
   const body = extractBody(raw);
-  const { html: interactiveBody, actions } = annotateInteractiveElements(body);
+  const lucideImports = new Set();
+  const normalizedBody = replaceMaterialSymbolSpans(body, lucideImports);
+  const { html: interactiveBody, actions } = annotateInteractiveElements(normalizedBody);
   const jsx = htmlToJsx(interactiveBody);
   const name = toComponentName(screen.title);
   if (!name) { console.warn("  SKIP empty component name:", screen.title); continue; }
@@ -337,6 +402,9 @@ for (const screen of manifest) {
   const functionSignature = actions.length > 0
     ? `export function ${name}({ actions }: ${name}Props) {`
     : `export function ${name}(_props: ${name}Props) {`;
+  const importBlock = lucideImports.size > 0
+    ? `import { ${[...lucideImports].sort().join(", ")} } from "lucide-react";\n\n`
+    : "";
 
   const code = `// AUTO-GENERATED from Stitch — DO NOT modify layout or CSS
 // Screen: ${screen.title}
@@ -347,6 +415,7 @@ for (const screen of manifest) {
 // 3. Wire interactive controls through the typed actions prop
 // 4. Replace placeholder data with props/state
 
+${importBlock}
 export type ${name}ActionId = ${actionType};
 
 export interface ${name}Props {

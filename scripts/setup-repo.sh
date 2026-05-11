@@ -259,6 +259,7 @@ if [ ! -f package.json ]; then
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.1",
+    "lucide-react": "^0.468.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "vite": "^5.3.5"
@@ -286,7 +287,7 @@ EOF
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
     <title>$HTML_TITLE</title>
   </head>
   <body>
@@ -393,7 +394,7 @@ EOF
 
 :root {
   color-scheme: light;
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: "Hanken Grotesk", "Segoe UI", sans-serif;
 }
 
 body {
@@ -420,6 +421,7 @@ EOF
     "test": "node --test"
   },
   "dependencies": {
+    "lucide-react": "^0.468.0",
     "next": "^14.2.5",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
@@ -521,7 +523,7 @@ EOF
 
 :root {
   color-scheme: light;
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: "Hanken Grotesk", "Segoe UI", sans-serif;
 }
 
 * {

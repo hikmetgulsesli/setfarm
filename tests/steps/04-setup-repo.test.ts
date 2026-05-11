@@ -103,7 +103,8 @@ describe("04-setup-repo step module", () => {
     assert.ok(script.includes('"test:run": "vitest run"'), "Vite scaffold should include non-watch test:run script");
     assert.ok(script.includes("cat > vitest.config.ts"), "Vite scaffold should create separate Vitest config");
     assert.ok(script.includes("cat > src/test/setup.ts"), "Vite scaffold should create test setup helper");
-    assert.ok(script.includes("Material+Symbols+Outlined"), "Vite scaffold should load Material Symbols used by Stitch exports");
+    assert.ok(script.includes('"lucide-react"'), "frontend scaffolds should install lucide-react for SVG icons");
+    assert.equal(script.includes("Material+Symbols+Outlined"), false, "scaffold must not load Material Symbols icon fonts");
     assert.ok(script.includes("<title>$HTML_TITLE</title>"), "HTML title should come from sanitized display title");
     assert.ok(script.includes('"name": "$PACKAGE_NAME"'), "package name should come from project slug");
     assert.ok(script.includes('data-setfarm-root="baseline"'), "App baseline should be machine-detectable");
