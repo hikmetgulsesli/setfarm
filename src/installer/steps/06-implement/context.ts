@@ -10,7 +10,7 @@ import os from "node:os";
 import { execFileSync } from "node:child_process";
 import { pgGet, pgQuery } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
-import { getStories, getCurrentStory, formatStoryForTemplate, formatCompletedStories, formatStoryRoadmap } from "../../story-ops.js";
+import { getStories, getCurrentStory, formatStoryForTemplate, formatCompletedStories, formatStoryRoadmap, parseAcceptanceCriteria } from "../../story-ops.js";
 import type { Story } from "../../types.js";
 import { parseOutputKeyValues } from "../../context-ops.js";
 import { collectUiBehaviorRequirements, type UiBehaviorRequirement } from "../03-stories/context.js";
@@ -130,14 +130,15 @@ export async function injectStoryContext(
     storyId: nextStory.story_id,
     title: nextStory.title,
     description: nextStory.description,
-    acceptanceCriteria: (() => { try { return JSON.parse(nextStory.acceptance_criteria); } catch { logger.warn("Bad acceptance_criteria JSON for story " + nextStory.story_id); return []; } })(),
+    acceptanceCriteria: parseAcceptanceCriteria(nextStory.acceptance_criteria),
     status: nextStory.status as Story["status"],
     output: nextStory.output ?? undefined,
     retryCount: nextStory.retry_count,
     maxRetries: nextStory.max_retries,
   };
-  const rawRetryFailureText = nextStory.output && (nextStory.abandoned_count > 0 || nextStory.retry_count > 0)
-    ? String(nextStory.output)
+  const storyRepoPath = context["story_workdir"] || context["repo"] || context["REPO"] || "";
+  const retryFailureText = nextStory.output && (nextStory.abandoned_count > 0 || nextStory.retry_count > 0)
+    ? sanitizedRetryFailureText(String(nextStory.output), storyRepoPath)
     : "";
 
   const allStories = await getStories(step.run_id);
@@ -162,10 +163,7 @@ export async function injectStoryContext(
   context["story_workdir"] = pipelineStoryWorkdir;
 
   // Inject source tree
-  const repoPath = context["story_workdir"] || context["repo"] || context["REPO"] || "";
-  const retryFailureText = rawRetryFailureText
-    ? sanitizedRetryFailureText(rawRetryFailureText, repoPath)
-    : "";
+  const repoPath = storyRepoPath;
   context["verify_feedback"] = retryFailureText;
 
   if (repoPath && !context["src_tree"]) {

@@ -30,7 +30,7 @@ export { failStep } from "./step-fail.js";
 
 // ── Imports from extracted modules (used internally) ──
 import { resolveTemplate, parseOutputKeyValues, readProgressFile, readProjectMemory, updateProjectMemory, getProjectTree, getInstalledPackages, getSharedCode, getRecentStoryCode, getComponentRegistry, getApiRoutes, pruneContextForStep } from "./context-ops.js";
-import { getStories, formatStoryForTemplate, formatCompletedStories, parseAndInsertStories } from "./story-ops.js";
+import { getStories, formatStoryForTemplate, formatCompletedStories, parseAcceptanceCriteria, parseAndInsertStories } from "./story-ops.js";
 import { createStoryWorktree, removeStoryWorktree, findWorktreeDir, syncBaseBranch } from "./worktree-ops.js";
 import { computeHasFrontendChanges, checkTestFailures, checkQualityGate, checkRequiredOutputFields, processDesignCompletion, processSetupCompletion, processSetupDesignContracts, processBrowserCheck, processDesignFidelityCheck, checkStoryDesignCompliance, checkImportConsistency } from "./step-guardrails.js";
 import { cleanupAbandonedSteps as _cleanupAbandonedSteps, cleanupProjectEphemera, scheduleRunCronTeardown } from "./cleanup-ops.js";
@@ -431,6 +431,22 @@ function collectQaFixScopeFiles(repoPath: string): string[] {
   return [...new Set(out)].sort();
 }
 
+function qualityFixAcceptanceCriteria(failure: string): string[] {
+  const issueCriteria = failure
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => /^-\s*(CRITICAL|WARNING|ERROR|FAIL|BLOCKER)\b/i.test(line))
+    .slice(0, 12)
+    .map((line) => `Resolve reported issue: ${line.replace(/^-\s*/, "")}`);
+  return [
+    "All reported QA/final-test failures are fixed in the rendered app.",
+    "npm run build passes on current main.",
+    "Platform smoke-test passes without blank page, dead button, console, network, or layout failures.",
+    "No unrelated toolchain/config churn is introduced.",
+    ...issueCriteria,
+  ];
+}
+
 export async function routeQualityFailureToImplement(
   step: { id: string; run_id: string; step_id: string; step_index: number; agent_id: string },
   output: string,
@@ -536,6 +552,17 @@ export async function routeQualityFailureToImplement(
     [step.run_id],
   );
   const dependsOn = priorStories.map((s) => s.story_id).filter(Boolean);
+  const title = `QA fix — ${step.step_id} runtime failures`;
+  const description = [
+    `Downstream ${step.step_id} found runtime/acceptance failures after story PRs were merged.`,
+    "Fix only the reported failures on current main. Do not add unrelated features or redesign the app.",
+    "Run npm run build and the platform smoke test before reporting STATUS: done.",
+    "",
+    "Failure report:",
+    failure,
+  ].join("\n");
+  const acceptance = qualityFixAcceptanceCriteria(failure);
+  const scopeDescription = `QA/final fix scope derived from existing source files after ${step.step_id} failure.`;
 
   let fixStoryId = existingActiveFix?.story_id || "";
   if (!existingActiveFix) {
@@ -546,21 +573,6 @@ export async function routeQualityFailureToImplement(
     const n = existingFixCountNum + 1;
     fixStoryId = `QA-FIX-${String(n).padStart(3, "0")}`;
     const storyIndex = (nextMeta?.max_idx ?? -1) + 1;
-    const title = `QA fix — ${step.step_id} runtime failures`;
-    const description = [
-      `Downstream ${step.step_id} found runtime/acceptance failures after story PRs were merged.`,
-      "Fix only the reported failures on current main. Do not add unrelated features or redesign the app.",
-      "Run npm run build and the platform smoke test before reporting STATUS: done.",
-      "",
-      "Failure report:",
-      failure,
-    ].join("\n");
-    const acceptance = [
-      "All reported QA/final-test failures are fixed in the rendered app.",
-      "npm run build passes on current main.",
-      "Platform smoke-test passes without blank page, dead button, console, network, or layout failures.",
-      "No unrelated toolchain/config churn is introduced.",
-    ];
     await pgRun(
       `INSERT INTO stories (id, run_id, story_index, story_id, title, description, acceptance_criteria, status, retry_count, max_retries, depends_on, scope_files, shared_files, scope_description, created_at, updated_at, output)
        VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', 0, 4, $8, $9, $10, $11, $12, $12, $13)`,
@@ -575,9 +587,35 @@ export async function routeQualityFailureToImplement(
         dependsOn.length > 0 ? JSON.stringify(dependsOn) : null,
         scopeFiles.length > 0 ? JSON.stringify(scopeFiles) : null,
         scopeFiles.length > 0 ? JSON.stringify(scopeFiles) : null,
-        `QA/final fix scope derived from existing source files after ${step.step_id} failure.`,
+        scopeDescription,
         now(),
         failure,
+      ],
+    );
+  } else {
+    await pgRun(
+      `UPDATE stories
+       SET title = $1,
+           description = $2,
+           acceptance_criteria = $3,
+           output = $4,
+           depends_on = COALESCE(depends_on, $5),
+           scope_files = COALESCE(scope_files, $6),
+           shared_files = COALESCE(shared_files, $7),
+           scope_description = $8,
+           updated_at = $9
+       WHERE id = $10`,
+      [
+        title,
+        description,
+        JSON.stringify(acceptance),
+        failure,
+        dependsOn.length > 0 ? JSON.stringify(dependsOn) : null,
+        scopeFiles.length > 0 ? JSON.stringify(scopeFiles) : null,
+        scopeFiles.length > 0 ? JSON.stringify(scopeFiles) : null,
+        scopeDescription,
+        now(),
+        existingActiveFix.id,
       ],
     );
   }
@@ -1479,7 +1517,7 @@ async function injectStoryContext(
     storyId: nextStory.story_id,
     title: nextStory.title,
     description: nextStory.description,
-    acceptanceCriteria: (() => { try { return JSON.parse(nextStory.acceptance_criteria); } catch { logger.warn("Bad acceptance_criteria JSON for story " + nextStory.story_id); return []; } })(),
+    acceptanceCriteria: parseAcceptanceCriteria(nextStory.acceptance_criteria),
     status: nextStory.status,
     output: nextStory.output ?? undefined,
     retryCount: nextStory.retry_count,
@@ -1766,7 +1804,7 @@ async function injectVerifyContext(
     id: nextUnverified.id, runId: nextUnverified.run_id,
     storyIndex: nextUnverified.story_index, storyId: nextUnverified.story_id,
     title: nextUnverified.title, description: nextUnverified.description,
-    acceptanceCriteria: (() => { try { return JSON.parse(nextUnverified.acceptance_criteria); } catch { logger.warn("Bad acceptance_criteria JSON for story " + nextUnverified.story_id); return []; } })(),
+    acceptanceCriteria: parseAcceptanceCriteria(nextUnverified.acceptance_criteria),
     status: nextUnverified.status, output: nextUnverified.output,
     retryCount: nextUnverified.retry_count, maxRetries: nextUnverified.max_retries,
   };

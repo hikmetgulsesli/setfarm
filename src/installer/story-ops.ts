@@ -15,7 +15,34 @@ import { MAX_STORIES, DEFAULT_STORY_MAX_RETRIES } from "./constants.js";
 /**
  * Get all stories for a run, ordered by story_index.
  */
-function safeParseAC(raw: string): string[] { try { const arr = JSON.parse(raw); return Array.isArray(arr) ? arr : [raw]; } catch { const m = raw.match(/^(\[.*?\])/s); if (m) { try { return JSON.parse(m[1]); } catch { /* fallback below */ } } return raw ? [raw] : []; } }
+const EMPTY_STORY_VALUE = /^(?:undefined|null|\[object Object\])$/i;
+
+function cleanStoryText(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const text = value.trim();
+  if (!text || EMPTY_STORY_VALUE.test(text)) return "";
+  return text;
+}
+
+export function parseAcceptanceCriteria(raw: unknown): string[] {
+  const text = cleanStoryText(raw);
+  if (!text) return [];
+  try {
+    const arr = JSON.parse(text);
+    if (Array.isArray(arr)) return arr.map(cleanStoryText).filter(Boolean);
+    const single = cleanStoryText(arr);
+    return single ? [single] : [];
+  } catch {
+    const m = text.match(/^(\[.*?\])/s);
+    if (m) {
+      try {
+        const arr = JSON.parse(m[1]);
+        if (Array.isArray(arr)) return arr.map(cleanStoryText).filter(Boolean);
+      } catch { /* fallback below */ }
+    }
+    return [text];
+  }
+}
 
 function mapStoryRow(r: any): Story {
   return {
@@ -25,7 +52,7 @@ function mapStoryRow(r: any): Story {
     storyId: r.story_id,
     title: r.title,
     description: r.description,
-    acceptanceCriteria: safeParseAC(r.acceptance_criteria),
+    acceptanceCriteria: parseAcceptanceCriteria(r.acceptance_criteria),
     status: r.status,
     output: r.output ?? undefined,
     retryCount: r.retry_count,
@@ -56,8 +83,26 @@ export async function getCurrentStory(stepId: string): Promise<Story | null> {
 // ── Story Formatting ────────────────────────────────────────────────
 
 export function formatStoryForTemplate(story: Story): string {
-  const ac = story.acceptanceCriteria.map((c: string, i: number) => `  ${i + 1}. ${c}`).join("\n");
-  return `Story ${story.storyId}: ${story.title}\n\n${story.description}\n\nAcceptance Criteria:\n${ac}`;
+  const storyId = cleanStoryText(story.storyId) || "UNKNOWN-STORY";
+  const title = cleanStoryText(story.title) || storyId;
+  const output = cleanStoryText(story.output);
+  const description =
+    cleanStoryText(story.description) ||
+    (output ? `Failure report:\n${output}` : "No story description was provided. Inspect the current repository state before editing.");
+  let criteria = Array.isArray(story.acceptanceCriteria)
+    ? story.acceptanceCriteria.map(cleanStoryText).filter(Boolean)
+    : [];
+  if (criteria.length === 0) {
+    criteria = /^QA-FIX-/i.test(storyId)
+      ? [
+          "Fix every failure listed in the QA/final failure report.",
+          "npm run build passes on the current branch.",
+          "The rendered app passes platform smoke testing without dead controls, console errors, blank screens, or layout failures.",
+        ]
+      : ["Implement the story behavior described above and verify it in the running app."];
+  }
+  const ac = criteria.map((c: string, i: number) => `  ${i + 1}. ${c}`).join("\n");
+  return `Story ${storyId}: ${title}\n\n${description}\n\nAcceptance Criteria:\n${ac}`;
 }
 
 export function formatCompletedStories(stories: Story[]): string {

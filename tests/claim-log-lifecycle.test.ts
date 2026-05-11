@@ -226,6 +226,19 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(routeSource, /WHERE run_id = \$2 AND step_id = \$3 AND story_id IS NULL AND outcome IS NULL/);
   });
 
+  it("persists actionable QA-FIX context when reusing an active fix story", () => {
+    const source = stepOpsSource();
+    const start = source.indexOf("async function routeQualityFailureToImplement(");
+    const end = source.indexOf("// ── Predicted screen file helpers", start);
+    assert.notEqual(start, -1, "routeQualityFailureToImplement source not found");
+    assert.notEqual(end, -1, "routeQualityFailureToImplement end marker not found");
+    const routeSource = source.slice(start, end);
+
+    assert.match(source, /Resolve reported issue:/);
+    assert.match(routeSource, /qualityFixAcceptanceCriteria\(failure\)/);
+    assert.match(routeSource, /UPDATE stories[\s\S]*description = \$2[\s\S]*acceptance_criteria = \$3[\s\S]*output = \$4/);
+  });
+
   it("fails verify merge blockers before creating QA-FIX stories", () => {
     const source = stepOpsSource();
     const start = source.indexOf("async function routeQualityFailureToImplement(");
