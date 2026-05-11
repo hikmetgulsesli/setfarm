@@ -86,6 +86,13 @@ const JSX_ATTRIBUTE_MAP = {
   "font-family": "fontFamily",
   "font-size": "fontSize",
   "font-weight": "fontWeight",
+  "patternunits": "patternUnits",
+  "patterncontentunits": "patternContentUnits",
+  "gradientunits": "gradientUnits",
+  "gradienttransform": "gradientTransform",
+  "maskunits": "maskUnits",
+  "maskcontentunits": "maskContentUnits",
+  "clippathunits": "clipPathUnits",
   "xlink:href": "xlinkHref",
   "xmlns:xlink": "xmlnsXlink",
 };

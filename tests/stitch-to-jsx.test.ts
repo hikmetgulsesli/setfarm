@@ -138,9 +138,11 @@ describe("stitch-to-jsx", () => {
         <main>
           <svg viewbox="0 0 24 24" xmlns:xlink="http://www.w3.org/1999/xlink">
             <defs>
-              <lineargradient id="a"><stop stop-color="#fff"></stop></lineargradient>
+              <lineargradient id="a" gradientunits="userSpaceOnUse" gradienttransform="rotate(45)"><stop stop-color="#fff"></stop></lineargradient>
               <radialgradient id="b"></radialgradient>
-              <clippath id="c"><path></path></clippath>
+              <pattern id="p" patternunits="userSpaceOnUse" patterncontentunits="objectBoundingBox"></pattern>
+              <mask id="m" maskunits="userSpaceOnUse" maskcontentunits="objectBoundingBox"></mask>
+              <clippath id="c" clippathunits="objectBoundingBox"><path></path></clippath>
               <foreignobject></foreignobject>
               <textpath href="#label">Label</textpath>
             </defs>
@@ -163,13 +165,20 @@ describe("stitch-to-jsx", () => {
       assert.match(code, /fillRule=/);
       assert.match(code, /clipRule=/);
       assert.match(code, /<linearGradient/);
+      assert.match(code, /gradientUnits=/);
+      assert.match(code, /gradientTransform=/);
+      assert.match(code, /patternUnits=/);
+      assert.match(code, /patternContentUnits=/);
+      assert.match(code, /maskUnits=/);
+      assert.match(code, /maskContentUnits=/);
+      assert.match(code, /clipPathUnits=/);
       assert.match(code, /<\/linearGradient>/);
       assert.match(code, /<radialGradient/);
       assert.match(code, /<clipPath/);
       assert.match(code, /<foreignObject/);
       assert.match(code, /<textPath/);
       assert.match(code, /xlinkHref=/);
-      assert.doesNotMatch(code, /viewbox=|stroke-width=|fill-rule=|clip-rule=|xlink:href=|lineargradient|radialgradient|clippath|foreignobject|textpath/);
+      assert.doesNotMatch(code, /viewbox=|stroke-width=|fill-rule=|clip-rule=|patternunits=|patterncontentunits=|gradientunits=|gradienttransform=|maskunits=|maskcontentunits=|clippathunits=|xlink:href=|lineargradient|radialgradient|clippath|foreignobject|textpath/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
