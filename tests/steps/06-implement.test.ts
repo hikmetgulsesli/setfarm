@@ -60,6 +60,16 @@ describe("06-implement step module", () => {
     assert.match(stepOps, /vite\.config\.\*, tailwind\.config\.\*, tsconfig\.\*, index\.html/);
   });
 
+  it("blocks SCOPE_BLEED completion instead of silently accepting it", () => {
+    const stepOps = fs.readFileSync(path.join(process.cwd(), "dist/installer/step-ops.js"), "utf-8");
+    assert.match(stepOps, /scope-bleed-cleanup/);
+    assert.match(stepOps, /failing story for retry/);
+    assert.match(stepOps, /await failStep\(stepId, scopeResult\.reason\)/);
+    assert.doesNotMatch(stepOps, /scope-bleed-silent/);
+    assert.doesNotMatch(stepOps, /story kept DONE/);
+    assert.doesNotMatch(stepOps, /kept DONE despite scope bleed/);
+  });
+
   it("cleans dirty out-of-scope files before reusing a story worktree", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-scope-clean-"));
     try {

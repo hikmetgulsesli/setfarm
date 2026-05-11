@@ -3969,18 +3969,11 @@ ${screenDescs}
             wd, baseBr, step.retry_count, step.max_retries,
           );
           if (!scopeResult.passed && scopeResult.category) {
-            // SCOPE_BLEED cleanup: revert out-of-scope files to baseline so the
-            // next retry doesn't inherit them. Without this, the offending
-            // commit stays on the branch; when the story later merges, those
-            // files collide with other stories that own them (observed run
-            // #496 US-001 merge conflict — US-002 bleed left US-001's files
-            // in US-002's branch, merge-queue rejected clean US-001 branch).
             if (scopeResult.category === "SCOPE_BLEED" && scopeResult.outOfScope && scopeResult.outOfScope.length > 0 && wd && baseBr) {
-              // SILENT REVERT (2026-04-22): cleanup out-of-scope files + amend commit.
-              // Pink Elephant: failing with feedback "Integration files belong to integration
-              // story" makes LLMs repeat the bleed. Silent cleanup preserves scope-clean commit
-              // and lets story continue to DONE → auto-PR → verify reviews.
-              let cleanupOk = false;
+              // Clean the branch before retry so the next attempt does not inherit
+              // the bad files, but still fail the story. Treating SCOPE_BLEED as
+              // advisory lets agents learn the wrong ownership boundary and hides
+              // cross-story collisions until later merge/verify stages.
               try {
                 const outOfScopeFiles = scopeResult.outOfScope;
                 for (const file of outOfScopeFiles) {
@@ -3997,38 +3990,41 @@ ${screenDescs}
                   }
                 }
                 try {
-                  execFileSync("git", ["commit", "--amend", "--no-edit", "--allow-empty"], {
+                  execFileSync("git", ["add", "--", ...outOfScopeFiles], {
                     cwd: wd, timeout: 10000, stdio: ["pipe", "pipe", "pipe"],
-                    env: { ...process.env, GIT_COMMITTER_NAME: "Moltclaw AI", GIT_COMMITTER_EMAIL: "setrox@moltclaw.local" },
                   });
-                  cleanupOk = true;
-                } catch { /* best effort */ }
-                logger.warn(`[scope-bleed-silent] Reverted ${outOfScopeFiles.length} out-of-scope file(s) in ${storyRow.story_id}: ${outOfScopeFiles.slice(0, 5).join(", ")} — story kept DONE`, { runId: step.run_id });
+                  const statusOut = execFileSync("git", ["status", "--porcelain", "--", ...outOfScopeFiles], {
+                    cwd: wd, timeout: 5000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8",
+                  }).trim();
+                  if (statusOut) {
+                    execFileSync("git", ["commit", "-m", `chore: revert out-of-scope files for ${storyRow.story_id}`], {
+                      cwd: wd, timeout: 10000, stdio: ["pipe", "pipe", "pipe"],
+                      env: {
+                        ...process.env,
+                        GIT_AUTHOR_NAME: "Moltclaw AI",
+                        GIT_AUTHOR_EMAIL: "setrox@moltclaw.local",
+                        GIT_COMMITTER_NAME: "Moltclaw AI",
+                        GIT_COMMITTER_EMAIL: "setrox@moltclaw.local",
+                      },
+                    });
+                  }
+                  context["scope_bleed_cleanup"] = `Reverted ${outOfScopeFiles.length} out-of-scope file(s) before retry: ${outOfScopeFiles.slice(0, 5).join(", ")}`;
+                  logger.warn(`[scope-bleed-cleanup] Reverted ${outOfScopeFiles.length} out-of-scope file(s) in ${storyRow.story_id}: ${outOfScopeFiles.slice(0, 5).join(", ")} — failing story for retry`, { runId: step.run_id });
+                } catch (commitErr) {
+                  context["scope_bleed_cleanup"] = `Scope bleed cleanup partially applied; commit failed: ${String(commitErr).slice(0, 180)}`;
+                  logger.warn(`[scope-bleed-cleanup] Cleanup commit failed: ${String(commitErr).slice(0, 200)}`, { runId: step.run_id });
+                }
               } catch (cleanupErr) {
-                logger.warn(`[scope-bleed-silent] Cleanup failed: ${String(cleanupErr).slice(0, 200)}`, { runId: step.run_id });
+                context["scope_bleed_cleanup"] = `Scope bleed cleanup failed: ${String(cleanupErr).slice(0, 180)}`;
+                logger.warn(`[scope-bleed-cleanup] Cleanup failed: ${String(cleanupErr).slice(0, 200)}`, { runId: step.run_id });
               }
-              if (cleanupOk) {
-                context["scope_bleed_warning"] = `Silently reverted ${scopeResult.outOfScope.length} out-of-scope file(s): ${scopeResult.outOfScope.slice(0, 3).join(", ")}`;
-                await updateRunContext(step.run_id, context);
-                // Fall through — story done.
-              } else {
-                // 2026-04-22: Cleanup failed -> WARNING ONLY (no fail). Setup bypass + story
-                // roadmap riskini azaltti. Tam app yazsa bile merge queue cogu dosyayi ignore
-                // eder. Story DONE olarak gecsin, fail retry dongusunu kirsin.
-                context["scope_bleed_warning"] = `Scope bleed detected (cleanup failed): ${scopeResult.outOfScope!.length} out-of-scope file(s). Story kept DONE advisory.`;
-                logger.warn(`[scope-bleed-warn] Story ${storyRow.story_id} kept DONE despite scope bleed (${scopeResult.outOfScope!.length} files) — cleanup failed, tolerating`, { runId: step.run_id });
-                await updateRunContext(step.run_id, context);
-                // Fall through — don't fail.
-              }
-            } else {
-              // Non-SCOPE_BLEED or no outOfScope list — original fail behavior
-              context["previous_failure"] = scopeResult.reason!;
-              context["failure_category"] = scopeResult.category;
-              context["failure_suggestion"] = scopeResult.suggestion!;
-              await updateRunContext(step.run_id, context);
-              await failStep(stepId, scopeResult.reason!);
-              return { advanced: false, runCompleted: false };
             }
+            context["previous_failure"] = scopeResult.reason!;
+            context["failure_category"] = scopeResult.category;
+            context["failure_suggestion"] = scopeResult.suggestion!;
+            await updateRunContext(step.run_id, context);
+            await failStep(stepId, scopeResult.reason!);
+            return { advanced: false, runCompleted: false };
           }
           // Soft warning (scope creep flag for verify step)
           if (scopeResult.reason && scopeResult.passed) {
@@ -4051,7 +4047,6 @@ ${screenDescs}
             await failStep(stepId, buildResult.reason!);
             return { advanced: false, runCompleted: false };
           }
-
 
           // QA-FIX smoke gate: downstream runtime-fix stories are created from
           // concrete smoke failures. Do not let an agent mark the QA-FIX done
