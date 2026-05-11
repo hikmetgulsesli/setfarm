@@ -309,7 +309,7 @@ const MATERIAL_TO_LUCIDE = {
   search: "Search",
   settings: "Settings",
   swords: "Swords",
-  touch_app: "HandPointer",
+  touch_app: "MousePointerClick",
   videogame_asset: "Gamepad2",
   view_timeline: "Activity",
   warning: "TriangleAlert",

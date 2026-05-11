@@ -135,6 +135,34 @@ describe("stitch-to-jsx", () => {
     }
   });
 
+  it("maps touch_app to a build-safe lucide icon export", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-touch-icon-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "controls-screen", title: "Controls Help" },
+      ]));
+      writeHtml(path.join(stitchDir, "controls-screen.html"), `
+        <main>
+          <span class="material-symbols-outlined text-[18px]">touch_app</span>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "ControlsHelp.tsx"), "utf-8");
+      assert.match(code, /import \{ MousePointerClick \} from "lucide-react";/);
+      assert.match(code, /<MousePointerClick className="text-\[18px\]" aria-hidden=\{true\} focusable="false" \/>/);
+      assert.doesNotMatch(code, /HandPointer|touch_app|material-symbols/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("handles JSX-style className Material Symbol markup from Stitch exports", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-jsx-icons-"));
     try {
