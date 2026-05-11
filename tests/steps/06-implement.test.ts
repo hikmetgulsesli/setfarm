@@ -24,11 +24,12 @@ describe("06-implement step module", () => {
     assert.equal(rules.includes("small edits OK"), false);
   });
 
-  it("scope gate treats shared_files as completion-allowed files", () => {
+  it("scope gate treats shared_files as read-only context, not completion-allowed files", () => {
     const source = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/guards.js"), "utf-8");
     assert.match(source, /SELECT scope_files, shared_files FROM stories WHERE id/);
     assert.match(source, /const declaredSharedFiles = parseScopeFiles\(scopeRow\?\.shared_files\)/);
-    assert.match(source, /declaredSharedFiles\.forEach\(f => allowed\.add\(f\)\)/);
+    assert.doesNotMatch(source, /declaredSharedFiles\.forEach\(f => allowed\.add\(f\)\)/);
+    assert.match(source, /void declaredSharedFiles/);
   });
 
   it("React Vite stack rules allow main.tsx only when scoped", () => {
@@ -148,8 +149,10 @@ describe("06-implement step module", () => {
       "src/screens/ProfilPaneli.tsx",
     ];
 
-    const withoutImplicit = computeScopeFileLimits(false, appScope, sharedScreens);
-    assert.ok(withoutImplicit.hardLimit < 24, `pre-implicit hard limit ${withoutImplicit.hardLimit} should show why implicit files matter`);
+    const withShared = computeScopeFileLimits(false, appScope, sharedScreens);
+    const withoutShared = computeScopeFileLimits(false, appScope);
+    assert.equal(withShared.hardLimit, withoutShared.hardLimit, "shared_files must not inflate writable scope limits");
+    assert.equal(withShared.softLimit, withoutShared.softLimit, "shared_files must remain read-only context");
 
     const implicitTestAndConfig = [
       "src/App.test.tsx",
@@ -162,8 +165,8 @@ describe("06-implement step module", () => {
       "jest.config.js",
     ];
     const { hardLimit, softLimit } = computeScopeFileLimits(false, appScope, sharedScreens, implicitTestAndConfig);
-    assert.ok(hardLimit >= 24, `hard limit ${hardLimit} should cover app shell, shared Stitch screens, and implicit test/config files`);
-    assert.ok(softLimit >= 16, `soft limit ${softLimit} should scale with shared and implicit file count`);
+    assert.ok(hardLimit >= 20, `hard limit ${hardLimit} should cover app shell and implicit test/config files`);
+    assert.ok(softLimit >= 14, `soft limit ${softLimit} should scale with writable and implicit file count`);
   });
 
   it("detects package build scripts for implement build gate", () => {

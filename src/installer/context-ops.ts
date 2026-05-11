@@ -391,7 +391,7 @@ function writeProjectClaudeMd(repo: string, context: Record<string, string>, mem
 ## Scope Discipline
 
 - Story'ler sırayla işleniyor. Her story'nin scope_files'ı dışına yazma.
-- Mevcut dosyaları değiştireceksen SHARED_FILES listesindekileri değiştir, diğerlerine dokunma.
+- SHARED_FILES listesindeki dosyalar sadece okuma/import bağlamıdır; scope_files içinde değilse değiştirme.
 - Önceki story'lerin fail_reason'larına dikkat — aynı pit'e düşme (aşağıdaki Story Log'a bak).
 
 `;
