@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { implementModule } from "../../dist/installer/steps/06-implement/module.js";
-import { checkBuildGate, computeScopeFileLimits, detectPackageBuildCommand, normalize, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
+import { checkBuildGate, computeScopeFileLimits, detectPackageBuildCommand, getOutOfScopeStoryFiles, normalize, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
 import { cleanupOutOfScopeWorktreeFiles } from "../../dist/installer/steps/06-implement/context.js";
 import { decideStorySystemSmokeGate } from "../../dist/installer/step-ops.js";
 import { checkStoryDesignCompliance } from "../../dist/installer/step-guardrails.js";
@@ -65,6 +65,20 @@ describe("06-implement step module", () => {
 
     const worktreeOps = fs.readFileSync(path.join(process.cwd(), "dist/installer/worktree-ops.js"), "utf-8");
     assert.doesNotMatch(worktreeOps, /src\/types\/\*/);
+  });
+
+  it("treats shared type/domain files as out of scope unless explicitly owned", () => {
+    const changed = [
+      "src/screens/GameBoard.tsx",
+      "src/types/domain.ts",
+      "src/screens/GameBoard.test.tsx",
+      "vitest.config.ts",
+    ];
+
+    assert.deepEqual(getOutOfScopeStoryFiles(changed, ["src/screens/GameBoard.tsx"]), [
+      "src/types/domain.ts",
+    ]);
+    assert.deepEqual(getOutOfScopeStoryFiles(changed, ["src/screens/GameBoard.tsx", "src/types/domain.ts"]), []);
   });
 
   it("blocks SCOPE_BLEED completion instead of silently accepting it", () => {

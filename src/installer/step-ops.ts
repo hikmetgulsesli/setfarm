@@ -143,6 +143,79 @@ function parseScopeFileList(raw: string | null | undefined): string[] {
   }
 }
 
+async function detectVerifyScopeDiffFailure(
+  runId: string,
+  storyId: string,
+  repoPath: string,
+  baseRef: string,
+  headRef = "HEAD",
+): Promise<string> {
+  if (!storyId || !repoPath || !baseRef) return "";
+  const story = await pgGet<{ story_id: string; title: string; scope_files: string | null }>(
+    "SELECT story_id, title, scope_files FROM stories WHERE run_id = $1 AND story_id = $2 LIMIT 1",
+    [runId, storyId],
+  );
+  if (!story?.scope_files) return "";
+  const declaredScope = parseScopeFileList(story.scope_files);
+  if (declaredScope.length === 0) return "";
+
+  const { getChangedFiles } = await import("./static-analysis.js");
+  const { getOutOfScopeStoryFiles } = await import("./steps/06-implement/guards.js");
+  const changedFiles = getChangedFiles(repoPath, baseRef, headRef);
+  const outOfScope = getOutOfScopeStoryFiles(changedFiles, declaredScope);
+  if (outOfScope.length === 0) return "";
+
+  const sharedTypeFiles = outOfScope.filter(file =>
+    /^src\/types(?:\/|\.|$)/.test(file) || /(?:^|\/)(domain|types)\.(tsx?|d\.ts)$/.test(file),
+  );
+  const sharedTypeHint = sharedTypeFiles.length > 0
+    ? "\nShared exported/domain types are read-only for this story. Keep them compatible; use a local render/display type or adapter inside the owned screen, and narrow before calling shared helpers."
+    : "";
+
+  return [
+    `SCOPE_BLEED: Story ${story.story_id} (${story.title}) PR diff modifies ${outOfScope.length} file(s) outside scope_files.`,
+    `Allowed scope_files: ${declaredScope.join(", ")}`,
+    `Out-of-scope files: ${outOfScope.slice(0, 20).join(", ")}`,
+    "shared_files are read-only/import context unless also listed in scope_files.",
+    sharedTypeHint.trim(),
+  ].filter(Boolean).join("\n");
+}
+
+async function routeVerifyScopeFailureToImplement(
+  verifyStep: StepRow,
+  context: Record<string, string>,
+  storyId: string,
+  failure: string,
+): Promise<void> {
+  const retryStory = await pgGet<{ id: string; retry_count: number; max_retries: number }>(
+    "SELECT id, retry_count, max_retries FROM stories WHERE run_id = $1 AND story_id = $2 AND status = 'done' LIMIT 1",
+    [verifyStep.run_id, storyId],
+  );
+  if (!retryStory) return;
+
+  const newRetry = retryStory.retry_count + 1;
+  context["verify_feedback"] = failure;
+  context["previous_failure"] = failure;
+  context["failure_category"] = "SCOPE_BLEED";
+  context["failure_suggestion"] = "Revert out-of-scope files from the story branch. Only modify files listed in scope_files; use local adapters instead of changing shared exported types.";
+
+  if (newRetry > retryStory.max_retries) {
+    await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [newRetry, failure, now(), retryStory.id]);
+    await updateRunContext(verifyStep.run_id, context);
+    const loopStep = await findLoopStep(verifyStep.run_id);
+    if (loopStep?.id) await setStepStatus(loopStep.id, "failed");
+    await failRun(verifyStep.run_id, true);
+    scheduleRunCronTeardown(verifyStep.run_id);
+    return;
+  }
+
+  await pgRun("UPDATE stories SET status = 'pending', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [newRetry, failure, now(), retryStory.id]);
+  await updateRunContext(verifyStep.run_id, context);
+  const loopStep = await findLoopStep(verifyStep.run_id);
+  if (loopStep?.id) await setStepStatus(loopStep.id, "pending");
+  emitEvent({ ts: now(), event: "story.retry", runId: verifyStep.run_id, workflowId: await getWorkflowId(verifyStep.run_id), stepId: verifyStep.step_id, storyId, detail: failure });
+}
+
 function getImplicitScopeFiles(workdir: string): string[] {
   void workdir;
   const files = [
@@ -1851,6 +1924,17 @@ async function claimSingleStep(
       context["preflight_analysis"] = formatPreFlightForAgent(report);
       context["preflight_diff"] = report.diffSummary;
       context["preflight_errors"] = [report.eslintErrors, report.tscErrors, report.contractErrors].filter(Boolean).join("\n");
+      const scopeFailure = await detectVerifyScopeDiffFailure(step.run_id, context["current_story_id"] || "", repoPath, baseRef, "HEAD");
+      if (scopeFailure) {
+        context["preflight_errors"] = [context["preflight_errors"], scopeFailure].filter(Boolean).join("\n");
+        context["preflight_analysis"] = `${context["preflight_analysis"]}\n\nVERIFY SCOPE CHECK:\n${scopeFailure}`;
+        logger.warn(`[preflight-scope] Verify blocked ${context["current_story_id"] || "(unknown story)"} before reviewer spawn: ${scopeFailure.slice(0, 240)}`, { runId: step.run_id });
+        await routeVerifyScopeFailureToImplement(step, context, context["current_story_id"] || "", scopeFailure);
+        await pgRun("UPDATE steps SET status = 'waiting', updated_at = $1 WHERE id = $2 AND status = 'running'", [now(), step.id]);
+        await recordStepTransition(step.id, step.run_id, "running", "waiting", agentId, "verify-scope-preflight");
+        await closeSingleStepHandoff("completed", "verify scope failure routed to implement");
+        return { found: false };
+      }
       logger.info(`[preflight] Verify pre-flight: ${report.changedFiles.length} files, ${report.totalIssues} issue(s)`, { runId: step.run_id });
     } catch (e) {
       logger.warn(`[preflight] Skipped: ${String(e)}`, { runId: step.run_id });

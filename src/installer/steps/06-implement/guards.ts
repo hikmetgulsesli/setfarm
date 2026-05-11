@@ -58,6 +58,13 @@ function isImplicitSharedSourceFile(f: string): boolean {
   return IMPLICIT_SHARED_PATTERNS.some(p => p.test(f));
 }
 
+export function getOutOfScopeStoryFiles(sourceFiles: string[], declaredScopeFiles: string[]): string[] {
+  const allowed = new Set<string>();
+  declaredScopeFiles.forEach(f => allowed.add(f));
+  if (allowed.size === 0) return [];
+  return sourceFiles.filter(f => !allowed.has(f) && !isImplicitSharedSourceFile(f));
+}
+
 function parseScopeFiles(raw: string | null | undefined): string[] {
   if (!raw) return [];
   try {
@@ -338,7 +345,7 @@ export async function checkScopeEnforcement(
       const allowed = new Set<string>();
       declaredScopeFiles.forEach(f => allowed.add(f));
       if (allowed.size > 0) {
-        const outOfScope = sourceFiles.filter(f => !allowed.has(f) && !isImplicitSharedSourceFile(f));
+        const outOfScope = getOutOfScopeStoryFiles(sourceFiles, declaredScopeFiles);
         if (outOfScope.length > 0) {
           const allowedList = [...allowed].slice(0, 15).join(", ");
           const oosList = outOfScope.slice(0, 10).join(", ");
