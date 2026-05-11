@@ -1484,7 +1484,7 @@ async function injectStoryContext(
     }
     // 5-model consensus: always inject scope_reminder (even on first attempt)
     if (context["story_scope_files"]) {
-      context["scope_reminder"] = "SCOPE ENFORCEMENT: You may ONLY write files in [" + context["story_scope_files"] + "]. shared_files are read-only/import context unless also listed in scope_files. Test files (*.test.tsx), test config, and src/types/* shared API files are also allowed when required by your scoped screens. App.tsx, main.tsx, index.css are FORBIDDEN unless in your scope_files. Violation = instant SCOPE_BLEED rejection.";
+      context["scope_reminder"] = "SCOPE ENFORCEMENT: You may ONLY write files in [" + context["story_scope_files"] + "]. shared_files are read-only/import context unless also listed in scope_files. Test files (*.test.tsx), Vitest/Jest-only config (vitest.config.*, jest.config.*), and src/types/* shared API files are also allowed when required by your scoped screens. vite.config.*, tailwind.config.*, tsconfig.*, index.html, App.tsx, main.tsx, index.css are FORBIDDEN unless in your scope_files. Never edit index.html for title/fonts/metadata. Violation = instant SCOPE_BLEED rejection.";
     }
   } catch (e) {
     // Column may not exist on very old schemas — degrade gracefully

@@ -37,7 +37,7 @@ You are implementing ONE user story. You may ONLY write to the files listed belo
    - **Before every `git commit` and `git push`:** verify `git branch --show-current` equals `{{STORY_BRANCH}}`.
    - **Do not commit midway.** Finish code + local checks first, then make one final story commit and push `{{STORY_BRANCH}}`.
    - **End of story:** commit only your scope files and push `{{STORY_BRANCH}}`. Do NOT create or merge a PR; the pipeline owns the PR gate.
-   - **Toolchain freeze:** do not inspect, rewrite, upgrade, or debate Vite/Tailwind/TypeScript/test config unless a local build/test command actually fails. If checks pass, leave config untouched.
+   - **Toolchain freeze:** do not inspect, rewrite, upgrade, or debate Vite/Tailwind/TypeScript/test config unless a local build/test command actually fails. If checks pass, leave config untouched. `vite.config.*` is app/toolchain config and is forbidden unless explicitly listed in SCOPE_FILES. If Vitest setup is needed, use/create `vitest.config.*` or `src/test/setup.ts` only.
 
 2. **ABSOLUTE SCOPE DISCIPLINE.** Write ONLY the files listed in SCOPE_FILES. That list is exhaustive for your story; every file the project needs was pre-planned into some story's scope.
    - Your job is ONLY the files above. Every other file already belongs to another story.
@@ -49,6 +49,7 @@ You are implementing ONE user story. You may ONLY write to the files listed belo
    - Do not delete or weaken existing tests to make your new code pass. Fix the implementation instead.
    - Do not add speculative navigation, account, archive, configuration, demo panels, or other UI unless this story explicitly asks for them.
    - If acceptance criteria conflict with existing tests, make the smallest compatible change and keep both old and new behavior working.
+   - Do not edit `index.html` for title, Google fonts, icon fonts, metadata, or root markup unless `index.html` is explicitly listed in SCOPE_FILES. Setup owns document shell metadata and global font links.
    - Before committing, run `git diff` and verify the diff contains only this story's required changes.
 
 3. **Design reference, not file assignment.** The Stitch design may show elements that are not in your SCOPE_FILES (for example, a shared header while your scope is one screen component). Use the design as reference for visual style, spacing and interaction of your scope files only. Do not create the other elements — another story owns them.

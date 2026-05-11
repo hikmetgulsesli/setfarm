@@ -259,7 +259,7 @@ async function injectScopeContext(nextStory: any, context: Record<string, string
       } catch (e) { logger.debug(`[scope-file] ${String(e).slice(0, 80)}`); }
     }
     if (context["story_scope_files"]) {
-      context["scope_reminder"] = "SCOPE ENFORCEMENT: You may ONLY write files in [" + context["story_scope_files"] + "]. shared_files are read-only/import context unless also listed in scope_files. Test files (*.test.tsx) and test config (vitest.config.ts, src/test/setup.ts) are also allowed. App.tsx, main.tsx, index.css are FORBIDDEN unless in your scope_files. Violation = instant SCOPE_BLEED rejection.";
+      context["scope_reminder"] = "SCOPE ENFORCEMENT: You may ONLY write files in [" + context["story_scope_files"] + "]. shared_files are read-only/import context unless also listed in scope_files. Test files (*.test.tsx) and Vitest/Jest-only config (vitest.config.ts, src/test/setup.ts) are also allowed. vite.config.ts, tailwind.config.js, tsconfig.*, index.html, App.tsx, main.tsx, index.css are FORBIDDEN unless in your scope_files. Never edit index.html for title/fonts/metadata. Violation = instant SCOPE_BLEED rejection.";
     }
   } catch (e) {
     logger.debug(`[scope-inject] Could not read story scope columns: ${String(e).slice(0, 120)}`);

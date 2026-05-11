@@ -42,6 +42,8 @@ describe("06-implement step module", () => {
     assert.ok(rules.includes("typed `actions` prop"));
     assert.ok(rules.includes("textContent"));
     assert.ok(rules.includes("Keep reducers/state transition functions pure"));
+    assert.ok(rules.includes("vite.config.*"));
+    assert.ok(rules.includes("Do NOT edit `index.html`"));
     assert.equal(rules.includes("small edits OK"), false);
   });
 
@@ -54,6 +56,7 @@ describe("06-implement step module", () => {
 
     const stepOps = fs.readFileSync(path.join(process.cwd(), "dist/installer/step-ops.js"), "utf-8");
     assert.match(stepOps, /cleanupOutOfScopeWorktreeFiles/);
+    assert.match(stepOps, /vite\.config\.\*, tailwind\.config\.\*, tsconfig\.\*, index\.html/);
   });
 
   it("cleans dirty out-of-scope files before reusing a story worktree", () => {
@@ -112,6 +115,8 @@ describe("06-implement step module", () => {
     assert.match(prompt, /Generated Stitch screen components may declare an `actions` prop/i);
     assert.match(prompt, /do not infer actions from `textContent`/i);
     assert.match(prompt, /Reducers and state transition functions must be pure/i);
+    assert.match(prompt, /`vite\.config\.\*` is app\/toolchain config and is forbidden/i);
+    assert.match(prompt, /Do not edit `index\.html` for title, Google fonts, icon fonts, metadata, or root markup/i);
   });
 
   it("buildPrompt returns empty string — loop delegates to AGENTS.md", () => {

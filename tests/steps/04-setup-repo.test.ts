@@ -100,13 +100,23 @@ describe("04-setup-repo step module", () => {
     assert.ok(script.includes('"build": "next build"'), "Next.js scaffold should build with next build");
     assert.ok(script.includes("clean_branch_tracking main"), "setup-repo should remove duplicate upstream config before push -u");
     assert.ok(script.includes('"@testing-library/user-event"'), "Vite scaffold should include user-event because agents write interaction tests");
+    assert.ok(script.includes('"test:run": "vitest run"'), "Vite scaffold should include non-watch test:run script");
+    assert.ok(script.includes("cat > vitest.config.ts"), "Vite scaffold should create separate Vitest config");
+    assert.ok(script.includes("cat > src/test/setup.ts"), "Vite scaffold should create test setup helper");
+    assert.ok(script.includes("Material+Symbols+Outlined"), "Vite scaffold should load Material Symbols used by Stitch exports");
+    assert.ok(script.includes("<title>$HTML_TITLE</title>"), "HTML title should come from sanitized display title");
     assert.ok(script.includes('"name": "$PACKAGE_NAME"'), "package name should come from project slug");
-    assert.ok(script.includes("<title>$PROJECT_NAME</title>"), "HTML title should come from project slug");
     assert.ok(script.includes('data-setfarm-root="baseline"'), "App baseline should be machine-detectable");
     assert.ok(script.includes("baseline scaffold did not create package.json"), "fresh frontend repos must fail if scaffold is missing");
     assert.equal(script.includes("<title>Notlar</title>"), false);
     assert.equal(script.includes("useNotes"), false);
     assert.equal(script.includes("NoteStatus"), false);
     assert.equal(script.includes("setfarm-notlar"), false);
+  });
+
+  it("preClaim passes project display name into setup-repo scaffold", () => {
+    const preclaim = fs.readFileSync("src/installer/steps/04-setup-repo/preclaim.ts", "utf-8");
+    assert.ok(preclaim.includes("project_display_name"), "preClaim should read display name from plan context");
+    assert.ok(preclaim.includes("String(displayName)"), "setup-repo.sh should receive display name as an argv");
   });
 });

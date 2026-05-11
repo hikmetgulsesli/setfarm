@@ -1,6 +1,6 @@
 #!/bin/bash
 # setup-repo.sh — Full repo setup for ANY project type
-# Usage: setup-repo.sh <REPO_PATH> <BRANCH> <STITCH_PROJECT_ID> <SCREEN_MAP_JSON>
+# Usage: setup-repo.sh <REPO_PATH> <BRANCH> <STITCH_PROJECT_ID> <SCREEN_MAP_JSON> <TECH_STACK> <PROJECT_DISPLAY_NAME>
 set -e
 
 REPO="$1"
@@ -8,6 +8,7 @@ BRANCH="$2"
 STITCH_PROJECT_ID="$3"
 SCREEN_MAP="$4"
 TECH_STACK="${5:-vite-react}"
+PROJECT_DISPLAY_NAME="${6:-}"
 STITCH_SCRIPT="$HOME/.openclaw/setfarm-repo/scripts/stitch-api.mjs"
 
 EXISTING_CODE=false
@@ -58,6 +59,10 @@ fi
 PROJECT_NAME=$(basename "$REPO")
 PACKAGE_NAME=$(printf "%s" "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._-]+/-/g; s/^-+//; s/-+$//')
 [ -n "$PACKAGE_NAME" ] || PACKAGE_NAME="setfarm-app"
+if [ -z "$PROJECT_DISPLAY_NAME" ]; then
+  PROJECT_DISPLAY_NAME=$(printf "%s" "$PROJECT_NAME" | sed -E 's/[-_]+/ /g; s/[[:space:]]+/ /g; s/^ //; s/ $//')
+fi
+HTML_TITLE=$(printf "%s" "$PROJECT_DISPLAY_NAME" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g')
 if ! git remote -v 2>/dev/null | grep -q origin; then
   # cuddly-sleeping-quail: gh repo create --push requires at least one commit.
   # If this is a fresh `git init` with no commits, create a README and commit
@@ -249,6 +254,7 @@ if [ ! -f package.json ]; then
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:run": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
@@ -278,7 +284,10 @@ EOF
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>$PROJECT_NAME</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
+    <title>$HTML_TITLE</title>
   </head>
   <body>
     <div id="root"></div>
@@ -327,6 +336,22 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
 });
+EOF
+      cat > vitest.config.ts <<'EOF'
+import { defineConfig } from 'vitest/config';
+
+export default defineConfig({
+  test: {
+    globals: true,
+    environment: 'jsdom',
+    setupFiles: ['./src/test/setup.ts'],
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+  },
+});
+EOF
+      mkdir -p src/test
+      cat > src/test/setup.ts <<'EOF'
+import '@testing-library/jest-dom/vitest';
 EOF
       cat > postcss.config.js <<'EOF'
 export default {
@@ -377,7 +402,7 @@ body {
   min-height: 100vh;
 }
 EOF
-      git add package.json index.html tsconfig.json tsconfig.node.json vite.config.ts postcss.config.js tailwind.config.js src/
+      git add package.json index.html tsconfig.json tsconfig.node.json vite.config.ts vitest.config.ts postcss.config.js tailwind.config.js src/
       git commit -m "chore: scaffold vite react app" 2>/dev/null || true
       ;;
     nextjs)
