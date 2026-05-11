@@ -8,6 +8,7 @@ import { implementModule } from "../../dist/installer/steps/06-implement/module.
 import { checkBuildGate, computeScopeFileLimits, detectPackageBuildCommand, normalize, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
 import { cleanupOutOfScopeWorktreeFiles } from "../../dist/installer/steps/06-implement/context.js";
 import { decideStorySystemSmokeGate } from "../../dist/installer/step-ops.js";
+import { checkStoryDesignCompliance } from "../../dist/installer/step-guardrails.js";
 import { STACK_RULES } from "../../dist/installer/steps/06-implement/stack-rules.js";
 import type { ParsedOutput } from "../../dist/installer/steps/types.js";
 
@@ -240,6 +241,32 @@ describe("06-implement step module", () => {
     const { hardLimit, softLimit } = computeScopeFileLimits(false, appScope, sharedScreens, implicitTestAndConfig);
     assert.ok(hardLimit >= 20, `hard limit ${hardLimit} should cover app shell and implicit test/config files`);
     assert.ok(softLimit >= 14, `soft limit ${softLimit} should scale with writable and implicit file count`);
+  });
+
+  it("checks critical UI contracts only against the story scope when scope is available", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-contract-scope-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "stitch"), { recursive: true });
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "stitch/design-tokens.css"), ":root { --color-background: #000; }\n");
+      fs.writeFileSync(path.join(tmp, "src/index.css"), "@import '../stitch/design-tokens.css';\n");
+      fs.writeFileSync(path.join(tmp, "src/screens/Allowed.tsx"), "export function Allowed() { return <span>Clean</span>; }\n");
+      fs.writeFileSync(path.join(tmp, "src/screens/Legacy.tsx"), "export function Legacy() { return <span className=\"material-symbols-outlined\">warning</span>; }\n");
+
+      assert.equal(checkStoryDesignCompliance({
+        repo: tmp,
+        story_workdir: tmp,
+        story_scope_files: "src/screens/Allowed.tsx",
+      }), null);
+
+      assert.match(checkStoryDesignCompliance({
+        repo: tmp,
+        story_workdir: tmp,
+        story_scope_files: "src/screens/Legacy.tsx",
+      }) || "", /CRITICAL DESIGN CONTRACT/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("detects package build scripts for implement build gate", () => {

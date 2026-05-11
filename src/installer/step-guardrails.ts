@@ -894,7 +894,41 @@ export function checkStoryDesignCompliance(
     return out;
   };
 
-  const contractErrors = runProjectContractChecks(workdir, collectSourceFiles(srcDir));
+  const parseScopeList = (value: string): string[] => value
+    .split(",")
+    .map(file => file.trim())
+    .filter(Boolean);
+  const scopedFiles = new Set<string>();
+  for (const file of parseScopeList(context["story_scope_files"] || "")) scopedFiles.add(file);
+  try {
+    const scopeFilePath = path.join(workdir, ".story-scope-files");
+    if (fs.existsSync(scopeFilePath)) {
+      for (const file of fs.readFileSync(scopeFilePath, "utf-8").split(/\r?\n/)) {
+        const trimmed = file.trim();
+        if (trimmed) scopedFiles.add(trimmed);
+      }
+    }
+  } catch {}
+
+  let contractFiles = [...scopedFiles]
+    .filter(file => /\.(ts|tsx|js|jsx|css|html)$/.test(file))
+    .filter(file => fs.existsSync(path.join(workdir, file)));
+  if (contractFiles.length === 0) {
+    try {
+      const diff = execFileSync("git", ["diff", "--name-only", "origin/main...HEAD"], {
+        cwd: workdir,
+        encoding: "utf-8",
+        timeout: GIT_DIFF_TIMEOUT,
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+      contractFiles = diff.split("\n")
+        .filter(file => /\.(ts|tsx|js|jsx|css|html)$/.test(file))
+        .filter(file => fs.existsSync(path.join(workdir, file)));
+    } catch {}
+  }
+  if (contractFiles.length === 0) contractFiles = collectSourceFiles(srcDir);
+
+  const contractErrors = runProjectContractChecks(workdir, contractFiles);
   if (contractErrors) {
     issues.push(`CRITICAL DESIGN CONTRACT:\n${contractErrors}`);
   }
