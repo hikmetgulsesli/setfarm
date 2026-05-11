@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { implementModule } from "../../dist/installer/steps/06-implement/module.js";
-import { checkBuildGate, computeScopeFileLimits, detectPackageBuildCommand, getOutOfScopeStoryFiles, normalize, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
+import { checkBuildGate, checkTestGate, computeScopeFileLimits, detectPackageBuildCommand, getOutOfScopeStoryFiles, normalize, sourceExposesWindowApp, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
 import { cleanupOutOfScopeWorktreeFiles } from "../../dist/installer/steps/06-implement/context.js";
 import { decideStorySystemSmokeGate } from "../../dist/installer/step-ops.js";
 import { checkStoryDesignCompliance } from "../../dist/installer/step-guardrails.js";
@@ -329,6 +329,81 @@ describe("06-implement step module", () => {
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
+  });
+
+  it("detects real window.app runtime bridge assignments only", () => {
+    assert.equal(sourceExposesWindowApp("window.app = { score: 10 };\n"), true);
+    assert.equal(sourceExposesWindowApp("globalThis['app'] = bridge;\n"), true);
+    assert.equal(sourceExposesWindowApp("(window as any).app = bridge;\n"), true);
+    assert.equal(sourceExposesWindowApp("(globalThis as any)['app'] = bridge;\n"), true);
+    assert.equal(sourceExposesWindowApp("window.game = bridge;\n"), false);
+    assert.equal(sourceExposesWindowApp("declare global { interface Window { app: unknown } }\n"), false);
+    assert.equal(sourceExposesWindowApp("// window.app = bridge;\nconst ready = true;\n"), false);
+    assert.equal(sourceExposesWindowApp("/* globalThis.app = bridge; */\nconst ready = true;\n"), false);
+  });
+
+  it("blocks implement completion when touched tests fail", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-test-gate-"));
+    try {
+      fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({
+        scripts: {
+          "test:run": "node -e \"console.error('synthetic test failure'); process.exit(2)\"",
+        },
+        devDependencies: { vitest: "1.0.0" },
+      }));
+      git(tmp, ["init", "-b", "main"]);
+      git(tmp, ["add", "."]);
+      git(tmp, ["commit", "-m", "baseline"]);
+      git(tmp, ["checkout", "-b", "story"]);
+
+      fs.mkdirSync(path.join(tmp, "src"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/failing.test.ts"), "import assert from 'node:assert/strict';\nassert.equal(1, 2);\n");
+      git(tmp, ["add", "."]);
+      git(tmp, ["commit", "-m", "add failing test"]);
+
+      const result = checkTestGate("US-001", "Failing Tests", tmp, "main", 0, 3);
+      assert.equal(result.passed, false);
+      assert.equal(result.category, "TEST_FAILED");
+      assert.match(result.reason || "", /src\/failing\.test\.ts/);
+      assert.match(result.reason || "", /synthetic test failure|Command failed/);
+      assert.match(result.suggestion || "", /TEST FAILURES DETECTED/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("does not run test gate when story did not touch tests", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-test-gate-clean-"));
+    try {
+      fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({
+        scripts: {
+          "test:run": "node -e \"console.error('should not run'); process.exit(2)\"",
+        },
+        devDependencies: { vitest: "1.0.0" },
+      }));
+      git(tmp, ["init", "-b", "main"]);
+      git(tmp, ["add", "."]);
+      git(tmp, ["commit", "-m", "baseline"]);
+      git(tmp, ["checkout", "-b", "story"]);
+
+      fs.mkdirSync(path.join(tmp, "src"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), "export function App() { return null; }\n");
+      git(tmp, ["add", "."]);
+      git(tmp, ["commit", "-m", "add app"]);
+
+      const result = checkTestGate("US-001", "No Test Touch", tmp, "main", 0, 3);
+      assert.equal(result.passed, true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("wires runtime bridge and touched-test gates into implement completion", () => {
+    const stepOps = fs.readFileSync(path.join(process.cwd(), "dist/installer/step-ops.js"), "utf-8");
+    assert.match(stepOps, /const bridgeResult = await checkRuntimeBridgeGate/);
+    assert.match(stepOps, /await failStep\(stepId, bridgeResult\.reason\)/);
+    assert.match(stepOps, /const testResult = checkTestGate/);
+    assert.match(stepOps, /await failStep\(stepId, testResult\.reason\)/);
   });
 
   it("defers full system smoke until later UI story owns the app surface", () => {

@@ -11,6 +11,7 @@ import { execFileSync } from "node:child_process";
 import { pgGet, pgQuery, pgRun } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
 import type { ParsedOutput, ValidationResult } from "../types.js";
+import { buildTestFixPrompt, detectTestFramework, runTests } from "../../test-generation.js";
 
 // ── Module interface methods ────────────────────────────────────
 
@@ -107,6 +108,47 @@ function summarizeBuildFailure(err: any): string {
     .slice(0, 3000);
 }
 
+function summarizeTestFailure(text: string): string {
+  return String(text || "")
+    .split("\n")
+    .map((line: string) => line.trimEnd())
+    .filter(Boolean)
+    .slice(-80)
+    .join("\n")
+    .slice(0, 3000);
+}
+
+function listTouchedFiles(workdir: string, baseBranch: string): string[] {
+  const files = new Set<string>();
+  try {
+    const diffOut = execFileSync("git", ["diff", "--name-only", `${baseBranch}...HEAD`], {
+      cwd: workdir, timeout: 10000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8",
+    }).trim();
+    diffOut.split("\n").map(s => s.trim()).filter(Boolean).forEach(f => files.add(f));
+  } catch {}
+  try {
+    const statusOut = execFileSync("git", ["status", "--porcelain"], {
+      cwd: workdir, timeout: 5000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8",
+    }).trim();
+    statusOut.split("\n").map(line => line.slice(3).trim()).filter(Boolean).forEach(f => files.add(f));
+  } catch {}
+  return [...files];
+}
+
+function stripSourceComments(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/.*$/gm, "");
+}
+
+export function sourceExposesWindowApp(source: string): boolean {
+  const clean = stripSourceComments(source);
+  return (
+    /\b(?:window|globalThis)\s*(?:\.\s*app|\[\s*["']app["']\s*\])\s*=/.test(clean) ||
+    /\(\s*(?:window|globalThis)\s+as\s+any\s*\)\s*(?:\.\s*app|\[\s*["']app["']\s*\])\s*=/.test(clean)
+  );
+}
+
 export function checkBuildGate(
   storyId: string,
   storyTitle: string,
@@ -136,6 +178,72 @@ export function checkBuildGate(
       suggestion: "Fix TypeScript/build errors in the story worktree, then run npm run build before completing",
     };
   }
+}
+
+export function checkTestGate(
+  storyId: string,
+  storyTitle: string,
+  workdir: string,
+  baseBranch: string,
+  retryCount: number,
+  maxRetries: number,
+): ScopeCheckResult {
+  if (!workdir || !baseBranch || retryCount >= maxRetries) return { passed: true };
+  const touched = listTouchedFiles(workdir, baseBranch);
+  const touchedTests = touched.filter(f => /\.(test|spec)\.(tsx?|jsx?)$/i.test(f));
+  if (touchedTests.length === 0) return { passed: true };
+
+  const framework = detectTestFramework(workdir);
+  if (framework.runner === "none") return { passed: true };
+
+  const result = runTests(workdir, framework);
+  if (result.passed) return { passed: true };
+  const summary = summarizeTestFailure([
+    result.errorSummary,
+    result.rawOutput,
+  ].filter(Boolean).join("\n"));
+  return {
+    passed: false,
+    reason: `TEST_FAILED: Story ${storyId} (${storyTitle}) reported STATUS: done but its touched test files fail under ${framework.command}. Touched tests: ${touchedTests.slice(0, 12).join(", ")}\n${summary}`,
+    category: "TEST_FAILED",
+    suggestion: buildTestFixPrompt(result),
+  };
+}
+
+export async function checkRuntimeBridgeGate(
+  storyId: string,
+  currentStoryDbId: string,
+  storyTitle: string,
+  workdir: string,
+): Promise<ScopeCheckResult> {
+  if (!workdir || !fs.existsSync(workdir)) return { passed: true };
+  const storyRow = await pgGet<{ description: string | null; acceptance_criteria: string | null; scope_files: string | null }>(
+    "SELECT description, acceptance_criteria, scope_files FROM stories WHERE id = $1",
+    [currentStoryDbId],
+  );
+  const storyText = [
+    storyTitle,
+    storyRow?.description || "",
+    storyRow?.acceptance_criteria || "",
+  ].join("\n");
+  if (!/\bwindow\.app\b/i.test(storyText)) return { passed: true };
+
+  const scopeFiles = parseScopeFiles(storyRow?.scope_files)
+    .filter(f => /\.(tsx?|jsx?)$/i.test(f))
+    .filter(f => fs.existsSync(path.join(workdir, f)));
+  for (const rel of scopeFiles) {
+    try {
+      const source = fs.readFileSync(path.join(workdir, rel), "utf-8");
+      if (sourceExposesWindowApp(source)) return { passed: true };
+    } catch {}
+  }
+
+  return {
+    passed: false,
+    reason: `RUNTIME_BRIDGE_MISSING: Story ${storyId} (${storyTitle}) acceptance criteria require window.app, but no scoped source file assigns window.app/globalThis.app. window.game, comments, or type declarations are not enough; expose the live runtime state bridge from a React effect or equivalent update point.`,
+    category: "RUNTIME_BRIDGE_MISSING",
+    suggestion: "Assign window.app/globalThis.app with live screen/status/score/level/lines/paused/gameOver/activePiece/nextPiece/storageStatus/lastError state and action hooks before reporting STATUS: done.",
+  };
 }
 
 

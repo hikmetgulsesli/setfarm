@@ -3999,8 +3999,10 @@ ${screenDescs}
           if (framework.runner !== "none") {
             const testResult = runTests(testRepo, framework);
             if (!testResult.passed) {
-              // 2026-04-21: WARN-ONLY. Test failures no longer fail story — verify step catches them
-              // via PR review. Avoids infinite retry loop when agent keeps producing flaky/failing tests.
+              // Full-suite failures stay advisory to avoid unrelated legacy/flaky
+              // tests trapping an isolated story. The implement guard below blocks
+              // the narrower case we care about: a story that touched/added tests
+              // and then reported done while those tests fail.
               logger.warn(`[test-runner] ${testResult.failedTests} test(s) failed for story ${storyRow?.story_id} (advisory, not blocking)`, { runId: step.run_id });
               context["test_warnings"] = `${testResult.failedTests} test(s) failed — see verify step review`;
               await updateRunContext(step.run_id, context);
@@ -4016,7 +4018,15 @@ ${screenDescs}
     // (Wave 6 fix A, Wave 10 Bug D, Wave 13 Bug P9, Wave 14 Bug Q)
     if (step.step_id === "implement" && storyStatus === STORY_STATUS.DONE && storyRow?.story_id) {
       try {
-        const { resolveStoryWorktree, checkScopeFilesGate, checkScopeEnforcement, checkBuildGate, checkQaFixSmokeGate } = await import("./steps/06-implement/guards.js");
+        const {
+          resolveStoryWorktree,
+          checkScopeFilesGate,
+          checkScopeEnforcement,
+          checkBuildGate,
+          checkTestGate,
+          checkRuntimeBridgeGate,
+          checkQaFixSmokeGate,
+        } = await import("./steps/06-implement/guards.js");
         const wd = await resolveStoryWorktree(step.current_story_id, context["story_workdir"] || "");
         const scopeLoopConfig = parseLoopConfigSafe(step.loop_config, step.run_id);
         const baseBr = context["story_base_ref"] || ((scopeLoopConfig?.mergeStrategy === "pr-each" || scopeLoopConfig?.verifyEach) ? "main" : (context["branch"] || ""));
@@ -4109,6 +4119,21 @@ ${screenDescs}
             context["scope_creep_warning"] = scopeResult.reason;
           }
 
+          // Runtime bridge gate: if a story contract explicitly requires
+          // window.app, block "done" output that only documents it or exposes a
+          // different ad-hoc bridge such as window.game.
+          const bridgeResult = await checkRuntimeBridgeGate(
+            storyRow.story_id, step.current_story_id, storyRow.title, wd,
+          );
+          if (!bridgeResult.passed && bridgeResult.category) {
+            context["previous_failure"] = bridgeResult.reason!;
+            context["failure_category"] = bridgeResult.category;
+            context["failure_suggestion"] = bridgeResult.suggestion!;
+            await updateRunContext(step.run_id, context);
+            await failStep(stepId, bridgeResult.reason!);
+            return { advanced: false, runCompleted: false };
+          }
+
           // Build gate: prompts ask agents to run local checks, but models can
           // still report done with unresolved TypeScript/module errors. Block
           // story completion here so compile failures retry inside implement
@@ -4123,6 +4148,22 @@ ${screenDescs}
             context["failure_suggestion"] = buildResult.suggestion!;
             await updateRunContext(step.run_id, context);
             await failStep(stepId, buildResult.reason!);
+            return { advanced: false, runCompleted: false };
+          }
+
+          // Test gate: if the story touched/added test files, those tests are
+          // part of the story's claimed contract. Do not let failing self-tests
+          // leak forward to verify as "done".
+          const testResult = checkTestGate(
+            storyRow.story_id, storyRow.title,
+            wd, baseBr, step.retry_count, step.max_retries,
+          );
+          if (!testResult.passed && testResult.category) {
+            context["previous_failure"] = testResult.reason!;
+            context["failure_category"] = testResult.category;
+            context["failure_suggestion"] = testResult.suggestion!;
+            await updateRunContext(step.run_id, context);
+            await failStep(stepId, testResult.reason!);
             return { advanced: false, runCompleted: false };
           }
 
