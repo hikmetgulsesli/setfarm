@@ -4,10 +4,13 @@
 
 export type ErrorCategory =
   | "GUARDRAIL_FAIL"
+  | "RUNTIME_BRIDGE_MISSING"
   | "TIMEOUT"
   | "CONTEXT_MISSING"
   | "BUILD_FAIL"
+  | "BUILD_FAILED"
   | "TEST_FAIL"
+  | "TEST_FAILED"
   | "DESIGN_MISMATCH"
   | "MERGE_CONFLICT"
   | "API_ERROR"
@@ -21,8 +24,11 @@ export interface ClassifiedError {
 }
 
 const PATTERNS: Array<{ pattern: RegExp; category: ErrorCategory; suggestion: string }> = [
+  { pattern: /^RUNTIME_BRIDGE_MISSING:/i, category: "RUNTIME_BRIDGE_MISSING", suggestion: "Expose the required window.app/globalThis.app runtime bridge from live state before reporting done" },
+  { pattern: /^TEST_FAILED:/i, category: "TEST_FAILED", suggestion: "Run the touched tests, fix the failing source or invalid test expectation, then report done only after tests pass" },
+  { pattern: /^BUILD_FAILED:/i, category: "BUILD_FAILED", suggestion: "Fix TypeScript/build errors in the story worktree, then run the build before completing" },
   { pattern: /GUARDRAIL|DESIGN UYUMSUZLUK|design.tokens|design compliance/i, category: "DESIGN_MISMATCH", suggestion: "Review exact design mismatch lines and apply the matching UI/design-token fix only" },
-  { pattern: /MISSING_INPUT|missing:\s*\w+|\[missing:/i, category: "CONTEXT_MISSING", suggestion: "Required template variable not set — check previous step output" },
+  { pattern: /MISSING_INPUT|\[missing:\s*\w+\]|(?:^|\n)\s*missing:\s*\w+/i, category: "CONTEXT_MISSING", suggestion: "Required template variable not set — check previous step output" },
   { pattern: /timed?\s*out|TIMEOUT|ABANDONED|agent.*dead/i, category: "TIMEOUT", suggestion: "Agent session exceeded timeout — retry or increase threshold" },
   { pattern: /npm ERR|build failed|tsc.*error|vite.*error|webpack.*error/i, category: "BUILD_FAIL", suggestion: "Build errors — check TypeScript types, missing imports, or dependency issues" },
   { pattern: /Tests?:\s+\d+\s+failed|test.*fail|FAIL\s+src\//i, category: "TEST_FAIL", suggestion: "Test failures — fix assertions or update test expectations" },
