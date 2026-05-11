@@ -10,10 +10,11 @@ import path from "node:path";
 import os from "node:os";
 import { pgClose, pgGet, pgMigrate, pgQuery, pgRun } from "./db-pg.js";
 import { loadWorkflowSpec } from "./installer/workflow-spec.js";
-import { resolveWorkflowDir, resolveSetfarmCli } from "./installer/paths.js";
+import { resolveWorkflowDir } from "./installer/paths.js";
 import { claimStep, completeStep } from "./installer/step-ops.js";
 import { failStep } from "./installer/step-fail.js";
 import { cleanupProjectEphemera, cleanupRunningRunOrphanedToolWorkers } from "./installer/cleanup-ops.js";
+import { buildPreclaimedPrompt, buildResolvedClaimBootstrapScript, claimTaskPreview } from "./spawner-prompt.js";
 
 const OPENCLAW_CLI = process.env.OPENCLAW_CLI || "/home/setrox/.local/bin/openclaw";
 const OPENCLAW_TASKS_DB = process.env.OPENCLAW_TASKS_DB || path.join(os.homedir(), ".openclaw", "tasks", "runs.sqlite");
@@ -836,33 +837,6 @@ function resolveAgentId(wfId: string, role: string, mapping: Record<string, stri
   if (Array.isArray(m)) return m;
   if (typeof m === "string" && m.length > 0) return [m];
   return [`${wfId}_${role}`];
-}
-
-function buildPreclaimedPrompt(wfId: string, role: string, agentId: string, outputFileId: string, claimFile: string): string {
-  const cli = resolveSetfarmCli();
-  const cliCommand = "/usr/bin/node " + cli;
-  return `Setfarm claim ready. First action MUST be exec. No prose or HEARTBEAT before exec.
-
-CLAIM_FILE=${claimFile}
-OUTPUT_FILE=/tmp/setfarm-output-${outputFileId}.txt
-
-First exec command should start with:
-CLAIM_FILE='${claimFile}'; OUTPUT_FILE='/tmp/setfarm-output-${outputFileId}.txt'; STEP_ID=$(jq -r '.stepId // empty' "$CLAIM_FILE"); WORKDIR=$(jq -r '(.workdir // .repo // (if (.input|type)=="object" then (.input.story_workdir // .input.repo // "") else "" end) // "")' "$CLAIM_FILE"); if [ -z "$WORKDIR" ]; then WORKDIR=$(jq -r 'if (.input|type)=="string" then .input else "" end' "$CLAIM_FILE" | tr -d '\\140' | sed -n 's/^WORKDIR:[[:space:]]*//p; s/^REPO:[[:space:]]*//p; s/.*\\(\\/home\\/setrox\\/projects\\/[^ ]*\\).*/\\1/p' | head -1); fi; case "$WORKDIR" in ""|*"<"*|*">"*|*"[missing:"*|*'$HOME'*|~*) WORKDIR="$HOME/.openclaw/workspace/agent-scratch";; esac; mkdir -p "$WORKDIR"; cd "$WORKDIR"; case "$(pwd)" in "$HOME"/.openclaw/setfarm-repo*) echo FATAL_PLATFORM_CWD; exit 1;; esac; printf 'STEP_ID=%s\nWORKDIR=%s\n' "$STEP_ID" "$(pwd)"; jq -r 'if (.input|type)=="object" then (.input.task // .input.current_story_title // .input.story_title // "") else .input end' "$CLAIM_FILE" | head -c 1200; echo
-
-Do ${wfId}/${role} work in WORKDIR only. Read the claim at ${claimFile} for exact requirements.
-Important: OpenClaw read/edit/write tools resolve relative paths against the configured agent workspace, not the shell cwd. When using read/edit/write tools for project files, use absolute paths under WORKDIR, for example "$WORKDIR/src/App.tsx". For exec commands, start each command with the WORKDIR extraction snippet above or pass workdir="$WORKDIR" after resolving it.
-Do not rely on CLAIM_FILE, OUTPUT_FILE, STEP_ID, or WORKDIR shell variables persisting across separate exec calls; each exec starts a fresh shell. If you need the claim again, use the literal path ${claimFile}. Write final output to the literal path /tmp/setfarm-output-${outputFileId}.txt. Do NOT run step peek/claim. No subagents/background delegation. No PR actions unless claim explicitly owns PR work.
-For normal quality findings in verify/review/QA/final-test, do NOT use step fail. Write STATUS: retry with concise findings and call step complete so the platform can route the batched fix back to implement. Use step fail only for infrastructure/unrecoverable execution failures.
-
-Complete with:
-cat > /tmp/setfarm-output-${outputFileId}.txt <<'SETFARM_EOF'
-STATUS: done
-<required claim output keys>
-SETFARM_EOF
-${cliCommand} step complete "$STEP_ID" --file /tmp/setfarm-output-${outputFileId}.txt
-
-Fail with: ${cliCommand} step fail "$STEP_ID" "specific reason"
-After complete/fail, reply HEARTBEAT_OK and stop.`;
 }
 
 function compactExitReason(err: unknown): string {
@@ -1891,9 +1865,11 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   const spawnId = Date.now() + "-" + Math.random().toString(36).slice(2, 10);
   const outputFileId = agentId + "-spawner-" + spawnId;
   const claimFile = path.join("/tmp", "claim-" + outputFileId + ".json");
-  const stalePath = path.join("/tmp", "setfarm-output-" + outputFileId + ".txt");
-  try { fs.unlinkSync(stalePath); } catch { /* didnt exist, fine */ }
+  const outputFile = path.join("/tmp", "setfarm-output-" + outputFileId + ".txt");
+  const bootstrapFile = path.join("/tmp", "setfarm-claim-bootstrap-" + outputFileId + ".sh");
+  try { fs.unlinkSync(outputFile); } catch { /* didnt exist, fine */ }
   try { fs.unlinkSync(claimFile); } catch { /* didnt exist, fine */ }
+  try { fs.unlinkSync(bootstrapFile); } catch { /* didnt exist, fine */ }
 
   const fullAgentId = `${wfId}_${role}`;
   let claim: Awaited<ReturnType<typeof claimStep>>;
@@ -1916,6 +1892,14 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   }
   const spawnCwd = safeAgentCwdFromClaimInput(claim.resolvedInput);
   fs.writeFileSync(claimFile, JSON.stringify({ stepId: claim.stepId, runId: claim.runId, workdir: spawnCwd, repo: spawnCwd, input: claim.resolvedInput }) + "\n");
+  fs.writeFileSync(bootstrapFile, buildResolvedClaimBootstrapScript({
+    claimFile,
+    outputFile,
+    stepId: claim.stepId || "",
+    workdir: spawnCwd,
+    taskPreview: claimTaskPreview(claim.resolvedInput),
+  }), { mode: 0o700 });
+  try { fs.chmodSync(bootstrapFile, 0o700); } catch { /* best-effort */ }
 
   // capture agent stdout/stderr to a transcript file for post-hoc diagnosis.
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
@@ -1924,7 +1908,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     return;
   }
 
-  const prompt = buildPreclaimedPrompt(wfId, role, agentId, outputFileId, claimFile);
+  const prompt = buildPreclaimedPrompt({ wfId, role, outputFile, claimFile, bootstrapFile });
   console.log("[spawner] Spawning " + agentId + " for " + wfId + "/" + role + " after pre-claim (active: " + activeProcesses.size + ")");
   claimingSpawns.delete(key);
   try { fs.mkdirSync(path.dirname(transcriptPath), { recursive: true }); } catch {}
@@ -1974,7 +1958,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     startedAtMs,
     transcriptPath,
     initialTranscriptSize,
-    outputPath: stalePath,
+    outputPath: outputFile,
     spawnCwd,
     sessionId,
     sessionKey,
@@ -2004,7 +1988,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
       fs.appendFileSync(transcriptPath, "--- SPAWN ERROR ---\n" + String((err as any).message || err) + "\n--- FINISHED " + new Date().toISOString() + " ---\n");
     } catch (e) { console.warn("[spawner] transcript write failed: " + String(e)); }
     console.warn("[spawner] " + agentId + " spawn error: " + ((err as any).message || err) + " (transcript: " + transcriptPath + ")");
-    if (isCurrentProcess && !shuttingDown && claim.stepId) void failClaimIfStillRunning(claim.stepId, agentId, wfId, role, transcriptPath, err, startedAtMs, spawnCwd, stalePath);
+    if (isCurrentProcess && !shuttingDown && claim.stepId) void failClaimIfStillRunning(claim.stepId, agentId, wfId, role, transcriptPath, err, startedAtMs, spawnCwd, outputFile);
   });
   child.once("exit", (code, signal) => {
     processExited = true;
@@ -2018,7 +2002,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     const err = code === 0 ? null : new Error(`openclaw agent exited code=${code ?? ""} signal=${signal ?? ""}`);
     if (err) {
       console.warn("[spawner] " + agentId + " exited: " + ((err as any).message || err) + " (transcript: " + transcriptPath + ")");
-      if (isCurrentProcess && !shuttingDown && claim.stepId) void failClaimIfStillRunning(claim.stepId, agentId, wfId, role, transcriptPath, err, startedAtMs, spawnCwd, stalePath);
+      if (isCurrentProcess && !shuttingDown && claim.stepId) void failClaimIfStillRunning(claim.stepId, agentId, wfId, role, transcriptPath, err, startedAtMs, spawnCwd, outputFile);
     }
     else {
       console.log("[spawner] " + agentId + " completed (transcript: " + transcriptPath + ")");
@@ -2032,7 +2016,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
           new Error("agent exited with code 0 without calling setfarm step complete/fail"),
           startedAtMs,
           spawnCwd,
-          stalePath,
+          outputFile,
         );
       }
     }
