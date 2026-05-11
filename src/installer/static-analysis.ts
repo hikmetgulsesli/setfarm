@@ -79,6 +79,12 @@ function lineFor(content: string, pattern: RegExp): number {
   return content.slice(0, match.index).split("\n").length;
 }
 
+function maskComments(content: string): string {
+  return content
+    .replace(/\/\*[\s\S]*?\*\//g, match => match.replace(/[^\n]/g, " "))
+    .replace(/(^|[^:])\/\/.*$/gm, (_match, prefix) => `${prefix}${" ".repeat(Math.max(0, _match.length - prefix.length))}`);
+}
+
 function primaryFontFamily(value: string): string {
   const [first] = value.split(",");
   return (first || "")
@@ -103,14 +109,16 @@ export function runProjectContractChecks(repoPath: string, files: string[]): str
       continue;
     }
 
-    const materialPattern = /\bmaterial-symbols(?:-outlined)?\b|\bmaterial-icons\b|Material\+Symbols|Material Symbols/i;
-    if (materialPattern.test(content)) {
-      issues.push(`${rel}:${lineFor(content, materialPattern)} — UI_CONTRACT: Material Symbols/icon fonts are not allowed; replace with inline SVG components or an already-installed SVG icon library.`);
+    const uncommented = maskComments(content);
+
+    const materialPattern = /(?:className|class)\s*=\s*(?:"[^"]*\bmaterial-(?:symbols(?:-outlined)?|icons)\b[^"]*"|'[^']*\bmaterial-(?:symbols(?:-outlined)?|icons)\b[^']*'|{`[^`]*\bmaterial-(?:symbols(?:-outlined)?|icons)\b[^`]*`})|fonts\.googleapis\.com\/css2\?family=Material\+(?:Symbols|Icons)|font-family\s*:\s*["']?Material (?:Symbols|Icons)/i;
+    if (materialPattern.test(uncommented)) {
+      issues.push(`${rel}:${lineFor(uncommented, materialPattern)} — UI_CONTRACT: Material Symbols/icon fonts are not allowed; replace with inline SVG components or an already-installed SVG icon library.`);
     }
 
-    const transitionAllPattern = /\btransition-all\b|transition\s*:\s*all\b/i;
-    if (transitionAllPattern.test(content)) {
-      issues.push(`${rel}:${lineFor(content, transitionAllPattern)} — UI_CONTRACT: blanket transition-all is not allowed; use transition-colors, transition-transform, transition-opacity, or explicit CSS properties.`);
+    const transitionAllPattern = /(?:className|class)\s*=\s*(?:"[^"]*\btransition-all\b[^"]*"|'[^']*\btransition-all\b[^']*'|{`[^`]*\btransition-all\b[^`]*`})|transition\s*:\s*all\b/i;
+    if (transitionAllPattern.test(uncommented)) {
+      issues.push(`${rel}:${lineFor(uncommented, transitionAllPattern)} — UI_CONTRACT: blanket transition-all is not allowed; use transition-colors, transition-transform, transition-opacity, or explicit CSS properties.`);
     }
 
     const emojiPattern = /[\u{1F300}-\u{1FAFF}]/u;

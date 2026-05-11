@@ -74,4 +74,27 @@ describe("verify static analysis", () => {
       fs.rmSync(repo, { recursive: true, force: true });
     }
   });
+
+  it("does not flag UI contract keywords that only appear in comments", () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-static-contract-comments-"));
+    try {
+      fs.mkdirSync(path.join(repo, "src"), { recursive: true });
+      fs.writeFileSync(path.join(repo, "src", "Icons.tsx"), `
+        /* Inline SVG icons — Material Symbols are not allowed per UI contract */
+        // Do not use transition-all in className.
+        export function Icon() {
+          return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h16" /></svg>;
+        }
+      `);
+      fs.writeFileSync(path.join(repo, "src", "index.css"), `
+        /* Avoid transition: all in real CSS. */
+        button { transition: color 160ms ease; }
+      `);
+
+      const report = runProjectContractChecks(repo, ["src/Icons.tsx", "src/index.css"]);
+      assert.equal(report, "");
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
 });
