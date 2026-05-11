@@ -37,6 +37,7 @@ import { cleanupAbandonedSteps as _cleanupAbandonedSteps, cleanupProjectEphemera
 import { isVerifyRetryMergeBlocker, isVerifyRetryQualityFailure } from "./verify-retry-routing.js";
 import { cleanupOutOfScopeWorktreeFiles } from "./steps/06-implement/context.js";
 import { sanitizeDesignMismatchFeedback } from "./error-taxonomy.js";
+import { sanitizeAgentPromptContracts } from "./prompt-contracts.js";
 import {
   getRunStatus, getRunContext, updateRunContext, failRun,
   getWorkflowId as _getWorkflowId,
@@ -2031,6 +2032,7 @@ async function claimSingleStep(
   } catch (_pe) {
     logger.warn(`[step-module] buildPrompt failed (falling back to template): ${String(_pe).slice(0, 200)}`, { runId: step.run_id });
   }
+  resolvedInput = sanitizeAgentPromptContracts(resolvedInput);
 
   // MISSING_INPUT_GUARD (v1.5.53): First miss -> retry step, second -> fail run.
   // WAL race condition can cause false positives — one retry absorbs that.
@@ -2296,7 +2298,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
             } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
           }
           const prunedContextLoop = pruneContextForStep(context, step.step_id);
-          const resolvedInput = resolveTemplate(step.input_template, prunedContextLoop);
+          const resolvedInput = sanitizeAgentPromptContracts(resolveTemplate(step.input_template, prunedContextLoop));
           logger.info(`[claim-idempotent] Re-issued running story ${runningStory.story_id} to ${agentId}`, { runId: step.run_id, stepId: step.step_id });
           return { found: true, stepId: step.id, runId: step.run_id, storyId: runningStory.story_id, storyDbId: runningStory.id, resolvedInput };
         }
@@ -2756,7 +2758,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
       if (loopBytesBefore > loopBytesAfter + 1000) {
         logger.info(`[context-prune] ${step.step_id} (loop story=${nextStory.story_id}): ${loopBytesBefore}→${loopBytesAfter} bytes (${Math.round((1 - loopBytesAfter / loopBytesBefore) * 100)}% trimmed)`, { runId: step.run_id });
       }
-      let resolvedInput = resolveTemplate(step.input_template, prunedContextLoop);
+      let resolvedInput = sanitizeAgentPromptContracts(resolveTemplate(step.input_template, prunedContextLoop));
 
       // Item 7: MISSING_INPUT_GUARD inside claim flow (v1.5.53: retry once before failing run)
       const allMissing = [...new Set([...resolvedInput.matchAll(/\[missing:\s*(\w+)\]/gi)].map(m => m[1].toLowerCase()))];
