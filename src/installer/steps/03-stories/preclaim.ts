@@ -131,6 +131,33 @@ function unique(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
 }
 
+function screenDisplayTitle(screen: PredictedScreen): string {
+  const title = compactText(screen.title || screen.screenId, screen.screenId)
+    .replace(/\s+screen$/i, "")
+    .trim();
+  return title || screen.screenId;
+}
+
+function formatScreenListTitle(screens: PredictedScreen[], fallback: string): string {
+  const titles = unique(screens.map(screenDisplayTitle));
+  if (titles.length === 0) return fallback;
+  if (titles.length === 1) return `${titles[0]} screen`;
+  if (titles.length === 2) return `${titles[0]} and ${titles[1]} screens`;
+  if (titles.length === 3) return `${titles[0]}, ${titles[1]} and ${titles[2]} screens`;
+  return `${titles[0]}, ${titles[1]} and ${titles.length - 2} more screens`;
+}
+
+function storyGroupTitle(group: StoryGroup): string {
+  return formatScreenListTitle(group.screens, group.title);
+}
+
+function storyGroupDescription(group: StoryGroup): string {
+  const titles = unique(group.screens.map(screenDisplayTitle));
+  const owned = titles.length > 0 ? titles.join(", ") : group.title;
+  const plural = titles.length === 1 ? "screen" : "screens";
+  return `Implement only the owned generated ${plural}: ${owned}. Wire visible controls declared for those ${plural} in DESIGN_DOM. Do not implement broader ${group.key} behavior unless it is present in these owned screens, and do not edit shared app files or sibling screen groups.`;
+}
+
 export function buildAcceptanceCriteria(repo: string): string[] {
   const reqs = collectUiBehaviorRequirements(repo);
   const criteria = reqs.slice(0, 30).map((req) => {
@@ -395,16 +422,17 @@ export function buildAutoStoriesOutput(params: {
       const groupScreenFiles = unique(group.screens.map((s) => s.filePath));
       const groupScreenIds = unique(group.screens.map((s) => s.screenId));
       const scopeFiles = unique(groupScreenFiles);
+      const title = storyGroupTitle(group);
       stories.push({
         id,
-        title: `${product} - ${group.title}`,
-        description: `${group.description} Implement the owned generated screens with visible form, navigation, filtering, retry, toggle, and selection behavior from DESIGN_DOM.`,
-        acceptanceCriteria: buildAcceptanceCriteriaForScreens(repo, groupScreenIds, group.title),
+        title: `${product} - ${title}`,
+        description: storyGroupDescription(group),
+        acceptanceCriteria: buildAcceptanceCriteriaForScreens(repo, groupScreenIds, title),
         depends_on: ["US-001"],
         screens: groupScreenIds,
         scope_files: scopeFiles,
         shared_files: APP_SCOPE_FILES,
-        scope_description: `${group.title}: own only ${scopeFiles.join(", ")}; use shared app state files without taking ownership.`,
+        scope_description: `${title}: own only ${scopeFiles.join(", ")}. Shared files are read-only context; do not edit App shell, shared state, domain/types, hooks, utilities, or sibling screens to satisfy unscoped behavior.`,
         file_skeletons: fileSkeletons(scopeFiles, screenFileSet),
       });
     });

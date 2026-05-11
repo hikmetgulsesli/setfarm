@@ -213,11 +213,21 @@ describe("03-stories step module", () => {
       assert.match(allText, /never through textContent\/DOM-label matching/);
       assert.match(allText, /Reducer\/state transitions are pure and immutable/);
       assert.match(allText, /generated screen button wiring is owned by the screen stories/);
-      assert.match(allText, /Game options and controls screens/);
-      assert.match(allText, /Pause, game-over and help states/);
+      assert.match(allText, /Next Piece Preview screen/);
+      assert.match(allText, /Game Options screen/);
+      assert.match(allText, /Game Over screen/);
       assert.doesNotMatch(allText, /touch\/click controls produce visible gameplay state changes/);
       assert.doesNotMatch(allText, /profile\/account/i);
       assert.doesNotMatch(allText, /Settings, profile and account screens/);
+      const nextPreviewStory = stories.find((s: any) => s.scope_files.includes("src/screens/NextPiecePreview.tsx"));
+      assert.ok(nextPreviewStory, "expected a dedicated NextPiecePreview story");
+      assert.deepEqual(nextPreviewStory.scope_files, ["src/screens/NextPiecePreview.tsx"]);
+      assert.match(nextPreviewStory.title, /Next Piece Preview screen$/);
+      assert.doesNotMatch([
+        nextPreviewStory.title,
+        nextPreviewStory.description,
+        nextPreviewStory.scope_description,
+      ].join("\n"), /\b(score|status|hud|level|line count|queue)\b/i);
       assert.equal(stories[0].scope_files.includes("src/hooks/useAppState.ts"), true);
       assert.equal(stories[0].shared_files.includes("src/screens/GameBoard.tsx"), true);
     } finally {
