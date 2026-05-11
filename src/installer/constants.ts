@@ -213,7 +213,7 @@ export const STEP_CONTEXT_ALLOWLIST: Record<string, string[]> = {
     "recent_stories_code", "src_tree", "project_tree", "component_registry",
     "api_routes", "installed_packages", "shared_code",
     "implement_phase", "scope_creep_warning", "test_generation_prompt",
-    "file_skeletons",
+    "file_skeletons", "scope_reminder",
     "detected_platform", "implement_base_commit",
     "story_scope_files", "story_scope_description", "story_shared_files",
     "verify_feedback", "claim_generation",

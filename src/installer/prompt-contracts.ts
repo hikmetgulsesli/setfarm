@@ -23,6 +23,12 @@ const STALE_DESIGN_DOM_NAV_RULE =
 const STALE_HIDE_UNWIRED_BUTTON_RULE =
   /- onClick=\{\(\) => \{\}\} is FORBIDDEN — if a button has no functionality, do not render it/g;
 
+const STALE_DESIGN_FIRST_LINK_LINE =
+  /- LINKS: every link must point to a real route\./g;
+
+const STALE_DESIGN_CONTRACT_NAV_RULE =
+  /1\. Every navigation link must route to (?:its|a real) page\.(?: If the Stitch design shows a\n\s+control whose target is not in the PRD, implement a project-specific behavior\n\s+first; if truly out of scope, make it visibly disabled\/hidden\.)?/g;
+
 export function sanitizeAgentPromptContracts(input: string): string {
   let output = input;
 
@@ -83,6 +89,27 @@ export function sanitizeAgentPromptContracts(input: string): string {
       "  wire the control to visible behavior, or mark it explicitly disabled/hidden",
       "  only when the story says it is unavailable. Do not remove Stitch controls",
       "  just because behavior is not implemented yet.",
+    ].join("\n"),
+  );
+
+  output = output.replace(
+    STALE_DESIGN_FIRST_LINK_LINE,
+    [
+      "- LINKS: every visible link must navigate, change visible state, or be",
+      "  intentionally disabled. Preserve generated Stitch `<a>` tags, className,",
+      "  nesting and layout; do not replace anchors with `<span>` just to remove",
+      "  `href=\"#\"`.",
+    ].join("\n"),
+  );
+
+  output = output.replace(
+    STALE_DESIGN_CONTRACT_NAV_RULE,
+    [
+      "1. Every navigation anchor must preserve the generated `<a>` tag, className,",
+      "   nesting and layout. If the route is real and in scope, navigate there. If the",
+      "   target is a Stitch placeholder or out of scope, keep the anchor and add",
+      "   visible in-screen behavior or an explicit disabled state; do not replace it",
+      "   with `<span>`.",
     ].join("\n"),
   );
 

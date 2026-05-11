@@ -830,6 +830,8 @@ steps:
       WORKDIR or MAIN_REPO during implement.
       Common missing packages: lucide-react, recharts, react-router-dom, chart.js, @types/*
 
+      STORY SCOPE RULE: {{scope_reminder}}
+
       !include story-loop-context.md
 
       === PROJECT CONTEXT (USE THIS — do not recreate it, import it) ===
@@ -871,14 +873,21 @@ steps:
       DESIGN DOM RULES (MANDATORY — FOLLOW EXACTLY):
       - Every in-scope button in this story's DESIGN_DOM screen(s) must exist in code with the same label and icon
       - Every in-scope input must have the same type and placeholder
-      - Every in-scope nav link must route to the correct page/modal
+      - Every in-scope nav anchor must preserve the generated `<a>` tag, className,
+        nesting and layout. If the route is real and in scope, navigate there. If
+        the target is a Stitch placeholder or out of scope, keep the anchor and
+        add visible in-screen behavior or an explicit disabled state; do not
+        replace it with `<span>`.
       - Section count and structure must match
       - Adapt CSS classes to var(--token) format
       - NEVER change button labels from Stitch (if Stitch says ENTER, code must say ENTER)
       - NEVER skip keyboard keys — if Stitch shows Q W E R T..., code must have Q W E R T... in that order
       - If DESIGN_DOM has a tabBar array, implement it as a bottom navigation with ALL tabs functional
       - Every tab must open its corresponding page/modal — no empty onClick handlers
-      - onClick={() => {}} is FORBIDDEN — if a button has no functionality, do not render it
+      - onClick={() => {}} is FORBIDDEN. Preserve generated control structure;
+        wire the control to visible behavior, or mark it explicitly disabled/hidden
+        only when the story says it is unavailable. Do not remove Stitch controls
+        just because behavior is not implemented yet.
       - Glassmorphism (backdrop-blur, opacity) must match Stitch exactly
       - If Stitch has a SHARE button or countdown timer, implement it
 

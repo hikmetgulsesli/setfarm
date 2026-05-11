@@ -57,9 +57,11 @@ LANGUAGE:
   names.
 
 DESIGN CONTRACT RULES:
-1. Every navigation link must route to its page. If the Stitch design shows a
-   control whose target is not in the PRD, implement a project-specific behavior
-   first; if truly out of scope, make it visibly disabled/hidden.
+1. Every navigation anchor must preserve the generated `<a>` tag, className,
+   nesting and layout. If the route is real and in scope, navigate there. If the
+   target is a Stitch placeholder or out of scope, keep the anchor and add
+   visible in-screen behavior or an explicit disabled state; do not replace it
+   with `<span>`.
 2. Every button must have a functional onClick handler that changes state,
    opens a modal/drawer, navigates, submits a form, or is intentionally disabled.
 3. Every input must have onChange and controlled state.

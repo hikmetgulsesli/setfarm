@@ -143,6 +143,12 @@ function parseScopeFileList(raw: string | null | undefined): string[] {
   }
 }
 
+function prependScopeReminderIfMissing(input: string, context: Record<string, string>): string {
+  const reminder = String(context["scope_reminder"] || "").trim();
+  if (!reminder || /\bSCOPE ENFORCEMENT:/i.test(input)) return input;
+  return `${reminder}\n\n${input}`;
+}
+
 async function detectVerifyScopeDiffFailure(
   runId: string,
   storyId: string,
@@ -2367,7 +2373,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
             } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
           }
           const prunedContextLoop = pruneContextForStep(context, step.step_id);
-          const resolvedInput = sanitizeAgentPromptContracts(resolveTemplate(step.input_template, prunedContextLoop));
+          const resolvedInput = sanitizeAgentPromptContracts(prependScopeReminderIfMissing(resolveTemplate(step.input_template, prunedContextLoop), context));
           logger.info(`[claim-idempotent] Re-issued running story ${runningStory.story_id} to ${agentId}`, { runId: step.run_id, stepId: step.step_id });
           return { found: true, stepId: step.id, runId: step.run_id, storyId: runningStory.story_id, storyDbId: runningStory.id, resolvedInput };
         }
@@ -2827,7 +2833,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
       if (loopBytesBefore > loopBytesAfter + 1000) {
         logger.info(`[context-prune] ${step.step_id} (loop story=${nextStory.story_id}): ${loopBytesBefore}→${loopBytesAfter} bytes (${Math.round((1 - loopBytesAfter / loopBytesBefore) * 100)}% trimmed)`, { runId: step.run_id });
       }
-      let resolvedInput = sanitizeAgentPromptContracts(resolveTemplate(step.input_template, prunedContextLoop));
+      let resolvedInput = sanitizeAgentPromptContracts(prependScopeReminderIfMissing(resolveTemplate(step.input_template, prunedContextLoop), context));
 
       // Item 7: MISSING_INPUT_GUARD inside claim flow (v1.5.53: retry once before failing run)
       const allMissing = [...new Set([...resolvedInput.matchAll(/\[missing:\s*(\w+)\]/gi)].map(m => m[1].toLowerCase()))];

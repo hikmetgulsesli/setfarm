@@ -15,7 +15,11 @@ LAYOUT RULES (MANDATORY):
 7. Read `stitch/<screen>.html` for full detail if the skeleton is unclear.
 
 DESIGN CONTRACT RULES:
-1. Every navigation link must route to a real page.
+1. Every navigation anchor must preserve the generated `<a>` tag, className,
+   nesting and layout. If the route is real and in scope, navigate there. If the
+   target is a Stitch placeholder or out of scope, keep the anchor and add
+   visible in-screen behavior or an explicit disabled state; do not replace it
+   with `<span>`.
 2. Every button must have functional behavior. Priority:
    a) Best: implement the full project-specific feature, panel, modal, page, or
       flow described by PRD/Stitch/DESIGN_DOM.
