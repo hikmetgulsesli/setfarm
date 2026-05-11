@@ -59,7 +59,7 @@ const SMOKE_INFRA_FAILURE = /\b(agent-browser|browser control|playwright|chromiu
 const QA_FIX_MAX_STORIES = Math.max(1, parseInt(process.env.SETFARM_QA_FIX_MAX_STORIES || "4", 10) || 4);
 const QA_FIX_REPEAT_LIMIT = Math.max(1, parseInt(process.env.SETFARM_QA_FIX_REPEAT_LIMIT || "2", 10) || 2);
 
-function humanizeProjectDisplayName(input: string): string {
+export function humanizeProjectDisplayName(input: string): string {
   const cleaned = String(input || "")
     .replace(/^(?:Project|Proje)\s*:\s*/i, "")
     .replace(/\s+(?:build|create|make|develop|implement|design|write|add|fix|yap|olustur|oluştur|kur|gelistir|geliştir)\b[\s\S]*$/i, "")
@@ -84,7 +84,7 @@ function humanizeProjectDisplayName(input: string): string {
   }).join(" ").slice(0, 80);
 }
 
-function normalizeMissionControlHostname(input: string, fallbackProjectName: string): string {
+export function normalizeMissionControlHostname(input: string, fallbackProjectName: string): string {
   const fallback = `${fallbackProjectName}.setrox.com.tr`;
   let value = String(input || "").trim();
   if (!value) return fallback;
@@ -112,6 +112,20 @@ function normalizeMissionControlHostname(input: string, fallbackProjectName: str
     .toLowerCase();
 
   return /^[a-z0-9.-]+$/.test(value) && value.includes(".") ? value : fallback;
+}
+
+export function normalizeMissionControlSummary(input: string, displayName: string): string {
+  const raw = String(input || "").replace(/\s+/g, " ").trim();
+  const looksLikeRawTask =
+    /^(?:Project|Proje)\s*:/i.test(raw) ||
+    /\b(?:Build|Create|Make|Develop|Implement)\s+a\b/i.test(raw) ||
+    /\bReact\/Vite\/TypeScript\b/i.test(raw) ||
+    /\bRequirements?\s*:/i.test(raw) ||
+    raw.length > 180;
+  if (!raw || looksLikeRawTask) {
+    return `${displayName} web application.`;
+  }
+  return raw.slice(0, 180);
 }
 
 function isQaFixStoryId(storyId: string | null | undefined): boolean {
@@ -3475,15 +3489,19 @@ ${screenDescs}
             const canonicalDomain = normalizeMissionControlHostname(mcData.domain || parsed["deploy_url"] || expectedDomain, projectName);
             const rawDisplayName = mcData.displayName || mcData.display_name || context["project_display_name"] || context["project_name"] || projectName;
             const canonicalDisplayName = humanizeProjectDisplayName(rawDisplayName);
+            const canonicalSummary = normalizeMissionControlSummary(mcData.summary || "", canonicalDisplayName);
             const needsPatch =
               mcData.domain !== canonicalDomain ||
               !mcData.displayName ||
               mcData.displayName === projectName ||
-              mcData.displayName === mcData.name;
+              mcData.displayName === mcData.name ||
+              mcData.displayName !== canonicalDisplayName ||
+              mcData.summary !== canonicalSummary;
 
             if (needsPatch) {
               const patchBody = JSON.stringify({
                 displayName: canonicalDisplayName,
+                summary: canonicalSummary,
                 domain: canonicalDomain,
               });
               execFileSync("curl", [

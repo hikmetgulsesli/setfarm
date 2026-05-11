@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { deployModule } from "../../dist/installer/steps/11-deploy/module.js";
 import { normalize, validateOutput } from "../../dist/installer/steps/11-deploy/guards.js";
+import { humanizeProjectDisplayName, normalizeMissionControlHostname, normalizeMissionControlSummary } from "../../dist/installer/step-ops.js";
 import type { ParsedOutput } from "../../dist/installer/steps/types.js";
 
 describe("11-deploy step module", () => {
@@ -75,5 +76,35 @@ describe("11-deploy step module", () => {
     const parsed = { status: "DONE\nDEPLOY_URL: https://x" } as ParsedOutput;
     normalize(parsed);
     assert.equal(parsed["status"], "done");
+  });
+
+  it("normalizes Mission Control hostnames to hostname-only domains", () => {
+    assert.equal(
+      normalizeMissionControlHostname("https://https//field-service-control-0510.setrox.com.tr", "field-service-control-0510"),
+      "field-service-control-0510.setrox.com.tr",
+    );
+    assert.equal(
+      normalizeMissionControlHostname("https://field-service-control-0510.setrox.com.tr/path?q=1", "field-service-control-0510"),
+      "field-service-control-0510.setrox.com.tr",
+    );
+    assert.equal(
+      normalizeMissionControlHostname("not a host", "field-service-control-0510"),
+      "field-service-control-0510.setrox.com.tr",
+    );
+  });
+
+  it("normalizes Mission Control display names and raw task summaries", () => {
+    assert.equal(
+      humanizeProjectDisplayName("field-service-control-0510 Build a browser-based React/Vite/TypeScript field service control room"),
+      "Field Service Control",
+    );
+    assert.equal(
+      normalizeMissionControlSummary("Project: field-service-control-0510 Build a browser-based React/Vite/TypeScript field service control room", "Field Service Control"),
+      "Field Service Control web application.",
+    );
+    assert.equal(
+      normalizeMissionControlSummary("Regional dispatch dashboard for active jobs.", "Field Service Control"),
+      "Regional dispatch dashboard for active jobs.",
+    );
   });
 });
