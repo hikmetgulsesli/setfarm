@@ -23,6 +23,28 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+function cssStringValue(value) {
+  return `"${String(value || "")
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\r?\n/g, ' ')
+    .trim()}"`;
+}
+
+function sanitizeCssCustomPropertyValue(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return '';
+  if (/^["'][^"']+["']$/.test(text)) return text;
+  if (/[;{}<>]/.test(text)) return cssStringValue(text);
+  if (/^[A-Za-z][A-Za-z0-9 -]*$/.test(text) && /\s/.test(text)) return cssStringValue(text);
+  return text;
+}
+
+function normalizeGoogleFontFamily(raw) {
+  const decoded = decodeURIComponent(String(raw || '').replace(/\+/g, ' '));
+  return decoded.split(':')[0].trim();
+}
+
 // Load API key from .env
 function loadApiKey() {
   const envPath = resolve(__dirname, '.env');
@@ -41,9 +63,14 @@ function loadApiKey() {
   throw new Error('STITCH_API_KEY not found in .env or environment');
 }
 
-const API_KEY = loadApiKey();
 const MCP_ENDPOINT = 'https://stitch.googleapis.com/mcp';
 let requestId = 0;
+let apiKey = null;
+
+function getApiKey() {
+  if (!apiKey) apiKey = loadApiKey();
+  return apiKey;
+}
 
 // JSON-RPC call helper
 async function rpc(method, params = {}) {
@@ -59,7 +86,7 @@ async function rpc(method, params = {}) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-Goog-Api-Key': API_KEY,
+      'X-Goog-Api-Key': getApiKey(),
     },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(300_000), // 5 min timeout
@@ -887,7 +914,7 @@ const commands = {
 
       // Source 3: Google Fonts <link> tags -> --font-google-{family}: {family}
       for (const fontMatch of content.matchAll(/fonts\.googleapis\.com\/css2\?family=([^&"]+)/g)) {
-        const family = decodeURIComponent(fontMatch[1].replace(/\+/g, ' ').replace(/:wght.*/, ''));
+        const family = normalizeGoogleFontFamily(fontMatch[1]);
         if (!family.includes('Material') && !family.includes('Icon')) {
           googleFonts.add(family);
         }
@@ -914,8 +941,10 @@ const commands = {
     let css = '/* design-tokens.css -- auto-generated from Stitch HTML */\n:root {\n';
     const jsonTokens = {};
     for (const [prop, value] of properties) {
-      css += `  ${prop}: ${value};\n`;
-      jsonTokens[prop] = value;
+      const safeValue = sanitizeCssCustomPropertyValue(value);
+      if (!safeValue) continue;
+      css += `  ${prop}: ${safeValue};\n`;
+      jsonTokens[prop] = safeValue;
     }
     css += '}\n';
 

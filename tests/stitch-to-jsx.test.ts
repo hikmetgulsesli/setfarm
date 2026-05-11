@@ -231,4 +231,42 @@ describe("stitch-to-jsx", () => {
     }
   });
 
+  it("extracts build-safe design tokens from Google font URLs", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-token-css-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      writeHtml(path.join(stitchDir, "main.html"), `
+        <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:ital,wght@0,100..900;1,100..900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+        <script id="tailwind-config">
+          tailwind.config = {
+            theme: {
+              extend: {
+                fontFamily: {
+                  body: ["Hanken Grotesk", "sans-serif"],
+                  mono: ["JetBrains Mono", "monospace"],
+                },
+                colors: { surface: "#101116" }
+              }
+            }
+          };
+        </script>
+      `);
+
+      execFileSync("node", ["scripts/stitch-api.mjs", "extract-tokens", stitchDir], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const css = fs.readFileSync(path.join(stitchDir, "design-tokens.css"), "utf-8");
+      assert.match(css, /--font-body: Hanken Grotesk, sans-serif;/);
+      assert.match(css, /--font-google-0: "Hanken Grotesk";/);
+      assert.doesNotMatch(css, /100\.\.900;1,100\.\.900/);
+      const fontGoogleLine = css.split(/\r?\n/).find(line => line.includes("--font-google-0")) || "";
+      assert.equal((fontGoogleLine.match(/;/g) || []).length, 1);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
 });
