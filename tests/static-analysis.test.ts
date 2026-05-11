@@ -81,6 +81,7 @@ describe("verify static analysis", () => {
       fs.mkdirSync(path.join(repo, "src"), { recursive: true });
       fs.writeFileSync(path.join(repo, "src", "Icons.tsx"), `
         /* Inline SVG icons — Material Symbols are not allowed per UI contract */
+        /* Do not use emoji icons like 🚀 in rendered UI. */
         // Do not use transition-all in className.
         export function Icon() {
           return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h16" /></svg>;

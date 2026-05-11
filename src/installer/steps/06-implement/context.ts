@@ -15,6 +15,7 @@ import type { Story } from "../../types.js";
 import { parseOutputKeyValues } from "../../context-ops.js";
 import { collectUiBehaviorRequirements, type UiBehaviorRequirement } from "../03-stories/context.js";
 import { sanitizeDesignMismatchFeedback } from "../../error-taxonomy.js";
+import { sanitizeRetryFeedbackForCurrentSource } from "../../retry-feedback.js";
 
 const STITCH_HTML_EXCERPT_CHARS = 2500;
 const STITCH_HTML_TOTAL_CHARS = 6000;
@@ -65,7 +66,7 @@ function normalizedStatusFromStepOutput(output: string): string {
   }
 }
 
-function sanitizedRetryFailureText(text: string): string {
+function extractActionableRetryFailureText(text: string): string {
   if (!text.trim()) return "";
   const status = normalizedStatusFromStepOutput(text);
   if (status !== "done" && status !== "skip") return sanitizeDesignMismatchFeedback(text);
@@ -78,6 +79,12 @@ function sanitizedRetryFailureText(text: string): string {
     return sanitizeDesignMismatchFeedback(lines.slice(actionableStart).join("\n"));
   }
   return "";
+}
+
+function sanitizedRetryFailureText(text: string, repoPath?: string): string {
+  const actionable = extractActionableRetryFailureText(text);
+  if (!actionable.trim()) return "";
+  return sanitizeRetryFeedbackForCurrentSource(actionable, { repoPath });
 }
 
 /**
@@ -129,8 +136,8 @@ export async function injectStoryContext(
     retryCount: nextStory.retry_count,
     maxRetries: nextStory.max_retries,
   };
-  const retryFailureText = nextStory.output && (nextStory.abandoned_count > 0 || nextStory.retry_count > 0)
-    ? sanitizedRetryFailureText(nextStory.output)
+  const rawRetryFailureText = nextStory.output && (nextStory.abandoned_count > 0 || nextStory.retry_count > 0)
+    ? String(nextStory.output)
     : "";
 
   const allStories = await getStories(step.run_id);
@@ -153,10 +160,14 @@ export async function injectStoryContext(
   context["pr_url"] = "";
   context["story_branch"] = pipelineStoryBranch || `${step.run_id.slice(0, 8)}-${story.storyId}`.toLowerCase();
   context["story_workdir"] = pipelineStoryWorkdir;
-  context["verify_feedback"] = retryFailureText;
 
   // Inject source tree
   const repoPath = context["story_workdir"] || context["repo"] || context["REPO"] || "";
+  const retryFailureText = rawRetryFailureText
+    ? sanitizedRetryFailureText(rawRetryFailureText, repoPath)
+    : "";
+  context["verify_feedback"] = retryFailureText;
+
   if (repoPath && !context["src_tree"]) {
     const srcTree = helpers.generateSrcTree(repoPath);
     if (srcTree) context["src_tree"] = srcTree;

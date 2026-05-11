@@ -122,8 +122,8 @@ export function runProjectContractChecks(repoPath: string, files: string[]): str
     }
 
     const emojiPattern = /[\u{1F300}-\u{1FAFF}]/u;
-    if (emojiPattern.test(content)) {
-      issues.push(`${rel}:${lineFor(content, emojiPattern)} — UI_CONTRACT: emoji icons are not allowed in source UI; replace with inline SVG components or an already-installed SVG icon library.`);
+    if (emojiPattern.test(uncommented)) {
+      issues.push(`${rel}:${lineFor(uncommented, emojiPattern)} — UI_CONTRACT: emoji icons are not allowed in source UI; replace with inline SVG components or an already-installed SVG icon library.`);
     }
 
     const fontDecl = /(?:^|[;{]\s*)font-family\s*:\s*([^;]+);/gim;
