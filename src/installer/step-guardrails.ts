@@ -1063,7 +1063,31 @@ export function checkStoryDesignCompliance(
 
   if (issues.length === 0) return null;
 
-  return `DESIGN UYUMSUZLUK:\n${issues.map(i => "• " + i).join("\n")}\nDÜZELT: Kritik UI sözleşmesi hatalarını düzelt; stitch/design-tokens.css'i import et, hardcoded renkleri var(--*) ile değiştir.`;
+  const issueText = issues.join("\n");
+  const fixHints: string[] = [];
+  if (/Material Symbols|icon fonts|emoji icons/i.test(issueText)) {
+    fixHints.push("Material Symbols/icon font/emoji ikonlarını inline SVG componentleriyle veya kurulu SVG icon library ile değiştir.");
+  }
+  if (/transition-all|transition\s*:\s*all|blanket transition/i.test(issueText)) {
+    fixHints.push("transition-all veya transition: all kullanma; transition-colors, transition-transform, transition-opacity ya da açık CSS property seç.");
+  }
+  if (/banned primary font|font-family/i.test(issueText)) {
+    fixHints.push("Banned primary font'u proje design token'ı veya onaylı ayırt edici font ile değiştir.");
+  }
+  if (/design-tokens\.css hiçbir dosyada|design-tokens\.css.*import/i.test(issueText)) {
+    fixHints.push("stitch/design-tokens.css'i gerçek CSS giriş dosyasına doğru relative path ile import et.");
+  }
+  if (/Tailwind CSS kullanılıyor ama yüklenemedi/i.test(issueText)) {
+    fixHints.push("Tailwind kullanımını package.json/build konfigürasyonu ile tutarlı hale getir veya Tailwind direktiflerini kaldır.");
+  }
+  if (/empty click\/change handler/i.test(issueText)) {
+    fixHints.push("Boş click/change handler'ları gerçek state veya navigation davranışına bağla.");
+  }
+  if (fixHints.length === 0) {
+    fixHints.push("Listelenen design compliance hatalarını yalnızca story scope içindeki dosyalarda düzelt.");
+  }
+
+  return `DESIGN UYUMSUZLUK:\n${issues.map(i => "• " + i).join("\n")}\nDÜZELT:\n${fixHints.map(i => "• " + i).join("\n")}`;
 }
 
 

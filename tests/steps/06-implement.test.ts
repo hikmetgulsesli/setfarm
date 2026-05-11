@@ -261,7 +261,7 @@ describe("06-implement step module", () => {
       fs.writeFileSync(path.join(tmp, "stitch/design-tokens.css"), ":root { --color-background: #000; }\n");
       fs.writeFileSync(path.join(tmp, "src/index.css"), "@import '../stitch/design-tokens.css';\n");
       fs.writeFileSync(path.join(tmp, "src/screens/Allowed.tsx"), "export function Allowed() { return <span>Clean</span>; }\n");
-      fs.writeFileSync(path.join(tmp, "src/screens/Legacy.tsx"), "export function Legacy() { return <span className=\"material-symbols-outlined\">warning</span>; }\n");
+      fs.writeFileSync(path.join(tmp, "src/screens/Legacy.tsx"), "export function Legacy() { return <button className=\"transition-all\"><span className=\"material-symbols-outlined\">warning</span></button>; }\n");
 
       assert.equal(checkStoryDesignCompliance({
         repo: tmp,
@@ -269,11 +269,15 @@ describe("06-implement step module", () => {
         story_scope_files: "src/screens/Allowed.tsx",
       }), null);
 
-      assert.match(checkStoryDesignCompliance({
+      const scopedContractFailure = checkStoryDesignCompliance({
         repo: tmp,
         story_workdir: tmp,
         story_scope_files: "src/screens/Legacy.tsx",
-      }) || "", /CRITICAL DESIGN CONTRACT/);
+      }) || "";
+      assert.match(scopedContractFailure, /CRITICAL DESIGN CONTRACT/);
+      assert.match(scopedContractFailure, /inline SVG componentleriyle veya kurulu SVG icon library/);
+      assert.match(scopedContractFailure, /transition-colors, transition-transform, transition-opacity/);
+      assert.doesNotMatch(scopedContractFailure, /hardcoded renkleri|stitch\/design-tokens\.css'i import et/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
