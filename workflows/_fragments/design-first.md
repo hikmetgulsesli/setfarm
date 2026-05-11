@@ -28,19 +28,19 @@ LAYOUT STRUCTURE (auto-extracted from Stitch HTML — REPRODUCE THIS EXACTLY):
 {{layout_skeleton}}
 
 DESIGN ENFORCEMENT (MANDATORY):
-- FONTS: copy every Google Fonts `<link>` from the Stitch HTML into
-  `index.html <head>`.
-  1. Copy every Stitch font link exactly.
-  2. If Stitch uses Material Symbols, include:
-     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
-  3. Do not skip font links from the Stitch HTML head.
+- FONTS: copy ordinary Google text-font `<link>` tags from the Stitch HTML into
+  `index.html <head>` only when `index.html` is in SCOPE_FILES. Do not copy
+  Material Symbols, Material Icons, or any icon-font links.
   BANNED font-family values: system-ui, Roboto, Arial, Inter, Helvetica.
+- ICONS: if Stitch HTML/DESIGN_DOM contains Material Symbols, Material Icons,
+  icon-font classes, or ligature text, replace them in source UI with inline
+  SVG components or an already-installed SVG icon library.
 - COLORS: use colors from design-tokens.css. Do not define your own hex/rgb
   colors. Always use var(--color-*). If Stitch HTML shows a hex color, map it
   to the matching design token.
 - LAYOUT: preserve the Stitch flex/grid hierarchy and nesting.
-- NEVER: emoji icons, purple gradients, transition: all, href="#", empty
-  handlers, console.log-only handlers.
+- NEVER: emoji icons, icon fonts, Material Symbols, purple gradients,
+  transition: all, href="#", empty handlers, console.log-only handlers.
 - ALWAYS: cursor-pointer on clickables, hover/focus states, focus-visible rings.
 - LINKS: every link must point to a real route.
 - HANDLERS: every handler must produce real product behavior.

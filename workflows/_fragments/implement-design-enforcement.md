@@ -3,15 +3,14 @@ DESIGN ENFORCEMENT (frontend stories — MANDATORY checklist before commit):
   :root must have --font-heading and --font-body CSS vars.
   h1-h6 → var(--font-heading), body → var(--font-body).
   BANNED font-family values: system-ui, Roboto, Arial, Inter, Helvetica.
-  - If stitch/*.html or DESIGN_DOM contains Material Symbols icon names,
-    YOU MUST add this to index.html <head> or app/layout.tsx:
-    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet" />
-    Without this link, icons render as plain text instead of symbols.
+  - Do NOT add Material Symbols, Material Icons, icon-font links, or icon
+    ligature text. If Stitch contains those names, replace them in source UI
+    with inline SVG components or an already-installed SVG icon library.
 - COLORS: shadcn/ui → update globals.css --accent from default gray to palette accent.
   Keep HSL format. Do not leave shadcn boilerplate unchanged.
 - LAYOUT: Hero → asymmetric grid, NOT centered text-center single-column.
   Feature/tool grids → first item lg:col-span-2 or unequal column widths.
-- NEVER: emoji icons, purple gradients, transition:all
+- NEVER: emoji icons, icon fonts, Material Symbols, purple gradients, transition:all
 - ALWAYS: cursor-pointer on clickables, hover/focus states, focus-visible rings
 - LINKS: NEVER use href="#" or href="javascript:void(0)" — these are dead links.
   Every <Link> and <a> MUST point to a real project-specific route from PRD/Stitch/DESIGN_DOM.

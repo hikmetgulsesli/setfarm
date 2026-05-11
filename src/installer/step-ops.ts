@@ -36,6 +36,7 @@ import { computeHasFrontendChanges, checkTestFailures, checkQualityGate, checkRe
 import { cleanupAbandonedSteps as _cleanupAbandonedSteps, cleanupProjectEphemera, scheduleRunCronTeardown } from "./cleanup-ops.js";
 import { isVerifyRetryMergeBlocker, isVerifyRetryQualityFailure } from "./verify-retry-routing.js";
 import { cleanupOutOfScopeWorktreeFiles } from "./steps/06-implement/context.js";
+import { sanitizeDesignMismatchFeedback } from "./error-taxonomy.js";
 import {
   getRunStatus, getRunContext, updateRunContext, failRun,
   getWorkflowId as _getWorkflowId,
@@ -591,14 +592,14 @@ function isSuccessfulStepOutput(output: string): boolean {
 function sanitizedRetryFailureText(text: string): string {
   if (!text.trim()) return "";
   const status = normalizedStatusFromStepOutput(text);
-  if (status !== "done" && status !== "skip") return text.trim();
+  if (status !== "done" && status !== "skip") return sanitizeDesignMismatchFeedback(text);
 
   const lines = text.split(/\r?\n/);
   const actionableStart = lines.findIndex((line) =>
     /\b(REMAINING|FAILURES?|ERRORS?|ISSUES?|BLOCKERS?|FEEDBACK|PREVIOUS_FAILURE|PR_NOT_MERGED|PR_MISSING|VERIFY_SYSTEM_SMOKE_FAILURE|SYSTEM_SMOKE_FAILURE|QUALITY GATE|GUARDRAIL)\b/i.test(line),
   );
   if (actionableStart >= 0) {
-    return lines.slice(actionableStart).join("\n").trim();
+    return sanitizeDesignMismatchFeedback(lines.slice(actionableStart).join("\n"));
   }
   return "";
 }

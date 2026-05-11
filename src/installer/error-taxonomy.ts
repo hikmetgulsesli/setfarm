@@ -39,7 +39,7 @@ const PATTERNS: Array<{ pattern: RegExp; category: ErrorCategory; suggestion: st
   { pattern: /CERTIFICATE|ssl|TLS|self.signed/i, category: "API_ERROR", suggestion: "SSL/TLS certificate error — check network or set NODE_TLS_REJECT_UNAUTHORIZED=0 temporarily" },
 ];
 
-function buildDesignMismatchSuggestion(errorText: string): string {
+export function buildDesignMismatchSuggestion(errorText: string): string {
   const suggestions: string[] = [];
   if (/Material Symbols|icon fonts|material-symbols|material-icons|emoji icons/i.test(errorText)) {
     suggestions.push("replace icon fonts/emoji with inline SVG components or an installed SVG icon library");
@@ -60,6 +60,27 @@ function buildDesignMismatchSuggestion(errorText: string): string {
     suggestions.push("fix only the exact files and issues reported by the design guardrail");
   }
   return suggestions.join("; ");
+}
+
+export function sanitizeDesignMismatchFeedback(errorText: string): string {
+  const text = errorText.trim();
+  if (!/DESIGN UYUMSUZLUK|UI_CONTRACT|design compliance|design mismatch/i.test(text)) return text;
+
+  const targetedFix = `DÜZELT:\n${buildDesignMismatchSuggestion(text)
+    .split("; ")
+    .map(suggestion => `• ${suggestion}`)
+    .join("\n")}`;
+
+  const staleGenericFix = /DÜZELT:\s*Kritik UI sözleşmesi hatalarını düzelt;\s*stitch\/design-tokens\.css'i import et,\s*hardcoded renkleri var\(--\*\) ile değiştir\./i;
+  if (staleGenericFix.test(text)) {
+    return text.replace(staleGenericFix, targetedFix).trim();
+  }
+
+  if (!/\nDÜZELT:/i.test(text)) {
+    return `${text}\n${targetedFix}`;
+  }
+
+  return text;
 }
 
 export function classifyError(errorText: string): ClassifiedError {
