@@ -293,4 +293,8 @@ ${jsx.split("\n").map(l => "      " + l).join("\n")}
 }
 
 fs.writeFileSync(path.join(screensDir, "SCREEN_INDEX.json"), JSON.stringify(screenIndex, null, 2));
+const barrel = screenIndex
+  .map((screen) => `export { ${screen.componentName} } from "./${screen.componentName}";`)
+  .join("\n");
+fs.writeFileSync(path.join(screensDir, "index.ts"), barrel ? `${barrel}\n` : "");
 console.log("Generated", screenIndex.length, "screen(s)");

@@ -40,6 +40,9 @@ describe("stitch-to-jsx", () => {
       const index = JSON.parse(fs.readFileSync(path.join(screensDir, "SCREEN_INDEX.json"), "utf-8"));
       assert.deepEqual(index.map((s: any) => s.title), ["Ana Sayfa"]);
       assert.equal(index[0].buttons, 1);
+
+      const barrel = fs.readFileSync(path.join(screensDir, "index.ts"), "utf-8");
+      assert.equal(barrel, 'export { AnaSayfa } from "./AnaSayfa";\n');
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
