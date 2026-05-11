@@ -60,6 +60,12 @@ Allowed:
    - First blocker wins. After finding a real build, test, smoke, review,
      acceptance, or merge blocker, stop investigating and return
      `STATUS: retry` with concise evidence.
+   - Retry feedback must respect the current story's writable scope. Do not
+     tell implement to edit `src/types/*`, App shell, routing, config, or other
+     shared/out-of-scope files unless those files are listed in the story's
+     scope_files. For screen-only typing defects, ask for a local display/render
+     type or adapter in the owned screen instead of widening shared exported
+     domain types.
    - Runtime/smoke/visual/accessibility failures on current `main` are still
      blockers for this run. Do not dismiss them as "pre-existing" or "not
      introduced by this PR"; report them so implement can create a batched

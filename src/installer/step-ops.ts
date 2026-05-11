@@ -144,6 +144,7 @@ function parseScopeFileList(raw: string | null | undefined): string[] {
 }
 
 function getImplicitScopeFiles(workdir: string): string[] {
+  void workdir;
   const files = [
     "vitest.config.ts",
     "vitest.config.js",
@@ -153,23 +154,6 @@ function getImplicitScopeFiles(workdir: string): string[] {
     "src/test/utils.ts",
     "src/setupTests.ts",
   ];
-
-  const typeDir = path.join(workdir, "src", "types");
-  try {
-    if (fs.existsSync(typeDir)) {
-      for (const entry of fs.readdirSync(typeDir)) {
-        if (/\.(tsx?|d\.ts)$/.test(entry)) {
-          files.push(path.posix.join("src/types", entry));
-        }
-      }
-    }
-  } catch {
-    // Best effort; missing type files should not block claim setup.
-  }
-
-  for (const typeFile of ["src/types.ts", "src/types.d.ts"]) {
-    if (fs.existsSync(path.join(workdir, typeFile))) files.push(typeFile);
-  }
 
   return [...new Set(files)];
 }
@@ -1470,8 +1454,9 @@ async function injectStoryContext(
         // shared_files are read/import context only. Do not make them writable;
         // otherwise integration stories can commit later stories' screen files.
         // Keep pre-commit scope in sync with the final scope guard's implicit
-        // allowances. Screen stories often need shared type updates for state
-        // wiring, and final guard already treats src/types/* as safe shared API.
+        // allowances. Shared domain/type files stay read-only unless explicitly
+        // listed in scope_files; otherwise screen stories can break out-of-scope
+        // consumers while still appearing scoped.
         const implicitFiles = getImplicitScopeFiles(context["story_workdir"]);
         const allAllowed = [...new Set([...scopeList, ...implicitFiles])];
         // Also allow *.test.tsx and *.spec.tsx (wildcard — hook uses grep -qxF so these wont match, but test files are caught by the hook logic)
@@ -1486,7 +1471,7 @@ async function injectStoryContext(
     }
     // 5-model consensus: always inject scope_reminder (even on first attempt)
     if (context["story_scope_files"]) {
-      context["scope_reminder"] = "SCOPE ENFORCEMENT: You may ONLY write files in [" + context["story_scope_files"] + "]. shared_files are read-only/import context unless also listed in scope_files. Test files (*.test.tsx), Vitest/Jest-only config (vitest.config.*, jest.config.*), and src/types/* shared API files are also allowed when required by your scoped screens. vite.config.*, tailwind.config.*, tsconfig.*, index.html, App.tsx, main.tsx, index.css are FORBIDDEN unless in your scope_files. Never edit index.html for title/fonts/metadata. Violation = instant SCOPE_BLEED rejection.";
+      context["scope_reminder"] = "SCOPE ENFORCEMENT: You may ONLY write files in [" + context["story_scope_files"] + "]. shared_files are read-only/import context unless also listed in scope_files. Test files (*.test.tsx) and Vitest/Jest-only config (vitest.config.*, jest.config.*) are allowed. src/types/*, domain model files, vite.config.*, tailwind.config.*, tsconfig.*, index.html, App.tsx, main.tsx, index.css are FORBIDDEN unless in your scope_files. Never edit shared exported types to fix only your screen; use local display/adaptor types inside scoped files. Violation = instant SCOPE_BLEED rejection.";
     }
   } catch (e) {
     // Column may not exist on very old schemas — degrade gracefully

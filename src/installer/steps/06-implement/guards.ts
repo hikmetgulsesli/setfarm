@@ -45,12 +45,9 @@ export interface ScopeCheckResult {
 const SCOPE_EXTS = /\.(tsx?|jsx?|vue|svelte|css|scss|html)$/i;
 const SCOPE_IGNORE = /^(node_modules\/|dist\/|\.next\/|build\/|coverage\/|stitch\/|references\/|DESIGN\.md|PROJECT_MEMORY\.md|\.gitignore|package(-lock)?\.json|tsconfig|vite\.config|tailwind\.config|postcss\.config|eslint\.config|README|index\.html$)/;
 const IMPLICIT_SHARED_PATTERNS = [
-  /^src\/types(\.(tsx?|d\.ts))?$/,
-  /^src\/types\/.*\.(tsx?|d\.ts)$/,
   /\.test\.(tsx?|jsx?)$/,
   /\.spec\.(tsx?|jsx?)$/,
   /^src\/setupTests\.(tsx?|js)$/,
-  /\.d\.ts$/,
   /^vitest\.config\.(ts|js|mts|mjs)$/,
   /^jest\.config\.(ts|js|mts|mjs)$/,
   /^src\/test\/setup\.(ts|js)$/,

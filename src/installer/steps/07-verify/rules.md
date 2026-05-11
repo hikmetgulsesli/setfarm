@@ -50,6 +50,12 @@ is proven, do not continue investigating for more issues; return
 When returning retry, do not fix the code. Produce a clear file/symptom list
 for the implement step.
 
+Retry feedback must stay inside the story's writable scope. Do not instruct the
+developer to edit shared/out-of-scope files such as `src/types/*`, App shell,
+routing, build config, or document shell unless they are listed in `scope_files`.
+For a screen-only render/type issue, request a local display/render type or
+adapter in the owned screen and narrowing before shared helper calls.
+
 ## Required For Pass (`STATUS: done`)
 
 - All acceptance criteria are proven.

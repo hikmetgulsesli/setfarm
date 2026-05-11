@@ -43,6 +43,7 @@ You are implementing ONE user story. You may ONLY write to the files listed belo
    - Your job is ONLY the files above. Every other file already belongs to another story.
    - Read from SHARED_FILES for import context; do not modify them and do not create sibling files next to them.
    - If a SHARED_FILE exports a React component, do not invent props for it and do not change its TypeScript interface. Render it only with props it already declares; if it needs new behavior, expose state/actions from your owned files and leave component-side wiring to the story that owns that component.
+   - Shared domain/type files (`src/types/*`, `src/types.ts`, domain model files) are read-only unless they are explicitly listed in SCOPE_FILES. Do not widen exported union/domain types to satisfy a screen-only render case when their consumers are outside your scope. Instead define a local display/render type or adapter in your owned file and narrow before calling shared helpers.
    - Generated Stitch screen components may declare an `actions` prop and `*ActionId` types. When you own app/screen assembly, wire controls through those declared action IDs from the component props or `src/screens/SCREEN_INDEX.json`; do not infer actions from `textContent`, `innerText`, DOM label matching, or `querySelector` heuristics.
    - Assembly of components into pages/layouts happens only in the story that owns `App.tsx`/`main.tsx`. If your scope is a set of components, write just those components — do not wrap them into a new parent file.
    - Preserve all behavior and tests from DONE stories. Existing tests are accepted contract, not disposable scaffolding.
@@ -57,6 +58,7 @@ You are implementing ONE user story. You may ONLY write to the files listed belo
 4. Read the story's acceptance criteria and implement ONLY what it asks
 5. Use imports from SHARED_FILES for context only; do not modify shared files unless they are also listed in SCOPE_FILES.
    If TypeScript says a prop does not exist on a shared component, remove the invented prop or add an owned adapter/context; never edit tsconfig or the shared component to hide the error.
+   If TypeScript says a shared exported type is too narrow for an owned screen's visual-only state, keep the shared type compatible and create a local render/display type inside the owned screen. A build error in an out-of-scope consumer means the shared API change is not allowed in this story.
 6. Every interactive control you create must be a real semantic control.
    - Use `<button>` for actions and `<a href>`/router links for navigation.
    - Do not put `onClick` on `<div>`, `<span>`, `<li>`, headings, or layout

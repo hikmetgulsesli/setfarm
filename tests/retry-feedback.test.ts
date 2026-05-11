@@ -55,4 +55,36 @@ describe("retry feedback sanitization", () => {
       fs.rmSync(repo, { recursive: true, force: true });
     }
   });
+
+  it("rewrites shared type retry advice when type files are outside story scope", () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-retry-feedback-scope-"));
+    try {
+      fs.writeFileSync(path.join(repo, ".story-scope-files"), "src/screens/GameBoard.tsx\nsrc/screens/MainMenu.tsx\n");
+      const feedback = [
+        "FEEDBACK:",
+        "- src/screens/GameBoard.tsx:121 — ghost cell uses `as Cell`; update Cell type to include ghost variants.",
+      ].join("\n");
+
+      const output = sanitizeRetryFeedbackForCurrentSource(feedback, { repoPath: repo });
+      assert.match(output, /keep the shared Cell type unchanged; use a local render\/display type in the owned screen/);
+      assert.match(output, /SCOPE NOTE/);
+      assert.match(output, /Do not edit shared domain\/type files/);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps shared type retry advice when type files are explicitly scoped", () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-retry-feedback-type-scope-"));
+    try {
+      fs.writeFileSync(path.join(repo, ".story-scope-files"), "src/screens/GameBoard.tsx\nsrc/types/domain.ts\n");
+      const feedback = "- src/types/domain.ts:15 — update Cell type to include ghost variants.";
+
+      const output = sanitizeRetryFeedbackForCurrentSource(feedback, { repoPath: repo });
+      assert.match(output, /update Cell type to include ghost variants/);
+      assert.doesNotMatch(output, /SCOPE NOTE/);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
 });

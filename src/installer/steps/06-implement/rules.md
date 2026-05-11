@@ -11,6 +11,7 @@ You are assigned ONE story with a FIXED list of files. You MUST NOT create or mo
 - Files listed in SHARED_FILES are read/import context only; do not edit them unless they are also listed in SCOPE_FILES
 - Test files (*.test.tsx, *.spec.tsx) for YOUR scope files only
 - Test config (`vitest.config.*`, `jest.config.*`) and `src/test/*` helpers only. `vite.config.*`, `tailwind.config.*`, `tsconfig.*`, and `index.html` are NOT test config and are forbidden unless explicitly listed in SCOPE_FILES.
+- Shared domain/type files (`src/types/*`, `src/types.ts`, domain model files) only when explicitly listed in SCOPE_FILES.
 
 ### What you CANNOT write:
 - ANY file not in SCOPE_FILES, except scoped test files and test config listed above
@@ -19,6 +20,7 @@ You are assigned ONE story with a FIXED list of files. You MUST NOT create or mo
 - Do NOT rewrite App.tsx, main.tsx, index.css unless they are in YOUR SCOPE_FILES
 - Do NOT edit `index.html` for title, font links, metadata, icon fonts, or root markup unless it is in YOUR SCOPE_FILES. Setup owns document shell metadata.
 - Do NOT edit `vite.config.*` to add Vitest settings. Use `vitest.config.*` when test config is allowed.
+- Do NOT widen shared exported/domain types to fix only a screen component. Use a local render/display type or adapter in your owned file, then narrow before calling shared helpers.
 - Do NOT invent props for components imported from SHARED_FILES. Render them with their declared props only, or expose owned context/actions for the owner story to consume later.
 - Generated Stitch screen components may expose a typed `actions` prop. Use those declared action IDs for wiring; do NOT route clicks by matching `textContent`, `innerText`, or DOM labels.
 - A pre-commit hook will REJECT your commit if you touch out-of-scope files

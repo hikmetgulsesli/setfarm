@@ -58,6 +58,13 @@ describe("06-implement step module", () => {
     const stepOps = fs.readFileSync(path.join(process.cwd(), "dist/installer/step-ops.js"), "utf-8");
     assert.match(stepOps, /cleanupOutOfScopeWorktreeFiles/);
     assert.match(stepOps, /vite\.config\.\*, tailwind\.config\.\*, tsconfig\.\*, index\.html/);
+    assert.doesNotMatch(stepOps, /src\/types\/\* shared API files are also allowed/);
+
+    const guards = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/guards.js"), "utf-8");
+    assert.doesNotMatch(guards, /src\\\/types\\\/\.\*/);
+
+    const worktreeOps = fs.readFileSync(path.join(process.cwd(), "dist/installer/worktree-ops.js"), "utf-8");
+    assert.doesNotMatch(worktreeOps, /src\/types\/\*/);
   });
 
   it("blocks SCOPE_BLEED completion instead of silently accepting it", () => {
@@ -128,6 +135,8 @@ describe("06-implement step module", () => {
     assert.match(prompt, /Reducers and state transition functions must be pure/i);
     assert.match(prompt, /`vite\.config\.\*` is app\/toolchain config and is forbidden/i);
     assert.match(prompt, /Do not edit `index\.html` for title, Google fonts, icon fonts, metadata, or root markup/i);
+    assert.match(prompt, /Shared domain\/type files \(`src\/types\/\*`, `src\/types\.ts`, domain model files\) are read-only unless they are explicitly listed in SCOPE_FILES/i);
+    assert.match(prompt, /local display\/render type or adapter/i);
   });
 
   it("buildPrompt returns empty string — loop delegates to AGENTS.md", () => {
