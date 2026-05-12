@@ -16,6 +16,7 @@ describe("product supervisor", () => {
     const prd = [
       "# Brick Arcade PRD",
       "The game includes brick grid, paddle controls, ball physics, score, lives, pause, restart, and game over.",
+      "Do not add profile/account panels unless the user asks for account features.",
       "## Screens",
       "| # | Screen Name | Type | Description |",
       "|---|-----------|-----|----------|",
@@ -79,4 +80,3 @@ describe("product supervisor", () => {
     }
   });
 });
-

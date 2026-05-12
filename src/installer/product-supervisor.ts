@@ -55,7 +55,7 @@ const TOKEN_STOP_WORDS = new Set([
 const GENERIC_SCREEN_TERMS = new Set([
   "board", "complete", "completion", "dashboard", "detail", "edit", "empty", "error",
   "form", "game", "help", "home", "insight", "insights", "list", "main", "menu",
-  "metric", "metrics", "option", "options", "overview", "panel", "pause", "play",
+  "metric", "metrics", "option", "options", "overlay", "overview", "panel", "pause", "play",
   "player", "primary", "progress", "result", "results", "settings", "status",
   "summary", "support", "workflow",
 ]);
@@ -174,10 +174,10 @@ function checkPlan(input: ProductSupervisorInput): string[] {
   }
 
   const normalizedTask = normalizeText(task);
-  const normalizedPrd = normalizeText(prd);
+  const screenText = normalizeText(rows.map((row) => `${row.name} ${row.description}`).join(" "));
   for (const group of PRODUCT_OPTIONAL_GROUPS) {
     if (group.taskHints.test(normalizedTask)) continue;
-    if (group.terms.some((term) => new RegExp(`\\b${term}\\b`, "i").test(normalizedPrd))) {
+    if (group.terms.some((term) => new RegExp(`\\b${term}\\b`, "i").test(screenText))) {
       issues.push(`PLAN_OPTIONAL_MODULE_DRIFT: PRD introduces ${group.name} behavior but the task does not request it.`);
     }
   }
