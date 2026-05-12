@@ -20,12 +20,19 @@ describe("07-verify step module", () => {
     assert.deepEqual(verifyModule.requiredOutputFields, ["STATUS"]);
   });
 
-  it("injectContext is a no-op (injection stays in step-ops for now)", async () => {
+  it("injectContext seeds supervisor memory and PR metadata defaults", async () => {
     const context: Record<string, string> = { foo: "bar" };
     await verifyModule.injectContext({
       runId: "r1", stepId: "verify", task: "t", context,
     });
-    assert.deepEqual(context, { foo: "bar" });
+    assert.deepEqual(context, {
+      foo: "bar",
+      supervisor_memory: "(no supervisor memory yet)",
+      pr_comments: "",
+      pr_check_state: "",
+      pr_mergeable: "",
+      pr_merge_state_status: "",
+    });
   });
 
   it("buildPrompt substitutes REPO/BRANCH/PR_URL/PREFLIGHT_ANALYSIS from context", () => {
