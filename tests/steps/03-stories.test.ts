@@ -207,6 +207,9 @@ describe("03-stories step module", () => {
       assert.match(stories[0].title, /game engine, state and test bridge$/);
       assert.match(stories[0].description, /shared game shell/);
       assert.match(stories[0].description, /without editing read-only screen components/);
+      assert.match(allText, /Every generated game screen is reachable/);
+      assert.match(allText, /no orphan phase-only screens remain/);
+      assert.match(allText, /HUD\/status screens such as next-piece previews/);
       assert.match(allText, /Next piece preview is derived from the same queue\/source of truth/);
       assert.match(allText, /does not pass invented props to generated shared screen components/);
       assert.match(allText, /declared actions props\/action IDs from SCREEN_INDEX/);
@@ -235,6 +238,13 @@ describe("03-stories step module", () => {
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }
+  });
+
+  it("story prompt requires generated screens to be reachable or embedded", async () => {
+    const result = await runModule(storiesModule, "Test", { status: "done" });
+
+    assert.match(result.prompt, /Every generated screen also needs a real user path/);
+    assert.match(result.prompt, /Do not leave orphan route\/phase-only screens/);
   });
 
   it("rejects stories that drift into another project concept", () => {

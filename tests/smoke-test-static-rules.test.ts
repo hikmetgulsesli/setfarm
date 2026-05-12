@@ -8,6 +8,7 @@ import {
   checkEntryPointImports,
   checkNativeButtonWiring,
   checkSemanticClickTargets,
+  checkUnreachableStateScreens,
   checkWeakInteractionAssertions,
 } from "../scripts/smoke-test.mjs";
 
@@ -99,6 +100,20 @@ describe("smoke-test static rules", () => {
     });
   });
 
+  it("does not treat href hash placeholders as explicit hash routing", () => {
+    withRepo(repo => {
+      fs.mkdirSync(path.join(repo, "src", "screens"), { recursive: true });
+      fs.writeFileSync(path.join(repo, "src", "App.tsx"), [
+        "export function App() {",
+        "  return <a href=\"#\">Placeholder</a>;",
+        "}",
+      ].join("\n"));
+      fs.writeFileSync(path.join(repo, "src", "screens", "GameOptions.tsx"), "export function GameOptions() { return null; }\n");
+
+      assert.deepEqual(discoverHashRoutes(repo), []);
+    });
+  });
+
   it("still derives screen hash routes when the app has explicit hash navigation", () => {
     withRepo(repo => {
       fs.mkdirSync(path.join(repo, "src", "screens"), { recursive: true });
@@ -159,6 +174,62 @@ describe("smoke-test static rules", () => {
       ].join("\n"));
 
       assert.deepEqual(checkSemanticClickTargets(repo), []);
+    });
+  });
+
+  it("rejects rendered phase screens whose transition action is never wired to UI", () => {
+    withRepo(repo => {
+      fs.writeFileSync(path.join(repo, "src", "App.tsx"), [
+        "import { useAppState } from './useAppState';",
+        "export function App() {",
+        "  const { state, actions } = useAppState();",
+        "  const phase = state.phase;",
+        "  return <>",
+        "    {phase === 'playing' && <button onClick={actions.pauseGame}>Pause</button>}",
+        "    {phase === 'paused' && <button onClick={actions.resumeGame}>Resume</button>}",
+        "    {phase === 'nextpiece' && <h1>Next Piece Preview</h1>}",
+        "  </>;",
+        "}",
+      ].join("\n"));
+      fs.writeFileSync(path.join(repo, "src", "useAppState.ts"), [
+        "export function useAppState() {",
+        "  const state = { phase: 'playing' };",
+        "  const pauseGame = () => setState({ phase: 'paused' });",
+        "  const resumeGame = () => setState({ phase: 'playing' });",
+        "  const goToNextPiece = () => setState({ phase: 'nextpiece' });",
+        "  return { state, actions: { pauseGame, resumeGame, goToNextPiece } };",
+        "}",
+      ].join("\n"));
+
+      const issues = checkUnreachableStateScreens(repo);
+      assert.equal(issues.length, 1);
+      assert.match(issues[0], /state "nextpiece".*goToNextPiece.*not wired/);
+    });
+  });
+
+  it("allows rendered phase screens when the transition action is wired", () => {
+    withRepo(repo => {
+      fs.writeFileSync(path.join(repo, "src", "App.tsx"), [
+        "import { useAppState } from './useAppState';",
+        "export function App() {",
+        "  const { state, actions } = useAppState();",
+        "  const phase = state.phase;",
+        "  return <>",
+        "    {phase === 'playing' && <button onClick={actions.goToNextPiece}>Next Piece</button>}",
+        "    {phase === 'nextpiece' && <button onClick={actions.resumeGame}>Back</button>}",
+        "  </>;",
+        "}",
+      ].join("\n"));
+      fs.writeFileSync(path.join(repo, "src", "useAppState.ts"), [
+        "export function useAppState() {",
+        "  const state = { phase: 'playing' };",
+        "  const resumeGame = () => setState({ phase: 'playing' });",
+        "  const goToNextPiece = () => setState({ phase: 'nextpiece' });",
+        "  return { state, actions: { resumeGame, goToNextPiece } };",
+        "}",
+      ].join("\n"));
+
+      assert.deepEqual(checkUnreachableStateScreens(repo), []);
     });
   });
 

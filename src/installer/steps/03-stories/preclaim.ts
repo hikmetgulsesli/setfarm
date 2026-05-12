@@ -167,7 +167,7 @@ export function buildAcceptanceCriteria(repo: string): string[] {
     return `${req.screenTitle}: ${req.kind} \"${trigger}\" must produce visible behavior: ${req.expectedBehavior}.`;
   });
   criteria.push("All visible active buttons/icons from Stitch screens have non-empty handlers or an explicit disabled/hidden state.");
-  criteria.push("All generated screens are wired into the app shell and remain responsive on desktop and mobile.");
+  criteria.push("All generated screens are reachable from the first rendered app surface by a visible button/link/menu item/keyboard shortcut, or are embedded into a reachable screen; no orphan route/phase-only screens remain.");
   criteria.push("Stateful interactions persist only when the PRD or DESIGN_DOM explicitly requires persistence; no unrelated demo flows are added.");
   return unique(criteria).slice(0, 40);
 }
@@ -306,6 +306,8 @@ function appStoryDraft(params: {
       description: "Build the shared game shell, reducer/state model, keyboard input wiring, persistence helper boundaries, smoke-visible window.app game state, and context/actions used by generated screens without editing read-only screen components.",
       acceptanceCriteria: [
         "App shell renders the playable game surface first, not a generic landing page or dashboard.",
+        "Every generated game screen is reachable from the first playable surface through visible UI or a documented keyboard shortcut, or is embedded into a reachable gameplay/menu surface; no orphan phase-only screens remain.",
+        "HUD/status screens such as next-piece previews are embedded in gameplay or have an obvious user path to open and return from them.",
         "App shell does not pass invented props to generated shared screen components; render read-only screens with their existing TypeScript props only.",
         "If App renders generated Stitch screens, it wires controls through declared actions props/action IDs from SCREEN_INDEX, never through textContent/DOM-label matching.",
         "Reducer/state transitions are pure and immutable; persistence, timers, and DOM/test bridge side effects live in effects or action wrappers.",
@@ -332,6 +334,7 @@ function appStoryDraft(params: {
     description: "Build the shared application shell, navigation state, domain types, persistence helpers, profile/settings panel wiring, and smoke-visible window.app state used by generated screens.",
     acceptanceCriteria: [
       "App shell wires every generated Stitch screen into one coherent application flow; first screen is the actual product surface, not a landing page.",
+      "Every generated Stitch screen is reachable from the first rendered app surface through visible navigation/control flow, or is embedded into a reachable screen; no orphan route/phase-only screens remain.",
       "Shared state exposes visible active screen, selected item, storage status, last error, active panel, and item count through window.app.",
       "Profile/account icon opens a visible panel/drawer/page and close/back controls visibly dismiss it.",
       "localStorage success, corrupted JSON, retry, and clear-data paths produce visible DOM feedback when persistence is required.",

@@ -80,6 +80,11 @@ No active-looking control may be left as a no-op.
    to code, test, commit, and push without losing context.
 4. Assign every screen in SCREEN_MAP to exactly one owner story. Use paths from
    PREDICTED_SCREEN_FILES in `scope_files`.
+   Every generated screen also needs a real user path from the first rendered
+   app surface. A screen may be a separate route/phase only if some visible
+   button/link/menu item/keyboard shortcut reaches it and a visible action
+   returns to the main flow. Status/HUD screens may instead be embedded into a
+   reachable parent screen. Do not leave orphan route/phase-only screens.
 5. Split by structure, not by element count. If one screen combines a form, a
    list, and a detail drawer, use separate stories when those are distinct
    concepts.

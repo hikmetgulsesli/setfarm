@@ -81,6 +81,10 @@ Use paths from PREDICTED_SCREEN_FILES exactly. Do not invent:
 Every screen is owned by exactly one story. Menus/lists, main functional
 screens, settings/profile, and result/notification flows should be distributed
 by product structure.
+Every generated screen must be reachable in the final app from the first
+rendered product surface through visible navigation/control flow, or embedded
+inside a reachable parent screen. Do not plan orphan route/phase-only screens
+that render in App state but have no user-enterable path.
 
 ## Integration-Only Files
 

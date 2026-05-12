@@ -205,7 +205,7 @@ function discoverHashRoutes(repo) {
       try { content = readFileSync(f, "utf-8"); } catch { return; }
       if (/\b(HashRouter|createHashRouter|hashchange|location\.hash)\b/.test(content) ||
           /\bnavigate\s*\(\s*["'][^"']+["']/.test(content) ||
-          /\bhref\s*=\s*["']#/.test(content)) {
+          /\bhref\s*=\s*["']#[A-Za-z0-9_/.-]+["']/.test(content)) {
         hasExplicitHashRouting = true;
       }
       for (const m of content.matchAll(/\bnavigate\s*\(\s*["']([^"']+)["']/g)) add(m[1]);
@@ -233,6 +233,120 @@ function discoverHashRoutes(repo) {
   }
 
   return [...routes].slice(0, 20);
+}
+
+function escapeRegExp(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function collectSourceFiles(repo) {
+  const files = [];
+  const sourceRoots = ["src", "app", "pages", "components"]
+    .map(d => join(repo, d))
+    .filter(d => existsSync(d));
+  for (const root of sourceRoots) {
+    walkDir(root, f => {
+      if (!/\.(tsx?|jsx?)$/.test(f) || /\.(test|spec)\.(tsx?|jsx?)$/i.test(f)) return;
+      files.push(f);
+    });
+  }
+  return files;
+}
+
+function nearestFunctionNameBefore(source, index) {
+  const prefix = source.slice(Math.max(0, index - 1400), index);
+  const patterns = [
+    /\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*(?:useCallback\s*\()?[^;{}]*=>/g,
+    /\bfunction\s+([A-Za-z_$][\w$]*)\s*\(/g,
+    /\b([A-Za-z_$][\w$]*)\s*:\s*\([^)]*\)\s*=>/g,
+  ];
+  let best = null;
+  for (const re of patterns) {
+    for (const m of prefix.matchAll(re)) {
+      const name = m[1];
+      if (name && m.index !== undefined && (!best || m.index > best.index)) best = { name, index: m.index };
+    }
+  }
+  return best?.name || null;
+}
+
+function renderedStateTokens(source) {
+  const tokens = new Set();
+  const renderChecks = [
+    /\b(?:phase|screen|currentScreen|activeScreen|view|route)\s*={2,3}\s*["']([A-Za-z0-9_-]+)["']/g,
+    /\b(?:state\.)?(?:phase|screen|currentScreen|activeScreen|view|route)\s*===\s*["']([A-Za-z0-9_-]+)["']/g,
+  ];
+  for (const re of renderChecks) {
+    for (const m of source.matchAll(re)) tokens.add(m[1]);
+  }
+  return [...tokens];
+}
+
+function transitionFunctionsForToken(source, token) {
+  const names = new Set();
+  const tokenRe = escapeRegExp(token);
+  const assignment = new RegExp(
+    `(?:\\b(?:phase|screen|currentScreen|activeScreen|view|route)\\s*:\\s*["']${tokenRe}["']|` +
+    `\\bset(?:Phase|Screen|CurrentScreen|ActiveScreen|View|Route)\\s*\\(\\s*["']${tokenRe}["']\\s*\\))`,
+    "g",
+  );
+  for (const m of source.matchAll(assignment)) {
+    const idx = m.index || 0;
+    const before = source.slice(Math.max(0, idx - 180), idx);
+    if (/\b(?:const|let|var)\s+\w+\s*=/.test(before) && !/\b(?:setState|setPhase|setScreen|setView|useCallback|function)\b/.test(before)) {
+      continue;
+    }
+    const name = nearestFunctionNameBefore(source, idx);
+    if (name && !/^getInitial/i.test(name)) names.add(name);
+  }
+  return [...names];
+}
+
+function hasVisibleTransitionReference(source, token, functionNames) {
+  const tokenRe = escapeRegExp(token);
+  const directTokenRefs = [
+    new RegExp(`\\b(?:href|to)\\s*=\\s*["']#?${tokenRe}["']`),
+    new RegExp(`\\b(?:onClick|onKeyDown|onSubmit|onPointerDown|onTouchStart)\\s*=\\s*\\{[^}]{0,240}["']${tokenRe}["']`),
+    new RegExp(`\\b(?:navigate|dispatch|setPhase|setScreen|setView|setRoute)\\s*\\([^)]{0,240}["']${tokenRe}["']`),
+  ];
+  if (directTokenRefs.some((re) => re.test(source))) {
+    return true;
+  }
+
+  for (const name of functionNames) {
+    const nameRe = escapeRegExp(name);
+    const uiRefs = [
+      new RegExp(`\\b(?:actions|appActions|props)\\.${nameRe}\\b`),
+      new RegExp(`\\b(?:onClick|onKeyDown|onSubmit|onPointerDown|onTouchStart)\\s*=\\s*\\{[^}]*\\b${nameRe}\\b`),
+      new RegExp(`\\baddEventListener\\s*\\(\\s*["'](?:keydown|keyup|click|pointerdown|touchstart)["'][\\s\\S]{0,400}\\b${nameRe}\\b`),
+      new RegExp(`\\bwindow\\.app\\s*=\\s*\\{[\\s\\S]{0,1200}\\b${nameRe}\\b`),
+    ];
+    if (uiRefs.some((re) => re.test(source))) return true;
+  }
+  return false;
+}
+
+function checkUnreachableStateScreens(repo) {
+  const files = collectSourceFiles(repo);
+  if (files.length === 0) return [];
+  const source = files.map((f) => {
+    try { return `\n// FILE: ${relative(repo, f)}\n${readFileSync(f, "utf-8")}`; } catch { return ""; }
+  }).join("\n");
+  const appFiles = files.filter((f) => /(^|\/)(App|main|index)\.(tsx?|jsx?)$/.test(relative(repo, f)));
+  const renderSource = (appFiles.length ? appFiles : files).map((f) => {
+    try { return readFileSync(f, "utf-8"); } catch { return ""; }
+  }).join("\n");
+
+  const issues = [];
+  for (const token of renderedStateTokens(renderSource)) {
+    const functionNames = transitionFunctionsForToken(source, token);
+    if (functionNames.length === 0) continue;
+    if (hasVisibleTransitionReference(source, token, functionNames)) continue;
+    issues.push(
+      `state "${token}" is rendered but transition action ${functionNames.join(", ")} is not wired to a visible button/link/keyboard handler; wire a user path or remove/embed the orphan screen`,
+    );
+  }
+  return issues;
 }
 
 function normalizeSnapshotText(text) {
@@ -1177,6 +1291,8 @@ async function main() {
   for (const b of buttonWiringIssues) failures.push('UNWIRED_BUTTON: ' + b);
   const semanticClickIssues = checkSemanticClickTargets(repoPath);
   for (const s of semanticClickIssues) failures.push('NON_SEMANTIC_CLICK_TARGET: ' + s);
+  const unreachableStateScreenIssues = checkUnreachableStateScreens(repoPath);
+  for (const s of unreachableStateScreenIssues) failures.push('UNREACHABLE_SCREEN: ' + s);
   const weakInteractionIssues = checkWeakInteractionAssertions(repoPath);
   for (const t of weakInteractionIssues) failures.push('[TEST] WEAK_INTERACTION_ASSERTION: ' + t);
 
@@ -2168,6 +2284,7 @@ async function main() {
   if (wiringIssues.length > 0) confidence -= 20;
   if (buttonWiringIssues.length > 0) confidence -= 35;
   if (semanticClickIssues.length > 0) confidence -= 35;
+  if (unreachableStateScreenIssues.length > 0) confidence -= 40;
   if (testCount > 0) confidence -= 20;
   if (linksBroken > 0) confidence -= 10;
   confidence = Math.max(0, confidence);
@@ -2185,6 +2302,8 @@ async function main() {
     buttonWiringDetails: buttonWiringIssues,
     semanticClickIssues: semanticClickIssues.length,
     semanticClickDetails: semanticClickIssues,
+    unreachableStateScreens: unreachableStateScreenIssues.length,
+    unreachableStateScreenDetails: unreachableStateScreenIssues,
     weakInteractionAssertions: weakInteractionIssues.length,
     weakInteractionDetails: weakInteractionIssues,
     linksChecked,
@@ -2216,6 +2335,7 @@ export {
   checkEntryPointImports,
   checkNativeButtonWiring,
   checkSemanticClickTargets,
+  checkUnreachableStateScreens,
   checkWeakInteractionAssertions,
 };
 
