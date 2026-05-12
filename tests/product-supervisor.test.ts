@@ -115,7 +115,7 @@ describe("product supervisor", () => {
           story_id: "US-001",
           story_index: 1,
           title: "Game Board shell and shared engine bridge wiring",
-          description: "Wire the declared DOM shell to the owned game board screen without broader scope changes.",
+          description: "Wire the declared DOM shell to the owned game board screen without broader scope changes, helper boundaries, and sibling file groups.",
           acceptance_criteria: JSON.stringify(["Game Board renders", "Paddle and ball state are visible"]),
         },
       ],
