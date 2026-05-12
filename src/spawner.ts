@@ -14,6 +14,7 @@ import { resolveWorkflowDir } from "./installer/paths.js";
 import { claimStep, completeStep } from "./installer/step-ops.js";
 import { failStep } from "./installer/step-fail.js";
 import { cleanupProjectEphemera, cleanupRunningRunOrphanedToolWorkers } from "./installer/cleanup-ops.js";
+import { updateSupervisorMemory } from "./installer/product-supervisor.js";
 import { buildPreclaimedPrompt, buildResolvedClaimBootstrapScript, claimTaskPreview } from "./spawner-prompt.js";
 
 const OPENCLAW_CLI = process.env.OPENCLAW_CLI || "/home/setrox/.local/bin/openclaw";
@@ -1575,9 +1576,35 @@ async function failClaimIfStillRunning(stepId: string, agentId: string, wfId: st
 
     const reason = `AGENT_PROCESS_EXITED: ${agentId} exited before completing ${wfId}/${role}. ${compactExitReason(err)}. Transcript: ${transcriptPath}`;
     console.warn(`[spawner] failing still-running claim ${stepId} (${row.step_id}) after agent exit`);
+    await recordSupervisorInfraEvent(row.run_id, row.step_id, row.current_story_id, reason);
     await failStep(stepId, reason);
   } catch (failErr) {
     console.warn(`[spawner] failed to mark exited agent claim as failed: ${String(failErr).slice(0, 300)}`);
+  }
+}
+
+async function recordSupervisorInfraEvent(runId: string, stepId: string, storyDbId: string | null, reason: string): Promise<void> {
+  try {
+    const contextRow = await pgGet<{ context: string | null }>("SELECT context FROM runs WHERE id = $1 LIMIT 1", [runId]);
+    let context: Record<string, string> = {};
+    try { context = contextRow?.context ? JSON.parse(contextRow.context) : {}; } catch { context = {}; }
+
+    let storyLabel = "";
+    if (storyDbId) {
+      const story = await pgGet<{ story_id: string; title: string }>("SELECT story_id, title FROM stories WHERE id = $1 LIMIT 1", [storyDbId]);
+      if (story) storyLabel = ` story=${story.story_id} title=${story.title.slice(0, 120)}`;
+    }
+
+    const entry = [
+      `### ${new Date().toISOString()} ${stepId} infra-retry${storyLabel}`,
+      "- Code: PRODUCT_SUPERVISOR_INFRA_RETRY",
+      `- Step: ${stepId}`,
+      `- Summary: ${reason.slice(0, 900)}`,
+    ].join("\n") + "\n";
+    updateSupervisorMemory(context, entry);
+    await pgRun("UPDATE runs SET context = $1, updated_at = NOW() WHERE id = $2", [JSON.stringify(context), runId]);
+  } catch (err) {
+    console.warn(`[spawner] supervisor infra memory update failed: ${String(err).slice(0, 220)}`);
   }
 }
 
