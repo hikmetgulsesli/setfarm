@@ -32,15 +32,24 @@ describe("Review step frontend visual verification", () => {
     assert.ok(workflowContent.includes("- id: security-gate"), "must have security-gate step");
   });
 
+  it("workflow has supervisor checkpoint before security-gate", () => {
+    const stepsSection = workflowContent.split(/^steps:/m)[1] || "";
+    const superviseIdx = stepsSection.indexOf("- id: supervise");
+    const securityIdx = stepsSection.indexOf("- id: security-gate");
+    assert.ok(superviseIdx > 0, "must have supervise step");
+    assert.ok(securityIdx > superviseIdx, "security-gate must come after supervise");
+    assert.match(stepsSection, /- id: supervise\s+agent: supervisor/);
+  });
+
   it("workflow has deploy step", () => {
     assert.ok(workflowContent.includes("- id: deploy"), "must have deploy step");
   });
 
-  it("workflow has 11 steps in v12.0 pipeline", () => {
+  it("workflow has 12 steps in v12.1 pipeline", () => {
     const stepMatches = workflowContent.match(/^\s+- id: (?!planner|setup|developer|reviewer|tester|security-gate|deployer|designer)\w+/gm);
     // Count steps section entries (after "steps:" heading)
     const stepsSection = workflowContent.split(/^steps:/m)[1];
     const steps = stepsSection?.match(/^\s+- id: \w+/gm) || [];
-    assert.equal(steps.length, 11, "should have 11 steps (setup split + qa-test added)");
+    assert.equal(steps.length, 12, "should have 12 steps (including supervisor checkpoint)");
   });
 });

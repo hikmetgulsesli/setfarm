@@ -30,6 +30,7 @@ function buildPrompt(ctx: PromptContext): string {
     PR_MERGEABLE: c["pr_mergeable"] || "",
     PR_MERGE_STATE_STATUS: c["pr_merge_state_status"] || "",
     PLAYWRIGHT_REPORT: c["playwright_report"] || "",
+    SUPERVISOR_MEMORY: c["supervisor_memory"] || "(no supervisor memory yet)",
   });
   return `${resolved}\n\n---\n\n# Rules\n\n${rulesBody}`;
 }

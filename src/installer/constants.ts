@@ -21,7 +21,7 @@ export const FAST_ABANDONED_THRESHOLD_MS = 600_000; // 10 min
 export const MAX_ABANDON_RESETS = 5;
 
 /** Steps that need longer abandon thresholds (Stitch API, complex builds) */
-export const SLOW_STEP_IDS = new Set(["design", "implement", "setup-repo", "setup-build"]);
+export const SLOW_STEP_IDS = new Set(["design", "implement", "setup-repo", "setup-build", "supervise"]);
 
 /** Extended threshold for slow steps (first abandon).
  *  Was 900_000 (15min) but comment said 40min — same halving bug. */
@@ -169,6 +169,15 @@ export const OPTIONAL_TEMPLATE_VARS = [
   "pr_check_state",
   "pr_mergeable",
   "playwright_report",
+  // LLM product supervisor checkpoint
+  "supervisor_memory",
+  "supervisor_git_summary",
+  "supervisor_last_decision",
+  "supervisor_last_summary",
+  "design_md_excerpt",
+  "package_json_excerpt",
+  "product_supervisor_status",
+  "product_supervisor_blocked",
 ] as const;
 
 
@@ -223,8 +232,18 @@ export const STEP_CONTEXT_ALLOWLIST: Record<string, string[]> = {
     "preflight_analysis", "preflight_diff", "preflight_errors",
     "verify_feedback", "stories_json", "completed_stories",
     "screen_map", "design_tokens",
+    "supervisor_memory", "product_supervisor_status", "product_supervisor_blocked",
     "pr_comments", "pr_check_state", "pr_mergeable",
     "playwright_report",
+  ],
+  supervise: [
+    "prd", "screen_map", "stories_json", "completed_stories",
+    "design_manifest", "design_tokens", "design_system", "design_dom_preview",
+    "ui_contract", "ui_behavior_contract", "design_notes", "design_md_excerpt",
+    "supervisor_memory", "supervisor_git_summary", "supervisor_last_decision", "supervisor_last_summary",
+    "product_supervisor_status", "product_supervisor_blocked",
+    "package_json_excerpt", "project_tree", "installed_packages", "component_registry",
+    "api_routes", "shared_code", "dev_server_port",
   ],
   "security-gate": ["security_notes"],
   "qa-test": ["dev_server_port", "project_name", "date"],

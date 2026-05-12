@@ -1,0 +1,38 @@
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+const workflow = readFileSync(resolve(import.meta.dirname, "../workflows/feature-dev/workflow.yml"), "utf-8");
+const stepsSection = workflow.split(/^steps:/m)[1] || "";
+const prompt = readFileSync(resolve(import.meta.dirname, "../src/installer/steps/12-supervise/prompt.md"), "utf-8");
+const verifyPrompt = readFileSync(resolve(import.meta.dirname, "../src/installer/steps/07-verify/prompt.md"), "utf-8");
+const agent = readFileSync(resolve(import.meta.dirname, "../workflows/feature-dev/agents/supervisor/AGENTS.md"), "utf-8");
+
+describe("LLM product supervisor architecture", () => {
+  it("declares a dedicated supervisor role and agent", () => {
+    assert.match(workflow, /supervisor:\s+\[feature-dev_supervisor\]/);
+    assert.match(workflow, /- id: supervisor\s+name: Product Supervisor\s+role: coding/s);
+  });
+
+  it("runs supervisor after verify and before downstream gates", () => {
+    const verifyIdx = stepsSection.indexOf("- id: verify");
+    const superviseIdx = stepsSection.indexOf("- id: supervise");
+    const securityIdx = stepsSection.indexOf("- id: security-gate");
+    assert.ok(verifyIdx > 0, "verify step exists");
+    assert.ok(superviseIdx > verifyIdx, "supervisor runs after verify");
+    assert.ok(securityIdx > superviseIdx, "security-gate runs after supervisor");
+  });
+
+  it("requires durable supervisor memory instead of project-specific rules", () => {
+    assert.match(prompt, /SUPERVISOR_MEMORY/);
+    assert.match(prompt, /SUPERVISOR_MEMORY_APPEND/);
+    assert.match(agent, /whole run/);
+    assert.match(prompt, /Apply this same system-level\s+contract to every project/);
+  });
+
+  it("injects supervisor memory into per-story verify feedback", () => {
+    assert.match(verifyPrompt, /SUPERVISOR_MEMORY/);
+    assert.match(verifyPrompt, /durable manager decisions/);
+  });
+});

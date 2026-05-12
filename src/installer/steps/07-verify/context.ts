@@ -2,6 +2,7 @@ import type { ClaimContext } from "../types.js";
 import { fetchPrState, formatPrCommentsForAgent } from "./pr-comments.js";
 import { runPlaywrightCheck, formatPlaywrightReport } from "./playwright-check.js";
 import { logger } from "../../../lib/logger.js";
+import { readSupervisorMemory } from "../../product-supervisor.js";
 
 // Verify context injection lives mostly in step-ops.ts (injectVerifyContext) because
 // it depends on the verify_each loop mechanism (autoVerifyDoneStories,
@@ -12,6 +13,8 @@ import { logger } from "../../../lib/logger.js";
 // CLI and expose them as context["pr_comments"] so verify prompt can ask
 // the agent to address each feedback point before auto-merge.
 export async function injectContext(ctx: ClaimContext): Promise<void> {
+  ctx.context["supervisor_memory"] = readSupervisorMemory(ctx.context);
+
   // PR comments. Prefer the current story PR over a stale final_pr from earlier
   // merge-queue/final-test state, otherwise old PR comments can leak into the
   // next story verification claim.

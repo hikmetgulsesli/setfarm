@@ -17,6 +17,7 @@ fully clean, then update local `main`.
 - `{{PR_MERGEABLE}}` — MERGEABLE/CONFLICTING/UNKNOWN
 - `{{PR_MERGE_STATE_STATUS}}` — CLEAN/DIRTY/BLOCKED/UNKNOWN
 - `{{PLAYWRIGHT_REPORT}}` — runtime/visual smoke report
+- `{{SUPERVISOR_MEMORY}}` — durable manager decisions from earlier phases
 
 ## Role Boundary
 
@@ -55,7 +56,7 @@ Allowed:
    - `git checkout -B "$HEAD_BRANCH" "origin/$HEAD_BRANCH"`.
    - If the local branch diverged, do not `git pull` merge; `origin/$HEAD_BRANCH` is the source of truth.
 6. Read review comments, failing checks, `{{PREFLIGHT_ANALYSIS}}`,
-   `{{PLAYWRIGHT_REPORT}}`, and acceptance criteria.
+   `{{PLAYWRIGHT_REPORT}}`, `{{SUPERVISOR_MEMORY}}`, and acceptance criteria.
    - If a real issue exists, do not fix it. Return `STATUS: retry`.
    - First blocker wins. After finding a real build, test, smoke, review,
      acceptance, or merge blocker, stop investigating and return

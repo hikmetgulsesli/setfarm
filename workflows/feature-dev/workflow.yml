@@ -1,11 +1,11 @@
 # PR-based workflow — each story creates a PR, verifier reviews + merges.
-# v12.0: Design-first pipeline. PRD → screens → stories → setup → code.
+# v12.1: Design-first pipeline plus LLM product supervisor checkpoint.
 id: feature-dev
 name: Feature Development Workflow
-version: 12.0
+version: 12.1
 description: |
   Design-first pipeline: PLAN → DESIGN → STORIES → SETUP-REPO → SETUP-BUILD → IMPLEMENT →
-  VERIFY → SECURITY-GATE → QA-TEST → FINAL-TEST → DEPLOY.
+  VERIFY → SUPERVISE → SECURITY-GATE → QA-TEST → FINAL-TEST → DEPLOY.
   Plan step produces PRD only (no stories). Design step generates screens
   from PRD via Stitch (no screen limit). Stories step decomposes PRD into
   user stories using SCREEN_MAP for screen↔story binding.
@@ -25,6 +25,7 @@ agent_mapping:
   designer: [feature-dev_designer]
   developer: [feature-dev_developer]  # Single agent - role workspace, no generic onboarding context
   reviewer: [feature-dev_reviewer]
+  supervisor: [feature-dev_supervisor]
   tester: [feature-dev_tester]
   security-gate: [feature-dev_security-gate]
   deployer: [feature-dev_deployer]
@@ -92,6 +93,17 @@ agents:
         AGENTS.md: agents/reviewer/AGENTS.md
         SOUL.md: agents/reviewer/SOUL.md
         IDENTITY.md: agents/reviewer/IDENTITY.md
+
+  - id: supervisor
+    name: Product Supervisor
+    role: coding
+    description: Persistent product manager/architect gate that audits the full product, fixes systemic issues, and updates supervisor memory before downstream QA.
+    workspace:
+      baseDir: agents/supervisor
+      files:
+        AGENTS.md: agents/supervisor/AGENTS.md
+        SOUL.md: agents/supervisor/SOUL.md
+        IDENTITY.md: agents/supervisor/IDENTITY.md
 
   - id: tester
     name: Tester
@@ -1418,6 +1430,33 @@ steps:
     max_retries: 5
     on_fail:
       escalate_to: human
+
+  - id: supervise
+    agent: supervisor
+    input: |
+      !include critical-preamble.md
+
+      Run the product supervisor checkpoint for the complete implementation.
+      The module prompt owns the detailed instructions and injects PRD, stories,
+      design, project memory, supervisor memory, git summary, and code context.
+
+      REPO: {{repo}}
+      BRANCH: {{branch}}
+      TASK: {{task}}
+      PREVIOUS FAILURE:
+      {{previous_failure}}
+
+      Required output:
+      STATUS: done
+      SUPERVISOR_DECISION: pass
+      SUPERVISOR_MEMORY_APPEND: <what was checked, what was fixed, residual risk>
+    expects: "STATUS: done"
+    max_retries: 3
+    on_fail:
+      retry_step: implement
+      max_retries: 2
+      on_exhausted:
+        escalate_to: human
 
 
   - id: security-gate

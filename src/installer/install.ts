@@ -71,7 +71,7 @@ const KIMI_FIRST_AGENT_MODEL = {
   timeoutMs: WORKFLOW_MODEL_TIMEOUT_MS,
 } as const;
 
-const DEFAULT_CRON_SESSION_RETENTION = "4h";
+const DEFAULT_CRON_SESSION_RETENTION = "24h";
 const DEFAULT_SESSION_MAINTENANCE = {
   mode: "enforce",
   pruneAfter: "2d",
@@ -209,7 +209,30 @@ function ensureCronSessionRetention(config: OpenClawConfig): void {
   if (!config.cron) config.cron = {};
   if (config.cron.sessionRetention === undefined) {
     config.cron.sessionRetention = DEFAULT_CRON_SESSION_RETENTION;
+    return;
   }
+  if (typeof config.cron.sessionRetention === "string") {
+    const currentMs = durationToMs(config.cron.sessionRetention);
+    const defaultMs = durationToMs(DEFAULT_CRON_SESSION_RETENTION);
+    if (currentMs > 0 && defaultMs > 0 && currentMs < defaultMs) {
+      config.cron.sessionRetention = DEFAULT_CRON_SESSION_RETENTION;
+    }
+  }
+}
+
+function durationToMs(value: string): number {
+  const match = value.trim().match(/^(\d+)\s*(ms|s|m|h|d)$/i);
+  if (!match) return 0;
+  const amount = Number(match[1]);
+  const unit = match[2].toLowerCase();
+  const scale =
+    unit === "ms" ? 1 :
+    unit === "s" ? 1000 :
+    unit === "m" ? 60_000 :
+    unit === "h" ? 3_600_000 :
+    unit === "d" ? 86_400_000 :
+    0;
+  return amount * scale;
 }
 
 function ensureExecConfig(config: OpenClawConfig): void {
