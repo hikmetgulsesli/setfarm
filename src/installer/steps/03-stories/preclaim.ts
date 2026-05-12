@@ -110,7 +110,7 @@ function inferProjectKind(params: {
     screenText,
   ].join(" ").toLowerCase();
 
-  if (/\b(game|oyun|tetris|tetromino|puzzle|arcade|score|level|lines?|pause|resume|restart|keyboard controls?|playfield|game board|next piece)\b/.test(text)) {
+  if (/\b(game|oyun|puzzle|arcade|score|level|pause|resume|restart|keyboard controls?|playfield|game board)\b/.test(text)) {
     return "game";
   }
   return "product";
@@ -225,8 +225,8 @@ function groupTemplates(projectKind: ProjectKind): StoryGroup[] {
       },
       {
         key: "metrics",
-        title: "Score, preview and status screens",
-        description: "Score, level, line count, next-piece preview, queue/status, and HUD behavior.",
+        title: "Score, progress and status screens",
+        description: "Score, level/progress, status, HUD panels, and task-requested gameplay summaries.",
         screens: [],
       },
       {
@@ -307,14 +307,14 @@ function appStoryDraft(params: {
       acceptanceCriteria: [
         "App shell renders the playable game surface first, not a generic landing page or dashboard.",
         "Every generated game screen is reachable from the first playable surface through visible UI or a documented keyboard shortcut, or is embedded into a reachable gameplay/menu surface; no orphan phase-only screens remain.",
-        "HUD/status screens such as next-piece previews are embedded in gameplay or have an obvious user path to open and return from them.",
+        "HUD/status screens are embedded in gameplay or have an obvious user path to open and return from them.",
         "App shell does not pass invented props to generated shared screen components; render read-only screens with their existing TypeScript props only.",
         "If App renders generated Stitch screens, it wires controls through declared actions props/action IDs from SCREEN_INDEX, never through textContent/DOM-label matching.",
         "Reducer/state transitions are pure and immutable; persistence, timers, and DOM/test bridge side effects live in effects or action wrappers.",
-        "Shared game state exposes visible screen, status, score, level, lines, active piece, next piece, paused/gameOver, storage status, and last error through window.app.",
+        "Shared game state exposes visible screen, status, score/progress, level/difficulty where present, gameplay entities, paused/gameOver, storage status, and last error through window.app.",
         "Start, pause, resume, restart, and game tick actions exist in owned state/context/window.app code; generated screen button wiring is owned by the screen stories.",
         "Keyboard controls implemented in owned files produce visible gameplay state changes when the game is active.",
-        "Next piece preview is derived from the same queue/source of truth used by piece spawning; no ref-only or duplicated preview state can drift.",
+        "HUD and status displays are derived from the same state source used by gameplay simulation; no ref-only or duplicated display state can drift.",
         "Game loop timers and repeated input use stable effects/callbacks so intervals do not restart every frame and pause/game-over stops movement.",
         "Persistence is limited to high score/preferences unless explicitly requested; corrupted persisted data produces visible recovery feedback when persistence is used.",
         "No product control uses data-smoke-ignore; inactive controls are disabled/hidden explicitly.",

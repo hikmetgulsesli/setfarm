@@ -3202,6 +3202,30 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
           return { advanced: false, runCompleted: false };
         }
       }
+
+      const supervisorPhase = step.step_id === "plan" ? "plan" : step.step_id === "deploy" ? "deploy" : "";
+      if (supervisorPhase && (parsed["status"] || "").toLowerCase() === "done") {
+        const { runProductSupervisorGate, updateSupervisorMemory } = await import("./product-supervisor.js");
+        const supervisor = runProductSupervisorGate({
+          phase: supervisorPhase as any,
+          runId: step.run_id,
+          stepId: step.step_id,
+          task: context["task"] || "",
+          parsed,
+          context,
+          rawOutput: output,
+        });
+        updateSupervisorMemory(context, supervisor.memoryEntry);
+        if (!supervisor.ok) {
+          context["previous_failure"] = supervisor.reason;
+          context["failure_category"] = supervisor.code;
+          context["failure_suggestion"] = "Treat this as product-manager feedback: preserve the original task/PRD, remove untraceable modules, and re-output a coherent result before coding continues.";
+          await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
+          await failStep(stepId, `GUARDRAIL [product-supervisor:${supervisorPhase}]: ${supervisor.reason}`);
+          return { advanced: false, runCompleted: false };
+        }
+        await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
+      }
     }
   }
 
@@ -4241,6 +4265,32 @@ ${screenDescs}
         }
       } catch (scopeErr) {
         logger.warn(`[scope-check] Skipped for story ${storyRow.story_id}: ${String(scopeErr).slice(0, 150)}`, { runId: step.run_id });
+      }
+    }
+
+    if (step.step_id === "implement" && storyStatus === STORY_STATUS.DONE && storyRow?.story_id) {
+      const { runProductSupervisorGate, updateSupervisorMemory } = await import("./product-supervisor.js");
+      const supervisor = runProductSupervisorGate({
+        phase: "implement",
+        runId: step.run_id,
+        stepId: step.step_id,
+        task: context["task"] || "",
+        context,
+        rawOutput: output,
+        currentStory: {
+          story_id: storyRow.story_id,
+          title: storyRow.title,
+        },
+      });
+      updateSupervisorMemory(context, supervisor.memoryEntry);
+      await updateRunContext(step.run_id, context);
+      if (!supervisor.ok) {
+        context["previous_failure"] = supervisor.reason;
+        context["failure_category"] = supervisor.code;
+        context["failure_suggestion"] = "Treat this as supervisor feedback: finish the actual story, remove placeholder/unfinished work, and report done only with real code behavior.";
+        await updateRunContext(step.run_id, context);
+        await failStep(stepId, `GUARDRAIL [product-supervisor:implement]: ${supervisor.reason}`);
+        return { advanced: false, runCompleted: false };
       }
     }
 

@@ -8,6 +8,7 @@ import {
   normalizeUiBehaviorText,
   type UiBehaviorRequirement,
 } from "./context.js";
+import { runProductSupervisorGate, updateSupervisorMemory } from "../../product-supervisor.js";
 
 // validateOutput is intentionally minimal at the field level — STORIES_JSON
 // arrives as multi-line raw text (not in parsed[]) and is ingested by
@@ -402,6 +403,23 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
     logger.warn(`[module:stories] ${uiBehaviorErr}`, { runId });
     await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);
     throw new Error(uiBehaviorErr);
+  }
+
+  const supervisor = runProductSupervisorGate({
+    phase: "stories",
+    runId,
+    stepId: "stories",
+    task: context["task"] || "",
+    context,
+    rawOutput,
+    stories: semanticRows,
+  });
+  updateSupervisorMemory(context, supervisor.memoryEntry);
+  await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), runId]);
+  if (!supervisor.ok) {
+    logger.warn(`[module:stories] ${supervisor.code}: ${supervisor.reason}`, { runId });
+    await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);
+    throw new Error(`${supervisor.code}: ${supervisor.reason}`);
   }
 
   // 2. missing scope_files (story_index > 0 — setup story exempt)

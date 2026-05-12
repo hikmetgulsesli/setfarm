@@ -184,8 +184,8 @@ function inferFallbackScreens(prd: string): ScreenMapEntry[] {
   }
 
   const lower = prd.toLowerCase();
-  if (names.length === 0 && /\b(tetris|tetromino|game|oyun)\b/.test(lower)) {
-    names.push("Main Menu", "Game Board", "Pause Overlay", "Game Over", "Settings");
+  if (names.length === 0 && /\b(game|oyun|arcade|puzzle|score|level|pause|restart)\b/.test(lower)) {
+    names.push("Main Menu", "Game Board", "Pause Overlay", "Game Over");
   } else if (names.length === 0) {
     names.push("Dashboard", "Detail View", "Create Form");
   }
@@ -214,14 +214,14 @@ function inferFallbackScreens(prd: string): ScreenMapEntry[] {
 function fallbackSpecificContent(screen: ScreenMapEntry): string {
   const title = screen.name.toLowerCase();
   if (/(game|board|oyun|play)/.test(title)) {
-    const cells = Array.from({ length: 200 }, (_, i) => `<div class="cell${i % 7 === 0 ? " active" : ""}" aria-hidden="true"></div>`).join("");
+    const cells = Array.from({ length: 96 }, (_, i) => `<div class="cell${i % 11 === 0 || i % 17 === 0 ? " active" : ""}" aria-hidden="true"></div>`).join("");
     return `
       <section class="game-layout" aria-label="Playable board reference">
-        <div class="board" role="grid" aria-label="10 by 20 Tetris playfield">${cells}</div>
+        <div class="board" role="grid" aria-label="Playable game field">${cells}</div>
         <aside class="side-panel">
-          <h2>Next Piece</h2>
-          <div class="mini-grid" aria-label="Next tetromino preview">${Array.from({ length: 16 }, (_, i) => `<span class="${i === 5 || i === 6 || i === 9 || i === 10 ? "active" : ""}"></span>`).join("")}</div>
-          <dl><dt>Score</dt><dd>12,400</dd><dt>Level</dt><dd>6</dd><dt>Lines</dt><dd>48</dd></dl>
+          <h2>Status</h2>
+          <div class="mini-grid" aria-label="Gameplay status preview">${Array.from({ length: 16 }, (_, i) => `<span class="${i % 5 === 0 ? "active" : ""}"></span>`).join("")}</div>
+          <dl><dt>Score</dt><dd>12,400</dd><dt>Level</dt><dd>6</dd><dt>Progress</dt><dd>48%</dd></dl>
           <button type="button">Pause</button><button type="button">Restart</button>
         </aside>
       </section>`;
@@ -230,7 +230,7 @@ function fallbackSpecificContent(screen: ScreenMapEntry): string {
     return `
       <form class="settings-panel">
         <label>Start Level <select name="level"><option>Level 1</option><option>Level 5</option></select></label>
-        <label>Ghost Piece <select name="ghost"><option>On</option><option>Off</option></select></label>
+        <label>Assist Hints <select name="assist"><option>On</option><option>Off</option></select></label>
         <label>Controls <input name="controls" placeholder="Arrow keys, WASD, or touch" /></label>
         <button type="button">Save Settings</button><button type="button">Reset Defaults</button>
       </form>`;
@@ -238,7 +238,7 @@ function fallbackSpecificContent(screen: ScreenMapEntry): string {
   if (/(over|result|score|sonuc|sonuç)/.test(title)) {
     return `
       <section class="result-panel">
-        <p class="scoreline">Final score 24,800 with 72 cleared lines.</p>
+        <p class="scoreline">Final score 24,800 with strong progress through the challenge.</p>
         <button type="button">Play Again</button><button type="button">Share Score</button><button type="button">Main Menu</button>
       </section>`;
   }

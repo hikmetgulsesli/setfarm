@@ -171,7 +171,7 @@ describe("03-stories step module", () => {
       mkdirSync(path.join(repo, "stitch"));
       writeFileSync(path.join(repo, "stitch", "DESIGN_MANIFEST.json"), JSON.stringify([
         { screenId: "SCR-001", title: "Game Board" },
-        { screenId: "SCR-002", title: "Next Piece Preview" },
+        { screenId: "SCR-002", title: "Score Panel" },
         { screenId: "SCR-003", title: "Game Options" },
         { screenId: "SCR-004", title: "Game Over" },
       ]));
@@ -196,7 +196,7 @@ describe("03-stories step module", () => {
       const predicted = computePredictedScreenFiles(repo);
       const output = buildAutoStoriesOutput({
         repo,
-        task: "Project: tetris-game-0511 Build a browser Tetris game with next piece preview, score, level, lines, pause/resume, restart, and keyboard controls.",
+        task: "Project: arcade-game-0511 Build a browser arcade game with score, level progress, pause/resume, restart, and keyboard controls.",
         predicted,
       });
 
@@ -209,30 +209,31 @@ describe("03-stories step module", () => {
       assert.match(stories[0].description, /without editing read-only screen components/);
       assert.match(allText, /Every generated game screen is reachable/);
       assert.match(allText, /no orphan phase-only screens remain/);
-      assert.match(allText, /HUD\/status screens such as next-piece previews/);
-      assert.match(allText, /Next piece preview is derived from the same queue\/source of truth/);
+      assert.match(allText, /HUD\/status screens are embedded in gameplay/);
+      assert.match(allText, /HUD and status displays are derived from the same state source/);
       assert.match(allText, /does not pass invented props to generated shared screen components/);
       assert.match(allText, /declared actions props\/action IDs from SCREEN_INDEX/);
       assert.match(allText, /never through textContent\/DOM-label matching/);
       assert.match(allText, /Reducer\/state transitions are pure and immutable/);
       assert.match(allText, /generated screen button wiring is owned by the screen stories/);
-      assert.match(allText, /Next Piece Preview screen/);
+      assert.match(allText, /Score Panel screen/);
       assert.match(allText, /Game Options screen/);
       assert.match(allText, /Game Over screen/);
       assert.doesNotMatch(allText, /touch\/click controls produce visible gameplay state changes/);
       assert.doesNotMatch(allText, /profile\/account/i);
       assert.doesNotMatch(allText, /Settings, profile and account screens/);
-      const nextPreviewStory = stories.find((s: any) => s.scope_files.includes("src/screens/NextPiecePreview.tsx"));
-      assert.ok(nextPreviewStory, "expected a dedicated NextPiecePreview story");
-      assert.deepEqual(nextPreviewStory.scope_files, ["src/screens/NextPiecePreview.tsx"]);
-      assert.match(nextPreviewStory.title, /Next Piece Preview screen$/);
+      assert.doesNotMatch(allText, /next piece|tetromino|activePiece|nextPiece/i);
+      const scorePanelStory = stories.find((s: any) => s.scope_files.includes("src/screens/ScorePanel.tsx"));
+      assert.ok(scorePanelStory, "expected a dedicated ScorePanel story");
+      assert.deepEqual(scorePanelStory.scope_files, ["src/screens/ScorePanel.tsx"]);
+      assert.match(scorePanelStory.title, /Score Panel screen$/);
       assert.doesNotMatch([
-        nextPreviewStory.title,
-        nextPreviewStory.description,
-        nextPreviewStory.scope_description,
-      ].join("\n"), /\b(score|status|hud|level|line count|queue)\b/i);
-      assert.doesNotMatch(nextPreviewStory.description, /those screen/i);
-      assert.match(nextPreviewStory.description, /that screen/);
+        scorePanelStory.title,
+        scorePanelStory.description,
+        scorePanelStory.scope_description,
+      ].join("\n"), /\b(game engine|keyboard|timer|persistence)\b/i);
+      assert.doesNotMatch(scorePanelStory.description, /those screen/i);
+      assert.match(scorePanelStory.description, /that screen/);
       assert.equal(stories[0].scope_files.includes("src/hooks/useAppState.ts"), true);
       assert.equal(stories[0].shared_files.includes("src/screens/GameBoard.tsx"), true);
     } finally {

@@ -161,7 +161,7 @@ describe("01-plan step module", () => {
 
   it("auto-plan uses Next.js project structure when TECH_STACK is nextjs", () => {
     const output = buildAutoPlanOutput(
-      "Project: seo-tetris-0511 Build a Next.js browser Tetris game with settings and restart flow.",
+      "Project: seo-arcade-0511 Build a Next.js browser arcade game with settings and restart flow.",
     );
     const parsed = parsePlanOutput(output);
     planModule.normalize?.(parsed);
@@ -174,9 +174,9 @@ describe("01-plan step module", () => {
     assert.doesNotMatch(parsed.prd, /Use src\/components, src\/screens, src\/hooks, src\/utils, src\/types, src\/App\.tsx, and src\/main\.tsx/);
   });
 
-  it("does not infer Next.js from game phrases like next piece preview", () => {
+  it("does not infer Next.js from game phrases that contain next as a normal word", () => {
     const output = buildAutoPlanOutput(
-      "Project: tetris-game-0511 Build a browser Tetris game with next piece preview, score, pause, and restart.",
+      "Project: arcade-game-0511 Build a browser arcade game with next level preview, score, pause, and restart.",
     );
     const parsed = parsePlanOutput(output);
     planModule.normalize?.(parsed);
@@ -190,7 +190,7 @@ describe("01-plan step module", () => {
 
   it("auto-plan emits a game-specific contract instead of product CRUD/profile requirements", () => {
     const output = buildAutoPlanOutput(
-      "Project: tetris-game-0511 Build a browser Tetris game with next piece preview, score, level, lines, pause/resume, restart, keyboard controls, and game over flow.",
+      "Project: arcade-game-0511 Build a browser arcade game with score, level progression, pause/resume, restart, keyboard controls, and game over flow.",
     );
     const parsed = parsePlanOutput(output);
     planModule.normalize?.(parsed);
@@ -199,12 +199,27 @@ describe("01-plan step module", () => {
     assert.equal(validation.ok, true, validation.errors.join("; "));
     assert.equal(parsed.tech_stack, "vite-react");
     assert.match(parsed.prd, /\| 1 \| Game Board \| play \|/);
-    assert.match(parsed.prd, /next piece preview is derived from the same queue used by piece spawning/i);
     assert.match(parsed.prd, /duplicate timers/i);
-    assert.match(parsed.prd, /window\.app = \{ state: \{ screen, status, score, level, lines, activePiece, nextPiece/);
+    assert.match(parsed.prd, /playfield entities/i);
+    assert.match(parsed.prd, /window\.app = \{ state: \{ screen, status, score, level, progress, entities/);
     assert.doesNotMatch(parsed.prd, /Filtering, search, create, edit, delete, profile/i);
     assert.doesNotMatch(parsed.prd, /profile\/account icon/i);
     assert.doesNotMatch(parsed.prd, /Every persisted record includes id, createdAt, and updatedAt/i);
+  });
+
+  it("preserves inline Project requirements without leaking a prior game template", () => {
+    const output = buildAutoPlanOutput(
+      "Project: brick-arcade-0512 Build a browser-based arcade game. Requirements: brick grid, paddle controls, ball physics, wall collisions, score, lives, pause/resume, restart, game over, and responsive layout.",
+    );
+    const parsed = parsePlanOutput(output);
+    planModule.normalize?.(parsed);
+    const validation = planModule.validateOutput(parsed);
+
+    assert.equal(validation.ok, true, validation.errors.join("; "));
+    assert.match(parsed.prd, /brick grid/i);
+    assert.match(parsed.prd, /paddle controls/i);
+    assert.match(parsed.prd, /ball physics/i);
+    assert.doesNotMatch(parsed.prd, /next piece|tetromino|activePiece|nextPiece/i);
   });
 
   it("infers UI language without letting English tasks become Turkish by default", () => {

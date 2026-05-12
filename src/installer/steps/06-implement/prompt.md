@@ -14,6 +14,11 @@ You are implementing ONE user story. You may ONLY write to the files listed belo
 > The files under "□ PENDING" stories belong to future stories — leave them for those.
 > Files under "→ CURRENT" are YOUR scope.
 
+## Supervisor Memory
+This is the persistent product-manager memory for this run. Treat blockers and prior decisions here as authoritative project context, not optional suggestions.
+
+{{SUPERVISOR_MEMORY}}
+
 ## Current Story
 {{STORY}}
 
@@ -81,8 +86,9 @@ You are implementing ONE user story. You may ONLY write to the files listed belo
 8. If the story acceptance criteria or PRD mention `window.app`, implement it
    as a real runtime test bridge, not documentation. Assign `window.app` from
    a React effect or equivalent update point and keep its fields current after
-   state changes. For games this includes score/status/level/lines/paused/
-   gameOver/activePiece/nextPiece; for product apps this includes active
+   state changes. For games this includes the requested game's score/progress,
+   status, level/difficulty where present, paused/gameOver, and gameplay
+   entities; for product apps this includes active
    screen/route, selected record, counts, storage status, last error, and active
    panel where those concepts exist.
    Reducers and state transition functions must be pure: no localStorage reads/writes, timers, DOM access, or mutation of existing state objects inside the reducer. Put persistence and timer side effects in effects or action wrappers, then dispatch plain state updates.

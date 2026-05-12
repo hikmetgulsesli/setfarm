@@ -94,7 +94,7 @@ function inferDbRequired(task: string): string {
 
 function inferProjectKind(task: string): ProjectKind {
   const lower = transliterate(task).toLowerCase();
-  if (/\b(game|oyun|tetris|tetromino|puzzle|arcade|score|level|lines?|pause|resume|restart|keyboard controls?)\b/.test(lower)) {
+  if (/\b(game|oyun|puzzle|arcade|score|level|pause|resume|restart|keyboard controls?|playfield)\b/.test(lower)) {
     return "game";
   }
   return "product";
@@ -108,49 +108,59 @@ export function inferUiLanguage(task: string): string {
 }
 
 function taskBullets(task: string): string[] {
+  const normalizeTaskLine = (line: string): string => {
+    let current = line.trim().replace(/^[-*]\s*/, "");
+    if (/^Platform\s*:/i.test(current)) return "";
+    if (/^(?:Project|Proje)\s*:/i.test(current)) {
+      current = current.replace(/^(?:Project|Proje)\s*:\s*/i, "").trim();
+      const verb = current.match(/\b(build|create|make|develop|implement|design|write|add|fix|yap|olustur|oluştur|kur|gelistir|geliştir)\b[\s\S]*$/i)?.[0];
+      if (verb) return verb.trim();
+      return "";
+    }
+    return current;
+  };
+
   const bullets = task
     .split(/\n+/)
-    .map(line => line.trim().replace(/^[-*]\s*/, ""))
-    .filter(line => line && !/^(?:Project|Proje)\s*:/i.test(line) && !/^Platform\s*:/i.test(line))
+    .map(normalizeTaskLine)
+    .filter(Boolean)
     .slice(0, 12);
   return bullets.length > 0 ? bullets : ["Deliver a working product surface where the first screen is the actual application workflow."];
 }
 
 function screensForTask(task: string): Array<{ name: string; type: string; description: string }> {
   const lower = task.toLowerCase();
-  if (/lead|crm|pipeline/.test(lower)) {
-    return [
-      { name: "Leads", type: "dashboard", description: "Lead list, search, filtering, quick status actions, and new lead entry." },
-      { name: "Lead Create Edit", type: "form", description: "Name, company, source, estimated value, status, next action, and date fields." },
-      { name: "Pipeline", type: "board", description: "Status columns with lead counts and estimated value totals." },
-      { name: "Insights", type: "dashboard", description: "Total leads, won/lost counts, weekly follow-up, and conversion metrics." },
-      { name: "Settings", type: "settings", description: "Density, currency, reminder, and persistence preferences." },
-      { name: "Profile Panel", type: "panel", description: "User name, timezone, notification toggles, close, and sign-out actions." },
-      { name: "Storage Error State", type: "error", description: "Save error, retry, and local data reset actions." },
-      { name: "Empty State", type: "empty", description: "No-lead explanation with a primary create-lead call to action." },
-    ];
-  }
   if (/game|oyun/.test(lower)) {
-    return [
-      { name: "Game Board", type: "play", description: "Playable main scene with the board, active piece, score, level, lines, and primary controls." },
-      { name: "Next Piece Preview", type: "status", description: "Upcoming piece queue preview derived from the same game state that spawns pieces." },
-      { name: "Main Menu", type: "menu", description: "Start, resume, restart, and difficulty actions." },
+    const screens = [
+      { name: "Game Board", type: "play", description: "Playable main scene with the playfield, user-controlled entities, score/progress, status, and primary controls." },
+      { name: "Main Menu", type: "menu", description: "Start, resume, restart, and any task-requested mode or difficulty actions." },
       { name: "Pause Overlay", type: "overlay", description: "Paused state with resume, restart, and return-to-menu actions." },
-      { name: "Game Over", type: "result", description: "Final score, level, lines cleared, replay, and return-to-menu actions." },
-      { name: "Controls Help", type: "help", description: "Keyboard and touch controls plus short rules." },
-      { name: "Game Options", type: "settings", description: "Audio, speed/difficulty, and control preferences when requested." },
+      { name: "Game Over", type: "result", description: "Final score/progress summary, replay, and return-to-menu actions." },
     ];
+    if (/\b(level complete|victory|win|complete state|bolum|bölüm)\b/i.test(lower)) {
+      screens.push({ name: "Progress Complete", type: "result", description: "Task-requested win, level-complete, or progress-complete state with continue/restart/menu actions." });
+    }
+    if (/\b(keyboard|touch|controls?|help|rules|yardim|yardım|how to)\b/i.test(lower)) {
+      screens.push({ name: "Controls Help", type: "help", description: "Task-requested keyboard/touch controls and concise rules." });
+    }
+    if (/\b(settings?|options?|preferences?|difficulty|audio|speed|ayar|tercih)\b/i.test(lower)) {
+      screens.push({ name: "Game Options", type: "settings", description: "Task-requested settings such as audio, difficulty, speed, controls, or preferences." });
+    }
+    return screens;
   }
-  return [
+  const screens = [
     { name: "Dashboard", type: "dashboard", description: "Primary data, filters, and the main product actions." },
     { name: "Create Edit", type: "form", description: "CRUD form with validation, cancel, and save behavior." },
     { name: "Detail", type: "detail", description: "Selected record summary with secondary actions." },
     { name: "Insights", type: "insights", description: "Useful summary metrics for the user." },
     { name: "Settings", type: "settings", description: "Preferences and visible state-changing controls." },
-    { name: "Profile", type: "panel", description: "Account details, toggles, and close behavior." },
     { name: "Error State", type: "error", description: "Retry and clear actions for storage or runtime errors." },
     { name: "Empty State", type: "empty", description: "No-data state that guides the user to the first action." },
   ];
+  if (/\b(profile|account|user|auth|login|sign in|profil|hesap|kullanici|kullanıcı)\b/i.test(lower)) {
+    screens.push({ name: "Profile", type: "panel", description: "Task-requested account details, toggles, and close/back behavior." });
+  }
+  return screens;
 }
 
 function platformLineForStack(stack: string): string {
@@ -200,7 +210,7 @@ export function buildAutoPlanOutput(task: string): string {
     ? [
       "- Provide a working first-load playable game surface, not a landing page or generic dashboard.",
       "- Ensure Start, Pause, Resume, Restart, keyboard/touch controls, and game-over actions visibly change the game state.",
-      "- Keep gameplay state single-sourced so score, board, active piece, next piece preview, pause, and game-over UI cannot drift.",
+      "- Keep gameplay state single-sourced so score/progress, playfield entities, status/HUD, pause, and game-over UI cannot drift.",
       "- Avoid text overflow, incoherent overlap, dead controls, and broken mobile controls on desktop and mobile.",
       "- Expose deterministic game state so smoke, final-test, and deploy gates can verify actual post-click and post-keyboard behavior.",
     ]
@@ -217,7 +227,7 @@ export function buildAutoPlanOutput(task: string): string {
       requirementRows,
       "- Gameplay controls provide visible post-action state changes for click/touch and keyboard input.",
       "- Pause/resume freezes and restarts the game loop without spawning duplicate timers.",
-      "- Restart resets the board, active piece, next queue, score, level, lines, and game-over state consistently.",
+      "- Restart resets the playfield, user-controlled entities, score/progress, level/difficulty where present, and game-over state consistently.",
       "- Product controls must not use data-smoke-ignore; intentionally unavailable controls are disabled or aria-disabled.",
     ]
     : [
@@ -229,8 +239,8 @@ export function buildAutoPlanOutput(task: string): string {
 
   const dataModel = projectKind === "game"
     ? [
-      "- Game state includes board grid, active piece, next piece queue/preview, score, level, lines, status, paused, and gameOver fields.",
-      "- The next piece preview is derived from the same queue used by piece spawning; do not keep a divergent ref or duplicate source of truth.",
+      "- Game state includes playfield entities, user input state, score/progress, level/difficulty where present, status, paused, and gameOver fields.",
+      "- HUD/status panels derive from the same gameplay state used by the simulation; do not keep divergent display-only state.",
       "- Timers and repeated input use stable callbacks/effects so interval setup does not thrash every frame.",
       "- Persistence is limited to high score and explicit preferences unless the task asks for saved games.",
       "- Corrupt persisted high-score/preferences data shows visible recovery feedback instead of silently resetting when persistence is used.",
@@ -246,7 +256,7 @@ export function buildAutoPlanOutput(task: string): string {
     ? [
       `- User-facing language: ${uiLanguage}.`,
       "- Aesthetic: focused game UI with a clear playfield, readable score/status panels, and controls that do not compete with gameplay.",
-      "- Palette: high-contrast board cells, distinct tetromino colors, Background #0F172A, Surface #111827, Text #F8FAFC, Border #334155, Success #22C55E, Error #F43F5E, Warning #F59E0B.",
+      "- Palette: high-contrast game entities, readable HUD colors, Background #0F172A, Surface #111827, Text #F8FAFC, Border #334155, Success #22C55E, Error #F43F5E, Warning #F59E0B.",
       "- Typography: system sans; compact status labels use small but readable headings.",
       "- Components: stable board dimensions, visible focus rings, and 44x44px touch targets for mobile controls.",
       "- Do not add profile/account panels unless the user explicitly asks for account features.",
@@ -275,7 +285,7 @@ export function buildAutoPlanOutput(task: string): string {
     ];
 
   const windowState = projectKind === "game"
-    ? "window.app = { state: { screen, status, score, level, lines, activePiece, nextPiece, paused, gameOver, storageStatus, lastError }, dispatch } exposes current gameplay and test state."
+    ? "window.app = { state: { screen, status, score, level, progress, entities, paused, gameOver, storageStatus, lastError }, dispatch } exposes current gameplay and test state using fields that match the requested game."
     : "window.app = { state, screen, lastError, storageStatus, itemCount, activePanel } exposes the main dogfood and test state.";
 
   return [
@@ -304,7 +314,7 @@ export function buildAutoPlanOutput(task: string): string {
     `- Storage: ${projectKind === "game" && dbRequired === "none" ? "localStorage only for high score/preferences when used, with visible recovery for corrupt data" : dbRequired === "none" ? "localStorage with visible retry and clear actions for persistence failures" : dbRequired}.`,
     "- Icons: Lucide React; do not use emoji as controls.",
     projectKind === "game"
-      ? "- Test surface: expose score, level, lines, status, paused/gameOver, activePiece, nextPiece, storageStatus, and lastError under window.app."
+      ? "- Test surface: expose score/progress, level/difficulty where present, status, paused/gameOver, gameplay entities, storageStatus, and lastError under window.app."
       : "- Test surface: expose state, active screen, errors, counters, and active panel under window.app.",
     "",
     "## Functional Requirements",

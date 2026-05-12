@@ -242,7 +242,7 @@ export async function checkRuntimeBridgeGate(
     passed: false,
     reason: `RUNTIME_BRIDGE_MISSING: Story ${storyId} (${storyTitle}) acceptance criteria require window.app, but no scoped source file assigns window.app/globalThis.app. window.game, comments, or type declarations are not enough; expose the live runtime state bridge from a React effect or equivalent update point.`,
     category: "RUNTIME_BRIDGE_MISSING",
-    suggestion: "Assign window.app/globalThis.app with live screen/status/score/level/lines/paused/gameOver/activePiece/nextPiece/storageStatus/lastError state and action hooks before reporting STATUS: done.",
+    suggestion: "Assign window.app/globalThis.app with live screen/status, score/progress where present, level/difficulty where present, paused/gameOver, domain entities, storageStatus/lastError state, and action hooks before reporting STATUS: done.",
   };
 }
 

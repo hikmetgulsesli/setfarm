@@ -16,6 +16,7 @@ import { parseOutputKeyValues } from "../../context-ops.js";
 import { collectUiBehaviorRequirements, type UiBehaviorRequirement } from "../03-stories/context.js";
 import { sanitizeDesignMismatchFeedback } from "../../error-taxonomy.js";
 import { sanitizeRetryFeedbackForCurrentSource } from "../../retry-feedback.js";
+import { readSupervisorMemory } from "../../product-supervisor.js";
 
 const STITCH_HTML_EXCERPT_CHARS = 2500;
 const STITCH_HTML_TOTAL_CHARS = 6000;
@@ -53,7 +54,7 @@ const OPTIONAL_TEMPLATE_VARS = [
   "project_tree", "installed_packages", "shared_code", "recent_stories_code",
   "component_registry", "api_routes", "design_rules", "detected_platform",
   "previous_failure", "failure_category", "failure_suggestion", "verify_feedback",
-  "detected_stack", "stack_rules",
+  "detected_stack", "stack_rules", "supervisor_memory",
 ];
 
 function normalizedStatusFromStepOutput(output: string): string {
@@ -152,6 +153,7 @@ export async function injectStoryContext(
   context["stories_remaining"] = String(pendingCount);
   context["progress"] = await helpers.readProgressFile(step.run_id);
   context["project_memory"] = await helpers.readProjectMemory(context);
+  context["supervisor_memory"] = readSupervisorMemory(context);
 
   // Story scope discipline injection (from planner's STORIES_JSON)
   await injectScopeContext(nextStory, context);

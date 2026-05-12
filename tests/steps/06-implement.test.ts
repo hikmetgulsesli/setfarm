@@ -140,8 +140,10 @@ describe("06-implement step module", () => {
   it("prompt requires runtime window.app bridge when accepted by story contract", () => {
     const prompt = fs.readFileSync(path.join(process.cwd(), "src/installer/steps/06-implement/prompt.md"), "utf-8");
     assert.match(prompt, /implement it\s+as a real runtime test bridge/i);
-    assert.match(prompt, /score\/status\/level\/lines\/paused\/\s+gameOver\/activePiece\/nextPiece/i);
+    assert.match(prompt, /requested game's score\/progress/i);
+    assert.match(prompt, /gameplay\s+entities/i);
     assert.match(prompt, /active\s+screen\/route, selected record, counts, storage status, last error/i);
+    assert.match(prompt, /Supervisor Memory/i);
     assert.match(prompt, /do not invent props/i);
     assert.match(prompt, /If TypeScript says a prop does not exist on a shared component/i);
     assert.match(prompt, /Generated Stitch screen components may declare an `actions` prop/i);
