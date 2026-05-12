@@ -235,6 +235,20 @@ function normalizeScreenName(value: string): string {
     .trim();
 }
 
+function screenNameMatches(expectedName: string, actualName: string): boolean {
+  const expected = normalizeScreenName(expectedName);
+  const actual = normalizeScreenName(actualName);
+  if (!expected || !actual) return false;
+  if (expected === actual) return true;
+  if (actual.startsWith(`${expected} `)) return true;
+  if (expected.startsWith(`${actual} `)) return true;
+
+  const expectedTokens = expected.split(" ").filter(Boolean);
+  const actualTokens = new Set(actual.split(" ").filter(Boolean));
+  if (expectedTokens.length < 2) return false;
+  return expectedTokens.every((token) => actualTokens.has(token));
+}
+
 function enoughDomainCoverage(sourceTerms: string[], targetText: string): boolean {
   if (sourceTerms.length < 3) return true;
   const targetTerms = new Set(tokenise(targetText));
@@ -311,13 +325,12 @@ function checkDesign(input: ProductSupervisorInput): string[] {
   }
 
   if (rows.length > 0) {
-    const expected = rows.map((row) => normalizeScreenName(row.name)).filter(Boolean);
-    const expectedSet = new Set(expected);
-    const actual = screenMap.map((screen) => normalizeScreenName(String(screen?.name || ""))).filter(Boolean);
-    const actualSet = new Set(actual);
-    const missing = rows.filter((row) => !actualSet.has(normalizeScreenName(row.name))).map((row) => row.name).slice(0, 8);
+    const missing = rows
+      .filter((row) => !screenMap.some((screen) => screenNameMatches(row.name, String(screen?.name || ""))))
+      .map((row) => row.name)
+      .slice(0, 8);
     const extra = screenMap
-      .filter((screen) => !expectedSet.has(normalizeScreenName(String(screen?.name || ""))))
+      .filter((screen) => !rows.some((row) => screenNameMatches(row.name, String(screen?.name || ""))))
       .map((screen) => String(screen?.name || "unnamed"))
       .slice(0, 8);
 

@@ -134,6 +134,20 @@ function normalizeScreenName(value: string): string {
     .trim();
 }
 
+function screenNameMatches(expectedName: string, actualName: string): boolean {
+  const expected = normalizeScreenName(expectedName);
+  const actual = normalizeScreenName(actualName);
+  if (!expected || !actual) return false;
+  if (expected === actual) return true;
+  if (actual.startsWith(`${expected} `)) return true;
+  if (expected.startsWith(`${actual} `)) return true;
+
+  const expectedTokens = expected.split(" ").filter(Boolean);
+  const actualTokens = new Set(actual.split(" ").filter(Boolean));
+  if (expectedTokens.length < 2) return false;
+  return expectedTokens.every((token) => actualTokens.has(token));
+}
+
 function parsePrdScreenRows(prd: string): Array<{ name: string; type: string; description: string }> {
   const rows: Array<{ name: string; type: string; description: string }> = [];
   const lines = String(prd || "").split(/\r?\n/);
@@ -160,22 +174,12 @@ function reconcileScreenMapToPrd(
   const rows = parsePrdScreenRows(prd);
   if (rows.length === 0) return { screenMap, missing: [], dropped: [], duplicates: [] };
 
-  const byName = new Map<string, ScreenMapEntry[]>();
-  for (const screen of screenMap) {
-    const key = normalizeScreenName(screen.name);
-    if (!key) continue;
-    const list = byName.get(key) || [];
-    list.push(screen);
-    byName.set(key, list);
-  }
-
   const next: ScreenMapEntry[] = [];
   const missing: string[] = [];
   const usedIds = new Set<string>();
   const duplicates: string[] = [];
   for (const row of rows) {
-    const key = normalizeScreenName(row.name);
-    const matches = byName.get(key) || [];
+    const matches = screenMap.filter((screen) => screenNameMatches(row.name, screen.name));
     const chosen = matches.find((screen) => !usedIds.has(screen.screenId)) || matches[0];
     if (!chosen) {
       missing.push(row.name);
@@ -191,9 +195,8 @@ function reconcileScreenMapToPrd(
     });
   }
 
-  const expectedNames = new Set(rows.map((row) => normalizeScreenName(row.name)));
   const dropped = screenMap
-    .filter((screen) => !usedIds.has(screen.screenId) || !expectedNames.has(normalizeScreenName(screen.name)))
+    .filter((screen) => !usedIds.has(screen.screenId) || !rows.some((row) => screenNameMatches(row.name, screen.name)))
     .map((screen) => screen.name)
     .filter(Boolean);
 

@@ -99,6 +99,35 @@ describe("product supervisor", () => {
     assert.match(result.reason, /DESIGN_SCREEN_MISSING/);
   });
 
+  it("accepts qualified Stitch screen titles that still map to PRD screens", () => {
+    const prd = [
+      "# Snake PRD",
+      "## Screens",
+      "| # | Screen Name | Type | Description |",
+      "|---|-----------|-----|----------|",
+      "| 1 | Game Board | play | Main playable grid and controls |",
+      "| 2 | Game Options | settings | Speed and control preferences |",
+      "| 3 | Game Over | result | Final score and restart |",
+    ].join("\n");
+
+    const result = runProductSupervisorGate({
+      phase: "design",
+      runId: "run-1",
+      stepId: "design",
+      parsed: {
+        status: "done",
+        screen_map: JSON.stringify([
+          { screenId: "a", name: "Game Board - Play State", type: "play", description: "" },
+          { screenId: "b", name: "Game Options & Settings", type: "settings", description: "" },
+          { screenId: "c", name: "Game Over Summary", type: "result", description: "" },
+        ]),
+      },
+      context: { prd },
+    });
+
+    assert.equal(result.ok, true, result.reason);
+  });
+
   it("does not treat implementation planning vocabulary as story domain drift", () => {
     const source = [
       "Project: brick-arcade-0512 Build a browser arcade game with brick grid, paddle controls, ball physics, score, lives, pause, restart, and game over.",
