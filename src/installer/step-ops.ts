@@ -1800,6 +1800,15 @@ async function injectVerifyContext(
   if (nextUnverified.story_branch) context["story_branch"] = nextUnverified.story_branch;
   context["current_story_id"] = nextUnverified.story_id;
   context["current_story_title"] = nextUnverified.title;
+  if (step.retry_count === 0 && context["previous_failure"]) {
+    const staleImplementFailure = /\b(RUNTIME_BRIDGE_MISSING|BUILD_FAILED|TEST_FAILED|SCOPE_BLEED|NO_WORK|SCOPE_FILE_MISSING|PRODUCT_SUPERVISOR_IMPLEMENT_BLOCKED)\b/i
+      .test(`${context["failure_category"] || ""}\n${context["previous_failure"] || ""}`);
+    if (staleImplementFailure) {
+      delete context["previous_failure"];
+      delete context["failure_category"];
+      delete context["failure_suggestion"];
+    }
+  }
   const storyObj: Story = {
     id: nextUnverified.id, runId: nextUnverified.run_id,
     storyIndex: nextUnverified.story_index, storyId: nextUnverified.story_id,
