@@ -401,20 +401,23 @@ export function updateSupervisorMemory(
   const repo = repoFromContext(context);
   if (!repo) return;
   try {
-    if (!fs.existsSync(repo)) return;
-    ensureGitExclude(repo, "SUPERVISOR_MEMORY.md");
     const memoryPath = path.join(repo, "SUPERVISOR_MEMORY.md");
-    const existing = fs.existsSync(memoryPath) ? fs.readFileSync(memoryPath, "utf-8") : "# Supervisor Memory\n\n";
+    const existing = fs.existsSync(memoryPath)
+      ? fs.readFileSync(memoryPath, "utf-8")
+      : (context.supervisor_memory || "# Supervisor Memory\n\n");
     let next = `${existing.trimEnd()}\n\n${entry}`;
     const lines = next.split(/\r?\n/);
     if (lines.length > 260) {
       next = ["# Supervisor Memory", "", ...lines.slice(-240)].join("\n");
     }
-    fs.writeFileSync(memoryPath, next.endsWith("\n") ? next : `${next}\n`);
+    const finalMemory = next.endsWith("\n") ? next : `${next}\n`;
     context.supervisor_memory = next.slice(-6000);
     context.product_supervisor_status = entry.includes(" blocked") ? "blocked" : "ok";
     if (entry.includes(" blocked")) context.product_supervisor_blocked = entry.slice(0, 1200);
     else delete context.product_supervisor_blocked;
+    if (!fs.existsSync(repo)) return;
+    ensureGitExclude(repo, "SUPERVISOR_MEMORY.md");
+    fs.writeFileSync(memoryPath, finalMemory);
   } catch (err) {
     logger.warn(`[product-supervisor] memory update failed: ${String(err).slice(0, 160)}`, {});
   }

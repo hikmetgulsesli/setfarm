@@ -162,4 +162,22 @@ describe("product supervisor", () => {
       rmSync(repo, { recursive: true, force: true });
     }
   });
+
+  it("keeps supervisor memory in run context before the repo exists", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "setfarm-supervisor-missing-"));
+    const repo = path.join(root, "future-repo");
+    try {
+      const context: Record<string, string> = { repo };
+      updateSupervisorMemory(context, "### 2026-05-12T00:00:00.000Z plan pass\n- Code: PRODUCT_SUPERVISOR_OK\n");
+      assert.match(context.supervisor_memory, /plan pass/);
+
+      mkdirSync(path.join(repo, ".git", "info"), { recursive: true });
+      updateSupervisorMemory(context, "### 2026-05-12T00:01:00.000Z design pass\n- Code: PRODUCT_SUPERVISOR_OK\n");
+      const persisted = readFileSync(path.join(repo, "SUPERVISOR_MEMORY.md"), "utf-8");
+      assert.match(persisted, /plan pass/);
+      assert.match(persisted, /design pass/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
