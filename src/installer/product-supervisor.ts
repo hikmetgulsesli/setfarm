@@ -37,17 +37,17 @@ export interface ProductSupervisorResult {
 
 const TOKEN_STOP_WORDS = new Set([
   "a", "about", "across", "active", "add", "admin", "all", "also", "and", "app",
-  "application", "based", "build", "browser", "button", "can", "client", "code",
+  "application", "based", "bridge", "broader", "build", "browser", "button", "can", "client", "code",
   "component", "components", "control", "controls", "create", "current", "data",
-  "desktop", "design", "develop", "display", "done", "edit", "error", "feature",
+  "declared", "desktop", "design", "develop", "display", "dom", "done", "edit", "engine", "error", "feature",
   "features", "file", "flow", "for", "from", "grid", "help", "high", "home",
   "implement", "include", "includes", "input", "interface", "layout", "level",
   "levels", "local", "main", "make", "menu", "mobile", "mode", "new", "page",
-  "panel", "platform", "project", "react", "record", "records", "report", "repo",
+  "owned", "owner", "panel", "platform", "project", "react", "record", "records", "report", "repo",
   "required", "requirements", "responsive", "route", "screen", "screens", "section",
-  "settings", "state", "status", "summary", "support", "surface", "system", "task",
+  "changes", "scope", "settings", "shared", "shell", "state", "status", "summary", "support", "surface", "system", "task",
   "test", "tests", "the", "through", "touch", "typescript", "ui", "use", "user",
-  "using", "view", "visible", "vite", "web", "with", "workflow",
+  "using", "view", "visible", "vite", "web", "wire", "wiring", "with", "without", "workflow",
   "bir", "bu", "icin", "için", "ile", "proje", "uygulama", "uygulamasi", "ve",
   "veya", "yap", "yeni",
 ]);

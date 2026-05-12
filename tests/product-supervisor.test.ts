@@ -98,6 +98,32 @@ describe("product supervisor", () => {
     assert.match(result.reason, /DESIGN_SCREEN_MISSING/);
   });
 
+  it("does not treat implementation planning vocabulary as story domain drift", () => {
+    const source = [
+      "Project: brick-arcade-0512 Build a browser arcade game with brick grid, paddle controls, ball physics, score, lives, pause, restart, and game over.",
+      "Game Board Main Menu Pause Overlay Game Over Progress Complete Controls Help",
+    ].join(" ");
+
+    const result = runProductSupervisorGate({
+      phase: "stories",
+      runId: "run-1",
+      stepId: "stories",
+      task: source,
+      context: { task: source, prd: source, screen_map: "[]" },
+      stories: [
+        {
+          story_id: "US-001",
+          story_index: 1,
+          title: "Game Board shell and shared engine bridge wiring",
+          description: "Wire the declared DOM shell to the owned game board screen without broader scope changes.",
+          acceptance_criteria: JSON.stringify(["Game Board renders", "Paddle and ball state are visible"]),
+        },
+      ],
+    });
+
+    assert.equal(result.ok, true, result.reason);
+  });
+
   it("persists supervisor memory in the project repo", () => {
     const repo = mkdtempSync(path.join(tmpdir(), "setfarm-supervisor-"));
     try {
