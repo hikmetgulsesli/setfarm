@@ -4100,6 +4100,8 @@ ${screenDescs}
 
     // SCOPE ENFORCEMENT — delegated to 06-implement/guards.ts
     // (Wave 6 fix A, Wave 10 Bug D, Wave 13 Bug P9, Wave 14 Bug Q)
+    let implementSupervisorWorkdir = "";
+    let implementSupervisorBaseRef = "";
     if (step.step_id === "implement" && storyStatus === STORY_STATUS.DONE && storyRow?.story_id) {
       try {
         const {
@@ -4114,6 +4116,8 @@ ${screenDescs}
         const wd = await resolveStoryWorktree(step.current_story_id, context["story_workdir"] || "");
         const scopeLoopConfig = parseLoopConfigSafe(step.loop_config, step.run_id);
         const baseBr = context["story_base_ref"] || ((scopeLoopConfig?.mergeStrategy === "pr-each" || scopeLoopConfig?.verifyEach) ? "main" : (context["branch"] || ""));
+        implementSupervisorWorkdir = wd || "";
+        implementSupervisorBaseRef = baseBr || "";
 
         // 2026-04-22: Setup story (story_index === 0) bypass KALDIRILDI.
         // Eski davranis: setup story scope check'e tabi degildi -> agent tam app yaziyordu
@@ -4281,6 +4285,8 @@ ${screenDescs}
         task: context["task"] || "",
         context,
         rawOutput: output,
+        workdir: implementSupervisorWorkdir || context["story_workdir"] || context["repo"] || "",
+        baseRef: implementSupervisorBaseRef || context["story_base_ref"] || "main",
         currentStory: {
           story_id: storyRow.story_id,
           title: storyRow.title,

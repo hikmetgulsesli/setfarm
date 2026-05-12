@@ -1,8 +1,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, mkdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import {
   readSupervisorMemory,
   runProductSupervisorGate,
@@ -178,6 +179,49 @@ describe("product supervisor", () => {
       assert.match(persisted, /design pass/);
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks implement completion with dead controls and malformed URLs in the story diff", () => {
+    const repo = mkdtempSync(path.join(tmpdir(), "setfarm-supervisor-implement-"));
+    try {
+      mkdirSync(path.join(repo, "src"), { recursive: true });
+      execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
+      execFileSync("git", ["config", "user.email", "setfarm@example.test"], { cwd: repo });
+      execFileSync("git", ["config", "user.name", "Setfarm Test"], { cwd: repo });
+      writeFileSync(path.join(repo, "src", "App.tsx"), "export default function App() { return <main />; }\n");
+      execFileSync("git", ["add", "."], { cwd: repo });
+      execFileSync("git", ["commit", "-m", "base"], { cwd: repo, stdio: "ignore" });
+
+      writeFileSync(
+        path.join(repo, "src", "App.tsx"),
+        [
+          "export default function App() {",
+          "  return <main>",
+          "    <button>Start</button>",
+          "    <a href=\"https://https//example.test\">Broken</a>",
+          "  </main>;",
+          "}",
+          "",
+        ].join("\n"),
+      );
+
+      const result = runProductSupervisorGate({
+        phase: "implement",
+        runId: "run-1",
+        stepId: "implement",
+        workdir: repo,
+        baseRef: "HEAD",
+        currentStory: { story_id: "US-001", title: "Wire controls" },
+        rawOutput: "STATUS: done\nCHANGES: wired controls",
+      });
+
+      assert.equal(result.ok, false);
+      assert.match(result.reason, /IMPLEMENT_INTERACTION_CONTRACT/);
+      assert.match(result.reason, /active <button>/);
+      assert.match(result.reason, /malformed URL/);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
     }
   });
 });

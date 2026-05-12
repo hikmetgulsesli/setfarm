@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { logger } from "../lib/logger.js";
 
 export type ProductSupervisorPhase = "plan" | "design" | "stories" | "implement" | "deploy";
@@ -23,6 +24,8 @@ export interface ProductSupervisorInput {
   parsed?: Record<string, string | undefined>;
   context?: Record<string, string>;
   rawOutput?: string;
+  workdir?: string;
+  baseRef?: string;
   stories?: ProductSupervisorStory[];
   currentStory?: ProductSupervisorStory | null;
 }
@@ -65,6 +68,9 @@ const PRODUCT_OPTIONAL_GROUPS: Array<{ name: string; terms: string[]; taskHints:
   { name: "auth/login", terms: ["auth", "login", "signin", "signup"], taskHints: /\b(auth|login|sign ?in|sign ?up|private|admin|account|user)\b/i },
   { name: "profile/account", terms: ["profile", "account"], taskHints: /\b(profile|account|user|auth|login|sign ?in|hesap|profil|kullanici|kullanıcı)\b/i },
 ];
+
+const IMPLEMENT_SCAN_EXT = /\.(tsx?|jsx?|vue|svelte|html)$/i;
+const IMPLEMENT_SCAN_IGNORE = /^(node_modules\/|dist\/|build\/|\.next\/|coverage\/|stitch\/|references\/)/;
 
 function normalizeText(text: string): string {
   return String(text || "")
@@ -112,6 +118,90 @@ function parseJsonArray(raw: string | null | undefined): any[] {
   } catch {
     return [];
   }
+}
+
+function safeGit(workdir: string, args: string[], timeout = 10000): string {
+  try {
+    return execFileSync("git", args, {
+      cwd: workdir,
+      encoding: "utf-8",
+      timeout,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+  } catch {
+    return "";
+  }
+}
+
+function changedFilesForImplement(workdir: string, baseRef: string): string[] {
+  if (!workdir || !fs.existsSync(workdir)) return [];
+  const files = new Set<string>();
+  const diffRef = baseRef ? `${baseRef}...HEAD` : "HEAD";
+  const diff = safeGit(workdir, ["diff", "--name-only", diffRef]);
+  diff.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).forEach((file) => files.add(file));
+
+  const status = safeGit(workdir, ["status", "--porcelain"]);
+  for (const line of status.split(/\r?\n/)) {
+    const rel = line.slice(3).trim();
+    if (rel) files.add(rel.replace(/^"|"$/g, ""));
+  }
+  return [...files].filter((file) => !IMPLEMENT_SCAN_IGNORE.test(file.replace(/\\/g, "/")));
+}
+
+function sourceWithoutComments(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, (match) => match.replace(/[^\n]/g, " "))
+    .replace(/(^|[^:])\/\/.*$/gm, (_match, prefix) => `${prefix}${" ".repeat(Math.max(0, _match.length - prefix.length))}`);
+}
+
+function lineForIndex(source: string, index: number): number {
+  return source.slice(0, Math.max(0, index)).split(/\r?\n/).length;
+}
+
+function hasAttribute(attrs: string, name: string): boolean {
+  return new RegExp(`\\b${name}\\b\\s*(?:=|$)`, "i").test(attrs);
+}
+
+function findStaticInteractionIssues(workdir: string, files: string[]): string[] {
+  const issues: string[] = [];
+  for (const rel of files.filter((file) => IMPLEMENT_SCAN_EXT.test(file)).slice(0, 80)) {
+    const abs = path.join(workdir, rel);
+    let source = "";
+    try {
+      if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) continue;
+      source = fs.readFileSync(abs, "utf-8");
+    } catch {
+      continue;
+    }
+    const malformedUrl = /https?:\/\/https?\/\//i.exec(source);
+    if (malformedUrl) {
+      issues.push(`${rel}:${lineForIndex(source, malformedUrl.index)} malformed URL/protocol: ${malformedUrl[0]}`);
+    }
+
+    const clean = sourceWithoutComments(source);
+
+    const deadHref = /<a\b[^>]*\bhref\s*=\s*(?:"\s*(?:#|javascript:void\(0\)|)\s*"|'\s*(?:#|javascript:void\(0\)|)\s*')[^>]*>/gi;
+    let linkMatch: RegExpExecArray | null;
+    while ((linkMatch = deadHref.exec(clean)) !== null) {
+      issues.push(`${rel}:${lineForIndex(clean, linkMatch.index)} active link uses a dead href`);
+      if (issues.length >= 12) break;
+    }
+
+    const button = /<button\b([^>]*)>/gi;
+    let match: RegExpExecArray | null;
+    while ((match = button.exec(clean)) !== null) {
+      const attrs = match[1] || "";
+      const isDisabled = hasAttribute(attrs, "disabled") || hasAttribute(attrs, "aria-disabled");
+      const isSubmit = /\btype\s*=\s*(?:"submit"|'submit'|{\s*["']submit["']\s*})/i.test(attrs);
+      const hasHandler = /\bon(?:Click|PointerDown|PointerUp|MouseDown|MouseUp|TouchStart|TouchEnd|KeyDown|Submit)\s*=/.test(attrs);
+      if (!isDisabled && !isSubmit && !hasHandler) {
+        issues.push(`${rel}:${lineForIndex(clean, match.index)} active <button> has no event handler, disabled state, or submit type`);
+        if (issues.length >= 12) break;
+      }
+    }
+    if (issues.length >= 12) break;
+  }
+  return issues;
 }
 
 function parsePrdScreenRows(prd: string): Array<{ name: string; description: string }> {
@@ -308,6 +398,19 @@ function checkImplement(input: ProductSupervisorInput): string[] {
 
   if (/\b(TODO|coming soon|placeholder|not implemented)\b/i.test(output)) {
     issues.push(`IMPLEMENT_PLACEHOLDER: ${story.story_id || story.title || "story"} completion output still mentions placeholder or unfinished work.`);
+  }
+
+  const workdir = input.workdir || input.context?.story_workdir || input.context?.repo || "";
+  if (workdir && fs.existsSync(workdir)) {
+    const changedFiles = changedFilesForImplement(workdir, input.baseRef || input.context?.story_base_ref || "HEAD");
+    if (changedFiles.length === 0) {
+      issues.push(`IMPLEMENT_NO_DELTA: ${story.story_id || story.title || "story"} reported done but supervisor found no changed files in the story worktree.`);
+    }
+
+    const interactionIssues = findStaticInteractionIssues(workdir, changedFiles);
+    if (interactionIssues.length > 0) {
+      issues.push(`IMPLEMENT_INTERACTION_CONTRACT: active controls or URLs are not wired correctly. ${interactionIssues.slice(0, 8).join("; ")}`);
+    }
   }
   return issues;
 }
