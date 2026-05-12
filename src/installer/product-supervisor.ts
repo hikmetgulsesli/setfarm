@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { logger } from "../lib/logger.js";
 
-export type ProductSupervisorPhase = "plan" | "stories" | "implement" | "deploy";
+export type ProductSupervisorPhase = "plan" | "design" | "stories" | "implement" | "deploy";
 
 export interface ProductSupervisorStory {
   story_id?: string | null;
@@ -137,6 +137,13 @@ function specificScreenTerms(name: string, description: string): string[] {
     .slice(0, 12);
 }
 
+function normalizeScreenName(value: string): string {
+  return normalizeText(value)
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function enoughDomainCoverage(sourceTerms: string[], targetText: string): boolean {
   if (sourceTerms.length < 3) return true;
   const targetTerms = new Set(tokenise(targetText));
@@ -179,6 +186,58 @@ function checkPlan(input: ProductSupervisorInput): string[] {
     if (group.taskHints.test(normalizedTask)) continue;
     if (group.terms.some((term) => new RegExp(`\\b${term}\\b`, "i").test(screenText))) {
       issues.push(`PLAN_OPTIONAL_MODULE_DRIFT: PRD introduces ${group.name} behavior but the task does not request it.`);
+    }
+  }
+
+  return issues;
+}
+
+function checkDesign(input: ProductSupervisorInput): string[] {
+  const context = input.context || {};
+  const parsed = input.parsed || {};
+  const prd = context.prd || context.PRD || parsed.prd || "";
+  const rows = parsePrdScreenRows(prd);
+  const screenMap = parseJsonArray(parsed.screen_map || context.screen_map || context.SCREEN_MAP || "");
+  const issues: string[] = [];
+
+  if (screenMap.length === 0) {
+    issues.push("DESIGN_SCREEN_MAP_EMPTY: design did not produce SCREEN_MAP entries.");
+    return issues;
+  }
+
+  const seen = new Map<string, number>();
+  for (const screen of screenMap) {
+    const key = normalizeScreenName(String(screen?.name || ""));
+    if (!key) {
+      issues.push("DESIGN_SCREEN_NAME_MISSING: SCREEN_MAP contains an entry without a usable name.");
+      continue;
+    }
+    seen.set(key, (seen.get(key) || 0) + 1);
+  }
+  const duplicates = [...seen.entries()].filter(([, count]) => count > 1).map(([name]) => name).slice(0, 8);
+  if (duplicates.length > 0) {
+    issues.push(`DESIGN_SCREEN_DUPLICATE: duplicate screen names in SCREEN_MAP: ${duplicates.join(", ")}.`);
+  }
+
+  if (rows.length > 0) {
+    const expected = rows.map((row) => normalizeScreenName(row.name)).filter(Boolean);
+    const expectedSet = new Set(expected);
+    const actual = screenMap.map((screen) => normalizeScreenName(String(screen?.name || ""))).filter(Boolean);
+    const actualSet = new Set(actual);
+    const missing = rows.filter((row) => !actualSet.has(normalizeScreenName(row.name))).map((row) => row.name).slice(0, 8);
+    const extra = screenMap
+      .filter((screen) => !expectedSet.has(normalizeScreenName(String(screen?.name || ""))))
+      .map((screen) => String(screen?.name || "unnamed"))
+      .slice(0, 8);
+
+    if (screenMap.length !== rows.length) {
+      issues.push(`DESIGN_SCREEN_COUNT_DRIFT: SCREEN_MAP has ${screenMap.length} screen(s) but PRD Screens table has ${rows.length}.`);
+    }
+    if (missing.length > 0) {
+      issues.push(`DESIGN_SCREEN_MISSING: missing PRD screen(s): ${missing.join(", ")}.`);
+    }
+    if (extra.length > 0) {
+      issues.push(`DESIGN_SCREEN_EXTRA: unrequested design screen(s): ${extra.join(", ")}.`);
     }
   }
 
@@ -270,6 +329,7 @@ function checkDeploy(input: ProductSupervisorInput): string[] {
 export function runProductSupervisorGate(input: ProductSupervisorInput): ProductSupervisorResult {
   let issues: string[] = [];
   if (input.phase === "plan") issues = checkPlan(input);
+  if (input.phase === "design") issues = checkDesign(input);
   if (input.phase === "stories") issues = checkStories(input);
   if (input.phase === "implement") issues = checkImplement(input);
   if (input.phase === "deploy") issues = checkDeploy(input);

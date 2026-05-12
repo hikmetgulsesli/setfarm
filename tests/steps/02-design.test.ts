@@ -102,4 +102,13 @@ describe("02-design step module", () => {
     assert.match(source, /Main Menu/);
     assert.doesNotMatch(source, /agent will see empty/);
   });
+
+  it("preClaim reconciles generated screens to the PRD screen contract", () => {
+    const source = designPreclaimSource();
+    assert.match(source, /function reconcileScreenMapToPrd/);
+    assert.match(source, /DESIGN_SCREEN_MAP_PRD_MISMATCH/);
+    assert.match(source, /rewriteScreenArtifactsForScreenMap/);
+    assert.match(source, /SCREENS_GENERATED: " \+ screenMap\.length/);
+    assert.doesNotMatch(source, /SCREENS_GENERATED: " \+ manifest\.length/);
+  });
 });

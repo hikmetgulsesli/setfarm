@@ -3203,7 +3203,11 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
         }
       }
 
-      const supervisorPhase = step.step_id === "plan" ? "plan" : step.step_id === "deploy" ? "deploy" : "";
+      const supervisorPhase =
+        step.step_id === "plan" ? "plan" :
+        step.step_id === "design" ? "design" :
+        step.step_id === "deploy" ? "deploy" :
+        "";
       if (supervisorPhase && (parsed["status"] || "").toLowerCase() === "done") {
         const { runProductSupervisorGate, updateSupervisorMemory } = await import("./product-supervisor.js");
         const supervisor = runProductSupervisorGate({

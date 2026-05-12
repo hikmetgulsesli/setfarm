@@ -64,6 +64,40 @@ describe("product supervisor", () => {
     assert.equal(result.ok, true, result.reason);
   });
 
+  it("blocks design SCREEN_MAP drift against the PRD screen contract", () => {
+    const prd = [
+      "# Brick Arcade PRD",
+      "## Screens",
+      "| # | Screen Name | Type | Description |",
+      "|---|-----------|-----|----------|",
+      "| 1 | Game Board | play | Main playable brick grid and paddle scene |",
+      "| 2 | Main Menu | menu | Start and resume actions |",
+      "| 3 | Game Over | result | Final score and restart |",
+    ].join("\n");
+
+    const result = runProductSupervisorGate({
+      phase: "design",
+      runId: "run-1",
+      stepId: "design",
+      parsed: {
+        status: "done",
+        screen_map: JSON.stringify([
+          { screenId: "a", name: "Game Board", type: "play", description: "" },
+          { screenId: "b", name: "Game Board", type: "play", description: "" },
+          { screenId: "c", name: "Leaderboard", type: "result", description: "" },
+          { screenId: "d", name: "Controls Help", type: "help", description: "" },
+        ]),
+      },
+      context: { prd },
+    });
+
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /DESIGN_SCREEN_COUNT_DRIFT/);
+    assert.match(result.reason, /DESIGN_SCREEN_DUPLICATE/);
+    assert.match(result.reason, /DESIGN_SCREEN_EXTRA/);
+    assert.match(result.reason, /DESIGN_SCREEN_MISSING/);
+  });
+
   it("persists supervisor memory in the project repo", () => {
     const repo = mkdtempSync(path.join(tmpdir(), "setfarm-supervisor-"));
     try {

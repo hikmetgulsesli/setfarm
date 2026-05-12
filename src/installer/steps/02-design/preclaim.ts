@@ -117,6 +117,116 @@ function manifestHtmlCounts(stitchDir: string): { total: number; valid: number }
 
 type ScreenMapEntry = { screenId: string; name: string; type: string; description: string };
 
+function normalizeScreenName(value: string): string {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[İ]/g, "I")
+    .replace(/[ı]/g, "i")
+    .replace(/[ğĞ]/g, "g")
+    .replace(/[üÜ]/g, "u")
+    .replace(/[şŞ]/g, "s")
+    .replace(/[öÖ]/g, "o")
+    .replace(/[çÇ]/g, "c")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function parsePrdScreenRows(prd: string): Array<{ name: string; type: string; description: string }> {
+  const rows: Array<{ name: string; type: string; description: string }> = [];
+  const lines = String(prd || "").split(/\r?\n/);
+  let inScreens = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (/^##+\s+Screens\b/i.test(trimmed)) {
+      inScreens = true;
+      continue;
+    }
+    if (inScreens && /^##+\s+/.test(trimmed)) break;
+    if (!inScreens || !/^\s*\|/.test(line) || /^\s*\|\s*-+/.test(line)) continue;
+    const cols = line.split("|").map((v) => v.trim()).filter(Boolean);
+    if (cols.length < 4 || /^#$/i.test(cols[0]) || /screen name/i.test(cols[1])) continue;
+    rows.push({ name: cols[1], type: cols[2], description: cols.slice(3).join(" ") });
+  }
+  return rows;
+}
+
+function reconcileScreenMapToPrd(
+  screenMap: ScreenMapEntry[],
+  prd: string,
+): { screenMap: ScreenMapEntry[]; missing: string[]; dropped: string[]; duplicates: string[] } {
+  const rows = parsePrdScreenRows(prd);
+  if (rows.length === 0) return { screenMap, missing: [], dropped: [], duplicates: [] };
+
+  const byName = new Map<string, ScreenMapEntry[]>();
+  for (const screen of screenMap) {
+    const key = normalizeScreenName(screen.name);
+    if (!key) continue;
+    const list = byName.get(key) || [];
+    list.push(screen);
+    byName.set(key, list);
+  }
+
+  const next: ScreenMapEntry[] = [];
+  const missing: string[] = [];
+  const usedIds = new Set<string>();
+  const duplicates: string[] = [];
+  for (const row of rows) {
+    const key = normalizeScreenName(row.name);
+    const matches = byName.get(key) || [];
+    const chosen = matches.find((screen) => !usedIds.has(screen.screenId)) || matches[0];
+    if (!chosen) {
+      missing.push(row.name);
+      continue;
+    }
+    if (matches.length > 1) duplicates.push(row.name);
+    usedIds.add(chosen.screenId);
+    next.push({
+      ...chosen,
+      name: row.name,
+      type: chosen.type || row.type || classifyScreenType(row.name),
+      description: chosen.description || row.description || `${row.name} screen`,
+    });
+  }
+
+  const expectedNames = new Set(rows.map((row) => normalizeScreenName(row.name)));
+  const dropped = screenMap
+    .filter((screen) => !usedIds.has(screen.screenId) || !expectedNames.has(normalizeScreenName(screen.name)))
+    .map((screen) => screen.name)
+    .filter(Boolean);
+
+  return { screenMap: next, missing, dropped, duplicates };
+}
+
+function rewriteScreenArtifactsForScreenMap(stitchDir: string, screenMap: ScreenMapEntry[], deviceType: string): void {
+  try {
+    const allowedIds = new Set(screenMap.map((screen) => screen.screenId));
+    const manifestPath = path.join(stitchDir, "DESIGN_MANIFEST.json");
+    let manifest: any[] = [];
+    try {
+      const raw = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+      if (Array.isArray(raw)) manifest = raw;
+    } catch {}
+    const byId = new Map(manifest.map((entry) => [String(entry?.screenId || entry?.id || ""), entry]));
+    const nextManifest = screenMap.map((screen) => {
+      const existing = byId.get(screen.screenId) || {};
+      return {
+        ...existing,
+        screenId: screen.screenId,
+        title: screen.name,
+        htmlFile: `${screen.screenId}.html`,
+        deviceType: existing.deviceType || existing.device_type || deviceType,
+      };
+    }).filter((entry) => allowedIds.has(String(entry.screenId)));
+    fs.writeFileSync(manifestPath, JSON.stringify(nextManifest, null, 2));
+    fs.writeFileSync(path.join(stitchDir, "SCREEN_MAP.json"), JSON.stringify(screenMap, null, 2));
+  } catch (e) {
+    logger.warn(`[module:design preclaim] artifact reconciliation write failed: ${String(e).slice(0, 200)}`);
+  }
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -643,6 +753,25 @@ All visible application text must be in ${uiLanguage}. Keep screen metadata, gen
     }
   }
   if (screenMap.length > 0) {
+    const reconciliation = reconcileScreenMapToPrd(screenMap, prd);
+    if (reconciliation.missing.length > 0) {
+      const error = `DESIGN_SCREEN_MAP_PRD_MISMATCH: Stitch output is missing PRD screen(s): ${reconciliation.missing.join(", ")}. Design must cover the PRD Screens table before stories/implementation.`;
+      logger.warn(`[module:design preclaim] ${error}`, { runId: ctx.runId });
+      await failDesignPreclaim(ctx, error);
+      return;
+    }
+    if (reconciliation.screenMap.length !== screenMap.length || reconciliation.dropped.length > 0 || reconciliation.duplicates.length > 0) {
+      const detail = [
+        reconciliation.dropped.length ? `dropped=${[...new Set(reconciliation.dropped)].slice(0, 8).join(",")}` : "",
+        reconciliation.duplicates.length ? `duplicates=${[...new Set(reconciliation.duplicates)].slice(0, 8).join(",")}` : "",
+        `final=${reconciliation.screenMap.length}`,
+      ].filter(Boolean).join(" ");
+      ctx.context["design_reconciliation"] = detail;
+      await recordPreClaimProgress(ctx, `Design preclaim: reconciled SCREEN_MAP to PRD (${detail})`);
+      logger.warn(`[module:design preclaim] Reconciled SCREEN_MAP to PRD: ${detail}`, { runId: ctx.runId });
+    }
+    screenMap = reconciliation.screenMap;
+    rewriteScreenArtifactsForScreenMap(stitchDir, screenMap, deviceType);
     ctx.context["screen_map"] = JSON.stringify(screenMap);
     logger.info(`[module:design preclaim] SCREEN_MAP injected (${screenMap.length} entries)`, { runId: ctx.runId });
     await recordPreClaimProgress(ctx, `Design preclaim: SCREEN_MAP ready with ${screenMap.length} entries`);
@@ -674,16 +803,22 @@ All visible application text must be in ${uiLanguage}. Keep screen metadata, gen
     try { manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8")); } catch { return; }
     if (!Array.isArray(manifest) || manifest.length === 0) return;
     manifest = manifest.filter((s: any) => !isPrdPseudoScreen(s));
+    const allowedScreenIds = new Set(screenMap.map(s => s.screenId));
+    manifest = manifest.filter((s: any) => allowedScreenIds.has(String(s?.screenId || s?.id || "")));
+    if (manifest.length !== screenMap.length) {
+      manifest = screenMap.map(s => ({ screenId: s.screenId, title: s.name, htmlFile: s.screenId + ".html", deviceType }));
+      try { fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2)); } catch {}
+    }
     if (manifest.length === 0) return;
     let htmlOkCount = 0;
-    for (const s of manifest) {
-      const sid = String(s?.screenId || s?.id || "");
+    for (const s of screenMap) {
+      const sid = String(s?.screenId || "");
       if (!sid) continue;
       const htmlPath = p.join(stitchDir, sid + ".html");
       if (isValidStitchHtml(htmlPath)) htmlOkCount++;
     }
-    if (htmlOkCount < manifest.length) {
-      logger.warn(`[module:design preclaim] auto-complete skipped: only ${htmlOkCount}/${manifest.length} valid HTMLs ready`, { runId: ctx.runId });
+    if (htmlOkCount < screenMap.length) {
+      logger.warn(`[module:design preclaim] auto-complete skipped: only ${htmlOkCount}/${screenMap.length} valid HTMLs ready`, { runId: ctx.runId });
       return;
     }
     let designSystem: any = {};
@@ -694,15 +829,15 @@ All visible application text must be in ${uiLanguage}. Keep screen metadata, gen
       "DEVICE_TYPE: " + deviceType,
       "DESIGN_SYSTEM: " + JSON.stringify(designSystem),
       "SCREEN_MAP: " + JSON.stringify(screenMap),
-      "SCREENS_GENERATED: " + manifest.length,
+      "SCREENS_GENERATED: " + screenMap.length,
       "AUTO_COMPLETED: design-preclaim (all assets ready, agent bypass)"
     ].join("\n");
     const { completeStep } = await import("../../step-ops.js");
     const stepRow = await pgGet<{ id: string }>("SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1", [ctx.runId, ctx.stepId]);
     const stepDbId = stepRow?.id || ctx.stepId;
-    await recordPreClaimProgress(ctx, `Design preclaim: auto-completing design with ${manifest.length} screens`);
+    await recordPreClaimProgress(ctx, `Design preclaim: auto-completing design with ${screenMap.length} screens`);
     await completeStep(stepDbId, output);
-    logger.info(`[module:design preclaim] AUTO-COMPLETED step ${ctx.stepId} (${manifest.length} screens, ${htmlOkCount} HTMLs, agent bypassed)`, { runId: ctx.runId, stepId: stepDbId });
+    logger.info(`[module:design preclaim] AUTO-COMPLETED step ${ctx.stepId} (${screenMap.length} screens, ${htmlOkCount} HTMLs, agent bypassed)`, { runId: ctx.runId, stepId: stepDbId });
   } catch (e) {
     logger.warn(`[module:design preclaim] auto-complete failed (falling back to agent): ${String(e).slice(0, 200)}`, { runId: ctx.runId });
   }
