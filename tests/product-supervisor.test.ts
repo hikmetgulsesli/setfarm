@@ -124,6 +124,29 @@ describe("product supervisor", () => {
     assert.equal(result.ok, true, result.reason);
   });
 
+  it("still blocks a story that introduces an unrelated product concept", () => {
+    const source = "Project: brick-arcade-0512 Build a browser arcade game with brick grid, paddle controls, ball physics, score, lives, pause, restart, and game over.";
+    const result = runProductSupervisorGate({
+      phase: "stories",
+      runId: "run-1",
+      stepId: "stories",
+      task: source,
+      context: { task: source, prd: source, screen_map: "[]" },
+      stories: [
+        {
+          story_id: "US-001",
+          story_index: 1,
+          title: "Next Piece Preview Queue",
+          description: "Show falling tetromino preview pieces.",
+          acceptance_criteria: JSON.stringify(["Preview appears"]),
+        },
+      ],
+    });
+
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /STORY_DOMAIN_DRIFT/);
+  });
+
   it("persists supervisor memory in the project repo", () => {
     const repo = mkdtempSync(path.join(tmpdir(), "setfarm-supervisor-"));
     try {

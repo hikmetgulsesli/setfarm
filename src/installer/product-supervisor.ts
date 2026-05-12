@@ -286,8 +286,9 @@ function checkStories(input: ProductSupervisorInput): string[] {
 
     const titleTerms = tokenise(`${story.title || ""} ${story.description || ""}`)
       .filter((term) => !GENERIC_SCREEN_TERMS.has(term));
-    const untraced = titleTerms.filter((term) => !sourceTerms.has(term)).slice(0, 5);
-    if (untraced.length > 0 && sourceTerms.size >= 5) {
+    const traced = titleTerms.filter((term) => sourceTerms.has(term));
+    const untraced = titleTerms.filter((term) => !sourceTerms.has(term));
+    if (untraced.length >= 3 && traced.length === 0 && sourceTerms.size >= 5) {
       issues.push(`STORY_DOMAIN_DRIFT: ${label} introduces untraced terms: ${untraced.join(", ")}.`);
     }
 
