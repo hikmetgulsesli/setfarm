@@ -148,4 +148,47 @@ describe("worktree operations", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it("does not reuse story branches with WIP retry history", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-worktree-wip-history-"));
+    const origin = path.join(tmp, "origin.git");
+    const repo = path.join(tmp, "repo");
+    const storyBranch = "c62e1bc1-us-003";
+
+    try {
+      execFileSync("git", ["init", "--bare", "--initial-branch=main", origin], {
+        encoding: "utf-8",
+        timeout: 30000,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      execFileSync("git", ["clone", origin, repo], {
+        encoding: "utf-8",
+        timeout: 30000,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+
+      git(repo, ["config", "user.email", "setfarm@example.invalid"]);
+      git(repo, ["config", "user.name", "Setfarm Test"]);
+      fs.writeFileSync(path.join(repo, "README.md"), "base\n");
+      git(repo, ["add", "README.md"]);
+      git(repo, ["commit", "-m", "base"]);
+      git(repo, ["push", "origin", "main"]);
+      const baseSha = git(repo, ["rev-parse", "main"]);
+
+      const firstWorktree = createStoryWorktree(repo, storyBranch, baseSha);
+      fs.writeFileSync(path.join(firstWorktree, "bad.txt"), "contaminated\n");
+      git(firstWorktree, ["add", "bad.txt"]);
+      git(firstWorktree, ["commit", "-m", "wip: contaminated history"]);
+      git(firstWorktree, ["push", "-u", "origin", storyBranch]);
+
+      const secondWorktree = createStoryWorktree(repo, storyBranch, baseSha);
+
+      assert.equal(secondWorktree, firstWorktree);
+      assert.equal(git(secondWorktree, ["rev-parse", "HEAD"]), baseSha);
+      assert.equal(fs.existsSync(path.join(secondWorktree, "bad.txt")), false);
+      assert.equal(git(repo, ["rev-parse", storyBranch]), baseSha);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });

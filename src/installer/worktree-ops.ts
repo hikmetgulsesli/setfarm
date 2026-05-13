@@ -434,6 +434,10 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
               saveAndRemoveWorktree(repo, worktreeDir, expected);
             }
           }
+          if (fs.existsSync(worktreeDir) && storyBranchHasContaminatedHistory(repo, expected, baseBranch)) {
+            logger.warn(`[worktree] Existing worktree ${worktreeDir} has WIP/auto-save retry history; discarding before claim`, {});
+            discardStoryWorktreeAndResetBranch(repo, expected, baseBranch, agentId);
+          }
           if (fs.existsSync(worktreeDir)) {
             const nmSrc = path.join(repo, "node_modules");
             const nmDst = path.join(worktreeDir, "node_modules");
@@ -514,6 +518,10 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
         logger.info(`[worktree] Reset story branch ${storyId} to ${resetTarget}`, {});
       } catch (resetErr) {
         logger.warn(`[worktree] Could not reset story branch: ${String(resetErr).slice(0, 150)}`, {});
+      }
+      if (storyBranchHasContaminatedHistory(repo, storyId.toLowerCase(), baseBranch)) {
+        logger.warn(`[worktree] Story branch ${storyId} has WIP/auto-save retry history; resetting to clean base ${baseBranch}`, {});
+        discardStoryWorktreeAndResetBranch(repo, storyId.toLowerCase(), baseBranch, agentId);
       }
       try {
         execFileSync("git", ["worktree", "add", worktreeDir, storyId.toLowerCase()], { cwd: repo, timeout: 30000, stdio: "pipe" });
@@ -705,6 +713,27 @@ function safeManagedStoryBranch(storyBranch: string): string {
     return "";
   }
   return branch;
+}
+
+function storyBranchHasContaminatedHistory(repo: string, storyBranch: string, baseRef: string): boolean {
+  const branch = safeManagedStoryBranch(storyBranch);
+  if (!repo || !branch || !baseRef) return false;
+  try {
+    execFileSync("git", ["rev-parse", "--verify", branch], {
+      cwd: repo, timeout: 5000, stdio: "pipe",
+    });
+    execFileSync("git", ["rev-parse", "--verify", baseRef], {
+      cwd: repo, timeout: 5000, stdio: "pipe",
+    });
+    const subjects = execFileSync("git", ["log", "--format=%s", `${baseRef}..${branch}`], {
+      cwd: repo, encoding: "utf-8", timeout: 10000, stdio: ["pipe", "pipe", "pipe"],
+    });
+    return subjects
+      .split(/\r?\n/)
+      .some((subject) => /^(wip\b|work in progress\b)|auto-save/i.test(subject.trim()));
+  } catch {
+    return false;
+  }
 }
 
 /**
