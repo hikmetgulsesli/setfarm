@@ -1805,7 +1805,7 @@ async function injectStoryContext(
         const domToInject = Object.keys(filteredScreens).length > 0 ? filteredScreens : fullDom.screens;
         const domJson = JSON.stringify(domToInject);
         context["design_dom"] = domJson.length > DESIGN_DOM_EXCERPT_CHARS
-          ? domJson.substring(0, DESIGN_DOM_EXCERPT_CHARS) + "...(truncated; read stitch/DESIGN_DOM.json for full DOM)"
+          ? domJson.substring(0, DESIGN_DOM_EXCERPT_CHARS) + "...(truncated; use injected UI behavior contract instead of reading full DESIGN_DOM.json)"
           : domJson;
       }
     }

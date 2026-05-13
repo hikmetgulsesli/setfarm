@@ -947,9 +947,10 @@ steps:
          timed out or crashed. Common causes: infinite loop, hanging process, excessive
          file I/O, context overflow, or memory exhaustion. Adjust your approach to avoid
          the same failure.
-      1. Read the story description and acceptance criteria from the claim with jq.
-         Do NOT cat the full claim JSON. Do NOT paste large prompt/context files into
-         the session.
+      1. Read the structured claim summary first. Use its story, scopeFiles,
+         generatedScreenPolicy, supervisorMemory, previousFailure, command, and
+         output-path fields as the authoritative handoff. Do NOT parse or dump
+         claim.input with jq, sed, head, cat, node loops, or python loops.
       2. Do NOT read full references/design-standards.md, backend-standards.md,
          react-best-practices.md, web-guidelines.md, or next-best-practices.md during
          implement. Their mandatory parts are already embedded in this prompt. If a

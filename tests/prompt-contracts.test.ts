@@ -120,6 +120,20 @@ describe("agent prompt contracts", () => {
     assert.match(output, /Do NOT parse or dump claim\.input with jq, sed, head, cat, node loops/);
   });
 
+  it("rewrites stale fragment claim jq instructions to claim-summary-first handoff", () => {
+    const input = [
+      "BEFORE writing code:",
+      "1. Read the story task and acceptance criteria from the claim via jq only; do not",
+      "   print the full claim JSON.",
+    ].join("\n");
+
+    const output = sanitizeAgentPromptContracts(input);
+
+    assert.doesNotMatch(output, /claim via jq only|print the full claim JSON/);
+    assert.match(output, /Read the structured claim summary file first/);
+    assert.match(output, /Do NOT parse or dump claim\.input with jq/);
+  });
+
   it("rewrites stale implement instructions that tell agents to read raw Stitch DOM", () => {
     const input = [
       "DESIGN DOM:",
@@ -134,6 +148,28 @@ describe("agent prompt contracts", () => {
     assert.match(output, /Use only the injected STORY_SCREENS, UI BEHAVIOR CONTRACT/);
     assert.match(output, /Do NOT read raw stitch\/\*\.html, \.stitch-screens\*\.json, or full/);
     assert.match(output, /gateway enforces this/);
+  });
+
+  it("rewrites stale implement Stitch file-read instructions to injected contracts", () => {
+    const input = [
+      "3. If stitch/ directory exists:",
+      "   a. Read stitch/DESIGN_MANIFEST.json only to identify/count screens",
+      "   b. Read only the stitch/*.html files for STORY_SCREENS / current scope, and",
+      "      only when layout details are not already available from the injected",
+      "      STORY_SCREENS/UI contract",
+      "   c. Read stitch/design-tokens.css only enough to import it and confirm token names",
+      "   d. Implementation MUST match Stitch design (layout, colors, fonts)",
+      "   e. NEVER use fonts/colors NOT in design-tokens.css",
+      "   f. You MUST @import stitch/design-tokens.css from the main CSS entry — do NOT copy or recreate tokens.",
+      "   g. stitch/design-tokens.css is the SINGLE SOURCE OF TRUTH for all design values.",
+    ].join("\n");
+
+    const output = sanitizeAgentPromptContracts(input);
+
+    assert.doesNotMatch(output, /Read only the stitch\/\*\.html files|Read stitch\/DESIGN_MANIFEST\.json/);
+    assert.match(output, /Do NOT read raw Stitch corpus files during implement/);
+    assert.match(output, /Use injected STORY_SCREENS, DESIGN_MANIFEST, DESIGN_TOKENS/);
+    assert.match(output, /report STATUS: retry with the\s+exact missing contract/);
   });
 
   it("rewrites stale Design DOM nav/control rules that caused layout removal", () => {

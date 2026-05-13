@@ -1,19 +1,20 @@
 BEFORE writing code:
-1. Read the story task and acceptance criteria from the claim via jq only; do not
-   print the full claim JSON.
+1. Read the structured claim summary first. Do not parse or dump raw claim JSON;
+   the summary already contains task, scope, story screens, supervisor memory,
+   previous failure, command, and output-path fields.
 2. Do NOT read full references/*.md files during implement. The mandatory rules
-   are already embedded in this prompt. If blocked on a specific rule, read only
-   the matching heading with rg/sed and cap output to 80 lines.
-3. If stitch/ directory exists:
-   a. Read stitch/DESIGN_MANIFEST.json only to identify/count screens
-   b. Read only the stitch/*.html files for STORY_SCREENS / current scope, and
-      only when layout details are not already available from the injected
-      STORY_SCREENS/UI contract
-   c. Read stitch/design-tokens.css only enough to import it and confirm token names
-   d. Implementation MUST match Stitch design (layout, colors, fonts)
-   e. NEVER use fonts/colors NOT in design-tokens.css
-   f. You MUST @import stitch/design-tokens.css from the main CSS entry — do NOT copy or recreate tokens.
-   g. stitch/design-tokens.css is the SINGLE SOURCE OF TRUTH for all design values.
+   are already embedded in this prompt. If a local build/test failure proves a
+   specific rule is needed, search the exact heading and read the smallest
+   focused excerpt only.
+3. Do NOT read raw Stitch corpus files during implement:
+   - Do not read stitch/*.html, .stitch-screens*.json, or full stitch/DESIGN_DOM.json.
+   - Do not read stitch/design-tokens.css just to discover colors or fonts.
+   - Use injected STORY_SCREENS, DESIGN_MANIFEST, DESIGN_TOKENS, STITCH_HTML
+     excerpts, UI BEHAVIOR CONTRACT, SCREEN_INDEX/index.ts, and generated screen
+     contracts as the source of truth.
+   - Match Stitch layout, colors, fonts, labels, icons, and controls from those
+     injected contracts. If detail is missing, report STATUS: retry with the
+     exact missing contract instead of loading raw design files.
 
 SCREEN COVERAGE RULE (CRITICAL):
 - Implement only current SCOPE_FILES. Do not create routes/pages/screens outside

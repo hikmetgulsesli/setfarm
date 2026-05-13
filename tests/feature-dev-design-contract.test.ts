@@ -50,8 +50,12 @@ describe("feature-dev design contract prompt", () => {
 
     assert.ok(implement, "implement step should exist");
     assert.doesNotMatch(implement.input, /Use stitch\/DESIGN_DOM\.json from WORKDIR/);
+    assert.doesNotMatch(implement.input, /Read only the stitch\/\*\.html files/);
+    assert.doesNotMatch(implement.input, /Read stitch\/DESIGN_MANIFEST\.json only/);
+    assert.doesNotMatch(implement.input, /Read the story description and acceptance criteria from the claim with jq/);
     assert.match(implement.input, /Use only the injected STORY_SCREENS, UI BEHAVIOR CONTRACT/);
     assert.match(implement.input, /Do NOT read raw stitch\/\*\.html, \.stitch-screens\*\.json, or full\s+stitch\/DESIGN_DOM\.json during implement/i);
+    assert.match(implement.input, /Do NOT read raw Stitch corpus files during implement/);
   });
 
   it("runs the product supervisor between each story and verification", async () => {

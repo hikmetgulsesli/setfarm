@@ -18,7 +18,8 @@ VIOLATION CONSEQUENCE: The pipeline runs git diff after you complete.
 Any file outside scope_files causes SCOPE_BLEED rejection. After 5
 rejections your story is PERMANENTLY FAILED and cannot recover.
 
-Read your scope: jq -r '.input.scope_files' /tmp/claim-*.json
+Read your scope from the structured claim summary file. Do not parse or dump raw
+`/tmp/claim-*.json`; the spawner provides the summary as the authoritative handoff.
 
 ## Reference Context Discipline
 
@@ -31,7 +32,8 @@ local command proves you need extra detail:
 - `references/backend-standards.md` only for backend/API/database stories.
 - `references/web-guidelines.md` only for focused accessibility/form behavior.
 - `references/design-standards.md` only for focused visual-system questions not
-  already answered by Stitch, DESIGN_DOM, design tokens, or injected rules.
+  already answered by injected Stitch excerpts, UI behavior contracts, design
+  tokens, or generated screen contracts.
 
 When a reference is needed, search for the exact section and read the smallest
 useful excerpt. Do not load unrelated backend/security/SQL guidance into a
@@ -257,7 +259,8 @@ TESTS: what tests you wrote
 
 ## Debugging Protocol
 
-When a bug or test failure occurs, follow `references/debugging-protocol.md`:
+When a bug or test failure occurs, follow the injected debugging protocol; do
+not load the full `references/debugging-protocol.md` during implement:
 1. Reproduce the bug with exact steps
 2. Read the FULL error — identify file, line, function
 3. Trace the data flow — log intermediate values

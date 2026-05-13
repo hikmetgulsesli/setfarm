@@ -57,6 +57,10 @@ describe("06-implement step module", () => {
     assert.doesNotMatch(contextSource, /read stitch files for full design/);
     assert.doesNotMatch(contextSource, /read stitch\/DESIGN_DOM\.json for full DOM/);
     assert.doesNotMatch(contextSource, /read stitch\/DESIGN_DOM\.json for the full behavior contract/);
+
+    const stepOps = fs.readFileSync(path.join(process.cwd(), "dist/installer/step-ops.js"), "utf-8");
+    assert.doesNotMatch(stepOps, /read stitch\/DESIGN_DOM\.json for full DOM/);
+    assert.match(stepOps, /use injected UI behavior contract instead of reading full DESIGN_DOM\.json/);
   });
 
   it("scope gate treats shared_files as read-only context, not completion-allowed files", () => {

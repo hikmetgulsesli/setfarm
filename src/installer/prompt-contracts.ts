@@ -41,8 +41,14 @@ const STALE_IMPLEMENT_FULL_REFERENCE_READ_BLOCK =
 const STALE_CLAIM_JQ_RULE =
   /1\. Read the story description and acceptance criteria from the claim with jq\.\n\s+Do NOT cat the full claim JSON\. Do NOT paste large prompt\/context files into\n\s+the session\./g;
 
+const STALE_FRAGMENT_CLAIM_JQ_RULE =
+  /1\. Read the story task and acceptance criteria from the claim via jq only; do not\n\s+print the full claim JSON\./g;
+
 const STALE_IMPLEMENT_RAW_STITCH_DOM_BLOCK =
   /DESIGN DOM:\n\s*Use stitch\/DESIGN_DOM\.json from WORKDIR when element-level detail is needed\.\n\s*Read only the screen ids listed in STORY_SCREENS\. Do NOT paste or process the\n\s*full project DOM in the session\./g;
+
+const STALE_IMPLEMENT_STITCH_FILE_READ_BLOCK =
+  /3\. If stitch\/ directory exists:\n\s+a\. Read stitch\/DESIGN_MANIFEST\.json only to identify\/count screens\n\s+b\. Read only the stitch\/\*\.html files for STORY_SCREENS \/ current scope, and\n\s+only when layout details are not already available from the injected\n\s+STORY_SCREENS\/UI contract\n\s+c\. Read stitch\/design-tokens\.css only enough to import it and confirm token names\n\s+d\. Implementation MUST match Stitch design \(layout, colors, fonts\)\n\s+e\. NEVER use fonts\/colors NOT in design-tokens\.css\n\s+f\. You MUST @import stitch\/design-tokens\.css from the main CSS entry — do NOT copy or recreate tokens\.\n\s+g\. stitch\/design-tokens\.css is the SINGLE SOURCE OF TRUTH for all design values\./g;
 
 export function sanitizeAgentPromptContracts(input: string): string {
   let output = input;
@@ -179,6 +185,17 @@ export function sanitizeAgentPromptContracts(input: string): string {
   );
 
   output = output.replace(
+    STALE_FRAGMENT_CLAIM_JQ_RULE,
+    [
+      "1. Read the structured claim summary file first. Use its story, scopeFiles,",
+      "   generatedScreenPolicy, supervisorMemory, previousFailure, command, and",
+      "   output-path fields as the authoritative handoff.",
+      "   Do NOT parse or dump claim.input with jq, sed, head, cat, node loops,",
+      "   or python loops. The full claim JSON is an audit fallback only.",
+    ].join("\n"),
+  );
+
+  output = output.replace(
     STALE_IMPLEMENT_RAW_STITCH_DOM_BLOCK,
     [
       "DESIGN DOM:",
@@ -187,6 +204,21 @@ export function sanitizeAgentPromptContracts(input: string): string {
       "Do NOT read raw stitch/*.html, .stitch-screens*.json, or full",
       "stitch/DESIGN_DOM.json during implement; the gateway enforces this to",
       "prevent context overload and cross-story drift.",
+    ].join("\n"),
+  );
+
+  output = output.replace(
+    STALE_IMPLEMENT_STITCH_FILE_READ_BLOCK,
+    [
+      "3. Do NOT read raw Stitch corpus files during implement:",
+      "   - Do not read stitch/*.html, .stitch-screens*.json, or full stitch/DESIGN_DOM.json.",
+      "   - Do not read stitch/design-tokens.css just to discover colors or fonts.",
+      "   - Use injected STORY_SCREENS, DESIGN_MANIFEST, DESIGN_TOKENS, STITCH_HTML",
+      "     excerpts, UI BEHAVIOR CONTRACT, SCREEN_INDEX/index.ts, and generated screen",
+      "     contracts as the source of truth.",
+      "   - Match Stitch layout, colors, fonts, labels, icons, and controls from those",
+      "     injected contracts. If detail is missing, report STATUS: retry with the",
+      "     exact missing contract instead of loading raw design files.",
     ].join("\n"),
   );
 
