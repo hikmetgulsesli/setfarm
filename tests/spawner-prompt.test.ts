@@ -58,6 +58,7 @@ describe("spawner prompt bootstrap", () => {
         generatedScreenPolicy: {
           summary: "No generated screen source file is in scope.",
         },
+        supervisorMemory: "### runtime guard\n- Summary: previous worker touched out-of-scope files",
       }) + "\n");
       fs.writeFileSync(bootstrapFile, buildResolvedClaimBootstrapScript({
         claimFile,
@@ -79,6 +80,7 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, /STORY=US-001 Bootstrap story/);
       assert.match(out, /SCOPE_FILES=src\/App\.tsx/);
       assert.match(out, /GENERATED_SCREEN_POLICY=No generated screen source file is in scope/);
+      assert.match(out, /SUPERVISOR_MEMORY=present \d+ chars/);
       assert.match(out, /Project: bootstrap sensor/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -91,6 +93,7 @@ describe("spawner prompt bootstrap", () => {
       const workdir = path.join(tmp, "worktree");
       fs.mkdirSync(path.join(workdir, "src", "screens"), { recursive: true });
       fs.writeFileSync(path.join(workdir, ".story-scope-files"), "src/App.tsx\nsrc/state.ts\n");
+      fs.writeFileSync(path.join(workdir, "SUPERVISOR_MEMORY.md"), "# Supervisor Memory\n\n### implement runtime-guard\n- Summary: worker read forbidden generated screens\n");
       fs.writeFileSync(path.join(workdir, "src", "screens", "SCREEN_INDEX.json"), JSON.stringify([
         { file: "src/screens/MainMenu.tsx" },
         { file: "src/screens/GameBoard.tsx" },
@@ -130,6 +133,7 @@ describe("spawner prompt bootstrap", () => {
         "src/screens/MainMenu.tsx",
       ]);
       assert.match((summary.generatedScreenPolicy as any).summary, /No generated screen source file is in scope/);
+      assert.match(String(summary.supervisorMemory), /forbidden generated screens/);
       assert.match(String(summary.acceptanceCriteria), /Pieces fall and rotate/);
       assert.match(JSON.stringify(summary.handoff), /Audit fallback only/);
     } finally {

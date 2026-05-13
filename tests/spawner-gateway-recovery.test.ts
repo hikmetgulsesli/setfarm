@@ -362,6 +362,8 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(promptSource, /export function buildClaimSummary/);
     assert.match(promptSource, /schema: "setfarm\.claim-summary\.v1"/);
     assert.match(promptSource, /generatedScreenPolicy/);
+    assert.match(promptSource, /readSupervisorMemoryFile/);
+    assert.match(promptSource, /supervisorMemory/);
     assert.match(promptSource, /No generated screen source file is in scope/);
     assert.match(promptSource, /Read the structured claim summary/);
     assert.match(promptSource, /Do NOT parse or dump claim\.input with jq\/sed\/head\/node loops/);

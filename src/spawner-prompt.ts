@@ -114,6 +114,20 @@ function readGeneratedScreenFiles(workdir: string): string[] {
   }
 }
 
+function readSupervisorMemoryFile(workdir: string, repo: string): string {
+  const candidates = [...new Set([repo, workdir].filter(Boolean))]
+    .map((root) => path.join(root, "SUPERVISOR_MEMORY.md"));
+  for (const filePath of candidates) {
+    try {
+      if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) continue;
+      return fs.readFileSync(filePath, "utf-8").trim().slice(-6000);
+    } catch {
+      // try the next candidate
+    }
+  }
+  return "";
+}
+
 function extractCurrentStory(input: string): { storyId: string; storyTitle: string; currentStory: string; acceptanceCriteria: string } {
   const currentStory = sliceSection(
     input,
@@ -161,6 +175,13 @@ export function buildClaimSummary(params: {
   const generatedScreenFiles = readGeneratedScreenFiles(workdir);
   const generatedScreenAllowed = generatedScreenFiles.filter((file) => scopeFileSet.has(file));
   const generatedScreenReadOnly = generatedScreenFiles.filter((file) => !scopeFileSet.has(file));
+  const supervisorMemoryFromInput = sliceSection(
+    input,
+    /^\s*SUPERVISOR MEMORY.*?:\s*/m,
+    [/^\s*CURRENT STORY/m, /^\s*STORY ROADMAP/m, /^\s*===/m],
+    6000,
+  );
+  const supervisorMemory = supervisorMemoryFromInput || readSupervisorMemoryFile(workdir, repo);
   return {
     schema: "setfarm.claim-summary.v1",
     workflow: params.wfId,
@@ -202,12 +223,7 @@ export function buildClaimSummary(params: {
       [/^\s*IMPLEMENTATION PHASE/m, /^\s*FILE SKELETONS/m],
       2200,
     ),
-    supervisorMemory: sliceSection(
-      input,
-      /^\s*SUPERVISOR MEMORY.*?:\s*/m,
-      [/^\s*CURRENT STORY/m, /^\s*STORY ROADMAP/m, /^\s*===/m],
-      2200,
-    ),
+    supervisorMemory,
     handoff: {
       claimFile: params.claimFile,
       outputFile: params.outputFile,
@@ -248,7 +264,7 @@ esac
 
 printf 'STEP_ID=%s\\nWORKDIR=%s\\nCLAIM_SUMMARY_FILE=%s\\n' "$STEP_ID" "$(pwd)" "$CLAIM_SUMMARY_FILE"
 if [ -n "$CLAIM_SUMMARY_FILE" ] && [ -f "$CLAIM_SUMMARY_FILE" ]; then
-  node -e 'const fs=require("fs"); const s=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const lines=[]; if (s.storyId || s.storyTitle) lines.push(("STORY=" + (s.storyId || "") + " " + (s.storyTitle || "")).trim()); if (Array.isArray(s.scopeFiles)) lines.push("SCOPE_FILES=" + s.scopeFiles.join(", ")); if (s.generatedScreenPolicy && s.generatedScreenPolicy.summary) lines.push("GENERATED_SCREEN_POLICY=" + s.generatedScreenPolicy.summary); if (s.task) lines.push("TASK=" + String(s.task).slice(0, 500)); process.stdout.write(lines.join("\\n") + "\\n");' "$CLAIM_SUMMARY_FILE"
+  node -e 'const fs=require("fs"); const s=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const lines=[]; if (s.storyId || s.storyTitle) lines.push(("STORY=" + (s.storyId || "") + " " + (s.storyTitle || "")).trim()); if (Array.isArray(s.scopeFiles)) lines.push("SCOPE_FILES=" + s.scopeFiles.join(", ")); if (s.generatedScreenPolicy && s.generatedScreenPolicy.summary) lines.push("GENERATED_SCREEN_POLICY=" + s.generatedScreenPolicy.summary); if (s.supervisorMemory) lines.push("SUPERVISOR_MEMORY=present " + String(s.supervisorMemory).length + " chars"); if (s.task) lines.push("TASK=" + String(s.task).slice(0, 500)); process.stdout.write(lines.join("\\n") + "\\n");' "$CLAIM_SUMMARY_FILE"
 fi
 printf '%s' "$TASK_PREVIEW" | head -c 1200
 echo
@@ -276,7 +292,7 @@ BOOTSTRAP_FILE=${params.bootstrapFile}
 First exec command:
 bash ${shellQuote(params.bootstrapFile)}
 
-Do ${params.wfId}/${params.role} work in WORKDIR only. Read the structured claim summary at ${params.claimSummaryFile} first; it is the authoritative handoff for story id/title, workdir, scope files, generatedScreenPolicy, screen refs, retry feedback, and output paths. The full claim at ${params.claimFile} is an audit fallback only. Do NOT parse or dump claim.input with jq/sed/head/node loops; use the summary fields and only fall back to the full claim for a missing focused field. Obey generatedScreenPolicy exactly: reading a forbidden src/screens/*.tsx file kills and retries the claim.
+Do ${params.wfId}/${params.role} work in WORKDIR only. Read the structured claim summary at ${params.claimSummaryFile} first; it is the authoritative handoff for story id/title, workdir, scope files, generatedScreenPolicy, supervisorMemory, screen refs, retry feedback, and output paths. The full claim at ${params.claimFile} is an audit fallback only. Do NOT parse or dump claim.input with jq/sed/head/node loops; use the summary fields and only fall back to the full claim for a missing focused field. Obey generatedScreenPolicy exactly: reading a forbidden src/screens/*.tsx file kills and retries the claim.
 Important: OpenClaw read/edit/write tools resolve relative paths against the configured agent workspace, not the shell cwd. When using read/edit/write tools for project files, use absolute paths under WORKDIR, for example "$WORKDIR/src/App.tsx". For exec commands, rerun the bootstrap command above or pass workdir="$WORKDIR" after resolving it.
 Do not rely on CLAIM_FILE, CLAIM_SUMMARY_FILE, OUTPUT_FILE, STEP_ID, or WORKDIR shell variables persisting across separate exec calls; each exec starts a fresh shell. If you need claim context again, use the literal summary path ${params.claimSummaryFile}. Write final output to the literal path ${params.outputFile}. Do NOT run step peek/claim. No subagents/background delegation. No PR actions unless claim explicitly owns PR work.
 For normal quality findings in verify/review/QA/final-test, do NOT use step fail. Write STATUS: retry with concise findings and call step complete so the platform can route the batched fix back to implement. Use step fail only for infrastructure/unrecoverable execution failures.
