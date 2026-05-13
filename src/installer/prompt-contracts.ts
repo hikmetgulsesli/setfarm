@@ -38,6 +38,9 @@ const STALE_SHARED_SCREEN_FULL_FILE_RULE =
 const STALE_IMPLEMENT_FULL_REFERENCE_READ_BLOCK =
   /## BEFORE Writing Any Code\n\nYou MUST read these reference files before starting implementation:\n1\. \*\*references\/design-standards\.md\*\* — Frontend design rules \(MANDATORY\)\n2\. \*\*references\/backend-standards\.md\*\* — Backend\/API\/DB rules \(MANDATORY\)\n3\. \*\*references\/web-guidelines\.md\*\* — Accessibility, forms, performance \(MANDATORY\)\n\nFollow ALL rules in these references\. Violations will cause your PR to be REJECTED\./g;
 
+const STALE_CLAIM_JQ_RULE =
+  /1\. Read the story description and acceptance criteria from the claim with jq\.\n\s+Do NOT cat the full claim JSON\. Do NOT paste large prompt\/context files into\n\s+the session\./g;
+
 export function sanitizeAgentPromptContracts(input: string): string {
   let output = input;
 
@@ -157,6 +160,17 @@ export function sanitizeAgentPromptContracts(input: string): string {
       "on Stitch, DESIGN_DOM, design tokens, generated screen contracts, and the",
       "injected rules. If a reference is needed, read the smallest focused excerpt;",
       "do not load unrelated backend/security/SQL guidance into the session.",
+    ].join("\n"),
+  );
+
+  output = output.replace(
+    STALE_CLAIM_JQ_RULE,
+    [
+      "1. Read the structured claim summary file first. Use its story, scopeFiles,",
+      "   generatedScreenPolicy, supervisorMemory, previousFailure, command, and",
+      "   output-path fields as the authoritative handoff.",
+      "   Do NOT parse or dump claim.input with jq, sed, head, cat, node loops,",
+      "   or python loops. The full claim JSON is an audit fallback only.",
     ].join("\n"),
   );
 

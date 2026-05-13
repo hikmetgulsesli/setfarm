@@ -102,6 +102,24 @@ describe("agent prompt contracts", () => {
     assert.match(output, /do not load unrelated backend\/security\/SQL guidance into the session/);
   });
 
+  it("rewrites stale claim jq instructions to claim-summary-first handoff", () => {
+    const input = [
+      "BEFORE writing code:",
+      "0. If PREVIOUS FAILURE is non-empty: analyze what went wrong.",
+      "1. Read the story description and acceptance criteria from the claim with jq.",
+      "   Do NOT cat the full claim JSON. Do NOT paste large prompt/context files into",
+      "   the session.",
+      "2. Continue normally.",
+    ].join("\n");
+
+    const output = sanitizeAgentPromptContracts(input);
+
+    assert.doesNotMatch(output, /from the claim with jq|Do NOT cat the full claim JSON/i);
+    assert.match(output, /Read the structured claim summary file first/);
+    assert.match(output, /supervisorMemory, previousFailure/);
+    assert.match(output, /Do NOT parse or dump claim\.input with jq, sed, head, cat, node loops/);
+  });
+
   it("rewrites stale Design DOM nav/control rules that caused layout removal", () => {
     const input = [
       "DESIGN DOM RULES (MANDATORY — FOLLOW EXACTLY):",
