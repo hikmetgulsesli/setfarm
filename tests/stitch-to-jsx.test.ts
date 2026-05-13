@@ -390,6 +390,44 @@ describe("stitch-to-jsx", () => {
     }
   });
 
+  it("keeps CSS custom properties valid in JSX inline style objects", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-inline-style-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "options-screen", title: "Game Options" },
+      ]));
+      writeHtml(path.join(stitchDir, "options-screen.html"), `
+        <main>
+          <input type="range" style="--tw-accent: #bdc2ff; accent-color: #bdc2ff">
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "GameOptions.tsx"), "utf-8");
+      assert.match(code, /style=\{\{"--tw-accent": "#bdc2ff", accentColor: "#bdc2ff"\} as any\}/);
+      assert.doesNotMatch(code, /-TwAccent/);
+
+      const transpiled = ts.transpileModule(code, {
+        compilerOptions: {
+          jsx: ts.JsxEmit.ReactJSX,
+          module: ts.ModuleKind.ESNext,
+          target: ts.ScriptTarget.ES2020,
+        },
+        reportDiagnostics: true,
+      });
+      const errors = (transpiled.diagnostics || []).filter(d => d.category === ts.DiagnosticCategory.Error);
+      assert.deepEqual(errors.map(d => d.messageText), []);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("extracts build-safe design tokens from Google font URLs", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-token-css-"));
     try {

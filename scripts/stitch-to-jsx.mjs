@@ -225,6 +225,35 @@ function normalizeStyleTagChildren(input) {
   });
 }
 
+function toReactStylePropertyKey(rawKey) {
+  const cssKey = String(rawKey || "").trim();
+  if (!cssKey) return "";
+  if (cssKey.startsWith("--")) return JSON.stringify(cssKey);
+  const jsKey = cssKey
+    .replace(/^-ms-/, "ms-")
+    .replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+  return /^[A-Za-z_$][\w$]*$/.test(jsKey) ? jsKey : JSON.stringify(cssKey);
+}
+
+function inlineStyleToJsx(styleText) {
+  let needsTypeEscape = false;
+  const pairs = String(styleText || "")
+    .split(";")
+    .map(x => x.trim())
+    .filter(Boolean)
+    .map(x => {
+      const [rawKey, ...rawValue] = x.split(":");
+      const cssKey = String(rawKey || "").trim();
+      const key = toReactStylePropertyKey(cssKey);
+      if (!key) return "";
+      if (cssKey.startsWith("--")) needsTypeEscape = true;
+      return `${key}: ${JSON.stringify(rawValue.join(":").trim())}`;
+    })
+    .filter(Boolean);
+  const suffix = needsTypeEscape ? " as any" : "";
+  return `style={{${pairs.join(", ")}}${suffix}}`;
+}
+
 function htmlToJsx(html) {
   let out = normalizeJsxAttributeValues(normalizeJsxAttributeNames(normalizeJsxTagNames(html)))
     .replace(/<(img|br|hr|input|meta|link)([^>]*?)>/gi, (_, tag, attrs) => {
@@ -234,14 +263,7 @@ function htmlToJsx(html) {
     .replace(/<script[\s\S]*?<\/script>/gi, "")
     .replace(/<link[^>]*\/?\s*>/gi, "")
     .replace(/<meta[^>]*\/?\s*>/gi, "")
-    .replace(/style="([^"]+)"/g, (_, s) => {
-      const pairs = s.split(";").filter(x => x.trim()).map(x => {
-        const [k, ...v] = x.split(":");
-        const key = k.trim().replace(/-([a-z])/g, (_, c) => c.toUpperCase());
-        return key + ": \"" + v.join(":").trim() + "\"";
-      });
-      return "style={{" + pairs.join(", ") + "}}";
-    });
+    .replace(/style="([^"]+)"/g, (_, s) => inlineStyleToJsx(s));
   out = normalizeStyleTagChildren(out);
   return normalizeHtmlComments(out);
 }
