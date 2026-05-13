@@ -33,8 +33,11 @@ describe("feature-dev design contract prompt", () => {
 
     assert.ok(implement, "implement step should exist");
     assert.match(implement.input, /GENERATED SCREEN CONTRACT/);
-    assert.match(implement.input, /do NOT cat\/read\/sed the full\s+file/i);
-    assert.match(implement.input, /Never read every src\/screens\/\*\.tsx file/i);
+    assert.match(implement.input, /do NOT use read, cat, sed,\s+head, tail, rg, grep, find, awk, node, or python on that\s+src\/screens\/\*\.tsx file/i);
+    assert.match(implement.input, /Focused line-range inspection is allowed only for generated screen\s+files explicitly listed in SCOPE_FILES/i);
+    assert.match(implement.input, /Shared\/read-only generated\s+screens must be consumed through SCREEN_INDEX\/index\.ts and injected\s+contracts only/i);
+    assert.doesNotMatch(implement.input, /If exact detail is\s+still needed, inspect one relevant file/i);
+    assert.doesNotMatch(implement.input, /Never read every src\/screens\/\*\.tsx file/i);
     assert.match(implement.input, /machine-enforced by the Setfarm spawner/i);
     assert.match(implement.input, /reading a generated\s+`?src\/screens\/\*\.tsx`?\s+file outside SCOPE_FILES kills and retries the claim/i);
     assert.match(implement.input, /Global screen reachability is\s+enforced by verify\/supervisor after merge/i);

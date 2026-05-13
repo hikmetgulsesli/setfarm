@@ -39,7 +39,9 @@ STITCH COMPONENT IMPORT RULES (NO EXCEPTIONS):
    layout; add only story-owned behavior/dynamic state.
 3. If a generated screen is shared-only, import/render it only through its
    exported component/action prop contract from src/screens/index.ts and
-   src/screens/SCREEN_INDEX.json. Do not bulk-read or modify shared screen files.
+   src/screens/SCREEN_INDEX.json. Do not read, bulk-read, shell-inspect, or
+   modify shared screen files. Focused line-range inspection is allowed only
+   for generated screen files explicitly listed in SCOPE_FILES.
    This is enforced by the spawner: reading a generated src/screens/*.tsx file
    outside SCOPE_FILES kills and retries the claim.
 4. NEVER create inline/duplicate overlay or screen implementations in page files.

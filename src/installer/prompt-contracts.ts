@@ -29,6 +29,12 @@ const STALE_DESIGN_FIRST_LINK_LINE =
 const STALE_DESIGN_CONTRACT_NAV_RULE =
   /1\. Every navigation link must route to (?:its|a real) page\.(?: If the Stitch design shows a\n\s+control whose target is not in the PRD, implement a project-specific behavior\n\s+first; if truly out of scope, make it visibly disabled\/hidden\.)?/g;
 
+const STALE_GENERATED_SCREEN_FOCUSED_READ_RULE =
+  /- Never read every src\/screens\/\*\.tsx file in one turn\. If exact detail is\n\s+still needed, inspect one relevant file with a focused line range\./g;
+
+const STALE_SHARED_SCREEN_FULL_FILE_RULE =
+  /- If a screen file is only in SHARED_FILES, do NOT cat\/read\/sed the full\n\s+file\. Use src\/screens\/SCREEN_INDEX\.json, src\/screens\/index\.ts,\n\s+COMPONENT REGISTRY, STORY_SCREENS, and UI BEHAVIOR CONTRACT for\n\s+component names, props, and action IDs\./g;
+
 export function sanitizeAgentPromptContracts(input: string): string {
   let output = input;
 
@@ -110,6 +116,26 @@ export function sanitizeAgentPromptContracts(input: string): string {
       "   target is a Stitch placeholder or out of scope, keep the anchor and add",
       "   visible in-screen behavior or an explicit disabled state; do not replace it",
       "   with `<span>`.",
+    ].join("\n"),
+  );
+
+  output = output.replace(
+    STALE_SHARED_SCREEN_FULL_FILE_RULE,
+    [
+      "- If a screen file is only in SHARED_FILES, do NOT use read, cat, sed,",
+      "  head, tail, rg, grep, find, awk, node, or python on that src/screens/*.tsx file.",
+      "  Use src/screens/SCREEN_INDEX.json, src/screens/index.ts, COMPONENT",
+      "  REGISTRY, STORY_SCREENS, and UI BEHAVIOR CONTRACT for component names,",
+      "  props, and action IDs.",
+    ].join("\n"),
+  );
+
+  output = output.replace(
+    STALE_GENERATED_SCREEN_FOCUSED_READ_RULE,
+    [
+      "- Focused line-range inspection is allowed only for generated screen files",
+      "  explicitly listed in SCOPE_FILES. Shared/read-only generated screens must",
+      "  be consumed through SCREEN_INDEX/index.ts and injected contracts only.",
     ].join("\n"),
   );
 

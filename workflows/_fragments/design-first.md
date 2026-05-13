@@ -3,8 +3,10 @@
 The Stitch files below are the design source of truth. The full HTML is not
 pasted into the prompt; read only current SCOPE_FILES from WORKDIR. If a
 generated screen is shared/read-only for this story, use SCREEN_INDEX/index.ts
-and the injected contracts instead of reading the full component source. Write
-only files in the current story scope. Setfarm enforces this at runtime:
+and the injected contracts instead of reading any component source from that
+shared screen. Focused line-range reads are allowed only for generated screen
+files explicitly listed in SCOPE_FILES. Write only files in the current story
+scope. Setfarm enforces this at runtime:
 reading a generated src/screens/*.tsx file outside SCOPE_FILES kills and
 retries the claim before generated-screen context overload.
 

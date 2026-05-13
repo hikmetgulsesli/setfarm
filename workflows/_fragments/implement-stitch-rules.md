@@ -19,7 +19,8 @@ SCREEN COVERAGE RULE (CRITICAL):
 - Implement only current SCOPE_FILES. Do not create routes/pages/screens outside
   this story to satisfy global manifest coverage.
 - For app-shell stories, use src/screens/SCREEN_INDEX.json and src/screens/index.ts
-  to wire generated screens into reachable flow without reading every screen file.
+  to wire generated screens into reachable flow without reading any non-owned
+  screen source file.
 - The spawner machine-enforces this: reading generated src/screens/*.tsx files
   outside SCOPE_FILES kills and retries the story claim.
 - For screen-owner stories, verify only the generated screen files in SCOPE_FILES.

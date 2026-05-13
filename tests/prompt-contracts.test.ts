@@ -63,6 +63,25 @@ describe("agent prompt contracts", () => {
     assert.match(output, /Do NOT replace anchors with `<span>`/);
   });
 
+  it("removes stale generated-screen focused-read loopholes", () => {
+    const input = [
+      "- If a screen file is only in SHARED_FILES, do NOT cat/read/sed the full",
+      "  file. Use src/screens/SCREEN_INDEX.json, src/screens/index.ts,",
+      "  COMPONENT REGISTRY, STORY_SCREENS, and UI BEHAVIOR CONTRACT for",
+      "  component names, props, and action IDs.",
+      "- Never read every src/screens/*.tsx file in one turn. If exact detail is",
+      "  still needed, inspect one relevant file with a focused line range.",
+    ].join("\n");
+
+    const output = sanitizeAgentPromptContracts(input);
+
+    assert.doesNotMatch(output, /If exact detail is\s+still needed, inspect one relevant file/i);
+    assert.doesNotMatch(output, /do NOT cat\/read\/sed the full\s+file/i);
+    assert.match(output, /do NOT use read, cat, sed,\s+head, tail, rg, grep, find, awk, node, or python/i);
+    assert.match(output, /Focused line-range inspection is allowed only for generated screen files\s+explicitly listed in SCOPE_FILES/i);
+    assert.match(output, /Shared\/read-only generated screens must\s+be consumed through SCREEN_INDEX\/index\.ts and injected contracts only/i);
+  });
+
   it("rewrites stale Design DOM nav/control rules that caused layout removal", () => {
     const input = [
       "DESIGN DOM RULES (MANDATORY — FOLLOW EXACTLY):",

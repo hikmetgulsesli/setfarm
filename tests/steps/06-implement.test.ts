@@ -148,6 +148,9 @@ describe("06-implement step module", () => {
     assert.match(prompt, /If TypeScript says a prop does not exist on a shared component/i);
     assert.match(prompt, /Generated Stitch screen components may declare an `actions` prop/i);
     assert.match(prompt, /do not infer actions from `textContent`/i);
+    assert.match(prompt, /do not use `read`, `cat`, `sed`, `head`, `tail`, `rg`, `grep`, `find`, `awk`, `node`, or `python` on that `src\/screens\/\*\.tsx` file/i);
+    assert.match(prompt, /Read generated screen source only when that exact `src\/screens\/\*\.tsx` file is listed in SCOPE_FILES/i);
+    assert.doesNotMatch(prompt, /If exact detail is\s+still needed, inspect one relevant file/i);
     assert.match(prompt, /Reducers and state transition functions must be pure/i);
     assert.match(prompt, /`vite\.config\.\*` is app\/toolchain config and is forbidden/i);
     assert.match(prompt, /Do not edit `index\.html` for title, Google fonts, icon fonts, metadata, or root markup/i);
