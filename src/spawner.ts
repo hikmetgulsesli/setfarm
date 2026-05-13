@@ -2759,7 +2759,8 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   try {
     fs.appendFileSync(transcriptPath, `[spawner] openclaw_cli=${OPENCLAW_CLI} session_id=${sessionId} session_key=${sessionKey} timeout=${AGENT_TIMEOUT_SECONDS}s cwd=${spawnCwd}\n`);
   } catch {}
-  const pathPrefix = claim.stepId === "implement" ? installImplementGitWrapper(spawnCwd, transcriptPath) : undefined;
+  const shouldInstallImplementGitWrapper = role === "developer" && Boolean(claim.storyId);
+  const pathPrefix = shouldInstallImplementGitWrapper ? installImplementGitWrapper(spawnCwd, transcriptPath) : undefined;
   const outFd = fs.openSync(transcriptPath, "a");
   const errFd = fs.openSync(transcriptPath, "a");
   const child = spawn(OPENCLAW_CLI, childArgs, {

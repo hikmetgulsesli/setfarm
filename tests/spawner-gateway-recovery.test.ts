@@ -463,7 +463,9 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /git add \./);
     assert.match(source, /git commit -am/);
     assert.match(source, /blocked WIP commit message/);
-    assert.match(source, /claim\.stepId === "implement" \? installImplementGitWrapper/);
+    assert.match(source, /const shouldInstallImplementGitWrapper = role === "developer" && Boolean\(claim\.storyId\)/);
+    assert.match(source, /shouldInstallImplementGitWrapper \? installImplementGitWrapper/);
+    assert.doesNotMatch(source, /claim\.stepId === "implement" \? installImplementGitWrapper/);
     assert.match(source, /buildOpenClawChildEnv\(pathPrefix\)/);
   });
 
