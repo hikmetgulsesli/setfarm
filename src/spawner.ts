@@ -1972,7 +1972,10 @@ async function requeueOrphanedStoryClaim(runId: string, stepId: string, agentId:
   );
   if (!row) return false;
 
-  await pgRun("UPDATE stories SET status = 'pending', claimed_by = NULL, updated_at = NOW() WHERE id = $1 AND status = 'running'", [row.id]);
+  await pgRun(
+    "UPDATE stories SET status = 'pending', claimed_by = NULL, abandoned_count = COALESCE(abandoned_count, 0) + 1, retry_count = retry_count + 1, output = $2, updated_at = NOW() WHERE id = $1 AND status = 'running'",
+    [row.id, diagnostic],
+  );
   await pgRun("UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = NOW() WHERE run_id = $1 AND step_id = $2 AND status IN ('pending','running','waiting')", [runId, stepId]);
   await pgRun("UPDATE claim_log SET outcome = 'infra_retry', abandoned_at = NOW(), diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND story_id = $4 AND agent_id = $5 AND outcome IS NULL", [diagnostic, runId, stepId, row.story_id, agentId]);
   console.warn(`[spawner] requeued orphaned story claim ${row.story_id} for ${agentId}: ${diagnostic.slice(0, 180)}`);
@@ -1996,7 +1999,10 @@ async function requeueOpenStoryClaim(runId: string, stepId: string, storyId: str
   if (!row) return false;
 
   if (row.story_db_id) {
-    await pgRun("UPDATE stories SET status = 'pending', claimed_by = NULL, updated_at = NOW() WHERE id = $1 AND status IN ('running','pending')", [row.story_db_id]);
+    await pgRun(
+      "UPDATE stories SET status = 'pending', claimed_by = NULL, abandoned_count = COALESCE(abandoned_count, 0) + 1, retry_count = retry_count + 1, output = $2, updated_at = NOW() WHERE id = $1 AND status IN ('running','pending')",
+      [row.story_db_id, diagnostic],
+    );
   }
   await pgRun("UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = NOW() WHERE run_id = $1 AND step_id = $2 AND status IN ('pending','running','waiting')", [runId, stepId]);
   await pgRun("UPDATE claim_log SET outcome = 'infra_retry', abandoned_at = NOW(), diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND story_id = $4 AND agent_id = $5 AND outcome IS NULL", [diagnostic, runId, stepId, storyId, agentId]);

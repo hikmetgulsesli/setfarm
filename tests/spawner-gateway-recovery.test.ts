@@ -398,6 +398,24 @@ describe("spawner gateway recovery wiring", () => {
     );
   });
 
+  it("persists runtime guard diagnostics into the next story retry claim", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    const requeueOpenStart = source.indexOf("async function requeueOpenStoryClaim");
+    const requeueOrphanStart = source.indexOf("async function requeueOrphanedStoryClaim");
+    assert.notEqual(requeueOpenStart, -1, "requeueOpenStoryClaim not found");
+    assert.notEqual(requeueOrphanStart, -1, "requeueOrphanedStoryClaim not found");
+
+    const requeueOpen = source.slice(requeueOpenStart, source.indexOf("async function requeueOrphanedRunningStories", requeueOpenStart));
+    const requeueOrphan = source.slice(requeueOrphanStart, source.indexOf("async function requeueOpenStoryClaim", requeueOrphanStart));
+
+    for (const block of [requeueOpen, requeueOrphan]) {
+      assert.match(block, /abandoned_count = COALESCE\(abandoned_count, 0\) \+ 1/);
+      assert.match(block, /retry_count = retry_count \+ 1/);
+      assert.match(block, /output = \$2/);
+      assert.match(block, /\[.*diagnostic.*\]/s);
+    }
+  });
+
   it("hard-times out verify agents as an infra retry instead of leaving open claims", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /VERIFY_AGENT_HARD_TIMEOUT_MS/);
