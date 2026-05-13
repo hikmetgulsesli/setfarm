@@ -310,11 +310,18 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /isGeneratedScreenComponentPath/);
     assert.match(source, /src\\\/screens\\\/\[\^\/\]\+\\\.tsx/);
     assert.match(source, /extractGeneratedScreenReadsFromCommand/);
+    assert.match(source, /\bhead\b\|tail\|less\|bat\|rg\|grep/);
+    assert.match(source, /src\/screens\/\*\.tsx/);
+    assert.doesNotMatch(source, /allowed\.size === 0\)\s*return \{ detected: false/);
     assert.match(source, /GENERATED_SCREEN_SHARED_READ/);
     assert.match(source, /const effectiveStoryId = active\.storyId \|\| row\.story_id \|\| undefined/);
     assert.match(source, /row\.type === "loop" && row\.step_id === "implement" && effectiveStoryId/);
     assert.match(source, /terminateActiveProcess\(active,\s*"generated-screen-read-guard"\)/);
     assert.match(source, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.agentId,\s*reason\)/);
+    assert.ok(
+      source.indexOf("generatedScreenReadGuard(active)") < source.indexOf("const terminalReason = childProcessTerminalReason(active.child)"),
+      "generated screen read guard must run before terminal-process recovery so quick exec/head exits cannot bypass it",
+    );
   });
 
   it("hard-times out verify agents as an infra retry instead of leaving open claims", () => {

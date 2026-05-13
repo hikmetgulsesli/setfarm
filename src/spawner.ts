@@ -573,7 +573,12 @@ function readStoryScopeFileSet(workdir: string): Set<string> {
 
 function extractGeneratedScreenReadsFromCommand(workdir: string, command: string): Array<{ path: string; via: string }> {
   const reads: Array<{ path: string; via: string }> = [];
-  if (!/\b(cat|sed|nl|head|tail|less|bat)\b/.test(command)) return reads;
+  const readsGeneratedScreenDirectory = /\b(cat|sed|nl|head|tail|less|bat|rg|grep|awk|find|wc|python3?|node)\b/.test(command)
+    && /(?:^|[\s"'`=])(?:\.\/)?src\/screens(?:\/|\s|$)/.test(command)
+    && !/src\/screens\/(?:SCREEN_INDEX\.json|index\.ts)\b/.test(command);
+  if (readsGeneratedScreenDirectory) {
+    reads.push({ path: "src/screens/*.tsx", via: "exec" });
+  }
   for (const match of command.matchAll(/(?:^|[\s"'`=])((?:\.\/|\/)?(?:[\w.-]+\/)*src\/screens\/[^'"`\s;|&]+\.tsx)/g)) {
     const relativePath = normalizeWorktreeRelativePath(workdir, match[1] || "");
     if (isGeneratedScreenComponentPath(relativePath)) reads.push({ path: relativePath, via: "exec" });
@@ -583,7 +588,6 @@ function extractGeneratedScreenReadsFromCommand(workdir: string, command: string
 
 function generatedScreenReadGuard(active: ActiveProcess): { detected: boolean; reason: string } {
   const allowed = readStoryScopeFileSet(active.spawnCwd);
-  if (allowed.size === 0) return { detected: false, reason: "" };
 
   let raw = "";
   try {
@@ -1939,6 +1943,23 @@ async function reapFinishedClaims(): Promise<void> {
           continue;
         }
 
+        const effectiveStoryId = active.storyId || row.story_id || undefined;
+        const effectiveStoryDbId = active.storyDbId || row.current_story_id || undefined;
+
+        if (row.type === "loop" && row.step_id === "implement" && effectiveStoryId && !isTerminalTestRole(active.role, active.agentId)) {
+          const generatedScreenRead = generatedScreenReadGuard(active);
+          if (generatedScreenRead.detected) {
+            const reason = generatedScreenRead.reason + ` Transcript: ${active.transcriptPath}`;
+            console.warn(`[spawner] ${reason}`);
+            try { fs.appendFileSync(active.transcriptPath, `--- GENERATED SCREEN READ GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
+            terminateActiveProcess(active, "generated-screen-read-guard");
+            activeProcesses.delete(key);
+            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
+            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
+            continue;
+          }
+        }
+
         const terminalReason = childProcessTerminalReason(active.child);
         if (terminalReason) {
           const reason = `AGENT_PROCESS_TERMINAL: ${active.agentId} process ended while ${active.wfId}/${active.role} was still running (${terminalReason}); recovering claim. Transcript: ${active.transcriptPath}`;
@@ -1951,9 +1972,6 @@ ${reason}
           await failClaimIfStillRunning(active.stepId, active.agentId, active.wfId, active.role, active.transcriptPath, new Error(reason), active.startedAtMs, active.spawnCwd, active.outputPath);
           continue;
         }
-
-        const effectiveStoryId = active.storyId || row.story_id || undefined;
-        const effectiveStoryDbId = active.storyDbId || row.current_story_id || undefined;
 
         if (effectiveStoryId && row.type === "loop" && row.step_id === "implement") {
           const storyStillOwned = row.current_story_id === effectiveStoryDbId
@@ -2002,20 +2020,6 @@ ${reason}
           activeProcesses.delete(key);
           await failClaimIfStillRunning(active.stepId, active.agentId, active.wfId, active.role, active.transcriptPath, new Error(reason), active.startedAtMs, active.spawnCwd, active.outputPath);
           continue;
-        }
-
-        if (row.type === "loop" && row.step_id === "implement" && effectiveStoryId && !isTerminalTestRole(active.role, active.agentId)) {
-          const generatedScreenRead = generatedScreenReadGuard(active);
-          if (generatedScreenRead.detected) {
-            const reason = generatedScreenRead.reason + ` Transcript: ${active.transcriptPath}`;
-            console.warn(`[spawner] ${reason}`);
-            try { fs.appendFileSync(active.transcriptPath, `--- GENERATED SCREEN READ GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
-            terminateActiveProcess(active, "generated-screen-read-guard");
-            activeProcesses.delete(key);
-            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
-            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
-            continue;
-          }
         }
 
         if (ageMs >= AGENT_SELF_LOOP_CHECK_AFTER_MS && !isTerminalTestRole(active.role, active.agentId)) {
