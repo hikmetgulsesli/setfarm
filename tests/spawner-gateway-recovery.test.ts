@@ -400,6 +400,29 @@ describe("spawner gateway recovery wiring", () => {
     );
   });
 
+  it("kills implement claims that use broad staging or WIP commits", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /function implementGitDisciplineGuard\(active: ActiveProcess\)/);
+    assert.match(source, /GIT_DISCIPLINE_VIOLATION/);
+    assert.match(source, /INTERMEDIATE_COMMIT_VIOLATION/);
+    assert.match(source, /isBroadGitAddCommand/);
+    assert.match(source, /gitCommitMessages/);
+    assert.match(source, /terminateActiveProcess\(active,\s*"git-discipline-guard"\)/);
+    assert.match(source, /--- GIT DISCIPLINE GUARD/);
+    assert.ok(
+      source.indexOf("implementScopeWriteGuard(active)") < source.indexOf("implementGitDisciplineGuard(active)"),
+      "scope writes should be checked before git discipline so the first diagnostic is the root write violation",
+    );
+    assert.ok(
+      source.indexOf("implementGitDisciplineGuard(active)") < source.indexOf("claimParseLoopGuard(active)"),
+      "git discipline guard should run before loop/context guards",
+    );
+    assert.ok(
+      source.indexOf("recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId") < source.indexOf("terminateActiveProcess(active, \"git-discipline-guard\")"),
+      "git discipline guard must write supervisor runtime memory before killing the claim",
+    );
+  });
+
   it("persists runtime guard diagnostics into the next story retry claim", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     const requeueOpenStart = source.indexOf("async function requeueOpenStoryClaim");

@@ -754,6 +754,72 @@ function implementScopeWriteGuard(active: ActiveProcess): { detected: boolean; r
   return { detected: false, reason: "" };
 }
 
+function compactCommandForDiagnostic(command: string): string {
+  return command.replace(/\s+/g, " ").trim().slice(0, 240);
+}
+
+function isBroadGitAddCommand(command: string): boolean {
+  const compact = compactCommandForDiagnostic(command);
+  return /\bgit\s+add\s+(?:-[A-Za-z]*A[A-Za-z]*\b|--all\b|\.(?:\s|$|&&|\|\||;))/i.test(compact);
+}
+
+function gitCommitMessages(command: string): string[] {
+  const compact = compactCommandForDiagnostic(command);
+  const messages: string[] = [];
+  for (const match of compact.matchAll(/\bgit\s+commit\b[^;&|]*(?:-m|--message=?)\s*(?:"([^"]*)"|'([^']*)'|([^\s;&|]+))/gi)) {
+    messages.push(String(match[1] ?? match[2] ?? match[3] ?? "").trim());
+  }
+  if (messages.length === 0 && /\bgit\s+commit\b/i.test(compact)) messages.push("");
+  return messages;
+}
+
+function implementGitDisciplineGuard(active: ActiveProcess): { detected: boolean; reason: string } {
+  let raw = "";
+  try {
+    raw = fs.readFileSync(active.sessionJsonlPath, "utf-8").slice(-512_000).trim();
+  } catch {
+    return { detected: false, reason: "" };
+  }
+  if (!raw) return { detected: false, reason: "" };
+
+  let commitCount = 0;
+  for (const line of raw.split(/\n/).filter(Boolean)) {
+    let event: any;
+    try { event = JSON.parse(line); } catch { continue; }
+    const message = event?.message || {};
+    if (String(message.role || "") !== "assistant") continue;
+    for (const call of extractToolCalls(message.content)) {
+      if (!call.command) continue;
+      const command = compactCommandForDiagnostic(call.command);
+      if (isBroadGitAddCommand(command)) {
+        return {
+          detected: true,
+          reason: `GIT_DISCIPLINE_VIOLATION: ${active.agentId} ran broad staging (${command}). Implement claims must stage explicit .story-scope-files entries and allowed test files only; runtime supervisor killed the claim before broad staging could be accepted.`,
+        };
+      }
+
+      const messages = gitCommitMessages(command);
+      for (const commitMessage of messages) {
+        commitCount += 1;
+        if (/^wip\b|work in progress/i.test(commitMessage)) {
+          return {
+            detected: true,
+            reason: `INTERMEDIATE_COMMIT_VIOLATION: ${active.agentId} created a WIP commit (${commitMessage || "no message"}). Implement claims must make one final story commit after checks, not checkpoint commits; runtime supervisor killed the claim.`,
+          };
+        }
+      }
+      if (commitCount > 1) {
+        return {
+          detected: true,
+          reason: `INTERMEDIATE_COMMIT_VIOLATION: ${active.agentId} ran git commit ${commitCount} times in one implement claim. Implement claims must make one final story commit after code and checks pass.`,
+        };
+      }
+    }
+  }
+
+  return { detected: false, reason: "" };
+}
+
 function isRawClaimFileRead(command: string, claimSummaryPath?: string): boolean {
   if (!command) return false;
   if (claimSummaryPath && command.includes(claimSummaryPath)) return false;
@@ -2153,6 +2219,19 @@ async function reapFinishedClaims(): Promise<void> {
             try { fs.appendFileSync(active.transcriptPath, `--- SCOPE WRITE GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
             await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "runtime-guard", reason);
             terminateActiveProcess(active, "scope-write-guard");
+            activeProcesses.delete(key);
+            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
+            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
+            continue;
+          }
+
+          const gitDiscipline = implementGitDisciplineGuard(active);
+          if (gitDiscipline.detected) {
+            const reason = gitDiscipline.reason + ` Transcript: ${active.transcriptPath}`;
+            console.warn(`[spawner] ${reason}`);
+            try { fs.appendFileSync(active.transcriptPath, `--- GIT DISCIPLINE GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
+            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "runtime-guard", reason);
+            terminateActiveProcess(active, "git-discipline-guard");
             activeProcesses.delete(key);
             if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
             await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
