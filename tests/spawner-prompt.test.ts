@@ -24,9 +24,10 @@ describe("spawner prompt bootstrap", () => {
     assert.match(prompt, /First exec command:\nbash '\/tmp\/setfarm-claim-bootstrap-feature-dev_developer-spawner-test\.sh'/);
     assert.match(prompt, /CLAIM_SUMMARY_FILE=\/tmp\/claim-summary-feature-dev_developer-spawner-test\.json/);
     assert.match(prompt, /Read the structured claim summary at \/tmp\/claim-summary-feature-dev_developer-spawner-test\.json first/);
-    assert.match(prompt, /designContracts\.screenIndex, designContracts\.uiContract, and designContracts\.componentRegistry/);
+    assert.match(prompt, /designContracts\.screenIndex, designContracts\.uiContract, designContracts\.componentRegistry, and designContracts\.componentTypes/);
+    assert.match(prompt, /src\/_probe\.tsx, src\/probe\.tsx, tmp\.ts, scratch\.tsx/);
     assert.match(prompt, /Do NOT parse or dump claim\.input with jq\/sed\/head\/node loops/);
-    assert.match(prompt, /Do NOT create scratch\/progress\/todo\/note files inside WORKDIR/);
+    assert.match(prompt, /Do NOT create scratch\/progress\/todo\/note\/probe files inside WORKDIR/);
     assert.doesNotMatch(prompt, /First exec command should start with/);
     assert.doesNotMatch(prompt, /jq -r/);
     assert.doesNotMatch(prompt, /case "\$WORKDIR" in/);
@@ -64,6 +65,7 @@ describe("spawner prompt bootstrap", () => {
           screenIndex: [{ componentName: "MainMenu" }],
           uiContract: [{ screenTitle: "Main Menu" }],
           componentRegistry: "export { MainMenu } from './MainMenu';",
+          componentTypes: [{ file: "src/screens/MainMenu.tsx" }],
         },
         supervisorMemory: "### runtime guard\n- Summary: previous worker touched out-of-scope files",
       }) + "\n");
@@ -90,6 +92,7 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, /SCREEN_INDEX_CONTRACTS=1/);
       assert.match(out, /UI_CONTRACTS=1/);
       assert.match(out, /COMPONENT_REGISTRY=present \d+ chars/);
+      assert.match(out, /COMPONENT_TYPE_CONTRACTS=1/);
       assert.match(out, /SUPERVISOR_MEMORY=present \d+ chars/);
       assert.match(out, /Project: bootstrap sensor/);
     } finally {
@@ -111,6 +114,20 @@ describe("spawner prompt bootstrap", () => {
       fs.writeFileSync(path.join(workdir, "src", "screens", "index.ts"), [
         "export { MainMenu } from './MainMenu';",
         "export { GameBoard } from './GameBoard';",
+      ].join("\n"));
+      fs.writeFileSync(path.join(workdir, "src", "screens", "MainMenu.tsx"), [
+        "export type MainMenuActionId = \"start-game-1\";",
+        "export interface MainMenuProps {",
+        "  actions?: Partial<Record<MainMenuActionId, () => void>>;",
+        "}",
+        "export function MainMenu({ actions }: MainMenuProps) { return null; }",
+      ].join("\n"));
+      fs.writeFileSync(path.join(workdir, "src", "screens", "GameBoard.tsx"), [
+        "export type GameBoardActionId = \"drop-1\";",
+        "export interface GameBoardProps {",
+        "  actions?: Partial<Record<GameBoardActionId, () => void>>;",
+        "}",
+        "export function GameBoard({ actions }: GameBoardProps) { return null; }",
       ].join("\n"));
       fs.mkdirSync(path.join(workdir, "stitch"), { recursive: true });
       fs.writeFileSync(path.join(workdir, "stitch", "UI_CONTRACT.json"), JSON.stringify([
@@ -172,7 +189,11 @@ describe("spawner prompt bootstrap", () => {
       assert.equal((summary.designContracts as any).uiContract.length, 1);
       assert.match(JSON.stringify((summary.designContracts as any).screenIndex), /START GAME/);
       assert.match(String((summary.designContracts as any).componentRegistry), /export \{ MainMenu \}/);
+      assert.equal((summary.designContracts as any).componentTypes.length, 2);
+      assert.match(JSON.stringify((summary.designContracts as any).componentTypes), /MainMenuProps/);
+      assert.match(JSON.stringify((summary.designContracts as any).componentTypes), /MainMenuActionId.*start-game-1/);
       assert.match(String((summary.designContracts as any).source), /instead of reading raw stitch\/\*\.html/);
+      assert.match(String((summary.designContracts as any).source), /creating source-tree probe files/);
       assert.match(String(summary.supervisorMemory), /forbidden generated screens/);
       assert.match(String(summary.acceptanceCriteria), /Pieces fall and rotate/);
       assert.match(JSON.stringify(summary.handoff), /Audit fallback only/);

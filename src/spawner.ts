@@ -843,9 +843,12 @@ function implementScopeWriteGuard(active: ActiveProcess): { detected: boolean; r
       if (call.name !== "write" && call.name !== "edit") continue;
       const relativePath = normalizeWorktreeRelativePath(active.spawnCwd, call.path);
       if (!relativePath || isRuntimeScopeAllowedWrite(relativePath, allowed)) continue;
+      const probeHint = /(?:^|\/|_)(probe|scratch|tmp)[^/]*\.[cm]?[jt]sx?$/i.test(relativePath)
+        ? " Do not create TypeScript probe/scratch files in the project tree to infer shared component props; use claim-summary designContracts.componentTypes or a /tmp-only experiment that never writes under WORKDIR."
+        : "";
       return {
         detected: true,
-        reason: `SCOPE_WRITE_VIOLATION: ${active.agentId} attempted ${call.name} on ${relativePath}, but this story may only write .story-scope-files entries. Runtime supervisor killed the claim before out-of-scope work could be committed.`,
+        reason: `SCOPE_WRITE_VIOLATION: ${active.agentId} attempted ${call.name} on ${relativePath}, but this story may only write .story-scope-files entries.${probeHint} Runtime supervisor killed the claim before out-of-scope work could be committed.`,
       };
     }
   }
