@@ -80,31 +80,31 @@ describe("11-deploy step module", () => {
 
   it("normalizes Mission Control hostnames to hostname-only domains", () => {
     assert.equal(
-      normalizeMissionControlHostname("https://https//field-service-control-0510.setrox.com.tr", "field-service-control-0510"),
-      "field-service-control-0510.setrox.com.tr",
+      normalizeMissionControlHostname("https://https//sample-control-0510.setrox.com.tr", "sample-control-0510"),
+      "sample-control-0510.setrox.com.tr",
     );
     assert.equal(
-      normalizeMissionControlHostname("https://field-service-control-0510.setrox.com.tr/path?q=1", "field-service-control-0510"),
-      "field-service-control-0510.setrox.com.tr",
+      normalizeMissionControlHostname("https://sample-control-0510.setrox.com.tr/path?q=1", "sample-control-0510"),
+      "sample-control-0510.setrox.com.tr",
     );
     assert.equal(
-      normalizeMissionControlHostname("not a host", "field-service-control-0510"),
-      "field-service-control-0510.setrox.com.tr",
+      normalizeMissionControlHostname("not a host", "sample-control-0510"),
+      "sample-control-0510.setrox.com.tr",
     );
   });
 
   it("normalizes Mission Control display names and raw task summaries", () => {
     assert.equal(
-      humanizeProjectDisplayName("field-service-control-0510 Build a browser-based React/Vite/TypeScript field service control room"),
-      "Field Service Control",
+      humanizeProjectDisplayName("sample-control-0510 Build a browser-based React/Vite/TypeScript operations control room"),
+      "Sample Control",
     );
     assert.equal(
-      normalizeMissionControlSummary("Project: field-service-control-0510 Build a browser-based React/Vite/TypeScript field service control room", "Field Service Control"),
-      "Field Service Control web application.",
+      normalizeMissionControlSummary("Project: sample-control-0510 Build a browser-based React/Vite/TypeScript operations control room", "Sample Control"),
+      "Sample Control web application.",
     );
     assert.equal(
-      normalizeMissionControlSummary("Regional dispatch dashboard for active jobs.", "Field Service Control"),
-      "Regional dispatch dashboard for active jobs.",
+      normalizeMissionControlSummary("Operations dashboard for active jobs.", "Sample Control"),
+      "Operations dashboard for active jobs.",
     );
   });
 });

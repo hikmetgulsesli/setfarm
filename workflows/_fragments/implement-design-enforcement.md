@@ -33,11 +33,16 @@ DESIGN ENFORCEMENT (frontend stories — MANDATORY checklist before commit):
     result is a blocking implementation failure.
 
 STITCH COMPONENT IMPORT RULES (NO EXCEPTIONS):
-1. If stitch/ has screen HTML files, there MUST be matching React components in components/
-2. Screen components MUST be imported and rendered in the main page (app/page.tsx or equivalent)
-3. NEVER create inline/duplicate overlay or screen implementations in page files
-4. If a component exists in components/ matching a Stitch screen, you MUST use it — do NOT recreate it
-5. After implementation, verify: every screen in DESIGN_MANIFEST.json has a matching import in the render tree
+1. Generated Stitch components live in src/screens/ unless the project scaffold
+   explicitly uses another generated path.
+2. If a generated screen is in SCOPE_FILES, preserve its component and generated
+   layout; add only story-owned behavior/dynamic state.
+3. If a generated screen is shared-only, import/render it only through its
+   exported component/action prop contract from src/screens/index.ts and
+   src/screens/SCREEN_INDEX.json. Do not bulk-read or modify shared screen files.
+4. NEVER create inline/duplicate overlay or screen implementations in page files.
+5. Verify current story scope before commit. Global screen reachability is
+   enforced by verify/supervisor after merge.
 
 FRAMEWORK-AWARE DESIGN TOKEN INTEGRATION:
 1. NEXT.JS (app/ dir): add @import "../stitch/design-tokens.css" at the top of app/globals.css.

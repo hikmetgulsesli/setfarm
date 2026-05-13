@@ -1,7 +1,9 @@
 # DESIGN-FIRST (MANDATORY)
 
 The Stitch files below are the design source of truth. The full HTML is not
-pasted into the prompt; read only the relevant story screens from WORKDIR. Write
+pasted into the prompt; read only current SCOPE_FILES from WORKDIR. If a
+generated screen is shared/read-only for this story, use SCREEN_INDEX/index.ts
+and the injected contracts instead of reading the full component source. Write
 only files in the current story scope.
 
 STORY SCREENS:
@@ -11,7 +13,8 @@ STITCH FILES TO READ:
 - stitch/DESIGN_MANIFEST.json
 - stitch/design-tokens.css
 - stitch/DESIGN_DOM.json
-- relevant stitch/*.html files listed in STORY_SCREENS
+- relevant stitch/*.html files listed in STORY_SCREENS only when the injected
+  contract is insufficient, capped to focused excerpts
 
 DESIGN TOKENS:
 {{design_tokens}}

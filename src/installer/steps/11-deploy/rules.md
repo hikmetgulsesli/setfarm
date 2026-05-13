@@ -59,5 +59,5 @@ when that is the correct runtime command.
   `<project>.setrox.com.tr`; never write `https://...`, `http://...`,
   `https//...`, paths, or trailing slashes into the `domain` field.
 - Mission Control `displayName` must be a human-readable product name, not the
-  kebab-case repo slug. Example: `field-service-control-0510` becomes
-  `Field Service Control`.
+  kebab-case repo slug. Example: `sample-control-0510` becomes
+  `Sample Control`.

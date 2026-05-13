@@ -38,6 +38,7 @@ const QA_AGENT_STUCK_MS = parsePositiveInt(process.env.SETFARM_QA_AGENT_STUCK_MS
 const AGENT_ACTIVITY_GRACE_MS = parsePositiveInt(process.env.SETFARM_AGENT_ACTIVITY_GRACE_MS, 4 * 60_000);
 const AGENT_HEARTBEAT_MS = parsePositiveInt(process.env.SETFARM_AGENT_HEARTBEAT_MS, 60_000);
 const AGENT_STARTUP_SILENCE_MS = parsePositiveInt(process.env.SETFARM_AGENT_STARTUP_SILENCE_MS, 4 * 60_000);
+const AGENT_MODEL_TURN_STALL_MS = parsePositiveInt(process.env.SETFARM_AGENT_MODEL_TURN_STALL_MS, 8 * 60_000);
 const AGENT_SELF_LOOP_CHECK_AFTER_MS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_CHECK_AFTER_MS, 6 * 60_000);
 const AGENT_SELF_LOOP_MIN_ACTIONS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_ACTIONS, 7);
 const AGENT_SELF_LOOP_MIN_NOOP_EDITS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_NOOP_EDITS, 4);
@@ -428,6 +429,30 @@ function fileSize(filePath: string): number {
   } catch {
     return 0;
   }
+}
+
+function fileMtimeMs(filePath: string): number {
+  try {
+    const stat = fs.statSync(filePath);
+    return Number.isFinite(stat.mtimeMs) ? stat.mtimeMs : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function progressFileMtimeMs(runId: string): number {
+  if (!runId) return 0;
+  return fileMtimeMs(`/tmp/setfarm-progress-${runId}.txt`);
+}
+
+function activeProcessPromptActivityMs(active: ActiveProcess): number {
+  return Math.max(
+    active.startedAtMs,
+    fileMtimeMs(active.transcriptPath),
+    fileMtimeMs(active.sessionJsonlPath),
+    fileMtimeMs(active.outputPath),
+    progressFileMtimeMs(active.runId),
+  );
 }
 
 function activeProcessHasVisibleOutput(active: ActiveProcess): boolean {
@@ -1867,6 +1892,17 @@ ${reason}
             }
             continue;
           }
+        }
+
+        const promptIdleMs = Date.now() - activeProcessPromptActivityMs(active);
+        if (ageMs >= AGENT_MODEL_TURN_STALL_MS && promptIdleMs >= AGENT_MODEL_TURN_STALL_MS) {
+          const reason = `AGENT_MODEL_TURN_STALLED: ${active.agentId} kept ${active.wfId}/${active.role} running for ${formatDurationMs(ageMs)} but session/output/progress files have not changed for ${formatDurationMs(promptIdleMs)}; retrying instead of treating CPU activity as progress. Transcript: ${active.transcriptPath}`;
+          console.warn(`[spawner] ${reason}`);
+          try { fs.appendFileSync(active.transcriptPath, `--- MODEL TURN STALL ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
+          terminateActiveProcess(active, "model-turn-stall");
+          activeProcesses.delete(key);
+          await failClaimIfStillRunning(active.stepId, active.agentId, active.wfId, active.role, active.transcriptPath, new Error(reason), active.startedAtMs, active.spawnCwd, active.outputPath);
+          continue;
         }
 
         const thresholdMs = stuckThresholdMs(active.role, row.story_id);

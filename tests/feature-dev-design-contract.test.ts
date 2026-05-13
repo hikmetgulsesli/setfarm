@@ -26,4 +26,17 @@ describe("feature-dev design contract prompt", () => {
     assert.match(implement.input, /Preserve generated Stitch `<a>` tags, className,\s+nesting and layout/);
     assert.match(implement.input, /do not replace anchors with `<span>`/i);
   });
+
+  it("keeps generated shared screens as contracts instead of bulk-read targets", async () => {
+    const spec = await loadWorkflowSpec(WORKFLOW_DIR);
+    const implement = spec.steps.find(step => step.id === "implement");
+
+    assert.ok(implement, "implement step should exist");
+    assert.match(implement.input, /GENERATED SCREEN CONTRACT/);
+    assert.match(implement.input, /do NOT cat\/read\/sed the full\s+file/i);
+    assert.match(implement.input, /Never read every src\/screens\/\*\.tsx file/i);
+    assert.match(implement.input, /Global screen reachability is\s+enforced by verify\/supervisor after merge/i);
+    assert.doesNotMatch(implement.input, /If any Stitch screen has NO matching page/);
+  });
+
 });

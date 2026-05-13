@@ -6,7 +6,9 @@ BEFORE writing code:
    the matching heading with rg/sed and cap output to 80 lines.
 3. If stitch/ directory exists:
    a. Read stitch/DESIGN_MANIFEST.json only to identify/count screens
-   b. Read only the stitch/*.html files for STORY_SCREENS / current scope
+   b. Read only the stitch/*.html files for STORY_SCREENS / current scope, and
+      only when layout details are not already available from the injected
+      STORY_SCREENS/UI contract
    c. Read stitch/design-tokens.css only enough to import it and confirm token names
    d. Implementation MUST match Stitch design (layout, colors, fonts)
    e. NEVER use fonts/colors NOT in design-tokens.css
@@ -14,11 +16,10 @@ BEFORE writing code:
    g. stitch/design-tokens.css is the SINGLE SOURCE OF TRUTH for all design values.
 
 SCREEN COVERAGE RULE (CRITICAL):
-- Before marking implement as done, verify EVERY screen in DESIGN_MANIFEST.json has a corresponding page/component
-- Read stitch/DESIGN_MANIFEST.json → count total screens
-- Compare with actual pages created in the project
-- If any Stitch screen has NO matching page → you MUST create it before completing
-- Check: for each screen in manifest, does a route/page exist? If not, create it.
-- A screen titled 'X Detail' needs a /x/[id] dynamic route
-- A screen titled 'X List' needs a /x listing page
-- A screen titled 'X Form' needs a /x/new or modal form
+- Implement only current SCOPE_FILES. Do not create routes/pages/screens outside
+  this story to satisfy global manifest coverage.
+- For app-shell stories, use src/screens/SCREEN_INDEX.json and src/screens/index.ts
+  to wire generated screens into reachable flow without reading every screen file.
+- For screen-owner stories, verify only the generated screen files in SCOPE_FILES.
+- Global screen coverage is checked by verify/supervisor after stories are merged;
+  do not solve it by editing out-of-scope files.
