@@ -1739,6 +1739,17 @@ async function failClaimIfStillRunning(stepId: string, agentId: string, wfId: st
 }
 
 async function recordSupervisorInfraEvent(runId: string, stepId: string, storyDbId: string | null, reason: string): Promise<void> {
+  await recordSupervisorRuntimeEvent(runId, stepId, storyDbId, "PRODUCT_SUPERVISOR_INFRA_RETRY", "infra-retry", reason);
+}
+
+async function recordSupervisorRuntimeEvent(
+  runId: string,
+  stepId: string,
+  storyDbId: string | null,
+  code: string,
+  eventType: string,
+  summary: string,
+): Promise<void> {
   try {
     const contextRow = await pgGet<{ context: string | null }>("SELECT context FROM runs WHERE id = $1 LIMIT 1", [runId]);
     let context: Record<string, string> = {};
@@ -1751,15 +1762,15 @@ async function recordSupervisorInfraEvent(runId: string, stepId: string, storyDb
     }
 
     const entry = [
-      `### ${new Date().toISOString()} ${stepId} infra-retry${storyLabel}`,
-      "- Code: PRODUCT_SUPERVISOR_INFRA_RETRY",
+      `### ${new Date().toISOString()} ${stepId} ${eventType}${storyLabel}`,
+      `- Code: ${code}`,
       `- Step: ${stepId}`,
-      `- Summary: ${reason.slice(0, 900)}`,
+      `- Summary: ${summary.slice(0, 900)}`,
     ].join("\n") + "\n";
     updateSupervisorMemory(context, entry);
     await pgRun("UPDATE runs SET context = $1, updated_at = NOW() WHERE id = $2", [JSON.stringify(context), runId]);
   } catch (err) {
-    console.warn(`[spawner] supervisor infra memory update failed: ${String(err).slice(0, 220)}`);
+    console.warn(`[spawner] supervisor runtime memory update failed: ${String(err).slice(0, 220)}`);
   }
 }
 
@@ -1952,6 +1963,7 @@ async function reapFinishedClaims(): Promise<void> {
             const reason = generatedScreenRead.reason + ` Transcript: ${active.transcriptPath}`;
             console.warn(`[spawner] ${reason}`);
             try { fs.appendFileSync(active.transcriptPath, `--- GENERATED SCREEN READ GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
+            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "runtime-guard", reason);
             terminateActiveProcess(active, "generated-screen-read-guard");
             activeProcesses.delete(key);
             if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
@@ -1981,6 +1993,7 @@ ${reason}
             const reason = `AGENT_STORY_STATE_MISMATCH: ${active.agentId} is still running ${effectiveStoryId}, but loop step points at ${row.story_id || "(none)"} (${row.story_status || "no-story"}); requeueing stale claim. Transcript: ${active.transcriptPath}`;
             console.warn(`[spawner] ${reason}`);
             try { fs.appendFileSync(active.transcriptPath, `--- STORY STATE MISMATCH ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
+            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "runtime-guard", reason);
             terminateActiveProcess(active, "story-state-mismatch");
             activeProcesses.delete(key);
             if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;

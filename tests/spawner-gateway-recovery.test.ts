@@ -314,9 +314,16 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /src\/screens\/\*\.tsx/);
     assert.doesNotMatch(source, /allowed\.size === 0\)\s*return \{ detected: false/);
     assert.match(source, /GENERATED_SCREEN_SHARED_READ/);
+    assert.match(source, /async function recordSupervisorRuntimeEvent/);
+    assert.match(source, /PRODUCT_SUPERVISOR_RUNTIME_GUARD/);
     assert.match(source, /const effectiveStoryId = active\.storyId \|\| row\.story_id \|\| undefined/);
+    assert.match(source, /const effectiveStoryDbId = active\.storyDbId \|\| row\.current_story_id \|\| undefined/);
     assert.match(source, /row\.type === "loop" && row\.step_id === "implement" && effectiveStoryId/);
     assert.match(source, /terminateActiveProcess\(active,\s*"generated-screen-read-guard"\)/);
+    assert.ok(
+      source.indexOf("recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId") < source.indexOf("await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId"),
+      "generated screen guard must write supervisor runtime memory before retrying the story claim",
+    );
     assert.match(source, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.agentId,\s*reason\)/);
     assert.ok(
       source.indexOf("generatedScreenReadGuard(active)") < source.indexOf("const terminalReason = childProcessTerminalReason(active.child)"),
