@@ -693,6 +693,70 @@ export function saveAndRemoveWorktree(repo: string, worktreeDir: string, storyBr
   try { execFileSync("git", ["worktree", "prune"], { cwd: repo, timeout: 5000, stdio: "pipe" }); } catch {}
 }
 
+function safeManagedStoryBranch(storyBranch: string): string {
+  const branch = storyBranch.toLowerCase().trim();
+  if (
+    !branch ||
+    branch.startsWith("-") ||
+    branch.includes("..") ||
+    branch.includes("@{") ||
+    !/^[a-z0-9._/-]+$/.test(branch)
+  ) {
+    return "";
+  }
+  return branch;
+}
+
+/**
+ * Runtime guard retries are different from timeouts/abandon paths: the worker
+ * produced contaminated context or git history, so preserving WIP is harmful.
+ * Discard the worktree and reset the story branch back to the clean base.
+ */
+export function discardStoryWorktreeAndResetBranch(repo: string, storyBranch: string, baseRef: string, agentId?: string): void {
+  const branch = safeManagedStoryBranch(storyBranch);
+  if (!repo || !branch || !baseRef) return;
+
+  const worktreeDir = findWorktreeDir(repo, branch, agentId) || path.join(repo, ".worktrees", branch);
+  try { if (fs.existsSync(worktreeDir)) killWorktreeProcesses(worktreeDir); } catch {}
+  try { fs.unlinkSync(path.join(worktreeDir, "node_modules")); } catch {}
+
+  if (fs.existsSync(worktreeDir)) {
+    try {
+      execFileSync("git", ["worktree", "remove", worktreeDir, "--force"], {
+        cwd: repo, timeout: 15000, stdio: "pipe",
+      });
+    } catch (removeErr) {
+      const normalized = path.resolve(worktreeDir);
+      if (normalized.includes(`${path.sep}story-worktrees${path.sep}`) || normalized.includes(`${path.sep}.worktrees${path.sep}`)) {
+        try { fs.rmSync(normalized, { recursive: true, force: true }); } catch {}
+      } else {
+        logger.warn(`[worktree] Refusing fallback rm for non-managed worktree path ${worktreeDir}: ${String(removeErr).slice(0, 120)}`, {});
+      }
+    }
+  }
+  try { execFileSync("git", ["worktree", "prune"], { cwd: repo, timeout: 5000, stdio: "pipe" }); } catch {}
+
+  try { releaseMainWorktreeBranch(repo, branch, baseRef); } catch {}
+  try {
+    execFileSync("git", ["branch", "-f", branch, baseRef], {
+      cwd: repo, timeout: 10000, stdio: "pipe",
+    });
+  } catch (resetErr) {
+    logger.warn(`[worktree] Could not reset contaminated story branch ${branch} to ${baseRef}: ${String(resetErr).slice(0, 160)}`, {});
+  }
+
+  try {
+    execFileSync("git", ["push", "origin", "--delete", branch], {
+      cwd: repo, timeout: 15000, stdio: "pipe",
+    });
+    logger.warn(`[worktree] Deleted remote contaminated story branch origin/${branch}`, {});
+  } catch {
+    // No remote branch is the desired state after a guard discard.
+  }
+
+  logger.warn(`[worktree] Discarded guarded retry worktree for ${branch}; reset local branch to ${baseRef}`, {});
+}
+
 /** Auto-save uncommitted changes in a worktree without removing it (used on abandon) */
 export function autoSaveWorktree(repo: string, storyId: string, agentId?: string): void {
   const worktreeDir = findWorktreeDir(repo, storyId, agentId) || path.join(repo, ".worktrees", storyId.toLowerCase());

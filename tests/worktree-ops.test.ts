@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { createStoryWorktree } from "../src/installer/worktree-ops.js";
+import { createStoryWorktree, discardStoryWorktreeAndResetBranch } from "../src/installer/worktree-ops.js";
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, {
@@ -96,6 +96,54 @@ describe("worktree operations", () => {
       assert.equal(git(secondWorktree, ["branch", "--show-current"]), storyBranch);
       assert.equal(fs.existsSync(path.join(secondWorktree, "dirty.txt")), false);
       assert.match(git(repo, ["stash", "list"]), /setfarm-auto-stash dirty story worktree before c62e1bc1-qa-fix-001/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("discards guarded retry worktrees instead of preserving WIP history", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-worktree-guard-discard-"));
+    const origin = path.join(tmp, "origin.git");
+    const repo = path.join(tmp, "repo");
+    const storyBranch = "c62e1bc1-us-002";
+
+    try {
+      execFileSync("git", ["init", "--bare", "--initial-branch=main", origin], {
+        encoding: "utf-8",
+        timeout: 30000,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      execFileSync("git", ["clone", origin, repo], {
+        encoding: "utf-8",
+        timeout: 30000,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+
+      git(repo, ["config", "user.email", "setfarm@example.invalid"]);
+      git(repo, ["config", "user.name", "Setfarm Test"]);
+      fs.writeFileSync(path.join(repo, "README.md"), "base\n");
+      git(repo, ["add", "README.md"]);
+      git(repo, ["commit", "-m", "base"]);
+      git(repo, ["push", "origin", "main"]);
+      const baseSha = git(repo, ["rev-parse", "main"]);
+
+      const worktree = createStoryWorktree(repo, storyBranch, baseSha);
+      fs.writeFileSync(path.join(worktree, "bad.txt"), "contaminated\n");
+      git(worktree, ["add", "bad.txt"]);
+      git(worktree, ["commit", "-m", "wip: contaminated runtime guard attempt"]);
+      git(worktree, ["push", "-u", "origin", storyBranch]);
+      assert.ok(fs.existsSync(worktree));
+      assert.notEqual(git(worktree, ["rev-parse", "HEAD"]), baseSha);
+
+      discardStoryWorktreeAndResetBranch(repo, storyBranch, baseSha);
+
+      assert.equal(fs.existsSync(worktree), false);
+      assert.equal(git(repo, ["rev-parse", storyBranch]), baseSha);
+      assert.throws(() => git(repo, ["ls-remote", "--exit-code", "origin", storyBranch]));
+
+      const cleanWorktree = createStoryWorktree(repo, storyBranch, baseSha);
+      assert.equal(git(cleanWorktree, ["rev-parse", "HEAD"]), baseSha);
+      assert.equal(fs.existsSync(path.join(cleanWorktree, "bad.txt")), false);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

@@ -13,6 +13,8 @@ import { loadWorkflowSpec } from "./installer/workflow-spec.js";
 import { resolveWorkflowDir } from "./installer/paths.js";
 import { claimStep, completeStep } from "./installer/step-ops.js";
 import { failStep } from "./installer/step-fail.js";
+import { getRunContext } from "./installer/repo.js";
+import { discardStoryWorktreeAndResetBranch } from "./installer/worktree-ops.js";
 import { cleanupProjectEphemera, cleanupRunningRunOrphanedToolWorkers } from "./installer/cleanup-ops.js";
 import { updateSupervisorMemory } from "./installer/product-supervisor.js";
 import { buildClaimSummary, buildPreclaimedPrompt, buildResolvedClaimBootstrapScript, claimTaskPreview } from "./spawner-prompt.js";
@@ -2077,6 +2079,8 @@ async function requeueOpenStoryClaim(runId: string, stepId: string, storyId: str
   );
   if (!row) return false;
 
+  await discardRuntimeGuardRetryWorktree(runId, storyId, agentId, diagnostic);
+
   if (row.story_db_id) {
     await pgRun(
       "UPDATE stories SET status = 'pending', claimed_by = NULL, abandoned_count = COALESCE(abandoned_count, 0) + 1, retry_count = retry_count + 1, output = $2, updated_at = NOW() WHERE id = $1 AND status IN ('running','pending')",
@@ -2087,6 +2091,19 @@ async function requeueOpenStoryClaim(runId: string, stepId: string, storyId: str
   await pgRun("UPDATE claim_log SET outcome = 'infra_retry', abandoned_at = NOW(), diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND story_id = $4 AND agent_id = $5 AND outcome IS NULL", [diagnostic, runId, stepId, storyId, agentId]);
   console.warn(`[spawner] requeued open story claim ${storyId} for ${agentId}: ${diagnostic.slice(0, 180)}`);
   return true;
+}
+
+async function discardRuntimeGuardRetryWorktree(runId: string, storyId: string, agentId: string, diagnostic: string): Promise<void> {
+  try {
+    const ctx = await getRunContext(runId);
+    if (!ctx["repo"]) return;
+    const storyBranch = `${runId.slice(0, 8)}-${storyId}`.toLowerCase();
+    const baseRef = ctx["implement_base_commit"] || ctx["story_base_ref"] || ctx["branch"] || "main";
+    discardStoryWorktreeAndResetBranch(ctx["repo"], storyBranch, baseRef, agentId);
+    console.warn(`[spawner] discarded guarded retry worktree ${storyBranch} before requeue: ${diagnostic.slice(0, 160)}`);
+  } catch (err) {
+    console.warn(`[spawner] guarded retry worktree discard failed for ${storyId}: ${String(err).slice(0, 220)}`);
+  }
 }
 
 async function requeueOrphanedRunningStories(): Promise<void> {

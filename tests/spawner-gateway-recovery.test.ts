@@ -410,6 +410,8 @@ describe("spawner gateway recovery wiring", () => {
   it("kills implement claims that use broad staging or WIP commits", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /function implementGitDisciplineGuard\(active: ActiveProcess\)/);
+    assert.match(source, /discardStoryWorktreeAndResetBranch/);
+    assert.match(source, /function discardRuntimeGuardRetryWorktree\(runId: string, storyId: string, agentId: string, diagnostic: string\)/);
     assert.match(source, /GIT_DISCIPLINE_VIOLATION/);
     assert.match(source, /INTERMEDIATE_COMMIT_VIOLATION/);
     assert.match(source, /isBroadGitAddCommand/);
@@ -439,6 +441,12 @@ describe("spawner gateway recovery wiring", () => {
 
     const requeueOpen = source.slice(requeueOpenStart, source.indexOf("async function requeueOrphanedRunningStories", requeueOpenStart));
     const requeueOrphan = source.slice(requeueOrphanStart, source.indexOf("async function requeueOpenStoryClaim", requeueOrphanStart));
+
+    assert.match(requeueOpen, /await discardRuntimeGuardRetryWorktree\(runId, storyId, agentId, diagnostic\)/);
+    assert.ok(
+      requeueOpen.indexOf("await discardRuntimeGuardRetryWorktree(runId, storyId, agentId, diagnostic)") < requeueOpen.indexOf("UPDATE stories SET status = 'pending'"),
+      "runtime guard requeue must discard contaminated worktree before the story can be claimed again",
+    );
 
     for (const block of [requeueOpen, requeueOrphan]) {
       assert.match(block, /abandoned_count = COALESCE\(abandoned_count, 0\) \+ 1/);
