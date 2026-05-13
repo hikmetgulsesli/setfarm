@@ -454,6 +454,19 @@ describe("spawner gateway recovery wiring", () => {
     );
   });
 
+  it("installs an implement-only git wrapper that blocks broad staging before retry loss", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /function installImplementGitWrapper\(workdir: string, transcriptPath: string\)/);
+    assert.match(source, /\.setfarm-bin/);
+    assert.match(source, /blocked broad staging/);
+    assert.match(source, /git add -A/);
+    assert.match(source, /git add \./);
+    assert.match(source, /git commit -am/);
+    assert.match(source, /blocked WIP commit message/);
+    assert.match(source, /claim\.stepId === "implement" \? installImplementGitWrapper/);
+    assert.match(source, /buildOpenClawChildEnv\(pathPrefix\)/);
+  });
+
   it("persists runtime guard diagnostics into the next story retry claim", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     const requeueOpenStart = source.indexOf("async function requeueOpenStoryClaim");

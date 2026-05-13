@@ -325,7 +325,7 @@ for file in $(git diff --cached --name-only); do
     *.test.ts|*.test.tsx|*.spec.ts|*.spec.tsx|src/test/*|src/setupTests.ts|vitest.config.ts|vitest.config.js|jest.config.ts|jest.config.js)
       continue
       ;;
-    .story-scope-files|.story-branch|pre-commit|references|node_modules)
+    .story-scope-files|.story-branch|pre-commit|references|node_modules|.setfarm-bin)
       continue
       ;;
   esac
@@ -355,7 +355,7 @@ fi
       const excludePath = execFileSync("git", ["rev-parse", "--git-path", "info/exclude"], {
         cwd: worktreeDir, encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
       }).trim();
-      const ignoreLines = [".story-scope-files", ".story-branch", "pre-commit", "references", "node_modules"];
+      const ignoreLines = [".story-scope-files", ".story-branch", "pre-commit", "references", "node_modules", ".setfarm-bin"];
       let existing = "";
       try { existing = fs.existsSync(excludePath) ? fs.readFileSync(excludePath, "utf-8") : ""; } catch {}
       const missing = ignoreLines.filter(line => !existing.split(/\r?\n/).includes(line));

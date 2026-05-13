@@ -96,8 +96,11 @@ This is the persistent product-manager memory for this run. Treat blockers and p
    panel where those concepts exist.
    Reducers and state transition functions must be pure: no localStorage reads/writes, timers, DOM access, or mutation of existing state objects inside the reducer. Put persistence and timer side effects in effects or action wrappers, then dispatch plain state updates.
 9. Before committing, run available local checks. Prefer `npm run build`; for Vitest use `npm run test:run` or `npx vitest run` instead of watch-mode `npm test` when needed. Do not pipe build/test commands through `head`, `tail`, `grep`, `tee`, `cat`, or similar output filters when deciding pass/fail; those pipelines can hide a failing exit code. If output is too long, run the full command first, preserve the command's real exit status, then inspect a saved log afterward. If a script is missing, say so in CHANGES.
-10. Commit once on the CURRENT branch (do not switch branches): stage only files from `.story-scope-files`, then `git commit -m "feat: <story-id> - <description>"`
-11. Do NOT use `git add -A` — stage only your scope files explicitly
+10. Commit once on the CURRENT branch (do not switch branches). Use this exact scope-staging sequence:
+    - `xargs -a .story-scope-files git add --`
+    - `git diff --cached --name-only`
+    - `git commit -m "feat: <story-id> - <description>"`
+11. Do NOT use `git add -A`, `git add .`, `git add -u`, `git commit -am`, or any `wip` commit message. The implement worktree installs a git wrapper that blocks those commands before they can waste a retry.
 12. If the pre-commit hook rejects, run `git reset HEAD <file>` and remove out-of-scope changes. Do NOT bypass with `--no-verify`.
 
 13. **CHECKPOINT (about every 5 minutes, REQUIRED).** For long implementations,

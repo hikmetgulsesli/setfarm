@@ -1339,7 +1339,7 @@ function maybeRestartGatewayForReadiness(reason: string, key: string): void {
   });
 }
 
-function buildOpenClawChildEnv(): NodeJS.ProcessEnv {
+function buildOpenClawChildEnv(pathPrefix?: string): NodeJS.ProcessEnv {
   const e: Record<string, string | undefined> = { ...process.env, OPENCLAW_AUTO_APPROVE: "1" };
   for (const k of ["SETFARM_PG_URL", "MASTER_POSTGRES_URL", "MASTER_MARIADB_URL", "MASTER_MONGODB_URL"]) {
     delete e[k];
@@ -1349,7 +1349,89 @@ function buildOpenClawChildEnv(): NodeJS.ProcessEnv {
   // production React, which breaks Testing Library's act() and creates false
   // QA failures. Let package scripts or explicit commands set NODE_ENV.
   delete e["NODE_ENV"];
+  if (pathPrefix) {
+    e["PATH"] = `${pathPrefix}${path.delimiter}${e["PATH"] || process.env.PATH || ""}`;
+  }
   return e as NodeJS.ProcessEnv;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function resolveGitBinary(): string {
+  try {
+    const out = execFileSync("bash", ["-lc", "command -v git"], {
+      encoding: "utf-8",
+      timeout: 5000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    if (out) return out;
+  } catch {}
+  return "/usr/bin/git";
+}
+
+function installImplementGitWrapper(workdir: string, transcriptPath: string): string | undefined {
+  if (!workdir) return undefined;
+  try {
+    const wrapperDir = path.join(workdir, ".setfarm-bin");
+    fs.mkdirSync(wrapperDir, { recursive: true });
+    const wrapperPath = path.join(wrapperDir, "git");
+    const realGit = resolveGitBinary();
+    const script = `#!/usr/bin/env bash
+REAL_GIT=${shellQuote(realGit)}
+cmd="$1"
+
+blocked() {
+  echo "SETFARM_GIT_WRAPPER: $1" >&2
+  echo "Blocked forms include: git add -A, git add ., git add -u, git commit -am, git commit --amend, and wip commits." >&2
+  echo "Use explicit scope staging instead:" >&2
+  echo "  xargs -a .story-scope-files git add --" >&2
+  echo "  git diff --cached --name-only" >&2
+  echo "  git commit -m \\"feat: <story-id> - <description>\\"" >&2
+  exit 2
+}
+
+if [ "$cmd" = "add" ]; then
+  for arg in "$@"; do
+    case "$arg" in
+      -A|--all|-u|--update|.|:/)
+        blocked "blocked broad staging: git $*"
+        ;;
+    esac
+  done
+fi
+
+if [ "$cmd" = "commit" ]; then
+  prev=""
+  for arg in "$@"; do
+    case "$arg" in
+      -a|--all|--amend)
+        blocked "blocked unsafe commit flag: git $*"
+        ;;
+      --message=*)
+        msg="\${arg#--message=}"
+        if [[ "$msg" =~ [Ww][Ii][Pp] ]]; then blocked "blocked WIP commit message: $msg"; fi
+        ;;
+      *)
+        if [ "$prev" = "-m" ] || [ "$prev" = "--message" ]; then
+          if [[ "$arg" =~ [Ww][Ii][Pp] ]]; then blocked "blocked WIP commit message: $arg"; fi
+        fi
+        ;;
+    esac
+    prev="$arg"
+  done
+fi
+
+exec "$REAL_GIT" "$@"
+`;
+    fs.writeFileSync(wrapperPath, script, { mode: 0o755 });
+    try { fs.appendFileSync(transcriptPath, `[spawner] installed implement git wrapper at ${wrapperPath}\n`); } catch {}
+    return wrapperDir;
+  } catch (err) {
+    try { fs.appendFileSync(transcriptPath, `[spawner] failed to install implement git wrapper: ${String(err).slice(0, 180)}\n`); } catch {}
+    return undefined;
+  }
 }
 
 function buildSessionKey(agentId: string, sessionId: string): string {
@@ -2677,6 +2759,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   try {
     fs.appendFileSync(transcriptPath, `[spawner] openclaw_cli=${OPENCLAW_CLI} session_id=${sessionId} session_key=${sessionKey} timeout=${AGENT_TIMEOUT_SECONDS}s cwd=${spawnCwd}\n`);
   } catch {}
+  const pathPrefix = claim.stepId === "implement" ? installImplementGitWrapper(spawnCwd, transcriptPath) : undefined;
   const outFd = fs.openSync(transcriptPath, "a");
   const errFd = fs.openSync(transcriptPath, "a");
   const child = spawn(OPENCLAW_CLI, childArgs, {
@@ -2688,7 +2771,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     // Security: denylist DB credentials from agent env. Keep everything
     // else — OpenClaw CLI needs many env vars and allowlist is too fragile.
     env: (() => {
-      return buildOpenClawChildEnv();
+      return buildOpenClawChildEnv(pathPrefix);
     })(),
     stdio: ["ignore", outFd, errFd],
   });

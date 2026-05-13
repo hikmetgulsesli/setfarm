@@ -48,6 +48,14 @@ describe("06-implement step module", () => {
     assert.equal(rules.includes("small edits OK"), false);
   });
 
+  it("gives implement agents an exact safe git staging sequence", () => {
+    const prompt = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/prompt.md"), "utf-8");
+    assert.match(prompt, /xargs -a \.story-scope-files git add --/);
+    assert.match(prompt, /git diff --cached --name-only/);
+    assert.match(prompt, /Do NOT use `git add -A`, `git add \.`, `git add -u`, `git commit -am`/);
+    assert.match(prompt, /git wrapper that blocks those commands/);
+  });
+
   it("does not tell implement agents to read raw Stitch design corpus", () => {
     const prompt = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/prompt.md"), "utf-8");
     const contextSource = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/context.js"), "utf-8");
