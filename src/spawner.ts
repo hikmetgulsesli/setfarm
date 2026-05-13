@@ -542,6 +542,86 @@ function extractToolCalls(content: unknown): Array<{ name: string; path: string;
   return calls;
 }
 
+function normalizeWorktreeRelativePath(workdir: string, rawPath: string): string {
+  const cleaned = rawPath
+    .replace(/^['"]|['"]$/g, "")
+    .trim();
+  if (!cleaned) return "";
+  const relative = path.isAbsolute(cleaned) ? path.relative(workdir, cleaned) : cleaned;
+  return path.normalize(relative).replace(/\\/g, "/").replace(/^\.\//, "");
+}
+
+function isGeneratedScreenComponentPath(relativePath: string): boolean {
+  return /^src\/screens\/[^/]+\.tsx$/.test(relativePath);
+}
+
+function readStoryScopeFileSet(workdir: string): Set<string> {
+  const scopePath = path.join(workdir, ".story-scope-files");
+  let raw = "";
+  try {
+    raw = fs.readFileSync(scopePath, "utf-8");
+  } catch {
+    return new Set();
+  }
+  return new Set(
+    raw
+      .split(/\r?\n/)
+      .map((line) => normalizeWorktreeRelativePath(workdir, line))
+      .filter(Boolean),
+  );
+}
+
+function extractGeneratedScreenReadsFromCommand(workdir: string, command: string): Array<{ path: string; via: string }> {
+  const reads: Array<{ path: string; via: string }> = [];
+  if (!/\b(cat|sed|nl|head|tail|less|bat)\b/.test(command)) return reads;
+  for (const match of command.matchAll(/(?:^|[\s"'`=])((?:\.\/|\/)?(?:[\w.-]+\/)*src\/screens\/[^'"`\s;|&]+\.tsx)/g)) {
+    const relativePath = normalizeWorktreeRelativePath(workdir, match[1] || "");
+    if (isGeneratedScreenComponentPath(relativePath)) reads.push({ path: relativePath, via: "exec" });
+  }
+  return reads;
+}
+
+function generatedScreenReadGuard(active: ActiveProcess): { detected: boolean; reason: string } {
+  const allowed = readStoryScopeFileSet(active.spawnCwd);
+  if (allowed.size === 0) return { detected: false, reason: "" };
+
+  let raw = "";
+  try {
+    raw = fs.readFileSync(active.sessionJsonlPath, "utf-8").slice(-512_000).trim();
+  } catch {
+    return { detected: false, reason: "" };
+  }
+  if (!raw) return { detected: false, reason: "" };
+
+  for (const line of raw.split(/\n/).filter(Boolean)) {
+    let event: any;
+    try { event = JSON.parse(line); } catch { continue; }
+    const message = event?.message || {};
+    if (String(message.role || "") !== "assistant") continue;
+
+    for (const call of extractToolCalls(message.content)) {
+      const candidates: Array<{ path: string; via: string }> = [];
+      if (call.name === "read" && call.path) {
+        const relativePath = normalizeWorktreeRelativePath(active.spawnCwd, call.path);
+        if (isGeneratedScreenComponentPath(relativePath)) candidates.push({ path: relativePath, via: "read" });
+      }
+      if (call.name === "exec" && call.command) {
+        candidates.push(...extractGeneratedScreenReadsFromCommand(active.spawnCwd, call.command));
+      }
+
+      for (const candidate of candidates) {
+        if (allowed.has(candidate.path)) continue;
+        return {
+          detected: true,
+          reason: `GENERATED_SCREEN_SHARED_READ: ${active.agentId} used ${candidate.via} on ${candidate.path}, but that generated screen is not in this story's .story-scope-files. Shared generated screens must be consumed through src/screens/SCREEN_INDEX.json, src/screens/index.ts, the component registry, and UI_CONTRACT. Setfarm killed the claim before generated-screen context overload.`,
+        };
+      }
+    }
+  }
+
+  return { detected: false, reason: "" };
+}
+
 function normalizedSessionCommand(command: string): string {
   const compact = command.replace(/\s+/g, " " ).trim();
   if (!compact) return "";
@@ -1873,6 +1953,20 @@ ${reason}
           activeProcesses.delete(key);
           await failClaimIfStillRunning(active.stepId, active.agentId, active.wfId, active.role, active.transcriptPath, new Error(reason), active.startedAtMs, active.spawnCwd, active.outputPath);
           continue;
+        }
+
+        if (row.type === "loop" && row.step_id === "implement" && active.storyId && !isTerminalTestRole(active.role, active.agentId)) {
+          const generatedScreenRead = generatedScreenReadGuard(active);
+          if (generatedScreenRead.detected) {
+            const reason = generatedScreenRead.reason + ` Transcript: ${active.transcriptPath}`;
+            console.warn(`[spawner] ${reason}`);
+            try { fs.appendFileSync(active.transcriptPath, `--- GENERATED SCREEN READ GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
+            terminateActiveProcess(active, "generated-screen-read-guard");
+            activeProcesses.delete(key);
+            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
+            await requeueOpenStoryClaim(active.runId, row.step_id, active.storyId, active.agentId, reason);
+            continue;
+          }
         }
 
         if (ageMs >= AGENT_SELF_LOOP_CHECK_AFTER_MS && !isTerminalTestRole(active.role, active.agentId)) {

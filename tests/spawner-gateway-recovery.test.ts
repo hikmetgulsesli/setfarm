@@ -298,6 +298,19 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /await updateRunningStepHeartbeat\(active,\s*row\.step_id,\s*ageMs\)/);
   });
 
+  it("kills implement claims that read shared generated screen files", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /function generatedScreenReadGuard\(active: ActiveProcess\)/);
+    assert.match(source, /readStoryScopeFileSet\(active\.spawnCwd\)/);
+    assert.match(source, /isGeneratedScreenComponentPath/);
+    assert.match(source, /src\\\/screens\\\/\[\^\/\]\+\\\.tsx/);
+    assert.match(source, /extractGeneratedScreenReadsFromCommand/);
+    assert.match(source, /GENERATED_SCREEN_SHARED_READ/);
+    assert.match(source, /row\.type === "loop" && row\.step_id === "implement"/);
+    assert.match(source, /terminateActiveProcess\(active,\s*"generated-screen-read-guard"\)/);
+    assert.match(source, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*active\.storyId,\s*active\.agentId,\s*reason\)/);
+  });
+
   it("hard-times out verify agents as an infra retry instead of leaving open claims", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /VERIFY_AGENT_HARD_TIMEOUT_MS/);

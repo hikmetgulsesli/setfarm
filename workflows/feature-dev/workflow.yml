@@ -811,6 +811,9 @@ steps:
         file. Use src/screens/SCREEN_INDEX.json, src/screens/index.ts,
         COMPONENT REGISTRY, STORY_SCREENS, and UI BEHAVIOR CONTRACT for
         component names, props, and action IDs.
+      - This is machine-enforced by the Setfarm spawner: reading a generated
+        src/screens/*.tsx file outside SCOPE_FILES kills and retries the claim
+        before generated-screen context overload.
       - Never read every src/screens/*.tsx file in one turn. If exact detail is
         still needed, inspect one relevant file with a focused line range.
       - If you rewrite layout from scratch instead of using generated screens,

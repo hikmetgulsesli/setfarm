@@ -35,6 +35,8 @@ describe("feature-dev design contract prompt", () => {
     assert.match(implement.input, /GENERATED SCREEN CONTRACT/);
     assert.match(implement.input, /do NOT cat\/read\/sed the full\s+file/i);
     assert.match(implement.input, /Never read every src\/screens\/\*\.tsx file/i);
+    assert.match(implement.input, /machine-enforced by the Setfarm spawner/i);
+    assert.match(implement.input, /reading a generated\s+`?src\/screens\/\*\.tsx`?\s+file outside SCOPE_FILES kills and retries the claim/i);
     assert.match(implement.input, /Global screen reachability is\s+enforced by verify\/supervisor after merge/i);
     assert.doesNotMatch(implement.input, /If any Stitch screen has NO matching page/);
   });
