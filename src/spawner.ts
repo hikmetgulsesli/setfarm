@@ -667,10 +667,15 @@ function shellCommandSegments(command: string): string[] {
     .filter(Boolean);
 }
 
+function stripGeneratedScreenSafeMetadataRefs(text: string): string {
+  return text.replace(/src\/screens\/(?:SCREEN_INDEX\.json|index\.ts)\b/g, "");
+}
+
 function isGeneratedScreenContentReadSegment(segment: string): boolean {
-  if (!/\bsrc\/screens(?:\/|\s|$)/.test(segment)) return false;
-  if (/src\/screens\/(?:SCREEN_INDEX\.json|index\.ts)\b/.test(segment)) return false;
-  return /\b(cat|sed|nl|head|tail|less|bat|rg|grep|awk|wc|python3?|node)\b/i.test(segment);
+  const unsafeSegment = stripGeneratedScreenSafeMetadataRefs(segment);
+  if (!/\bsrc\/screens(?:\/|\s|$)/.test(unsafeSegment)) return false;
+  return /\b(cat|sed|nl|head|tail|less|bat|rg|grep|awk|wc|python3?|node)\b/i.test(segment)
+    || /\b(?:readFileSync|readdirSync|createReadStream|glob(?:Sync)?|fast-glob)\b/i.test(segment);
 }
 
 function extractGeneratedScreenReadsFromCommand(workdir: string, command: string): Array<{ path: string; via: string }> {

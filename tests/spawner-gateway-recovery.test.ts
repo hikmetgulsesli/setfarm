@@ -315,7 +315,9 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /extractGeneratedScreenReadsFromCommand/);
     assert.match(source, /function shellCommandSegments/);
     assert.match(source, /function isGeneratedScreenContentReadSegment/);
+    assert.match(source, /function stripGeneratedScreenSafeMetadataRefs/);
     assert.match(source, /\bhead\b\|tail\|less\|bat\|rg\|grep/);
+    assert.match(source, /readFileSync\|readdirSync\|createReadStream/);
     const screenExtractor = source.slice(
       source.indexOf("function isGeneratedScreenContentReadSegment"),
       source.indexOf("function generatedScreenReadGuard"),
