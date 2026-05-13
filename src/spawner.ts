@@ -733,6 +733,85 @@ function generatedScreenReadGuard(active: ActiveProcess): { detected: boolean; r
   return { detected: false, reason: "" };
 }
 
+function isRawStitchDesignPath(relativePath: string): boolean {
+  return /^stitch\/[^/]+\.html$/i.test(relativePath)
+    || relativePath === "stitch/DESIGN_DOM.json"
+    || /^\.stitch-screens.*\.json$/i.test(relativePath);
+}
+
+function stripSafeStitchMetadataRefs(text: string): string {
+  return text
+    .replace(/stitch\/(?:design-tokens\.css|UI_CONTRACT\.json|DESIGN_MANIFEST\.json)\b/g, "")
+    .replace(/\.stitch\b/g, "");
+}
+
+function isRawStitchDesignReadSegment(segment: string): boolean {
+  const unsafeSegment = stripSafeStitchMetadataRefs(segment);
+  if (!/(?:\bstitch\/|\bstitch\b|\.stitch-screens)/i.test(unsafeSegment)) return false;
+  if (!/(?:\.html\b|DESIGN_DOM\.json|\.stitch-screens.*\.json)/i.test(unsafeSegment)) return false;
+  return /\b(cat|sed|nl|head|tail|less|bat|rg|grep|awk|wc|python3?|node)\b/i.test(segment)
+    || /\b(?:readFileSync|readdirSync|createReadStream|glob(?:Sync)?|fast-glob)\b/i.test(segment);
+}
+
+function extractRawStitchDesignReadsFromCommand(workdir: string, command: string): Array<{ path: string; via: string }> {
+  const reads: Array<{ path: string; via: string }> = [];
+  for (const segment of shellCommandSegments(command)) {
+    if (!isRawStitchDesignReadSegment(segment)) continue;
+    if (/(?:\bstitch\/|\bstitch\b)/i.test(segment) && /\.html\b/i.test(segment)) {
+      reads.push({ path: "stitch/*.html", via: "exec" });
+    }
+    if (/DESIGN_DOM\.json/i.test(segment)) {
+      reads.push({ path: "stitch/DESIGN_DOM.json", via: "exec" });
+    }
+    if (/\.stitch-screens.*\.json/i.test(segment)) {
+      reads.push({ path: ".stitch-screens*.json", via: "exec" });
+    }
+    for (const match of segment.matchAll(/(?:^|[\s"'`=])((?:\.\/|\/)?(?:[\w.-]+\/)*(?:stitch\/[^'"`\s;|&]+\.html|stitch\/DESIGN_DOM\.json|\.stitch-screens[^'"`\s;|&]*\.json))/gi)) {
+      const relativePath = normalizeWorktreeRelativePath(workdir, match[1] || "");
+      if (isRawStitchDesignPath(relativePath)) reads.push({ path: relativePath, via: "exec" });
+    }
+  }
+  return reads;
+}
+
+function rawStitchDesignReadGuard(active: ActiveProcess): { detected: boolean; reason: string } {
+  let raw = "";
+  try {
+    raw = fs.readFileSync(active.sessionJsonlPath, "utf-8").slice(-512_000).trim();
+  } catch {
+    return { detected: false, reason: "" };
+  }
+  if (!raw) return { detected: false, reason: "" };
+
+  for (const line of raw.split(/\n/).filter(Boolean)) {
+    let event: any;
+    try { event = JSON.parse(line); } catch { continue; }
+    const message = event?.message || {};
+    if (String(message.role || "") !== "assistant") continue;
+
+    for (const call of extractToolCalls(message.content)) {
+      const candidates: Array<{ path: string; via: string }> = [];
+      if (call.name === "read" && call.path) {
+        const relativePath = normalizeWorktreeRelativePath(active.spawnCwd, call.path);
+        if (isRawStitchDesignPath(relativePath)) candidates.push({ path: relativePath, via: "read" });
+      }
+      if (call.name === "exec" && call.command) {
+        candidates.push(...extractRawStitchDesignReadsFromCommand(active.spawnCwd, call.command));
+      }
+
+      if (candidates.length > 0) {
+        const candidate = candidates[0];
+        return {
+          detected: true,
+          reason: `RAW_STITCH_CONTEXT_READ: ${active.agentId} used ${candidate.via} on ${candidate.path}. Implement claims must use injected Stitch excerpts, UI_CONTRACT, SCREEN_INDEX, and story-owned generated screens instead of loading raw stitch HTML/full DESIGN_DOM context. Setfarm killed the claim before design-context overload.`,
+        };
+      }
+    }
+  }
+
+  return { detected: false, reason: "" };
+}
+
 function isRuntimeScopeAllowedWrite(relativePath: string, allowed: Set<string>): boolean {
   if (allowed.has(relativePath)) return true;
   if (relativePath === ".story-scope-files" || relativePath === ".story-branch" || relativePath === "pre-commit") return true;
@@ -2306,6 +2385,19 @@ async function reapFinishedClaims(): Promise<void> {
             try { fs.appendFileSync(active.transcriptPath, `--- GENERATED SCREEN READ GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
             await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "runtime-guard", reason);
             terminateActiveProcess(active, "generated-screen-read-guard");
+            activeProcesses.delete(key);
+            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
+            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
+            continue;
+          }
+
+          const rawStitchRead = rawStitchDesignReadGuard(active);
+          if (rawStitchRead.detected) {
+            const reason = rawStitchRead.reason + ` Transcript: ${active.transcriptPath}`;
+            console.warn(`[spawner] ${reason}`);
+            try { fs.appendFileSync(active.transcriptPath, `--- RAW STITCH READ GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
+            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "runtime-guard", reason);
+            terminateActiveProcess(active, "raw-stitch-read-guard");
             activeProcesses.delete(key);
             if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
             await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);

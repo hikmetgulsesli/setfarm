@@ -343,6 +343,26 @@ describe("spawner gateway recovery wiring", () => {
     );
   });
 
+  it("kills implement claims that read raw Stitch design corpus", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /function rawStitchDesignReadGuard\(active: ActiveProcess\)/);
+    assert.match(source, /function isRawStitchDesignPath/);
+    assert.match(source, /stitch\/\*\.html/);
+    assert.match(source, /stitch\/DESIGN_DOM\.json/);
+    assert.match(source, /\.stitch-screens\*\.json/);
+    assert.match(source, /RAW_STITCH_CONTEXT_READ/);
+    assert.match(source, /injected Stitch excerpts, UI_CONTRACT, SCREEN_INDEX/);
+    assert.match(source, /terminateActiveProcess\(active,\s*"raw-stitch-read-guard"\)/);
+    assert.ok(
+      source.indexOf("rawStitchDesignReadGuard(active)") > source.indexOf("generatedScreenReadGuard(active)"),
+      "raw Stitch guard should run after the more specific generated-screen guard",
+    );
+    assert.ok(
+      source.indexOf("rawStitchDesignReadGuard(active)") < source.indexOf("const terminalReason = childProcessTerminalReason(active.child)"),
+      "raw Stitch read guard must run before terminal-process recovery",
+    );
+  });
+
   it("kills implement claims that load irrelevant or full reference files", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /function implementReferenceReadGuard\(active: ActiveProcess\)/);
