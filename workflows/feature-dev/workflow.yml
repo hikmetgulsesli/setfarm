@@ -888,9 +888,11 @@ steps:
       STORY_SCREENS: {{story_screens}}
 
       DESIGN DOM:
-      Use stitch/DESIGN_DOM.json from WORKDIR when element-level detail is needed.
-      Read only the screen ids listed in STORY_SCREENS. Do NOT paste or process the
-      full project DOM in the session.
+      Use only the injected STORY_SCREENS, UI BEHAVIOR CONTRACT, DESIGN_MANIFEST,
+      DESIGN_TOKENS, SCREEN_INDEX, and generated screen contracts in this claim.
+      Do NOT read raw stitch/*.html, .stitch-screens*.json, or full
+      stitch/DESIGN_DOM.json during implement; the gateway enforces this to
+      prevent context overload and cross-story drift.
 
       UI BEHAVIOR CONTRACT (from Stitch DOM — mandatory):
       {{ui_behavior_contract}}

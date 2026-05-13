@@ -44,6 +44,16 @@ describe("feature-dev design contract prompt", () => {
     assert.doesNotMatch(implement.input, /If any Stitch screen has NO matching page/);
   });
 
+  it("does not instruct implement agents to read raw Stitch DOM files", async () => {
+    const spec = await loadWorkflowSpec(WORKFLOW_DIR);
+    const implement = spec.steps.find(step => step.id === "implement");
+
+    assert.ok(implement, "implement step should exist");
+    assert.doesNotMatch(implement.input, /Use stitch\/DESIGN_DOM\.json from WORKDIR/);
+    assert.match(implement.input, /Use only the injected STORY_SCREENS, UI BEHAVIOR CONTRACT/);
+    assert.match(implement.input, /Do NOT read raw stitch\/\*\.html, \.stitch-screens\*\.json, or full\s+stitch\/DESIGN_DOM\.json during implement/i);
+  });
+
   it("runs the product supervisor between each story and verification", async () => {
     const spec = await loadWorkflowSpec(WORKFLOW_DIR);
     const implement = spec.steps.find(step => step.id === "implement");

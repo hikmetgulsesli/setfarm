@@ -41,6 +41,9 @@ const STALE_IMPLEMENT_FULL_REFERENCE_READ_BLOCK =
 const STALE_CLAIM_JQ_RULE =
   /1\. Read the story description and acceptance criteria from the claim with jq\.\n\s+Do NOT cat the full claim JSON\. Do NOT paste large prompt\/context files into\n\s+the session\./g;
 
+const STALE_IMPLEMENT_RAW_STITCH_DOM_BLOCK =
+  /DESIGN DOM:\n\s*Use stitch\/DESIGN_DOM\.json from WORKDIR when element-level detail is needed\.\n\s*Read only the screen ids listed in STORY_SCREENS\. Do NOT paste or process the\n\s*full project DOM in the session\./g;
+
 export function sanitizeAgentPromptContracts(input: string): string {
   let output = input;
 
@@ -157,9 +160,10 @@ export function sanitizeAgentPromptContracts(input: string): string {
       "Only inspect reference files when the current story owns that domain or a",
       "local command proves you need extra detail. Backend/API/DB standards apply",
       "only to backend/API/database story scope. For frontend/game stories, rely",
-      "on Stitch, DESIGN_DOM, design tokens, generated screen contracts, and the",
-      "injected rules. If a reference is needed, read the smallest focused excerpt;",
-      "do not load unrelated backend/security/SQL guidance into the session.",
+      "on injected Stitch excerpts, UI behavior contracts, design tokens, generated",
+      "screen contracts, and the injected rules. If a reference is needed, read the",
+      "smallest focused excerpt; do not load unrelated backend/security/SQL guidance",
+      "into the session.",
     ].join("\n"),
   );
 
@@ -171,6 +175,18 @@ export function sanitizeAgentPromptContracts(input: string): string {
       "   output-path fields as the authoritative handoff.",
       "   Do NOT parse or dump claim.input with jq, sed, head, cat, node loops,",
       "   or python loops. The full claim JSON is an audit fallback only.",
+    ].join("\n"),
+  );
+
+  output = output.replace(
+    STALE_IMPLEMENT_RAW_STITCH_DOM_BLOCK,
+    [
+      "DESIGN DOM:",
+      "Use only the injected STORY_SCREENS, UI BEHAVIOR CONTRACT, DESIGN_MANIFEST,",
+      "DESIGN_TOKENS, SCREEN_INDEX, and generated screen contracts in this claim.",
+      "Do NOT read raw stitch/*.html, .stitch-screens*.json, or full",
+      "stitch/DESIGN_DOM.json during implement; the gateway enforces this to",
+      "prevent context overload and cross-story drift.",
     ].join("\n"),
   );
 

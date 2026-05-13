@@ -99,7 +99,7 @@ describe("agent prompt contracts", () => {
     assert.doesNotMatch(output, /You MUST read these reference files|backend-standards\.md\*\* — Backend\/API\/DB rules \(MANDATORY\)/);
     assert.match(output, /Do NOT read full `references\/\*\.md` files during implement/);
     assert.match(output, /Backend\/API\/DB standards apply\s+only to backend\/API\/database story scope/);
-    assert.match(output, /do not load unrelated backend\/security\/SQL guidance into the session/);
+    assert.match(output, /do not load unrelated backend\/security\/SQL guidance\s+into the session/);
   });
 
   it("rewrites stale claim jq instructions to claim-summary-first handoff", () => {
@@ -118,6 +118,22 @@ describe("agent prompt contracts", () => {
     assert.match(output, /Read the structured claim summary file first/);
     assert.match(output, /supervisorMemory, previousFailure/);
     assert.match(output, /Do NOT parse or dump claim\.input with jq, sed, head, cat, node loops/);
+  });
+
+  it("rewrites stale implement instructions that tell agents to read raw Stitch DOM", () => {
+    const input = [
+      "DESIGN DOM:",
+      "Use stitch/DESIGN_DOM.json from WORKDIR when element-level detail is needed.",
+      "Read only the screen ids listed in STORY_SCREENS. Do NOT paste or process the",
+      "full project DOM in the session.",
+    ].join("\n");
+
+    const output = sanitizeAgentPromptContracts(input);
+
+    assert.doesNotMatch(output, /Use stitch\/DESIGN_DOM\.json from WORKDIR/);
+    assert.match(output, /Use only the injected STORY_SCREENS, UI BEHAVIOR CONTRACT/);
+    assert.match(output, /Do NOT read raw stitch\/\*\.html, \.stitch-screens\*\.json, or full/);
+    assert.match(output, /gateway enforces this/);
   });
 
   it("rewrites stale Design DOM nav/control rules that caused layout removal", () => {
