@@ -35,6 +35,9 @@ const STALE_GENERATED_SCREEN_FOCUSED_READ_RULE =
 const STALE_SHARED_SCREEN_FULL_FILE_RULE =
   /- If a screen file is only in SHARED_FILES, do NOT cat\/read\/sed the full\n\s+file\. Use src\/screens\/SCREEN_INDEX\.json, src\/screens\/index\.ts,\n\s+COMPONENT REGISTRY, STORY_SCREENS, and UI BEHAVIOR CONTRACT for\n\s+component names, props, and action IDs\./g;
 
+const STALE_IMPLEMENT_FULL_REFERENCE_READ_BLOCK =
+  /## BEFORE Writing Any Code\n\nYou MUST read these reference files before starting implementation:\n1\. \*\*references\/design-standards\.md\*\* — Frontend design rules \(MANDATORY\)\n2\. \*\*references\/backend-standards\.md\*\* — Backend\/API\/DB rules \(MANDATORY\)\n3\. \*\*references\/web-guidelines\.md\*\* — Accessibility, forms, performance \(MANDATORY\)\n\nFollow ALL rules in these references\. Violations will cause your PR to be REJECTED\./g;
+
 export function sanitizeAgentPromptContracts(input: string): string {
   let output = input;
 
@@ -136,6 +139,24 @@ export function sanitizeAgentPromptContracts(input: string): string {
       "- Focused line-range inspection is allowed only for generated screen files",
       "  explicitly listed in SCOPE_FILES. Shared/read-only generated screens must",
       "  be consumed through SCREEN_INDEX/index.ts and injected contracts only.",
+    ].join("\n"),
+  );
+
+  output = output.replace(
+    STALE_IMPLEMENT_FULL_REFERENCE_READ_BLOCK,
+    [
+      "## Reference Context Discipline",
+      "",
+      "Do NOT read full `references/*.md` files during implement. The platform",
+      "injects mandatory, story-relevant rules into this claim as Design Rules,",
+      "Stack Rules, UI Behavior Contract, Supervisor Memory, and retry feedback.",
+      "",
+      "Only inspect reference files when the current story owns that domain or a",
+      "local command proves you need extra detail. Backend/API/DB standards apply",
+      "only to backend/API/database story scope. For frontend/game stories, rely",
+      "on Stitch, DESIGN_DOM, design tokens, generated screen contracts, and the",
+      "injected rules. If a reference is needed, read the smallest focused excerpt;",
+      "do not load unrelated backend/security/SQL guidance into the session.",
     ].join("\n"),
   );
 

@@ -20,14 +20,22 @@ rejections your story is PERMANENTLY FAILED and cannot recover.
 
 Read your scope: jq -r '.input.scope_files' /tmp/claim-*.json
 
-## BEFORE Writing Any Code
+## Reference Context Discipline
 
-You MUST read these reference files before starting implementation:
-1. **references/design-standards.md** — Frontend design rules (MANDATORY)
-2. **references/backend-standards.md** — Backend/API/DB rules (MANDATORY)
-3. **references/web-guidelines.md** — Accessibility, forms, performance (MANDATORY)
+Do NOT read full `references/*.md` files during implement. The platform injects
+the mandatory, story-relevant rules into the claim as Design Rules, Stack Rules,
+UI Behavior Contract, Supervisor Memory, and retry feedback.
 
-Follow ALL rules in these references. Violations will cause your PR to be REJECTED.
+Only inspect references when the current story actually owns that domain or a
+local command proves you need extra detail:
+- `references/backend-standards.md` only for backend/API/database stories.
+- `references/web-guidelines.md` only for focused accessibility/form behavior.
+- `references/design-standards.md` only for focused visual-system questions not
+  already answered by Stitch, DESIGN_DOM, design tokens, or injected rules.
+
+When a reference is needed, search for the exact section and read the smallest
+useful excerpt. Do not load unrelated backend/security/SQL guidance into a
+frontend/game implementation session.
 
 ## SCOPE BOUNDARIES (important — read before editing files)
 

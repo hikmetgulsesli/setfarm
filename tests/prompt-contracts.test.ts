@@ -82,6 +82,26 @@ describe("agent prompt contracts", () => {
     assert.match(output, /Shared\/read-only generated screens must\s+be consumed through SCREEN_INDEX\/index\.ts and injected contracts only/i);
   });
 
+  it("removes stale implement-time full reference read requirements", () => {
+    const input = [
+      "## BEFORE Writing Any Code",
+      "",
+      "You MUST read these reference files before starting implementation:",
+      "1. **references/design-standards.md** — Frontend design rules (MANDATORY)",
+      "2. **references/backend-standards.md** — Backend/API/DB rules (MANDATORY)",
+      "3. **references/web-guidelines.md** — Accessibility, forms, performance (MANDATORY)",
+      "",
+      "Follow ALL rules in these references. Violations will cause your PR to be REJECTED.",
+    ].join("\n");
+
+    const output = sanitizeAgentPromptContracts(input);
+
+    assert.doesNotMatch(output, /You MUST read these reference files|backend-standards\.md\*\* — Backend\/API\/DB rules \(MANDATORY\)/);
+    assert.match(output, /Do NOT read full `references\/\*\.md` files during implement/);
+    assert.match(output, /Backend\/API\/DB standards apply\s+only to backend\/API\/database story scope/);
+    assert.match(output, /do not load unrelated backend\/security\/SQL guidance into the session/);
+  });
+
   it("rewrites stale Design DOM nav/control rules that caused layout removal", () => {
     const input = [
       "DESIGN DOM RULES (MANDATORY — FOLLOW EXACTLY):",
