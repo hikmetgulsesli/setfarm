@@ -25,6 +25,7 @@ describe("spawner prompt bootstrap", () => {
     assert.match(prompt, /CLAIM_SUMMARY_FILE=\/tmp\/claim-summary-feature-dev_developer-spawner-test\.json/);
     assert.match(prompt, /Read the structured claim summary at \/tmp\/claim-summary-feature-dev_developer-spawner-test\.json first/);
     assert.match(prompt, /Do NOT parse or dump claim\.input with jq\/sed\/head\/node loops/);
+    assert.match(prompt, /Do NOT create scratch\/progress\/todo\/note files inside WORKDIR/);
     assert.doesNotMatch(prompt, /First exec command should start with/);
     assert.doesNotMatch(prompt, /jq -r/);
     assert.doesNotMatch(prompt, /case "\$WORKDIR" in/);

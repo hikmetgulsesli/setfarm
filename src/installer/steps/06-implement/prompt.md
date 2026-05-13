@@ -46,6 +46,7 @@ This is the persistent product-manager memory for this run. Treat blockers and p
 
 2. **ABSOLUTE SCOPE DISCIPLINE.** Write ONLY the files listed in SCOPE_FILES. That list is exhaustive for your story; every file the project needs was pre-planned into some story's scope.
    - Your job is ONLY the files above. Every other file already belongs to another story.
+   - Do not create scratch notes, todo files, progress files, logs, or reports inside the project worktree. Files such as `progress.txt`, `TODO.md`, `notes.md`, `scratch.*`, or ad hoc reports are out of scope unless explicitly listed in SCOPE_FILES. Use `/tmp/setfarm-progress-{{RUN_ID}}.txt` for checkpoints only.
    - Read from SHARED_FILES for import context; do not modify them and do not create sibling files next to them.
    - If a SHARED_FILE exports a React component, do not invent props for it and do not change its TypeScript interface. Render it only with props it already declares; if it needs new behavior, expose state/actions from your owned files and leave component-side wiring to the story that owns that component.
    - Shared domain/type files (`src/types/*`, `src/types.ts`, domain model files) are read-only unless they are explicitly listed in SCOPE_FILES. Do not widen exported union/domain types to satisfy a screen-only render case when their consumers are outside your scope. Instead define a local display/render type or adapter in your owned file and narrow before calling shared helpers.
