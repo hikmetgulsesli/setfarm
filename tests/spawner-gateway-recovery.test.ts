@@ -262,8 +262,13 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /without calling setfarm step complete\/fail/);
     assert.match(source, /row\.step_id !== "implement"/);
     assert.match(source, /findDiffBaseRef\(workdir\)/);
+    assert.match(source, /sourceStatusFiles\(workdir\)/);
+    assert.match(source, /sourceTouchedFiles\(workdir,\s*baseRef\)/);
     assert.match(source, /runBuildGate\(workdir\)/);
+    assert.match(source, /commitRecoveredImplementWork\(workdir,\s*story\.story_id,\s*changedFiles\)/);
+    assert.match(source, /git",\s*\["add",\s*"--",\s*\.\.\.uniqueFiles\]/);
     assert.match(source, /RECOVERY: agent-exit-build-passing/);
+    assert.match(source, /RECOVERY_COMMIT:/);
     assert.match(source, /await completeStep\(stepDbId,\s*recoveryOutput\)/);
     assert.match(source, /exitReason\.includes\("AGENT_STARTUP_SILENT"\)/);
     assert.match(source, /exitReason\.includes\("AGENT_PROCESS_STUCK"\)/);

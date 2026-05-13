@@ -1496,26 +1496,43 @@ function buildScriptExists(workdir: string): boolean {
   }
 }
 
+const RECOVERABLE_SOURCE_PATHS = [
+  "src", "app", "components", "lib", "pages", "public",
+  "index.html", "package.json", "package-lock.json",
+  "vite.config.ts", "vite.config.js", "tsconfig.json",
+  "tailwind.config.ts", "tailwind.config.js", "postcss.config.js",
+  "eslint.config.js", "vitest.config.ts", "vitest.config.js",
+  "jest.config.ts", "jest.config.js",
+];
+
 function sourceDiffFiles(workdir: string, baseRef: string): string[] {
   const raw = gitOutput(workdir, [
-    "diff", "--name-only", `${baseRef}...HEAD`, "--",
-    "src", "app", "components", "lib", "pages", "public",
-    "index.html", "package.json", "package-lock.json",
-    "vite.config.ts", "vite.config.js", "tsconfig.json",
-    "tailwind.config.ts", "tailwind.config.js", "postcss.config.js",
-    "eslint.config.js", "vitest.config.ts", "vitest.config.js",
-    "jest.config.ts", "jest.config.js",
+    "diff", "--name-only", `${baseRef}...HEAD`, "--", ...RECOVERABLE_SOURCE_PATHS,
   ]);
   return raw ? raw.split("\n").map((line) => line.trim()).filter(Boolean) : [];
+}
+
+function sourceStatusFiles(workdir: string): string[] {
+  const raw = gitOutput(workdir, ["status", "--porcelain", "--", ...RECOVERABLE_SOURCE_PATHS]);
+  if (!raw) return [];
+  return raw
+    .split("\n")
+    .map((line) => {
+      let rel = line.slice(3).trim();
+      if (rel.includes(" -> ")) rel = rel.split(" -> ").pop() || rel;
+      return rel.replace(/^"|"$/g, "");
+    })
+    .filter(Boolean);
+}
+
+function sourceTouchedFiles(workdir: string, baseRef: string): string[] {
+  return [...new Set([...sourceDiffFiles(workdir, baseRef), ...sourceStatusFiles(workdir)])];
 }
 
 function findDiffBaseRef(workdir: string): string | null {
   for (const ref of ["main", "origin/main", "HEAD~1"]) {
     if (!gitOutput(workdir, ["rev-parse", "--verify", ref])) continue;
-    const aheadRaw = gitOutput(workdir, ["rev-list", "--count", `${ref}..HEAD`]);
-    const ahead = Number(aheadRaw || "0");
-    if (!Number.isFinite(ahead) || ahead <= 0) continue;
-    if (sourceDiffFiles(workdir, ref).length > 0) return ref;
+    if (sourceTouchedFiles(workdir, ref).length > 0) return ref;
   }
   return null;
 }
@@ -1550,6 +1567,31 @@ function runBuildGate(workdir: string): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+function commitRecoveredImplementWork(workdir: string, storyId: string, files: string[]): string | null {
+  const uniqueFiles = [...new Set(files)].filter(Boolean);
+  if (uniqueFiles.length === 0) return null;
+  try {
+    execFileSync("git", ["add", "--", ...uniqueFiles], {
+      cwd: workdir,
+      timeout: 20_000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const staged = gitOutput(workdir, ["diff", "--cached", "--name-only"]);
+    if (staged) {
+      execFileSync("git", ["commit", "-m", `chore: recover ${storyId} implement work`], {
+        cwd: workdir,
+        timeout: 30_000,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, SETFARM_RECOVERY_COMMIT: "1" },
+      });
+    }
+    return gitOutput(workdir, ["rev-parse", "--short", "HEAD"]);
+  } catch (err) {
+    console.warn(`[spawner] implement recovery commit failed for ${storyId}: ${compactExitReason(err)}`);
+    return null;
   }
 }
 
@@ -1599,19 +1641,23 @@ async function tryRecoverExitedImplementWork(
 
   const baseRef = findDiffBaseRef(workdir);
   if (!baseRef) return false;
+  const changedFiles = sourceTouchedFiles(workdir, baseRef).slice(0, 20);
+  if (changedFiles.length === 0) return false;
   if (!runBuildGate(workdir)) return false;
+  const recoveryCommit = commitRecoveredImplementWork(workdir, story.story_id, changedFiles);
+  if (!recoveryCommit) return false;
 
   context["story_workdir"] = workdir;
   context["story_branch"] = storyBranch;
   await pgRun("UPDATE runs SET context = $1, updated_at = NOW() WHERE id = $2", [JSON.stringify(context), row.run_id]);
 
-  const changedFiles = sourceDiffFiles(workdir, baseRef).slice(0, 20);
   const recoveryOutput = [
     "STATUS: done",
     `STORY_BRANCH: ${storyBranch}`,
-    `CHANGES: Recovered ${story.story_id} after agent exited with build-passing committed work on ${storyBranch}.`,
+    `CHANGES: Recovered ${story.story_id} after agent exited with build-passing work on ${storyBranch}. Commit: ${recoveryCommit}.`,
     "BUILD_CMD: npm run build",
     "RECOVERY: agent-exit-build-passing",
+    `RECOVERY_COMMIT: ${recoveryCommit}`,
     `TRANSCRIPT: ${transcriptPath}`,
     `CHANGED_FILES: ${changedFiles.join(", ")}`,
   ].join("\n");
