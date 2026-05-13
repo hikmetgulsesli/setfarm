@@ -378,6 +378,26 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.agentId,\s*reason\)/);
   });
 
+  it("kills implement claims that write outside story scope during runtime", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /function implementScopeWriteGuard\(active: ActiveProcess\)/);
+    assert.match(source, /readStoryScopeFileSet\(active\.spawnCwd\)/);
+    assert.match(source, /SCOPE_WRITE_VIOLATION/);
+    assert.match(source, /attempted \$\{call\.name\} on \$\{relativePath\}/);
+    assert.match(source, /isRuntimeScopeAllowedWrite/);
+    assert.match(source, /\\\.\(test\|spec\)\\\.\[cm\]\?\[jt\]sx\?/);
+    assert.match(source, /terminateActiveProcess\(active,\s*"scope-write-guard"\)/);
+    assert.match(source, /--- SCOPE WRITE GUARD/);
+    assert.ok(
+      source.indexOf("implementScopeWriteGuard(active)") < source.indexOf("claimParseLoopGuard(active)"),
+      "scope write guard should run before loop/context guards",
+    );
+    assert.ok(
+      source.indexOf("recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId") < source.indexOf("terminateActiveProcess(active, \"scope-write-guard\")"),
+      "scope write guard must write supervisor runtime memory before killing the claim",
+    );
+  });
+
   it("hard-times out verify agents as an infra retry instead of leaving open claims", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /VERIFY_AGENT_HARD_TIMEOUT_MS/);

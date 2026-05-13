@@ -713,6 +713,47 @@ function generatedScreenReadGuard(active: ActiveProcess): { detected: boolean; r
   return { detected: false, reason: "" };
 }
 
+function isRuntimeScopeAllowedWrite(relativePath: string, allowed: Set<string>): boolean {
+  if (allowed.has(relativePath)) return true;
+  if (relativePath === ".story-scope-files" || relativePath === ".story-branch" || relativePath === "pre-commit") return true;
+  if (/\.(test|spec)\.[cm]?[jt]sx?$/i.test(relativePath)) return true;
+  return /^(vitest|jest)\.config\.[cm]?[jt]s$/i.test(relativePath)
+    || relativePath === "src/test/setup.ts"
+    || relativePath === "src/test/utils.ts"
+    || relativePath === "src/setupTests.ts";
+}
+
+function implementScopeWriteGuard(active: ActiveProcess): { detected: boolean; reason: string } {
+  const allowed = readStoryScopeFileSet(active.spawnCwd);
+  if (!allowed.size) return { detected: false, reason: "" };
+
+  let raw = "";
+  try {
+    raw = fs.readFileSync(active.sessionJsonlPath, "utf-8").slice(-512_000).trim();
+  } catch {
+    return { detected: false, reason: "" };
+  }
+  if (!raw) return { detected: false, reason: "" };
+
+  for (const line of raw.split(/\n/).filter(Boolean)) {
+    let event: any;
+    try { event = JSON.parse(line); } catch { continue; }
+    const message = event?.message || {};
+    if (String(message.role || "") !== "assistant") continue;
+    for (const call of extractToolCalls(message.content)) {
+      if (call.name !== "write" && call.name !== "edit") continue;
+      const relativePath = normalizeWorktreeRelativePath(active.spawnCwd, call.path);
+      if (!relativePath || isRuntimeScopeAllowedWrite(relativePath, allowed)) continue;
+      return {
+        detected: true,
+        reason: `SCOPE_WRITE_VIOLATION: ${active.agentId} attempted ${call.name} on ${relativePath}, but this story may only write .story-scope-files entries. Runtime supervisor killed the claim before out-of-scope work could be committed.`,
+      };
+    }
+  }
+
+  return { detected: false, reason: "" };
+}
+
 function isRawClaimFileRead(command: string, claimSummaryPath?: string): boolean {
   if (!command) return false;
   if (claimSummaryPath && command.includes(claimSummaryPath)) return false;
@@ -2099,6 +2140,19 @@ async function reapFinishedClaims(): Promise<void> {
         const effectiveStoryDbId = active.storyDbId || row.current_story_id || undefined;
 
         if (row.type === "loop" && row.step_id === "implement" && effectiveStoryId && !isTerminalTestRole(active.role, active.agentId)) {
+          const scopeWrite = implementScopeWriteGuard(active);
+          if (scopeWrite.detected) {
+            const reason = scopeWrite.reason + ` Transcript: ${active.transcriptPath}`;
+            console.warn(`[spawner] ${reason}`);
+            try { fs.appendFileSync(active.transcriptPath, `--- SCOPE WRITE GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
+            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "runtime-guard", reason);
+            terminateActiveProcess(active, "scope-write-guard");
+            activeProcesses.delete(key);
+            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
+            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
+            continue;
+          }
+
           const claimParseLoop = claimParseLoopGuard(active);
           if (claimParseLoop.detected) {
             const reason = claimParseLoop.reason + ` Transcript: ${active.transcriptPath}`;
