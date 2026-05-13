@@ -526,9 +526,9 @@ function extractSessionText(content: unknown): string {
     .join("\n");
 }
 
-function extractToolCalls(content: unknown): Array<{ name: string; path: string; command: string }> {
+function extractToolCalls(content: unknown): Array<{ name: string; path: string; command: string; limit: number | null }> {
   if (!Array.isArray(content)) return [];
-  const calls: Array<{ name: string; path: string; command: string }> = [];
+  const calls: Array<{ name: string; path: string; command: string; limit: number | null }> = [];
   for (const part of content as any[]) {
     if (!part || typeof part !== "object") continue;
     const type = String(part.type || "");
@@ -537,7 +537,11 @@ function extractToolCalls(content: unknown): Array<{ name: string; path: string;
     const args = part.arguments || part.input || {};
     const candidate = typeof args.path === "string" ? args.path : "";
     const command = typeof args.command === "string" ? args.command : "";
-    calls.push({ name, path: candidate, command });
+    const rawLimit = args.limit ?? args.maxLines ?? args.max_lines ?? args.max_output_tokens;
+    const parsedLimit = rawLimit === undefined || rawLimit === null || rawLimit === ""
+      ? null
+      : Number(rawLimit);
+    calls.push({ name, path: candidate, command, limit: parsedLimit !== null && Number.isFinite(parsedLimit) ? parsedLimit : null });
   }
   return calls;
 }
@@ -569,6 +573,87 @@ function readStoryScopeFileSet(workdir: string): Set<string> {
       .map((line) => normalizeWorktreeRelativePath(workdir, line))
       .filter(Boolean),
   );
+}
+
+function isReferenceMarkdownPath(relativePath: string): boolean {
+  return /^references\/[^/]+\.md$/.test(relativePath);
+}
+
+function isBackendReferencePath(relativePath: string): boolean {
+  return relativePath === "references/backend-standards.md";
+}
+
+function storyScopeLooksBackend(workdir: string): boolean {
+  const allowed = Array.from(readStoryScopeFileSet(workdir));
+  if (allowed.length === 0) return true;
+  return allowed.some((file) =>
+    /(^|\/)(api|server|routes|route|middleware|db|database|migrations|models|controllers|services|schemas)\//i.test(file)
+    || /(^|\/)(server|api|db|database|prisma|schema|route|routes)\.[cm]?[jt]sx?$/i.test(file)
+    || /\.(sql|prisma)$/i.test(file),
+  );
+}
+
+function extractReferenceReadsFromCommand(workdir: string, command: string): Array<{ path: string; via: string; full: boolean }> {
+  const reads: Array<{ path: string; via: string; full: boolean }> = [];
+  if (!/\breferences\/[^'"`\s;|&]+\.md\b/.test(command)) return reads;
+  const fullReadCommand = /\b(cat|less|bat|python3?|node)\b/.test(command);
+  const shellReadCommand = /\b(cat|sed|nl|head|tail|less|bat|rg|grep|awk|find|wc|python3?|node)\b/.test(command);
+  if (!shellReadCommand) return reads;
+
+  for (const match of command.matchAll(/(?:^|[\s"'`=])((?:\.\/|\/)?(?:[\w.-]+\/)*references\/[^'"`\s;|&]+\.md)/g)) {
+    const relativePath = normalizeWorktreeRelativePath(workdir, match[1] || "");
+    if (isReferenceMarkdownPath(relativePath)) reads.push({ path: relativePath, via: "exec", full: fullReadCommand });
+  }
+  return reads;
+}
+
+function implementReferenceReadGuard(active: ActiveProcess): { detected: boolean; reason: string } {
+  const backendScope = storyScopeLooksBackend(active.spawnCwd);
+
+  let raw = "";
+  try {
+    raw = fs.readFileSync(active.sessionJsonlPath, "utf-8").slice(-512_000).trim();
+  } catch {
+    return { detected: false, reason: "" };
+  }
+  if (!raw) return { detected: false, reason: "" };
+
+  for (const line of raw.split(/\n/).filter(Boolean)) {
+    let event: any;
+    try { event = JSON.parse(line); } catch { continue; }
+    const message = event?.message || {};
+    if (String(message.role || "") !== "assistant") continue;
+
+    for (const call of extractToolCalls(message.content)) {
+      const candidates: Array<{ path: string; via: string; full: boolean }> = [];
+      if (call.name === "read" && call.path) {
+        const relativePath = normalizeWorktreeRelativePath(active.spawnCwd, call.path);
+        if (isReferenceMarkdownPath(relativePath)) {
+          candidates.push({ path: relativePath, via: "read", full: call.limit === null || call.limit > 220 });
+        }
+      }
+      if (call.name === "exec" && call.command) {
+        candidates.push(...extractReferenceReadsFromCommand(active.spawnCwd, call.command));
+      }
+
+      for (const candidate of candidates) {
+        if (isBackendReferencePath(candidate.path) && !backendScope) {
+          return {
+            detected: true,
+            reason: `IRRELEVANT_REFERENCE_CONTEXT: ${active.agentId} read ${candidate.path} during a non-backend implement story. Backend/API/DB standards must not be loaded into frontend/game story context; Setfarm killed the claim before irrelevant reference context polluted implementation.`,
+          };
+        }
+        if (candidate.full) {
+          return {
+            detected: true,
+            reason: `FULL_REFERENCE_CONTEXT_READ: ${active.agentId} loaded full ${candidate.path}. Implement claims must use injected rules and only inspect the smallest focused reference excerpt when the story owns that domain; Setfarm killed the claim before reference context overload.`,
+          };
+        }
+      }
+    }
+  }
+
+  return { detected: false, reason: "" };
 }
 
 function extractGeneratedScreenReadsFromCommand(workdir: string, command: string): Array<{ path: string; via: string }> {
@@ -1958,6 +2043,19 @@ async function reapFinishedClaims(): Promise<void> {
         const effectiveStoryDbId = active.storyDbId || row.current_story_id || undefined;
 
         if (row.type === "loop" && row.step_id === "implement" && effectiveStoryId && !isTerminalTestRole(active.role, active.agentId)) {
+          const referenceRead = implementReferenceReadGuard(active);
+          if (referenceRead.detected) {
+            const reason = referenceRead.reason + ` Transcript: ${active.transcriptPath}`;
+            console.warn(`[spawner] ${reason}`);
+            try { fs.appendFileSync(active.transcriptPath, `--- REFERENCE READ GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
+            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "runtime-guard", reason);
+            terminateActiveProcess(active, "reference-read-guard");
+            activeProcesses.delete(key);
+            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
+            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
+            continue;
+          }
+
           const generatedScreenRead = generatedScreenReadGuard(active);
           if (generatedScreenRead.detected) {
             const reason = generatedScreenRead.reason + ` Transcript: ${active.transcriptPath}`;

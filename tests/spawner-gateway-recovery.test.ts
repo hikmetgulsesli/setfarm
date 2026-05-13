@@ -331,6 +331,28 @@ describe("spawner gateway recovery wiring", () => {
     );
   });
 
+  it("kills implement claims that load irrelevant or full reference files", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /function implementReferenceReadGuard\(active: ActiveProcess\)/);
+    assert.match(source, /function storyScopeLooksBackend\(workdir: string\)/);
+    assert.match(source, /references\\\/\[\^\/\]\+\\\.md/);
+    assert.match(source, /IRRELEVANT_REFERENCE_CONTEXT/);
+    assert.match(source, /FULL_REFERENCE_CONTEXT_READ/);
+    assert.match(source, /Backend\/API\/DB standards must not be loaded into frontend\/game story context/);
+    assert.match(source, /candidate\.full/);
+    assert.match(source, /terminateActiveProcess\(active,\s*"reference-read-guard"\)/);
+    assert.match(source, /--- REFERENCE READ GUARD/);
+    assert.ok(
+      source.indexOf("implementReferenceReadGuard(active)") < source.indexOf("generatedScreenReadGuard(active)"),
+      "reference context guard should run before generated-screen guard so stale reference mandates are retried early",
+    );
+    assert.ok(
+      source.indexOf("recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId") < source.indexOf("terminateActiveProcess(active, \"reference-read-guard\")"),
+      "reference guard must write supervisor runtime memory before killing the claim",
+    );
+    assert.match(source, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.agentId,\s*reason\)/);
+  });
+
   it("hard-times out verify agents as an infra retry instead of leaving open claims", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /VERIFY_AGENT_HARD_TIMEOUT_MS/);
