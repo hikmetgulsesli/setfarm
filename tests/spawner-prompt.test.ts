@@ -114,6 +114,11 @@ describe("spawner prompt bootstrap", () => {
           `WORKDIR: ${workdir}`,
           "MAIN_REPO: /home/setrox/projects/tetris-sensor",
           "STORY_BRANCH: run-us-001",
+          "BUILD_CMD: ",
+          "TEST_CMD: ",
+          "LINT_CMD: ",
+          "",
+          "*** GENERATED SCREEN CONTRACT ***",
           "CURRENT STORY: Story US-001: Tetris engine",
           "",
           "Acceptance Criteria:",
@@ -126,6 +131,9 @@ describe("spawner prompt bootstrap", () => {
       assert.equal(summary.schema, "setfarm.claim-summary.v1");
       assert.equal(summary.storyId, "US-001");
       assert.equal(summary.storyTitle, "Tetris engine");
+      assert.equal(summary.buildCommand, "true");
+      assert.equal(summary.testCommand, "true");
+      assert.equal(summary.lintCommand, "true");
       assert.deepEqual(summary.scopeFiles, ["src/App.tsx", "src/state.ts"]);
       assert.deepEqual((summary.generatedScreenPolicy as any).allowedSourceFiles, []);
       assert.deepEqual((summary.generatedScreenPolicy as any).forbiddenSourceFiles, [
@@ -136,6 +144,47 @@ describe("spawner prompt bootstrap", () => {
       assert.match(String(summary.supervisorMemory), /forbidden generated screens/);
       assert.match(String(summary.acceptanceCriteria), /Pieces fall and rotate/);
       assert.match(JSON.stringify(summary.handoff), /Audit fallback only/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("does not treat the next label as an empty command value", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-empty-cmd-"));
+    try {
+      fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({
+        scripts: {
+          build: "tsc && vite build",
+          test: "vitest run",
+        },
+      }));
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: "/tmp/claim.json",
+        outputFile: "/tmp/output.txt",
+        bootstrapFile: "/tmp/bootstrap.sh",
+        stepId: "step-123",
+        runId: "run-123",
+        workdir: tmp,
+        repo: tmp,
+        input: [
+          "TASK: Project: command parse sensor",
+          `WORKDIR: ${tmp}`,
+          "BUILD_CMD: ",
+          "TEST_CMD: ",
+          "LINT_CMD: ",
+          "",
+          "*** GENERATED SCREEN CONTRACT ***",
+          "CURRENT STORY: Story US-001: command parsing",
+          "Acceptance Criteria:",
+          "  1. Empty command labels are not parsed as the following label.",
+        ].join("\n"),
+      });
+
+      assert.equal(summary.buildCommand, "npm run build");
+      assert.equal(summary.testCommand, "npm run test");
+      assert.equal(summary.lintCommand, "true");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

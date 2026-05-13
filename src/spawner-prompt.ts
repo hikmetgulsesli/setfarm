@@ -31,8 +31,28 @@ function escapeRegExp(value: string): string {
 }
 
 function lineValue(input: string, label: string): string {
-  const match = input.match(new RegExp("^\\s*" + escapeRegExp(label) + ":\\s*(.*)$", "m"));
+  const match = input.match(new RegExp("^[ \\t]*" + escapeRegExp(label) + ":[ \\t]*(.*)$", "m"));
   return (match?.[1] || "").trim();
+}
+
+function packageScriptCommand(workdir: string, script: string): string {
+  try {
+    const packageJsonPath = path.join(workdir, "package.json");
+    const parsed = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
+    const scripts = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>)["scripts"] : undefined;
+    if (scripts && typeof scripts === "object" && typeof (scripts as Record<string, unknown>)[script] === "string") {
+      return `npm run ${script}`;
+    }
+  } catch {
+    // Missing package metadata is fine for non-Node projects.
+  }
+  return "";
+}
+
+function resolvedCommand(input: string, label: string, workdir: string, script: string, fallback: string): string {
+  const fromInput = lineValue(input, label);
+  if (fromInput) return fromInput;
+  return packageScriptCommand(workdir, script) || fallback;
 }
 
 function sliceSection(input: string, start: RegExp, ends: RegExp[], limit: number): string {
@@ -195,9 +215,9 @@ export function buildClaimSummary(params: {
     repo,
     storyBranch: lineValue(input, "STORY_BRANCH"),
     runBranch: lineValue(input, "RUN_BRANCH"),
-    buildCommand: lineValue(input, "BUILD_CMD"),
-    testCommand: lineValue(input, "TEST_CMD"),
-    lintCommand: lineValue(input, "LINT_CMD"),
+    buildCommand: resolvedCommand(input, "BUILD_CMD", workdir, "build", "true"),
+    testCommand: resolvedCommand(input, "TEST_CMD", workdir, "test", "true"),
+    lintCommand: resolvedCommand(input, "LINT_CMD", workdir, "lint", "true"),
     scopeFiles,
     sharedFiles: splitCsvList(lineValue(input, "story_shared_files")),
     storyScreens: parseJsonArray(storyScreensRaw),
