@@ -46,6 +46,7 @@ You are assigned ONE story with a FIXED list of files. You MUST NOT create or mo
 - Import from existing shared code before creating new utilities
 - CSS: use Tailwind classes matching the Stitch design tokens
 - Keep reducers/state transition functions pure: no localStorage, timers, DOM access, random mutable singletons, or mutation of existing state objects inside reducers. Run persistence and timers in effects/action wrappers.
+- Local checks must preserve real exit codes. Do not decide build/test success from commands piped through `head`, `tail`, `grep`, `tee`, `cat`, or similar filters. If logs are long, run the full command first and inspect saved output only after the command exits.
 
 ## Git Hygiene
 - Commit once at the end after implementation and local checks pass. Use `/tmp/setfarm-progress-<run>.txt` checkpoints for long work, not partial git commits.
