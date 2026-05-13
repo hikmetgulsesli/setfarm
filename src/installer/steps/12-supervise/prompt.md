@@ -17,6 +17,8 @@ BRANCH: {{BRANCH}}
 BUILD_CMD: {{BUILD_CMD}}
 TEST_CMD: {{TEST_CMD}}
 LINT_CMD: {{LINT_CMD}}
+SUPERVISOR_SCOPE: {{SUPERVISOR_SCOPE}}
+CURRENT_STORY: {{CURRENT_STORY}}
 
 PREVIOUS FAILURE:
 {{PREVIOUS_FAILURE}}
@@ -83,6 +85,8 @@ SHARED_CODE:
 ## Job
 
 1. `cd {{REPO}}` and check out `{{BRANCH}}`.
+   - If `SUPERVISOR_SCOPE` is `story`, audit only `CURRENT_STORY` plus shared code it touched, but keep PRD/design coherence in mind.
+   - If `SUPERVISOR_SCOPE` is `final-product`, audit the complete implementation.
 2. Read `SUPERVISOR_MEMORY.md`, `PROJECT_MEMORY.md`, `DESIGN.md`, `stitch/`,
    app entry points, route files, and files most relevant to the PRD/screens.
 3. Audit product coherence:
@@ -128,4 +132,3 @@ STATUS: retry
 SUPERVISOR_DECISION: block
 SUPERVISOR_MEMORY_APPEND: <durable blocker summary>
 ISSUES: <exact blocking issue and next fix>
-

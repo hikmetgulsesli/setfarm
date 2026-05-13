@@ -38,6 +38,8 @@ function buildPrompt(ctx: PromptContext): string {
     SHARED_CODE: c["shared_code"] || "",
     PACKAGE_JSON_EXCERPT: c["package_json_excerpt"] || "",
     PREVIOUS_FAILURE: c["previous_failure"] || "",
+    SUPERVISOR_SCOPE: c["supervisor_scope"] || "final-product",
+    CURRENT_STORY: c["current_story_id"] ? `${c["current_story_id"]} ${c["current_story_title"] || ""}`.trim() : "(not story-scoped)",
   });
   return `${resolved}\n\n---\n\n# Rules\n\n${rulesBody}`;
 }
@@ -53,4 +55,3 @@ export const superviseModule: StepModule = {
   requiredOutputFields: ["STATUS", "SUPERVISOR_DECISION"],
   maxPromptSize: 32768,
 };
-

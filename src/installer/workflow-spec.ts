@@ -122,6 +122,8 @@ function parseLoopConfig(raw: any): LoopConfig {
     freshSession: raw.fresh_session ?? raw.freshSession,
     verifyEach: raw.verify_each ?? raw.verifyEach,
     verifyStep: raw.verify_step ?? raw.verifyStep,
+    superviseEach: raw.supervise_each ?? raw.superviseEach,
+    superviseStep: raw.supervise_step ?? raw.superviseStep,
     parallelCount: raw.parallel_count ?? raw.parallelCount,
     mergeStrategy: raw.merge_strategy ?? raw.mergeStrategy,
   };
@@ -163,6 +165,11 @@ function validateSteps(steps: WorkflowStep[], workflowDir: string) {
       if (step.loop.verifyEach && step.loop.verifyStep) {
         if (!ids.has(step.loop.verifyStep)) {
           throw new Error(`workflow.yml step "${step.id}" loop.verify_step references unknown step "${step.loop.verifyStep}"`);
+        }
+      }
+      if (step.loop.superviseEach && step.loop.superviseStep) {
+        if (!ids.has(step.loop.superviseStep)) {
+          throw new Error(`workflow.yml step "${step.id}" loop.supervise_step references unknown step "${step.loop.superviseStep}"`);
         }
       }
     }

@@ -778,6 +778,8 @@ steps:
       fresh_session: true
       verify_each: true
       verify_step: verify
+      supervise_each: true
+      supervise_step: supervise
       merge_strategy: pr-each
       parallel_count: 1
     input: |

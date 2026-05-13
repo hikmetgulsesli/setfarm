@@ -492,6 +492,11 @@ export async function syncActiveCrons(runId: string, workflowId: string): Promis
             neededRoles.add(verifyRole);
             stepsPerRole.set(verifyRole, (stepsPerRole.get(verifyRole) ?? 0) + 1);
           }
+          if (lc.superviseEach && lc.superviseStep) {
+            const superviseRole = lc.superviseStep.replace(workflowId + '_', '');
+            neededRoles.add(superviseRole);
+            stepsPerRole.set(superviseRole, (stepsPerRole.get(superviseRole) ?? 0) + 1);
+          }
         } catch {}
       }
     }

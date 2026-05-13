@@ -44,4 +44,15 @@ describe("feature-dev design contract prompt", () => {
     assert.doesNotMatch(implement.input, /If any Stitch screen has NO matching page/);
   });
 
+  it("runs the product supervisor between each story and verification", async () => {
+    const spec = await loadWorkflowSpec(WORKFLOW_DIR);
+    const implement = spec.steps.find(step => step.id === "implement");
+
+    assert.ok(implement, "implement step should exist");
+    assert.equal(implement.loop?.verifyEach, true);
+    assert.equal(implement.loop?.verifyStep, "verify");
+    assert.equal(implement.loop?.superviseEach, true);
+    assert.equal(implement.loop?.superviseStep, "supervise");
+  });
+
 });

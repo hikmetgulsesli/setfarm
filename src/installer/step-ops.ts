@@ -58,6 +58,7 @@ const QA_FIX_IGNORE = /^(node_modules\/|dist\/|build\/|\.next\/|coverage\/|stitc
 const SMOKE_INFRA_FAILURE = /\b(agent-browser|browser control|playwright|chromium|chrome|page\.goto|browser|context|target page)\b[\s\S]{0,320}\b(ETIMEDOUT|ECONNREFUSED|ECONNRESET|EPIPE|timed out|timeout|target page|context or browser has been closed|browser has been closed|target closed|protocol error)\b/i;
 const QA_FIX_MAX_STORIES = Math.max(1, parseInt(process.env.SETFARM_QA_FIX_MAX_STORIES || "4", 10) || 4);
 const QA_FIX_REPEAT_LIMIT = Math.max(1, parseInt(process.env.SETFARM_QA_FIX_REPEAT_LIMIT || "2", 10) || 2);
+const SUPERVISED_STORY_IDS_CONTEXT_KEY = "supervised_story_ids";
 
 export function humanizeProjectDisplayName(input: string): string {
   const cleaned = String(input || "")
@@ -829,6 +830,26 @@ function parseLoopConfigSafe(raw: string | null, runId?: string): LoopConfig | n
   }
 }
 
+function firstOutputWord(value: string | undefined): string {
+  return String(value || "").trim().split(/\s+/)[0].toLowerCase();
+}
+
+function parseStoryIdSet(value: string | undefined): Set<string> {
+  return new Set(String(value || "").split(",").map((v) => v.trim()).filter(Boolean));
+}
+
+function markStorySupervised(context: Record<string, string>, storyId: string): void {
+  const ids = parseStoryIdSet(context[SUPERVISED_STORY_IDS_CONTEXT_KEY]);
+  ids.add(storyId);
+  context[SUPERVISED_STORY_IDS_CONTEXT_KEY] = Array.from(ids).sort().join(",");
+}
+
+function clearStorySupervised(context: Record<string, string>, storyId: string): void {
+  const ids = parseStoryIdSet(context[SUPERVISED_STORY_IDS_CONTEXT_KEY]);
+  ids.delete(storyId);
+  context[SUPERVISED_STORY_IDS_CONTEXT_KEY] = Array.from(ids).sort().join(",");
+}
+
 async function isVerifyEachVerifyStep(step: { run_id: string; step_id: string }): Promise<boolean> {
   const loopStep = await pgGet<{ loop_config: string | null }>(
     "SELECT loop_config FROM steps WHERE run_id = $1 AND type = 'loop' AND step_id = 'implement' LIMIT 1",
@@ -837,6 +858,32 @@ async function isVerifyEachVerifyStep(step: { run_id: string; step_id: string })
   const loopConfig = parseLoopConfigSafe(loopStep?.loop_config || null, step.run_id);
   return !!(loopConfig?.verifyEach && (loopConfig.verifyStep || "verify") === step.step_id);
 }
+
+async function getSuperviseEachConfigForStep(step: { run_id: string; step_id: string }): Promise<{ loopStepId: string; verifyStep: string; superviseStep: string } | null> {
+  const loopStep = await pgGet<{ id: string; loop_config: string | null }>(
+    "SELECT id, loop_config FROM steps WHERE run_id = $1 AND type = 'loop' AND step_id = 'implement' LIMIT 1",
+    [step.run_id],
+  );
+  const loopConfig = parseLoopConfigSafe(loopStep?.loop_config || null, step.run_id);
+  const superviseStep = loopConfig?.superviseStep || "supervise";
+  if (!loopStep || !loopConfig?.superviseEach || superviseStep !== step.step_id) return null;
+  const pendingStory = await pgGet<{ story_id: string }>(
+    "SELECT story_id FROM stories WHERE run_id = $1 AND status = 'done' ORDER BY updated_at DESC LIMIT 1",
+    [step.run_id],
+  );
+  if (!pendingStory) return null;
+  return { loopStepId: loopStep.id, verifyStep: loopConfig.verifyStep || "verify", superviseStep };
+}
+
+async function findUnsupervisedDoneStory(runId: string, context: Record<string, string>): Promise<{ id: string; story_id: string; title: string; retry_count: number; max_retries: number; pr_url: string | null; story_branch: string | null } | undefined> {
+  const supervised = parseStoryIdSet(context[SUPERVISED_STORY_IDS_CONTEXT_KEY]);
+  const rows = await pgQuery<{ id: string; story_id: string; title: string; retry_count: number; max_retries: number; pr_url: string | null; story_branch: string | null }>(
+    "SELECT id, story_id, title, retry_count, max_retries, pr_url, story_branch FROM stories WHERE run_id = $1 AND status = 'done' ORDER BY updated_at DESC",
+    [runId],
+  );
+  return rows.find((story) => !supervised.has(story.story_id));
+}
+
 
 function formatExecFailure(e: unknown, max = 900): string {
   const err = e as any;
@@ -2534,6 +2581,36 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
       // reviewed, fixed, merged into main, and marked verified before the next
       // story can be claimed. This prevents US-002/US-003 from branching from a
       // stale baseline while US-001's PR is still open.
+      if (loopConfig?.superviseEach && loopConfig.superviseStep) {
+        const superviseActiveRetriedStory = await pgGet<{ cnt: string }>(
+          "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status IN ('pending', 'running') AND retry_count > 0",
+          [step.run_id],
+        );
+        const activeQaFix = await pgGet<{ cnt: string }>(
+          "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND story_id LIKE 'QA-FIX-%' AND status IN ('pending', 'running')",
+          [step.run_id],
+        );
+        const awaitingSupervisor = await findUnsupervisedDoneStory(step.run_id, context);
+        if (
+          awaitingSupervisor
+          && parseInt(activeQaFix?.cnt || "0", 10) === 0
+          && parseInt(superviseActiveRetriedStory?.cnt || "0", 10) === 0
+        ) {
+          context["supervisor_scope"] = "story";
+          context["current_story_id"] = awaitingSupervisor.story_id;
+          context["current_story_title"] = awaitingSupervisor.title;
+          if (awaitingSupervisor.pr_url) context["pr_url"] = awaitingSupervisor.pr_url;
+          if (awaitingSupervisor.story_branch) context["story_branch"] = awaitingSupervisor.story_branch;
+          await updateRunContext(step.run_id, context);
+          await pgRun(
+            "UPDATE steps SET status = 'pending', current_story_id = $1, updated_at = $2 WHERE run_id = $3 AND step_id = $4 AND status IN ('waiting','done','pending')",
+            [awaitingSupervisor.id, now(), step.run_id, loopConfig.superviseStep],
+          );
+          logger.info(`[supervise-each] Waiting for supervisor before verify: ${awaitingSupervisor.story_id}`, { runId: step.run_id });
+          return { found: false };
+        }
+      }
+
       if (loopConfig?.verifyEach && loopConfig.verifyStep) {
         const activeRetriedStory = await pgGet<{ cnt: string }>(
           "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status IN ('pending', 'running') AND retry_count > 0",
@@ -3196,6 +3273,17 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
   // Fix: trim and extract only the first word from the status value.
   const rawStatus = (parsed["status"] || "").trim();
   const statusVal = (rawStatus.indexOf("\n") >= 0 ? rawStatus.slice(0, rawStatus.indexOf("\n")).trim() : rawStatus).split(/\s/)[0].toLowerCase() || undefined;
+  const superviseEachConfigForStep = await getSuperviseEachConfigForStep(step);
+  const supervisorDecisionVal = firstOutputWord(parsed["supervisor_decision"]);
+  if (superviseEachConfigForStep && (statusVal === "retry" || supervisorDecisionVal === "block")) {
+    return await handleSuperviseEachCompletion(
+      step,
+      superviseEachConfigForStep.loopStepId,
+      superviseEachConfigForStep.verifyStep,
+      output,
+      context,
+    );
+  }
   if (step.step_id === "qa-test") {
     const _modRegistry = await import("./steps/registry.js");
     const _stepModule = _modRegistry.get(step.step_id);
@@ -4809,6 +4897,34 @@ ${screenDescs}
       return { advanced: false, runCompleted: false };
     }
 
+    // SUPERVISE-EACH: run the LLM product supervisor between implement and verify.
+    // The story remains status=done, which keeps the implement loop from claiming
+    // the next story until the supervisor either passes it to verify or sends it
+    // back to implement with manager feedback.
+    if (loopConfig?.superviseEach && loopConfig.superviseStep && storyStatus === STORY_STATUS.DONE && storyRow?.story_id) {
+      context["supervisor_scope"] = "story";
+      context["current_story_id"] = storyRow.story_id;
+      context["current_story_title"] = storyRow.title;
+      if (storyPrUrl) context["pr_url"] = storyPrUrl;
+      if (storyBranchName) context["story_branch"] = storyBranchName;
+      clearStorySupervised(context, storyRow.story_id);
+      await updateRunContext(step.run_id, context);
+
+      const superviseStep = await pgGet<{ id: string }>(
+        "SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1",
+        [step.run_id, loopConfig.superviseStep],
+      );
+      if (superviseStep) {
+        await pgRun(
+          "UPDATE steps SET status = 'pending', current_story_id = $1, updated_at = $2 WHERE id = $3 AND status IN ('waiting', 'done', 'pending')",
+          [step.current_story_id, now(), superviseStep.id],
+        );
+        await pgRun("UPDATE steps SET status = 'running', started_at = COALESCE(started_at, NOW()), updated_at = $1 WHERE id = $2", [now(), step.id]);
+        logger.info(`[supervise-each] Story ${storyRow.story_id} queued for supervisor before verify`, { runId: step.run_id });
+        return { advanced: false, runCompleted: false };
+      }
+    }
+
     // T8: verify_each flow — set verify step to pending
     if (loopConfig?.verifyEach && loopConfig.verifyStep && !(storyIsQaFix && storyStatus === STORY_STATUS.VERIFIED)) {
       const verifyStep = await pgGet<{ id: string }>("SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1", [step.run_id, loopConfig.verifyStep]);
@@ -4833,6 +4949,9 @@ ${screenDescs}
 
   if (loopStepRow?.loop_config) {
     const lc: LoopConfig = JSON.parse(loopStepRow.loop_config);
+    if (lc.superviseEach && (lc.superviseStep || "supervise") === step.step_id) {
+      return await handleSuperviseEachCompletion(step, loopStepRow.id, lc.verifyStep || "verify", output, context);
+    }
     if (lc.verifyEach && lc.verifyStep === step.step_id) {
       return await handleVerifyEachCompletion(step, loopStepRow.id, output, context);
     }
@@ -4881,6 +5000,132 @@ ${screenDescs}
   }
 
   return advancePipeline(step.run_id);
+}
+
+/**
+ * Handle supervise-each completion: manager gate between implement and verify.
+ */
+async function handleSuperviseEachCompletion(
+  superviseStep: { id: string; run_id: string; step_id: string; step_index: number; current_story_id?: string | null },
+  loopStepId: string,
+  verifyStepName: string,
+  output: string,
+  context: Record<string, string>,
+): Promise<{ advanced: boolean; runCompleted: boolean }> {
+  const parsedOutput = parseOutputKeyValues(output);
+  for (const key of PROTECTED_CONTEXT_KEYS) {
+    if (key in parsedOutput) {
+      logger.warn(`[handleSuperviseEach] Stripped protected key "${key}" from output`, { runId: superviseStep.run_id });
+      delete parsedOutput[key];
+    }
+  }
+
+  let story = undefined as Awaited<ReturnType<typeof findUnsupervisedDoneStory>>;
+  if (superviseStep.current_story_id) {
+    story = await pgGet<any>(
+      "SELECT id, story_id, title, retry_count, max_retries, pr_url, story_branch FROM stories WHERE run_id = $1 AND id = $2 AND status = 'done' LIMIT 1",
+      [superviseStep.run_id, superviseStep.current_story_id],
+    );
+  }
+  const reportedStoryId = parsedOutput["current_story_id"] || context["current_story_id"] || "";
+  if (!story && reportedStoryId) {
+    story = await pgGet<any>(
+      "SELECT id, story_id, title, retry_count, max_retries, pr_url, story_branch FROM stories WHERE run_id = $1 AND story_id = $2 AND status = 'done' LIMIT 1",
+      [superviseStep.run_id, reportedStoryId],
+    );
+  }
+  if (!story) {
+    story = await findUnsupervisedDoneStory(superviseStep.run_id, context);
+  }
+
+  const changed = await pgRun(
+    "UPDATE steps SET status = 'waiting', output = $1, current_story_id = NULL, updated_at = $2 WHERE id = $3 AND status IN ('running', 'pending')",
+    [output, now(), superviseStep.id],
+  );
+  if (changed.changes === 0) return { advanced: false, runCompleted: false };
+  await recordStepTransition(superviseStep.id, superviseStep.run_id, "running", "waiting", undefined, "handleSuperviseEachCompletion");
+  try {
+    await pgRun(
+      "UPDATE claim_log SET outcome = 'completed', duration_ms = EXTRACT(EPOCH FROM NOW() - claimed_at::timestamptz) * 1000 WHERE run_id = $1 AND step_id = $2 AND story_id IS NULL AND outcome IS NULL",
+      [superviseStep.run_id, superviseStep.step_id],
+    );
+  } catch (e) { logger.warn(`[claim-log] Failed to resolve supervise_each completion: ${String(e)}`, { runId: superviseStep.run_id }); }
+
+  if (!story) {
+    context["previous_failure"] = "SUPERVISE_EACH_ORPHAN: supervisor completed but no status=done story was available.";
+    context["failure_category"] = "SUPERVISE_EACH_ORPHAN";
+    await updateRunContext(superviseStep.run_id, context);
+    await setStepStatus(loopStepId, "pending");
+    logger.warn(`[handleSuperviseEach] No done story found; returning implement loop to pending`, { runId: superviseStep.run_id });
+    return { advanced: false, runCompleted: false };
+  }
+
+  const status = firstOutputWord(parsedOutput["status"] || context["status"]);
+  const decision = firstOutputWord(parsedOutput["supervisor_decision"]);
+  const issues = (parsedOutput["issues"] || parsedOutput["supervisor_memory_append"] || output || "").slice(0, 6000);
+
+  try {
+    const { updateSupervisorMemory } = await import("./product-supervisor.js");
+    const summary = [
+      `### ${new Date().toISOString()} llm-supervisor story ${story.story_id} ${decision || status || "unknown"}`,
+      `- Step: ${superviseStep.step_id}`,
+      `- Story: ${story.story_id} ${story.title}`,
+      `- Decision: ${decision || status || "unknown"}`,
+      `- Summary: ${(parsedOutput["supervisor_memory_append"] || parsedOutput["changes"] || parsedOutput["checks"] || issues || "").slice(0, 1200)}`,
+    ].join("\n");
+    updateSupervisorMemory(context, `${summary}\n`);
+  } catch (e) { logger.warn(`[handleSuperviseEach] Could not update supervisor memory: ${String(e).slice(0, 150)}`, { runId: superviseStep.run_id }); }
+
+  if (status === "retry" || decision === "block") {
+    const newRetry = (story.retry_count || 0) + 1;
+    context["previous_failure"] = `LLM_SUPERVISOR_BLOCKED for ${story.story_id}:\n${issues}`;
+    context["failure_category"] = "LLM_SUPERVISOR_BLOCKED";
+    context["failure_suggestion"] = "Return to the same story branch, fix the manager/audit blocker, then report STATUS: done again.";
+    context["current_story_id"] = story.story_id;
+    context["current_story_title"] = story.title;
+    if (story.story_branch) context["story_branch"] = story.story_branch;
+    clearStorySupervised(context, story.story_id);
+
+    if (newRetry > (story.max_retries || 0)) {
+      await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [newRetry, issues, now(), story.id]);
+      await updateRunContext(superviseStep.run_id, context);
+      await setStepStatus(loopStepId, "failed");
+      await failRun(superviseStep.run_id, true);
+      const wfId = await getWorkflowId(superviseStep.run_id);
+      emitEvent({ ts: now(), event: "story.failed", runId: superviseStep.run_id, workflowId: wfId, stepId: superviseStep.step_id, storyId: story.story_id });
+      emitEvent({ ts: now(), event: "run.failed", runId: superviseStep.run_id, workflowId: wfId, detail: "Supervisor retries exhausted" });
+      scheduleRunCronTeardown(superviseStep.run_id);
+      return { advanced: false, runCompleted: false };
+    }
+
+    await pgRun(
+      "UPDATE stories SET status = 'pending', retry_count = $1, output = $2, pr_url = NULL, merge_status = NULL, updated_at = $3 WHERE id = $4",
+      [newRetry, issues, now(), story.id],
+    );
+    await updateRunContext(superviseStep.run_id, context);
+    await setStepStatus(loopStepId, "pending");
+    await pgRun("UPDATE steps SET status = 'waiting', retry_count = 0, current_story_id = NULL, updated_at = $1 WHERE run_id = $2 AND step_id = $3", [now(), superviseStep.run_id, verifyStepName]);
+    emitEvent({ ts: now(), event: "story.retry", runId: superviseStep.run_id, workflowId: await getWorkflowId(superviseStep.run_id), stepId: superviseStep.step_id, storyId: story.story_id, detail: issues.slice(0, 500) });
+    logger.warn(`[supervise-each] Supervisor blocked ${story.story_id}; returning to implement`, { runId: superviseStep.run_id });
+    return { advanced: false, runCompleted: false };
+  }
+
+  markStorySupervised(context, story.story_id);
+  context["supervisor_scope"] = "story";
+  context["current_story_id"] = story.story_id;
+  context["current_story_title"] = story.title;
+  if (story.pr_url) context["pr_url"] = story.pr_url;
+  if (story.story_branch) context["story_branch"] = story.story_branch;
+  delete context["previous_failure"];
+  await updateRunContext(superviseStep.run_id, context);
+
+  await pgRun(
+    "UPDATE steps SET status = 'pending', updated_at = $1 WHERE run_id = $2 AND step_id = $3 AND status IN ('waiting', 'done', 'pending')",
+    [now(), superviseStep.run_id, verifyStepName],
+  );
+  await pgRun("UPDATE steps SET status = 'running', started_at = COALESCE(started_at, NOW()), updated_at = $1 WHERE id = $2", [now(), loopStepId]);
+  logger.info(`[supervise-each] Supervisor passed ${story.story_id}; verify queued`, { runId: superviseStep.run_id });
+  return { advanced: false, runCompleted: false };
 }
 
 /**
@@ -5156,6 +5401,12 @@ async function handleVerifyEachCompletion(
   }
 
   // No more unverified stories — persist context and check loop continuation
+  context["supervisor_scope"] = "final-product";
+  delete context["current_story_id"];
+  delete context["current_story_title"];
+  delete context["current_story"];
+  delete context["pr_url"];
+  delete context["story_branch"];
   await updateRunContext(verifyStep.run_id, context);
 
   try {

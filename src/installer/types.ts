@@ -45,6 +45,8 @@ export type LoopConfig = {
   freshSession?: boolean;
   verifyEach?: boolean;
   verifyStep?: string;
+  superviseEach?: boolean;
+  superviseStep?: string;
   parallelCount?: number;
   /** "pr-each" (default): per-story PRs + verify_each. "direct-merge": merge queue + single PR. */
   mergeStrategy?: "pr-each" | "direct-merge";
