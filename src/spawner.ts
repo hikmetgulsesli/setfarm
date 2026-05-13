@@ -15,7 +15,7 @@ import { claimStep, completeStep } from "./installer/step-ops.js";
 import { failStep } from "./installer/step-fail.js";
 import { cleanupProjectEphemera, cleanupRunningRunOrphanedToolWorkers } from "./installer/cleanup-ops.js";
 import { updateSupervisorMemory } from "./installer/product-supervisor.js";
-import { buildPreclaimedPrompt, buildResolvedClaimBootstrapScript, claimTaskPreview } from "./spawner-prompt.js";
+import { buildClaimSummary, buildPreclaimedPrompt, buildResolvedClaimBootstrapScript, claimTaskPreview } from "./spawner-prompt.js";
 
 const OPENCLAW_CLI = process.env.OPENCLAW_CLI || "/home/setrox/.local/bin/openclaw";
 const OPENCLAW_TASKS_DB = process.env.OPENCLAW_TASKS_DB || path.join(os.homedir(), ".openclaw", "tasks", "runs.sqlite");
@@ -44,6 +44,7 @@ const AGENT_SELF_LOOP_MIN_ACTIONS = parsePositiveInt(process.env.SETFARM_AGENT_S
 const AGENT_SELF_LOOP_MIN_NOOP_EDITS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_NOOP_EDITS, 4);
 const AGENT_SELF_LOOP_MIN_REPEATED_FAILURES = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_REPEATED_FAILURES, 4);
 const AGENT_SELF_LOOP_MIN_REPEATED_COMMANDS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_REPEATED_COMMANDS, 8);
+const CLAIM_PARSE_LOOP_MIN_READS = parsePositiveInt(process.env.SETFARM_CLAIM_PARSE_LOOP_MIN_READS, 6);
 const REAP_FINISHED_ACTIVE_GRACE_MS = parsePositiveInt(process.env.SETFARM_REAP_FINISHED_ACTIVE_GRACE_MS, 60_000);
 const ORPHANED_SINGLE_STEP_CLAIM_MS = parsePositiveInt(process.env.SETFARM_ORPHANED_SINGLE_STEP_CLAIM_MS, 2 * 60_000);
 const OPENCLAW_TASK_REGISTRY_SETTLE_MS = parsePositiveInt(process.env.SETFARM_OPENCLAW_TASK_REGISTRY_SETTLE_MS, 2000);
@@ -338,6 +339,7 @@ type ActiveProcess = {
   transcriptPath: string;
   initialTranscriptSize: number;
   outputPath: string;
+  claimSummaryPath?: string;
   spawnCwd: string;
   sessionId: string;
   sessionKey: string;
@@ -706,6 +708,60 @@ function generatedScreenReadGuard(active: ActiveProcess): { detected: boolean; r
         };
       }
     }
+  }
+
+  return { detected: false, reason: "" };
+}
+
+function isRawClaimFileRead(command: string, claimSummaryPath?: string): boolean {
+  if (!command) return false;
+  if (claimSummaryPath && command.includes(claimSummaryPath)) return false;
+  if (/\bclaim-summary-[^'"`\s;|&]+\.json\b/.test(command)) return false;
+  return /\/tmp\/claim-[^'"`\s;|&]+\.json\b/.test(command)
+    && /\b(jq|node|python3?|sed|head|tail|cat|grep|rg|awk|wc)\b/.test(command);
+}
+
+function claimParseLoopGuard(active: ActiveProcess): { detected: boolean; reason: string } {
+  let raw = "";
+  try {
+    raw = fs.readFileSync(active.sessionJsonlPath, "utf-8").slice(-512_000).trim();
+  } catch {
+    return { detected: false, reason: "" };
+  }
+  if (!raw) return { detected: false, reason: "" };
+
+  let rawClaimReads = 0;
+  let summaryReads = 0;
+  let writes = 0;
+  let edits = 0;
+  for (const line of raw.split(/\n/).filter(Boolean)) {
+    let event: any;
+    try { event = JSON.parse(line); } catch { continue; }
+    const message = event?.message || {};
+    if (String(message.role || "") !== "assistant") continue;
+    for (const call of extractToolCalls(message.content)) {
+      if (call.name === "write") writes += 1;
+      if (call.name === "edit") edits += 1;
+      if (call.path && active.claimSummaryPath && call.path.includes(active.claimSummaryPath)) summaryReads += 1;
+      if (call.path && /\/tmp\/claim-[^'"`\s;|&]+\.json\b/.test(call.path)) rawClaimReads += 1;
+      if (call.command) {
+        if (active.claimSummaryPath && call.command.includes(active.claimSummaryPath)) summaryReads += 1;
+        if (isRawClaimFileRead(call.command, active.claimSummaryPath)) rawClaimReads += 1;
+      }
+    }
+  }
+
+  if (rawClaimReads >= CLAIM_PARSE_LOOP_MIN_READS && writes === 0 && edits === 0 && fileSize(active.outputPath) === 0) {
+    return {
+      detected: true,
+      reason: `CLAIM_PARSE_LOOP: ${active.agentId} read raw /tmp/claim-*.json ${rawClaimReads} times without writing project files or output. Workers must use CLAIM_SUMMARY_FILE first and must not jq/sed/head/node-loop over claim.input.`,
+    };
+  }
+  if (rawClaimReads >= CLAIM_PARSE_LOOP_MIN_READS * 2 && summaryReads === 0) {
+    return {
+      detected: true,
+      reason: `CLAIM_SUMMARY_IGNORED: ${active.agentId} kept parsing raw /tmp/claim-*.json (${rawClaimReads} reads) and never used CLAIM_SUMMARY_FILE. Setfarm is retrying with supervisor handoff discipline.`,
+    };
   }
 
   return { detected: false, reason: "" };
@@ -2043,6 +2099,19 @@ async function reapFinishedClaims(): Promise<void> {
         const effectiveStoryDbId = active.storyDbId || row.current_story_id || undefined;
 
         if (row.type === "loop" && row.step_id === "implement" && effectiveStoryId && !isTerminalTestRole(active.role, active.agentId)) {
+          const claimParseLoop = claimParseLoopGuard(active);
+          if (claimParseLoop.detected) {
+            const reason = claimParseLoop.reason + ` Transcript: ${active.transcriptPath}`;
+            console.warn(`[spawner] ${reason}`);
+            try { fs.appendFileSync(active.transcriptPath, `--- CLAIM PARSE LOOP GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
+            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "runtime-guard", reason);
+            terminateActiveProcess(active, "claim-parse-loop-guard");
+            activeProcesses.delete(key);
+            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
+            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
+            continue;
+          }
+
           const referenceRead = implementReferenceReadGuard(active);
           if (referenceRead.detected) {
             const reason = referenceRead.reason + ` Transcript: ${active.transcriptPath}`;
@@ -2262,10 +2331,12 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   const spawnId = Date.now() + "-" + Math.random().toString(36).slice(2, 10);
   const outputFileId = agentId + "-spawner-" + spawnId;
   const claimFile = path.join("/tmp", "claim-" + outputFileId + ".json");
+  const claimSummaryFile = path.join("/tmp", "claim-summary-" + outputFileId + ".json");
   const outputFile = path.join("/tmp", "setfarm-output-" + outputFileId + ".txt");
   const bootstrapFile = path.join("/tmp", "setfarm-claim-bootstrap-" + outputFileId + ".sh");
   try { fs.unlinkSync(outputFile); } catch { /* didnt exist, fine */ }
   try { fs.unlinkSync(claimFile); } catch { /* didnt exist, fine */ }
+  try { fs.unlinkSync(claimSummaryFile); } catch { /* didnt exist, fine */ }
   try { fs.unlinkSync(bootstrapFile); } catch { /* didnt exist, fine */ }
 
   const fullAgentId = `${wfId}_${role}`;
@@ -2289,9 +2360,23 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   }
   const spawnCwd = safeAgentCwdFromClaimInput(claim.resolvedInput);
   fs.writeFileSync(claimFile, JSON.stringify({ stepId: claim.stepId, runId: claim.runId, workdir: spawnCwd, repo: spawnCwd, input: claim.resolvedInput }) + "\n");
+  fs.writeFileSync(claimSummaryFile, JSON.stringify(buildClaimSummary({
+    wfId,
+    role,
+    claimFile,
+    outputFile,
+    bootstrapFile,
+    stepId: claim.stepId || "",
+    runId: claim.runId || "",
+    workdir: spawnCwd,
+    repo: spawnCwd,
+    storyId: claim.storyId,
+    input: claim.resolvedInput,
+  }), null, 2) + "\n");
   fs.writeFileSync(bootstrapFile, buildResolvedClaimBootstrapScript({
     claimFile,
     outputFile,
+    claimSummaryFile,
     stepId: claim.stepId || "",
     workdir: spawnCwd,
     taskPreview: claimTaskPreview(claim.resolvedInput),
@@ -2305,7 +2390,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     return;
   }
 
-  const prompt = buildPreclaimedPrompt({ wfId, role, outputFile, claimFile, bootstrapFile });
+  const prompt = buildPreclaimedPrompt({ wfId, role, outputFile, claimFile, claimSummaryFile, bootstrapFile });
   console.log("[spawner] Spawning " + agentId + " for " + wfId + "/" + role + " after pre-claim (active: " + activeProcesses.size + ")");
   claimingSpawns.delete(key);
   try { fs.mkdirSync(path.dirname(transcriptPath), { recursive: true }); } catch {}
@@ -2356,6 +2441,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     transcriptPath,
     initialTranscriptSize,
     outputPath: outputFile,
+    claimSummaryPath: claimSummaryFile,
     spawnCwd,
     sessionId,
     sessionKey,

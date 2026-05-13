@@ -123,6 +123,9 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /resolved === SETFARM_SRC \|\| resolved\.startsWith\(SETFARM_SRC \+ path\.sep\)/);
     assert.match(source, /const spawnCwd = safeAgentCwdFromClaimInput\(claim\.resolvedInput\)/);
     assert.match(source, /JSON\.stringify\(\{ stepId: claim\.stepId, runId: claim\.runId, workdir: spawnCwd, repo: spawnCwd, input: claim\.resolvedInput \}\)/);
+    assert.match(source, /const claimSummaryFile = path\.join\("\/tmp", "claim-summary-" \+ outputFileId \+ "\.json"\)/);
+    assert.match(source, /JSON\.stringify\(buildClaimSummary\(\{/);
+    assert.match(source, /claimSummaryFile,/);
     assert.match(source, /buildResolvedClaimBootstrapScript\(\{/);
     assert.match(source, /workdir: spawnCwd/);
     assert.match(source, /cwd: spawnCwd/);
@@ -349,6 +352,26 @@ describe("spawner gateway recovery wiring", () => {
     assert.ok(
       source.indexOf("recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId") < source.indexOf("terminateActiveProcess(active, \"reference-read-guard\")"),
       "reference guard must write supervisor runtime memory before killing the claim",
+    );
+    assert.match(source, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.agentId,\s*reason\)/);
+  });
+
+  it("hands agents a structured claim summary and kills raw claim parsing loops", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    const promptSource = fs.readFileSync(path.join(root, "src", "spawner-prompt.ts"), "utf-8");
+    assert.match(promptSource, /export function buildClaimSummary/);
+    assert.match(promptSource, /schema: "setfarm\.claim-summary\.v1"/);
+    assert.match(promptSource, /Read the structured claim summary/);
+    assert.match(promptSource, /Do NOT parse or dump claim\.input with jq\/sed\/head\/node loops/);
+    assert.match(promptSource, /CLAIM_SUMMARY_FILE/);
+    assert.match(source, /CLAIM_PARSE_LOOP_MIN_READS/);
+    assert.match(source, /function claimParseLoopGuard\(active: ActiveProcess\)/);
+    assert.match(source, /CLAIM_PARSE_LOOP/);
+    assert.match(source, /CLAIM_SUMMARY_IGNORED/);
+    assert.match(source, /terminateActiveProcess\(active,\s*"claim-parse-loop-guard"\)/);
+    assert.ok(
+      source.indexOf("claimParseLoopGuard(active)") < source.indexOf("implementReferenceReadGuard(active)"),
+      "claim parse loop guard should run before context-pollution guards",
     );
     assert.match(source, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.agentId,\s*reason\)/);
   });
