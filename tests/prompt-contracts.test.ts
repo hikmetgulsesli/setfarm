@@ -172,6 +172,50 @@ describe("agent prompt contracts", () => {
     assert.match(output, /report STATUS: retry with the\s+exact missing contract/);
   });
 
+  it("rewrites stale design-first raw Stitch file-read instructions", () => {
+    const input = [
+      "# DESIGN-FIRST (MANDATORY)",
+      "",
+      "The Stitch files below are the design source of truth. The full HTML is not",
+      "pasted into the prompt; read only current SCOPE_FILES from WORKDIR. If a",
+      "generated screen is shared/read-only for this story, use SCREEN_INDEX/index.ts",
+      "and the injected contracts instead of reading any component source from that",
+      "shared screen. Focused line-range reads are allowed only for generated screen",
+      "files explicitly listed in SCOPE_FILES. Write only files in the current story",
+      "scope. Setfarm enforces this at runtime:",
+      "reading a generated src/screens/*.tsx file outside SCOPE_FILES kills and",
+      "retries the claim before generated-screen context overload.",
+      "",
+      "STORY SCREENS:",
+      "[]",
+      "",
+      "STITCH FILES TO READ:",
+      "- stitch/DESIGN_MANIFEST.json",
+      "- stitch/design-tokens.css",
+      "- stitch/DESIGN_DOM.json",
+      "- relevant stitch/*.html files listed in STORY_SCREENS only when the injected",
+      "  contract is insufficient, capped to focused excerpts",
+      "",
+      "DESIGN TOKENS:",
+      "",
+      "",
+      "DESIGN DOM:",
+      "The prompt excerpt is intentionally short. If full structure is needed, read",
+      "only the current story screens from stitch/DESIGN_DOM.json. Do not paste the",
+      "entire project DOM into the prompt.",
+    ].join("\n");
+
+    const output = sanitizeAgentPromptContracts(input);
+
+    assert.doesNotMatch(output, /STITCH FILES TO READ|relevant stitch\/\*\.html files listed/i);
+    assert.doesNotMatch(output, /If full structure is needed, read\s+only the current story screens from stitch\/DESIGN_DOM\.json/i);
+    assert.doesNotMatch(output, /read only current SCOPE_FILES from WORKDIR/i);
+    assert.match(output, /STITCH RAW FILES:/);
+    assert.match(output, /Do NOT read raw stitch\/\*\.html, \.stitch-screens\*\.json, stitch\/DESIGN_DOM\.json/);
+    assert.match(output, /report STATUS: retry with the exact missing contract/);
+    assert.match(output, /Use only the injected STORY_SCREENS, UI CONTRACT, LAYOUT STRUCTURE/);
+  });
+
   it("rewrites stale Design DOM nav/control rules that caused layout removal", () => {
     const input = [
       "DESIGN DOM RULES (MANDATORY — FOLLOW EXACTLY):",

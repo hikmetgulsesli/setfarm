@@ -50,6 +50,15 @@ const STALE_IMPLEMENT_RAW_STITCH_DOM_BLOCK =
 const STALE_IMPLEMENT_STITCH_FILE_READ_BLOCK =
   /3\. If stitch\/ directory exists:\n\s+a\. Read stitch\/DESIGN_MANIFEST\.json only to identify\/count screens\n\s+b\. Read only the stitch\/\*\.html files for STORY_SCREENS \/ current scope, and\n\s+only when layout details are not already available from the injected\n\s+STORY_SCREENS\/UI contract\n\s+c\. Read stitch\/design-tokens\.css only enough to import it and confirm token names\n\s+d\. Implementation MUST match Stitch design \(layout, colors, fonts\)\n\s+e\. NEVER use fonts\/colors NOT in design-tokens\.css\n\s+f\. You MUST @import stitch\/design-tokens\.css from the main CSS entry — do NOT copy or recreate tokens\.\n\s+g\. stitch\/design-tokens\.css is the SINGLE SOURCE OF TRUTH for all design values\./g;
 
+const STALE_DESIGN_FIRST_RAW_STITCH_INTRO =
+  /The Stitch files below are the design source of truth\. The full HTML is not\npasted into the prompt; read only current SCOPE_FILES from WORKDIR\. If a\ngenerated screen is shared\/read-only for this story, use SCREEN_INDEX\/index\.ts\nand the injected contracts instead of reading any component source from that\nshared screen\. Focused line-range reads are allowed only for generated screen\nfiles explicitly listed in SCOPE_FILES\. Write only files in the current story\nscope\. Setfarm enforces this at runtime:\nreading a generated src\/screens\/\*\.tsx file outside SCOPE_FILES kills and\nretries the claim before generated-screen context overload\./g;
+
+const STALE_DESIGN_FIRST_STITCH_FILES_TO_READ_BLOCK =
+  /STITCH FILES TO READ:\n- stitch\/DESIGN_MANIFEST\.json\n- stitch\/design-tokens\.css\n- stitch\/DESIGN_DOM\.json\n- relevant stitch\/\*\.html files listed in STORY_SCREENS only when the injected\n\s+contract is insufficient, capped to focused excerpts/g;
+
+const STALE_DESIGN_FIRST_DOM_FULL_READ_BLOCK =
+  /DESIGN DOM:\nThe prompt excerpt is intentionally short\. If full structure is needed, read\nonly the current story screens from stitch\/DESIGN_DOM\.json\. Do not paste the\nentire project DOM into the prompt\./g;
+
 export function sanitizeAgentPromptContracts(input: string): string {
   let output = input;
 
@@ -219,6 +228,45 @@ export function sanitizeAgentPromptContracts(input: string): string {
       "   - Match Stitch layout, colors, fonts, labels, icons, and controls from those",
       "     injected contracts. If detail is missing, report STATUS: retry with the",
       "     exact missing contract instead of loading raw design files.",
+    ].join("\n"),
+  );
+
+  output = output.replace(
+    STALE_DESIGN_FIRST_RAW_STITCH_INTRO,
+    [
+      "The injected Stitch contracts below are the design source of truth during",
+      "implement. Do not read raw Stitch export files from the worktree during",
+      "implement; use STORY_SCREENS, DESIGN_MANIFEST, DESIGN_TOKENS, UI CONTRACT,",
+      "LAYOUT STRUCTURE, SCREEN_INDEX/index.ts, and scoped generated screen contracts.",
+      "If a generated screen is shared/read-only for this story, use",
+      "SCREEN_INDEX/index.ts and the injected contracts instead of reading any",
+      "component source from that shared screen. Focused line-range reads are allowed",
+      "only for generated screen files explicitly listed in SCOPE_FILES. Write only",
+      "files in the current story scope. Setfarm enforces this at runtime: reading a",
+      "generated src/screens/*.tsx file outside SCOPE_FILES, or raw",
+      "stitch/*.html/.stitch-screens*/DESIGN_DOM corpus files, kills and retries the",
+      "claim before context overload.",
+    ].join("\n"),
+  );
+
+  output = output.replace(
+    STALE_DESIGN_FIRST_STITCH_FILES_TO_READ_BLOCK,
+    [
+      "STITCH RAW FILES:",
+      "Do NOT read raw stitch/*.html, .stitch-screens*.json, stitch/DESIGN_DOM.json,",
+      "or stitch/design-tokens.css during implement. If the injected contract is",
+      "missing required detail, report STATUS: retry with the exact missing contract",
+      "instead of loading raw Stitch files.",
+    ].join("\n"),
+  );
+
+  output = output.replace(
+    STALE_DESIGN_FIRST_DOM_FULL_READ_BLOCK,
+    [
+      "DESIGN DOM:",
+      "Use only the injected STORY_SCREENS, UI CONTRACT, LAYOUT STRUCTURE,",
+      "DESIGN_MANIFEST, DESIGN_TOKENS, SCREEN_INDEX/index.ts, and generated screen",
+      "contracts in this claim. Do not load the full project DOM.",
     ].join("\n"),
   );
 
