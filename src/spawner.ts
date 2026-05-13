@@ -1952,18 +1952,21 @@ ${reason}
           continue;
         }
 
-        if (active.storyId && row.type === "loop" && row.step_id === "implement") {
-          const storyStillOwned = row.current_story_id === active.storyDbId
-            && row.story_id === active.storyId
+        const effectiveStoryId = active.storyId || row.story_id || undefined;
+        const effectiveStoryDbId = active.storyDbId || row.current_story_id || undefined;
+
+        if (effectiveStoryId && row.type === "loop" && row.step_id === "implement") {
+          const storyStillOwned = row.current_story_id === effectiveStoryDbId
+            && row.story_id === effectiveStoryId
             && row.story_status === "running";
           if (!storyStillOwned) {
-            const reason = `AGENT_STORY_STATE_MISMATCH: ${active.agentId} is still running ${active.storyId}, but loop step points at ${row.story_id || "(none)"} (${row.story_status || "no-story"}); requeueing stale claim. Transcript: ${active.transcriptPath}`;
+            const reason = `AGENT_STORY_STATE_MISMATCH: ${active.agentId} is still running ${effectiveStoryId}, but loop step points at ${row.story_id || "(none)"} (${row.story_status || "no-story"}); requeueing stale claim. Transcript: ${active.transcriptPath}`;
             console.warn(`[spawner] ${reason}`);
             try { fs.appendFileSync(active.transcriptPath, `--- STORY STATE MISMATCH ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
             terminateActiveProcess(active, "story-state-mismatch");
             activeProcesses.delete(key);
             if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
-            await requeueOpenStoryClaim(active.runId, row.step_id, active.storyId, active.agentId, reason);
+            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
             continue;
           }
         }
@@ -2001,7 +2004,7 @@ ${reason}
           continue;
         }
 
-        if (row.type === "loop" && row.step_id === "implement" && active.storyId && !isTerminalTestRole(active.role, active.agentId)) {
+        if (row.type === "loop" && row.step_id === "implement" && effectiveStoryId && !isTerminalTestRole(active.role, active.agentId)) {
           const generatedScreenRead = generatedScreenReadGuard(active);
           if (generatedScreenRead.detected) {
             const reason = generatedScreenRead.reason + ` Transcript: ${active.transcriptPath}`;
@@ -2010,7 +2013,7 @@ ${reason}
             terminateActiveProcess(active, "generated-screen-read-guard");
             activeProcesses.delete(key);
             if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
-            await requeueOpenStoryClaim(active.runId, row.step_id, active.storyId, active.agentId, reason);
+            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
             continue;
           }
         }

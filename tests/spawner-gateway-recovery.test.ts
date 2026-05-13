@@ -311,9 +311,10 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /src\\\/screens\\\/\[\^\/\]\+\\\.tsx/);
     assert.match(source, /extractGeneratedScreenReadsFromCommand/);
     assert.match(source, /GENERATED_SCREEN_SHARED_READ/);
-    assert.match(source, /row\.type === "loop" && row\.step_id === "implement"/);
+    assert.match(source, /const effectiveStoryId = active\.storyId \|\| row\.story_id \|\| undefined/);
+    assert.match(source, /row\.type === "loop" && row\.step_id === "implement" && effectiveStoryId/);
     assert.match(source, /terminateActiveProcess\(active,\s*"generated-screen-read-guard"\)/);
-    assert.match(source, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*active\.storyId,\s*active\.agentId,\s*reason\)/);
+    assert.match(source, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.agentId,\s*reason\)/);
   });
 
   it("hard-times out verify agents as an infra retry instead of leaving open claims", () => {
