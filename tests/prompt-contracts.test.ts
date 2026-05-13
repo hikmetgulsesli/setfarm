@@ -172,6 +172,22 @@ describe("agent prompt contracts", () => {
     assert.match(output, /report STATUS: retry with the\s+exact missing contract/);
   });
 
+  it("removes raw Stitch read hints from UI contract fragments and injected excerpts", () => {
+    const input = [
+      "LAYOUT RULES (MANDATORY):",
+      "7. Read `stitch/<screen>.html` for full detail if the skeleton is unclear.",
+      "HTML_EXCERPT: <main>...</main> ...(truncated; read file for full HTML)",
+      "...(truncated; read stitch files for full design)",
+    ].join("\n");
+
+    const output = sanitizeAgentPromptContracts(input);
+
+    assert.doesNotMatch(output, /Read `stitch\/<screen>\.html`|read file for full HTML|read stitch files for full design/);
+    assert.match(output, /claim-summary designContracts/);
+    assert.match(output, /report STATUS: retry with the exact missing contract/);
+    assert.match(output, /use injected contracts or report the exact missing contract/);
+  });
+
   it("rewrites stale design-first raw Stitch file-read instructions", () => {
     const input = [
       "# DESIGN-FIRST (MANDATORY)",

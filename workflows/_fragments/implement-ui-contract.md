@@ -12,7 +12,10 @@ LAYOUT RULES (MANDATORY):
 4. Preserve container properties: border, radius, padding, background, gap.
 5. Do not flatten the hierarchy.
 6. Do not invent a different layout.
-7. Read `stitch/<screen>.html` for full detail if the skeleton is unclear.
+7. Use the injected UI CONTRACT, LAYOUT STRUCTURE, SCREEN_INDEX, and
+   claim-summary designContracts. If required detail is missing, report
+   STATUS: retry with the exact missing contract instead of reading raw Stitch
+   files.
 
 DESIGN CONTRACT RULES:
 1. Every navigation anchor must preserve the generated `<a>` tag, className,

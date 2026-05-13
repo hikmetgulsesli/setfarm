@@ -24,6 +24,7 @@ describe("spawner prompt bootstrap", () => {
     assert.match(prompt, /First exec command:\nbash '\/tmp\/setfarm-claim-bootstrap-feature-dev_developer-spawner-test\.sh'/);
     assert.match(prompt, /CLAIM_SUMMARY_FILE=\/tmp\/claim-summary-feature-dev_developer-spawner-test\.json/);
     assert.match(prompt, /Read the structured claim summary at \/tmp\/claim-summary-feature-dev_developer-spawner-test\.json first/);
+    assert.match(prompt, /designContracts\.screenIndex, designContracts\.uiContract, and designContracts\.componentRegistry/);
     assert.match(prompt, /Do NOT parse or dump claim\.input with jq\/sed\/head\/node loops/);
     assert.match(prompt, /Do NOT create scratch\/progress\/todo\/note files inside WORKDIR/);
     assert.doesNotMatch(prompt, /First exec command should start with/);
@@ -59,6 +60,11 @@ describe("spawner prompt bootstrap", () => {
         generatedScreenPolicy: {
           summary: "No generated screen source file is in scope.",
         },
+        designContracts: {
+          screenIndex: [{ componentName: "MainMenu" }],
+          uiContract: [{ screenTitle: "Main Menu" }],
+          componentRegistry: "export { MainMenu } from './MainMenu';",
+        },
         supervisorMemory: "### runtime guard\n- Summary: previous worker touched out-of-scope files",
       }) + "\n");
       fs.writeFileSync(bootstrapFile, buildResolvedClaimBootstrapScript({
@@ -81,6 +87,9 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, /STORY=US-001 Bootstrap story/);
       assert.match(out, /SCOPE_FILES=src\/App\.tsx/);
       assert.match(out, /GENERATED_SCREEN_POLICY=No generated screen source file is in scope/);
+      assert.match(out, /SCREEN_INDEX_CONTRACTS=1/);
+      assert.match(out, /UI_CONTRACTS=1/);
+      assert.match(out, /COMPONENT_REGISTRY=present \d+ chars/);
       assert.match(out, /SUPERVISOR_MEMORY=present \d+ chars/);
       assert.match(out, /Project: bootstrap sensor/);
     } finally {
@@ -96,8 +105,25 @@ describe("spawner prompt bootstrap", () => {
       fs.writeFileSync(path.join(workdir, ".story-scope-files"), "src/App.tsx\nsrc/state.ts\n");
       fs.writeFileSync(path.join(workdir, "SUPERVISOR_MEMORY.md"), "# Supervisor Memory\n\n### implement runtime-guard\n- Summary: worker read forbidden generated screens\n");
       fs.writeFileSync(path.join(workdir, "src", "screens", "SCREEN_INDEX.json"), JSON.stringify([
-        { file: "src/screens/MainMenu.tsx" },
-        { file: "src/screens/GameBoard.tsx" },
+        { file: "src/screens/MainMenu.tsx", componentName: "MainMenu", actions: [{ id: "start-game-1", label: "START GAME" }] },
+        { file: "src/screens/GameBoard.tsx", componentName: "GameBoard", actions: [{ id: "drop-1", label: "Drop" }] },
+      ]));
+      fs.writeFileSync(path.join(workdir, "src", "screens", "index.ts"), [
+        "export { MainMenu } from './MainMenu';",
+        "export { GameBoard } from './GameBoard';",
+      ].join("\n"));
+      fs.mkdirSync(path.join(workdir, "stitch"), { recursive: true });
+      fs.writeFileSync(path.join(workdir, "stitch", "UI_CONTRACT.json"), JSON.stringify([
+        {
+          screenId: "main-menu",
+          screenTitle: "Main Menu",
+          deviceType: "DESKTOP",
+          buttons: [{ label: "START GAME" }],
+          inputs: [],
+          navigation: [],
+          totalInteractive: 1,
+          requiresRouter: false,
+        },
       ]));
       const summary = buildClaimSummary({
         wfId: "feature-dev",
@@ -142,6 +168,11 @@ describe("spawner prompt bootstrap", () => {
         "src/screens/MainMenu.tsx",
       ]);
       assert.match((summary.generatedScreenPolicy as any).summary, /No generated screen source file is in scope/);
+      assert.equal((summary.designContracts as any).screenIndex.length, 2);
+      assert.equal((summary.designContracts as any).uiContract.length, 1);
+      assert.match(JSON.stringify((summary.designContracts as any).screenIndex), /START GAME/);
+      assert.match(String((summary.designContracts as any).componentRegistry), /export \{ MainMenu \}/);
+      assert.match(String((summary.designContracts as any).source), /instead of reading raw stitch\/\*\.html/);
       assert.match(String(summary.supervisorMemory), /forbidden generated screens/);
       assert.match(String(summary.acceptanceCriteria), /Pieces fall and rotate/);
       assert.match(JSON.stringify(summary.handoff), /Audit fallback only/);

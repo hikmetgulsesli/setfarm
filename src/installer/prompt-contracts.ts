@@ -50,6 +50,9 @@ const STALE_IMPLEMENT_RAW_STITCH_DOM_BLOCK =
 const STALE_IMPLEMENT_STITCH_FILE_READ_BLOCK =
   /3\. If stitch\/ directory exists:\n\s+a\. Read stitch\/DESIGN_MANIFEST\.json only to identify\/count screens\n\s+b\. Read only the stitch\/\*\.html files for STORY_SCREENS \/ current scope, and\n\s+only when layout details are not already available from the injected\n\s+STORY_SCREENS\/UI contract\n\s+c\. Read stitch\/design-tokens\.css only enough to import it and confirm token names\n\s+d\. Implementation MUST match Stitch design \(layout, colors, fonts\)\n\s+e\. NEVER use fonts\/colors NOT in design-tokens\.css\n\s+f\. You MUST @import stitch\/design-tokens\.css from the main CSS entry — do NOT copy or recreate tokens\.\n\s+g\. stitch\/design-tokens\.css is the SINGLE SOURCE OF TRUTH for all design values\./g;
 
+const STALE_UI_CONTRACT_RAW_HTML_LINE =
+  /7\. Read `stitch\/<screen>\.html` for full detail if the skeleton is unclear\./g;
+
 const STALE_DESIGN_FIRST_RAW_STITCH_INTRO =
   /The Stitch files below are the design source of truth\. The full HTML is not\npasted into the prompt; read only current SCOPE_FILES from WORKDIR\. If a\ngenerated screen is shared\/read-only for this story, use SCREEN_INDEX\/index\.ts\nand the injected contracts instead of reading any component source from that\nshared screen\. Focused line-range reads are allowed only for generated screen\nfiles explicitly listed in SCOPE_FILES\. Write only files in the current story\nscope\. Setfarm enforces this at runtime:\nreading a generated src\/screens\/\*\.tsx file outside SCOPE_FILES kills and\nretries the claim before generated-screen context overload\./g;
 
@@ -230,6 +233,15 @@ export function sanitizeAgentPromptContracts(input: string): string {
       "     exact missing contract instead of loading raw design files.",
     ].join("\n"),
   );
+
+  output = output.replace(
+    STALE_UI_CONTRACT_RAW_HTML_LINE,
+    "7. Use the injected UI CONTRACT, LAYOUT STRUCTURE, SCREEN_INDEX, and claim-summary designContracts. If required detail is missing, report STATUS: retry with the exact missing contract instead of reading raw Stitch files.",
+  );
+
+  output = output
+    .replace(/\.\.\.\(truncated; read file for full HTML\)/g, "...(truncated; use injected contracts or report the exact missing contract)")
+    .replace(/\.\.\.\(truncated; read stitch files for full design\)/g, "...(truncated; use injected contracts or report the exact missing contract)");
 
   output = output.replace(
     STALE_DESIGN_FIRST_RAW_STITCH_INTRO,

@@ -1768,11 +1768,11 @@ async function injectStoryContext(
           const html = fs.readFileSync(htmlFile, "utf-8");
           const excerpt = html.replace(/\s+/g, " ").trim();
           const truncated = excerpt.length > STITCH_HTML_EXCERPT_CHARS
-            ? excerpt.slice(0, STITCH_HTML_EXCERPT_CHARS) + " ...(truncated; read file for full HTML)"
+            ? excerpt.slice(0, STITCH_HTML_EXCERPT_CHARS) + " ...(truncated; use injected contracts or report the exact missing contract)"
             : excerpt;
           stitchHtmlContent += `\nSTITCH SCREEN: ${screen.name || screen.screenId}\nFILE: ${screen.htmlFile || `stitch/${screen.screenId}.html`}\nHTML_EXCERPT: ${truncated}\n`;
           if (stitchHtmlContent.length > STITCH_HTML_TOTAL_CHARS) {
-            stitchHtmlContent = stitchHtmlContent.slice(0, STITCH_HTML_TOTAL_CHARS) + "\n...(truncated; read stitch files for full design)\n";
+            stitchHtmlContent = stitchHtmlContent.slice(0, STITCH_HTML_TOTAL_CHARS) + "\n...(truncated; use injected contracts or report the exact missing contract)\n";
             break;
           }
         }

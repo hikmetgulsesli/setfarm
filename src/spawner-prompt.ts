@@ -95,6 +95,14 @@ function parseJsonArray(raw: string): unknown[] {
   }
 }
 
+function readJsonArrayFile(filePath: string): unknown[] {
+  try {
+    return parseJsonArray(fs.readFileSync(filePath, "utf-8"));
+  } catch {
+    return [];
+  }
+}
+
 function extractScopeFiles(input: string, workdir: string): string[] {
   const fromScopeFile = readLinesFile(path.join(workdir, ".story-scope-files"));
   if (fromScopeFile.length > 0) return fromScopeFile;
@@ -132,6 +140,45 @@ function readGeneratedScreenFiles(workdir: string): string[] {
   } catch {
     return [];
   }
+}
+
+function readTextFileLimit(filePath: string, limit: number): string {
+  try {
+    if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return "";
+    return fs.readFileSync(filePath, "utf-8").trim().slice(0, limit);
+  } catch {
+    return "";
+  }
+}
+
+function compactUiContract(input: unknown[]): unknown[] {
+  return input.slice(0, 40).map((item) => {
+    if (!item || typeof item !== "object") return item;
+    const record = item as Record<string, unknown>;
+    return {
+      screenId: record["screenId"],
+      screenTitle: record["screenTitle"],
+      deviceType: record["deviceType"],
+      buttons: record["buttons"],
+      navigation: record["navigation"],
+      inputs: record["inputs"],
+      totalInteractive: record["totalInteractive"],
+      requiresRouter: record["requiresRouter"],
+      requiresDragDrop: record["requiresDragDrop"],
+    };
+  });
+}
+
+function readDesignContractSummary(workdir: string): Record<string, unknown> {
+  const screenIndex = readJsonArrayFile(path.join(workdir, "src", "screens", "SCREEN_INDEX.json"));
+  const uiContract = compactUiContract(readJsonArrayFile(path.join(workdir, "stitch", "UI_CONTRACT.json")));
+  const componentRegistry = readTextFileLimit(path.join(workdir, "src", "screens", "index.ts"), 12000);
+  return {
+    source: "Authoritative safe design handoff. Use this summary instead of reading raw stitch/*.html, .stitch-screens*.json, stitch/DESIGN_DOM.json, or shared src/screens/*.tsx files.",
+    screenIndex,
+    uiContract,
+    componentRegistry,
+  };
 }
 
 function readSupervisorMemoryFile(workdir: string, repo: string): string {
@@ -195,6 +242,7 @@ export function buildClaimSummary(params: {
   const generatedScreenFiles = readGeneratedScreenFiles(workdir);
   const generatedScreenAllowed = generatedScreenFiles.filter((file) => scopeFileSet.has(file));
   const generatedScreenReadOnly = generatedScreenFiles.filter((file) => !scopeFileSet.has(file));
+  const designContracts = readDesignContractSummary(workdir);
   const supervisorMemoryFromInput = sliceSection(
     input,
     /^\s*SUPERVISOR MEMORY.*?:\s*/m,
@@ -229,6 +277,7 @@ export function buildClaimSummary(params: {
       forbiddenSourceFiles: generatedScreenReadOnly,
       safeMetadataFiles: ["src/screens/SCREEN_INDEX.json", "src/screens/index.ts"],
     },
+    designContracts,
     currentStory: currentStory.currentStory,
     acceptanceCriteria: currentStory.acceptanceCriteria,
     uiBehaviorContract: sliceSection(
@@ -284,7 +333,7 @@ esac
 
 printf 'STEP_ID=%s\\nWORKDIR=%s\\nCLAIM_SUMMARY_FILE=%s\\n' "$STEP_ID" "$(pwd)" "$CLAIM_SUMMARY_FILE"
 if [ -n "$CLAIM_SUMMARY_FILE" ] && [ -f "$CLAIM_SUMMARY_FILE" ]; then
-  node -e 'const fs=require("fs"); const s=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const lines=[]; if (s.storyId || s.storyTitle) lines.push(("STORY=" + (s.storyId || "") + " " + (s.storyTitle || "")).trim()); if (Array.isArray(s.scopeFiles)) lines.push("SCOPE_FILES=" + s.scopeFiles.join(", ")); if (s.generatedScreenPolicy && s.generatedScreenPolicy.summary) lines.push("GENERATED_SCREEN_POLICY=" + s.generatedScreenPolicy.summary); if (s.supervisorMemory) lines.push("SUPERVISOR_MEMORY=present " + String(s.supervisorMemory).length + " chars"); if (s.task) lines.push("TASK=" + String(s.task).slice(0, 500)); process.stdout.write(lines.join("\\n") + "\\n");' "$CLAIM_SUMMARY_FILE"
+  node -e 'const fs=require("fs"); const s=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const lines=[]; if (s.storyId || s.storyTitle) lines.push(("STORY=" + (s.storyId || "") + " " + (s.storyTitle || "")).trim()); if (Array.isArray(s.scopeFiles)) lines.push("SCOPE_FILES=" + s.scopeFiles.join(", ")); if (s.generatedScreenPolicy && s.generatedScreenPolicy.summary) lines.push("GENERATED_SCREEN_POLICY=" + s.generatedScreenPolicy.summary); const dc=s.designContracts||{}; if (Array.isArray(dc.screenIndex)) lines.push("SCREEN_INDEX_CONTRACTS=" + dc.screenIndex.length); if (Array.isArray(dc.uiContract)) lines.push("UI_CONTRACTS=" + dc.uiContract.length); if (dc.componentRegistry) lines.push("COMPONENT_REGISTRY=present " + String(dc.componentRegistry).length + " chars"); if (s.supervisorMemory) lines.push("SUPERVISOR_MEMORY=present " + String(s.supervisorMemory).length + " chars"); if (s.task) lines.push("TASK=" + String(s.task).slice(0, 500)); process.stdout.write(lines.join("\\n") + "\\n");' "$CLAIM_SUMMARY_FILE"
 fi
 printf '%s' "$TASK_PREVIEW" | head -c 1200
 echo
@@ -312,7 +361,7 @@ BOOTSTRAP_FILE=${params.bootstrapFile}
 First exec command:
 bash ${shellQuote(params.bootstrapFile)}
 
-Do ${params.wfId}/${params.role} work in WORKDIR only. Read the structured claim summary at ${params.claimSummaryFile} first; it is the authoritative handoff for story id/title, workdir, scope files, generatedScreenPolicy, supervisorMemory, screen refs, retry feedback, and output paths. The full claim at ${params.claimFile} is an audit fallback only. Do NOT parse or dump claim.input with jq/sed/head/node loops; use the summary fields and only fall back to the full claim for a missing focused field. Obey generatedScreenPolicy exactly: reading a forbidden src/screens/*.tsx file kills and retries the claim.
+Do ${params.wfId}/${params.role} work in WORKDIR only. Read the structured claim summary at ${params.claimSummaryFile} first; it is the authoritative handoff for story id/title, workdir, scope files, generatedScreenPolicy, designContracts, supervisorMemory, screen refs, retry feedback, and output paths. Use designContracts.screenIndex, designContracts.uiContract, and designContracts.componentRegistry instead of reading raw Stitch files or shared generated screen source. The full claim at ${params.claimFile} is an audit fallback only. Do NOT parse or dump claim.input with jq/sed/head/node loops; use the summary fields and only fall back to the full claim for a missing focused field. Obey generatedScreenPolicy exactly: reading a forbidden src/screens/*.tsx file kills and retries the claim.
 Do NOT create scratch/progress/todo/note files inside WORKDIR unless they are explicitly listed in scopeFiles. Use ${params.outputFile} for final output and /tmp/setfarm-progress-<run-id>.txt for checkpoints only.
 Important: OpenClaw read/edit/write tools resolve relative paths against the configured agent workspace, not the shell cwd. When using read/edit/write tools for project files, use absolute paths under WORKDIR, for example "$WORKDIR/src/App.tsx". For exec commands, rerun the bootstrap command above or pass workdir="$WORKDIR" after resolving it.
 Do not rely on CLAIM_FILE, CLAIM_SUMMARY_FILE, OUTPUT_FILE, STEP_ID, or WORKDIR shell variables persisting across separate exec calls; each exec starts a fresh shell. If you need claim context again, use the literal summary path ${params.claimSummaryFile}. Write final output to the literal path ${params.outputFile}. Do NOT run step peek/claim. No subagents/background delegation. No PR actions unless claim explicitly owns PR work.
