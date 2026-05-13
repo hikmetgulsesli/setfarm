@@ -55,6 +55,9 @@ describe("spawner prompt bootstrap", () => {
         storyTitle: "Bootstrap story",
         task: "Project: bootstrap sensor",
         scopeFiles: ["src/App.tsx"],
+        generatedScreenPolicy: {
+          summary: "No generated screen source file is in scope.",
+        },
       }) + "\n");
       fs.writeFileSync(bootstrapFile, buildResolvedClaimBootstrapScript({
         claimFile,
@@ -75,6 +78,7 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, new RegExp(`CLAIM_SUMMARY_FILE=${claimSummaryFile.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
       assert.match(out, /STORY=US-001 Bootstrap story/);
       assert.match(out, /SCOPE_FILES=src\/App\.tsx/);
+      assert.match(out, /GENERATED_SCREEN_POLICY=No generated screen source file is in scope/);
       assert.match(out, /Project: bootstrap sensor/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -85,8 +89,12 @@ describe("spawner prompt bootstrap", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-"));
     try {
       const workdir = path.join(tmp, "worktree");
-      fs.mkdirSync(workdir, { recursive: true });
+      fs.mkdirSync(path.join(workdir, "src", "screens"), { recursive: true });
       fs.writeFileSync(path.join(workdir, ".story-scope-files"), "src/App.tsx\nsrc/state.ts\n");
+      fs.writeFileSync(path.join(workdir, "src", "screens", "SCREEN_INDEX.json"), JSON.stringify([
+        { file: "src/screens/MainMenu.tsx" },
+        { file: "src/screens/GameBoard.tsx" },
+      ]));
       const summary = buildClaimSummary({
         wfId: "feature-dev",
         role: "developer",
@@ -116,6 +124,12 @@ describe("spawner prompt bootstrap", () => {
       assert.equal(summary.storyId, "US-001");
       assert.equal(summary.storyTitle, "Tetris engine");
       assert.deepEqual(summary.scopeFiles, ["src/App.tsx", "src/state.ts"]);
+      assert.deepEqual((summary.generatedScreenPolicy as any).allowedSourceFiles, []);
+      assert.deepEqual((summary.generatedScreenPolicy as any).forbiddenSourceFiles, [
+        "src/screens/GameBoard.tsx",
+        "src/screens/MainMenu.tsx",
+      ]);
+      assert.match((summary.generatedScreenPolicy as any).summary, /No generated screen source file is in scope/);
       assert.match(String(summary.acceptanceCriteria), /Pieces fall and rotate/);
       assert.match(JSON.stringify(summary.handoff), /Audit fallback only/);
     } finally {
