@@ -162,6 +162,22 @@ function hasAttribute(attrs: string, name: string): boolean {
   return new RegExp(`\\b${name}\\b\\s*(?:=|$)`, "i").test(attrs);
 }
 
+function attrValue(attrs: string, name: string): string | null {
+  const match = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|\\{\\s*["']([^"']*)["']\\s*\\})`, "i").exec(attrs);
+  if (!match) return null;
+  return (match[1] ?? match[2] ?? match[3] ?? "").trim();
+}
+
+function isDeadHrefValue(value: string | null): boolean {
+  if (value === null) return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "" || normalized === "#" || normalized.startsWith("javascript:void(0)");
+}
+
+function isExplicitlyInertAnchor(attrs: string): boolean {
+  return hasAttribute(attrs, "aria-current") || hasAttribute(attrs, "aria-disabled") || hasAttribute(attrs, "disabled");
+}
+
 function findStaticInteractionIssues(workdir: string, files: string[]): string[] {
   const issues: string[] = [];
   for (const rel of files.filter((file) => IMPLEMENT_SCAN_EXT.test(file)).slice(0, 80)) {
@@ -180,11 +196,14 @@ function findStaticInteractionIssues(workdir: string, files: string[]): string[]
 
     const clean = sourceWithoutComments(source);
 
-    const deadHref = /<a\b[^>]*\bhref\s*=\s*(?:"\s*(?:#|javascript:void\(0\)|)\s*"|'\s*(?:#|javascript:void\(0\)|)\s*')[^>]*>/gi;
+    const deadHref = /<a\b([^>]*)>/gi;
     let linkMatch: RegExpExecArray | null;
     while ((linkMatch = deadHref.exec(clean)) !== null) {
-      issues.push(`${rel}:${lineForIndex(clean, linkMatch.index)} active link uses a dead href`);
-      if (issues.length >= 12) break;
+      const attrs = linkMatch[1] || "";
+      if (isDeadHrefValue(attrValue(attrs, "href")) && !isExplicitlyInertAnchor(attrs)) {
+        issues.push(`${rel}:${lineForIndex(clean, linkMatch.index)} active link uses a dead href`);
+        if (issues.length >= 12) break;
+      }
     }
 
     const button = /<button\b([^>]*)>/gi;

@@ -4121,6 +4121,7 @@ ${screenDescs}
           checkTestGate,
           checkRuntimeBridgeGate,
           checkQaFixSmokeGate,
+          checkDesignDomImplementationGate,
         } = await import("./steps/06-implement/guards.js");
         const wd = await resolveStoryWorktree(step.current_story_id, context["story_workdir"] || "");
         const scopeLoopConfig = parseLoopConfigSafe(step.loop_config, step.run_id);
@@ -4277,6 +4278,22 @@ ${screenDescs}
             context["failure_suggestion"] = qaSmokeResult.suggestion!;
             await updateRunContext(step.run_id, context);
             await failStep(stepId, qaSmokeResult.reason!);
+            return { advanced: false, runCompleted: false };
+          }
+
+          // DESIGN_DOM implementation gate: screen stories must not advance
+          // with static controls, missing hrefs, or wrong icons that are
+          // already declared in Stitch/DESIGN_DOM. Catch these before verify
+          // consumes story retries with review comments about the same contract.
+          const designDomResult = await checkDesignDomImplementationGate(
+            storyRow.story_id, step.current_story_id, storyRow.title, wd, context["repo"] || "",
+          );
+          if (!designDomResult.passed && designDomResult.category) {
+            context["previous_failure"] = designDomResult.reason!;
+            context["failure_category"] = designDomResult.category;
+            context["failure_suggestion"] = designDomResult.suggestion!;
+            await updateRunContext(step.run_id, context);
+            await failStep(stepId, designDomResult.reason!);
             return { advanced: false, runCompleted: false };
           }
         }

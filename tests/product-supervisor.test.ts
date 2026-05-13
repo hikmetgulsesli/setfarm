@@ -228,6 +228,7 @@ describe("product supervisor", () => {
           "export default function App() {",
           "  return <main>",
           "    <button>Start</button>",
+          "    <a href=\"#\">Dead hash</a>",
           "    <a href=\"https://https//example.test\">Broken</a>",
           "  </main>;",
           "}",
@@ -248,7 +249,49 @@ describe("product supervisor", () => {
       assert.equal(result.ok, false);
       assert.match(result.reason, /IMPLEMENT_INTERACTION_CONTRACT/);
       assert.match(result.reason, /active <button>/);
+      assert.match(result.reason, /active link uses a dead href/);
       assert.match(result.reason, /malformed URL/);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("allows explicitly inert hash anchors without treating them as active dead links", () => {
+    const repo = mkdtempSync(path.join(tmpdir(), "setfarm-supervisor-inert-anchor-"));
+    try {
+      mkdirSync(path.join(repo, "src"), { recursive: true });
+      execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
+      execFileSync("git", ["config", "user.email", "setfarm@example.test"], { cwd: repo });
+      execFileSync("git", ["config", "user.name", "Setfarm Test"], { cwd: repo });
+      writeFileSync(path.join(repo, "src", "App.tsx"), "export default function App() { return <main />; }\n");
+      execFileSync("git", ["add", "."], { cwd: repo });
+      execFileSync("git", ["commit", "-m", "base"], { cwd: repo, stdio: "ignore" });
+
+      writeFileSync(
+        path.join(repo, "src", "App.tsx"),
+        [
+          "export default function App() {",
+          "  return <nav>",
+          "    <a href=\"#\" aria-current=\"page\">Terminal</a>",
+          "    <a href=\"#\" aria-disabled=\"true\" tabIndex={-1}>Records</a>",
+          "    <button type=\"button\" onClick={() => {}}>Start</button>",
+          "  </nav>;",
+          "}",
+          "",
+        ].join("\n"),
+      );
+
+      const result = runProductSupervisorGate({
+        phase: "implement",
+        runId: "run-1",
+        stepId: "implement",
+        workdir: repo,
+        baseRef: "HEAD",
+        currentStory: { story_id: "US-001", title: "Wire inert anchors" },
+        rawOutput: "STATUS: done\nCHANGES: preserved current and disabled anchors",
+      });
+
+      assert.equal(result.ok, true, result.reason);
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }

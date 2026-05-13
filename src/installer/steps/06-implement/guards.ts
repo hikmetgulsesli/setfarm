@@ -141,6 +141,14 @@ function stripSourceComments(source: string): string {
     .replace(/\/\/.*$/gm, "");
 }
 
+function lineForIndex(source: string, index: number): number {
+  return source.slice(0, Math.max(0, index)).split(/\r?\n/).length;
+}
+
+function hasAttribute(attrs: string, name: string): boolean {
+  return new RegExp(`\\b${name}\\b\\s*(?:=|$)`, "i").test(attrs);
+}
+
 export function sourceExposesWindowApp(source: string): boolean {
   const clean = stripSourceComments(source);
   return (
@@ -314,6 +322,230 @@ export function checkQaFixSmokeGate(storyId: string, storyTitle: string, workdir
       suggestion: "Fix every reported UNWIRED_BUTTON, blank page, console, network, hydration, and layout failure before reporting STATUS: done. Disabled placeholder controls must use disabled or aria-disabled; active controls need real behavior.",
     };
   }
+}
+
+type JsxBlock = { attrs: string; inner: string; index: number };
+
+const ICON_ALIASES: Record<string, string[]> = {
+  emoji_events: ["Trophy", "Award", "Medal", "emoji_events"],
+  help: ["HelpCircle", "CircleHelp", "help"],
+  keyboard_arrow_down: ["ArrowDown", "ChevronDown", "keyboard_arrow_down"],
+  keyboard_arrow_left: ["ArrowLeft", "ChevronLeft", "keyboard_arrow_left"],
+  keyboard_arrow_right: ["ArrowRight", "ChevronRight", "keyboard_arrow_right"],
+  keyboard_arrow_up: ["ArrowUp", "ChevronUp", "keyboard_arrow_up"],
+  logout: ["LogOut", "LogOutIcon", "logout"],
+  memory: ["Cpu", "MemoryStick", "memory"],
+  menu: ["Menu", "menu"],
+  play_arrow: ["Play", "play_arrow"],
+  power_settings_new: ["Power", "power_settings_new"],
+  refresh: ["RefreshCw", "RefreshCcw", "RotateCw", "refresh"],
+  restart_alt: ["RefreshCw", "RefreshCcw", "RotateCcw", "restart_alt"],
+  settings: ["Settings", "settings"],
+  terminal: ["Terminal", "terminal"],
+};
+
+function attrValue(attrs: string, name: string): string | null {
+  const match = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|\\{\\s*["']([^"']*)["']\\s*\\})`, "i").exec(attrs);
+  if (!match) return null;
+  return (match[1] ?? match[2] ?? match[3] ?? "").trim();
+}
+
+function isDeadHrefValue(value: string | null): boolean {
+  if (value === null) return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "" || normalized === "#" || normalized.startsWith("javascript:void(0)");
+}
+
+function isExplicitlyInertAnchor(attrs: string): boolean {
+  return hasAttribute(attrs, "aria-current") || hasAttribute(attrs, "aria-disabled") || hasAttribute(attrs, "disabled");
+}
+
+function normalizeControlLabel(value: string): string {
+  return String(value || "")
+    .replace(/\[icon:[^\]]*\]/gi, " ")
+    .replace(/[_-]+/g, " ")
+    .replace(/[^a-z0-9]+/gi, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function jsxVisibleText(inner: string): string {
+  return inner
+    .replace(/\{[^}]*\}/g, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractJsxBlocks(source: string, tag: "a" | "button"): JsxBlock[] {
+  const clean = stripSourceComments(source);
+  const re = new RegExp(`<${tag}\\b([^>]*)>([\\s\\S]*?)<\\/${tag}>`, "gi");
+  const blocks: JsxBlock[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(clean)) !== null) {
+    blocks.push({ attrs: match[1] || "", inner: match[2] || "", index: match.index });
+  }
+  return blocks;
+}
+
+function blockHaystack(block: JsxBlock): string {
+  return normalizeControlLabel(`${block.attrs} ${jsxVisibleText(block.inner)}`);
+}
+
+function blockHasIcon(block: JsxBlock, icon: string): boolean {
+  const expected = String(icon || "").trim();
+  if (!expected) return true;
+  const raw = `${block.attrs}\n${block.inner}`;
+  const normalized = normalizeControlLabel(raw);
+  const aliases = ICON_ALIASES[expected] || [expected];
+  return aliases.some((alias) => {
+    const compact = normalizeControlLabel(alias);
+    if (compact && normalized.includes(compact)) return true;
+    return new RegExp(`\\b${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(raw);
+  });
+}
+
+function blockMatchesControl(block: JsxBlock, control: any): boolean {
+  const label = normalizeControlLabel(control?.label || control?.text || "");
+  const icon = String(control?.icon || "").trim();
+  const haystack = blockHaystack(block);
+  if (label && haystack.includes(label)) return true;
+  if (icon && blockHasIcon(block, icon)) return true;
+  return false;
+}
+
+function buttonIsActionable(block: JsxBlock): boolean {
+  const attrs = block.attrs || "";
+  const isDisabled = hasAttribute(attrs, "disabled") || hasAttribute(attrs, "aria-disabled");
+  const isSubmit = /\btype\s*=\s*(?:"submit"|'submit'|{\s*["']submit["']\s*})/i.test(attrs);
+  const hasHandler = /\bon(?:Click|PointerDown|PointerUp|MouseDown|MouseUp|TouchStart|TouchEnd|KeyDown|Submit)\s*=/.test(attrs);
+  return isDisabled || isSubmit || hasHandler;
+}
+
+function loadDesignDomScreens(workdir: string, repoPath = ""): any[] {
+  const candidates = [
+    path.join(workdir, "stitch", "DESIGN_DOM.json"),
+    repoPath ? path.join(repoPath, "stitch", "DESIGN_DOM.json") : "",
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    try {
+      if (!fs.existsSync(candidate)) continue;
+      const parsed = JSON.parse(fs.readFileSync(candidate, "utf-8"));
+      if (Array.isArray(parsed)) return parsed;
+      if (Array.isArray(parsed?.screens)) return parsed.screens;
+      if (parsed?.screens && typeof parsed.screens === "object") return Object.values(parsed.screens);
+      if (parsed && typeof parsed === "object") {
+        return Object.values(parsed).filter((value: any) => value && typeof value === "object" && (value.buttons || value.navLinks));
+      }
+    } catch {}
+  }
+  return [];
+}
+
+function loadScreenIndex(workdir: string, repoPath = ""): any[] {
+  const candidates = [
+    path.join(workdir, "src", "screens", "SCREEN_INDEX.json"),
+    repoPath ? path.join(repoPath, "src", "screens", "SCREEN_INDEX.json") : "",
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    try {
+      if (!fs.existsSync(candidate)) continue;
+      const parsed = JSON.parse(fs.readFileSync(candidate, "utf-8"));
+      if (Array.isArray(parsed)) return parsed;
+    } catch {}
+  }
+  return [];
+}
+
+function designScreenForIndexEntry(entry: any, screens: any[]): any | undefined {
+  const entryScreenId = String(entry?.screenId || "").trim();
+  const entryTitle = normalizeControlLabel(entry?.title || entry?.name || "");
+  return screens.find((screen) => String(screen?.screenId || screen?.id || "").trim() === entryScreenId)
+    || screens.find((screen) => normalizeControlLabel(screen?.title || screen?.name || screen?.screenName || "") === entryTitle);
+}
+
+export function findDesignDomImplementationIssues(workdir: string, scopeFiles: string[], repoPath = ""): string[] {
+  if (!workdir || !fs.existsSync(workdir) || scopeFiles.length === 0) return [];
+  const screenIndex = loadScreenIndex(workdir, repoPath);
+  const designScreens = loadDesignDomScreens(workdir, repoPath);
+  if (screenIndex.length === 0 || designScreens.length === 0) return [];
+
+  const scoped = new Set(scopeFiles);
+  const issues: string[] = [];
+  for (const entry of screenIndex.filter((item) => scoped.has(String(item?.file || ""))).slice(0, 8)) {
+    const file = String(entry.file || "");
+    const abs = path.join(workdir, file);
+    if (!fs.existsSync(abs)) continue;
+    const source = fs.readFileSync(abs, "utf-8");
+    const buttons = extractJsxBlocks(source, "button");
+    const links = extractJsxBlocks(source, "a");
+    const design = designScreenForIndexEntry(entry, designScreens);
+    if (!design) continue;
+    const screenName = String(entry.title || design.title || design.name || file);
+
+    for (const control of Array.isArray(design.buttons) ? design.buttons : []) {
+      const label = String(control?.label || control?.text || "").trim();
+      const icon = String(control?.icon || "").trim();
+      if (!label && !icon) continue;
+      const match = buttons.find((block) => blockMatchesControl(block, control));
+      if (!match) {
+        issues.push(`${file}: missing DESIGN_DOM button "${label || icon}" on ${screenName}`);
+      } else {
+        if (!buttonIsActionable(match)) {
+          issues.push(`${file}:${lineForIndex(source, match.index)} DESIGN_DOM button "${label || icon}" is static or lacks a handler/disabled state`);
+        }
+        if (icon && !blockHasIcon(match, icon)) {
+          issues.push(`${file}:${lineForIndex(source, match.index)} DESIGN_DOM button "${label || icon}" is missing expected icon "${icon}"`);
+        }
+      }
+      if (issues.length >= 12) return issues;
+    }
+
+    for (const nav of Array.isArray(design.navLinks) ? design.navLinks : []) {
+      const label = String(nav?.label || nav?.text || "").trim();
+      const expectedHref = String(nav?.href || "").trim();
+      const match = links.find((block) => blockMatchesControl(block, nav));
+      if (!match) {
+        issues.push(`${file}: missing DESIGN_DOM link "${label || expectedHref}" on ${screenName}`);
+      } else {
+        const actualHref = attrValue(match.attrs, "href");
+        if (expectedHref && actualHref === null) {
+          issues.push(`${file}:${lineForIndex(source, match.index)} DESIGN_DOM link "${label || expectedHref}" lacks href="${expectedHref}"`);
+        } else if (isDeadHrefValue(actualHref) && !isExplicitlyInertAnchor(match.attrs) && !/\bonClick\s*=/.test(match.attrs)) {
+          issues.push(`${file}:${lineForIndex(source, match.index)} active DESIGN_DOM link "${label || expectedHref}" uses a dead href without aria-current/aria-disabled or handler`);
+        }
+        if (String(nav?.icon || "").trim() && !blockHasIcon(match, String(nav.icon))) {
+          issues.push(`${file}:${lineForIndex(source, match.index)} DESIGN_DOM link "${label || expectedHref}" is missing expected icon "${nav.icon}"`);
+        }
+      }
+      if (issues.length >= 12) return issues;
+    }
+  }
+  return issues;
+}
+
+export async function checkDesignDomImplementationGate(
+  storyId: string,
+  currentStoryDbId: string,
+  storyTitle: string,
+  workdir: string,
+  repoPath = "",
+): Promise<ScopeCheckResult> {
+  if (!workdir || !fs.existsSync(workdir)) return { passed: true };
+  const row = await pgGet<{ scope_files: string | null }>(
+    "SELECT scope_files FROM stories WHERE id = $1",
+    [currentStoryDbId],
+  );
+  const scopeFiles = parseScopeFiles(row?.scope_files).filter((file) => /^src\/screens\/.+\.(tsx|jsx)$/i.test(file));
+  if (scopeFiles.length === 0) return { passed: true };
+  const issues = findDesignDomImplementationIssues(workdir, scopeFiles, repoPath);
+  if (issues.length === 0) return { passed: true };
+  return {
+    passed: false,
+    reason: `DESIGN_DOM_IMPLEMENTATION_MISMATCH: Story ${storyId} (${storyTitle}) reported STATUS: done but scoped screen code does not satisfy DESIGN_DOM controls.\n${issues.slice(0, 12).map((issue) => `- ${issue}`).join("\n")}`,
+    category: "DESIGN_DOM_IMPLEMENTATION_MISMATCH",
+    suggestion: "Fix the scoped screen files so every DESIGN_DOM button/link remains present, has the declared href/icon where applicable, and is either wired to visible behavior or explicitly disabled/current before reporting done.",
+  };
 }
 
 /**

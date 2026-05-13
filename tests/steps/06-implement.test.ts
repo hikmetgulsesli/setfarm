@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { implementModule } from "../../dist/installer/steps/06-implement/module.js";
-import { checkBuildGate, checkTestGate, computeScopeFileLimits, detectPackageBuildCommand, getOutOfScopeStoryFiles, normalize, sourceExposesWindowApp, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
+import { checkBuildGate, checkTestGate, computeScopeFileLimits, detectPackageBuildCommand, findDesignDomImplementationIssues, getOutOfScopeStoryFiles, normalize, sourceExposesWindowApp, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
 import { cleanupOutOfScopeWorktreeFiles } from "../../dist/installer/steps/06-implement/context.js";
 import { decideStorySystemSmokeGate } from "../../dist/installer/step-ops.js";
 import { checkStoryDesignCompliance } from "../../dist/installer/step-guardrails.js";
@@ -303,6 +303,106 @@ describe("06-implement step module", () => {
       assert.match(scopedContractFailure, /inline SVG componentleriyle veya kurulu SVG icon library/);
       assert.match(scopedContractFailure, /transition-colors, transition-transform, transition-opacity/);
       assert.doesNotMatch(scopedContractFailure, /hardcoded renkleri|stitch\/design-tokens\.css'i import et/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("catches scoped screen controls that drift from DESIGN_DOM before verify retries are spent", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-design-dom-gate-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "stitch"), { recursive: true });
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { screenId: "pause-1", title: "Pause Overlay", file: "src/screens/PauseOverlay.tsx" },
+        { screenId: "over-1", title: "Game Over", file: "src/screens/GameOver.tsx" },
+      ]));
+      fs.writeFileSync(path.join(tmp, "stitch/DESIGN_DOM.json"), JSON.stringify({
+        screens: [
+          {
+            screenId: "pause-1",
+            title: "Pause Overlay",
+            buttons: [{ label: "SUPERVISOR", action: "click-action" }],
+            navLinks: [{ label: "terminal", href: "#", icon: "terminal" }],
+          },
+          {
+            screenId: "over-1",
+            title: "Game Over",
+            buttons: [
+              { label: "REBOOT SESSION", icon: "restart_alt", action: "reset" },
+              { label: "DISCONNECT (MAIN MENU)", icon: "logout", action: "navigate" },
+            ],
+            navLinks: [],
+          },
+        ],
+      }));
+      fs.writeFileSync(path.join(tmp, "src/screens/PauseOverlay.tsx"), [
+        "export function PauseOverlay() {",
+        "  return <nav>",
+        "    <div>SUPERVISOR</div>",
+        "    <a aria-current=\"page\"><span data-icon=\"terminal\" />TERMINAL</a>",
+        "  </nav>;",
+        "}",
+        "",
+      ].join("\n"));
+      fs.writeFileSync(path.join(tmp, "src/screens/GameOver.tsx"), [
+        "import { Circle } from 'lucide-react';",
+        "export function GameOver({ actions }: any) {",
+        "  return <main>",
+        "    <button type=\"button\" onClick={actions?.restart}><Circle />REBOOT SESSION</button>",
+        "    <button type=\"button\" onClick={actions?.menu}><Circle />DISCONNECT (MAIN MENU)</button>",
+        "  </main>;",
+        "}",
+        "",
+      ].join("\n"));
+
+      const issues = findDesignDomImplementationIssues(tmp, [
+        "src/screens/PauseOverlay.tsx",
+        "src/screens/GameOver.tsx",
+      ]);
+
+      assert.ok(issues.some((issue) => issue.includes('DESIGN_DOM button "SUPERVISOR" is static') || issue.includes('missing DESIGN_DOM button "SUPERVISOR"')), issues.join("\n"));
+      assert.ok(issues.some((issue) => issue.includes('link "terminal" lacks href="#"')), issues.join("\n"));
+      assert.ok(issues.some((issue) => issue.includes('expected icon "restart_alt"')), issues.join("\n"));
+      assert.ok(issues.some((issue) => issue.includes('expected icon "logout"')), issues.join("\n"));
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("allows explicitly inert DESIGN_DOM hash anchors when href and aria state are preserved", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-design-dom-anchor-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "stitch"), { recursive: true });
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { screenId: "pause-1", title: "Pause Overlay", file: "src/screens/PauseOverlay.tsx" },
+      ]));
+      fs.writeFileSync(path.join(tmp, "stitch/DESIGN_DOM.json"), JSON.stringify({
+        screens: [
+          {
+            screenId: "pause-1",
+            title: "Pause Overlay",
+            buttons: [],
+            navLinks: [
+              { label: "terminal", href: "#", icon: "terminal" },
+              { label: "RECORDS", href: "#", icon: "emoji_events" },
+            ],
+          },
+        ],
+      }));
+      fs.writeFileSync(path.join(tmp, "src/screens/PauseOverlay.tsx"), [
+        "import { Terminal, Trophy } from 'lucide-react';",
+        "export function PauseOverlay() {",
+        "  return <nav>",
+        "    <a href=\"#\" aria-current=\"page\"><Terminal />TERMINAL</a>",
+        "    <a href=\"#\" aria-disabled=\"true\" tabIndex={-1}><Trophy />RECORDS</a>",
+        "  </nav>;",
+        "}",
+        "",
+      ].join("\n"));
+
+      assert.deepEqual(findDesignDomImplementationIssues(tmp, ["src/screens/PauseOverlay.tsx"]), []);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
