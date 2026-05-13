@@ -658,17 +658,30 @@ function implementReferenceReadGuard(active: ActiveProcess): { detected: boolean
   return { detected: false, reason: "" };
 }
 
+function shellCommandSegments(command: string): string[] {
+  return command
+    .split(/\s*(?:&&|\|\||;|\n)\s*/g)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+}
+
+function isGeneratedScreenContentReadSegment(segment: string): boolean {
+  if (!/\bsrc\/screens(?:\/|\s|$)/.test(segment)) return false;
+  if (/src\/screens\/(?:SCREEN_INDEX\.json|index\.ts)\b/.test(segment)) return false;
+  return /\b(cat|sed|nl|head|tail|less|bat|rg|grep|awk|wc|python3?|node)\b/i.test(segment);
+}
+
 function extractGeneratedScreenReadsFromCommand(workdir: string, command: string): Array<{ path: string; via: string }> {
   const reads: Array<{ path: string; via: string }> = [];
-  const readsGeneratedScreenDirectory = /\b(cat|sed|nl|head|tail|less|bat|rg|grep|awk|find|wc|python3?|node)\b/.test(command)
-    && /(?:^|[\s"'`=])(?:\.\/)?src\/screens(?:\/|\s|$)/.test(command)
-    && !/src\/screens\/(?:SCREEN_INDEX\.json|index\.ts)\b/.test(command);
-  if (readsGeneratedScreenDirectory) {
-    reads.push({ path: "src/screens/*.tsx", via: "exec" });
-  }
-  for (const match of command.matchAll(/(?:^|[\s"'`=])((?:\.\/|\/)?(?:[\w.-]+\/)*src\/screens\/[^'"`\s;|&]+\.tsx)/g)) {
-    const relativePath = normalizeWorktreeRelativePath(workdir, match[1] || "");
-    if (isGeneratedScreenComponentPath(relativePath)) reads.push({ path: relativePath, via: "exec" });
+  for (const segment of shellCommandSegments(command)) {
+    if (!isGeneratedScreenContentReadSegment(segment)) continue;
+    if (/(?:^|[\s"'`=])(?:\.\/)?src\/screens(?:\/|\s|$)/.test(segment)) {
+      reads.push({ path: "src/screens/*.tsx", via: "exec" });
+    }
+    for (const match of segment.matchAll(/(?:^|[\s"'`=])((?:\.\/|\/)?(?:[\w.-]+\/)*src\/screens\/[^'"`\s;|&]+\.tsx)/g)) {
+      const relativePath = normalizeWorktreeRelativePath(workdir, match[1] || "");
+      if (isGeneratedScreenComponentPath(relativePath)) reads.push({ path: relativePath, via: "exec" });
+    }
   }
   return reads;
 }

@@ -313,7 +313,14 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /isGeneratedScreenComponentPath/);
     assert.match(source, /src\\\/screens\\\/\[\^\/\]\+\\\.tsx/);
     assert.match(source, /extractGeneratedScreenReadsFromCommand/);
+    assert.match(source, /function shellCommandSegments/);
+    assert.match(source, /function isGeneratedScreenContentReadSegment/);
     assert.match(source, /\bhead\b\|tail\|less\|bat\|rg\|grep/);
+    const screenExtractor = source.slice(
+      source.indexOf("function isGeneratedScreenContentReadSegment"),
+      source.indexOf("function generatedScreenReadGuard"),
+    );
+    assert.doesNotMatch(screenExtractor, /\|find\|/);
     assert.match(source, /src\/screens\/\*\.tsx/);
     assert.doesNotMatch(source, /allowed\.size === 0\)\s*return \{ detected: false/);
     assert.match(source, /GENERATED_SCREEN_SHARED_READ/);
