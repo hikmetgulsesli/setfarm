@@ -136,6 +136,86 @@ function isSmokeInfrastructureFailure(failure: string): boolean {
   return SMOKE_INFRA_FAILURE.test(failure);
 }
 
+const GH_PR_URL_REGEX = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+(?:[?#].*)?$/i;
+
+function formatCommandError(error: unknown): string {
+  const err = error as { message?: string; stdout?: Buffer | string; stderr?: Buffer | string };
+  const message = String(err?.message || error || "").split("\n")[0];
+  const stderr = Buffer.isBuffer(err?.stderr) ? err.stderr.toString("utf-8") : String(err?.stderr || "");
+  const stdout = Buffer.isBuffer(err?.stdout) ? err.stdout.toString("utf-8") : String(err?.stdout || "");
+  return [message, stderr.trim(), stdout.trim()].filter(Boolean).join(" | ").slice(0, 900);
+}
+
+function isValidGithubPrUrl(prUrl: string, expectedRepoName = ""): boolean {
+  return GH_PR_URL_REGEX.test(prUrl) && (!expectedRepoName || prUrl.includes(`/${expectedRepoName}/`));
+}
+
+async function ensureStoryPrUrlForBranch(options: {
+  runId: string;
+  repoPath: string;
+  storyBranchName: string;
+  baseBranch: string;
+  storyId: string;
+  storyTitle: string;
+  changes: string;
+  existingPrUrl?: string;
+}): Promise<{ prUrl: string; error: string }> {
+  const {
+    runId,
+    repoPath,
+    storyBranchName,
+    baseBranch,
+    storyId,
+    storyTitle,
+    changes,
+    existingPrUrl = "",
+  } = options;
+  const expectedRepoName = repoPath.split("/").pop() || "";
+  if (existingPrUrl && isValidGithubPrUrl(existingPrUrl, expectedRepoName)) {
+    return { prUrl: existingPrUrl, error: "" };
+  }
+  if (!repoPath || !storyBranchName) {
+    return { prUrl: "", error: `AUTO_PR_CREATE_FAILED: missing repo or story branch for ${storyId}` };
+  }
+
+  try {
+    execFileSync("git", ["push", "-u", "origin", storyBranchName], {
+      cwd: repoPath, timeout: 30_000, stdio: ["pipe", "pipe", "pipe"],
+    });
+  } catch (pushErr) {
+    logger.warn(`[auto-pr] push failed for ${storyBranchName}: ${formatCommandError(pushErr)}`, { runId });
+  }
+
+  try {
+    const existingPr = execFileSync("gh", ["pr", "list", "--head", storyBranchName, "--state", "all", "--json", "url", "--jq", ".[0].url // \"\""], {
+      cwd: repoPath, timeout: 15_000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8",
+    }).toString().trim();
+    if (existingPr && isValidGithubPrUrl(existingPr, expectedRepoName)) {
+      logger.info(`[auto-pr] Reusing existing PR ${existingPr} for story ${storyId}`, { runId });
+      return { prUrl: existingPr, error: "" };
+    }
+  } catch (listErr) {
+    logger.warn(`[auto-pr] pr list failed for ${storyBranchName}: ${formatCommandError(listErr)}`, { runId });
+  }
+
+  const prTitle = `feat: ${storyId || "story"} - ${(storyTitle || "").slice(0, 70)}`;
+  const prBody = `## Story\n${storyId || ""}: ${storyTitle || ""}\n\n## Changes\n${changes.slice(0, 1500)}\n\n_Auto-created by setfarm after story completion._`;
+  try {
+    const prOut = execFileSync("gh", ["pr", "create", "--base", baseBranch || "main", "--head", storyBranchName, "--title", prTitle, "--body", prBody], {
+      cwd: repoPath, timeout: 30_000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8",
+    }).toString().trim();
+    const urlMatch = prOut.match(/https?:\/\/github\.com\/\S+/);
+    const prUrl = urlMatch?.[0] || "";
+    if (prUrl && isValidGithubPrUrl(prUrl, expectedRepoName)) {
+      logger.info(`[auto-pr] Created PR ${prUrl} for story ${storyId}`, { runId });
+      return { prUrl, error: "" };
+    }
+    return { prUrl: "", error: `AUTO_PR_CREATE_FAILED: gh pr create returned no valid PR URL for ${storyBranchName}. Output: ${prOut.slice(0, 300)}` };
+  } catch (createErr) {
+    return { prUrl: "", error: `AUTO_PR_CREATE_FAILED: ${storyBranchName}: ${formatCommandError(createErr)}` };
+  }
+}
+
 type StorySmokeRow = {
   story_id: string;
   story_index: number;
@@ -1788,6 +1868,12 @@ async function injectVerifyContext(
   }
 
   // Inject unverified story context for agent verification
+  if (!nextUnverified.pr_url && context["auto_pr_create_failed"]) {
+    await updateRunContext(step.run_id, context);
+    logger.warn(`[claim-auto-verify] Story ${nextUnverified.story_id} has no PR URL after platform auto-PR repair attempt; deferring reviewer claim`, { runId: step.run_id });
+    return false;
+  }
+
   if (nextUnverified.output) {
     const storyOutput = parseOutputKeyValues(nextUnverified.output);
     for (const [key, value] of Object.entries(storyOutput)) {
@@ -4527,52 +4613,29 @@ ${screenDescs}
     ) {
       const autoRepo = context["repo"];
       const autoBase = requiredPrBase || (context["branch"] || "main");
-      try {
-        // Ensure branch is pushed (idempotent)
-        try {
-          execFileSync("git", ["push", "-u", "origin", storyBranchName], {
-            cwd: autoRepo, timeout: 30000, stdio: ["pipe", "pipe", "pipe"],
-          });
-        } catch (pushErr) {
-          logger.warn(`[auto-pr] push failed for ${storyBranchName}: ${String(pushErr).slice(0, 200)}`, { runId: step.run_id });
-        }
-
-        // Check for existing PR (any state) to avoid duplicate creation
-        let existingPr = "";
-        try {
-          existingPr = execFileSync("gh", ["pr", "list", "--head", storyBranchName, "--state", "all", "--json", "url", "--jq", ".[0].url // \"\""], {
-            cwd: autoRepo, timeout: 15000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8",
-          }).toString().trim();
-        } catch (listErr) {
-          logger.warn(`[auto-pr] pr list failed: ${String(listErr).slice(0, 150)}`, { runId: step.run_id });
-        }
-
-        if (existingPr) {
-          storyPrUrl = existingPr;
-          logger.info(`[auto-pr] Reusing existing PR ${existingPr} for story ${storyRow?.story_id}`, { runId: step.run_id });
-        } else {
-          const prTitle = `feat: ${storyRow?.story_id || "story"} - ${(storyRow?.title || "").slice(0, 70)}`;
-          const changesRaw = (parsed["changes"] || output || "").toString().slice(0, 1500);
-          const prBody = `## Story\n${storyRow?.story_id || ""}: ${storyRow?.title || ""}\n\n## Changes\n${changesRaw}\n\n_Auto-created by setfarm after story completion._`;
-          try {
-            const prOut = execFileSync("gh", ["pr", "create", "--base", autoBase, "--head", storyBranchName, "--title", prTitle, "--body", prBody], {
-              cwd: autoRepo, timeout: 30000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8",
-            }).toString().trim();
-            const urlMatch = prOut.match(/https?:\/\/github\.com\/\S+/);
-            if (urlMatch) {
-              storyPrUrl = urlMatch[0];
-              parsed["pr_url"] = storyPrUrl;
-              context["pr_url"] = storyPrUrl;
-              logger.info(`[auto-pr] Created PR ${storyPrUrl} for story ${storyRow?.story_id}`, { runId: step.run_id });
-            } else {
-              logger.warn(`[auto-pr] gh pr create returned no URL. Output: ${prOut.slice(0, 300)}`, { runId: step.run_id });
-            }
-          } catch (createErr) {
-            logger.warn(`[auto-pr] gh pr create failed for ${storyBranchName}: ${String(createErr).slice(0, 400)}`, { runId: step.run_id });
-          }
-        }
-      } catch (autoErr) {
-        logger.warn(`[auto-pr] unexpected: ${String(autoErr).slice(0, 200)}`, { runId: step.run_id });
+      const ensured = await ensureStoryPrUrlForBranch({
+        runId: step.run_id,
+        repoPath: autoRepo,
+        storyBranchName,
+        baseBranch: autoBase,
+        storyId: storyRow?.story_id || "story",
+        storyTitle: storyRow?.title || "",
+        changes: (parsed["changes"] || output || "").toString(),
+        existingPrUrl: storyPrUrl,
+      });
+      if (ensured.prUrl) {
+        storyPrUrl = ensured.prUrl;
+        parsed["pr_url"] = storyPrUrl;
+        context["pr_url"] = storyPrUrl;
+        delete context["auto_pr_create_failed"];
+        delete context["failure_category"];
+        delete context["failure_suggestion"];
+      } else {
+        context["auto_pr_create_failed"] = ensured.error;
+        context["previous_failure"] = ensured.error;
+        context["failure_category"] = "AUTO_PR_CREATE_FAILED";
+        context["failure_suggestion"] = "This is a platform PR creation failure. Do not recode the story; Setfarm must create or reuse the story PR before reviewer runs.";
+        logger.warn(`[auto-pr] ${ensured.error}`, { runId: step.run_id });
       }
     }
 
@@ -5186,8 +5249,44 @@ ${failure}`,
       }
     }
 
-    const prUrl = story.pr_url || "";
-    if (!prUrl) return story; // No PR URL → needs agent verification
+    let prUrl = story.pr_url || "";
+    if (!prUrl) {
+      const repoPath = context["repo"] || context["REPO"] || "";
+      const storyBranchName = (story.story_branch || `${runId.slice(0, 8)}-${story.story_id}`).toLowerCase();
+      let loopConfig: Partial<LoopConfig> = {};
+      try { loopConfig = loopStepRow?.loop_config ? JSON.parse(loopStepRow.loop_config) : {}; } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
+      const baseBranch = (loopConfig?.mergeStrategy === "pr-each" || loopConfig?.verifyEach)
+        ? "main"
+        : (context["branch"] || "main");
+      const ensured = await ensureStoryPrUrlForBranch({
+        runId,
+        repoPath,
+        storyBranchName,
+        baseBranch,
+        storyId: story.story_id,
+        storyTitle: story.title,
+        changes: story.output || "",
+      });
+      if (ensured.prUrl) {
+        await pgRun("UPDATE stories SET pr_url = $1, story_branch = $2, updated_at = $3 WHERE id = $4", [ensured.prUrl, storyBranchName, now(), story.id]);
+        context["pr_url"] = ensured.prUrl;
+        context["story_branch"] = storyBranchName;
+        delete context["auto_pr_create_failed"];
+        delete context["failure_category"];
+        delete context["failure_suggestion"];
+        await updateRunContext(runId, context);
+        logger.info(`[${logPrefix}] Story ${story.story_id} PR repaired before reviewer claim: ${ensured.prUrl}`, { runId });
+        continue;
+      }
+
+      context["auto_pr_create_failed"] = ensured.error;
+      context["previous_failure"] = ensured.error;
+      context["failure_category"] = "AUTO_PR_CREATE_FAILED";
+      context["failure_suggestion"] = "This is a platform PR creation failure. Do not spawn reviewer or recode the story until Setfarm creates/reuses the story PR.";
+      await updateRunContext(runId, context);
+      logger.warn(`[${logPrefix}] ${ensured.error}; deferring reviewer claim`, { runId });
+      return story;
+    }
 
     try {
       const prState = getPRState(prUrl);

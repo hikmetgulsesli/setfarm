@@ -78,6 +78,8 @@ describe("07-verify step module", () => {
     assert.ok(verifyPromptSource.includes("Do not dismiss them as \"pre-existing\""));
     assert.ok(verifyPromptSource.includes("current-main runtime/smoke evidence is clean"));
     assert.ok(verifyPromptSource.includes("8 minutes"));
+    assert.ok(verifyPromptSource.includes("VERIFY_INFRA_PR_URL_MISSING"));
+    assert.ok(verifyPromptSource.includes("Setfarm must create/reuse the story PR before reviewer runs"));
   });
 
   it("buildPrompt stays within maxPromptSize for typical context", () => {

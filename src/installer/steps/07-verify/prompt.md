@@ -41,21 +41,24 @@ Allowed:
 
 1. `cd "{{REPO}}"`.
 2. `git fetch origin --prune`.
-3. Read PR metadata:
+3. If `{{PR_URL}}` is empty, stop immediately. Do not inspect source files,
+   read generated screens, run build/test, or infer a branch. Return:
+   `STATUS: fail` and `FEEDBACK: VERIFY_INFRA_PR_URL_MISSING — Setfarm must create/reuse the story PR before reviewer runs.`
+4. Read PR metadata:
    - `gh pr view "{{PR_URL}}" --json state,headRefName,baseRefName,mergeable,mergeStateStatus,reviews,comments,statusCheckRollup`
    - For inline comments: `gh pr diff "{{PR_URL}}"` and `gh api repos/<owner>/<repo>/pulls/<num>/comments`.
    - If `baseRefName` is not `main`, retarget the PR:
      `gh api -X PATCH repos/<owner>/<repo>/pulls/<num> -f base=main`.
-4. If the PR is not open:
+5. If the PR is not open:
    - If it is `MERGED`, run `git checkout main && git pull --ff-only origin main`,
      then still evaluate the build/test/smoke evidence below before returning.
    - Otherwise return `STATUS: retry` with the reason.
-5. Check out the PR branch:
+6. Check out the PR branch:
    - `HEAD_BRANCH=$(gh pr view "{{PR_URL}}" --json headRefName --jq .headRefName)`
    - `git fetch origin "$HEAD_BRANCH" main --prune`
    - `git checkout -B "$HEAD_BRANCH" "origin/$HEAD_BRANCH"`.
    - If the local branch diverged, do not `git pull` merge; `origin/$HEAD_BRANCH` is the source of truth.
-6. Read review comments, failing checks, `{{PREFLIGHT_ANALYSIS}}`,
+7. Read review comments, failing checks, `{{PREFLIGHT_ANALYSIS}}`,
    `{{PLAYWRIGHT_REPORT}}`, `{{SUPERVISOR_MEMORY}}`, and acceptance criteria.
    - If a real issue exists, do not fix it. Return `STATUS: retry`.
    - First blocker wins. After finding a real build, test, smoke, review,
@@ -72,7 +75,7 @@ Allowed:
      introduced by this PR"; report them so implement can create a batched
      QA-FIX story.
    - Missing ESLint config is not a real lint failure; do not add config unless the story explicitly asks for it.
-7. Build/test/smoke verification:
+8. Build/test/smoke verification:
    - `{{LINT_CMD}}`
    - `{{BUILD_CMD}}`
    - `{{TEST_CMD}}`
@@ -85,19 +88,19 @@ Allowed:
    - Skip empty or `true` infrastructure commands.
    - Run each command at most once. If it fails, immediately return
      `STATUS: retry`; do not run extra commands to "get the full picture".
-8. Final blocker check before merge:
+9. Final blocker check before merge:
    - PR state must be `OPEN`.
    - There must be no blocking review comments, failing checks, smoke failures,
      build/test failures, merge conflicts, or acceptance mismatches.
    - `git status --short` must be clean; verifier must not have changed source.
-9. If the PR is fully clean:
+10. If the PR is fully clean:
    - `gh pr comment "{{PR_URL}}" --body "Verified: build/test/smoke checked; merging."`
    - `gh pr merge "{{PR_URL}}" --squash --delete-branch`
    - If merge fails, immediately return `STATUS: retry` with the blocker
      reason. Do not inspect, rebase, resolve, or repair merge conflicts.
-10. Confirm merge:
+11. Confirm merge:
     - `gh pr view "{{PR_URL}}" --json state --jq .state` must return `MERGED`.
-11. Update local main:
+12. Update local main:
     - `git fetch origin main`
     - `git checkout main`
     - `git pull --ff-only origin main`

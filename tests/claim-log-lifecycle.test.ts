@@ -165,6 +165,20 @@ describe("single-step claim_log lifecycle", () => {
     assert.doesNotMatch(fullSource, /buildPreFlightReport\(context\["repo"\], analysisBranch\)/);
   });
 
+  it("does not spawn reviewer for done verify_each stories until a story PR exists", () => {
+    const fullSource = stepOpsSource();
+    const verifySource = autoVerifyDoneStoriesSource();
+    const claimSource = claimSingleStepSource();
+    assert.match(fullSource, /async function ensureStoryPrUrlForBranch/);
+    assert.match(verifySource, /if \(!prUrl\) \{/);
+    assert.match(verifySource, /ensureStoryPrUrlForBranch\(/);
+    assert.match(verifySource, /AUTO_PR_CREATE_FAILED/);
+    assert.match(verifySource, /deferring reviewer claim/);
+    assert.match(fullSource, /has no PR URL after platform auto-PR repair attempt; deferring reviewer claim/);
+    assert.match(claimSource, /verify_each auto-verified or advanced without agent spawn/);
+    assert.doesNotMatch(verifySource, /if \(!prUrl\) return story; \/\/ No PR URL → needs agent verification/);
+  });
+
   it("does not overwrite actionable retry context with stale successful output", () => {
     const fullSource = stepOpsSource();
     const source = claimSingleStepSource();
