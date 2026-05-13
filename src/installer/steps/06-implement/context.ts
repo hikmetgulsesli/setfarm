@@ -433,11 +433,11 @@ async function injectStitchHtml(context: Record<string, string>, runId: string, 
           const html = fs.readFileSync(htmlFile, "utf-8");
           const excerpt = html.replace(/\s+/g, " ").trim();
           const truncated = excerpt.length > STITCH_HTML_EXCERPT_CHARS
-            ? excerpt.slice(0, STITCH_HTML_EXCERPT_CHARS) + " ...(truncated; read file for full HTML)"
+            ? excerpt.slice(0, STITCH_HTML_EXCERPT_CHARS) + " ...(truncated; use injected UI contracts instead of reading raw HTML)"
             : excerpt;
           stitchHtmlContent += `\nSTITCH SCREEN: ${screen.name || screen.screenId}\nFILE: ${screen.htmlFile || `stitch/${screen.screenId}.html`}\nHTML_EXCERPT: ${truncated}\n`;
           if (stitchHtmlContent.length > STITCH_HTML_TOTAL_CHARS) {
-            stitchHtmlContent = stitchHtmlContent.slice(0, STITCH_HTML_TOTAL_CHARS) + "\n...(truncated; read stitch files for full design)\n";
+            stitchHtmlContent = stitchHtmlContent.slice(0, STITCH_HTML_TOTAL_CHARS) + "\n...(truncated; use UI_CONTRACT, SCREEN_INDEX, and story-owned generated screens instead of reading raw stitch HTML)\n";
             break;
           }
         }
@@ -469,7 +469,7 @@ function injectDesignDom(context: Record<string, string>): void {
         const domToInject = Object.keys(filteredScreens).length > 0 ? filteredScreens : fullDom.screens;
         const domJson = JSON.stringify(domToInject);
         context["design_dom"] = domJson.length > DESIGN_DOM_EXCERPT_CHARS
-          ? domJson.substring(0, DESIGN_DOM_EXCERPT_CHARS) + "...(truncated; read stitch/DESIGN_DOM.json for full DOM)"
+          ? domJson.substring(0, DESIGN_DOM_EXCERPT_CHARS) + "...(truncated; use injected UI behavior contract instead of reading full DESIGN_DOM.json)"
           : domJson;
       }
     }
@@ -501,7 +501,7 @@ function renderUiBehaviorContract(reqs: UiBehaviorRequirement[]): string {
     ].filter(Boolean);
     const line = `  - ${bits.join("; ")}`;
     if (totalBytes + line.length > UI_BEHAVIOR_CONTRACT_CHARS) {
-      lines.push("  - ...(truncated; read stitch/DESIGN_DOM.json for the full behavior contract)");
+      lines.push("  - ...(truncated; continue with listed controls and generated screen contracts; do not read full DESIGN_DOM.json)");
       break;
     }
     lines.push(line);

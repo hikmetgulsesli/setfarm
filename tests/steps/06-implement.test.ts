@@ -48,6 +48,17 @@ describe("06-implement step module", () => {
     assert.equal(rules.includes("small edits OK"), false);
   });
 
+  it("does not tell implement agents to read raw Stitch design corpus", () => {
+    const prompt = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/prompt.md"), "utf-8");
+    const contextSource = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/context.js"), "utf-8");
+
+    assert.match(prompt, /Do not read raw `stitch\/\*\.html`/);
+    assert.match(contextSource, /use UI_CONTRACT, SCREEN_INDEX, and story-owned generated screens instead of reading raw stitch HTML/);
+    assert.doesNotMatch(contextSource, /read stitch files for full design/);
+    assert.doesNotMatch(contextSource, /read stitch\/DESIGN_DOM\.json for full DOM/);
+    assert.doesNotMatch(contextSource, /read stitch\/DESIGN_DOM\.json for the full behavior contract/);
+  });
+
   it("scope gate treats shared_files as read-only context, not completion-allowed files", () => {
     const source = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/guards.js"), "utf-8");
     assert.match(source, /SELECT scope_files, shared_files FROM stories WHERE id/);
