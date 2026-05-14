@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { designModule } from "../../dist/installer/steps/02-design/module.js";
+import { inferFallbackScreens } from "../../dist/installer/steps/02-design/preclaim.js";
 import { runModule } from "./harness.js";
 
 function designPreclaimSource(): string {
@@ -90,6 +91,15 @@ describe("02-design step module", () => {
     assert.match(source, /download-all[\s\S]*onProgress: \(\) => recordPreClaimProgress\(ctx, `Design preclaim: still downloading Stitch HTML files/);
   });
 
+  it("preClaim terminates child processes after cancellation", () => {
+    const source = designPreclaimSource();
+    assert.match(source, /const PRECLAIM_CANCELLED = "DESIGN_PRECLAIM_CANCELLED"/);
+    assert.match(source, /stepUpdate\.changes === 0\) return false/);
+    assert.match(source, /child\?\.kill\("SIGTERM"\)/);
+    assert.match(source, /child\?\.kill\("SIGKILL"\)/);
+    assert.match(source, /if \(isPreclaimCancelledError\(e\)\) return/);
+  });
+
   it("preClaim uses UI_LANGUAGE instead of a hard-coded Turkish Stitch prompt", () => {
     const source = designPreclaimSource();
     assert.match(source, /const uiLanguage = ctx\.context\["ui_language"\]/);
@@ -105,6 +115,31 @@ describe("02-design step module", () => {
     assert.match(source, /UI_CONTRACT\.json/);
     assert.match(source, /Main Menu/);
     assert.doesNotMatch(source, /agent will see empty/);
+  });
+
+  it("local fallback mirrors the PRD Screens table exactly", () => {
+    const prd = `# Tetris PRD
+
+## Screens
+| # | Screen Name | Type | Description |
+|---|-------------|------|-------------|
+| 1 | Main Menu | menu | Start and resume entry point |
+| 2 | Game Board | game | Playfield, score, next piece, and touch controls |
+| 3 | Pause Overlay | modal | Pause/resume/restart state |
+| 4 | Game Over | result | Final score and restart action |
+| 5 | Controls Help | help | Keyboard controls and rules |
+`;
+    const screens = inferFallbackScreens(prd);
+    assert.deepEqual(screens.map((screen) => screen.name), [
+      "Main Menu",
+      "Game Board",
+      "Pause Overlay",
+      "Game Over",
+      "Controls Help",
+    ]);
+    const controls = screens.find((screen) => screen.name === "Controls Help");
+    assert.equal(controls?.type, "help");
+    assert.equal(controls?.description, "Keyboard controls and rules");
   });
 
   it("preClaim reconciles generated screens to the PRD screen contract", () => {

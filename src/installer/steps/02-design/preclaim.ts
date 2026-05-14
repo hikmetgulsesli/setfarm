@@ -8,26 +8,51 @@ import { now, pgGet, pgRun } from "../../../db-pg.js";
 import { emitEvent } from "../../events.js";
 
 const MIN_STITCH_HTML_BYTES = 1000;
+const PRECLAIM_CANCELLED = "DESIGN_PRECLAIM_CANCELLED";
 
 type ExecFileTextOptions = {
   cwd?: string;
   timeout?: number;
-  onProgress?: () => void | Promise<void>;
+  onProgress?: () => boolean | void | Promise<boolean | void>;
   progressIntervalMs?: number;
 };
+
+function isPreclaimCancelledError(error: unknown): boolean {
+  return String((error as any)?.message || error).includes(PRECLAIM_CANCELLED);
+}
 
 function execFileText(command: string, args: string[], options: ExecFileTextOptions = {}): Promise<string> {
   return new Promise((resolve, reject) => {
     const { onProgress, progressIntervalMs = 30000, ...execOptions } = options;
+    let child: ReturnType<typeof execFile> | null = null;
+    let cancelled = false;
+    let killTimer: NodeJS.Timeout | null = null;
+    const cancelChild = () => {
+      if (cancelled) return;
+      cancelled = true;
+      try { child?.kill("SIGTERM"); } catch {}
+      killTimer = setTimeout(() => {
+        try { child?.kill("SIGKILL"); } catch {}
+      }, 5000);
+    };
     const progressTimer = onProgress
-      ? setInterval(() => { Promise.resolve(onProgress()).catch(() => {}); }, progressIntervalMs)
+      ? setInterval(() => {
+          Promise.resolve(onProgress())
+            .then((keepGoing) => { if (keepGoing === false) cancelChild(); })
+            .catch(() => {});
+        }, progressIntervalMs)
       : null;
-    execFile(command, args, {
+    child = execFile(command, args, {
       encoding: "utf-8",
       maxBuffer: 20 * 1024 * 1024,
       ...execOptions,
     }, (err, stdout, stderr) => {
       if (progressTimer) clearInterval(progressTimer);
+      if (killTimer) clearTimeout(killTimer);
+      if (cancelled) {
+        reject(new Error(`${PRECLAIM_CANCELLED}: step is no longer running; child process terminated.`));
+        return;
+      }
       if (err) {
         const detail = String(stderr || stdout || (err as any).message || err).replace(/\s+/g, " ").slice(0, 1000);
         reject(new Error(detail));
@@ -38,19 +63,21 @@ function execFileText(command: string, args: string[], options: ExecFileTextOpti
   });
 }
 
-async function recordPreClaimProgress(ctx: ClaimContext, detail: string): Promise<void> {
+async function recordPreClaimProgress(ctx: ClaimContext, detail: string): Promise<boolean> {
   const safeDetail = detail.replace(/\s+/g, " ").slice(0, 500);
   try {
     const stepUpdate = await pgRun("UPDATE steps SET updated_at = $1 WHERE run_id = $2 AND step_id = $3 AND status = 'running'", [now(), ctx.runId, ctx.stepId]);
-    if (stepUpdate.changes === 0) return;
+    if (stepUpdate.changes === 0) return false;
     await pgRun(
       "UPDATE claim_log SET diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND story_id IS NULL AND outcome IS NULL",
       [safeDetail, ctx.runId, ctx.stepId],
     );
   } catch (e) {
     logger.debug(`[module:design preclaim] progress heartbeat failed: ${String(e).slice(0, 120)}`);
+    return true;
   }
   emitEvent({ ts: now(), event: "step.progress", runId: ctx.runId, stepId: ctx.stepId, detail: safeDetail });
+  return true;
 }
 
 async function failDesignPreclaim(ctx: ClaimContext, error: string): Promise<void> {
@@ -276,40 +303,49 @@ function inferAppName(prd: string, repo: string): string {
   return (titleMatch?.[1] || path.basename(repo) || "Application").trim().slice(0, 80);
 }
 
-function inferFallbackScreens(prd: string): ScreenMapEntry[] {
+export function inferFallbackScreens(prd: string): ScreenMapEntry[] {
+  const prdRows = parsePrdScreenRows(prd);
   const names: string[] = [];
-  const lines = prd.split(/\r?\n/);
-  let inScreens = false;
 
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (/^#{1,4}\s+/.test(trimmed)) {
-      inScreens = /\b(screen|screens|view|views|page|pages|modal|modals|ekran|sayfa)\b/i.test(trimmed);
-      continue;
+  if (prdRows.length > 0) {
+    for (const row of prdRows) addUniqueScreenName(names, row.name);
+  } else {
+    const lines = prd.split(/\r?\n/);
+    let inScreens = false;
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (/^#{1,4}\s+/.test(trimmed)) {
+        inScreens = /\b(screen|screens|view|views|page|pages|modal|modals|ekran|sayfa)\b/i.test(trimmed);
+        continue;
+      }
+      if (!inScreens) continue;
+
+      const bullet = trimmed.match(/^[-*]\s+(?:\*\*)?([^:|\-*]{3,80})(?:\*\*)?(?:\s*[:|-]|\s*$)/);
+      if (bullet?.[1]) addUniqueScreenName(names, bullet[1]);
+
+      const table = trimmed.match(/^\|\s*([^|]{3,80})\s*\|/);
+      if (table?.[1] && !/^[-:\s]+$/.test(table[1])) addUniqueScreenName(names, table[1]);
     }
-    if (!inScreens) continue;
 
-    const bullet = trimmed.match(/^[-*]\s+(?:\*\*)?([^:|\-*]{3,80})(?:\*\*)?(?:\s*[:|-]|\s*$)/);
-    if (bullet?.[1]) addUniqueScreenName(names, bullet[1]);
+    const lower = prd.toLowerCase();
+    if (names.length === 0 && /\b(game|oyun|arcade|puzzle|score|level|pause|restart)\b/.test(lower)) {
+      names.push("Main Menu", "Game Board", "Pause Overlay", "Game Over");
+    } else if (names.length === 0) {
+      names.push("Dashboard", "Detail View", "Create Form");
+    }
 
-    const table = trimmed.match(/^\|\s*([^|]{3,80})\s*\|/);
-    if (table?.[1] && !/^[-:\s]+$/.test(table[1])) addUniqueScreenName(names, table[1]);
+    if (/\b(settings|ayarlar)\b/i.test(prd)) addUniqueScreenName(names, "Settings");
+    if (/\b(help|rules|yardim|yardım|how to)\b/i.test(prd)) addUniqueScreenName(names, "Help and Rules");
+    if (/\b(profile|profil)\b/i.test(prd)) addUniqueScreenName(names, "Profile");
+    if (/\b(error|empty|loading|hata|bos|boş)\b/i.test(prd)) addUniqueScreenName(names, "State Feedback");
   }
 
-  const lower = prd.toLowerCase();
-  if (names.length === 0 && /\b(game|oyun|arcade|puzzle|score|level|pause|restart)\b/.test(lower)) {
-    names.push("Main Menu", "Game Board", "Pause Overlay", "Game Over");
-  } else if (names.length === 0) {
-    names.push("Dashboard", "Detail View", "Create Form");
-  }
-
-  if (/\b(settings|ayarlar)\b/i.test(prd)) addUniqueScreenName(names, "Settings");
-  if (/\b(help|rules|yardim|yardım|how to)\b/i.test(prd)) addUniqueScreenName(names, "Help and Rules");
-  if (/\b(profile|profil)\b/i.test(prd)) addUniqueScreenName(names, "Profile");
-  if (/\b(error|empty|loading|hata|bos|boş)\b/i.test(prd)) addUniqueScreenName(names, "State Feedback");
-
+  const prdRowsByName = new Map(prdRows.map((row) => [normalizeScreenName(row.name), row]));
+  const screenNames = prdRows.length > 0 ? names : names.slice(0, 7);
   const used = new Set<string>();
-  return names.slice(0, 7).map((name, index) => {
+  return screenNames.map((name, index) => {
+    const prdRow = prdRowsByName.get(normalizeScreenName(name));
     const base = "fallback-" + toScreenId(name, `screen-${index + 1}`);
     let screenId = base;
     let suffix = 2;
@@ -318,8 +354,8 @@ function inferFallbackScreens(prd: string): ScreenMapEntry[] {
     return {
       screenId,
       name,
-      type: classifyScreenType(name),
-      description: `${name} screen generated by local fallback design assets`,
+      type: prdRow?.type || classifyScreenType(name),
+      description: prdRow?.description || `${name} screen generated by local fallback design assets`,
     };
   });
 }
@@ -571,7 +607,10 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       const out = await execFileText("node", [stitchScript, "ensure-project", path.basename(repo), repo],
         { timeout: 30000, cwd: repo, onProgress: () => recordPreClaimProgress(ctx, "Design preclaim: still ensuring Stitch project") });
       try { projId = JSON.parse(out).projectId || ""; } catch (e) { logger.debug(`[module:design preclaim] parse: ${String(e).slice(0, 80)}`); }
-    } catch (e) { logger.warn(`[module:design preclaim] ensure-project failed: ${String(e).slice(0, 200)}`, { runId: ctx.runId }); }
+    } catch (e) {
+      if (isPreclaimCancelledError(e)) return;
+      logger.warn(`[module:design preclaim] ensure-project failed: ${String(e).slice(0, 200)}`, { runId: ctx.runId });
+    }
   }
 
   if (!projId) {
@@ -612,6 +651,7 @@ All visible application text must be in ${uiLanguage}. Keep screen metadata, gen
     logger.info(`[module:design preclaim] Generated ${genResult.total || 0} screens in ${genResult.elapsedSeconds || "?"}s`, { runId: ctx.runId });
     await recordPreClaimProgress(ctx, `Design preclaim: generated ${genResult.total || 0} Stitch screens`);
   } catch (e) {
+    if (isPreclaimCancelledError(e)) return;
     logger.warn(`[module:design preclaim] generate-all-screens failed: ${String(e).slice(0, 200)}`, { runId: ctx.runId });
     await recordPreClaimProgress(ctx, "Design preclaim: Stitch generation failed, continuing to download/fallback");
   }
@@ -633,6 +673,7 @@ All visible application text must be in ${uiLanguage}. Keep screen metadata, gen
       ctx.context["screens_generated"] = String(htmlCount);
       if (htmlCount > 0 && (!total || htmlCount >= total)) break;
     } catch (e) {
+      if (isPreclaimCancelledError(e)) return;
       logger.warn(`[module:design preclaim] download-all failed (attempt ${attempt + 1}/3): ${String(e).slice(0, 200)}`, { runId: ctx.runId });
       await recordPreClaimProgress(ctx, `Design preclaim: Stitch download failed on attempt ${attempt + 1}/3`);
     }
