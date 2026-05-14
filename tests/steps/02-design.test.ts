@@ -9,6 +9,10 @@ function designPreclaimSource(): string {
   return fs.readFileSync(path.resolve(import.meta.dirname, "../../src/installer/steps/02-design/preclaim.ts"), "utf-8");
 }
 
+function stepOpsSource(): string {
+  return fs.readFileSync(path.resolve(import.meta.dirname, "../../src/installer/step-ops.ts"), "utf-8");
+}
+
 function validDesignOutput(overrides: Record<string, string> = {}) {
   return {
     status: "done",
@@ -110,5 +114,19 @@ describe("02-design step module", () => {
     assert.match(source, /rewriteScreenArtifactsForScreenMap/);
     assert.match(source, /SCREENS_GENERATED: " \+ screenMap\.length/);
     assert.doesNotMatch(source, /SCREENS_GENERATED: " \+ manifest\.length/);
+  });
+
+  it("dedup auto-skip validates reusable design assets against PRD screens through normal completion guardrails", () => {
+    const source = stepOpsSource();
+    const start = source.indexOf("async function autoCompleteDesignStep");
+    const end = source.indexOf("/**\n * DESIGN STEP DEDUP", start);
+    const autoCompleteSource = source.slice(start, end);
+    assert.match(source, /function reconcileReusableDesignScreens/);
+    assert.match(source, /parsePrdDesignScreenRows/);
+    assert.match(source, /Existing design cache missing PRD screen\(s\)/);
+    assert.match(source, /clearReusableDesignCache\(dRepoPath\)/);
+    assert.match(autoCompleteSource, /SCREEN_MAP: \$\{JSON\.stringify\(dScreenMap\)\}/);
+    assert.match(autoCompleteSource, /await completeStep\(step\.id, dOutput\)/);
+    assert.doesNotMatch(autoCompleteSource, /UPDATE steps SET status = 'done'/);
   });
 });

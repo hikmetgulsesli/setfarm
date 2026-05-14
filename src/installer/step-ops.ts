@@ -1492,6 +1492,115 @@ function expectedDesignScreenCount(repoPath: string): number {
   }
 }
 
+function normalizeDesignScreenName(value: string): string {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[İ]/g, "I")
+    .replace(/[ı]/g, "i")
+    .replace(/[ğĞ]/g, "g")
+    .replace(/[üÜ]/g, "u")
+    .replace(/[şŞ]/g, "s")
+    .replace(/[öÖ]/g, "o")
+    .replace(/[çÇ]/g, "c")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function designScreenNameMatches(expectedName: string, actualName: string): boolean {
+  const expected = normalizeDesignScreenName(expectedName);
+  const actual = normalizeDesignScreenName(actualName);
+  if (!expected || !actual) return false;
+  if (expected === actual) return true;
+  if (actual.startsWith(`${expected} `)) return true;
+  if (expected.startsWith(`${actual} `)) return true;
+
+  const expectedTokens = expected.split(" ").filter(Boolean);
+  const actualTokens = new Set(actual.split(" ").filter(Boolean));
+  if (expectedTokens.length < 2) return false;
+  return expectedTokens.every((token) => actualTokens.has(token));
+}
+
+function parsePrdDesignScreenRows(prd: string): Array<{ name: string; type: string; description: string }> {
+  const rows: Array<{ name: string; type: string; description: string }> = [];
+  const lines = String(prd || "").split(/\r?\n/);
+  let inScreens = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (/^##+\s+Screens\b/i.test(trimmed)) {
+      inScreens = true;
+      continue;
+    }
+    if (inScreens && /^##+\s+/.test(trimmed)) break;
+    if (!inScreens || !/^\s*\|/.test(line) || /^\s*\|\s*-+/.test(line)) continue;
+    const cols = line.split("|").map((value) => value.trim()).filter(Boolean);
+    if (cols.length < 4 || /^#$/i.test(cols[0]) || /screen name/i.test(cols[1])) continue;
+    rows.push({ name: cols[1], type: cols[2], description: cols.slice(3).join(" ") });
+  }
+  return rows;
+}
+
+function reconcileReusableDesignScreens(
+  reusableScreens: Array<{ screenId: string; name: string }>,
+  prd: string,
+): {
+  screens: Array<{ screenId: string; name: string; type: string; description: string }>;
+  missing: string[];
+  dropped: string[];
+  duplicates: string[];
+} {
+  const rows = parsePrdDesignScreenRows(prd);
+  if (rows.length === 0) {
+    return {
+      screens: reusableScreens.map((screen) => ({
+        screenId: screen.screenId,
+        name: screen.name,
+        type: "page",
+        description: screen.name,
+      })),
+      missing: [],
+      dropped: [],
+      duplicates: [],
+    };
+  }
+
+  const screens: Array<{ screenId: string; name: string; type: string; description: string }> = [];
+  const missing: string[] = [];
+  const usedIds = new Set<string>();
+  const duplicates: string[] = [];
+
+  for (const row of rows) {
+    const matches = reusableScreens.filter((screen) => designScreenNameMatches(row.name, screen.name));
+    const chosen = matches.find((screen) => !usedIds.has(screen.screenId)) || matches[0];
+    if (!chosen) {
+      missing.push(row.name);
+      continue;
+    }
+    if (matches.length > 1) duplicates.push(row.name);
+    usedIds.add(chosen.screenId);
+    screens.push({
+      screenId: chosen.screenId,
+      name: row.name,
+      type: row.type || "page",
+      description: row.description || `${row.name} screen`,
+    });
+  }
+
+  const dropped = reusableScreens
+    .filter((screen) => !usedIds.has(screen.screenId) || !rows.some((row) => designScreenNameMatches(row.name, screen.name)))
+    .map((screen) => screen.name)
+    .filter(Boolean);
+
+  return { screens, missing, dropped, duplicates };
+}
+
+function clearReusableDesignCache(repoPath: string): void {
+  try { fs.rmSync(path.join(repoPath, "stitch"), { recursive: true, force: true }); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
+  try { fs.unlinkSync(path.join(repoPath, ".stitch")); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
+}
+
 async function autoCompleteDesignStep(step: StepRow, db: any, htmlFiles: string[], projectId: string): Promise<boolean> {
   const dRepoPath = (await getRunContext(step.run_id))["repo"] || "";
   const dCtx = await getRunContext(step.run_id);
@@ -1507,10 +1616,7 @@ async function autoCompleteDesignStep(step: StepRow, db: any, htmlFiles: string[
   const prdScreenCount = dCtx["prd_screen_count"] ? parseInt(dCtx["prd_screen_count"], 10) : 0;
   if (prdScreenCount > 0 && reusableScreens.length < prdScreenCount) {
     logger.warn(`[design-dedup] Existing design incomplete: ${reusableScreens.length}/${prdScreenCount} valid screens — clearing cache to force regeneration`, { runId: step.run_id });
-    if (dRepoPath) {
-      try { fs.rmSync(path.join(dRepoPath, "stitch"), { recursive: true, force: true }); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
-      try { fs.unlinkSync(path.join(dRepoPath, ".stitch")); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
-    }
+    clearReusableDesignCache(dRepoPath);
     return false;
   }
 
@@ -1519,23 +1625,39 @@ async function autoCompleteDesignStep(step: StepRow, db: any, htmlFiles: string[
     return false;
   }
 
-  const dScreenMap = reusableScreens.map((screen) => ({
-    screenId: screen.screenId,
-    name: screen.name,
-    type: "page",
-    description: screen.name,
-  }));
+  const reconciliation = reconcileReusableDesignScreens(reusableScreens, dCtx["prd"] || dCtx["PRD"] || "");
+  if (reconciliation.missing.length > 0) {
+    const missing = reconciliation.missing.slice(0, 8).join(", ");
+    logger.warn(`[design-dedup] Existing design cache missing PRD screen(s): ${missing} — clearing cache to force regeneration`, { runId: step.run_id });
+    dCtx["design_dedup_mismatch"] = `missing=${missing}`;
+    await updateRunContext(step.run_id, dCtx);
+    clearReusableDesignCache(dRepoPath);
+    return false;
+  }
+
+  if (reconciliation.dropped.length > 0 || reconciliation.duplicates.length > 0) {
+    logger.warn(`[design-dedup] Reconciled reusable design cache to PRD screens (dropped=${reconciliation.dropped.length}, duplicates=${reconciliation.duplicates.length})`, { runId: step.run_id });
+  }
+
+  const dScreenMap = reconciliation.screens;
   dCtx["stitch_project_id"] = projectId;
-  dCtx["screens_generated"] = String(reusableScreens.length);
+  dCtx["screens_generated"] = String(dScreenMap.length);
   dCtx["screen_map"] = JSON.stringify(dScreenMap);
   dCtx["device_type"] = dCtx["device_type"] || "DESKTOP";
   dCtx["design_system"] = dCtx["design_system"] || "reused from existing designs";
-  dCtx["design_notes"] = `Reused ${reusableScreens.length} existing screen designs`;
+  dCtx["design_notes"] = `Reused ${dScreenMap.length} existing screen designs`;
   await updateRunContext(step.run_id, dCtx);
-  const dOutput = `STATUS: done\nSTITCH_PROJECT_ID: ${projectId}\nSCREENS_GENERATED: ${reusableScreens.length}\nDESIGN_NOTES: Reused ${reusableScreens.length} screens (auto-skip)`;
-  await pgRun("UPDATE steps SET status = 'done', output = $1, updated_at = $2 WHERE id = $3", [dOutput, now(), step.id]);
-  logger.info(`[design-dedup] Auto-skipped design — reusing ${reusableScreens.length} valid screens (project ${projectId})`, { runId: step.run_id });
-  await advancePipeline(step.run_id);
+  const dOutput = [
+    "STATUS: done",
+    `STITCH_PROJECT_ID: ${projectId}`,
+    `DEVICE_TYPE: ${dCtx["device_type"]}`,
+    `DESIGN_SYSTEM: ${dCtx["design_system"]}`,
+    `SCREEN_MAP: ${JSON.stringify(dScreenMap)}`,
+    `SCREENS_GENERATED: ${dScreenMap.length}`,
+    `DESIGN_NOTES: Reused ${dScreenMap.length} screens (auto-skip)`,
+  ].join("\n");
+  await completeStep(step.id, dOutput);
+  logger.info(`[design-dedup] Auto-skipped design through completeStep guardrails — reusing ${dScreenMap.length} valid screens (project ${projectId})`, { runId: step.run_id });
   return true;
 }
 
