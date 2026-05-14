@@ -143,6 +143,20 @@ function safeAgentCwdFromClaimInput(input: unknown): string {
       if (resolved) return resolved;
     }
 
+    const preparedWorktree = input.match(/prepared story worktree:\s*`?([^`\n]+)`?/i);
+    const preparedResolved = safeAgentCwdFromCandidate(preparedWorktree?.[1]);
+    if (preparedResolved) return preparedResolved;
+
+    for (const match of input.matchAll(/`?([^\s\"'<>`]+\/story-worktrees\/[A-Za-z0-9._-]+)`?/g)) {
+      const resolved = safeAgentCwdFromCandidate(match[1]);
+      if (resolved) return resolved;
+    }
+
+    for (const match of input.matchAll(/`?(\/home\/setrox\/\.openclaw\/workspaces\/workflows\/[^\s\"'<>`]+\/story-worktrees\/[A-Za-z0-9._-]+)`?/g)) {
+      const resolved = safeAgentCwdFromCandidate(match[1]);
+      if (resolved) return resolved;
+    }
+
     for (const match of input.matchAll(/`?(\/home\/setrox\/projects\/[A-Za-z0-9._-]+)`?/g)) {
       const resolved = safeAgentCwdFromCandidate(match[1]);
       if (resolved) return resolved;
@@ -2770,6 +2784,14 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
       .replace(/\[missing:\s*OUTPUT_FILE_ID\]/g, outputFileId);
   }
   const spawnCwd = safeAgentCwdFromClaimInput(claim.resolvedInput);
+  if (claim.storyId && spawnCwd === AGENT_SAFE_CWD) {
+    claimingSpawns.delete(key);
+    const reason = "CLAIM_WORKDIR_MISSING: story claim " + claim.storyId + " for " + fullAgentId + " did not resolve a project/story worktree from claim input. Refusing to spawn in agent scratch.";
+    console.warn("[spawner] " + reason);
+    if (claim.runId) await recordSupervisorInfraEvent(claim.runId, "spawner", claim.storyDbId || null, reason);
+    if (claim.stepId) await failStep(claim.stepId, reason);
+    return;
+  }
   fs.writeFileSync(claimFile, JSON.stringify({ stepId: claim.stepId, runId: claim.runId, workdir: spawnCwd, repo: spawnCwd, input: claim.resolvedInput }) + "\n");
   fs.writeFileSync(claimSummaryFile, JSON.stringify(buildClaimSummary({
     wfId,
@@ -3332,3 +3354,4 @@ async function main() {
 }
 
 main().catch((err) => { console.error(`[spawner] Fatal: ${String(err)}`); process.exit(1); });
+

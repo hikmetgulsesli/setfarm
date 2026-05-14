@@ -75,6 +75,18 @@ function splitCsvList(raw: string): string[] {
     .filter(Boolean);
 }
 
+function splitScopeFileList(raw: string): string[] {
+  return [...new Set(raw
+    .split(/[\n,]+/)
+    .map((item) => item.trim().replace(/^[-*]\s*/, "").replace(/^`|`$/g, ""))
+    .map((item) => item.replace(/^["']|["']$/g, ""))
+    .filter((item) => item.length > 0)
+    .filter((item) => !path.isAbsolute(item) && !item.includes(".."))
+    .filter((item) => /^[A-Za-z0-9_./@+-]+$/.test(item))
+    .filter((item) => /[./]/.test(item))
+  )];
+}
+
 function readLinesFile(filePath: string): string[] {
   try {
     return fs.readFileSync(filePath, "utf-8")
@@ -107,10 +119,14 @@ function extractScopeFiles(input: string, workdir: string): string[] {
   const fromScopeFile = readLinesFile(path.join(workdir, ".story-scope-files"));
   if (fromScopeFile.length > 0) return fromScopeFile;
 
-  const scopeRule = lineValue(input, "STORY SCOPE RULE");
+  const scopeRule = lineValue(input, "SCOPE ENFORCEMENT") || lineValue(input, "STORY SCOPE RULE");
   const bracket = scopeRule.match(/ONLY write files in \[([^\]]+)\]/i);
-  if (bracket?.[1]) return splitCsvList(bracket[1]);
-  return splitCsvList(lineValue(input, "story_scope_files"));
+  if (bracket?.[1]) return splitScopeFileList(bracket[1]);
+
+  const declaredFiles = sliceSection(input, /^\s*## YOUR FILES[^\n]*\n/m, [/^\s*SCOPE ENFORCEMENT:/m, /^\s*## /m], 3000);
+  if (declaredFiles) return splitScopeFileList(declaredFiles);
+
+  return splitScopeFileList(lineValue(input, "story_scope_files") || lineValue(input, "SCOPE_FILES"));
 }
 
 function isGeneratedScreenFile(filePath: string): boolean {
@@ -402,3 +418,4 @@ After complete/fail, reply HEARTBEAT_OK and stop.`;
 }
 
 export const defaultAgentScratch = path.join(os.homedir(), ".openclaw", "workspace", "agent-scratch");
+

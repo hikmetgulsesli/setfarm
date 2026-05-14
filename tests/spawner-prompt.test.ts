@@ -100,6 +100,40 @@ describe("spawner prompt bootstrap", () => {
     }
   });
 
+
+  it("extracts scope files from module prompt when the sidecar file is unavailable", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-fallback-"));
+    try {
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        bootstrapFile: path.join(tmp, "bootstrap.sh"),
+        stepId: "step-123",
+        runId: "run-123",
+        workdir: tmp,
+        repo: tmp,
+        storyId: "US-001",
+        input: [
+          "# Developer Task",
+          "",
+          "## YOUR FILES (scope_files) — you may ONLY create/modify these:",
+          "src/App.tsx, src/App.css, src/main.tsx, src/index.css",
+          "",
+          "SCOPE ENFORCEMENT: You may ONLY write files in [src/App.tsx, src/App.css, src/main.tsx, src/index.css].",
+          "",
+          "## Current Story",
+          "Story US-001: Bootstrap story",
+        ].join("\n"),
+      });
+
+      assert.deepEqual(summary.scopeFiles, ["src/App.tsx", "src/App.css", "src/main.tsx", "src/index.css"]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("builds a compact structured claim summary so agents do not parse claim.input", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-"));
     try {

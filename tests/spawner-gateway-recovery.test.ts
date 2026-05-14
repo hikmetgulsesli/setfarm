@@ -120,6 +120,10 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /function safeAgentCwdFromClaimInput\(input: unknown\): string/);
     assert.match(source, /"story_workdir",\s*"repo",\s*"REPO",\s*"workdir",\s*"WORKDIR"/);
     assert.match(source, /\\\/home\\\/setrox\\\/projects\\\//);
+    assert.match(source, /prepared story worktree/);
+    assert.match(source, /story-worktrees/);
+    assert.match(source, /CLAIM_WORKDIR_MISSING/);
+    assert.match(source, /claim\.storyId && spawnCwd === AGENT_SAFE_CWD/);
     assert.match(source, /resolved === SETFARM_SRC \|\| resolved\.startsWith\(SETFARM_SRC \+ path\.sep\)/);
     assert.match(source, /const spawnCwd = safeAgentCwdFromClaimInput\(claim\.resolvedInput\)/);
     assert.match(source, /JSON\.stringify\(\{ stepId: claim\.stepId, runId: claim\.runId, workdir: spawnCwd, repo: spawnCwd, input: claim\.resolvedInput \}\)/);
