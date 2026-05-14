@@ -2663,6 +2663,7 @@ ${reason}
               " instead of waiting on synthetic session activity. Transcript: " + active.transcriptPath;
             console.warn("[spawner] " + reason);
             try { fs.appendFileSync(active.transcriptPath, "--- SELF LOOP " + new Date().toISOString() + " ---\n" + reason + "\n"); } catch {}
+            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "AGENT_SELF_LOOP", "agent-self-loop", reason);
             terminateActiveProcess(active, "self-loop");
             activeProcesses.delete(key);
             if (row.type === "loop" && active.storyId) {
@@ -3383,4 +3384,3 @@ async function main() {
 }
 
 main().catch((err) => { console.error(`[spawner] Fatal: ${String(err)}`); process.exit(1); });
-

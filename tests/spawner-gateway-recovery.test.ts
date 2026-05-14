@@ -524,6 +524,26 @@ describe("spawner gateway recovery wiring", () => {
     }
   });
 
+  it("records self-loop diagnostics in supervisor memory before retrying claims", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    const selfLoopStart = source.indexOf("const loop = repeatedSessionFileLoop(active)");
+    const selfLoopEnd = source.indexOf("const promptIdleMs =", selfLoopStart);
+    assert.notEqual(selfLoopStart, -1, "self-loop guard not found");
+    assert.notEqual(selfLoopEnd, -1, "self-loop guard end not found");
+
+    const block = source.slice(selfLoopStart, selfLoopEnd);
+    assert.match(block, /AGENT_SELF_LOOP/);
+    assert.match(block, /recordSupervisorRuntimeEvent\(active\.runId,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"AGENT_SELF_LOOP",\s*"agent-self-loop",\s*reason\)/);
+    assert.ok(
+      block.indexOf("recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null") < block.indexOf("terminateActiveProcess(active, \"self-loop\")"),
+      "self-loop guard must write supervisor memory before killing the claim",
+    );
+    assert.ok(
+      block.indexOf("recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null") < block.indexOf("await requeueOpenStoryClaim(active.runId, row.step_id, active.storyId"),
+      "self-loop guard must preserve manager diagnostics before retry",
+    );
+  });
+
   it("hard-times out verify agents as an infra retry instead of leaving open claims", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /VERIFY_AGENT_HARD_TIMEOUT_MS/);

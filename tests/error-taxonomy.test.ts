@@ -86,6 +86,13 @@ describe("error taxonomy", () => {
     );
     assert.equal(noDelta.category, "AGENT_STALL");
     assert.match(noDelta.suggestion, /source delta/);
+
+    const selfLoop = classifyError(
+      "AGENT_SELF_LOOP: repeated identical test/build command (calls=8, command=cd <workdir> && npm run test 2>&1); retrying feature-dev/developer instead of waiting on synthetic session activity.",
+    );
+    assert.equal(selfLoop.category, "AGENT_SELF_LOOP");
+    assert.match(selfLoop.suggestion, /supervisor feedback/);
+    assert.match(selfLoop.suggestion, /avoid repeating identical commands/);
   });
 
 
