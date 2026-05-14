@@ -51,10 +51,18 @@ describe("06-implement step module", () => {
 
   it("keeps git ownership in the platform instead of the implement agent", () => {
     const prompt = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/prompt.md"), "utf-8");
+    const rules = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/rules.md"), "utf-8");
+    const workflow = fs.readFileSync(path.join(process.cwd(), "workflows/feature-dev/workflow.yml"), "utf-8");
+    const implementInput = workflow.split("\n  - id: implement\n")[1]?.split("\n  - id: verify\n")[0] || "";
     assert.match(prompt, /Do NOT run `git add`, `git commit`, `git push`, `gh pr create`, or any branch command/);
     assert.match(prompt, /Setfarm performs the final scoped story commit after build\/scope\/supervisor gates pass/);
+    assert.match(rules, /Do NOT run `git add`, `git commit`, `git push`/);
+    assert.match(implementInput, /Setfarm performs the final\s+scoped story commit/);
     assert.doesNotMatch(prompt, /xargs -a \.story-scope-files git add --/);
     assert.doesNotMatch(prompt, /git commit -m "feat: <story-id> - <description>"/);
+    assert.doesNotMatch(rules, /Commit once at the end/);
+    assert.doesNotMatch(implementInput, /git commit -m "feat:/);
+    assert.doesNotMatch(implementInput, /git push -u origin/);
   });
 
   it("platform story commit stages only declared scope and implicit test files", () => {
@@ -260,9 +268,18 @@ describe("06-implement step module", () => {
     assert.match(prompt, /local display\/render type or adapter/i);
   });
 
-  it("buildPrompt returns empty string — loop delegates to AGENTS.md", () => {
+  it("buildPrompt is the loop source of truth for implement instructions", () => {
     const result = implementModule.buildPrompt({ runId: "r1", task: "anything", context: { repo: "/x" } });
-    assert.equal(result, "");
+    assert.match(result, /# Developer Task/);
+    assert.match(result, /Setfarm commits the allowed story scope/);
+    assert.doesNotMatch(result, /Commit and push your changes/);
+  });
+
+  it("loop claims use step module buildPrompt instead of stale workflow fallback", () => {
+    const source = fs.readFileSync(path.join(process.cwd(), "src/installer/step-ops.ts"), "utf-8");
+    assert.match(source, /Step module takeover for loop claims/);
+    assert.match(source, /loop buildPrompt override/);
+    assert.ok(source.includes("resolveTemplate(_modulePrompt, prunedContextLoop)"));
   });
 
   it("injectContext is a no-op (real work happens in injectStoryContext post-selection)", async () => {

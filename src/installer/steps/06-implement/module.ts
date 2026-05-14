@@ -7,16 +7,11 @@ import { normalize, validateOutput } from "./guards.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const promptTemplate = fs.readFileSync(path.join(__dirname, "prompt.md"), "utf-8");
-const rulesBody = fs.readFileSync(path.join(__dirname, "rules.md"), "utf-8");
-
 function buildPrompt(_ctx: PromptContext): string {
-  // Implement is a loop step — the real prompt comes from AGENTS.md via
-  // workflow.yml input_template, enriched by injectStoryContext in the
-  // loop claim path. Returning empty string preserves the 869-line
-  // AGENTS.md template instead of replacing it with a thin skeleton.
-  // The rules.md scope enforcement is injected via context["scope_reminder"]
-  // by injectStoryContext, so it still reaches the agent.
-  return "";
+  // Loop claims resolve this module prompt after injectStoryContext() fills
+  // story-specific variables. Keep implement instructions in one source so
+  // workflow.yml cannot drift into conflicting git/scope commands.
+  return promptTemplate;
 }
 
 async function injectContext(ctx: ClaimContext): Promise<void> {

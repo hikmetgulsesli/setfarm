@@ -785,7 +785,7 @@ steps:
     input: |
       !include critical-preamble.md
 
-      Implement ONE user story. Commit and push your changes to the prepared story branch.
+      Implement ONE user story in the prepared story worktree. Do not stage, commit, push, branch, or open PRs; Setfarm owns the scoped story commit and PR gate after local checks pass.
       The pipeline will create a PR to main, wait for review, merge it, sync local main,
       and only then claim the next story.
 
@@ -1009,7 +1009,7 @@ steps:
          - Do NOT add speculative UI such as profile, archive, settings,
            navigation, dashboards, or demo panels unless this story explicitly
            asks for them.
-         - Before committing, run `git diff` and remove anything that does not
+         - Before reporting done, run `git diff` and remove anything that does not
            directly serve this story's acceptance criteria.
 
       TEST GUIDE (if available — follow this to write tests):
@@ -1058,7 +1058,7 @@ steps:
            # Fix root causes from the limited log excerpt. Open exact file:line only.
            # Do NOT rerun commands just to print more output; inspect the saved log with rg/sed.
            if [ "$CYCLE" = "2" ]; then
-             echo "WARNING: Still failing after 2 fix cycles — commit only if acceptance criteria are implemented and failures are non-blocking"
+             echo "WARNING: Still failing after 2 fix cycles — report done only if acceptance criteria are implemented and failures are non-blocking"
            fi
          done
 
@@ -1068,23 +1068,23 @@ steps:
          error is truly unfixable (missing dependency, infrastructure failure,
          external API issue, or context/tool failure).
 
-      8. Commit (exclude runtime files):
+      8. Final scoped handoff:
          rm -f .setfarm-step-output.txt 2>/dev/null || true
-         while IFS= read -r f; do
-           [ -z "$f" ] && continue
-           [ -e "$f" ] || [ -L "$f" ] || continue
-           git add -- "$f"
-         done < .story-scope-files
-         git ls-files --modified --others --exclude-standard -- ':(glob)**/*.test.ts' ':(glob)**/*.test.tsx' ':(glob)**/*.spec.ts' ':(glob)**/*.spec.tsx' | xargs -r git add --
-         git diff --cached --quiet && { echo "NO_SCOPED_CHANGES_STAGED"; git status --short; exit 1; }
-         git commit -m "feat: {{current_story_id}} - {{current_story_title}}"
+         git status --short
+         git diff -- . ':!node_modules' ':!.setfarm-bin'
+         Verify the diff is limited to this story's SCOPE_FILES plus allowed
+         implicit test files. If any out-of-scope file changed, restore or remove
+         it before reporting done.
 
-      9. Push the prepared branch:
-         git push -u origin "$STORY_BRANCH"
+      9. Do NOT run git add, git commit, git push, gh pr create, or branch
+         commands. The implement worktree installs a git wrapper and the runtime
+         supervisor kills agent-side git ownership. Setfarm performs the final
+         scoped story commit, pushes STORY_BRANCH, and owns the PR gate after
+         build/scope/supervisor gates pass.
 
-      10. DO NOT create a PR. The pipeline opens one PR per story to main after this output.
-          The next story will not start until that PR is reviewed, fixed, merged, and
-          local main is synced.
+      10. DO NOT create a PR. The pipeline opens one PR per story to main after
+          the scoped platform commit. The next story will not start until that
+          PR is reviewed, fixed, merged, and local main is synced.
 
       11. Write detailed progress to `/tmp/setfarm-progress-{{run_id}}.txt`:
           {
@@ -1102,9 +1102,10 @@ steps:
       STORY_BRANCH: <exact branch name, e.g. a1b2c3d4-us-001>
       CHANGES: <what you implemented>
       TESTS: <what tests you wrote>
+      PR_URL: <leave empty; pipeline creates the PR>
 
-      STORY_BRANCH must be the exact prepared branch name you used and pushed.
-      DO NOT create a PR — the pipeline handles the story PR gate automatically.
+      STORY_BRANCH must be the exact prepared branch name. Do NOT git add, commit,
+      push, or create a PR — the pipeline handles scoped commit and PR gate automatically.
       ============================================================
     expects: "STATUS: done"
     max_retries: 5

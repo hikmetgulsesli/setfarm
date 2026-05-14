@@ -3301,6 +3301,30 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
       }
       let resolvedInput = sanitizeAgentPromptContracts(prependScopeReminderIfMissing(resolveTemplate(step.input_template, prunedContextLoop), context));
 
+      // Step module takeover for loop claims. Single-step claims already use
+      // buildPrompt(); loop claims need the same module source of truth after
+      // injectStoryContext() has populated story-specific variables.
+      try {
+        const _modRegistryP = await import("./steps/registry.js");
+        const _stepModuleP = _modRegistryP.get(step.step_id);
+        if (_stepModuleP) {
+          const _modulePrompt = _stepModuleP.buildPrompt({
+            runId: step.run_id,
+            task: prunedContextLoop["task"] || prunedContextLoop["TASK"] || "",
+            context: prunedContextLoop,
+          });
+          if (_modulePrompt && _modulePrompt.length > 0) {
+            if (_modulePrompt.length > _stepModuleP.maxPromptSize) {
+              logger.warn(`[step-module] ${_stepModuleP.id} loop prompt ${_modulePrompt.length} > budget ${_stepModuleP.maxPromptSize} — using anyway, investigate`, { runId: step.run_id });
+            }
+            resolvedInput = sanitizeAgentPromptContracts(prependScopeReminderIfMissing(resolveTemplate(_modulePrompt, prunedContextLoop), context));
+            logger.info(`[step-module] ${_stepModuleP.id} loop buildPrompt override (${_modulePrompt.length}b)`, { runId: step.run_id });
+          }
+        }
+      } catch (_pe) {
+        logger.warn(`[step-module] loop buildPrompt failed (falling back to template): ${String(_pe).slice(0, 200)}`, { runId: step.run_id });
+      }
+
       // Item 7: MISSING_INPUT_GUARD inside claim flow (v1.5.53: retry once before failing run)
       const allMissing = [...new Set([...resolvedInput.matchAll(/\[missing:\s*(\w+)\]/gi)].map(m => m[1].toLowerCase()))];
       if (allMissing.length > 0) {

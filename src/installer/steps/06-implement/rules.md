@@ -23,14 +23,14 @@ You are assigned ONE story with a FIXED list of files. You MUST NOT create or mo
 - Do NOT widen shared exported/domain types to fix only a screen component. Use a local render/display type or adapter in your owned file, then narrow before calling shared helpers.
 - Do NOT invent props for components imported from SHARED_FILES. Render them with their declared props only, or expose owned context/actions for the owner story to consume later.
 - Generated Stitch screen components may expose a typed `actions` prop. Use those declared action IDs for wiring; do NOT route clicks by matching `textContent`, `innerText`, or DOM labels.
-- A pre-commit hook will REJECT your commit if you touch out-of-scope files
-- Server-side SCOPE_BLEED guard will REJECT your output even if the hook is bypassed
+- Runtime scope guard will REJECT your output if you touch out-of-scope files
+- Server-side SCOPE_BLEED guard will REJECT your output even if local tooling is bypassed
 
-### If the pre-commit hook rejects your commit:
-1. Run `git reset HEAD <blocked-file>` for each blocked file
-2. Run `git checkout -- <blocked-file>` to discard changes
-3. Only stage and commit files from your SCOPE_FILES
-4. Do NOT use --no-verify to bypass the hook
+### If scope guard reports out-of-scope changes:
+1. Run `git status --short` and `git diff -- <path>` to inspect the exact file
+2. Restore or remove each out-of-scope file before reporting done
+3. Do not stage, commit, push, branch, or open PRs; Setfarm owns git after gates pass
+4. Do NOT use --no-verify, alternate git binaries, or shell wrappers to bypass guards
 
 ## Regression Safety
 - DONE story behavior is contract. Preserve existing features unless this story explicitly replaces them.
@@ -49,10 +49,11 @@ You are assigned ONE story with a FIXED list of files. You MUST NOT create or mo
 - Local checks must preserve real exit codes. Do not decide build/test success from commands piped through `head`, `tail`, `grep`, `tee`, `cat`, or similar filters. If logs are long, run the full command first and inspect saved output only after the command exits.
 
 ## Git Hygiene
-- Commit once at the end after implementation and local checks pass. Use `/tmp/setfarm-progress-<run>.txt` checkpoints for long work, not partial git commits.
-- Format: `feat: <story-id> - <description>`
-- Do NOT force push or rewrite history
-- Do NOT modify package.json dependencies unless the story requires it
+- Do NOT run `git add`, `git commit`, `git push`, branch commands, or PR commands during implement.
+- Use `/tmp/setfarm-progress-<run>.txt` checkpoints for long work, not partial git commits.
+- Setfarm creates the final scoped commit as `feat: <story-id> - <description>` after build/scope/supervisor gates pass.
+- Do NOT force push, rewrite history, or bypass the git wrapper/guards.
+- Do NOT modify package.json dependencies unless the story requires it.
 - Do NOT create, edit, merge, retarget, or close GitHub PRs. Setfarm creates the story PR after completion.
 
 ## Output Contract
