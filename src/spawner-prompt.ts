@@ -324,8 +324,8 @@ export function buildClaimSummary(params: {
     storyScreens: parseJsonArray(storyScreensRaw),
     generatedScreenPolicy: {
       summary: generatedScreenAllowed.length > 0
-        ? `May read/edit only these generated screen source files: ${generatedScreenAllowed.join(", ")}. Other src/screens/*.tsx files are forbidden; use SCREEN_INDEX.json and src/screens/index.ts.`
-        : "No generated screen source file is in scope. Do not read/cat/sed/head/grep/rg/node/python any src/screens/*.tsx file; use SCREEN_INDEX.json and src/screens/index.ts only.",
+        ? `May use OpenClaw read/edit only on these generated screen source files: ${generatedScreenAllowed.join(", ")}. Other src/screens/*.tsx files are forbidden to read or edit; use SCREEN_INDEX.json, src/screens/index.ts, component registry, component types, and UI_CONTRACT.`
+        : "No generated screen source file is in scope. Do not use OpenClaw read tool, cat, sed, head, grep, rg, node, or python on any src/screens/*.tsx file; use SCREEN_INDEX.json, src/screens/index.ts, component registry, component types, and UI_CONTRACT only.",
       allowedSourceFiles: generatedScreenAllowed,
       forbiddenSourceFiles: generatedScreenReadOnly,
       safeMetadataFiles: ["src/screens/SCREEN_INDEX.json", "src/screens/index.ts"],

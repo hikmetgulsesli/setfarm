@@ -47,6 +47,7 @@ describe("error taxonomy", () => {
     );
     assert.equal(generated.category, "GENERATED_SCREEN_SHARED_READ");
     assert.match(generated.suggestion, /SCREEN_INDEX\.json/);
+    assert.match(generated.suggestion, /OpenClaw read tool/);
 
     const rawStitch = classifyError(
       "RAW_STITCH_CONTEXT_READ: feature-dev_developer used exec on stitch/*.html. Implement claims must use injected Stitch excerpts, UI_CONTRACT, SCREEN_INDEX, and story-owned generated screens instead of loading raw stitch HTML/full DESIGN_DOM context.",
@@ -112,6 +113,20 @@ describe("error taxonomy", () => {
     assert.match(feedback, /DÜZELT:\n• replace icon fonts\/emoji with inline SVG components/);
     assert.match(feedback, /• replace transition-all\/transition: all with scoped transition properties/);
     assert.doesNotMatch(feedback, /Kritik UI sözleşmesi|hardcoded renkleri/);
+  });
+
+  it("rewrites generated screen read feedback without design-mismatch fix text", () => {
+    const feedback = sanitizeDesignMismatchFeedback([
+      "GENERATED_SCREEN_SHARED_READ: feature-dev_developer used read on src/screens/MainMenu.tsx. Shared generated screens must be consumed through src/screens/SCREEN_INDEX.json, src/screens/index.ts, the component registry, and UI_CONTRACT.",
+      "Transcript: /tmp/feature-dev.log",
+      "DÜZELT:",
+      "• fix only the exact files and issues reported by the design guardrail",
+    ].join("\n"));
+
+    assert.match(feedback, /OpenClaw read tool/);
+    assert.match(feedback, /SCREEN_INDEX\.json/);
+    assert.doesNotMatch(feedback, /design guardrail/i);
+    assert.doesNotMatch(feedback, /design-token|hardcoded colors/i);
   });
 
   it("rewrites raw stitch context feedback without design-mismatch fix text", () => {

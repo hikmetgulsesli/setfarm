@@ -231,6 +231,8 @@ describe("spawner prompt bootstrap", () => {
         "src/screens/MainMenu.tsx",
       ]);
       assert.match((summary.generatedScreenPolicy as any).summary, /No generated screen source file is in scope/);
+      assert.match((summary.generatedScreenPolicy as any).summary, /OpenClaw read tool/);
+      assert.match((summary.generatedScreenPolicy as any).summary, /component registry/);
       assert.equal((summary.designContracts as any).screenIndex.length, 2);
       assert.equal((summary.designContracts as any).uiContract.length, 1);
       assert.match(JSON.stringify((summary.designContracts as any).screenIndex), /START GAME/);

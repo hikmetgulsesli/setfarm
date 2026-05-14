@@ -46,7 +46,7 @@ const PATTERNS: Array<{ pattern: RegExp; category: ErrorCategory; suggestion: st
   { pattern: /^SCOPE_WRITE_VIOLATION:/i, category: "SCOPE_WRITE_VIOLATION", suggestion: "Modify only files listed in scopeFiles. Remove out-of-scope edits and keep scratch/probe files outside the project worktree." },
   { pattern: /^SCOPE_BLEED:/i, category: "SCOPE_BLEED", suggestion: "Story modified files outside SCOPE_FILES. Revert or move out-of-scope files; if an allowed src/* path appears truncated, inspect git porcelain path parsing." },
   { pattern: /^PLATFORM_STORY_COMMIT_SCOPE_BLOCKED:/i, category: "SCOPE_BLEED", suggestion: "Platform story commit saw out-of-scope files. If directory paths are reported, inspect git status -uall expansion before retrying." },
-  { pattern: /^GENERATED_SCREEN_SHARED_READ:/i, category: "GENERATED_SCREEN_SHARED_READ", suggestion: "Use claim-summary designContracts, SCREEN_INDEX.json, and src/screens/index.ts for shared generated screens. Do not read forbidden src/screens/*.tsx files outside scopeFiles." },
+  { pattern: /^GENERATED_SCREEN_SHARED_READ:/i, category: "GENERATED_SCREEN_SHARED_READ", suggestion: "Use claim-summary designContracts, SCREEN_INDEX.json, and src/screens/index.ts for shared generated screens. Do not use the OpenClaw read tool or shell commands to read forbidden src/screens/*.tsx files outside scopeFiles." },
   { pattern: /^RAW_STITCH_CONTEXT_READ:/i, category: "RAW_STITCH_CONTEXT_READ", suggestion: "Use CLAIM_SUMMARY_FILE, injected Stitch excerpts, UI_CONTRACT, SCREEN_INDEX.json, and only story-owned generated screens. Do not read or exec stitch/*.html, .stitch-screens*.json, or stitch/DESIGN_DOM.json inside implement claims." },
   { pattern: /^CLAIM_WORKDIR_MISSING:/i, category: "CLAIM_WORKDIR_MISSING", suggestion: "Setfarm could not resolve the prepared story worktree. Fix claim/workdir handoff before spawning a developer in agent scratch." },
   { pattern: /^CLAIM_PARSE_LOOP:/i, category: "CLAIM_PARSE_LOOP", suggestion: "Read the structured claim summary once and work from its focused fields. Do not jq/sed/head/node-loop over raw claim.input." },
@@ -73,6 +73,28 @@ const PATTERNS: Array<{ pattern: RegExp; category: ErrorCategory; suggestion: st
   { pattern: /rate.limit|429|too many requests/i, category: "API_ERROR", suggestion: "API rate limit hit — wait and retry, or use different API key" },
   { pattern: /CERTIFICATE|ssl|TLS|self.signed/i, category: "API_ERROR", suggestion: "SSL/TLS certificate error — check network or set NODE_TLS_REJECT_UNAUTHORIZED=0 temporarily" },
 ];
+
+export function buildGeneratedScreenSharedReadSuggestion(): string {
+  return [
+    "do not use the OpenClaw read tool, cat, sed, head, grep, rg, node, or python to read forbidden src/screens/*.tsx files outside scopeFiles",
+    "use CLAIM_SUMMARY_FILE designContracts, SCREEN_INDEX.json, src/screens/index.ts, component registry, component types, and UI_CONTRACT instead",
+    "if a generated screen contract is insufficient, report the exact missing action/type contract instead of opening shared generated source",
+  ].join("; ");
+}
+
+function sanitizeGeneratedScreenSharedReadFeedback(errorText: string): string {
+  const text = errorText.trim();
+  const targetedFix = `DÜZELT:\n${buildGeneratedScreenSharedReadSuggestion()
+    .split("; ")
+    .map(suggestion => `• ${suggestion}`)
+    .join("\n")}`;
+
+  if (/\nDÜZELT:/i.test(text)) {
+    return text.replace(/\nDÜZELT:[\s\S]*$/i, `\n${targetedFix}`).trim();
+  }
+
+  return `${text}\n${targetedFix}`;
+}
 
 export function buildRawStitchContextSuggestion(): string {
   return [
@@ -121,6 +143,7 @@ export function buildDesignMismatchSuggestion(errorText: string): string {
 
 export function sanitizeDesignMismatchFeedback(errorText: string): string {
   const text = errorText.trim();
+  if (/GENERATED_SCREEN_SHARED_READ:/i.test(text)) return sanitizeGeneratedScreenSharedReadFeedback(text);
   if (/RAW_STITCH_CONTEXT_READ:/i.test(text)) return sanitizeRawStitchContextFeedback(text);
   if (!/DESIGN UYUMSUZLUK|UI_CONTRACT|design compliance|design mismatch/i.test(text)) return text;
 
