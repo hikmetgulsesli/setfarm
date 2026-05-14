@@ -7,7 +7,15 @@ fully clean, then update local `main`.
 
 ## Context
 
-- `{{REPO}}` — project root directory
+VERIFY_WORKDIR: {{VERIFY_WORKDIR}}
+MAIN_REPO: {{MAIN_REPO}}
+STORY_WORKDIR: {{STORY_WORKDIR}}
+REPO: {{REPO}}
+
+- `VERIFY_WORKDIR` is where the story branch must be verified.
+- `MAIN_REPO` is the canonical project repository for final `main` update.
+- `STORY_WORKDIR` is the existing story-branch worktree, when this is a story PR.
+- `REPO` is the primary verification workdir; it equals `STORY_WORKDIR` when present, otherwise `MAIN_REPO`.
 - `{{BRANCH}}` — run/setup branch; not the story merge target
 - `{{CURRENT_STORY}}` — story being verified
 - `{{PR_URL}}` — story PR being verified
@@ -52,7 +60,12 @@ Verify is an evidence gate, not a broad manual source review.
 
 ## Required Flow
 
-1. `cd "{{REPO}}"`.
+1. `cd "{{VERIFY_WORKDIR}}"`.
+   - If `{{STORY_WORKDIR}}` is non-empty, this is the authoritative checkout
+     for the story branch. Do not check out the story branch inside
+     `{{MAIN_REPO}}`; Git worktree ownership will reject it and it wastes the
+     verify budget.
+   - Use `{{MAIN_REPO}}` only for final `main` refresh after the PR is merged.
 2. `git fetch origin --prune`.
 3. If `{{PR_URL}}` is empty, stop immediately. Do not inspect source files,
    read generated screens, run build/test, or infer a branch. Return:
@@ -66,10 +79,15 @@ Verify is an evidence gate, not a broad manual source review.
    - If it is `MERGED`, run `git checkout main && git pull --ff-only origin main`,
      then still evaluate the build/test/smoke evidence below before returning.
    - Otherwise return `STATUS: retry` with the reason.
-6. Check out the PR branch:
+6. Check out or align the PR branch in the verification workdir:
    - `HEAD_BRANCH=$(gh pr view "{{PR_URL}}" --json headRefName --jq .headRefName)`
    - `git fetch origin "$HEAD_BRANCH" main --prune`
-   - `git checkout -B "$HEAD_BRANCH" "origin/$HEAD_BRANCH"`.
+   - If `{{STORY_WORKDIR}}` is non-empty, stay in `{{STORY_WORKDIR}}` and
+     confirm `git branch --show-current` is `$HEAD_BRANCH`. If it differs,
+     return `STATUS: retry` with `VERIFY_WORKDIR_BRANCH_MISMATCH`; do not try
+     to steal that branch from another worktree.
+   - If no story workdir exists, run
+     `git checkout -B "$HEAD_BRANCH" "origin/$HEAD_BRANCH"` in `{{VERIFY_WORKDIR}}`.
    - If the local branch diverged, do not `git pull` merge; `origin/$HEAD_BRANCH` is the source of truth.
 7. Read review comments, failing checks, `{{PREFLIGHT_ANALYSIS}}`,
    `{{PLAYWRIGHT_REPORT}}`, `{{SUPERVISOR_MEMORY}}`, and acceptance criteria.
@@ -119,7 +137,8 @@ Verify is an evidence gate, not a broad manual source review.
      reason. Do not inspect, rebase, resolve, or repair merge conflicts.
 12. Confirm merge:
     - `gh pr view "{{PR_URL}}" --json state --jq .state` must return `MERGED`.
-13. Update local main:
+13. Update local main in the canonical repo:
+    - `cd "{{MAIN_REPO}}"`
     - `git fetch origin main`
     - `git checkout main`
     - `git pull --ff-only origin main`

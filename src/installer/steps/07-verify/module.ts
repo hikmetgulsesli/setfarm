@@ -13,8 +13,14 @@ const rulesBody = fs.readFileSync(path.join(__dirname, "rules.md"), "utf-8");
 
 function buildPrompt(ctx: PromptContext): string {
   const c = ctx.context;
+  const mainRepo = c["repo"] || "";
+  const storyWorkdir = c["story_workdir"] || "";
+  const verifyWorkdir = storyWorkdir || mainRepo;
   const resolved = resolveTemplate(promptTemplate, {
-    REPO: c["repo"] || "",
+    REPO: verifyWorkdir,
+    MAIN_REPO: mainRepo,
+    STORY_WORKDIR: storyWorkdir,
+    VERIFY_WORKDIR: verifyWorkdir,
     BRANCH: c["branch"] || "main",
     CURRENT_STORY: c["current_story"] || "",
     CURRENT_STORY_ID: c["current_story_id"] || "",

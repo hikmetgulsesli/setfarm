@@ -60,6 +60,9 @@ describe("spawner prompt bootstrap", () => {
         storyTitle: "Bootstrap story",
         storyBranch: "run-us-001",
         repo: "/home/setrox/projects/bootstrap-sensor",
+        mainRepo: "/home/setrox/projects/bootstrap-sensor",
+        storyWorkdir: "/home/setrox/.openclaw/workspaces/workflows/feature-dev/agents/developer/story-worktrees/run-us-001",
+        verifyWorkdir: "/home/setrox/.openclaw/workspaces/workflows/feature-dev/agents/developer/story-worktrees/run-us-001",
         task: "Project: bootstrap sensor",
         scopeFiles: ["src/App.tsx"],
         gitPolicy: {
@@ -100,6 +103,8 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, new RegExp(`CLAIM_SUMMARY_FILE=${claimSummaryFile.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
       assert.match(out, /STORY=US-001 Bootstrap story/);
       assert.match(out, /STORY_BRANCH=run-us-001/);
+      assert.match(out, /STORY_WORKDIR=\/home\/setrox\/\.openclaw\/workspaces\/workflows\/feature-dev\/agents\/developer\/story-worktrees\/run-us-001/);
+      assert.match(out, /VERIFY_WORKDIR=\/home\/setrox\/\.openclaw\/workspaces\/workflows\/feature-dev\/agents\/developer\/story-worktrees\/run-us-001/);
       assert.match(out, /MAIN_REPO=\/home\/setrox\/projects\/bootstrap-sensor/);
       assert.match(out, /SCOPE_FILES=src\/App\.tsx/);
       assert.match(out, /GIT_POLICY=Developer story agents write code only/);
@@ -238,6 +243,9 @@ describe("spawner prompt bootstrap", () => {
       assert.equal(summary.storyTitle, "Tetris engine");
       assert.equal(summary.storyBranch, "run-us-001");
       assert.equal(summary.repo, "/home/setrox/projects/tetris-sensor");
+      assert.equal(summary.mainRepo, "/home/setrox/projects/tetris-sensor");
+      assert.equal(summary.storyWorkdir, "");
+      assert.equal(summary.verifyWorkdir, workdir);
       assert.equal(summary.buildCommand, "true");
       assert.equal(summary.testCommand, "true");
       assert.equal(summary.lintCommand, "true");
@@ -309,6 +317,56 @@ describe("spawner prompt bootstrap", () => {
       assert.equal(summary.buildCommand, "npm run build");
       assert.equal(summary.testCommand, "npm run test");
       assert.equal(summary.lintCommand, "true");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the story worktree for verification while preserving the canonical main repo", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-story-workdir-"));
+    try {
+      const mainRepo = path.join(tmp, "main-repo");
+      const storyWorkdir = path.join(tmp, "workflows", "feature-dev", "agents", "developer", "story-worktrees", "33d23f10-us-001");
+      fs.mkdirSync(mainRepo, { recursive: true });
+      fs.mkdirSync(storyWorkdir, { recursive: true });
+      fs.writeFileSync(path.join(storyWorkdir, "package.json"), JSON.stringify({
+        scripts: {
+          build: "tsc && vite build",
+          test: "vitest run",
+        },
+      }));
+
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "reviewer",
+        claimFile: "/tmp/claim.json",
+        outputFile: "/tmp/output.txt",
+        bootstrapFile: "/tmp/bootstrap.sh",
+        stepId: "step-123",
+        runId: "33d23f10-f68c-4c75-a9e9-4a48996d075b",
+        workdir: storyWorkdir,
+        repo: storyWorkdir,
+        storyId: "US-001",
+        input: [
+          "TASK: Project: worktree routing sensor",
+          `VERIFY_WORKDIR: ${storyWorkdir}`,
+          `MAIN_REPO: ${mainRepo}`,
+          `STORY_WORKDIR: ${storyWorkdir}`,
+          `REPO: ${storyWorkdir}`,
+          "STORY_BRANCH: 33d23f10-us-001",
+          "",
+          "CURRENT STORY: Story US-001: Worktree routing",
+        ].join("\n"),
+      });
+
+      assert.equal(summary.workdir, storyWorkdir);
+      assert.equal(summary.storyWorkdir, storyWorkdir);
+      assert.equal(summary.verifyWorkdir, storyWorkdir);
+      assert.equal(summary.repo, mainRepo);
+      assert.equal(summary.mainRepo, mainRepo);
+      assert.equal(summary.storyBranch, "33d23f10-us-001");
+      assert.equal(summary.buildCommand, "npm run build");
+      assert.equal(summary.testCommand, "npm run test");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

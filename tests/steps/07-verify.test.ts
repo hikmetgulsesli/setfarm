@@ -35,12 +35,13 @@ describe("07-verify step module", () => {
     });
   });
 
-  it("buildPrompt substitutes REPO/BRANCH/PR_URL/PREFLIGHT_ANALYSIS from context", () => {
+  it("buildPrompt substitutes worktree, main repo, PR, and preflight context", () => {
     const prompt = verifyModule.buildPrompt({
       runId: "r1",
       task: "t",
       context: {
         repo: "$HOME/projects/sayac-12345",
+        story_workdir: "/tmp/story-worktrees/r1-us-001",
         branch: "feature-sayac",
         pr_url: "https://github.com/u/r/pull/42",
         preflight_analysis: "3 files changed, 0 ESLint errors",
@@ -48,6 +49,10 @@ describe("07-verify step module", () => {
       },
     });
     assert.ok(prompt.includes("$HOME/projects/sayac-12345"));
+    assert.ok(prompt.includes("MAIN_REPO: $HOME/projects/sayac-12345"));
+    assert.ok(prompt.includes("STORY_WORKDIR: /tmp/story-worktrees/r1-us-001"));
+    assert.ok(prompt.includes("VERIFY_WORKDIR: /tmp/story-worktrees/r1-us-001"));
+    assert.ok(prompt.includes("REPO: /tmp/story-worktrees/r1-us-001"));
     assert.ok(prompt.includes("feature-sayac"));
     assert.ok(prompt.includes("https://github.com/u/r/pull/42"));
     assert.ok(prompt.includes("3 files changed"));
@@ -84,6 +89,10 @@ describe("07-verify step module", () => {
     assert.ok(verifyPromptSource.includes("Verify is an evidence gate"));
     assert.ok(verifyPromptSource.includes("Build/test/smoke verification before source review"));
     assert.ok(verifyPromptSource.includes("inspect only files changed by the PR"));
+    assert.ok(verifyPromptSource.includes("VERIFY_WORKDIR"));
+    assert.ok(verifyPromptSource.includes("STORY_WORKDIR"));
+    assert.ok(verifyPromptSource.includes("VERIFY_WORKDIR_BRANCH_MISMATCH"));
+    assert.ok(verifyPromptSource.includes("Do not check out the story branch inside"));
   });
 
   it("buildPrompt stays within maxPromptSize for typical context", () => {

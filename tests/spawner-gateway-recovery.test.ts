@@ -118,10 +118,14 @@ describe("spawner gateway recovery wiring", () => {
   it("starts agents in the claimed story worktree when one is available", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /function safeAgentCwdFromClaimInput\(input: unknown\): string/);
-    assert.match(source, /"story_workdir",\s*"repo",\s*"REPO",\s*"workdir",\s*"WORKDIR"/);
+    assert.match(source, /STORY_WORKDIR_CANDIDATE_KEYS/);
+    assert.match(source, /"story_workdir",\s*"STORY_WORKDIR",\s*"verify_workdir",\s*"VERIFY_WORKDIR",\s*"WORKDIR",\s*"workdir"/);
+    assert.match(source, /REPO_CANDIDATE_KEYS/);
     assert.match(source, /\\\/home\\\/setrox\\\/projects\\\//);
     assert.match(source, /prepared story worktree/);
     assert.match(source, /story-worktrees/);
+    assert.match(source, /safeAgentCwdFromTextLabels\(input,\s*STORY_WORKDIR_CANDIDATE_KEYS\)/);
+    assert.match(source, /safeAgentCwdFromTextLabels\(input,\s*REPO_CANDIDATE_KEYS\)/);
     assert.match(source, /CLAIM_WORKDIR_MISSING/);
     assert.match(source, /claim\.storyId && spawnCwd === AGENT_SAFE_CWD/);
     assert.match(source, /resolved === SETFARM_SRC \|\| resolved\.startsWith\(SETFARM_SRC \+ path\.sep\)/);

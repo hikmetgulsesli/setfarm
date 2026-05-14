@@ -80,6 +80,22 @@ function deriveStoryBranch(input: string, runId: string, storyId?: string): stri
   return runPrefix && normalizedStoryId ? `${runPrefix}-${normalizedStoryId}` : "";
 }
 
+function deriveStoryWorkdir(input: string, fallbackWorkdir: string): string {
+  const explicit = firstMeaningfulLineValue(input, "STORY_WORKDIR")
+    || firstMeaningfulLineValue(input, "story_workdir")
+    || firstMeaningfulLineValue(input, "VERIFY_WORKDIR")
+    || firstMeaningfulLineValue(input, "verify_workdir");
+  if (explicit) return explicit;
+
+  const prepared = extractBacktickedValue(input, /prepared story worktree:\s*`?([^`\n]+)`?/i);
+  if (prepared) return prepared;
+
+  const mentioned = extractBacktickedValue(input, /`?([^\s"'<>`]+\/story-worktrees\/[A-Za-z0-9._-]+)`?/);
+  if (mentioned) return mentioned;
+
+  return String(fallbackWorkdir || "").includes(`${path.sep}story-worktrees${path.sep}`) ? fallbackWorkdir : "";
+}
+
 function packageScriptCommand(workdir: string, script: string): string {
   try {
     const packageJsonPath = path.join(workdir, "package.json");
@@ -317,8 +333,13 @@ export function buildClaimSummary(params: {
 }): Record<string, unknown> {
   const input = String(params.input || "");
   const currentStory = extractCurrentStory(input);
-  const workdir = params.workdir || lineValue(input, "WORKDIR") || defaultAgentScratch;
-  const repo = firstMeaningfulLineValue(input, "MAIN_REPO") || params.repo || workdir;
+  const rawWorkdir = params.workdir || lineValue(input, "WORKDIR") || defaultAgentScratch;
+  const storyWorkdir = deriveStoryWorkdir(input, rawWorkdir);
+  const workdir = storyWorkdir || rawWorkdir;
+  const repo = firstMeaningfulLineValue(input, "MAIN_REPO")
+    || firstMeaningfulLineValue(input, "REPO")
+    || params.repo
+    || workdir;
   const storyId = params.storyId || currentStory.storyId;
   const storyScreensRaw = lineValue(input, "STORY_SCREENS");
   const task = lineValue(input, "TASK") || claimTaskPreview(params.input);
@@ -353,6 +374,9 @@ export function buildClaimSummary(params: {
     task,
     workdir,
     repo,
+    mainRepo: repo,
+    storyWorkdir,
+    verifyWorkdir: storyWorkdir || workdir,
     storyBranch: deriveStoryBranch(input, params.runId, storyId),
     runBranch: lineValue(input, "RUN_BRANCH"),
     buildCommand: resolvedCommand(input, "BUILD_CMD", workdir, "build", "true"),
@@ -435,7 +459,7 @@ esac
 
 printf 'STEP_ID=%s\\nWORKDIR=%s\\nCLAIM_SUMMARY_FILE=%s\\n' "$STEP_ID" "$(pwd)" "$CLAIM_SUMMARY_FILE"
 if [ -n "$CLAIM_SUMMARY_FILE" ] && [ -f "$CLAIM_SUMMARY_FILE" ]; then
-  node -e 'const fs=require("fs"); const s=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const lines=[]; if (s.storyId || s.storyTitle) lines.push(("STORY=" + (s.storyId || "") + " " + (s.storyTitle || "")).trim()); if (s.storyBranch) lines.push("STORY_BRANCH=" + String(s.storyBranch)); if (s.repo) lines.push("MAIN_REPO=" + String(s.repo)); if (Array.isArray(s.scopeFiles)) lines.push("SCOPE_FILES=" + s.scopeFiles.join(", ")); if (s.gitPolicy && s.gitPolicy.summary) lines.push("GIT_POLICY=" + s.gitPolicy.summary); if (Array.isArray(s.gitPolicy && s.gitPolicy.forbiddenForAgent) && s.gitPolicy.forbiddenForAgent.length) lines.push("FORBIDDEN_GIT=" + s.gitPolicy.forbiddenForAgent.join(", ")); if (s.failureCategory) lines.push("FAILURE_CATEGORY=" + String(s.failureCategory).slice(0, 160)); if (s.failureSuggestion) lines.push("FAILURE_SUGGESTION=" + String(s.failureSuggestion).slice(0, 240)); if (s.previousFailure) lines.push("PREVIOUS_FAILURE=present " + String(s.previousFailure).length + " chars"); if (s.generatedScreenPolicy && s.generatedScreenPolicy.summary) lines.push("GENERATED_SCREEN_POLICY=" + s.generatedScreenPolicy.summary); const dc=s.designContracts||{}; if (Array.isArray(dc.screenIndex)) lines.push("SCREEN_INDEX_CONTRACTS=" + dc.screenIndex.length); if (Array.isArray(dc.uiContract)) lines.push("UI_CONTRACTS=" + dc.uiContract.length); if (dc.componentRegistry) lines.push("COMPONENT_REGISTRY=present " + String(dc.componentRegistry).length + " chars"); if (Array.isArray(dc.componentTypes)) lines.push("COMPONENT_TYPE_CONTRACTS=" + dc.componentTypes.length); if (s.supervisorMemory) lines.push("SUPERVISOR_MEMORY=present " + String(s.supervisorMemory).length + " chars"); if (s.task) lines.push("TASK=" + String(s.task).slice(0, 500)); process.stdout.write(lines.join("\\n") + "\\n");' "$CLAIM_SUMMARY_FILE"
+  node -e 'const fs=require("fs"); const s=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const lines=[]; if (s.storyId || s.storyTitle) lines.push(("STORY=" + (s.storyId || "") + " " + (s.storyTitle || "")).trim()); if (s.storyBranch) lines.push("STORY_BRANCH=" + String(s.storyBranch)); if (s.storyWorkdir) lines.push("STORY_WORKDIR=" + String(s.storyWorkdir)); if (s.verifyWorkdir) lines.push("VERIFY_WORKDIR=" + String(s.verifyWorkdir)); if (s.repo) lines.push("MAIN_REPO=" + String(s.repo)); if (Array.isArray(s.scopeFiles)) lines.push("SCOPE_FILES=" + s.scopeFiles.join(", ")); if (s.gitPolicy && s.gitPolicy.summary) lines.push("GIT_POLICY=" + s.gitPolicy.summary); if (Array.isArray(s.gitPolicy && s.gitPolicy.forbiddenForAgent) && s.gitPolicy.forbiddenForAgent.length) lines.push("FORBIDDEN_GIT=" + s.gitPolicy.forbiddenForAgent.join(", ")); if (s.failureCategory) lines.push("FAILURE_CATEGORY=" + String(s.failureCategory).slice(0, 160)); if (s.failureSuggestion) lines.push("FAILURE_SUGGESTION=" + String(s.failureSuggestion).slice(0, 240)); if (s.previousFailure) lines.push("PREVIOUS_FAILURE=present " + String(s.previousFailure).length + " chars"); if (s.generatedScreenPolicy && s.generatedScreenPolicy.summary) lines.push("GENERATED_SCREEN_POLICY=" + s.generatedScreenPolicy.summary); const dc=s.designContracts||{}; if (Array.isArray(dc.screenIndex)) lines.push("SCREEN_INDEX_CONTRACTS=" + dc.screenIndex.length); if (Array.isArray(dc.uiContract)) lines.push("UI_CONTRACTS=" + dc.uiContract.length); if (dc.componentRegistry) lines.push("COMPONENT_REGISTRY=present " + String(dc.componentRegistry).length + " chars"); if (Array.isArray(dc.componentTypes)) lines.push("COMPONENT_TYPE_CONTRACTS=" + dc.componentTypes.length); if (s.supervisorMemory) lines.push("SUPERVISOR_MEMORY=present " + String(s.supervisorMemory).length + " chars"); if (s.task) lines.push("TASK=" + String(s.task).slice(0, 500)); process.stdout.write(lines.join("\\n") + "\\n");' "$CLAIM_SUMMARY_FILE"
 fi
 printf '%s' "$TASK_PREVIEW" | head -c 1200
 echo
@@ -463,7 +487,7 @@ BOOTSTRAP_FILE=${params.bootstrapFile}
 First exec command:
 bash ${shellQuote(params.bootstrapFile)}
 
-Do ${params.wfId}/${params.role} work in WORKDIR only. Read the structured claim summary at ${params.claimSummaryFile} first; it is the authoritative handoff for story id/title, workdir, scope files, gitPolicy, generatedScreenPolicy, designContracts, supervisorMemory, screen refs, retry feedback, and output paths. Obey gitPolicy exactly: when owner is setfarm-platform, do not run git add/commit/push/branch/PR commands; Setfarm performs the scoped commit and PR handoff after gates pass. Use designContracts.screenIndex, designContracts.uiContract, designContracts.componentRegistry, and designContracts.componentTypes instead of reading raw Stitch files, shared generated screen source, or creating TypeScript probe files. The full claim at ${params.claimFile} is an audit fallback only. Do NOT parse or dump claim.input with jq/sed/head/node loops; use the summary fields and only fall back to the full claim for a missing focused field. Obey generatedScreenPolicy exactly: reading a forbidden src/screens/*.tsx file kills and retries the claim.
+Do ${params.wfId}/${params.role} work in WORKDIR only. Read the structured claim summary at ${params.claimSummaryFile} first; it is the authoritative handoff for story id/title, workdir, mainRepo, storyWorkdir, verifyWorkdir, scope files, gitPolicy, generatedScreenPolicy, designContracts, supervisorMemory, screen refs, retry feedback, and output paths. Obey gitPolicy exactly: when owner is setfarm-platform, do not run git add/commit/push/branch/PR commands; Setfarm performs the scoped commit and PR handoff after gates pass. Use designContracts.screenIndex, designContracts.uiContract, designContracts.componentRegistry, and designContracts.componentTypes instead of reading raw Stitch files, shared generated screen source, or creating TypeScript probe files. The full claim at ${params.claimFile} is an audit fallback only. Do NOT parse or dump claim.input with jq/sed/head/node loops; use the summary fields and only fall back to the full claim for a missing focused field. Obey generatedScreenPolicy exactly: reading a forbidden src/screens/*.tsx file kills and retries the claim.
 Do NOT create scratch/progress/todo/note/probe files inside WORKDIR unless they are explicitly listed in scopeFiles. Files like src/_probe.tsx, src/probe.tsx, tmp.ts, scratch.tsx, TODO.md, and progress.txt are forbidden in the project worktree. Use ${params.outputFile} for final output and /tmp/setfarm-progress-<run-id>.txt for checkpoints only.
 Important: OpenClaw read/edit/write tools resolve relative paths against the configured agent workspace, not the shell cwd. When using read/edit/write tools for project files, use absolute paths under WORKDIR, for example "$WORKDIR/src/App.tsx". For exec commands, rerun the bootstrap command above or pass workdir="$WORKDIR" after resolving it.
 Do not rely on CLAIM_FILE, CLAIM_SUMMARY_FILE, OUTPUT_FILE, STEP_ID, or WORKDIR shell variables persisting across separate exec calls; each exec starts a fresh shell. If you need claim context again, use the literal summary path ${params.claimSummaryFile}. Write final output to the literal path ${params.outputFile}. Do NOT run step peek/claim. No subagents/background delegation. No PR actions unless claim explicitly owns PR work.

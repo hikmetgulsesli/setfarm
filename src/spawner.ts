@@ -124,13 +124,70 @@ function safeAgentCwdFromCandidate(raw: unknown): string | null {
   return resolved;
 }
 
+const STORY_WORKDIR_CANDIDATE_KEYS = [
+  "story_workdir",
+  "STORY_WORKDIR",
+  "verify_workdir",
+  "VERIFY_WORKDIR",
+  "WORKDIR",
+  "workdir",
+];
+
+const REPO_CANDIDATE_KEYS = [
+  "MAIN_REPO",
+  "repo",
+  "REPO",
+];
+
+function escapeForRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function safeAgentCwdFromRecord(record: Record<string, unknown>, keys: string[]): string | null {
+  for (const key of keys) {
+    const resolved = safeAgentCwdFromCandidate(record[key]);
+    if (resolved) return resolved;
+  }
+  return null;
+}
+
+function safeAgentCwdFromTextLabels(input: string, keys: string[]): string | null {
+  for (const key of keys) {
+    const re = new RegExp("(?:^|[\\r\\n])\\s*" + escapeForRegex(key) + "\\s*[:=]\\s*([^\\s\"'`]+)", "g");
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(input)) !== null) {
+      const resolved = safeAgentCwdFromCandidate(match[1]);
+      if (resolved) return resolved;
+    }
+  }
+  return null;
+}
+
+function safeAgentCwdFromStoryWorktreeMentions(input: string): string | null {
+  const preparedWorktree = input.match(/prepared story worktree:\s*`?([^`\n]+)`?/i);
+  const preparedResolved = safeAgentCwdFromCandidate(preparedWorktree?.[1]);
+  if (preparedResolved) return preparedResolved;
+
+  for (const match of input.matchAll(/`?([^\s\"'<>`]+\/story-worktrees\/[A-Za-z0-9._-]+)`?/g)) {
+    const resolved = safeAgentCwdFromCandidate(match[1]);
+    if (resolved) return resolved;
+  }
+
+  for (const match of input.matchAll(/`?(\/home\/setrox\/\.openclaw\/workspaces\/workflows\/[^\s\"'<>`]+\/story-worktrees\/[A-Za-z0-9._-]+)`?/g)) {
+    const resolved = safeAgentCwdFromCandidate(match[1]);
+    if (resolved) return resolved;
+  }
+
+  return null;
+}
+
 function safeAgentCwdFromClaimInput(input: unknown): string {
   if (input && typeof input === "object" && !Array.isArray(input)) {
     const record = input as Record<string, unknown>;
-    for (const key of ["story_workdir", "repo", "REPO", "workdir", "WORKDIR"]) {
-      const resolved = safeAgentCwdFromCandidate(record[key]);
-      if (resolved) return resolved;
-    }
+    const storyWorkdir = safeAgentCwdFromRecord(record, STORY_WORKDIR_CANDIDATE_KEYS);
+    if (storyWorkdir) return storyWorkdir;
+    const repo = safeAgentCwdFromRecord(record, REPO_CANDIDATE_KEYS);
+    if (repo) return repo;
     return AGENT_SAFE_CWD;
   }
 
@@ -141,24 +198,12 @@ function safeAgentCwdFromClaimInput(input: unknown): string {
       if (resolved !== AGENT_SAFE_CWD) return resolved;
     } catch {}
 
-    for (const match of input.matchAll(/(?:story_workdir|WORKDIR|REPO|repo)\s*[:=]\s*([^\s"'`]+)/g)) {
-      const resolved = safeAgentCwdFromCandidate(match[1]);
-      if (resolved) return resolved;
-    }
-
-    const preparedWorktree = input.match(/prepared story worktree:\s*`?([^`\n]+)`?/i);
-    const preparedResolved = safeAgentCwdFromCandidate(preparedWorktree?.[1]);
-    if (preparedResolved) return preparedResolved;
-
-    for (const match of input.matchAll(/`?([^\s\"'<>`]+\/story-worktrees\/[A-Za-z0-9._-]+)`?/g)) {
-      const resolved = safeAgentCwdFromCandidate(match[1]);
-      if (resolved) return resolved;
-    }
-
-    for (const match of input.matchAll(/`?(\/home\/setrox\/\.openclaw\/workspaces\/workflows\/[^\s\"'<>`]+\/story-worktrees\/[A-Za-z0-9._-]+)`?/g)) {
-      const resolved = safeAgentCwdFromCandidate(match[1]);
-      if (resolved) return resolved;
-    }
+    const storyLabel = safeAgentCwdFromTextLabels(input, STORY_WORKDIR_CANDIDATE_KEYS);
+    if (storyLabel) return storyLabel;
+    const storyMention = safeAgentCwdFromStoryWorktreeMentions(input);
+    if (storyMention) return storyMention;
+    const repoLabel = safeAgentCwdFromTextLabels(input, REPO_CANDIDATE_KEYS);
+    if (repoLabel) return repoLabel;
 
     for (const match of input.matchAll(/`?(\/home\/setrox\/projects\/[A-Za-z0-9._-]+)`?/g)) {
       const resolved = safeAgentCwdFromCandidate(match[1]);
