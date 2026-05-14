@@ -400,6 +400,9 @@ function withStepModulePromptAliases(context: Record<string, string>, runId: str
   assign("STORY_SCREENS", "story_screens");
   assign("DESIGN_RULES", "design_rules");
   assign("SUPERVISOR_MEMORY", "supervisor_memory");
+  assign("PREVIOUS_FAILURE", "previous_failure");
+  assign("FAILURE_CATEGORY", "failure_category");
+  assign("FAILURE_SUGGESTION", "failure_suggestion");
   return aliased;
 }
 

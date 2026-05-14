@@ -75,6 +75,9 @@ describe("spawner prompt bootstrap", () => {
           componentTypes: [{ file: "src/screens/MainMenu.tsx" }],
         },
         supervisorMemory: "### runtime guard\n- Summary: previous worker touched out-of-scope files",
+        previousFailure: "GENERATED_SCREEN_SHARED_READ: previous worker read src/screens/MainMenu.tsx",
+        failureCategory: "GENERATED_SCREEN_SHARED_READ",
+        failureSuggestion: "Use claim-summary designContracts instead of shared generated source.",
       }) + "\n");
       fs.writeFileSync(bootstrapFile, buildResolvedClaimBootstrapScript({
         claimFile,
@@ -97,6 +100,9 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, /SCOPE_FILES=src\/App\.tsx/);
       assert.match(out, /GIT_POLICY=Developer story agents write code only/);
       assert.match(out, /FORBIDDEN_GIT=git add, git commit, git push/);
+      assert.match(out, /FAILURE_CATEGORY=GENERATED_SCREEN_SHARED_READ/);
+      assert.match(out, /FAILURE_SUGGESTION=Use claim-summary designContracts instead of shared generated source/);
+      assert.match(out, /PREVIOUS_FAILURE=present \d+ chars/);
       assert.match(out, /GENERATED_SCREEN_POLICY=No generated screen source file is in scope/);
       assert.match(out, /SCREEN_INDEX_CONTRACTS=1/);
       assert.match(out, /UI_CONTRACTS=1/);
@@ -212,6 +218,14 @@ describe("spawner prompt bootstrap", () => {
           "  1. Pieces fall and rotate.",
           "SCOPE: SCOPE ENFORCEMENT: You may ONLY write files in [src/App.tsx].",
           "STORY_SCREENS: []",
+          "",
+          "## Previous Failure / Retry Feedback",
+          "Failure category: GENERATED_SCREEN_SHARED_READ",
+          "Suggested response: Use claim-summary designContracts instead.",
+          "",
+          "GENERATED_SCREEN_SHARED_READ: previous worker read src/screens/MainMenu.tsx",
+          "",
+          "## Current Story",
         ].join("\n"),
       });
 
@@ -243,6 +257,9 @@ describe("spawner prompt bootstrap", () => {
       assert.match(String((summary.designContracts as any).source), /instead of reading raw stitch\/\*\.html/);
       assert.match(String((summary.designContracts as any).source), /creating source-tree probe files/);
       assert.match(String(summary.supervisorMemory), /forbidden generated screens/);
+      assert.match(String(summary.previousFailure), /GENERATED_SCREEN_SHARED_READ/);
+      assert.equal(summary.failureCategory, "GENERATED_SCREEN_SHARED_READ");
+      assert.equal(summary.failureSuggestion, "Use claim-summary designContracts instead.");
       assert.match(String(summary.acceptanceCriteria), /Pieces fall and rotate/);
       assert.match(JSON.stringify(summary.handoff), /Audit fallback only/);
     } finally {

@@ -19,6 +19,12 @@ This is the persistent product-manager memory for this run. Treat blockers and p
 
 {{SUPERVISOR_MEMORY}}
 
+## Previous Failure / Retry Feedback
+Failure category: {{FAILURE_CATEGORY}}
+Suggested response: {{FAILURE_SUGGESTION}}
+
+{{PREVIOUS_FAILURE}}
+
 ## Current Story
 {{STORY}}
 
