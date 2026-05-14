@@ -8,6 +8,8 @@ function parsePlanOutput(output: string) {
   const field = (key: string) => output.match(new RegExp(`^${key}:\\s*(.*)$`, "m"))?.[1]?.trim() || "";
   return {
     status: field("STATUS"),
+    project_slug: field("PROJECT_SLUG"),
+    project_display_name: field("PROJECT_DISPLAY_NAME"),
     repo: field("REPO"),
     branch: field("BRANCH"),
     tech_stack: field("TECH_STACK"),
@@ -157,6 +159,24 @@ describe("01-plan step module", () => {
 
     assert.equal(parsed.repo.endsWith("/projects/retry-feedback-lab-0505"), true);
     assert.equal(parsed.branch, "feature-retry-feedback-lab-0505");
+    assert.equal(parsed.project_display_name, "Operations Console");
+    assert.doesNotMatch(parsed.prd.split("\n").slice(0, 8).join("\n"), /Retry Feedback Lab/i);
+  });
+
+  it("separates internal run slugs from product display titles", () => {
+    const output = buildAutoPlanOutput(
+      "Project: tetris-supervisor-rootfix-0514s Build a browser-based Tetris game with playable falling blocks, keyboard controls, pause/resume, scoring, next-piece preview, game-over/restart flow, responsive touch controls, and smoke tests.",
+    );
+    const parsed = parsePlanOutput(output);
+    planModule.normalize?.(parsed);
+    const validation = planModule.validateOutput(parsed);
+
+    assert.equal(validation.ok, true, validation.errors.join("; "));
+    assert.equal(parsed.project_slug, "tetris-supervisor-rootfix-0514s");
+    assert.equal(parsed.repo.endsWith("/projects/tetris-supervisor-rootfix-0514s"), true);
+    assert.equal(parsed.project_display_name, "Tetris");
+    assert.match(parsed.prd, /^# Tetris PRD/m);
+    assert.doesNotMatch(parsed.prd.split("\n").slice(0, 8).join("\n"), /Supervisor Root Fix|0514/i);
   });
 
   it("auto-plan uses Next.js project structure when TECH_STACK is nextjs", () => {

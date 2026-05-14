@@ -8,6 +8,8 @@ const DEFAULT_STACK = "vite-react";
 
 type ProjectKind = "game" | "product";
 
+const COMMAND_VERB_RE = /\b(build|create|make|develop|implement|design|write|add|fix|yap|olustur|oluştur|kur|gelistir|geliştir)\b/i;
+
 function transliterate(input: string): string {
   return input
     .replace(/[Ğğ]/g, "g")
@@ -32,13 +34,18 @@ export function slugify(input: string): string {
 function extractProjectName(task: string): string {
   const projectLine = task.match(/(?:^|\n)\s*(?:Project|Proje)\s*:\s*([^\n]+)/i)?.[1]?.trim();
   if (projectLine) {
-    const inlineTaskStart = projectLine.match(
-      /^(.+?)\s+(?:build|create|make|develop|implement|design|write|add|fix|yap|olustur|oluştur|kur|gelistir|geliştir)\b/i,
-    );
+    const inlineTaskStart = projectLine.match(new RegExp(`^(.+?)\\s+${COMMAND_VERB_RE.source}`, "i"));
     return (inlineTaskStart?.[1] || projectLine).trim();
   }
   const firstLine = task.split(/\n+/).map(line => line.trim()).find(Boolean) || "setfarm-project";
   return firstLine.replace(/^(?:Project|Proje)\s*:\s*/i, "").slice(0, 80);
+}
+
+function extractInlineActionDescription(task: string): string {
+  const projectLine = task.match(/(?:^|\n)\s*(?:Project|Proje)\s*:\s*([^\n]+)/i)?.[1]?.trim() || "";
+  const source = projectLine || task.split(/\n+/).map(line => line.trim()).find(line => COMMAND_VERB_RE.test(line)) || "";
+  const match = source.match(COMMAND_VERB_RE);
+  return match ? source.slice(match.index ?? 0).trim() : "";
 }
 
 function humanizeProjectName(input: string): string {
@@ -54,7 +61,15 @@ function humanizeProjectName(input: string): string {
   const normalized = transliterate(cleaned);
   const hasSlugShape = /[-_]/.test(normalized) || /^[a-z0-9]+$/.test(normalized);
   if (!hasSlugShape) {
-    return cleaned.replace(/\s+/g, " ").trim().slice(0, 80);
+    const compact = cleaned.replace(/\s+/g, " ").trim();
+    if (/^[a-z0-9\s]+$/.test(compact)) {
+      return compact
+        .split(/\s+/)
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(" ")
+        .slice(0, 80);
+    }
+    return compact.slice(0, 80);
   }
 
   const words = normalized
@@ -74,6 +89,38 @@ function humanizeProjectName(input: string): string {
     })
     .join(" ")
     .slice(0, 80);
+}
+
+function productNameFromActionDescription(actionDescription: string): string {
+  let cleaned = String(actionDescription || "")
+    .replace(new RegExp(`^${COMMAND_VERB_RE.source}\\s+`, "i"), "")
+    .replace(/^(?:a|an|the|bir)\s+/i, "")
+    .replace(/\b(?:browser|web|mobile)[-\s]+based\b/gi, "")
+    .replace(/\b(?:React|Vite|TypeScript|Tailwind|Next\.?js|Node\.?js)\b/gi, "")
+    .replace(/\b(?:browser|web|mobile)\b\s*/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  cleaned = (cleaned.split(/\b(?:with|for|using|including|include|where|that)\b|[.;,]/i)[0] || "")
+    .replace(/\s+(?:app|application|tool|experience|surface)\s*$/i, "")
+    .replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const specificGame = cleaned.match(/^(.+?)\s+game$/i)?.[1]?.trim();
+  if (specificGame && !/^(?:arcade|puzzle|board|card)$/i.test(specificGame)) {
+    cleaned = specificGame;
+  }
+
+  return cleaned;
+}
+
+function extractProjectDisplayName(task: string, fallbackRawName: string): string {
+  const actionProduct = productNameFromActionDescription(extractInlineActionDescription(task));
+  if (actionProduct && /[a-zA-Z]/.test(transliterate(actionProduct))) {
+    return humanizeProjectName(actionProduct);
+  }
+  return humanizeProjectName(fallbackRawName);
 }
 
 function inferTechStack(task: string): string {
@@ -191,7 +238,7 @@ function projectStructureForStack(stack: string): string {
 
 export function buildAutoPlanOutput(task: string): string {
   const rawProjectName = extractProjectName(task);
-  const projectName = humanizeProjectName(rawProjectName);
+  const projectName = extractProjectDisplayName(task, rawProjectName);
   const slug = slugify(rawProjectName);
   const stack = inferTechStack(task);
   const dbRequired = inferDbRequired(task);
