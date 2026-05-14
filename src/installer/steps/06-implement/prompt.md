@@ -39,9 +39,7 @@ This is the persistent product-manager memory for this run. Treat blockers and p
    - **Branch:** This story uses exactly `{{STORY_BRANCH}}`. The branch is already checked out.
    - **NEVER run** `git checkout -b`, `git branch -m`, or create/rename a branch.
    - **NEVER run** dependency install commands during implement. If a dependency is missing, report it.
-   - **Before every `git commit` and `git push`:** verify `git branch --show-current` equals `{{STORY_BRANCH}}`.
-   - **Do not commit midway.** Finish code + local checks first, then make one final story commit and push `{{STORY_BRANCH}}`.
-   - **End of story:** commit only your scope files and push `{{STORY_BRANCH}}`. Do NOT create or merge a PR; the pipeline owns the PR gate.
+   - **Do not run git staging, commit, push, branch, or PR commands.** Finish code + local checks and report `STATUS: done`; Setfarm commits the allowed story scope, pushes `{{STORY_BRANCH}}`, and owns the PR gate.
    - **Toolchain freeze:** do not inspect, rewrite, upgrade, or debate Vite/Tailwind/TypeScript/test config unless a local build/test command actually fails. If checks pass, leave config untouched. `vite.config.*` is app/toolchain config and is forbidden unless explicitly listed in SCOPE_FILES. If Vitest setup is needed, use/create `vitest.config.*` or `src/test/setup.ts` only.
 
 2. **ABSOLUTE SCOPE DISCIPLINE.** Write ONLY the files listed in SCOPE_FILES. That list is exhaustive for your story; every file the project needs was pre-planned into some story's scope.
@@ -59,7 +57,7 @@ This is the persistent product-manager memory for this run. Treat blockers and p
    - Do not add speculative navigation, account, archive, configuration, demo panels, or other UI unless this story explicitly asks for them.
    - If acceptance criteria conflict with existing tests, make the smallest compatible change and keep both old and new behavior working.
    - Do not edit `index.html` for title, Google fonts, icon fonts, metadata, or root markup unless `index.html` is explicitly listed in SCOPE_FILES. Setup owns document shell metadata and global font links.
-   - Before committing, run `git diff` and verify the diff contains only this story's required changes.
+   - Before reporting done, run `git diff` and verify the diff contains only this story's required changes.
 
 3. **Design reference, not file assignment.** The Stitch design may show elements that are not in your SCOPE_FILES (for example, a shared header while your scope is one screen component). Use the design as reference for visual style, spacing and interaction of your scope files only. Do not create the other elements — another story owns them.
 
@@ -95,15 +93,11 @@ This is the persistent product-manager memory for this run. Treat blockers and p
    screen/route, selected record, counts, storage status, last error, and active
    panel where those concepts exist.
    Reducers and state transition functions must be pure: no localStorage reads/writes, timers, DOM access, or mutation of existing state objects inside the reducer. Put persistence and timer side effects in effects or action wrappers, then dispatch plain state updates.
-9. Before committing, run available local checks. Prefer `npm run build`; for Vitest use `npm run test:run` or `npx vitest run` instead of watch-mode `npm test` when needed. Do not pipe build/test commands through `head`, `tail`, `grep`, `tee`, `cat`, or similar output filters when deciding pass/fail; those pipelines can hide a failing exit code. If output is too long, run the full command first, preserve the command's real exit status, then inspect a saved log afterward. If a script is missing, say so in CHANGES.
-10. Commit once on the CURRENT branch (do not switch branches). Use this exact scope-staging sequence:
-    - `xargs -a .story-scope-files git add --`
-    - `git diff --cached --name-only`
-    - `git commit -m "feat: <story-id> - <description>"`
-11. Do NOT use `git add -A`, `git add .`, `git add -u`, `git commit -am`, or any `wip` commit message. The implement worktree installs a git wrapper that blocks those commands before they can waste a retry.
-12. If the pre-commit hook rejects, run `git reset HEAD <file>` and remove out-of-scope changes. Do NOT bypass with `--no-verify`.
+9. Before reporting done, run available local checks. Prefer `npm run build`; for Vitest use `npm run test:run` or `npx vitest run` instead of watch-mode `npm test` when needed. Do not pipe build/test commands through `head`, `tail`, `grep`, `tee`, `cat`, or similar output filters when deciding pass/fail; those pipelines can hide a failing exit code. If output is too long, run the full command first, preserve the command's real exit status, then inspect a saved log afterward. If a script is missing, say so in CHANGES.
+10. Do NOT run `git add`, `git commit`, `git push`, `gh pr create`, or any branch command. The implement worktree installs a git wrapper that blocks unsafe git operations, and Setfarm performs the final scoped story commit after build/scope/supervisor gates pass.
+11. If `git diff` shows out-of-scope changes, remove them before reporting done. Do NOT bypass hooks with `--no-verify`.
 
-13. **CHECKPOINT (about every 5 minutes, REQUIRED).** For long implementations,
+12. **CHECKPOINT (about every 5 minutes, REQUIRED).** For long implementations,
    write a short progress checkpoint every 5 minutes:
    ```bash
    echo "[$(date +%H:%M:%S)] <short status: file being edited, files completed>" >> /tmp/setfarm-progress-{{RUN_ID}}.txt

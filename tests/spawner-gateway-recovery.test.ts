@@ -429,14 +429,20 @@ describe("spawner gateway recovery wiring", () => {
     );
   });
 
-  it("kills implement claims that use broad staging or WIP commits", () => {
+  it("kills unmanaged git bypasses while the implement wrapper handles bare git misuse", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /function implementGitDisciplineGuard\(active: ActiveProcess\)/);
     assert.match(source, /discardStoryWorktreeAndResetBranch/);
     assert.match(source, /function discardRuntimeGuardRetryWorktree\(runId: string, storyId: string, agentId: string, diagnostic: string\)/);
     assert.match(source, /GIT_DISCIPLINE_VIOLATION/);
     assert.match(source, /INTERMEDIATE_COMMIT_VIOLATION/);
+    assert.match(source, /hasImplementGitWrapper\(active\.spawnCwd\)/);
+    assert.match(source, /commandBypassesImplementGitWrapper/);
+    assert.match(source, /wrapperWillBlock/);
+    assert.match(source, /Setfarm performs the final scoped story commit/);
     assert.match(source, /isBroadGitAddCommand/);
+    assert.match(source, /isAnyGitAddCommand/);
+    assert.match(source, /isGitPushCommand/);
     assert.match(source, /gitCommitMessages/);
     assert.match(source, /terminateActiveProcess\(active,\s*"git-discipline-guard"\)/);
     assert.match(source, /--- GIT DISCIPLINE GUARD/);
@@ -454,15 +460,15 @@ describe("spawner gateway recovery wiring", () => {
     );
   });
 
-  it("installs an implement-only git wrapper that blocks broad staging before retry loss", () => {
+  it("installs an implement-only git wrapper that blocks agent-side git ownership before retry loss", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /function installImplementGitWrapper\(workdir: string, transcriptPath: string\)/);
     assert.match(source, /\.setfarm-bin/);
-    assert.match(source, /blocked broad staging/);
-    assert.match(source, /git add -A/);
-    assert.match(source, /git add \./);
-    assert.match(source, /git commit -am/);
-    assert.match(source, /blocked WIP commit message/);
+    assert.match(source, /blocked agent staging/);
+    assert.match(source, /blocked agent commit/);
+    assert.match(source, /blocked agent push/);
+    assert.match(source, /Developer agents do not stage, commit, push, or open PRs/);
+    assert.match(source, /Setfarm commits the allowed \.story-scope-files entries after build\/scope\/supervisor gates pass/);
     assert.match(source, /const shouldInstallImplementGitWrapper = role === "developer" && Boolean\(claim\.storyId\)/);
     assert.match(source, /shouldInstallImplementGitWrapper \? installImplementGitWrapper/);
     assert.doesNotMatch(source, /claim\.stepId === "implement" \? installImplementGitWrapper/);

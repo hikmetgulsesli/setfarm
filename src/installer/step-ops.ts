@@ -217,6 +217,142 @@ async function ensureStoryPrUrlForBranch(options: {
   }
 }
 
+const PLATFORM_STORY_COMMIT_ALLOWED_PATTERNS = [
+  /\.(test|spec)\.[cm]?[jt]sx?$/i,
+  /^src\/test\/(?:setup|utils)\.[cm]?[jt]sx?$/i,
+  /^src\/setupTests\.[cm]?[jt]sx?$/i,
+  /^(?:vitest|jest)\.config\.[cm]?[jt]s$/i,
+];
+
+function parseGitStatusPaths(status: string): string[] {
+  const files = new Set<string>();
+  for (const line of String(status || "").split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const raw = line.slice(3).trim().replace(/^"|"$/g, "");
+    if (!raw) continue;
+    if (raw.includes(" -> ")) {
+      const parts = raw.split(" -> ").map((part) => part.trim().replace(/^"|"$/g, "")).filter(Boolean);
+      for (const part of parts) files.add(part);
+      continue;
+    }
+    files.add(raw);
+  }
+  return [...files].filter(Boolean);
+}
+
+function readStoryScopeFilesFromWorktree(workdir: string): string[] {
+  try {
+    const scopePath = path.join(workdir, ".story-scope-files");
+    if (!fs.existsSync(scopePath)) return [];
+    return fs.readFileSync(scopePath, "utf-8")
+      .split(/\r?\n/)
+      .map((line) => line.trim().replace(/^\.\/+/, ""))
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function isPlatformInternalCommitPath(file: string): boolean {
+  return file === ".story-scope-files"
+    || file === ".story-branch"
+    || file === "pre-commit"
+    || file === "SUPERVISOR_MEMORY.md"
+    || file === "PROJECT_MEMORY.md"
+    || file.startsWith(".setfarm-bin/")
+    || file.startsWith("node_modules/")
+    || file.startsWith("references/");
+}
+
+function isPlatformStoryCommitAllowed(file: string, scopeFiles: Set<string>): boolean {
+  if (scopeFiles.has(file)) return true;
+  return PLATFORM_STORY_COMMIT_ALLOWED_PATTERNS.some((pattern) => pattern.test(file));
+}
+
+export function commitStoryWorktreeScopeIfNeeded(
+  workdir: string,
+  storyId: string,
+  storyTitle: string,
+): { committed: boolean; sha: string; stagedFiles: string[]; error: string } {
+  if (!workdir || !fs.existsSync(workdir)) {
+    return { committed: false, sha: "", stagedFiles: [], error: "PLATFORM_STORY_COMMIT_MISSING_WORKDIR" };
+  }
+
+  let status = "";
+  try {
+    status = execFileSync("git", ["status", "--porcelain"], {
+      cwd: workdir,
+      encoding: "utf-8",
+      timeout: 10_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+  } catch (err) {
+    return { committed: false, sha: "", stagedFiles: [], error: `PLATFORM_STORY_COMMIT_STATUS_FAILED: ${formatCommandError(err)}` };
+  }
+
+  const touched = parseGitStatusPaths(status).filter((file) => !isPlatformInternalCommitPath(file));
+  if (touched.length === 0) return { committed: false, sha: "", stagedFiles: [], error: "" };
+
+  const scopeFiles = new Set(readStoryScopeFilesFromWorktree(workdir));
+  if (scopeFiles.size === 0) {
+    return {
+      committed: false,
+      sha: "",
+      stagedFiles: [],
+      error: `PLATFORM_STORY_COMMIT_SCOPE_MISSING: ${storyId} has uncommitted files but .story-scope-files is empty or missing.`,
+    };
+  }
+
+  const blocked = touched.filter((file) => !isPlatformStoryCommitAllowed(file, scopeFiles));
+  if (blocked.length > 0) {
+    return {
+      committed: false,
+      sha: "",
+      stagedFiles: [],
+      error: `PLATFORM_STORY_COMMIT_SCOPE_BLOCKED: ${storyId} has out-of-scope uncommitted file(s): ${blocked.slice(0, 12).join(", ")}.`,
+    };
+  }
+
+  try {
+    execFileSync("git", ["add", "--", ...touched], {
+      cwd: workdir,
+      timeout: 20_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const staged = execFileSync("git", ["diff", "--cached", "--name-only"], {
+      cwd: workdir,
+      encoding: "utf-8",
+      timeout: 10_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim().split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    if (staged.length === 0) return { committed: false, sha: "", stagedFiles: [], error: "" };
+
+    const commitTitle = (storyTitle || "story work").replace(/\s+/g, " ").trim().slice(0, 90);
+    execFileSync("git", ["commit", "-m", `feat: ${storyId} - ${commitTitle}`], {
+      cwd: workdir,
+      timeout: 30_000,
+      stdio: ["pipe", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        SETFARM_PLATFORM_COMMIT: "1",
+        GIT_AUTHOR_NAME: "Setfarm Supervisor",
+        GIT_AUTHOR_EMAIL: "setfarm-supervisor@example.invalid",
+        GIT_COMMITTER_NAME: "Setfarm Supervisor",
+        GIT_COMMITTER_EMAIL: "setfarm-supervisor@example.invalid",
+      },
+    });
+    const sha = execFileSync("git", ["rev-parse", "--short", "HEAD"], {
+      cwd: workdir,
+      encoding: "utf-8",
+      timeout: 10_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+    return { committed: true, sha, stagedFiles: staged, error: "" };
+  } catch (err) {
+    return { committed: false, sha: "", stagedFiles: [], error: `PLATFORM_STORY_COMMIT_FAILED: ${formatCommandError(err)}` };
+  }
+}
+
 type StorySmokeRow = {
   story_id: string;
   story_index: number;
@@ -4501,6 +4637,30 @@ ${screenDescs}
         await updateRunContext(step.run_id, context);
         await failStep(stepId, `GUARDRAIL [product-supervisor:implement]: ${supervisor.reason}`);
         return { advanced: false, runCompleted: false };
+      }
+    }
+
+    // PLATFORM STORY COMMIT: developer agents write code only. After all
+    // build/scope/product-supervisor gates pass, Setfarm stages exactly the
+    // allowed story scope and creates the final story commit before push/PR.
+    if (step.step_id === "implement" && storyStatus === STORY_STATUS.DONE && storyRow?.story_id) {
+      const commitResult = commitStoryWorktreeScopeIfNeeded(
+        implementSupervisorWorkdir || context["story_workdir"] || "",
+        storyRow.story_id,
+        storyRow.title || "",
+      );
+      if (commitResult.error) {
+        context["previous_failure"] = commitResult.error;
+        context["failure_category"] = "PLATFORM_STORY_COMMIT_FAILED";
+        context["failure_suggestion"] = "This is a Setfarm commit ownership failure. Do not ask the developer agent to run git commands; fix the platform scoped commit path or story scope.";
+        await updateRunContext(step.run_id, context);
+        await failStep(stepId, commitResult.error);
+        return { advanced: false, runCompleted: false };
+      }
+      if (commitResult.committed) {
+        context["platform_story_commit"] = `${storyRow.story_id}:${commitResult.sha}:${commitResult.stagedFiles.join(",")}`.slice(0, 1200);
+        await updateRunContext(step.run_id, context);
+        logger.info(`[platform-story-commit] ${storyRow.story_id} committed ${commitResult.stagedFiles.length} file(s) at ${commitResult.sha}`, { runId: step.run_id });
       }
     }
 

@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { implementModule } from "../../dist/installer/steps/06-implement/module.js";
 import { checkBuildGate, checkTestGate, computeScopeFileLimits, detectPackageBuildCommand, findDesignDomImplementationIssues, getOutOfScopeStoryFiles, normalize, sourceExposesWindowApp, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
 import { cleanupOutOfScopeWorktreeFiles } from "../../dist/installer/steps/06-implement/context.js";
-import { decideStorySystemSmokeGate } from "../../dist/installer/step-ops.js";
+import { commitStoryWorktreeScopeIfNeeded, decideStorySystemSmokeGate } from "../../dist/installer/step-ops.js";
 import { checkStoryDesignCompliance } from "../../dist/installer/step-guardrails.js";
 import { STACK_RULES } from "../../dist/installer/steps/06-implement/stack-rules.js";
 import type { ParsedOutput } from "../../dist/installer/steps/types.js";
@@ -48,12 +48,62 @@ describe("06-implement step module", () => {
     assert.equal(rules.includes("small edits OK"), false);
   });
 
-  it("gives implement agents an exact safe git staging sequence", () => {
+  it("keeps git ownership in the platform instead of the implement agent", () => {
     const prompt = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/prompt.md"), "utf-8");
-    assert.match(prompt, /xargs -a \.story-scope-files git add --/);
-    assert.match(prompt, /git diff --cached --name-only/);
-    assert.match(prompt, /Do NOT use `git add -A`, `git add \.`, `git add -u`, `git commit -am`/);
-    assert.match(prompt, /git wrapper that blocks those commands/);
+    assert.match(prompt, /Do NOT run `git add`, `git commit`, `git push`, `gh pr create`, or any branch command/);
+    assert.match(prompt, /Setfarm performs the final scoped story commit after build\/scope\/supervisor gates pass/);
+    assert.doesNotMatch(prompt, /xargs -a \.story-scope-files git add --/);
+    assert.doesNotMatch(prompt, /git commit -m "feat: <story-id> - <description>"/);
+  });
+
+  it("platform story commit stages only declared scope and implicit test files", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-platform-commit-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), "export const app = 'base';\n");
+      fs.writeFileSync(path.join(tmp, "src/Other.tsx"), "export const other = 'base';\n");
+      git(tmp, ["init", "-b", "main"]);
+      git(tmp, ["add", "src/App.tsx", "src/Other.tsx"]);
+      git(tmp, ["commit", "-m", "base"]);
+      fs.writeFileSync(path.join(tmp, ".story-scope-files"), "src/App.tsx\n");
+
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), "export const app = 'changed';\n");
+      fs.writeFileSync(path.join(tmp, "src/App.test.tsx"), "it('works', () => {});\n");
+
+      const result = commitStoryWorktreeScopeIfNeeded(tmp, "US-001", "state shell");
+
+      assert.equal(result.error, "");
+      assert.equal(result.committed, true);
+      assert.deepEqual(result.stagedFiles.sort(), ["src/App.test.tsx", "src/App.tsx"].sort());
+      assert.match(git(tmp, ["log", "-1", "--format=%s"]), /feat: US-001 - state shell/);
+      const status = git(tmp, ["status", "--porcelain"]);
+      assert.doesNotMatch(status, /src\/App/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("platform story commit refuses out-of-scope files", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-platform-commit-block-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), "export const app = 'base';\n");
+      fs.writeFileSync(path.join(tmp, "src/Other.tsx"), "export const other = 'base';\n");
+      git(tmp, ["init", "-b", "main"]);
+      git(tmp, ["add", "src/App.tsx", "src/Other.tsx"]);
+      git(tmp, ["commit", "-m", "base"]);
+      fs.writeFileSync(path.join(tmp, ".story-scope-files"), "src/App.tsx\n");
+      fs.writeFileSync(path.join(tmp, "src/Other.tsx"), "export const other = 'blocked';\n");
+
+      const result = commitStoryWorktreeScopeIfNeeded(tmp, "US-002", "blocked scope");
+
+      assert.equal(result.committed, false);
+      assert.match(result.error, /PLATFORM_STORY_COMMIT_SCOPE_BLOCKED/);
+      assert.match(result.error, /src\/Other\.tsx/);
+      assert.equal(git(tmp, ["log", "-1", "--format=%s"]), "base");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("does not tell implement agents to read raw Stitch design corpus", () => {

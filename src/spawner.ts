@@ -860,9 +860,33 @@ function compactCommandForDiagnostic(command: string): string {
   return command.replace(/\s+/g, " ").trim().slice(0, 240);
 }
 
+function hasImplementGitWrapper(workdir: string): boolean {
+  try {
+    return fs.existsSync(path.join(workdir, ".setfarm-bin", "git"));
+  } catch {
+    return false;
+  }
+}
+
+function commandBypassesImplementGitWrapper(command: string): boolean {
+  const compact = compactCommandForDiagnostic(command);
+  return /(?:^|[\s;&|])(?:\/usr\/bin\/git|\/bin\/git|\/opt\/homebrew\/bin\/git|\/usr\/local\/bin\/git)\b/.test(compact)
+    || /(?:^|[\s;&|])env\b[^;&|]*\bPATH=/.test(compact)
+    || /(?:^|[\s;&|])PATH=/.test(compact)
+    || /\bSETFARM_(?:PLATFORM|RECOVERY)_COMMIT=1\b/.test(compact);
+}
+
 function isBroadGitAddCommand(command: string): boolean {
   const compact = compactCommandForDiagnostic(command);
   return /\bgit\s+add\s+(?:-[A-Za-z]*A[A-Za-z]*\b|--all\b|\.(?:\s|$|&&|\|\||;))/i.test(compact);
+}
+
+function isAnyGitAddCommand(command: string): boolean {
+  return /\bgit\s+add\b/i.test(compactCommandForDiagnostic(command));
+}
+
+function isGitPushCommand(command: string): boolean {
+  return /\bgit\s+push\b/i.test(compactCommandForDiagnostic(command));
 }
 
 function gitCommitMessages(command: string): string[] {
@@ -885,6 +909,7 @@ function implementGitDisciplineGuard(active: ActiveProcess): { detected: boolean
   if (!raw) return { detected: false, reason: "" };
 
   let commitCount = 0;
+  const wrapperInstalled = hasImplementGitWrapper(active.spawnCwd);
   for (const line of raw.split(/\n/).filter(Boolean)) {
     let event: any;
     try { event = JSON.parse(line); } catch { continue; }
@@ -893,27 +918,42 @@ function implementGitDisciplineGuard(active: ActiveProcess): { detected: boolean
     for (const call of extractToolCalls(message.content)) {
       if (!call.command) continue;
       const command = compactCommandForDiagnostic(call.command);
-      if (isBroadGitAddCommand(command)) {
+      const wrapperWillBlock = wrapperInstalled && !commandBypassesImplementGitWrapper(command);
+      if (isAnyGitAddCommand(command) && wrapperWillBlock) continue;
+      if (isGitPushCommand(command) && wrapperWillBlock) continue;
+
+      if (isBroadGitAddCommand(command) || (isAnyGitAddCommand(command) && !wrapperWillBlock)) {
         return {
           detected: true,
-          reason: `GIT_DISCIPLINE_VIOLATION: ${active.agentId} ran broad staging (${command}). Implement claims must stage explicit .story-scope-files entries and allowed test files only; runtime supervisor killed the claim before broad staging could be accepted.`,
+          reason: `GIT_DISCIPLINE_VIOLATION: ${active.agentId} ran agent-side staging (${command}). Implement claims must not stage files; Setfarm performs the final scoped story commit after gates pass. Runtime supervisor killed the claim before unmanaged staging could be accepted.`,
+        };
+      }
+      if (isGitPushCommand(command)) {
+        return {
+          detected: true,
+          reason: `GIT_DISCIPLINE_VIOLATION: ${active.agentId} ran agent-side push (${command}). Implement claims must not push branches; Setfarm pushes the story branch after scoped commit and supervisor gates pass.`,
         };
       }
 
       const messages = gitCommitMessages(command);
+      if (messages.length > 0 && wrapperWillBlock) continue;
       for (const commitMessage of messages) {
         commitCount += 1;
         if (/^wip\b|work in progress/i.test(commitMessage)) {
           return {
             detected: true,
-            reason: `INTERMEDIATE_COMMIT_VIOLATION: ${active.agentId} created a WIP commit (${commitMessage || "no message"}). Implement claims must make one final story commit after checks, not checkpoint commits; runtime supervisor killed the claim.`,
+            reason: `INTERMEDIATE_COMMIT_VIOLATION: ${active.agentId} created a WIP commit (${commitMessage || "no message"}). Implement claims must not commit; Setfarm creates the final scoped story commit after gates pass.`,
           };
         }
+        return {
+          detected: true,
+          reason: `GIT_DISCIPLINE_VIOLATION: ${active.agentId} ran agent-side commit (${command}). Implement claims must not commit; Setfarm creates the final scoped story commit after gates pass.`,
+        };
       }
       if (commitCount > 1) {
         return {
           detected: true,
-          reason: `INTERMEDIATE_COMMIT_VIOLATION: ${active.agentId} ran git commit ${commitCount} times in one implement claim. Implement claims must make one final story commit after code and checks pass.`,
+          reason: `INTERMEDIATE_COMMIT_VIOLATION: ${active.agentId} ran git commit ${commitCount} times in one implement claim. Implement claims must not commit; Setfarm creates the final scoped story commit after gates pass.`,
         };
       }
     }
@@ -1387,25 +1427,20 @@ cmd="$1"
 
 blocked() {
   echo "SETFARM_GIT_WRAPPER: $1" >&2
-  echo "Blocked forms include: git add -A, git add ., git add -u, git commit -am, git commit --amend, and wip commits." >&2
-  echo "Use explicit scope staging instead:" >&2
-  echo "  xargs -a .story-scope-files git add --" >&2
-  echo "  git diff --cached --name-only" >&2
-  echo "  git commit -m \\"feat: <story-id> - <description>\\"" >&2
+  echo "Developer agents do not stage, commit, push, or open PRs." >&2
+  echo "Setfarm commits the allowed .story-scope-files entries after build/scope/supervisor gates pass." >&2
+  echo "Use git diff/status only, then report STATUS: done." >&2
   exit 2
 }
 
 if [ "$cmd" = "add" ]; then
-  for arg in "$@"; do
-    case "$arg" in
-      -A|--all|-u|--update|.|:/)
-        blocked "blocked broad staging: git $*"
-        ;;
-    esac
-  done
+  blocked "blocked agent staging: git $*"
 fi
 
 if [ "$cmd" = "commit" ]; then
+  if [ "\${SETFARM_RECOVERY_COMMIT:-}" = "1" ] || [ "\${SETFARM_PLATFORM_COMMIT:-}" = "1" ]; then
+    exec "$REAL_GIT" "$@"
+  fi
   prev=""
   for arg in "$@"; do
     case "$arg" in
@@ -1423,6 +1458,31 @@ if [ "$cmd" = "commit" ]; then
         ;;
     esac
     prev="$arg"
+  done
+  blocked "blocked agent commit: git $*"
+fi
+
+if [ "$cmd" = "push" ]; then
+  blocked "blocked agent push: git $*"
+fi
+
+if [ "$cmd" = "checkout" ]; then
+  for arg in "$@"; do
+    case "$arg" in
+      -b|-B|--orphan)
+        blocked "blocked agent branch creation: git $*"
+        ;;
+    esac
+  done
+fi
+
+if [ "$cmd" = "branch" ]; then
+  for arg in "$@"; do
+    case "$arg" in
+      -m|-M|-d|-D|--move|--delete)
+        blocked "blocked agent branch mutation: git $*"
+        ;;
+    esac
   done
 fi
 
