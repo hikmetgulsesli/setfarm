@@ -432,7 +432,7 @@ describe("spawner gateway recovery wiring", () => {
     );
   });
 
-  it("kills unmanaged git bypasses while the implement wrapper handles bare git misuse", () => {
+  it("kills all agent-side git ownership even when the wrapper should also block it", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /function implementGitDisciplineGuard\(active: ActiveProcess\)/);
     assert.match(source, /discardStoryWorktreeAndResetBranch/);
@@ -441,7 +441,10 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /INTERMEDIATE_COMMIT_VIOLATION/);
     assert.match(source, /hasImplementGitWrapper\(active\.spawnCwd\)/);
     assert.match(source, /commandBypassesImplementGitWrapper/);
-    assert.match(source, /wrapperWillBlock/);
+    assert.match(source, /wrapperBypassHint/);
+    assert.doesNotMatch(source, /wrapperWillBlock/);
+    assert.doesNotMatch(source, /if \(isAnyGitAddCommand\(command\) && wrapperWillBlock\) continue/);
+    assert.doesNotMatch(source, /messages\.length > 0 && wrapperWillBlock/);
     assert.match(source, /Setfarm performs the final scoped story commit/);
     assert.match(source, /isBroadGitAddCommand/);
     assert.match(source, /isAnyGitAddCommand/);

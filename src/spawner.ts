@@ -919,36 +919,35 @@ function implementGitDisciplineGuard(active: ActiveProcess): { detected: boolean
     for (const call of extractToolCalls(message.content)) {
       if (!call.command) continue;
       const command = compactCommandForDiagnostic(call.command);
-      const wrapperWillBlock = wrapperInstalled && !commandBypassesImplementGitWrapper(command);
-      if (isAnyGitAddCommand(command) && wrapperWillBlock) continue;
-      if (isGitPushCommand(command) && wrapperWillBlock) continue;
+      const wrapperBypassHint = wrapperInstalled && commandBypassesImplementGitWrapper(command)
+        ? " Wrapper bypass attempt detected."
+        : "";
 
-      if (isBroadGitAddCommand(command) || (isAnyGitAddCommand(command) && !wrapperWillBlock)) {
+      if (isBroadGitAddCommand(command) || isAnyGitAddCommand(command)) {
         return {
           detected: true,
-          reason: `GIT_DISCIPLINE_VIOLATION: ${active.agentId} ran agent-side staging (${command}). Implement claims must not stage files; Setfarm performs the final scoped story commit after gates pass. Runtime supervisor killed the claim before unmanaged staging could be accepted.`,
+          reason: `GIT_DISCIPLINE_VIOLATION: ${active.agentId} ran agent-side staging (${command}). Implement claims must not stage files; Setfarm performs the final scoped story commit after gates pass. Runtime supervisor killed the claim before unmanaged staging could be accepted.${wrapperBypassHint}`,
         };
       }
       if (isGitPushCommand(command)) {
         return {
           detected: true,
-          reason: `GIT_DISCIPLINE_VIOLATION: ${active.agentId} ran agent-side push (${command}). Implement claims must not push branches; Setfarm pushes the story branch after scoped commit and supervisor gates pass.`,
+          reason: `GIT_DISCIPLINE_VIOLATION: ${active.agentId} ran agent-side push (${command}). Implement claims must not push branches; Setfarm pushes the story branch after scoped commit and supervisor gates pass.${wrapperBypassHint}`,
         };
       }
 
       const messages = gitCommitMessages(command);
-      if (messages.length > 0 && wrapperWillBlock) continue;
       for (const commitMessage of messages) {
         commitCount += 1;
         if (/^wip\b|work in progress/i.test(commitMessage)) {
           return {
             detected: true,
-            reason: `INTERMEDIATE_COMMIT_VIOLATION: ${active.agentId} created a WIP commit (${commitMessage || "no message"}). Implement claims must not commit; Setfarm creates the final scoped story commit after gates pass.`,
+            reason: `INTERMEDIATE_COMMIT_VIOLATION: ${active.agentId} created a WIP commit (${commitMessage || "no message"}). Implement claims must not commit; Setfarm creates the final scoped story commit after gates pass.${wrapperBypassHint}`,
           };
         }
         return {
           detected: true,
-          reason: `GIT_DISCIPLINE_VIOLATION: ${active.agentId} ran agent-side commit (${command}). Implement claims must not commit; Setfarm creates the final scoped story commit after gates pass.`,
+          reason: `GIT_DISCIPLINE_VIOLATION: ${active.agentId} ran agent-side commit (${command}). Implement claims must not commit; Setfarm creates the final scoped story commit after gates pass.${wrapperBypassHint}`,
         };
       }
       if (commitCount > 1) {
