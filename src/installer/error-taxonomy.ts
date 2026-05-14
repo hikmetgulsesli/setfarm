@@ -15,6 +15,8 @@ export type ErrorCategory =
   | "MERGE_CONFLICT"
   | "API_ERROR"
   | "AGENT_CRASH"
+  | "AGENT_STALL"
+  | "AGENT_PROCESS_EXITED"
   | "GIT_DISCIPLINE"
   | "INTERMEDIATE_COMMIT"
   | "SCOPE_WRITE_VIOLATION"
@@ -33,6 +35,9 @@ export interface ClassifiedError {
 }
 
 const PATTERNS: Array<{ pattern: RegExp; category: ErrorCategory; suggestion: string }> = [
+  { pattern: /AGENT_MODEL_TURN_STALLED:/i, category: "AGENT_STALL", suggestion: "Model turn stalled without file/output/progress changes. Treat as provider/session infra; retry the same claim, and if repeated switch model or reduce injected context." },
+  { pattern: /engine_overloaded|temporarily overloaded|Provider finish_reason:\s*engine_overloaded/i, category: "API_ERROR", suggestion: "Model provider overloaded — retry the claim later or use a different model/provider; do not change project code for this failure." },
+  { pattern: /^AGENT_PROCESS_EXITED:/i, category: "AGENT_PROCESS_EXITED", suggestion: "Agent process exited before completing the claim. Retry with the same scoped handoff; inspect transcript only if it repeats." },
   { pattern: /^GIT_DISCIPLINE_VIOLATION:/i, category: "GIT_DISCIPLINE", suggestion: "Developer agents must not run git add/commit/push. Continue coding in the assigned worktree, report STATUS: done, and let Setfarm stage, commit, push, and create PRs." },
   { pattern: /^INTERMEDIATE_COMMIT_VIOLATION:/i, category: "INTERMEDIATE_COMMIT", suggestion: "Use /tmp/setfarm-progress checkpoints for long work. Do not create partial commits; Setfarm creates the scoped story commit after gates pass." },
   { pattern: /^SCOPE_WRITE_VIOLATION:/i, category: "SCOPE_WRITE_VIOLATION", suggestion: "Modify only files listed in scopeFiles. Remove out-of-scope edits and keep scratch/probe files outside the project worktree." },

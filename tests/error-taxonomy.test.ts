@@ -54,6 +54,25 @@ describe("error taxonomy", () => {
     assert.equal(product.category, "PRODUCT_SUPERVISOR_BLOCKED");
   });
 
+  it("classifies model/session infra failures instead of UNKNOWN", () => {
+    const stalled = classifyError(
+      "AGENT_PROCESS_EXITED: feature-dev_developer exited before completing feature-dev/developer. AGENT_MODEL_TURN_STALLED: feature-dev_developer kept feature-dev/developer running for 9m38s but session/output/progress files have not changed for 8m4s.",
+    );
+    assert.equal(stalled.category, "AGENT_STALL");
+    assert.match(stalled.suggestion, /provider\/session infra/);
+
+    const overloaded = classifyError(
+      "The AI service is temporarily overloaded. Please try again in a moment. rawError=Provider finish_reason: engine_overloaded",
+    );
+    assert.equal(overloaded.category, "API_ERROR");
+    assert.match(overloaded.suggestion, /provider overloaded/i);
+
+    const exited = classifyError(
+      "AGENT_PROCESS_EXITED: feature-dev_reviewer exited before completing feature-dev/reviewer. exit code 1",
+    );
+    assert.equal(exited.category, "AGENT_PROCESS_EXITED");
+  });
+
   it("rewrites stale generic design mismatch feedback before retry prompts reuse it", () => {
     const feedback = sanitizeDesignMismatchFeedback([
       "DESIGN UYUMSUZLUK:",
