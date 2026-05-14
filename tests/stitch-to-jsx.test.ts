@@ -113,8 +113,8 @@ describe("stitch-to-jsx", () => {
       ]));
       writeHtml(path.join(stitchDir, "controls-screen.html"), `
         <main>
-          <span class="material-symbols-outlined text-primary transition-all">warning</span>
-          <button class="transition-all"><span class="material-symbols-outlined text-[18px]">rotate_right</span>Rotate</button>
+          <span aria-hidden="true" class="material-symbols-outlined text-primary transition-all">warning</span>
+          <button class="transition-all"><span data-icon="rotate_right" aria-hidden="true" focusable="false" class="material-symbols-outlined text-[18px]">rotate_right</span>Rotate</button>
         </main>
       `);
 
@@ -128,8 +128,21 @@ describe("stitch-to-jsx", () => {
       assert.match(code, /<TriangleAlert className="text-primary transition-colors" aria-hidden=\{true\} focusable="false" \/>/);
       assert.match(code, /<RotateCw className="text-\[18px\]" aria-hidden=\{true\} focusable="false" \/>Rotate/);
       assert.match(code, /<button className="transition-colors"/);
+      assert.equal((code.match(/aria-hidden/g) || []).length, 2);
+      assert.equal((code.match(/focusable=/g) || []).length, 2);
       assert.doesNotMatch(code, /material-symbols|Material Symbols|>warning<|>rotate_right</);
       assert.doesNotMatch(code, /transition-all/);
+
+      const transpiled = ts.transpileModule(code, {
+        compilerOptions: {
+          jsx: ts.JsxEmit.ReactJSX,
+          module: ts.ModuleKind.ESNext,
+          target: ts.ScriptTarget.ES2020,
+        },
+        reportDiagnostics: true,
+      });
+      const errors = (transpiled.diagnostics || []).filter(d => d.category === ts.DiagnosticCategory.Error);
+      assert.deepEqual(errors.map(d => d.messageText), []);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

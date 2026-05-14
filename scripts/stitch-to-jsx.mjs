@@ -325,6 +325,36 @@ function inlineStyleToJsx(styleText) {
   return `style={{${pairs.join(", ")}}${suffix}}`;
 }
 
+function stripJsxAttribute(attrs, attrName) {
+  const pattern = new RegExp(
+    `\\s+${escapeRegExp(attrName)}(?:\\s*=\\s*(?:"[^"]*"|'[^']*'|\\{[^}]*\\}|[^\\s"'=<>]+))?`,
+    "gi",
+  );
+  return String(attrs || "").replace(pattern, "");
+}
+
+function dedupeJsxAttributes(input) {
+  return String(input || "").replace(/<([A-Za-z][\w.:]*)\b([^<>]*?)(\/?)>/g, (match, tag, attrs, selfClose) => {
+    if (!attrs || match.startsWith("</")) return match;
+    const attrPattern = /\s+([A-Za-z_:$][\w:.-]*)(?:\s*=\s*(?:"[^"]*"|'[^']*'|\{[^}]*\}|[^\s"'=<>]+))?/g;
+    const seen = new Set();
+    let out = "";
+    let last = 0;
+    for (const attr of attrs.matchAll(attrPattern)) {
+      const index = attr.index ?? 0;
+      const name = String(attr[1] || "").toLowerCase();
+      out += attrs.slice(last, index);
+      if (!seen.has(name)) {
+        seen.add(name);
+        out += attr[0];
+      }
+      last = index + attr[0].length;
+    }
+    out += attrs.slice(last);
+    return `<${tag}${out}${selfClose}>`;
+  });
+}
+
 function htmlToJsx(html) {
   let out = normalizeJsxAttributeValues(normalizeJsxAttributeNames(normalizeJsxTagNames(html)))
     .replace(/<(img|br|hr|input|meta|link)([^>]*?)>/gi, (_, tag, attrs) => {
@@ -334,9 +364,9 @@ function htmlToJsx(html) {
     .replace(/<script[\s\S]*?<\/script>/gi, "")
     .replace(/<link[^>]*\/?\s*>/gi, "")
     .replace(/<meta[^>]*\/?\s*>/gi, "")
-    .replace(/style="([^"]+)"/g, (_, s) => inlineStyleToJsx(s));
+      .replace(/style="([^"]+)"/g, (_, s) => inlineStyleToJsx(s));
   out = normalizeStyleTagChildren(out);
-  return escapeJsxTextBraces(normalizeHtmlComments(out));
+  return dedupeJsxAttributes(escapeJsxTextBraces(normalizeHtmlComments(out)));
 }
 
 function extractBody(html) {
@@ -548,7 +578,9 @@ function replaceMaterialSymbolSpans(html, lucideImports) {
         .split(/\s+/)
         .filter(cls => cls && cls !== "material-icons" && !cls.startsWith("material-symbols"))
         .join(" ");
-      const attrs = `${beforeClass || ""}${afterClass || ""}`.trimEnd();
+      const attrs = ["aria-hidden", "focusable", "data-icon"]
+        .reduce((next, attr) => stripJsxAttribute(next, attr), `${beforeClass || ""}${afterClass || ""}`)
+        .trimEnd();
       const classAttr = cleanedClass ? ` class="${cleanedClass}"` : "";
       return `<${component}${attrs}${classAttr} aria-hidden="true" focusable="false" />`;
     },
