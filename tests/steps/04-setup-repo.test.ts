@@ -106,6 +106,10 @@ describe("04-setup-repo step module", () => {
     assert.ok(script.includes('"lucide-react"'), "frontend scaffolds should install lucide-react for SVG icons");
     assert.equal(script.includes("Material+Symbols+Outlined"), false, "scaffold must not load Material Symbols icon fonts");
     assert.ok(script.includes("<title>$HTML_TITLE</title>"), "HTML title should come from sanitized display title");
+    assert.ok(script.includes("UI_LANGUAGE=\"${7:-English}\""), "setup-repo should accept UI_LANGUAGE as a scaffold input");
+    assert.ok(script.includes("html_lang_for_ui_language()"), "setup-repo should derive html lang from UI_LANGUAGE");
+    assert.ok(script.includes('<html lang="$HTML_LANG">'), "frontend scaffolds should use derived html lang");
+    assert.equal(script.includes('<html lang="tr">'), false, "Vite scaffold must not hard-code Turkish html lang");
     assert.ok(script.includes('"name": "$PACKAGE_NAME"'), "package name should come from project slug");
     assert.ok(script.includes('data-setfarm-root="baseline"'), "App baseline should be machine-detectable");
     assert.ok(script.includes("baseline scaffold did not create package.json"), "fresh frontend repos must fail if scaffold is missing");
@@ -119,5 +123,7 @@ describe("04-setup-repo step module", () => {
     const preclaim = fs.readFileSync("src/installer/steps/04-setup-repo/preclaim.ts", "utf-8");
     assert.ok(preclaim.includes("project_display_name"), "preClaim should read display name from plan context");
     assert.ok(preclaim.includes("String(displayName)"), "setup-repo.sh should receive display name as an argv");
+    assert.ok(preclaim.includes("ui_language"), "preClaim should read UI language from plan context");
+    assert.ok(preclaim.includes("String(uiLanguage)"), "setup-repo.sh should receive UI language as an argv");
   });
 });

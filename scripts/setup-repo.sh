@@ -1,6 +1,6 @@
 #!/bin/bash
 # setup-repo.sh — Full repo setup for ANY project type
-# Usage: setup-repo.sh <REPO_PATH> <BRANCH> <STITCH_PROJECT_ID> <SCREEN_MAP_JSON> <TECH_STACK> <PROJECT_DISPLAY_NAME>
+# Usage: setup-repo.sh <REPO_PATH> <BRANCH> <STITCH_PROJECT_ID> <SCREEN_MAP_JSON> <TECH_STACK> <PROJECT_DISPLAY_NAME> <UI_LANGUAGE>
 set -e
 
 REPO="$1"
@@ -9,6 +9,7 @@ STITCH_PROJECT_ID="$3"
 SCREEN_MAP="$4"
 TECH_STACK="${5:-vite-react}"
 PROJECT_DISPLAY_NAME="${6:-}"
+UI_LANGUAGE="${7:-English}"
 STITCH_SCRIPT="$HOME/.openclaw/setfarm-repo/scripts/stitch-api.mjs"
 
 EXISTING_CODE=false
@@ -27,6 +28,23 @@ normalize_stack() {
       else
         printf "%s" "$raw"
       fi
+      ;;
+  esac
+}
+
+html_lang_for_ui_language() {
+  local raw
+  raw=$(printf "%s" "${1:-English}" | tr '[:upper:]' '[:lower:]')
+  raw=$(printf "%s" "$raw" | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')
+  case "$raw" in
+    turkish|tr|tr-tr)
+      printf "tr"
+      ;;
+    english|en|en-us|en-gb)
+      printf "en"
+      ;;
+    *)
+      printf "en"
       ;;
   esac
 }
@@ -63,6 +81,7 @@ if [ -z "$PROJECT_DISPLAY_NAME" ]; then
   PROJECT_DISPLAY_NAME=$(printf "%s" "$PROJECT_NAME" | sed -E 's/[-_]+/ /g; s/[[:space:]]+/ /g; s/^ //; s/ $//')
 fi
 HTML_TITLE=$(printf "%s" "$PROJECT_DISPLAY_NAME" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g')
+HTML_LANG=$(html_lang_for_ui_language "$UI_LANGUAGE")
 if ! git remote -v 2>/dev/null | grep -q origin; then
   # cuddly-sleeping-quail: gh repo create --push requires at least one commit.
   # If this is a fresh `git init` with no commits, create a README and commit
@@ -281,7 +300,7 @@ if [ ! -f package.json ]; then
 EOF
       cat > index.html <<EOF
 <!doctype html>
-<html lang="tr">
+<html lang="$HTML_LANG">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -505,7 +524,7 @@ export default function RootLayout({
   children: ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="$HTML_LANG">
       <body>{children}</body>
     </html>
   );

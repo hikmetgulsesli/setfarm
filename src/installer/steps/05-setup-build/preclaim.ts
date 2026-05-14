@@ -96,8 +96,10 @@ function rerunSetupRepoScaffold(ctx: ClaimContext, repo: string): boolean {
   const stitchProjectId = ctx.context["stitch_project_id"] || ctx.context["STITCH_PROJECT_ID"] || "";
   const screenMap = ctx.context["screen_map"] || ctx.context["SCREEN_MAP"] || "";
   const techStack = ctx.context["tech_stack"] || ctx.context["TECH_STACK"] || "vite-react";
+  const displayName = ctx.context["project_display_name"] || ctx.context["PROJECT_DISPLAY_NAME"] || ctx.context["project_name"] || "";
+  const uiLanguage = ctx.context["ui_language"] || ctx.context["UI_LANGUAGE"] || "English";
   try {
-    execFileSync("bash", [script, repo, String(branch), String(stitchProjectId), String(screenMap), String(techStack)], {
+    execFileSync("bash", [script, repo, String(branch), String(stitchProjectId), String(screenMap), String(techStack), String(displayName), String(uiLanguage)], {
       encoding: "utf-8",
       timeout: 180000,
       stdio: "pipe",

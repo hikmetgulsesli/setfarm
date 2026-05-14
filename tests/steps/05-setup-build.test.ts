@@ -30,6 +30,8 @@ describe("05-setup-build step module", () => {
     assert.ok(recovery >= 0, "setup-build should have a setup-repo recovery path");
     assert.ok(setupScript > recovery, "recovery path should call setup-repo.sh");
     assert.ok(missingPackage > setupScript, "missing package failure should be reported only after recovery");
+    assert.ok(preclaim.includes("String(displayName)"), "recovery path should preserve project display title");
+    assert.ok(preclaim.includes("String(uiLanguage)"), "recovery path should preserve UI language for scaffold html lang");
   });
 
   it("preClaim re-evaluates stale setup-build failure flags before auto-complete", () => {

@@ -34,14 +34,15 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
 
   // 1. Run setup-repo.sh — idempotent (script creates .git, baseline scaffold,
   // remote, run branch, references, and Stitch assets).
-  // Script signature: setup-repo.sh <REPO> <BRANCH> <STITCH_PROJECT_ID> <SCREEN_MAP> <TECH_STACK> <PROJECT_DISPLAY_NAME>
+  // Script signature: setup-repo.sh <REPO> <BRANCH> <STITCH_PROJECT_ID> <SCREEN_MAP> <TECH_STACK> <PROJECT_DISPLAY_NAME> <UI_LANGUAGE>
   const script = path.join(os.homedir(), ".openclaw/setfarm-repo/scripts/setup-repo.sh");
   const stitchProjectId = ctx.context["stitch_project_id"] || ctx.context["STITCH_PROJECT_ID"] || "";
   const screenMap = ctx.context["screen_map"] || ctx.context["SCREEN_MAP"] || "";
   const displayName = ctx.context["project_display_name"] || ctx.context["PROJECT_DISPLAY_NAME"] || ctx.context["project_name"] || "";
+  const uiLanguage = ctx.context["ui_language"] || ctx.context["UI_LANGUAGE"] || "English";
   if (fs.existsSync(script)) {
     try {
-      execFileSync("bash", [script, repo, branch, String(stitchProjectId), String(screenMap), String(techStack), String(displayName)], { encoding: "utf-8", timeout: 180000 });
+      execFileSync("bash", [script, repo, branch, String(stitchProjectId), String(screenMap), String(techStack), String(displayName), String(uiLanguage)], { encoding: "utf-8", timeout: 180000 });
       logger.info(`[module:setup-repo preclaim] setup-repo.sh ran (stack=${techStack}, branch=${branch})`, { runId: ctx.runId });
     } catch (e) {
       setupRepoFailed = true;
