@@ -59,7 +59,7 @@ const TOKEN_STOP_WORDS = new Set([
 const GENERIC_SCREEN_TERMS = new Set([
   "board", "complete", "completion", "dashboard", "detail", "edit", "empty", "error",
   "form", "game", "help", "home", "insight", "insights", "list", "main", "menu",
-  "metric", "metrics", "option", "options", "overlay", "overview", "panel", "pause", "play",
+  "metric", "metrics", "option", "options", "over", "overlay", "overview", "panel", "pause", "play",
   "player", "primary", "progress", "result", "results", "settings", "status",
   "summary", "support", "workflow",
 ]);

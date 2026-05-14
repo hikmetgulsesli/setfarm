@@ -65,6 +65,31 @@ describe("product supervisor", () => {
     assert.equal(result.ok, true, result.reason);
   });
 
+  it("does not reject common game state screens when the task asks for a game", () => {
+    const task = "Project: falling-blocks Build a browser game with keyboard controls, score, levels, pause, restart, and responsive layout.";
+    const prd = [
+      "# Falling Blocks PRD",
+      "The game includes keyboard controls, score, levels, pause, restart, and responsive layout.",
+      "## Screens",
+      "| # | Screen Name | Type | Description |",
+      "|---|-----------|-----|----------|",
+      "| 1 | Game Board | play | Main playable game board |",
+      "| 2 | Game Over | result | Final score and restart |",
+      "| 3 | Controls Help | help | Keyboard controls and rules |",
+    ].join("\n");
+
+    const result = runProductSupervisorGate({
+      phase: "plan",
+      runId: "run-1",
+      stepId: "plan",
+      task,
+      parsed: { status: "done", prd, prd_screen_count: "3" },
+      context: { task },
+    });
+
+    assert.equal(result.ok, true, result.reason);
+  });
+
   it("blocks design SCREEN_MAP drift against the PRD screen contract", () => {
     const prd = [
       "# Brick Arcade PRD",
