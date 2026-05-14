@@ -132,6 +132,46 @@ describe("06-implement step module", () => {
     }
   });
 
+  it("platform story commit expands untracked scoped directories before checking scope", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-platform-commit-uall-"));
+    try {
+      fs.writeFileSync(path.join(tmp, "README.md"), "base\n");
+      git(tmp, ["init", "-b", "main"]);
+      git(tmp, ["add", "README.md"]);
+      git(tmp, ["commit", "-m", "base"]);
+      fs.writeFileSync(path.join(tmp, ".story-scope-files"), [
+        "src/contexts/AppContext.tsx",
+        "src/hooks/useAppState.ts",
+        "src/types/domain.ts",
+        "src/utils/storage.ts",
+      ].join("\n") + "\n");
+      fs.mkdirSync(path.join(tmp, "src/contexts"), { recursive: true });
+      fs.mkdirSync(path.join(tmp, "src/hooks"), { recursive: true });
+      fs.mkdirSync(path.join(tmp, "src/types"), { recursive: true });
+      fs.mkdirSync(path.join(tmp, "src/utils"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/contexts/AppContext.tsx"), "export const AppContext = {};\n");
+      fs.writeFileSync(path.join(tmp, "src/hooks/useAppState.ts"), "export const useAppState = () => null;\n");
+      fs.writeFileSync(path.join(tmp, "src/types/domain.ts"), "export type GameState = {};\n");
+      fs.writeFileSync(path.join(tmp, "src/utils/storage.ts"), "export const storage = {};\n");
+      fs.writeFileSync(path.join(tmp, "src/utils/storage.test.ts"), "import './storage';\n");
+
+      const result = commitStoryWorktreeScopeIfNeeded(tmp, "US-001", "scoped directories");
+
+      assert.equal(result.error, "");
+      assert.equal(result.committed, true);
+      assert.deepEqual(result.stagedFiles.sort(), [
+        "src/contexts/AppContext.tsx",
+        "src/hooks/useAppState.ts",
+        "src/types/domain.ts",
+        "src/utils/storage.test.ts",
+        "src/utils/storage.ts",
+      ].sort());
+      assert.equal(git(tmp, ["log", "-1", "--format=%s"]), "feat: US-001 - scoped directories");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("does not tell implement agents to read raw Stitch design corpus", () => {
     const prompt = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/prompt.md"), "utf-8");
     const contextSource = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/context.js"), "utf-8");

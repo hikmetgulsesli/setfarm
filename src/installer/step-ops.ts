@@ -274,7 +274,7 @@ export function commitStoryWorktreeScopeIfNeeded(
 
   let status = "";
   try {
-    status = execFileSync("git", ["status", "--porcelain"], {
+    status = execFileSync("git", ["status", "--porcelain=v1", "-uall"], {
       cwd: workdir,
       encoding: "utf-8",
       timeout: 10_000,

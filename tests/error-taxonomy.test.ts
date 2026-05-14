@@ -80,6 +80,11 @@ describe("error taxonomy", () => {
     );
     assert.equal(scoped.category, "SCOPE_BLEED");
     assert.match(scoped.suggestion, /SCOPE_FILES/);
+
+    const platformScoped = classifyError(
+      "PLATFORM_STORY_COMMIT_SCOPE_BLOCKED: US-001 has out-of-scope uncommitted file(s): src/contexts/.",
+    );
+    assert.equal(platformScoped.category, "SCOPE_BLEED");
   });
 
   it("rewrites stale generic design mismatch feedback before retry prompts reuse it", () => {
