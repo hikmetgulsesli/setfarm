@@ -27,6 +27,8 @@ describe("spawner prompt bootstrap", () => {
     assert.match(prompt, /gitPolicy/);
     assert.match(prompt, /Setfarm performs the scoped commit and PR handoff after gates pass/);
     assert.match(prompt, /designContracts\.screenIndex, designContracts\.uiContract, designContracts\.componentRegistry, and designContracts\.componentTypes/);
+    assert.match(prompt, /retryDiscipline\.mode="first-delta"/);
+    assert.match(prompt, /make a small scoped source delta before broad analysis\/build\/test/);
     assert.match(prompt, /src\/_probe\.tsx, src\/probe\.tsx, tmp\.ts, scratch\.tsx/);
     assert.match(prompt, /Do NOT parse or dump claim\.input with jq\/sed\/head\/node loops/);
     assert.match(prompt, /Do NOT create scratch\/progress\/todo\/note\/probe files inside WORKDIR/);
@@ -83,6 +85,10 @@ describe("spawner prompt bootstrap", () => {
         previousFailure: "GENERATED_SCREEN_SHARED_READ: previous worker read src/screens/MainMenu.tsx",
         failureCategory: "GENERATED_SCREEN_SHARED_READ",
         failureSuggestion: "Use claim-summary designContracts instead of shared generated source.",
+        retryDiscipline: {
+          mode: "first-delta",
+          instruction: "Hard manager retry discipline: inspect owned scope files and make a small scoped source delta before broad analysis.",
+        },
       }) + "\n");
       fs.writeFileSync(bootstrapFile, buildResolvedClaimBootstrapScript({
         claimFile,
@@ -111,6 +117,7 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, /FORBIDDEN_GIT=git add, git commit, git push/);
       assert.match(out, /FAILURE_CATEGORY=GENERATED_SCREEN_SHARED_READ/);
       assert.match(out, /FAILURE_SUGGESTION=Use claim-summary designContracts instead of shared generated source/);
+      assert.match(out, /RETRY_DISCIPLINE=first-delta: Hard manager retry discipline/);
       assert.match(out, /PREVIOUS_FAILURE=present \d+ chars/);
       assert.match(out, /GENERATED_SCREEN_POLICY=No generated screen source file is in scope/);
       assert.match(out, /SCREEN_INDEX_CONTRACTS=1/);
@@ -274,6 +281,8 @@ describe("spawner prompt bootstrap", () => {
       assert.match(String(summary.previousFailure), /GENERATED_SCREEN_SHARED_READ/);
       assert.equal(summary.failureCategory, "GENERATED_SCREEN_SHARED_READ");
       assert.equal(summary.failureSuggestion, "Use claim-summary designContracts instead.");
+      assert.equal((summary.retryDiscipline as any).mode, "first-delta");
+      assert.match(String((summary.retryDiscipline as any).instruction), /small scoped source delta/);
       assert.match(String(summary.acceptanceCriteria), /Pieces fall and rotate/);
       assert.match(JSON.stringify(summary.handoff), /Audit fallback only/);
     } finally {

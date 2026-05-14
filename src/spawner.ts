@@ -45,6 +45,7 @@ const AGENT_STARTUP_SILENCE_MS = parsePositiveInt(process.env.SETFARM_AGENT_STAR
 const AGENT_MODEL_TURN_STALL_MS = parsePositiveInt(process.env.SETFARM_AGENT_MODEL_TURN_STALL_MS, 8 * 60_000);
 const AGENT_SELF_LOOP_CHECK_AFTER_MS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_CHECK_AFTER_MS, 6 * 60_000);
 const IMPLEMENT_NO_DELTA_GRACE_MS = parsePositiveInt(process.env.SETFARM_IMPLEMENT_NO_DELTA_GRACE_MS, 8 * 60_000);
+const IMPLEMENT_PRE_DELTA_MAX_CONTEXT_READS = parsePositiveInt(process.env.SETFARM_IMPLEMENT_PRE_DELTA_MAX_CONTEXT_READS, 10);
 const AGENT_SELF_LOOP_MIN_ACTIONS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_ACTIONS, 7);
 const AGENT_SELF_LOOP_MIN_NOOP_EDITS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_NOOP_EDITS, 4);
 const AGENT_SELF_LOOP_MIN_REPEATED_FAILURES = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_REPEATED_FAILURES, 4);
@@ -811,7 +812,8 @@ function stripSafeStitchMetadataRefs(text: string): string {
 function isRawStitchDesignReadSegment(segment: string): boolean {
   const unsafeSegment = stripSafeStitchMetadataRefs(segment);
   if (!/(?:\bstitch\/|\bstitch\b|\.stitch-screens)/i.test(unsafeSegment)) return false;
-  if (!/(?:\.html\b|DESIGN_DOM\.json|\.stitch-screens.*\.json)/i.test(unsafeSegment)) return false;
+  if (!/(?:\.html\b|DESIGN_DOM\.json|\.stitch-screens.*\.json)/i.test(unsafeSegment)
+    && !/(?:^|[\s"'`=])(?:\.\/|\/)?(?:[\w.@-]+\/)*stitch\/?(?:[\s"'`;|&]|$)/i.test(unsafeSegment)) return false;
   return /\b(cat|sed|nl|head|tail|less|bat|rg|grep|awk|wc|python3?|node)\b/i.test(segment)
     || /\b(?:readFileSync|readdirSync|createReadStream|glob(?:Sync)?|fast-glob)\b/i.test(segment);
 }
@@ -820,6 +822,9 @@ function extractRawStitchDesignReadsFromCommand(workdir: string, command: string
   const reads: Array<{ path: string; via: string }> = [];
   for (const segment of shellCommandSegments(command)) {
     if (!isRawStitchDesignReadSegment(segment)) continue;
+    if (/(?:^|[\s"'`=])(?:\.\/|\/)?(?:[\w.@-]+\/)*stitch\/?(?:[\s"'`;|&]|$)/i.test(stripSafeStitchMetadataRefs(segment))) {
+      reads.push({ path: "stitch/*", via: "exec" });
+    }
     if (/(?:\bstitch\/|\bstitch\b)/i.test(segment) && /\.html\b/i.test(segment)) {
       reads.push({ path: "stitch/*.html", via: "exec" });
     }
@@ -870,6 +875,74 @@ function rawStitchDesignReadGuard(active: ActiveProcess): { detected: boolean; r
         };
       }
     }
+  }
+
+  return { detected: false, reason: "" };
+}
+
+function isPreDeltaProjectContextPath(relativePath: string): boolean {
+  if (!relativePath || relativePath.startsWith("..")) return false;
+  if (/^(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|tsconfig(?:\.[^/]+)?\.json)$/.test(relativePath)) return true;
+  if (/^(vite|vitest|jest|tailwind|postcss|eslint)\.config\.[cm]?[jt]s$/.test(relativePath)) return true;
+  if (/^(src|app|components|lib|pages|tests?|public)\//.test(relativePath)) return true;
+  if (/^stitch\/(?:design-tokens\.css|UI_CONTRACT\.json|DESIGN_MANIFEST\.json)$/.test(relativePath)) return true;
+  return false;
+}
+
+function preDeltaContextReadsFromCommand(active: ActiveProcess, command: string): string[] {
+  if (!/\b(cat|sed|nl|head|tail|less|bat|rg|grep|awk|wc|python3?|node)\b/i.test(command)) return [];
+  const paths = new Set<string>();
+  for (const match of command.matchAll(/(?:^|[\s"'`=])((?:\.\/|\/)?(?:[\w.@-]+\/)*(?:src|app|components|lib|pages|tests?|public|stitch)\/[^'"`\s;|&]+|(?:\.\/)?(?:package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|tsconfig(?:\.[^/]+)?\.json|(?:vite|vitest|jest|tailwind|postcss|eslint)\.config\.[cm]?[jt]s))(?:[\s"'`;|&]|$)/gi)) {
+    const relativePath = normalizeSessionProjectRelativePath(active, match[1] || "");
+    if (isPreDeltaProjectContextPath(relativePath)) paths.add(relativePath);
+  }
+  for (const dir of ["src", "app", "components", "lib", "pages", "tests", "test", "public"]) {
+    const re = new RegExp(`(?:^|[\\s"'\\\`=])(?:\\.\\/|\\/)?(?:[\\w.@-]+\\/)*${dir}\\/?(?:[\\s"';|&]|$)`, "i");
+    if (re.test(command)) paths.add(`${dir}/*`);
+  }
+  if (/(?:^|[\s"'`=])(?:\.\/|\/)?(?:[\w.@-]+\/)*stitch\/?(?:[\s"';|&]|$)/i.test(stripSafeStitchMetadataRefs(command))) {
+    paths.add("stitch/*");
+  }
+  return Array.from(paths);
+}
+
+function implementPreDeltaExplorationGuard(active: ActiveProcess): { detected: boolean; reason: string } {
+  if (fileSize(active.outputPath) > 0) return { detected: false, reason: "" };
+  if (sourceStatusFiles(active.spawnCwd).length > 0) return { detected: false, reason: "" };
+
+  let raw = "";
+  try {
+    raw = fs.readFileSync(active.sessionJsonlPath, "utf-8").slice(-512_000).trim();
+  } catch {
+    return { detected: false, reason: "" };
+  }
+  if (!raw) return { detected: false, reason: "" };
+
+  const contextReads = new Set<string>();
+  for (const line of raw.split(/\n/).filter(Boolean)) {
+    let event: any;
+    try { event = JSON.parse(line); } catch { continue; }
+    const message = event?.message || {};
+    if (String(message.role || "") !== "assistant") continue;
+
+    for (const call of extractToolCalls(message.content)) {
+      if (call.name === "read" && call.path) {
+        const relativePath = normalizeSessionProjectRelativePath(active, call.path);
+        if (isPreDeltaProjectContextPath(relativePath)) contextReads.add(relativePath);
+      }
+      if (call.command) {
+        for (const relativePath of preDeltaContextReadsFromCommand(active, call.command)) {
+          contextReads.add(relativePath);
+        }
+      }
+    }
+  }
+
+  if (contextReads.size > IMPLEMENT_PRE_DELTA_MAX_CONTEXT_READS) {
+    return {
+      detected: true,
+      reason: `IMPLEMENT_PRE_DELTA_CONTEXT_SPRAWL: ${active.agentId} read ${contextReads.size} project/design context paths before any source delta (${Array.from(contextReads).slice(0, 8).join(", ")}). Retry with first-delta supervisor discipline: read CLAIM_SUMMARY_FILE, inspect only owned scope files and safe metadata needed for the first edit, then make a small scoped code change before broad analysis.`,
+    };
   }
 
   return { detected: false, reason: "" };
@@ -2710,6 +2783,19 @@ async function reapFinishedClaims(): Promise<void> {
             try { fs.appendFileSync(active.transcriptPath, `--- RAW STITCH READ GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
             await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "runtime-guard", reason);
             terminateActiveProcess(active, "raw-stitch-read-guard");
+            activeProcesses.delete(key);
+            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
+            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
+            continue;
+          }
+
+          const preDeltaExploration = implementPreDeltaExplorationGuard(active);
+          if (preDeltaExploration.detected) {
+            const reason = preDeltaExploration.reason + ` Transcript: ${active.transcriptPath}`;
+            console.warn(`[spawner] ${reason}`);
+            try { fs.appendFileSync(active.transcriptPath, `--- IMPLEMENT PRE-DELTA CONTEXT GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
+            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "runtime-guard", reason);
+            terminateActiveProcess(active, "implement-pre-delta-context-guard");
             activeProcesses.delete(key);
             if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
             await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);

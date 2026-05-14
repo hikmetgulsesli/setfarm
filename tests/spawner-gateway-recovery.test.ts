@@ -359,6 +359,8 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /function rawStitchDesignReadGuard\(active: ActiveProcess\)/);
     assert.match(source, /function isRawStitchDesignPath/);
     assert.match(source, /stitch\/\*\.html/);
+    assert.match(source, /stitch\/\*/);
+    assert.match(source, /stripSafeStitchMetadataRefs\(segment\)/);
     assert.match(source, /stitch\/DESIGN_DOM\.json/);
     assert.match(source, /\.stitch-screens\*\.json/);
     assert.match(source, /RAW_STITCH_CONTEXT_READ/);
@@ -386,6 +388,25 @@ describe("spawner gateway recovery wiring", () => {
     assert.ok(
       source.indexOf("implementNoDeltaStallGuard(active, ageMs)") < source.indexOf("const terminalReason = childProcessTerminalReason(active.child)"),
       "no-delta stall guard must run before terminal-process recovery",
+    );
+  });
+
+  it("kills implement claims that sprawl through context before the first source delta", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /IMPLEMENT_PRE_DELTA_MAX_CONTEXT_READS/);
+    assert.match(source, /SETFARM_IMPLEMENT_PRE_DELTA_MAX_CONTEXT_READS/);
+    assert.match(source, /function implementPreDeltaExplorationGuard\(active: ActiveProcess\)/);
+    assert.match(source, /IMPLEMENT_PRE_DELTA_CONTEXT_SPRAWL/);
+    assert.match(source, /first-delta supervisor discipline/);
+    assert.match(source, /preDeltaContextReadsFromCommand\(active, call\.command\)/);
+    assert.match(source, /terminateActiveProcess\(active,\s*"implement-pre-delta-context-guard"\)/);
+    assert.ok(
+      source.indexOf("implementPreDeltaExplorationGuard(active)") > source.indexOf("rawStitchDesignReadGuard(active)"),
+      "pre-delta context guard should run after more specific context guards",
+    );
+    assert.ok(
+      source.indexOf("implementPreDeltaExplorationGuard(active)") < source.indexOf("implementNoDeltaStallGuard(active, ageMs)"),
+      "pre-delta context guard should run before the slower no-delta stall timeout",
     );
   });
 
