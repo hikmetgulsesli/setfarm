@@ -8,6 +8,7 @@ import { implementModule } from "../../dist/installer/steps/06-implement/module.
 import { checkBuildGate, checkTestGate, computeScopeFileLimits, detectPackageBuildCommand, findDesignDomImplementationIssues, getOutOfScopeStoryFiles, normalize, sourceExposesWindowApp, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
 import { cleanupOutOfScopeWorktreeFiles } from "../../dist/installer/steps/06-implement/context.js";
 import { commitStoryWorktreeScopeIfNeeded, decideStorySystemSmokeGate } from "../../dist/installer/step-ops.js";
+import { IMPLICIT_STORY_SCOPE_FILES, isImplicitStoryScopeFile } from "../../dist/installer/story-scope.js";
 import { checkStoryDesignCompliance } from "../../dist/installer/step-guardrails.js";
 import { STACK_RULES } from "../../dist/installer/steps/06-implement/stack-rules.js";
 import type { ParsedOutput } from "../../dist/installer/steps/types.js";
@@ -83,6 +84,23 @@ describe("06-implement step module", () => {
     }
   });
 
+  it("uses one implicit story scope rule for runtime guard and platform commit", () => {
+    assert.equal(isImplicitStoryScopeFile("src/test/utils.tsx"), true);
+    assert.equal(isImplicitStoryScopeFile("./src/test/setup.mts"), true);
+    assert.equal(isImplicitStoryScopeFile("src/types/domain.test.ts"), true);
+    assert.equal(isImplicitStoryScopeFile("src/types/domain.ts"), false);
+    assert.ok(IMPLICIT_STORY_SCOPE_FILES.includes("src/test/utils.tsx"));
+
+    const guards = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/guards.js"), "utf-8");
+    const stepOps = fs.readFileSync(path.join(process.cwd(), "dist/installer/step-ops.js"), "utf-8");
+    const context = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/context.js"), "utf-8");
+    assert.match(guards, /isImplicitStoryScopeFile/);
+    assert.match(stepOps, /isImplicitStoryScopeFile/);
+    assert.match(stepOps, /IMPLICIT_STORY_SCOPE_FILES/);
+    assert.match(context, /IMPLICIT_STORY_SCOPE_FILES/);
+    assert.doesNotMatch(stepOps, /PLATFORM_STORY_COMMIT_ALLOWED_PATTERNS/);
+  });
+
   it("platform story commit refuses out-of-scope files", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-platform-commit-block-"));
     try {
@@ -152,6 +170,17 @@ describe("06-implement step module", () => {
       "src/types/domain.ts",
     ]);
     assert.deepEqual(getOutOfScopeStoryFiles(changed, ["src/screens/GameBoard.tsx", "src/types/domain.ts"]), []);
+  });
+
+  it("allows shared test helpers through the scope gate", () => {
+    const changed = [
+      "src/App.tsx",
+      "src/test/utils.tsx",
+      "src/test/setup.mts",
+      "src/types/domain.test.ts",
+    ];
+
+    assert.deepEqual(getOutOfScopeStoryFiles(changed, ["src/App.tsx"]), []);
   });
 
   it("blocks SCOPE_BLEED completion instead of silently accepting it", () => {

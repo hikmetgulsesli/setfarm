@@ -17,6 +17,7 @@ import { collectUiBehaviorRequirements, type UiBehaviorRequirement } from "../03
 import { sanitizeDesignMismatchFeedback } from "../../error-taxonomy.js";
 import { sanitizeRetryFeedbackForCurrentSource } from "../../retry-feedback.js";
 import { readSupervisorMemory } from "../../product-supervisor.js";
+import { IMPLICIT_STORY_SCOPE_FILES } from "../../story-scope.js";
 
 const STITCH_HTML_EXCERPT_CHARS = 2500;
 const STITCH_HTML_TOTAL_CHARS = 6000;
@@ -257,7 +258,7 @@ async function injectScopeContext(nextStory: any, context: Record<string, string
     if (context["story_scope_files"] && context["story_workdir"]) {
       try {
         const scopeList = context["story_scope_files"].split(", ");
-        const implicitFiles = ["vitest.config.ts","vitest.config.js","jest.config.ts","jest.config.js","src/test/setup.ts","src/test/utils.ts","src/setupTests.ts"];
+        const implicitFiles = IMPLICIT_STORY_SCOPE_FILES;
         const allAllowed = [...new Set([...scopeList, ...implicitFiles])];
         const scopeFilePath = path.join(context["story_workdir"], ".story-scope-files");
         fs.writeFileSync(scopeFilePath, allAllowed.join("\n") + "\n");
@@ -271,7 +272,7 @@ async function injectScopeContext(nextStory: any, context: Record<string, string
       } catch (e) { logger.debug(`[scope-file] ${String(e).slice(0, 80)}`); }
     }
     if (context["story_scope_files"]) {
-      context["scope_reminder"] = "SCOPE ENFORCEMENT: You may ONLY write files in [" + context["story_scope_files"] + "]. shared_files are read-only/import context unless also listed in scope_files. Test files (*.test.tsx) and Vitest/Jest-only config (vitest.config.ts, src/test/setup.ts) are allowed. src/types/*, domain model files, vite.config.ts, tailwind.config.js, tsconfig.*, index.html, App.tsx, main.tsx, index.css are FORBIDDEN unless in your scope_files. Never edit shared exported types to fix only your screen; use local display/adaptor types inside scoped files. Violation = instant SCOPE_BLEED rejection.";
+      context["scope_reminder"] = "SCOPE ENFORCEMENT: You may ONLY write files in [" + context["story_scope_files"] + "]. shared_files are read-only/import context unless also listed in scope_files. Test files (*.test.*, *.spec.*), src/test/setup.*, src/test/utils.*, src/setupTests.*, and Vitest/Jest-only config (vitest.config.*, jest.config.*) are allowed. src/types/*, domain model files, vite.config.*, tailwind.config.*, tsconfig.*, index.html, App.tsx, main.tsx, index.css are FORBIDDEN unless in your scope_files. Never edit shared exported types to fix only your screen; use local display/adaptor types inside scoped files. Violation = instant SCOPE_BLEED rejection.";
     }
   } catch (e) {
     logger.debug(`[scope-inject] Could not read story scope columns: ${String(e).slice(0, 120)}`);

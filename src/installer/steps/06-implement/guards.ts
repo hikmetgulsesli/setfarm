@@ -12,6 +12,7 @@ import { pgGet, pgQuery, pgRun } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
 import type { ParsedOutput, ValidationResult } from "../types.js";
 import { buildTestFixPrompt, detectTestFramework, runTests } from "../../test-generation.js";
+import { isImplicitStoryScopeFile } from "../../story-scope.js";
 
 // ── Module interface methods ────────────────────────────────────
 
@@ -45,18 +46,9 @@ export interface ScopeCheckResult {
 
 const SCOPE_EXTS = /\.(tsx?|jsx?|vue|svelte|css|scss|html)$/i;
 const SCOPE_IGNORE = /^(node_modules\/|dist\/|\.next\/|build\/|coverage\/|stitch\/|references\/|DESIGN\.md|PROJECT_MEMORY\.md|\.gitignore|package(-lock)?\.json|tsconfig|vite\.config|tailwind\.config|postcss\.config|eslint\.config|README|index\.html$)/;
-const IMPLICIT_SHARED_PATTERNS = [
-  /\.test\.(tsx?|jsx?)$/,
-  /\.spec\.(tsx?|jsx?)$/,
-  /^src\/setupTests\.(tsx?|js)$/,
-  /^vitest\.config\.(ts|js|mts|mjs)$/,
-  /^jest\.config\.(ts|js|mts|mjs)$/,
-  /^src\/test\/setup\.(ts|js)$/,
-  /^src\/test\/utils\.(ts|js)$/,
-];
 
 function isImplicitSharedSourceFile(f: string): boolean {
-  return IMPLICIT_SHARED_PATTERNS.some(p => p.test(f));
+  return isImplicitStoryScopeFile(f);
 }
 
 export function getOutOfScopeStoryFiles(sourceFiles: string[], declaredScopeFiles: string[]): string[] {
@@ -691,9 +683,9 @@ export async function checkScopeEnforcement(
           const oosList = outOfScope.slice(0, 10).join(", ");
           return {
             passed: false,
-            reason: `SCOPE_BLEED: Story ${storyId} modified ${outOfScope.length} file(s) outside its SCOPE_FILES list. shared_files are read-only/import context unless also listed in scope_files. Re-read your SCOPE_FILES in the claim input and modify ONLY those files. Revert all other changes. Integration files (App.tsx, main.tsx, routing) belong to the integration story, not yours.`,
+            reason: `SCOPE_BLEED: Story ${storyId} modified ${outOfScope.length} file(s) outside its SCOPE_FILES list: ${oosList}. Allowed SCOPE_FILES: ${allowedList}. shared_files are read-only/import context unless also listed in scope_files. Re-read your SCOPE_FILES in the claim input and modify ONLY those files. Revert all other changes. Integration files (App.tsx, main.tsx, routing) belong to the integration story, not yours.`,
             category: "SCOPE_BLEED",
-            suggestion: "Only modify files declared in your SCOPE_FILES",
+            suggestion: `Only modify declared SCOPE_FILES. Revert or move out-of-scope files: ${oosList}`,
             outOfScope,
           };
         }

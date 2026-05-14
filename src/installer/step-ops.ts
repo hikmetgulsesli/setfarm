@@ -38,6 +38,7 @@ import { isVerifyRetryMergeBlocker, isVerifyRetryQualityFailure } from "./verify
 import { cleanupOutOfScopeWorktreeFiles } from "./steps/06-implement/context.js";
 import { sanitizeDesignMismatchFeedback } from "./error-taxonomy.js";
 import { sanitizeAgentPromptContracts } from "./prompt-contracts.js";
+import { IMPLICIT_STORY_SCOPE_FILES, isImplicitStoryScopeFile } from "./story-scope.js";
 import {
   getRunStatus, getRunContext, updateRunContext, failRun,
   getWorkflowId as _getWorkflowId,
@@ -217,13 +218,6 @@ async function ensureStoryPrUrlForBranch(options: {
   }
 }
 
-const PLATFORM_STORY_COMMIT_ALLOWED_PATTERNS = [
-  /\.(test|spec)\.[cm]?[jt]sx?$/i,
-  /^src\/test\/(?:setup|utils)\.[cm]?[jt]sx?$/i,
-  /^src\/setupTests\.[cm]?[jt]sx?$/i,
-  /^(?:vitest|jest)\.config\.[cm]?[jt]s$/i,
-];
-
 function parseGitStatusPaths(status: string): string[] {
   const files = new Set<string>();
   for (const line of String(status || "").split(/\r?\n/)) {
@@ -266,7 +260,7 @@ function isPlatformInternalCommitPath(file: string): boolean {
 
 function isPlatformStoryCommitAllowed(file: string, scopeFiles: Set<string>): boolean {
   if (scopeFiles.has(file)) return true;
-  return PLATFORM_STORY_COMMIT_ALLOWED_PATTERNS.some((pattern) => pattern.test(file));
+  return isImplicitStoryScopeFile(file);
 }
 
 export function commitStoryWorktreeScopeIfNeeded(
@@ -455,17 +449,7 @@ async function routeVerifyScopeFailureToImplement(
 
 function getImplicitScopeFiles(workdir: string): string[] {
   void workdir;
-  const files = [
-    "vitest.config.ts",
-    "vitest.config.js",
-    "jest.config.ts",
-    "jest.config.js",
-    "src/test/setup.ts",
-    "src/test/utils.ts",
-    "src/setupTests.ts",
-  ];
-
-  return [...new Set(files)];
+  return [...new Set(IMPLICIT_STORY_SCOPE_FILES)];
 }
 
 function isSystemSmokeBoundaryFile(file: string): boolean {
@@ -1987,7 +1971,7 @@ async function injectStoryContext(
     }
     // 5-model consensus: always inject scope_reminder (even on first attempt)
     if (context["story_scope_files"]) {
-      context["scope_reminder"] = "SCOPE ENFORCEMENT: You may ONLY write files in [" + context["story_scope_files"] + "]. shared_files are read-only/import context unless also listed in scope_files. Test files (*.test.tsx) and Vitest/Jest-only config (vitest.config.*, jest.config.*) are allowed. src/types/*, domain model files, vite.config.*, tailwind.config.*, tsconfig.*, index.html, App.tsx, main.tsx, index.css are FORBIDDEN unless in your scope_files. Never edit shared exported types to fix only your screen; use local display/adaptor types inside scoped files. Do not create project-tree probe/scratch files such as src/_probe.tsx, src/probe.tsx, tmp.ts, or scratch.tsx to infer types; use claim-summary designContracts.componentTypes. Violation = instant SCOPE_BLEED rejection.";
+      context["scope_reminder"] = "SCOPE ENFORCEMENT: You may ONLY write files in [" + context["story_scope_files"] + "]. shared_files are read-only/import context unless also listed in scope_files. Test files (*.test.*, *.spec.*), src/test/setup.*, src/test/utils.*, src/setupTests.*, and Vitest/Jest-only config (vitest.config.*, jest.config.*) are allowed. src/types/*, domain model files, vite.config.*, tailwind.config.*, tsconfig.*, index.html, App.tsx, main.tsx, index.css are FORBIDDEN unless in your scope_files. Never edit shared exported types to fix only your screen; use local display/adaptor types inside scoped files. Do not create project-tree probe/scratch files such as src/_probe.tsx, src/probe.tsx, tmp.ts, or scratch.tsx to infer types; use claim-summary designContracts.componentTypes. Violation = instant SCOPE_BLEED rejection.";
     }
   } catch (e) {
     // Column may not exist on very old schemas — degrade gracefully
@@ -4594,23 +4578,31 @@ ${screenDescs}
               // cross-story collisions until later merge/verify stages.
               try {
                 const outOfScopeFiles = scopeResult.outOfScope;
+                const filesToStage = new Set<string>();
+                const filesToRemove = new Set<string>();
                 for (const file of outOfScopeFiles) {
+                  const absFile = path.join(wd, file);
                   try {
                     execFileSync("git", ["checkout", baseBr, "--", file], {
                       cwd: wd, timeout: 10000, stdio: ["pipe", "pipe", "pipe"],
                     });
+                    filesToStage.add(file);
                   } catch (checkoutErr) {
-                    try {
-                      execFileSync("git", ["rm", "-f", file], {
-                        cwd: wd, timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
-                      });
-                    } catch { /* best effort */ }
+                    fs.rmSync(absFile, { recursive: true, force: true });
+                    filesToRemove.add(file);
                   }
                 }
                 try {
-                  execFileSync("git", ["add", "--", ...outOfScopeFiles], {
-                    cwd: wd, timeout: 10000, stdio: ["pipe", "pipe", "pipe"],
-                  });
+                  if (filesToStage.size > 0) {
+                    execFileSync("git", ["add", "--", ...filesToStage], {
+                      cwd: wd, timeout: 10000, stdio: ["pipe", "pipe", "pipe"],
+                    });
+                  }
+                  if (filesToRemove.size > 0) {
+                    execFileSync("git", ["rm", "-f", "--ignore-unmatch", "--", ...filesToRemove], {
+                      cwd: wd, timeout: 10000, stdio: ["pipe", "pipe", "pipe"],
+                    });
+                  }
                   const statusOut = execFileSync("git", ["status", "--porcelain", "--", ...outOfScopeFiles], {
                     cwd: wd, timeout: 5000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8",
                   }).trim();
