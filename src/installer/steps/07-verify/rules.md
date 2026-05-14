@@ -22,6 +22,14 @@ Do not mutate anything except:
 3. If `DESIGN_DOM.json` exists, compare the implementation to the screen design
    at the semantic element level.
 
+## Evidence First
+
+The verify agent must run PR metadata plus deterministic commands before broad
+source reading. Do not read many source/test files up front. If build, test,
+lint, smoke, PR review, or mergeability already proves a blocker, stop there and
+return `STATUS: retry`. If those pass, inspect only PR-changed files needed to
+prove acceptance criteria.
+
 ## Retry Triggers (`STATUS: retry`)
 
 - Files listed in story `scope_files` are missing from the worktree.

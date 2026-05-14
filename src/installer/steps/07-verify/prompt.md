@@ -37,6 +37,19 @@ Allowed:
 - Retargeting PR metadata to `main` when the PR base is wrong.
 - Merging the PR when it is fully clean.
 
+## Bounded Manager Protocol
+
+Verify is an evidence gate, not a broad manual source review.
+
+- After the claim summary and PR metadata, run deterministic evidence first:
+  lint/build/test/smoke as configured.
+- Do not read many source/test files before those commands. If build/test/lint
+  fail, immediately return `STATUS: retry` with the first blocker.
+- If deterministic evidence passes, inspect only PR-changed files needed to
+  prove acceptance criteria or explain the first blocker.
+- Do not open unrelated source files, generated screen sources, or full test
+  suites as a substitute for running the configured commands.
+
 ## Required Flow
 
 1. `cd "{{REPO}}"`.
@@ -60,6 +73,8 @@ Allowed:
    - If the local branch diverged, do not `git pull` merge; `origin/$HEAD_BRANCH` is the source of truth.
 7. Read review comments, failing checks, `{{PREFLIGHT_ANALYSIS}}`,
    `{{PLAYWRIGHT_REPORT}}`, `{{SUPERVISOR_MEMORY}}`, and acceptance criteria.
+   Do not inspect source files in this step; first run the deterministic
+   commands in step 8.
    - If a real issue exists, do not fix it. Return `STATUS: retry`.
    - First blocker wins. After finding a real build, test, smoke, review,
      acceptance, or merge blocker, stop investigating and return
@@ -75,7 +90,7 @@ Allowed:
      introduced by this PR"; report them so implement can create a batched
      QA-FIX story.
    - Missing ESLint config is not a real lint failure; do not add config unless the story explicitly asks for it.
-8. Build/test/smoke verification:
+8. Build/test/smoke verification before source review:
    - `{{LINT_CMD}}`
    - `{{BUILD_CMD}}`
    - `{{TEST_CMD}}`
@@ -88,19 +103,23 @@ Allowed:
    - Skip empty or `true` infrastructure commands.
    - Run each command at most once. If it fails, immediately return
      `STATUS: retry`; do not run extra commands to "get the full picture".
-9. Final blocker check before merge:
+9. Focused source/acceptance review:
+   - If commands pass, inspect only files changed by the PR and only as much as
+     needed to prove acceptance criteria or explain the first blocker.
+   - Do not read unrelated source/test files for general quality hunting.
+10. Final blocker check before merge:
    - PR state must be `OPEN`.
    - There must be no blocking review comments, failing checks, smoke failures,
      build/test failures, merge conflicts, or acceptance mismatches.
    - `git status --short` must be clean; verifier must not have changed source.
-10. If the PR is fully clean:
+11. If the PR is fully clean:
    - `gh pr comment "{{PR_URL}}" --body "Verified: build/test/smoke checked; merging."`
    - `gh pr merge "{{PR_URL}}" --squash --delete-branch`
    - If merge fails, immediately return `STATUS: retry` with the blocker
      reason. Do not inspect, rebase, resolve, or repair merge conflicts.
-11. Confirm merge:
+12. Confirm merge:
     - `gh pr view "{{PR_URL}}" --json state --jq .state` must return `MERGED`.
-12. Update local main:
+13. Update local main:
     - `git fetch origin main`
     - `git checkout main`
     - `git pull --ff-only origin main`

@@ -100,6 +100,13 @@ describe("error taxonomy", () => {
     assert.equal(crossProject.category, "CROSS_PROJECT_CONTAMINATION");
     assert.match(crossProject.suggestion, /CLAIM_SUMMARY_FILE/);
     assert.match(crossProject.suggestion, /prepared story worktree/);
+
+    const boundedVerify = classifyError(
+      "VERIFY_BOUNDED_REVIEW_VIOLATION: feature-dev_reviewer read 8 project source/test files before running build/test/lint evidence in verify.",
+    );
+    assert.equal(boundedVerify.category, "VERIFY_BOUNDED_REVIEW_VIOLATION");
+    assert.match(boundedVerify.suggestion, /bounded manager gate/);
+    assert.match(boundedVerify.suggestion, /deterministic build\/test\/lint evidence/);
   });
 
 

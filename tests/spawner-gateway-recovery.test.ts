@@ -558,6 +558,30 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /pg_notify\('step_pending'/);
   });
 
+  it("runtime-guards verify agents that broad-read source before evidence commands", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /VERIFY_BOUNDED_REVIEW_MIN_AGE_MS/);
+    assert.match(source, /VERIFY_BOUNDED_REVIEW_MAX_SOURCE_READS/);
+    assert.match(source, /function verifyBoundedReviewGuard/);
+    assert.match(source, /VERIFY_BOUNDED_REVIEW_VIOLATION/);
+    assert.match(source, /project source\/test files before running build\/test\/lint evidence/);
+    assert.match(source, /normalizeSessionProjectRelativePath/);
+    assert.match(source, /story-worktrees/);
+
+    const guardStart = source.indexOf("const boundedReview = verifyBoundedReviewGuard(active, ageMs)");
+    const guardEnd = source.indexOf("await updateRunningStepHeartbeat(active, row.step_id, ageMs)", guardStart);
+    assert.notEqual(guardStart, -1, "verify bounded review guard block missing");
+    assert.notEqual(guardEnd, -1, "verify bounded review guard block end missing");
+    const block = source.slice(guardStart, guardEnd);
+    assert.match(block, /recordSupervisorRuntimeEvent\(active\.runId,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"VERIFY_BOUNDED_REVIEW_VIOLATION"/);
+    assert.match(block, /terminateActiveProcess\(active,\s*"verify-bounded-review"\)/);
+    assert.match(block, /await retryActiveSingleStepClaim\(active,\s*row\.step_id,\s*reason\)/);
+    assert.ok(
+      block.indexOf("recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null") < block.indexOf("terminateActiveProcess(active, \"verify-bounded-review\")"),
+      "verify bounded review guard must write supervisor memory before killing the claim",
+    );
+  });
+
   it("retries running single-step claims that are no longer tracked by the spawner", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /ORPHANED_SINGLE_STEP_CLAIM_MS/);

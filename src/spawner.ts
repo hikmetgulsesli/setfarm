@@ -32,6 +32,8 @@ const BACKGROUND_WORKFLOWS = new Set((process.env.SETFARM_BACKGROUND_WORKFLOWS |
   .map((item) => item.trim())
   .filter(Boolean));
 const VERIFY_AGENT_HARD_TIMEOUT_MS = parsePositiveInt(process.env.SETFARM_VERIFY_AGENT_HARD_TIMEOUT_MS, 10 * 60_000);
+const VERIFY_BOUNDED_REVIEW_MIN_AGE_MS = parsePositiveInt(process.env.SETFARM_VERIFY_BOUNDED_REVIEW_MIN_AGE_MS, 2 * 60_000);
+const VERIFY_BOUNDED_REVIEW_MAX_SOURCE_READS = parsePositiveInt(process.env.SETFARM_VERIFY_BOUNDED_REVIEW_MAX_SOURCE_READS, 6);
 const NON_DEVELOPER_STUCK_MS = parsePositiveInt(process.env.SETFARM_AGENT_STUCK_MS, 12 * 60_000);
 const DEVELOPER_STUCK_MS = parsePositiveInt(process.env.SETFARM_DEVELOPER_AGENT_STUCK_MS, 15 * 60_000);
 const QA_FIX_AGENT_STUCK_MS = parsePositiveInt(process.env.SETFARM_QA_FIX_AGENT_STUCK_MS, 8 * 60_000);
@@ -1025,6 +1027,97 @@ function claimParseLoopGuard(active: ActiveProcess): { detected: boolean; reason
     return {
       detected: true,
       reason: `CLAIM_SUMMARY_IGNORED: ${active.agentId} kept parsing raw /tmp/claim-*.json (${rawClaimReads} reads) and never used CLAIM_SUMMARY_FILE. Setfarm is retrying with supervisor handoff discipline.`,
+    };
+  }
+
+  return { detected: false, reason: "" };
+}
+
+function isVerifyDeterministicEvidenceCommand(command: string): boolean {
+  const compact = compactCommandForDiagnostic(command);
+  if (!compact) return false;
+  return /\b(npm|pnpm|yarn|bun)\s+(run\s+)?(build|test|test:run|lint|typecheck)\b/i.test(compact)
+    || /\bnpx\s+(vitest|tsc|eslint)\b/i.test(compact)
+    || /\b(vitest|tsc|eslint)\s+(run|--noEmit|\.)?/i.test(compact)
+    || /\bnode\b[^;&|]*\b(smoke-test|playwright-check)\b/i.test(compact);
+}
+
+function isSourceReviewPath(relativePath: string): boolean {
+  if (!relativePath || relativePath.startsWith("..")) return false;
+  if (relativePath === "src/screens/SCREEN_INDEX.json" || relativePath === "src/screens/index.ts") return false;
+  if (/^src\/screens\/[^/]+\.tsx$/.test(relativePath)) return false;
+  if (/^src\/.*\.(tsx?|jsx?|css|scss|sass|less)$/.test(relativePath)) return true;
+  if (/^tests?\/.*\.(tsx?|jsx?)$/.test(relativePath)) return true;
+  return /\.(test|spec)\.(tsx?|jsx?)$/.test(relativePath);
+}
+
+function normalizeSessionProjectRelativePath(active: ActiveProcess, rawPath: string): string {
+  let relativePath = normalizeWorktreeRelativePath(active.spawnCwd, rawPath);
+  if (relativePath && !relativePath.startsWith("..")) return relativePath;
+
+  const cleaned = rawPath.replace(/^['"]|['"]$/g, "").trim();
+  const storyWorktreeMatch = cleaned.match(/\/story-worktrees\/[^/]+\/(.+)$/);
+  if (storyWorktreeMatch?.[1]) return path.normalize(storyWorktreeMatch[1]).replace(/\\/g, "/");
+
+  const projectMatch = cleaned.match(/\/projects\/[^/]+\/(.+)$/);
+  if (projectMatch?.[1]) return path.normalize(projectMatch[1]).replace(/\\/g, "/");
+
+  return relativePath;
+}
+
+function sourceReviewReadsFromCommand(active: ActiveProcess, command: string): string[] {
+  if (!/\b(cat|sed|nl|head|tail|less|bat|rg|grep|awk|wc|python3?|node)\b/i.test(command)) return [];
+  const paths = new Set<string>();
+  for (const match of command.matchAll(/(?:^|[\s"'`=])((?:\.\/|\/)?(?:[\w.@-]+\/)*[\w.@-]+\.(?:tsx?|jsx?|css|scss|sass|less))(?:[\s"'`;|&]|$)/gi)) {
+    const relativePath = normalizeSessionProjectRelativePath(active, match[1] || "");
+    if (isSourceReviewPath(relativePath)) paths.add(relativePath);
+  }
+  return Array.from(paths);
+}
+
+function verifyBoundedReviewGuard(active: ActiveProcess, ageMs: number): { detected: boolean; reason: string } {
+  if (ageMs < VERIFY_BOUNDED_REVIEW_MIN_AGE_MS) return { detected: false, reason: "" };
+
+  let raw = "";
+  try {
+    raw = fs.readFileSync(active.sessionJsonlPath, "utf-8").slice(-512_000).trim();
+  } catch {
+    return { detected: false, reason: "" };
+  }
+  if (!raw) return { detected: false, reason: "" };
+
+  const preEvidenceReads = new Set<string>();
+  let sawDeterministicEvidence = false;
+
+  for (const line of raw.split(/\n/).filter(Boolean)) {
+    let event: any;
+    try { event = JSON.parse(line); } catch { continue; }
+    const message = event?.message || {};
+    if (String(message.role || "") !== "assistant") continue;
+
+    for (const call of extractToolCalls(message.content)) {
+      if (call.command && isVerifyDeterministicEvidenceCommand(call.command)) {
+        sawDeterministicEvidence = true;
+        continue;
+      }
+      if (sawDeterministicEvidence) continue;
+
+      if (call.name === "read" && call.path) {
+        const relativePath = normalizeSessionProjectRelativePath(active, call.path);
+        if (isSourceReviewPath(relativePath)) preEvidenceReads.add(relativePath);
+      }
+      if (call.command) {
+        for (const relativePath of sourceReviewReadsFromCommand(active, call.command)) {
+          preEvidenceReads.add(relativePath);
+        }
+      }
+    }
+  }
+
+  if (!sawDeterministicEvidence && preEvidenceReads.size >= VERIFY_BOUNDED_REVIEW_MAX_SOURCE_READS && fileSize(active.outputPath) === 0) {
+    return {
+      detected: true,
+      reason: `VERIFY_BOUNDED_REVIEW_VIOLATION: ${active.agentId} read ${preEvidenceReads.size} project source/test files before running build/test/lint evidence in verify (${Array.from(preEvidenceReads).slice(0, 6).join(", ")}). Verify is a bounded gate, not broad manual source review: read PR metadata, run deterministic commands once, then inspect only changed files needed for the first blocker.`,
     };
   }
 
@@ -2630,6 +2723,20 @@ ${reason}
           activeProcesses.delete(key);
           await pgRun("UPDATE steps SET status = 'waiting', updated_at = NOW() WHERE id = $1 AND status = 'running'", [active.stepId]);
           continue;
+        }
+
+        if (row.step_id === "verify") {
+          const boundedReview = verifyBoundedReviewGuard(active, ageMs);
+          if (boundedReview.detected) {
+            const reason = boundedReview.reason + ` Transcript: ${active.transcriptPath}`;
+            console.warn(`[spawner] ${reason}`);
+            try { fs.appendFileSync(active.transcriptPath, `--- VERIFY BOUNDED REVIEW GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
+            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "VERIFY_BOUNDED_REVIEW_VIOLATION", "verify-bounded-review", reason);
+            terminateActiveProcess(active, "verify-bounded-review");
+            activeProcesses.delete(key);
+            await retryActiveSingleStepClaim(active, row.step_id, reason);
+            continue;
+          }
         }
 
         await updateRunningStepHeartbeat(active, row.step_id, ageMs);

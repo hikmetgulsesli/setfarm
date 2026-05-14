@@ -80,6 +80,10 @@ describe("07-verify step module", () => {
     assert.ok(verifyPromptSource.includes("8 minutes"));
     assert.ok(verifyPromptSource.includes("VERIFY_INFRA_PR_URL_MISSING"));
     assert.ok(verifyPromptSource.includes("Setfarm must create/reuse the story PR before reviewer runs"));
+    assert.ok(verifyPromptSource.includes("Bounded Manager Protocol"));
+    assert.ok(verifyPromptSource.includes("Verify is an evidence gate"));
+    assert.ok(verifyPromptSource.includes("Build/test/smoke verification before source review"));
+    assert.ok(verifyPromptSource.includes("inspect only files changed by the PR"));
   });
 
   it("buildPrompt stays within maxPromptSize for typical context", () => {
