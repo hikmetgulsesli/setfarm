@@ -278,8 +278,13 @@ describe("06-implement step module", () => {
   it("loop claims use step module buildPrompt instead of stale workflow fallback", () => {
     const source = fs.readFileSync(path.join(process.cwd(), "src/installer/step-ops.ts"), "utf-8");
     assert.match(source, /Step module takeover for loop claims/);
+    assert.match(source, /withStepModulePromptAliases/);
+    assert.match(source, /assign\("SCOPE_FILES", "story_scope_files"\)/);
+    assert.match(source, /assign\("STORY_ROADMAP", "story_roadmap"\)/);
+    assert.match(source, /assign\("STORY", "current_story"\)/);
     assert.match(source, /loop buildPrompt override/);
-    assert.ok(source.includes("resolveTemplate(_modulePrompt, prunedContextLoop)"));
+    assert.ok(source.includes("resolveTemplate(_modulePrompt, renderContext)"));
+    assert.ok(source.includes("await resolveLoopClaimInput(step, prunedContextLoop, context)"));
   });
 
   it("injectContext is a no-op (real work happens in injectStoryContext post-selection)", async () => {

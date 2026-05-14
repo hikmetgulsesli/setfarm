@@ -374,6 +374,70 @@ function prependScopeReminderIfMissing(input: string, context: Record<string, st
   return `${reminder}\n\n${input}`;
 }
 
+function withStepModulePromptAliases(context: Record<string, string>, runId: string): Record<string, string> {
+  const aliased = { ...context };
+  const assign = (target: string, ...sources: string[]) => {
+    if (String(aliased[target] || "").trim()) return;
+    for (const source of sources) {
+      const value = String(aliased[source] || "");
+      if (value.trim()) {
+        aliased[target] = value;
+        return;
+      }
+    }
+    aliased[target] = "";
+  };
+
+  assign("RUN_ID", "run_id");
+  if (!aliased["RUN_ID"]) aliased["RUN_ID"] = runId;
+  assign("TASK", "task");
+  assign("STORY_WORKDIR", "story_workdir");
+  assign("STORY_BRANCH", "story_branch");
+  assign("SCOPE_FILES", "story_scope_files");
+  assign("SCOPE_REMINDER", "scope_reminder");
+  assign("STORY_ROADMAP", "story_roadmap");
+  assign("STORY", "current_story");
+  assign("STORY_SCREENS", "story_screens");
+  assign("DESIGN_RULES", "design_rules");
+  assign("SUPERVISOR_MEMORY", "supervisor_memory");
+  return aliased;
+}
+
+async function resolveLoopClaimInput(
+  step: { step_id: string; run_id: string; input_template: string },
+  prunedContextLoop: Record<string, string>,
+  context: Record<string, string>,
+): Promise<string> {
+  const renderContext = withStepModulePromptAliases(prunedContextLoop, step.run_id);
+  let resolvedInput = sanitizeAgentPromptContracts(prependScopeReminderIfMissing(resolveTemplate(step.input_template, renderContext), context));
+
+  // Step module takeover for loop claims. Single-step claims already use
+  // buildPrompt(); loop claims need the same module source of truth after
+  // injectStoryContext() has populated story-specific variables.
+  try {
+    const _modRegistryP = await import("./steps/registry.js");
+    const _stepModuleP = _modRegistryP.get(step.step_id);
+    if (_stepModuleP) {
+      const _modulePrompt = _stepModuleP.buildPrompt({
+        runId: step.run_id,
+        task: renderContext["task"] || renderContext["TASK"] || "",
+        context: renderContext,
+      });
+      if (_modulePrompt && _modulePrompt.length > 0) {
+        if (_modulePrompt.length > _stepModuleP.maxPromptSize) {
+          logger.warn("[step-module] " + _stepModuleP.id + " loop prompt " + _modulePrompt.length + " > budget " + _stepModuleP.maxPromptSize + " - using anyway, investigate", { runId: step.run_id });
+        }
+        resolvedInput = sanitizeAgentPromptContracts(prependScopeReminderIfMissing(resolveTemplate(_modulePrompt, renderContext), context));
+        logger.info("[step-module] " + _stepModuleP.id + " loop buildPrompt override (" + _modulePrompt.length + "b)", { runId: step.run_id });
+      }
+    }
+  } catch (_pe) {
+    logger.warn("[step-module] loop buildPrompt failed (falling back to template): " + String(_pe).slice(0, 200), { runId: step.run_id });
+  }
+
+  return resolvedInput;
+}
+
 async function detectVerifyScopeDiffFailure(
   runId: string,
   storyId: string,
@@ -2809,7 +2873,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
             } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
           }
           const prunedContextLoop = pruneContextForStep(context, step.step_id);
-          const resolvedInput = sanitizeAgentPromptContracts(prependScopeReminderIfMissing(resolveTemplate(step.input_template, prunedContextLoop), context));
+          const resolvedInput = await resolveLoopClaimInput(step, prunedContextLoop, context);
           logger.info(`[claim-idempotent] Re-issued running story ${runningStory.story_id} to ${agentId}`, { runId: step.run_id, stepId: step.step_id });
           return { found: true, stepId: step.id, runId: step.run_id, storyId: runningStory.story_id, storyDbId: runningStory.id, resolvedInput };
         }
@@ -3299,31 +3363,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
       if (loopBytesBefore > loopBytesAfter + 1000) {
         logger.info(`[context-prune] ${step.step_id} (loop story=${nextStory.story_id}): ${loopBytesBefore}→${loopBytesAfter} bytes (${Math.round((1 - loopBytesAfter / loopBytesBefore) * 100)}% trimmed)`, { runId: step.run_id });
       }
-      let resolvedInput = sanitizeAgentPromptContracts(prependScopeReminderIfMissing(resolveTemplate(step.input_template, prunedContextLoop), context));
-
-      // Step module takeover for loop claims. Single-step claims already use
-      // buildPrompt(); loop claims need the same module source of truth after
-      // injectStoryContext() has populated story-specific variables.
-      try {
-        const _modRegistryP = await import("./steps/registry.js");
-        const _stepModuleP = _modRegistryP.get(step.step_id);
-        if (_stepModuleP) {
-          const _modulePrompt = _stepModuleP.buildPrompt({
-            runId: step.run_id,
-            task: prunedContextLoop["task"] || prunedContextLoop["TASK"] || "",
-            context: prunedContextLoop,
-          });
-          if (_modulePrompt && _modulePrompt.length > 0) {
-            if (_modulePrompt.length > _stepModuleP.maxPromptSize) {
-              logger.warn(`[step-module] ${_stepModuleP.id} loop prompt ${_modulePrompt.length} > budget ${_stepModuleP.maxPromptSize} — using anyway, investigate`, { runId: step.run_id });
-            }
-            resolvedInput = sanitizeAgentPromptContracts(prependScopeReminderIfMissing(resolveTemplate(_modulePrompt, prunedContextLoop), context));
-            logger.info(`[step-module] ${_stepModuleP.id} loop buildPrompt override (${_modulePrompt.length}b)`, { runId: step.run_id });
-          }
-        }
-      } catch (_pe) {
-        logger.warn(`[step-module] loop buildPrompt failed (falling back to template): ${String(_pe).slice(0, 200)}`, { runId: step.run_id });
-      }
+      const resolvedInput = await resolveLoopClaimInput(step, prunedContextLoop, context);
 
       // Item 7: MISSING_INPUT_GUARD inside claim flow (v1.5.53: retry once before failing run)
       const allMissing = [...new Set([...resolvedInput.matchAll(/\[missing:\s*(\w+)\]/gi)].map(m => m[1].toLowerCase()))];
