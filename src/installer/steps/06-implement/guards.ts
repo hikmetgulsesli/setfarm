@@ -110,6 +110,16 @@ function summarizeTestFailure(text: string): string {
     .slice(0, 3000);
 }
 
+export function parseGitStatusPorcelainPath(line: string): string {
+  if (!line || !line.trim()) return "";
+  const raw = line.slice(3).trim().replace(/^"|"$/g, "");
+  if (!raw) return "";
+  if (raw.includes(" -> ")) {
+    return raw.split(" -> ").map((part) => part.trim().replace(/^"|"$/g, "")).filter(Boolean).pop() || "";
+  }
+  return raw;
+}
+
 function listTouchedFiles(workdir: string, baseBranch: string): string[] {
   const files = new Set<string>();
   try {
@@ -121,8 +131,8 @@ function listTouchedFiles(workdir: string, baseBranch: string): string[] {
   try {
     const statusOut = execFileSync("git", ["status", "--porcelain"], {
       cwd: workdir, timeout: 5000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8",
-    }).trim();
-    statusOut.split("\n").map(line => line.slice(3).trim()).filter(Boolean).forEach(f => files.add(f));
+    });
+    statusOut.split(/\r?\n/).map(parseGitStatusPorcelainPath).filter(Boolean).forEach(f => files.add(f));
   } catch {}
   return [...files];
 }
@@ -614,8 +624,8 @@ export async function checkScopeEnforcement(
   try {
     const statusOut = execFileSync("git", ["status", "--porcelain"], {
       cwd: workdir, timeout: 5000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8",
-    }).trim();
-    dirtyFiles = statusOut ? statusOut.split("\n").map(l => l.slice(3).trim()).filter(Boolean) : [];
+    });
+    dirtyFiles = statusOut.split(/\r?\n/).map(parseGitStatusPorcelainPath).filter(Boolean);
   } catch {}
 
   const allTouched = Array.from(new Set([...changedFiles, ...dirtyFiles]));

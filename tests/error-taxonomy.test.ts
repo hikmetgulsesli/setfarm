@@ -73,6 +73,15 @@ describe("error taxonomy", () => {
     assert.equal(exited.category, "AGENT_PROCESS_EXITED");
   });
 
+
+  it("classifies scope bleed as a scope failure instead of UNKNOWN", () => {
+    const scoped = classifyError(
+      "SCOPE_BLEED: Story US-001 modified 1 file(s) outside its SCOPE_FILES list: src/Other.tsx.",
+    );
+    assert.equal(scoped.category, "SCOPE_BLEED");
+    assert.match(scoped.suggestion, /SCOPE_FILES/);
+  });
+
   it("rewrites stale generic design mismatch feedback before retry prompts reuse it", () => {
     const feedback = sanitizeDesignMismatchFeedback([
       "DESIGN UYUMSUZLUK:",

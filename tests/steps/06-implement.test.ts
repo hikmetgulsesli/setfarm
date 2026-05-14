@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { implementModule } from "../../dist/installer/steps/06-implement/module.js";
-import { checkBuildGate, checkTestGate, computeScopeFileLimits, detectPackageBuildCommand, findDesignDomImplementationIssues, getOutOfScopeStoryFiles, normalize, sourceExposesWindowApp, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
+import { checkBuildGate, checkTestGate, computeScopeFileLimits, detectPackageBuildCommand, findDesignDomImplementationIssues, getOutOfScopeStoryFiles, normalize, parseGitStatusPorcelainPath, sourceExposesWindowApp, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
 import { cleanupOutOfScopeWorktreeFiles } from "../../dist/installer/steps/06-implement/context.js";
 import { commitStoryWorktreeScopeIfNeeded, decideStorySystemSmokeGate } from "../../dist/installer/step-ops.js";
 import { IMPLICIT_STORY_SCOPE_FILES, isImplicitStoryScopeFile } from "../../dist/installer/story-scope.js";
@@ -189,6 +189,14 @@ describe("06-implement step module", () => {
     ];
 
     assert.deepEqual(getOutOfScopeStoryFiles(changed, ["src/App.tsx"]), []);
+  });
+
+
+  it("parses git porcelain dirty paths without trimming away the status columns", () => {
+    assert.equal(parseGitStatusPorcelainPath(" M src/App.tsx"), "src/App.tsx");
+    assert.equal(parseGitStatusPorcelainPath("M  src/hooks/useAppState.ts"), "src/hooks/useAppState.ts");
+    assert.equal(parseGitStatusPorcelainPath("?? src/types/domain.test.ts"), "src/types/domain.test.ts");
+    assert.equal(parseGitStatusPorcelainPath("R  src/Old.tsx -> src/New.tsx"), "src/New.tsx");
   });
 
   it("blocks SCOPE_BLEED completion instead of silently accepting it", () => {
