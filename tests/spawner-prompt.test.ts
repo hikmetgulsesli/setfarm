@@ -24,6 +24,8 @@ describe("spawner prompt bootstrap", () => {
     assert.match(prompt, /First exec command:\nbash '\/tmp\/setfarm-claim-bootstrap-feature-dev_developer-spawner-test\.sh'/);
     assert.match(prompt, /CLAIM_SUMMARY_FILE=\/tmp\/claim-summary-feature-dev_developer-spawner-test\.json/);
     assert.match(prompt, /Read the structured claim summary at \/tmp\/claim-summary-feature-dev_developer-spawner-test\.json first/);
+    assert.match(prompt, /gitPolicy/);
+    assert.match(prompt, /Setfarm performs the scoped commit and PR handoff after gates pass/);
     assert.match(prompt, /designContracts\.screenIndex, designContracts\.uiContract, designContracts\.componentRegistry, and designContracts\.componentTypes/);
     assert.match(prompt, /src\/_probe\.tsx, src\/probe\.tsx, tmp\.ts, scratch\.tsx/);
     assert.match(prompt, /Do NOT parse or dump claim\.input with jq\/sed\/head\/node loops/);
@@ -58,6 +60,11 @@ describe("spawner prompt bootstrap", () => {
         storyTitle: "Bootstrap story",
         task: "Project: bootstrap sensor",
         scopeFiles: ["src/App.tsx"],
+        gitPolicy: {
+          owner: "setfarm-platform",
+          summary: "Developer story agents write code only.",
+          forbiddenForAgent: ["git add", "git commit", "git push"],
+        },
         generatedScreenPolicy: {
           summary: "No generated screen source file is in scope.",
         },
@@ -88,6 +95,8 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, new RegExp(`CLAIM_SUMMARY_FILE=${claimSummaryFile.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
       assert.match(out, /STORY=US-001 Bootstrap story/);
       assert.match(out, /SCOPE_FILES=src\/App\.tsx/);
+      assert.match(out, /GIT_POLICY=Developer story agents write code only/);
+      assert.match(out, /FORBIDDEN_GIT=git add, git commit, git push/);
       assert.match(out, /GENERATED_SCREEN_POLICY=No generated screen source file is in scope/);
       assert.match(out, /SCREEN_INDEX_CONTRACTS=1/);
       assert.match(out, /UI_CONTRACTS=1/);
@@ -212,6 +221,9 @@ describe("spawner prompt bootstrap", () => {
       assert.equal(summary.buildCommand, "true");
       assert.equal(summary.testCommand, "true");
       assert.equal(summary.lintCommand, "true");
+      assert.equal((summary.gitPolicy as any).owner, "setfarm-platform");
+      assert.match((summary.gitPolicy as any).summary, /Developer story agents write code only/);
+      assert.deepEqual((summary.gitPolicy as any).forbiddenForAgent.slice(0, 3), ["git add", "git commit", "git push"]);
       assert.deepEqual(summary.scopeFiles, ["src/App.tsx", "src/state.ts"]);
       assert.deepEqual((summary.generatedScreenPolicy as any).allowedSourceFiles, []);
       assert.deepEqual((summary.generatedScreenPolicy as any).forbiddenSourceFiles, [

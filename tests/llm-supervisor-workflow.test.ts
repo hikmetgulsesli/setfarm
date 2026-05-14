@@ -29,10 +29,20 @@ describe("LLM product supervisor architecture", () => {
     assert.match(prompt, /SUPERVISOR_MEMORY_APPEND/);
     assert.match(agent, /whole run/);
     assert.match(prompt, /Apply this same system-level\s+contract to every project/);
+    assert.match(prompt, /Do not add project-specific policy/);
+    assert.match(prompt, /durable, reusable manager findings/);
+    assert.match(agent, /Do not create one-off, project-specific policy/);
+    assert.match(readFileSync(resolve(import.meta.dirname, "../src/installer/steps/12-supervise/rules.md"), "utf-8"), /persistent manager session/);
   });
 
   it("injects supervisor memory into per-story verify feedback", () => {
     assert.match(verifyPrompt, /SUPERVISOR_MEMORY/);
     assert.match(verifyPrompt, /durable manager decisions/);
+  });
+
+  it("keeps developer git ownership on the platform, not story agents", () => {
+    assert.match(workflow, /Developers write code only in prepared story worktrees/);
+    assert.match(workflow, /Setfarm stages the\s+declared scope, commits and pushes the story branch/);
+    assert.doesNotMatch(workflow, /Developer commits and pushes the prepared story branch/);
   });
 });

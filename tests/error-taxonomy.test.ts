@@ -34,6 +34,26 @@ describe("error taxonomy", () => {
     assert.doesNotMatch(classified.suggestion, /design-tokens\.css|hardcoded colors/);
   });
 
+  it("classifies runtime supervisor guard failures before generic killed/crash text", () => {
+    const git = classifyError(
+      "GIT_DISCIPLINE_VIOLATION: feature-dev_developer ran agent-side staging (git add -A). Runtime supervisor killed the claim before unmanaged staging could be accepted.",
+    );
+    assert.equal(git.category, "GIT_DISCIPLINE");
+    assert.match(git.suggestion, /Setfarm stage|Setfarm.*commit|Setfarm.*push/i);
+    assert.doesNotMatch(git.suggestion, /memory/i);
+
+    const generated = classifyError(
+      "GENERATED_SCREEN_SHARED_READ: feature-dev_developer used read on src/screens/MainMenu.tsx. Setfarm killed the claim before generated-screen context overload.",
+    );
+    assert.equal(generated.category, "GENERATED_SCREEN_SHARED_READ");
+    assert.match(generated.suggestion, /SCREEN_INDEX\.json/);
+
+    const product = classifyError(
+      "GUARDRAIL [product-supervisor:implement]: IMPLEMENT_NO_DELTA: US-001 reported done but supervisor found no changed files.",
+    );
+    assert.equal(product.category, "PRODUCT_SUPERVISOR_BLOCKED");
+  });
+
   it("rewrites stale generic design mismatch feedback before retry prompts reuse it", () => {
     const feedback = sanitizeDesignMismatchFeedback([
       "DESIGN UYUMSUZLUK:",

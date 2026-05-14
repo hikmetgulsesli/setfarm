@@ -15,6 +15,15 @@ export type ErrorCategory =
   | "MERGE_CONFLICT"
   | "API_ERROR"
   | "AGENT_CRASH"
+  | "GIT_DISCIPLINE"
+  | "INTERMEDIATE_COMMIT"
+  | "SCOPE_WRITE_VIOLATION"
+  | "GENERATED_SCREEN_SHARED_READ"
+  | "CLAIM_WORKDIR_MISSING"
+  | "CLAIM_PARSE_LOOP"
+  | "CLAIM_SUMMARY_IGNORED"
+  | "PRODUCT_SUPERVISOR_BLOCKED"
+  | "LLM_SUPERVISOR_BLOCKED"
   | "UNKNOWN";
 
 export interface ClassifiedError {
@@ -24,6 +33,15 @@ export interface ClassifiedError {
 }
 
 const PATTERNS: Array<{ pattern: RegExp; category: ErrorCategory; suggestion: string }> = [
+  { pattern: /^GIT_DISCIPLINE_VIOLATION:/i, category: "GIT_DISCIPLINE", suggestion: "Developer agents must not run git add/commit/push. Continue coding in the assigned worktree, report STATUS: done, and let Setfarm stage, commit, push, and create PRs." },
+  { pattern: /^INTERMEDIATE_COMMIT_VIOLATION:/i, category: "INTERMEDIATE_COMMIT", suggestion: "Use /tmp/setfarm-progress checkpoints for long work. Do not create partial commits; Setfarm creates the scoped story commit after gates pass." },
+  { pattern: /^SCOPE_WRITE_VIOLATION:/i, category: "SCOPE_WRITE_VIOLATION", suggestion: "Modify only files listed in scopeFiles. Remove out-of-scope edits and keep scratch/probe files outside the project worktree." },
+  { pattern: /^GENERATED_SCREEN_SHARED_READ:/i, category: "GENERATED_SCREEN_SHARED_READ", suggestion: "Use claim-summary designContracts, SCREEN_INDEX.json, and src/screens/index.ts for shared generated screens. Do not read forbidden src/screens/*.tsx files outside scopeFiles." },
+  { pattern: /^CLAIM_WORKDIR_MISSING:/i, category: "CLAIM_WORKDIR_MISSING", suggestion: "Setfarm could not resolve the prepared story worktree. Fix claim/workdir handoff before spawning a developer in agent scratch." },
+  { pattern: /^CLAIM_PARSE_LOOP:/i, category: "CLAIM_PARSE_LOOP", suggestion: "Read the structured claim summary once and work from its focused fields. Do not jq/sed/head/node-loop over raw claim.input." },
+  { pattern: /^CLAIM_SUMMARY_IGNORED:/i, category: "CLAIM_SUMMARY_IGNORED", suggestion: "Use CLAIM_SUMMARY_FILE as the authoritative handoff before reading the full claim fallback." },
+  { pattern: /^LLM_SUPERVISOR_BLOCKED:/i, category: "LLM_SUPERVISOR_BLOCKED", suggestion: "Treat this as manager feedback. Return the same story to implement with the exact product/code blocker and keep supervisor memory intact." },
+  { pattern: /GUARDRAIL \[product-supervisor:|PRODUCT_SUPERVISOR|IMPLEMENT_NO_DELTA|PLAN_TRACEABILITY|PLAN_SCREEN_|DESIGN_SCREEN_|STORY_SUPERVISION_/i, category: "PRODUCT_SUPERVISOR_BLOCKED", suggestion: "Product supervisor blocked a contract drift. Fix the root PRD/design/story coherence issue before continuing the pipeline." },
   { pattern: /^RUNTIME_BRIDGE_MISSING:/i, category: "RUNTIME_BRIDGE_MISSING", suggestion: "Expose the required window.app/globalThis.app runtime bridge from live state before reporting done" },
   { pattern: /^TEST_FAILED:/i, category: "TEST_FAILED", suggestion: "Run the touched tests, fix the failing source or invalid test expectation, then report done only after tests pass" },
   { pattern: /^BUILD_FAILED:/i, category: "BUILD_FAILED", suggestion: "Fix TypeScript/build errors in the story worktree, then run the build before completing" },

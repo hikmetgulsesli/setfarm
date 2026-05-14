@@ -9,9 +9,10 @@ description: |
   Plan step produces PRD only (no stories). Design step generates screens
   from PRD via Stitch (no screen limit). Stories step decomposes PRD into
   user stories using SCREEN_MAP for screen↔story binding.
-  Developer commits and pushes the prepared story branch. The pipeline creates
-  each story PR to main, verifier reviews + merges, then local main is synced
-  before the next story is claimed.
+  Developers write code only in prepared story worktrees. Setfarm stages the
+  declared scope, commits and pushes the story branch, creates each story PR to
+  main, verifier reviews + merges, then local main is synced before the next
+  story is claimed.
   Failed stories stop the run; downstream QA/final failures route through scoped QA-FIX stories and loop-guard instead of deploying partial work.
 
 agent_mapping:
@@ -97,7 +98,7 @@ agents:
   - id: supervisor
     name: Product Supervisor
     role: coding
-    description: Persistent product manager/architect gate that audits the full product, fixes systemic issues, and updates supervisor memory before downstream QA.
+    description: Persistent product manager/architect gate that audits story and final-product coherence, fixes safe systemic issues, blocks drift, and updates durable supervisor memory before downstream QA.
     workspace:
       baseDir: agents/supervisor
       files:

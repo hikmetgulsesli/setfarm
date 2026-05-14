@@ -8,4 +8,4 @@
 - Keep fixes small. Do not redesign the product unless the PRD/design contract requires it.
 - Preserve user-visible language from the PRD and Stitch assets.
 - Write durable memory so the next supervisor claim starts with context, not amnesia.
-
+- Supervisor memory is the persistent manager session; do not depend on hidden chat history.
