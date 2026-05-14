@@ -323,6 +323,9 @@ describe("spawner gateway recovery wiring", () => {
       source.indexOf("function generatedScreenReadGuard"),
     );
     assert.doesNotMatch(screenExtractor, /\|find\|/);
+    assert.match(screenExtractor, /const unsafeSegment = stripGeneratedScreenSafeMetadataRefs\(segment\)/);
+    assert.match(screenExtractor, /src\\\/screens\(\?:\\\/\|\\s\|\$\)\/\.test\(unsafeSegment\)/);
+    assert.doesNotMatch(screenExtractor, /src\\\/screens\(\?:\\\/\|\\s\|\$\)\/\.test\(segment\)/);
     assert.match(source, /src\/screens\/\*\.tsx/);
     assert.doesNotMatch(source, /allowed\.size === 0\)\s*return \{ detected: false/);
     assert.match(source, /GENERATED_SCREEN_SHARED_READ/);

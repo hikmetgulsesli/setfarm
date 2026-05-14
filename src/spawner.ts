@@ -682,7 +682,8 @@ function extractGeneratedScreenReadsFromCommand(workdir: string, command: string
   const reads: Array<{ path: string; via: string }> = [];
   for (const segment of shellCommandSegments(command)) {
     if (!isGeneratedScreenContentReadSegment(segment)) continue;
-    if (/(?:^|[\s"'`=])(?:\.\/)?src\/screens(?:\/|\s|$)/.test(segment)) {
+    const unsafeSegment = stripGeneratedScreenSafeMetadataRefs(segment);
+    if (/(?:^|[\s"'`=])(?:\.\/)?src\/screens(?:\/|\s|$)/.test(unsafeSegment)) {
       reads.push({ path: "src/screens/*.tsx", via: "exec" });
     }
     for (const match of segment.matchAll(/(?:^|[\s"'`=])((?:\.\/|\/)?(?:[\w.-]+\/)*src\/screens\/[^'"`\s;|&]+\.tsx)/g)) {
