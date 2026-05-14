@@ -93,6 +93,13 @@ describe("error taxonomy", () => {
     assert.equal(selfLoop.category, "AGENT_SELF_LOOP");
     assert.match(selfLoop.suggestion, /supervisor feedback/);
     assert.match(selfLoop.suggestion, /avoid repeating identical commands/);
+
+    const crossProject = classifyError(
+      "CROSS-PROJECT CONTAMINATION: Agent output references a different project. STORY_BRANCH \"us-001-tetris-game-engine-state-test-bridge\" does not match run prefix \"33d23f10\".",
+    );
+    assert.equal(crossProject.category, "CROSS_PROJECT_CONTAMINATION");
+    assert.match(crossProject.suggestion, /CLAIM_SUMMARY_FILE/);
+    assert.match(crossProject.suggestion, /prepared story worktree/);
   });
 
 

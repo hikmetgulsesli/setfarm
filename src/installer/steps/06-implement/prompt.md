@@ -25,6 +25,15 @@ Suggested response: {{FAILURE_SUGGESTION}}
 
 {{PREVIOUS_FAILURE}}
 
+## Claim Handoff
+These labels are the authoritative machine-readable handoff for this claim.
+
+RUN_ID: {{RUN_ID}}
+STORY_ID: {{STORY_ID}}
+STORY_BRANCH: {{STORY_BRANCH}}
+STORY_WORKDIR: {{STORY_WORKDIR}}
+MAIN_REPO: {{MAIN_REPO}}
+
 ## Current Story
 {{STORY}}
 
@@ -115,7 +124,7 @@ Suggested response: {{FAILURE_SUGGESTION}}
 
 ```
 STATUS: done
-STORY_BRANCH: <your-branch-name>
+STORY_BRANCH: {{STORY_BRANCH}}
 CHANGES: <summary of what you implemented>
 PR_URL: <leave empty; pipeline creates the PR>
 ```

@@ -391,6 +391,8 @@ function withStepModulePromptAliases(context: Record<string, string>, runId: str
   assign("RUN_ID", "run_id");
   if (!aliased["RUN_ID"]) aliased["RUN_ID"] = runId;
   assign("TASK", "task");
+  assign("STORY_ID", "current_story_id");
+  assign("MAIN_REPO", "repo");
   assign("STORY_WORKDIR", "story_workdir");
   assign("STORY_BRANCH", "story_branch");
   assign("SCOPE_FILES", "story_scope_files");
@@ -4897,7 +4899,29 @@ ${screenDescs}
         if (prMismatch) details.push(`PR_URL "${agentOriginalPr}" does not reference repo "${expectedRepoName}"`);
         const correctiveMsg = `CROSS-PROJECT CONTAMINATION: Agent output references a different project. ${details.join(". ")}. You must work in ${context["repo"] || "the assigned repo"} on story ${storyRow?.story_id} (${storyRow?.title}). Do NOT reference other repos, branches, or PRs. Re-do the work in the correct worktree.`;
         logger.error(`[cross-project-guard] ${correctiveMsg}`, { runId: step.run_id, stepId: step.step_id });
-        if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
+        let restoredContext: Record<string, string> = {};
+        try {
+          restoredContext = prevContextJson?.context ? JSON.parse(prevContextJson.context) : { ...context };
+        } catch {
+          restoredContext = { ...context };
+        }
+        const { classifyError } = await import("./error-taxonomy.js");
+        const classified = classifyError(correctiveMsg);
+        restoredContext["previous_failure"] = correctiveMsg;
+        restoredContext["failure_category"] = classified.category;
+        restoredContext["failure_suggestion"] = classified.suggestion;
+        try {
+          const { updateSupervisorMemory } = await import("./product-supervisor.js");
+          updateSupervisorMemory(restoredContext, [
+            `### ${new Date().toISOString()} implement cross-project guard story=${storyRow?.story_id || ""} title=${storyRow?.title || ""}`,
+            "- Code: CROSS_PROJECT_CONTAMINATION",
+            "- Step: implement",
+            `- Summary: ${correctiveMsg.slice(0, 1200)}`,
+          ].join("\n") + "\n");
+        } catch {
+          // Retry feedback above is sufficient even if supervisor memory cannot be updated.
+        }
+        await updateRunContext(step.run_id, restoredContext);
         await failStep(stepId, correctiveMsg);
         return { advanced: false, runCompleted: false };
       }

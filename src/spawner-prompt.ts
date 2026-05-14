@@ -35,6 +35,51 @@ function lineValue(input: string, label: string): string {
   return (match?.[1] || "").trim();
 }
 
+function isPlaceholderValue(value: string): boolean {
+  const trimmed = value.trim();
+  return !trimmed ||
+    /^\[[^\]]+\]$/.test(trimmed) ||
+    /^<[^>]+>$/.test(trimmed) ||
+    /\b(?:your-|placeholder|missing)\b/i.test(trimmed);
+}
+
+function firstMeaningfulLineValue(input: string, label: string): string {
+  const re = new RegExp("^[ \\t]*" + escapeRegExp(label) + ":[ \\t]*(.*)$", "gm");
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(input)) !== null) {
+    const value = (match[1] || "").trim();
+    if (!isPlaceholderValue(value)) return value;
+  }
+  return "";
+}
+
+function extractBacktickedValue(input: string, pattern: RegExp): string {
+  const match = pattern.exec(input);
+  const value = (match?.[1] || "").trim();
+  return isPlaceholderValue(value) ? "" : value;
+}
+
+function deriveStoryBranch(input: string, runId: string, storyId?: string): string {
+  const explicit = firstMeaningfulLineValue(input, "STORY_BRANCH");
+  if (explicit) return explicit.toLowerCase();
+
+  const fromBranchInstruction = extractBacktickedValue(
+    input,
+    /Branch:\s*This story uses exactly\s*`([^`]+)`/i,
+  );
+  if (fromBranchInstruction) return fromBranchInstruction.toLowerCase();
+
+  const fromPushInstruction = extractBacktickedValue(
+    input,
+    /Setfarm commits[\s\S]{0,180}pushes\s*`([^`]+)`/i,
+  );
+  if (fromPushInstruction) return fromPushInstruction.toLowerCase();
+
+  const normalizedStoryId = String(storyId || "").trim().toLowerCase();
+  const runPrefix = String(runId || "").trim().slice(0, 8).toLowerCase();
+  return runPrefix && normalizedStoryId ? `${runPrefix}-${normalizedStoryId}` : "";
+}
+
 function packageScriptCommand(workdir: string, script: string): string {
   try {
     const packageJsonPath = path.join(workdir, "package.json");
@@ -273,7 +318,8 @@ export function buildClaimSummary(params: {
   const input = String(params.input || "");
   const currentStory = extractCurrentStory(input);
   const workdir = params.workdir || lineValue(input, "WORKDIR") || defaultAgentScratch;
-  const repo = params.repo || lineValue(input, "MAIN_REPO") || workdir;
+  const repo = firstMeaningfulLineValue(input, "MAIN_REPO") || params.repo || workdir;
+  const storyId = params.storyId || currentStory.storyId;
   const storyScreensRaw = lineValue(input, "STORY_SCREENS");
   const task = lineValue(input, "TASK") || claimTaskPreview(params.input);
   const scopeFiles = extractScopeFiles(input, workdir);
@@ -302,12 +348,12 @@ export function buildClaimSummary(params: {
     role: params.role,
     stepId: params.stepId,
     runId: params.runId,
-    storyId: params.storyId || currentStory.storyId,
+    storyId,
     storyTitle: currentStory.storyTitle,
     task,
     workdir,
     repo,
-    storyBranch: lineValue(input, "STORY_BRANCH"),
+    storyBranch: deriveStoryBranch(input, params.runId, storyId),
     runBranch: lineValue(input, "RUN_BRANCH"),
     buildCommand: resolvedCommand(input, "BUILD_CMD", workdir, "build", "true"),
     testCommand: resolvedCommand(input, "TEST_CMD", workdir, "test", "true"),
@@ -389,7 +435,7 @@ esac
 
 printf 'STEP_ID=%s\\nWORKDIR=%s\\nCLAIM_SUMMARY_FILE=%s\\n' "$STEP_ID" "$(pwd)" "$CLAIM_SUMMARY_FILE"
 if [ -n "$CLAIM_SUMMARY_FILE" ] && [ -f "$CLAIM_SUMMARY_FILE" ]; then
-  node -e 'const fs=require("fs"); const s=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const lines=[]; if (s.storyId || s.storyTitle) lines.push(("STORY=" + (s.storyId || "") + " " + (s.storyTitle || "")).trim()); if (Array.isArray(s.scopeFiles)) lines.push("SCOPE_FILES=" + s.scopeFiles.join(", ")); if (s.gitPolicy && s.gitPolicy.summary) lines.push("GIT_POLICY=" + s.gitPolicy.summary); if (Array.isArray(s.gitPolicy && s.gitPolicy.forbiddenForAgent) && s.gitPolicy.forbiddenForAgent.length) lines.push("FORBIDDEN_GIT=" + s.gitPolicy.forbiddenForAgent.join(", ")); if (s.failureCategory) lines.push("FAILURE_CATEGORY=" + String(s.failureCategory).slice(0, 160)); if (s.failureSuggestion) lines.push("FAILURE_SUGGESTION=" + String(s.failureSuggestion).slice(0, 240)); if (s.previousFailure) lines.push("PREVIOUS_FAILURE=present " + String(s.previousFailure).length + " chars"); if (s.generatedScreenPolicy && s.generatedScreenPolicy.summary) lines.push("GENERATED_SCREEN_POLICY=" + s.generatedScreenPolicy.summary); const dc=s.designContracts||{}; if (Array.isArray(dc.screenIndex)) lines.push("SCREEN_INDEX_CONTRACTS=" + dc.screenIndex.length); if (Array.isArray(dc.uiContract)) lines.push("UI_CONTRACTS=" + dc.uiContract.length); if (dc.componentRegistry) lines.push("COMPONENT_REGISTRY=present " + String(dc.componentRegistry).length + " chars"); if (Array.isArray(dc.componentTypes)) lines.push("COMPONENT_TYPE_CONTRACTS=" + dc.componentTypes.length); if (s.supervisorMemory) lines.push("SUPERVISOR_MEMORY=present " + String(s.supervisorMemory).length + " chars"); if (s.task) lines.push("TASK=" + String(s.task).slice(0, 500)); process.stdout.write(lines.join("\\n") + "\\n");' "$CLAIM_SUMMARY_FILE"
+  node -e 'const fs=require("fs"); const s=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const lines=[]; if (s.storyId || s.storyTitle) lines.push(("STORY=" + (s.storyId || "") + " " + (s.storyTitle || "")).trim()); if (s.storyBranch) lines.push("STORY_BRANCH=" + String(s.storyBranch)); if (s.repo) lines.push("MAIN_REPO=" + String(s.repo)); if (Array.isArray(s.scopeFiles)) lines.push("SCOPE_FILES=" + s.scopeFiles.join(", ")); if (s.gitPolicy && s.gitPolicy.summary) lines.push("GIT_POLICY=" + s.gitPolicy.summary); if (Array.isArray(s.gitPolicy && s.gitPolicy.forbiddenForAgent) && s.gitPolicy.forbiddenForAgent.length) lines.push("FORBIDDEN_GIT=" + s.gitPolicy.forbiddenForAgent.join(", ")); if (s.failureCategory) lines.push("FAILURE_CATEGORY=" + String(s.failureCategory).slice(0, 160)); if (s.failureSuggestion) lines.push("FAILURE_SUGGESTION=" + String(s.failureSuggestion).slice(0, 240)); if (s.previousFailure) lines.push("PREVIOUS_FAILURE=present " + String(s.previousFailure).length + " chars"); if (s.generatedScreenPolicy && s.generatedScreenPolicy.summary) lines.push("GENERATED_SCREEN_POLICY=" + s.generatedScreenPolicy.summary); const dc=s.designContracts||{}; if (Array.isArray(dc.screenIndex)) lines.push("SCREEN_INDEX_CONTRACTS=" + dc.screenIndex.length); if (Array.isArray(dc.uiContract)) lines.push("UI_CONTRACTS=" + dc.uiContract.length); if (dc.componentRegistry) lines.push("COMPONENT_REGISTRY=present " + String(dc.componentRegistry).length + " chars"); if (Array.isArray(dc.componentTypes)) lines.push("COMPONENT_TYPE_CONTRACTS=" + dc.componentTypes.length); if (s.supervisorMemory) lines.push("SUPERVISOR_MEMORY=present " + String(s.supervisorMemory).length + " chars"); if (s.task) lines.push("TASK=" + String(s.task).slice(0, 500)); process.stdout.write(lines.join("\\n") + "\\n");' "$CLAIM_SUMMARY_FILE"
 fi
 printf '%s' "$TASK_PREVIEW" | head -c 1200
 echo
