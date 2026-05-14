@@ -225,6 +225,77 @@ function normalizeStyleTagChildren(input) {
   });
 }
 
+function copyJsxExpression(input, start) {
+  if (input.startsWith("{/*", start)) {
+    const end = input.indexOf("*/}", start + 3);
+    return end >= 0 ? { text: input.slice(start, end + 3), next: end + 3 } : null;
+  }
+  if (input.startsWith("{`", start)) {
+    let i = start + 2;
+    while (i < input.length) {
+      if (input[i] === "\\") {
+        i += 2;
+        continue;
+      }
+      if (input[i] === "`" && input[i + 1] === "}") {
+        return { text: input.slice(start, i + 2), next: i + 2 };
+      }
+      i++;
+    }
+  }
+  return null;
+}
+
+function escapeJsxTextBraces(input) {
+  let out = "";
+  let inTag = false;
+  let quote = "";
+
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+
+    if (inTag) {
+      out += ch;
+      if (quote) {
+        if (ch === quote) quote = "";
+        continue;
+      }
+      if (ch === "\"" || ch === "'") {
+        quote = ch;
+      } else if (ch === ">") {
+        inTag = false;
+      }
+      continue;
+    }
+
+    if (ch === "<") {
+      inTag = true;
+      out += ch;
+      continue;
+    }
+
+    if (ch === "{") {
+      const expression = copyJsxExpression(input, i);
+      if (expression) {
+        out += expression.text;
+        i = expression.next - 1;
+      } else {
+        out += "&#123;";
+      }
+      continue;
+    }
+
+    if (ch === "}") {
+      out += "&#125;";
+      continue;
+    }
+
+    out += ch;
+  }
+
+  return out;
+}
+
 function toReactStylePropertyKey(rawKey) {
   const cssKey = String(rawKey || "").trim();
   if (!cssKey) return "";
@@ -265,7 +336,7 @@ function htmlToJsx(html) {
     .replace(/<meta[^>]*\/?\s*>/gi, "")
     .replace(/style="([^"]+)"/g, (_, s) => inlineStyleToJsx(s));
   out = normalizeStyleTagChildren(out);
-  return normalizeHtmlComments(out);
+  return escapeJsxTextBraces(normalizeHtmlComments(out));
 }
 
 function extractBody(html) {

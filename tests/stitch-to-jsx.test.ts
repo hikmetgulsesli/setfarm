@@ -390,6 +390,52 @@ describe("stitch-to-jsx", () => {
     }
   });
 
+  it("escapes literal text braces in preformatted content without breaking JSX expressions", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-pre-braces-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "game-over", title: "Game Over" },
+      ]));
+      writeHtml(path.join(stitchDir, "game-over.html"), `
+        <main>
+          <!-- keep this comment as JSX comment -->
+          <style>.panel { color: red; }</style>
+          <pre>Final_State: {
+  "score": 142850,
+  "active_piece": null
+}
+Awaiting input...</pre>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "GameOver.tsx"), "utf-8");
+      assert.match(code, /Final_State: &#123;/);
+      assert.match(code, /&#125;\s+Awaiting input/);
+      assert.match(code, /<style>\{`\.panel \{ color: red; \}`\}<\/style>/);
+      assert.match(code, /\{\/\* keep this comment as JSX comment \*\/\}/);
+
+      const transpiled = ts.transpileModule(code, {
+        compilerOptions: {
+          jsx: ts.JsxEmit.ReactJSX,
+          module: ts.ModuleKind.ESNext,
+          target: ts.ScriptTarget.ES2020,
+        },
+        reportDiagnostics: true,
+      });
+      const errors = (transpiled.diagnostics || []).filter(d => d.category === ts.DiagnosticCategory.Error);
+      assert.deepEqual(errors.map(d => d.messageText), []);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("keeps CSS custom properties valid in JSX inline style objects", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-inline-style-"));
     try {
