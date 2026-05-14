@@ -22,6 +22,7 @@ export type ErrorCategory =
   | "SCOPE_WRITE_VIOLATION"
   | "SCOPE_BLEED"
   | "GENERATED_SCREEN_SHARED_READ"
+  | "RAW_STITCH_CONTEXT_READ"
   | "CLAIM_WORKDIR_MISSING"
   | "CLAIM_PARSE_LOOP"
   | "CLAIM_SUMMARY_IGNORED"
@@ -45,6 +46,7 @@ const PATTERNS: Array<{ pattern: RegExp; category: ErrorCategory; suggestion: st
   { pattern: /^SCOPE_BLEED:/i, category: "SCOPE_BLEED", suggestion: "Story modified files outside SCOPE_FILES. Revert or move out-of-scope files; if an allowed src/* path appears truncated, inspect git porcelain path parsing." },
   { pattern: /^PLATFORM_STORY_COMMIT_SCOPE_BLOCKED:/i, category: "SCOPE_BLEED", suggestion: "Platform story commit saw out-of-scope files. If directory paths are reported, inspect git status -uall expansion before retrying." },
   { pattern: /^GENERATED_SCREEN_SHARED_READ:/i, category: "GENERATED_SCREEN_SHARED_READ", suggestion: "Use claim-summary designContracts, SCREEN_INDEX.json, and src/screens/index.ts for shared generated screens. Do not read forbidden src/screens/*.tsx files outside scopeFiles." },
+  { pattern: /^RAW_STITCH_CONTEXT_READ:/i, category: "RAW_STITCH_CONTEXT_READ", suggestion: "Use CLAIM_SUMMARY_FILE, injected Stitch excerpts, UI_CONTRACT, SCREEN_INDEX.json, and only story-owned generated screens. Do not read or exec stitch/*.html, .stitch-screens*.json, or stitch/DESIGN_DOM.json inside implement claims." },
   { pattern: /^CLAIM_WORKDIR_MISSING:/i, category: "CLAIM_WORKDIR_MISSING", suggestion: "Setfarm could not resolve the prepared story worktree. Fix claim/workdir handoff before spawning a developer in agent scratch." },
   { pattern: /^CLAIM_PARSE_LOOP:/i, category: "CLAIM_PARSE_LOOP", suggestion: "Read the structured claim summary once and work from its focused fields. Do not jq/sed/head/node-loop over raw claim.input." },
   { pattern: /^CLAIM_SUMMARY_IGNORED:/i, category: "CLAIM_SUMMARY_IGNORED", suggestion: "Use CLAIM_SUMMARY_FILE as the authoritative handoff before reading the full claim fallback." },
@@ -71,6 +73,28 @@ const PATTERNS: Array<{ pattern: RegExp; category: ErrorCategory; suggestion: st
   { pattern: /CERTIFICATE|ssl|TLS|self.signed/i, category: "API_ERROR", suggestion: "SSL/TLS certificate error — check network or set NODE_TLS_REJECT_UNAUTHORIZED=0 temporarily" },
 ];
 
+export function buildRawStitchContextSuggestion(): string {
+  return [
+    "do not read or exec stitch/*.html, .stitch-screens*.json, or stitch/DESIGN_DOM.json inside implement claims",
+    "use CLAIM_SUMMARY_FILE, injected Stitch excerpts, UI_CONTRACT, SCREEN_INDEX.json, and only story-owned generated screens",
+    "if the injected design handoff is insufficient, report the exact missing contract instead of loading the raw design corpus",
+  ].join("; ");
+}
+
+function sanitizeRawStitchContextFeedback(errorText: string): string {
+  const text = errorText.trim();
+  const targetedFix = `DÜZELT:\n${buildRawStitchContextSuggestion()
+    .split("; ")
+    .map(suggestion => `• ${suggestion}`)
+    .join("\n")}`;
+
+  if (/\nDÜZELT:/i.test(text)) {
+    return text.replace(/\nDÜZELT:[\s\S]*$/i, `\n${targetedFix}`).trim();
+  }
+
+  return `${text}\n${targetedFix}`;
+}
+
 export function buildDesignMismatchSuggestion(errorText: string): string {
   const suggestions: string[] = [];
   if (/Material Symbols|icon fonts|material-symbols|material-icons|emoji icons/i.test(errorText)) {
@@ -96,6 +120,7 @@ export function buildDesignMismatchSuggestion(errorText: string): string {
 
 export function sanitizeDesignMismatchFeedback(errorText: string): string {
   const text = errorText.trim();
+  if (/RAW_STITCH_CONTEXT_READ:/i.test(text)) return sanitizeRawStitchContextFeedback(text);
   if (!/DESIGN UYUMSUZLUK|UI_CONTRACT|design compliance|design mismatch/i.test(text)) return text;
 
   const targetedFix = `DÜZELT:\n${buildDesignMismatchSuggestion(text)

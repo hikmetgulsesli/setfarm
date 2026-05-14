@@ -48,6 +48,14 @@ describe("error taxonomy", () => {
     assert.equal(generated.category, "GENERATED_SCREEN_SHARED_READ");
     assert.match(generated.suggestion, /SCREEN_INDEX\.json/);
 
+    const rawStitch = classifyError(
+      "RAW_STITCH_CONTEXT_READ: feature-dev_developer used exec on stitch/*.html. Implement claims must use injected Stitch excerpts, UI_CONTRACT, SCREEN_INDEX, and story-owned generated screens instead of loading raw stitch HTML/full DESIGN_DOM context.",
+    );
+    assert.equal(rawStitch.category, "RAW_STITCH_CONTEXT_READ");
+    assert.match(rawStitch.suggestion, /CLAIM_SUMMARY_FILE/);
+    assert.match(rawStitch.suggestion, /stitch\/\*\.html/);
+    assert.doesNotMatch(rawStitch.suggestion, /design guardrail/i);
+
     const product = classifyError(
       "GUARDRAIL [product-supervisor:implement]: IMPLEMENT_NO_DELTA: US-001 reported done but supervisor found no changed files.",
     );
@@ -99,4 +107,19 @@ describe("error taxonomy", () => {
     assert.match(feedback, /• replace transition-all\/transition: all with scoped transition properties/);
     assert.doesNotMatch(feedback, /Kritik UI sözleşmesi|hardcoded renkleri/);
   });
+
+  it("rewrites raw stitch context feedback without design-mismatch fix text", () => {
+    const feedback = sanitizeDesignMismatchFeedback([
+      "RAW_STITCH_CONTEXT_READ: feature-dev_developer used exec on stitch/*.html. Implement claims must use injected Stitch excerpts, UI_CONTRACT, SCREEN_INDEX, and story-owned generated screens instead of loading raw stitch HTML/full DESIGN_DOM context.",
+      "Transcript: /tmp/feature-dev.log",
+      "DÜZELT:",
+      "• fix only the exact files and issues reported by the design guardrail",
+    ].join("\n"));
+
+    assert.match(feedback, /CLAIM_SUMMARY_FILE/);
+    assert.match(feedback, /stitch\/\*\.html/);
+    assert.doesNotMatch(feedback, /design guardrail/i);
+    assert.doesNotMatch(feedback, /design-token|hardcoded colors/i);
+  });
+
 });
