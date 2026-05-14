@@ -38,6 +38,7 @@ export interface ClassifiedError {
 
 const PATTERNS: Array<{ pattern: RegExp; category: ErrorCategory; suggestion: string }> = [
   { pattern: /AGENT_MODEL_TURN_STALLED:/i, category: "AGENT_STALL", suggestion: "Model turn stalled without file/output/progress changes. Treat as provider/session infra; retry the same claim, and if repeated switch model or reduce injected context." },
+  { pattern: /^IMPLEMENT_NO_DELTA_STALL:/i, category: "AGENT_STALL", suggestion: "Implement agent spent the grace window without any project source delta. Retry the same scoped story and require a small code edit before extended analysis." },
   { pattern: /engine_overloaded|temporarily overloaded|Provider finish_reason:\s*engine_overloaded/i, category: "API_ERROR", suggestion: "Model provider overloaded — retry the claim later or use a different model/provider; do not change project code for this failure." },
   { pattern: /^AGENT_PROCESS_EXITED:/i, category: "AGENT_PROCESS_EXITED", suggestion: "Agent process exited before completing the claim. Retry with the same scoped handoff; inspect transcript only if it repeats." },
   { pattern: /^GIT_DISCIPLINE_VIOLATION:/i, category: "GIT_DISCIPLINE", suggestion: "Developer agents must not run git add/commit/push. Continue coding in the assigned worktree, report STATUS: done, and let Setfarm stage, commit, push, and create PRs." },

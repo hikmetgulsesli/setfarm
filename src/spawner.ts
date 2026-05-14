@@ -42,6 +42,7 @@ const AGENT_HEARTBEAT_MS = parsePositiveInt(process.env.SETFARM_AGENT_HEARTBEAT_
 const AGENT_STARTUP_SILENCE_MS = parsePositiveInt(process.env.SETFARM_AGENT_STARTUP_SILENCE_MS, 4 * 60_000);
 const AGENT_MODEL_TURN_STALL_MS = parsePositiveInt(process.env.SETFARM_AGENT_MODEL_TURN_STALL_MS, 8 * 60_000);
 const AGENT_SELF_LOOP_CHECK_AFTER_MS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_CHECK_AFTER_MS, 6 * 60_000);
+const IMPLEMENT_NO_DELTA_GRACE_MS = parsePositiveInt(process.env.SETFARM_IMPLEMENT_NO_DELTA_GRACE_MS, 8 * 60_000);
 const AGENT_SELF_LOOP_MIN_ACTIONS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_ACTIONS, 7);
 const AGENT_SELF_LOOP_MIN_NOOP_EDITS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_NOOP_EDITS, 4);
 const AGENT_SELF_LOOP_MIN_REPEATED_FAILURES = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_REPEATED_FAILURES, 4);
@@ -2039,6 +2040,19 @@ function sourceTouchedFiles(workdir: string, baseRef: string): string[] {
   return [...new Set([...sourceDiffFiles(workdir, baseRef), ...sourceStatusFiles(workdir)])];
 }
 
+function implementNoDeltaStallGuard(active: ActiveProcess, ageMs: number): { detected: boolean; reason: string } {
+  if (ageMs < IMPLEMENT_NO_DELTA_GRACE_MS) return { detected: false, reason: "" };
+  if (fileSize(active.outputPath) > 0) return { detected: false, reason: "" };
+
+  const changedFiles = sourceStatusFiles(active.spawnCwd);
+  if (changedFiles.length > 0) return { detected: false, reason: "" };
+
+  return {
+    detected: true,
+    reason: `IMPLEMENT_NO_DELTA_STALL: ${active.agentId} kept ${active.wfId}/${active.role} running for ${formatDurationMs(ageMs)} without writing any project source/worktree delta. Retry the same story with a small scoped code change before extended analysis; use CLAIM_SUMMARY_FILE and injected contracts instead of reasoning in place.`,
+  };
+}
+
 function findDiffBaseRef(workdir: string): string | null {
   for (const ref of ["main", "origin/main", "HEAD~1"]) {
     if (!gitOutput(workdir, ["rev-parse", "--verify", ref])) continue;
@@ -2472,6 +2486,7 @@ async function reapFinishedClaims(): Promise<void> {
       if (!row) {
         console.warn(`[spawner] Reaping ${key}: claimed step disappeared`);
       } else if (row.run_status === "running" && row.step_status === "running") {
+        const ageMs = Date.now() - active.startedAtMs;
         const loopStoryDone = row.type === "loop"
           && await loopStoryCompletedAfter(row.run_id, active.agentId, active.storyId || row.current_story_id, active.startedAtMs);
         if (loopStoryDone) {
@@ -2562,6 +2577,21 @@ async function reapFinishedClaims(): Promise<void> {
             await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
             continue;
           }
+
+          const noDeltaStall = implementNoDeltaStallGuard(active, ageMs);
+          if (noDeltaStall.detected) {
+            const reason = noDeltaStall.reason + ` Transcript: ${active.transcriptPath}`;
+            console.warn(`[spawner] ${reason}`);
+            try { fs.appendFileSync(active.transcriptPath, `--- IMPLEMENT NO DELTA STALL ${new Date().toISOString()} ---
+${reason}
+`); } catch {}
+            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "runtime-guard", reason);
+            terminateActiveProcess(active, "implement-no-delta-stall");
+            activeProcesses.delete(key);
+            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
+            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
+            continue;
+          }
         }
 
         const terminalReason = childProcessTerminalReason(active.child);
@@ -2602,7 +2632,6 @@ ${reason}
           continue;
         }
 
-        const ageMs = Date.now() - active.startedAtMs;
         await updateRunningStepHeartbeat(active, row.step_id, ageMs);
 
         if (row.step_id === "verify" && ageMs >= VERIFY_AGENT_HARD_TIMEOUT_MS) {

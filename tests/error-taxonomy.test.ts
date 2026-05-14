@@ -79,6 +79,12 @@ describe("error taxonomy", () => {
       "AGENT_PROCESS_EXITED: feature-dev_reviewer exited before completing feature-dev/reviewer. exit code 1",
     );
     assert.equal(exited.category, "AGENT_PROCESS_EXITED");
+
+    const noDelta = classifyError(
+      "IMPLEMENT_NO_DELTA_STALL: feature-dev_developer kept feature-dev/developer running for 15m20s without writing any project source/worktree delta.",
+    );
+    assert.equal(noDelta.category, "AGENT_STALL");
+    assert.match(noDelta.suggestion, /source delta/);
   });
 
 

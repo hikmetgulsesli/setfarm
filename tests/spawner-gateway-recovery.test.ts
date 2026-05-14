@@ -370,6 +370,21 @@ describe("spawner gateway recovery wiring", () => {
     );
   });
 
+  it("kills implement claims that keep reasoning without any source delta", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /IMPLEMENT_NO_DELTA_GRACE_MS/);
+    assert.match(source, /SETFARM_IMPLEMENT_NO_DELTA_GRACE_MS/);
+    assert.match(source, /function implementNoDeltaStallGuard\(active: ActiveProcess, ageMs: number\)/);
+    assert.match(source, /sourceStatusFiles\(active\.spawnCwd\)/);
+    assert.match(source, /IMPLEMENT_NO_DELTA_STALL/);
+    assert.match(source, /terminateActiveProcess\(active,\s*"implement-no-delta-stall"\)/);
+    assert.match(source, /await requeueOpenStoryClaim\(active\.runId, row\.step_id, effectiveStoryId, active\.agentId, reason\)/);
+    assert.ok(
+      source.indexOf("implementNoDeltaStallGuard(active, ageMs)") < source.indexOf("const terminalReason = childProcessTerminalReason(active.child)"),
+      "no-delta stall guard must run before terminal-process recovery",
+    );
+  });
+
   it("kills implement claims that load irrelevant or full reference files", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /function implementReferenceReadGuard\(active: ActiveProcess\)/);
