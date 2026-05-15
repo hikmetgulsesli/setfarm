@@ -962,6 +962,48 @@ function preDeltaContextReadsFromCommand(active: ActiveProcess, command: string)
   return Array.from(paths);
 }
 
+function claimSummaryRetryDisciplineMode(active: ActiveProcess): string {
+  if (!active.claimSummaryPath) return "";
+  try {
+    const parsed = JSON.parse(fs.readFileSync(active.claimSummaryPath, "utf-8"));
+    return String(parsed?.retryDiscipline?.mode || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function implementPreDeltaCheckGuard(active: ActiveProcess): { detected: boolean; reason: string } {
+  if (fileSize(active.outputPath) > 0) return { detected: false, reason: "" };
+  if (sourceStatusFiles(active.spawnCwd).length > 0) return { detected: false, reason: "" };
+  if (!/^first-delta$/i.test(claimSummaryRetryDisciplineMode(active))) return { detected: false, reason: "" };
+
+  let raw = "";
+  try {
+    raw = fs.readFileSync(active.sessionJsonlPath, "utf-8").slice(-512_000).trim();
+  } catch {
+    return { detected: false, reason: "" };
+  }
+  if (!raw) return { detected: false, reason: "" };
+
+  for (const line of raw.split(/\n/).filter(Boolean)) {
+    let event: any;
+    try { event = JSON.parse(line); } catch { continue; }
+    const message = event?.message || {};
+    if (String(message.role || "") !== "assistant") continue;
+
+    for (const call of extractToolCalls(message.content)) {
+      if (!call.command || !isVerifyDeterministicEvidenceCommand(call.command)) continue;
+      const command = compactCommandForDiagnostic(call.command);
+      return {
+        detected: true,
+        reason: `IMPLEMENT_PRE_DELTA_CHECK_VIOLATION: ${active.agentId} ran deterministic checks before any source delta during a first-delta retry (${command}). First-delta retries must read CLAIM_SUMMARY_FILE, inspect only owned scope files plus safe metadata needed for the first edit, make a small scoped source change, then run build/test/lint.`,
+      };
+    }
+  }
+
+  return { detected: false, reason: "" };
+}
+
 function implementPreDeltaExplorationGuard(active: ActiveProcess): { detected: boolean; reason: string } {
   if (fileSize(active.outputPath) > 0) return { detected: false, reason: "" };
   if (sourceStatusFiles(active.spawnCwd).length > 0) return { detected: false, reason: "" };
@@ -1166,6 +1208,13 @@ function isRawClaimFileRead(command: string, claimSummaryPath?: string): boolean
     && /\b(jq|node|python3?|sed|head|tail|cat|grep|rg|awk|wc)\b/.test(command);
 }
 
+function isRawClaimInputProbe(command: string, claimSummaryPath?: string): boolean {
+  if (!isRawClaimFileRead(command, claimSummaryPath)) return false;
+  return /(?:^|[^\w])(?:JSON\.parse\([^)]*\)|[A-Za-z_$][\w$]*)\.input\b/i.test(command)
+    || /\bObject\.keys\([^)]*\.input\b/i.test(command)
+    || /\bclaim\.input\b/i.test(command);
+}
+
 function claimParseLoopGuard(active: ActiveProcess): { detected: boolean; reason: string } {
   let raw = "";
   try {
@@ -1179,6 +1228,7 @@ function claimParseLoopGuard(active: ActiveProcess): { detected: boolean; reason
   let summaryReads = 0;
   let writes = 0;
   let edits = 0;
+  let rawClaimInputProbes = 0;
   for (const line of raw.split(/\n/).filter(Boolean)) {
     let event: any;
     try { event = JSON.parse(line); } catch { continue; }
@@ -1192,10 +1242,17 @@ function claimParseLoopGuard(active: ActiveProcess): { detected: boolean; reason
       if (call.command) {
         if (active.claimSummaryPath && call.command.includes(active.claimSummaryPath)) summaryReads += 1;
         if (isRawClaimFileRead(call.command, active.claimSummaryPath)) rawClaimReads += 1;
+        if (isRawClaimInputProbe(call.command, active.claimSummaryPath)) rawClaimInputProbes += 1;
       }
     }
   }
 
+  if (rawClaimInputProbes > 0 && writes === 0 && edits === 0 && sourceStatusFiles(active.spawnCwd).length === 0 && fileSize(active.outputPath) === 0) {
+    return {
+      detected: true,
+      reason: `CLAIM_PARSE_LOOP: ${active.agentId} parsed raw claim.input before making any source delta (${rawClaimInputProbes} probe${rawClaimInputProbes === 1 ? "" : "s"}). Workers must use CLAIM_SUMMARY_FILE focused fields and only read the raw claim for non-input audit fallback such as stepId.`,
+    };
+  }
   if (rawClaimReads >= CLAIM_PARSE_LOOP_MIN_READS && writes === 0 && edits === 0 && fileSize(active.outputPath) === 0) {
     return {
       detected: true,
@@ -2878,6 +2935,19 @@ async function reapFinishedClaims(): Promise<void> {
             try { fs.appendFileSync(active.transcriptPath, `--- RAW STITCH READ GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
             await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "runtime-guard", reason);
             terminateActiveProcess(active, "raw-stitch-read-guard");
+            activeProcesses.delete(key);
+            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
+            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
+            continue;
+          }
+
+          const preDeltaCheck = implementPreDeltaCheckGuard(active);
+          if (preDeltaCheck.detected) {
+            const reason = preDeltaCheck.reason + ` Transcript: ${active.transcriptPath}`;
+            console.warn(`[spawner] ${reason}`);
+            try { fs.appendFileSync(active.transcriptPath, `--- IMPLEMENT PRE-DELTA CHECK GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
+            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "runtime-guard", reason);
+            terminateActiveProcess(active, "implement-pre-delta-check-guard");
             activeProcesses.delete(key);
             if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
             await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);

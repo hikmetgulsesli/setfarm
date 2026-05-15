@@ -20,6 +20,7 @@ export type ErrorCategory =
   | "AGENT_SELF_LOOP"
   | "AGENT_PROCESS_EXITED"
   | "NO_WORK_DETECTED"
+  | "IMPLEMENT_PRE_DELTA_CHECK_VIOLATION"
   | "CROSS_PROJECT_CONTAMINATION"
   | "VERIFY_BOUNDED_REVIEW_VIOLATION"
   | "GIT_DISCIPLINE"
@@ -44,6 +45,7 @@ export interface ClassifiedError {
 const PATTERNS: Array<{ pattern: RegExp; category: ErrorCategory; suggestion: string }> = [
   { pattern: /AGENT_MODEL_TURN_STALLED:/i, category: "AGENT_STALL", suggestion: "Model turn stalled without file/output/progress changes. Treat as provider/session infra; retry the same claim, and if repeated switch model or reduce injected context." },
   { pattern: /^IMPLEMENT_NO_DELTA_STALL:/i, category: "AGENT_STALL", suggestion: "Implement agent spent the grace window without any project source delta. Retry the same scoped story and require a small code edit before extended analysis." },
+  { pattern: /^IMPLEMENT_PRE_DELTA_CHECK_VIOLATION:/i, category: "IMPLEMENT_PRE_DELTA_CHECK_VIOLATION", suggestion: "First-delta retry discipline was violated. Re-read CLAIM_SUMMARY_FILE, inspect only owned scope files plus safe metadata, make a small scoped source delta first, then run build/test/lint." },
   { pattern: /^NO WORK DETECTED:/i, category: "NO_WORK_DETECTED", suggestion: "The story reported done with no source delta. Re-read CLAIM_SUMMARY_FILE, inspect only owned scope files, make a small scoped implementation change before broad checks, then run the required build/test commands before reporting done." },
   { pattern: /^AGENT_SELF_LOOP:/i, category: "AGENT_SELF_LOOP", suggestion: "Agent repeated the same tool/test/build action without new code progress. Treat as supervisor feedback: inspect the first failing signal once, change the owned code or test expectation before rerunning, and avoid repeating identical commands." },
   { pattern: /^CROSS-PROJECT CONTAMINATION:/i, category: "CROSS_PROJECT_CONTAMINATION", suggestion: "Treat as manager feedback and ignore the contaminated branch/PR claim. Re-read CLAIM_SUMMARY_FILE, use its storyBranch/workdir/main repo as the only source of truth, work only in the prepared story worktree, and report the exact storyBranch from the summary." },

@@ -449,7 +449,7 @@ function retryDisciplineForFailure(
       instruction: "Hard manager retry discipline: before adding or polishing unrelated features, expose the required window.app/globalThis.app bridge from live runtime state in a scoped React effect or equivalent update point, then run build/tests. Do not report STATUS: done until the blocker is implemented in source.",
     };
   }
-  if (!/(AGENT_STALL|IMPLEMENT_NO_DELTA_STALL|NO_WORK_DETECTED|CLAIM_SUMMARY_IGNORED|CLAIM_PARSE_LOOP|GENERATED_SCREEN_SHARED_READ|RAW_STITCH_CONTEXT_READ|IRRELEVANT_REFERENCE_CONTEXT|FULL_REFERENCE_CONTEXT_READ|SCOPE_WRITE_VIOLATION)/i.test(signal)) {
+  if (!/(AGENT_STALL|IMPLEMENT_NO_DELTA_STALL|IMPLEMENT_PRE_DELTA_CHECK_VIOLATION|NO_WORK_DETECTED|CLAIM_SUMMARY_IGNORED|CLAIM_PARSE_LOOP|GENERATED_SCREEN_SHARED_READ|RAW_STITCH_CONTEXT_READ|IRRELEVANT_REFERENCE_CONTEXT|FULL_REFERENCE_CONTEXT_READ|SCOPE_WRITE_VIOLATION)/i.test(signal)) {
     return undefined;
   }
   return {

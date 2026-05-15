@@ -422,6 +422,26 @@ describe("spawner gateway recovery wiring", () => {
     );
   });
 
+  it("kills first-delta retries that run checks before a source delta", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /function claimSummaryRetryDisciplineMode\(active: ActiveProcess\)/);
+    assert.match(source, /function implementPreDeltaCheckGuard\(active: ActiveProcess\)/);
+    assert.match(source, /retryDiscipline\?\.mode/);
+    assert.match(source, /first-delta/);
+    assert.match(source, /isVerifyDeterministicEvidenceCommand\(call\.command\)/);
+    assert.match(source, /IMPLEMENT_PRE_DELTA_CHECK_VIOLATION/);
+    assert.match(source, /make a small scoped source change, then run build\/test\/lint/);
+    assert.match(source, /terminateActiveProcess\(active,\s*"implement-pre-delta-check-guard"\)/);
+    assert.ok(
+      source.indexOf("implementPreDeltaCheckGuard(active)") > source.indexOf("rawStitchDesignReadGuard(active)"),
+      "pre-delta check guard should run after more specific design/context guards",
+    );
+    assert.ok(
+      source.indexOf("implementPreDeltaCheckGuard(active)") < source.indexOf("implementPreDeltaExplorationGuard(active)"),
+      "pre-delta check guard should run before broad context-sprawl guard",
+    );
+  });
+
   it("kills implement claims that load irrelevant or full reference files", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /function implementReferenceReadGuard\(active: ActiveProcess\)/);
@@ -458,6 +478,9 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(promptSource, /CLAIM_SUMMARY_FILE/);
     assert.match(source, /CLAIM_PARSE_LOOP_MIN_READS/);
     assert.match(source, /function claimParseLoopGuard\(active: ActiveProcess\)/);
+    assert.match(source, /function isRawClaimInputProbe\(command: string,\s*claimSummaryPath\?: string\)/);
+    assert.match(source, /rawClaimInputProbes/);
+    assert.match(source, /parsed raw claim\.input before making any source delta/);
     assert.match(source, /CLAIM_PARSE_LOOP/);
     assert.match(source, /CLAIM_SUMMARY_IGNORED/);
     assert.match(source, /terminateActiveProcess\(active,\s*"claim-parse-loop-guard"\)/);

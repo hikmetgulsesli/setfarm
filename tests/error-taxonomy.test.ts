@@ -97,6 +97,13 @@ describe("error taxonomy", () => {
     assert.equal(noDelta.category, "AGENT_STALL");
     assert.match(noDelta.suggestion, /source delta/);
 
+    const preDeltaCheck = classifyError(
+      "IMPLEMENT_PRE_DELTA_CHECK_VIOLATION: feature-dev_developer ran deterministic checks before any source delta during a first-delta retry (npm run build).",
+    );
+    assert.equal(preDeltaCheck.category, "IMPLEMENT_PRE_DELTA_CHECK_VIOLATION");
+    assert.match(preDeltaCheck.suggestion, /CLAIM_SUMMARY_FILE/);
+    assert.match(preDeltaCheck.suggestion, /source delta first/);
+
     const noWork = classifyError(
       "NO WORK DETECTED: Story US-002 (Pong arcade - Main Menu and Game Board screens) reported STATUS: done but the worktree has ZERO source-file changes vs main. The agent appears to have shortcut the task.",
     );
