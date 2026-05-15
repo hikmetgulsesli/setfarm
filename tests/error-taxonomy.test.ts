@@ -97,6 +97,13 @@ describe("error taxonomy", () => {
     assert.equal(noDelta.category, "AGENT_STALL");
     assert.match(noDelta.suggestion, /source delta/);
 
+    const noWork = classifyError(
+      "NO WORK DETECTED: Story US-002 (Pong arcade - Main Menu and Game Board screens) reported STATUS: done but the worktree has ZERO source-file changes vs main. The agent appears to have shortcut the task.",
+    );
+    assert.equal(noWork.category, "NO_WORK_DETECTED");
+    assert.match(noWork.suggestion, /CLAIM_SUMMARY_FILE/);
+    assert.match(noWork.suggestion, /small scoped implementation change/);
+
     const selfLoop = classifyError(
       "AGENT_SELF_LOOP: repeated identical test/build command (calls=8, command=cd <workdir> && npm run test 2>&1); retrying feature-dev/developer instead of waiting on synthetic session activity.",
     );
