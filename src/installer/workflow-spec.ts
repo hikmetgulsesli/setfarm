@@ -78,6 +78,7 @@ export async function loadWorkflowSpec(workflowDir: string): Promise<WorkflowSpe
     }
   }
   validateSteps(parsed.steps, workflowDir);
+  validateWorkflowInvariants(parsed, workflowDir);
   return parsed;
 }
 
@@ -173,5 +174,39 @@ function validateSteps(steps: WorkflowStep[], workflowDir: string) {
         }
       }
     }
+  }
+}
+
+function validateWorkflowInvariants(workflow: WorkflowSpec, workflowDir: string) {
+  if (workflow.id !== "feature-dev") return;
+
+  const implement = workflow.steps.find(step => step.id === "implement");
+  const verify = workflow.steps.find(step => step.id === "verify");
+  const supervise = workflow.steps.find(step => step.id === "supervise");
+  const supervisorAgent = workflow.agents.find(agent => agent.id === "supervisor");
+
+  if (!supervisorAgent) {
+    throw new Error(`workflow.yml feature-dev requires a supervisor agent in ${workflowDir}`);
+  }
+  if (!implement) {
+    throw new Error(`workflow.yml feature-dev requires implement step in ${workflowDir}`);
+  }
+  if (!verify) {
+    throw new Error(`workflow.yml feature-dev requires verify step in ${workflowDir}`);
+  }
+  if (!supervise) {
+    throw new Error(`workflow.yml feature-dev requires supervise step in ${workflowDir}`);
+  }
+  if (supervise.agent !== "supervisor") {
+    throw new Error(`workflow.yml feature-dev supervise step must use supervisor agent in ${workflowDir}`);
+  }
+  if (implement.type !== "loop" || !implement.loop) {
+    throw new Error(`workflow.yml feature-dev implement step must be a story loop in ${workflowDir}`);
+  }
+  if (!implement.loop.verifyEach || implement.loop.verifyStep !== "verify") {
+    throw new Error(`workflow.yml feature-dev implement loop must enable verify_each with verify_step=verify in ${workflowDir}`);
+  }
+  if (!implement.loop.superviseEach || implement.loop.superviseStep !== "supervise") {
+    throw new Error(`workflow.yml feature-dev implement loop must enable supervise_each with supervise_step=supervise in ${workflowDir}`);
   }
 }

@@ -1,6 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import { loadWorkflowSpec } from "../dist/installer/workflow-spec.js";
 
 const WORKFLOW_DIR = path.resolve(import.meta.dirname, "..", "workflows", "feature-dev");
@@ -72,6 +74,49 @@ describe("feature-dev design contract prompt", () => {
     assert.equal(implement.loop?.verifyStep, "verify");
     assert.equal(implement.loop?.superviseEach, true);
     assert.equal(implement.loop?.superviseStep, "supervise");
+  });
+
+  it("rejects feature-dev workflows that omit the product supervisor gate", async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "setfarm-feature-dev-no-supervisor-"));
+    try {
+      writeFileSync(path.join(dir, "workflow.yml"), `
+id: feature-dev
+name: Broken Feature Development Workflow
+agents:
+  - id: developer
+    workspace:
+      baseDir: agents/developer
+      files:
+        AGENTS.md: agents/developer/AGENTS.md
+  - id: reviewer
+    workspace:
+      baseDir: agents/reviewer
+      files:
+        AGENTS.md: agents/reviewer/AGENTS.md
+steps:
+  - id: implement
+    agent: developer
+    type: loop
+    loop:
+      over: stories
+      completion: all_done
+      verify_each: true
+      verify_step: verify
+    input: implement
+    expects: "STATUS: done"
+  - id: verify
+    agent: reviewer
+    input: verify
+    expects: "STATUS: done"
+`);
+
+      await assert.rejects(
+        () => loadWorkflowSpec(dir),
+        /feature-dev requires a supervisor agent/,
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
 });
