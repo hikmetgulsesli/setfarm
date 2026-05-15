@@ -75,6 +75,17 @@ describe("spawner prompt bootstrap", () => {
         generatedScreenPolicy: {
           summary: "No generated screen source file is in scope.",
         },
+        screenUsageContract: {
+          summary: "Use compact screen contract first.",
+          components: [
+            {
+              componentName: "MainMenu",
+              file: "src/screens/MainMenu.tsx",
+              sourceRead: "forbidden",
+              actionIds: ["start-game-1", "settings-4"],
+            },
+          ],
+        },
         designContracts: {
           screenIndex: [{ componentName: "MainMenu" }],
           uiContract: [{ screenTitle: "Main Menu" }],
@@ -115,6 +126,8 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, /SCOPE_FILES=src\/App\.tsx/);
       assert.match(out, /GIT_POLICY=Developer story agents write code only/);
       assert.match(out, /FORBIDDEN_GIT=git add, git commit, git push/);
+      assert.match(out, /SCREEN_USAGE=Use compact screen contract first/);
+      assert.match(out, /SCREEN_COMPONENT=MainMenu src\/screens\/MainMenu\.tsx forbidden actions=start-game-1\|settings-4/);
       assert.match(out, /FAILURE_CATEGORY=GENERATED_SCREEN_SHARED_READ/);
       assert.match(out, /FAILURE_SUGGESTION=Use claim-summary designContracts instead of shared generated source/);
       assert.match(out, /RETRY_DISCIPLINE=first-delta: Hard manager retry discipline/);
@@ -265,6 +278,17 @@ describe("spawner prompt bootstrap", () => {
         "src/screens/GameBoard.tsx",
         "src/screens/MainMenu.tsx",
       ]);
+      assert.match((summary.screenUsageContract as any).summary, /Use this compact contract before designContracts/);
+      assert.match((summary.screenUsageContract as any).fatalSourceReadRule, /killed and retried/);
+      assert.equal((summary.screenUsageContract as any).importFrom, "src/screens");
+      assert.deepEqual(
+        (summary.screenUsageContract as any).components.map((c: any) => [c.componentName, c.file, c.sourceRead]),
+        [
+          ["GameBoard", "src/screens/GameBoard.tsx", "forbidden"],
+          ["MainMenu", "src/screens/MainMenu.tsx", "forbidden"],
+        ],
+      );
+      assert.deepEqual((summary.screenUsageContract as any).components[1].actionIds, ["start-game-1"]);
       assert.match((summary.generatedScreenPolicy as any).summary, /No generated screen source file is in scope/);
       assert.match((summary.generatedScreenPolicy as any).summary, /OpenClaw read tool/);
       assert.match((summary.generatedScreenPolicy as any).summary, /component registry/);
