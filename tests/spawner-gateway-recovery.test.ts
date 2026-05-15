@@ -396,9 +396,16 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /IMPLEMENT_PRE_DELTA_MAX_CONTEXT_READS/);
     assert.match(source, /SETFARM_IMPLEMENT_PRE_DELTA_MAX_CONTEXT_READS/);
     assert.match(source, /function implementPreDeltaExplorationGuard\(active: ActiveProcess\)/);
+    assert.match(source, /function isPreDeltaSafeContextPath\(relativePath: string,\s*allowed: Set<string>\)/);
+    assert.match(source, /const allowed = readStoryScopeFileSet\(active\.spawnCwd\)/);
+    assert.match(source, /allowed\.has\(normalized\)/);
+    assert.match(source, /src\\\/screens\(\?:\\\/\(\?:SCREEN_INDEX\\\.json\|index\\\.ts\)\)\?/);
+    assert.match(source, /package\\\.json\|package-lock\\\.json\|pnpm-lock\\\.yaml\|yarn\\\.lock/);
     assert.match(source, /IMPLEMENT_PRE_DELTA_CONTEXT_SPRAWL/);
     assert.match(source, /first-delta supervisor discipline/);
     assert.match(source, /preDeltaContextReadsFromCommand\(active, call\.command\)/);
+    assert.match(source, /!isPreDeltaSafeContextPath\(relativePath,\s*allowed\)/);
+    assert.match(source, /contextReads\.add\(normalizePreDeltaContextPath\(relativePath\)\)/);
     assert.match(source, /terminateActiveProcess\(active,\s*"implement-pre-delta-context-guard"\)/);
     assert.ok(
       source.indexOf("implementPreDeltaExplorationGuard(active)") > source.indexOf("rawStitchDesignReadGuard(active)"),

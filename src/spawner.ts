@@ -889,6 +889,22 @@ function isPreDeltaProjectContextPath(relativePath: string): boolean {
   return false;
 }
 
+function normalizePreDeltaContextPath(relativePath: string): string {
+  return relativePath.replace(/^\.\/+/, "").replace(/\/+$/, "");
+}
+
+function isPreDeltaSafeContextPath(relativePath: string, allowed: Set<string>): boolean {
+  const normalized = normalizePreDeltaContextPath(relativePath);
+  if (!normalized || normalized.startsWith("..")) return true;
+  if (allowed.has(normalized)) return true;
+  if (/^(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|tsconfig(?:\.[^/]+)?\.json)$/.test(normalized)) return true;
+  if (/^(vite|vitest|jest|tailwind|postcss|eslint)\.config\.[cm]?[jt]s$/.test(normalized)) return true;
+  if (/^src\/screens(?:\/(?:SCREEN_INDEX\.json|index\.ts))?$/.test(normalized)) return true;
+  if (/^src\/test(?:\/(?:setup|utils)\.[cm]?[jt]sx?)?$/.test(normalized)) return true;
+  if (/^src\/setupTests\.[cm]?[jt]sx?$/.test(normalized)) return true;
+  return false;
+}
+
 function preDeltaContextReadsFromCommand(active: ActiveProcess, command: string): string[] {
   if (!/\b(cat|sed|nl|head|tail|less|bat|rg|grep|awk|wc|python3?|node)\b/i.test(command)) return [];
   const paths = new Set<string>();
@@ -918,6 +934,7 @@ function implementPreDeltaExplorationGuard(active: ActiveProcess): { detected: b
   }
   if (!raw) return { detected: false, reason: "" };
 
+  const allowed = readStoryScopeFileSet(active.spawnCwd);
   const contextReads = new Set<string>();
   for (const line of raw.split(/\n/).filter(Boolean)) {
     let event: any;
@@ -928,11 +945,15 @@ function implementPreDeltaExplorationGuard(active: ActiveProcess): { detected: b
     for (const call of extractToolCalls(message.content)) {
       if (call.name === "read" && call.path) {
         const relativePath = normalizeSessionProjectRelativePath(active, call.path);
-        if (isPreDeltaProjectContextPath(relativePath)) contextReads.add(relativePath);
+        if (isPreDeltaProjectContextPath(relativePath) && !isPreDeltaSafeContextPath(relativePath, allowed)) {
+          contextReads.add(normalizePreDeltaContextPath(relativePath));
+        }
       }
       if (call.command) {
         for (const relativePath of preDeltaContextReadsFromCommand(active, call.command)) {
-          contextReads.add(relativePath);
+          if (!isPreDeltaSafeContextPath(relativePath, allowed)) {
+            contextReads.add(normalizePreDeltaContextPath(relativePath));
+          }
         }
       }
     }
