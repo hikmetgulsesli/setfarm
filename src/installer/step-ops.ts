@@ -234,17 +234,44 @@ function parseGitStatusPaths(status: string): string[] {
   return [...files].filter(Boolean);
 }
 
+function normalizeScopeFile(file: string): string {
+  return String(file || "")
+    .trim()
+    .replace(/^\.\/+/, "")
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "");
+}
+
 function readStoryScopeFilesFromWorktree(workdir: string): string[] {
   try {
     const scopePath = path.join(workdir, ".story-scope-files");
     if (!fs.existsSync(scopePath)) return [];
     return fs.readFileSync(scopePath, "utf-8")
       .split(/\r?\n/)
-      .map((line) => line.trim().replace(/^\.\/+/, ""))
+      .map((line) => normalizeScopeFile(line))
       .filter(Boolean);
   } catch {
     return [];
   }
+}
+
+function parseDeclaredScopeFiles(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed
+        .filter((file): file is string => typeof file === "string")
+        .map(normalizeScopeFile)
+        .filter(Boolean);
+    }
+  } catch {
+    // Fall through to newline/comma parsing for defensive compatibility.
+  }
+  return String(raw)
+    .split(/[\r\n,]+/)
+    .map(normalizeScopeFile)
+    .filter(Boolean);
 }
 
 function isPlatformInternalCommitPath(file: string): boolean {
@@ -267,6 +294,8 @@ export function commitStoryWorktreeScopeIfNeeded(
   workdir: string,
   storyId: string,
   storyTitle: string,
+  declaredScopeFiles: string[] = [],
+  commitType = "feat",
 ): { committed: boolean; sha: string; stagedFiles: string[]; error: string } {
   if (!workdir || !fs.existsSync(workdir)) {
     return { committed: false, sha: "", stagedFiles: [], error: "PLATFORM_STORY_COMMIT_MISSING_WORKDIR" };
@@ -284,10 +313,20 @@ export function commitStoryWorktreeScopeIfNeeded(
     return { committed: false, sha: "", stagedFiles: [], error: `PLATFORM_STORY_COMMIT_STATUS_FAILED: ${formatCommandError(err)}` };
   }
 
+  try {
+    execFileSync("git", ["reset", "-q", "HEAD", "--", "."], {
+      cwd: workdir,
+      timeout: 20_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+  } catch (err) {
+    return { committed: false, sha: "", stagedFiles: [], error: `PLATFORM_STORY_COMMIT_RESET_FAILED: ${formatCommandError(err)}` };
+  }
+
   const touched = parseGitStatusPaths(status).filter((file) => !isPlatformInternalCommitPath(file));
   if (touched.length === 0) return { committed: false, sha: "", stagedFiles: [], error: "" };
 
-  const scopeFiles = new Set(readStoryScopeFilesFromWorktree(workdir));
+  const scopeFiles = new Set((declaredScopeFiles.length > 0 ? declaredScopeFiles : readStoryScopeFilesFromWorktree(workdir)).map(normalizeScopeFile));
   if (scopeFiles.size === 0) {
     return {
       committed: false,
@@ -322,7 +361,8 @@ export function commitStoryWorktreeScopeIfNeeded(
     if (staged.length === 0) return { committed: false, sha: "", stagedFiles: [], error: "" };
 
     const commitTitle = (storyTitle || "story work").replace(/\s+/g, " ").trim().slice(0, 90);
-    execFileSync("git", ["commit", "-m", `feat: ${storyId} - ${commitTitle}`], {
+    const safeCommitType = /^[a-z][a-z0-9-]*$/i.test(commitType) ? commitType.toLowerCase() : "feat";
+    execFileSync("git", ["commit", "-m", `${safeCommitType}: ${storyId} - ${commitTitle}`], {
       cwd: workdir,
       timeout: 30_000,
       stdio: ["pipe", "pipe", "pipe"],
@@ -344,6 +384,36 @@ export function commitStoryWorktreeScopeIfNeeded(
     return { committed: true, sha, stagedFiles: staged, error: "" };
   } catch (err) {
     return { committed: false, sha: "", stagedFiles: [], error: `PLATFORM_STORY_COMMIT_FAILED: ${formatCommandError(err)}` };
+  }
+}
+
+function pushStoryBranch(workdir: string, storyBranch: string | null | undefined): { pushed: boolean; error: string } {
+  if (!workdir || !fs.existsSync(workdir)) {
+    return { pushed: false, error: "PLATFORM_STORY_PUSH_MISSING_WORKDIR" };
+  }
+  let branch = String(storyBranch || "").trim().toLowerCase();
+  if (!branch) {
+    try {
+      branch = execFileSync("git", ["branch", "--show-current"], {
+        cwd: workdir,
+        encoding: "utf-8",
+        timeout: 10_000,
+        stdio: ["pipe", "pipe", "pipe"],
+      }).trim().toLowerCase();
+    } catch (err) {
+      return { pushed: false, error: `PLATFORM_STORY_PUSH_BRANCH_FAILED: ${formatCommandError(err)}` };
+    }
+  }
+  if (!branch) return { pushed: false, error: "PLATFORM_STORY_PUSH_MISSING_BRANCH" };
+  try {
+    execFileSync("git", ["push", "-u", "origin", branch], {
+      cwd: workdir,
+      timeout: 45_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    return { pushed: true, error: "" };
+  } catch (err) {
+    return { pushed: false, error: `PLATFORM_STORY_PUSH_FAILED: ${formatCommandError(err)}` };
   }
 }
 
@@ -1064,10 +1134,10 @@ async function getSuperviseEachConfigForStep(step: { run_id: string; step_id: st
   return { loopStepId: loopStep.id, verifyStep: loopConfig.verifyStep || "verify", superviseStep };
 }
 
-async function findUnsupervisedDoneStory(runId: string, context: Record<string, string>): Promise<{ id: string; story_id: string; title: string; retry_count: number; max_retries: number; pr_url: string | null; story_branch: string | null } | undefined> {
+async function findUnsupervisedDoneStory(runId: string, context: Record<string, string>): Promise<{ id: string; story_id: string; title: string; retry_count: number; max_retries: number; pr_url: string | null; story_branch: string | null; scope_files: string | null } | undefined> {
   const supervised = parseStoryIdSet(context[SUPERVISED_STORY_IDS_CONTEXT_KEY]);
-  const rows = await pgQuery<{ id: string; story_id: string; title: string; retry_count: number; max_retries: number; pr_url: string | null; story_branch: string | null }>(
-    "SELECT id, story_id, title, retry_count, max_retries, pr_url, story_branch FROM stories WHERE run_id = $1 AND status = 'done' ORDER BY updated_at DESC",
+  const rows = await pgQuery<{ id: string; story_id: string; title: string; retry_count: number; max_retries: number; pr_url: string | null; story_branch: string | null; scope_files: string | null }>(
+    "SELECT id, story_id, title, retry_count, max_retries, pr_url, story_branch, scope_files FROM stories WHERE run_id = $1 AND status = 'done' ORDER BY updated_at DESC",
     [runId],
   );
   return rows.find((story) => !supervised.has(story.story_id));
@@ -5426,14 +5496,14 @@ async function handleSuperviseEachCompletion(
   let story = undefined as Awaited<ReturnType<typeof findUnsupervisedDoneStory>>;
   if (superviseStep.current_story_id) {
     story = await pgGet<any>(
-      "SELECT id, story_id, title, retry_count, max_retries, pr_url, story_branch FROM stories WHERE run_id = $1 AND id = $2 AND status = 'done' LIMIT 1",
+      "SELECT id, story_id, title, retry_count, max_retries, pr_url, story_branch, scope_files FROM stories WHERE run_id = $1 AND id = $2 AND status = 'done' LIMIT 1",
       [superviseStep.run_id, superviseStep.current_story_id],
     );
   }
   const reportedStoryId = parsedOutput["current_story_id"] || context["current_story_id"] || "";
   if (!story && reportedStoryId) {
     story = await pgGet<any>(
-      "SELECT id, story_id, title, retry_count, max_retries, pr_url, story_branch FROM stories WHERE run_id = $1 AND story_id = $2 AND status = 'done' LIMIT 1",
+      "SELECT id, story_id, title, retry_count, max_retries, pr_url, story_branch, scope_files FROM stories WHERE run_id = $1 AND story_id = $2 AND status = 'done' LIMIT 1",
       [superviseStep.run_id, reportedStoryId],
     );
   }
@@ -5511,6 +5581,92 @@ async function handleSuperviseEachCompletion(
     emitEvent({ ts: now(), event: "story.retry", runId: superviseStep.run_id, workflowId: await getWorkflowId(superviseStep.run_id), stepId: superviseStep.step_id, storyId: story.story_id, detail: issues.slice(0, 500) });
     logger.warn(`[supervise-each] Supervisor blocked ${story.story_id}; returning to implement`, { runId: superviseStep.run_id });
     return { advanced: false, runCompleted: false };
+  }
+
+  let supervisorWorkdir = context["story_workdir"] || context["repo"] || "";
+  try {
+    const { resolveStoryWorktree } = await import("./steps/06-implement/guards.js");
+    const resolved = await resolveStoryWorktree(story.id, context["story_workdir"] || "");
+    if (resolved) supervisorWorkdir = resolved;
+  } catch (e) {
+    logger.warn(`[supervise-each] Could not resolve story worktree for ${story.story_id}: ${String(e).slice(0, 150)}`, { runId: superviseStep.run_id });
+  }
+
+  const supervisorCommit = commitStoryWorktreeScopeIfNeeded(
+    supervisorWorkdir,
+    story.story_id,
+    story.title || "",
+    parseDeclaredScopeFiles(story.scope_files),
+    "fix",
+  );
+  if (supervisorCommit.error) {
+    const newRetry = (story.retry_count || 0) + 1;
+    const failure = `PLATFORM_SUPERVISOR_COMMIT_FAILED for ${story.story_id}: ${supervisorCommit.error}`;
+    context["previous_failure"] = failure;
+    context["failure_category"] = "PLATFORM_SUPERVISOR_COMMIT_FAILED";
+    context["failure_suggestion"] = "Supervisor left uncommitted or out-of-scope code. Return to the same story branch, keep edits inside scope_files, and do not let verify run until platform commit succeeds.";
+    context["current_story_id"] = story.story_id;
+    context["current_story_title"] = story.title;
+    if (story.story_branch) context["story_branch"] = story.story_branch;
+    clearStorySupervised(context, story.story_id);
+    if (newRetry > (story.max_retries || 0)) {
+      await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [newRetry, failure, now(), story.id]);
+      await updateRunContext(superviseStep.run_id, context);
+      await setStepStatus(loopStepId, "failed");
+      await failRun(superviseStep.run_id, true);
+      const wfId = await getWorkflowId(superviseStep.run_id);
+      emitEvent({ ts: now(), event: "story.failed", runId: superviseStep.run_id, workflowId: wfId, stepId: superviseStep.step_id, storyId: story.story_id });
+      emitEvent({ ts: now(), event: "run.failed", runId: superviseStep.run_id, workflowId: wfId, detail: failure.slice(0, 500) });
+      scheduleRunCronTeardown(superviseStep.run_id);
+      return { advanced: false, runCompleted: false };
+    }
+    await pgRun(
+      "UPDATE stories SET status = 'pending', retry_count = $1, output = $2, pr_url = NULL, merge_status = NULL, updated_at = $3 WHERE id = $4",
+      [newRetry, failure, now(), story.id],
+    );
+    await updateRunContext(superviseStep.run_id, context);
+    await setStepStatus(loopStepId, "pending");
+    await pgRun("UPDATE steps SET status = 'waiting', retry_count = 0, current_story_id = NULL, updated_at = $1 WHERE run_id = $2 AND step_id = $3", [now(), superviseStep.run_id, verifyStepName]);
+    emitEvent({ ts: now(), event: "story.retry", runId: superviseStep.run_id, workflowId: await getWorkflowId(superviseStep.run_id), stepId: superviseStep.step_id, storyId: story.story_id, detail: failure.slice(0, 500) });
+    logger.warn(`[supervise-each] Supervisor fixes for ${story.story_id} could not be platform-committed; returning to implement`, { runId: superviseStep.run_id });
+    return { advanced: false, runCompleted: false };
+  }
+  if (supervisorCommit.committed) {
+    const pushResult = pushStoryBranch(supervisorWorkdir, story.story_branch || context["story_branch"]);
+    if (pushResult.error) {
+      const newRetry = (story.retry_count || 0) + 1;
+      const failure = `PLATFORM_SUPERVISOR_PUSH_FAILED for ${story.story_id}: ${pushResult.error}`;
+      context["previous_failure"] = failure;
+      context["failure_category"] = "PLATFORM_SUPERVISOR_PUSH_FAILED";
+      context["failure_suggestion"] = "Supervisor fixes were committed locally but could not be pushed to the story branch. Fix platform git/remote state before verify.";
+      context["current_story_id"] = story.story_id;
+      context["current_story_title"] = story.title;
+      if (story.story_branch) context["story_branch"] = story.story_branch;
+      clearStorySupervised(context, story.story_id);
+      if (newRetry > (story.max_retries || 0)) {
+        await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [newRetry, failure, now(), story.id]);
+        await updateRunContext(superviseStep.run_id, context);
+        await setStepStatus(loopStepId, "failed");
+        await failRun(superviseStep.run_id, true);
+        const wfId = await getWorkflowId(superviseStep.run_id);
+        emitEvent({ ts: now(), event: "story.failed", runId: superviseStep.run_id, workflowId: wfId, stepId: superviseStep.step_id, storyId: story.story_id });
+        emitEvent({ ts: now(), event: "run.failed", runId: superviseStep.run_id, workflowId: wfId, detail: failure.slice(0, 500) });
+        scheduleRunCronTeardown(superviseStep.run_id);
+        return { advanced: false, runCompleted: false };
+      }
+      await pgRun(
+        "UPDATE stories SET status = 'pending', retry_count = $1, output = $2, pr_url = NULL, merge_status = NULL, updated_at = $3 WHERE id = $4",
+        [newRetry, failure, now(), story.id],
+      );
+      await updateRunContext(superviseStep.run_id, context);
+      await setStepStatus(loopStepId, "pending");
+      await pgRun("UPDATE steps SET status = 'waiting', retry_count = 0, current_story_id = NULL, updated_at = $1 WHERE run_id = $2 AND step_id = $3", [now(), superviseStep.run_id, verifyStepName]);
+      emitEvent({ ts: now(), event: "story.retry", runId: superviseStep.run_id, workflowId: await getWorkflowId(superviseStep.run_id), stepId: superviseStep.step_id, storyId: story.story_id, detail: failure.slice(0, 500) });
+      logger.warn(`[supervise-each] Supervisor fixes for ${story.story_id} could not be pushed; returning to implement`, { runId: superviseStep.run_id });
+      return { advanced: false, runCompleted: false };
+    }
+    context["platform_supervisor_commit"] = `${story.story_id}:${supervisorCommit.sha}:${supervisorCommit.stagedFiles.join(",")}`.slice(0, 1200);
+    logger.info(`[platform-supervisor-commit] ${story.story_id} committed ${supervisorCommit.stagedFiles.length} supervisor file(s) at ${supervisorCommit.sha}`, { runId: superviseStep.run_id });
   }
 
   markStorySupervised(context, story.story_id);

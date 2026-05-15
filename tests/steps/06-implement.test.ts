@@ -92,6 +92,36 @@ describe("06-implement step module", () => {
     }
   });
 
+  it("platform story commit can use declared DB scope and ignores pre-staged internal files", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-platform-commit-db-scope-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), "export const app = 'base';\n");
+      fs.writeFileSync(path.join(tmp, "SUPERVISOR_MEMORY.md"), "base memory\n");
+      git(tmp, ["init", "-b", "main"]);
+      git(tmp, ["add", "src/App.tsx", "SUPERVISOR_MEMORY.md"]);
+      git(tmp, ["commit", "-m", "base"]);
+
+      fs.writeFileSync(path.join(tmp, "SUPERVISOR_MEMORY.md"), "dirty internal memory\n");
+      git(tmp, ["add", "SUPERVISOR_MEMORY.md"]);
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), "export const app = 'supervisor fix';\n");
+
+      const result = commitStoryWorktreeScopeIfNeeded(tmp, "US-001", "supervisor fix", ["src/App.tsx"], "fix");
+
+      assert.equal(result.error, "");
+      assert.equal(result.committed, true);
+      assert.deepEqual(result.stagedFiles, ["src/App.tsx"]);
+      assert.equal(git(tmp, ["log", "-1", "--format=%s"]), "fix: US-001 - supervisor fix");
+      const committedFiles = git(tmp, ["show", "--name-only", "--format=", "HEAD"]).trim().split(/\r?\n/).filter(Boolean);
+      assert.deepEqual(committedFiles, ["src/App.tsx"]);
+      const status = git(tmp, ["status", "--porcelain"]);
+      assert.match(status, /^M SUPERVISOR_MEMORY\.md$/m);
+      assert.doesNotMatch(status, /^M  SUPERVISOR_MEMORY\.md$/m);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("uses one implicit story scope rule for runtime guard and platform commit", () => {
     assert.equal(isImplicitStoryScopeFile("src/test/utils.tsx"), true);
     assert.equal(isImplicitStoryScopeFile("./src/test/setup.mts"), true);
