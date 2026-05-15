@@ -458,6 +458,58 @@ describe("spawner prompt bootstrap", () => {
     }
   });
 
+  it("falls back to the existing repo when a story worktree handoff is stale", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-stale-story-workdir-"));
+    try {
+      const mainRepo = path.join(tmp, "main-repo");
+      const staleStoryWorkdir = path.join(tmp, "workflows", "feature-dev", "agents", "developer", "story-worktrees", "33d23f10-us-001");
+      fs.mkdirSync(mainRepo, { recursive: true });
+      fs.writeFileSync(path.join(mainRepo, "package.json"), JSON.stringify({
+        scripts: {
+          build: "tsc && vite build",
+          test: "vitest",
+          "test:run": "vitest run",
+        },
+      }));
+
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "reviewer",
+        claimFile: "/tmp/claim.json",
+        outputFile: "/tmp/output.txt",
+        bootstrapFile: "/tmp/bootstrap.sh",
+        stepId: "step-123",
+        runId: "33d23f10-f68c-4c75-a9e9-4a48996d075b",
+        workdir: mainRepo,
+        repo: mainRepo,
+        storyId: "US-001",
+        input: [
+          "TASK: Project: stale worktree routing sensor",
+          `VERIFY_WORKDIR: ${staleStoryWorkdir}`,
+          `MAIN_REPO: ${mainRepo}`,
+          `STORY_WORKDIR: ${staleStoryWorkdir}`,
+          "BUILD_CMD: true",
+          "TEST_CMD: true",
+          "LINT_CMD: true",
+          "STORY_BRANCH: 33d23f10-us-001",
+          "",
+          "CURRENT STORY: Story US-001: Worktree routing",
+        ].join("\n"),
+      });
+
+      assert.equal(summary.workdir, mainRepo);
+      assert.equal(summary.storyWorkdir, "");
+      assert.equal(summary.verifyWorkdir, mainRepo);
+      assert.equal(summary.repo, mainRepo);
+      assert.equal(summary.mainRepo, mainRepo);
+      assert.equal(summary.buildCommand, "npm run build");
+      assert.equal(summary.testCommand, "npm run test:run");
+      assert.equal(summary.lintCommand, "true");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("derives storyBranch from authoritative handoff instead of output-format placeholders", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-branch-"));
     try {

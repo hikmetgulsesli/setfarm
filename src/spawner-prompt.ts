@@ -60,6 +60,16 @@ function extractBacktickedValue(input: string, pattern: RegExp): string {
   return isPlaceholderValue(value) ? "" : value;
 }
 
+function existingDirectory(value: string): string {
+  const candidate = String(value || "").trim();
+  if (!candidate) return "";
+  try {
+    return fs.existsSync(candidate) && fs.statSync(candidate).isDirectory() ? candidate : "";
+  } catch {
+    return "";
+  }
+}
+
 function deriveStoryBranch(input: string, runId: string, storyId?: string): string {
   const explicit = firstMeaningfulLineValue(input, "STORY_BRANCH");
   if (explicit) return explicit.toLowerCase();
@@ -86,23 +96,43 @@ function deriveStoryWorkdir(input: string, fallbackWorkdir: string): string {
     || firstMeaningfulLineValue(input, "story_workdir")
     || firstMeaningfulLineValue(input, "VERIFY_WORKDIR")
     || firstMeaningfulLineValue(input, "verify_workdir");
-  if (explicit) return explicit;
+  if (explicit) return existingDirectory(explicit);
 
   const prepared = extractBacktickedValue(input, /prepared story worktree:\s*`?([^`\n]+)`?/i);
-  if (prepared) return prepared;
+  if (prepared) return existingDirectory(prepared);
 
   const mentioned = extractBacktickedValue(input, /`?([^\s"'<>`]+\/story-worktrees\/[A-Za-z0-9._-]+)`?/);
-  if (mentioned) return mentioned;
+  if (mentioned) return existingDirectory(mentioned);
 
-  return String(fallbackWorkdir || "").includes(`${path.sep}story-worktrees${path.sep}`) ? fallbackWorkdir : "";
+  return String(fallbackWorkdir || "").includes(`${path.sep}story-worktrees${path.sep}`)
+    ? existingDirectory(fallbackWorkdir)
+    : "";
 }
 
-function packageScriptCommand(workdir: string, script: string): string {
+function packageScriptCommand(workdirs: string[], script: string): string {
+  const candidates = [...new Set(workdirs.map(existingDirectory).filter(Boolean))];
+  for (const workdir of candidates) {
+    const command = packageScriptCommandInDirectory(workdir, script);
+    if (command) return command;
+  }
+  return "";
+}
+
+function packageScriptCommandInDirectory(workdir: string, script: string): string {
   try {
     const packageJsonPath = path.join(workdir, "package.json");
     const parsed = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
     const scripts = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>)["scripts"] : undefined;
-    if (scripts && typeof scripts === "object" && typeof (scripts as Record<string, unknown>)[script] === "string") {
+    if (!scripts || typeof scripts !== "object") return "";
+    const scriptMap = scripts as Record<string, unknown>;
+    if (script === "test" && typeof scriptMap["test:run"] === "string") {
+      return "npm run test:run";
+    }
+    const value = scriptMap[script];
+    if (typeof value === "string") {
+      if (script === "test" && /\bvitest\b/i.test(value) && !/\brun\b/i.test(value)) {
+        return "npx vitest run";
+      }
       return `npm run ${script}`;
     }
   } catch {
@@ -111,10 +141,14 @@ function packageScriptCommand(workdir: string, script: string): string {
   return "";
 }
 
-function resolvedCommand(input: string, label: string, workdir: string, script: string, fallback: string): string {
+function isNoopCommand(value: string): boolean {
+  return /^(?:true|:|noop|none|n\/a)$/i.test(value.trim());
+}
+
+function resolvedCommand(input: string, label: string, workdirs: string[], script: string, fallback: string): string {
   const fromInput = lineValue(input, label);
-  if (fromInput) return fromInput;
-  return packageScriptCommand(workdir, script) || fallback;
+  if (fromInput && !isNoopCommand(fromInput)) return fromInput;
+  return packageScriptCommand(workdirs, script) || fromInput || fallback;
 }
 
 function sliceSection(input: string, start: RegExp, ends: RegExp[], limit: number): string {
@@ -412,7 +446,11 @@ export function buildClaimSummary(params: {
 }): Record<string, unknown> {
   const input = String(params.input || "");
   const currentStory = extractCurrentStory(input);
-  const rawWorkdir = params.workdir || lineValue(input, "WORKDIR") || defaultAgentScratch;
+  const rawWorkdir = existingDirectory(params.workdir)
+    || existingDirectory(lineValue(input, "WORKDIR"))
+    || params.workdir
+    || lineValue(input, "WORKDIR")
+    || defaultAgentScratch;
   const storyWorkdir = deriveStoryWorkdir(input, rawWorkdir);
   const workdir = storyWorkdir || rawWorkdir;
   const repo = firstMeaningfulLineValue(input, "MAIN_REPO")
@@ -469,9 +507,9 @@ export function buildClaimSummary(params: {
     verifyWorkdir: storyWorkdir || workdir,
     storyBranch: deriveStoryBranch(input, params.runId, storyId),
     runBranch: lineValue(input, "RUN_BRANCH"),
-    buildCommand: resolvedCommand(input, "BUILD_CMD", workdir, "build", "true"),
-    testCommand: resolvedCommand(input, "TEST_CMD", workdir, "test", "true"),
-    lintCommand: resolvedCommand(input, "LINT_CMD", workdir, "lint", "true"),
+    buildCommand: resolvedCommand(input, "BUILD_CMD", [workdir, repo], "build", "true"),
+    testCommand: resolvedCommand(input, "TEST_CMD", [workdir, repo], "test", "true"),
+    lintCommand: resolvedCommand(input, "LINT_CMD", [workdir, repo], "lint", "true"),
     gitPolicy: isDeveloperStoryClaim ? {
       owner: "setfarm-platform",
       summary: "Developer story agents write code only. Do not stage, commit, push, create branches, or open PRs; Setfarm commits allowed scopeFiles after build/scope/supervisor gates pass.",
