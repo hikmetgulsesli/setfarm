@@ -34,6 +34,8 @@ const BACKGROUND_WORKFLOWS = new Set((process.env.SETFARM_BACKGROUND_WORKFLOWS |
 const VERIFY_AGENT_HARD_TIMEOUT_MS = parsePositiveInt(process.env.SETFARM_VERIFY_AGENT_HARD_TIMEOUT_MS, 10 * 60_000);
 const VERIFY_BOUNDED_REVIEW_MIN_AGE_MS = parsePositiveInt(process.env.SETFARM_VERIFY_BOUNDED_REVIEW_MIN_AGE_MS, 2 * 60_000);
 const VERIFY_BOUNDED_REVIEW_MAX_SOURCE_READS = parsePositiveInt(process.env.SETFARM_VERIFY_BOUNDED_REVIEW_MAX_SOURCE_READS, 6);
+const SESSION_GUARD_HEAD_BYTES = parsePositiveInt(process.env.SETFARM_SESSION_GUARD_HEAD_BYTES, 768_000);
+const SESSION_GUARD_TAIL_BYTES = parsePositiveInt(process.env.SETFARM_SESSION_GUARD_TAIL_BYTES, 768_000);
 const NON_DEVELOPER_STUCK_MS = parsePositiveInt(process.env.SETFARM_AGENT_STUCK_MS, 12 * 60_000);
 const DEVELOPER_STUCK_MS = parsePositiveInt(process.env.SETFARM_DEVELOPER_AGENT_STUCK_MS, 15 * 60_000);
 const QA_FIX_AGENT_STUCK_MS = parsePositiveInt(process.env.SETFARM_QA_FIX_AGENT_STUCK_MS, 8 * 60_000);
@@ -1207,6 +1209,39 @@ function isVerifyDeterministicEvidenceCommand(command: string): boolean {
     || /\bnode\b[^;&|]*\b(smoke-test|playwright-check)\b/i.test(compact);
 }
 
+function readSessionJsonlForGuard(filePath: string): string {
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(filePath);
+  } catch {
+    return "";
+  }
+  const fileSize = Number(stat.size);
+  if (!Number.isFinite(fileSize) || fileSize <= 0) return "";
+
+  const headBytes = Math.max(0, SESSION_GUARD_HEAD_BYTES);
+  const tailBytes = Math.max(0, SESSION_GUARD_TAIL_BYTES);
+  const windowBytes = headBytes + tailBytes;
+  try {
+    if (windowBytes <= 0 || fileSize <= windowBytes) {
+      return fs.readFileSync(filePath, "utf-8").trim();
+    }
+
+    const fd = fs.openSync(filePath, "r");
+    try {
+      const head = Buffer.alloc(Math.min(headBytes, fileSize));
+      const tail = Buffer.alloc(Math.min(tailBytes, fileSize));
+      if (head.length > 0) fs.readSync(fd, head, 0, head.length, 0);
+      if (tail.length > 0) fs.readSync(fd, tail, 0, tail.length, Math.max(0, fileSize - tail.length));
+      return `${head.toString("utf-8")}\n${tail.toString("utf-8")}`.trim();
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return "";
+  }
+}
+
 function isSourceReviewPath(relativePath: string): boolean {
   if (!relativePath || relativePath.startsWith("..")) return false;
   if (relativePath === "src/screens/SCREEN_INDEX.json" || relativePath === "src/screens/index.ts") return false;
@@ -1243,12 +1278,7 @@ function sourceReviewReadsFromCommand(active: ActiveProcess, command: string): s
 function verifyBoundedReviewGuard(active: ActiveProcess, ageMs: number): { detected: boolean; reason: string } {
   if (ageMs < VERIFY_BOUNDED_REVIEW_MIN_AGE_MS) return { detected: false, reason: "" };
 
-  let raw = "";
-  try {
-    raw = fs.readFileSync(active.sessionJsonlPath, "utf-8").slice(-512_000).trim();
-  } catch {
-    return { detected: false, reason: "" };
-  }
+  const raw = readSessionJsonlForGuard(active.sessionJsonlPath);
   if (!raw) return { detected: false, reason: "" };
 
   const preEvidenceReads = new Set<string>();

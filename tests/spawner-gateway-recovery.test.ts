@@ -594,11 +594,21 @@ describe("spawner gateway recovery wiring", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /VERIFY_BOUNDED_REVIEW_MIN_AGE_MS/);
     assert.match(source, /VERIFY_BOUNDED_REVIEW_MAX_SOURCE_READS/);
+    assert.match(source, /SESSION_GUARD_HEAD_BYTES/);
+    assert.match(source, /SESSION_GUARD_TAIL_BYTES/);
+    assert.match(source, /function readSessionJsonlForGuard/);
     assert.match(source, /function verifyBoundedReviewGuard/);
     assert.match(source, /VERIFY_BOUNDED_REVIEW_VIOLATION/);
     assert.match(source, /project source\/test files before running build\/test\/lint evidence/);
     assert.match(source, /normalizeSessionProjectRelativePath/);
     assert.match(source, /story-worktrees/);
+    const boundedGuardStart = source.indexOf("function verifyBoundedReviewGuard");
+    const boundedGuardEnd = source.indexOf("function normalizedSessionCommand", boundedGuardStart);
+    assert.notEqual(boundedGuardStart, -1, "verify bounded review guard function missing");
+    assert.notEqual(boundedGuardEnd, -1, "verify bounded review guard function end missing");
+    const boundedGuardFunction = source.slice(boundedGuardStart, boundedGuardEnd);
+    assert.match(boundedGuardFunction, /readSessionJsonlForGuard\(active\.sessionJsonlPath\)/);
+    assert.doesNotMatch(boundedGuardFunction, /slice\(-512_000\)/);
 
     const guardStart = source.indexOf("const boundedReview = verifyBoundedReviewGuard(active, ageMs)");
     const guardEnd = source.indexOf("await updateRunningStepHeartbeat(active, row.step_id, ageMs)", guardStart);
