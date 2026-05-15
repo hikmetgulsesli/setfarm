@@ -217,6 +217,19 @@ function sliceSection(input: string, start: RegExp, ends: RegExp[], limit: numbe
   return input.slice(startIndex, endIndex).trim().slice(0, limit);
 }
 
+function cleanPreviousFailureSection(raw: string): string {
+  let value = String(raw || "").trim();
+  const claimHandoff = value.search(/^\s*##\s*Claim Handoff\b/im);
+  if (claimHandoff >= 0) value = value.slice(0, claimHandoff).trim();
+  value = value
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*(?:Failure category|Suggested response):\s*$/i.test(line))
+    .join("\n")
+    .trim();
+  if (!value || /^##\s*Claim Handoff\b/im.test(value)) return "";
+  return value;
+}
+
 function splitCsvList(raw: string): string[] {
   return raw
     .split(",")
@@ -530,12 +543,18 @@ export function buildClaimSummary(params: {
     6000,
   );
   const supervisorMemory = supervisorMemoryFromInput || readSupervisorMemoryFile(workdir, repo);
-  const previousFailure = sliceSection(
+  const previousFailure = cleanPreviousFailureSection(sliceSection(
     input,
     /^\s*(?:##\s*)?PREVIOUS FAILURE.*(?:\n|:\s*)/im,
-    [/^\s*##\s*CURRENT STORY/im, /^\s*CURRENT STORY/im, /^\s*IMPLEMENTATION PHASE/im, /^\s*FILE SKELETONS/im],
+    [
+      /^\s*##\s*Claim Handoff/im,
+      /^\s*##\s*CURRENT STORY/im,
+      /^\s*CURRENT STORY/im,
+      /^\s*IMPLEMENTATION PHASE/im,
+      /^\s*FILE SKELETONS/im,
+    ],
     2200,
-  );
+  ));
   const explicitFailureCategory = meaningfulFailureCategory(
     lineValue(previousFailure, "Failure category") || lineValue(input, "Failure category"),
   );

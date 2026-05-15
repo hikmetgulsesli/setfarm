@@ -384,6 +384,50 @@ describe("spawner prompt bootstrap", () => {
     }
   });
 
+  it("does not turn an empty previous-failure block into retry feedback", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-empty-previous-failure-summary-"));
+    try {
+      fs.writeFileSync(path.join(tmp, ".story-scope-files"), "src/screens/MainMenu.tsx\n");
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: "/tmp/claim.json",
+        outputFile: "/tmp/output.txt",
+        bootstrapFile: "/tmp/bootstrap.sh",
+        stepId: "step-123",
+        runId: "9923bbd6-6541-4d3e-ad2a-8b2d15a8a22f",
+        workdir: tmp,
+        repo: tmp,
+        storyId: "US-002",
+        input: [
+          "TASK: Project: Pong arcade",
+          `WORKDIR: ${tmp}`,
+          "CURRENT STORY: Story US-002: Main Menu",
+          "",
+          "## Previous Failure / Retry Feedback",
+          "Failure category: ",
+          "Suggested response: ",
+          "",
+          "## Claim Handoff",
+          "RUN_ID: 9923bbd6-6541-4d3e-ad2a-8b2d15a8a22f",
+          "STORY_ID: US-002",
+          "STORY_BRANCH: 9923bbd6-us-002",
+          `STORY_WORKDIR: ${tmp}`,
+          "",
+          "## Current Story",
+          "Story US-002: Main Menu",
+        ].join("\n"),
+      });
+
+      assert.equal(summary.previousFailure, "");
+      assert.equal(summary.failureCategory, "");
+      assert.equal(summary.failureSuggestion, "");
+      assert.equal(summary.retryFeedback, undefined);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("hands prior retry feedback to supervisors as audit context, not an edit mandate", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-supervisor-audit-summary-"));
     try {
