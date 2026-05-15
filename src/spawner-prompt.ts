@@ -91,7 +91,24 @@ function deriveStoryBranch(input: string, runId: string, storyId?: string): stri
   return runPrefix && normalizedStoryId ? `${runPrefix}-${normalizedStoryId}` : "";
 }
 
-function deriveStoryWorkdir(input: string, fallbackWorkdir: string): string {
+function discoverStoryWorktreeByBranch(wfId: string, branch: string): string {
+  const normalizedBranch = String(branch || "").trim().toLowerCase();
+  if (!normalizedBranch || normalizedBranch.includes(path.sep) || normalizedBranch.includes("..")) return "";
+  const agentsRoot = path.join(os.homedir(), ".openclaw", "workspaces", "workflows", wfId, "agents");
+  try {
+    for (const agentDir of fs.readdirSync(agentsRoot, { withFileTypes: true })) {
+      if (!agentDir.isDirectory()) continue;
+      const candidate = path.join(agentsRoot, agentDir.name, "story-worktrees", normalizedBranch);
+      const existing = existingDirectory(candidate);
+      if (existing) return existing;
+    }
+  } catch {
+    // Workflow worktree roots are optional; fall back to explicit handoff paths.
+  }
+  return "";
+}
+
+function deriveStoryWorkdir(input: string, fallbackWorkdir: string, wfId: string, storyBranch: string): string {
   const explicit = firstMeaningfulLineValue(input, "STORY_WORKDIR")
     || firstMeaningfulLineValue(input, "story_workdir")
     || firstMeaningfulLineValue(input, "VERIFY_WORKDIR")
@@ -103,6 +120,9 @@ function deriveStoryWorkdir(input: string, fallbackWorkdir: string): string {
 
   const mentioned = extractBacktickedValue(input, /`?([^\s"'<>`]+\/story-worktrees\/[A-Za-z0-9._-]+)`?/);
   if (mentioned) return existingDirectory(mentioned);
+
+  const discovered = discoverStoryWorktreeByBranch(wfId, storyBranch);
+  if (discovered) return discovered;
 
   return String(fallbackWorkdir || "").includes(`${path.sep}story-worktrees${path.sep}`)
     ? existingDirectory(fallbackWorkdir)
@@ -416,7 +436,8 @@ function extractCurrentStory(input: string): { storyId: string; storyTitle: stri
     2600,
   );
   const source = currentStory || input;
-  const storyMatch = source.match(/\bStory\s+([A-Z]+-\d+):\s*([^\n]+)/i);
+  const storyMatch = source.match(/\bStory\s+([A-Z]+-\d+):\s*([^\n]+)/i)
+    || source.match(/^\s*CURRENT_STORY:\s*([A-Z]+-\d+)\s+([^\n]+)/im);
   const acceptanceCriteria = sliceSection(
     source,
     /^\s*Acceptance Criteria:\s*/m,
@@ -451,13 +472,14 @@ export function buildClaimSummary(params: {
     || params.workdir
     || lineValue(input, "WORKDIR")
     || defaultAgentScratch;
-  const storyWorkdir = deriveStoryWorkdir(input, rawWorkdir);
+  const storyId = params.storyId || currentStory.storyId;
+  const storyBranch = deriveStoryBranch(input, params.runId, storyId);
+  const storyWorkdir = deriveStoryWorkdir(input, rawWorkdir, params.wfId, storyBranch);
   const workdir = storyWorkdir || rawWorkdir;
   const repo = firstMeaningfulLineValue(input, "MAIN_REPO")
     || firstMeaningfulLineValue(input, "REPO")
     || params.repo
     || workdir;
-  const storyId = params.storyId || currentStory.storyId;
   const storyScreensRaw = lineValue(input, "STORY_SCREENS");
   const task = lineValue(input, "TASK") || claimTaskPreview(params.input);
   const scopeFiles = extractScopeFiles(input, workdir);
@@ -505,7 +527,7 @@ export function buildClaimSummary(params: {
     mainRepo: repo,
     storyWorkdir,
     verifyWorkdir: storyWorkdir || workdir,
-    storyBranch: deriveStoryBranch(input, params.runId, storyId),
+    storyBranch,
     runBranch: lineValue(input, "RUN_BRANCH"),
     buildCommand: resolvedCommand(input, "BUILD_CMD", [workdir, repo], "build", "true"),
     testCommand: resolvedCommand(input, "TEST_CMD", [workdir, repo], "test", "true"),

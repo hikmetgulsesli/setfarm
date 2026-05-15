@@ -510,6 +510,59 @@ describe("spawner prompt bootstrap", () => {
     }
   });
 
+  it("discovers a story-scoped supervisor worktree from CURRENT_STORY and run id", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-supervisor-story-workdir-"));
+    const workflowId = `feature-dev-summary-test-${process.pid}-${Date.now()}`;
+    const branch = "33d23f10-us-001";
+    const workflowRoot = path.join(os.homedir(), ".openclaw", "workspaces", "workflows", workflowId);
+    try {
+      const mainRepo = path.join(tmp, "main-repo");
+      const storyWorkdir = path.join(workflowRoot, "agents", "developer", "story-worktrees", branch);
+      fs.mkdirSync(mainRepo, { recursive: true });
+      fs.mkdirSync(storyWorkdir, { recursive: true });
+      fs.writeFileSync(path.join(storyWorkdir, "package.json"), JSON.stringify({
+        scripts: {
+          build: "tsc && vite build",
+          test: "vitest",
+          "test:run": "vitest run",
+        },
+      }));
+
+      const summary = buildClaimSummary({
+        wfId: workflowId,
+        role: "supervisor",
+        claimFile: "/tmp/claim.json",
+        outputFile: "/tmp/output.txt",
+        bootstrapFile: "/tmp/bootstrap.sh",
+        stepId: "step-123",
+        runId: "33d23f10-f68c-4c75-a9e9-4a48996d075b",
+        workdir: mainRepo,
+        repo: mainRepo,
+        input: [
+          "TASK: Project: supervisor story routing sensor",
+          `MAIN_REPO: ${mainRepo}`,
+          `REPO: ${mainRepo}`,
+          "BUILD_CMD: true",
+          "TEST_CMD: true",
+          "CURRENT_STORY: US-001 Breakout arcade - game engine, state and test bridge",
+        ].join("\n"),
+      });
+
+      assert.equal(summary.storyId, "US-001");
+      assert.equal(summary.storyTitle, "Breakout arcade - game engine, state and test bridge");
+      assert.equal(summary.storyBranch, branch);
+      assert.equal(summary.workdir, storyWorkdir);
+      assert.equal(summary.storyWorkdir, storyWorkdir);
+      assert.equal(summary.verifyWorkdir, storyWorkdir);
+      assert.equal(summary.repo, mainRepo);
+      assert.equal(summary.buildCommand, "npm run build");
+      assert.equal(summary.testCommand, "npm run test:run");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+      fs.rmSync(workflowRoot, { recursive: true, force: true });
+    }
+  });
+
   it("derives storyBranch from authoritative handoff instead of output-format placeholders", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-branch-"));
     try {
