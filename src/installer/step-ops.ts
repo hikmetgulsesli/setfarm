@@ -2753,6 +2753,26 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
                  AND verify_done_st.pr_url <> (r.context::jsonb ->> 'verify_pending_pr_url')
              )
            )
+           AND NOT (
+             s.step_id = COALESCE((
+               SELECT NULLIF(verify_loop.loop_config::jsonb ->> 'verifyStep', '')
+               FROM steps verify_loop
+               WHERE verify_loop.run_id = s.run_id
+                 AND verify_loop.type = 'loop'
+                 AND verify_loop.step_id = 'implement'
+                 AND COALESCE(verify_loop.loop_config::jsonb, '{}'::jsonb) @> '{"superviseEach":true}'::jsonb
+               LIMIT 1
+             ), 'verify')
+             AND EXISTS (
+               SELECT 1 FROM stories verify_wait_st
+               WHERE verify_wait_st.run_id = s.run_id
+                 AND verify_wait_st.status = 'done'
+                 AND (
+                   COALESCE(r.context::jsonb ->> 'supervised_story_ids', '') = ''
+                   OR POSITION(',' || verify_wait_st.story_id || ',' IN ',' || COALESCE(r.context::jsonb ->> 'supervised_story_ids', '') || ',') = 0
+                 )
+             )
+           )
            AND NOT EXISTS (
              SELECT 1 FROM steps prev
 	             WHERE prev.run_id = s.run_id

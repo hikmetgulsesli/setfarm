@@ -165,6 +165,15 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(source, /fix_st\.story_id LIKE 'QA-FIX-%'/);
   });
 
+  it("blocks verify_each reviewer claims until supervise_each has passed the done story", () => {
+    const source = claimStepSelectionSource();
+    assert.match(source, /verify_loop\.loop_config::jsonb ->> 'verifyStep'/);
+    assert.match(source, /"superviseEach":true/);
+    assert.match(source, /verify_wait_st\.status = 'done'/);
+    assert.match(source, /r\.context::jsonb ->> 'supervised_story_ids'/);
+    assert.match(source, /POSITION\(',' \|\| verify_wait_st\.story_id \|\| ',' IN ',' \|\| COALESCE\(r\.context::jsonb ->> 'supervised_story_ids'/);
+  });
+
   it("runs verify preflight against the PR branch diff, not story branch against itself", () => {
     const fullSource = stepOpsSource();
     assert.match(fullSource, /execFileSync\("git", \["fetch", "--prune", "origin", "main", analysisBranch\]/);
