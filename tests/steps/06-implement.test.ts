@@ -612,6 +612,7 @@ describe("06-implement step module", () => {
     assert.equal(sourceExposesWindowApp("window.app = { score: 10 };\n"), true);
     assert.equal(sourceExposesWindowApp("globalThis['app'] = bridge;\n"), true);
     assert.equal(sourceExposesWindowApp("(window as any).app = bridge;\n"), true);
+    assert.equal(sourceExposesWindowApp("(window as unknown as Record<string, unknown>).app = bridge;\n"), true);
     assert.equal(sourceExposesWindowApp("(globalThis as any)['app'] = bridge;\n"), true);
     assert.equal(sourceExposesWindowApp("window.game = bridge;\n"), false);
     assert.equal(sourceExposesWindowApp("declare global { interface Window { app: unknown } }\n"), false);

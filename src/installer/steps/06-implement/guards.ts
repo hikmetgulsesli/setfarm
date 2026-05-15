@@ -155,7 +155,7 @@ export function sourceExposesWindowApp(source: string): boolean {
   const clean = stripSourceComments(source);
   return (
     /\b(?:window|globalThis)\s*(?:\.\s*app|\[\s*["']app["']\s*\])\s*=/.test(clean) ||
-    /\(\s*(?:window|globalThis)\s+as\s+any\s*\)\s*(?:\.\s*app|\[\s*["']app["']\s*\])\s*=/.test(clean)
+    /\(\s*(?:window|globalThis)(?:\s+as\s+[^)]+)+\)\s*(?:\.\s*app|\[\s*["']app["']\s*\])\s*=/.test(clean)
   );
 }
 
