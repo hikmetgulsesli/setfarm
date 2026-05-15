@@ -2776,6 +2776,24 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
 	                 AND NOT EXISTS (SELECT 1 FROM stories active_st WHERE active_st.run_id = s.run_id AND active_st.status IN ('pending', 'running') AND active_st.retry_count > 0)
 	                 AND NOT EXISTS (SELECT 1 FROM stories fix_st WHERE fix_st.run_id = s.run_id AND fix_st.story_id LIKE 'QA-FIX-%' AND fix_st.status IN ('pending', 'running'))
 	               )
+	               AND NOT (
+	                 s.step_id = COALESCE((
+	                   SELECT NULLIF(sup_loop.loop_config::jsonb ->> 'superviseStep', '')
+	                   FROM steps sup_loop
+	                   WHERE sup_loop.run_id = s.run_id
+	                     AND sup_loop.type = 'loop'
+	                     AND sup_loop.step_id = 'implement'
+	                     AND COALESCE(sup_loop.loop_config::jsonb, '{}'::jsonb) @> '{"superviseEach":true}'::jsonb
+	                   LIMIT 1
+	                 ), 'supervise')
+	                 AND EXISTS (
+	                   SELECT 1 FROM stories sup_done_st
+	                   WHERE sup_done_st.run_id = s.run_id
+	                     AND sup_done_st.status = 'done'
+	                 )
+	                 AND NOT EXISTS (SELECT 1 FROM stories active_st WHERE active_st.run_id = s.run_id AND active_st.status IN ('pending', 'running') AND active_st.retry_count > 0)
+	                 AND NOT EXISTS (SELECT 1 FROM stories fix_st WHERE fix_st.run_id = s.run_id AND fix_st.story_id LIKE 'QA-FIX-%' AND fix_st.status IN ('pending', 'running'))
+	               )
 	           )
          ORDER BY
            CASE

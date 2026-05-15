@@ -156,6 +156,15 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(fullSource, /LIMIT 1`, \[agentId, callerGatewayAgent \?\? null, PR_REVIEW_DELAY_MS\]/);
   });
 
+  it("allows supervise_each supervisor claims to bypass verify_each ordering delay", () => {
+    const source = previousStepSelectionBypassSource(claimStepSelectionSource());
+    assert.match(source, /"superviseEach":true/);
+    assert.match(source, /sup_loop\.loop_config::jsonb ->> 'superviseStep'/);
+    assert.match(source, /sup_done_st\.status = 'done'/);
+    assert.match(source, /s\.step_id = COALESCE/);
+    assert.match(source, /fix_st\.story_id LIKE 'QA-FIX-%'/);
+  });
+
   it("runs verify preflight against the PR branch diff, not story branch against itself", () => {
     const fullSource = stepOpsSource();
     assert.match(fullSource, /execFileSync\("git", \["fetch", "--prune", "origin", "main", analysisBranch\]/);
