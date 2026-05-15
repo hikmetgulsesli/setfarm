@@ -543,7 +543,7 @@ describe("spawner gateway recovery wiring", () => {
 
     for (const block of [requeueOpen, requeueOrphan]) {
       assert.match(block, /abandoned_count = COALESCE\(abandoned_count, 0\) \+ 1/);
-      assert.match(block, /retry_count = retry_count \+ 1/);
+      assert.doesNotMatch(block, /retry_count = retry_count \+ 1/);
       assert.match(block, /output = \$2/);
       assert.match(block, /\[.*diagnostic.*\]/s);
     }
