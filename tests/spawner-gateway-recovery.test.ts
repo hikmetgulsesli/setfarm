@@ -324,6 +324,8 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /function shellCommandSegments/);
     assert.match(source, /function isGeneratedScreenContentReadSegment/);
     assert.match(source, /function stripGeneratedScreenSafeMetadataRefs/);
+    assert.match(source, /function stripExplicitGeneratedScreenComponentRefs/);
+    assert.match(source, /function hasBroadGeneratedScreenSourceRef/);
     assert.match(source, /\bhead\b\|tail\|less\|bat\|rg\|grep/);
     assert.match(source, /readFileSync\|readdirSync\|createReadStream/);
     const screenExtractor = source.slice(
@@ -334,6 +336,9 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(screenExtractor, /const unsafeSegment = stripGeneratedScreenSafeMetadataRefs\(segment\)/);
     assert.match(screenExtractor, /src\\\/screens\(\?:\\\/\|\\s\|\$\)\/\.test\(unsafeSegment\)/);
     assert.doesNotMatch(screenExtractor, /src\\\/screens\(\?:\\\/\|\\s\|\$\)\/\.test\(segment\)/);
+    assert.match(screenExtractor, /hasBroadGeneratedScreenSourceRef\(unsafeSegment\)/);
+    assert.match(source, /stripExplicitGeneratedScreenComponentRefs\(text\)/);
+    assert.match(screenExtractor, /\[\^'"\`\\s;\|&\*\?\[\\\]\]\+\\\.tsx/);
     assert.match(source, /src\/screens\/\*\.tsx/);
     assert.doesNotMatch(source, /allowed\.size === 0\)\s*return \{ detected: false/);
     assert.match(source, /GENERATED_SCREEN_SHARED_READ/);

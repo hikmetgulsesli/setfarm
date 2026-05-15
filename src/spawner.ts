@@ -761,6 +761,18 @@ function stripGeneratedScreenSafeMetadataRefs(text: string): string {
   return text.replace(/src\/screens\/(?:SCREEN_INDEX\.json|index\.ts)\b/g, "");
 }
 
+function stripExplicitGeneratedScreenComponentRefs(text: string): string {
+  return text.replace(
+    /(?:^|[\s"'`=])((?:\.\/|\/)?(?:[\w.-]+\/)*src\/screens\/[^'"`\s;|&*?[\]]+\.tsx)\b/g,
+    " ",
+  );
+}
+
+function hasBroadGeneratedScreenSourceRef(text: string): boolean {
+  const withoutExplicitComponentRefs = stripExplicitGeneratedScreenComponentRefs(text);
+  return /(?:^|[\s"'`=])(?:\.\/|\/)?(?:[\w.-]+\/)*src\/screens(?:\/|\s|$)/.test(withoutExplicitComponentRefs);
+}
+
 function isGeneratedScreenContentReadSegment(segment: string): boolean {
   const unsafeSegment = stripGeneratedScreenSafeMetadataRefs(segment);
   if (!/\bsrc\/screens(?:\/|\s|$)/.test(unsafeSegment)) return false;
@@ -773,10 +785,10 @@ function extractGeneratedScreenReadsFromCommand(workdir: string, command: string
   for (const segment of shellCommandSegments(command)) {
     if (!isGeneratedScreenContentReadSegment(segment)) continue;
     const unsafeSegment = stripGeneratedScreenSafeMetadataRefs(segment);
-    if (/(?:^|[\s"'`=])(?:\.\/)?src\/screens(?:\/|\s|$)/.test(unsafeSegment)) {
+    if (hasBroadGeneratedScreenSourceRef(unsafeSegment)) {
       reads.push({ path: "src/screens/*.tsx", via: "exec" });
     }
-    for (const match of segment.matchAll(/(?:^|[\s"'`=])((?:\.\/|\/)?(?:[\w.-]+\/)*src\/screens\/[^'"`\s;|&]+\.tsx)/g)) {
+    for (const match of segment.matchAll(/(?:^|[\s"'`=])((?:\.\/|\/)?(?:[\w.-]+\/)*src\/screens\/[^'"`\s;|&*?[\]]+\.tsx)\b/g)) {
       const relativePath = normalizeWorktreeRelativePath(workdir, match[1] || "");
       if (isGeneratedScreenComponentPath(relativePath)) reads.push({ path: relativePath, via: "exec" });
     }
