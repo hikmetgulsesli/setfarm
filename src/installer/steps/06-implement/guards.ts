@@ -330,6 +330,8 @@ export function checkQaFixSmokeGate(storyId: string, storyTitle: string, workdir
 type JsxBlock = { attrs: string; inner: string; index: number };
 
 const ICON_ALIASES: Record<string, string[]> = {
+  arrow_drop_down: ["ChevronDown", "ArrowDown", "CaretDown", "arrow_drop_down"],
+  arrow_drop_up: ["ChevronUp", "ArrowUp", "CaretUp", "arrow_drop_up"],
   emoji_events: ["Trophy", "Award", "Medal", "emoji_events"],
   help: ["HelpCircle", "CircleHelp", "help"],
   keyboard_arrow_down: ["ArrowDown", "ChevronDown", "keyboard_arrow_down"],
@@ -339,10 +341,13 @@ const ICON_ALIASES: Record<string, string[]> = {
   logout: ["LogOut", "LogOutIcon", "logout"],
   memory: ["Cpu", "MemoryStick", "memory"],
   menu: ["Menu", "menu"],
+  menu_book: ["BookOpen", "Book", "NotebookText", "menu_book"],
   play_arrow: ["Play", "play_arrow"],
+  play_circle: ["CirclePlay", "PlayCircle", "Play", "play_circle"],
   power_settings_new: ["Power", "power_settings_new"],
   refresh: ["RefreshCw", "RefreshCcw", "RotateCw", "refresh"],
   restart_alt: ["RefreshCw", "RefreshCcw", "RotateCcw", "restart_alt"],
+  sports_esports: ["Gamepad2", "Gamepad", "Joystick", "sports_esports"],
   settings: ["Settings", "settings"],
   terminal: ["Terminal", "terminal"],
 };
@@ -406,6 +411,14 @@ function blockHasIcon(block: JsxBlock, icon: string): boolean {
     if (compact && normalized.includes(compact)) return true;
     return new RegExp(`\\b${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(raw);
   });
+}
+
+function iconExpectationHint(icon: string): string {
+  const expected = String(icon || "").trim();
+  const aliases = (ICON_ALIASES[expected] || [])
+    .filter((alias) => alias && alias !== expected)
+    .slice(0, 4);
+  return aliases.length > 0 ? ` (accepted SVG aliases: ${aliases.join(", ")})` : "";
 }
 
 function blockMatchesControl(block: JsxBlock, control: any): boolean {
@@ -498,7 +511,7 @@ export function findDesignDomImplementationIssues(workdir: string, scopeFiles: s
           issues.push(`${file}:${lineForIndex(source, match.index)} DESIGN_DOM button "${label || icon}" is static or lacks a handler/disabled state`);
         }
         if (icon && !blockHasIcon(match, icon)) {
-          issues.push(`${file}:${lineForIndex(source, match.index)} DESIGN_DOM button "${label || icon}" is missing expected icon "${icon}"`);
+          issues.push(`${file}:${lineForIndex(source, match.index)} DESIGN_DOM button "${label || icon}" is missing expected icon "${icon}"${iconExpectationHint(icon)}`);
         }
       }
       if (issues.length >= 12) return issues;
@@ -518,7 +531,7 @@ export function findDesignDomImplementationIssues(workdir: string, scopeFiles: s
           issues.push(`${file}:${lineForIndex(source, match.index)} active DESIGN_DOM link "${label || expectedHref}" uses a dead href without aria-current/aria-disabled or handler`);
         }
         if (String(nav?.icon || "").trim() && !blockHasIcon(match, String(nav.icon))) {
-          issues.push(`${file}:${lineForIndex(source, match.index)} DESIGN_DOM link "${label || expectedHref}" is missing expected icon "${nav.icon}"`);
+          issues.push(`${file}:${lineForIndex(source, match.index)} DESIGN_DOM link "${label || expectedHref}" is missing expected icon "${nav.icon}"${iconExpectationHint(String(nav.icon))}`);
         }
       }
       if (issues.length >= 12) return issues;

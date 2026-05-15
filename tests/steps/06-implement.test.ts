@@ -601,6 +601,52 @@ describe("06-implement step module", () => {
     }
   });
 
+  it("accepts Lucide SVG aliases for common Material DESIGN_DOM icon names", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-design-dom-icon-aliases-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "stitch"), { recursive: true });
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { screenId: "main-1", title: "Main Menu", file: "src/screens/MainMenu.tsx" },
+      ]));
+      fs.writeFileSync(path.join(tmp, "stitch/DESIGN_DOM.json"), JSON.stringify({
+        screens: [
+          {
+            screenId: "main-1",
+            title: "Main Menu",
+            buttons: [
+              { label: "Start New Game", icon: "sports_esports", action: "start" },
+              { label: "Resume", icon: "play_circle", action: "resume" },
+              { label: "How to Play", icon: "menu_book", action: "help" },
+              { icon: "arrow_drop_up", action: "up" },
+              { icon: "arrow_drop_down", action: "down" },
+            ],
+            navLinks: [],
+          },
+        ],
+      }));
+      fs.writeFileSync(path.join(tmp, "src/screens/MainMenu.tsx"), [
+        "import { BookOpen, ChevronDown, ChevronUp, CirclePlay, Gamepad2 } from 'lucide-react';",
+        "export function MainMenu({ actions }: any) {",
+        "  return <main>",
+        "    <button type=\"button\" onClick={actions?.start}><Gamepad2 />Start New Game</button>",
+        "    <button type=\"button\" onClick={actions?.resume}><CirclePlay />Resume</button>",
+        "    <button type=\"button\" onClick={actions?.help}><BookOpen />How to Play</button>",
+        "    <button type=\"button\" onClick={actions?.up}><ChevronUp aria-label=\"up\" /></button>",
+        "    <button type=\"button\" onClick={actions?.down}><ChevronDown aria-label=\"down\" /></button>",
+        "  </main>;",
+        "}",
+        "",
+      ].join("\n"));
+
+      const issues = findDesignDomImplementationIssues(tmp, ["src/screens/MainMenu.tsx"]);
+
+      assert.deepEqual(issues, []);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("allows explicitly inert DESIGN_DOM hash anchors when href and aria state are preserved", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-design-dom-anchor-"));
     try {

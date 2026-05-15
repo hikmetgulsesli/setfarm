@@ -384,6 +384,46 @@ describe("spawner prompt bootstrap", () => {
     }
   });
 
+  it("elevates DESIGN_DOM mismatches into semantic-fix manager discipline", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-design-dom-summary-"));
+    try {
+      fs.writeFileSync(path.join(tmp, ".story-scope-files"), "src/screens/MainMenu.tsx\nsrc/screens/GameBoard.tsx\n");
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: "/tmp/claim.json",
+        outputFile: "/tmp/output.txt",
+        bootstrapFile: "/tmp/bootstrap.sh",
+        stepId: "step-123",
+        runId: "run-123",
+        workdir: tmp,
+        repo: tmp,
+        storyId: "US-002",
+        input: [
+          "TASK: Project: Pong arcade",
+          `WORKDIR: ${tmp}`,
+          "CURRENT STORY: Story US-002: Main Menu and Game Board",
+          "",
+          "## Previous Failure / Retry Feedback",
+          "DESIGN_DOM_IMPLEMENTATION_MISMATCH: Story US-002 reported STATUS: done but scoped screen code does not satisfy DESIGN_DOM controls.",
+          "- src/screens/MainMenu.tsx:58 DESIGN_DOM button \"Start New Game\" is missing expected icon \"sports_esports\"",
+          "- src/screens/GameBoard.tsx: missing DESIGN_DOM button \"arrow_drop_up\" on Game Board",
+          "",
+          "## Current Story",
+        ].join("\n"),
+      });
+
+      assert.equal(summary.failureCategory, "DESIGN_DOM_IMPLEMENTATION_MISMATCH");
+      assert.equal((summary.retryFeedback as any).mode, "fix");
+      assert.equal((summary.retryDiscipline as any).mode, "semantic-fix");
+      assert.match(String((summary.retryDiscipline as any).instruction), /DESIGN_DOM controls\/icons\/labels\/action IDs/);
+      assert.match(String((summary.retryDiscipline as any).instruction), /Lucide aliases/);
+      assert.doesNotMatch(String((summary.retryDiscipline as any).instruction), /first edit/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("does not turn an empty previous-failure block into retry feedback", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-empty-previous-failure-summary-"));
     try {

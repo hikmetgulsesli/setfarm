@@ -70,6 +70,7 @@ describe("error taxonomy", () => {
     assert.equal(designDom.category, "DESIGN_DOM_IMPLEMENTATION_MISMATCH");
     assert.match(designDom.suggestion, /DESIGN_DOM\/UI_CONTRACT/);
     assert.match(designDom.suggestion, /controls, icons, labels, and action IDs/);
+    assert.match(designDom.suggestion, /inline SVG\/Lucide aliases/);
     assert.match(designDom.suggestion, /Do not read raw Stitch HTML/);
   });
 
