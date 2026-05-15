@@ -61,6 +61,16 @@ describe("error taxonomy", () => {
       "GUARDRAIL [product-supervisor:implement]: IMPLEMENT_NO_DELTA: US-001 reported done but supervisor found no changed files.",
     );
     assert.equal(product.category, "PRODUCT_SUPERVISOR_BLOCKED");
+
+    const designDom = classifyError([
+      "DESIGN_DOM_IMPLEMENTATION_MISMATCH: Story US-002 (Pong arcade - Main Menu and Game Board screens) reported STATUS: done but scoped screen code does not satisfy DESIGN_DOM controls.",
+      "- src/screens/MainMenu.tsx:65 DESIGN_DOM button \"Start New Game\" is missing expected icon \"sports_esports\"",
+      "- src/screens/GameBoard.tsx: missing DESIGN_DOM button \"arrow_drop_up\" on Game Board",
+    ].join("\n"));
+    assert.equal(designDom.category, "DESIGN_DOM_IMPLEMENTATION_MISMATCH");
+    assert.match(designDom.suggestion, /DESIGN_DOM\/UI_CONTRACT/);
+    assert.match(designDom.suggestion, /controls, icons, labels, and action IDs/);
+    assert.match(designDom.suggestion, /Do not read raw Stitch HTML/);
   });
 
   it("classifies model/session infra failures instead of UNKNOWN", () => {
