@@ -2,6 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
 import { resolveSetfarmCli } from "./installer/paths.js";
+import { classifyError } from "./installer/error-taxonomy.js";
 
 function shellQuote(value: string): string {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
@@ -342,6 +343,12 @@ function retryDisciplineForFailure(
   previousFailure: string,
 ): Record<string, unknown> | undefined {
   const signal = `${failureCategory}\n${failureSuggestion}\n${previousFailure}`;
+  if (/\bRUNTIME_BRIDGE_MISSING\b/i.test(signal)) {
+    return {
+      mode: "semantic-fix",
+      instruction: "Hard manager retry discipline: before adding or polishing unrelated features, expose the required window.app/globalThis.app bridge from live runtime state in a scoped React effect or equivalent update point, then run build/tests. Do not report STATUS: done until the blocker is implemented in source.",
+    };
+  }
   if (!/(AGENT_STALL|IMPLEMENT_NO_DELTA_STALL|CLAIM_SUMMARY_IGNORED|CLAIM_PARSE_LOOP|GENERATED_SCREEN_SHARED_READ|RAW_STITCH_CONTEXT_READ|IRRELEVANT_REFERENCE_CONTEXT|FULL_REFERENCE_CONTEXT_READ|SCOPE_WRITE_VIOLATION)/i.test(signal)) {
     return undefined;
   }
@@ -350,6 +357,21 @@ function retryDisciplineForFailure(
     maxPreDeltaContextReads: 10,
     instruction: "Hard manager retry discipline: after bootstrap and the claim summary, inspect only the owned scope files plus safe metadata needed for the first edit, then make a small scoped source delta before broad analysis/build/test. Do not read raw stitch files, forbidden generated screens, full claims, or unrelated shared source to re-learn the project.",
   };
+}
+
+function meaningfulFailureCategory(value: string): string {
+  const trimmed = value.trim();
+  return trimmed && !/^UNKNOWN$/i.test(trimmed) ? trimmed : "";
+}
+
+function meaningfulFailureSuggestion(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed || /^Unexpected error\b/i.test(trimmed)) return "";
+  return trimmed;
+}
+
+function compactFailureLine(value: string, limit = 1200): string {
+  return value.replace(/\s+/g, " ").trim().slice(0, limit);
 }
 
 function extractCurrentStory(input: string): { storyId: string; storyTitle: string; currentStory: string; acceptanceCriteria: string } {
@@ -420,8 +442,16 @@ export function buildClaimSummary(params: {
     [/^\s*##\s*CURRENT STORY/im, /^\s*CURRENT STORY/im, /^\s*IMPLEMENTATION PHASE/im, /^\s*FILE SKELETONS/im],
     2200,
   );
-  const failureCategory = lineValue(previousFailure, "Failure category") || lineValue(input, "Failure category");
-  const failureSuggestion = lineValue(previousFailure, "Suggested response") || lineValue(input, "Suggested response");
+  const explicitFailureCategory = meaningfulFailureCategory(
+    lineValue(previousFailure, "Failure category") || lineValue(input, "Failure category"),
+  );
+  const explicitFailureSuggestion = meaningfulFailureSuggestion(
+    lineValue(previousFailure, "Suggested response") || lineValue(input, "Suggested response"),
+  );
+  const classifiedFailure = classifyError([previousFailure, explicitFailureCategory, explicitFailureSuggestion].filter(Boolean).join("\n"));
+  const failureCategory = explicitFailureCategory || (previousFailure ? classifiedFailure.category : "");
+  const failureSuggestion = explicitFailureSuggestion || (previousFailure ? classifiedFailure.suggestion : "");
+  const retryDiscipline = retryDisciplineForFailure(failureCategory, failureSuggestion, previousFailure);
   return {
     schema: "setfarm.claim-summary.v1",
     workflow: params.wfId,
@@ -478,7 +508,13 @@ export function buildClaimSummary(params: {
     previousFailure,
     failureCategory,
     failureSuggestion,
-    retryDiscipline: retryDisciplineForFailure(failureCategory, failureSuggestion, previousFailure),
+    retryDiscipline,
+    retryFeedback: previousFailure ? {
+      category: failureCategory,
+      suggestion: failureSuggestion,
+      blocker: compactFailureLine(previousFailure),
+      discipline: retryDiscipline,
+    } : undefined,
     supervisorMemory,
     handoff: {
       claimFile: params.claimFile,
@@ -520,7 +556,7 @@ esac
 
 printf 'STEP_ID=%s\\nWORKDIR=%s\\nCLAIM_SUMMARY_FILE=%s\\n' "$STEP_ID" "$(pwd)" "$CLAIM_SUMMARY_FILE"
 if [ -n "$CLAIM_SUMMARY_FILE" ] && [ -f "$CLAIM_SUMMARY_FILE" ]; then
-  node -e 'const fs=require("fs"); const s=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const lines=[]; if (s.storyId || s.storyTitle) lines.push(("STORY=" + (s.storyId || "") + " " + (s.storyTitle || "")).trim()); if (s.storyBranch) lines.push("STORY_BRANCH=" + String(s.storyBranch)); if (s.storyWorkdir) lines.push("STORY_WORKDIR=" + String(s.storyWorkdir)); if (s.verifyWorkdir) lines.push("VERIFY_WORKDIR=" + String(s.verifyWorkdir)); if (s.repo) lines.push("MAIN_REPO=" + String(s.repo)); if (Array.isArray(s.scopeFiles)) lines.push("SCOPE_FILES=" + s.scopeFiles.join(", ")); if (s.gitPolicy && s.gitPolicy.summary) lines.push("GIT_POLICY=" + s.gitPolicy.summary); if (Array.isArray(s.gitPolicy && s.gitPolicy.forbiddenForAgent) && s.gitPolicy.forbiddenForAgent.length) lines.push("FORBIDDEN_GIT=" + s.gitPolicy.forbiddenForAgent.join(", ")); const sc=s.screenUsageContract||{}; if (sc.summary) lines.push("SCREEN_USAGE=" + String(sc.summary).slice(0, 500)); if (Array.isArray(sc.components)) for (const c of sc.components.slice(0, 12)) lines.push("SCREEN_COMPONENT=" + [c.componentName, c.file, c.sourceRead, "actions=" + (Array.isArray(c.actionIds) ? c.actionIds.join("|") : "")].filter(Boolean).join(" ")); if (s.failureCategory) lines.push("FAILURE_CATEGORY=" + String(s.failureCategory).slice(0, 160)); if (s.failureSuggestion) lines.push("FAILURE_SUGGESTION=" + String(s.failureSuggestion).slice(0, 240)); if (s.retryDiscipline && s.retryDiscipline.mode) lines.push("RETRY_DISCIPLINE=" + String(s.retryDiscipline.mode) + ": " + String(s.retryDiscipline.instruction || "").slice(0, 240)); if (s.previousFailure) lines.push("PREVIOUS_FAILURE=present " + String(s.previousFailure).length + " chars"); if (s.generatedScreenPolicy && s.generatedScreenPolicy.summary) lines.push("GENERATED_SCREEN_POLICY=" + s.generatedScreenPolicy.summary); const dc=s.designContracts||{}; if (Array.isArray(dc.screenIndex)) lines.push("SCREEN_INDEX_CONTRACTS=" + dc.screenIndex.length); if (Array.isArray(dc.uiContract)) lines.push("UI_CONTRACTS=" + dc.uiContract.length); if (dc.componentRegistry) lines.push("COMPONENT_REGISTRY=present " + String(dc.componentRegistry).length + " chars"); if (Array.isArray(dc.componentTypes)) lines.push("COMPONENT_TYPE_CONTRACTS=" + dc.componentTypes.length); if (s.supervisorMemory) lines.push("SUPERVISOR_MEMORY=present " + String(s.supervisorMemory).length + " chars"); if (s.task) lines.push("TASK=" + String(s.task).slice(0, 500)); process.stdout.write(lines.join("\\n") + "\\n");' "$CLAIM_SUMMARY_FILE"
+  node -e 'const fs=require("fs"); const s=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const lines=[]; if (s.storyId || s.storyTitle) lines.push(("STORY=" + (s.storyId || "") + " " + (s.storyTitle || "")).trim()); if (s.storyBranch) lines.push("STORY_BRANCH=" + String(s.storyBranch)); if (s.storyWorkdir) lines.push("STORY_WORKDIR=" + String(s.storyWorkdir)); if (s.verifyWorkdir) lines.push("VERIFY_WORKDIR=" + String(s.verifyWorkdir)); if (s.repo) lines.push("MAIN_REPO=" + String(s.repo)); if (Array.isArray(s.scopeFiles)) lines.push("SCOPE_FILES=" + s.scopeFiles.join(", ")); if (s.gitPolicy && s.gitPolicy.summary) lines.push("GIT_POLICY=" + s.gitPolicy.summary); if (Array.isArray(s.gitPolicy && s.gitPolicy.forbiddenForAgent) && s.gitPolicy.forbiddenForAgent.length) lines.push("FORBIDDEN_GIT=" + s.gitPolicy.forbiddenForAgent.join(", ")); const sc=s.screenUsageContract||{}; if (sc.summary) lines.push("SCREEN_USAGE=" + String(sc.summary).slice(0, 500)); if (Array.isArray(sc.components)) for (const c of sc.components.slice(0, 12)) lines.push("SCREEN_COMPONENT=" + [c.componentName, c.file, c.sourceRead, "actions=" + (Array.isArray(c.actionIds) ? c.actionIds.join("|") : "")].filter(Boolean).join(" ")); if (s.failureCategory) lines.push("FAILURE_CATEGORY=" + String(s.failureCategory).slice(0, 160)); if (s.failureSuggestion) lines.push("FAILURE_SUGGESTION=" + String(s.failureSuggestion).slice(0, 240)); const rf=s.retryFeedback||{}; if (rf.blocker) lines.push("RETRY_BLOCKER=" + String(rf.blocker).slice(0, 700)); if (rf.suggestion) lines.push("RETRY_ACTION=" + String(rf.suggestion).slice(0, 300)); if (s.retryDiscipline && s.retryDiscipline.mode) lines.push("RETRY_DISCIPLINE=" + String(s.retryDiscipline.mode) + ": " + String(s.retryDiscipline.instruction || "").slice(0, 240)); if (s.previousFailure) lines.push("PREVIOUS_FAILURE=present " + String(s.previousFailure).length + " chars"); if (s.generatedScreenPolicy && s.generatedScreenPolicy.summary) lines.push("GENERATED_SCREEN_POLICY=" + s.generatedScreenPolicy.summary); const dc=s.designContracts||{}; if (Array.isArray(dc.screenIndex)) lines.push("SCREEN_INDEX_CONTRACTS=" + dc.screenIndex.length); if (Array.isArray(dc.uiContract)) lines.push("UI_CONTRACTS=" + dc.uiContract.length); if (dc.componentRegistry) lines.push("COMPONENT_REGISTRY=present " + String(dc.componentRegistry).length + " chars"); if (Array.isArray(dc.componentTypes)) lines.push("COMPONENT_TYPE_CONTRACTS=" + dc.componentTypes.length); if (s.supervisorMemory) lines.push("SUPERVISOR_MEMORY=present " + String(s.supervisorMemory).length + " chars"); if (s.task) lines.push("TASK=" + String(s.task).slice(0, 500)); process.stdout.write(lines.join("\\n") + "\\n");' "$CLAIM_SUMMARY_FILE"
 fi
 printf '%s' "$TASK_PREVIEW" | head -c 1200
 echo
@@ -548,8 +584,8 @@ BOOTSTRAP_FILE=${params.bootstrapFile}
 First exec command:
 bash ${shellQuote(params.bootstrapFile)}
 
-Do ${params.wfId}/${params.role} work in WORKDIR only. Read the structured claim summary at ${params.claimSummaryFile} first; it is the authoritative handoff for story id/title, workdir, mainRepo, storyWorkdir, verifyWorkdir, scope files, gitPolicy, screenUsageContract, generatedScreenPolicy, designContracts, supervisorMemory, screen refs, retry feedback, and output paths. Obey gitPolicy exactly: when owner is setfarm-platform, do not run git add/commit/push/branch/PR commands; Setfarm performs the scoped commit and PR handoff after gates pass. Use screenUsageContract first for generated screen component names, props, and action IDs; use designContracts.screenIndex, designContracts.uiContract, designContracts.componentRegistry, and designContracts.componentTypes as fallback instead of reading raw Stitch files, shared generated screen source, or creating TypeScript probe files. The full claim at ${params.claimFile} is an audit fallback only. Do NOT parse or dump claim.input with jq/sed/head/node loops; use the summary fields and only fall back to the full claim for a missing focused field. Obey generatedScreenPolicy exactly: reading a forbidden src/screens/*.tsx file kills and retries the claim.
-If the claim summary contains retryDiscipline.mode="first-delta", treat it as a hard supervisor instruction: after bootstrap and summary, inspect only the owned scope files plus safe metadata needed for the first edit, then make a small scoped source delta before broad analysis/build/test.
+Do ${params.wfId}/${params.role} work in WORKDIR only. Read the structured claim summary at ${params.claimSummaryFile} first; it is the authoritative handoff for story id/title, workdir, mainRepo, storyWorkdir, verifyWorkdir, scope files, gitPolicy, screenUsageContract, generatedScreenPolicy, designContracts, supervisorMemory, screen refs, retry feedback, and output paths. If retryFeedback.blocker exists, treat it as the first blocking requirement and satisfy it before unrelated work; do not report done until it is fixed in scoped source. Obey gitPolicy exactly: when owner is setfarm-platform, do not run git add/commit/push/branch/PR commands; Setfarm performs the scoped commit and PR handoff after gates pass. Use screenUsageContract first for generated screen component names, props, and action IDs; use designContracts.screenIndex, designContracts.uiContract, designContracts.componentRegistry, and designContracts.componentTypes as fallback instead of reading raw Stitch files, shared generated screen source, or creating TypeScript probe files. The full claim at ${params.claimFile} is an audit fallback only. Do NOT parse or dump claim.input with jq/sed/head/node loops; use the summary fields and only fall back to the full claim for a missing focused field. Obey generatedScreenPolicy exactly: reading a forbidden src/screens/*.tsx file kills and retries the claim.
+If the claim summary contains retryDiscipline.mode, treat it as a hard supervisor instruction. For retryDiscipline.mode="first-delta", after bootstrap and summary, inspect only the owned scope files plus safe metadata needed for the first edit, then make a small scoped source delta before broad analysis/build/test. For retryDiscipline.mode="semantic-fix", implement the named blocker first, then run the relevant checks.
 Do NOT create scratch/progress/todo/note/probe files inside WORKDIR unless they are explicitly listed in scopeFiles. Files like src/_probe.tsx, src/probe.tsx, tmp.ts, scratch.tsx, TODO.md, and progress.txt are forbidden in the project worktree. Use ${params.outputFile} for final output and /tmp/setfarm-progress-<run-id>.txt for checkpoints only.
 Important: OpenClaw read/edit/write tools resolve relative paths against the configured agent workspace, not the shell cwd. When using read/edit/write tools for project files, use absolute paths under WORKDIR, for example "$WORKDIR/src/App.tsx". For exec commands, rerun the bootstrap command above or pass workdir="$WORKDIR" after resolving it.
 Do not rely on CLAIM_FILE, CLAIM_SUMMARY_FILE, OUTPUT_FILE, STEP_ID, or WORKDIR shell variables persisting across separate exec calls; each exec starts a fresh shell. If you need claim context again, use the literal summary path ${params.claimSummaryFile}. Write final output to the literal path ${params.outputFile}. Do NOT run step peek/claim. No subagents/background delegation. No PR actions unless claim explicitly owns PR work.
