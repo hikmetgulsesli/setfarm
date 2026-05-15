@@ -24,7 +24,9 @@ describe("spawner prompt bootstrap", () => {
     assert.match(prompt, /First exec command:\nbash '\/tmp\/setfarm-claim-bootstrap-feature-dev_developer-spawner-test\.sh'/);
     assert.match(prompt, /CLAIM_SUMMARY_FILE=\/tmp\/claim-summary-feature-dev_developer-spawner-test\.json/);
     assert.match(prompt, /Read the structured claim summary at \/tmp\/claim-summary-feature-dev_developer-spawner-test\.json first/);
-    assert.match(prompt, /If retryFeedback\.blocker exists, treat it as the first blocking requirement/);
+    assert.match(prompt, /Use retryFeedback\.mode exactly/);
+    assert.match(prompt, /mode="fix" means the blocker is an open implementation requirement/);
+    assert.match(prompt, /mode="audit" means prior feedback may be stale/);
     assert.match(prompt, /gitPolicy/);
     assert.match(prompt, /Setfarm performs the scoped commit and PR handoff after gates pass/);
     assert.match(prompt, /designContracts\.screenIndex, designContracts\.uiContract, designContracts\.componentRegistry, and designContracts\.componentTypes/);
@@ -69,6 +71,10 @@ describe("spawner prompt bootstrap", () => {
         storyWorkdir: "/home/setrox/.openclaw/workspaces/workflows/feature-dev/agents/developer/story-worktrees/run-us-001",
         verifyWorkdir: "/home/setrox/.openclaw/workspaces/workflows/feature-dev/agents/developer/story-worktrees/run-us-001",
         task: "Project: bootstrap sensor",
+        taskBrief: "Project: bootstrap sensor",
+        buildCommand: "npm run build",
+        testCommand: "npm run test:run",
+        lintCommand: "true",
         scopeFiles: ["src/App.tsx"],
         gitPolicy: {
           owner: "setfarm-platform",
@@ -104,9 +110,11 @@ describe("spawner prompt bootstrap", () => {
           instruction: "Hard manager retry discipline: inspect owned scope files and make a small scoped source delta before broad analysis.",
         },
         retryFeedback: {
+          mode: "fix",
           category: "GENERATED_SCREEN_SHARED_READ",
           suggestion: "Use claim-summary designContracts instead of shared generated source.",
           blocker: "GENERATED_SCREEN_SHARED_READ: previous worker read src/screens/MainMenu.tsx",
+          instruction: "Previous feedback is an open implementation blocker.",
         },
       }) + "\n");
       fs.writeFileSync(bootstrapFile, buildResolvedClaimBootstrapScript({
@@ -115,7 +123,7 @@ describe("spawner prompt bootstrap", () => {
         outputFile,
         stepId: "step-123",
         workdir,
-        taskPreview: "Project: bootstrap sensor",
+        taskPreview: "TASK:\nProject: bootstrap sensor\nTEST_CMD: true",
       }), { mode: 0o700 });
 
       const out = execFileSync("bash", [bootstrapFile], {
@@ -131,6 +139,9 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, /STORY_WORKDIR=\/home\/setrox\/\.openclaw\/workspaces\/workflows\/feature-dev\/agents\/developer\/story-worktrees\/run-us-001/);
       assert.match(out, /VERIFY_WORKDIR=\/home\/setrox\/\.openclaw\/workspaces\/workflows\/feature-dev\/agents\/developer\/story-worktrees\/run-us-001/);
       assert.match(out, /MAIN_REPO=\/home\/setrox\/projects\/bootstrap-sensor/);
+      assert.match(out, /BUILD_CMD=npm run build/);
+      assert.match(out, /TEST_CMD=npm run test:run/);
+      assert.match(out, /LINT_CMD=true/);
       assert.match(out, /SCOPE_FILES=src\/App\.tsx/);
       assert.match(out, /GIT_POLICY=Developer story agents write code only/);
       assert.match(out, /FORBIDDEN_GIT=git add, git commit, git push/);
@@ -138,8 +149,10 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, /SCREEN_COMPONENT=MainMenu src\/screens\/MainMenu\.tsx forbidden actions=start-game-1\|settings-4/);
       assert.match(out, /FAILURE_CATEGORY=GENERATED_SCREEN_SHARED_READ/);
       assert.match(out, /FAILURE_SUGGESTION=Use claim-summary designContracts instead of shared generated source/);
+      assert.match(out, /RETRY_MODE=fix/);
       assert.match(out, /RETRY_BLOCKER=GENERATED_SCREEN_SHARED_READ: previous worker read src\/screens\/MainMenu\.tsx/);
       assert.match(out, /RETRY_ACTION=Use claim-summary designContracts instead of shared generated source/);
+      assert.match(out, /RETRY_INSTRUCTION=Previous feedback is an open implementation blocker/);
       assert.match(out, /RETRY_DISCIPLINE=first-delta: Hard manager retry discipline/);
       assert.match(out, /PREVIOUS_FAILURE=present \d+ chars/);
       assert.match(out, /GENERATED_SCREEN_POLICY=No generated screen source file is in scope/);
@@ -148,7 +161,8 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, /COMPONENT_REGISTRY=present \d+ chars/);
       assert.match(out, /COMPONENT_TYPE_CONTRACTS=1/);
       assert.match(out, /SUPERVISOR_MEMORY=present \d+ chars/);
-      assert.match(out, /Project: bootstrap sensor/);
+      assert.match(out, /TASK_BRIEF=Project: bootstrap sensor/);
+      assert.doesNotMatch(out, /TEST_CMD: true/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -315,9 +329,11 @@ describe("spawner prompt bootstrap", () => {
       assert.match(String(summary.previousFailure), /GENERATED_SCREEN_SHARED_READ/);
       assert.equal(summary.failureCategory, "GENERATED_SCREEN_SHARED_READ");
       assert.equal(summary.failureSuggestion, "Use claim-summary designContracts instead.");
+      assert.equal((summary.retryFeedback as any).mode, "fix");
       assert.equal((summary.retryDiscipline as any).mode, "first-delta");
       assert.match((summary.retryFeedback as any).blocker, /GENERATED_SCREEN_SHARED_READ/);
       assert.match((summary.retryFeedback as any).suggestion, /claim-summary designContracts/);
+      assert.match((summary.retryFeedback as any).instruction, /open implementation blocker/);
       assert.match(String((summary.retryDiscipline as any).instruction), /small scoped source delta/);
       assert.match(String(summary.acceptanceCriteria), /Pieces fall and rotate/);
       assert.match(JSON.stringify(summary.handoff), /Audit fallback only/);
@@ -358,10 +374,58 @@ describe("spawner prompt bootstrap", () => {
 
       assert.equal(summary.failureCategory, "RUNTIME_BRIDGE_MISSING");
       assert.match(String(summary.failureSuggestion), /window\.app\/globalThis\.app runtime bridge/);
+      assert.equal((summary.retryFeedback as any).mode, "fix");
       assert.equal((summary.retryDiscipline as any).mode, "semantic-fix");
       assert.match(String((summary.retryDiscipline as any).instruction), /window\.app\/globalThis\.app/);
       assert.match((summary.retryFeedback as any).blocker, /RUNTIME_BRIDGE_MISSING/);
       assert.match((summary.retryFeedback as any).suggestion, /runtime bridge/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("hands prior retry feedback to supervisors as audit context, not an edit mandate", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-supervisor-audit-summary-"));
+    try {
+      fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({
+        scripts: {
+          build: "tsc && vite build",
+          test: "vitest",
+          "test:run": "vitest run",
+        },
+      }));
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "supervisor",
+        claimFile: "/tmp/claim.json",
+        outputFile: "/tmp/output.txt",
+        bootstrapFile: "/tmp/bootstrap.sh",
+        stepId: "step-123",
+        runId: "run-123",
+        workdir: tmp,
+        repo: tmp,
+        storyId: "US-001",
+        input: [
+          "TASK:",
+          "Build a browser-based Breakout arcade game.",
+          "BUILD_CMD: true",
+          "TEST_CMD: true",
+          "",
+          "CURRENT_STORY: US-001 Breakout arcade - game engine",
+          "",
+          "## Previous Failure / Retry Feedback",
+          "GENERATED_SCREEN_SHARED_READ: previous worker read src/screens/MainMenu.tsx",
+          "",
+          "## Current Story",
+        ].join("\n"),
+      });
+
+      assert.equal((summary.retryFeedback as any).mode, "audit");
+      assert.equal(summary.retryDiscipline, undefined);
+      assert.match((summary.retryFeedback as any).instruction, /prior review context/);
+      assert.equal(summary.taskBrief, "Build a browser-based Breakout arcade game.");
+      assert.equal(summary.buildCommand, "npm run build");
+      assert.equal(summary.testCommand, "npm run test:run");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
