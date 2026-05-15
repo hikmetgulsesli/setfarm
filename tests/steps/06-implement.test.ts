@@ -8,6 +8,7 @@ import { implementModule } from "../../dist/installer/steps/06-implement/module.
 import { checkBuildGate, checkTestGate, computeScopeFileLimits, detectPackageBuildCommand, findDesignDomImplementationIssues, getOutOfScopeStoryFiles, normalize, parseGitStatusPorcelainPath, sourceExposesWindowApp, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
 import { cleanupOutOfScopeWorktreeFiles } from "../../dist/installer/steps/06-implement/context.js";
 import { commitStoryWorktreeScopeIfNeeded, decideStorySystemSmokeGate } from "../../dist/installer/step-ops.js";
+import { ensureStoryBranchWorktree } from "../../dist/installer/worktree-ops.js";
 import { IMPLICIT_STORY_SCOPE_FILES, isImplicitStoryScopeFile } from "../../dist/installer/story-scope.js";
 import { checkStoryDesignCompliance } from "../../dist/installer/step-guardrails.js";
 import { STACK_RULES } from "../../dist/installer/steps/06-implement/stack-rules.js";
@@ -117,6 +118,31 @@ describe("06-implement step module", () => {
       const status = git(tmp, ["status", "--porcelain"]);
       assert.match(status, /^M SUPERVISOR_MEMORY\.md$/m);
       assert.doesNotMatch(status, /^M  SUPERVISOR_MEMORY\.md$/m);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rehydrates a deleted story branch worktree for supervisor and reviewer audits", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-review-worktree-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), "export const app = 'main';\n");
+      git(tmp, ["init", "-b", "main"]);
+      git(tmp, ["add", "src/App.tsx"]);
+      git(tmp, ["commit", "-m", "base"]);
+      git(tmp, ["checkout", "-b", "33d23f10-us-001"]);
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), "export const app = 'story';\n");
+      git(tmp, ["add", "src/App.tsx"]);
+      git(tmp, ["commit", "-m", "feat: US-001 story"]);
+      git(tmp, ["checkout", "main"]);
+
+      const reviewWorkdir = ensureStoryBranchWorktree(tmp, "33d23f10-us-001");
+
+      assert.ok(reviewWorkdir.endsWith(path.join(".worktrees", "33d23f10-us-001")));
+      assert.equal(git(reviewWorkdir, ["branch", "--show-current"]), "33d23f10-us-001");
+      assert.equal(fs.readFileSync(path.join(reviewWorkdir, "src/App.tsx"), "utf-8"), "export const app = 'story';\n");
+      assert.equal(git(tmp, ["branch", "--show-current"]), "main");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

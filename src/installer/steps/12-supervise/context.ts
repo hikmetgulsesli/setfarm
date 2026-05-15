@@ -51,8 +51,10 @@ function supervisorGitSummary(repo: string, branch: string): string {
 }
 
 export async function injectContext(ctx: ClaimContext): Promise<void> {
-  const repo = expandTilde(ctx.context["repo"] || "");
-  const branch = ctx.context["branch"] || "main";
+  const mainRepo = expandTilde(ctx.context["repo"] || "");
+  const storyWorkdir = expandTilde(ctx.context["story_workdir"] || "");
+  const repo = storyWorkdir || mainRepo;
+  const branch = storyWorkdir ? (ctx.context["story_branch"] || ctx.context["branch"] || "main") : (ctx.context["branch"] || "main");
 
   ctx.context["supervisor_memory"] = readSupervisorMemory(ctx.context);
   ctx.context["project_memory"] = readProjectMemory(ctx.context);
@@ -72,4 +74,3 @@ export async function injectContext(ctx: ClaimContext): Promise<void> {
   ctx.context["design_md_excerpt"] = readIfExists(path.join(repo, "DESIGN.md"), 12000) || "(no DESIGN.md)";
   ctx.context["package_json_excerpt"] = readIfExists(path.join(repo, "package.json"), 5000) || "(no package.json)";
 }
-

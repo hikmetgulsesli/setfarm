@@ -13,10 +13,18 @@ const rulesBody = fs.readFileSync(path.join(__dirname, "rules.md"), "utf-8");
 
 function buildPrompt(ctx: PromptContext): string {
   const c = ctx.context;
+  const mainRepo = c["repo"] || "";
+  const storyWorkdir = c["story_workdir"] || "";
+  const supervisorWorkdir = storyWorkdir || mainRepo;
+  const branch = storyWorkdir ? (c["story_branch"] || c["branch"] || "main") : (c["branch"] || "main");
   const resolved = resolveTemplate(promptTemplate, {
     TASK: c["task"] || "",
-    REPO: c["repo"] || "",
-    BRANCH: c["branch"] || "main",
+    REPO: supervisorWorkdir,
+    MAIN_REPO: mainRepo,
+    STORY_WORKDIR: storyWorkdir,
+    SUPERVISOR_WORKDIR: supervisorWorkdir,
+    BRANCH: branch,
+    STORY_BRANCH: c["story_branch"] || "",
     BUILD_CMD: c["build_cmd"] || "npm run build",
     TEST_CMD: c["test_cmd"] || "true",
     LINT_CMD: c["lint_cmd"] || "true",

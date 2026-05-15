@@ -13,6 +13,7 @@ import { logger } from "../../../lib/logger.js";
 import type { ParsedOutput, ValidationResult } from "../types.js";
 import { buildTestFixPrompt, detectTestFramework, runTests } from "../../test-generation.js";
 import { isImplicitStoryScopeFile } from "../../story-scope.js";
+import { ensureStoryBranchWorktree } from "../../worktree-ops.js";
 
 // ── Module interface methods ────────────────────────────────────
 
@@ -767,14 +768,35 @@ export async function checkScopeEnforcement(
  * Resolve worktree path for scope check (fixes parallel story context overwrite bug).
  */
 export async function resolveStoryWorktree(currentStoryDbId: string, contextWorkdir: string): Promise<string> {
-  const storyBranchRow = await pgGet<{ story_branch: string | null }>(
-    "SELECT story_branch FROM stories WHERE id = $1", [currentStoryDbId]
+  const storyBranchRow = await pgGet<{ story_branch: string | null; context: string | null }>(
+    "SELECT s.story_branch, r.context FROM stories s JOIN runs r ON r.id = s.run_id WHERE s.id = $1", [currentStoryDbId]
   );
   const storyBranch = storyBranchRow?.story_branch || "";
   if (storyBranch) {
     const worktreeBase = path.join(os.homedir(), ".openclaw", "workspaces", "workflows", "feature-dev", "agents", "developer", "story-worktrees");
     const candidateWd = path.join(worktreeBase, storyBranch);
     if (fs.existsSync(candidateWd)) return candidateWd;
+    if (contextWorkdir && fs.existsSync(contextWorkdir)) {
+      try {
+        const branch = execFileSync("git", ["branch", "--show-current"], {
+          cwd: contextWorkdir,
+          encoding: "utf-8",
+          timeout: 5000,
+          stdio: ["pipe", "pipe", "pipe"],
+        }).trim().toLowerCase();
+        if (branch === storyBranch.toLowerCase()) return contextWorkdir;
+      } catch {
+        // Fall through to rehydrate from the canonical repo.
+      }
+    }
+    try {
+      const runContext = JSON.parse(storyBranchRow?.context || "{}") as Record<string, string>;
+      const repo = runContext["repo"] || "";
+      const reviewWorkdir = ensureStoryBranchWorktree(repo, storyBranch);
+      if (reviewWorkdir) return reviewWorkdir;
+    } catch {
+      // Last resort below.
+    }
   }
-  return contextWorkdir || "";
+  return contextWorkdir && fs.existsSync(contextWorkdir) ? contextWorkdir : "";
 }

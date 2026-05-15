@@ -35,6 +35,14 @@ describe("LLM product supervisor architecture", () => {
     assert.match(readFileSync(resolve(import.meta.dirname, "../src/installer/steps/12-supervise/rules.md"), "utf-8"), /persistent manager session/);
   });
 
+  it("forces story-scoped supervisor audits onto the story worktree", () => {
+    assert.match(prompt, /SUPERVISOR_WORKDIR/);
+    assert.match(prompt, /STORY_WORKDIR/);
+    assert.match(prompt, /MAIN_REPO/);
+    assert.match(prompt, /only authoritative checkout/);
+    assert.match(prompt, /Do not audit `MAIN_REPO` as a fallback/);
+  });
+
   it("injects supervisor memory into per-story verify feedback", () => {
     assert.match(verifyPrompt, /SUPERVISOR_MEMORY/);
     assert.match(verifyPrompt, /durable manager decisions/);

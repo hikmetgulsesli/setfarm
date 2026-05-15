@@ -14,13 +14,21 @@ Use SUPERVISOR_MEMORY_APPEND for durable, reusable manager findings.
 TASK:
 {{TASK}}
 
+SUPERVISOR_WORKDIR: {{SUPERVISOR_WORKDIR}}
+STORY_WORKDIR: {{STORY_WORKDIR}}
+MAIN_REPO: {{MAIN_REPO}}
 REPO: {{REPO}}
 BRANCH: {{BRANCH}}
+STORY_BRANCH: {{STORY_BRANCH}}
 BUILD_CMD: {{BUILD_CMD}}
 TEST_CMD: {{TEST_CMD}}
 LINT_CMD: {{LINT_CMD}}
 SUPERVISOR_SCOPE: {{SUPERVISOR_SCOPE}}
 CURRENT_STORY: {{CURRENT_STORY}}
+
+For `SUPERVISOR_SCOPE: story`, `SUPERVISOR_WORKDIR`/`STORY_WORKDIR` is the
+only authoritative checkout. Do not audit `MAIN_REPO` as a fallback for story
+implementation state; it may intentionally still be the baseline branch.
 
 PREVIOUS FAILURE:
 {{PREVIOUS_FAILURE}}

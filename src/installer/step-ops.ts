@@ -31,7 +31,7 @@ export { failStep } from "./step-fail.js";
 // ── Imports from extracted modules (used internally) ──
 import { resolveTemplate, parseOutputKeyValues, readProgressFile, readProjectMemory, updateProjectMemory, getProjectTree, getInstalledPackages, getSharedCode, getRecentStoryCode, getComponentRegistry, getApiRoutes, pruneContextForStep } from "./context-ops.js";
 import { getStories, formatStoryForTemplate, formatCompletedStories, parseAcceptanceCriteria, parseAndInsertStories } from "./story-ops.js";
-import { createStoryWorktree, removeStoryWorktree, findWorktreeDir, syncBaseBranch } from "./worktree-ops.js";
+import { createStoryWorktree, removeStoryWorktree, findWorktreeDir, syncBaseBranch, ensureStoryBranchWorktree } from "./worktree-ops.js";
 import { computeHasFrontendChanges, checkTestFailures, checkQualityGate, checkRequiredOutputFields, processDesignCompletion, processSetupCompletion, processSetupDesignContracts, processBrowserCheck, processDesignFidelityCheck, checkStoryDesignCompliance, checkImportConsistency } from "./step-guardrails.js";
 import { cleanupAbandonedSteps as _cleanupAbandonedSteps, cleanupProjectEphemera, scheduleRunCronTeardown } from "./cleanup-ops.js";
 import { isVerifyRetryMergeBlocker, isVerifyRetryQualityFailure } from "./verify-retry-routing.js";
@@ -415,6 +415,51 @@ function pushStoryBranch(workdir: string, storyBranch: string | null | undefined
   } catch (err) {
     return { pushed: false, error: `PLATFORM_STORY_PUSH_FAILED: ${formatCommandError(err)}` };
   }
+}
+
+function storyWorkdirMatchesBranch(workdir: string, storyBranch: string): boolean {
+  if (!workdir || !fs.existsSync(workdir) || !storyBranch) return false;
+  try {
+    const branch = execFileSync("git", ["branch", "--show-current"], {
+      cwd: workdir,
+      encoding: "utf-8",
+      timeout: 5000,
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim().toLowerCase();
+    return branch === storyBranch.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
+function ensureStoryAuditWorkdir(
+  context: Record<string, string>,
+  storyBranch: string | null | undefined,
+  agentId: string | null | undefined,
+  runId: string,
+  storyId: string,
+  purpose: string,
+): string {
+  const branch = String(storyBranch || context["story_branch"] || "").trim().toLowerCase();
+  if (!branch) return "";
+
+  const current = context["story_workdir"] || "";
+  if (storyWorkdirMatchesBranch(current, branch)) {
+    context["story_workdir"] = current;
+    return current;
+  }
+
+  const repo = context["repo"] || "";
+  const workdir = ensureStoryBranchWorktree(repo, branch, agentId || undefined);
+  if (workdir) {
+    context["story_branch"] = branch;
+    context["story_workdir"] = workdir;
+    logger.info(`[story-workdir] ${purpose} will use ${workdir} for ${storyId} (${branch})`, { runId });
+    return workdir;
+  }
+
+  logger.error(`[story-workdir] Could not prepare ${purpose} worktree for ${storyId} (${branch})`, { runId });
+  return "";
 }
 
 type StorySmokeRow = {
@@ -2271,6 +2316,7 @@ async function injectVerifyContext(
   step: StepRow,
   context: Record<string, string>,
   db: any,
+  agentId: string,
 ): Promise<boolean> {
   const loopStepForVerify = await findLoopStep(step.run_id);
   if (!loopStepForVerify?.loop_config) return true;
@@ -2314,6 +2360,17 @@ async function injectVerifyContext(
   if (nextUnverified.story_branch) context["story_branch"] = nextUnverified.story_branch;
   context["current_story_id"] = nextUnverified.story_id;
   context["current_story_title"] = nextUnverified.title;
+  if (nextUnverified.story_branch) {
+    const workdir = ensureStoryAuditWorkdir(context, nextUnverified.story_branch, agentId, step.run_id, nextUnverified.story_id, "verify_each");
+    if (!workdir) {
+      const failure = `PLATFORM_STORY_WORKTREE_MISSING: ${nextUnverified.story_id} has branch ${nextUnverified.story_branch}, but Setfarm could not prepare a story worktree for reviewer verification. Reviewer must not audit the main repo fallback.`;
+      context["previous_failure"] = failure;
+      context["failure_category"] = "PLATFORM_STORY_WORKTREE_MISSING";
+      context["failure_suggestion"] = "Fix Setfarm worktree rehydration or repo branch state before spawning supervisor/reviewer agents.";
+      await updateRunContext(step.run_id, context);
+      return false;
+    }
+  }
   if (step.retry_count === 0 && context["previous_failure"]) {
     const staleImplementFailure = /\b(RUNTIME_BRIDGE_MISSING|BUILD_FAILED|TEST_FAILED|SCOPE_BLEED|NO_WORK|SCOPE_FILE_MISSING|PRODUCT_SUPERVISOR_IMPLEMENT_BLOCKED)\b/i
       .test(`${context["failure_category"] || ""}\n${context["previous_failure"] || ""}`);
@@ -2339,6 +2396,71 @@ async function injectVerifyContext(
   await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
   logger.info(`Verify step: injected story ${nextUnverified.story_id} context`, { runId: step.run_id });
 
+  return true;
+}
+
+async function injectSuperviseEachContext(
+  step: StepRow,
+  context: Record<string, string>,
+  agentId: string,
+): Promise<boolean> {
+  const loopStepForSupervise = await findLoopStep(step.run_id);
+  if (!loopStepForSupervise?.loop_config) return true;
+
+  const lcCheck: LoopConfig = JSON.parse(loopStepForSupervise.loop_config);
+  if (!lcCheck.superviseEach || (lcCheck.superviseStep || "supervise") !== step.step_id) return true;
+
+  let story: any | undefined;
+  if (step.current_story_id) {
+    story = await pgGet<any>(
+      "SELECT * FROM stories WHERE run_id = $1 AND id = $2 AND status = 'done' LIMIT 1",
+      [step.run_id, step.current_story_id],
+    );
+  }
+  const currentStoryId = context["current_story_id"] || "";
+  if (!story && currentStoryId) {
+    story = await pgGet<any>(
+      "SELECT * FROM stories WHERE run_id = $1 AND story_id = $2 AND status = 'done' LIMIT 1",
+      [step.run_id, currentStoryId],
+    );
+  }
+  if (!story) {
+    story = await findUnsupervisedDoneStory(step.run_id, context);
+  }
+  if (!story) return true;
+
+  const storyBranch = (story.story_branch || `${step.run_id.slice(0, 8)}-${story.story_id}`).toLowerCase();
+  context["supervisor_scope"] = "story";
+  context["current_story_id"] = story.story_id;
+  context["current_story_title"] = story.title || "";
+  if (story.pr_url) context["pr_url"] = story.pr_url;
+  context["story_branch"] = storyBranch;
+
+  const workdir = ensureStoryAuditWorkdir(context, storyBranch, agentId, step.run_id, story.story_id, "supervise_each");
+  if (!workdir) {
+    const failure = `PLATFORM_STORY_WORKTREE_MISSING: ${story.story_id} has branch ${storyBranch}, but Setfarm could not prepare a story worktree for supervisor audit. Supervisor must not audit the main repo fallback.`;
+    context["previous_failure"] = failure;
+    context["failure_category"] = "PLATFORM_STORY_WORKTREE_MISSING";
+    context["failure_suggestion"] = "Fix Setfarm worktree rehydration or repo branch state before spawning supervisor/reviewer agents.";
+    await updateRunContext(step.run_id, context);
+    return false;
+  }
+
+  const storyObj: Story = {
+    id: story.id,
+    runId: story.run_id,
+    storyIndex: story.story_index,
+    storyId: story.story_id,
+    title: story.title,
+    description: story.description || "",
+    acceptanceCriteria: parseAcceptanceCriteria(story.acceptance_criteria),
+    status: story.status,
+    output: story.output,
+    retryCount: story.retry_count,
+    maxRetries: story.max_retries,
+  };
+  context["current_story"] = formatStoryForTemplate(storyObj);
+  await updateRunContext(step.run_id, context);
   return true;
 }
 
@@ -2469,7 +2591,16 @@ async function claimSingleStep(
 
   // BUG FIX: If this is a verify step for a verify_each loop, inject the correct
   // story info from the oldest unverified 'done' story (not from stale context).
-  if (!await injectVerifyContext(step, context, db)) {
+  if (!await injectSuperviseEachContext(step, context, agentId)) {
+    await pgRun(
+      "UPDATE steps SET status = 'pending', updated_at = $1 WHERE id = $2 AND status = 'running'",
+      [now(), step.id],
+    );
+    await closeSingleStepHandoff("infra_retry", "supervise_each story worktree was missing; no supervisor spawned");
+    return { found: false };
+  }
+
+  if (!await injectVerifyContext(step, context, db, agentId)) {
     await pgRun(
       "UPDATE steps SET status = 'pending', updated_at = $1 WHERE id = $2 AND status = 'running'",
       [now(), step.id],
@@ -5587,7 +5718,10 @@ async function handleSuperviseEachCompletion(
   try {
     const { resolveStoryWorktree } = await import("./steps/06-implement/guards.js");
     const resolved = await resolveStoryWorktree(story.id, context["story_workdir"] || "");
-    if (resolved) supervisorWorkdir = resolved;
+    if (resolved) {
+      supervisorWorkdir = resolved;
+      context["story_workdir"] = resolved;
+    }
   } catch (e) {
     logger.warn(`[supervise-each] Could not resolve story worktree for ${story.story_id}: ${String(e).slice(0, 150)}`, { runId: superviseStep.run_id });
   }

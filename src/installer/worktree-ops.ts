@@ -632,6 +632,147 @@ export function findWorktreeDir(repo: string, storyId: string, agentId?: string)
   return null;
 }
 
+function gitWorktreePathForBranch(repo: string, branch: string): string {
+  try {
+    const output = execFileSync("git", ["worktree", "list", "--porcelain"], {
+      cwd: repo,
+      encoding: "utf-8",
+      timeout: 5000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let currentPath = "";
+    for (const line of output.split(/\r?\n/)) {
+      if (line.startsWith("worktree ")) {
+        currentPath = line.slice("worktree ".length).trim();
+      } else if (line === `branch refs/heads/${branch}` && currentPath && fs.existsSync(currentPath)) {
+        return currentPath;
+      }
+    }
+  } catch {
+    // No git worktree metadata available.
+  }
+  return "";
+}
+
+function prepareStoryWorktreeAssets(repo: string, worktreeDir: string, storyBranch: string): void {
+  const nmSrc = path.join(repo, "node_modules");
+  const nmDst = path.join(worktreeDir, "node_modules");
+  if (fs.existsSync(nmSrc)) {
+    try {
+      const stat = fs.lstatSync(nmDst);
+      if (!stat.isSymbolicLink()) {
+        fs.rmSync(nmDst, { recursive: true, force: true });
+        fs.symlinkSync(nmSrc, nmDst);
+      }
+    } catch {
+      try { fs.symlinkSync(nmSrc, nmDst); } catch {}
+    }
+  }
+  copyStitchToWorktree(repo, worktreeDir);
+  ensureReferencesLink(repo, worktreeDir);
+  installScopeHook(worktreeDir, storyBranch);
+}
+
+/**
+ * Ensure reviewer/supervisor agents audit the committed story branch, even
+ * after the developer worktree was removed at story completion. This differs
+ * from createStoryWorktree: it never resets the branch to main/base, because
+ * review must see the exact completed implementation that was just pushed.
+ */
+export function ensureStoryBranchWorktree(repo: string, storyBranch: string, agentId?: string): string {
+  const branch = safeManagedStoryBranch(storyBranch);
+  if (!repo || !fs.existsSync(repo) || !branch) return "";
+
+  try { execFileSync("git", ["worktree", "prune"], { cwd: repo, timeout: 5000, stdio: ["pipe", "pipe", "pipe"] }); } catch {}
+
+  const existing = findWorktreeDir(repo, branch, agentId) || gitWorktreePathForBranch(repo, branch);
+  if (existing && fs.existsSync(existing)) {
+    try {
+      const current = execFileSync("git", ["branch", "--show-current"], {
+        cwd: existing,
+        encoding: "utf-8",
+        timeout: 5000,
+        stdio: ["pipe", "pipe", "pipe"],
+      }).trim().toLowerCase();
+      if (current === branch) {
+        prepareStoryWorktreeAssets(repo, existing, branch);
+        return existing;
+      }
+    } catch {
+      // Fall through to re-creation below.
+    }
+  }
+
+  try {
+    execFileSync("git", ["fetch", "origin", branch], {
+      cwd: repo,
+      timeout: 15000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+  } catch {
+    // Local-only story branches are still valid before the first push.
+  }
+
+  let ref = branch;
+  try {
+    execFileSync("git", ["rev-parse", "--verify", branch], {
+      cwd: repo,
+      timeout: 5000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+  } catch {
+    try {
+      execFileSync("git", ["rev-parse", "--verify", `origin/${branch}`], {
+        cwd: repo,
+        timeout: 5000,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      execFileSync("git", ["branch", branch, `origin/${branch}`], {
+        cwd: repo,
+        timeout: 10000,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+    } catch (err) {
+      logger.warn(`[worktree] Cannot resolve story branch ${branch} for review worktree: ${String(err).slice(0, 150)}`, {});
+      return "";
+    }
+  }
+
+  releaseMainWorktreeBranch(repo, branch, "main");
+  const worktreeBase = resolveWorktreeBaseDir(repo, agentId);
+  const worktreeDir = path.join(worktreeBase, branch);
+  if (fs.existsSync(worktreeDir)) {
+    const normalized = path.resolve(worktreeDir);
+    if (normalized.includes(`${path.sep}story-worktrees${path.sep}`) || normalized.includes(`${path.sep}.worktrees${path.sep}`)) {
+      try { fs.rmSync(normalized, { recursive: true, force: true }); } catch {}
+    } else {
+      logger.warn(`[worktree] Refusing to recreate non-managed review worktree path ${worktreeDir}`, {});
+      return "";
+    }
+  }
+
+  try {
+    fs.mkdirSync(path.dirname(worktreeDir), { recursive: true });
+    execFileSync("git", ["worktree", "add", worktreeDir, ref], {
+      cwd: repo,
+      timeout: 30000,
+      stdio: "pipe",
+    });
+  } catch (err: any) {
+    const occupied = gitWorktreePathForBranch(repo, branch);
+    if (occupied && fs.existsSync(occupied)) {
+      prepareStoryWorktreeAssets(repo, occupied, branch);
+      return occupied;
+    }
+    logger.warn(`[worktree] Failed to create review worktree for ${branch}: ${String(err).slice(0, 180)}`, {});
+    return "";
+  }
+
+  prepareStoryWorktreeAssets(repo, worktreeDir, branch);
+  logger.info(`[worktree] Created review worktree ${worktreeDir} for ${branch}`, {});
+  return worktreeDir;
+}
+
 /**
  * Wave 13b: Single source of truth for worktree removal.
  * ALWAYS auto-saves uncommitted work (commit + push) before destroying anything.
