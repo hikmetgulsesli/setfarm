@@ -525,7 +525,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /buildOpenClawChildEnv\(pathPrefix\)/);
   });
 
-  it("persists runtime guard diagnostics into the next story retry claim", () => {
+  it("persists runtime guard diagnostics without consuming story retry budgets", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     const requeueOpenStart = source.indexOf("async function requeueOpenStoryClaim");
     const requeueOrphanStart = source.indexOf("async function requeueOrphanedStoryClaim");
@@ -542,7 +542,7 @@ describe("spawner gateway recovery wiring", () => {
     );
 
     for (const block of [requeueOpen, requeueOrphan]) {
-      assert.match(block, /abandoned_count = COALESCE\(abandoned_count, 0\) \+ 1/);
+      assert.doesNotMatch(block, /abandoned_count = COALESCE\(abandoned_count, 0\) \+ 1/);
       assert.doesNotMatch(block, /retry_count = retry_count \+ 1/);
       assert.match(block, /output = \$2/);
       assert.match(block, /\[.*diagnostic.*\]/s);

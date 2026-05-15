@@ -518,6 +518,18 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(implementSelectionSource, qaFixOrder);
   });
 
+  it("does not hide pending stories after manager guard abandons", () => {
+    const source = repoSource();
+    const nextPendingStart = source.indexOf("export async function getNextPendingStory(");
+    const claimNextStart = source.indexOf("export async function claimNextStory(");
+    assert.notEqual(nextPendingStart, -1, "getNextPendingStory source not found");
+    assert.notEqual(claimNextStart, -1, "claimNextStory source not found");
+
+    const nextPendingSource = source.slice(nextPendingStart, claimNextStart);
+    assert.match(nextPendingSource, /WHERE run_id = \$1 AND status = 'pending'/);
+    assert.doesNotMatch(nextPendingSource, /abandoned_count\s*(?:IS NULL|<\s*3)/);
+  });
+
   it("closes single-step failure claims by workflow step id, not step UUID", () => {
     const source = fs.readFileSync(path.join(root, "src", "installer", "step-fail.ts"), "utf-8");
     const singleFailureStart = source.indexOf("async function handleSingleStepFailurePG(");

@@ -102,7 +102,7 @@ export async function findStoryByStatus(runId: string, status: string): Promise<
 export async function getNextPendingStory(runId: string): Promise<any | undefined> {
   return await pgGet(
     `SELECT * FROM stories
-     WHERE run_id = $1 AND status = 'pending' AND (abandoned_count IS NULL OR abandoned_count < 3)
+     WHERE run_id = $1 AND status = 'pending'
      ORDER BY CASE WHEN story_id LIKE 'QA-FIX-%' THEN 0 ELSE 1 END, story_index ASC
      LIMIT 1`,
     [runId],

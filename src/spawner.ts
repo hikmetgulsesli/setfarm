@@ -2522,10 +2522,10 @@ async function requeueOrphanedStoryClaim(runId: string, stepId: string, agentId:
   if (!row) return false;
 
   // Runtime guard retries are manager/discipline failures, not semantic story
-  // failures. Keep the diagnostic and abandon count, but preserve retry_count
-  // for real build/design/verify feedback.
+  // failures. Keep the diagnostic, but preserve both story retry and abandon
+  // budgets for real build/design/verify feedback and crash recovery.
   await pgRun(
-    "UPDATE stories SET status = 'pending', claimed_by = NULL, abandoned_count = COALESCE(abandoned_count, 0) + 1, output = $2, updated_at = NOW() WHERE id = $1 AND status = 'running'",
+    "UPDATE stories SET status = 'pending', claimed_by = NULL, output = $2, updated_at = NOW() WHERE id = $1 AND status = 'running'",
     [row.id, diagnostic],
   );
   await pgRun("UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = NOW() WHERE run_id = $1 AND step_id = $2 AND status IN ('pending','running','waiting')", [runId, stepId]);
@@ -2554,10 +2554,10 @@ async function requeueOpenStoryClaim(runId: string, stepId: string, storyId: str
 
   if (row.story_db_id) {
     // Runtime guard retries are manager/discipline failures, not semantic story
-    // failures. Keep the diagnostic and abandon count, but preserve retry_count
-    // for real build/design/verify feedback.
+    // failures. Keep the diagnostic, but preserve both story retry and abandon
+    // budgets for real build/design/verify feedback and crash recovery.
     await pgRun(
-      "UPDATE stories SET status = 'pending', claimed_by = NULL, abandoned_count = COALESCE(abandoned_count, 0) + 1, output = $2, updated_at = NOW() WHERE id = $1 AND status IN ('running','pending')",
+      "UPDATE stories SET status = 'pending', claimed_by = NULL, output = $2, updated_at = NOW() WHERE id = $1 AND status IN ('running','pending')",
       [row.story_db_id, diagnostic],
     );
   }
