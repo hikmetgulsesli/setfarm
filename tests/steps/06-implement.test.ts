@@ -647,6 +647,46 @@ describe("06-implement step module", () => {
     }
   });
 
+  it("does not match icon aliases inside CSS words or force display-only title controls to be actions", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-design-dom-title-alias-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "stitch"), { recursive: true });
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { screenId: "main-1", title: "Main Menu", file: "src/screens/MainMenu.tsx" },
+      ]));
+      fs.writeFileSync(path.join(tmp, "stitch/DESIGN_DOM.json"), JSON.stringify({
+        screens: [
+          {
+            screenId: "main-1",
+            title: "Main Menu",
+            buttons: [
+              { label: "Resume", icon: "play_circle", classes: ["h-touch-target"], action: "click-action" },
+              { label: "PONG ARCADE", icon: null, classes: [], action: "click-action" },
+            ],
+            navLinks: [],
+          },
+        ],
+      }));
+      fs.writeFileSync(path.join(tmp, "src/screens/MainMenu.tsx"), [
+        "import { PlayCircle } from 'lucide-react';",
+        "export function MainMenu() {",
+        "  return <main>",
+        "    <button className=\"font-display-score text-display-score\">PONG ARCADE</button>",
+        "    <button disabled={true} type=\"button\"><PlayCircle />Resume</button>",
+        "  </main>;",
+        "}",
+        "",
+      ].join("\n"));
+
+      const issues = findDesignDomImplementationIssues(tmp, ["src/screens/MainMenu.tsx"]);
+
+      assert.deepEqual(issues, []);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("allows explicitly inert DESIGN_DOM hash anchors when href and aria state are preserved", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-design-dom-anchor-"));
     try {

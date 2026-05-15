@@ -377,6 +377,16 @@ function normalizeControlLabel(value: string): string {
     .toLowerCase();
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizedHasTokenPhrase(haystack: string, phrase: string): boolean {
+  const compact = normalizeControlLabel(phrase);
+  if (!compact) return false;
+  return new RegExp(`(?:^|\\s)${escapeRegExp(compact)}(?:\\s|$)`).test(haystack);
+}
+
 function jsxVisibleText(inner: string): string {
   return inner
     .replace(/\{[^}]*\}/g, " ")
@@ -407,9 +417,8 @@ function blockHasIcon(block: JsxBlock, icon: string): boolean {
   const normalized = normalizeControlLabel(raw);
   const aliases = ICON_ALIASES[expected] || [expected];
   return aliases.some((alias) => {
-    const compact = normalizeControlLabel(alias);
-    if (compact && normalized.includes(compact)) return true;
-    return new RegExp(`\\b${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(raw);
+    if (normalizedHasTokenPhrase(normalized, alias)) return true;
+    return new RegExp(`\\b${escapeRegExp(alias)}\\b`).test(raw);
   });
 }
 
@@ -428,6 +437,19 @@ function blockMatchesControl(block: JsxBlock, control: any): boolean {
   if (label && haystack.includes(label)) return true;
   if (icon && blockHasIcon(block, icon)) return true;
   return false;
+}
+
+function isDisplayOnlyDesignButton(control: any): boolean {
+  const label = String(control?.label || control?.text || "").trim();
+  const icon = String(control?.icon || "").trim();
+  const classes = Array.isArray(control?.classes) ? control.classes.filter(Boolean) : [];
+  if (!label || icon || classes.length > 0) return false;
+  return true;
+}
+
+function sourceHasVisibleControlText(source: string, label: string): boolean {
+  const text = normalizeControlLabel(jsxVisibleText(stripSourceComments(source)));
+  return normalizedHasTokenPhrase(text, label);
 }
 
 function buttonIsActionable(block: JsxBlock): boolean {
@@ -505,9 +527,12 @@ export function findDesignDomImplementationIssues(workdir: string, scopeFiles: s
       if (!label && !icon) continue;
       const match = buttons.find((block) => blockMatchesControl(block, control));
       if (!match) {
+        if (isDisplayOnlyDesignButton(control) && label && sourceHasVisibleControlText(source, label)) {
+          continue;
+        }
         issues.push(`${file}: missing DESIGN_DOM button "${label || icon}" on ${screenName}`);
       } else {
-        if (!buttonIsActionable(match)) {
+        if (!buttonIsActionable(match) && !isDisplayOnlyDesignButton(control)) {
           issues.push(`${file}:${lineForIndex(source, match.index)} DESIGN_DOM button "${label || icon}" is static or lacks a handler/disabled state`);
         }
         if (icon && !blockHasIcon(match, icon)) {
