@@ -229,6 +229,7 @@ venv/
 .env*.local
 .env.production
 .env.development
+references
 
 # === IDE & OS ===
 .DS_Store
@@ -584,6 +585,7 @@ clean_branch_tracking "$BRANCH"
 
 # 6. References symlink
 ln -sfn "$HOME/.openclaw/setfarm-repo/references" references 2>/dev/null || true
+git rm --cached references 2>/dev/null || true
 
 # 7. Stitch download (if project ID provided and not empty)
 if [ -n "$STITCH_PROJECT_ID" ] && [ "$STITCH_PROJECT_ID" != "undefined" ] && [ "$STITCH_PROJECT_ID" != "" ]; then

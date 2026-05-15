@@ -704,6 +704,7 @@ function implementReferenceReadGuard(active: ActiveProcess): { detected: boolean
       }
 
       for (const candidate of candidates) {
+        if (!candidateSourceExists(active.spawnCwd, candidate.path)) continue;
         if (isBackendReferencePath(candidate.path) && !backendScope) {
           return {
             detected: true,
@@ -721,6 +722,30 @@ function implementReferenceReadGuard(active: ActiveProcess): { detected: boolean
   }
 
   return { detected: false, reason: "" };
+}
+
+function candidateSourceExists(workdir: string, relativePath: string): boolean {
+  if (!relativePath || relativePath.startsWith("..")) return false;
+  if (relativePath.includes("*")) {
+    if (relativePath === "stitch/*.html") return directoryHasMatch(path.join(workdir, "stitch"), /\.html$/i);
+    if (relativePath === ".stitch-screens*.json") return directoryHasMatch(workdir, /^\.stitch-screens.*\.json$/i);
+    if (relativePath === "stitch/*") {
+      return fs.existsSync(path.join(workdir, "stitch", "DESIGN_DOM.json"))
+        || directoryHasMatch(path.join(workdir, "stitch"), /\.html$/i)
+        || directoryHasMatch(path.join(workdir, "stitch"), /^\.stitch-screens.*\.json$/i);
+    }
+    return true;
+  }
+  return fs.existsSync(path.join(workdir, relativePath));
+}
+
+function directoryHasMatch(dir: string, pattern: RegExp): boolean {
+  try {
+    if (!fs.existsSync(dir)) return false;
+    return fs.readdirSync(dir).some((entry) => pattern.test(entry));
+  } catch {
+    return false;
+  }
 }
 
 function shellCommandSegments(command: string): string[] {
@@ -868,7 +893,8 @@ function rawStitchDesignReadGuard(active: ActiveProcess): { detected: boolean; r
       }
 
       if (candidates.length > 0) {
-        const candidate = candidates[0];
+        const candidate = candidates.find((item) => candidateSourceExists(active.spawnCwd, item.path));
+        if (!candidate) continue;
         return {
           detected: true,
           reason: `RAW_STITCH_CONTEXT_READ: ${active.agentId} used ${candidate.via} on ${candidate.path}. Implement claims must use injected Stitch excerpts, UI_CONTRACT, SCREEN_INDEX, and story-owned generated screens instead of loading raw stitch HTML/full DESIGN_DOM context. Setfarm killed the claim before design-context overload.`,

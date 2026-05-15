@@ -235,7 +235,21 @@ export function syncBaseBranch(repo: string, baseBranch = "main"): boolean {
 
 // ── Stitch Asset Copy ───────────────────────────────────────────────
 
-/** Copy stitch/ design assets from main repo into worktree so developers can reference them */
+type StoryWorktreeAssetMode = "full" | "implement";
+
+const IMPLEMENT_REFERENCE_README = [
+  "# Setfarm Implement Reference Policy",
+  "",
+  "Full reference manuals are intentionally not mounted in implement worktrees.",
+  "Use the injected Design Rules, Stack Rules, UI Behavior Contract,",
+  "Supervisor Memory, previous-failure feedback, and claim summary instead.",
+  "",
+  "If a missing rule is blocking implementation, report STATUS: fail/retry with",
+  "the exact missing contract instead of loading broad reference context.",
+  "",
+].join("\n");
+
+/** Copy stitch/ design assets from main repo into worktree so agents can reference them */
 function ensureReferencesLink(repo: string, worktreeDir: string): void {
   const refsSrc = path.join(repo, "references");
   const refsDst = path.join(worktreeDir, "references");
@@ -245,6 +259,77 @@ function ensureReferencesLink(repo: string, worktreeDir: string): void {
     logger.info(`[worktree] Linked references/ into worktree`, {});
   } catch (e) {
     logger.warn(`[worktree] Failed to link references/: ${String(e).slice(0, 100)}`, {});
+  }
+}
+
+function gitTrackedPath(worktreeDir: string, relativePath: string): boolean {
+  try {
+    execFileSync("git", ["ls-files", "--error-unmatch", "--", relativePath], {
+      cwd: worktreeDir,
+      timeout: 5000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function hideTrackedPathForImplement(worktreeDir: string, relativePath: string): void {
+  const abs = path.join(worktreeDir, relativePath);
+  try {
+    if (gitTrackedPath(worktreeDir, relativePath)) {
+      execFileSync("git", ["update-index", "--skip-worktree", "--", relativePath], {
+        cwd: worktreeDir,
+        timeout: 5000,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+    }
+    if (fs.existsSync(abs)) fs.rmSync(abs, { recursive: true, force: true });
+  } catch (e) {
+    logger.warn(`[worktree] Failed to hide implement-only path ${relativePath}: ${String(e).slice(0, 120)}`, {});
+  }
+}
+
+function listStitchCorpusPaths(worktreeDir: string): string[] {
+  const stitchDir = path.join(worktreeDir, "stitch");
+  const paths: string[] = [];
+  try {
+    if (fs.existsSync(stitchDir)) {
+      for (const entry of fs.readdirSync(stitchDir)) {
+        const rel = path.join("stitch", entry).replace(/\\/g, "/");
+        if (/\.html$/i.test(entry)
+          || /\.png$/i.test(entry)
+          || entry === "DESIGN_DOM.json"
+          || entry === ".generate-prompt.txt"
+          || /^\.stitch-screens.*\.json$/i.test(entry)) {
+          paths.push(rel);
+        }
+      }
+    }
+    for (const entry of fs.readdirSync(worktreeDir)) {
+      if (/^\.stitch-screens.*\.json$/i.test(entry)) paths.push(entry);
+    }
+  } catch {
+    // Missing stitch assets are valid for non-UI projects.
+  }
+  return [...new Set(paths)];
+}
+
+function hardenImplementStoryAssets(worktreeDir: string): void {
+  for (const rel of listStitchCorpusPaths(worktreeDir)) {
+    hideTrackedPathForImplement(worktreeDir, rel);
+  }
+
+  hideTrackedPathForImplement(worktreeDir, "references");
+  const refsDir = path.join(worktreeDir, "references");
+  try {
+    fs.mkdirSync(refsDir, { recursive: true });
+    fs.writeFileSync(path.join(refsDir, "README.md"), IMPLEMENT_REFERENCE_README);
+    fs.writeFileSync(path.join(refsDir, ".setfarm-reference-policy.md"), IMPLEMENT_REFERENCE_README);
+    logger.info(`[worktree] Hardened implement assets in ${worktreeDir}`, {});
+  } catch (e) {
+    logger.warn(`[worktree] Failed to write implement reference policy: ${String(e).slice(0, 120)}`, {});
   }
 }
 
@@ -439,22 +524,7 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
             discardStoryWorktreeAndResetBranch(repo, expected, baseBranch, agentId);
           }
           if (fs.existsSync(worktreeDir)) {
-            const nmSrc = path.join(repo, "node_modules");
-            const nmDst = path.join(worktreeDir, "node_modules");
-            if (fs.existsSync(nmSrc)) {
-              try {
-                const stat = fs.lstatSync(nmDst);
-                if (!stat.isSymbolicLink()) {
-                  fs.rmSync(nmDst, { recursive: true, force: true });
-                  fs.symlinkSync(nmSrc, nmDst);
-                }
-              } catch {
-                try { fs.symlinkSync(nmSrc, nmDst); } catch {}
-              }
-            }
-            copyStitchToWorktree(repo, worktreeDir);
-            ensureReferencesLink(repo, worktreeDir);
-            installScopeHook(worktreeDir, storyId);
+            prepareStoryWorktreeAssets(repo, worktreeDir, storyId, "implement");
             logger.info(`[worktree] Reusing existing worktree ${worktreeDir} for ${storyId}`, {});
             return worktreeDir;
           }
@@ -566,21 +636,7 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
         }
       }
     }
-    // Symlink node_modules to avoid reinstall per story
-    const nmSrc = path.join(repo, "node_modules");
-    const nmDst = path.join(worktreeDir, "node_modules");
-    if (fs.existsSync(nmSrc) && !fs.existsSync(nmDst)) {
-      fs.symlinkSync(nmSrc, nmDst);
-    }
-    // Copy design/reference assets into worktree so developer agents can read them
-    copyStitchToWorktree(repo, worktreeDir);
-    ensureReferencesLink(repo, worktreeDir);
-
-    // 5-model consensus Fix 3: git pre-commit hook for scope enforcement.
-    // Write .story-scope-files + install pre-commit hook that blocks
-    // commits touching files outside scope. Agent sees red git error →
-    // forced to comply (unlike prompt instructions which can be ignored).
-    installScopeHook(worktreeDir, storyId);
+    prepareStoryWorktreeAssets(repo, worktreeDir, storyId, "implement");
 
     logger.info(`[worktree] Created ${worktreeDir} from ${baseBranch}`, {});
     return worktreeDir;
@@ -598,14 +654,7 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
           throw fallback_err;
         }
       }
-      const nmSrc = path.join(repo, "node_modules");
-      const nmDst = path.join(worktreeDir, "node_modules");
-      if (fs.existsSync(nmSrc) && !fs.existsSync(nmDst)) {
-        fs.symlinkSync(nmSrc, nmDst);
-      }
-      copyStitchToWorktree(repo, worktreeDir);
-      ensureReferencesLink(repo, worktreeDir);
-      installScopeHook(worktreeDir, storyId);
+      prepareStoryWorktreeAssets(repo, worktreeDir, storyId, "implement");
       logger.info(`[worktree] Created ${worktreeDir} (existing branch)`, {});
       return worktreeDir;
     } catch (err2: any) {
@@ -654,7 +703,7 @@ function gitWorktreePathForBranch(repo: string, branch: string): string {
   return "";
 }
 
-function prepareStoryWorktreeAssets(repo: string, worktreeDir: string, storyBranch: string): void {
+function prepareStoryWorktreeAssets(repo: string, worktreeDir: string, storyBranch: string, mode: StoryWorktreeAssetMode = "full"): void {
   const nmSrc = path.join(repo, "node_modules");
   const nmDst = path.join(worktreeDir, "node_modules");
   if (fs.existsSync(nmSrc)) {
@@ -669,7 +718,11 @@ function prepareStoryWorktreeAssets(repo: string, worktreeDir: string, storyBran
     }
   }
   copyStitchToWorktree(repo, worktreeDir);
-  ensureReferencesLink(repo, worktreeDir);
+  if (mode === "implement") {
+    hardenImplementStoryAssets(worktreeDir);
+  } else {
+    ensureReferencesLink(repo, worktreeDir);
+  }
   installScopeHook(worktreeDir, storyBranch);
 }
 

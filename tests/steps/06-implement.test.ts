@@ -8,7 +8,7 @@ import { implementModule } from "../../dist/installer/steps/06-implement/module.
 import { checkBuildGate, checkTestGate, computeScopeFileLimits, detectPackageBuildCommand, findDesignDomImplementationIssues, getOutOfScopeStoryFiles, normalize, parseGitStatusPorcelainPath, sourceExposesWindowApp, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
 import { cleanupOutOfScopeWorktreeFiles } from "../../dist/installer/steps/06-implement/context.js";
 import { commitStoryWorktreeScopeIfNeeded, decideStorySystemSmokeGate } from "../../dist/installer/step-ops.js";
-import { ensureStoryBranchWorktree } from "../../dist/installer/worktree-ops.js";
+import { createStoryWorktree, ensureStoryBranchWorktree } from "../../dist/installer/worktree-ops.js";
 import { IMPLICIT_STORY_SCOPE_FILES, isImplicitStoryScopeFile } from "../../dist/installer/story-scope.js";
 import { checkStoryDesignCompliance } from "../../dist/installer/step-guardrails.js";
 import { STACK_RULES } from "../../dist/installer/steps/06-implement/stack-rules.js";
@@ -674,6 +674,44 @@ describe("06-implement step module", () => {
     assert.equal(sourceExposesWindowApp("declare global { interface Window { app: unknown } }\n"), false);
     assert.equal(sourceExposesWindowApp("// window.app = bridge;\nconst ready = true;\n"), false);
     assert.equal(sourceExposesWindowApp("/* globalThis.app = bridge; */\nconst ready = true;\n"), false);
+  });
+
+  it("prepares implement worktrees with safe design and reference corpus", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-implement-safe-assets-"));
+    try {
+      const referenceSource = path.join(tmp, "reference-source");
+      fs.mkdirSync(referenceSource, { recursive: true });
+      fs.writeFileSync(path.join(referenceSource, "game-dev-guide.md"), "# full game guide\n".repeat(400));
+      fs.symlinkSync(referenceSource, path.join(tmp, "references"), "dir");
+      fs.mkdirSync(path.join(tmp, "stitch"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "stitch", "screen.html"), "<html>raw stitch</html>\n");
+      fs.writeFileSync(path.join(tmp, "stitch", "screen.png"), "png bytes\n");
+      fs.writeFileSync(path.join(tmp, "stitch", "DESIGN_DOM.json"), JSON.stringify({ raw: true }));
+      fs.writeFileSync(path.join(tmp, "stitch", "UI_CONTRACT.json"), JSON.stringify([{ screen: "Main" }]));
+      fs.writeFileSync(path.join(tmp, "stitch", "DESIGN_MANIFEST.json"), JSON.stringify([{ id: "screen" }]));
+      fs.writeFileSync(path.join(tmp, "stitch", "SCREEN_MAP.json"), JSON.stringify([{ id: "screen" }]));
+      fs.writeFileSync(path.join(tmp, "stitch", "design-tokens.css"), ":root { --color-bg: #000; }\n");
+      fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({ scripts: { build: "vite build" } }));
+      git(tmp, ["init", "-b", "main"]);
+      git(tmp, ["add", "."]);
+      git(tmp, ["commit", "-m", "base"]);
+
+      const worktree = createStoryWorktree(tmp, "44aa2211-us-001", "main");
+
+      assert.ok(worktree);
+      assert.equal(fs.existsSync(path.join(worktree, "stitch", "screen.html")), false);
+      assert.equal(fs.existsSync(path.join(worktree, "stitch", "DESIGN_DOM.json")), false);
+      assert.equal(fs.existsSync(path.join(worktree, "stitch", "screen.png")), false);
+      assert.equal(fs.existsSync(path.join(worktree, "stitch", "UI_CONTRACT.json")), true);
+      assert.equal(fs.existsSync(path.join(worktree, "stitch", "DESIGN_MANIFEST.json")), true);
+      assert.equal(fs.existsSync(path.join(worktree, "stitch", "design-tokens.css")), true);
+      assert.equal(fs.lstatSync(path.join(worktree, "references")).isSymbolicLink(), false);
+      assert.equal(fs.existsSync(path.join(worktree, "references", "game-dev-guide.md")), false);
+      assert.match(fs.readFileSync(path.join(worktree, "references", "README.md"), "utf-8"), /Full reference manuals are intentionally not mounted/);
+      assert.equal(git(worktree, ["status", "--porcelain", "--", "references", "stitch"]).trim(), "");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("blocks implement completion when touched tests fail", () => {
