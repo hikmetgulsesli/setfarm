@@ -9,21 +9,29 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..", "..");
 const htmlPath = join(root, "landing", "index.html");
 const backupPath = htmlPath + ".bak";
+const readmePath = join(root, "README.md");
+const readmeBackupPath = readmePath + ".bak";
+const installPath = join(root, "scripts", "install.sh");
+const installBackupPath = installPath + ".bak";
 const scriptPath = join(root, "scripts", "inject-version.js");
 
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-const version = pkg.version;
+const releaseVersion = pkg.version;
 
 describe("inject-version", () => {
   beforeEach(() => {
     copyFileSync(htmlPath, backupPath);
+    copyFileSync(readmePath, readmeBackupPath);
+    copyFileSync(installPath, installBackupPath);
   });
 
   afterEach(() => {
     copyFileSync(backupPath, htmlPath);
+    copyFileSync(readmeBackupPath, readmePath);
+    copyFileSync(installBackupPath, installPath);
   });
 
-  it("replaces {{VERSION}} with the package version", () => {
+  it("replaces {{VERSION}} with the package release version", () => {
     // Ensure placeholder exists
     let html = readFileSync(htmlPath, "utf8");
     if (!html.includes("{{VERSION}}")) {
@@ -38,8 +46,8 @@ describe("inject-version", () => {
 
     const result = readFileSync(htmlPath, "utf8");
     assert.ok(
-      result.includes(`v${version}`),
-      `Expected HTML to contain v${version}`
+      result.includes(`v${releaseVersion}`),
+      `Expected HTML to contain v${releaseVersion}`
     );
     assert.ok(
       !result.includes("{{VERSION}}"),
@@ -57,11 +65,22 @@ describe("inject-version", () => {
     assert.equal(first, second, "Output should be identical after two runs");
   });
 
-  it("injects the correct semver from package.json", () => {
+  it("injects the package release semver into the visible badge", () => {
     execFileSync("node", [scriptPath], { cwd: root });
     const html = readFileSync(htmlPath, "utf8");
     const match = html.match(/class="version-badge">v([^<]+)</);
     assert.ok(match, "Version badge should exist in HTML");
-    assert.equal(match[1], version, "Version should match package.json");
+    assert.equal(match[1], releaseVersion, "Version badge should match package.json");
+  });
+
+  it("keeps install URLs on the package release semver tag", () => {
+    execFileSync("node", [scriptPath], { cwd: root });
+    const html = readFileSync(htmlPath, "utf8");
+    const readme = readFileSync(readmePath, "utf8");
+    const install = readFileSync(installPath, "utf8");
+
+    for (const source of [html, readme, install]) {
+      assert.ok(source.includes(`/setfarm/v${releaseVersion}/`), "release URL should use package semver");
+    }
   });
 });

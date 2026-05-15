@@ -10,7 +10,7 @@
  * if the branch is wrong, making the failure loud and obvious.
  */
 import { execFileSync } from "node:child_process";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -55,6 +55,12 @@ if (!allowDirty) {
 }
 
 mkdirSync(distDir, { recursive: true });
-const info = { sha, branch, dirty, builtAt: new Date().toISOString() };
+let packageVersion = "0.0.0";
+try {
+  packageVersion = JSON.parse(readFileSync(resolve(repoRoot, "package.json"), "utf8")).version || packageVersion;
+} catch {}
+const shortSha = sha.slice(0, 8);
+const displayVersion = `${packageVersion}+${shortSha}${dirty ? ".dirty" : ""}`;
+const info = { sha, shortSha, branch, dirty, packageVersion, displayVersion, builtAt: new Date().toISOString() };
 writeFileSync(resolve(distDir, "BUILD_INFO.json"), JSON.stringify(info, null, 2) + "\n");
-console.log("[write-build-info] stamped dist/BUILD_INFO.json: " + sha.slice(0, 8) + " on " + branch + (dirty ? " (DIRTY)" : ""));
+console.log("[write-build-info] stamped dist/BUILD_INFO.json: " + displayVersion + " on " + branch + (dirty ? " (DIRTY)" : ""));

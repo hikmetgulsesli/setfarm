@@ -23,9 +23,19 @@ import { dirname, join } from "node:path";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const pkgPath = join(__dirname, "..", "..", "package.json");
+const buildInfoPath = join(__dirname, "..", "BUILD_INFO.json");
 
 function getVersion(): string {
   try {
+    if (existsSync(buildInfoPath)) {
+      const buildInfo = JSON.parse(readFileSync(buildInfoPath, "utf-8"));
+      if (typeof buildInfo.displayVersion === "string" && buildInfo.displayVersion.trim()) {
+        return buildInfo.displayVersion.trim();
+      }
+      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+      const shortSha = String(buildInfo.shortSha || buildInfo.sha || "").slice(0, 8).replace(/[^0-9A-Za-z-]/g, "");
+      if (pkg.version && shortSha) return `${pkg.version}+${shortSha}${buildInfo.dirty ? ".dirty" : ""}`;
+    }
     const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
     return pkg.version ?? "unknown";
   } catch {
