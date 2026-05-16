@@ -62,17 +62,26 @@ export function resolveTemplate(template: string, context: Record<string, string
 export function parseOutputKeyValues(output: string): Record<string, string> {
   const result: Record<string, string> = {};
 
+  function normalizeOutputKey(key: string): string {
+    return key
+      .trim()
+      .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+      .replace(/[\s-]+/g, "_")
+      .toLowerCase();
+  }
+
   // Try JSON object format first: {"STATUS": "done", "KEY": "value", ...}
   const trimmed = output.trim();
   if (trimmed.startsWith("{")) {
     try {
       const obj = JSON.parse(trimmed);
       for (const [key, value] of Object.entries(obj)) {
-        if (key === "STORIES_JSON" || key === "SCREEN_MAP") {
+        const normalizedKey = normalizeOutputKey(key);
+        if (normalizedKey === "stories_json" || normalizedKey === "screen_map") {
           // Complex values — store as JSON string for downstream parsing
-          result[key.toLowerCase()] = typeof value === "string" ? value : JSON.stringify(value);
+          result[normalizedKey] = typeof value === "string" ? value : JSON.stringify(value);
         } else {
-          result[key.toLowerCase()] = String(value);
+          result[normalizedKey] = String(value);
         }
       }
       return result;
@@ -86,15 +95,18 @@ export function parseOutputKeyValues(output: string): Record<string, string> {
   let pendingValue = "";
 
   function commitPending() {
-    if (pendingKey && !pendingKey.startsWith("STORIES_JSON")) {
-      result[pendingKey.toLowerCase()] = pendingValue.trim();
+    if (pendingKey) {
+      const normalizedKey = normalizeOutputKey(pendingKey);
+      if (!normalizedKey.startsWith("stories_json")) {
+        result[normalizedKey] = pendingValue.trim();
+      }
     }
     pendingKey = null;
     pendingValue = "";
   }
 
   for (const line of lines) {
-    const match = line.match(/^([A-Z_]+):\s*(.*)$/);
+    const match = line.match(/^([A-Za-z][A-Za-z0-9_ -]*):\s*(.*)$/);
     if (match) {
       // New KEY: line found — flush previous key
       commitPending();

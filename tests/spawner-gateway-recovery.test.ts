@@ -92,6 +92,54 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /claim = await claimStep\(fullAgentId,\s*agentId\)/);
   });
 
+  it("selects only usable agent runtimes instead of the first PATH hit", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /function pathCommandCandidates\(name: string\): string\[\]/);
+    assert.match(source, /function commandIsUsable\(command: string\): boolean/);
+    assert.match(source, /execFileSync\(command,\s*\["--version"\]/);
+    assert.match(source, /function firstUsableCommand\(candidates: string\[\]\): string/);
+    assert.match(source, /\.\.\.pathCommandCandidates\("codex"\)/);
+    assert.match(source, /\.\.\.pathCommandCandidates\("openclaw"\)/);
+    assert.match(source, /return firstUsableCommand\(candidates\) \|\| candidates\.find\(isExecutable\) \|\| "codex"/);
+    assert.match(source, /return firstUsableCommand\(candidates\) \|\| candidates\.find\(isExecutable\) \|\| "openclaw"/);
+    assert.match(source, /Requested runtime \$\{requested\} is not usable; falling back to available runtime/);
+    assert.match(source, /CLI is not executable or failed --version/);
+    assert.doesNotMatch(source, /return commandFromPath\("codex"\) \? "codex" : "openclaw"/);
+  });
+
+  it("self-heals supervise-each queues before reviewer polling", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    const helperStart = source.indexOf("async function queuePendingSuperviseEachSteps()");
+    const helperEnd = source.indexOf("async function pollForPendingWork()", helperStart);
+    const pollStart = source.indexOf("async function pollForPendingWork()");
+    const pollEnd = source.indexOf("async function main()", pollStart);
+    assert.notEqual(helperStart, -1, "queuePendingSuperviseEachSteps helper not found");
+    assert.notEqual(helperEnd, -1, "queuePendingSuperviseEachSteps helper end not found");
+    assert.notEqual(pollStart, -1, "pollForPendingWork source not found");
+    assert.notEqual(pollEnd, -1, "pollForPendingWork end not found");
+
+    const helperSource = source.slice(helperStart, helperEnd);
+    const pollSource = source.slice(pollStart, pollEnd);
+
+    assert.match(helperSource, /"superviseEach":true/);
+    assert.match(helperSource, /COALESCE\(NULLIF\(loop_step\.loop_config::jsonb ->> 'superviseStep', ''\), 'supervise'\)/);
+    assert.match(helperSource, /COALESCE\(NULLIF\(loop_step\.loop_config::jsonb ->> 'verifyStep', ''\), 'verify'\)/);
+    assert.match(helperSource, /r\.context::jsonb ->> 'supervised_story_ids'/);
+    assert.match(helperSource, /POSITION\(',' \|\| st\.story_id \|\| ',' IN ',' \|\| COALESCE\(r\.context::jsonb ->> 'supervised_story_ids'/);
+    assert.match(helperSource, /UPDATE steps sup/);
+    assert.match(helperSource, /current_story_id = c\.story_db_id/);
+    assert.match(helperSource, /UPDATE steps SET status = 'waiting', current_story_id = NULL/);
+    assert.match(helperSource, /reviewer waits for supervisor/);
+    assert.ok(
+      pollSource.indexOf("await queuePendingSuperviseEachSteps()") > pollSource.indexOf("await autoVerifyMergedPrEachStories()"),
+      "supervise-each self-heal should run after auto-verify repair",
+    );
+    assert.ok(
+      pollSource.indexOf("await queuePendingSuperviseEachSteps()") < pollSource.indexOf("const steps = await pgQuery"),
+      "supervise-each self-heal must run before pending step polling",
+    );
+  });
+
   it("uses per-spawn handoff files for retry isolation", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /const spawnId = Date\.now\(\) \+ "-" \+ Math\.random\(\)\.toString\(36\)\.slice\(2,\s*10\)/);
@@ -122,12 +170,15 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /"story_workdir",\s*"STORY_WORKDIR",\s*"verify_workdir",\s*"VERIFY_WORKDIR",\s*"WORKDIR",\s*"workdir"/);
     assert.match(source, /REPO_CANDIDATE_KEYS/);
     assert.match(source, /\\\/home\\\/setrox\\\/projects\\\//);
+    assert.match(source, /\\\/Users\\\/\[\^\/\\s/);
+    assert.match(source, /project root\\b/);
     assert.match(source, /prepared story worktree/);
     assert.match(source, /story-worktrees/);
     assert.match(source, /safeAgentCwdFromTextLabels\(input,\s*STORY_WORKDIR_CANDIDATE_KEYS\)/);
     assert.match(source, /safeAgentCwdFromTextLabels\(input,\s*REPO_CANDIDATE_KEYS\)/);
     assert.match(source, /CLAIM_WORKDIR_MISSING/);
     assert.match(source, /claim\.storyId && spawnCwd === AGENT_SAFE_CWD/);
+    assert.match(source, /claimRoleRequiresProjectCwd\(role,\s*agentId\) && spawnCwd === AGENT_SAFE_CWD/);
     assert.match(source, /resolved === SETFARM_SRC \|\| resolved\.startsWith\(SETFARM_SRC \+ path\.sep\)/);
     assert.match(source, /const spawnCwd = safeAgentCwdFromClaimInput\(claim\.resolvedInput\)/);
     assert.match(source, /JSON\.stringify\(\{ stepId: claim\.stepId, runId: claim\.runId, workdir: spawnCwd, repo: spawnCwd, input: claim\.resolvedInput \}\)/);
@@ -200,8 +251,32 @@ describe("spawner gateway recovery wiring", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /REAP_FINISHED_ACTIVE_GRACE_MS/);
     assert.match(source, /function activeProcessIdleMs\(active: ActiveProcess\): number/);
+    assert.match(source, /const terminalReason = childProcessTerminalReason\(active\.child\)/);
+    assert.match(source, /const nonRunningActiveGraceMs = Math\.max\(REAP_FINISHED_ACTIVE_GRACE_MS,\s*stuckThresholdMs\(active\.role,\s*active\.storyId\)\)/);
+    assert.match(source, /row\.run_status === "running" && row\.step_status !== "running" && !terminalReason && ageMs < nonRunningActiveGraceMs/);
+    assert.match(source, /Deferring reap for active/);
     assert.match(source, /row\.run_status === "running" && idleMs < REAP_FINISHED_ACTIVE_GRACE_MS/);
     assert.match(source, /Deferring reap for/);
+  });
+
+  it("recovers exited claims even after the active process map entry was already removed", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /const currentProcess = activeProcesses\.get\(key\)/);
+    assert.match(source, /const hasReplacementProcess = Boolean\(currentProcess && currentProcess\.child !== child\)/);
+    assert.match(source, /if \(!hasReplacementProcess && !shuttingDown && claim\.stepId\)/);
+    assert.match(source, /new Error\("agent exited with code 0 without calling setfarm step complete\/fail"\)/);
+    assert.match(source, /\.finally\(\(\) => cleanupSpawnerDetachedToolChildren\("spawn-clean-exit"\)\)/);
+  });
+
+  it("cleans detached preview and Playwright children after agent exit or reap", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /function isSpawnerDetachedToolCommand\(command: string\): boolean/);
+    assert.match(source, /function cleanupSpawnerDetachedToolChildren\(context: string\): void/);
+    assert.match(source, /ppid !== process\.pid/);
+    assert.match(source, /activePids\.has\(pid\)/);
+    assert.match(source, /chromium_headless_shell\\b\[\\s\\S\]\*\\bplaywright_chromiumdev_profile-/);
+    assert.match(source, /setTimeout\(\(\) => cleanupSpawnerDetachedToolChildren\(context\),\s*1500\)/);
+    assert.match(source, /cleanupSpawnerDetachedToolChildren\("poll-orphan-sweep"\)/);
   });
 
   it("logs transient async failures without crashing the event-driven spawner", () => {
@@ -248,6 +323,84 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(releaseSource, /Spawner shutdown released active loop claim/);
     assert.match(releaseSource, /step_id = \$3 AND story_id = \$4 AND agent_id = \$5 AND outcome IS NULL/);
     assert.doesNotMatch(releaseSource, /story_id = \$3 AND agent_id = \$4 AND outcome IS NULL/);
+  });
+
+  it("requeues startup orphan running claims as infra retry instead of product failure", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    const recoveryStart = source.indexOf("async function failStaleRunningClaimsFromPreviousSpawner(");
+    const recoveryEnd = source.indexOf("async function releaseActiveProcessForShutdown(", recoveryStart);
+    assert.notEqual(recoveryStart, -1, "startup recovery source not found");
+    assert.notEqual(recoveryEnd, -1, "startup recovery end not found");
+    const recoverySource = source.slice(recoveryStart, recoveryEnd);
+
+    assert.match(recoverySource, /LEFT JOIN stories st ON st\.id = s\.current_story_id/);
+    assert.match(recoverySource, /await requeueStaleRunningClaimFromPreviousSpawner\(row,\s*reason\)/);
+    assert.match(recoverySource, /UPDATE steps SET status = 'pending', current_story_id = NULL/);
+    assert.match(recoverySource, /UPDATE claim_log SET outcome = 'infra_retry'/);
+    assert.doesNotMatch(recoverySource, /await failStep\(row\.id,\s*reason\)/);
+  });
+
+  it("does not consume single-step retry budgets for transient agent infrastructure exits", () => {
+    const source = fs.readFileSync(path.join(root, "src", "installer", "step-fail.ts"), "utf-8");
+    const singleStart = source.indexOf("async function handleSingleStepFailurePG(");
+    const criticalStart = source.indexOf("// Boost max_retries for quality gate steps", singleStart);
+    assert.notEqual(singleStart, -1, "handleSingleStepFailurePG source not found");
+    assert.notEqual(criticalStart, -1, "single-step infra retry block not found");
+    const singlePreamble = source.slice(singleStart, criticalStart);
+
+    assert.match(source, /function isTransientAgentInfrastructureFailure\(error: string\): boolean/);
+    assert.match(source, /normalized\.includes\("agent exited code="\)/);
+    assert.match(singlePreamble, /if \(isTransientAgentInfrastructureFailure\(error\)\)/);
+    assert.match(singlePreamble, /UPDATE steps SET status = 'pending', output = \$\{error\}, updated_at = \$\{now\(\)\} WHERE id = \$\{stepId\}/);
+    assert.match(singlePreamble, /outcome = 'infra_retry'/);
+    assert.match(singlePreamble, /failStep:singleInfraRetry/);
+    assert.match(singlePreamble, /without consuming step retry/);
+    assert.doesNotMatch(singlePreamble, /retry_count = \$\{newRetryCount\}/);
+  });
+
+  it("does not route merged story PRs back to implement for platform metadata-only dirty status", () => {
+    const source = fs.readFileSync(path.join(root, "src", "installer", "step-ops.ts"), "utf-8");
+    const helperStart = source.indexOf("function isPlatformMetadataOnlyVerifyRetry(");
+    const verifyStart = source.indexOf("async function handleVerifyEachCompletion(");
+    const verifyEnd = source.indexOf("// Verify PASSED", verifyStart);
+    assert.notEqual(helperStart, -1, "platform metadata verify retry helper not found");
+    assert.notEqual(verifyStart, -1, "handleVerifyEachCompletion source not found");
+    assert.notEqual(verifyEnd, -1, "verify retry branch boundary not found");
+    const helperSource = source.slice(helperStart, source.indexOf("function isPlatformStoryCommitAllowed", helperStart));
+    const verifyPreamble = source.slice(verifyStart, verifyEnd);
+
+    assert.match(helperSource, /supervisor_memory\\\.md/);
+    assert.match(helperSource, /project_memory\\\.md/);
+    assert.match(helperSource, /clean git status/);
+    assert.match(helperSource, /failedCheck/);
+    assert.match(helperSource, /productBlocker/);
+    assert.match(verifyPreamble, /let status = parsedOutput/);
+    assert.match(verifyPreamble, /status === "retry" && verifiedStoryId && isPlatformMetadataOnlyVerifyRetry\(output\)/);
+    assert.match(verifyPreamble, /getPRState\(row\.pr_url\) === "MERGED"/);
+    assert.match(verifyPreamble, /verify_platform_metadata_retry_ignored/);
+    assert.match(verifyPreamble, /status = "done"/);
+  });
+
+  it("does not block QA-FIX main merges on platform metadata-only dirty status", () => {
+    const source = fs.readFileSync(path.join(root, "src", "installer", "step-ops.ts"), "utf-8");
+    const helperStart = source.indexOf("function gitPorcelainPath(");
+    const qaFixStart = source.indexOf("if (storyStatus === STORY_STATUS.DONE && storyIsQaFix)");
+    const qaFixEnd = source.indexOf("const requiredPrBase", qaFixStart);
+    assert.notEqual(helperStart, -1, "platform metadata dirty parser not found");
+    assert.notEqual(qaFixStart, -1, "QA-FIX merge block not found");
+    assert.notEqual(qaFixEnd, -1, "QA-FIX merge block boundary not found");
+    const helperSource = source.slice(helperStart, source.indexOf("function isPlatformStoryCommitAllowed", helperStart));
+    const qaFixMergeBlock = source.slice(qaFixStart, qaFixEnd);
+
+    assert.match(source, /function gitPorcelainPath\(line: string\): string/);
+    assert.match(helperSource, /const raw = String\(line \|\| ""\)\.replace\(/);
+    assert.doesNotMatch(helperSource, /String\(line \|\| ""\)\.trim\(\)/);
+    assert.match(helperSource, /raw\.slice\(3\)\.trim\(\)/);
+    assert.match(helperSource, /\^\[ MADRCU\?!\]\{2\}\\s/);
+    assert.match(helperSource, /files\.length > 0 && files\.every\(isPlatformInternalCommitPath\)/);
+    assert.match(qaFixMergeBlock, /dirty && !isPlatformMetadataOnlyDirtyStatus\(dirty\)/);
+    assert.match(qaFixMergeBlock, /qa_fix_platform_metadata_dirty_ignored/);
+    assert.match(qaFixMergeBlock, /Ignoring platform metadata-only dirty status before merging/);
   });
 
   it("enforces one open claim per run step story and agent at the database layer", () => {
@@ -539,6 +692,9 @@ describe("spawner gateway recovery wiring", () => {
 
   it("installs an implement-only git wrapper that blocks agent-side git ownership before retry loss", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    const wrapperStart = source.indexOf("function installImplementGitWrapper");
+    const wrapperEnd = source.indexOf("function buildSessionKey", wrapperStart);
+    const wrapperSource = source.slice(wrapperStart, wrapperEnd);
     assert.match(source, /function installImplementGitWrapper\(workdir: string, transcriptPath: string\)/);
     assert.match(source, /\.setfarm-bin/);
     assert.match(source, /blocked agent staging/);
@@ -550,6 +706,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /shouldInstallImplementGitWrapper \? installImplementGitWrapper/);
     assert.doesNotMatch(source, /claim\.stepId === "implement" \? installImplementGitWrapper/);
     assert.match(source, /buildOpenClawChildEnv\(pathPrefix\)/);
+    assert.doesNotMatch(wrapperSource, /SETFARM_PLATFORM_COMMIT|SETFARM_RECOVERY_COMMIT/);
   });
 
   it("persists runtime guard diagnostics without consuming story retry budgets", () => {

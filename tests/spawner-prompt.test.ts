@@ -24,12 +24,15 @@ describe("spawner prompt bootstrap", () => {
     assert.match(prompt, /First exec command:\nbash '\/tmp\/setfarm-claim-bootstrap-feature-dev_developer-spawner-test\.sh'/);
     assert.match(prompt, /CLAIM_SUMMARY_FILE=\/tmp\/claim-summary-feature-dev_developer-spawner-test\.json/);
     assert.match(prompt, /Read the structured claim summary at \/tmp\/claim-summary-feature-dev_developer-spawner-test\.json first/);
+    assert.match(prompt, /outputContract\.requiredFields and outputContract\.format exactly/);
+    assert.match(prompt, /guard-backed roles will reject prose-only summaries/);
     assert.match(prompt, /Use retryFeedback\.mode exactly/);
     assert.match(prompt, /mode="fix" means the blocker is an open implementation requirement/);
     assert.match(prompt, /mode="audit" means prior feedback may be stale/);
     assert.match(prompt, /gitPolicy/);
     assert.match(prompt, /Setfarm performs the scoped commit and PR handoff after gates pass/);
     assert.match(prompt, /designContracts\.screenIndex, designContracts\.uiContract, designContracts\.componentRegistry, and designContracts\.componentTypes/);
+    assert.match(prompt, /Do NOT print or dump the entire claim summary JSON/);
     assert.match(prompt, /retryDiscipline\.mode/);
     assert.match(prompt, /retryDiscipline\.mode="first-delta"/);
     assert.match(prompt, /retryDiscipline\.mode="semantic-fix"/);
@@ -40,6 +43,7 @@ describe("spawner prompt bootstrap", () => {
     assert.doesNotMatch(prompt, /First exec command should start with/);
     assert.doesNotMatch(prompt, /jq -r/);
     assert.doesNotMatch(prompt, /case "\$WORKDIR" in/);
+    assert.doesNotMatch(prompt, /\/usr\/bin\/node/);
     assert.match(prompt, /step complete "\$STEP_ID" --file '\/tmp\/setfarm-output-feature-dev_developer-spawner-test\.txt'/);
   });
 
@@ -72,6 +76,14 @@ describe("spawner prompt bootstrap", () => {
         verifyWorkdir: "/home/setrox/.openclaw/workspaces/workflows/feature-dev/agents/developer/story-worktrees/run-us-001",
         task: "Project: bootstrap sensor",
         taskBrief: "Project: bootstrap sensor",
+        outputContract: {
+          format: [
+            "STATUS: done|retry|skip|fail",
+            "QA_REPORT: quality-reports/qa-test-1.md",
+            "QA_SCREENS_TESTED: <number>",
+          ].join("\n"),
+          requiredFields: ["STATUS", "QA_REPORT", "QA_SCREENS_TESTED"],
+        },
         buildCommand: "npm run build",
         testCommand: "npm run test:run",
         lintCommand: "true",
@@ -162,6 +174,9 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, /COMPONENT_TYPE_CONTRACTS=1/);
       assert.match(out, /SUPERVISOR_MEMORY=present \d+ chars/);
       assert.match(out, /TASK_BRIEF=Project: bootstrap sensor/);
+      assert.match(out, /OUTPUT_REQUIRED_FIELDS=STATUS, QA_REPORT, QA_SCREENS_TESTED/);
+      assert.match(out, /OUTPUT_CONTRACT STATUS: done\|retry\|skip\|fail/);
+      assert.match(out, /OUTPUT_CONTRACT QA_REPORT: quality-reports\/qa-test-1\.md/);
       assert.doesNotMatch(out, /TEST_CMD: true/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -336,7 +351,129 @@ describe("spawner prompt bootstrap", () => {
       assert.match((summary.retryFeedback as any).instruction, /open implementation blocker/);
       assert.match(String((summary.retryDiscipline as any).instruction), /small scoped source delta/);
       assert.match(String(summary.acceptanceCriteria), /Pieces fall and rotate/);
+      assert.match(String(summary.currentStory), /Story US-001: Tetris engine/);
       assert.match(JSON.stringify(summary.handoff), /Audit fallback only/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("derives single-step project roots from claim context and keeps task text compact", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-single-step-summary-"));
+    try {
+      const repo = path.join(tmp, "orbit-blocks-canary");
+      const scratch = path.join(tmp, "agent-scratch");
+      fs.mkdirSync(repo, { recursive: true });
+      fs.mkdirSync(scratch, { recursive: true });
+      const noisyStories = JSON.stringify([
+        {
+          id: "US-001",
+          title: "Generated screen and controller wiring",
+          acceptanceCriteria: new Array(20).fill("Every visible control must be interactive."),
+        },
+      ], null, 2);
+
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "qa-tester",
+        claimFile: "/tmp/claim.json",
+        outputFile: "/tmp/output.txt",
+        bootstrapFile: "/tmp/bootstrap.sh",
+        stepId: "step-qa",
+        runId: "run-qa",
+        workdir: scratch,
+        repo: scratch,
+        input: [
+          "# QA Test Step - Browser, Visual, and Functional Test Agent",
+          "",
+          "Test the project after verify and security-gate. Open the live app in a browser,",
+          "prove that acceptance criteria work at runtime, traverse routes and controls,",
+          "capture screenshots, and write one batch QA report.",
+          "",
+          "## Context",
+          "",
+          `- ${repo}: project root`,
+          "- run-qa: feature branch",
+          `- ${noisyStories}: stories payload`,
+          "",
+          "## Output Format",
+          "",
+          "```",
+          "STATUS: done|retry|skip|fail",
+          "QA_REPORT: quality-reports/qa-test-1.md",
+          "QA_SCREENS_TESTED: <number>",
+          "QA_ROUTES_TESTED: <number>",
+          "QA_INTERACTIONS_TESTED: <number>",
+          "QA_TOTAL_ISSUES: <number>",
+          "TEST_FAILURES: <batch issue list when STATUS is retry>",
+          "ISSUES: <optional extra observations>",
+          "```",
+        ].join("\n"),
+      });
+
+      assert.equal(summary.workdir, repo);
+      assert.equal(summary.verifyWorkdir, repo);
+      assert.equal(summary.repo, repo);
+      assert.equal(summary.mainRepo, repo);
+      assert.match(String(summary.task), /^Test the project after verify and security-gate/);
+      assert.ok(String(summary.task).length <= 700);
+      assert.doesNotMatch(String(summary.task), /acceptanceCriteria|US-001|stories payload/);
+      assert.deepEqual((summary.outputContract as any).requiredFields, [
+        "STATUS",
+        "QA_REPORT",
+        "QA_SCREENS_TESTED",
+        "QA_ROUTES_TESTED",
+        "QA_INTERACTIONS_TESTED",
+        "QA_TOTAL_ISSUES",
+        "TEST_FAILURES",
+        "ISSUES",
+      ]);
+      assert.match(String((summary.outputContract as any).format), /QA_TOTAL_ISSUES: <number>/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("bootstrap prefers claim-summary workdir over stale scratch workdir", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-workdir-bootstrap-"));
+    try {
+      const repo = path.join(tmp, "project");
+      const scratch = path.join(tmp, "agent-scratch");
+      fs.mkdirSync(repo, { recursive: true });
+      fs.mkdirSync(scratch, { recursive: true });
+      const claimFile = path.join(tmp, "claim.json");
+      const claimSummaryFile = path.join(tmp, "claim-summary.json");
+      const outputFile = path.join(tmp, "output.txt");
+      const bootstrapFile = path.join(tmp, "bootstrap.sh");
+      fs.writeFileSync(claimFile, JSON.stringify({
+        stepId: "step-qa",
+        runId: "run-qa",
+        workdir: scratch,
+        repo: scratch,
+      }) + "\n");
+      fs.writeFileSync(claimSummaryFile, JSON.stringify({
+        workdir: repo,
+        repo,
+        mainRepo: repo,
+        taskBrief: "QA project root sensor",
+      }) + "\n");
+      fs.writeFileSync(bootstrapFile, buildResolvedClaimBootstrapScript({
+        claimFile,
+        claimSummaryFile,
+        outputFile,
+        stepId: "step-qa",
+        workdir: scratch,
+        taskPreview: "QA project root sensor",
+      }), { mode: 0o700 });
+
+      const out = execFileSync("bash", [bootstrapFile], {
+        encoding: "utf-8",
+        timeout: 10_000,
+      });
+
+      assert.match(out, new RegExp(`WORKDIR=${repo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+      assert.match(out, new RegExp(`MAIN_REPO=${repo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+      assert.doesNotMatch(out, new RegExp(`WORKDIR=${scratch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -373,12 +510,50 @@ describe("spawner prompt bootstrap", () => {
       });
 
       assert.equal(summary.failureCategory, "RUNTIME_BRIDGE_MISSING");
-      assert.match(String(summary.failureSuggestion), /window\.app\/globalThis\.app runtime bridge/);
+      assert.match(String(summary.failureSuggestion), /window\.app = \{ state, actions \}|globalThis\.app = \{ state, actions \}/);
       assert.equal((summary.retryFeedback as any).mode, "fix");
       assert.equal((summary.retryDiscipline as any).mode, "semantic-fix");
-      assert.match(String((summary.retryDiscipline as any).instruction), /window\.app\/globalThis\.app/);
+      assert.match(String((summary.retryDiscipline as any).instruction), /window\.app = \{ state, actions \}|globalThis\.app = \{ state, actions \}/);
+      assert.match(String((summary.retryDiscipline as any).instruction), /Type declarations, comments, docs, window\.game/);
       assert.match((summary.retryFeedback as any).blocker, /RUNTIME_BRIDGE_MISSING/);
-      assert.match((summary.retryFeedback as any).suggestion, /runtime bridge/);
+      assert.match((summary.retryFeedback as any).suggestion, /window\.app = \{ state, actions \}|globalThis\.app = \{ state, actions \}/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("elevates missing scope files into a semantic-fix manager instruction", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-scope-file-summary-"));
+    try {
+      fs.writeFileSync(path.join(tmp, ".story-scope-files"), "src/App.tsx\nsrc/hooks/useAppState.ts\n");
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: "/tmp/claim.json",
+        outputFile: "/tmp/output.txt",
+        bootstrapFile: "/tmp/bootstrap.sh",
+        stepId: "step-123",
+        runId: "run-123",
+        workdir: tmp,
+        repo: tmp,
+        storyId: "US-001",
+        input: [
+          "TASK: Project: scope file sensor",
+          `WORKDIR: ${tmp}`,
+          "CURRENT STORY: Story US-001: App shell",
+          "",
+          "## Previous Failure / Retry Feedback",
+          "SCOPE_FILE_MISSING: Story US-001 declared scope_files=[\"src/App.tsx\",\"src/hooks/useAppState.ts\"] but only 1/2 exist as non-empty files.",
+          "",
+          "## Current Story",
+        ].join("\n"),
+      });
+
+      assert.equal(summary.failureCategory, "SCOPE_FILE_MISSING");
+      assert.match(String(summary.failureSuggestion), /declared scope_files/);
+      assert.equal((summary.retryDiscipline as any).mode, "semantic-fix");
+      assert.match(String((summary.retryDiscipline as any).instruction), /declared scope_files/);
+      assert.match(String((summary.retryDiscipline as any).instruction), /Do not collapse the implementation into one file/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -513,6 +688,75 @@ describe("spawner prompt bootstrap", () => {
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
+  });
+
+  it("extracts supervisor Output Contract blocks into claim summaries", () => {
+    const summary = buildClaimSummary({
+      wfId: "feature-dev",
+      role: "supervisor",
+      claimFile: "/tmp/claim.json",
+      outputFile: "/tmp/output.txt",
+      bootstrapFile: "/tmp/bootstrap.sh",
+      stepId: "step-supervise",
+      runId: "run-supervise",
+      workdir: "/tmp",
+      repo: "/tmp",
+      storyId: "US-001",
+      input: [
+        "TASK:",
+        "Build a browser game.",
+        "",
+        "CURRENT_STORY: US-001 Runtime bridge",
+        "",
+        "## Output Contract",
+        "",
+        "If clean:",
+        "",
+        "STATUS: done",
+        "SUPERVISOR_DECISION: pass",
+        "SUPERVISOR_MEMORY_APPEND: <checked>",
+        "CHECKS: <commands>",
+        "CHANGES: none",
+        "RISKS: none",
+      ].join("\n"),
+    });
+
+    assert.match(String((summary.outputContract as any)?.format), /SUPERVISOR_DECISION: pass/);
+    assert.deepEqual((summary.outputContract as any)?.requiredFields.slice(0, 2), ["STATUS", "SUPERVISOR_DECISION"]);
+  });
+
+  it("extracts story acceptance criteria from story-scoped supervisor prompts", () => {
+    const summary = buildClaimSummary({
+      wfId: "feature-dev",
+      role: "supervisor",
+      claimFile: "/tmp/claim.json",
+      outputFile: "/tmp/output.txt",
+      bootstrapFile: "/tmp/bootstrap.sh",
+      stepId: "step-supervise",
+      runId: "run-supervise",
+      workdir: "/tmp",
+      repo: "/tmp",
+      storyId: "US-001",
+      input: [
+        "SUPERVISOR_SCOPE: story",
+        "CURRENT_STORY: Story US-001: Game runtime",
+        "",
+        "Build the runtime state bridge.",
+        "",
+        "Acceptance Criteria:",
+        "  1. Expose storage status and last error through window.app.",
+        "  2. Disable gameplay controls when the game is not playing.",
+        "",
+        "For `SUPERVISOR_SCOPE: story`, audit only this story.",
+        "",
+        "PREVIOUS FAILURE:",
+        "(none)",
+      ].join("\n"),
+    });
+
+    assert.match(String(summary.acceptanceCriteria), /Expose storage status and last error/);
+    assert.match(String(summary.acceptanceCriteria), /Disable gameplay controls/);
+    assert.doesNotMatch(String(summary.acceptanceCriteria), /PREVIOUS FAILURE/);
   });
 
   it("does not treat the next label as an empty command value", () => {

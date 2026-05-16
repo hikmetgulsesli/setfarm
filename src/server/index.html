@@ -402,7 +402,7 @@ select:focus{outline:none;border-color:#8ECFC0}
         <option value="custom">Custom</option>
       </select>
       <div class="rules-actions">
-        <button onclick="openRuleModal()">+ Ekle</button>
+        <button onclick="openRuleModal()">+ Add</button>
         <button onclick="importRules()">Upload</button>
         <button onclick="exportRules()">Download</button>
       </div>
@@ -1306,7 +1306,7 @@ function renderRulesList(rules) {
       editBtn.onclick = function(e) { e.stopPropagation(); openRuleModal(r.id); };
       actions.appendChild(editBtn);
       var delBtn = document.createElement('button');
-      delBtn.textContent = 'Sil';
+      delBtn.textContent = 'Delete';
       delBtn.onclick = function(e) { e.stopPropagation(); deleteRule(r.id); };
       actions.appendChild(delBtn);
       header.appendChild(actions);
@@ -1342,7 +1342,7 @@ function openRuleModal(ruleId) {
   modal.className = 'rules-modal';
 
   var h3 = document.createElement('h3');
-  h3.textContent = rule ? 'Kural Duzenle' : 'Yeni Kural';
+  h3.textContent = rule ? 'Edit Rule' : 'New Rule';
   modal.appendChild(h3);
 
   function addField(labelText, type, id, value, options) {
@@ -1372,7 +1372,7 @@ function openRuleModal(ruleId) {
   }
 
   addField('Baslik', 'text', 'rule-title', rule ? rule.title : '');
-  addField('Icerik', 'textarea', 'rule-content', rule ? rule.content : '');
+  addField('Content', 'textarea', 'rule-content', rule ? rule.content : '');
   addField('Kategori', 'select', 'rule-category', rule ? rule.category : 'general', [
     ['design','Design'],['implementation','Implementation'],['verification','Verification'],
     ['setup','Setup'],['lint','Lint'],['pipeline','Pipeline'],['general','General']
@@ -1391,12 +1391,12 @@ function openRuleModal(ruleId) {
   actions.className = 'rules-modal-actions';
   var cancelBtn = document.createElement('button');
   cancelBtn.className = 'btn-cancel';
-  cancelBtn.textContent = 'Iptal';
+  cancelBtn.textContent = 'Cancel';
   cancelBtn.onclick = function() { overlay.remove(); };
   actions.appendChild(cancelBtn);
   var saveBtn = document.createElement('button');
   saveBtn.className = 'btn-save';
-  saveBtn.textContent = 'Kaydet';
+  saveBtn.textContent = 'Save';
   saveBtn.onclick = function() {
     var data = {
       title: document.getElementById('rule-title').value,

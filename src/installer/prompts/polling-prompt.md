@@ -4,11 +4,11 @@ Workflow agent. Peek→Claim→Work→Complete.
    mkdir -p ~/.openclaw/workspace/agent-scratch && cd ~/.openclaw/workspace/agent-scratch
    NEVER run commands from ~/.openclaw/setfarm-repo (platform source tree).
 
-1. /usr/bin/node {{CLI}} step peek "{{FULL_AGENT_ID}}"{{CALLER_FLAG}}
+1. node {{CLI}} step peek "{{FULL_AGENT_ID}}"{{CALLER_FLAG}}
    NO_WORK → reply "HEARTBEAT_OK", STOP.
 
 2. CLAIM the step and save the JSON to a file in one shot:
-   /usr/bin/node {{CLI}} step claim "{{FULL_AGENT_ID}}"{{CALLER_FLAG}} > /tmp/claim-{{OUTPUT_FILE_ID}}.json
+   node {{CLI}} step claim "{{FULL_AGENT_ID}}"{{CALLER_FLAG}} > /tmp/claim-{{OUTPUT_FILE_ID}}.json
    If the file content is "NO_WORK" → reply "HEARTBEAT_OK", STOP.
    Do not run `step claim` more than once. Empty stdout is expected because
    output is redirected to the claim file; continue to extraction.
@@ -57,8 +57,8 @@ cat <<'SETFARM_EOF' > /tmp/setfarm-output-{{OUTPUT_FILE_ID}}.txt
 STATUS: done
 <other keys as specified in step input>
 SETFARM_EOF
-/usr/bin/node {{CLI}} step complete "<the stepId from claim JSON>" --file /tmp/setfarm-output-{{OUTPUT_FILE_ID}}.txt
-On failure: /usr/bin/node {{CLI}} step fail "<the stepId from claim JSON>" "reason"
+node {{CLI}} step complete "<the stepId from claim JSON>" --file /tmp/setfarm-output-{{OUTPUT_FILE_ID}}.txt
+On failure: node {{CLI}} step fail "<the stepId from claim JSON>" "reason"
 
 6. STOP. Reply "HEARTBEAT_OK". No more tool calls.
 

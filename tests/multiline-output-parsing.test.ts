@@ -122,4 +122,21 @@ describe("parseOutputKeyValues — multi-line output parsing", () => {
     assert.equal(result["status"], "done");
     assert.equal(result["note"], "some note");
   });
+
+  it("accepts common non-uppercase agent output keys", () => {
+    const output = [
+      "STATUS: done",
+      "storyId: US-001",
+      "summary: Implemented the requested feature",
+      "filesChanged:",
+      "- src/App.tsx",
+      "- src/index.css",
+    ].join("\n");
+
+    const result = parseOutputKeyValues(output);
+    assert.equal(result["status"], "done");
+    assert.equal(result["story_id"], "US-001");
+    assert.equal(result["summary"], "Implemented the requested feature");
+    assert.ok(result["files_changed"].includes("src/App.tsx"));
+  });
 });

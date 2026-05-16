@@ -2,6 +2,12 @@
 
 This repository now keeps agent-facing operational notes in English only.
 
+## 2.3.39 - 2026-05-16
+
+- Added a spawner daemon control path and CLI autostart so local and cloud runs can use an event-driven execution backend without stale gateway cron assumptions.
+- Added Codex/OpenClaw runtime resolution, claim-summary output contracts, and safer project-root workdir detection for spawned workers.
+- Added PostgreSQL schema bootstrap and Mission Control supervisor artifact summaries so fresh Setfarm instances expose run health without manual migration gaps.
+
 ## 2.3.38 - 2026-05-16
 
 - Split missing declared scope files into a dedicated implement retry category with clearer worker feedback.

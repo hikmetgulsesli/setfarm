@@ -12,6 +12,7 @@ import YAML from "yaml";
 import type { RunInfo, StepInfo } from "../installer/status.js";
 import { getRunEvents } from "../installer/events.js";
 import { getMedicStatus, getRecentMedicChecks } from "../medic/medic.js";
+import { readSupervisorArtifactSummary } from "./supervisor-summary.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -331,7 +332,7 @@ export function startDashboard(port = 3333): http.Server {
         const ts = now();
         const id = crypto.randomUUID();
         await pgRun(
-          "INSERT INTO rules (id, title, content, category, project_type, severity, applies_to, enabled, sort_order, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, 1, 0, $8, $9)",
+          "INSERT INTO rules (id, title, content, category, project_type, severity, applies_to, enabled, sort_order, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, 0, $8, $9)",
           [id, body.title, body.content, body.category ?? "general", body.project_type ?? "general", body.severity ?? "mandatory", body.applies_to ?? "implement", ts, ts]
         );
         return json(res, { id }, 201);
@@ -363,14 +364,14 @@ export function startDashboard(port = 3333): http.Server {
           if (existing) {
             await pgRun(
               "UPDATE rules SET content = $1, category = $2, project_type = $3, severity = $4, applies_to = $5, enabled = $6, updated_at = $7 WHERE id = $8",
-              [r.content, r.category ?? "general", r.project_type ?? "general", r.severity ?? "mandatory", r.applies_to ?? "implement", r.enabled === false ? 0 : 1, ts, existing.id]
+              [r.content, r.category ?? "general", r.project_type ?? "general", r.severity ?? "mandatory", r.applies_to ?? "implement", r.enabled !== false, ts, existing.id]
             );
             updated++;
           } else {
             const id = crypto.randomUUID();
             await pgRun(
               "INSERT INTO rules (id, title, content, category, project_type, severity, applies_to, enabled, sort_order, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9, $10)",
-              [id, r.title, r.content, r.category ?? "general", r.project_type ?? "general", r.severity ?? "mandatory", r.applies_to ?? "implement", r.enabled === false ? 0 : 1, ts, ts]
+              [id, r.title, r.content, r.category ?? "general", r.project_type ?? "general", r.severity ?? "mandatory", r.applies_to ?? "implement", r.enabled !== false, ts, ts]
             );
             imported++;
           }
@@ -386,7 +387,7 @@ export function startDashboard(port = 3333): http.Server {
       const id = ruleToggleMatch[1];
       if (id.startsWith("frag-") || id.startsWith("ref-")) return json(res, { error: "Cannot toggle system rules" }, 403);
       const ts = now();
-      await pgRun("UPDATE rules SET enabled = CASE WHEN enabled = 1 THEN 0 ELSE 1 END, updated_at = $1 WHERE id = $2", [ts, id]);
+      await pgRun("UPDATE rules SET enabled = NOT enabled, updated_at = $1 WHERE id = $2", [ts, id]);
       return json(res, { ok: true });
     }
 
@@ -399,7 +400,7 @@ export function startDashboard(port = 3333): http.Server {
         const ts = now();
         await pgRun(
           "UPDATE rules SET title = $1, content = $2, category = $3, project_type = $4, severity = $5, applies_to = $6, enabled = $7, updated_at = $8 WHERE id = $9",
-          [body.title, body.content, body.category ?? "general", body.project_type ?? "general", body.severity ?? "mandatory", body.applies_to ?? "implement", body.enabled === false ? 0 : 1, ts, id]
+          [body.title, body.content, body.category ?? "general", body.project_type ?? "general", body.severity ?? "mandatory", body.applies_to ?? "implement", body.enabled !== false, ts, id]
         );
         return json(res, { ok: true });
       } catch (e: any) {
@@ -431,6 +432,12 @@ export function startDashboard(port = 3333): http.Server {
         [storiesMatch[1]]
       );
       return json(res, stories);
+    }
+
+    const supervisorMatch = p.match(/^\/api\/runs\/([^/]+)\/supervisor$/);
+    if (supervisorMatch) {
+      const run = await getRunById(supervisorMatch[1]);
+      return run ? json(res, readSupervisorArtifactSummary(run)) : json(res, { error: "not found" }, 404);
     }
 
     const runMatch = p.match(/^\/api\/runs\/(.+)$/);

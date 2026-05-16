@@ -97,6 +97,70 @@ function existingDirectory(value: string): string {
   }
 }
 
+function isAgentScratchPath(value: string): boolean {
+  const candidate = String(value || "").trim();
+  if (!candidate) return false;
+  const resolved = path.resolve(candidate);
+  return resolved === path.resolve(defaultAgentScratch) || path.basename(resolved) === "agent-scratch";
+}
+
+function projectRootFromClaimText(input: string): string {
+  const projectRootLine = /(?:^|[\r\n])\s*(?:[-*]\s*)?`?([^`\r\n]+?)`?\s*:\s*project root\b/gi;
+  let lineMatch: RegExpExecArray | null;
+  while ((lineMatch = projectRootLine.exec(input)) !== null) {
+    const candidate = existingDirectory((lineMatch[1] || "").trim());
+    if (candidate) return candidate;
+  }
+
+  const projectRootLabel = /(?:^|[\r\n])\s*project root\s*[:=]\s*`?([^`\r\n]+?)`?\s*$/gi;
+  let labelMatch: RegExpExecArray | null;
+  while ((labelMatch = projectRootLabel.exec(input)) !== null) {
+    const candidate = existingDirectory((labelMatch[1] || "").trim());
+    if (candidate) return candidate;
+  }
+
+  return "";
+}
+
+function compactTaskSummary(input: string, rawInput: unknown): string {
+  const brief = extractTaskBrief(input, rawInput).trim();
+  if (brief) return brief.slice(0, 700);
+
+  const direct = lineValue(input, "TASK").trim();
+  if (direct) return direct.slice(0, 700);
+
+  return claimTaskPreview(rawInput)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line && !line.startsWith("#"))?.slice(0, 700) || "";
+}
+
+function extractOutputContract(input: string): { format: string; requiredFields: string[] } | undefined {
+  const section = sliceSection(
+    input,
+    /^\s*##\s*Output (?:Format|Contract)\s*$/im,
+    [/^\s*##\s+/m],
+    2200,
+  );
+  if (!section) return undefined;
+  const fenced = section.match(/```(?:[A-Za-z0-9_-]+)?\s*\n([\s\S]*?)```/);
+  const format = (fenced?.[1] || section)
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.trim())
+    .slice(0, 24)
+    .join("\n")
+    .slice(0, 1800);
+  if (!format) return undefined;
+  const requiredFields = Array.from(new Set(
+    format
+      .split(/\r?\n/)
+      .map((line) => line.match(/^\s*([A-Z][A-Z0-9_]+)\s*:/)?.[1])
+      .filter((value): value is string => Boolean(value)),
+  ));
+  return { format, requiredFields };
+}
+
 function deriveStoryBranch(input: string, runId: string, storyId?: string): string {
   const explicit = firstMeaningfulLineValue(input, "STORY_BRANCH");
   if (explicit) return explicit.toLowerCase();
@@ -428,8 +492,11 @@ function buildScreenUsageContract(
 }
 
 function readSupervisorMemoryFile(workdir: string, repo: string): string {
-  const candidates = [...new Set([repo, workdir].filter(Boolean))]
-    .map((root) => path.join(root, "SUPERVISOR_MEMORY.md"));
+  const roots = [...new Set([repo, workdir].filter(Boolean))];
+  const candidates = roots.flatMap((root) => [
+    path.join(root, ".setfarm", "SUPERVISOR_MEMORY.md"),
+    path.join(root, "SUPERVISOR_MEMORY.md"),
+  ]);
   for (const filePath of candidates) {
     try {
       if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) continue;
@@ -450,7 +517,13 @@ function retryDisciplineForFailure(
   if (/\bRUNTIME_BRIDGE_MISSING\b/i.test(signal)) {
     return {
       mode: "semantic-fix",
-      instruction: "Hard manager retry discipline: before adding or polishing unrelated features, expose the required window.app/globalThis.app bridge from live runtime state in a scoped React effect or equivalent update point, then run build/tests. Do not report STATUS: done until the blocker is implemented in source.",
+      instruction: "Hard manager retry discipline: first add a literal runtime assignment in scoped source, for example window.app = { state, actions } or globalThis.app = { state, actions }, from a React effect or equivalent live update point. Type declarations, comments, docs, window.game, or prose about a bridge do not count. After the assignment exists, run build/tests. Do not report STATUS: done until the source contains the assignment.",
+    };
+  }
+  if (/\bSCOPE_FILE_MISSING\b/i.test(signal)) {
+    return {
+      mode: "semantic-fix",
+      instruction: "Scope-file retry discipline: first create meaningful non-empty code in the declared scope_files that belong to this story, especially app shell, context, hooks, domain types, storage helpers, and CSS files when listed. Do not collapse the implementation into one file and do not report STATUS: done until the owned scope files exist.",
     };
   }
   if (/\bSUPERVISOR_BLOCKERS_OPEN\b/i.test(signal)) {
@@ -485,25 +558,28 @@ function compactFailureLine(value: string, limit = 1200): string {
 }
 
 function extractCurrentStory(input: string): { storyId: string; storyTitle: string; currentStory: string; acceptanceCriteria: string } {
-  const currentStory = sliceSection(
+  const currentStorySection = sliceSection(
     input,
     /^\s*CURRENT STORY:\s*/m,
-    [/^\s*=== PROJECT CONTEXT/m, /^\s*FILE TREE/m, /^\s*DESIGN DATA/m],
+    [/^\s*For `SUPERVISOR_SCOPE/m, /^\s*PREVIOUS FAILURE:/m, /^\s*=== PROJECT CONTEXT/m, /^\s*FILE TREE/m, /^\s*DESIGN DATA/m],
     2600,
   );
-  const source = currentStory || input;
+  const source = currentStorySection || input;
   const storyMatch = source.match(/\bStory\s+([A-Z]+-\d+):\s*([^\n]+)/i)
-    || source.match(/^\s*CURRENT_STORY:\s*([A-Z]+-\d+)\s+([^\n]+)/im);
+    || source.match(/^\s*CURRENT_STORY:\s*([A-Z]+-\d+)\s+([^\n]+)/im)
+    || source.match(/^\s*STORY[=:]\s*([A-Z]+-\d+)\s+([^\n]+)/im);
   const acceptanceCriteria = sliceSection(
     source,
     /^\s*Acceptance Criteria:\s*/m,
     [/^\s*SCOPE:/m, /^\s*[A-Z][A-Z _-]+:/m, /^\s*===/m],
     1800,
   );
+  const storyId = (storyMatch?.[1] || "").trim();
+  const storyTitle = (storyMatch?.[2] || "").trim();
   return {
-    storyId: (storyMatch?.[1] || "").trim(),
-    storyTitle: (storyMatch?.[2] || "").trim(),
-    currentStory,
+    storyId,
+    storyTitle,
+    currentStory: currentStorySection || (storyId ? `Story ${storyId}: ${storyTitle}`.trim() : ""),
     acceptanceCriteria,
   };
 }
@@ -522,9 +598,13 @@ export function buildClaimSummary(params: {
   input: unknown;
 }): Record<string, unknown> {
   const input = String(params.input || "");
+  const projectRoot = projectRootFromClaimText(input);
   const currentStory = extractCurrentStory(input);
-  const rawWorkdir = existingDirectory(params.workdir)
+  const paramWorkdir = existingDirectory(params.workdir);
+  const rawWorkdir = (paramWorkdir && !isAgentScratchPath(paramWorkdir) ? paramWorkdir : "")
     || existingDirectory(lineValue(input, "WORKDIR"))
+    || projectRoot
+    || paramWorkdir
     || params.workdir
     || lineValue(input, "WORKDIR")
     || defaultAgentScratch;
@@ -534,11 +614,13 @@ export function buildClaimSummary(params: {
   const workdir = storyWorkdir || rawWorkdir;
   const repo = firstMeaningfulLineValue(input, "MAIN_REPO")
     || firstMeaningfulLineValue(input, "REPO")
+    || projectRoot
     || params.repo
     || workdir;
   const storyScreensRaw = lineValue(input, "STORY_SCREENS");
-  const task = lineValue(input, "TASK") || claimTaskPreview(params.input);
   const taskBrief = extractTaskBrief(input, params.input);
+  const task = compactTaskSummary(input, params.input);
+  const outputContract = extractOutputContract(input);
   const scopeFiles = extractScopeFiles(input, workdir);
   const scopeFileSet = new Set(scopeFiles);
   const isDeveloperStoryClaim = params.role === "developer" && Boolean(params.storyId || currentStory.storyId);
@@ -590,6 +672,12 @@ export function buildClaimSummary(params: {
     screenUsageContract: buildScreenUsageContract(designContracts, generatedScreenAllowed, generatedScreenReadOnly),
     task,
     taskBrief,
+    outputContract: outputContract ? {
+      source: "role-prompt-output-format",
+      format: outputContract.format,
+      requiredFields: outputContract.requiredFields,
+      instruction: "Final step output must include these exact fields before calling step complete. Do not replace them with prose-only summaries.",
+    } : undefined,
     workdir,
     repo,
     mainRepo: repo,
@@ -632,7 +720,7 @@ export function buildClaimSummary(params: {
       safeMetadataFiles: ["src/screens/SCREEN_INDEX.json", "src/screens/index.ts"],
     },
     designContracts,
-    currentStory: currentStory.currentStory,
+    currentStory: currentStory.currentStory || (storyId ? `Story ${storyId}: ${currentStory.storyTitle}`.trim() : ""),
     acceptanceCriteria: currentStory.acceptanceCriteria,
     uiBehaviorContract: sliceSection(
       input,
@@ -681,6 +769,29 @@ STEP_ID=${shellQuote(params.stepId)}
 WORKDIR=${shellQuote(params.workdir || defaultAgentScratch)}
 TASK_PREVIEW=${shellQuote(String(params.taskPreview || "").slice(0, 1200))}
 export CLAIM_FILE CLAIM_SUMMARY_FILE OUTPUT_FILE STEP_ID WORKDIR
+
+if [ -n "$CLAIM_SUMMARY_FILE" ] && [ -f "$CLAIM_SUMMARY_FILE" ]; then
+  SUMMARY_WORKDIR="$(node - "$CLAIM_SUMMARY_FILE" <<'SETFARM_WORKDIR_NODE'
+const fs = require("fs");
+try {
+  const s = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+  for (const value of [s.workdir, s.verifyWorkdir, s.mainRepo, s.repo]) {
+    if (!value) continue;
+    try {
+      if (fs.existsSync(String(value)) && fs.statSync(String(value)).isDirectory()) {
+        process.stdout.write(String(value));
+        break;
+      }
+    } catch {}
+  }
+} catch {}
+SETFARM_WORKDIR_NODE
+)"
+  if [ -n "$SUMMARY_WORKDIR" ]; then
+    WORKDIR="$SUMMARY_WORKDIR"
+    export WORKDIR
+  fi
+fi
 
 mkdir -p "$WORKDIR"
 cd "$WORKDIR"
@@ -733,6 +844,15 @@ if (dc.componentRegistry) lines.push("COMPONENT_REGISTRY=present " + String(dc.c
 if (Array.isArray(dc.componentTypes)) lines.push("COMPONENT_TYPE_CONTRACTS=" + dc.componentTypes.length);
 if (s.supervisorMemory) lines.push("SUPERVISOR_MEMORY=present " + String(s.supervisorMemory).length + " chars");
 if (s.taskBrief) lines.push("TASK_BRIEF=" + String(s.taskBrief).slice(0, 500));
+const oc = s.outputContract || {};
+if (Array.isArray(oc.requiredFields) && oc.requiredFields.length) lines.push("OUTPUT_REQUIRED_FIELDS=" + oc.requiredFields.join(", "));
+if (oc.format) {
+  lines.push("OUTPUT_CONTRACT_BEGIN");
+  for (const line of String(oc.format).split(/\\r?\\n/).slice(0, 24)) {
+    if (line.trim()) lines.push("OUTPUT_CONTRACT " + line.slice(0, 240));
+  }
+  lines.push("OUTPUT_CONTRACT_END");
+}
 process.stdout.write(lines.join("\\n") + "\\n");
 SETFARM_SUMMARY_NODE
   SUMMARY_PRINTED=1
@@ -753,9 +873,9 @@ export function buildPreclaimedPrompt(params: {
   bootstrapFile: string;
 }): string {
   const cli = resolveSetfarmCli();
-  const cliCommand = "/usr/bin/node " + cli;
+  const cliCommand = "node " + shellQuote(cli);
   const stepIdCommand = `STEP_ID=$(node -e 'const fs=require("fs"); process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).stepId||"")' ${shellQuote(params.claimFile)})`;
-  return `Setfarm claim ready. First action MUST be exec. No prose or HEARTBEAT before exec.
+  return `Setfarm claim ready. The project planning, design, and story approval gates already happened inside Setfarm. Do not invoke separate brainstorming, design-approval, or planning workflows. First action MUST be exec. No prose or HEARTBEAT before exec.
 
 CLAIM_FILE=${params.claimFile}
 CLAIM_SUMMARY_FILE=${params.claimSummaryFile}
@@ -765,7 +885,7 @@ BOOTSTRAP_FILE=${params.bootstrapFile}
 First exec command:
 bash ${shellQuote(params.bootstrapFile)}
 
-Do ${params.wfId}/${params.role} work in WORKDIR only. Read the structured claim summary at ${params.claimSummaryFile} first; it is the authoritative handoff for story id/title, workdir, mainRepo, storyWorkdir, verifyWorkdir, build/test/lint commands, scope files, gitPolicy, supervisor checklist paths, screenUsageContract, generatedScreenPolicy, designContracts, supervisorMemory, screen refs, retry feedback, and output paths. Use retryFeedback.mode exactly: mode="fix" means the blocker is an open implementation requirement and must be fixed before unrelated work; mode="audit" means prior feedback may be stale, so first verify whether it is still present with bounded evidence before reporting or changing code. Obey gitPolicy exactly: when owner is setfarm-platform, do not run git add/commit/push/branch/PR commands; Setfarm performs the scoped commit and PR handoff after gates pass. Use screenUsageContract first for generated screen component names, props, and action IDs; use designContracts.screenIndex, designContracts.uiContract, designContracts.componentRegistry, and designContracts.componentTypes as fallback instead of reading raw Stitch files, shared generated screen source, or creating TypeScript probe files. The full claim at ${params.claimFile} is an audit fallback only. Do NOT parse or dump claim.input with jq/sed/head/node loops; use the summary fields and only fall back to the full claim for a missing focused field. Obey generatedScreenPolicy exactly: if you accidentally read a forbidden src/screens/*.tsx file, stop broad reading and return to summary/contracts; supervisor records that as a correction signal.
+Do ${params.wfId}/${params.role} work in WORKDIR only. Read the structured claim summary at ${params.claimSummaryFile} first; it is the authoritative handoff for story id/title, workdir, mainRepo, storyWorkdir, verifyWorkdir, build/test/lint commands, scope files, gitPolicy, supervisor checklist paths, screenUsageContract, generatedScreenPolicy, designContracts, supervisorMemory, screen refs, retry feedback, outputContract, and output paths. Do NOT print or dump the entire claim summary JSON to the transcript; use the bootstrap lines or targeted field extraction for only the fields you need. Use outputContract.requiredFields and outputContract.format exactly for the final step output; guard-backed roles will reject prose-only summaries even when the work itself passed. Use retryFeedback.mode exactly: mode="fix" means the blocker is an open implementation requirement and must be fixed before unrelated work; mode="audit" means prior feedback may be stale, so first verify whether it is still present with bounded evidence before reporting or changing code. Obey gitPolicy exactly: when owner is setfarm-platform, do not run git add/commit/push/branch/PR commands; Setfarm performs the scoped commit and PR handoff after gates pass. Use screenUsageContract first for generated screen component names, props, and action IDs; use designContracts.screenIndex, designContracts.uiContract, designContracts.componentRegistry, and designContracts.componentTypes as fallback instead of reading raw Stitch files, shared generated screen source, or creating TypeScript probe files. The full claim at ${params.claimFile} is an audit fallback only. Do NOT parse or dump claim.input with jq/sed/head/node loops; use the summary fields and only fall back to the full claim for a missing focused field. Obey generatedScreenPolicy exactly: if you accidentally read a forbidden src/screens/*.tsx file, stop broad reading and return to summary/contracts; supervisor records that as a correction signal.
 For retryFeedback.mode="fix", treat retryDiscipline.mode as a hard implementation instruction. For retryDiscipline.mode="first-delta", after bootstrap and summary, inspect only the owned scope files plus safe metadata needed for the first edit, then make a small scoped source delta before broad analysis/build/test. For retryDiscipline.mode="semantic-fix", implement the named blocker first, then run the relevant checks. For retryFeedback.mode="audit", do not convert prior feedback into a source-edit mandate unless the role-specific prompt explicitly owns that fix.
 Do NOT create scratch/progress/todo/note/probe files inside WORKDIR unless they are explicitly listed in scopeFiles. Files like src/_probe.tsx, src/probe.tsx, tmp.ts, scratch.tsx, TODO.md, and progress.txt are forbidden in the project worktree. Use ${params.outputFile} for final output and /tmp/setfarm-progress-<run-id>.txt for checkpoints only.
 Important: OpenClaw read/edit/write tools resolve relative paths against the configured agent workspace, not the shell cwd. When using read/edit/write tools for project files, use absolute paths under WORKDIR, for example "$WORKDIR/src/App.tsx". For exec commands, rerun the bootstrap command above or pass workdir="$WORKDIR" after resolving it.
@@ -775,7 +895,7 @@ For normal quality findings in verify/review/QA/final-test, do NOT use step fail
 Complete with:
 cat > ${shellQuote(params.outputFile)} <<'SETFARM_EOF'
 STATUS: done
-<required claim output keys>
+<all required outputContract fields from ${params.claimSummaryFile}>
 SETFARM_EOF
 ${stepIdCommand}; ${cliCommand} step complete "$STEP_ID" --file ${shellQuote(params.outputFile)}
 

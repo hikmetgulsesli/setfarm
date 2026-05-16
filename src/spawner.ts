@@ -19,7 +19,111 @@ import { cleanupProjectEphemera, cleanupRunningRunOrphanedToolWorkers } from "./
 import { updateSupervisorMemory } from "./installer/product-supervisor.js";
 import { buildClaimSummary, buildPreclaimedPrompt, buildResolvedClaimBootstrapScript, claimTaskPreview } from "./spawner-prompt.js";
 
-const OPENCLAW_CLI = process.env.OPENCLAW_CLI || "/home/setrox/.local/bin/openclaw";
+type AgentRuntime = "codex" | "openclaw";
+
+function commandFromPath(name: string): string {
+  try {
+    return execFileSync("which", [name], {
+      encoding: "utf-8",
+      timeout: 5000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return "";
+  }
+}
+
+function pathCommandCandidates(name: string): string[] {
+  return (process.env.PATH || "")
+    .split(path.delimiter)
+    .filter(Boolean)
+    .map((dir) => path.join(dir, name));
+}
+
+function uniqueStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const normalized = value.trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
+}
+
+function isExecutable(candidate: string): boolean {
+  if (!candidate) return false;
+  if (!path.isAbsolute(candidate)) return true;
+  try {
+    fs.accessSync(candidate, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function commandIsUsable(command: string): boolean {
+  if (!isExecutable(command)) return false;
+  try {
+    execFileSync(command, ["--version"], {
+      encoding: "utf-8",
+      timeout: 10_000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function firstUsableCommand(candidates: string[]): string {
+  for (const candidate of candidates) {
+    if (commandIsUsable(candidate)) return candidate;
+  }
+  return "";
+}
+
+function resolveCodexCli(): string {
+  const candidates = uniqueStrings([
+    process.env.CODEX_CLI || "",
+    commandFromPath("codex"),
+    ...pathCommandCandidates("codex"),
+      path.join(os.homedir(), ".local", "bin", "codex"),
+      "/opt/homebrew/bin/codex",
+      "/usr/local/bin/codex",
+  ]);
+  return firstUsableCommand(candidates) || candidates.find(isExecutable) || "codex";
+}
+
+function resolveOpenClawCli(): string {
+  const candidates = uniqueStrings([
+    process.env.OPENCLAW_CLI || "",
+    commandFromPath("openclaw"),
+    ...pathCommandCandidates("openclaw"),
+      path.join(os.homedir(), ".local", "bin", "openclaw"),
+      path.join(os.homedir(), ".npm-global", "bin", "openclaw"),
+      "/opt/homebrew/bin/openclaw",
+      "/usr/local/bin/openclaw",
+  ]);
+  return firstUsableCommand(candidates) || candidates.find(isExecutable) || "openclaw";
+}
+
+function resolveAgentRuntime(): AgentRuntime {
+  const requested = (process.env.SETFARM_AGENT_RUNTIME || "").trim().toLowerCase();
+  if (requested === "codex" && commandIsUsable(CODEX_CLI)) return "codex";
+  if (requested === "openclaw" && commandIsUsable(OPENCLAW_CLI)) return "openclaw";
+  if (requested === "codex" || requested === "openclaw") {
+    console.warn(`[spawner] Requested runtime ${requested} is not usable; falling back to available runtime`);
+  }
+  if (commandIsUsable(CODEX_CLI)) return "codex";
+  if (commandIsUsable(OPENCLAW_CLI)) return "openclaw";
+  return requested === "openclaw" ? "openclaw" : "codex";
+}
+
+const CODEX_CLI = resolveCodexCli();
+const OPENCLAW_CLI = resolveOpenClawCli();
+const AGENT_RUNTIME: AgentRuntime = resolveAgentRuntime();
 const OPENCLAW_TASKS_DB = process.env.OPENCLAW_TASKS_DB || path.join(os.homedir(), ".openclaw", "tasks", "runs.sqlite");
 const POLL_INTERVAL_MS = 30_000;
 const AGENT_TIMEOUT_SECONDS = 1800;
@@ -92,6 +196,13 @@ const SETFARM_SRC = path.resolve(process.env.SETFARM_REPO_DIR || path.join(os.ho
 const AGENT_SAFE_CWD = path.join(os.homedir(), ".openclaw", "workspace", "agent-scratch");
 const TRANSCRIPT_ROOT = path.join(os.homedir(), ".openclaw", "workspace", "transcripts");
 const OPENCLAW_AGENTS_ROOT = path.join(os.homedir(), ".openclaw", "agents");
+
+function assertAgentRuntimeAvailable(): void {
+  const command = AGENT_RUNTIME === "codex" ? CODEX_CLI : OPENCLAW_CLI;
+  if (!commandIsUsable(command)) {
+    throw new Error(`AGENT_RUNTIME_UNAVAILABLE: ${AGENT_RUNTIME} CLI is not executable or failed --version at ${command}`);
+  }
+}
 
 function assertAgentCwdSafe(): void {
   // cuddly-sleeping-quail: refuse to spawn agents inside the platform source tree.
@@ -184,6 +295,29 @@ function safeAgentCwdFromStoryWorktreeMentions(input: string): string | null {
   return null;
 }
 
+function safeAgentCwdFromProjectRootMentions(input: string): string | null {
+  const projectRootLine = /(?:^|[\r\n])\s*(?:[-*]\s*)?`?([^`\r\n]+?)`?\s*:\s*project root\b/gi;
+  let lineMatch: RegExpExecArray | null;
+  while ((lineMatch = projectRootLine.exec(input)) !== null) {
+    const resolved = safeAgentCwdFromCandidate(lineMatch[1]);
+    if (resolved) return resolved;
+  }
+
+  const projectRootLabel = /(?:^|[\r\n])\s*project root\s*[:=]\s*`?([^`\r\n]+?)`?\s*$/gi;
+  let labelMatch: RegExpExecArray | null;
+  while ((labelMatch = projectRootLabel.exec(input)) !== null) {
+    const resolved = safeAgentCwdFromCandidate(labelMatch[1]);
+    if (resolved) return resolved;
+  }
+
+  for (const match of input.matchAll(/`?((?:\/Users\/[^/\s"'<>`]+|\/home\/[^/\s"'<>`]+)\/projects\/[A-Za-z0-9._-]+)`?/g)) {
+    const resolved = safeAgentCwdFromCandidate(match[1]);
+    if (resolved) return resolved;
+  }
+
+  return null;
+}
+
 function safeAgentCwdFromClaimInput(input: unknown): string {
   if (input && typeof input === "object" && !Array.isArray(input)) {
     const record = input as Record<string, unknown>;
@@ -207,6 +341,8 @@ function safeAgentCwdFromClaimInput(input: unknown): string {
     if (storyMention) return storyMention;
     const repoLabel = safeAgentCwdFromTextLabels(input, REPO_CANDIDATE_KEYS);
     if (repoLabel) return repoLabel;
+    const projectRoot = safeAgentCwdFromProjectRootMentions(input);
+    if (projectRoot) return projectRoot;
 
     for (const match of input.matchAll(/`?(\/home\/setrox\/projects\/[A-Za-z0-9._-]+)`?/g)) {
       const resolved = safeAgentCwdFromCandidate(match[1]);
@@ -215,6 +351,15 @@ function safeAgentCwdFromClaimInput(input: unknown): string {
   }
 
   return AGENT_SAFE_CWD;
+}
+
+function claimRoleRequiresProjectCwd(role: string, agentId: string): boolean {
+  return [
+    "security-gate",
+    "qa-test",
+    "final-test",
+    "deploy",
+  ].includes(role) || /(?:^|_)(security-gate|qa-tester|final-test|deployer)$/.test(agentId);
 }
 
 type InlineSecurityFinding = {
@@ -1739,6 +1884,11 @@ function maybeRestartGatewayForReadiness(reason: string, key: string): void {
   if (gatewayRestartInFlight) return;
   if (activeProcesses.size > 0) return;
   if (nowMs - lastGatewayPrespawnRestartMs < GATEWAY_PRESPAWN_RESTART_COOLDOWN_MS) return;
+  if (process.platform !== "linux") {
+    lastGatewayPrespawnRestartMs = nowMs;
+    console.warn(`[spawner] Gateway restart skipped on ${process.platform} before ${key}. reason=${reason}`);
+    return;
+  }
 
   gatewayRestartInFlight = true;
   lastGatewayPrespawnRestartMs = nowMs;
@@ -1769,6 +1919,14 @@ function buildOpenClawChildEnv(pathPrefix?: string): NodeJS.ProcessEnv {
     e["PATH"] = `${pathPrefix}${path.delimiter}${e["PATH"] || process.env.PATH || ""}`;
   }
   return e as NodeJS.ProcessEnv;
+}
+
+function buildAgentChildEnv(pathPrefix?: string): NodeJS.ProcessEnv {
+  const e = buildOpenClawChildEnv(pathPrefix);
+  if (AGENT_RUNTIME === "codex") {
+    e.CODEX_HOME = e.CODEX_HOME || path.join(os.homedir(), ".codex");
+  }
+  return e;
 }
 
 function shellQuote(value: string): string {
@@ -1811,9 +1969,6 @@ if [ "$cmd" = "add" ]; then
 fi
 
 if [ "$cmd" = "commit" ]; then
-  if [ "\${SETFARM_RECOVERY_COMMIT:-}" = "1" ] || [ "\${SETFARM_PLATFORM_COMMIT:-}" = "1" ]; then
-    exec "$REAL_GIT" "$@"
-  fi
   prev=""
   for arg in "$@"; do
     case "$arg" in
@@ -1907,6 +2062,50 @@ function killProcessTree(pid: number | undefined, signal: NodeJS.Signals = "SIGT
     // no children or pgrep unavailable
   }
   try { process.kill(pid, signal); } catch { /* already dead */ }
+}
+
+function isSpawnerDetachedToolCommand(command: string): boolean {
+  return (
+    /\b(?:npm|pnpm|yarn|bun)\s+run\s+(?:dev|preview|start)\b/.test(command) ||
+    /\b(?:vite|next)\b[\s\S]{0,160}\b(?:dev|preview|start)\b/.test(command) ||
+    /\bserve\b[\s\S]{0,160}\bdist\b/.test(command) ||
+    /\bchromium_headless_shell\b[\s\S]*\bplaywright_chromiumdev_profile-/.test(command)
+  );
+}
+
+function cleanupSpawnerDetachedToolChildren(context: string): void {
+  let out = "";
+  try {
+    out = execFileSync("ps", ["-axo", "pid=,ppid=,command="], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 5000,
+    });
+  } catch {
+    return;
+  }
+
+  const activePids = new Set([...activeProcesses.values()].map((active) => active.child.pid).filter((pid): pid is number => Number.isFinite(pid)));
+  const targets: number[] = [];
+  for (const line of out.split("\n")) {
+    const match = line.trim().match(/^(\d+)\s+(\d+)\s+([\s\S]+)$/);
+    if (!match) continue;
+    const pid = Number(match[1]);
+    const ppid = Number(match[2]);
+    const command = match[3] || "";
+    if (!Number.isFinite(pid) || !Number.isFinite(ppid)) continue;
+    if (ppid !== process.pid || pid === process.pid || activePids.has(pid)) continue;
+    if (!isSpawnerDetachedToolCommand(command)) continue;
+    targets.push(pid);
+  }
+
+  for (const pid of targets) killProcessTree(pid, "SIGTERM");
+  if (targets.length > 0) {
+    setTimeout(() => {
+      for (const pid of targets) killProcessTree(pid, "SIGKILL");
+    }, 2000);
+    console.warn(`[spawner] ${context}: reaped ${targets.length} detached tool child process(es)`);
+  }
 }
 
 function childProcessTerminalReason(child: ChildProcess): string | null {
@@ -2178,6 +2377,11 @@ async function restartGatewayAfterOpenClawCleanup(context: string, result: OpenC
   }
   const nowMs = Date.now();
   if (nowMs - lastGatewayCleanupRestartMs < GATEWAY_PRESPAWN_RESTART_COOLDOWN_MS) return false;
+  if (process.platform !== "linux") {
+    lastGatewayCleanupRestartMs = nowMs;
+    console.warn(`[spawner] gateway restart after stale OpenClaw cleanup skipped on ${process.platform} (${context}): sessions=${result.sessions} tasks=${result.tasks}`);
+    return false;
+  }
 
   gatewayRestartInFlight = true;
   lastGatewayCleanupRestartMs = nowMs;
@@ -2219,10 +2423,16 @@ function cancelOpenClawTask(lookup: string, context: string): void {
   });
 }
 
+function cancelRuntimeTask(lookup: string, context: string): void {
+  if (AGENT_RUNTIME !== "openclaw") return;
+  cancelOpenClawTask(lookup, context);
+}
+
 function terminateActiveProcess(active: ActiveProcess, context: string): void {
-  cancelOpenClawTask(active.sessionKey, context);
+  cancelRuntimeTask(active.sessionKey, context);
   killProcessTree(active.child.pid, "SIGTERM");
   setTimeout(() => killProcessTree(active.child.pid, "SIGKILL"), 5000);
+  setTimeout(() => cleanupSpawnerDetachedToolChildren(context), 1500);
   if (["qa-tester", "tester", "final-tester"].some((role) => active.role.includes(role) || active.agentId.includes(role))) {
     setTimeout(() => {
       void cleanupProjectEphemera(active.runId, `spawner-${context}-${active.role}`);
@@ -2266,7 +2476,7 @@ function killStartupOrphanSpawnerAgents(): void {
       if (!Number.isFinite(pid) || pid === process.pid) continue;
       const sessionKey = extractSpawnerSessionKeyFromArgs(readProcessArgs(pid));
       console.warn(`[spawner] killing orphan spawner OpenClaw process pid=${pid}${sessionKey ? " session=" + sessionKey : ""}`);
-      if (sessionKey) cancelOpenClawTask(sessionKey, "startup-orphan");
+      if (sessionKey) cancelRuntimeTask(sessionKey, "startup-orphan");
       killProcessTree(pid, "SIGTERM");
       setTimeout(() => killProcessTree(pid, "SIGKILL"), 5000);
     }
@@ -2467,7 +2677,7 @@ function commitRecoveredImplementWork(workdir: string, storyId: string, files: s
         cwd: workdir,
         timeout: 30_000,
         stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, SETFARM_RECOVERY_COMMIT: "1" },
+        env: { ...process.env },
       });
     }
     return gitOutput(workdir, ["rev-parse", "--short", "HEAD"]);
@@ -2953,7 +3163,7 @@ async function reapFinishedClaims(): Promise<void> {
           try { fs.appendFileSync(active.transcriptPath, `--- PROCESS TERMINAL ${new Date().toISOString()} ---
 ${reason}
 `); } catch {}
-          cancelOpenClawTask(active.sessionKey, "process-terminal");
+          cancelRuntimeTask(active.sessionKey, "process-terminal");
           activeProcesses.delete(key);
           await failClaimIfStillRunning(active.stepId, active.agentId, active.wfId, active.role, active.transcriptPath, new Error(reason), active.startedAtMs, active.spawnCwd, active.outputPath);
           continue;
@@ -3072,8 +3282,14 @@ ${reason}
         await failClaimIfStillRunning(active.stepId, active.agentId, active.wfId, active.role, active.transcriptPath, new Error(reason), active.startedAtMs, active.spawnCwd, active.outputPath);
         continue;
       } else {
+        const ageMs = Date.now() - active.startedAtMs;
         const idleMs = activeProcessIdleMs(active);
-        if (row.run_status === "running" && row.step_status !== "running") {
+        const terminalReason = childProcessTerminalReason(active.child);
+        const nonRunningActiveGraceMs = Math.max(REAP_FINISHED_ACTIVE_GRACE_MS, stuckThresholdMs(active.role, active.storyId));
+        if (row.run_status === "running" && row.step_status !== "running" && !terminalReason && ageMs < nonRunningActiveGraceMs) {
+          console.log(`[spawner] Deferring reap for active ${key}: step ${row.step_id} is ${row.step_status}, run is ${row.run_status}, age ${formatDurationMs(ageMs)}`);
+          continue;
+        } else if (row.run_status === "running" && row.step_status !== "running") {
           console.warn(`[spawner] Reaping stale active process immediately for ${key}: step ${row.step_id} is ${row.step_status}, run is ${row.run_status}; retry must not wait on old process activity`);
         } else if (row.run_status === "running" && idleMs < REAP_FINISHED_ACTIVE_GRACE_MS) {
           console.log(`[spawner] Deferring reap for ${key}: step ${row.step_id} is ${row.step_status}, run is ${row.run_status}, but agent was active ${formatDurationMs(idleMs)} ago`);
@@ -3105,7 +3321,7 @@ function spawnAgent(agentId: string, wfId: string, role: string): void {
   const delayMs = Math.max(0, nextSpawnEarliest - nowMs);
   nextSpawnEarliest = nowMs + delayMs + SPAWN_STAGGER_MS;
   queuedSpawns.add(key);
-  if (delayMs > 0) console.log(`[spawner] Queueing ${key} for ${delayMs}ms to avoid OpenClaw plugin-cache races`);
+  if (delayMs > 0) console.log(`[spawner] Queueing ${key} for ${delayMs}ms to stagger agent startup`);
   setTimeout(() => {
     queuedSpawns.delete(key);
     if (shuttingDown) return;
@@ -3128,13 +3344,15 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     }, WORKFLOW_DEFER_RETRY_MS);
     return;
   }
-  const openClawCleanup = cleanupStaleSetfarmOpenClawTaskRecords("prespawn");
-  if (!OPENCLAW_AGENT_LOCAL) await restartGatewayAfterOpenClawCleanup("prespawn", openClawCleanup);
+  const openClawCleanup = AGENT_RUNTIME === "openclaw"
+    ? cleanupStaleSetfarmOpenClawTaskRecords("prespawn")
+    : { sessions: 0, tasks: 0 };
+  if (AGENT_RUNTIME === "openclaw" && !OPENCLAW_AGENT_LOCAL) await restartGatewayAfterOpenClawCleanup("prespawn", openClawCleanup);
   if (activeProcesses.size >= MAX_CONCURRENT) {
     console.log(`[spawner] At capacity (${activeProcesses.size}/${MAX_CONCURRENT}), skip ${agentId}`);
     return;
   }
-  if (!OPENCLAW_AGENT_LOCAL) {
+  if (AGENT_RUNTIME === "openclaw" && !OPENCLAW_AGENT_LOCAL) {
     const gatewayReadiness = await getGatewayReadiness();
     if (!gatewayReadiness.ready) {
       maybeRestartGatewayForReadiness(gatewayReadiness.reason, key);
@@ -3188,6 +3406,14 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     if (claim.stepId) await failStep(claim.stepId, reason);
     return;
   }
+  if (!claim.storyId && claimRoleRequiresProjectCwd(role, agentId) && spawnCwd === AGENT_SAFE_CWD) {
+    claimingSpawns.delete(key);
+    const reason = "CLAIM_WORKDIR_MISSING: " + fullAgentId + " requires a project repository but did not resolve one from claim input. Refusing to spawn in agent scratch.";
+    console.warn("[spawner] " + reason);
+    if (claim.runId) await recordSupervisorInfraEvent(claim.runId, "spawner", null, reason);
+    if (claim.stepId) await failStep(claim.stepId, reason);
+    return;
+  }
   fs.writeFileSync(claimFile, JSON.stringify({ stepId: claim.stepId, runId: claim.runId, workdir: spawnCwd, repo: spawnCwd, input: claim.resolvedInput }) + "\n");
   fs.writeFileSync(claimSummaryFile, JSON.stringify(buildClaimSummary({
     wfId,
@@ -3231,20 +3457,34 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   const sessionId = "spawner-" + agentId + "-" + spawnId;
   const sessionKey = buildSessionKey(agentId, sessionId);
   const sessionJsonlPath = agentSessionJsonlPath(agentId, sessionId);
-  const childArgs = [
-    "agent", "--json", "--agent", agentId,
-    ...(OPENCLAW_AGENT_LOCAL ? ["--local"] : []),
-    "--session-id", sessionId,
-    "--message", prompt, "--timeout", String(AGENT_TIMEOUT_SECONDS),
-  ];
+  const codexModelArgs = process.env.SETFARM_CODEX_MODEL ? ["--model", process.env.SETFARM_CODEX_MODEL] : [];
+  const childArgs = AGENT_RUNTIME === "codex"
+    ? [
+      "--ask-for-approval", "never",
+      "exec", "--json",
+      "--ignore-user-config",
+      "--ignore-rules",
+      "--cd", spawnCwd,
+      "--sandbox", "danger-full-access",
+      "--skip-git-repo-check",
+      ...codexModelArgs,
+      "-",
+    ]
+    : [
+      "agent", "--json", "--agent", agentId,
+      ...(OPENCLAW_AGENT_LOCAL ? ["--local"] : []),
+      "--session-id", sessionId,
+      "--message", prompt, "--timeout", String(AGENT_TIMEOUT_SECONDS),
+    ];
   try {
-    fs.appendFileSync(transcriptPath, `[spawner] openclaw_cli=${OPENCLAW_CLI} session_id=${sessionId} session_key=${sessionKey} timeout=${AGENT_TIMEOUT_SECONDS}s cwd=${spawnCwd}\n`);
+    const agentCli = AGENT_RUNTIME === "codex" ? CODEX_CLI : OPENCLAW_CLI;
+    fs.appendFileSync(transcriptPath, `[spawner] runtime=${AGENT_RUNTIME} cli=${agentCli} session_id=${sessionId} session_key=${sessionKey} timeout=${AGENT_TIMEOUT_SECONDS}s cwd=${spawnCwd}\n`);
   } catch {}
   const shouldInstallImplementGitWrapper = role === "developer" && Boolean(claim.storyId);
   const pathPrefix = shouldInstallImplementGitWrapper ? installImplementGitWrapper(spawnCwd, transcriptPath) : undefined;
   const outFd = fs.openSync(transcriptPath, "a");
   const errFd = fs.openSync(transcriptPath, "a");
-  const child = spawn(OPENCLAW_CLI, childArgs, {
+  const child = spawn(AGENT_RUNTIME === "codex" ? CODEX_CLI : OPENCLAW_CLI, childArgs, {
     cwd: spawnCwd,  // Use the claimed worktree when available so relative tool paths resolve correctly.
     // Security audit S-1: explicit env allowlist. Previous `{...process.env}` leaked
     // ALL secrets (API keys, DB password, master URLs) to every agent child process.
@@ -3253,10 +3493,14 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     // Security: denylist DB credentials from agent env. Keep everything
     // else — OpenClaw CLI needs many env vars and allowlist is too fragile.
     env: (() => {
-      return buildOpenClawChildEnv(pathPrefix);
+      return buildAgentChildEnv(pathPrefix);
     })(),
-    stdio: ["ignore", outFd, errFd],
+    stdio: AGENT_RUNTIME === "codex" ? ["pipe", outFd, errFd] : ["ignore", outFd, errFd],
   });
+  if (AGENT_RUNTIME === "codex") {
+    child.stdin?.write(prompt);
+    child.stdin?.end();
+  }
   const startedAtMs = Date.now();
   const initialTranscriptSize = fileSize(transcriptPath);
   const activeProcess: ActiveProcess = {
@@ -3276,7 +3520,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     spawnCwd,
     sessionId,
     sessionKey,
-    sessionJsonlPath,
+    sessionJsonlPath: AGENT_RUNTIME === "codex" ? transcriptPath : sessionJsonlPath,
     lastCpuTicks: readProcessCpuTicks(child.pid) ?? undefined,
     lastCpuActivityMs: startedAtMs,
   };
@@ -3288,7 +3532,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   const hardTimeout = setTimeout(() => {
     if (processExited) return;
     try {
-      fs.appendFileSync(transcriptPath, `--- HARD TIMEOUT ${new Date().toISOString()} ---\nopenclaw agent exceeded ${AGENT_TIMEOUT_SECONDS + 60}s\n`);
+      fs.appendFileSync(transcriptPath, `--- HARD TIMEOUT ${new Date().toISOString()} ---\nagent exceeded ${AGENT_TIMEOUT_SECONDS + 60}s\n`);
     } catch {}
     terminateActiveProcess(activeProcess, "spawn-hard-timeout");
   }, (AGENT_TIMEOUT_SECONDS + 60) * 1000);
@@ -3296,31 +3540,41 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     processExited = true;
     clearTimeout(hardTimeout);
     closeTranscriptFds();
-    const isCurrentProcess = activeProcesses.get(key)?.child === child;
+    const currentProcess = activeProcesses.get(key);
+    const isCurrentProcess = currentProcess?.child === child;
+    const hasReplacementProcess = Boolean(currentProcess && currentProcess.child !== child);
     if (isCurrentProcess) activeProcesses.delete(key);
     try {
       fs.appendFileSync(transcriptPath, "--- SPAWN ERROR ---\n" + String((err as any).message || err) + "\n--- FINISHED " + new Date().toISOString() + " ---\n");
     } catch (e) { console.warn("[spawner] transcript write failed: " + String(e)); }
     console.warn("[spawner] " + agentId + " spawn error: " + ((err as any).message || err) + " (transcript: " + transcriptPath + ")");
-    if (isCurrentProcess && !shuttingDown && claim.stepId) void failClaimIfStillRunning(claim.stepId, agentId, wfId, role, transcriptPath, err, startedAtMs, spawnCwd, outputFile);
+    if (!hasReplacementProcess && !shuttingDown && claim.stepId) {
+      void failClaimIfStillRunning(claim.stepId, agentId, wfId, role, transcriptPath, err, startedAtMs, spawnCwd, outputFile)
+        .finally(() => cleanupSpawnerDetachedToolChildren("spawn-error"));
+    }
   });
   child.once("exit", (code, signal) => {
     processExited = true;
     clearTimeout(hardTimeout);
     closeTranscriptFds();
-    const isCurrentProcess = activeProcesses.get(key)?.child === child;
+    const currentProcess = activeProcesses.get(key);
+    const isCurrentProcess = currentProcess?.child === child;
+    const hasReplacementProcess = Boolean(currentProcess && currentProcess.child !== child);
     if (isCurrentProcess) activeProcesses.delete(key);
     try {
       fs.appendFileSync(transcriptPath, `--- EXIT code=${code ?? ""} signal=${signal ?? ""} ---\n--- FINISHED ${new Date().toISOString()} ---\n`);
     } catch (e) { console.warn("[spawner] transcript write failed: " + String(e)); }
-    const err = code === 0 ? null : new Error(`openclaw agent exited code=${code ?? ""} signal=${signal ?? ""}`);
+    const err = code === 0 ? null : new Error(`agent exited code=${code ?? ""} signal=${signal ?? ""}`);
     if (err) {
       console.warn("[spawner] " + agentId + " exited: " + ((err as any).message || err) + " (transcript: " + transcriptPath + ")");
-      if (isCurrentProcess && !shuttingDown && claim.stepId) void failClaimIfStillRunning(claim.stepId, agentId, wfId, role, transcriptPath, err, startedAtMs, spawnCwd, outputFile);
+      if (!hasReplacementProcess && !shuttingDown && claim.stepId) {
+        void failClaimIfStillRunning(claim.stepId, agentId, wfId, role, transcriptPath, err, startedAtMs, spawnCwd, outputFile)
+          .finally(() => cleanupSpawnerDetachedToolChildren("spawn-exit"));
+      }
     }
     else {
       console.log("[spawner] " + agentId + " completed (transcript: " + transcriptPath + ")");
-      if (isCurrentProcess && !shuttingDown && claim.stepId) {
+      if (!hasReplacementProcess && !shuttingDown && claim.stepId) {
         void failClaimIfStillRunning(
           claim.stepId,
           agentId,
@@ -3331,7 +3585,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
           startedAtMs,
           spawnCwd,
           outputFile,
-        );
+        ).finally(() => cleanupSpawnerDetachedToolChildren("spawn-clean-exit"));
       }
     }
   });
@@ -3344,10 +3598,11 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
 async function failStaleRunningClaimsFromPreviousSpawner(): Promise<void> {
   try {
     const graceSeconds = Math.max(0, Math.ceil(STARTUP_RUNNING_GRACE_MS / 1000));
-    const rows = await pgQuery<{ id: string; step_id: string; agent_id: string; run_id: string; current_story_id: string | null; run_number: number; updated_at: string }>(
-      `SELECT s.id, s.step_id, s.agent_id, s.run_id, s.current_story_id, r.run_number, s.updated_at
+      const rows = await pgQuery<{ id: string; step_id: string; agent_id: string; run_id: string; current_story_id: string | null; story_id: string | null; run_number: number; updated_at: string }>(
+      `SELECT s.id, s.step_id, s.agent_id, s.run_id, s.current_story_id, st.story_id, r.run_number, s.updated_at
        FROM steps s
        JOIN runs r ON r.id = s.run_id
+       LEFT JOIN stories st ON st.id = s.current_story_id
        WHERE s.status = 'running'
          AND r.status = 'running'
          AND s.updated_at <= NOW() - ($1::int * interval '1 second')
@@ -3395,10 +3650,41 @@ async function failStaleRunningClaimsFromPreviousSpawner(): Promise<void> {
       }
       const reason = `AGENT_PROCESS_ORPHANED: spawner restarted with no active process for run #${row.run_number} ${row.step_id} (${row.agent_id}); retrying running claim last updated ${row.updated_at}`;
       console.warn(`[spawner] ${reason}`);
-      await failStep(row.id, reason);
+      await requeueStaleRunningClaimFromPreviousSpawner(row, reason);
     }
   } catch (err) {
     console.warn(`[spawner] startup running claim recovery failed: ${String(err).slice(0, 300)}`);
+  }
+}
+
+async function requeueStaleRunningClaimFromPreviousSpawner(row: {
+  id: string;
+  step_id: string;
+  agent_id: string;
+  run_id: string;
+  current_story_id: string | null;
+  story_id: string | null;
+}, reason: string): Promise<void> {
+  if (row.current_story_id) {
+    await pgRun(
+      "UPDATE stories SET status = 'pending', claimed_by = NULL, updated_at = NOW() WHERE id = $1 AND status = 'running'",
+      [row.current_story_id],
+    );
+  }
+  await pgRun(
+    "UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = NOW() WHERE id = $1 AND status = 'running'",
+    [row.id],
+  );
+  if (row.story_id) {
+    await pgRun(
+      "UPDATE claim_log SET outcome = 'infra_retry', abandoned_at = NOW(), duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at::timestamptz)) * 1000 AS INTEGER), diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND story_id = $4 AND agent_id = $5 AND outcome IS NULL",
+      [reason, row.run_id, row.step_id, row.story_id, row.agent_id],
+    );
+  } else {
+    await pgRun(
+      "UPDATE claim_log SET outcome = 'infra_retry', abandoned_at = NOW(), duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at::timestamptz)) * 1000 AS INTEGER), diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND story_id IS NULL AND agent_id = $4 AND outcome IS NULL",
+      [reason, row.run_id, row.step_id, row.agent_id],
+    );
   }
 }
 
@@ -3612,12 +3898,80 @@ async function autoVerifyMergedPrEachStories() {
   }
 }
 
+async function queuePendingSuperviseEachSteps(): Promise<void> {
+  try {
+    const rows = await pgQuery<{ run_id: string; step_id: string; story_id: string; verify_step: string }>(
+      `WITH candidates AS (
+         SELECT DISTINCT ON (sup.id)
+           sup.id AS supervise_step_id,
+           sup.run_id,
+           sup.step_id,
+           st.id AS story_db_id,
+           st.story_id,
+           COALESCE(NULLIF(loop_step.loop_config::jsonb ->> 'verifyStep', ''), 'verify') AS verify_step
+         FROM steps sup
+         JOIN runs r ON r.id = sup.run_id AND r.status = 'running'
+         JOIN steps loop_step
+           ON loop_step.run_id = sup.run_id
+          AND loop_step.type = 'loop'
+          AND loop_step.step_id = 'implement'
+          AND loop_step.status = 'running'
+          AND COALESCE(loop_step.loop_config::jsonb, '{}'::jsonb) @> '{"superviseEach":true}'::jsonb
+         JOIN stories st
+           ON st.run_id = sup.run_id
+          AND st.status = 'done'
+         WHERE sup.step_id = COALESCE(NULLIF(loop_step.loop_config::jsonb ->> 'superviseStep', ''), 'supervise')
+           AND sup.status IN ('waiting', 'done', 'pending')
+           AND (
+             COALESCE(r.context::jsonb ->> 'supervised_story_ids', '') = ''
+             OR POSITION(',' || st.story_id || ',' IN ',' || COALESCE(r.context::jsonb ->> 'supervised_story_ids', '') || ',') = 0
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM stories active_st
+             WHERE active_st.run_id = sup.run_id
+               AND active_st.status IN ('pending', 'running')
+               AND active_st.retry_count > 0
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM stories fix_st
+             WHERE fix_st.run_id = sup.run_id
+               AND fix_st.story_id LIKE 'QA-FIX-%'
+               AND fix_st.status IN ('pending', 'running')
+           )
+         ORDER BY sup.id, st.story_index ASC
+       ),
+       queued AS (
+         UPDATE steps sup
+         SET status = 'pending',
+             current_story_id = c.story_db_id,
+             updated_at = NOW()
+         FROM candidates c
+         WHERE sup.id = c.supervise_step_id
+         RETURNING sup.run_id, sup.step_id, c.story_id, c.verify_step
+       )
+       SELECT * FROM queued`
+    );
+
+    for (const row of rows) {
+      await pgRun(
+        "UPDATE steps SET status = 'waiting', current_story_id = NULL, updated_at = NOW() WHERE run_id = $1 AND step_id = $2 AND status = 'pending'",
+        [row.run_id, row.verify_step],
+      );
+      console.log(`[spawner] Queued supervise_each story ${row.story_id} for ${row.step_id}; reviewer waits for supervisor`);
+    }
+  } catch (err) {
+    console.error(`[spawner] queue supervise_each: ${String(err)}`);
+  }
+}
+
 async function pollForPendingWork() {
   if (shuttingDown) return;
   try {
     await runClaimMaintenance();
     await cleanupRunningRunOrphanedToolWorkers();
+    cleanupSpawnerDetachedToolChildren("poll-orphan-sweep");
     await autoVerifyMergedPrEachStories();
+    await queuePendingSuperviseEachSteps();
     await advanceCompletedVerifyEachLoops();
     const steps = await pgQuery<{ agent_id: string; run_id: string; step_id: string }>(
       `SELECT s.agent_id, s.run_id, s.step_id
@@ -3700,13 +4054,16 @@ async function main() {
 
   fs.mkdirSync(path.dirname(PID_FILE), { recursive: true });
   fs.writeFileSync(PID_FILE, String(process.pid));
-  console.log(`[spawner] Starting (PID ${process.pid})`);
+  assertAgentRuntimeAvailable();
+  console.log(`[spawner] Starting (PID ${process.pid}, runtime=${AGENT_RUNTIME})`);
   await pgMigrate();
   killStartupOrphanSpawnerAgents();
   await failStaleRunningClaimsFromPreviousSpawner();
   await requeueOrphanedRunningStories();
   await cleanupRunningRunEphemeraOnStartup();
-  await restartGatewayAfterOpenClawCleanup("startup", cleanupStaleSetfarmOpenClawTaskRecords("startup"));
+  if (AGENT_RUNTIME === "openclaw") {
+    await restartGatewayAfterOpenClawCleanup("startup", cleanupStaleSetfarmOpenClawTaskRecords("startup"));
+  }
 
   const shutdown = async () => {
     shuttingDown = true;
@@ -3722,7 +4079,7 @@ async function main() {
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);
 
-  const pgUrl = process.env.SETFARM_PG_URL || "postgresql://localhost:5432/setfarm";
+  const pgUrl = process.env.SETFARM_PG_URL || "postgresql://postgres@localhost:5432/setfarm";
   const listener = postgres(pgUrl, { max: 1 });
 
   await listener.listen("step_pending", (msg) => {
@@ -3741,10 +4098,12 @@ async function main() {
   console.log("[spawner] Listening for step_pending and story_pending events");
   setInterval(pollForPendingWork, POLL_INTERVAL_MS);
   setInterval(() => { void runClaimMaintenance(); }, Math.min(POLL_INTERVAL_MS, 10_000));
-  setInterval(() => {
-    const result = cleanupStaleSetfarmOpenClawTaskRecords("interval");
-    void restartGatewayAfterOpenClawCleanup("interval", result);
-  }, OPENCLAW_STALE_TASK_SWEEP_MS);
+  if (AGENT_RUNTIME === "openclaw") {
+    setInterval(() => {
+      const result = cleanupStaleSetfarmOpenClawTaskRecords("interval");
+      void restartGatewayAfterOpenClawCleanup("interval", result);
+    }, OPENCLAW_STALE_TASK_SWEEP_MS);
+  }
   await pollForPendingWork();
   console.log("[spawner] Ready");
 }

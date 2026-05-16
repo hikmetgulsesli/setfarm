@@ -40,6 +40,7 @@ describe("buildPollingPrompt", () => {
     const prompt = buildPollingPrompt("feature-dev", "developer");
     assert.ok(prompt.includes("step complete"), "should include step complete");
     assert.ok(prompt.includes("step fail"), "should include step fail");
+    assert.ok(!prompt.includes("/usr/bin/node"), "should not hard-code a Linux-only node path");
   });
 
   it("mentions stepId for claim output", () => {

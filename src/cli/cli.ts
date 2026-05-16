@@ -9,6 +9,7 @@ import { listBundledWorkflows } from "../installer/workflow-fetch.js";
 import { readRecentLogs } from "../lib/logger.js";
 import { getRecentEvents, getRunEvents, type SetfarmEvent } from "../installer/events.js";
 import { startDaemon, stopDaemon, getDaemonStatus, isRunning } from "../server/daemonctl.js";
+import { startSpawner, stopSpawner, getSpawnerStatus, isSpawnerRunning } from "../server/spawnerctl.js";
 import { claimStep, completeStep, failStep, getStories, peekStep } from "../installer/step-ops.js";
 import { recordStepTransition } from "../installer/repo.js";
 import { ensureCliSymlink } from "../installer/symlink.js";
@@ -111,6 +112,41 @@ function printEvents(events: SetfarmEvent[]): void {
   }
 }
 
+async function ensureWorkflowExecutionBackend(workflowId: string): Promise<void> {
+  const { gatewayAgentCronsEnabled, removeAgentCrons, setupAgentCrons } = await import("../installer/agent-cron.js");
+
+  if (!gatewayAgentCronsEnabled()) {
+    const result = await startSpawner();
+    console.log(`Spawner running (PID ${result.pid}).`);
+    return;
+  }
+
+  const { loadWorkflowSpec } = await import("../installer/workflow-spec.js");
+  const { resolveWorkflowDir } = await import("../installer/paths.js");
+  const workflowDir = resolveWorkflowDir(workflowId);
+  const workflow = await loadWorkflowSpec(workflowDir);
+
+  await removeAgentCrons(workflowId);
+  await setupAgentCrons(workflow);
+
+  if (process.platform !== "linux") {
+    console.log(`Gateway restart skipped on ${process.platform}; workflow crons were refreshed.`);
+    return;
+  }
+
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const execFileAsync = promisify(execFile);
+  try {
+    await execFileAsync("systemctl", ["--user", "restart", "openclaw-gateway"], { timeout: 10000 });
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+    await removeAgentCrons(workflowId);
+    await setupAgentCrons(workflow);
+  } catch (restartErr) {
+    process.stderr.write(`Warning: Gateway restart failed: ${restartErr instanceof Error ? restartErr.message : String(restartErr)}\n`);
+  }
+}
+
 function printUsage() {
   process.stdout.write(
     [
@@ -131,6 +167,11 @@ function printUsage() {
       "setfarm dashboard [start] [--port N]   Start dashboard daemon (default: 3333)",
       "setfarm dashboard stop                  Stop dashboard daemon",
       "setfarm dashboard status                Check dashboard status",
+      "",
+      "setfarm spawner [start]                Start workflow spawner daemon",
+      "setfarm spawner stop                   Stop workflow spawner daemon",
+      "setfarm spawner restart                Restart workflow spawner daemon",
+      "setfarm spawner status                 Check workflow spawner status",
       "",
       "setfarm step peek <agent-id>        Lightweight check for pending work (HAS_WORK or NO_WORK)",
       "setfarm step claim <agent-id>       Claim pending step, output resolved input as JSON",
@@ -283,6 +324,17 @@ async function main() {
     } else {
       console.log("\nDashboard already running.");
     }
+
+    if (!isSpawnerRunning().running) {
+      try {
+        const result = await startSpawner();
+        console.log(`Spawner started (PID ${result.pid}).`);
+      } catch (err) {
+        console.log(`Note: Could not start spawner: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    } else {
+      console.log("Spawner already running.");
+    }
     return;
   }
 
@@ -329,6 +381,44 @@ async function main() {
     const result = await startDaemon(port);
     console.log(`Dashboard started (PID ${result.pid})`);
     console.log(`  http://localhost:${result.port}`);
+    return;
+  }
+
+  if (group === "spawner") {
+    const sub = args[1];
+
+    if (sub === "stop") {
+      if (stopSpawner()) {
+        console.log("Spawner stopped.");
+      } else {
+        console.log("Spawner is not running.");
+      }
+      return;
+    }
+
+    if (sub === "restart") {
+      stopSpawner();
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      const result = await startSpawner();
+      console.log(`Spawner restarted (PID ${result.pid}).`);
+      console.log(`  log: ${result.logFile}`);
+      return;
+    }
+
+    if (sub === "status") {
+      const st = getSpawnerStatus();
+      if (st.running) {
+        console.log(`Spawner running (PID ${st.pid ?? "unknown"})`);
+      } else {
+        console.log("Spawner is not running.");
+      }
+      console.log(`  log: ${st.logFile}`);
+      return;
+    }
+
+    const result = await startSpawner();
+    console.log(`Spawner started (PID ${result.pid}).`);
+    console.log(`  log: ${result.logFile}`);
     return;
   }
 
@@ -708,29 +798,10 @@ async function main() {
           [now(), run.id]
         );
 
-        // Ensure crons are running for this workflow
-        const { loadWorkflowSpec } = await import("../installer/workflow-spec.js");
-        const { resolveWorkflowDir } = await import("../installer/paths.js");
-        const { removeAgentCrons, setupAgentCrons } = await import("../installer/agent-cron.js");
         try {
-          const workflowDir = resolveWorkflowDir(run.workflow_id);
-          const workflow = await loadWorkflowSpec(workflowDir);
-          await removeAgentCrons(run.workflow_id);
-          await setupAgentCrons(workflow);
-          // Force gateway restart so scheduler picks up fresh crons
-          const { execFile: execFile2 } = await import("child_process");
-          const { promisify: promisify2 } = await import("util");
-          const execFileAsync2 = promisify2(execFile2);
-          try {
-            await execFileAsync2("systemctl", ["--user", "restart", "openclaw-gateway"], { timeout: 10000 });
-            await new Promise(r => setTimeout(r, 5000));
-            await removeAgentCrons(run.workflow_id);
-            await setupAgentCrons(workflow);
-          } catch (restartErr) {
-            process.stderr.write(`Warning: Gateway restart failed: ${restartErr instanceof Error ? restartErr.message : String(restartErr)}\n`);
-          }
+          await ensureWorkflowExecutionBackend(run.workflow_id);
         } catch (err) {
-          process.stderr.write(`Warning: Could not start crons: ${err instanceof Error ? err.message : String(err)}\n`);
+          process.stderr.write(`Warning: Could not start workflow execution backend: ${err instanceof Error ? err.message : String(err)}\n`);
         }
 
         console.log(`Resumed run ${run.id.slice(0, 8)} — reset loop step "${loopStep.id.slice(0, 8)}" to pending, verify step "${failedStep.step_id}" to waiting`);
@@ -761,30 +832,10 @@ async function main() {
       [now(), run.id]
     );
 
-    // Ensure crons are running for this workflow
-    const { loadWorkflowSpec } = await import("../installer/workflow-spec.js");
-    const { resolveWorkflowDir } = await import("../installer/paths.js");
-    const { removeAgentCrons, setupAgentCrons } = await import("../installer/agent-cron.js");
     try {
-      const workflowDir = resolveWorkflowDir(run.workflow_id);
-      const workflow = await loadWorkflowSpec(workflowDir);
-      await removeAgentCrons(run.workflow_id);
-      await setupAgentCrons(workflow);
-      // Force gateway restart so scheduler picks up fresh crons (workaround for stale scheduler bug)
-      const { execFile } = await import("child_process");
-      const { promisify } = await import("util");
-      const execFileAsync = promisify(execFile);
-      try {
-        await execFileAsync("systemctl", ["--user", "restart", "openclaw-gateway"], { timeout: 10000 });
-        // Wait for gateway to come back up, then re-create crons on the new instance
-        await new Promise(r => setTimeout(r, 5000));
-        await removeAgentCrons(run.workflow_id);
-        await setupAgentCrons(workflow);
-      } catch (restartErr) {
-        process.stderr.write(`Warning: Gateway restart failed: ${restartErr instanceof Error ? restartErr.message : String(restartErr)}\n`);
-      }
+      await ensureWorkflowExecutionBackend(run.workflow_id);
     } catch (err) {
-      process.stderr.write(`Warning: Could not start crons: ${err instanceof Error ? err.message : String(err)}\n`);
+      process.stderr.write(`Warning: Could not start workflow execution backend: ${err instanceof Error ? err.message : String(err)}\n`);
     }
 
     console.log(`Resumed run ${run.id.slice(0, 8)} from step "${failedStep.step_id}"`);
@@ -799,7 +850,8 @@ async function main() {
     const workflow = await loadWorkflowSpec(workflowDir);
     if (!gatewayAgentCronsEnabled()) {
       await removeAgentCrons(target);
-      console.log(`Gateway agent crons disabled; event-driven spawner owns workflow "${target}".`);
+      const result = await startSpawner();
+      console.log(`Gateway agent crons disabled; event-driven spawner owns workflow "${target}" (PID ${result.pid}).`);
       return;
     }
     // Force recreate: remove existing then create fresh
@@ -830,6 +882,16 @@ async function main() {
       taskTitle = readFileSync(taskTitle.slice(1), "utf8").trim();
     }
     if (!taskTitle) { process.stderr.write("Missing task title.\n"); printUsage(); process.exit(1); }
+
+    if (process.env.SETFARM_DISABLE_SPAWNER_AUTOSTART !== "1" && !isSpawnerRunning().running) {
+      try {
+        const result = await startSpawner();
+        console.log(`Spawner started (PID ${result.pid}).`);
+      } catch (err) {
+        process.stderr.write(`Cannot start workflow run: spawner failed to start. ${err instanceof Error ? err.message : String(err)}\n`);
+        process.exit(1);
+      }
+    }
 
     // Wave 7 (plan: reactive-frolicking-cupcake.md): Kimi quota pre-flight guard.
     // Hits the MC kimi-quota endpoint (which queries Kimi Code billing in turn)
