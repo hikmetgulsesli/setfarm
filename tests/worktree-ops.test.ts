@@ -101,6 +101,86 @@ describe("worktree operations", () => {
     }
   });
 
+  it("does not auto-stash product supervisor memory from the main repo", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-worktree-internal-main-dirty-"));
+    const origin = path.join(tmp, "origin.git");
+    const repo = path.join(tmp, "repo");
+    const storyBranch = "c62e1bc1-us-005";
+
+    try {
+      execFileSync("git", ["init", "--bare", "--initial-branch=main", origin], {
+        encoding: "utf-8",
+        timeout: 30000,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      execFileSync("git", ["clone", origin, repo], {
+        encoding: "utf-8",
+        timeout: 30000,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+
+      git(repo, ["config", "user.email", "setfarm@example.invalid"]);
+      git(repo, ["config", "user.name", "Setfarm Test"]);
+      fs.writeFileSync(path.join(repo, "README.md"), "base\n");
+      fs.writeFileSync(path.join(repo, "SUPERVISOR_MEMORY.md"), "legacy memory\n");
+      git(repo, ["add", "README.md", "SUPERVISOR_MEMORY.md"]);
+      git(repo, ["commit", "-m", "base"]);
+      git(repo, ["push", "origin", "main"]);
+
+      fs.writeFileSync(path.join(repo, "SUPERVISOR_MEMORY.md"), "updated manager memory\n");
+      assert.match(git(repo, ["status", "--porcelain"]), /SUPERVISOR_MEMORY\.md/);
+
+      const worktree = createStoryWorktree(repo, storyBranch, "main");
+
+      assert.equal(git(repo, ["stash", "list"]), "");
+      assert.equal(git(worktree, ["branch", "--show-current"]), storyBranch);
+      assert.match(git(repo, ["status", "--porcelain"]), /SUPERVISOR_MEMORY\.md/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("releases stale managed supervisor worktrees before retrying a story branch", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-worktree-supervisor-lock-"));
+    const origin = path.join(tmp, "origin.git");
+    const repo = path.join(tmp, "repo");
+    const supervisorWorktree = path.join(tmp, "supervisor", "story-worktrees", "c62e1bc1-us-004");
+    const storyBranch = "c62e1bc1-us-004";
+
+    try {
+      execFileSync("git", ["init", "--bare", "--initial-branch=main", origin], {
+        encoding: "utf-8",
+        timeout: 30000,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      execFileSync("git", ["clone", origin, repo], {
+        encoding: "utf-8",
+        timeout: 30000,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+
+      git(repo, ["config", "user.email", "setfarm@example.invalid"]);
+      git(repo, ["config", "user.name", "Setfarm Test"]);
+      fs.writeFileSync(path.join(repo, "README.md"), "base\n");
+      git(repo, ["add", "README.md"]);
+      git(repo, ["commit", "-m", "base"]);
+      git(repo, ["push", "origin", "main"]);
+      git(repo, ["branch", storyBranch, "main"]);
+      fs.mkdirSync(path.dirname(supervisorWorktree), { recursive: true });
+      git(repo, ["worktree", "add", supervisorWorktree, storyBranch]);
+
+      assert.equal(git(supervisorWorktree, ["branch", "--show-current"]), storyBranch);
+
+      const retryWorktree = createStoryWorktree(repo, storyBranch, "main");
+
+      assert.ok(retryWorktree.endsWith(path.join(".worktrees", storyBranch)));
+      assert.equal(git(retryWorktree, ["branch", "--show-current"]), storyBranch);
+      assert.equal(fs.existsSync(supervisorWorktree), false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("discards guarded retry worktrees instead of preserving WIP history", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-worktree-guard-discard-"));
     const origin = path.join(tmp, "origin.git");

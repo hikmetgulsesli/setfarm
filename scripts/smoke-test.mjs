@@ -187,10 +187,32 @@ function normalizeRouteToken(value) {
 
 function discoverHashRoutes(repo) {
   const routes = new Set();
+  const readGeneratedFallbackScreenIndex = () => {
+    const indexPath = join(repo, "src", "screens", "SCREEN_INDEX.json");
+    if (!existsSync(indexPath)) return [];
+    try {
+      const parsed = JSON.parse(readFileSync(indexPath, "utf-8"));
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .map(item => String(item?.screenId || "").trim())
+        .filter(Boolean);
+    } catch {
+      return [];
+    }
+  };
+  const generatedFallbackScreenIds = readGeneratedFallbackScreenIndex();
+  const hasGeneratedFallbackScreenIndex = generatedFallbackScreenIds.length > 0 &&
+    generatedFallbackScreenIds.every(id => /^fallback-[a-z0-9_-]+$/i.test(id));
+  const isIgnoredHashRoute = (route) => {
+    const clean = String(route || "").trim().replace(/^#/, "").replace(/^\//, "");
+    if (!clean || clean === "dashboard" || clean === "home" || clean === "index") return true;
+    if (/^fallback-[a-z0-9_-]+$/i.test(clean)) return true;
+    if (/^(javascript|mailto|tel):/i.test(clean)) return true;
+    return false;
+  };
   const add = (route) => {
     const clean = String(route || "").trim().replace(/^#/, "").replace(/^\//, "");
-    if (!clean || clean === "dashboard" || clean === "home") return;
-    if (/^(javascript|mailto|tel):/i.test(clean)) return;
+    if (isIgnoredHashRoute(clean)) return;
     routes.add("#" + clean);
   };
 
@@ -203,9 +225,12 @@ function discoverHashRoutes(repo) {
       if (!/\.(tsx?|jsx?)$/.test(f) || /\.(test|spec)\.(tsx?|jsx?)$/i.test(f)) return;
       let content = "";
       try { content = readFileSync(f, "utf-8"); } catch { return; }
+      const realHrefHashes = [...content.matchAll(/\bhref\s*=\s*["']#([^"']+)["']/g)]
+        .map(m => m[1])
+        .filter(route => !isIgnoredHashRoute(route));
       if (/\b(HashRouter|createHashRouter|hashchange|location\.hash)\b/.test(content) ||
           /\bnavigate\s*\(\s*["'][^"']+["']/.test(content) ||
-          /\bhref\s*=\s*["']#[A-Za-z0-9_/.-]+["']/.test(content)) {
+          realHrefHashes.length > 0) {
         hasExplicitHashRouting = true;
       }
       for (const m of content.matchAll(/\bnavigate\s*\(\s*["']([^"']+)["']/g)) add(m[1]);
@@ -215,7 +240,7 @@ function discoverHashRoutes(repo) {
   }
 
   const screenDir = join(repo, "src", "screens");
-  if (hasExplicitHashRouting && existsSync(screenDir)) {
+  if (hasExplicitHashRouting && existsSync(screenDir) && !hasGeneratedFallbackScreenIndex) {
     const screenMap = new Map([
       ["create-edit-record", "create"],
       ["create-edit", "create"],
@@ -994,14 +1019,88 @@ const PLACEHOLDER_RE = [
 function isPlaceholder(t) { return PLACEHOLDER_RE.some(r=>r.test(t)); }
 
 function startServer(dir, port) {
+  const startNodeStaticServer = () => {
+    const serverSource = `
+const http = require("http");
+const fs = require("fs");
+const path = require("path");
+const root = process.argv[1];
+const port = Number(process.argv[2]);
+const mime = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".ico": "image/x-icon",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2"
+};
+function resolveFile(reqUrl) {
+  const parsed = new URL(reqUrl, "http://localhost");
+  let pathname = decodeURIComponent(parsed.pathname);
+  if (pathname.endsWith("/")) pathname += "index.html";
+  const candidate = path.resolve(root, "." + pathname);
+  const rootWithSep = path.resolve(root) + path.sep;
+  if (candidate !== path.resolve(root) && !candidate.startsWith(rootWithSep)) return null;
+  if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+  const index = path.join(root, "index.html");
+  return fs.existsSync(index) ? index : null;
+}
+const server = http.createServer((req, res) => {
+  try {
+    const file = resolveFile(req.url || "/");
+    if (!file) {
+      res.statusCode = 404;
+      res.end("Not found");
+      return;
+    }
+    res.setHeader("content-type", mime[path.extname(file).toLowerCase()] || "application/octet-stream");
+    fs.createReadStream(file).pipe(res);
+  } catch (err) {
+    res.statusCode = 500;
+    res.end(String(err && err.message || err));
+  }
+});
+server.listen(port, "127.0.0.1", () => console.log("http://127.0.0.1:" + port));
+`;
+    return spawn(process.execPath, ['-e', serverSource, dir, String(port)], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: false,
+    });
+  };
+
   return new Promise((resolve, reject) => {
-    const p = spawn('serve',[dir,'-l',String(port),'-s','--no-clipboard'],{stdio:['ignore','pipe','pipe'],detached:false});
+    let p = spawn('serve',[dir,'-l',String(port),'-s','--no-clipboard'],{stdio:['ignore','pipe','pipe'],detached:false});
     let ok = false;
+    let fallbackStarted = false;
     const to = setTimeout(()=>{ if(!ok){p.kill();reject(new Error('timeout'));} },10000);
     const fn = d=>{ if(!ok&&(d.toString().includes('Accepting')||d.toString().includes('http://'))){ok=true;clearTimeout(to);setTimeout(()=>resolve(p),500);} };
-    p.stdout.on('data',fn); p.stderr.on('data',fn);
-    p.on('error',e=>{clearTimeout(to);reject(e);});
-    p.on('exit',c=>{if(!ok){clearTimeout(to);reject(new Error(`exit ${c}`));}});
+    const attach = () => {
+      const child = p;
+      child.stdout.on('data',fn); child.stderr.on('data',fn);
+      child.on('error',e=>{
+        if (!ok && !fallbackStarted && e && e.code === 'ENOENT') {
+          fallbackStarted = true;
+          p = startNodeStaticServer();
+          attach();
+          return;
+        }
+        clearTimeout(to);
+        reject(e);
+      });
+      child.on('exit',c=>{
+        if (fallbackStarted && child !== p) return;
+        if(!ok){clearTimeout(to);reject(new Error(`exit ${c}`));}
+      });
+    };
+    attach();
   });
 }
 
@@ -1353,7 +1452,7 @@ async function main() {
       ab('screenshot', join(repoPath, 'smoke-home.png'), '--annotate');
 
       // Find and click primary action button (Start/Play/Begin etc.)
-      const primaryBtn = p.buttons.find(b => /start|play|begin|basla|baslat|launch/i.test(b));
+      const primaryBtn = p.buttons.find(b => /start|play|begin|launch/i.test(b));
       if (primaryBtn) {
         ab('find', 'text', primaryBtn, 'click');
         await sleep(2000);

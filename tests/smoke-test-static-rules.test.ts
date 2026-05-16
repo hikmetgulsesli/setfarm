@@ -114,6 +114,48 @@ describe("smoke-test static rules", () => {
     });
   });
 
+  it("ignores generated fallback design navigation hashes", () => {
+    withRepo(repo => {
+      fs.mkdirSync(path.join(repo, "src", "screens"), { recursive: true });
+      fs.writeFileSync(path.join(repo, "src", "App.tsx"), [
+        'import { MainMenu } from "./screens";',
+        "export function App() { return <MainMenu />; }",
+      ].join("\n"));
+      fs.writeFileSync(path.join(repo, "src", "screens", "index.ts"), 'export { MainMenu } from "./MainMenu";\n');
+      fs.writeFileSync(path.join(repo, "src", "screens", "MainMenu.tsx"), [
+        "export function MainMenu() {",
+        "  return <nav>",
+        '    <a href="#fallback-main-menu">Main Menu</a>',
+        '    <a href="#fallback-controls-help">Controls Help</a>',
+        "  </nav>;",
+        "}",
+      ].join("\n"));
+
+      assert.deepEqual(discoverHashRoutes(repo), []);
+    });
+  });
+
+  it("does not derive short screen hashes from generated fallback screen indexes", () => {
+    withRepo(repo => {
+      fs.mkdirSync(path.join(repo, "src", "screens"), { recursive: true });
+      fs.writeFileSync(path.join(repo, "src", "App.tsx"), [
+        "export function App() {",
+        "  window.addEventListener('hashchange', () => {});",
+        "  location.hash = '#settings';",
+        "  return null;",
+        "}",
+      ].join("\n"));
+      fs.writeFileSync(path.join(repo, "src", "screens", "SCREEN_INDEX.json"), JSON.stringify([
+        { screenId: "fallback-main-menu", componentName: "MainMenu", file: "src/screens/MainMenu.tsx" },
+        { screenId: "fallback-game-options", componentName: "GameOptions", file: "src/screens/GameOptions.tsx" },
+      ]));
+      fs.writeFileSync(path.join(repo, "src", "screens", "MainMenu.tsx"), "export function MainMenu() { return null; }\n");
+      fs.writeFileSync(path.join(repo, "src", "screens", "GameOptions.tsx"), "export function GameOptions() { return null; }\n");
+
+      assert.deepEqual(discoverHashRoutes(repo), ["#settings"]);
+    });
+  });
+
   it("still derives screen hash routes when the app has explicit hash navigation", () => {
     withRepo(repo => {
       fs.mkdirSync(path.join(repo, "src", "screens"), { recursive: true });
@@ -272,6 +314,32 @@ describe("smoke-test static rules", () => {
     assert.match(smokeScript, /status: failures\.length === 0 \? 'pass' : \(confidence >= 70 \? 'warn' : 'fail'\)/);
     assert.match(smokeScript, /process\.exit\(result\.status === 'fail' \? 1 : 0\)/);
     assert.doesNotMatch(smokeScript, /process\.exit\(failures\.length > 0 \? 1 : 0\)/);
+  });
+
+  it("does not require a globally installed static server for smoke tests", () => {
+    const smokeScript = fs.readFileSync(path.join(process.cwd(), "scripts/smoke-test.mjs"), "utf-8");
+
+    assert.match(smokeScript, /function startServer/);
+    assert.match(smokeScript, /startNodeStaticServer/);
+    assert.match(smokeScript, /process\.execPath/);
+    assert.match(smokeScript, /e\.code === 'ENOENT'/);
+  });
+
+  it("cleans up visual verification preview and browser process groups", () => {
+    const verifyScript = fs.readFileSync(path.join(process.cwd(), "src/installer/steps/07-verify/playwright-check.ts"), "utf-8");
+    const supervisorVisualQa = fs.readFileSync(path.join(process.cwd(), "src/installer/supervisor/visual-qa.ts"), "utf-8");
+
+    assert.match(verifyScript, /process\.kill\(-proc\.pid,\s*signal\)/);
+    assert.match(verifyScript, /await stopPreviewServer\(server\.proc\)/);
+    assert.match(verifyScript, /function execFileProcessGroup/);
+    assert.match(verifyScript, /function cleanupDetachedPlaywrightChildren/);
+    assert.match(verifyScript, /chromium_headless_shell\|playwright_chromiumdev_profile/);
+    assert.match(verifyScript, /detached:\s*true/);
+    assert.match(verifyScript, /finally \{ await browser\.close\(\)\.catch\(\(\) => \{\}\); \}/);
+
+    assert.match(supervisorVisualQa, /process\.kill\(-proc\.pid,\s*signal\)/);
+    assert.match(supervisorVisualQa, /await stopPreviewServer\(server\.proc\)/);
+    assert.doesNotMatch(supervisorVisualQa, /setTimeout\(\(\) => \{\s*try \{\s*if \(proc\.pid\) process\.kill\(-proc\.pid,\s*"SIGKILL"\)/);
   });
 
   it("ignores SVGs hidden by responsive ancestors in visual smoke", () => {

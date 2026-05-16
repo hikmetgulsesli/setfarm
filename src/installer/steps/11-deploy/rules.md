@@ -25,6 +25,9 @@
 
 - Library-only project with no deployable frontend.
 - User requested local-only testing.
+- Deployment infrastructure is unavailable from the current workspace: Mission
+  Control is not reachable, systemd user services are unavailable, and no
+  configured remote deployment host is reachable.
 
 ## systemd Unit Template
 
@@ -36,7 +39,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/home/setrox/projects/<project>
-ExecStart=/usr/bin/node dist/server.js
+ExecStart=<absolute-node-path> dist/server.js
 Restart=on-failure
 RestartSec=10
 Environment=NODE_ENV=production
@@ -46,6 +49,7 @@ Environment=PORT=<port>
 WantedBy=default.target
 ```
 
+Resolve `<absolute-node-path>` with `command -v node` on the deployment host.
 For Vite static apps, preview/serve may be used instead of `node dist/server.js`
 when that is the correct runtime command.
 

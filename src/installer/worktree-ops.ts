@@ -53,11 +53,11 @@ function stashDirtyMainRepo(repo: string, storyId: string): void {
       encoding: "utf-8",
       timeout: 5000,
       stdio: ["pipe", "pipe", "pipe"],
-    }).trim();
-    if (!status) return;
+    }).trimEnd();
+    if (!status.trim()) return;
     const relevantStatus = status
       .split(/\r?\n/)
-      .filter(line => !/^\S\S\s+\.worktrees(?:\/|$)/.test(line) && !/^\?\?\s+\.worktrees(?:\/|$)/.test(line))
+      .filter(line => !isPlatformInternalStatusLine(line))
       .join("\n")
       .trim();
     if (!relevantStatus) return;
@@ -82,12 +82,94 @@ function stashDirtyMainRepo(repo: string, storyId: string): void {
   }
 }
 
+function statusPathFromPorcelainLine(line: string): string {
+  const raw = line.slice(3).trim().replace(/^"|"$/g, "");
+  const renamed = raw.split(" -> ");
+  return renamed[renamed.length - 1] || raw;
+}
+
+function isPlatformInternalStatusLine(line: string): boolean {
+  const file = statusPathFromPorcelainLine(line);
+  return file === "SUPERVISOR_MEMORY.md"
+    || file === "PROJECT_MEMORY.md"
+    || file === "CLAUDE.md"
+    || file === ".worktrees"
+    || file.startsWith(".worktrees/")
+    || file === ".setfarm"
+    || file.startsWith(".setfarm/")
+    || file === ".setfarm-bin"
+    || file.startsWith(".setfarm-bin/")
+    || file === "node_modules"
+    || file.startsWith("node_modules/")
+    || file === "references"
+    || file.startsWith("references/");
+}
+
 function sameFilesystemPath(a: string, b: string): boolean {
   try {
     return fs.realpathSync.native(a) === fs.realpathSync.native(b);
   } catch {
     return path.resolve(a) === path.resolve(b);
   }
+}
+
+function isManagedWorktreePath(candidate: string): boolean {
+  const normalized = path.resolve(candidate);
+  return normalized.includes(`${path.sep}story-worktrees${path.sep}`) || normalized.includes(`${path.sep}.worktrees${path.sep}`);
+}
+
+export function releaseManagedStoryBranchOccupancy(repo: string, storyBranch: string, exceptPath = ""): boolean {
+  const branch = safeManagedStoryBranch(storyBranch);
+  if (!repo || !branch) return true;
+
+  let output = "";
+  try {
+    output = execFileSync("git", ["worktree", "list", "--porcelain"], {
+      cwd: repo,
+      encoding: "utf-8",
+      timeout: 5000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+  } catch {
+    return true;
+  }
+
+  const exceptResolved = exceptPath ? path.resolve(exceptPath) : "";
+  let currentPath = "";
+  let released = true;
+  const releaseCurrent = () => {
+    if (!currentPath || !fs.existsSync(currentPath)) return;
+    const resolved = path.resolve(currentPath);
+    if (exceptResolved && resolved === exceptResolved) return;
+    if (!isManagedWorktreePath(resolved)) {
+      logger.warn(`[worktree] Refusing to release non-managed worktree holding ${branch}: ${resolved}`, {});
+      released = false;
+      return;
+    }
+    try { fs.unlinkSync(path.join(resolved, "node_modules")); } catch {}
+    try {
+      execFileSync("git", ["worktree", "remove", resolved, "--force"], {
+        cwd: repo,
+        timeout: 15000,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      logger.warn(`[worktree] Released stale managed worktree holding ${branch}: ${resolved}`, {});
+    } catch (removeErr) {
+      try { fs.rmSync(resolved, { recursive: true, force: true }); } catch {}
+      logger.warn(`[worktree] Force-removed stale managed worktree holding ${branch}: ${String(removeErr).slice(0, 150)}`, {});
+    }
+  };
+
+  for (const line of output.split(/\r?\n/)) {
+    if (line.startsWith("worktree ")) {
+      currentPath = line.slice("worktree ".length).trim();
+    } else if (line === `branch refs/heads/${branch}`) {
+      releaseCurrent();
+    }
+  }
+
+  try { execFileSync("git", ["worktree", "prune"], { cwd: repo, timeout: 5000, stdio: ["pipe", "pipe", "pipe"] }); } catch {}
+  return released;
 }
 
 function checkoutRefInMainWorktree(repo: string, ref: string, reason: string): boolean {
@@ -561,6 +643,7 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
     }
 
     releaseMainWorktreeBranch(repo, storyId.toLowerCase(), baseBranch);
+    releaseManagedStoryBranchOccupancy(repo, storyId.toLowerCase(), worktreeDir);
 
     // Check if story branch already exists (may have WIP commits from previous session)
     let branchExists = false;

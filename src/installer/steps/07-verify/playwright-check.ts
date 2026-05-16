@@ -8,7 +8,7 @@
  * missing browser tooling.
  */
 
-import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 import fs from "node:fs";
 import path from "node:path";
@@ -68,6 +68,10 @@ async function startPreviewServer(repoPath: string): Promise<{ proc: ChildProces
   const proc = spawn("npm", ["run", script, "--", "--port", String(port), "--host", "127.0.0.1"], {
     cwd: repoPath, detached: true, stdio: ["ignore", "pipe", "pipe"],
   });
+  let exited = false;
+  proc.once("exit", () => {
+    exited = true;
+  });
 
   // Wait up to 30s for "Local:" or similar ready signal
   const url = `http://127.0.0.1:${port}`;
@@ -82,14 +86,130 @@ async function startPreviewServer(repoPath: string): Promise<{ proc: ChildProces
     proc.on("exit", () => { clearTimeout(timer); resolve(false); });
   });
   if (!ready) {
-    try { proc.kill("SIGTERM"); } catch { /* ignore */ }
+    await stopPreviewServer(proc);
     return null;
   }
+  if (exited) return null;
   return { proc, url };
 }
 
-function stopPreviewServer(proc: ChildProcess): void {
-  try { proc.kill("SIGTERM"); setTimeout(() => { try { proc.kill("SIGKILL"); } catch { /* */ } }, 3000); } catch { /* */ }
+async function stopPreviewServer(proc: ChildProcess): Promise<void> {
+  terminateProcessGroup(proc, "SIGTERM");
+  const stopped = await waitForExit(proc, 3000);
+  if (!stopped) {
+    terminateProcessGroup(proc, "SIGKILL");
+    await waitForExit(proc, 1000);
+  }
+}
+
+function terminateProcessGroup(proc: ChildProcess, signal: NodeJS.Signals): void {
+  try {
+    if (proc.pid) {
+      process.kill(-proc.pid, signal);
+      return;
+    }
+  } catch {
+    // Fall back to the direct child below when the process group is gone or unavailable.
+  }
+  try { proc.kill(signal); } catch { /* ignore */ }
+}
+
+function cleanupDetachedPlaywrightChildren(): void {
+  let output = "";
+  try {
+    output = execFileSync("ps", ["-axo", "pid=,ppid=,pgid=,command="], {
+      encoding: "utf-8",
+      timeout: 5000,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
+    return;
+  }
+  for (const line of output.split("\n")) {
+    const match = line.trim().match(/^(\d+)\s+(\d+)\s+(-?\d+)\s+(.+)$/);
+    if (!match) continue;
+    const pid = Number(match[1]);
+    const parentPid = Number(match[2]);
+    const processGroupId = Number(match[3]);
+    const command = match[4] || "";
+    if (parentPid !== process.pid) continue;
+    if (!/chromium_headless_shell|playwright_chromiumdev_profile/i.test(command)) continue;
+    try {
+      process.kill(-processGroupId, "SIGTERM");
+    } catch {
+      try { process.kill(pid, "SIGTERM"); } catch { /* ignore */ }
+    }
+    setTimeout(() => {
+      try {
+        process.kill(-processGroupId, "SIGKILL");
+      } catch {
+        try { process.kill(pid, "SIGKILL"); } catch { /* ignore */ }
+      }
+    }, 2000).unref();
+  }
+}
+
+function waitForExit(proc: ChildProcess, timeoutMs: number): Promise<boolean> {
+  if (proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve(false);
+    }, timeoutMs);
+    timer.unref?.();
+    function done() {
+      cleanup();
+      resolve(true);
+    }
+    function cleanup() {
+      clearTimeout(timer);
+      proc.off("exit", done);
+      proc.off("error", done);
+    }
+    proc.once("exit", done);
+    proc.once("error", done);
+  });
+}
+
+function execFileProcessGroup(command: string, args: string[], options: { cwd: string; timeout: number }): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString();
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      terminateProcessGroup(child, "SIGTERM");
+      setTimeout(() => terminateProcessGroup(child, "SIGKILL"), 3000).unref();
+    }, options.timeout);
+    timer.unref?.();
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once("exit", (code, signal) => {
+      clearTimeout(timer);
+      if (timedOut) {
+        reject(new Error(`${command} ${args.join(" ")} timed out after ${options.timeout}ms`));
+        return;
+      }
+      if (code === 0) {
+        resolve({ stdout, stderr });
+        return;
+      }
+      reject(new Error(`${command} ${args.join(" ")} exited with code ${code ?? "null"} signal ${signal ?? "null"}\n${stderr}`.slice(0, 1000)));
+    });
+  });
 }
 
 /**
@@ -120,12 +240,12 @@ export async function runPlaywrightCheck(repoPath: string): Promise<PlaywrightRe
     const harnessPath = path.join(repoPath, ".setfarm-playwright-harness.mjs");
     const harness = `
 import { chromium } from 'playwright';
-const browser = await chromium.launch();
-const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-const page = await ctx.newPage();
 const issues = [];
-page.on('console', msg => { if (msg.type() === 'error') issues.push({ type: 'console_error', detail: msg.text().slice(0, 200) }); });
+const browser = await chromium.launch();
 try {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const page = await ctx.newPage();
+  page.on('console', msg => { if (msg.type() === 'error') issues.push({ type: 'console_error', detail: msg.text().slice(0, 200) }); });
   await page.goto('${server.url}', { timeout: 15000, waitUntil: 'networkidle' });
   function fingerprint() {
     return JSON.stringify({
@@ -152,12 +272,17 @@ try {
     if (before === after) issues.push({ type: 'dead_button', detail: \`\${label || '?'}: click produced no visible state, route, focus, or DOM change\` });
   }
 } catch (e) { issues.push({ type: 'preview_failed', detail: String(e).slice(0, 200) }); }
-await browser.close();
+finally { await browser.close().catch(() => {}); }
 console.log(JSON.stringify({ issues, checked: 1 }));
 `;
     fs.writeFileSync(harnessPath, harness, "utf-8");
-    const { stdout } = await execFileAsync("node", [harnessPath], { cwd: repoPath, timeout: 60000 });
-    try { fs.unlinkSync(harnessPath); } catch { /* */ }
+    let stdout = "";
+    try {
+      ({ stdout } = await execFileProcessGroup("node", [harnessPath], { cwd: repoPath, timeout: 60000 }));
+    } finally {
+      try { fs.unlinkSync(harnessPath); } catch { /* */ }
+      cleanupDetachedPlaywrightChildren();
+    }
 
     // Parse harness output
     const match = stdout.match(/\{"issues":\[.*?\],"checked":\d+\}/);
@@ -169,7 +294,7 @@ console.log(JSON.stringify({ issues, checked: 1 }));
   } catch (err: any) {
     issues.push({ type: "preview_failed", detail: String(err?.message || err).slice(0, 200) });
   } finally {
-    stopPreviewServer(server.proc);
+    await stopPreviewServer(server.proc);
   }
 
   return { ok: issues.length === 0, issues, screensChecked };

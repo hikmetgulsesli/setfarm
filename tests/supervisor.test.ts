@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { buildSupervisorChecklistFromProject } from "../src/installer/supervisor/checklist.js";
 import { runImplementSupervisorScan } from "../src/installer/supervisor/run-supervisor.js";
 import {
+  applyScanFindings,
   readSupervisorChecklist,
   readSupervisorRunMetadata,
   readSupervisorState,
@@ -13,8 +15,25 @@ import {
   supervisorFixerPlanPath,
   supervisorInterventionsPath,
   supervisorVisualReportPath,
+  upsertSupervisorRunMetadata,
   writeSupervisorVisualResult,
 } from "../src/installer/supervisor/state.js";
+import { readSupervisorArtifactSummary } from "../src/server/supervisor-summary.js";
+
+function git(cwd: string, args: string[]): string {
+  return execFileSync("git", args, {
+    cwd,
+    encoding: "utf-8",
+    timeout: 10000,
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "Setfarm Test",
+      GIT_AUTHOR_EMAIL: "setfarm-test@example.test",
+      GIT_COMMITTER_NAME: "Setfarm Test",
+      GIT_COMMITTER_EMAIL: "setfarm-test@example.test",
+    },
+  }).trim();
+}
 
 describe("supervisor checklist scanning", () => {
   it("merges checklist items across story scopes in the same run", async () => {
@@ -255,6 +274,31 @@ describe("supervisor checklist scanning", () => {
     }
   });
 
+  it("writes supervisor artifact excludes to linked worktree common git metadata", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-supervisor-worktree-exclude-"));
+    const worktree = path.join(tmp, ".worktrees", "story-a");
+    try {
+      fs.writeFileSync(path.join(tmp, "README.md"), "base\n");
+      git(tmp, ["init", "-b", "main"]);
+      git(tmp, ["add", "README.md"]);
+      git(tmp, ["commit", "-m", "base"]);
+      git(tmp, ["worktree", "add", "-b", "story-a", worktree, "HEAD"]);
+
+      upsertSupervisorRunMetadata({
+        workdir: worktree,
+        runId: "run-worktree",
+        status: "active",
+        storyId: "US-001",
+        storyWorkdir: worktree,
+      });
+
+      assert.match(fs.readFileSync(path.join(tmp, ".git/info/exclude"), "utf-8"), /^\.setfarm\/$/m);
+      assert.doesNotMatch(git(worktree, ["status", "--porcelain=v1", "-uall"]), /\.setfarm\/supervisor/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("persists visual QA result and markdown evidence", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-supervisor-visual-"));
     try {
@@ -285,6 +329,180 @@ describe("supervisor checklist scanning", () => {
       assert.equal(result?.issues[0]?.type, "dead_control");
       assert.equal(fs.existsSync(supervisorVisualReportPath(tmp, "run-visual")), true);
       assert.match(fs.readFileSync(supervisorVisualReportPath(tmp, "run-visual"), "utf-8"), /dead_control/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps skipped visual QA as warning and does not clear earlier visual blockers", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-supervisor-visual-skip-"));
+    try {
+      const runId = "run-visual-skip";
+      applyScanFindings({
+        workdir: tmp,
+        runId,
+        storyId: "US-001",
+        findings: [{
+          itemId: "visual:dead-control-desktop-root-start",
+          storyId: "US-001",
+          status: "dead-control",
+          severity: "blocker",
+          observed: ["Start button produced no visible change."],
+          lastScan: "visual-qa",
+          files: [],
+          message: "Visual QA dead_control on desktop /: Start button produced no visible change.",
+          checkedAt: "2026-05-16T00:00:00.000Z",
+        }],
+      });
+
+      writeSupervisorVisualResult(tmp, {
+        schema: "setfarm.supervisor-visual-result.v1",
+        runId,
+        storyId: "US-001",
+        ok: true,
+        skipped: true,
+        reason: "Playwright browser unavailable",
+        routesChecked: [],
+        controlsChecked: 0,
+        screenshots: [],
+        issues: [],
+        artifactDir: path.join(tmp, ".setfarm/supervisor/run-visual-skip/visual"),
+        createdAt: "2026-05-16T00:01:00.000Z",
+      });
+
+      const run = readSupervisorRunMetadata(tmp, runId);
+      const state = readSupervisorState(tmp, runId);
+      const summary = readSupervisorArtifactSummary({
+        id: runId,
+        task: `Visual skip sample --repo ${tmp}`,
+        context: JSON.stringify({ repo: tmp }),
+      });
+      assert.equal(run?.status, "warning");
+      assert.equal(state.stories["US-001"].status, "blocked");
+      assert.equal(state.stories["US-001"].openBlockers.includes("visual:dead-control-desktop-root-start"), true);
+      assert.equal(summary.status, "blocked");
+      assert.equal(summary.visual.status, "skipped");
+      assert.match(fs.readFileSync(supervisorVisualReportPath(tmp, runId), "utf-8"), /Status: skipped/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("clears stale visual blockers after a successful non-skipped visual pass", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-supervisor-visual-clear-"));
+    try {
+      const runId = "run-visual-clear";
+      applyScanFindings({
+        workdir: tmp,
+        runId,
+        storyId: "US-001",
+        findings: [{
+          itemId: "visual:layout-overflow-mobile-root-panel",
+          storyId: "US-001",
+          status: "layout-overflow",
+          severity: "blocker",
+          observed: ["Panel overflowed the mobile viewport."],
+          lastScan: "visual-qa",
+          files: [],
+          message: "Visual QA layout_overflow on mobile /: Panel overflowed the mobile viewport.",
+          checkedAt: "2026-05-16T00:00:00.000Z",
+        }],
+      });
+      assert.equal(readSupervisorState(tmp, runId).projectStatus, "blocked");
+
+      writeSupervisorVisualResult(tmp, {
+        schema: "setfarm.supervisor-visual-result.v1",
+        runId,
+        storyId: "US-001",
+        ok: true,
+        baseUrl: "http://127.0.0.1:5555",
+        routesChecked: ["/"],
+        controlsChecked: 3,
+        screenshots: [".setfarm/supervisor/run-visual-clear/visual/desktop-root.png"],
+        issues: [],
+        artifactDir: path.join(tmp, ".setfarm/supervisor/run-visual-clear/visual"),
+        createdAt: "2026-05-16T00:01:00.000Z",
+      });
+
+      const run = readSupervisorRunMetadata(tmp, runId);
+      const state = readSupervisorState(tmp, runId);
+      const story = state.stories["US-001"];
+      assert.equal(run?.status, "passed");
+      assert.equal(story.status, "passed");
+      assert.equal(story.openBlockers.length, 0);
+      assert.equal(story.resolved.includes("visual:layout-overflow-mobile-root-panel"), true);
+      assert.equal(state.evidence["visual:layout-overflow-mobile-root-panel"].status, "passed");
+      assert.equal(state.projectStatus, "implementing");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("summarizes supervisor artifacts for dashboard and Mission Control", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-supervisor-summary-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.mkdirSync(path.join(tmp, "stitch"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { screenId: "SCR-001", title: "Console", file: "src/screens/Console.tsx" },
+      ]));
+      fs.writeFileSync(path.join(tmp, "stitch/DESIGN_DOM.json"), JSON.stringify({
+        screens: {
+          "SCR-001": {
+            screenId: "SCR-001",
+            title: "Console",
+            buttons: [{ label: "Launch", action: "launch" }],
+          },
+        },
+      }));
+      fs.writeFileSync(path.join(tmp, "src/screens/Console.tsx"), [
+        "export function Console() {",
+        "  return <button type=\"button\">Launch</button>;",
+        "}",
+      ].join("\n"));
+
+      const runId = "run-summary";
+      await runImplementSupervisorScan({
+        runId,
+        workdir: tmp,
+        storyId: "US-001",
+        scopeFiles: ["src/screens/Console.tsx"],
+        repeatedBlockerCount: 1,
+      });
+      writeSupervisorVisualResult(tmp, {
+        schema: "setfarm.supervisor-visual-result.v1",
+        runId,
+        ok: false,
+        routesChecked: ["/"],
+        controlsChecked: 1,
+        screenshots: [path.join(tmp, ".setfarm/supervisor/run-summary/visual/desktop-root.png")],
+        issues: [{
+          id: "dead-control-desktop-root-launch",
+          type: "dead_control",
+          severity: "blocker",
+          route: "/",
+          viewport: "desktop",
+          detail: "Launch button did not change route, DOM, or focus.",
+        }],
+        artifactDir: path.join(tmp, ".setfarm/supervisor/run-summary/visual"),
+        createdAt: "2026-05-16T00:00:00.000Z",
+      });
+
+      const summary = readSupervisorArtifactSummary({
+        id: runId,
+        task: `Build sample --repo ${tmp}`,
+        context: JSON.stringify({ repo: tmp }),
+      });
+
+      assert.equal(summary.available, true);
+      assert.equal(summary.status, "fixing");
+      assert.equal(summary.openBlockers, 1);
+      assert.equal(summary.pendingInterventions, 1);
+      assert.equal(summary.checklistItems, 1);
+      assert.equal(summary.visual.status, "fail");
+      assert.equal(summary.visual.issueCount, 1);
+      assert.ok(summary.artifacts.fixerPlan);
+      assert.match(summary.interventionText || "", /Launch/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

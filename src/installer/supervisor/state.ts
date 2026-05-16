@@ -239,6 +239,56 @@ export function applyScanFindings(params: {
   return state;
 }
 
+export function resolveVisualFindingsForStory(params: {
+  workdir: string;
+  runId: string;
+  storyId: string;
+  checkedAt?: string;
+}): SupervisorState {
+  const state = readSupervisorState(params.workdir, params.runId);
+  const story = state.stories[params.storyId];
+  if (!story) return state;
+
+  const visualIds = new Set(
+    [...story.openBlockers, ...story.warnings]
+      .filter((itemId) => {
+        const evidence = state.evidence[itemId];
+        return itemId.startsWith("visual:") || evidence?.lastScan === "visual-qa";
+      }),
+  );
+  if (visualIds.size === 0) return state;
+
+  const checkedAt = params.checkedAt || new Date().toISOString();
+  story.openBlockers = story.openBlockers.filter((itemId) => !visualIds.has(itemId));
+  story.warnings = story.warnings.filter((itemId) => !visualIds.has(itemId));
+  for (const itemId of visualIds) {
+    addUnique(story.resolved, itemId);
+    const evidence = state.evidence[itemId];
+    if (evidence) {
+      state.evidence[itemId] = {
+        ...evidence,
+        status: "passed",
+        observed: [...evidence.observed, "Resolved by a later successful visual QA scan."],
+        lastScan: "visual-qa",
+        message: "Visual QA passed after this previous visual finding.",
+        checkedAt,
+      };
+    }
+  }
+
+  story.status = story.openBlockers.length > 0
+    ? "blocked"
+    : story.warnings.length > 0
+      ? "warning"
+      : "passed";
+  story.lastEvidenceAt = checkedAt;
+  state.projectStatus = Object.values(state.stories).some((item) => item.openBlockers.length > 0)
+    ? "blocked"
+    : "implementing";
+  writeSupervisorState(params.workdir, state);
+  return state;
+}
+
 export function addSupervisorIntervention(workdir: string, runId: string, intervention: SupervisorIntervention): SupervisorState {
   const state = readSupervisorState(workdir, runId);
   state.interventions = [
@@ -312,10 +362,18 @@ export function writeSupervisorVisualResult(workdir: string, result: SupervisorV
     workdir,
     runId: result.runId,
     scope: "visual-qa",
-    status: result.ok ? "passed" : "blocked",
+    status: result.skipped ? "warning" : result.ok ? "passed" : "blocked",
     storyId: result.storyId,
     visualReport: supervisorVisualReportPath(workdir, result.runId),
   });
+  if (result.ok && !result.skipped && result.storyId) {
+    resolveVisualFindingsForStory({
+      workdir,
+      runId: result.runId,
+      storyId: result.storyId,
+      checkedAt: result.createdAt,
+    });
+  }
 }
 
 export function readSupervisorVisualResult(workdir: string, runId: string): SupervisorVisualResult | null {
@@ -356,7 +414,7 @@ function formatSupervisorVisualMarkdown(result: SupervisorVisualResult): string 
     "",
     `Run: ${result.runId}`,
     `Story: ${result.storyId || "run"}`,
-    `Status: ${result.ok ? "pass" : result.skipped ? "skipped" : "fail"}`,
+    `Status: ${result.skipped ? "skipped" : result.ok ? "pass" : "fail"}`,
     `Created: ${result.createdAt}`,
     `Routes checked: ${result.routesChecked.join(", ") || "none"}`,
     `Controls checked: ${result.controlsChecked}`,
@@ -389,28 +447,43 @@ function safeSegment(value: string): string {
 
 export function ensureSupervisorArtifactsExcluded(workdir: string): void {
   try {
-    const gitInfoDir = resolveGitInfoDir(workdir);
-    if (!gitInfoDir) return;
-    fs.mkdirSync(gitInfoDir, { recursive: true });
-    const excludePath = path.join(gitInfoDir, "exclude");
-    const current = fs.existsSync(excludePath) ? fs.readFileSync(excludePath, "utf-8") : "";
-    if (/^\.setfarm\/?$/m.test(current)) return;
-    const next = `${current.replace(/\s*$/g, "")}\n.setfarm/\n`;
-    fs.writeFileSync(excludePath, next, "utf-8");
+    for (const gitInfoDir of resolveGitInfoDirs(workdir)) {
+      fs.mkdirSync(gitInfoDir, { recursive: true });
+      const excludePath = path.join(gitInfoDir, "exclude");
+      const current = fs.existsSync(excludePath) ? fs.readFileSync(excludePath, "utf-8") : "";
+      if (/^\.setfarm\/?$/m.test(current)) continue;
+      const next = `${current.replace(/\s*$/g, "")}\n.setfarm/\n`;
+      fs.writeFileSync(excludePath, next, "utf-8");
+    }
   } catch {
     // Supervisor artifacts must never block the product pipeline.
   }
 }
 
-function resolveGitInfoDir(workdir: string): string | null {
+function resolveGitInfoDirs(workdir: string): string[] {
   const dotGit = path.join(workdir, ".git");
-  if (!fs.existsSync(dotGit)) return null;
+  if (!fs.existsSync(dotGit)) return [];
   const stat = fs.statSync(dotGit);
-  if (stat.isDirectory()) return path.join(dotGit, "info");
-  if (!stat.isFile()) return null;
+  if (stat.isDirectory()) {
+    return uniquePaths([path.join(dotGit, "info"), commonGitInfoDir(dotGit)]);
+  }
+  if (!stat.isFile()) return [];
   const content = fs.readFileSync(dotGit, "utf-8").trim();
   const match = content.match(/^gitdir:\s*(.+)$/i);
-  if (!match) return null;
+  if (!match) return [];
   const gitDir = path.isAbsolute(match[1]) ? match[1] : path.resolve(workdir, match[1]);
-  return path.join(gitDir, "info");
+  return uniquePaths([path.join(gitDir, "info"), commonGitInfoDir(gitDir)]);
+}
+
+function commonGitInfoDir(gitDir: string): string | null {
+  const commonDirFile = path.join(gitDir, "commondir");
+  if (!fs.existsSync(commonDirFile)) return null;
+  const raw = fs.readFileSync(commonDirFile, "utf-8").trim();
+  if (!raw) return null;
+  const commonDir = path.isAbsolute(raw) ? raw : path.resolve(gitDir, raw);
+  return path.join(commonDir, "info");
+}
+
+function uniquePaths(values: Array<string | null>): string[] {
+  return [...new Set(values.filter((value): value is string => Boolean(value)))];
 }

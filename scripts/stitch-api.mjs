@@ -579,8 +579,8 @@ const commands = {
           const existingCat = detectCategory(s.title || '');
           if (existingCat === newCategory) return true;
         }
-        // Fuzzy prefix match: "Ana Sayfa" matches "Ana Sayfa Modern Dark", "Ana Sayfa V2" etc.
-        const normalize = (t) => t.replace(/[_\-\s]+/g, ' ').replace(/(v\d+|modern|dark|light|pwa|tr|turkuaz|tema|yeni|alt|variant|\d+)$/gi, '').trim();
+        // Fuzzy prefix match: "Home Page" matches "Home Page Modern Dark", "Home Page V2", etc.
+        const normalize = (t) => t.replace(/[_\-\s]+/g, ' ').replace(/(v\d+|modern|dark|light|pwa|variant|\d+)$/gi, '').trim();
         const normNew = normalize(titleLower);
         const normExisting = normalize(sTitle);
         if (normNew && normExisting && (normNew === normExisting || normNew.startsWith(normExisting) || normExisting.startsWith(normNew))) return true;

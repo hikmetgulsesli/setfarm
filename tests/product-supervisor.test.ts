@@ -202,16 +202,16 @@ describe("product supervisor", () => {
     assert.match(result.reason, /STORY_DOMAIN_DRIFT/);
   });
 
-  it("persists supervisor memory in the project repo", () => {
+  it("persists supervisor memory under ignored platform metadata", () => {
     const repo = mkdtempSync(path.join(tmpdir(), "setfarm-supervisor-"));
     try {
       mkdirSync(path.join(repo, ".git", "info"), { recursive: true });
       const context: Record<string, string> = { repo };
       updateSupervisorMemory(context, "### 2026-05-12T00:00:00.000Z plan pass\n- Code: PRODUCT_SUPERVISOR_OK\n");
 
-      assert.equal(supervisorMemoryPath(context), path.join(repo, "SUPERVISOR_MEMORY.md"));
+      assert.equal(supervisorMemoryPath(context), path.join(repo, ".setfarm", "SUPERVISOR_MEMORY.md"));
       assert.match(readSupervisorMemory(context), /PRODUCT_SUPERVISOR_OK/);
-      assert.match(readFileSync(path.join(repo, ".git", "info", "exclude"), "utf-8"), /SUPERVISOR_MEMORY\.md/);
+      assert.match(readFileSync(path.join(repo, ".git", "info", "exclude"), "utf-8"), /\.setfarm\//);
       assert.match(context.supervisor_memory, /PRODUCT_SUPERVISOR_OK/);
     } finally {
       rmSync(repo, { recursive: true, force: true });
@@ -228,11 +228,30 @@ describe("product supervisor", () => {
 
       mkdirSync(path.join(repo, ".git", "info"), { recursive: true });
       updateSupervisorMemory(context, "### 2026-05-12T00:01:00.000Z design pass\n- Code: PRODUCT_SUPERVISOR_OK\n");
-      const persisted = readFileSync(path.join(repo, "SUPERVISOR_MEMORY.md"), "utf-8");
+      const persisted = readFileSync(path.join(repo, ".setfarm", "SUPERVISOR_MEMORY.md"), "utf-8");
       assert.match(persisted, /plan pass/);
       assert.match(persisted, /design pass/);
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("can read legacy root supervisor memory without writing new updates there", () => {
+    const repo = mkdtempSync(path.join(tmpdir(), "setfarm-supervisor-legacy-"));
+    try {
+      mkdirSync(path.join(repo, ".git", "info"), { recursive: true });
+      writeFileSync(path.join(repo, "SUPERVISOR_MEMORY.md"), "# Supervisor Memory\n\nlegacy\n");
+      const context: Record<string, string> = { repo };
+
+      assert.match(readSupervisorMemory(context), /legacy/);
+      updateSupervisorMemory(context, "### 2026-05-12T00:00:00.000Z plan pass\n- Code: PRODUCT_SUPERVISOR_OK\n");
+
+      const legacy = readFileSync(path.join(repo, "SUPERVISOR_MEMORY.md"), "utf-8");
+      const current = readFileSync(path.join(repo, ".setfarm", "SUPERVISOR_MEMORY.md"), "utf-8");
+      assert.match(legacy, /^# Supervisor Memory\n\nlegacy\n$/);
+      assert.match(current, /PRODUCT_SUPERVISOR_OK/);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
     }
   });
 
@@ -276,6 +295,78 @@ describe("product supervisor", () => {
       assert.match(result.reason, /active <button>/);
       assert.match(result.reason, /active link uses a dead href/);
       assert.match(result.reason, /malformed URL/);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("does not block implement completion when placeholder wording is reported as fixed", () => {
+    const repo = mkdtempSync(path.join(tmpdir(), "setfarm-supervisor-placeholder-fixed-"));
+    try {
+      mkdirSync(path.join(repo, "src"), { recursive: true });
+      execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
+      execFileSync("git", ["config", "user.email", "setfarm@example.test"], { cwd: repo });
+      execFileSync("git", ["config", "user.name", "Setfarm Test"], { cwd: repo });
+      writeFileSync(path.join(repo, "src", "App.tsx"), "export default function App() { return <main />; }\n");
+      execFileSync("git", ["add", "."], { cwd: repo });
+      execFileSync("git", ["commit", "-m", "base"], { cwd: repo, stdio: "ignore" });
+
+      writeFileSync(
+        path.join(repo, "src", "App.tsx"),
+        [
+          "export default function App() {",
+          "  return <main>",
+          "    <button type=\"button\" onClick={() => {}}>Start</button>",
+          "  </main>;",
+          "}",
+          "",
+        ].join("\n"),
+      );
+
+      const result = runProductSupervisorGate({
+        phase: "implement",
+        runId: "run-1",
+        stepId: "implement",
+        workdir: repo,
+        baseRef: "HEAD",
+        currentStory: { story_id: "US-001", title: "Remove stale placeholder copy" },
+        rawOutput: [
+          "STATUS: done",
+          "summary: Replaced static placeholder display values with real game state.",
+          "blocker_fixed: guardrail no longer finds placeholder or unfinished text in scoped files.",
+        ].join("\n"),
+      });
+
+      assert.equal(result.ok, true, result.reason);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("still blocks implement completion when placeholder wording is unresolved", () => {
+    const repo = mkdtempSync(path.join(tmpdir(), "setfarm-supervisor-placeholder-unresolved-"));
+    try {
+      mkdirSync(path.join(repo, "src"), { recursive: true });
+      execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
+      execFileSync("git", ["config", "user.email", "setfarm@example.test"], { cwd: repo });
+      execFileSync("git", ["config", "user.name", "Setfarm Test"], { cwd: repo });
+      writeFileSync(path.join(repo, "src", "App.tsx"), "export default function App() { return <main />; }\n");
+      execFileSync("git", ["add", "."], { cwd: repo });
+      execFileSync("git", ["commit", "-m", "base"], { cwd: repo, stdio: "ignore" });
+      writeFileSync(path.join(repo, "src", "App.tsx"), "export default function App() { return <main>Ready</main>; }\n");
+
+      const result = runProductSupervisorGate({
+        phase: "implement",
+        runId: "run-1",
+        stepId: "implement",
+        workdir: repo,
+        baseRef: "HEAD",
+        currentStory: { story_id: "US-001", title: "Report unresolved placeholder" },
+        rawOutput: "STATUS: done\nremaining: placeholder copy still needs work",
+      });
+
+      assert.equal(result.ok, false);
+      assert.match(result.reason, /IMPLEMENT_PLACEHOLDER/);
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }

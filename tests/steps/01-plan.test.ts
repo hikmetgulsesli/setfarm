@@ -179,6 +179,21 @@ describe("01-plan step module", () => {
     assert.doesNotMatch(parsed.prd.split("\n").slice(0, 8).join("\n"), /Supervisor Root Fix|0514/i);
   });
 
+  it("derives clean project names from called/named product phrases without a Project line", () => {
+    const output = buildAutoPlanOutput(
+      "Build a compact browser arcade game called Neon Courier. It should have keyboard controls, score, pause, restart, and responsive touch controls.",
+    );
+    const parsed = parsePlanOutput(output);
+    planModule.normalize?.(parsed);
+    const validation = planModule.validateOutput(parsed);
+
+    assert.equal(validation.ok, true, validation.errors.join("; "));
+    assert.equal(parsed.project_slug, "neon-courier");
+    assert.equal(parsed.repo.endsWith("/projects/neon-courier"), true);
+    assert.equal(parsed.project_display_name, "Neon Courier");
+    assert.match(parsed.prd, /^# Neon Courier PRD/m);
+  });
+
   it("auto-plan uses Next.js project structure when TECH_STACK is nextjs", () => {
     const output = buildAutoPlanOutput(
       "Project: seo-arcade-0511 Build a Next.js browser arcade game with settings and restart flow.",
@@ -221,6 +236,8 @@ describe("01-plan step module", () => {
     assert.match(parsed.prd, /\| 1 \| Game Board \| play \|/);
     assert.match(parsed.prd, /duplicate timers/i);
     assert.match(parsed.prd, /playfield entities/i);
+    assert.match(parsed.prd, /Gameplay-only controls are rendered active only while they can affect the current game state/i);
+    assert.match(parsed.prd, /Touch controls must not appear as active controls outside the gameplay state/i);
     assert.match(parsed.prd, /window\.app = \{ state: \{ screen, status, score, level, progress, entities/);
     assert.doesNotMatch(parsed.prd, /Filtering, search, create, edit, delete, profile/i);
     assert.doesNotMatch(parsed.prd, /profile\/account icon/i);

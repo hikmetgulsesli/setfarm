@@ -2,6 +2,12 @@
 
 This repository now keeps agent-facing operational notes in English only.
 
+## 2.3.40 - 2026-05-16
+
+- Stabilized generated project scaffolds with ignored Setfarm metadata, a durable Vite baseline test, local fallback design assets, and cleaner natural-language project naming.
+- Hardened smoke and visual QA so fallback design hashes, missing static-server binaries, preview servers, and Playwright child processes do not create false product failures or leaked processes.
+- Moved supervisor memory under ignored `.setfarm` artifacts, added linked-worktree excludes, and added a deploy capability preclaim gate that skips unavailable infrastructure instead of failing healthy builds.
+
 ## 2.3.39 - 2026-05-16
 
 - Added a spawner daemon control path and CLI autostart so local and cloud runs can use an event-driven execution backend without stale gateway cron assumptions.

@@ -314,6 +314,7 @@ function appStoryDraft(params: {
         "Shared game state exposes visible screen, status, score/progress, level/difficulty where present, gameplay entities, paused/gameOver, storage status, and last error through window.app.",
         "Start, pause, resume, restart, and game tick actions exist in owned state/context/window.app code; generated screen button wiring is owned by the screen stories.",
         "Keyboard controls implemented in owned files produce visible gameplay state changes when the game is active.",
+        "Touch/gameplay controls are visible and active only in states where they can affect gameplay; on menu, paused, game-over, or inactive states they are hidden or explicitly disabled/aria-disabled.",
         "HUD and status displays are derived from the same state source used by gameplay simulation; no ref-only or duplicated display state can drift.",
         "Game loop timers and repeated input use stable effects/callbacks so intervals do not restart every frame and pause/game-over stops movement.",
         "Persistence is limited to high score/preferences unless explicitly requested; corrupted persisted data produces visible recovery feedback when persistence is used.",

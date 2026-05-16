@@ -17,7 +17,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   if (process.env.SETFARM_DISABLE_AUTO_SETUP_REPO === "1") return;
 
   const repo = ctx.context["repo"] || ctx.context["REPO"] || "";
-  // Tek run-branch mimarisi (2026-04-21): her run tek branch (runId), her story bu branch uzerine commit
+  // Single run-branch architecture: every run owns one branch, and each story commits onto that branch.
   const planBranch = ctx.context["branch"] || ctx.context["BRANCH"] || "";
   const branch = ctx.runId;
   ctx.context["branch"] = branch;

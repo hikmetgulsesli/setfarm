@@ -54,7 +54,7 @@ export async function injectContext(ctx: ClaimContext): Promise<void> {
       const report = formatSupervisorVisualReport(result);
       ctx.context["playwright_report"] = report;
       ctx.context["supervisor_visual_report"] = report;
-      logger.info(`[verify] Supervisor visual QA ${result.ok ? "PASS" : result.skipped ? "SKIP" : "FAIL"} (${result.issues.length} issue(s))`, { runId: ctx.runId });
+      logger.info(`[verify] Supervisor visual QA ${result.skipped ? "SKIP" : result.ok ? "PASS" : "FAIL"} (${result.issues.length} issue(s))`, { runId: ctx.runId });
     } catch (e) {
       logger.warn(`[verify] Supervisor visual QA errored (non-fatal): ${String(e).slice(0, 160)}`, { runId: ctx.runId });
     }

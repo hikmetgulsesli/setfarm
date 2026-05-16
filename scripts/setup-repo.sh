@@ -61,6 +61,23 @@ clean_branch_tracking() {
   git config --unset-all "branch.$branch.merge" 2>/dev/null || true
 }
 
+ensure_setfarm_internal_ignored() {
+  mkdir -p .git/info 2>/dev/null || true
+  touch .git/info/exclude 2>/dev/null || true
+  for pattern in ".setfarm/" ".setfarm-bin/" ".worktrees/" "SUPERVISOR_MEMORY.md" "PROJECT_MEMORY.md" "CLAUDE.md" "references"; do
+    grep -qxF "$pattern" .git/info/exclude 2>/dev/null || printf "%s\n" "$pattern" >> .git/info/exclude
+  done
+  if [ -f .gitignore ]; then
+    for pattern in ".setfarm/" ".setfarm-bin/" ".worktrees/" "SUPERVISOR_MEMORY.md" "PROJECT_MEMORY.md" "CLAUDE.md" "references"; do
+      grep -qxF "$pattern" .gitignore 2>/dev/null || printf "%s\n" "$pattern" >> .gitignore
+    done
+  fi
+}
+
+unstage_setfarm_internal_files() {
+  git rm -r --cached --ignore-unmatch .setfarm .setfarm-bin .worktrees references SUPERVISOR_MEMORY.md PROJECT_MEMORY.md CLAUDE.md >/dev/null 2>&1 || true
+}
+
 # 1. Create repo if needed
 if [ -d "$REPO/.git" ]; then
   echo "Repo already exists at $REPO"
@@ -89,7 +106,8 @@ if ! git remote -v 2>/dev/null | grep -q origin; then
   # → gh repo create --push → "no commits found" → FATAL.
   if ! git rev-parse --verify HEAD >/dev/null 2>&1; then
     [ -f README.md ] || echo "# $PROJECT_NAME" > README.md
-    [ -f .gitignore ] || printf "node_modules/\ndist/\n.env\n" > .gitignore
+    [ -f .gitignore ] || printf "node_modules/\ndist/\n.env\n.setfarm/\n.setfarm-bin/\n.worktrees/\nSUPERVISOR_MEMORY.md\nPROJECT_MEMORY.md\nCLAUDE.md\nreferences\n" > .gitignore
+    ensure_setfarm_internal_ignored
     git add README.md .gitignore 2>/dev/null || true
     git commit -m "chore: initial commit" >/dev/null 2>&1 || true
   fi
@@ -117,11 +135,14 @@ if ! git remote -v 2>/dev/null | grep -q origin; then
   fi
 fi
 
+ensure_setfarm_internal_ignored
+
 # 3. Main branch
 git branch -M main 2>/dev/null || true
 clean_branch_tracking main
 # Commit existing files (stitch/, README, etc.) if any, otherwise empty commit
 git add -A 2>/dev/null || true
+unstage_setfarm_internal_files
 git diff --cached --quiet && git commit --allow-empty -m "chore: initial commit" 2>/dev/null || true
 git diff --cached --quiet || git commit -m "chore: initial commit" 2>/dev/null || true
 if ! git push -u origin main 2>&1; then
@@ -230,6 +251,11 @@ venv/
 .env.production
 .env.development
 references
+.setfarm/
+.setfarm-bin/
+SUPERVISOR_MEMORY.md
+PROJECT_MEMORY.md
+CLAUDE.md
 
 # === IDE & OS ===
 .DS_Store
@@ -373,6 +399,18 @@ EOF
       mkdir -p src/test
       cat > src/test/setup.ts <<'EOF'
 import '@testing-library/jest-dom/vitest';
+EOF
+      cat > src/App.test.tsx <<'EOF'
+import { render, screen } from '@testing-library/react';
+import { describe, expect, it } from 'vitest';
+import App from './App';
+
+describe('App', () => {
+  it('renders an application root', () => {
+    render(<App />);
+    expect(screen.getByRole('main')).toBeInTheDocument();
+  });
+});
 EOF
       cat > postcss.config.js <<'EOF'
 export default {

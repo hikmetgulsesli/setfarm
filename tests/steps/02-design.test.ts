@@ -142,6 +142,18 @@ describe("02-design step module", () => {
     assert.equal(controls?.description, "Keyboard controls and rules");
   });
 
+  it("keeps Game Over fallback on result actions instead of pause controls", () => {
+    const source = designPreclaimSource();
+    const resultBranch = source.indexOf("if (/(over|result|score|summary)/.test(title))");
+    const gameBranch = source.indexOf("if (/(game|board|play)/.test(title))");
+
+    assert.ok(resultBranch >= 0, "result fallback branch should exist");
+    assert.ok(gameBranch >= 0, "game fallback branch should exist");
+    assert.ok(resultBranch < gameBranch, "Game Over must not match the generic game board fallback first");
+    assert.match(source, /<button type="button">Restart<\/button><button type="button">Main Menu<\/button>/);
+    assert.doesNotMatch(source, /<button type="button">Play Again<\/button><button type="button">Share Score<\/button><button type="button">Main Menu<\/button>/);
+  });
+
   it("preClaim reconciles generated screens to the PRD screen contract", () => {
     const source = designPreclaimSource();
     assert.match(source, /function reconcileScreenMapToPrd/);

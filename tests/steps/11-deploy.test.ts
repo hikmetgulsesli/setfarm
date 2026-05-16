@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { deployModule } from "../../dist/installer/steps/11-deploy/module.js";
 import { normalize, validateOutput } from "../../dist/installer/steps/11-deploy/guards.js";
+import { evaluateDeployCapability } from "../../dist/installer/steps/11-deploy/preclaim.js";
 import { humanizeProjectDisplayName, normalizeMissionControlHostname, normalizeMissionControlSummary } from "../../dist/installer/step-ops.js";
 import type { ParsedOutput } from "../../dist/installer/steps/types.js";
 
@@ -10,6 +11,7 @@ describe("11-deploy step module", () => {
     assert.equal(deployModule.id, "deploy");
     assert.equal(deployModule.type, "single");
     assert.equal(deployModule.agentRole, "deployer");
+    assert.equal(typeof deployModule.preClaim, "function");
     assert.equal(deployModule.maxPromptSize, 10240);
   });
 
@@ -66,6 +68,53 @@ describe("11-deploy step module", () => {
 
   it("validateOutput accepts STATUS: skip", () => {
     assert.equal(validateOutput({ status: "skip" } as ParsedOutput).ok, true);
+  });
+
+  it("deploy capability gate skips when local and remote deployment infrastructure is unavailable", () => {
+    const decision = evaluateDeployCapability({
+      platform: "darwin",
+      localMissionControl: false,
+      localSystemctl: false,
+      remoteHost: "",
+      remoteReachable: false,
+      deployRequired: false,
+      deployDisabled: false,
+    });
+
+    assert.equal(decision.shouldSkip, true);
+    assert.equal(decision.mode, "unavailable");
+    assert.match(decision.reason, /Deployment infrastructure is unavailable/);
+    assert.match(decision.reason, /Mission Control/);
+  });
+
+  it("deploy capability gate lets the deployer run when local deploy services are available", () => {
+    const decision = evaluateDeployCapability({
+      platform: "linux",
+      localMissionControl: true,
+      localSystemctl: true,
+      remoteHost: "",
+      remoteReachable: false,
+      deployRequired: false,
+      deployDisabled: false,
+    });
+
+    assert.equal(decision.shouldSkip, false);
+    assert.equal(decision.mode, "local");
+  });
+
+  it("deploy capability gate does not auto-skip when deploy is explicitly required", () => {
+    const decision = evaluateDeployCapability({
+      platform: "darwin",
+      localMissionControl: false,
+      localSystemctl: false,
+      remoteHost: "deploy-host",
+      remoteReachable: false,
+      deployRequired: true,
+      deployDisabled: false,
+    });
+
+    assert.equal(decision.shouldSkip, false);
+    assert.equal(decision.mode, "required");
   });
 
   it("validateOutput rejects unknown STATUS", () => {

@@ -119,7 +119,7 @@ export async function runSupervisorVisualQa(params: VisualQaParams): Promise<Sup
       artifactDir,
     });
   } finally {
-    stopPreviewServer(server.proc);
+    await stopPreviewServer(server.proc);
   }
 }
 
@@ -480,25 +480,53 @@ async function startSinglePreviewServer(repoPath: string, script: "preview" | "d
   });
   const ready = await waitForServer(url, 35000, () => exited);
   if (!ready) {
-    stopPreviewServer(proc);
+    await stopPreviewServer(proc);
     return null;
   }
   return { proc, url };
 }
 
-function stopPreviewServer(proc: ChildProcess): void {
-  try {
-    if (proc.pid) process.kill(-proc.pid, "SIGTERM");
-  } catch {
-    try { proc.kill("SIGTERM"); } catch {}
+async function stopPreviewServer(proc: ChildProcess): Promise<void> {
+  terminateProcessGroup(proc, "SIGTERM");
+  const stopped = await waitForExit(proc, 3000);
+  if (!stopped) {
+    terminateProcessGroup(proc, "SIGKILL");
+    await waitForExit(proc, 1000);
   }
-  setTimeout(() => {
-    try {
-      if (proc.pid) process.kill(-proc.pid, "SIGKILL");
-    } catch {
-      try { proc.kill("SIGKILL"); } catch {}
+}
+
+function terminateProcessGroup(proc: ChildProcess, signal: NodeJS.Signals): void {
+  try {
+    if (proc.pid) {
+      process.kill(-proc.pid, signal);
+      return;
     }
-  }, 2500).unref();
+  } catch {
+    // Fall back to the direct child below when the process group is gone or unavailable.
+  }
+  try { proc.kill(signal); } catch {}
+}
+
+function waitForExit(proc: ChildProcess, timeoutMs: number): Promise<boolean> {
+  if (proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve(false);
+    }, timeoutMs);
+    timer.unref?.();
+    function done() {
+      cleanup();
+      resolve(true);
+    }
+    function cleanup() {
+      clearTimeout(timer);
+      proc.off("exit", done);
+      proc.off("error", done);
+    }
+    proc.once("exit", done);
+    proc.once("error", done);
+  });
 }
 
 async function waitForServer(url: string, timeoutMs: number, isProcessExited?: () => boolean): Promise<boolean> {

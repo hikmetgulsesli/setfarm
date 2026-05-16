@@ -31,12 +31,24 @@ export function slugify(input: string): string {
   return slug || "setfarm-project";
 }
 
+function extractNamedProductPhrase(input: string): string {
+  const source = String(input || "").replace(/\s+/g, " ").trim();
+  const match = source.match(/\b(?:called|named|titled)\s+["'“”]?([A-Za-z0-9][A-Za-z0-9&' -]{1,80}?)(?=["'“”]?(?:[.;,]| with\b| for\b| using\b| that\b| which\b| should\b|$))/i);
+  return (match?.[1] || "")
+    .replace(/["'“”]+/g, "")
+    .replace(/^(?:a|an|the)\s+/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function extractProjectName(task: string): string {
   const projectLine = task.match(/(?:^|\n)\s*Project\s*:\s*([^\n]+)/i)?.[1]?.trim();
   if (projectLine) {
     const inlineTaskStart = projectLine.match(new RegExp(`^(.+?)\\s+${COMMAND_VERB_RE.source}`, "i"));
     return (inlineTaskStart?.[1] || projectLine).trim();
   }
+  const namedProduct = extractNamedProductPhrase(task);
+  if (namedProduct) return namedProduct;
   const firstLine = task.split(/\n+/).map(line => line.trim()).find(Boolean) || "setfarm-project";
   return firstLine.replace(/^Project\s*:\s*/i, "").slice(0, 80);
 }
@@ -92,6 +104,9 @@ function humanizeProjectName(input: string): string {
 }
 
 function productNameFromActionDescription(actionDescription: string): string {
+  const namedProduct = extractNamedProductPhrase(actionDescription);
+  if (namedProduct) return namedProduct;
+
   let cleaned = String(actionDescription || "")
     .replace(new RegExp(`^${COMMAND_VERB_RE.source}\\s+`, "i"), "")
     .replace(/^(?:a|an|the)\s+/i, "")
@@ -272,6 +287,7 @@ export function buildAutoPlanOutput(task: string): string {
     ? [
       requirementRows,
       "- Gameplay controls provide visible post-action state changes for click/touch and keyboard input.",
+      "- Gameplay-only controls are rendered active only while they can affect the current game state; on menus, pause overlays, game-over screens, and other inactive states they are hidden or explicitly disabled/aria-disabled.",
       "- Pause/resume freezes and restarts the game loop without spawning duplicate timers.",
       "- Restart resets the playfield, user-controlled entities, score/progress, level/difficulty where present, and game-over state consistently.",
       "- Product controls must not use data-smoke-ignore; intentionally unavailable controls are disabled or aria-disabled.",
@@ -305,6 +321,7 @@ export function buildAutoPlanOutput(task: string): string {
       "- Palette: high-contrast game entities, readable HUD colors, Background #0F172A, Surface #111827, Text #F8FAFC, Border #334155, Success #22C55E, Error #F43F5E, Warning #F59E0B.",
       "- Typography: system sans; compact status labels use small but readable headings.",
       "- Components: stable board dimensions, visible focus rings, and 44x44px touch targets for mobile controls.",
+      "- Touch controls must not appear as active controls outside the gameplay state unless they visibly change state or are disabled.",
       "- Do not add profile/account panels unless the user explicitly asks for account features.",
     ]
     : [

@@ -362,6 +362,13 @@ export function inferFallbackScreens(prd: string): ScreenMapEntry[] {
 
 function fallbackSpecificContent(screen: ScreenMapEntry): string {
   const title = screen.name.toLowerCase();
+  if (/(over|result|score|summary)/.test(title)) {
+    return `
+      <section class="result-panel">
+        <p class="scoreline">Final score 24,800 with strong progress through the challenge.</p>
+        <button type="button">Restart</button><button type="button">Main Menu</button>
+      </section>`;
+  }
   if (/(game|board|play)/.test(title)) {
     const cells = Array.from({ length: 96 }, (_, i) => `<div class="cell${i % 11 === 0 || i % 17 === 0 ? " active" : ""}" aria-hidden="true"></div>`).join("");
     return `
@@ -383,13 +390,6 @@ function fallbackSpecificContent(screen: ScreenMapEntry): string {
         <label>Controls <input name="controls" placeholder="Arrow keys, WASD, or touch" /></label>
         <button type="button">Save Settings</button><button type="button">Reset Defaults</button>
       </form>`;
-  }
-  if (/(over|result|score|summary)/.test(title)) {
-    return `
-      <section class="result-panel">
-        <p class="scoreline">Final score 24,800 with strong progress through the challenge.</p>
-        <button type="button">Play Again</button><button type="button">Share Score</button><button type="button">Main Menu</button>
-      </section>`;
   }
   return `
     <section class="command-panel">
@@ -614,9 +614,20 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   }
 
   if (!projId) {
-    const error = "DESIGN_ASSET_GENERATION_FAILED: Stitch project could not be created; design assets are unavailable.";
-    logger.warn(`[module:design preclaim] ${error}`, { runId: ctx.runId });
-    await failDesignPreclaim(ctx, error);
+    try {
+      await recordPreClaimProgress(ctx, "Design preclaim: Stitch project unavailable, generating local fallback design assets");
+      const fallbackScreens = createFallbackDesignAssets(repo, stitchDir, prd, ctx.context["device_type"] || "DESKTOP");
+      ctx.context["stitch_project_id"] = "local-fallback";
+      ctx.context["screens_generated"] = String(fallbackScreens.length);
+      ctx.context["screen_map"] = JSON.stringify(fallbackScreens);
+      logger.warn(`[module:design preclaim] Stitch project unavailable; generated ${fallbackScreens.length} local fallback design assets`, { runId: ctx.runId });
+      await recordPreClaimProgress(ctx, `Design preclaim: generated fallback design assets (${fallbackScreens.length} screens)`);
+      return;
+    } catch (e) {
+      const error = `DESIGN_ASSET_GENERATION_FAILED: Stitch project could not be created and local fallback failed: ${String(e).slice(0, 240)}`;
+      logger.warn(`[module:design preclaim] ${error}`, { runId: ctx.runId });
+      await failDesignPreclaim(ctx, error);
+    }
     return;
   }
 

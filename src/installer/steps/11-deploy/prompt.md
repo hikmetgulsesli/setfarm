@@ -3,6 +3,13 @@
 Deploy the project that passed final-test. Configure systemd, choose a
 subdomain, configure tunnel/proxy, and health-check the live app.
 
+Before changing files or services, verify that the deployment environment is
+available. A deployable environment must have reachable Mission Control and a
+host capable of running user systemd services. If deployment infrastructure is
+not reachable from this workspace and deploy is not explicitly required, finish
+with `STATUS: skip` and a clear `SKIP_REASON` instead of using `step fail` or
+retrying service setup.
+
 ## Context
 
 - `{{REPO}}`: project root
@@ -47,3 +54,5 @@ PORT: <port>
 
 For `STATUS: done`, at least one deploy proof is required: DEPLOY_URL,
 SYSTEMD_UNIT, or PORT.
+
+For `STATUS: skip`, include `SKIP_REASON` and do not include fake deploy proof.

@@ -216,6 +216,8 @@ describe("03-stories step module", () => {
       assert.match(allText, /never through textContent\/DOM-label matching/);
       assert.match(allText, /Reducer\/state transitions are pure and immutable/);
       assert.match(allText, /generated screen button wiring is owned by the screen stories/);
+      assert.match(allText, /Touch\/gameplay controls are visible and active only in states where they can affect gameplay/);
+      assert.match(allText, /hidden or explicitly disabled\/aria-disabled/);
       assert.match(allText, /Score Panel screen/);
       assert.match(allText, /Game Options screen/);
       assert.match(allText, /Game Over screen/);

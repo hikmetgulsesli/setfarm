@@ -432,7 +432,7 @@ function checkImplement(input: ProductSupervisorInput): string[] {
   const issues: string[] = [];
   if (!story) return issues;
 
-  if (/\b(TODO|coming soon|placeholder|not implemented)\b/i.test(output)) {
+  if (implementationOutputHasUnresolvedPlaceholder(output)) {
     issues.push(`IMPLEMENT_PLACEHOLDER: ${story.story_id || story.title || "story"} completion output still mentions placeholder or unfinished work.`);
   }
 
@@ -449,6 +449,21 @@ function checkImplement(input: ProductSupervisorInput): string[] {
     }
   }
   return issues;
+}
+
+function implementationOutputHasUnresolvedPlaceholder(output: string): boolean {
+  for (const line of output.split(/\r?\n/)) {
+    if (!/\b(TODO|coming soon|placeholder|unfinished|not implemented)\b/i.test(line)) continue;
+    if (isResolvedPlaceholderReportLine(line)) continue;
+    return true;
+  }
+  return false;
+}
+
+function isResolvedPlaceholderReportLine(line: string): boolean {
+  const normalized = line.toLowerCase();
+  if (/\b(still|remaining|left|needs|must|should|contains?)\b/.test(normalized)) return false;
+  return /\b(removed|replaced|resolved|fixed|cleared|clean|no longer|without|does not|do not|did not|none found)\b/.test(normalized);
 }
 
 function checkDeploy(input: ProductSupervisorInput): string[] {
@@ -503,15 +518,21 @@ function ensureGitExclude(repo: string, relPath: string): void {
 
 export function supervisorMemoryPath(context: Record<string, string> | undefined): string {
   const repo = repoFromContext(context);
-  return repo ? path.join(repo, "SUPERVISOR_MEMORY.md") : "";
+  return repo ? path.join(repo, ".setfarm", "SUPERVISOR_MEMORY.md") : "";
 }
 
 export function readSupervisorMemory(context: Record<string, string> | undefined): string {
   const memoryPath = supervisorMemoryPath(context);
-  if (!memoryPath) return "(no supervisor memory yet)";
+  const repo = repoFromContext(context);
+  const candidates = [
+    memoryPath,
+    repo ? path.join(repo, "SUPERVISOR_MEMORY.md") : "",
+  ].filter(Boolean);
   try {
-    if (!fs.existsSync(memoryPath)) return "(no supervisor memory yet)";
-    return fs.readFileSync(memoryPath, "utf-8");
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate)) return fs.readFileSync(candidate, "utf-8");
+    }
+    return "(no supervisor memory yet)";
   } catch {
     return "(no supervisor memory yet)";
   }
@@ -540,7 +561,7 @@ export function updateSupervisorMemory(
   const repo = repoFromContext(context);
   if (!repo) return;
   try {
-    const memoryPath = path.join(repo, "SUPERVISOR_MEMORY.md");
+    const memoryPath = supervisorMemoryPath(context);
     const existing = fs.existsSync(memoryPath)
       ? fs.readFileSync(memoryPath, "utf-8")
       : (context.supervisor_memory || "# Supervisor Memory\n\n");
@@ -555,7 +576,9 @@ export function updateSupervisorMemory(
     if (entry.includes(" blocked")) context.product_supervisor_blocked = entry.slice(0, 1200);
     else delete context.product_supervisor_blocked;
     if (!fs.existsSync(repo)) return;
+    ensureGitExclude(repo, ".setfarm/");
     ensureGitExclude(repo, "SUPERVISOR_MEMORY.md");
+    fs.mkdirSync(path.dirname(memoryPath), { recursive: true });
     fs.writeFileSync(memoryPath, finalMemory);
   } catch (err) {
     logger.warn(`[product-supervisor] memory update failed: ${String(err).slice(0, 160)}`, {});
