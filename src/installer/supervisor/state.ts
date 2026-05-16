@@ -122,7 +122,9 @@ export function applyScanFindings(params: {
       ? "warning"
       : "passed";
   story.lastEvidenceAt = new Date().toISOString();
-  state.projectStatus = story.openBlockers.length > 0 ? "blocked" : "implementing";
+  state.projectStatus = Object.values(state.stories).some((item) => item.openBlockers.length > 0)
+    ? "blocked"
+    : "implementing";
   writeSupervisorState(workdir, state);
   return state;
 }

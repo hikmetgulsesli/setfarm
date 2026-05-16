@@ -143,10 +143,18 @@ function inputLooksLikeItem(block: JsxBlock, item: SupervisorChecklistItem): boo
 
 function buttonIsActionable(block: JsxBlock): boolean {
   const attrs = block.attrs;
-  const isDisabled = /\b(?:disabled|aria-disabled)\b(?:\s*=\s*(?:"true"|'true'|\{true\}))?/i.test(attrs);
+  const isDisabled = booleanAttrIsTruthy(attrs, "disabled") || booleanAttrIsTruthy(attrs, "aria-disabled");
   const isSubmit = /\btype\s*=\s*(?:"submit"|'submit'|\{\s*["']submit["']\s*\})/i.test(attrs);
   const hasHandler = /\bon(?:Click|PointerDown|PointerUp|MouseDown|MouseUp|TouchStart|TouchEnd|KeyDown|Submit)\s*=/.test(attrs);
   return isDisabled || isSubmit || hasHandler;
+}
+
+function booleanAttrIsTruthy(attrs: string, name: string): boolean {
+  const match = new RegExp(`\\b${name}\\b(?:\\s*=\\s*(?:"([^"]*)"|'([^']*)'|\\{\\s*([^}]+?)\\s*\\}))?`, "i").exec(attrs);
+  if (!match) return false;
+  const value = (match[1] ?? match[2] ?? match[3] ?? "").trim().toLowerCase();
+  if (!value) return true;
+  return !["false", "0", "null", "undefined"].includes(value);
 }
 
 function isDisplayOnlyItem(item: SupervisorChecklistItem, source: string): boolean {
@@ -224,7 +232,9 @@ function isDeadHrefValue(value: string | null): boolean {
 }
 
 function isExplicitlyInertAnchor(attrs: string): boolean {
-  return /\b(?:aria-current|aria-disabled|disabled)\b/i.test(attrs);
+  return booleanAttrIsTruthy(attrs, "aria-current")
+    || booleanAttrIsTruthy(attrs, "aria-disabled")
+    || booleanAttrIsTruthy(attrs, "disabled");
 }
 
 function finding(

@@ -206,7 +206,7 @@ function evidenceForControl(type: SupervisorChecklistItemType): string[] {
 }
 
 function checklistId(type: SupervisorChecklistItemType, screen: string, label: string, file: string): string {
-  return `dom:${safeId(screen || file)}:${type}:${safeId(label || "control")}`;
+  return `dom:${safeId(screen || file)}:${safeId(file)}:${type}:${safeId(label || "control")}`;
 }
 
 function safeId(value: string): string {

@@ -153,8 +153,12 @@ function lineForIndex(source: string, index: number): number {
   return source.slice(0, Math.max(0, index)).split(/\r?\n/).length;
 }
 
-function hasAttribute(attrs: string, name: string): boolean {
-  return new RegExp(`\\b${name}\\b\\s*(?:=|$)`, "i").test(attrs);
+function booleanAttributeIsTruthy(attrs: string, name: string): boolean {
+  const match = new RegExp(`\\b${name}\\b(?:\\s*=\\s*(?:"([^"]*)"|'([^']*)'|\\{\\s*([^}]+?)\\s*\\}))?`, "i").exec(attrs);
+  if (!match) return false;
+  const value = (match[1] ?? match[2] ?? match[3] ?? "").trim().toLowerCase();
+  if (!value) return true;
+  return !["false", "0", "null", "undefined"].includes(value);
 }
 
 export function sourceExposesWindowApp(source: string): boolean {
@@ -370,7 +374,9 @@ function isDeadHrefValue(value: string | null): boolean {
 }
 
 function isExplicitlyInertAnchor(attrs: string): boolean {
-  return hasAttribute(attrs, "aria-current") || hasAttribute(attrs, "aria-disabled") || hasAttribute(attrs, "disabled");
+  return booleanAttributeIsTruthy(attrs, "aria-current")
+    || booleanAttributeIsTruthy(attrs, "aria-disabled")
+    || booleanAttributeIsTruthy(attrs, "disabled");
 }
 
 function normalizeControlLabel(value: string): string {
@@ -459,7 +465,7 @@ function sourceHasVisibleControlText(source: string, label: string): boolean {
 
 function buttonIsActionable(block: JsxBlock): boolean {
   const attrs = block.attrs || "";
-  const isDisabled = hasAttribute(attrs, "disabled") || hasAttribute(attrs, "aria-disabled");
+  const isDisabled = booleanAttributeIsTruthy(attrs, "disabled") || booleanAttributeIsTruthy(attrs, "aria-disabled");
   const isSubmit = /\btype\s*=\s*(?:"submit"|'submit'|{\s*["']submit["']\s*})/i.test(attrs);
   const hasHandler = /\bon(?:Click|PointerDown|PointerUp|MouseDown|MouseUp|TouchStart|TouchEnd|KeyDown|Submit)\s*=/.test(attrs);
   return isDisabled || isSubmit || hasHandler;

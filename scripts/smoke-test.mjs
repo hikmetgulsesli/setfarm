@@ -366,7 +366,7 @@ function routeTokenFromLabel(label) {
   if (/\b(dashboard|overview|home)\b/.test(text)) return "dashboard";
   if (/\b(profile|account|user)\b/.test(text)) return "profile";
   if (/\b(details?|view details?|open)\b/.test(text)) return "detail";
-  if (/\b(create|new|add|log|report)\b/.test(text) && /\b(incident|record|ticket|case|task|item|project)\b/.test(text)) return "create";
+  if (/\b(create|new|add|log|report)\b/.test(text) && /\b(record|ticket|case|task|item|project|note|entry)\b/.test(text)) return "create";
   if (/\b(save|submit|send|create|add|report)\b/.test(text)) return "save";
   if (/\b(cancel|back|return|close)\b/.test(text)) return "cancel";
   if (/\b(clear|reset|delete|remove)\b/.test(text)) return "destructive";
@@ -376,9 +376,9 @@ function routeTokenFromLabel(label) {
 function expectedTextForIntent(intent) {
   if (intent === "settings") return /setting|configuration|preferences|workspace|notification|data management/i;
   if (intent === "insights") return /insight|analytics|metric|report|trend|allocation|response/i;
-  if (intent === "dashboard") return /dashboard|overview|active|incident|status|summary/i;
+  if (intent === "dashboard") return /dashboard|overview|active|status|summary/i;
   if (intent === "profile") return /profile|account|operator|user|session|accessibility/i;
-  if (intent === "detail") return /detail|summary|incident|status|assign|export|location/i;
+  if (intent === "detail") return /detail|summary|status|assign|export|location/i;
   if (intent === "create") return /new|create|add|log|report|record|title|description|save/i;
   return null;
 }
@@ -419,7 +419,7 @@ const FLOW_AUDIT_EVAL =
       if (/\\b(dashboard|overview|home)\\b/.test(text)) return "dashboard";
       if (/\\b(profile|account|user)\\b/.test(text)) return "profile";
       if (/\\b(details?|view details?|open)\\b/.test(text)) return "detail";
-      if (/\\b(create|new|add|log|report)\\b/.test(text) && /\\b(incident|record|ticket|case|task|item|project)\\b/.test(text)) return "create";
+      if (/\\b(create|new|add|log|report)\\b/.test(text) && /\\b(record|ticket|case|task|item|project|note|entry)\\b/.test(text)) return "create";
       if (/\\b(save|submit|send|create|add|report)\\b/.test(text)) return "save";
       if (/\\b(cancel|back|return|close)\\b/.test(text)) return "cancel";
       return "";
@@ -435,17 +435,18 @@ const FLOW_AUDIT_EVAL =
       try {
         var st = (window.app && window.app.state) || {};
         return {
-          incidents: Array.isArray(st.incidents) ? st.incidents.length : null,
           records: Array.isArray(st.records) ? st.records.length : null,
           items: Array.isArray(st.items) ? st.items.length : null,
-          tasks: Array.isArray(st.tasks) ? st.tasks.length : null
+          tasks: Array.isArray(st.tasks) ? st.tasks.length : null,
+          notes: Array.isArray(st.notes) ? st.notes.length : null,
+          entries: Array.isArray(st.entries) ? st.entries.length : null
         };
       } catch(e) {
-        return { incidents:null, records:null, items:null, tasks:null };
+        return { records:null, items:null, tasks:null, notes:null, entries:null };
       }
     }
     function countIncreased(before, after) {
-      return ["incidents","records","items","tasks"].some(function(k) {
+      return ["records","items","tasks","notes","entries"].some(function(k) {
         return typeof before[k] === "number" && typeof after[k] === "number" && after[k] > before[k];
       });
     }
@@ -490,9 +491,9 @@ const FLOW_AUDIT_EVAL =
     function textMatches(intent, bodyText) {
       if (intent === "settings") return /setting|configuration|preferences|workspace|notification|data management/i.test(bodyText);
       if (intent === "insights") return /insight|analytics|metric|report|trend|allocation|response/i.test(bodyText);
-      if (intent === "dashboard") return /dashboard|overview|active|incident|status|summary/i.test(bodyText);
+      if (intent === "dashboard") return /dashboard|overview|active|status|summary/i.test(bodyText);
       if (intent === "profile") return /profile|account|operator|user|session|accessibility/i.test(bodyText);
-      if (intent === "detail") return /detail|summary|incident|status|assign|export|location/i.test(bodyText);
+      if (intent === "detail") return /detail|summary|status|assign|export|location/i.test(bodyText);
       if (intent === "create") return /new|create|add|log|report|record|title|description|save/i.test(bodyText);
       return false;
     }
@@ -740,6 +741,15 @@ function checkNativeButtonWiring(repo) {
     return m ? m[2] : '';
   }
 
+  function booleanAttrIsTruthy(tag, name) {
+    const re = new RegExp("\\b" + name + "\\b(?:\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|\\{\\s*([^}]+?)\\s*\\}))?", "i");
+    const m = tag.match(re);
+    if (!m) return false;
+    const value = String(m[1] ?? m[2] ?? m[3] ?? '').trim().toLowerCase();
+    if (!value) return true;
+    return !['false', '0', 'null', 'undefined'].includes(value);
+  }
+
   function buttonLabel(tag, inner) {
     const explicit = attrValue(tag, 'aria-label') || attrValue(tag, 'title') || attrValue(tag, 'data-testid');
     if (explicit) return explicit.trim().replace(/\s+/g, ' ').slice(0, 60);
@@ -770,7 +780,7 @@ function checkNativeButtonWiring(repo) {
 
         const hasHandler = /\bonClick\s*=/.test(tag);
         const isSubmit = /\btype\s*=\s*(["'])submit\1/i.test(tag);
-        const isDisabled = /\bdisabled(?:\s*=|\s|>)/i.test(tag) || /\baria-disabled\s*=\s*(["']true["']|\{true\})/i.test(tag);
+        const isDisabled = booleanAttrIsTruthy(tag, 'disabled') || booleanAttrIsTruthy(tag, 'aria-disabled');
         const hasSpreadProps = /\{\s*\.\.\./.test(tag);
 
         if (hasHandler || isSubmit || isDisabled || hasSpreadProps) continue;
