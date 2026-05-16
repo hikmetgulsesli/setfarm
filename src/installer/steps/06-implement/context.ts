@@ -19,6 +19,7 @@ import { sanitizeRetryFeedbackForCurrentSource } from "../../retry-feedback.js";
 import { readSupervisorMemory } from "../../product-supervisor.js";
 import { IMPLICIT_STORY_SCOPE_FILES } from "../../story-scope.js";
 import { applyStackContractContext } from "../../stack-contract/context.js";
+import { applyLibraryPackContext } from "../../library-packs/context.js";
 
 const STITCH_HTML_EXCERPT_CHARS = 2500;
 const STITCH_HTML_TOTAL_CHARS = 6000;
@@ -58,6 +59,7 @@ const OPTIONAL_TEMPLATE_VARS = [
   "previous_failure", "failure_category", "failure_suggestion", "verify_feedback",
   "detected_stack", "stack_rules", "stack_contract", "stack_pack_id",
   "stack_prompt", "stack_setup_contract", "stack_verification_contract",
+  "library_pack_ids", "library_packs", "library_prompt",
   "supervisor_memory",
 ];
 
@@ -158,8 +160,14 @@ export async function injectStoryContext(
   context["progress"] = await helpers.readProgressFile(step.run_id);
   context["project_memory"] = await helpers.readProjectMemory(context);
   context["supervisor_memory"] = readSupervisorMemory(context);
-  applyStackContractContext(context, {
+  const stackContract = applyStackContractContext(context, {
     repoPath: storyRepoPath,
+    taskText: context["prd"] || context["task"] || "",
+    persist: Boolean(storyRepoPath),
+  });
+  applyLibraryPackContext(context, {
+    repoPath: storyRepoPath,
+    stackContract,
     taskText: context["prd"] || context["task"] || "",
     persist: Boolean(storyRepoPath),
   });

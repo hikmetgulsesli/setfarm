@@ -362,6 +362,9 @@ describe("06-implement step module", () => {
     assert.match(prompt, /resolved by Setfarm before implementation/i);
     assert.match(prompt, /Stack-Specific Implementation Rules/i);
     assert.match(prompt, /Stack Verification Contract/i);
+    assert.match(prompt, /Selected Library Packs/i);
+    assert.match(prompt, /library packs were selected by Setfarm from the PRD, design contract, and resolved stack/i);
+    assert.match(prompt, /Library-Specific Implementation Rules/i);
     assert.match(prompt, /do not invent props/i);
     assert.match(prompt, /If TypeScript says a prop does not exist on a shared component/i);
     assert.match(prompt, /Generated Stitch screen components may declare an `actions` prop/i);

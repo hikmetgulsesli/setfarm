@@ -57,6 +57,14 @@ The following stack contract is resolved by Setfarm before implementation. Follo
 ## Stack Verification Contract
 {{STACK_VERIFICATION_CONTRACT}}
 
+## Selected Library Packs
+The following library packs were selected by Setfarm from the PRD, design contract, and resolved stack. These are implementation tools only; Stitch, PRD, DESIGN_DOM, and the stack contract remain the authority.
+
+{{LIBRARY_PACKS}}
+
+## Library-Specific Implementation Rules
+{{LIBRARY_PROMPT}}
+
 ## Instructions
 
 1. **WORKING DIRECTORY AND BRANCH (CRITICAL — prepared worktree architecture).** Everything happens in the prepared story worktree: `{{STORY_WORKDIR}}`.

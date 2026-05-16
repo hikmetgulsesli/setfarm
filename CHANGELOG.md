@@ -2,6 +2,12 @@
 
 This repository now keeps agent-facing operational notes in English only.
 
+## 2.3.35 - 2026-05-16
+
+- Added a Setfarm-owned library pack registry and selector for UI primitives, icons, motion, creative canvas, forms, and charts.
+- Persisted selected library packs to the project ledger and injected only selected pack guidance into implement prompts.
+- Added regression coverage for browser game, dashboard, static-site, and library-pack ledger selection behavior.
+
 ## 2.3.34 - 2026-05-16
 
 - Injected the Setfarm stack contract into setup-repo, setup-build, implement, and supervisor prompt contexts.
