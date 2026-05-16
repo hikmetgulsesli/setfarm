@@ -1,6 +1,6 @@
 {
   "name": "setfarm",
-  "version": "2.3.0",
+  "version": "2.3.33",
   "type": "module",
   "private": true,
   "engines": {
@@ -12,9 +12,11 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && cp src/server/index.html dist/server/index.html && cp src/installer/compat-rules.json dist/installer/compat-rules.json && mkdir -p dist/installer/prompts && cp src/installer/prompts/*.md dist/installer/prompts/ && node scripts/copy-step-assets.mjs && chmod +x dist/cli/cli.js && node scripts/inject-version.js",
     "start": "node dist/cli/cli.js",
-    "test": "node --import tsx --test tests/*.test.ts",
+    "test": "node --import tsx --test tests/*.test.ts && npm run test:steps && npm run test:scripts",
     "test:steps": "node --import tsx --test tests/steps/*.test.ts",
-    "prebuild": "node scripts/write-build-info.mjs"
+    "test:scripts": "node --test scripts/__tests__/*.test.js",
+    "check:english": "node scripts/check-english-contract.mjs",
+    "prebuild": "node scripts/check-english-contract.mjs && node scripts/write-build-info.mjs"
   },
   "dependencies": {
     "json5": "^2.2.3",

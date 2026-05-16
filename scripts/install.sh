@@ -2,10 +2,11 @@
 set -euo pipefail
 
 # Setfarm installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/hikmetgulsesli/setfarm/v2.3.0/scripts/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/hikmetgulsesli/setfarm/v2.3.33/scripts/install.sh | bash
 
 REPO="https://github.com/hikmetgulsesli/setfarm.git"
 DEST="${HOME}/.openclaw/workspace/setfarm"
+LEGACY_DEST="${HOME}/.openclaw/setfarm-repo"
 
 echo "Installing Setfarm..."
 
@@ -19,6 +20,16 @@ else
 fi
 
 cd "$DEST"
+
+# Runtime scripts still resolve the platform source through this stable path.
+# Keep it as a compatibility link to the real install root.
+if [ -L "$LEGACY_DEST" ]; then
+  ln -sfn "$DEST" "$LEGACY_DEST"
+elif [ ! -e "$LEGACY_DEST" ]; then
+  ln -s "$DEST" "$LEGACY_DEST"
+else
+  echo "Note: $LEGACY_DEST already exists; leaving it unchanged."
+fi
 
 # Build
 echo "Installing dependencies..."
