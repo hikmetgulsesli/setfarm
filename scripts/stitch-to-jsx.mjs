@@ -376,8 +376,8 @@ function extractBody(html) {
 
 function toComponentName(title) {
   return title
-    .replace(/[ıİ]/g,"i").replace(/[şŞ]/g,"s").replace(/[çÇ]/g,"c")
-    .replace(/[ğĞ]/g,"g").replace(/[üÜ]/g,"u").replace(/[öÖ]/g,"o")
+    .replace(/[\u0131\u0130]/g,"i").replace(/[\u015f\u015e]/g,"s").replace(/[\u00e7\u00c7]/g,"c")
+    .replace(/[\u011f\u011e]/g,"g").replace(/[\u00fc\u00dc]/g,"u").replace(/[\u00f6\u00d6]/g,"o")
     .replace(/[^a-zA-Z0-9\s]/g,"")
     .split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join("");
 }
@@ -589,8 +589,8 @@ function replaceMaterialSymbolSpans(html, lucideImports) {
 
 function slugifyActionId(label, fallback) {
   const normalized = String(label || "")
-    .replace(/[ıİ]/g, "i").replace(/[şŞ]/g, "s").replace(/[çÇ]/g, "c")
-    .replace(/[ğĞ]/g, "g").replace(/[üÜ]/g, "u").replace(/[öÖ]/g, "o")
+    .replace(/[\u0131\u0130]/g, "i").replace(/[\u015f\u015e]/g, "s").replace(/[\u00e7\u00c7]/g, "c")
+    .replace(/[\u011f\u011e]/g, "g").replace(/[\u00fc\u00dc]/g, "u").replace(/[\u00f6\u00d6]/g, "o")
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()

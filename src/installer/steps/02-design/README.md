@@ -1,45 +1,37 @@
-# 02-design — Design Step Modülü
+# 02-design - Design Step Module
 
-Pipeline'ın ikinci step'i. Stitch API ile ekranları otomatik üretir, agent doğrular ve SCREEN_MAP + DESIGN_SYSTEM çıkarır.
+The second pipeline step. It uses Stitch to generate screen designs, then verifies and stores design contracts.
 
-## Input (context)
+## Input
 
-- `prd` (string) — plan step'ten gelen PRD
-- `repo` (string) — proje dizini
-- `device_type` (opsiyonel) — DESKTOP varsayılan
+- `prd`: PRD from plan
+- `repo`: project directory
+- `device_type`: optional, defaults to desktop
 
-## Side Effect (preClaim)
+## Preclaim Side Effects
 
-Agent claim'i ÖNCE pipeline:
-- Stitch project ensure
-- PRD'den all screens generate
-- HTML download (3 retry + tracking fallback)
-- `stitch/DESIGN_MANIFEST.json` ve `stitch/*.html` üretir
+Before the agent claim:
 
-Agent sadece doğrular — Stitch API'yi tekrar çağırmaz.
+- ensures the Stitch project exists
+- generates all PRD screens
+- downloads HTML with retries and tracking fallback
+- writes `stitch/DESIGN_MANIFEST.json` and `stitch/*.html`
 
-## Output (parsed)
+The agent verifies the generated design. It does not call Stitch again.
 
-- STATUS: done
-- DEVICE_TYPE: DESKTOP | TABLET | MOBILE
-- DESIGN_SYSTEM: JSON (aesthetic, palette, fonts)
-- SCREEN_MAP: JSON array (screenId, name, type, description)
+## Parsed Output
 
-## Side Effects (onComplete)
+- `STATUS: done`
+- `DEVICE_TYPE`
+- `DESIGN_SYSTEM`
+- `SCREEN_MAP`
 
-- Context'e DESIGN_SYSTEM, SCREEN_MAP, device_type kaydeder
-- design-contract'ları inşa eder
-- screenshot'ları cache dizinine persist eder
+## Completion Side Effects
 
-## Files
-
-- `rules.md` — design step kuralları
-- `prompt.md` — agent template (`{{REPO}}`, `{{PRD_SCREEN_COUNT}}` template var)
-- `preclaim.ts` — Stitch API entegrasyonu (heavy lifting)
-- `context.ts` — claim-side context inject
-- `guards.ts` — validate + onComplete
-- `module.ts` — StepModule export
+- stores design system, screen map, and device type in context
+- builds design contracts
+- persists screenshots to cache
 
 ## Prompt Budget
 
-`maxPromptSize: 10240` (10 KB). Design rules detaylı, plan'dan biraz büyük budget.
+`maxPromptSize: 10240` bytes.

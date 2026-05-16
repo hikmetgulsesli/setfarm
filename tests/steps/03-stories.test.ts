@@ -57,23 +57,23 @@ describe("03-stories step module", () => {
     assert.equal(result.prompt.includes("CounterDisplay"), false, "prompt should not bias output toward a counter component");
   });
 
-  it("extracts explicit Turkish and English story caps", () => {
-    assert.equal(extractExplicitMaxStories("Maksimum 1 story üret."), 1);
-    assert.equal(extractExplicitMaxStories("maks 2 adet story olsun"), 2);
-    assert.equal(extractExplicitMaxStories("En çok 3 story yaz"), 3);
+  it("extracts explicit English story caps", () => {
+    assert.equal(extractExplicitMaxStories("Maximum 1 story."), 1);
+    assert.equal(extractExplicitMaxStories("Use up to 2 stories"), 2);
+    assert.equal(extractExplicitMaxStories("No more than 3 stories"), 3);
     assert.equal(extractExplicitMaxStories("4 stories maximum"), 4);
-    assert.equal(extractExplicitMaxStories("story listesi üret"), null);
+    assert.equal(extractExplicitMaxStories("Generate the story list"), null);
   });
 
   it("extracts stable domain terms from task and PRD", () => {
     const terms = extractStoryDomainTerms(
-      "Basit sayaç uygulaması: arttır, azalt, sıfırla, değer localStorage içinde saklansın.",
-      "Sayaç değeri görüntülenir. Kullanıcı Arttır, Azalt ve Sıfırla butonlarını kullanır."
+      "Simple counter app: increment, decrement, reset, and persist the value in localStorage.",
+      "The counter value is visible. The user can use Increment, Decrement, and Reset buttons."
     );
-    assert.ok(terms.includes("sayac"));
-    assert.ok(terms.includes("arttir"));
-    assert.ok(terms.includes("azalt"));
-    assert.ok(terms.includes("sifirla"));
+    assert.ok(terms.includes("counter"));
+    assert.ok(terms.includes("increment"));
+    assert.ok(terms.includes("decrement"));
+    assert.ok(terms.includes("reset"));
   });
 
   it("single-story auto scope stays project-neutral", () => {
@@ -83,10 +83,10 @@ describe("03-stories step module", () => {
       writeFileSync(path.join(repo, "stitch", "DESIGN_DOM.json"), JSON.stringify({
         screens: {
           "SCR-001": {
-            title: "Ana",
+            title: "Home",
             behaviorContract: [
-              { kind: "button", label: "Başlat", icon: "play_arrow", action: "start", expectedBehavior: "start visible workflow" },
-              { kind: "button", label: "Durdur", icon: "stop", action: "stop", expectedBehavior: "stop visible workflow" },
+              { kind: "button", label: "Start", icon: "play_arrow", action: "start", expectedBehavior: "start visible workflow" },
+              { kind: "button", label: "Stop", icon: "stop", action: "stop", expectedBehavior: "stop visible workflow" },
             ],
           },
         },
@@ -97,9 +97,9 @@ describe("03-stories step module", () => {
       assert.equal(criteriaText.includes("notes"), false);
       assert.equal(criteriaText.includes("settings"), false);
 
-      const scope = buildSingleStoryScopeFiles(["src/screens/Ana.tsx"]);
+      const scope = buildSingleStoryScopeFiles(["src/screens/Home.tsx"]);
       assert.deepEqual(scope, [
-        "src/screens/Ana.tsx",
+        "src/screens/Home.tsx",
         "src/App.tsx",
         "src/App.css",
         "src/main.tsx",
@@ -119,21 +119,21 @@ describe("03-stories step module", () => {
       writeFileSync(path.join(repo, "stitch", "DESIGN_MANIFEST.json"), JSON.stringify([
         { screenId: "SCR-001", title: "Leads" },
         { screenId: "SCR-002", title: "Pipeline" },
-        { screenId: "SCR-003", title: "Profil Paneli" },
-        { screenId: "SCR-004", title: "Storage Hata Durumu" },
+        { screenId: "SCR-003", title: "Profile Panel" },
+        { screenId: "SCR-004", title: "Storage Error State" },
       ]));
       writeFileSync(path.join(repo, "stitch", "DESIGN_DOM.json"), JSON.stringify({
         screens: {
-          "SCR-001": {
-            title: "Leads",
-            behaviorContract: [
-              { kind: "button", label: "Yeni Lead", icon: "plus", action: "create", expectedBehavior: "open add lead form" },
-            ],
-          },
+	          "SCR-001": {
+	            title: "Leads",
+	            behaviorContract: [
+	              { kind: "button", label: "New Lead", icon: "plus", action: "create", expectedBehavior: "open add lead form" },
+	            ],
+	          },
           "SCR-003": {
-            title: "Profil Paneli",
+            title: "Profile Panel",
             behaviorContract: [
-              { kind: "button", label: "Profil", icon: "user", action: "open", expectedBehavior: "open profile panel" },
+              { kind: "button", label: "Profile", icon: "user", action: "open", expectedBehavior: "open profile panel" },
             ],
           },
         },
@@ -142,23 +142,23 @@ describe("03-stories step module", () => {
       const predicted = computePredictedScreenFiles(repo);
       const output = buildAutoStoriesOutput({
         repo,
-        task: "Freelancer lead triage CRM uygulaması",
+        task: "Freelancer lead triage CRM application",
         predicted,
       });
 
       const storiesJson = output.match(/STORIES_JSON:\n([\s\S]*?)\nSCREEN_MAP:/)?.[1] || "[]";
       const stories = JSON.parse(storiesJson);
-      assert.equal(stories.length, 5);
-      assert.match(stories[0].title, /^Freelancer lead triage CRM uygulaması -/);
+	      assert.equal(stories.length, 4);
+      assert.match(stories[0].title, /^Freelancer lead triage CRM application -/);
       assert.equal(stories[0].scope_files.includes("src/App.tsx"), true);
       assert.equal(stories[0].scope_files.includes("src/contexts/AppContext.tsx"), true);
       assert.equal(stories[0].shared_files.includes("src/screens/Leads.tsx"), true);
-      assert.equal(stories[0].shared_files.includes("src/screens/ProfilPaneli.tsx"), true);
+      assert.equal(stories[0].shared_files.includes("src/screens/ProfilePanel.tsx"), true);
       assert.equal(stories[1].scope_files.includes("src/screens/Leads.tsx"), true);
-      assert.equal(stories.some((s: any) => s.scope_files.includes("src/screens/ProfilPaneli.tsx")), true);
+      assert.equal(stories.some((s: any) => s.scope_files.includes("src/screens/ProfilePanel.tsx")), true);
       assert.equal(stories.slice(1).every((s: any) => s.shared_files.includes("src/App.tsx")), true);
-      assert.match(output, /Yeni Lead/);
-      assert.match(output, /Profil/);
+	      assert.match(output, /New Lead/);
+      assert.match(output, /Profile/);
       assert.equal(output.includes("CounterPanel"), false);
     } finally {
       rmSync(repo, { recursive: true, force: true });
@@ -251,15 +251,15 @@ describe("03-stories step module", () => {
   it("rejects stories that drift into another project concept", () => {
     const err = detectStorySemanticDrift(
       {
-        task: "Basit sayaç uygulaması: arttır, azalt, sıfırla, değer localStorage içinde saklansın.",
-        prd: "Sayaç değeri gösterilir. Arttır, azalt ve sıfırla aksiyonları desteklenir.",
+        task: "Simple counter app: increment, decrement, reset, and persist the value in localStorage.",
+        prd: "Counter value is shown. Increment, decrement, and reset actions are supported.",
       },
       [{
         story_id: "US-001",
-        title: "Renk Koru — Kurulum ve Tüm Oyun Akışı",
-        description: "Renk körlüğü testi uygulaması: seviye seçimi ve Ishihara oyun döngüsü.",
-        acceptance_criteria: JSON.stringify(["Başla butonu seviye seçimine geçer", "10 soru sonunda skor gösterilir"]),
-        scope_description: "Tek story oyun akışı",
+        title: "Color Guard - Setup and Full Game Flow",
+        description: "Color vision test application with level selection and Ishihara game loop.",
+        acceptance_criteria: JSON.stringify(["Start button opens level selection", "Score appears after 10 questions"]),
+        scope_description: "Single story game flow",
         scope_files: JSON.stringify(["src/hooks/useGame.ts", "src/components/IshiharaCircle.tsx"]),
       }]
     );
@@ -269,16 +269,16 @@ describe("03-stories step module", () => {
   it("accepts stories that preserve the original project concept", () => {
     const err = detectStorySemanticDrift(
       {
-        task: "Basit sayaç uygulaması: arttır, azalt, sıfırla, değer localStorage içinde saklansın.",
-        prd: "Sayaç değeri gösterilir. Arttır, azalt ve sıfırla aksiyonları desteklenir.",
+        task: "Simple counter app: increment, decrement, reset, and persist the value in localStorage.",
+        prd: "Counter value is shown. Increment, decrement, and reset actions are supported.",
       },
       [{
         story_id: "US-001",
-        title: "Sayaç — kurulum, UI ve localStorage akışı",
-        description: "Sayaç değeri, arttır, azalt ve sıfırla aksiyonları tek story içinde uygulanır.",
-        acceptance_criteria: JSON.stringify(["Arttır butonu sayacı artırır", "Azalt butonu sayacı azaltır", "Sıfırla butonu sayacı sıfırlar"]),
-        scope_description: "Tek story sayaç akışı",
-        scope_files: JSON.stringify(["src/hooks/useCounter.ts", "src/screens/AnaSayfa.tsx"]),
+        title: "Counter - setup, UI, and localStorage flow",
+        description: "Counter value, increment, decrement, and reset actions are implemented in one story.",
+        acceptance_criteria: JSON.stringify(["Increment button increases the counter", "Decrement button decreases the counter", "Reset button resets the counter"]),
+        scope_description: "Single story counter flow",
+        scope_files: JSON.stringify(["src/hooks/useCounter.ts", "src/screens/Home.tsx"]),
       }]
     );
     assert.equal(err, null);
@@ -291,10 +291,10 @@ describe("03-stories step module", () => {
       writeFileSync(path.join(repo, "stitch", "DESIGN_DOM.json"), JSON.stringify({
         screens: {
           "SCR-001": {
-            title: "Ana",
+            title: "Home",
             behaviorContract: [
-              { kind: "button", label: "Ayarlar", icon: "settings", route: "/settings", expectedBehavior: "navigate:/settings" },
-              { kind: "button", label: "Artır", icon: "add", action: "increment", expectedBehavior: "increase visible value" },
+              { kind: "button", label: "Settings", icon: "settings", route: "/settings", expectedBehavior: "navigate:/settings" },
+              { kind: "button", label: "Increment", icon: "add", action: "increment", expectedBehavior: "increase visible value" },
             ],
           },
         },
@@ -303,8 +303,8 @@ describe("03-stories step module", () => {
       const reqs = collectUiBehaviorRequirements(repo);
       assert.equal(reqs.length, 2);
       const contract = computeUiBehaviorContract(repo);
-      assert.match(contract, /Ayarlar/);
-      assert.match(contract, /Artır/);
+	      assert.match(contract, /settings/);
+      assert.match(contract, /Increment/);
       assert.match(contract, /navigate:\/settings/);
     } finally {
       rmSync(repo, { recursive: true, force: true });
@@ -347,10 +347,10 @@ describe("03-stories step module", () => {
       writeFileSync(path.join(repo, "stitch", "DESIGN_DOM.json"), JSON.stringify({
         screens: {
           "SCR-001": {
-            title: "Ana",
+            title: "Home",
             behaviorContract: [
-              { kind: "button", label: "Ayarlar", icon: "settings", route: "/settings", expectedBehavior: "navigate:/settings" },
-              { kind: "button", label: "Artır", icon: "add", action: "increment", expectedBehavior: "increase visible value" },
+              { kind: "button", label: "Settings", icon: "settings", route: "/settings", expectedBehavior: "navigate:/settings" },
+              { kind: "button", label: "Increment", icon: "add", action: "increment", expectedBehavior: "increase visible value" },
             ],
           },
         },
@@ -358,24 +358,24 @@ describe("03-stories step module", () => {
 
       const missing = detectUiBehaviorContractGaps(repo, [{
         story_id: "US-001",
-        title: "Sayaç — ana ekran",
-        description: "Sayaç değeri görüntülenir.",
-        acceptance_criteria: JSON.stringify(["Artır butonu sayacı artırır"]),
-        scope_description: "Ana sayaç akışı",
-        scope_files: JSON.stringify(["src/screens/Ana.tsx"]),
+        title: "Counter - main screen",
+        description: "Counter value is displayed.",
+        acceptance_criteria: JSON.stringify(["Increment button increases the counter"]),
+        scope_description: "Main counter flow",
+        scope_files: JSON.stringify(["src/screens/Home.tsx"]),
       }]);
-      assert.match(missing || "", /Ayarlar/);
+	      assert.match(missing || "", /settings/);
 
       const ok = detectUiBehaviorContractGaps(repo, [{
         story_id: "US-001",
-        title: "Sayaç — ana ekran ve ayarlar",
-        description: "Ayarlar paneli ve sayaç artırma akışı uygulanır.",
+        title: "Counter - main screen and settings",
+        description: "Settings panel and counter increment flow are implemented.",
         acceptance_criteria: JSON.stringify([
-          "Ayarlar/settings ikon butonu /settings paneline gider.",
-          "Artır butonu sayaç değerini artırır.",
+          "Settings icon button opens the /settings panel.",
+          "Increment button increases the counter value.",
         ]),
-        scope_description: "Ana sayaç ve ayarlar akışı",
-        scope_files: JSON.stringify(["src/screens/Ana.tsx"]),
+        scope_description: "Main counter and settings flow",
+        scope_files: JSON.stringify(["src/screens/Home.tsx"]),
       }]);
       assert.equal(ok, null);
     } finally {
@@ -390,32 +390,32 @@ describe("03-stories step module", () => {
       writeFileSync(path.join(repo, "stitch", "DESIGN_DOM.json"), JSON.stringify({
         screens: {
           "SCR-001": {
-            title: "Ana",
+            title: "Home",
             behaviorContract: [
-              { kind: "button", label: "Ayarlar", icon: "settings", route: "/settings", expectedBehavior: "open settings panel" },
-              { kind: "button", label: "Artır", icon: "add", action: "increment", expectedBehavior: "increase visible value" },
+              { kind: "button", label: "Settings", icon: "settings", route: "/settings", expectedBehavior: "open settings panel" },
+              { kind: "button", label: "Increment", icon: "add", action: "increment", expectedBehavior: "increase visible value" },
             ],
           },
         },
       }));
       writeFileSync(path.join(repo, "stitch", "DESIGN_MANIFEST.json"), JSON.stringify([
-        { screenId: "SCR-001", title: "Ana" },
+        { screenId: "SCR-001", title: "Home" },
       ]));
 
       const updates = planUiBehaviorCriteriaInjections(repo, [{
         story_id: "US-001",
         story_index: 1,
-        title: "Sayaç — ana ekran",
-        description: "Sayaç değeri görüntülenir.",
-        acceptance_criteria: JSON.stringify(["Artır butonu sayacı artırır"]),
-        scope_description: "Ana sayaç akışı",
-        scope_files: JSON.stringify(["src/screens/Ana.tsx"]),
+        title: "Counter - main screen",
+        description: "Counter value is displayed.",
+        acceptance_criteria: JSON.stringify(["Increment button increases the counter"]),
+        scope_description: "Main counter flow",
+        scope_files: JSON.stringify(["src/screens/Home.tsx"]),
       }]);
 
       const additions = updates.get("US-001") || [];
       assert.equal(additions.length, 1);
       assert.match(additions[0], /UI_BEHAVIOR_CONTRACT/);
-      assert.match(additions[0], /Ayarlar/);
+	      assert.match(additions[0], /settings/);
       assert.match(additions[0], /open settings panel/);
     } finally {
       rmSync(repo, { recursive: true, force: true });
@@ -426,7 +426,7 @@ describe("03-stories step module", () => {
     const scope = normalizeScopeFilesForStory([
       "src/hooks/useCounter.ts",
       "src/components/CounterControls/CounterControls.tsx",
-      "src/screens/AnaSayfaSayacEkrani.tsx",
+	      "src/screens/HomeCounterScreen.tsx",
       "package.json",
       "tsconfig.json",
       "vite.config.ts",
@@ -435,7 +435,7 @@ describe("03-stories step module", () => {
     assert.deepEqual(scope, [
       "src/hooks/useCounter.ts",
       "src/components/CounterControls/CounterControls.tsx",
-      "src/screens/AnaSayfaSayacEkrani.tsx",
+	      "src/screens/HomeCounterScreen.tsx",
       "src/App.tsx",
       "src/App.css",
       "src/main.tsx",
@@ -447,7 +447,7 @@ describe("03-stories step module", () => {
   it("removes setup-owned toolchain files from frontend story scopes", () => {
     const scope = normalizeScopeFilesForStory([
       "src/App.tsx",
-      "src/screens/AnaSayfa.tsx",
+	      "src/screens/Home.tsx",
       "package.json",
       "package-lock.json",
       "tsconfig.app.json",
@@ -459,7 +459,7 @@ describe("03-stories step module", () => {
 
     assert.deepEqual(scope, [
       "src/App.tsx",
-      "src/screens/AnaSayfa.tsx",
+	      "src/screens/Home.tsx",
       "src/App.css",
       "src/main.tsx",
       "src/index.css",

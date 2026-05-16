@@ -149,12 +149,12 @@ Important directories to back up:
 
 ---
 
-## Cloudflare DNS API (Otomatik Subdomain Ekleme)
+## Cloudflare DNS API
 
-Yeni proje oluştururken DNS kaydını otomatik eklemek için:
+Use this endpoint when a new project needs an automated DNS record:
 
 ```bash
-# CNAME ekle (proxied)
+# Add a proxied CNAME.
 curl -s -X POST "https://api.cloudflare.com/client/v4/zones/dcb4b61afa6f4a6bd8c05950381655f2/dns_records" \
   -H "Authorization: Bearer CP1qBCzEfcwYlFifgNfEiVEye75FWR7Dq_7BEh8O" \
   -H "Content-Type: application/json" \
@@ -163,5 +163,5 @@ curl -s -X POST "https://api.cloudflare.com/client/v4/zones/dcb4b61afa6f4a6bd8c0
 
 - Zone: setrox.com.tr
 - Tunnel CNAME: `92d8df83-3623-4850-ba41-29126106d020.cfargotunnel.com`
-- Subdomain max 25 karakter, kısa ve öz olmalı
-- Cloudflare tunnel config'e de hostname + service eklemeyi unutma
+- Keep subdomains short; maximum recommended length is 25 characters.
+- Also add the hostname and service mapping to the Cloudflare tunnel config.

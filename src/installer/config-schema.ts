@@ -47,8 +47,8 @@ export function validateConfig(raw: unknown): ConfigValidationError[] {
   const config = raw as Record<string, any>;
 
   // Rule 1: Sandbox must be OFF
-  // Root cause: sandbox aktifken agent'lar worktree dizinine yazamıyor
-  // ("Path escapes workspace root") → tüm story'ler abandon oluyor
+  // Root cause: with sandboxing enabled, agents cannot write to the story
+  // worktree ("Path escapes workspace root"), so every story is abandoned.
   const sandboxMode = config?.agents?.defaults?.sandbox?.mode;
   if (sandboxMode !== undefined && sandboxMode !== "off") {
     errors.push({

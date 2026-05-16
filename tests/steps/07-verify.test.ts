@@ -40,20 +40,20 @@ describe("07-verify step module", () => {
       runId: "r1",
       task: "t",
       context: {
-        repo: "$HOME/projects/sayac-12345",
+        repo: "$HOME/projects/counter-12345",
         story_workdir: "/tmp/story-worktrees/r1-us-001",
-        branch: "feature-sayac",
+        branch: "feature-counter",
         pr_url: "https://github.com/u/r/pull/42",
         preflight_analysis: "3 files changed, 0 ESLint errors",
         current_story: "US-002: Domain state",
       },
     });
-    assert.ok(prompt.includes("$HOME/projects/sayac-12345"));
-    assert.ok(prompt.includes("MAIN_REPO: $HOME/projects/sayac-12345"));
+    assert.ok(prompt.includes("$HOME/projects/counter-12345"));
+    assert.ok(prompt.includes("MAIN_REPO: $HOME/projects/counter-12345"));
     assert.ok(prompt.includes("STORY_WORKDIR: /tmp/story-worktrees/r1-us-001"));
     assert.ok(prompt.includes("VERIFY_WORKDIR: /tmp/story-worktrees/r1-us-001"));
     assert.ok(prompt.includes("REPO: /tmp/story-worktrees/r1-us-001"));
-    assert.ok(prompt.includes("feature-sayac"));
+    assert.ok(prompt.includes("feature-counter"));
     assert.ok(prompt.includes("https://github.com/u/r/pull/42"));
     assert.ok(prompt.includes("3 files changed"));
     assert.ok(prompt.includes("US-002"));

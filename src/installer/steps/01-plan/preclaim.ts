@@ -8,16 +8,16 @@ const DEFAULT_STACK = "vite-react";
 
 type ProjectKind = "game" | "product";
 
-const COMMAND_VERB_RE = /\b(build|create|make|develop|implement|design|write|add|fix|yap|olustur|oluştur|kur|gelistir|geliştir)\b/i;
+const COMMAND_VERB_RE = /\b(build|create|make|develop|implement|design|write|add|fix)\b/i;
 
 function transliterate(input: string): string {
   return input
-    .replace(/[Ğğ]/g, "g")
-    .replace(/[Üü]/g, "u")
-    .replace(/[Şş]/g, "s")
-    .replace(/[İIı]/g, "i")
-    .replace(/[Öö]/g, "o")
-    .replace(/[Çç]/g, "c");
+    .replace(/[\u011e\u011f]/g, "g")
+    .replace(/[\u00dc\u00fc]/g, "u")
+    .replace(/[\u015e\u015f]/g, "s")
+    .replace(/[\u0130I\u0131]/g, "i")
+    .replace(/[\u00d6\u00f6]/g, "o")
+    .replace(/[\u00c7\u00e7]/g, "c");
 }
 
 export function slugify(input: string): string {
@@ -32,17 +32,17 @@ export function slugify(input: string): string {
 }
 
 function extractProjectName(task: string): string {
-  const projectLine = task.match(/(?:^|\n)\s*(?:Project|Proje)\s*:\s*([^\n]+)/i)?.[1]?.trim();
+  const projectLine = task.match(/(?:^|\n)\s*Project\s*:\s*([^\n]+)/i)?.[1]?.trim();
   if (projectLine) {
     const inlineTaskStart = projectLine.match(new RegExp(`^(.+?)\\s+${COMMAND_VERB_RE.source}`, "i"));
     return (inlineTaskStart?.[1] || projectLine).trim();
   }
   const firstLine = task.split(/\n+/).map(line => line.trim()).find(Boolean) || "setfarm-project";
-  return firstLine.replace(/^(?:Project|Proje)\s*:\s*/i, "").slice(0, 80);
+  return firstLine.replace(/^Project\s*:\s*/i, "").slice(0, 80);
 }
 
 function extractInlineActionDescription(task: string): string {
-  const projectLine = task.match(/(?:^|\n)\s*(?:Project|Proje)\s*:\s*([^\n]+)/i)?.[1]?.trim() || "";
+  const projectLine = task.match(/(?:^|\n)\s*Project\s*:\s*([^\n]+)/i)?.[1]?.trim() || "";
   const source = projectLine || task.split(/\n+/).map(line => line.trim()).find(line => COMMAND_VERB_RE.test(line)) || "";
   const match = source.match(COMMAND_VERB_RE);
   return match ? source.slice(match.index ?? 0).trim() : "";
@@ -50,8 +50,8 @@ function extractInlineActionDescription(task: string): string {
 
 function humanizeProjectName(input: string): string {
   const cleaned = String(input || "")
-    .replace(/^(?:Project|Proje)\s*:\s*/i, "")
-    .replace(/\s+(?:build|create|make|develop|implement|design|write|add|fix|yap|olustur|oluştur|kur|gelistir|geliştir)\b[\s\S]*$/i, "")
+    .replace(/^Project\s*:\s*/i, "")
+    .replace(/\s+(?:build|create|make|develop|implement|design|write|add|fix)\b[\s\S]*$/i, "")
     .replace(/\s+(?:React|Vite|TypeScript|Tailwind|Next\.?js|Node\.?js)\b[\s\S]*$/i, "")
     .replace(/[.;:,\-\s]+$/g, "")
     .trim();
@@ -94,7 +94,7 @@ function humanizeProjectName(input: string): string {
 function productNameFromActionDescription(actionDescription: string): string {
   let cleaned = String(actionDescription || "")
     .replace(new RegExp(`^${COMMAND_VERB_RE.source}\\s+`, "i"), "")
-    .replace(/^(?:a|an|the|bir)\s+/i, "")
+    .replace(/^(?:a|an|the)\s+/i, "")
     .replace(/\b(?:browser|web|mobile)[-\s]+based\b/gi, "")
     .replace(/\b(?:React|Vite|TypeScript|Tailwind|Next\.?js|Node\.?js)\b/gi, "")
     .replace(/\b(?:browser|web|mobile)\b\s*/gi, "")
@@ -125,23 +125,23 @@ function extractProjectDisplayName(task: string, fallbackRawName: string): strin
 
 function inferTechStack(task: string): string {
   const lower = task.toLowerCase();
-  if (/\breact native\b|mobil uygulama|mobile app/.test(lower)) return "react-native";
+  if (/\breact native\b|mobile app/.test(lower)) return "react-native";
   if (/\bnext\s*(?:\.?js|js)\b|\bnextjs\b|\bseo\b|\bssr\b/.test(lower)) return "nextjs";
-  if (/\bnode\b|\bexpress\b|api only|sadece api/.test(lower)) return "node-express";
-  if (/\bvanilla\b|frameworksiz|plain ts/.test(lower)) return "vanilla-ts";
+  if (/\bnode\b|\bexpress\b|api only/.test(lower)) return "node-express";
+  if (/\bvanilla\b|plain ts/.test(lower)) return "vanilla-ts";
   return DEFAULT_STACK;
 }
 
 function inferDbRequired(task: string): string {
   const lower = task.toLowerCase();
   if (/\bsqlite\b/.test(lower)) return "sqlite";
-  if (/\bpostgres\b|\bpostgresql\b|\bauth\b|giris|login|sign in|account|create account|hesap olustur|user data|multi user|shared data|database/.test(lower)) return "postgres";
+  if (/\bpostgres\b|\bpostgresql\b|\bauth\b|login|sign in|account|create account|user data|multi user|shared data|database/.test(lower)) return "postgres";
   return "none";
 }
 
 function inferProjectKind(task: string): ProjectKind {
   const lower = transliterate(task).toLowerCase();
-  if (/\b(game|oyun|puzzle|arcade|score|level|pause|resume|restart|keyboard controls?|playfield)\b/.test(lower)) {
+  if (/\b(game|puzzle|arcade|score|level|pause|resume|restart|keyboard controls?|playfield)\b/.test(lower)) {
     return "game";
   }
   return "product";
@@ -149,8 +149,7 @@ function inferProjectKind(task: string): ProjectKind {
 
 export function inferUiLanguage(task: string): string {
   const normalized = transliterate(task).toLowerCase();
-  if (/\b(english|ingilizce)\b/.test(normalized)) return "English";
-  if (/\b(turkish|turkce)\b/.test(normalized)) return "Turkish";
+  if (/\benglish\b/.test(normalized)) return "English";
   return "English";
 }
 
@@ -158,9 +157,9 @@ function taskBullets(task: string): string[] {
   const normalizeTaskLine = (line: string): string => {
     let current = line.trim().replace(/^[-*]\s*/, "");
     if (/^Platform\s*:/i.test(current)) return "";
-    if (/^(?:Project|Proje)\s*:/i.test(current)) {
-      current = current.replace(/^(?:Project|Proje)\s*:\s*/i, "").trim();
-      const verb = current.match(/\b(build|create|make|develop|implement|design|write|add|fix|yap|olustur|oluştur|kur|gelistir|geliştir)\b[\s\S]*$/i)?.[0];
+    if (/^Project\s*:/i.test(current)) {
+      current = current.replace(/^Project\s*:\s*/i, "").trim();
+      const verb = current.match(/\b(build|create|make|develop|implement|design|write|add|fix)\b[\s\S]*$/i)?.[0];
       if (verb) return verb.trim();
       return "";
     }
@@ -177,20 +176,20 @@ function taskBullets(task: string): string[] {
 
 function screensForTask(task: string): Array<{ name: string; type: string; description: string }> {
   const lower = task.toLowerCase();
-  if (/game|oyun/.test(lower)) {
+  if (/game/.test(lower)) {
     const screens = [
       { name: "Game Board", type: "play", description: "Playable main scene with the playfield, user-controlled entities, score/progress, status, and primary controls." },
       { name: "Main Menu", type: "menu", description: "Start, resume, restart, and any task-requested mode or difficulty actions." },
       { name: "Pause Overlay", type: "overlay", description: "Paused state with resume, restart, and return-to-menu actions." },
       { name: "Game Over", type: "result", description: "Final score/progress summary, replay, and return-to-menu actions." },
     ];
-    if (/\b(level complete|victory|win|complete state|bolum|bölüm)\b/i.test(lower)) {
+    if (/\b(level complete|victory|win|complete state)\b/i.test(lower)) {
       screens.push({ name: "Progress Complete", type: "result", description: "Task-requested win, level-complete, or progress-complete state with continue/restart/menu actions." });
     }
-    if (/\b(keyboard|touch|controls?|help|rules|yardim|yardım|how to)\b/i.test(lower)) {
+    if (/\b(keyboard|touch|controls?|help|rules|how to)\b/i.test(lower)) {
       screens.push({ name: "Controls Help", type: "help", description: "Task-requested keyboard/touch controls and concise rules." });
     }
-    if (/\b(settings?|options?|preferences?|difficulty|audio|speed|ayar|tercih)\b/i.test(lower)) {
+    if (/\b(settings?|options?|preferences?|difficulty|audio|speed)\b/i.test(lower)) {
       screens.push({ name: "Game Options", type: "settings", description: "Task-requested settings such as audio, difficulty, speed, controls, or preferences." });
     }
     return screens;
@@ -204,7 +203,7 @@ function screensForTask(task: string): Array<{ name: string; type: string; descr
     { name: "Error State", type: "error", description: "Retry and clear actions for storage or runtime errors." },
     { name: "Empty State", type: "empty", description: "No-data state that guides the user to the first action." },
   ];
-  if (/\b(profile|account|user|auth|login|sign in|profil|hesap|kullanici|kullanıcı)\b/i.test(lower)) {
+  if (/\b(profile|account|user|auth|login|sign in)\b/i.test(lower)) {
     screens.push({ name: "Profile", type: "panel", description: "Task-requested account details, toggles, and close/back behavior." });
   }
   return screens;

@@ -1,30 +1,26 @@
-# 05-setup-build — Setup Build Step Modülü
+# 05-setup-build - Setup Build Step Module
 
-Setup-repo sonrası. npm install + build + compat check + stitch-to-jsx.
+Runs after setup-repo. It installs dependencies, verifies the baseline build, checks compatibility, and converts Stitch output into source screens.
 
-## Input (context)
+## Input
 
-- `repo`, `tech_stack` — plan'dan
-- stitch/DESIGN_MANIFEST.json — design preClaim'den
+- `repo`, `tech_stack`
+- `stitch/DESIGN_MANIFEST.json`
 
-## Side Effects (preClaim — heavy)
+## Preclaim Side Effects
 
-1. `npm install` (idempotent)
-2. `npm run build` — baseline doğrulama (fail = step fail)
-3. Compat engine (React 19 + testing-library 15 gibi peer mismatch'leri yakalar)
-4. Tailwind kurulum (stitch HTML'lerinde Tailwind class'ı varsa)
-5. `stitch-to-jsx.mjs` → `src/screens/*.tsx` auto-generate + commit
-6. BUILD_CMD_HINT context'e yazılır
+1. Run `npm install`.
+2. Run baseline build.
+3. Run compatibility checks.
+4. Configure Tailwind when Stitch output requires it.
+5. Run `stitch-to-jsx.mjs`.
+6. Store the build command hint in context.
 
-## Output (parsed)
+## Parsed Output
 
-- STATUS: done
-- BUILD_CMD: agent'ın beyanı (`npm run build` default)
+- `STATUS: done`
+- `BUILD_CMD`
 
 ## Prompt Budget
 
-`maxPromptSize: 6144`
-
-## Files
-
-README + rules + prompt + context + guards + preclaim + module
+`maxPromptSize: 6144` bytes.

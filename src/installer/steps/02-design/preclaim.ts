@@ -148,13 +148,13 @@ function normalizeScreenName(value: string): string {
   return String(value || "")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[İ]/g, "I")
-    .replace(/[ı]/g, "i")
-    .replace(/[ğĞ]/g, "g")
-    .replace(/[üÜ]/g, "u")
-    .replace(/[şŞ]/g, "s")
-    .replace(/[öÖ]/g, "o")
-    .replace(/[çÇ]/g, "c")
+    .replace(/[\u0130]/g, "I")
+    .replace(/[\u0131]/g, "i")
+    .replace(/[\u011f\u011e]/g, "g")
+    .replace(/[\u00fc\u00dc]/g, "u")
+    .replace(/[\u015f\u015e]/g, "s")
+    .replace(/[\u00f6\u00d6]/g, "o")
+    .replace(/[\u00e7\u00c7]/g, "c")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .replace(/\s+/g, " ")
@@ -269,12 +269,12 @@ function toScreenId(value: string, fallback: string): string {
   const normalized = value
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/ı/g, "i")
-    .replace(/ğ/g, "g")
-    .replace(/ü/g, "u")
-    .replace(/ş/g, "s")
-    .replace(/ö/g, "o")
-    .replace(/ç/g, "c")
+    .replace(/\u0131/g, "i")
+    .replace(/\u011f/g, "g")
+    .replace(/\u00fc/g, "u")
+    .replace(/\u015f/g, "s")
+    .replace(/\u00f6/g, "o")
+    .replace(/\u00e7/g, "c")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
@@ -290,7 +290,7 @@ function addUniqueScreenName(names: string[], value: string): void {
     .replace(/^[0-9]+[.)]\s*/, "")
     .trim();
   if (!clean || clean.length < 3 || clean.length > 80) return;
-  if (/^(screen|screens|name|title|description|type|page|view|ekran|sayfa)$/i.test(clean)) return;
+  if (/^(screen|screens|name|title|description|type|page|view)$/i.test(clean)) return;
   if (!names.some(existing => existing.toLowerCase() === clean.toLowerCase())) names.push(clean);
 }
 
@@ -316,7 +316,7 @@ export function inferFallbackScreens(prd: string): ScreenMapEntry[] {
     for (const line of lines) {
       const trimmed = line.trim();
       if (/^#{1,4}\s+/.test(trimmed)) {
-        inScreens = /\b(screen|screens|view|views|page|pages|modal|modals|ekran|sayfa)\b/i.test(trimmed);
+        inScreens = /\b(screen|screens|view|views|page|pages|modal|modals)\b/i.test(trimmed);
         continue;
       }
       if (!inScreens) continue;
@@ -329,16 +329,16 @@ export function inferFallbackScreens(prd: string): ScreenMapEntry[] {
     }
 
     const lower = prd.toLowerCase();
-    if (names.length === 0 && /\b(game|oyun|arcade|puzzle|score|level|pause|restart)\b/.test(lower)) {
+    if (names.length === 0 && /\b(game|arcade|puzzle|score|level|pause|restart)\b/.test(lower)) {
       names.push("Main Menu", "Game Board", "Pause Overlay", "Game Over");
     } else if (names.length === 0) {
       names.push("Dashboard", "Detail View", "Create Form");
     }
 
-    if (/\b(settings|ayarlar)\b/i.test(prd)) addUniqueScreenName(names, "Settings");
-    if (/\b(help|rules|yardim|yardım|how to)\b/i.test(prd)) addUniqueScreenName(names, "Help and Rules");
-    if (/\b(profile|profil)\b/i.test(prd)) addUniqueScreenName(names, "Profile");
-    if (/\b(error|empty|loading|hata|bos|boş)\b/i.test(prd)) addUniqueScreenName(names, "State Feedback");
+    if (/\b(settings|options|preferences)\b/i.test(prd)) addUniqueScreenName(names, "Settings");
+    if (/\b(help|rules|how to)\b/i.test(prd)) addUniqueScreenName(names, "Help and Rules");
+    if (/\b(profile|account|user)\b/i.test(prd)) addUniqueScreenName(names, "Profile");
+    if (/\b(error|empty|loading|fallback)\b/i.test(prd)) addUniqueScreenName(names, "State Feedback");
   }
 
   const prdRowsByName = new Map(prdRows.map((row) => [normalizeScreenName(row.name), row]));
@@ -362,7 +362,7 @@ export function inferFallbackScreens(prd: string): ScreenMapEntry[] {
 
 function fallbackSpecificContent(screen: ScreenMapEntry): string {
   const title = screen.name.toLowerCase();
-  if (/(game|board|oyun|play)/.test(title)) {
+  if (/(game|board|play)/.test(title)) {
     const cells = Array.from({ length: 96 }, (_, i) => `<div class="cell${i % 11 === 0 || i % 17 === 0 ? " active" : ""}" aria-hidden="true"></div>`).join("");
     return `
       <section class="game-layout" aria-label="Playable board reference">
@@ -375,7 +375,7 @@ function fallbackSpecificContent(screen: ScreenMapEntry): string {
         </aside>
       </section>`;
   }
-  if (/(setting|ayar)/.test(title)) {
+  if (/(setting|option|preference)/.test(title)) {
     return `
       <form class="settings-panel">
         <label>Start Level <select name="level"><option>Level 1</option><option>Level 5</option></select></label>
@@ -384,7 +384,7 @@ function fallbackSpecificContent(screen: ScreenMapEntry): string {
         <button type="button">Save Settings</button><button type="button">Reset Defaults</button>
       </form>`;
   }
-  if (/(over|result|score|sonuc|sonuç)/.test(title)) {
+  if (/(over|result|score|summary)/.test(title)) {
     return `
       <section class="result-panel">
         <p class="scoreline">Final score 24,800 with strong progress through the challenge.</p>
@@ -631,7 +631,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
 Generate a SEPARATE screen design for EVERY page, view, modal, dialog, tab panel, and settings screen described in this PRD. Do NOT skip ANY screen — even if it seems minor.
 
 MANDATORY SCREENS:
-- If the PRD mentions "settings" or "ayarlar" → generate a Settings screen
+- If the PRD mentions settings, options, or preferences, generate a Settings screen
 - If the PRD mentions tabs or bottom navigation → generate EACH tab view as a separate screen
 - If the PRD mentions modals (statistics, help, share, confirmation) → generate each as a separate screen
 - If the PRD mentions error states, empty states, loading states → generate those too
@@ -887,21 +887,21 @@ All visible application text must be in ${uiLanguage}. Keep screen metadata, gen
   }
 }
 
-// Lightweight screen-type heuristic from Turkish title keywords.
+// Lightweight screen-type heuristic from English title keywords.
 // The agent can override in its output if a more specific type is needed,
 // but defaults are good enough for stories step's screen→story binding.
 function classifyScreenType(title: string): string {
   const t = title.toLowerCase();
-  if (/(menü|menu|ana sayfa|home|landing)/.test(t)) return "menu";
-  if (/(liste|list|katalog)/.test(t)) return "list-view";
-  if (/(detay|detail)/.test(t)) return "detail";
-  if (/(form|yeni|ekle|düzenle|edit|add)/.test(t)) return "form";
-  if (/(ayar|setting|profil|profile)/.test(t)) return "settings";
-  if (/(sonuç|result|skor|score)/.test(t)) return "result";
-  if (/(oyun|game|play)/.test(t)) return "game";
-  if (/(seçim|select|seviye|level|zorluk)/.test(t)) return "selection";
-  if (/(bilgi|info|hakkında|nasıl|how)/.test(t)) return "info";
-  if (/(boş|empty|404|hata|error)/.test(t)) return "error";
-  if (/(yükle|upload)/.test(t)) return "form";
+  if (/(menu|home|landing)/.test(t)) return "menu";
+  if (/(list|catalog)/.test(t)) return "list-view";
+  if (/(detail)/.test(t)) return "detail";
+  if (/(form|new|create|edit|add)/.test(t)) return "form";
+  if (/(setting|option|preference|profile|account)/.test(t)) return "settings";
+  if (/(result|score|summary)/.test(t)) return "result";
+  if (/(game|play)/.test(t)) return "game";
+  if (/(select|choice|level|difficulty)/.test(t)) return "selection";
+  if (/(info|about|how)/.test(t)) return "info";
+  if (/(empty|404|error|fallback)/.test(t)) return "error";
+  if (/(upload)/.test(t)) return "form";
   return "app-screen";
 }

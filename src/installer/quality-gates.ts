@@ -109,7 +109,7 @@ export function runQualityChecks(repoPath: string): QualityIssue[] {
   } catch { /* no match = OK */ }
 
 
-  // --- DESIGN CONTRACT CHECKS (Faz 1) ---
+  // --- DESIGN CONTRACT CHECKS (phase 1) ---
 
   // Check: UI_CONTRACT.json requiresRouter but no react-router in package.json
   const contractPath = path.join(repoPath, "stitch", "UI_CONTRACT.json");

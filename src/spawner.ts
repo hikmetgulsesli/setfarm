@@ -415,6 +415,7 @@ type ActiveProcess = {
   lastCpuActivityMs?: number;
   lastHeartbeatMs?: number;
   lastHeartbeatSignature?: string;
+  supervisorSignals?: Set<string>;
 };
 
 type OpenClawTaskRecord = {
@@ -710,13 +711,13 @@ function implementReferenceReadGuard(active: ActiveProcess): { detected: boolean
         if (isBackendReferencePath(candidate.path) && !backendScope) {
           return {
             detected: true,
-            reason: `IRRELEVANT_REFERENCE_CONTEXT: ${active.agentId} read ${candidate.path} during a non-backend implement story. Backend/API/DB standards must not be loaded into frontend/game story context; Setfarm killed the claim before irrelevant reference context polluted implementation.`,
+            reason: `IRRELEVANT_REFERENCE_CONTEXT: ${active.agentId} read ${candidate.path} during a non-backend implement story. Backend/API/DB standards must not be loaded into frontend/game story context; Setfarm recorded a supervisor signal so the worker can be redirected without restarting the claim.`,
           };
         }
         if (candidate.full) {
           return {
             detected: true,
-            reason: `FULL_REFERENCE_CONTEXT_READ: ${active.agentId} loaded full ${candidate.path}. Implement claims must use injected rules and only inspect the smallest focused reference excerpt when the story owns that domain; Setfarm killed the claim before reference context overload.`,
+            reason: `FULL_REFERENCE_CONTEXT_READ: ${active.agentId} loaded full ${candidate.path}. Implement claims must use injected rules and only inspect the smallest focused reference excerpt when the story owns that domain; Setfarm recorded a supervisor signal so the worker can be redirected without restarting the claim.`,
           };
         }
       }
@@ -827,7 +828,7 @@ function generatedScreenReadGuard(active: ActiveProcess): { detected: boolean; r
         if (allowed.has(candidate.path)) continue;
         return {
           detected: true,
-          reason: `GENERATED_SCREEN_SHARED_READ: ${active.agentId} used ${candidate.via} on ${candidate.path}, but that generated screen is not in this story's .story-scope-files. Shared generated screens must be consumed through src/screens/SCREEN_INDEX.json, src/screens/index.ts, the component registry, and UI_CONTRACT. Setfarm killed the claim before generated-screen context overload.`,
+          reason: `GENERATED_SCREEN_SHARED_READ: ${active.agentId} used ${candidate.via} on ${candidate.path}, but that generated screen is not in this story's .story-scope-files. Shared generated screens must be consumed through src/screens/SCREEN_INDEX.json, src/screens/index.ts, the component registry, and UI_CONTRACT. Setfarm recorded a supervisor signal so the worker can be redirected without restarting the claim.`,
         };
       }
     }
@@ -911,7 +912,7 @@ function rawStitchDesignReadGuard(active: ActiveProcess): { detected: boolean; r
         if (!candidate) continue;
         return {
           detected: true,
-          reason: `RAW_STITCH_CONTEXT_READ: ${active.agentId} used ${candidate.via} on ${candidate.path}. Implement claims must use injected Stitch excerpts, UI_CONTRACT, SCREEN_INDEX, and story-owned generated screens instead of loading raw stitch HTML/full DESIGN_DOM context. Setfarm killed the claim before design-context overload.`,
+          reason: `RAW_STITCH_CONTEXT_READ: ${active.agentId} used ${candidate.via} on ${candidate.path}. Implement claims must use injected Stitch excerpts, UI_CONTRACT, SCREEN_INDEX, and story-owned generated screens instead of loading raw stitch HTML/full DESIGN_DOM context. Setfarm recorded a supervisor signal so the worker can be redirected without restarting the claim.`,
         };
       }
     }
@@ -996,7 +997,7 @@ function implementPreDeltaCheckGuard(active: ActiveProcess): { detected: boolean
       const command = compactCommandForDiagnostic(call.command);
       return {
         detected: true,
-        reason: `IMPLEMENT_PRE_DELTA_CHECK_VIOLATION: ${active.agentId} ran deterministic checks before any source delta during a first-delta retry (${command}). First-delta retries must read CLAIM_SUMMARY_FILE, inspect only owned scope files plus safe metadata needed for the first edit, make a small scoped source change, then run build/test/lint.`,
+        reason: `IMPLEMENT_PRE_DELTA_CHECK_VIOLATION: ${active.agentId} ran deterministic checks before any source delta during first-delta supervisor discipline (${command}). The worker must read CLAIM_SUMMARY_FILE, inspect only owned scope files plus safe metadata needed for the first edit, make a small scoped source change, then run build/test/lint.`,
       };
     }
   }
@@ -1044,7 +1045,7 @@ function implementPreDeltaExplorationGuard(active: ActiveProcess): { detected: b
   if (contextReads.size > IMPLEMENT_PRE_DELTA_MAX_CONTEXT_READS) {
     return {
       detected: true,
-      reason: `IMPLEMENT_PRE_DELTA_CONTEXT_SPRAWL: ${active.agentId} read ${contextReads.size} project/design context paths before any source delta (${Array.from(contextReads).slice(0, 8).join(", ")}). Retry with first-delta supervisor discipline: read CLAIM_SUMMARY_FILE, inspect only owned scope files and safe metadata needed for the first edit, then make a small scoped code change before broad analysis.`,
+      reason: `IMPLEMENT_PRE_DELTA_CONTEXT_SPRAWL: ${active.agentId} read ${contextReads.size} project/design context paths before any source delta (${Array.from(contextReads).slice(0, 8).join(", ")}). Supervisor should redirect the worker to read CLAIM_SUMMARY_FILE, inspect only owned scope files and safe metadata needed for the first edit, then make a small scoped code change before broad analysis.`,
     };
   }
 
@@ -1262,7 +1263,7 @@ function claimParseLoopGuard(active: ActiveProcess): { detected: boolean; reason
   if (rawClaimReads >= CLAIM_PARSE_LOOP_MIN_READS * 2 && summaryReads === 0) {
     return {
       detected: true,
-      reason: `CLAIM_SUMMARY_IGNORED: ${active.agentId} kept parsing raw /tmp/claim-*.json (${rawClaimReads} reads) and never used CLAIM_SUMMARY_FILE. Setfarm is retrying with supervisor handoff discipline.`,
+      reason: `CLAIM_SUMMARY_IGNORED: ${active.agentId} kept parsing raw /tmp/claim-*.json (${rawClaimReads} reads) and never used CLAIM_SUMMARY_FILE. Setfarm recorded a supervisor signal for handoff discipline.`,
     };
   }
 
@@ -2406,7 +2407,7 @@ function implementNoDeltaStallGuard(active: ActiveProcess, ageMs: number): { det
 
   return {
     detected: true,
-    reason: `IMPLEMENT_NO_DELTA_STALL: ${active.agentId} kept ${active.wfId}/${active.role} running for ${formatDurationMs(ageMs)} without writing any project source/worktree delta. Retry the same story with a small scoped code change before extended analysis; use CLAIM_SUMMARY_FILE and injected contracts instead of reasoning in place.`,
+    reason: `IMPLEMENT_NO_DELTA_STALL: ${active.agentId} kept ${active.wfId}/${active.role} running for ${formatDurationMs(ageMs)} without writing any project source/worktree delta. Supervisor should redirect the same worker toward a small scoped code change before extended analysis; use CLAIM_SUMMARY_FILE and injected contracts instead of reasoning in place.`,
   };
 }
 
@@ -2651,6 +2652,26 @@ async function recordSupervisorRuntimeEvent(
   }
 }
 
+async function recordRuntimeSupervisorSignal(
+  active: ActiveProcess,
+  stepId: string,
+  storyDbId: string | null,
+  guardName: string,
+  transcriptTitle: string,
+  reason: string,
+): Promise<void> {
+  const signalKey = `${guardName}:${reason.slice(0, 500)}`;
+  active.supervisorSignals ||= new Set<string>();
+  if (active.supervisorSignals.has(signalKey)) return;
+  active.supervisorSignals.add(signalKey);
+  const diagnostic = reason + ` Transcript: ${active.transcriptPath}`;
+  console.warn(`[spawner] supervisor signal ${guardName}: ${diagnostic}`);
+  try {
+    fs.appendFileSync(active.transcriptPath, `--- SUPERVISOR SIGNAL ${transcriptTitle} ${new Date().toISOString()} ---\n${diagnostic}\n`);
+  } catch {}
+  await recordSupervisorRuntimeEvent(active.runId, stepId, storyDbId, "PRODUCT_SUPERVISOR_RUNTIME_SIGNAL", "supervisor-signal", diagnostic);
+}
+
 async function requeueOrphanedStoryClaim(runId: string, stepId: string, agentId: string, diagnostic: string): Promise<boolean> {
   const row = await pgGet<{ id: string; story_id: string }>(
     `SELECT st.id, st.story_id
@@ -2891,95 +2912,37 @@ async function reapFinishedClaims(): Promise<void> {
 
           const claimParseLoop = claimParseLoopGuard(active);
           if (claimParseLoop.detected) {
-            const reason = claimParseLoop.reason + ` Transcript: ${active.transcriptPath}`;
-            console.warn(`[spawner] ${reason}`);
-            try { fs.appendFileSync(active.transcriptPath, `--- CLAIM PARSE LOOP GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
-            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "runtime-guard", reason);
-            terminateActiveProcess(active, "claim-parse-loop-guard");
-            activeProcesses.delete(key);
-            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
-            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
-            continue;
+            await recordRuntimeSupervisorSignal(active, row.step_id, effectiveStoryDbId || null, "claim-parse-loop-guard", "CLAIM PARSE LOOP", claimParseLoop.reason);
           }
 
           const referenceRead = implementReferenceReadGuard(active);
           if (referenceRead.detected) {
-            const reason = referenceRead.reason + ` Transcript: ${active.transcriptPath}`;
-            console.warn(`[spawner] ${reason}`);
-            try { fs.appendFileSync(active.transcriptPath, `--- REFERENCE READ GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
-            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "runtime-guard", reason);
-            terminateActiveProcess(active, "reference-read-guard");
-            activeProcesses.delete(key);
-            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
-            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
-            continue;
+            await recordRuntimeSupervisorSignal(active, row.step_id, effectiveStoryDbId || null, "reference-read-guard", "REFERENCE READ", referenceRead.reason);
           }
 
           const generatedScreenRead = generatedScreenReadGuard(active);
           if (generatedScreenRead.detected) {
-            const reason = generatedScreenRead.reason + ` Transcript: ${active.transcriptPath}`;
-            console.warn(`[spawner] ${reason}`);
-            try { fs.appendFileSync(active.transcriptPath, `--- GENERATED SCREEN READ GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
-            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "runtime-guard", reason);
-            terminateActiveProcess(active, "generated-screen-read-guard");
-            activeProcesses.delete(key);
-            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
-            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
-            continue;
+            await recordRuntimeSupervisorSignal(active, row.step_id, effectiveStoryDbId || null, "generated-screen-read-guard", "GENERATED SCREEN READ", generatedScreenRead.reason);
           }
 
           const rawStitchRead = rawStitchDesignReadGuard(active);
           if (rawStitchRead.detected) {
-            const reason = rawStitchRead.reason + ` Transcript: ${active.transcriptPath}`;
-            console.warn(`[spawner] ${reason}`);
-            try { fs.appendFileSync(active.transcriptPath, `--- RAW STITCH READ GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
-            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "runtime-guard", reason);
-            terminateActiveProcess(active, "raw-stitch-read-guard");
-            activeProcesses.delete(key);
-            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
-            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
-            continue;
+            await recordRuntimeSupervisorSignal(active, row.step_id, effectiveStoryDbId || null, "raw-stitch-read-guard", "RAW STITCH READ", rawStitchRead.reason);
           }
 
           const preDeltaCheck = implementPreDeltaCheckGuard(active);
           if (preDeltaCheck.detected) {
-            const reason = preDeltaCheck.reason + ` Transcript: ${active.transcriptPath}`;
-            console.warn(`[spawner] ${reason}`);
-            try { fs.appendFileSync(active.transcriptPath, `--- IMPLEMENT PRE-DELTA CHECK GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
-            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "runtime-guard", reason);
-            terminateActiveProcess(active, "implement-pre-delta-check-guard");
-            activeProcesses.delete(key);
-            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
-            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
-            continue;
+            await recordRuntimeSupervisorSignal(active, row.step_id, effectiveStoryDbId || null, "implement-pre-delta-check-guard", "IMPLEMENT PRE-DELTA CHECK", preDeltaCheck.reason);
           }
 
           const preDeltaExploration = implementPreDeltaExplorationGuard(active);
           if (preDeltaExploration.detected) {
-            const reason = preDeltaExploration.reason + ` Transcript: ${active.transcriptPath}`;
-            console.warn(`[spawner] ${reason}`);
-            try { fs.appendFileSync(active.transcriptPath, `--- IMPLEMENT PRE-DELTA CONTEXT GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
-            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "runtime-guard", reason);
-            terminateActiveProcess(active, "implement-pre-delta-context-guard");
-            activeProcesses.delete(key);
-            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
-            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
-            continue;
+            await recordRuntimeSupervisorSignal(active, row.step_id, effectiveStoryDbId || null, "implement-pre-delta-context-guard", "IMPLEMENT PRE-DELTA CONTEXT", preDeltaExploration.reason);
           }
 
           const noDeltaStall = implementNoDeltaStallGuard(active, ageMs);
           if (noDeltaStall.detected) {
-            const reason = noDeltaStall.reason + ` Transcript: ${active.transcriptPath}`;
-            console.warn(`[spawner] ${reason}`);
-            try { fs.appendFileSync(active.transcriptPath, `--- IMPLEMENT NO DELTA STALL ${new Date().toISOString()} ---
-${reason}
-`); } catch {}
-            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "runtime-guard", reason);
-            terminateActiveProcess(active, "implement-no-delta-stall");
-            activeProcesses.delete(key);
-            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
-            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
-            continue;
+            await recordRuntimeSupervisorSignal(active, row.step_id, effectiveStoryDbId || null, "implement-no-delta-stall", "IMPLEMENT NO DELTA STALL", noDeltaStall.reason);
           }
         }
 

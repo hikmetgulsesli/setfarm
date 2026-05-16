@@ -3,7 +3,7 @@ import type { ClaimContext } from "../types.js";
 const FIRST_ATTEMPT_REMINDER =
   "REMINDER: Output MUST include ALL mandatory fields. " +
   "PRD (min 2000 chars, English technical prose, Screens table min 3 rows) + REPO (absolute path) + " +
-  "BRANCH + TECH_STACK (vite-react|nextjs|vanilla-ts|node-express|react-native) + UI_LANGUAGE (English|Turkish) + " +
+  "BRANCH + TECH_STACK (vite-react|nextjs|vanilla-ts|node-express|react-native) + UI_LANGUAGE (English or requested product language) + " +
   "PRD_SCREEN_COUNT (int >=3) + DB_REQUIRED (none|postgres|sqlite). Missing = instant REJECT.";
 
 // Plan step context is intentionally minimal: only the task. A first-attempt

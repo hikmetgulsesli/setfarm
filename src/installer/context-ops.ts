@@ -385,14 +385,14 @@ function writeProjectClaudeMd(repo: string, context: Record<string, string>, mem
 **Branch**: ${branch}
 **Original task**: ${task || "(not recorded)"}
 
-> Bu dosya setfarm tarafından her story tamamlandığında güncellenir.
-> Canonical kaynak: PROJECT_MEMORY.md (aynı dizinde).
+> This file is updated by Setfarm after each completed story.
+> Canonical source: PROJECT_MEMORY.md in the same directory.
 
 ## Scope Discipline
 
-- Story'ler sırayla işleniyor. Her story'nin scope_files'ı dışına yazma.
-- SHARED_FILES listesindeki dosyalar sadece okuma/import bağlamıdır; scope_files içinde değilse değiştirme.
-- Önceki story'lerin fail_reason'larına dikkat — aynı pit'e düşme (aşağıdaki Story Log'a bak).
+- Stories are processed in order. Do not write outside the current story scope_files.
+- SHARED_FILES are read/import context only. Do not modify them unless they are also listed in scope_files.
+- Review previous story fail_reason entries and avoid repeating the same failure pattern.
 
 `;
 

@@ -969,7 +969,7 @@ export function checkStoryDesignCompliance(
       }
     }
     if (!injected) {
-      issues.push("design-tokens.css hiçbir dosyada import/referans edilmemiş ve auto-fix yapılamadı");
+      issues.push("design-tokens.css is not imported or referenced anywhere, and the auto-fix could not apply it");
     }
   }
 
@@ -1000,7 +1000,7 @@ export function checkStoryDesignCompliance(
               fs.writeFileSync(twPath, `/** @type {import('tailwindcss').Config} */\nexport default {\n  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],\n  theme: { extend: {} },\n  plugins: [],\n};\n`);
             }
           } catch (installErr) {
-            issues.push("Tailwind CSS kullanılıyor ama yüklenemedi: " + String(installErr));
+            issues.push("Tailwind CSS directives are present, but Tailwind could not be installed: " + String(installErr));
           }
         }
       }
@@ -1066,28 +1066,28 @@ export function checkStoryDesignCompliance(
   const issueText = issues.join("\n");
   const fixHints: string[] = [];
   if (/Material Symbols|icon fonts|emoji icons/i.test(issueText)) {
-    fixHints.push("Material Symbols/icon font/emoji ikonlarını inline SVG componentleriyle veya kurulu SVG icon library ile değiştir.");
+    fixHints.push("Replace Material Symbols, icon fonts, and emoji icons with inline SVG components or an installed SVG icon library.");
   }
   if (/transition-all|transition\s*:\s*all|blanket transition/i.test(issueText)) {
-    fixHints.push("transition-all veya transition: all kullanma; transition-colors, transition-transform, transition-opacity ya da açık CSS property seç.");
+    fixHints.push("Do not use transition-all or transition: all; use transition-colors, transition-transform, transition-opacity, or explicit CSS properties.");
   }
   if (/banned primary font|font-family/i.test(issueText)) {
-    fixHints.push("Banned primary font'u proje design token'ı veya onaylı ayırt edici font ile değiştir.");
+    fixHints.push("Replace the banned primary font with the project design token font or an approved distinctive font.");
   }
-  if (/design-tokens\.css hiçbir dosyada|design-tokens\.css.*import/i.test(issueText)) {
-    fixHints.push("stitch/design-tokens.css'i gerçek CSS giriş dosyasına doğru relative path ile import et.");
+  if (/design-tokens\.css is not imported|design-tokens\.css.*import/i.test(issueText)) {
+    fixHints.push("Import stitch/design-tokens.css from the real CSS entrypoint with the correct relative path.");
   }
-  if (/Tailwind CSS kullanılıyor ama yüklenemedi/i.test(issueText)) {
-    fixHints.push("Tailwind kullanımını package.json/build konfigürasyonu ile tutarlı hale getir veya Tailwind direktiflerini kaldır.");
+  if (/Tailwind CSS directives are present/i.test(issueText)) {
+    fixHints.push("Make Tailwind usage consistent with package.json/build configuration or remove the Tailwind directives.");
   }
   if (/empty click\/change handler/i.test(issueText)) {
-    fixHints.push("Boş click/change handler'ları gerçek state veya navigation davranışına bağla.");
+    fixHints.push("Wire empty click/change handlers to real state or navigation behavior.");
   }
   if (fixHints.length === 0) {
-    fixHints.push("Listelenen design compliance hatalarını yalnızca story scope içindeki dosyalarda düzelt.");
+    fixHints.push("Fix the listed design compliance issues only inside the story scope files.");
   }
 
-  return `DESIGN UYUMSUZLUK:\n${issues.map(i => "• " + i).join("\n")}\nDÜZELT:\n${fixHints.map(i => "• " + i).join("\n")}`;
+  return `DESIGN MISMATCH:\n${issues.map(i => "- " + i).join("\n")}\nFIX:\n${fixHints.map(i => "- " + i).join("\n")}`;
 }
 
 

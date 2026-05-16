@@ -20,9 +20,9 @@ function validDesignOutput(overrides: Record<string, string> = {}) {
     device_type: "DESKTOP",
     design_system: '{"aesthetic": "minimal", "palette": "dark", "fonts": {"heading": "Space Grotesk", "body": "Inter"}}',
     screen_map: JSON.stringify([
-      { screenId: "abc123", name: "Ana Menü", type: "menu", description: "Ana ekran" },
-      { screenId: "def456", name: "Oyun Ekranı", type: "game", description: "Oyun" },
-      { screenId: "ghi789", name: "Sonuç", type: "result", description: "Sonuç" },
+      { screenId: "abc123", name: "Main Menu", type: "menu", description: "Main screen" },
+      { screenId: "def456", name: "Game Board", type: "game", description: "Game" },
+      { screenId: "ghi789", name: "Results", type: "result", description: "Results" },
     ]),
     ...overrides,
   };
@@ -100,11 +100,11 @@ describe("02-design step module", () => {
     assert.match(source, /if \(isPreclaimCancelledError\(e\)\) return/);
   });
 
-  it("preClaim uses UI_LANGUAGE instead of a hard-coded Turkish Stitch prompt", () => {
+  it("preClaim uses UI_LANGUAGE instead of a hard-coded localized Stitch prompt", () => {
     const source = designPreclaimSource();
     assert.match(source, /const uiLanguage = ctx\.context\["ui_language"\]/);
     assert.match(source, /All visible application text must be in \$\{uiLanguage\}/);
-    assert.doesNotMatch(source, /All visible text must be in Turkish|Turkish language/);
+    assert.doesNotMatch(source, /All visible text must be in a hard-coded language|hard-coded language/);
   });
 
   it("preClaim generates local fallback design assets when Stitch returns no HTML", () => {

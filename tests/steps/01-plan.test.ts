@@ -24,7 +24,7 @@ describe("01-plan step module", () => {
   it("happy path: prompt under budget + validation ok + context populated", async () => {
     const result = await runModule(
       planModule,
-      "Basit not tutma uygulaması",
+      "Simple note-taking application",
       validPlanOutput()
     );
     assert.ok(result.validation.ok, `validation failed: ${result.validation.errors.join("; ")}`);
@@ -39,7 +39,7 @@ describe("01-plan step module", () => {
     const result = await runModule(
       planModule,
       "Test",
-      validPlanOutput({ prd: "Çok kısa PRD." })
+      validPlanOutput({ prd: "Too short PRD." })
     );
     assert.equal(result.validation.ok, false);
     assert.ok(result.validation.errors.some(e => e.includes("PRD must be")));
@@ -67,7 +67,7 @@ describe("01-plan step module", () => {
   });
 
   it("prompt budget holds with typical task (~1KB)", async () => {
-    const typicalTask = "Türkçe kelime tahmin oyunu: 3 zorluk seviyesi (kolay 4 harf, orta 6 harf, zor 8 harf), 6 deneme hakkı, harf feedback'i (doğru yer, yanlış yer, yok), skor takibi. Ekranlar: Ana Menü, Zorluk Seçimi, Oyun Ekranı, Sonuç Ekranı, Ayarlar, Bilgi.";
+    const typicalTask = "English word guessing game: three difficulty levels, six attempts, letter feedback, score tracking, main menu, difficulty selection, game board, result screen, settings, and help.";
     const result = await runModule(
       planModule,
       typicalTask,
@@ -108,11 +108,11 @@ describe("01-plan step module", () => {
     assert.ok(result.validation.errors.some(e => e.includes("DB_REQUIRED")));
   });
 
-  it("auto-plan output is valid, bounded, and derives repo from Proje line", () => {
+  it("auto-plan output is valid, bounded, and derives repo from Project line", () => {
     const output = buildAutoPlanOutput([
-      "Proje: lead-triage-0430",
+      "Project: lead-triage-0430",
       "Platform: web React 18 Vite TypeScript.",
-      "Lead ekleme, pipeline, insights, settings ve profil paneli olan localStorage uygulamasi yap.",
+      "Build a localStorage lead triage app with add lead, pipeline, insights, settings, and profile panel.",
     ].join("\n"));
     const parsed = parsePlanOutput(output);
     planModule.normalize?.(parsed);
@@ -126,11 +126,11 @@ describe("01-plan step module", () => {
     assert.ok(parsed.prd.length >= 2000, `PRD too short: ${parsed.prd.length}`);
     assert.ok(output.length < 7000, `auto-plan output should stay compact, got ${output.length}`);
     assert.match(parsed.prd, /## Overview/);
-    assert.doesNotMatch(parsed.prd, /Arayuz Turkce|Ekranlar|Ayarlar/);
+    assert.doesNotMatch(parsed.prd, /localized metadata leak|screen-name-placeholder|settings-placeholder/);
   });
 
-  it("slugify transliterates Turkish project names", () => {
-    assert.equal(slugify("Çağrı İzleme Ürün Şeması"), "cagri-izleme-urun-semasi");
+  it("slugify normalizes project names", () => {
+    assert.equal(slugify("Call Center Product Schema"), "call-center-product-schema");
   });
 
   it("auto-plan defaults English projects to English UI and English screen metadata", () => {
@@ -147,7 +147,7 @@ describe("01-plan step module", () => {
     assert.equal(parsed.ui_language, "English");
     assert.match(parsed.prd, /User-facing copy language: English/);
     assert.match(parsed.prd, /\| 1 \| Dashboard \| dashboard \|/);
-    assert.doesNotMatch(output, /Arayuz Turkce|Ekran Adi|Hata Durumu|Bos Durum|Ayarlar/);
+    assert.doesNotMatch(output, /localized metadata leak|screen-name-placeholder|error-placeholder|settings-placeholder/);
   });
 
   it("keeps Project inline descriptions out of the repo slug", () => {
@@ -242,9 +242,8 @@ describe("01-plan step module", () => {
     assert.doesNotMatch(parsed.prd, /next piece|tetromino|activePiece|nextPiece/i);
   });
 
-  it("infers UI language without letting English tasks become Turkish by default", () => {
+  it("keeps UI language English by default", () => {
     assert.equal(inferUiLanguage("Project: signal desk\nBuild an English app."), "English");
-    assert.equal(inferUiLanguage("Proje: not panosu\nBasit not tutma uygulaması yap."), "English");
-    assert.equal(inferUiLanguage("Proje: not panosu\nTurkce UI ile basit not tutma uygulamasi yap."), "Turkish");
+    assert.equal(inferUiLanguage("Project: note board\nBuild a simple note-taking app."), "English");
   });
 });

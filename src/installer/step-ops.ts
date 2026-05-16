@@ -63,8 +63,8 @@ const SUPERVISED_STORY_IDS_CONTEXT_KEY = "supervised_story_ids";
 
 export function humanizeProjectDisplayName(input: string): string {
   const cleaned = String(input || "")
-    .replace(/^(?:Project|Proje)\s*:\s*/i, "")
-    .replace(/\s+(?:build|create|make|develop|implement|design|write|add|fix|yap|olustur|oluştur|kur|gelistir|geliştir)\b[\s\S]*$/i, "")
+    .replace(/^Project\s*:\s*/i, "")
+    .replace(/\s+(?:build|create|make|develop|implement|design|write|add|fix)\b[\s\S]*$/i, "")
     .replace(/\s+(?:React|Vite|TypeScript|Tailwind|Next\.?js|Node\.?js)\b[\s\S]*$/i, "")
     .replace(/[.;:,\-\s]+$/g, "")
     .trim();
@@ -119,7 +119,7 @@ export function normalizeMissionControlHostname(input: string, fallbackProjectNa
 export function normalizeMissionControlSummary(input: string, displayName: string): string {
   const raw = String(input || "").replace(/\s+/g, " ").trim();
   const looksLikeRawTask =
-    /^(?:Project|Proje)\s*:/i.test(raw) ||
+    /^Project\s*:/i.test(raw) ||
     /\b(?:Build|Create|Make|Develop|Implement)\s+a\b/i.test(raw) ||
     /\bReact\/Vite\/TypeScript\b/i.test(raw) ||
     /\bRequirements?\s*:/i.test(raw) ||
@@ -1038,16 +1038,13 @@ export async function routeQualityFailureToImplement(
   return true;
 }
 
-// ── Predicted screen file helpers (2026-04-14 SCOPE_BLEED fix) ──
-// Mirrors scripts/stitch-to-jsx.mjs toComponentName() — MUST stay in sync.
-// Planner was hallucinating English paths (src/pages/GameScreen.tsx) while
-// stitch-to-jsx produced Turkish paths (src/screens/OyunEkrani.tsx), causing
-// SCOPE_BLEED loops. This helper lets stories step inject the real future
-// paths before planner generates scope_files.
+// Predicted screen file helpers. Mirrors scripts/stitch-to-jsx.mjs
+// toComponentName(); keep the two implementations in sync so story scope files
+// match the generated screen component paths.
 function toComponentNameForStitch(title: string): string {
   return title
-    .replace(/[ıİ]/g, "i").replace(/[şŞ]/g, "s").replace(/[çÇ]/g, "c")
-    .replace(/[ğĞ]/g, "g").replace(/[üÜ]/g, "u").replace(/[öÖ]/g, "o")
+    .replace(/[\u0131\u0130]/g, "i").replace(/[\u015f\u015e]/g, "s").replace(/[\u00e7\u00c7]/g, "c")
+    .replace(/[\u011f\u011e]/g, "g").replace(/[\u00fc\u00dc]/g, "u").replace(/[\u00f6\u00d6]/g, "o")
     .replace(/[^a-zA-Z0-9\s]/g, "")
     .split(/\s+/).filter(w => w.length > 0)
     .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join("");
@@ -1381,8 +1378,7 @@ export async function peekStep(agentId: string, callerGatewayAgent?: string): Pr
       // (pool-based agents always pass --caller), ONLY inspect this caller's
       // own output file. The previous readdir-everything scan let an assigned
       // developer's stale /tmp/setfarm-output-<other>.txt get auto-completed
-      // into a DIFFERENT run's implement step — e.g. lux polling for yemek
-      // picked up koda's leftover renk-koru output (workflow.log 06:22:07).
+      // into a different run's implement step.
       const tmpFiles = callerGatewayAgent
         ? (fs.existsSync(`/tmp/setfarm-output-${callerGatewayAgent}.txt`) ? [`setfarm-output-${callerGatewayAgent}.txt`] : [])
         : fs.readdirSync('/tmp').filter(f => f.startsWith('setfarm-output-') && f.endsWith('.txt'));
@@ -1664,13 +1660,13 @@ function normalizeDesignScreenName(value: string): string {
   return String(value || "")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[İ]/g, "I")
-    .replace(/[ı]/g, "i")
-    .replace(/[ğĞ]/g, "g")
-    .replace(/[üÜ]/g, "u")
-    .replace(/[şŞ]/g, "s")
-    .replace(/[öÖ]/g, "o")
-    .replace(/[çÇ]/g, "c")
+    .replace(/[\u0130]/g, "I")
+    .replace(/[\u0131]/g, "i")
+    .replace(/[\u011f\u011e]/g, "g")
+    .replace(/[\u00fc\u00dc]/g, "u")
+    .replace(/[\u015f\u015e]/g, "s")
+    .replace(/[\u00f6\u00d6]/g, "o")
+    .replace(/[\u00e7\u00c7]/g, "c")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .replace(/\s+/g, " ")
@@ -2790,7 +2786,7 @@ async function claimSingleStep(
 
   // Step module takeover: if a module is registered for this step, its
   // buildPrompt() replaces the workflow.yml input_template output. This is
-  // how the module's prompt.md + rules.md actually reach the agent (Faz 2
+  // how the module's prompt.md + rules.md actually reach the agent (phase 2
   // of the module pilot — without this, AGENTS.md stays the source of truth
   // and the module's prompt sits unused).
   try {
@@ -4853,12 +4849,9 @@ ${screenDescs}
         implementSupervisorWorkdir = wd || "";
         implementSupervisorBaseRef = baseBr || "";
 
-        // 2026-04-22: Setup story (story_index === 0) bypass KALDIRILDI.
-        // Eski davranis: setup story scope check'e tabi degildi -> agent tam app yaziyordu
-        // -> sonraki story'ler "dosya zaten yazilmis" SCOPE_FILE_MISSING aliyordu.
-        // Artik tum story'ler scope check'e tabi. Config dosyalari (package.json, vite.config,
-        // tailwind.config, postcss.config, tsconfig.json vb.) zaten guards.ts SCOPE_IGNORE
-        // regex'inde ignore ediliyor, setup story rahatlikla calisir.
+        // 2026-04-22: setup stories also go through scope checks. Broad
+        // configuration files are already covered by SCOPE_IGNORE, so setup
+        // can still initialize the project without bypassing ownership checks.
         if (wd && baseBr && fs.existsSync(wd)) {
           // Scope files existence gate (declared files must exist in worktree)
           if (step.retry_count < step.max_retries) {
@@ -5018,7 +5011,7 @@ ${screenDescs}
           // already declared in Stitch/DESIGN_DOM. Catch these before verify
           // consumes story retries with review comments about the same contract.
           const designDomResult = await checkDesignDomImplementationGate(
-            storyRow.story_id, step.current_story_id, storyRow.title, wd, context["repo"] || "",
+            step.run_id, storyRow.story_id, step.current_story_id, storyRow.title, wd, context["repo"] || "",
           );
           if (!designDomResult.passed && designDomResult.category) {
             context["previous_failure"] = designDomResult.reason!;

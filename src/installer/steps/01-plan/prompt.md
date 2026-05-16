@@ -3,7 +3,7 @@ PLAN step — {{TASK}}
 Create the product PRD and choose the technical defaults for this run. The
 agent-facing contract is English. User-facing application copy must follow
 UI_LANGUAGE. Default UI_LANGUAGE to English unless the user explicitly requests
-Turkish UI.
+another visible product language.
 
 Do not read `rules.md`; the rules are embedded below.
 
@@ -14,7 +14,7 @@ Do not read `rules.md`; the rules are embedded below.
 ## Work
 
 1. Read the task and identify the product concept.
-2. Choose UI_LANGUAGE as English or Turkish.
+2. Choose UI_LANGUAGE as English unless the task explicitly requests another visible product language.
 3. Write a detailed PRD in English, including the UI_LANGUAGE decision.
 4. Choose TECH_STACK and DB_REQUIRED.
 5. Choose REPO path and BRANCH name.
@@ -27,7 +27,7 @@ STATUS: done
 REPO: $HOME/projects/<slug>
 BRANCH: <branch-name>
 TECH_STACK: <vite-react|nextjs|vanilla-ts|node-express|react-native>
-UI_LANGUAGE: <English|Turkish>
+UI_LANGUAGE: <English or requested product language>
 PRD:
 <PRD body>
 PRD_SCREEN_COUNT: <number>

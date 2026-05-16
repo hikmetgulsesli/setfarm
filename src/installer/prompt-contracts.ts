@@ -12,7 +12,7 @@ const DESIGN_FIRST_MATERIAL_SYMBOLS_BLOCK =
   /- FONTS: copy every Google Fonts `<link>` from the Stitch HTML into\n  `index\.html <head>`\.\n  1\. Copy every Stitch font link exactly\.\n  2\. If Stitch uses Material Symbols, include:\n     <link href="https:\/\/fonts\.googleapis\.com\/css2\?family=Material\+Symbols\+Outlined:wght,FILL@100\.\.700,0\.\.1&display=swap" rel="stylesheet"\/>\n  3\. Do not skip font links from the Stitch HTML head\.\n  BANNED font-family values: system-ui, Roboto, Arial, Inter, Helvetica\./g;
 
 const STALE_GENERIC_DESIGN_FIX =
-  /DÜZELT:\s*Kritik UI sözleşmesi hatalarını düzelt;\s*stitch\/design-tokens\.css'i import et,\s*hardcoded renkleri var\(--\*\) ile değiştir\./g;
+  /FIX:[\s\S]{0,240}stitch\/design-tokens\.css[\s\S]{0,240}hardcoded[\s\S]{0,80}var\(--\*\)/g;
 
 const STALE_HREF_HASH_LINK_BLOCK =
   /- LINKS: NEVER use href="#" or href="javascript:void\(0\)" — these are dead links\.\n\s+Every <Link> and <a> MUST point to a real project-specific route from PRD\/Stitch\/DESIGN_DOM\.\n\s+If the destination page doesn't exist yet, create a minimal placeholder page with the route\.\n\s+If a sidebar\/navbar has navigation items, EVERY item MUST have a working href\.\n\s+Before commit: grep -rn 'href="#"' src\/ — if ANY match found, you MUST fix them all\./g;
@@ -285,11 +285,11 @@ export function sanitizeAgentPromptContracts(input: string): string {
   output = output.replace(
     STALE_GENERIC_DESIGN_FIX,
     [
-      "DÜZELT:",
-      "• Fix only the exact UI_CONTRACT lines above.",
-      "• For icon-font issues, use inline SVG components or an installed SVG icon library.",
-      "• For transition-all issues, use scoped transition properties.",
-      "• Do not add unrelated design-token/import work unless the error explicitly reports it.",
+      "FIX:",
+      "- Fix only the exact UI_CONTRACT lines above.",
+      "- For icon-font issues, use inline SVG components or an installed SVG icon library.",
+      "- For transition-all issues, use scoped transition properties.",
+      "- Do not add unrelated design-token/import work unless the error explicitly reports it.",
     ].join("\n"),
   );
 

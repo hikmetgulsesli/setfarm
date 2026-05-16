@@ -378,9 +378,9 @@ select:focus{outline:none;border-color:#8ECFC0}
 <div id="page-rules" style="display:none">
   <div class="rules-layout">
     <div class="rules-toolbar">
-      <input type="text" id="rules-search" placeholder="Kural ara..." oninput="filterRules()" style="min-width:180px">
+      <input type="text" id="rules-search" placeholder="Search rules..." oninput="filterRules()" style="min-width:180px">
       <select id="rules-cat-filter" onchange="filterRules()">
-        <option value="">Tum Kategoriler</option>
+        <option value="">All Categories</option>
         <option value="design">Design</option>
         <option value="implementation">Implementation</option>
         <option value="verification">Verification</option>
@@ -390,7 +390,7 @@ select:focus{outline:none;border-color:#8ECFC0}
         <option value="general">General</option>
       </select>
       <select id="rules-type-filter" onchange="filterRules()">
-        <option value="">Tum Proje Tipleri</option>
+        <option value="">All Project Types</option>
         <option value="react">React</option>
         <option value="nextjs">Next.js</option>
         <option value="mobile">Mobile</option>
@@ -1265,7 +1265,7 @@ function renderRulesList(rules) {
   var stats = document.getElementById('rules-stats');
   var systemCount = rules.filter(function(r) { return r.readonly; }).length;
   var customCount = rules.filter(function(r) { return !r.readonly; }).length;
-  stats.textContent = rules.length + ' kural (' + systemCount + ' system, ' + customCount + ' custom)';
+  stats.textContent = rules.length + ' rules (' + systemCount + ' system, ' + customCount + ' custom)';
 
   list.textContent = '';
   rules.forEach(function(r) {
@@ -1377,7 +1377,7 @@ function openRuleModal(ruleId) {
     ['design','Design'],['implementation','Implementation'],['verification','Verification'],
     ['setup','Setup'],['lint','Lint'],['pipeline','Pipeline'],['general','General']
   ]);
-  addField('Proje Tipi', 'select', 'rule-project-type', rule ? rule.project_type : 'general', [
+  addField('Project Type', 'select', 'rule-project-type', rule ? rule.project_type : 'general', [
     ['general','Genel'],['react','React'],['nextjs','Next.js'],['mobile','Mobile']
   ]);
   addField('Onem', 'select', 'rule-severity', rule ? rule.severity : 'mandatory', [
@@ -1426,7 +1426,7 @@ async function saveRule(id, data) {
 }
 
 async function deleteRule(id) {
-  if (!confirm('Bu kurali silmek istediginize emin misiniz?')) return;
+  if (!confirm('Are you sure you want to delete this rule?')) return;
   await fetch(API + '/api/rules/' + id, { method: 'DELETE' });
   loadRulesData();
 }

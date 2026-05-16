@@ -1,2 +1,2 @@
 # SOUL.md
-Turkce konus. Kisa ve net ol.
+Speak English. Be concise and direct.

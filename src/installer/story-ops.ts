@@ -112,9 +112,8 @@ export function formatCompletedStories(stories: Story[]): string {
 }
 
 /**
- * Zengin completed/planned stories ozeti — her story icin scope_files listesi dahil.
- * Agent'a "US-001 zaten X dosyalarini yazdi, sen yazma" bilgisini verir.
- * Scope bleed paradoksu icin kritik.
+ * Completed/planned story roadmap with scope_files for each story.
+ * Tells agents which files previous stories already own so they avoid scope bleed.
  */
 export async function formatStoryRoadmap(runId: string, currentStoryId: string): Promise<string> {
   const rows = await pgQuery<{

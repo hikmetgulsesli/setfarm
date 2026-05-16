@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * design-dom-extract.mjs — Stitch HTML'den DOM yapısı extract eder
- * Kullanım: node design-dom-extract.mjs <stitch-dir> [output-path]
- * Çıktı: DESIGN_DOM.json
+ * design-dom-extract.mjs - extracts a DOM contract from Stitch HTML.
+ * Usage: node design-dom-extract.mjs <stitch-dir> [output-path]
+ * Output: DESIGN_DOM.json
  */
 import { readFileSync, writeFileSync, readdirSync, existsSync } from 'fs';
 import path from 'path';
@@ -88,11 +88,11 @@ function dedupeControls(items) {
 
 function normalizeLabel(label) {
   return String(label || '')
-    .replace(/[İ]/g, 'I').replace(/[ı]/g, 'i')
+    .replace(/[\u0130]/g, 'I').replace(/[\u0131]/g, 'i')
     .toLowerCase()
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .replace(/[ıİ]/g, 'i').replace(/[şŞ]/g, 's').replace(/[çÇ]/g, 'c')
-    .replace(/[ğĞ]/g, 'g').replace(/[üÜ]/g, 'u').replace(/[öÖ]/g, 'o')
+    .replace(/[\u0131\u0130]/g, 'i').replace(/[\u015f\u015e]/g, 's').replace(/[\u00e7\u00c7]/g, 'c')
+    .replace(/[\u011f\u011e]/g, 'g').replace(/[\u00fc\u00dc]/g, 'u').replace(/[\u00f6\u00d6]/g, 'o')
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
 }
@@ -151,12 +151,12 @@ function extractElements(html, screenId, htmlPath) {
   result.fonts = [...fontSet];
 
   const routeInference = {
-    settings: "/settings", ayarlar: "/settings", tune: "/settings",
-    home: "/", "ana sayfa": "/", profile: "/profile", person: "/profile", profil: "/profile",
-    notifications: "/notifications", bildirimler: "/notifications",
-    search: "/search", arama: "/search", ara: "/search",
-    help: "/help", yardim: "/help", info: "/about", history: "/history",
-    gecmis: "/history", kayitlar: "/history", favorite: "/favorites",
+    settings: "/settings", options: "/settings", tune: "/settings",
+    home: "/", dashboard: "/", profile: "/profile", person: "/profile", account: "/profile",
+    notifications: "/notifications",
+    search: "/search", filter: "/search",
+    help: "/help", info: "/about", history: "/history",
+    logs: "/history", favorite: "/favorites",
     bookmark: "/bookmarks", logout: "/logout", login: "/login",
   };
 
@@ -357,16 +357,16 @@ function extractElements(html, screenId, htmlPath) {
 
 function predictAction(label, icon) {
   const l = normalizeLabel(`${label || ''} ${icon || ''}`);
-  if (l.includes('kaydet') || l.includes('save') || l.includes('gonder') || l.includes('submit')) return 'form-submit';
-  if (l.includes('sil') || l.includes('delete') || l.includes('kaldir')) return 'destructive';
-  if (l.includes('iptal') || l.includes('cancel') || l.includes('kapat') || l.includes('close')) return 'dismiss';
-  if (l.includes('yeniden dene') || l.includes('tekrar dene') || l.includes('retry')) return 'retry';
-  if (l.includes('artir') || l.includes('increase') || l.includes('increment') || l.includes('plus')) return 'increment';
-  if (l.includes('azalt') || l.includes('decrease') || l.includes('decrement') || l.includes('minus') || l.includes('remove')) return 'decrement';
-  if (l.includes('sifirla') || l.includes('reset') || l.includes('restart')) return 'reset';
-  if (l.includes('ekle') || l.includes('add') || l.includes('olustur') || l.includes('create') || l.includes('yeni')) return 'create';
-  if (l.includes('duzenle') || l.includes('edit') || l.includes('guncelle')) return 'edit';
-  if (l.includes('ara') || l.includes('search') || l.includes('filtre')) return 'search';
+  if (l.includes('save') || l.includes('send') || l.includes('submit')) return 'form-submit';
+  if (l.includes('delete') || l.includes('remove') || l.includes('trash')) return 'destructive';
+  if (l.includes('cancel') || l.includes('dismiss') || l.includes('close')) return 'dismiss';
+  if (l.includes('retry') || l.includes('try again')) return 'retry';
+  if (l.includes('increase') || l.includes('increment') || l.includes('plus')) return 'increment';
+  if (l.includes('decrease') || l.includes('decrement') || l.includes('minus') || l.includes('remove')) return 'decrement';
+  if (l.includes('reset') || l.includes('restart')) return 'reset';
+  if (l.includes('add') || l.includes('create') || l.includes('new')) return 'create';
+  if (l.includes('edit') || l.includes('update')) return 'edit';
+  if (l.includes('search') || l.includes('filter')) return 'search';
   return 'click-action';
 }
 

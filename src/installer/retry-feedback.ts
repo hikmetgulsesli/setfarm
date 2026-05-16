@@ -18,9 +18,9 @@ function formatDesignMismatch(errors: string): string {
   const lines = errors.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
   const fixes = buildDesignMismatchSuggestion(errors)
     .split("; ")
-    .map(suggestion => `• ${suggestion}`)
+    .map(suggestion => `- ${suggestion}`)
     .join("\n");
-  return `DESIGN UYUMSUZLUK:\n${lines.map(line => `• ${line}`).join("\n")}\nDÜZELT:\n${fixes}`;
+  return `DESIGN MISMATCH:\n${lines.map(line => `- ${line}`).join("\n")}\nFIX:\n${fixes}`;
 }
 
 function readScopeFiles(repoPath: string): Set<string> {

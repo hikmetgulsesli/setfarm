@@ -26,14 +26,14 @@ describe("08-security-gate step module", () => {
       runId: "r1",
       task: "t",
       context: {
-        repo: "$HOME/projects/sayac-12345",
-        branch: "feature-sayac",
+        repo: "$HOME/projects/counter-12345",
+        branch: "feature-counter",
         final_pr: "https://github.com/u/r/pull/7",
         stories_json: '[{"id":"US-001"}]',
       },
     });
-    assert.ok(prompt.includes("$HOME/projects/sayac-12345"));
-    assert.ok(prompt.includes("feature-sayac"));
+    assert.ok(prompt.includes("$HOME/projects/counter-12345"));
+    assert.ok(prompt.includes("feature-counter"));
     assert.ok(prompt.includes("pull/7"));
     assert.ok(prompt.includes("OWASP"));
     assert.ok(prompt.includes("Rules"));

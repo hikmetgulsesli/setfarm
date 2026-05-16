@@ -52,8 +52,8 @@ function compactText(text: string, fallback: string): string {
 
 function humanizeProjectLabel(input: string, fallback: string): string {
   const cleaned = String(input || "")
-    .replace(/^(?:Proje|Project)\s*:\s*/i, "")
-    .replace(/\s+(?:Build|Create|Make|Implement|Design|Write|Add|Fix|Yap|Olustur|Oluştur|Kur|Gelistir|Geliştir)\b[\s\S]*$/i, "")
+    .replace(/^(?:Project)\s*:\s*/i, "")
+    .replace(/\s+(?:Build|Create|Make|Implement|Design|Write|Add|Fix|Develop|Scaffold)\b[\s\S]*$/i, "")
     .replace(/\s+(?:React|Vite|TypeScript|Tailwind|Next\.?js|Node\.?js)\b[\s\S]*$/i, "")
     .replace(/[.;:,\-\s]+$/g, "")
     .trim();
@@ -81,10 +81,10 @@ function humanizeProjectLabel(input: string, fallback: string): string {
 
 function extractProjectLabel(text: string, fallback: string): string {
   const raw = String(text || "");
-  const projectLine = raw.match(/(?:^|\n)\s*(?:Proje|Project)\s*:\s*([^\n]+)/i)?.[1]?.trim();
+  const projectLine = raw.match(/(?:^|\n)\s*(?:Project)\s*:\s*([^\n]+)/i)?.[1]?.trim();
   const candidate = projectLine || raw.split(/\n+/).map((line) => line.trim()).find(Boolean) || "";
   const cleaned = candidate
-    .replace(/^(?:Proje|Project)\s*:\s*/i, "")
+    .replace(/^(?:Project)\s*:\s*/i, "")
     .replace(/\s+(?:Build|Create|Make|Implement|Platform|React|Vite|TypeScript)\b[\s\S]*$/i, "")
     .replace(/[.;:,\-\s]+$/g, "")
     .trim();
@@ -110,7 +110,7 @@ function inferProjectKind(params: {
     screenText,
   ].join(" ").toLowerCase();
 
-  if (/\b(game|oyun|puzzle|arcade|score|level|pause|resume|restart|keyboard controls?|playfield|game board)\b/.test(text)) {
+  if (/\b(game|puzzle|arcade|score|level|pause|resume|restart|keyboard controls?|playfield|game board)\b/.test(text)) {
     return "game";
   }
   return "product";
@@ -203,14 +203,14 @@ export function buildSingleStoryScopeFiles(screenFiles: string[]): string[] {
 function screenBucket(screen: PredictedScreen, projectKind: ProjectKind): StoryGroup["key"] {
   const text = `${screen.screenId} ${screen.title} ${screen.filePath}`.toLowerCase();
   if (projectKind === "game") {
-    if (/ayar|setting|option|control|difficulty|audio|preferences?|tercih/.test(text)) return "settings";
+    if (/setting|option|control|difficulty|audio|preferences?/.test(text)) return "settings";
     if (/score|level|line|stat|status|preview|next|queue|hud|metric/.test(text)) return "metrics";
-    if (/hata|error|bos|empty|fallback|support|yardim|help|gameover|game over|result|pause|paused/.test(text)) return "support";
+    if (/error|empty|fallback|support|help|gameover|game over|result|pause|paused/.test(text)) return "support";
     return "primary";
   }
-  if (/ayar|setting|profil|profile|account|hesap|preference|tercih|user|kullanici/.test(text)) return "settings";
-  if (/insight|istatistik|stat|metric|dashboard|rapor|report|pipeline|kanban|board|analiz/.test(text)) return "metrics";
-  if (/hata|error|storage|bos|empty|fallback|support|yardim|help/.test(text)) return "support";
+  if (/setting|profile|account|preference|user/.test(text)) return "settings";
+  if (/insight|stat|metric|dashboard|report|pipeline|kanban|board|analysis/.test(text)) return "metrics";
+  if (/error|storage|empty|fallback|support|help/.test(text)) return "support";
   return "primary";
 }
 

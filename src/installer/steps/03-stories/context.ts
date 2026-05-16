@@ -11,10 +11,10 @@ const FIRST_ATTEMPT_REMINDER =
 
 export function extractExplicitMaxStories(text: string): number | null {
   const patterns = [
-    /\ben\s+(?:fazla|çok)\s+(\d+)\s+(?:adet\s+)?(?:k[iı]sa\s+)?(?:user\s+)?stor(?:y|ies)\b/i,
-    /\b(?:maksimum|maks|azami)\s+(\d+)\s+(?:adet\s+)?(?:k[iı]sa\s+)?(?:user\s+)?stor(?:y|ies)\b/i,
     /\bmax(?:imum)?\s+(\d+)\s+(?:user\s+)?stor(?:y|ies)\b/i,
-    /\b(\d+)\s+(?:adet\s+)?(?:user\s+)?stor(?:y|ies)\s+(?:max|maximum|maksimum|maks|azami)\b/i,
+    /\bup\s+to\s+(\d+)\s+(?:user\s+)?stor(?:y|ies)\b/i,
+    /\bno\s+more\s+than\s+(\d+)\s+(?:user\s+)?stor(?:y|ies)\b/i,
+    /\b(\d+)\s+(?:user\s+)?stor(?:y|ies)\s+(?:max|maximum)\b/i,
   ];
   for (const pattern of patterns) {
     const m = text.match(pattern);
@@ -25,12 +25,12 @@ export function extractExplicitMaxStories(text: string): number | null {
 }
 
 // Mirror of scripts/stitch-to-jsx.mjs toComponentName. Used to predict the
-// final screen file paths (src/screens/<TurkishName>.tsx) before stitch-to-jsx
-// runs in setup-build, so the stories planner uses correct paths in scope_files.
+// final screen file paths before stitch-to-jsx runs in setup-build, so the
+// stories planner uses correct paths in scope_files.
 function toComponentNameForStitch(title: string): string {
   return title
-    .replace(/[ıİ]/g, "i").replace(/[şŞ]/g, "s").replace(/[çÇ]/g, "c")
-    .replace(/[ğĞ]/g, "g").replace(/[üÜ]/g, "u").replace(/[öÖ]/g, "o")
+    .replace(/[\u0131\u0130]/g, "i").replace(/[\u015f\u015e]/g, "s").replace(/[\u00e7\u00c7]/g, "c")
+    .replace(/[\u011f\u011e]/g, "g").replace(/[\u00fc\u00dc]/g, "u").replace(/[\u00f6\u00d6]/g, "o")
     .replace(/[^a-zA-Z0-9\s]/g, "")
     .split(/\s+/).filter(w => w.length > 0)
     .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join("");
@@ -78,11 +78,11 @@ export interface UiBehaviorRequirement {
 
 export function normalizeUiBehaviorText(text: string): string {
   return String(text || "")
-    .replace(/[İ]/g, "I").replace(/[ı]/g, "i")
+    .replace(/[\u0130]/g, "I").replace(/[\u0131]/g, "i")
     .toLowerCase()
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-    .replace(/[ıİ]/g, "i").replace(/[şŞ]/g, "s").replace(/[çÇ]/g, "c")
-    .replace(/[ğĞ]/g, "g").replace(/[üÜ]/g, "u").replace(/[öÖ]/g, "o")
+    .replace(/[\u0131\u0130]/g, "i").replace(/[\u015f\u015e]/g, "s").replace(/[\u00e7\u00c7]/g, "c")
+    .replace(/[\u011f\u011e]/g, "g").replace(/[\u00fc\u00dc]/g, "u").replace(/[\u00f6\u00d6]/g, "o")
     .replace(/[^a-z0-9/]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();

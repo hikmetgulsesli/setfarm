@@ -1,71 +1,68 @@
-# Lessons Learned — Feature-Dev Pipeline
+# Lessons Learned - Feature-Dev Pipeline
 
-Bu dosya geçmiş pipeline hatalarından çıkarılan derslerdir. Tüm agent'lar bu kuralları takip etmelidir.
+This file records durable pipeline lessons. All agent-facing guidance in this repository must stay in English.
 
-## Son Günceleme: 2026-02-18
+## Last Updated: 2026-02-18
 
----
+## 1. Implement Stories For Real
 
-## 1. Story'leri Gerçekten Implement Et
-**Sorun:** AgentViz v2 Run #4'te agent'lar story'leri "done" olarak işaretledi ama gerçek kodu yazmadı. 16 story'den 13'ü "done" idi ama repo'da sadece scaffolding vardı — componentler, hook'lar, server kodu yoktu.
+Problem: Some historical runs marked stories as done while only scaffolding existed.
 
-**Kural:** Her story bittiğinde:
-- Oluşturulan dosyaları listele
-- `npm run build` ve `npm test` geçtiğini doğrula
-- Sadece "STATUS: done" yazma — gerçekten çalışan kod ürettiğinden emin ol
-- Component story ise: component dosyası + CSS + test dosyası olmalı
+Rule:
 
----
+- List the files created or changed.
+- Verify `npm run build` and relevant tests.
+- Do not report `STATUS: done` unless real working source behavior exists.
+- Component stories should include source, styling when needed, and focused tests when risk warrants it.
 
-## 2. SSL Sertifika Sorunu
-**Sorun:** US-013 (Nginx reverse proxy) story'sinde agent `certbot` ile Let's Encrypt sertifika almaya çalıştı. Ancak:
-- certbot kurulu değildi
-- Cloudflare Access ACME challenge'ı engelledi
-- Agent 5 kez timeout yedi, aynı döngüye girdi
+## 2. SSL Certificate Handling
 
-**Kural:** Bu sunucuda (moltclaw):
-- Tüm domain'ler Cloudflare proxy arkasında
-- Let's Encrypt KULLANMA
-- Self-signed origin cert kullan: `/etc/nginx/ssl/origin.crt` ve `/etc/nginx/ssl/origin.key`
-- Cloudflare "Full" SSL mode'da, origin cert yeterli
+Problem: Agents tried to use certbot even though Cloudflare Access blocked ACME challenges.
 
----
+Rule:
 
-## 3. sudo Gerektiren İşlemler
-**Sorun:** Agent'lar sudo gerektiren komutları çalıştıramıyor, timeout'a giriyor.
+- Do not use Let's Encrypt automation on this server path.
+- Use the configured origin certificate when Nginx TLS is required.
+- Cloudflare Full SSL mode is expected for proxied domains.
 
-**Kural:**
-- `sudo` gerektiren bir adım varsa, story output'unda bunu belirt
-- Alternatif yol ara (user-level service, user dizinine yazma vs.)
-- Çözülemiyorsa story'yi "blocked: sudo required" olarak işaretle, sonsuz döngüye girme
+## 3. Sudo Requirements
 
----
+Problem: Agents cannot reliably complete sudo prompts and often time out.
+
+Rule:
+
+- If a step requires sudo, report the requirement explicitly.
+- Prefer user-level services or user-writable paths.
+- If there is no safe alternative, mark the item blocked instead of looping.
 
 ## 4. Stuck Recovery
-**Sorun:** Step'ler stuck olunca sadece retry ediliyordu, aynı hataya tekrar düşüyordu.
 
-**Çözüm:** Mission Control'de Smart Stuck Recovery v2 devrede:
-- Stuck step'in log'u analiz edilir
-- Bilinen hata pattern'leri tespit edilir (SSL, permission, rate limit, network, dependency, missing tool)
-- Fixable hatalar otomatik düzeltilir
-- 3+ retry'den sonra story otomatik skip edilir
+Problem: Blind retrying repeats the same failure.
 
----
+Rule:
 
-## 5. Pipeline Pratik Kurallar
-- `npm install` başarısız olursa → dependency_error, tekrar dene
-- Rate limit (429) alırsan → story'yi skip et, sonrakine geç
-- Network hatası varsa → kısa süre bekle, tekrar dene
-- Build başarısız olursa → hata mesajını oku, düzelt, tekrar dene
-- Test başarısız olursa → testi geç, ileride fixle
+- Analyze the failing output first.
+- Detect known patterns: SSL, permission, rate limit, network, dependency, missing tool.
+- Apply deterministic fixes when available.
+- Escalate after repeated failure instead of repeating the same action.
 
----
+## 5. Practical Pipeline Rules
 
-## 6. Sunucu Bilgileri
-- **OS:** Ubuntu (moltclaw)
-- **User:** setrox
-- **Projeler:** ~/.openclaw/ altında
-- **Nginx:** Self-signed cert /etc/nginx/ssl/origin.{crt,key}
-- **Cloudflare:** Tüm *.setrox.com.tr domain'leri CF proxy arkasında
-- **Node:** Sistem node'u kullan
-- **certbot:** Kurulu ama Cloudflare Access yüzünden çalışmıyor, KULLANMA
+- Dependency installation failure: classify and retry only when actionable.
+- Rate limit: wait or switch provider when policy allows.
+- Network failure: short backoff, then retry.
+- Build failure: read the error, fix source, rerun.
+- Test failure: fix source or test expectation when owned by the story.
+
+## 6. Server Notes
+
+- OS: Ubuntu on moltclaw.
+- User: setrox.
+- Nginx origin certificate path: `/etc/nginx/ssl/origin.{crt,key}`.
+- Cloudflare proxies `*.setrox.com.tr`.
+- Use system Node unless a project explicitly pins another runtime.
+- Important paths:
+  - `~/.openclaw/`
+  - `~/mission-control/projects.json`
+  - `/etc/cloudflared/config.yml`
+  - `/etc/systemd/system/*.service`

@@ -1,34 +1,26 @@
-# 04-setup-repo — Setup Repo Step Modülü
+# 04-setup-repo - Setup Repo Step Module
 
-Plan+Design+Stories sonrası. Git repo hazırlar, scaffold yapar, DB provision eder, design contract'larını yazar.
+Runs after plan, design, and stories. It prepares the git repository, scaffold, database provisioning, and design contracts.
 
-## Input (context)
+## Input
 
-- `repo`, `branch`, `tech_stack`, `db_required` — plan'dan
-- `screen_map` — design'dan (contract building için)
-- stitch/* — design preClaim'den
+- `repo`, `branch`, `tech_stack`, `db_required`
+- `screen_map`
+- `stitch/*`
 
-## Side Effects (preClaim — heavy)
+## Preclaim Side Effects
 
-1. `setup-repo.sh` çağırır (git init + branch + scaffold by tech_stack)
-2. Missing BRANCH'ı main'den oluşturur
-3. `processSetupCompletion` — DB_REQUIRED=postgres ise DB provision
-4. `processSetupDesignContracts` — stitch HTML'lerinden table/route/component contract'ları üretir
-5. updated_at refresh
+1. Run `setup-repo.sh`.
+2. Create a missing branch from main.
+3. Provision the database when required.
+4. Build table, route, and component contracts from Stitch HTML.
+5. Refresh timestamps.
 
-## Output (parsed)
+## Parsed Output
 
-- STATUS: done
-- EXISTING_CODE: false|true
-
-## Side Effects (onComplete)
-
-- context'e existing_code stamp
+- `STATUS: done`
+- `EXISTING_CODE`
 
 ## Prompt Budget
 
-`maxPromptSize: 6144` (6 KB) — kısa iş.
-
-## Files
-
-README + rules + prompt + context + guards + preclaim + module
+`maxPromptSize: 6144` bytes.

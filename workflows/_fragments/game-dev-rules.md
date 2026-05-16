@@ -1,6 +1,6 @@
 CANVAS / GAME PROJECT RULES (MANDATORY for any project with <canvas> or game mechanics):
 
-Detect: If TASK or PRD contains "game", "oyun", "canvas", "endless runner", "platformer",
+Detect: If TASK or PRD contains "game", "canvas", "endless runner", "platformer",
 "arcade", "puzzle game", "shooter", or similar → apply ALL rules below.
 
 1. SINGLE STATE MACHINE — use ONE state tracking mechanism:

@@ -405,8 +405,8 @@ export async function runMergeQueue(
       // Get task name for PR title
       const runRow = await pgGet<{ task: string }>("SELECT task FROM runs WHERE id = $1", [runId]);
       const taskLines = (runRow?.task || "").split("\n");
-      const projectLine = taskLines.find(l => l.startsWith("Proje:")) || taskLines[0] || "Feature";
-      const projectName = projectLine.replace(/^Proje:\s*/, "").trim();
+      const projectLine = taskLines.find(l => l.startsWith("Project:")) || taskLines[0] || "Feature";
+      const projectName = projectLine.replace(/^Project:\s*/, "").trim();
 
       const prBody = [
         "## Summary",

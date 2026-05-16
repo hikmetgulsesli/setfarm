@@ -303,7 +303,7 @@ describe("spawner prompt bootstrap", () => {
         "src/screens/MainMenu.tsx",
       ]);
       assert.match((summary.screenUsageContract as any).summary, /Use this compact contract before designContracts/);
-      assert.match((summary.screenUsageContract as any).fatalSourceReadRule, /killed and retried/);
+      assert.match((summary.screenUsageContract as any).sourceReadRule, /supervisor signals/);
       assert.equal((summary.screenUsageContract as any).importFrom, "src/screens");
       assert.deepEqual(
         (summary.screenUsageContract as any).components.map((c: any) => [c.componentName, c.file, c.sourceRead]),
@@ -405,19 +405,19 @@ describe("spawner prompt bootstrap", () => {
           "CURRENT STORY: Story US-002: Main Menu and Game Board",
           "",
           "## Previous Failure / Retry Feedback",
-          "DESIGN_DOM_IMPLEMENTATION_MISMATCH: Story US-002 reported STATUS: done but scoped screen code does not satisfy DESIGN_DOM controls.",
-          "- src/screens/MainMenu.tsx:58 DESIGN_DOM button \"Start New Game\" is missing expected icon \"sports_esports\"",
+          "SUPERVISOR_BLOCKERS_OPEN: Story US-002 has deterministic supervisor blockers.",
           "- src/screens/GameBoard.tsx: missing DESIGN_DOM button \"arrow_drop_up\" on Game Board",
+          "- src/screens/MainMenu.tsx: static button \"Start New Game\" needs a real handler or explicit disabled state",
           "",
           "## Current Story",
         ].join("\n"),
       });
 
-      assert.equal(summary.failureCategory, "DESIGN_DOM_IMPLEMENTATION_MISMATCH");
+      assert.equal(summary.failureCategory, "SUPERVISOR_BLOCKERS_OPEN");
       assert.equal((summary.retryFeedback as any).mode, "fix");
       assert.equal((summary.retryDiscipline as any).mode, "semantic-fix");
-      assert.match(String((summary.retryDiscipline as any).instruction), /DESIGN_DOM controls\/icons\/labels\/action IDs/);
-      assert.match(String((summary.retryDiscipline as any).instruction), /Lucide aliases/);
+      assert.match(String((summary.retryDiscipline as any).instruction), /Supervisor checklist discipline/);
+      assert.match(String((summary.retryDiscipline as any).instruction), /Missing controls, dead links, and static active controls/);
       assert.doesNotMatch(String((summary.retryDiscipline as any).instruction), /first edit/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

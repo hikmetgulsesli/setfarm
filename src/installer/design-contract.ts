@@ -362,7 +362,7 @@ export async function enrichStoriesWithDesignContract(
   logger.info(`[design-contract] Enriched ${stories.length} stories with design criteria`, { runId });
 }
 
-// --- Design compliance validation (Faz 3) ---
+// --- Design compliance validation (phase 3) ---
 
 export function validateDesignCompliance(repoPath: string): string[] {
   const issues: string[] = [];

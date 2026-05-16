@@ -18,10 +18,10 @@ describe("retry feedback sanitization", () => {
       `);
 
       const feedback = [
-        "DESIGN UYUMSUZLUK:",
+        "DESIGN MISMATCH:",
         "src/screens/GameBoard.tsx:2 — UI_CONTRACT: Material Symbols/icon fonts are not allowed; replace with inline SVG components.",
-        "DÜZELT:",
-        "• Material Symbols/icon font/emoji ikonlarını inline SVG componentleriyle veya kurulu SVG icon library ile değiştir.",
+        "FIX:",
+        "• Replace Material Symbols/icon font/emoji icons with inline SVG components or an installed SVG icon library.",
       ].join("\n");
 
       assert.equal(sanitizeRetryFeedbackForCurrentSource(feedback, { repoPath: repo }), "");
@@ -41,16 +41,16 @@ describe("retry feedback sanitization", () => {
       `);
 
       const feedback = [
-        "DESIGN UYUMSUZLUK:",
+        "DESIGN MISMATCH:",
         "src/screens/GameBoard.tsx:88 — UI_CONTRACT: Material Symbols/icon fonts are not allowed.",
-        "DÜZELT: Kritik UI sözleşmesi hatalarını düzelt; stitch/design-tokens.css'i import et, hardcoded renkleri var(--*) ile değiştir.",
+        "FIX: Resolve the exact UI contract failures; import stitch/design-tokens.css and replace hardcoded colors with var(--*) tokens.",
       ].join("\n");
 
       const output = sanitizeRetryFeedbackForCurrentSource(feedback, { repoPath: repo });
       assert.match(output, /src\/screens\/GameBoard\.tsx:3 — UI_CONTRACT: Material Symbols\/icon fonts are not allowed/);
       assert.match(output, /blanket transition-all is not allowed/);
       assert.match(output, /inline SVG components/);
-      assert.doesNotMatch(output, /design-tokens\.css|hardcoded renkleri/);
+      assert.doesNotMatch(output, /design-tokens\.css|hardcoded colors/);
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }

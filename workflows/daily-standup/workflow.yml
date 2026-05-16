@@ -2,9 +2,9 @@ id: daily-standup
 name: Daily Standup Meeting
 version: 2
 description: |
-  Gunluk standup raporu. Collector son 24 saatteki agent aktivitesini,
-  run durumlarini ve sistem sagligini toplar. Reporter ozet hazirlayip
-  Discord ve Telegram a gonderir.
+  Daily standup report. Collector gathers agent activity, run status, and
+  system health for the last 24 hours. Reporter prepares a concise summary and
+  sends it to Discord and Telegram.
 
 agent_mapping:
   collector: nexus
@@ -25,7 +25,7 @@ agents:
     name: Collector
     role: analysis
     model: minimax-openai/MiniMax-M2.7
-    description: Son 24 saatteki agent aktivitesini, run durumlarini ve sistem bilgisini toplar.
+    description: Collects agent activity, run status, and system health from the last 24 hours.
     workspace:
       baseDir: agents/collector
       files:
@@ -36,7 +36,7 @@ agents:
     name: Reporter
     role: analysis
     model: minimax-openai/MiniMax-M2.7
-    description: Toplanan veriyi ozetleyip Discord ve Telegram a gonderir.
+    description: Summarizes collected data and sends it to Discord and Telegram.
     workspace:
       baseDir: agents/reporter
       files:
@@ -47,37 +47,37 @@ steps:
   - id: collect
     agent: collector
     input: |
-      Gunluk standup icin veri topla. Asagidaki komutlari calistir ve ciktilarini raporla.
+      Collect data for the daily standup. Run the commands below and report the outputs.
 
-      1. SON 24 SAAT RUNLAR:
+      1. RUNS FROM THE LAST 24 HOURS:
       sqlite3 ~/.openclaw/setfarm/setfarm.db "SELECT workflow_id, status, task, created_at FROM runs WHERE datetime(created_at) > datetime('now', '-24 hours') ORDER BY created_at DESC;"
 
-      2. SON 24 SAAT STORY DURUMU:
+      2. STORY STATUS FROM THE LAST 24 HOURS:
       sqlite3 ~/.openclaw/setfarm/setfarm.db "SELECT s.story_id, s.title, s.status, s.retry_count, r.workflow_id FROM stories s JOIN runs r ON r.id = s.run_id WHERE datetime(s.updated_at) > datetime('now', '-24 hours') ORDER BY s.updated_at DESC LIMIT 30;"
 
-      3. AGENT AKTIVITESI:
+      3. AGENT ACTIVITY:
       curl -s http://127.0.0.1:3080/api/setfarm/agents 2>/dev/null || echo "MC API unavailable"
 
-      4. AKTIF ALERTLER:
+      4. ACTIVE ALERTS:
       curl -s http://127.0.0.1:3080/api/setfarm/alerts 2>/dev/null || echo "No alerts endpoint"
 
-      5. SISTEM DURUMU:
+      5. SYSTEM STATUS:
       echo "=== UPTIME ===" && uptime
       echo "=== MEMORY ===" && free -h
       echo "=== DISK ===" && df -h / /home
       echo "=== DOCKER ===" && docker ps --format "table {{.Names}}\t{{.Status}}" 2>/dev/null
 
-      6. MALIYET:
+      6. COST:
       curl -s http://127.0.0.1:3080/api/costs 2>/dev/null | head -50 || echo "No cost data"
 
       MANDATORY OUTPUT FORMAT:
       STATUS: done
-      RUNS_DATA: <son 24 saat run ozeti>
-      STORIES_DATA: <story durumlari>
-      AGENTS_DATA: <agent aktivite ozeti>
-      SYSTEM_DATA: <sistem durumu ozeti>
-      COST_DATA: <maliyet ozeti>
-      ALERTS_DATA: <alert ozeti>
+      RUNS_DATA: <run summary from last 24 hours>
+      STORIES_DATA: <story status summary>
+      AGENTS_DATA: <agent activity summary>
+      SYSTEM_DATA: <system health summary>
+      COST_DATA: <cost summary>
+      ALERTS_DATA: <alert summary>
     expects: "STATUS: done"
     max_retries: 1
     on_fail:
@@ -86,66 +86,66 @@ steps:
   - id: report
     agent: reporter
     input: |
-      Standup raporunu ozetle ve gonder.
+      Summarize and send the standup report.
 
-      TOPLANAN VERILER:
-      RUNLAR: {{runs_data}}
-      STORY LERI: {{stories_data}}
-      AGENTLAR: {{agents_data}}
-      SISTEM: {{system_data}}
-      MALIYET: {{cost_data}}
-      ALERTLER: {{alerts_data}}
+      COLLECTED DATA:
+      RUNS: {{runs_data}}
+      STORIES: {{stories_data}}
+      AGENTS: {{agents_data}}
+      SYSTEM: {{system_data}}
+      COST: {{cost_data}}
+      ALERTS: {{alerts_data}}
 
-      GOREVLER — HEPSINI SIRASI ILE CALISTIR, HICBIRINI ATLAMA:
+      TASKS - RUN ALL OF THEM IN ORDER. DO NOT SKIP ANY TASK.
 
-      GOREV 1: Raporu dosyaya yaz (dolar isaretlerini oldugu gibi yaz, shell escape yapma):
+      TASK 1: Write the report to a file. Keep dollar signs literal; do not shell-escape them:
       ```
       cat > /tmp/standup-report.txt << 'STANDUP_EOF'
-      <asagidaki formatta rapor yaz>
+      <write the report in the format below>
       STANDUP_EOF
       ```
 
-      GOREV 2: Discord a gonder (dosyadan oku):
+      TASK 2: Send to Discord from the file:
       ```
       openclaw message send --channel discord --target 1472655519662477315 --message "$(cat /tmp/standup-report.txt)"
       ```
 
-      GOREV 3: Telegram a gonder (dosyadan oku):
+      TASK 3: Send to Telegram from the file:
       ```
       openclaw message send --channel telegram --target 725838988 --message "$(cat /tmp/standup-report.txt)"
       ```
 
-      GOREV 4: Kalici kayit:
+      TASK 4: Save a persistent record:
       ```
       cp /tmp/standup-report.txt ~/.openclaw/workspace/memory/meetings/standup-$(date +%Y-%m-%d).md
       ```
 
-      KRITIK: Her komutu GERCEKTEN CALISTIR. "Gonderdim" deme, komutu calistir ve ciktisini goster.
-      Komut ciktisinda "Sent via Discord" ve "Sent via Telegram" gormeden STATUS: done DEME.
+      CRITICAL: Actually run every command. Do not say "sent" without running the command and showing its output.
+      Do not report STATUS: done until command output includes "Sent via Discord" and "Sent via Telegram".
 
-      RAPOR FORMATI (Turkce, emoji kullan):
-      GUNLUK STANDUP — <tarih>
+      REPORT FORMAT:
+      DAILY STANDUP - <date>
 
-      RUNLAR (son 24s)
-      - <workflow>: <durum> — <ozet>
+      RUNS (last 24h)
+      - <workflow>: <status> - <summary>
 
-      AGENT AKTIVITESI
-      - <agent>: <ne yapti>
+      AGENT ACTIVITY
+      - <agent>: <what it did>
 
-      SISTEM
+      SYSTEM
       - RAM: .../... | Disk: .../... | Uptime: ...
 
-      MALIYET
-      - Gunluk toplam: USD ...
+      COST
+      - Daily total: USD ...
 
-      ALERTLER
-      - <varsa listele, yoksa "Temiz">
+      ALERTS
+      - <list alerts if present; otherwise write "Clear">
 
-      NOT: Maliyet degerlerini "USD 0.26" formatinda yaz, dolar isareti kullanma.
+      NOTE: Write cost values in "USD 0.26" format. Do not use a dollar sign.
 
       MANDATORY OUTPUT FORMAT:
       STATUS: done
-      SUMMARY: <gonderilen rapor ozeti — Discord ve Telegram message ID lerini dahil et>
+      SUMMARY: <summary of the sent report, including Discord and Telegram message IDs>
     expects: "STATUS: done"
     max_retries: 1
     on_fail:

@@ -1,79 +1,62 @@
-# Setfarm — Claude Session Talimatları
+# Setfarm Session Instructions
 
-Bu dosya, Setfarm repo'sunda çalışan her Claude session tarafından otomatik okunur.
+This file is auto-loaded by coding sessions that work in the Setfarm repository.
 
-## CHANGELOG.md Güncellemesi (ZORUNLU)
+## Changelog Updates
 
-Önemli değişiklik yaptığında `CHANGELOG.md` dosyasını GÜNCELLE. En tepeye yeni entry ekle.
+Update `CHANGELOG.md` when a meaningful system change lands. Add the newest entry at the top.
 
-### Önemli Değişiklik Kriterleri
-- Yeni feature
-- Kritik bug fix
-- Architectural değişiklik
-- Performance iyileştirme
-- Security fix
-- Template/prompt değişikliği (workflow.yml, polling-prompt.md)
-- DB migration
-- Config değişikliği (openclaw.json, agents)
+Update for:
 
-### Önemsiz (Changelog'a eklenmez)
-- Typo fix
-- Tek satır log değişikliği
-- Comment güncellemesi
-- Format/whitespace
+- new features
+- critical bug fixes
+- architecture changes
+- performance improvements
+- security fixes
+- template or prompt changes
+- database migrations
+- model, agent, or runtime configuration changes
 
-### Format
+Skip for:
+
+- typo-only edits
+- one-line log changes
+- comments only
+- formatting or whitespace only
+
+## Entry Format
 
 ```markdown
-## YYYY-MM-DD — Kısa Başlık
+## YYYY-MM-DD - Short Title
 
-### Büyük Değişiklik (varsa — architectural shift)
-Açıklama — ne yapıldı, **neden**
+### Major Change
+What changed and why.
 
-### Teknik Değişiklikler
+### Technical Changes
+- Detail
 
-**Modül Adı (commit hash):**
-- Detay 1
-- Detay 2
+### Critical Fixes
+- Issue and fix summary
 
-**Başka Modül (commit hash):**
-- Detay
+### Performance
+- Metric and result
 
-### Kritik Bug Fix'ler
-- Sorun + fix özeti (commit hash)
-
-### Performans
-- Metrik + sonuç
-
-### Doğrulama
-- Test run numarası + sonuç
-- Hangi senaryo test edildi
-
----
+### Verification
+- Test command and result
+- Scenario tested
 ```
 
-### Kurallar
-1. **Türkçe yaz** (teknik terimler hariç)
-2. **Commit hash'leri ekle** — referans için
-3. **En tepeye ekle** — kronolojik sıra (yeni üstte)
-4. **Git commit** ayrı yap: `docs: changelog update for <tarih>`
-5. **Push et** — sunucudaki `/changelog` sayfası push'tan sonra güncellenir
+## Rules
 
-### Otomatik Tetikleme
+1. Write all repository instructions, prompts, workflow text, and generated agent-facing feedback in English.
+2. Include commit hashes when useful for traceability.
+3. Add new changelog entries at the top.
+4. Keep changelog commits separate when practical.
+5. Push changes after verification so runtime documentation can refresh.
 
-Kullanıcı "bitti", "session'ı kapat", "deploy et" dediğinde veya büyük bir commit serisi tamamlandığında otomatik güncelle. Sor değil, YAP.
+## Runtime Notes
 
-## MC CHANGELOG
-
-MC'de değişiklik varsa `~/projects/mission-control/CHANGELOG.md` dosyasını da güncelle. Aynı format.
-
-## /changelog Sayfası
-
-Sunucuda `https://ai.setrox.com.tr/changelog` sayfası CHANGELOG.md'yi render ediyor. MC ve Setfarm changelog ayrı sekmelerde değil, üst üste gösteriliyor. Push + MC restart → sayfa güncellenir (30s cache TTL).
-
-## Diğer Talimatlar
-
-- **Sunucu asıl kaynak**: Her değişiklik öncesi `ssh setrox@192.168.1.198` ile sunucudaki dosyayı kontrol et
-- **Proje isimlerinde random numara**: Test run başlatırken `sayac-app-XXXXX` formatı
-- **Model config değiştirme**: Kullanıcı onayı olmadan ASLA
-- **Çalışan run'lara dokunma**: Sadece raporla, müdahale etme
+- The server-side checkout is the runtime source of truth. Compare it before risky runtime changes.
+- Do not change model configuration without explicit user approval.
+- Do not interfere with active runs unless the user asks for intervention.
+- Developer story agents write code only. Setfarm owns staging, commits, pushes, and PR handoff.

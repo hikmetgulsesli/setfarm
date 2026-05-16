@@ -18,14 +18,14 @@ describe("stitch-to-jsx", () => {
       const stitchDir = path.join(tmp, "stitch");
       fs.mkdirSync(stitchDir, { recursive: true });
       fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
-        { screenId: "prd-screen", title: "Sayaç Uygulaması PRD" },
+        { screenId: "prd-screen", title: "Counter App PRD" },
         { screenId: "invalid-screen", title: "Invalid Screen" },
-        { screenId: "main-screen", title: "Ana Sayfa", htmlFile: "main-screen-custom.html" },
+        { screenId: "main-screen", title: "Home Screen", htmlFile: "main-screen-custom.html" },
       ]));
 
       writeHtml(path.join(stitchDir, "prd-screen.html"), "<main><h1>PRD</h1></main>");
       fs.writeFileSync(path.join(stitchDir, "invalid-screen.html"), "<html></html>");
-      writeHtml(path.join(stitchDir, "main-screen-custom.html"), "<main><button>Ekle</button></main>");
+      writeHtml(path.join(stitchDir, "main-screen-custom.html"), "<main><button>Add</button></main>");
 
       execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
         cwd: process.cwd(),
@@ -33,24 +33,24 @@ describe("stitch-to-jsx", () => {
       });
 
       const screensDir = path.join(tmp, "src", "screens");
-      assert.equal(fs.existsSync(path.join(screensDir, "SayacUygulamasiPrd.tsx")), false);
+      assert.equal(fs.existsSync(path.join(screensDir, "CounterAppPrd.tsx")), false);
       assert.equal(fs.existsSync(path.join(screensDir, "InvalidScreen.tsx")), false);
-      assert.equal(fs.existsSync(path.join(screensDir, "AnaSayfa.tsx")), true);
+      assert.equal(fs.existsSync(path.join(screensDir, "HomeScreen.tsx")), true);
 
       const index = JSON.parse(fs.readFileSync(path.join(screensDir, "SCREEN_INDEX.json"), "utf-8"));
-      assert.deepEqual(index.map((s: any) => s.title), ["Ana Sayfa"]);
+      assert.deepEqual(index.map((s: any) => s.title), ["Home Screen"]);
       assert.equal(index[0].buttons, 1);
       assert.deepEqual(index[0].actions, [
-        { id: "ekle-1", kind: "button", label: "Ekle", index: 0 },
+        { id: "add-1", kind: "button", label: "Add", index: 0 },
       ]);
 
-      const code = fs.readFileSync(path.join(screensDir, "AnaSayfa.tsx"), "utf-8");
-      assert.match(code, /export type AnaSayfaActionId = "ekle-1";/);
-      assert.match(code, /actions\?: Partial<Record<AnaSayfaActionId, \(\) => void>>;/);
-      assert.match(code, /<button type="button" data-action-id="ekle-1" onClick=\{actions\?\.\["ekle-1"\]\}>Ekle<\/button>/);
+      const code = fs.readFileSync(path.join(screensDir, "HomeScreen.tsx"), "utf-8");
+      assert.match(code, /export type HomeScreenActionId = "add-1";/);
+      assert.match(code, /actions\?: Partial<Record<HomeScreenActionId, \(\) => void>>;/);
+      assert.match(code, /<button type="button" data-action-id="add-1" onClick=\{actions\?\.\["add-1"\]\}>Add<\/button>/);
 
       const barrel = fs.readFileSync(path.join(screensDir, "index.ts"), "utf-8");
-      assert.equal(barrel, 'export { AnaSayfa } from "./AnaSayfa";\nexport type { AnaSayfaProps, AnaSayfaActionId } from "./AnaSayfa";\n');
+      assert.equal(barrel, 'export { HomeScreen } from "./HomeScreen";\nexport type { HomeScreenProps, HomeScreenActionId } from "./HomeScreen";\n');
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -214,17 +214,17 @@ describe("stitch-to-jsx", () => {
       const stitchDir = path.join(tmp, "stitch");
       fs.mkdirSync(stitchDir, { recursive: true });
       fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
-        { screenId: "error-screen", title: "Hata Durumu" },
+        { screenId: "error-screen", title: "Error State" },
       ]));
-      writeHtml(path.join(stitchDir, "error-screen.html"), "<main><p>Hata<br/>Tekrar dene</p></main>");
+      writeHtml(path.join(stitchDir, "error-screen.html"), "<main><p>Error<br/>Try again</p></main>");
 
       execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
         cwd: process.cwd(),
         stdio: "pipe",
       });
 
-      const code = fs.readFileSync(path.join(tmp, "src", "screens", "HataDurumu.tsx"), "utf-8");
-      assert.match(code, /Hata<br \/>Tekrar dene/);
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "ErrorState.tsx"), "utf-8");
+      assert.match(code, /Error<br \/>Try again/);
       assert.doesNotMatch(code, /<br\/ \/>/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -237,7 +237,7 @@ describe("stitch-to-jsx", () => {
       const stitchDir = path.join(tmp, "stitch");
       fs.mkdirSync(stitchDir, { recursive: true });
       fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
-        { screenId: "loading-screen", title: "Yükleme Ekranı" },
+        { screenId: "loading-screen", title: "Loading Screen" },
       ]));
       writeHtml(path.join(stitchDir, "loading-screen.html"), `
         <main>
@@ -262,7 +262,7 @@ describe("stitch-to-jsx", () => {
         stdio: "pipe",
       });
 
-      const code = fs.readFileSync(path.join(tmp, "src", "screens", "YuklemeEkrani.tsx"), "utf-8");
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "LoadingScreen.tsx"), "utf-8");
       assert.match(code, /viewBox=/);
       assert.match(code, /xmlnsXlink=/);
       assert.match(code, /strokeWidth=/);
@@ -295,7 +295,7 @@ describe("stitch-to-jsx", () => {
       const stitchDir = path.join(tmp, "stitch");
       fs.mkdirSync(stitchDir, { recursive: true });
       fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
-        { screenId: "modal-screen", title: "Yeni Kayıt Modalı" },
+        { screenId: "modal-screen", title: "New Record Modal" },
       ]));
       writeHtml(path.join(stitchDir, "modal-screen.html"), `
         <main>
@@ -303,7 +303,7 @@ describe("stitch-to-jsx", () => {
           <input type="checkbox" checked="" required="">
           <textarea id="note" rows="3" maxlength="120" readonly="true"></textarea>
           <div role="slider" aria-valuemin="0" aria-valuemax="10" aria-valuenow="8" aria-level="2"></div>
-          <button tabindex="0" disabled="false">Kaydet</button>
+          <button tabindex="0" disabled="false">Save</button>
         </main>
       `);
 
@@ -312,7 +312,7 @@ describe("stitch-to-jsx", () => {
         stdio: "pipe",
       });
 
-      const code = fs.readFileSync(path.join(tmp, "src", "screens", "YeniKayitModali.tsx"), "utf-8");
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "NewRecordModal.tsx"), "utf-8");
       assert.match(code, /htmlFor="note"/);
       assert.match(code, /rows=\{3\}/);
       assert.match(code, /maxLength=\{120\}/);
@@ -337,16 +337,16 @@ describe("stitch-to-jsx", () => {
       const stitchDir = path.join(tmp, "stitch");
       fs.mkdirSync(stitchDir, { recursive: true });
       fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
-        { screenId: "history-screen", title: "Kayıtlar Ekranı" },
+        { screenId: "history-screen", title: "History Screen" },
       ]));
       writeHtml(path.join(stitchDir, "history-screen.html"), `
         <main>
           <!--
             <div class="hidden">
-              <span>Geçmiş Boş</span>
+              <span>History Empty</span>
             </div>
           -->
-          <section>Kayıtlar</section>
+          <section>Records</section>
         </main>
       `);
 
@@ -355,8 +355,8 @@ describe("stitch-to-jsx", () => {
         stdio: "pipe",
       });
 
-      const code = fs.readFileSync(path.join(tmp, "src", "screens", "KayitlarEkrani.tsx"), "utf-8");
-      assert.match(code, /\{\/\*[\s\S]*Geçmiş Boş[\s\S]*\*\/\}/);
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "HistoryScreen.tsx"), "utf-8");
+      assert.match(code, /\{\/\*[\s\S]*History Empty[\s\S]*\*\/\}/);
       assert.doesNotMatch(code, /<!--|-->/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

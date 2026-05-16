@@ -119,7 +119,7 @@ function rerunSetupRepoScaffold(ctx: ClaimContext, repo: string): boolean {
 // 2. npm run build — baseline verification
 // 3. Compat engine (fail fast on React 19 / testing-library mismatches)
 // 4. Tailwind install/config (when Stitch uses utility classes)
-// 5. stitch-to-jsx → src/screens/<TurkishName>.tsx + commit
+// 5. stitch-to-jsx -> src/screens/<PredictedScreenName>.tsx + commit
 export async function preClaim(ctx: ClaimContext): Promise<void> {
   if (process.env.SETFARM_DISABLE_AUTO_SETUP_BUILD === "1") return;
 

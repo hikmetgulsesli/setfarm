@@ -488,14 +488,14 @@ Gateway restarts are allowed when necessary (e.g., after a config fix), but foll
 ### Project Name Rules
 - Clean, short display names: "Recipe Book", "Markdown Notepad", "AgentViz"
 - **NEVER** include feature descriptions in the name
-- No trailing descriptions (e.g., "Recipe Book - Tarif ekle, malzeme listesi..." is BANNED)
+- No trailing descriptions (e.g., "Recipe Book - Add recipe, ingredient list..." is BANNED)
 - Feature details go in the `description` field, NOT in the name
 
 ### Examples
 
 | GOOD | BAD |
 |------|-----|
-| `recipe-book` | `recipe-book-tarif-ekle-malzeme-listesi-porsiyon-hesap-t` |
+| `recipe-book` | `recipe-book-add-recipe-ingredient-list-serving-calculator` |
 | `markdown.setrox.com.tr` | `markdown-notepad-live-preview-syntax-highlight-local-sto.setrox.com.tr` |
 | "AgentViz" | "AgentViz — Real-time Agent Activity Visualization" |
 | `expense-tracker` | `an-expense-tracker` |

@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { implementModule } from "../../dist/installer/steps/06-implement/module.js";
-import { checkBuildGate, checkTestGate, computeScopeFileLimits, detectPackageBuildCommand, findDesignDomImplementationIssues, getOutOfScopeStoryFiles, normalize, parseGitStatusPorcelainPath, sourceExposesWindowApp, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
+import { checkBuildGate, checkTestGate, computeScopeFileLimits, detectPackageBuildCommand, findDesignDomImplementationFindings, findDesignDomImplementationIssues, getOutOfScopeStoryFiles, normalize, parseGitStatusPorcelainPath, sourceExposesWindowApp, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
 import { cleanupOutOfScopeWorktreeFiles } from "../../dist/installer/steps/06-implement/context.js";
 import { commitStoryWorktreeScopeIfNeeded, decideStorySystemSmokeGate } from "../../dist/installer/step-ops.js";
 import { createStoryWorktree, ensureStoryBranchWorktree } from "../../dist/installer/worktree-ops.js";
@@ -445,9 +445,9 @@ describe("06-implement step module", () => {
 
   it("expands scope overflow limits for large planner-owned single-story scopes", () => {
     const declaredScope = [
-      "src/screens/AnaSayfaSayac.tsx",
-      "src/screens/HataDurumuSessizFallback.tsx",
-      "src/screens/BaslangicDurumuBos.tsx",
+      "src/screens/HomeCounter.tsx",
+      "src/screens/ErrorStateFallback.tsx",
+      "src/screens/EmptyInitialState.tsx",
       "src/components/CounterDisplay/CounterDisplay.tsx",
       "src/components/CounterDisplay/CounterDisplay.module.css",
       "src/components/ActionButtons/ActionButtons.tsx",
@@ -479,14 +479,14 @@ describe("06-implement step module", () => {
       "src/utils/storage.ts",
     ];
     const sharedScreens = [
-      "src/screens/AdayEkleduzenle.tsx",
-      "src/screens/AdaylarLeads.tsx",
-      "src/screens/AnalizlerInsights.tsx",
-      "src/screens/AyarlarSettings.tsx",
-      "src/screens/BosDurumEmptyState.tsx",
-      "src/screens/HataDurumuErrorState.tsx",
+      "src/screens/LeadEditor.tsx",
+      "src/screens/LeadList.tsx",
+      "src/screens/InsightsDashboard.tsx",
+      "src/screens/SettingsScreen.tsx",
+      "src/screens/EmptyState.tsx",
+      "src/screens/ErrorState.tsx",
       "src/screens/PipelineBoard.tsx",
-      "src/screens/ProfilPaneli.tsx",
+      "src/screens/ProfilePanel.tsx",
     ];
 
     const withShared = computeScopeFileLimits(false, appScope, sharedScreens);
@@ -531,9 +531,9 @@ describe("06-implement step module", () => {
         story_scope_files: "src/screens/Legacy.tsx",
       }) || "";
       assert.match(scopedContractFailure, /CRITICAL DESIGN CONTRACT/);
-      assert.match(scopedContractFailure, /inline SVG componentleriyle veya kurulu SVG icon library/);
+      assert.match(scopedContractFailure, /inline SVG components or an installed SVG icon library/);
       assert.match(scopedContractFailure, /transition-colors, transition-transform, transition-opacity/);
-      assert.doesNotMatch(scopedContractFailure, /hardcoded renkleri|stitch\/design-tokens\.css'i import et/);
+      assert.doesNotMatch(scopedContractFailure, /hardcoded colors|import stitch\/design-tokens\.css/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -587,15 +587,17 @@ describe("06-implement step module", () => {
         "",
       ].join("\n"));
 
-      const issues = findDesignDomImplementationIssues(tmp, [
+      const findings = findDesignDomImplementationFindings(tmp, [
         "src/screens/PauseOverlay.tsx",
         "src/screens/GameOver.tsx",
       ]);
+      const issues = findings.filter((finding: any) => finding.severity === "blocker").map((finding: any) => finding.message);
+      const warnings = findings.filter((finding: any) => finding.severity === "warning").map((finding: any) => finding.message);
 
-      assert.ok(issues.some((issue) => issue.includes('DESIGN_DOM button "SUPERVISOR" is static') || issue.includes('missing DESIGN_DOM button "SUPERVISOR"')), issues.join("\n"));
+      assert.ok(issues.some((issue) => issue.includes('SUPERVISOR_CHECKLIST button "SUPERVISOR" is static') || issue.includes('missing button "SUPERVISOR"')), issues.join("\n"));
       assert.ok(issues.some((issue) => issue.includes('link "terminal" lacks href="#"')), issues.join("\n"));
-      assert.ok(issues.some((issue) => issue.includes('expected icon "restart_alt"')), issues.join("\n"));
-      assert.ok(issues.some((issue) => issue.includes('expected icon "logout"')), issues.join("\n"));
+      assert.ok(warnings.some((issue) => issue.includes('expected icon "restart_alt"')), warnings.join("\n"));
+      assert.ok(warnings.some((issue) => issue.includes('expected icon "logout"')), warnings.join("\n"));
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -661,8 +663,7 @@ describe("06-implement step module", () => {
             screenId: "main-1",
             title: "Main Menu",
             buttons: [
-              { label: "Resume", icon: "play_circle", classes: ["h-touch-target"], action: "click-action" },
-              { label: "PONG ARCADE", icon: null, classes: [], action: "click-action" },
+              { label: "Resume", icon: "play_circle", classes: ["h-touch-target"], action: "resume" },
             ],
             navLinks: [],
           },
@@ -670,10 +671,10 @@ describe("06-implement step module", () => {
       }));
       fs.writeFileSync(path.join(tmp, "src/screens/MainMenu.tsx"), [
         "import { PlayCircle } from 'lucide-react';",
-        "export function MainMenu() {",
+        "export function MainMenu({ actions }: any) {",
         "  return <main>",
-        "    <button className=\"font-display-score text-display-score\">PONG ARCADE</button>",
-        "    <button disabled={true} type=\"button\"><PlayCircle />Resume</button>",
+        "    <h1 className=\"font-display-score text-display-score\">PONG ARCADE</h1>",
+        "    <button type=\"button\" onClick={actions?.resume}><PlayCircle />Resume</button>",
         "  </main>;",
         "}",
         "",
@@ -876,7 +877,7 @@ describe("06-implement step module", () => {
         story_id: "US-002",
         story_index: 1,
         status: "pending",
-        scope_files: JSON.stringify(["src/screens/AnaSayfa.tsx", "src/App.tsx"]),
+        scope_files: JSON.stringify(["src/screens/Home.tsx", "src/App.tsx"]),
       },
     ]);
 
@@ -896,7 +897,7 @@ describe("06-implement step module", () => {
         story_id: "US-002",
         story_index: 1,
         status: "verified",
-        scope_files: JSON.stringify(["src/screens/AnaSayfa.tsx"]),
+        scope_files: JSON.stringify(["src/screens/Home.tsx"]),
       },
       {
         story_id: "US-003",

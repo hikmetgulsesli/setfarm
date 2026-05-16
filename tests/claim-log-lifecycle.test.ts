@@ -242,8 +242,8 @@ describe("single-step claim_log lifecycle", () => {
 
   it("closes downstream quality gate claims when routing back to implement", () => {
     const source = stepOpsSource();
-    const start = source.indexOf("async function routeQualityFailureToImplement(");
-    const end = source.indexOf("// ── Predicted screen file helpers", start);
+    const start = source.indexOf("export async function routeQualityFailureToImplement(");
+    const end = source.indexOf("// Predicted screen file helpers", start);
     assert.notEqual(start, -1, "routeQualityFailureToImplement source not found");
     assert.notEqual(end, -1, "routeQualityFailureToImplement end marker not found");
     const routeSource = source.slice(start, end);
@@ -260,8 +260,8 @@ describe("single-step claim_log lifecycle", () => {
 
   it("persists actionable QA-FIX context when reusing an active fix story", () => {
     const source = stepOpsSource();
-    const start = source.indexOf("async function routeQualityFailureToImplement(");
-    const end = source.indexOf("// ── Predicted screen file helpers", start);
+    const start = source.indexOf("export async function routeQualityFailureToImplement(");
+    const end = source.indexOf("// Predicted screen file helpers", start);
     assert.notEqual(start, -1, "routeQualityFailureToImplement source not found");
     assert.notEqual(end, -1, "routeQualityFailureToImplement end marker not found");
     const routeSource = source.slice(start, end);
@@ -273,8 +273,8 @@ describe("single-step claim_log lifecycle", () => {
 
   it("fails verify merge blockers before creating QA-FIX stories", () => {
     const source = stepOpsSource();
-    const start = source.indexOf("async function routeQualityFailureToImplement(");
-    const end = source.indexOf("// ── Predicted screen file helpers", start);
+    const start = source.indexOf("export async function routeQualityFailureToImplement(");
+    const end = source.indexOf("// Predicted screen file helpers", start);
     assert.notEqual(start, -1, "routeQualityFailureToImplement source not found");
     assert.notEqual(end, -1, "routeQualityFailureToImplement end marker not found");
     const routeSource = source.slice(start, end);

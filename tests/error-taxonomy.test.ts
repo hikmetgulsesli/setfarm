@@ -23,7 +23,7 @@ describe("error taxonomy", () => {
 
   it("keeps design mismatch suggestions specific to reported UI contract failures", () => {
     const classified = classifyError([
-      "DESIGN UYUMSUZLUK:",
+      "DESIGN MISMATCH:",
       "src/screens/GameBoard.tsx:145 — UI_CONTRACT: Material Symbols/icon fonts are not allowed",
       "src/screens/GameBoard.tsx:164 — UI_CONTRACT: blanket transition-all is not allowed",
     ].join("\n"));
@@ -69,8 +69,8 @@ describe("error taxonomy", () => {
     ].join("\n"));
     assert.equal(designDom.category, "DESIGN_DOM_IMPLEMENTATION_MISMATCH");
     assert.match(designDom.suggestion, /DESIGN_DOM\/UI_CONTRACT/);
-    assert.match(designDom.suggestion, /controls, icons, labels, and action IDs/);
-    assert.match(designDom.suggestion, /inline SVG\/Lucide aliases/);
+    assert.match(designDom.suggestion, /controls, labels, and action IDs/);
+    assert.match(designDom.suggestion, /Labeled icon mismatches are supervisor warnings/);
     assert.match(designDom.suggestion, /Do not read raw Stitch HTML/);
   });
 
@@ -150,22 +150,22 @@ describe("error taxonomy", () => {
 
   it("rewrites stale generic design mismatch feedback before retry prompts reuse it", () => {
     const feedback = sanitizeDesignMismatchFeedback([
-      "DESIGN UYUMSUZLUK:",
+      "DESIGN MISMATCH:",
       "src/screens/GameBoard.tsx:145 — UI_CONTRACT: Material Symbols/icon fonts are not allowed",
       "src/screens/GameBoard.tsx:164 — UI_CONTRACT: blanket transition-all is not allowed",
-      "DÜZELT: Kritik UI sözleşmesi hatalarını düzelt; stitch/design-tokens.css'i import et, hardcoded renkleri var(--*) ile değiştir.",
+      "FIX: Resolve the exact UI contract failures; import stitch/design-tokens.css and replace hardcoded colors with var(--*) tokens.",
     ].join("\n"));
 
-    assert.match(feedback, /DÜZELT:\n• replace icon fonts\/emoji with inline SVG components/);
-    assert.match(feedback, /• replace transition-all\/transition: all with scoped transition properties/);
-    assert.doesNotMatch(feedback, /Kritik UI sözleşmesi|hardcoded renkleri/);
+    assert.match(feedback, /FIX:\n- replace icon fonts\/emoji with inline SVG components/);
+    assert.match(feedback, /- replace transition-all\/transition: all with scoped transition properties/);
+    assert.doesNotMatch(feedback, /exact UI contract failures/);
   });
 
   it("rewrites generated screen read feedback without design-mismatch fix text", () => {
     const feedback = sanitizeDesignMismatchFeedback([
       "GENERATED_SCREEN_SHARED_READ: feature-dev_developer used read on src/screens/MainMenu.tsx. Shared generated screens must be consumed through src/screens/SCREEN_INDEX.json, src/screens/index.ts, the component registry, and UI_CONTRACT.",
       "Transcript: /tmp/feature-dev.log",
-      "DÜZELT:",
+      "FIX:",
       "• fix only the exact files and issues reported by the design guardrail",
     ].join("\n"));
 
@@ -179,7 +179,7 @@ describe("error taxonomy", () => {
     const feedback = sanitizeDesignMismatchFeedback([
       "RAW_STITCH_CONTEXT_READ: feature-dev_developer used exec on stitch/*.html. Implement claims must use injected Stitch excerpts, UI_CONTRACT, SCREEN_INDEX, and story-owned generated screens instead of loading raw stitch HTML/full DESIGN_DOM context.",
       "Transcript: /tmp/feature-dev.log",
-      "DÜZELT:",
+      "FIX:",
       "• fix only the exact files and issues reported by the design guardrail",
     ].join("\n"));
 

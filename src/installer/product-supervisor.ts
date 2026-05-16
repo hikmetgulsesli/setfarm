@@ -52,8 +52,6 @@ const TOKEN_STOP_WORDS = new Set([
   "scope", "settings", "shared", "shell", "sibling", "siblings", "state", "status", "summary", "support", "surface", "system", "task",
   "test", "tests", "the", "these", "those", "through", "touch", "typescript", "ui", "use", "user",
   "using", "view", "visible", "vite", "web", "wire", "wiring", "with", "without", "workflow",
-  "bir", "bu", "icin", "için", "ile", "proje", "uygulama", "uygulamasi", "ve",
-  "veya", "yap", "yeni",
 ]);
 
 const GENERIC_SCREEN_TERMS = new Set([
@@ -66,7 +64,7 @@ const GENERIC_SCREEN_TERMS = new Set([
 
 const PRODUCT_OPTIONAL_GROUPS: Array<{ name: string; terms: string[]; taskHints: RegExp }> = [
   { name: "auth/login", terms: ["auth", "login", "signin", "signup"], taskHints: /\b(auth|login|sign ?in|sign ?up|private|admin|account|user)\b/i },
-  { name: "profile/account", terms: ["profile", "account"], taskHints: /\b(profile|account|user|auth|login|sign ?in|hesap|profil|kullanici|kullanıcı)\b/i },
+  { name: "profile/account", terms: ["profile", "account"], taskHints: /\b(profile|account|user|auth|login|sign ?in)\b/i },
 ];
 
 const IMPLEMENT_SCAN_EXT = /\.(tsx?|jsx?|vue|svelte|html)$/i;
@@ -74,16 +72,16 @@ const IMPLEMENT_SCAN_IGNORE = /^(node_modules\/|dist\/|build\/|\.next\/|coverage
 
 function normalizeText(text: string): string {
   return String(text || "")
-    .replace(/[İ]/g, "I")
-    .replace(/[ı]/g, "i")
+    .replace(/[\u0130]/g, "I")
+    .replace(/[\u0131]/g, "i")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
-    .replace(/[şŞ]/g, "s")
-    .replace(/[çÇ]/g, "c")
-    .replace(/[ğĞ]/g, "g")
-    .replace(/[üÜ]/g, "u")
-    .replace(/[öÖ]/g, "o");
+    .replace(/[\u015f\u015e]/g, "s")
+    .replace(/[\u00e7\u00c7]/g, "c")
+    .replace(/[\u011f\u011e]/g, "g")
+    .replace(/[\u00fc\u00dc]/g, "u")
+    .replace(/[\u00f6\u00d6]/g, "o");
 }
 
 function tokenise(text: string): string[] {
@@ -105,7 +103,7 @@ function tokenise(text: string): string[] {
 function taskDomainTokens(task: string): string[] {
   const withoutProjectPrefix = String(task || "")
     .split(/\n+/)
-    .map((line) => line.replace(/^\s*(?:Project|Proje)\s*:\s*[^\s]+\s*/i, ""))
+    .map((line) => line.replace(/^\s*Project\s*:\s*[^\s]+\s*/i, ""))
     .join("\n");
   return tokenise(withoutProjectPrefix).slice(0, 40);
 }

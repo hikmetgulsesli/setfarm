@@ -54,6 +54,10 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function safePathSegment(value: string): string {
+  return String(value || "unknown").replace(/[^A-Za-z0-9._-]+/g, "-").slice(0, 120) || "unknown";
+}
+
 function lineValue(input: string, label: string): string {
   const match = input.match(new RegExp("^[ \\t]*" + escapeRegExp(label) + ":[ \\t]*(.*)$", "m"));
   return (match?.[1] || "").trim();
@@ -411,7 +415,7 @@ function buildScreenUsageContract(
   return {
     summary: "Use this compact contract before designContracts. Import generated screens from src/screens and wire only listed action IDs through actions props. Do not read forbidden src/screens/*.tsx source files.",
     importFrom: "src/screens",
-    fatalSourceReadRule: "Forbidden generated screen source reads are killed and retried by Setfarm.",
+    sourceReadRule: "Forbidden generated screen source reads are supervisor signals. The worker must switch back to SCREEN_INDEX, component registry, component types, and UI_CONTRACT instead of continuing broad source reads.",
     components: componentTypes.map((contract) => ({
       componentName: generatedComponentName(contract),
       file: contract.file,
@@ -449,10 +453,10 @@ function retryDisciplineForFailure(
       instruction: "Hard manager retry discipline: before adding or polishing unrelated features, expose the required window.app/globalThis.app bridge from live runtime state in a scoped React effect or equivalent update point, then run build/tests. Do not report STATUS: done until the blocker is implemented in source.",
     };
   }
-  if (/\bDESIGN_DOM_IMPLEMENTATION_MISMATCH\b/i.test(signal)) {
+  if (/\bSUPERVISOR_BLOCKERS_OPEN\b/i.test(signal)) {
     return {
       mode: "semantic-fix",
-      instruction: "Hard manager retry discipline: fix the reported DESIGN_DOM controls/icons/labels/action IDs in scoped screen files first, using inline SVG/Lucide aliases for Material ligature names. Do not read raw Stitch files, broaden scope, or run build/tests until the exact reported blockers are implemented.",
+      instruction: "Supervisor checklist discipline: fix the exact reported blocker ids in scoped files first. Missing controls, dead links, and static active controls are blockers; labeled icon/label drift is warning-level unless the checklist marks it blocker. Do not read raw Stitch files or broaden scope.",
     };
   }
   if (!/(AGENT_STALL|IMPLEMENT_NO_DELTA_STALL|IMPLEMENT_PRE_DELTA_CHECK_VIOLATION|NO_WORK_DETECTED|CLAIM_SUMMARY_IGNORED|CLAIM_PARSE_LOOP|GENERATED_SCREEN_SHARED_READ|RAW_STITCH_CONTEXT_READ|IRRELEVANT_REFERENCE_CONTEXT|FULL_REFERENCE_CONTEXT_READ|SCOPE_WRITE_VIOLATION)/i.test(signal)) {
@@ -549,6 +553,7 @@ export function buildClaimSummary(params: {
     6000,
   );
   const supervisorMemory = supervisorMemoryFromInput || readSupervisorMemoryFile(workdir, repo);
+  const supervisorStateRoot = path.join(workdir, ".setfarm", "supervisor", safePathSegment(params.runId || "unknown-run"));
   const previousFailure = cleanPreviousFailureSection(sliceSection(
     input,
     /^\s*(?:##\s*)?PREVIOUS FAILURE.*(?:\n|:\s*)/im,
@@ -609,6 +614,13 @@ export function buildClaimSummary(params: {
       completion: "Follow the role-specific output contract.",
     },
     scopeFiles,
+    supervisor: {
+      stateRoot: supervisorStateRoot,
+      checklistPath: path.join(supervisorStateRoot, "SUPERVISOR_CHECKLIST.json"),
+      statePath: path.join(supervisorStateRoot, "SUPERVISOR_STATE.json"),
+      eventsPath: path.join(supervisorStateRoot, "SUPERVISOR_EVENTS.jsonl"),
+      instruction: "Close all blocker items assigned to this story before STATUS: done. Warnings should be addressed when practical but do not justify broad redesign.",
+    },
     sharedFiles: splitCsvList(lineValue(input, "story_shared_files")),
     storyScreens: parseJsonArray(storyScreensRaw),
     generatedScreenPolicy: {
@@ -753,7 +765,7 @@ BOOTSTRAP_FILE=${params.bootstrapFile}
 First exec command:
 bash ${shellQuote(params.bootstrapFile)}
 
-Do ${params.wfId}/${params.role} work in WORKDIR only. Read the structured claim summary at ${params.claimSummaryFile} first; it is the authoritative handoff for story id/title, workdir, mainRepo, storyWorkdir, verifyWorkdir, build/test/lint commands, scope files, gitPolicy, screenUsageContract, generatedScreenPolicy, designContracts, supervisorMemory, screen refs, retry feedback, and output paths. Use retryFeedback.mode exactly: mode="fix" means the blocker is an open implementation requirement and must be fixed before unrelated work; mode="audit" means prior feedback may be stale, so first verify whether it is still present with bounded evidence before reporting or changing code. Obey gitPolicy exactly: when owner is setfarm-platform, do not run git add/commit/push/branch/PR commands; Setfarm performs the scoped commit and PR handoff after gates pass. Use screenUsageContract first for generated screen component names, props, and action IDs; use designContracts.screenIndex, designContracts.uiContract, designContracts.componentRegistry, and designContracts.componentTypes as fallback instead of reading raw Stitch files, shared generated screen source, or creating TypeScript probe files. The full claim at ${params.claimFile} is an audit fallback only. Do NOT parse or dump claim.input with jq/sed/head/node loops; use the summary fields and only fall back to the full claim for a missing focused field. Obey generatedScreenPolicy exactly: reading a forbidden src/screens/*.tsx file kills and retries the claim.
+Do ${params.wfId}/${params.role} work in WORKDIR only. Read the structured claim summary at ${params.claimSummaryFile} first; it is the authoritative handoff for story id/title, workdir, mainRepo, storyWorkdir, verifyWorkdir, build/test/lint commands, scope files, gitPolicy, supervisor checklist paths, screenUsageContract, generatedScreenPolicy, designContracts, supervisorMemory, screen refs, retry feedback, and output paths. Use retryFeedback.mode exactly: mode="fix" means the blocker is an open implementation requirement and must be fixed before unrelated work; mode="audit" means prior feedback may be stale, so first verify whether it is still present with bounded evidence before reporting or changing code. Obey gitPolicy exactly: when owner is setfarm-platform, do not run git add/commit/push/branch/PR commands; Setfarm performs the scoped commit and PR handoff after gates pass. Use screenUsageContract first for generated screen component names, props, and action IDs; use designContracts.screenIndex, designContracts.uiContract, designContracts.componentRegistry, and designContracts.componentTypes as fallback instead of reading raw Stitch files, shared generated screen source, or creating TypeScript probe files. The full claim at ${params.claimFile} is an audit fallback only. Do NOT parse or dump claim.input with jq/sed/head/node loops; use the summary fields and only fall back to the full claim for a missing focused field. Obey generatedScreenPolicy exactly: if you accidentally read a forbidden src/screens/*.tsx file, stop broad reading and return to summary/contracts; supervisor records that as a correction signal.
 For retryFeedback.mode="fix", treat retryDiscipline.mode as a hard implementation instruction. For retryDiscipline.mode="first-delta", after bootstrap and summary, inspect only the owned scope files plus safe metadata needed for the first edit, then make a small scoped source delta before broad analysis/build/test. For retryDiscipline.mode="semantic-fix", implement the named blocker first, then run the relevant checks. For retryFeedback.mode="audit", do not convert prior feedback into a source-edit mandate unless the role-specific prompt explicitly owns that fix.
 Do NOT create scratch/progress/todo/note/probe files inside WORKDIR unless they are explicitly listed in scopeFiles. Files like src/_probe.tsx, src/probe.tsx, tmp.ts, scratch.tsx, TODO.md, and progress.txt are forbidden in the project worktree. Use ${params.outputFile} for final output and /tmp/setfarm-progress-<run-id>.txt for checkpoints only.
 Important: OpenClaw read/edit/write tools resolve relative paths against the configured agent workspace, not the shell cwd. When using read/edit/write tools for project files, use absolute paths under WORKDIR, for example "$WORKDIR/src/App.tsx". For exec commands, rerun the bootstrap command above or pass workdir="$WORKDIR" after resolving it.

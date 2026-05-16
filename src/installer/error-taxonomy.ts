@@ -13,6 +13,7 @@ export type ErrorCategory =
   | "TEST_FAILED"
   | "DESIGN_MISMATCH"
   | "DESIGN_DOM_IMPLEMENTATION_MISMATCH"
+  | "SUPERVISOR_BLOCKERS_OPEN"
   | "MERGE_CONFLICT"
   | "API_ERROR"
   | "AGENT_CRASH"
@@ -59,7 +60,8 @@ const PATTERNS: Array<{ pattern: RegExp; category: ErrorCategory; suggestion: st
   { pattern: /^PLATFORM_STORY_COMMIT_SCOPE_BLOCKED:/i, category: "SCOPE_BLEED", suggestion: "Platform story commit saw out-of-scope files. If directory paths are reported, inspect git status -uall expansion before retrying." },
   { pattern: /^GENERATED_SCREEN_SHARED_READ:/i, category: "GENERATED_SCREEN_SHARED_READ", suggestion: "Use claim-summary designContracts, SCREEN_INDEX.json, and src/screens/index.ts for shared generated screens. Do not use the OpenClaw read tool or shell commands to read forbidden src/screens/*.tsx files outside scopeFiles." },
   { pattern: /^RAW_STITCH_CONTEXT_READ:/i, category: "RAW_STITCH_CONTEXT_READ", suggestion: "Use CLAIM_SUMMARY_FILE, injected Stitch excerpts, UI_CONTRACT, SCREEN_INDEX.json, and only story-owned generated screens. Do not read or exec stitch/*.html, .stitch-screens*.json, or stitch/DESIGN_DOM.json inside implement claims." },
-  { pattern: /^DESIGN_DOM_IMPLEMENTATION_MISMATCH:/i, category: "DESIGN_DOM_IMPLEMENTATION_MISMATCH", suggestion: "Use the injected DESIGN_DOM/UI_CONTRACT/screenUsageContract handoff and restore the exact scoped controls, icons, labels, and action IDs reported by the guard. Material ligature icon names in diagnostics must be implemented with inline SVG/Lucide aliases, not Material icon fonts. Do not read raw Stitch HTML or broaden the story scope." },
+  { pattern: /^DESIGN_DOM_IMPLEMENTATION_MISMATCH:/i, category: "DESIGN_DOM_IMPLEMENTATION_MISMATCH", suggestion: "Use the injected DESIGN_DOM/UI_CONTRACT/screenUsageContract handoff and restore the exact scoped controls, labels, and action IDs reported by the guard. Labeled icon mismatches are supervisor warnings unless the control is icon-only. Do not read raw Stitch HTML or broaden the story scope." },
+  { pattern: /^SUPERVISOR_BLOCKERS_OPEN:/i, category: "SUPERVISOR_BLOCKERS_OPEN", suggestion: "Fix the exact supervisor checklist blocker ids in scoped files first. Missing controls, dead links, and static active controls are blockers; warning-level design drift can be handled after blockers pass. Do not read raw Stitch HTML or broaden scope." },
   { pattern: /^CLAIM_WORKDIR_MISSING:/i, category: "CLAIM_WORKDIR_MISSING", suggestion: "Setfarm could not resolve the prepared story worktree. Fix claim/workdir handoff before spawning a developer in agent scratch." },
   { pattern: /^CLAIM_PARSE_LOOP:/i, category: "CLAIM_PARSE_LOOP", suggestion: "Read the structured claim summary once and work from its focused fields. Do not jq/sed/head/node-loop over raw claim.input." },
   { pattern: /^CLAIM_SUMMARY_IGNORED:/i, category: "CLAIM_SUMMARY_IGNORED", suggestion: "Use CLAIM_SUMMARY_FILE as the authoritative handoff before reading the full claim fallback." },
@@ -68,7 +70,7 @@ const PATTERNS: Array<{ pattern: RegExp; category: ErrorCategory; suggestion: st
   { pattern: /^RUNTIME_BRIDGE_MISSING:/i, category: "RUNTIME_BRIDGE_MISSING", suggestion: "Expose the required window.app/globalThis.app runtime bridge from live state before reporting done" },
   { pattern: /^TEST_FAILED:/i, category: "TEST_FAILED", suggestion: "Run the touched tests, fix the failing source or invalid test expectation, then report done only after tests pass" },
   { pattern: /^BUILD_FAILED:/i, category: "BUILD_FAILED", suggestion: "Fix TypeScript/build errors in the story worktree, then run the build before completing" },
-  { pattern: /GUARDRAIL|DESIGN UYUMSUZLUK|design.tokens|design compliance/i, category: "DESIGN_MISMATCH", suggestion: "Review exact design mismatch lines and apply the matching UI/design-token fix only" },
+  { pattern: /GUARDRAIL|DESIGN MISMATCH|design.tokens|design compliance/i, category: "DESIGN_MISMATCH", suggestion: "Review exact design mismatch lines and apply the matching UI/design-token fix only" },
   { pattern: /MISSING_INPUT|\[missing:\s*\w+\]|(?:^|\n)\s*missing:\s*\w+/i, category: "CONTEXT_MISSING", suggestion: "Required template variable not set — check previous step output" },
   { pattern: /timed?\s*out|TIMEOUT|ABANDONED|agent.*dead/i, category: "TIMEOUT", suggestion: "Agent session exceeded timeout — retry or increase threshold" },
   { pattern: /npm ERR|build failed|tsc.*error|vite.*error|webpack.*error/i, category: "BUILD_FAIL", suggestion: "Build errors — check TypeScript types, missing imports, or dependency issues" },
@@ -96,13 +98,13 @@ export function buildGeneratedScreenSharedReadSuggestion(): string {
 
 function sanitizeGeneratedScreenSharedReadFeedback(errorText: string): string {
   const text = errorText.trim();
-  const targetedFix = `DÜZELT:\n${buildGeneratedScreenSharedReadSuggestion()
+  const targetedFix = `FIX:\n${buildGeneratedScreenSharedReadSuggestion()
     .split("; ")
-    .map(suggestion => `• ${suggestion}`)
+    .map(suggestion => `- ${suggestion}`)
     .join("\n")}`;
 
-  if (/\nDÜZELT:/i.test(text)) {
-    return text.replace(/\nDÜZELT:[\s\S]*$/i, `\n${targetedFix}`).trim();
+  if (/\nFIX:/i.test(text)) {
+    return text.replace(/\nFIX:[\s\S]*$/i, `\n${targetedFix}`).trim();
   }
 
   return `${text}\n${targetedFix}`;
@@ -118,13 +120,13 @@ export function buildRawStitchContextSuggestion(): string {
 
 function sanitizeRawStitchContextFeedback(errorText: string): string {
   const text = errorText.trim();
-  const targetedFix = `DÜZELT:\n${buildRawStitchContextSuggestion()
+  const targetedFix = `FIX:\n${buildRawStitchContextSuggestion()
     .split("; ")
-    .map(suggestion => `• ${suggestion}`)
+    .map(suggestion => `- ${suggestion}`)
     .join("\n")}`;
 
-  if (/\nDÜZELT:/i.test(text)) {
-    return text.replace(/\nDÜZELT:[\s\S]*$/i, `\n${targetedFix}`).trim();
+  if (/\nFIX:/i.test(text)) {
+    return text.replace(/\nFIX:[\s\S]*$/i, `\n${targetedFix}`).trim();
   }
 
   return `${text}\n${targetedFix}`;
@@ -138,7 +140,7 @@ export function buildDesignMismatchSuggestion(errorText: string): string {
   if (/transition-all|transition\s*:\s*all|blanket transition/i.test(errorText)) {
     suggestions.push("replace transition-all/transition: all with scoped transition properties");
   }
-  if (/design-tokens\.css.*import|design-tokens\.css hiçbir dosyada|design.tokens/i.test(errorText)) {
+  if (/design-tokens\.css.*import|design-tokens\.css is not imported|design.tokens/i.test(errorText)) {
     suggestions.push("import stitch/design-tokens.css from the real CSS entrypoint");
   }
   if (/hardcoded|#[0-9a-f]{3,8}|var\(--token\)/i.test(errorText)) {
@@ -157,19 +159,19 @@ export function sanitizeDesignMismatchFeedback(errorText: string): string {
   const text = errorText.trim();
   if (/GENERATED_SCREEN_SHARED_READ:/i.test(text)) return sanitizeGeneratedScreenSharedReadFeedback(text);
   if (/RAW_STITCH_CONTEXT_READ:/i.test(text)) return sanitizeRawStitchContextFeedback(text);
-  if (!/DESIGN UYUMSUZLUK|UI_CONTRACT|design compliance|design mismatch/i.test(text)) return text;
+  if (!/DESIGN MISMATCH|UI_CONTRACT|design compliance|design mismatch/i.test(text)) return text;
 
-  const targetedFix = `DÜZELT:\n${buildDesignMismatchSuggestion(text)
+  const targetedFix = `FIX:\n${buildDesignMismatchSuggestion(text)
     .split("; ")
-    .map(suggestion => `• ${suggestion}`)
+    .map(suggestion => `- ${suggestion}`)
     .join("\n")}`;
 
-  const staleGenericFix = /DÜZELT:\s*Kritik UI sözleşmesi hatalarını düzelt;\s*stitch\/design-tokens\.css'i import et,\s*hardcoded renkleri var\(--\*\) ile değiştir\./i;
+  const staleGenericFix = /FIX:[\s\S]{0,240}stitch\/design-tokens\.css[\s\S]{0,240}hardcoded[\s\S]{0,80}var\(--\*\)/i;
   if (staleGenericFix.test(text)) {
     return text.replace(staleGenericFix, targetedFix).trim();
   }
 
-  if (!/\nDÜZELT:/i.test(text)) {
+  if (!/\nFIX:/i.test(text)) {
     return `${text}\n${targetedFix}`;
   }
 

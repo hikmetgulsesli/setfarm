@@ -11,7 +11,7 @@ STATUS: done
 REPO: $HOME/projects/<slug>
 BRANCH: <branch-name>
 TECH_STACK: <vite-react|nextjs|vanilla-ts|node-express|react-native>
-UI_LANGUAGE: <English|Turkish>
+UI_LANGUAGE: <English or requested product language>
 PRD:
 <PRD body — at least 2000 characters, English, includes every section below>
 PRD_SCREEN_COUNT: <number of rows in the Screens table, minimum 3>
@@ -24,7 +24,7 @@ DB_REQUIRED: <none|postgres|sqlite>
 - Summarize the product in 2-3 sentences.
 - Define the target users.
 - Define UI_LANGUAGE. Default to English unless the user explicitly requests
-  Turkish UI.
+  localized UI.
 
 ### 2. Goals
 - List 4-6 concrete product goals.
@@ -163,9 +163,9 @@ Use `none` when unclear.
 - Pipeline instructions, story titles, technical reports, and output fields are English.
 - Visible application copy follows UI_LANGUAGE.
 - Screen names, component identifiers, file names, story titles, and reports remain English.
-- For Turkish UI_LANGUAGE, write only visible in-app copy in Turkish.
-- Do not mix random English labels into a Turkish UI unless they are technical
-  terms or brand names.
+- If UI_LANGUAGE is not English, localize only visible in-app copy.
+- Do not mix random English labels into localized visible copy unless they are
+  technical terms or brand names.
 
 ## Do Not
 

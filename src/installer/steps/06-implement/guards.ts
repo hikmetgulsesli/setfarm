@@ -14,6 +14,11 @@ import type { ParsedOutput, ValidationResult } from "../types.js";
 import { buildTestFixPrompt, detectTestFramework, runTests } from "../../test-generation.js";
 import { isImplicitStoryScopeFile } from "../../story-scope.js";
 import { ensureStoryBranchWorktree } from "../../worktree-ops.js";
+import { buildSupervisorChecklistFromProject } from "../../supervisor/checklist.js";
+import { formatSupervisorBlockerFeedback } from "../../supervisor/intervention.js";
+import { runImplementSupervisorScan } from "../../supervisor/run-supervisor.js";
+import { formatSupervisorFindings, scanSupervisorChecklist } from "../../supervisor/scanner.js";
+import type { SupervisorFinding } from "../../supervisor/types.js";
 
 // ── Module interface methods ────────────────────────────────────
 
@@ -502,70 +507,28 @@ function designScreenForIndexEntry(entry: any, screens: any[]): any | undefined 
     || screens.find((screen) => normalizeControlLabel(screen?.title || screen?.name || screen?.screenName || "") === entryTitle);
 }
 
-export function findDesignDomImplementationIssues(workdir: string, scopeFiles: string[], repoPath = ""): string[] {
+export function findDesignDomImplementationFindings(workdir: string, scopeFiles: string[], repoPath = ""): SupervisorFinding[] {
   if (!workdir || !fs.existsSync(workdir) || scopeFiles.length === 0) return [];
-  const screenIndex = loadScreenIndex(workdir, repoPath);
-  const designScreens = loadDesignDomScreens(workdir, repoPath);
-  if (screenIndex.length === 0 || designScreens.length === 0) return [];
+  const checklist = buildSupervisorChecklistFromProject({
+    runId: "adhoc-scan",
+    workdir,
+    repoPath,
+    scopeFiles,
+  });
+  if (checklist.items.length === 0) return [];
+  return scanSupervisorChecklist(workdir, checklist, scopeFiles).findings
+    .filter((finding) => finding.status !== "passed")
+    .slice(0, 24);
+}
 
-  const scoped = new Set(scopeFiles);
-  const issues: string[] = [];
-  for (const entry of screenIndex.filter((item) => scoped.has(String(item?.file || ""))).slice(0, 8)) {
-    const file = String(entry.file || "");
-    const abs = path.join(workdir, file);
-    if (!fs.existsSync(abs)) continue;
-    const source = fs.readFileSync(abs, "utf-8");
-    const buttons = extractJsxBlocks(source, "button");
-    const links = extractJsxBlocks(source, "a");
-    const design = designScreenForIndexEntry(entry, designScreens);
-    if (!design) continue;
-    const screenName = String(entry.title || design.title || design.name || file);
-
-    for (const control of Array.isArray(design.buttons) ? design.buttons : []) {
-      const label = String(control?.label || control?.text || "").trim();
-      const icon = String(control?.icon || "").trim();
-      if (!label && !icon) continue;
-      const match = buttons.find((block) => blockMatchesControl(block, control));
-      if (!match) {
-        if (isDisplayOnlyDesignButton(control) && label && sourceHasVisibleControlText(source, label)) {
-          continue;
-        }
-        issues.push(`${file}: missing DESIGN_DOM button "${label || icon}" on ${screenName}`);
-      } else {
-        if (!buttonIsActionable(match) && !isDisplayOnlyDesignButton(control)) {
-          issues.push(`${file}:${lineForIndex(source, match.index)} DESIGN_DOM button "${label || icon}" is static or lacks a handler/disabled state`);
-        }
-        if (icon && !blockHasIcon(match, icon)) {
-          issues.push(`${file}:${lineForIndex(source, match.index)} DESIGN_DOM button "${label || icon}" is missing expected icon "${icon}"${iconExpectationHint(icon)}`);
-        }
-      }
-      if (issues.length >= 12) return issues;
-    }
-
-    for (const nav of Array.isArray(design.navLinks) ? design.navLinks : []) {
-      const label = String(nav?.label || nav?.text || "").trim();
-      const expectedHref = String(nav?.href || "").trim();
-      const match = links.find((block) => blockMatchesControl(block, nav));
-      if (!match) {
-        issues.push(`${file}: missing DESIGN_DOM link "${label || expectedHref}" on ${screenName}`);
-      } else {
-        const actualHref = attrValue(match.attrs, "href");
-        if (expectedHref && actualHref === null) {
-          issues.push(`${file}:${lineForIndex(source, match.index)} DESIGN_DOM link "${label || expectedHref}" lacks href="${expectedHref}"`);
-        } else if (isDeadHrefValue(actualHref) && !isExplicitlyInertAnchor(match.attrs) && !/\bonClick\s*=/.test(match.attrs)) {
-          issues.push(`${file}:${lineForIndex(source, match.index)} active DESIGN_DOM link "${label || expectedHref}" uses a dead href without aria-current/aria-disabled or handler`);
-        }
-        if (String(nav?.icon || "").trim() && !blockHasIcon(match, String(nav.icon))) {
-          issues.push(`${file}:${lineForIndex(source, match.index)} DESIGN_DOM link "${label || expectedHref}" is missing expected icon "${nav.icon}"${iconExpectationHint(String(nav.icon))}`);
-        }
-      }
-      if (issues.length >= 12) return issues;
-    }
-  }
-  return issues;
+export function findDesignDomImplementationIssues(workdir: string, scopeFiles: string[], repoPath = ""): string[] {
+  const blockers = findDesignDomImplementationFindings(workdir, scopeFiles, repoPath)
+    .filter((finding) => finding.severity === "blocker");
+  return formatSupervisorFindings(blockers).slice(0, 12);
 }
 
 export async function checkDesignDomImplementationGate(
+  runId: string,
   storyId: string,
   currentStoryDbId: string,
   storyTitle: string,
@@ -579,13 +542,20 @@ export async function checkDesignDomImplementationGate(
   );
   const scopeFiles = parseScopeFiles(row?.scope_files).filter((file) => /^src\/screens\/.+\.(tsx|jsx)$/i.test(file));
   if (scopeFiles.length === 0) return { passed: true };
-  const issues = findDesignDomImplementationIssues(workdir, scopeFiles, repoPath);
-  if (issues.length === 0) return { passed: true };
+  const scan = await runImplementSupervisorScan({
+    runId,
+    workdir,
+    repoPath,
+    storyId,
+    scopeFiles,
+  });
+  if (scan.blockers.length === 0) return { passed: true };
+  const feedback = formatSupervisorBlockerFeedback(scan.blockers);
   return {
     passed: false,
-    reason: `DESIGN_DOM_IMPLEMENTATION_MISMATCH: Story ${storyId} (${storyTitle}) reported STATUS: done but scoped screen code does not satisfy DESIGN_DOM controls.\n${issues.slice(0, 12).map((issue) => `- ${issue}`).join("\n")}`,
-    category: "DESIGN_DOM_IMPLEMENTATION_MISMATCH",
-    suggestion: "Fix the scoped screen files so every DESIGN_DOM button/link remains present, has the declared href/icon where applicable, and is either wired to visible behavior or explicitly disabled/current before reporting done.",
+    reason: `${feedback}\nStory ${storyId} (${storyTitle}) reported STATUS: done with unresolved supervisor checklist blocker(s).`,
+    category: "SUPERVISOR_BLOCKERS_OPEN",
+    suggestion: "Use the supervisor checklist/state files under .setfarm/supervisor/<runId>/ and fix only the scoped story files until scanner evidence closes every blocker. Warnings such as labeled icon mismatch should be handled when practical but are not fatal.",
   };
 }
 

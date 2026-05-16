@@ -367,7 +367,7 @@ function routeTokenFromLabel(label) {
   if (/\b(profile|account|user)\b/.test(text)) return "profile";
   if (/\b(details?|view details?|open)\b/.test(text)) return "detail";
   if (/\b(create|new|add|log|report)\b/.test(text) && /\b(incident|record|ticket|case|task|item|project)\b/.test(text)) return "create";
-  if (/\b(save|submit|send|create|add|report|kaydet|gonder)\b/.test(text)) return "save";
+  if (/\b(save|submit|send|create|add|report)\b/.test(text)) return "save";
   if (/\b(cancel|back|return|close)\b/.test(text)) return "cancel";
   if (/\b(clear|reset|delete|remove)\b/.test(text)) return "destructive";
   return "";
@@ -420,7 +420,7 @@ const FLOW_AUDIT_EVAL =
       if (/\\b(profile|account|user)\\b/.test(text)) return "profile";
       if (/\\b(details?|view details?|open)\\b/.test(text)) return "detail";
       if (/\\b(create|new|add|log|report)\\b/.test(text) && /\\b(incident|record|ticket|case|task|item|project)\\b/.test(text)) return "create";
-      if (/\\b(save|submit|send|create|add|report|kaydet|gonder)\\b/.test(text)) return "save";
+      if (/\\b(save|submit|send|create|add|report)\\b/.test(text)) return "save";
       if (/\\b(cancel|back|return|close)\\b/.test(text)) return "cancel";
       return "";
     }
@@ -541,7 +541,7 @@ const FLOW_AUDIT_EVAL =
       var filled = fillForm();
       await sleep(120);
       var saveBtn = Array.from(document.querySelectorAll("button,[role=button]")).find(function(el) {
-        return /save|submit|send|create|add|report|kaydet|gonder/i.test(labelFor(el, 0));
+        return /save|submit|send|create|add|report/i.test(labelFor(el, 0));
       });
       if (!saveBtn) return { ok: false, reason: "create form has no save/submit button" };
       var saveBefore = snapshot();
@@ -608,7 +608,7 @@ const FLOW_AUDIT_EVAL =
         await sleep(100);
         var saveBefore = snapshot();
         var saveBtn = item.el.isConnected ? item.el : Array.from(document.querySelectorAll("button,[role=button]")).find(function(el) {
-          return /save|submit|send|create|add|report|kaydet|gonder/i.test(labelFor(el, 0));
+          return /save|submit|send|create|add|report/i.test(labelFor(el, 0));
         });
         if (saveBtn) {
           try { saveBtn.click(); } catch(e) {}
@@ -1197,7 +1197,7 @@ const BUTTON_AUDIT_EVAL =
 async function tryAuth(baseUrl, repoPath) {
   // Check if there's a login page
   const snap = abOk('snapshot') || '';
-  const hasLoginForm = /password|şifre|login|giriş/i.test(snap);
+  const hasLoginForm = /password|login|sign in/i.test(snap);
   if (!hasLoginForm) return null;
 
   // Look for test credentials in .env or .env.test or .env.local
@@ -1241,7 +1241,7 @@ async function tryAuth(baseUrl, repoPath) {
         await sleep(3000);
         // Check if we're still on login page
         const afterSnap = abOk('snapshot') || '';
-        if (/password|şifre|login|giriş/i.test(afterSnap)) {
+        if (/password|login|sign in/i.test(afterSnap)) {
           return 'login-failed';
         }
         return 'logged-in';
@@ -1624,7 +1624,7 @@ async function main() {
 
           // Find submit/send button and click it
           const submitBtn = formParsed.buttons.find(b =>
-            /submit|send|go|search|login|sign|save|ok|gonder|kaydet|ara/i.test(b)
+            /submit|send|go|search|login|sign|save|ok/i.test(b)
           );
           if (submitBtn) {
             const submitRef = formParsed.refs['button:' + submitBtn];

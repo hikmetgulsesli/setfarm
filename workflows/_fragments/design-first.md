@@ -61,9 +61,9 @@ DESIGN ENFORCEMENT (MANDATORY):
 LANGUAGE:
 - Agent-facing code comments, reports, and technical outputs should be English.
 - Visible application copy must follow the user's requested product language.
-  For Turkish tasks, visible labels, placeholders, aria-labels, titles, and
-  error messages should be Turkish unless they are technical terms or brand
-  names.
+  If the user explicitly requests a non-English product language, localize only
+  visible application copy; keep code, comments, reports, and technical output
+  in English.
 
 DESIGN CONTRACT RULES:
 1. Every navigation anchor must preserve the generated `<a>` tag, className,

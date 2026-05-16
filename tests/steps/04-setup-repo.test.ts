@@ -109,14 +109,14 @@ describe("04-setup-repo step module", () => {
     assert.ok(script.includes("UI_LANGUAGE=\"${7:-English}\""), "setup-repo should accept UI_LANGUAGE as a scaffold input");
     assert.ok(script.includes("html_lang_for_ui_language()"), "setup-repo should derive html lang from UI_LANGUAGE");
     assert.ok(script.includes('<html lang="$HTML_LANG">'), "frontend scaffolds should use derived html lang");
-    assert.equal(script.includes('<html lang="tr">'), false, "Vite scaffold must not hard-code Turkish html lang");
+    assert.equal(script.includes('<html lang="tr">'), false, "Vite scaffold must not hard-code a locale-specific html lang");
     assert.ok(script.includes('"name": "$PACKAGE_NAME"'), "package name should come from project slug");
     assert.ok(script.includes('data-setfarm-root="baseline"'), "App baseline should be machine-detectable");
     assert.ok(script.includes("baseline scaffold did not create package.json"), "fresh frontend repos must fail if scaffold is missing");
-    assert.equal(script.includes("<title>Notlar</title>"), false);
+    assert.equal(script.includes("<title>Notes</title>"), false);
     assert.equal(script.includes("useNotes"), false);
     assert.equal(script.includes("NoteStatus"), false);
-    assert.equal(script.includes("setfarm-notlar"), false);
+    assert.equal(script.includes("setfarm-notes"), false);
   });
 
   it("preClaim passes project display name into setup-repo scaffold", () => {

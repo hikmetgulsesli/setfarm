@@ -314,7 +314,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /await updateRunningStepHeartbeat\(active,\s*row\.step_id,\s*ageMs\)/);
   });
 
-  it("kills implement claims that read shared generated screen files", () => {
+  it("records supervisor signals when implement claims read shared generated screen files", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /function generatedScreenReadGuard\(active: ActiveProcess\)/);
     assert.match(source, /readStoryScopeFileSet\(active\.spawnCwd\)/);
@@ -342,24 +342,23 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /src\/screens\/\*\.tsx/);
     assert.doesNotMatch(source, /allowed\.size === 0\)\s*return \{ detected: false/);
     assert.match(source, /GENERATED_SCREEN_SHARED_READ/);
-    assert.match(source, /async function recordSupervisorRuntimeEvent/);
-    assert.match(source, /PRODUCT_SUPERVISOR_RUNTIME_GUARD/);
+    assert.match(source, /async function recordRuntimeSupervisorSignal/);
+    assert.match(source, /PRODUCT_SUPERVISOR_RUNTIME_SIGNAL/);
     assert.match(source, /const effectiveStoryId = active\.storyId \|\| row\.story_id \|\| undefined/);
     assert.match(source, /const effectiveStoryDbId = active\.storyDbId \|\| row\.current_story_id \|\| undefined/);
     assert.match(source, /row\.type === "loop" && row\.step_id === "implement" && effectiveStoryId/);
-    assert.match(source, /terminateActiveProcess\(active,\s*"generated-screen-read-guard"\)/);
+    assert.match(source, /recordRuntimeSupervisorSignal\(active,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"generated-screen-read-guard"/);
     assert.ok(
-      source.indexOf("recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId") < source.indexOf("await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId"),
-      "generated screen guard must write supervisor runtime memory before retrying the story claim",
+      source.indexOf("generatedScreenReadGuard(active)") < source.indexOf("rawStitchDesignReadGuard(active)"),
+      "generated screen guard should run before raw Stitch guard",
     );
-    assert.match(source, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.agentId,\s*reason\)/);
     assert.ok(
       source.indexOf("generatedScreenReadGuard(active)") < source.indexOf("const terminalReason = childProcessTerminalReason(active.child)"),
-      "generated screen read guard must run before terminal-process recovery so quick exec/head exits cannot bypass it",
+      "generated screen read guard must run before terminal-process recovery so quick exec/head exits are still observed",
     );
   });
 
-  it("kills implement claims that read raw Stitch design corpus", () => {
+  it("records supervisor signals when implement claims read raw Stitch design corpus", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /function rawStitchDesignReadGuard\(active: ActiveProcess\)/);
     assert.match(source, /function isRawStitchDesignPath/);
@@ -370,7 +369,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /\.stitch-screens\*\.json/);
     assert.match(source, /RAW_STITCH_CONTEXT_READ/);
     assert.match(source, /injected Stitch excerpts, UI_CONTRACT, SCREEN_INDEX/);
-    assert.match(source, /terminateActiveProcess\(active,\s*"raw-stitch-read-guard"\)/);
+    assert.match(source, /recordRuntimeSupervisorSignal\(active,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"raw-stitch-read-guard"/);
     assert.ok(
       source.indexOf("rawStitchDesignReadGuard(active)") > source.indexOf("generatedScreenReadGuard(active)"),
       "raw Stitch guard should run after the more specific generated-screen guard",
@@ -381,22 +380,21 @@ describe("spawner gateway recovery wiring", () => {
     );
   });
 
-  it("kills implement claims that keep reasoning without any source delta", () => {
+  it("records supervisor signals when implement claims keep reasoning without any source delta", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /IMPLEMENT_NO_DELTA_GRACE_MS/);
     assert.match(source, /SETFARM_IMPLEMENT_NO_DELTA_GRACE_MS/);
     assert.match(source, /function implementNoDeltaStallGuard\(active: ActiveProcess, ageMs: number\)/);
     assert.match(source, /sourceStatusFiles\(active\.spawnCwd\)/);
     assert.match(source, /IMPLEMENT_NO_DELTA_STALL/);
-    assert.match(source, /terminateActiveProcess\(active,\s*"implement-no-delta-stall"\)/);
-    assert.match(source, /await requeueOpenStoryClaim\(active\.runId, row\.step_id, effectiveStoryId, active\.agentId, reason\)/);
+    assert.match(source, /recordRuntimeSupervisorSignal\(active,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"implement-no-delta-stall"/);
     assert.ok(
       source.indexOf("implementNoDeltaStallGuard(active, ageMs)") < source.indexOf("const terminalReason = childProcessTerminalReason(active.child)"),
       "no-delta stall guard must run before terminal-process recovery",
     );
   });
 
-  it("kills implement claims that sprawl through context before the first source delta", () => {
+  it("records supervisor signals when implement claims sprawl through context before the first source delta", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /IMPLEMENT_PRE_DELTA_MAX_CONTEXT_READS/);
     assert.match(source, /SETFARM_IMPLEMENT_PRE_DELTA_MAX_CONTEXT_READS/);
@@ -411,7 +409,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /preDeltaContextReadsFromCommand\(active, call\.command\)/);
     assert.match(source, /!isPreDeltaSafeContextPath\(relativePath,\s*allowed\)/);
     assert.match(source, /contextReads\.add\(normalizePreDeltaContextPath\(relativePath\)\)/);
-    assert.match(source, /terminateActiveProcess\(active,\s*"implement-pre-delta-context-guard"\)/);
+    assert.match(source, /recordRuntimeSupervisorSignal\(active,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"implement-pre-delta-context-guard"/);
     assert.ok(
       source.indexOf("implementPreDeltaExplorationGuard(active)") > source.indexOf("rawStitchDesignReadGuard(active)"),
       "pre-delta context guard should run after more specific context guards",
@@ -422,7 +420,7 @@ describe("spawner gateway recovery wiring", () => {
     );
   });
 
-  it("kills first-delta retries that run checks before a source delta", () => {
+  it("records supervisor signals for first-delta retries that run checks before a source delta", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /function claimSummaryRetryDisciplineMode\(active: ActiveProcess\)/);
     assert.match(source, /function implementPreDeltaCheckGuard\(active: ActiveProcess\)/);
@@ -431,7 +429,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /isVerifyDeterministicEvidenceCommand\(call\.command\)/);
     assert.match(source, /IMPLEMENT_PRE_DELTA_CHECK_VIOLATION/);
     assert.match(source, /make a small scoped source change, then run build\/test\/lint/);
-    assert.match(source, /terminateActiveProcess\(active,\s*"implement-pre-delta-check-guard"\)/);
+    assert.match(source, /recordRuntimeSupervisorSignal\(active,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"implement-pre-delta-check-guard"/);
     assert.ok(
       source.indexOf("implementPreDeltaCheckGuard(active)") > source.indexOf("rawStitchDesignReadGuard(active)"),
       "pre-delta check guard should run after more specific design/context guards",
@@ -442,7 +440,7 @@ describe("spawner gateway recovery wiring", () => {
     );
   });
 
-  it("kills implement claims that load irrelevant or full reference files", () => {
+  it("records supervisor signals when implement claims load irrelevant or full reference files", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /function implementReferenceReadGuard\(active: ActiveProcess\)/);
     assert.match(source, /function storyScopeLooksBackend\(workdir: string\)/);
@@ -451,20 +449,15 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /FULL_REFERENCE_CONTEXT_READ/);
     assert.match(source, /Backend\/API\/DB standards must not be loaded into frontend\/game story context/);
     assert.match(source, /candidate\.full/);
-    assert.match(source, /terminateActiveProcess\(active,\s*"reference-read-guard"\)/);
-    assert.match(source, /--- REFERENCE READ GUARD/);
+    assert.match(source, /recordRuntimeSupervisorSignal\(active,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"reference-read-guard"/);
+    assert.match(source, /--- SUPERVISOR SIGNAL/);
     assert.ok(
       source.indexOf("implementReferenceReadGuard(active)") < source.indexOf("generatedScreenReadGuard(active)"),
-      "reference context guard should run before generated-screen guard so stale reference mandates are retried early",
+      "reference context guard should run before generated-screen guard so stale reference mandates are observed early",
     );
-    assert.ok(
-      source.indexOf("recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId") < source.indexOf("terminateActiveProcess(active, \"reference-read-guard\")"),
-      "reference guard must write supervisor runtime memory before killing the claim",
-    );
-    assert.match(source, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.agentId,\s*reason\)/);
   });
 
-  it("hands agents a structured claim summary and kills raw claim parsing loops", () => {
+  it("hands agents a structured claim summary and records supervisor signals for raw claim parsing loops", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     const promptSource = fs.readFileSync(path.join(root, "src", "spawner-prompt.ts"), "utf-8");
     assert.match(promptSource, /export function buildClaimSummary/);
@@ -483,12 +476,11 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /parsed raw claim\.input before making any source delta/);
     assert.match(source, /CLAIM_PARSE_LOOP/);
     assert.match(source, /CLAIM_SUMMARY_IGNORED/);
-    assert.match(source, /terminateActiveProcess\(active,\s*"claim-parse-loop-guard"\)/);
+    assert.match(source, /recordRuntimeSupervisorSignal\(active,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"claim-parse-loop-guard"/);
     assert.ok(
       source.indexOf("claimParseLoopGuard(active)") < source.indexOf("implementReferenceReadGuard(active)"),
       "claim parse loop guard should run before context-pollution guards",
     );
-    assert.match(source, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.agentId,\s*reason\)/);
   });
 
   it("kills implement claims that write outside story scope during runtime", () => {

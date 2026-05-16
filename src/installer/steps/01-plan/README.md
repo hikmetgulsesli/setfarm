@@ -1,43 +1,36 @@
-# 01-plan — Plan Step Modülü
+# 01-plan - Plan Step Module
 
-Pipeline'ın ilk step'i. Görev metninden PRD ve teknik kararlar üretir.
+The first pipeline step. It converts the user task into a PRD and technical decisions.
 
 ## Input
 
-- `task` (string) — run.task (kullanıcının verdiği görev açıklaması)
+- `task`: user-provided task text
 
-## Output (parsed)
+## Parsed Output
 
-- STATUS: done
-- REPO: string (absolute path)
-- BRANCH: string (kebab-case)
-- TECH_STACK: enum (vite-react | nextjs | vanilla-ts | node-express | react-native)
-- PRD: string (min 500 char, Turkish, includes Ekranlar table)
-- PRD_SCREEN_COUNT: int (min 3)
-- DB_REQUIRED: enum (none | postgres | sqlite)
+- `STATUS: done`
+- `REPO`: absolute path
+- `BRANCH`: kebab-case branch slug
+- `TECH_STACK`: `vite-react`, `nextjs`, `vanilla-ts`, `node-express`, or `react-native`
+- `PRD`: complete product requirements document
+- `PRD_SCREEN_COUNT`: integer, at least 3
+- `DB_REQUIRED`: `none`, `postgres`, or `sqlite`
 
 ## Side Effects
 
-`onComplete` çağrıldığında:
-- PRD DB'nin `prds` tablosuna yazılır
-- REPO path ve TECH_STACK context'e kaydedilir (sonraki step'ler için)
+On completion:
+
+- writes the PRD to the `prds` table
+- stores repo path and tech stack in run context
 
 ## Files
 
-- `rules.md` — agent'ın uyacağı kurallar (prompt'a resolved)
-- `prompt.md` — agent template (`{{TASK}}` var'ı içerir)
-- `module.ts` — StepModule export (`planModule`)
-- `guards.ts` — validateOutput + onComplete
-- `context.ts` — injectContext (sadece TASK inject)
+- `rules.md`: agent rules
+- `prompt.md`: agent template
+- `module.ts`: StepModule export
+- `guards.ts`: validation and completion
+- `context.ts`: context injection
 
 ## Prompt Budget
 
-`maxPromptSize: 8192` bytes. Agent'a giden toplam prompt (prompt.md + rules.md + inject'lenmiş TASK) bu sınırı aşamaz.
-
-## Test
-
-```
-node --import tsx --test tests/steps/01-plan.test.ts
-```
-
-5 senaryo: happy path, short PRD, missing screen count, invalid tech stack, prompt size.
+`maxPromptSize: 8192` bytes.

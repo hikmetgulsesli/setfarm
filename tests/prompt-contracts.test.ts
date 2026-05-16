@@ -36,12 +36,12 @@ describe("agent prompt contracts", () => {
       "  3. Do not skip font links from the Stitch HTML head.",
       "  BANNED font-family values: system-ui, Roboto, Arial, Inter, Helvetica.",
       "- NEVER: emoji icons, purple gradients, transition: all, href=\"#\", empty",
-      "DÜZELT: Kritik UI sözleşmesi hatalarını düzelt; stitch/design-tokens.css'i import et, hardcoded renkleri var(--*) ile değiştir.",
+      "FIX: Resolve the exact UI contract failures; import stitch/design-tokens.css and replace hardcoded colors with var(--*) tokens.",
     ].join("\n");
 
     const output = sanitizeAgentPromptContracts(input);
 
-    assert.doesNotMatch(output, /Material\+Symbols\+Outlined|Copy every Stitch font link exactly|Kritik UI sözleşmesi|hardcoded renkleri/);
+    assert.doesNotMatch(output, /Material\+Symbols\+Outlined|Copy every Stitch font link exactly|exact UI contract failures|hardcoded colors/);
     assert.match(output, /Do not copy\s+Material Symbols, Material Icons, or any icon-font links/);
     assert.match(output, /dead unhandled placeholder links/);
     assert.match(output, /Fix only the exact UI_CONTRACT lines above/);

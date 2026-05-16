@@ -29,40 +29,36 @@ function getExplicitMaxStories(context: Record<string, string>): number | null {
 }
 
 const SEMANTIC_STOP_WORDS = new Set([
-  "about", "adet", "agent", "ana", "app", "application", "arac", "asama", "basic", "basit",
-  "bir", "bircok", "butun", "cihaz", "codlama", "css", "daha", "de", "deploy", "dev",
-  "dizin", "dogrulama", "dosya", "ekran", "fazla", "frontend", "gereken", "gerekirse",
-  "gerekli", "github", "html", "icin", "icinde", "ile", "ise", "javascript", "kisa",
-  "kod", "kodlama", "kurulum", "local", "localstorage", "maks", "maksimum", "minimal",
-  "next", "nextjs", "node", "olan", "olarak", "olacak", "olsun", "platform", "prd",
-  "proje", "react", "repo", "screen", "setup", "smoke", "static", "story", "tailwind",
-  "tek", "temel", "test", "testidir", "tests", "typescript", "typecheck", "ui", "user",
-  "uygulama", "uygulamasi", "veya", "vite", "web", "yeni", "yok",
+  "about", "agent", "app", "application", "basic", "build", "css", "deploy", "dev",
+  "frontend", "github", "html", "javascript", "local", "localstorage", "minimal",
+  "next", "nextjs", "node", "platform", "prd", "react", "repo", "screen", "setup",
+  "smoke", "static", "story", "tailwind", "test", "tests", "typescript", "typecheck",
+  "ui", "user", "vite", "web",
 ]);
 
 const SEMANTIC_SYNONYM_GROUPS = [
-  ["sayac", "sayaci", "sayacin", "sayaclar", "counter"],
-  ["arttir", "artir", "increment", "increase"],
-  ["azalt", "decrement", "decrease"],
-  ["sifirla", "reset"],
-  ["not", "notlar", "notes", "note"],
-  ["arama", "ara", "search"],
-  ["gorev", "todo", "task"],
-  ["oyun", "game"],
+  ["counter", "tally"],
+  ["increment", "increase"],
+  ["decrement", "decrease"],
+  ["reset", "restart"],
+  ["notes", "note"],
+  ["search", "filter"],
+  ["todo", "task"],
+  ["game", "play"],
 ];
 
 function normalizeSemanticText(text: string): string {
   return String(text || "")
-    .replace(/[İ]/g, "I")
-    .replace(/[ı]/g, "i")
+    .replace(/[\u0130]/g, "I")
+    .replace(/[\u0131]/g, "i")
     .toLowerCase()
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-    .replace(/[ıİ]/g, "i")
-    .replace(/[şŞ]/g, "s")
-    .replace(/[çÇ]/g, "c")
-    .replace(/[ğĞ]/g, "g")
-    .replace(/[üÜ]/g, "u")
-    .replace(/[öÖ]/g, "o");
+    .replace(/[\u0131\u0130]/g, "i")
+    .replace(/[\u015f\u015e]/g, "s")
+    .replace(/[\u00e7\u00c7]/g, "c")
+    .replace(/[\u011f\u011e]/g, "g")
+    .replace(/[\u00fc\u00dc]/g, "u")
+    .replace(/[\u00f6\u00d6]/g, "o");
 }
 
 function canonicalSemanticToken(token: string): string {
@@ -139,30 +135,30 @@ export function detectStorySemanticDrift(
 }
 
 const UI_BEHAVIOR_STOP_WORDS = new Set([
-  "action", "aktif", "aria", "button", "buton", "click", "control", "deger",
-  "div", "dom", "feedback", "flow", "href", "icon", "input", "islem", "item",
+  "action", "aria", "button", "click", "control", "div", "dom", "feedback",
+  "flow", "href", "icon", "input", "item",
   "label", "link", "modal", "navigate", "onchange", "onclick", "page", "panel",
   "state", "submit", "target", "trigger", "url", "value", "visible", "circle", "alt",
 ]);
 
 const UI_BEHAVIOR_SYNONYM_GROUPS = [
-  ["settings", "setting", "ayar", "ayarlar", "tune"],
-  ["history", "gecmis", "kayit", "kayitlar", "logs", "log"],
-  ["profile", "profil", "person", "account", "hesap", "kullanici"],
-  ["home", "ana", "anasayfa", "dashboard"],
-  ["search", "ara", "arama", "filtre", "filter"],
-  ["add", "add_circle", "plus", "ekle", "yeni", "olustur", "create"],
-  ["artir", "arttir", "increase", "increment", "plus"],
-  ["remove", "minus", "azalt", "decrease", "decrement"],
-  ["reset", "restart", "restart_alt", "sifirla"],
-  ["save", "kaydet", "submit", "gonder"],
-  ["delete", "sil", "kaldir", "trash"],
-  ["close", "kapat", "iptal", "cancel", "dismiss"],
-  ["note", "notes", "not", "notlar"],
-  ["counter", "sayac", "tally"],
-  ["notification", "notifications", "bildirim", "bildirimler"],
-  ["favorite", "favorites", "favori"],
-  ["bookmark", "bookmarks", "yerimi"],
+  ["settings", "setting", "tune", "options", "preferences"],
+  ["history", "logs", "log"],
+  ["profile", "person", "account", "user"],
+  ["home", "dashboard"],
+  ["search", "filter"],
+  ["add", "add_circle", "plus", "create", "new"],
+  ["increase", "increment", "plus"],
+  ["remove", "minus", "decrease", "decrement"],
+  ["reset", "restart", "restart_alt"],
+  ["save", "submit", "send"],
+  ["delete", "remove", "trash"],
+  ["close", "cancel", "dismiss"],
+  ["note", "notes"],
+  ["counter", "tally"],
+  ["notification", "notifications"],
+  ["favorite", "favorites"],
+  ["bookmark", "bookmarks"],
 ];
 
 function uiBehaviorTokens(text: string): string[] {
@@ -542,7 +538,7 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
   if (hallucinated.length > 0) {
     const list = hallucinated.slice(0, 10).map(h => `${h.story}:${h.path}`).join(", ");
     const validList = predictedScreens.slice(0, 10).map(s => s.filePath).join(", ");
-    const msg = `GUARDRAIL: ${hallucinated.length} hallucinated screen path(s) (${list}). Stitch produces src/screens/<TurkishName>.tsx. Valid: ${validList}. Use PREDICTED_SCREEN_FILES.`;
+    const msg = `GUARDRAIL: ${hallucinated.length} hallucinated screen path(s) (${list}). Stitch produces src/screens/<PredictedScreenName>.tsx. Valid: ${validList}. Use PREDICTED_SCREEN_FILES.`;
     logger.warn(`[module:stories] ${msg}`, { runId });
     await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);
     throw new Error(msg);
