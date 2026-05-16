@@ -410,7 +410,7 @@ export async function processSetupDesignContracts(
             for (const storyId of screen.stories) {
               const row = await pgGet<any>("SELECT id, acceptance_criteria FROM stories WHERE run_id = $1 AND story_id = $2", [runId, storyId]);
               if (!row) continue;
-              const criterion = `Must implement screen ${screen.screenId} (${screen.name}) — read stitch/${screen.screenId}.html`;
+              const criterion = `Must implement screen ${screen.screenId} (${screen.name}) - read stitch/${screen.screenId}.html`;
               if (!row.acceptance_criteria.includes(screen.screenId)) {
                 // v1.5.53: Parse as JSON array before appending (was raw string concat → broke JSON)
                 let acArr: string[] = [];

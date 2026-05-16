@@ -25,6 +25,38 @@ describe("story prompt formatting", () => {
     assert.deepEqual(parseAcceptanceCriteria("undefined"), []);
   });
 
+  it("recovers JSON criteria with appended design contract text", () => {
+    const raw = [
+      "[\"First criterion\",\"Second criterion\"]",
+      "",
+      "--- Design Contract Requirements ---",
+      "- [DESIGN] Navigation link \"Home\" -> #home MUST route to a real page/component",
+      "- [DESIGN] Button \"Save\" MUST have a functional onClick handler",
+    ].join("\n");
+
+    assert.deepEqual(parseAcceptanceCriteria(raw), [
+      "First criterion",
+      "Second criterion",
+      "[DESIGN] Navigation link \"Home\" -> #home MUST route to a real page/component",
+      "[DESIGN] Button \"Save\" MUST have a functional onClick handler",
+    ]);
+  });
+
+  it("flattens legacy nested JSON criteria strings", () => {
+    const nested = [
+      JSON.stringify(["App shell renders first", "Keyboard controls change state"]) +
+        "\n\n--- Design Contract Requirements ---\n- [DESIGN] Navigation link \"Game\" -> #game MUST route",
+      "Must implement screen fallback-game-board (Game Board) - read stitch/fallback-game-board.html",
+    ];
+
+    assert.deepEqual(parseAcceptanceCriteria(JSON.stringify(nested)), [
+      "App shell renders first",
+      "Keyboard controls change state",
+      "[DESIGN] Navigation link \"Game\" -> #game MUST route",
+      "Must implement screen fallback-game-board (Game Board) - read stitch/fallback-game-board.html",
+    ]);
+  });
+
   it("uses QA failure output and fallback criteria when QA-FIX fields are empty", () => {
     const formatted = formatStoryForTemplate(story({
       storyId: "QA-FIX-003",

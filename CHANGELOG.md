@@ -2,6 +2,12 @@
 
 This repository now keeps agent-facing operational notes in English only.
 
+## 2.3.41 - 2026-05-16
+
+- Preserved story acceptance criteria as JSON arrays when design-contract criteria are appended, preventing malformed story rows from confusing implement agents.
+- Added backward-compatible acceptance-criteria parsing for legacy rows that already contain appended design-contract text or nested JSON criteria strings.
+- Normalized generated screen-enrichment criteria to ASCII text for cleaner agent prompts.
+
 ## 2.3.40 - 2026-05-16
 
 - Stabilized generated project scaffolds with ignored Setfarm metadata, a durable Vite baseline test, local fallback design assets, and cleaner natural-language project naming.

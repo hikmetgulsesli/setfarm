@@ -24,20 +24,103 @@ function cleanStoryText(value: unknown): string {
   return text;
 }
 
+function extractLeadingJsonArray(text: string): { json: string; tail: string } | null {
+  if (!text.startsWith("[")) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === "\"") {
+      inString = true;
+    } else if (ch === "[") {
+      depth += 1;
+    } else if (ch === "]") {
+      depth -= 1;
+      if (depth === 0) {
+        return {
+          json: text.slice(0, i + 1),
+          tail: text.slice(i + 1),
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+function criteriaFromTail(tail: string): string[] {
+  return tail
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .map(line => line.replace(/^[-*]\s+/, "").trim())
+    .filter(line => line && line !== "--- Design Contract Requirements ---")
+    .filter(line => !EMPTY_STORY_VALUE.test(line));
+}
+
+function flattenCriteriaValues(values: unknown[]): string[] {
+  const criteria: string[] = [];
+
+  for (const value of values) {
+    const text = cleanStoryText(value);
+    if (!text) continue;
+
+    if (text.startsWith("[")) {
+      const extracted = extractLeadingJsonArray(text);
+      if (extracted) {
+        try {
+          const nested = JSON.parse(extracted.json);
+          if (Array.isArray(nested)) {
+            criteria.push(...flattenCriteriaValues(nested));
+            criteria.push(...criteriaFromTail(extracted.tail));
+            continue;
+          }
+        } catch {
+          // Fall through to preserving the original text.
+        }
+      }
+    }
+
+    criteria.push(text);
+  }
+
+  const seen = new Set<string>();
+  return criteria.filter(item => {
+    const key = item.trim();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export function parseAcceptanceCriteria(raw: unknown): string[] {
   const text = cleanStoryText(raw);
   if (!text) return [];
   try {
     const arr = JSON.parse(text);
-    if (Array.isArray(arr)) return arr.map(cleanStoryText).filter(Boolean);
+    if (Array.isArray(arr)) return flattenCriteriaValues(arr);
     const single = cleanStoryText(arr);
     return single ? [single] : [];
   } catch {
-    const m = text.match(/^(\[.*?\])/s);
-    if (m) {
+    const extracted = extractLeadingJsonArray(text);
+    if (extracted) {
       try {
-        const arr = JSON.parse(m[1]);
-        if (Array.isArray(arr)) return arr.map(cleanStoryText).filter(Boolean);
+        const arr = JSON.parse(extracted.json);
+        if (Array.isArray(arr)) {
+          return flattenCriteriaValues(arr).concat(criteriaFromTail(extracted.tail));
+        }
       } catch { /* fallback below */ }
     }
     return [text];

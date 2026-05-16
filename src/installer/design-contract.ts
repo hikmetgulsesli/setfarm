@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { logger } from "../lib/logger.js";
 import { pgQuery, pgRun, now } from "../db-pg.js";
+import { parseAcceptanceCriteria } from "./story-ops.js";
 
 // ESM __dirname polyfill (NodeNext doesn't provide it)
 const __filename = fileURLToPath(import.meta.url);
@@ -314,7 +315,7 @@ export async function enrichStoriesWithDesignContract(
     // Match story to relevant design elements by keyword overlap
     for (const nav of allNav) {
       if (titleLower.includes(nav.label.toLowerCase().split(" ")[0]) || (nav.href && titleLower.includes(nav.href.replace(/\//g, "")))) {
-        extraCriteria.push(`Navigation link "${nav.label}" → ${nav.href} MUST route to a real page/component`);
+        extraCriteria.push(`Navigation link "${nav.label}" -> ${nav.href} MUST route to a real page/component`);
       }
     }
 
@@ -348,10 +349,15 @@ export async function enrichStoriesWithDesignContract(
     const toAdd = extraCriteria.slice(0, 8);
     if (toAdd.length === 0) continue;
 
-    const existingAC = story.acceptance_criteria || "";
-    const separator = existingAC.endsWith("\n") ? "" : "\n";
-    const designAC = toAdd.map(c => `- [DESIGN] ${c}`).join("\n");
-    const updatedAC = existingAC + separator + "\n--- Design Contract Requirements ---\n" + designAC;
+    const existingAC = parseAcceptanceCriteria(story.acceptance_criteria || "");
+    const nextAC = [...existingAC];
+    const seen = new Set(existingAC);
+    for (const criterion of toAdd.map(c => `[DESIGN] ${c}`)) {
+      if (seen.has(criterion)) continue;
+      seen.add(criterion);
+      nextAC.push(criterion);
+    }
+    const updatedAC = JSON.stringify(nextAC);
 
     await pgRun(
       "UPDATE stories SET acceptance_criteria = $1, updated_at = $2 WHERE id = $3",
