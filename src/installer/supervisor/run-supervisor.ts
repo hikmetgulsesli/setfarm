@@ -1,4 +1,5 @@
 import { buildSupervisorChecklistFromProject } from "./checklist.js";
+import { persistSupervisorFixerPlan } from "./fixer.js";
 import { buildSupervisorIntervention } from "./intervention.js";
 import { scanSupervisorChecklist } from "./scanner.js";
 import {
@@ -6,6 +7,8 @@ import {
   appendSupervisorEvent,
   applyScanFindings,
   readSupervisorChecklist,
+  upsertSupervisorRunMetadata,
+  writeSupervisorInterventionsMarkdown,
   writeSupervisorChecklist,
 } from "./state.js";
 import type { SupervisorChecklist, SupervisorScanResult } from "./types.js";
@@ -17,7 +20,19 @@ export async function runImplementSupervisorScan(params: {
   storyId?: string;
   scopeFiles: string[];
   targetWorker?: string;
+  repeatedBlockerCount?: number;
 }): Promise<SupervisorScanResult> {
+  upsertSupervisorRunMetadata({
+    workdir: params.workdir,
+    runId: params.runId,
+    scope: "implement-scan",
+    status: "active",
+    mainRepo: params.repoPath,
+    storyId: params.storyId,
+    storyWorkdir: params.workdir,
+    activeWorkers: params.targetWorker ? [params.targetWorker] : [],
+  });
+
   const existing = readSupervisorChecklist(params.workdir, params.runId);
   const scopedChecklist = buildSupervisorChecklistFromProject({
     runId: params.runId,
@@ -55,6 +70,16 @@ export async function runImplementSupervisorScan(params: {
     source: "scanner",
     message: `Supervisor scan completed: ${result.blockers.length} blocker(s), ${result.warnings.length} warning(s).`,
   });
+  upsertSupervisorRunMetadata({
+    workdir: params.workdir,
+    runId: params.runId,
+    scope: "implement-scan",
+    status: result.blockers.length > 0 ? "blocked" : result.warnings.length > 0 ? "warning" : "passed",
+    mainRepo: params.repoPath,
+    storyId: params.storyId,
+    storyWorkdir: params.workdir,
+    activeWorkers: params.targetWorker ? [params.targetWorker] : [],
+  });
 
   for (const blocker of result.blockers.slice(0, 6)) {
     const intervention = buildSupervisorIntervention({
@@ -74,6 +99,7 @@ export async function runImplementSupervisorScan(params: {
       message: intervention.message,
     });
   }
+  writeSupervisorInterventionsMarkdown(params.workdir, params.runId);
 
   for (const warning of result.warnings.slice(0, 12)) {
     appendSupervisorEvent(params.workdir, {
@@ -84,6 +110,17 @@ export async function runImplementSupervisorScan(params: {
       itemId: warning.itemId,
       source: "scanner",
       message: warning.message,
+    });
+  }
+
+  if (result.blockers.length > 0 && (params.repeatedBlockerCount || 0) > 0) {
+    persistSupervisorFixerPlan({
+      workdir: params.workdir,
+      runId: params.runId,
+      storyId: params.storyId,
+      findings: result.blockers,
+      allowedFiles: params.scopeFiles,
+      repeatedBlockerCount: params.repeatedBlockerCount,
     });
   }
 

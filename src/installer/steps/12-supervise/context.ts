@@ -13,6 +13,13 @@ import {
   readProjectMemory,
 } from "../../context-ops.js";
 import { readSupervisorMemory } from "../../product-supervisor.js";
+import {
+  supervisorChecklistPath,
+  supervisorInterventionsPath,
+  supervisorRunPath,
+  supervisorStatePath,
+  supervisorVisualReportPath,
+} from "../../supervisor/state.js";
 
 function safeExec(cwd: string, cmd: string, args: string[], maxChars = 8000): string {
   try {
@@ -73,4 +80,9 @@ export async function injectContext(ctx: ClaimContext): Promise<void> {
   ctx.context["supervisor_git_summary"] = supervisorGitSummary(repo, branch);
   ctx.context["design_md_excerpt"] = readIfExists(path.join(repo, "DESIGN.md"), 12000) || "(no DESIGN.md)";
   ctx.context["package_json_excerpt"] = readIfExists(path.join(repo, "package.json"), 5000) || "(no package.json)";
+  ctx.context["supervisor_run"] = readIfExists(supervisorRunPath(repo, ctx.runId), 8000) || "(no supervisor run metadata)";
+  ctx.context["supervisor_state"] = readIfExists(supervisorStatePath(repo, ctx.runId), 12000) || "(no supervisor state)";
+  ctx.context["supervisor_checklist"] = readIfExists(supervisorChecklistPath(repo, ctx.runId), 12000) || "(no supervisor checklist)";
+  ctx.context["supervisor_interventions"] = readIfExists(supervisorInterventionsPath(repo, ctx.runId), 12000) || "(no supervisor interventions)";
+  ctx.context["supervisor_visual_report"] = readIfExists(supervisorVisualReportPath(repo, ctx.runId), 12000) || "(no supervisor visual QA report)";
 }

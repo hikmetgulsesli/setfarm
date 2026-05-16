@@ -542,8 +542,8 @@ export async function checkDesignDomImplementationGate(
   repoPath = "",
 ): Promise<ScopeCheckResult> {
   if (!workdir || !fs.existsSync(workdir)) return { passed: true };
-  const row = await pgGet<{ scope_files: string | null }>(
-    "SELECT scope_files FROM stories WHERE id = $1",
+  const row = await pgGet<{ scope_files: string | null; retry_count: number | null }>(
+    "SELECT scope_files, retry_count FROM stories WHERE id = $1",
     [currentStoryDbId],
   );
   const scopeFiles = parseScopeFiles(row?.scope_files).filter((file) => /^src\/screens\/.+\.(tsx|jsx)$/i.test(file));
@@ -554,6 +554,7 @@ export async function checkDesignDomImplementationGate(
     repoPath,
     storyId,
     scopeFiles,
+    repeatedBlockerCount: row?.retry_count || 0,
   });
   if (scan.blockers.length === 0) return { passed: true };
   const feedback = formatSupervisorBlockerFeedback(scan.blockers);
@@ -561,7 +562,7 @@ export async function checkDesignDomImplementationGate(
     passed: false,
     reason: `${feedback}\nStory ${storyId} (${storyTitle}) reported STATUS: done with unresolved supervisor checklist blocker(s).`,
     category: "SUPERVISOR_BLOCKERS_OPEN",
-    suggestion: "Use the supervisor checklist/state files under .setfarm/supervisor/<runId>/ and fix only the scoped story files until scanner evidence closes every blocker. Warnings such as labeled icon mismatch should be handled when practical but are not fatal.",
+    suggestion: "Use the supervisor checklist/state/intervention files under .setfarm/supervisor/<runId>/ and fix only the scoped story files until scanner evidence closes every blocker. If SUPERVISOR_FIXER_PLAN.json exists, use its provider/allowed-files guidance for the next scoped repair attempt.",
   };
 }
 

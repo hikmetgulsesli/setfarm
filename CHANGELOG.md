@@ -2,6 +2,13 @@
 
 This repository now keeps agent-facing operational notes in English only.
 
+## 2.3.0 - 2026-05-16
+
+- Added persistent supervisor run metadata, intervention reports, visual QA artifacts, and fixer plans under `.setfarm/supervisor/<runId>/`.
+- Wired supervisor interventions into story-scoped manager checkpoints so retries carry explicit manager feedback instead of ad hoc project rules.
+- Added Playwright-backed visual QA evidence for web verification, including route screenshots, console/network issues, layout overflow checks, and clicked-control checks.
+- Kept supervisor artifacts out of product git history with automatic `.setfarm/` git excludes.
+
 ## 2.2.0 - 2026-05-16
 
 - Added the supervisor-first execution architecture for persistent project oversight.

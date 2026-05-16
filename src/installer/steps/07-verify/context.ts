@@ -1,6 +1,6 @@
 import type { ClaimContext } from "../types.js";
 import { fetchPrState, formatPrCommentsForAgent } from "./pr-comments.js";
-import { runPlaywrightCheck, formatPlaywrightReport } from "./playwright-check.js";
+import { runSupervisorVisualQa, formatSupervisorVisualReport } from "../../supervisor/visual-qa.js";
 import { logger } from "../../../lib/logger.js";
 import { readSupervisorMemory } from "../../product-supervisor.js";
 
@@ -40,18 +40,23 @@ export async function injectContext(ctx: ClaimContext): Promise<void> {
     }
   }
 
-  // Playwright visual/smoke check (when repo has Playwright installed)
-  const repoPath = ctx.context["repo"] || "";
+  // Supervisor visual QA persists screenshots, console/browser issues, route
+  // crawl results, and clicked-control evidence under .setfarm/supervisor/<runId>.
+  const repoPath = ctx.context["story_workdir"] || ctx.context["repo"] || "";
   if (repoPath) {
     try {
-      const result = await runPlaywrightCheck(repoPath);
-      if (!result.skipped) {
-        const report = formatPlaywrightReport(result);
-        ctx.context["playwright_report"] = report;
-        logger.info(`[verify] Playwright check ${result.ok ? "PASS" : "FAIL"} (${result.issues.length} issue(s))`, { runId: ctx.runId });
-      }
+      const result = await runSupervisorVisualQa({
+        runId: ctx.runId,
+        workdir: repoPath,
+        repoPath,
+        storyId: ctx.context["current_story_id"] || undefined,
+      });
+      const report = formatSupervisorVisualReport(result);
+      ctx.context["playwright_report"] = report;
+      ctx.context["supervisor_visual_report"] = report;
+      logger.info(`[verify] Supervisor visual QA ${result.ok ? "PASS" : result.skipped ? "SKIP" : "FAIL"} (${result.issues.length} issue(s))`, { runId: ctx.runId });
     } catch (e) {
-      logger.warn(`[verify] Playwright check errored (non-fatal): ${String(e).slice(0, 160)}`, { runId: ctx.runId });
+      logger.warn(`[verify] Supervisor visual QA errored (non-fatal): ${String(e).slice(0, 160)}`, { runId: ctx.runId });
     }
   }
 }

@@ -35,6 +35,7 @@ import { createStoryWorktree, removeStoryWorktree, findWorktreeDir, syncBaseBran
 import { computeHasFrontendChanges, checkTestFailures, checkQualityGate, checkRequiredOutputFields, processDesignCompletion, processSetupCompletion, processSetupDesignContracts, processBrowserCheck, processDesignFidelityCheck, checkStoryDesignCompliance, checkImportConsistency } from "./step-guardrails.js";
 import { cleanupAbandonedSteps as _cleanupAbandonedSteps, cleanupProjectEphemera, scheduleRunCronTeardown } from "./cleanup-ops.js";
 import { isVerifyRetryMergeBlocker, isVerifyRetryQualityFailure } from "./verify-retry-routing.js";
+import { markSupervisorInterventions, upsertSupervisorRunMetadata } from "./supervisor/state.js";
 import { cleanupOutOfScopeWorktreeFiles } from "./steps/06-implement/context.js";
 import { sanitizeDesignMismatchFeedback } from "./error-taxonomy.js";
 import { sanitizeAgentPromptContracts } from "./prompt-contracts.js";
@@ -2441,6 +2442,16 @@ async function injectSuperviseEachContext(
     await updateRunContext(step.run_id, context);
     return false;
   }
+  upsertSupervisorRunMetadata({
+    workdir,
+    runId: step.run_id,
+    scope: "story",
+    status: "active",
+    mainRepo: context["repo"] || "",
+    storyId: story.story_id,
+    storyWorkdir: workdir,
+    supervisorSessionId: agentId,
+  });
 
   const storyObj: Story = {
     id: story.id,
@@ -5660,6 +5671,7 @@ async function handleSuperviseEachCompletion(
   const status = firstOutputWord(parsedOutput["status"] || context["status"]);
   const decision = firstOutputWord(parsedOutput["supervisor_decision"]);
   const issues = (parsedOutput["issues"] || parsedOutput["supervisor_memory_append"] || output || "").slice(0, 6000);
+  const supervisorLedgerWorkdir = context["story_workdir"] || context["repo"] || "";
 
   try {
     const { updateSupervisorMemory } = await import("./product-supervisor.js");
@@ -5682,6 +5694,23 @@ async function handleSuperviseEachCompletion(
     context["current_story_title"] = story.title;
     if (story.story_branch) context["story_branch"] = story.story_branch;
     clearStorySupervised(context, story.story_id);
+    if (supervisorLedgerWorkdir) {
+      upsertSupervisorRunMetadata({
+        workdir: supervisorLedgerWorkdir,
+        runId: superviseStep.run_id,
+        scope: "story",
+        status: "blocked",
+        mainRepo: context["repo"] || "",
+        storyId: story.story_id,
+        storyWorkdir: supervisorLedgerWorkdir,
+      });
+      markSupervisorInterventions({
+        workdir: supervisorLedgerWorkdir,
+        runId: superviseStep.run_id,
+        storyId: story.story_id,
+        result: "sent",
+      });
+    }
 
     if (newRetry > (story.max_retries || 0)) {
       await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [newRetry, issues, now(), story.id]);
@@ -5736,6 +5765,17 @@ async function handleSuperviseEachCompletion(
     context["current_story_title"] = story.title;
     if (story.story_branch) context["story_branch"] = story.story_branch;
     clearStorySupervised(context, story.story_id);
+    if (supervisorWorkdir) {
+      upsertSupervisorRunMetadata({
+        workdir: supervisorWorkdir,
+        runId: superviseStep.run_id,
+        scope: "story",
+        status: "blocked",
+        mainRepo: context["repo"] || "",
+        storyId: story.story_id,
+        storyWorkdir: supervisorWorkdir,
+      });
+    }
     if (newRetry > (story.max_retries || 0)) {
       await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [newRetry, failure, now(), story.id]);
       await updateRunContext(superviseStep.run_id, context);
@@ -5770,6 +5810,17 @@ async function handleSuperviseEachCompletion(
       context["current_story_title"] = story.title;
       if (story.story_branch) context["story_branch"] = story.story_branch;
       clearStorySupervised(context, story.story_id);
+      if (supervisorWorkdir) {
+        upsertSupervisorRunMetadata({
+          workdir: supervisorWorkdir,
+          runId: superviseStep.run_id,
+          scope: "story",
+          status: "blocked",
+          mainRepo: context["repo"] || "",
+          storyId: story.story_id,
+          storyWorkdir: supervisorWorkdir,
+        });
+      }
       if (newRetry > (story.max_retries || 0)) {
         await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [newRetry, failure, now(), story.id]);
         await updateRunContext(superviseStep.run_id, context);
@@ -5803,6 +5854,23 @@ async function handleSuperviseEachCompletion(
   if (story.pr_url) context["pr_url"] = story.pr_url;
   if (story.story_branch) context["story_branch"] = story.story_branch;
   delete context["previous_failure"];
+  if (supervisorWorkdir) {
+    upsertSupervisorRunMetadata({
+      workdir: supervisorWorkdir,
+      runId: superviseStep.run_id,
+      scope: "story",
+      status: decision === "fixed" ? "done" : "passed",
+      mainRepo: context["repo"] || "",
+      storyId: story.story_id,
+      storyWorkdir: supervisorWorkdir,
+    });
+    markSupervisorInterventions({
+      workdir: supervisorWorkdir,
+      runId: superviseStep.run_id,
+      storyId: story.story_id,
+      result: "resolved",
+    });
+  }
   await updateRunContext(superviseStep.run_id, context);
 
   await pgRun(

@@ -5,7 +5,16 @@ import os from "node:os";
 import path from "node:path";
 import { buildSupervisorChecklistFromProject } from "../src/installer/supervisor/checklist.js";
 import { runImplementSupervisorScan } from "../src/installer/supervisor/run-supervisor.js";
-import { readSupervisorChecklist, readSupervisorState } from "../src/installer/supervisor/state.js";
+import {
+  readSupervisorChecklist,
+  readSupervisorRunMetadata,
+  readSupervisorState,
+  readSupervisorVisualResult,
+  supervisorFixerPlanPath,
+  supervisorInterventionsPath,
+  supervisorVisualReportPath,
+  writeSupervisorVisualResult,
+} from "../src/installer/supervisor/state.js";
 
 describe("supervisor checklist scanning", () => {
   it("merges checklist items across story scopes in the same run", async () => {
@@ -196,6 +205,86 @@ describe("supervisor checklist scanning", () => {
 
       assert.equal(checklist.items.filter((item) => item.label === "Save").length, 2);
       assert.equal(new Set(checklist.items.map((item) => item.id)).size, checklist.items.length);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("persists supervisor ledger, interventions, fixer plan, and git artifact exclude", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-supervisor-ledger-"));
+    try {
+      fs.mkdirSync(path.join(tmp, ".git/info"), { recursive: true });
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.mkdirSync(path.join(tmp, "stitch"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { screenId: "SCR-001", title: "Console", file: "src/screens/Console.tsx" },
+      ]));
+      fs.writeFileSync(path.join(tmp, "stitch/DESIGN_DOM.json"), JSON.stringify({
+        screens: {
+          "SCR-001": {
+            screenId: "SCR-001",
+            title: "Console",
+            buttons: [{ label: "Launch", action: "launch" }],
+          },
+        },
+      }));
+      fs.writeFileSync(path.join(tmp, "src/screens/Console.tsx"), [
+        "export function Console() {",
+        "  return <main><button type=\"button\">Launch</button></main>;",
+        "}",
+      ].join("\n"));
+
+      const runId = "run-ledger";
+      await runImplementSupervisorScan({
+        runId,
+        workdir: tmp,
+        storyId: "US-001",
+        scopeFiles: ["src/screens/Console.tsx"],
+        repeatedBlockerCount: 1,
+      });
+
+      const run = readSupervisorRunMetadata(tmp, runId);
+      assert.equal(run?.status, "fixing");
+      assert.equal(run?.storyId, "US-001");
+      assert.equal(fs.existsSync(supervisorInterventionsPath(tmp, runId)), true);
+      assert.equal(fs.existsSync(supervisorFixerPlanPath(tmp, runId)), true);
+      assert.match(fs.readFileSync(supervisorInterventionsPath(tmp, runId), "utf-8"), /Launch/);
+      assert.match(fs.readFileSync(path.join(tmp, ".git/info/exclude"), "utf-8"), /^\.setfarm\/$/m);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("persists visual QA result and markdown evidence", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-supervisor-visual-"));
+    try {
+      writeSupervisorVisualResult(tmp, {
+        schema: "setfarm.supervisor-visual-result.v1",
+        runId: "run-visual",
+        storyId: "US-002",
+        ok: false,
+        baseUrl: "http://127.0.0.1:5555",
+        routesChecked: ["/"],
+        controlsChecked: 1,
+        screenshots: [".setfarm/supervisor/run-visual/visual/desktop-root.png"],
+        issues: [{
+          id: "dead-control-desktop-root-test",
+          type: "dead_control",
+          severity: "blocker",
+          route: "/",
+          viewport: "desktop",
+          detail: "Start button did not change route, DOM, or focus.",
+          screenshot: ".setfarm/supervisor/run-visual/visual/desktop-root.png",
+        }],
+        artifactDir: path.join(tmp, ".setfarm/supervisor/run-visual/visual"),
+        createdAt: "2026-05-16T00:00:00.000Z",
+      });
+
+      const result = readSupervisorVisualResult(tmp, "run-visual");
+      assert.equal(result?.ok, false);
+      assert.equal(result?.issues[0]?.type, "dead_control");
+      assert.equal(fs.existsSync(supervisorVisualReportPath(tmp, "run-visual")), true);
+      assert.match(fs.readFileSync(supervisorVisualReportPath(tmp, "run-visual"), "utf-8"), /dead_control/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

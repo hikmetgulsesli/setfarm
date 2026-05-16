@@ -37,6 +37,23 @@ PREVIOUS FAILURE:
 
 {{SUPERVISOR_MEMORY}}
 
+## Supervisor Runtime Ledger
+
+SUPERVISOR_RUN:
+{{SUPERVISOR_RUN}}
+
+SUPERVISOR_STATE:
+{{SUPERVISOR_STATE}}
+
+SUPERVISOR_CHECKLIST:
+{{SUPERVISOR_CHECKLIST}}
+
+SUPERVISOR_INTERVENTIONS:
+{{SUPERVISOR_INTERVENTIONS}}
+
+SUPERVISOR_VISUAL_REPORT:
+{{SUPERVISOR_VISUAL_REPORT}}
+
 ## PRD
 
 {{PRD}}
@@ -111,11 +128,14 @@ SHARED_CODE:
    - `{{BUILD_CMD}}`
    - `{{TEST_CMD}}` if meaningful
    - For web apps, run `node $HOME/.openclaw/setfarm-repo/scripts/smoke-test.mjs "{{REPO}}"` if the script exists.
-5. If you find fixable issues that are safe inside this supervisor checkpoint,
-   fix them directly, commit with `git commit -m "fix: supervisor audit"`, and
-   push the active branch. Keep this for concrete root-cause fixes, not broad
-   redesigns.
-6. If the issue requires redoing a story, changing the PRD/story plan, or
+5. Read the supervisor runtime ledger. Treat open blocker evidence in
+   `SUPERVISOR_STATE`, `SUPERVISOR_INTERVENTIONS`, and `SUPERVISOR_VISUAL_REPORT`
+   as manager instructions, not optional notes.
+6. If you find fixable issues that are safe inside this supervisor checkpoint,
+   make scoped file edits directly. Do not create commits yourself; Setfarm will
+   commit and push supervisor edits after this step validates scope. Keep this
+   for concrete root-cause fixes, not broad redesigns.
+7. If the issue requires redoing a story, changing the PRD/story plan, or
    touching ownership outside a safe supervisor patch, do not
    patch around it. Return `STATUS: retry` with exact implement feedback.
 

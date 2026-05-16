@@ -26,6 +26,10 @@ describe("LLM product supervisor architecture", () => {
 
   it("requires durable supervisor memory instead of project-specific rules", () => {
     assert.match(prompt, /SUPERVISOR_MEMORY/);
+    assert.match(prompt, /SUPERVISOR_RUN/);
+    assert.match(prompt, /SUPERVISOR_STATE/);
+    assert.match(prompt, /SUPERVISOR_INTERVENTIONS/);
+    assert.match(prompt, /SUPERVISOR_VISUAL_REPORT/);
     assert.match(prompt, /SUPERVISOR_MEMORY_APPEND/);
     assert.match(agent, /whole run/);
     assert.match(prompt, /Apply this same system-level\s+contract to every project/);
@@ -33,6 +37,12 @@ describe("LLM product supervisor architecture", () => {
     assert.match(prompt, /durable, reusable manager findings/);
     assert.match(agent, /Do not create one-off, project-specific policy/);
     assert.match(readFileSync(resolve(import.meta.dirname, "../src/installer/steps/12-supervise/rules.md"), "utf-8"), /persistent manager session/);
+  });
+
+  it("keeps supervisor patch git ownership on Setfarm", () => {
+    assert.match(prompt, /Setfarm will\s+commit and push supervisor edits after this step validates scope/);
+    assert.match(readFileSync(resolve(import.meta.dirname, "../src/installer/steps/12-supervise/rules.md"), "utf-8"), /Do not create git commits manually/);
+    assert.doesNotMatch(prompt, /git commit -m "fix: supervisor audit"/);
   });
 
   it("forces story-scoped supervisor audits onto the story worktree", () => {
