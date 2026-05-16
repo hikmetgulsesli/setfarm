@@ -28,6 +28,16 @@ export function normalize(parsed: ParsedOutput): void {
     const raw = parsed["status"].trim();
     parsed["status"] = (raw.indexOf("\n") >= 0 ? raw.slice(0, raw.indexOf("\n")).trim() : raw).split(/\s/)[0].toLowerCase();
   }
+  if (!parsed["changes"]) {
+    parsed["changes"] =
+      parsed["summary"] ||
+      parsed["implementation_summary"] ||
+      parsed["change_summary"] ||
+      parsed["files_changed"];
+  }
+  if (!parsed["story_branch"] && parsed["storybranch"]) {
+    parsed["story_branch"] = parsed["storybranch"];
+  }
 }
 
 export function validateOutput(parsed: ParsedOutput): ValidationResult {
@@ -606,8 +616,8 @@ export async function checkScopeFilesGate(
     return {
       passed: false,
       reason: `SCOPE_FILE_MISSING: Story ${storyId} (${storyTitle}) declared scope_files=${JSON.stringify(declared)} but only ${present.length}/${declared.length} exist as non-empty files (required at least ${required}). Missing: ${missing.join(", ") || "none"}. You reported STATUS: done but too little of the owned scope exists.`,
-      category: "NO_WORK",
-      suggestion: "Write meaningful code in at least the primary files listed in scope_files",
+      category: "SCOPE_FILE_MISSING",
+      suggestion: "Write meaningful non-empty implementation code in the primary files listed in scope_files before reporting done",
     };
   }
   return { passed: true };
@@ -734,7 +744,7 @@ export async function checkScopeEnforcement(
       storyText += "\n" + (storyRow?.description || "") + "\n" + (storyRow?.acceptance_criteria || "");
     } catch {}
 
-    const explicitDeletionStory = /\b(remove|delete|drop|cleanup|replace|rewrite|migrate|rename|sil|kaldir|temizle)\b/i.test(storyText);
+    const explicitDeletionStory = /\b(remove|delete|drop|cleanup|replace|rewrite|migrate|rename)\b/i.test(storyText);
     if (!explicitDeletionStory) {
       const heavyDeletes: string[] = [];
       try {

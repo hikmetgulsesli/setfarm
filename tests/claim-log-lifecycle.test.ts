@@ -174,6 +174,24 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(source, /POSITION\(',' \|\| verify_wait_st\.story_id \|\| ',' IN ',' \|\| COALESCE\(r\.context::jsonb ->> 'supervised_story_ids'/);
   });
 
+  it("does not hijack final-product supervisor completion as supervise_each after all stories are verified", () => {
+    const source = stepOpsSource();
+    const configHelperStart = source.indexOf("async function getSuperviseEachConfigForStep(");
+    const configHelperEnd = source.indexOf("async function findUnsupervisedDoneStory(", configHelperStart);
+    assert.notEqual(configHelperStart, -1, "getSuperviseEachConfigForStep source not found");
+    assert.notEqual(configHelperEnd, -1, "getSuperviseEachConfigForStep end not found");
+    const configHelper = source.slice(configHelperStart, configHelperEnd);
+    assert.match(configHelper, /status = 'done'/);
+    assert.match(configHelper, /if \(!pendingStory\) return null/);
+
+    const completeDispatchStart = source.indexOf("if (lc.superviseEach && (lc.superviseStep || \"supervise\") === step.step_id)");
+    assert.notEqual(completeDispatchStart, -1, "supervise_each complete dispatch not found");
+    const completeDispatch = source.slice(completeDispatchStart, completeDispatchStart + 700);
+    assert.match(completeDispatch, /if \(superviseEachConfigForStep\)/);
+    assert.match(completeDispatch, /handleSuperviseEachCompletion/);
+    assert.match(completeDispatch, /treating it as final supervisor/);
+  });
+
   it("runs verify preflight against the PR branch diff, not story branch against itself", () => {
     const fullSource = stepOpsSource();
     assert.match(fullSource, /execFileSync\("git", \["fetch", "--prune", "origin", "main", analysisBranch\]/);

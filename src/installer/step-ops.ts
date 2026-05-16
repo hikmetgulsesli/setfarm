@@ -62,6 +62,39 @@ const QA_FIX_MAX_STORIES = Math.max(1, parseInt(process.env.SETFARM_QA_FIX_MAX_S
 const QA_FIX_REPEAT_LIMIT = Math.max(1, parseInt(process.env.SETFARM_QA_FIX_REPEAT_LIMIT || "2", 10) || 2);
 const SUPERVISED_STORY_IDS_CONTEXT_KEY = "supervised_story_ids";
 
+function stripSetfarmGitWrapperPath(value: string | undefined): string {
+  return String(value || "")
+    .split(path.delimiter)
+    .filter((entry) => entry && path.basename(entry) !== ".setfarm-bin")
+    .join(path.delimiter);
+}
+
+function platformGitEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    ...extra,
+    PATH: stripSetfarmGitWrapperPath(extra.PATH || process.env.PATH),
+  };
+}
+
+function sanitizePlatformProcessPath(): void {
+  const cleaned = stripSetfarmGitWrapperPath(process.env.PATH);
+  if (cleaned && cleaned !== process.env.PATH) process.env.PATH = cleaned;
+}
+
+function execPlatformGit(args: string[], options: {
+  cwd: string;
+  timeout: number;
+  stdio: any;
+  encoding?: BufferEncoding;
+  env?: NodeJS.ProcessEnv;
+}): Buffer | string {
+  return execFileSync("git", args, {
+    ...options,
+    env: platformGitEnv(options.env),
+  } as any);
+}
+
 export function humanizeProjectDisplayName(input: string): string {
   const cleaned = String(input || "")
     .replace(/^Project\s*:\s*/i, "")
@@ -281,9 +314,57 @@ function isPlatformInternalCommitPath(file: string): boolean {
     || file === "pre-commit"
     || file === "SUPERVISOR_MEMORY.md"
     || file === "PROJECT_MEMORY.md"
+    || file === ".setfarm"
+    || file.startsWith(".setfarm/")
     || file.startsWith(".setfarm-bin/")
     || file.startsWith("node_modules/")
     || file.startsWith("references/");
+}
+
+function isPlatformMetadataOnlyVerifyRetry(output: string): boolean {
+  const normalized = output.toLowerCase();
+  const mentionsPlatformMetadata =
+    /\bsupervisor_memory\.md\b/i.test(output)
+    || /\bproject_memory\.md\b/i.test(output)
+    || /\bclaude\.md\b/i.test(output)
+    || /\.setfarm(?:\/|\b)/i.test(output);
+  if (!mentionsPlatformMetadata) return false;
+
+  const isDirtyStatusComplaint =
+    /\bgit status\b/.test(normalized)
+    || /\bdirty\b/.test(normalized)
+    || /\bmodified\b/.test(normalized)
+    || /\bclean workspace\b/.test(normalized)
+    || /\bclean worktree\b/.test(normalized)
+    || /\bclean git status\b/.test(normalized);
+  if (!isDirtyStatusComplaint) return false;
+
+  const failedCheck = /\b(build|test|lint|smoke)\b[\s\S]{0,80}\b(fail|failed|failure|error|broken)\b/.test(normalized);
+  const productBlocker = /\b(runtime|button|link|control|conflict|scope_bleed|non-functional|broken|missing|blocker)\b/.test(normalized);
+  return !failedCheck && !productBlocker;
+}
+
+function gitPorcelainPath(line: string): string {
+  const raw = String(line || "").replace(/\r$/, "");
+  if (!raw.trim()) return "";
+  const status = raw.slice(0, 2);
+  const body = /^[ MADRCU?!]{2}\s/.test(raw.slice(0, 3))
+    ? raw.slice(3).trim()
+    : raw.trim().replace(/^[ MADRCU?!]{1,2}\s+/, "");
+  if (!body) return "";
+  if (/[RC]/.test(status)) {
+    const renamed = body.match(/^(.+?)\s+->\s+(.+)$/);
+    if (renamed) return renamed[2].trim().replace(/^"|"$/g, "");
+  }
+  return body.replace(/^"|"$/g, "");
+}
+
+function isPlatformMetadataOnlyDirtyStatus(status: string): boolean {
+  const files = String(status || "")
+    .split(/\r?\n/)
+    .map(gitPorcelainPath)
+    .filter(Boolean);
+  return files.length > 0 && files.every(isPlatformInternalCommitPath);
 }
 
 function isPlatformStoryCommitAllowed(file: string, scopeFiles: Set<string>): boolean {
@@ -304,18 +385,18 @@ export function commitStoryWorktreeScopeIfNeeded(
 
   let status = "";
   try {
-    status = execFileSync("git", ["status", "--porcelain=v1", "-uall"], {
+    status = String(execPlatformGit(["status", "--porcelain=v1", "-uall"], {
       cwd: workdir,
       encoding: "utf-8",
       timeout: 10_000,
       stdio: ["pipe", "pipe", "pipe"],
-    });
+    }));
   } catch (err) {
     return { committed: false, sha: "", stagedFiles: [], error: `PLATFORM_STORY_COMMIT_STATUS_FAILED: ${formatCommandError(err)}` };
   }
 
   try {
-    execFileSync("git", ["reset", "-q", "HEAD", "--", "."], {
+    execPlatformGit(["reset", "-q", "HEAD", "--", "."], {
       cwd: workdir,
       timeout: 20_000,
       stdio: ["pipe", "pipe", "pipe"],
@@ -348,40 +429,38 @@ export function commitStoryWorktreeScopeIfNeeded(
   }
 
   try {
-    execFileSync("git", ["add", "--", ...touched], {
+    execPlatformGit(["add", "--", ...touched], {
       cwd: workdir,
       timeout: 20_000,
       stdio: ["pipe", "pipe", "pipe"],
     });
-    const staged = execFileSync("git", ["diff", "--cached", "--name-only"], {
+    const staged = String(execPlatformGit(["diff", "--cached", "--name-only"], {
       cwd: workdir,
       encoding: "utf-8",
       timeout: 10_000,
       stdio: ["pipe", "pipe", "pipe"],
-    }).trim().split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    })).trim().split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     if (staged.length === 0) return { committed: false, sha: "", stagedFiles: [], error: "" };
 
     const commitTitle = (storyTitle || "story work").replace(/\s+/g, " ").trim().slice(0, 90);
     const safeCommitType = /^[a-z][a-z0-9-]*$/i.test(commitType) ? commitType.toLowerCase() : "feat";
-    execFileSync("git", ["commit", "-m", `${safeCommitType}: ${storyId} - ${commitTitle}`], {
+    execPlatformGit(["commit", "-m", `${safeCommitType}: ${storyId} - ${commitTitle}`], {
       cwd: workdir,
       timeout: 30_000,
       stdio: ["pipe", "pipe", "pipe"],
       env: {
-        ...process.env,
-        SETFARM_PLATFORM_COMMIT: "1",
         GIT_AUTHOR_NAME: "Setfarm Supervisor",
         GIT_AUTHOR_EMAIL: "setfarm-supervisor@example.invalid",
         GIT_COMMITTER_NAME: "Setfarm Supervisor",
         GIT_COMMITTER_EMAIL: "setfarm-supervisor@example.invalid",
       },
     });
-    const sha = execFileSync("git", ["rev-parse", "--short", "HEAD"], {
+    const sha = String(execPlatformGit(["rev-parse", "--short", "HEAD"], {
       cwd: workdir,
       encoding: "utf-8",
       timeout: 10_000,
       stdio: ["pipe", "pipe", "pipe"],
-    }).trim();
+    })).trim();
     return { committed: true, sha, stagedFiles: staged, error: "" };
   } catch (err) {
     return { committed: false, sha: "", stagedFiles: [], error: `PLATFORM_STORY_COMMIT_FAILED: ${formatCommandError(err)}` };
@@ -395,19 +474,19 @@ function pushStoryBranch(workdir: string, storyBranch: string | null | undefined
   let branch = String(storyBranch || "").trim().toLowerCase();
   if (!branch) {
     try {
-      branch = execFileSync("git", ["branch", "--show-current"], {
+      branch = String(execPlatformGit(["branch", "--show-current"], {
         cwd: workdir,
         encoding: "utf-8",
         timeout: 10_000,
         stdio: ["pipe", "pipe", "pipe"],
-      }).trim().toLowerCase();
+      })).trim().toLowerCase();
     } catch (err) {
       return { pushed: false, error: `PLATFORM_STORY_PUSH_BRANCH_FAILED: ${formatCommandError(err)}` };
     }
   }
   if (!branch) return { pushed: false, error: "PLATFORM_STORY_PUSH_MISSING_BRANCH" };
   try {
-    execFileSync("git", ["push", "-u", "origin", branch], {
+    execPlatformGit(["push", "-u", "origin", branch], {
       cwd: workdir,
       timeout: 45_000,
       stdio: ["pipe", "pipe", "pipe"],
@@ -421,12 +500,12 @@ function pushStoryBranch(workdir: string, storyBranch: string | null | undefined
 function storyWorkdirMatchesBranch(workdir: string, storyBranch: string): boolean {
   if (!workdir || !fs.existsSync(workdir) || !storyBranch) return false;
   try {
-    const branch = execFileSync("git", ["branch", "--show-current"], {
+    const branch = String(execPlatformGit(["branch", "--show-current"], {
       cwd: workdir,
       encoding: "utf-8",
       timeout: 5000,
       stdio: ["pipe", "pipe", "pipe"],
-    }).trim().toLowerCase();
+    })).trim().toLowerCase();
     return branch === storyBranch.toLowerCase();
   } catch {
     return false;
@@ -1306,6 +1385,11 @@ function publishSetupBaselineToMain(repo: string, runBranch: string, runId: stri
       }).trim();
       if (dirty) {
         execFileSync("git", ["add", "-A"], { cwd: repo, timeout: 10000, stdio: ["pipe", "pipe", "pipe"] });
+        try {
+          execFileSync("git", ["rm", "-r", "--cached", "--ignore-unmatch", ".setfarm", ".setfarm-bin", ".worktrees", "references", "SUPERVISOR_MEMORY.md", "PROJECT_MEMORY.md", "CLAUDE.md"], {
+            cwd: repo, timeout: 10000, stdio: ["pipe", "pipe", "pipe"],
+          });
+        } catch {}
         execFileSync("git", ["commit", "-m", "chore: finalize setup baseline"], {
           cwd: repo,
           timeout: 20000,
@@ -3674,6 +3758,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
  * Complete a step: save output, merge context, advance pipeline.
  */
 export async function completeStep(stepId: string, output: string): Promise<{ advanced: boolean; runCompleted: boolean }> {
+  sanitizePlatformProcessPath();
 
   type StepRow = { id: string; run_id: string; step_id: string; step_index: number; type: string; loop_config: string | null; current_story_id: string | null; agent_id: string; retry_count: number; max_retries: number };
   let step = await pgGet<StepRow>("SELECT id, run_id, step_id, step_index, type, loop_config, current_story_id, agent_id, retry_count, max_retries FROM steps WHERE id = $1", [stepId]);
@@ -5209,7 +5294,7 @@ ${screenDescs}
         const dirty = execFileSync("git", ["status", "--porcelain"], {
           cwd: repoPath, timeout: 10000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8",
         }).trim();
-        if (dirty) {
+        if (dirty && !isPlatformMetadataOnlyDirtyStatus(dirty)) {
           const mergeMsg = `QA_FIX_MERGE_BLOCKED: ${repoPath} has uncommitted changes, refusing to merge ${storyBranchName} into main.`;
           context["previous_failure"] = mergeMsg;
           context["failure_category"] = "QA_FIX_MERGE_BLOCKED";
@@ -5217,6 +5302,10 @@ ${screenDescs}
           await updateRunContext(step.run_id, context);
           await failStep(stepId, mergeMsg);
           return { advanced: false, runCompleted: false };
+        }
+        if (dirty) {
+          logger.warn(`[qa-fix-merge] Ignoring platform metadata-only dirty status before merging ${storyBranchName}: ${dirty.replace(/\s+/g, " ").slice(0, 240)}`, { runId: step.run_id });
+          context["qa_fix_platform_metadata_dirty_ignored"] = `${storyRow?.story_id || "QA-FIX"}:${new Date().toISOString()}`;
         }
 
         try {
@@ -5558,7 +5647,16 @@ ${screenDescs}
   if (loopStepRow?.loop_config) {
     const lc: LoopConfig = JSON.parse(loopStepRow.loop_config);
     if (lc.superviseEach && (lc.superviseStep || "supervise") === step.step_id) {
-      return await handleSuperviseEachCompletion(step, loopStepRow.id, lc.verifyStep || "verify", output, context);
+      if (superviseEachConfigForStep) {
+        return await handleSuperviseEachCompletion(
+          step,
+          superviseEachConfigForStep.loopStepId,
+          superviseEachConfigForStep.verifyStep,
+          output,
+          context,
+        );
+      }
+      logger.info(`[supervise-each] ${step.step_id} completion has no done story awaiting story supervision; treating it as final supervisor`, { runId: step.run_id });
     }
     if (lc.verifyEach && lc.verifyStep === step.step_id) {
       return await handleVerifyEachCompletion(step, loopStepRow.id, output, context);
@@ -5901,7 +5999,7 @@ async function handleVerifyEachCompletion(
     }
   }
 
-  const status = parsedOutput["status"]?.toLowerCase() || context["status"]?.toLowerCase();
+  let status = parsedOutput["status"]?.toLowerCase() || context["status"]?.toLowerCase();
   const reportedMergedPrUrl = parsedOutput["merged_pr"] || "";
   if (reportedMergedPrUrl) {
     invalidatePRStateCache(reportedMergedPrUrl);
@@ -5966,6 +6064,18 @@ async function handleVerifyEachCompletion(
     if (lastDone) {
       verifiedStoryId = lastDone.story_id;
       logger.warn(`[verify] current_story_id missing from output+context, using fallback: ${lastDone.story_id}`, { runId: verifyStep.run_id });
+    }
+  }
+
+  if (status === "retry" && verifiedStoryId && isPlatformMetadataOnlyVerifyRetry(output)) {
+    const row = await pgGet<{ pr_url: string | null }>(
+      "SELECT pr_url FROM stories WHERE run_id = $1 AND story_id = $2 AND status = 'done' LIMIT 1",
+      [verifyStep.run_id, verifiedStoryId],
+    );
+    if (row?.pr_url && getPRState(row.pr_url) === "MERGED") {
+      context["verify_platform_metadata_retry_ignored"] = `${verifiedStoryId}:${new Date().toISOString()}`;
+      status = "done";
+      logger.warn(`[verify] Ignoring platform metadata-only retry for ${verifiedStoryId}; PR is merged and product checks are not blocked`, { runId: verifyStep.run_id });
     }
   }
 

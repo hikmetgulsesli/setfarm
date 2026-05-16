@@ -2,6 +2,12 @@
 
 This repository now keeps agent-facing operational notes in English only.
 
+## 2.3.38 - 2026-05-16
+
+- Split missing declared scope files into a dedicated implement retry category with clearer worker feedback.
+- Hardened platform-owned git operations so worker git wrappers and supervisor runtime artifacts cannot block story commits.
+- Required story-scoped supervisor passes to report acceptance-criteria coverage, preventing final-product checks from hijacking story supervisor loops.
+
 ## 2.3.37 - 2026-05-16
 
 - Added the English source contract script required by the committed build and test scripts.

@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import type { PromptContext, StepModule } from "../types.js";
 import { resolveTemplate } from "../_shared/prompt-resolver.js";
 import { injectContext } from "./context.js";
-import { onComplete, validateOutput } from "./guards.js";
+import { normalizeOutput, onComplete, validateOutput } from "./guards.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -52,7 +52,7 @@ function buildPrompt(ctx: PromptContext): string {
     PACKAGE_JSON_EXCERPT: c["package_json_excerpt"] || "",
     PREVIOUS_FAILURE: c["previous_failure"] || "",
     SUPERVISOR_SCOPE: c["supervisor_scope"] || "final-product",
-    CURRENT_STORY: c["current_story_id"] ? `${c["current_story_id"]} ${c["current_story_title"] || ""}`.trim() : "(not story-scoped)",
+    CURRENT_STORY: c["current_story"] || (c["current_story_id"] ? `${c["current_story_id"]} ${c["current_story_title"] || ""}`.trim() : "(not story-scoped)"),
   });
   return `${resolved}\n\n---\n\n# Rules\n\n${rulesBody}`;
 }
@@ -63,8 +63,9 @@ export const superviseModule: StepModule = {
   agentRole: "supervisor",
   injectContext,
   buildPrompt,
+  normalize: normalizeOutput,
   validateOutput,
   onComplete,
-  requiredOutputFields: ["STATUS", "SUPERVISOR_DECISION"],
+  requiredOutputFields: ["STATUS", "SUPERVISOR_DECISION", "AC_COVERAGE"],
   maxPromptSize: 32768,
 };

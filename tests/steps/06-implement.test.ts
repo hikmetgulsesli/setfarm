@@ -5,13 +5,14 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { implementModule } from "../../dist/installer/steps/06-implement/module.js";
-import { checkBuildGate, checkTestGate, computeScopeFileLimits, detectPackageBuildCommand, findDesignDomImplementationFindings, findDesignDomImplementationIssues, getOutOfScopeStoryFiles, normalize, parseGitStatusPorcelainPath, sourceExposesWindowApp, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
+import { checkBuildGate, checkScopeFilesGate, checkTestGate, computeScopeFileLimits, detectPackageBuildCommand, findDesignDomImplementationFindings, findDesignDomImplementationIssues, getOutOfScopeStoryFiles, normalize, parseGitStatusPorcelainPath, sourceExposesWindowApp, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
 import { cleanupOutOfScopeWorktreeFiles } from "../../dist/installer/steps/06-implement/context.js";
 import { commitStoryWorktreeScopeIfNeeded, decideStorySystemSmokeGate } from "../../dist/installer/step-ops.js";
 import { createStoryWorktree, ensureStoryBranchWorktree } from "../../dist/installer/worktree-ops.js";
 import { IMPLICIT_STORY_SCOPE_FILES, isImplicitStoryScopeFile } from "../../dist/installer/story-scope.js";
 import { checkStoryDesignCompliance } from "../../dist/installer/step-guardrails.js";
 import { STACK_RULES } from "../../dist/installer/steps/06-implement/stack-rules.js";
+import { pgRun } from "../../dist/db-pg.js";
 import type { ParsedOutput } from "../../dist/installer/steps/types.js";
 
 function git(cwd: string, args: string[]): string {
@@ -93,6 +94,35 @@ describe("06-implement step module", () => {
     }
   });
 
+  it("platform story commit bypasses the implement agent git wrapper", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-platform-commit-wrapper-"));
+    const originalPath = process.env.PATH;
+    try {
+      fs.mkdirSync(path.join(tmp, "src"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), "export const app = 'base';\n");
+      git(tmp, ["init", "-b", "main"]);
+      git(tmp, ["add", "src/App.tsx"]);
+      git(tmp, ["commit", "-m", "base"]);
+      fs.writeFileSync(path.join(tmp, ".story-scope-files"), "src/App.tsx\n");
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), "export const app = 'changed';\n");
+
+      const wrapperDir = path.join(tmp, ".setfarm-bin");
+      fs.mkdirSync(wrapperDir, { recursive: true });
+      fs.writeFileSync(path.join(wrapperDir, "git"), "#!/usr/bin/env bash\necho WRAPPER_HIT >&2\nexit 2\n", { mode: 0o755 });
+      process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath || ""}`;
+
+      const result = commitStoryWorktreeScopeIfNeeded(tmp, "US-001", "wrapper bypass");
+
+      assert.equal(result.error, "");
+      assert.equal(result.committed, true);
+      process.env.PATH = originalPath;
+      assert.equal(git(tmp, ["log", "-1", "--format=%s"]), "feat: US-001 - wrapper bypass");
+    } finally {
+      process.env.PATH = originalPath;
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("platform story commit can use declared DB scope and ignores pre-staged internal files", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-platform-commit-db-scope-"));
     try {
@@ -118,6 +148,31 @@ describe("06-implement step module", () => {
       const status = git(tmp, ["status", "--porcelain"]);
       assert.match(status, /^M SUPERVISOR_MEMORY\.md$/m);
       assert.doesNotMatch(status, /^M  SUPERVISOR_MEMORY\.md$/m);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("platform story commit ignores supervisor runtime artifacts", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-platform-commit-supervisor-artifacts-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), "export const app = 'base';\n");
+      git(tmp, ["init", "-b", "main"]);
+      git(tmp, ["add", "src/App.tsx"]);
+      git(tmp, ["commit", "-m", "base"]);
+      fs.writeFileSync(path.join(tmp, ".story-scope-files"), "src/App.tsx\n");
+
+      fs.mkdirSync(path.join(tmp, ".setfarm/supervisor/run-1"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, ".setfarm/supervisor/run-1/SUPERVISOR_RUN.json"), "{}\n");
+      fs.writeFileSync(path.join(tmp, ".setfarm/supervisor/run-1/SUPERVISOR_EVENTS.jsonl"), "{}\n");
+
+      const result = commitStoryWorktreeScopeIfNeeded(tmp, "US-001", "supervisor pass", ["src/App.tsx"], "fix");
+
+      assert.equal(result.error, "");
+      assert.equal(result.committed, false);
+      assert.deepEqual(result.stagedFiles, []);
+      assert.equal(git(tmp, ["log", "-1", "--format=%s"]), "base");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -354,6 +409,9 @@ describe("06-implement step module", () => {
   it("prompt requires runtime window.app bridge when accepted by story contract", () => {
     const prompt = fs.readFileSync(path.join(process.cwd(), "src/installer/steps/06-implement/prompt.md"), "utf-8");
     assert.match(prompt, /implement it\s+as a real runtime test bridge/i);
+    assert.match(prompt, /`window\.app = \{ state, actions \}`/);
+    assert.match(prompt, /`globalThis\.app = \{ state, actions \}`/);
+    assert.match(prompt, /type declarations, comments, `window\.game`, and prose about a\s+bridge do not count/i);
     assert.match(prompt, /requested game's score\/progress/i);
     assert.match(prompt, /gameplay\s+entities/i);
     assert.match(prompt, /active\s+screen\/route, selected record, counts, storage status, last error/i);
@@ -377,6 +435,8 @@ describe("06-implement step module", () => {
     assert.match(prompt, /Do not edit `index\.html` for title, Google fonts, icon fonts, metadata, or root markup/i);
     assert.match(prompt, /Shared domain\/type files \(`src\/types\/\*`, `src\/types\.ts`, domain model files\) are read-only unless they are explicitly listed in SCOPE_FILES/i);
     assert.match(prompt, /local display\/render type or adapter/i);
+    assert.match(prompt, /do not render movement,\s+pickup\/drop, pause, or other gameplay-only controls as active buttons/i);
+    assert.match(prompt, /On menu, help, paused,\s+game-over, empty, loading, or inactive screens/i);
   });
 
   it("buildPrompt is the loop source of truth for implement instructions", () => {
@@ -425,6 +485,13 @@ describe("06-implement step module", () => {
   it("validateOutput accepts STATUS: done when CHANGES is set", () => {
     const r = validateOutput({ status: "done", changes: "src/App.tsx modified" } as ParsedOutput);
     assert.equal(r.ok, true);
+  });
+
+  it("normalize treats common summary fields as CHANGES", () => {
+    const parsed = { status: "done", summary: "Implemented scoped files" } as ParsedOutput;
+    normalize(parsed);
+    assert.equal(parsed["changes"], "Implemented scoped files");
+    assert.equal(validateOutput(parsed).ok, true);
   });
 
   it("validateOutput accepts STATUS: done when STORY_BRANCH is set", () => {
@@ -768,6 +835,35 @@ describe("06-implement step module", () => {
     assert.equal(sourceExposesWindowApp("declare global { interface Window { app: unknown } }\n"), false);
     assert.equal(sourceExposesWindowApp("// window.app = bridge;\nconst ready = true;\n"), false);
     assert.equal(sourceExposesWindowApp("/* globalThis.app = bridge; */\nconst ready = true;\n"), false);
+  });
+
+  it("reports missing declared scope files with a dedicated category", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-scope-file-category-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src", "App.tsx"), "export default function App() { return null; }\n");
+      const storyId = "scope-file-story-" + Date.now();
+      await pgRun(
+        `INSERT INTO runs (id, workflow_id, task, status, created_at, updated_at)
+         VALUES ($1, 'feature-dev', 'scope file category test', 'running', NOW(), NOW())
+         ON CONFLICT (id) DO NOTHING`,
+        ["scope-file-run"],
+      );
+      await pgRun(
+        `INSERT INTO stories (id, run_id, story_index, story_id, title, status, scope_files, created_at, updated_at)
+         VALUES ($1, $2, 0, 'US-001', 'Scope File Story', 'running', $3, NOW(), NOW())`,
+        [storyId, "scope-file-run", JSON.stringify(["src/App.tsx", "src/hooks/useAppState.ts", "src/types/domain.ts"])],
+      );
+
+      const result = await checkScopeFilesGate("US-001", storyId, "Scope File Story", tmp);
+      assert.equal(result.passed, false);
+      assert.equal(result.category, "SCOPE_FILE_MISSING");
+      assert.match(result.reason || "", /SCOPE_FILE_MISSING/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+      await pgRun("DELETE FROM stories WHERE run_id = $1", ["scope-file-run"]);
+      await pgRun("DELETE FROM runs WHERE id = $1", ["scope-file-run"]);
+    }
   });
 
   it("prepares implement worktrees with safe design and reference corpus", () => {

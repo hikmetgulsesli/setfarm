@@ -71,6 +71,8 @@ function isTransientAgentInfrastructureFailure(error: string): boolean {
     normalized.includes("abnormal closure") ||
     normalized.includes("gateway not yet ready") ||
     normalized.includes("discarded invalid tool result middleware output") ||
+    normalized.includes("agent exited code=") ||
+    normalized.includes("agent exited:") ||
     normalized.includes("openclaw agent exited") ||
     normalized.includes("agent_process_stuck") ||
     normalized.includes("agent_process_orphaned") ||
@@ -213,6 +215,20 @@ async function handleSingleStepFailurePG(
   const workflowStepId = stepRow?.step_id || "";
 
   if (await routeVerifyEachFailureToImplement(stepId, step, workflowStepId, error)) {
+    return { retrying: true, runFailed: false };
+  }
+
+  if (isTransientAgentInfrastructureFailure(error)) {
+    await pgBegin(async (sql) => {
+      await sql`UPDATE steps SET status = 'pending', output = ${error}, updated_at = ${now()} WHERE id = ${stepId}`;
+      try {
+        await sql`UPDATE claim_log SET outcome = 'infra_retry', duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at)) * 1000 AS INTEGER), diagnostic = ${error} WHERE run_id = ${step.run_id} AND step_id = ${workflowStepId} AND story_id IS NULL AND outcome IS NULL`;
+      } catch (e) {
+        logger.warn("[claim-log] update failed: " + String(e), {});
+      }
+    });
+    await recordStepTransition(stepId, step.run_id, "running", "pending", step.agent_id, "failStep:singleInfraRetry", { error: error.slice(0, 300) });
+    logger.warn(`[failStep] Transient agent/model failure for single step ${workflowStepId || stepId}; requeued without consuming step retry`, { runId: step.run_id });
     return { retrying: true, runFailed: false };
   }
 

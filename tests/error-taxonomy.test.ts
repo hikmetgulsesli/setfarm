@@ -19,6 +19,12 @@ describe("error taxonomy", () => {
       "BUILD_FAILED: Story US-001 reported STATUS: done but npm run build failed.",
     );
     assert.equal(buildFailed.category, "BUILD_FAILED");
+
+    const scopeFileMissing = classifyError(
+      "SCOPE_FILE_MISSING: Story US-001 declared scope_files but only 3/8 exist as non-empty files.",
+    );
+    assert.equal(scopeFileMissing.category, "SCOPE_FILE_MISSING");
+    assert.match(scopeFileMissing.suggestion, /declared scope_files/);
   });
 
   it("keeps design mismatch suggestions specific to reported UI contract failures", () => {

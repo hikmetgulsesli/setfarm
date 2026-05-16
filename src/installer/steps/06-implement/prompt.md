@@ -108,6 +108,11 @@ The following library packs were selected by Setfarm from the PRD, design contra
    - Every native `<button>` must have real behavior: `onClick`,
      `type="submit"`, or `disabled`/`aria-disabled` for intentionally
      unavailable controls.
+   - For games and spatial/keyboard/touch interfaces, do not render movement,
+     pickup/drop, pause, or other gameplay-only controls as active buttons
+     outside the state where they can change gameplay. On menu, help, paused,
+     game-over, empty, loading, or inactive screens, hide those controls or
+     mark them `disabled`/`aria-disabled` with clear visual state.
    - Do not use `data-smoke-ignore` to hide product controls from smoke checks.
      Icon-only controls must have an accessible name and must change visible
      state, open a project-specific panel/dialog, navigate, or be disabled.
@@ -119,11 +124,14 @@ The following library packs were selected by Setfarm from the PRD, design contra
    the visible UI state, route/hash, dialog/panel presence, callback call,
    validation message, localStorage/state change, or saved data.
 8. If the story acceptance criteria or PRD mention `window.app`, implement it
-   as a real runtime test bridge, not documentation. Assign `window.app` from
-   a React effect or equivalent update point and keep its fields current after
-   state changes. For games this includes the requested game's score/progress,
-   status, level/difficulty where present, paused/gameOver, and gameplay
-   entities; for product apps this includes active
+   as a real runtime test bridge, not documentation. Scoped source must contain
+   an actual assignment such as `window.app = { state, actions }` or
+   `globalThis.app = { state, actions }` from a React effect or equivalent live
+   update point; type declarations, comments, `window.game`, and prose about a
+   bridge do not count. Keep its fields current after state changes. For games
+   this includes the requested game's score/progress, status, level/difficulty
+   where present, paused/gameOver, and gameplay entities; for product apps this
+   includes active
    screen/route, selected record, counts, storage status, last error, and active
    panel where those concepts exist.
    Reducers and state transition functions must be pure: no localStorage reads/writes, timers, DOM access, or mutation of existing state objects inside the reducer. Put persistence and timer side effects in effects or action wrappers, then dispatch plain state updates.

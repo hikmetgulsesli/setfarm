@@ -114,9 +114,17 @@ SHARED_CODE:
 1. `cd {{REPO}}` and check out `{{BRANCH}}`.
    - If `SUPERVISOR_SCOPE` is `story`, audit only `CURRENT_STORY` plus shared code it touched, but keep PRD/design coherence in mind.
    - If `SUPERVISOR_SCOPE` is `final-product`, audit the complete implementation.
-2. Read `SUPERVISOR_MEMORY.md`, `PROJECT_MEMORY.md`, `DESIGN.md`, `stitch/`,
+2. Use the injected Durable Supervisor Memory above as the authoritative manager
+   memory. If you need the persisted file, read `.setfarm/SUPERVISOR_MEMORY.md`
+   only when it exists. Then read `PROJECT_MEMORY.md`, `DESIGN.md`, `stitch/`,
    app entry points, route files, and files most relevant to the PRD/screens.
 3. Audit product coherence:
+   - For `SUPERVISOR_SCOPE: story`, first extract the current story's
+     acceptance criteria from `STORIES_JSON` and audit every criterion before
+     deciding pass/fixed. `PREVIOUS FAILURE` is only one input; do not pass
+     after checking only the previous blocker.
+   - For `SUPERVISOR_SCOPE: final-product`, sample all stories and make sure
+     each story has either direct evidence or downstream QA evidence.
    - PRD screens exist in code and are reachable.
    - Stitch/DESIGN.md visual contract is represented by imported components, tokens, and layout structure.
    - Buttons, links, tabs, menus, forms, keyboard controls, and route actions are wired or explicitly disabled.
@@ -145,6 +153,7 @@ If clean:
 
 STATUS: done
 SUPERVISOR_DECISION: pass
+AC_COVERAGE: checked <n>/<n> acceptance criteria; <brief evidence summary>
 SUPERVISOR_MEMORY_APPEND: <what you checked and why it is coherent>
 CHECKS: <commands and results>
 CHANGES: none
@@ -154,6 +163,7 @@ If you fixed issues:
 
 STATUS: done
 SUPERVISOR_DECISION: fixed
+AC_COVERAGE: checked <n>/<n> acceptance criteria after fix; <brief evidence summary>
 SUPERVISOR_MEMORY_APPEND: <what was broken, root cause, and fix>
 CHECKS: <commands and results>
 CHANGES: <commit hash and files changed>

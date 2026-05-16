@@ -28,6 +28,7 @@ export type ErrorCategory =
   | "INTERMEDIATE_COMMIT"
   | "SCOPE_WRITE_VIOLATION"
   | "SCOPE_BLEED"
+  | "SCOPE_FILE_MISSING"
   | "GENERATED_SCREEN_SHARED_READ"
   | "RAW_STITCH_CONTEXT_READ"
   | "CLAIM_WORKDIR_MISSING"
@@ -57,6 +58,7 @@ const PATTERNS: Array<{ pattern: RegExp; category: ErrorCategory; suggestion: st
   { pattern: /^INTERMEDIATE_COMMIT_VIOLATION:/i, category: "INTERMEDIATE_COMMIT", suggestion: "Use /tmp/setfarm-progress checkpoints for long work. Do not create partial commits; Setfarm creates the scoped story commit after gates pass." },
   { pattern: /^SCOPE_WRITE_VIOLATION:/i, category: "SCOPE_WRITE_VIOLATION", suggestion: "Modify only files listed in scopeFiles. Remove out-of-scope edits and keep scratch/probe files outside the project worktree." },
   { pattern: /^SCOPE_BLEED:/i, category: "SCOPE_BLEED", suggestion: "Story modified files outside SCOPE_FILES. Revert or move out-of-scope files; if an allowed src/* path appears truncated, inspect git porcelain path parsing." },
+  { pattern: /^SCOPE_FILE_MISSING:/i, category: "SCOPE_FILE_MISSING", suggestion: "Create meaningful non-empty implementation files in the declared scope_files before reporting done. Do not collapse the story into one file when the story owns app state, hooks, domain types, storage, or CSS files." },
   { pattern: /^PLATFORM_STORY_COMMIT_SCOPE_BLOCKED:/i, category: "SCOPE_BLEED", suggestion: "Platform story commit saw out-of-scope files. If directory paths are reported, inspect git status -uall expansion before retrying." },
   { pattern: /^GENERATED_SCREEN_SHARED_READ:/i, category: "GENERATED_SCREEN_SHARED_READ", suggestion: "Use claim-summary designContracts, SCREEN_INDEX.json, and src/screens/index.ts for shared generated screens. Do not use the OpenClaw read tool or shell commands to read forbidden src/screens/*.tsx files outside scopeFiles." },
   { pattern: /^RAW_STITCH_CONTEXT_READ:/i, category: "RAW_STITCH_CONTEXT_READ", suggestion: "Use CLAIM_SUMMARY_FILE, injected Stitch excerpts, UI_CONTRACT, SCREEN_INDEX.json, and only story-owned generated screens. Do not read or exec stitch/*.html, .stitch-screens*.json, or stitch/DESIGN_DOM.json inside implement claims." },
@@ -67,7 +69,7 @@ const PATTERNS: Array<{ pattern: RegExp; category: ErrorCategory; suggestion: st
   { pattern: /^CLAIM_SUMMARY_IGNORED:/i, category: "CLAIM_SUMMARY_IGNORED", suggestion: "Use CLAIM_SUMMARY_FILE as the authoritative handoff before reading the full claim fallback." },
   { pattern: /^LLM_SUPERVISOR_BLOCKED:/i, category: "LLM_SUPERVISOR_BLOCKED", suggestion: "Treat this as manager feedback. Return the same story to implement with the exact product/code blocker and keep supervisor memory intact." },
   { pattern: /GUARDRAIL \[product-supervisor:|PRODUCT_SUPERVISOR|IMPLEMENT_NO_DELTA|PLAN_TRACEABILITY|PLAN_SCREEN_|DESIGN_SCREEN_|STORY_SUPERVISION_/i, category: "PRODUCT_SUPERVISOR_BLOCKED", suggestion: "Product supervisor blocked a contract drift. Fix the root PRD/design/story coherence issue before continuing the pipeline." },
-  { pattern: /^RUNTIME_BRIDGE_MISSING:/i, category: "RUNTIME_BRIDGE_MISSING", suggestion: "Expose the required window.app/globalThis.app runtime bridge from live state before reporting done" },
+  { pattern: /^RUNTIME_BRIDGE_MISSING:/i, category: "RUNTIME_BRIDGE_MISSING", suggestion: "Add a real scoped source assignment such as window.app = { state, actions } or globalThis.app = { state, actions } from live runtime state before reporting done. Type declarations, comments, and window.game do not satisfy this guard." },
   { pattern: /^TEST_FAILED:/i, category: "TEST_FAILED", suggestion: "Run the touched tests, fix the failing source or invalid test expectation, then report done only after tests pass" },
   { pattern: /^BUILD_FAILED:/i, category: "BUILD_FAILED", suggestion: "Fix TypeScript/build errors in the story worktree, then run the build before completing" },
   { pattern: /GUARDRAIL|DESIGN MISMATCH|design.tokens|design compliance/i, category: "DESIGN_MISMATCH", suggestion: "Review exact design mismatch lines and apply the matching UI/design-token fix only" },

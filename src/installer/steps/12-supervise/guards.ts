@@ -5,6 +5,26 @@ function firstWord(value: string | undefined): string {
   return String(value || "").trim().split(/\s+/)[0].toLowerCase();
 }
 
+function expectedAcceptanceCriteriaCount(currentStory: string | undefined): number {
+  const text = String(currentStory || "");
+  const marker = text.match(/Acceptance Criteria:\s*([\s\S]*)/i);
+  if (!marker) return 0;
+  const body = marker[1];
+  const numbered = body.match(/^\s*\d+\.\s+\S.*$/gm) || [];
+  if (numbered.length > 0) return numbered.length;
+  return body.split(/\n+/).map((line) => line.trim()).filter(Boolean).length;
+}
+
+function parsedCoverageTotal(acCoverage: string): number | null {
+  const match = acCoverage.match(/\bchecked\s+(\d+)\s*\/\s*(\d+)\b/i);
+  if (!match) return null;
+  const done = Number(match[1]);
+  const total = Number(match[2]);
+  if (!Number.isFinite(done) || !Number.isFinite(total)) return null;
+  if (done !== total) return -1;
+  return total;
+}
+
 export function validateOutput(parsed: ParsedOutput): ValidationResult {
   const status = firstWord(parsed.status);
   if (!status) return { ok: false, errors: ["STATUS is required"] };
@@ -17,8 +37,18 @@ export function validateOutput(parsed: ParsedOutput): ValidationResult {
     if (!["pass", "fixed", "block"].includes(decision)) {
       return { ok: false, errors: [`SUPERVISOR_DECISION must be pass, fixed, or block; got ${parsed.supervisor_decision}`] };
     }
+    if ((decision === "pass" || decision === "fixed") && !String(parsed.ac_coverage || "").trim()) {
+      return { ok: false, errors: ["AC_COVERAGE is required when supervisor passes or fixes a checkpoint"] };
+    }
   }
   return { ok: true, errors: [] };
+}
+
+export function normalizeOutput(parsed: ParsedOutput): void {
+  const status = firstWord(parsed.status);
+  if (status === "done" && !firstWord(parsed.supervisor_decision)) {
+    parsed.supervisor_decision = "pass";
+  }
 }
 
 export async function onComplete(ctx: CompleteContext): Promise<void> {
@@ -28,6 +58,20 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
   const changes = (ctx.parsed.changes || "").trim();
   const risks = (ctx.parsed.risks || "").trim();
   const issues = (ctx.parsed.issues || "").trim();
+  const acCoverage = (ctx.parsed.ac_coverage || "").trim();
+  if ((decision === "pass" || decision === "fixed") && String(ctx.context["supervisor_scope"] || "") === "story") {
+    const expectedCount = expectedAcceptanceCriteriaCount(ctx.context["current_story"]);
+    const coveredCount = parsedCoverageTotal(acCoverage);
+    if (expectedCount <= 0) {
+      throw new Error("SUPERVISOR_AC_CONTEXT_MISSING: story-scoped supervisor pass/fixed requires CURRENT_STORY with acceptance criteria.");
+    }
+    if (coveredCount !== expectedCount) {
+      throw new Error(`SUPERVISOR_AC_COVERAGE_MISMATCH: supervisor reported ${acCoverage || "empty coverage"}, but current story has ${expectedCount} acceptance criteria.`);
+    }
+    if (/\btask requirements?\b/i.test(acCoverage)) {
+      throw new Error("SUPERVISOR_AC_COVERAGE_GENERIC: story-scoped supervisor coverage must audit story acceptance criteria, not the task brief.");
+    }
+  }
 
   const lines = [
     `### ${new Date().toISOString()} llm-supervisor ${decision}`,
@@ -35,6 +79,7 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
     `- Decision: ${decision}`,
   ];
   if (memoryAppend) lines.push(`- Memory: ${memoryAppend.slice(0, 1200)}`);
+  if (acCoverage) lines.push(`- AC Coverage: ${acCoverage.slice(0, 800)}`);
   if (changes) lines.push(`- Changes: ${changes.slice(0, 800)}`);
   if (checks) lines.push(`- Checks: ${checks.slice(0, 800)}`);
   if (risks) lines.push(`- Risks: ${risks.slice(0, 800)}`);
@@ -51,4 +96,3 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
     throw new Error(`LLM_SUPERVISOR_BLOCKED: ${(issues || memoryAppend || "blocked").slice(0, 400)}`);
   }
 }
-
