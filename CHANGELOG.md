@@ -2,6 +2,12 @@
 
 This repository now keeps agent-facing operational notes in English only.
 
+## 2.3.34 - 2026-05-16
+
+- Injected the Setfarm stack contract into setup-repo, setup-build, implement, and supervisor prompt contexts.
+- Added compatibility aliases so existing stack-rule prompts keep working while the new stack-contract pipeline rolls out.
+- Added regression coverage for stack context keys and implement prompt stack-contract sections.
+
 ## 2.3.33 - 2026-05-16
 
 - Added a Setfarm-owned stack contract core with pack registry, repository evidence detection, preflight reconciliation, and portable ledger persistence.

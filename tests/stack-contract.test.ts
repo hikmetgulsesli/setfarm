@@ -6,6 +6,7 @@ import path from "node:path";
 import { resolveStackContract } from "../dist/installer/stack-contract/reconcile.js";
 import { readStackContract, stackContractPath, writeStackContract } from "../dist/installer/stack-contract/ledger.js";
 import { getStackPack, listStackPacks } from "../dist/installer/stack-contract/packs.js";
+import { applyStackContractContext } from "../dist/installer/stack-contract/context.js";
 
 function tmpDir(name: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), `setfarm-${name}-`));
@@ -182,6 +183,34 @@ describe("stack contract", () => {
       assert.equal(file, stackContractPath(repo));
       assert.equal(readStackContract(repo)?.packId, "vite-react-web-app");
       assert.match(fs.readFileSync(path.join(repo, ".git/info/exclude"), "utf-8"), /^\.setfarm\/$/m);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("applies stack contract context keys and compatibility aliases", () => {
+    const repo = tmpDir("stack-context");
+    try {
+      writeText(path.join(repo, ".git/info/exclude"), "");
+      writeJson(path.join(repo, "package.json"), {
+        dependencies: { next: "^16.0.0", react: "^19.0.0" },
+        scripts: { build: "next build" },
+      });
+
+      const context: Record<string, string> = {
+        repo,
+        task: "Build a Next.js web app.",
+      };
+      const contract = applyStackContractContext(context);
+
+      assert.equal(contract.packId, "nextjs-web-app");
+      assert.equal(context.stack_pack_id, "nextjs-web-app");
+      assert.match(context.stack_contract, /Pack: nextjs-web-app/);
+      assert.match(context.stack_prompt, /Next\.js stack contract/);
+      assert.match(context.stack_verification_contract, /build: npm run build/);
+      assert.equal(context.detected_stack, "nextjs-web-app");
+      assert.equal(context.stack_rules, context.stack_prompt);
+      assert.equal(readStackContract(repo)?.packId, "nextjs-web-app");
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }

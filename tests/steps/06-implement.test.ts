@@ -358,6 +358,10 @@ describe("06-implement step module", () => {
     assert.match(prompt, /gameplay\s+entities/i);
     assert.match(prompt, /active\s+screen\/route, selected record, counts, storage status, last error/i);
     assert.match(prompt, /Supervisor Memory/i);
+    assert.match(prompt, /Stack Contract/i);
+    assert.match(prompt, /resolved by Setfarm before implementation/i);
+    assert.match(prompt, /Stack-Specific Implementation Rules/i);
+    assert.match(prompt, /Stack Verification Contract/i);
     assert.match(prompt, /do not invent props/i);
     assert.match(prompt, /If TypeScript says a prop does not exist on a shared component/i);
     assert.match(prompt, /Generated Stitch screen components may declare an `actions` prop/i);

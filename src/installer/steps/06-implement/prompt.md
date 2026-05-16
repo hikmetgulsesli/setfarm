@@ -46,6 +46,17 @@ MAIN_REPO: {{MAIN_REPO}}
 ## Design Rules
 {{DESIGN_RULES}}
 
+## Stack Contract
+The following stack contract is resolved by Setfarm before implementation. Follow it instead of guessing the framework or runtime.
+
+{{STACK_CONTRACT}}
+
+## Stack-Specific Implementation Rules
+{{STACK_PROMPT}}
+
+## Stack Verification Contract
+{{STACK_VERIFICATION_CONTRACT}}
+
 ## Instructions
 
 1. **WORKING DIRECTORY AND BRANCH (CRITICAL — prepared worktree architecture).** Everything happens in the prepared story worktree: `{{STORY_WORKDIR}}`.

@@ -18,6 +18,7 @@ import { sanitizeDesignMismatchFeedback } from "../../error-taxonomy.js";
 import { sanitizeRetryFeedbackForCurrentSource } from "../../retry-feedback.js";
 import { readSupervisorMemory } from "../../product-supervisor.js";
 import { IMPLICIT_STORY_SCOPE_FILES } from "../../story-scope.js";
+import { applyStackContractContext } from "../../stack-contract/context.js";
 
 const STITCH_HTML_EXCERPT_CHARS = 2500;
 const STITCH_HTML_TOTAL_CHARS = 6000;
@@ -55,7 +56,9 @@ const OPTIONAL_TEMPLATE_VARS = [
   "project_tree", "installed_packages", "shared_code", "recent_stories_code",
   "component_registry", "api_routes", "design_rules", "detected_platform",
   "previous_failure", "failure_category", "failure_suggestion", "verify_feedback",
-  "detected_stack", "stack_rules", "supervisor_memory",
+  "detected_stack", "stack_rules", "stack_contract", "stack_pack_id",
+  "stack_prompt", "stack_setup_contract", "stack_verification_contract",
+  "supervisor_memory",
 ];
 
 function normalizedStatusFromStepOutput(output: string): string {
@@ -155,6 +158,11 @@ export async function injectStoryContext(
   context["progress"] = await helpers.readProgressFile(step.run_id);
   context["project_memory"] = await helpers.readProjectMemory(context);
   context["supervisor_memory"] = readSupervisorMemory(context);
+  applyStackContractContext(context, {
+    repoPath: storyRepoPath,
+    taskText: context["prd"] || context["task"] || "",
+    persist: Boolean(storyRepoPath),
+  });
 
   // Story scope discipline injection (from planner's STORIES_JSON)
   await injectScopeContext(nextStory, context);
