@@ -59,15 +59,11 @@ const WORKFLOW_AGENT_SKILLS_LIMITS = { maxSkillsPromptChars: 1200 } as const;
 const MINIMAX_OPENAI_PROVIDER_ID = "minimax-openai";
 const MINIMAX_OPENAI_MODEL_REF = `${MINIMAX_OPENAI_PROVIDER_ID}/MiniMax-M2.7`;
 const KIMI_CODING_MODEL_REF = "kimi-coding/kimi-for-coding";
+const CODEX_DEFAULT_MODEL_REF = "default";
 const WORKFLOW_MODEL_TIMEOUT_MS = 10 * 60 * 1000;
-const MINIMAX_AGENT_MODEL = {
-  primary: MINIMAX_OPENAI_MODEL_REF,
-  fallbacks: [KIMI_CODING_MODEL_REF],
-  timeoutMs: WORKFLOW_MODEL_TIMEOUT_MS,
-} as const;
-const KIMI_FIRST_AGENT_MODEL = {
-  primary: KIMI_CODING_MODEL_REF,
-  fallbacks: [MINIMAX_OPENAI_MODEL_REF],
+const CODEX_FIRST_AGENT_MODEL = {
+  primary: CODEX_DEFAULT_MODEL_REF,
+  fallbacks: [KIMI_CODING_MODEL_REF, MINIMAX_OPENAI_MODEL_REF],
   timeoutMs: WORKFLOW_MODEL_TIMEOUT_MS,
 } as const;
 
@@ -301,10 +297,8 @@ function ensureSessionMaintenance(config: OpenClawConfig): void {
   delete (maintenance as Record<string, unknown>).rotateBytes;
 }
 
-function defaultModelForAgent(agentId: string): Record<string, unknown> {
-  const localId = agentId.includes("_") ? agentId.split("_").pop() || agentId : agentId;
-  if (["security-gate", "setup-build", "setup-repo"].includes(localId)) return { ...MINIMAX_AGENT_MODEL };
-  return { ...KIMI_FIRST_AGENT_MODEL };
+function defaultModelForAgent(_agentId: string): Record<string, unknown> {
+  return { ...CODEX_FIRST_AGENT_MODEL };
 }
 
 function upsertAgent(

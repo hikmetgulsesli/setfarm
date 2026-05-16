@@ -2,6 +2,12 @@
 
 This repository now keeps agent-facing operational notes in English only.
 
+## 2.3.37 - 2026-05-16
+
+- Added the English source contract script required by the committed build and test scripts.
+- Switched workflow agent defaults to Codex-first with Kimi and MiniMax fallbacks for provider flexibility.
+- Added a project-neutral guard inventory that separates hard platform guards from supervisor-managed product-quality signals.
+
 ## 2.3.36 - 2026-05-16
 
 - Added a unified supervisor ledger surface for stack contracts, library packs, design contracts, DOM inventory, repair history, final evidence, visual results, and supervisor state.

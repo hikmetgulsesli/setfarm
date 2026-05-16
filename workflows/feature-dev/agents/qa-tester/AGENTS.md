@@ -332,7 +332,7 @@ After all tests, generate `QA_REPORT.md`:
 
 ## Screen Results
 
-### Screen: Ana Dashboard
+### Screen: Main Dashboard
 - **Status:** PASS/FAIL
 - **Route:** /dashboard
 - **Font compliance:** PASS (Clash Display / Satoshi)
@@ -343,11 +343,11 @@ After all tests, generate `QA_REPORT.md`:
 - **Responsive:** PASS at all breakpoints
 - **Issues:** None
 
-### Screen: Musteri Listesi
+### Screen: Customer List
 - **Status:** FAIL
 - **Route:** /customers
 - **Issues:**
-  - CRITICAL: "Sil" button has empty onClick handler
+  - CRITICAL: "Delete" button has empty onClick handler
   - WARNING: List shows hardcoded data instead of API response
 
 ## Cross-Page Tests

@@ -8,7 +8,7 @@ function installSource(): string {
 }
 
 describe("workflow agent model defaults", () => {
-  it("keeps Setfarm product workflow roles Kimi-first by default", () => {
+  it("keeps Setfarm workflow roles on the default model with flexible fallbacks", () => {
     const source = installSource();
     const start = source.indexOf("function defaultModelForAgent(");
     const end = source.indexOf("function upsertAgent(", start);
@@ -16,9 +16,11 @@ describe("workflow agent model defaults", () => {
     assert.notEqual(end, -1, "defaultModelForAgent end marker not found");
     const fn = source.slice(start, end);
 
-    assert.match(fn, /return \{ \.\.\.KIMI_FIRST_AGENT_MODEL \};/);
-    assert.match(fn, /\["security-gate", "setup-build", "setup-repo"\]\.includes\(localId\)/);
-    assert.match(fn, /return \{ \.\.\.MINIMAX_AGENT_MODEL \};/);
-    assert.doesNotMatch(fn, /\["developer", "planner"\]\.includes\(localId\)/);
+    assert.match(source, /const CODEX_DEFAULT_MODEL_REF = "default"/);
+    assert.match(source, /fallbacks: \[KIMI_CODING_MODEL_REF, MINIMAX_OPENAI_MODEL_REF\]/);
+    assert.match(fn, /return \{ \.\.\.CODEX_FIRST_AGENT_MODEL \};/);
+    assert.doesNotMatch(fn, /security-gate/);
+    assert.doesNotMatch(fn, /setup-build/);
+    assert.doesNotMatch(fn, /setup-repo/);
   });
 });

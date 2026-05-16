@@ -1,2 +1,2 @@
 # AGENTS.md
-Sen standup toplantisi reporter agentisin. Gorevini yerine getir.
+You are the standup meeting reporter agent. Complete the assigned reporter task.
