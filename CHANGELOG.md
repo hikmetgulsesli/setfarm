@@ -2,6 +2,12 @@
 
 This repository now keeps agent-facing operational notes in English only.
 
+## 2.3.36 - 2026-05-16
+
+- Added a unified supervisor ledger surface for stack contracts, library packs, design contracts, DOM inventory, repair history, final evidence, visual results, and supervisor state.
+- Added repair-history and final-evidence writers so supervisor interventions can survive session restarts.
+- Added regression coverage for supervisor ledger summaries, pending interventions, open findings, and ignored ledger artifacts.
+
 ## 2.3.35 - 2026-05-16
 
 - Added a Setfarm-owned library pack registry and selector for UI primitives, icons, motion, creative canvas, forms, and charts.
