@@ -2,6 +2,12 @@
 
 This repository now keeps agent-facing operational notes in English only.
 
+## 2.3.42 - 2026-05-17
+
+- Isolated auto-planned generated projects by run id so repeated tasks cannot reuse stale project workspaces, branches, or design assets.
+- Invalidated stale local fallback design assets when a Stitch API key is available, forcing design preclaims to attempt real Stitch generation again.
+- Turned implement no-delta stall detection into an active supervisor intervention that terminates and requeues stalled story work before hard timeouts.
+
 ## 2.3.41 - 2026-05-16
 
 - Preserved story acceptance criteria as JSON arrays when design-contract criteria are appended, preventing malformed story rows from confusing implement agents.

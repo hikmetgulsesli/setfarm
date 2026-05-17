@@ -250,16 +250,50 @@ function projectStructureForStack(stack: string): string {
   return "Use src/components, src/screens, src/hooks, src/utils, src/types, src/App.tsx, and src/main.tsx. Stitch HTML screens are translated into the App workflow after setup/build; no generated design screen should remain unused.";
 }
 
-export function buildAutoPlanOutput(task: string): string {
+type AutoPlanOptions = {
+  runId?: string;
+  repo?: string;
+};
+
+function runIsolatedSlug(baseSlug: string, runId?: string): string {
+  const suffix = String(runId || "").trim().slice(0, 8).toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (!suffix) return baseSlug.slice(0, 80).replace(/-+$/g, "");
+  if (baseSlug.endsWith(`-${suffix}`)) return baseSlug;
+  const maxBaseLength = Math.max(1, 80 - suffix.length - 1);
+  const trimmedBase = baseSlug.slice(0, maxBaseLength).replace(/-+$/g, "") || "project";
+  return `${trimmedBase}-${suffix}`;
+}
+
+function branchForSlug(slug: string): string {
+  const prefix = "feature-";
+  const maxSlugLength = 80 - prefix.length;
+  const suffixMatch = slug.match(/-([a-z0-9]{8})$/);
+  let branchSlug = slug;
+  if (branchSlug.length > maxSlugLength) {
+    if (suffixMatch) {
+      const suffix = suffixMatch[1];
+      const maxBaseLength = Math.max(1, maxSlugLength - suffix.length - 1);
+      const base = branchSlug.slice(0, maxBaseLength).replace(/-+$/g, "") || "project";
+      branchSlug = `${base}-${suffix}`;
+    } else {
+      branchSlug = branchSlug.slice(0, maxSlugLength).replace(/-+$/g, "");
+    }
+  }
+  return `${prefix}${branchSlug}`.replace(/-+$/g, "");
+}
+
+export function buildAutoPlanOutput(task: string, options: AutoPlanOptions = {}): string {
   const rawProjectName = extractProjectName(task);
   const projectName = extractProjectDisplayName(task, rawProjectName);
-  const slug = slugify(rawProjectName);
+  const baseSlug = slugify(rawProjectName);
+  const explicitRepo = String(options.repo || "").trim();
+  const slug = explicitRepo ? slugify(path.basename(explicitRepo)) : runIsolatedSlug(baseSlug, options.runId);
   const stack = inferTechStack(task);
   const dbRequired = inferDbRequired(task);
   const uiLanguage = inferUiLanguage(task);
   const projectKind = inferProjectKind(task);
-  const repo = path.join(os.homedir(), "projects", slug);
-  const branch = `feature-${slug}`.slice(0, 80).replace(/-+$/g, "");
+  const repo = explicitRepo || path.join(os.homedir(), "projects", slug);
+  const branch = branchForSlug(slug);
   const bullets = taskBullets(task);
   const screens = screensForTask(task);
   const screenRows = screens
@@ -410,7 +444,10 @@ export function buildAutoPlanOutput(task: string): string {
 export async function preClaim(ctx: ClaimContext): Promise<void> {
   if (process.env.SETFARM_DISABLE_AUTO_PLAN === "1") return;
 
-  const output = buildAutoPlanOutput(ctx.task || ctx.context["task"] || "");
+  const output = buildAutoPlanOutput(ctx.task || ctx.context["task"] || "", {
+    runId: ctx.runId,
+    repo: ctx.context["repo"] || ctx.context["REPO"] || "",
+  });
   const step = await pgGet<{ id: string }>(
     "SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1",
     [ctx.runId, ctx.stepId],

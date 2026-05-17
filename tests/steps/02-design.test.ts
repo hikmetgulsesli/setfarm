@@ -2,8 +2,9 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { designModule } from "../../dist/installer/steps/02-design/module.js";
-import { inferFallbackScreens } from "../../dist/installer/steps/02-design/preclaim.js";
+import { inferFallbackScreens, manifestUsesLocalFallback, stitchApiKeyAvailable } from "../../dist/installer/steps/02-design/preclaim.js";
 import { runModule } from "./harness.js";
 
 function designPreclaimSource(): string {
@@ -115,6 +116,24 @@ describe("02-design step module", () => {
     assert.match(source, /UI_CONTRACT\.json/);
     assert.match(source, /Main Menu/);
     assert.doesNotMatch(source, /agent will see empty/);
+  });
+
+  it("preClaim does not reuse stale local fallback assets when a Stitch key is available", () => {
+    const source = designPreclaimSource();
+    assert.match(source, /manifestUsesLocalFallback\(stitchDir\) && stitchApiKeyAvailable\(\)/);
+    assert.match(source, /invalidating stale local fallback assets before real Stitch generation/);
+    assert.match(source, /fs\.rmSync\(stitchDir, \{ recursive: true, force: true \}\)/);
+
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stale-fallback-"));
+    try {
+      fs.writeFileSync(path.join(tmp, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "fallback-main", source: "local-fallback" },
+      ]));
+      assert.equal(manifestUsesLocalFallback(tmp), true);
+      assert.equal(stitchApiKeyAvailable({ STITCH_API_KEY: "test-key" } as NodeJS.ProcessEnv), true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("local fallback mirrors the PRD Screens table exactly", () => {

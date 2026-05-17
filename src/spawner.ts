@@ -3153,6 +3153,12 @@ async function reapFinishedClaims(): Promise<void> {
           const noDeltaStall = implementNoDeltaStallGuard(active, ageMs);
           if (noDeltaStall.detected) {
             await recordRuntimeSupervisorSignal(active, row.step_id, effectiveStoryDbId || null, "implement-no-delta-stall", "IMPLEMENT NO DELTA STALL", noDeltaStall.reason);
+            const reason = noDeltaStall.reason + ` Transcript: ${active.transcriptPath}`;
+            terminateActiveProcess(active, "implement-no-delta-stall");
+            activeProcesses.delete(key);
+            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
+            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
+            continue;
           }
         }
 

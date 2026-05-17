@@ -194,6 +194,48 @@ describe("01-plan step module", () => {
     assert.match(parsed.prd, /^# Neon Courier PRD/m);
   });
 
+  it("auto-plan isolates generated repos per run while keeping product display names clean", () => {
+    const output = buildAutoPlanOutput(
+      "Build a compact browser puzzle game called Pulse Grid. It should have score, timer, reset, help, settings, keyboard and touch controls.",
+      { runId: "e9770d0f-8b65-4226-b954-c043332d817c" },
+    );
+    const parsed = parsePlanOutput(output);
+    planModule.normalize?.(parsed);
+    const validation = planModule.validateOutput(parsed);
+
+    assert.equal(validation.ok, true, validation.errors.join("; "));
+    assert.equal(parsed.project_slug, "pulse-grid-e9770d0f");
+    assert.equal(parsed.repo.endsWith("/projects/pulse-grid-e9770d0f"), true);
+    assert.equal(parsed.branch, "feature-pulse-grid-e9770d0f");
+    assert.equal(parsed.project_display_name, "Pulse Grid");
+    assert.match(parsed.prd, /^# Pulse Grid PRD/m);
+  });
+
+  it("auto-plan preserves explicit repo overrides without adding a run suffix", () => {
+    const output = buildAutoPlanOutput(
+      "Build a compact browser puzzle game called Pulse Grid.",
+      { runId: "e9770d0f-8b65-4226-b954-c043332d817c", repo: "/tmp/custom-pulse-grid" },
+    );
+    const parsed = parsePlanOutput(output);
+
+    assert.equal(parsed.project_slug, "custom-pulse-grid");
+    assert.equal(parsed.repo, "/tmp/custom-pulse-grid");
+    assert.equal(parsed.branch, "feature-custom-pulse-grid");
+  });
+
+  it("auto-plan preserves run isolation suffixes for long generated project names", () => {
+    const output = buildAutoPlanOutput(
+      "Project: extremely-long-generated-browser-game-name-with-many-extra-marketing-words-and-grid-controls Build a compact browser game.",
+      { runId: "e9770d0f-8b65-4226-b954-c043332d817c" },
+    );
+    const parsed = parsePlanOutput(output);
+
+    assert.equal(parsed.project_slug.endsWith("-e9770d0f"), true);
+    assert.equal(parsed.project_slug.length <= 80, true);
+    assert.equal(parsed.branch.endsWith("-e9770d0f"), true);
+    assert.equal(parsed.branch.length <= 80, true);
+  });
+
   it("auto-plan uses Next.js project structure when TECH_STACK is nextjs", () => {
     const output = buildAutoPlanOutput(
       "Project: seo-arcade-0511 Build a Next.js browser arcade game with settings and restart flow.",

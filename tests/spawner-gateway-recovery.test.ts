@@ -541,6 +541,8 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /sourceStatusFiles\(active\.spawnCwd\)/);
     assert.match(source, /IMPLEMENT_NO_DELTA_STALL/);
     assert.match(source, /recordRuntimeSupervisorSignal\(active,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"implement-no-delta-stall"/);
+    assert.match(source, /terminateActiveProcess\(active,\s*"implement-no-delta-stall"\)/);
+    assert.match(source, /requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.agentId,\s*reason\)/);
     assert.ok(
       source.indexOf("implementNoDeltaStallGuard(active, ageMs)") < source.indexOf("const terminalReason = childProcessTerminalReason(active.child)"),
       "no-delta stall guard must run before terminal-process recovery",

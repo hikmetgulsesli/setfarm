@@ -142,6 +142,34 @@ function manifestHtmlCounts(stitchDir: string): { total: number; valid: number }
   }
 }
 
+export function manifestUsesLocalFallback(stitchDir: string): boolean {
+  const manifestPath = path.join(stitchDir, "DESIGN_MANIFEST.json");
+  if (!fs.existsSync(manifestPath)) return false;
+  try {
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+    if (!Array.isArray(manifest) || manifest.length === 0) return false;
+    return manifest.every((entry) => String(entry?.source || "").toLowerCase() === "local-fallback");
+  } catch {
+    return false;
+  }
+}
+
+export function stitchApiKeyAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (String(env.STITCH_API_KEY || "").trim()) return true;
+  const candidates = [
+    path.join(os.homedir(), ".openclaw/setfarm-repo/scripts/.env"),
+    path.resolve(process.cwd(), "scripts/.env"),
+  ];
+  for (const file of candidates) {
+    try {
+      const raw = fs.readFileSync(file, "utf-8");
+      const match = raw.match(/^STITCH_API_KEY=(.+)$/m);
+      if (match?.[1]?.trim()) return true;
+    } catch {}
+  }
+  return false;
+}
+
 type ScreenMapEntry = { screenId: string; name: string; type: string; description: string };
 
 function normalizeScreenName(value: string): string {
@@ -565,7 +593,9 @@ function createFallbackDesignAssets(repo: string, stitchDir: string, prd: string
 // 4. download-all (3 retries + tracking-file fallback)
 // Agent then validates the result — never calls Stitch API itself.
 //
-// Idempotent: if stitch/ already has HTML files, skips entirely.
+// Idempotent: if stitch/ already has current non-fallback HTML files, skips.
+// Local fallback assets are regenerated when a real Stitch key is available so
+// retries do not silently keep stale placeholder designs.
 export async function preClaim(ctx: ClaimContext): Promise<void> {
   const repo = ctx.context["repo"] || ctx.context["REPO"] || "";
   const prd = ctx.context["prd"] || ctx.context["PRD"] || "";
@@ -576,7 +606,17 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     ? fs.readdirSync(stitchDir).filter(f => f.endsWith(".html")).length
     : 0;
   const existingCounts = manifestHtmlCounts(stitchDir);
-  if (existingHtml > 0 && existingCounts.valid > 0 && (existingCounts.total === 0 || existingCounts.valid >= existingCounts.total)) {
+  const staleFallbackDesign = existingHtml > 0 && manifestUsesLocalFallback(stitchDir) && stitchApiKeyAvailable();
+  if (staleFallbackDesign) {
+    logger.warn(`[module:design preclaim] Existing local-fallback Stitch assets found while STITCH_API_KEY is available; regenerating real design assets`, { runId: ctx.runId });
+    await recordPreClaimProgress(ctx, "Design preclaim: invalidating stale local fallback assets before real Stitch generation");
+    try {
+      fs.rmSync(stitchDir, { recursive: true, force: true });
+      fs.mkdirSync(stitchDir, { recursive: true });
+    } catch (e) {
+      logger.warn(`[module:design preclaim] stale fallback cleanup failed: ${String(e).slice(0, 200)}`, { runId: ctx.runId });
+    }
+  } else if (existingHtml > 0 && existingCounts.valid > 0 && (existingCounts.total === 0 || existingCounts.valid >= existingCounts.total)) {
     logger.info(`[module:design preclaim] Skip — ${existingCounts.valid}/${existingCounts.total || existingCounts.valid} valid HTML already in ${stitchDir}`, { runId: ctx.runId });
     return;
   } else if (existingHtml > 0) {
