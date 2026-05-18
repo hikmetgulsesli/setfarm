@@ -3,6 +3,7 @@ import os from "node:os";
 import type { ClaimContext } from "../types.js";
 import { pgGet } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
+import { missionControlApi, runtimeConfig } from "../../../runtime-config.js";
 
 export interface DeployCapabilitySnapshot {
   platform: NodeJS.Platform | string;
@@ -43,7 +44,7 @@ function commandExists(command: string): boolean {
 
 function localMissionControlAvailable(): boolean {
   if (!commandExists("curl")) return false;
-  return commandSucceeds("curl", ["-fsS", "--max-time", "2", "http://127.0.0.1:3080/api/projects/next-port"], 4_000);
+  return commandSucceeds("curl", ["-fsS", "--max-time", "2", missionControlApi("/api/projects/next-port")], 4_000);
 }
 
 function localSystemctlAvailable(): boolean {
@@ -56,7 +57,7 @@ function remoteDeployHostReachable(host: string): boolean {
   if (!host || !commandExists("ssh")) return false;
   const script = [
     "command -v systemctl >/dev/null 2>&1",
-    "curl -fsS --max-time 3 http://127.0.0.1:3080/api/projects/next-port >/dev/null 2>&1",
+    `curl -fsS --max-time 3 ${shellQuote(runtimeConfig.missionControlInternalUrl + "/api/projects/next-port")} >/dev/null 2>&1`,
   ].join(" && ");
   return commandSucceeds("ssh", ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", host, script], 8_000);
 }
@@ -97,7 +98,7 @@ export function evaluateDeployCapability(snapshot: DeployCapabilitySnapshot): De
   }
 
   const missing = [
-    snapshot.localMissionControl ? "" : "Mission Control is not reachable on 127.0.0.1:3080",
+    snapshot.localMissionControl ? "" : `Mission Control is not reachable at ${runtimeConfig.missionControlInternalUrl}`,
     snapshot.localSystemctl ? "" : "local systemd user services are unavailable",
     snapshot.remoteHost
       ? `remote deploy host ${snapshot.remoteHost} is not reachable or lacks deploy services`

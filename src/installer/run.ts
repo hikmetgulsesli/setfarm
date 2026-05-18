@@ -7,6 +7,7 @@ import { logger } from "../lib/logger.js";
 import { ensureWorkflowCrons } from "./agent-cron.js";
 import { cleanAgentWorkspace } from "./worktree-ops.js";
 import { emitEvent } from "./events.js";
+import { refreshRunContractSafe } from "./contract-ledger.js";
 
 export async function runWorkflow(params: {
   workflowId: string;
@@ -85,6 +86,8 @@ export async function runWorkflow(params: {
       );
     }
   });
+
+  await refreshRunContractSafe(runId, "run.started");
 
   // Clean agent workspaces of stale files from previous runs
   const agentIds = new Set(workflow.steps.map((s: any) => `${workflow.id}_${s.agent}`));

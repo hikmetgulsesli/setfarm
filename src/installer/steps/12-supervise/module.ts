@@ -53,6 +53,9 @@ function buildPrompt(ctx: PromptContext): string {
     PREVIOUS_FAILURE: c["previous_failure"] || "",
     SUPERVISOR_SCOPE: c["supervisor_scope"] || "final-product",
     CURRENT_STORY: c["current_story"] || (c["current_story_id"] ? `${c["current_story_id"]} ${c["current_story_title"] || ""}`.trim() : "(not story-scoped)"),
+    SCOPE_FILES: c["story_scope_files"] || "",
+    SHARED_FILES: c["story_shared_files"] || "",
+    SCOPE_REMINDER: c["scope_reminder"] || "",
   });
   return `${resolved}\n\n---\n\n# Rules\n\n${rulesBody}`;
 }

@@ -4,7 +4,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { formatPreFlightForAgent, getChangedFiles, getDiffSummary, runProjectContractChecks } from "../src/installer/static-analysis.js";
+import { formatPreFlightForAgent, getChangedFiles, getDiffSummary, normalizeGeneratedSourceContractTokens, runProjectContractChecks } from "../src/installer/static-analysis.js";
 
 function git(repo: string, args: string[]): string {
   return execFileSync("git", args, {
@@ -94,6 +94,53 @@ describe("verify static analysis", () => {
 
       const report = runProjectContractChecks(repo, ["src/Icons.tsx", "src/index.css"]);
       assert.equal(report, "");
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves generated Stitch transition tokens while suppressing layout-only contract checks", () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-static-generated-contract-"));
+    try {
+      fs.mkdirSync(path.join(repo, "src", "screens"), { recursive: true });
+      const screenPath = path.join(repo, "src", "screens", "Options.tsx");
+      fs.writeFileSync(screenPath, `
+        // AUTO-GENERATED from Stitch - DO NOT modify layout or CSS
+        export function Options() {
+          return <div className="after:transition-all hover:transition-all transition-all">Options</div>;
+        }
+      `);
+
+      const changed = normalizeGeneratedSourceContractTokens(repo, ["src/screens/Options.tsx"]);
+      const content = fs.readFileSync(screenPath, "utf-8");
+
+      assert.deepEqual(changed, []);
+      assert.match(content, /after:transition-all/);
+      assert.match(content, /hover:transition-all/);
+      assert.match(content, /\btransition-all\b/);
+      assert.equal(runProjectContractChecks(repo, ["src/screens/Options.tsx"]), "");
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("does not normalize non-generated source contract violations", () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-static-nongenerated-contract-"));
+    try {
+      fs.mkdirSync(path.join(repo, "src", "screens"), { recursive: true });
+      const screenPath = path.join(repo, "src", "screens", "Options.tsx");
+      fs.writeFileSync(screenPath, `
+        export function Options() {
+          return <div className="transition-all">Options</div>;
+        }
+      `);
+
+      const changed = normalizeGeneratedSourceContractTokens(repo, ["src/screens/Options.tsx"]);
+      const content = fs.readFileSync(screenPath, "utf-8");
+
+      assert.deepEqual(changed, []);
+      assert.match(content, /\btransition-all\b/);
+      assert.match(runProjectContractChecks(repo, ["src/screens/Options.tsx"]), /blanket transition-all is not allowed/);
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }

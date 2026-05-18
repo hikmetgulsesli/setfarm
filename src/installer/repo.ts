@@ -44,21 +44,34 @@ export async function updateRunContext(runId: string, context: Record<string, st
 export async function failRun(runId: string, terminal = false): Promise<void> {
   await pgRun("UPDATE runs SET status = 'failed', updated_at = $1 WHERE id = $2",
     [now(), runId]);
-  if (!terminal) return;
+  if (terminal) {
+    try {
+      const row = await pgGet<{ meta: string | null }>("SELECT meta FROM runs WHERE id = $1", [runId]);
+      const meta = row?.meta ? JSON.parse(row.meta) : {};
+      meta.terminal_failure = true;
+      meta.terminal_marked_at = now();
+      await pgRun("UPDATE runs SET meta = $1 WHERE id = $2", [JSON.stringify(meta), runId]);
+    } catch (e) {
+      logger.warn(`[failRun] Could not persist terminal_failure flag for ${runId}: ${String(e)}`);
+    }
+  }
   try {
-    const row = await pgGet<{ meta: string | null }>("SELECT meta FROM runs WHERE id = $1", [runId]);
-    const meta = row?.meta ? JSON.parse(row.meta) : {};
-    meta.terminal_failure = true;
-    meta.terminal_marked_at = now();
-    await pgRun("UPDATE runs SET meta = $1 WHERE id = $2", [JSON.stringify(meta), runId]);
+    const { refreshRunContractSafe } = await import("./contract-ledger.js");
+    await refreshRunContractSafe(runId, "run.failed");
   } catch (e) {
-    logger.warn(`[failRun] Could not persist terminal_failure flag for ${runId}: ${String(e)}`);
+    logger.warn(`[failRun] Contract refresh failed for ${runId}: ${String(e)}`);
   }
 }
 
 export async function completeRun(runId: string): Promise<void> {
   await pgRun("UPDATE runs SET status = 'completed', updated_at = $1 WHERE id = $2",
     [now(), runId]);
+  try {
+    const { refreshRunContractSafe } = await import("./contract-ledger.js");
+    await refreshRunContractSafe(runId, "run.completed");
+  } catch (e) {
+    logger.warn(`[completeRun] Contract refresh failed for ${runId}: ${String(e)}`);
+  }
 }
 
 export async function getWorkflowId(runId: string): Promise<string | undefined> {
@@ -73,9 +86,37 @@ export async function getWorkflowId(runId: string): Promise<string | undefined> 
 
 // ── Story queries ───────────────────────────────────────────────────
 
-export async function verifyStory(storyId: string): Promise<void> {
-  await pgRun("UPDATE stories SET status = 'verified', updated_at = $1 WHERE id = $2",
-    [now(), storyId]);
+export function isStaleFailureStoryOutput(output: string | null | undefined): boolean {
+  const text = String(output || "").trim();
+  if (!text) return false;
+  return /\b(PR_REVIEW_COMMENTS_OPEN|PR_NOT_MERGED|PR_MISSING|BUILD_FAILED|VERIFY_SYSTEM_SMOKE_FAILURE|SYSTEM_SMOKE_FAILURE|LLM_SUPERVISOR_BLOCKED|SUPERVISOR_BLOCKERS_OPEN|SCOPE_BLEED|PLATFORM_STORY_COMMIT_|PLATFORM_SUPERVISOR_|Critical step retries exhausted|retries exhausted|STATUS:\s*retry)\b/i.test(text)
+    || /\b(?:open|unresolved|actionable|current)\b[\s\S]{0,180}\bPR\s+review\s+(?:comment|thread)s?\b/i.test(text);
+}
+
+export function verifiedStoryOutput(existingOutput: string | null | undefined, verificationOutput?: string): string | null {
+  const verifiedOutput = String(verificationOutput || "").trim();
+  if (verifiedOutput) return verifiedOutput.slice(0, 6000);
+  if (!isStaleFailureStoryOutput(existingOutput)) return null;
+  return [
+    "STATUS: verified",
+    "VERIFICATION_SUMMARY: Story verified by Setfarm gates; stale failure output cleared.",
+  ].join("\n");
+}
+
+export async function verifyStory(storyId: string, verificationOutput?: string): Promise<void> {
+  const row = await pgGet<{ run_id: string; output: string | null }>("SELECT run_id, output FROM stories WHERE id = $1", [storyId]);
+  const replacementOutput = verifiedStoryOutput(row?.output, verificationOutput);
+  if (replacementOutput !== null) {
+    await pgRun("UPDATE stories SET status = 'verified', output = $1, updated_at = $2 WHERE id = $3",
+      [replacementOutput, now(), storyId]);
+  } else {
+    await pgRun("UPDATE stories SET status = 'verified', updated_at = $1 WHERE id = $2",
+      [now(), storyId]);
+  }
+  if (row?.run_id) {
+    const { refreshRunContractSafe } = await import("./contract-ledger.js");
+    await refreshRunContractSafe(row.run_id, "story.verified");
+  }
 }
 
 export async function skipFailedStories(_runId: string): Promise<number> {
@@ -152,6 +193,7 @@ export async function updateStoryStatus(storyId: string, status: string, extra?:
   output?: string; prUrl?: string; storyBranch?: string;
   retryCount?: number; abandonedCount?: number;
 }): Promise<void> {
+  const row = await pgGet<{ run_id: string }>("SELECT run_id FROM stories WHERE id = $1", [storyId]);
   const ts = now();
   const sets: string[] = ["status = $1", "updated_at = $2"];
   const vals: any[] = [status, ts];
@@ -163,6 +205,10 @@ export async function updateStoryStatus(storyId: string, status: string, extra?:
   if (extra?.abandonedCount !== undefined) { sets.push(`abandoned_count = $${idx}`); vals.push(extra.abandonedCount); idx++; }
   vals.push(storyId);
   await pgRun(`UPDATE stories SET ${sets.join(", ")} WHERE id = $${idx}`, vals);
+  if (row?.run_id) {
+    const { refreshRunContractSafe } = await import("./contract-ledger.js");
+    await refreshRunContractSafe(row.run_id, `story.${status}`);
+  }
 }
 
 // ── Step queries ────────────────────────────────────────────────────

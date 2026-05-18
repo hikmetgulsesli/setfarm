@@ -10,6 +10,7 @@ import {
   isPrdPseudoScreen,
   type UiBehaviorRequirement,
 } from "./context.js";
+import { REOPENABLE_APP_INTEGRATION_FILES } from "../../story-scope.js";
 
 type PredictedScreen = ReturnType<typeof computePredictedScreenFiles>[number];
 type ProjectKind = "game" | "product";
@@ -44,6 +45,8 @@ const APP_SCOPE_FILES = [
   "src/hooks/useAppState.ts",
   "src/utils/storage.ts",
 ];
+
+const STORY_APP_INTEGRATION_FILES = APP_SCOPE_FILES;
 
 function compactText(text: string, fallback: string): string {
   const s = String(text || "").replace(/\s+/g, " ").trim();
@@ -157,7 +160,7 @@ function storyGroupDescription(group: StoryGroup): string {
   const plural = titles.length === 1 ? "screen" : "screens";
   const demonstrative = titles.length === 1 ? "that screen" : "those screens";
   const pronoun = titles.length === 1 ? "it" : "these owned screens";
-  return `Implement only the owned generated ${plural}: ${owned}. Wire visible controls declared for ${demonstrative} in DESIGN_DOM. Do not implement broader ${group.key} behavior unless it is present in ${pronoun}, and do not edit shared app files or sibling screen groups.`;
+  return `Implement only the owned generated ${plural}: ${owned}. Wire visible controls declared for ${demonstrative} in DESIGN_DOM. You may edit app integration files only to connect these owned screens to shared state, navigation, and actions; do not implement broader ${group.key} behavior unless it is present in ${pronoun}, and do not edit sibling screen groups.`;
 }
 
 export function buildAcceptanceCriteria(repo: string): string[] {
@@ -166,7 +169,7 @@ export function buildAcceptanceCriteria(repo: string): string[] {
     const trigger = [req.label, req.icon ? `icon ${req.icon}` : ""].filter(Boolean).join(" / ");
     return `${req.screenTitle}: ${req.kind} \"${trigger}\" must produce visible behavior: ${req.expectedBehavior}.`;
   });
-  criteria.push("All visible active buttons/icons from Stitch screens have non-empty handlers or an explicit disabled/hidden state.");
+  criteria.push("All visible active buttons, links, icons, inputs, and selects from Stitch screens have real behavior or an explicit disabled/hidden state.");
   criteria.push("All generated screens are reachable from the first rendered app surface by a visible button/link/menu item/keyboard shortcut, or are embedded into a reachable screen; no orphan route/phase-only screens remain.");
   criteria.push("Stateful interactions persist only when the PRD or DESIGN_DOM explicitly requires persistence; no unrelated demo flows are added.");
   return unique(criteria).slice(0, 40);
@@ -184,9 +187,17 @@ function buildAcceptanceCriteriaForScreens(repo: string, screenIds: string[], fa
     .map(behaviorCriterion);
 
   criteria.push(`${fallbackTitle}: all visible active controls have non-empty handlers or an explicit disabled/hidden state.`);
+  criteria.push(`${fallbackTitle}: each owned generated screen is reachable from the first rendered app surface through visible navigation/control flow or is embedded into a reachable parent screen; no owned screen remains orphaned.`);
   criteria.push(`${fallbackTitle}: screen state changes are visible in the DOM and remain responsive on desktop and mobile.`);
   criteria.push(`${fallbackTitle}: no product control uses data-smoke-ignore to bypass smoke checks.`);
   return unique(criteria);
+}
+
+function buildScreenStoryScopeFiles(groupScreenFiles: string[]): string[] {
+  return unique([
+    ...groupScreenFiles,
+    ...STORY_APP_INTEGRATION_FILES.filter((file) => REOPENABLE_APP_INTEGRATION_FILES.includes(file)),
+  ]);
 }
 
 export function buildSingleStoryScopeFiles(screenFiles: string[]): string[] {
@@ -306,8 +317,8 @@ function appStoryDraft(params: {
       description: "Build the shared game shell, reducer/state model, keyboard input wiring, persistence helper boundaries, smoke-visible window.app game state, and context/actions used by generated screens without editing read-only screen components.",
       acceptanceCriteria: [
         "App shell renders the playable game surface first, not a generic landing page or dashboard.",
-        "Every generated game screen is reachable from the first playable surface through visible UI or a documented keyboard shortcut, or is embedded into a reachable gameplay/menu surface; no orphan phase-only screens remain.",
-        "HUD/status screens are embedded in gameplay or have an obvious user path to open and return from them.",
+        "Shared shell exposes stable navigation targets and action handlers for screen-owner stories without requiring pending generated screens to be visible in this story.",
+        "HUD/status data is derived from the same gameplay state used by the simulation; screen-owner stories embed or route generated HUD/status screens when they own those screens.",
         "App shell does not pass invented props to generated shared screen components; render read-only screens with their existing TypeScript props only.",
         "If App renders generated Stitch screens, it wires controls through declared actions props/action IDs from SCREEN_INDEX, never through textContent/DOM-label matching.",
         "Reducer/state transitions are pure and immutable; persistence, timers, and DOM/test bridge side effects live in effects or action wrappers.",
@@ -321,7 +332,7 @@ function appStoryDraft(params: {
         "No product control uses data-smoke-ignore; inactive controls are disabled/hidden explicitly.",
       ],
       depends_on: [],
-      screens,
+      screens: [],
       scope_files: APP_SCOPE_FILES,
       shared_files: params.screenFiles,
       scope_description: "Shared game integration and state ownership. Generated src/screens files are read-only shared context here: do not edit them, do not change their prop interfaces, and do not pass props they do not already declare. If generated screens expose typed actions props, App may pass those declared action handlers; never use textContent or DOM-label matching for control routing. Screen stories own all edits and additional button wiring for those files.",
@@ -334,15 +345,15 @@ function appStoryDraft(params: {
     title: `${params.product} - app shell, state and persistence`,
     description: "Build the shared application shell, navigation state, domain types, persistence helpers, profile/settings panel wiring, and smoke-visible window.app state used by generated screens.",
     acceptanceCriteria: [
-      "App shell wires every generated Stitch screen into one coherent application flow; first screen is the actual product surface, not a landing page.",
-      "Every generated Stitch screen is reachable from the first rendered app surface through visible navigation/control flow, or is embedded into a reachable screen; no orphan route/phase-only screens remain.",
+      "App shell provides the actual product surface and shared navigation/state contracts, not a landing page.",
+      "Shared shell exposes stable navigation targets and action handlers for screen-owner stories without requiring pending generated screens to be visible in this story.",
       "Shared state exposes visible active screen, selected item, storage status, last error, active panel, and item count through window.app.",
       "Profile/account icon opens a visible panel/drawer/page and close/back controls visibly dismiss it.",
       "localStorage success, corrupted JSON, retry, and clear-data paths produce visible DOM feedback when persistence is required.",
       "No product control uses data-smoke-ignore; inactive controls are disabled/hidden explicitly.",
     ],
     depends_on: [],
-    screens,
+    screens: [],
     scope_files: APP_SCOPE_FILES,
     shared_files: params.screenFiles,
     scope_description: "Shared app integration and state ownership. Generated src/screens files are read-only shared context here; screen stories own all edits to those files.",
@@ -427,7 +438,7 @@ export function buildAutoStoriesOutput(params: {
       const id = `US-${String(index + 2).padStart(3, "0")}`;
       const groupScreenFiles = unique(group.screens.map((s) => s.filePath));
       const groupScreenIds = unique(group.screens.map((s) => s.screenId));
-      const scopeFiles = unique(groupScreenFiles);
+      const scopeFiles = buildScreenStoryScopeFiles(groupScreenFiles);
       const title = storyGroupTitle(group);
       stories.push({
         id,
@@ -437,8 +448,8 @@ export function buildAutoStoriesOutput(params: {
         depends_on: ["US-001"],
         screens: groupScreenIds,
         scope_files: scopeFiles,
-        shared_files: APP_SCOPE_FILES,
-        scope_description: `${title}: own only ${scopeFiles.join(", ")}. Shared files are read-only context; do not edit App shell, shared state, domain/types, hooks, utilities, or sibling screens to satisfy unscoped behavior.`,
+        shared_files: [],
+        scope_description: `${title}: own generated screens ${groupScreenFiles.join(", ")} plus app integration files needed to wire those screens to shared state, navigation, and actions. Do not edit sibling screen groups or unrelated app behavior.`,
         file_skeletons: fileSkeletons(scopeFiles, screenFileSet),
       });
     });

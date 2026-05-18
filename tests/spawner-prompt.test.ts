@@ -27,6 +27,8 @@ describe("spawner prompt bootstrap", () => {
     assert.match(prompt, /outputContract\.requiredFields and outputContract\.format exactly/);
     assert.match(prompt, /guard-backed roles will reject prose-only summaries/);
     assert.match(prompt, /Use retryFeedback\.mode exactly/);
+    assert.match(prompt, /supervisorEvidence/);
+    assert.match(prompt, /current-source scanner evidence/);
     assert.match(prompt, /mode="fix" means the blocker is an open implementation requirement/);
     assert.match(prompt, /mode="audit" means prior feedback may be stale/);
     assert.match(prompt, /gitPolicy/);
@@ -117,6 +119,17 @@ describe("spawner prompt bootstrap", () => {
         previousFailure: "GENERATED_SCREEN_SHARED_READ: previous worker read src/screens/MainMenu.tsx",
         failureCategory: "GENERATED_SCREEN_SHARED_READ",
         failureSuggestion: "Use claim-summary designContracts instead of shared generated source.",
+        scopeFileStates: [
+          {
+            path: "src/App.tsx",
+            exists: false,
+            kind: "missing",
+            instruction: "Create this owned file directly if the story requires it; do not treat the missing file as a blocker.",
+          },
+        ],
+        existingScopeFiles: [],
+        missingScopeFiles: ["src/App.tsx"],
+        scopeFileInstruction: "scopeFiles is the owned write set for this story. Missing scope files are expected new owned files; create them directly with add-file/create-file semantics when needed instead of retrying update-only patches.",
         retryDiscipline: {
           mode: "first-delta",
           instruction: "Hard manager retry discipline: inspect owned scope files and make a small scoped source delta before broad analysis.",
@@ -155,6 +168,8 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, /TEST_CMD=npm run test:run/);
       assert.match(out, /LINT_CMD=true/);
       assert.match(out, /SCOPE_FILES=src\/App\.tsx/);
+      assert.match(out, /MISSING_SCOPE_FILES=src\/App\.tsx/);
+      assert.match(out, /SCOPE_FILE_POLICY=.*Missing scope files are expected new owned files/);
       assert.match(out, /GIT_POLICY=Developer story agents write code only/);
       assert.match(out, /FORBIDDEN_GIT=git add, git commit, git push/);
       assert.match(out, /SCREEN_USAGE=Use compact screen contract first/);
@@ -212,6 +227,50 @@ describe("spawner prompt bootstrap", () => {
       });
 
       assert.deepEqual(summary.scopeFiles, ["src/App.tsx", "src/App.css", "src/main.tsx", "src/index.css"]);
+      assert.deepEqual(summary.existingScopeFiles, []);
+      assert.deepEqual(summary.missingScopeFiles, ["src/App.tsx", "src/App.css", "src/main.tsx", "src/index.css"]);
+      assert.match(String(summary.scopeFileInstruction), /Missing scope files are expected new owned files/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("marks existing and missing scope files separately for worker patch mode", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-scope-state-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src", "App.tsx"), "export function App() { return null; }\n");
+      fs.writeFileSync(path.join(tmp, ".story-scope-files"), "src/App.tsx\nsrc/App.css\nsrc/contexts/AppContext.tsx\n");
+
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        bootstrapFile: path.join(tmp, "bootstrap.sh"),
+        stepId: "step-123",
+        runId: "run-123",
+        workdir: tmp,
+        repo: tmp,
+        storyId: "US-001",
+        input: [
+          "# Developer Task",
+          "CURRENT STORY: Story US-001: Bootstrap story",
+        ].join("\n"),
+      });
+
+      assert.deepEqual(summary.scopeFiles, ["src/App.tsx", "src/App.css", "src/contexts/AppContext.tsx"]);
+      assert.deepEqual(summary.existingScopeFiles, ["src/App.tsx"]);
+      assert.deepEqual(summary.missingScopeFiles, ["src/App.css", "src/contexts/AppContext.tsx"]);
+      assert.deepEqual(
+        (summary.scopeFileStates as any[]).map((file) => [file.path, file.kind, file.exists]),
+        [
+          ["src/App.tsx", "existing", true],
+          ["src/App.css", "missing", false],
+          ["src/contexts/AppContext.tsx", "missing", false],
+        ],
+      );
+      assert.match(String(summary.scopeFileInstruction), /create them directly with add-file\/create-file semantics/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -259,6 +318,39 @@ describe("spawner prompt bootstrap", () => {
           requiresRouter: false,
         },
       ]));
+      const supervisorDir = path.join(workdir, ".setfarm", "supervisor", "run-123");
+      fs.mkdirSync(supervisorDir, { recursive: true });
+      fs.writeFileSync(path.join(supervisorDir, "SUPERVISOR_STATE.json"), JSON.stringify({
+        schema: "setfarm.supervisor-state.v1",
+        runId: "run-123",
+        projectStatus: "implementing",
+        updatedAt: "2026-05-17T00:00:00.000Z",
+        stories: {
+          "US-001": {
+            status: "passed",
+            currentWorker: "feature-dev_developer",
+            openBlockers: [],
+            warnings: [],
+            resolved: ["dom:main-menu:start"],
+            lastEvidenceAt: "2026-05-17T00:00:00.000Z",
+          },
+        },
+        evidence: {
+          "dom:main-menu:start": {
+            itemId: "dom:main-menu:start",
+            storyId: "US-001",
+            status: "passed",
+            severity: "blocker",
+            observed: ["START GAME"],
+            lastScan: "static-control-scan",
+            files: ["src/screens/MainMenu.tsx"],
+            line: 1,
+            message: "SUPERVISOR_CHECKLIST button \"START GAME\" passed scanner evidence",
+            checkedAt: "2026-05-17T00:00:00.000Z",
+          },
+        },
+        interventions: [],
+      }, null, 2));
       const summary = buildClaimSummary({
         wfId: "feature-dev",
         role: "developer",
@@ -341,6 +433,10 @@ describe("spawner prompt bootstrap", () => {
       assert.match(String((summary.designContracts as any).source), /instead of reading raw stitch\/\*\.html/);
       assert.match(String((summary.designContracts as any).source), /creating source-tree probe files/);
       assert.match(String(summary.supervisorMemory), /forbidden generated screens/);
+      assert.equal((summary.supervisorEvidence as any).storyStatus, "passed");
+      assert.equal((summary.supervisorEvidence as any).counts.blockers, 0);
+      assert.equal((summary.supervisorEvidence as any).counts.resolved, 1);
+      assert.match(String((summary.supervisorEvidence as any).instruction), /Current-source scanner evidence/);
       assert.match(String(summary.previousFailure), /GENERATED_SCREEN_SHARED_READ/);
       assert.equal(summary.failureCategory, "GENERATED_SCREEN_SHARED_READ");
       assert.equal(summary.failureSuggestion, "Use claim-summary designContracts instead.");
@@ -434,6 +530,86 @@ describe("spawner prompt bootstrap", () => {
     }
   });
 
+  it("loads current supervisor evidence from sibling story worktrees", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-sibling-supervisor-evidence-"));
+    try {
+      const agentsRoot = path.join(tmp, "workflows", "feature-dev", "agents");
+      const storyBranch = "run-us-001";
+      const supervisorWorkdir = path.join(agentsRoot, "supervisor", "story-worktrees", storyBranch);
+      const developerWorkdir = path.join(agentsRoot, "developer", "story-worktrees", storyBranch);
+      fs.mkdirSync(supervisorWorkdir, { recursive: true });
+      fs.mkdirSync(developerWorkdir, { recursive: true });
+      const emptySupervisorStateDir = path.join(supervisorWorkdir, ".setfarm", "supervisor", "run-123");
+      fs.mkdirSync(emptySupervisorStateDir, { recursive: true });
+      fs.writeFileSync(path.join(emptySupervisorStateDir, "SUPERVISOR_STATE.json"), JSON.stringify({
+        schema: "setfarm.supervisor-state.v1",
+        runId: "run-123",
+        projectStatus: "implementing",
+        updatedAt: "2026-05-17T00:05:00.000Z",
+        stories: {},
+        evidence: {},
+        interventions: [],
+      }, null, 2));
+      const stateDir = path.join(developerWorkdir, ".setfarm", "supervisor", "run-123");
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.writeFileSync(path.join(stateDir, "SUPERVISOR_STATE.json"), JSON.stringify({
+        schema: "setfarm.supervisor-state.v1",
+        runId: "run-123",
+        projectStatus: "implementing",
+        updatedAt: "2026-05-17T00:00:00.000Z",
+        stories: {
+          "US-001": {
+            status: "passed",
+            openBlockers: [],
+            warnings: [],
+            resolved: ["dom:screen:start"],
+            lastEvidenceAt: "2026-05-17T00:00:00.000Z",
+          },
+        },
+        evidence: {
+          "dom:screen:start": {
+            itemId: "dom:screen:start",
+            storyId: "US-001",
+            status: "passed",
+            severity: "blocker",
+            observed: ["Start"],
+            lastScan: "static-control-scan",
+            files: ["src/screens/MainMenu.tsx"],
+            message: "passed current scanner evidence",
+            checkedAt: "2026-05-17T00:00:00.000Z",
+          },
+        },
+        interventions: [],
+      }, null, 2));
+
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "supervisor",
+        claimFile: "/tmp/claim.json",
+        outputFile: "/tmp/output.txt",
+        bootstrapFile: "/tmp/bootstrap.sh",
+        stepId: "step-123",
+        runId: "run-123",
+        workdir: supervisorWorkdir,
+        repo: supervisorWorkdir,
+        storyId: "US-001",
+        input: [
+          "TASK: sibling evidence",
+          `WORKDIR: ${supervisorWorkdir}`,
+          `STORY_BRANCH: ${storyBranch}`,
+          "CURRENT STORY: Story US-001: Main Menu",
+        ].join("\n"),
+      });
+
+      assert.equal((summary.supervisorEvidence as any).storyStatus, "passed");
+      assert.match(String((summary.supervisorEvidence as any).workdir), /developer\/story-worktrees\/run-us-001$/);
+      assert.equal((summary.supervisorEvidence as any).counts.blockers, 0);
+      assert.equal((summary.supervisorEvidence as any).counts.passed, 1);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("bootstrap prefers claim-summary workdir over stale scratch workdir", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-workdir-bootstrap-"));
     try {
@@ -517,6 +693,44 @@ describe("spawner prompt bootstrap", () => {
       assert.match(String((summary.retryDiscipline as any).instruction), /Type declarations, comments, docs, window\.game/);
       assert.match((summary.retryFeedback as any).blocker, /RUNTIME_BRIDGE_MISSING/);
       assert.match((summary.retryFeedback as any).suggestion, /window\.app = \{ state, actions \}|globalThis\.app = \{ state, actions \}/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("elevates verifier retry findings into bounded quality-fix feedback", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-quality-retry-summary-"));
+    try {
+      fs.writeFileSync(path.join(tmp, ".story-scope-files"), "src/App.tsx\nsrc/test/utils.tsx\n");
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: "/tmp/claim.json",
+        outputFile: "/tmp/output.txt",
+        bootstrapFile: "/tmp/bootstrap.sh",
+        stepId: "step-123",
+        runId: "run-123",
+        workdir: tmp,
+        repo: tmp,
+        storyId: "US-001",
+        input: [
+          "TASK: Project: quality retry sensor",
+          `WORKDIR: ${tmp}`,
+          "CURRENT STORY: Story US-001: App shell",
+          "",
+          "## Previous Failure / Retry Feedback",
+          "STATUS: retry",
+          "FINDINGS:",
+          "- src/App.tsx:270-280: rotateTile increments moves when no tile mutation occurs.",
+          "",
+          "## Current Story",
+        ].join("\n"),
+      });
+
+      assert.equal(summary.failureCategory, "QUALITY_RETRY_FEEDBACK");
+      assert.equal((summary.retryFeedback as any).mode, "fix");
+      assert.match((summary.retryFeedback as any).blocker, /rotateTile increments moves/);
+      assert.match(String(summary.failureSuggestion), /exact retry findings/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -845,6 +1059,70 @@ describe("spawner prompt bootstrap", () => {
       assert.equal(summary.storyBranch, "33d23f10-us-001");
       assert.equal(summary.buildCommand, "npm run build");
       assert.equal(summary.testCommand, "npm run test");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("adds reviewer output contract defaults and command aliases when role prompt omits output format", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-reviewer-default-contract-"));
+    try {
+      const mainRepo = path.join(tmp, "main-repo");
+      const storyWorkdir = path.join(tmp, "workflows", "feature-dev", "agents", "developer", "story-worktrees", "33d23f10-us-001");
+      fs.mkdirSync(mainRepo, { recursive: true });
+      fs.mkdirSync(storyWorkdir, { recursive: true });
+      fs.writeFileSync(path.join(storyWorkdir, "package.json"), JSON.stringify({
+        scripts: {
+          build: "tsc && vite build",
+          "test:run": "vitest run",
+        },
+      }));
+
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "reviewer",
+        claimFile: "/tmp/claim.json",
+        outputFile: "/tmp/output.txt",
+        bootstrapFile: "/tmp/bootstrap.sh",
+        stepId: "step-123",
+        runId: "33d23f10-f68c-4c75-a9e9-4a48996d075b",
+        workdir: storyWorkdir,
+        repo: storyWorkdir,
+        storyId: "US-001",
+        input: [
+          "TASK: verify one story PR.",
+          `VERIFY_WORKDIR: ${storyWorkdir}`,
+          `MAIN_REPO: ${mainRepo}`,
+          `STORY_WORKDIR: ${storyWorkdir}`,
+          `REPO: ${storyWorkdir}`,
+          "LINT_CMD: true",
+          "STORY_BRANCH: 33d23f10-us-001",
+          "",
+          "CURRENT STORY: Story US-001: Runtime bridge",
+          "",
+          "## Feedback Format",
+          "",
+          "Use actionable findings.",
+        ].join("\n"),
+      });
+
+      assert.equal((summary.outputContract as any).source, "role-default");
+      assert.deepEqual((summary.outputContract as any).requiredFields, [
+        "STATUS",
+        "STORY",
+        "ROLE",
+        "RESULT",
+        "FINDINGS",
+        "CHECKS",
+        "SCOPE",
+      ]);
+      assert.match(String((summary.outputContract as any).format), /STATUS: done\|retry\|fail/);
+      assert.equal(summary.buildCommand, "npm run build");
+      assert.equal(summary.testCommand, "npm run test:run");
+      assert.equal(summary.lintCommand, "true");
+      assert.equal(summary.buildCmd, "npm run build");
+      assert.equal(summary.testCmd, "npm run test:run");
+      assert.equal(summary.lintCmd, "true");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

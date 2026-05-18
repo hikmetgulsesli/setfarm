@@ -156,7 +156,8 @@ describe("03-stories step module", () => {
       assert.equal(stories[0].shared_files.includes("src/screens/ProfilePanel.tsx"), true);
       assert.equal(stories[1].scope_files.includes("src/screens/Leads.tsx"), true);
       assert.equal(stories.some((s: any) => s.scope_files.includes("src/screens/ProfilePanel.tsx")), true);
-      assert.equal(stories.slice(1).every((s: any) => s.shared_files.includes("src/App.tsx")), true);
+      assert.equal(stories.slice(1).every((s: any) => s.scope_files.includes("src/App.tsx")), true);
+      assert.equal(stories.slice(1).every((s: any) => s.scope_files.includes("src/hooks/useAppState.ts")), true);
 	      assert.match(output, /New Lead/);
       assert.match(output, /Profile/);
       assert.equal(output.includes("CounterPanel"), false);
@@ -203,13 +204,17 @@ describe("03-stories step module", () => {
       const storiesJson = output.match(/STORIES_JSON:\n([\s\S]*?)\nSCREEN_MAP:/)?.[1] || "[]";
       const stories = JSON.parse(storiesJson);
       const allText = JSON.stringify(stories);
+      const appStoryText = JSON.stringify(stories[0]);
 
       assert.match(stories[0].title, /game engine, state and test bridge$/);
       assert.match(stories[0].description, /shared game shell/);
       assert.match(stories[0].description, /without editing read-only screen components/);
-      assert.match(allText, /Every generated game screen is reachable/);
-      assert.match(allText, /no orphan phase-only screens remain/);
-      assert.match(allText, /HUD\/status screens are embedded in gameplay/);
+      assert.deepEqual(stories[0].screens, []);
+      assert.match(appStoryText, /screen-owner stories/);
+      assert.doesNotMatch(appStoryText, /Every generated game screen is reachable/);
+      assert.doesNotMatch(appStoryText, /HUD\/status screens are embedded in gameplay/);
+      assert.match(allText, /owned generated screen is reachable/);
+      assert.match(allText, /no owned screen remains orphaned/);
       assert.match(allText, /HUD and status displays are derived from the same state source/);
       assert.match(allText, /does not pass invented props to generated shared screen components/);
       assert.match(allText, /declared actions props\/action IDs from SCREEN_INDEX/);
@@ -227,7 +232,10 @@ describe("03-stories step module", () => {
       assert.doesNotMatch(allText, /next piece|tetromino|activePiece|nextPiece/i);
       const scorePanelStory = stories.find((s: any) => s.scope_files.includes("src/screens/ScorePanel.tsx"));
       assert.ok(scorePanelStory, "expected a dedicated ScorePanel story");
-      assert.deepEqual(scorePanelStory.scope_files, ["src/screens/ScorePanel.tsx"]);
+      assert.equal(scorePanelStory.scope_files.includes("src/screens/ScorePanel.tsx"), true);
+      assert.equal(scorePanelStory.scope_files.includes("src/App.tsx"), true);
+      assert.equal(scorePanelStory.scope_files.includes("src/hooks/useAppState.ts"), true);
+      assert.equal(scorePanelStory.scope_files.includes("src/types/domain.ts"), true);
       assert.match(scorePanelStory.title, /Score Panel screen$/);
       assert.doesNotMatch([
         scorePanelStory.title,
@@ -337,6 +345,35 @@ describe("03-stories step module", () => {
       const contract = computeUiBehaviorContract(repo);
       assert.doesNotMatch(contract, /navigate:#|route=#/);
       assert.match(contract, /preserve anchor semantics/);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("collects link requirements from DESIGN_DOM navigation arrays", () => {
+    const repo = mkdtempSync(path.join(tmpdir(), "setfarm-dom-navigation-"));
+    try {
+      mkdirSync(path.join(repo, "stitch"));
+      writeFileSync(path.join(repo, "stitch", "DESIGN_DOM.json"), JSON.stringify({
+        screens: {
+          "SCR-001": {
+            title: "Main Menu",
+            navigation: [
+              { kind: "link", label: "Help", href: "#" },
+              { kind: "link", label: "Settings", href: "/settings" },
+            ],
+          },
+        },
+      }));
+
+      const reqs = collectUiBehaviorRequirements(repo);
+      assert.deepEqual(reqs.map((req) => `${req.kind}:${req.label}:${req.route || ""}`), [
+        "link:Help:",
+        "link:Settings:/settings",
+      ]);
+
+      const criteriaText = buildAcceptanceCriteria(repo).join("\n");
+      assert.match(criteriaText, /buttons, links, icons, inputs, and selects/);
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }

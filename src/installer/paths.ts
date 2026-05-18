@@ -58,3 +58,14 @@ export function resolveSetfarmCli(): string {
   // From dist/installer/paths.js -> ../../dist/cli/cli.js
   return path.resolve(__dirname, "..", "cli", "cli.js");
 }
+
+export function resolvePlatformRoot(): string {
+  const env = process.env.SETFARM_PLATFORM_ROOT?.trim();
+  if (env) return env;
+  // From dist/installer/paths.js -> ../..
+  return path.resolve(__dirname, "..", "..");
+}
+
+export function resolvePlatformScript(scriptName: string): string {
+  return path.join(resolvePlatformRoot(), "scripts", scriptName);
+}

@@ -20,6 +20,7 @@ import { getPRState, invalidatePRStateCache, tryReopenPR, tryAutoMergePR, findPr
 import { failStep } from "./step-fail.js";
 import { advancePipeline, checkLoopContinuation } from "./step-advance.js";
 import { mergeStoryIntoFeature, runMergeQueue } from "./merge-queue-ops.js";
+import { refreshRunContractSafe } from "./contract-ledger.js";
 
 // ── Re-exports from extracted modules (backwards compat for cli.ts, medic.ts) ──
 export { resolveTemplate, parseOutputKeyValues } from "./context-ops.js";
@@ -37,9 +38,11 @@ import { cleanupAbandonedSteps as _cleanupAbandonedSteps, cleanupProjectEphemera
 import { isVerifyRetryMergeBlocker, isVerifyRetryQualityFailure } from "./verify-retry-routing.js";
 import { markSupervisorInterventions, upsertSupervisorRunMetadata } from "./supervisor/state.js";
 import { cleanupOutOfScopeWorktreeFiles } from "./steps/06-implement/context.js";
+import { missionControlApi } from "../runtime-config.js";
 import { sanitizeDesignMismatchFeedback } from "./error-taxonomy.js";
 import { sanitizeAgentPromptContracts } from "./prompt-contracts.js";
 import { IMPLICIT_STORY_SCOPE_FILES, isImplicitStoryScopeFile } from "./story-scope.js";
+import { resolvePlatformScript } from "./paths.js";
 import {
   getRunStatus, getRunContext, updateRunContext, failRun,
   getWorkflowId as _getWorkflowId,
@@ -563,6 +566,53 @@ function parseScopeFileList(raw: string | null | undefined): string[] {
   }
 }
 
+function buildStoryScopeReminder(scopeFiles: string[]): string {
+  return "SCOPE ENFORCEMENT: You may ONLY write files in [" + scopeFiles.join(", ") + "]. shared_files are read-only/import context unless also listed in scope_files. Test files (*.test.*, *.spec.*), src/test/setup.*, src/test/utils.*, src/setupTests.*, and Vitest/Jest-only config (vitest.config.*, jest.config.*) are allowed. src/types/*, domain model files, vite.config.*, tailwind.config.*, tsconfig.*, index.html, App.tsx, main.tsx, index.css are FORBIDDEN unless in your scope_files. Never edit shared exported types to fix only your screen; use local display/adaptor types inside scoped files. Do not create project-tree probe/scratch files such as src/_probe.tsx, src/probe.tsx, tmp.ts, or scratch.tsx to infer types; use claim-summary designContracts.componentTypes. Violation = instant SCOPE_BLEED rejection.";
+}
+
+function syncStoryScopeContext(
+  context: Record<string, string>,
+  story: { story_id?: string | null; id?: string | null; scope_files?: string | null; shared_files?: string | null },
+  storyWorkdir: string,
+  runId: string,
+): string[] {
+  const scopeFiles = parseDeclaredScopeFiles(story.scope_files);
+  const sharedFiles = parseDeclaredScopeFiles(story.shared_files);
+
+  if (scopeFiles.length > 0) {
+    context["story_scope_files"] = scopeFiles.join(", ");
+    context["scope_reminder"] = buildStoryScopeReminder(scopeFiles);
+  } else {
+    delete context["story_scope_files"];
+    delete context["scope_reminder"];
+  }
+
+  if (sharedFiles.length > 0) {
+    context["story_shared_files"] = sharedFiles.join(", ");
+  } else {
+    delete context["story_shared_files"];
+  }
+
+  if (storyWorkdir && scopeFiles.length > 0) {
+    try {
+      const allAllowed = [...new Set([...scopeFiles, ...getImplicitScopeFiles(storyWorkdir)])];
+      const scopePath = path.join(storyWorkdir, ".story-scope-files");
+      fs.writeFileSync(scopePath, allAllowed.join("\n") + "\n");
+      try { fs.chmodSync(scopePath, 0o664); } catch { /* best effort */ }
+      cleanupOutOfScopeWorktreeFiles(
+        storyWorkdir,
+        allAllowed,
+        String(story.story_id || story.id || "story"),
+        runId,
+      );
+    } catch (e) {
+      logger.debug(`[scope-sync] Could not write story scope sidecar: ${String(e).slice(0, 120)}`);
+    }
+  }
+
+  return scopeFiles;
+}
+
 function prependScopeReminderIfMissing(input: string, context: Record<string, string>): string {
   const reminder = String(context["scope_reminder"] || "").trim();
   if (!reminder || /\bSCOPE ENFORCEMENT:/i.test(input)) return input;
@@ -676,11 +726,112 @@ async function detectVerifyScopeDiffFailure(
   ].filter(Boolean).join("\n");
 }
 
+async function detectVerifyGeneratedScreenRegressionFailure(
+  runId: string,
+  storyId: string,
+  workdir: string,
+  repoPath: string,
+): Promise<string> {
+  if (!runId || !storyId || !workdir || !fs.existsSync(workdir)) return "";
+  const story = await pgGet<{ story_id: string; title: string; story_index: number | null }>(
+    "SELECT story_id, title, story_index FROM stories WHERE run_id = $1 AND story_id = $2 LIMIT 1",
+    [runId, storyId],
+  );
+  if (!story || story.story_index == null) return "";
+
+  const previousRows = await pgQuery<{ story_screens: string | null }>(
+    "SELECT story_screens FROM stories WHERE run_id = $1 AND story_index < $2 AND status IN ('done', 'verified') ORDER BY story_index",
+    [runId, story.story_index],
+  );
+  if (previousRows.length === 0) return "";
+
+  const { findGeneratedScreenRegressionIssues } = await import("./steps/06-implement/guards.js");
+  const issues = findGeneratedScreenRegressionIssues(
+    workdir,
+    previousRows.map((row) => row.story_screens || []),
+    repoPath,
+  );
+  if (issues.length === 0) return "";
+
+  return [
+    issues.join("\n"),
+    `Story ${story.story_id} (${story.title}) reached verify while regressing a previously verified generated screen integration.`,
+  ].join("\n");
+}
+
+async function detectOpenPrReviewCommentFailure(
+  prUrl: string | null | undefined,
+  storyId: string,
+  context: Record<string, string>,
+): Promise<string> {
+  const url = String(prUrl || "").trim();
+  if (!url) return "";
+
+  try {
+    const { fetchPrState, formatPrCommentsForAgent, resolveActionableInlineReviewThreads } = await import("./steps/07-verify/pr-comments.js");
+    let state = await fetchPrState(url, context["repo_full"] || "");
+    if (state) {
+      let formatted = formatPrCommentsForAgent(state);
+      context["pr_comments"] = formatted || "";
+      context["pr_check_state"] = state.checksStatus || "";
+      context["pr_mergeable"] = state.mergeable || "";
+      context["pr_merge_state_status"] = state.mergeStateStatus || "";
+      if (state.state !== "MERGED" && formatted) {
+        const retryAlreadyAddressedReview =
+          context["failure_category"] === "PR_REVIEW_COMMENTS_OPEN" ||
+          /PR_REVIEW_COMMENTS_OPEN/i.test(`${context["previous_failure"] || ""}\n${context["verify_feedback"] || ""}`);
+        const reviewStateAllowsResolution =
+          state.checksStatus !== "failing" &&
+          state.mergeable !== "CONFLICTING" &&
+          !["DIRTY", "BLOCKED"].includes(state.mergeStateStatus || "");
+        if (retryAlreadyAddressedReview && reviewStateAllowsResolution) {
+          const resolution = await resolveActionableInlineReviewThreads(state);
+          if (resolution.resolved > 0) {
+            context["pr_review_threads_resolved"] = String(resolution.resolved);
+            state = await fetchPrState(url, context["repo_full"] || "");
+            if (state) {
+              formatted = formatPrCommentsForAgent(state);
+              context["pr_comments"] = formatted || "";
+              context["pr_check_state"] = state.checksStatus || "";
+              context["pr_mergeable"] = state.mergeable || "";
+              context["pr_merge_state_status"] = state.mergeStateStatus || "";
+              if (!formatted) return "";
+            }
+          }
+          if (resolution.failed > 0) {
+            context["pr_review_thread_resolution_failed"] = resolution.failures.join("\n").slice(0, 1200);
+          }
+        }
+        return [
+          `PR_REVIEW_COMMENTS_OPEN: ${storyId} has actionable PR review comments that must be fixed before merge.`,
+          formatted,
+        ].join("\n");
+      }
+      return "";
+    }
+  } catch (e) {
+    logger.warn(`[verify-pr-comments] Fresh PR comment check failed for ${storyId}: ${String(e).slice(0, 180)}`);
+  }
+
+  const fallback = String(context["pr_comments"] || "").trim();
+  if (/^## PR Comments \(\d+ actionable\)/m.test(fallback)) {
+    return [
+      `PR_REVIEW_COMMENTS_OPEN: ${storyId} has actionable PR review comments that must be fixed before merge.`,
+      fallback,
+    ].join("\n");
+  }
+  return "";
+}
+
 async function routeVerifyScopeFailureToImplement(
   verifyStep: StepRow,
   context: Record<string, string>,
   storyId: string,
   failure: string,
+  options: {
+    category?: string;
+    suggestion?: string;
+  } = {},
 ): Promise<void> {
   const retryStory = await pgGet<{ id: string; retry_count: number; max_retries: number }>(
     "SELECT id, retry_count, max_retries FROM stories WHERE run_id = $1 AND story_id = $2 AND status = 'done' LIMIT 1",
@@ -691,8 +842,8 @@ async function routeVerifyScopeFailureToImplement(
   const newRetry = retryStory.retry_count + 1;
   context["verify_feedback"] = failure;
   context["previous_failure"] = failure;
-  context["failure_category"] = "SCOPE_BLEED";
-  context["failure_suggestion"] = "Revert out-of-scope files from the story branch. Only modify files listed in scope_files; use local adapters instead of changing shared exported types.";
+  context["failure_category"] = options.category || "SCOPE_BLEED";
+  context["failure_suggestion"] = options.suggestion || "Revert out-of-scope files from the story branch. Only modify files listed in scope_files; use local adapters instead of changing shared exported types.";
 
   if (newRetry > retryStory.max_retries) {
     await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [newRetry, failure, now(), retryStory.id]);
@@ -806,6 +957,35 @@ function runSystemSmokeGate(repoPath: string, runId: string, stepId: string): { 
   }
 }
 
+function runPostMergeBuildGate(
+  repoPath: string,
+  buildCmd: string,
+  runId: string,
+  stepId: string,
+): { ok: boolean; output: string; failure: string } {
+  const command = String(buildCmd || "npm run build").trim();
+  if (!repoPath || !fs.existsSync(repoPath) || !command || command === "true") {
+    return { ok: true, output: "skip (build command unavailable)", failure: "" };
+  }
+
+  try {
+    logger.info(`[verify-build-gate] Running ${command}`, { runId, stepId });
+    const output = execFileSync("sh", ["-lc", command], {
+      cwd: repoPath,
+      timeout: 240_000,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        CI: process.env.CI || "1",
+      },
+    }).trim();
+    return { ok: true, output: output.slice(-2000) || `pass (${command})`, failure: "" };
+  } catch (err) {
+    return { ok: false, output: "", failure: formatExecFailure(err, 6000) };
+  }
+}
+
 async function confirmFailedSystemSmokeGate(
   repoPath: string,
   runId: string,
@@ -837,6 +1017,18 @@ async function ensureSystemSmokeBeforeAutoVerify(
   if (!repoPath) return true;
 
   syncBaseBranch(repoPath, "main");
+  const buildGate = runPostMergeBuildGate(repoPath, context["build_cmd"] || "npm run build", runId, "verify");
+  if (!buildGate.ok) {
+    const failure = `BUILD_FAILED: Post-merge build failed for ${story.story_id} on current main.\n${buildGate.failure}`;
+    context["previous_failure"] = failure;
+    context["current_story_id"] = story.story_id;
+    context["failure_category"] = "BUILD_FAILED";
+    context["failure_suggestion"] = "Fix the merged main build before auto-verifying the story. Route the failure through the same quality-fix path instead of accepting final supervision.";
+    await updateRunContext(runId, context);
+    logger.warn(`[${logPrefix}-build-gate] Build failed; blocked auto-verify for ${story.story_id}: ${buildGate.failure.slice(0, 200)}`, { runId });
+    return false;
+  }
+
   const decision = await shouldRunStorySystemSmokeGate(runId, story.story_id);
   if (!decision.run) {
     context["smoke_test_result"] = `deferred for ${story.story_id}: ${decision.reason}`;
@@ -1174,12 +1366,64 @@ function sanitizedRetryFailureText(text: string): string {
 
   const lines = text.split(/\r?\n/);
   const actionableStart = lines.findIndex((line) =>
-    /\b(REMAINING|FAILURES?|ERRORS?|ISSUES?|BLOCKERS?|FEEDBACK|PREVIOUS_FAILURE|PR_NOT_MERGED|PR_MISSING|VERIFY_SYSTEM_SMOKE_FAILURE|SYSTEM_SMOKE_FAILURE|QUALITY GATE|GUARDRAIL)\b/i.test(line),
+    /\b(REMAINING|FAILURES?|ERRORS?|ISSUES?|BLOCKERS?|FEEDBACK|PREVIOUS_FAILURE|PR_REVIEW_COMMENTS_OPEN|PR_NOT_MERGED|PR_MISSING|VERIFY_SYSTEM_SMOKE_FAILURE|SYSTEM_SMOKE_FAILURE|QUALITY GATE|GUARDRAIL)\b/i.test(line),
   );
   if (actionableStart >= 0) {
     return sanitizeDesignMismatchFeedback(lines.slice(actionableStart).join("\n"));
   }
   return "";
+}
+
+function cleanRetryIssueText(value: string | undefined): string {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  const normalized = text.replace(/\s+/g, " ").trim().toLowerCase();
+  if (["none", "(none)", "n/a", "na", "null", "undefined", "no issues"].includes(normalized)) {
+    return "";
+  }
+  if (/^status:\s*retry\s*$/i.test(text)) return "";
+  if (/^(feedback|issues|findings|blockers|test_failures):\s*(none|\(none\)|n\/a|na|null|undefined)\s*$/i.test(text)) {
+    return "";
+  }
+  return text;
+}
+
+function formatRetryIssueBlock(label: string, value: string | undefined): string {
+  const text = cleanRetryIssueText(value);
+  return text ? `STATUS: retry\n${label}:\n${text}` : "";
+}
+
+export function resolveVerifyRetryIssues(
+  parsedOutput: Record<string, string>,
+  context: Record<string, string>,
+  output: string,
+): string {
+  for (const [label, value] of [
+    ["FEEDBACK", parsedOutput["feedback"]],
+    ["ISSUES", parsedOutput["issues"]],
+    ["TEST_FAILURES", parsedOutput["test_failures"]],
+    ["FINDINGS", parsedOutput["findings"]],
+    ["BLOCKERS", parsedOutput["blockers"]],
+  ] as Array<[string, string | undefined]>) {
+    const block = formatRetryIssueBlock(label, value);
+    if (block) return block;
+  }
+
+  const rawOutput = cleanRetryIssueText(output);
+  if (rawOutput) return rawOutput;
+
+  for (const [label, value] of [
+    ["FEEDBACK", context["feedback"]],
+    ["ISSUES", context["issues"]],
+    ["TEST_FAILURES", context["test_failures"]],
+    ["FINDINGS", context["findings"]],
+    ["BLOCKERS", context["blockers"]],
+  ] as Array<[string, string | undefined]>) {
+    const block = formatRetryIssueBlock(label, value);
+    if (block) return block;
+  }
+
+  return "STATUS: retry\nFEEDBACK:\n- Verifier requested retry but did not provide actionable feedback.";
 }
 
 /**
@@ -2071,6 +2315,7 @@ async function autoCompleteStoriesWithPRs(
           await pgRun("UPDATE steps SET current_story_id = NULL, updated_at = $1 WHERE id = $2 AND current_story_id = $3", [now(), step.id, rs.id]);
         logger.info(`[claim-auto-complete] Story ${rs.story_id} auto-completed — PR exists: ${prUrl}`, { runId: step.run_id });
         emitEvent({ ts: now(), event: "story.done", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, storyId: rs.story_id, storyTitle: rs.title, detail: `Auto-completed — PR exists (${prUrl})` });
+        await refreshRunContractSafe(step.run_id, "story.auto_completed");
       } else if (prFound && !prUrlValid) {
         logger.warn(`[claim-auto-complete] Story ${rs.story_id} has PR "${prUrl}" but format invalid or wrong repo — NOT auto-completing`, { runId: step.run_id });
       }
@@ -2508,7 +2753,35 @@ async function injectSuperviseEachContext(
   if (!story) {
     story = await findUnsupervisedDoneStory(step.run_id, context);
   }
-  if (!story) return true;
+  if (!story) {
+    const remainingStoryWork = await pgGet<{ cnt: string }>(
+      "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status IN ('pending','running','done')",
+      [step.run_id],
+    );
+    const loopStatus = await pgGet<{ status: string }>(
+      "SELECT status FROM steps WHERE run_id = $1 AND type = 'loop' AND step_id = 'implement' LIMIT 1",
+      [step.run_id],
+    );
+    if (loopStatus?.status === "done" && parseInt(remainingStoryWork?.cnt || "0", 10) === 0) {
+      context["supervisor_scope"] = "final-product";
+      delete context["current_story_id"];
+      delete context["current_story_title"];
+      delete context["current_story"];
+      delete context["story_scope_files"];
+      delete context["story_shared_files"];
+      delete context["scope_reminder"];
+      delete context["pr_url"];
+      delete context["story_branch"];
+      if (/SUPERVISOR_AC_CONTEXT_MISSING|story-scoped supervisor/i.test(context["previous_failure"] || "")) {
+        delete context["previous_failure"];
+        delete context["failure_category"];
+        delete context["failure_suggestion"];
+      }
+      await updateRunContext(step.run_id, context);
+      logger.info(`[supervise-each] No story remains to audit; claiming ${step.step_id} as final-product supervisor`, { runId: step.run_id });
+    }
+    return true;
+  }
 
   const storyBranch = (story.story_branch || `${step.run_id.slice(0, 8)}-${story.story_id}`).toLowerCase();
   context["supervisor_scope"] = "story";
@@ -2526,6 +2799,7 @@ async function injectSuperviseEachContext(
     await updateRunContext(step.run_id, context);
     return false;
   }
+  syncStoryScopeContext(context, story, workdir, step.run_id);
   upsertSupervisorRunMetadata({
     workdir,
     runId: step.run_id,
@@ -2645,9 +2919,11 @@ async function claimSingleStep(
     const { classifyError } = await import("./error-taxonomy.js");
     if (failureText) {
       const classified = classifyError(failureText);
+      const currentCategory = context["failure_category"] || "";
+      const currentSuggestion = context["failure_suggestion"] || "";
       if (context["previous_failure"] !== failureText) context["previous_failure"] = failureText;
-      if (!context["failure_category"]) context["failure_category"] = classified.category;
-      if (!context["failure_suggestion"]) context["failure_suggestion"] = classified.suggestion;
+      if (!currentCategory || currentCategory === "UNKNOWN") context["failure_category"] = classified.category;
+      if (!currentSuggestion || /Unexpected error/i.test(currentSuggestion)) context["failure_suggestion"] = classified.suggestion;
       const source = existingFailure ? "context" : "step-output";
       logger.info(`[claim] Injected previous_failure from ${source} (${context["failure_category"] || classified.category}) for retry ${step.retry_count} of ${step.step_id}`, { runId: step.run_id });
     } else if (step.output && stepOutputLooksSuccessful) {
@@ -2736,6 +3012,25 @@ async function claimSingleStep(
         await pgRun("UPDATE steps SET status = 'waiting', updated_at = $1 WHERE id = $2 AND status = 'running'", [now(), step.id]);
         await recordStepTransition(step.id, step.run_id, "running", "waiting", agentId, "verify-scope-preflight");
         await closeSingleStepHandoff("completed", "verify scope failure routed to implement");
+        return { found: false };
+      }
+      const generatedScreenRegressionFailure = await detectVerifyGeneratedScreenRegressionFailure(
+        step.run_id,
+        context["current_story_id"] || "",
+        context["story_workdir"] || repoPath,
+        repoPath,
+      );
+      if (generatedScreenRegressionFailure) {
+        context["preflight_errors"] = [context["preflight_errors"], generatedScreenRegressionFailure].filter(Boolean).join("\n");
+        context["preflight_analysis"] = `${context["preflight_analysis"]}\n\nVERIFY GENERATED SCREEN REGRESSION CHECK:\n${generatedScreenRegressionFailure}`;
+        logger.warn(`[preflight-generated-screen-regression] Verify blocked ${context["current_story_id"] || "(unknown story)"} before reviewer spawn: ${generatedScreenRegressionFailure.slice(0, 240)}`, { runId: step.run_id });
+        await routeVerifyScopeFailureToImplement(step, context, context["current_story_id"] || "", generatedScreenRegressionFailure, {
+          category: "GENERATED_SCREEN_REGRESSION",
+          suggestion: "Restore every previously verified generated screen render path before review. Keep prior story screens reachable while integrating current-story screens; do not replace generated components with custom duplicate UI.",
+        });
+        await pgRun("UPDATE steps SET status = 'waiting', updated_at = $1 WHERE id = $2 AND status = 'running'", [now(), step.id]);
+        await recordStepTransition(step.id, step.run_id, "running", "waiting", agentId, "verify-generated-screen-regression-preflight");
+        await closeSingleStepHandoff("completed", "verify generated screen regression routed to implement");
         return { found: false };
       }
       logger.info(`[preflight] Verify pre-flight: ${report.changedFiles.length} files, ${report.totalIssues} issue(s)`, { runId: step.run_id });
@@ -4022,7 +4317,21 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
           // 0-stories, missing scope_files, hallucinated screen path).
           const _msg = `GUARDRAIL [module:${_stepModule.id}]: ${String(_oe instanceof Error ? _oe.message : _oe).slice(0, 400)}`;
           logger.warn(`[step-module] ${_msg}`, { runId: step.run_id });
-          if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
+          if (prevContextJson) {
+            let restoredContext = prevContextJson.context;
+            if (_stepModule.id === "supervise") {
+              try {
+                const supervisorContext = JSON.parse(prevContextJson.context || "{}");
+                supervisorContext["previous_failure"] = _msg;
+                supervisorContext["failure_category"] = "SUPERVISOR_OUTPUT_INVALID";
+                supervisorContext["failure_suggestion"] = "Re-run the supervisor audit. If passing or fixing a story-scoped checkpoint, AC_COVERAGE must use the exact current story acceptance-criteria count, for example checked 20/20 acceptance criteria.";
+                restoredContext = JSON.stringify(supervisorContext);
+              } catch {
+                restoredContext = prevContextJson.context;
+              }
+            }
+            await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [restoredContext, step.run_id]);
+          }
           await failStep(stepId, _msg);
           return { advanced: false, runCompleted: false };
         }
@@ -4146,7 +4455,7 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
 
     // AUTO-CREATE Stitch project if agent didn't create one
     if (dRepo && !dProjId && dHasScreens) {
-      const stitchScript = path.join(os.homedir(), ".openclaw/setfarm-repo/scripts/stitch-api.mjs");
+      const stitchScript = resolvePlatformScript("stitch-api.mjs");
       const projectName = path.basename(dRepo);
       logger.info(`[design-auto-project] Creating Stitch project "${projectName}"`, { runId: step.run_id });
       try {
@@ -4167,7 +4476,7 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
       const dStitchDir = path.join(dRepo, "stitch");
       // Only generate if no HTML exists (skip if already downloaded by pre-claim)
       {
-        const stitchScript = path.join(os.homedir(), ".openclaw/setfarm-repo/scripts/stitch-api.mjs");
+        const stitchScript = resolvePlatformScript("stitch-api.mjs");
         const existingHtmlCount = fs.existsSync(dStitchDir)
           ? fs.readdirSync(dStitchDir).filter((f: string) => f.endsWith(".html")).length : 0;
         let screenMapArr: any[] = [];
@@ -4178,33 +4487,44 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
           const deviceType = context["device_type"] || "DESKTOP";
           const uiLanguage = context["ui_language"] || context["UI_LANGUAGE"] || "English";
 
-          // Build multi-screen prompt with FULL PRD
+          // Build compact exact-count prompt. This mirrors the design preclaim
+          // fast path and avoids sending broad implementation/test details to
+          // Stitch, which can turn one batch call into a long-running no-HTML
+          // generation.
           const prd = context["prd"] || context["PRD"] || "";
           const screenDescs = screenMapArr.map((s: any, i: number) =>
-            `Screen ${i + 1}: ${s.name} — ${s.description || s.type || "UI screen"}`
+            `${i + 1}. ${s.name} (${s.type || "screen"}) - ${s.description || "UI screen"}`
           ).join("\n");
+          const compactPrd = String(prd)
+            .replace(/\n## Screens[\s\S]*?(?=\n## |$)/, "\n")
+            .replace(/\n## Project Structure[\s\S]*?(?=\n## |$)/, "\n")
+            .replace(/\n## Window State[\s\S]*?(?=\n## |$)/, "\n")
+            .replace(/\nPRD_SCREEN_COUNT:.*$/gm, "")
+            .replace(/\nDB_REQUIRED:.*$/gm, "")
+            .replace(/\n{3,}/g, "\n\n")
+            .trim();
+          const prdTruncated = compactPrd.length > 4500 ? compactPrd.slice(0, 4500) + "\n...(truncated)" : compactPrd;
 
-          // PRD truncate: max 6000 chars to fit Stitch API limits
-          const prdTruncated = prd.length > 6000 ? prd.slice(0, 6000) + "\n...(truncated)" : prd;
+          const prompt = `Generate exactly ${screenMapArr.length} separate ${deviceType} screens in one Stitch batch call.
 
-          const prompt = `Generate ${screenMapArr.length} screens for the following application.
-
-=== PRD (Product Requirements Document) ===
-${prdTruncated}
-
-=== DESIGN SYSTEM ===
-${designSystem}
-
-=== SCREENS TO GENERATE ===
+Screen titles must match exactly:
 ${screenDescs}
 
-=== RULES ===
-- All visible application text (buttons, labels, headings, placeholders, menu items) MUST be in ${uiLanguage}.
-- Keep screen metadata, generated source identifiers, and technical labels in English unless that text is visibly shown to users.
+Application summary:
+${prdTruncated}
+
+Design system:
+${designSystem}
+
+Batch generation rules:
+- Generate exactly ${screenMapArr.length} screens. Do not generate more or fewer screens.
+- Do not create a PRD, requirements document, sitemap, landing page, or generic dashboard screen unless it is explicitly listed above.
+- Do not combine multiple listed screens into one design.
+- All visible user-facing text must be in ${uiLanguage}.
+- Keep screen metadata and technical identifiers in English.
 - Use simple inline SVG icons in generated HTML. Do not use emoji, icon fonts, Material Symbols, or icon ligature text.
-- Consistent design system across ALL screens.
-- Each screen must be a complete, detailed, production-ready UI design.
-- Dark theme with the colors specified in design system.`;
+- Use a cohesive design system across all screens.
+- Each screen must be complete, detailed, and production-ready.`;
 
           const promptFile = path.join(dStitchDir, ".generate-prompt.txt");
           fs.writeFileSync(promptFile, prompt);
@@ -4370,7 +4690,7 @@ ${screenDescs}
       const projectName = context["repo"] ? path.basename(context["repo"]) : "";
       if (projectName) {
         try {
-          const mcCheck = execFileSync("curl", ["-sf", "--max-time", "5", `http://127.0.0.1:3080/api/projects/${projectName}`],
+          const mcCheck = execFileSync("curl", ["-sf", "--max-time", "5", missionControlApi(`/api/projects/${projectName}`)],
             { timeout: 10_000, stdio: "pipe" }).toString().trim();
           const mcData = JSON.parse(mcCheck);
           if (!mcData.id) {
@@ -4401,14 +4721,14 @@ ${screenDescs}
                 "5",
                 "-X",
                 "PATCH",
-                `http://127.0.0.1:3080/api/projects/${projectName}`,
+                missionControlApi(`/api/projects/${projectName}`),
                 "-H",
                 "Content-Type: application/json",
                 "-d",
                 patchBody,
               ], { timeout: 10_000, stdio: "pipe" });
 
-              const patchedRaw = execFileSync("curl", ["-sf", "--max-time", "5", `http://127.0.0.1:3080/api/projects/${projectName}`],
+              const patchedRaw = execFileSync("curl", ["-sf", "--max-time", "5", missionControlApi(`/api/projects/${projectName}`)],
                 { timeout: 10_000, stdio: "pipe" }).toString().trim();
               const patched = JSON.parse(patchedRaw);
               if (patched.domain !== canonicalDomain) {
@@ -4937,6 +5257,8 @@ ${screenDescs}
           checkTestGate,
           checkRuntimeBridgeGate,
           checkQaFixSmokeGate,
+          checkGeneratedScreenIntegrationGate,
+          checkGeneratedScreenRegressionGate,
           checkDesignDomImplementationGate,
         } = await import("./steps/06-implement/guards.js");
         const wd = await resolveStoryWorktree(step.current_story_id, context["story_workdir"] || "");
@@ -5083,6 +5405,37 @@ ${screenDescs}
             context["failure_suggestion"] = testResult.suggestion!;
             await updateRunContext(step.run_id, context);
             await failStep(stepId, testResult.reason!);
+            return { advanced: false, runCompleted: false };
+          }
+
+          // Generated-screen integration gate: if a story owns generated
+          // screens, the rendered app/router surface must consume those screen
+          // components instead of silently keeping custom duplicate UI.
+          const generatedScreenResult = await checkGeneratedScreenIntegrationGate(
+            storyRow.story_id, step.current_story_id, storyRow.title, wd, context["repo"] || "",
+          );
+          if (!generatedScreenResult.passed && generatedScreenResult.category) {
+            context["previous_failure"] = generatedScreenResult.reason!;
+            context["failure_category"] = generatedScreenResult.category;
+            context["failure_suggestion"] = generatedScreenResult.suggestion!;
+            await updateRunContext(step.run_id, context);
+            await failStep(stepId, generatedScreenResult.reason!);
+            return { advanced: false, runCompleted: false };
+          }
+
+          // Generated-screen regression gate: later screen stories may need the
+          // shared app/router surface, but they must preserve previously
+          // verified generated screens instead of replacing them with custom
+          // duplicate UI while adding the current story screens.
+          const generatedScreenRegressionResult = await checkGeneratedScreenRegressionGate(
+            step.run_id, storyRow.story_id, step.current_story_id, storyRow.title, wd, context["repo"] || "",
+          );
+          if (!generatedScreenRegressionResult.passed && generatedScreenRegressionResult.category) {
+            context["previous_failure"] = generatedScreenRegressionResult.reason!;
+            context["failure_category"] = generatedScreenRegressionResult.category;
+            context["failure_suggestion"] = generatedScreenRegressionResult.suggestion!;
+            await updateRunContext(step.run_id, context);
+            await failStep(stepId, generatedScreenRegressionResult.reason!);
             return { advanced: false, runCompleted: false };
           }
 
@@ -5472,6 +5825,7 @@ ${screenDescs}
 
     // Clear current_story_id, save output
     await pgRun("UPDATE steps SET current_story_id = NULL, output = $1, updated_at = $2 WHERE id = $3", [output, now(), step.id]);
+    await refreshRunContractSafe(step.run_id, `story.${storyStatus}`);
 
     const loopConfig: LoopConfig | null = parseLoopConfigSafe(step.loop_config, step.run_id);
 
@@ -5546,6 +5900,7 @@ ${screenDescs}
               context["final_pr"] = mqResult.prUrl;
               await updateRunContext(step.run_id, context);
             }
+            await refreshRunContractSafe(step.run_id, "implement.direct_merge.done");
             return advancePipeline(step.run_id);
           } catch (mqErr) {
             // Wave 11 Bug G fix (plan: reactive-frolicking-cupcake.md, run #344 postmortem):
@@ -5674,6 +6029,7 @@ ${screenDescs}
     return { advanced: false, runCompleted: false };
   }
   await recordStepTransition(stepId, step.run_id, "running", "done", step.agent_id, "completeStep");
+  await refreshRunContractSafe(step.run_id, `step.${step.step_id}.done`, context);
   emitEvent({ ts: now(), event: "step.done", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id });
   logger.info(`Step completed: ${step.step_id}`, { runId: step.run_id, stepId: step.step_id });
 
@@ -5999,7 +6355,7 @@ async function handleVerifyEachCompletion(
     }
   }
 
-  let status = parsedOutput["status"]?.toLowerCase() || context["status"]?.toLowerCase();
+  let status = firstOutputWord(parsedOutput["status"] || context["status"]);
   const reportedMergedPrUrl = parsedOutput["merged_pr"] || "";
   if (reportedMergedPrUrl) {
     invalidatePRStateCache(reportedMergedPrUrl);
@@ -6093,7 +6449,7 @@ async function handleVerifyEachCompletion(
 
     if (retryStory) {
       const newRetry = retryStory.retry_count + 1;
-      const issues = context["issues"] ?? output;
+      const issues = resolveVerifyRetryIssues(parsedOutput, context, output);
       const failureCategory = isVerifyRetryMergeBlocker(issues) ? "VERIFY_MERGE_BLOCKER" : undefined;
       const failureSuggestion = failureCategory
         ? "Resolve the conflicting PR/story branch state in the same story branch, push it, and do not route this to QA-FIX."
@@ -6136,11 +6492,30 @@ async function handleVerifyEachCompletion(
     if (verifiedRow) {
       if (!verifiedRow.pr_url) {
         context["previous_failure"] = `PR_MISSING: ${verifiedStoryId} cannot be verified until a PR exists and is merged into main.`;
+        context["failure_category"] = "PR_MISSING";
+        context["failure_suggestion"] = "Create or recover the story PR before verify runs. A story cannot be verified from local worktree output alone.";
         context["current_story_id"] = verifiedStoryId;
         if (verifiedRow.story_branch) context["story_branch"] = verifiedRow.story_branch;
         await updateRunContext(verifyStep.run_id, context);
         await setStepStatus(verifyStep.id, "pending");
         logger.warn(`[verify] ${verifiedStoryId} reported done but has no PR URL — keeping verify pending`, { runId: verifyStep.run_id });
+        return { advanced: false, runCompleted: false };
+      }
+      const prReviewCommentsFailure = await detectOpenPrReviewCommentFailure(
+        verifiedRow.pr_url,
+        verifiedStoryId,
+        context,
+      );
+      if (prReviewCommentsFailure) {
+        if (verifiedRow.story_branch) context["story_branch"] = verifiedRow.story_branch;
+        context["pr_url"] = verifiedRow.pr_url;
+        context["current_story_id"] = verifiedStoryId;
+        await routeVerifyScopeFailureToImplement(verifyStep as StepRow, context, verifiedStoryId, prReviewCommentsFailure, {
+          category: "PR_REVIEW_COMMENTS_OPEN",
+          suggestion: "Address every actionable PR review comment in the same story branch. After a retry produces a clean candidate, Setfarm resolves current inline review threads and only then allows verify to merge.",
+        });
+        await setStepStatus(verifyStep.id, "waiting");
+        logger.warn(`[verify-pr-comments] ${verifiedStoryId} has actionable PR review comments — routed back to implement before merge`, { runId: verifyStep.run_id });
         return { advanced: false, runCompleted: false };
       }
       let prState = getPRState(verifiedRow.pr_url);
@@ -6153,6 +6528,8 @@ async function handleVerifyEachCompletion(
       }
       if (prState !== "MERGED") {
         context["previous_failure"] = `PR_NOT_MERGED: ${verifiedStoryId} PR is ${prState}. Address review comments/checks, merge ${verifiedRow.pr_url} into main, then report STATUS: done.`;
+        context["failure_category"] = "PR_NOT_MERGED";
+        context["failure_suggestion"] = "Do not accept STATUS: done while the story PR is still open. Address review comments/checks, merge the PR into main, and then let verify re-check the merged state.";
         context["pr_url"] = verifiedRow.pr_url;
         context["current_story_id"] = verifiedStoryId;
         if (verifiedRow.story_branch) context["story_branch"] = verifiedRow.story_branch;
@@ -6165,6 +6542,27 @@ async function handleVerifyEachCompletion(
       const repoPath = context["repo"] || context["REPO"] || "";
       if (repoPath) {
         syncBaseBranch(repoPath, "main");
+        const buildGate = runPostMergeBuildGate(repoPath, context["build_cmd"] || "npm run build", verifyStep.run_id, verifyStep.step_id);
+        if (!buildGate.ok) {
+          const failure = `BUILD_FAILED: Post-merge build failed for ${verifiedStoryId} on current main.\n${buildGate.failure}`;
+          context["previous_failure"] = failure;
+          context["current_story_id"] = verifiedStoryId;
+          context["failure_category"] = "BUILD_FAILED";
+          context["failure_suggestion"] = "Fix the merged main build before accepting verify. Route the failure through the quality-fix path instead of allowing final supervision to catch it.";
+          await updateRunContext(verifyStep.run_id, context);
+          if (await routeQualityFailureToImplement(
+            { id: verifyStep.id, run_id: verifyStep.run_id, step_id: verifyStep.step_id, step_index: verifyStep.step_index, agent_id: "" },
+            `SYSTEM_SMOKE_FAILURE:\n${failure}`,
+            context,
+          )) {
+            logger.warn(`[verify-build-gate] Routed post-merge build failure for ${verifiedStoryId} back to implement`, { runId: verifyStep.run_id });
+            return { advanced: false, runCompleted: false };
+          }
+          await setStepStatus(verifyStep.id, "pending");
+          logger.warn(`[verify-build-gate] Post-merge build failed but route-to-implement was unavailable: ${buildGate.failure.slice(0, 200)}`, { runId: verifyStep.run_id });
+          return { advanced: false, runCompleted: false };
+        }
+
         const smokeDecision = await shouldRunStorySystemSmokeGate(verifyStep.run_id, verifiedStoryId);
         if (!smokeDecision.run) {
           context["smoke_test_result"] = `deferred for ${verifiedStoryId}: ${smokeDecision.reason}`;
@@ -6225,7 +6623,7 @@ async function handleVerifyEachCompletion(
         }
       }
 
-      await verifyStory(verifiedRow.id);
+      await verifyStory(verifiedRow.id, output);
       logger.info(`Story verified: ${verifiedStoryId}`, { runId: verifyStep.run_id });
     }
   }
@@ -6327,7 +6725,7 @@ export async function autoVerifyDoneStories(
     );
     const verifyStepAbandons = verifyStep?.abandoned_count ?? 0;
     const routeAutoVerifySmokeFailure = async (): Promise<boolean> => {
-      if (context["failure_category"] !== "VERIFY_SYSTEM_SMOKE_FAILURE" || !verifyStep) return false;
+      if (!["VERIFY_SYSTEM_SMOKE_FAILURE", "BUILD_FAILED"].includes(context["failure_category"] || "") || !verifyStep) return false;
       const failure = context["previous_failure"] || `VERIFY_SYSTEM_SMOKE_FAILURE for ${story.story_id}`;
       const routed = await routeQualityFailureToImplement(
         {
@@ -6354,7 +6752,10 @@ ${failure}`,
             if (await routeAutoVerifySmokeFailure()) return null;
             return story;
           }
-          await verifyStory(story.id);
+          await verifyStory(story.id, [
+            "STATUS: verified",
+            `VERIFICATION_SUMMARY: Force-verified after PR was already merged and verify was abandoned ${verifyStepAbandons} time(s).`,
+          ].join("\n"));
           logger.info(`[${logPrefix}] Story ${story.story_id} force-verified — PR already merged, verify abandoned ${verifyStepAbandons}x`, { runId });
           emitEvent({ ts: now(), event: "story.verified", runId, workflowId: await getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title, detail: `Force-verified — PR merged, verify abandoned ${verifyStepAbandons}x` });
           continue;
@@ -6426,7 +6827,7 @@ ${failure}`,
           if (await routeAutoVerifySmokeFailure()) return null;
           return story;
         }
-        await verifyStory(story.id);
+        await verifyStory(story.id, "STATUS: verified\nVERIFICATION_SUMMARY: Auto-verified after PR was already merged and Setfarm gates passed.");
         logger.info(`[${logPrefix}] Story ${story.story_id} auto-verified — PR merged`, { runId });
         emitEvent({ ts: now(), event: "story.verified", runId, workflowId: await getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title });
         continue;
@@ -6447,7 +6848,7 @@ ${failure}`,
             if (await routeAutoVerifySmokeFailure()) return null;
             return story;
           }
-          await verifyStory(story.id);
+          await verifyStory(story.id, "STATUS: verified\nVERIFICATION_SUMMARY: Auto-verified after closed PR content was confirmed in the base branch and Setfarm gates passed.");
           logger.info(`[${logPrefix}] Story ${story.story_id} auto-verified — CLOSED PR content in base branch`, { runId });
           emitEvent({ ts: now(), event: "story.verified", runId, workflowId: await getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title, detail: "Auto-verified — CLOSED PR content in base branch" });
           continue;

@@ -5,7 +5,9 @@ set -e
 
 STITCH_PROJECT_ID="$1"
 SCREEN_MAP="$2"
-STITCH_SCRIPT="$HOME/.openclaw/setfarm-repo/scripts/stitch-api.mjs"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PLATFORM_ROOT="${SETFARM_PLATFORM_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+STITCH_SCRIPT="$PLATFORM_ROOT/scripts/stitch-api.mjs"
 
 if [ -z "$STITCH_PROJECT_ID" ]; then
   echo "No STITCH_PROJECT_ID provided, skipping stitch download"

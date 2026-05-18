@@ -556,7 +556,7 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
     if (fs.existsSync(gitFile)) {
       try {
         const gitContent = fs.readFileSync(gitFile, "utf-8").trim();
-        // Parse: "gitdir: /home/setrox/projects/sudoku/.git/worktrees/us-001"
+        // Parse gitdir entries that point back to the source repository worktree metadata.
         const m = gitContent.match(/gitdir:\s*(.+?)\/.git\/worktrees\//);
         if (m) {
           const worktreeRepo = m[1];

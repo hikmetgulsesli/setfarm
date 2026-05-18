@@ -38,6 +38,7 @@ export interface SupervisorChecklistItem {
   icon?: string;
   href?: string;
   action?: string;
+  classes?: string[];
   parentId?: string;
   severity: SupervisorSeverity;
   evidenceRequired: string[];

@@ -52,6 +52,16 @@ together so implement can fix them in one batch.
 
 ## Required Dev-Server Lifecycle
 
+External browser-testing skills and docs are advisory only. This Setfarm
+lifecycle is authoritative for QA claims. Do not copy sample commands that use a
+fixed or common framework dev port. Every browser script must navigate to
+`DEV_SERVER_URL` or `QA_URL` from the lifecycle below, never to a hardcoded
+localhost URL. For ad-hoc Node Playwright scripts, do not import `expect` from
+`playwright`; either import assertions from `@playwright/test` when that package
+is installed or use explicit `if (...) throw new Error(...)` checks. If a
+temporary QA script becomes syntactically invalid after edits, recreate it from
+scratch instead of patching a broken temp file.
+
 Do not start the dev server with uncontrolled `npm run dev & ...`. Do not
 compress this lifecycle into a one-line `&& ... & DEV_PID=$! ...` command: `&`
 will background the preceding shell list, lose `PORT`/`LOG`, and make readiness
@@ -59,26 +69,38 @@ checks test the wrong process. Put the lifecycle and all browser checks in one
 multi-line exec shell. Do not run this script merely to print `DEV_SERVER_URL`
 and then run `agent-browser` in a later exec: the `trap` will shut the server
 down before the browser can connect. Keep every `agent-browser`/Playwright call
-inside this same script while the Vite process is alive. The `trap` must be in
-the same shell and the server process group must shut down. `--strictPort` is
-required: if port 5173 is already occupied, fail fast instead of letting Vite
-silently move to 5174/5175 and testing the wrong server instance.
+inside this same script while the project server is alive. The `trap` must be
+in the same shell and the server process group must shut down.
 
 Do not use broad process cleanup commands such as `pkill -f vite`,
 `pgrep -f vite`, `killall vite`, or `kill $(pgrep -f ...)`. Those patterns can
 match the QA shell command itself because the command text contains `vite`,
 causing the agent to kill its own exec before it writes the Setfarm output. If
-port 5173 is occupied, report `STATUS: retry` or `STATUS: fail` with the owner
-PID from `lsof -nP -iTCP:5173 -sTCP:LISTEN`; do not kill unrelated processes.
-Only stop the Vite process group that this script starts via `DEV_PID`.
+the preferred port is occupied, do not kill unrelated processes. Choose another
+free local-only port. Only stop the process group that this script starts via
+`DEV_PID`.
 
-Use this lifecycle template for the runtime server. Do not replace it with
-`npm run preview`, `npx serve`, `serve dist`, or a separate background server
-exec: those commands often shut down when the shell exits or test a different
-artifact than the Vite app under review. If the template cannot start the
-server, write the QA report and Setfarm output with the failure evidence, then
-complete the step with `STATUS: retry` or `STATUS: fail`; do not loop through
-alternate server strategies.
+Allocate a collision-free port for each QA run. Do not hardcode a commonly used
+development port. Use a high local port, pass it explicitly to the project
+server, and require strict binding when the framework supports it. For Vite or
+React scripts, use `npm run dev -- --host 127.0.0.1 --port "$PORT" --strictPort`.
+For Next.js or other stacks, use the framework's documented `HOSTNAME`/`PORT`
+environment variables or CLI flags. If the server cannot bind the selected port,
+pick another free local port once; if it still fails, write the QA report and
+complete the step with `STATUS: retry` or `STATUS: fail` with the server log.
+
+Before running product assertions, verify that the URL is serving the target
+project, not Mission Control, Setfarm, another local dashboard, or a stale app
+from a previous run. Load `http://127.0.0.1:$PORT/`, inspect the title/body/root
+markers, and confirm it matches the current project name, package name, or
+known app root. If the page clearly belongs to another app, treat it as an
+infrastructure port collision, choose a new port, and rerun the server setup.
+Do not report wrong-app evidence as a product QA failure.
+
+Use this lifecycle template for the runtime server. Keep browser checks inside
+the script. Do not replace it with `npm run preview`, `npx serve`, `serve dist`,
+or a separate background server exec unless the project has no dev server and
+the stack contract explicitly names a different command.
 
 Use bounded browser commands. Every `agent-browser` invocation must be wrapped
 with a shell timeout, for example `timeout 12s agent-browser snapshot -i` and
@@ -102,7 +124,21 @@ git fetch origin main
 git checkout main
 git pull --ff-only origin main
 npm run build
-PORT=5173
+PORT="$(
+python3 - <<'PY'
+import socket
+for port in range(5500, 6000):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            s.bind(("127.0.0.1", port))
+        except OSError:
+            continue
+        print(port)
+        raise SystemExit
+raise SystemExit("NO_FREE_PORT")
+PY
+)"
 RUN_LABEL="$(basename "$(pwd)" | tr -c 'A-Za-z0-9_.-' '-')"
 LOG="/tmp/setfarm-qa-devserver-${RUN_LABEL}.log"
 : >"$LOG"
@@ -124,13 +160,21 @@ for i in $(seq 1 30); do
 done
 curl -sf "http://127.0.0.1:$PORT/" >/dev/null || { echo "SERVER_FAIL"; tail -80 "$LOG"; exit 1; }
 grep -q "Local:.*127.0.0.1:$PORT" "$LOG" || { echo "SERVER_FAIL: dev server did not bind requested port $PORT"; tail -80 "$LOG"; exit 1; }
+PAGE_HTML="$(curl -sf "http://127.0.0.1:$PORT/" | tr '\n' ' ' | head -c 12000)"
+if printf '%s' "$PAGE_HTML" | grep -Eiq 'MISSION CONTROL|SETFARM|OpenClaw dashboard'; then
+  echo "SERVER_FAIL: selected port served a different local application"
+  tail -80 "$LOG"
+  exit 1
+fi
 echo "DEV_SERVER_URL=http://127.0.0.1:$PORT"
+export DEV_SERVER_URL="http://127.0.0.1:$PORT"
+export QA_URL="$DEV_SERVER_URL"
 # Browser/DOM checks here, before this script exits. Finish within 10 minutes.
 # Example:
-#   timeout 12s agent-browser open "http://127.0.0.1:$PORT/"
+#   timeout 12s agent-browser open "$DEV_SERVER_URL"
 #   timeout 12s agent-browser snapshot -i
 #   timeout 12s agent-browser click @e2
-#   node /home/setrox/.openclaw/setfarm-repo/scripts/smoke-test.mjs "$(pwd)"
+#   node "$HOME/.openclaw/setfarm-repo/scripts/smoke-test.mjs" "$(pwd)"
 SETFARM_QA_RUN
 bash "$QA_RUN_SCRIPT"
 ```

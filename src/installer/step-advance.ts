@@ -47,6 +47,7 @@ function clearPrEachDownstreamContext(context: Record<string, any>): Record<stri
   const next = { ...context };
   next["branch"] = "main";
   next["BRANCH"] = "main";
+  next["supervisor_scope"] = "final-product";
   delete next["story_branch"];
   delete next["STORY_BRANCH"];
   delete next["story_workdir"];
@@ -54,6 +55,7 @@ function clearPrEachDownstreamContext(context: Record<string, any>): Record<stri
   delete next["PR_URL"];
   delete next["final_pr"];
   delete next["current_story_id"];
+  delete next["current_story_title"];
   delete next["current_story"];
   delete next["previous_failure"];
   delete next["failure_category"];
@@ -365,7 +367,7 @@ export async function autoVerifyAndAdvance(runId: string): Promise<boolean> {
       skipped++;
       continue;
     }
-    await verifyStory(story.id);
+    await verifyStory(story.id, "STATUS: verified\nVERIFICATION_SUMMARY: Medic force-verified after PR was merged and smoke gate passed.");
     verified++;
     const wfId = await getWorkflowId(runId);
     emitEvent({ ts: now(), event: "story.verified" as any, runId, workflowId: wfId, storyId: story.story_id, detail: "Medic: force auto-verified (PR merged)" });

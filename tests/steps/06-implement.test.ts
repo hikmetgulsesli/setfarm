@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { implementModule } from "../../dist/installer/steps/06-implement/module.js";
-import { checkBuildGate, checkScopeFilesGate, checkTestGate, computeScopeFileLimits, detectPackageBuildCommand, findDesignDomImplementationFindings, findDesignDomImplementationIssues, getOutOfScopeStoryFiles, normalize, parseGitStatusPorcelainPath, sourceExposesWindowApp, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
+import { checkBuildGate, checkScopeFilesGate, checkTestGate, computeScopeFileLimits, detectPackageBuildCommand, findDesignDomImplementationFindings, findDesignDomImplementationIssues, findGeneratedScreenIntegrationIssues, findGeneratedScreenRegressionIssues, getOutOfScopeStoryFiles, normalize, parseGitStatusPorcelainPath, sourceExposesWindowApp, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
 import { cleanupOutOfScopeWorktreeFiles } from "../../dist/installer/steps/06-implement/context.js";
 import { commitStoryWorktreeScopeIfNeeded, decideStorySystemSmokeGate } from "../../dist/installer/step-ops.js";
 import { createStoryWorktree, ensureStoryBranchWorktree } from "../../dist/installer/worktree-ops.js";
@@ -800,6 +800,137 @@ describe("06-implement step module", () => {
     }
   });
 
+  it("blocks screen stories when owned generated screens are not rendered by the app surface", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-generated-screen-integration-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { screenId: "main-menu", title: "Main Menu", componentName: "MainMenu", file: "src/screens/MainMenu.tsx" },
+      ]));
+      fs.writeFileSync(path.join(tmp, "src/screens/MainMenu.tsx"), [
+        "export function MainMenu({ actions }: any) {",
+        "  return <button type=\"button\" onClick={actions?.start}>Start Game</button>;",
+        "}",
+        "",
+      ].join("\n"));
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "export default function App() {",
+        "  return <button type=\"button\">Start Game</button>;",
+        "}",
+        "",
+      ].join("\n"));
+
+      const issues = findGeneratedScreenIntegrationIssues(
+        tmp,
+        ["src/screens/MainMenu.tsx", "src/App.tsx"],
+        [{ screenId: "main-menu", name: "Main Menu", type: "menu" }],
+      );
+
+      assert.equal(issues.length, 1);
+      assert.match(issues[0], /GENERATED_SCREEN_NOT_INTEGRATED/);
+      assert.match(issues[0], /MainMenu \(src\/screens\/MainMenu\.tsx\)/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts screen stories when owned generated screens are rendered through a barrel import", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-generated-screen-rendered-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { screenId: "main-menu", title: "Main Menu", componentName: "MainMenu", file: "src/screens/MainMenu.tsx" },
+      ]));
+      fs.writeFileSync(path.join(tmp, "src/screens/index.ts"), "export { MainMenu } from './MainMenu';\n");
+      fs.writeFileSync(path.join(tmp, "src/screens/MainMenu.tsx"), [
+        "export function MainMenu({ actions }: any) {",
+        "  return <button type=\"button\" onClick={actions?.start}>Start Game</button>;",
+        "}",
+        "",
+      ].join("\n"));
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "import { MainMenu } from './screens';",
+        "export default function App({ actions }: any) {",
+        "  return <MainMenu actions={{ start: actions?.start }} />;",
+        "}",
+        "",
+      ].join("\n"));
+
+      assert.deepEqual(
+        findGeneratedScreenIntegrationIssues(
+          tmp,
+          ["src/screens/MainMenu.tsx", "src/App.tsx"],
+          [{ screenId: "main-menu", name: "Main Menu", type: "menu" }],
+        ),
+        [],
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks later screen stories when they remove previously verified generated screens", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-generated-screen-regression-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { screenId: "main-menu", title: "Main Menu", componentName: "MainMenu", file: "src/screens/MainMenu.tsx" },
+        { screenId: "game-options", title: "Game Options", componentName: "GameOptions", file: "src/screens/GameOptions.tsx" },
+      ]));
+      fs.writeFileSync(path.join(tmp, "src/screens/MainMenu.tsx"), "export function MainMenu() { return <div>Main</div>; }\n");
+      fs.writeFileSync(path.join(tmp, "src/screens/GameOptions.tsx"), "export function GameOptions() { return <div>Options</div>; }\n");
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "import { GameOptions } from './screens/GameOptions';",
+        "export default function App() {",
+        "  return <GameOptions />;",
+        "}",
+        "",
+      ].join("\n"));
+
+      const issues = findGeneratedScreenRegressionIssues(
+        tmp,
+        [[{ screenId: "main-menu", name: "Main Menu", type: "menu" }]],
+      );
+
+      assert.equal(issues.length, 1);
+      assert.match(issues[0], /GENERATED_SCREEN_REGRESSION/);
+      assert.match(issues[0], /MainMenu \(src\/screens\/MainMenu\.tsx\)/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts later screen stories when previous generated screens stay rendered", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-generated-screen-regression-ok-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { screenId: "main-menu", title: "Main Menu", componentName: "MainMenu", file: "src/screens/MainMenu.tsx" },
+        { screenId: "game-options", title: "Game Options", componentName: "GameOptions", file: "src/screens/GameOptions.tsx" },
+      ]));
+      fs.writeFileSync(path.join(tmp, "src/screens/MainMenu.tsx"), "export function MainMenu() { return <div>Main</div>; }\n");
+      fs.writeFileSync(path.join(tmp, "src/screens/GameOptions.tsx"), "export function GameOptions() { return <div>Options</div>; }\n");
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "import { MainMenu } from './screens/MainMenu';",
+        "import { GameOptions } from './screens/GameOptions';",
+        "export default function App({ screen }: { screen: string }) {",
+        "  return screen === 'settings' ? <GameOptions /> : <MainMenu />;",
+        "}",
+        "",
+      ].join("\n"));
+
+      assert.deepEqual(
+        findGeneratedScreenRegressionIssues(
+          tmp,
+          [[{ screenId: "main-menu", name: "Main Menu", type: "menu" }]],
+        ),
+        [],
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("detects package build scripts for implement build gate", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-build-gate-"));
     try {
@@ -966,6 +1097,12 @@ describe("06-implement step module", () => {
     assert.match(stepOps, /await failStep\(stepId, bridgeResult\.reason\)/);
     assert.match(stepOps, /const testResult = checkTestGate/);
     assert.match(stepOps, /await failStep\(stepId, testResult\.reason\)/);
+    assert.match(stepOps, /const generatedScreenResult = await checkGeneratedScreenIntegrationGate/);
+    assert.match(stepOps, /await failStep\(stepId, generatedScreenResult\.reason\)/);
+    assert.match(stepOps, /const generatedScreenRegressionResult = await checkGeneratedScreenRegressionGate/);
+    assert.match(stepOps, /await failStep\(stepId, generatedScreenRegressionResult\.reason\)/);
+    assert.match(stepOps, /detectVerifyGeneratedScreenRegressionFailure/);
+    assert.match(stepOps, /verify-generated-screen-regression-preflight/);
   });
 
   it("defers full system smoke until later UI story owns the app surface", () => {

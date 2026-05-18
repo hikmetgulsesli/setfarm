@@ -68,8 +68,10 @@ later stories.
 - `shared_files`: read/import context only unless also listed in `scope_files`.
 - `scope_description`: one sentence saying what the story owns and does not own.
 
-Two stories must not share the same `scope_files` entry. Shared files belong to
-one owner story or the final integration story.
+Two stories must not share the same generated screen file in `scope_files`.
+App integration files may be reopened by later interactive screen stories when
+the story must wire its owned screen controls into shared state, navigation, or
+actions. Keep those edits limited to that owned screen's behavior.
 
 ## Screen File Rules
 
@@ -86,15 +88,16 @@ rendered product surface through visible navigation/control flow, or embedded
 inside a reachable parent screen. Do not plan orphan route/phase-only screens
 that render in App state but have no user-enterable path.
 
-## Integration-Only Files
+## Reopenable App Integration Files
 
-These files may appear in `scope_files` only for US-001 or the final
-integration story:
+These files may appear in `scope_files` for US-001 and for later screen stories
+that need to wire owned generated controls into the app shell:
 - `src/App.tsx`, `src/main.tsx`, `src/index.tsx`
 - `src/index.css`, `src/App.css`
-- `package.json`, `tsconfig.json`, `vite.config.*`, `next.config.*`, `tailwind.config.*`
+- `src/contexts/AppContext.tsx`, `src/hooks/useAppState.ts`, `src/types/domain.ts`, `src/utils/storage.ts`
 
-Other stories may reference them in `shared_files` only.
+Package manager, TypeScript, Vite, Next, and Tailwind config files remain setup
+or final-test owned unless explicitly listed in the current story scope.
 
 ## Acceptance Criteria
 

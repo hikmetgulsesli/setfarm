@@ -44,6 +44,31 @@ export const IMPLICIT_STORY_SCOPE_FILES: string[] = [
   "src/setupTests.cjs",
 ];
 
+export const REOPENABLE_APP_INTEGRATION_FILES: string[] = [
+  "src/App.tsx",
+  "src/App.jsx",
+  "src/App.css",
+  "src/main.tsx",
+  "src/main.jsx",
+  "src/index.tsx",
+  "src/index.jsx",
+  "src/index.css",
+  "src/contexts/AppContext.tsx",
+  "src/contexts/AppContext.jsx",
+  "src/types/domain.ts",
+  "src/types/domain.tsx",
+  "src/hooks/useAppState.ts",
+  "src/hooks/useAppState.tsx",
+  "src/utils/storage.ts",
+  "src/utils/storage.tsx",
+  "app/page.tsx",
+  "app/layout.tsx",
+  "app/globals.css",
+  "src/app/page.tsx",
+  "src/app/layout.tsx",
+  "src/app/globals.css",
+];
+
 export function normalizeStoryScopePath(file: string): string {
   return String(file || "")
     .replace(/\\/g, "/")
@@ -54,4 +79,9 @@ export function normalizeStoryScopePath(file: string): string {
 export function isImplicitStoryScopeFile(file: string): boolean {
   const normalized = normalizeStoryScopePath(file);
   return IMPLICIT_STORY_SCOPE_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+export function isReopenableAppIntegrationFile(file: string): boolean {
+  const normalized = normalizeStoryScopePath(file);
+  return REOPENABLE_APP_INTEGRATION_FILES.includes(normalized);
 }

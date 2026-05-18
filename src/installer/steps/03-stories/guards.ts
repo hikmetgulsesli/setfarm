@@ -9,6 +9,7 @@ import {
   type UiBehaviorRequirement,
 } from "./context.js";
 import { runProductSupervisorGate, updateSupervisorMemory } from "../../product-supervisor.js";
+import { isReopenableAppIntegrationFile } from "../../story-scope.js";
 
 // validateOutput is intentionally minimal at the field level — STORIES_JSON
 // arrives as multi-line raw text (not in parsed[]) and is ingested by
@@ -462,7 +463,10 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
   }
 
   // 3. scope_files overlap auto-fix (keep first owner by story_index, move
-  //    duplicates from later stories to their shared_files)
+  //    duplicates from later stories to their shared_files). App integration
+  //    files are intentionally reopenable by later interactive screen stories:
+  //    US-001 creates the shell/state, and screen stories wire their owned
+  //    generated controls into that shell without opening broad screen scope.
   const allRows = await pgQuery<{ story_id: string; scope_files: string | null; shared_files: string | null; story_index: number }>(
     "SELECT story_id, scope_files, shared_files, story_index FROM stories WHERE run_id = $1 ORDER BY story_index",
     [runId]
@@ -477,6 +481,7 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
     if (!Array.isArray(files)) continue;
     for (const f of files) {
       if (typeof f !== "string") continue;
+      if (isReopenableAppIntegrationFile(f)) continue;
       if (fileOwner[f]) {
         overlaps.push(`${f} \u2192 ${fileOwner[f]} + ${row.story_id}`);
         if (!fixMap[row.story_id]) fixMap[row.story_id] = { remove: [], add: [] };

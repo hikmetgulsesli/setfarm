@@ -2978,6 +2978,17 @@ async function requeueOrphanedRunningStories(): Promise<void> {
   );
 
   for (const row of rows) {
+    const trackedByActiveProcess = Array.from(activeProcesses.values()).some((active) =>
+      active.runId === row.run_id
+      && (active.storyDbId === row.story_db_id || active.storyId === row.story_id)
+      && (!row.agent_id || active.agentId === row.agent_id)
+      && !childProcessTerminalReason(active.child)
+    );
+    if (trackedByActiveProcess) {
+      console.log(`[spawner] preserving running story ${row.story_id} for run #${row.run_number}: active ${row.agent_id || "agent"} process is still tracked`);
+      continue;
+    }
+
     const diagnostic = `ORPHANED_RUNNING_STORY: ${row.story_id} was running but loop step ${row.step_id || "(missing)"} is ${row.step_status || "(missing)"} or no longer points at story`;
     await pgRun("UPDATE stories SET status = 'pending', claimed_by = NULL, updated_at = NOW() WHERE id = $1 AND status = 'running'", [row.story_db_id]);
     if (row.step_db_id) {

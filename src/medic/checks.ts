@@ -17,7 +17,7 @@ function systemctlUser(...args: string[]): string {
   });
 }
 import { join } from "path";
-const DISABLED_DIR = join(process.env.HOME || "/home/setrox", ".openclaw/disabled-services");
+const DISABLED_DIR = join(process.env.HOME || os.homedir(), ".openclaw/disabled-services");
 
 export type MedicSeverity = "info" | "warning" | "critical";
 export type MedicActionType =

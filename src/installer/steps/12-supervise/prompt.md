@@ -25,10 +25,19 @@ TEST_CMD: {{TEST_CMD}}
 LINT_CMD: {{LINT_CMD}}
 SUPERVISOR_SCOPE: {{SUPERVISOR_SCOPE}}
 CURRENT_STORY: {{CURRENT_STORY}}
+SCOPE_FILES: {{SCOPE_FILES}}
+SHARED_FILES: {{SHARED_FILES}}
+
+SCOPE_REMINDER:
+{{SCOPE_REMINDER}}
 
 For `SUPERVISOR_SCOPE: story`, `SUPERVISOR_WORKDIR`/`STORY_WORKDIR` is the
 only authoritative checkout. Do not audit `MAIN_REPO` as a fallback for story
 implementation state; it may intentionally still be the baseline branch.
+When `SUPERVISOR_SCOPE: story`, `SCOPE_FILES` is also the supervisor's safe
+write set. You may inspect shared code needed to understand the failure, but
+direct edits must stay inside `SCOPE_FILES` plus test/support files explicitly
+allowed by `SCOPE_REMINDER`.
 
 PREVIOUS FAILURE:
 {{PREVIOUS_FAILURE}}
@@ -142,7 +151,9 @@ SHARED_CODE:
 6. If you find fixable issues that are safe inside this supervisor checkpoint,
    make scoped file edits directly. Do not create commits yourself; Setfarm will
    commit and push supervisor edits after this step validates scope. Keep this
-   for concrete root-cause fixes, not broad redesigns.
+   for concrete root-cause fixes, not broad redesigns. In story scope, do not
+   refuse a safe fix merely because the worker failed; use `SCOPE_FILES` as the
+   manager-owned patch boundary.
 7. If the issue requires redoing a story, changing the PRD/story plan, or
    touching ownership outside a safe supervisor patch, do not
    patch around it. Return `STATUS: retry` with exact implement feedback.

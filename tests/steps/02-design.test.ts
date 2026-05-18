@@ -90,6 +90,15 @@ describe("02-design step module", () => {
     assert.match(source, /UPDATE claim_log SET diagnostic = \$1/);
     assert.match(source, /generate-all-screens[\s\S]*onProgress: \(\) => recordPreClaimProgress\(ctx, "Design preclaim: still generating Stitch screens"\)/);
     assert.match(source, /download-all[\s\S]*onProgress: \(\) => recordPreClaimProgress\(ctx, `Design preclaim: still downloading Stitch HTML files/);
+    assert.match(source, /timeout: 660000/);
+  });
+
+  it("preClaim resolves Stitch scripts from the active platform root", () => {
+    const source = designPreclaimSource();
+    assert.match(source, /import \{ resolvePlatformScript \} from "\.\.\/\.\.\/paths\.js"/);
+    assert.match(source, /const stitchScript = resolvePlatformScript\("stitch-api\.mjs"\)/);
+    assert.match(source, /const domScript = resolvePlatformScript\("design-dom-extract\.mjs"\)/);
+    assert.doesNotMatch(source, /\.openclaw\/setfarm-repo\/scripts\/stitch-api\.mjs/);
   });
 
   it("preClaim terminates child processes after cancellation", () => {
@@ -104,23 +113,42 @@ describe("02-design step module", () => {
   it("preClaim uses UI_LANGUAGE instead of a hard-coded localized Stitch prompt", () => {
     const source = designPreclaimSource();
     assert.match(source, /const uiLanguage = ctx\.context\["ui_language"\]/);
-    assert.match(source, /All visible application text must be in \$\{uiLanguage\}/);
+    assert.match(source, /All visible user-facing text must be in \$\{uiLanguage\}/);
     assert.doesNotMatch(source, /All visible text must be in a hard-coded language|hard-coded language/);
   });
 
-  it("preClaim generates local fallback design assets when Stitch returns no HTML", () => {
+  it("preClaim keeps local fallback only for unconfigured Stitch environments", () => {
     const source = designPreclaimSource();
     assert.match(source, /function createFallbackDesignAssets/);
     assert.match(source, /Design preclaim: generated fallback design assets/);
+    assert.match(source, /if \(htmlCount === 0 && hasStitchKey\)/);
+    assert.match(source, /DESIGN_STITCH_HTML_UNAVAILABLE/);
     assert.match(source, /SCREEN_MAP\.json/);
     assert.match(source, /UI_CONTRACT\.json/);
     assert.match(source, /Main Menu/);
     assert.doesNotMatch(source, /agent will see empty/);
   });
 
+  it("preClaim uses compact exact-count batch Stitch prompts and keeps per-screen recovery opt-in", () => {
+    const source = designPreclaimSource();
+    assert.match(source, /function compactPrdForStitch/);
+    assert.match(source, /function buildBatchStitchPrompt/);
+    assert.match(source, /Generate exactly \$\{screens\.length\} separate/);
+    assert.match(source, /Screen titles must match exactly/);
+    assert.match(source, /function buildPerScreenStitchPrompt/);
+    assert.match(source, /function retitleTrackedStitchScreens/);
+    assert.match(source, /async function generateStitchScreensIndividually/);
+    assert.match(source, /generate-screen-safe/);
+    assert.match(source, /setfarmExpectedTitle/);
+    assert.match(source, /SETFARM_STITCH_PER_SCREEN_RECOVERY/);
+    assert.match(source, /Design preclaim: per-screen Stitch generation produced/);
+    assert.match(source, /batch generation, download, and tracking-file recovery/);
+  });
+
   it("preClaim does not reuse stale local fallback assets when a Stitch key is available", () => {
     const source = designPreclaimSource();
-    assert.match(source, /manifestUsesLocalFallback\(stitchDir\) && stitchApiKeyAvailable\(\)/);
+    assert.match(source, /const hasStitchKey = stitchApiKeyAvailable\(\)/);
+    assert.match(source, /manifestUsesLocalFallback\(stitchDir\) && hasStitchKey/);
     assert.match(source, /invalidating stale local fallback assets before real Stitch generation/);
     assert.match(source, /fs\.rmSync\(stitchDir, \{ recursive: true, force: true \}\)/);
 
@@ -182,6 +210,14 @@ describe("02-design step module", () => {
     assert.doesNotMatch(source, /SCREENS_GENERATED: " \+ manifest\.length/);
   });
 
+  it("preClaim writes a DESIGN.md briefing for real and fallback Stitch artifacts", () => {
+    const source = designPreclaimSource();
+    assert.match(source, /function writeDesignMarkdownBrief/);
+    assert.match(source, /writeDesignMarkdownBrief\(stitchDir, screens, prd, repo\)/);
+    assert.match(source, /writeDesignMarkdownBrief\(stitchDir, screenMap, prd, repo\)/);
+    assert.match(source, /Implementation must follow these artifacts before inventing new UI structure/);
+  });
+
   it("dedup auto-skip validates reusable design assets against PRD screens through normal completion guardrails", () => {
     const source = stepOpsSource();
     const start = source.indexOf("async function autoCompleteDesignStep");
@@ -194,5 +230,22 @@ describe("02-design step module", () => {
     assert.match(autoCompleteSource, /SCREEN_MAP: \$\{JSON\.stringify\(dScreenMap\)\}/);
     assert.match(autoCompleteSource, /await completeStep\(step\.id, dOutput\)/);
     assert.doesNotMatch(autoCompleteSource, /UPDATE steps SET status = 'done'/);
+  });
+
+  it("resets an empty Stitch project after a previous HTML availability failure", () => {
+    const source = designPreclaimSource();
+
+    assert.match(source, /resetFailedStitchProject/);
+    assert.match(source, /DESIGN_STITCH\|0\\s\+\(\?:valid\\s\+\)\?\(\?:HTML\|Stitch screens\)\|download failed/);
+    assert.match(source, /Design preclaim: resetting empty Stitch project after previous generation failure/);
+    assert.match(source, /STITCH_FORCE_NEW_PROJECT: "1"/);
+  });
+
+  it("deduplicates repeated Stitch progress heartbeats without suppressing state updates", () => {
+    const source = designPreclaimSource();
+
+    assert.match(source, /const progressDedupe = new Map/);
+    assert.match(source, /last\.detail !== safeDetail \|\| Date\.now\(\) - last\.emittedAt >= 120000/);
+    assert.match(source, /if \(shouldEmit\)/);
   });
 });

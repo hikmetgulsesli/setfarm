@@ -10,7 +10,9 @@ SCREEN_MAP="$4"
 TECH_STACK="${5:-vite-react}"
 PROJECT_DISPLAY_NAME="${6:-}"
 UI_LANGUAGE="${7:-English}"
-STITCH_SCRIPT="$HOME/.openclaw/setfarm-repo/scripts/stitch-api.mjs"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PLATFORM_ROOT="${SETFARM_PLATFORM_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+STITCH_SCRIPT="$PLATFORM_ROOT/scripts/stitch-api.mjs"
 
 EXISTING_CODE=false
 
@@ -622,7 +624,7 @@ git checkout -b "$BRANCH" 2>/dev/null || git checkout "$BRANCH" 2>/dev/null || t
 clean_branch_tracking "$BRANCH"
 
 # 6. References symlink
-ln -sfn "$HOME/.openclaw/setfarm-repo/references" references 2>/dev/null || true
+ln -sfn "$PLATFORM_ROOT/references" references 2>/dev/null || true
 git rm --cached references 2>/dev/null || true
 
 # 7. Stitch download (if project ID provided and not empty)
@@ -633,7 +635,7 @@ if [ -n "$STITCH_PROJECT_ID" ] && [ "$STITCH_PROJECT_ID" != "undefined" ] && [ "
     echo "=== STITCH SKIP: PRD Generator already placed $EXISTING_HTML HTML files in stitch/ ==="
   else
     echo "=== STITCH DOWNLOAD ==="
-    bash "$HOME/.openclaw/setfarm-repo/scripts/stitch-download.sh" "$STITCH_PROJECT_ID" "$SCREEN_MAP"
+    bash "$PLATFORM_ROOT/scripts/stitch-download.sh" "$STITCH_PROJECT_ID" "$SCREEN_MAP"
     STITCH_EXIT=$?
     if [ $STITCH_EXIT -ne 0 ]; then
       echo "FATAL: Stitch download failed with exit code $STITCH_EXIT"

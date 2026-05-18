@@ -1,6 +1,6 @@
 {
   "name": "setfarm",
-  "version": "2.3.42",
+  "version": "2.3.72",
   "type": "module",
   "private": true,
   "engines": {
@@ -15,8 +15,10 @@
     "test": "node --import tsx --test tests/*.test.ts && npm run test:steps && npm run test:scripts",
     "test:steps": "node --import tsx --test tests/steps/*.test.ts",
     "test:scripts": "node --test scripts/__tests__/*.test.js",
+    "check:version": "node scripts/check-version-contract.mjs",
     "check:english": "node scripts/check-english-contract.mjs",
-    "prebuild": "node scripts/check-english-contract.mjs && node scripts/write-build-info.mjs"
+    "check:paths": "node scripts/check-path-contract.mjs",
+    "prebuild": "node scripts/check-version-contract.mjs && node scripts/check-english-contract.mjs && node scripts/check-path-contract.mjs && node scripts/write-build-info.mjs"
   },
   "dependencies": {
     "json5": "^2.2.3",

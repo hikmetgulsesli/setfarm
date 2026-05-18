@@ -137,6 +137,100 @@ describe("supervisor checklist scanning", () => {
     }
   });
 
+  it("matches form controls by JSX tag and attributes instead of empty visible text", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-supervisor-form-controls-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.mkdirSync(path.join(tmp, "stitch"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { screenId: "SCR-001", title: "Settings", file: "src/screens/Settings.tsx" },
+      ]));
+      fs.writeFileSync(path.join(tmp, "stitch/DESIGN_DOM.json"), JSON.stringify({
+        screens: {
+          "SCR-001": {
+            screenId: "SCR-001",
+            title: "Settings",
+            inputs: [
+              { kind: "input", type: "range", label: "range" },
+              { kind: "input", type: "select", label: "select" },
+            ],
+          },
+        },
+      }));
+      fs.writeFileSync(path.join(tmp, "src/screens/Settings.tsx"), [
+        "import { useState } from 'react';",
+        "export function Settings() {",
+        "  const [speed, setSpeed] = useState('1.5');",
+        "  const [level, setLevel] = useState('2');",
+        "  return <main>",
+        "    <input className=\"sr-only\" type=\"checkbox\" />",
+        "    <input id=\"signal-speed\" name=\"signal-speed\" type=\"range\" value={speed} onChange={(event) => setSpeed(event.currentTarget.value)} />",
+        "    <select id=\"security-clearance\" name=\"security-clearance\" value={level} onChange={(event) => setLevel(event.currentTarget.value)}>",
+        "      <option value=\"1\">Easy</option>",
+        "      <option value=\"2\">Normal</option>",
+        "    </select>",
+        "  </main>;",
+        "}",
+      ].join("\n"));
+
+      const result = await runImplementSupervisorScan({
+        runId: "run-form-controls",
+        workdir: tmp,
+        storyId: "US-001",
+        scopeFiles: ["src/screens/Settings.tsx"],
+      });
+
+      assert.equal(result.blockers.length, 0);
+      assert.equal(result.passed.some((finding) => finding.itemId.endsWith(":input:range")), true);
+      assert.equal(result.passed.some((finding) => finding.itemId.endsWith(":input:select")), true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("matches icon-only generated buttons by accessible label, icon, or class signature", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-supervisor-icon-buttons-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.mkdirSync(path.join(tmp, "stitch"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { screenId: "SCR-001", title: "Panel", file: "src/screens/Panel.tsx" },
+      ]));
+      fs.writeFileSync(path.join(tmp, "stitch/DESIGN_DOM.json"), JSON.stringify({
+        screens: {
+          "SCR-001": {
+            screenId: "SCR-001",
+            title: "Panel",
+            buttons: [
+              { label: "Close", icon: "close", classes: ["text-muted", "p-2", "rounded-DEFAULT", "transition-colors"], action: "dismiss" },
+              { label: "help", icon: "help", classes: ["w-touch-target-min", "h-touch-target-min", "items-center", "justify-center", "rounded-DEFAULT"], action: "navigate" },
+            ],
+          },
+        },
+      }));
+      fs.writeFileSync(path.join(tmp, "src/screens/Panel.tsx"), [
+        "import { Circle, X } from 'lucide-react';",
+        "export function Panel({ actions }: any) {",
+        "  return <main>",
+        "    <button aria-label=\"Close\" className=\"text-muted p-2 rounded-DEFAULT transition-colors\" type=\"button\" onClick={actions?.close}><X /></button>",
+        "    <button className=\"w-touch-target-min h-touch-target-min flex items-center justify-center rounded-DEFAULT\" type=\"button\" onClick={actions?.help}><Circle /></button>",
+        "  </main>;",
+        "}",
+      ].join("\n"));
+
+      const result = await runImplementSupervisorScan({
+        runId: "run-icon-buttons",
+        workdir: tmp,
+        storyId: "US-001",
+        scopeFiles: ["src/screens/Panel.tsx"],
+      });
+
+      assert.equal(result.blockers.length, 0);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("keeps project status blocked while another story still has open blockers", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-supervisor-project-status-"));
     try {
@@ -224,6 +318,59 @@ describe("supervisor checklist scanning", () => {
 
       assert.equal(checklist.items.filter((item) => item.label === "Save").length, 2);
       assert.equal(new Set(checklist.items.map((item) => item.id)).size, checklist.items.length);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("builds checklist link items from DESIGN_DOM navigation arrays", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-supervisor-navigation-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.mkdirSync(path.join(tmp, "stitch"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { screenId: "SCR-001", title: "Main Menu", file: "src/screens/MainMenu.tsx" },
+      ]));
+      fs.writeFileSync(path.join(tmp, "stitch/DESIGN_DOM.json"), JSON.stringify({
+        screens: {
+          "SCR-001": {
+            screenId: "SCR-001",
+            title: "Main Menu",
+            navigation: [{ label: "Help", href: "#" }],
+            buttons: [{ label: "Start", action: "start" }],
+          },
+        },
+      }));
+
+      const checklist = buildSupervisorChecklistFromProject({ runId: "run-navigation", workdir: tmp });
+
+      assert.equal(checklist.items.some((item) => item.type === "button" && item.label === "Start"), true);
+      assert.equal(checklist.items.some((item) => item.type === "link" && item.label === "Help" && item.href === "#"), true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to generated SCREEN_INDEX actions when design DOM is absent", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-supervisor-screen-index-actions-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        {
+          screenId: "SCR-001",
+          title: "Main Menu",
+          file: "src/screens/MainMenu.tsx",
+          actions: [
+            { id: "start-1", kind: "button", label: "Start" },
+            { id: "help-1", kind: "link", label: "Help", href: "#" },
+          ],
+        },
+      ]));
+
+      const checklist = buildSupervisorChecklistFromProject({ runId: "run-screen-index-actions", workdir: tmp });
+
+      assert.equal(checklist.items.some((item) => item.type === "button" && item.action === "start-1"), true);
+      assert.equal(checklist.items.some((item) => item.type === "link" && item.action === "help-1" && item.href === "#"), true);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

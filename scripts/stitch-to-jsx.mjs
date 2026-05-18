@@ -611,10 +611,19 @@ function uniqueActionId(actions, base, index) {
   return id;
 }
 
+function attrValue(attrs, attrName) {
+  const match = new RegExp(
+    `\\b${escapeRegExp(attrName)}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'=<>]+))`,
+    "i",
+  ).exec(String(attrs || ""));
+  return match ? String(match[1] ?? match[2] ?? match[3] ?? "").trim() : "";
+}
+
 function annotateInteractiveElements(html) {
   const actions = [];
   let buttonIndex = 0;
-  const annotated = String(html || "").replace(/<button\b([^>]*)>([\s\S]*?)<\/button>/gi, (match, attrs, inner) => {
+  let linkIndex = 0;
+  const withButtons = String(html || "").replace(/<button\b([^>]*)>([\s\S]*?)<\/button>/gi, (match, attrs, inner) => {
     const index = buttonIndex++;
     const label = textFromHtml(inner) || `Button ${index + 1}`;
     const base = slugifyActionId(label, "button");
@@ -628,6 +637,21 @@ function annotateInteractiveElements(html) {
     if (!/\btype\s*=/.test(cleanAttrs)) cleanAttrs += ' type="button"';
 
     return `<button${cleanAttrs} data-action-id="${id}" onClick={actions?.["${id}"]}>${inner}</button>`;
+  });
+  const annotated = withButtons.replace(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi, (match, attrs, inner) => {
+    const index = linkIndex++;
+    const href = attrValue(attrs, "href");
+    const label = textFromHtml(inner) || href || `Link ${index + 1}`;
+    const base = slugifyActionId(label, "link");
+    const id = uniqueActionId(actions, base, index);
+    actions.push({ id, kind: "link", label, href, index });
+
+    const cleanAttrs = String(attrs || "")
+      .replace(/\sdata-action-id=(?:"[^"]*"|'[^']*')/gi, "")
+      .replace(/\sonclick=(?:"[^"]*"|'[^']*')/gi, "")
+      .replace(/\sonClick=\{[^}]*\}/g, "");
+
+    return `<a${cleanAttrs} data-action-id="${id}" onClick={actions?.["${id}"]}>${inner}</a>`;
   });
   return { html: annotated, actions };
 }

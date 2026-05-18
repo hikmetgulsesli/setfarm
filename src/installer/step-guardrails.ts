@@ -7,6 +7,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { homedir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { pgGet, pgRun, pgQuery, now } from "../db-pg.js";
 import { logger } from "../lib/logger.js";
@@ -16,8 +17,10 @@ import { detectPlatform, checkDesignViolations } from "./design-rules.js";
 import { buildDesignContracts, generateUIContract, enrichStoriesWithDesignContract, validateDesignCompliance, generateLayoutSkeletons, checkCrossScreenConsistency, checkDesignFidelity, detectUnusedModules, reconcileDesignWithStories, checkIntegrationWiring, checkDuplicateInlineCode } from "./design-contract.js";
 import { provisionDatabase, resolveDbType } from "./db-provision.js";
 import { runBrowserDomCheck } from "./browser-tools.js";
-import { runProjectContractChecks } from "./static-analysis.js";
+import { normalizeGeneratedSourceContractTokens, runProjectContractChecks } from "./static-analysis.js";
 import { TEST_FAIL_PATTERNS, GIT_DIFF_TIMEOUT } from "./constants.js";
+import { resolvePlatformScript } from "./paths.js";
+import { computePredictedScreenFiles } from "./steps/03-stories/context.js";
 
 // ── Test Failure Detection ──────────────────────────────────────────
 
@@ -226,7 +229,7 @@ export async function processDesignCompletion(
     if (needsRecovery && stitchProjectId) {
       logger.warn(`[design-guardrail] SCREEN_MAP missing or invalid. Auto-recovering from Stitch API (project ${stitchProjectId})...`, { runId });
       try {
-        const stitchScript = path.join(process.env.HOME || "", ".openclaw/setfarm-repo/scripts/stitch-api.mjs");
+        const stitchScript = resolvePlatformScript("stitch-api.mjs");
         const raw = execFileSync("node", [stitchScript, "list-screens", stitchProjectId], { encoding: "utf8", timeout: 30000 });
         const screens = JSON.parse(raw);
         if (Array.isArray(screens) && screens.length > 0) {
@@ -262,7 +265,7 @@ export async function processDesignCompletion(
       const repoPath = context["repo"] || "";
       if (repoPath) {
         const stitchDir = path.join(repoPath, "stitch");
-        const cacheDir = path.join(process.env.HOME || "/home/setrox", ".openclaw/setfarm/stitch-cache", stitchProjectId);
+        const cacheDir = path.join(process.env.HOME || homedir(), ".openclaw/setfarm/stitch-cache", stitchProjectId);
         if (fs.existsSync(stitchDir)) {
           fs.mkdirSync(cacheDir, { recursive: true });
           for (const f of fs.readdirSync(stitchDir)) {
@@ -282,6 +285,92 @@ export async function processDesignCompletion(
 }
 
 // ── Design Contract Building (setup step) ───────────────────────────
+
+type ScreenOwnerStory = {
+  story_id: string;
+  title?: string | null;
+  scope_files?: string | null;
+  shared_files?: string | null;
+};
+
+type PredictedScreenFile = {
+  screenId: string;
+  title: string;
+  filePath: string;
+};
+
+function parseJsonStringArray(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function titleTokens(value: unknown): string[] {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(/\s+/)
+    .filter((token) => token.length > 2 && !["screen", "page", "story", "setup"].includes(token));
+}
+
+function chooseSingleScreenOwner(
+  screen: any,
+  stories: ScreenOwnerStory[],
+  predictedByScreenId: Map<string, PredictedScreenFile>,
+): string {
+  const declaredIds = Array.isArray(screen?.stories)
+    ? screen.stories.map((storyId: unknown) => String(storyId || "").trim()).filter(Boolean)
+    : [];
+  const candidateStories = declaredIds.length > 0
+    ? stories.filter((story) => declaredIds.includes(story.story_id))
+    : stories;
+  if (candidateStories.length === 0) return declaredIds[0] || "";
+
+  const screenId = String(screen?.screenId || screen?.id || "").trim();
+  const predictedFile = predictedByScreenId.get(screenId)?.filePath || "";
+  if (predictedFile) {
+    const scopeOwner = candidateStories.find((story) => parseJsonStringArray(story.scope_files).includes(predictedFile));
+    if (scopeOwner) return scopeOwner.story_id;
+  }
+
+  const tokens = titleTokens(screen?.name || screen?.title);
+  if (tokens.length > 0) {
+    const titleOwner = candidateStories.find((story) => {
+      const title = String(story.title || "").toLowerCase();
+      return tokens.every((token) => title.includes(token));
+    });
+    if (titleOwner) return titleOwner.story_id;
+  }
+
+  const nonSetupOwner = candidateStories.find((story) => story.story_id !== "US-001");
+  return (nonSetupOwner || candidateStories[0]).story_id;
+}
+
+export function normalizeScreenMapStoryOwners(
+  screenMap: any[],
+  stories: ScreenOwnerStory[],
+  predictedScreens: PredictedScreenFile[],
+): { screenMap: any[]; changed: boolean; changes: string[] } {
+  const predictedByScreenId = new Map(predictedScreens.map((screen) => [screen.screenId, screen]));
+  const changes: string[] = [];
+  const normalized = screenMap.map((screen) => {
+    const declared = Array.isArray(screen?.stories)
+      ? screen.stories.map((storyId: unknown) => String(storyId || "").trim()).filter(Boolean)
+      : [];
+    const owner = chooseSingleScreenOwner(screen, stories, predictedByScreenId);
+    if (!owner) return screen;
+    if (declared.length !== 1 || declared[0] !== owner) {
+      changes.push(`${String(screen?.name || screen?.screenId || "screen")}:[${declared.join(",") || "none"}]->${owner}`);
+      return { ...screen, stories: [owner] };
+    }
+    return screen;
+  });
+  return { screenMap: normalized, changed: changes.length > 0, changes };
+}
 
 /**
  * Process setup step completion: build design contracts after HTML download.
@@ -403,6 +492,18 @@ export async function processSetupDesignContracts(
             context["screen_map"] = JSON.stringify(screenMap);
             await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [JSON.stringify(context), runId]);
             logger.info("[setup-design-contracts] Converted old SCREEN_MAP format to array format: " + converted.length + " screens", { runId });
+          }
+
+          const allStoriesForOwnership = await pgQuery<ScreenOwnerStory>(
+            "SELECT story_id, title, scope_files, shared_files FROM stories WHERE run_id = $1 ORDER BY story_index",
+            [runId],
+          );
+          const ownership = normalizeScreenMapStoryOwners(screenMap, allStoriesForOwnership, computePredictedScreenFiles(repoPath));
+          if (ownership.changed) {
+            screenMap = ownership.screenMap;
+            context["screen_map"] = JSON.stringify(screenMap);
+            await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), runId]);
+            logger.warn(`[setup-design-contracts] normalized multi-owner screen map: ${ownership.changes.slice(0, 8).join("; ")}`, { runId });
           }
 
           for (const screen of screenMap) {
@@ -927,6 +1028,11 @@ export function checkStoryDesignCompliance(
     } catch {}
   }
   if (contractFiles.length === 0) contractFiles = collectSourceFiles(srcDir);
+
+  const normalizedGeneratedFiles = normalizeGeneratedSourceContractTokens(workdir, contractFiles);
+  if (normalizedGeneratedFiles.length > 0) {
+    logger.info(`[design-compliance] normalized generated Stitch contract tokens: ${normalizedGeneratedFiles.slice(0, 20).join(", ")}`, {});
+  }
 
   const contractErrors = runProjectContractChecks(workdir, contractFiles);
   if (contractErrors) {

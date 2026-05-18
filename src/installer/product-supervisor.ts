@@ -182,6 +182,10 @@ function isExplicitlyInertAnchor(attrs: string): boolean {
     || booleanAttributeIsTruthy(attrs, "disabled");
 }
 
+function hasInteractionHandler(attrs: string): boolean {
+  return /\bon(?:Click|PointerDown|PointerUp|MouseDown|MouseUp|TouchStart|TouchEnd|KeyDown|Submit)\s*=/.test(attrs);
+}
+
 function findStaticInteractionIssues(workdir: string, files: string[]): string[] {
   const issues: string[] = [];
   for (const rel of files.filter((file) => IMPLEMENT_SCAN_EXT.test(file)).slice(0, 80)) {
@@ -204,7 +208,7 @@ function findStaticInteractionIssues(workdir: string, files: string[]): string[]
     let linkMatch: RegExpExecArray | null;
     while ((linkMatch = deadHref.exec(clean)) !== null) {
       const attrs = linkMatch[1] || "";
-      if (isDeadHrefValue(attrValue(attrs, "href")) && !isExplicitlyInertAnchor(attrs)) {
+      if (isDeadHrefValue(attrValue(attrs, "href")) && !isExplicitlyInertAnchor(attrs) && !hasInteractionHandler(attrs)) {
         issues.push(`${rel}:${lineForIndex(clean, linkMatch.index)} active link uses a dead href`);
         if (issues.length >= 12) break;
       }
@@ -216,7 +220,7 @@ function findStaticInteractionIssues(workdir: string, files: string[]): string[]
       const attrs = match[1] || "";
       const isDisabled = booleanAttributeIsTruthy(attrs, "disabled") || booleanAttributeIsTruthy(attrs, "aria-disabled");
       const isSubmit = /\btype\s*=\s*(?:"submit"|'submit'|{\s*["']submit["']\s*})/i.test(attrs);
-      const hasHandler = /\bon(?:Click|PointerDown|PointerUp|MouseDown|MouseUp|TouchStart|TouchEnd|KeyDown|Submit)\s*=/.test(attrs);
+      const hasHandler = hasInteractionHandler(attrs);
       if (!isDisabled && !isSubmit && !hasHandler) {
         issues.push(`${rel}:${lineForIndex(clean, match.index)} active <button> has no event handler, disabled state, or submit type`);
         if (issues.length >= 12) break;

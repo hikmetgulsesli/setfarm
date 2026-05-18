@@ -5,7 +5,7 @@ import { logger } from "../../../lib/logger.js";
 
 const FIRST_ATTEMPT_REMINDER =
   "REMINDER: STORIES_JSON array is required. Each story needs: id, title, description, " +
-  "acceptanceCriteria, depends_on, screens, scope_files (NO overlapping files), " +
+  "acceptanceCriteria, depends_on, screens, scope_files (NO overlapping generated screen files), " +
   "shared_files, scope_description. Do not invent screen paths such as src/pages/*.tsx. " +
   "Use PREDICTED_SCREEN_FILES from context. Missing fields = instant REJECT.";
 
@@ -171,7 +171,12 @@ export function collectUiBehaviorRequirements(repoPath: string): UiBehaviorRequi
           else add("button", item);
         }
       } else {
-        for (const item of Array.isArray(sd?.navLinks) ? sd.navLinks : []) add("link", item);
+        const links = [
+          ...(Array.isArray(sd?.navLinks) ? sd.navLinks : []),
+          ...(Array.isArray(sd?.navigation) ? sd.navigation : []),
+          ...(Array.isArray(sd?.links) ? sd.links : []),
+        ];
+        for (const item of links) add("link", item);
         for (const item of Array.isArray(sd?.buttons) ? sd.buttons : []) add("button", item);
         for (const item of Array.isArray(sd?.inputs) ? sd.inputs : []) add("input", item);
       }
@@ -241,12 +246,17 @@ export function computeDesignDomPreview(repoPath: string): string {
       const title = sd?.title || sd?.name || screenId;
       if (isPrdPseudoScreen({ screenId, title })) continue;
       const buttons: string[] = Array.isArray(sd?.buttons) ? sd.buttons.map((b: any) => typeof b === "string" ? b : controlLabel(b)).filter(Boolean).slice(0, 8) : [];
+      const links: string[] = [
+        ...(Array.isArray(sd?.navLinks) ? sd.navLinks : []),
+        ...(Array.isArray(sd?.navigation) ? sd.navigation : []),
+        ...(Array.isArray(sd?.links) ? sd.links : []),
+      ].map((item: any) => typeof item === "string" ? item : controlLabel(item)).filter(Boolean).slice(0, 8);
       const inputs: string[] = Array.isArray(sd?.inputs) ? sd.inputs.map((i: any) => typeof i === "string" ? i : controlLabel(i)).filter(Boolean).slice(0, 6) : [];
       const behavior: string[] = Array.isArray(sd?.behaviorContract)
         ? sd.behaviorContract.map((b: any) => `${b.kind || "button"}:${controlLabel(b)}->${b.expectedBehavior || b.action || b.route || ""}`).filter(Boolean).slice(0, 6)
         : [];
-      const elementCount = (sd?.elements?.length) || (buttons.length + inputs.length) || 0;
-      const line = `- ${screenId} (${title}): ${elementCount} elements, buttons=[${buttons.join(", ")}], inputs=[${inputs.join(", ")}], behavior=[${behavior.join(" | ")}]`;
+      const elementCount = (sd?.elements?.length) || (buttons.length + links.length + inputs.length) || 0;
+      const line = `- ${screenId} (${title}): ${elementCount} elements, buttons=[${buttons.join(", ")}], links=[${links.join(", ")}], inputs=[${inputs.join(", ")}], behavior=[${behavior.join(" | ")}]`;
       if (totalBytes + line.length > BUDGET) break;
       entries.push(line);
       totalBytes += line.length + 1;

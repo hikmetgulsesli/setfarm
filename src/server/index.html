@@ -496,13 +496,19 @@ async function loadRuns() {
 
 function getActiveStepId(run) {
   if (!run.steps || !run.steps.length) return null;
-  const active = run.steps.find(s => s.status !== 'done' && s.status !== 'skipped');
+  const active = run.steps.find(s => s.status !== 'done');
   return active ? active.step_id : run.steps[run.steps.length - 1].step_id;
 }
 
 function esc(s) { if (!s) return ''; return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function parseTS(ts) { if (!ts) return null; if (!ts.endsWith('Z') && !ts.includes('+')) ts = ts.replace(' ', 'T') + 'Z'; return new Date(ts); }
 const stepIcons = {done:'\u2713',running:'\u25CF',pending:'\u25CB',waiting:'\u25CC',failed:'\u2717',error:'\u2717'};
+function visibleStatus(status) {
+  var st = String(status || 'pending').trim().toLowerCase();
+  if (!st || st === 'na' || st === 'n/a' || st === 'not_applicable' || st === 'none' || st === 'waiting') return 'pending';
+  if (st === 'skipped' || st === 'skip') return 'failed';
+  return st;
+}
 
 function renderBoard(wf, runs) {
   const board = document.getElementById('board');
@@ -537,8 +543,9 @@ function renderBoard(wf, runs) {
       cardsDiv.appendChild(empty);
     } else {
       cards.forEach(function(run) {
-        var isDone = run.status === 'done';
-        var isFailed = run.status === 'failed' || run.status === 'error';
+        var runStatus = visibleStatus(run.status);
+        var isDone = runStatus === 'done';
+        var isFailed = runStatus === 'failed' || runStatus === 'error';
         var card = document.createElement('div');
         card.className = 'card' + (isDone ? ' done' : isFailed ? ' failed' : '');
         card.onclick = function() { openRun(run.id); };
@@ -552,8 +559,8 @@ function renderBoard(wf, runs) {
         var metaDiv = document.createElement('div');
         metaDiv.className = 'card-meta';
         var badge = document.createElement('span');
-        badge.className = 'badge badge-' + run.status;
-        badge.textContent = run.status;
+        badge.className = 'badge badge-' + runStatus;
+        badge.textContent = runStatus;
         metaDiv.appendChild(badge);
         var timeSpan = document.createElement('span');
         timeSpan.textContent = run.updated_at ? parseTS(run.updated_at)?.toLocaleString() || "" : '';
@@ -598,8 +605,9 @@ async function openRun(id) {
   metaDiv.className = 'panel-meta';
   var badgeSpan = document.createElement('span');
   var badge = document.createElement('span');
-  badge.className = 'badge badge-' + run.status;
-  badge.textContent = run.status;
+  var runStatus = visibleStatus(run.status);
+  badge.className = 'badge badge-' + runStatus;
+  badge.textContent = runStatus;
   badgeSpan.appendChild(badge);
   metaDiv.appendChild(badgeSpan);
   var createdSpan = document.createElement('span');
@@ -614,7 +622,7 @@ async function openRun(id) {
   var stepsDiv = document.createElement('div');
   stepsDiv.className = 'steps-list';
   (run.steps || []).forEach(function(s) {
-    var st = s.status || 'waiting';
+    var st = visibleStatus(s.status);
     var icon = stepIcons[st] || '\u25CB';
     var hasOutput = !!s.output;
 
@@ -776,7 +784,7 @@ async function loadStories(runId) {
   const stories = await fetchJSON('/api/runs/' + runId + '/stories');
   const container = document.getElementById('stories-panel');
   if (!stories || stories.length === 0) { container.textContent = ''; return; }
-  var done = stories.filter(s => ['done', 'verified', 'skipped'].includes(s.status)).length;
+  var done = stories.filter(s => ['done', 'verified'].includes(s.status)).length;
   var pct = Math.round((done / stories.length) * 100);
 
   container.textContent = '';
@@ -807,7 +815,7 @@ async function loadStories(runId) {
   listDiv.style.cssText = 'display:flex;flex-direction:column;gap:6px';
 
   stories.forEach(function(s) {
-    var st = s.status || 'pending';
+    var st = visibleStatus(s.status);
     var icon = stepIcons[st] || '\u25CB';
     var ac = [];
     try { ac = JSON.parse(s.acceptance_criteria || '[]'); } catch(e) { ac = [s.acceptance_criteria]; }
@@ -1452,7 +1460,7 @@ async function handleRulesImport(event) {
     method: 'POST', headers: {'Content-Type':'application/json'}, body: text
   });
   var result = await resp.json();
-  alert('Import: ' + (result.imported || 0) + ' eklendi, ' + (result.updated || 0) + ' guncellendi, ' + (result.skipped || 0) + ' atildi');
+  alert('Import: ' + (result.imported || 0) + ' added, ' + (result.updated || 0) + ' updated, ' + (result.skipped || 0) + ' ignored');
   loadRulesData();
   event.target.value = '';
 }

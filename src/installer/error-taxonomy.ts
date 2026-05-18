@@ -30,12 +30,18 @@ export type ErrorCategory =
   | "SCOPE_BLEED"
   | "SCOPE_FILE_MISSING"
   | "GENERATED_SCREEN_SHARED_READ"
+  | "GENERATED_SCREEN_NOT_INTEGRATED"
+  | "GENERATED_SCREEN_REGRESSION"
   | "RAW_STITCH_CONTEXT_READ"
   | "CLAIM_WORKDIR_MISSING"
   | "CLAIM_PARSE_LOOP"
   | "CLAIM_SUMMARY_IGNORED"
   | "PRODUCT_SUPERVISOR_BLOCKED"
   | "LLM_SUPERVISOR_BLOCKED"
+  | "QUALITY_RETRY_FEEDBACK"
+  | "PR_REVIEW_COMMENTS_OPEN"
+  | "PR_NOT_MERGED"
+  | "PR_MISSING"
   | "UNKNOWN";
 
 export interface ClassifiedError {
@@ -61,6 +67,12 @@ const PATTERNS: Array<{ pattern: RegExp; category: ErrorCategory; suggestion: st
   { pattern: /^SCOPE_FILE_MISSING:/i, category: "SCOPE_FILE_MISSING", suggestion: "Create meaningful non-empty implementation files in the declared scope_files before reporting done. Do not collapse the story into one file when the story owns app state, hooks, domain types, storage, or CSS files." },
   { pattern: /^PLATFORM_STORY_COMMIT_SCOPE_BLOCKED:/i, category: "SCOPE_BLEED", suggestion: "Platform story commit saw out-of-scope files. If directory paths are reported, inspect git status -uall expansion before retrying." },
   { pattern: /^GENERATED_SCREEN_SHARED_READ:/i, category: "GENERATED_SCREEN_SHARED_READ", suggestion: "Use claim-summary designContracts, SCREEN_INDEX.json, and src/screens/index.ts for shared generated screens. Do not use the OpenClaw read tool or shell commands to read forbidden src/screens/*.tsx files outside scopeFiles." },
+  { pattern: /^GENERATED_SCREEN_NOT_INTEGRATED:/i, category: "GENERATED_SCREEN_NOT_INTEGRATED", suggestion: "Render every owned generated screen through the app/router surface and wire its declared actions prop IDs before reporting done. Preserve previous-story behavior while replacing duplicate custom UI." },
+  { pattern: /^GENERATED_SCREEN_REGRESSION:/i, category: "GENERATED_SCREEN_REGRESSION", suggestion: "Preserve every previously verified generated screen route/rendering surface while adding the current story screens. Do not replace previous generated screens with custom duplicate UI." },
+  { pattern: /^PR_REVIEW_COMMENTS_OPEN:/i, category: "PR_REVIEW_COMMENTS_OPEN", suggestion: "Address every actionable PR review comment in the same story branch, push the fix, and only allow verify to merge after fresh PR comments are clear." },
+  { pattern: /\b(?:PR\s*#\d+\s+still\s+has|current|actionable|unresolved|non-outdated)\b[\s\S]{0,220}\breview\s+(?:comment|thread)s?\b/i, category: "PR_REVIEW_COMMENTS_OPEN", suggestion: "Address, reply to, or resolve every current actionable PR review thread in the same story branch before retrying verify or merge gates." },
+  { pattern: /^PR_NOT_MERGED:/i, category: "PR_NOT_MERGED", suggestion: "Do not accept STATUS: done while the story PR is still open. Address review comments/checks, merge the PR into main, and then let verify re-check the merged state." },
+  { pattern: /^PR_MISSING:/i, category: "PR_MISSING", suggestion: "Create or recover the story PR before verify runs. A story cannot be verified from local worktree output alone." },
   { pattern: /^RAW_STITCH_CONTEXT_READ:/i, category: "RAW_STITCH_CONTEXT_READ", suggestion: "Use CLAIM_SUMMARY_FILE, injected Stitch excerpts, UI_CONTRACT, SCREEN_INDEX.json, and only story-owned generated screens. Do not read or exec stitch/*.html, .stitch-screens*.json, or stitch/DESIGN_DOM.json inside implement claims." },
   { pattern: /^DESIGN_DOM_IMPLEMENTATION_MISMATCH:/i, category: "DESIGN_DOM_IMPLEMENTATION_MISMATCH", suggestion: "Use the injected DESIGN_DOM/UI_CONTRACT/screenUsageContract handoff and restore the exact scoped controls, labels, and action IDs reported by the guard. Labeled icon mismatches are supervisor warnings unless the control is icon-only. Do not read raw Stitch HTML or broaden the story scope." },
   { pattern: /^SUPERVISOR_BLOCKERS_OPEN:/i, category: "SUPERVISOR_BLOCKERS_OPEN", suggestion: "Fix the exact supervisor checklist blocker ids in scoped files first. Missing controls, dead links, and static active controls are blockers; warning-level design drift can be handled after blockers pass. Do not read raw Stitch HTML or broaden scope." },
@@ -68,7 +80,9 @@ const PATTERNS: Array<{ pattern: RegExp; category: ErrorCategory; suggestion: st
   { pattern: /^CLAIM_PARSE_LOOP:/i, category: "CLAIM_PARSE_LOOP", suggestion: "Read the structured claim summary once and work from its focused fields. Do not jq/sed/head/node-loop over raw claim.input." },
   { pattern: /^CLAIM_SUMMARY_IGNORED:/i, category: "CLAIM_SUMMARY_IGNORED", suggestion: "Use CLAIM_SUMMARY_FILE as the authoritative handoff before reading the full claim fallback." },
   { pattern: /^LLM_SUPERVISOR_BLOCKED:/i, category: "LLM_SUPERVISOR_BLOCKED", suggestion: "Treat this as manager feedback. Return the same story to implement with the exact product/code blocker and keep supervisor memory intact." },
-  { pattern: /GUARDRAIL \[product-supervisor:|PRODUCT_SUPERVISOR|IMPLEMENT_NO_DELTA|PLAN_TRACEABILITY|PLAN_SCREEN_|DESIGN_SCREEN_|STORY_SUPERVISION_/i, category: "PRODUCT_SUPERVISOR_BLOCKED", suggestion: "Product supervisor blocked a contract drift. Fix the root PRD/design/story coherence issue before continuing the pipeline." },
+  { pattern: /\bSUPERVISOR_DECISION\s*:\s*block\b|^STATUS\s*:\s*retry[\s\S]*\bSUPERVISOR_/i, category: "LLM_SUPERVISOR_BLOCKED", suggestion: "Treat this as manager feedback. Return the same story to implement with the exact product/code blocker and keep supervisor memory intact." },
+  { pattern: /^STATUS\s*:\s*retry[\s\S]*(?:\bFINDINGS\s*:|\bTEST_FAILURES\s*:|\bFEEDBACK\s*:|\bVULNERABILITIES\s*:)/i, category: "QUALITY_RETRY_FEEDBACK", suggestion: "Apply the exact retry findings in scoped source files, add or update focused regression coverage when requested, run the required checks, and keep the fix bounded to the current story." },
+  { pattern: /(?:^|\n)\s*(?:GUARDRAIL\s+\[product-supervisor:|PRODUCT_SUPERVISOR(?:_BLOCKED)?\s*:|IMPLEMENT_NO_DELTA\b|PLAN_TRACEABILITY\b|PLAN_SCREEN_|DESIGN_SCREEN_|STORY_SUPERVISION_)/i, category: "PRODUCT_SUPERVISOR_BLOCKED", suggestion: "Product supervisor blocked a contract drift. Fix the root PRD/design/story coherence issue before continuing the pipeline." },
   { pattern: /^RUNTIME_BRIDGE_MISSING:/i, category: "RUNTIME_BRIDGE_MISSING", suggestion: "Add a real scoped source assignment such as window.app = { state, actions } or globalThis.app = { state, actions } from live runtime state before reporting done. Type declarations, comments, and window.game do not satisfy this guard." },
   { pattern: /^TEST_FAILED:/i, category: "TEST_FAILED", suggestion: "Run the touched tests, fix the failing source or invalid test expectation, then report done only after tests pass" },
   { pattern: /^BUILD_FAILED:/i, category: "BUILD_FAILED", suggestion: "Fix TypeScript/build errors in the story worktree, then run the build before completing" },
@@ -77,7 +91,7 @@ const PATTERNS: Array<{ pattern: RegExp; category: ErrorCategory; suggestion: st
   { pattern: /timed?\s*out|TIMEOUT|ABANDONED|agent.*dead/i, category: "TIMEOUT", suggestion: "Agent session exceeded timeout — retry or increase threshold" },
   { pattern: /npm ERR|build failed|tsc.*error|vite.*error|webpack.*error/i, category: "BUILD_FAIL", suggestion: "Build errors — check TypeScript types, missing imports, or dependency issues" },
   { pattern: /Tests?:\s+\d+\s+failed|test.*fail|FAIL\s+src\//i, category: "TEST_FAIL", suggestion: "Test failures — fix assertions or update test expectations" },
-  { pattern: /merge conflict|CONFLICT|could not merge/i, category: "MERGE_CONFLICT", suggestion: "Git merge conflict — resolve conflicting changes between parallel stories" },
+  { pattern: /(?:^|\n)\s*(?:MERGE_CONFLICT:|CONFLICT\s+\([^)]+\):|Auto-merging .+\nCONFLICT\b|Automatic merge failed|<<<<<<<\s|=======\s*$|>>>>>>>\s|error:\s+could not (?:apply|merge)\b|fatal:.*merge.*conflict|unmerged paths)/i, category: "MERGE_CONFLICT", suggestion: "Git merge conflict — resolve conflicting changes between parallel stories" },
   { pattern: /fetch failed|ECONNREFUSED|ENOTFOUND|rate.limit|quota/i, category: "API_ERROR", suggestion: "External API error — check network, API keys, or rate limits" },
   { pattern: /GUARDRAIL FAIL|quality gate|smoke.test/i, category: "GUARDRAIL_FAIL", suggestion: "Quality gate check failed — review guardrail output for specific issues" },
   { pattern: /segfault|SIGSEGV|heap out of memory|killed/i, category: "AGENT_CRASH", suggestion: "Agent process crashed — likely memory issue, retry with smaller context" },
@@ -85,7 +99,7 @@ const PATTERNS: Array<{ pattern: RegExp; category: ErrorCategory; suggestion: st
   { pattern: /ENOMEM|heap out of memory|JavaScript heap/i, category: "AGENT_CRASH", suggestion: "Out of memory — reduce context size or increase NODE_OPTIONS --max-old-space-size" },
   { pattern: /ENOSPC|no space left on device/i, category: "API_ERROR", suggestion: "Disk full — clean up old builds, node_modules, or logs" },
   { pattern: /permission denied|EACCES/i, category: "BUILD_FAIL", suggestion: "Permission denied — check file permissions or run with correct user" },
-  { pattern: /branch.*already exists|checkout.*conflict/i, category: "MERGE_CONFLICT", suggestion: "Git branch conflict — delete old branch or resolve conflicts" },
+  { pattern: /branch .{0,120} already exists|checkout .{0,120}(?:would overwrite|unmerged|conflict)|local changes .{0,120} would be overwritten by checkout/i, category: "MERGE_CONFLICT", suggestion: "Git branch conflict — delete old branch or resolve conflicts" },
   { pattern: /rate.limit|429|too many requests/i, category: "API_ERROR", suggestion: "API rate limit hit — wait and retry, or use different API key" },
   { pattern: /CERTIFICATE|ssl|TLS|self.signed/i, category: "API_ERROR", suggestion: "SSL/TLS certificate error — check network or set NODE_TLS_REJECT_UNAUTHORIZED=0 temporarily" },
 ];

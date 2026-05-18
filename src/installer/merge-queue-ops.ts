@@ -371,8 +371,8 @@ export async function runMergeQueue(
     if (mergeResult.success) {
       result.merged.push(story.story_id);
       await pgRun(
-        "UPDATE stories SET merge_status = 'merged', status = 'verified', updated_at = $1 WHERE id = $2",
-        [now(), story.id],
+        "UPDATE stories SET merge_status = 'merged', status = 'verified', output = $1, updated_at = $2 WHERE id = $3",
+        ["STATUS: verified\nVERIFICATION_SUMMARY: Direct-merged into feature branch and marked verified.", now(), story.id],
       );
       emitEvent({
         ts: now(), event: "story.verified", runId, workflowId: wfId,

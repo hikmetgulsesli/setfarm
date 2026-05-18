@@ -44,6 +44,8 @@ Allowed:
 - Running each build/test/smoke command once.
 - Retargeting PR metadata to `main` when the PR base is wrong.
 - Merging the PR when it is fully clean.
+- Using an already configured bounded smoke command or precomputed
+  `PLAYWRIGHT_REPORT`.
 
 ## Bounded Manager Protocol
 
@@ -114,6 +116,13 @@ Verify is an evidence gate, not a broad manual source review.
    - `{{TEST_CMD}}`
    - Never run Vitest in watch mode. If `npm test` maps to `vitest`, use
      `npm run test:run` or `npx vitest run` instead.
+   - Do not run long-lived servers in the foreground. Never execute
+     `npm run dev`, `npm run preview`, `vite`, `next dev`, or similar commands
+     as a blocking verification command.
+   - If runtime/visual evidence is required but `PLAYWRIGHT_REPORT` and a
+     bounded smoke command are both unavailable, return `STATUS: retry` with
+     the missing evidence. Do not improvise an unbounded manual dev-server
+     session.
    - Run test commands with a clean test environment. If `NODE_ENV` is
      `production`, unset it or run with `NODE_ENV=test`; React/Vitest tests
      failing only because production React disables `act()` are environment

@@ -39,10 +39,12 @@ paths in `scope_files`; do not invent page/view paths.
 
 ## DESIGN_DOM_PREVIEW
 
-This is the per-screen element summary, including buttons and inputs. Use it to
+This is the per-screen element summary, including buttons, links, and inputs. Use it to
 choose scope ownership and to predict which components/hooks each screen needs.
 If the same control appears on multiple screens, put the shared implementation
-in `shared_files` or the integration story, not in duplicate story scopes.
+in app integration files only when those files are needed to wire owned screen
+controls into shared state, navigation, or actions. Generated screen files still
+have exactly one owner story.
 
 {{DESIGN_DOM_PREVIEW}}
 
@@ -89,7 +91,9 @@ No active-looking control may be left as a no-op.
    list, and a detail drawer, use separate stories when those are distinct
    concepts.
 6. Put shared components such as Button, Input, Modal, shared state, or layout
-   only where one story clearly owns them.
+   only where one story clearly owns them. Later screen stories may reopen app
+   integration files such as App/state/hooks/types only to connect their owned
+   screen controls to already-planned shared state and navigation.
 7. Write mechanical acceptance criteria for every UI_BEHAVIOR_CONTRACT item:
    `"Control name" opens the matching panel`, `"Route name" navigates to its
    route`, `"Action name" changes visible state/localStorage`, etc. Use real

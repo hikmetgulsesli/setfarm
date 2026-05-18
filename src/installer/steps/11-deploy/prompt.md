@@ -38,8 +38,8 @@ retrying service setup.
    - Never put `http://`, `https://`, slashes, paths, or `https//` in `domain`.
    - Payload fields: `id`, `name`, `displayName`, `summary`, `repo`, `status`,
      `ports`, `domain`, `service`, `github`, run id fields if present, `completedAt`.
-   - First try `POST http://127.0.0.1:3080/api/projects`; if project exists,
-     `PATCH http://127.0.0.1:3080/api/projects/<project-id>`.
+   - First try `POST ${MC_INTERNAL_URL:-http://127.0.0.1:3080}/api/projects`; if project exists,
+     `PATCH ${MC_INTERNAL_URL:-http://127.0.0.1:3080}/api/projects/<project-id>`.
    - Mission Control update failure must not roll back a working service; report
      it in ISSUES.
 

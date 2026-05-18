@@ -25,6 +25,46 @@ describe("error taxonomy", () => {
     );
     assert.equal(scopeFileMissing.category, "SCOPE_FILE_MISSING");
     assert.match(scopeFileMissing.suggestion, /declared scope_files/);
+
+    const generatedScreenNotIntegrated = classifyError(
+      "GENERATED_SCREEN_NOT_INTEGRATED: owned generated screen(s) are not rendered by the app/router surface: MainMenu (src/screens/MainMenu.tsx).",
+    );
+    assert.equal(generatedScreenNotIntegrated.category, "GENERATED_SCREEN_NOT_INTEGRATED");
+    assert.match(generatedScreenNotIntegrated.suggestion, /generated screen/i);
+    assert.match(generatedScreenNotIntegrated.suggestion, /app\/router surface/);
+
+    const generatedScreenRegression = classifyError(
+      "GENERATED_SCREEN_REGRESSION: previously verified generated screen(s) are no longer rendered by the app/router surface: MainMenu (src/screens/MainMenu.tsx).",
+    );
+    assert.equal(generatedScreenRegression.category, "GENERATED_SCREEN_REGRESSION");
+    assert.match(generatedScreenRegression.suggestion, /previously verified generated screen/i);
+  });
+
+  it("classifies PR lifecycle blockers as actionable retry feedback", () => {
+    const commentsOpen = classifyError(
+      "PR_REVIEW_COMMENTS_OPEN: US-004 has actionable PR review comments that must be fixed before merge.",
+    );
+    assert.equal(commentsOpen.category, "PR_REVIEW_COMMENTS_OPEN");
+    assert.match(commentsOpen.suggestion, /review comment/i);
+    assert.match(commentsOpen.suggestion, /fresh PR comments are clear/i);
+
+    const unresolvedThread = classifyError(
+      "PR #1 still has an unresolved non-outdated review thread on src/App.css:65. Next fix: a PR-owning implementer/reviewer should resolve or reply to that thread after confirming .vd-road includes touch-action: none, then rerun supervisor/merge gates.",
+    );
+    assert.equal(unresolvedThread.category, "PR_REVIEW_COMMENTS_OPEN");
+    assert.match(unresolvedThread.suggestion, /review thread/i);
+
+    const notMerged = classifyError(
+      "PR_NOT_MERGED: US-004 PR is OPEN. Address review comments/checks, merge https://github.com/acme/app/pull/4 into main, then report STATUS: done.",
+    );
+    assert.equal(notMerged.category, "PR_NOT_MERGED");
+    assert.match(notMerged.suggestion, /still open/i);
+
+    const missing = classifyError(
+      "PR_MISSING: US-001 cannot be verified until a PR exists and is merged into main.",
+    );
+    assert.equal(missing.category, "PR_MISSING");
+    assert.match(missing.suggestion, /Create or recover the story PR/i);
   });
 
   it("keeps design mismatch suggestions specific to reported UI contract failures", () => {
@@ -152,6 +192,62 @@ describe("error taxonomy", () => {
       "PLATFORM_STORY_COMMIT_SCOPE_BLOCKED: US-001 has out-of-scope uncommitted file(s): src/contexts/.",
     );
     assert.equal(platformScoped.category, "SCOPE_BLEED");
+  });
+
+  it("classifies review and supervisor retry reports instead of UNKNOWN", () => {
+    const reviewRetry = classifyError([
+      "STATUS: retry",
+      "FINDINGS:",
+      "- src/App.tsx:270-280: rotateTile increments moves when no tile mutation occurs.",
+      "CHECKS:",
+      "- npm run build: passed",
+    ].join("\n"));
+    assert.equal(reviewRetry.category, "QUALITY_RETRY_FEEDBACK");
+    assert.match(reviewRetry.suggestion, /exact retry findings/);
+    assert.match(reviewRetry.suggestion, /focused regression coverage/);
+
+    const reviewRetryWithConflictWord = classifyError([
+      "STATUS: retry",
+      "FINDINGS:",
+      "- src/App.tsx:517 conflicts with acceptance criterion 10 because paused tiles remain enabled.",
+      "## Durable Supervisor Memory",
+      "- Prior code: PRODUCT_SUPERVISOR_BLOCKED from an older plan gate.",
+      "CHECKS:",
+      "- npm run build: passed",
+    ].join("\n"));
+    assert.equal(reviewRetryWithConflictWord.category, "QUALITY_RETRY_FEEDBACK");
+
+    const supervisorRetry = classifyError([
+      "STATUS: retry",
+      "SUPERVISOR_DECISION: block",
+      "ISSUES:",
+      "- AC7 missing window.app state fields.",
+    ].join("\n"));
+    assert.equal(supervisorRetry.category, "LLM_SUPERVISOR_BLOCKED");
+    assert.match(supervisorRetry.suggestion, /manager feedback/);
+  });
+
+  it("classifies only real git conflict signals as merge conflicts", () => {
+    const naturalLanguageConflict = classifyError(
+      "src/App.tsx:517 conflicts with acceptance criterion 10 because paused tiles remain enabled.",
+    );
+    assert.notEqual(naturalLanguageConflict.category, "MERGE_CONFLICT");
+
+    const gitConflict = classifyError([
+      "Auto-merging src/App.tsx",
+      "CONFLICT (content): Merge conflict in src/App.tsx",
+      "Automatic merge failed; fix conflicts and then commit the result.",
+    ].join("\n"));
+    assert.equal(gitConflict.category, "MERGE_CONFLICT");
+
+    const markerConflict = classifyError([
+      "<<<<<<< HEAD",
+      "current",
+      "=======",
+      "incoming",
+      ">>>>>>> feature",
+    ].join("\n"));
+    assert.equal(markerConflict.category, "MERGE_CONFLICT");
   });
 
   it("rewrites stale generic design mismatch feedback before retry prompts reuse it", () => {

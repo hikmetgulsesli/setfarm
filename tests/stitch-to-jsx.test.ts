@@ -103,6 +103,57 @@ describe("stitch-to-jsx", () => {
     }
   });
 
+  it("emits typed actions for generated screen links", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-link-actions-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "menu-screen", title: "Main Menu" },
+      ]));
+      writeHtml(path.join(stitchDir, "menu-screen.html"), `
+        <main>
+          <a href="#" class="nav-link">Help</a>
+          <button>Start Game</button>
+          <a href="/settings" onclick="return false">Settings</a>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "MainMenu.tsx"), "utf-8");
+      assert.match(code, /export type MainMenuActionId = "start-game-1" \| "help-1" \| "settings-2";/);
+      assert.match(code, /<a href="#" className="nav-link" data-action-id="help-1" onClick=\{actions\?\.\["help-1"\]\}>Help<\/a>/);
+      assert.match(code, /<a href="\/settings" data-action-id="settings-2" onClick=\{actions\?\.\["settings-2"\]\}>Settings<\/a>/);
+      assert.doesNotMatch(code, /onclick=/);
+
+      const index = JSON.parse(fs.readFileSync(path.join(tmp, "src", "screens", "SCREEN_INDEX.json"), "utf-8"));
+      assert.equal(index[0].buttons, 1);
+      assert.equal(index[0].links, 2);
+      assert.deepEqual(index[0].actions, [
+        { id: "start-game-1", kind: "button", label: "Start Game", index: 0 },
+        { id: "help-1", kind: "link", label: "Help", href: "#", index: 0 },
+        { id: "settings-2", kind: "link", label: "Settings", href: "/settings", index: 1 },
+      ]);
+
+      const transpiled = ts.transpileModule(code, {
+        compilerOptions: {
+          jsx: ts.JsxEmit.ReactJSX,
+          module: ts.ModuleKind.ESNext,
+          target: ts.ScriptTarget.ES2020,
+        },
+        reportDiagnostics: true,
+      });
+      const errors = (transpiled.diagnostics || []).filter(d => d.category === ts.DiagnosticCategory.Error);
+      assert.deepEqual(errors.map(d => d.messageText), []);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("converts Material Symbols spans into lucide-react SVG components", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-icons-"));
     try {

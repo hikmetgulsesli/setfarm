@@ -494,7 +494,7 @@ function loadDesignDomScreens(workdir: string, repoPath = ""): any[] {
       if (Array.isArray(parsed?.screens)) return parsed.screens;
       if (parsed?.screens && typeof parsed.screens === "object") return Object.values(parsed.screens);
       if (parsed && typeof parsed === "object") {
-        return Object.values(parsed).filter((value: any) => value && typeof value === "object" && (value.buttons || value.navLinks));
+        return Object.values(parsed).filter((value: any) => value && typeof value === "object" && (value.buttons || value.navLinks || value.navigation || value.links));
       }
     } catch {}
   }
@@ -543,6 +543,193 @@ export function findDesignDomImplementationIssues(workdir: string, scopeFiles: s
   return formatSupervisorFindings(blockers).slice(0, 12);
 }
 
+type ScreenOwnershipRef = {
+  screenId?: string;
+  id?: string;
+  name?: string;
+  title?: string;
+  type?: string;
+  file?: string;
+  filePath?: string;
+  componentName?: string;
+};
+
+function normalizeRelPath(value: string): string {
+  return String(value || "").replace(/\\/g, "/").replace(/^\.\//, "").trim();
+}
+
+function parseJsonArray(raw: unknown): unknown[] {
+  if (Array.isArray(raw)) return raw;
+  if (raw == null || raw === "") return [];
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return raw.split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean);
+    }
+  }
+  return [];
+}
+
+function parseStoryScreenRefs(raw: unknown): ScreenOwnershipRef[] {
+  return parseJsonArray(raw)
+    .map((item): ScreenOwnershipRef | null => {
+      if (typeof item === "string") {
+        const value = item.trim();
+        return value ? { screenId: value, name: value, title: value } : null;
+      }
+      if (!item || typeof item !== "object") return null;
+      const record = item as Record<string, unknown>;
+      return {
+        screenId: String(record.screenId || record.id || record.slug || "").trim() || undefined,
+        id: String(record.id || "").trim() || undefined,
+        name: String(record.name || record.title || record.screenTitle || "").trim() || undefined,
+        title: String(record.title || record.name || record.screenTitle || "").trim() || undefined,
+        type: String(record.type || record.kind || "").trim() || undefined,
+        file: String(record.file || "").trim() || undefined,
+        filePath: String(record.filePath || record.path || "").trim() || undefined,
+        componentName: String(record.componentName || record.component || "").trim() || undefined,
+      };
+    })
+    .filter((item): item is ScreenOwnershipRef => Boolean(item));
+}
+
+function screenRefMatchesIndexEntry(ref: ScreenOwnershipRef, entry: any): boolean {
+  const refIds = [
+    ref.screenId,
+    ref.id,
+    ref.name,
+    ref.title,
+    ref.componentName,
+  ].map((value) => normalizeControlLabel(String(value || ""))).filter(Boolean);
+  const entryIds = [
+    entry?.screenId,
+    entry?.id,
+    entry?.name,
+    entry?.title,
+    entry?.componentName,
+  ].map((value) => normalizeControlLabel(String(value || ""))).filter(Boolean);
+  if (refIds.some((refId) => entryIds.includes(refId))) return true;
+
+  const refFile = normalizeRelPath(ref.filePath || ref.file || "");
+  const entryFile = normalizeRelPath(String(entry?.file || ""));
+  return Boolean(refFile && entryFile && refFile === entryFile);
+}
+
+function componentNameForScreenEntry(entry: any): string {
+  const explicit = String(entry?.componentName || "").trim();
+  if (explicit) return explicit;
+  const file = normalizeRelPath(String(entry?.file || ""));
+  const basename = file.split("/").pop()?.replace(/\.(tsx|jsx|ts|js)$/i, "") || "";
+  return basename && /^[A-Z][A-Za-z0-9_$]*$/.test(basename) ? basename : "";
+}
+
+function listSourceFiles(root: string, relDir = ""): string[] {
+  const absDir = path.join(root, relDir);
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(absDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  for (const entry of entries) {
+    const rel = normalizeRelPath(path.join(relDir, entry.name));
+    if (entry.isDirectory()) {
+      if (/^(node_modules|dist|build|coverage|\.git|\.next|stitch|references)$/.test(entry.name)) continue;
+      out.push(...listSourceFiles(root, rel));
+      continue;
+    }
+    if (/\.(tsx?|jsx?)$/i.test(entry.name)) out.push(rel);
+  }
+  return out;
+}
+
+function sourceRendersComponent(source: string, componentName: string): boolean {
+  const clean = stripSourceComments(source);
+  const escaped = escapeRegExp(componentName);
+  return new RegExp(`<\\s*${escaped}\\b`).test(clean)
+    || new RegExp(`React\\.createElement\\(\\s*${escaped}\\b`).test(clean);
+}
+
+function screenEntriesForRefs(screenIndex: any[], refs: ScreenOwnershipRef[], scopeFiles: string[] = []): Array<{ file: string; componentName: string; title: string }> {
+  const scoped = new Set(scopeFiles.map(normalizeRelPath).filter(Boolean));
+  return screenIndex
+    .filter((entry) => {
+      const file = normalizeRelPath(String(entry?.file || ""));
+      if (!file || !/^src\/screens\/.+\.(tsx|jsx)$/i.test(file)) return false;
+      if (scoped.size > 0 && !scoped.has(file)) return false;
+      return refs.some((ref) => screenRefMatchesIndexEntry(ref, entry));
+    })
+    .map((entry) => ({
+      file: normalizeRelPath(String(entry?.file || "")),
+      componentName: componentNameForScreenEntry(entry),
+      title: String(entry?.title || entry?.name || entry?.componentName || "").trim(),
+    }))
+    .filter((entry) => entry.file && entry.componentName);
+}
+
+function missingRenderedGeneratedScreens(workdir: string, entries: Array<{ file: string; componentName: string; title: string }>): Array<{ file: string; componentName: string; title: string }> {
+  if (entries.length === 0) return [];
+  const ownedFiles = new Set(entries.map((entry) => entry.file));
+  const candidateFiles = listSourceFiles(workdir)
+    .filter((file) => !ownedFiles.has(file))
+    .filter((file) => !/^src\/screens\/(?:SCREEN_INDEX|index)\.(tsx?|jsx?)$/i.test(file))
+    .filter((file) => !/\.(test|spec)\.(tsx?|jsx?)$/i.test(file));
+
+  const sources = candidateFiles.map((file) => {
+    try {
+      return { file, source: fs.readFileSync(path.join(workdir, file), "utf-8") };
+    } catch {
+      return { file, source: "" };
+    }
+  });
+
+  return entries.filter((entry) => !sources.some(({ source }) => sourceRendersComponent(source, entry.componentName)));
+}
+
+export function findGeneratedScreenIntegrationIssues(
+  workdir: string,
+  scopeFiles: string[],
+  storyScreensRaw: unknown = [],
+  repoPath = "",
+): string[] {
+  if (!workdir || !fs.existsSync(workdir)) return [];
+  const storyScreens = parseStoryScreenRefs(storyScreensRaw);
+  if (storyScreens.length === 0) return [];
+
+  const screenIndex = loadScreenIndex(workdir, repoPath);
+  const ownedEntries = screenEntriesForRefs(screenIndex, storyScreens, scopeFiles);
+  const missing = missingRenderedGeneratedScreens(workdir, ownedEntries);
+  if (missing.length === 0) return [];
+
+  return [
+    `GENERATED_SCREEN_NOT_INTEGRATED: owned generated screen(s) are not rendered by the app/router surface: ${missing.map((entry) => `${entry.componentName} (${entry.file})`).join(", ")}. Import/render each owned generated screen from src/screens or a generated barrel and wire declared actions props/action IDs; do not replace it with custom duplicate UI.`,
+  ];
+}
+
+export function findGeneratedScreenRegressionIssues(
+  workdir: string,
+  previousStoryScreensRaw: unknown[] = [],
+  repoPath = "",
+): string[] {
+  if (!workdir || !fs.existsSync(workdir)) return [];
+  const previousRefs = previousStoryScreensRaw.flatMap((raw) => parseStoryScreenRefs(raw));
+  if (previousRefs.length === 0) return [];
+
+  const screenIndex = loadScreenIndex(workdir, repoPath);
+  const previousEntries = screenEntriesForRefs(screenIndex, previousRefs);
+  const byFile = new Map<string, { file: string; componentName: string; title: string }>();
+  for (const entry of previousEntries) byFile.set(entry.file, entry);
+  const missing = missingRenderedGeneratedScreens(workdir, [...byFile.values()]);
+  if (missing.length === 0) return [];
+
+  return [
+    `GENERATED_SCREEN_REGRESSION: previously verified generated screen(s) are no longer rendered by the app/router surface: ${missing.map((entry) => `${entry.componentName} (${entry.file})`).join(", ")}. Keep prior story screens reachable while integrating the current story screens; do not replace prior generated screens with custom duplicate UI.`,
+  ];
+}
+
 export async function checkDesignDomImplementationGate(
   runId: string,
   storyId: string,
@@ -573,6 +760,61 @@ export async function checkDesignDomImplementationGate(
     reason: `${feedback}\nStory ${storyId} (${storyTitle}) reported STATUS: done with unresolved supervisor checklist blocker(s).`,
     category: "SUPERVISOR_BLOCKERS_OPEN",
     suggestion: "Use the supervisor checklist/state/intervention files under .setfarm/supervisor/<runId>/ and fix only the scoped story files until scanner evidence closes every blocker. If SUPERVISOR_FIXER_PLAN.json exists, use its provider/allowed-files guidance for the next scoped repair attempt.",
+  };
+}
+
+export async function checkGeneratedScreenIntegrationGate(
+  storyId: string,
+  currentStoryDbId: string,
+  storyTitle: string,
+  workdir: string,
+  repoPath = "",
+): Promise<ScopeCheckResult> {
+  if (!workdir || !fs.existsSync(workdir)) return { passed: true };
+  const row = await pgGet<{ scope_files: string | null; story_screens: string | null }>(
+    "SELECT scope_files, story_screens FROM stories WHERE id = $1",
+    [currentStoryDbId],
+  );
+  const scopeFiles = parseScopeFiles(row?.scope_files);
+  const issues = findGeneratedScreenIntegrationIssues(workdir, scopeFiles, row?.story_screens || [], repoPath);
+  if (issues.length === 0) return { passed: true };
+  return {
+    passed: false,
+    reason: `${issues.join("\n")}\nStory ${storyId} (${storyTitle}) reported STATUS: done while an owned generated screen was not integrated into the rendered app surface.`,
+    category: "GENERATED_SCREEN_NOT_INTEGRATED",
+    suggestion: "Render every owned generated screen through the app/router surface and wire its declared actions prop IDs before reporting STATUS: done. Preserve previously implemented state behavior while replacing duplicate custom UI.",
+  };
+}
+
+export async function checkGeneratedScreenRegressionGate(
+  runId: string,
+  storyId: string,
+  currentStoryDbId: string,
+  storyTitle: string,
+  workdir: string,
+  repoPath = "",
+): Promise<ScopeCheckResult> {
+  if (!workdir || !fs.existsSync(workdir)) return { passed: true };
+  const current = await pgGet<{ story_index: number | null }>(
+    "SELECT story_index FROM stories WHERE id = $1",
+    [currentStoryDbId],
+  );
+  if (current?.story_index == null) return { passed: true };
+  const previousRows = await pgQuery<{ story_screens: string | null }>(
+    "SELECT story_screens FROM stories WHERE run_id = $1 AND story_index < $2 AND status IN ('done', 'verified') ORDER BY story_index",
+    [runId, current.story_index],
+  );
+  const issues = findGeneratedScreenRegressionIssues(
+    workdir,
+    previousRows.map((row) => row.story_screens || []),
+    repoPath,
+  );
+  if (issues.length === 0) return { passed: true };
+  return {
+    passed: false,
+    reason: `${issues.join("\n")}\nStory ${storyId} (${storyTitle}) reported STATUS: done while regressing a previously verified generated screen integration.`,
+    category: "GENERATED_SCREEN_REGRESSION",
+    suggestion: "Preserve previously verified generated screens through the app/router surface while adding the current story screens. Restore the prior render path and keep current-story changes bounded.",
   };
 }
 

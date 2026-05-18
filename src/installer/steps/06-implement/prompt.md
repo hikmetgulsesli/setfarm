@@ -117,7 +117,7 @@ The following library packs were selected by Setfarm from the PRD, design contra
      Icon-only controls must have an accessible name and must change visible
      state, open a project-specific panel/dialog, navigate, or be disabled.
      Decorative icons must not be rendered as `<button>`.
-   - If you render generated Stitch screens, use their typed `actions` prop for button behavior. Do not attach a parent click handler that branches on button text.
+   - If you render generated Stitch screens, use their typed `actions` prop for button and link behavior. Do not attach a parent click handler that branches on visible text.
 7. Interaction tests must prove the post-click result. Do not write
    `expect(() => fireEvent.click(...)).not.toThrow()` or the same pattern with
    `userEvent.click` as the only assertion. After every click in a test, assert

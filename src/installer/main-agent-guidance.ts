@@ -1,11 +1,13 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { readOpenClawConfig } from "./openclaw-config.js";
+import { runtimeConfig } from "../runtime-config.js";
 
 const WORKFLOW_BLOCK_START = "<!-- setfarm:workflows -->";
 const WORKFLOW_BLOCK_END = "<!-- /setfarm:workflows -->";
 
 const CLI = "node ~/.openclaw/workspace/setfarm/dist/cli/cli.js";
+const MISSION_CONTROL = runtimeConfig.missionControlInternalUrl;
 
 const TOOLS_BLOCK = `${WORKFLOW_BLOCK_START}
 # Setfarm Workflows
@@ -24,7 +26,7 @@ Workflows are self-advancing via per-agent cron jobs. No manual orchestration ne
 ## DELEGATION RULE (CRITICAL)
 - When a user asks for a new project/feature/app: DO NOT code it yourself. You are the orchestrator, not the developer.
 - ALWAYS delegate to setfarm workflow: \`${CLI} workflow run feature-dev "<task>"\`
-- Get next available port: \`curl -s http://127.0.0.1:3080/api/projects/next-port\`
+- Get next available port: \`curl -s ${MISSION_CONTROL}/api/projects/next-port\`
 - ALWAYS specify the repo directory explicitly in the task description:
   - Format: REPO: ~/projects/<project-name>
   - The project name should be kebab-case (lowercase, hyphens)
@@ -49,7 +51,7 @@ Agent cron jobs are created automatically during install.
 ## DELEGATION RULE (CRITICAL)
 - When a user asks for a new project/feature/app: DO NOT code it yourself. You are the orchestrator, not the developer.
 - ALWAYS delegate to setfarm workflow: \`${CLI} workflow run feature-dev "<task>"\`
-- Get next available port: \`curl -s http://127.0.0.1:3080/api/projects/next-port\`
+- Get next available port: \`curl -s ${MISSION_CONTROL}/api/projects/next-port\`
 - ALWAYS specify the repo directory explicitly in the task description:
   - Format: REPO: ~/projects/<project-name>
   - The project name should be kebab-case (lowercase, hyphens)

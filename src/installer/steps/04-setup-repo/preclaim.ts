@@ -1,4 +1,3 @@
-import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -6,6 +5,7 @@ import type { ClaimContext } from "../types.js";
 import { pgGet } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
 import { processSetupCompletion, processSetupDesignContracts } from "../../step-guardrails.js";
+import { resolvePlatformScript } from "../../paths.js";
 
 // Heavy work before the agent:
 // 1. Run setup-repo.sh (git init + branch + scaffold)
@@ -35,7 +35,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   // 1. Run setup-repo.sh — idempotent (script creates .git, baseline scaffold,
   // remote, run branch, references, and Stitch assets).
   // Script signature: setup-repo.sh <REPO> <BRANCH> <STITCH_PROJECT_ID> <SCREEN_MAP> <TECH_STACK> <PROJECT_DISPLAY_NAME> <UI_LANGUAGE>
-  const script = path.join(os.homedir(), ".openclaw/setfarm-repo/scripts/setup-repo.sh");
+  const script = resolvePlatformScript("setup-repo.sh");
   const stitchProjectId = ctx.context["stitch_project_id"] || ctx.context["STITCH_PROJECT_ID"] || "";
   const screenMap = ctx.context["screen_map"] || ctx.context["SCREEN_MAP"] || "";
   const displayName = ctx.context["project_display_name"] || ctx.context["PROJECT_DISPLAY_NAME"] || ctx.context["project_name"] || "";

@@ -1,10 +1,10 @@
-import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import type { ClaimContext } from "../types.js";
 import { pgGet } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
+import { resolvePlatformScript } from "../../paths.js";
 
 const MIN_STITCH_HTML_BYTES = 1000;
 
@@ -90,7 +90,7 @@ ${css}`);
 }
 
 function rerunSetupRepoScaffold(ctx: ClaimContext, repo: string): boolean {
-  const script = path.join(os.homedir(), ".openclaw/setfarm-repo/scripts/setup-repo.sh");
+  const script = resolvePlatformScript("setup-repo.sh");
   if (!fs.existsSync(script)) return false;
   const branch = ctx.context["branch"] || ctx.context["BRANCH"] || ctx.runId;
   const stitchProjectId = ctx.context["stitch_project_id"] || ctx.context["STITCH_PROJECT_ID"] || "";
@@ -261,7 +261,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   const stitchManifest = path.join(repo, "stitch", "DESIGN_MANIFEST.json");
   if (fs.existsSync(stitchManifest)) {
     try {
-      const scriptPath = path.join(os.homedir(), ".openclaw/setfarm-repo/scripts/stitch-to-jsx.mjs");
+      const scriptPath = resolvePlatformScript("stitch-to-jsx.mjs");
       if (fs.existsSync(scriptPath)) {
         execFileSync("node", [scriptPath, repo], { timeout: 30000, stdio: "pipe" });
         try {

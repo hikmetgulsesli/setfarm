@@ -96,6 +96,28 @@ describe("12-supervise step module", () => {
     assert.match(prompt, /Disable gameplay controls when the game is not playing/);
   });
 
+  it("buildPrompt carries the story write scope into supervisor checkpoints", () => {
+    const prompt = superviseModule.buildPrompt({
+      runId: "run-supervisor-scope",
+      task: "Build a puzzle game.",
+      context: {
+        repo: "/tmp/project",
+        story_workdir: "/tmp/project/.setfarm/story-worktree",
+        supervisor_scope: "story",
+        current_story_id: "US-002",
+        current_story_title: "Menu wiring",
+        story_scope_files: "src/App.tsx, src/hooks/useAppState.ts",
+        story_shared_files: "src/screens/MainMenuMenu.tsx",
+        scope_reminder: "SCOPE ENFORCEMENT: You may ONLY write files in [src/App.tsx, src/hooks/useAppState.ts].",
+      },
+    });
+
+    assert.match(prompt, /SCOPE_FILES: src\/App\.tsx, src\/hooks\/useAppState\.ts/);
+    assert.match(prompt, /SHARED_FILES: src\/screens\/MainMenuMenu\.tsx/);
+    assert.match(prompt, /supervisor's safe\s+write set/i);
+    assert.match(prompt, /SCOPE ENFORCEMENT: You may ONLY write files/);
+  });
+
   it("rejects story supervisor pass when AC_COVERAGE does not match the current story criteria", async () => {
     await assert.rejects(
       () => onComplete({
@@ -118,6 +140,58 @@ describe("12-supervise step module", () => {
         },
       }),
       /SUPERVISOR_AC_COVERAGE_MISMATCH|SUPERVISOR_AC_COVERAGE_GENERIC/,
+    );
+  });
+
+  it("accepts complete story-specific coverage with a stale denominator as a warning", async () => {
+    const context: Record<string, any> = {
+      supervisor_scope: "story",
+      current_story: [
+        "Story US-001: Game runtime",
+        "",
+        "Acceptance Criteria:",
+        "  1. Expose storage status and last error through window.app.",
+        "  2. Disable gameplay controls when the game is not playing.",
+        "  3. Keep timers paused outside gameplay.",
+      ].join("\n"),
+    };
+
+    await onComplete({
+      runId: "run-supervisor-story",
+      stepId: "supervise",
+      parsed: {
+        status: "done",
+        supervisor_decision: "pass",
+        ac_coverage: "checked 2/2 acceptance criteria; storage, disabled controls, and timer behavior were audited in source and tests",
+      },
+      context,
+    });
+
+    assert.match(context.supervisor_coverage_warning, /reported 2\/2, current story has 3/);
+  });
+
+  it("rejects incomplete story-scoped coverage", async () => {
+    await assert.rejects(
+      () => onComplete({
+        runId: "run-supervisor-story",
+        stepId: "supervise",
+        parsed: {
+          status: "done",
+          supervisor_decision: "pass",
+          ac_coverage: "checked 1/2 acceptance criteria; storage was audited",
+        },
+        context: {
+          supervisor_scope: "story",
+          current_story: [
+            "Story US-001: Game runtime",
+            "",
+            "Acceptance Criteria:",
+            "  1. Expose storage status and last error through window.app.",
+            "  2. Disable gameplay controls when the game is not playing.",
+          ].join("\n"),
+        },
+      }),
+      /SUPERVISOR_AC_COVERAGE_INCOMPLETE/,
     );
   });
 });

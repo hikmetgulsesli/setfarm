@@ -93,6 +93,20 @@ function primaryFontFamily(value: string): string {
     .toLowerCase();
 }
 
+function isGeneratedStitchSource(rel: string, content: string): boolean {
+  const normalized = rel.replace(/\\/g, "/");
+  return /^src\/screens\/[^/]+\.(?:tsx|jsx)$/.test(normalized)
+    && content.includes("AUTO-GENERATED from Stitch");
+}
+
+export function normalizeGeneratedSourceContractTokens(repoPath: string, files: string[]): string[] {
+  void repoPath;
+  void files;
+  // Generated Stitch screens carry a layout-preservation contract. Contract checks may
+  // suppress generated layout tokens, but Setfarm must not rewrite className values.
+  return [];
+}
+
 export function runProjectContractChecks(repoPath: string, files: string[]): string {
   const issues: string[] = [];
   const sourceFiles = files
@@ -117,7 +131,7 @@ export function runProjectContractChecks(repoPath: string, files: string[]): str
     }
 
     const transitionAllPattern = /(?:className|class)\s*=\s*(?:"[^"]*\btransition-all\b[^"]*"|'[^']*\btransition-all\b[^']*'|{`[^`]*\btransition-all\b[^`]*`})|transition\s*:\s*all\b/i;
-    if (transitionAllPattern.test(uncommented)) {
+    if (transitionAllPattern.test(uncommented) && !isGeneratedStitchSource(rel, content)) {
       issues.push(`${rel}:${lineFor(uncommented, transitionAllPattern)} — UI_CONTRACT: blanket transition-all is not allowed; use transition-colors, transition-transform, transition-opacity, or explicit CSS properties.`);
     }
 

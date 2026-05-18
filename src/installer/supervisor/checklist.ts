@@ -9,6 +9,7 @@ type ScreenIndexEntry = {
   name?: string;
   componentName?: string;
   file?: string;
+  actions?: DesignControl[];
 };
 
 type DesignControl = Record<string, unknown>;
@@ -33,7 +34,7 @@ export function buildSupervisorChecklistFromProject(params: {
     const file = normalizePath(String(entry.file || ""));
     if (!file) continue;
     if (scoped.size > 0 && !scoped.has(file)) continue;
-    const design = designScreenForIndexEntry(entry, designScreens);
+    const design = designScreenForIndexEntry(entry, designScreens) || designScreenFromGeneratedActions(entry);
     if (!design) continue;
     const screen = String(entry.componentName || entry.title || design.title || design.name || file).trim() || file;
     const screenId = String(entry.screenId || entry.id || design.screenId || design.id || "").trim() || undefined;
@@ -44,7 +45,7 @@ export function buildSupervisorChecklistFromProject(params: {
       screenId,
       file,
       scopeFiles: scopeFiles.length > 0 ? scopeFiles : [file],
-      controls: Array.isArray(design.buttons) ? design.buttons : [],
+      controls: controlsForDesign(design, "button"),
       type: "button",
     });
     addControlItems(items, {
@@ -53,7 +54,7 @@ export function buildSupervisorChecklistFromProject(params: {
       screenId,
       file,
       scopeFiles: scopeFiles.length > 0 ? scopeFiles : [file],
-      controls: Array.isArray(design.navLinks) ? design.navLinks : [],
+      controls: controlsForDesign(design, "link"),
       type: "link",
     });
     addControlItems(items, {
@@ -62,7 +63,7 @@ export function buildSupervisorChecklistFromProject(params: {
       screenId,
       file,
       scopeFiles: scopeFiles.length > 0 ? scopeFiles : [file],
-      controls: Array.isArray(design.inputs) ? design.inputs : [],
+      controls: controlsForDesign(design, "input"),
       type: "input",
     });
     addControlItems(items, {
@@ -71,7 +72,7 @@ export function buildSupervisorChecklistFromProject(params: {
       screenId,
       file,
       scopeFiles: scopeFiles.length > 0 ? scopeFiles : [file],
-      controls: Array.isArray(design.selects) ? design.selects : [],
+      controls: controlsForDesign(design, "select"),
       type: "select",
     });
   }
@@ -108,13 +109,73 @@ export function loadDesignDomScreens(workdir: string, repoPath = ""): any[] {
       if (Array.isArray(parsed?.screens)) return parsed.screens;
       if (parsed?.screens && typeof parsed.screens === "object") return Object.values(parsed.screens);
       if (parsed && typeof parsed === "object") {
-        return Object.values(parsed).filter((value: any) => value && typeof value === "object" && (value.buttons || value.navLinks || value.inputs));
+        return Object.values(parsed).filter((value: any) => value && typeof value === "object" && (value.buttons || value.navLinks || value.navigation || value.links || value.inputs));
       }
     } catch {
       // keep looking
     }
   }
   return [];
+}
+
+function controlsForDesign(design: any, type: SupervisorChecklistItemType): DesignControl[] {
+  if (!design || typeof design !== "object") return [];
+  if (type === "button") return Array.isArray(design.buttons) ? design.buttons : [];
+  if (type === "link") {
+    const links = [
+      ...(Array.isArray(design.navLinks) ? design.navLinks : []),
+      ...(Array.isArray(design.navigation) ? design.navigation : []),
+      ...(Array.isArray(design.links) ? design.links : []),
+    ];
+    return dedupeControls(links);
+  }
+  if (type === "input") return Array.isArray(design.inputs) ? design.inputs : [];
+  if (type === "select") return Array.isArray(design.selects) ? design.selects : [];
+  return [];
+}
+
+function designScreenFromGeneratedActions(entry: ScreenIndexEntry): any | undefined {
+  const actions = Array.isArray(entry.actions) ? entry.actions : [];
+  if (actions.length === 0) return undefined;
+  const buttons = actions
+    .filter((action) => String(action.kind || "").toLowerCase() === "button")
+    .map(actionControlFromScreenIndex);
+  const navLinks = actions
+    .filter((action) => String(action.kind || "").toLowerCase() === "link")
+    .map(actionControlFromScreenIndex);
+  return {
+    screenId: entry.screenId || entry.id,
+    title: entry.title || entry.name || entry.componentName,
+    buttons,
+    navLinks,
+    inputs: [],
+    selects: [],
+  };
+}
+
+function actionControlFromScreenIndex(action: DesignControl): DesignControl {
+  return {
+    label: action.label || action.id,
+    href: action.href,
+    action: action.id,
+  };
+}
+
+function dedupeControls(controls: DesignControl[]): DesignControl[] {
+  const seen = new Set<string>();
+  const out: DesignControl[] = [];
+  for (const control of controls) {
+    const key = [
+      normalizeControlText(control.label || control.text || control.name || ""),
+      normalizeControlText(control.href || control.route || ""),
+      normalizeControlText(control.icon || ""),
+      normalizeControlText(control.action || control.actionId || ""),
+    ].join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(control);
+  }
+  return out;
 }
 
 export function designScreenForIndexEntry(entry: ScreenIndexEntry, screens: any[]): any | undefined {
@@ -156,6 +217,7 @@ function addControlItems(items: SupervisorChecklistItem[], params: {
     const icon = String(control.icon || "").trim();
     const href = String(control.href || "").trim();
     const action = String(control.action || control.actionId || control.onClick || "").trim();
+    const classes = Array.isArray(control.classes) ? control.classes.map((value) => String(value || "").trim()).filter(Boolean) : [];
     if (!label && !icon && !href) continue;
 
     const baseId = checklistId(type, screen, label || href || icon, file);
@@ -171,6 +233,7 @@ function addControlItems(items: SupervisorChecklistItem[], params: {
       icon: icon || undefined,
       href: href || undefined,
       action: action || undefined,
+      classes: classes.length > 0 ? classes : undefined,
       severity: "blocker",
       evidenceRequired: evidenceForControl(type),
       source: "design-dom",
@@ -189,6 +252,7 @@ function addControlItems(items: SupervisorChecklistItem[], params: {
         icon,
         href: href || undefined,
         action: action || undefined,
+        classes: classes.length > 0 ? classes : undefined,
         parentId: baseId,
         severity: label ? "warning" : "blocker",
         evidenceRequired: ["static-icon"],

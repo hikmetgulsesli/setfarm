@@ -4,6 +4,9 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { verifyModule } from "../../dist/installer/steps/07-verify/module.js";
 import { normalize, validateOutput } from "../../dist/installer/steps/07-verify/guards.js";
+import { formatPrCommentsForAgent } from "../../dist/installer/steps/07-verify/pr-comments.js";
+import { resolveVerifyRetryIssues } from "../../dist/installer/step-ops.js";
+import { isStaleFailureStoryOutput, verifiedStoryOutput } from "../../dist/installer/repo.js";
 import type { ParsedOutput } from "../../dist/installer/steps/types.js";
 
 const verifyPromptSource = readFileSync(
@@ -93,6 +96,9 @@ describe("07-verify step module", () => {
     assert.ok(verifyPromptSource.includes("STORY_WORKDIR"));
     assert.ok(verifyPromptSource.includes("VERIFY_WORKDIR_BRANCH_MISMATCH"));
     assert.ok(verifyPromptSource.includes("Do not check out the story branch inside"));
+    assert.ok(verifyPromptSource.includes("Do not run long-lived servers in the foreground"));
+    assert.ok(verifyPromptSource.includes("Never execute"));
+    assert.ok(verifyPromptSource.includes("npm run dev"));
   });
 
   it("buildPrompt stays within maxPromptSize for typical context", () => {
@@ -154,5 +160,118 @@ describe("07-verify step module", () => {
     const parsed = { feedback: "x" } as ParsedOutput;
     normalize(parsed);
     assert.equal(parsed["status"], undefined);
+  });
+
+  it("retry issue resolution prefers current FEEDBACK over stale context issues", () => {
+    const issues = resolveVerifyRetryIssues(
+      {
+        status: "retry",
+        feedback: "- PR #3 has an unresolved current review comment.",
+      },
+      {
+        issues: "none",
+        previous_failure: "none",
+      },
+      "STATUS: retry\nFEEDBACK:\n- PR #3 has an unresolved current review comment.",
+    );
+
+    assert.match(issues, /STATUS: retry/);
+    assert.match(issues, /PR #3 has an unresolved current review comment/);
+    assert.doesNotMatch(issues, /^none$/i);
+  });
+
+  it("does not block on resolved or outdated inline review threads", () => {
+    const formatted = formatPrCommentsForAgent({
+      state: "OPEN",
+      checksStatus: "passing",
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+      comments: [
+        {
+          id: "review-1",
+          kind: "review",
+          state: "COMMENTED",
+          author: "gemini-code-assist",
+          body: "## Code Review\n\nSummary of findings already handled in inline threads.",
+          createdAt: "2026-05-18T00:31:27Z",
+        },
+        {
+          id: "resolved-inline",
+          kind: "review-comment",
+          author: "gemini-code-assist",
+          body: "Add touch-action: none to the game road.",
+          createdAt: "2026-05-18T00:31:28Z",
+          path: "src/App.css",
+          line: 65,
+          originalLine: 64,
+          threadResolved: true,
+          outdated: false,
+        },
+        {
+          id: "outdated-inline",
+          kind: "review-comment",
+          author: "gemini-code-assist",
+          body: "Previous code path had stale score accumulation.",
+          createdAt: "2026-05-18T00:31:28Z",
+          path: "src/hooks/useAppState.ts",
+          originalLine: 92,
+          threadOutdated: true,
+          outdated: true,
+        },
+      ],
+    });
+
+    assert.equal(formatted, "");
+  });
+
+  it("still blocks current inline review comments and changes-requested reviews", () => {
+    const formatted = formatPrCommentsForAgent({
+      state: "OPEN",
+      checksStatus: "passing",
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+      comments: [
+        {
+          id: "current-inline",
+          threadId: "PRRT_current",
+          kind: "review-comment",
+          author: "reviewer",
+          body: "The pause button still mutates gameplay state.",
+          createdAt: "2026-05-18T00:31:28Z",
+          path: "src/App.tsx",
+          line: 120,
+          originalLine: 120,
+          threadResolved: false,
+          outdated: false,
+        },
+        {
+          id: "changes-requested",
+          kind: "review",
+          state: "CHANGES_REQUESTED",
+          author: "reviewer",
+          body: "Please fix the blocking runtime state issue before merge.",
+          createdAt: "2026-05-18T00:31:27Z",
+        },
+      ],
+    });
+
+    assert.match(formatted, /2 actionable/);
+    assert.match(formatted, /thread=PRRT_current/);
+    assert.match(formatted, /src\/App\.tsx:120|pause button/);
+    assert.match(formatted, /CHANGES_REQUESTED/);
+  });
+
+  it("replaces stale failure output when a story becomes verified", () => {
+    const stale = "PR_REVIEW_COMMENTS_OPEN: US-002 has actionable PR review comments that must be fixed before merge.";
+    const staleNaturalLanguage = "Open actionable PR review thread remains on src/App.tsx in PR #2.";
+
+    assert.equal(isStaleFailureStoryOutput(stale), true);
+    assert.equal(isStaleFailureStoryOutput(staleNaturalLanguage), true);
+    assert.match(verifiedStoryOutput(stale), /STATUS: verified/);
+    assert.match(
+      verifiedStoryOutput(stale, "STATUS: done\nRESULT: reviewer passed") || "",
+      /reviewer passed/,
+    );
+    assert.equal(verifiedStoryOutput("STATUS: done\nCHANGES: created app"), null);
   });
 });

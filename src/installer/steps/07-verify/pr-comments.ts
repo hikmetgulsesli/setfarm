@@ -21,6 +21,7 @@ const execFileAsync = promisify(execFile);
 
 export interface PrComment {
   id: string;
+  threadId?: string;
   author: string;
   body: string;
   createdAt: string;
@@ -29,6 +30,8 @@ export interface PrComment {
   line?: number;
   originalLine?: number;
   outdated?: boolean;
+  threadResolved?: boolean;
+  threadOutdated?: boolean;
   kind: "issue" | "review" | "review-comment";
 }
 
@@ -38,6 +41,25 @@ export interface PrState {
   mergeStateStatus?: string;
   checksStatus?: string;
   comments: PrComment[];
+}
+
+export function getActionablePrComments(state: PrState): PrComment[] {
+  return (state.comments || []).filter(c => {
+    if (!c.body || c.body.trim().length < 5) return false;
+    // GitHub keeps old inline review comments after a branch moves. When the
+    // current line is gone, `line` is null and only `original_line` remains.
+    // GraphQL reviewThreads also marks resolved threads. Treat resolved or
+    // outdated inline threads as historical context; otherwise verify agents
+    // re-route fixed/stale comments as fresh blockers.
+    if (c.kind === "review-comment" && (c.outdated || c.threadResolved || c.threadOutdated)) return false;
+    // GitHub keeps COMMENTED review summaries after every inline thread has
+    // been fixed/resolved. Only CHANGES_REQUESTED review summaries are
+    // blocking without a current inline thread.
+    if (c.kind === "review") return c.state === "CHANGES_REQUESTED";
+    // Skip bot-generated auto-merge notifications and similar noise.
+    if (/^(auto-merge|automerge|merge conflict|ci)\b/i.test(c.body.trim())) return false;
+    return true;
+  });
 }
 
 /**
@@ -96,28 +118,71 @@ export async function fetchPrState(prUrl: string, fallbackRepo?: string): Promis
         kind: "review",
       });
     }
+    let fetchedInlineThreads = false;
     try {
-      const { stdout: inlineStdout } = await execFileAsync("gh", [
-        "api", `repos/${parsed.owner}/${parsed.repo}/pulls/${parsed.number}/comments`,
+      const { stdout: threadStdout } = await execFileAsync("gh", [
+        "api", "graphql",
+        "-f", `owner=${parsed.owner}`,
+        "-f", `name=${parsed.repo}`,
+        "-F", `number=${parsed.number}`,
+        "-f", "query=query($owner:String!,$name:String!,$number:Int!){ repository(owner:$owner,name:$name){ pullRequest(number:$number){ reviewThreads(first:100){ nodes{ id isResolved isOutdated path line startLine comments(first:50){ nodes{ databaseId body author{login} path line originalLine outdated createdAt } } } } } } }",
       ], { timeout: 30000 });
-      const inline = JSON.parse(inlineStdout);
-      if (Array.isArray(inline)) {
-        for (const c of inline) {
-          comments.push({
-            id: `review-comment-${c.id || Math.random().toString(36).slice(2)}`,
-            author: c.user?.login || "unknown",
-            body: c.body || "",
-            createdAt: c.created_at || "",
-            path: c.path || "",
-            line: typeof c.line === "number" ? c.line : undefined,
-            originalLine: typeof c.original_line === "number" ? c.original_line : undefined,
-            outdated: typeof c.line !== "number",
-            kind: "review-comment",
-          });
+      const threadData = JSON.parse(threadStdout);
+      const threads = threadData?.data?.repository?.pullRequest?.reviewThreads?.nodes;
+      if (Array.isArray(threads)) {
+        fetchedInlineThreads = true;
+        for (const thread of threads) {
+          const threadComments = thread?.comments?.nodes;
+          if (!Array.isArray(threadComments)) continue;
+          for (const c of threadComments) {
+            const line = typeof c.line === "number" ? c.line : typeof thread.line === "number" ? thread.line : undefined;
+            const originalLine = typeof c.originalLine === "number" ? c.originalLine : undefined;
+            const threadOutdated = Boolean(thread.isOutdated || c.outdated);
+            comments.push({
+              id: `review-comment-${c.databaseId || Math.random().toString(36).slice(2)}`,
+              threadId: typeof thread.id === "string" ? thread.id : undefined,
+              author: c.author?.login || "unknown",
+              body: c.body || "",
+              createdAt: c.createdAt || "",
+              path: c.path || thread.path || "",
+              line,
+              originalLine,
+              outdated: threadOutdated || typeof line !== "number",
+              threadResolved: Boolean(thread.isResolved),
+              threadOutdated,
+              kind: "review-comment",
+            });
+          }
         }
       }
-    } catch (inlineErr: any) {
-      logger.warn(`[pr-comments] inline review comment fetch failed for ${ref}: ${String(inlineErr?.message || inlineErr).slice(0, 160)}`);
+    } catch (threadErr: any) {
+      logger.warn(`[pr-comments] GraphQL review thread fetch failed for ${ref}: ${String(threadErr?.message || threadErr).slice(0, 160)}`);
+    }
+
+    if (!fetchedInlineThreads) {
+      try {
+        const { stdout: inlineStdout } = await execFileAsync("gh", [
+          "api", `repos/${parsed.owner}/${parsed.repo}/pulls/${parsed.number}/comments`,
+        ], { timeout: 30000 });
+        const inline = JSON.parse(inlineStdout);
+        if (Array.isArray(inline)) {
+          for (const c of inline) {
+            comments.push({
+              id: `review-comment-${c.id || Math.random().toString(36).slice(2)}`,
+              author: c.user?.login || "unknown",
+              body: c.body || "",
+              createdAt: c.created_at || "",
+              path: c.path || "",
+              line: typeof c.line === "number" ? c.line : undefined,
+              originalLine: typeof c.original_line === "number" ? c.original_line : undefined,
+              outdated: typeof c.line !== "number",
+              kind: "review-comment",
+            });
+          }
+        }
+      } catch (inlineErr: any) {
+        logger.warn(`[pr-comments] inline review comment fetch failed for ${ref}: ${String(inlineErr?.message || inlineErr).slice(0, 160)}`);
+      }
     }
 
     const rollup = Array.isArray(data.statusCheckRollup) ? data.statusCheckRollup : [];
@@ -145,17 +210,7 @@ export async function fetchPrState(prUrl: string, fallbackRepo?: string): Promis
 export function formatPrCommentsForAgent(state: PrState): string {
   if (!state.comments || state.comments.length === 0) return "";
 
-  const actionable = state.comments.filter(c => {
-    if (!c.body || c.body.trim().length < 5) return false;
-    // GitHub keeps old inline review comments after a branch moves. When the
-    // current line is gone, `line` is null and only `original_line` remains.
-    // Treat those as historical context; otherwise verify agents re-route
-    // fixed/stale comments as fresh blockers.
-    if (c.kind === "review-comment" && c.outdated) return false;
-    // Skip bot-generated auto-merge notifications and similar noise
-    if (/^(auto-merge|automerge|merge conflict|ci)\b/i.test(c.body.trim())) return false;
-    return true;
-  });
+  const actionable = getActionablePrComments(state);
 
   if (actionable.length === 0) return "";
 
@@ -169,11 +224,55 @@ export function formatPrCommentsForAgent(state: PrState): string {
     const body = c.body.trim().replace(/\s+/g, " ").slice(0, 400);
     const tag = c.state ? `[${c.kind}:${c.state}]` : `[${c.kind}]`;
     const loc = c.path ? ` ${c.path}${c.line ? `:${c.line}` : ""}` : "";
-    lines.push(`- ${tag}${loc} @${c.author}: ${body}`);
+    const thread = c.threadId ? ` thread=${c.threadId}` : "";
+    lines.push(`- ${tag}${thread}${loc} @${c.author}: ${body}`);
   }
   lines.push("");
-  lines.push("For each comment, push the appropriate fix to the same branch, then state that the comment was addressed.");
+  lines.push("For each current inline comment or changes-requested review, push the appropriate fix to the same branch, then state that the comment was addressed. Setfarm will resolve current inline review threads after a retry produces a clean verification candidate.");
   return lines.join("\n");
+}
+
+/**
+ * Resolve current inline review threads after a retry has already produced a
+ * fresh clean candidate. This closes stale external-review workflow state; it
+ * does not replace the normal verify acceptance/build/test gate.
+ */
+export async function resolveReviewThread(threadId: string): Promise<{ ok: boolean; reason?: string }> {
+  const id = threadId.trim();
+  if (!id) return { ok: false, reason: "missing thread id" };
+  try {
+    await execFileAsync("gh", [
+      "api", "graphql",
+      "-f", `threadId=${id}`,
+      "-f", "query=mutation($threadId:ID!){ resolveReviewThread(input:{threadId:$threadId}){ thread { id isResolved } } }",
+    ], { timeout: 30000 });
+    logger.info(`[pr-comments] Resolved review thread ${id}`);
+    return { ok: true };
+  } catch (err: any) {
+    const msg = String(err?.message || err).slice(0, 240);
+    logger.warn(`[pr-comments] Resolve review thread ${id} failed: ${msg}`);
+    return { ok: false, reason: msg };
+  }
+}
+
+export async function resolveActionableInlineReviewThreads(state: PrState): Promise<{ resolved: number; failed: number; failures: string[] }> {
+  const actionable = getActionablePrComments(state);
+  const threadIds = [...new Set(actionable
+    .filter(c => c.kind === "review-comment" && c.threadId)
+    .map(c => c.threadId as string))];
+  const failures: string[] = [];
+  let resolved = 0;
+  let failed = 0;
+  for (const threadId of threadIds) {
+    const result = await resolveReviewThread(threadId);
+    if (result.ok) {
+      resolved += 1;
+    } else {
+      failed += 1;
+      failures.push(`${threadId}: ${result.reason || "unknown failure"}`);
+    }
+  }
+  return { resolved, failed, failures };
 }
 
 /**

@@ -21,8 +21,11 @@ wrk/
 .setfarm-*.json
 prd-*.md
 
-# Faz8: Security cleanup
+# Security cleanup
 .env
+.env.local
+.env.*.local
+!.env.example
 scripts/.env
 .stitch-screens-*.json
 .setfarm-step-output.txt

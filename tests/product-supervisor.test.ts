@@ -412,4 +412,44 @@ describe("product supervisor", () => {
       rmSync(repo, { recursive: true, force: true });
     }
   });
+
+  it("allows hash anchors with explicit handlers without treating them as dead links", () => {
+    const repo = mkdtempSync(path.join(tmpdir(), "setfarm-supervisor-handled-anchor-"));
+    try {
+      mkdirSync(path.join(repo, "src"), { recursive: true });
+      execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
+      execFileSync("git", ["config", "user.email", "setfarm@example.test"], { cwd: repo });
+      execFileSync("git", ["config", "user.name", "Setfarm Test"], { cwd: repo });
+      writeFileSync(path.join(repo, "src", "App.tsx"), "export default function App() { return <main />; }\n");
+      execFileSync("git", ["add", "."], { cwd: repo });
+      execFileSync("git", ["commit", "-m", "base"], { cwd: repo, stdio: "ignore" });
+
+      writeFileSync(
+        path.join(repo, "src", "App.tsx"),
+        [
+          "export default function App({ actions }: any) {",
+          "  return <nav>",
+          "    <a href=\"#\" data-action-id=\"game-1\" onClick={actions?.[\"game-1\"]}>GAME</a>",
+          "    <button type=\"button\" onClick={() => {}}>Start</button>",
+          "  </nav>;",
+          "}",
+          "",
+        ].join("\n"),
+      );
+
+      const result = runProductSupervisorGate({
+        phase: "implement",
+        runId: "run-1",
+        stepId: "implement",
+        workdir: repo,
+        baseRef: "HEAD",
+        currentStory: { story_id: "US-001", title: "Wire handled anchors" },
+        rawOutput: "STATUS: done\nCHANGES: wired hash anchors through action handlers",
+      });
+
+      assert.equal(result.ok, true, result.reason);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
 });

@@ -6,6 +6,8 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { homedir } from "node:os";
+import path from "node:path";
 import { pgGet, pgQuery, pgRun, pgExec, pgBegin, now } from "../db-pg.js";
 import { logger } from "../lib/logger.js";
 import { emitEvent } from "./events.js";
@@ -21,6 +23,7 @@ import {
 } from "./repo.js";
 import { removeStoryWorktree } from "./worktree-ops.js";
 import { cleanupProjectEphemera, scheduleRunCronTeardown } from "./cleanup-ops.js";
+import { refreshRunContractSafe } from "./contract-ledger.js";
 
 // ── failStep ─────────────────────────────────────────────────────────
 
@@ -100,6 +103,7 @@ async function handleLoopStepFailurePG(
     });
     await recordStepTransition(stepId, step.run_id, "running", "pending", step.agent_id, "failStep:loopInfraRetry", { storyId: storyRow?.story_id, error: error.slice(0, 300) });
     logger.warn(`[failStep] Transient agent/model failure for ${storyRow?.story_id}; requeued without consuming story retry`, { runId: step.run_id });
+    await refreshRunContractSafe(step.run_id, "story.infra_retry");
     return { retrying: true, runFailed: false };
   }
 
@@ -130,6 +134,7 @@ async function handleLoopStepFailurePG(
     emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: runFailReason });
     scheduleRunCronTeardown(step.run_id);
     logger.warn(`[failStep] Story ${storyRow?.story_id} retries exhausted — failing run (policy: fail-fast on unrecoverable story)`, { runId: step.run_id });
+    await refreshRunContractSafe(step.run_id, "story.failed");
     return { retrying: false, runFailed: true };
   }
 
@@ -144,15 +149,16 @@ async function handleLoopStepFailurePG(
     fireFallbackRetryCron(step, storyRow, newRetry);
   }
 
+  await refreshRunContractSafe(step.run_id, "story.retry");
   return { retrying: true, runFailed: false };
 }
 
 // ── Single step failure (PG) ─────────────────────────────────────────
 
-const CRITICAL_STEPS = new Set(["deploy", "plan", "design", "setup-repo", "setup-build", "stories", "final-test", "qa-test", "security-gate", "verify"]);
+const CRITICAL_STEPS = new Set(["deploy", "plan", "design", "setup-repo", "setup-build", "stories", "supervise", "final-test", "qa-test", "security-gate", "verify"]);
 
 /** Quality gate steps get boosted max_retries so agents have more chances to fix issues */
-const QUALITY_GATE_STEPS = new Set(["final-test", "qa-test", "security-gate", "verify"]);
+const QUALITY_GATE_STEPS = new Set(["supervise", "final-test", "qa-test", "security-gate", "verify"]);
 const QUALITY_GATE_MIN_RETRIES = 4;
 
 function formatVerifyFailureAsRetryOutput(error: string): string {
@@ -229,6 +235,7 @@ async function handleSingleStepFailurePG(
     });
     await recordStepTransition(stepId, step.run_id, "running", "pending", step.agent_id, "failStep:singleInfraRetry", { error: error.slice(0, 300) });
     logger.warn(`[failStep] Transient agent/model failure for single step ${workflowStepId || stepId}; requeued without consuming step retry`, { runId: step.run_id });
+    await refreshRunContractSafe(step.run_id, "step.infra_retry");
     return { retrying: true, runFailed: false };
   }
 
@@ -268,6 +275,7 @@ async function handleSingleStepFailurePG(
       emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId2, stepId: stepId, detail: error });
       emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId2, detail: "Critical step retries exhausted" });
       scheduleRunCronTeardown(step.run_id);
+      await refreshRunContractSafe(step.run_id, "step.failed");
       return { retrying: false, runFailed: true };
     } else {
       await recordStepTransition(stepId, step.run_id, "running", "skipped", step.agent_id, "failStep:nonCritical", { error, retry: newRetryCount });
@@ -275,11 +283,13 @@ async function handleSingleStepFailurePG(
       emitEvent({ ts: now(), event: "step.skipped", runId: step.run_id, workflowId: wfId2, stepId: workflowStepId, detail: `Retries exhausted — skipped: ${error}` });
       logger.warn(`[failStep] Non-critical step ${workflowStepId} skipped after ${newRetryCount} retries — pipeline continues`, { runId: step.run_id });
       const { advancePipeline } = await import("./step-advance.js");
+      await refreshRunContractSafe(step.run_id, "step.skipped");
       await advancePipeline(step.run_id);
       return { retrying: false, runFailed: false };
     }
   } else {
     await recordStepTransition(stepId, step.run_id, "running", "pending", step.agent_id, "failStep:retry", { error, retry: newRetryCount });
+    await refreshRunContractSafe(step.run_id, "step.retry");
     return { retrying: true, runFailed: false };
   }
 }
@@ -298,7 +308,7 @@ async function fireFallbackRetryCron(
     const fallbackAgent = mappedAgents[newRetry % mappedAgents.length];
     const cronName = `setfarm/fallback-retry/${Date.now()}-${storyRow?.story_id || "unknown"}-r${newRetry}`;
     const pollingPrompt = buildPollingPrompt(wfId2, agentRole, fallbackAgent);
-    execFileSync(process.env.OPENCLAW_CLI || "/home/setrox/.local/bin/openclaw", [
+    execFileSync(process.env.OPENCLAW_CLI || path.join(homedir(), ".local/bin/openclaw"), [
       "cron", "add",
       "--name", cronName,
       "--agent", fallbackAgent,

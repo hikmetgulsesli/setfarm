@@ -30,6 +30,13 @@ lint, smoke, PR review, or mergeability already proves a blocker, stop there and
 return `STATUS: retry`. If those pass, inspect only PR-changed files needed to
 prove acceptance criteria.
 
+Do not run long-lived dev servers in the foreground. Never execute `npm run dev`,
+`npm run preview`, `vite`, `next dev`, or similar blocking commands during
+verify. Use a precomputed `PLAYWRIGHT_REPORT` or a configured bounded smoke
+command. If neither exists and runtime/visual evidence is mandatory, return
+`STATUS: retry` with the missing evidence instead of opening an unbounded server
+session.
+
 ## Retry Triggers (`STATUS: retry`)
 
 - Files listed in story `scope_files` are missing from the worktree.

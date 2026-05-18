@@ -94,7 +94,11 @@ function blocksForItem(source: string, item: SupervisorChecklistItem): JsxBlock[
   if (item.type === "link" || item.type === "nav") return extractJsxBlocks(source, "a");
   if (item.type === "select") return extractJsxBlocks(source, "select");
   if (item.type === "input") {
-    return [...extractJsxBlocks(source, "input"), ...extractJsxBlocks(source, "textarea")];
+    return [
+      ...extractJsxBlocks(source, "input"),
+      ...extractJsxBlocks(source, "textarea"),
+      ...extractJsxBlocks(source, "select"),
+    ];
   }
   return [
     ...extractJsxBlocks(source, "button"),
@@ -121,8 +125,10 @@ function extractJsxBlocks(source: string, tag: string): JsxBlock[] {
 
 function blockMatchesItem(block: JsxBlock, item: SupervisorChecklistItem, source: string): boolean {
   if (item.label && blockHasVisibleText(block, item.label)) return true;
+  if (item.label && blockHasAccessibleLabel(block, item.label)) return true;
   if (item.href && attrValue(block.attrs, "href") === item.href) return true;
-  if (!item.label && item.icon && blockHasIcon(block, item.icon)) return true;
+  if (item.icon && blockHasIcon(block, item.icon)) return true;
+  if ((item.type === "button" || item.type === "link" || item.type === "icon") && blockMatchesClassSignature(block, item)) return true;
   if (item.type === "input" || item.type === "select") return inputLooksLikeItem(block, item);
   if (item.label && sourceHasVisibleControlText(source, item.label)) return block.block.includes(item.label);
   return false;
@@ -132,7 +138,9 @@ function inputLooksLikeItem(block: JsxBlock, item: SupervisorChecklistItem): boo
   const expected = normalizeControlText(item.label || item.action || item.href || "");
   if (!expected) return true;
   const haystack = normalizeControlText([
+    block.tag,
     block.attrs,
+    attrValue(block.attrs, "type") || "",
     attrValue(block.attrs, "placeholder") || "",
     attrValue(block.attrs, "aria-label") || "",
     attrValue(block.attrs, "name") || "",
@@ -170,7 +178,21 @@ function blockHasVisibleText(block: JsxBlock, label: string): boolean {
   const expected = normalizeControlText(label);
   if (!expected) return false;
   const visible = normalizeControlText(visibleText(block));
+  if (!visible) return false;
   return visible === expected || visible.includes(expected) || expected.includes(visible);
+}
+
+function blockHasAccessibleLabel(block: JsxBlock, label: string): boolean {
+  const expected = normalizeControlText(label);
+  if (!expected) return false;
+  const value = normalizeControlText([
+    attrValue(block.attrs, "aria-label") || "",
+    attrValue(block.attrs, "title") || "",
+    attrValue(block.attrs, "name") || "",
+    attrValue(block.attrs, "id") || "",
+  ].join(" "));
+  if (!value) return false;
+  return value === expected || value.includes(expected) || expected.includes(value);
 }
 
 function sourceHasVisibleControlText(source: string, label: string): boolean {
@@ -198,6 +220,36 @@ function blockHasIcon(block: JsxBlock, icon: string): boolean {
   return candidates.some((candidate) => new RegExp(`\\b${escapeRegex(candidate)}\\b`, "i").test(raw));
 }
 
+function blockMatchesClassSignature(block: JsxBlock, item: SupervisorChecklistItem): boolean {
+  const expected = (item.classes || []).map(normalizeClassToken).filter(Boolean);
+  if (expected.length === 0) return false;
+  const actual = new Set(extractClassTokens(block.attrs).map(normalizeClassToken).filter(Boolean));
+  if (actual.size === 0) return false;
+  const strong = expected.filter((token) => !isWeakClassToken(token));
+  const candidates = strong.length >= 3 ? strong : expected;
+  const hits = candidates.filter((token) => actual.has(token)).length;
+  if (hits < Math.min(3, candidates.length)) return false;
+  return hits / Math.max(1, candidates.length) >= 0.45;
+}
+
+function extractClassTokens(attrs: string): string[] {
+  const tokens: string[] = [];
+  const rx = /\bclass(?:Name)?\s*=\s*(?:"([^"]*)"|'([^']*)')/gi;
+  let match: RegExpExecArray | null;
+  while ((match = rx.exec(attrs)) !== null) {
+    tokens.push(...String(match[1] ?? match[2] ?? "").split(/\s+/).filter(Boolean));
+  }
+  return tokens;
+}
+
+function normalizeClassToken(value: string): string {
+  return String(value || "").trim();
+}
+
+function isWeakClassToken(value: string): boolean {
+  return /^(flex|grid|block|hidden|relative|absolute|fixed|items-|justify-|text-|bg-|border$|border-|rounded-|p[trblxy]?-\d|m[trblxy]?-\d|w-|h-|gap-|transition|transition-|duration-)/.test(value);
+}
+
 function iconCandidates(icon: string): string[] {
   const normalized = normalizeIcon(icon);
   const aliases: Record<string, string[]> = {
@@ -211,6 +263,7 @@ function iconCandidates(icon: string): string[] {
     terminal: ["terminal"],
     emojievents: ["trophy", "award"],
     arrowback: ["arrowleft", "chevronleft"],
+    close: ["x", "circlex", "xicon"],
   };
   return [...new Set([normalized, ...(aliases[normalized] || []).map(normalizeIcon)])].filter(Boolean);
 }

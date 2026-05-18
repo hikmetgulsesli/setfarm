@@ -4,8 +4,7 @@
  * Uses porsager/postgres (tagged template SQL).
  */
 import postgres from "postgres";
-
-const DEFAULT_PG_URL = "postgresql://postgres@localhost:5432/setfarm";
+import { runtimeConfig } from "./runtime-config.js";
 
 let _sql: ReturnType<typeof postgres> | null = null;
 let _schemaReady = false;
@@ -13,7 +12,7 @@ let _schemaReadyPromise: Promise<void> | null = null;
 let _isMigrating = false;
 
 function resolvePgUrl(): string {
-  return (process.env.SETFARM_PG_URL || DEFAULT_PG_URL).split(/\s+/)[0];
+  return runtimeConfig.setfarmPgUrl;
 }
 
 function quoteIdent(value: string): string {

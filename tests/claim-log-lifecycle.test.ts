@@ -18,6 +18,10 @@ function stepOpsSource(): string {
   return fs.readFileSync(path.join(root, "src", "installer", "step-ops.ts"), "utf-8");
 }
 
+function stepAdvanceSource(): string {
+  return fs.readFileSync(path.join(root, "src", "installer", "step-advance.ts"), "utf-8");
+}
+
 function repoSource(): string {
   return fs.readFileSync(path.join(root, "src", "installer", "repo.ts"), "utf-8");
 }
@@ -81,6 +85,15 @@ function autoCompleteStoriesWithPRsSource(): string {
   const end = source.indexOf("async function resolveStoryScreens(", start);
   assert.notEqual(start, -1, "autoCompleteStoriesWithPRs source not found");
   assert.notEqual(end, -1, "autoCompleteStoriesWithPRs end not found");
+  return source.slice(start, end);
+}
+
+function injectSuperviseEachContextSource(): string {
+  const source = fs.readFileSync(path.join(root, "src", "installer", "step-ops.ts"), "utf-8");
+  const start = source.indexOf("async function injectSuperviseEachContext(");
+  const end = source.indexOf("/**\n * Claim a single", start);
+  assert.notEqual(start, -1, "injectSuperviseEachContext source not found");
+  assert.notEqual(end, -1, "injectSuperviseEachContext end not found");
   return source.slice(start, end);
 }
 
@@ -192,6 +205,25 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(completeDispatch, /treating it as final supervisor/);
   });
 
+  it("clears stale story supervisor context before final-product supervisor claims", () => {
+    const injectSource = injectSuperviseEachContextSource();
+    assert.match(injectSource, /status IN \('pending','running','done'\)/);
+    assert.match(injectSource, /loopStatus\?\.status === "done"/);
+    assert.match(injectSource, /context\["supervisor_scope"\] = "final-product"/);
+    assert.match(injectSource, /delete context\["current_story_title"\]/);
+    assert.match(injectSource, /SUPERVISOR_AC_CONTEXT_MISSING\|story-scoped supervisor/);
+    assert.match(injectSource, /No story remains to audit; claiming/);
+
+    const advanceSource = stepAdvanceSource();
+    const clearStart = advanceSource.indexOf("function clearPrEachDownstreamContext(");
+    const clearEnd = advanceSource.indexOf("// ── advancePipeline", clearStart);
+    assert.notEqual(clearStart, -1, "clearPrEachDownstreamContext source not found");
+    assert.notEqual(clearEnd, -1, "clearPrEachDownstreamContext end not found");
+    const clearSource = advanceSource.slice(clearStart, clearEnd);
+    assert.match(clearSource, /next\["supervisor_scope"\] = "final-product"/);
+    assert.match(clearSource, /delete next\["current_story_title"\]/);
+  });
+
   it("runs verify preflight against the PR branch diff, not story branch against itself", () => {
     const fullSource = stepOpsSource();
     assert.match(fullSource, /execFileSync\("git", \["fetch", "--prune", "origin", "main", analysisBranch\]/);
@@ -221,11 +253,13 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(fullSource, /function isSuccessfulStepOutput\(output: string\): boolean/);
     assert.match(fullSource, /return status === "done" \|\| status === "skip"/);
     assert.match(fullSource, /function sanitizedRetryFailureText\(text: string\): string/);
-    assert.match(fullSource, /PR_NOT_MERGED\|PR_MISSING\|VERIFY_SYSTEM_SMOKE_FAILURE/);
+    assert.match(fullSource, /PR_REVIEW_COMMENTS_OPEN\|PR_NOT_MERGED\|PR_MISSING\|VERIFY_SYSTEM_SMOKE_FAILURE/);
     assert.match(source, /const existingFailure = sanitizedRetryFailureText\(context\["previous_failure"\] \|\| ""\)/);
     assert.match(source, /const stepOutputLooksSuccessful = step\.output \? isSuccessfulStepOutput\(step\.output\) : false/);
     assert.match(source, /const failureText = existingFailure \|\| \(!stepOutputLooksSuccessful \? sanitizedRetryFailureText\(step\.output \|\| ""\) : ""\)/);
     assert.match(source, /if \(context\["previous_failure"\] !== failureText\) context\["previous_failure"\] = failureText/);
+    assert.match(source, /currentCategory === "UNKNOWN"/);
+    assert.match(source, /Unexpected error/i);
     assert.match(source, /Skipped successful step output as retry previous_failure/);
     assert.doesNotMatch(source, /context\["previous_failure"\] = step\.output/);
   });
@@ -339,7 +373,7 @@ describe("single-step claim_log lifecycle", () => {
     assert.notEqual(passedStart, -1, "verify-each passed branch not found");
     const retrySource = source.slice(retryStart, passedStart);
 
-    assert.match(retrySource, /const issues = context\["issues"\] \?\? output/);
+    assert.match(retrySource, /const issues = resolveVerifyRetryIssues\(parsedOutput, context, output\)/);
     assert.match(retrySource, /context\["verify_feedback"\] = issues/);
     assert.match(retrySource, /context\["previous_failure"\] = issues/);
     assert.match(retrySource, /isVerifyRetryMergeBlocker\(issues\)/);
@@ -354,7 +388,7 @@ describe("single-step claim_log lifecycle", () => {
     const handleSource = handleVerifyEachSource();
     const fullSource = stepOpsSource();
 
-    assert.match(autoSource, /failure_category"\] !== "VERIFY_SYSTEM_SMOKE_FAILURE"/);
+    assert.match(autoSource, /\["VERIFY_SYSTEM_SMOKE_FAILURE", "BUILD_FAILED"\]\.includes\(context\["failure_category"\] \|\| ""\)/);
     assert.match(autoSource, /routeQualityFailureToImplement\(/);
     assert.match(autoSource, /SYSTEM_SMOKE_FAILURE:/);
     assert.match(autoSource, /verify_quality_failure_routed/);
@@ -382,7 +416,7 @@ describe("single-step claim_log lifecycle", () => {
     assert.doesNotMatch(identifySource, /parsedOutput\["current_story_id"\] \|\| context\["current_story_id"\]/);
   });
 
-  it("auto-merges an approved open PR before marking verify-each complete", () => {
+  it("blocks actionable PR review comments before auto-merge", () => {
     const handleSource = handleVerifyEachSource();
     const passedStart = handleSource.indexOf("// Verify PASSED");
     const smokeStart = handleSource.indexOf("const repoPath = context[\"repo\"] || context[\"REPO\"] || \"\";", passedStart);
@@ -390,6 +424,8 @@ describe("single-step claim_log lifecycle", () => {
     assert.notEqual(smokeStart, -1, "verify smoke branch not found");
     const passedSource = handleSource.slice(passedStart, smokeStart);
 
+    const prCommentsCheck = passedSource.indexOf("detectOpenPrReviewCommentFailure(");
+    const prCommentsRoute = passedSource.indexOf("PR_REVIEW_COMMENTS_OPEN", prCommentsCheck);
     const mutableState = passedSource.indexOf("let prState = getPRState(verifiedRow.pr_url)");
     const openGuard = passedSource.indexOf("if (prState === \"OPEN\")", mutableState);
     const autoMerge = passedSource.indexOf("tryAutoMergePR(verifiedRow.pr_url, verifiedStoryId, verifyStep.run_id)", openGuard);
@@ -397,12 +433,42 @@ describe("single-step claim_log lifecycle", () => {
     const recheck = passedSource.indexOf("prState = getPRState(verifiedRow.pr_url)", invalidate);
     const notMergedGuard = passedSource.indexOf("if (prState !== \"MERGED\")", recheck);
 
+    assert.ok(prCommentsCheck >= 0, "verify must fetch fresh PR comments before merge");
+    assert.ok(prCommentsRoute > prCommentsCheck, "actionable PR comments must route back to implement");
+    assert.ok(prCommentsCheck < mutableState, "PR comments must be checked before cached PR state and auto-merge");
     assert.ok(mutableState >= 0, "PR state must be mutable so merge can be rechecked");
     assert.ok(openGuard > mutableState, "open PR guard must run after state lookup");
     assert.ok(autoMerge > openGuard, "approved open PR should use existing auto-merge helper");
     assert.ok(invalidate > autoMerge, "PR state cache must be invalidated after merge");
     assert.ok(recheck > invalidate, "PR state must be rechecked after merge");
     assert.ok(notMergedGuard > recheck, "not-merged guard should use post-merge state");
+  });
+
+  it("runs post-merge build before accepting verify or deferring smoke", () => {
+    const handleSource = handleVerifyEachSource();
+    const passedStart = handleSource.indexOf("// Verify PASSED");
+    const smokeStart = handleSource.indexOf("const smokeDecision = await shouldRunStorySystemSmokeGate", passedStart);
+    assert.notEqual(passedStart, -1, "verify-each passed branch not found");
+    assert.notEqual(smokeStart, -1, "verify smoke decision not found");
+    const passedSource = handleSource.slice(passedStart, smokeStart + 1200);
+
+    const syncMain = passedSource.indexOf("syncBaseBranch(repoPath, \"main\")");
+    const buildGate = passedSource.indexOf("runPostMergeBuildGate(repoPath");
+    const routeFailure = passedSource.indexOf("routeQualityFailureToImplement(", buildGate);
+    const smokeDecision = passedSource.indexOf("shouldRunStorySystemSmokeGate", buildGate);
+
+    assert.ok(syncMain >= 0, "verify should sync main before post-merge gates");
+    assert.ok(buildGate > syncMain, "post-merge build must run after syncing main");
+    assert.ok(routeFailure > buildGate, "post-merge build failure must route through the quality-fix path");
+    assert.ok(smokeDecision > buildGate, "smoke may be deferred only after main build passes");
+
+    const fullSource = stepOpsSource();
+    const ensureStart = fullSource.indexOf("async function ensureSystemSmokeBeforeAutoVerify(");
+    const ensureEnd = fullSource.indexOf("const smokeGate = runSystemSmokeGate", ensureStart);
+    assert.notEqual(ensureStart, -1, "auto-verify gate source not found");
+    assert.notEqual(ensureEnd, -1, "auto-verify smoke call not found");
+    const ensureSource = fullSource.slice(ensureStart, ensureEnd);
+    assert.ok(ensureSource.indexOf("runPostMergeBuildGate(repoPath") < ensureSource.indexOf("shouldRunStorySystemSmokeGate"), "auto-verify build must run before smoke deferral");
   });
 
   it("injects stored verify retry feedback before developer claim context is persisted", () => {
@@ -601,6 +667,34 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(routeSource, /formatVerifyFailureAsRetryOutput\(error\)/);
     assert.match(routeSource, /routeQualityFailureToImplement/);
     assert.match(singleFailureSource, /routeVerifyEachFailureToImplement\(stepId, step, workflowStepId, error\)/);
+  });
+
+  it("treats supervisor as a critical quality gate instead of skipping it", () => {
+    const source = fs.readFileSync(path.join(root, "src", "installer", "step-fail.ts"), "utf-8");
+    const criticalStart = source.indexOf("const CRITICAL_STEPS");
+    const qualityStart = source.indexOf("const QUALITY_GATE_STEPS");
+    const qualityEnd = source.indexOf("const QUALITY_GATE_MIN_RETRIES", qualityStart);
+    assert.notEqual(criticalStart, -1, "CRITICAL_STEPS source not found");
+    assert.notEqual(qualityStart, -1, "QUALITY_GATE_STEPS source not found");
+    assert.notEqual(qualityEnd, -1, "QUALITY_GATE_STEPS end not found");
+
+    const criticalSource = source.slice(criticalStart, qualityStart);
+    const qualitySource = source.slice(qualityStart, qualityEnd);
+    assert.match(criticalSource, /"supervise"/);
+    assert.match(qualitySource, /"supervise"/);
+  });
+
+  it("feeds invalid supervisor output back into the next supervisor attempt", () => {
+    const source = stepOpsSource();
+    const onCompleteStart = source.indexOf("if (_stepModule.onComplete)");
+    const supervisorFeedback = source.indexOf("SUPERVISOR_OUTPUT_INVALID", onCompleteStart);
+    assert.notEqual(onCompleteStart, -1, "step module onComplete block not found");
+    assert.notEqual(supervisorFeedback, -1, "supervisor output feedback context not found");
+
+    const onCompleteSource = source.slice(onCompleteStart, source.indexOf("const supervisorPhase =", onCompleteStart));
+    assert.match(onCompleteSource, /previous_failure/);
+    assert.match(onCompleteSource, /failure_suggestion/);
+    assert.match(onCompleteSource, /AC_COVERAGE must use the exact current story acceptance-criteria count/);
   });
 
   it("closes terminal failStepWithOutput claims by workflow step id", () => {

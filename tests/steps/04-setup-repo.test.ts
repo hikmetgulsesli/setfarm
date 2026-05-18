@@ -74,6 +74,8 @@ describe("04-setup-repo step module", () => {
     assert.ok(preclaim.includes("AUTO-COMPLETED setup-repo"), "setup-repo should complete in preClaim when the repo is ready");
     assert.ok(preclaim.includes("completeStep(step.id, output)"), "preClaim should use the normal completeStep path");
     assert.ok(preclaim.includes("repoReady"), "auto-complete must require a real prepared repo");
+    assert.ok(preclaim.includes('resolvePlatformScript("setup-repo.sh")'), "setup-repo preClaim should use the active platform script path");
+    assert.equal(preclaim.includes(".openclaw/setfarm-repo/scripts/setup-repo.sh"), false, "setup-repo preClaim must not hard-code the legacy install path");
   });
 
   it("onComplete canonicalizes setup-repo branch to the run id", async () => {
@@ -115,6 +117,9 @@ describe("04-setup-repo step module", () => {
     assert.ok(script.includes('"name": "$PACKAGE_NAME"'), "package name should come from project slug");
     assert.ok(script.includes('data-setfarm-root="baseline"'), "App baseline should be machine-detectable");
     assert.ok(script.includes("baseline scaffold did not create package.json"), "fresh frontend repos must fail if scaffold is missing");
+    assert.ok(script.includes("PLATFORM_ROOT="), "setup-repo.sh should resolve scripts relative to the active platform root");
+    assert.ok(script.includes('STITCH_SCRIPT="$PLATFORM_ROOT/scripts/stitch-api.mjs"'), "setup-repo.sh should call the active Stitch script");
+    assert.equal(script.includes('STITCH_SCRIPT="$HOME/.openclaw/setfarm-repo/scripts/stitch-api.mjs"'), false, "setup-repo.sh must not hard-code the legacy Stitch script path");
     assert.equal(script.includes("<title>Notes</title>"), false);
     assert.equal(script.includes("useNotes"), false);
     assert.equal(script.includes("NoteStatus"), false);

@@ -374,7 +374,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(helperSource, /clean git status/);
     assert.match(helperSource, /failedCheck/);
     assert.match(helperSource, /productBlocker/);
-    assert.match(verifyPreamble, /let status = parsedOutput/);
+    assert.match(verifyPreamble, /let status = firstOutputWord\(parsedOutput\["status"\] \|\| context\["status"\]\)/);
     assert.match(verifyPreamble, /status === "retry" && verifiedStoryId && isPlatformMetadataOnlyVerifyRetry\(output\)/);
     assert.match(verifyPreamble, /getPRState\(row\.pr_url\) === "MERGED"/);
     assert.match(verifyPreamble, /verify_platform_metadata_retry_ignored/);
@@ -816,6 +816,25 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = retry_count \+ 1/);
     assert.match(source, /UPDATE claim_log SET outcome = 'infra_retry'/);
     assert.match(source, /setInterval\(\(\) => \{ void runClaimMaintenance\(\); \}, Math\.min\(POLL_INTERVAL_MS, 10_000\)\)/);
+  });
+
+  it("does not requeue a running story while its agent process is still tracked", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    const start = source.indexOf("async function requeueOrphanedRunningStories");
+    const end = source.indexOf("async function requeueUntrackedRunningSingleStepClaims", start);
+    assert.notEqual(start, -1, "requeueOrphanedRunningStories not found");
+    assert.notEqual(end, -1, "requeueOrphanedRunningStories end not found");
+
+    const block = source.slice(start, end);
+    assert.match(block, /trackedByActiveProcess/);
+    assert.match(block, /Array\.from\(activeProcesses\.values\(\)\)\.some/);
+    assert.match(block, /active\.runId === row\.run_id/);
+    assert.match(block, /active\.storyDbId === row\.story_db_id \|\| active\.storyId === row\.story_id/);
+    assert.match(block, /!childProcessTerminalReason\(active\.child\)/);
+    assert.ok(
+      block.indexOf("trackedByActiveProcess") < block.indexOf("ORPHANED_RUNNING_STORY"),
+      "active-process preservation must run before orphan retry mutation",
+    );
   });
 
   it("tells verify agents to fail fast on first blocker", () => {

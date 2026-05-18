@@ -3,6 +3,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { resolveSetfarmCli } from "./installer/paths.js";
 import { classifyError } from "./installer/error-taxonomy.js";
+import { readSupervisorState, supervisorStatePath } from "./installer/supervisor/state.js";
 
 function shellQuote(value: string): string {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
@@ -159,6 +160,67 @@ function extractOutputContract(input: string): { format: string; requiredFields:
       .filter((value): value is string => Boolean(value)),
   ));
   return { format, requiredFields };
+}
+
+function defaultOutputContract(role: string): { source: string; format: string; requiredFields: string[]; instruction: string } {
+  const normalized = String(role || "").toLowerCase();
+  if (normalized === "reviewer" || normalized === "verifier") {
+    return {
+      source: "role-default",
+      format: [
+        "STATUS: done|retry|fail",
+        "STORY: <story id and title>",
+        "ROLE: reviewer",
+        "RESULT: <concise verification result>",
+        "FINDINGS: <numbered defects when STATUS is retry; none when clean>",
+        "CHECKS: <commands and evidence>",
+        "SCOPE: <files changed/read or none>",
+      ].join("\n"),
+      requiredFields: ["STATUS", "STORY", "ROLE", "RESULT", "FINDINGS", "CHECKS", "SCOPE"],
+      instruction: "Final step output must include these fields. Use STATUS: retry for real defects, STATUS: fail only for unrecoverable infrastructure, and STATUS: done only after the role prompt's pass requirements are met.",
+    };
+  }
+  if (normalized === "supervisor") {
+    return {
+      source: "role-default",
+      format: [
+        "STATUS: done|retry|fail",
+        "SUPERVISOR_DECISION: pass|block",
+        "AC_COVERAGE: <acceptance criteria coverage summary>",
+        "SUPERVISOR_MEMORY_APPEND: <durable manager memory update>",
+        "CHECKS: <commands and evidence>",
+        "CHANGES: <none or scoped changes>",
+        "RISKS: <remaining risks or none>",
+        "ISSUES: <blocking issues or none>",
+      ].join("\n"),
+      requiredFields: ["STATUS", "SUPERVISOR_DECISION", "AC_COVERAGE", "SUPERVISOR_MEMORY_APPEND", "CHECKS", "CHANGES", "RISKS", "ISSUES"],
+      instruction: "Final step output must include these fields. Use SUPERVISOR_DECISION: block when implementation must retry.",
+    };
+  }
+  if (normalized === "developer") {
+    return {
+      source: "role-default",
+      format: [
+        "STATUS: done|fail",
+        "STORY_BRANCH: <story branch>",
+        "CHANGES: <summary of implemented scope>",
+        "PR_URL: <empty; Setfarm creates the PR>",
+        "REASON: <only when STATUS is fail>",
+      ].join("\n"),
+      requiredFields: ["STATUS", "STORY_BRANCH", "CHANGES", "PR_URL", "REASON"],
+      instruction: "Final step output must include these fields. Do not stage, commit, push, or create a PR from the agent.",
+    };
+  }
+  return {
+    source: "role-default",
+    format: [
+      "STATUS: done|retry|skip|fail",
+      "SUMMARY: <concise result>",
+      "CHECKS: <commands and evidence>",
+    ].join("\n"),
+    requiredFields: ["STATUS", "SUMMARY", "CHECKS"],
+    instruction: "Final step output must include these fields before calling step complete.",
+  };
 }
 
 function deriveStoryBranch(input: string, runId: string, storyId?: string): string {
@@ -359,6 +421,28 @@ function extractScopeFiles(input: string, workdir: string): string[] {
   return splitScopeFileList(lineValue(input, "story_scope_files") || lineValue(input, "SCOPE_FILES"));
 }
 
+function fileExistsInWorkdir(workdir: string, filePath: string): boolean {
+  try {
+    return fs.existsSync(path.join(workdir, filePath));
+  } catch {
+    return false;
+  }
+}
+
+function buildScopeFileStates(workdir: string, scopeFiles: string[]): Array<Record<string, unknown>> {
+  return scopeFiles.map((file) => {
+    const exists = fileExistsInWorkdir(workdir, file);
+    return {
+      path: file,
+      exists,
+      kind: exists ? "existing" : "missing",
+      instruction: exists
+        ? "Update this owned file when the story requires it."
+        : "Create this owned file directly if the story requires it; do not treat the missing file as a blocker.",
+    };
+  });
+}
+
 function isGeneratedScreenFile(filePath: string): boolean {
   return /^src\/screens\/[^/]+\.tsx$/.test(filePath);
 }
@@ -508,6 +592,134 @@ function readSupervisorMemoryFile(workdir: string, repo: string): string {
   return "";
 }
 
+function readCurrentSupervisorEvidenceSummary(params: {
+  workdir: string;
+  repo: string;
+  runId: string;
+  storyId?: string;
+  storyBranch?: string;
+}): Record<string, unknown> | undefined {
+  const { workdir, repo, runId, storyId, storyBranch } = params;
+  if (!workdir || !runId) return undefined;
+  const summaries = supervisorEvidenceRoots(workdir, repo, storyBranch)
+    .map((root) => readSupervisorEvidenceSummaryFromRoot(root, runId, storyId))
+    .filter((summary): summary is Record<string, unknown> => Boolean(summary));
+  if (!summaries.length) return undefined;
+
+  return summaries
+    .sort((a, b) => supervisorEvidenceScore(b) - supervisorEvidenceScore(a))[0];
+}
+
+function readSupervisorEvidenceSummaryFromRoot(
+  root: string,
+  runId: string,
+  storyId?: string,
+): Record<string, unknown> | undefined {
+  const stateFile = supervisorStatePath(root, runId);
+  if (!fs.existsSync(stateFile)) return undefined;
+  const state = readSupervisorState(root, runId);
+  const story = storyId ? state.stories[storyId] : undefined;
+  const scopedIds = new Set<string>([
+    ...(story?.openBlockers || []),
+    ...(story?.warnings || []),
+    ...(story?.resolved || []),
+  ]);
+  const evidenceEntries = Object.entries(state.evidence)
+    .filter(([itemId, evidence]) => scopedIds.has(itemId) || (!!storyId && (evidence as any).storyId === storyId));
+
+  const blockers = (story?.openBlockers || [])
+    .map((itemId) => state.evidence[itemId])
+    .filter(Boolean)
+    .map(compactSupervisorEvidence)
+    .slice(0, 8);
+  const warnings = (story?.warnings || [])
+    .map((itemId) => state.evidence[itemId])
+    .filter(Boolean)
+    .map(compactSupervisorEvidence)
+    .slice(0, 8);
+  const resolved = (story?.resolved || [])
+    .map((itemId) => state.evidence[itemId])
+    .filter(Boolean)
+    .sort((a, b) => String(b.checkedAt || "").localeCompare(String(a.checkedAt || "")))
+    .map(compactSupervisorEvidence)
+    .slice(0, 12);
+
+  return {
+    source: "current-supervisor-state",
+    instruction: "Current-source scanner evidence is newer than initial Stitch/UI_CONTRACT data. For audit-mode retries, trust openBlockers/warnings here over stale retryFeedback or original designContracts when they conflict.",
+    path: stateFile,
+    workdir: root,
+    projectStatus: state.projectStatus,
+    updatedAt: state.updatedAt,
+    storyId,
+    storyStatus: story?.status || "unknown",
+    counts: {
+      blockers: story?.openBlockers.length || 0,
+      warnings: story?.warnings.length || 0,
+      resolved: story?.resolved.length || 0,
+      evidence: evidenceEntries.length,
+      passed: evidenceEntries.filter(([, evidence]) => evidence.status === "passed").length,
+    },
+    blockers,
+    warnings,
+    recentlyResolved: resolved,
+  };
+}
+
+function supervisorEvidenceScore(summary: Record<string, unknown>): number {
+  const counts = (summary.counts && typeof summary.counts === "object" ? summary.counts : {}) as Record<string, unknown>;
+  const numeric = (key: string): number => {
+    const value = counts[key];
+    return typeof value === "number" && Number.isFinite(value) ? value : 0;
+  };
+  const storyStatus = String(summary.storyStatus || "");
+  const updatedAt = Date.parse(String(summary.updatedAt || ""));
+  const recencyTieBreaker = Number.isFinite(updatedAt) ? Math.min(updatedAt / 1_000_000_000_000_000, 1) : 0;
+  return (
+    (storyStatus && storyStatus !== "unknown" ? 10_000 : 0) +
+    numeric("blockers") * 1_000 +
+    numeric("warnings") * 400 +
+    numeric("resolved") * 120 +
+    numeric("passed") * 80 +
+    numeric("evidence") * 50 +
+    recencyTieBreaker
+  );
+}
+
+function supervisorEvidenceRoots(workdir: string, repo: string, storyBranch?: string): string[] {
+  const roots = [workdir, repo].filter(Boolean);
+  const branch = String(storyBranch || "").trim();
+  if (branch) {
+    const normalized = workdir.replace(/\\/g, "/");
+    const match = normalized.match(/^(.*\/workflows\/[^/]+\/agents)\/[^/]+\/story-worktrees\/[^/]+$/);
+    if (match) {
+      const agentsRoot = match[1];
+      try {
+        for (const agentDir of fs.readdirSync(agentsRoot)) {
+          const candidate = path.join(agentsRoot, agentDir, "story-worktrees", branch);
+          if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) roots.push(candidate);
+        }
+      } catch {
+        // Keep the direct workdir/repo candidates.
+      }
+    }
+  }
+  return [...new Set(roots.map((item) => path.resolve(item)))];
+}
+
+function compactSupervisorEvidence(evidence: any): Record<string, unknown> {
+  return {
+    itemId: evidence.itemId,
+    status: evidence.status,
+    severity: evidence.severity,
+    file: Array.isArray(evidence.files) ? evidence.files[0] : undefined,
+    line: evidence.line,
+    message: String(evidence.message || "").slice(0, 240),
+    observed: Array.isArray(evidence.observed) ? evidence.observed.slice(0, 4) : [],
+    checkedAt: evidence.checkedAt,
+  };
+}
+
 function retryDisciplineForFailure(
   failureCategory: string,
   failureSuggestion: string,
@@ -621,7 +833,23 @@ export function buildClaimSummary(params: {
   const taskBrief = extractTaskBrief(input, params.input);
   const task = compactTaskSummary(input, params.input);
   const outputContract = extractOutputContract(input);
+  const resolvedOutputContract = outputContract ? {
+    source: "role-prompt-output-format",
+    format: outputContract.format,
+    requiredFields: outputContract.requiredFields,
+    instruction: "Final step output must include these exact fields before calling step complete. Do not replace them with prose-only summaries.",
+  } : defaultOutputContract(params.role);
   const scopeFiles = extractScopeFiles(input, workdir);
+  const scopeFileStates = buildScopeFileStates(workdir, scopeFiles);
+  const missingScopeFiles = scopeFileStates
+    .filter((file) => file.kind === "missing")
+    .map((file) => String(file.path));
+  const existingScopeFiles = scopeFileStates
+    .filter((file) => file.kind === "existing")
+    .map((file) => String(file.path));
+  const scopeFileInstruction = missingScopeFiles.length > 0
+    ? "scopeFiles is the owned write set for this story. Existing scope files may be updated. Missing scope files are expected new owned files; create them directly with add-file/create-file semantics when needed instead of retrying update-only patches. Do not treat missing owned files as blockers."
+    : "scopeFiles is the owned write set for this story. Existing scope files may be updated. Do not edit files outside this write set unless the role prompt explicitly allows it.";
   const scopeFileSet = new Set(scopeFiles);
   const isDeveloperStoryClaim = params.role === "developer" && Boolean(params.storyId || currentStory.storyId);
   const generatedScreenFiles = readGeneratedScreenFiles(workdir);
@@ -661,6 +889,9 @@ export function buildClaimSummary(params: {
   const retryDiscipline = retryMode === "fix"
     ? retryDisciplineForFailure(failureCategory, failureSuggestion, previousFailure)
     : undefined;
+  const buildCommand = resolvedCommand(input, "BUILD_CMD", [workdir, repo], "build", "true");
+  const testCommand = resolvedCommand(input, "TEST_CMD", [workdir, repo], "test", "true");
+  const lintCommand = resolvedCommand(input, "LINT_CMD", [workdir, repo], "lint", "true");
   return {
     schema: "setfarm.claim-summary.v1",
     workflow: params.wfId,
@@ -672,12 +903,7 @@ export function buildClaimSummary(params: {
     screenUsageContract: buildScreenUsageContract(designContracts, generatedScreenAllowed, generatedScreenReadOnly),
     task,
     taskBrief,
-    outputContract: outputContract ? {
-      source: "role-prompt-output-format",
-      format: outputContract.format,
-      requiredFields: outputContract.requiredFields,
-      instruction: "Final step output must include these exact fields before calling step complete. Do not replace them with prose-only summaries.",
-    } : undefined,
+    outputContract: resolvedOutputContract,
     workdir,
     repo,
     mainRepo: repo,
@@ -685,9 +911,12 @@ export function buildClaimSummary(params: {
     verifyWorkdir: storyWorkdir || workdir,
     storyBranch,
     runBranch: lineValue(input, "RUN_BRANCH"),
-    buildCommand: resolvedCommand(input, "BUILD_CMD", [workdir, repo], "build", "true"),
-    testCommand: resolvedCommand(input, "TEST_CMD", [workdir, repo], "test", "true"),
-    lintCommand: resolvedCommand(input, "LINT_CMD", [workdir, repo], "lint", "true"),
+    buildCommand,
+    testCommand,
+    lintCommand,
+    buildCmd: buildCommand,
+    testCmd: testCommand,
+    lintCmd: lintCommand,
     gitPolicy: isDeveloperStoryClaim ? {
       owner: "setfarm-platform",
       summary: "Developer story agents write code only. Do not stage, commit, push, create branches, or open PRs; Setfarm commits allowed scopeFiles after build/scope/supervisor gates pass.",
@@ -702,6 +931,10 @@ export function buildClaimSummary(params: {
       completion: "Follow the role-specific output contract.",
     },
     scopeFiles,
+    scopeFileStates,
+    existingScopeFiles,
+    missingScopeFiles,
+    scopeFileInstruction,
     supervisor: {
       stateRoot: supervisorStateRoot,
       checklistPath: path.join(supervisorStateRoot, "SUPERVISOR_CHECKLIST.json"),
@@ -709,6 +942,13 @@ export function buildClaimSummary(params: {
       eventsPath: path.join(supervisorStateRoot, "SUPERVISOR_EVENTS.jsonl"),
       instruction: "Close all blocker items assigned to this story before STATUS: done. Warnings should be addressed when practical but do not justify broad redesign.",
     },
+    supervisorEvidence: readCurrentSupervisorEvidenceSummary({
+      workdir,
+      repo,
+      runId: params.runId,
+      storyId,
+      storyBranch,
+    }),
     sharedFiles: splitCsvList(lineValue(input, "story_shared_files")),
     storyScreens: parseJsonArray(storyScreensRaw),
     generatedScreenPolicy: {
@@ -818,6 +1058,9 @@ if (s.buildCommand) lines.push("BUILD_CMD=" + String(s.buildCommand));
 if (s.testCommand) lines.push("TEST_CMD=" + String(s.testCommand));
 if (s.lintCommand) lines.push("LINT_CMD=" + String(s.lintCommand));
 if (Array.isArray(s.scopeFiles)) lines.push("SCOPE_FILES=" + s.scopeFiles.join(", "));
+if (Array.isArray(s.existingScopeFiles) && s.existingScopeFiles.length) lines.push("EXISTING_SCOPE_FILES=" + s.existingScopeFiles.join(", "));
+if (Array.isArray(s.missingScopeFiles) && s.missingScopeFiles.length) lines.push("MISSING_SCOPE_FILES=" + s.missingScopeFiles.join(", "));
+if (s.scopeFileInstruction) lines.push("SCOPE_FILE_POLICY=" + String(s.scopeFileInstruction).slice(0, 500));
 if (s.gitPolicy && s.gitPolicy.summary) lines.push("GIT_POLICY=" + s.gitPolicy.summary);
 if (Array.isArray(s.gitPolicy && s.gitPolicy.forbiddenForAgent) && s.gitPolicy.forbiddenForAgent.length) lines.push("FORBIDDEN_GIT=" + s.gitPolicy.forbiddenForAgent.join(", "));
 const sc = s.screenUsageContract || {};
@@ -837,6 +1080,22 @@ if (rf.instruction) lines.push("RETRY_INSTRUCTION=" + String(rf.instruction).sli
 if (s.retryDiscipline && s.retryDiscipline.mode) lines.push("RETRY_DISCIPLINE=" + String(s.retryDiscipline.mode) + ": " + String(s.retryDiscipline.instruction || "").slice(0, 240));
 if (s.previousFailure) lines.push("PREVIOUS_FAILURE=present " + String(s.previousFailure).length + " chars");
 if (s.generatedScreenPolicy && s.generatedScreenPolicy.summary) lines.push("GENERATED_SCREEN_POLICY=" + s.generatedScreenPolicy.summary);
+const se = s.supervisorEvidence || {};
+if (se.source) {
+  const counts = se.counts || {};
+  lines.push("SUPERVISOR_EVIDENCE=" + [
+    "source=" + se.source,
+    se.storyId ? "story=" + se.storyId : "",
+    se.storyStatus ? "status=" + se.storyStatus : "",
+    "blockers=" + (counts.blockers ?? 0),
+    "warnings=" + (counts.warnings ?? 0),
+    "resolved=" + (counts.resolved ?? 0),
+  ].filter(Boolean).join(" "));
+  if (se.instruction) lines.push("SUPERVISOR_EVIDENCE_RULE=" + String(se.instruction).slice(0, 400));
+  if (Array.isArray(se.blockers) && se.blockers.length) {
+    lines.push("SUPERVISOR_OPEN_BLOCKER=" + String(se.blockers[0].message || "").slice(0, 300));
+  }
+}
 const dc = s.designContracts || {};
 if (Array.isArray(dc.screenIndex)) lines.push("SCREEN_INDEX_CONTRACTS=" + dc.screenIndex.length);
 if (Array.isArray(dc.uiContract)) lines.push("UI_CONTRACTS=" + dc.uiContract.length);
@@ -885,7 +1144,7 @@ BOOTSTRAP_FILE=${params.bootstrapFile}
 First exec command:
 bash ${shellQuote(params.bootstrapFile)}
 
-Do ${params.wfId}/${params.role} work in WORKDIR only. Read the structured claim summary at ${params.claimSummaryFile} first; it is the authoritative handoff for story id/title, workdir, mainRepo, storyWorkdir, verifyWorkdir, build/test/lint commands, scope files, gitPolicy, supervisor checklist paths, screenUsageContract, generatedScreenPolicy, designContracts, supervisorMemory, screen refs, retry feedback, outputContract, and output paths. Do NOT print or dump the entire claim summary JSON to the transcript; use the bootstrap lines or targeted field extraction for only the fields you need. Use outputContract.requiredFields and outputContract.format exactly for the final step output; guard-backed roles will reject prose-only summaries even when the work itself passed. Use retryFeedback.mode exactly: mode="fix" means the blocker is an open implementation requirement and must be fixed before unrelated work; mode="audit" means prior feedback may be stale, so first verify whether it is still present with bounded evidence before reporting or changing code. Obey gitPolicy exactly: when owner is setfarm-platform, do not run git add/commit/push/branch/PR commands; Setfarm performs the scoped commit and PR handoff after gates pass. Use screenUsageContract first for generated screen component names, props, and action IDs; use designContracts.screenIndex, designContracts.uiContract, designContracts.componentRegistry, and designContracts.componentTypes as fallback instead of reading raw Stitch files, shared generated screen source, or creating TypeScript probe files. The full claim at ${params.claimFile} is an audit fallback only. Do NOT parse or dump claim.input with jq/sed/head/node loops; use the summary fields and only fall back to the full claim for a missing focused field. Obey generatedScreenPolicy exactly: if you accidentally read a forbidden src/screens/*.tsx file, stop broad reading and return to summary/contracts; supervisor records that as a correction signal.
+Do ${params.wfId}/${params.role} work in WORKDIR only. Read the structured claim summary at ${params.claimSummaryFile} first; it is the authoritative handoff for story id/title, workdir, mainRepo, storyWorkdir, verifyWorkdir, build/test/lint commands, scopeFiles, scopeFileStates, missingScopeFiles, scopeFileInstruction, gitPolicy, supervisor checklist paths, supervisorEvidence, screenUsageContract, generatedScreenPolicy, designContracts, supervisorMemory, screen refs, retry feedback, outputContract, and output paths. Do NOT print or dump the entire claim summary JSON to the transcript; use the bootstrap lines or targeted field extraction for only the fields you need. Use outputContract.requiredFields and outputContract.format exactly for the final step output; guard-backed roles will reject prose-only summaries even when the work itself passed. Use retryFeedback.mode exactly: mode="fix" means the blocker is an open implementation requirement and must be fixed before unrelated work; mode="audit" means prior feedback may be stale, so first verify whether it is still present with bounded evidence before reporting or changing code. Obey scopeFileInstruction exactly: missingScopeFiles are expected owned files that may be created directly; do not treat them as blockers and do not retry update-only patches against missing files. Obey gitPolicy exactly: when owner is setfarm-platform, do not run git add/commit/push/branch/PR commands; Setfarm performs the scoped commit and PR handoff after gates pass. Use supervisorEvidence before retryFeedback/designContracts when it is present: it is current-source scanner evidence and stale original UI_CONTRACT findings must not block when supervisorEvidence shows zero open blockers. Use screenUsageContract first for generated screen component names, props, and action IDs; use designContracts.screenIndex, designContracts.uiContract, designContracts.componentRegistry, and designContracts.componentTypes as fallback instead of reading raw Stitch files, shared generated screen source, or creating TypeScript probe files. The full claim at ${params.claimFile} is an audit fallback only. Do NOT parse or dump claim.input with jq/sed/head/node loops; use the summary fields and only fall back to the full claim for a missing focused field. Obey generatedScreenPolicy exactly: if you accidentally read a forbidden src/screens/*.tsx file, stop broad reading and return to summary/contracts; supervisor records that as a correction signal.
 For retryFeedback.mode="fix", treat retryDiscipline.mode as a hard implementation instruction. For retryDiscipline.mode="first-delta", after bootstrap and summary, inspect only the owned scope files plus safe metadata needed for the first edit, then make a small scoped source delta before broad analysis/build/test. For retryDiscipline.mode="semantic-fix", implement the named blocker first, then run the relevant checks. For retryFeedback.mode="audit", do not convert prior feedback into a source-edit mandate unless the role-specific prompt explicitly owns that fix.
 Do NOT create scratch/progress/todo/note/probe files inside WORKDIR unless they are explicitly listed in scopeFiles. Files like src/_probe.tsx, src/probe.tsx, tmp.ts, scratch.tsx, TODO.md, and progress.txt are forbidden in the project worktree. Use ${params.outputFile} for final output and /tmp/setfarm-progress-<run-id>.txt for checkpoints only.
 Important: OpenClaw read/edit/write tools resolve relative paths against the configured agent workspace, not the shell cwd. When using read/edit/write tools for project files, use absolute paths under WORKDIR, for example "$WORKDIR/src/App.tsx". For exec commands, rerun the bootstrap command above or pass workdir="$WORKDIR" after resolving it.

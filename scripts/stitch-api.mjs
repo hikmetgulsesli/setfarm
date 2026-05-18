@@ -46,7 +46,14 @@ function normalizeGoogleFontFamily(raw) {
 }
 
 function screenIdOf(screen) {
-  return String((screen?.name || '').replace(/^projects\/\d+\/screens\//, '') || screen?.id || screen?.screenId || '').trim();
+  return String(
+    (screen?.name || '').replace(/^projects\/\d+\/screens\//, '') ||
+    (screen?.sourceScreen || '').replace(/^projects\/\d+\/screens\//, '') ||
+    screen?.id ||
+    screen?.screenId ||
+    screen?.screen_id ||
+    ''
+  ).trim();
 }
 
 function titleOf(screen) {
@@ -59,6 +66,157 @@ function htmlUrlOf(screen) {
 
 function screenshotUrlOf(screen) {
   return screen?.screenshotUrl || screen?.screenshot?.downloadUrl || screen?.screenshot?.download_url || null;
+}
+
+function jsonPayloadsFromToolText(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return [];
+  const candidates = [raw];
+  const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence?.[1]) candidates.push(fence[1].trim());
+  const objectStart = raw.indexOf('{');
+  const objectEnd = raw.lastIndexOf('}');
+  if (objectStart !== -1 && objectEnd > objectStart) candidates.push(raw.slice(objectStart, objectEnd + 1));
+  const arrayStart = raw.indexOf('[');
+  const arrayEnd = raw.lastIndexOf(']');
+  if (arrayStart !== -1 && arrayEnd > arrayStart) candidates.push(raw.slice(arrayStart, arrayEnd + 1));
+
+  const parsed = [];
+  const seen = new Set();
+  for (const candidate of candidates) {
+    const key = candidate.trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    try { parsed.push(JSON.parse(key)); } catch {}
+  }
+  return parsed;
+}
+
+function screenSourceArrays(value) {
+  const arrays = [];
+  const seen = new Set();
+  const visit = (node, depth = 0) => {
+    if (!node || depth > 8) return;
+    if (typeof node !== 'object') return;
+    if (seen.has(node)) return;
+    seen.add(node);
+
+    if (Array.isArray(node)) {
+      for (const item of node) visit(item, depth + 1);
+      return;
+    }
+
+    const directArrays = [
+      node.screens,
+      node.screenInstances,
+      node.screen_instances,
+      node.structuredContent?.screens,
+      node.structuredContent?.screenInstances,
+      node.structured_content?.screens,
+      node.structured_content?.screen_instances,
+      node.design?.screens,
+    ];
+    for (const maybeArray of directArrays) {
+      if (Array.isArray(maybeArray)) arrays.push(maybeArray);
+    }
+
+    for (const comp of node.outputComponents || node.output_components || []) {
+      if (Array.isArray(comp?.design?.screens)) arrays.push(comp.design.screens);
+      visit(comp, depth + 1);
+    }
+
+    for (const child of Object.values(node)) visit(child, depth + 1);
+  };
+  visit(value);
+  return arrays;
+}
+
+function normalizeScreenEntry(screen) {
+  const screenId = screenIdOf(screen);
+  if (!screenId) return null;
+  return {
+    ...screen,
+    screenId,
+    title: titleOf(screen),
+    htmlUrl: htmlUrlOf(screen),
+    screenshotUrl: screenshotUrlOf(screen),
+    width: screen?.width,
+    height: screen?.height,
+  };
+}
+
+function collectScreensFromResult(result) {
+  const byId = new Map();
+  const add = (screen) => {
+    const normalized = normalizeScreenEntry(screen);
+    if (!normalized?.screenId) return;
+    const existing = byId.get(normalized.screenId);
+    byId.set(normalized.screenId, existing ? { ...normalized, ...existing } : normalized);
+  };
+
+  for (const arr of screenSourceArrays(result)) {
+    for (const screen of arr) add(screen);
+  }
+
+  for (const item of result?.content || []) {
+    if (item?.type !== 'text') continue;
+    for (const parsed of jsonPayloadsFromToolText(item.text)) {
+      if (Array.isArray(parsed)) {
+        for (const screen of parsed) add(screen);
+      }
+      for (const arr of screenSourceArrays(parsed)) {
+        for (const screen of arr) add(screen);
+      }
+      if (parsed?.screen) add(parsed.screen);
+    }
+  }
+
+  return [...byId.values()];
+}
+
+function describeToolResultShape(result) {
+  const content = Array.isArray(result?.content) ? result.content : [];
+  const textKeys = [];
+  for (const item of content.slice(0, 3)) {
+    if (item?.type !== 'text') continue;
+    const parsed = jsonPayloadsFromToolText(item.text)[0];
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) textKeys.push(Object.keys(parsed).slice(0, 12));
+  }
+  return {
+    topLevelKeys: result && typeof result === 'object' ? Object.keys(result).slice(0, 16) : [],
+    structuredContentKeys: result?.structuredContent && typeof result.structuredContent === 'object'
+      ? Object.keys(result.structuredContent).slice(0, 16)
+      : [],
+    contentTypes: content.map((item) => item?.type || typeof item).slice(0, 12),
+    textKeys,
+  };
+}
+
+function toolResultText(result) {
+  const content = Array.isArray(result?.content) ? result.content : [];
+  return content
+    .filter((item) => item?.type === 'text')
+    .map((item) => String(item.text || '').trim())
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+}
+
+function toolResultError(result) {
+  const text = toolResultText(result);
+  if (result?.isError) return text || 'Stitch MCP tool returned isError=true';
+  for (const parsed of jsonPayloadsFromToolText(text)) {
+    if (parsed?.error) return typeof parsed.error === 'string' ? parsed.error : JSON.stringify(parsed.error);
+    if (parsed?.isError) return parsed?.message || parsed?.detail || text || 'Stitch MCP tool returned an error payload';
+  }
+  return null;
+}
+
+function assertToolResultOk(result, toolName) {
+  const error = toolResultError(result);
+  if (!error) return;
+  const diagnostic = describeToolResultShape(result);
+  throw new Error(`${toolName} failed: ${String(error).replace(/\s+/g, ' ').slice(0, 900)} shape=${JSON.stringify(diagnostic)}`);
 }
 
 function readTrackedScreens(projectId) {
@@ -129,6 +287,12 @@ function getApiKey() {
   return apiKey;
 }
 
+function rpcTimeoutMs() {
+  const raw = Number(process.env.STITCH_RPC_TIMEOUT_MS || process.env.STITCH_TIMEOUT_MS || 600_000);
+  if (!Number.isFinite(raw) || raw < 30_000) return 600_000;
+  return Math.min(raw, 900_000);
+}
+
 // JSON-RPC call helper
 async function rpc(method, params = {}) {
   requestId++;
@@ -146,7 +310,7 @@ async function rpc(method, params = {}) {
       'X-Goog-Api-Key': getApiKey(),
     },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(300_000), // 5 min timeout
+    signal: AbortSignal.timeout(rpcTimeoutMs()),
   });
 
   if (!res.ok) {
@@ -191,51 +355,22 @@ async function downloadFile(url, outputPath, attempt = 1) {
 
 // Parse screens from generate response
 function parseScreens(result) {
-  const screens = [];
   const suggestions = [];
-
+  const screens = collectScreensFromResult(result);
   if (!result || !result.content) return { screens, suggestions };
 
   for (const item of result.content) {
     if (item.type === 'text') {
-      try {
-        const parsed = JSON.parse(item.text);
+      for (const parsed of jsonPayloadsFromToolText(item.text)) {
         // Check for outputComponents structure (camelCase from API)
         const components = parsed.outputComponents || parsed.output_components;
         if (components) {
           for (const comp of components) {
-            if (comp.design && comp.design.screens) {
-              for (const screen of comp.design.screens) {
-                screens.push({
-                  screenId: screen.id || screen.screen_id || screen.screenId,
-                  title: screen.title || 'Untitled',
-                  htmlUrl: screen.htmlCode?.downloadUrl || screen.html_code?.download_url || null,
-                  screenshotUrl: screen.screenshot?.downloadUrl || screen.screenshot?.download_url || null,
-                  width: screen.width,
-                  height: screen.height,
-                });
-              }
-            }
             if (comp.suggestions) {
               suggestions.push(...comp.suggestions);
             }
           }
         }
-        // Direct screens array
-        if (parsed.screens) {
-          for (const screen of parsed.screens) {
-            screens.push({
-              screenId: screen.id || screen.screen_id || screen.screenId,
-              title: screen.title || 'Untitled',
-              htmlUrl: screen.htmlCode?.downloadUrl || screen.html_code?.download_url || null,
-              screenshotUrl: screen.screenshot?.downloadUrl || screen.screenshot?.download_url || null,
-              width: screen.width,
-              height: screen.height,
-            });
-          }
-        }
-      } catch (e) {
-        process.stderr.write(`WARN: Could not parse screen data: ${e.message}\n`);
       }
     }
   }
@@ -245,34 +380,7 @@ function parseScreens(result) {
 
 // Parse screen list from list_screens result (shared helper)
 function parseScreenList(result) {
-  let screens = [];
-  if (result && result.content) {
-    for (const item of result.content) {
-      if (item.type === 'text') {
-        try {
-          const parsed = JSON.parse(item.text);
-          if (Array.isArray(parsed)) {
-            screens = parsed;
-          } else if (parsed.screens) {
-            screens = parsed.screens;
-          } else if (parsed.structuredContent?.screens) {
-            screens = parsed.structuredContent.screens;
-          } else if (parsed.outputComponents) {
-            for (const comp of parsed.outputComponents) {
-              if (comp.design?.screens) screens.push(...comp.design.screens);
-            }
-          } else if (parsed.output_components) {
-            for (const comp of parsed.output_components) {
-              if (comp.design?.screens) screens.push(...comp.design.screens);
-            }
-          }
-        } catch {
-          // skip unparseable text
-        }
-      }
-    }
-  }
-  return screens;
+  return collectScreensFromResult(result);
 }
 
 // Safe JS object literal parser -- converts JS object syntax to JSON then parses.
@@ -385,11 +493,13 @@ const commands = {
     };
 
     let result = await callTool('generate_screen_from_text', args);
+    assertToolResultOk(result, 'generate_screen_from_text');
     let { screens, suggestions } = parseScreens(result);
     // Quota exhaustion detection: Stitch returns 200 OK but no screens when credits are gone
     if (screens.length === 0 && rotateKey('no screens returned — possible quota exhaustion')) {
       await initialize(); // re-init MCP session with new key
       result = await callTool('generate_screen_from_text', args);
+      assertToolResultOk(result, 'generate_screen_from_text');
       ({ screens, suggestions } = parseScreens(result));
     }
 // Save generated screens to local tracking file for dedup
@@ -459,7 +569,7 @@ const commands = {
         let htmlCount = 0;
         try { htmlCount = readdirSync(stitchDir).filter(f => f.endsWith('.html')).length; } catch {}
         let trackedCount = 0;
-        try { trackedCount = JSON.parse(readFileSync(resolve(repoPath, '.stitch-screens.json'), 'utf-8')).length; } catch {}
+        try { trackedCount = JSON.parse(readFileSync(resolve(repoPath, '.stitch-screens-' + existing.projectId + '.json'), 'utf-8')).length; } catch {}
         if (htmlCount > 0 || trackedCount > 0) {
           console.log(JSON.stringify({ projectId: existing.projectId, source: 'stitch-file' }, null, 2));
           return;
@@ -470,8 +580,10 @@ const commands = {
 
     await initialize();
 
-    // 2. Find existing project by name
-    const listResult = await callTool('list_projects', {});
+    // 2. Find existing project by name unless recovery explicitly requires
+    // a fresh Stitch project after an empty or errored generation.
+    const forceNewProject = process.env.STITCH_FORCE_NEW_PROJECT === '1';
+    const listResult = forceNewProject ? null : await callTool('list_projects', {});
     let projects = [];
     if (listResult && listResult.content) {
       for (const item of listResult.content) {
@@ -603,6 +715,7 @@ const commands = {
     // 2. Generate screen
     const args = { projectId, prompt, deviceType, modelId };
     const result = await callTool('generate_screen_from_text', args);
+    assertToolResultOk(result, 'generate_screen_from_text');
     const { screens, suggestions } = parseScreens(result);
 // Save generated screens to local tracking file for dedup
 // AND eagerly download HTML+screenshot (Stitch deletes them after ~hours)
@@ -1178,6 +1291,7 @@ const commands = {
     const startTime = Date.now();
 
     const result = await callTool("generate_screen_from_text", { projectId, prompt, deviceType, modelId });
+    assertToolResultOk(result, "generate_screen_from_text");
     const { screens } = parseScreens(result);
 
     const elapsed = Math.round((Date.now() - startTime) / 1000);
@@ -1244,23 +1358,28 @@ const commands = {
         process.stderr.write("Retry " + (retry + 1) + "/3: listing screens...\n");
         try {
           const listResult = await callTool("list_screens", { projectId });
-          const listed = parseScreens(listResult);
-          if (listed.screens.length > 0) {
-            process.stderr.write("Found " + listed.screens.length + " screens via list-screens (retry " + (retry + 1) + ")\n");
+          const listedScreens = parseScreenList(listResult).map(s => ({
+            screenId: screenIdOf(s),
+            title: titleOf(s),
+            htmlUrl: htmlUrlOf(s),
+            screenshotUrl: screenshotUrlOf(s),
+          })).filter(s => s.screenId);
+          if (listedScreens.length > 0) {
+            process.stderr.write("Found " + listedScreens.length + " screens via list-screens (retry " + (retry + 1) + ")\n");
             // Download them
             const { mkdirSync } = await import("fs");
             const { resolve } = await import("path");
             const stitchDir = resolve(process.cwd(), "stitch");
             mkdirSync(stitchDir, { recursive: true });
             let dlOk = 0;
-            await Promise.allSettled(listed.screens.map(async (s) => {
+            await Promise.allSettled(listedScreens.map(async (s) => {
               try {
                 if (s.htmlUrl) { await downloadFile(s.htmlUrl, resolve(stitchDir, s.screenId + ".html")); dlOk++; }
                 if (s.screenshotUrl) { await downloadFile(s.screenshotUrl, resolve(stitchDir, s.screenId + ".png")); }
               } catch {}
             }));
             process.stderr.write("Fallback downloaded " + dlOk + " screens\n");
-            screens.push(...listed.screens);
+            screens.push(...listedScreens);
           }
         } catch (e) {
           process.stderr.write("list-screens retry " + (retry + 1) + " failed: " + e.message + "\n");
@@ -1271,7 +1390,8 @@ const commands = {
     console.log(JSON.stringify({
       total: screens.length,
       screens: screens.map(s => ({ screenId: s.screenId, title: s.title })),
-      elapsedSeconds: Math.round((Date.now() - startTime) / 1000)
+      elapsedSeconds: Math.round((Date.now() - startTime) / 1000),
+      diagnostic: screens.length === 0 ? describeToolResultShape(result) : undefined
     }, null, 2));
   },
 };

@@ -2,6 +2,185 @@
 
 This repository now keeps agent-facing operational notes in English only.
 
+## 2.3.72 - 2026-05-18
+
+- Normalized operator-facing dashboard statuses so `N/A` and skipped states never appear as visible pipeline outcomes.
+- Hardened Stitch recovery tests around explicit MCP tool errors and empty cached project regeneration.
+- Kept repeated Stitch progress heartbeats from flooding activity feeds while preserving live state updates.
+
+## 2.3.71 - 2026-05-18
+
+- Kept run-contract idle implementation checkpoints pending instead of emitting not-applicable status.
+- Normalized skipped story evidence to failure in operator-facing contract data so skipped work is never counted as complete.
+- Updated the built-in Setfarm dashboard to stop treating skipped stories or steps as completed progress.
+
+## 2.3.70 - 2026-05-18
+
+- Made the QA dev-server lifecycle authoritative over external browser-testing examples so agents do not reuse fixed sample ports or wrong-app URLs.
+- Exported `DEV_SERVER_URL` and `QA_URL` in the QA lifecycle template so browser scripts use the currently allocated project server.
+- Added regression coverage for QA prompt guidance that avoids invalid Playwright `expect` imports and broken temp-script patching loops.
+
+## 2.3.69 - 2026-05-18
+
+- Passed story scope files into story-scoped supervisor checkpoints so manager fixes use the same write boundary as implementation stories.
+- Wrote `.story-scope-files` into supervisor story worktrees before claims so the bootstrap summary and platform commit guard agree on safe edits.
+- Added regression coverage proving supervisor prompts carry `SCOPE_FILES`, shared context, and the scope reminder.
+
+## 2.3.68 - 2026-05-18
+
+- Replaced stale failure output when a story becomes verified so Mission Control does not show old blockers as current failures.
+- Stored reviewer or auto-verify evidence in verified stories for clearer run-contract history.
+- Added regression coverage for clearing stale PR/retry output after verification.
+
+## 2.3.67 - 2026-05-18
+
+- Added review thread IDs to PR feedback so retry context identifies the exact current GitHub inline thread.
+- Added a retry-after-fix thread resolution gate: after a PR review retry produces a clean candidate, Setfarm resolves current inline review threads before normal verify and merge gates continue.
+- Clarified PR review retry guidance so implementation fixes code while Setfarm owns thread cleanup and merge control.
+
+## 2.3.66 - 2026-05-18
+
+- Switched PR review comment gating to GitHub review thread metadata so resolved or outdated inline threads are not treated as fresh blockers.
+- Stopped treating COMMENTED review summaries as blocking review feedback when no current inline thread or CHANGES_REQUESTED review remains.
+- Added verify regression coverage for resolved, outdated, current inline, and changes-requested PR review states.
+
+## 2.3.65 - 2026-05-18
+
+- Classified unresolved PR review threads without an explicit `PR_REVIEW_COMMENTS_OPEN` prefix as deterministic PR review blockers instead of `UNKNOWN`.
+- Added regression coverage for supervisor wording that points to a non-outdated review thread.
+
+## 2.3.64 - 2026-05-18
+
+- Kept run-contract checks pending until the owning pipeline step has terminal evidence.
+- Prevented design, story, setup, and implementation artifacts from passing early just because files already exist.
+- Added regression coverage for future-step contract state so Mission Control can report real progress.
+
+## 2.3.63 - 2026-05-17
+
+- Added a deterministic post-merge build gate before verify can accept or auto-verify a story.
+- Routed merged-main build failures back through the quality-fix path instead of letting final supervision discover them late.
+- Added regression coverage so smoke deferral cannot skip the main build check.
+
+## 2.3.62 - 2026-05-17
+
+- Blocked verify and auto-merge when a story PR still has actionable review comments.
+- Classified PR review comments, missing PRs, and unmerged PRs as deterministic retry categories instead of generic unknown failures.
+- Added regression coverage so actionable PR feedback is routed back to implementation before merge.
+
+## 2.3.61 - 2026-05-17
+
+- Reclassified stale `UNKNOWN` retry context when the previous failure text contains a concrete guard category.
+- Prevented generic retry instructions from masking generated-screen regression feedback.
+- Added lifecycle coverage so actionable retry categories replace generic fallback metadata.
+
+## 2.3.60 - 2026-05-17
+
+- Added a verify preflight generated-screen regression gate so reviewer and supervisor claims cannot pass a story that removed previously verified generated screen routes.
+- Routed generated-screen regression failures back to implementation with targeted retry feedback before reviewer spawn.
+- Added wiring coverage so future refactors keep the verify preflight guard in the pipeline.
+
+## 2.3.59 - 2026-05-17
+
+- Added an implement-time generated-screen regression gate so later stories cannot remove previously verified generated screen integrations while adding their own screens.
+- Classified generated-screen regression failures as actionable retry feedback.
+- Added regression coverage for preserving previous generated screen routes across later screen stories.
+
+## 2.3.58 - 2026-05-17
+
+- Added an implement-time generated-screen integration gate so stories that own Stitch screens must render those generated components through the app/router surface instead of keeping custom duplicate UI.
+- Classified generated-screen integration failures as actionable retry feedback.
+- Added regression coverage for missing and barrel-imported generated screen rendering.
+
+## 2.3.57 - 2026-05-17
+
+- Aligned product-supervisor anchor handling with the deterministic supervisor scanner: hash anchors are still blocked when dead, but accepted when explicitly wired through an interaction handler or marked inert.
+- Added regression coverage for generated Stitch anchors that keep `href="#"` while routing behavior through typed action handlers.
+
+## 2.3.56 - 2026-05-17
+
+- Added claim-summary scope file state so agents can distinguish existing owned files from expected new owned files.
+- Printed missing scope files and scope file policy during bootstrap to prevent update-only patch loops on files that must be created.
+- Added regression coverage for mixed existing and missing story scope handoffs.
+
+## 2.3.55 - 2026-05-17
+
+- Narrowed retry error classification so reviewer findings stay bounded quality feedback even when they mention acceptance-criteria conflicts or include older supervisor memory.
+- Restricted merge-conflict detection to real Git conflict markers and merge output instead of natural-language product review text.
+- Kept generated screen ownership out of shared shell stories so future screen work is deferred to the owning stories rather than blocking the first implementation story.
+- Added claim-summary output defaults and command aliases so reviewers, supervisors, and developers get stable handoffs even when role prompts omit an explicit output contract.
+
+## 2.3.54 - 2026-05-17
+
+- Classified verifier retry findings as bounded quality-fix feedback instead of `UNKNOWN`.
+- Classified supervisor retry blocks as manager feedback so the next implement claim gets the right repair context.
+- Added regression coverage for review and supervisor retry taxonomy.
+
+## 2.3.53 - 2026-05-17
+
+- Hardened Stitch MCP response parsing so generated screens are recovered from top-level `structuredContent`, nested output components, screen instances, and embedded JSON text.
+- Added zero-screen response-shape diagnostics to design preclaim progress so Mission Control can show why Stitch recovery is waiting or failing.
+- Added regression coverage for structured and embedded Stitch response parsing.
+
+## 2.3.52 - 2026-05-17
+
+- Promoted Stitch links to typed generated screen actions so DOM-extracted navigation controls are wired through the same contract as buttons.
+- Expanded story planning and supervisor checklist inputs to include `navigation`/`links` arrays in addition to `navLinks`.
+- Added regression coverage for generated link action IDs, supervisor navigation checklist fallback, and story behavior contracts.
+
+## 2.3.51 - 2026-05-17
+
+- Prevented orphan-story maintenance from requeueing a running story while the original agent process is still tracked by the spawner.
+- Added regression coverage for active-process preservation before orphan-story retry mutation.
+
+## 2.3.50 - 2026-05-17
+
+- Reworked QA browser server instructions to allocate collision-free local ports instead of relying on a fixed development port.
+- Required QA to verify that the tested URL belongs to the target project before treating browser evidence as product evidence.
+- Added regression coverage that prevents the QA step prompt from reintroducing fixed local port behavior or wrong-app product failures.
+
+## 2.3.49 - 2026-05-17
+
+- Cleared stale story-scoped supervisor context when pr-each loops advance into final-product supervision.
+- Added a final supervisor claim sanitizer so runs with all stories verified cannot fail the final product gate on missing story acceptance criteria.
+- Added regression coverage for final-product supervisor context cleanup in supervise-each workflows.
+
+## 2.3.48 - 2026-05-17
+
+- Added a Setfarm version contract check so package metadata, lockfile metadata, and changelog headings must advance together.
+- Wired the version contract into prebuild before English and path contracts, preventing silent releases with stale visible versions.
+- Preserved the current supervisor, story scope, verify retry, and generated Stitch contract fixes under the new release metadata.
+
+## 2.3.47 - 2026-05-17
+
+- Fixed run contract story ownership normalization for object-based `story_screens` so screen assignment checks no longer serialize screens as `[object Object]`.
+- Added automatic `stitch/DESIGN.md` briefing generation for real and fallback Stitch artifacts before design auto-completion.
+- Normalized duplicate `SCREEN_MAP.stories` owners to the story that owns the generated screen file before adding design acceptance criteria.
+- Added regression coverage for object screen ownership and design briefing generation.
+
+## 2.3.46 - 2026-05-17
+
+- Added layered Setfarm runtime configuration with `.env` plus `.env.local`, while preserving real process environment as the highest-priority source.
+- Centralized Mission Control internal API URLs behind `MC_INTERNAL_URL` so deploy, preclaim, status cleanup, CLI quota checks, and main-agent guidance work on local and remote runtimes.
+- Added runtime path roots for projects, Setfarm state, scripts, CLI binaries, and repository paths to reduce workstation-specific defaults.
+
+## 2.3.45 - 2026-05-17
+
+- Added a project-neutral run contract ledger with per-step checklist evidence, framework stack-pack evidence, story ownership, deferred future-story surfaces, and blockers.
+- Persisted the run contract to `.setfarm/RUN_CONTRACT.json` and run context so supervisors and Mission Control can audit the same source of truth.
+- Refreshed the contract on run, step, and story lifecycle transitions, with regression coverage for design artifacts, stack resolution, and deferred story ownership.
+
+## 2.3.44 - 2026-05-17
+
+- Made the story supervisor a critical quality gate so exhausted supervisor failures fail loudly instead of being marked as skipped.
+- Fed invalid supervisor output back into the next supervisor attempt with explicit AC_COVERAGE correction context.
+- Added regression coverage for supervisor critical-gate behavior and invalid supervisor-output feedback.
+
+## 2.3.43 - 2026-05-17
+
+- Restored Stitch design generation to the fast exact-count batch path so all planned screens are generated in one call before implementation can begin.
+- Added active platform-root script resolution for Stitch, setup, and design DOM extraction so Setfarm no longer drifts back to legacy `~/.openclaw` script paths.
+- Extended Stitch JSON-RPC timeouts, fixed zero-screen list recovery parsing, and stopped masking configured Stitch failures with local fallback assets.
+
 ## 2.3.42 - 2026-05-17
 
 - Isolated auto-planned generated projects by run id so repeated tasks cannot reuse stale project workspaces, branches, or design assets.

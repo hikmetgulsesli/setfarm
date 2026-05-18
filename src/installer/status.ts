@@ -2,6 +2,7 @@ import { pgQuery, pgGet, pgRun, now } from "../db-pg.js";
 import { teardownWorkflowCronsIfIdle } from "./agent-cron.js";
 import { emitEvent } from "./events.js";
 import { recordStepTransition } from "./repo.js";
+import { missionControlApi, runtimeConfig } from "../runtime-config.js";
 
 export type RunInfo = {
   id: string;
@@ -155,14 +156,14 @@ export async function stopWorkflow(query: string): Promise<StopWorkflowResult> {
         // Remove from MC projects.json
         try {
           const { execFileSync } = await import("child_process");
-          execFileSync("curl", ["-sf", "-X", "DELETE", `http://127.0.0.1:3080/api/projects/${projectName}`,
+          execFileSync("curl", ["-sf", "-X", "DELETE", missionControlApi(`/api/projects/${projectName}`),
             "-H", "Content-Type: application/json", "-d", JSON.stringify({ confirmName: projectName })],
             { timeout: 10000, stdio: "pipe" });
         } catch { /* MC might not have it */ }
         // Remove tunnel entry
         try {
           const { execFileSync } = await import("child_process");
-          const tunnelScript = `${process.env.HOME}/.openclaw/scripts/tunnel-remove.sh`;
+          const tunnelScript = `${runtimeConfig.scriptsDir}/tunnel-remove.sh`;
           execFileSync("sudo", ["bash", tunnelScript, `${projectName}.setrox.com.tr`],
             { timeout: 15000, stdio: "pipe" });
         } catch { /* tunnel might not exist */ }

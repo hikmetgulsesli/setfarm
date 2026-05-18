@@ -38,7 +38,7 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/setrox/projects/<project>
+WorkingDirectory=<absolute-project-path>
 ExecStart=<absolute-node-path> dist/server.js
 Restart=on-failure
 RestartSec=10

@@ -15,14 +15,13 @@ function expectedAcceptanceCriteriaCount(currentStory: string | undefined): numb
   return body.split(/\n+/).map((line) => line.trim()).filter(Boolean).length;
 }
 
-function parsedCoverageTotal(acCoverage: string): number | null {
+function parsedCoverageCount(acCoverage: string): { done: number; total: number; complete: boolean } | null {
   const match = acCoverage.match(/\bchecked\s+(\d+)\s*\/\s*(\d+)\b/i);
   if (!match) return null;
   const done = Number(match[1]);
   const total = Number(match[2]);
   if (!Number.isFinite(done) || !Number.isFinite(total)) return null;
-  if (done !== total) return -1;
-  return total;
+  return { done, total, complete: done === total };
 }
 
 export function validateOutput(parsed: ParsedOutput): ValidationResult {
@@ -61,15 +60,21 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
   const acCoverage = (ctx.parsed.ac_coverage || "").trim();
   if ((decision === "pass" || decision === "fixed") && String(ctx.context["supervisor_scope"] || "") === "story") {
     const expectedCount = expectedAcceptanceCriteriaCount(ctx.context["current_story"]);
-    const coveredCount = parsedCoverageTotal(acCoverage);
+    const coverageCount = parsedCoverageCount(acCoverage);
     if (expectedCount <= 0) {
       throw new Error("SUPERVISOR_AC_CONTEXT_MISSING: story-scoped supervisor pass/fixed requires CURRENT_STORY with acceptance criteria.");
     }
-    if (coveredCount !== expectedCount) {
-      throw new Error(`SUPERVISOR_AC_COVERAGE_MISMATCH: supervisor reported ${acCoverage || "empty coverage"}, but current story has ${expectedCount} acceptance criteria.`);
-    }
     if (/\btask requirements?\b/i.test(acCoverage)) {
       throw new Error("SUPERVISOR_AC_COVERAGE_GENERIC: story-scoped supervisor coverage must audit story acceptance criteria, not the task brief.");
+    }
+    if (!coverageCount) {
+      throw new Error(`SUPERVISOR_AC_COVERAGE_FORMAT: story-scoped supervisor coverage must include "checked N/N acceptance criteria"; got ${acCoverage || "empty coverage"}.`);
+    }
+    if (!coverageCount.complete) {
+      throw new Error(`SUPERVISOR_AC_COVERAGE_INCOMPLETE: supervisor reported ${acCoverage}, but current story has ${expectedCount} acceptance criteria.`);
+    }
+    if (coverageCount.total !== expectedCount) {
+      ctx.context["supervisor_coverage_warning"] = `Supervisor reported ${coverageCount.done}/${coverageCount.total}, current story has ${expectedCount}; accepted because coverage was complete and story-specific.`;
     }
   }
 

@@ -30,6 +30,9 @@ describe("05-setup-build step module", () => {
     assert.ok(recovery >= 0, "setup-build should have a setup-repo recovery path");
     assert.ok(setupScript > recovery, "recovery path should call setup-repo.sh");
     assert.ok(missingPackage > setupScript, "missing package failure should be reported only after recovery");
+    assert.ok(preclaim.includes('resolvePlatformScript("setup-repo.sh")'), "setup-build recovery should use the active setup script");
+    assert.ok(preclaim.includes('resolvePlatformScript("stitch-to-jsx.mjs")'), "setup-build should use the active Stitch-to-JSX script");
+    assert.equal(preclaim.includes(".openclaw/setfarm-repo/scripts/setup-repo.sh"), false, "setup-build must not hard-code the legacy setup script path");
     assert.ok(preclaim.includes("String(displayName)"), "recovery path should preserve project display title");
     assert.ok(preclaim.includes("String(uiLanguage)"), "recovery path should preserve UI language for scaffold html lang");
   });

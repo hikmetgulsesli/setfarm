@@ -12,10 +12,12 @@ import { startDaemon, stopDaemon, getDaemonStatus, isRunning } from "../server/d
 import { startSpawner, stopSpawner, getSpawnerStatus, isSpawnerRunning } from "../server/spawnerctl.js";
 import { claimStep, completeStep, failStep, getStories, peekStep } from "../installer/step-ops.js";
 import { recordStepTransition } from "../installer/repo.js";
+import { refreshRunContractSafe } from "../installer/contract-ledger.js";
 import { ensureCliSymlink } from "../installer/symlink.js";
 import { runMedicCheck, getMedicStatus, getRecentMedicChecks } from "../medic/medic.js";
 import { pgQuery, pgGet, pgRun, pgClose, now } from "../db-pg.js";
 import { installMedicCron, uninstallMedicCron, isMedicCronInstalled } from "../medic/medic-cron.js";
+import { missionControlApi } from "../runtime-config.js";
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -191,6 +193,52 @@ function printUsage() {
       "setfarm version                      Show installed version",
       "setfarm update                       Pull latest, rebuild, and reinstall workflows",
     ].join("\n") + "\n",
+  );
+}
+
+function parseJsonObject(value: string | null | undefined): Record<string, any> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+async function clearManualResumeState(runId: string): Promise<void> {
+  const row = await pgGet<{ context: string | null; meta: string | null }>(
+    "SELECT context, meta FROM runs WHERE id = $1",
+    [runId],
+  );
+  const context = parseJsonObject(row?.context);
+  const meta = parseJsonObject(row?.meta);
+
+  for (const key of [
+    "previous_failure",
+    "failure_category",
+    "failure_suggestion",
+    "verify_feedback",
+    "current_story_id",
+    "current_story_title",
+    "current_story",
+    "story_workdir",
+    "story_branch",
+    "pr_url",
+  ]) {
+    delete context[key];
+  }
+
+  if (meta.terminal_failure === true) {
+    meta.resume_cleared_terminal_failure_at = now();
+  }
+  delete meta.terminal_failure;
+  delete meta.terminal_marked_at;
+  delete meta.terminal_reason;
+
+  await pgRun(
+    "UPDATE runs SET context = $1, meta = $2, updated_at = $3 WHERE id = $4",
+    [JSON.stringify(context), JSON.stringify(meta), now(), runId],
   );
 }
 
@@ -743,6 +791,8 @@ async function main() {
       process.exit(1);
     }
 
+    await clearManualResumeState(run.id);
+
     // If it's a loop step with a failed story, reset that story to pending
     if (failedStep.type === "loop") {
       const failedStory = await pgGet<{ id: string }>("SELECT id FROM stories WHERE run_id = $1 AND status = 'failed' ORDER BY story_index ASC LIMIT 1", [run.id]);
@@ -797,6 +847,7 @@ async function main() {
           "UPDATE runs SET status = 'running', updated_at = $1 WHERE id = $2",
           [now(), run.id]
         );
+        await refreshRunContractSafe(run.id, "cli.resume.verify_each");
 
         try {
           await ensureWorkflowExecutionBackend(run.workflow_id);
@@ -831,6 +882,7 @@ async function main() {
       "UPDATE runs SET status = 'running', updated_at = $1 WHERE id = $2",
       [now(), run.id]
     );
+    await refreshRunContractSafe(run.id, "cli.resume");
 
     try {
       await ensureWorkflowExecutionBackend(run.workflow_id);
@@ -905,9 +957,7 @@ async function main() {
     if (!forceQuota) {
       try {
         const http = await import("node:http");
-        const quotaUrl = process.env.MC_INTERNAL_URL
-          ? `${process.env.MC_INTERNAL_URL}/api/kimi-quota`
-          : "http://127.0.0.1:3080/api/kimi-quota";
+        const quotaUrl = missionControlApi("/api/kimi-quota");
         const body = await new Promise<string>((resolve, reject) => {
           const req = http.get(quotaUrl, { timeout: 3000 }, (res) => {
             const chunks: Buffer[] = [];
