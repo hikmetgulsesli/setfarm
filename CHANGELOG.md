@@ -2,6 +2,12 @@
 
 This repository now keeps agent-facing operational notes in English only.
 
+## 2.3.73 - 2026-05-18
+
+- Repaired the installer compatibility path so stale non-git legacy runtimes are backed up and replaced with a link to the active Setfarm install root.
+- Added regression coverage for the legacy runtime link guard so local and server dashboards cannot silently keep executing old Setfarm code.
+- Kept release metadata advancing with the runtime repair.
+
 ## 2.3.72 - 2026-05-18
 
 - Normalized operator-facing dashboard statuses so `N/A` and skipped states never appear as visible pipeline outcomes.

@@ -2,13 +2,15 @@
 set -euo pipefail
 
 # Setfarm installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/hikmetgulsesli/setfarm/v2.3.72/scripts/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/hikmetgulsesli/setfarm/v2.3.73/scripts/install.sh | bash
 
 REPO="https://github.com/hikmetgulsesli/setfarm.git"
 DEST="${HOME}/.openclaw/workspace/setfarm"
 LEGACY_DEST="${HOME}/.openclaw/setfarm-repo"
 
 echo "Installing Setfarm..."
+
+mkdir -p "$(dirname "$DEST")" "$(dirname "$LEGACY_DEST")"
 
 # Clone or pull
 if [ -d "$DEST/.git" ]; then
@@ -23,13 +25,40 @@ cd "$DEST"
 
 # Runtime scripts still resolve the platform source through this stable path.
 # Keep it as a compatibility link to the real install root.
-if [ -L "$LEGACY_DEST" ]; then
-  ln -sfn "$DEST" "$LEGACY_DEST"
-elif [ ! -e "$LEGACY_DEST" ]; then
-  ln -s "$DEST" "$LEGACY_DEST"
-else
-  echo "Note: $LEGACY_DEST already exists; leaving it unchanged."
-fi
+link_legacy_runtime() {
+  if [ -L "$LEGACY_DEST" ]; then
+    ln -sfn "$DEST" "$LEGACY_DEST"
+    return
+  fi
+
+  if [ ! -e "$LEGACY_DEST" ]; then
+    ln -s "$DEST" "$LEGACY_DEST"
+    return
+  fi
+
+  local dest_real
+  local legacy_real
+  dest_real="$(cd "$DEST" && pwd -P)"
+  legacy_real="$(cd "$LEGACY_DEST" 2>/dev/null && pwd -P || true)"
+
+  if [ "$legacy_real" = "$dest_real" ]; then
+    return
+  fi
+
+  if [ ! -d "$LEGACY_DEST/.git" ] || [ "${SETFARM_REPLACE_LEGACY:-0}" = "1" ]; then
+    local backup
+    backup="${LEGACY_DEST}.backup-$(date +%Y%m%d%H%M%S)"
+    echo "Backing up stale legacy runtime: $LEGACY_DEST -> $backup"
+    mv "$LEGACY_DEST" "$backup"
+    ln -s "$DEST" "$LEGACY_DEST"
+    return
+  fi
+
+  echo "Warning: $LEGACY_DEST is a separate git checkout; leaving it unchanged."
+  echo "Set SETFARM_REPLACE_LEGACY=1 to back it up and link to $DEST."
+}
+
+link_legacy_runtime
 
 # Build
 echo "Installing dependencies..."
