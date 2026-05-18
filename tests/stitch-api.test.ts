@@ -51,6 +51,17 @@ describe("stitch-api partial list recovery", () => {
     assert.match(source, /assertToolResultOk\(result, "generate_screen_from_text"\)/);
   });
 
+  it("includes redacted Stitch text diagnostics for zero-screen responses", () => {
+    const source = fs.readFileSync("scripts/stitch-api.mjs", "utf-8");
+
+    assert.match(source, /function redactDiagnosticText\(text\)/);
+    assert.match(source, /AQ\\\.\[A-Za-z0-9_-\]\+/);
+    assert.match(source, /function toolResultTextSample\(result, maxLength = 700\)/);
+    assert.match(source, /textSample: textSample \|\| undefined/);
+    assert.match(source, /0-screen Stitch response:/);
+    assert.match(source, /diagnostic: screens\.length === 0 \? zeroScreenDiagnostic : undefined/);
+  });
+
   it("can force a fresh Stitch project after an empty cached project failure", () => {
     const source = fs.readFileSync("scripts/stitch-api.mjs", "utf-8");
 

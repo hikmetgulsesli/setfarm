@@ -24,6 +24,14 @@ function isPreclaimCancelledError(error: unknown): boolean {
   return String((error as any)?.message || error).includes(PRECLAIM_CANCELLED);
 }
 
+function redactDiagnosticText(text: unknown): string {
+  return String(text || "")
+    .replace(/AQ\.[A-Za-z0-9_-]+/g, "AQ.[REDACTED]")
+    .replace(/(api[_-]?key|token|authorization|bearer)\s*[:=]\s*["']?[^"'\s,}]+/gi, "$1=[REDACTED]")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function execFileText(command: string, args: string[], options: ExecFileTextOptions = {}): Promise<string> {
   return new Promise((resolve, reject) => {
     const { onProgress, progressIntervalMs = 30000, ...execOptions } = options;
@@ -921,6 +929,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
 
   // 3. generate-all-screens (single batch call)
   let batchGenerationCompleted = false;
+  let lastStitchDiagnostic = "";
   try {
     const genOut = await execFileText("node", [stitchScript, "generate-all-screens", projId, promptFile, deviceType, "GEMINI_3_1_PRO"],
       {
@@ -935,14 +944,21 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     const generatedTotal = Number(genResult.total || 0);
     if (generatedTotal === 0 && genResult.diagnostic) {
       const shape = JSON.stringify(genResult.diagnostic).slice(0, 260);
+      const textSample = redactDiagnosticText(genResult.diagnostic.textSample).slice(0, 500);
+      lastStitchDiagnostic = textSample || shape;
       await recordPreClaimProgress(ctx, `Design preclaim: generated 0 Stitch screens; response shape ${shape}`);
+      if (textSample) {
+        await recordPreClaimProgress(ctx, `Design preclaim: 0-screen Stitch response: ${textSample}`);
+      }
     } else {
       await recordPreClaimProgress(ctx, `Design preclaim: generated ${generatedTotal} Stitch screens`);
     }
   } catch (e) {
     if (isPreclaimCancelledError(e)) return;
-    logger.warn(`[module:design preclaim] generate-all-screens failed: ${String(e).slice(0, 200)}`, { runId: ctx.runId });
-    await recordPreClaimProgress(ctx, "Design preclaim: batch Stitch generation failed, checking whether Stitch produced downloadable screens");
+    const failureDetail = redactDiagnosticText(e).slice(0, 500);
+    lastStitchDiagnostic = failureDetail;
+    logger.warn(`[module:design preclaim] generate-all-screens failed: ${failureDetail.slice(0, 200)}`, { runId: ctx.runId });
+    await recordPreClaimProgress(ctx, `Design preclaim: batch Stitch generation failed: ${failureDetail || "unknown error"}; checking whether Stitch produced downloadable screens`);
   }
 
   // 4. download-all with retries only after a completed batch call. If the
@@ -966,8 +982,10 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       if (htmlCount > 0 && (!total || htmlCount >= total)) break;
     } catch (e) {
       if (isPreclaimCancelledError(e)) return;
-      logger.warn(`[module:design preclaim] download-all failed (attempt ${attempt + 1}/3): ${String(e).slice(0, 200)}`, { runId: ctx.runId });
-      await recordPreClaimProgress(ctx, `Design preclaim: Stitch download failed on attempt ${attempt + 1}/${downloadAttempts}`);
+      const downloadDetail = redactDiagnosticText(e).slice(0, 300);
+      logger.warn(`[module:design preclaim] download-all failed (attempt ${attempt + 1}/3): ${downloadDetail.slice(0, 200)}`, { runId: ctx.runId });
+      lastStitchDiagnostic = downloadDetail || lastStitchDiagnostic;
+      await recordPreClaimProgress(ctx, `Design preclaim: Stitch download failed on attempt ${attempt + 1}/${downloadAttempts}${downloadDetail ? `: ${downloadDetail}` : ""}`);
     }
     if (attempt < downloadAttempts - 1) {
       logger.info(`[module:design preclaim] HTML incomplete (${htmlCount} valid), waiting 30s before retry`, { runId: ctx.runId });
@@ -1014,7 +1032,8 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   }
 
   if (htmlCount === 0 && hasStitchKey) {
-    const error = "DESIGN_STITCH_HTML_UNAVAILABLE: STITCH_API_KEY is configured but Stitch produced 0 valid HTML screens after batch generation, download, and tracking-file recovery. Stop at design instead of continuing with local fallback.";
+    const suffix = lastStitchDiagnostic ? ` Last Stitch diagnostic: ${lastStitchDiagnostic.slice(0, 650)}` : "";
+    const error = `DESIGN_STITCH_HTML_UNAVAILABLE: STITCH_API_KEY is configured but Stitch produced 0 valid HTML screens after batch generation, download, and tracking-file recovery. Stop at design instead of continuing with local fallback.${suffix}`;
     logger.warn(`[module:design preclaim] ${error}`, { runId: ctx.runId });
     await failDesignPreclaim(ctx, error);
     return;

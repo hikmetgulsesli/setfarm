@@ -85,10 +85,13 @@ describe("02-design step module", () => {
     const source = designPreclaimSource();
     assert.match(source, /function execFileText[\s\S]*onProgress/);
     assert.match(source, /function recordPreClaimProgress/);
+    assert.match(source, /function redactDiagnosticText\(text: unknown\): string/);
     assert.match(source, /event: "step\.progress"/);
     assert.match(source, /UPDATE steps SET updated_at = \$1/);
     assert.match(source, /UPDATE claim_log SET diagnostic = \$1/);
     assert.match(source, /generate-all-screens[\s\S]*onProgress: \(\) => recordPreClaimProgress\(ctx, "Design preclaim: still generating Stitch screens"\)/);
+    assert.match(source, /0-screen Stitch response/);
+    assert.match(source, /Last Stitch diagnostic/);
     assert.match(source, /download-all[\s\S]*onProgress: \(\) => recordPreClaimProgress\(ctx, `Design preclaim: still downloading Stitch HTML files/);
     assert.match(source, /timeout: 660000/);
   });

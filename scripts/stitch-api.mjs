@@ -174,6 +174,18 @@ function collectScreensFromResult(result) {
   return [...byId.values()];
 }
 
+function redactDiagnosticText(text) {
+  return String(text || "")
+    .replace(/AQ\.[A-Za-z0-9_-]+/g, "AQ.[REDACTED]")
+    .replace(/(api[_-]?key|token|authorization|bearer)\s*[:=]\s*["']?[^"'\s,}]+/gi, "$1=[REDACTED]")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function toolResultTextSample(result, maxLength = 700) {
+  return redactDiagnosticText(toolResultText(result)).slice(0, maxLength);
+}
+
 function describeToolResultShape(result) {
   const content = Array.isArray(result?.content) ? result.content : [];
   const textKeys = [];
@@ -182,13 +194,16 @@ function describeToolResultShape(result) {
     const parsed = jsonPayloadsFromToolText(item.text)[0];
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) textKeys.push(Object.keys(parsed).slice(0, 12));
   }
+  const textSample = toolResultTextSample(result);
   return {
+    isError: Boolean(result?.isError),
     topLevelKeys: result && typeof result === 'object' ? Object.keys(result).slice(0, 16) : [],
     structuredContentKeys: result?.structuredContent && typeof result.structuredContent === 'object'
       ? Object.keys(result.structuredContent).slice(0, 16)
       : [],
     contentTypes: content.map((item) => item?.type || typeof item).slice(0, 12),
     textKeys,
+    textSample: textSample || undefined,
   };
 }
 
@@ -1326,6 +1341,10 @@ const commands = {
 
     const elapsed = Math.round((Date.now() - startTime) / 1000);
     process.stderr.write("Generated " + screens.length + " screens in " + elapsed + "s\n");
+    const zeroScreenDiagnostic = screens.length === 0 ? describeToolResultShape(result) : undefined;
+    if (zeroScreenDiagnostic?.textSample) {
+      process.stderr.write("0-screen Stitch response: " + zeroScreenDiagnostic.textSample.slice(0, 500) + "\n");
+    }
 
     // Eager download all screens
     if (screens.length > 0) {
@@ -1421,7 +1440,7 @@ const commands = {
       total: screens.length,
       screens: screens.map(s => ({ screenId: s.screenId, title: s.title })),
       elapsedSeconds: Math.round((Date.now() - startTime) / 1000),
-      diagnostic: screens.length === 0 ? describeToolResultShape(result) : undefined
+      diagnostic: screens.length === 0 ? zeroScreenDiagnostic : undefined
     }, null, 2));
   },
 };

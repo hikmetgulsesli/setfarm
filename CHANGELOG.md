@@ -2,6 +2,12 @@
 
 This repository now keeps agent-facing operational notes in English only.
 
+## 2.3.75 - 2026-05-18
+
+- Added redacted Stitch response diagnostics when batch screen generation returns zero valid screens.
+- Carried the last Stitch generation or download diagnostic into the design failure output so Mission Control can show the root cause instead of a generic HTML-unavailable message.
+- Added regression coverage for zero-screen Stitch diagnostics and preclaim progress reporting.
+
 ## 2.3.74 - 2026-05-18
 
 - Added canonical runtime env loading from `~/.openclaw/setfarm/.env.local` so installed Setfarm dashboards and spawners can see local and server credentials without storing secrets in the repo checkout.
