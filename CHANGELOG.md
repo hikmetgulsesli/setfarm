@@ -2,6 +2,12 @@
 
 This repository now keeps agent-facing operational notes in English only.
 
+## 2.3.77 - 2026-05-18
+
+- Emitted workflow step identifiers in terminal failure events instead of internal database UUIDs.
+- Preserved story and critical-step failure telemetry with stable step names so Mission Control live feeds remain readable.
+- Added regression coverage for failStep terminal event identity.
+
 ## 2.3.76 - 2026-05-18
 
 - Classified transient Stitch provider outages from redacted MCP/tool diagnostics.

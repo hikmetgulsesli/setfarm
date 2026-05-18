@@ -640,9 +640,31 @@ describe("single-step claim_log lifecycle", () => {
     assert.notEqual(singleFailureEnd, -1, "handleSingleStepFailurePG transaction block not found");
     const singleFailureSource = source.slice(singleFailureStart, singleFailureEnd);
 
-    assert.match(singleFailureSource, /const workflowStepId = stepRow\?\.step_id \|\| ""/);
+    assert.match(singleFailureSource, /const workflowStepId = step\.step_id \|\| ""/);
     assert.match(singleFailureSource, /step_id = \$\{workflowStepId\}/);
     assert.doesNotMatch(singleFailureSource, /claim_log[\s\S]*step_id = \$\{stepId\}/);
+  });
+
+  it("emits workflow step ids instead of internal UUIDs for failStep terminal events", () => {
+    const source = fs.readFileSync(path.join(root, "src", "installer", "step-fail.ts"), "utf-8");
+    const failStepStart = source.indexOf("export async function failStep(");
+    const loopStart = source.indexOf("async function handleLoopStepFailurePG(");
+    const singleStart = source.indexOf("async function handleSingleStepFailurePG(");
+    const singleEnd = source.indexOf("// ── Fallback Model Cron", singleStart);
+    assert.notEqual(failStepStart, -1, "failStep source not found");
+    assert.notEqual(loopStart, -1, "loop failure source not found");
+    assert.notEqual(singleStart, -1, "single failure source not found");
+    assert.notEqual(singleEnd, -1, "single failure end not found");
+
+    const failStepSource = source.slice(failStepStart, loopStart);
+    const loopSource = source.slice(loopStart, singleStart);
+    const singleSource = source.slice(singleStart, singleEnd);
+
+    assert.match(failStepSource, /SELECT id, run_id, step_id, step_index/);
+    assert.match(loopSource, /const workflowStepId = step\.step_id \|\| stepId/);
+    assert.match(loopSource, /event: "step\.failed"[\s\S]*stepId: workflowStepId/);
+    assert.match(singleSource, /event: "step\.failed"[\s\S]*stepId: workflowStepId \|\| stepId/);
+    assert.doesNotMatch(singleSource, /event: "step\.failed"[\s\S]{0,160}stepId: stepId/);
   });
 
   it("routes verify-each step fail quality reports back to implement", () => {

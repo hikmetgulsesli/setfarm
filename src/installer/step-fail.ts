@@ -31,14 +31,14 @@ import { refreshRunContractSafe } from "./contract-ledger.js";
  * Fail a step, with retry logic. For loop steps, applies per-story retry.
  */
 export async function failStep(stepId: string, error: string): Promise<{ retrying: boolean; runFailed: boolean }> {
-  type FailStepRow = { id: string; run_id: string; step_index: number; retry_count: number; max_retries: number; type: string; current_story_id: string | null; agent_id: string };
+  type FailStepRow = { id: string; run_id: string; step_id: string; step_index: number; retry_count: number; max_retries: number; type: string; current_story_id: string | null; agent_id: string };
   let step = await pgGet<FailStepRow>(
-    "SELECT id, run_id, step_index, retry_count, max_retries, type, current_story_id, agent_id FROM steps WHERE id = $1", [stepId]
+    "SELECT id, run_id, step_id, step_index, retry_count, max_retries, type, current_story_id, agent_id FROM steps WHERE id = $1", [stepId]
   );
 
   if (!step) {
     const fallbackSteps = await pgQuery<FailStepRow>(
-      `SELECT id, run_id, step_index, retry_count, max_retries, type, current_story_id, agent_id
+      `SELECT id, run_id, step_id, step_index, retry_count, max_retries, type, current_story_id, agent_id
        FROM steps
        WHERE run_id = $1 AND status IN ('running', 'pending')
        ORDER BY step_index ASC
@@ -85,9 +85,10 @@ function isTransientAgentInfrastructureFailure(error: string): boolean {
 
 async function handleLoopStepFailurePG(
   stepId: string,
-  step: { run_id: string; step_index: number; retry_count: number; max_retries: number; type: string; current_story_id: string | null; agent_id: string },
+  step: { run_id: string; step_id?: string; step_index: number; retry_count: number; max_retries: number; type: string; current_story_id: string | null; agent_id: string },
   error: string,
 ): Promise<{ retrying: boolean; runFailed: boolean }> {
+  const workflowStepId = step.step_id || stepId;
   const story = await pgGet<{ id: string; retry_count: number; max_retries: number }>(
     "SELECT id, retry_count, max_retries FROM stories WHERE id = $1", [step.current_story_id!]
   );
@@ -129,8 +130,8 @@ async function handleLoopStepFailurePG(
     });
     await recordStepTransition(stepId, step.run_id, "running", "failed", step.agent_id, "failStep:loopStoryExhausted", { storyId: storyRow?.story_id, retry: newRetry });
     const wfId = await getWorkflowId(step.run_id);
-    emitEvent({ ts: now(), event: "story.failed", runId: step.run_id, workflowId: wfId, stepId: stepId, storyId: storyRow?.story_id, storyTitle: storyRow?.title, detail: `Story retries exhausted (${newRetry}/${story.max_retries}) — failing run` });
-    emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: stepId, detail: runFailReason });
+    emitEvent({ ts: now(), event: "story.failed", runId: step.run_id, workflowId: wfId, stepId: workflowStepId, storyId: storyRow?.story_id, storyTitle: storyRow?.title, detail: `Story retries exhausted (${newRetry}/${story.max_retries}) — failing run` });
+    emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: workflowStepId, detail: runFailReason });
     emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: runFailReason });
     scheduleRunCronTeardown(step.run_id);
     logger.warn(`[failStep] Story ${storyRow?.story_id} retries exhausted — failing run (policy: fail-fast on unrecoverable story)`, { runId: step.run_id });
@@ -212,13 +213,12 @@ async function routeVerifyEachFailureToImplement(
 
 async function handleSingleStepFailurePG(
   stepId: string,
-  step: { run_id: string; step_index: number; retry_count: number; max_retries: number; type: string; current_story_id: string | null; agent_id: string },
+  step: { run_id: string; step_id?: string; step_index: number; retry_count: number; max_retries: number; type: string; current_story_id: string | null; agent_id: string },
   error: string,
 ): Promise<{ retrying: boolean; runFailed: boolean }> {
   const newRetryCount = step.retry_count + 1;
 
-  const stepRow = await pgGet<{ step_id: string }>("SELECT step_id FROM steps WHERE id = $1", [stepId]);
-  const workflowStepId = stepRow?.step_id || "";
+  const workflowStepId = step.step_id || "";
 
   if (await routeVerifyEachFailureToImplement(stepId, step, workflowStepId, error)) {
     return { retrying: true, runFailed: false };
@@ -272,7 +272,7 @@ async function handleSingleStepFailurePG(
     if (isCritical) {
       await recordStepTransition(stepId, step.run_id, "running", "failed", step.agent_id, "failStep:critical", { error, retry: newRetryCount });
       const wfId2 = await getWorkflowId(step.run_id);
-      emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId2, stepId: stepId, detail: error });
+      emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId2, stepId: workflowStepId || stepId, detail: error });
       emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId2, detail: "Critical step retries exhausted" });
       scheduleRunCronTeardown(step.run_id);
       await refreshRunContractSafe(step.run_id, "step.failed");
