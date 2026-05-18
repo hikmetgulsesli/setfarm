@@ -2,6 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
 import { execFile } from "node:child_process";
+import { deflateSync } from "node:zlib";
 import type { ClaimContext } from "../types.js";
 import { logger } from "../../../lib/logger.js";
 import { now, pgGet, pgRun } from "../../../db-pg.js";
@@ -248,6 +249,117 @@ export function stitchApiKeyAvailable(env: NodeJS.ProcessEnv = process.env): boo
 }
 
 type ScreenMapEntry = { screenId: string; name: string; type: string; description: string };
+
+function crc32(buffer: Buffer): number {
+  let crc = 0xffffffff;
+  for (const byte of buffer) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit++) {
+      crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type: string, data: Buffer): Buffer {
+  const typeBuffer = Buffer.from(type, "ascii");
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length, 0);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(Buffer.concat([typeBuffer, data])), 0);
+  return Buffer.concat([length, typeBuffer, data, crc]);
+}
+
+function fillRect(
+  pixels: Buffer,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+  rectWidth: number,
+  rectHeight: number,
+  color: [number, number, number, number],
+): void {
+  const x1 = Math.max(0, Math.floor(x));
+  const y1 = Math.max(0, Math.floor(y));
+  const x2 = Math.min(width, Math.floor(x + rectWidth));
+  const y2 = Math.min(height, Math.floor(y + rectHeight));
+  for (let yy = y1; yy < y2; yy++) {
+    const rowOffset = yy * width * 4;
+    for (let xx = x1; xx < x2; xx++) {
+      const offset = rowOffset + xx * 4;
+      pixels[offset] = color[0];
+      pixels[offset + 1] = color[1];
+      pixels[offset + 2] = color[2];
+      pixels[offset + 3] = color[3];
+    }
+  }
+}
+
+function writeFallbackPng(filePath: string, screen: ScreenMapEntry, index: number): void {
+  const width = 960;
+  const height = 540;
+  const pixels = Buffer.alloc(width * height * 4);
+  fillRect(pixels, width, height, 0, 0, width, height, [11, 16, 32, 255]);
+  fillRect(pixels, width, height, 32, 28, width - 64, 64, [21, 27, 45, 255]);
+  fillRect(pixels, width, height, 52, 48, 180, 8, [32, 227, 178, 255]);
+  fillRect(pixels, width, height, width - 212, 48, 160, 8, [255, 184, 107, 255]);
+
+  const isGameLike = /game|play|board|canvas/i.test(`${screen.name} ${screen.type}`);
+  const isDetailLike = /detail|edit|create|form|settings/i.test(`${screen.name} ${screen.type}`);
+  if (isGameLike) {
+    fillRect(pixels, width, height, 80, 128, 560, 344, [8, 13, 25, 255]);
+    for (let row = 0; row < 10; row++) {
+      for (let col = 0; col < 14; col++) {
+        const active = (row + col + index) % 5 === 0;
+        fillRect(pixels, width, height, 104 + col * 36, 152 + row * 30, 30, 24, active ? [32, 227, 178, 255] : [32, 40, 63, 255]);
+      }
+    }
+    fillRect(pixels, width, height, 684, 128, 196, 92, [21, 27, 45, 255]);
+    fillRect(pixels, width, height, 684, 244, 196, 228, [21, 27, 45, 255]);
+  } else if (isDetailLike) {
+    fillRect(pixels, width, height, 72, 128, 312, 336, [21, 27, 45, 255]);
+    fillRect(pixels, width, height, 416, 128, 472, 336, [21, 27, 45, 255]);
+    for (let row = 0; row < 6; row++) {
+      fillRect(pixels, width, height, 448, 164 + row * 44, 352, 12, [32, 40, 63, 255]);
+      fillRect(pixels, width, height, 448, 184 + row * 44, 260, 8, [155, 168, 199, 255]);
+    }
+    fillRect(pixels, width, height, 692, 412, 132, 32, [32, 227, 178, 255]);
+  } else {
+    for (let col = 0; col < 3; col++) {
+      fillRect(pixels, width, height, 72 + col * 288, 128, 248, 132, [21, 27, 45, 255]);
+      fillRect(pixels, width, height, 96 + col * 288, 164, 116, 10, [32, 227, 178, 255]);
+      fillRect(pixels, width, height, 96 + col * 288, 192, 176, 8, [155, 168, 199, 255]);
+    }
+    fillRect(pixels, width, height, 72, 300, 816, 164, [21, 27, 45, 255]);
+    for (let row = 0; row < 4; row++) {
+      fillRect(pixels, width, height, 104, 334 + row * 28, 720 - row * 44, 8, [32, 40, 63, 255]);
+    }
+  }
+
+  const scanlineLength = 1 + width * 4;
+  const raw = Buffer.alloc(scanlineLength * height);
+  for (let y = 0; y < height; y++) {
+    raw[y * scanlineLength] = 0;
+    pixels.copy(raw, y * scanlineLength + 1, y * width * 4, (y + 1) * width * 4);
+  }
+
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  ihdr[10] = 0;
+  ihdr[11] = 0;
+  ihdr[12] = 0;
+
+  fs.writeFileSync(filePath, Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk("IHDR", ihdr),
+    pngChunk("IDAT", deflateSync(raw)),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]));
+}
 
 function normalizeScreenName(value: string): string {
   return String(value || "")
@@ -761,12 +873,14 @@ function createFallbackDesignAssets(repo: string, stitchDir: string, prd: string
     screenId: s.screenId,
     title: s.name,
     htmlFile: `${s.screenId}.html`,
+    screenshotFile: `${s.screenId}.png`,
     deviceType,
     source: "local-fallback",
   }));
 
-  for (const screen of screens) {
+  for (const [index, screen] of screens.entries()) {
     fs.writeFileSync(path.join(stitchDir, `${screen.screenId}.html`), buildFallbackHtml(screen, screens, appName, deviceType));
+    writeFallbackPng(path.join(stitchDir, `${screen.screenId}.png`), screen, index);
   }
 
   const tokenJson = {

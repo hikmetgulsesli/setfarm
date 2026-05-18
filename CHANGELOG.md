@@ -2,6 +2,11 @@
 
 This repository now keeps agent-facing operational notes in English only.
 
+## 2.3.79 - 2026-05-18
+
+- Generated valid PNG previews for local fallback design screens so the design contract remains complete when Stitch is unavailable.
+- Added regression coverage that prevents fallback design completion without matching PNG artifacts.
+
 ## 2.3.78 - 2026-05-18
 
 - Added multi-key Stitch API loading from `STITCH_API_KEYS` and indexed `STITCH_API_KEY_N` environment values.

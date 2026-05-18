@@ -130,6 +130,9 @@ describe("02-design step module", () => {
     assert.match(source, /design_asset_warning/);
     assert.match(source, /SCREEN_MAP\.json/);
     assert.match(source, /UI_CONTRACT\.json/);
+    assert.match(source, /function writeFallbackPng/);
+    assert.match(source, /screenshotFile: `\$\{s\.screenId\}\.png`/);
+    assert.match(source, /writeFallbackPng\(path\.join\(stitchDir, `\$\{screen\.screenId\}\.png`\), screen, index\)/);
     assert.match(source, /Main Menu/);
     assert.doesNotMatch(source, /Stop at design instead of continuing with local fallback/);
     assert.doesNotMatch(source, /agent will see empty/);
