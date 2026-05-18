@@ -2,6 +2,12 @@
 
 This repository now keeps agent-facing operational notes in English only.
 
+## 2.3.76 - 2026-05-18
+
+- Classified transient Stitch provider outages from redacted MCP/tool diagnostics.
+- Stopped design preclaim from running download and tracking-file recovery when Stitch did not accept the batch generation request.
+- Added terminal design-step failure for explicit Stitch provider unavailability so Mission Control shows the real external outage instead of repeated generic HTML recovery noise.
+
 ## 2.3.75 - 2026-05-18
 
 - Added redacted Stitch response diagnostics when batch screen generation returns zero valid screens.

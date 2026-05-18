@@ -132,6 +132,20 @@ describe("02-design step module", () => {
     assert.doesNotMatch(source, /agent will see empty/);
   });
 
+  it("preClaim fails fast on transient Stitch provider outages instead of burning download retries", () => {
+    const source = designPreclaimSource();
+
+    assert.match(source, /function isStitchProviderUnavailable\(text: unknown\): boolean/);
+    assert.match(source, /service is currently unavailable/);
+    assert.match(source, /temporarily unavailable/);
+    assert.match(source, /resource exhausted/);
+    assert.match(source, /const downloadAttempts = stitchProviderUnavailable \? 0 : \(batchGenerationCompleted \? 3 : 1\)/);
+    assert.match(source, /skipping Stitch download recovery because the provider did not accept generation/);
+    assert.match(source, /DESIGN_STITCH_SERVICE_UNAVAILABLE/);
+    assert.match(source, /failDesignPreclaim\(ctx, error, \{ terminal: stitchProviderUnavailable \}\)/);
+    assert.match(source, /UPDATE steps SET max_retries = retry_count WHERE id = \$1/);
+  });
+
   it("preClaim uses compact exact-count batch Stitch prompts and keeps per-screen recovery opt-in", () => {
     const source = designPreclaimSource();
     assert.match(source, /function compactPrdForStitch/);
