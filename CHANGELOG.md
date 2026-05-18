@@ -2,6 +2,12 @@
 
 This repository now keeps agent-facing operational notes in English only.
 
+## 2.3.74 - 2026-05-18
+
+- Added canonical runtime env loading from `~/.openclaw/setfarm/.env.local` so installed Setfarm dashboards and spawners can see local and server credentials without storing secrets in the repo checkout.
+- Migrated legacy repo-local env keys during install, including keys found in timestamped legacy backups from previous Setfarm installs.
+- Taught Stitch design detection and the Stitch CLI to read the same runtime env locations, preventing false offline fallback when a Stitch key exists.
+
 ## 2.3.73 - 2026-05-18
 
 - Repaired the installer compatibility path so stale non-git legacy runtimes are backed up and replaced with a link to the active Setfarm install root.

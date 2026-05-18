@@ -165,15 +165,27 @@ export function manifestUsesLocalFallback(stitchDir: string): boolean {
 
 export function stitchApiKeyAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
   if (String(env.STITCH_API_KEY || "").trim()) return true;
+  const configuredEnvDir = String(env.SETFARM_ENV_DIR || "").trim();
   const candidates = [
+    ...(configuredEnvDir
+      ? [
+          path.join(configuredEnvDir.replace(/^~(?=\/|$)/, os.homedir()), ".env.local"),
+          path.join(configuredEnvDir.replace(/^~(?=\/|$)/, os.homedir()), ".env"),
+        ]
+      : []),
     path.join(path.dirname(resolvePlatformScript("stitch-api.mjs")), ".env"),
+    path.join(path.dirname(resolvePlatformScript("stitch-api.mjs")), ".env.local"),
+    path.join(os.homedir(), ".openclaw/setfarm/.env.local"),
+    path.join(os.homedir(), ".openclaw/setfarm/.env"),
+    path.join(os.homedir(), ".openclaw/.env.local"),
+    path.join(os.homedir(), ".openclaw/.env"),
     path.join(os.homedir(), ".openclaw/setfarm-repo/scripts/.env"),
     path.resolve(process.cwd(), "scripts/.env"),
   ];
   for (const file of candidates) {
     try {
       const raw = fs.readFileSync(file, "utf-8");
-      const match = raw.match(/^STITCH_API_KEY=(.+)$/m);
+      const match = raw.match(/^\s*(?:export\s+)?STITCH_API_KEY\s*=\s*(.+)$/m);
       if (match?.[1]?.trim()) return true;
     } catch {}
   }

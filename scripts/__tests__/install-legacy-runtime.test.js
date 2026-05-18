@@ -24,4 +24,14 @@ describe("install legacy runtime link", () => {
     assert.match(install, /SETFARM_REPLACE_LEGACY/);
     assert.match(install, /separate git checkout/);
   });
+
+  it("migrates runtime secrets out of legacy repo-local env files", () => {
+    const install = readFileSync(join(root, "scripts", "install.sh"), "utf8");
+
+    assert.match(install, /CONFIG_ENV="\$\{CONFIG_DIR\}\/\.env\.local"/);
+    assert.match(install, /migrate_runtime_env\(\)/);
+    assert.match(install, /migrate_runtime_env_from_backups/);
+    assert.match(install, /STITCH_API_KEY/);
+    assert.match(install, /chmod 600 "\$CONFIG_ENV"/);
+  });
 });

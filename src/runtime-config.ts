@@ -27,8 +27,7 @@ function resolvePackageRoot(): string {
   return moduleDir;
 }
 
-function loadEnvFile(filename: string, overrideFileValues: boolean): void {
-  const envDir = expandRuntimePath(process.env.SETFARM_ENV_DIR || resolvePackageRoot());
+function loadEnvFile(envDir: string, filename: string, overrideFileValues: boolean): void {
   const envPath = join(envDir, filename);
   if (!existsSync(envPath)) return;
   const lines = readFileSync(envPath, "utf-8").split(/\r?\n/);
@@ -48,8 +47,15 @@ function loadEnvFile(filename: string, overrideFileValues: boolean): void {
 }
 
 export function loadRuntimeEnv(): void {
-  loadEnvFile(".env", false);
-  loadEnvFile(".env.local", true);
+  const explicitEnvDir = process.env.SETFARM_ENV_DIR?.trim();
+  const envDirs = explicitEnvDir
+    ? [expandRuntimePath(explicitEnvDir)]
+    : [resolvePackageRoot(), join(homedir(), ".openclaw", "setfarm")];
+
+  for (const envDir of envDirs) {
+    loadEnvFile(envDir, ".env", false);
+    loadEnvFile(envDir, ".env.local", true);
+  }
 }
 
 loadRuntimeEnv();

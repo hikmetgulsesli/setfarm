@@ -260,21 +260,51 @@ function mergeTrackedScreens(projectId, screens) {
   return [...byId.values()];
 }
 
-// Load API key from .env
-function loadApiKey() {
-  const envPath = resolve(__dirname, '.env');
+function readEnvKey(envPath, key) {
   try {
     const content = readFileSync(envPath, 'utf-8');
     for (const line of content.split('\n')) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith('STITCH_API_KEY=')) {
-        return trimmed.slice('STITCH_API_KEY='.length).replace(/^["']|["']$/g, '');
+      const trimmed = line.trim().replace(/^export\s+/, '');
+      if (trimmed.startsWith(`${key}=`)) {
+        return trimmed.slice(`${key}=`.length).replace(/^["']|["']$/g, '');
       }
     }
   } catch {
     // fall through
   }
+  return '';
+}
+
+function envFileCandidates() {
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  const configured = process.env.SETFARM_ENV_DIR
+    ? [resolve(process.env.SETFARM_ENV_DIR, '.env.local'), resolve(process.env.SETFARM_ENV_DIR, '.env')]
+    : [];
+  const homeCandidates = home
+    ? [
+        resolve(home, '.openclaw', 'setfarm', '.env.local'),
+        resolve(home, '.openclaw', 'setfarm', '.env'),
+        resolve(home, '.openclaw', '.env.local'),
+        resolve(home, '.openclaw', '.env'),
+      ]
+    : [];
+  return [
+    ...configured,
+    resolve(__dirname, '.env.local'),
+    resolve(__dirname, '.env'),
+    resolve(__dirname, '..', '.env.local'),
+    resolve(__dirname, '..', '.env'),
+    ...homeCandidates,
+  ];
+}
+
+// Load API key from process env or Setfarm runtime env files.
+function loadApiKey() {
   if (process.env.STITCH_API_KEY) return process.env.STITCH_API_KEY;
+  for (const envPath of envFileCandidates()) {
+    const value = readEnvKey(envPath, 'STITCH_API_KEY');
+    if (value) return value;
+  }
   throw new Error('STITCH_API_KEY not found in .env or environment');
 }
 
