@@ -135,6 +135,28 @@ async function failDesignPreclaim(ctx: ClaimContext, error: string, options: { t
   await failStep(step.id, safeError);
 }
 
+async function completeWithLocalFallbackDesign(
+  ctx: ClaimContext,
+  repo: string,
+  stitchDir: string,
+  prd: string,
+  deviceType: string,
+  reason: string,
+): Promise<number> {
+  const safeReason = redactDiagnosticText(reason).slice(0, 800);
+  await recordPreClaimProgress(ctx, `Design preclaim: using local design fallback because Stitch is unavailable${safeReason ? `: ${safeReason}` : ""}`);
+  const fallbackScreens = createFallbackDesignAssets(repo, stitchDir, prd, deviceType);
+  ctx.context["stitch_project_id"] = ctx.context["stitch_project_id"] || "local-fallback";
+  ctx.context["screens_generated"] = String(fallbackScreens.length);
+  ctx.context["screen_map"] = JSON.stringify(fallbackScreens);
+  ctx.context["design_asset_warning"] = safeReason || "Stitch unavailable; generated local fallback design assets.";
+  logger.warn(`[module:design preclaim] Stitch unavailable; generated ${fallbackScreens.length} local fallback design assets`, {
+    runId: ctx.runId,
+  });
+  await recordPreClaimProgress(ctx, `Design preclaim: generated fallback design assets (${fallbackScreens.length} screens)`);
+  return fallbackScreens.length;
+}
+
 function isValidStitchHtml(filePath: string): boolean {
   try {
     if (!fs.existsSync(filePath)) return false;
@@ -193,6 +215,8 @@ export function manifestUsesLocalFallback(stitchDir: string): boolean {
 
 export function stitchApiKeyAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
   if (String(env.STITCH_API_KEY || "").trim()) return true;
+  if (String(env.STITCH_API_KEYS || "").trim()) return true;
+  if (Object.keys(env).some((key) => /^STITCH_API_KEY_\d+$/.test(key) && String(env[key] || "").trim())) return true;
   const configuredEnvDir = String(env.SETFARM_ENV_DIR || "").trim();
   const candidates = [
     ...(configuredEnvDir
@@ -215,6 +239,9 @@ export function stitchApiKeyAvailable(env: NodeJS.ProcessEnv = process.env): boo
       const raw = fs.readFileSync(file, "utf-8");
       const match = raw.match(/^\s*(?:export\s+)?STITCH_API_KEY\s*=\s*(.+)$/m);
       if (match?.[1]?.trim()) return true;
+      const multi = raw.match(/^\s*(?:export\s+)?STITCH_API_KEYS\s*=\s*(.+)$/m);
+      if (multi?.[1]?.trim()) return true;
+      if (/^\s*(?:export\s+)?STITCH_API_KEY_\d+\s*=\s*\S+/m.test(raw)) return true;
     } catch {}
   }
   return false;
@@ -831,8 +858,9 @@ function createFallbackDesignAssets(repo: string, stitchDir: string, prd: string
 // Agent then validates the result — never calls Stitch API itself.
 //
 // Idempotent: if stitch/ already has current non-fallback HTML files, skips.
-// Local fallback assets are regenerated when a real Stitch key is available so
-// retries do not silently keep stale placeholder designs.
+// Local fallback assets are regenerated when a real Stitch key is available.
+// If all configured Stitch keys or the provider fail, the step writes a complete
+// generated design bundle instead of leaving downstream agents with empty context.
 export async function preClaim(ctx: ClaimContext): Promise<void> {
   const repo = ctx.context["repo"] || ctx.context["REPO"] || "";
   const prd = ctx.context["prd"] || ctx.context["PRD"] || "";
@@ -914,9 +942,20 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
 
   if (!projId) {
     if (hasStitchKey) {
-      const error = "DESIGN_STITCH_PROJECT_UNAVAILABLE: STITCH_API_KEY is configured but Setfarm could not create or load a Stitch project. Stop at design instead of continuing with local fallback.";
-      logger.warn(`[module:design preclaim] ${error}`, { runId: ctx.runId });
-      await failDesignPreclaim(ctx, error);
+      try {
+        await completeWithLocalFallbackDesign(
+          ctx,
+          repo,
+          stitchDir,
+          prd,
+          ctx.context["device_type"] || "DESKTOP",
+          "DESIGN_STITCH_PROJECT_UNAVAILABLE: STITCH_API_KEY is configured but Setfarm could not create or load a Stitch project.",
+        );
+      } catch (e) {
+        const error = `DESIGN_ASSET_GENERATION_FAILED: Stitch project could not be created and local fallback failed: ${String(e).slice(0, 240)}`;
+        logger.warn(`[module:design preclaim] ${error}`, { runId: ctx.runId });
+        await failDesignPreclaim(ctx, error);
+      }
       return;
     }
     try {
@@ -989,8 +1028,8 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   }
 
   // 4. download-all with retries only after a completed batch call. If the
-  // batch call itself fails, do one bounded download/list recovery and then
-  // stop at design when no real HTML exists.
+  // provider does not accept generation, skip wasteful download retries and use
+  // the complete generated fallback bundle below.
   let htmlCount = 0;
   const downloadAttempts = stitchProviderUnavailable ? 0 : (batchGenerationCompleted ? 3 : 1);
   if (stitchProviderUnavailable) {
@@ -1063,17 +1102,20 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
 
   if (htmlCount === 0 && hasStitchKey) {
     const suffix = lastStitchDiagnostic ? ` Last Stitch diagnostic: ${lastStitchDiagnostic.slice(0, 650)}` : "";
-    const error = stitchProviderUnavailable
-      ? `DESIGN_STITCH_SERVICE_UNAVAILABLE: STITCH_API_KEY is configured but the Stitch provider is temporarily unavailable. Stop at design without download recovery because no generation result was accepted.${suffix}`
-      : `DESIGN_STITCH_HTML_UNAVAILABLE: STITCH_API_KEY is configured but Stitch produced 0 valid HTML screens after batch generation, download, and tracking-file recovery. Stop at design instead of continuing with local fallback.${suffix}`;
-    logger.warn(`[module:design preclaim] ${error}`, { runId: ctx.runId });
-    await failDesignPreclaim(ctx, error, { terminal: stitchProviderUnavailable });
-    return;
+    const warning = stitchProviderUnavailable
+      ? `DESIGN_STITCH_SERVICE_UNAVAILABLE: STITCH_API_KEY is configured but the Stitch provider is temporarily unavailable.${suffix}`
+      : `DESIGN_STITCH_HTML_UNAVAILABLE: STITCH_API_KEY is configured but Stitch produced 0 valid HTML screens after batch generation, download, and tracking-file recovery.${suffix}`;
+    try {
+      htmlCount = await completeWithLocalFallbackDesign(ctx, repo, stitchDir, prd, deviceType, warning);
+    } catch (e) {
+      const error = `DESIGN_ASSET_GENERATION_FAILED: ${warning} Local fallback also failed: ${String(e).slice(0, 240)}`;
+      logger.warn(`[module:design preclaim] ${error}`, { runId: ctx.runId });
+      await failDesignPreclaim(ctx, error, { terminal: stitchProviderUnavailable });
+      return;
+    }
   }
 
-  // 4d. Local fallback: keep offline or unconfigured environments usable. When
-  // a Stitch key is configured, real Stitch failure is surfaced as a design
-  // failure above instead of being masked by fallback assets.
+  // 4d. Local fallback: keep offline or unconfigured environments usable.
   if (htmlCount === 0) {
     try {
       await recordPreClaimProgress(ctx, "Design preclaim: generating local fallback design assets");

@@ -120,19 +120,22 @@ describe("02-design step module", () => {
     assert.doesNotMatch(source, /All visible text must be in a hard-coded language|hard-coded language/);
   });
 
-  it("preClaim keeps local fallback only for unconfigured Stitch environments", () => {
+  it("preClaim uses local fallback when Stitch cannot provide usable screens", () => {
     const source = designPreclaimSource();
     assert.match(source, /function createFallbackDesignAssets/);
+    assert.match(source, /async function completeWithLocalFallbackDesign/);
     assert.match(source, /Design preclaim: generated fallback design assets/);
-    assert.match(source, /if \(htmlCount === 0 && hasStitchKey\)/);
+    assert.match(source, /htmlCount = await completeWithLocalFallbackDesign\(ctx, repo, stitchDir, prd, deviceType, warning\)/);
     assert.match(source, /DESIGN_STITCH_HTML_UNAVAILABLE/);
+    assert.match(source, /design_asset_warning/);
     assert.match(source, /SCREEN_MAP\.json/);
     assert.match(source, /UI_CONTRACT\.json/);
     assert.match(source, /Main Menu/);
+    assert.doesNotMatch(source, /Stop at design instead of continuing with local fallback/);
     assert.doesNotMatch(source, /agent will see empty/);
   });
 
-  it("preClaim fails fast on transient Stitch provider outages instead of burning download retries", () => {
+  it("preClaim falls back on transient Stitch provider outages instead of burning download retries", () => {
     const source = designPreclaimSource();
 
     assert.match(source, /function isStitchProviderUnavailable\(text: unknown\): boolean/);
@@ -142,8 +145,8 @@ describe("02-design step module", () => {
     assert.match(source, /const downloadAttempts = stitchProviderUnavailable \? 0 : \(batchGenerationCompleted \? 3 : 1\)/);
     assert.match(source, /skipping Stitch download recovery because the provider did not accept generation/);
     assert.match(source, /DESIGN_STITCH_SERVICE_UNAVAILABLE/);
-    assert.match(source, /failDesignPreclaim\(ctx, error, \{ terminal: stitchProviderUnavailable \}\)/);
-    assert.match(source, /UPDATE steps SET max_retries = retry_count WHERE id = \$1/);
+    assert.match(source, /completeWithLocalFallbackDesign\(ctx, repo, stitchDir, prd, deviceType, warning\)/);
+    assert.doesNotMatch(source, /Stop at design without download recovery/);
   });
 
   it("preClaim uses compact exact-count batch Stitch prompts and keeps per-screen recovery opt-in", () => {
@@ -165,6 +168,8 @@ describe("02-design step module", () => {
   it("preClaim does not reuse stale local fallback assets when a Stitch key is available", () => {
     const source = designPreclaimSource();
     assert.match(source, /const hasStitchKey = stitchApiKeyAvailable\(\)/);
+    assert.match(source, /STITCH_API_KEYS/);
+    assert.match(source, /STITCH_API_KEY_\\d\+/);
     assert.match(source, /manifestUsesLocalFallback\(stitchDir\) && hasStitchKey/);
     assert.match(source, /invalidating stale local fallback assets before real Stitch generation/);
     assert.match(source, /fs\.rmSync\(stitchDir, \{ recursive: true, force: true \}\)/);

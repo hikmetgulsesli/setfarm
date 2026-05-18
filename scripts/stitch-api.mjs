@@ -290,6 +290,43 @@ function readEnvKey(envPath, key) {
   return '';
 }
 
+function readEnvKeys(envPath) {
+  try {
+    const content = readFileSync(envPath, 'utf-8');
+    const values = [];
+    for (const line of content.split('\n')) {
+      const trimmed = line.trim().replace(/^export\s+/, '');
+      if (trimmed.startsWith('STITCH_API_KEYS=')) {
+        values.push(...splitApiKeyList(trimmed.slice('STITCH_API_KEYS='.length).replace(/^["']|["']$/g, '')));
+      }
+      const indexed = trimmed.match(/^STITCH_API_KEY_(\d+)=(.+)$/);
+      if (indexed) values.push(indexed[2].replace(/^["']|["']$/g, ''));
+    }
+    return values;
+  } catch {
+    return [];
+  }
+}
+
+function splitApiKeyList(raw) {
+  return String(raw || '')
+    .split(/[\n,; ]+/)
+    .map((value) => value.trim().replace(/^["']|["']$/g, ''))
+    .filter(Boolean);
+}
+
+function uniqueApiKeys(values) {
+  const seen = new Set();
+  const keys = [];
+  for (const value of values) {
+    const key = String(value || '').trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    keys.push(key);
+  }
+  return keys;
+}
+
 function envFileCandidates() {
   const home = process.env.HOME || process.env.USERPROFILE || '';
   const configured = process.env.SETFARM_ENV_DIR
@@ -313,23 +350,64 @@ function envFileCandidates() {
   ];
 }
 
-// Load API key from process env or Setfarm runtime env files.
-function loadApiKey() {
-  if (process.env.STITCH_API_KEY) return process.env.STITCH_API_KEY;
+// Load API keys from process env or Setfarm runtime env files.
+function loadApiKeys() {
+  const keys = [
+    ...splitApiKeyList(process.env.STITCH_API_KEYS),
+    ...Object.keys(process.env)
+      .filter((key) => /^STITCH_API_KEY_\d+$/.test(key))
+      .sort((a, b) => Number(a.replace(/\D+/g, '')) - Number(b.replace(/\D+/g, '')))
+      .map((key) => process.env[key]),
+    process.env.STITCH_API_KEY,
+  ];
   for (const envPath of envFileCandidates()) {
-    const value = readEnvKey(envPath, 'STITCH_API_KEY');
-    if (value) return value;
+    keys.push(...readEnvKeys(envPath));
+    keys.push(readEnvKey(envPath, 'STITCH_API_KEY'));
   }
+  const unique = uniqueApiKeys(keys);
+  if (unique.length > 0) return unique;
   throw new Error('STITCH_API_KEY not found in .env or environment');
 }
 
 const MCP_ENDPOINT = 'https://stitch.googleapis.com/mcp';
 let requestId = 0;
-let apiKey = null;
+let apiKeys = null;
+let apiKeyIndex = 0;
 
 function getApiKey() {
-  if (!apiKey) apiKey = loadApiKey();
-  return apiKey;
+  if (!apiKeys) apiKeys = loadApiKeys();
+  return apiKeys[apiKeyIndex];
+}
+
+function keyCount() {
+  if (!apiKeys) apiKeys = loadApiKeys();
+  return apiKeys.length;
+}
+
+function rotateKey(reason) {
+  if (keyCount() <= 1 || apiKeyIndex >= apiKeys.length - 1) return false;
+  apiKeyIndex += 1;
+  process.stderr.write(`Stitch API key fallback ${apiKeyIndex + 1}/${apiKeys.length}: ${redactDiagnosticText(reason).slice(0, 220)}\n`);
+  return true;
+}
+
+function shouldRotateForStitchFailure(text) {
+  const normalized = redactDiagnosticText(text).toLowerCase();
+  return (
+    /\bservice is currently unavailable\b/.test(normalized) ||
+    /\bservice unavailable\b/.test(normalized) ||
+    /\btemporarily unavailable\b/.test(normalized) ||
+    /\bresource exhausted\b/.test(normalized) ||
+    /\brate limit(?:ed)?\b/.test(normalized) ||
+    /\bquota\b/.test(normalized) ||
+    /\bpermission denied\b/.test(normalized) ||
+    /\bapi key not valid\b/.test(normalized) ||
+    /\bapi key expired\b/.test(normalized) ||
+    /\bunauthorized\b/.test(normalized) ||
+    /\bforbidden\b/.test(normalized) ||
+    /\b429\b/.test(normalized) ||
+    /\b503\b/.test(normalized)
+  );
 }
 
 function rpcTimeoutMs() {
@@ -348,26 +426,32 @@ async function rpc(method, params = {}) {
     params,
   };
 
-  const res = await fetch(MCP_ENDPOINT, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Goog-Api-Key': getApiKey(),
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(rpcTimeoutMs()),
-  });
+  for (;;) {
+    const res = await fetch(MCP_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': getApiKey(),
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(rpcTimeoutMs()),
+    });
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`HTTP ${res.status}: ${text}`);
-  }
+    if (!res.ok) {
+      const text = await res.text();
+      const message = `HTTP ${res.status}: ${text}`;
+      if (shouldRotateForStitchFailure(message) && rotateKey(message)) continue;
+      throw new Error(message);
+    }
 
-  const json = await res.json();
-  if (json.error) {
-    throw new Error(`RPC error ${json.error.code}: ${json.error.message}`);
+    const json = await res.json();
+    if (json.error) {
+      const message = `RPC error ${json.error.code}: ${json.error.message}`;
+      if (shouldRotateForStitchFailure(message) && rotateKey(message)) continue;
+      throw new Error(message);
+    }
+    return json.result;
   }
-  return json.result;
 }
 
 // Initialize MCP session
@@ -381,8 +465,33 @@ async function initialize() {
 
 // Call an MCP tool
 async function callTool(name, args) {
-  const result = await rpc('tools/call', { name, arguments: args });
-  return result;
+  for (;;) {
+    const result = await rpc('tools/call', { name, arguments: args });
+    const error = toolResultError(result);
+    if (error && shouldRotateForStitchFailure(error) && rotateKey(`${name} failed: ${error}`)) {
+      await initialize();
+      continue;
+    }
+    return result;
+  }
+}
+
+async function generateScreenFromText(args) {
+  for (;;) {
+    const result = await callTool('generate_screen_from_text', args);
+    assertToolResultOk(result, 'generate_screen_from_text');
+    const parsed = parseScreens(result);
+    if (parsed.screens.length === 0) {
+      const diagnostic = describeToolResultShape(result);
+      const reason = diagnostic?.textSample || JSON.stringify(diagnostic) || 'no screens returned';
+      const retryableEmptyResponse = shouldRotateForStitchFailure(reason) || /no screens returned|screens\.length === 0|generated 0/i.test(reason);
+      if (retryableEmptyResponse && rotateKey(reason)) {
+        await initialize();
+        continue;
+      }
+    }
+    return { result, ...parsed };
+  }
 }
 
 // Download a file from a signed URL (User-Agent + 429 retry + size validation)
@@ -537,16 +646,7 @@ const commands = {
       modelId,
     };
 
-    let result = await callTool('generate_screen_from_text', args);
-    assertToolResultOk(result, 'generate_screen_from_text');
-    let { screens, suggestions } = parseScreens(result);
-    // Quota exhaustion detection: Stitch returns 200 OK but no screens when credits are gone
-    if (screens.length === 0 && rotateKey('no screens returned — possible quota exhaustion')) {
-      await initialize(); // re-init MCP session with new key
-      result = await callTool('generate_screen_from_text', args);
-      assertToolResultOk(result, 'generate_screen_from_text');
-      ({ screens, suggestions } = parseScreens(result));
-    }
+    const { screens, suggestions } = await generateScreenFromText(args);
 // Save generated screens to local tracking file for dedup
     if (screens.length > 0) {
       // Write tracking to project-scoped file
@@ -759,9 +859,7 @@ const commands = {
 
     // 2. Generate screen
     const args = { projectId, prompt, deviceType, modelId };
-    const result = await callTool('generate_screen_from_text', args);
-    assertToolResultOk(result, 'generate_screen_from_text');
-    const { screens, suggestions } = parseScreens(result);
+    const { screens, suggestions } = await generateScreenFromText(args);
 // Save generated screens to local tracking file for dedup
 // AND eagerly download HTML+screenshot (Stitch deletes them after ~hours)
     if (screens.length > 0) {
@@ -1335,9 +1433,7 @@ const commands = {
     process.stderr.write("Generating all screens in single API call...\n");
     const startTime = Date.now();
 
-    const result = await callTool("generate_screen_from_text", { projectId, prompt, deviceType, modelId });
-    assertToolResultOk(result, "generate_screen_from_text");
-    const { screens } = parseScreens(result);
+    const { result, screens } = await generateScreenFromText({ projectId, prompt, deviceType, modelId });
 
     const elapsed = Math.round((Date.now() - startTime) / 1000);
     process.stderr.write("Generated " + screens.length + " screens in " + elapsed + "s\n");

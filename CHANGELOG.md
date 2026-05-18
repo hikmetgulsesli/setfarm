@@ -2,6 +2,12 @@
 
 This repository now keeps agent-facing operational notes in English only.
 
+## 2.3.78 - 2026-05-18
+
+- Added multi-key Stitch API loading from `STITCH_API_KEYS` and indexed `STITCH_API_KEY_N` environment values.
+- Rotated Stitch keys on retryable HTTP, RPC, MCP tool, and zero-screen generation failures before accepting a provider failure.
+- Kept design preclaim moving with complete generated design artifacts when Stitch remains unavailable after configured key recovery.
+
 ## 2.3.77 - 2026-05-18
 
 - Emitted workflow step identifiers in terminal failure events instead of internal database UUIDs.

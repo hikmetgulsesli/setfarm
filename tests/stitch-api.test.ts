@@ -48,7 +48,7 @@ describe("stitch-api partial list recovery", () => {
     assert.match(source, /result\?\.isError/);
     assert.match(source, /toolResultError\(result\)/);
     assert.match(source, /assertToolResultOk\(result, 'generate_screen_from_text'\)/);
-    assert.match(source, /assertToolResultOk\(result, "generate_screen_from_text"\)/);
+    assert.match(source, /async function generateScreenFromText\(args\)/);
   });
 
   it("includes redacted Stitch text diagnostics for zero-screen responses", () => {
@@ -60,6 +60,21 @@ describe("stitch-api partial list recovery", () => {
     assert.match(source, /textSample: textSample \|\| undefined/);
     assert.match(source, /0-screen Stitch response:/);
     assert.match(source, /diagnostic: screens\.length === 0 \? zeroScreenDiagnostic : undefined/);
+  });
+
+  it("supports rotating through backup Stitch API keys", () => {
+    const source = fs.readFileSync("scripts/stitch-api.mjs", "utf-8");
+
+    assert.match(source, /function loadApiKeys\(\)/);
+    assert.match(source, /STITCH_API_KEYS/);
+    assert.match(source, /\^STITCH_API_KEY_\\d\+\$/);
+    assert.match(source, /function rotateKey\(reason\)/);
+    assert.match(source, /function shouldRotateForStitchFailure\(text\)/);
+    assert.match(source, /async function generateScreenFromText\(args\)/);
+    assert.match(source, /retryableEmptyResponse/);
+    assert.match(source, /resource exhausted/);
+    assert.match(source, /temporarily unavailable/);
+    assert.match(source, /api key not valid/);
   });
 
   it("can force a fresh Stitch project after an empty cached project failure", () => {
