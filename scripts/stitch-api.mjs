@@ -415,6 +415,24 @@ function shouldRotateForStitchFailure(text) {
   );
 }
 
+function isTransientStitchGenerateFailure(text) {
+  const normalized = redactDiagnosticText(text).toLowerCase();
+  return (
+    shouldRotateForStitchFailure(text) ||
+    /\bservice is currently unavailable\b/.test(normalized) ||
+    /\bservice unavailable\b/.test(normalized) ||
+    /\btemporarily unavailable\b/.test(normalized) ||
+    /\bdeadline exceeded\b/.test(normalized) ||
+    /\b503\b/.test(normalized)
+  );
+}
+
+function intEnv(name, fallback, min, max) {
+  const raw = Number(process.env[name] || fallback);
+  if (!Number.isFinite(raw)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(raw)));
+}
+
 function rpcTimeoutMs() {
   const raw = Number(process.env.STITCH_RPC_TIMEOUT_MS || process.env.STITCH_TIMEOUT_MS || 600_000);
   if (!Number.isFinite(raw) || raw < 30_000) return 600_000;
@@ -1438,7 +1456,28 @@ const commands = {
     process.stderr.write("Generating all screens in single API call...\n");
     const startTime = Date.now();
 
-    const { result, screens } = await generateScreenFromText({ projectId, prompt, deviceType, modelId });
+    const retryAttempts = intEnv("STITCH_GENERATE_ALL_RETRY_ATTEMPTS", 3, 1, 5);
+    const retryBaseDelayMs = intEnv("STITCH_GENERATE_ALL_RETRY_BASE_DELAY_MS", 45000, 5000, 180000);
+    let result = null;
+    let screens = [];
+    for (let attempt = 1; attempt <= retryAttempts; attempt++) {
+      try {
+        const generated = await generateScreenFromText({ projectId, prompt, deviceType, modelId });
+        result = generated.result;
+        screens = generated.screens;
+        break;
+      } catch (e) {
+        const message = e?.message || String(e);
+        if (attempt < retryAttempts && isTransientStitchGenerateFailure(message)) {
+          const delayMs = retryBaseDelayMs * attempt;
+          process.stderr.write("Stitch generate transient failure on attempt " + attempt + "/" + retryAttempts + ": " + redactDiagnosticText(message).slice(0, 300) + "\n");
+          process.stderr.write("Retrying generate-all-screens in " + Math.round(delayMs / 1000) + "s...\n");
+          await new Promise(r => setTimeout(r, delayMs));
+          continue;
+        }
+        throw e;
+      }
+    }
 
     const elapsed = Math.round((Date.now() - startTime) / 1000);
     process.stderr.write("Generated " + screens.length + " screens in " + elapsed + "s\n");

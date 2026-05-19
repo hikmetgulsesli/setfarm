@@ -275,10 +275,23 @@ function surfaceActionsLine(surface: ProductSurface): string {
 
 function productDisplayName(prd: string): string {
   const text = String(prd || "");
-  const match = text.match(/(?:^|\n)\s*(?:PROJECT_NAME|project_name)\s*:?\s*"?([^"\n]+)"?/i);
-  if (match?.[1]?.trim()) return truncateForPrompt(match[1].trim(), 80);
-  const title = text.match(/(?:^|\n)#\s*PRD\s*:\s*(.+)$/i)?.[1] || text.match(/(?:^|\n)([A-Z][^\n]{3,80})\s+Product Contract\b/)?.[1];
-  return truncateForPrompt(String(title || "Product").replace(/\s*Product Contract\s*$/i, "").trim(), 80) || "Product";
+  const candidates = [
+    text.match(/(?:^|\n)\s*PROJECT_NAME\s*:?\s*["']?([^"'\n]+)["']?/i)?.[1],
+    text.match(/(?:^|\n)\s*project_name\s*:?\s*["']?([^"'\n]+)["']?/i)?.[1],
+    text.match(/(?:^|\n)#\s*PRD\s*:\s*(.+)$/i)?.[1],
+    text.match(/(?:^|\n)([A-Z][^\n]{3,80})\s+Product Contract\b/)?.[1],
+    text.match(/\bcalled\s+([A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*){0,5})\s+(?:that|which|to|for|,|\.)/i)?.[1],
+    text.match(/(?:^|\n)\s*-?\s*Overview\s*:\s*([A-Z][A-Za-z0-9]*(?:\s+[A-Z][A-Za-z0-9]*){0,5})\s+(?:turns|is|helps|lets|provides|manages)\b/i)?.[1],
+  ];
+  for (const candidate of candidates) {
+    const clean = String(candidate || "")
+      .replace(/\s*Product Contract\s*$/i, "")
+      .replace(/\s+for\s+.*$/i, "")
+      .trim();
+    const name = truncateForPrompt(clean, 80);
+    if (name && !/^product$/i.test(name)) return name;
+  }
+  return "Product";
 }
 
 function surfaceScreenSpec(surface: ProductSurface, index: number, projectName: string): string {
