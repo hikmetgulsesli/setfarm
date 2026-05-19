@@ -103,6 +103,13 @@ function rerunSetupRepoScaffold(ctx: ClaimContext, repo: string): boolean {
       encoding: "utf-8",
       timeout: 180000,
       stdio: "pipe",
+      env: {
+        ...process.env,
+        SETFARM_RUN_SLUG: ctx.context["run_slug"] || "",
+        SETFARM_GITHUB_REPO: ctx.context["github_repo"] || "",
+        SETFARM_APP_TITLE: ctx.context["app_title"] || displayName,
+        SETFARM_PACKAGE_NAME: ctx.context["package_name"] || "",
+      },
     });
     logger.info(`[module:setup-build preclaim] recovered missing package.json via setup-repo.sh`, { runId: ctx.runId });
     return fs.existsSync(path.join(repo, "package.json"));

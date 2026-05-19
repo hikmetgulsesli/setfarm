@@ -1,9 +1,5 @@
-import os from "node:os";
-import path from "node:path";
-import fs from "node:fs";
-import { execFileSync } from "node:child_process";
 import type { ParsedOutput, ValidationResult, CompleteContext } from "../types.js";
-import { logger } from "../../../lib/logger.js";
+import { resolveRuntimeIdentity, slugifyIdentity } from "../../runtime-identity.js";
 
 const VALID_TECH_STACKS = new Set([
   "vite-react",
@@ -13,66 +9,81 @@ const VALID_TECH_STACKS = new Set([
   "react-native",
 ]);
 
+const VALID_PLATFORMS = new Set(["web", "mobile", "desktop", "api", "cli", "game"]);
 const VALID_DB_REQUIRED = new Set(["none", "postgres", "sqlite"]);
 const VALID_UI_LANGUAGES = new Set(["english", "turkish"]);
-
+const VALID_BOOLEAN = new Set(["true", "false"]);
 const MIN_PRD_LENGTH = 2000;
-const MIN_SCREEN_COUNT = 3;
 
-// Normalize REPO path: (1) expand $HOME/~ literals (agents often paste the
-// template verbatim — fs.existsSync('$HOME/...') is always false otherwise),
-// (2) ensure $HOME/projects/ prefix, (3) if path collides with an existing
-// repo from a prior run, hard-reset to clean slate INCLUDING stitch/.
+const REQUIRED_PRD_SECTIONS = [
+  "Context And Goals",
+  "Data And State Contract",
+  "Behavioral And Action Contract",
+  "Product Surfaces",
+  "Validation And Error Strategy",
+  "System Contracts",
+  "Platform Contract",
+  "Testability Contract",
+  "Out Of Scope",
+];
+
+function boolValue(value: string): boolean {
+  return String(value || "").trim().toLowerCase() === "true";
+}
+
+function hasSection(prd: string, section: string): boolean {
+  const escaped = section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^##+\\s+(?:\\d+\\.\\s*)?${escaped}\\b`, "im").test(prd);
+}
+
+function countContractBlocks(prd: string, pattern: RegExp): number {
+  return (prd.match(pattern) || []).length;
+}
+
+function definedActionIds(prd: string): Set<string> {
+  const ids = new Set<string>();
+  for (const match of prd.matchAll(/^#{3,6}\s+ACTION:\s*(ACT_[A-Z0-9_]+)\b/gim)) {
+    ids.add(match[1]);
+  }
+  for (const match of prd.matchAll(/^\s*(?:[-*]\s*)?`?ACTION_ID`?\s*:\s*`?(ACT_[A-Z0-9_]+)\b/gim)) {
+    ids.add(match[1]);
+  }
+  return ids;
+}
+
+function permittedActionIds(prd: string): Set<string> {
+  const ids = new Set<string>();
+  for (const match of prd.matchAll(/^\s*[-*]\s*Permitted Actions:\s*(.+)$/gim)) {
+    for (const action of match[1].matchAll(/\bACT_[A-Z0-9_]+\b/g)) {
+      ids.add(action[0]);
+    }
+  }
+  return ids;
+}
+
+function hasRuntimeLeak(parsed: ParsedOutput, prd: string): string[] {
+  const errors: string[] = [];
+  const forbiddenKeys = ["repo", "branch", "github_repo", "run_slug", "package_name", "app_title", "prd_screen_count"];
+  for (const key of forbiddenKeys) {
+    if (String(parsed[key] || "").trim()) {
+      errors.push(`${key.toUpperCase()} is runtime-owned and must not be emitted by PLAN`);
+    }
+  }
+  if (/^##+\s+(?:\d+\.\s*)?Screens\b/im.test(prd) || /\|\s*#\s*\|\s*Screen/i.test(prd)) {
+    errors.push("PRD must not include a physical Screens table; use Product Surfaces only");
+  }
+  if (/\b(?:\/Users\/|\/home\/|\\Users\\|\$HOME\/|~\/|github\.com\/|feature-[-a-z0-9]+)/i.test(prd)) {
+    errors.push("PRD must not include repo paths, local directories, GitHub URLs, or branch names");
+  }
+  return errors;
+}
+
 export function normalize(parsed: ParsedOutput): void {
-  let repo = (parsed.repo || "").trim();
-  if (!repo) return;
-  const home = os.homedir();
-  const projectsDir = path.join(home, "projects");
-
-  // (1) Variable expansion — agent literal '$HOME/projects/foo' or '~/projects/foo'
-  if (repo.startsWith("$HOME/") || repo === "$HOME") {
-    repo = home + repo.slice(5);
-  } else if (repo.startsWith("~/") || repo === "~") {
-    repo = home + repo.slice(1);
-  } else if (repo.includes("$HOME")) {
-    repo = repo.replace(/\$HOME/g, home);
-  }
-  if (repo !== parsed.repo) {
-    parsed.repo = repo;
-    logger.warn(`[module:plan] REPO expanded: ${repo}`);
-  }
-
-  // (2) Path normalization — slug under $HOME/projects/ if absolute path is elsewhere
-  if (!repo.startsWith(projectsDir) && !path.isAbsolute(repo)) {
-    const slug = repo.split("/").filter(Boolean).pop() || "project";
-    repo = path.join(projectsDir, slug);
-    parsed.repo = repo;
-    logger.warn(`[module:plan] REPO normalized: ${repo}`);
-  }
-
-  // (2) Collision reset — if a previous run left this dir with >2 commits, wipe it
-  if (!fs.existsSync(repo) || !fs.existsSync(path.join(repo, ".git"))) return;
-  let commitCount = 0;
-  try {
-    commitCount = parseInt(execFileSync("git", ["rev-list", "--count", "HEAD"],
-      { cwd: repo, encoding: "utf-8", timeout: 5000 }).trim(), 10) || 0;
-  } catch { return; }
-  if (commitCount <= 2) return;
-
-  try {
-    execFileSync("git", ["checkout", "--orphan", "__fresh__"], { cwd: repo, timeout: 5000 });
-    execFileSync("git", ["rm", "-rf", "."], { cwd: repo, timeout: 5000, stdio: ["pipe", "pipe", "pipe"] });
-    execFileSync("git", ["clean", "-fdx"], { cwd: repo, timeout: 5000 });
-    // -fdx removes stitch/ AND .stitch dotfile too — fresh design generation
-    fs.writeFileSync(path.join(repo, "README.md"), "# Project\n");
-    execFileSync("git", ["add", "."], { cwd: repo, timeout: 5000 });
-    execFileSync("git", ["commit", "-m", "initial"], { cwd: repo, timeout: 5000 });
-    try { execFileSync("git", ["branch", "-D", "main"], { cwd: repo, timeout: 5000 }); } catch { /* main may not exist */ }
-    execFileSync("git", ["branch", "-m", "main"], { cwd: repo, timeout: 5000 });
-    logger.warn(`[module:plan] hard-reset existing repo (${commitCount} commits) — stitch will regenerate`);
-  } catch (e) {
-    logger.warn(`[module:plan] repo reset failed: ${String(e).slice(0, 200)}`);
-  }
+  if (parsed.project_slug) parsed.project_slug = slugifyIdentity(parsed.project_slug);
+  if (parsed.tech_stack) parsed.tech_stack = parsed.tech_stack.toLowerCase().trim();
+  if (parsed.platform) parsed.platform = parsed.platform.toLowerCase().trim();
+  if (parsed.db_required) parsed.db_required = parsed.db_required.toLowerCase().trim();
+  if (parsed.design_required) parsed.design_required = parsed.design_required.toLowerCase().trim();
 }
 
 export function validateOutput(parsed: ParsedOutput): ValidationResult {
@@ -82,14 +93,19 @@ export function validateOutput(parsed: ParsedOutput): ValidationResult {
     errors.push(`STATUS must be 'done' (got: '${parsed.status || ""}')`);
   }
 
-  const repo = parsed.repo || "";
-  if (!repo || !/^[/$~]/.test(repo)) {
-    errors.push(`REPO must be an absolute path (got: '${repo}')`);
+  const projectName = String(parsed.project_name || "").trim();
+  if (!projectName || projectName.length > 80) {
+    errors.push(`PROJECT_NAME must be non-empty and <=80 chars (got: '${projectName}')`);
   }
 
-  const branch = parsed.branch || "";
-  if (!branch || branch.length > 80 || /\s/.test(branch)) {
-    errors.push(`BRANCH must be non-empty, <=80 chars, no spaces (got: '${branch}')`);
+  const projectSlug = String(parsed.project_slug || "").trim();
+  if (!projectSlug || projectSlug !== slugifyIdentity(projectSlug) || projectSlug.length > 64) {
+    errors.push(`PROJECT_SLUG must be kebab-case ASCII and <=64 chars (got: '${projectSlug}')`);
+  }
+
+  const platform = (parsed.platform || "").toLowerCase();
+  if (!VALID_PLATFORMS.has(platform)) {
+    errors.push(`PLATFORM must be one of ${[...VALID_PLATFORMS].join(", ")} (got: '${platform}')`);
   }
 
   const techStack = (parsed.tech_stack || "").toLowerCase();
@@ -97,39 +113,86 @@ export function validateOutput(parsed: ParsedOutput): ValidationResult {
     errors.push(`TECH_STACK must be one of ${[...VALID_TECH_STACKS].join(", ")} (got: '${techStack}')`);
   }
 
-  const prd = parsed.prd || "";
-  if (prd.length < MIN_PRD_LENGTH) {
-    errors.push(`PRD must be >=${MIN_PRD_LENGTH} chars (got: ${prd.length})`);
-  }
-
-  const screenCountStr = parsed.prd_screen_count || "";
-  const screenCount = parseInt(screenCountStr, 10);
-  if (!Number.isFinite(screenCount) || screenCount < MIN_SCREEN_COUNT) {
-    errors.push(`PRD_SCREEN_COUNT must be integer >=${MIN_SCREEN_COUNT} (got: '${screenCountStr}')`);
-  }
-
   const dbRequired = (parsed.db_required || "").toLowerCase();
   if (!VALID_DB_REQUIRED.has(dbRequired)) {
     errors.push(`DB_REQUIRED must be one of ${[...VALID_DB_REQUIRED].join(", ")} (got: '${dbRequired}')`);
   }
 
+  const designRequired = (parsed.design_required || "").toLowerCase();
+  if (!VALID_BOOLEAN.has(designRequired)) {
+    errors.push(`DESIGN_REQUIRED must be true or false (got: '${designRequired}')`);
+  }
+
   const uiLanguage = (parsed.ui_language || "").toLowerCase();
   if (!VALID_UI_LANGUAGES.has(uiLanguage)) {
-    errors.push(`UI_LANGUAGE must be one of ${[...VALID_UI_LANGUAGES].join(", ")} (got: '${uiLanguage}')`);
+    errors.push(`UI_LANGUAGE must be one of ${[...VALID_UI_LANGUAGES].join(", ")} (got: '${parsed.ui_language || ""}')`);
   }
+
+  const prd = parsed.prd || "";
+  if (prd.length < MIN_PRD_LENGTH) {
+    errors.push(`PRD must be >=${MIN_PRD_LENGTH} chars (got: ${prd.length})`);
+  }
+
+  for (const section of REQUIRED_PRD_SECTIONS) {
+    if (!hasSection(prd, section)) errors.push(`PRD missing section: ${section}`);
+  }
+
+  if (boolValue(designRequired)) {
+    if (countContractBlocks(prd, /\bSURF_[A-Z0-9_]+\b/g) === 0 && !/\bSURFACE_ID\s*:/i.test(prd)) {
+      errors.push("DESIGN_REQUIRED=true requires Product Surfaces with SURF_* identifiers");
+    }
+    if (!/\bcontrol_hint\b|\bControl Hint\b|\bPermitted Actions\b/i.test(prd)) {
+      errors.push("Product Surfaces must include permitted action/control hints for Stitch");
+    }
+  }
+
+  const definedActions = definedActionIds(prd);
+  if (definedActions.size === 0 && countContractBlocks(prd, /\bACT_[A-Z0-9_]+\b/g) === 0 && !/\bACTION_ID\s*:/i.test(prd)) {
+    errors.push("PRD must include Behavioral And Action Contract entries with ACT_* identifiers");
+  }
+
+  if (boolValue(designRequired)) {
+    const missing = [...permittedActionIds(prd)].filter(actionId => !definedActions.has(actionId));
+    if (missing.length > 0) {
+      errors.push(`Every permitted action must have a Behavioral And Action Contract entry. Missing: ${missing.slice(0, 8).join(", ")}`);
+    }
+  }
+
+  if (!/##+\s+(?:\d+\.\s*)?Out Of Scope\b[\s\S]*?(?:\n[-*]\s+\S|\nNo\s+)/i.test(prd)) {
+    errors.push("Out Of Scope must include at least one explicit deny item");
+  }
+
+  errors.push(...hasRuntimeLeak(parsed, prd));
 
   return { ok: errors.length === 0, errors };
 }
 
-// Side effect: stamp parsed values into the shared run context so downstream
-// steps (design, stories, setup) read them from context["repo"] etc.
 export async function onComplete(ctx: CompleteContext): Promise<void> {
-  const { parsed, context } = ctx;
-  context["repo"] = parsed.repo || "";
-  context["branch"] = parsed.branch || "";
+  const { parsed, context, runId } = ctx;
+  normalize(parsed);
+
+  const identity = resolveRuntimeIdentity({
+    runId,
+    projectName: parsed.project_name,
+    projectSlug: parsed.project_slug,
+    explicitRepo: context["repo"] || context["REPO"] || "",
+    explicitBranch: context["branch"] || context["BRANCH"] || "",
+    explicitGithubRepo: context["github_repo"] || context["GITHUB_REPO"] || "",
+  });
+
+  context["project_name"] = identity.projectName;
+  context["project_display_name"] = identity.projectName;
+  context["project_slug"] = identity.projectSlug;
+  context["run_slug"] = identity.runSlug;
+  context["repo"] = identity.repo;
+  context["branch"] = identity.branch;
+  context["github_repo"] = identity.githubRepo;
+  context["app_title"] = identity.appTitle;
+  context["package_name"] = identity.packageName;
+  context["platform"] = (parsed.platform || "").toLowerCase();
   context["tech_stack"] = (parsed.tech_stack || "").toLowerCase();
   context["prd"] = parsed.prd || "";
-  context["prd_screen_count"] = parsed.prd_screen_count || "";
   context["db_required"] = (parsed.db_required || "").toLowerCase();
+  context["design_required"] = (parsed.design_required || "").toLowerCase();
   context["ui_language"] = parsed.ui_language || "English";
 }

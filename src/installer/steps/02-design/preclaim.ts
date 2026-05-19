@@ -2,7 +2,6 @@ import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
 import { execFile } from "node:child_process";
-import { deflateSync } from "node:zlib";
 import type { ClaimContext } from "../types.js";
 import { logger } from "../../../lib/logger.js";
 import { now, pgGet, pgRun } from "../../../db-pg.js";
@@ -47,6 +46,10 @@ function isStitchProviderUnavailable(text: unknown): boolean {
     /\bquota\b/.test(normalized) ||
     /\b503\b/.test(normalized)
   );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function execFileText(command: string, args: string[], options: ExecFileTextOptions = {}): Promise<string> {
@@ -136,28 +139,6 @@ async function failDesignPreclaim(ctx: ClaimContext, error: string, options: { t
   await failStep(step.id, safeError);
 }
 
-async function completeWithLocalFallbackDesign(
-  ctx: ClaimContext,
-  repo: string,
-  stitchDir: string,
-  prd: string,
-  deviceType: string,
-  reason: string,
-): Promise<number> {
-  const safeReason = redactDiagnosticText(reason).slice(0, 800);
-  await recordPreClaimProgress(ctx, `Design preclaim: using local design fallback because Stitch is unavailable${safeReason ? `: ${safeReason}` : ""}`);
-  const fallbackScreens = createFallbackDesignAssets(repo, stitchDir, prd, deviceType);
-  ctx.context["stitch_project_id"] = ctx.context["stitch_project_id"] || "local-fallback";
-  ctx.context["screens_generated"] = String(fallbackScreens.length);
-  ctx.context["screen_map"] = JSON.stringify(fallbackScreens);
-  ctx.context["design_asset_warning"] = safeReason || "Stitch unavailable; generated local fallback design assets.";
-  logger.warn(`[module:design preclaim] Stitch unavailable; generated ${fallbackScreens.length} local fallback design assets`, {
-    runId: ctx.runId,
-  });
-  await recordPreClaimProgress(ctx, `Design preclaim: generated fallback design assets (${fallbackScreens.length} screens)`);
-  return fallbackScreens.length;
-}
-
 function isValidStitchHtml(filePath: string): boolean {
   try {
     if (!fs.existsSync(filePath)) return false;
@@ -214,6 +195,15 @@ export function manifestUsesLocalFallback(stitchDir: string): boolean {
   }
 }
 
+function hasValidStitchDesignMarkdown(stitchDir: string): boolean {
+  try {
+    const designPath = path.join(stitchDir, "DESIGN.md");
+    return fs.existsSync(designPath) && fs.statSync(designPath).size >= 500;
+  } catch {
+    return false;
+  }
+}
+
 export function stitchApiKeyAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
   if (String(env.STITCH_API_KEY || "").trim()) return true;
   if (String(env.STITCH_API_KEYS || "").trim()) return true;
@@ -248,118 +238,59 @@ export function stitchApiKeyAvailable(env: NodeJS.ProcessEnv = process.env): boo
   return false;
 }
 
-type ScreenMapEntry = { screenId: string; name: string; type: string; description: string };
+type ScreenMapEntry = { screenId: string; name: string; type: string; description: string; surfaceIds?: string[] };
+type ProductSurface = {
+  surfaceId: string;
+  name: string;
+  purpose: string;
+  dataEntitiesBound: string;
+  coreContent: string;
+  permittedActions: Array<{ actionId: string; controlHint: string }>;
+  entryPoints: string;
+  exitRules: string;
+  authRequired: string;
+  designGuidance: string;
+};
 
-function crc32(buffer: Buffer): number {
-  let crc = 0xffffffff;
-  for (const byte of buffer) {
-    crc ^= byte;
-    for (let bit = 0; bit < 8; bit++) {
-      crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
-    }
-  }
-  return (crc ^ 0xffffffff) >>> 0;
+function truncateForPrompt(value: string, max = 420): string {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (text.length <= max) return text;
+  return text.slice(0, Math.max(0, max - 1)).trimEnd() + "…";
 }
 
-function pngChunk(type: string, data: Buffer): Buffer {
-  const typeBuffer = Buffer.from(type, "ascii");
-  const length = Buffer.alloc(4);
-  length.writeUInt32BE(data.length, 0);
-  const crc = Buffer.alloc(4);
-  crc.writeUInt32BE(crc32(Buffer.concat([typeBuffer, data])), 0);
-  return Buffer.concat([length, typeBuffer, data, crc]);
+function surfaceCaption(surface: ProductSurface): string {
+  const content = surface.coreContent || surface.purpose || `${surface.name} workflow`;
+  return truncateForPrompt(`${surface.name}: ${content}`, 180);
 }
 
-function fillRect(
-  pixels: Buffer,
-  width: number,
-  height: number,
-  x: number,
-  y: number,
-  rectWidth: number,
-  rectHeight: number,
-  color: [number, number, number, number],
-): void {
-  const x1 = Math.max(0, Math.floor(x));
-  const y1 = Math.max(0, Math.floor(y));
-  const x2 = Math.min(width, Math.floor(x + rectWidth));
-  const y2 = Math.min(height, Math.floor(y + rectHeight));
-  for (let yy = y1; yy < y2; yy++) {
-    const rowOffset = yy * width * 4;
-    for (let xx = x1; xx < x2; xx++) {
-      const offset = rowOffset + xx * 4;
-      pixels[offset] = color[0];
-      pixels[offset + 1] = color[1];
-      pixels[offset + 2] = color[2];
-      pixels[offset + 3] = color[3];
-    }
-  }
+function surfaceActionsLine(surface: ProductSurface): string {
+  return surface.permittedActions.map((action) => `${action.actionId} as ${action.controlHint}`).join(", ") || "No explicit actions";
 }
 
-function writeFallbackPng(filePath: string, screen: ScreenMapEntry, index: number): void {
-  const width = 960;
-  const height = 540;
-  const pixels = Buffer.alloc(width * height * 4);
-  fillRect(pixels, width, height, 0, 0, width, height, [11, 16, 32, 255]);
-  fillRect(pixels, width, height, 32, 28, width - 64, 64, [21, 27, 45, 255]);
-  fillRect(pixels, width, height, 52, 48, 180, 8, [32, 227, 178, 255]);
-  fillRect(pixels, width, height, width - 212, 48, 160, 8, [255, 184, 107, 255]);
-
-  const isGameLike = /game|play|board|canvas/i.test(`${screen.name} ${screen.type}`);
-  const isDetailLike = /detail|edit|create|form|settings/i.test(`${screen.name} ${screen.type}`);
-  if (isGameLike) {
-    fillRect(pixels, width, height, 80, 128, 560, 344, [8, 13, 25, 255]);
-    for (let row = 0; row < 10; row++) {
-      for (let col = 0; col < 14; col++) {
-        const active = (row + col + index) % 5 === 0;
-        fillRect(pixels, width, height, 104 + col * 36, 152 + row * 30, 30, 24, active ? [32, 227, 178, 255] : [32, 40, 63, 255]);
-      }
-    }
-    fillRect(pixels, width, height, 684, 128, 196, 92, [21, 27, 45, 255]);
-    fillRect(pixels, width, height, 684, 244, 196, 228, [21, 27, 45, 255]);
-  } else if (isDetailLike) {
-    fillRect(pixels, width, height, 72, 128, 312, 336, [21, 27, 45, 255]);
-    fillRect(pixels, width, height, 416, 128, 472, 336, [21, 27, 45, 255]);
-    for (let row = 0; row < 6; row++) {
-      fillRect(pixels, width, height, 448, 164 + row * 44, 352, 12, [32, 40, 63, 255]);
-      fillRect(pixels, width, height, 448, 184 + row * 44, 260, 8, [155, 168, 199, 255]);
-    }
-    fillRect(pixels, width, height, 692, 412, 132, 32, [32, 227, 178, 255]);
-  } else {
-    for (let col = 0; col < 3; col++) {
-      fillRect(pixels, width, height, 72 + col * 288, 128, 248, 132, [21, 27, 45, 255]);
-      fillRect(pixels, width, height, 96 + col * 288, 164, 116, 10, [32, 227, 178, 255]);
-      fillRect(pixels, width, height, 96 + col * 288, 192, 176, 8, [155, 168, 199, 255]);
-    }
-    fillRect(pixels, width, height, 72, 300, 816, 164, [21, 27, 45, 255]);
-    for (let row = 0; row < 4; row++) {
-      fillRect(pixels, width, height, 104, 334 + row * 28, 720 - row * 44, 8, [32, 40, 63, 255]);
-    }
-  }
-
-  const scanlineLength = 1 + width * 4;
-  const raw = Buffer.alloc(scanlineLength * height);
-  for (let y = 0; y < height; y++) {
-    raw[y * scanlineLength] = 0;
-    pixels.copy(raw, y * scanlineLength + 1, y * width * 4, (y + 1) * width * 4);
-  }
-
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(width, 0);
-  ihdr.writeUInt32BE(height, 4);
-  ihdr[8] = 8;
-  ihdr[9] = 6;
-  ihdr[10] = 0;
-  ihdr[11] = 0;
-  ihdr[12] = 0;
-
-  fs.writeFileSync(filePath, Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    pngChunk("IHDR", ihdr),
-    pngChunk("IDAT", deflateSync(raw)),
-    pngChunk("IEND", Buffer.alloc(0)),
-  ]));
+function surfaceScreenSpec(surface: ProductSurface, index: number): string {
+  return [
+    `SCREEN_SPEC_${index + 1}:`,
+    `- exact_screen_title: ${surface.name} - SurfaceGate Desk`,
+    `- surface_id: ${surface.surfaceId}`,
+    `- unique_canvas_caption: ${surfaceCaption(surface)}`,
+    `- purpose: ${truncateForPrompt(surface.purpose)}`,
+    `- required_content: ${truncateForPrompt(surface.coreContent || "Use the Product Surface purpose as content.")}`,
+    `- data_entities: ${truncateForPrompt(surface.dataEntitiesBound || "not specified", 220)}`,
+    `- visible_actions: ${surfaceActionsLine(surface)}`,
+    `- entry_exit_rules: ${truncateForPrompt(`${surface.entryPoints || "not specified"} -> ${surface.exitRules || "not specified"}`, 260)}`,
+    `- design_guidance: ${truncateForPrompt(surface.designGuidance || "Follow the scoped product contract.", 320)}`,
+  ].join("\n");
 }
+
+type SurfaceVerificationResult = {
+  screenMap: ScreenMapEntry[];
+  missing: string[];
+  unexpected: string[];
+  duplicates: string[];
+  surfaces: ProductSurface[];
+  missingSurfaces: ProductSurface[];
+  inlineCovered: string[];
+};
 
 function normalizeScreenName(value: string): string {
   return String(value || "")
@@ -378,7 +309,7 @@ function normalizeScreenName(value: string): string {
     .trim();
 }
 
-function screenNameMatches(expectedName: string, actualName: string): boolean {
+function surfaceNameMatches(expectedName: string, actualName: string): boolean {
   const expected = normalizeScreenName(expectedName);
   const actual = normalizeScreenName(actualName);
   if (!expected || !actual) return false;
@@ -392,59 +323,280 @@ function screenNameMatches(expectedName: string, actualName: string): boolean {
   return expectedTokens.every((token) => actualTokens.has(token));
 }
 
-function parsePrdScreenRows(prd: string): Array<{ name: string; type: string; description: string }> {
-  const rows: Array<{ name: string; type: string; description: string }> = [];
-  const lines = String(prd || "").split(/\r?\n/);
-  let inScreens = false;
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (/^##+\s+Screens\b/i.test(trimmed)) {
-      inScreens = true;
-      continue;
-    }
-    if (inScreens && /^##+\s+/.test(trimmed)) break;
-    if (!inScreens || !/^\s*\|/.test(line) || /^\s*\|\s*-+/.test(line)) continue;
-    const cols = line.split("|").map((v) => v.trim()).filter(Boolean);
-    if (cols.length < 4 || /^#$/i.test(cols[0]) || /screen name/i.test(cols[1])) continue;
-    rows.push({ name: cols[1], type: cols[2], description: cols.slice(3).join(" ") });
-  }
-  return rows;
+function splitCsvish(value: string): string[] {
+  return String(value || "")
+    .split(/[,;]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
-function reconcileScreenMapToPrd(
-  screenMap: ScreenMapEntry[],
-  prd: string,
-): { screenMap: ScreenMapEntry[]; missing: string[]; dropped: string[]; duplicates: string[] } {
-  const rows = parsePrdScreenRows(prd);
-  if (rows.length === 0) return { screenMap, missing: [], dropped: [], duplicates: [] };
+function normalizeSurfaceId(value: string, fallback: string): string {
+  const clean = String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  if (clean.startsWith("SURF_") && clean.length > 5) return clean;
+  const fallbackClean = String(fallback || "SURFACE").toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  return `SURF_${fallbackClean || "SURFACE"}`;
+}
 
-  const next: ScreenMapEntry[] = [];
-  const missing: string[] = [];
-  const usedIds = new Set<string>();
-  const duplicates: string[] = [];
-  for (const row of rows) {
-    const matches = screenMap.filter((screen) => screenNameMatches(row.name, screen.name));
-    const chosen = matches.find((screen) => !usedIds.has(screen.screenId)) || matches[0];
-    if (!chosen) {
-      missing.push(row.name);
+function parsePermittedActions(value: string): Array<{ actionId: string; controlHint: string }> {
+  const actions: Array<{ actionId: string; controlHint: string }> = [];
+  const actionRe = /\b(ACT_[A-Z0-9_]+)\b(?:[^()\n]*\((?:control_hint|Control Hint)\s*:\s*([^)]+)\))?/g;
+  let match: RegExpExecArray | null;
+  while ((match = actionRe.exec(value))) {
+    actions.push({ actionId: match[1], controlHint: (match[2] || "primary_button").trim() });
+  }
+  if (actions.length > 0) return actions;
+  return splitCsvish(value).map((item) => {
+    const id = item.match(/\b(ACT_[A-Z0-9_]+)\b/)?.[1] || "";
+    const hint = item.match(/\b(?:control_hint|Control Hint)\s*:\s*([a-z_]+)/i)?.[1] || "primary_button";
+    return id ? { actionId: id, controlHint: hint } : null;
+  }).filter(Boolean) as Array<{ actionId: string; controlHint: string }>;
+}
+
+function assignSurfaceField(surface: ProductSurface, key: string, value: string): void {
+  const normalizedKey = key.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  if (normalizedKey === "surface id" || normalizedKey === "surface") surface.surfaceId = normalizeSurfaceId(value, surface.name);
+  else if (normalizedKey === "name") surface.name = value.trim() || surface.name;
+  else if (normalizedKey === "purpose") surface.purpose = value.trim();
+  else if (normalizedKey === "data entities bound" || normalizedKey === "data entities") surface.dataEntitiesBound = value.trim();
+  else if (normalizedKey === "core content") surface.coreContent = value.trim();
+  else if (normalizedKey === "permitted actions" || normalizedKey === "actions") surface.permittedActions = parsePermittedActions(value);
+  else if (normalizedKey === "entry points") surface.entryPoints = value.trim();
+  else if (normalizedKey === "exit guard rules" || normalizedKey === "exit rules" || normalizedKey === "exit points") surface.exitRules = value.trim();
+  else if (normalizedKey === "auth required") surface.authRequired = value.trim();
+  else if (normalizedKey === "design guidance") surface.designGuidance = value.trim();
+}
+
+export function parseProductSurfaces(prd: string): ProductSurface[] {
+  const surfaces: ProductSurface[] = [];
+  const lines = String(prd || "").split(/\r?\n/);
+  let inSurfaces = false;
+  let current: ProductSurface | null = null;
+  const pushCurrent = () => {
+    if (!current) return;
+    current.surfaceId = normalizeSurfaceId(current.surfaceId, current.name);
+    if (!current.name) current.name = current.surfaceId.replace(/^SURF_/, "").replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (m) => m.toUpperCase());
+    if (!current.purpose) current.purpose = `${current.name} product surface`;
+    surfaces.push(current);
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (/^##+\s+(?:\d+\.\s*)?Product Surfaces\b/i.test(trimmed)) {
+      inSurfaces = true;
       continue;
     }
-    if (matches.length > 1) duplicates.push(row.name);
-    usedIds.add(chosen.screenId);
+    if (inSurfaces && /^##\s+/.test(trimmed)) break;
+    if (!inSurfaces) continue;
+
+    const heading = trimmed.match(/^#{3,5}\s+SURFACE\s*:\s*([A-Z0-9_ -]+)(?:\s*[-:]\s*(.+))?$/i);
+    const bulletId = trimmed.match(/^[-*]\s*(?:SURFACE_ID|Surface ID)\s*:\s*([A-Z0-9_ -]+)$/i);
+    if (heading || bulletId) {
+      pushCurrent();
+      const idRaw = heading?.[1] || bulletId?.[1] || "";
+      const nameRaw = heading?.[2] || idRaw;
+      current = {
+        surfaceId: normalizeSurfaceId(idRaw, nameRaw),
+        name: nameRaw.replace(/^SURF[_ -]?/i, "").replace(/[_-]+/g, " ").trim(),
+        purpose: "",
+        dataEntitiesBound: "",
+        coreContent: "",
+        permittedActions: [],
+        entryPoints: "",
+        exitRules: "",
+        authRequired: "",
+        designGuidance: "",
+      };
+      continue;
+    }
+
+    if (!current) continue;
+    const field = trimmed.match(/^[-*]\s*([^:]+):\s*(.+)$/);
+    if (field) assignSurfaceField(current, field[1], field[2]);
+  }
+  pushCurrent();
+
+  const seen = new Set<string>();
+  return surfaces.filter((surface) => {
+    if (seen.has(surface.surfaceId)) return false;
+    seen.add(surface.surfaceId);
+    return true;
+  });
+}
+
+function surfaceSearchText(surface: ProductSurface): string {
+  return [
+    surface.surfaceId,
+    surface.name,
+    surface.purpose,
+    surface.dataEntitiesBound,
+    surface.coreContent,
+    surface.entryPoints,
+    surface.exitRules,
+    surface.designGuidance,
+    surface.permittedActions.map((action) => `${action.actionId} ${action.controlHint}`).join(" "),
+  ].join(" ");
+}
+
+export function surfaceCoverageMode(surface: ProductSurface): "standalone_required" | "inline_allowed" {
+  const text = normalizeScreenName(surfaceSearchText(surface));
+  const inlineStateTerms = [
+    "empty",
+    "error",
+    "loading",
+    "retry",
+    "recover",
+    "recovery",
+    "failed",
+    "failure",
+    "validation",
+    "fallback",
+    "offline",
+    "corrupt",
+    "unauthorized",
+    "permission",
+    "confirmation",
+  ];
+  return inlineStateTerms.some((term) => text.includes(term)) ? "inline_allowed" : "standalone_required";
+}
+
+function htmlTextForInlineCoverage(stitchDir: string, screenMap: ScreenMapEntry[]): string {
+  const parts = screenMap.map((screen) => `${screen.name} ${screen.type} ${screen.description}`);
+  if (!stitchDir || !fs.existsSync(stitchDir)) return normalizeScreenName(parts.join(" "));
+  try {
+    for (const file of fs.readdirSync(stitchDir).filter((name) => name.endsWith(".html") && !name.startsWith("."))) {
+      const filePath = path.join(stitchDir, file);
+      if (!isValidStitchHtml(filePath)) continue;
+      const html = fs.readFileSync(filePath, "utf-8")
+        .replace(/<script[\s\S]*?<\/script>/gi, " ")
+        .replace(/<style[\s\S]*?<\/style>/gi, " ")
+        .replace(/<[^>]+>/g, " ");
+      parts.push(html.slice(0, 200000));
+    }
+  } catch {}
+  return normalizeScreenName(parts.join(" "));
+}
+
+function inlineCoverageEvidence(surface: ProductSurface, stitchDir: string, screenMap: ScreenMapEntry[]): string | null {
+  if (surfaceCoverageMode(surface) !== "inline_allowed") return null;
+  const designText = htmlTextForInlineCoverage(stitchDir, screenMap);
+  if (!designText) return null;
+  const surfaceText = normalizeScreenName(surfaceSearchText(surface));
+  const evidenceTerms = [
+    "empty",
+    "error",
+    "loading",
+    "retry",
+    "recover",
+    "recovery",
+    "failed",
+    "failure",
+    "validation",
+    "fallback",
+    "offline",
+    "corrupt",
+    "clear",
+    "reset",
+    "create",
+  ].filter((term) => surfaceText.includes(term));
+  const uniqueTerms = [...new Set(evidenceTerms)];
+  if (uniqueTerms.length === 0) return null;
+  const hits = uniqueTerms.filter((term) => designText.includes(term));
+  const requiredHits = Math.min(2, uniqueTerms.length);
+  return hits.length >= requiredHits ? `${surface.surfaceId} inline evidence: ${hits.slice(0, 5).join(",")}` : null;
+}
+
+function tokenSet(value: string): Set<string> {
+  const ignored = new Set(["the", "and", "for", "with", "from", "this", "that", "screen", "surface", "page", "view", "state", "app", "product", "user", "users"]);
+  return new Set(normalizeScreenName(value).split(" ").filter((token) => token.length > 2 && !ignored.has(token)));
+}
+
+function matchSurfacesForScreen(screen: ScreenMapEntry, surfaces: ProductSurface[]): ProductSurface[] {
+  const screenText = `${screen.name} ${screen.type} ${screen.description}`;
+  const screenTokens = tokenSet(screenText);
+  const exactMatches: ProductSurface[] = [];
+  for (const surface of surfaces) {
+    if (surfaceNameMatches(surface.name, screen.name) || normalizeScreenName(screenText).includes(normalizeScreenName(surface.surfaceId.replace(/^SURF_/, "")))) {
+      exactMatches.push(surface);
+    }
+  }
+  if (exactMatches.length > 0) return exactMatches;
+
+  const matches: ProductSurface[] = [];
+  for (const surface of surfaces) {
+    if (surfaceCoverageMode(surface) === "inline_allowed") {
+      continue;
+    }
+    const surfaceTokens = tokenSet(surfaceSearchText(surface));
+    let hits = 0;
+    for (const token of surfaceTokens) if (screenTokens.has(token)) hits++;
+    if (hits >= Math.min(2, Math.max(1, surfaceTokens.size))) matches.push(surface);
+  }
+  return matches;
+}
+
+function screenLooksOutOfScope(screen: ScreenMapEntry, prd: string): boolean {
+  const text = normalizeScreenName(`${screen.name} ${screen.type} ${screen.description}`);
+  const prdText = normalizeScreenName(prd);
+  const forbidden = [
+    "marketing landing",
+    "pricing",
+    "checkout",
+    "shopping cart",
+    "admin panel",
+    "documentation",
+    "requirements",
+    "prd",
+    "sitemap",
+    "blog",
+  ];
+  return forbidden.some((term) => text.includes(term) && !prdText.includes(term));
+}
+
+export function verifyScreenMapToSurfaces(
+  screenMap: ScreenMapEntry[],
+  prd: string,
+  options: { stitchDir?: string } = {},
+): SurfaceVerificationResult {
+  const surfaces = parseProductSurfaces(prd);
+  if (surfaces.length === 0) return { screenMap, missing: [], unexpected: [], duplicates: [], surfaces, missingSurfaces: [], inlineCovered: [] };
+
+  const next: ScreenMapEntry[] = [];
+  const missingSurfaceIds = new Set(surfaces.map((surface) => surface.surfaceId));
+  const unexpected: string[] = [];
+  const usedIds = new Set<string>();
+  const duplicates: string[] = [];
+
+  for (const screen of screenMap) {
+    const matches = matchSurfacesForScreen(screen, surfaces);
+    if (matches.length === 0 || screenLooksOutOfScope(screen, prd)) {
+      unexpected.push(screen.name || screen.screenId);
+      continue;
+    }
+    if (usedIds.has(screen.screenId)) duplicates.push(screen.name || screen.screenId);
+    usedIds.add(screen.screenId);
+    for (const match of matches) missingSurfaceIds.delete(match.surfaceId);
     next.push({
-      ...chosen,
-      name: row.name,
-      type: chosen.type || row.type || classifyScreenType(row.name),
-      description: chosen.description || row.description || `${row.name} screen`,
+      ...screen,
+      type: screen.type || classifyScreenType(screen.name),
+      description: screen.description || `${screen.name} screen`,
+      surfaceIds: matches.map((surface) => surface.surfaceId),
     });
   }
 
-  const dropped = screenMap
-    .filter((screen) => !usedIds.has(screen.screenId) || !rows.some((row) => screenNameMatches(row.name, screen.name)))
-    .map((screen) => screen.name)
-    .filter(Boolean);
+  const missingSurfaces: ProductSurface[] = [];
+  const inlineCovered: string[] = [];
+  for (const surface of surfaces.filter((item) => missingSurfaceIds.has(item.surfaceId))) {
+    const evidence = options.stitchDir ? inlineCoverageEvidence(surface, options.stitchDir, next) : null;
+    if (evidence) {
+      inlineCovered.push(evidence);
+      continue;
+    }
+    missingSurfaces.push(surface);
+  }
 
-  return { screenMap: next, missing, dropped, duplicates };
+  const missing = missingSurfaces.map((surface) => `${surface.surfaceId} ${surface.name}`.trim());
+
+  return { screenMap: next, missing, unexpected, duplicates, surfaces, missingSurfaces, inlineCovered };
 }
 
 function rewriteScreenArtifactsForScreenMap(stitchDir: string, screenMap: ScreenMapEntry[], deviceType: string): void {
@@ -465,6 +617,7 @@ function rewriteScreenArtifactsForScreenMap(stitchDir: string, screenMap: Screen
         title: screen.name,
         htmlFile: `${screen.screenId}.html`,
         deviceType: existing.deviceType || existing.device_type || deviceType,
+        surfaceIds: screen.surfaceIds || existing.surfaceIds || [],
       };
     }).filter((entry) => allowedIds.has(String(entry.screenId)));
     fs.writeFileSync(manifestPath, JSON.stringify(nextManifest, null, 2));
@@ -474,103 +627,196 @@ function rewriteScreenArtifactsForScreenMap(stitchDir: string, screenMap: Screen
   }
 }
 
-function markdownCell(value: unknown): string {
-  return String(value || "")
-    .replace(/\|/g, "/")
-    .replace(/\s+/g, " ")
-    .trim();
-}
+function buildDesignBrief(prd: string, deviceType: string, uiLanguage: string): string {
+  const surfaces = parseProductSurfaces(prd);
+  const surfaceInventory = surfaces.map((surface, index) => [
+    `${index + 1}. ${surface.surfaceId} - ${surface.name}`,
+    `   Purpose: ${surface.purpose}`,
+    `   Data: ${surface.dataEntitiesBound || "not specified"}`,
+    `   Core content: ${surface.coreContent || "not specified"}`,
+    `   Actions: ${surface.permittedActions.map((action) => `${action.actionId} (${action.controlHint})`).join(", ") || "none"}`,
+    `   Entry/exit: ${surface.entryPoints || "not specified"} -> ${surface.exitRules || "not specified"}`,
+    `   Guidance: ${surface.designGuidance || "follow the product contract"}`,
+  ].join("\n")).join("\n\n");
 
-function writeDesignMarkdownBrief(stitchDir: string, screenMap: ScreenMapEntry[], prd: string, repo: string): void {
-  try {
-    if (!stitchDir || screenMap.length === 0) return;
-    fs.mkdirSync(stitchDir, { recursive: true });
-    const appName = inferAppName(prd, repo);
-    const screenRows = screenMap
-      .map((screen, index) => `| ${index + 1} | ${markdownCell(screen.screenId)} | ${markdownCell(screen.name)} | ${markdownCell(screen.type)} | ${markdownCell(screen.description)} |`)
-      .join("\n");
-    const content = [
-      `# ${appName} Design`,
-      "",
-      "Generated by Setfarm design preclaim from Stitch artifacts.",
-      "",
-      "## Screens",
-      "| # | Screen ID | Name | Type | Description |",
-      "|---|-----------|------|------|-------------|",
-      screenRows,
-      "",
-      "## Source Artifacts",
-      "- `SCREEN_MAP.json`",
-      "- `DESIGN_MANIFEST.json`",
-      "- `DESIGN_DOM.json`",
-      "- `UI_CONTRACT.json`",
-      "- `design-tokens.json` or `design-tokens.css`",
-      "",
-      "Implementation must follow these artifacts before inventing new UI structure.",
-      "",
-    ].join("\n");
-    fs.writeFileSync(path.join(stitchDir, "DESIGN.md"), content);
-  } catch (e) {
-    logger.warn(`[module:design preclaim] DESIGN.md write failed: ${String(e).slice(0, 200)}`);
-  }
-}
-
-function compactPrdForStitch(prd: string): string {
-  const withoutScreenTable = String(prd || "")
-    .replace(/\n## Screens[\s\S]*?(?=\n## |$)/, "\n")
-    .replace(/\n## Project Structure[\s\S]*?(?=\n## |$)/, "\n")
-    .replace(/\n## Window State[\s\S]*?(?=\n## |$)/, "\n")
-    .replace(/\nPRD_SCREEN_COUNT:.*$/gm, "")
-    .replace(/\nDB_REQUIRED:.*$/gm, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-  return withoutScreenTable.length > 4500 ? `${withoutScreenTable.slice(0, 4500)}\n...(truncated)` : withoutScreenTable;
+  return [
+    "# DESIGN_BRIEF",
+    "",
+    "## STRICT_UI_SCOPE_CONTRACT",
+    "- Design only UI that maps to one or more PRODUCT_SURFACES below.",
+    "- Do not invent modules, workflows, dashboards, marketing pages, admin areas, ecommerce flows, docs, PRD pages, or settings outside the Product Surfaces.",
+    "- Physical screen count, routing, tabs, modals, drawers, and component hierarchy are Stitch decisions, but every generated screen must be traceable to a SURF_* id.",
+    "- Every permitted action must have a plausible visible control or platform-appropriate interaction.",
+    "- Empty, loading, validation, and error states may be included only inside the declared Product Surfaces.",
+    `- All visible user-facing text must be in ${uiLanguage}.`,
+    "- Keep metadata, screen titles, and technical identifiers in English.",
+    `- Target device type: ${deviceType}.`,
+    "",
+    "## PRODUCT_SURFACES",
+    surfaceInventory || "No Product Surfaces were declared.",
+    "",
+    "## UI_OUT_OF_SCOPE",
+    "- No PRD/requirements/sitemap/documentation screens.",
+    "- No generic admin, pricing, checkout, blog, onboarding, account, or profile areas unless declared as a Product Surface.",
+    "- No local placeholder/wireframe design.",
+    "",
+    "## FULL_PRD_APPENDIX",
+    "The full PRD below is passive background context. If it conflicts with PRODUCT_SURFACES, PRODUCT_SURFACES wins.",
+    "",
+    prd,
+  ].join("\n");
 }
 
 function buildBatchStitchPrompt(repo: string, prd: string, deviceType: string, uiLanguage: string): string {
-  const screens = inferFallbackScreens(prd);
-  const appName = inferAppName(prd, repo);
-  const screenList = screens
-    .map((screen, index) => `${index + 1}. ${screen.name} (${screen.type || "screen"}) - ${screen.description || `${screen.name} screen`}`)
-    .join("\n");
+  void repo;
+  return buildDesignBrief(prd, deviceType, uiLanguage);
+}
+
+function buildChunkedStitchPrompt(prd: string, surfaces: ProductSurface[], deviceType: string, uiLanguage: string): string {
+  const surfaceIds = new Set(surfaces.map((surface) => surface.surfaceId));
+  const scopedTargets = inferPrdScreens(prd).filter((screen) => (screen.surfaceIds || []).some((id) => surfaceIds.has(id)));
+  const screenSpecs = surfaces.map((surface, index) => surfaceScreenSpec(surface, index)).join("\n\n");
+  const expectedTitles = surfaces.map((surface) => `- ${surface.name} - SurfaceGate Desk`).join("\n");
 
   return [
-    `Generate exactly ${screens.length} separate ${deviceType} screens for "${appName}" in one Stitch batch call.`,
+    "# STITCH_CHUNK_BRIEF",
     "",
-    "Screen titles must match exactly:",
-    screenList,
+    `Generate exactly ${surfaces.length} production-quality UI screens for the Product Surface targets below.`,
+    "This is one chunk of a larger Setfarm design run. Do not design surfaces outside this chunk.",
+    `Target device type: ${deviceType}.`,
+    `All visible user-facing text must be in ${uiLanguage}.`,
     "",
-    "Application summary:",
-    compactPrdForStitch(prd),
+    "## REQUIRED_SCREEN_TITLES",
+    expectedTitles || "No Product Surface targets were declared.",
     "",
-    "Batch generation rules:",
-    `- Generate exactly ${screens.length} screens. Do not generate more or fewer screens.`,
-    "- Do not create a PRD, requirements document, sitemap, landing page, or generic dashboard screen unless it is explicitly listed above.",
-    "- Do not combine multiple listed screens into one design.",
-    "- Each listed screen must be complete, production-quality, and visually consistent with the others.",
-    "- Use a polished modern interface with real layout density and visible controls.",
-    `- All visible user-facing text must be in ${uiLanguage}.`,
-    "- Keep screen metadata and technical identifiers in English.",
-    "- Use a cohesive design system across all screens.",
+    "## SCREEN_SPECS",
+    screenSpecs || scopedTargets.map((screen, index) => [
+      `SCREEN_SPEC_${index + 1}:`,
+      `- exact_screen_title: ${screen.name} - SurfaceGate Desk`,
+      `- surface_id: ${(screen.surfaceIds || []).join(", ") || "unknown"}`,
+      `- unique_canvas_caption: ${screen.description || `${screen.name} surface`}`,
+      `- purpose: ${screen.description || `${screen.name} surface`}`,
+      "- required_content: Use only this target's purpose and actions.",
+    ].join("\n")).join("\n\n"),
+    "",
+    "## OUTPUT_RULES",
+    "- Create one distinct canvas/frame per SCREEN_SPEC.",
+    "- Use exact_screen_title as the screen title/name. Do not rename screens to generic labels.",
+    "- Use unique_canvas_caption for that screen only. Do not reuse one global caption across screens.",
+    "- Do not place the whole chunk summary, PRD summary, Key Deliverables text, or any follow-up question as visible screen captions.",
+    "- Do not write 'How would you like to proceed?', 'We could refine...', or similar assistant chat text in the design output.",
+    "- Each screen must visibly emphasize its own required_content and visible_actions. Do not let all screens share the same layout content.",
+    "",
+    "## STRICT_UI_SCOPE_CONTRACT",
+    "- Every generated screen must map to one or more SCREEN_SPECS above.",
+    "- Do not invent modules, dashboards, marketing pages, admin areas, ecommerce flows, docs, account, or profile areas outside the Product Surfaces.",
+    "- Every permitted action from the matching Product Surface should have a plausible visible control or platform-appropriate interaction.",
+    "- Empty, loading, validation, and error states may be included only inside the declared Product Surfaces.",
+    "",
+    "## FULL_PRD_APPENDIX",
+    "The full PRD below is passive context. CHUNK_TARGETS above are the active design scope.",
+    "",
+    prd,
   ].join("\n");
 }
 
 function buildPerScreenStitchPrompt(prd: string, screen: ScreenMapEntry, uiLanguage: string): string {
   return [
-    `Create exactly one production-quality ${screen.type || "app"} screen for this product.`,
-    `Screen name: ${screen.name}`,
-    `Screen description: ${screen.description || `${screen.name} screen`}`,
+    `Create exactly one production-quality UI screen for this Product Surface target.`,
+    `Target name: ${screen.name}`,
+    `Target description: ${screen.description || `${screen.name} surface`}`,
+    `Surface IDs: ${(screen.surfaceIds || []).join(", ") || "unknown"}`,
     "",
-    "Product requirements:",
-    prd.slice(0, 12000),
+    "Scoped design brief:",
+    buildDesignBrief(prd, "DESKTOP", uiLanguage).slice(0, 16000),
     "",
     "Design requirements:",
-    "- Generate only this screen, not a whole app flow.",
-    "- Include all visible controls, navigation, empty/error states, and labels that this screen naturally needs.",
+    "- Generate only this scoped target, not a whole unrelated app flow.",
+    "- Every visible control must map to an ACT_* action declared in the Product Surface when possible.",
     "- Use a polished, modern visual design with real layout density, not a placeholder wireframe.",
     `- All visible user-facing text must be in ${uiLanguage}.`,
     "- Keep technical metadata in English.",
   ].join("\n");
+}
+
+function stitchSurfaceBatchSize(): number {
+  const raw = Number(process.env.SETFARM_STITCH_SURFACE_BATCH_SIZE || 5);
+  if (!Number.isFinite(raw) || raw < 1) return 5;
+  return Math.max(1, Math.min(5, Math.floor(raw)));
+}
+
+function stitchBatchGenerationEnabled(): boolean {
+  return process.env.SETFARM_STITCH_BATCH_GENERATION === "1";
+}
+
+async function generateStitchScreensInSurfaceChunks(
+  ctx: ClaimContext,
+  stitchScript: string,
+  repo: string,
+  stitchDir: string,
+  projId: string,
+  prd: string,
+  deviceType: string,
+  uiLanguage: string,
+): Promise<{ completed: boolean; providerUnavailable: boolean; diagnostic: string }> {
+  const surfaces = parseProductSurfaces(prd);
+  if (surfaces.length === 0) return { completed: false, providerUnavailable: false, diagnostic: "No Product Surfaces declared" };
+  if (!stitchBatchGenerationEnabled()) {
+    return { completed: false, providerUnavailable: false, diagnostic: "Batch generation disabled; using per-screen Stitch generation" };
+  }
+
+  const batchSize = stitchSurfaceBatchSize();
+  let completed = true;
+  let providerUnavailable = false;
+  let diagnostic = "";
+
+  await recordPreClaimProgress(ctx, `Design preclaim: generating ${surfaces.length} Product Surfaces in Stitch chunks of ${batchSize}`);
+
+  for (let index = 0; index < surfaces.length; index += batchSize) {
+    const chunk = surfaces.slice(index, index + batchSize);
+    const chunkNo = Math.floor(index / batchSize) + 1;
+    const totalChunks = Math.ceil(surfaces.length / batchSize);
+    const chunkPrompt = path.join(stitchDir, `.generate-prompt-chunk-${chunkNo}.txt`);
+    fs.writeFileSync(chunkPrompt, buildChunkedStitchPrompt(prd, chunk, deviceType, uiLanguage), "utf-8");
+
+    await recordPreClaimProgress(ctx, `Design preclaim: generating Stitch batch chunk ${chunkNo}/${totalChunks} (${chunk.length} surfaces)`);
+    try {
+      const genOut = await execFileText("node", [stitchScript, "generate-all-screens", projId, chunkPrompt, deviceType, "GEMINI_3_1_PRO"], {
+        timeout: 660000,
+        cwd: repo,
+        onProgress: () => recordPreClaimProgress(ctx, `Design preclaim: still generating Stitch batch chunk ${chunkNo}/${totalChunks}`),
+      });
+
+      let genResult: any = {};
+      try { genResult = JSON.parse(genOut); } catch {}
+      const generatedTotal = Number(genResult.total || 0);
+      logger.info(`[module:design preclaim] Generated ${generatedTotal} screens for Stitch chunk ${chunkNo}/${totalChunks}`, { runId: ctx.runId });
+      if (generatedTotal === 0 && genResult.diagnostic) {
+        const shape = JSON.stringify(genResult.diagnostic).slice(0, 260);
+        const textSample = redactDiagnosticText(genResult.diagnostic.textSample).slice(0, 500);
+        diagnostic = textSample || shape || diagnostic;
+        providerUnavailable = providerUnavailable || isStitchProviderUnavailable(textSample || shape);
+        completed = false;
+        await recordPreClaimProgress(ctx, `Design preclaim: Stitch chunk ${chunkNo}/${totalChunks} generated 0 screens; response shape ${shape}`);
+        if (providerUnavailable) break;
+      } else {
+        await recordPreClaimProgress(ctx, `Design preclaim: Stitch chunk ${chunkNo}/${totalChunks} generated ${generatedTotal} screens`);
+      }
+    } catch (e) {
+      if (isPreclaimCancelledError(e)) throw e;
+      const failureDetail = redactDiagnosticText(e).slice(0, 500);
+      diagnostic = failureDetail || diagnostic;
+      providerUnavailable = providerUnavailable || isStitchProviderUnavailable(failureDetail);
+      completed = false;
+      logger.warn(`[module:design preclaim] Stitch batch chunk ${chunkNo}/${totalChunks} failed: ${failureDetail.slice(0, 200)}`, { runId: ctx.runId });
+      await recordPreClaimProgress(ctx, `Design preclaim: Stitch batch chunk ${chunkNo}/${totalChunks} failed: ${failureDetail || "unknown error"}`);
+      if (providerUnavailable) break;
+    }
+
+    if (index + batchSize < surfaces.length) await new Promise(r => setTimeout(r, 2000));
+  }
+
+  return { completed, providerUnavailable, diagnostic };
 }
 
 function retitleTrackedStitchScreens(repo: string, projId: string, screenIds: string[], title: string): void {
@@ -592,6 +838,12 @@ function retitleTrackedStitchScreens(repo: string, projId: string, screenIds: st
   } catch {}
 }
 
+function stitchScreenRecoveryBatchSize(): number {
+  const raw = Number(process.env.SETFARM_STITCH_SCREEN_BATCH_SIZE || 5);
+  if (!Number.isFinite(raw) || raw < 1) return 5;
+  return Math.max(1, Math.min(5, Math.floor(raw)));
+}
+
 async function generateStitchScreensIndividually(
   ctx: ClaimContext,
   stitchScript: string,
@@ -601,42 +853,55 @@ async function generateStitchScreensIndividually(
   prd: string,
   deviceType: string,
   uiLanguage: string,
+  targetsOverride?: ScreenMapEntry[],
+  reason = "batch Stitch generation returned no HTML",
 ): Promise<number> {
-  const targets = inferFallbackScreens(prd);
+  const targets = targetsOverride?.length ? targetsOverride : inferPrdScreens(prd);
   if (targets.length === 0) return 0;
 
-  await recordPreClaimProgress(ctx, `Design preclaim: batch Stitch generation returned no HTML, generating ${targets.length} screens one by one`);
+  const batchSize = stitchScreenRecoveryBatchSize();
+  await recordPreClaimProgress(ctx, `Design preclaim: ${reason}, generating ${targets.length} Stitch screen(s) in chunks of ${batchSize}`);
   let generated = 0;
-  for (const screen of targets) {
+
+  const generateOne = async (screen: ScreenMapEntry): Promise<void> => {
     const promptPath = path.join(stitchDir, `.screen-prompt-${screen.screenId}.txt`);
     fs.writeFileSync(promptPath, buildPerScreenStitchPrompt(prd, screen, uiLanguage), "utf-8");
-    try {
-      await recordPreClaimProgress(ctx, `Design preclaim: generating Stitch screen "${screen.name}"`);
-      const out = await execFileText(
-        "node",
-        [stitchScript, "generate-screen-safe", projId, `@${promptPath}`, screen.name, deviceType, "GEMINI_3_1_PRO"],
-        {
-          timeout: 360000,
-          cwd: repo,
-          onProgress: () => recordPreClaimProgress(ctx, `Design preclaim: still generating Stitch screen "${screen.name}"`),
-        },
-      );
-      let parsed: any = {};
-      try { parsed = JSON.parse(out); } catch {}
-      const generatedScreens = Array.isArray(parsed?.screens) ? parsed.screens : [];
-      const count = generatedScreens.length;
-      retitleTrackedStitchScreens(
-        repo,
-        projId,
-        generatedScreens.map((item: any) => String(item?.screenId || item?.id || "")).filter(Boolean),
-        screen.name,
-      );
-      if (count > 0 || parsed?.skipped) generated++;
-    } catch (e) {
-      if (isPreclaimCancelledError(e)) throw e;
-      logger.warn(`[module:design preclaim] per-screen Stitch generation failed for ${screen.name}: ${String(e).slice(0, 240)}`, { runId: ctx.runId });
+    await recordPreClaimProgress(ctx, `Design preclaim: generating Stitch screen "${screen.name}"`);
+    const out = await execFileText(
+      "node",
+      [stitchScript, "generate-screen-safe", projId, `@${promptPath}`, screen.name, deviceType, "GEMINI_3_1_PRO"],
+      {
+        timeout: 360000,
+        cwd: repo,
+        onProgress: () => recordPreClaimProgress(ctx, `Design preclaim: still generating Stitch screen "${screen.name}"`),
+      },
+    );
+    let parsed: any = {};
+    try { parsed = JSON.parse(out); } catch {}
+    const generatedScreens = Array.isArray(parsed?.screens) ? parsed.screens : [];
+    const count = generatedScreens.length;
+    retitleTrackedStitchScreens(
+      repo,
+      projId,
+      generatedScreens.map((item: any) => String(item?.screenId || item?.id || "")).filter(Boolean),
+      screen.name,
+    );
+    if (count > 0 || parsed?.skipped) generated++;
+  };
+
+  for (let index = 0; index < targets.length; index += batchSize) {
+    const batch = targets.slice(index, index + batchSize);
+    await recordPreClaimProgress(ctx, `Design preclaim: generating Stitch recovery chunk ${Math.floor(index / batchSize) + 1}/${Math.ceil(targets.length / batchSize)}`);
+    const results = await Promise.allSettled(batch.map((screen) => generateOne(screen)));
+    for (let offset = 0; offset < results.length; offset++) {
+      const result = results[offset];
+      if (result.status !== "rejected") continue;
+      const screen = batch[offset];
+      if (isPreclaimCancelledError(result.reason)) throw result.reason;
+      logger.warn(`[module:design preclaim] per-screen Stitch generation failed for ${screen.name}: ${String(result.reason).slice(0, 240)}`, { runId: ctx.runId });
       await recordPreClaimProgress(ctx, `Design preclaim: Stitch screen generation failed for "${screen.name}"`);
     }
+    if (index + batchSize < targets.length) await new Promise(r => setTimeout(r, 2000));
   }
 
   if (generated > 0) {
@@ -658,12 +923,31 @@ async function generateStitchScreensIndividually(
   return htmlCount;
 }
 
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+async function downloadStitchDesignMarkdown(
+  ctx: ClaimContext,
+  stitchScript: string,
+  repo: string,
+  stitchDir: string,
+  projId: string,
+): Promise<void> {
+  if (!projId || projId === "local-fallback") return;
+  await recordPreClaimProgress(ctx, "Design preclaim: downloading Stitch DESIGN.md");
+  const out = await execFileText("node", [stitchScript, "get-design-md", projId, stitchDir], {
+    timeout: 45000,
+    cwd: repo,
+    onProgress: () => recordPreClaimProgress(ctx, "Design preclaim: still downloading Stitch DESIGN.md"),
+  });
+  let designMd = "";
+  try {
+    const parsed = JSON.parse(out);
+    designMd = String(parsed?.designMd || "").trim();
+  } catch {
+    designMd = "";
+  }
+  const designPath = path.join(stitchDir, "DESIGN.md");
+  if (!designMd || !fs.existsSync(designPath) || fs.statSync(designPath).size < 500) {
+    throw new Error("DESIGN_STITCH_DESIGN_MD_UNAVAILABLE: Stitch get-design-md did not produce stitch/DESIGN.md.");
+  }
 }
 
 function toScreenId(value: string, fallback: string): string {
@@ -683,74 +967,14 @@ function toScreenId(value: string, fallback: string): string {
   return normalized || fallback;
 }
 
-function addUniqueScreenName(names: string[], value: string): void {
-  const clean = value
-    .replace(/\*\*/g, "")
-    .replace(/[`#]/g, "")
-    .replace(/\s+/g, " ")
-    .replace(/^[0-9]+[.)]\s*/, "")
-    .trim();
-  if (!clean || clean.length < 3 || clean.length > 80) return;
-  if (/^(screen|screens|name|title|description|type|page|view)$/i.test(clean)) return;
-  if (!names.some(existing => existing.toLowerCase() === clean.toLowerCase())) names.push(clean);
-}
-
-function inferAppName(prd: string, repo: string): string {
-  const projectMatch = prd.match(/Project:\s*([^\n.]+)/i);
-  if (projectMatch?.[1]) {
-    return projectMatch[1].replace(/\s+Build\b.*$/i, "").trim().slice(0, 80) || path.basename(repo);
-  }
-  const titleMatch = prd.match(/^#\s+(.+)$/m);
-  return (titleMatch?.[1] || path.basename(repo) || "Application")
-    .replace(/\s+PRD\b.*$/i, "")
-    .trim()
-    .slice(0, 80);
-}
-
-export function inferFallbackScreens(prd: string): ScreenMapEntry[] {
-  const prdRows = parsePrdScreenRows(prd);
-  const names: string[] = [];
-
-  if (prdRows.length > 0) {
-    for (const row of prdRows) addUniqueScreenName(names, row.name);
-  } else {
-    const lines = prd.split(/\r?\n/);
-    let inScreens = false;
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (/^#{1,4}\s+/.test(trimmed)) {
-        inScreens = /\b(screen|screens|view|views|page|pages|modal|modals)\b/i.test(trimmed);
-        continue;
-      }
-      if (!inScreens) continue;
-
-      const bullet = trimmed.match(/^[-*]\s+(?:\*\*)?([^:|\-*]{3,80})(?:\*\*)?(?:\s*[:|-]|\s*$)/);
-      if (bullet?.[1]) addUniqueScreenName(names, bullet[1]);
-
-      const table = trimmed.match(/^\|\s*([^|]{3,80})\s*\|/);
-      if (table?.[1] && !/^[-:\s]+$/.test(table[1])) addUniqueScreenName(names, table[1]);
-    }
-
-    const lower = prd.toLowerCase();
-    if (names.length === 0 && /\b(game|arcade|puzzle|score|level|pause|restart)\b/.test(lower)) {
-      names.push("Main Menu", "Game Board", "Pause Overlay", "Game Over");
-    } else if (names.length === 0) {
-      names.push("Dashboard", "Detail View", "Create Form");
-    }
-
-    if (/\b(settings|options|preferences)\b/i.test(prd)) addUniqueScreenName(names, "Settings");
-    if (/\b(help|rules|how to)\b/i.test(prd)) addUniqueScreenName(names, "Help and Rules");
-    if (/\b(profile|account|user)\b/i.test(prd)) addUniqueScreenName(names, "Profile");
-    if (/\b(error|empty|loading|fallback)\b/i.test(prd)) addUniqueScreenName(names, "State Feedback");
-  }
-
-  const prdRowsByName = new Map(prdRows.map((row) => [normalizeScreenName(row.name), row]));
-  const screenNames = prdRows.length > 0 ? names : names.slice(0, 7);
+export function inferPrdScreens(prd: string): ScreenMapEntry[] {
+  const surfaces = parseProductSurfaces(prd);
+  const screenNames = surfaces.length > 0
+    ? surfaces.map((surface) => surface.name)
+    : ["Product Workspace"];
   const used = new Set<string>();
   return screenNames.map((name, index) => {
-    const prdRow = prdRowsByName.get(normalizeScreenName(name));
-    const base = "fallback-" + toScreenId(name, `screen-${index + 1}`);
+    const base = "prd-" + toScreenId(name, `screen-${index + 1}`);
     let screenId = base;
     let suffix = 2;
     while (used.has(screenId)) screenId = `${base}-${suffix++}`;
@@ -758,210 +982,88 @@ export function inferFallbackScreens(prd: string): ScreenMapEntry[] {
     return {
       screenId,
       name,
-      type: prdRow?.type || classifyScreenType(name),
-      description: prdRow?.description || `${name} screen generated by local fallback design assets`,
+      type: classifyScreenType(name),
+      description: surfaces[index]?.purpose || `${name} Product Surface from the PRD contract`,
+      surfaceIds: surfaces[index] ? [surfaces[index].surfaceId] : [],
     };
   });
 }
 
-function fallbackSpecificContent(screen: ScreenMapEntry): string {
-  const title = screen.name.toLowerCase();
-  if (/(over|result|score|summary)/.test(title)) {
-    return `
-      <section class="result-panel">
-        <p class="scoreline">Final score 24,800 with strong progress through the challenge.</p>
-        <button type="button">Restart</button><button type="button">Main Menu</button>
-      </section>`;
-  }
-  if (/(game|board|play)/.test(title)) {
-    const cells = Array.from({ length: 96 }, (_, i) => `<div class="cell${i % 11 === 0 || i % 17 === 0 ? " active" : ""}" aria-hidden="true"></div>`).join("");
-    return `
-      <section class="game-layout" aria-label="Playable board reference">
-        <div class="board" role="grid" aria-label="Playable game field">${cells}</div>
-        <aside class="side-panel">
-          <h2>Status</h2>
-          <div class="mini-grid" aria-label="Gameplay status preview">${Array.from({ length: 16 }, (_, i) => `<span class="${i % 5 === 0 ? "active" : ""}"></span>`).join("")}</div>
-          <dl><dt>Score</dt><dd>12,400</dd><dt>Level</dt><dd>6</dd><dt>Progress</dt><dd>48%</dd></dl>
-          <button type="button">Pause</button><button type="button">Restart</button>
-        </aside>
-      </section>`;
-  }
-  if (/(setting|option|preference)/.test(title)) {
-    return `
-      <form class="settings-panel">
-        <label>Start Level <select name="level"><option>Level 1</option><option>Level 5</option></select></label>
-        <label>Assist Hints <select name="assist"><option>On</option><option>Off</option></select></label>
-        <label>Controls <input name="controls" placeholder="Arrow keys, WASD, or touch" /></label>
-        <button type="button">Save Settings</button><button type="button">Reset Defaults</button>
-      </form>`;
-  }
-  return `
-    <section class="command-panel">
-      <p>Primary application state with clear actions, readable hierarchy, and responsive layout guidance for implementation.</p>
-      <div class="action-row"><button type="button">Start Game</button><button type="button">Resume</button><button type="button">Open Settings</button></div>
-      <div class="data-grid"><article><h2>Goal</h2><p>Build a working interactive experience, not a static mock.</p></article><article><h2>Controls</h2><p>Keyboard, pointer, restart, pause, and state feedback must be implemented.</p></article></div>
-    </section>`;
-}
-
-function buildFallbackHtml(screen: ScreenMapEntry, screens: ScreenMapEntry[], appName: string, deviceType: string): string {
-  const nav = screens.map(s => `<a href="#${escapeHtml(s.screenId)}">${escapeHtml(s.name)}</a>`).join("");
-  const content = fallbackSpecificContent(screen);
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>${escapeHtml(screen.name)}</title>
-  <style>
-    :root {
-      --color-background: #0b1020;
-      --color-surface: #151b2d;
-      --color-panel: #20283f;
-      --color-primary: #20e3b2;
-      --color-accent: #ffb86b;
-      --color-danger: #ff5c7a;
-      --color-text: #eef4ff;
-      --color-muted: #9ba8c7;
-      --font-heading: "Hanken Grotesk", "Segoe UI", sans-serif;
-      --font-body: "Hanken Grotesk", "Segoe UI", sans-serif;
-      --radius-card: 8px;
-      --spacing-unit: 8px;
-    }
-    * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; background: var(--color-background); color: var(--color-text); font-family: var(--font-body); }
-    header { display: flex; justify-content: space-between; gap: 24px; align-items: center; padding: 24px 32px; border-bottom: 1px solid rgba(255,255,255,.12); background: var(--color-surface); }
-    main { padding: 32px; display: grid; gap: 24px; }
-    h1, h2 { font-family: var(--font-heading); margin: 0; }
-    p { color: var(--color-muted); line-height: 1.55; }
-    nav { display: flex; flex-wrap: wrap; gap: 10px; }
-    a, button { border-radius: 8px; font: inherit; }
-    a { color: var(--color-primary); text-decoration: none; padding: 8px 10px; border: 1px solid rgba(32,227,178,.25); }
-    button { border: 0; background: var(--color-primary); color: #04110d; padding: 10px 14px; font-weight: 700; cursor: pointer; }
-    button + button { background: var(--color-panel); color: var(--color-text); border: 1px solid rgba(255,255,255,.14); }
-    .meta { color: var(--color-muted); font-size: 13px; text-transform: uppercase; letter-spacing: .08em; }
-    .game-layout { display: grid; grid-template-columns: minmax(260px, 420px) minmax(220px, 320px); gap: 24px; align-items: start; }
-    .board { aspect-ratio: 10 / 20; display: grid; grid-template-columns: repeat(10, 1fr); grid-template-rows: repeat(20, 1fr); gap: 2px; padding: 10px; background: #050814; border: 1px solid rgba(255,255,255,.18); border-radius: var(--radius-card); }
-    .cell, .mini-grid span { background: rgba(255,255,255,.08); border-radius: 2px; min-height: 8px; }
-    .cell.active, .mini-grid .active { background: var(--color-accent); box-shadow: 0 0 18px rgba(255,184,107,.35); }
-    .side-panel, .command-panel, .settings-panel, .result-panel { background: var(--color-surface); border: 1px solid rgba(255,255,255,.14); border-radius: var(--radius-card); padding: 20px; display: grid; gap: 16px; }
-    .mini-grid { width: 96px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px; }
-    dl { display: grid; grid-template-columns: 1fr auto; gap: 8px 18px; margin: 0; }
-    dt { color: var(--color-muted); } dd { margin: 0; font-weight: 800; }
-    .settings-panel label { display: grid; gap: 6px; color: var(--color-muted); }
-    input, select { background: #080d19; border: 1px solid rgba(255,255,255,.18); border-radius: 8px; color: var(--color-text); padding: 10px; }
-    .action-row { display: flex; flex-wrap: wrap; gap: 10px; }
-    .data-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-    article { background: var(--color-panel); border-radius: var(--radius-card); padding: 16px; }
-    @media (max-width: 720px) { header, main { padding: 18px; } .game-layout, .data-grid { grid-template-columns: 1fr; } }
-  </style>
-</head>
-<body data-device="${escapeHtml(deviceType)}">
-  <header>
-    <div><div class="meta">${escapeHtml(appName)}</div><h1>${escapeHtml(screen.name)}</h1><p>${escapeHtml(screen.description)}</p></div>
-    <nav aria-label="Fallback design navigation">${nav}</nav>
-  </header>
-  <main id="${escapeHtml(screen.screenId)}">${content}</main>
-</body>
-</html>`;
-}
-
-function createFallbackDesignAssets(repo: string, stitchDir: string, prd: string, deviceType: string): ScreenMapEntry[] {
-  fs.mkdirSync(stitchDir, { recursive: true });
-  const screens = inferFallbackScreens(prd);
-  const appName = inferAppName(prd, repo);
-  const manifest = screens.map(s => ({
-    screenId: s.screenId,
-    title: s.name,
-    htmlFile: `${s.screenId}.html`,
-    screenshotFile: `${s.screenId}.png`,
-    deviceType,
-    source: "local-fallback",
-  }));
-
-  for (const [index, screen] of screens.entries()) {
-    fs.writeFileSync(path.join(stitchDir, `${screen.screenId}.html`), buildFallbackHtml(screen, screens, appName, deviceType));
-    writeFallbackPng(path.join(stitchDir, `${screen.screenId}.png`), screen, index);
-  }
-
-  const tokenJson = {
-    source: "local-fallback",
-    colors: {
-      background: "#0b1020",
-      surface: "#151b2d",
-      panel: "#20283f",
-      primary: "#20e3b2",
-      accent: "#ffb86b",
-      danger: "#ff5c7a",
-      text: "#eef4ff",
-      muted: "#9ba8c7",
-    },
-    fonts: { heading: "Inter, system-ui, sans-serif", body: "Inter, system-ui, sans-serif" },
-    radius: { card: "8px" },
-    spacing: { unit: "8px" },
-  };
-  const tokenCss = `/* design-tokens.css -- generated by Setfarm local fallback */
-:root {
-  --color-background: ${tokenJson.colors.background};
-  --color-surface: ${tokenJson.colors.surface};
-  --color-panel: ${tokenJson.colors.panel};
-  --color-primary: ${tokenJson.colors.primary};
-  --color-accent: ${tokenJson.colors.accent};
-  --color-danger: ${tokenJson.colors.danger};
-  --color-text: ${tokenJson.colors.text};
-  --color-muted: ${tokenJson.colors.muted};
-  --font-heading: ${tokenJson.fonts.heading};
-  --font-body: ${tokenJson.fonts.body};
-  --radius-card: ${tokenJson.radius.card};
-  --spacing-unit: ${tokenJson.spacing.unit};
-}
-`;
-
-  const domScreens: Record<string, any> = {};
-  const uiContracts = screens.map((screen, index) => {
-    const buttons = [
-      { type: "button", label: index === 0 ? "Start Game" : "Restart", line: 1 },
-      { type: "button", label: "Open Settings", line: 1 },
-    ];
-    const navigation = screens.map((s, navIndex) => ({ type: "link", label: s.name, href: `#${s.screenId}`, line: navIndex + 1 }));
-    domScreens[screen.screenId] = {
-      screenId: screen.screenId,
-      title: screen.name,
-      materialSymbolsRequired: false,
-      sections: [{ tag: "main", layout: "grid", classes: [], childCount: 3 }],
-      buttons: buttons.map(b => ({ label: b.label, classes: [], icon: null, action: "click-action" })),
-      inputs: /setting/i.test(screen.name) ? [{ type: "select", placeholder: "", name: "level", classes: [] }] : [],
-      navLinks: navigation.map(n => ({ label: n.label, href: n.href, classes: [], icon: null })),
-      cards: [],
-      icons: [],
-      images: [],
-      cssVars: { "--color-background": tokenJson.colors.background, "--color-primary": tokenJson.colors.primary },
-      colorPalette: tokenJson.colors,
-      fonts: ["Inter"],
-      layoutHints: { gridCols: /game|board/i.test(screen.name) ? 2 : 1 },
-    };
+function screenTargetsForSurfaces(surfaces: ProductSurface[]): ScreenMapEntry[] {
+  const used = new Set<string>();
+  return surfaces.map((surface, index) => {
+    const base = "prd-" + toScreenId(surface.name, `surface-${index + 1}`);
+    let screenId = base;
+    let suffix = 2;
+    while (used.has(screenId)) screenId = `${base}-${suffix++}`;
+    used.add(screenId);
     return {
-      screenId: screen.screenId,
-      screenTitle: screen.name,
-      deviceType,
-      elements: [...navigation, ...buttons],
-      navigation,
-      buttons,
-      inputs: /setting/i.test(screen.name) ? [{ type: "input", label: "Start Level", inputType: "select", placeholder: "Level", line: 1 }] : [],
-      hardcodedData: [],
-      totalInteractive: navigation.length + buttons.length,
-      requiresRouter: false,
-      requiresDragDrop: false,
+      screenId,
+      name: surface.name,
+      type: classifyScreenType(surface.name),
+      description: surface.purpose || `${surface.name} Product Surface from the PRD contract`,
+      surfaceIds: [surface.surfaceId],
     };
   });
+}
 
-  fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify(manifest, null, 2));
-  fs.writeFileSync(path.join(stitchDir, "SCREEN_MAP.json"), JSON.stringify(screens, null, 2));
-  fs.writeFileSync(path.join(stitchDir, "design-tokens.json"), JSON.stringify(tokenJson, null, 2));
-  fs.writeFileSync(path.join(stitchDir, "design-tokens.css"), tokenCss);
-  fs.writeFileSync(path.join(stitchDir, "DESIGN_DOM.json"), JSON.stringify({ generatedAt: now(), screenCount: screens.length, screens: domScreens }, null, 2));
-  fs.writeFileSync(path.join(stitchDir, "UI_CONTRACT.json"), JSON.stringify(uiContracts, null, 2));
-  writeDesignMarkdownBrief(stitchDir, screens, prd, repo);
-  return screens;
+function readScreenMapFromStitchArtifacts(stitchDir: string, deviceType: string, runId?: string): ScreenMapEntry[] {
+  const manifestPath = path.join(stitchDir, "DESIGN_MANIFEST.json");
+  let screenMap: ScreenMapEntry[] = [];
+  if (fs.existsSync(manifestPath)) {
+    try {
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+      if (Array.isArray(manifest)) {
+        screenMap = manifest
+          .filter((s: any) => !isPrdPseudoScreen(s))
+          .filter((s: any) => s?.screenId && s?.title)
+          .map((s: any) => ({
+            screenId: String(s.screenId),
+            name: String(s.title),
+            type: classifyScreenType(String(s.title)),
+            description: String(s.title) + " screen",
+          }));
+      }
+    } catch (e) {
+      logger.warn(`[module:design preclaim] manifest parse failed: ${String(e).slice(0, 200)}`, { runId });
+    }
+  }
+
+  if (screenMap.length === 0 && fs.existsSync(stitchDir)) {
+    try {
+      const htmlFiles = fs.readdirSync(stitchDir).filter(f => f.endsWith(".html") && !f.startsWith(".") && isValidStitchHtml(path.join(stitchDir, f)));
+      for (const file of htmlFiles) {
+        const screenId = file.replace(/\.html$/, "");
+        let title = screenId;
+        try {
+          const html = fs.readFileSync(path.join(stitchDir, file), "utf-8").slice(0, 4000);
+          const m = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+          if (m) title = m[1].trim();
+        } catch {}
+        if (/^prd(?:\b|[:\s-])/i.test(title)) continue;
+        screenMap.push({
+          screenId,
+          name: title || screenId,
+          type: classifyScreenType(title),
+          description: title + " screen",
+        });
+      }
+      if (screenMap.length > 0) {
+        try {
+          fs.writeFileSync(manifestPath, JSON.stringify(
+            screenMap.map(s => ({ screenId: s.screenId, title: s.name, htmlFile: s.screenId + ".html", deviceType })),
+            null, 2
+          ));
+          logger.info(`[module:design preclaim] manifest synthesized from ${screenMap.length} HTML files`, { runId });
+        } catch (e) {
+          logger.warn(`[module:design preclaim] manifest synthesize failed: ${String(e).slice(0, 200)}`, { runId });
+        }
+      }
+    } catch (e) {
+      logger.warn(`[module:design preclaim] HTML fallback failed: ${String(e).slice(0, 200)}`, { runId });
+    }
+  }
+  return screenMap;
 }
 
 // Heavy work BEFORE agent claims the design step:
@@ -971,15 +1073,39 @@ function createFallbackDesignAssets(repo: string, stitchDir: string, prd: string
 // 4. download-all (3 retries + tracking-file fallback)
 // Agent then validates the result — never calls Stitch API itself.
 //
-// Idempotent: if stitch/ already has current non-fallback HTML files, skips.
-// Local fallback assets are regenerated when a real Stitch key is available.
-// If all configured Stitch keys or the provider fail, the step writes a complete
-// generated design bundle instead of leaving downstream agents with empty context.
+// Idempotent: if stitch/ already has current non-fallback HTML files plus
+// Stitch DESIGN.md, skips. If Stitch cannot produce the required assets, the
+// design step fails instead of generating local placeholder design files.
 export async function preClaim(ctx: ClaimContext): Promise<void> {
   const repo = ctx.context["repo"] || ctx.context["REPO"] || "";
   const prd = ctx.context["prd"] || ctx.context["PRD"] || "";
   const stitchDir = repo ? path.join(repo, "stitch") : "";
   if (!repo || !prd || !stitchDir) return;
+  const designRequired = String(ctx.context["design_required"] || ctx.context["DESIGN_REQUIRED"] || "true").toLowerCase() !== "false";
+  if (!designRequired) {
+    const stepRow = await pgGet<{ id: string }>("SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1", [ctx.runId, ctx.stepId]);
+    if (!stepRow?.id) return;
+    ctx.context["screen_map"] = "[]";
+    ctx.context["screens_generated"] = "0";
+    ctx.context["design_system"] = "{}";
+    const { completeStep } = await import("../../step-ops.js");
+    await completeStep(stepRow.id, [
+      "STATUS: done",
+      "DESIGN_REQUIRED: false",
+      "DEVICE_TYPE: NONE",
+      "DESIGN_SYSTEM: {}",
+      "SCREEN_MAP: []",
+      "SCREENS_GENERATED: 0",
+      "AUTO_COMPLETED: design-bypass (DESIGN_REQUIRED=false)",
+    ].join("\n"));
+    logger.info("[module:design preclaim] AUTO-COMPLETED design bypass (DESIGN_REQUIRED=false)", { runId: ctx.runId });
+    return;
+  }
+  const declaredSurfaces = parseProductSurfaces(prd);
+  if (declaredSurfaces.length === 0) {
+    await failDesignPreclaim(ctx, "DESIGN_SURFACE_MISMATCH: DESIGN_REQUIRED=true but PRD has no Product Surfaces to send to Stitch.", { terminal: true });
+    return;
+  }
   const hasStitchKey = stitchApiKeyAvailable();
   const previousAssetError = String(ctx.context["design_asset_error"] || "");
   const resetFailedStitchProject = hasStitchKey && /DESIGN_STITCH|0\s+(?:valid\s+)?(?:HTML|Stitch screens)|download failed/i.test(previousAssetError);
@@ -1004,6 +1130,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     ? fs.readdirSync(stitchDir).filter(f => f.endsWith(".html")).length
     : 0;
   const existingCounts = manifestHtmlCounts(stitchDir);
+  let recoverDesignMdOnly = false;
   const staleFallbackDesign = existingHtml > 0 && manifestUsesLocalFallback(stitchDir) && hasStitchKey;
   if (staleFallbackDesign) {
     logger.warn(`[module:design preclaim] Existing local-fallback Stitch assets found while STITCH_API_KEY is available; regenerating real design assets`, { runId: ctx.runId });
@@ -1015,8 +1142,26 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       logger.warn(`[module:design preclaim] stale fallback cleanup failed: ${String(e).slice(0, 200)}`, { runId: ctx.runId });
     }
   } else if (existingHtml > 0 && existingCounts.valid > 0 && (existingCounts.total === 0 || existingCounts.valid >= existingCounts.total)) {
-    logger.info(`[module:design preclaim] Skip — ${existingCounts.valid}/${existingCounts.total || existingCounts.valid} valid HTML already in ${stitchDir}`, { runId: ctx.runId });
-    return;
+    const cachedScreenMap = readScreenMapFromStitchArtifacts(stitchDir, ctx.context["device_type"] || "DESKTOP", ctx.runId);
+    const cachedReconciliation = verifyScreenMapToSurfaces(cachedScreenMap, prd, { stitchDir });
+    if (hasValidStitchDesignMarkdown(stitchDir)) {
+      if (cachedReconciliation.screenMap.length > 0 && cachedReconciliation.missing.length === 0) {
+        rewriteScreenArtifactsForScreenMap(stitchDir, cachedReconciliation.screenMap, ctx.context["device_type"] || "DESKTOP");
+        ctx.context["screen_map"] = JSON.stringify(cachedReconciliation.screenMap);
+        logger.info(`[module:design preclaim] Skip — ${existingCounts.valid}/${existingCounts.total || existingCounts.valid} valid HTML and DESIGN.md already in ${stitchDir}`, { runId: ctx.runId });
+        return;
+      }
+      await recordPreClaimProgress(ctx, `Design preclaim: cached Stitch assets missing Product Surface coverage (${cachedReconciliation.missing.slice(0, 5).join(", ")}), regenerating`);
+      logger.warn(`[module:design preclaim] cached Stitch assets missing Product Surface coverage; regenerating`, { runId: ctx.runId });
+    } else {
+      recoverDesignMdOnly = cachedReconciliation.screenMap.length > 0 && cachedReconciliation.missing.length === 0;
+      if (recoverDesignMdOnly) {
+        logger.info(`[module:design preclaim] ${existingCounts.valid}/${existingCounts.total || existingCounts.valid} valid HTML already in ${stitchDir}; recovering Stitch DESIGN.md`, { runId: ctx.runId });
+      } else {
+        await recordPreClaimProgress(ctx, `Design preclaim: cached Stitch HTML missing Product Surface coverage (${cachedReconciliation.missing.slice(0, 5).join(", ")}), regenerating`);
+        logger.warn(`[module:design preclaim] cached Stitch HTML missing Product Surface coverage; regenerating`, { runId: ctx.runId });
+      }
+    }
   } else if (existingHtml > 0) {
     logger.warn(`[module:design preclaim] Existing stitch HTML incomplete/invalid (${existingCounts.valid}/${existingCounts.total || existingHtml} valid), regenerating`, { runId: ctx.runId });
     try {
@@ -1040,14 +1185,35 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   } catch (e) { logger.debug(`[module:design preclaim] dotStitch read: ${String(e).slice(0, 80)}`); }
 
   if (!projId) {
+    const ensureAttempts = Math.max(1, Math.min(5, Number(process.env.SETFARM_STITCH_PROJECT_RETRY_ATTEMPTS || 3) || 3));
+    let ensureDiagnostic = "";
     try {
-      await recordPreClaimProgress(ctx, "Design preclaim: ensuring Stitch project");
       const ensureEnv = resetFailedStitchProject
         ? { ...process.env, STITCH_FORCE_NEW_PROJECT: "1" }
         : process.env;
-      const out = await execFileText("node", [stitchScript, "ensure-project", path.basename(repo), repo],
-        { timeout: 30000, cwd: repo, env: ensureEnv, onProgress: () => recordPreClaimProgress(ctx, "Design preclaim: still ensuring Stitch project") });
-      try { projId = JSON.parse(out).projectId || ""; } catch (e) { logger.debug(`[module:design preclaim] parse: ${String(e).slice(0, 80)}`); }
+      for (let attempt = 0; attempt < ensureAttempts && !projId; attempt++) {
+        await recordPreClaimProgress(ctx, `Design preclaim: ensuring Stitch project (attempt ${attempt + 1}/${ensureAttempts})`);
+        try {
+          const out = await execFileText("node", [stitchScript, "ensure-project", path.basename(repo), repo],
+            { timeout: 60000, cwd: repo, env: ensureEnv, onProgress: () => recordPreClaimProgress(ctx, `Design preclaim: still ensuring Stitch project (attempt ${attempt + 1}/${ensureAttempts})`) });
+          try { projId = JSON.parse(out).projectId || ""; } catch (e) { logger.debug(`[module:design preclaim] parse: ${String(e).slice(0, 80)}`); }
+          if (projId) break;
+          ensureDiagnostic = "ensure-project returned no projectId";
+        } catch (e) {
+          if (isPreclaimCancelledError(e)) return;
+          ensureDiagnostic = redactDiagnosticText(e).slice(0, 500) || "unknown ensure-project error";
+          logger.warn(`[module:design preclaim] ensure-project failed (attempt ${attempt + 1}/${ensureAttempts}): ${ensureDiagnostic.slice(0, 200)}`, { runId: ctx.runId });
+          await recordPreClaimProgress(ctx, `Design preclaim: Stitch project ensure failed on attempt ${attempt + 1}/${ensureAttempts}: ${ensureDiagnostic}`);
+        }
+        if (!projId && attempt < ensureAttempts - 1) {
+          const delayMs = Math.min(30000, 10000 * (attempt + 1));
+          await recordPreClaimProgress(ctx, `Design preclaim: waiting ${Math.round(delayMs / 1000)}s before retrying Stitch project ensure`);
+          await sleep(delayMs);
+        }
+      }
+      if (!projId && ensureDiagnostic) {
+        ctx.context["stitch_project_diagnostic"] = ensureDiagnostic;
+      }
     } catch (e) {
       if (isPreclaimCancelledError(e)) return;
       logger.warn(`[module:design preclaim] ensure-project failed: ${String(e).slice(0, 200)}`, { runId: ctx.runId });
@@ -1056,78 +1222,57 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
 
   if (!projId) {
     if (hasStitchKey) {
-      try {
-        await completeWithLocalFallbackDesign(
-          ctx,
-          repo,
-          stitchDir,
-          prd,
-          ctx.context["device_type"] || "DESKTOP",
-          "DESIGN_STITCH_PROJECT_UNAVAILABLE: STITCH_API_KEY is configured but Setfarm could not create or load a Stitch project.",
-        );
-      } catch (e) {
-        const error = `DESIGN_ASSET_GENERATION_FAILED: Stitch project could not be created and local fallback failed: ${String(e).slice(0, 240)}`;
-        logger.warn(`[module:design preclaim] ${error}`, { runId: ctx.runId });
-        await failDesignPreclaim(ctx, error);
-      }
-      return;
-    }
-    try {
-      await recordPreClaimProgress(ctx, "Design preclaim: Stitch project unavailable, generating local fallback design assets");
-      const fallbackScreens = createFallbackDesignAssets(repo, stitchDir, prd, ctx.context["device_type"] || "DESKTOP");
-      ctx.context["stitch_project_id"] = "local-fallback";
-      ctx.context["screens_generated"] = String(fallbackScreens.length);
-      ctx.context["screen_map"] = JSON.stringify(fallbackScreens);
-      logger.warn(`[module:design preclaim] Stitch project unavailable; generated ${fallbackScreens.length} local fallback design assets`, { runId: ctx.runId });
-      await recordPreClaimProgress(ctx, `Design preclaim: generated fallback design assets (${fallbackScreens.length} screens)`);
-      return;
-    } catch (e) {
-      const error = `DESIGN_ASSET_GENERATION_FAILED: Stitch project could not be created and local fallback failed: ${String(e).slice(0, 240)}`;
+      const diagnostic = String(ctx.context["stitch_project_diagnostic"] || "").trim();
+      const suffix = diagnostic ? ` Last Stitch diagnostic: ${diagnostic.slice(0, 650)}` : "";
+      const error = `DESIGN_STITCH_PROJECT_UNAVAILABLE: STITCH_API_KEY is configured but Setfarm could not create or load a Stitch project after retries.${suffix}`;
       logger.warn(`[module:design preclaim] ${error}`, { runId: ctx.runId });
-      await failDesignPreclaim(ctx, error);
+      await failDesignPreclaim(ctx, error, { terminal: true });
+      return;
     }
+    const error = "DESIGN_STITCH_API_KEY_REQUIRED: Stitch design generation requires STITCH_API_KEY; local fallback design generation is disabled.";
+    logger.warn(`[module:design preclaim] ${error}`, { runId: ctx.runId });
+    await failDesignPreclaim(ctx, error, { terminal: true });
     return;
   }
 
   ctx.context["stitch_project_id"] = projId;
 
-  // 2. Write compact, explicit multi-screen Stitch prompt. The batch API is
-  // fastest and most reliable when it receives an exact screen count and names.
+  if (recoverDesignMdOnly) {
+    try {
+      await downloadStitchDesignMarkdown(ctx, stitchScript, repo, stitchDir, projId);
+      return;
+    } catch (e) {
+      if (isPreclaimCancelledError(e)) return;
+      const error = redactDiagnosticText(e).slice(0, 500);
+      logger.warn(`[module:design preclaim] ${error}`, { runId: ctx.runId });
+      await failDesignPreclaim(ctx, error || "DESIGN_STITCH_DESIGN_MD_UNAVAILABLE", { terminal: true });
+      return;
+    }
+  }
+
+  // 2. Write the full PRD plus the old mandatory-screen primer. The compact
+  // exact-count prompt proved too brittle against Stitch provider failures.
   const promptFile = path.join(stitchDir, ".generate-prompt.txt");
+  const designBriefPath = path.join(stitchDir, "DESIGN_BRIEF.md");
   const deviceType = ctx.context["device_type"] || "DESKTOP";
   const uiLanguage = ctx.context["ui_language"] || ctx.context["UI_LANGUAGE"] || "English";
-  fs.writeFileSync(promptFile, buildBatchStitchPrompt(repo, prd, deviceType, uiLanguage));
+  const designBrief = buildBatchStitchPrompt(repo, prd, deviceType, uiLanguage);
+  fs.writeFileSync(designBriefPath, designBrief, "utf-8");
+  fs.writeFileSync(promptFile, designBrief, "utf-8");
   logger.info(`[module:design preclaim] Generating screens (project ${projId}, device ${deviceType})`, { runId: ctx.runId });
   await recordPreClaimProgress(ctx, `Design preclaim: generating Stitch screens for ${deviceType}`);
 
-  // 3. generate-all-screens (single batch call)
+  // 3. generate-all-screens in Stitch chunks. Stitch handles up to 5 screens
+  // reliably per batch, so 20 surfaces must be 4 Stitch calls of 5, not one
+  // oversized request.
   let batchGenerationCompleted = false;
   let lastStitchDiagnostic = "";
   let stitchProviderUnavailable = false;
   try {
-    const genOut = await execFileText("node", [stitchScript, "generate-all-screens", projId, promptFile, deviceType, "GEMINI_3_1_PRO"],
-      {
-        timeout: 660000,
-        cwd: repo,
-        onProgress: () => recordPreClaimProgress(ctx, "Design preclaim: still generating Stitch screens"),
-      });
-    batchGenerationCompleted = true;
-    let genResult: any = {};
-    try { genResult = JSON.parse(genOut); } catch (e) { logger.debug(`[module:design preclaim] gen parse: ${String(e).slice(0, 80)}`); }
-    logger.info(`[module:design preclaim] Generated ${genResult.total || 0} screens in ${genResult.elapsedSeconds || "?"}s`, { runId: ctx.runId });
-    const generatedTotal = Number(genResult.total || 0);
-    if (generatedTotal === 0 && genResult.diagnostic) {
-      const shape = JSON.stringify(genResult.diagnostic).slice(0, 260);
-      const textSample = redactDiagnosticText(genResult.diagnostic.textSample).slice(0, 500);
-      lastStitchDiagnostic = textSample || shape;
-      stitchProviderUnavailable = isStitchProviderUnavailable(textSample || shape);
-      await recordPreClaimProgress(ctx, `Design preclaim: generated 0 Stitch screens; response shape ${shape}`);
-      if (textSample) {
-        await recordPreClaimProgress(ctx, `Design preclaim: 0-screen Stitch response: ${textSample}`);
-      }
-    } else {
-      await recordPreClaimProgress(ctx, `Design preclaim: generated ${generatedTotal} Stitch screens`);
-    }
+    const chunkResult = await generateStitchScreensInSurfaceChunks(ctx, stitchScript, repo, stitchDir, projId, prd, deviceType, uiLanguage);
+    batchGenerationCompleted = chunkResult.completed;
+    stitchProviderUnavailable = chunkResult.providerUnavailable;
+    lastStitchDiagnostic = chunkResult.diagnostic || lastStitchDiagnostic;
   } catch (e) {
     if (isPreclaimCancelledError(e)) return;
     const failureDetail = redactDiagnosticText(e).slice(0, 500);
@@ -1141,14 +1286,12 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     }
   }
 
-  // 4. download-all with retries only after a completed batch call. If the
-  // provider does not accept generation, skip wasteful download retries and use
-  // the complete generated fallback bundle below.
+  // 4. download-all with retries. When the batch call completed or returned an
+  // ambiguous error, Stitch can still finish async work after a delay. When the
+  // provider explicitly reports UNAVAILABLE, do one quick probe, then move to
+  // per-surface Stitch generation instead of spending minutes polling nothing.
   let htmlCount = 0;
-  const downloadAttempts = stitchProviderUnavailable ? 0 : (batchGenerationCompleted ? 3 : 1);
-  if (stitchProviderUnavailable) {
-    await recordPreClaimProgress(ctx, "Design preclaim: skipping Stitch download recovery because the provider did not accept generation");
-  }
+  const downloadAttempts = stitchProviderUnavailable ? 1 : (batchGenerationCompleted ? 3 : 1);
   for (let attempt = 0; attempt < downloadAttempts; attempt++) {
     try {
       await recordPreClaimProgress(ctx, `Design preclaim: downloading Stitch HTML files (attempt ${attempt + 1}/${downloadAttempts})`);
@@ -1178,7 +1321,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   }
 
   // 4b. Tracking-file fallback: direct curl from cached URLs if download-all returned 0
-  if (htmlCount === 0 && !stitchProviderUnavailable) {
+  if (htmlCount === 0) {
     const trackFile = path.join(repo, ".stitch-screens-" + projId + ".json");
     if (fs.existsSync(trackFile)) {
       try {
@@ -1202,9 +1345,9 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     }
   }
 
-  // 4c. Optional per-screen Stitch recovery. It is disabled by default because
-  // Setfarm's primary path is one fast batch call for the whole screen set.
-  if (htmlCount === 0 && hasStitchKey && !stitchProviderUnavailable && process.env.SETFARM_STITCH_PER_SCREEN_RECOVERY === "1") {
+  // 4c. Chunked per-screen Stitch recovery. This restores the fast 5+N behavior
+  // used before single-call batch generation became the only active path.
+  if (htmlCount === 0 && hasStitchKey && process.env.SETFARM_STITCH_PER_SCREEN_RECOVERY !== "0") {
     try {
       htmlCount = await generateStitchScreensIndividually(ctx, stitchScript, repo, stitchDir, projId, prd, deviceType, uiLanguage);
       ctx.context["screens_generated"] = String(htmlCount);
@@ -1216,31 +1359,30 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
 
   if (htmlCount === 0 && hasStitchKey) {
     const suffix = lastStitchDiagnostic ? ` Last Stitch diagnostic: ${lastStitchDiagnostic.slice(0, 650)}` : "";
-    const warning = stitchProviderUnavailable
+    const error = stitchProviderUnavailable
       ? `DESIGN_STITCH_SERVICE_UNAVAILABLE: STITCH_API_KEY is configured but the Stitch provider is temporarily unavailable.${suffix}`
-      : `DESIGN_STITCH_HTML_UNAVAILABLE: STITCH_API_KEY is configured but Stitch produced 0 valid HTML screens after batch generation, download, and tracking-file recovery.${suffix}`;
-    try {
-      htmlCount = await completeWithLocalFallbackDesign(ctx, repo, stitchDir, prd, deviceType, warning);
-    } catch (e) {
-      const error = `DESIGN_ASSET_GENERATION_FAILED: ${warning} Local fallback also failed: ${String(e).slice(0, 240)}`;
-      logger.warn(`[module:design preclaim] ${error}`, { runId: ctx.runId });
-      await failDesignPreclaim(ctx, error, { terminal: stitchProviderUnavailable });
-      return;
-    }
+      : `DESIGN_STITCH_HTML_UNAVAILABLE: STITCH_API_KEY is configured but Stitch produced 0 valid HTML screens after batch generation, download, tracking-file recovery, and chunked per-screen recovery.${suffix}`;
+    logger.warn(`[module:design preclaim] ${error}`, { runId: ctx.runId });
+    await failDesignPreclaim(ctx, error, { terminal: stitchProviderUnavailable });
+    return;
   }
 
-  // 4d. Local fallback: keep offline or unconfigured environments usable.
   if (htmlCount === 0) {
+    const error = "DESIGN_STITCH_API_KEY_REQUIRED: Stitch design generation requires STITCH_API_KEY; local fallback design generation is disabled.";
+    logger.warn(`[module:design preclaim] ${error}`, { runId: ctx.runId });
+    await failDesignPreclaim(ctx, error, { terminal: true });
+    return;
+  }
+
+  if (htmlCount > 0 && hasStitchKey && projId && !manifestUsesLocalFallback(stitchDir)) {
     try {
-      await recordPreClaimProgress(ctx, "Design preclaim: generating local fallback design assets");
-      const fallbackScreens = createFallbackDesignAssets(repo, stitchDir, prd, deviceType);
-      htmlCount = fallbackScreens.length;
-      ctx.context["screens_generated"] = String(htmlCount);
-      ctx.context["screen_map"] = JSON.stringify(fallbackScreens);
-      logger.warn(`[module:design preclaim] Stitch produced 0 valid HTML screens; generated ${htmlCount} local fallback design assets`, { runId: ctx.runId });
-      await recordPreClaimProgress(ctx, `Design preclaim: generated fallback design assets (${htmlCount} screens)`);
+      await downloadStitchDesignMarkdown(ctx, stitchScript, repo, stitchDir, projId);
     } catch (e) {
-      logger.warn(`[module:design preclaim] local fallback design generation failed: ${String(e).slice(0, 200)}`, { runId: ctx.runId });
+      if (isPreclaimCancelledError(e)) return;
+      const error = redactDiagnosticText(e).slice(0, 500);
+      logger.warn(`[module:design preclaim] ${error}`, { runId: ctx.runId });
+      await failDesignPreclaim(ctx, error || "DESIGN_STITCH_DESIGN_MD_UNAVAILABLE", { terminal: true });
+      return;
     }
   }
 
@@ -1259,83 +1401,58 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   //    download-all sometimes returns HTML without writing manifest — observed
   //    in run #449). Either way the agent gets a populated SCREEN_MAP and only
   //    has to emit DESIGN_SYSTEM.
-  const manifestPath = path.join(stitchDir, "DESIGN_MANIFEST.json");
-  let screenMap: Array<{ screenId: string; name: string; type: string; description: string }> = [];
-  if (fs.existsSync(manifestPath)) {
-    try {
-      const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
-      if (Array.isArray(manifest)) {
-        screenMap = manifest
-          .filter((s: any) => !isPrdPseudoScreen(s))
-          .filter((s: any) => s?.screenId && s?.title)
-          .map((s: any) => ({
-            screenId: String(s.screenId),
-            name: String(s.title),
-            type: classifyScreenType(String(s.title)),
-            description: String(s.title) + " screen",
-          }));
-      }
-    } catch (e) {
-      logger.warn(`[module:design preclaim] manifest parse failed: ${String(e).slice(0, 200)}`, { runId: ctx.runId });
-    }
-  }
-  // Fallback: scan stitch/*.html, derive name from <title> tag (or screenId)
-  if (screenMap.length === 0 && fs.existsSync(stitchDir)) {
-    try {
-      const htmlFiles = fs.readdirSync(stitchDir).filter(f => f.endsWith(".html") && !f.startsWith(".") && isValidStitchHtml(path.join(stitchDir, f)));
-      for (const file of htmlFiles) {
-        const screenId = file.replace(/\.html$/, "");
-        let title = screenId;
-        try {
-          const html = fs.readFileSync(path.join(stitchDir, file), "utf-8").slice(0, 4000);
-          const m = html.match(/<title[^>]*>([^<]+)<\/title>/i);
-          if (m) title = m[1].trim();
-        } catch {}
-        if (/^prd(?:\b|[:\s-])/i.test(title)) continue;
-        screenMap.push({
-          screenId,
-          name: title || screenId,
-          type: classifyScreenType(title),
-          description: title + " screen",
-        });
-      }
-      if (screenMap.length > 0) {
-        // Synthesize manifest so downstream code (agent prompt examples, etc.) works
-        try {
-          fs.writeFileSync(manifestPath, JSON.stringify(
-            screenMap.map(s => ({ screenId: s.screenId, title: s.name, htmlFile: s.screenId + ".html", deviceType: ctx.context["device_type"] || "DESKTOP" })),
-            null, 2
-          ));
-          logger.info(`[module:design preclaim] manifest synthesized from ${screenMap.length} HTML files`, { runId: ctx.runId });
-        } catch (e) {
-          logger.warn(`[module:design preclaim] manifest synthesize failed: ${String(e).slice(0, 200)}`, { runId: ctx.runId });
-        }
-      }
-    } catch (e) {
-      logger.warn(`[module:design preclaim] HTML fallback failed: ${String(e).slice(0, 200)}`, { runId: ctx.runId });
-    }
-  }
+  let screenMap = readScreenMapFromStitchArtifacts(stitchDir, deviceType, ctx.runId);
   if (screenMap.length > 0) {
-    const reconciliation = reconcileScreenMapToPrd(screenMap, prd);
-    if (reconciliation.missing.length > 0) {
-      const error = `DESIGN_SCREEN_MAP_PRD_MISMATCH: Stitch output is missing PRD screen(s): ${reconciliation.missing.join(", ")}. Design must cover the PRD Screens table before stories/implementation.`;
+    let reconciliation = verifyScreenMapToSurfaces(screenMap, prd, { stitchDir });
+    if (reconciliation.inlineCovered.length > 0) {
+      await recordPreClaimProgress(ctx, `Design preclaim: inline-covered state surfaces (${reconciliation.inlineCovered.slice(0, 5).join("; ")})`);
+    }
+    if (reconciliation.missing.length > 0 && hasStitchKey && process.env.SETFARM_STITCH_TARGETED_SURFACE_RETRY !== "0") {
+      const retryTargets = screenTargetsForSurfaces(reconciliation.missingSurfaces);
+      await recordPreClaimProgress(ctx, `Design preclaim: targeted retry for missing required Product Surfaces (${reconciliation.missing.slice(0, 5).join(", ")})`);
+      try {
+        await generateStitchScreensIndividually(
+          ctx,
+          stitchScript,
+          repo,
+          stitchDir,
+          projId,
+          prd,
+          deviceType,
+          uiLanguage,
+          retryTargets,
+          "Product Surface coverage mismatch",
+        );
+        screenMap = readScreenMapFromStitchArtifacts(stitchDir, deviceType, ctx.runId);
+        reconciliation = verifyScreenMapToSurfaces(screenMap, prd, { stitchDir });
+      } catch (e) {
+        if (isPreclaimCancelledError(e)) return;
+        logger.warn(`[module:design preclaim] targeted Product Surface retry failed: ${String(e).slice(0, 240)}`, { runId: ctx.runId });
+      }
+    }
+    if (reconciliation.missing.length > 0 || reconciliation.screenMap.length === 0) {
+      const detail = [
+        reconciliation.missing.length ? `missing surfaces=${reconciliation.missing.slice(0, 8).join(", ")}` : "",
+        reconciliation.unexpected.length ? `unexpected screens=${reconciliation.unexpected.slice(0, 8).join(", ")}` : "",
+      ].filter(Boolean).join("; ");
+      const error = `DESIGN_SURFACE_MISMATCH: Stitch output is missing required Product Surfaces after targeted retry. ${detail}. DESIGN must regenerate scoped Stitch assets before stories/implementation.`;
       logger.warn(`[module:design preclaim] ${error}`, { runId: ctx.runId });
       await failDesignPreclaim(ctx, error);
       return;
     }
-    if (reconciliation.screenMap.length !== screenMap.length || reconciliation.dropped.length > 0 || reconciliation.duplicates.length > 0) {
+    if (reconciliation.screenMap.length !== screenMap.length || reconciliation.duplicates.length > 0 || reconciliation.unexpected.length > 0 || reconciliation.inlineCovered.length > 0) {
       const detail = [
-        reconciliation.dropped.length ? `dropped=${[...new Set(reconciliation.dropped)].slice(0, 8).join(",")}` : "",
         reconciliation.duplicates.length ? `duplicates=${[...new Set(reconciliation.duplicates)].slice(0, 8).join(",")}` : "",
+        reconciliation.unexpected.length ? `dropped_unexpected=${[...new Set(reconciliation.unexpected)].slice(0, 8).join(",")}` : "",
+        reconciliation.inlineCovered.length ? `inline_covered=${reconciliation.inlineCovered.length}` : "",
         `final=${reconciliation.screenMap.length}`,
       ].filter(Boolean).join(" ");
       ctx.context["design_reconciliation"] = detail;
-      await recordPreClaimProgress(ctx, `Design preclaim: reconciled SCREEN_MAP to PRD (${detail})`);
-      logger.warn(`[module:design preclaim] Reconciled SCREEN_MAP to PRD: ${detail}`, { runId: ctx.runId });
+      await recordPreClaimProgress(ctx, `Design preclaim: reconciled SCREEN_MAP to Product Surfaces (${detail})`);
+      logger.warn(`[module:design preclaim] Reconciled SCREEN_MAP to Product Surfaces: ${detail}`, { runId: ctx.runId });
     }
     screenMap = reconciliation.screenMap;
     rewriteScreenArtifactsForScreenMap(stitchDir, screenMap, deviceType);
-    writeDesignMarkdownBrief(stitchDir, screenMap, prd, repo);
     ctx.context["screen_map"] = JSON.stringify(screenMap);
     logger.info(`[module:design preclaim] SCREEN_MAP injected (${screenMap.length} entries)`, { runId: ctx.runId });
     await recordPreClaimProgress(ctx, `Design preclaim: SCREEN_MAP ready with ${screenMap.length} entries`);

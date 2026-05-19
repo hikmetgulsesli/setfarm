@@ -12,7 +12,7 @@ import {
 } from "../dist/installer/product-supervisor.js";
 
 describe("product supervisor", () => {
-  it("blocks untraceable PRD screens before they become implementation stories", () => {
+  it("blocks legacy PRD screen tables before they become implementation stories", () => {
     const task = "Project: brick-arcade-0512 Build a browser arcade game with brick grid, paddle controls, ball physics, score, lives, pause, restart, and game over.";
     const prd = [
       "# Brick Arcade PRD",
@@ -36,21 +36,23 @@ describe("product supervisor", () => {
     });
 
     assert.equal(result.ok, false);
-    assert.match(result.reason, /PLAN_SCREEN_DRIFT/);
-    assert.match(result.reason, /Next Piece Preview/);
+    assert.match(result.reason, /PLAN_SCREEN_TABLE_FORBIDDEN/);
   });
 
-  it("passes a traceable generic plan contract", () => {
+  it("passes a traceable Product Surface plan contract", () => {
     const task = "Project: brick-arcade-0512 Build a browser arcade game with brick grid, paddle controls, ball physics, score, lives, pause, restart, and game over.";
     const prd = [
       "# Brick Arcade PRD",
       "The game includes brick grid, paddle controls, ball physics, score, lives, pause, restart, and game over.",
-      "## Screens",
-      "| # | Screen Name | Type | Description |",
-      "|---|-----------|-----|----------|",
-      "| 1 | Game Board | play | Main playable brick grid and paddle scene |",
-      "| 2 | Controls Help | help | Keyboard controls and game rules |",
-      "| 3 | Game Over | result | Final score, lives summary, and restart |",
+      "## 4. Product Surfaces",
+      "### SURFACE: SURF_GAMEPLAY",
+      "- Name: Gameplay",
+      "- Purpose: Main playable brick grid, paddle controls, ball physics, score, lives, pause, restart, and game over.",
+      "- Permitted Actions: ACT_START_GAME (control_hint: primary_button), ACT_PAUSE_GAME (control_hint: keyboard_shortcut)",
+      "### SURFACE: SURF_HELP",
+      "- Name: Controls Help",
+      "- Purpose: Keyboard controls and concise game rules.",
+      "- Permitted Actions: ACT_RETURN_TO_GAMEPLAY (control_hint: secondary_button)",
     ].join("\n");
 
     const result = runProductSupervisorGate({
@@ -58,24 +60,27 @@ describe("product supervisor", () => {
       runId: "run-1",
       stepId: "plan",
       task,
-      parsed: { status: "done", prd, prd_screen_count: "3" },
+      parsed: { status: "done", prd },
       context: { task },
     });
 
     assert.equal(result.ok, true, result.reason);
   });
 
-  it("does not reject common game state screens when the task asks for a game", () => {
+  it("does not reject common game state surfaces when the task asks for a game", () => {
     const task = "Project: falling-blocks Build a browser game with keyboard controls, score, levels, pause, restart, and responsive layout.";
     const prd = [
       "# Falling Blocks PRD",
       "The game includes keyboard controls, score, levels, pause, restart, and responsive layout.",
-      "## Screens",
-      "| # | Screen Name | Type | Description |",
-      "|---|-----------|-----|----------|",
-      "| 1 | Game Board | play | Main playable game board |",
-      "| 2 | Game Over | result | Final score and restart |",
-      "| 3 | Controls Help | help | Keyboard controls and rules |",
+      "## 4. Product Surfaces",
+      "### SURFACE: SURF_GAMEPLAY",
+      "- Name: Game Board",
+      "- Purpose: Main playable game board with keyboard controls, score, levels, pause, restart, and responsive layout.",
+      "- Permitted Actions: ACT_START_GAME (control_hint: primary_button), ACT_RESTART_GAME (control_hint: secondary_button)",
+      "### SURFACE: SURF_HELP",
+      "- Name: Controls Help",
+      "- Purpose: Keyboard controls and rules.",
+      "- Permitted Actions: ACT_RETURN_TO_GAMEPLAY (control_hint: secondary_button)",
     ].join("\n");
 
     const result = runProductSupervisorGate({
@@ -83,22 +88,88 @@ describe("product supervisor", () => {
       runId: "run-1",
       stepId: "plan",
       task,
-      parsed: { status: "done", prd, prd_screen_count: "3" },
+      parsed: { status: "done", prd },
       context: { task },
     });
 
     assert.equal(result.ok, true, result.reason);
   });
 
-  it("blocks design SCREEN_MAP drift against the PRD screen contract", () => {
+  it("allows generic workspace and editor surface labels when the surface contract is task-traceable", () => {
+    const task = "Build a compact browser service desk app called SurfaceCheck Desk. It should manage tickets, queues, agents, SLA status, insights, settings, empty and error states.";
+    const prd = [
+      "# SurfaceCheck Desk PRD",
+      "The product manages tickets, queues, agents, SLA status, insights, settings, empty and error states.",
+      "## 4. Product Surfaces",
+      "### SURFACE: SURF_WORKSPACE",
+      "- Name: Workspace",
+      "- Purpose: Main ticket queue workspace for tickets, queues, agents, SLA status, insights, settings, empty and error states.",
+      "- Permitted Actions: ACT_SEARCH_RECORDS (control_hint: search_input_persistent), ACT_CREATE_RECORD (control_hint: primary_button)",
+      "### SURFACE: SURF_RECORD_EDITOR",
+      "- Name: Record Editor",
+      "- Purpose: Create, update, and validate ticket records while preserving queue, agent, SLA, empty, and error context.",
+      "- Permitted Actions: ACT_SAVE_RECORD (control_hint: form_submit)",
+    ].join("\n");
+
+    const result = runProductSupervisorGate({
+      phase: "plan",
+      runId: "run-1",
+      stepId: "plan",
+      task,
+      parsed: { status: "done", prd },
+      context: { task },
+    });
+
+    assert.equal(result.ok, true, result.reason);
+  });
+
+  it("allows requested singular/plural service desk surfaces and ignores negative profile anti-goals", () => {
+    const task = "Build a compact browser service desk app called SurfaceGate Desk. It should manage tickets, queues, agents, SLA status, insights, settings, empty and error states.";
+    const prd = [
+      "# SurfaceGate Desk PRD",
+      "The product manages tickets, queues, agents, SLA status, insights, settings, empty and error states.",
+      "## 4. Product Surfaces",
+      "### SURFACE: SURF_TICKET_OPERATIONS",
+      "- Name: Ticket Operations",
+      "- Purpose: Give the user the main operational view for tickets, queues, agents, SLA status, insights, settings, empty and error states.",
+      "- Design Guidance: Dense product UI; avoid unrelated admin/reporting modules.",
+      "### SURFACE: SURF_QUEUE_AND_STATUS_MANAGEMENT",
+      "- Name: Queue and Status Management",
+      "- Purpose: Help users organize ticket work by queue, status, SLA, stage, priority, or triage context.",
+      "### SURFACE: SURF_AGENT_WORKLOAD",
+      "- Name: Agent Workload",
+      "- Purpose: Show how ticket work is assigned or blocked across requested agents.",
+      "- Design Guidance: Make ownership scannable without creating a separate HR or account-management module.",
+      "### SURFACE: SURF_SETTINGS_AND_PREFERENCES",
+      "- Name: Settings and Preferences",
+      "- Purpose: Let users adjust workflow preferences requested by the task.",
+      "- Design Guidance: Do not invent unrelated profile or billing areas.",
+    ].join("\n");
+
+    const result = runProductSupervisorGate({
+      phase: "plan",
+      runId: "run-1",
+      stepId: "plan",
+      task,
+      parsed: { status: "done", prd },
+      context: { task },
+    });
+
+    assert.equal(result.ok, true, result.reason);
+  });
+
+  it("blocks design SCREEN_MAP drift against the Product Surface contract", () => {
     const prd = [
       "# Brick Arcade PRD",
-      "## Screens",
-      "| # | Screen Name | Type | Description |",
-      "|---|-----------|-----|----------|",
-      "| 1 | Game Board | play | Main playable brick grid and paddle scene |",
-      "| 2 | Main Menu | menu | Start and resume actions |",
-      "| 3 | Game Over | result | Final score and restart |",
+      "## 4. Product Surfaces",
+      "### SURFACE: SURF_GAMEPLAY",
+      "- Name: Game Board",
+      "- Purpose: Main playable brick grid and paddle scene.",
+      "- Permitted Actions: ACT_START_GAME (control_hint: primary_button)",
+      "### SURFACE: SURF_RESULTS",
+      "- Name: Game Over",
+      "- Purpose: Final score and restart.",
+      "- Permitted Actions: ACT_RESTART_GAME (control_hint: secondary_button)",
     ].join("\n");
 
     const result = runProductSupervisorGate({
@@ -118,21 +189,26 @@ describe("product supervisor", () => {
     });
 
     assert.equal(result.ok, false);
-    assert.match(result.reason, /DESIGN_SCREEN_COUNT_DRIFT/);
     assert.match(result.reason, /DESIGN_SCREEN_DUPLICATE/);
-    assert.match(result.reason, /DESIGN_SCREEN_EXTRA/);
-    assert.match(result.reason, /DESIGN_SCREEN_MISSING/);
+    assert.match(result.reason, /DESIGN_SURFACE_MISMATCH/);
   });
 
-  it("accepts qualified Stitch screen titles that still map to PRD screens", () => {
+  it("accepts qualified Stitch screen titles that still map to Product Surfaces", () => {
     const prd = [
       "# Snake PRD",
-      "## Screens",
-      "| # | Screen Name | Type | Description |",
-      "|---|-----------|-----|----------|",
-      "| 1 | Game Board | play | Main playable grid and controls |",
-      "| 2 | Game Options | settings | Speed and control preferences |",
-      "| 3 | Game Over | result | Final score and restart |",
+      "## 4. Product Surfaces",
+      "### SURFACE: SURF_GAMEPLAY",
+      "- Name: Game Board",
+      "- Purpose: Main playable grid and controls.",
+      "- Permitted Actions: ACT_START_GAME (control_hint: primary_button)",
+      "### SURFACE: SURF_OPTIONS",
+      "- Name: Game Options",
+      "- Purpose: Speed and control preferences.",
+      "- Permitted Actions: ACT_SAVE_PREFERENCES (control_hint: form_submit)",
+      "### SURFACE: SURF_RESULTS",
+      "- Name: Game Over",
+      "- Purpose: Final score and restart.",
+      "- Permitted Actions: ACT_RESTART_GAME (control_hint: secondary_button)",
     ].join("\n");
 
     const result = runProductSupervisorGate({

@@ -92,10 +92,14 @@ else
   echo "Initialized new repo at $REPO"
 fi
 
-# 2. GitHub remote (with duplicate-name fallback)
-PROJECT_NAME=$(basename "$REPO")
-PACKAGE_NAME=$(printf "%s" "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._-]+/-/g; s/^-+//; s/-+$//')
+# 2. Runtime identity (provided by Setfarm/MC; basename is only a last-resort fallback)
+PROJECT_NAME="${SETFARM_RUN_SLUG:-$(basename "$REPO")}"
+GITHUB_REPO="${SETFARM_GITHUB_REPO:-hikmetgulsesli/$PROJECT_NAME}"
+PACKAGE_NAME="${SETFARM_PACKAGE_NAME:-$(printf "%s" "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._-]+/-/g; s/^-+//; s/-+$//')}"
 [ -n "$PACKAGE_NAME" ] || PACKAGE_NAME="setfarm-app"
+if [ -n "${SETFARM_APP_TITLE:-}" ]; then
+  PROJECT_DISPLAY_NAME="$SETFARM_APP_TITLE"
+fi
 if [ -z "$PROJECT_DISPLAY_NAME" ]; then
   PROJECT_DISPLAY_NAME=$(printf "%s" "$PROJECT_NAME" | sed -E 's/[-_]+/ /g; s/[[:space:]]+/ /g; s/^ //; s/ $//')
 fi
@@ -107,21 +111,22 @@ if ! git remote -v 2>/dev/null | grep -q origin; then
   # so --push has something to push. Run #389 postmortem: empty dir → git init
   # → gh repo create --push → "no commits found" → FATAL.
   if ! git rev-parse --verify HEAD >/dev/null 2>&1; then
-    [ -f README.md ] || echo "# $PROJECT_NAME" > README.md
+    [ -f README.md ] || echo "# $PROJECT_DISPLAY_NAME" > README.md
     [ -f .gitignore ] || printf "node_modules/\ndist/\n.env\n.setfarm/\n.setfarm-bin/\n.worktrees/\nSUPERVISOR_MEMORY.md\nPROJECT_MEMORY.md\nCLAUDE.md\nreferences\n" > .gitignore
     ensure_setfarm_internal_ignored
     git add README.md .gitignore 2>/dev/null || true
     git commit -m "chore: initial commit" >/dev/null 2>&1 || true
   fi
-  if OUTPUT=$(gh repo create "hikmetgulsesli/$PROJECT_NAME" --public --source . --remote origin --push 2>&1); then
-    echo "GitHub repo created: hikmetgulsesli/$PROJECT_NAME"
+  if OUTPUT=$(gh repo create "$GITHUB_REPO" --public --source . --remote origin --push 2>&1); then
+    echo "GitHub repo created: $GITHUB_REPO"
   else
     if echo "$OUTPUT" | grep -qi "Name already exists\|already exists"; then
       # Name taken — try with suffix
       for SUFFIX in 2 3 4 5; do
         ALT_NAME="${PROJECT_NAME}-${SUFFIX}"
-        if gh repo create "hikmetgulsesli/$ALT_NAME" --public --source . --remote origin --push 2>/dev/null; then
-          echo "GitHub repo created with alt name: hikmetgulsesli/$ALT_NAME"
+        ALT_REPO="$(printf "%s" "$GITHUB_REPO" | sed -E "s#[^/]+$#$ALT_NAME#")"
+        if gh repo create "$ALT_REPO" --public --source . --remote origin --push 2>/dev/null; then
+          echo "GitHub repo created with alt name: $ALT_REPO"
           break
         fi
       done
@@ -555,7 +560,7 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "$PROJECT_NAME",
+  title: "$HTML_TITLE",
   description: "Setfarm generated application",
 };
 

@@ -6,9 +6,12 @@ version: 12.1
 description: |
   Design-first pipeline: PLAN → DESIGN → STORIES → SETUP-REPO → SETUP-BUILD → IMPLEMENT →
   VERIFY → SUPERVISE → SECURITY-GATE → QA-TEST → FINAL-TEST → DEPLOY.
-  Plan step produces PRD only (no stories). Design step generates screens
-  from PRD via Stitch (no screen limit). Stories step decomposes PRD into
-  user stories using SCREEN_MAP for screen↔story binding.
+  Plan step produces a portable Product Contract only (no stories, no runtime
+  repo/branch/path values, no physical screen table). Design step derives a
+  scoped Stitch DESIGN_BRIEF from Product Surfaces, downloads Stitch artifacts,
+  and verifies every generated screen maps back to a SURF_* contract. Stories
+  step decomposes PRD plus DESIGN_MANIFEST into user stories using SCREEN_MAP
+  for generated screen to story binding.
   Developers write code only in prepared story worktrees. Setfarm stages the
   declared scope, commits and pushes the story branch, creates each story PR to
   main, verifier reviews + merges, then local main is synced before the next
@@ -169,82 +172,38 @@ steps:
       for English UI or uses an English product brief, choose English. If it
       explicitly asks for Turkish UI, choose Turkish. Do not force Turkish by default.
 
-      Analyze the following task and produce a detailed PRD (Product Requirements Document).
-      Do NOT create stories yet — the design step will generate screen designs first,
-      then the stories step will decompose based on both PRD and screen designs.
+      Analyze the following task and produce a detailed Product Contract PRD.
+      Do NOT create stories yet. The design step will derive a scoped Stitch
+      DESIGN_BRIEF from Product Surfaces, then the stories step will decompose
+      based on the PRD and verified Stitch DESIGN_MANIFEST.
 
       TASK:
       {{task}}
 
       Instructions:
-      1. Explore the codebase (if repo exists) to understand the stack, conventions, and patterns
-      2. Read references/brainstorming-protocol.md for architectural decision-making
-      3. Write a comprehensive PRD covering:
-         - Project overview and goals
-         - Target platform (web/mobile/desktop)
-         - Functional requirements (all features, pages, modules)
-         - Technical requirements (stack, DB, APIs, auth)
-         - UI/UX requirements (pages, screens, interactions)
-         - Non-functional requirements (performance, security)
-         - If the task is a game/oyun: specify game type, physics model, input keys,
-           state machine states, and require window.game state exposure
-      4. The PRD must be detailed enough for a designer to identify ALL screens
-         and for a developer to implement without ambiguity
-
-      === MANDATORY: SCREEN TABLE IN PRD ===
-      The PRD MUST end with a "## Screens" section containing a numbered table:
-      | # | Screen Name | Type | Description |
-      |---|-----------|-----|----------|
-      | 1 | Main Dashboard | dashboard | KPI cards and recent activity |
-      | 2 | Customer List | list-view | Search, filters, and pagination |
-      ...
-
-      MINIMUM SCREEN COUNT by project type:
-      - Landing page / static site: 3-5
-      - Game (web/mobile): 5-8
-      - Dashboard / analytics: 8-15
-      - CRUD application: 10-15
-      - CRM / ERP / SaaS: 20-35
-      - E-commerce: 25-40
-
-      MANDATORY SCREENS for CRUD entities:
-      Each entity (customer, quotation, product, etc.) requires minimum 3 screens:
-      1. List view (search, filter, pagination)
-      2. Detail view (all info, related data, actions)
-      3. Form (create/edit, validation)
-
-      Each report type = 1 separate screen (not a single "reports" page).
-
-      Standard screens are CONDITIONAL, not universal:
-      - Login page only if the task requires accounts, admin access, private data, or authentication.
-      - Settings/profile/preferences only if the task explicitly needs user/configuration preferences.
-      - 404 / Error page for routed multi-page apps; simple single-view utilities may use inline error states.
-      - Empty states only for list/search/data views where empty data is a real state.
-
-      If the PRD screen table has FEWER screens than the minimum for the project type,
-      add only genuinely required product screens before outputting the PRD.
-      Simple single-page utilities must still satisfy PRD_SCREEN_COUNT >= 3, but those
-      rows should be the primary view plus real inline state views (empty/error/success/help)
-      that fit the product. Do not invent login/settings/history/profile screens for
-      smoke/simple apps just to satisfy a generic checklist.
-
-      5. Determine the repo path and branch name
-         CRITICAL REPO PATH RULE: The repo path MUST be $HOME/projects/<slug>.
-         The slug comes from the token following "Proje:" in the task description.
-         Extract that token VERBATIM — numbers, hyphens, and suffixes are part
-         of the name. Only transform: lowercase + locale-specific characters
-         to ASCII equivalents + replace spaces with hyphens. Never trim trailing
-         digits, never drop suffixes like "-v2" or "-53259", never translate.
-
-         Examples:
-           "Proje: hesap-makinesi"         → $HOME/projects/hesap-makinesi
-           "Proje: hesap-makinesi-53259"   → $HOME/projects/hesap-makinesi-53259
-           "Proje: todo-v3"                → $HOME/projects/todo-v3
-           "Proje: Basit Hesap Makinesi"   → $HOME/projects/basit-hesap-makinesi
-
-         If the token looks like "<name>-<digits>" it is a random run suffix for
-         isolation — preserve the digits. NEVER use a different base directory.
-         NEVER translate the project name to English.
+      1. Choose PROJECT_NAME from the task, or infer a concise product name.
+      2. Choose PROJECT_SLUG, PLATFORM, TECH_STACK, UI_LANGUAGE, DB_REQUIRED,
+         and DESIGN_REQUIRED.
+      3. Write a comprehensive Product Contract PRD with these sections:
+         - Context And Goals
+         - Data And State Contract
+         - Behavioral And Action Contract with ACT_* ids
+         - Product Surfaces with SURF_* ids for UI-bound products
+         - Validation And Error Strategy
+         - System Contracts
+         - Platform Contract
+         - Testability Contract
+         - Out Of Scope
+      4. Product Surfaces are semantic product responsibilities, not physical
+         screens. Stitch owns layout, physical screen count, routes, tabs,
+         modals, drawers, and component hierarchy in DESIGN_MANIFEST.json.
+      5. Include permitted actions and control_hint values on Product Surfaces
+         so Stitch can design controls without inventing unrelated modules.
+      6. Do not output repo paths, branch names, GitHub repos, run slugs,
+         package names, app titles, ENV values, PRD_SCREEN_COUNT, or a Screens
+         table. MC/Setfarm resolves runtime identity after PLAN.
+      7. API and CLI products must set DESIGN_REQUIRED=false and skip Product
+         Surfaces/Stitch requirements.
 
       PREVIOUS FAILURE (if retrying — READ THIS AND FIX THE ISSUE):
       {{previous_failure}}
@@ -270,13 +229,15 @@ steps:
       MANDATORY OUTPUT FORMAT — PIPELINE WILL BREAK IF YOU SKIP ANY KEY
       ============================================================
       STATUS: done
-      REPO: <exact repo path, e.g. $HOME/projects/myproject>
-      BRANCH: <branch name, e.g. feature-name>
+      PROJECT_NAME: <product name>
+      PROJECT_SLUG: <kebab-case product slug>
+      PLATFORM: <web|mobile|desktop|api|cli|game>
       TECH_STACK: <vite-react|nextjs|vanilla-ts|node-express|react-native>
-      PRD:
-      <full PRD text — include all sections, pages, features, technical details>
-      PRD_SCREEN_COUNT: <number of rows in the Screens table>
+      UI_LANGUAGE: <English or requested product language>
       DB_REQUIRED: <none|postgres|sqlite>
+      DESIGN_REQUIRED: <true|false>
+      PRD:
+      <Product Contract PRD with Product Surfaces, ACT_* actions, platform/testability contracts, and Out Of Scope>
       ============================================================
     expects: "STATUS: done"
     max_retries: 2
@@ -288,8 +249,9 @@ steps:
     input: |
       !include critical-preamble.md
 
-      Generate professional UI designs for all frontend screens using Stitch.
-      You work from the PRD — stories do not exist yet. Identify screens from the PRD.
+      Validate the Stitch-generated design artifacts prepared by the pipeline.
+      Stories do not exist yet. Product Surfaces from PLAN are the scope source;
+      DESIGN_MANIFEST.json is the physical screen authority after Stitch returns.
 
       LANGUAGE RULE: All screen prompts sent to Stitch MUST use the PRD's UI_LANGUAGE.
       Button labels, menu items, headings, placeholder text, and error messages must
@@ -316,53 +278,57 @@ steps:
       - Target 768x1024 viewport (iPad standard)
       - Consider split-view and multitasking layouts
 
-      === STITCH SCREENS WERE GENERATED BY THE PIPELINE ===
+      === STITCH ARTIFACTS WERE GENERATED BY THE PIPELINE ===
 
-      The pipeline sent the PRD to Stitch and generated all screens automatically.
-      HTML design files are available in the stitch/ directory.
+      The pipeline built stitch/DESIGN_BRIEF.md from Product Surfaces, sent the
+      scoped brief to Stitch, downloaded DESIGN.md, HTML, PNG, DOM, tokens, and
+      DESIGN_MANIFEST.json, then verified every generated screen maps back to
+      one or more SURF_* Product Surfaces.
 
       *** DO NOT TOUCH THE STITCH API. Do not call generate-screen, create-project, or list-screens. ***
-      *** Screens are already generated. Your job is to verify and map them. ***
+      *** Screens are already generated. Your job is to extract/report the design system and preserve SCREEN_MAP. ***
 
       YOUR TASK:
-      1. List and inspect the HTML files in stitch/
-      2. Compare every screen against the PRD screen table
-      3. Check for missing or incorrect screens
-      4. Verify design-system consistency (colors, fonts, theme)
-      5. Create SCREEN_MAP with screenId, name, type, and description for every screen
-      6. Output STATUS: done
+      1. Inspect stitch/design-tokens.css or design-tokens.json.
+      2. Optionally inspect stitch/DESIGN_BRIEF.md to confirm Product Surface scope.
+      3. Verify design-system consistency (colors, fonts, theme).
+      4. Return SCREEN_MAP from context unchanged, preserving surfaceIds.
+      5. Output STATUS: done.
 
             === RETRY ===
-      Fail → retry 2x. At least 1 screen required, else STATUS: retry.
-      Backend-only project (0 UI) → STATUS: done, SCREENS_GENERATED: 0
+      Fail → retry 2x. DESIGN_REQUIRED=false projects may return DEVICE_TYPE: NONE and SCREEN_MAP: [].
 
       ============================================================
       MANDATORY OUTPUT FORMAT
       ============================================================
       STATUS: done
-      DEVICE_TYPE: <DESKTOP|MOBILE|TABLET>
+      DEVICE_TYPE: <DESKTOP|MOBILE|TABLET|NONE>
       DESIGN_SYSTEM:
-        aesthetic: <direction>
-        palette: <name>
-        heading_font: <font>
-        body_font: <font>
-        icon_library: <library>
+      {
+        "aesthetic": "<direction>",
+        "palette": {
+          "primary": "#hex",
+          "secondary": "#hex",
+          "background": "#hex",
+          "surface": "#hex",
+          "text": "#hex",
+          "border": "#hex"
+        },
+        "typography": {"heading": "<font>", "body": "<font>"},
+        "iconLibrary": "lucide|heroicons"
+      }
       SCREEN_MAP:
       [
         {
-          "screenId": "<unique-screen-id>",
-          "name": "Main Dashboard",
-          "type": "dashboard",
-          "description": "Primary overview screen"
+          "screenId": "<real Stitch screen id>",
+          "name": "<screen name from manifest>",
+          "type": "<screen type>",
+          "description": "<description>",
+          "surfaceIds": ["SURF_*"]
         }
       ]
-      IMPORTANT: screenId should be a unique kebab-case identifier for each screen
-      (the hex string from the API response), NOT a made-up ID like SCR-001.
-      The pipeline will map these to real Stitch screen IDs automatically.
-
-      NOTE: Pipeline auto-creates Stitch project and generates all screens from SCREEN_MAP.
-      the pipeline guardrail will REJECT your output and force a retry.
-      Even if screens were reused/skipped, you MUST output SCREEN_MAP with real IDs.
+      IMPORTANT: Do not invent screen IDs or remove surfaceIds. Pipeline guardrails
+      reject unmapped/unrelated screens before this agent claims the step.
 
       ============================================================
     expects: "STATUS: done"

@@ -100,6 +100,10 @@ function inferProjectKind(params: {
   predicted?: PredictedScreen[];
   screenMap?: any[];
 }): ProjectKind {
+  const platform = String(params.context?.["platform"] || params.context?.["PLATFORM"] || "").toLowerCase();
+  if (platform === "game") return "game";
+  if (platform && ["web", "mobile", "desktop", "api", "cli"].includes(platform)) return "product";
+
   const screenText = [
     ...(params.predicted || []).map((screen) => `${screen.screenId} ${screen.title} ${screen.filePath}`),
     ...(params.screenMap || []).map((screen: any) => `${screen?.screenId || screen?.id || ""} ${screen?.title || screen?.name || ""} ${screen?.type || ""} ${screen?.description || ""}`),
@@ -343,12 +347,12 @@ function appStoryDraft(params: {
   return {
     id: "US-001",
     title: `${params.product} - app shell, state and persistence`,
-    description: "Build the shared application shell, navigation state, domain types, persistence helpers, profile/settings panel wiring, and smoke-visible window.app state used by generated screens.",
+    description: "Build the shared application shell, navigation state, domain types, persistence helpers, requested settings/preferences wiring, and smoke-visible window.app state used by generated screens.",
     acceptanceCriteria: [
       "App shell provides the actual product surface and shared navigation/state contracts, not a landing page.",
       "Shared shell exposes stable navigation targets and action handlers for screen-owner stories without requiring pending generated screens to be visible in this story.",
       "Shared state exposes visible active screen, selected item, storage status, last error, active panel, and item count through window.app.",
-      "Profile/account icon opens a visible panel/drawer/page and close/back controls visibly dismiss it.",
+      "Declared settings/preferences controls open a visible panel/drawer/page or inline surface only when requested by the PRD/Product Surfaces, and close/back controls visibly dismiss that surface.",
       "localStorage success, corrupted JSON, retry, and clear-data paths produce visible DOM feedback when persistence is required.",
       "No product control uses data-smoke-ignore; inactive controls are disabled/hidden explicitly.",
     ],

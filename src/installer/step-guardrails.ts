@@ -707,7 +707,7 @@ export function processSetupCompletion(
     return null;
   }
   try {
-    const projectName = path.basename(context["repo"] || "project");
+    const projectName = context["run_slug"] || path.basename(context["repo"] || "project");
     const dbType = resolveDbType(dbRequired);
     const creds = provisionDatabase(projectName, dbType);
     context["database_url"] = creds.connectionString;

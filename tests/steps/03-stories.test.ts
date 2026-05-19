@@ -251,6 +251,40 @@ describe("03-stories step module", () => {
     }
   });
 
+  it("does not classify web products as games just because generic PRD prose mentions game as another platform", () => {
+    const repo = mkdtempSync(path.join(tmpdir(), "setfarm-web-product-stories-"));
+    try {
+      mkdirSync(path.join(repo, "stitch"));
+      writeFileSync(path.join(repo, "stitch", "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "SCR-001", title: "Ticket Operations" },
+        { screenId: "SCR-002", title: "Queue and Status Management" },
+        { screenId: "SCR-003", title: "Insights" },
+      ]));
+      writeFileSync(path.join(repo, "stitch", "DESIGN_DOM.json"), JSON.stringify({ screens: {} }));
+
+      const predicted = computePredictedScreenFiles(repo);
+      const output = buildAutoStoriesOutput({
+        repo,
+        task: "Build a compact browser service desk app with tickets, queues, agents, SLA status and insights.",
+        context: {
+          platform: "web",
+          project_name: "SurfaceGate Desk",
+          prd: "The product should implement actual tool/game/API/CLI behavior language from a generic template but this run is platform web.",
+        },
+        predicted,
+      });
+
+      const storiesJson = output.match(/STORIES_JSON:\n([\s\S]*?)\nSCREEN_MAP:/)?.[1] || "[]";
+      const stories = JSON.parse(storiesJson);
+
+      assert.doesNotMatch(stories[0].title, /game engine/);
+      assert.match(stories[0].title, /app shell, state and persistence/);
+      assert.doesNotMatch(JSON.stringify(stories[0]), /Profile\/account icon/);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
   it("story prompt requires generated screens to be reachable or embedded", async () => {
     const result = await runModule(storiesModule, "Test", { status: "done" });
 

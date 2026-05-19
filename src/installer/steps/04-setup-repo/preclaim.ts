@@ -17,14 +17,11 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   if (process.env.SETFARM_DISABLE_AUTO_SETUP_REPO === "1") return;
 
   const repo = ctx.context["repo"] || ctx.context["REPO"] || "";
-  // Single run-branch architecture: every run owns one branch, and each story commits onto that branch.
-  const planBranch = ctx.context["branch"] || ctx.context["BRANCH"] || "";
-  const branch = ctx.runId;
+  // Single run-branch architecture: every run owns one resolved runtime branch,
+  // and each story commits onto that branch.
+  const branch = ctx.context["branch"] || ctx.context["BRANCH"] || ctx.context["run_slug"] || ctx.runId;
   ctx.context["branch"] = branch;
   ctx.context["BRANCH"] = branch;
-  if (planBranch && planBranch !== branch && planBranch !== "main") {
-    logger.info(`[module:setup-repo preclaim] plan branch ${planBranch} ignored, using run-branch ${branch}`, { runId: ctx.runId });
-  }
   const techStack = ctx.context["tech_stack"] || ctx.context["TECH_STACK"] || "vite-react";
   if (!repo) {
     logger.warn(`[module:setup-repo preclaim] skipped — no repo in context`, { runId: ctx.runId });
@@ -42,7 +39,17 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   const uiLanguage = ctx.context["ui_language"] || ctx.context["UI_LANGUAGE"] || "English";
   if (fs.existsSync(script)) {
     try {
-      execFileSync("bash", [script, repo, branch, String(stitchProjectId), String(screenMap), String(techStack), String(displayName), String(uiLanguage)], { encoding: "utf-8", timeout: 180000 });
+      execFileSync("bash", [script, repo, branch, String(stitchProjectId), String(screenMap), String(techStack), String(displayName), String(uiLanguage)], {
+        encoding: "utf-8",
+        timeout: 180000,
+        env: {
+          ...process.env,
+          SETFARM_RUN_SLUG: ctx.context["run_slug"] || "",
+          SETFARM_GITHUB_REPO: ctx.context["github_repo"] || "",
+          SETFARM_APP_TITLE: ctx.context["app_title"] || displayName,
+          SETFARM_PACKAGE_NAME: ctx.context["package_name"] || "",
+        },
+      });
       logger.info(`[module:setup-repo preclaim] setup-repo.sh ran (stack=${techStack}, branch=${branch})`, { runId: ctx.runId });
     } catch (e) {
       setupRepoFailed = true;

@@ -54,7 +54,12 @@ if [ -f "stitch/DESIGN_MANIFEST.json" ]; then
   done
 fi
 
-# Step 3: Extract design tokens
+# Step 3: Download Stitch DESIGN.md and extract design tokens
+node "$STITCH_SCRIPT" get-design-md "$STITCH_PROJECT_ID" stitch >/dev/null
+if [ ! -s "stitch/DESIGN.md" ]; then
+  echo "FATAL: Stitch DESIGN.md was not downloaded"
+  exit 1
+fi
 node "$STITCH_SCRIPT" extract-tokens stitch stitch/design-tokens.css 2>/dev/null || true
 
 # Step 4: Agent workspace fallback — ONLY from matching project (parallel safety)

@@ -12,10 +12,9 @@ const rulesBody = fs.readFileSync(path.join(__dirname, "rules.md"), "utf-8");
 
 function buildPrompt(ctx: PromptContext): string {
   const repo = ctx.context["repo"] || ctx.context["REPO"] || "";
-  const screenCount = ctx.context["prd_screen_count"] || ctx.context["PRD_SCREEN_COUNT"] || "?";
   const resolved = promptTemplate
     .replace(/\{\{REPO\}\}/g, repo)
-    .replace(/\{\{PRD_SCREEN_COUNT\}\}/g, screenCount);
+    .replace(/\{\{PRODUCT_SURFACES\}\}/g, ctx.context["product_surfaces"] || "");
   return `${resolved}\n\n---\n\n# Rules\n\n${rulesBody}`;
 }
 

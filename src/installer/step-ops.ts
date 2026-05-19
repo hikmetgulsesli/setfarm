@@ -2016,23 +2016,45 @@ function designScreenNameMatches(expectedName: string, actualName: string): bool
   return expectedTokens.every((token) => actualTokens.has(token));
 }
 
-function parsePrdDesignScreenRows(prd: string): Array<{ name: string; type: string; description: string }> {
-  const rows: Array<{ name: string; type: string; description: string }> = [];
+function parsePrdDesignSurfaces(prd: string): Array<{ surfaceId: string; name: string; description: string }> {
+  const surfaces: Array<{ surfaceId: string; name: string; description: string }> = [];
   const lines = String(prd || "").split(/\r?\n/);
-  let inScreens = false;
+  let inSurfaces = false;
+  let current: { surfaceId: string; name: string; description: string } | null = null;
+  const pushCurrent = () => {
+    if (!current) return;
+    if (!current.name) current.name = current.surfaceId.replace(/^SURF_/, "").replace(/_/g, " ");
+    surfaces.push(current);
+  };
   for (const line of lines) {
     const trimmed = line.trim();
-    if (/^##+\s+Screens\b/i.test(trimmed)) {
-      inScreens = true;
+    if (/^##+\s+(?:\d+\.\s*)?Product Surfaces\b/i.test(trimmed)) {
+      inSurfaces = true;
       continue;
     }
-    if (inScreens && /^##+\s+/.test(trimmed)) break;
-    if (!inScreens || !/^\s*\|/.test(line) || /^\s*\|\s*-+/.test(line)) continue;
-    const cols = line.split("|").map((value) => value.trim()).filter(Boolean);
-    if (cols.length < 4 || /^#$/i.test(cols[0]) || /screen name/i.test(cols[1])) continue;
-    rows.push({ name: cols[1], type: cols[2], description: cols.slice(3).join(" ") });
+    if (inSurfaces && /^##\s+/.test(trimmed)) break;
+    if (!inSurfaces) continue;
+    const heading = trimmed.match(/^#{3,5}\s+SURFACE\s*:\s*([A-Z0-9_ -]+)(?:\s*[-:]\s*(.+))?$/i);
+    const bulletId = trimmed.match(/^[-*]\s*(?:SURFACE_ID|Surface ID)\s*:\s*([A-Z0-9_ -]+)$/i);
+    if (heading || bulletId) {
+      pushCurrent();
+      const rawId = String(heading?.[1] || bulletId?.[1] || "").trim();
+      const cleanId = rawId.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+      const surfaceId = cleanId.startsWith("SURF_") ? cleanId : `SURF_${cleanId || "SURFACE"}`;
+      current = { surfaceId, name: String(heading?.[2] || rawId).replace(/^SURF[_ -]?/i, "").replace(/[_-]+/g, " ").trim(), description: "" };
+      continue;
+    }
+    if (!current) continue;
+    const field = trimmed.match(/^[-*]\s*([^:]+):\s*(.+)$/);
+    if (!field) continue;
+    const key = field[1].toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    if (key === "name") current.name = field[2].trim();
+    if (key === "purpose" || key === "core content" || key === "design guidance") {
+      current.description = `${current.description} ${field[2].trim()}`.trim();
+    }
   }
-  return rows;
+  pushCurrent();
+  return surfaces;
 }
 
 function reconcileReusableDesignScreens(
@@ -2044,8 +2066,8 @@ function reconcileReusableDesignScreens(
   dropped: string[];
   duplicates: string[];
 } {
-  const rows = parsePrdDesignScreenRows(prd);
-  if (rows.length === 0) {
+  const surfaces = parsePrdDesignSurfaces(prd);
+  if (surfaces.length === 0) {
     return {
       screens: reusableScreens.map((screen) => ({
         screenId: screen.screenId,
@@ -2064,25 +2086,25 @@ function reconcileReusableDesignScreens(
   const usedIds = new Set<string>();
   const duplicates: string[] = [];
 
-  for (const row of rows) {
-    const matches = reusableScreens.filter((screen) => designScreenNameMatches(row.name, screen.name));
+  for (const surface of surfaces) {
+    const matches = reusableScreens.filter((screen) => designScreenNameMatches(surface.name, screen.name) || designScreenNameMatches(surface.surfaceId.replace(/^SURF_/, ""), screen.name));
     const chosen = matches.find((screen) => !usedIds.has(screen.screenId)) || matches[0];
     if (!chosen) {
-      missing.push(row.name);
+      missing.push(`${surface.surfaceId} ${surface.name}`.trim());
       continue;
     }
-    if (matches.length > 1) duplicates.push(row.name);
+    if (matches.length > 1) duplicates.push(surface.name);
     usedIds.add(chosen.screenId);
     screens.push({
       screenId: chosen.screenId,
-      name: row.name,
-      type: row.type || "page",
-      description: row.description || `${row.name} screen`,
+      name: chosen.name || surface.name,
+      type: "page",
+      description: surface.description || `${surface.name} Product Surface`,
     });
   }
 
   const dropped = reusableScreens
-    .filter((screen) => !usedIds.has(screen.screenId) || !rows.some((row) => designScreenNameMatches(row.name, screen.name)))
+    .filter((screen) => !usedIds.has(screen.screenId) || !surfaces.some((surface) => designScreenNameMatches(surface.name, screen.name) || designScreenNameMatches(surface.surfaceId.replace(/^SURF_/, ""), screen.name)))
     .map((screen) => screen.name)
     .filter(Boolean);
 
@@ -2106,9 +2128,9 @@ async function autoCompleteDesignStep(step: StepRow, db: any, htmlFiles: string[
     return false;
   }
 
-  const prdScreenCount = dCtx["prd_screen_count"] ? parseInt(dCtx["prd_screen_count"], 10) : 0;
-  if (prdScreenCount > 0 && reusableScreens.length < prdScreenCount) {
-    logger.warn(`[design-dedup] Existing design incomplete: ${reusableScreens.length}/${prdScreenCount} valid screens — clearing cache to force regeneration`, { runId: step.run_id });
+  const prdSurfaces = parsePrdDesignSurfaces(dCtx["prd"] || dCtx["PRD"] || "");
+  if (prdSurfaces.length > 0 && reusableScreens.length < prdSurfaces.length) {
+    logger.warn(`[design-dedup] Existing design incomplete: ${reusableScreens.length}/${prdSurfaces.length} Product Surface-backed valid screens — clearing cache to force regeneration`, { runId: step.run_id });
     clearReusableDesignCache(dRepoPath);
     return false;
   }
@@ -2121,7 +2143,7 @@ async function autoCompleteDesignStep(step: StepRow, db: any, htmlFiles: string[
   const reconciliation = reconcileReusableDesignScreens(reusableScreens, dCtx["prd"] || dCtx["PRD"] || "");
   if (reconciliation.missing.length > 0) {
     const missing = reconciliation.missing.slice(0, 8).join(", ");
-    logger.warn(`[design-dedup] Existing design cache missing PRD screen(s): ${missing} — clearing cache to force regeneration`, { runId: step.run_id });
+    logger.warn(`[design-dedup] Existing design cache missing Product Surface(s): ${missing} — clearing cache to force regeneration`, { runId: step.run_id });
     dCtx["design_dedup_mismatch"] = `missing=${missing}`;
     await updateRunContext(step.run_id, dCtx);
     clearReusableDesignCache(dRepoPath);
@@ -2129,7 +2151,7 @@ async function autoCompleteDesignStep(step: StepRow, db: any, htmlFiles: string[
   }
 
   if (reconciliation.dropped.length > 0 || reconciliation.duplicates.length > 0) {
-    logger.warn(`[design-dedup] Reconciled reusable design cache to PRD screens (dropped=${reconciliation.dropped.length}, duplicates=${reconciliation.duplicates.length})`, { runId: step.run_id });
+    logger.warn(`[design-dedup] Reconciled reusable design cache to Product Surfaces (dropped=${reconciliation.dropped.length}, duplicates=${reconciliation.duplicates.length})`, { runId: step.run_id });
   }
 
   const dScreenMap = reconciliation.screens;
@@ -4483,48 +4505,34 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
         try { screenMapArr = JSON.parse(dScreenMap); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
         if (screenMapArr.length > 0 && existingHtmlCount === 0) {
           const designSystem = context["design_system"] || "";
-          const task = context["task"] || "";
           const deviceType = context["device_type"] || "DESKTOP";
           const uiLanguage = context["ui_language"] || context["UI_LANGUAGE"] || "English";
 
-          // Build compact exact-count prompt. This mirrors the design preclaim
-          // fast path and avoids sending broad implementation/test details to
-          // Stitch, which can turn one batch call into a long-running no-HTML
-          // generation.
           const prd = context["prd"] || context["PRD"] || "";
           const screenDescs = screenMapArr.map((s: any, i: number) =>
             `${i + 1}. ${s.name} (${s.type || "screen"}) - ${s.description || "UI screen"}`
           ).join("\n");
-          const compactPrd = String(prd)
-            .replace(/\n## Screens[\s\S]*?(?=\n## |$)/, "\n")
-            .replace(/\n## Project Structure[\s\S]*?(?=\n## |$)/, "\n")
-            .replace(/\n## Window State[\s\S]*?(?=\n## |$)/, "\n")
-            .replace(/\nPRD_SCREEN_COUNT:.*$/gm, "")
-            .replace(/\nDB_REQUIRED:.*$/gm, "")
-            .replace(/\n{3,}/g, "\n\n")
-            .trim();
-          const prdTruncated = compactPrd.length > 4500 ? compactPrd.slice(0, 4500) + "\n...(truncated)" : compactPrd;
 
-          const prompt = `Generate exactly ${screenMapArr.length} separate ${deviceType} screens in one Stitch batch call.
+          const prompt = `# DESIGN_BRIEF
 
-Screen titles must match exactly:
-${screenDescs}
-
-Application summary:
-${prdTruncated}
-
-Design system:
-${designSystem}
-
-Batch generation rules:
-- Generate exactly ${screenMapArr.length} screens. Do not generate more or fewer screens.
-- Do not create a PRD, requirements document, sitemap, landing page, or generic dashboard screen unless it is explicitly listed above.
-- Do not combine multiple listed screens into one design.
+## STRICT_UI_SCOPE_CONTRACT
+- Design only UI that maps to the SCREEN_MAP/Product Surface targets below.
+- Do not invent modules, workflows, dashboards, marketing pages, admin areas, ecommerce flows, docs, PRD pages, or settings outside those targets.
+- Physical screen count, routing, tabs, modals, drawers, and component hierarchy are Stitch decisions, but every generated screen must be traceable to an existing target.
 - All visible user-facing text must be in ${uiLanguage}.
 - Keep screen metadata and technical identifiers in English.
-- Use simple inline SVG icons in generated HTML. Do not use emoji, icon fonts, Material Symbols, or icon ligature text.
-- Use a cohesive design system across all screens.
-- Each screen must be complete, detailed, and production-ready.`;
+- Target device type: ${deviceType}.
+
+## PRODUCT_SURFACE_TARGETS
+${screenDescs}
+
+## DESIGN_SYSTEM_CONTEXT
+${designSystem}
+
+## FULL_PRD_APPENDIX
+The full PRD below is passive background context. If it conflicts with PRODUCT_SURFACE_TARGETS, PRODUCT_SURFACE_TARGETS wins.
+
+${prd}`;
 
           const promptFile = path.join(dStitchDir, ".generate-prompt.txt");
           fs.writeFileSync(promptFile, prompt);
@@ -4687,7 +4695,7 @@ Batch generation rules:
     // MC registration guardrail: verify project is registered in Mission Control
     const deployType = parsed["deploy_type"] || "";
     if (!deployType || deployType === "new-web" || deployType === "new-mobile" || deployType === "update") {
-      const projectName = context["repo"] ? path.basename(context["repo"]) : "";
+      const projectName = context["run_slug"] || (context["repo"] ? path.basename(context["repo"]) : "");
       if (projectName) {
         try {
           const mcCheck = execFileSync("curl", ["-sf", "--max-time", "5", missionControlApi(`/api/projects/${projectName}`)],
@@ -4769,7 +4777,7 @@ Batch generation rules:
     }
 
     // Tunnel + DNS auto-create: ensure Cloudflare tunnel entry + DNS CNAME exist
-    const deployProjectName = context["repo"] ? path.basename(context["repo"]) : "";
+    const deployProjectName = context["run_slug"] || (context["repo"] ? path.basename(context["repo"]) : "");
     if (deployProjectName && port) {
       const hostname = `${deployProjectName}.setrox.com.tr`;
       let tunnelOk = false;
@@ -4794,6 +4802,9 @@ Batch generation rules:
   // v12.0: design step SCREEN_MAP no longer requires stories field (stories step adds it later)
   logger.info(`[completeStep] step_id=${step.step_id} status=${parsed["status"]} has_screen_map=${!!context["screen_map"]}`, { runId: step.run_id });
   if (step.step_id === "design" && parsed["status"]?.toLowerCase() === "done") {
+    if (String(context["design_required"] || parsed["design_required"] || "true").toLowerCase() === "false") {
+      logger.info("[screen-map-guardrail] Skipped because DESIGN_REQUIRED=false", { runId: step.run_id });
+    } else {
     logger.info(`[screen-map-guardrail] Entering design step guardrail check`, { runId: step.run_id });
     let screenMapErr: string | null = null;
     const screenMapRaw = context["screen_map"];
@@ -4811,15 +4822,21 @@ Batch generation rules:
               break;
             }
           }
-          // v1.7.7: Minimum screen count enforcement
-          // Count PRD screen table rows from context (if planner stored them)
-          const prdScreenCount = context["prd_screen_count"] ? parseInt(context["prd_screen_count"], 10) : 0;
-          if (!screenMapErr && prdScreenCount > 0 && sm.length < prdScreenCount) {
-            screenMapErr = `GUARDRAIL: SCREEN_MAP has ${sm.length} screens but PRD requires ${prdScreenCount}. Design must generate ALL screens from PRD table. Missing: ${prdScreenCount - sm.length} screens.`;
+          const prdSurfaces = parsePrdDesignSurfaces(context["prd"] || context["PRD"] || "");
+          if (!screenMapErr && prdSurfaces.length > 0) {
+            const covered = new Set<string>();
+            for (const scr of sm) {
+              if (Array.isArray(scr.surfaceIds)) {
+                for (const id of scr.surfaceIds) covered.add(String(id));
+              }
+            }
+            const missing = prdSurfaces.filter((surface) => !covered.has(surface.surfaceId));
+            if (missing.length > 0) {
+              screenMapErr = `GUARDRAIL: SCREEN_MAP is missing Product Surface coverage: ${missing.map(s => s.surfaceId).slice(0, 8).join(", ")}.`;
+            }
           }
-          // Minimum absolute count: CRM/SaaS projects should have at least 8 screens
-          if (!screenMapErr && sm.length < 3) {
-            screenMapErr = "GUARDRAIL: SCREEN_MAP has only " + sm.length + " screens. Minimum 3 required. Add missing screens.";
+          if (!screenMapErr && String(context["design_required"] || "true").toLowerCase() !== "false" && sm.length < 1) {
+            screenMapErr = "GUARDRAIL: SCREEN_MAP is empty. Design must identify Stitch screens mapped to Product Surfaces.";
           }
         }
       } catch {
@@ -4830,6 +4847,7 @@ Batch generation rules:
       logger.warn(`[screen-map-guardrail] SCREEN_MAP validation failed: ${screenMapErr}`, { runId: step.run_id, stepId: step.step_id });
       await failStep(stepId, screenMapErr);
       return { advanced: false, runCompleted: false };
+    }
     }
   }
 

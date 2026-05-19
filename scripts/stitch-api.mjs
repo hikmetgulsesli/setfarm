@@ -350,16 +350,25 @@ function envFileCandidates() {
   ];
 }
 
-// Load API keys from process env or Setfarm runtime env files.
-function loadApiKeys() {
-  const keys = [
+function processApiKeys() {
+  return uniqueApiKeys([
     ...splitApiKeyList(process.env.STITCH_API_KEYS),
     ...Object.keys(process.env)
       .filter((key) => /^STITCH_API_KEY_\d+$/.test(key))
       .sort((a, b) => Number(a.replace(/\D+/g, '')) - Number(b.replace(/\D+/g, '')))
       .map((key) => process.env[key]),
     process.env.STITCH_API_KEY,
-  ];
+  ]);
+}
+
+// Load API keys from process env or Setfarm runtime env files.
+// Process-level keys are authoritative. Mixing them with fallback env-file keys
+// can create a project under one key and then rotate into another account that
+// cannot see the project.
+function loadApiKeys() {
+  const fromProcess = processApiKeys();
+  if (fromProcess.length > 0) return fromProcess;
+  const keys = [];
   for (const envPath of envFileCandidates()) {
     keys.push(...readEnvKeys(envPath));
     keys.push(readEnvKey(envPath, 'STITCH_API_KEY'));
@@ -394,9 +403,6 @@ function rotateKey(reason) {
 function shouldRotateForStitchFailure(text) {
   const normalized = redactDiagnosticText(text).toLowerCase();
   return (
-    /\bservice is currently unavailable\b/.test(normalized) ||
-    /\bservice unavailable\b/.test(normalized) ||
-    /\btemporarily unavailable\b/.test(normalized) ||
     /\bresource exhausted\b/.test(normalized) ||
     /\brate limit(?:ed)?\b/.test(normalized) ||
     /\bquota\b/.test(normalized) ||
@@ -405,8 +411,7 @@ function shouldRotateForStitchFailure(text) {
     /\bapi key expired\b/.test(normalized) ||
     /\bunauthorized\b/.test(normalized) ||
     /\bforbidden\b/.test(normalized) ||
-    /\b429\b/.test(normalized) ||
-    /\b503\b/.test(normalized)
+    /\b429\b/.test(normalized)
   );
 }
 

@@ -134,7 +134,7 @@ SHARED_CODE:
      after checking only the previous blocker.
    - For `SUPERVISOR_SCOPE: final-product`, sample all stories and make sure
      each story has either direct evidence or downstream QA evidence.
-   - PRD screens exist in code and are reachable.
+   - Stitch-generated screens mapped from Product Surfaces exist in code and are reachable.
    - Stitch/DESIGN.md visual contract is represented by imported components, tokens, and layout structure.
    - Buttons, links, tabs, menus, forms, keyboard controls, and route actions are wired or explicitly disabled.
    - No `href="#"`, `javascript:void(0)`, malformed URLs, empty handlers, placeholder pages, fake names, lorem ipsum, visible TODOs, or "coming soon" product text.

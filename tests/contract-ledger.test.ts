@@ -31,7 +31,24 @@ function writeDesign(repo: string, screens: Array<{ screenId: string; name: stri
 }
 
 function baseRun(repo: string) {
-  const prd = "Build a compact browser puzzle game with menu, play, help, pause, and game over states. ".repeat(12);
+  const prd = [
+    "# Pulse Grid Product Contract",
+    "Build a compact browser puzzle game with menu, play, help, pause, and game over states.",
+    "## 4. Product Surfaces",
+    "### SURFACE: SURF_MENU",
+    "- Name: Main Menu",
+    "- Purpose: Start, resume, and choose game mode.",
+    "### SURFACE: SURF_GAMEPLAY",
+    "- Name: Game Board",
+    "- Purpose: Main playable puzzle board with score and input.",
+    "### SURFACE: SURF_HELP",
+    "- Name: Help",
+    "- Purpose: Controls and rules reference.",
+    "## 8. Testability Contract",
+    "- Critical paths cover starting from menu, playing the board, opening help, pausing, and reaching game over.",
+    "- Each interactive control exposes deterministic state so smoke, final-test, and deployment gates can verify the actual game loop.",
+    "- The PRD text is intentionally long enough to satisfy the ledger's captured-context evidence threshold for a completed plan phase.",
+  ].join("\n");
   return {
     id: "run-contract",
     run_number: 7,
@@ -43,7 +60,7 @@ function baseRun(repo: string) {
       branch: "feature/pulse-grid",
       tech_stack: "vite-react",
       prd,
-      prd_screen_count: "3",
+      design_required: "true",
       ui_language: "English",
       build_cmd: "npm run build",
     }),

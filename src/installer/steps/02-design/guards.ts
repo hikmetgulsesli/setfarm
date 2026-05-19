@@ -13,12 +13,17 @@ export function validateOutput(parsed: ParsedOutput): ValidationResult {
     errors.push(`STATUS must be 'done' (got: '${parsed.status || ""}')`);
   }
 
+  const designRequired = String(parsed.design_required || "true").toLowerCase() !== "false";
+
   const deviceType = (parsed.device_type || "").toUpperCase();
-  if (deviceType && !VALID_DEVICE_TYPES.has(deviceType)) {
+  if (deviceType && deviceType !== "NONE" && !VALID_DEVICE_TYPES.has(deviceType)) {
     errors.push(`DEVICE_TYPE must be one of ${[...VALID_DEVICE_TYPES].join(", ")} (got: '${parsed.device_type}')`);
   }
 
   const screenMapRaw = parsed.screen_map || "";
+  if (!designRequired && (!screenMapRaw.trim() || screenMapRaw.trim() === "[]")) {
+    return { ok: errors.length === 0, errors };
+  }
   if (!screenMapRaw.trim()) {
     errors.push("SCREEN_MAP is required for design completion");
   } else {
@@ -51,6 +56,11 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
   if (parsed.device_type) context["device_type"] = parsed.device_type.toUpperCase();
   if (parsed.design_system) context["design_system"] = parsed.design_system;
   if (parsed.screen_map) context["screen_map"] = parsed.screen_map;
+  if (parsed.design_required) context["design_required"] = parsed.design_required.toLowerCase();
+
+  if (String(context["design_required"] || "true").toLowerCase() === "false") {
+    return;
+  }
 
   // Delegate to legacy guardrail for design contracts + design-tokens extraction
   // + screenshot persistence + SCREEN_MAP auto-recovery from Stitch API.

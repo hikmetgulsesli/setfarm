@@ -420,6 +420,8 @@ export function buildRunContract(input: BuildRunContractInput): RunContract {
   const storiesDone = stepCompleteOrPast("stories");
   const designDone = stepCompleteOrPast("design");
   const setupDone = stepCompleteOrPast("setup-repo");
+  const designRequired = String(context.design_required ?? "true").toLowerCase() !== "false";
+  const productSurfaceCount = new Set(String(context.prd || "").match(/\bSURF_[A-Z0-9_]+\b/g) || []).size;
 
   const phases: ContractPhase[] = [];
   const planItems: ContractItem[] = [
@@ -427,20 +429,20 @@ export function buildRunContract(input: BuildRunContractInput): RunContract {
     makeItem("plan.branch", "Feature branch resolved", requiredStatus(done("plan"), Boolean(branch)), "planner", updatedAt, { stepId: "plan", evidence: branch || "missing branch" }),
     makeItem("plan.stack", "Technology stack declared", requiredStatus(done("plan"), Boolean(techStack)), "planner", updatedAt, { stepId: "plan", evidence: techStack || "missing tech_stack" }),
     makeItem("plan.prd", "PRD captured in run context", requiredStatus(done("plan"), String(context.prd || "").length >= 500), "planner", updatedAt, { stepId: "plan", evidence: String(context.prd || "").length ? `${String(context.prd || "").length} chars` : "missing prd" }),
-    makeItem("plan.screens", "Screen count declared when UI is required", requiredStatus(done("plan"), Number(context.prd_screen_count || 0) > 0 || !/\b(ui|screen|page|game|web|app|dashboard)\b/i.test(input.run.task)), "planner", updatedAt, { stepId: "plan", evidence: String(context.prd_screen_count || "not declared") }),
-    makeItem("plan.language", "Implementation language contract is English", requiredStatus(done("plan"), !uiLanguage || /^english$/i.test(uiLanguage)), "planner", updatedAt, { stepId: "plan", evidence: uiLanguage || "default English" }),
+    makeItem("plan.surfaces", "Product Surfaces declared when design is required", requiredStatus(done("plan"), !designRequired || productSurfaceCount > 0), "planner", updatedAt, { stepId: "plan", evidence: designRequired ? `${productSurfaceCount} surface id(s)` : "design bypass" }),
+    makeItem("plan.language", "UI language declared", requiredStatus(done("plan"), Boolean(uiLanguage)), "planner", updatedAt, { stepId: "plan", evidence: uiLanguage || "missing ui_language" }),
   ];
   phases.push({ id: "plan", label: "Plan", status: phaseStatusForSteps(planItems, ["plan"]), items: planItems });
 
   const designItems: ContractItem[] = [
-    makeItem("design.stitch_dir", "Stitch artifact directory exists", requiredStatus(designDone, Boolean(stitchDir && fs.existsSync(stitchDir))), "designer", updatedAt, { stepId: "design", evidence: stitchDir || "missing repo" }),
-    makeItem("design.screen_map", "Screen map is machine readable", requiredStatus(designDone, screenMap.length > 0), "designer", updatedAt, { stepId: "design", evidence: `${screenMap.length} screen(s)` }),
-    makeItem("design.html", "HTML design exports downloaded", requiredStatus(designDone, htmlFiles.length >= Math.max(1, screenMap.length || Number(context.prd_screen_count || 0))), "designer", updatedAt, { stepId: "design", evidence: `${htmlFiles.length} html file(s)` }),
-    makeItem("design.png", "PNG screenshots downloaded", requiredStatus(designDone, pngFiles.length >= Math.max(1, screenMap.length || Number(context.prd_screen_count || 0))), "designer", updatedAt, { stepId: "design", evidence: `${pngFiles.length} png file(s)` }),
-    makeItem("design.dom", "DOM extraction manifest exists", requiredStatus(designDone, fileExists(repo, "stitch/DESIGN_DOM.json")), "designer", updatedAt, { stepId: "design", evidence: "stitch/DESIGN_DOM.json" }),
-    makeItem("design.ui_contract", "UI contract exists", requiredStatus(designDone, fileExists(repo, "stitch/UI_CONTRACT.json")), "designer", updatedAt, { stepId: "design", evidence: "stitch/UI_CONTRACT.json" }),
-    makeItem("design.tokens", "Design tokens exist", requiredStatus(designDone, fileExists(repo, "stitch/design-tokens.json") || fileExists(repo, "stitch/design-tokens.css")), "designer", updatedAt, { stepId: "design", evidence: "design tokens" }),
-    makeItem("design.md", "Design markdown briefing exists", requiredStatus(designDone, fileExists(repo, "stitch/DESIGN.md") || fileExists(repo, "DESIGN.md")), "designer", updatedAt, { stepId: "design", evidence: "DESIGN.md" }),
+    makeItem("design.stitch_dir", "Stitch artifact directory exists", requiredStatus(designDone, !designRequired || Boolean(stitchDir && fs.existsSync(stitchDir))), "designer", updatedAt, { stepId: "design", evidence: designRequired ? (stitchDir || "missing repo") : "design bypass" }),
+    makeItem("design.screen_map", "Screen map is machine readable", requiredStatus(designDone, !designRequired || screenMap.length > 0), "designer", updatedAt, { stepId: "design", evidence: `${screenMap.length} screen(s)` }),
+    makeItem("design.html", "HTML design exports downloaded", requiredStatus(designDone, !designRequired || htmlFiles.length >= Math.max(1, screenMap.length)), "designer", updatedAt, { stepId: "design", evidence: `${htmlFiles.length} html file(s)` }),
+    makeItem("design.png", "PNG screenshots downloaded", requiredStatus(designDone, !designRequired || pngFiles.length >= Math.max(1, screenMap.length)), "designer", updatedAt, { stepId: "design", evidence: `${pngFiles.length} png file(s)` }),
+    makeItem("design.dom", "DOM extraction manifest exists", requiredStatus(designDone, !designRequired || fileExists(repo, "stitch/DESIGN_DOM.json")), "designer", updatedAt, { stepId: "design", evidence: "stitch/DESIGN_DOM.json" }),
+    makeItem("design.ui_contract", "UI contract exists", requiredStatus(designDone, !designRequired || fileExists(repo, "stitch/UI_CONTRACT.json")), "designer", updatedAt, { stepId: "design", evidence: "stitch/UI_CONTRACT.json" }),
+    makeItem("design.tokens", "Design tokens exist", requiredStatus(designDone, !designRequired || fileExists(repo, "stitch/design-tokens.json") || fileExists(repo, "stitch/design-tokens.css")), "designer", updatedAt, { stepId: "design", evidence: "design tokens" }),
+    makeItem("design.md", "Design markdown exists", requiredStatus(designDone, !designRequired || fileExists(repo, "stitch/DESIGN.md") || fileExists(repo, "DESIGN.md")), "designer", updatedAt, { stepId: "design", evidence: "DESIGN.md" }),
   ];
   phases.push({ id: "design", label: "Design", status: phaseStatusForSteps(designItems, ["design"]), items: designItems });
 

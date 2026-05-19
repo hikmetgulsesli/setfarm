@@ -14,7 +14,7 @@ const rulesBody = fs.readFileSync(path.join(__dirname, "rules.md"), "utf-8");
 
 function buildPrompt(ctx: PromptContext): string {
   const c = ctx.context;
-  const projectName = (c["repo"] || "").replace(/\/+$/, "").split("/").pop() || "";
+  const projectName = c["run_slug"] || (c["repo"] || "").replace(/\/+$/, "").split("/").pop() || "";
   const displayName = c["project_display_name"] || c["project_name"] || projectName;
   const hostname = `${projectName}.setrox.com.tr`;
   const resolved = resolveTemplate(promptTemplate, {

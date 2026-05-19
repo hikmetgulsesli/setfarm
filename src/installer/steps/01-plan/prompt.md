@@ -1,9 +1,8 @@
 PLAN step — {{TASK}}
 
-Create the product PRD and choose the technical defaults for this run. The
-agent-facing contract is English. User-facing application copy must follow
-UI_LANGUAGE. Default UI_LANGUAGE to English unless the user explicitly requests
-another visible product language.
+Create the product contract PRD for this run. PLAN owns product intent,
+behavior, data/state contracts, platform choice, and Stitch design guidance.
+PLAN does not own runtime infrastructure.
 
 Do not read `rules.md`; the rules are embedded below.
 
@@ -13,25 +12,25 @@ Do not read `rules.md`; the rules are embedded below.
 
 ## Work
 
-1. Read the task and identify the product concept.
-2. Choose UI_LANGUAGE as English unless the task explicitly requests another visible product language.
-3. Write a detailed PRD in English, including the UI_LANGUAGE decision.
-4. Choose TECH_STACK and DB_REQUIRED.
-5. Choose REPO path and BRANCH name.
-6. Return exactly the key-value output format below.
+1. Identify the product name from the task, or derive a concise product name from the requested product.
+2. Choose PLATFORM, TECH_STACK, UI_LANGUAGE, DB_REQUIRED, and DESIGN_REQUIRED.
+3. Write the PRD as a product contract with Product Surfaces, not physical screens.
+4. Keep implementation/runtime details out of PLAN.
+5. Return exactly the key-value format below.
 
 ## Output Format
 
 ```
 STATUS: done
-REPO: $HOME/projects/<slug>
-BRANCH: <branch-name>
+PROJECT_NAME: <product name>
+PROJECT_SLUG: <kebab-case product slug>
+PLATFORM: <web|mobile|desktop|api|cli|game>
 TECH_STACK: <vite-react|nextjs|vanilla-ts|node-express|react-native>
 UI_LANGUAGE: <English or requested product language>
+DB_REQUIRED: <none|postgres|sqlite>
+DESIGN_REQUIRED: <true|false>
 PRD:
 <PRD body>
-PRD_SCREEN_COUNT: <number>
-DB_REQUIRED: <none|postgres|sqlite>
 ```
 
 Every field is required. This is not JSON. Use KEY: VALUE lines. PRD may be

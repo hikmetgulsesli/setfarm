@@ -1,13 +1,10 @@
 import type { ClaimContext } from "../types.js";
 
 const FIRST_ATTEMPT_REMINDER =
-  "REMINDER: Output MUST include ALL mandatory fields. " +
-  "PRD (min 2000 chars, English technical prose, Screens table min 3 rows) + REPO (absolute path) + " +
-  "BRANCH + TECH_STACK (vite-react|nextjs|vanilla-ts|node-express|react-native) + UI_LANGUAGE (English or requested product language) + " +
-  "PRD_SCREEN_COUNT (int >=3) + DB_REQUIRED (none|postgres|sqlite). Missing = instant REJECT.";
+  "REMINDER: PLAN is a product contract only. Output STATUS, PROJECT_NAME, PROJECT_SLUG, PLATFORM, TECH_STACK, UI_LANGUAGE, DB_REQUIRED, DESIGN_REQUIRED, and PRD. " +
+  "Do not emit REPO, BRANCH, GITHUB_REPO, RUN_SLUG, PACKAGE_NAME, APP_TITLE, PRD_SCREEN_COUNT, or a physical Screens table. " +
+  "PRD must use Product Surfaces and Action Contracts; runtime identity is resolved by MC/Setfarm after PLAN.";
 
-// Plan step context is intentionally minimal: only the task. A first-attempt
-// reminder is injected to prime the agent on mandatory output fields.
 export async function injectContext(ctx: ClaimContext): Promise<void> {
   ctx.context["task"] = ctx.task;
   if (ctx.retryCount === 0 && !ctx.context["previous_failure"]) {

@@ -97,9 +97,14 @@ export const OPTIONAL_TEMPLATE_VARS = [
   "stories_json",
   "current_story_title",
   "final_pr",
-  // PRD: removed from optional list in v1.5.53 — prd is now mandatory
-  // PRD screen count
-  "prd_screen_count",
+  // Product/runtime identity resolved after PLAN
+  "project_slug",
+  "run_slug",
+  "github_repo",
+  "app_title",
+  "package_name",
+  "platform",
+  "design_required",
   // Design system (Stitch)
   "design_system",
   "stitch_project_id",

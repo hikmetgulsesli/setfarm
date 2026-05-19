@@ -56,10 +56,10 @@ const TOKEN_STOP_WORDS = new Set([
 
 const GENERIC_SCREEN_TERMS = new Set([
   "board", "complete", "completion", "dashboard", "detail", "edit", "empty", "error",
-  "form", "game", "help", "home", "insight", "insights", "list", "main", "menu",
-  "metric", "metrics", "option", "options", "over", "overlay", "overview", "panel", "pause", "play",
-  "player", "primary", "progress", "result", "results", "settings", "status",
-  "summary", "support", "workflow",
+  "editor", "form", "game", "gameplay", "help", "home", "insight", "insights", "list", "main", "management", "menu",
+  "metric", "metrics", "operation", "operations", "option", "options", "over", "overlay", "overview", "panel", "pause", "play",
+  "player", "preferences", "primary", "progress", "recovery", "result", "results", "settings", "status",
+  "summary", "support", "workflow", "workspace",
 ]);
 
 const PRODUCT_OPTIONAL_GROUPS: Array<{ name: string; terms: string[]; taskHints: RegExp }> = [
@@ -106,6 +106,27 @@ function taskDomainTokens(task: string): string[] {
     .map((line) => line.replace(/^\s*Project\s*:\s*[^\s]+\s*/i, ""))
     .join("\n");
   return tokenise(withoutProjectPrefix).slice(0, 40);
+}
+
+function domainTokenSet(tokens: string[]): Set<string> {
+  const out = new Set<string>();
+  for (const token of tokens) {
+    out.add(token);
+    if (token.endsWith("ies") && token.length > 4) out.add(`${token.slice(0, -3)}y`);
+    if (token.endsWith("s") && token.length > 3 && !/(ss|us|is)$/.test(token)) out.add(token.slice(0, -1));
+  }
+  return out;
+}
+
+function stripNegativeOptionalModuleText(text: string): string {
+  return String(text || "")
+    .split(/\r?\n/)
+    .filter((line) => {
+      const normalized = normalizeText(line);
+      if (!/\b(profile|account|auth|login|signin|signup)\b/.test(normalized)) return true;
+      return !/\b(avoid|do not|dont|no|without|unless|not)\b/.test(normalized);
+    })
+    .join("\n");
 }
 
 function parseJsonArray(raw: string | null | undefined): any[] {
@@ -231,21 +252,44 @@ function findStaticInteractionIssues(workdir: string, files: string[]): string[]
   return issues;
 }
 
-function parsePrdScreenRows(prd: string): Array<{ name: string; description: string }> {
-  const rows: Array<{ name: string; description: string }> = [];
+function parsePrdSurfaceRows(prd: string): Array<{ surfaceId: string; name: string; description: string }> {
+  const rows: Array<{ surfaceId: string; name: string; description: string }> = [];
   const lines = String(prd || "").split(/\r?\n/);
-  let inScreens = false;
+  let inSurfaces = false;
+  let current: { surfaceId: string; name: string; description: string } | null = null;
+  const pushCurrent = () => {
+    if (!current) return;
+    if (!current.name) current.name = current.surfaceId.replace(/^SURF_/, "").replace(/_/g, " ");
+    rows.push(current);
+  };
   for (const line of lines) {
-    if (/^##+\s+Screens\b/i.test(line.trim())) {
-      inScreens = true;
+    const trimmed = line.trim();
+    if (/^##+\s+(?:\d+\.\s*)?Product Surfaces\b/i.test(trimmed)) {
+      inSurfaces = true;
       continue;
     }
-    if (inScreens && /^##+\s+/.test(line.trim())) break;
-    if (!inScreens || !/^\s*\|/.test(line) || /^\s*\|\s*-+/.test(line)) continue;
-    const cols = line.split("|").map((v) => v.trim()).filter(Boolean);
-    if (cols.length < 4 || /^#$/i.test(cols[0]) || /screen name/i.test(cols[1])) continue;
-    rows.push({ name: cols[1], description: cols.slice(3).join(" ") });
+    if (inSurfaces && /^##\s+/.test(trimmed)) break;
+    if (!inSurfaces) continue;
+    const heading = trimmed.match(/^#{3,5}\s+SURFACE\s*:\s*([A-Z0-9_ -]+)(?:\s*[-:]\s*(.+))?$/i);
+    const bulletId = trimmed.match(/^[-*]\s*(?:SURFACE_ID|Surface ID)\s*:\s*([A-Z0-9_ -]+)$/i);
+    if (heading || bulletId) {
+      pushCurrent();
+      const rawId = String(heading?.[1] || bulletId?.[1] || "").trim();
+      const cleanId = rawId.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+      const surfaceId = cleanId.startsWith("SURF_") ? cleanId : `SURF_${cleanId || "SURFACE"}`;
+      current = { surfaceId, name: String(heading?.[2] || rawId).replace(/^SURF[_ -]?/i, "").replace(/[_-]+/g, " ").trim(), description: "" };
+      continue;
+    }
+    if (!current) continue;
+    const field = trimmed.match(/^[-*]\s*([^:]+):\s*(.+)$/);
+    if (!field) continue;
+    const key = field[1].toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    if (key === "name") current.name = field[2].trim();
+    if (key === "purpose" || key === "core content" || key === "design guidance") {
+      current.description = `${current.description} ${field[2].trim()}`.trim();
+    }
   }
+  pushCurrent();
   return rows;
 }
 
@@ -296,24 +340,23 @@ function checkPlan(input: ProductSupervisorInput): string[] {
     issues.push(`PLAN_TRACEABILITY: PRD does not preserve enough task/domain terms. Missing examples: ${missing.join(", ") || "n/a"}.`);
   }
 
-  const rows = parsePrdScreenRows(prd);
-  const declaredCount = Number.parseInt(parsed.prd_screen_count || "", 10);
-  if (Number.isFinite(declaredCount) && rows.length > 0 && declaredCount !== rows.length) {
-    issues.push(`PLAN_SCREEN_COUNT: PRD_SCREEN_COUNT=${declaredCount} but Screens table has ${rows.length} row(s).`);
+  if (parsed.prd_screen_count || /^##+\s+(?:\d+\.\s*)?Screens\b/im.test(prd) || /\|\s*#\s*\|\s*Screen/i.test(prd)) {
+    issues.push("PLAN_SCREEN_TABLE_FORBIDDEN: PLAN must use Product Surfaces and must not emit PRD_SCREEN_COUNT or a physical Screens table.");
   }
 
-  const taskTermSet = new Set(taskTerms);
+  const rows = parsePrdSurfaceRows(prd);
+  const taskTermSet = domainTokenSet(taskTerms);
   for (const row of rows.slice(0, 30)) {
     const specific = specificScreenTerms(row.name, "");
     if (specific.length === 0) continue;
     const traceable = specific.some((term) => taskTermSet.has(term));
     if (!traceable && taskTerms.length >= 3) {
-      issues.push(`PLAN_SCREEN_DRIFT: Screen "${row.name}" has unrequested specific terms: ${specific.slice(0, 5).join(", ")}.`);
+      issues.push(`PLAN_SURFACE_DRIFT: Product Surface "${row.name}" has unrequested specific terms: ${specific.slice(0, 5).join(", ")}.`);
     }
   }
 
   const normalizedTask = normalizeText(task);
-  const screenText = normalizeText(rows.map((row) => `${row.name} ${row.description}`).join(" "));
+  const screenText = normalizeText(stripNegativeOptionalModuleText(rows.map((row) => `${row.name} ${row.description}`).join("\n")));
   for (const group of PRODUCT_OPTIONAL_GROUPS) {
     if (group.taskHints.test(normalizedTask)) continue;
     if (group.terms.some((term) => new RegExp(`\\b${term}\\b`, "i").test(screenText))) {
@@ -328,7 +371,7 @@ function checkDesign(input: ProductSupervisorInput): string[] {
   const context = input.context || {};
   const parsed = input.parsed || {};
   const prd = context.prd || context.PRD || parsed.prd || "";
-  const rows = parsePrdScreenRows(prd);
+  const rows = parsePrdSurfaceRows(prd);
   const screenMap = parseJsonArray(parsed.screen_map || context.screen_map || context.SCREEN_MAP || "");
   const issues: string[] = [];
 
@@ -352,23 +395,35 @@ function checkDesign(input: ProductSupervisorInput): string[] {
   }
 
   if (rows.length > 0) {
+    const coveredSurfaceIds = new Set<string>();
+    for (const screen of screenMap) {
+      if (Array.isArray(screen?.surfaceIds)) {
+        for (const id of screen.surfaceIds) coveredSurfaceIds.add(String(id));
+      } else {
+        for (const row of rows) {
+          if (screenNameMatches(row.name, String(screen?.name || "")) || screenNameMatches(row.surfaceId.replace(/^SURF_/, ""), String(screen?.name || ""))) {
+            coveredSurfaceIds.add(row.surfaceId);
+          }
+        }
+      }
+    }
     const missing = rows
-      .filter((row) => !screenMap.some((screen) => screenNameMatches(row.name, String(screen?.name || ""))))
-      .map((row) => row.name)
+      .filter((row) => !coveredSurfaceIds.has(row.surfaceId))
+      .map((row) => row.surfaceId)
       .slice(0, 8);
     const extra = screenMap
-      .filter((screen) => !rows.some((row) => screenNameMatches(row.name, String(screen?.name || ""))))
+      .filter((screen) => {
+        if (Array.isArray(screen?.surfaceIds) && screen.surfaceIds.some((id: any) => rows.some((row) => row.surfaceId === String(id)))) return false;
+        return !rows.some((row) => screenNameMatches(row.name, String(screen?.name || "")) || screenNameMatches(row.surfaceId.replace(/^SURF_/, ""), String(screen?.name || "")));
+      })
       .map((screen) => String(screen?.name || "unnamed"))
       .slice(0, 8);
 
-    if (screenMap.length !== rows.length) {
-      issues.push(`DESIGN_SCREEN_COUNT_DRIFT: SCREEN_MAP has ${screenMap.length} screen(s) but PRD Screens table has ${rows.length}.`);
-    }
     if (missing.length > 0) {
-      issues.push(`DESIGN_SCREEN_MISSING: missing PRD screen(s): ${missing.join(", ")}.`);
+      issues.push(`DESIGN_SURFACE_MISSING: missing Product Surface coverage: ${missing.join(", ")}.`);
     }
     if (extra.length > 0) {
-      issues.push(`DESIGN_SCREEN_EXTRA: unrequested design screen(s): ${extra.join(", ")}.`);
+      issues.push(`DESIGN_SURFACE_MISMATCH: unrequested or unmapped design screen(s): ${extra.join(", ")}.`);
     }
   }
 
