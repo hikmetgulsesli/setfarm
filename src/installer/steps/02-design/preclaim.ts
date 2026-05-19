@@ -627,9 +627,8 @@ function rewriteScreenArtifactsForScreenMap(stitchDir: string, screenMap: Screen
   }
 }
 
-function buildDesignBrief(prd: string, deviceType: string, uiLanguage: string): string {
-  const surfaces = parseProductSurfaces(prd);
-  const surfaceInventory = surfaces.map((surface, index) => [
+function buildSurfaceInventory(surfaces: ProductSurface[]): string {
+  return surfaces.map((surface, index) => [
     `${index + 1}. ${surface.surfaceId} - ${surface.name}`,
     `   Purpose: ${surface.purpose}`,
     `   Data: ${surface.dataEntitiesBound || "not specified"}`,
@@ -638,6 +637,61 @@ function buildDesignBrief(prd: string, deviceType: string, uiLanguage: string): 
     `   Entry/exit: ${surface.entryPoints || "not specified"} -> ${surface.exitRules || "not specified"}`,
     `   Guidance: ${surface.designGuidance || "follow the product contract"}`,
   ].join("\n")).join("\n\n");
+}
+
+function productVisionSummary(prd: string): string {
+  const text = String(prd || "");
+  const pick = (label: string): string => {
+    const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = text.match(new RegExp(`(?:^|\\n)\\s*-?\\s*${escaped}\\s*:\\s*(.+)`, "i"));
+    return truncateForPrompt(match?.[1] || "", 320);
+  };
+  const lines = [
+    pick("Overview"),
+    pick("Core Objectives") || pick("FR-001"),
+    pick("Target Audience"),
+  ].filter(Boolean);
+  if (lines.length > 0) return lines.map((line) => `- ${line}`).join("\n");
+  return `- ${truncateForPrompt(text.replace(/\s+/g, " ").trim(), 600) || "Use the declared Product Surfaces as the visual product source."}`;
+}
+
+function uiSafePrdContext(prd: string): string {
+  const lines = String(prd || "").split(/\r?\n/);
+  const keepSection = (line: string): boolean => {
+    const normalized = normalizeScreenName(line);
+    return (
+      normalized.includes("context and goals") ||
+      normalized.includes("behavioral and action contract") ||
+      normalized.includes("validation and error strategy") ||
+      normalized.includes("out of scope")
+    );
+  };
+  const stopSection = (line: string): boolean => /^#{1,3}\s+/.test(line.trim()) || /^\s*\d+\.\s+/.test(line.trim());
+  const kept: string[] = [];
+  let active = false;
+  for (const rawLine of lines) {
+    const line = rawLine.trimEnd();
+    if (keepSection(line)) {
+      active = true;
+      kept.push(line);
+      continue;
+    }
+    if (active && stopSection(line) && !keepSection(line)) {
+      active = false;
+    }
+    if (!active) continue;
+    if (/\b(?:repo|branch|github|local directory|server directory|env|environment|testability|platform contract|state architecture|data flow|server state|db_required)\b/i.test(line)) {
+      continue;
+    }
+    kept.push(line);
+  }
+  const text = kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  return truncateForPrompt(text, 9000) || "No extra UI-safe PRD context extracted.";
+}
+
+function buildDesignBrief(prd: string, deviceType: string, uiLanguage: string): string {
+  const surfaces = parseProductSurfaces(prd);
+  const surfaceInventory = buildSurfaceInventory(surfaces);
 
   return [
     "# DESIGN_BRIEF",
@@ -652,6 +706,9 @@ function buildDesignBrief(prd: string, deviceType: string, uiLanguage: string): 
     "- Keep metadata, screen titles, and technical identifiers in English.",
     `- Target device type: ${deviceType}.`,
     "",
+    "## PRODUCT_VISION_SUMMARY",
+    productVisionSummary(prd),
+    "",
     "## PRODUCT_SURFACES",
     surfaceInventory || "No Product Surfaces were declared.",
     "",
@@ -660,44 +717,34 @@ function buildDesignBrief(prd: string, deviceType: string, uiLanguage: string): 
     "- No generic admin, pricing, checkout, blog, onboarding, account, or profile areas unless declared as a Product Surface.",
     "- No local placeholder/wireframe design.",
     "",
-    "## FULL_PRD_APPENDIX",
-    "The full PRD below is passive background context. If it conflicts with PRODUCT_SURFACES, PRODUCT_SURFACES wins.",
-    "",
-    prd,
+    "## UI_SAFE_PRD_CONTEXT",
+    "Use this only to understand product behavior and missing UI states. Do not render this text directly. SCREEN_SPECS remain the active screen source.",
+    uiSafePrdContext(prd),
   ].join("\n");
 }
 
 function buildBatchStitchPrompt(repo: string, prd: string, deviceType: string, uiLanguage: string): string {
   void repo;
-  return buildDesignBrief(prd, deviceType, uiLanguage);
-}
-
-function buildChunkedStitchPrompt(prd: string, surfaces: ProductSurface[], deviceType: string, uiLanguage: string): string {
-  const surfaceIds = new Set(surfaces.map((surface) => surface.surfaceId));
-  const scopedTargets = inferPrdScreens(prd).filter((screen) => (screen.surfaceIds || []).some((id) => surfaceIds.has(id)));
+  const surfaces = parseProductSurfaces(prd);
   const screenSpecs = surfaces.map((surface, index) => surfaceScreenSpec(surface, index)).join("\n\n");
   const expectedTitles = surfaces.map((surface) => `- ${surface.name} - SurfaceGate Desk`).join("\n");
 
   return [
-    "# STITCH_CHUNK_BRIEF",
+    "# STITCH_BATCH_BRIEF",
     "",
     `Generate exactly ${surfaces.length} production-quality UI screens for the Product Surface targets below.`,
-    "This is one chunk of a larger Setfarm design run. Do not design surfaces outside this chunk.",
+    "Generate every SCREEN_SPEC in this single batch call. Do not stop after five screens unless there are exactly five SCREEN_SPEC entries.",
     `Target device type: ${deviceType}.`,
     `All visible user-facing text must be in ${uiLanguage}.`,
+    "",
+    "## PRODUCT_VISION_SUMMARY",
+    productVisionSummary(prd),
     "",
     "## REQUIRED_SCREEN_TITLES",
     expectedTitles || "No Product Surface targets were declared.",
     "",
     "## SCREEN_SPECS",
-    screenSpecs || scopedTargets.map((screen, index) => [
-      `SCREEN_SPEC_${index + 1}:`,
-      `- exact_screen_title: ${screen.name} - SurfaceGate Desk`,
-      `- surface_id: ${(screen.surfaceIds || []).join(", ") || "unknown"}`,
-      `- unique_canvas_caption: ${screen.description || `${screen.name} surface`}`,
-      `- purpose: ${screen.description || `${screen.name} surface`}`,
-      "- required_content: Use only this target's purpose and actions.",
-    ].join("\n")).join("\n\n"),
+    screenSpecs || "No Product Surface targets were declared.",
     "",
     "## OUTPUT_RULES",
     "- Create one distinct canvas/frame per SCREEN_SPEC.",
@@ -713,10 +760,12 @@ function buildChunkedStitchPrompt(prd: string, surfaces: ProductSurface[], devic
     "- Every permitted action from the matching Product Surface should have a plausible visible control or platform-appropriate interaction.",
     "- Empty, loading, validation, and error states may be included only inside the declared Product Surfaces.",
     "",
-    "## FULL_PRD_APPENDIX",
-    "The full PRD below is passive context. CHUNK_TARGETS above are the active design scope.",
+    "## PRODUCT_SURFACES",
+    buildSurfaceInventory(surfaces) || "No Product Surfaces were declared.",
     "",
-    prd,
+    "## UI_SAFE_PRD_CONTEXT",
+    "Use this only to understand product behavior and missing UI states. Do not render this text directly. SCREEN_SPECS remain the active screen source.",
+    uiSafePrdContext(prd),
   ].join("\n");
 }
 
@@ -739,17 +788,7 @@ function buildPerScreenStitchPrompt(prd: string, screen: ScreenMapEntry, uiLangu
   ].join("\n");
 }
 
-function stitchSurfaceBatchSize(): number {
-  const raw = Number(process.env.SETFARM_STITCH_SURFACE_BATCH_SIZE || 5);
-  if (!Number.isFinite(raw) || raw < 1) return 5;
-  return Math.max(1, Math.min(5, Math.floor(raw)));
-}
-
-function stitchBatchGenerationEnabled(): boolean {
-  return process.env.SETFARM_STITCH_BATCH_GENERATION === "1";
-}
-
-async function generateStitchScreensInSurfaceChunks(
+async function generateStitchScreensInSingleBatch(
   ctx: ClaimContext,
   stitchScript: string,
   repo: string,
@@ -761,62 +800,41 @@ async function generateStitchScreensInSurfaceChunks(
 ): Promise<{ completed: boolean; providerUnavailable: boolean; diagnostic: string }> {
   const surfaces = parseProductSurfaces(prd);
   if (surfaces.length === 0) return { completed: false, providerUnavailable: false, diagnostic: "No Product Surfaces declared" };
-  if (!stitchBatchGenerationEnabled()) {
-    return { completed: false, providerUnavailable: false, diagnostic: "Batch generation disabled; using per-screen Stitch generation" };
-  }
-
-  const batchSize = stitchSurfaceBatchSize();
-  let completed = true;
   let providerUnavailable = false;
   let diagnostic = "";
 
-  await recordPreClaimProgress(ctx, `Design preclaim: generating ${surfaces.length} Product Surfaces in Stitch chunks of ${batchSize}`);
+  await recordPreClaimProgress(ctx, `Design preclaim: generating ${surfaces.length} Product Surfaces in one Stitch batch`);
+  try {
+    const promptFile = path.join(stitchDir, ".generate-prompt.txt");
+    const genOut = await execFileText("node", [stitchScript, "generate-all-screens", projId, promptFile, deviceType, "GEMINI_3_1_PRO"], {
+      timeout: 660000,
+      cwd: repo,
+      onProgress: () => recordPreClaimProgress(ctx, "Design preclaim: still generating Stitch batch"),
+    });
 
-  for (let index = 0; index < surfaces.length; index += batchSize) {
-    const chunk = surfaces.slice(index, index + batchSize);
-    const chunkNo = Math.floor(index / batchSize) + 1;
-    const totalChunks = Math.ceil(surfaces.length / batchSize);
-    const chunkPrompt = path.join(stitchDir, `.generate-prompt-chunk-${chunkNo}.txt`);
-    fs.writeFileSync(chunkPrompt, buildChunkedStitchPrompt(prd, chunk, deviceType, uiLanguage), "utf-8");
-
-    await recordPreClaimProgress(ctx, `Design preclaim: generating Stitch batch chunk ${chunkNo}/${totalChunks} (${chunk.length} surfaces)`);
-    try {
-      const genOut = await execFileText("node", [stitchScript, "generate-all-screens", projId, chunkPrompt, deviceType, "GEMINI_3_1_PRO"], {
-        timeout: 660000,
-        cwd: repo,
-        onProgress: () => recordPreClaimProgress(ctx, `Design preclaim: still generating Stitch batch chunk ${chunkNo}/${totalChunks}`),
-      });
-
-      let genResult: any = {};
-      try { genResult = JSON.parse(genOut); } catch {}
-      const generatedTotal = Number(genResult.total || 0);
-      logger.info(`[module:design preclaim] Generated ${generatedTotal} screens for Stitch chunk ${chunkNo}/${totalChunks}`, { runId: ctx.runId });
-      if (generatedTotal === 0 && genResult.diagnostic) {
-        const shape = JSON.stringify(genResult.diagnostic).slice(0, 260);
-        const textSample = redactDiagnosticText(genResult.diagnostic.textSample).slice(0, 500);
-        diagnostic = textSample || shape || diagnostic;
-        providerUnavailable = providerUnavailable || isStitchProviderUnavailable(textSample || shape);
-        completed = false;
-        await recordPreClaimProgress(ctx, `Design preclaim: Stitch chunk ${chunkNo}/${totalChunks} generated 0 screens; response shape ${shape}`);
-        if (providerUnavailable) break;
-      } else {
-        await recordPreClaimProgress(ctx, `Design preclaim: Stitch chunk ${chunkNo}/${totalChunks} generated ${generatedTotal} screens`);
-      }
-    } catch (e) {
-      if (isPreclaimCancelledError(e)) throw e;
-      const failureDetail = redactDiagnosticText(e).slice(0, 500);
-      diagnostic = failureDetail || diagnostic;
-      providerUnavailable = providerUnavailable || isStitchProviderUnavailable(failureDetail);
-      completed = false;
-      logger.warn(`[module:design preclaim] Stitch batch chunk ${chunkNo}/${totalChunks} failed: ${failureDetail.slice(0, 200)}`, { runId: ctx.runId });
-      await recordPreClaimProgress(ctx, `Design preclaim: Stitch batch chunk ${chunkNo}/${totalChunks} failed: ${failureDetail || "unknown error"}`);
-      if (providerUnavailable) break;
+    let genResult: any = {};
+    try { genResult = JSON.parse(genOut); } catch {}
+    const generatedTotal = Number(genResult.total || 0);
+    logger.info(`[module:design preclaim] Generated ${generatedTotal} screens in one Stitch batch`, { runId: ctx.runId });
+    if (generatedTotal === 0 && genResult.diagnostic) {
+      const shape = JSON.stringify(genResult.diagnostic).slice(0, 260);
+      const textSample = redactDiagnosticText(genResult.diagnostic.textSample).slice(0, 500);
+      diagnostic = textSample || shape || diagnostic;
+      providerUnavailable = providerUnavailable || isStitchProviderUnavailable(textSample || shape);
+      await recordPreClaimProgress(ctx, `Design preclaim: Stitch batch generated 0 screens; response shape ${shape}`);
+      return { completed: false, providerUnavailable, diagnostic };
     }
-
-    if (index + batchSize < surfaces.length) await new Promise(r => setTimeout(r, 2000));
+    await recordPreClaimProgress(ctx, `Design preclaim: Stitch batch generated ${generatedTotal} screen(s)`);
+    return { completed: true, providerUnavailable: false, diagnostic };
+  } catch (e) {
+    if (isPreclaimCancelledError(e)) throw e;
+    const failureDetail = redactDiagnosticText(e).slice(0, 500);
+    diagnostic = failureDetail || diagnostic;
+    providerUnavailable = providerUnavailable || isStitchProviderUnavailable(failureDetail);
+    logger.warn(`[module:design preclaim] Stitch batch failed: ${failureDetail.slice(0, 200)}`, { runId: ctx.runId });
+    await recordPreClaimProgress(ctx, `Design preclaim: Stitch batch failed: ${failureDetail || "unknown error"}`);
+    return { completed: false, providerUnavailable, diagnostic };
   }
-
-  return { completed, providerUnavailable, diagnostic };
 }
 
 function retitleTrackedStitchScreens(repo: string, projId: string, screenIds: string[], title: string): void {
@@ -1250,8 +1268,9 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     }
   }
 
-  // 2. Write the full PRD plus the old mandatory-screen primer. The compact
-  // exact-count prompt proved too brittle against Stitch provider failures.
+  // 2. Write one explicit batch prompt. The prompt lists every Product Surface
+  // as a separate SCREEN_SPEC so Stitch generates the whole design set in one
+  // call without falling back to per-screen generation.
   const promptFile = path.join(stitchDir, ".generate-prompt.txt");
   const designBriefPath = path.join(stitchDir, "DESIGN_BRIEF.md");
   const deviceType = ctx.context["device_type"] || "DESKTOP";
@@ -1262,17 +1281,15 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   logger.info(`[module:design preclaim] Generating screens (project ${projId}, device ${deviceType})`, { runId: ctx.runId });
   await recordPreClaimProgress(ctx, `Design preclaim: generating Stitch screens for ${deviceType}`);
 
-  // 3. generate-all-screens in Stitch chunks. Stitch handles up to 5 screens
-  // reliably per batch, so 20 surfaces must be 4 Stitch calls of 5, not one
-  // oversized request.
+  // 3. generate-all-screens (single Stitch batch call for every Product Surface).
   let batchGenerationCompleted = false;
   let lastStitchDiagnostic = "";
   let stitchProviderUnavailable = false;
   try {
-    const chunkResult = await generateStitchScreensInSurfaceChunks(ctx, stitchScript, repo, stitchDir, projId, prd, deviceType, uiLanguage);
-    batchGenerationCompleted = chunkResult.completed;
-    stitchProviderUnavailable = chunkResult.providerUnavailable;
-    lastStitchDiagnostic = chunkResult.diagnostic || lastStitchDiagnostic;
+    const batchResult = await generateStitchScreensInSingleBatch(ctx, stitchScript, repo, stitchDir, projId, prd, deviceType, uiLanguage);
+    batchGenerationCompleted = batchResult.completed;
+    stitchProviderUnavailable = batchResult.providerUnavailable;
+    lastStitchDiagnostic = batchResult.diagnostic || lastStitchDiagnostic;
   } catch (e) {
     if (isPreclaimCancelledError(e)) return;
     const failureDetail = redactDiagnosticText(e).slice(0, 500);
@@ -1287,9 +1304,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   }
 
   // 4. download-all with retries. When the batch call completed or returned an
-  // ambiguous error, Stitch can still finish async work after a delay. When the
-  // provider explicitly reports UNAVAILABLE, do one quick probe, then move to
-  // per-surface Stitch generation instead of spending minutes polling nothing.
+  // ambiguous error, Stitch can still finish async work after a delay.
   let htmlCount = 0;
   const downloadAttempts = stitchProviderUnavailable ? 1 : (batchGenerationCompleted ? 3 : 1);
   for (let attempt = 0; attempt < downloadAttempts; attempt++) {
@@ -1345,9 +1360,9 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     }
   }
 
-  // 4c. Chunked per-screen Stitch recovery. This restores the fast 5+N behavior
-  // used before single-call batch generation became the only active path.
-  if (htmlCount === 0 && hasStitchKey && process.env.SETFARM_STITCH_PER_SCREEN_RECOVERY !== "0") {
+  // 4c. Optional manual recovery path. Disabled by default: Setfarm's normal
+  // design mode must stay whole-batch Stitch generation, not per-screen calls.
+  if (htmlCount === 0 && hasStitchKey && process.env.SETFARM_STITCH_PER_SCREEN_RECOVERY === "1") {
     try {
       htmlCount = await generateStitchScreensIndividually(ctx, stitchScript, repo, stitchDir, projId, prd, deviceType, uiLanguage);
       ctx.context["screens_generated"] = String(htmlCount);
@@ -1361,7 +1376,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     const suffix = lastStitchDiagnostic ? ` Last Stitch diagnostic: ${lastStitchDiagnostic.slice(0, 650)}` : "";
     const error = stitchProviderUnavailable
       ? `DESIGN_STITCH_SERVICE_UNAVAILABLE: STITCH_API_KEY is configured but the Stitch provider is temporarily unavailable.${suffix}`
-      : `DESIGN_STITCH_HTML_UNAVAILABLE: STITCH_API_KEY is configured but Stitch produced 0 valid HTML screens after batch generation, download, tracking-file recovery, and chunked per-screen recovery.${suffix}`;
+      : `DESIGN_STITCH_HTML_UNAVAILABLE: STITCH_API_KEY is configured but Stitch produced 0 valid HTML screens after single batch generation, download, and tracking-file recovery.${suffix}`;
     logger.warn(`[module:design preclaim] ${error}`, { runId: ctx.runId });
     await failDesignPreclaim(ctx, error, { terminal: stitchProviderUnavailable });
     return;
@@ -1407,7 +1422,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     if (reconciliation.inlineCovered.length > 0) {
       await recordPreClaimProgress(ctx, `Design preclaim: inline-covered state surfaces (${reconciliation.inlineCovered.slice(0, 5).join("; ")})`);
     }
-    if (reconciliation.missing.length > 0 && hasStitchKey && process.env.SETFARM_STITCH_TARGETED_SURFACE_RETRY !== "0") {
+    if (reconciliation.missing.length > 0 && hasStitchKey && process.env.SETFARM_STITCH_TARGETED_SURFACE_RETRY === "1") {
       const retryTargets = screenTargetsForSurfaces(reconciliation.missingSurfaces);
       await recordPreClaimProgress(ctx, `Design preclaim: targeted retry for missing required Product Surfaces (${reconciliation.missing.slice(0, 5).join(", ")})`);
       try {
@@ -1435,7 +1450,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
         reconciliation.missing.length ? `missing surfaces=${reconciliation.missing.slice(0, 8).join(", ")}` : "",
         reconciliation.unexpected.length ? `unexpected screens=${reconciliation.unexpected.slice(0, 8).join(", ")}` : "",
       ].filter(Boolean).join("; ");
-      const error = `DESIGN_SURFACE_MISMATCH: Stitch output is missing required Product Surfaces after targeted retry. ${detail}. DESIGN must regenerate scoped Stitch assets before stories/implementation.`;
+      const error = `DESIGN_SURFACE_MISMATCH: Stitch output is missing required Product Surfaces after single batch generation. ${detail}. DESIGN must regenerate the whole scoped Stitch batch before stories/implementation.`;
       logger.warn(`[module:design preclaim] ${error}`, { runId: ctx.runId });
       await failDesignPreclaim(ctx, error);
       return;

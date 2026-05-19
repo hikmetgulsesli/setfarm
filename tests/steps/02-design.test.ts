@@ -72,11 +72,14 @@ describe("02-design step module", () => {
     const source = designPreclaimSource();
     assert.match(source, /function buildDesignBrief/);
     assert.match(source, /STRICT_UI_SCOPE_CONTRACT/);
+    assert.match(source, /PRODUCT_VISION_SUMMARY/);
     assert.match(source, /PRODUCT_SURFACES/);
-    assert.match(source, /FULL_PRD_APPENDIX/);
+    assert.match(source, /UI_SAFE_PRD_CONTEXT/);
+    assert.match(source, /Use this only to understand product behavior and missing UI states/);
     assert.match(source, /function verifyScreenMapToSurfaces/);
     assert.match(source, /DESIGN_SURFACE_MISMATCH/);
     assert.match(source, /DESIGN_BRIEF\.md/);
+    assert.doesNotMatch(source, /FULL_PRD_APPENDIX/);
     assert.doesNotMatch(source, /MANDATORY SCREENS FROM SETFARM/);
     assert.doesNotMatch(source, /reconcileScreenMapToPrd/);
   });
@@ -91,16 +94,13 @@ describe("02-design step module", () => {
     assert.match(source, /get-design-md/);
   });
 
-  it("preClaim keeps Stitch download and chunked recovery behavior", () => {
+  it("preClaim keeps Stitch download and whole-batch generation behavior", () => {
     const source = designPreclaimSource();
-    assert.match(source, /function generateStitchScreensInSurfaceChunks/);
-    assert.match(source, /function stitchBatchGenerationEnabled/);
-    assert.match(source, /SETFARM_STITCH_BATCH_GENERATION/);
-    assert.match(source, /Batch generation disabled; using per-screen Stitch generation/);
-    assert.match(source, /STITCH_SURFACE_BATCH_SIZE/);
-    assert.match(source, /Math\.min\(5, Math\.floor\(raw\)\)/);
-    assert.match(source, /generating Stitch batch chunk/);
-    assert.match(source, /generate-all-screens[\s\S]*chunkPrompt/);
+    assert.match(source, /function generateStitchScreensInSingleBatch/);
+    assert.match(source, /STITCH_BATCH_BRIEF/);
+    assert.match(source, /Generate every SCREEN_SPEC in this single batch call/);
+    assert.match(source, /generating \$\{surfaces\.length\} Product Surfaces in one Stitch batch/);
+    assert.match(source, /generate-all-screens[\s\S]*promptFile/);
     assert.match(source, /SCREEN_SPECS/);
     assert.match(source, /exact_screen_title/);
     assert.match(source, /unique_canvas_caption/);
@@ -108,8 +108,11 @@ describe("02-design step module", () => {
     assert.match(source, /Do not write 'How would you like to proceed\?'/);
     assert.match(source, /const downloadAttempts = stitchProviderUnavailable \? 1 : \(batchGenerationCompleted \? 3 : 1\)/);
     assert.match(source, /SETFARM_STITCH_PER_SCREEN_RECOVERY/);
+    assert.match(source, /SETFARM_STITCH_PER_SCREEN_RECOVERY === "1"/);
     assert.match(source, /SETFARM_STITCH_SCREEN_BATCH_SIZE/);
     assert.match(source, /generate-screen-safe/);
+    assert.doesNotMatch(source, /Batch generation disabled; using per-screen Stitch generation/);
+    assert.doesNotMatch(source, /generating Stitch batch chunk/);
   });
 
   it("preClaim retries transient Stitch project ensure failures before failing design", () => {
@@ -120,11 +123,12 @@ describe("02-design step module", () => {
     assert.match(source, /could not create or load a Stitch project after retries/);
   });
 
-  it("preClaim uses targeted retry and inline coverage for recoverable design mismatches", () => {
+  it("preClaim keeps targeted retry opt-in and inline coverage for recoverable design mismatches", () => {
     const source = designPreclaimSource();
     assert.match(source, /function surfaceCoverageMode/);
     assert.match(source, /inline_covered/);
     assert.match(source, /SETFARM_STITCH_TARGETED_SURFACE_RETRY/);
+    assert.match(source, /SETFARM_STITCH_TARGETED_SURFACE_RETRY === "1"/);
     assert.match(source, /Product Surface coverage mismatch/);
     assert.match(source, /screenTargetsForSurfaces/);
   });
