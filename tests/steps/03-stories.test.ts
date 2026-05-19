@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { storiesModule } from "../../dist/installer/steps/03-stories/module.js";
@@ -17,6 +17,7 @@ import {
 } from "../../dist/installer/steps/03-stories/preclaim.js";
 import {
   detectStorySemanticDrift,
+  detectImplementationContractGaps,
   detectUiBehaviorContractGaps,
   extractStoryDomainTerms,
   planUiBehaviorCriteriaInjections,
@@ -47,6 +48,7 @@ describe("03-stories step module", () => {
   it("prompt includes scope_files and predicted_screen_files mentions", async () => {
     const result = await runModule(storiesModule, "Test", { status: "done" });
     assert.ok(result.prompt.includes("scope_files"), "prompt should mention scope_files");
+    assert.ok(result.prompt.includes("implementation_contract"), "prompt should mention implementation_contract");
     assert.ok(result.prompt.includes("PREDICTED_SCREEN_FILES"), "prompt should mention predicted screens");
     assert.ok(result.prompt.includes("DESIGN_DOM_PREVIEW"), "prompt should mention design DOM preview section");
     assert.match(result.prompt, /setup-repo/);
@@ -55,6 +57,15 @@ describe("03-stories step module", () => {
     assert.ok(result.prompt.includes("STORIES_JSON"), "prompt should mention STORIES_JSON");
     assert.equal(result.prompt.includes("src/hooks/useCounter.ts"), false, "prompt should not bias output toward a counter scaffold path");
     assert.equal(result.prompt.includes("CounterDisplay"), false, "prompt should not bias output toward a counter component");
+  });
+
+  it("stores implementation contracts as story DB fields", () => {
+    const dbSource = readFileSync(path.join(process.cwd(), "dist/db-pg.js"), "utf-8");
+    const storyOpsSource = readFileSync(path.join(process.cwd(), "dist/installer/story-ops.js"), "utf-8");
+
+    assert.match(dbSource, /implementation_contract TEXT/);
+    assert.match(storyOpsSource, /normalizeImplementationContract/);
+    assert.match(storyOpsSource, /implementation_contract, created_at, updated_at/);
   });
 
   it("extracts explicit English story caps", () => {
@@ -155,6 +166,10 @@ describe("03-stories step module", () => {
       assert.equal(stories[0].shared_files.includes("src/screens/Leads.tsx"), true);
       assert.equal(stories[0].shared_files.includes("src/screens/ProfilePanel.tsx"), true);
       assert.equal(stories[1].scope_files.includes("src/screens/Leads.tsx"), true);
+      assert.deepEqual(stories[1].implementation_contract.owned_screen_ids, ["SCR-001"]);
+      assert.ok(stories[1].implementation_contract.owned_screen_files.includes("src/screens/Leads.tsx"));
+      assert.ok(stories[1].implementation_contract.state_contract.length > 0);
+      assert.ok(stories[1].implementation_contract.test_contract.length > 0);
       assert.equal(stories.some((s: any) => s.scope_files.includes("src/screens/ProfilePanel.tsx")), true);
       assert.equal(stories.slice(1).every((s: any) => s.scope_files.includes("src/App.tsx")), true);
       assert.equal(stories.slice(1).every((s: any) => s.scope_files.includes("src/hooks/useAppState.ts")), true);
@@ -245,6 +260,7 @@ describe("03-stories step module", () => {
       assert.doesNotMatch(scorePanelStory.description, /those screen/i);
       assert.match(scorePanelStory.description, /that screen/);
       assert.equal(stories[0].scope_files.includes("src/hooks/useAppState.ts"), true);
+      assert.ok(stories[0].implementation_contract.state_contract.some((item: string) => /gameplay/i.test(item)));
       assert.equal(stories[0].shared_files.includes("src/screens/GameBoard.tsx"), true);
     } finally {
       rmSync(repo, { recursive: true, force: true });
@@ -326,6 +342,40 @@ describe("03-stories step module", () => {
       }]
     );
     assert.equal(err, null);
+  });
+
+  it("rejects feature stories without implementation contracts", () => {
+    const err = detectImplementationContractGaps([{
+      story_id: "US-002",
+      title: "Ticket editor",
+      description: "Implements ticket editing.",
+      acceptance_criteria: JSON.stringify(["Save button persists a ticket"]),
+      scope_description: "Ticket editor screen",
+      scope_files: JSON.stringify(["src/screens/TicketEditor.tsx"]),
+      implementation_contract: null,
+    }]);
+
+    assert.match(err || "", /implementation_contract/i);
+
+    const ok = detectImplementationContractGaps([{
+      story_id: "US-002",
+      title: "Ticket editor",
+      description: "Implements ticket editing.",
+      acceptance_criteria: JSON.stringify(["Save button persists a ticket"]),
+      scope_description: "Ticket editor screen",
+      scope_files: JSON.stringify(["src/screens/TicketEditor.tsx"]),
+      implementation_contract: JSON.stringify({
+        owned_screen_ids: ["SCR-002"],
+        owned_screen_files: ["src/screens/TicketEditor.tsx"],
+        owned_actions: [{ id: "ACT_SAVE_RECORD", trigger: "Save", state_change: "Persist ticket", ui_feedback: "Saved confirmation" }],
+        state_contract: ["activeDraft and validationErrors"],
+        persistence_contract: ["write Ticket changes to localStorage"],
+        navigation_contract: ["save returns to operations"],
+        test_contract: ["empty title shows validation"],
+      }),
+    }]);
+
+    assert.equal(ok, null);
   });
 
   it("builds a UI behavior contract from DESIGN_DOM", () => {

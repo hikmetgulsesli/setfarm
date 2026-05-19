@@ -258,6 +258,13 @@ function isSetupOwnedFrontendToolchainFile(file: string): boolean {
   return SETUP_OWNED_FRONTEND_TOOLCHAIN_PATTERNS.some((pattern) => pattern.test(file));
 }
 
+function normalizeImplementationContract(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const contract = value as Record<string, unknown>;
+  if (Object.keys(contract).length === 0) return null;
+  return JSON.stringify(contract);
+}
+
 export function normalizeScopeFilesForStory(scopeFiles: unknown, storyCount: number): string[] | null {
   if (!Array.isArray(scopeFiles)) return null;
 
@@ -429,8 +436,9 @@ export async function parseAndInsertStories(output: string, runId: string): Prom
       const sharedFiles = Array.isArray(s.shared_files) ? JSON.stringify(s.shared_files) : null;
       const scopeDesc = typeof s.scope_description === "string" ? s.scope_description : null;
       const fileSkeletons = s.file_skeletons && typeof s.file_skeletons === "object" ? JSON.stringify(s.file_skeletons) : null;
-      await sql`INSERT INTO stories (id, run_id, story_index, story_id, title, description, acceptance_criteria, status, retry_count, max_retries, depends_on, scope_files, shared_files, scope_description, file_skeletons, created_at, updated_at)
-        VALUES (${crypto.randomUUID()}, ${runId}, ${i}, ${s.id}, ${s.title}, ${s.description}, ${JSON.stringify(ac)}, 'pending', 0, 5, ${dependsOn}, ${scopeFiles}, ${sharedFiles}, ${scopeDesc}, ${fileSkeletons}, ${ts}, ${ts})`;
+      const implementationContract = normalizeImplementationContract(s.implementation_contract);
+      await sql`INSERT INTO stories (id, run_id, story_index, story_id, title, description, acceptance_criteria, status, retry_count, max_retries, depends_on, scope_files, shared_files, scope_description, file_skeletons, implementation_contract, created_at, updated_at)
+        VALUES (${crypto.randomUUID()}, ${runId}, ${i}, ${s.id}, ${s.title}, ${s.description}, ${JSON.stringify(ac)}, 'pending', 0, 5, ${dependsOn}, ${scopeFiles}, ${sharedFiles}, ${scopeDesc}, ${fileSkeletons}, ${implementationContract}, ${ts}, ${ts})`;
     }
   });
 }

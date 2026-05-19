@@ -53,11 +53,16 @@ describe("06-implement step module", () => {
 
   it("keeps git ownership in the platform instead of the implement agent", () => {
     const prompt = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/prompt.md"), "utf-8");
+    const contextSource = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/context.js"), "utf-8");
     const rules = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/rules.md"), "utf-8");
     const workflow = fs.readFileSync(path.join(process.cwd(), "workflows/feature-dev/workflow.yml"), "utf-8");
     const implementInput = workflow.split("\n  - id: implement\n")[1]?.split("\n  - id: verify\n")[0] || "";
     assert.match(prompt, /Do NOT run `git add`, `git commit`, `git push`, `gh pr create`, or any branch command/);
     assert.match(prompt, /Setfarm performs the final scoped story commit after build\/scope\/supervisor gates pass/);
+    assert.match(prompt, /Story Implementation Contract/);
+    assert.match(prompt, /owned screens, actions, state, persistence, navigation, and\s+test obligations/);
+    assert.match(contextSource, /story_implementation_contract/);
+    assert.match(contextSource, /implementation_contract FROM stories/);
     assert.match(rules, /Do NOT run `git add`, `git commit`, `git push`/);
     assert.match(implementInput, /Setfarm performs the final\s+scoped story commit/);
     assert.doesNotMatch(prompt, /xargs -a \.story-scope-files git add --/);

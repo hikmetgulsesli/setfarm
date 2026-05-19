@@ -96,6 +96,7 @@ export const OPTIONAL_TEMPLATE_VARS = [
   "story_workdir",
   "stories_json",
   "current_story_title",
+  "story_implementation_contract",
   "final_pr",
   // Product/runtime identity resolved after PLAN
   "project_slug",
@@ -241,6 +242,7 @@ export const STEP_CONTEXT_ALLOWLIST: Record<string, string[]> = {
     "library_pack_ids", "library_packs", "library_prompt",
     "detected_stack", "stack_rules",
     "story_scope_files", "story_scope_description", "story_shared_files",
+    "story_implementation_contract",
     "verify_feedback", "claim_generation",
   ],
   verify: [

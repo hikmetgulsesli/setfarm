@@ -26,6 +26,22 @@ interface StoryDraft {
   shared_files: string[];
   scope_description: string;
   file_skeletons: Record<string, string>;
+  implementation_contract: StoryImplementationContract;
+}
+
+interface StoryImplementationContract {
+  owned_screen_ids: string[];
+  owned_screen_files: string[];
+  owned_actions: Array<{
+    id: string;
+    trigger: string;
+    state_change: string;
+    ui_feedback: string;
+  }>;
+  state_contract: string[];
+  persistence_contract: string[];
+  navigation_contract: string[];
+  test_contract: string[];
 }
 
 interface StoryGroup {
@@ -136,6 +152,109 @@ function loadScreenMap(repo: string): any[] {
 
 function unique(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
+}
+
+function actionIdForRequirement(req: UiBehaviorRequirement): string {
+  const raw = req.action || req.label || req.kind;
+  const suffix = String(raw || "action")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toUpperCase();
+  return `ACT_${suffix || "ACTION"}`;
+}
+
+function actionContractsForScreens(repo: string, screenIds: string[]): StoryImplementationContract["owned_actions"] {
+  const screenSet = new Set(screenIds);
+  return collectUiBehaviorRequirements(repo)
+    .filter((req) => screenSet.has(req.screenId))
+    .slice(0, 20)
+    .map((req) => ({
+      id: actionIdForRequirement(req),
+      trigger: `${req.screenTitle}: ${req.kind} "${req.label}"`,
+      state_change: req.expectedBehavior,
+      ui_feedback: "Visible DOM/state/URL feedback matching the generated Stitch control.",
+    }));
+}
+
+function appImplementationContract(projectKind: ProjectKind): StoryImplementationContract {
+  if (projectKind === "game") {
+    return {
+      owned_screen_ids: [],
+      owned_screen_files: [],
+      owned_actions: [
+        {
+          id: "ACT_APP_STATE_BOOTSTRAP",
+          trigger: "Application load and shared game shell initialization",
+          state_change: "Initialize gameplay state, navigation target, storage status, and window.app test bridge.",
+          ui_feedback: "The first rendered surface is the actual playable game/product state, not a landing page.",
+        },
+      ],
+      state_contract: [
+        "Own shared gameplay state, active screen, score/progress, level/difficulty where present, paused/gameOver, storage status, and last error.",
+      ],
+      persistence_contract: [
+        "Persist only explicit game preferences/high score or PRD-required state; corrupted persisted data produces visible recovery feedback.",
+      ],
+      navigation_contract: [
+        "Expose stable navigation/action handlers for screen-owner stories without implementing sibling screens in this story.",
+      ],
+      test_contract: [
+        "window.app exposes live gameplay/product state and actions required by smoke/final tests.",
+      ],
+    };
+  }
+  return {
+    owned_screen_ids: [],
+    owned_screen_files: [],
+    owned_actions: [
+      {
+        id: "ACT_APP_STATE_BOOTSTRAP",
+        trigger: "Application load and shared app shell initialization",
+        state_change: "Initialize active surface, selected item, storage status, last error, active panel, and item counts.",
+        ui_feedback: "The first rendered surface is the actual requested product workflow, not a landing page.",
+      },
+    ],
+    state_contract: [
+      "Own shared app shell state, navigation state, selected entity, storage status, last error, active panel, and item count.",
+    ],
+    persistence_contract: [
+      "Persist local preferences/records only when PRD or DESIGN_DOM requires persistence; corrupted persisted data shows recoverable feedback.",
+    ],
+    navigation_contract: [
+      "Expose stable navigation/action handlers for screen-owner stories without implementing sibling screens in this story.",
+    ],
+    test_contract: [
+      "window.app exposes active screen/route, selected record, counts, storage status, last error, and active panel when those concepts exist.",
+    ],
+  };
+}
+
+function screenImplementationContract(params: {
+  repo: string;
+  title: string;
+  screenIds: string[];
+  screenFiles: string[];
+}): StoryImplementationContract {
+  const ownedActions = actionContractsForScreens(params.repo, params.screenIds);
+  return {
+    owned_screen_ids: params.screenIds,
+    owned_screen_files: params.screenFiles,
+    owned_actions: ownedActions,
+    state_contract: [
+      `${params.title}: own the state needed by the listed generated controls and use shared app state/context for cross-screen data.`,
+    ],
+    persistence_contract: [
+      `${params.title}: persist only PRD/DESIGN_DOM-required values; otherwise keep transient UI state local/shared.`,
+    ],
+    navigation_contract: [
+      `${params.title}: every owned screen must be reachable from the first rendered app surface or embedded into a reachable parent, with visible return/close behavior where applicable.`,
+    ],
+    test_contract: [
+      `${params.title}: tests must prove visible state/DOM/route/storage feedback for owned controls, not only click without throw.`,
+    ],
+  };
 }
 
 function screenDisplayTitle(screen: PredictedScreen): string {
@@ -341,6 +460,7 @@ function appStoryDraft(params: {
       shared_files: params.screenFiles,
       scope_description: "Shared game integration and state ownership. Generated src/screens files are read-only shared context here: do not edit them, do not change their prop interfaces, and do not pass props they do not already declare. If generated screens expose typed actions props, App may pass those declared action handlers; never use textContent or DOM-label matching for control routing. Screen stories own all edits and additional button wiring for those files.",
       file_skeletons: fileSkeletons(APP_SCOPE_FILES, params.screenFileSet),
+      implementation_contract: appImplementationContract(params.projectKind),
     };
   }
 
@@ -362,6 +482,7 @@ function appStoryDraft(params: {
     shared_files: params.screenFiles,
     scope_description: "Shared app integration and state ownership. Generated src/screens files are read-only shared context here; screen stories own all edits to those files.",
     file_skeletons: fileSkeletons(APP_SCOPE_FILES, params.screenFileSet),
+    implementation_contract: appImplementationContract(params.projectKind),
   };
 }
 
@@ -432,6 +553,12 @@ export function buildAutoStoriesOutput(params: {
       shared_files: [],
       scope_description: "One-story explicit user cap: implement all generated screens, visible button/icon behavior, app integration, and only the state/persistence behavior required by the project context.",
       file_skeletons: fileSkeletons(scopeFiles, screenFileSet),
+      implementation_contract: screenImplementationContract({
+        repo,
+        title: "complete single-story implementation",
+        screenIds: unique(predicted.map((s) => s.screenId)),
+        screenFiles,
+      }),
     }];
   } else {
     const groups = chooseScreenGroups(predicted, maxStories, projectKind);
@@ -455,6 +582,12 @@ export function buildAutoStoriesOutput(params: {
         shared_files: [],
         scope_description: `${title}: own generated screens ${groupScreenFiles.join(", ")} plus app integration files needed to wire those screens to shared state, navigation, and actions. Do not edit sibling screen groups or unrelated app behavior.`,
         file_skeletons: fileSkeletons(scopeFiles, screenFileSet),
+        implementation_contract: screenImplementationContract({
+          repo,
+          title,
+          screenIds: groupScreenIds,
+          screenFiles: groupScreenFiles,
+        }),
       });
     });
   }

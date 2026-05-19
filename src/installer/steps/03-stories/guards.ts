@@ -97,6 +97,7 @@ export interface SemanticStoryInput {
   scope_description?: string | null;
   scope_files?: string | null;
   shared_files?: string | null;
+  implementation_contract?: string | null;
 }
 
 function parseStoryJsonField(raw: string | null | undefined): string {
@@ -242,6 +243,71 @@ function parseStringArray(raw: string | null | undefined): string[] {
   }
 }
 
+function parseImplementationContract(raw: string | null | undefined): Record<string, any> | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function contractStringArray(contract: Record<string, any>, key: string): string[] {
+  const value = contract[key];
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
+}
+
+function contractActions(contract: Record<string, any>): any[] {
+  return Array.isArray(contract.owned_actions)
+    ? contract.owned_actions.filter((item: any) => item && typeof item === "object")
+    : [];
+}
+
+export function detectImplementationContractGaps(stories: SemanticStoryInput[]): string | null {
+  const failures: string[] = [];
+  for (const story of stories) {
+    const storyId = story.story_id || "UNKNOWN";
+    const contract = parseImplementationContract(story.implementation_contract);
+    if (!contract) {
+      failures.push(`${storyId}: missing implementation_contract`);
+      continue;
+    }
+
+    const screens = parseStringArray((story as any).screens || "");
+    const scopeFiles = parseStringArray(story.scope_files);
+    const ownedScreenIds = contractStringArray(contract, "owned_screen_ids");
+    const ownedScreenFiles = contractStringArray(contract, "owned_screen_files");
+    const hasScreens = screens.length > 0 || scopeFiles.some((file) => file.startsWith("src/screens/"));
+
+    if (hasScreens) {
+      if (ownedScreenIds.length === 0) failures.push(`${storyId}: contract missing owned_screen_ids`);
+      if (ownedScreenFiles.length === 0) failures.push(`${storyId}: contract missing owned_screen_files`);
+    }
+
+    if (contractStringArray(contract, "state_contract").length === 0) {
+      failures.push(`${storyId}: contract missing state_contract`);
+    }
+    if (contractStringArray(contract, "persistence_contract").length === 0) {
+      failures.push(`${storyId}: contract missing persistence_contract`);
+    }
+    if (contractStringArray(contract, "navigation_contract").length === 0) {
+      failures.push(`${storyId}: contract missing navigation_contract`);
+    }
+    if (contractStringArray(contract, "test_contract").length === 0) {
+      failures.push(`${storyId}: contract missing test_contract`);
+    }
+
+    const hasBehavior = contractActions(contract).length > 0 || contractStringArray(contract, "navigation_contract").length > 0;
+    if (!hasBehavior) {
+      failures.push(`${storyId}: contract missing owned action/navigation behavior`);
+    }
+  }
+
+  if (failures.length === 0) return null;
+  return `GUARDRAIL: STORIES_JSON implementation_contract is incomplete. ${failures.slice(0, 8).join("; ")}${failures.length > 8 ? `; +${failures.length - 8} more` : ""}. Re-output STORIES_JSON with behavior contracts, not hook/component implementation plans.`;
+}
+
 function behaviorCriterion(req: UiBehaviorRequirement): string {
   const details = [
     `${req.kind} "${req.label}"`,
@@ -376,7 +442,7 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
   }
 
   let semanticRows = await pgQuery<SemanticStoryInput>(
-    "SELECT story_index, story_id, title, description, acceptance_criteria, scope_description, scope_files, shared_files FROM stories WHERE run_id = $1 ORDER BY story_index",
+    "SELECT story_index, story_id, title, description, acceptance_criteria, scope_description, scope_files, shared_files, implementation_contract FROM stories WHERE run_id = $1 ORDER BY story_index",
     [runId]
   );
   const semanticErr = detectStorySemanticDrift(
@@ -389,10 +455,17 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
     throw new Error(semanticErr);
   }
 
+  const implementationContractErr = detectImplementationContractGaps(semanticRows);
+  if (implementationContractErr) {
+    logger.warn(`[module:stories] ${implementationContractErr}`, { runId });
+    await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);
+    throw new Error(implementationContractErr);
+  }
+
   const repoPath = context["repo"] || context["REPO"] || "";
   await autoInjectUiBehaviorCriteria(runId, repoPath, semanticRows);
   semanticRows = await pgQuery<SemanticStoryInput>(
-    "SELECT story_index, story_id, title, description, acceptance_criteria, scope_description, scope_files, shared_files FROM stories WHERE run_id = $1 ORDER BY story_index",
+    "SELECT story_index, story_id, title, description, acceptance_criteria, scope_description, scope_files, shared_files, implementation_contract FROM stories WHERE run_id = $1 ORDER BY story_index",
     [runId]
   );
   const uiBehaviorErr = detectUiBehaviorContractGaps(repoPath, semanticRows);

@@ -37,6 +37,14 @@ MAIN_REPO: {{MAIN_REPO}}
 ## Current Story
 {{STORY}}
 
+## Story Implementation Contract
+This is the behavior handoff from STORIES. Treat it as authoritative for the
+current story's owned screens, actions, state, persistence, navigation, and
+test obligations. It is NOT a code plan: choose hook/component/function names
+from the real repository structure, but do not drop any listed behavior.
+
+{{STORY_IMPLEMENTATION_CONTRACT}}
+
 ## Project
 {{TASK}}
 

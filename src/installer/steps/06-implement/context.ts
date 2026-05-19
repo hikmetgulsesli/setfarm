@@ -52,6 +52,7 @@ const STORY_STATUS = {
 const OPTIONAL_TEMPLATE_VARS = [
   "completed_stories", "story_roadmap", "stories_remaining", "progress", "project_memory",
   "story_scope_files", "story_shared_files", "story_scope_description",
+  "story_implementation_contract",
   "file_skeletons", "scope_reminder", "stitch_html", "design_dom",
   "ui_behavior_contract",
   "project_tree", "installed_packages", "shared_code", "recent_stories_code",
@@ -243,8 +244,8 @@ export async function injectStoryContext(
 
 async function injectScopeContext(nextStory: any, context: Record<string, string>): Promise<void> {
   try {
-    const scopeRow = await pgGet<{ scope_files: string; shared_files: string; scope_description: string; file_skeletons: string }>(
-      "SELECT scope_files, shared_files, scope_description, file_skeletons FROM stories WHERE id = $1",
+    const scopeRow = await pgGet<{ scope_files: string; shared_files: string; scope_description: string; file_skeletons: string; implementation_contract: string }>(
+      "SELECT scope_files, shared_files, scope_description, file_skeletons, implementation_contract FROM stories WHERE id = $1",
       [nextStory.id]
     );
     if (scopeRow?.scope_files) {
@@ -252,6 +253,14 @@ async function injectScopeContext(nextStory: any, context: Record<string, string
         const list = JSON.parse(scopeRow.scope_files);
         if (Array.isArray(list) && list.length > 0) context["story_scope_files"] = list.join(", ");
       } catch (e) { logger.debug(`[context] Malformed scope_files JSON: ${String(e).slice(0, 80)}`); }
+    }
+    if (scopeRow?.implementation_contract) {
+      try {
+        const contract = JSON.parse(scopeRow.implementation_contract);
+        if (contract && typeof contract === "object" && Object.keys(contract).length > 0) {
+          context["story_implementation_contract"] = JSON.stringify(contract, null, 2);
+        }
+      } catch (e) { logger.debug(`[context] Malformed implementation_contract JSON: ${String(e).slice(0, 80)}`); }
     }
     if (scopeRow?.shared_files) {
       try {

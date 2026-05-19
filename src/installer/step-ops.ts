@@ -644,6 +644,7 @@ function withStepModulePromptAliases(context: Record<string, string>, runId: str
   assign("SCOPE_REMINDER", "scope_reminder");
   assign("STORY_ROADMAP", "story_roadmap");
   assign("STORY", "current_story");
+  assign("STORY_IMPLEMENTATION_CONTRACT", "story_implementation_contract");
   assign("STORY_SCREENS", "story_screens");
   assign("DESIGN_RULES", "design_rules");
   assign("SUPERVISOR_MEMORY", "supervisor_memory");
@@ -2445,8 +2446,8 @@ async function injectStoryContext(
   // "implement the acceptance criteria" mode. The post-implementation bleed
   // check in completeStep uses these to reject out-of-scope writes.
   try {
-    const scopeRow = await pgGet<{ scope_files: string; shared_files: string; scope_description: string; file_skeletons: string }>(
-      "SELECT scope_files, shared_files, scope_description, file_skeletons FROM stories WHERE id = $1",
+    const scopeRow = await pgGet<{ scope_files: string; shared_files: string; scope_description: string; file_skeletons: string; implementation_contract: string }>(
+      "SELECT scope_files, shared_files, scope_description, file_skeletons, implementation_contract FROM stories WHERE id = $1",
       [nextStory.id]
     );
     if (scopeRow?.scope_files) {
@@ -2467,6 +2468,14 @@ async function injectStoryContext(
     }
     if (scopeRow?.scope_description) {
       context["story_scope_description"] = scopeRow.scope_description;
+    }
+    if (scopeRow?.implementation_contract) {
+      try {
+        const contract = JSON.parse(scopeRow.implementation_contract);
+        if (contract && typeof contract === "object" && Object.keys(contract).length > 0) {
+          context["story_implementation_contract"] = JSON.stringify(contract, null, 2);
+        }
+      } catch (e) { logger.debug(`[context] Malformed implementation_contract JSON: ${String(e).slice(0, 80)}`); }
     }
     // file_skeletons: function signatures from stories step to guide implementation
     if (scopeRow?.file_skeletons) {

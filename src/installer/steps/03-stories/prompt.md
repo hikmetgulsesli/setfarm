@@ -98,8 +98,13 @@ No active-looking control may be left as a no-op.
    `"Control name" opens the matching panel`, `"Route name" navigates to its
    route`, `"Action name" changes visible state/localStorage`, etc. Use real
    PRD/Stitch labels; do not copy placeholder names.
-8. Update SCREEN_MAP by adding a `stories` field to each screen.
-9. Return the exact output format below.
+8. Add `implementation_contract` to every story. This is a behavior handoff,
+   not a code plan. It MUST name owned screen ids/files, owned actions,
+   state contract, persistence contract, navigation contract, and test
+   contract. Do not prescribe hook names, component splits, function names, or
+   framework internals before setup has created the real repo.
+9. Update SCREEN_MAP by adding a `stories` field to each screen.
+10. Return the exact output format below.
 
 ## Story Schema Reference
 
@@ -124,7 +129,23 @@ Outputting literal placeholders such as `<domain>` is an error.
     "src/screens/<PredictedScreenName>.tsx"
   ],
   "shared_files": ["src/types/index.ts"],
-  "scope_description": "State/helper + component family + related screen flow"
+  "scope_description": "State/helper + component family + related screen flow",
+  "implementation_contract": {
+    "owned_screen_ids": ["SCR-001"],
+    "owned_screen_files": ["src/screens/<PredictedScreenName>.tsx"],
+    "owned_actions": [
+      {
+        "id": "ACT_EXAMPLE",
+        "trigger": "Exact Stitch control or PRD action",
+        "state_change": "Visible app state/data change",
+        "ui_feedback": "Visible confirmation, validation, route, panel, or disabled state"
+      }
+    ],
+    "state_contract": ["Named state responsibilities, not hook/function names"],
+    "persistence_contract": ["localStorage/API/database behavior required by PRD"],
+    "navigation_contract": ["reachable screen and return/close behavior"],
+    "test_contract": ["deterministic behavior that implement must verify"]
+  }
 }
 ```
 
