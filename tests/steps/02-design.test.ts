@@ -106,6 +106,9 @@ describe("02-design step module", () => {
     assert.match(source, /unique_canvas_caption/);
     assert.match(source, /Do not reuse one global caption across screens/);
     assert.match(source, /Do not write 'How would you like to proceed\?'/);
+    assert.match(source, /SETFARM_STITCH_BATCH_RETRY_ATTEMPTS/);
+    assert.match(source, /SETFARM_STITCH_BATCH_RETRY_BASE_DELAY_MS/);
+    assert.match(source, /retrying whole batch/);
     assert.match(source, /const downloadAttempts = stitchProviderUnavailable \? 1 : \(batchGenerationCompleted \? 3 : 1\)/);
     assert.match(source, /SETFARM_STITCH_PER_SCREEN_RECOVERY/);
     assert.match(source, /SETFARM_STITCH_PER_SCREEN_RECOVERY === "1"/);

@@ -52,6 +52,12 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function boundedIntEnv(name: string, fallback: number, min: number, max: number): number {
+  const raw = Number(process.env[name] || fallback);
+  if (!Number.isFinite(raw)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(raw)));
+}
+
 function execFileText(command: string, args: string[], options: ExecFileTextOptions = {}): Promise<string> {
   return new Promise((resolve, reject) => {
     const { onProgress, progressIntervalMs = 30000, ...execOptions } = options;
@@ -800,41 +806,58 @@ async function generateStitchScreensInSingleBatch(
 ): Promise<{ completed: boolean; providerUnavailable: boolean; diagnostic: string }> {
   const surfaces = parseProductSurfaces(prd);
   if (surfaces.length === 0) return { completed: false, providerUnavailable: false, diagnostic: "No Product Surfaces declared" };
+  const retryAttempts = boundedIntEnv("SETFARM_STITCH_BATCH_RETRY_ATTEMPTS", 3, 1, 5);
+  const retryBaseDelayMs = boundedIntEnv("SETFARM_STITCH_BATCH_RETRY_BASE_DELAY_MS", 45000, 5000, 180000);
   let providerUnavailable = false;
   let diagnostic = "";
 
   await recordPreClaimProgress(ctx, `Design preclaim: generating ${surfaces.length} Product Surfaces in one Stitch batch`);
-  try {
-    const promptFile = path.join(stitchDir, ".generate-prompt.txt");
-    const genOut = await execFileText("node", [stitchScript, "generate-all-screens", projId, promptFile, deviceType, "GEMINI_3_1_PRO"], {
-      timeout: 660000,
-      cwd: repo,
-      onProgress: () => recordPreClaimProgress(ctx, "Design preclaim: still generating Stitch batch"),
-    });
+  for (let attempt = 1; attempt <= retryAttempts; attempt++) {
+    try {
+      const promptFile = path.join(stitchDir, ".generate-prompt.txt");
+      const genOut = await execFileText("node", [stitchScript, "generate-all-screens", projId, promptFile, deviceType, "GEMINI_3_1_PRO"], {
+        timeout: 660000,
+        cwd: repo,
+        onProgress: () => recordPreClaimProgress(ctx, `Design preclaim: still generating Stitch batch (attempt ${attempt}/${retryAttempts})`),
+      });
 
-    let genResult: any = {};
-    try { genResult = JSON.parse(genOut); } catch {}
-    const generatedTotal = Number(genResult.total || 0);
-    logger.info(`[module:design preclaim] Generated ${generatedTotal} screens in one Stitch batch`, { runId: ctx.runId });
-    if (generatedTotal === 0 && genResult.diagnostic) {
-      const shape = JSON.stringify(genResult.diagnostic).slice(0, 260);
-      const textSample = redactDiagnosticText(genResult.diagnostic.textSample).slice(0, 500);
-      diagnostic = textSample || shape || diagnostic;
-      providerUnavailable = providerUnavailable || isStitchProviderUnavailable(textSample || shape);
-      await recordPreClaimProgress(ctx, `Design preclaim: Stitch batch generated 0 screens; response shape ${shape}`);
+      let genResult: any = {};
+      try { genResult = JSON.parse(genOut); } catch {}
+      const generatedTotal = Number(genResult.total || 0);
+      logger.info(`[module:design preclaim] Generated ${generatedTotal} screens in one Stitch batch (attempt ${attempt}/${retryAttempts})`, { runId: ctx.runId });
+      if (generatedTotal === 0 && genResult.diagnostic) {
+        const shape = JSON.stringify(genResult.diagnostic).slice(0, 260);
+        const textSample = redactDiagnosticText(genResult.diagnostic.textSample).slice(0, 500);
+        diagnostic = textSample || shape || diagnostic;
+        providerUnavailable = providerUnavailable || isStitchProviderUnavailable(textSample || shape);
+        await recordPreClaimProgress(ctx, `Design preclaim: Stitch batch generated 0 screens on attempt ${attempt}/${retryAttempts}; response shape ${shape}`);
+        if (providerUnavailable && attempt < retryAttempts) {
+          const delayMs = retryBaseDelayMs * attempt;
+          await recordPreClaimProgress(ctx, `Design preclaim: Stitch provider unavailable; retrying whole batch in ${Math.round(delayMs / 1000)}s`);
+          await sleep(delayMs);
+          continue;
+        }
+        return { completed: false, providerUnavailable, diagnostic };
+      }
+      await recordPreClaimProgress(ctx, `Design preclaim: Stitch batch generated ${generatedTotal} screen(s)`);
+      return { completed: true, providerUnavailable: false, diagnostic };
+    } catch (e) {
+      if (isPreclaimCancelledError(e)) throw e;
+      const failureDetail = redactDiagnosticText(e).slice(0, 500);
+      diagnostic = failureDetail || diagnostic;
+      providerUnavailable = providerUnavailable || isStitchProviderUnavailable(failureDetail);
+      logger.warn(`[module:design preclaim] Stitch batch failed on attempt ${attempt}/${retryAttempts}: ${failureDetail.slice(0, 200)}`, { runId: ctx.runId });
+      await recordPreClaimProgress(ctx, `Design preclaim: Stitch batch failed on attempt ${attempt}/${retryAttempts}: ${failureDetail || "unknown error"}`);
+      if (providerUnavailable && attempt < retryAttempts) {
+        const delayMs = retryBaseDelayMs * attempt;
+        await recordPreClaimProgress(ctx, `Design preclaim: Stitch provider unavailable; retrying whole batch in ${Math.round(delayMs / 1000)}s`);
+        await sleep(delayMs);
+        continue;
+      }
       return { completed: false, providerUnavailable, diagnostic };
     }
-    await recordPreClaimProgress(ctx, `Design preclaim: Stitch batch generated ${generatedTotal} screen(s)`);
-    return { completed: true, providerUnavailable: false, diagnostic };
-  } catch (e) {
-    if (isPreclaimCancelledError(e)) throw e;
-    const failureDetail = redactDiagnosticText(e).slice(0, 500);
-    diagnostic = failureDetail || diagnostic;
-    providerUnavailable = providerUnavailable || isStitchProviderUnavailable(failureDetail);
-    logger.warn(`[module:design preclaim] Stitch batch failed: ${failureDetail.slice(0, 200)}`, { runId: ctx.runId });
-    await recordPreClaimProgress(ctx, `Design preclaim: Stitch batch failed: ${failureDetail || "unknown error"}`);
-    return { completed: false, providerUnavailable, diagnostic };
   }
+  return { completed: false, providerUnavailable, diagnostic };
 }
 
 function retitleTrackedStitchScreens(repo: string, projId: string, screenIds: string[], title: string): void {
