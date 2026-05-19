@@ -273,10 +273,18 @@ function surfaceActionsLine(surface: ProductSurface): string {
   return surface.permittedActions.map((action) => `${action.actionId} as ${action.controlHint}`).join(", ") || "No explicit actions";
 }
 
-function surfaceScreenSpec(surface: ProductSurface, index: number): string {
+function productDisplayName(prd: string): string {
+  const text = String(prd || "");
+  const match = text.match(/(?:^|\n)\s*(?:PROJECT_NAME|project_name)\s*:?\s*"?([^"\n]+)"?/i);
+  if (match?.[1]?.trim()) return truncateForPrompt(match[1].trim(), 80);
+  const title = text.match(/(?:^|\n)#\s*PRD\s*:\s*(.+)$/i)?.[1] || text.match(/(?:^|\n)([A-Z][^\n]{3,80})\s+Product Contract\b/)?.[1];
+  return truncateForPrompt(String(title || "Product").replace(/\s*Product Contract\s*$/i, "").trim(), 80) || "Product";
+}
+
+function surfaceScreenSpec(surface: ProductSurface, index: number, projectName: string): string {
   return [
     `SCREEN_SPEC_${index + 1}:`,
-    `- exact_screen_title: ${surface.name} - SurfaceGate Desk`,
+    `- exact_screen_title: ${surface.name} - ${projectName}`,
     `- surface_id: ${surface.surfaceId}`,
     `- unique_canvas_caption: ${surfaceCaption(surface)}`,
     `- purpose: ${truncateForPrompt(surface.purpose)}`,
@@ -729,17 +737,21 @@ function buildDesignBrief(prd: string, deviceType: string, uiLanguage: string): 
   ].join("\n");
 }
 
-function buildBatchStitchPrompt(repo: string, prd: string, deviceType: string, uiLanguage: string): string {
+function buildBatchStitchPrompt(repo: string, prd: string, deviceType: string, uiLanguage: string, stageSurfaces?: ProductSurface[], stageLabel = "all surfaces"): string {
   void repo;
-  const surfaces = parseProductSurfaces(prd);
-  const screenSpecs = surfaces.map((surface, index) => surfaceScreenSpec(surface, index)).join("\n\n");
-  const expectedTitles = surfaces.map((surface) => `- ${surface.name} - SurfaceGate Desk`).join("\n");
+  const allSurfaces = parseProductSurfaces(prd);
+  const surfaces = stageSurfaces?.length ? stageSurfaces : allSurfaces;
+  const projectName = productDisplayName(prd);
+  const screenSpecs = surfaces.map((surface, index) => surfaceScreenSpec(surface, index, projectName)).join("\n\n");
+  const expectedTitles = surfaces.map((surface) => `- ${surface.name} - ${projectName}`).join("\n");
 
   return [
     "# STITCH_BATCH_BRIEF",
     "",
     `Generate exactly ${surfaces.length} production-quality UI screens for the Product Surface targets below.`,
-    "Generate every SCREEN_SPEC in this single batch call. Do not stop after five screens unless there are exactly five SCREEN_SPEC entries.",
+    `Batch stage: ${stageLabel}.`,
+    "Generate every SCREEN_SPEC in this batch call. Do not generate screens outside this stage.",
+    "If this Stitch project already has screens from an earlier stage, preserve the same visual system, navigation pattern, density, typography, spacing, and component language.",
     `Target device type: ${deviceType}.`,
     `All visible user-facing text must be in ${uiLanguage}.`,
     "",
@@ -754,6 +766,8 @@ function buildBatchStitchPrompt(repo: string, prd: string, deviceType: string, u
     "",
     "## OUTPUT_RULES",
     "- Create one distinct canvas/frame per SCREEN_SPEC.",
+    "- Do not create a design-system/style-guide canvas as an output screen. Apply the design system inside the product screens only.",
+    "- Do not output palette, typography, component inventory, or moodboard screens.",
     "- Use exact_screen_title as the screen title/name. Do not rename screens to generic labels.",
     "- Use unique_canvas_caption for that screen only. Do not reuse one global caption across screens.",
     "- Do not place the whole chunk summary, PRD summary, Key Deliverables text, or any follow-up question as visible screen captions.",
@@ -808,56 +822,71 @@ async function generateStitchScreensInSingleBatch(
   if (surfaces.length === 0) return { completed: false, providerUnavailable: false, diagnostic: "No Product Surfaces declared" };
   const retryAttempts = boundedIntEnv("SETFARM_STITCH_BATCH_RETRY_ATTEMPTS", 3, 1, 5);
   const retryBaseDelayMs = boundedIntEnv("SETFARM_STITCH_BATCH_RETRY_BASE_DELAY_MS", 45000, 5000, 180000);
+  const stageSize = boundedIntEnv("SETFARM_STITCH_BATCH_STAGE_SIZE", 5, 1, 5);
+  const stages: ProductSurface[][] = [];
+  for (let index = 0; index < surfaces.length; index += stageSize) {
+    stages.push(surfaces.slice(index, index + stageSize));
+  }
   let providerUnavailable = false;
   let diagnostic = "";
 
-  await recordPreClaimProgress(ctx, `Design preclaim: generating ${surfaces.length} Product Surfaces in one Stitch batch`);
-  for (let attempt = 1; attempt <= retryAttempts; attempt++) {
-    try {
-      const promptFile = path.join(stitchDir, ".generate-prompt.txt");
-      const genOut = await execFileText("node", [stitchScript, "generate-all-screens", projId, promptFile, deviceType, "GEMINI_3_1_PRO"], {
-        timeout: 660000,
-        cwd: repo,
-        onProgress: () => recordPreClaimProgress(ctx, `Design preclaim: still generating Stitch batch (attempt ${attempt}/${retryAttempts})`),
-      });
+  await recordPreClaimProgress(ctx, `Design preclaim: generating ${surfaces.length} Product Surfaces in ${stages.length} Stitch batch stage(s) of up to ${stageSize}`);
+  for (let stageIndex = 0; stageIndex < stages.length; stageIndex++) {
+    const stageSurfaces = stages[stageIndex];
+    const stageLabel = `stage ${stageIndex + 1}/${stages.length} (${stageSurfaces.map((surface) => surface.surfaceId).join(", ")})`;
+    const promptFile = path.join(stitchDir, ".generate-prompt.txt");
+    fs.writeFileSync(promptFile, buildBatchStitchPrompt(repo, prd, deviceType, uiLanguage, stageSurfaces, stageLabel), "utf-8");
+    await recordPreClaimProgress(ctx, `Design preclaim: generating Stitch batch ${stageLabel}`);
+    let stageCompleted = false;
 
-      let genResult: any = {};
-      try { genResult = JSON.parse(genOut); } catch {}
-      const generatedTotal = Number(genResult.total || 0);
-      logger.info(`[module:design preclaim] Generated ${generatedTotal} screens in one Stitch batch (attempt ${attempt}/${retryAttempts})`, { runId: ctx.runId });
-      if (generatedTotal === 0 && genResult.diagnostic) {
-        const shape = JSON.stringify(genResult.diagnostic).slice(0, 260);
-        const textSample = redactDiagnosticText(genResult.diagnostic.textSample).slice(0, 500);
-        diagnostic = textSample || shape || diagnostic;
-        providerUnavailable = providerUnavailable || isStitchProviderUnavailable(textSample || shape);
-        await recordPreClaimProgress(ctx, `Design preclaim: Stitch batch generated 0 screens on attempt ${attempt}/${retryAttempts}; response shape ${shape}`);
+    for (let attempt = 1; attempt <= retryAttempts; attempt++) {
+      try {
+        const genOut = await execFileText("node", [stitchScript, "generate-all-screens", projId, promptFile, deviceType, "GEMINI_3_1_PRO"], {
+          timeout: 660000,
+          cwd: repo,
+          onProgress: () => recordPreClaimProgress(ctx, `Design preclaim: still generating Stitch batch ${stageIndex + 1}/${stages.length} (attempt ${attempt}/${retryAttempts})`),
+        });
+
+        let genResult: any = {};
+        try { genResult = JSON.parse(genOut); } catch {}
+        const generatedTotal = Number(genResult.total || 0);
+        logger.info(`[module:design preclaim] Generated ${generatedTotal} screen(s) in Stitch batch ${stageIndex + 1}/${stages.length} (attempt ${attempt}/${retryAttempts})`, { runId: ctx.runId });
+        if (generatedTotal === 0 && genResult.diagnostic) {
+          const shape = JSON.stringify(genResult.diagnostic).slice(0, 260);
+          const textSample = redactDiagnosticText(genResult.diagnostic.textSample).slice(0, 500);
+          diagnostic = textSample || shape || diagnostic;
+          providerUnavailable = providerUnavailable || isStitchProviderUnavailable(textSample || shape);
+          await recordPreClaimProgress(ctx, `Design preclaim: Stitch batch ${stageIndex + 1}/${stages.length} generated 0 screens on attempt ${attempt}/${retryAttempts}; response shape ${shape}`);
+          if (providerUnavailable && attempt < retryAttempts) {
+            const delayMs = retryBaseDelayMs * attempt;
+            await recordPreClaimProgress(ctx, `Design preclaim: Stitch provider unavailable; retrying same batch stage in ${Math.round(delayMs / 1000)}s`);
+            await sleep(delayMs);
+            continue;
+          }
+          return { completed: false, providerUnavailable, diagnostic };
+        }
+        await recordPreClaimProgress(ctx, `Design preclaim: Stitch batch ${stageIndex + 1}/${stages.length} generated ${generatedTotal} screen(s)`);
+        stageCompleted = true;
+        break;
+      } catch (e) {
+        if (isPreclaimCancelledError(e)) throw e;
+        const failureDetail = redactDiagnosticText(e).slice(0, 500);
+        diagnostic = failureDetail || diagnostic;
+        providerUnavailable = providerUnavailable || isStitchProviderUnavailable(failureDetail);
+        logger.warn(`[module:design preclaim] Stitch batch ${stageIndex + 1}/${stages.length} failed on attempt ${attempt}/${retryAttempts}: ${failureDetail.slice(0, 200)}`, { runId: ctx.runId });
+        await recordPreClaimProgress(ctx, `Design preclaim: Stitch batch ${stageIndex + 1}/${stages.length} failed on attempt ${attempt}/${retryAttempts}: ${failureDetail || "unknown error"}`);
         if (providerUnavailable && attempt < retryAttempts) {
           const delayMs = retryBaseDelayMs * attempt;
-          await recordPreClaimProgress(ctx, `Design preclaim: Stitch provider unavailable; retrying whole batch in ${Math.round(delayMs / 1000)}s`);
+          await recordPreClaimProgress(ctx, `Design preclaim: Stitch provider unavailable; retrying same batch stage in ${Math.round(delayMs / 1000)}s`);
           await sleep(delayMs);
           continue;
         }
         return { completed: false, providerUnavailable, diagnostic };
       }
-      await recordPreClaimProgress(ctx, `Design preclaim: Stitch batch generated ${generatedTotal} screen(s)`);
-      return { completed: true, providerUnavailable: false, diagnostic };
-    } catch (e) {
-      if (isPreclaimCancelledError(e)) throw e;
-      const failureDetail = redactDiagnosticText(e).slice(0, 500);
-      diagnostic = failureDetail || diagnostic;
-      providerUnavailable = providerUnavailable || isStitchProviderUnavailable(failureDetail);
-      logger.warn(`[module:design preclaim] Stitch batch failed on attempt ${attempt}/${retryAttempts}: ${failureDetail.slice(0, 200)}`, { runId: ctx.runId });
-      await recordPreClaimProgress(ctx, `Design preclaim: Stitch batch failed on attempt ${attempt}/${retryAttempts}: ${failureDetail || "unknown error"}`);
-      if (providerUnavailable && attempt < retryAttempts) {
-        const delayMs = retryBaseDelayMs * attempt;
-        await recordPreClaimProgress(ctx, `Design preclaim: Stitch provider unavailable; retrying whole batch in ${Math.round(delayMs / 1000)}s`);
-        await sleep(delayMs);
-        continue;
-      }
-      return { completed: false, providerUnavailable, diagnostic };
     }
+    if (!stageCompleted) return { completed: false, providerUnavailable, diagnostic };
   }
-  return { completed: false, providerUnavailable, diagnostic };
+  return { completed: true, providerUnavailable: false, diagnostic };
 }
 
 function retitleTrackedStitchScreens(repo: string, projId: string, screenIds: string[], title: string): void {
