@@ -54,10 +54,14 @@ state/test/screen file so implement does not infer "write the whole app".
 
 ## Ordering
 
-1. US-001: project setup + design tokens + database schema if needed.
-2. US-002+: core modules and screen flows, depending on US-001.
-3. Final story: integration wiring: App.tsx, main.tsx, routes, index.css. It
-   depends on all feature stories.
+1. US-001: app shell, shared state, persistence, navigation, and deterministic
+   test bridge (`window.app`). Setup/build/toolchain work belongs to setup
+   steps, not stories.
+2. US-002+: Product Surface / generated screen action slices, depending on
+   US-001. Each story owns its generated screen file(s) and the PRD `ACT_*`
+   actions mapped to those screens.
+3. App integration files may be reopened by later screen stories only to wire
+   that story's owned PRD actions and generated controls into shared state.
 
 Later stories may depend on earlier stories. Earlier stories must not depend on
 later stories.
@@ -109,6 +113,11 @@ Good criteria are mechanical and testable:
 
 ### UI Behavior Contract
 
+PRD Product Surface actions are the behavior authority. Stitch DOM controls are
+visual triggers. In `implementation_contract.owned_actions`, preserve PRD
+`ACT_*` ids whenever Product Surfaces provide them, and put generated DOM action
+ids/labels under `generated_action_ids`.
+
 If UI_BEHAVIOR_CONTRACT exists, every button/link/input must appear in at least
 one acceptance criterion. A criterion must describe behavior, not just presence:
 route change, panel/dialog open, state/localStorage change, search/filter
@@ -141,5 +150,6 @@ SCREEN_MAP:
 - Do not invent screen paths.
 - Do not create oversized stories.
 - Do not assign the same file to multiple stories.
-- Do not put App.tsx in a feature story.
+- Do not put App.tsx in an arbitrary feature story; only reopen app integration
+  files for owned screen/action wiring.
 - Do not output zero stories or missing scope descriptions.

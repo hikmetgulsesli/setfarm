@@ -72,12 +72,14 @@ No active-looking control may be left as a no-op.
 1. **ONE MAIN CONCEPT PER STORY.** A story may own one component family, one
    hook+utility boundary, one screen flow, or one integration slice. Do not mix
    unrelated concepts.
-2. **Separate setup, feature slices, and integration.**
-   - US-001: project setup only: scaffold, package.json, configs, base types.
-     No feature code.
-   - US-002..N: one feature slice each: hook+test, component+test+style,
-     screen+flow, or storage/API boundary.
-   - Final story: integration wiring: App.tsx, routes, layout, global style.
+2. **Separate setup/build from implementation ownership.**
+   - Setup and build are already handled by earlier/later pipeline steps; do
+     not create stories for package.json, scaffold, config, or dependency work.
+   - US-001 owns the app shell, shared state, persistence, navigation, and
+     `window.app` test bridge needed by generated screens.
+   - US-002..N own Product Surface / generated screen action slices. Each
+     story wires only its owned PRD actions and generated screen controls into
+     the shared US-001 state contract.
 3. **Prevent context bloat.** Each story should be small enough for implement
    to code, test, commit, and push without losing context.
 4. Assign every screen in SCREEN_MAP to exactly one owner story. Use paths from
@@ -99,10 +101,12 @@ No active-looking control may be left as a no-op.
    route`, `"Action name" changes visible state/localStorage`, etc. Use real
    PRD/Stitch labels; do not copy placeholder names.
 8. Add `implementation_contract` to every story. This is a behavior handoff,
-   not a code plan. It MUST name owned screen ids/files, owned actions,
-   state contract, persistence contract, navigation contract, and test
-   contract. Do not prescribe hook names, component splits, function names, or
-   framework internals before setup has created the real repo.
+   not a code plan. It MUST name owned screen ids/files, owned PRD `ACT_*`
+   actions, Stitch control mappings, state contract, persistence contract,
+   navigation contract, and test contract. PRD actions are the behavior
+   authority; Stitch DOM controls are only visual triggers. Do not prescribe
+   hook names, component splits, function names, or framework internals before
+   setup has created the real repo.
 9. Update SCREEN_MAP by adding a `stories` field to each screen.
 10. Return the exact output format below.
 
@@ -138,7 +142,10 @@ Outputting literal placeholders such as `<domain>` is an error.
         "id": "ACT_EXAMPLE",
         "trigger": "Exact Stitch control or PRD action",
         "state_change": "Visible app state/data change",
-        "ui_feedback": "Visible confirmation, validation, route, panel, or disabled state"
+        "ui_feedback": "Visible confirmation, validation, route, panel, or disabled state",
+        "surface_id": "SURF_EXAMPLE",
+        "control_hint": "primary_button",
+        "generated_action_ids": ["Stitch label or generated DOM action id"]
       }
     ],
     "state_contract": ["Named state responsibilities, not hook/function names"],

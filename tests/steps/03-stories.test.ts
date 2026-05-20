@@ -22,6 +22,7 @@ import {
   extractStoryDomainTerms,
   planUiBehaviorCriteriaInjections,
 } from "../../dist/installer/steps/03-stories/guards.js";
+import { detectPrdActionCoverageGaps } from "../../dist/installer/steps/03-stories/story-coverage-gates.js";
 import { normalizeScopeFilesForStory } from "../../dist/installer/story-ops.js";
 import { runModule } from "./harness.js";
 
@@ -397,6 +398,48 @@ describe("03-stories step module", () => {
       }),
     }]);
 
+    assert.equal(ok, null);
+  });
+
+  it("requires PRD Product Surface actions to be owned by story implementation contracts", () => {
+    const context = {
+      prd: [
+        "4. Product Surfaces",
+        "SURFACE: SURF_TICKET_EDITOR",
+        "- Name: Ticket Editor",
+        "- Permitted Actions: ACT_SAVE_RECORD (control_hint: form_submit), ACT_CANCEL_EDIT (control_hint: secondary_button)",
+      ].join("\n"),
+    };
+
+    const missing = detectPrdActionCoverageGaps(context, [{
+      story_id: "US-002",
+      implementation_contract: JSON.stringify({
+        owned_screen_ids: ["SCR-002"],
+        owned_screen_files: ["src/screens/TicketEditor.tsx"],
+        owned_actions: [{ id: "ACT_SAVE_RECORD", surface_id: "SURF_TICKET_EDITOR" }],
+        state_contract: ["draft"],
+        persistence_contract: ["localStorage"],
+        navigation_contract: ["return to operations"],
+        test_contract: ["save validates"],
+      }),
+    }]);
+    assert.match(missing || "", /ACT_CANCEL_EDIT/);
+
+    const ok = detectPrdActionCoverageGaps(context, [{
+      story_id: "US-002",
+      implementation_contract: JSON.stringify({
+        owned_screen_ids: ["SCR-002"],
+        owned_screen_files: ["src/screens/TicketEditor.tsx"],
+        owned_actions: [
+          { id: "ACT_SAVE_RECORD", surface_id: "SURF_TICKET_EDITOR" },
+          { id: "ACT_CANCEL_EDIT", surface_id: "SURF_TICKET_EDITOR" },
+        ],
+        state_contract: ["draft"],
+        persistence_contract: ["localStorage"],
+        navigation_contract: ["return to operations"],
+        test_contract: ["save validates"],
+      }),
+    }]);
     assert.equal(ok, null);
   });
 

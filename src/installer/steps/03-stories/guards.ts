@@ -10,6 +10,7 @@ import {
 } from "./context.js";
 import { runProductSupervisorGate, updateSupervisorMemory } from "../../product-supervisor.js";
 import { isReopenableAppIntegrationFile } from "../../story-scope.js";
+import { detectPrdActionCoverageGaps } from "./story-coverage-gates.js";
 
 // validateOutput is intentionally minimal at the field level — STORIES_JSON
 // arrives as multi-line raw text (not in parsed[]) and is ingested by
@@ -460,6 +461,13 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
     logger.warn(`[module:stories] ${implementationContractErr}`, { runId });
     await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);
     throw new Error(implementationContractErr);
+  }
+
+  const prdActionCoverageErr = detectPrdActionCoverageGaps(context, semanticRows);
+  if (prdActionCoverageErr) {
+    logger.warn(`[module:stories] ${prdActionCoverageErr}`, { runId });
+    await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);
+    throw new Error(prdActionCoverageErr);
   }
 
   const repoPath = context["repo"] || context["REPO"] || "";
