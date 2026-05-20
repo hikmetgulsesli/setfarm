@@ -154,13 +154,25 @@ describe("03-stories step module", () => {
       const output = buildAutoStoriesOutput({
         repo,
         task: "Freelancer lead triage CRM application",
+        context: {
+          project_name: "Freelancer CRM",
+          prd: [
+            "4. Product Surfaces",
+            "SURFACE: SURF_LEADS",
+            "- Name: Leads",
+            "- Permitted Actions: ACT_CREATE_LEAD (control_hint: primary_button), ACT_SEARCH_LEADS (control_hint: search_input_persistent)",
+            "SURFACE: SURF_PROFILE_PANEL",
+            "- Name: Profile Panel",
+            "- Permitted Actions: ACT_OPEN_PROFILE (control_hint: icon_button)",
+          ].join("\n"),
+        },
         predicted,
       });
 
       const storiesJson = output.match(/STORIES_JSON:\n([\s\S]*?)\nSCREEN_MAP:/)?.[1] || "[]";
       const stories = JSON.parse(storiesJson);
 	      assert.equal(stories.length, 4);
-      assert.match(stories[0].title, /^Freelancer lead triage CRM application -/);
+      assert.match(stories[0].title, /^Freelancer CRM -/);
       assert.equal(stories[0].scope_files.includes("src/App.tsx"), true);
       assert.equal(stories[0].scope_files.includes("src/contexts/AppContext.tsx"), true);
       assert.equal(stories[0].shared_files.includes("src/screens/Leads.tsx"), true);
@@ -170,7 +182,17 @@ describe("03-stories step module", () => {
       assert.ok(stories[1].implementation_contract.owned_screen_files.includes("src/screens/Leads.tsx"));
       assert.ok(stories[1].implementation_contract.state_contract.length > 0);
       assert.ok(stories[1].implementation_contract.test_contract.length > 0);
+      assert.ok(
+        stories[1].implementation_contract.owned_actions.some((action: any) =>
+          action.id === "ACT_CREATE_LEAD"
+          && action.control_hint === "primary_button"
+          && action.generated_action_ids.includes("create")
+        ),
+        "PRD semantic action should be the primary implementation action, with DOM action ids only as mapping metadata",
+      );
       assert.equal(stories.some((s: any) => s.scope_files.includes("src/screens/ProfilePanel.tsx")), true);
+      const profileStory = stories.find((s: any) => s.scope_files.includes("src/screens/ProfilePanel.tsx"));
+      assert.ok(profileStory.implementation_contract.owned_actions.some((action: any) => action.id === "ACT_OPEN_PROFILE"));
       assert.equal(stories.slice(1).every((s: any) => s.scope_files.includes("src/App.tsx")), true);
       assert.equal(stories.slice(1).every((s: any) => s.scope_files.includes("src/hooks/useAppState.ts")), true);
 	      assert.match(output, /New Lead/);
