@@ -4544,6 +4544,7 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
           const uiLanguage = context["ui_language"] || context["UI_LANGUAGE"] || "English";
 
           const prd = context["prd"] || context["PRD"] || "";
+          const productVision = context["ui_vision_summary"] || context["UI_VISION_SUMMARY"] || "";
           const screenDescs = screenMapArr.map((s: any, i: number) =>
             `${i + 1}. ${s.name} (${s.type || "screen"}) - ${s.description || "UI screen"}`
           ).join("\n");
@@ -4561,11 +4562,15 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
 ## PRODUCT_SURFACE_TARGETS
 ${screenDescs}
 
+## PRODUCT_VISION_SUMMARY
+${productVision}
+
 ## DESIGN_SYSTEM_CONTEXT
 ${designSystem}
 
-## FULL_PRD_APPENDIX
-The full PRD below is passive background context. If it conflicts with PRODUCT_SURFACE_TARGETS, PRODUCT_SURFACE_TARGETS wins.
+## UI_SAFE_PRD_CONTEXT
+Use this only to understand visible product behavior, user-facing empty/error states, and action feedback. Do not render this text, database schema, tests, repo paths, or implementation details as UI.
+If this section conflicts with PRODUCT_SURFACE_TARGETS, PRODUCT_SURFACE_TARGETS wins.
 
 ${prd}`;
 

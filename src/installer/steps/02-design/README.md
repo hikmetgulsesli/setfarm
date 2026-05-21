@@ -17,8 +17,8 @@ Before the agent claim:
 
 - skips Stitch when `DESIGN_REQUIRED=false`
 - writes `stitch/DESIGN_BRIEF.md` with `STRICT_UI_SCOPE_CONTRACT`,
-  Product Surfaces, action control hints, UI anti-goals, and passive
-  `FULL_PRD_APPENDIX`
+  Product Surfaces, action control hints, UI anti-goals,
+  `PRODUCT_VISION_SUMMARY`, and `UI_SAFE_PRD_CONTEXT`
 - ensures the Stitch project exists
 - requests Stitch artifacts for Product Surface-backed targets
 - downloads `stitch/DESIGN.md`, `stitch/*.html`, `stitch/*.png`, DOM, tokens,

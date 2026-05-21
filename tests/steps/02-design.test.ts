@@ -253,6 +253,9 @@ describe("02-design step module", () => {
     assert.match(source, /function parsePrdDesignSurfaces/);
     assert.match(source, /Existing design cache missing Product Surface/);
     assert.match(source, /clearReusableDesignCache\(dRepoPath\)/);
+    assert.match(source, /PRODUCT_VISION_SUMMARY/);
+    assert.match(source, /UI_SAFE_PRD_CONTEXT/);
+    assert.doesNotMatch(source, /FULL_PRD_APPENDIX/);
     assert.doesNotMatch(source, /parsePrdDesignScreenRows/);
   });
 
