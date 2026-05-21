@@ -4,9 +4,10 @@ import type { ClaimContext } from "../types.js";
 import { slugifyIdentity, transliterateIdentity } from "../../runtime-identity.js";
 
 const DEFAULT_STACK = "vite-react";
+const PLAN_CONTRACT_SCHEMA_VERSION = "setfarm.plan.v2.2";
 const COMMAND_VERB_RE = /\b(build|create|make|develop|implement|design|write|add|fix)\b/i;
 
-type ProjectKind = "game" | "product" | "api" | "cli" | "mobile";
+type ProjectKind = "game" | "product" | "api" | "cli" | "mobile" | "desktop";
 type AutoPlanOptions = {
   runId?: string;
 };
@@ -106,6 +107,7 @@ function inferPlatform(task: string): string {
   const lower = task.toLowerCase();
   if (/\b(api only|backend service|rest api|graphql)\b/.test(lower)) return "api";
   if (/\b(cli|command line|terminal app)\b/.test(lower)) return "cli";
+  if (/\b(electron|desktop app|desktop application|macos|windows app|linux desktop)\b/.test(lower)) return "desktop";
   if (/\breact native\b|\bmobile app\b|\bios\b|\bandroid\b/.test(lower)) return "mobile";
   if (/\b(game|arcade|puzzle|playfield|score|level|pause|restart)\b/.test(lower)) return "game";
   return "web";
@@ -113,15 +115,23 @@ function inferPlatform(task: string): string {
 
 function inferTechStack(task: string): string {
   const lower = task.toLowerCase();
-  if (/\breact native\b|mobile app/.test(lower)) return "react-native";
+  if (/\bandroid\b/.test(lower) && !/\breact native\b|\bexpo\b/.test(lower)) return "android-native";
+  if (/\bios\b|\biphone\b|\bipad\b/.test(lower) && !/\breact native\b|\bexpo\b/.test(lower)) return "ios-native";
+  if (/\breact native\b|\bexpo\b|mobile app/.test(lower)) return "react-native-expo";
+  if (/\belectron\b|desktop app|desktop application/.test(lower)) return "desktop-electron";
+  if (/\b(game|arcade|puzzle|playfield|score|level|pause|restart)\b/.test(lower)) return "browser-game";
   if (/\bnext\s*(?:\.?js|js)\b|\bnextjs\b|\bseo\b|\bssr\b/.test(lower)) return "nextjs";
+  if (/\bpython\b/.test(lower) && /\b(cli|command line|terminal app)\b/.test(lower)) return "python-cli";
+  if (/\bpython\b/.test(lower) && /\b(api only|backend service|rest api|graphql|fastapi|flask|django)\b/.test(lower)) return "python-web";
   if (/\bnode\b|\bexpress\b|api only|rest api|backend service/.test(lower)) return "node-express";
-  if (/\bvanilla\b|plain ts|cli|command line/.test(lower)) return "vanilla-ts";
+  if (/\bcli|command line|terminal app/.test(lower)) return "node-cli";
+  if (/\bstatic html\b|\bhtml only\b|\bno framework\b/.test(lower)) return "static-html";
   return DEFAULT_STACK;
 }
 
 function inferDbRequired(task: string): string {
   const lower = task.toLowerCase();
+  if (/\bfirebase\b|\bsupabase\b|\bstripe\b|\bexternal api\b|\bmanaged service\b/.test(lower)) return "external";
   if (/\bsqlite\b/.test(lower)) return "sqlite";
   if (/\bpostgres\b|\bpostgresql\b|\bauth\b|login|sign in|account|create account|user data|multi user|shared data|database/.test(lower)) return "postgres";
   return "none";
@@ -129,7 +139,7 @@ function inferDbRequired(task: string): string {
 
 function inferProjectKind(task: string): ProjectKind {
   const platform = inferPlatform(task);
-  if (platform === "api" || platform === "cli" || platform === "mobile" || platform === "game") return platform;
+  if (platform === "api" || platform === "cli" || platform === "mobile" || platform === "game" || platform === "desktop") return platform;
   return "product";
 }
 
@@ -169,6 +179,26 @@ function hasAny(text: string, terms: RegExp): boolean {
 
 function entityToken(entity: string): string {
   return slugify(entity).toUpperCase().replace(/-/g, "_") || "RECORD";
+}
+
+function surfaceSlug(surfaceBlock: string): string {
+  const id = surfaceBlock.match(/^### SURFACE:\s*(SURF_[A-Z0-9_]+)/m)?.[1] || "SURF_PRODUCT";
+  return slugify(id.replace(/^SURF_/, "").toLowerCase().replace(/_/g, " "));
+}
+
+function addSurfaceMetadata(surfaceBlock: string, displayFields: string, representation = "standalone", hostSurfaceId = "none"): string {
+  if (/\n- Domain Hint:/i.test(surfaceBlock)) return surfaceBlock;
+  const domainHint = surfaceSlug(surfaceBlock);
+  return surfaceBlock
+    .replace(
+      /\n- Data Entities Bound:/,
+      `\n- Domain Hint: ${domainHint}\n- Representation: ${representation}\n- Host Surface ID: ${hostSurfaceId}\n- Data Entities Bound:`,
+    )
+    .replace(/\n- Core Content:/, `\n- Display Fields: ${displayFields}\n- Core Content:`);
+}
+
+function productDisplayFields(entity: string): string {
+  return `${entity}.id, ${entity}.title, ${entity}.status, ${entity}.createdAt, ${entity}.updatedAt, ActivityEvent.label, ActivityEvent.timestamp, Preference.key, Preference.value`;
 }
 
 function productSurfaceBlocks(task: string, entity: string): string[] {
@@ -291,7 +321,7 @@ function productSurfaceBlocks(task: string, entity: string): string[] {
     ].join("\n"));
   }
 
-  return surfaces;
+  return surfaces.map((surface) => addSurfaceMetadata(surface, productDisplayFields(entity)));
 }
 
 function surfaceBlocks(kind: ProjectKind, entity: string, task = ""): string[] {
@@ -322,7 +352,7 @@ function surfaceBlocks(kind: ProjectKind, entity: string, task = ""): string[] {
         "- Auth Required: false",
         "- Design Guidance: Compact settings; no unrelated admin areas or identity-management modules unless explicitly requested.",
       ].join("\n"),
-    ];
+    ].map((surface) => addSurfaceMetadata(surface, "GameSession.status, GameSession.score, GameSession.level, GameSession.paused, GameSession.gameOver, ScoreState.highScore, Preference.key, Preference.value"));
   }
 
   return productSurfaceBlocks(task, entity);
@@ -381,20 +411,23 @@ function actionBlocks(kind: ProjectKind, entity: string, task = ""): string[] {
 
 function platformContract(kind: ProjectKind, stack: string): string {
   if (kind === "api") {
-    return "- Type: API\n- Auth Scheme: bearer_jwt or api_key when task requires auth; otherwise anonymous-safe endpoints.\n- Endpoint Contract: define route, method, request DTO, response DTO, and status codes per action.\n- Pagination: cursor for collections, none for single-resource endpoints.\n- Error Envelope: { error: { code, message, details } }.\n- Rate Limit: Include 429 behavior when public or auth endpoints exist.";
+    return "- Type: API\n- Auth Scheme: bearer_jwt or api_key when task requires auth; otherwise anonymous-safe endpoints.\n- Endpoint Contract: define route, method, request DTO, response DTO, and status codes per action.\n- Pagination: cursor for collections, none for single-resource endpoints.\n- Error Envelope: { error: { code, message, details } }.\n- Rate Limit: Include 429 behavior when public or auth endpoints exist.\n### route_guard_policy\n- Protected Surfaces: none; endpoint authorization is enforced by endpoint/auth middleware when auth is in scope.\n- Public Surfaces: not applicable.\n- Guard Implementation Owner: setup/implementation resolves middleware from endpoint contract, not PLAN paths.";
   }
   if (kind === "cli") {
-    return "- Type: CLI\n- Command Contract: command names, args, flags, config file path policy, and examples.\n- STDOUT/STDERR: stdout is machine-readable success output; stderr is progress and diagnostics.\n- Exit Codes: 0 success, 1 user/config error, 2 system error.\n- Filesystem: only paths provided by args/config; no hardcoded directories.";
+    return "- Type: CLI\n- Command Contract: command names, args, flags, config file path policy, and examples.\n- STDOUT/STDERR: stdout is machine-readable success output; stderr is progress and diagnostics.\n- Exit Codes: 0 success, 1 user/config error, 2 system error.\n- Filesystem: only paths provided by args/config; no hardcoded directories.\n### route_guard_policy\n- Protected Surfaces: none.\n- Public Surfaces: not applicable.\n- Guard Implementation Owner: not applicable for CLI.";
   }
   if (kind === "mobile") {
-    return "- Type: Mobile\n- Navigation: React Native navigation surfaces map to Product Surfaces.\n- Offline Policy: read-only or local-first when DB_REQUIRED is none.\n- Native Permissions: request only if the task explicitly needs camera, location, files, or notifications.\n- Test Handles: use testID for all interactive controls.";
+    return "- Type: Mobile\n- Navigation: React Native navigation surfaces map to Product Surfaces.\n- Offline Policy: read-only or local-first when DB_REQUIRED is none.\n- Native Permissions: request only if the task explicitly needs camera, location, files, or notifications.\n- Test Handles: use testID for all interactive controls.\n### route_guard_policy\n- Protected Surfaces: none by default; add SURF_* entries only when auth is explicitly requested.\n- Public Surfaces: all anonymous/local surfaces.\n- Redirect On Unauthorized: show permission/auth surface or inline message without data loss.\n- Guard Implementation Owner: app shell story owns navigation plumbing only.";
   }
   if (kind === "game") {
-    return "- Type: Game\n- Runtime: browser game loop or React-hosted simulation depending on TECH_STACK.\n- Input Model: keyboard and touch controls are first-class and visible/recoverable.\n- Pause/Restart: pause freezes simulation; restart resets session state without clearing high score/preferences.\n- Save State: high score/preferences only unless task asks for saved games.";
+    return "- Type: Game\n- Runtime: browser game loop or React-hosted simulation depending on TECH_STACK.\n- Input Model: keyboard and touch controls are first-class and visible/recoverable.\n- Pause/Restart: pause freezes simulation; restart resets session state without clearing high score/preferences.\n- Save State: high score/preferences only unless task asks for saved games.\n- Design Conversion Policy: reference visual shell/overlays only; gameplay runtime and physics are implemented from action/state contracts.\n### route_guard_policy\n- Protected Surfaces: none by default.\n- Public Surfaces: SURF_GAMEPLAY and SURF_GAME_SETTINGS.\n- Guard Implementation Owner: app/game shell story owns panel visibility only.";
+  }
+  if (kind === "desktop") {
+    return "- Type: Desktop\n- Runtime: Electron desktop shell when TECH_STACK=desktop-electron.\n- Local File Policy: only user-selected files or app-owned data directories; no hardcoded paths.\n- Persistence: local storage or SQLite only when requested.\n- Test Handles: deterministic DOM/test handles for desktop shell smoke tests.\n### route_guard_policy\n- Protected Surfaces: none by default; add protected surfaces only when auth is explicitly requested.\n- Public Surfaces: all local anonymous surfaces.\n- Guard Implementation Owner: app shell story owns navigation plumbing only.";
   }
   return stack === "nextjs"
-    ? "- Type: Web\n- Rendering Strategy: hybrid; server components for static/data fetching and client components for interactive Product Surfaces.\n- Auth Storage: httpOnly cookie when auth is in scope; avoid localStorage tokens.\n- Route Guards: middleware/server checks for protected surfaces, client state only for UI convenience.\n- CSP Policy: standard by default; no inline script dependencies outside framework needs."
-    : "- Type: Web\n- Rendering Strategy: CSR for Vite React unless the task requests SSR/SEO.\n- Auth Storage: local state/localStorage only for non-sensitive local apps; httpOnly cookie if auth/server is introduced.\n- Route Guards: client router or surface-level guard state.\n- Test Surface: window.app is allowed for deterministic smoke/final-test inspection.";
+    ? "- Type: Web\n- Rendering Strategy: hybrid; server components for static/data fetching and client components for interactive Product Surfaces.\n- Auth Storage: httpOnly cookie when auth is in scope; avoid localStorage tokens.\n- CSP Policy: standard by default; no inline script dependencies outside framework needs.\n### route_guard_policy\n- Protected Surfaces: none by default; list SURF_* entries only when auth is explicitly requested.\n- Public Surfaces: anonymous/local product surfaces.\n- Redirect On Unauthorized: preserve current intent and route to auth/permission surface when auth exists.\n- Guard Implementation Owner: app shell story owns middleware/router plumbing, later stories own their surface content."
+    : "- Type: Web\n- Rendering Strategy: CSR for Vite React unless the task requests SSR/SEO.\n- Auth Storage: local state/localStorage only for non-sensitive local apps; httpOnly cookie if auth/server is introduced.\n- Test Surface: window.app is allowed for deterministic smoke/final-test inspection.\n### route_guard_policy\n- Protected Surfaces: none by default; list SURF_* entries only when auth is explicitly requested.\n- Public Surfaces: anonymous/local product surfaces.\n- Redirect On Unauthorized: preserve current intent and show auth/permission feedback when auth exists.\n- Guard Implementation Owner: app shell story owns router/surface plumbing, later stories own their surface content.";
 }
 
 function designRequiredFor(kind: ProjectKind): boolean {
@@ -404,15 +437,87 @@ function designRequiredFor(kind: ProjectKind): boolean {
 function platformBehaviorLabel(platform: string): string {
   if (platform === "api") return "API endpoint behavior";
   if (platform === "cli") return "CLI command behavior";
+  if (platform === "desktop") return "desktop product behavior";
   if (platform === "mobile") return "mobile app behavior";
   if (platform === "game") return "browser game behavior";
   return "web product behavior";
 }
 
+function uiVisionSummary(projectName: string, kind: ProjectKind, entity: string): string {
+  if (kind === "api" || kind === "cli") {
+    return `${projectName} has DESIGN_REQUIRED=false, so no visual UI is generated. The downstream contract should still preserve a concise operational interface through clear command or endpoint responses, deterministic errors, and product-specific naming. Any future UI surface must derive from Product Surfaces, not from repo or runtime paths.`;
+  }
+  if (kind === "game") {
+    return `${projectName} should feel like a playable browser game from the first viewport, with the playfield, score, pause/restart controls, and recovery states immediately visible. Stitch may design the game shell, HUD, overlays, and settings surfaces, but gameplay runtime details remain governed by the GameSession action/state contract. The design should avoid generic dashboards and keep every visual element tied to play, progress, input, or recovery.`;
+  }
+  return `${projectName} should feel like a focused ${entity.toLowerCase()} operations product, not a marketing page. Stitch should emphasize dense but readable working surfaces, stable navigation, visible actions, validation/recovery feedback, and domain-specific data content. The visual system must stay inside the declared Product Surfaces and avoid unrelated admin, billing, profile, ecommerce, or generic BI modules.`;
+}
+
+function mockDataContract(kind: ProjectKind, entity: string, dbRequired: string): string[] {
+  if (kind === "api") {
+    return [
+      "### mock_data_contract",
+      `- Strategy: endpoint fixtures for ${entity} request/response examples and error envelopes.`,
+      `- Required Entities: ${entity}, ActivityEvent, Preference when relevant to endpoint behavior.`,
+      "- Required States: ready, empty, validation_error, conflict_error, unauthorized, rate_limited, system_error.",
+      "- Persistence Seed Policy: use deterministic test fixtures; no runtime secrets.",
+      "- Injection Boundary: stack pack resolves API test fixture location.",
+      "### data_access_contract",
+      `- Client Data Access: API consumers use the endpoint contract; implementation must not invent additional endpoints outside ACT_* actions.`,
+      `- Server Data Access: ${dbRequired === "none" ? "in-memory or fixture-backed unless a database is explicitly requested." : `${dbRequired} persistence adapter with DTO validation.`}`,
+      "- Fetching Strategy: endpoint handlers return declared DTO/error envelopes only.",
+      "- Mutation Strategy: validate request DTO, apply one state change, return deterministic status code.",
+    ];
+  }
+  if (kind === "cli") {
+    return [
+      "### mock_data_contract",
+      `- Strategy: fixture files and argument examples for ${entity} command runs.`,
+      `- Required Entities: ${entity}, Preference when config or cache is in scope.`,
+      "- Required States: ready, empty_input, invalid_args, config_error, file_error, system_error.",
+      "- Persistence Seed Policy: test fixtures only; no hardcoded host paths.",
+      "- Injection Boundary: stack pack resolves CLI fixture/config test location.",
+      "### data_access_contract",
+      "- Client Data Access: command args, flags, stdin, and config files defined by Platform Contract.",
+      "- Server Data Access: none unless explicitly requested.",
+      "- Fetching Strategy: read only user-provided paths or fixture inputs.",
+      "- Mutation Strategy: write only declared output/cache/config targets.",
+    ];
+  }
+  if (kind === "game") {
+    return [
+      "### mock_data_contract",
+      "- Strategy: fixture seed function for GameSession, ScoreState, PlayerInput, and Preference.",
+      "- Required Entities: GameSession, PlayerInput, ScoreState, Preference.",
+      "- Required States: ready, playing, paused, game_over, empty_preferences, storage_error, input_disabled.",
+      "- Persistence Seed Policy: localStorage high score/preferences only unless saved games are requested.",
+      "- Injection Boundary: stack pack resolves game fixture/runtime seed location.",
+      "### data_access_contract",
+      "- Client Data Access: single game runtime state store with deterministic debug exposure for tests.",
+      "- Server Data Access: none for local browser games unless explicitly requested.",
+      "- Fetching Strategy: no hidden network calls.",
+      "- Mutation Strategy: game loop/actions update GameSession once per tick/action and preserve high score/preferences.",
+    ];
+  }
+  return [
+    "### mock_data_contract",
+    `- Strategy: fixture_files for ${entity}, ActivityEvent, Preference, and validation examples.`,
+    `- Required Entities: ${entity}, ActivityEvent, Preference.`,
+    "- Required States: ready, empty, loading, error, validation_error, filtered_empty, storage_error.",
+    "- Persistence Seed Policy: local fixtures and localStorage seed when DB_REQUIRED=none; server fixture seed when DB_REQUIRED is postgres/sqlite/external.",
+    "- Injection Boundary: stack pack resolves fixture file and test bridge locations; PLAN does not emit physical paths.",
+    "### data_access_contract",
+    `- Client Data Access: ${dbRequired === "none" ? "local state plus localStorage persistence adapter." : "client/server adapter selected by setup stack pack."}`,
+    `- Server Data Access: ${dbRequired === "none" ? "none." : `${dbRequired} persistence through generated adapter; secrets supplied only by MC/runtime.`}`,
+    "- Fetching Strategy: one declared data source per entity; do not mix raw fetch, SWR, React Query, and local copies unless setup explicitly selects one.",
+    "- Mutation Strategy: validate input, apply exactly one write path, refresh derived views, and preserve last good state on failure.",
+  ];
+}
+
 export function buildAutoPlanOutput(task: string, _options: AutoPlanOptions = {}): string {
   const rawProjectName = extractProjectName(task);
   const projectName = extractProjectDisplayName(task, rawProjectName);
-  const projectSlug = slugify(rawProjectName);
+  const projectSlug = slugify(projectName);
   const kind = inferProjectKind(task);
   const platform = inferPlatform(task);
   const stack = inferTechStack(task);
@@ -420,6 +525,7 @@ export function buildAutoPlanOutput(task: string, _options: AutoPlanOptions = {}
   const uiLanguage = inferUiLanguage(task);
   const designRequired = designRequiredFor(kind);
   const entity = primaryEntity(task, kind);
+  const uiSummary = uiVisionSummary(projectName, kind, entity);
   const bullets = taskBullets(task).map((line, idx) => `- FR-${String(idx + 1).padStart(3, "0")}: ${line}`);
   const surfaces = surfaceBlocks(kind, entity, task);
   const actions = actionBlocks(kind, entity, task);
@@ -429,6 +535,7 @@ export function buildAutoPlanOutput(task: string, _options: AutoPlanOptions = {}
     : "DESIGN_REQUIRED=false. Product Surfaces are intentionally skipped for this API/CLI contract.";
 
   return [
+    `CONTRACT_SCHEMA_VERSION: ${PLAN_CONTRACT_SCHEMA_VERSION}`,
     "STATUS: done",
     `PROJECT_NAME: ${projectName}`,
     `PROJECT_SLUG: ${projectSlug}`,
@@ -437,6 +544,7 @@ export function buildAutoPlanOutput(task: string, _options: AutoPlanOptions = {}
     `UI_LANGUAGE: ${uiLanguage}`,
     `DB_REQUIRED: ${dbRequired}`,
     `DESIGN_REQUIRED: ${designRequired ? "true" : "false"}`,
+    `UI_VISION_SUMMARY: ${uiSummary}`,
     "PRD:",
     `# ${projectName} Product Contract`,
     "",
@@ -462,16 +570,17 @@ export function buildAutoPlanOutput(task: string, _options: AutoPlanOptions = {}
     "- Preference:",
     "  - Fields: key:string required, value:json required, updatedAt:timestamp required.",
     "### State Architecture",
-    `- Server State: ${dbRequired === "none" ? "none for local-only apps unless later setup introduces a backend." : `${dbRequired} owns persisted shared data.`}`,
+    `- Server State: ${dbRequired === "none" ? "none for local-only apps; setup may only introduce a backend when the selected stack contract requires it." : `${dbRequired} owns persisted shared data.`}`,
     "- Client/Local State: active surface, selected entity, drafts, filters, loading flags, lastError, and transient feedback.",
     "- URL / Router State: active surface or selected item may be reflected in route/query when the platform supports it.",
-    "- Persisted State: local preferences and local-only records when DB_REQUIRED=none; server persistence when DB_REQUIRED is postgres/sqlite.",
+    "- Persisted State: local preferences and local-only records when DB_REQUIRED=none; server/external persistence when DB_REQUIRED is postgres/sqlite/external.",
     "- Transient UI State: modal/drawer open state, hover/focus, optimistic flags, and retry timers.",
     "### Data Flow",
     "- Read Path: load seed/current data into a single source of truth, derive visible lists/metrics from it, and expose deterministic test state.",
     "- Write Path: validate input, update local/server state once, then refresh derived views without duplicate state copies.",
     "- Error Path: preserve last good data, set lastError/storageStatus, show retry/clear actions, and keep drafts when safe.",
     "- Side Effects: persistence writes, analytics/logging only when explicitly in scope, and no hidden network calls for local-only products.",
+    ...mockDataContract(kind, entity, dbRequired),
     "",
     "## 3. Behavioral And Action Contract",
     actions.join("\n\n"),
@@ -486,7 +595,12 @@ export function buildAutoPlanOutput(task: string, _options: AutoPlanOptions = {}
     "- Error Display Policy: forms use inline errors; global load/persist failures use compact banners or state panels; no blocking alert dialogs unless the platform requires them.",
     "",
     "## 6. System Contracts",
-    "- Environment Needs: list key names only when an external provider is required; values are supplied by MC/runtime, never by PLAN.",
+    "### environment_contract",
+    "- Required Keys: none by default; list key names only when an external provider is required.",
+    "- Optional Keys: none by default.",
+    "- Secret Handling: MC/runtime supplies values; PLAN never emits values, .env contents, or local secret paths.",
+    "- Client Exposed Keys: none unless an explicitly public provider key is required.",
+    "- Missing Key Behavior: fail the relevant setup/verify gate with a structured error, never silently substitute fake credentials.",
     "- External Integrations: none by default. If task requests Stripe, Supabase, Firebase, email, maps, or another provider, define provider purpose and failure behavior here.",
     "- Permission Model: anonymous/local by default; if auth is requested, define roles and unauthorized effects per action and surface.",
     "- Security: never expose secrets in client code; persistence errors must be visible; user data should not be silently discarded.",
@@ -498,7 +612,7 @@ export function buildAutoPlanOutput(task: string, _options: AutoPlanOptions = {}
     "- Critical Path TC_LOAD_READY: launch product, observe primary surface or command/API readiness, and verify no placeholder/marketing-only first state.",
     "- Critical Path TC_PRIMARY_ACTION: execute the main action from the task and verify visible or response-state change.",
     "- Critical Path TC_ERROR_RECOVERY: force invalid input or a recoverable load/persist failure and verify user feedback plus retry/clear path.",
-    stack === "react-native"
+    stack === "react-native-expo" || stack === "android-native" || stack === "ios-native"
       ? "- Test Handle Policy: every interactive control uses testID; do not rely on window.app."
       : platform === "api"
         ? "- Test Handle Policy: endpoint assertions validate status codes, DTO shape, and error envelope."
@@ -510,6 +624,7 @@ export function buildAutoPlanOutput(task: string, _options: AutoPlanOptions = {}
     "## 9. Out Of Scope",
     "- No repo paths, branch names, GitHub URLs, run slugs, package names, or hardcoded local/server directories in PLAN.",
     "- No physical screen table, screen-count field, or agent-invented screen list in PLAN.",
+    "- DESIGN receives only scoped UI-facing context derived from Product Surfaces, display fields, permitted actions, validation behavior, and UI anti-goals.",
     "- No modules outside Product Surfaces, Action Contracts, or explicit task requirements.",
     designRequired
       ? "- No local fallback design; DESIGN must use Stitch when DESIGN_REQUIRED=true and must block on Stitch failure."

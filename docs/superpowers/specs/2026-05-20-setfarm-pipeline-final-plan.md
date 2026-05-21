@@ -61,6 +61,7 @@ PLAN outputs a portable product contract. It must not include repo paths, branch
 Required top-level fields:
 
 ```yaml
+CONTRACT_SCHEMA_VERSION: "setfarm.plan.v2.2"
 STATUS: done
 PROJECT_NAME: "product name from user request or PRD inference"
 PROJECT_SLUG: "stable kebab-case product slug"
@@ -101,6 +102,12 @@ data_access_contract:
   server_state: "none | raw_fetch | react_query | swr | server_actions"
   persistence_adapter: "localStorage | sqlite | postgres | external_api | none"
 
+environment_contract:
+  required_keys: [] # key names only, never values
+  optional_keys: []
+  secret_handling: "mc_runtime_values_only"
+  client_exposed_keys: [] # explicit public keys only
+
 route_guard_policy:
   public_surfaces: []
   protected_surfaces: []
@@ -139,6 +146,7 @@ Rules:
 - `control_hint: none` is valid only for system-triggered or non-visual actions.
 - Out Of Scope must include product-specific anti-goals and universal runtime-boundary bans.
 - `mock_data_contract.required_states` is product-specific. `ready`, `empty`, and `error` are common defaults, not a fixed global list.
+- `environment_contract` may request key names only. PLAN must never emit secret values, local env paths, deployment env paths, or `.env` file contents.
 - US-001 implements route guard plumbing only. It must not import or reference feature route components that do not exist yet.
 
 ## DESIGN And Stitch Contract
@@ -478,7 +486,7 @@ Rules:
 - If a role has no rule, setup-build fails with `SCOPE_TARGET_UNRESOLVED`.
 - If two stories resolve to the same write path without an explicit shared-edit grant, setup-build fails.
 - MC may only use paths from `FILE_TREE_MANIFEST.json`; it must not synthesize fallback paths.
-- An LLM may propose `domain_slug` or `target_slug` during STORIES, but path resolution remains deterministic and testable.
+- LLM output is advisory only for semantic labels such as `domain_slug`, `target_slug`, story intent, and product language. All executable paths, dependencies, permissions, commands, env handling, and ownership boundaries are resolved deterministically by stack packs, MC, and gates.
 
 ### Stack Pack Shape
 
@@ -814,6 +822,8 @@ Setup/build pass only when every applicable gate passes:
 - SETUP-BUILD resolves physical paths through stack packs.
 - SETUP-BUILD writes deterministic `FILE_TREE_MANIFEST.json`; MC never invents fallback paths.
 - `targetResolutionRules` cannot be empty.
+- LLM output is advisory only; executable runtime decisions are deterministic.
+- PLAN may request env key names only; MC/runtime owns all env values.
 - `SETUP_CERTIFICATE.json` and `IMPLEMENT_CONTEXT.json` are separate files with separate mutability rules.
 - `FULL_PRD_APPENDIX` is removed.
 - Stitch is batch-first and same-project staged when needed.

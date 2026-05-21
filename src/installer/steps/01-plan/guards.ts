@@ -4,15 +4,23 @@ import { resolveRuntimeIdentity, slugifyIdentity } from "../../runtime-identity.
 const VALID_TECH_STACKS = new Set([
   "vite-react",
   "nextjs",
-  "vanilla-ts",
+  "static-html",
+  "browser-game",
   "node-express",
-  "react-native",
+  "python-web",
+  "node-cli",
+  "python-cli",
+  "react-native-expo",
+  "android-native",
+  "ios-native",
+  "desktop-electron",
 ]);
 
 const VALID_PLATFORMS = new Set(["web", "mobile", "desktop", "api", "cli", "game"]);
-const VALID_DB_REQUIRED = new Set(["none", "postgres", "sqlite"]);
+const VALID_DB_REQUIRED = new Set(["none", "postgres", "sqlite", "external"]);
 const VALID_UI_LANGUAGES = new Set(["english", "turkish"]);
 const VALID_BOOLEAN = new Set(["true", "false"]);
+const PLAN_CONTRACT_SCHEMA_VERSION = "setfarm.plan.v2.2";
 const MIN_PRD_LENGTH = 2000;
 
 const REQUIRED_PRD_SECTIONS = [
@@ -75,6 +83,9 @@ function hasRuntimeLeak(parsed: ParsedOutput, prd: string): string[] {
   if (/\b(?:\/Users\/|\/home\/|\\Users\\|\$HOME\/|~\/|github\.com\/|feature-[-a-z0-9]+)/i.test(prd)) {
     errors.push("PRD must not include repo paths, local directories, GitHub URLs, or branch names");
   }
+  if (/\bFULL_PRD_APPENDIX\b/i.test(prd)) {
+    errors.push("PRD must not reference FULL_PRD_APPENDIX; DESIGN uses PRD_CONTEXT_SLICE only");
+  }
   return errors;
 }
 
@@ -88,6 +99,10 @@ export function normalize(parsed: ParsedOutput): void {
 
 export function validateOutput(parsed: ParsedOutput): ValidationResult {
   const errors: string[] = [];
+
+  if ((parsed.contract_schema_version || "").trim() !== PLAN_CONTRACT_SCHEMA_VERSION) {
+    errors.push(`CONTRACT_SCHEMA_VERSION must be '${PLAN_CONTRACT_SCHEMA_VERSION}' (got: '${parsed.contract_schema_version || ""}')`);
+  }
 
   if ((parsed.status || "").toLowerCase() !== "done") {
     errors.push(`STATUS must be 'done' (got: '${parsed.status || ""}')`);
@@ -123,6 +138,11 @@ export function validateOutput(parsed: ParsedOutput): ValidationResult {
     errors.push(`DESIGN_REQUIRED must be true or false (got: '${designRequired}')`);
   }
 
+  const uiVisionSummary = String(parsed.ui_vision_summary || "").trim();
+  if (boolValue(designRequired) && uiVisionSummary.length < 80) {
+    errors.push("UI_VISION_SUMMARY must be present and >=80 chars when DESIGN_REQUIRED=true");
+  }
+
   const uiLanguage = (parsed.ui_language || "").toLowerCase();
   if (!VALID_UI_LANGUAGES.has(uiLanguage)) {
     errors.push(`UI_LANGUAGE must be one of ${[...VALID_UI_LANGUAGES].join(", ")} (got: '${parsed.ui_language || ""}')`);
@@ -144,6 +164,18 @@ export function validateOutput(parsed: ParsedOutput): ValidationResult {
     if (!/\bcontrol_hint\b|\bControl Hint\b|\bPermitted Actions\b/i.test(prd)) {
       errors.push("Product Surfaces must include permitted action/control hints for Stitch");
     }
+    if (!/\bRepresentation\s*:\s*(standalone|inline)\b/i.test(prd)) {
+      errors.push("Product Surfaces must declare Representation: standalone or inline");
+    }
+    if (!/\bDomain Hint\s*:/i.test(prd)) {
+      errors.push("Product Surfaces must declare Domain Hint for deterministic scope target mapping");
+    }
+    if (!/\bDisplay Fields\s*:/i.test(prd)) {
+      errors.push("Product Surfaces must declare Display Fields for scoped PRD_CONTEXT_SLICE construction");
+    }
+    if (/\bRepresentation\s*:\s*inline\b/i.test(prd) && !/\bHost Surface ID\s*:\s*SURF_[A-Z0-9_]+\b/i.test(prd)) {
+      errors.push("Inline Product Surfaces must declare Host Surface ID: SURF_*");
+    }
   }
 
   const definedActions = definedActionIds(prd);
@@ -160,6 +192,16 @@ export function validateOutput(parsed: ParsedOutput): ValidationResult {
 
   if (!/##+\s+(?:\d+\.\s*)?Out Of Scope\b[\s\S]*?(?:\n[-*]\s+\S|\nNo\s+)/i.test(prd)) {
     errors.push("Out Of Scope must include at least one explicit deny item");
+  }
+
+  const requiredContractMarkers = [
+    ["mock_data_contract", /\bmock_data_contract\b|Mock Data Contract/i],
+    ["data_access_contract", /\bdata_access_contract\b|Data Access Contract/i],
+    ["environment_contract", /\benvironment_contract\b|Environment Contract/i],
+    ["route_guard_policy", /\broute_guard_policy\b|Route Guard Policy/i],
+  ] as const;
+  for (const [name, pattern] of requiredContractMarkers) {
+    if (!pattern.test(prd)) errors.push(`PRD missing required contract marker: ${name}`);
   }
 
   errors.push(...hasRuntimeLeak(parsed, prd));
@@ -195,4 +237,6 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
   context["db_required"] = (parsed.db_required || "").toLowerCase();
   context["design_required"] = (parsed.design_required || "").toLowerCase();
   context["ui_language"] = parsed.ui_language || "English";
+  context["contract_schema_version"] = parsed.contract_schema_version || PLAN_CONTRACT_SCHEMA_VERSION;
+  context["ui_vision_summary"] = parsed.ui_vision_summary || "";
 }

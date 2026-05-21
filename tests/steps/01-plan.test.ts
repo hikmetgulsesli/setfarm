@@ -7,6 +7,7 @@ import { runModule, validPlanOutput } from "./harness.js";
 function parsePlanOutput(output: string) {
   const field = (key: string) => output.match(new RegExp(`^${key}:\\s*(.*)$`, "m"))?.[1]?.trim() || "";
   return {
+    contract_schema_version: field("CONTRACT_SCHEMA_VERSION"),
     status: field("STATUS"),
     project_name: field("PROJECT_NAME"),
     project_slug: field("PROJECT_SLUG"),
@@ -15,6 +16,7 @@ function parsePlanOutput(output: string) {
     ui_language: field("UI_LANGUAGE"),
     db_required: field("DB_REQUIRED"),
     design_required: field("DESIGN_REQUIRED"),
+    ui_vision_summary: field("UI_VISION_SUMMARY"),
     prd: output.match(/^PRD:\n([\s\S]*)$/m)?.[1] || "",
   };
 }
@@ -32,7 +34,7 @@ function permittedActionIds(prd: string): Set<string> {
 }
 
 describe("01-plan step module", () => {
-  it("happy path: v2.1 product contract validates and runtime context is resolved", async () => {
+  it("happy path: v2.2 product contract validates and runtime context is resolved", async () => {
     const result = await runModule(planModule, "Simple note-taking application", validPlanOutput());
     assert.ok(result.validation.ok, `validation failed: ${result.validation.errors.join("; ")}`);
     assert.ok(result.promptBytes < planModule.maxPromptSize);
@@ -42,6 +44,8 @@ describe("01-plan step module", () => {
     assert.match(result.contextAfterComplete["branch"], /^feature-test-app-/);
     assert.equal(result.contextAfterComplete["tech_stack"], "vite-react");
     assert.equal(result.contextAfterComplete["design_required"], "true");
+    assert.equal(result.contextAfterComplete["contract_schema_version"], "setfarm.plan.v2.2");
+    assert.match(result.contextAfterComplete["ui_vision_summary"], /focused note operations product/);
     assert.ok(result.onCompleteCalled);
   });
 
@@ -87,11 +91,11 @@ describe("01-plan step module", () => {
     assert.ok(result.validation.errors.some(e => e.includes("Every permitted action")));
   });
 
-  it("module metadata uses the v2.1 output schema", () => {
+  it("module metadata uses the v2.2 output schema", () => {
     assert.equal(planModule.id, "plan");
     assert.equal(planModule.agentRole, "planner");
     assert.deepEqual(planModule.requiredOutputFields, [
-      "STATUS", "PROJECT_NAME", "PROJECT_SLUG", "PLATFORM", "TECH_STACK", "UI_LANGUAGE", "DB_REQUIRED", "DESIGN_REQUIRED", "PRD"
+      "CONTRACT_SCHEMA_VERSION", "STATUS", "PROJECT_NAME", "PROJECT_SLUG", "PLATFORM", "TECH_STACK", "UI_LANGUAGE", "DB_REQUIRED", "DESIGN_REQUIRED", "UI_VISION_SUMMARY", "PRD"
     ]);
   });
 
@@ -108,10 +112,19 @@ describe("01-plan step module", () => {
     const missingActions = [...permittedActions].filter(action => !definedActions.has(action));
 
     assert.equal(validation.ok, true, validation.errors.join("; "));
+    assert.equal(parsed.contract_schema_version, "setfarm.plan.v2.2");
+    assert.match(parsed.ui_vision_summary, /Surface|Ticket|operations|product/i);
     assert.equal(parsed.project_name, "Ticket Loom");
     assert.equal(parsed.project_slug, "ticket-loom");
     assert.equal(parsed.platform, "web");
     assert.match(parsed.prd, /## 4\. Product Surfaces/);
+    assert.match(parsed.prd, /mock_data_contract/);
+    assert.match(parsed.prd, /data_access_contract/);
+    assert.match(parsed.prd, /environment_contract/);
+    assert.match(parsed.prd, /route_guard_policy/);
+    assert.match(parsed.prd, /Representation: standalone/);
+    assert.match(parsed.prd, /Domain Hint:/);
+    assert.match(parsed.prd, /Display Fields:/);
     assert.match(parsed.prd, /SURF_TICKET_OPERATIONS/);
     assert.match(parsed.prd, /SURF_QUEUE_AND_STATUS_MANAGEMENT/);
     assert.match(parsed.prd, /SURF_AGENT_WORKLOAD/);
@@ -126,6 +139,7 @@ describe("01-plan step module", () => {
     assert.doesNotMatch(output, /^REPO:/m);
     assert.doesNotMatch(output, /^BRANCH:/m);
     assert.doesNotMatch(output, /PRD_SCREEN_COUNT/);
+    assert.doesNotMatch(output, /FULL_PRD_APPENDIX/);
     assert.doesNotMatch(output, /^## Screens/m);
     assert.doesNotMatch(output, /tool\/game\/API\/CLI/);
   });
@@ -163,7 +177,7 @@ describe("01-plan step module", () => {
       {
         task: "Build a React Native mobile app called FieldPocket for tracking field visits, offline preferences, and retry states.",
         platform: "mobile",
-        stack: "react-native",
+        stack: "react-native-expo",
         designRequired: "true",
         mustHave: [/Type: Mobile/, /Offline Policy/, /testID/, /## 4\. Product Surfaces/],
         mustNotHave: [/window\.app is allowed/],
@@ -171,9 +185,9 @@ describe("01-plan step module", () => {
       {
         task: "Build a browser puzzle game called GridPulse with score, levels, pause, restart, and settings.",
         platform: "game",
-        stack: "vite-react",
+        stack: "browser-game",
         designRequired: "true",
-        mustHave: [/Type: Game/, /SURF_GAMEPLAY/, /SURF_GAME_SETTINGS/, /ACT_START_GAME/],
+        mustHave: [/Type: Game/, /SURF_GAMEPLAY/, /SURF_GAME_SETTINGS/, /ACT_START_GAME/, /Design Conversion Policy/],
         mustNotHave: [/SURF_RECORD_OPERATIONS/],
       },
       {
@@ -187,7 +201,7 @@ describe("01-plan step module", () => {
       {
         task: "Build a CLI command line tool called LogSweep for scanning log files and returning JSON summaries.",
         platform: "cli",
-        stack: "vanilla-ts",
+        stack: "node-cli",
         designRequired: "false",
         mustHave: [/Type: CLI/, /STDOUT\/STDERR/, /Exit Codes/, /DESIGN_REQUIRED=false/],
         mustNotHave: [/### SURFACE:/, /Stitch/],
@@ -202,9 +216,14 @@ describe("01-plan step module", () => {
       const missingActions = [...permittedActionIds(parsed.prd)].filter(action => !actionIdsFromContract(parsed.prd).has(action));
 
       assert.equal(validation.ok, true, `${item.platform}: ${validation.errors.join("; ")}`);
+      assert.equal(parsed.contract_schema_version, "setfarm.plan.v2.2");
       assert.equal(parsed.platform, item.platform);
       assert.equal(parsed.tech_stack, item.stack);
       assert.equal(parsed.design_required, item.designRequired);
+      assert.match(parsed.prd, /mock_data_contract/, `${item.platform} should include mock data contract`);
+      assert.match(parsed.prd, /data_access_contract/, `${item.platform} should include data access contract`);
+      assert.match(parsed.prd, /environment_contract/, `${item.platform} should include environment contract`);
+      assert.match(parsed.prd, /route_guard_policy/, `${item.platform} should include route guard policy`);
       assert.deepEqual(missingActions, [], `${item.platform}: permitted actions must be defined`);
       for (const pattern of item.mustHave) assert.match(parsed.prd, pattern, `${item.platform} should include ${pattern}`);
       for (const pattern of item.mustNotHave) assert.doesNotMatch(parsed.prd, pattern, `${item.platform} should not include ${pattern}`);

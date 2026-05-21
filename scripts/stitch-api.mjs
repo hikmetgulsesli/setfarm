@@ -400,6 +400,18 @@ function rotateKey(reason) {
   return true;
 }
 
+function isTransientStitchGenerateFailure(text) {
+  const normalized = redactDiagnosticText(text).toLowerCase();
+  return (
+    shouldRotateForStitchFailure(text) ||
+    /\bservice is currently unavailable\b/.test(normalized) ||
+    /\bservice unavailable\b/.test(normalized) ||
+    /\btemporarily unavailable\b/.test(normalized) ||
+    /\bdeadline exceeded\b/.test(normalized) ||
+    /\b503\b/.test(normalized)
+  );
+}
+
 function shouldRotateForStitchFailure(text) {
   const normalized = redactDiagnosticText(text).toLowerCase();
   return (
@@ -412,18 +424,6 @@ function shouldRotateForStitchFailure(text) {
     /\bunauthorized\b/.test(normalized) ||
     /\bforbidden\b/.test(normalized) ||
     /\b429\b/.test(normalized)
-  );
-}
-
-function isTransientStitchGenerateFailure(text) {
-  const normalized = redactDiagnosticText(text).toLowerCase();
-  return (
-    shouldRotateForStitchFailure(text) ||
-    /\bservice is currently unavailable\b/.test(normalized) ||
-    /\bservice unavailable\b/.test(normalized) ||
-    /\btemporarily unavailable\b/.test(normalized) ||
-    /\bdeadline exceeded\b/.test(normalized) ||
-    /\b503\b/.test(normalized)
   );
 }
 
