@@ -180,6 +180,10 @@ export async function pgMigrate(): Promise<void> {
         depends_on TEXT,
         scope_files TEXT,
         shared_files TEXT,
+        scope_targets TEXT,
+        requested_dependencies TEXT,
+        shared_edit_requests TEXT,
+        resolved_scope_files TEXT,
         scope_description TEXT,
         file_skeletons TEXT,
         implementation_contract TEXT,
@@ -249,6 +253,10 @@ export async function pgMigrate(): Promise<void> {
     await s`ALTER TABLE stories ADD COLUMN IF NOT EXISTS depends_on TEXT`;
     await s`ALTER TABLE stories ADD COLUMN IF NOT EXISTS scope_files TEXT`;
     await s`ALTER TABLE stories ADD COLUMN IF NOT EXISTS shared_files TEXT`;
+    await s`ALTER TABLE stories ADD COLUMN IF NOT EXISTS scope_targets TEXT`;
+    await s`ALTER TABLE stories ADD COLUMN IF NOT EXISTS requested_dependencies TEXT`;
+    await s`ALTER TABLE stories ADD COLUMN IF NOT EXISTS shared_edit_requests TEXT`;
+    await s`ALTER TABLE stories ADD COLUMN IF NOT EXISTS resolved_scope_files TEXT`;
     await s`ALTER TABLE stories ADD COLUMN IF NOT EXISTS scope_description TEXT`;
     await s`ALTER TABLE stories ADD COLUMN IF NOT EXISTS file_skeletons TEXT`;
     await s`ALTER TABLE stories ADD COLUMN IF NOT EXISTS implementation_contract TEXT`;

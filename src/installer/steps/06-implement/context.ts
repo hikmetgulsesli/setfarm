@@ -20,6 +20,7 @@ import { readSupervisorMemory } from "../../product-supervisor.js";
 import { IMPLICIT_STORY_SCOPE_FILES } from "../../story-scope.js";
 import { applyStackContractContext } from "../../stack-contract/context.js";
 import { applyLibraryPackContext } from "../../library-packs/context.js";
+import { assembleImplementContext } from "../../setup-handoff.js";
 
 const STITCH_HTML_EXCERPT_CHARS = 2500;
 const STITCH_HTML_TOTAL_CHARS = 6000;
@@ -53,6 +54,7 @@ const OPTIONAL_TEMPLATE_VARS = [
   "completed_stories", "story_roadmap", "stories_remaining", "progress", "project_memory",
   "story_scope_files", "story_shared_files", "story_scope_description",
   "story_implementation_contract",
+  "implement_context", "implement_context_path",
   "file_skeletons", "scope_reminder", "stitch_html", "design_dom",
   "ui_behavior_contract",
   "project_tree", "installed_packages", "shared_code", "recent_stories_code",
@@ -244,10 +246,33 @@ export async function injectStoryContext(
 
 async function injectScopeContext(nextStory: any, context: Record<string, string>): Promise<void> {
   try {
-    const scopeRow = await pgGet<{ scope_files: string; shared_files: string; scope_description: string; file_skeletons: string; implementation_contract: string }>(
-      "SELECT scope_files, shared_files, scope_description, file_skeletons, implementation_contract FROM stories WHERE id = $1",
+    const scopeRow = await pgGet<{ scope_files: string; shared_files: string; scope_description: string; file_skeletons: string; implementation_contract: string; scope_targets: string | null; shared_edit_requests: string | null; depends_on: string | null }>(
+      "SELECT scope_files, shared_files, scope_description, file_skeletons, implementation_contract, scope_targets, shared_edit_requests, depends_on FROM stories WHERE id = $1",
       [nextStory.id]
     );
+    const baseRepo = context["repo"] || context["REPO"] || context["story_workdir"] || "";
+    if (scopeRow && baseRepo) {
+      const implementContext = assembleImplementContext({
+        repo: baseRepo,
+        runId: nextStory.run_id || "",
+        storyId: nextStory.story_id || nextStory.id || "",
+        storyRow: scopeRow,
+      });
+      if (implementContext) {
+        context["implement_context"] = JSON.stringify(implementContext, null, 2);
+        context["implement_context_path"] = `.setfarm/implement-context/${nextStory.story_id || nextStory.id}.json`;
+        const resolved = Array.isArray((implementContext as any).resolvedScopeFiles)
+          ? (implementContext as any).resolvedScopeFiles
+          : [];
+        const sharedWritable = Array.isArray((implementContext as any).sharedEditableFiles)
+          ? (implementContext as any).sharedEditableFiles
+              .filter((entry: any) => entry?.allowedForThisStory)
+              .map((entry: any) => entry.path)
+          : [];
+        const merged = [...new Set([...resolved, ...sharedWritable])].filter(Boolean);
+        if (merged.length > 0) context["story_scope_files"] = merged.join(", ");
+      }
+    }
     if (scopeRow?.scope_files) {
       try {
         const list = JSON.parse(scopeRow.scope_files);

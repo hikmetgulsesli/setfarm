@@ -132,7 +132,10 @@ interface DbStory {
   max_retries?: number;
   depends_on?: string | null;
   scope_files?: string | null;
+  scope_targets?: string | null;
+  resolved_scope_files?: string | null;
   shared_files?: string | null;
+  shared_edit_requests?: string | null;
   story_screens?: string | null;
   pr_url?: string | null;
   story_branch?: string | null;
@@ -401,13 +404,20 @@ export function buildRunContract(input: BuildRunContractInput): RunContract {
     const screenRefs = parseScreenRefs(story.story_screens);
     const ownsScreens = screenRefs.map(formatScreenRef);
     const ownsScreenIds = screenRefs.map(normalizeScreenId).filter(Boolean);
+    const resolvedScopeFiles = parseStringList(story.resolved_scope_files);
+    const physicalScopeFiles = parseStringList(story.scope_files);
+    const logicalScopeTargets = parseStringList(story.scope_targets);
       return {
         storyId: story.story_id,
         title: story.title,
         status: visibleStoryStatus(story.status),
         ownsScreens,
         ownsScreenIds,
-        scopeFiles: parseStringList(story.scope_files),
+        scopeFiles: resolvedScopeFiles.length
+          ? resolvedScopeFiles
+          : physicalScopeFiles.length
+          ? physicalScopeFiles
+          : logicalScopeTargets,
       sharedFiles: parseStringList(story.shared_files),
       dependsOn: parseStringList(story.depends_on),
       deferred: ["pending", "waiting"].includes(story.status),
@@ -447,12 +457,16 @@ export function buildRunContract(input: BuildRunContractInput): RunContract {
   phases.push({ id: "design", label: "Design", status: phaseStatusForSteps(designItems, ["design"]), items: designItems });
 
   const storiesWithAc = input.stories.filter((story) => parseStringList(story.acceptance_criteria).length > 0);
-  const storiesWithScope = input.stories.filter((story) => parseStringList(story.scope_files).length > 0);
+  const storiesWithScope = input.stories.filter((story) =>
+    parseStringList(story.scope_targets).length > 0
+    || parseStringList(story.resolved_scope_files).length > 0
+    || parseStringList(story.scope_files).length > 0
+  );
   const storiesWithScreens = input.stories.filter((story) => parseScreenRefs(story.story_screens).length > 0);
   const storyItems: ContractItem[] = [
     makeItem("stories.count", "Stories decomposed", requiredStatus(storiesDone, input.stories.length > 0), "planner", updatedAt, { stepId: "stories", evidence: `${input.stories.length} story(ies)` }),
     makeItem("stories.ac", "Every story has acceptance criteria", requiredStatus(storiesDone, input.stories.length > 0 && storiesWithAc.length === input.stories.length), "planner", updatedAt, { stepId: "stories", evidence: `${storiesWithAc.length}/${input.stories.length}` }),
-    makeItem("stories.scope_files", "Every story has owned scope files", requiredStatus(storiesDone, input.stories.length > 0 && storiesWithScope.length === input.stories.length), "planner", updatedAt, { stepId: "stories", evidence: `${storiesWithScope.length}/${input.stories.length}` }),
+    makeItem("stories.scope_targets", "Every story has logical ownership targets", requiredStatus(storiesDone, input.stories.length > 0 && storiesWithScope.length === input.stories.length), "planner", updatedAt, { stepId: "stories", evidence: `${storiesWithScope.length}/${input.stories.length}` }),
     makeItem("stories.screen_ownership", "Design screens are assigned or explicitly deferred", requiredStatus(storiesDone, screenIds.size === 0 || unownedScreens.length === 0), "planner", updatedAt, { stepId: "stories", evidence: unownedScreens.length ? `unowned: ${unownedScreens.join(", ")}` : `${storiesWithScreens.length} story screen map(s)` }),
   ];
   for (const story of storyOwnership) {
@@ -589,7 +603,7 @@ export async function refreshRunContract(runId: string, reason = "refresh", cont
   );
   const stories = await pgQuery<DbStory>(
     `SELECT id, run_id, story_index, story_id, title, description, acceptance_criteria, status, output, retry_count, max_retries,
-            depends_on, scope_files, shared_files, story_screens, pr_url, story_branch, merge_status
+            depends_on, scope_files, scope_targets, resolved_scope_files, shared_files, shared_edit_requests, story_screens, pr_url, story_branch, merge_status
        FROM stories WHERE run_id = $1 ORDER BY story_index ASC`,
     [runId],
   );

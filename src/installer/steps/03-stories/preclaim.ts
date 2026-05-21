@@ -28,14 +28,56 @@ interface StoryDraft {
   acceptanceCriteria: string[];
   depends_on: string[];
   screens: string[];
-  scope_files: string[];
-  shared_files: string[];
+  requested_dependencies: StoryRequestedDependency[];
+  scope_targets: StoryScopeTarget[];
+  shared_edit_requests: StorySharedEditRequest[];
+  scope_files?: string[];
+  shared_files?: string[];
   scope_description: string;
   file_skeletons: Record<string, string>;
   implementation_contract: StoryImplementationContract;
 }
 
+interface StoryRequestedDependency {
+  name: string;
+  ecosystem: "npm" | "python" | "gradle" | "swift" | "none";
+  reason: string;
+  requested_by_action_ids: string[];
+}
+
+interface StoryScopeTarget {
+  role:
+    | "app_shell"
+    | "route_registration"
+    | "surface_component"
+    | "action_handler"
+    | "state_store"
+    | "fixture_data"
+    | "persistence_adapter"
+    | "test_bridge"
+    | "style_integration"
+    | "game_runtime"
+    | "api_route"
+    | "cli_command";
+  surface_id?: string;
+  screen_id?: string;
+  domain_slug: string;
+  target_slug: string;
+  action_ids: string[];
+  entity_names: string[];
+  resolved_path: null;
+}
+
+interface StorySharedEditRequest {
+  role: "route_registration" | "style_integration" | "app_shell" | "test_bridge";
+  action: "register_route" | "wire_action" | "append_style_hook" | "expose_test_bridge";
+  intent: string;
+  edit_scope: string;
+  requested_by: string;
+}
+
 interface StoryImplementationContract {
+  owned_surface_ids: string[];
   owned_screen_ids: string[];
   owned_screen_files: string[];
   owned_actions: StoryOwnedAction[];
@@ -64,6 +106,16 @@ const APP_SCOPE_FILES = [
 ];
 
 const STORY_APP_INTEGRATION_FILES = APP_SCOPE_FILES;
+
+function slugify(value: string, fallback = "app"): string {
+  const slug = String(value || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
+  return slug || fallback;
+}
 
 function compactText(text: string, fallback: string): string {
   const s = String(text || "").replace(/\s+/g, " ").trim();
@@ -158,6 +210,7 @@ function unique(values: string[]): string[] {
 function appImplementationContract(projectKind: ProjectKind): StoryImplementationContract {
   if (projectKind === "game") {
     return {
+      owned_surface_ids: [],
       owned_screen_ids: [],
       owned_screen_files: [],
       owned_actions: [
@@ -183,6 +236,7 @@ function appImplementationContract(projectKind: ProjectKind): StoryImplementatio
     };
   }
   return {
+    owned_surface_ids: [],
     owned_screen_ids: [],
     owned_screen_files: [],
     owned_actions: [
@@ -217,6 +271,7 @@ function screenImplementationContract(params: {
 }): StoryImplementationContract {
   const ownedActions = buildOwnedActionsForScreens(params.repo, params.screenIds, params.semanticActions || []);
   return {
+    owned_surface_ids: unique((params.semanticActions || []).map((action) => action.surfaceId || "")),
     owned_screen_ids: params.screenIds,
     owned_screen_files: params.screenFiles,
     owned_actions: ownedActions,
@@ -434,8 +489,9 @@ function appStoryDraft(params: {
       ],
       depends_on: [],
       screens: [],
-      scope_files: APP_SCOPE_FILES,
-      shared_files: params.screenFiles,
+      requested_dependencies: [],
+      scope_targets: buildAppScopeTargets(params.product, params.projectKind),
+      shared_edit_requests: [],
       scope_description: "Shared game integration and state ownership. Generated src/screens files are read-only shared context here: do not edit them, do not change their prop interfaces, and do not pass props they do not already declare. If generated screens expose typed actions props, App may pass those declared action handlers; never use textContent or DOM-label matching for control routing. Screen stories own all edits and additional button wiring for those files.",
       file_skeletons: fileSkeletons(APP_SCOPE_FILES, params.screenFileSet),
       implementation_contract: appImplementationContract(params.projectKind),
@@ -456,8 +512,9 @@ function appStoryDraft(params: {
     ],
     depends_on: [],
     screens: [],
-    scope_files: APP_SCOPE_FILES,
-    shared_files: params.screenFiles,
+    requested_dependencies: [],
+    scope_targets: buildAppScopeTargets(params.product, params.projectKind),
+    shared_edit_requests: [],
     scope_description: "Shared app integration and state ownership. Generated src/screens files are read-only shared context here; screen stories own all edits to those files.",
     file_skeletons: fileSkeletons(APP_SCOPE_FILES, params.screenFileSet),
     implementation_contract: appImplementationContract(params.projectKind),
@@ -471,6 +528,94 @@ function fileSkeletons(files: string[], screenFiles: Set<string>): Record<string
       ? "Generated Stitch screen wired to shared app state and visible behavior handlers."
       : "Shared app state, integration, styling, or persistence implementation file.",
   ]));
+}
+
+function targetFor(role: StoryScopeTarget["role"], params: {
+  domainSlug: string;
+  targetSlug: string;
+  screenId?: string;
+  surfaceId?: string;
+  actionIds?: string[];
+  entityNames?: string[];
+}): StoryScopeTarget {
+  return {
+    role,
+    surface_id: params.surfaceId,
+    screen_id: params.screenId,
+    domain_slug: params.domainSlug,
+    target_slug: params.targetSlug,
+    action_ids: params.actionIds || [],
+    entity_names: params.entityNames || [],
+    resolved_path: null,
+  };
+}
+
+function buildAppScopeTargets(product: string, projectKind: ProjectKind): StoryScopeTarget[] {
+  const domainSlug = slugify(product);
+  return unique([
+    "app_shell",
+    "state_store",
+    "fixture_data",
+    "persistence_adapter",
+    "test_bridge",
+    "style_integration",
+    ...(projectKind === "game" ? ["game_runtime"] : []),
+  ]).map((role) => targetFor(role as StoryScopeTarget["role"], {
+    domainSlug,
+    targetSlug: role === "game_runtime" ? "game-runtime" : domainSlug,
+  }));
+}
+
+function buildScreenScopeTargets(
+  screens: PredictedScreen[],
+  semanticActions: PrdSurfaceAction[],
+  fallbackDomain: string,
+): StoryScopeTarget[] {
+  const targets: StoryScopeTarget[] = [];
+  for (const screen of screens) {
+    const title = screenDisplayTitle(screen);
+    const actionsForScreen = surfaceActionsForScreens([screen], [screen.screenId], semanticActions);
+    const actionIds = actionsForScreen.map((action) => action.id);
+    const surfaceId = actionsForScreen.find((action) => action.surfaceId)?.surfaceId;
+    const domainSlug = slugify(surfaceId || fallbackDomain || title, fallbackDomain || "surface");
+    targets.push(targetFor("surface_component", {
+      domainSlug,
+      targetSlug: slugify(title, screen.screenId.toLowerCase()),
+      screenId: screen.screenId,
+      surfaceId,
+      actionIds,
+    }));
+    for (const actionId of actionIds) {
+      targets.push(targetFor("action_handler", {
+        domainSlug,
+        targetSlug: slugify(actionId, "action"),
+        screenId: screen.screenId,
+        surfaceId,
+        actionIds: [actionId],
+      }));
+    }
+  }
+  return targets;
+}
+
+function buildSharedEditRequests(storyId: string, screens: PredictedScreen[]): StorySharedEditRequest[] {
+  if (screens.length === 0) return [];
+  return [
+    {
+      role: "route_registration",
+      action: "register_route",
+      intent: "Register only this story's resolved surface components in the app shell navigation/route registry.",
+      edit_scope: "route_registration_only",
+      requested_by: storyId,
+    },
+    {
+      role: "app_shell",
+      action: "wire_action",
+      intent: "Wire only this story's owned PRD actions and Stitch controls to existing shared app state.",
+      edit_scope: "owned_action_wiring_only",
+      requested_by: storyId,
+    },
+  ];
 }
 
 function buildScreenMap(screenMap: any[], predicted: PredictedScreen[], stories: StoryDraft[]): any[] {
@@ -530,8 +675,12 @@ export function buildAutoStoriesOutput(params: {
       acceptanceCriteria: buildAcceptanceCriteria(repo),
       depends_on: [],
       screens: unique(predicted.map((s) => s.screenId)),
-      scope_files: scopeFiles,
-      shared_files: [],
+      requested_dependencies: [],
+      scope_targets: [
+        ...buildAppScopeTargets(product, projectKind),
+        ...buildScreenScopeTargets(predicted, semanticSurfaceActions, slugify(product)),
+      ],
+      shared_edit_requests: [],
       scope_description: "One-story explicit user cap: implement all generated screens, visible button/icon behavior, app integration, and only the state/persistence behavior required by the project context.",
       file_skeletons: fileSkeletons(scopeFiles, screenFileSet),
       implementation_contract: screenImplementationContract({
@@ -560,8 +709,9 @@ export function buildAutoStoriesOutput(params: {
         acceptanceCriteria: buildAcceptanceCriteriaForScreens(repo, groupScreenIds, title),
         depends_on: ["US-001"],
         screens: groupScreenIds,
-        scope_files: scopeFiles,
-        shared_files: [],
+        requested_dependencies: [],
+        scope_targets: buildScreenScopeTargets(group.screens, semanticSurfaceActions, slugify(product)),
+        shared_edit_requests: buildSharedEditRequests(id, group.screens),
         scope_description: `${title}: own generated screens ${groupScreenFiles.join(", ")} plus app integration files needed to wire those screens to shared state, navigation, and actions. Do not edit sibling screen groups or unrelated app behavior.`,
         file_skeletons: fileSkeletons(scopeFiles, screenFileSet),
         implementation_contract: screenImplementationContract({

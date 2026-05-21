@@ -98,6 +98,9 @@ export interface SemanticStoryInput {
   scope_description?: string | null;
   scope_files?: string | null;
   shared_files?: string | null;
+  scope_targets?: string | null;
+  requested_dependencies?: string | null;
+  shared_edit_requests?: string | null;
   implementation_contract?: string | null;
 }
 
@@ -105,7 +108,7 @@ function parseStoryJsonField(raw: string | null | undefined): string {
   if (!raw) return "";
   try {
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed.join(" ");
+    if (Array.isArray(parsed)) return parsed.map((item) => typeof item === "string" ? item : JSON.stringify(item)).join(" ");
     if (parsed && typeof parsed === "object") return Object.values(parsed as Record<string, unknown>).join(" ");
   } catch {
     // fall through to raw text
@@ -126,6 +129,8 @@ export function detectStorySemanticDrift(
     s.scope_description || "",
     parseStoryJsonField(s.acceptance_criteria),
     parseStoryJsonField(s.scope_files),
+    parseStoryJsonField(s.scope_targets),
+    parseStoryJsonField(s.shared_edit_requests),
   ].join(" ")).join(" ");
   const storyTerms = new Set(semanticTokens(storyText));
   const hits = domainTerms.filter(t => storyTerms.has(t));
@@ -210,6 +215,7 @@ function findMissingUiBehaviorRequirements(
     s.scope_description || "",
     parseStoryJsonField(s.acceptance_criteria),
     parseStoryJsonField(s.scope_files),
+    parseStoryJsonField(s.scope_targets),
   ].join(" ")).join(" ");
   const storyTokens = new Set(uiBehaviorTokens(storyText).flatMap(expandUiBehaviorTerm));
 
@@ -277,13 +283,14 @@ export function detectImplementationContractGaps(stories: SemanticStoryInput[]):
 
     const screens = parseStringArray((story as any).screens || "");
     const scopeFiles = parseStringArray(story.scope_files);
+    const scopeTargetsText = parseStoryJsonField(story.scope_targets);
     const ownedScreenIds = contractStringArray(contract, "owned_screen_ids");
     const ownedScreenFiles = contractStringArray(contract, "owned_screen_files");
-    const hasScreens = screens.length > 0 || scopeFiles.some((file) => file.startsWith("src/screens/"));
+    const hasScreens = screens.length > 0 || scopeFiles.some((file) => file.startsWith("src/screens/")) || scopeTargetsText.length > 0;
 
     if (hasScreens) {
       if (ownedScreenIds.length === 0) failures.push(`${storyId}: contract missing owned_screen_ids`);
-      if (ownedScreenFiles.length === 0) failures.push(`${storyId}: contract missing owned_screen_files`);
+      if (ownedScreenFiles.length === 0 && scopeTargetsText.length === 0) failures.push(`${storyId}: contract missing owned_screen_files or scope_targets`);
     }
 
     if (contractStringArray(contract, "state_contract").length === 0) {
@@ -327,9 +334,11 @@ function scoreStoryForRequirement(
   let score = 0;
   const scope = parseStringArray(story.scope_files);
   const shared = parseStringArray(story.shared_files);
+  const scopeTargetsText = parseStoryJsonField(story.scope_targets);
   const screenFile = screenFileById.get(req.screenId);
   if (screenFile && scope.includes(screenFile)) score += 100;
   if (screenFile && shared.includes(screenFile)) score += 50;
+  if (scopeTargetsText.includes(req.screenId)) score += 100;
   if ((story.story_index ?? 0) > 0) score += 10; // avoid setup story when possible
 
   const storyTokens = new Set(uiBehaviorTokens([
@@ -338,6 +347,7 @@ function scoreStoryForRequirement(
     story.scope_description || "",
     parseStoryJsonField(story.acceptance_criteria),
     parseStoryJsonField(story.scope_files),
+    parseStoryJsonField(story.scope_targets),
   ].join(" ")).flatMap(expandUiBehaviorTerm));
   for (const term of requirementTerms(req)) {
     if (storyTokens.has(term)) score += 4;
@@ -443,7 +453,7 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
   }
 
   let semanticRows = await pgQuery<SemanticStoryInput>(
-    "SELECT story_index, story_id, title, description, acceptance_criteria, scope_description, scope_files, shared_files, implementation_contract FROM stories WHERE run_id = $1 ORDER BY story_index",
+    "SELECT story_index, story_id, title, description, acceptance_criteria, scope_description, scope_files, shared_files, scope_targets, requested_dependencies, shared_edit_requests, implementation_contract FROM stories WHERE run_id = $1 ORDER BY story_index",
     [runId]
   );
   const semanticErr = detectStorySemanticDrift(
@@ -473,7 +483,7 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
   const repoPath = context["repo"] || context["REPO"] || "";
   await autoInjectUiBehaviorCriteria(runId, repoPath, semanticRows);
   semanticRows = await pgQuery<SemanticStoryInput>(
-    "SELECT story_index, story_id, title, description, acceptance_criteria, scope_description, scope_files, shared_files, implementation_contract FROM stories WHERE run_id = $1 ORDER BY story_index",
+    "SELECT story_index, story_id, title, description, acceptance_criteria, scope_description, scope_files, shared_files, scope_targets, requested_dependencies, shared_edit_requests, implementation_contract FROM stories WHERE run_id = $1 ORDER BY story_index",
     [runId]
   );
   const uiBehaviorErr = detectUiBehaviorContractGaps(repoPath, semanticRows);
@@ -500,14 +510,16 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
     throw new Error(`${supervisor.code}: ${supervisor.reason}`);
   }
 
-  // 2. missing scope_files (story_index > 0 — setup story exempt)
+  // 2. missing scope_targets (story_index > 0 — app-shell story exempt).
+  // STORIES is a planning artifact: it may not emit physical scope_files as
+  // ownership truth. SETUP-BUILD resolves scope_targets into scope_files later.
   const missingScope = await pgQuery<{ story_id: string }>(
-    "SELECT story_id FROM stories WHERE run_id = $1 AND story_index > 0 AND (scope_files IS NULL OR scope_files = '' OR scope_files = '[]')",
+    "SELECT story_id FROM stories WHERE run_id = $1 AND story_index > 0 AND (scope_targets IS NULL OR scope_targets = '' OR scope_targets = '[]')",
     [runId]
   );
   if (missingScope.length > 0) {
     const ids = missingScope.map(r => r.story_id).join(", ");
-    const msg = `GUARDRAIL: ${missingScope.length} story/stories missing scope_files (${ids}). Every non-setup story MUST declare scope_files. Re-output STORIES_JSON with scope_files populated.`;
+    const msg = `GUARDRAIL: ${missingScope.length} story/stories missing scope_targets (${ids}). Every non-setup story MUST declare logical scope_targets. SETUP-BUILD resolves physical files later.`;
     logger.warn(`[module:stories] ${msg}`, { runId });
     await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);
     throw new Error(msg);

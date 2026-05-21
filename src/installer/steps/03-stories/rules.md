@@ -1,16 +1,15 @@
 # STORIES Step Rules
 
-Read PRD + SCREEN_MAP + DESIGN_SYSTEM and produce a file-scoped user story
-list. Stories must be dependency-ordered, non-overlapping, and implementation
-ready.
+Read PRD + SCREEN_MAP + DESIGN_SYSTEM and produce a logical user story
+contract. Stories must be dependency-ordered, non-overlapping, and
+implementation ready without guessing physical files.
 
 ## Inputs
 
 - `prd`: Plan step PRD.
 - `screen_map`: Design step SCREEN_MAP.
 - `design_system`: Design step fonts, palette, and aesthetic.
-- `predicted_screen_files`: exact generated paths for each screen, e.g.
-  `src/screens/<ScreenName>.tsx`.
+- `predicted_screen_files`: Stitch-generated screen hints for screen identity.
 
 Stories runs before setup-repo. Do not depend on files inside REPO existing on
 disk. The embedded claim context is the source of truth.
@@ -25,8 +24,20 @@ disk. The embedded claim context is the source of truth.
   "acceptanceCriteria": ["Criterion 1", "Tests pass", "Typecheck passes"],
   "depends_on": ["US-X"],
   "screens": ["screen-id-1"],
-  "scope_files": ["src/lib/foo.ts", "src/screens/Bar.tsx"],
-  "shared_files": ["src/App.tsx"],
+  "requested_dependencies": [],
+  "scope_targets": [
+    {
+      "role": "surface_component",
+      "surface_id": "SURF_EXAMPLE",
+      "screen_id": "SCR-001",
+      "domain_slug": "tickets",
+      "target_slug": "ticket-editor",
+      "action_ids": ["ACT_SAVE_RECORD"],
+      "entity_names": ["Ticket"],
+      "resolved_path": null
+    }
+  ],
+  "shared_edit_requests": [],
   "scope_description": "One sentence defining what this story owns"
 }
 ```
@@ -66,20 +77,19 @@ state/test/screen file so implement does not infer "write the whole app".
 Later stories may depend on earlier stories. Earlier stories must not depend on
 later stories.
 
-## scope_files and shared_files
+## scope_targets and shared_edit_requests
 
-- `scope_files`: the only files that story may create or modify.
-- `shared_files`: read/import context only unless also listed in `scope_files`.
+- `scope_targets`: logical ownership. SETUP-BUILD resolves these into files.
+- `shared_edit_requests`: requested shared wiring. MC may grant or reject later.
 - `scope_description`: one sentence saying what the story owns and does not own.
 
-Two stories must not share the same generated screen file in `scope_files`.
-App integration files may be reopened by later interactive screen stories when
-the story must wire its owned screen controls into shared state, navigation, or
-actions. Keep those edits limited to that owned screen's behavior.
+Two stories must not share the same generated screen id as `surface_component`.
+App integration edits must be represented as `shared_edit_requests`; STORIES
+cannot grant itself shared write permission.
 
 ## Screen File Rules
 
-Use paths from PREDICTED_SCREEN_FILES exactly. Do not invent:
+Use `screen_id` from SCREEN_MAP exactly. Do not invent physical paths:
 - `src/pages/GameScreen.tsx`
 - `src/views/MainMenu.tsx`
 - `src/components/screens/...`
@@ -94,8 +104,8 @@ that render in App state but have no user-enterable path.
 
 ## Reopenable App Integration Files
 
-These files may appear in `scope_files` for US-001 and for later screen stories
-that need to wire owned generated controls into the app shell:
+These logical edit zones may appear as `shared_edit_requests` for later screen
+stories that need to wire owned generated controls into the app shell:
 - `src/App.tsx`, `src/main.tsx`, `src/index.tsx`
 - `src/index.css`, `src/App.css`
 - `src/contexts/AppContext.tsx`, `src/hooks/useAppState.ts`, `src/types/domain.ts`, `src/utils/storage.ts`
@@ -136,7 +146,7 @@ only say a control is present or clickable.
 STATUS: done
 STORIES_JSON:
 [
-  { "id": "US-001", "title": "...", "description": "...", "acceptanceCriteria": [...], "depends_on": [], "screens": [...], "scope_files": [...], "shared_files": [], "scope_description": "..." }
+  { "id": "US-001", "title": "...", "description": "...", "acceptanceCriteria": [...], "depends_on": [], "screens": [...], "requested_dependencies": [], "scope_targets": [...], "shared_edit_requests": [], "scope_description": "..." }
 ]
 SCREEN_MAP:
 [
@@ -149,7 +159,7 @@ SCREEN_MAP:
 - Do not choose a new TECH_STACK.
 - Do not invent screen paths.
 - Do not create oversized stories.
-- Do not assign the same file to multiple stories.
-- Do not put App.tsx in an arbitrary feature story; only reopen app integration
-  files for owned screen/action wiring.
-- Do not output zero stories or missing scope descriptions.
+- Do not output physical `scope_files` as the ownership source.
+- Do not put App.tsx in an arbitrary feature story; request app-shell edits only
+  through `shared_edit_requests`.
+- Do not output zero stories, missing scope targets, or missing scope descriptions.

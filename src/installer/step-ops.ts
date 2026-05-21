@@ -38,6 +38,7 @@ import { cleanupAbandonedSteps as _cleanupAbandonedSteps, cleanupProjectEphemera
 import { isVerifyRetryMergeBlocker, isVerifyRetryQualityFailure } from "./verify-retry-routing.js";
 import { markSupervisorInterventions, upsertSupervisorRunMetadata } from "./supervisor/state.js";
 import { cleanupOutOfScopeWorktreeFiles } from "./steps/06-implement/context.js";
+import { assembleImplementContext } from "./setup-handoff.js";
 import { missionControlApi } from "../runtime-config.js";
 import { sanitizeDesignMismatchFeedback } from "./error-taxonomy.js";
 import { sanitizeAgentPromptContracts } from "./prompt-contracts.js";
@@ -645,6 +646,8 @@ function withStepModulePromptAliases(context: Record<string, string>, runId: str
   assign("STORY_ROADMAP", "story_roadmap");
   assign("STORY", "current_story");
   assign("STORY_IMPLEMENTATION_CONTRACT", "story_implementation_contract");
+  assign("IMPLEMENT_CONTEXT", "implement_context");
+  assign("IMPLEMENT_CONTEXT_PATH", "implement_context_path");
   assign("STORY_SCREENS", "story_screens");
   assign("DESIGN_RULES", "design_rules");
   assign("SUPERVISOR_MEMORY", "supervisor_memory");
@@ -2446,10 +2449,33 @@ async function injectStoryContext(
   // "implement the acceptance criteria" mode. The post-implementation bleed
   // check in completeStep uses these to reject out-of-scope writes.
   try {
-    const scopeRow = await pgGet<{ scope_files: string; shared_files: string; scope_description: string; file_skeletons: string; implementation_contract: string }>(
-      "SELECT scope_files, shared_files, scope_description, file_skeletons, implementation_contract FROM stories WHERE id = $1",
+    const scopeRow = await pgGet<{ scope_files: string; shared_files: string; scope_description: string; file_skeletons: string; implementation_contract: string; scope_targets: string | null; shared_edit_requests: string | null; depends_on: string | null }>(
+      "SELECT scope_files, shared_files, scope_description, file_skeletons, implementation_contract, scope_targets, shared_edit_requests, depends_on FROM stories WHERE id = $1",
       [nextStory.id]
     );
+    const baseRepo = context["repo"] || context["REPO"] || "";
+    if (scopeRow && baseRepo) {
+      const implementContext = assembleImplementContext({
+        repo: baseRepo,
+        runId: step.run_id,
+        storyId: nextStory.story_id || nextStory.id || "",
+        storyRow: scopeRow,
+      });
+      if (implementContext) {
+        context["implement_context"] = JSON.stringify(implementContext, null, 2);
+        context["implement_context_path"] = `.setfarm/implement-context/${nextStory.story_id || nextStory.id}.json`;
+        const resolved = Array.isArray((implementContext as any).resolvedScopeFiles)
+          ? (implementContext as any).resolvedScopeFiles
+          : [];
+        const sharedWritable = Array.isArray((implementContext as any).sharedEditableFiles)
+          ? (implementContext as any).sharedEditableFiles
+              .filter((entry: any) => entry?.allowedForThisStory)
+              .map((entry: any) => entry.path)
+          : [];
+        const merged = [...new Set([...resolved, ...sharedWritable])].filter(Boolean);
+        if (merged.length > 0) context["story_scope_files"] = merged.join(", ");
+      }
+    }
     if (scopeRow?.scope_files) {
       try {
         const list = JSON.parse(scopeRow.scope_files);

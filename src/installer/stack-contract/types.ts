@@ -3,10 +3,14 @@ export type StackPackId =
   | "vite-react-web-app"
   | "static-html-site"
   | "browser-game-canvas"
+  | "node-express-api"
+  | "node-cli"
   | "python-cli"
   | "python-web"
+  | "react-native-expo"
   | "android-app"
-  | "ios-app";
+  | "ios-app"
+  | "desktop-electron";
 
 export type StackContractStatus = "resolved" | "needs-reconcile";
 
@@ -56,9 +60,61 @@ export interface StackVerificationContract {
   tests: string[];
 }
 
+export type StackDesignPolicy = "stitch-required" | "stitch-brief-only" | "none";
+export type StackConversionPolicy = "none" | "wrap_jsx" | "reference_only" | "native_equivalent";
+export type StackScaffoldPolicy = "create" | "verify-existing" | "hybrid";
+
+export type ScopeTargetRole =
+  | "app_shell"
+  | "route_registration"
+  | "surface_component"
+  | "action_handler"
+  | "state_store"
+  | "fixture_data"
+  | "persistence_adapter"
+  | "test_bridge"
+  | "style_integration"
+  | "game_runtime"
+  | "api_route"
+  | "cli_command";
+
+export interface TargetResolutionRule {
+  ruleId: string;
+  template: string;
+  allowedRoles: ScopeTargetRole[];
+}
+
+export interface MockInjectionPolicy {
+  fixtureRoot?: string;
+  bootstrapFile?: string;
+  productionIsolation: "test_only" | "dev_only" | "runtime_seed";
+}
+
+export interface DataAccessPolicy {
+  defaultClientState: string;
+  defaultServerState: string;
+  allowedLibraries: string[];
+}
+
+export interface ImplementationBoundaries {
+  setupOwnedFiles: string[];
+  forbiddenDuringImplement: string[];
+  sharedFiles: string[];
+}
+
+export interface DependencyPolicy {
+  ecosystem: "npm" | "python" | "gradle" | "swift" | "none";
+  allowedDependencies: string[];
+}
+
 export interface StackPack {
   id: StackPackId;
   label: string;
+  platform?: string;
+  techStackAliases?: string[];
+  designPolicy?: StackDesignPolicy;
+  conversionPolicy?: StackConversionPolicy;
+  scaffoldPolicy?: StackScaffoldPolicy;
   projectTypes: string[];
   whenToUse: string;
   repoSignals: string[];
@@ -66,6 +122,13 @@ export interface StackPack {
   fileContract: StackFileContract;
   routeContract: StackRouteContract;
   verification: StackVerificationContract;
+  requiredFiles?: string[];
+  artifactChecks?: string[];
+  targetResolutionRules?: Record<ScopeTargetRole, TargetResolutionRule>;
+  mockInjectionPolicy?: MockInjectionPolicy;
+  dataAccessPolicy?: DataAccessPolicy;
+  implementationBoundaries?: ImplementationBoundaries;
+  dependencyPolicy?: DependencyPolicy;
   prompt: string;
 }
 
@@ -83,6 +146,14 @@ export interface StackContract {
   fileContract: StackFileContract;
   routeContract: StackRouteContract;
   verification: StackVerificationContract;
+  designPolicy?: StackDesignPolicy;
+  conversionPolicy?: StackConversionPolicy;
+  scaffoldPolicy?: StackScaffoldPolicy;
+  targetResolutionRules?: Record<ScopeTargetRole, TargetResolutionRule>;
+  mockInjectionPolicy?: MockInjectionPolicy;
+  dataAccessPolicy?: DataAccessPolicy;
+  implementationBoundaries?: ImplementationBoundaries;
+  dependencyPolicy?: DependencyPolicy;
   prompt: string;
   createdAt: string;
   updatedAt: string;

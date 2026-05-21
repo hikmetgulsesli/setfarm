@@ -60,9 +60,11 @@ describe("06-implement step module", () => {
     assert.match(prompt, /Do NOT run `git add`, `git commit`, `git push`, `gh pr create`, or any branch command/);
     assert.match(prompt, /Setfarm performs the final scoped story commit after build\/scope\/supervisor gates pass/);
     assert.match(prompt, /Story Implementation Contract/);
+    assert.match(prompt, /Implement Context/);
     assert.match(prompt, /owned screens, actions, state, persistence, navigation, and\s+test obligations/);
     assert.match(contextSource, /story_implementation_contract/);
-    assert.match(contextSource, /implementation_contract FROM stories/);
+    assert.match(contextSource, /implementation_contract, scope_targets, shared_edit_requests/);
+    assert.match(contextSource, /assembleImplementContext/);
     assert.match(rules, /Do NOT run `git add`, `git commit`, `git push`/);
     assert.match(implementInput, /Setfarm performs the final\s+scoped story commit/);
     assert.doesNotMatch(prompt, /xargs -a \.story-scope-files git add --/);

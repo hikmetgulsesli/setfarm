@@ -5,6 +5,7 @@ import type { ClaimContext } from "../types.js";
 import { pgGet } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
 import { resolvePlatformScript } from "../../paths.js";
+import { materializeSetupBuildContracts } from "../../setup-handoff.js";
 
 const MIN_STITCH_HTML_BYTES = 1000;
 
@@ -121,6 +122,29 @@ function rerunSetupRepoScaffold(ctx: ClaimContext, repo: string): boolean {
   }
 }
 
+async function writeSetupHandoff(ctx: ClaimContext, repo: string, buildCmd: string): Promise<void> {
+  try {
+    const { manifest, certificate } = await materializeSetupBuildContracts(ctx.runId, repo, ctx.context, buildCmd);
+    ctx.context["setup_certificate_path"] = ".setfarm/setup/SETUP_CERTIFICATE.json";
+    ctx.context["file_tree_manifest_path"] = ".setfarm/setup/FILE_TREE_MANIFEST.json";
+    ctx.context["resolved_scope_target_count"] = String(manifest.resolvedTargets.length);
+    ctx.context["setup_stack_pack_id"] = String(certificate.stackPackId || "");
+    logger.info(`[module:setup-build preclaim] setup handoff ok (${manifest.resolvedTargets.length} targets)`, {
+      runId: ctx.runId,
+    });
+  } catch (e) {
+    const err = e as any;
+    const code = err?.code || "SETUP_HANDOFF_FAILED";
+    const details = [
+      `${code}: ${String(err?.message || e).slice(0, 800)}`,
+      err?.missingRole ? `missingRole=${err.missingRole}` : "",
+      err?.suggestedRuleAddition ? `suggestedRuleAddition=${err.suggestedRuleAddition}` : "",
+    ].filter(Boolean).join("\n");
+    logger.warn(`[module:setup-build preclaim] setup handoff failed: ${details.slice(0, 300)}`, { runId: ctx.runId });
+    ctx.context["baseline_fail"] = details;
+  }
+}
+
 // Heavy work before agent:
 // 1. npm install (idempotent — skip if node_modules exists)
 // 2. npm run build — baseline verification
@@ -212,6 +236,11 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   }
   ctx.context["build_cmd_hint"] = buildCmd;
 
+  // Resolve logical story targets to deterministic stack-pack file paths before
+  // the setup-owned baseline is sealed. This also installs approved requested
+  // dependencies from STORIES; implement may not add ad hoc packages later.
+  await writeSetupHandoff(ctx, repo, buildCmd);
+
   // 4. Tailwind install/config (if Stitch HTML uses utility classes).
   // Keep the setup-repo baseline on one path: Tailwind v3 + PostCSS. A later
   // setup-build completion hook used to add @tailwindcss/vite on top of this,
@@ -295,6 +324,10 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       logger.warn(`[module:setup-build preclaim] stitch-to-jsx failed: ${details.slice(0, 300)}`, { runId: ctx.runId });
       ctx.context["baseline_fail"] = `stitch-to-jsx failed:\n${details}`;
     }
+  }
+
+  if (!ctx.context["baseline_fail"] && !ctx.context["compat_fail"]) {
+    await writeSetupHandoff(ctx, repo, ctx.context["build_cmd_hint"] || buildCmd || "npm run build");
   }
 
   if (!ctx.context["baseline_fail"] && !ctx.context["compat_fail"]) {

@@ -221,10 +221,14 @@ describe("stack contract", () => {
     assert.deepEqual(ids, [
       "android-app",
       "browser-game-canvas",
+      "desktop-electron",
       "ios-app",
       "nextjs-web-app",
+      "node-cli",
+      "node-express-api",
       "python-cli",
       "python-web",
+      "react-native-expo",
       "static-html-site",
       "vite-react-web-app",
     ]);
@@ -232,6 +236,7 @@ describe("stack contract", () => {
       const pack = getStackPack(id);
       assert.ok(pack.prompt.length > 40, `${id} prompt should be useful`);
       assert.ok(pack.verification.build.length + pack.verification.smoke.length > 0, `${id} should define verification`);
+      assert.ok(pack.targetResolutionRules && Object.keys(pack.targetResolutionRules).length > 0, `${id} should define target resolution rules`);
     }
   });
 });

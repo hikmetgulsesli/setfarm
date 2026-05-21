@@ -195,15 +195,16 @@ export function formatCompletedStories(stories: Story[]): string {
 }
 
 /**
- * Completed/planned story roadmap with scope_files for each story.
- * Tells agents which files previous stories already own so they avoid scope bleed.
+ * Completed/planned story roadmap with the best available ownership evidence.
+ * Before setup-build this is logical scope_targets; after setup-build it is
+ * resolved_scope_files. Tells agents which story owns what so they avoid bleed.
  */
 export async function formatStoryRoadmap(runId: string, currentStoryId: string): Promise<string> {
   const rows = await pgQuery<{
     story_id: string; title: string; status: string;
-    scope_files: string | null; shared_files: string | null;
+    scope_files: string | null; resolved_scope_files: string | null; scope_targets: string | null; shared_files: string | null;
   }>(
-    "SELECT story_id, title, status, scope_files, shared_files FROM stories WHERE run_id = $1 ORDER BY story_index",
+    "SELECT story_id, title, status, scope_files, resolved_scope_files, scope_targets, shared_files FROM stories WHERE run_id = $1 ORDER BY story_index",
     [runId]
   );
   if (rows.length === 0) return "(no stories)";
@@ -213,10 +214,10 @@ export async function formatStoryRoadmap(runId: string, currentStoryId: string):
     const isCurrent = r.story_id === currentStoryId;
     const marker = isCurrent ? "→ CURRENT" : r.status === "done" || r.status === "verified" ? "✓ DONE" : r.status === "failed" ? "✗ FAILED" : "□ " + r.status.toUpperCase();
     let scope: string[] = [];
-    try { scope = JSON.parse(r.scope_files || "[]"); } catch {}
+    try { scope = JSON.parse(r.resolved_scope_files || r.scope_files || r.scope_targets || "[]"); } catch {}
     const scopeStr = scope.length > 0 ? scope.join(", ") : "(no scope declared)";
     lines.push(`${marker} ${r.story_id}: ${r.title}`);
-    lines.push(`    Files: ${scopeStr}`);
+    lines.push(`    Ownership: ${scopeStr}`);
   }
   return lines.join("\n");
 }
@@ -263,6 +264,12 @@ function normalizeImplementationContract(value: unknown): string | null {
   const contract = value as Record<string, unknown>;
   if (Object.keys(contract).length === 0) return null;
   return JSON.stringify(contract);
+}
+
+function normalizeJsonArray(value: unknown): string | null {
+  if (!Array.isArray(value)) return null;
+  const cleaned = value.filter((item) => item !== null && item !== undefined);
+  return cleaned.length > 0 ? JSON.stringify(cleaned) : null;
 }
 
 export function normalizeScopeFilesForStory(scopeFiles: unknown, storyCount: number): string[] | null {
@@ -415,30 +422,21 @@ export async function parseAndInsertStories(output: string, runId: string): Prom
       const s = stories[i];
       const ac = s.acceptanceCriteria ?? s.acceptance_criteria;
       const dependsOn = Array.isArray(s.depends_on) ? JSON.stringify(s.depends_on) : null;
-      // Wave 14 Bug Q: story scope discipline. Planner may declare the exact
-      // file set each story is allowed to touch (scope_files) plus optional
-      // shared_files for cross-story collaboration (e.g. App.tsx wiring). The
-      // post-implementation bleed check uses these to reject stories that wrote
-      // outside their declared scope.
-      //
-      // Wave 14.1 (run #348 postmortem): most planner runs produce acceptance
-      // criteria that already name files like "src/components/X.tsx ..." but do
-      // NOT emit a top-level scope_files array. Rather than retrying planners
-      // until they obey the new contract, we auto-derive scope_files from the
-      // acceptance_criteria text with matchAll. Backward-compat (old stories
-      // still work), robust (planner just needs good AC), and progressive
-      // (when planners start emitting scope_files explicitly, that wins).
-      // Single developer mode: scope_files are informational, not enforced.
-      // Regex-based auto-derive removed — caused false positives and scope_bleed rejections.
-      // If planner provides scope_files explicitly, we store them for reference.
+      // Modern contract: STORIES emits logical scope_targets and optional
+      // shared_edit_requests. SETUP-BUILD resolves those to physical paths and
+      // writes resolved_scope_files. Legacy scope_files are still stored only
+      // for old runs and explicit human-authored stories.
       const normalizedScopeFiles = normalizeScopeFilesForStory(s.scope_files, stories.length);
       const scopeFiles: string | null = normalizedScopeFiles ? JSON.stringify(normalizedScopeFiles) : null;
       const sharedFiles = Array.isArray(s.shared_files) ? JSON.stringify(s.shared_files) : null;
+      const scopeTargets = normalizeJsonArray(s.scope_targets);
+      const requestedDependencies = normalizeJsonArray(s.requested_dependencies);
+      const sharedEditRequests = normalizeJsonArray(s.shared_edit_requests);
       const scopeDesc = typeof s.scope_description === "string" ? s.scope_description : null;
       const fileSkeletons = s.file_skeletons && typeof s.file_skeletons === "object" ? JSON.stringify(s.file_skeletons) : null;
       const implementationContract = normalizeImplementationContract(s.implementation_contract);
-      await sql`INSERT INTO stories (id, run_id, story_index, story_id, title, description, acceptance_criteria, status, retry_count, max_retries, depends_on, scope_files, shared_files, scope_description, file_skeletons, implementation_contract, created_at, updated_at)
-        VALUES (${crypto.randomUUID()}, ${runId}, ${i}, ${s.id}, ${s.title}, ${s.description}, ${JSON.stringify(ac)}, 'pending', 0, 5, ${dependsOn}, ${scopeFiles}, ${sharedFiles}, ${scopeDesc}, ${fileSkeletons}, ${implementationContract}, ${ts}, ${ts})`;
+      await sql`INSERT INTO stories (id, run_id, story_index, story_id, title, description, acceptance_criteria, status, retry_count, max_retries, depends_on, scope_files, shared_files, scope_targets, requested_dependencies, shared_edit_requests, resolved_scope_files, scope_description, file_skeletons, implementation_contract, created_at, updated_at)
+        VALUES (${crypto.randomUUID()}, ${runId}, ${i}, ${s.id}, ${s.title}, ${s.description}, ${JSON.stringify(ac)}, 'pending', 0, 5, ${dependsOn}, ${scopeFiles}, ${sharedFiles}, ${scopeTargets}, ${requestedDependencies}, ${sharedEditRequests}, ${scopeFiles}, ${scopeDesc}, ${fileSkeletons}, ${implementationContract}, ${ts}, ${ts})`;
     }
   });
 }

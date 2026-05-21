@@ -2,6 +2,7 @@ import type { ParsedOutput, ValidationResult, CompleteContext } from "../types.j
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { materializeSetupBuildContracts } from "../../setup-handoff.js";
 
 function cleanProcessText(value: unknown): string {
   const text = Buffer.isBuffer(value) ? value.toString("utf-8") : String(value || "");
@@ -97,4 +98,13 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
 
   // Stamp BUILD_CMD (agent value or pre-computed hint)
   context["build_cmd"] = parsed.build_cmd || context["build_cmd_hint"] || "npm run build";
+
+  const repo = resolveRepo(context);
+  if (repo) {
+    const { manifest, certificate } = await materializeSetupBuildContracts(ctx.runId, repo, context, context["build_cmd"]);
+    context["setup_certificate_path"] = ".setfarm/setup/SETUP_CERTIFICATE.json";
+    context["file_tree_manifest_path"] = ".setfarm/setup/FILE_TREE_MANIFEST.json";
+    context["resolved_scope_target_count"] = String(manifest.resolvedTargets.length);
+    context["setup_stack_pack_id"] = String(certificate.stackPackId || "");
+  }
 }

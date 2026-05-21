@@ -26,6 +26,16 @@ import { detectPrdActionCoverageGaps } from "../../dist/installer/steps/03-stori
 import { normalizeScopeFilesForStory } from "../../dist/installer/story-ops.js";
 import { runModule } from "./harness.js";
 
+function hasScopeTarget(story: any, role: string, screenId?: string): boolean {
+  return Array.isArray(story.scope_targets)
+    && story.scope_targets.some((target: any) => target?.role === role && (!screenId || target?.screen_id === screenId));
+}
+
+function hasSharedEditRequest(story: any, role: string): boolean {
+  return Array.isArray(story.shared_edit_requests)
+    && story.shared_edit_requests.some((request: any) => request?.role === role);
+}
+
 describe("03-stories step module", () => {
   it("happy path: STATUS=done passes validation + prompt under budget", async () => {
     const result = await runModule(storiesModule, "Test", { status: "done" });
@@ -46,9 +56,9 @@ describe("03-stories step module", () => {
     assert.equal(storiesModule.maxPromptSize, 32768);
   });
 
-  it("prompt includes scope_files and predicted_screen_files mentions", async () => {
+  it("prompt includes logical scope target and predicted_screen_files mentions", async () => {
     const result = await runModule(storiesModule, "Test", { status: "done" });
-    assert.ok(result.prompt.includes("scope_files"), "prompt should mention scope_files");
+    assert.ok(result.prompt.includes("scope_targets"), "prompt should mention scope_targets");
     assert.ok(result.prompt.includes("implementation_contract"), "prompt should mention implementation_contract");
     assert.ok(result.prompt.includes("PREDICTED_SCREEN_FILES"), "prompt should mention predicted screens");
     assert.ok(result.prompt.includes("DESIGN_DOM_PREVIEW"), "prompt should mention design DOM preview section");
@@ -174,11 +184,10 @@ describe("03-stories step module", () => {
       const stories = JSON.parse(storiesJson);
 	      assert.equal(stories.length, 4);
       assert.match(stories[0].title, /^Freelancer CRM -/);
-      assert.equal(stories[0].scope_files.includes("src/App.tsx"), true);
-      assert.equal(stories[0].scope_files.includes("src/contexts/AppContext.tsx"), true);
-      assert.equal(stories[0].shared_files.includes("src/screens/Leads.tsx"), true);
-      assert.equal(stories[0].shared_files.includes("src/screens/ProfilePanel.tsx"), true);
-      assert.equal(stories[1].scope_files.includes("src/screens/Leads.tsx"), true);
+      assert.equal(hasScopeTarget(stories[0], "app_shell"), true);
+      assert.equal(hasScopeTarget(stories[0], "state_store"), true);
+      assert.equal(hasScopeTarget(stories[0], "fixture_data"), true);
+      assert.equal(hasScopeTarget(stories[1], "surface_component", "SCR-001"), true);
       assert.deepEqual(stories[1].implementation_contract.owned_screen_ids, ["SCR-001"]);
       assert.ok(stories[1].implementation_contract.owned_screen_files.includes("src/screens/Leads.tsx"));
       assert.ok(stories[1].implementation_contract.state_contract.length > 0);
@@ -191,11 +200,11 @@ describe("03-stories step module", () => {
         ),
         "PRD semantic action should be the primary implementation action, with DOM action ids only as mapping metadata",
       );
-      assert.equal(stories.some((s: any) => s.scope_files.includes("src/screens/ProfilePanel.tsx")), true);
-      const profileStory = stories.find((s: any) => s.scope_files.includes("src/screens/ProfilePanel.tsx"));
+      assert.equal(stories.some((s: any) => hasScopeTarget(s, "surface_component", "SCR-002")), true);
+      const profileStory = stories.find((s: any) => hasScopeTarget(s, "surface_component", "SCR-003"));
       assert.ok(profileStory.implementation_contract.owned_actions.some((action: any) => action.id === "ACT_OPEN_PROFILE"));
-      assert.equal(stories.slice(1).every((s: any) => s.scope_files.includes("src/App.tsx")), true);
-      assert.equal(stories.slice(1).every((s: any) => s.scope_files.includes("src/hooks/useAppState.ts")), true);
+      assert.equal(stories.slice(1).every((s: any) => hasSharedEditRequest(s, "route_registration")), true);
+      assert.equal(stories.slice(1).every((s: any) => hasSharedEditRequest(s, "app_shell")), true);
 	      assert.match(output, /New Lead/);
       assert.match(output, /Profile/);
       assert.equal(output.includes("CounterPanel"), false);
@@ -268,12 +277,11 @@ describe("03-stories step module", () => {
       assert.doesNotMatch(allText, /profile\/account/i);
       assert.doesNotMatch(allText, /Settings, profile and account screens/);
       assert.doesNotMatch(allText, /next piece|tetromino|activePiece|nextPiece/i);
-      const scorePanelStory = stories.find((s: any) => s.scope_files.includes("src/screens/ScorePanel.tsx"));
+      const scorePanelStory = stories.find((s: any) => hasScopeTarget(s, "surface_component", "SCR-002"));
       assert.ok(scorePanelStory, "expected a dedicated ScorePanel story");
-      assert.equal(scorePanelStory.scope_files.includes("src/screens/ScorePanel.tsx"), true);
-      assert.equal(scorePanelStory.scope_files.includes("src/App.tsx"), true);
-      assert.equal(scorePanelStory.scope_files.includes("src/hooks/useAppState.ts"), true);
-      assert.equal(scorePanelStory.scope_files.includes("src/types/domain.ts"), true);
+      assert.equal(hasScopeTarget(scorePanelStory, "surface_component", "SCR-002"), true);
+      assert.equal(hasSharedEditRequest(scorePanelStory, "route_registration"), true);
+      assert.equal(hasSharedEditRequest(scorePanelStory, "app_shell"), true);
       assert.match(scorePanelStory.title, /Score Panel screen$/);
       assert.doesNotMatch([
         scorePanelStory.title,
@@ -282,9 +290,9 @@ describe("03-stories step module", () => {
       ].join("\n"), /\b(game engine|keyboard|timer|persistence)\b/i);
       assert.doesNotMatch(scorePanelStory.description, /those screen/i);
       assert.match(scorePanelStory.description, /that screen/);
-      assert.equal(stories[0].scope_files.includes("src/hooks/useAppState.ts"), true);
+      assert.equal(hasScopeTarget(stories[0], "state_store"), true);
       assert.ok(stories[0].implementation_contract.state_contract.some((item: string) => /gameplay/i.test(item)));
-      assert.equal(stories[0].shared_files.includes("src/screens/GameBoard.tsx"), true);
+      assert.equal(hasScopeTarget(stories[0], "game_runtime"), true);
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }

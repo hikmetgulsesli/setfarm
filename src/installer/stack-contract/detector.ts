@@ -13,10 +13,14 @@ const TASK_HINTS: Array<{ packId: StackPackId; pattern: RegExp; value: string; w
   { packId: "vite-react-web-app", pattern: /\b(vite|react spa|single page app|single-page app)\b/i, value: "task mentions Vite or React SPA", weight: 55 },
   { packId: "static-html-site", pattern: /\b(static html|plain html|single html|landing page|marketing page)\b/i, value: "task mentions static HTML or landing page", weight: 55 },
   { packId: "browser-game-canvas", pattern: /\b(browser game|arcade|tetris|pong|breakout|canvas game|game loop|playable game|keyboard controls|touch controls)\b/i, value: "task mentions browser game behavior", weight: 85 },
+  { packId: "node-express-api", pattern: /\b(node express|express api|node api|backend api|rest api)\b/i, value: "task mentions Node/Express API", weight: 70 },
+  { packId: "node-cli", pattern: /\b(node cli|typescript cli|commander|yargs)\b/i, value: "task mentions Node CLI", weight: 65 },
   { packId: "python-cli", pattern: /\b(python cli|command line|terminal tool|automation script)\b/i, value: "task mentions Python CLI", weight: 65 },
   { packId: "python-web", pattern: /\b(fastapi|flask|django|python web|api server)\b/i, value: "task mentions Python web server", weight: 70 },
+  { packId: "react-native-expo", pattern: /\b(expo|react native|react-native)\b/i, value: "task mentions React Native/Expo", weight: 80 },
   { packId: "android-app", pattern: /\b(android|kotlin|jetpack compose|gradle)\b/i, value: "task mentions Android", weight: 85 },
   { packId: "ios-app", pattern: /\b(ios|iphone|swiftui|swift|xcode|uikit)\b/i, value: "task mentions iOS", weight: 85 },
+  { packId: "desktop-electron", pattern: /\b(electron|desktop app|desktop-electron)\b/i, value: "task mentions Electron desktop", weight: 75 },
 ];
 
 export function detectStackCandidates(repoPath?: string, taskText = ""): StackCandidate[] {
@@ -117,6 +121,11 @@ function collectPackageEvidence(pkg: PackageJson, add: (packId: StackPackId, evi
   if (deps.vite) add("vite-react-web-app", dependencyEvidence("vite", 65));
   if (deps.react) add("vite-react-web-app", dependencyEvidence("react", 25));
   if (deps["@vitejs/plugin-react"]) add("vite-react-web-app", dependencyEvidence("@vitejs/plugin-react", 35));
+  if (deps.express) add("node-express-api", dependencyEvidence("express", 85));
+  if (deps.commander || deps.yargs) add("node-cli", dependencyEvidence("commander/yargs", 75));
+  if (deps.expo) add("react-native-expo", dependencyEvidence("expo", 95));
+  if (deps["react-native"]) add("react-native-expo", dependencyEvidence("react-native", 65));
+  if (deps.electron) add("desktop-electron", dependencyEvidence("electron", 90));
   if (deps.fastapi) add("python-web", dependencyEvidence("fastapi", 80));
   if (deps.flask) add("python-web", dependencyEvidence("flask", 80));
   if (deps.django) add("python-web", dependencyEvidence("django", 80));
@@ -124,6 +133,8 @@ function collectPackageEvidence(pkg: PackageJson, add: (packId: StackPackId, evi
   const scripts = pkg.scripts ?? {};
   if (/\bnext\b/.test(Object.values(scripts).join("\n"))) add("nextjs-web-app", scriptEvidence("next script", 25));
   if (/\bvite\b/.test(Object.values(scripts).join("\n"))) add("vite-react-web-app", scriptEvidence("vite script", 25));
+  if (/\bexpo\b/.test(Object.values(scripts).join("\n"))) add("react-native-expo", scriptEvidence("expo script", 35));
+  if (/\belectron\b/.test(Object.values(scripts).join("\n"))) add("desktop-electron", scriptEvidence("electron script", 35));
 }
 
 function collectPythonFrameworkEvidence(repoPath: string, add: (packId: StackPackId, evidence: StackEvidence) => void): void {

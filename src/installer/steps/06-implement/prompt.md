@@ -45,6 +45,15 @@ from the real repository structure, but do not drop any listed behavior.
 
 {{STORY_IMPLEMENTATION_CONTRACT}}
 
+## Implement Context
+This is the Setfarm machine handoff assembled after setup-build. It resolves
+logical STORY scope targets into real repo paths and grants shared edits for
+this story only. Treat this as the source of truth for file ownership.
+
+IMPLEMENT_CONTEXT_PATH: {{IMPLEMENT_CONTEXT_PATH}}
+
+{{IMPLEMENT_CONTEXT}}
+
 ## Project
 {{TASK}}
 
