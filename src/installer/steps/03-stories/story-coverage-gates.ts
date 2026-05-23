@@ -21,6 +21,14 @@ function contractActions(contract: Record<string, any> | null): any[] {
     : [];
 }
 
+function contractSurfaceIds(contract: Record<string, any> | null): string[] {
+  return Array.isArray(contract?.owned_surface_ids)
+    ? contract.owned_surface_ids
+      .filter((item: any): item is string => typeof item === "string" && item.trim().length > 0)
+      .map((item: string) => item.toUpperCase())
+    : [];
+}
+
 function actionPair(surfaceId: string | undefined, actionId: string): string {
   return `${String(surfaceId || "").toUpperCase()}:${String(actionId || "").toUpperCase()}`;
 }
@@ -41,14 +49,19 @@ export function detectPrdActionCoverageGaps(
 
   for (const story of stories) {
     const contract = parseImplementationContract(story.implementation_contract);
+    const ownedSurfaceIds = contractSurfaceIds(contract);
     for (const action of contractActions(contract)) {
       const id = typeof action.id === "string" ? action.id.toUpperCase() : "";
       if (!id.startsWith("ACT_")) continue;
       const surfaceId = typeof action.surface_id === "string" ? action.surface_id.toUpperCase() : "";
-      const exactKey = actionPair(surfaceId, id);
+      const matchingRequiredKeys = [...required.keys()].filter((key) => key.endsWith(`:${id}`));
       const fallbackKeys = surfaceId
-        ? [exactKey]
-        : [...required.keys()].filter((key) => key.endsWith(`:${id}`));
+        ? [actionPair(surfaceId, id)]
+        : ownedSurfaceIds.length === 1
+          ? [actionPair(ownedSurfaceIds[0], id)]
+          : matchingRequiredKeys.length === 1
+            ? matchingRequiredKeys
+            : [];
       for (const key of fallbackKeys) {
         if (!required.has(key)) continue;
         const current = owners.get(key) || [];

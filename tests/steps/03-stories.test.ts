@@ -15,6 +15,7 @@ import {
   buildAutoStoriesOutput,
   buildSingleStoryScopeFiles,
 } from "../../dist/installer/steps/03-stories/preclaim.js";
+import { buildOwnedActionsForScreens } from "../../dist/installer/steps/03-stories/action-control-mapper.js";
 import {
   detectStorySemanticDrift,
   detectImplementationContractGaps,
@@ -77,6 +78,40 @@ describe("03-stories step module", () => {
     assert.match(dbSource, /implementation_contract TEXT/);
     assert.match(storyOpsSource, /normalizeImplementationContract/);
     assert.match(storyOpsSource, /implementation_contract, created_at, updated_at/);
+  });
+
+  it("does not require owned_screen_ids for app-shell-only logical targets", () => {
+    const gap = detectImplementationContractGaps([
+      {
+        story_id: "US-001",
+        screens: JSON.stringify([]),
+        scope_files: JSON.stringify([]),
+        scope_targets: JSON.stringify([
+          { role: "app_shell", domain_slug: "surfacegate-desk", resolved_path: null },
+          { role: "state_store", domain_slug: "surfacegate-desk", resolved_path: null },
+          { role: "fixture_data", domain_slug: "surfacegate-desk", entity_names: ["Ticket"], resolved_path: null },
+        ]),
+        implementation_contract: JSON.stringify({
+          owned_surface_ids: [],
+          owned_screen_ids: [],
+          owned_screen_files: [],
+          owned_actions: [
+            {
+              id: "ACT_APP_STATE_BOOTSTRAP",
+              trigger: "Application load",
+              state_change: "Initialize shared app state.",
+              ui_feedback: "Actual product workflow is visible.",
+            },
+          ],
+          state_contract: ["Own shared app shell state."],
+          persistence_contract: ["Persist local data required by PRD."],
+          navigation_contract: ["Expose stable navigation handlers."],
+          test_contract: ["window.app exposes deterministic state."],
+        }),
+      } as any,
+    ]);
+
+    assert.equal(gap, null);
   });
 
   it("extracts explicit English story caps", () => {
@@ -449,6 +484,80 @@ describe("03-stories step module", () => {
       }),
     }]);
     assert.equal(ok, null);
+  });
+
+  it("keeps repeated PRD action IDs distinct by surface", () => {
+    const repo = mkdtempSync(path.join(tmpdir(), "setfarm-actions-"));
+    try {
+      const actions = buildOwnedActionsForScreens(repo, ["SCR-001"], [
+        {
+          id: "ACT_SEARCH_RECORDS",
+          surfaceId: "SURF_TICKET_OPERATIONS",
+          surfaceName: "Ticket Operations",
+          controlHint: "search_input_persistent",
+        },
+        {
+          id: "ACT_SEARCH_RECORDS",
+          surfaceId: "SURF_AGENT_WORKLOAD",
+          surfaceName: "Agent Workload",
+          controlHint: "search_input_persistent",
+        },
+      ]);
+
+      assert.equal(actions.filter((action) => action.id === "ACT_SEARCH_RECORDS").length, 2);
+      assert.deepEqual(
+        actions.filter((action) => action.id === "ACT_SEARCH_RECORDS").map((action) => action.surface_id).sort(),
+        ["SURF_AGENT_WORKLOAD", "SURF_TICKET_OPERATIONS"],
+      );
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("does not let ambiguous action IDs cover every surface without surface binding", () => {
+    const context = {
+      prd: [
+        "4. Product Surfaces",
+        "SURFACE: SURF_TICKET_OPERATIONS",
+        "- Name: Ticket Operations",
+        "- Permitted Actions: ACT_SEARCH_RECORDS (control_hint: search_input_persistent)",
+        "SURFACE: SURF_AGENT_WORKLOAD",
+        "- Name: Agent Workload",
+        "- Permitted Actions: ACT_SEARCH_RECORDS (control_hint: search_input_persistent)",
+      ].join("\n"),
+    };
+
+    const ambiguous = detectPrdActionCoverageGaps(context, [{
+      story_id: "US-002",
+      implementation_contract: JSON.stringify({
+        owned_screen_ids: ["SCR-001"],
+        owned_screen_files: ["src/screens/TicketOperations.tsx"],
+        owned_actions: [{ id: "ACT_SEARCH_RECORDS" }],
+        state_contract: ["query"],
+        persistence_contract: ["none"],
+        navigation_contract: ["same screen"],
+        test_contract: ["filters visible list"],
+      }),
+    }]);
+    assert.match(ambiguous || "", /SURF_TICKET_OPERATIONS:ACT_SEARCH_RECORDS/);
+    assert.match(ambiguous || "", /SURF_AGENT_WORKLOAD:ACT_SEARCH_RECORDS/);
+
+    const bound = detectPrdActionCoverageGaps(context, [{
+      story_id: "US-002",
+      implementation_contract: JSON.stringify({
+        owned_screen_ids: ["SCR-001"],
+        owned_screen_files: ["src/screens/TicketOperations.tsx"],
+        owned_actions: [
+          { id: "ACT_SEARCH_RECORDS", surface_id: "SURF_TICKET_OPERATIONS" },
+          { id: "ACT_SEARCH_RECORDS", surface_id: "SURF_AGENT_WORKLOAD" },
+        ],
+        state_contract: ["query"],
+        persistence_contract: ["none"],
+        navigation_contract: ["same screen"],
+        test_contract: ["filters visible list"],
+      }),
+    }]);
+    assert.equal(bound, null);
   });
 
   it("builds a UI behavior contract from DESIGN_DOM", () => {

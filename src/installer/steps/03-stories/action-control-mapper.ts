@@ -168,8 +168,12 @@ export function buildOwnedActionsForScreens(
 
   const seen = new Set<string>();
   return [...semanticContracts, ...fallbackContracts].filter((action) => {
-    if (seen.has(action.id)) return false;
-    seen.add(action.id);
+    const surfaceId = "surface_id" in action && typeof action.surface_id === "string"
+      ? action.surface_id
+      : "";
+    const key = `${surfaceId}:${action.id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
     return true;
   });
 }

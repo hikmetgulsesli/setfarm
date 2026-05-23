@@ -53,6 +53,7 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
   const { runId, parsed, context } = ctx;
 
   // Stamp parsed values into context for downstream steps
+  if (parsed.stitch_project_id) context["stitch_project_id"] = parsed.stitch_project_id;
   if (parsed.device_type) context["device_type"] = parsed.device_type.toUpperCase();
   if (parsed.design_system) context["design_system"] = parsed.design_system;
   if (parsed.screen_map) context["screen_map"] = parsed.screen_map;

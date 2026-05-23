@@ -271,6 +271,23 @@ function contractActions(contract: Record<string, any>): any[] {
     : [];
 }
 
+function hasOwnedScreenScopeTarget(raw: string | null | undefined): boolean {
+  if (!raw) return false;
+  try {
+    const parsed = JSON.parse(raw);
+    const targets = Array.isArray(parsed) ? parsed : [parsed];
+    return targets.some((target: any) =>
+      target
+      && typeof target === "object"
+      && target.role === "surface_component"
+      && typeof target.screen_id === "string"
+      && target.screen_id.trim().length > 0
+    );
+  } catch {
+    return /"role"\s*:\s*"surface_component"/.test(String(raw));
+  }
+}
+
 export function detectImplementationContractGaps(stories: SemanticStoryInput[]): string | null {
   const failures: string[] = [];
   for (const story of stories) {
@@ -286,7 +303,9 @@ export function detectImplementationContractGaps(stories: SemanticStoryInput[]):
     const scopeTargetsText = parseStoryJsonField(story.scope_targets);
     const ownedScreenIds = contractStringArray(contract, "owned_screen_ids");
     const ownedScreenFiles = contractStringArray(contract, "owned_screen_files");
-    const hasScreens = screens.length > 0 || scopeFiles.some((file) => file.startsWith("src/screens/")) || scopeTargetsText.length > 0;
+    const hasScreens = screens.length > 0
+      || scopeFiles.some((file) => file.startsWith("src/screens/"))
+      || hasOwnedScreenScopeTarget(story.scope_targets);
 
     if (hasScreens) {
       if (ownedScreenIds.length === 0) failures.push(`${storyId}: contract missing owned_screen_ids`);

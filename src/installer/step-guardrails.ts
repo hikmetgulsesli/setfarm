@@ -203,7 +203,24 @@ export async function processDesignCompletion(
 ): Promise<string | null> {
   // v12.0: Design step is cloud-only. Validate SCREENS_GENERATED and STITCH_PROJECT_ID.
   const screensGenerated = parseInt(context["screens_generated"] || "-1", 10);
-  const stitchProjectId = context["stitch_project_id"] || "";
+  let stitchProjectId = context["stitch_project_id"] || "";
+  const repoPathForStitch = context["repo"] || context["REPO"] || "";
+  if (repoPathForStitch) {
+    try {
+      const dotStitchPath = path.join(repoPathForStitch, ".stitch");
+      if (fs.existsSync(dotStitchPath)) {
+        const dotStitch = JSON.parse(fs.readFileSync(dotStitchPath, "utf-8"));
+        const fileProjectId = String(dotStitch?.projectId || "").trim();
+        if (fileProjectId && fileProjectId !== stitchProjectId) {
+          logger.warn(`[design-guardrail] Context Stitch project ${stitchProjectId || "(empty)"} differed from repo .stitch ${fileProjectId}; using repo .stitch`, { runId });
+          stitchProjectId = fileProjectId;
+          context["stitch_project_id"] = fileProjectId;
+        }
+      }
+    } catch (e: any) {
+      logger.warn(`[design-guardrail] Could not verify repo .stitch project id: ${String(e?.message || e).slice(0, 160)}`, { runId });
+    }
+  }
   // STITCH_PROJECT_ID no longer required from agent — pipeline auto-creates
   if (!stitchProjectId) {
     logger.info(`[design-guardrail] No STITCH_PROJECT_ID — pipeline will auto-create`, { runId });

@@ -4529,6 +4529,23 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
       }
     }
 
+    if (dRepo) {
+      try {
+        const dotStitchPath = path.join(dRepo, ".stitch");
+        if (fs.existsSync(dotStitchPath)) {
+          const dotStitch = JSON.parse(fs.readFileSync(dotStitchPath, "utf-8"));
+          const fileProjectId = String(dotStitch?.projectId || "").trim();
+          if (fileProjectId && fileProjectId !== dProjId) {
+            logger.warn(`[design-download] Context Stitch project ${dProjId || "(empty)"} differed from repo .stitch ${fileProjectId}; using repo .stitch`, { runId: step.run_id });
+            dProjId = fileProjectId;
+            context["stitch_project_id"] = fileProjectId;
+          }
+        }
+      } catch (e) {
+        logger.warn(`[design-download] Could not verify repo .stitch project id: ${String(e).slice(0, 160)}`, { runId: step.run_id });
+      }
+    }
+
     if (dRepo && dProjId && dHasScreens) {
       const dStitchDir = path.join(dRepo, "stitch");
       // Only generate if no HTML exists (skip if already downloaded by pre-claim)
@@ -4589,14 +4606,21 @@ ${prd}`;
         }
 
         // DOWNLOAD: Batch download all screens (HTML + PNG + manifest + tokens)
-        logger.info(`[design-download] Downloading all screens from Stitch project ${dProjId}`, { runId: step.run_id });
-        try {
-          const dlOut = execFileSync("node", [stitchScript, "download-all", dProjId, dStitchDir], { encoding: "utf-8", timeout: 180000, cwd: dRepo });
-          let dlResult: any = {};
-          try { dlResult = JSON.parse(dlOut); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
-          logger.info(`[design-download] Downloaded ${dlResult.downloaded || 0}/${dlResult.total || 0} screens`, { runId: step.run_id });
-        } catch (dlErr) {
-          logger.warn(`[design-download] Batch download failed: ${dlErr}`, { runId: step.run_id });
+        const expectedHtmlCount = screenMapArr.length || dScreenCount;
+        const currentHtmlCount = fs.existsSync(dStitchDir)
+          ? fs.readdirSync(dStitchDir).filter((f: string) => f.endsWith(".html")).length : 0;
+        if (expectedHtmlCount > 0 && currentHtmlCount >= expectedHtmlCount) {
+          logger.info(`[design-download] Skip download; ${currentHtmlCount}/${expectedHtmlCount} HTML files already present from design preclaim`, { runId: step.run_id });
+        } else {
+          logger.info(`[design-download] Downloading all screens from Stitch project ${dProjId}`, { runId: step.run_id });
+          try {
+            const dlOut = execFileSync("node", [stitchScript, "download-all", dProjId, dStitchDir], { encoding: "utf-8", timeout: 180000, cwd: dRepo });
+            let dlResult: any = {};
+            try { dlResult = JSON.parse(dlOut); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
+            logger.info(`[design-download] Downloaded ${dlResult.downloaded || 0}/${dlResult.total || 0} screens`, { runId: step.run_id });
+          } catch (dlErr) {
+            logger.warn(`[design-download] Batch download failed: ${dlErr}`, { runId: step.run_id });
+          }
         }
 
         // GUARD: Verify HTML files actually exist after download

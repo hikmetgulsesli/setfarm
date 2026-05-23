@@ -1,6 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
+import crypto from "node:crypto";
 import { execFile } from "node:child_process";
 import type { ClaimContext } from "../types.js";
 import { logger } from "../../../lib/logger.js";
@@ -46,6 +47,253 @@ function isStitchProviderUnavailable(text: unknown): boolean {
     /\bquota\b/.test(normalized) ||
     /\b503\b/.test(normalized)
   );
+}
+
+export type DesignFailureOwner =
+  | "stitch_api"
+  | "network_or_stitch_api"
+  | "setfarm_configuration"
+  | "setfarm_local_system"
+  | "prompt_or_design_contract"
+  | "stitch_empty_project"
+  | "unknown";
+
+export type DesignFailureCategory =
+  | "authentication"
+  | "quota_or_rate_limit"
+  | "provider_unavailable"
+  | "timeout"
+  | "network_fetch"
+  | "empty_project"
+  | "configuration"
+  | "local_filesystem"
+  | "surface_mismatch"
+  | "unknown";
+
+export type DesignFailureClassification = {
+  category: DesignFailureCategory;
+  owner: DesignFailureOwner;
+  retryable: boolean;
+  apiRelated: boolean;
+  setfarmBugLikely: boolean;
+  promptRelated: boolean;
+  confidence: "high" | "medium" | "low";
+  reason: string;
+};
+
+type DesignFailureReport = {
+  schemaVersion: 1;
+  runId: string;
+  stepId: string;
+  occurredAt: string;
+  projectId: string;
+  activeProjectId?: string;
+  phase: string;
+  operation: string;
+  attempt?: number;
+  maxAttempts?: number;
+  stageIndex?: number;
+  stageCount?: number;
+  surfaceIds?: string[];
+  diagnostic: string;
+  classification: DesignFailureClassification;
+  fingerprint: string;
+  htmlCount?: number;
+  screensGenerated?: number;
+  reportPath?: string;
+};
+
+export function classifyDesignFailure(diagnostic: unknown, phase = ""): DesignFailureClassification {
+  const text = redactDiagnosticText(diagnostic);
+  const normalized = text.toLowerCase();
+  const phaseText = phase.toLowerCase();
+
+  if (/\b(?:401|403|unauthorized|permission denied|forbidden|invalid api key|api key rejected|auth(?:entication)? failed)\b/.test(normalized)) {
+    return {
+      category: "authentication",
+      owner: "setfarm_configuration",
+      retryable: false,
+      apiRelated: true,
+      setfarmBugLikely: false,
+      promptRelated: false,
+      confidence: "high",
+      reason: "The Stitch request reached an authenticated API boundary but credentials or permissions were rejected.",
+    };
+  }
+
+  if (/\b(?:429|quota|rate limit(?:ed)?|resource exhausted)\b/.test(normalized)) {
+    return {
+      category: "quota_or_rate_limit",
+      owner: "stitch_api",
+      retryable: true,
+      apiRelated: true,
+      setfarmBugLikely: false,
+      promptRelated: false,
+      confidence: "high",
+      reason: "The Stitch/Gemini provider reported quota, rate-limit, or resource exhaustion.",
+    };
+  }
+
+  if (/\b(?:503|service is currently unavailable|service unavailable|temporarily unavailable|provider unavailable|stitch provider unavailable)\b/.test(normalized)) {
+    return {
+      category: "provider_unavailable",
+      owner: "stitch_api",
+      retryable: true,
+      apiRelated: true,
+      setfarmBugLikely: false,
+      promptRelated: false,
+      confidence: "high",
+      reason: "The provider reported a temporary unavailable state.",
+    };
+  }
+
+  if (/\b(?:504|deadline exceeded|timed? ?out|timeout|operation was aborted|aborted due to timeout)\b/.test(normalized)) {
+    return {
+      category: "timeout",
+      owner: "network_or_stitch_api",
+      retryable: true,
+      apiRelated: true,
+      setfarmBugLikely: false,
+      promptRelated: false,
+      confidence: "high",
+      reason: "The generation or download operation exceeded its timeout/deadline.",
+    };
+  }
+
+  if (/\b(?:fetch failed|econnreset|enotfound|eai_again|socket hang up|network error|tls|connection refused)\b/.test(normalized)) {
+    return {
+      category: "network_fetch",
+      owner: "network_or_stitch_api",
+      retryable: true,
+      apiRelated: true,
+      setfarmBugLikely: false,
+      promptRelated: false,
+      confidence: "medium",
+      reason: "The low-level fetch/network call failed before Setfarm received a structured Stitch result.",
+    };
+  }
+
+  if (/\b(?:no screens found|0 valid html|0 html|0 screens|produced 0 valid html|generated 0 screens)\b/.test(normalized)) {
+    return {
+      category: "empty_project",
+      owner: "stitch_empty_project",
+      retryable: true,
+      apiRelated: true,
+      setfarmBugLikely: false,
+      promptRelated: false,
+      confidence: phaseText.includes("download") ? "high" : "medium",
+      reason: "Stitch project exists but the API returned no downloadable screens for that project.",
+    };
+  }
+
+  if (/\b(?:design_surface_mismatch|missing required product surfaces|unexpected screens|out of scope)\b/.test(normalized)) {
+    return {
+      category: "surface_mismatch",
+      owner: "prompt_or_design_contract",
+      retryable: true,
+      apiRelated: false,
+      setfarmBugLikely: false,
+      promptRelated: true,
+      confidence: "high",
+      reason: "Generated screens did not satisfy the Product Surface contract.",
+    };
+  }
+
+  if (/\b(?:enoent|eacces|eperm|no such file|permission denied|read-only file system|write failed)\b/.test(normalized)) {
+    return {
+      category: "local_filesystem",
+      owner: "setfarm_local_system",
+      retryable: false,
+      apiRelated: false,
+      setfarmBugLikely: true,
+      promptRelated: false,
+      confidence: "high",
+      reason: "Local filesystem or process execution failed before/after the provider call.",
+    };
+  }
+
+  if (/\b(?:stitch_api_key_required|missing stitch_api_key|no stitch api key)\b/.test(normalized)) {
+    return {
+      category: "configuration",
+      owner: "setfarm_configuration",
+      retryable: false,
+      apiRelated: false,
+      setfarmBugLikely: false,
+      promptRelated: false,
+      confidence: "high",
+      reason: "Design generation cannot start because the Stitch API key is missing from Setfarm configuration.",
+    };
+  }
+
+  return {
+    category: "unknown",
+    owner: "unknown",
+    retryable: true,
+    apiRelated: false,
+    setfarmBugLikely: false,
+    promptRelated: false,
+    confidence: "low",
+    reason: "The diagnostic did not match a known Stitch/Setfarm failure signature.",
+  };
+}
+
+function designFailureFingerprint(report: Omit<DesignFailureReport, "fingerprint" | "reportPath">): string {
+  return crypto
+    .createHash("sha256")
+    .update([
+      report.phase,
+      report.operation,
+      report.projectId,
+      report.classification.category,
+      report.diagnostic.slice(0, 500),
+      String(report.stageIndex || ""),
+      (report.surfaceIds || []).join(","),
+    ].join("\n"))
+    .digest("hex")
+    .slice(0, 16);
+}
+
+function writeDesignFailureReport(
+  ctx: ClaimContext,
+  repo: string,
+  input: Omit<DesignFailureReport, "schemaVersion" | "runId" | "stepId" | "occurredAt" | "classification" | "fingerprint" | "reportPath"> & {
+    classification?: DesignFailureClassification;
+  },
+): DesignFailureReport | null {
+  if (!repo) return null;
+  const diagnostic = redactDiagnosticText(input.diagnostic).slice(0, 2000);
+  const classification = input.classification || classifyDesignFailure(diagnostic, input.phase);
+  const baseReport = {
+    schemaVersion: 1 as const,
+    runId: ctx.runId,
+    stepId: ctx.stepId,
+    occurredAt: new Date().toISOString(),
+    ...input,
+    diagnostic,
+    classification,
+  };
+  const report: DesignFailureReport = {
+    ...baseReport,
+    fingerprint: designFailureFingerprint(baseReport),
+  };
+
+  try {
+    const dir = path.join(repo, ".setfarm");
+    fs.mkdirSync(dir, { recursive: true });
+    const latestPath = path.join(dir, "DESIGN_FAILURE.latest.json");
+    const jsonlPath = path.join(dir, "design-failures.jsonl");
+    report.reportPath = latestPath;
+    fs.writeFileSync(latestPath, JSON.stringify(report, null, 2));
+    fs.appendFileSync(jsonlPath, JSON.stringify(report) + "\n");
+    ctx.context["design_failure_report_path"] = latestPath;
+    ctx.context["design_failure_category"] = classification.category;
+    ctx.context["design_failure_owner"] = classification.owner;
+    ctx.context["design_failure_summary"] = `${classification.category}/${classification.owner}: ${classification.reason}`;
+  } catch (e) {
+    logger.warn(`[module:design preclaim] failed to write DESIGN_FAILURE report: ${String(e).slice(0, 200)}`, { runId: ctx.runId });
+  }
+
+  return report;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -835,6 +1083,7 @@ async function generateStitchScreensInSingleBatch(
   if (surfaces.length === 0) return { completed: false, providerUnavailable: false, diagnostic: "No Product Surfaces declared" };
   const retryAttempts = boundedIntEnv("SETFARM_STITCH_BATCH_RETRY_ATTEMPTS", 3, 1, 5);
   const retryBaseDelayMs = boundedIntEnv("SETFARM_STITCH_BATCH_RETRY_BASE_DELAY_MS", 45000, 5000, 180000);
+  const scriptRetryAttempts = boundedIntEnv("SETFARM_STITCH_SCRIPT_RETRY_ATTEMPTS", 1, 1, 3);
   const stageSize = boundedIntEnv("SETFARM_STITCH_BATCH_STAGE_SIZE", 5, 1, 5);
   const stages: ProductSurface[][] = [];
   for (let index = 0; index < surfaces.length; index += stageSize) {
@@ -857,6 +1106,10 @@ async function generateStitchScreensInSingleBatch(
         const genOut = await execFileText("node", [stitchScript, "generate-all-screens", projId, promptFile, deviceType, "GEMINI_3_1_PRO"], {
           timeout: 660000,
           cwd: repo,
+          env: {
+            ...process.env,
+            STITCH_GENERATE_ALL_RETRY_ATTEMPTS: String(scriptRetryAttempts),
+          },
           onProgress: () => recordPreClaimProgress(ctx, `Design preclaim: still generating Stitch batch ${stageIndex + 1}/${stages.length} (attempt ${attempt}/${retryAttempts})`),
         });
 
@@ -869,6 +1122,19 @@ async function generateStitchScreensInSingleBatch(
           const textSample = redactDiagnosticText(genResult.diagnostic.textSample).slice(0, 500);
           diagnostic = textSample || shape || diagnostic;
           providerUnavailable = providerUnavailable || isStitchProviderUnavailable(textSample || shape);
+          writeDesignFailureReport(ctx, repo, {
+            projectId: projId,
+            phase: "generate_batch",
+            operation: "stitch.generate_all_screens",
+            attempt,
+            maxAttempts: retryAttempts,
+            stageIndex: stageIndex + 1,
+            stageCount: stages.length,
+            surfaceIds: stageSurfaces.map((surface) => surface.surfaceId),
+            diagnostic: diagnostic || "Stitch generated 0 screens",
+            screensGenerated: 0,
+            htmlCount: countValidStitchHtml(stitchDir),
+          });
           await recordPreClaimProgress(ctx, `Design preclaim: Stitch batch ${stageIndex + 1}/${stages.length} generated 0 screens on attempt ${attempt}/${retryAttempts}; response shape ${shape}`);
           if (providerUnavailable && attempt < retryAttempts) {
             const delayMs = retryBaseDelayMs * attempt;
@@ -887,6 +1153,22 @@ async function generateStitchScreensInSingleBatch(
         diagnostic = failureDetail || diagnostic;
         providerUnavailable = providerUnavailable || isStitchProviderUnavailable(failureDetail);
         logger.warn(`[module:design preclaim] Stitch batch ${stageIndex + 1}/${stages.length} failed on attempt ${attempt}/${retryAttempts}: ${failureDetail.slice(0, 200)}`, { runId: ctx.runId });
+        const report = writeDesignFailureReport(ctx, repo, {
+          projectId: projId,
+          phase: "generate_batch",
+          operation: "stitch.generate_all_screens",
+          attempt,
+          maxAttempts: retryAttempts,
+          stageIndex: stageIndex + 1,
+          stageCount: stages.length,
+          surfaceIds: stageSurfaces.map((surface) => surface.surfaceId),
+          diagnostic: failureDetail || "unknown Stitch batch generation failure",
+          screensGenerated: 0,
+          htmlCount: countValidStitchHtml(stitchDir),
+        });
+        if (report) {
+          await recordPreClaimProgress(ctx, `Design preclaim: failure classified as ${report.classification.category}/${report.classification.owner} (${report.classification.confidence})`);
+        }
         await recordPreClaimProgress(ctx, `Design preclaim: Stitch batch ${stageIndex + 1}/${stages.length} failed on attempt ${attempt}/${retryAttempts}: ${failureDetail || "unknown error"}`);
         if (providerUnavailable && attempt < retryAttempts) {
           const delayMs = retryBaseDelayMs * attempt;
@@ -1203,6 +1485,8 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       }
       ctx.context["design_asset_error"] = "";
       ctx.context["screens_generated"] = "0";
+      ctx.context["stitch_project_id"] = "";
+      ctx.context["STITCH_PROJECT_ID"] = "";
       fs.mkdirSync(stitchDir, { recursive: true });
     } catch (e) {
       logger.warn(`[module:design preclaim] failed Stitch project reset failed: ${String(e).slice(0, 200)}`, { runId: ctx.runId });
@@ -1286,6 +1570,19 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
           if (isPreclaimCancelledError(e)) return;
           ensureDiagnostic = redactDiagnosticText(e).slice(0, 500) || "unknown ensure-project error";
           logger.warn(`[module:design preclaim] ensure-project failed (attempt ${attempt + 1}/${ensureAttempts}): ${ensureDiagnostic.slice(0, 200)}`, { runId: ctx.runId });
+          const report = writeDesignFailureReport(ctx, repo, {
+            projectId: projId,
+            phase: "ensure_project",
+            operation: "stitch.ensure_project",
+            attempt: attempt + 1,
+            maxAttempts: ensureAttempts,
+            diagnostic: ensureDiagnostic,
+            screensGenerated: 0,
+            htmlCount: countValidStitchHtml(stitchDir),
+          });
+          if (report) {
+            await recordPreClaimProgress(ctx, `Design preclaim: failure classified as ${report.classification.category}/${report.classification.owner} (${report.classification.confidence})`);
+          }
           await recordPreClaimProgress(ctx, `Design preclaim: Stitch project ensure failed on attempt ${attempt + 1}/${ensureAttempts}: ${ensureDiagnostic}`);
         }
         if (!projId && attempt < ensureAttempts - 1) {
@@ -1309,11 +1606,27 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       const suffix = diagnostic ? ` Last Stitch diagnostic: ${diagnostic.slice(0, 650)}` : "";
       const error = `DESIGN_STITCH_PROJECT_UNAVAILABLE: STITCH_API_KEY is configured but Setfarm could not create or load a Stitch project after retries.${suffix}`;
       logger.warn(`[module:design preclaim] ${error}`, { runId: ctx.runId });
+      writeDesignFailureReport(ctx, repo, {
+        projectId: projId,
+        phase: "ensure_project",
+        operation: "stitch.ensure_project",
+        diagnostic: error,
+        screensGenerated: 0,
+        htmlCount: countValidStitchHtml(stitchDir),
+      });
       await failDesignPreclaim(ctx, error, { terminal: true });
       return;
     }
     const error = "DESIGN_STITCH_API_KEY_REQUIRED: Stitch design generation requires STITCH_API_KEY; local fallback design generation is disabled.";
     logger.warn(`[module:design preclaim] ${error}`, { runId: ctx.runId });
+    writeDesignFailureReport(ctx, repo, {
+      projectId: projId,
+      phase: "configuration",
+      operation: "setfarm.require_stitch_api_key",
+      diagnostic: error,
+      screensGenerated: 0,
+      htmlCount: countValidStitchHtml(stitchDir),
+    });
     await failDesignPreclaim(ctx, error, { terminal: true });
     return;
   }
@@ -1328,6 +1641,14 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       if (isPreclaimCancelledError(e)) return;
       const error = redactDiagnosticText(e).slice(0, 500);
       logger.warn(`[module:design preclaim] ${error}`, { runId: ctx.runId });
+      writeDesignFailureReport(ctx, repo, {
+        projectId: projId,
+        phase: "design_markdown",
+        operation: "stitch.get_design_md",
+        diagnostic: error || "DESIGN_STITCH_DESIGN_MD_UNAVAILABLE",
+        screensGenerated: Number(ctx.context["screens_generated"] || 0),
+        htmlCount: countValidStitchHtml(stitchDir),
+      });
       await failDesignPreclaim(ctx, error || "DESIGN_STITCH_DESIGN_MD_UNAVAILABLE", { terminal: true });
       return;
     }
@@ -1361,6 +1682,17 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     lastStitchDiagnostic = failureDetail;
     stitchProviderUnavailable = isStitchProviderUnavailable(failureDetail);
     logger.warn(`[module:design preclaim] generate-all-screens failed: ${failureDetail.slice(0, 200)}`, { runId: ctx.runId });
+    const report = writeDesignFailureReport(ctx, repo, {
+      projectId: projId,
+      phase: "generate_batch",
+      operation: "stitch.generate_all_screens",
+      diagnostic: failureDetail || "unknown Stitch generation failure",
+      screensGenerated: 0,
+      htmlCount: countValidStitchHtml(stitchDir),
+    });
+    if (report) {
+      await recordPreClaimProgress(ctx, `Design preclaim: failure classified as ${report.classification.category}/${report.classification.owner} (${report.classification.confidence})`);
+    }
     if (stitchProviderUnavailable) {
       await recordPreClaimProgress(ctx, `Design preclaim: Stitch provider unavailable during batch generation: ${failureDetail || "unknown error"}`);
     } else {
@@ -1391,6 +1723,19 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       const downloadDetail = redactDiagnosticText(e).slice(0, 300);
       logger.warn(`[module:design preclaim] download-all failed (attempt ${attempt + 1}/3): ${downloadDetail.slice(0, 200)}`, { runId: ctx.runId });
       lastStitchDiagnostic = downloadDetail || lastStitchDiagnostic;
+      const report = writeDesignFailureReport(ctx, repo, {
+        projectId: projId,
+        phase: "download_all",
+        operation: "stitch.download_all",
+        attempt: attempt + 1,
+        maxAttempts: downloadAttempts,
+        diagnostic: downloadDetail || "unknown Stitch download failure",
+        screensGenerated: Number(ctx.context["screens_generated"] || 0),
+        htmlCount,
+      });
+      if (report) {
+        await recordPreClaimProgress(ctx, `Design preclaim: failure classified as ${report.classification.category}/${report.classification.owner} (${report.classification.confidence})`);
+      }
       await recordPreClaimProgress(ctx, `Design preclaim: Stitch download failed on attempt ${attempt + 1}/${downloadAttempts}${downloadDetail ? `: ${downloadDetail}` : ""}`);
     }
     if (attempt < downloadAttempts - 1) {
@@ -1443,6 +1788,14 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       ? `DESIGN_STITCH_SERVICE_UNAVAILABLE: STITCH_API_KEY is configured but the Stitch provider is temporarily unavailable.${suffix}`
       : `DESIGN_STITCH_HTML_UNAVAILABLE: STITCH_API_KEY is configured but Stitch produced 0 valid HTML screens after single batch generation, download, and tracking-file recovery.${suffix}`;
     logger.warn(`[module:design preclaim] ${error}`, { runId: ctx.runId });
+    writeDesignFailureReport(ctx, repo, {
+      projectId: projId,
+      phase: "html_availability",
+      operation: "setfarm.verify_stitch_html",
+      diagnostic: error,
+      screensGenerated: Number(ctx.context["screens_generated"] || 0),
+      htmlCount,
+    });
     await failDesignPreclaim(ctx, error, { terminal: stitchProviderUnavailable });
     return;
   }
@@ -1450,6 +1803,14 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   if (htmlCount === 0) {
     const error = "DESIGN_STITCH_API_KEY_REQUIRED: Stitch design generation requires STITCH_API_KEY; local fallback design generation is disabled.";
     logger.warn(`[module:design preclaim] ${error}`, { runId: ctx.runId });
+    writeDesignFailureReport(ctx, repo, {
+      projectId: projId,
+      phase: "configuration",
+      operation: "setfarm.require_stitch_api_key",
+      diagnostic: error,
+      screensGenerated: 0,
+      htmlCount,
+    });
     await failDesignPreclaim(ctx, error, { terminal: true });
     return;
   }
@@ -1461,6 +1822,14 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       if (isPreclaimCancelledError(e)) return;
       const error = redactDiagnosticText(e).slice(0, 500);
       logger.warn(`[module:design preclaim] ${error}`, { runId: ctx.runId });
+      writeDesignFailureReport(ctx, repo, {
+        projectId: projId,
+        phase: "design_markdown",
+        operation: "stitch.get_design_md",
+        diagnostic: error || "DESIGN_STITCH_DESIGN_MD_UNAVAILABLE",
+        screensGenerated: Number(ctx.context["screens_generated"] || htmlCount),
+        htmlCount,
+      });
       await failDesignPreclaim(ctx, error || "DESIGN_STITCH_DESIGN_MD_UNAVAILABLE", { terminal: true });
       return;
     }
@@ -1517,6 +1886,15 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       ].filter(Boolean).join("; ");
       const error = `DESIGN_SURFACE_MISMATCH: Stitch output is missing required Product Surfaces after single batch generation. ${detail}. DESIGN must regenerate the whole scoped Stitch batch before stories/implementation.`;
       logger.warn(`[module:design preclaim] ${error}`, { runId: ctx.runId });
+      writeDesignFailureReport(ctx, repo, {
+        projectId: projId,
+        phase: "surface_verify",
+        operation: "setfarm.verify_product_surface_coverage",
+        diagnostic: error,
+        surfaceIds: reconciliation.missingSurfaces.map((surface) => surface.surfaceId),
+        screensGenerated: screenMap.length,
+        htmlCount: countValidStitchHtml(stitchDir),
+      });
       await failDesignPreclaim(ctx, error);
       return;
     }
@@ -1539,6 +1917,14 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   } else {
     const error = "DESIGN_ASSET_GENERATION_FAILED: Stitch generation/download produced 0 valid HTML screens; SCREEN_MAP unavailable. Do not continue to implementation without design assets.";
     logger.warn(`[module:design preclaim] ${error}`, { runId: ctx.runId });
+    writeDesignFailureReport(ctx, repo, {
+      projectId: projId,
+      phase: "screen_map",
+      operation: "setfarm.read_screen_map_from_stitch_artifacts",
+      diagnostic: error,
+      screensGenerated: 0,
+      htmlCount: countValidStitchHtml(stitchDir),
+    });
     await failDesignPreclaim(ctx, error);
     return;
   }
@@ -1587,6 +1973,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     const deviceType = ctx.context["device_type"] || "DESKTOP";
     const output = [
       "STATUS: done",
+      "STITCH_PROJECT_ID: " + (ctx.context["stitch_project_id"] || ""),
       "DEVICE_TYPE: " + deviceType,
       "DESIGN_SYSTEM: " + JSON.stringify(designSystem),
       "SCREEN_MAP: " + JSON.stringify(screenMap),

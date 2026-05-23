@@ -4,11 +4,19 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { designModule } from "../../dist/installer/steps/02-design/module.js";
-import { inferPrdScreens, manifestUsesLocalFallback, parseProductSurfaces, stitchApiKeyAvailable, surfaceCoverageMode, verifyScreenMapToSurfaces } from "../../dist/installer/steps/02-design/preclaim.js";
+import { classifyDesignFailure, inferPrdScreens, manifestUsesLocalFallback, parseProductSurfaces, stitchApiKeyAvailable, surfaceCoverageMode, verifyScreenMapToSurfaces } from "../../dist/installer/steps/02-design/preclaim.js";
 import { runModule } from "./harness.js";
 
 function designPreclaimSource(): string {
   return fs.readFileSync(path.resolve(import.meta.dirname, "../../src/installer/steps/02-design/preclaim.ts"), "utf-8");
+}
+
+function designGuardsSource(): string {
+  return fs.readFileSync(path.resolve(import.meta.dirname, "../../src/installer/steps/02-design/guards.ts"), "utf-8");
+}
+
+function stepGuardrailsSource(): string {
+  return fs.readFileSync(path.resolve(import.meta.dirname, "../../src/installer/step-guardrails.ts"), "utf-8");
 }
 
 function stepOpsSource(): string {
@@ -94,6 +102,32 @@ describe("02-design step module", () => {
     assert.match(source, /get-design-md/);
   });
 
+  it("classifies first-attempt Stitch failures for operator reporting", () => {
+    const fetchFailed = classifyDesignFailure('Generating all screens in single API call... { "error": "fetch failed" }', "generate_batch");
+    assert.equal(fetchFailed.category, "network_fetch");
+    assert.equal(fetchFailed.owner, "network_or_stitch_api");
+    assert.equal(fetchFailed.retryable, true);
+    assert.equal(fetchFailed.apiRelated, true);
+    assert.equal(fetchFailed.promptRelated, false);
+
+    const noScreens = classifyDesignFailure("No screens found for project 9734332380688899706", "download_all");
+    assert.equal(noScreens.category, "empty_project");
+    assert.equal(noScreens.owner, "stitch_empty_project");
+
+    const mismatch = classifyDesignFailure("DESIGN_SURFACE_MISMATCH: missing required Product Surfaces", "surface_verify");
+    assert.equal(mismatch.category, "surface_mismatch");
+    assert.equal(mismatch.promptRelated, true);
+  });
+
+  it("preClaim writes structured DESIGN failure reports", () => {
+    const source = designPreclaimSource();
+    assert.match(source, /DESIGN_FAILURE\.latest\.json/);
+    assert.match(source, /design-failures\.jsonl/);
+    assert.match(source, /design_failure_category/);
+    assert.match(source, /failure classified as/);
+    assert.match(source, /network_or_stitch_api/);
+  });
+
   it("preClaim keeps Stitch download and whole-batch generation behavior", () => {
     const source = designPreclaimSource();
     assert.match(source, /function generateStitchScreensInSingleBatch/);
@@ -112,14 +146,29 @@ describe("02-design step module", () => {
     assert.match(source, /Do not write 'How would you like to proceed\?'/);
     assert.match(source, /SETFARM_STITCH_BATCH_RETRY_ATTEMPTS/);
     assert.match(source, /SETFARM_STITCH_BATCH_RETRY_BASE_DELAY_MS/);
+    assert.match(source, /SETFARM_STITCH_SCRIPT_RETRY_ATTEMPTS/);
+    assert.match(source, /STITCH_GENERATE_ALL_RETRY_ATTEMPTS/);
     assert.match(source, /retrying same batch stage/);
     assert.match(source, /const downloadAttempts = stitchProviderUnavailable \? 1 : \(batchGenerationCompleted \? 3 : 1\)/);
     assert.match(source, /SETFARM_STITCH_PER_SCREEN_RECOVERY/);
     assert.match(source, /SETFARM_STITCH_PER_SCREEN_RECOVERY === "1"/);
     assert.match(source, /SETFARM_STITCH_SCREEN_BATCH_SIZE/);
     assert.match(source, /generate-screen-safe/);
+    assert.match(source, /STITCH_PROJECT_ID: /);
     assert.doesNotMatch(source, /Batch generation disabled; using per-screen Stitch generation/);
     assert.doesNotMatch(source, /generating Stitch batch chunk/);
+  });
+
+  it("design completion keeps the active Stitch project id after retry", () => {
+    const guards = designGuardsSource();
+    const stepGuardrails = stepGuardrailsSource();
+    const stepOps = stepOpsSource();
+
+    assert.match(guards, /parsed\.stitch_project_id/);
+    assert.match(stepGuardrails, /repo \.stitch/);
+    assert.match(stepGuardrails, /using repo \.stitch/);
+    assert.match(stepOps, /Context Stitch project/);
+    assert.match(stepOps, /Skip download; \$\{currentHtmlCount\}\/\$\{expectedHtmlCount\} HTML files already present/);
   });
 
   it("preClaim retries transient Stitch project ensure failures before failing design", () => {
