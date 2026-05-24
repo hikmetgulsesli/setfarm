@@ -8,6 +8,12 @@ import { resolvePlatformScript } from "../../paths.js";
 import { materializeSetupBuildContracts } from "../../setup-handoff.js";
 
 const MIN_STITCH_HTML_BYTES = 1000;
+const DESIGN_IMPORT_REPORT_REL = ".setfarm/setup/DESIGN_IMPORT_VALIDATE.json";
+const DESIGN_IMPORT_REPAIR_SUGGESTION =
+  "Inspect .setfarm/setup/DESIGN_IMPORT_VALIDATE.json, scripts/stitch-to-jsx.mjs, " +
+  "scripts/generated-screen-validator.mjs, and src/screens/*.tsx. Fix the deterministic " +
+  "Stitch-to-JSX import/conversion baseline, rerun generated-screen-validator --fix, then rerun npm run build. " +
+  "Do not pass generated-screen mechanical defects to IMPLEMENT.";
 
 function isReusableStitchHtml(filePath: string): boolean {
   try {
@@ -53,6 +59,58 @@ function formatProcessFailure(error: unknown, max = 1200): string {
   if (stdout) parts.push(`stdout:\n${stdout}`);
   if (parts.length === 0 && e?.message) parts.push(cleanProcessText(e.message));
   return parts.join("\n\n").slice(0, max);
+}
+
+function setPreclaimFailure(
+  ctx: ClaimContext,
+  message: string,
+  category = "setup_build_failure",
+  suggestion = "Repair setup/build baseline, rerun the declared build command, then complete setup-build.",
+): void {
+  const clipped = message.slice(0, 5000);
+  ctx.context["baseline_fail"] = clipped;
+  ctx.context["previous_failure"] = `SETUP_BUILD_PRECLAIM_BLOCKER:\n${clipped}`;
+  ctx.context["failure_category"] = category;
+  ctx.context["failure_suggestion"] = suggestion;
+}
+
+function summarizeDesignImportReport(repo: string, max = 1800): string {
+  const reportPath = path.join(repo, DESIGN_IMPORT_REPORT_REL);
+  if (!fs.existsSync(reportPath)) {
+    return `DESIGN_IMPORT_REPORT: ${DESIGN_IMPORT_REPORT_REL} missing`;
+  }
+
+  try {
+    const report = JSON.parse(fs.readFileSync(reportPath, "utf-8"));
+    const failures = Array.isArray(report.failedRules) ? report.failedRules : [];
+    const fixes = Array.isArray(report.fixesApplied) ? report.fixesApplied : [];
+    const lines = [
+      `DESIGN_IMPORT_REPORT: ${DESIGN_IMPORT_REPORT_REL}`,
+      `status=${String(report.status || "unknown")} fixMode=${String(report.fixMode ?? "unknown")} failures=${failures.length} fixes=${fixes.length}`,
+    ];
+
+    if (fixes.length > 0) {
+      lines.push(
+        `fixesApplied=${fixes.slice(0, 8).map((f: any) =>
+          [f.ruleId || f.code || "fix", f.file || "", f.message || ""].filter(Boolean).join(":")
+        ).join("; ")}`
+      );
+    }
+
+    for (const f of failures.slice(0, 10)) {
+      lines.push(
+        `failure=${[
+          f.code || f.ruleId || "unknown",
+          f.file || "",
+          f.message || f.details || "",
+        ].filter(Boolean).join(": ")}`
+      );
+    }
+
+    return lines.join("\n").slice(0, max);
+  } catch (e) {
+    return `DESIGN_IMPORT_REPORT: ${DESIGN_IMPORT_REPORT_REL} unreadable: ${String(e).slice(0, 300)}`;
+  }
 }
 
 function ensureTailwindV3Files(repo: string): void {
@@ -117,7 +175,12 @@ function rerunSetupRepoScaffold(ctx: ClaimContext, repo: string): boolean {
   } catch (e) {
     const details = formatProcessFailure(e, 600);
     logger.warn(`[module:setup-build preclaim] setup-repo recovery failed: ${details.slice(0, 300)}`, { runId: ctx.runId });
-    ctx.context["baseline_fail"] = `setup-repo recovery failed:\n${details}`;
+    setPreclaimFailure(
+      ctx,
+      `setup-repo recovery failed:\n${details}`,
+      "setup_repo_recovery_failure",
+      "Fix setup-repo scaffold recovery or rerun setup-repo before setup-build continues.",
+    );
     return false;
   }
 }
@@ -141,7 +204,12 @@ async function writeSetupHandoff(ctx: ClaimContext, repo: string, buildCmd: stri
       err?.suggestedRuleAddition ? `suggestedRuleAddition=${err.suggestedRuleAddition}` : "",
     ].filter(Boolean).join("\n");
     logger.warn(`[module:setup-build preclaim] setup handoff failed: ${details.slice(0, 300)}`, { runId: ctx.runId });
-    ctx.context["baseline_fail"] = details;
+    setPreclaimFailure(
+      ctx,
+      details,
+      "setup_contract_failure",
+      "Fix SETUP_CERTIFICATE/FILE_TREE_MANIFEST generation, then rerun setup-build preclaim.",
+    );
   }
 }
 
@@ -158,7 +226,12 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   if (!repo) {
     const msg = "package.json missing after setup-repo — baseline scaffold did not run";
     logger.warn(`[module:setup-build preclaim] ${msg}`, { runId: ctx.runId });
-    ctx.context["baseline_fail"] = msg;
+    setPreclaimFailure(
+      ctx,
+      msg,
+      "setup_repo_recovery_failure",
+      "Ensure setup-repo created the project scaffold before setup-build starts.",
+    );
     return;
   }
   if (!fs.existsSync(path.join(repo, "package.json"))) {
@@ -167,7 +240,14 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   if (!fs.existsSync(path.join(repo, "package.json"))) {
     const msg = "package.json missing after setup-repo — baseline scaffold did not run";
     logger.warn(`[module:setup-build preclaim] ${msg}`, { runId: ctx.runId });
-    ctx.context["baseline_fail"] ||= msg;
+    if (!ctx.context["baseline_fail"]) {
+      setPreclaimFailure(
+        ctx,
+        msg,
+        "setup_repo_recovery_failure",
+        "Ensure setup-repo created package.json before setup-build continues.",
+      );
+    }
     return;
   }
   // A previous setup-build attempt may have stored baseline_fail/compat_fail in
@@ -175,6 +255,9 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   // later successful build can auto-complete instead of spawning a stuck agent.
   delete ctx.context["baseline_fail"];
   delete ctx.context["compat_fail"];
+  delete ctx.context["previous_failure"];
+  delete ctx.context["failure_category"];
+  delete ctx.context["failure_suggestion"];
 
   // 1. npm install (skip if node_modules already present — idempotent)
   let installedDeps = false;
@@ -186,7 +269,12 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     } catch (e) {
       const details = formatProcessFailure(e);
       logger.warn(`[module:setup-build preclaim] npm install failed: ${details.slice(0, 300)}`, { runId: ctx.runId });
-      ctx.context["baseline_fail"] = `npm install failed:\n${details}`;
+      setPreclaimFailure(
+        ctx,
+        `npm install failed:\n${details}`,
+        "setup_build_failure",
+        "Fix package dependency baseline, rerun npm install/build, then complete setup-build.",
+      );
     }
   }
   if (installedDeps) {
@@ -210,6 +298,8 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
         : `COMPAT_VIOLATIONS (${fails.length}):\n\n` + fails.map((f: any) => `[${f.id}] ${f.resolvedMessage}`).join("\n\n");
       logger.warn(`[module:setup-build preclaim] compat FAIL: ${header.slice(0, 300)}`, { runId: ctx.runId });
       ctx.context["compat_fail"] = header.slice(0, 800);
+      ctx.context["failure_category"] = "setup_compat_failure";
+      ctx.context["failure_suggestion"] = "Fix incompatible package versions in setup/build scope, rerun install/build, then complete setup-build.";
     }
   } catch (e) {
     logger.warn(`[module:setup-build preclaim] compat evaluate failed: ${String(e).slice(0, 200)}`, { runId: ctx.runId });
@@ -226,7 +316,12 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       } catch (e) {
         const details = formatProcessFailure(e);
         logger.warn(`[module:setup-build preclaim] baseline build failed: ${details.slice(0, 300)}`, { runId: ctx.runId });
-        ctx.context["baseline_fail"] = details;
+        setPreclaimFailure(
+          ctx,
+          `npm run build failed:\n${details}`,
+          "setup_build_failure",
+          "Fix setup/build baseline so npm run build passes before generated screens or IMPLEMENT run.",
+        );
       }
     } else {
       buildCmd = "(no build script)";
@@ -300,6 +395,25 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       const scriptPath = resolvePlatformScript("stitch-to-jsx.mjs");
       if (fs.existsSync(scriptPath)) {
         execFileSync("node", [scriptPath, repo], { timeout: 30000, stdio: "pipe" });
+        const validatorPath = resolvePlatformScript("generated-screen-validator.mjs");
+        if (fs.existsSync(validatorPath)) {
+          try {
+            execFileSync("node", [validatorPath, repo, "--fix"], { cwd: repo, timeout: 60000, stdio: "pipe" });
+            ctx.context["design_import_validate_report"] = DESIGN_IMPORT_REPORT_REL;
+            logger.info(`[module:setup-build preclaim] design import validate ok`, { runId: ctx.runId });
+          } catch (e) {
+            ctx.context["design_import_validate_report"] = DESIGN_IMPORT_REPORT_REL;
+            const msg = [
+              `DESIGN_IMPORT_VALIDATE failed after stitch-to-jsx:\n${summarizeDesignImportReport(repo)}`,
+              "",
+              "PROCESS:",
+              formatProcessFailure(e),
+            ].join("\n");
+            logger.warn(`[module:setup-build preclaim] ${msg}`, { runId: ctx.runId });
+            setPreclaimFailure(ctx, msg, "design_import_failure", DESIGN_IMPORT_REPAIR_SUGGESTION);
+            return;
+          }
+        }
         try {
           const generatedPaths = ["src/screens/", "src/index.css", "src/main.css", "src/App.css", "app/globals.css"]
             .filter(p => fs.existsSync(path.join(repo, p.replace(/\/$/, ""))));
@@ -314,15 +428,34 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
             logger.info(`[module:setup-build preclaim] post-stitch build ok`, { runId: ctx.runId });
           }
         } catch (e) {
-          const msg = `npm run build failed after stitch-to-jsx:\n${formatProcessFailure(e)}`;
+          const details = formatProcessFailure(e);
+          const generatedScreenFailure = /src\/screens|stitch-to-jsx|generated screen|DESIGN_IMPORT/i.test(details);
+          const msg = [
+            generatedScreenFailure
+              ? `npm run build failed after stitch-to-jsx:\n${summarizeDesignImportReport(repo)}`
+              : "npm run build failed after stitch-to-jsx:\n",
+            details,
+          ].filter(Boolean).join("\n");
           logger.warn(`[module:setup-build preclaim] ${msg}`, { runId: ctx.runId });
-          ctx.context["baseline_fail"] = msg;
+          setPreclaimFailure(
+            ctx,
+            msg,
+            generatedScreenFailure ? "design_import_failure" : "setup_build_failure",
+            generatedScreenFailure
+              ? DESIGN_IMPORT_REPAIR_SUGGESTION
+              : "Fix setup/build baseline so npm run build passes, then complete setup-build.",
+          );
         }
       }
     } catch (e) {
       const details = formatProcessFailure(e);
       logger.warn(`[module:setup-build preclaim] stitch-to-jsx failed: ${details.slice(0, 300)}`, { runId: ctx.runId });
-      ctx.context["baseline_fail"] = `stitch-to-jsx failed:\n${details}`;
+      setPreclaimFailure(
+        ctx,
+        `stitch-to-jsx failed:\n${details}`,
+        "design_import_failure",
+        DESIGN_IMPORT_REPAIR_SUGGESTION,
+      );
     }
   }
 

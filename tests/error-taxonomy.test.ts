@@ -33,11 +33,56 @@ describe("error taxonomy", () => {
     assert.match(generatedScreenNotIntegrated.suggestion, /generated screen/i);
     assert.match(generatedScreenNotIntegrated.suggestion, /app\/router surface/);
 
+    const generatedScreenProps = classifyError(
+      "GENERATED_SCREEN_REQUIRED_PROPS_UNWIRED: src/App.tsx renders OperationsScreen without required generated screen prop(s): items.",
+    );
+    assert.equal(generatedScreenProps.category, "GENERATED_SCREEN_REQUIRED_PROPS_UNWIRED");
+    assert.match(generatedScreenProps.suggestion, /Wire every required generated screen prop/);
+
+    const generatedVisibleState = classifyError(
+      "STATUS: retry FINDINGS: generated operations table and metrics remain hardcoded placeholder data while store actions update window.app only.",
+    );
+    assert.equal(generatedVisibleState.category, "GENERATED_SCREEN_VISIBLE_STATE_UNWIRED");
+    assert.match(generatedVisibleState.suggestion, /props\/store-backed render data/);
+    assert.match(generatedVisibleState.suggestion, /visible DOM/);
+
+    const actionNoop = classifyError(
+      "STATUS: retry FINDINGS: ACT_SAVE_RECORD is navigation-only: it only updates active panel and writes the selected status back to the same current value.",
+    );
+    assert.equal(actionNoop.category, "OWNED_ACTION_NOOP_OR_NAVIGATION_ONLY");
+    assert.match(actionNoop.suggestion, /real declared data/);
+    assert.match(actionNoop.suggestion, /same current value/);
+
     const generatedScreenRegression = classifyError(
       "GENERATED_SCREEN_REGRESSION: previously verified generated screen(s) are no longer rendered by the app/router surface: MainMenu (src/screens/MainMenu.tsx).",
     );
     assert.equal(generatedScreenRegression.category, "GENERATED_SCREEN_REGRESSION");
     assert.match(generatedScreenRegression.suggestion, /previously verified generated screen/i);
+
+    const generatedShellChrome = classifyError(
+      "GENERATED_SCREEN_SHELL_CHROME_UNSAFE: src/App.tsx renders visible diagnostic/session/status/debug/QA chrome around generated full-screen screens.",
+    );
+    assert.equal(generatedShellChrome.category, "GENERATED_SCREEN_SHELL_CHROME_UNSAFE");
+    assert.match(generatedShellChrome.suggestion, /window\.app/);
+    assert.match(generatedShellChrome.suggestion, /visual viewport root/);
+
+    const generatedShellLandmark = classifyError(
+      "GENERATED_SCREEN_SHELL_LANDMARK_UNSAFE: src/App.tsx wraps generated full-screen Stitch screens in an app-shell main landmark.",
+    );
+    assert.equal(generatedShellLandmark.category, "GENERATED_SCREEN_SHELL_CHROME_UNSAFE");
+    assert.match(generatedShellLandmark.suggestion, /main landmark/);
+    assert.match(generatedShellLandmark.suggestion, /data-setfarm-root/);
+
+    const designImport = classifyError(
+      [
+        "SETUP_BUILD_PRECLAIM_BLOCKER:",
+        "DESIGN_IMPORT_VALIDATE failed after stitch-to-jsx:",
+        "generated-screen-validator reported DESIGN_IMPORT_ICON_PROP_INVALID in src/screens/GeneratedEditor.tsx.",
+      ].join("\n"),
+    );
+    assert.equal(designImport.category, "DESIGN_IMPORT_FAILURE");
+    assert.match(designImport.suggestion, /stitch-to-jsx/);
+    assert.match(designImport.suggestion, /generated-screen-validator/);
   });
 
   it("classifies PR lifecycle blockers as actionable retry feedback", () => {
@@ -132,6 +177,16 @@ describe("error taxonomy", () => {
     );
     assert.equal(overloaded.category, "API_ERROR");
     assert.match(overloaded.suggestion, /provider overloaded/i);
+
+    const visualQaInfra = classifyError([
+      "STATUS: retry",
+      "FINDINGS:",
+      "Supervisor Visual QA",
+      "- [blocker] navigation_error mobile /: Error: page.evaluate: Target page, context or browser has been closed",
+    ].join("\n"));
+    assert.equal(visualQaInfra.category, "VISUAL_QA_INFRA_ERROR");
+    assert.match(visualQaInfra.suggestion, /browser sandbox/i);
+    assert.doesNotMatch(visualQaInfra.suggestion, /source files|scoped source/i);
 
     const exited = classifyError(
       "AGENT_PROCESS_EXITED: feature-dev_reviewer exited before completing feature-dev/reviewer. exit code 1",

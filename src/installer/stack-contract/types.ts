@@ -78,10 +78,49 @@ export type ScopeTargetRole =
   | "api_route"
   | "cli_command";
 
+export const SCOPE_TARGET_ROLES: ScopeTargetRole[] = [
+  "app_shell",
+  "route_registration",
+  "surface_component",
+  "action_handler",
+  "state_store",
+  "fixture_data",
+  "persistence_adapter",
+  "test_bridge",
+  "style_integration",
+  "game_runtime",
+  "api_route",
+  "cli_command",
+];
+
+export type StackRouterParadigm =
+  | "file_system_nested"
+  | "declarative_flat"
+  | "single_entry"
+  | "native_manifest"
+  | "none"
+  | "game_runtime";
+
+export type TargetResolutionKind = "single_file" | "shared_file" | "file_set" | "submodule_set";
+
 export interface TargetResolutionRule {
   ruleId: string;
   template: string;
   allowedRoles: ScopeTargetRole[];
+  kind?: TargetResolutionKind;
+}
+
+export interface SlugRules {
+  surface_slug: string;
+  screen_file: string;
+  action_file: string;
+  entity_file: string;
+}
+
+export interface SlugRuleTest {
+  ruleKey: keyof SlugRules;
+  input: string;
+  expected: string;
 }
 
 export interface MockInjectionPolicy {
@@ -107,6 +146,52 @@ export interface DependencyPolicy {
   allowedDependencies: string[];
 }
 
+export type DependencyConflictStrategy = "highest_compatible" | "exact_match" | "reject_conflict";
+
+export interface DependencyResolutionPolicy {
+  conflictStrategy: DependencyConflictStrategy;
+  outOfEcosystem: "reject";
+  manifestPatchMode: "setup_build_only";
+}
+
+export type SharedEditValidationPolicy = "ast_required" | "patch_window" | "human_review_required";
+
+export interface PatchWindowMarker {
+  file: string;
+  start: string;
+  end: string;
+  scope: string;
+}
+
+export interface UtilityFilePolicy {
+  allowedRoots: string[];
+  naming: string;
+  garbageCollection: "mc_reachable_imports" | "none";
+}
+
+export interface BuildStrippingPolicy {
+  testBridgeStripping: {
+    required: boolean;
+    method: "bundler_define_replacement" | "file_exclusion" | "not_applicable";
+    verification: "config_and_bundle_scan" | "not_applicable";
+  };
+  devToolStripping: {
+    required: boolean;
+    method: "bundler_define_replacement" | "file_exclusion" | "not_applicable";
+    verification: "config_and_bundle_scan" | "not_applicable";
+  };
+}
+
+export interface SandboxPrewarmPolicy {
+  commands: string[];
+  successCheck: "exit_code_zero" | "binary_hash" | "version_match" | "not_required";
+  expectedVersion?: string;
+  timeoutMs: number;
+  networkPolicy: "allowlist" | "open" | "none";
+  allowedHosts: string[];
+  artifactPath: string;
+}
+
 export interface StackPack {
   id: StackPackId;
   label: string;
@@ -125,10 +210,20 @@ export interface StackPack {
   requiredFiles?: string[];
   artifactChecks?: string[];
   targetResolutionRules?: Record<ScopeTargetRole, TargetResolutionRule>;
+  routerParadigm?: StackRouterParadigm;
+  slugRules?: SlugRules;
+  slugRuleTests?: SlugRuleTest[];
   mockInjectionPolicy?: MockInjectionPolicy;
   dataAccessPolicy?: DataAccessPolicy;
   implementationBoundaries?: ImplementationBoundaries;
   dependencyPolicy?: DependencyPolicy;
+  dependencyResolutionPolicy?: DependencyResolutionPolicy;
+  sharedEditValidationPolicy?: SharedEditValidationPolicy;
+  patchWindowMarkers?: PatchWindowMarker[];
+  utilityFilePolicy?: UtilityFilePolicy;
+  buildStrippingPolicy?: BuildStrippingPolicy;
+  sandboxPrewarm?: SandboxPrewarmPolicy;
+  nativeEquivalentContract?: string;
   prompt: string;
 }
 
@@ -150,10 +245,20 @@ export interface StackContract {
   conversionPolicy?: StackConversionPolicy;
   scaffoldPolicy?: StackScaffoldPolicy;
   targetResolutionRules?: Record<ScopeTargetRole, TargetResolutionRule>;
+  routerParadigm?: StackRouterParadigm;
+  slugRules?: SlugRules;
+  slugRuleTests?: SlugRuleTest[];
   mockInjectionPolicy?: MockInjectionPolicy;
   dataAccessPolicy?: DataAccessPolicy;
   implementationBoundaries?: ImplementationBoundaries;
   dependencyPolicy?: DependencyPolicy;
+  dependencyResolutionPolicy?: DependencyResolutionPolicy;
+  sharedEditValidationPolicy?: SharedEditValidationPolicy;
+  patchWindowMarkers?: PatchWindowMarker[];
+  utilityFilePolicy?: UtilityFilePolicy;
+  buildStrippingPolicy?: BuildStrippingPolicy;
+  sandboxPrewarm?: SandboxPrewarmPolicy;
+  nativeEquivalentContract?: string;
   prompt: string;
   createdAt: string;
   updatedAt: string;

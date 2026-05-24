@@ -325,6 +325,22 @@ function isPlatformInternalCommitPath(file: string): boolean {
     || file.startsWith("references/");
 }
 
+function isPlatformTransientRuntimeArtifact(file: string): boolean {
+  return file === "smoke-home.png"
+    || file === "smoke-after-click.png"
+    || file.startsWith("test-results/")
+    || file.startsWith("playwright-report/")
+    || file.startsWith(".playwright/")
+    || file.startsWith(".nyc_output/")
+    || file.startsWith("coverage/")
+    || /\.(?:webm|mp4|zip)$/i.test(file)
+    || /(?:^|\/)(?:screenshot|smoke|visual|qa)[^/]*\.(?:png|jpg|jpeg|json)$/i.test(file);
+}
+
+function isPlatformNonStoryCommitPath(file: string): boolean {
+  return isPlatformInternalCommitPath(file) || isPlatformTransientRuntimeArtifact(file);
+}
+
 function isPlatformMetadataOnlyVerifyRetry(output: string): boolean {
   const normalized = output.toLowerCase();
   const mentionsPlatformMetadata =
@@ -368,7 +384,7 @@ function isPlatformMetadataOnlyDirtyStatus(status: string): boolean {
     .split(/\r?\n/)
     .map(gitPorcelainPath)
     .filter(Boolean);
-  return files.length > 0 && files.every(isPlatformInternalCommitPath);
+  return files.length > 0 && files.every(isPlatformNonStoryCommitPath);
 }
 
 function isPlatformStoryCommitAllowed(file: string, scopeFiles: Set<string>): boolean {
@@ -409,7 +425,7 @@ export function commitStoryWorktreeScopeIfNeeded(
     return { committed: false, sha: "", stagedFiles: [], error: `PLATFORM_STORY_COMMIT_RESET_FAILED: ${formatCommandError(err)}` };
   }
 
-  const touched = parseGitStatusPaths(status).filter((file) => !isPlatformInternalCommitPath(file));
+  const touched = parseGitStatusPaths(status).filter((file) => !isPlatformNonStoryCommitPath(file));
   if (touched.length === 0) return { committed: false, sha: "", stagedFiles: [], error: "" };
 
   const scopeFiles = new Set((declaredScopeFiles.length > 0 ? declaredScopeFiles : readStoryScopeFilesFromWorktree(workdir)).map(normalizeScopeFile));
@@ -565,6 +581,32 @@ function parseScopeFileList(raw: string | null | undefined): string[] {
   } catch {
     return [];
   }
+}
+
+function mergeStoryScopeFiles(context: Record<string, string>, files: string[]): string[] {
+  const existing = String(context["story_scope_files"] || "")
+    .split(",")
+    .map(file => file.trim())
+    .filter(Boolean);
+  const merged = [...new Set([...existing, ...files.map(file => String(file || "").trim()).filter(Boolean)])];
+  if (merged.length > 0) {
+    context["story_scope_files"] = merged.join(", ");
+  }
+  return merged;
+}
+
+function isDesignImportBlockedError(error: unknown): boolean {
+  return /DESIGN_IMPORT_VALIDATE|DESIGN_IMPORT_/i.test(String(error instanceof Error ? error.message : error));
+}
+
+function markDesignImportBlocked(context: Record<string, string>, error: unknown): void {
+  const message = String(error instanceof Error ? error.message : error).trim();
+  context["previous_failure"] = message || "DESIGN_IMPORT_VALIDATE_BLOCKED";
+  context["failure_category"] = "design_import_failure";
+  context["failure_suggestion"] =
+    "Generated Stitch screen import did not pass deterministic validation. Inspect .setfarm/setup/DESIGN_IMPORT_VALIDATE.json, scripts/stitch-to-jsx.mjs, scripts/generated-screen-validator.mjs, and src/screens/*.tsx. Fix the converter/normalizer baseline, rerun generated-screen-validator --fix and npm run build, then retry setup-build. Do not pass generated-screen mechanical defects to IMPLEMENT.";
+  context["scope_reminder"] =
+    "DESIGN IMPORT BLOCKED: IMPLEMENT_CONTEXT was intentionally not assembled because generated screen conversion failed before implementation. Repair the Stitch-to-JSX import pipeline or generated-screen validator, not product logic.";
 }
 
 function buildStoryScopeReminder(scopeFiles: string[]): string {
@@ -2473,14 +2515,14 @@ async function injectStoryContext(
               .map((entry: any) => entry.path)
           : [];
         const merged = [...new Set([...resolved, ...sharedWritable])].filter(Boolean);
-        if (merged.length > 0) context["story_scope_files"] = merged.join(", ");
+        if (merged.length > 0) mergeStoryScopeFiles(context, merged);
       }
     }
     if (scopeRow?.scope_files) {
       try {
         const list = JSON.parse(scopeRow.scope_files);
         if (Array.isArray(list) && list.length > 0) {
-          context["story_scope_files"] = list.join(", ");
+          mergeStoryScopeFiles(context, list.filter((file): file is string => typeof file === "string"));
         }
       } catch (e) { logger.debug(`[context] Malformed JSON: ${String(e).slice(0, 80)}`); }
     }
@@ -2542,7 +2584,11 @@ async function injectStoryContext(
     }
   } catch (e) {
     // Column may not exist on very old schemas — degrade gracefully
-    logger.debug(`[scope-inject] Could not read story scope columns: ${String(e).slice(0, 120)}`);
+    if (isDesignImportBlockedError(e)) {
+      markDesignImportBlocked(context, e);
+    } else {
+      logger.debug(`[scope-inject] Could not read story scope columns: ${String(e).slice(0, 120)}`);
+    }
   }
 
   // FIX: Clear stale story-specific context from previous story to prevent cross-contamination
@@ -5341,6 +5387,8 @@ ${prd}`;
           checkQaFixSmokeGate,
           checkGeneratedScreenIntegrationGate,
           checkGeneratedScreenRegressionGate,
+          checkGeneratedScreenRequiredPropsGate,
+          checkGeneratedScreenShellChromeGate,
           checkDesignDomImplementationGate,
         } = await import("./steps/06-implement/guards.js");
         const wd = await resolveStoryWorktree(step.current_story_id, context["story_workdir"] || "");
@@ -5518,6 +5566,39 @@ ${prd}`;
             context["failure_suggestion"] = generatedScreenRegressionResult.suggestion!;
             await updateRunContext(step.run_id, context);
             await failStep(stepId, generatedScreenRegressionResult.reason!);
+            return { advanced: false, runCompleted: false };
+          }
+
+          // Generated-screen shell chrome gate: app shells may expose smoke
+          // and status state through window.app, but must not render visible
+          // debug/session/status strips around full-screen Stitch surfaces.
+          // Those strips caused mobile root overflow in real runs and belong
+          // in deterministic test state, not in the visual product chrome.
+          const generatedScreenShellChromeResult = checkGeneratedScreenShellChromeGate(
+            storyRow.story_id, storyRow.title, wd, context["repo"] || "",
+          );
+          if (!generatedScreenShellChromeResult.passed && generatedScreenShellChromeResult.category) {
+            context["previous_failure"] = generatedScreenShellChromeResult.reason!;
+            context["failure_category"] = generatedScreenShellChromeResult.category;
+            context["failure_suggestion"] = generatedScreenShellChromeResult.suggestion!;
+            await updateRunContext(step.run_id, context);
+            await failStep(stepId, generatedScreenShellChromeResult.reason!);
+            return { advanced: false, runCompleted: false };
+          }
+
+          // Generated-screen required props gate: generated Stitch components
+          // often expose typed runtime inputs. The app/router story must wire
+          // those from scoped state/adapters instead of advancing with an
+          // unrenderable screen or editing generated source out of scope.
+          const generatedScreenPropsResult = checkGeneratedScreenRequiredPropsGate(
+            storyRow.story_id, storyRow.title, wd, context["repo"] || "",
+          );
+          if (!generatedScreenPropsResult.passed && generatedScreenPropsResult.category) {
+            context["previous_failure"] = generatedScreenPropsResult.reason!;
+            context["failure_category"] = generatedScreenPropsResult.category;
+            context["failure_suggestion"] = generatedScreenPropsResult.suggestion!;
+            await updateRunContext(step.run_id, context);
+            await failStep(stepId, generatedScreenPropsResult.reason!);
             return { advanced: false, runCompleted: false };
           }
 

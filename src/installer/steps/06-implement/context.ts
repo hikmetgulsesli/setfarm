@@ -244,6 +244,37 @@ export async function injectStoryContext(
 
 // ── Internal helpers ───────────────────────────────────────────────
 
+function parseScopeFileList(raw: string | undefined): string[] {
+  return String(raw || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function mergeStoryScopeFiles(context: Record<string, string>, files: string[]): void {
+  const existing = parseScopeFileList(context["story_scope_files"]);
+  const merged = [...new Set([...existing, ...files.map((file) => String(file || "").trim()).filter(Boolean)])];
+  if (merged.length > 0) context["story_scope_files"] = merged.join(", ");
+}
+
+function isDesignImportBlockedError(e: unknown): boolean {
+  const err = e as { code?: unknown; message?: unknown };
+  return /DESIGN_IMPORT_VALIDATE|DESIGN_IMPORT_/i.test(String(err?.code || err?.message || e));
+}
+
+function markDesignImportBlocked(context: Record<string, string>, e: unknown): void {
+  const message = String((e as Error)?.message || e);
+  context["previous_failure"] = message;
+  context["failure_category"] = "design_import_failure";
+  context["failure_suggestion"] = [
+    "IMPLEMENT BLOCKED: generated screen import baseline failed before story context assembly.",
+    "Inspect .setfarm/setup/DESIGN_IMPORT_VALIDATE.json, scripts/stitch-to-jsx.mjs, scripts/generated-screen-validator.mjs, and src/screens/*.tsx.",
+    "Fix the deterministic converter/import layer, rerun node scripts/generated-screen-validator.mjs <repo-path> --fix, then rerun npm run build.",
+    "Do not patch product behavior code to work around generated-screen mechanical defects.",
+  ].join(" ");
+  context["scope_reminder"] = context["failure_suggestion"];
+}
+
 async function injectScopeContext(nextStory: any, context: Record<string, string>): Promise<void> {
   try {
     const scopeRow = await pgGet<{ scope_files: string; shared_files: string; scope_description: string; file_skeletons: string; implementation_contract: string; scope_targets: string | null; shared_edit_requests: string | null; depends_on: string | null }>(
@@ -270,13 +301,13 @@ async function injectScopeContext(nextStory: any, context: Record<string, string
               .map((entry: any) => entry.path)
           : [];
         const merged = [...new Set([...resolved, ...sharedWritable])].filter(Boolean);
-        if (merged.length > 0) context["story_scope_files"] = merged.join(", ");
+        mergeStoryScopeFiles(context, merged);
       }
     }
     if (scopeRow?.scope_files) {
       try {
         const list = JSON.parse(scopeRow.scope_files);
-        if (Array.isArray(list) && list.length > 0) context["story_scope_files"] = list.join(", ");
+        if (Array.isArray(list) && list.length > 0) mergeStoryScopeFiles(context, list);
       } catch (e) { logger.debug(`[context] Malformed scope_files JSON: ${String(e).slice(0, 80)}`); }
     }
     if (scopeRow?.implementation_contract) {
@@ -325,6 +356,7 @@ async function injectScopeContext(nextStory: any, context: Record<string, string
       context["scope_reminder"] = "SCOPE ENFORCEMENT: You may ONLY write files in [" + context["story_scope_files"] + "]. shared_files are read-only/import context unless also listed in scope_files. Test files (*.test.*, *.spec.*), src/test/setup.*, src/test/utils.*, src/setupTests.*, and Vitest/Jest-only config (vitest.config.*, jest.config.*) are allowed. src/types/*, domain model files, vite.config.*, tailwind.config.*, tsconfig.*, index.html, App.tsx, main.tsx, index.css are FORBIDDEN unless in your scope_files. Never edit shared exported types to fix only your screen; use local display/adaptor types inside scoped files. Violation = instant SCOPE_BLEED rejection.";
     }
   } catch (e) {
+    if (isDesignImportBlockedError(e)) markDesignImportBlocked(context, e);
     logger.debug(`[scope-inject] Could not read story scope columns: ${String(e).slice(0, 120)}`);
   }
 }
@@ -532,6 +564,8 @@ function renderUiBehaviorContract(reqs: UiBehaviorRequirement[]): string {
   const lines = [
     "Every control below is from Stitch DOM and MUST be implemented in this story when its screen is in scope.",
     "Each control needs real visible behavior: route/panel/dialog/state change/form validation. Empty onClick is forbidden.",
+    "Generated screen content must render from story-owned props/store/adapters; do not leave static Stitch placeholder rows, metrics, forms, checklist/status chips, detail panels, or empty/error states when an owned action changes that state.",
+    "A completed story must prove at least one owned action changes visible DOM inside the generated screen, not only window.app/globalThis.app, hidden shell state, logs, or a status snapshot.",
   ];
   let currentScreen = "";
   let totalBytes = lines.join("\n").length;

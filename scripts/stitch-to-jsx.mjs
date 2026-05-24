@@ -443,11 +443,52 @@ function materialIconKey(inner) {
 }
 
 function normalizeClassTokens(classValue) {
-  return String(classValue || "")
+  const tokens = String(classValue || "")
     .split(/\s+/)
     .map(cls => (cls === "transition-all" ? "transition-colors" : cls))
-    .filter(Boolean)
-    .join(" ");
+    .filter(Boolean);
+
+  return normalizePositionedFullWidth(tokens).join(" ");
+}
+
+function splitTailwindVariant(token) {
+  let depth = 0;
+  let splitAt = -1;
+  for (let i = 0; i < token.length; i += 1) {
+    const ch = token[i];
+    if (ch === "[") depth += 1;
+    if (ch === "]") depth = Math.max(0, depth - 1);
+    if (ch === ":" && depth === 0) splitAt = i;
+  }
+  if (splitAt === -1) return { variant: "", base: token };
+  return { variant: token.slice(0, splitAt), base: token.slice(splitAt + 1) };
+}
+
+function normalizePositionedFullWidth(tokens) {
+  const parsed = tokens.map((token) => ({ token, ...splitTailwindVariant(token) }));
+  const isPositioned = parsed.some(({ base }) => base === "fixed" || base === "absolute");
+  if (!isPositioned) return tokens;
+
+  const insetByVariant = new Map();
+  for (const { variant, base } of parsed) {
+    if (!insetByVariant.has(variant)) insetByVariant.set(variant, { left: false, right: false });
+    const entry = insetByVariant.get(variant);
+    if (/^-?left-(?:\[|[a-z0-9/.-])/.test(base)) entry.left = true;
+    if (/^-?right-(?:\[|[a-z0-9/.-])/.test(base)) entry.right = true;
+  }
+
+  const hasInsetPair = (variant) => {
+    const exact = insetByVariant.get(variant);
+    const base = insetByVariant.get("");
+    return Boolean((exact && exact.left && exact.right) || (variant && base && base.left && base.right));
+  };
+
+  return parsed
+    .filter(({ variant, base }) => {
+      if (!["w-full", "w-screen", "min-w-full", "min-w-screen"].includes(base)) return true;
+      return !hasInsetPair(variant);
+    })
+    .map(({ token }) => token);
 }
 
 function normalizeDesignClassAttributes(html) {
@@ -578,7 +619,7 @@ function replaceMaterialSymbolSpans(html, lucideImports) {
         .split(/\s+/)
         .filter(cls => cls && cls !== "material-icons" && !cls.startsWith("material-symbols"))
         .join(" ");
-      const attrs = ["aria-hidden", "focusable", "data-icon"]
+      const attrs = ["aria-hidden", "focusable", "data-icon", "title"]
         .reduce((next, attr) => stripJsxAttribute(next, attr), `${beforeClass || ""}${afterClass || ""}`)
         .trimEnd();
       const classAttr = cleanedClass ? ` class="${cleanedClass}"` : "";

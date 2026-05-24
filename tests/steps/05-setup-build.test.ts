@@ -32,6 +32,7 @@ describe("05-setup-build step module", () => {
     assert.ok(missingPackage > setupScript, "missing package failure should be reported only after recovery");
     assert.ok(preclaim.includes('resolvePlatformScript("setup-repo.sh")'), "setup-build recovery should use the active setup script");
     assert.ok(preclaim.includes('resolvePlatformScript("stitch-to-jsx.mjs")'), "setup-build should use the active Stitch-to-JSX script");
+    assert.ok(preclaim.includes('resolvePlatformScript("generated-screen-validator.mjs")'), "setup-build should validate generated screens before handoff");
     assert.equal(preclaim.includes(".openclaw/setfarm-repo/scripts/setup-repo.sh"), false, "setup-build must not hard-code the legacy setup script path");
     assert.ok(preclaim.includes("String(displayName)"), "recovery path should preserve project display title");
     assert.ok(preclaim.includes("String(uiLanguage)"), "recovery path should preserve UI language for scaffold html lang");
@@ -73,6 +74,27 @@ describe("05-setup-build step module", () => {
     assert.ok(prompt.includes("Rules"));
   });
 
+  it("buildPrompt carries setup-build repair context to the setup-build agent", () => {
+    const prompt = setupBuildModule.buildPrompt({
+      runId: "r1",
+      task: "t",
+      context: {
+        repo: "$HOME/projects/testapp-12345",
+        tech_stack: "vite-react",
+        build_cmd_hint: "npm run build",
+        previous_failure: "SETUP_BUILD_PRECLAIM_BLOCKER:\nDESIGN_IMPORT_VALIDATE failed",
+        failure_category: "design_import_failure",
+        failure_suggestion: "Fix the deterministic Stitch-to-JSX import baseline.",
+        design_import_validate_report: ".setfarm/setup/DESIGN_IMPORT_VALIDATE.json",
+      },
+    });
+
+    assert.ok(prompt.includes("Failure category: design_import_failure"));
+    assert.ok(prompt.includes("Fix the deterministic Stitch-to-JSX import baseline."));
+    assert.ok(prompt.includes(".setfarm/setup/DESIGN_IMPORT_VALIDATE.json"));
+    assert.ok(prompt.includes("SETUP_BUILD_PRECLAIM_BLOCKER"));
+  });
+
   it("buildPrompt stays within maxPromptSize for typical inputs", () => {
     const prompt = setupBuildModule.buildPrompt({
       runId: "r1",
@@ -106,6 +128,10 @@ describe("05-setup-build step module", () => {
     assert.ok(preclaim.includes("formatProcessFailure"), "preclaim should preserve stdout/stderr from failed commands");
     assert.ok(preclaim.includes("stderr:"), "preclaim failures should include stderr labels");
     assert.ok(preclaim.includes("npm run build failed after stitch-to-jsx:\\n"), "post-stitch build failures should keep the real compiler output");
+    assert.ok(preclaim.includes("DESIGN_IMPORT_VALIDATE failed after stitch-to-jsx:\\n"), "design import validation failures should keep the validator output");
+    assert.ok(preclaim.includes("design_import_failure"), "generated screen defects should be classified separately from implementation failures");
+    assert.ok(preclaim.includes("DESIGN_IMPORT_REPAIR_SUGGESTION"), "setup-build retry should receive a deterministic repair path");
+    assert.ok(preclaim.includes("summarizeDesignImportReport(repo)"), "validator reports should be summarized for the retry agent");
   });
 
   it("commits Stitch runtime CSS generated alongside screens", () => {
@@ -114,6 +140,19 @@ describe("05-setup-build step module", () => {
     assert.ok(preclaim.includes("\"src/screens/\""), "generated screens should still be staged");
     assert.ok(preclaim.includes("\"src/index.css\""), "stitch-to-jsx runtime CSS in src/index.css should be staged");
     assert.ok(preclaim.includes("\"src/App.css\""), "alternate CSS entrypoints should be staged when updated");
+  });
+
+  it("validates generated screens before committing or building them", () => {
+    const preclaim = fs.readFileSync("src/installer/steps/05-setup-build/preclaim.ts", "utf-8");
+    const convert = preclaim.indexOf('resolvePlatformScript("stitch-to-jsx.mjs")');
+    const validate = preclaim.indexOf('resolvePlatformScript("generated-screen-validator.mjs")');
+    const commit = preclaim.indexOf("chore: auto-generate JSX screens from Stitch HTML");
+    const postBuild = preclaim.indexOf("post-stitch build ok");
+    assert.ok(convert >= 0, "setup-build should run stitch-to-jsx");
+    assert.ok(validate > convert, "screen validation should run after conversion");
+    assert.ok(commit > validate, "generated screens should be committed only after validation");
+    assert.ok(postBuild > validate, "post-stitch build should run only after validation");
+    assert.ok(preclaim.includes("[validatorPath, repo, \"--fix\"]"), "setup-build should auto-fix deterministic generated screen defects before failing");
   });
 
   it("onComplete stamps build_cmd from parsed output", async () => {
@@ -185,6 +224,9 @@ describe("05-setup-build step module", () => {
       const context: Record<string, string> = {
         repo: tmp,
         baseline_fail: "previous generated JSX failed",
+        previous_failure: "SETUP_BUILD_PRECLAIM_BLOCKER:\nprevious generated JSX failed",
+        failure_category: "design_import_failure",
+        failure_suggestion: "repair generated JSX",
       };
 
       await onComplete({
@@ -195,6 +237,9 @@ describe("05-setup-build step module", () => {
       });
 
       assert.equal(context["baseline_fail"], undefined);
+      assert.equal(context["previous_failure"], undefined);
+      assert.equal(context["failure_category"], undefined);
+      assert.equal(context["failure_suggestion"], undefined);
       assert.equal(context["build_cmd"], "npm run build");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

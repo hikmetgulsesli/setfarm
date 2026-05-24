@@ -7,6 +7,7 @@ import { resolveStackContract } from "../dist/installer/stack-contract/reconcile
 import { readStackContract, stackContractPath, writeStackContract } from "../dist/installer/stack-contract/ledger.js";
 import { getStackPack, listStackPacks } from "../dist/installer/stack-contract/packs.js";
 import { applyStackContractContext } from "../dist/installer/stack-contract/context.js";
+import { validateAllStackPacks } from "../dist/installer/stack-contract/validators.js";
 
 function tmpDir(name: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), `setfarm-${name}-`));
@@ -237,6 +238,15 @@ describe("stack contract", () => {
       assert.ok(pack.prompt.length > 40, `${id} prompt should be useful`);
       assert.ok(pack.verification.build.length + pack.verification.smoke.length > 0, `${id} should define verification`);
       assert.ok(pack.targetResolutionRules && Object.keys(pack.targetResolutionRules).length > 0, `${id} should define target resolution rules`);
+      assert.ok(pack.slugRules, `${id} should define slug rules`);
+      assert.ok(pack.slugRuleTests && pack.slugRuleTests.length >= 2, `${id} should define slug rule tests`);
     }
+  });
+
+  it("validates all stack packs against the frozen contract schema", () => {
+    const issues = validateAllStackPacks();
+    assert.deepEqual(issues, []);
+    assert.equal(getStackPack("android-app").conversionPolicy, "reference_only");
+    assert.equal(getStackPack("ios-app").conversionPolicy, "reference_only");
   });
 });

@@ -653,6 +653,214 @@ function sourceRendersComponent(source: string, componentName: string): boolean 
     || new RegExp(`React\\.createElement\\(\\s*${escaped}\\b`).test(clean);
 }
 
+function sourceReferencesGeneratedScreens(source: string, componentNames: string[]): boolean {
+  const clean = stripSourceComments(source);
+  if (/from\s+["'][^"']*(?:\/screens|\\screens|src\/screens|src\\screens)/i.test(clean)) return true;
+  if (/\bSCREEN_INDEX\b/.test(clean)) return true;
+  return componentNames.some((name) => name && sourceRendersComponent(clean, name));
+}
+
+const GENERATED_SCREEN_IGNORED_REQUIRED_PROPS = new Set(["children", "className", "style", "ref", "key"]);
+
+function extractTypeOrInterfaceBody(source: string, typeName: string): string {
+  const escaped = escapeRegExp(typeName);
+  const typeMatch = new RegExp(`\\btype\\s+${escaped}\\s*=\\s*\\{`, "m").exec(source);
+  const interfaceMatch = new RegExp(`\\binterface\\s+${escaped}\\s*\\{`, "m").exec(source);
+  const match = typeMatch || interfaceMatch;
+  if (!match) return "";
+  const start = source.indexOf("{", match.index);
+  if (start < 0) return "";
+  let depth = 0;
+  for (let i = start; i < source.length; i++) {
+    const ch = source[i];
+    if (ch === "{") depth++;
+    if (ch === "}") {
+      depth--;
+      if (depth === 0) return source.slice(start + 1, i);
+    }
+  }
+  return "";
+}
+
+function extractRequiredMembers(body: string): string[] {
+  const required = new Set<string>();
+  const lines = body.split(/\r?\n/);
+  let depth = 0;
+  for (const line of lines) {
+    const match = depth === 0
+      ? /^\s*(?:readonly\s+)?([A-Za-z_$][\w$]*)\s*(\?)?\s*:/.exec(line)
+      : null;
+    if (match) {
+      const name = match[1];
+      const optional = Boolean(match[2]);
+      if (!optional && !GENERATED_SCREEN_IGNORED_REQUIRED_PROPS.has(name)) required.add(name);
+    }
+    const opens = (line.match(/\{/g) || []).length;
+    const closes = (line.match(/\}/g) || []).length;
+    depth = Math.max(0, depth + opens - closes);
+  }
+  return [...required];
+}
+
+function extractGeneratedScreenRequiredProps(source: string, componentName: string): string[] {
+  const required = new Set<string>();
+  for (const typeName of [`${componentName}Props`, "Props"]) {
+    extractRequiredMembers(extractTypeOrInterfaceBody(source, typeName)).forEach((prop) => required.add(prop));
+  }
+  return [...required];
+}
+
+function sourceMissingRequiredPropsForComponent(source: string, componentName: string, requiredProps: string[]): string[] {
+  if (requiredProps.length === 0) return [];
+  const clean = stripSourceComments(source);
+  const jsxRe = new RegExp(`<\\s*${escapeRegExp(componentName)}\\b([^>]*)>`, "g");
+  const missing = new Set<string>();
+  let match: RegExpExecArray | null;
+  while ((match = jsxRe.exec(clean)) !== null) {
+    const attrs = match[1] || "";
+    if (attrs.includes("...")) continue;
+    const provided = new Set<string>();
+    const attrRe = /\b([A-Za-z_$][\w$]*)\s*=/g;
+    let attrMatch: RegExpExecArray | null;
+    while ((attrMatch = attrRe.exec(attrs)) !== null) provided.add(attrMatch[1]);
+    for (const prop of requiredProps) {
+      if (!provided.has(prop)) missing.add(prop);
+    }
+  }
+  return [...missing];
+}
+
+export function findGeneratedScreenRequiredPropIssues(workdir: string, repoPath = ""): string[] {
+  if (!workdir || !fs.existsSync(workdir)) return [];
+  const screenIndex = loadScreenIndex(workdir, repoPath);
+  if (screenIndex.length === 0) return [];
+  const sourceFiles = listSourceFiles(workdir)
+    .filter((file) => !/\.(test|spec)\.(tsx?|jsx?)$/i.test(file))
+    .filter((file) => !/^src\/screens\/(?:SCREEN_INDEX|index)\./i.test(file));
+  const issues: string[] = [];
+
+  for (const entry of screenIndex) {
+    const componentName = componentNameForScreenEntry(entry);
+    const screenFile = normalizeRelPath(String(entry?.file || entry?.filePath || ""));
+    if (!componentName || !screenFile) continue;
+    const worktreeScreen = path.join(workdir, screenFile);
+    const repoScreen = repoPath ? path.join(repoPath, screenFile) : "";
+    const screenSourcePath = fs.existsSync(worktreeScreen) ? worktreeScreen : (repoScreen && fs.existsSync(repoScreen) ? repoScreen : "");
+    if (!screenSourcePath) continue;
+    let requiredProps: string[] = [];
+    try {
+      requiredProps = extractGeneratedScreenRequiredProps(fs.readFileSync(screenSourcePath, "utf-8"), componentName);
+    } catch {
+      requiredProps = [];
+    }
+    if (requiredProps.length === 0) continue;
+
+    for (const file of sourceFiles) {
+      if (file === screenFile || /^src\/screens\//i.test(file)) continue;
+      const abs = path.join(workdir, file);
+      try {
+        const source = fs.readFileSync(abs, "utf-8");
+        if (!sourceRendersComponent(source, componentName)) continue;
+        const missing = sourceMissingRequiredPropsForComponent(source, componentName, requiredProps);
+        if (missing.length > 0) {
+          issues.push(`GENERATED_SCREEN_REQUIRED_PROPS_UNWIRED: ${file} renders ${componentName} without required generated screen prop(s): ${missing.join(", ")}. Preserve generated screen prop contracts and wire them from app state/adapters before reporting done.`);
+        }
+      } catch {}
+    }
+  }
+
+  return issues.slice(0, 24);
+}
+
+const GENERATED_SHELL_DIAGNOSTIC_TEXT =
+  /\b(?:session\s+status|storage\s+status|runtime\s+status|app\s+status|qa\s+status|smoke\s+status|status\s*bar|statusbar|debug\s+(?:panel|bar|strip|status|statusbar)|diagnostic\s+(?:panel|bar|strip|status|statusbar)|telemetry\s+(?:panel|bar|strip|status|statusbar))\b/i;
+const GENERATED_SHELL_DIAGNOSTIC_MARKUP =
+  /(?:data-testid|aria-label|className|class|id)\s*=\s*(?:"[^"]*\b(?:(?:session|storage|runtime|debug|diagnostic|telemetry|smoke|qa)[-_ ]?(?:status|statusbar|strip|bar|panel|banner)|status[-_ ]?bar)\b[^"]*"|'[^']*\b(?:(?:session|storage|runtime|debug|diagnostic|telemetry|smoke|qa)[-_ ]?(?:status|statusbar|strip|bar|panel|banner)|status[-_ ]?bar)\b[^']*'|\{`[^`]*\b(?:(?:session|storage|runtime|debug|diagnostic|telemetry|smoke|qa)[-_ ]?(?:status|statusbar|strip|bar|panel|banner)|status[-_ ]?bar)\b[^`]*`\})/i;
+const GENERATED_SHELL_GLOBAL_LAYOUT =
+  /\b(?:fixed|absolute|sticky|top-0|inset-x-0|left-0|right-0|w-screen|w-full|min-w-\[|z-\d+|overflow-x-(?:auto|scroll|visible))\b/i;
+const GENERATED_SHELL_VISIBLE_DIAGNOSTIC_JSX =
+  /<[^>]+>\s*(?:Route|Panel|Records|Storage|Selected|Session|Runtime|Debug|QA)\s*:\s*(?:\{[^}]*\}|[^<]*)<\/[^>]+>/i;
+const JSX_MAIN_LANDMARK_TAG = /<\s*main\b/i;
+const JSX_MAIN_ROLE_LANDMARK = /<\s*(?:div|section|article)\b[^>]*\brole\s*=\s*(?:"main"|'main'|\{\s*["']main["']\s*\})/i;
+
+function hasVisibleGeneratedShellDiagnosticChrome(source: string): boolean {
+  const clean = stripSourceComments(source);
+  if (GENERATED_SHELL_VISIBLE_DIAGNOSTIC_JSX.test(clean)) return true;
+  if (GENERATED_SHELL_DIAGNOSTIC_MARKUP.test(clean)) return true;
+  if (!GENERATED_SHELL_DIAGNOSTIC_TEXT.test(clean)) return false;
+  return GENERATED_SHELL_GLOBAL_LAYOUT.test(clean);
+}
+
+function sourceHasMainLandmark(source: string): boolean {
+  const clean = stripSourceComments(source);
+  return JSX_MAIN_LANDMARK_TAG.test(clean) || JSX_MAIN_ROLE_LANDMARK.test(clean);
+}
+
+function generatedScreenMainComponents(workdir: string, repoPath: string, screenIndex: any[]): Set<string> {
+  const components = new Set<string>();
+  for (const entry of screenIndex) {
+    const componentName = componentNameForScreenEntry(entry);
+    const screenFile = normalizeRelPath(String(entry?.file || entry?.filePath || ""));
+    if (!componentName || !screenFile || !/^src\/screens\/.+\.(tsx|jsx)$/i.test(screenFile)) continue;
+    const candidates = [
+      path.join(workdir, screenFile),
+      repoPath ? path.join(repoPath, screenFile) : "",
+    ].filter(Boolean);
+    for (const candidate of candidates) {
+      try {
+        if (!fs.existsSync(candidate)) continue;
+        if (sourceHasMainLandmark(fs.readFileSync(candidate, "utf-8"))) {
+          components.add(componentName);
+        }
+        break;
+      } catch {}
+    }
+  }
+  return components;
+}
+
+export function findGeneratedScreenShellChromeIssues(workdir: string, repoPath = ""): string[] {
+  if (!workdir || !fs.existsSync(workdir)) return [];
+  const screenIndex = loadScreenIndex(workdir, repoPath);
+  const componentNames = screenIndex.map(componentNameForScreenEntry).filter(Boolean);
+  if (componentNames.length === 0) return [];
+  const mainLandmarkComponents = generatedScreenMainComponents(workdir, repoPath, screenIndex);
+
+  const candidateFiles = listSourceFiles(workdir)
+    .filter((file) => !/^src\/screens\//i.test(file))
+    .filter((file) => !/\.(test|spec)\.(tsx?|jsx?)$/i.test(file))
+    .filter((file) => /(^|\/)(App|app|Root|root|Layout|layout|Router|router|main)\.(tsx?|jsx?)$/i.test(file));
+
+  const offenders: string[] = [];
+  const landmarkOffenders: string[] = [];
+  for (const file of candidateFiles) {
+    let source = "";
+    try {
+      source = fs.readFileSync(path.join(workdir, file), "utf-8");
+    } catch {
+      continue;
+    }
+    if (!sourceReferencesGeneratedScreens(source, componentNames)) continue;
+    if (hasVisibleGeneratedShellDiagnosticChrome(source)) offenders.push(file);
+    if (
+      mainLandmarkComponents.size > 0
+      && sourceHasMainLandmark(source)
+      && [...mainLandmarkComponents].some((name) => sourceRendersComponent(source, name))
+    ) {
+      landmarkOffenders.push(file);
+    }
+  }
+
+  return [
+    ...offenders.map((file) =>
+    `GENERATED_SCREEN_SHELL_CHROME_UNSAFE: ${file} renders visible diagnostic/session/status/debug/QA chrome around generated full-screen screens. Keep smoke/debug state in window.app/globalThis.app or test-only data, not visible app shell chrome that can push, cover, or overflow generated screens on mobile.`,
+    ),
+    ...landmarkOffenders.map((file) =>
+      `GENERATED_SCREEN_SHELL_LANDMARK_UNSAFE: ${file} wraps generated full-screen Stitch screens in an app-shell main landmark while generated screen components already render their own main landmark. Use a neutral <div data-setfarm-root> container and keep generated screens as the semantic and visual root.`,
+    ),
+  ];
+}
+
 function screenEntriesForRefs(screenIndex: any[], refs: ScreenOwnershipRef[], scopeFiles: string[] = []): Array<{ file: string; componentName: string; title: string }> {
   const scoped = new Set(scopeFiles.map(normalizeRelPath).filter(Boolean));
   return screenIndex
@@ -815,6 +1023,40 @@ export async function checkGeneratedScreenRegressionGate(
     reason: `${issues.join("\n")}\nStory ${storyId} (${storyTitle}) reported STATUS: done while regressing a previously verified generated screen integration.`,
     category: "GENERATED_SCREEN_REGRESSION",
     suggestion: "Preserve previously verified generated screens through the app/router surface while adding the current story screens. Restore the prior render path and keep current-story changes bounded.",
+  };
+}
+
+export function checkGeneratedScreenShellChromeGate(
+  storyId: string,
+  storyTitle: string,
+  workdir: string,
+  repoPath = "",
+): ScopeCheckResult {
+  if (!workdir || !fs.existsSync(workdir)) return { passed: true };
+  const issues = findGeneratedScreenShellChromeIssues(workdir, repoPath);
+  if (issues.length === 0) return { passed: true };
+  return {
+    passed: false,
+    reason: `${issues.join("\n")}\nStory ${storyId} (${storyTitle}) reported STATUS: done while app-level chrome can visually break generated full-screen Stitch surfaces.`,
+    category: "GENERATED_SCREEN_SHELL_CHROME_UNSAFE",
+    suggestion: "Remove visible diagnostic/session/status/debug/QA strips from the app shell around generated screens. Expose deterministic smoke state through window.app/globalThis.app and keep generated screens mounted as the visual viewport root.",
+  };
+}
+
+export function checkGeneratedScreenRequiredPropsGate(
+  storyId: string,
+  storyTitle: string,
+  workdir: string,
+  repoPath = "",
+): ScopeCheckResult {
+  if (!workdir || !fs.existsSync(workdir)) return { passed: true };
+  const issues = findGeneratedScreenRequiredPropIssues(workdir, repoPath);
+  if (issues.length === 0) return { passed: true };
+  return {
+    passed: false,
+    reason: `${issues.join("\n")}\nStory ${storyId} (${storyTitle}) reported STATUS: done while required generated screen props are not wired from the app shell/router.`,
+    category: "GENERATED_SCREEN_REQUIRED_PROPS_UNWIRED",
+    suggestion: "Wire every required generated screen prop from scoped app state/adapters or pass a typed spread adapter before reporting done. Do not edit generated src/screens/*.tsx files unless they are owned by the story.",
   };
 }
 

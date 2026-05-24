@@ -1,7 +1,24 @@
-import type { ScopeTargetRole, StackPack, StackPackId, TargetResolutionRule } from "./types.js";
+import type {
+  BuildStrippingPolicy,
+  DependencyResolutionPolicy,
+  PatchWindowMarker,
+  SandboxPrewarmPolicy,
+  ScopeTargetRole,
+  SharedEditValidationPolicy,
+  SlugRules,
+  SlugRuleTest,
+  StackPack,
+  StackPackId,
+  StackRouterParadigm,
+  TargetResolutionRule,
+  UtilityFilePolicy,
+} from "./types.js";
 
 function rule(ruleId: string, role: ScopeTargetRole, template: string): TargetResolutionRule {
-  return { ruleId, template, allowedRoles: [role] };
+  const kind = role === "route_registration" || role === "style_integration" || role === "test_bridge"
+    ? "shared_file"
+    : "single_file";
+  return { ruleId, template, allowedRoles: [role], kind };
 }
 
 function rules(prefix: string, templates: Record<ScopeTargetRole, string>): Record<ScopeTargetRole, TargetResolutionRule> {
@@ -114,6 +131,143 @@ const MOBILE_TARGET_RULES = rules("mobile", {
   api_route: "src/api/{target_slug}.ts",
   cli_command: "scripts/{target_slug}.ts",
 });
+
+const DEFAULT_SLUG_RULES: SlugRules = {
+  surface_slug: "kebab-case: strip SURF_ prefix, lowercase, replace non-alphanumeric separators with hyphen",
+  screen_file: "PascalCase: strip SCR-NNN prefix when present, capitalize words",
+  action_file: "camelCase: strip ACT_ prefix when present, lowercase first word",
+  entity_file: "PascalCase: entity name as-is after separator normalization",
+};
+
+const JS_SLUG_TESTS: SlugRuleTest[] = [
+  { ruleKey: "surface_slug", input: "SURF_TICKET_EDITOR", expected: "ticket-editor" },
+  { ruleKey: "screen_file", input: "SCR-002-ticket-editor", expected: "TicketEditor" },
+  { ruleKey: "action_file", input: "ACT_SAVE_RECORD", expected: "saveRecord" },
+];
+
+const PYTHON_SLUG_TESTS: SlugRuleTest[] = [
+  { ruleKey: "surface_slug", input: "SURF_TICKET_EDITOR", expected: "ticket_editor" },
+  { ruleKey: "screen_file", input: "SCR-002-ticket-editor", expected: "ticket_editor" },
+  { ruleKey: "action_file", input: "ACT_SAVE_RECORD", expected: "save_record" },
+];
+
+const ANDROID_SLUG_TESTS: SlugRuleTest[] = [
+  { ruleKey: "surface_slug", input: "SURF_TICKET_EDITOR", expected: "ticket_editor" },
+  { ruleKey: "screen_file", input: "SCR-002-ticket-editor", expected: "TicketEditorScreen" },
+  { ruleKey: "entity_file", input: "ticket record", expected: "TicketRecord" },
+];
+
+const IOS_SLUG_TESTS: SlugRuleTest[] = [
+  { ruleKey: "surface_slug", input: "SURF_TICKET_EDITOR", expected: "ticket-editor" },
+  { ruleKey: "screen_file", input: "SCR-002-ticket-editor", expected: "TicketEditorView" },
+  { ruleKey: "entity_file", input: "ticket record", expected: "TicketRecord" },
+];
+
+const DEFAULT_DEPENDENCY_RESOLUTION: DependencyResolutionPolicy = {
+  conflictStrategy: "reject_conflict",
+  outOfEcosystem: "reject",
+  manifestPatchMode: "setup_build_only",
+};
+
+const DEFAULT_BUILD_STRIPPING: BuildStrippingPolicy = {
+  testBridgeStripping: {
+    required: true,
+    method: "bundler_define_replacement",
+    verification: "config_and_bundle_scan",
+  },
+  devToolStripping: {
+    required: false,
+    method: "not_applicable",
+    verification: "not_applicable",
+  },
+};
+
+const NOT_APPLICABLE_STRIPPING: BuildStrippingPolicy = {
+  testBridgeStripping: {
+    required: false,
+    method: "not_applicable",
+    verification: "not_applicable",
+  },
+  devToolStripping: {
+    required: false,
+    method: "not_applicable",
+    verification: "not_applicable",
+  },
+};
+
+function sandboxPrewarm(commands: string[], artifactPath = ".setfarm/setup/PREWARM_EVIDENCE.json"): SandboxPrewarmPolicy {
+  return {
+    commands,
+    successCheck: commands.length > 0 ? "exit_code_zero" : "not_required",
+    timeoutMs: commands.length > 0 ? 120000 : 1000,
+    networkPolicy: commands.length > 0 ? "allowlist" : "none",
+    allowedHosts: commands.length > 0
+      ? ["registry.npmjs.org", "pypi.org", "files.pythonhosted.org", "services.gradle.org", "github.com"]
+      : [],
+    artifactPath,
+  };
+}
+
+function routerParadigmFor(pack: StackPack): StackRouterParadigm {
+  if (pack.id === "nextjs-web-app") return "file_system_nested";
+  if (pack.id === "browser-game-canvas") return "game_runtime";
+  if (pack.platform === "api" || pack.platform === "cli") return "declarative_flat";
+  if (pack.id === "android-app" || pack.id === "ios-app") return "native_manifest";
+  if (pack.routeContract.router === "none") return "none";
+  return "single_entry";
+}
+
+function slugTestsFor(pack: StackPack): SlugRuleTest[] {
+  if (pack.id === "python-cli" || pack.id === "python-web") return PYTHON_SLUG_TESTS;
+  if (pack.id === "android-app") return ANDROID_SLUG_TESTS;
+  if (pack.id === "ios-app") return IOS_SLUG_TESTS;
+  return JS_SLUG_TESTS;
+}
+
+function utilityPolicyFor(pack: StackPack): UtilityFilePolicy {
+  const roots = pack.id.startsWith("python") ? ["src/", "tests/"] : pack.id === "android-app"
+    ? ["app/src/main/", "app/src/test/"]
+    : pack.id === "ios-app"
+      ? ["Sources/", "Tests/"]
+      : ["src/", "tests/"];
+  return {
+    allowedRoots: roots,
+    naming: "derive from scope target slug rules; no product-specific hardcoded file names",
+    garbageCollection: "mc_reachable_imports",
+  };
+}
+
+function sharedEditPolicyFor(pack: StackPack): SharedEditValidationPolicy {
+  if (pack.id.startsWith("python") || pack.id === "android-app" || pack.id === "ios-app") return "patch_window";
+  return "ast_required";
+}
+
+function patchMarkersFor(pack: StackPack): PatchWindowMarker[] {
+  const sharedFiles = pack.implementationBoundaries?.sharedFiles || [];
+  if (sharedEditPolicyFor(pack) !== "patch_window") return [];
+  return sharedFiles.map((file) => ({
+    file,
+    start: "SETFARM_INJECT_START",
+    end: "SETFARM_INJECT_END",
+    scope: "stack-pack shared edit patch window",
+  }));
+}
+
+function finalizePack(pack: StackPack): StackPack {
+  const isCodeBuild = pack.dependencyPolicy?.ecosystem === "none" ? false : Boolean(pack.setup.install || pack.setup.build || pack.setup.test || pack.setup.smoke);
+  return {
+    ...pack,
+    routerParadigm: pack.routerParadigm || routerParadigmFor(pack),
+    slugRules: pack.slugRules || DEFAULT_SLUG_RULES,
+    slugRuleTests: pack.slugRuleTests || slugTestsFor(pack),
+    dependencyResolutionPolicy: pack.dependencyResolutionPolicy || DEFAULT_DEPENDENCY_RESOLUTION,
+    sharedEditValidationPolicy: pack.sharedEditValidationPolicy || sharedEditPolicyFor(pack),
+    patchWindowMarkers: pack.patchWindowMarkers || patchMarkersFor(pack),
+    utilityFilePolicy: pack.utilityFilePolicy || utilityPolicyFor(pack),
+    buildStrippingPolicy: pack.buildStrippingPolicy || (pack.designPolicy === "none" ? NOT_APPLICABLE_STRIPPING : DEFAULT_BUILD_STRIPPING),
+    sandboxPrewarm: pack.sandboxPrewarm || sandboxPrewarm(isCodeBuild && pack.setup.install ? [pack.setup.install] : []),
+  };
+}
 
 export const STACK_PACKS: Record<StackPackId, StackPack> = {
   "nextjs-web-app": {
@@ -609,7 +763,7 @@ export const STACK_PACKS: Record<StackPackId, StackPack> = {
     platform: "mobile",
     techStackAliases: ["android-native", "android"],
     designPolicy: "stitch-brief-only",
-    conversionPolicy: "native_equivalent",
+    conversionPolicy: "reference_only",
     scaffoldPolicy: "verify-existing",
     projectTypes: ["android", "mobile-app"],
     whenToUse: "Use for native Android apps with Gradle, AndroidManifest, Kotlin, Java, or Android project evidence.",
@@ -661,7 +815,7 @@ export const STACK_PACKS: Record<StackPackId, StackPack> = {
     platform: "mobile",
     techStackAliases: ["ios-native", "ios"],
     designPolicy: "stitch-brief-only",
-    conversionPolicy: "native_equivalent",
+    conversionPolicy: "reference_only",
     scaffoldPolicy: "verify-existing",
     projectTypes: ["ios", "iphone", "mobile-app"],
     whenToUse: "Use for native iOS apps with Xcode, Swift, SwiftUI, UIKit, or iOS project evidence.",
@@ -761,6 +915,10 @@ export const STACK_PACKS: Record<StackPackId, StackPack> = {
     ].join("\n"),
   },
 };
+
+for (const id of Object.keys(STACK_PACKS) as StackPackId[]) {
+  STACK_PACKS[id] = finalizePack(STACK_PACKS[id]);
+}
 
 export function getStackPack(packId: StackPackId): StackPack {
   return STACK_PACKS[packId];

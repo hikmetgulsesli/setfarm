@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { implementModule } from "../../dist/installer/steps/06-implement/module.js";
-import { checkBuildGate, checkScopeFilesGate, checkTestGate, computeScopeFileLimits, detectPackageBuildCommand, findDesignDomImplementationFindings, findDesignDomImplementationIssues, findGeneratedScreenIntegrationIssues, findGeneratedScreenRegressionIssues, getOutOfScopeStoryFiles, normalize, parseGitStatusPorcelainPath, sourceExposesWindowApp, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
+import { checkBuildGate, checkGeneratedScreenRequiredPropsGate, checkGeneratedScreenShellChromeGate, checkScopeFilesGate, checkTestGate, computeScopeFileLimits, detectPackageBuildCommand, findDesignDomImplementationFindings, findDesignDomImplementationIssues, findGeneratedScreenIntegrationIssues, findGeneratedScreenRegressionIssues, findGeneratedScreenRequiredPropIssues, findGeneratedScreenShellChromeIssues, getOutOfScopeStoryFiles, normalize, parseGitStatusPorcelainPath, sourceExposesWindowApp, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
 import { cleanupOutOfScopeWorktreeFiles } from "../../dist/installer/steps/06-implement/context.js";
 import { commitStoryWorktreeScopeIfNeeded, decideStorySystemSmokeGate } from "../../dist/installer/step-ops.js";
 import { createStoryWorktree, ensureStoryBranchWorktree } from "../../dist/installer/worktree-ops.js";
@@ -51,6 +51,299 @@ describe("06-implement step module", () => {
     assert.equal(rules.includes("small edits OK"), false);
   });
 
+  it("keeps app diagnostics out of generated full-screen Stitch surfaces", () => {
+    const prompt = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/prompt.md"), "utf-8");
+    const rules = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/rules.md"), "utf-8");
+
+    assert.match(prompt, /Do not add visible diagnostic, session, status, QA, debug, or telemetry strips/);
+    assert.match(prompt, /Do not wrap generated full-screen Stitch screens in another semantic landmark\/root/);
+    assert.match(prompt, /every visible product datum/);
+    assert.match(prompt, /static Stitch placeholder/);
+    assert.match(prompt, /changes visible DOM inside the generated screen/);
+    assert.match(prompt, /same current value/);
+    assert.match(prompt, /390px mobile viewport/);
+    assert.match(prompt, /window\.app`\/`globalThis\.app/);
+    assert.match(rules, /Generated screen content must be state-driven/);
+    assert.match(rules, /visible tables, rows, cards, metrics, forms/);
+    assert.match(rules, /not complete until a real owned action changes visible DOM/);
+    assert.match(rules, /must not be no-ops/);
+    assert.match(rules, /same current value/);
+    assert.match(rules, /Do not add visible diagnostic\/session\/status\/debug\/QA strips/);
+    assert.match(rules, /Generated screens own their semantic landmarks/);
+    assert.match(rules, /window\.app` or `globalThis\.app/);
+    assert.match(rules, /horizontally overflows the generated screen on mobile/);
+  });
+
+  it("blocks visible app-shell diagnostics around generated full-screen Stitch screens", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-generated-shell-chrome-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        {
+          screenId: "operations",
+          title: "Operations",
+          componentName: "OperationsScreen",
+          file: "src/screens/OperationsScreen.tsx",
+        },
+      ]));
+      fs.writeFileSync(
+        path.join(tmp, "src/screens/OperationsScreen.tsx"),
+        "export function OperationsScreen() { return <main data-testid=\"operations-screen\">Operations</main>; }\n",
+      );
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "import { OperationsScreen } from './screens/OperationsScreen';",
+        "export default function App() {",
+        "  return <div>",
+        "    <div className=\"fixed top-0 left-0 right-0 z-50 w-full\" data-testid=\"session-status-strip\">Session Status OK</div>",
+        "    <OperationsScreen />",
+        "  </div>;",
+        "}",
+        "",
+      ].join("\n"));
+
+      const issues = findGeneratedScreenShellChromeIssues(tmp);
+      assert.equal(issues.length, 1);
+      assert.match(issues[0], /GENERATED_SCREEN_SHELL_CHROME_UNSAFE/);
+      assert.match(issues[0], /src\/App\.tsx/);
+
+      const gate = checkGeneratedScreenShellChromeGate("US-001", "App Shell", tmp);
+      assert.equal(gate.passed, false);
+      assert.equal(gate.category, "GENERATED_SCREEN_SHELL_CHROME_UNSAFE");
+      assert.match(gate.reason || "", /app-level chrome/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks visible route panel storage statusbar around generated full-screen Stitch screens", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-generated-shell-statusbar-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        {
+          screenId: "operations",
+          title: "Operations",
+          componentName: "OperationsScreen",
+          file: "src/screens/OperationsScreen.tsx",
+        },
+      ]));
+      fs.writeFileSync(
+        path.join(tmp, "src/screens/OperationsScreen.tsx"),
+        "export function OperationsScreen() { return <main data-testid=\"operations-screen\">Operations</main>; }\n",
+      );
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "import { OperationsScreen } from './screens/OperationsScreen';",
+        "export default function App() {",
+        "  const store = { activeRoute: '/', activePanel: 'operations', storageStatus: 'ready', counts: { total: 3 } };",
+        "  return <section className=\"calibratrack-shell\">",
+        "    <div className=\"calibratrack-statusbar\" aria-live=\"polite\">",
+        "      <span>Route: {store.activeRoute}</span>",
+        "      <span>Panel: {store.activePanel}</span>",
+        "      <span>Records: {store.counts.total}</span>",
+        "      <span>Storage: {store.storageStatus}</span>",
+        "    </div>",
+        "    <OperationsScreen />",
+        "  </section>;",
+        "}",
+        "",
+      ].join("\n"));
+
+      const issues = findGeneratedScreenShellChromeIssues(tmp);
+      assert.equal(issues.length, 1);
+      assert.match(issues.join("\n"), /GENERATED_SCREEN_SHELL_CHROME_UNSAFE/);
+
+      const gate = checkGeneratedScreenShellChromeGate("US-001", "App Shell", tmp);
+      assert.equal(gate.passed, false);
+      assert.equal(gate.category, "GENERATED_SCREEN_SHELL_CHROME_UNSAFE");
+      assert.match(gate.reason || "", /visible diagnostic/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks duplicate app-shell main landmarks around generated full-screen Stitch screens", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-generated-shell-landmark-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        {
+          screenId: "operations",
+          title: "Operations",
+          componentName: "OperationsScreen",
+          file: "src/screens/OperationsScreen.tsx",
+        },
+      ]));
+      fs.writeFileSync(
+        path.join(tmp, "src/screens/OperationsScreen.tsx"),
+        "export function OperationsScreen() { return <main data-testid=\"operations-screen\">Operations</main>; }\n",
+      );
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "import { OperationsScreen } from './screens/OperationsScreen';",
+        "export default function App() {",
+        "  return <main data-setfarm-root=\"app\">",
+        "    <OperationsScreen />",
+        "  </main>;",
+        "}",
+        "",
+      ].join("\n"));
+
+      const issues = findGeneratedScreenShellChromeIssues(tmp);
+      assert.equal(issues.length, 1);
+      assert.match(issues[0], /GENERATED_SCREEN_SHELL_LANDMARK_UNSAFE/);
+      assert.match(issues[0], /src\/App\.tsx/);
+      assert.match(issues[0], /neutral <div data-setfarm-root>/);
+
+      const gate = checkGeneratedScreenShellChromeGate("US-001", "App Shell", tmp);
+      assert.equal(gate.passed, false);
+      assert.equal(gate.category, "GENERATED_SCREEN_SHELL_CHROME_UNSAFE");
+      assert.match(gate.reason || "", /main landmark/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("allows app-shell main landmarks when generated screens do not own main landmarks", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-generated-shell-landmark-ok-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        {
+          screenId: "operations",
+          title: "Operations",
+          componentName: "OperationsScreen",
+          file: "src/screens/OperationsScreen.tsx",
+        },
+      ]));
+      fs.writeFileSync(
+        path.join(tmp, "src/screens/OperationsScreen.tsx"),
+        "export function OperationsScreen() { return <section data-testid=\"operations-screen\">Operations</section>; }\n",
+      );
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "import { OperationsScreen } from './screens/OperationsScreen';",
+        "export default function App() {",
+        "  return <main data-setfarm-root=\"app\">",
+        "    <OperationsScreen />",
+        "  </main>;",
+        "}",
+        "",
+      ].join("\n"));
+
+      assert.deepEqual(findGeneratedScreenShellChromeIssues(tmp), []);
+      assert.equal(checkGeneratedScreenShellChromeGate("US-001", "App Shell", tmp).passed, true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("allows invisible window.app smoke state for generated full-screen Stitch screens", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-generated-shell-chrome-ok-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        {
+          screenId: "operations",
+          title: "Operations",
+          componentName: "OperationsScreen",
+          file: "src/screens/OperationsScreen.tsx",
+        },
+      ]));
+      fs.writeFileSync(
+        path.join(tmp, "src/screens/OperationsScreen.tsx"),
+        "export function OperationsScreen() { return <main data-testid=\"operations-screen\">Operations</main>; }\n",
+      );
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "import { OperationsScreen } from './screens/OperationsScreen';",
+        "export default function App() {",
+        "  (globalThis as any).app = { storageStatus: 'ready', activeSurface: 'operations' };",
+        "  return <OperationsScreen />;",
+        "}",
+        "",
+      ].join("\n"));
+
+      assert.deepEqual(findGeneratedScreenShellChromeIssues(tmp), []);
+      assert.equal(checkGeneratedScreenShellChromeGate("US-001", "App Shell", tmp).passed, true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks missing required props when app renders generated screen without adapter", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-generated-required-props-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { screenId: "operations", title: "Operations", componentName: "ItemOperationsScreen", file: "src/screens/ItemOperationsScreen.tsx" },
+      ]));
+      fs.writeFileSync(path.join(tmp, "src/screens/ItemOperationsScreen.tsx"), [
+        "export type ItemOperationsScreenProps = {",
+        "  items: Array<{ id: string; label: string }>;",
+        "  counts: { total: number };",
+        "  selectedItem: string | null;",
+        "  onCreate?: () => void;",
+        "  className?: string;",
+        "};",
+        "export function ItemOperationsScreen(props: ItemOperationsScreenProps) {",
+        "  return <main>{props.items.length}</main>;",
+        "}",
+        "",
+      ].join("\n"));
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "import { ItemOperationsScreen } from './screens/ItemOperationsScreen';",
+        "export default function App() {",
+        "  return <ItemOperationsScreen />;",
+        "}",
+        "",
+      ].join("\n"));
+
+      const issues = findGeneratedScreenRequiredPropIssues(tmp);
+      assert.equal(issues.length, 1);
+      assert.match(issues[0], /items/);
+      assert.match(issues[0], /counts/);
+      assert.match(issues[0], /selectedItem/);
+      assert.doesNotMatch(issues[0], /onCreate/);
+      assert.doesNotMatch(issues[0], /className/);
+
+      const gate = checkGeneratedScreenRequiredPropsGate("US-001", "App Shell", tmp);
+      assert.equal(gate.passed, false);
+      assert.equal(gate.category, "GENERATED_SCREEN_REQUIRED_PROPS_UNWIRED");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("allows generated screens when required props are wired", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-generated-required-props-ok-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { screenId: "operations", title: "Operations", componentName: "ItemOperationsScreen", file: "src/screens/ItemOperationsScreen.tsx" },
+      ]));
+      fs.writeFileSync(path.join(tmp, "src/screens/ItemOperationsScreen.tsx"), [
+        "export type ItemOperationsScreenProps = {",
+        "  items: Array<{ id: string; label: string }>;",
+        "  counts: { total: number };",
+        "  selectedItem: string | null;",
+        "};",
+        "export function ItemOperationsScreen(props: ItemOperationsScreenProps) {",
+        "  return <main>{props.items.length}</main>;",
+        "}",
+        "",
+      ].join("\n"));
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "import { ItemOperationsScreen } from './screens/ItemOperationsScreen';",
+        "export default function App() {",
+        "  return <ItemOperationsScreen items={[]} counts={{ total: 0 }} selectedItem={null} />;",
+        "}",
+        "",
+      ].join("\n"));
+
+      assert.deepEqual(findGeneratedScreenRequiredPropIssues(tmp), []);
+      assert.equal(checkGeneratedScreenRequiredPropsGate("US-001", "App Shell", tmp).passed, true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("keeps git ownership in the platform instead of the implement agent", () => {
     const prompt = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/prompt.md"), "utf-8");
     const contextSource = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/context.js"), "utf-8");
@@ -65,6 +358,8 @@ describe("06-implement step module", () => {
     assert.match(contextSource, /story_implementation_contract/);
     assert.match(contextSource, /implementation_contract, scope_targets, shared_edit_requests/);
     assert.match(contextSource, /assembleImplementContext/);
+    assert.match(contextSource, /Generated screen content must render from story-owned props\/store\/adapters/);
+    assert.match(contextSource, /visible DOM inside the generated screen/);
     assert.match(rules, /Do NOT run `git add`, `git commit`, `git push`/);
     assert.match(implementInput, /Setfarm performs the final\s+scoped story commit/);
     assert.doesNotMatch(prompt, /xargs -a \.story-scope-files git add --/);
@@ -180,6 +475,33 @@ describe("06-implement step module", () => {
       assert.equal(result.committed, false);
       assert.deepEqual(result.stagedFiles, []);
       assert.equal(git(tmp, ["log", "-1", "--format=%s"]), "base");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("platform story commit ignores transient runtime smoke artifacts", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-platform-commit-runtime-artifacts-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), "export const app = 'base';\n");
+      git(tmp, ["init", "-b", "main"]);
+      git(tmp, ["add", "src/App.tsx"]);
+      git(tmp, ["commit", "-m", "base"]);
+      fs.writeFileSync(path.join(tmp, ".story-scope-files"), "src/App.tsx\n");
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), "export const app = 'changed';\n");
+      fs.writeFileSync(path.join(tmp, "smoke-home.png"), "fake image\n");
+      fs.mkdirSync(path.join(tmp, "test-results/story"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "test-results/story/video.webm"), "video\n");
+      fs.mkdirSync(path.join(tmp, "playwright-report"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "playwright-report/index.html"), "<html></html>\n");
+
+      const result = commitStoryWorktreeScopeIfNeeded(tmp, "US-001", "runtime artifacts", ["src/App.tsx"], "fix");
+
+      assert.equal(result.error, "");
+      assert.equal(result.committed, true);
+      assert.deepEqual(result.stagedFiles, ["src/App.tsx"]);
+      assert.equal(git(tmp, ["show", "--name-only", "--format=", "HEAD"]).trim(), "src/App.tsx");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -1108,6 +1430,10 @@ describe("06-implement step module", () => {
     assert.match(stepOps, /await failStep\(stepId, generatedScreenResult\.reason\)/);
     assert.match(stepOps, /const generatedScreenRegressionResult = await checkGeneratedScreenRegressionGate/);
     assert.match(stepOps, /await failStep\(stepId, generatedScreenRegressionResult\.reason\)/);
+    assert.match(stepOps, /const generatedScreenShellChromeResult = checkGeneratedScreenShellChromeGate/);
+    assert.match(stepOps, /await failStep\(stepId, generatedScreenShellChromeResult\.reason\)/);
+    assert.match(stepOps, /const generatedScreenPropsResult = checkGeneratedScreenRequiredPropsGate/);
+    assert.match(stepOps, /await failStep\(stepId, generatedScreenPropsResult\.reason\)/);
     assert.match(stepOps, /detectVerifyGeneratedScreenRegressionFailure/);
     assert.match(stepOps, /verify-generated-screen-regression-preflight/);
   });

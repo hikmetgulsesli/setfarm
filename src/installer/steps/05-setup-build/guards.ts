@@ -33,6 +33,13 @@ function resolveRepo(context: Record<string, string>): string {
   return repo;
 }
 
+function clearPreclaimFailureContext(context: Record<string, string>): void {
+  delete context["baseline_fail"];
+  delete context["previous_failure"];
+  delete context["failure_category"];
+  delete context["failure_suggestion"];
+}
+
 async function refreshCompatFailure(context: Record<string, string>): Promise<void> {
   if (!context["compat_fail"]) return;
   const repo = resolveRepo(context);
@@ -51,6 +58,10 @@ async function refreshCompatFailure(context: Record<string, string>): Promise<vo
     throw new Error(`COMPAT: ${header.slice(0, 800)}`);
   }
   delete context["compat_fail"];
+  if (context["failure_category"] === "setup_compat_failure") {
+    delete context["failure_category"];
+    delete context["failure_suggestion"];
+  }
 }
 
 function refreshBaselineFailure(parsed: ParsedOutput, context: Record<string, string>): void {
@@ -64,7 +75,7 @@ function refreshBaselineFailure(parsed: ParsedOutput, context: Record<string, st
   const pkg = JSON.parse(fs.readFileSync(packageJson, "utf-8"));
   const buildCmd = parsed.build_cmd || context["build_cmd_hint"] || (pkg.scripts?.build ? "npm run build" : "");
   if (!buildCmd) {
-    delete context["baseline_fail"];
+    clearPreclaimFailureContext(context);
     return;
   }
 
@@ -74,7 +85,7 @@ function refreshBaselineFailure(parsed: ParsedOutput, context: Record<string, st
     } else {
       execFileSync("sh", ["-lc", buildCmd], { cwd: repo, timeout: 180000, stdio: "pipe" });
     }
-    delete context["baseline_fail"];
+    clearPreclaimFailureContext(context);
   } catch (e) {
     throw new Error(`BASELINE: npm run build failed — ${formatProcessFailure(e, 300)}`);
   }

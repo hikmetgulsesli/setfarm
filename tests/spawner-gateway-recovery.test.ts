@@ -397,7 +397,8 @@ describe("spawner gateway recovery wiring", () => {
     assert.doesNotMatch(helperSource, /String\(line \|\| ""\)\.trim\(\)/);
     assert.match(helperSource, /raw\.slice\(3\)\.trim\(\)/);
     assert.match(helperSource, /\^\[ MADRCU\?!\]\{2\}\\s/);
-    assert.match(helperSource, /files\.length > 0 && files\.every\(isPlatformInternalCommitPath\)/);
+    assert.match(helperSource, /files\.length > 0 && files\.every\(isPlatformNonStoryCommitPath\)/);
+    assert.match(source, /function isPlatformTransientRuntimeArtifact\(file: string\): boolean/);
     assert.match(qaFixMergeBlock, /dirty && !isPlatformMetadataOnlyDirtyStatus\(dirty\)/);
     assert.match(qaFixMergeBlock, /qa_fix_platform_metadata_dirty_ignored/);
     assert.match(qaFixMergeBlock, /Ignoring platform metadata-only dirty status before merging/);

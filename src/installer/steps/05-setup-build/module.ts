@@ -15,7 +15,11 @@ function buildPrompt(ctx: PromptContext): string {
   const resolved = promptTemplate
     .replace(/\{\{REPO\}\}/g, c["repo"] || "")
     .replace(/\{\{TECH_STACK\}\}/g, c["tech_stack"] || "vite-react")
-    .replace(/\{\{BUILD_CMD_HINT\}\}/g, c["build_cmd_hint"] || "npm run build");
+    .replace(/\{\{BUILD_CMD_HINT\}\}/g, c["build_cmd_hint"] || "npm run build")
+    .replace(/\{\{PREVIOUS_FAILURE\}\}/g, c["previous_failure"] || "(none)")
+    .replace(/\{\{FAILURE_CATEGORY\}\}/g, c["failure_category"] || "none")
+    .replace(/\{\{FAILURE_SUGGESTION\}\}/g, c["failure_suggestion"] || "none")
+    .replace(/\{\{DESIGN_IMPORT_VALIDATE_REPORT\}\}/g, c["design_import_validate_report"] || ".setfarm/setup/DESIGN_IMPORT_VALIDATE.json");
   return `${resolved}\n\n---\n\n# Rules\n\n${rulesBody}`;
 }
 

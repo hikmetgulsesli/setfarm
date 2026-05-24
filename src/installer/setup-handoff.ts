@@ -6,6 +6,7 @@ import { logger } from "../lib/logger.js";
 import { computePredictedScreenFiles } from "./steps/03-stories/context.js";
 import { resolveStackContract } from "./stack-contract/reconcile.js";
 import { getStackPack } from "./stack-contract/packs.js";
+import { validateStackPack } from "./stack-contract/validators.js";
 import type {
   ScopeTargetRole,
   StackPack,
@@ -15,7 +16,8 @@ import type {
 
 const SETUP_SCHEMA = "setfarm.setup-certificate.v1";
 const FILE_TREE_SCHEMA = "setfarm.file-tree-manifest.v1";
-const IMPLEMENT_CONTEXT_SCHEMA = "setfarm.implement-context.v1";
+const SHARED_GRANTS_SCHEMA = "setfarm.shared-grants.v1";
+const IMPLEMENT_CONTEXT_SCHEMA = "setfarm.implement-context.v2";
 
 export interface StoryScopeTarget {
   role: ScopeTargetRole;
@@ -51,10 +53,32 @@ export interface ResolvedTarget {
   domainSlug: string;
   targetSlug: string;
   path: string;
+  resolvedPath: string;
   ruleId: string;
   sharedEdit?: boolean;
   editScope?: string;
+  collisionStatus?: "unique" | "pending_shared_grant" | "shared";
+  sharedGrantRequestId?: string;
   source: "scope_target" | "shared_edit_request";
+}
+
+export interface SharedGrant {
+  grantId: string;
+  runId: string;
+  storyId: string;
+  path: string;
+  role: ScopeTargetRole;
+  editScope: string;
+  status: "granted" | "denied";
+  reason: string;
+  source: "shared_edit_request" | "stack_shared_file";
+}
+
+export interface SharedGrantsArtifact {
+  schema: typeof SHARED_GRANTS_SCHEMA;
+  version: number;
+  runId: string;
+  grants: SharedGrant[];
 }
 
 export interface DependencyEvidence {
@@ -62,6 +86,28 @@ export interface DependencyEvidence {
   approved: StoryDependencyRequest[];
   installed: StoryDependencyRequest[];
   rejected: Array<StoryDependencyRequest & { reason: string }>;
+}
+
+export interface DesignImportValidateSummary {
+  status: "pass" | "fail" | "skipped" | "missing";
+  reportPath: string;
+  checkedAt?: string;
+  fixMode?: boolean;
+  screensValidated: string[];
+  failedRules: unknown[];
+  fixesApplied: unknown[];
+  rootCauseCategory?: string;
+  summary?: Record<string, unknown>;
+}
+
+export interface DesignVisualSmokeSummary {
+  status: "pass" | "fail" | "skipped" | "missing";
+  checkedAt?: string;
+  screensChecked: string[];
+  failedChecks: unknown[];
+  headlessBinaryVersion?: string;
+  viewports: string[];
+  reason?: string;
 }
 
 export interface FileTreeManifest {
@@ -98,8 +144,22 @@ export interface SetupCertificate {
     conversionNote: string;
   };
   fileTreeManifestPath: string;
+  sharedGrantsPath: string;
   targetResolutionRules: Record<string, TargetResolutionRule>;
+  routerParadigm?: string;
+  slugRules?: Record<string, string>;
+  slugRuleTests?: Array<Record<string, string>>;
+  sharedEditValidationPolicy?: string;
+  patchWindowMarkers?: Array<Record<string, string>>;
+  utilityFilePolicy?: Record<string, unknown>;
+  buildStrippingPolicy?: Record<string, unknown>;
+  sandboxPrewarm?: Record<string, unknown>;
+  prewarmEvidencePath?: string;
+  mockInjectionContract?: Record<string, unknown>;
+  designImportValidate?: DesignImportValidateSummary;
+  designVisualSmoke?: DesignVisualSmokeSummary;
   dependencyEvidence: DependencyEvidence;
+  dependencyResolutionPolicy?: Record<string, unknown>;
   buildEvidence: Record<string, string>;
   createdAt: string;
 }
@@ -178,6 +238,14 @@ export function setupCertificatePath(repo: string): string {
 
 export function fileTreeManifestPath(repo: string): string {
   return path.join(setupDir(repo), "FILE_TREE_MANIFEST.json");
+}
+
+export function sharedGrantsPath(repo: string): string {
+  return path.join(setupDir(repo), "SHARED_GRANTS.json");
+}
+
+export function designImportValidatePath(repo: string): string {
+  return path.join(setupDir(repo), "DESIGN_IMPORT_VALIDATE.json");
 }
 
 export function implementContextPath(repo: string, storyId: string): string {
@@ -259,6 +327,7 @@ function resolveTarget(
     domainSlug,
     targetSlug,
     path: resolvedPath,
+    resolvedPath,
     ruleId: rule.ruleId,
     sharedEdit: source === "shared_edit_request",
     editScope,
@@ -364,6 +433,91 @@ function generatedDesignFiles(repo: string): string[] {
     .sort();
 }
 
+function generatedScreenSourceFiles(repo: string): string[] {
+  const screensDir = path.join(repo, "src", "screens");
+  if (!fs.existsSync(screensDir)) return [];
+  const out: string[] = [];
+  const walk = (dir: string): void => {
+    for (const name of fs.readdirSync(dir)) {
+      const abs = path.join(dir, name);
+      const stat = fs.statSync(abs);
+      if (stat.isDirectory()) {
+        walk(abs);
+        continue;
+      }
+      if (!/\.(tsx|jsx)$/i.test(name)) continue;
+      out.push(relativeSetupPath(repo, abs));
+    }
+  };
+  walk(screensDir);
+  return out.sort();
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function readDesignImportValidateSummary(repo: string): DesignImportValidateSummary {
+  const reportFile = designImportValidatePath(repo);
+  const reportPath = relativeSetupPath(repo, reportFile);
+  const raw = readJsonFile<Record<string, unknown>>(reportFile);
+  if (!raw) {
+    return {
+      status: "missing",
+      reportPath,
+      screensValidated: [],
+      failedRules: [],
+      fixesApplied: [],
+    };
+  }
+
+  const rawStatus = raw.status;
+  const status: DesignImportValidateSummary["status"] =
+    rawStatus === "pass" || rawStatus === "fail" || rawStatus === "skipped" ? rawStatus : "fail";
+
+  return {
+    status,
+    reportPath: typeof raw.reportPath === "string" ? raw.reportPath : reportPath,
+    checkedAt: typeof raw.checkedAt === "string" ? raw.checkedAt : undefined,
+    fixMode: typeof raw.fixMode === "boolean" ? raw.fixMode : undefined,
+    screensValidated: stringArray(raw.screensValidated),
+    failedRules: Array.isArray(raw.failedRules) ? raw.failedRules : [],
+    fixesApplied: Array.isArray(raw.fixesApplied) ? raw.fixesApplied : [],
+    rootCauseCategory: typeof raw.rootCauseCategory === "string" ? raw.rootCauseCategory : undefined,
+    summary: raw.summary && typeof raw.summary === "object" && !Array.isArray(raw.summary)
+      ? raw.summary as Record<string, unknown>
+      : undefined,
+  };
+}
+
+function defaultDesignVisualSmokeSummary(): DesignVisualSmokeSummary {
+  return {
+    status: "skipped",
+    screensChecked: [],
+    failedChecks: [],
+    viewports: ["1280x800", "375x812"],
+    reason: "not configured in this stack pack yet",
+  };
+}
+
+function assertDesignImportReady(repo: string, certificate?: SetupCertificate): void {
+  const screenFiles = generatedScreenSourceFiles(repo);
+  const summary = certificate?.designImportValidate || readDesignImportValidateSummary(repo);
+  if (screenFiles.length === 0 && summary.status === "missing") return;
+  if (summary.status === "pass") return;
+
+  const reportPath = summary.reportPath || relativeSetupPath(repo, designImportValidatePath(repo));
+  throw Object.assign(new Error(
+    `DESIGN_IMPORT_VALIDATE_BLOCKED: generated screen baseline is not validated (${summary.status}). ` +
+    `Inspect ${reportPath}, scripts/stitch-to-jsx.mjs, scripts/generated-screen-validator.mjs, and src/screens/*.tsx. ` +
+    "Run node scripts/generated-screen-validator.mjs <repo-path> --fix and npm run build before IMPLEMENT.",
+  ), {
+    code: "DESIGN_IMPORT_VALIDATE_BLOCKED",
+    reportPath,
+    failedRules: summary.failedRules,
+  });
+}
+
 function targetSkeleton(target: ResolvedTarget): string {
   if (target.source === "shared_edit_request") return `Shared edit grant: ${target.editScope || target.role}.`;
   if (target.role === "surface_component") return `Resolved surface component for ${target.screenId || target.surfaceId || target.targetSlug}.`;
@@ -416,6 +570,87 @@ async function writeResolvedStories(
   }
 }
 
+function grantIdFor(target: ResolvedTarget, index: number): string {
+  return normalizeActionId(`GRANT_${target.storyId}_${target.role}_${index}`).toUpperCase();
+}
+
+export function annotateResolvedTargetsForSetup(
+  resolved: ResolvedTarget[],
+  pack: StackPack,
+  runId: string,
+): { targets: ResolvedTarget[]; grants: SharedGrant[] } {
+  const writers = new Map<string, ResolvedTarget[]>();
+  for (const target of resolved) {
+    const current = writers.get(target.path) || [];
+    current.push(target);
+    writers.set(target.path, current);
+  }
+  const shared = new Set(pack.implementationBoundaries?.sharedFiles || []);
+  const forbidden = new Set(pack.implementationBoundaries?.forbiddenDuringImplement || []);
+  const targets: ResolvedTarget[] = resolved.map((target) => ({ ...target, collisionStatus: "unique" }));
+  const byIdentity = new Map(targets.map((target) => [`${target.storyId}:${target.role}:${target.path}:${target.source}`, target]));
+  const grants: SharedGrant[] = [];
+  const conflicts = [...writers.entries()].filter(([file, pathTargets]) => {
+    const pathOwners = new Set(pathTargets.map((target) => target.storyId));
+    if (pathOwners.size <= 1) return false;
+
+    if (shared.has(file)) {
+      for (const original of pathTargets) {
+        const current = byIdentity.get(`${original.storyId}:${original.role}:${original.path}:${original.source}`);
+        if (!current) continue;
+        current.collisionStatus = original.sharedEdit ? "pending_shared_grant" : "shared";
+      }
+      return false;
+    }
+
+    if (pathTargets.every((target) => target.sharedEdit)) return false;
+    return true;
+  });
+
+  if (conflicts.length > 0) {
+    const msg = conflicts
+      .slice(0, 6)
+      .map(([file, fileTargets]) => `${file}: ${fileTargets.map((target) => `${target.storyId}/${target.role}/${target.source}`).join(", ")}`)
+      .join("; ");
+    throw Object.assign(new Error(`FILE_TREE_PATH_COLLISION: ${msg}`), { code: "FILE_TREE_PATH_COLLISION" });
+  }
+
+  let grantIndex = 1;
+  for (const target of targets) {
+    if (!target.sharedEdit) continue;
+    target.collisionStatus = target.collisionStatus === "pending_shared_grant" ? "pending_shared_grant" : "shared";
+    const grantId = grantIdFor(target, grantIndex++);
+    target.sharedGrantRequestId = grantId;
+    const deniedReason = forbidden.has(target.path)
+      ? "target path is forbiddenDuringImplement"
+      : !shared.has(target.path)
+        ? "target path is not declared as a stack shared file"
+        : "";
+    grants.push({
+      grantId,
+      runId,
+      storyId: target.storyId,
+      path: target.path,
+      role: target.role,
+      editScope: target.editScope || target.role,
+      status: deniedReason ? "denied" : "granted",
+      reason: deniedReason || "validated against story shared_edit_requests and stack sharedFiles",
+      source: "shared_edit_request",
+    });
+  }
+
+  const denied = grants.filter((grant) => grant.status === "denied");
+  if (denied.length > 0) {
+    const msg = denied
+      .slice(0, 6)
+      .map((grant) => `${grant.grantId}:${grant.path}:${grant.reason}`)
+      .join("; ");
+    throw Object.assign(new Error(`SHARED_TARGET_GRANT_DENIED: ${msg}`), { code: "SHARED_TARGET_GRANT_DENIED", deniedGrants: denied });
+  }
+
+  return { targets, grants };
+}
+
 function assertNoTargetConflicts(resolved: ResolvedTarget[], pack: StackPack): void {
   const writers = new Map<string, ResolvedTarget[]>();
   for (const target of resolved) {
@@ -445,6 +680,11 @@ export async function materializeSetupBuildContracts(
   buildCommand: string,
 ): Promise<{ manifest: FileTreeManifest; certificate: SetupCertificate }> {
   const pack = selectStackPack(repo, context);
+  const packIssues = validateStackPack(pack);
+  if (packIssues.length > 0) {
+    const msg = packIssues.slice(0, 8).map((issue) => `${issue.code}:${issue.message}`).join("; ");
+    throw Object.assign(new Error(`SETUP_CONTRACT_INVALID: ${msg}`), { code: "SETUP_CONTRACT_INVALID", issues: packIssues });
+  }
   if (!pack.targetResolutionRules || Object.keys(pack.targetResolutionRules).length === 0) {
     throw Object.assign(new Error(`SCOPE_TARGET_UNRESOLVED: stack pack ${pack.id} has empty targetResolutionRules`), {
       code: "SCOPE_TARGET_UNRESOLVED",
@@ -471,17 +711,25 @@ export async function materializeSetupBuildContracts(
     }
   }
   assertNoTargetConflicts(resolved, pack);
-  await writeResolvedStories(runId, rows, resolved, pack);
+  const { targets: resolvedTargets, grants } = annotateResolvedTargetsForSetup(resolved, pack, runId);
+  await writeResolvedStories(runId, rows, resolvedTargets, pack);
 
   const relManifest = ".setfarm/setup/FILE_TREE_MANIFEST.json";
+  const relSharedGrants = ".setfarm/setup/SHARED_GRANTS.json";
   const manifest: FileTreeManifest = {
     schema: FILE_TREE_SCHEMA,
     runId,
     stackPackId: pack.id,
-    resolvedTargets: resolved,
+    resolvedTargets,
     dependencyPlan,
     mockInjectionPoints: pack.mockInjectionPolicy ? [pack.mockInjectionPolicy as unknown as Record<string, unknown>] : [],
-    routeRegistrationPlan: resolved.filter((target) => target.role === "route_registration"),
+    routeRegistrationPlan: resolvedTargets.filter((target) => target.role === "route_registration"),
+  };
+  const sharedGrants: SharedGrantsArtifact = {
+    schema: SHARED_GRANTS_SCHEMA,
+    version: 1,
+    runId,
+    grants,
   };
 
   const certificate: SetupCertificate = {
@@ -510,8 +758,22 @@ export async function materializeSetupBuildContracts(
         : "Stack pack may consume generated Stitch JSX artifacts.",
     },
     fileTreeManifestPath: relManifest,
+    sharedGrantsPath: relSharedGrants,
     targetResolutionRules: pack.targetResolutionRules!,
+    routerParadigm: pack.routerParadigm,
+    slugRules: pack.slugRules as unknown as Record<string, string>,
+    slugRuleTests: pack.slugRuleTests as unknown as Array<Record<string, string>>,
+    sharedEditValidationPolicy: pack.sharedEditValidationPolicy,
+    patchWindowMarkers: pack.patchWindowMarkers as unknown as Array<Record<string, string>>,
+    utilityFilePolicy: pack.utilityFilePolicy as unknown as Record<string, unknown>,
+    buildStrippingPolicy: pack.buildStrippingPolicy as unknown as Record<string, unknown>,
+    sandboxPrewarm: pack.sandboxPrewarm as unknown as Record<string, unknown>,
+    prewarmEvidencePath: pack.sandboxPrewarm?.artifactPath,
+    mockInjectionContract: pack.mockInjectionPolicy as unknown as Record<string, unknown>,
+    designImportValidate: readDesignImportValidateSummary(repo),
+    designVisualSmoke: defaultDesignVisualSmokeSummary(),
     dependencyEvidence: dependencyPlan,
+    dependencyResolutionPolicy: pack.dependencyResolutionPolicy as unknown as Record<string, unknown>,
     buildEvidence: {
       buildCommand,
       artifactPath: fs.existsSync(path.join(repo, "dist", "index.html")) ? "dist/index.html" : "",
@@ -523,8 +785,9 @@ export async function materializeSetupBuildContracts(
 
   fs.mkdirSync(setupDir(repo), { recursive: true });
   fs.writeFileSync(fileTreeManifestPath(repo), JSON.stringify(manifest, null, 2) + "\n");
+  fs.writeFileSync(sharedGrantsPath(repo), JSON.stringify(sharedGrants, null, 2) + "\n");
   fs.writeFileSync(setupCertificatePath(repo), JSON.stringify(certificate, null, 2) + "\n");
-  logger.info(`[setup-handoff] wrote FILE_TREE_MANIFEST and SETUP_CERTIFICATE (${pack.id})`, { runId });
+  logger.info(`[setup-handoff] wrote FILE_TREE_MANIFEST, SHARED_GRANTS, and SETUP_CERTIFICATE (${pack.id})`, { runId });
   return { manifest, certificate };
 }
 
@@ -550,18 +813,25 @@ export function assembleImplementContext(params: {
 }): Record<string, unknown> | null {
   const certificate = readJsonFile<SetupCertificate>(setupCertificatePath(params.repo));
   const manifest = readJsonFile<FileTreeManifest>(fileTreeManifestPath(params.repo));
+  const sharedGrants = readJsonFile<SharedGrantsArtifact>(sharedGrantsPath(params.repo));
   if (!certificate || !manifest) return null;
+  assertDesignImportReady(params.repo, certificate);
 
   const storyTargets = manifest.resolvedTargets.filter((target) => target.storyId === params.storyId);
   const forbidden = new Set(certificate.forbiddenDuringImplement || []);
+  const grantsById = new Map((sharedGrants?.grants || []).map((grant) => [grant.grantId, grant]));
   const resolvedScopeFiles = [...new Set(storyTargets.filter((target) => !target.sharedEdit).map((target) => target.path))];
   const sharedEditableFiles = storyTargets
-    .filter((target) => target.sharedEdit)
+    .filter((target) => {
+      if (!target.sharedEdit) return false;
+      const grant = target.sharedGrantRequestId ? grantsById.get(target.sharedGrantRequestId) : null;
+      return grant?.status === "granted";
+    })
     .map((target) => ({
       path: target.path,
       allowedForThisStory: !forbidden.has(target.path),
       editScope: target.editScope || "shared_edit",
-      grantedBy: `${params.storyId}.shared_edit_requests`,
+      grantedBy: target.sharedGrantRequestId || `${params.storyId}.shared_edit_requests`,
     }));
 
   const context = {
@@ -570,6 +840,8 @@ export function assembleImplementContext(params: {
     storyId: params.storyId,
     setupCertificatePath: relativeSetupPath(params.repo, setupCertificatePath(params.repo)),
     fileTreeManifestPath: relativeSetupPath(params.repo, fileTreeManifestPath(params.repo)),
+    sharedGrantsPath: relativeSetupPath(params.repo, sharedGrantsPath(params.repo)),
+    sharedGrantsVersion: sharedGrants?.version || 0,
     resolvedScopeFiles,
     readOnlyFiles: certificate.sharedFiles.filter((file) => !resolvedScopeFiles.includes(file)),
     sharedEditableFiles,
@@ -577,6 +849,17 @@ export function assembleImplementContext(params: {
     dependencyContext: {
       availableDependencies: certificate.dependencyEvidence.approved.map((dep) => dep.name),
       forbiddenDependencyChanges: true,
+      resolutionPolicy: certificate.dependencyResolutionPolicy || "setup_build_only",
+    },
+    stackContext: {
+      stackPackId: certificate.stackPackId,
+      routerParadigm: certificate.routerParadigm,
+      slugRules: certificate.slugRules,
+      sharedEditValidationPolicy: certificate.sharedEditValidationPolicy,
+      patchWindowMarkers: certificate.patchWindowMarkers || [],
+      utilityFilePolicy: certificate.utilityFilePolicy,
+      buildStrippingPolicy: certificate.buildStrippingPolicy,
+      sandboxPrewarm: certificate.sandboxPrewarm,
     },
     ownedActions: safeJsonObject(params.storyRow.implementation_contract).owned_actions || [],
     ownedSurfaces: safeJsonObject(params.storyRow.implementation_contract).owned_surface_ids || [],
@@ -587,7 +870,8 @@ export function assembleImplementContext(params: {
     routeGuardPolicy: {},
     assemblyRules: {
       scopeResolution: "apply FILE_TREE_MANIFEST resolvedTargets for this story only",
-      sharedEditConflict: "forbiddenDuringImplement beats story.shared_edit_requests",
+      sharedEditConflict: "forbiddenDuringImplement beats story.shared_edit_requests; SHARED_GRANTS is the permission source",
+      sharedGrantPolicy: "sharedEditableFiles are emitted only for grants with status=granted",
       dependencyCheck: "all depends_on story IDs must be completed before this story starts",
       mockDataSource: "PLAN mock_data_contract merged with stack mockInjectionPolicy",
     },

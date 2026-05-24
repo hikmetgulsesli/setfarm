@@ -6,6 +6,7 @@ export type ErrorCategory =
   | "GUARDRAIL_FAIL"
   | "RUNTIME_BRIDGE_MISSING"
   | "TIMEOUT"
+  | "VISUAL_QA_INFRA_ERROR"
   | "CONTEXT_MISSING"
   | "BUILD_FAIL"
   | "BUILD_FAILED"
@@ -29,9 +30,14 @@ export type ErrorCategory =
   | "SCOPE_WRITE_VIOLATION"
   | "SCOPE_BLEED"
   | "SCOPE_FILE_MISSING"
+  | "DESIGN_IMPORT_FAILURE"
   | "GENERATED_SCREEN_SHARED_READ"
   | "GENERATED_SCREEN_NOT_INTEGRATED"
+  | "GENERATED_SCREEN_REQUIRED_PROPS_UNWIRED"
+  | "OWNED_ACTION_NOOP_OR_NAVIGATION_ONLY"
+  | "GENERATED_SCREEN_VISIBLE_STATE_UNWIRED"
   | "GENERATED_SCREEN_REGRESSION"
+  | "GENERATED_SCREEN_SHELL_CHROME_UNSAFE"
   | "RAW_STITCH_CONTEXT_READ"
   | "CLAIM_WORKDIR_MISSING"
   | "CLAIM_PARSE_LOOP"
@@ -59,6 +65,7 @@ const PATTERNS: Array<{ pattern: RegExp; category: ErrorCategory; suggestion: st
   { pattern: /^CROSS-PROJECT CONTAMINATION:/i, category: "CROSS_PROJECT_CONTAMINATION", suggestion: "Treat as manager feedback and ignore the contaminated branch/PR claim. Re-read CLAIM_SUMMARY_FILE, use its storyBranch/workdir/main repo as the only source of truth, work only in the prepared story worktree, and report the exact storyBranch from the summary." },
   { pattern: /^VERIFY_BOUNDED_REVIEW_VIOLATION:/i, category: "VERIFY_BOUNDED_REVIEW_VIOLATION", suggestion: "Verify must behave like a bounded manager gate: read the claim summary and PR metadata, run deterministic build/test/lint evidence once, then inspect only changed files needed for the first blocker. Do not perform broad manual source review before evidence commands." },
   { pattern: /engine_overloaded|temporarily overloaded|Provider finish_reason:\s*engine_overloaded/i, category: "API_ERROR", suggestion: "Model provider overloaded — retry the claim later or use a different model/provider; do not change project code for this failure." },
+  { pattern: /\b(?:visual qa|visual|supervisor|playwright|agent-browser|browser|chromium|page\.(?:evaluate|goto|locator|click)|context)\b[\s\S]{0,320}\b(?:target page, context or browser has been closed|browser has been closed|target closed|context closed|page closed|browser context was closed|Protocol error:.*Target closed)\b/i, category: "VISUAL_QA_INFRA_ERROR", suggestion: "Visual QA browser infrastructure failed. Restart or prewarm the browser sandbox and rerun visual QA; do not change product code unless the same issue reproduces in a successful browser session." },
   { pattern: /^AGENT_PROCESS_EXITED:/i, category: "AGENT_PROCESS_EXITED", suggestion: "Agent process exited before completing the claim. Retry with the same scoped handoff; inspect transcript only if it repeats." },
   { pattern: /^GIT_DISCIPLINE_VIOLATION:/i, category: "GIT_DISCIPLINE", suggestion: "Developer agents must not run git add/commit/push. Continue coding in the assigned worktree, report STATUS: done, and let Setfarm stage, commit, push, and create PRs." },
   { pattern: /^INTERMEDIATE_COMMIT_VIOLATION:/i, category: "INTERMEDIATE_COMMIT", suggestion: "Use /tmp/setfarm-progress checkpoints for long work. Do not create partial commits; Setfarm creates the scoped story commit after gates pass." },
@@ -66,9 +73,15 @@ const PATTERNS: Array<{ pattern: RegExp; category: ErrorCategory; suggestion: st
   { pattern: /^SCOPE_BLEED:/i, category: "SCOPE_BLEED", suggestion: "Story modified files outside SCOPE_FILES. Revert or move out-of-scope files; if an allowed src/* path appears truncated, inspect git porcelain path parsing." },
   { pattern: /^SCOPE_FILE_MISSING:/i, category: "SCOPE_FILE_MISSING", suggestion: "Create meaningful non-empty implementation files in the declared scope_files before reporting done. Do not collapse the story into one file when the story owns app state, hooks, domain types, storage, or CSS files." },
   { pattern: /^PLATFORM_STORY_COMMIT_SCOPE_BLOCKED:/i, category: "SCOPE_BLEED", suggestion: "Platform story commit saw out-of-scope files. If directory paths are reported, inspect git status -uall expansion before retrying." },
+  { pattern: /(?:^|\n)\s*(?:DESIGN_IMPORT_VALIDATE|DESIGN_IMPORT_[A-Z_]+|stitch-to-jsx failed|generated-screen-validator|npm run build failed after stitch-to-jsx|generated screen source outside this (?:claim|step)'s owned)/i, category: "DESIGN_IMPORT_FAILURE", suggestion: "Treat as a setup-build design import hardening failure: inspect .setfarm/setup/DESIGN_IMPORT_VALIDATE.json, scripts/stitch-to-jsx.mjs, scripts/generated-screen-validator.mjs, and generated src/screens/*.tsx; fix deterministic conversion/validation, rerun the validator with --fix, then rerun build before IMPLEMENT." },
   { pattern: /^GENERATED_SCREEN_SHARED_READ:/i, category: "GENERATED_SCREEN_SHARED_READ", suggestion: "Use claim-summary designContracts, SCREEN_INDEX.json, and src/screens/index.ts for shared generated screens. Do not use the OpenClaw read tool or shell commands to read forbidden src/screens/*.tsx files outside scopeFiles." },
   { pattern: /^GENERATED_SCREEN_NOT_INTEGRATED:/i, category: "GENERATED_SCREEN_NOT_INTEGRATED", suggestion: "Render every owned generated screen through the app/router surface and wire its declared actions prop IDs before reporting done. Preserve previous-story behavior while replacing duplicate custom UI." },
+  { pattern: /^GENERATED_SCREEN_REQUIRED_PROPS_UNWIRED:/i, category: "GENERATED_SCREEN_REQUIRED_PROPS_UNWIRED", suggestion: "Wire every required generated screen prop from scoped app state/adapters before reporting done. Preserve generated component prop contracts when editing app/router/shared files." },
+  { pattern: /(?:^OWNED_ACTION_NOOP_OR_NAVIGATION_ONLY:|\b(?:owned action|action|ACT_[A-Z_]+|save|create|update|apply|retry|clear)\b[\s\S]{0,260}\b(?:no-?op|navigation[- ]only|only navigates|only updates? (?:active\s*)?(?:panel|route)|active\s+(?:panel|route)\s+only|same[- ]value|same current value|current value|setActivePanel|setActiveRoute|writes?[\s\S]{0,80}\bcurrent value)\b)/i, category: "OWNED_ACTION_NOOP_OR_NAVIGATION_ONLY", suggestion: "Treat this as an implement behavior failure. Wire the owned action to a real declared data, persistence, or recovery mutation and a visible generated-screen DOM change; do not complete save/create/update/apply/retry/clear by only changing route/panel state, logging, updating window.app, or writing a field back to its same current value." },
+  { pattern: /(?:^GENERATED_SCREEN_VISIBLE_STATE_UNWIRED:|\bgenerated\b[\s\S]{0,180}\b(?:table|metrics?|rows?|cards?|form|checklist|detail|editor|empty|error)\b[\s\S]{0,220}\b(?:static|hardcoded|placeholder|fixed|not\s+(?:state[- ]?driven|updated|wired)|remain(?:s|ed)?\s+(?:static|hardcoded|placeholder|fixed))|\b(?:visible|rendered)\b[\s\S]{0,180}\b(?:state|data|rows?|metrics?|form|checklist)\b[\s\S]{0,220}\b(?:not\s+(?:state[- ]?driven|updated|wired)|static|hardcoded|placeholder))/i, category: "GENERATED_SCREEN_VISIBLE_STATE_UNWIRED", suggestion: "Treat this as an implement wiring failure, not a Stitch/design failure. In the story-owned generated screen files, replace static placeholder rows, metrics, forms, checklist/status chips, and empty/error panels with props/store-backed render data; prove a real action changes visible DOM, not only window.app or shell state." },
   { pattern: /^GENERATED_SCREEN_REGRESSION:/i, category: "GENERATED_SCREEN_REGRESSION", suggestion: "Preserve every previously verified generated screen route/rendering surface while adding the current story screens. Do not replace previous generated screens with custom duplicate UI." },
+  { pattern: /^GENERATED_SCREEN_SHELL_CHROME_UNSAFE:/i, category: "GENERATED_SCREEN_SHELL_CHROME_UNSAFE", suggestion: "Remove visible diagnostic/session/status/debug/QA chrome around generated full-screen Stitch screens. Keep smoke/debug state in window.app/globalThis.app or test-only data, and keep generated screens mounted as the visual viewport root on mobile and desktop." },
+  { pattern: /^GENERATED_SCREEN_SHELL_LANDMARK_UNSAFE:/i, category: "GENERATED_SCREEN_SHELL_CHROME_UNSAFE", suggestion: "Remove app-shell semantic landmark wrappers around generated full-screen Stitch screens. Generated screens own their main landmark; use a neutral div data-setfarm-root container for app state wiring." },
   { pattern: /^PR_REVIEW_COMMENTS_OPEN:/i, category: "PR_REVIEW_COMMENTS_OPEN", suggestion: "Address every actionable PR review comment in the same story branch, push the fix, and only allow verify to merge after fresh PR comments are clear." },
   { pattern: /\b(?:PR\s*#\d+\s+still\s+has|current|actionable|unresolved|non-outdated)\b[\s\S]{0,220}\breview\s+(?:comment|thread)s?\b/i, category: "PR_REVIEW_COMMENTS_OPEN", suggestion: "Address, reply to, or resolve every current actionable PR review thread in the same story branch before retrying verify or merge gates." },
   { pattern: /^PR_NOT_MERGED:/i, category: "PR_NOT_MERGED", suggestion: "Do not accept STATUS: done while the story PR is still open. Address review comments/checks, merge the PR into main, and then let verify re-check the merged state." },

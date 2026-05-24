@@ -56,6 +56,39 @@ describe("stitch-to-jsx", () => {
     }
   });
 
+  it("removes full-width utilities from positioned elements with both horizontal insets", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-positioned-width-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "dashboard-screen", title: "Dashboard Screen" },
+      ]));
+      writeHtml(path.join(stitchDir, "dashboard-screen.html"), `
+        <main>
+          <header class="fixed top-0 left-16 right-0 z-50 w-full min-w-full bg-white">Toolbar</header>
+          <section class="absolute left-[4rem] right-0 w-screen">Panel</section>
+          <div class="relative left-16 right-0 w-full">Normal flow</div>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "DashboardScreen.tsx"), "utf-8");
+      assert.match(code, /className="fixed top-0 left-16 right-0 z-50 bg-white"/);
+      assert.match(code, /className="absolute left-\[4rem\] right-0"/);
+      assert.match(code, /className="relative left-16 right-0 w-full"/);
+      assert.doesNotMatch(code, /fixed[^"]*\bw-full\b/);
+      assert.doesNotMatch(code, /fixed[^"]*\bmin-w-full\b/);
+      assert.doesNotMatch(code, /absolute[^"]*\bw-screen\b/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("emits stable action ids for generated screen controls", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-actions-"));
     try {
@@ -165,6 +198,7 @@ describe("stitch-to-jsx", () => {
       writeHtml(path.join(stitchDir, "controls-screen.html"), `
         <main>
           <span aria-hidden="true" class="material-symbols-outlined text-primary transition-all">warning</span>
+          <span title="Triggers visual warning when limit is exceeded." class="material-symbols-outlined text-outline text-[16px] cursor-help">info</span>
           <button class="transition-all"><span data-icon="rotate_right" aria-hidden="true" focusable="false" class="material-symbols-outlined text-[18px]">rotate_right</span>Rotate</button>
         </main>
       `);
@@ -175,12 +209,14 @@ describe("stitch-to-jsx", () => {
       });
 
       const code = fs.readFileSync(path.join(tmp, "src", "screens", "ControlsHelp.tsx"), "utf-8");
-      assert.match(code, /import \{ RotateCw, TriangleAlert \} from "lucide-react";/);
+      assert.match(code, /import \{ Info, RotateCw, TriangleAlert \} from "lucide-react";/);
       assert.match(code, /<TriangleAlert className="text-primary transition-colors" aria-hidden=\{true\} focusable="false" \/>/);
+      assert.match(code, /<Info className="text-outline text-\[16px\] cursor-help" aria-hidden=\{true\} focusable="false" \/>/);
       assert.match(code, /<RotateCw className="text-\[18px\]" aria-hidden=\{true\} focusable="false" \/>Rotate/);
       assert.match(code, /<button className="transition-colors"/);
-      assert.equal((code.match(/aria-hidden/g) || []).length, 2);
-      assert.equal((code.match(/focusable=/g) || []).length, 2);
+      assert.equal((code.match(/aria-hidden/g) || []).length, 3);
+      assert.equal((code.match(/focusable=/g) || []).length, 3);
+      assert.doesNotMatch(code, /<Info[^>]*\stitle=/);
       assert.doesNotMatch(code, /material-symbols|Material Symbols|>warning<|>rotate_right</);
       assert.doesNotMatch(code, /transition-all/);
 

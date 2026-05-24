@@ -45,6 +45,10 @@ You are assigned ONE story with a FIXED list of files. You MUST NOT create or mo
 - Use TypeScript types — no `any` unless wrapping external data
 - Import from existing shared code before creating new utilities
 - CSS: use Tailwind classes matching the Stitch design tokens
+- Generated screen content must be state-driven. If this story owns generated `src/screens/*.tsx`, replace static Stitch placeholder data for visible tables, rows, cards, metrics, forms, checklist/status chips, detail panels, saved filters, and empty/error panels with story-owned props/store/adapters. Action wiring is not complete until a real owned action changes visible DOM inside the generated screen, not only `window.app`, shell state, or logs.
+- Save/create/update/apply/retry/clear actions must not be no-ops. Do not complete an owned action by only changing an active route/panel, logging, updating `window.app`, or writing the same current value back into state; mutate the declared data/recovery/persistence state and show that change in generated-screen DOM.
+- Do not add visible diagnostic/session/status/debug/QA strips around generated full-screen Stitch screens unless that visible surface is explicitly in the story. Expose smoke/debug state through `window.app` or `globalThis.app`; do not create app-level chrome that pushes, overlays, or horizontally overflows the generated screen on mobile.
+- Do not wrap generated full-screen Stitch screens in another semantic landmark/root such as `<main>`, `<section role="main">`, or a second viewport shell. Generated screens own their semantic landmarks; app shell wrappers must be neutral containers such as `<div data-setfarm-root>`.
 - Keep reducers/state transition functions pure: no localStorage, timers, DOM access, random mutable singletons, or mutation of existing state objects inside reducers. Run persistence and timers in effects/action wrappers.
 - Local checks must preserve real exit codes. Do not decide build/test success from commands piped through `head`, `tail`, `grep`, `tee`, `cat`, or similar filters. If logs are long, run the full command first and inspect saved output only after the command exits.
 
