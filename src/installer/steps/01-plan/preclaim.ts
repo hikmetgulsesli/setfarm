@@ -143,6 +143,21 @@ function inferProjectKind(task: string): ProjectKind {
   return "product";
 }
 
+function singularizeEntityToken(raw: string): string {
+  const token = String(raw || "").toLowerCase().replace(/[^a-z-]/g, "");
+  if (!token) return token;
+  if (token.endsWith("ies") && token.length > 4) return `${token.slice(0, -3)}y`;
+  if (token.endsWith("sses") && token.length > 5) return token.slice(0, -2);
+  if (token.endsWith("ches") || token.endsWith("shes") || token.endsWith("xes") || token.endsWith("zes")) return token.slice(0, -2);
+  if (token.endsWith("s") && !token.endsWith("ss") && !token.endsWith("us") && token.length > 3) return token.slice(0, -1);
+  return token;
+}
+
+function formatEntityName(raw: string): string {
+  const singular = singularizeEntityToken(raw);
+  return singular.replace(/(^|-)([a-z])/g, (_m, sep, ch) => `${sep}${ch.toUpperCase()}`).replace(/-/g, "");
+}
+
 export function inferUiLanguage(task: string): string {
   const normalized = transliterateIdentity(task).toLowerCase();
   if (/\b(turkish|turkce|tr)\b/.test(normalized)) return "Turkish";
@@ -163,14 +178,13 @@ function primaryEntity(task: string, kind: ProjectKind): string {
   if (kind === "api") return "Resource";
   if (kind === "cli") return "CommandRun";
   const lower = task.toLowerCase();
-  if (/\b(service desk|tickets?|queues?|sla)\b/.test(lower)) return "Ticket";
+  if (/\b(service desk|support desk|help desk|tickets?)\b/.test(lower)) return "Ticket";
   if (/\b(crm|customers?|accounts?|contacts?|leads?|opportunities?)\b/.test(lower)) return "Customer";
   if (/\b(inventory|stock|warehouse|products?)\b/.test(lower)) return "Item";
-  const match = lower.match(/\b(?:manage|track|triage|plan|organize|edit|create|list|browse|review|approve)\s+(?:a|an|the|many|multiple|all|new|open|active|pending)?\s*([a-z][a-z-]{2,24})s?\b/i);
+  const match = lower.match(/\b(?:manage|track|triage|plan|organize|edit|create|list|browse|review|approve)\s+(?:(?:a|an|the|many|multiple|all|new|open|active|pending)\s+)?([a-z][a-z-]{2,24})\b/i);
   const blocked = new Set(["browser", "compact", "service", "desk", "app", "application", "called", "named", "dashboard", "screen", "state", "workflow", "data", "user", "users", "settings"]);
   if (!match?.[1] || blocked.has(match[1])) return "Record";
-  const singular = match[1].replace(/s$/i, "");
-  return singular.replace(/(^|-)([a-z])/g, (_m, sep, ch) => `${sep}${ch.toUpperCase()}`).replace(/-/g, "");
+  return formatEntityName(match[1]);
 }
 
 function hasAny(text: string, terms: RegExp): boolean {

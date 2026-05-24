@@ -144,6 +144,26 @@ describe("01-plan step module", () => {
     assert.doesNotMatch(output, /tool\/game\/API\/CLI/);
   });
 
+  it("auto-plan does not convert non-ticket queue domains into service desk surfaces", () => {
+    const output = buildAutoPlanOutput(
+      "Build a compact browser maintenance scheduling app called MaintiGrid Q9L7. It should manage assets, preventive maintenance plans, technician queues, overdue work orders, settings, empty and error recovery, and every visible action should update real app state.",
+      { runId: "6a450d5c-0a91-48ee-bfac-1c4f18c6ce54" },
+    );
+    const parsed = parsePlanOutput(output);
+    planModule.normalize?.(parsed);
+    const validation = planModule.validateOutput(parsed);
+
+    assert.equal(validation.ok, true, validation.errors.join("; "));
+    assert.equal(parsed.project_name, "MaintiGrid Q9L7");
+    assert.equal(parsed.project_slug, "maintigrid-q9l7");
+    assert.match(parsed.ui_vision_summary, /Asset|maintenance|operations|product/i);
+    assert.match(parsed.prd, /SURF_ASSET_OPERATIONS/);
+    assert.match(parsed.prd, /SURF_QUEUE_AND_STATUS_MANAGEMENT/);
+    assert.match(parsed.prd, /SURF_SETTINGS_AND_PREFERENCES/);
+    assert.doesNotMatch(parsed.prd, /\bTicket\b/);
+    assert.doesNotMatch(parsed.prd, /SURF_TICKET/);
+  });
+
   it("preserves explicitly named product casing from the request", () => {
     const output = buildAutoPlanOutput("Build a compact browser service desk app called SurfaceGate Desk with tickets and queues.");
     const parsed = parsePlanOutput(output);
