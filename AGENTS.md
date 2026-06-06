@@ -18,12 +18,19 @@ Use TypeScript ESM with explicit `.js` imports for local compiled modules. Prefe
 - `npm test`: all tests.
 - `npm run test:steps`: step-module tests.
 - `npm run test:scripts`: script tests.
-- Local dirty-tree verification may use `SETFARM_ALLOW_DIRTY_BUILD=1`.
-- Runtime guard bypass for platform verification may use `SETFARM_SKIP_RUNTIME_GUARD=1` only when the reason is explicit.
+- Builds must run on a clean Setfarm worktree. Do not use `SETFARM_ALLOW_DIRTY_BUILD=1`; commit or otherwise resolve the dirty state first.
+- Do not use `SETFARM_SKIP_RUNTIME_GUARD=1` for normal verification. If a runtime guard blocks work, fix the guard cause or document the blocker instead of bypassing it.
 
 ## Operating Protocol
 
 Start with live truth. Before judging a run, inspect the local repo, PostgreSQL state, relevant claim logs, observations, and GitHub PR state. Do not rely on stale `stories.output`, agent prose, or Mission Control cards as the source of truth.
+
+Setfarm + Mission Control operate through a single source of truth hierarchy:
+
+1. Live PostgreSQL rows, claim logs, observations, and GitHub PR state.
+2. Setfarm stack contracts, stack modules, and `RunOperationalModel`.
+3. Mission Control presentation of the derived model.
+4. Agent prose and generated project claims.
 
 Generated projects are disposable evidence sources. Do not spend effort rescuing a failed or low-value generated project unless it is needed to observe a recent platform fix or expose a systemic Setfarm/MC bug. If a project is effectively trash, stop recovering it and move to a clean run.
 
@@ -42,7 +49,9 @@ Use the Universal Agent Inner Dev Loop design in `docs/superpowers/specs/2026-06
 
 - Do not add project-specific hardcode to generic gates.
 - Express requirements through stack packs, capability contracts, evidence artifacts, and tests.
+- Stack-specific behavior belongs in stack modules or stack contracts. Do not fix a browser-game failure by weakening React, Next.js, native, CLI, or API behavior globally.
 - Mission Control should render derived state from DB observations/events, not agent claims.
+- Mission Control must prefer Setfarm's canonical operational model over local UI re-derivation for stack, story progress, failure owner, retryability, and recovery policy.
 - Supervisor is a bounded coherence/evidence gate, not an unbounded code fixer.
 - Self-heal is plan-only unless explicitly and safely expanded; it must not weaken invariant tests.
 

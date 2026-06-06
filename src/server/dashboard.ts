@@ -13,6 +13,7 @@ import type { RunInfo, StepInfo } from "../installer/status.js";
 import { getRunEvents } from "../installer/events.js";
 import { getMedicStatus, getRecentMedicChecks } from "../medic/medic.js";
 import { readSupervisorArtifactSummary } from "./supervisor-summary.js";
+import { getRunOperationalModel } from "./run-operational-model.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -211,6 +212,8 @@ interface ParsedRule {
   source_file: string;
   severity: string;
   applies_to: string;
+  stack_pack_ids: string[];
+  module_owner: string;
   enabled: boolean;
   readonly: true;
 }
@@ -236,6 +239,22 @@ const REFERENCE_MAP: Record<string, { category: string; project_type: string }> 
   "web-design-guidelines.md": { category: "design", project_type: "general" },
   "web-guidelines.md": { category: "design", project_type: "general" },
 };
+
+const RULE_STACK_SCOPE: Record<string, { stack_pack_ids: string[]; module_owner: string }> = {
+  "game-dev-rules.md": { stack_pack_ids: ["browser-game-canvas"], module_owner: "stack.browser-game-canvas" },
+  "game-dev-guide.md": { stack_pack_ids: ["browser-game-canvas"], module_owner: "stack.browser-game-canvas" },
+  "react-best-practices.md": { stack_pack_ids: ["vite-react-web-app", "browser-game-canvas"], module_owner: "stack.web-react" },
+  "next-best-practices.md": { stack_pack_ids: ["nextjs-web-app"], module_owner: "stack.nextjs-web-app" },
+};
+
+function ruleStackScope(sourceFile: string): { stack_pack_ids: string[]; module_owner: string } {
+  const lower = sourceFile.toLowerCase();
+  if (RULE_STACK_SCOPE[lower]) return RULE_STACK_SCOPE[lower];
+  if (lower.includes("game")) return { stack_pack_ids: ["browser-game-canvas"], module_owner: "stack.browser-game-canvas" };
+  if (lower.includes("next")) return { stack_pack_ids: ["nextjs-web-app"], module_owner: "stack.nextjs-web-app" };
+  if (lower.includes("react")) return { stack_pack_ids: ["vite-react-web-app", "browser-game-canvas"], module_owner: "stack.web-react" };
+  return { stack_pack_ids: [], module_owner: "global" };
+}
 
 function titleFromFilename(filename: string): string {
   return filename
@@ -268,6 +287,7 @@ function parseSystemRules(): ParsedRule[] {
           source_file: f,
           severity: "mandatory",
           applies_to: mapping.applies_to,
+          ...ruleStackScope(f),
           enabled: true,
           readonly: true,
         });
@@ -292,6 +312,7 @@ function parseSystemRules(): ParsedRule[] {
         source_file: f,
         severity: "advisory",
         applies_to: "all",
+        ...ruleStackScope(f),
         enabled: true,
         readonly: true,
       });
@@ -318,12 +339,14 @@ async function getAllRules(query: URLSearchParams): Promise<any[]> {
   const category = query.get("category");
   const projectType = query.get("project_type");
   const source = query.get("source");
+  const stackPackId = query.get("stack_pack_id");
   const search = query.get("search")?.toLowerCase();
 
   if (category) all = all.filter((r) => r.category === category);
   if (projectType) all = all.filter((r) => r.project_type === projectType);
   if (source === "system") all = all.filter((r) => r.readonly);
   else if (source === "custom") all = all.filter((r) => !r.readonly);
+  if (stackPackId) all = all.filter((r) => !Array.isArray(r.stack_pack_ids) || r.stack_pack_ids.length === 0 || r.stack_pack_ids.includes(stackPackId));
   if (search) all = all.filter((r) => r.title.toLowerCase().includes(search) || r.content.toLowerCase().includes(search));
 
   return all;
@@ -496,6 +519,12 @@ export function startDashboard(port = 3333): http.Server {
     const observationsMatch = p.match(/^\/api\/runs\/([^/]+)\/observations$/);
     if (observationsMatch) {
       return json(res, await getRunObservations(observationsMatch[1]));
+    }
+
+    const operationalModelMatch = p.match(/^\/api\/runs\/([^/]+)\/operational-model$/);
+    if (operationalModelMatch) {
+      const model = await getRunOperationalModel(operationalModelMatch[1]);
+      return model ? json(res, model) : json(res, { error: "not found" }, 404);
     }
 
     const storiesMatch = p.match(/^\/api\/runs\/([^/]+)\/stories$/);
