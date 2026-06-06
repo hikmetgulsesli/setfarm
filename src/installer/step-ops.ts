@@ -2057,8 +2057,8 @@ async function routeOriginalStoryQualityFailureToImplement(
   const normalizedStoryId = String(storyId || "").trim();
   if (!normalizedStoryId) return false;
 
-  const retryStory = await pgGet<{ id: string; story_id: string; title: string | null; status: string; retry_count: number; max_retries: number; story_branch: string | null }>(
-    "SELECT id, story_id, title, status, retry_count, max_retries, story_branch FROM stories WHERE run_id = $1 AND story_id = $2 AND status IN ('pending','running','done','verified','skipped') LIMIT 1",
+  const retryStory = await pgGet<{ id: string; story_id: string; title: string | null; status: string; retry_count: number; max_retries: number; story_branch: string | null; pr_url: string | null }>(
+    "SELECT id, story_id, title, status, retry_count, max_retries, story_branch, pr_url FROM stories WHERE run_id = $1 AND story_id = $2 AND status IN ('pending','running','done','verified','skipped') LIMIT 1",
     [step.run_id, normalizedStoryId],
   );
   if (!retryStory) return false;
@@ -2084,6 +2084,31 @@ async function routeOriginalStoryQualityFailureToImplement(
   context["current_story_title"] = retryStory.title || "";
   if (retryStory.story_branch) context["story_branch"] = retryStory.story_branch;
   delete context["status"];
+
+  if (retryStory.pr_url && getPRState(retryStory.pr_url) === "MERGED") {
+    const reason = [
+      "POST_MERGE_QUALITY_REGRESSION:",
+      `${retryStory.story_id} PR is already MERGED; Setfarm must not reopen or recode the original story branch.`,
+      routeReason,
+      "",
+      "Failure report:",
+      failure.slice(0, 3000),
+    ].join("\n");
+    context["previous_failure"] = reason;
+    context["failure_category"] = "POST_MERGE_QUALITY_REGRESSION";
+    context["failure_suggestion"] = "Handle this on current main through the bounded QA-FIX/main-fix path or stop for platform diagnosis; do not reset the merged story to pending or clear its PR metadata.";
+    context["post_merge_quality_regression_story_id"] = retryStory.story_id;
+    context["post_merge_quality_regression_pr_url"] = retryStory.pr_url;
+    await updateRunContext(step.run_id, context);
+    await failStepWithOutput(step.id, reason);
+    await failRun(step.run_id, true);
+    scheduleRunCronTeardown(step.run_id);
+    const wfId = await _getWorkflowId(step.run_id);
+    emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, storyId: retryStory.story_id, detail: reason.slice(0, 500) });
+    emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: "POST_MERGE_QUALITY_REGRESSION" });
+    logger.error(`[quality-router] Refusing to retry merged story ${retryStory.story_id} after ${step.step_id} failure`, { runId: step.run_id });
+    return true;
+  }
 
   if (retryStory.status === "pending" || retryStory.status === "running") {
     await updateRunContext(step.run_id, context);

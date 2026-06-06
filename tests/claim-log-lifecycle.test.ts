@@ -424,6 +424,27 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(helperSource, /quality failure already routed to original story/);
   });
 
+  it("refuses to reopen merged story PRs for post-merge quality regressions", () => {
+    const source = stepOpsSource();
+    const start = source.indexOf("async function routeOriginalStoryQualityFailureToImplement(");
+    const end = source.indexOf("// Predicted screen file helpers", start);
+    assert.notEqual(start, -1, "routeOriginalStoryQualityFailureToImplement source not found");
+    assert.notEqual(end, -1, "routeOriginalStoryQualityFailureToImplement end marker not found");
+    const helperSource = source.slice(start, end);
+
+    const prSelect = helperSource.indexOf("story_branch, pr_url FROM stories");
+    const mergedGuard = helperSource.indexOf('retryStory.pr_url && getPRState(retryStory.pr_url) === "MERGED"', prSelect);
+    const postMergeCategory = helperSource.indexOf("POST_MERGE_QUALITY_REGRESSION", mergedGuard);
+    const storyReset = helperSource.indexOf("UPDATE stories SET status = 'pending'", mergedGuard);
+
+    assert.ok(prSelect >= 0, "original story router must read pr_url");
+    assert.ok(mergedGuard > prSelect, "merged PR guard must run after loading story metadata");
+    assert.ok(postMergeCategory > mergedGuard, "merged PR guard must classify post-merge quality regression");
+    assert.ok(storyReset > postMergeCategory, "story reset may only appear after the merged PR guard");
+    assert.match(helperSource, /must not reopen or recode the original story branch/);
+    assert.match(helperSource, /do not reset the merged story to pending or clear its PR metadata/);
+  });
+
   it("enforces active story id uniqueness at the database boundary", () => {
     const source = fs.readFileSync(path.join(root, "src", "db-pg.ts"), "utf-8");
     assert.match(source, /ALTER TABLE stories ADD COLUMN IF NOT EXISTS quality_failure_fingerprint TEXT/);
