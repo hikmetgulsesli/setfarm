@@ -117,12 +117,16 @@ function asStackPackId(value: unknown): StackPackId | null {
 function inferStackPackId(run: Pick<RunInfo, "task" | "context">): { id: StackPackId; confidence: "high" | "medium" | "low"; evidence: string[] } {
   const context = safeJson((run as any).context);
   const explicit = asStackPackId(context.stack_pack_id || context.detected_stack || context.setup_stack_pack_id);
-  if (explicit) return { id: explicit, confidence: "high", evidence: [`context stack_pack_id=${explicit}`] };
-
   const text = `${run.task || ""} ${context.tech_stack || ""} ${context.platform || ""}`.toLowerCase();
-  if (/\b(browser-game|browser game|canvas-game|arcade|gameplay|playable game|keyboard controls)\b/.test(text)) {
-    return { id: "browser-game-canvas", confidence: "medium", evidence: ["task/context browser-game hints"] };
+  const browserGameHint = /\b(browser-game|browser game|canvas-game|arcade|gameplay|playable game|keyboard controls)\b/.test(text);
+  if (explicit && explicit !== "vite-react-web-app") return { id: explicit, confidence: "high", evidence: [`context stack_pack_id=${explicit}`] };
+  if (browserGameHint) {
+    const evidence = explicit === "vite-react-web-app"
+      ? ["task/context browser-game hints override generic vite-react stack_pack_id"]
+      : ["task/context browser-game hints"];
+    return { id: "browser-game-canvas", confidence: explicit === "vite-react-web-app" ? "high" : "medium", evidence };
   }
+  if (explicit) return { id: explicit, confidence: "high", evidence: [`context stack_pack_id=${explicit}`] };
   if (/\b(next\.?js|nextjs)\b/.test(text)) return { id: "nextjs-web-app", confidence: "medium", evidence: ["task/context Next.js hints"] };
   if (/\b(react native|react-native|expo)\b/.test(text)) return { id: "react-native-expo", confidence: "medium", evidence: ["task/context React Native hints"] };
   if (/\b(ios|iphone|swiftui|xcode)\b/.test(text)) return { id: "ios-app", confidence: "medium", evidence: ["task/context iOS hints"] };

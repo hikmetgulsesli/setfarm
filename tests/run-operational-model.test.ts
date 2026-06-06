@@ -94,4 +94,18 @@ describe("run operational model", () => {
     assert.equal(model.stories.doneAwaitingVerify, 0);
     assert.equal(model.failure.present, false);
   });
+
+  it("does not let a generic vite context hide browser-game stack intent", () => {
+    const model = buildRunOperationalModel({
+      run: run({
+        context: JSON.stringify({ stack_pack_id: "vite-react-web-app", tech_stack: "browser-game" }),
+      }),
+      steps: [step("plan", "done")],
+      stories: [],
+    });
+
+    assert.equal(model.stack.stackPackId, "browser-game-canvas");
+    assert.equal(model.stack.confidence, "high");
+    assert.match(model.stack.evidence.join(" "), /override generic vite-react/);
+  });
 });
