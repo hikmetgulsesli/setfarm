@@ -7,7 +7,7 @@ import { pgGet } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
 import { allocateRuntimePort, writeRunRuntimeArtifact } from "../../runtime-ports.js";
 import { recordGateObservation, recordStackEvidencePlanObservation } from "../../operation-observability.js";
-import { isBrowserRuntimeStack, resolveOperationalStackContract, stackEvidenceMetadata } from "../../stack-evidence.js";
+import { resolveOperationalStackContract, stackEvidenceMetadata, stackExecutionPlanForStep } from "../../stack-evidence.js";
 import { updateRunContext } from "../../repo.js";
 import { resolvePlatformScript } from "../../paths.js";
 import { ensureSmokeBuildFresh } from "../../smoke-gate.js";
@@ -163,13 +163,14 @@ function runPreflight(command: string, cwd: string, timeoutMs: number): { ok: bo
 export async function preClaim(ctx: ClaimContext): Promise<void> {
   const repo = (ctx.context["repo"] || ctx.context["REPO"] || "").replace(/^~/, os.homedir());
   const stackContract = resolveOperationalStackContract(ctx.context, false);
+  const stackPlan = stackExecutionPlanForStep(ctx.stepId, stackContract);
   await recordStackEvidencePlanObservation({
     run_id: ctx.runId,
     step_id: ctx.stepId,
     agent_id: "tester",
   }, ctx.context, "running", "Final-test preclaim resolved stack evidence contract.");
 
-  if (!isBrowserRuntimeStack(stackContract)) {
+  if (stackPlan.systemSmokeRunner !== "setfarm-smoke-test") {
     await recordGateObservation({
       runId: ctx.runId,
       stepId: ctx.stepId,
@@ -178,8 +179,8 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       label: "Final stack preclaim",
       status: "info",
       summary: "Browser smoke preclaim skipped for non-browser stack",
-      detail: "Final-test will use the stack-specific agent prompt/evidence contract instead of Setfarm's browser smoke preclaim.",
-      metadata: stackEvidenceMetadata(stackContract),
+      detail: stackPlan.reason,
+      metadata: { ...stackEvidenceMetadata(stackContract), stackPlan },
     });
     return;
   }

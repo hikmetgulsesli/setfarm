@@ -3,6 +3,7 @@ import type { StackContract, StackPack, StackPackId } from "../stack-contract/ty
 import type {
   StackEvidenceClass,
   StackEvidencePlan,
+  StackExecutionPlan,
   StackFailureClassification,
   StackFailureInput,
   StackModule,
@@ -109,18 +110,31 @@ function classifyFailureFor(packId: StackPackId, input: StackFailureInput): Stac
 }
 
 function makeModule(pack: StackPack): StackModule {
+  const buildEvidencePlan = (stepId: string): StackEvidencePlan => ({
+    stackPackId: pack.id,
+    runtimeKind: runtimeKindFor(pack.id),
+    evidenceClasses: evidenceClassesFor(stepId, runtimeKindFor(pack.id)),
+    toolPreflightRequired: Boolean(pack.toolPreflight?.some((tool) => tool.required)),
+  });
   return {
     id: pack.id,
     pack,
     runtimeKind: () => runtimeKindFor(pack.id),
     isBrowserRuntime: () => runtimeKindFor(pack.id) === "browser",
     evidenceClassesForStep: (stepId) => evidenceClassesFor(stepId, runtimeKindFor(pack.id)),
-    buildEvidencePlan: (stepId): StackEvidencePlan => ({
-      stackPackId: pack.id,
-      runtimeKind: runtimeKindFor(pack.id),
-      evidenceClasses: evidenceClassesFor(stepId, runtimeKindFor(pack.id)),
-      toolPreflightRequired: Boolean(pack.toolPreflight?.some((tool) => tool.required)),
-    }),
+    buildEvidencePlan,
+    executionPlanForStep: (stepId): StackExecutionPlan => {
+      const base = buildEvidencePlan(stepId);
+      const browser = runtimeKindFor(pack.id) === "browser";
+      return {
+        ...base,
+        systemSmokeRunner: browser ? "setfarm-smoke-test" : "stack-agent",
+        shouldAllocateRuntime: browser,
+        reason: browser
+          ? `${pack.id} uses Setfarm browser smoke/runtime evidence for ${stepId}.`
+          : `${pack.id} uses stack-specific agent/tool evidence for ${stepId}; browser smoke is not applicable.`,
+      };
+    },
     classifyFailure: (input) => classifyFailureFor(pack.id, input),
     resolveContract: (base) => base,
   };

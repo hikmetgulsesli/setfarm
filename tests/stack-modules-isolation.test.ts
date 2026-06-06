@@ -17,6 +17,19 @@ test("every stack module routes tooling infrastructure failures to infra_retry",
   }
 });
 
+test("stack modules choose shared browser smoke only for browser runtime stacks", () => {
+  for (const module of listStackModules()) {
+    const plan = module.executionPlanForStep("qa-test");
+    if (plan.runtimeKind === "browser") {
+      assert.equal(plan.systemSmokeRunner, "setfarm-smoke-test", module.id);
+      assert.equal(plan.shouldAllocateRuntime, true, module.id);
+    } else {
+      assert.equal(plan.systemSmokeRunner, "stack-agent", module.id);
+      assert.equal(plan.shouldAllocateRuntime, false, module.id);
+    }
+  }
+});
+
 test("stack modules keep game product evidence separate from framework selection", () => {
   const game = classifyStackFailure("browser-game-canvas", {
     stepId: "verify",
@@ -43,4 +56,14 @@ test("stack module integration prevents infra evidence from reaching product gat
   assert.match(source, /implementEvidenceRun\.failureAction === "infra_retry"/);
   assert.match(source, /SETFARM_INFRA_RETRY/);
   assert.match(source, /await failStep\(stepId, infraReason\)/);
+});
+
+test("QA and final preclaims use stack execution plans instead of generic browser checks", () => {
+  const qa = fs.readFileSync(path.join(process.cwd(), "src/installer/steps/09-qa-test/preclaim.ts"), "utf-8");
+  const final = fs.readFileSync(path.join(process.cwd(), "src/installer/steps/10-final-test/preclaim.ts"), "utf-8");
+  for (const source of [qa, final]) {
+    assert.match(source, /stackExecutionPlanForStep\(ctx\.stepId, stackContract\)/);
+    assert.match(source, /stackPlan\.systemSmokeRunner !== "setfarm-smoke-test"/);
+    assert.doesNotMatch(source, /isBrowserRuntimeStack/);
+  }
 });

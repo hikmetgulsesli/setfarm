@@ -25,6 +25,14 @@ export interface StackEvidencePlan {
   toolPreflightRequired: boolean;
 }
 
+export type StackSystemSmokeRunner = "setfarm-smoke-test" | "stack-agent" | "none";
+
+export interface StackExecutionPlan extends StackEvidencePlan {
+  systemSmokeRunner: StackSystemSmokeRunner;
+  shouldAllocateRuntime: boolean;
+  reason: string;
+}
+
 export interface StackModule {
   id: StackPackId;
   pack: StackPack;
@@ -32,6 +40,7 @@ export interface StackModule {
   isBrowserRuntime(): boolean;
   evidenceClassesForStep(stepId: string): StackEvidenceClass[];
   buildEvidencePlan(stepId: string): StackEvidencePlan;
+  executionPlanForStep(stepId: string): StackExecutionPlan;
   classifyFailure(input: StackFailureInput): StackFailureClassification;
   resolveContract(base: StackContract): StackContract;
 }

@@ -2,7 +2,7 @@ import type { StackContract } from "./stack-contract/types.js";
 import { resolveStackContract } from "./stack-contract/reconcile.js";
 import { writeStackContract } from "./stack-contract/ledger.js";
 import { stackModuleForContract } from "./stack-modules/registry.js";
-import type { StackEvidenceClass, StackRuntimeKind } from "./stack-modules/types.js";
+import type { StackEvidenceClass, StackExecutionPlan, StackRuntimeKind } from "./stack-modules/types.js";
 
 export type EvidenceClass = StackEvidenceClass;
 
@@ -62,4 +62,18 @@ export function stackEvidenceMetadata(contract: StackContract): Record<string, u
 
 export function evidenceClassesForStep(stepId: string, contract: StackContract): EvidenceClass[] {
   return stackModuleForContract(contract)?.evidenceClassesForStep(stepId) || [];
+}
+
+export function stackExecutionPlanForStep(stepId: string, contract: StackContract): StackExecutionPlan {
+  const module = stackModuleForContract(contract);
+  if (module) return module.executionPlanForStep(stepId);
+  return {
+    stackPackId: "vite-react-web-app",
+    runtimeKind: "unknown",
+    evidenceClasses: [],
+    toolPreflightRequired: false,
+    systemSmokeRunner: "stack-agent",
+    shouldAllocateRuntime: false,
+    reason: "Stack contract is unresolved; use stack-specific agent evidence instead of shared browser smoke.",
+  };
 }

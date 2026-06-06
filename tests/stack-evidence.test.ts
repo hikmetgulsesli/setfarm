@@ -5,6 +5,7 @@ import {
   evidenceClassesForStep,
   isBrowserRuntimeStack,
   stackRuntimeKind,
+  stackExecutionPlanForStep,
 } from "../dist/installer/stack-evidence.js";
 import { getStackPack } from "../dist/installer/stack-contract/packs.js";
 import type { StackContract } from "../dist/installer/stack-contract/types.js";
@@ -50,6 +51,13 @@ test("runtime kind separates browser, native, server, and cli stacks", () => {
   assert.equal(stackRuntimeKind(contract("react-native-expo")), "native");
   assert.equal(stackRuntimeKind(contract("python-web")), "server");
   assert.equal(stackRuntimeKind(contract("python-cli")), "cli");
+});
+
+test("stack execution plans keep browser smoke out of native stacks", () => {
+  assert.equal(stackExecutionPlanForStep("qa-test", contract("browser-game-canvas")).systemSmokeRunner, "setfarm-smoke-test");
+  assert.equal(stackExecutionPlanForStep("qa-test", contract("nextjs-web-app")).systemSmokeRunner, "setfarm-smoke-test");
+  assert.equal(stackExecutionPlanForStep("qa-test", contract("ios-app")).systemSmokeRunner, "stack-agent");
+  assert.equal(stackExecutionPlanForStep("qa-test", contract("android-app")).shouldAllocateRuntime, false);
 });
 
 test("vite stack declares deterministic runtime and tool preflight contracts", () => {
