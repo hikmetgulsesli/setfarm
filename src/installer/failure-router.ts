@@ -1,4 +1,7 @@
-export type FailureRouteAction = "re_claim" | "link_story" | "platform_bug";
+import { classifyStackFailure } from "./stack-modules/registry.js";
+import type { StackPackId } from "./stack-contract/types.js";
+
+export type FailureRouteAction = "re_claim" | "link_story" | "platform_bug" | "infra_retry";
 
 export type FailureRoutePolicy = "qa_fix_disabled" | "qa_fix_bounded";
 
@@ -6,6 +9,7 @@ export interface FailureRouteInput {
   runId: string;
   stepId: string;
   failure: string;
+  stackPackId?: StackPackId | string | null;
   currentStoryId?: string | null;
   hasMachineEvidence?: boolean;
   existingRepairCount?: number;
@@ -30,38 +34,49 @@ export function readQaFixEnabled(): boolean {
   return boolEnv("SETFARM_QA_FIX_ENABLED", false);
 }
 
-function normalizeCategory(stepId: string, failure: string): string {
-  const raw = String(failure || "");
-  if (/\bSMOKE_INFRA_FAILURE\b|agent-browser|playwright|chromium|ECONNREFUSED|timeout/i.test(raw)) return "browser_infra_failure";
-  if (/\bVERIFY_MERGE_BLOCKER\b|merge conflict|CONFLICTING|DIRTY/i.test(raw)) return "verify_merge_blocker";
-  if (/\bIMPLEMENT_EVIDENCE|runtime evidence|IMPLEMENT_VERIFICATION_REQUEST/i.test(raw)) return "implement_evidence_failure";
-  if (/\bDESIGN_IMPORT|stitch-to-jsx|generated-screen-validator|SCREEN_MAP/i.test(raw)) return "design_import_failure";
-  if (stepId === "qa-test") return "qa_quality_failure";
-  if (stepId === "final-test") return "final_test_quality_failure";
-  if (stepId === "verify") return "verify_quality_failure";
-  return "downstream_quality_failure";
+function isStackPackId(value: unknown): value is StackPackId {
+  return [
+    "nextjs-web-app",
+    "vite-react-web-app",
+    "static-html-site",
+    "browser-game-canvas",
+    "node-express-api",
+    "node-cli",
+    "python-cli",
+    "python-web",
+    "react-native-expo",
+    "android-app",
+    "ios-app",
+    "desktop-electron",
+  ].includes(String(value));
 }
 
 export function routeDownstreamQualityFailure(input: FailureRouteInput): FailureRouteDecision {
-  const category = normalizeCategory(input.stepId, input.failure);
+  const stackPackId = isStackPackId(input.stackPackId) ? input.stackPackId : "vite-react-web-app";
+  const classification = classifyStackFailure(stackPackId, {
+    stepId: input.stepId,
+    failure: input.failure,
+    hasMachineEvidence: input.hasMachineEvidence,
+  });
+  const category = classification.category;
   const qaFixEnabled = readQaFixEnabled();
   const policy: FailureRoutePolicy = qaFixEnabled ? "qa_fix_bounded" : "qa_fix_disabled";
 
-  if (category === "browser_infra_failure" || category === "design_import_failure") {
+  if (classification.action === "infra_retry") {
     return {
-      action: "platform_bug",
+      action: "infra_retry",
       category,
-      reason: `${category} is a platform/setup failure and must not create a QA-FIX story.`,
+      reason: classification.reason,
       qaFixAllowed: false,
       policy,
     };
   }
 
-  if (category === "verify_merge_blocker") {
+  if (classification.action === "platform_bug") {
     return {
       action: "platform_bug",
       category,
-      reason: "Verify merge blockers require PR/story branch repair, not a QA-FIX story.",
+      reason: classification.reason,
       qaFixAllowed: false,
       policy,
     };

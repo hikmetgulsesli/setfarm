@@ -82,6 +82,10 @@ function isTransientAgentInfrastructureFailure(error: string): boolean {
     normalized.includes("agent_process_orphaned") ||
     normalized.includes("agent_model_turn_stalled") ||
     normalized.includes("agent_startup_silent") ||
+    normalized.includes("setfarm_infra_retry") ||
+    normalized.includes("browser_infra_failure") ||
+    normalized.includes("native_infra_failure") ||
+    normalized.includes("stack_tooling_infra_failure") ||
     normalized.includes("task is already terminal")
   );
 }

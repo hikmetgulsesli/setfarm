@@ -1,13 +1,10 @@
 import type { StackContract } from "./stack-contract/types.js";
 import { resolveStackContract } from "./stack-contract/reconcile.js";
 import { writeStackContract } from "./stack-contract/ledger.js";
+import { stackModuleForContract } from "./stack-modules/registry.js";
+import type { StackEvidenceClass, StackRuntimeKind } from "./stack-modules/types.js";
 
-export type EvidenceClass = "build" | "test" | "smoke" | "dom" | "visual" | "security" | "deploy";
-
-const BROWSER_PACKS = new Set(["nextjs-web-app", "vite-react-web-app", "static-html-site", "browser-game-canvas", "desktop-electron"]);
-const NATIVE_PACKS = new Set(["react-native-expo", "android-app", "ios-app"]);
-const SERVER_PACKS = new Set(["node-express-api", "python-web"]);
-const CLI_PACKS = new Set(["node-cli", "python-cli"]);
+export type EvidenceClass = StackEvidenceClass;
 
 export function resolveOperationalStackContract(context: Record<string, string>, persist = true): StackContract {
   const repoPath = context["story_workdir"] || context["repo"] || context["REPO"] || "";
@@ -25,7 +22,8 @@ export function resolveOperationalStackContract(context: Record<string, string>,
 
 export function isBrowserRuntimeStack(contract: Pick<StackContract, "packId" | "verification"> | null | undefined): boolean {
   if (!contract) return false;
-  if (contract.packId && BROWSER_PACKS.has(contract.packId)) return true;
+  const module = stackModuleForContract(contract);
+  if (module) return module.isBrowserRuntime();
   const verification = contract.verification || { build: [], smoke: [], dom: [], visual: [], tests: [] };
   const text = [
     ...(verification.smoke || []),
@@ -35,13 +33,8 @@ export function isBrowserRuntimeStack(contract: Pick<StackContract, "packId" | "
   return /\b(browser|route|dom|playwright|screenshot|web page|viewport)\b/.test(text);
 }
 
-export function stackRuntimeKind(contract: Pick<StackContract, "packId"> | null | undefined): "browser" | "native" | "server" | "cli" | "unknown" {
-  const packId = contract?.packId || "";
-  if (BROWSER_PACKS.has(packId)) return "browser";
-  if (NATIVE_PACKS.has(packId)) return "native";
-  if (SERVER_PACKS.has(packId)) return "server";
-  if (CLI_PACKS.has(packId)) return "cli";
-  return "unknown";
+export function stackRuntimeKind(contract: Pick<StackContract, "packId"> | null | undefined): StackRuntimeKind {
+  return stackModuleForContract(contract)?.runtimeKind() || "unknown";
 }
 
 export function stackEvidenceSummary(contract: StackContract): string {
@@ -68,12 +61,5 @@ export function stackEvidenceMetadata(contract: StackContract): Record<string, u
 }
 
 export function evidenceClassesForStep(stepId: string, contract: StackContract): EvidenceClass[] {
-  const browser = isBrowserRuntimeStack(contract);
-  if (stepId === "verify") return browser ? ["build", "test", "smoke", "dom", "visual"] : ["build", "test", "smoke"];
-  if (stepId === "supervise") return browser ? ["dom", "visual"] : ["smoke"];
-  if (stepId === "security-gate") return ["security"];
-  if (stepId === "qa-test") return browser ? ["smoke", "dom", "visual"] : ["smoke"];
-  if (stepId === "final-test") return browser ? ["build", "test", "smoke", "dom", "visual"] : ["build", "test", "smoke"];
-  if (stepId === "deploy") return ["deploy"];
-  return [];
+  return stackModuleForContract(contract)?.evidenceClassesForStep(stepId) || [];
 }

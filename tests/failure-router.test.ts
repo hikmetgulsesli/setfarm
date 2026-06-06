@@ -37,19 +37,21 @@ describe("failure router", () => {
     assert.equal(decision.action, "re_claim");
   });
 
-  it("routes infrastructure and design import failures to platform bugs", () => {
+  it("routes infrastructure to infra retry and design import failures to platform bugs", () => {
     const infra = routeDownstreamQualityFailure({
       runId: "run-1",
       stepId: "qa-test",
+      stackPackId: "browser-game-canvas",
       failure: "playwright chromium timed out with ECONNREFUSED",
       hasMachineEvidence: true,
     });
-    assert.equal(infra.action, "platform_bug");
+    assert.equal(infra.action, "infra_retry");
     assert.equal(infra.category, "browser_infra_failure");
 
     const design = routeDownstreamQualityFailure({
       runId: "run-1",
       stepId: "setup-build",
+      stackPackId: "browser-game-canvas",
       failure: "generated-screen-validator failed SCREEN_MAP coverage",
       hasMachineEvidence: true,
     });

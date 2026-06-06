@@ -67,6 +67,14 @@ describe("implement evidence runner", () => {
     assert.match(source, /stateBridgeScreen\(capture\?\.stateBridge\)/);
   });
 
+  it("classifies runtime capture infrastructure failures with stack-owned failure metadata", () => {
+    const source = fs.readFileSync(path.join(process.cwd(), "src/installer/implement-evidence-runner.ts"), "utf-8");
+    assert.match(source, /classifyStackFailure/);
+    assert.match(source, /failureOwner: failureClassification\?\.owner/);
+    assert.match(source, /failureAction: failureClassification\?\.action/);
+    assert.match(source, /failureCategory: failureClassification\?\.category/);
+  });
+
   afterEach(() => {
     for (const [key, value] of savedEnv) {
       if (value === undefined) delete process.env[key];

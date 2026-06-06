@@ -1819,6 +1819,7 @@ export async function routeQualityFailureToImplement(
     runId: step.run_id,
     stepId: step.step_id,
     failure,
+    stackPackId: context["stack_pack_id"] || context["detected_stack"] || "",
     currentStoryId: context["current_story_id"] || "",
     hasMachineEvidence: /\b(smoke|screenshot|QA_JSON|FINAL_TEST|IMPLEMENT_EVIDENCE|runtime|browser|interaction)\b/i.test(failure),
     existingRepairCount: existingFixCountNum,
@@ -1830,6 +1831,23 @@ export async function routeQualityFailureToImplement(
   context["failure_route_reason"] = routeDecision.reason;
 
   if (!routeDecision.qaFixAllowed) {
+    if (routeDecision.action === "infra_retry") {
+      const reason = [
+        "SETFARM_INFRA_RETRY:",
+        routeDecision.reason,
+        `Failure category: ${routeDecision.category}`,
+        "",
+        "Failure report:",
+        failure.slice(0, 3000),
+      ].join("\n");
+      context["previous_failure"] = reason;
+      context["failure_category"] = routeDecision.category;
+      context["failure_suggestion"] = "Retry platform/tooling infrastructure for this stack; do not consume product story retry budget.";
+      await updateRunContext(step.run_id, context);
+      await failStep(step.id, reason);
+      return true;
+    }
+
     if (routeDecision.action === "re_claim") {
       const routed = await routeOriginalStoryQualityFailureToImplement(
         step,
@@ -7076,6 +7094,7 @@ ${prd}`;
             runId: step.run_id,
             storyId: storyRow.story_id,
             workdir: wd,
+            stackPackId: context["stack_pack_id"] || context["detected_stack"] || "",
             observe: async (observation) => {
               await recordLiveObservation({
                 runId: step.run_id,
@@ -7103,8 +7122,27 @@ ${prd}`;
             status: implementEvidenceRun.attempted ? (implementEvidenceRun.ok ? "pass" : "fail") : "info",
             summary: implementEvidenceRun.reason,
             detail: implementEvidenceRun.evidencePath || "",
-            metadata: { attempted: implementEvidenceRun.attempted, evidencePath: implementEvidenceRun.evidencePath || "" },
+            metadata: {
+              attempted: implementEvidenceRun.attempted,
+              evidencePath: implementEvidenceRun.evidencePath || "",
+              failureOwner: implementEvidenceRun.failureOwner || "",
+              failureAction: implementEvidenceRun.failureAction || "",
+              failureCategory: implementEvidenceRun.failureCategory || "",
+            },
           });
+          if (implementEvidenceRun.failureAction === "infra_retry") {
+            const infraReason = [
+              "SETFARM_INFRA_RETRY:",
+              implementEvidenceRun.reason,
+              `Failure category: ${implementEvidenceRun.failureCategory || "stack_tooling_infra_failure"}`,
+              "",
+              "Implementation evidence runner hit stack tooling infrastructure before product behavior could be judged.",
+            ].join("\n");
+            applyRetryFailureContext(context, infraReason, implementEvidenceRun.failureCategory || "stack_tooling_infra_failure", "Retry stack tooling infrastructure; do not consume product story retry budget.");
+            await updateRunContext(step.run_id, context);
+            await failStep(stepId, infraReason);
+            return { advanced: false, runCompleted: false };
+          }
 
           const implementEvidenceResult = checkImplementEvidenceGate(storyRow.story_id, storyRow.title, wd);
           await recordImplementGateObservation(step, storyRow, "implement.evidence", "Implement evidence gate", implementEvidenceResult);

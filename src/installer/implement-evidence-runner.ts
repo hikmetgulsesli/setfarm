@@ -5,6 +5,9 @@ import { implementEvidenceArtifactPaths, readImplementEvidenceConfig } from "./i
 import { writeImplementEvidenceArtifact } from "./implement-evidence-writer.js";
 import type { InteractionRequest } from "./runtime-driver.js";
 import { WebPreviewRuntimeDriver } from "./web-runtime-driver.js";
+import { classifyStackFailure } from "./stack-modules/registry.js";
+import type { StackFailureAction, StackFailureOwner } from "./stack-modules/types.js";
+import type { StackPackId } from "./stack-contract/types.js";
 
 type RawInteractionRequest = Record<string, any>;
 
@@ -13,6 +16,9 @@ export interface ImplementEvidenceRunResult {
   evidencePath?: string;
   ok: boolean;
   reason: string;
+  failureOwner?: StackFailureOwner;
+  failureAction?: StackFailureAction;
+  failureCategory?: string;
 }
 
 export interface ImplementEvidenceObservation {
@@ -141,6 +147,23 @@ function hasPackageScript(workdir: string, scriptName: string): boolean {
   return !!pkg?.scripts?.[scriptName];
 }
 
+function isStackPackId(value: unknown): value is StackPackId {
+  return [
+    "nextjs-web-app",
+    "vite-react-web-app",
+    "static-html-site",
+    "browser-game-canvas",
+    "node-express-api",
+    "node-cli",
+    "python-cli",
+    "python-web",
+    "react-native-expo",
+    "android-app",
+    "ios-app",
+    "desktop-electron",
+  ].includes(String(value));
+}
+
 function writeJsonIfMissing(filePath: string, value: Record<string, unknown>): boolean {
   if (fs.existsSync(filePath)) return false;
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -223,6 +246,7 @@ export async function runImplementEvidenceIfRequested(input: {
   runNumber?: number | null;
   storyId: string;
   workdir: string;
+  stackPackId?: StackPackId | string | null;
   observe?: ImplementEvidenceObserver;
 }): Promise<ImplementEvidenceRunResult> {
   async function observe(observation: ImplementEvidenceObservation): Promise<void> {
@@ -417,12 +441,27 @@ export async function runImplementEvidenceIfRequested(input: {
     verdict: issues.length === 0 ? "pass" : "fail",
     issues,
   });
+  const failureText = issues.map((issue) => `${issue.code}: ${issue.message}`).join("\n");
+  const failureClassification = issues.length > 0
+    ? classifyStackFailure(isStackPackId(input.stackPackId) ? input.stackPackId : "vite-react-web-app", {
+      stepId: "implement",
+      failure: failureText,
+      hasMachineEvidence: true,
+    })
+    : null;
   await observe({
     checkId: "implement.evidence.artifact",
     label: "Implement evidence artifact",
     status: issues.length === 0 ? "pass" : "fail",
     summary: issues.length === 0 ? "Wrote passing implementation evidence." : "Wrote failing implementation evidence.",
-    metadata: { evidencePath, flowCount: flows.length, issueCount: issues.length },
+    metadata: {
+      evidencePath,
+      flowCount: flows.length,
+      issueCount: issues.length,
+      failureOwner: failureClassification?.owner,
+      failureAction: failureClassification?.action,
+      failureCategory: failureClassification?.category,
+    },
     filePaths: [evidencePath],
     eventType: issues.length === 0 ? "implement.evidence.artifact.completed" : "implement.evidence.artifact.failed",
   });
@@ -431,5 +470,8 @@ export async function runImplementEvidenceIfRequested(input: {
     evidencePath,
     ok: issues.length === 0,
     reason: issues.length === 0 ? "Implementation evidence captured." : issues.map((issue) => issue.code).join(", "),
+    failureOwner: failureClassification?.owner,
+    failureAction: failureClassification?.action,
+    failureCategory: failureClassification?.category,
   };
 }

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   evidenceClassesForStep,
@@ -57,4 +58,10 @@ test("vite stack declares deterministic runtime and tool preflight contracts", (
   assert.equal(pack.runtime?.portBand, "preview");
   assert.match(pack.runtime?.previewCommand || "", /--strictPort/);
   assert.ok(pack.toolPreflight?.some((tool) => tool.tool === "agent-browser" && tool.required));
+});
+
+test("stack evidence delegates runtime decisions to stack modules", () => {
+  const source = readFileSync(new URL("../src/installer/stack-evidence.ts", import.meta.url), "utf-8");
+  assert.match(source, /stackModuleForContract/);
+  assert.doesNotMatch(source, /const BROWSER_PACKS/);
 });
