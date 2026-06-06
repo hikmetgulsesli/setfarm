@@ -23,9 +23,10 @@ import { archiveRunProgress, scheduleRunCronTeardown, cleanupLocalBranches } fro
 import { cleanupWorktrees, cleanAgentWorkspace, syncBaseBranch } from "./worktree-ops.js";
 import { RUN_STATUS, STEP_STATUS, STORY_STATUS } from "./constants.js";
 import { syncActiveCrons } from "./agent-cron.js";
+import { resolvePlatformScript } from "./paths.js";
 
 function runMedicAutoVerifySmokeGate(repoPath: string, runId: string, storyId: string): boolean {
-  const smokeScript = path.join(os.homedir(), ".openclaw", "setfarm-repo", "scripts", "smoke-test.mjs");
+  const smokeScript = resolvePlatformScript("smoke-test.mjs");
   if (!repoPath || !fs.existsSync(repoPath) || !fs.existsSync(smokeScript)) return true;
   try {
     syncBaseBranch(repoPath, "main");

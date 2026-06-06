@@ -103,6 +103,7 @@ const APP_SCOPE_FILES = [
   "src/types/domain.ts",
   "src/hooks/useAppState.ts",
   "src/utils/storage.ts",
+  "src/test/bridge.ts",
 ];
 
 const STORY_APP_INTEGRATION_FILES = APP_SCOPE_FILES;
@@ -524,7 +525,9 @@ function appStoryDraft(params: {
 function fileSkeletons(files: string[], screenFiles: Set<string>): Record<string, string> {
   return Object.fromEntries(files.map((file) => [
     file,
-    screenFiles.has(file)
+    file === "src/test/bridge.ts"
+      ? "Runtime test bridge helper. Include a literal publisher function such as `export function publishAppBridge(bridge: unknown) { (window as any).app = bridge; (globalThis as any).app = bridge; return bridge; }`, then call it from App/runtime effects with live state and actions. Comments, type declarations, or window.game do not satisfy the bridge guard."
+      : screenFiles.has(file)
       ? "Generated Stitch screen wired to shared app state and visible behavior handlers."
       : "Shared app state, integration, styling, or persistence implementation file.",
   ]));

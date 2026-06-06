@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { isVerifyRetryMergeBlocker, isVerifyRetryQualityFailure } from "../dist/installer/verify-retry-routing.js";
+import { isVerifyRetryInfraFailure, isVerifyRetryMergeBlocker, isVerifyRetryQualityFailure } from "../dist/installer/verify-retry-routing.js";
 
 describe("verify retry routing", () => {
   it("routes actionable verify retry reports back to implement", () => {
@@ -26,6 +26,32 @@ describe("verify retry routing", () => {
     ].join("\n");
 
     assert.equal(isVerifyRetryQualityFailure(output), true);
+  });
+
+  it("does not route browser infrastructure retries back to implement", () => {
+    const output = [
+      "STATUS: retry",
+      "FINDINGS:",
+      "- Mobile visual QA remains blocked: Error: page.evaluate: Target page, context or browser has been closed.",
+      "- agent-browser click '[data-action-id=\"queue-2\"]' hung and exited -1, while DOM element.click() changed route to queue.",
+    ].join("\n");
+
+    assert.equal(isVerifyRetryInfraFailure(output), true);
+    assert.equal(isVerifyRetryQualityFailure(output), false);
+    assert.equal(isVerifyRetryMergeBlocker(output), false);
+  });
+
+  it("treats visual QA browser helper reference errors as infrastructure retries", () => {
+    const output = [
+      "STATUS: retry",
+      "FINDINGS:",
+      "- Supervisor visual QA report shows blocker navigation_error on desktop /: page.evaluate ReferenceError: isTilingBackgroundRepeat is not defined.",
+      "- Same report shows blocker navigation_error on mobile / with the same isTilingBackgroundRepeat ReferenceError.",
+    ].join("\n");
+
+    assert.equal(isVerifyRetryInfraFailure(output), true);
+    assert.equal(isVerifyRetryQualityFailure(output), false);
+    assert.equal(isVerifyRetryMergeBlocker(output), false);
   });
 
   it("routes blocking review comments about functional defects back to implement", () => {

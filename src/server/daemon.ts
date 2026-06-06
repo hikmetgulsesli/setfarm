@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import "../runtime-config.js";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";

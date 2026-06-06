@@ -31,6 +31,8 @@ export function applyStackContractContext(
   context["stack_prompt"] = contract.prompt;
   context["stack_setup_contract"] = formatCommandContract(contract.setup);
   context["stack_verification_contract"] = formatVerificationContract(contract.verification);
+  context["stack_runtime_contract"] = formatRuntimeContract(contract);
+  context["stack_tool_preflight_contract"] = formatToolPreflightContract(contract);
 
   // Compatibility aliases for the current prompt/guard migration.
   context["detected_stack"] = contract.packId || "unknown";
@@ -70,6 +72,27 @@ function formatVerificationContract(verification: StackContract["verification"])
     }
   }
   return lines.length > 0 ? lines.join("\n") : "- no stack-specific verification resolved";
+}
+
+function formatRuntimeContract(contract: StackContract): string {
+  const runtime = contract.runtime;
+  if (!runtime || runtime.service === "none") return "- no runtime required";
+  return [
+    `- service: ${runtime.service}`,
+    `- host: ${runtime.host}`,
+    `- port_policy: ${runtime.portPolicy}`,
+    runtime.portBand ? `- port_band: ${runtime.portBand}` : "",
+    runtime.previewCommand ? `- preview: ${runtime.previewCommand}` : "",
+    runtime.devCommand ? `- dev: ${runtime.devCommand}` : "",
+    `- readiness: ${runtime.readinessProbe}`,
+    `- smoke_runner: ${runtime.smokeRunner}`,
+  ].filter(Boolean).join("\n");
+}
+
+function formatToolPreflightContract(contract: StackContract): string {
+  const tools = contract.toolPreflight || [];
+  if (tools.length === 0) return "- no stack-specific tool preflight required";
+  return tools.map((tool) => `- ${tool.tool}: ${tool.command} (${tool.required ? "required" : "optional"})`).join("\n");
 }
 
 function normalizeRepoPath(value: string): string {

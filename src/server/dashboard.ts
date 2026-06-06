@@ -41,14 +41,41 @@ function loadWorkflows(): WorkflowDef[] {
   return results;
 }
 
-async function getRuns(workflowId?: string): Promise<Array<RunInfo & { steps: StepInfo[] }>> {
+type DashboardRunInfo = RunInfo & {
+  steps: StepInfo[];
+  terminal: boolean;
+  derived_status: "active" | "terminal" | "completed" | "queued";
+};
+
+function isTerminalRunStatus(status: string | null | undefined): boolean {
+  return ["failed", "cancelled", "canceled", "error"].includes(String(status || "").trim().toLowerCase());
+}
+
+function dashboardDerivedStatus(run: RunInfo): DashboardRunInfo["derived_status"] {
+  const status = String(run.status || "").trim().toLowerCase();
+  if (isTerminalRunStatus(status)) return "terminal";
+  if (status === "completed" || status === "done") return "completed";
+  if (status === "running") return "active";
+  return "queued";
+}
+
+function decorateDashboardRun(run: RunInfo & { steps: StepInfo[] }): DashboardRunInfo {
+  return {
+    ...run,
+    terminal: isTerminalRunStatus(run.status),
+    derived_status: dashboardDerivedStatus(run),
+  };
+}
+
+async function getRuns(workflowId?: string, options: { includeTerminal?: boolean } = {}): Promise<DashboardRunInfo[]> {
   const runs = workflowId
     ? await pgQuery<RunInfo>("SELECT * FROM runs WHERE workflow_id = $1 ORDER BY created_at DESC", [workflowId])
     : await pgQuery<RunInfo>("SELECT * FROM runs ORDER BY created_at DESC");
-  const results: Array<RunInfo & { steps: StepInfo[] }> = [];
+  const results: DashboardRunInfo[] = [];
   for (const r of runs) {
+    if (!options.includeTerminal && isTerminalRunStatus(r.status)) continue;
     const steps = await pgQuery<StepInfo>("SELECT * FROM steps WHERE run_id = $1 ORDER BY step_index ASC", [r.id]);
-    results.push({ ...r, steps });
+    results.push(decorateDashboardRun({ ...r, steps }));
   }
   return results;
 }
@@ -58,6 +85,47 @@ async function getRunById(id: string): Promise<(RunInfo & { steps: StepInfo[] })
   if (!run) return null;
   const steps = await pgQuery<StepInfo>("SELECT * FROM steps WHERE run_id = $1 ORDER BY step_index ASC", [run.id]);
   return { ...run, steps };
+}
+
+async function getRunObservations(runId: string): Promise<any[]> {
+  const rows = await pgQuery<any>(
+    `SELECT id, run_id, step_id, story_id, agent_id, phase, check_id, label, status,
+            summary, detail, evidence, file_paths, github, metadata, event_type,
+            started_at, completed_at, created_at, updated_at
+     FROM run_observations
+     WHERE run_id = $1
+     ORDER BY created_at DESC
+     LIMIT 250`,
+    [runId],
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    runId: row.run_id,
+    stepId: row.step_id,
+    storyId: row.story_id,
+    agentId: row.agent_id,
+    phase: row.phase,
+    checkId: row.check_id,
+    label: row.label,
+    status: row.status,
+    summary: row.summary,
+    detail: row.detail,
+    eventType: row.event_type,
+    startedAt: row.started_at,
+    completedAt: row.completed_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    evidence: safeJson(row.evidence, {}),
+    filePaths: safeJson(row.file_paths, []),
+    github: safeJson(row.github, {}),
+    metadata: safeJson(row.metadata, {}),
+  }));
+}
+
+function safeJson(raw: unknown, fallback: unknown): unknown {
+  if (raw == null || raw === "") return fallback;
+  if (typeof raw !== "string") return raw;
+  try { return JSON.parse(raw); } catch { return fallback; }
 }
 
 function json(res: http.ServerResponse, data: unknown, status = 200) {
@@ -425,6 +493,11 @@ export function startDashboard(port = 3333): http.Server {
       return json(res, getRunEvents(eventsMatch[1]));
     }
 
+    const observationsMatch = p.match(/^\/api\/runs\/([^/]+)\/observations$/);
+    if (observationsMatch) {
+      return json(res, await getRunObservations(observationsMatch[1]));
+    }
+
     const storiesMatch = p.match(/^\/api\/runs\/([^/]+)\/stories$/);
     if (storiesMatch) {
       const stories = await pgQuery(
@@ -448,7 +521,8 @@ export function startDashboard(port = 3333): http.Server {
 
     if (p === "/api/runs") {
       const wf = url.searchParams.get("workflow") ?? undefined;
-      return json(res, await getRuns(wf));
+      const includeTerminal = ["1", "true", "yes", "on"].includes(String(url.searchParams.get("include_terminal") || "").toLowerCase());
+      return json(res, await getRuns(wf, { includeTerminal }));
     }
 
     // Medic API

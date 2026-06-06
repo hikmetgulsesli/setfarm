@@ -3,6 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { loadRuntimeEnv } from "../runtime-config.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -33,6 +34,8 @@ export async function startSpawner(): Promise<{ pid: number; logFile: string }> 
   if (status.running) {
     return { pid: status.pid, logFile: getSpawnerLogFile() };
   }
+
+  loadRuntimeEnv();
 
   const logFile = getSpawnerLogFile();
   fs.mkdirSync(path.dirname(getSpawnerPidFile()), { recursive: true });

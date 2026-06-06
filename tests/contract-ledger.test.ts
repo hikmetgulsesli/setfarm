@@ -215,6 +215,37 @@ describe("run contract ledger", () => {
     assert.deepEqual(firstStory?.ownsScreens, ["Main Menu (menu)", "Game Board (game)"]);
   });
 
+  it("uses implementation_contract screen ownership when story_screens is empty", () => {
+    const repo = tempRepo("contract-screens");
+    writeDesign(repo, [
+      { screenId: "menu", name: "Main Menu" },
+      { screenId: "play", name: "Game Board" },
+      { screenId: "help", name: "Help" },
+    ]);
+
+    const contractStories = stories().map((story) => ({
+      ...story,
+      story_screens: null,
+      implementation_contract: JSON.stringify({
+        owned_screen_ids: story.story_id === "US-001" ? ["menu", "play"] : ["help"],
+        owned_screen_files: story.story_id === "US-001" ? ["src/screens/Menu.tsx", "src/screens/Play.tsx"] : ["src/screens/Help.tsx"],
+      }),
+    }));
+
+    const contract = buildRunContract({
+      run: baseRun(repo),
+      steps: steps() as any,
+      stories: contractStories as any,
+      now: "2026-05-17T00:00:00.000Z",
+    });
+    const storyPhase = contract.phases.find(p => p.id === "stories");
+    const ownershipItem = storyPhase?.items.find(i => i.id === "stories.screen_ownership");
+
+    assert.equal(ownershipItem?.status, "pass");
+    assert.equal(ownershipItem?.evidence, "2 story screen map(s)");
+    assert.deepEqual(contract.stories.find(s => s.storyId === "US-001")?.ownsScreens, ["Menu", "Play"]);
+  });
+
   it("keeps implementation pending rather than failed when the loop is idle between story gates", () => {
     const repo = tempRepo("idle-loop");
     writeDesign(repo, [

@@ -33,13 +33,21 @@ is the merge gate; if it fails, deploy must not run.
 4. **Import consistency**: no duplicate import dirs or broken imports.
 5. **Main branch clean**: merged main is not broken.
 
+## Required Final-Test JSON
+
+Create `quality-reports/final-test-1.json`. It must be valid JSON with
+`schema: "setfarm.final-test.v1"`, `status`, route/screen/interaction counts,
+smoke result, issue count, and any failures. This file is the machine-readable
+deploy gate; prose output is advisory.
+
 ## Output Format
 
 ```
 STATUS: done|retry|skip|fail
 SMOKE_TEST_RESULT: <summary line, e.g. "pass (16/16 phases)" or "fail: Phase 3 build">
+FINAL_TEST_JSON: quality-reports/final-test-1.json
 TEST_FAILURES: <list when retry/fail>
 ```
 
-`STATUS: done` requires SMOKE_TEST_RESULT. Copy the final smoke summary or write
-a concise equivalent.
+`STATUS: done` requires SMOKE_TEST_RESULT and FINAL_TEST_JSON. Copy the final
+smoke summary or write a concise equivalent.

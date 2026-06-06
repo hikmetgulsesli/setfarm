@@ -56,6 +56,9 @@ function scanItem(workdir: string, item: SupervisorChecklistItem): SupervisorFin
   const tags = blocksForItem(source, item);
   const match = tags.find((block) => blockMatchesItem(block, item, source));
   if (!match) {
+    if (item.type === "button" && isDisplayOnlyItem(item, source)) {
+      return finding(item, "passed", [item.label || ""], `SUPERVISOR_CHECKLIST display-only ${describeItem(item)} passed visible text evidence`, now);
+    }
     return finding(item, "missing", [], `SUPERVISOR_CHECKLIST missing ${describeItem(item)} on ${item.screen}`, now);
   }
 
@@ -113,14 +116,21 @@ function extractJsxBlocks(source: string, tag: string): JsxBlock[] {
   const openClose = new RegExp(`<${tag}\\b([^>]*)>([\\s\\S]*?)<\\/${tag}>`, "gi");
   let match: RegExpExecArray | null;
   while ((match = openClose.exec(source)) !== null) {
+    if (isInsideJsxBlockComment(source, match.index)) continue;
     blocks.push({ tag, attrs: match[1] || "", inner: match[2] || "", block: match[0], index: match.index });
   }
   const selfClosing = new RegExp(`<${tag}\\b([^>]*)\\/?>`, "gi");
   while ((match = selfClosing.exec(source)) !== null) {
     if (match[0].includes(`</${tag}>`)) continue;
+    if (isInsideJsxBlockComment(source, match.index)) continue;
     blocks.push({ tag, attrs: match[1] || "", inner: "", block: match[0], index: match.index });
   }
   return blocks.sort((a, b) => a.index - b.index);
+}
+
+function isInsideJsxBlockComment(source: string, index: number): boolean {
+  const before = source.slice(0, Math.max(0, index));
+  return before.lastIndexOf("{/*") > before.lastIndexOf("*/}");
 }
 
 function blockMatchesItem(block: JsxBlock, item: SupervisorChecklistItem, source: string): boolean {
@@ -167,11 +177,23 @@ function booleanAttrIsTruthy(attrs: string, name: string): boolean {
 
 function isDisplayOnlyItem(item: SupervisorChecklistItem, source: string): boolean {
   if (!item.label) return false;
-  if (item.action || item.href) return false;
+  if (item.href) return false;
+  if (item.action && (!isGenericDesignClickAction(item.action) || !isLikelyDisplayOnlyLabel(item.label))) return false;
   const normalized = normalizeControlText(item.label);
   if (!normalized) return false;
   const titleLike = normalized.split(/\s+/).length <= 4 && !/\b(start|save|cancel|delete|open|close|next|back|play|pause|submit|create)\b/.test(normalized);
-  return titleLike && sourceHasVisibleControlText(source, item.label);
+  return titleLike && sourceHasDisplayOnlyEvidence(source, item.label);
+}
+
+function isGenericDesignClickAction(action: string): boolean {
+  return /^click(?:[-_\s]?action)?$/i.test(String(action || "").trim());
+}
+
+function isLikelyDisplayOnlyLabel(label: string): boolean {
+  const normalized = normalizeControlText(label);
+  if (!normalized) return false;
+  if (/^(?:[a-z]{1,3}|[a-z](?:\s+[a-z]){1,3})$/i.test(normalized)) return true;
+  return /\b(brand|logo|avatar|profile|person|user|account|manager|command|matrix)\b/.test(normalized);
 }
 
 function blockHasVisibleText(block: JsxBlock, label: string): boolean {
@@ -198,8 +220,21 @@ function blockHasAccessibleLabel(block: JsxBlock, label: string): boolean {
 function sourceHasVisibleControlText(source: string, label: string): boolean {
   const expected = normalizeControlText(label);
   if (!expected) return false;
-  const visible = normalizeControlText(source.replace(/<[^>]+>/g, " "));
+  const visible = normalizeControlText(stripJsxBlockComments(source).replace(/<[^>]+>/g, " "));
   return visible.includes(expected);
+}
+
+function stripJsxBlockComments(source: string): string {
+  return source.replace(/\{\/\*[\s\S]*?\*\/\}/g, " ");
+}
+
+function sourceHasDisplayOnlyEvidence(source: string, label: string): boolean {
+  if (sourceHasVisibleControlText(source, label)) return true;
+  const expected = normalizeIcon(label);
+  if (!expected) return false;
+  if (!/\b(person|profile|avatar|user|account)\b/i.test(label)) return false;
+  const normalizedSource = normalizeIcon(source);
+  return iconCandidates(expected).some((candidate) => normalizedSource.includes(candidate));
 }
 
 function visibleText(block: JsxBlock): string {
@@ -253,6 +288,19 @@ function isWeakClassToken(value: string): boolean {
 function iconCandidates(icon: string): string[] {
   const normalized = normalizeIcon(icon);
   const aliases: Record<string, string[]> = {
+    analytics: ["barchart3", "chartbar", "linechart"],
+    assignmentreturn: ["packagecheck", "undo2", "clipboardcheck"],
+    calendartoday: ["calendardays", "calendar"],
+    dashboard: ["layoutdashboard", "gauge", "home"],
+    description: ["filetext", "scrolltext"],
+    filterlist: ["listfilter", "filter"],
+    inventory2: ["packagesearch", "archive", "package", "boxes"],
+    notifications: ["bell", "bellring"],
+    policy: ["shieldalert", "shieldcheck"],
+    searchoff: ["searchx", "search"],
+    sort: ["arrowupdown", "arrowdownup", "listfilter"],
+    tune: ["slidershorizontal", "settings2", "listfilter"],
+    widgets: ["boxes", "layoutgrid", "grid3x3"],
     sportsesports: ["gamepad2", "gamepad", "joystick"],
     playcircle: ["circleplay", "playcircle", "play"],
     menubook: ["bookopen", "book", "library"],
@@ -264,6 +312,9 @@ function iconCandidates(icon: string): string[] {
     emojievents: ["trophy", "award"],
     arrowback: ["arrowleft", "chevronleft"],
     close: ["x", "circlex", "xicon"],
+    person: ["user", "circleuserround", "accountcircle", "person"],
+    user: ["user", "circleuserround", "accountcircle", "person"],
+    accountcircle: ["accountcircle", "circleuserround", "user", "person"],
   };
   return [...new Set([normalized, ...(aliases[normalized] || []).map(normalizeIcon)])].filter(Boolean);
 }

@@ -38,6 +38,8 @@ describe("spawner prompt bootstrap", () => {
     assert.match(prompt, /retryDiscipline\.mode/);
     assert.match(prompt, /retryDiscipline\.mode="first-delta"/);
     assert.match(prompt, /retryDiscipline\.mode="semantic-fix"/);
+    assert.match(prompt, /claimSummary\.runtimeDoneChecklist/);
+    assert.match(prompt, /hard done checklist/);
     assert.match(prompt, /make a small scoped source delta before broad analysis\/build\/test/);
     assert.match(prompt, /src\/_probe\.tsx, src\/probe\.tsx, tmp\.ts, scratch\.tsx/);
     assert.match(prompt, /Do NOT parse or dump claim\.input with jq\/sed\/head\/node loops/);
@@ -98,6 +100,11 @@ describe("spawner prompt bootstrap", () => {
         generatedScreenPolicy: {
           summary: "No generated screen source file is in scope.",
         },
+        integrationPolicy: {
+          applies: true,
+          summary: "This story may touch app/router/shell integration, so preserve existing reachable render paths before adding the current story.",
+          requiredCheck: "Before STATUS: done, compare the app/router diff and confirm previous generated screen imports/render branches remain reachable while the current story screen is added.",
+        },
         screenUsageContract: {
           summary: "Use compact screen contract first.",
           components: [
@@ -108,6 +115,17 @@ describe("spawner prompt bootstrap", () => {
               actionIds: ["start-game-1", "settings-4"],
             },
           ],
+        },
+        implementEvidenceContract: {
+          mode: "blocking",
+          visualGate: "advisory",
+          visualProvider: "minimax",
+          intentPath: "/home/setrox/.openclaw/workspaces/workflows/feature-dev/agents/developer/story-worktrees/run-us-001/.setfarm/implement/US-001/IMPLEMENT_INTENT.json",
+          verificationRequestPath: "/home/setrox/.openclaw/workspaces/workflows/feature-dev/agents/developer/story-worktrees/run-us-001/.setfarm/implement/US-001/IMPLEMENT_VERIFICATION_REQUEST.json",
+          evidencePath: "/home/setrox/.openclaw/workspaces/workflows/feature-dev/agents/developer/story-worktrees/run-us-001/.setfarm/implement/US-001/IMPLEMENT_EVIDENCE.json",
+          instruction: "For runtime/UI stories, write IMPLEMENT_INTENT.json before broad coding and IMPLEMENT_VERIFICATION_REQUEST.json before STATUS: done. Setfarm owns IMPLEMENT_EVIDENCE.json and executes the runtime evidence. Use the top-level JSON key named schema; do not use $schema.",
+          intentSchema: "top-level schema key, not $schema. Required exact JSON for interactive criteria: {\"schema\":\"setfarm.implement-intent.v1\",\"storyId\":\"<storyId>\",\"storyType\":\"ui_interactive\",\"acceptanceCriteria\":[{\"id\":\"AC-001\",\"description\":\"...\"}],\"runtimeEvidenceRequired\":{\"minFlowCount\":1}}. Use minFlowCount:0 only when acceptance criteria require no user/runtime interaction.",
+          verificationRequestSchema: "top-level schema key, not $schema. Required exact JSON: {\"schema\":\"setfarm.implement-verification-request.v1\",\"storyId\":\"<storyId>\",\"status\":\"ready_for_orchestrator_verification\",\"interactionRequests\":[{\"id\":\"flow-1\",\"action\":\"click\",\"target\":\"[data-action-id='<action-id>']\",\"waitCondition\":\"dom_idle\",\"timeoutMs\":1000}],\"uncoveredCriteria\":[],\"knownGaps\":[]}. interactionRequests may be [] only when criteria require no interaction; otherwise request executable actions or list criteria in uncoveredCriteria. Interactions start from the app's initial loaded state and run in order; if the target is on a later surface, first include or implement a reachable opener action, then request the target action.",
         },
         designContracts: {
           screenIndex: [{ componentName: "MainMenu" }],
@@ -139,6 +157,7 @@ describe("spawner prompt bootstrap", () => {
           category: "GENERATED_SCREEN_SHARED_READ",
           suggestion: "Use claim-summary designContracts instead of shared generated source.",
           blocker: "GENERATED_SCREEN_SHARED_READ: previous worker read src/screens/MainMenu.tsx",
+          details: "GENERATED_SCREEN_SHARED_READ: previous worker read src/screens/MainMenu.tsx",
           instruction: "Previous feedback is an open implementation blocker.",
         },
       }) + "\n");
@@ -177,12 +196,25 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, /FAILURE_CATEGORY=GENERATED_SCREEN_SHARED_READ/);
       assert.match(out, /FAILURE_SUGGESTION=Use claim-summary designContracts instead of shared generated source/);
       assert.match(out, /RETRY_MODE=fix/);
-      assert.match(out, /RETRY_BLOCKER=GENERATED_SCREEN_SHARED_READ: previous worker read src\/screens\/MainMenu\.tsx/);
+      assert.match(out, /RETRY_BLOCKER_PREVIEW=GENERATED_SCREEN_SHARED_READ: previous worker read src\/screens\/MainMenu\.tsx/);
+      assert.match(out, /RETRY_DETAIL=full retry detail is in claimSummary\.retryFeedback\.details/);
       assert.match(out, /RETRY_ACTION=Use claim-summary designContracts instead of shared generated source/);
       assert.match(out, /RETRY_INSTRUCTION=Previous feedback is an open implementation blocker/);
       assert.match(out, /RETRY_DISCIPLINE=first-delta: Hard manager retry discipline/);
       assert.match(out, /PREVIOUS_FAILURE=present \d+ chars/);
       assert.match(out, /GENERATED_SCREEN_POLICY=No generated screen source file is in scope/);
+      assert.match(out, /INTEGRATION_POLICY=This story may touch app\/router\/shell integration/);
+      assert.match(out, /INTEGRATION_CHECK=Before STATUS: done, compare the app\/router diff/);
+      assert.match(out, /IMPLEMENT_EVIDENCE_GATE=mode=blocking visual=advisory provider=minimax/);
+      assert.match(out, /IMPLEMENT_INTENT_PATH=.*\/\.setfarm\/implement\/US-001\/IMPLEMENT_INTENT\.json/);
+      assert.match(out, /IMPLEMENT_VERIFICATION_REQUEST_PATH=.*\/\.setfarm\/implement\/US-001\/IMPLEMENT_VERIFICATION_REQUEST\.json/);
+      assert.match(out, /IMPLEMENT_EVIDENCE_PATH_SETFARM_OWNS=.*\/\.setfarm\/implement\/US-001\/IMPLEMENT_EVIDENCE\.json/);
+      assert.match(out, /IMPLEMENT_EVIDENCE_RULE=For runtime\/UI stories, write IMPLEMENT_INTENT\.json/);
+      assert.match(out, /IMPLEMENT_EVIDENCE_RULE=.*top-level JSON key named schema; do not use \$schema/);
+      assert.match(out, /IMPLEMENT_INTENT_SCHEMA=top-level schema key, not \$schema/);
+      assert.match(out, /IMPLEMENT_INTENT_SCHEMA=.*"schema":"setfarm\.implement-intent\.v1"/);
+      assert.match(out, /IMPLEMENT_VERIFICATION_REQUEST_SCHEMA=top-level schema key, not \$schema/);
+      assert.match(out, /IMPLEMENT_VERIFICATION_REQUEST_SCHEMA=.*"schema":"setfarm\.implement-verification-request\.v1"/);
       assert.match(out, /SCREEN_INDEX_CONTRACTS=1/);
       assert.match(out, /UI_CONTRACTS=1/);
       assert.match(out, /COMPONENT_REGISTRY=present \d+ chars/);
@@ -423,6 +455,18 @@ describe("spawner prompt bootstrap", () => {
       assert.match((summary.generatedScreenPolicy as any).summary, /No generated screen source file is in scope/);
       assert.match((summary.generatedScreenPolicy as any).summary, /OpenClaw read tool/);
       assert.match((summary.generatedScreenPolicy as any).summary, /component registry/);
+      assert.equal((summary.integrationPolicy as any).applies, true);
+      assert.match((summary.integrationPolicy as any).summary, /preserve existing reachable render paths/i);
+      assert.match((summary.integrationPolicy as any).requiredCheck, /previous generated screen imports\/render branches remain reachable/i);
+      assert.equal((summary.implementEvidenceContract as any).mode, "blocking");
+      assert.match(String((summary.implementEvidenceContract as any).intentPath), /\/\.setfarm\/implement\/US-001\/IMPLEMENT_INTENT\.json$/);
+      assert.match(String((summary.implementEvidenceContract as any).verificationRequestPath), /\/\.setfarm\/implement\/US-001\/IMPLEMENT_VERIFICATION_REQUEST\.json$/);
+      assert.match(String((summary.implementEvidenceContract as any).evidencePath), /\/\.setfarm\/implement\/US-001\/IMPLEMENT_EVIDENCE\.json$/);
+      assert.match(String((summary.implementEvidenceContract as any).instruction), /do not use \$schema/);
+      assert.match(String((summary.implementEvidenceContract as any).intentSchema), /"schema":"setfarm\.implement-intent\.v1"/);
+      assert.match(String((summary.implementEvidenceContract as any).verificationRequestSchema), /"schema":"setfarm\.implement-verification-request\.v1"/);
+      assert.match(String((summary.implementEvidenceContract as any).verificationRequestSchema), /initial loaded state/);
+      assert.match(String((summary.implementEvidenceContract as any).verificationRequestSchema), /reachable opener action/);
       assert.equal((summary.designContracts as any).screenIndex.length, 2);
       assert.equal((summary.designContracts as any).uiContract.length, 1);
       assert.match(JSON.stringify((summary.designContracts as any).screenIndex), /START GAME/);
@@ -449,6 +493,178 @@ describe("spawner prompt bootstrap", () => {
       assert.match(String(summary.acceptanceCriteria), /Pieces fall and rotate/);
       assert.match(String(summary.currentStory), /Story US-001: Tetris engine/);
       assert.match(JSON.stringify(summary.handoff), /Audit fallback only/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("omits raw retry worktree diffs from previous failure summaries", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-no-raw-diff-"));
+    try {
+      const workdir = path.join(tmp, "worktree");
+      fs.mkdirSync(workdir, { recursive: true });
+      fs.writeFileSync(path.join(workdir, ".story-scope-files"), "src/App.tsx\n");
+
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        bootstrapFile: path.join(tmp, "bootstrap.sh"),
+        stepId: "step-123",
+        runId: "run-123",
+        workdir,
+        repo: workdir,
+        storyId: "US-001",
+        input: [
+          "TASK: Project: retry diff sensor",
+          "CURRENT STORY: Story US-001: Retry diff sensor",
+          "",
+          "## Previous Failure / Retry Feedback",
+          "IMPLEMENT_EVIDENCE_INCOMPLETE: request.schema is required.",
+          "",
+          "ALSO_FIX:",
+          "RETRY_WORKTREE_PATCH:",
+          "Setfarm captured the previous failed attempt before cleaning the retry worktree.",
+          "```diff",
+          "diff --git a/src/App.tsx b/src/App.tsx",
+          "--- a/src/App.tsx",
+          "+++ b/src/App.tsx",
+          "@@ -1 +1 @@",
+          "-old",
+          "+new",
+          "```",
+          "",
+          "## Current Story",
+        ].join("\n"),
+      });
+
+      assert.match(String(summary.previousFailure), /IMPLEMENT_EVIDENCE_INCOMPLETE/);
+      assert.match(String(summary.previousFailure), /raw diffs are not safe claim context/);
+      assert.doesNotMatch(String(summary.previousFailure), /diff --git/);
+      assert.doesNotMatch(String(summary.previousFailure), /```diff/);
+      assert.doesNotMatch(JSON.stringify(summary.retryFeedback), /diff --git/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves all actionable PR review threads in retry feedback details", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-pr-review-"));
+    try {
+      const workdir = path.join(tmp, "worktree");
+      fs.mkdirSync(workdir, { recursive: true });
+      fs.writeFileSync(path.join(workdir, ".story-scope-files"), "src/App.tsx\nsrc/store.ts\n");
+      const longBody = "This review comment includes enough implementation context that it used to be truncated before later review threads reached the developer. ".repeat(12);
+      const input = [
+        "TASK: Project: PR retry sensor",
+        "CURRENT STORY: Story US-001: PR retry sensor",
+        "",
+        "## Previous Failure / Retry Feedback",
+        "PR_REVIEW_COMMENTS_OPEN: US-001 has actionable PR review comments that must be fixed before merge.",
+        "",
+        "## PR Comments (4 actionable)",
+        "PR state: OPEN, checks: passing, mergeable: MERGEABLE, mergeStateStatus: CLEAN",
+        "",
+        `- [review-comment] thread=PRRT_one src/store.ts:10 @gemini-code-assist:\n  ${longBody}\n  Fix collision removal.`,
+        `- [review-comment] thread=PRRT_two src/App.tsx:20 @gemini-code-assist:\n  ${longBody}\n  Fix selector resubscribe.`,
+        `- [review-comment] thread=PRRT_three src/store.ts:30 @gemini-code-assist:\n  ${longBody}\n  Rename non-hook use-prefixed function.`,
+        `- [review-comment] thread=PRRT_four src/game-runtime.ts:40 @gemini-code-assist:\n  ${longBody}\n  Throttle requestAnimationFrame to 60 FPS.`,
+        "",
+        "## Current Story",
+      ].join("\n");
+
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        bootstrapFile: path.join(tmp, "bootstrap.sh"),
+        stepId: "step-123",
+        runId: "run-123",
+        workdir,
+        repo: workdir,
+        storyId: "US-001",
+        input,
+      });
+
+      assert.match(String(summary.previousFailure), /thread=PRRT_one/);
+      assert.match(String(summary.previousFailure), /thread=PRRT_four/);
+      assert.match(String((summary.retryFeedback as any).details), /thread=PRRT_four/);
+      assert.match(String((summary.retryFeedback as any).blocker), /thread=PRRT_four/);
+      assert.deepEqual((summary.retryFeedback as any).prThreadIds, ["PRRT_one", "PRRT_two", "PRRT_three", "PRRT_four"]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("summarizes long story implementation contracts without emitting partial JSON", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-contract-truncation-"));
+    try {
+      const longContract = {
+        owned_surface_ids: [],
+        owned_screen_ids: [],
+        owned_screen_files: [],
+        owned_actions: [
+          {
+            id: "ACT_APP_STATE_BOOTSTRAP",
+            trigger: "Application load and shared game shell initialization",
+            state_change: "Initialize gameplay state, navigation target, storage status, and window.app test bridge.",
+            ui_feedback: "The first rendered surface is the actual playable game/product state, not a landing page.",
+          },
+        ],
+        state_contract: [
+          "Own shared gameplay state, active screen, score/progress, level/difficulty where present, paused/gameOver, storage status, and last error.",
+        ],
+        persistence_contract: [
+          "Persist only explicit game preferences/high score or PRD-required state; corrupted persisted data produces visible recovery feedback.",
+        ],
+        navigation_contract: [
+          "Expose stable navigation/action handlers for screen-owner stories without implementing sibling screens in this story.",
+        ],
+        test_contract: [
+          "window.app exposes live gameplay/product state and actions required by smoke/final tests.",
+        ],
+        resolved_scope_roles: [
+          { role: "app_shell", path: "src/App.tsx", source: "scope_target" },
+          { role: "state_store", path: "src/features/pulsegate-lite/pulsegate-lite.store.ts", source: "scope_target" },
+          { role: "fixture_data", path: "src/__fixtures__/pulsegate-lite.fixture.ts", source: "scope_target" },
+          { role: "test_bridge", path: "src/test/bridge.ts", source: "scope_target" },
+          { role: "runtime_loop", path: "src/game/game-runtime.ts", source: "scope_target" },
+        ],
+      };
+
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: "/tmp/claim.json",
+        outputFile: "/tmp/output.txt",
+        bootstrapFile: "/tmp/bootstrap.sh",
+        stepId: "step-123",
+        runId: "run-123",
+        workdir: tmp,
+        repo: tmp,
+        storyId: "US-001",
+        input: [
+          "TASK: Project: PulseGate Lite",
+          "CURRENT STORY: Story US-001: PulseGate Lite - game engine, state and test bridge",
+          "",
+          "Acceptance Criteria:",
+          "  1. Implement the story behavior described above and verify it in the running app.",
+          "",
+          "## Story Implementation Contract",
+          "This is the behavior handoff from STORIES. Treat it as authoritative.",
+          "",
+          JSON.stringify(longContract, null, 2),
+          "SCOPE: SCOPE ENFORCEMENT: You may ONLY write files in [src/App.tsx].",
+        ].join("\n"),
+      });
+
+      assert.match(String(summary.acceptanceCriteria), /Story implementation contract summary/);
+      assert.match(String(summary.acceptanceCriteria), /ACT_APP_STATE_BOOTSTRAP/);
+      assert.match(String(summary.acceptanceCriteria), /runtime_loop:src\/game\/game-runtime\.ts/);
+      assert.doesNotMatch(String(summary.acceptanceCriteria), /"role":\s*"fix$/);
+      assert.doesNotMatch(String(summary.acceptanceCriteria), /resolved_scope_roles":\s*\[[\s\S]*"role":\s*"fix/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -610,6 +826,191 @@ describe("spawner prompt bootstrap", () => {
     }
   });
 
+  it("filters stale resolved supervisor blockers from claim summaries", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stale-supervisor-blocker-"));
+    try {
+      const workdir = path.join(tmp, "worktree");
+      fs.mkdirSync(path.join(workdir, ".setfarm", "supervisor", "run-123"), { recursive: true });
+      fs.writeFileSync(path.join(workdir, ".setfarm", "supervisor", "run-123", "SUPERVISOR_STATE.json"), JSON.stringify({
+        schema: "setfarm.supervisor-state.v1",
+        runId: "run-123",
+        projectStatus: "blocked",
+        updatedAt: "2026-05-17T00:00:00.000Z",
+        stories: {
+          "US-002": {
+            status: "blocked",
+            openBlockers: ["visual:viewport_integrity-desktop-root"],
+            warnings: [],
+            resolved: ["visual:viewport_integrity-desktop-root", "llm-supervisor:US-002:decision"],
+            lastEvidenceAt: "2026-05-17T00:00:00.000Z",
+          },
+        },
+        evidence: {
+          "visual:viewport_integrity-desktop-root": {
+            itemId: "visual:viewport_integrity-desktop-root",
+            storyId: "US-002",
+            status: "passed",
+            severity: "blocker",
+            observed: ["Resolved by a later successful visual QA scan."],
+            lastScan: "visual-qa",
+            files: ["src/screens/Gameplay.tsx"],
+            message: "Visual QA passed after this previous visual finding.",
+            checkedAt: "2026-05-17T00:01:00.000Z",
+          },
+          "llm-supervisor:US-002:decision": {
+            itemId: "llm-supervisor:US-002:decision",
+            storyId: "US-002",
+            status: "passed",
+            severity: "info",
+            observed: ["SUPERVISOR_DECISION: pass"],
+            lastScan: "llm-supervisor",
+            files: [],
+            message: "Story-scoped supervisor completed with pass.",
+            checkedAt: "2026-05-17T00:01:30.000Z",
+          },
+        },
+        interventions: [],
+      }, null, 2));
+
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: "/tmp/claim.json",
+        outputFile: "/tmp/output.txt",
+        bootstrapFile: "/tmp/bootstrap.sh",
+        stepId: "step-123",
+        runId: "run-123",
+        workdir,
+        repo: workdir,
+        storyId: "US-002",
+        input: [
+          "TASK: stale visual blocker",
+          `WORKDIR: ${workdir}`,
+          "CURRENT STORY: Story US-002: Gameplay",
+        ].join("\n"),
+      });
+
+      assert.equal((summary.supervisorEvidence as any).storyStatus, "passed");
+      assert.equal((summary.supervisorEvidence as any).counts.blockers, 0);
+      assert.equal((summary.supervisorEvidence as any).blockers.length, 0);
+      assert.equal((summary.supervisorEvidence as any).counts.resolved, 2);
+      assert.match(JSON.stringify((summary.supervisorEvidence as any).recentlyResolved), /viewport_integrity/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("prefers newer supervisor pass evidence over stale blocked sibling evidence", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-supervisor-sibling-recency-"));
+    try {
+      const agentsRoot = path.join(tmp, "workflows", "feature-dev", "agents");
+      const storyBranch = "run-us-002";
+      const developerWorkdir = path.join(agentsRoot, "developer", "story-worktrees", storyBranch);
+      const supervisorWorkdir = path.join(agentsRoot, "supervisor", "story-worktrees", storyBranch);
+      const reviewerWorkdir = path.join(agentsRoot, "reviewer", "story-worktrees", storyBranch);
+      for (const dir of [developerWorkdir, supervisorWorkdir, reviewerWorkdir]) {
+        fs.mkdirSync(path.join(dir, ".setfarm", "supervisor", "run-123"), { recursive: true });
+      }
+
+      fs.writeFileSync(path.join(developerWorkdir, ".setfarm", "supervisor", "run-123", "SUPERVISOR_STATE.json"), JSON.stringify({
+        schema: "setfarm.supervisor-state.v1",
+        runId: "run-123",
+        projectStatus: "blocked",
+        updatedAt: "2026-05-17T00:00:00.000Z",
+        stories: {
+          "US-002": {
+            status: "blocked",
+            openBlockers: ["visual:layout-overflow-mobile-root"],
+            warnings: [],
+            resolved: [],
+            lastEvidenceAt: "2026-05-17T00:00:00.000Z",
+          },
+        },
+        evidence: {
+          "visual:layout-overflow-mobile-root": {
+            itemId: "visual:layout-overflow-mobile-root",
+            storyId: "US-002",
+            status: "failed",
+            severity: "blocker",
+            observed: ["layout_overflow mobile"],
+            lastScan: "visual-qa",
+            files: ["src/screens/Gameplay.tsx"],
+            message: "Visual QA layout_overflow on mobile.",
+            checkedAt: "2026-05-17T00:00:00.000Z",
+          },
+        },
+        interventions: [],
+      }, null, 2));
+
+      fs.writeFileSync(path.join(supervisorWorkdir, ".setfarm", "supervisor", "run-123", "SUPERVISOR_STATE.json"), JSON.stringify({
+        schema: "setfarm.supervisor-state.v1",
+        runId: "run-123",
+        projectStatus: "implementing",
+        updatedAt: "2026-05-17T00:05:00.000Z",
+        stories: {
+          "US-002": {
+            status: "passed",
+            openBlockers: [],
+            warnings: [],
+            resolved: ["visual:layout-overflow-mobile-root", "llm-supervisor:US-002:decision"],
+            lastEvidenceAt: "2026-05-17T00:05:00.000Z",
+          },
+        },
+        evidence: {
+          "visual:layout-overflow-mobile-root": {
+            itemId: "visual:layout-overflow-mobile-root",
+            storyId: "US-002",
+            status: "passed",
+            severity: "blocker",
+            observed: ["Desktop and mobile overflow checks returned zero overflows."],
+            lastScan: "visual-qa",
+            files: ["src/screens/Gameplay.tsx"],
+            message: "Visual QA passed after this previous visual finding.",
+            checkedAt: "2026-05-17T00:05:00.000Z",
+          },
+          "llm-supervisor:US-002:decision": {
+            itemId: "llm-supervisor:US-002:decision",
+            storyId: "US-002",
+            status: "passed",
+            severity: "info",
+            observed: ["SUPERVISOR_DECISION: pass"],
+            lastScan: "llm-supervisor",
+            files: [],
+            message: "Story-scoped supervisor completed with pass.",
+            checkedAt: "2026-05-17T00:05:30.000Z",
+          },
+        },
+        interventions: [],
+      }, null, 2));
+
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "reviewer",
+        claimFile: "/tmp/claim.json",
+        outputFile: "/tmp/output.txt",
+        bootstrapFile: "/tmp/bootstrap.sh",
+        stepId: "step-123",
+        runId: "run-123",
+        workdir: reviewerWorkdir,
+        repo: reviewerWorkdir,
+        storyId: "US-002",
+        input: [
+          "TASK: sibling evidence recency",
+          `WORKDIR: ${reviewerWorkdir}`,
+          `STORY_BRANCH: ${storyBranch}`,
+          "CURRENT STORY: Story US-002: Gameplay",
+        ].join("\n"),
+      });
+
+      assert.equal((summary.supervisorEvidence as any).storyStatus, "passed");
+      assert.match(String((summary.supervisorEvidence as any).workdir), /supervisor\/story-worktrees\/run-us-002$/);
+      assert.equal((summary.supervisorEvidence as any).counts.blockers, 0);
+      assert.equal((summary.supervisorEvidence as any).counts.resolved, 2);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("bootstrap prefers claim-summary workdir over stale scratch workdir", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-workdir-bootstrap-"));
     try {
@@ -693,6 +1094,63 @@ describe("spawner prompt bootstrap", () => {
       assert.match(String((summary.retryDiscipline as any).instruction), /Type declarations, comments, docs, window\.game/);
       assert.match((summary.retryFeedback as any).blocker, /RUNTIME_BRIDGE_MISSING/);
       assert.match((summary.retryFeedback as any).suggestion, /window\.app = \{ state, actions \}|globalThis\.app = \{ state, actions \}/);
+      assert.deepEqual((summary as any).runtimeDoneChecklist, []);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("adds a browser-game runtime done checklist to claims", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-browser-game-summary-"));
+    try {
+      fs.writeFileSync(path.join(tmp, ".story-scope-files"), "src/App.tsx\nsrc/game/game-runtime.ts\nsrc/test/bridge.ts\n");
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: "/tmp/claim.json",
+        outputFile: "/tmp/output.txt",
+        bootstrapFile: "/tmp/bootstrap.sh",
+        stepId: "step-123",
+        runId: "run-123",
+        workdir: tmp,
+        repo: tmp,
+        storyId: "US-001",
+        input: [
+          "TASK: Build a compact browser-game called VectorGate Lite.",
+          `WORKDIR: ${tmp}`,
+          "CURRENT STORY: Story US-001: VectorGate Lite - game engine, state and test bridge",
+          "",
+          "Acceptance Criteria:",
+          "  1. Gameplay uses a live runtime loop.",
+          "  2. Shared state is visible through window.app.",
+          "",
+          "## Current Story",
+        ].join("\n"),
+      });
+
+      const checklist = (summary as any).runtimeDoneChecklist;
+      assert.equal(Array.isArray(checklist), true);
+      assert.equal(checklist.length >= 5, true);
+      assert.match(checklist.join("\n"), /data-setfarm-root/);
+      assert.match(checklist.join("\n"), /setInterval|requestAnimationFrame/);
+      assert.match(checklist.join("\n"), /window\.app|globalThis\.app/);
+
+      const bootstrapFile = path.join(tmp, "bootstrap.sh");
+      const claimFile = path.join(tmp, "claim.json");
+      const claimSummaryFile = path.join(tmp, "claim-summary.json");
+      fs.writeFileSync(claimFile, JSON.stringify({ stepId: "step-123", workdir: tmp, input: "" }) + "\n");
+      fs.writeFileSync(claimSummaryFile, JSON.stringify(summary) + "\n");
+      fs.writeFileSync(bootstrapFile, buildResolvedClaimBootstrapScript({
+        claimFile,
+        claimSummaryFile,
+        outputFile: "/tmp/output.txt",
+        stepId: "step-123",
+        workdir: tmp,
+        taskPreview: "browser game claim",
+      }), { mode: 0o700 });
+      const out = execFileSync("bash", [bootstrapFile], { encoding: "utf-8", timeout: 10_000 });
+      assert.match(out, /RUNTIME_DONE_CHECKLIST=5 required invariant\(s\)/);
+      assert.match(out, /RUNTIME_DONE_CHECK=.*setInterval or requestAnimationFrame/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -773,6 +1231,43 @@ describe("spawner prompt bootstrap", () => {
     }
   });
 
+  it("gives package scope bleed a dependency-safe retry discipline", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-package-scope-bleed-"));
+    try {
+      fs.writeFileSync(path.join(tmp, ".story-scope-files"), "src/App.tsx\n");
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: "/tmp/claim.json",
+        outputFile: "/tmp/output.txt",
+        bootstrapFile: "/tmp/bootstrap.sh",
+        stepId: "step-123",
+        runId: "run-123",
+        workdir: tmp,
+        repo: tmp,
+        storyId: "US-001",
+        input: [
+          "TASK: Project: package bleed sensor",
+          `WORKDIR: ${tmp}`,
+          "CURRENT STORY: Story US-001: App shell",
+          "",
+          "## Previous Failure / Retry Feedback",
+          "SCOPE_BLEED: Story US-001 committed QA/test artifact(s) that do not belong in product code: package-lock.json, package.json.",
+          "",
+          "## Current Story",
+        ].join("\n"),
+      });
+
+      assert.equal(summary.failureCategory, "SCOPE_BLEED");
+      assert.match(String(summary.failureSuggestion), /package\/dependency files/);
+      assert.equal((summary.retryDiscipline as any).mode, "semantic-fix");
+      assert.match(String((summary.retryDiscipline as any).instruction), /Do not install dependencies/);
+      assert.match(String((summary.retryDiscipline as any).instruction), /setup-build\/stack-pack dependency blocker/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("elevates DESIGN_DOM mismatches into semantic-fix manager discipline", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-design-dom-summary-"));
     try {
@@ -808,6 +1303,109 @@ describe("spawner prompt bootstrap", () => {
       assert.match(String((summary.retryDiscipline as any).instruction), /Supervisor checklist discipline/);
       assert.match(String((summary.retryDiscipline as any).instruction), /Missing controls, dead links, and static active controls/);
       assert.doesNotMatch(String((summary.retryDiscipline as any).instruction), /first edit/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps reviewer visual blocker evidence compact without screenshot artifact paths", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-reviewer-visual-summary-"));
+    try {
+      const workdir = path.join(tmp, "work");
+      fs.mkdirSync(path.join(workdir, ".setfarm", "supervisor", "run-123"), { recursive: true });
+      fs.writeFileSync(path.join(workdir, ".setfarm", "supervisor", "run-123", "SUPERVISOR_STATE.json"), JSON.stringify({
+        schema: "setfarm.supervisor-state.v1",
+        runId: "run-123",
+        projectStatus: "blocked",
+        updatedAt: "2026-05-17T00:00:00.000Z",
+        stories: {
+          "US-003": {
+            status: "blocked",
+            openBlockers: ["visual:dead-control-desktop-root-start"],
+            warnings: [],
+            resolved: [],
+            lastEvidenceAt: "2026-05-17T00:00:00.000Z",
+          },
+        },
+        evidence: {
+          "visual:dead-control-desktop-root-start": {
+            itemId: "visual:dead-control-desktop-root-start",
+            storyId: "US-003",
+            status: "dead-control",
+            severity: "blocker",
+            observed: ["Start button timeout with long Playwright call log that should not be copied into reviewer prompt"],
+            lastScan: "visual-qa",
+            files: [".setfarm/supervisor/run-123/visual/desktop-root-control-1.png"],
+            message: "Visual QA dead_control on desktop /: Start: TimeoutError: locator.click timed out",
+            checkedAt: "2026-05-17T00:00:00.000Z",
+          },
+        },
+        interventions: [],
+      }, null, 2));
+
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "reviewer",
+        claimFile: "/tmp/claim.json",
+        outputFile: "/tmp/output.txt",
+        bootstrapFile: "/tmp/bootstrap.sh",
+        stepId: "step-123",
+        runId: "run-123",
+        workdir,
+        repo: workdir,
+        storyId: "US-003",
+        input: [
+          "TASK: verify one story PR",
+          `WORKDIR: ${workdir}`,
+          "CURRENT STORY: Story US-003: Settings",
+        ].join("\n"),
+      });
+
+      const blocker = (summary.supervisorEvidence as any).blockers[0];
+      assert.equal((summary.supervisorEvidence as any).counts.blockers, 1);
+      assert.equal(blocker.file, undefined);
+      assert.deepEqual(blocker.observed, []);
+      assert.doesNotMatch(JSON.stringify(summary.supervisorEvidence), /desktop-root-control-1\.png/);
+      assert.match(String((summary.supervisorEvidence as any).instruction), /do not open screenshot\/image artifacts/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("turns visual QA supervisor retries into first-delta discipline", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-visual-qa-retry-summary-"));
+    try {
+      fs.writeFileSync(path.join(tmp, ".story-scope-files"), "src/screens/GameSettings.tsx\nsrc/App.tsx\n");
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: "/tmp/claim.json",
+        outputFile: "/tmp/output.txt",
+        bootstrapFile: "/tmp/bootstrap.sh",
+        stepId: "step-123",
+        runId: "run-123",
+        workdir: tmp,
+        repo: tmp,
+        storyId: "US-003",
+        input: [
+          "TASK: Project: VectorGate Lite",
+          `WORKDIR: ${tmp}`,
+          "CURRENT STORY: Story US-003: Game Settings",
+          "",
+          "## Previous Failure / Retry Feedback",
+          "LLM_SUPERVISOR_BLOCKED: Treat this as manager feedback.",
+          "SUPERVISOR_VISUAL_QA_BLOCKED: US-003",
+          "- [blocker] layout_overflow mobile /: div DIV width=342 left=195 right=537",
+          "",
+          "## Current Story",
+        ].join("\n"),
+      });
+
+      assert.equal(summary.failureCategory, "LLM_SUPERVISOR_BLOCKED");
+      assert.equal((summary.retryFeedback as any).mode, "fix");
+      assert.equal((summary.retryDiscipline as any).mode, "first-delta");
+      assert.match(String((summary.retryDiscipline as any).instruction), /reported blocker/);
+      assert.match(String((summary.retryDiscipline as any).instruction), /before broad analysis\/build\/test/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -904,6 +1502,38 @@ describe("spawner prompt bootstrap", () => {
     }
   });
 
+  it("extracts QA-FIX story ids and titles from current story text", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-qafix-summary-"));
+    try {
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: "/tmp/claim.json",
+        outputFile: "/tmp/output.txt",
+        bootstrapFile: "/tmp/bootstrap.sh",
+        stepId: "step-123",
+        runId: "eab427d1-4405-4c7c-98bb-58c524f2dac8",
+        workdir: tmp,
+        repo: tmp,
+        storyId: "QA-FIX-001",
+        input: [
+          "TASK: Project: ClinicPulse",
+          `WORKDIR: ${tmp}`,
+          "CURRENT STORY: Story QA-FIX-001: QA fix - supervise runtime failures",
+          "",
+          "Acceptance Criteria:",
+          "1. Fix every failure listed in the QA/final failure report.",
+        ].join("\n"),
+      });
+
+      assert.equal(summary.storyId, "QA-FIX-001");
+      assert.equal(summary.storyTitle, "QA fix - supervise runtime failures");
+      assert.match(String(summary.currentStory), /Story QA-FIX-001: QA fix/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("extracts supervisor Output Contract blocks into claim summaries", () => {
     const summary = buildClaimSummary({
       wfId: "feature-dev",
@@ -932,11 +1562,26 @@ describe("spawner prompt bootstrap", () => {
         "CHECKS: <commands>",
         "CHANGES: none",
         "RISKS: none",
+        "",
+        "If blocked:",
+        "",
+        "STATUS: retry",
+        "SUPERVISOR_DECISION: block",
+        "SUPERVISOR_MEMORY_APPEND: <durable blocker>",
+        "ISSUES: <blocking issue>",
       ].join("\n"),
     });
 
     assert.match(String((summary.outputContract as any)?.format), /SUPERVISOR_DECISION: pass/);
     assert.deepEqual((summary.outputContract as any)?.requiredFields.slice(0, 2), ["STATUS", "SUPERVISOR_DECISION"]);
+    assert.deepEqual((summary.outputContract as any)?.requiredFields, [
+      "STATUS",
+      "SUPERVISOR_DECISION",
+      "SUPERVISOR_MEMORY_APPEND",
+      "CHECKS",
+      "CHANGES",
+      "RISKS",
+    ]);
   });
 
   it("extracts story acceptance criteria from story-scoped supervisor prompts", () => {
@@ -971,6 +1616,29 @@ describe("spawner prompt bootstrap", () => {
     assert.match(String(summary.acceptanceCriteria), /Expose storage status and last error/);
     assert.match(String(summary.acceptanceCriteria), /Disable gameplay controls/);
     assert.doesNotMatch(String(summary.acceptanceCriteria), /PREVIOUS FAILURE/);
+  });
+
+  it("extracts story diff base into supervisor claim summaries", () => {
+    const summary = buildClaimSummary({
+      wfId: "feature-dev",
+      role: "supervisor",
+      claimFile: "/tmp/claim.json",
+      outputFile: "/tmp/output.txt",
+      bootstrapFile: "/tmp/bootstrap.sh",
+      stepId: "step-supervise",
+      runId: "run-supervise",
+      workdir: "/tmp",
+      repo: "/tmp",
+      storyId: "US-002",
+      input: [
+        "SUPERVISOR_SCOPE: story",
+        "STORY_BRANCH: abc12345-us-002",
+        "STORY_DIFF_BASE: main",
+        "CURRENT_STORY: Story US-002: Customer operations",
+      ].join("\n"),
+    });
+
+    assert.equal((summary as any).storyDiffBase, "main");
   });
 
   it("does not treat the next label as an empty command value", () => {

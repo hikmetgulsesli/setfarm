@@ -4,6 +4,8 @@ import type { ClaimContext } from "../types.js";
 import { pgGet } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
 import { missionControlApi, runtimeConfig } from "../../../runtime-config.js";
+import { recordGateObservation, recordStackEvidencePlanObservation } from "../../operation-observability.js";
+import { resolveOperationalStackContract, stackEvidenceMetadata } from "../../stack-evidence.js";
 
 export interface DeployCapabilitySnapshot {
   platform: NodeJS.Platform | string;
@@ -139,8 +141,30 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     return;
   }
 
+  const stackContract = resolveOperationalStackContract(ctx.context, false);
+  await recordStackEvidencePlanObservation({
+    run_id: ctx.runId,
+    step_id: ctx.stepId,
+    agent_id: "deployer",
+  }, ctx.context, "running", "Deploy preclaim resolved stack evidence contract.");
+
   const snapshot = detectDeployCapability(ctx);
   const decision = evaluateDeployCapability(snapshot);
+  await recordGateObservation({
+    runId: ctx.runId,
+    stepId: ctx.stepId,
+    agentId: "deployer",
+    checkId: "deploy-capability",
+    label: "Deploy capability",
+    status: decision.shouldSkip ? "info" : "pass",
+    summary: decision.reason,
+    detail: JSON.stringify(snapshot),
+    metadata: {
+      mode: decision.mode,
+      shouldSkip: decision.shouldSkip,
+      ...stackEvidenceMetadata(stackContract),
+    },
+  });
   if (!decision.shouldSkip) {
     ctx.context["deploy_capability"] = decision.mode;
     ctx.context["deploy_capability_reason"] = decision.reason;

@@ -45,7 +45,7 @@ export function buildSupervisorChecklistFromProject(params: {
       screenId,
       file,
       scopeFiles: scopeFiles.length > 0 ? scopeFiles : [file],
-      controls: controlsForDesign(design, "button"),
+      controls: controlsForDesign(design, "button", entry),
       type: "button",
     });
     addControlItems(items, {
@@ -54,7 +54,7 @@ export function buildSupervisorChecklistFromProject(params: {
       screenId,
       file,
       scopeFiles: scopeFiles.length > 0 ? scopeFiles : [file],
-      controls: controlsForDesign(design, "link"),
+      controls: controlsForDesign(design, "link", entry),
       type: "link",
     });
     addControlItems(items, {
@@ -63,7 +63,7 @@ export function buildSupervisorChecklistFromProject(params: {
       screenId,
       file,
       scopeFiles: scopeFiles.length > 0 ? scopeFiles : [file],
-      controls: controlsForDesign(design, "input"),
+      controls: controlsForDesign(design, "input", entry),
       type: "input",
     });
     addControlItems(items, {
@@ -72,7 +72,7 @@ export function buildSupervisorChecklistFromProject(params: {
       screenId,
       file,
       scopeFiles: scopeFiles.length > 0 ? scopeFiles : [file],
-      controls: controlsForDesign(design, "select"),
+      controls: controlsForDesign(design, "select", entry),
       type: "select",
     });
   }
@@ -118,9 +118,12 @@ export function loadDesignDomScreens(workdir: string, repoPath = ""): any[] {
   return [];
 }
 
-function controlsForDesign(design: any, type: SupervisorChecklistItemType): DesignControl[] {
+function controlsForDesign(design: any, type: SupervisorChecklistItemType, entry?: ScreenIndexEntry): DesignControl[] {
   if (!design || typeof design !== "object") return [];
-  if (type === "button") return Array.isArray(design.buttons) ? design.buttons : [];
+  if (type === "button") {
+    const buttons: DesignControl[] = Array.isArray(design.buttons) ? design.buttons : [];
+    return buttons.filter((control) => !isDecorativeGenericDesignControl(control, entry));
+  }
   if (type === "link") {
     const links = [
       ...(Array.isArray(design.navLinks) ? design.navLinks : []),
@@ -132,6 +135,56 @@ function controlsForDesign(design: any, type: SupervisorChecklistItemType): Desi
   if (type === "input") return Array.isArray(design.inputs) ? design.inputs : [];
   if (type === "select") return Array.isArray(design.selects) ? design.selects : [];
   return [];
+}
+
+function isDecorativeGenericDesignControl(control: DesignControl, entry?: ScreenIndexEntry): boolean {
+  if (!Array.isArray(entry?.actions) || entry.actions.length === 0) return false;
+  const classes = Array.isArray(control.classes) ? control.classes.map((value) => String(value || "").trim()).filter(Boolean) : [];
+  if (classes.length > 0) return false;
+  const href = String(control.href || "").trim();
+  if (href) return false;
+
+  const label = normalizeControlText(control.label || control.text || control.name || "");
+  const icon = normalizeControlText(control.icon || "");
+  const action = String(control.action || control.actionId || control.onClick || "").trim();
+  if (!label && !icon) return true;
+
+  const generatedActionLabels = new Set(
+    (Array.isArray(entry?.actions) ? entry.actions : [])
+      .flatMap((action) => [action.label, action.id, action.href])
+      .map(normalizeControlText)
+      .filter(Boolean),
+  );
+  if (generatedActionLabels.has(label) || generatedActionLabels.has(icon)) return false;
+
+  if (isGenericDesignClickAction(action)) return true;
+  if (isGenericDesignNavigationAction(action)) return true;
+  if (isDecorativeIconOnlyDesignControl(label, icon, action)) return true;
+
+  return false;
+}
+
+function isGenericDesignClickAction(action: string): boolean {
+  return /^click(?:[-_\s]?action)?$/i.test(String(action || "").trim());
+}
+
+function isGenericDesignNavigationAction(action: string): boolean {
+  return /^(?:navigate|navigation|route|link|open)$/i.test(normalizeControlText(action));
+}
+
+function isDecorativeIconOnlyDesignControl(label: string, icon: string, action: string): boolean {
+  if (!icon) return false;
+  if (label && label !== icon) return false;
+  const normalizedAction = normalizeControlText(action);
+  if (normalizedAction && !/^(?:navigate|navigation|route|link|open)$/.test(normalizedAction)) return false;
+  return isMaterialSymbolLikeName(icon);
+}
+
+function isMaterialSymbolLikeName(value: string): boolean {
+  const normalized = normalizeControlText(value);
+  if (!normalized) return false;
+  return /^(?:[a-z]+(?:\s+[a-z]+)+)$/.test(normalized)
+    && /\b(?:flight|takeoff|landing|warehouse|terrain|meeting|room|document|group|remove|account|circle|grid|view|filter|list|more|vert|notifications|settings)\b/.test(normalized);
 }
 
 function designScreenFromGeneratedActions(entry: ScreenIndexEntry): any | undefined {
@@ -213,7 +266,7 @@ function addControlItems(items: SupervisorChecklistItem[], params: {
 }): void {
   const { storyId, screen, screenId, file, scopeFiles, controls, type } = params;
   for (const control of controls) {
-    const label = String(control.label || control.text || control.name || control.placeholder || "").trim();
+    const label = labelForChecklistControl(control, type);
     const icon = String(control.icon || "").trim();
     const href = String(control.href || "").trim();
     const action = String(control.action || control.actionId || control.onClick || "").trim();
@@ -260,6 +313,23 @@ function addControlItems(items: SupervisorChecklistItem[], params: {
       });
     }
   }
+}
+
+function labelForChecklistControl(control: DesignControl, type: SupervisorChecklistItemType): string {
+  const rawLabel = String(control.label || control.text || control.name || control.placeholder || "").trim();
+  if (type !== "input" && type !== "select") return rawLabel;
+  if (rawLabel && !isExamplePlaceholderLabel(rawLabel)) return rawLabel;
+  const structural = String(control.name || control.id || control.type || type).trim();
+  return structural || rawLabel;
+}
+
+function isExamplePlaceholderLabel(value: string): boolean {
+  const normalized = normalizeControlText(value);
+  if (!normalized) return false;
+  if (/^(?:e g|eg|example|sample|placeholder)\b/.test(normalized)) return true;
+  if (/\b(?:jane doe|john doe|john smith|jane smith|foo bar|lorem ipsum)\b/.test(normalized)) return true;
+  if (/\b(?:example com|email@example|name@example)\b/.test(normalized)) return true;
+  return false;
 }
 
 function evidenceForControl(type: SupervisorChecklistItemType): string[] {

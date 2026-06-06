@@ -37,6 +37,19 @@ command. If neither exists and runtime/visual evidence is mandatory, return
 `STATUS: retry` with the missing evidence instead of opening an unbounded server
 session.
 
+If `PLAYWRIGHT_REPORT`, `SUPERVISOR_EVIDENCE`, or supervisor memory already
+contains a runtime/visual blocker (`dead_control`, `broken_link`,
+`preview_failed`, `console_error`, `screenshot_diff`, or visual blocker), stop
+there and return `STATUS: retry`. Do not write ad hoc Playwright/Puppeteer
+scripts, do not run Python Playwright, and do not launch a custom dev server to
+reproduce a system-owned visual finding.
+
+When a required behavior appears absent in PR-changed source, run at most one
+focused source search and one narrower confirmation search. If both show the
+behavior is missing, finalize with `STATUS: retry`; do not keep refining grep
+filters or repeating equivalent searches. A no-match result after generated
+artifacts are excluded is sufficient negative evidence.
+
 ## Retry Triggers (`STATUS: retry`)
 
 - Files listed in story `scope_files` are missing from the worktree.
@@ -50,6 +63,10 @@ session.
   a retry; do not treat the leaked environment as a story defect.
 - Low design-token usage: too much hardcoded inline hex/rgb/px.
 - Accessibility gaps: missing focus ring, ARIA, or keyboard navigation.
+- Required keyboard, pointer/touch, route/action, persistence, disabled, or
+  `aria-disabled` behavior is absent from PR-changed source. Programmatic
+  `window.app` or test-bridge actions do not satisfy user-facing input
+  behavior unless the story explicitly asks for bridge-only control.
 - `PLAYWRIGHT_REPORT` contains dead button, broken link, route drift, empty
   page, overlay trap, or screenshot-visible layout break.
 - Current `main` still fails runtime/smoke/visual/accessibility checks. This is

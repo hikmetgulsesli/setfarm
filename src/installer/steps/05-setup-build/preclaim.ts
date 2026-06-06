@@ -6,11 +6,13 @@ import { pgGet } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
 import { resolvePlatformScript } from "../../paths.js";
 import { materializeSetupBuildContracts } from "../../setup-handoff.js";
+import { findGeneratedScreenIconFallbackIssues } from "../06-implement/guards.js";
 
 const MIN_STITCH_HTML_BYTES = 1000;
 const DESIGN_IMPORT_REPORT_REL = ".setfarm/setup/DESIGN_IMPORT_VALIDATE.json";
+const UNKNOWN_MATERIAL_ICONS_REPORT_REL = ".setfarm/setup/UNKNOWN_MATERIAL_ICONS.json";
 const DESIGN_IMPORT_REPAIR_SUGGESTION =
-  "Inspect .setfarm/setup/DESIGN_IMPORT_VALIDATE.json, scripts/stitch-to-jsx.mjs, " +
+  "Inspect .setfarm/setup/DESIGN_IMPORT_VALIDATE.json, .setfarm/setup/UNKNOWN_MATERIAL_ICONS.json, scripts/stitch-to-jsx.mjs, " +
   "scripts/generated-screen-validator.mjs, and src/screens/*.tsx. Fix the deterministic " +
   "Stitch-to-JSX import/conversion baseline, rerun generated-screen-validator --fix, then rerun npm run build. " +
   "Do not pass generated-screen mechanical defects to IMPLEMENT.";
@@ -74,10 +76,37 @@ function setPreclaimFailure(
   ctx.context["failure_suggestion"] = suggestion;
 }
 
+function throwPreclaimFailure(
+  ctx: ClaimContext,
+  message: string,
+  category = "setup_build_failure",
+  suggestion = "Repair setup/build baseline, rerun the declared build command, then complete setup-build.",
+): never {
+  setPreclaimFailure(ctx, message, category, suggestion);
+  throw new Error(message.slice(0, 1200));
+}
+
 function summarizeDesignImportReport(repo: string, max = 1800): string {
   const reportPath = path.join(repo, DESIGN_IMPORT_REPORT_REL);
+  const unknownIconsPath = path.join(repo, UNKNOWN_MATERIAL_ICONS_REPORT_REL);
+  const unknownIconLines: string[] = [];
+  if (fs.existsSync(unknownIconsPath)) {
+    try {
+      const unknownReport = JSON.parse(fs.readFileSync(unknownIconsPath, "utf-8"));
+      const icons = Array.isArray(unknownReport.icons) ? unknownReport.icons : [];
+      unknownIconLines.push(
+        `UNKNOWN_MATERIAL_ICONS_REPORT: ${UNKNOWN_MATERIAL_ICONS_REPORT_REL}`,
+        `status=${String(unknownReport.status || "unknown")} count=${String(unknownReport.count ?? icons.length)}`,
+      );
+      if (icons.length > 0) {
+        unknownIconLines.push(`icons=${icons.slice(0, 20).map((icon: any) => `${icon.iconName || "unknown"}(${icon.count || 1})`).join(", ")}`);
+      }
+    } catch (e) {
+      unknownIconLines.push(`UNKNOWN_MATERIAL_ICONS_REPORT: ${UNKNOWN_MATERIAL_ICONS_REPORT_REL} unreadable: ${String(e).slice(0, 300)}`);
+    }
+  }
   if (!fs.existsSync(reportPath)) {
-    return `DESIGN_IMPORT_REPORT: ${DESIGN_IMPORT_REPORT_REL} missing`;
+    return [`DESIGN_IMPORT_REPORT: ${DESIGN_IMPORT_REPORT_REL} missing`, ...unknownIconLines].join("\n").slice(0, max);
   }
 
   try {
@@ -107,9 +136,59 @@ function summarizeDesignImportReport(repo: string, max = 1800): string {
       );
     }
 
-    return lines.join("\n").slice(0, max);
+    return [...lines, ...unknownIconLines].join("\n").slice(0, max);
   } catch (e) {
     return `DESIGN_IMPORT_REPORT: ${DESIGN_IMPORT_REPORT_REL} unreadable: ${String(e).slice(0, 300)}`;
+  }
+}
+
+function setupManifestDeclaresSurfaceScreens(repo: string): boolean {
+  const manifestPath = path.join(repo, ".setfarm", "setup", "FILE_TREE_MANIFEST.json");
+  if (!fs.existsSync(manifestPath)) return false;
+  try {
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+    const targets = Array.isArray(manifest?.resolvedTargets) ? manifest.resolvedTargets : [];
+    return targets.some((target: any) =>
+      target &&
+      target.role === "surface_component" &&
+      (target.path || target.resolvedPath || target.screenId || target.screen_id)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function stitchScreenMapDeclaresScreens(repo: string): boolean {
+  const screenMapPath = path.join(repo, "stitch", "SCREEN_MAP.json");
+  if (!fs.existsSync(screenMapPath)) return false;
+  try {
+    const screenMap = JSON.parse(fs.readFileSync(screenMapPath, "utf-8"));
+    return Array.isArray(screenMap) && screenMap.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function enforceFinalDesignImportValidation(ctx: ClaimContext, repo: string): boolean {
+  if (!setupManifestDeclaresSurfaceScreens(repo) || !stitchScreenMapDeclaresScreens(repo)) return true;
+  const validatorPath = resolvePlatformScript("generated-screen-validator.mjs");
+  if (!fs.existsSync(validatorPath)) return true;
+  try {
+    execFileSync("node", [validatorPath, repo, "--fix"], { cwd: repo, timeout: 60000, stdio: "pipe" });
+    ctx.context["design_import_validate_report"] = DESIGN_IMPORT_REPORT_REL;
+    logger.info(`[module:setup-build preclaim] final design import validate ok`, { runId: ctx.runId });
+    return true;
+  } catch (e) {
+    ctx.context["design_import_validate_report"] = DESIGN_IMPORT_REPORT_REL;
+    const msg = [
+      `DESIGN_IMPORT_VALIDATE failed before setup-build completion:\n${summarizeDesignImportReport(repo)}`,
+      "",
+      "PROCESS:",
+      formatProcessFailure(e),
+    ].join("\n");
+    logger.warn(`[module:setup-build preclaim] ${msg}`, { runId: ctx.runId });
+    setPreclaimFailure(ctx, msg, "design_import_failure", DESIGN_IMPORT_REPAIR_SUGGESTION);
+    return false;
   }
 }
 
@@ -401,6 +480,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
             execFileSync("node", [validatorPath, repo, "--fix"], { cwd: repo, timeout: 60000, stdio: "pipe" });
             ctx.context["design_import_validate_report"] = DESIGN_IMPORT_REPORT_REL;
             logger.info(`[module:setup-build preclaim] design import validate ok`, { runId: ctx.runId });
+            await writeSetupHandoff(ctx, repo, buildCmd);
           } catch (e) {
             ctx.context["design_import_validate_report"] = DESIGN_IMPORT_REPORT_REL;
             const msg = [
@@ -410,9 +490,17 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
               formatProcessFailure(e),
             ].join("\n");
             logger.warn(`[module:setup-build preclaim] ${msg}`, { runId: ctx.runId });
-            setPreclaimFailure(ctx, msg, "design_import_failure", DESIGN_IMPORT_REPAIR_SUGGESTION);
-            return;
+            throwPreclaimFailure(ctx, msg, "design_import_failure", DESIGN_IMPORT_REPAIR_SUGGESTION);
           }
+        }
+        const generatedIconFallbackIssues = findGeneratedScreenIconFallbackIssues(repo);
+        if (generatedIconFallbackIssues.length > 0) {
+          const msg = [
+            "DESIGN_IMPORT_ICON_FALLBACK failed after stitch-to-jsx:",
+            ...generatedIconFallbackIssues.slice(0, 8),
+          ].join("\n");
+          logger.warn(`[module:setup-build preclaim] ${msg.slice(0, 500)}`, { runId: ctx.runId });
+          throwPreclaimFailure(ctx, msg, "design_import_failure", DESIGN_IMPORT_REPAIR_SUGGESTION);
         }
         try {
           const generatedPaths = ["src/screens/", "src/index.css", "src/main.css", "src/App.css", "app/globals.css"]
@@ -437,20 +525,21 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
             details,
           ].filter(Boolean).join("\n");
           logger.warn(`[module:setup-build preclaim] ${msg}`, { runId: ctx.runId });
+          if (generatedScreenFailure) {
+            throwPreclaimFailure(ctx, msg, "design_import_failure", DESIGN_IMPORT_REPAIR_SUGGESTION);
+          }
           setPreclaimFailure(
             ctx,
             msg,
-            generatedScreenFailure ? "design_import_failure" : "setup_build_failure",
-            generatedScreenFailure
-              ? DESIGN_IMPORT_REPAIR_SUGGESTION
-              : "Fix setup/build baseline so npm run build passes, then complete setup-build.",
+            "setup_build_failure",
+            "Fix setup/build baseline so npm run build passes, then complete setup-build.",
           );
         }
       }
     } catch (e) {
       const details = formatProcessFailure(e);
       logger.warn(`[module:setup-build preclaim] stitch-to-jsx failed: ${details.slice(0, 300)}`, { runId: ctx.runId });
-      setPreclaimFailure(
+      throwPreclaimFailure(
         ctx,
         `stitch-to-jsx failed:\n${details}`,
         "design_import_failure",
@@ -461,6 +550,12 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
 
   if (!ctx.context["baseline_fail"] && !ctx.context["compat_fail"]) {
     await writeSetupHandoff(ctx, repo, ctx.context["build_cmd_hint"] || buildCmd || "npm run build");
+  }
+
+  if (!ctx.context["baseline_fail"] && !ctx.context["compat_fail"]) {
+    if (!enforceFinalDesignImportValidation(ctx, repo)) {
+      throw new Error((ctx.context["baseline_fail"] || "DESIGN_IMPORT_VALIDATE failed before setup-build completion").slice(0, 1200));
+    }
   }
 
   if (!ctx.context["baseline_fail"] && !ctx.context["compat_fail"]) {

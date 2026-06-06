@@ -124,7 +124,7 @@ function inferTechStack(task: string): string {
   if (/\bpython\b/.test(lower) && /\b(cli|command line|terminal app)\b/.test(lower)) return "python-cli";
   if (/\bpython\b/.test(lower) && /\b(api only|backend service|rest api|graphql|fastapi|flask|django)\b/.test(lower)) return "python-web";
   if (/\bnode\b|\bexpress\b|api only|rest api|backend service/.test(lower)) return "node-express";
-  if (/\bcli|command line|terminal app/.test(lower)) return "node-cli";
+  if (/\bcli\b|command line|terminal app/.test(lower)) return "node-cli";
   if (/\bstatic html\b|\bhtml only\b|\bno framework\b/.test(lower)) return "static-html";
   return DEFAULT_STACK;
 }
@@ -179,10 +179,12 @@ function primaryEntity(task: string, kind: ProjectKind): string {
   if (kind === "cli") return "CommandRun";
   const lower = task.toLowerCase();
   if (/\b(service desk|support desk|help desk|tickets?)\b/.test(lower)) return "Ticket";
+  if (/\b(clinic|nurses?|patients?|walk-in patients?)\b/.test(lower)) return "Patient";
+  if (/\b(field kit|route kits?|gear packs?|kit planning|prepare route kits?)\b/.test(lower)) return "Kit";
   if (/\b(crm|customers?|accounts?|contacts?|leads?|opportunities?)\b/.test(lower)) return "Customer";
   if (/\b(inventory|stock|warehouse|products?)\b/.test(lower)) return "Item";
   const match = lower.match(/\b(?:manage|track|triage|plan|organize|edit|create|list|browse|review|approve)\s+(?:(?:a|an|the|many|multiple|all|new|open|active|pending)\s+)?([a-z][a-z-]{2,24})\b/i);
-  const blocked = new Set(["browser", "compact", "service", "desk", "app", "application", "called", "named", "dashboard", "screen", "state", "workflow", "data", "user", "users", "settings"]);
+  const blocked = new Set(["browser", "compact", "service", "desk", "app", "application", "called", "named", "dashboard", "screen", "state", "workflow", "data", "user", "users", "settings", "offline", "online", "local", "remote"]);
   if (!match?.[1] || blocked.has(match[1])) return "Record";
   return formatEntityName(match[1]);
 }
@@ -215,9 +217,88 @@ function productDisplayFields(entity: string): string {
   return `${entity}.id, ${entity}.title, ${entity}.status, ${entity}.createdAt, ${entity}.updatedAt, ActivityEvent.label, ActivityEvent.timestamp, Preference.key, Preference.value`;
 }
 
+function hasAssignmentIntent(lower: string): boolean {
+  if (/\b(agent|agents|assignee|assignees|owner|owners|workload)\b/.test(lower)) return true;
+  return /\b(assign|assigned|assignment|reassign|allocate|allocation)\b/.test(lower)
+    && /\b(team|teams|person|people|member|members|gear|pack|packs|resource|resources|crew|crews)\b/.test(lower);
+}
+
+function assignmentSurface(task: string, entity: string): { id: string; name: string; noun: string; target: string } {
+  const lower = task.toLowerCase();
+  if (/\bgear packs?\b/.test(lower)) {
+    return {
+      id: "SURF_GEAR_PACK_ASSIGNMENT",
+      name: "Gear Pack Assignment",
+      noun: "gear pack",
+      target: /\bfield teams?\b/.test(lower) ? "field teams" : "teams or owners",
+    };
+  }
+  if (/\broute kits?\b|\bfield kits?\b/.test(lower)) {
+    return {
+      id: "SURF_KIT_ASSIGNMENT",
+      name: "Kit Assignment",
+      noun: "kit",
+      target: /\bfield teams?\b/.test(lower) ? "field teams" : "teams or owners",
+    };
+  }
+  if (/\bteam|teams|crew|crews\b/.test(lower) && /\bassign|assigned|assignment|reassign|allocate|allocation\b/.test(lower)) {
+    return { id: "SURF_TEAM_ASSIGNMENT", name: "Team Assignment", noun: entity.toLowerCase(), target: "teams" };
+  }
+  if (/\b(operator|operators)\b/.test(lower)) {
+    return { id: "SURF_OPERATOR_ASSIGNMENT", name: "Operator Assignment", noun: entity.toLowerCase(), target: "operators" };
+  }
+  if (/\b(owner|owners)\b/.test(lower)) {
+    return { id: "SURF_OWNER_ASSIGNMENT", name: "Owner Assignment", noun: entity.toLowerCase(), target: "owners" };
+  }
+  return { id: "SURF_AGENT_WORKLOAD", name: "Agent Workload", noun: entity.toLowerCase(), target: "agents or owners" };
+}
+
+function hasStatusWorkflowIntent(lower: string): boolean {
+  return /\b(queue|queues|sla|triage|priority|priorities|pipeline|board|stage|stages|kanban|readiness|handoff)\b/.test(lower);
+}
+
+function statusWorkflowSurface(task: string): { id: string; name: string; context: string; core: string; design: string } {
+  const lower = task.toLowerCase();
+  if (/\b(queue|queues|sla)\b/.test(lower)) {
+    return {
+      id: "SURF_QUEUE_AND_STATUS_MANAGEMENT",
+      name: "Queue and Status Management",
+      context: "queue, status, and SLA state",
+      core: "queue/status lanes, SLA or priority markers, ownership, blockers, aging indicators, and next-action controls.",
+      design: "Represent operational state clearly; do not flatten queue/SLA work into decorative metrics.",
+    };
+  }
+  if (/\btriage\b/.test(lower)) {
+    return {
+      id: "SURF_TRIAGE_BOARD",
+      name: "Triage Board",
+      context: "triage priority, room readiness, consent, and handoff state",
+      core: "triage lanes, priority markers, room readiness, consent blockers, handoff notes, aging indicators, and next-action controls.",
+      design: "Represent triage state clearly; do not introduce service-desk queues or unrelated operations modules.",
+    };
+  }
+  if (/\b(pipeline|kanban|stage|stages)\b/.test(lower)) {
+    return {
+      id: "SURF_PIPELINE_BOARD",
+      name: "Pipeline Board",
+      context: "pipeline stage and board state",
+      core: "stage lanes, status markers, blockers, aging indicators, ownership, and next-action controls.",
+      design: "Represent board state clearly; do not introduce service-desk queues or unrelated analytics modules.",
+    };
+  }
+  return {
+    id: "SURF_STATUS_BOARD",
+    name: "Status Board",
+    context: "status, priority, readiness, and handoff state",
+    core: "status groups, priority/readiness markers, blockers, aging indicators, ownership, and next-action controls.",
+    design: "Represent operational state clearly; do not introduce unrequested queue, SLA, or pipeline terminology.",
+  };
+}
+
 function productSurfaceBlocks(task: string, entity: string): string[] {
   const lower = task.toLowerCase();
   const token = entityToken(entity);
+  const statusSurface = statusWorkflowSurface(task);
   const surfaces: string[] = [
     [
       `### SURFACE: SURF_${token}_OPERATIONS`,
@@ -245,33 +326,34 @@ function productSurfaceBlocks(task: string, entity: string): string[] {
     ].join("\n"),
   ];
 
-  if (hasAny(lower, /\b(queue|queues|sla|triage|pipeline|board|stage|kanban)\b/)) {
+  if (hasStatusWorkflowIntent(lower)) {
     surfaces.push([
-      "### SURFACE: SURF_QUEUE_AND_STATUS_MANAGEMENT",
-      "- Name: Queue and Status Management",
-      `- Purpose: Help users organize ${entity} work by queue, status, SLA, stage, priority, or triage context when those signals are part of the requested product.`,
+      `### SURFACE: ${statusSurface.id}`,
+      `- Name: ${statusSurface.name}`,
+      `- Purpose: Help users organize ${entity} work by ${statusSurface.context} when those signals are part of the requested product.`,
       `- Data Entities Bound: ${entity}, ActivityEvent, Preference`,
-      "- Core Content: queue/status lanes, SLA or priority markers, ownership, blockers, aging indicators, and next-action controls.",
+      `- Core Content: ${statusSurface.core}`,
       "- Permitted Actions: ACT_SEARCH_RECORDS (control_hint: search_input_persistent), ACT_SELECT_RECORD (control_hint: inline_edit), ACT_UPDATE_RECORD_STATUS (control_hint: inline_edit)",
       `- Entry Points: SURF_${token}_OPERATIONS`,
       `- Exit & Guard Rules: Status changes keep the user in the same ${entity} context and expose recoverable failure feedback.`,
       "- Auth Required: false",
-      "- Design Guidance: Represent operational state clearly; do not flatten queue/SLA work into decorative metrics.",
+      `- Design Guidance: ${statusSurface.design}`,
     ].join("\n"));
   }
 
-  if (hasAny(lower, /\b(agent|agents|assignee|assignees|owner|owners|team|teams|workload)\b/)) {
+  if (hasAssignmentIntent(lower)) {
+    const assignment = assignmentSurface(task, entity);
     surfaces.push([
-      "### SURFACE: SURF_AGENT_WORKLOAD",
-      "- Name: Agent Workload",
-      `- Purpose: Show how ${entity} work is assigned, overloaded, pending, or blocked across agents or owners.`,
+      `### SURFACE: ${assignment.id}`,
+      `- Name: ${assignment.name}`,
+      `- Purpose: Show how ${assignment.noun} work is assigned, pending, missing, or blocked across ${assignment.target}.`,
       `- Data Entities Bound: ${entity}, ActivityEvent`,
-      "- Core Content: agent/owner list, workload counts, stale or overdue indicators, reassignment controls, and recent activity.",
+      `- Core Content: ${assignment.target} list, ${assignment.noun} counts, missing or stale indicators, reassignment controls, and recent activity.`,
       "- Permitted Actions: ACT_SEARCH_RECORDS (control_hint: search_input_persistent), ACT_SELECT_RECORD (control_hint: inline_edit), ACT_ASSIGN_RECORD (control_hint: context_menu), ACT_FILTER_INSIGHTS (control_hint: context_menu)",
-      `- Entry Points: SURF_${token}_OPERATIONS, SURF_QUEUE_AND_STATUS_MANAGEMENT`,
-      `- Exit & Guard Rules: Reassignment preserves the selected ${entity} and updates visible queue/status counts.`,
+      `- Entry Points: SURF_${token}_OPERATIONS${hasStatusWorkflowIntent(lower) ? `, ${statusSurface.id}` : ""}`,
+      `- Exit & Guard Rules: Reassignment preserves the selected ${entity} and updates visible assignment/status counts.`,
       "- Auth Required: false",
-      "- Design Guidance: Make workload and ownership scannable without creating a separate HR or account-management module.",
+      "- Design Guidance: Make assignment state scannable without creating a separate HR or account-management module.",
     ].join("\n"));
   }
 
@@ -408,12 +490,14 @@ function actionBlocks(kind: ProjectKind, entity: string, task = ""): string[] {
     `### ACTION: ACT_EXPORT_SUMMARY\n- Surface Bound: SURF_INSIGHTS\n- Trigger: User clicks Export or Download Summary from insight/reporting controls.\n- Preconditions & Auth: Visible insight data exists or a valid empty export state is allowed.\n- Async Behavior: Generate the export from current filters; show progress and prevent duplicate exports.\n- Success Effect: A downloadable or copyable summary is produced from current ${entity} metrics.\n- Failure Effect: Keep the current insights visible and show retryable export feedback.\n- Navigation After Success: target same, method replace.\n- Navigation After Failure: target same, preserve_form_data true.\n- State Changes: exportStatus, lastExportAt, and export error state.\n- Persistence Effects: No persistence write unless export history is explicitly in scope.\n- User Feedback: Export confirmation or retryable failure message appears.\n- Required Role: any.\n- Unauthorized Effect: Disable export or show permission message when auth is in scope.`,
   ];
 
-  if (hasAny(lower, /\b(queue|queues|sla|triage|pipeline|board|stage|kanban)\b/)) {
-    actions.push(`### ACTION: ACT_UPDATE_RECORD_STATUS\n- Surface Bound: SURF_QUEUE_AND_STATUS_MANAGEMENT\n- Trigger: User changes queue, status, SLA state, stage, priority, or triage lane for a visible ${entity}.\n- Preconditions & Auth: ${entity} is selected and the target status/queue value is valid.\n- Async Behavior: Apply optimistic UI only if rollback is defined; otherwise show loading on the changed control.\n- Success Effect: ${entity} appears in the correct queue/status context and derived counts update.\n- Failure Effect: Roll back the visible status/queue change and show contextual retry feedback.\n- Navigation After Success: target same, method replace.\n- Navigation After Failure: target same, preserve_form_data true.\n- State Changes: ${entity}.status, queue/stage/SLA fields, activity event, and visible aggregate counts.\n- Persistence Effects: Persist the status/queue change to localStorage or selected database.\n- User Feedback: Status badge/lane and updated timestamp change visibly.\n- Required Role: any.\n- Unauthorized Effect: Disable restricted status transitions when auth is in scope.`);
+  if (hasStatusWorkflowIntent(lower)) {
+    const statusSurface = statusWorkflowSurface(task);
+    actions.push(`### ACTION: ACT_UPDATE_RECORD_STATUS\n- Surface Bound: ${statusSurface.id}\n- Trigger: User changes ${statusSurface.context} for a visible ${entity}.\n- Preconditions & Auth: ${entity} is selected and the target state is valid.\n- Async Behavior: Apply optimistic UI only if rollback is defined; otherwise show loading on the changed control.\n- Success Effect: ${entity} appears in the correct ${statusSurface.name.toLowerCase()} context and derived counts update.\n- Failure Effect: Roll back the visible state change and show contextual retry feedback.\n- Navigation After Success: target same, method replace.\n- Navigation After Failure: target same, preserve_form_data true.\n- State Changes: ${entity}.status, priority/readiness fields, activity event, and visible aggregate counts.\n- Persistence Effects: Persist the visible state change to localStorage or selected database.\n- User Feedback: Status badge/lane and updated timestamp change visibly.\n- Required Role: any.\n- Unauthorized Effect: Disable restricted status transitions when auth is in scope.`);
   }
 
-  if (hasAny(lower, /\b(agent|agents|assignee|assignees|owner|owners|team|teams|workload)\b/)) {
-    actions.push(`### ACTION: ACT_ASSIGN_RECORD\n- Surface Bound: SURF_AGENT_WORKLOAD\n- Trigger: User assigns, reassigns, or clears the owner/agent for a visible ${entity}.\n- Preconditions & Auth: Target agent/owner exists and the ${entity} can be assigned.\n- Async Behavior: Show assignment loading state and prevent duplicate reassignment clicks.\n- Success Effect: Owner/agent, workload counts, and recent activity update consistently.\n- Failure Effect: Restore previous owner/agent and show retryable assignment feedback.\n- Navigation After Success: target same, method replace.\n- Navigation After Failure: target same, preserve_form_data true.\n- State Changes: assignee/owner field, workload aggregates, and activity event.\n- Persistence Effects: Persist assignment to localStorage or selected database.\n- User Feedback: Assignment chip/list and workload counts update visibly.\n- Required Role: any.\n- Unauthorized Effect: Disable assignment control or show permission message when auth is in scope.`);
+  if (hasAssignmentIntent(lower)) {
+    const assignment = assignmentSurface(task, entity);
+    actions.push(`### ACTION: ACT_ASSIGN_RECORD\n- Surface Bound: ${assignment.id}\n- Trigger: User assigns, reassigns, or clears ${assignment.noun} ownership for a visible ${entity}.\n- Preconditions & Auth: Target ${assignment.target} exists and the ${entity} can be assigned.\n- Async Behavior: Show assignment loading state and prevent duplicate reassignment clicks.\n- Success Effect: Assignment, status counts, and recent activity update consistently.\n- Failure Effect: Restore previous assignment and show retryable assignment feedback.\n- Navigation After Success: target same, method replace.\n- Navigation After Failure: target same, preserve_form_data true.\n- State Changes: assignment field, assignment aggregates, and activity event.\n- Persistence Effects: Persist assignment to localStorage or selected database.\n- User Feedback: Assignment chip/list and counts update visibly.\n- Required Role: any.\n- Unauthorized Effect: Disable assignment control or show permission message when auth is in scope.`);
   }
 
   if (hasAny(lower, /\b(setting|settings|preference|preferences|filter|filters|saved view|saved views)\b/)) {

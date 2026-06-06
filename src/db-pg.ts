@@ -236,6 +236,30 @@ export async function pgMigrate(): Promise<void> {
         details TEXT NOT NULL DEFAULT '[]'
       )
     `;
+    await s`
+      CREATE TABLE IF NOT EXISTS run_observations (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+        step_id TEXT NOT NULL,
+        story_id TEXT NOT NULL DEFAULT '',
+        agent_id TEXT,
+        phase TEXT,
+        check_id TEXT NOT NULL,
+        label TEXT NOT NULL,
+        status TEXT NOT NULL,
+        summary TEXT,
+        detail TEXT,
+        evidence TEXT NOT NULL DEFAULT '{}',
+        file_paths TEXT NOT NULL DEFAULT '[]',
+        github TEXT NOT NULL DEFAULT '{}',
+        metadata TEXT NOT NULL DEFAULT '{}',
+        event_type TEXT,
+        started_at TIMESTAMPTZ,
+        completed_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `;
 
     await s`ALTER TABLE runs ADD COLUMN IF NOT EXISTS run_number INTEGER DEFAULT nextval('runs_run_number_seq'::regclass)`;
     await s`ALTER TABLE runs ADD COLUMN IF NOT EXISTS meta TEXT`;
@@ -264,12 +288,20 @@ export async function pgMigrate(): Promise<void> {
     await s`ALTER TABLE stories ADD COLUMN IF NOT EXISTS story_branch TEXT`;
     await s`ALTER TABLE stories ADD COLUMN IF NOT EXISTS pr_url TEXT`;
     await s`ALTER TABLE stories ADD COLUMN IF NOT EXISTS merge_status TEXT`;
+    await s`ALTER TABLE stories ADD COLUMN IF NOT EXISTS quality_failure_fingerprint TEXT`;
+    await s`ALTER TABLE run_observations ADD COLUMN IF NOT EXISTS event_type TEXT`;
+    await s`ALTER TABLE run_observations ADD COLUMN IF NOT EXISTS detail TEXT`;
 
     await s`CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_run_number_unique ON runs(run_number)`;
     await s`CREATE INDEX IF NOT EXISTS idx_steps_run_status ON steps(run_id, status)`;
     await s`CREATE INDEX IF NOT EXISTS idx_stories_run_status ON stories(run_id, status)`;
+    await s`CREATE UNIQUE INDEX IF NOT EXISTS idx_stories_active_story_id_unique ON stories(run_id, story_id) WHERE status IN ('pending', 'running')`;
+    await s`CREATE INDEX IF NOT EXISTS idx_stories_quality_failure_fingerprint ON stories(run_id, quality_failure_fingerprint) WHERE quality_failure_fingerprint IS NOT NULL`;
     await s`CREATE INDEX IF NOT EXISTS idx_steps_agent_status ON steps(agent_id, status) WHERE status IN ('pending', 'running')`;
     await s`CREATE INDEX IF NOT EXISTS idx_runs_status_dev ON runs(status, assigned_developer) WHERE status = 'running'`;
+    await s`CREATE INDEX IF NOT EXISTS idx_run_observations_run_created ON run_observations(run_id, created_at DESC)`;
+    await s`CREATE INDEX IF NOT EXISTS idx_run_observations_step_story ON run_observations(run_id, step_id, story_id, created_at DESC)`;
+    await s`CREATE INDEX IF NOT EXISTS idx_run_observations_status ON run_observations(run_id, status, created_at DESC)`;
 
     await s`
       UPDATE claim_log cl

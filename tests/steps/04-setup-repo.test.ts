@@ -98,6 +98,7 @@ describe("04-setup-repo step module", () => {
     assert.ok(script.includes('git init -b main'), "fresh repos should initialize main directly");
     assert.ok(script.includes("normalize_stack()"), "setup-repo should normalize planner TECH_STACK labels");
     assert.ok(script.includes("react-vite-typescript"), "React/Vite/TypeScript labels should map to vite-react");
+    assert.ok(script.includes("browser-game|canvas-game|arcade|game"), "browser game labels should scaffold on the Vite React baseline");
     assert.ok(script.includes("nextjs)"), "Next.js should have a first-class scaffold case");
     assert.ok(script.includes('"build": "next build"'), "Next.js scaffold should build with next build");
     assert.ok(script.includes("clean_branch_tracking main"), "setup-repo should remove duplicate upstream config before push -u");
@@ -105,8 +106,11 @@ describe("04-setup-repo step module", () => {
     assert.ok(script.includes('"test:run": "vitest run"'), "Vite scaffold should include non-watch test:run script");
     assert.ok(script.includes("cat > vitest.config.ts"), "Vite scaffold should create separate Vitest config");
     assert.ok(script.includes("cat > src/test/setup.ts"), "Vite scaffold should create test setup helper");
+    assert.ok(script.includes("cleanup();"), "Vite scaffold test setup should cleanup React renders");
+    assert.ok(script.includes("rafHandles"), "Vite scaffold test setup should cleanup RAF loops from browser-game runtimes");
     assert.ok(script.includes("cat > src/App.test.tsx"), "Vite scaffold should create a durable baseline render test");
     assert.ok(script.includes("renders an application root"), "baseline render test should survive later App.tsx implementations");
+    assert.ok(script.includes("getByTestId('setfarm-app-root')"), "baseline render test should assert the neutral app root, not a semantic main wrapper");
     assert.ok(script.includes('"lucide-react"'), "frontend scaffolds should install lucide-react for SVG icons");
     assert.equal(script.includes("Material+Symbols+Outlined"), false, "scaffold must not load Material Symbols icon fonts");
     assert.ok(script.includes("<title>$HTML_TITLE</title>"), "HTML title should come from sanitized display title");
@@ -116,6 +120,7 @@ describe("04-setup-repo step module", () => {
     assert.equal(script.includes('<html lang="tr">'), false, "Vite scaffold must not hard-code a locale-specific html lang");
     assert.ok(script.includes('"name": "$PACKAGE_NAME"'), "package name should come from project slug");
     assert.ok(script.includes('data-setfarm-root="baseline"'), "App baseline should be machine-detectable");
+    assert.equal(script.includes('return <main data-setfarm-root="baseline"'), false, "generated-screen scaffolds must start from a neutral app root");
     assert.ok(script.includes("baseline scaffold did not create package.json"), "fresh frontend repos must fail if scaffold is missing");
     assert.ok(script.includes("PLATFORM_ROOT="), "setup-repo.sh should resolve scripts relative to the active platform root");
     assert.ok(script.includes('STITCH_SCRIPT="$PLATFORM_ROOT/scripts/stitch-api.mjs"'), "setup-repo.sh should call the active Stitch script");

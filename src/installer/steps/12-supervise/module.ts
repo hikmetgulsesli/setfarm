@@ -25,6 +25,7 @@ function buildPrompt(ctx: PromptContext): string {
     SUPERVISOR_WORKDIR: supervisorWorkdir,
     BRANCH: branch,
     STORY_BRANCH: c["story_branch"] || "",
+    STORY_DIFF_BASE: c["story_diff_base"] || "",
     BUILD_CMD: c["build_cmd"] || "npm run build",
     TEST_CMD: c["test_cmd"] || "true",
     LINT_CMD: c["lint_cmd"] || "true",

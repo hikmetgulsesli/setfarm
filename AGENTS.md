@@ -1,58 +1,67 @@
-# Setfarm Agents
+# Setfarm Agent Guide
 
-Setfarm provisions multi-agent workflows for OpenClaw. It installs workflow agent workspaces, wires agents into the OpenClaw config, and keeps a run record per task.
+## Repository Shape
 
-## Installing Setfarm
+Setfarm is a private TypeScript/Node.js CLI and workflow runtime. Work in this repo when changing Setfarm or Mission Control:
 
-**Prerequisites:** Node.js >= 22, OpenClaw v2026.2.9+, `gh` CLI (for PR steps).
+- `src/installer`: workflow orchestration, state transitions, gates, stack contracts, evidence, PR lifecycle, and step modules.
+- `src/spawner.ts`: detached agent spawning, runtime discipline, transcript guards, cleanup, and recovery handling.
+- `src/server`: Mission Control API and UI.
+- `workflows`: workflow definitions and agent prompt fragments.
+- `tests`: unit and lifecycle regression tests; step-specific coverage lives in `tests/steps`.
 
-> **Do NOT run `npm install setfarm`.** There is an unrelated package on npm with that name. Setfarm is installed from GitHub only.
+Use TypeScript ESM with explicit `.js` imports for local compiled modules. Prefer deterministic code, schemas, observations, and tests over prompt-only instructions.
 
-### Steps
+## Commands
 
-1. **Clone the repo** into the OpenClaw workspace:
-   ```bash
-   git clone https://github.com/hikmetgulsesli/setfarm.git ~/.openclaw/workspace/setfarm
-   ```
+- `npm run build`: version/path/English contracts, TypeScript compile, asset copy, and dist preparation.
+- `npm test`: all tests.
+- `npm run test:steps`: step-module tests.
+- `npm run test:scripts`: script tests.
+- Local dirty-tree verification may use `SETFARM_ALLOW_DIRTY_BUILD=1`.
+- Runtime guard bypass for platform verification may use `SETFARM_SKIP_RUNTIME_GUARD=1` only when the reason is explicit.
 
-2. **Build:**
-   ```bash
-   cd ~/.openclaw/workspace/setfarm
-   npm install
-   npm run build
-   ```
+## Operating Protocol
 
-3. **Link the CLI** (makes `setfarm` available globally):
-   ```bash
-   npm link
-   ```
+Start with live truth. Before judging a run, inspect the local repo, PostgreSQL state, relevant claim logs, observations, and GitHub PR state. Do not rely on stale `stories.output`, agent prose, or Mission Control cards as the source of truth.
 
-4. **Install workflows** (provisions agents, cron jobs, and DB):
-   ```bash
-   setfarm install
-   ```
+Generated projects are disposable evidence sources. Do not spend effort rescuing a failed or low-value generated project unless it is needed to observe a recent platform fix or expose a systemic Setfarm/MC bug. If a project is effectively trash, stop recovering it and move to a clean run.
 
-5. **Verify:** Run `setfarm workflow list` — you should see the available workflows.
+Use observe-first recovery:
 
-If `setfarm` fails with a `node:sqlite` error, your `node` binary may be Bun's wrapper instead of real Node.js 22+. Check with `node -e "require('node:sqlite')"`. See [#54](https://github.com/hikmetgulsesli/setfarm/issues/54) for workarounds.
+- Continue an existing run only to measure platform behavior after a fix, confirm a state-machine path, or gather a new systemic bug signal.
+- Do not manually resolve GitHub threads, extend retry budgets, mutate DB state, or patch generated project code just to save a project.
+- Any operational recovery must be bounded, documented in `run_observations`, preserve evidence, and explain the platform cause.
+- Prefer starting a new run over carrying forward polluted state after the platform behavior has been learned.
 
-## Why Setfarm
+## Platform Invariants
 
-- **Repeatable workflow execution**: Start the same set of agents with a consistent prompt and workspace every time.
-- **Structured collaboration**: Each workflow defines roles (lead, developer, verifier, reviewer) and how they hand off work.
-- **Traceable runs**: Runs are stored by task title so you can check status without hunting through logs.
-- **Clean lifecycle**: Install, update, or uninstall workflows without manual cleanup.
+Agents do not self-certify correctness. Agent output is a claim; Setfarm-owned evidence is authority. For implementation stories that require runtime evidence, agents may declare intent and request verification, but Setfarm must run the app, execute interactions, capture screenshots/DOM/state/logs, write authoritative artifacts, and decide pass/fail.
 
-## What It Changes in OpenClaw
+Use the Universal Agent Inner Dev Loop design in `docs/superpowers/specs/2026-06-03-universal-agent-inner-dev-loop-design.md` for Setfarm and Mission Control work:
 
-- Adds workflow agents to `openclaw.json` (your main agent stays default).
-- Creates workflow workspaces under `~/.openclaw/workspaces/workflows`.
-- Stores workflow definitions and run state under `~/.openclaw/setfarm`.
-- Inserts an Setfarm guidance block into the main agent's `AGENTS.md` and `TOOLS.md`.
+- Do not add project-specific hardcode to generic gates.
+- Express requirements through stack packs, capability contracts, evidence artifacts, and tests.
+- Mission Control should render derived state from DB observations/events, not agent claims.
+- Supervisor is a bounded coherence/evidence gate, not an unbounded code fixer.
+- Self-heal is plan-only unless explicitly and safely expanded; it must not weaken invariant tests.
 
-## Uninstalling
+Visual evidence is a first-class gate. Control it with:
 
-- `setfarm workflow uninstall <workflow-id>` removes a single workflow's agents, workspaces, and run records.
-- `setfarm uninstall` removes everything: all workflows, agents, cron jobs, and DB state.
+- `SETFARM_IMPLEMENT_EVIDENCE_GATE=off|advisory|blocking`
+- `SETFARM_VISUAL_EVIDENCE_GATE=off|advisory|blocking`
+- `SETFARM_VISUAL_EVIDENCE_PROVIDER=none|minimax|openai|anthropic`
 
-If something fails, report the exact error and ask the user to resolve it before continuing.
+Even when disabled, Mission Control and evidence artifacts must show the visual gate as `disabled`. Blocking mode may only advance from orchestrator-owned evidence.
+
+## Git And Safety
+
+The worktree is often intentionally dirty. Never revert changes you did not make. Keep edits scoped to the platform concern being fixed, and avoid generated runtime artifacts unless they are required source assets.
+
+Developer, reviewer, supervisor, QA, and final-test agents must not stage, commit, push, or open PRs. Setfarm owns git handoff after scoped gates pass.
+
+Do not commit `.env`, tokens, local run state, generated project worktrees, or transient evidence directories.
+
+## Testing Expectations
+
+Add regression tests for every gate, validator, PR lifecycle, state transition, Mission Control state derivation, spawner recovery, or evidence bug. For changes in generated-screen, setup-build, verify, QA, final-test, spawner, or Mission Control behavior, run focused tests plus `npm run build` when code changes require compilation.

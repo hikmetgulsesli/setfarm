@@ -1,9 +1,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import type { ParsedOutput } from "../../src/installer/steps/types.js";
 import { superviseModule } from "../../src/installer/steps/12-supervise/module.js";
 import { normalizeOutput, onComplete, validateOutput } from "../../src/installer/steps/12-supervise/guards.js";
+import { readSupervisorState, supervisorStatePath, writeSupervisorState } from "../../src/installer/supervisor/state.js";
 
 describe("12-supervise step module", () => {
   it("module metadata is correct", () => {
@@ -118,6 +122,61 @@ describe("12-supervise step module", () => {
     assert.match(prompt, /SCOPE ENFORCEMENT: You may ONLY write files/);
   });
 
+  it("buildPrompt tells story supervisors which base branch to use for scope diffs", () => {
+    const prompt = superviseModule.buildPrompt({
+      runId: "run-supervisor-diff-base",
+      task: "Build a returns desk.",
+      context: {
+        repo: "/tmp/project",
+        story_workdir: "/tmp/project/.setfarm/story-worktree",
+        supervisor_scope: "story",
+        current_story_id: "US-002",
+        current_story_title: "Customer operations",
+        story_branch: "abc12345-us-002",
+        story_diff_base: "main",
+        story_scope_files: "src/App.tsx",
+      },
+    });
+
+    assert.match(prompt, /STORY_DIFF_BASE: main/);
+    assert.match(prompt, /git diff --name-status STORY_DIFF_BASE\.\.\.HEAD/);
+    assert.match(prompt, /Do not compare a story PR\s+against an older workflow feature baseline/i);
+  });
+
+  it("prompt requires bounded browser checks on isolated strict ports", () => {
+    const prompt = superviseModule.buildPrompt({
+      runId: "run-supervisor-browser",
+      task: "Build a browser game.",
+      context: { repo: "/tmp/project", supervisor_scope: "story" },
+    });
+
+    assert.match(prompt, /--strictPort/);
+    assert.match(prompt, /timeout 12s agent-browser/);
+    assert.match(prompt, /3080,\s*3333,\s*5173,\s*or 5600/);
+  });
+
+  it("buildPrompt tells supervisors to keep generated screen feedback in-surface without breaking flex mounts", () => {
+    const prompt = superviseModule.buildPrompt({
+      runId: "run-supervisor-generated-screen",
+      task: "Build an operations console.",
+      context: {
+        repo: "/tmp/project",
+        story_workdir: "/tmp/project/.setfarm/story-worktree",
+        supervisor_scope: "story",
+        current_story_id: "US-002",
+        current_story_title: "Generated screen wiring",
+        story_scope_files: "src/App.tsx, src/screens/Operations.tsx",
+      },
+    });
+
+    assert.match(prompt, /do not add visible app-shell diagnostic\/status\/persistence panels/i);
+    assert.match(prompt, /owned Product Surface\/generated screen props\/state/);
+    assert.match(prompt, /window\.app`\/`globalThis\.app/);
+    assert.match(prompt, /neutral flex mount/);
+    assert.match(prompt, /flex min-h-screen w-full/);
+    assert.match(prompt, /Do not fix shell chrome by breaking the generated screen's required root layout/);
+  });
+
   it("rejects story supervisor pass when AC_COVERAGE does not match the current story criteria", async () => {
     await assert.rejects(
       () => onComplete({
@@ -168,6 +227,74 @@ describe("12-supervise step module", () => {
     });
 
     assert.match(context.supervisor_coverage_warning, /reported 2\/2, current story has 3/);
+  });
+
+  it("clears durable story supervisor blockers after a story-scoped pass", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-supervise-pass-"));
+    try {
+      const runId = "run-supervisor-story-state";
+      writeSupervisorState(tmp, {
+        schema: "setfarm.supervisor-state.v1",
+        runId,
+        projectStatus: "blocked",
+        updatedAt: "2026-05-24T00:00:00.000Z",
+        stories: {
+          "US-002": {
+            status: "blocked",
+            openBlockers: ["visual:navigation_error-mobile-root"],
+            warnings: [],
+            resolved: [],
+            lastEvidenceAt: "2026-05-24T00:00:00.000Z",
+          },
+        },
+        evidence: {
+          "visual:navigation_error-mobile-root": {
+            itemId: "visual:navigation_error-mobile-root",
+            storyId: "US-002",
+            status: "visual-failure",
+            severity: "blocker",
+            observed: ["page.goto: Target page, context or browser has been closed"],
+            lastScan: "visual-qa",
+            files: [],
+            message: "Visual QA navigation_error on mobile /",
+            checkedAt: "2026-05-24T00:00:00.000Z",
+          },
+        },
+        interventions: [],
+      });
+      assert.equal(fs.existsSync(supervisorStatePath(tmp, runId)), true);
+
+      await onComplete({
+        runId,
+        stepId: "supervise",
+        parsed: {
+          status: "done",
+          supervisor_decision: "pass",
+          ac_coverage: "checked 1/1 acceptance criteria; mobile route renders and prior visual infra failure did not reproduce",
+          checks: "npm run build passed",
+        },
+        context: {
+          supervisor_scope: "story",
+          current_story_id: "US-002",
+          story_workdir: tmp,
+          current_story: [
+            "Story US-002: Vehicle editor",
+            "",
+            "Acceptance Criteria:",
+            "  1. Mobile route renders without navigation errors.",
+          ].join("\n"),
+        },
+      });
+
+      const state = readSupervisorState(tmp, runId);
+      assert.equal(state.projectStatus, "implementing");
+      assert.equal(state.stories["US-002"].status, "passed");
+      assert.deepEqual(state.stories["US-002"].openBlockers, []);
+      assert.equal(state.evidence["visual:navigation_error-mobile-root"].status, "passed");
+      assert.equal(state.evidence["llm-supervisor:US-002:decision"].status, "passed");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("rejects incomplete story-scoped coverage", async () => {

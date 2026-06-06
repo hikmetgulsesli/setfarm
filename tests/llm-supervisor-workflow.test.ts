@@ -43,6 +43,17 @@ describe("LLM product supervisor architecture", () => {
     assert.match(prompt, /Setfarm will\s+commit and push supervisor edits after this step validates scope/);
     assert.match(readFileSync(resolve(import.meta.dirname, "../src/installer/steps/12-supervise/rules.md"), "utf-8"), /Do not create git commits manually/);
     assert.doesNotMatch(prompt, /git commit -m "fix: supervisor audit"/);
+    assert.match(agent, /Do not create commits, branches, or pushes/);
+    assert.doesNotMatch(agent, /commit with `fix: supervisor audit`/);
+  });
+
+  it("keeps supervisor audits bounded so agents do not exhaust tool budgets", () => {
+    const rules = readFileSync(resolve(import.meta.dirname, "../src/installer/steps/12-supervise/rules.md"), "utf-8");
+    assert.match(prompt, /at most 12 shell\/tool calls/);
+    assert.match(prompt, /Never leave the claim without `STATUS`/);
+    assert.match(rules, /at most 12 shell\/tool calls/);
+    assert.match(rules, /Do not run repeated grep\/diff\/read loops/);
+    assert.match(agent, /Do not run open-ended grep\/diff\/read loops/);
   });
 
   it("forces story-scoped supervisor audits onto the story worktree", () => {

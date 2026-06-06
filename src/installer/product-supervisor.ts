@@ -59,7 +59,7 @@ const GENERIC_SCREEN_TERMS = new Set([
   "editor", "form", "game", "gameplay", "help", "home", "insight", "insights", "list", "main", "management", "menu",
   "metric", "metrics", "operation", "operations", "option", "options", "over", "overlay", "overview", "panel", "pause", "play",
   "player", "preferences", "primary", "progress", "recovery", "result", "results", "settings", "status",
-  "summary", "support", "workflow", "workspace",
+  "summary", "support", "workflow", "workspace", "entity", "entities", "item", "items", "resource", "resources",
 ]);
 
 const PRODUCT_OPTIONAL_GROUPS: Array<{ name: string; terms: string[]; taskHints: RegExp }> = [
@@ -512,8 +512,9 @@ function checkImplement(input: ProductSupervisorInput): string[] {
 
 function implementationOutputHasUnresolvedPlaceholder(output: string): boolean {
   for (const line of output.split(/\r?\n/)) {
-    if (!/\b(TODO|coming soon|placeholder|unfinished|not implemented)\b/i.test(line)) continue;
+    if (!/\b(TODO|coming soon|placeholder|lorem ipsum|unfinished|not implemented)\b/i.test(line)) continue;
     if (isResolvedPlaceholderReportLine(line)) continue;
+    if (/\b(placeholder|lorem ipsum)\b/i.test(line) && !placeholderLineLooksUnresolved(line)) continue;
     return true;
   }
   return false;
@@ -523,6 +524,11 @@ function isResolvedPlaceholderReportLine(line: string): boolean {
   const normalized = line.toLowerCase();
   if (/\b(still|remaining|left|needs|must|should|contains?)\b/.test(normalized)) return false;
   return /\b(removed|replaced|resolved|fixed|cleared|clean|no longer|without|does not|do not|did not|none found)\b/.test(normalized);
+}
+
+function placeholderLineLooksUnresolved(line: string): boolean {
+  const normalized = line.toLowerCase();
+  return /\b(still|remaining|left|needs|must|should|contains?|unresolved|unfinished|not implemented|todo|coming soon)\b/.test(normalized);
 }
 
 function checkDeploy(input: ProductSupervisorInput): string[] {

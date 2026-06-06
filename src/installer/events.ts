@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { pgGet } from "../db-pg.js";
+import { recordEventObservation } from "./observations.js";
 
 function getEventsDir(): string {
   return process.env.SETFARM_DB_PATH
@@ -33,6 +34,7 @@ export interface SetfarmEvent {
 }
 
 export function emitEvent(evt: SetfarmEvent): void {
+  recordEventObservation(evt);
   try {
     fs.mkdirSync(getEventsDir(), { recursive: true });
     // Rotate if too large

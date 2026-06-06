@@ -21,6 +21,7 @@ import { IMPLICIT_STORY_SCOPE_FILES } from "../../story-scope.js";
 import { applyStackContractContext } from "../../stack-contract/context.js";
 import { applyLibraryPackContext } from "../../library-packs/context.js";
 import { assembleImplementContext } from "../../setup-handoff.js";
+import { applyScopedRetryPatchForStory, discardDirtyRetryWorktreeState, latestRetryPatchForStory, latestRetryStashPatchForStory } from "../../worktree-ops.js";
 
 const STITCH_HTML_EXCERPT_CHARS = 2500;
 const STITCH_HTML_TOTAL_CHARS = 6000;
@@ -78,6 +79,7 @@ function normalizedStatusFromStepOutput(output: string): string {
 
 function extractActionableRetryFailureText(text: string): string {
   if (!text.trim()) return "";
+  if (/^IMPLEMENT_PRE_DELTA_CHECK_VIOLATION:/i.test(text.trim())) return "";
   const status = normalizedStatusFromStepOutput(text);
   if (status !== "done" && status !== "skip") return sanitizeDesignMismatchFeedback(text);
 
@@ -89,6 +91,106 @@ function extractActionableRetryFailureText(text: string): string {
     return sanitizeDesignMismatchFeedback(lines.slice(actionableStart).join("\n"));
   }
   return "";
+}
+
+export function mergeRetryFailureTexts(items: Array<string | undefined | null>): string {
+  const seen = new Set<string>();
+  const merged: string[] = [];
+  for (const item of items) {
+    const text = String(item || "").trim();
+    if (!text) continue;
+    const key = text.replace(/\s+/g, " ").slice(0, 900);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(text);
+  }
+  return merged.join("\n\nALSO_FIX:\n");
+}
+
+async function collectPriorStoryFailureText(runId: string, storyId: string, storyRepoPath: string): Promise<string> {
+  try {
+    const rows = await pgQuery<{ diagnostic: string | null }>(
+      `SELECT diagnostic
+         FROM claim_log
+        WHERE run_id = $1
+          AND step_id = 'implement'
+          AND story_id = $2
+          AND outcome = 'failed'
+          AND COALESCE(diagnostic, '') <> ''
+        ORDER BY id DESC
+        LIMIT 4`,
+      [runId, storyId],
+    );
+    return mergeRetryFailureTexts(rows.map((row) => sanitizedRetryFailureText(String(row.diagnostic || ""), storyRepoPath)));
+  } catch (err) {
+    logger.warn(`[implement-context] failed to collect prior story failure diagnostics for ${storyId}: ${String(err).slice(0, 160)}`, { runId });
+    return "";
+  }
+}
+
+function retryPatchRepoCandidates(repoPath: string, worktreeDir: string): string[] {
+  const candidates = [repoPath, worktreeDir].map((item) => String(item || "").trim()).filter(Boolean);
+  if (worktreeDir && fs.existsSync(worktreeDir)) {
+    try {
+      const commonDir = execFileSync("git", ["rev-parse", "--git-common-dir"], {
+        cwd: worktreeDir,
+        encoding: "utf-8",
+        timeout: 5000,
+        stdio: ["pipe", "pipe", "pipe"],
+      }).trim();
+      const absoluteCommonDir = path.isAbsolute(commonDir) ? commonDir : path.resolve(worktreeDir, commonDir);
+      if (path.basename(absoluteCommonDir) === ".git") candidates.push(path.dirname(absoluteCommonDir));
+    } catch {
+      // Best-effort fallback; repoPath/worktreeDir candidates remain useful.
+    }
+  }
+  return [...new Set(candidates)];
+}
+
+function collectRetryWorktreePatchFeedback(repoPath: string, worktreeDir: string, storyId: string, aliases: string[] = []): string {
+  try {
+    let patch = "";
+    let source = "";
+    const ids = [...new Set([storyId, ...aliases].map((id) => String(id || "").trim()).filter(Boolean))];
+    for (const candidateRepo of retryPatchRepoCandidates(repoPath, worktreeDir)) {
+      for (const id of ids) {
+        const patchPath = latestRetryPatchForStory(candidateRepo, id);
+        if (patchPath && fs.existsSync(patchPath)) {
+          patch = fs.readFileSync(patchPath, "utf-8");
+          source = path.relative(candidateRepo, patchPath);
+          break;
+        }
+      }
+      if (patch.trim()) break;
+    }
+    if (!patch.trim()) {
+      for (const id of ids) {
+        patch = latestRetryStashPatchForStory(worktreeDir, id);
+        if (patch.trim()) {
+          source = "latest matching setfarm-auto-stash";
+          break;
+        }
+      }
+    }
+    if (!patch.trim()) return "";
+    const touchedFiles = [...patch.matchAll(/^diff --git a\/(.+?) b\/(.+)$/gm)]
+      .map((match) => match[2] || match[1])
+      .filter(Boolean);
+    const deletedLines = (patch.match(/^-{1}(?!-)/gm) || []).length;
+    const addedLines = (patch.match(/^\+{1}(?!\+)/gm) || []).length;
+    const fileSummary = [...new Set(touchedFiles)].slice(0, 16).join(", ") || "unknown";
+    return [
+      "RETRY_WORKTREE_PATCH:",
+      "Setfarm captured a previous failed attempt before cleaning the retry worktree. This is a compact diagnostic summary only; do not re-apply the old patch body.",
+      `Source: ${source}`,
+      `Touched files: ${fileSummary}`,
+      `Patch size: +${addedLines} -${deletedLines} across ${new Set(touchedFiles).size || "unknown"} file(s).`,
+      "Use the current guard failure and current source as truth. If the previous patch deleted working code or changed package files, preserve the current source and make a fresh scoped fix instead.",
+    ].join("\n");
+  } catch (err) {
+    logger.warn(`[implement-context] failed to collect retry worktree patch for ${storyId}: ${String(err).slice(0, 160)}`, {});
+    return "";
+  }
 }
 
 function sanitizedRetryFailureText(text: string, repoPath?: string): string {
@@ -123,6 +225,10 @@ export async function injectStoryContext(
   // Prevents cross-contamination when parallel stories share the same run context.
   const pipelineStoryBranch = context["story_branch"] || "";
   const pipelineStoryWorkdir = context["story_workdir"] || context["repo"] || "";
+  const priorContextStoryId = context["current_story_id"] || "";
+  const priorContextFailure = context["previous_failure"] || "";
+  const priorContextFailureCategory = context["failure_category"] || "";
+  const priorContextFailureSuggestion = context["failure_suggestion"] || "";
   delete context["pr_url"];
   delete context["story_branch"];
   delete context["current_story_id"];
@@ -132,6 +238,7 @@ export async function injectStoryContext(
   delete context["previous_failure"];
   delete context["failure_category"];
   delete context["failure_suggestion"];
+  delete context["story_implementation_contract"];
 
   const story: Story = {
     id: nextStory.id,
@@ -147,8 +254,17 @@ export async function injectStoryContext(
     maxRetries: nextStory.max_retries,
   };
   const storyRepoPath = context["story_workdir"] || context["repo"] || context["REPO"] || "";
-  const retryFailureText = nextStory.output && (nextStory.abandoned_count > 0 || nextStory.retry_count > 0)
-    ? sanitizedRetryFailureText(String(nextStory.output), storyRepoPath)
+  const preservedContextRetryFailure =
+    story.retryCount > 0 && priorContextFailure && (!priorContextStoryId || priorContextStoryId === story.storyId)
+      ? sanitizedRetryFailureText(priorContextFailure, storyRepoPath || pipelineStoryWorkdir)
+      : "";
+  const retryFailureText = nextStory.output
+    ? (() => {
+        const isQualityFixStory = /^QA-FIX-\d+$/i.test(nextStory.story_id || "");
+        return (isQualityFixStory || nextStory.abandoned_count > 0 || nextStory.retry_count > 0)
+          ? sanitizedRetryFailureText(String(nextStory.output), storyRepoPath)
+          : "";
+      })()
     : "";
 
   const allStories = await getStories(step.run_id);
@@ -184,9 +300,48 @@ export async function injectStoryContext(
   context["story_branch"] = pipelineStoryBranch || `${step.run_id.slice(0, 8)}-${story.storyId}`.toLowerCase();
   context["story_workdir"] = pipelineStoryWorkdir;
 
+  if (story.retryCount > 0 && context["story_workdir"]) {
+    discardDirtyRetryWorktreeState(context["story_workdir"], story.storyId, step.run_id);
+    const scopedRetryPatchFiles = [
+      ...parseScopeFileList(context["story_scope_files"]),
+      ...IMPLICIT_STORY_SCOPE_FILES,
+    ];
+    const restoreResult = applyScopedRetryPatchForStory(
+      context["repo"] || context["REPO"] || storyRepoPath,
+      context["story_workdir"],
+      story.storyId,
+      scopedRetryPatchFiles,
+      step.run_id,
+    );
+    if (restoreResult.applied) {
+      context["retry_worktree_patch_restored"] = [
+        "RETRY_WORKTREE_PATCH_RESTORED: Setfarm restored the last failed attempt patch because every touched file was inside this story's scoped write set.",
+        `FILES: ${(restoreResult.touchedFiles || []).join(", ")}`,
+      ].join("\n");
+    } else if (restoreResult.reason !== "no_retry_patch") {
+      context["retry_worktree_patch_restored"] = `RETRY_WORKTREE_PATCH_NOT_RESTORED: ${restoreResult.reason}`;
+    }
+  }
+  const scopeFilesRetryFailure = story.retryCount > 0
+    ? buildScopeFilesRetryFailureForWorkdir(
+        story.storyId,
+        story.title,
+        nextStory.scope_files,
+        context["story_workdir"] || storyRepoPath,
+      )
+    : "";
+  const priorStoryFailureText = story.retryCount > 0
+    ? await collectPriorStoryFailureText(step.run_id, story.storyId, storyRepoPath)
+    : "";
+  const retryPatchRepoPath = context["repo"] || context["REPO"] || storyRepoPath;
+  const retryPatchFailureText = collectRetryWorktreePatchFeedback(retryPatchRepoPath, context["story_workdir"] || "", story.storyId, [
+    context["story_branch"],
+    pipelineStoryBranch,
+  ]);
+
   // Inject source tree
   const repoPath = storyRepoPath;
-  context["verify_feedback"] = retryFailureText;
+  context["verify_feedback"] = mergeRetryFailureTexts([preservedContextRetryFailure, retryFailureText, priorStoryFailureText, retryPatchFailureText, context["retry_worktree_patch_restored"] || ""]);
 
   if (repoPath && !context["src_tree"]) {
     const srcTree = helpers.generateSrcTree(repoPath);
@@ -225,12 +380,28 @@ export async function injectStoryContext(
   // Inject previous_failure from prior abandon/verify-retry output before
   // persisting context, otherwise the next developer claim can render blank
   // retry feedback.
-  if (retryFailureText) {
+  const combinedRetryFailure = mergeRetryFailureTexts([
+    scopeFilesRetryFailure,
+    preservedContextRetryFailure,
+    retryFailureText,
+    priorStoryFailureText,
+    retryPatchFailureText,
+  ]);
+
+  if (combinedRetryFailure) {
     const { classifyError } = await import("../../error-taxonomy.js");
-    const classified = classifyError(retryFailureText);
-    context["previous_failure"] = retryFailureText;
-    context["failure_category"] = classified.category;
-    context["failure_suggestion"] = classified.suggestion;
+    const classified = classifyError(combinedRetryFailure);
+    context["previous_failure"] = combinedRetryFailure;
+    context["failure_category"] = scopeFilesRetryFailure
+      ? "SCOPE_FILE_MISSING"
+      : preservedContextRetryFailure && priorContextFailureCategory
+        ? priorContextFailureCategory
+        : classified.category;
+    context["failure_suggestion"] = scopeFilesRetryFailure
+      ? "Create meaningful non-empty implementation files in the declared scope_files before addressing later guardrails. Do not report STATUS: done until the primary owned files exist."
+      : preservedContextRetryFailure && priorContextFailureSuggestion
+        ? priorContextFailureSuggestion
+      : classified.suggestion;
   }
 
   // Default optional template vars
@@ -249,6 +420,53 @@ function parseScopeFileList(raw: string | undefined): string[] {
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function isOptionalScopeCompanionFile(rel: string): boolean {
+  return /^src\/features\/surf-[^/]+\/act_[^/]+\.[cm]?[tj]sx?$/.test(rel);
+}
+
+function parseScopeFilesFromJson(raw: unknown): string[] {
+  try {
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (Array.isArray(parsed)) return parsed.filter((file: unknown) => typeof file === "string");
+  } catch {
+    return [];
+  }
+  return [];
+}
+
+export function buildScopeFilesRetryFailureForWorkdir(
+  storyId: string,
+  storyTitle: string,
+  scopeFilesRaw: unknown,
+  workdir: string,
+): string {
+  if (!workdir || !fs.existsSync(workdir)) return "";
+  const declared = parseScopeFilesFromJson(scopeFilesRaw);
+  if (declared.length === 0) return "";
+
+  const missing: string[] = [];
+  const present: string[] = [];
+  for (const rel of declared) {
+    const abs = path.join(workdir, rel);
+    try {
+      const st = fs.statSync(abs);
+      if (st.isFile() && st.size > 0) present.push(rel);
+      else missing.push(rel);
+    } catch {
+      missing.push(rel);
+    }
+  }
+
+  const primaryDeclared = declared.filter((rel) => !isOptionalScopeCompanionFile(rel));
+  const primaryPresent = present.filter((rel) => !isOptionalScopeCompanionFile(rel));
+  const requiredUniverse = primaryDeclared.length > 0 ? primaryDeclared : declared;
+  const presentUniverse = primaryDeclared.length > 0 ? primaryPresent : present;
+  const required = Math.max(1, Math.ceil(requiredUniverse.length * 0.5));
+  if (presentUniverse.length >= required) return "";
+
+  return `SCOPE_FILE_MISSING: Story ${storyId} (${storyTitle}) declared scope_files=${JSON.stringify(declared)} but only ${presentUniverse.length}/${requiredUniverse.length} primary files exist as non-empty files (required at least ${required}; ${present.length}/${declared.length} total declared files exist). Missing: ${missing.join(", ") || "none"}. Before fixing later guardrails, create meaningful non-empty implementation code in the primary owned scope files.`;
 }
 
 function mergeStoryScopeFiles(context: Record<string, string>, files: string[]): void {
@@ -315,8 +533,12 @@ async function injectScopeContext(nextStory: any, context: Record<string, string
         const contract = JSON.parse(scopeRow.implementation_contract);
         if (contract && typeof contract === "object" && Object.keys(contract).length > 0) {
           context["story_implementation_contract"] = JSON.stringify(contract, null, 2);
+        } else {
+          delete context["story_implementation_contract"];
         }
       } catch (e) { logger.debug(`[context] Malformed implementation_contract JSON: ${String(e).slice(0, 80)}`); }
+    } else {
+      delete context["story_implementation_contract"];
     }
     if (scopeRow?.shared_files) {
       try {
@@ -447,12 +669,12 @@ export function cleanupOutOfScopeWorktreeFiles(
       timeout: 5000,
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
-    }).trim();
+    });
   } catch (e) {
     logger.debug(`[scope-clean] Could not inspect ${storyId}: ${String(e).slice(0, 120)}`);
     return [];
   }
-  if (!status) return [];
+  if (!status.trim()) return [];
 
   const cleaned: string[] = [];
   for (const entry of parsePorcelainStatus(status)) {

@@ -56,6 +56,40 @@ describe("stitch-to-jsx", () => {
     }
   });
 
+  it("deduplicates barrel exports when Stitch returns repeated screen titles", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-barrel-dedupe-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "gameplay-a", title: "Gameplay - GateGlide Lite" },
+        { screenId: "gameplay-b", title: "Gameplay - GateGlide Lite" },
+        { screenId: "settings-a", title: "Game Settings - GateGlide Lite" },
+        { screenId: "settings-b", title: "Game Settings - GateGlide Lite" },
+      ]));
+      writeHtml(path.join(stitchDir, "gameplay-a.html"), "<main><button>Start</button></main>");
+      writeHtml(path.join(stitchDir, "gameplay-b.html"), "<main><button>Restart</button></main>");
+      writeHtml(path.join(stitchDir, "settings-a.html"), "<main><button>Save</button></main>");
+      writeHtml(path.join(stitchDir, "settings-b.html"), "<main><button>Back</button></main>");
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const index = JSON.parse(fs.readFileSync(path.join(tmp, "src", "screens", "SCREEN_INDEX.json"), "utf-8"));
+      assert.equal(index.length, 4);
+
+      const barrel = fs.readFileSync(path.join(tmp, "src", "screens", "index.ts"), "utf-8");
+      assert.equal((barrel.match(/export \{ GameplayGateglideLite \}/g) || []).length, 1);
+      assert.equal((barrel.match(/export type \{ GameplayGateglideLiteProps/g) || []).length, 1);
+      assert.equal((barrel.match(/export \{ GameSettingsGateglideLite \}/g) || []).length, 1);
+      assert.equal((barrel.match(/export type \{ GameSettingsGateglideLiteProps/g) || []).length, 1);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("removes full-width utilities from positioned elements with both horizontal insets", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-positioned-width-"));
     try {
@@ -136,6 +170,73 @@ describe("stitch-to-jsx", () => {
     }
   });
 
+  it("uses accessible names for icon-only generated button action ids", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-icon-action-labels-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "toolbar-screen", title: "Toolbar Screen" },
+      ]));
+      writeHtml(path.join(stitchDir, "toolbar-screen.html"), `
+        <main>
+          <button title="Offline Mode"><span class="material-symbols-outlined">cloud_off</span></button>
+          <button aria-label="Terrain"><span class="material-symbols-outlined">terrain</span></button>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "ToolbarScreen.tsx"), "utf-8");
+      assert.match(code, /export type ToolbarScreenActionId = "offline-mode-1" \| "terrain-2";/);
+      assert.match(code, /<button title="Offline Mode" type="button" data-action-id="offline-mode-1" onClick=\{actions\?\.\["offline-mode-1"\]\}>/);
+      assert.match(code, /<button aria-label="Terrain" type="button" data-action-id="terrain-2" onClick=\{actions\?\.\["terrain-2"\]\}>/);
+
+      const index = JSON.parse(fs.readFileSync(path.join(tmp, "src", "screens", "SCREEN_INDEX.json"), "utf-8"));
+      assert.deepEqual(index[0].actions.map((action: any) => action.label), ["Offline Mode", "Terrain"]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("derives semantic action ids from Material icon controls without polluting visible labels", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-material-action-labels-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "clinic-toolbar", title: "Clinic Toolbar" },
+      ]));
+      writeHtml(path.join(stitchDir, "clinic-toolbar.html"), `
+        <main>
+          <button><span class="material-symbols-outlined">cloud_off</span></button>
+          <button><span data-icon="priority_high" class="material-symbols-outlined">priority_high</span>Escalate</button>
+          <a href="#consent"><span class="material-symbols-outlined">description</span></a>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "ClinicToolbar.tsx"), "utf-8");
+      assert.match(code, /export type ClinicToolbarActionId = "cloud-off-1" \| "escalate-2" \| "description-1";/);
+      assert.match(code, /data-action-id="cloud-off-1"/);
+      assert.match(code, /data-action-id="escalate-2"/);
+      assert.match(code, /data-action-id="description-1"/);
+      assert.doesNotMatch(code, /priority-high-escalate/);
+
+      const index = JSON.parse(fs.readFileSync(path.join(tmp, "src", "screens", "SCREEN_INDEX.json"), "utf-8"));
+      assert.deepEqual(index[0].actions.map((action: any) => action.label), ["Cloud Off", "Escalate", "Description"]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("emits typed actions for generated screen links", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-link-actions-"));
     try {
@@ -159,8 +260,8 @@ describe("stitch-to-jsx", () => {
 
       const code = fs.readFileSync(path.join(tmp, "src", "screens", "MainMenu.tsx"), "utf-8");
       assert.match(code, /export type MainMenuActionId = "start-game-1" \| "help-1" \| "settings-2";/);
-      assert.match(code, /<a href="#" className="nav-link" data-action-id="help-1" onClick=\{actions\?\.\["help-1"\]\}>Help<\/a>/);
-      assert.match(code, /<a href="\/settings" data-action-id="settings-2" onClick=\{actions\?\.\["settings-2"\]\}>Settings<\/a>/);
+      assert.match(code, /<a href="#" className="nav-link" data-action-id="help-1" onClick=\{\(event\) => \{ event\.preventDefault\(\); actions\?\.\["help-1"\]\?\.\(\); \}\}>Help<\/a>/);
+      assert.match(code, /<a href="\/settings" data-action-id="settings-2" onClick=\{\(event\) => \{ event\.preventDefault\(\); actions\?\.\["settings-2"\]\?\.\(\); \}\}>Settings<\/a>/);
       assert.doesNotMatch(code, /onclick=/);
 
       const index = JSON.parse(fs.readFileSync(path.join(tmp, "src", "screens", "SCREEN_INDEX.json"), "utf-8"));
@@ -199,6 +300,7 @@ describe("stitch-to-jsx", () => {
         <main>
           <span aria-hidden="true" class="material-symbols-outlined text-primary transition-all">warning</span>
           <span title="Triggers visual warning when limit is exceeded." class="material-symbols-outlined text-outline text-[16px] cursor-help">info</span>
+          <button><span class="material-symbols-outlined">help_center</span>Help Center</button>
           <button class="transition-all"><span data-icon="rotate_right" aria-hidden="true" focusable="false" class="material-symbols-outlined text-[18px]">rotate_right</span>Rotate</button>
         </main>
       `);
@@ -209,15 +311,16 @@ describe("stitch-to-jsx", () => {
       });
 
       const code = fs.readFileSync(path.join(tmp, "src", "screens", "ControlsHelp.tsx"), "utf-8");
-      assert.match(code, /import \{ Info, RotateCw, TriangleAlert \} from "lucide-react";/);
+      assert.match(code, /import \{ CircleHelp, Info, RotateCw, TriangleAlert \} from "lucide-react";/);
       assert.match(code, /<TriangleAlert className="text-primary transition-colors" aria-hidden=\{true\} focusable="false" \/>/);
       assert.match(code, /<Info className="text-outline text-\[16px\] cursor-help" aria-hidden=\{true\} focusable="false" \/>/);
+      assert.match(code, /<CircleHelp aria-hidden=\{true\} focusable="false" \/>Help Center/);
       assert.match(code, /<RotateCw className="text-\[18px\]" aria-hidden=\{true\} focusable="false" \/>Rotate/);
       assert.match(code, /<button className="transition-colors"/);
-      assert.equal((code.match(/aria-hidden/g) || []).length, 3);
-      assert.equal((code.match(/focusable=/g) || []).length, 3);
+      assert.equal((code.match(/aria-hidden/g) || []).length, 4);
+      assert.equal((code.match(/focusable=/g) || []).length, 4);
       assert.doesNotMatch(code, /<Info[^>]*\stitle=/);
-      assert.doesNotMatch(code, /material-symbols|Material Symbols|>warning<|>rotate_right</);
+      assert.doesNotMatch(code, /material-symbols|Material Symbols|>warning<|>help_center<|>rotate_right</);
       assert.doesNotMatch(code, /transition-all/);
 
       const transpiled = ts.transpileModule(code, {
@@ -235,7 +338,49 @@ describe("stitch-to-jsx", () => {
     }
   });
 
-  it("maps touch_app to a build-safe lucide icon export", () => {
+  it("sanitizes Stitch style blocks before writing runtime CSS", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-style-sanitize-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "settings-screen", title: "Settings Screen" },
+      ]));
+      writeHtml(path.join(stitchDir, "settings-screen.html"), `
+        <style>
+          .material-symbols-outlined {
+            font-family: 'Material Symbols Outlined';
+            font-size: 24px;
+          }
+          .toggle {
+            transition: all 0.2s;
+            background: theme('colors.primary-container');
+            box-shadow: 0 0 8px theme('colors.outline-variant');
+          }
+        </style>
+        <main><button><span class="material-symbols-outlined">style</span>Style</button></main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const css = fs.readFileSync(path.join(tmp, "src", "index.css"), "utf-8");
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "SettingsScreen.tsx"), "utf-8");
+      assert.doesNotMatch(css, /material-symbols|Material Symbols|font-family:\s*['"]?Material/i);
+      assert.doesNotMatch(css, /transition:\s*all/i);
+      assert.doesNotMatch(css, /theme\(/i);
+      assert.match(css, /background: var\(--color-primary-container\);/);
+      assert.match(css, /box-shadow: 0 0 8px var\(--color-outline-variant\);/);
+      assert.match(css, /transition: color, background-color, border-color, box-shadow, opacity, transform 0\.2s;/);
+      assert.match(code, /Palette/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("maps pointer Material Symbols to build-safe lucide icon exports", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-touch-icon-"));
     try {
       const stitchDir = path.join(tmp, "stitch");
@@ -246,6 +391,7 @@ describe("stitch-to-jsx", () => {
       writeHtml(path.join(stitchDir, "controls-screen.html"), `
         <main>
           <span class="material-symbols-outlined text-[18px]">touch_app</span>
+          <span class="material-symbols-outlined text-[16px]">mouse</span>
         </main>
       `);
 
@@ -257,7 +403,522 @@ describe("stitch-to-jsx", () => {
       const code = fs.readFileSync(path.join(tmp, "src", "screens", "ControlsHelp.tsx"), "utf-8");
       assert.match(code, /import \{ MousePointerClick \} from "lucide-react";/);
       assert.match(code, /<MousePointerClick className="text-\[18px\]" aria-hidden=\{true\} focusable="false" \/>/);
-      assert.doesNotMatch(code, /HandPointer|touch_app|material-symbols/);
+      assert.match(code, /<MousePointerClick className="text-\[16px\]" aria-hidden=\{true\} focusable="false" \/>/);
+      assert.doesNotMatch(code, /HandPointer|touch_app|>mouse<|material-symbols/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("maps key Material Symbol to a deterministic lucide icon", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-key-icon-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "vault-screen", title: "Vault Screen" },
+      ]));
+      writeHtml(path.join(stitchDir, "vault-screen.html"), `
+        <main>
+          <button><span class="material-symbols-outlined">key</span>Collect Key</button>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "VaultScreen.tsx"), "utf-8");
+      const iconReport = JSON.parse(fs.readFileSync(path.join(tmp, ".setfarm", "setup", "UNKNOWN_MATERIAL_ICONS.json"), "utf-8"));
+      assert.equal(iconReport.status, "pass");
+      assert.deepEqual(iconReport.icons, []);
+      assert.match(code, /import \{ Key \} from "lucide-react";/);
+      assert.match(code, /<Key/);
+      assert.doesNotMatch(code, /\bBadgeHelp\b|material-symbols|>key</);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("maps restore Material Symbol used by generated reset controls", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-restore-icon-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "restore-screen", title: "Restore Screen" },
+      ]));
+      writeHtml(path.join(stitchDir, "restore-screen.html"), `
+        <main>
+          <button><span class="material-symbols-outlined">restore</span>Restore defaults</button>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "RestoreScreen.tsx"), "utf-8");
+      const iconReport = JSON.parse(fs.readFileSync(path.join(tmp, ".setfarm", "setup", "UNKNOWN_MATERIAL_ICONS.json"), "utf-8"));
+      assert.equal(iconReport.status, "pass");
+      assert.deepEqual(iconReport.icons, []);
+      assert.match(code, /import \{ RotateCcw \} from "lucide-react";/);
+      assert.match(code, /<RotateCcw/);
+      assert.doesNotMatch(code, /\bBadgeHelp\b|material-symbols|>restore</);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("maps exit_to_app Material Symbol used by generated exit controls", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-exit-icon-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "exit-screen", title: "Exit Screen" },
+      ]));
+      writeHtml(path.join(stitchDir, "exit-screen.html"), `
+        <main>
+          <button><span class="material-symbols-outlined">exit_to_app</span>Exit to menu</button>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "ExitScreen.tsx"), "utf-8");
+      const iconReport = JSON.parse(fs.readFileSync(path.join(tmp, ".setfarm", "setup", "UNKNOWN_MATERIAL_ICONS.json"), "utf-8"));
+      assert.equal(iconReport.status, "pass");
+      assert.deepEqual(iconReport.icons, []);
+      assert.match(code, /import \{ LogOut \} from "lucide-react";/);
+      assert.match(code, /<LogOut/);
+      assert.doesNotMatch(code, /\bBadgeHelp\b|material-symbols|>exit_to_app</);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("maps common app navigation Material Symbols to semantic lucide icons instead of Circle", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-nav-icons-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "nav-screen", title: "Return Desk Navigation" },
+      ]));
+      writeHtml(path.join(stitchDir, "nav-screen.html"), `
+        <main>
+          <a href="#"><span class="material-symbols-outlined">dashboard</span>Dashboard</a>
+          <a href="#"><span class="material-symbols-outlined">assignment_return</span>Triage</a>
+          <a href="#"><span class="material-symbols-outlined">inventory_2</span>Inventory</a>
+          <a href="#"><span class="material-symbols-outlined">analytics</span>Reports</a>
+          <button><span class="material-symbols-outlined">sort</span>Sort</button>
+          <button><span class="material-symbols-outlined">notifications</span></button>
+          <button><span class="material-symbols-outlined">edit_note</span>Editor</button>
+          <button><span class="material-symbols-outlined">desktop_windows</span>Workspace Display</button>
+          <button><span class="material-symbols-outlined">table_rows</span>Data List</button>
+          <button><span class="material-symbols-outlined">view_kanban</span>Visual Board</button>
+          <button><span class="material-symbols-outlined">train</span>Train</button>
+          <button><span class="material-symbols-outlined">data_object</span>Data Object</button>
+          <button><span class="material-symbols-outlined">dataset</span>Dataset</button>
+          <button><span class="material-symbols-outlined">add_box</span>Create</button>
+          <button><span class="material-symbols-outlined">swap_horiz</span>Swap</button>
+          <button><span class="material-symbols-outlined">route</span>Route</button>
+          <button><span class="material-symbols-outlined">south_east</span>South East</button>
+          <button><span class="material-symbols-outlined">sync_alt</span>Sync Alt</button>
+          <button><span class="material-symbols-outlined">timer</span>Timer</button>
+          <button><span class="material-symbols-outlined">schedule</span>ETA</button>
+          <button><span class="material-symbols-outlined">group</span>Crew</button>
+          <button><span class="material-symbols-outlined">sync</span>Sync</button>
+          <button><span class="material-symbols-outlined">expand_more</span>Expand</button>
+          <button><span class="material-symbols-outlined">local_hospital</span>Clinic</button>
+          <button><span class="material-symbols-outlined">medical_services</span>Medical</button>
+          <button><span class="material-symbols-outlined">queue</span>Queue</button>
+          <button><span class="material-symbols-outlined">tv_options_parental</span>Display Options</button>
+          <button><span class="material-symbols-outlined">clinical_notes</span>Clinical Notes</button>
+          <button><span class="material-symbols-outlined">progress_activity</span>Progress</button>
+          <button><span class="material-symbols-outlined">sync_problem</span>Sync Problem</button>
+          <button><span class="material-symbols-outlined">folder_open</span>Folder Open</button>
+          <button><span class="material-symbols-outlined">folder_off</span>Folder Off</button>
+          <button><span class="material-symbols-outlined">filter_list_off</span>Filter Off</button>
+          <button><span class="material-symbols-outlined">groups</span>Teams</button>
+          <button><span class="material-symbols-outlined">lightbulb</span>Idea</button>
+          <button><span class="material-symbols-outlined">cleaning_services</span>Cleanup</button>
+          <button><span class="material-symbols-outlined">notifications_active</span>Active Alert</button>
+          <button><span class="material-symbols-outlined">cloud_off</span>Offline</button>
+          <button><span class="material-symbols-outlined">contact_support</span>Contact support</button>
+          <button><span class="material-symbols-outlined">person_add</span>Add Person</button>
+          <button><span class="material-symbols-outlined">contact_phone</span>Contact</button>
+          <button><span class="material-symbols-outlined">call</span>Call</button>
+          <button><span class="material-symbols-outlined">mail</span>Mail</button>
+          <button><span class="material-symbols-outlined">restart_alt</span>Restart</button>
+          <button><span class="material-symbols-outlined">priority_high</span>Priority</button>
+          <button><span class="material-symbols-outlined">login</span>Login</button>
+          <button><span class="material-symbols-outlined">star</span>Star</button>
+          <button><span class="material-symbols-outlined">favorite</span>Favorite</button>
+          <button><span class="material-symbols-outlined">ecg_heart</span>Vitals</button>
+          <button><span class="material-symbols-outlined">speed</span>Speed</button>
+          <button><span class="material-symbols-outlined">trending_up</span>Trend</button>
+          <button><span class="material-symbols-outlined">precision_manufacturing</span>Factory</button>
+          <button><span class="material-symbols-outlined">list_alt</span>Work List</button>
+          <button><span class="material-symbols-outlined">sensors</span>Sensor</button>
+          <button><span class="material-symbols-outlined">arrow_drop_down</span>Dropdown</button>
+          <button><span class="material-symbols-outlined">arrow_drop_up</span>Dropdown Up</button>
+          <button><span class="material-symbols-outlined">change_history</span>Change History</button>
+          <button><span class="material-symbols-outlined">assignment_ind</span>Assignment</button>
+          <button><span class="material-symbols-outlined">build</span>Build</button>
+          <button><span class="material-symbols-outlined">edit_document</span>Edit Document</button>
+          <button><span class="material-symbols-outlined">flight</span>Flight</button>
+          <button><span class="material-symbols-outlined">flight_land</span>Landing</button>
+          <button><span class="material-symbols-outlined">flight_takeoff</span>Takeoff</button>
+          <button><span class="material-symbols-outlined">group_remove</span>Remove Group</button>
+          <button><span class="material-symbols-outlined">meeting_room</span>Gate Room</button>
+          <button><span class="material-symbols-outlined">grid_view</span>Grid</button>
+          <button><span class="material-symbols-outlined">drag_indicator</span>Drag</button>
+          <button><span class="material-symbols-outlined">open_in_full</span>Open Full</button>
+          <button><span class="material-symbols-outlined">pending_actions</span>Pending</button>
+          <button><span class="material-symbols-outlined">monitoring</span>Monitoring</button>
+          <button><span class="material-symbols-outlined">monitor</span>Monitor</button>
+          <button><span class="material-symbols-outlined">monitor_heart</span>Monitor Heart</button>
+          <button><span class="material-symbols-outlined">filter_alt</span>Filter Alt</button>
+          <button><span class="material-symbols-outlined">power</span>Power</button>
+          <button><span class="material-symbols-outlined">wifi_off</span>Wifi Off</button>
+          <button><span class="material-symbols-outlined">report</span>Report</button>
+          <button><span class="material-symbols-outlined">person_search</span>Find Person</button>
+          <button><span class="material-symbols-outlined">unfold_more</span>Unfold</button>
+          <button><span class="material-symbols-outlined">block</span>Block</button>
+          <button><span class="material-symbols-outlined">fact_check</span>Fact Check</button>
+          <button><span class="material-symbols-outlined">warehouse</span>Warehouse</button>
+          <button><span class="material-symbols-outlined">airline_seat_recline_normal</span>Seat</button>
+          <button><span class="material-symbols-outlined">bed</span>Room Bed</button>
+          <button><span class="material-symbols-outlined">format_list_numbered</span>Numbered Queue</button>
+          <button><span class="material-symbols-outlined">how_to_reg</span>Registered</button>
+          <button><span class="material-symbols-outlined">vital_signs</span>Vitals</button>
+          <button><span class="material-symbols-outlined">density_medium</span>Medium density</button>
+          <button><span class="material-symbols-outlined">density_small</span>Small density</button>
+          <button><span class="material-symbols-outlined">deployed_code</span>Package</button>
+          <button><span class="material-symbols-outlined">engineering</span>Engineering</button>
+          <button><span class="material-symbols-outlined">label</span>Label</button>
+          <button><span class="material-symbols-outlined">local_shipping</span>Shipping</button>
+          <button><span class="material-symbols-outlined">location_on</span>Location</button>
+          <button><span class="material-symbols-outlined">map</span>Map</button>
+          <button><span class="material-symbols-outlined">near_me</span>Navigate</button>
+          <button><span class="material-symbols-outlined">reorder</span>Reorder</button>
+          <button><span class="material-symbols-outlined">support_agent</span>Support</button>
+          <button><span class="material-symbols-outlined">task_alt</span>Task done</button>
+          <button><span class="material-symbols-outlined">terminal</span>Terminal</button>
+          <button><span class="material-symbols-outlined">toggle_on</span>Toggle On</button>
+          <button><span class="material-symbols-outlined">keyboard</span>Keyboard</button>
+          <button><span class="material-symbols-outlined">music_note</span>Music</button>
+          <button><span class="material-symbols-outlined">keyboard_arrow_left</span>Move Left</button>
+          <button><span class="material-symbols-outlined">keyboard_arrow_right</span>Move Right</button>
+          <button><span class="material-symbols-outlined">graphic_eq</span>Equalizer</button>
+          <button><span class="material-symbols-outlined">volume_up</span>Volume</button>
+          <button><span class="material-symbols-outlined">volume_mute</span>Muted Volume</button>
+          <button><span class="material-symbols-outlined">fast_forward</span>Fast forward</button>
+          <button><span class="material-symbols-outlined">visibility</span>Visible</button>
+          <button><span class="material-symbols-outlined">rocket_launch</span>Launch</button>
+          <button><span class="material-symbols-outlined">blur_on</span>Focus effect</button>
+          <button><span class="material-symbols-outlined">style</span>Visual style</button>
+          <button><span class="material-symbols-outlined">bolt</span>Power signal</button>
+          <button><span class="material-symbols-outlined">checklist</span>Checklist</button>
+          <button><span class="material-symbols-outlined">dns</span>Server</button>
+          <button><span class="material-symbols-outlined">done_all</span>All done</button>
+          <button><span class="material-symbols-outlined">help_outline</span>Help outline</button>
+          <button><span class="material-symbols-outlined">history</span>History</button>
+          <button><span class="material-symbols-outlined">notification_important</span>Important alert</button>
+          <button><span class="material-symbols-outlined">view_week</span>Week view</button>
+          <a href="#"><span class="material-symbols-outlined">help</span>Help</a>
+          <a href="#"><span class="material-symbols-outlined">logout</span>Logout</a>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "ReturnDeskNavigation.tsx"), "utf-8");
+      const iconReport = JSON.parse(fs.readFileSync(path.join(tmp, ".setfarm", "setup", "UNKNOWN_MATERIAL_ICONS.json"), "utf-8"));
+      assert.equal(iconReport.status, "pass");
+      assert.deepEqual(iconReport.icons, []);
+      assert.match(code, /import \{ Activity, Armchair, ArrowLeftRight, ArrowUpDown, AudioWaveform, BadgeAlert, BadgeCheck, Ban, BarChart3, Bed, Bell, BellRing, Bolt, Braces, BriefcaseMedical, CheckCheck, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ChevronsUpDown, CircleHelp, ClipboardCheck, ClipboardList, ClipboardPlus, Clock, CloudOff, Columns3, Database, DoorOpen, Expand, Eye, Factory, FastForward, FilePenLine, FileWarning, Filter, FilterX, FolderOpen, FolderX, Gauge, Grid3X3, GripHorizontal, GripVertical, HardHat, Headphones, Heart, HeartPulse, History, Hospital, Kanban, Keyboard, LayoutDashboard, Lightbulb, ListChecks, ListOrdered, ListTodo, LoaderCircle, LogIn, LogOut, Mail, Map, MapPin, Monitor, MonitorCog, MoveDownRight, Music, Navigation, Package, PackageCheck, PackageSearch, Palette, Pencil, Phone, PhoneCall, Plane, PlaneLanding, PlaneTakeoff, PlusSquare, Power, RadioTower, RefreshCcw, RefreshCw, RefreshCwOff, Rocket, RotateCcw, Route, Rows2, Rows3, Server, Sparkles, Star, Tag, Terminal, Timer, ToggleRight, Train, TrendingUp, Triangle, Truck, UserCheck, UserMinus, UserPlus, UserSearch, Users, UsersRound, Volume2, VolumeX, Warehouse, WifiOff, Wrench \} from "lucide-react";/);
+      assert.match(code, /<LayoutDashboard/);
+      assert.match(code, /<PackageCheck/);
+      assert.match(code, /<PackageSearch/);
+      assert.match(code, /<BarChart3/);
+      assert.match(code, /<ArrowUpDown/);
+      assert.match(code, /<Bell/);
+      assert.match(code, /<Pencil/);
+      assert.match(code, /<Monitor/);
+      assert.match(code, /<Rows3/);
+      assert.match(code, /<Kanban/);
+      assert.match(code, /<Train/);
+      assert.match(code, /<Braces/);
+      assert.match(code, /<Database/);
+      assert.match(code, /<PlusSquare/);
+      assert.match(code, /<ArrowLeftRight/);
+      assert.match(code, /<Route/);
+      assert.match(code, /<MoveDownRight/);
+      assert.match(code, /<RefreshCcw/);
+      assert.match(code, /<Timer/);
+      assert.match(code, /<Clock/);
+      assert.match(code, /<Users/);
+      assert.match(code, /<RefreshCw/);
+      assert.match(code, /<ChevronDown/);
+      assert.match(code, /<ChevronUp/);
+      assert.match(code, /<Triangle/);
+      assert.match(code, /<Hospital/);
+      assert.match(code, /<BriefcaseMedical/);
+      assert.match(code, /<ListOrdered/);
+      assert.match(code, /<MonitorCog/);
+      assert.match(code, /<ClipboardPlus/);
+      assert.match(code, /<LoaderCircle/);
+      assert.match(code, /<RefreshCwOff/);
+      assert.match(code, /<FolderOpen/);
+      assert.match(code, /<FolderX/);
+      assert.match(code, /<FilterX/);
+      assert.match(code, /<UsersRound/);
+      assert.match(code, /<Lightbulb/);
+      assert.match(code, /<Sparkles/);
+      assert.match(code, /<BellRing/);
+      assert.match(code, /<Bolt/);
+      assert.match(code, /<ListChecks/);
+      assert.match(code, /<Server/);
+      assert.match(code, /<CheckCheck/);
+      assert.match(code, /<History/);
+      assert.match(code, /<Columns3/);
+      assert.match(code, /<CloudOff/);
+      assert.match(code, /<CircleHelp/);
+      assert.match(code, /<UserPlus/);
+      assert.match(code, /<PhoneCall/);
+      assert.match(code, /<Phone/);
+      assert.match(code, /<Mail/);
+      assert.match(code, /<RotateCcw/);
+      assert.match(code, /<BadgeAlert/);
+      assert.match(code, /<LogIn/);
+      assert.match(code, /<Star/);
+      assert.match(code, /<Heart/);
+      assert.match(code, /<HeartPulse/);
+      assert.match(code, /<Gauge/);
+      assert.match(code, /<TrendingUp/);
+      assert.match(code, /<Factory/);
+      assert.match(code, /<ListTodo/);
+      assert.match(code, /<RadioTower/);
+      assert.match(code, /<ClipboardCheck/);
+      assert.match(code, /<Wrench/);
+      assert.match(code, /<FilePenLine/);
+      assert.match(code, /<Plane/);
+      assert.match(code, /<PlaneLanding/);
+      assert.match(code, /<PlaneTakeoff/);
+      assert.match(code, /<UserMinus/);
+      assert.match(code, /<DoorOpen/);
+      assert.match(code, /<Grid3X3/);
+      assert.match(code, /<GripVertical/);
+      assert.match(code, /<Expand/);
+      assert.match(code, /<ClipboardList/);
+      assert.match(code, /<Activity/);
+      assert.match(code, /<Monitor/);
+      assert.match(code, /<Filter/);
+      assert.match(code, /<Power/);
+      assert.match(code, /<WifiOff/);
+      assert.match(code, /<FileWarning/);
+      assert.match(code, /<UserSearch/);
+      assert.match(code, /<ChevronsUpDown/);
+      assert.match(code, /<Ban/);
+      assert.match(code, /<BadgeCheck/);
+      assert.match(code, /<Warehouse/);
+      assert.match(code, /<Armchair/);
+      assert.match(code, /<Bed/);
+      assert.match(code, /<UserCheck/);
+      assert.match(code, /<Rows2/);
+      assert.match(code, /<Package/);
+      assert.match(code, /<HardHat/);
+      assert.match(code, /<Tag/);
+      assert.match(code, /<Truck/);
+      assert.match(code, /<MapPin/);
+      assert.match(code, /<Map/);
+      assert.match(code, /<Navigation/);
+      assert.match(code, /<GripHorizontal/);
+      assert.match(code, /<Headphones/);
+      assert.match(code, /<Terminal/);
+      assert.match(code, /<ToggleRight/);
+      assert.match(code, /<Keyboard/);
+      assert.match(code, /<ChevronLeft/);
+      assert.match(code, /<ChevronRight/);
+      assert.match(code, /<Music/);
+      assert.match(code, /<AudioWaveform/);
+      assert.match(code, /<Volume2/);
+      assert.match(code, /<VolumeX/);
+      assert.match(code, /<FastForward/);
+      assert.match(code, /<Eye/);
+      assert.match(code, /<Rocket/);
+      assert.match(code, /<CircleHelp/);
+      assert.match(code, /<LogOut/);
+      assert.doesNotMatch(code, /\bCircle\b/);
+      assert.doesNotMatch(code, /\bBadgeHelp\b/);
+      assert.doesNotMatch(code, /material-symbols/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("fails generated screen conversion when Stitch uses an unmapped Material Symbol", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-unknown-icon-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "unknown-icon-screen", title: "Unknown Icon Screen" },
+      ]));
+      writeHtml(path.join(stitchDir, "unknown-icon-screen.html"), `
+        <main>
+          <button><span class="material-symbols-outlined">domain_specific_unknown_icon</span>Action</button>
+        </main>
+      `);
+
+      assert.throws(
+        () => execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+          cwd: process.cwd(),
+          stdio: "pipe",
+        }),
+        (error: any) => {
+          const stderr = String(error.stderr || "");
+          assert.match(stderr, /UNKNOWN_MATERIAL_ICONS/);
+          assert.match(stderr, /domain_specific_unknown_icon/);
+          return true;
+        },
+      );
+
+      const iconReport = JSON.parse(fs.readFileSync(path.join(tmp, ".setfarm", "setup", "UNKNOWN_MATERIAL_ICONS.json"), "utf-8"));
+      assert.equal(iconReport.status, "fail");
+      assert.deepEqual(iconReport.icons, [{ iconName: "domain_specific_unknown_icon", count: 1 }]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("maps settings and policy Material Symbols used by game config screens", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-game-config-icons-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "game-settings", title: "Game Settings" },
+      ]));
+      writeHtml(path.join(stitchDir, "game-settings.html"), `
+        <main>
+          <button><span class="material-symbols-outlined">settings_input_component</span>Config</button>
+          <button><span class="material-symbols-outlined">shield</span>Safety</button>
+          <button><span class="material-symbols-outlined">leaderboard</span>Scores</button>
+          <button><span class="material-symbols-outlined">pause_circle</span>Pause</button>
+          <button><span class="material-symbols-outlined">play_circle</span>Resume</button>
+          <button><span class="material-symbols-outlined">replay</span>Restart</button>
+          <button><span class="material-symbols-outlined">device_reset</span>Reset Device</button>
+          <button><span class="material-symbols-outlined">cancel</span>Cancel</button>
+          <button><span class="material-symbols-outlined">face</span>Profile</button>
+          <button><span class="material-symbols-outlined">keyboard_return</span>Return</button>
+          <button><span class="material-symbols-outlined">power_settings_new</span>Power</button>
+          <button><span class="material-symbols-outlined">layers</span>Layers</button>
+          <button><span class="material-symbols-outlined">stars</span>Bonus</button>
+          <button><span class="material-symbols-outlined">trophy</span>Trophy</button>
+          <button><span class="material-symbols-outlined">emoji_events</span>Events</button>
+          <button><span class="material-symbols-outlined">sports_esports</span>Controls</button>
+          <input type="range" min="1" max="3" value="2" oninput="syncValue(this.value)" />
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "GameSettings.tsx"), "utf-8");
+      assert.match(code, /import \{ Ban, CirclePause, CirclePlay, CornerDownLeft, Gamepad2, Layers, Power, RefreshCcw, RotateCcw, Shield, SlidersHorizontal, Smile, Sparkles, Trophy \} from "lucide-react";/);
+      assert.match(code, /<Ban/);
+      assert.match(code, /<CirclePause/);
+      assert.match(code, /<CirclePlay/);
+      assert.match(code, /<CornerDownLeft/);
+      assert.match(code, /<Layers/);
+      assert.match(code, /<Power/);
+      assert.match(code, /<RefreshCcw/);
+      assert.match(code, /<RotateCcw/);
+      assert.match(code, /<SlidersHorizontal/);
+      assert.match(code, /<Shield/);
+      assert.match(code, /<Smile/);
+      assert.match(code, /<Sparkles/);
+      assert.match(code, /<Trophy/);
+      assert.match(code, /<Gamepad2/);
+      assert.doesNotMatch(code, /\boninput=|\bonInput="syncValue/);
+      const iconReport = JSON.parse(fs.readFileSync(path.join(tmp, ".setfarm", "setup", "UNKNOWN_MATERIAL_ICONS.json"), "utf-8"));
+      assert.equal(iconReport.status, "pass");
+      assert.deepEqual(iconReport.icons, []);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("maps common browser-game telemetry Material Symbols used by Stitch game screens", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-game-icons-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(path.join(tmp, "src"), { recursive: true });
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src", "index.css"), "@tailwind base;\n@tailwind components;\n@tailwind utilities;\n");
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "game-icons", title: "Game Icons" },
+      ]));
+      writeHtml(path.join(stitchDir, "game-icons.html"), `
+        <main>
+          <span class="material-symbols-outlined">local_fire_department</span>
+          <span class="material-symbols-outlined">local_gas_station</span>
+          <span class="material-symbols-outlined">straighten</span>
+          <span class="material-symbols-outlined">ads_click</span>
+          <span class="material-symbols-outlined">electric_bolt</span>
+          <span class="material-symbols-outlined">equalizer</span>
+          <span class="material-symbols-outlined">volume_down</span>
+          <span class="material-symbols-outlined">vibration</span>
+          <span class="material-symbols-outlined">wifi_tethering</span>
+          <span class="material-symbols-outlined">directions_car</span>
+          <span class="material-symbols-outlined">flash_on</span>
+          <span class="material-symbols-outlined">hub</span>
+          <span class="material-symbols-outlined">keyboard_alt</span>
+          <span class="material-symbols-outlined">keyboard_arrow_down</span>
+          <span class="material-symbols-outlined">keyboard_voice</span>
+          <span class="material-symbols-outlined">settings_suggest</span>
+          <span class="material-symbols-outlined">space_bar</span>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "GameIcons.tsx"), "utf-8");
+      assert.match(code, /Car/);
+      assert.match(code, /AudioWaveform/);
+      assert.match(code, /ChevronDown/);
+      assert.match(code, /Flame/);
+      assert.match(code, /Fuel/);
+      assert.match(code, /Keyboard/);
+      assert.match(code, /Mic/);
+      assert.match(code, /MousePointerClick/);
+      assert.match(code, /Network/);
+      assert.match(code, /RadioTower/);
+      assert.match(code, /Ruler/);
+      assert.match(code, /Settings2/);
+      assert.match(code, /Space/);
+      assert.match(code, /Vibrate/);
+      assert.match(code, /Volume1/);
+      assert.match(code, /Zap/);
+      const iconReport = JSON.parse(fs.readFileSync(path.join(tmp, ".setfarm", "setup", "UNKNOWN_MATERIAL_ICONS.json"), "utf-8"));
+      assert.equal(iconReport.status, "pass");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -619,15 +1280,37 @@ Awaiting input...</pre>
       fs.mkdirSync(path.join(tmp, "src"), { recursive: true });
       fs.mkdirSync(stitchDir, { recursive: true });
       fs.writeFileSync(path.join(tmp, "src", "index.css"), "@tailwind base;\n@tailwind components;\n@tailwind utilities;\n");
-      fs.writeFileSync(path.join(stitchDir, "design-tokens.css"), ":root { --color-background: #0f172a; }\n");
+      fs.writeFileSync(path.join(stitchDir, "design-tokens.css"), [
+        ":root {",
+        "  --color-background: #0f172a;",
+        "  --color-surface: #081425;",
+        "  --color-surface-container: #111827;",
+        "  --color-on-surface: #d8e3fb;",
+        "  --color-outline-variant: #3e4850;",
+        "  --font-body-md: Inter;",
+        "  --spacing-gutter: 0.75rem;",
+        "  --spacing-hud-safe-area: 32px;",
+        "  --radius-DEFAULT: 0.125rem;",
+        "}",
+        "",
+      ].join("\n"));
       fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
         { screenId: "game-screen", title: "Game Board" },
       ]));
       writeHtml(path.join(stitchDir, "game-screen.html"), `
-        <main class="bg-grid px-gutter">
+        <style>
+          .scanlines { pointer-events: none; }
+          .grid-perspective { transform: perspective(1000px) rotateX(60deg); }
+          @keyframes pulse-move { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+        </style>
+        <main class="bg-grid px-gutter p-gutter pb-hud-safe-area bg-surface text-on-surface dark:bg-surface hover:bg-surface-container dark:hover:bg-surface-container">
+          <div class="scanlines"></div>
+          <div class="absolute bottom-hud-safe-area left-hud-safe-area right-hud-safe-area">HUD</div>
+          <div class="grid-perspective"></div>
           <div class="w-grid-block h-grid-block tetromino-i machined-border"></div>
-          <button class="min-touch h-touch-target text-label-sm font-label-sm neon-glow-red">Start</button>
+          <button class="min-touch h-touch-target text-label-sm font-label-sm font-body-md border-outline-variant rounded-DEFAULT neon-glow-red">Start</button>
           <span class="ghost-piece text-display-lg font-display-lg"></span>
+          <span class="score-readout text-display-xl font-display-xl"></span>
         </main>
       `);
 
@@ -643,12 +1326,64 @@ Awaiting input...</pre>
       const css = fs.readFileSync(path.join(tmp, "src", "index.css"), "utf-8");
       assert.match(css, /@import '\.\.\/stitch\/design-tokens\.css';/);
       assert.equal((css.match(/SETFARM_STITCH_RUNTIME_UTILITIES_START/g) || []).length, 1);
+      assert.equal((css.match(/SETFARM_STITCH_CUSTOM_CSS_START/g) || []).length, 1);
+      assert.match(css, /\.scanlines \{ pointer-events: none; \}/);
+      assert.match(css, /\.grid-perspective \{ transform: perspective\(1000px\) rotateX\(60deg\); \}/);
+      assert.match(css, /@keyframes pulse-move/);
       assert.match(css, /\.text-label-sm \{ font-size: 0\.75rem; line-height: 1rem; \}/);
+      assert.match(css, /\.text-display-xl \{ font-size: 4\.5rem; line-height: 1; \}/);
       assert.match(css, /\.font-label-sm \{ font-weight: 600; letter-spacing: 0\.02em; \}/);
+      assert.match(css, /\.font-display-xl \{ font-weight: 900; \}/);
       assert.match(css, /\.tetromino-i \{ background: var\(--tetromino-i, #38bdf8\);/);
       assert.match(css, /\.w-grid-block \{ width: clamp\(1\.1rem, 5vw, 1\.85rem\); \}/);
       assert.match(css, /\.min-touch \{ min-width: 44px; min-height: 44px; \}/);
       assert.match(css, /\.bg-grid \{ background-image:/);
+      assert.match(css, /\.bg-surface \{ background-color: var\(--color-surface\); \}/);
+      assert.match(css, /\.text-on-surface \{ color: var\(--color-on-surface\); \}/);
+      assert.match(css, /\.border-outline-variant \{ border-color: var\(--color-outline-variant\); \}/);
+      assert.match(css, /\.p-gutter \{ padding: var\(--spacing-gutter\); \}/);
+      assert.match(css, /\.pb-hud-safe-area \{ padding-bottom: var\(--spacing-hud-safe-area\); \}/);
+      assert.match(css, /\.bottom-hud-safe-area \{ bottom: var\(--spacing-hud-safe-area\); \}/);
+      assert.match(css, /\.left-hud-safe-area \{ left: var\(--spacing-hud-safe-area\); \}/);
+      assert.match(css, /\.right-hud-safe-area \{ right: var\(--spacing-hud-safe-area\); \}/);
+      assert.match(css, /\.font-body-md \{ font-family: var\(--font-body-md\), sans-serif; \}/);
+      assert.match(css, /\.rounded-DEFAULT \{ border-radius: var\(--radius-DEFAULT\); \}/);
+      assert.ok(css.includes(".dark .dark\\:bg-surface { background-color: var(--color-surface); }"));
+      assert.ok(css.includes(".hover\\:bg-surface-container:hover { background-color: var(--color-surface-container); }"));
+      assert.ok(css.includes(".dark .dark\\:hover\\:bg-surface-container:hover { background-color: var(--color-surface-container); }"));
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("adds no-repeat policy to generated scene background images", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-scene-bg-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(path.join(tmp, "src"), { recursive: true });
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src", "index.css"), "@tailwind base;\n@tailwind components;\n@tailwind utilities;\n");
+      fs.writeFileSync(path.join(stitchDir, "design-tokens.css"), ":root { --color-surface: #10131a; }\n");
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "gameplay-screen", title: "Gameplay Screen" },
+      ]));
+      writeHtml(path.join(stitchDir, "gameplay-screen.html"), `
+        <main>
+          <div class="absolute inset-0 bg-[url('image-gameplay-bg')] bg-cover bg-center opacity-30" data-alt="Large gameplay background"></div>
+          <button>Start Game</button>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "GameplayScreen.tsx"), "utf-8");
+      assert.match(code, /className="absolute inset-0 bg-\[url\('image-gameplay-bg'\)\] bg-cover bg-center opacity-30 bg-no-repeat"/);
+
+      const css = fs.readFileSync(path.join(tmp, "src", "index.css"), "utf-8");
+      assert.match(css, /\.bg-no-repeat \{ background-repeat: no-repeat; \}/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

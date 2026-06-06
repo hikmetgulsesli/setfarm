@@ -6,6 +6,9 @@ import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
 import { emitEvent } from "./events.js";
+import { recordObservation } from "./observations.js";
+import { recordGateObservation, recordStackEvidencePlanObservation, recordStepOutputObservation } from "./operation-observability.js";
+import { isBrowserRuntimeStack, resolveOperationalStackContract, stackEvidenceMetadata } from "./stack-evidence.js";
 import { logger } from "../lib/logger.js";
 import { runQualityChecks, formatQualityReport } from "./quality-gates.js";
 import {
@@ -32,18 +35,21 @@ export { failStep } from "./step-fail.js";
 // ── Imports from extracted modules (used internally) ──
 import { resolveTemplate, parseOutputKeyValues, readProgressFile, readProjectMemory, updateProjectMemory, getProjectTree, getInstalledPackages, getSharedCode, getRecentStoryCode, getComponentRegistry, getApiRoutes, pruneContextForStep } from "./context-ops.js";
 import { getStories, formatStoryForTemplate, formatCompletedStories, parseAcceptanceCriteria, parseAndInsertStories } from "./story-ops.js";
-import { createStoryWorktree, removeStoryWorktree, findWorktreeDir, syncBaseBranch, ensureStoryBranchWorktree } from "./worktree-ops.js";
+import { createStoryWorktree, removeStoryWorktree, findWorktreeDir, syncBaseBranch, ensureStoryBranchWorktree, latestRetryPatchForStory, latestRetryStashPatchForStory, discardDirtyRetryWorktreeState } from "./worktree-ops.js";
 import { computeHasFrontendChanges, checkTestFailures, checkQualityGate, checkRequiredOutputFields, processDesignCompletion, processSetupCompletion, processSetupDesignContracts, processBrowserCheck, processDesignFidelityCheck, checkStoryDesignCompliance, checkImportConsistency } from "./step-guardrails.js";
 import { cleanupAbandonedSteps as _cleanupAbandonedSteps, cleanupProjectEphemera, scheduleRunCronTeardown } from "./cleanup-ops.js";
-import { isVerifyRetryMergeBlocker, isVerifyRetryQualityFailure } from "./verify-retry-routing.js";
-import { markSupervisorInterventions, upsertSupervisorRunMetadata } from "./supervisor/state.js";
-import { cleanupOutOfScopeWorktreeFiles } from "./steps/06-implement/context.js";
+import { isVerifyRetryInfraFailure, isVerifyRetryMergeBlocker, isVerifyRetryQualityFailure } from "./verify-retry-routing.js";
+import { markSupervisorInterventions, readSupervisorState, readSupervisorVisualResult, upsertSupervisorRunMetadata, writeSupervisorState } from "./supervisor/state.js";
+import { resolveStoryVisualScope } from "./supervisor/visual-qa.js";
+import { cleanupOutOfScopeWorktreeFiles, mergeRetryFailureTexts } from "./steps/06-implement/context.js";
 import { assembleImplementContext } from "./setup-handoff.js";
 import { missionControlApi } from "../runtime-config.js";
 import { sanitizeDesignMismatchFeedback } from "./error-taxonomy.js";
 import { sanitizeAgentPromptContracts } from "./prompt-contracts.js";
+import { routeDownstreamQualityFailure } from "./failure-router.js";
 import { IMPLICIT_STORY_SCOPE_FILES, isImplicitStoryScopeFile } from "./story-scope.js";
 import { resolvePlatformScript } from "./paths.js";
+import { ensureSmokeBuildFresh } from "./smoke-gate.js";
 import {
   getRunStatus, getRunContext, updateRunContext, failRun,
   getWorkflowId as _getWorkflowId,
@@ -58,13 +64,210 @@ const STITCH_HTML_EXCERPT_CHARS = 2500;
 const STITCH_HTML_TOTAL_CHARS = 6000;
 const DESIGN_DOM_EXCERPT_CHARS = 3000;
 
-const QUALITY_FIX_STEPS = new Set(["security-gate", "qa-test", "final-test"]);
+const QUALITY_FIX_STEPS = new Set(["supervise", "security-gate", "qa-test", "final-test"]);
+const HARD_PRECLAIM_STEPS = new Set(["setup-build", "security-gate", "qa-test", "final-test"]);
 const QA_FIX_SOURCE_EXT = /\.(tsx?|jsx?|css|scss|vue|svelte)$/i;
 const QA_FIX_IGNORE = /^(node_modules\/|dist\/|build\/|\.next\/|coverage\/|stitch\/|references\/)|(^|\/)(package(-lock)?\.json|tsconfig[^/]*\.json|vite\.config\.[^/]+|tailwind\.config\.[^/]+|postcss\.config\.[^/]+|eslint\.config\.[^/]+|index\.html)$/;
-const SMOKE_INFRA_FAILURE = /\b(agent-browser|browser control|playwright|chromium|chrome|page\.goto|browser|context|target page)\b[\s\S]{0,320}\b(ETIMEDOUT|ECONNREFUSED|ECONNRESET|EPIPE|timed out|timeout|target page|context or browser has been closed|browser has been closed|target closed|protocol error)\b/i;
+const SMOKE_INFRA_FAILURE = /(?:\b(agent-browser|browser control|playwright|chromium|chrome|page\.goto|browser|context|target page)\b[\s\S]{0,320}\b(ETIMEDOUT|ECONNREFUSED|ECONNRESET|EPIPE|timed out|timeout|target page|context or browser has been closed|browser has been closed|target closed|protocol error)\b|\bsystem smoke did not return structured JSON\b|\bsmoke did not return structured JSON\b)/i;
+
+function applyRetryFailureContext(
+  context: Record<string, any>,
+  failure: string,
+  category?: string,
+  suggestion?: string,
+): void {
+  const nextFailure = String(failure || "").trim();
+  if (nextFailure) {
+    context["previous_failure"] = mergeRetryFailureTexts([
+      String(context["previous_failure"] || ""),
+      nextFailure,
+    ]);
+  }
+  if (category) context["failure_category"] = category;
+  if (suggestion) context["failure_suggestion"] = suggestion;
+}
+
+function retryPatchRepoCandidates(repoPath: string, worktreeDir: string): string[] {
+  const candidates = [repoPath, worktreeDir].map((item) => String(item || "").trim()).filter(Boolean);
+  if (worktreeDir && fs.existsSync(worktreeDir)) {
+    try {
+      const commonDir = execFileSync("git", ["rev-parse", "--git-common-dir"], {
+        cwd: worktreeDir,
+        encoding: "utf-8",
+        timeout: 5000,
+        stdio: ["pipe", "pipe", "pipe"],
+      }).trim();
+      const absoluteCommonDir = path.isAbsolute(commonDir) ? commonDir : path.resolve(worktreeDir, commonDir);
+      if (path.basename(absoluteCommonDir) === ".git") candidates.push(path.dirname(absoluteCommonDir));
+    } catch {
+      // Best effort; direct repo/worktree candidates are still checked.
+    }
+  }
+  return [...new Set(candidates)];
+}
+
+function collectRetryWorktreePatchFeedback(repoPath: string, worktreeDir: string, storyId: string, aliases: string[] = []): string {
+  try {
+    let patch = "";
+    let source = "";
+    const ids = [...new Set([storyId, ...aliases].map((id) => String(id || "").trim()).filter(Boolean))];
+    for (const candidateRepo of retryPatchRepoCandidates(repoPath, worktreeDir)) {
+      for (const id of ids) {
+        const patchPath = latestRetryPatchForStory(candidateRepo, id);
+        if (patchPath && fs.existsSync(patchPath)) {
+          patch = fs.readFileSync(patchPath, "utf-8");
+          source = path.relative(candidateRepo, patchPath);
+          break;
+        }
+      }
+      if (patch.trim()) break;
+    }
+    if (!patch.trim()) {
+      for (const id of ids) {
+        patch = latestRetryStashPatchForStory(worktreeDir, id);
+        if (patch.trim()) {
+          source = "latest matching setfarm-auto-stash";
+          break;
+        }
+      }
+    }
+    if (!patch.trim()) return "";
+    const touchedFiles = [...patch.matchAll(/^diff --git a\/(.+?) b\/(.+)$/gm)]
+      .map((match) => match[2] || match[1])
+      .filter(Boolean);
+    const deletedLines = (patch.match(/^-{1}(?!-)/gm) || []).length;
+    const addedLines = (patch.match(/^\+{1}(?!\+)/gm) || []).length;
+    const fileSummary = [...new Set(touchedFiles)].slice(0, 16).join(", ") || "unknown";
+    return [
+      "RETRY_WORKTREE_PATCH:",
+      "Setfarm captured a previous failed attempt before cleaning the retry worktree. This is a compact diagnostic summary only; do not re-apply the old patch body.",
+      `Source: ${source}`,
+      `Touched files: ${fileSummary}`,
+      `Patch size: +${addedLines} -${deletedLines} across ${new Set(touchedFiles).size || "unknown"} file(s).`,
+      "Use the current guard failure and current source as truth. If the previous patch deleted working code or changed package files, preserve the current source and make a fresh scoped fix instead.",
+    ].join("\n");
+  } catch (err) {
+    logger.warn(`[implement-context] failed to collect retry worktree patch for ${storyId}: ${String(err).slice(0, 160)}`, {});
+    return "";
+  }
+}
+
 const QA_FIX_MAX_STORIES = Math.max(1, parseInt(process.env.SETFARM_QA_FIX_MAX_STORIES || "4", 10) || 4);
 const QA_FIX_REPEAT_LIMIT = Math.max(1, parseInt(process.env.SETFARM_QA_FIX_REPEAT_LIMIT || "2", 10) || 2);
 const SUPERVISED_STORY_IDS_CONTEXT_KEY = "supervised_story_ids";
+
+function markStorySupervisorStatePassedInWorkdir(
+  workdir: string,
+  runId: string,
+  storyId: string,
+  decision: string,
+  acCoverage = "",
+): void {
+  if (!workdir || !runId || !storyId) return;
+  const nowIso = new Date().toISOString();
+  const state = readSupervisorState(workdir, runId);
+  const story = state.stories[storyId] || {
+    status: "passed",
+    currentWorker: undefined,
+    openBlockers: [],
+    warnings: [],
+    resolved: [],
+    lastEvidenceAt: nowIso,
+  };
+
+  const previousOpen = [...new Set([...(story.openBlockers || []), ...(story.warnings || [])])];
+  for (const itemId of previousOpen) {
+    if (!story.resolved.includes(itemId)) story.resolved.push(itemId);
+    const evidence = state.evidence[itemId];
+    if (evidence) {
+      state.evidence[itemId] = {
+        ...evidence,
+        status: "passed",
+        observed: [
+          ...(Array.isArray(evidence.observed) ? evidence.observed : []),
+          `Resolved by story-scoped LLM supervisor ${decision} decision.`,
+        ].slice(-12),
+        message: `Supervisor ${decision} decision cleared this previous finding.`,
+        checkedAt: nowIso,
+      };
+    }
+  }
+
+  const syntheticId = `llm-supervisor:${storyId}:decision`;
+  if (!story.resolved.includes(syntheticId)) story.resolved.push(syntheticId);
+  story.openBlockers = [];
+  story.warnings = [];
+  story.status = "passed";
+  story.lastEvidenceAt = nowIso;
+  state.stories[storyId] = story;
+  state.evidence[syntheticId] = {
+    itemId: syntheticId,
+    storyId,
+    status: "passed",
+    severity: "info",
+    observed: [`SUPERVISOR_DECISION: ${decision}`, acCoverage].filter(Boolean),
+    lastScan: "llm-supervisor",
+    files: [],
+    message: `Story-scoped supervisor completed with ${decision}.`,
+    checkedAt: nowIso,
+  } as any;
+  state.projectStatus = Object.values(state.stories).some((item: any) => (item.openBlockers || []).length > 0)
+    ? "blocked"
+    : "implementing";
+  writeSupervisorState(workdir, state);
+}
+
+function compactObservationText(value: unknown, max = 900): string {
+  return String(value || "").replace(/\s+/g, " ").trim().slice(0, max);
+}
+
+async function recordLiveObservation(options: {
+  runId: string;
+  stepId: string;
+  storyId?: string | null;
+  agentId?: string | null;
+  checkId: string;
+  label: string;
+  status: "pending" | "running" | "pass" | "fail" | "retry" | "blocked" | "info";
+  summary?: string | null;
+  detail?: string | null;
+  evidence?: Record<string, unknown> | null;
+  filePaths?: string[] | null;
+  github?: Record<string, unknown> | null;
+  metadata?: Record<string, unknown> | null;
+}): Promise<void> {
+  await recordObservation({
+    ...options,
+    summary: compactObservationText(options.summary || options.detail || options.label, 300),
+    detail: compactObservationText(options.detail || options.summary || "", 1200),
+  });
+}
+
+async function recordImplementGateObservation(
+  step: { run_id: string; step_id: string; agent_id?: string | null },
+  story: { story_id?: string | null; title?: string | null } | null | undefined,
+  checkId: string,
+  label: string,
+  result: { passed: boolean; reason?: string; category?: string; suggestion?: string; outOfScope?: string[] },
+): Promise<void> {
+  await recordLiveObservation({
+    runId: step.run_id,
+    stepId: step.step_id,
+    storyId: story?.story_id || "",
+    agentId: step.agent_id || "",
+    checkId,
+    label,
+    status: result.passed ? "pass" : "fail",
+    summary: result.passed ? `${label} passed` : result.category || `${label} failed`,
+    detail: result.reason || result.suggestion || "",
+    filePaths: result.outOfScope || [],
+    metadata: {
+      category: result.category || "",
+      suggestion: result.suggestion || "",
+      storyTitle: story?.title || "",
+    },
+  });
+}
 
 function stripSetfarmGitWrapperPath(value: string | undefined): string {
   return String(value || "")
@@ -212,7 +415,11 @@ async function ensureStoryPrUrlForBranch(options: {
   } = options;
   const expectedRepoName = repoPath.split("/").pop() || "";
   if (existingPrUrl && isValidGithubPrUrl(existingPrUrl, expectedRepoName)) {
-    return { prUrl: existingPrUrl, error: "" };
+    const existingState = getPRState(existingPrUrl);
+    if (existingState === "OPEN" || existingState === "MERGED") {
+      return { prUrl: existingPrUrl, error: "" };
+    }
+    logger.warn(`[auto-pr] Ignoring ${existingState} existing PR ${existingPrUrl} for story ${storyId}; Setfarm will search/create a usable PR`, { runId });
   }
   if (!repoPath || !storyBranchName) {
     return { prUrl: "", error: `AUTO_PR_CREATE_FAILED: missing repo or story branch for ${storyId}` };
@@ -227,11 +434,11 @@ async function ensureStoryPrUrlForBranch(options: {
   }
 
   try {
-    const existingPr = execFileSync("gh", ["pr", "list", "--head", storyBranchName, "--state", "all", "--json", "url", "--jq", ".[0].url // \"\""], {
+    const existingPr = execFileSync("gh", ["pr", "list", "--head", storyBranchName, "--state", "all", "--json", "url,state", "--jq", "[.[] | select(.state == \"OPEN\" or .state == \"MERGED\")][0].url // \"\""], {
       cwd: repoPath, timeout: 15_000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8",
     }).toString().trim();
     if (existingPr && isValidGithubPrUrl(existingPr, expectedRepoName)) {
-      logger.info(`[auto-pr] Reusing existing PR ${existingPr} for story ${storyId}`, { runId });
+      logger.info(`[auto-pr] Reusing usable existing PR ${existingPr} for story ${storyId}`, { runId });
       return { prUrl: existingPr, error: "" };
     }
   } catch (listErr) {
@@ -254,6 +461,81 @@ async function ensureStoryPrUrlForBranch(options: {
   } catch (createErr) {
     return { prUrl: "", error: `AUTO_PR_CREATE_FAILED: ${storyBranchName}: ${formatCommandError(createErr)}` };
   }
+}
+
+function gitCommandOk(cwd: string, args: string[], timeout = 5000): boolean {
+  try {
+    execFileSync("git", args, { cwd, timeout, stdio: ["pipe", "pipe", "pipe"] });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function storyAlreadyIntegratedInBase(options: {
+  runId: string;
+  storyDbId: string;
+  storyId: string;
+  workdir: string;
+  baseBranch: string;
+}): Promise<{ integrated: boolean; detail: string }> {
+  const story = await pgGet<{ story_branch: string | null; pr_url: string | null }>(
+    "SELECT story_branch, pr_url FROM stories WHERE id = $1",
+    [options.storyDbId],
+  );
+  const candidates = [
+    story?.story_branch || "",
+    `${options.runId.slice(0, 8)}-${options.storyId}`.toLowerCase(),
+  ].map(s => s.trim()).filter(Boolean);
+  const uniqueCandidates = [...new Set(candidates)];
+
+  let ancestorRef = "";
+  for (const branch of uniqueCandidates) {
+    for (const ref of [branch, `origin/${branch}`]) {
+      if (!gitCommandOk(options.workdir, ["rev-parse", "--verify", ref])) continue;
+      if (gitCommandOk(options.workdir, ["merge-base", "--is-ancestor", ref, options.baseBranch])) {
+        ancestorRef = ref;
+        break;
+      }
+    }
+    if (ancestorRef) break;
+  }
+
+  const storyCommitPattern = new RegExp(`\\b${options.storyId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+  let baseHasStoryCommit = false;
+  try {
+    const logOut = execFileSync("git", ["log", "--format=%H%x09%s", "-n", "120", options.baseBranch], {
+      cwd: options.workdir,
+      timeout: 8000,
+      stdio: ["pipe", "pipe", "pipe"],
+      encoding: "utf-8",
+    });
+    baseHasStoryCommit = storyCommitPattern.test(logOut);
+  } catch {
+    baseHasStoryCommit = false;
+  }
+
+  if (ancestorRef && baseHasStoryCommit) {
+    return {
+      integrated: true,
+      detail: `${options.storyId} branch ${ancestorRef} is already an ancestor of ${options.baseBranch}, and ${options.baseBranch} contains a story commit for ${options.storyId}.`,
+    };
+  }
+
+  if (story?.pr_url) {
+    const prState = getPRState(story.pr_url);
+    if (prState === "MERGED" && (ancestorRef || baseHasStoryCommit)) {
+      return {
+        integrated: true,
+        detail: `${options.storyId} PR is MERGED and local base evidence confirms the story is integrated.`,
+      };
+    }
+  }
+
+  return {
+    integrated: false,
+    detail: `${options.storyId} has no local integration proof for ${options.baseBranch}; ancestorRef=${ancestorRef || "none"} storyCommit=${baseHasStoryCommit ? "yes" : "no"}.`,
+  };
 }
 
 function parseGitStatusPaths(status: string): string[] {
@@ -485,6 +767,21 @@ export function commitStoryWorktreeScopeIfNeeded(
   } catch (err) {
     return { committed: false, sha: "", stagedFiles: [], error: `PLATFORM_STORY_COMMIT_FAILED: ${formatCommandError(err)}` };
   }
+}
+
+export function cleanupBlockedStoryCommitScope(
+  workdir: string,
+  storyId: string,
+  declaredScopeFiles: string[] = [],
+  runId = "",
+): string[] {
+  if (!workdir || !fs.existsSync(workdir)) return [];
+  const declared = declaredScopeFiles.length > 0
+    ? declaredScopeFiles
+    : readStoryScopeFilesFromWorktree(workdir);
+  if (declared.length === 0) return [];
+  const allAllowed = [...new Set([...declared, ...getImplicitScopeFiles(workdir)])];
+  return cleanupOutOfScopeWorktreeFiles(workdir, allAllowed, storyId, runId);
 }
 
 function pushStoryBranch(workdir: string, storyBranch: string | null | undefined): { pushed: boolean; error: string } {
@@ -805,51 +1102,267 @@ async function detectVerifyGeneratedScreenRegressionFailure(
   ].join("\n");
 }
 
+async function hasPriorPrReviewCommentRetry(runId: string, storyId: string): Promise<boolean> {
+  if (!runId || !storyId) return false;
+  try {
+    const observationRows = await pgQuery<{ found: string }>(
+      `
+        SELECT '1' AS found
+        FROM run_observations
+        WHERE run_id = $1
+          AND (story_id = $2 OR story_id = '')
+          AND (
+            coalesce(summary, '') ILIKE '%PR_REVIEW_COMMENTS_OPEN%'
+            OR coalesce(detail, '') ILIKE '%PR_REVIEW_COMMENTS_OPEN%'
+            OR check_id = 'verify.pr_comments.fetch'
+          )
+          AND (
+            coalesce(summary, '') ILIKE '%actionable%'
+            OR coalesce(detail, '') ILIKE '%actionable%'
+            OR status = 'blocked'
+          )
+        LIMIT 1
+      `,
+      [runId, storyId],
+    );
+    if (observationRows.length > 0) return true;
+
+    const storyRows = await pgQuery<{ found: string }>(
+      `
+        SELECT '1' AS found
+        FROM stories
+        WHERE run_id = $1
+          AND story_id = $2
+          AND coalesce(output, '') ILIKE '%PR_REVIEW_COMMENTS_OPEN%'
+        LIMIT 1
+      `,
+      [runId, storyId],
+    );
+    return storyRows.length > 0;
+  } catch (e) {
+    logger.warn(`[verify-pr-comments] Could not inspect prior PR comment retry state for ${storyId}: ${String(e).slice(0, 160)}`);
+    return false;
+  }
+}
+
+export function isResolvedNoRepeatVisualRetryIssue(value: string | undefined): boolean {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text) return false;
+  return /\bvisual qa\b/i.test(text)
+    && /\bviewport_integrity\b/i.test(text)
+    && /\brepeat\s*=\s*no-repeat\b/i.test(text)
+    && /\bsize\s*=\s*(cover|contain|100%\s+100%|100%|calc\()/i.test(text);
+}
+
+async function shouldDeferVerifyRetryExhaustionForResolvedEvidence(
+  runId: string,
+  storyId: string,
+  issues: string,
+  context: Record<string, string>,
+): Promise<boolean> {
+  if (!runId || !storyId || !isResolvedNoRepeatVisualRetryIssue(issues)) return false;
+  if (String(context["verify_retry_exhaustion_deferred"] || "").includes(`${storyId}:`)) return false;
+
+  try {
+    const rows = await pgQuery<{ found: string }>(
+      `
+        WITH latest_retry AS (
+          SELECT COALESCE(MAX(created_at), TIMESTAMP 'epoch') AS ts
+          FROM run_observations
+          WHERE run_id = $1
+            AND (story_id = $2 OR story_id = '')
+            AND (
+              event_type = 'story.retry'
+              OR check_id LIKE 'story.retry:%'
+              OR label ILIKE '%retry%'
+            )
+        )
+        SELECT '1' AS found
+        FROM run_observations o, latest_retry r
+        WHERE o.run_id = $1
+          AND o.story_id = $2
+          AND o.created_at >= r.ts
+          AND o.status = 'pass'
+          AND (
+            o.check_id = 'supervisor-decision'
+            OR o.check_id = 'stack-evidence:verify'
+            OR o.event_type IN ('story.done', 'story.verified')
+          )
+        ORDER BY o.created_at DESC
+        LIMIT 1
+      `,
+      [runId, storyId],
+    );
+    return rows.length > 0;
+  } catch (e) {
+    logger.warn(`[verify] Could not inspect resolved retry evidence for ${storyId}: ${String(e).slice(0, 160)}`, { runId });
+    return false;
+  }
+}
+
 async function detectOpenPrReviewCommentFailure(
   prUrl: string | null | undefined,
   storyId: string,
   context: Record<string, string>,
+  runId = "",
+  stepId = "verify",
 ): Promise<string> {
   const url = String(prUrl || "").trim();
   if (!url) return "";
 
   try {
-    const { fetchPrState, formatPrCommentsForAgent, resolveActionableInlineReviewThreads } = await import("./steps/07-verify/pr-comments.js");
+    const {
+      fetchPrState,
+      formatPrCommentsForAgent,
+      resolveHistoricalInlineReviewThreads,
+      resolveMechanicallySatisfiedInlineReviewThreads,
+    } = await import("./steps/07-verify/pr-comments.js");
     let state = await fetchPrState(url, context["repo_full"] || "");
     if (state) {
       let formatted = formatPrCommentsForAgent(state);
+      const actionableCount = formatted ? Number(formatted.match(/^## PR Comments \((\d+) actionable\)/m)?.[1] || 0) : 0;
+      if (runId) {
+        await recordLiveObservation({
+          runId,
+          stepId,
+          storyId,
+          checkId: "verify.pr_comments.fetch",
+          label: "Fetch PR review comments",
+          status: actionableCount > 0 ? "blocked" : "pass",
+          summary: actionableCount > 0 ? `${actionableCount} actionable PR comment(s)` : "No actionable PR comments",
+          detail: formatted || `PR state ${state.state}, checks ${state.checksStatus || "unknown"}`,
+          github: {
+            prUrl: url,
+            state: state.state,
+            checksStatus: state.checksStatus || "",
+            mergeable: state.mergeable || "",
+            mergeStateStatus: state.mergeStateStatus || "",
+            actionableComments: actionableCount,
+            totalComments: state.comments?.length || 0,
+          },
+        });
+      }
       context["pr_comments"] = formatted || "";
       context["pr_check_state"] = state.checksStatus || "";
+      context["pr_created_at"] = state.createdAt || "";
       context["pr_mergeable"] = state.mergeable || "";
       context["pr_merge_state_status"] = state.mergeStateStatus || "";
-      if (state.state !== "MERGED" && formatted) {
-        const retryAlreadyAddressedReview =
-          context["failure_category"] === "PR_REVIEW_COMMENTS_OPEN" ||
-          /PR_REVIEW_COMMENTS_OPEN/i.test(`${context["previous_failure"] || ""}\n${context["verify_feedback"] || ""}`);
-        const reviewStateAllowsResolution =
-          state.checksStatus !== "failing" &&
-          state.mergeable !== "CONFLICTING" &&
-          !["DIRTY", "BLOCKED"].includes(state.mergeStateStatus || "");
-        if (retryAlreadyAddressedReview && reviewStateAllowsResolution) {
-          const resolution = await resolveActionableInlineReviewThreads(state);
-          if (resolution.resolved > 0) {
-            context["pr_review_threads_resolved"] = String(resolution.resolved);
-            state = await fetchPrState(url, context["repo_full"] || "");
-            if (state) {
-              formatted = formatPrCommentsForAgent(state);
-              context["pr_comments"] = formatted || "";
-              context["pr_check_state"] = state.checksStatus || "";
-              context["pr_mergeable"] = state.mergeable || "";
-              context["pr_merge_state_status"] = state.mergeStateStatus || "";
-              if (!formatted) return "";
-            }
+      const reviewStateAllowsResolution =
+        state.checksStatus !== "failing" &&
+        state.mergeable !== "CONFLICTING" &&
+        !["DIRTY", "BLOCKED"].includes(state.mergeStateStatus || "");
+      const localRepoPath = String(context["repo"] || "").trim();
+      if (formatted && reviewStateAllowsResolution && localRepoPath) {
+        const verifiedResolution = await resolveMechanicallySatisfiedInlineReviewThreads(state, localRepoPath);
+        if (verifiedResolution.resolved > 0) {
+          context["pr_verified_review_threads_resolved"] = String(verifiedResolution.resolved);
+          if (runId) {
+            await recordLiveObservation({
+              runId,
+              stepId,
+              storyId,
+              checkId: "verify.pr_comments.resolve_verified",
+              label: "Resolve verified review threads",
+              status: "pass",
+              summary: `${verifiedResolution.resolved} mechanically verified thread(s) resolved`,
+              detail: verifiedResolution.failures.join("\n"),
+              github: {
+                prUrl: url,
+                resolved: verifiedResolution.resolved,
+                failed: verifiedResolution.failed,
+                candidates: verifiedResolution.candidates,
+                policyDecision: "mechanically_satisfied_current_thread",
+              },
+              metadata: { policyDecision: "mechanically_satisfied_current_thread" },
+            });
           }
-          if (resolution.failed > 0) {
-            context["pr_review_thread_resolution_failed"] = resolution.failures.join("\n").slice(0, 1200);
+          const refreshedState = await fetchPrState(url, context["repo_full"] || "");
+          if (refreshedState) {
+            state = refreshedState;
+            formatted = formatPrCommentsForAgent(refreshedState);
+            context["pr_comments"] = formatted || "";
+            context["pr_check_state"] = refreshedState.checksStatus || "";
+            context["pr_created_at"] = refreshedState.createdAt || "";
+            context["pr_mergeable"] = refreshedState.mergeable || "";
+            context["pr_merge_state_status"] = refreshedState.mergeStateStatus || "";
           }
         }
+        if (verifiedResolution.failed > 0) {
+          context["pr_verified_review_thread_resolution_failed"] = verifiedResolution.failures.join("\n").slice(0, 1200);
+          if (runId) {
+            await recordLiveObservation({
+              runId,
+              stepId,
+              storyId,
+              checkId: "verify.pr_comments.resolve_verified_failed",
+              label: "Resolve verified review threads",
+              status: "fail",
+              summary: `${verifiedResolution.failed} verified thread resolution failure(s)`,
+              detail: verifiedResolution.failures.join("\n"),
+              github: {
+                prUrl: url,
+                resolved: verifiedResolution.resolved,
+                failed: verifiedResolution.failed,
+                candidates: verifiedResolution.candidates,
+                policyDecision: "mechanically_satisfied_current_thread",
+              },
+              metadata: { policyDecision: "mechanically_satisfied_current_thread" },
+            });
+          }
+        }
+      }
+      if (!formatted && reviewStateAllowsResolution) {
+        const historicalResolution = await resolveHistoricalInlineReviewThreads(state);
+        if (historicalResolution.resolved > 0) {
+          context["pr_historical_review_threads_resolved"] = String(historicalResolution.resolved);
+          if (runId) {
+            await recordLiveObservation({
+              runId,
+              stepId,
+              storyId,
+              checkId: "verify.pr_comments.resolve_historical",
+              label: "Resolve historical review threads",
+              status: "pass",
+              summary: `${historicalResolution.resolved} historical thread(s) resolved`,
+              detail: historicalResolution.failures.join("\n"),
+              github: { prUrl: url, resolved: historicalResolution.resolved, failed: historicalResolution.failed, policyDecision: "historical_or_outdated_thread" },
+              metadata: { policyDecision: "historical_or_outdated_thread" },
+            });
+          }
+          const refreshedState = await fetchPrState(url, context["repo_full"] || "");
+          if (refreshedState) {
+            state = refreshedState;
+            formatted = formatPrCommentsForAgent(refreshedState);
+            context["pr_comments"] = formatted || "";
+            context["pr_check_state"] = refreshedState.checksStatus || "";
+            context["pr_created_at"] = refreshedState.createdAt || "";
+            context["pr_mergeable"] = refreshedState.mergeable || "";
+            context["pr_merge_state_status"] = refreshedState.mergeStateStatus || "";
+          }
+        }
+        if (historicalResolution.failed > 0) {
+          context["pr_historical_review_thread_resolution_failed"] = historicalResolution.failures.join("\n").slice(0, 1200);
+          if (runId) {
+            await recordLiveObservation({
+              runId,
+              stepId,
+              storyId,
+              checkId: "verify.pr_comments.resolve_historical_failed",
+              label: "Resolve historical review threads",
+              status: "fail",
+              summary: `${historicalResolution.failed} historical thread resolution failure(s)`,
+              detail: historicalResolution.failures.join("\n"),
+              github: { prUrl: url, resolved: historicalResolution.resolved, failed: historicalResolution.failed, policyDecision: "historical_or_outdated_thread" },
+              metadata: { policyDecision: "historical_or_outdated_thread" },
+            });
+          }
+        }
+      }
+      if (formatted) {
         return [
-          `PR_REVIEW_COMMENTS_OPEN: ${storyId} has actionable PR review comments that must be fixed before merge.`,
+          state.state === "MERGED"
+            ? `PR_REVIEW_COMMENTS_OPEN: ${storyId} PR is merged but still has current actionable PR review comments. This is a verify lifecycle violation; do not mark the story verified until the comments are no longer actionable.`
+            : `PR_REVIEW_COMMENTS_OPEN: ${storyId} has actionable PR review comments that must be fixed before merge.`,
           formatted,
         ].join("\n");
       }
@@ -857,6 +1370,19 @@ async function detectOpenPrReviewCommentFailure(
     }
   } catch (e) {
     logger.warn(`[verify-pr-comments] Fresh PR comment check failed for ${storyId}: ${String(e).slice(0, 180)}`);
+    if (runId) {
+      await recordLiveObservation({
+        runId,
+        stepId,
+        storyId,
+        checkId: "verify.pr_comments.fetch_failed",
+        label: "Fetch PR review comments",
+        status: "fail",
+        summary: "PR review comment fetch failed",
+        detail: String(e),
+        github: { prUrl: url },
+      });
+    }
   }
 
   const fallback = String(context["pr_comments"] || "").trim();
@@ -867,6 +1393,74 @@ async function detectOpenPrReviewCommentFailure(
     ].join("\n");
   }
   return "";
+}
+
+function prReviewSettleRemainingMs(context: Record<string, string>): number {
+  const createdAt = String(context["pr_created_at"] || context["verify_pending_since"] || "").trim();
+  const createdMs = createdAt ? new Date(createdAt).getTime() : 0;
+  if (!Number.isFinite(createdMs) || createdMs <= 0) return PR_REVIEW_DELAY_MS;
+  return Math.max(0, PR_REVIEW_DELAY_MS - (Date.now() - createdMs));
+}
+
+function prReviewSettleComplete(context: Record<string, string>): boolean {
+  return prReviewSettleRemainingMs(context) <= 0;
+}
+
+function isOpenPrDeliveryBlockerContext(context: Record<string, string>): boolean {
+  const category = String(context["failure_category"] || "").trim();
+  const failure = `${context["previous_failure"] || ""}\n${context["verify_feedback"] || ""}`;
+  return (
+    ["PR_NOT_MERGED", "PR_MISSING", "VERIFY_MERGE_BLOCKER"].includes(category) ||
+    /\b(PR_NOT_MERGED|PR_MISSING|VERIFY_MERGE_BLOCKER):/i.test(failure)
+  );
+}
+
+function prDeliveryBlockerStoryId(context: Record<string, string>): string {
+  const failure = `${context["previous_failure"] || ""}\n${context["verify_feedback"] || ""}`;
+  const explicit = failure.match(/\b(?:PR_NOT_MERGED|PR_MISSING|VERIFY_MERGE_BLOCKER):\s*([A-Z]+-\d+)\b/i)?.[1];
+  return (explicit || context["current_story_id"] || "").trim();
+}
+
+async function fetchFreshPrStateName(
+  prUrl: string,
+  storyId: string,
+  context: Record<string, string>,
+  runId: string,
+  stepId: string,
+): Promise<string> {
+  try {
+    const { fetchPrState } = await import("./steps/07-verify/pr-comments.js");
+    const state = await fetchPrState(prUrl, context["repo_full"] || "");
+    if (state) {
+      context["pr_check_state"] = state.checksStatus || "";
+      context["pr_mergeable"] = state.mergeable || "";
+      context["pr_merge_state_status"] = state.mergeStateStatus || "";
+      await recordLiveObservation({
+        runId,
+        stepId,
+        storyId,
+        checkId: "verify.pr_state.fresh",
+        label: "Verify PR merge state",
+        status: state.state === "MERGED" ? "pass" : "blocked",
+        summary: `PR state ${state.state}`,
+        detail: `PR state: ${state.state}, checks: ${state.checksStatus || "unknown"}, mergeable: ${state.mergeable || "unknown"}, mergeStateStatus: ${state.mergeStateStatus || "unknown"}`,
+        github: {
+          prUrl,
+          state: state.state,
+          checksStatus: state.checksStatus || "",
+          mergeable: state.mergeable || "",
+          mergeStateStatus: state.mergeStateStatus || "",
+          actionableComments: 0,
+          totalComments: state.comments?.length || 0,
+        },
+      });
+      return state.state || "UNKNOWN";
+    }
+  } catch (e) {
+    logger.warn(`[verify-pr-state] Fresh PR state check failed for ${storyId}: ${String(e).slice(0, 180)}`, { runId });
+  }
+  invalidatePRStateCache(prUrl);
+  return getPRState(prUrl);
 }
 
 async function routeVerifyScopeFailureToImplement(
@@ -901,7 +1495,7 @@ async function routeVerifyScopeFailureToImplement(
     return;
   }
 
-  await pgRun("UPDATE stories SET status = 'pending', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [newRetry, failure, now(), retryStory.id]);
+  await pgRun("UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [newRetry, failure, now(), retryStory.id]);
   await updateRunContext(verifyStep.run_id, context);
   const loopStep = await findLoopStep(verifyStep.run_id);
   if (loopStep?.id) await setStepStatus(loopStep.id, "pending");
@@ -983,12 +1577,21 @@ function qualityFailureFingerprint(failure: string): string {
 }
 
 function runSystemSmokeGate(repoPath: string, runId: string, stepId: string): { ok: boolean; output: string; failure: string; infraFailure: boolean } {
-  const smokeScript = path.join(os.homedir(), ".openclaw", "setfarm-repo", "scripts", "smoke-test.mjs");
+  const smokeScript = resolvePlatformScript("smoke-test.mjs");
   if (!repoPath || !fs.existsSync(repoPath) || !fs.existsSync(smokeScript)) {
     return { ok: true, output: "skip (smoke script or repo missing)", failure: "", infraFailure: false };
   }
 
   try {
+    const buildFresh = ensureSmokeBuildFresh(repoPath, {
+      runId,
+      stepId,
+      buildCommand: "npm run build",
+      logPrefix: "system-smoke-prebuild",
+    });
+    if (!buildFresh.ok) {
+      return { ok: false, output: "", failure: buildFresh.failure, infraFailure: false };
+    }
     logger.info(`[system-smoke-gate] Running smoke-test.mjs`, { runId, stepId });
     const output = execFileSync("node", [smokeScript, repoPath], {
       cwd: repoPath,
@@ -1193,6 +1796,14 @@ export async function routeQualityFailureToImplement(
     return true;
   }
 
+  const fingerprint = qualityFailureFingerprint(failure);
+  const priorFingerprint = context["quality_failure_fingerprint"] || "";
+  const repeatCount = priorFingerprint === fingerprint
+    ? (parseInt(context["quality_failure_repeat_count"] || "0", 10) || 0) + 1
+    : 1;
+  context["quality_failure_fingerprint"] = fingerprint;
+  context["quality_failure_repeat_count"] = String(repeatCount);
+
   const existingActiveFix = await pgGet<{ id: string; story_id: string }>(
     "SELECT id, story_id FROM stories WHERE run_id = $1 AND story_id LIKE 'QA-FIX-%' AND status IN ('pending','running') ORDER BY story_index DESC LIMIT 1",
     [step.run_id],
@@ -1203,13 +1814,57 @@ export async function routeQualityFailureToImplement(
     [step.run_id],
   );
   const existingFixCountNum = parseInt(existingFixCount?.cnt || "0", 10) || 0;
-  const fingerprint = qualityFailureFingerprint(failure);
-  const priorFingerprint = context["quality_failure_fingerprint"] || "";
-  const repeatCount = priorFingerprint === fingerprint
-    ? (parseInt(context["quality_failure_repeat_count"] || "0", 10) || 0) + 1
-    : 1;
-  context["quality_failure_fingerprint"] = fingerprint;
-  context["quality_failure_repeat_count"] = String(repeatCount);
+
+  const routeDecision = routeDownstreamQualityFailure({
+    runId: step.run_id,
+    stepId: step.step_id,
+    failure,
+    currentStoryId: context["current_story_id"] || "",
+    hasMachineEvidence: /\b(smoke|screenshot|QA_JSON|FINAL_TEST|IMPLEMENT_EVIDENCE|runtime|browser|interaction)\b/i.test(failure),
+    existingRepairCount: existingFixCountNum,
+    repeatedFailureCount: repeatCount,
+  });
+  context["failure_route_action"] = routeDecision.action;
+  context["failure_route_category"] = routeDecision.category;
+  context["failure_route_policy"] = routeDecision.policy;
+  context["failure_route_reason"] = routeDecision.reason;
+
+  if (!routeDecision.qaFixAllowed) {
+    if (routeDecision.action === "re_claim") {
+      const routed = await routeOriginalStoryQualityFailureToImplement(
+        step,
+        context,
+        context["current_story_id"] || "",
+        failure,
+        routeDecision.category,
+        routeDecision.reason,
+      );
+      if (routed) return true;
+    }
+
+    const reason = [
+      "QUALITY_FAILURE_ROUTER_BLOCKED_QA_FIX:",
+      routeDecision.reason,
+      `Route action: ${routeDecision.action}`,
+      `Failure category: ${routeDecision.category}`,
+      "",
+      "Failure report:",
+      failure.slice(0, 3000),
+    ].join("\n");
+    context["previous_failure"] = reason;
+    context["failure_category"] = routeDecision.category;
+    context["failure_suggestion"] = routeDecision.action === "re_claim"
+      ? "Retry the original implementation story with orchestrator-owned evidence instead of creating QA-FIX."
+      : "Treat this as a platform/setup failure and inspect Setfarm gates before retrying.";
+    await updateRunContext(step.run_id, context);
+    await failStepWithOutput(step.id, reason);
+    await failRun(step.run_id, true);
+    const wfId = await _getWorkflowId(step.run_id);
+    emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: reason.slice(0, 500) });
+    emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: routeDecision.category });
+    logger.error(`[quality-router] Blocked QA-FIX routing for ${step.step_id}: ${routeDecision.category}: ${routeDecision.reason}`, { runId: step.run_id });
+    return true;
+  }
 
   if (!existingActiveFix && (existingFixCountNum >= QA_FIX_MAX_STORIES || repeatCount > QA_FIX_REPEAT_LIMIT)) {
     const reason = [
@@ -1276,9 +1931,22 @@ export async function routeQualityFailureToImplement(
     const n = existingFixCountNum + 1;
     fixStoryId = `QA-FIX-${String(n).padStart(3, "0")}`;
     const storyIndex = (nextMeta?.max_idx ?? -1) + 1;
-    await pgRun(
-      `INSERT INTO stories (id, run_id, story_index, story_id, title, description, acceptance_criteria, status, retry_count, max_retries, depends_on, scope_files, shared_files, scope_description, created_at, updated_at, output)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', 0, 4, $8, $9, $10, $11, $12, $12, $13)`,
+    const insertedFix = await pgGet<{ id: string; story_id: string }>(
+      `INSERT INTO stories (id, run_id, story_index, story_id, title, description, acceptance_criteria, status, retry_count, max_retries, depends_on, scope_files, shared_files, scope_description, created_at, updated_at, output, quality_failure_fingerprint)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', 0, 4, $8, $9, $10, $11, $12, $12, $13, $14)
+       ON CONFLICT (run_id, story_id) WHERE status IN ('pending', 'running')
+       DO UPDATE SET
+         title = EXCLUDED.title,
+         description = EXCLUDED.description,
+         acceptance_criteria = EXCLUDED.acceptance_criteria,
+         output = EXCLUDED.output,
+         depends_on = COALESCE(stories.depends_on, EXCLUDED.depends_on),
+         scope_files = COALESCE(stories.scope_files, EXCLUDED.scope_files),
+         shared_files = COALESCE(stories.shared_files, EXCLUDED.shared_files),
+         scope_description = EXCLUDED.scope_description,
+         quality_failure_fingerprint = EXCLUDED.quality_failure_fingerprint,
+         updated_at = EXCLUDED.updated_at
+       RETURNING id, story_id`,
       [
         crypto.randomUUID(),
         step.run_id,
@@ -1293,8 +1961,10 @@ export async function routeQualityFailureToImplement(
         scopeDescription,
         now(),
         failure,
+        fingerprint,
       ],
     );
+    if (insertedFix?.story_id) fixStoryId = insertedFix.story_id;
   } else {
     await pgRun(
       `UPDATE stories
@@ -1306,8 +1976,9 @@ export async function routeQualityFailureToImplement(
            scope_files = COALESCE(scope_files, $6),
            shared_files = COALESCE(shared_files, $7),
            scope_description = $8,
-           updated_at = $9
-       WHERE id = $10`,
+           quality_failure_fingerprint = $9,
+           updated_at = $10
+       WHERE id = $11`,
       [
         title,
         description,
@@ -1317,6 +1988,7 @@ export async function routeQualityFailureToImplement(
         scopeFiles.length > 0 ? JSON.stringify(scopeFiles) : null,
         scopeFiles.length > 0 ? JSON.stringify(scopeFiles) : null,
         scopeDescription,
+        fingerprint,
         now(),
         existingActiveFix.id,
       ],
@@ -1353,6 +2025,120 @@ export async function routeQualityFailureToImplement(
   emitEvent({ ts: now(), event: "story.retry", runId: step.run_id, workflowId: wfId, stepId: "implement", storyId: fixStoryId, detail: `Created ${fixStoryId} from ${step.step_id} failure` });
   emitEvent({ ts: now(), event: "step.pending", runId: step.run_id, workflowId: wfId, stepId: "implement", detail: `Downstream quality failure routed to ${fixStoryId}` });
   logger.warn(`[quality-fix] Routed ${step.step_id} failure back to implement via ${fixStoryId}`, { runId: step.run_id });
+  return true;
+}
+
+async function routeOriginalStoryQualityFailureToImplement(
+  step: { id: string; run_id: string; step_id: string; step_index: number; agent_id: string },
+  context: Record<string, string>,
+  storyId: string,
+  failure: string,
+  category: string,
+  routeReason: string,
+): Promise<boolean> {
+  const normalizedStoryId = String(storyId || "").trim();
+  if (!normalizedStoryId) return false;
+
+  const retryStory = await pgGet<{ id: string; story_id: string; title: string | null; status: string; retry_count: number; max_retries: number; story_branch: string | null }>(
+    "SELECT id, story_id, title, status, retry_count, max_retries, story_branch FROM stories WHERE run_id = $1 AND story_id = $2 AND status IN ('pending','running','done','verified','skipped') LIMIT 1",
+    [step.run_id, normalizedStoryId],
+  );
+  if (!retryStory) return false;
+
+  const loopStep = await pgGet<{ id: string; step_index: number; status: string }>(
+    "SELECT id, step_index, status FROM steps WHERE run_id = $1 AND step_id = 'implement' AND type = 'loop' LIMIT 1",
+    [step.run_id],
+  );
+  if (!loopStep) return false;
+
+  const retryFailure = [
+    `DOWNSTREAM_QUALITY_FAILURE from ${step.step_id}:`,
+    routeReason,
+    "",
+    failure,
+  ].join("\n").slice(0, 12000);
+  const newRetry = (retryStory.retry_count || 0) + 1;
+
+  context["previous_failure"] = retryFailure;
+  context["failure_category"] = category || "DOWNSTREAM_QUALITY_FAILURE";
+  context["failure_suggestion"] = "Retry the original implementation story with orchestrator-owned evidence. Do not create a QA-FIX story.";
+  context["current_story_id"] = retryStory.story_id;
+  context["current_story_title"] = retryStory.title || "";
+  if (retryStory.story_branch) context["story_branch"] = retryStory.story_branch;
+  delete context["status"];
+
+  if (retryStory.status === "pending" || retryStory.status === "running") {
+    await updateRunContext(step.run_id, context);
+    await pgBegin(async (sql) => {
+      await sql.unsafe(
+        "UPDATE steps SET status = 'waiting', current_story_id = NULL, updated_at = $1 WHERE id = $2",
+        [now(), step.id],
+      );
+      await sql.unsafe(
+        "UPDATE steps SET status = CASE WHEN status = 'waiting' THEN 'pending' ELSE status END, current_story_id = COALESCE(current_story_id, $1), updated_at = $2 WHERE id = $3",
+        [retryStory.story_id, now(), loopStep.id],
+      );
+    });
+    await recordStepTransition(step.id, step.run_id, "running", "waiting", step.agent_id, "qualityFailure:originalStoryAlreadyRouted", { storyId: retryStory.story_id, fromStep: step.step_id });
+    try {
+      await pgRun(
+        "UPDATE claim_log SET outcome = 'completed', duration_ms = EXTRACT(EPOCH FROM NOW() - claimed_at::timestamptz) * 1000, diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND story_id IS NULL AND outcome IS NULL",
+        [`quality failure already routed to original story ${retryStory.story_id}`, step.run_id, step.step_id],
+      );
+    } catch (e) {
+      logger.warn(`[claim-log] Failed to close duplicate original-story quality claim: ${String(e)}`, { runId: step.run_id });
+    }
+    const wfId = await _getWorkflowId(step.run_id);
+    emitEvent({ ts: now(), event: "story.retry", runId: step.run_id, workflowId: wfId, stepId: "implement", storyId: retryStory.story_id, detail: `Duplicate downstream ${step.step_id} failure observed while original story was already ${retryStory.status}` });
+    emitEvent({ ts: now(), event: "step.pending", runId: step.run_id, workflowId: wfId, stepId: "implement", detail: `Original story ${retryStory.story_id} already routed for downstream quality failure` });
+    logger.warn(`[quality-router] Duplicate ${step.step_id} quality failure suppressed; original story ${retryStory.story_id} is already ${retryStory.status}`, { runId: step.run_id });
+    return true;
+  }
+
+  if (newRetry > (retryStory.max_retries || 0)) {
+    await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [newRetry, retryFailure, now(), retryStory.id]);
+    await updateRunContext(step.run_id, context);
+    await setStepStatus(loopStep.id, "failed");
+    await failStepWithOutput(step.id, retryFailure);
+    await failRun(step.run_id, true);
+    scheduleRunCronTeardown(step.run_id);
+    const wfId = await _getWorkflowId(step.run_id);
+    emitEvent({ ts: now(), event: "story.failed", runId: step.run_id, workflowId: wfId, stepId: "implement", storyId: retryStory.story_id, detail: retryFailure.slice(0, 500) });
+    emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: category || "DOWNSTREAM_QUALITY_FAILURE" });
+    logger.error(`[quality-router] Original story retry exhausted for ${retryStory.story_id} after ${step.step_id} failure`, { runId: step.run_id });
+    return true;
+  }
+
+  await updateRunContext(step.run_id, context);
+  await pgBegin(async (sql) => {
+    await sql.unsafe(
+      "UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, retry_count = $1, output = $2, pr_url = NULL, merge_status = NULL, updated_at = $3 WHERE id = $4",
+      [newRetry, retryFailure, now(), retryStory.id],
+    );
+    await sql.unsafe(
+      "UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = $1 WHERE id = $2",
+      [now(), loopStep.id],
+    );
+    await sql.unsafe(
+      "UPDATE steps SET status = 'waiting', retry_count = 0, current_story_id = NULL, updated_at = $1 WHERE run_id = $2 AND step_index > $3",
+      [now(), step.run_id, loopStep.step_index],
+    );
+  });
+
+  await recordStepTransition(loopStep.id, step.run_id, loopStep.status, "pending", undefined, "qualityFailure:routeOriginalStory", { storyId: retryStory.story_id, fromStep: step.step_id });
+  await recordStepTransition(step.id, step.run_id, "running", "waiting", step.agent_id, "qualityFailure:routeOriginalStory", { storyId: retryStory.story_id });
+  try {
+    await pgRun(
+      "UPDATE claim_log SET outcome = 'completed', duration_ms = EXTRACT(EPOCH FROM NOW() - claimed_at::timestamptz) * 1000, diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND story_id IS NULL AND outcome IS NULL",
+      [`quality failure routed to original story ${retryStory.story_id}`, step.run_id, step.step_id],
+    );
+  } catch (e) {
+    logger.warn(`[claim-log] Failed to close routed original-story quality claim: ${String(e)}`, { runId: step.run_id });
+  }
+  const wfId = await _getWorkflowId(step.run_id);
+  emitEvent({ ts: now(), event: "story.retry", runId: step.run_id, workflowId: wfId, stepId: "implement", storyId: retryStory.story_id, detail: `Downstream ${step.step_id} failure routed to original story` });
+  emitEvent({ ts: now(), event: "step.pending", runId: step.run_id, workflowId: wfId, stepId: "implement", detail: `Downstream quality failure routed to original story ${retryStory.story_id}` });
+  logger.warn(`[quality-router] Routed ${step.step_id} failure back to original story ${retryStory.story_id}`, { runId: step.run_id });
   return true;
 }
 
@@ -1407,6 +2193,7 @@ function isSuccessfulStepOutput(output: string): boolean {
 
 function sanitizedRetryFailureText(text: string): string {
   if (!text.trim()) return "";
+  if (/^IMPLEMENT_PRE_DELTA_CHECK_VIOLATION:/i.test(text.trim())) return "";
   const status = normalizedStatusFromStepOutput(text);
   if (status !== "done" && status !== "skip") return sanitizeDesignMismatchFeedback(text);
 
@@ -1515,6 +2302,10 @@ function markStorySupervised(context: Record<string, string>, storyId: string): 
   context[SUPERVISED_STORY_IDS_CONTEXT_KEY] = Array.from(ids).sort().join(",");
 }
 
+function isStorySupervised(context: Record<string, string>, storyId: string): boolean {
+  return parseStoryIdSet(context[SUPERVISED_STORY_IDS_CONTEXT_KEY]).has(storyId);
+}
+
 function clearStorySupervised(context: Record<string, string>, storyId: string): void {
   const ids = parseStoryIdSet(context[SUPERVISED_STORY_IDS_CONTEXT_KEY]);
   ids.delete(storyId);
@@ -1555,6 +2346,263 @@ async function findUnsupervisedDoneStory(runId: string, context: Record<string, 
   return rows.find((story) => !supervised.has(story.story_id));
 }
 
+function findOpenSupervisorStateIssues(context: Record<string, string>, runId: string): string[] {
+  const workdirs = [...new Set([context["story_workdir"], context["repo"]].filter(Boolean))];
+  const issues: string[] = [];
+  for (const workdir of workdirs) {
+    try {
+      const state = readSupervisorState(workdir, runId);
+      for (const [storyId, story] of Object.entries(state.stories || {})) {
+        const resolvedIds = new Set(story.resolved || []);
+        const isActiveFinding = (itemId: string): boolean => {
+          const evidence = state.evidence?.[itemId];
+          if (!evidence) return false;
+          if (resolvedIds.has(itemId)) return false;
+          return evidence.status !== "passed";
+        };
+        for (const itemId of (story.openBlockers || []).filter(isActiveFinding)) issues.push(`${storyId}:${itemId}`);
+        for (const itemId of (story.warnings || []).filter(isActiveFinding)) issues.push(`${storyId}:${itemId}`);
+      }
+    } catch (e) {
+      logger.warn(`[supervise-each] Could not inspect supervisor state in ${workdir}: ${String(e).slice(0, 150)}`, { runId });
+    }
+  }
+  return [...new Set(issues)];
+}
+
+function findBlockingSupervisorEvidenceForStory(
+  workdirs: string[],
+  runId: string,
+  storyId: string,
+  storyBranch?: string | null,
+): { category: string; message: string; detail: string } | null {
+  for (const workdir of expandSupervisorEvidenceWorkdirs(workdirs, storyBranch || undefined)) {
+    try {
+      if (!isUsableSupervisorEvidenceWorkdir(workdir)) {
+        logger.warn(`[supervise-each] Ignoring stale supervisor evidence from inactive workdir ${workdir} for ${storyId}`, { runId });
+        continue;
+      }
+
+      const visual = readSupervisorVisualResult(workdir, runId);
+      if (visual && !visual.skipped && !visual.ok && (!visual.storyId || visual.storyId === storyId)) {
+        const blockerIssues = visual.issues
+          .filter((issue) => issue.severity === "blocker")
+          .slice(0, 8)
+          .map((issue) => `- [${issue.severity}] ${issue.type} ${issue.viewport} ${issue.route}: ${issue.detail}`);
+        return {
+          category: "SUPERVISOR_VISUAL_QA_BLOCKED",
+          message: `Supervisor visual QA blocked ${storyId}`,
+          detail: [
+            `STATUS: retry`,
+            `SUPERVISOR_VISUAL_QA_BLOCKED: ${storyId}`,
+            `WORKDIR: ${workdir}`,
+            blockerIssues.length > 0 ? blockerIssues.join("\n") : "- Visual QA failed with no blocker details.",
+            visual.screenshots.length > 0 ? `SCREENSHOTS: ${visual.screenshots.slice(0, 6).join(", ")}` : "",
+          ].filter(Boolean).join("\n"),
+        };
+      }
+
+      const state = readSupervisorState(workdir, runId);
+      const story = state.stories?.[storyId];
+      const resolvedIds = new Set(story?.resolved || []);
+      const openBlockers = [...new Set(story?.openBlockers || [])].filter((itemId) => {
+        const evidence = state.evidence?.[itemId];
+        if (!evidence) return false;
+        if (resolvedIds.has(itemId)) return false;
+        return evidence.status !== "passed";
+      });
+      if (openBlockers.length > 0) {
+        const blockerLines = openBlockers.slice(0, 8).map((itemId) => {
+          const evidence = state.evidence?.[itemId];
+          return `- ${itemId}: ${evidence?.message || evidence?.status || "open supervisor blocker"}`;
+        });
+        return {
+          category: "SUPERVISOR_EVIDENCE_BLOCKED",
+          message: `Supervisor evidence blocked ${storyId}`,
+          detail: [
+            `STATUS: retry`,
+            `SUPERVISOR_EVIDENCE_BLOCKED: ${storyId}`,
+            `WORKDIR: ${workdir}`,
+            blockerLines.length > 0 ? blockerLines.join("\n") : "- Supervisor state is blocked.",
+          ].join("\n"),
+        };
+      }
+    } catch (e) {
+      logger.warn(`[supervise-each] Could not inspect supervisor evidence in ${workdir}: ${String(e).slice(0, 150)}`, { runId });
+    }
+  }
+  return null;
+}
+
+function expandSupervisorEvidenceWorkdirs(workdirs: string[], storyBranch?: string): string[] {
+  const roots = new Set<string>();
+  const add = (candidate: string) => {
+    if (!candidate) return;
+    try {
+      roots.add(path.resolve(candidate));
+    } catch {
+      roots.add(candidate);
+    }
+  };
+
+  for (const workdir of workdirs.filter(Boolean)) {
+    add(workdir);
+    const normalized = workdir.replace(/\\/g, "/");
+    const match = normalized.match(/^(.*\/workflows\/[^/]+\/agents)\/[^/]+\/story-worktrees\/([^/]+)$/);
+    if (!match) continue;
+    const agentsRoot = match[1];
+    const branch = storyBranch || match[2];
+    try {
+      for (const agentDir of fs.readdirSync(agentsRoot)) {
+        const candidate = path.join(agentsRoot, agentDir, "story-worktrees", branch);
+        if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) add(candidate);
+      }
+    } catch {
+      // Keep direct roots; missing sibling worktrees are not fatal.
+    }
+  }
+
+  return [...roots];
+}
+
+function isUsableSupervisorEvidenceWorkdir(workdir: string): boolean {
+  try {
+    if (!workdir || !fs.existsSync(workdir) || !fs.statSync(workdir).isDirectory()) return false;
+    const sourceMarkers = [
+      "package.json",
+      "index.html",
+      "src",
+      "app",
+      "pages",
+      "ios",
+      "android",
+      "Package.swift",
+      "pyproject.toml",
+      "Cargo.toml",
+      "go.mod",
+      "pubspec.yaml",
+    ];
+    return sourceMarkers.some((marker) => fs.existsSync(path.join(workdir, marker)));
+  } catch {
+    return false;
+  }
+}
+
+async function routeBlockingSupervisorEvidenceToImplement(params: {
+  runId: string;
+  verifyStepId: string;
+  verifyStepName: string;
+  loopStepId: string;
+  story: {
+    id: string;
+    story_id: string;
+    title?: string;
+    retry_count?: number;
+    max_retries?: number;
+    story_branch?: string | null;
+  };
+  context: Record<string, string>;
+  workdirs: string[];
+}): Promise<boolean> {
+  const blocking = findBlockingSupervisorEvidenceForStory(
+    params.workdirs,
+    params.runId,
+    params.story.story_id,
+    params.story.story_branch,
+  );
+  if (!blocking) return false;
+
+  const story = params.story;
+  const newRetry = (story.retry_count || 0) + 1;
+  const failure = blocking.detail.slice(0, 6000);
+  params.context["previous_failure"] = failure;
+  params.context["failure_category"] = blocking.category;
+  params.context["failure_suggestion"] = "Return to the same story branch and fix the supervisor evidence blocker before verify can run. The LLM supervisor pass cannot override open visual/state evidence.";
+  params.context["current_story_id"] = story.story_id;
+  params.context["current_story_title"] = story.title || "";
+  if (story.story_branch) params.context["story_branch"] = story.story_branch;
+  clearStorySupervised(params.context, story.story_id);
+
+  const supervisorWorkdir = params.workdirs.find(Boolean) || "";
+  if (supervisorWorkdir) {
+    upsertSupervisorRunMetadata({
+      workdir: supervisorWorkdir,
+      runId: params.runId,
+      scope: "story",
+      status: "blocked",
+      mainRepo: params.context["repo"] || "",
+      storyId: story.story_id,
+      storyWorkdir: supervisorWorkdir,
+    });
+    markSupervisorInterventions({
+      workdir: supervisorWorkdir,
+      runId: params.runId,
+      storyId: story.story_id,
+      result: "sent",
+    });
+  }
+
+  await recordObservation({
+    runId: params.runId,
+    stepId: params.verifyStepName,
+    storyId: story.story_id,
+    phase: params.verifyStepName,
+    checkId: "verify_each.supervisor_evidence_blocked",
+    status: "fail",
+    label: "Supervisor evidence blocked verify",
+    detail: failure.slice(0, 1800),
+  });
+
+  if (newRetry > (story.max_retries || 0)) {
+    await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [newRetry, failure, now(), story.id]);
+    await updateRunContext(params.runId, params.context);
+    await setStepStatus(params.loopStepId, "failed");
+    await failRun(params.runId, true);
+    const wfId = await getWorkflowId(params.runId);
+    emitEvent({ ts: now(), event: "story.failed", runId: params.runId, workflowId: wfId, stepId: params.verifyStepName, storyId: story.story_id, detail: blocking.message });
+    emitEvent({ ts: now(), event: "run.failed", runId: params.runId, workflowId: wfId, detail: blocking.message });
+    scheduleRunCronTeardown(params.runId);
+    return true;
+  }
+
+  await pgRun(
+    "UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, retry_count = $1, output = $2, pr_url = NULL, merge_status = NULL, updated_at = $3 WHERE id = $4",
+    [newRetry, failure, now(), story.id],
+  );
+  await updateRunContext(params.runId, params.context);
+  await setStepStatus(params.loopStepId, "pending");
+  await pgRun("UPDATE steps SET status = 'waiting', retry_count = 0, current_story_id = NULL, updated_at = $1 WHERE id = $2", [now(), params.verifyStepId]);
+  emitEvent({ ts: now(), event: "story.retry", runId: params.runId, workflowId: await getWorkflowId(params.runId), stepId: params.verifyStepName, storyId: story.story_id, detail: failure.slice(0, 500) });
+  logger.warn(`[verify] Supervisor evidence blocked ${story.story_id}; returning to implement before reviewer claim`, { runId: params.runId });
+  return true;
+}
+
+async function shouldAutoCompleteFinalSuperviseEachStep(runId: string, context: Record<string, string>): Promise<{ ok: boolean; reason: string }> {
+  const loopStatus = await pgGet<{ status: string }>(
+    "SELECT status FROM steps WHERE run_id = $1 AND type = 'loop' AND step_id = 'implement' LIMIT 1",
+    [runId],
+  );
+  if (loopStatus?.status !== "done") return { ok: false, reason: "implement loop is not done" };
+
+  const storyCounts = await pgGet<{ total: string; active: string; unverified: string }>(
+    `SELECT
+       COUNT(*)::text AS total,
+       COUNT(*) FILTER (WHERE status IN ('pending','running','done'))::text AS active,
+       COUNT(*) FILTER (WHERE status NOT IN ('verified'))::text AS unverified
+     FROM stories
+     WHERE run_id = $1`,
+    [runId],
+  );
+  if (parseInt(storyCounts?.total || "0", 10) === 0) return { ok: false, reason: "no stories exist" };
+  if (parseInt(storyCounts?.active || "0", 10) > 0) return { ok: false, reason: "story work remains" };
+  if (parseInt(storyCounts?.unverified || "0", 10) > 0) return { ok: false, reason: "not all stories are verified" };
+
+  const openIssues = findOpenSupervisorStateIssues(context, runId);
+  if (openIssues.length > 0) return { ok: false, reason: `open supervisor issue(s): ${openIssues.slice(0, 8).join(", ")}` };
+
+  return { ok: true, reason: "all story supervisors passed and all stories are verified" };
+}
+
 
 function formatExecFailure(e: unknown, max = 900): string {
   const err = e as any;
@@ -1586,6 +2634,20 @@ function currentGitBranch(repo: string): string {
   } catch {
     return "";
   }
+}
+
+function isVerifyRetryOutsideStoryVisualScope(
+  issues: string,
+  context: Record<string, string>,
+  storyId: string,
+): boolean {
+  if (!storyId) return false;
+  if (!/\b(visual|layout|overflow|viewport|screenshot|screen|desktop|mobile)\b/i.test(issues)) return false;
+  const repos = [
+    context["repo"] || "",
+    context["story_workdir"] || "",
+  ].filter(Boolean);
+  return repos.some((repo) => resolveStoryVisualScope(repo, storyId).skip);
 }
 
 function gitBranchExists(repo: string, branch: string): boolean {
@@ -2107,7 +3169,7 @@ function reconcileReusableDesignScreens(
   reusableScreens: Array<{ screenId: string; name: string }>,
   prd: string,
 ): {
-  screens: Array<{ screenId: string; name: string; type: string; description: string }>;
+  screens: Array<{ screenId: string; name: string; type: string; description: string; surfaceIds?: string[] }>;
   missing: string[];
   dropped: string[];
   duplicates: string[];
@@ -2127,7 +3189,7 @@ function reconcileReusableDesignScreens(
     };
   }
 
-  const screens: Array<{ screenId: string; name: string; type: string; description: string }> = [];
+  const screens: Array<{ screenId: string; name: string; type: string; description: string; surfaceIds?: string[] }> = [];
   const missing: string[] = [];
   const usedIds = new Set<string>();
   const duplicates: string[] = [];
@@ -2146,6 +3208,7 @@ function reconcileReusableDesignScreens(
       name: chosen.name || surface.name,
       type: "page",
       description: surface.description || `${surface.name} Product Surface`,
+      surfaceIds: [surface.surfaceId],
     });
   }
 
@@ -2470,8 +3533,13 @@ async function injectStoryContext(
     retryCount: nextStory.retry_count,
     maxRetries: nextStory.max_retries,
   };
-  const retryFailureText = nextStory.output && (nextStory.abandoned_count > 0 || nextStory.retry_count > 0)
-    ? sanitizedRetryFailureText(nextStory.output)
+  const retryFailureText = nextStory.output
+    ? (() => {
+        const isQualityFixStory = /^QA-FIX-\d+$/i.test(nextStory.story_id || "");
+        return (isQualityFixStory || nextStory.abandoned_count > 0 || nextStory.retry_count > 0)
+          ? sanitizedRetryFailureText(nextStory.output)
+          : "";
+      })()
     : "";
 
   const allStories = await getStories(step.run_id);
@@ -2495,6 +3563,9 @@ async function injectStoryContext(
       "SELECT scope_files, shared_files, scope_description, file_skeletons, implementation_contract, scope_targets, shared_edit_requests, depends_on FROM stories WHERE id = $1",
       [nextStory.id]
     );
+    delete context["story_scope_files"];
+    delete context["story_shared_files"];
+    delete context["scope_reminder"];
     const baseRepo = context["repo"] || context["REPO"] || "";
     if (scopeRow && baseRepo) {
       const implementContext = assembleImplementContext({
@@ -2542,8 +3613,12 @@ async function injectStoryContext(
         const contract = JSON.parse(scopeRow.implementation_contract);
         if (contract && typeof contract === "object" && Object.keys(contract).length > 0) {
           context["story_implementation_contract"] = JSON.stringify(contract, null, 2);
+        } else {
+          delete context["story_implementation_contract"];
         }
       } catch (e) { logger.debug(`[context] Malformed implementation_contract JSON: ${String(e).slice(0, 80)}`); }
+    } else {
+      delete context["story_implementation_contract"];
     }
     // file_skeletons: function signatures from stories step to guide implementation
     if (scopeRow?.file_skeletons) {
@@ -2591,11 +3666,19 @@ async function injectStoryContext(
     }
   }
 
+  const retryPatchFailureText = collectRetryWorktreePatchFeedback(
+    context["repo"] || context["REPO"] || "",
+    context["story_workdir"] || "",
+    story.storyId,
+    [pipelineStoryBranch, context["story_branch"]],
+  );
+  const combinedRetryFailure = mergeRetryFailureTexts([retryFailureText, retryPatchFailureText]);
+
   // FIX: Clear stale story-specific context from previous story to prevent cross-contamination
   context["pr_url"] = "";
   // ISSUE-1: Restore pipeline-set story_branch (from worktree) instead of blanking it
   context["story_branch"] = pipelineStoryBranch;
-  context["verify_feedback"] = retryFailureText;
+  context["verify_feedback"] = combinedRetryFailure;
 
   // Inject source tree so agent knows existing file structure (prevents duplicate dirs)
   const repoPath = context["repo"] || context["REPO"] || "";
@@ -2719,10 +3802,10 @@ async function injectStoryContext(
   // v1.5.50: Inject previous_failure from prior abandon/verify-retry output.
   // Persist this before the developer claim is rendered so retry feedback cannot
   // be lost between verify_each and the next story attempt.
-  if (retryFailureText) {
+  if (combinedRetryFailure) {
     const { classifyError } = await import("./error-taxonomy.js");
-    const classified = classifyError(retryFailureText);
-    context["previous_failure"] = retryFailureText;
+    const classified = classifyError(combinedRetryFailure);
+    context["previous_failure"] = combinedRetryFailure;
     context["failure_category"] = classified.category;
     context["failure_suggestion"] = classified.suggestion;
   }
@@ -2777,6 +3860,10 @@ async function injectVerifyContext(
     return false;
   }
 
+  if (isStorySupervised(context, nextUnverified.story_id)) {
+    clearVerifiedStoryFailureContext(context);
+  }
+
   if (nextUnverified.output) {
     const storyOutput = parseOutputKeyValues(nextUnverified.output);
     for (const [key, value] of Object.entries(storyOutput)) {
@@ -2799,6 +3886,17 @@ async function injectVerifyContext(
       await updateRunContext(step.run_id, context);
       return false;
     }
+  }
+  if (await routeBlockingSupervisorEvidenceToImplement({
+    runId: step.run_id,
+    verifyStepId: step.id,
+    verifyStepName: step.step_id,
+    loopStepId: loopStepForVerify.id,
+    story: nextUnverified,
+    context,
+    workdirs: [context["story_workdir"], context["repo"]],
+  })) {
+    return false;
   }
   if (step.retry_count === 0 && context["previous_failure"]) {
     const staleImplementFailure = /\b(RUNTIME_BRIDGE_MISSING|BUILD_FAILED|TEST_FAILED|SCOPE_BLEED|NO_WORK|SCOPE_FILE_MISSING|PRODUCT_SUPERVISOR_IMPLEMENT_BLOCKED)\b/i
@@ -2887,11 +3985,15 @@ async function injectSuperviseEachContext(
   }
 
   const storyBranch = (story.story_branch || `${step.run_id.slice(0, 8)}-${story.story_id}`).toLowerCase();
+  const storyDiffBase = (lcCheck.mergeStrategy === "pr-each" || lcCheck.verifyEach)
+    ? "main"
+    : (context["story_base_ref"] || context["branch"] || "main");
   context["supervisor_scope"] = "story";
   context["current_story_id"] = story.story_id;
   context["current_story_title"] = story.title || "";
   if (story.pr_url) context["pr_url"] = story.pr_url;
   context["story_branch"] = storyBranch;
+  context["story_diff_base"] = storyDiffBase;
 
   const workdir = ensureStoryAuditWorkdir(context, storyBranch, agentId, step.run_id, story.story_id, "supervise_each");
   if (!workdir) {
@@ -3069,6 +4171,48 @@ async function claimSingleStep(
     await closeSingleStepHandoff("infra_retry", "supervise_each story worktree was missing; no supervisor spawned");
     return { found: false };
   }
+  if (step.step_id === "supervise" && context["supervisor_scope"] === "final-product") {
+    const finalSupervise = await shouldAutoCompleteFinalSuperviseEachStep(step.run_id, context);
+    if (finalSupervise.ok) {
+      const output = [
+        "STATUS: done",
+        "SUPERVISOR_DECISION: pass",
+        `AC_COVERAGE: ${finalSupervise.reason}`,
+        "CHECKS: deterministic supervise-each final gate; no LLM supervisor spawned",
+      ].join("\n");
+      const done = await pgRun(
+        "UPDATE steps SET status = 'done', output = $1, current_story_id = NULL, updated_at = $2 WHERE id = $3 AND status = 'running'",
+        [output, now(), step.id],
+      );
+      if (done.changes > 0) {
+        await closeSingleStepHandoff("completed", "supervise_each deterministic final gate completed");
+        await recordStepTransition(step.id, step.run_id, "running", "done", agentId, "superviseEach:final-auto-complete");
+        await refreshRunContractSafe(step.run_id, `step.${step.step_id}.done`, context);
+        emitEvent({
+          ts: now(),
+          event: "step.done",
+          runId: step.run_id,
+          workflowId: await getWorkflowId(step.run_id),
+          stepId: step.step_id,
+          agentId,
+          detail: "supervise_each deterministic final gate completed",
+        });
+        await recordObservation({
+          runId: step.run_id,
+          stepId: step.step_id,
+          phase: step.step_id,
+          checkId: "supervise_each.final_auto_complete",
+          status: "pass",
+          label: "Supervise-each final gate completed deterministically",
+          detail: finalSupervise.reason,
+        });
+        await cleanupProjectEphemera(step.run_id, `step-complete:${step.step_id}:final-auto`, context);
+        await advancePipeline(step.run_id);
+      }
+      return { found: false };
+    }
+    logger.info(`[supervise-each] Final supervisor remains agent-owned: ${finalSupervise.reason}`, { runId: step.run_id });
+  }
 
   if (!await injectVerifyContext(step, context, db, agentId)) {
     await pgRun(
@@ -3162,6 +4306,7 @@ async function claimSingleStep(
         const formatted = formatPrCommentsForAgent(state);
         context["pr_comments"] = formatted || "";
         context["pr_check_state"] = state.checksStatus || "";
+        context["pr_created_at"] = state.createdAt || "";
         context["pr_mergeable"] = state.mergeable || "";
         context["pr_merge_state_status"] = state.mergeStateStatus || "";
         hasReviewSignal =
@@ -3193,6 +4338,27 @@ async function claimSingleStep(
     }
     if (hasReviewSignal) {
       logger.info(`[review-delay] PR already has review/check signal — skipping wait`, { runId: step.run_id, stepId: step.step_id });
+    }
+    const storyIdForReviewSignal = context["current_story_id"] || "";
+    if (storyIdForReviewSignal && context["pr_comments"]) {
+      const prReviewCommentsFailure = await detectOpenPrReviewCommentFailure(
+        reviewPrUrl,
+        storyIdForReviewSignal,
+        context,
+        step.run_id,
+        step.step_id,
+      );
+      if (prReviewCommentsFailure) {
+        await routeVerifyScopeFailureToImplement(step, context, storyIdForReviewSignal, prReviewCommentsFailure, {
+          category: "PR_REVIEW_COMMENTS_OPEN",
+          suggestion: "Address every actionable PR review comment in the same story branch. Do not spawn reviewer for already-known actionable review feedback.",
+        });
+        await pgRun("UPDATE steps SET status = 'waiting', updated_at = $1 WHERE id = $2 AND status = 'running'", [now(), step.id]);
+        await recordStepTransition(step.id, step.run_id, "running", "waiting", agentId, "verify-pr-comments-preclaim");
+        await closeSingleStepHandoff("completed", "actionable PR review comments routed to implement before reviewer spawn");
+        logger.warn(`[verify-pr-comments] ${storyIdForReviewSignal} has actionable PR review comments — routed before reviewer spawn`, { runId: step.run_id });
+        return { found: false };
+      }
     }
     // Delay passed — clean up marker so a future retry starts fresh
     delete context["verify_pending_since"];
@@ -3267,6 +4433,13 @@ async function claimSingleStep(
             return { found: false };
           }
         } catch (_pce) {
+          const preClaimError = `PRECLAIM_BLOCKED [${_stepModule.id}]: ${String(_pce).slice(0, 1200)}`;
+          if (HARD_PRECLAIM_STEPS.has(step.step_id)) {
+            logger.warn(`[step-module] ${_stepModule.id} preClaim failed as hard gate: ${String(_pce).slice(0, 200)}`, { runId: step.run_id });
+            await failStep(step.id, preClaimError);
+            await closeSingleStepHandoff("failed", preClaimError);
+            return { found: false };
+          }
           logger.warn(`[step-module] ${_stepModule.id} preClaim failed (non-fatal): ${String(_pce).slice(0, 200)}`, { runId: step.run_id });
         }
       }
@@ -3616,6 +4789,60 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
       const runIdPrefix = step.run_id.slice(0, 8);
       await autoCompleteStoriesWithPRs(step, runIdPrefix, context, null);
 
+      if (isPrEach && isOpenPrDeliveryBlockerContext(context)) {
+        const blockedStoryId = prDeliveryBlockerStoryId(context);
+        if (blockedStoryId) {
+          const blockedStory = await pgGet<{ status: string }>(
+            "SELECT status FROM stories WHERE run_id = $1 AND story_id = $2 LIMIT 1",
+            [step.run_id, blockedStoryId],
+          );
+          if (blockedStory?.status === "verified") {
+            clearVerifiedStoryFailureContext(context);
+            delete context["current_story_id"];
+            delete context["current_story_title"];
+            delete context["current_story"];
+            delete context["pr_url"];
+            delete context["story_branch"];
+            await updateRunContext(step.run_id, context);
+            logger.info(`[pr-each] Cleared stale PR delivery blocker for verified story ${blockedStoryId}`, { runId: step.run_id });
+          }
+        }
+      }
+
+      if (isPrEach && isOpenPrDeliveryBlockerContext(context)) {
+        const activeRetriedForDeliveryBlocker = await pgGet<{ cnt: string }>(
+          "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status IN ('pending', 'running') AND retry_count > 0",
+          [step.run_id],
+        );
+        const activeQaFixForDeliveryBlocker = await pgGet<{ cnt: string }>(
+          "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND story_id LIKE 'QA-FIX-%' AND status IN ('pending', 'running')",
+          [step.run_id],
+        );
+        if (
+          parseInt(activeRetriedForDeliveryBlocker?.cnt || "0", 10) === 0
+          && parseInt(activeQaFixForDeliveryBlocker?.cnt || "0", 10) === 0
+        ) {
+          const blockedStoryId = prDeliveryBlockerStoryId(context);
+          const verifyStepName = loopConfig.verifyStep || "verify";
+          await pgRun(
+            "UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = $1 WHERE run_id = $2 AND step_id = $3 AND status IN ('waiting','done','pending','running')",
+            [now(), step.run_id, verifyStepName],
+          );
+          await recordGateObservation({
+            runId: step.run_id,
+            stepId: step.step_id,
+            storyId: blockedStoryId,
+            checkId: "implement.pr_each_delivery_blocker",
+            label: "PR-each delivery blocker",
+            status: "blocked",
+            summary: context["failure_category"] || "Open verify/PR delivery blocker",
+            detail: String(context["previous_failure"] || context["verify_feedback"] || "").slice(0, 1500),
+          });
+          logger.warn(`[pr-each] Blocking new story claim while verify delivery blocker is open: ${context["failure_category"] || "unknown"} ${blockedStoryId}`, { runId: step.run_id });
+          return { found: false };
+        }
+      }
+
       // pr-each means strict serial delivery: a story with status=done must be
       // reviewed, fixed, merged into main, and marked verified before the next
       // story can be claimed. This prevents US-002/US-003 from branching from a
@@ -3640,6 +4867,9 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
           context["current_story_title"] = awaitingSupervisor.title;
           if (awaitingSupervisor.pr_url) context["pr_url"] = awaitingSupervisor.pr_url;
           if (awaitingSupervisor.story_branch) context["story_branch"] = awaitingSupervisor.story_branch;
+          context["story_diff_base"] = (loopConfig.mergeStrategy === "pr-each" || loopConfig.verifyEach)
+            ? "main"
+            : (context["story_base_ref"] || context["branch"] || "main");
           await updateRunContext(step.run_id, context);
           await pgRun(
             "UPDATE steps SET status = 'pending', current_story_id = $1, updated_at = $2 WHERE run_id = $3 AND step_id = $4 AND status IN ('waiting','done','pending')",
@@ -4118,7 +5348,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
           scheduleRunCronTeardown(step.run_id);
         } else {
           // First occurrence — retry story (possible WAL lag)
-          await pgRun("UPDATE stories SET status = 'pending', retry_count = retry_count + 1, output = $1, updated_at = $2 WHERE id = $3", [reason + " — retrying once", now(), nextStory.id]);
+          await pgRun("UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, retry_count = retry_count + 1, output = $1, updated_at = $2 WHERE id = $3", [reason + " — retrying once", now(), nextStory.id]);
           await pgRun("UPDATE steps SET current_story_id = NULL, updated_at = $1 WHERE id = $2", [now(), step.id]);
           if (context["repo"]) removeStoryWorktree(context["repo"], storyBranch, agentId);
           try { await pgRun("UPDATE claim_log SET outcome = 'failed', diagnostic = $1 WHERE story_id = $2 AND outcome IS NULL", [reason, nextStory.story_id]); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
@@ -4313,6 +5543,8 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
   // Fix: trim and extract only the first word from the status value.
   const rawStatus = (parsed["status"] || "").trim();
   const statusVal = (rawStatus.indexOf("\n") >= 0 ? rawStatus.slice(0, rawStatus.indexOf("\n")).trim() : rawStatus).split(/\s/)[0].toLowerCase() || undefined;
+  await recordStepOutputObservation(step, parsed, output, context);
+  await recordStackEvidencePlanObservation(step, context);
   const superviseEachConfigForStep = await getSuperviseEachConfigForStep(step);
   const supervisorDecisionVal = firstOutputWord(parsed["supervisor_decision"]);
   if (superviseEachConfigForStep && (statusVal === "retry" || supervisorDecisionVal === "block")) {
@@ -4412,7 +5644,16 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
       }
       if (_stepModule.onComplete) {
         try {
-          await _stepModule.onComplete({ runId: step.run_id, stepId: step.step_id, parsed, context, rawOutput: output });
+          let completeCurrentStoryId = "";
+          if (step.current_story_id) {
+            const completeStory = await pgGet<{ story_id: string }>(
+              "SELECT story_id FROM stories WHERE id = $1 AND run_id = $2 LIMIT 1",
+              [step.current_story_id, step.run_id],
+            );
+            completeCurrentStoryId = completeStory?.story_id || "";
+          }
+          if (!completeCurrentStoryId) completeCurrentStoryId = context["current_story_id"] || "";
+          await _stepModule.onComplete({ runId: step.run_id, stepId: step.step_id, parsed, context, currentStoryId: completeCurrentStoryId, rawOutput: output });
           await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
           logger.info(`[step-module] ${_stepModule.id} onComplete ok`, { runId: step.run_id });
         } catch (_oe) {
@@ -4493,6 +5734,16 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
     const missingFieldsMsg = checkRequiredOutputFields(step.step_id, parsed);
     if (missingFieldsMsg) {
       logger.warn(`[required-fields-guardrail] ${missingFieldsMsg}`, { runId: step.run_id, stepId: step.step_id });
+      await recordGateObservation({
+        runId: step.run_id,
+        stepId: step.step_id,
+        agentId: step.agent_id,
+        checkId: "required-output-fields",
+        label: "Required output fields",
+        status: "fail",
+        summary: "Required output fields missing",
+        detail: missingFieldsMsg,
+      });
       if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
       await failStep(stepId, missingFieldsMsg);
       return { advanced: false, runCompleted: false };
@@ -4504,18 +5755,36 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
     const testFailMsg = checkTestFailures(output);
     if (testFailMsg && step.retry_count < step.max_retries) {
       logger.warn(`Test guardrail triggered — soft retry with fix instructions`, { runId: step.run_id, stepId: step.step_id });
+      await recordGateObservation({
+        runId: step.run_id,
+        stepId: step.step_id,
+        agentId: step.agent_id,
+        checkId: "test-guardrail",
+        label: "Test guardrail",
+        status: "retry",
+        summary: "Test evidence requested retry",
+        detail: testFailMsg,
+      });
       // Inject failure details as previous_failure so agent knows what to fix
       const { classifyError: _ce1 } = await import("./error-taxonomy.js");
       const _cl1 = _ce1(testFailMsg);
-      context["previous_failure"] = `TEST GUARDRAIL: ${testFailMsg}`;
-      context["failure_category"] = _cl1.category;
-      context["failure_suggestion"] = _cl1.suggestion;
+      applyRetryFailureContext(context, `TEST GUARDRAIL: ${testFailMsg}`, _cl1.category, _cl1.suggestion);
       await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
       await failStep(stepId, testFailMsg);
       return { advanced: false, runCompleted: false };
     } else if (testFailMsg) {
       // Max retries reached — hard fail
       logger.warn(`Test guardrail — max retries reached, hard fail`, { runId: step.run_id, stepId: step.step_id });
+      await recordGateObservation({
+        runId: step.run_id,
+        stepId: step.step_id,
+        agentId: step.agent_id,
+        checkId: "test-guardrail",
+        label: "Test guardrail",
+        status: "fail",
+        summary: "Test guardrail exhausted retries",
+        detail: testFailMsg,
+      });
       if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
       await failStep(stepId, testFailMsg);
       return { advanced: false, runCompleted: false };
@@ -4530,16 +5799,40 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
     const qgMsg = checkQualityGate(step.step_id, qgPath);
     if (qgMsg && step.retry_count < step.max_retries) {
       logger.warn(`[quality-gate] Soft retry with fix instructions`, { runId: step.run_id, stepId: step.step_id });
+      const qgSummary = qgMsg
+        .split(/\n/)
+        .map(line => line.trim())
+        .find(line => line.length > 0) || "Quality gate requested retry";
+      await recordGateObservation({
+        runId: step.run_id,
+        stepId: step.step_id,
+        agentId: step.agent_id,
+        checkId: "quality-gate",
+        label: "Quality gate",
+        status: "retry",
+        summary: `Quality gate retry: ${qgSummary}`,
+        detail: qgMsg,
+        metadata: { repoPath: qgPath },
+      });
       const { classifyError: _ce2 } = await import("./error-taxonomy.js");
       const _cl2 = _ce2(qgMsg);
-      context["previous_failure"] = `QUALITY GATE: ${qgMsg}`;
-      context["failure_category"] = _cl2.category;
-      context["failure_suggestion"] = _cl2.suggestion;
+      applyRetryFailureContext(context, `QUALITY GATE: ${qgMsg}`, _cl2.category, _cl2.suggestion);
       await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
       await failStep(stepId, qgMsg);
       return { advanced: false, runCompleted: false };
     } else if (qgMsg) {
       logger.warn(`[quality-gate] Max retries — hard fail`, { runId: step.run_id, stepId: step.step_id });
+      await recordGateObservation({
+        runId: step.run_id,
+        stepId: step.step_id,
+        agentId: step.agent_id,
+        checkId: "quality-gate",
+        label: "Quality gate",
+        status: "fail",
+        summary: "Quality gate exhausted retries",
+        detail: qgMsg,
+        metadata: { repoPath: qgPath },
+      });
       if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
       await failStep(stepId, qgMsg);
       return { advanced: false, runCompleted: false };
@@ -5003,7 +6296,23 @@ ${prd}`;
   if (step.step_id === "final-test" && parsed["status"]?.toLowerCase() === "done") {
     let smokeResult = parsed["smoke_test_result"] || "";
     const repoPath = context["repo"] || "";
-    const smokeScript = path.join(os.homedir(), ".openclaw", "setfarm-repo", "scripts", "smoke-test.mjs");
+    const smokeScript = resolvePlatformScript("smoke-test.mjs");
+    const stackContract = resolveOperationalStackContract(context, false);
+    if (!isBrowserRuntimeStack(stackContract)) {
+      context["smoke_test_result"] = smokeResult || `stack-specific final evidence required for ${stackContract.packId || "unknown stack"}; browser smoke skipped`;
+      await recordGateObservation({
+        runId: step.run_id,
+        stepId: step.step_id,
+        agentId: step.agent_id,
+        checkId: "final-system-smoke",
+        label: "Final system smoke",
+        status: "info",
+        summary: "Browser final smoke skipped for non-browser stack",
+        detail: context["smoke_test_result"],
+        metadata: stackEvidenceMetadata(stackContract),
+      });
+      await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
+    } else {
     let smokeFailure = "";
     if (repoPath && fs.existsSync(smokeScript)) {
       try {
@@ -5029,8 +6338,24 @@ ${prd}`;
           }
         }
 
-        logger.info(`[final-test-smoke-gate] Running smoke-test.mjs as system gate`, { runId: step.run_id, stepId: step.step_id });
-        const smokeOut = execFileSync("node", [smokeScript, repoPath], { timeout: 240000, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+        const smokePort = context["preview_port"] || context["dev_server_port"] || "";
+        const smokeArgs = [smokeScript, repoPath, ...(smokePort ? ["--port", smokePort] : [])];
+        logger.info(`[final-test-smoke-gate] Running smoke-test.mjs as system gate on port ${smokePort || "auto"}`, { runId: step.run_id, stepId: step.step_id });
+        const smokeOut = execFileSync("node", smokeArgs, {
+          timeout: 240000,
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+          env: {
+            ...process.env,
+            ...(smokePort ? {
+              DEV_SERVER_PORT: smokePort,
+              PREVIEW_PORT: smokePort,
+              PORT: smokePort,
+              DEV_SERVER_URL: context["dev_server_url"] || `http://127.0.0.1:${smokePort}`,
+              QA_URL: context["qa_url"] || context["dev_server_url"] || `http://127.0.0.1:${smokePort}`,
+            } : {}),
+          },
+        });
         smokeResult = (smokeOut || "").trim().slice(-2000) || "pass (system smoke gate)";
         parsed["smoke_test_result"] = smokeResult;
         logger.info(`[final-test-smoke-gate] smoke-test passed`, { runId: step.run_id });
@@ -5060,6 +6385,7 @@ ${prd}`;
       if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
       await failStep(stepId, "GUARDRAIL: final-test completed without SMOKE_TEST_RESULT. You MUST run smoke-test.mjs and include SMOKE_TEST_RESULT in your output.");
       return { advanced: false, runCompleted: false };
+    }
     }
   }
 
@@ -5310,7 +6636,7 @@ ${prd}`;
             await updateRunContext(step.run_id, context);
 
             // Re-queue story as pending for next phase
-            await pgRun("UPDATE stories SET status = 'pending', updated_at = $1 WHERE id = $2",
+            await pgRun("UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, updated_at = $1 WHERE id = $2",
               [now(), step.current_story_id]);
 
             logger.info(`[phased-dev] Phase ${currentPhase} complete, advancing to ${nextPhase}`, { runId: step.run_id });
@@ -5327,6 +6653,18 @@ ${prd}`;
     if (step.step_id === "implement" && storyStatus === STORY_STATUS.DONE) {
       const designIssue = checkStoryDesignCompliance(context);
       const isCriticalDesignIssue = !!designIssue && /CRITICAL DESIGN CONTRACT/i.test(designIssue);
+      await recordLiveObservation({
+        runId: step.run_id,
+        stepId: step.step_id,
+        storyId: storyRow?.story_id || "",
+        agentId: step.agent_id || "",
+        checkId: "implement.design_compliance",
+        label: "Design compliance check",
+        status: designIssue && (isCriticalDesignIssue || step.retry_count >= 2) ? "fail" : designIssue ? "info" : "pass",
+        summary: designIssue ? "Design issue detected" : "Design compliance passed",
+        detail: designIssue || "",
+        metadata: { critical: isCriticalDesignIssue, retryCount: step.retry_count },
+      });
       if (designIssue && (isCriticalDesignIssue || step.retry_count >= 2) && step.retry_count < step.max_retries) {
         logger.warn(`[design-compliance] Story ${storyRow?.story_id} failed design check — soft retry`, { runId: step.run_id });
         const { classifyError: _ce3 } = await import("./error-taxonomy.js");
@@ -5355,6 +6693,18 @@ ${prd}`;
           const framework = detectTestFramework(testRepo);
           if (framework.runner !== "none") {
             const testResult = runTests(testRepo, framework);
+            await recordLiveObservation({
+              runId: step.run_id,
+              stepId: step.step_id,
+              storyId: storyRow?.story_id || "",
+              agentId: step.agent_id || "",
+              checkId: "implement.advisory_test_runner",
+              label: "Advisory test runner",
+              status: testResult.passed ? "pass" : "info",
+              summary: testResult.passed ? `${framework.runner} tests passed` : `${testResult.failedTests} advisory test failure(s)`,
+              detail: testResult.rawOutput || testResult.errorSummary || "",
+              metadata: { runner: framework.runner, failedTests: testResult.failedTests },
+            });
             if (!testResult.passed) {
               // Full-suite failures stay advisory to avoid unrelated legacy/flaky
               // tests trapping an isolated story. The implement guard below blocks
@@ -5385,9 +6735,12 @@ ${prd}`;
           checkTestGate,
           checkRuntimeBridgeGate,
           checkQaFixSmokeGate,
+          checkImplementEvidenceGate,
           checkGeneratedScreenIntegrationGate,
           checkGeneratedScreenRegressionGate,
           checkGeneratedScreenRequiredPropsGate,
+          checkGeneratedRuntimeSemanticGate,
+          checkPlatformHelperContaminationGate,
           checkGeneratedScreenShellChromeGate,
           checkDesignDomImplementationGate,
         } = await import("./steps/06-implement/guards.js");
@@ -5404,6 +6757,7 @@ ${prd}`;
           // Scope files existence gate (declared files must exist in worktree)
           if (step.retry_count < step.max_retries) {
             const sfGate = await checkScopeFilesGate(storyRow.story_id, step.current_story_id, storyRow.title, wd);
+            await recordImplementGateObservation(step, storyRow, "implement.scope_files", "Scope files gate", sfGate);
             if (!sfGate.passed) {
               context["previous_failure"] = sfGate.reason!;
               context["failure_category"] = sfGate.category!;
@@ -5415,10 +6769,28 @@ ${prd}`;
           }
 
           // Zero-work, stub, scope bleed, scope overflow checks
-          const scopeResult = await checkScopeEnforcement(
+          let scopeResult = await checkScopeEnforcement(
             storyRow.story_id, step.current_story_id, storyRow.title,
             wd, baseBr, step.retry_count, step.max_retries,
           );
+          if (!scopeResult.passed && scopeResult.category === "NO_WORK_DETECTED") {
+            const integration = await storyAlreadyIntegratedInBase({
+              runId: step.run_id,
+              storyDbId: step.current_story_id,
+              storyId: storyRow.story_id,
+              workdir: wd,
+              baseBranch: baseBr,
+            });
+            if (integration.integrated) {
+              scopeResult = {
+                passed: true,
+                reason: `NO_WORK_ALREADY_INTEGRATED: ${integration.detail} Treating this retry as idempotent completion instead of consuming another story retry.`,
+                category: "NO_WORK_ALREADY_INTEGRATED",
+                suggestion: "Continue normal build/smoke/PR verification; do not spawn another implement retry for an already integrated story.",
+              };
+            }
+          }
+          await recordImplementGateObservation(step, storyRow, "implement.scope_enforcement", "Scope enforcement gate", scopeResult);
           if (!scopeResult.passed && scopeResult.category) {
             if (scopeResult.category === "SCOPE_BLEED" && scopeResult.outOfScope && scopeResult.outOfScope.length > 0 && wd && baseBr) {
               // Clean the branch before retry so the next attempt does not inherit
@@ -5427,6 +6799,18 @@ ${prd}`;
               // cross-story collisions until later merge/verify stages.
               try {
                 const outOfScopeFiles = scopeResult.outOfScope;
+                await recordLiveObservation({
+                  runId: step.run_id,
+                  stepId: step.step_id,
+                  storyId: storyRow.story_id,
+                  agentId: step.agent_id || "",
+                  checkId: "implement.scope_bleed_cleanup",
+                  label: "Scope bleed cleanup",
+                  status: "running",
+                  summary: `Reverting ${outOfScopeFiles.length} out-of-scope file(s)`,
+                  detail: outOfScopeFiles.join("\n"),
+                  filePaths: outOfScopeFiles,
+                });
                 const filesToStage = new Set<string>();
                 const filesToRemove = new Set<string>();
                 for (const file of outOfScopeFiles) {
@@ -5468,9 +6852,33 @@ ${prd}`;
                     });
                   }
                   context["scope_bleed_cleanup"] = `Reverted ${outOfScopeFiles.length} out-of-scope file(s) before retry: ${outOfScopeFiles.slice(0, 5).join(", ")}`;
+                  await recordLiveObservation({
+                    runId: step.run_id,
+                    stepId: step.step_id,
+                    storyId: storyRow.story_id,
+                    agentId: step.agent_id || "",
+                    checkId: "implement.scope_bleed_cleanup_done",
+                    label: "Scope bleed cleanup",
+                    status: "pass",
+                    summary: `Reverted ${outOfScopeFiles.length} out-of-scope file(s)`,
+                    detail: outOfScopeFiles.join("\n"),
+                    filePaths: outOfScopeFiles,
+                  });
                   logger.warn(`[scope-bleed-cleanup] Reverted ${outOfScopeFiles.length} out-of-scope file(s) in ${storyRow.story_id}: ${outOfScopeFiles.slice(0, 5).join(", ")} — failing story for retry`, { runId: step.run_id });
                 } catch (commitErr) {
                   context["scope_bleed_cleanup"] = `Scope bleed cleanup partially applied; commit failed: ${String(commitErr).slice(0, 180)}`;
+                  await recordLiveObservation({
+                    runId: step.run_id,
+                    stepId: step.step_id,
+                    storyId: storyRow.story_id,
+                    agentId: step.agent_id || "",
+                    checkId: "implement.scope_bleed_cleanup_failed",
+                    label: "Scope bleed cleanup",
+                    status: "fail",
+                    summary: "Scope bleed cleanup commit failed",
+                    detail: String(commitErr),
+                    filePaths: outOfScopeFiles,
+                  });
                   logger.warn(`[scope-bleed-cleanup] Cleanup commit failed: ${String(commitErr).slice(0, 200)}`, { runId: step.run_id });
                 }
               } catch (cleanupErr) {
@@ -5478,9 +6886,32 @@ ${prd}`;
                 logger.warn(`[scope-bleed-cleanup] Cleanup failed: ${String(cleanupErr).slice(0, 200)}`, { runId: step.run_id });
               }
             }
-            context["previous_failure"] = scopeResult.reason!;
-            context["failure_category"] = scopeResult.category;
-            context["failure_suggestion"] = scopeResult.suggestion!;
+            const shouldDiscardFailedScopeAttempt =
+              scopeResult.category === "RETRY_PATCH_REAPPLIED"
+              || scopeResult.category === "NO_WORK_DETECTED"
+              || scopeResult.category === "APP_INTEGRATION_SCOPE_REGRESSION"
+              || scopeResult.category === "APP_INTEGRATION_SEMANTIC_REGRESSION"
+              || scopeResult.category === "GENERATED_SCREEN_INTEGRATION_REGRESSION";
+            if (shouldDiscardFailedScopeAttempt && wd) {
+              const discardedFiles = discardDirtyRetryWorktreeState(wd, storyRow.story_id, step.run_id);
+              if (discardedFiles.length > 0) {
+                context["failed_scope_attempt_cleanup"] = `Discarded ${discardedFiles.length} dirty file(s) after ${scopeResult.category}: ${discardedFiles.slice(0, 8).join(", ")}`;
+                await recordLiveObservation({
+                  runId: step.run_id,
+                  stepId: step.step_id,
+                  storyId: storyRow.story_id,
+                  agentId: step.agent_id || "",
+                  checkId: "implement.failed_scope_attempt_cleanup",
+                  label: "Failed scope attempt cleanup",
+                  status: "pass",
+                  summary: `Discarded ${discardedFiles.length} dirty file(s) after ${scopeResult.category}`,
+                  detail: discardedFiles.join("\n"),
+                  filePaths: discardedFiles,
+                  metadata: { category: scopeResult.category },
+                });
+              }
+            }
+            applyRetryFailureContext(context, scopeResult.reason!, scopeResult.category, scopeResult.suggestion!);
             await updateRunContext(step.run_id, context);
             await failStep(stepId, scopeResult.reason!);
             return { advanced: false, runCompleted: false };
@@ -5496,10 +6927,9 @@ ${prd}`;
           const bridgeResult = await checkRuntimeBridgeGate(
             storyRow.story_id, step.current_story_id, storyRow.title, wd,
           );
+          await recordImplementGateObservation(step, storyRow, "implement.runtime_bridge", "Runtime bridge gate", bridgeResult);
           if (!bridgeResult.passed && bridgeResult.category) {
-            context["previous_failure"] = bridgeResult.reason!;
-            context["failure_category"] = bridgeResult.category;
-            context["failure_suggestion"] = bridgeResult.suggestion!;
+            applyRetryFailureContext(context, bridgeResult.reason!, bridgeResult.category, bridgeResult.suggestion!);
             await updateRunContext(step.run_id, context);
             await failStep(stepId, bridgeResult.reason!);
             return { advanced: false, runCompleted: false };
@@ -5513,10 +6943,9 @@ ${prd}`;
             storyRow.story_id, storyRow.title,
             wd, step.retry_count, step.max_retries,
           );
+          await recordImplementGateObservation(step, storyRow, "implement.build", "Build gate", buildResult);
           if (!buildResult.passed && buildResult.category) {
-            context["previous_failure"] = buildResult.reason!;
-            context["failure_category"] = buildResult.category;
-            context["failure_suggestion"] = buildResult.suggestion!;
+            applyRetryFailureContext(context, buildResult.reason!, buildResult.category, buildResult.suggestion!);
             await updateRunContext(step.run_id, context);
             await failStep(stepId, buildResult.reason!);
             return { advanced: false, runCompleted: false };
@@ -5529,10 +6958,9 @@ ${prd}`;
             storyRow.story_id, storyRow.title,
             wd, baseBr, step.retry_count, step.max_retries,
           );
+          await recordImplementGateObservation(step, storyRow, "implement.test", "Test gate", testResult);
           if (!testResult.passed && testResult.category) {
-            context["previous_failure"] = testResult.reason!;
-            context["failure_category"] = testResult.category;
-            context["failure_suggestion"] = testResult.suggestion!;
+            applyRetryFailureContext(context, testResult.reason!, testResult.category, testResult.suggestion!);
             await updateRunContext(step.run_id, context);
             await failStep(stepId, testResult.reason!);
             return { advanced: false, runCompleted: false };
@@ -5544,10 +6972,9 @@ ${prd}`;
           const generatedScreenResult = await checkGeneratedScreenIntegrationGate(
             storyRow.story_id, step.current_story_id, storyRow.title, wd, context["repo"] || "",
           );
+          await recordImplementGateObservation(step, storyRow, "implement.generated_screen_integration", "Generated screen integration gate", generatedScreenResult);
           if (!generatedScreenResult.passed && generatedScreenResult.category) {
-            context["previous_failure"] = generatedScreenResult.reason!;
-            context["failure_category"] = generatedScreenResult.category;
-            context["failure_suggestion"] = generatedScreenResult.suggestion!;
+            applyRetryFailureContext(context, generatedScreenResult.reason!, generatedScreenResult.category, generatedScreenResult.suggestion!);
             await updateRunContext(step.run_id, context);
             await failStep(stepId, generatedScreenResult.reason!);
             return { advanced: false, runCompleted: false };
@@ -5560,10 +6987,9 @@ ${prd}`;
           const generatedScreenRegressionResult = await checkGeneratedScreenRegressionGate(
             step.run_id, storyRow.story_id, step.current_story_id, storyRow.title, wd, context["repo"] || "",
           );
+          await recordImplementGateObservation(step, storyRow, "implement.generated_screen_regression", "Generated screen regression gate", generatedScreenRegressionResult);
           if (!generatedScreenRegressionResult.passed && generatedScreenRegressionResult.category) {
-            context["previous_failure"] = generatedScreenRegressionResult.reason!;
-            context["failure_category"] = generatedScreenRegressionResult.category;
-            context["failure_suggestion"] = generatedScreenRegressionResult.suggestion!;
+            applyRetryFailureContext(context, generatedScreenRegressionResult.reason!, generatedScreenRegressionResult.category, generatedScreenRegressionResult.suggestion!);
             await updateRunContext(step.run_id, context);
             await failStep(stepId, generatedScreenRegressionResult.reason!);
             return { advanced: false, runCompleted: false };
@@ -5577,10 +7003,9 @@ ${prd}`;
           const generatedScreenShellChromeResult = checkGeneratedScreenShellChromeGate(
             storyRow.story_id, storyRow.title, wd, context["repo"] || "",
           );
+          await recordImplementGateObservation(step, storyRow, "implement.generated_screen_shell_chrome", "Generated screen shell chrome gate", generatedScreenShellChromeResult);
           if (!generatedScreenShellChromeResult.passed && generatedScreenShellChromeResult.category) {
-            context["previous_failure"] = generatedScreenShellChromeResult.reason!;
-            context["failure_category"] = generatedScreenShellChromeResult.category;
-            context["failure_suggestion"] = generatedScreenShellChromeResult.suggestion!;
+            applyRetryFailureContext(context, generatedScreenShellChromeResult.reason!, generatedScreenShellChromeResult.category, generatedScreenShellChromeResult.suggestion!);
             await updateRunContext(step.run_id, context);
             await failStep(stepId, generatedScreenShellChromeResult.reason!);
             return { advanced: false, runCompleted: false };
@@ -5593,12 +7018,41 @@ ${prd}`;
           const generatedScreenPropsResult = checkGeneratedScreenRequiredPropsGate(
             storyRow.story_id, storyRow.title, wd, context["repo"] || "",
           );
+          await recordImplementGateObservation(step, storyRow, "implement.generated_screen_required_props", "Generated screen required props gate", generatedScreenPropsResult);
           if (!generatedScreenPropsResult.passed && generatedScreenPropsResult.category) {
-            context["previous_failure"] = generatedScreenPropsResult.reason!;
-            context["failure_category"] = generatedScreenPropsResult.category;
-            context["failure_suggestion"] = generatedScreenPropsResult.suggestion!;
+            applyRetryFailureContext(context, generatedScreenPropsResult.reason!, generatedScreenPropsResult.category, generatedScreenPropsResult.suggestion!);
             await updateRunContext(step.run_id, context);
             await failStep(stepId, generatedScreenPropsResult.reason!);
+            return { advanced: false, runCompleted: false };
+          }
+
+          // Generated-screen runtime semantic gate: build/smoke can pass even
+          // when the app lies through a hardcoded bridge, collapses multiple
+          // nav destinations into one screen, uses generic icon fallbacks, or
+          // wires visible actions to shell-only route/panel changes. Block that
+          // class of fake completion before verify/QA.
+          const generatedRuntimeSemanticResult = checkGeneratedRuntimeSemanticGate(
+            storyRow.story_id, storyRow.title, wd, context["repo"] || "",
+          );
+          await recordImplementGateObservation(step, storyRow, "implement.generated_runtime_semantics", "Generated runtime semantics gate", generatedRuntimeSemanticResult);
+          if (!generatedRuntimeSemanticResult.passed && generatedRuntimeSemanticResult.category) {
+            applyRetryFailureContext(context, generatedRuntimeSemanticResult.reason!, generatedRuntimeSemanticResult.category, generatedRuntimeSemanticResult.suggestion!);
+            await updateRunContext(step.run_id, context);
+            await failStep(stepId, generatedRuntimeSemanticResult.reason!);
+            return { advanced: false, runCompleted: false };
+          }
+
+          // Platform helper contamination gate: generated products must not
+          // carry Setfarm scanner/test-harness shims. A platform bug should be
+          // fixed in Setfarm and replayed, not patched into product source.
+          const platformHelperContaminationResult = checkPlatformHelperContaminationGate(
+            storyRow.story_id, storyRow.title, wd, context["repo"] || "",
+          );
+          await recordImplementGateObservation(step, storyRow, "implement.platform_helper_contamination", "Platform helper contamination gate", platformHelperContaminationResult);
+          if (!platformHelperContaminationResult.passed && platformHelperContaminationResult.category) {
+            applyRetryFailureContext(context, platformHelperContaminationResult.reason!, platformHelperContaminationResult.category, platformHelperContaminationResult.suggestion!);
+            await updateRunContext(step.run_id, context);
+            await failStep(stepId, platformHelperContaminationResult.reason!);
             return { advanced: false, runCompleted: false };
           }
 
@@ -5609,12 +7063,55 @@ ${prd}`;
           // retry exhaustion instead of giving the developer the exact failing
           // controls to patch.
           const qaSmokeResult = checkQaFixSmokeGate(storyRow.story_id, storyRow.title, wd);
+          await recordImplementGateObservation(step, storyRow, "implement.qa_fix_smoke", "QA-FIX smoke gate", qaSmokeResult);
           if (!qaSmokeResult.passed && qaSmokeResult.category) {
-            context["previous_failure"] = qaSmokeResult.reason!;
-            context["failure_category"] = qaSmokeResult.category;
-            context["failure_suggestion"] = qaSmokeResult.suggestion!;
+            applyRetryFailureContext(context, qaSmokeResult.reason!, qaSmokeResult.category, qaSmokeResult.suggestion!);
             await updateRunContext(step.run_id, context);
             await failStep(stepId, qaSmokeResult.reason!);
+            return { advanced: false, runCompleted: false };
+          }
+
+          const { runImplementEvidenceIfRequested } = await import("./implement-evidence-runner.js");
+          const implementEvidenceRun = await runImplementEvidenceIfRequested({
+            runId: step.run_id,
+            storyId: storyRow.story_id,
+            workdir: wd,
+            observe: async (observation) => {
+              await recordLiveObservation({
+                runId: step.run_id,
+                stepId: step.step_id,
+                storyId: storyRow.story_id,
+                agentId: step.agent_id || "",
+                checkId: observation.checkId,
+                label: observation.label,
+                status: observation.status,
+                summary: observation.summary || "",
+                detail: observation.detail || "",
+                evidence: observation.evidence || {},
+                filePaths: observation.filePaths || [],
+                metadata: { ...(observation.metadata || {}), eventType: observation.eventType || "" },
+              });
+            },
+          });
+          await recordLiveObservation({
+            runId: step.run_id,
+            stepId: step.step_id,
+            storyId: storyRow.story_id,
+            agentId: step.agent_id || "",
+            checkId: "implement.evidence_runner",
+            label: "Implement evidence runner",
+            status: implementEvidenceRun.attempted ? (implementEvidenceRun.ok ? "pass" : "fail") : "info",
+            summary: implementEvidenceRun.reason,
+            detail: implementEvidenceRun.evidencePath || "",
+            metadata: { attempted: implementEvidenceRun.attempted, evidencePath: implementEvidenceRun.evidencePath || "" },
+          });
+
+          const implementEvidenceResult = checkImplementEvidenceGate(storyRow.story_id, storyRow.title, wd);
+          await recordImplementGateObservation(step, storyRow, "implement.evidence", "Implement evidence gate", implementEvidenceResult);
+          if (!implementEvidenceResult.passed && implementEvidenceResult.category) {
+            applyRetryFailureContext(context, implementEvidenceResult.reason!, implementEvidenceResult.category, implementEvidenceResult.suggestion!);
+            await updateRunContext(step.run_id, context);
+            await failStep(stepId, implementEvidenceResult.reason!);
             return { advanced: false, runCompleted: false };
           }
 
@@ -5625,10 +7122,9 @@ ${prd}`;
           const designDomResult = await checkDesignDomImplementationGate(
             step.run_id, storyRow.story_id, step.current_story_id, storyRow.title, wd, context["repo"] || "",
           );
+          await recordImplementGateObservation(step, storyRow, "implement.design_dom", "DESIGN_DOM implementation gate", designDomResult);
           if (!designDomResult.passed && designDomResult.category) {
-            context["previous_failure"] = designDomResult.reason!;
-            context["failure_category"] = designDomResult.category;
-            context["failure_suggestion"] = designDomResult.suggestion!;
+            applyRetryFailureContext(context, designDomResult.reason!, designDomResult.category, designDomResult.suggestion!);
             await updateRunContext(step.run_id, context);
             await failStep(stepId, designDomResult.reason!);
             return { advanced: false, runCompleted: false };
@@ -5657,6 +7153,18 @@ ${prd}`;
       });
       updateSupervisorMemory(context, supervisor.memoryEntry);
       await updateRunContext(step.run_id, context);
+      await recordLiveObservation({
+        runId: step.run_id,
+        stepId: step.step_id,
+        storyId: storyRow.story_id,
+        agentId: step.agent_id || "",
+        checkId: "implement.product_supervisor",
+        label: "Product supervisor gate",
+        status: supervisor.ok ? "pass" : "blocked",
+        summary: supervisor.ok ? "Product supervisor passed" : supervisor.code,
+        detail: supervisor.reason || "",
+        metadata: { code: supervisor.code || "" },
+      });
       if (!supervisor.ok) {
         context["previous_failure"] = supervisor.reason;
         context["failure_category"] = supervisor.code;
@@ -5671,12 +7179,48 @@ ${prd}`;
     // build/scope/product-supervisor gates pass, Setfarm stages exactly the
     // allowed story scope and creates the final story commit before push/PR.
     if (step.step_id === "implement" && storyStatus === STORY_STATUS.DONE && storyRow?.story_id) {
+      await recordLiveObservation({
+        runId: step.run_id,
+        stepId: step.step_id,
+        storyId: storyRow.story_id,
+        agentId: step.agent_id || "",
+        checkId: "implement.platform_commit.start",
+        label: "Platform story commit",
+        status: "running",
+        summary: "Staging owned story files",
+        detail: storyRow.title || "",
+      });
       const commitResult = commitStoryWorktreeScopeIfNeeded(
         implementSupervisorWorkdir || context["story_workdir"] || "",
         storyRow.story_id,
         storyRow.title || "",
       );
       if (commitResult.error) {
+        const cleanedScopeBlockedFiles = /PLATFORM_STORY_COMMIT_SCOPE_BLOCKED/i.test(commitResult.error)
+          ? cleanupBlockedStoryCommitScope(
+              implementSupervisorWorkdir || context["story_workdir"] || "",
+              storyRow.story_id,
+              [],
+              step.run_id,
+            )
+          : [];
+        await recordLiveObservation({
+          runId: step.run_id,
+          stepId: step.step_id,
+          storyId: storyRow.story_id,
+          agentId: step.agent_id || "",
+          checkId: "implement.platform_commit.failed",
+          label: "Platform story commit",
+          status: "fail",
+          summary: "Platform story commit failed",
+          detail: cleanedScopeBlockedFiles.length > 0
+            ? `${commitResult.error}\n\nCleaned out-of-scope dirty file(s):\n${cleanedScopeBlockedFiles.join("\n")}`
+            : commitResult.error,
+          filePaths: cleanedScopeBlockedFiles.length > 0 ? cleanedScopeBlockedFiles : commitResult.stagedFiles,
+        });
+        if (cleanedScopeBlockedFiles.length > 0) {
+          context["scope_bleed_cleanup"] = `Cleaned ${cleanedScopeBlockedFiles.length} out-of-scope file(s) after platform commit scope block: ${cleanedScopeBlockedFiles.slice(0, 5).join(", ")}`;
+        }
         context["previous_failure"] = commitResult.error;
         context["failure_category"] = "PLATFORM_STORY_COMMIT_FAILED";
         context["failure_suggestion"] = "This is a Setfarm commit ownership failure. Do not ask the developer agent to run git commands; fix the platform scoped commit path or story scope.";
@@ -5685,9 +7229,34 @@ ${prd}`;
         return { advanced: false, runCompleted: false };
       }
       if (commitResult.committed) {
+        await recordLiveObservation({
+          runId: step.run_id,
+          stepId: step.step_id,
+          storyId: storyRow.story_id,
+          agentId: step.agent_id || "",
+          checkId: "implement.platform_commit.done",
+          label: "Platform story commit",
+          status: "pass",
+          summary: `Committed ${commitResult.stagedFiles.length} file(s) at ${commitResult.sha}`,
+          detail: commitResult.stagedFiles.join("\n"),
+          filePaths: commitResult.stagedFiles,
+          metadata: { sha: commitResult.sha },
+        });
         context["platform_story_commit"] = `${storyRow.story_id}:${commitResult.sha}:${commitResult.stagedFiles.join(",")}`.slice(0, 1200);
         await updateRunContext(step.run_id, context);
         logger.info(`[platform-story-commit] ${storyRow.story_id} committed ${commitResult.stagedFiles.length} file(s) at ${commitResult.sha}`, { runId: step.run_id });
+      } else {
+        await recordLiveObservation({
+          runId: step.run_id,
+          stepId: step.step_id,
+          storyId: storyRow.story_id,
+          agentId: step.agent_id || "",
+          checkId: "implement.platform_commit.noop",
+          label: "Platform story commit",
+          status: "pass",
+          summary: "No owned file changes to commit",
+          detail: "",
+        });
       }
     }
 
@@ -5807,6 +7376,18 @@ ${prd}`;
       }
 
       try {
+        await recordLiveObservation({
+          runId: step.run_id,
+          stepId: step.step_id,
+          storyId: storyRow?.story_id || "",
+          agentId: step.agent_id || "",
+          checkId: "implement.qa_fix_merge.start",
+          label: "QA-FIX merge to main",
+          status: "running",
+          summary: `Merging ${storyBranchName} into main`,
+          detail: repoPath,
+          metadata: { branch: storyBranchName },
+        });
         const dirty = execFileSync("git", ["status", "--porcelain"], {
           cwd: repoPath, timeout: 10000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8",
         }).trim();
@@ -5840,6 +7421,19 @@ ${prd}`;
         );
 
         if (!mergeResult.success) {
+          await recordLiveObservation({
+            runId: step.run_id,
+            stepId: step.step_id,
+            storyId: storyRow?.story_id || "",
+            agentId: step.agent_id || "",
+            checkId: "implement.qa_fix_merge.failed",
+            label: "QA-FIX merge to main",
+            status: "fail",
+            summary: "QA-FIX merge failed",
+            detail: mergeResult.conflicts.join("\n") || "unknown conflicts",
+            filePaths: mergeResult.conflicts,
+            metadata: { branch: storyBranchName },
+          });
           const mergeMsg = `QA_FIX_MERGE_FAILED: ${storyRow?.story_id || "QA-FIX"} branch ${storyBranchName} could not merge into main. Conflicts: ${mergeResult.conflicts.join(", ") || "unknown"}`;
           context["previous_failure"] = mergeMsg;
           context["failure_category"] = "QA_FIX_MERGE_FAILED";
@@ -5853,6 +7447,18 @@ ${prd}`;
         storyEvent = "story.verified";
         storyMergeStatus = "merged";
         context["qa_fix_merged_to_main"] = `${storyRow?.story_id || "QA-FIX"}:${storyBranchName}`;
+        await recordLiveObservation({
+          runId: step.run_id,
+          stepId: step.step_id,
+          storyId: storyRow?.story_id || "",
+          agentId: step.agent_id || "",
+          checkId: "implement.qa_fix_merge.done",
+          label: "QA-FIX merge to main",
+          status: "pass",
+          summary: `${storyRow?.story_id || "QA-FIX"} merged into main`,
+          detail: storyBranchName,
+          metadata: { branch: storyBranchName, mergeStatus: storyMergeStatus },
+        });
 
         if (storyPrUrl) {
           try {
@@ -5867,6 +7473,18 @@ ${prd}`;
 
         logger.info(`[qa-fix-merge] Merged ${storyRow?.story_id} (${storyBranchName}) directly into main`, { runId: step.run_id });
       } catch (mergeErr) {
+        await recordLiveObservation({
+          runId: step.run_id,
+          stepId: step.step_id,
+          storyId: storyRow?.story_id || "",
+          agentId: step.agent_id || "",
+          checkId: "implement.qa_fix_merge.error",
+          label: "QA-FIX merge to main",
+          status: "fail",
+          summary: "QA-FIX merge error",
+          detail: String(mergeErr),
+          metadata: { branch: storyBranchName },
+        });
         const mergeMsg = `QA_FIX_MERGE_ERROR: ${String(mergeErr).slice(0, 500)}`;
         context["previous_failure"] = mergeMsg;
         context["failure_category"] = "QA_FIX_MERGE_ERROR";
@@ -5914,6 +7532,18 @@ ${prd}`;
     ) {
       const autoRepo = context["repo"];
       const autoBase = requiredPrBase || (context["branch"] || "main");
+      await recordLiveObservation({
+        runId: step.run_id,
+        stepId: step.step_id,
+        storyId: storyRow?.story_id || "",
+        agentId: step.agent_id || "",
+        checkId: "implement.auto_pr.start",
+        label: "Create or reuse story PR",
+        status: "running",
+        summary: `Opening PR for ${storyBranchName}`,
+        detail: `${storyBranchName} -> ${autoBase}`,
+        metadata: { branch: storyBranchName, base: autoBase },
+      });
       const ensured = await ensureStoryPrUrlForBranch({
         runId: step.run_id,
         repoPath: autoRepo,
@@ -5925,6 +7555,18 @@ ${prd}`;
         existingPrUrl: storyPrUrl,
       });
       if (ensured.prUrl) {
+        await recordLiveObservation({
+          runId: step.run_id,
+          stepId: step.step_id,
+          storyId: storyRow?.story_id || "",
+          agentId: step.agent_id || "",
+          checkId: "implement.auto_pr.done",
+          label: "Create or reuse story PR",
+          status: "pass",
+          summary: "Story PR ready",
+          detail: ensured.prUrl,
+          github: { prUrl: ensured.prUrl, branch: storyBranchName, base: autoBase },
+        });
         storyPrUrl = ensured.prUrl;
         parsed["pr_url"] = storyPrUrl;
         context["pr_url"] = storyPrUrl;
@@ -5932,6 +7574,18 @@ ${prd}`;
         delete context["failure_category"];
         delete context["failure_suggestion"];
       } else {
+        await recordLiveObservation({
+          runId: step.run_id,
+          stepId: step.step_id,
+          storyId: storyRow?.story_id || "",
+          agentId: step.agent_id || "",
+          checkId: "implement.auto_pr.failed",
+          label: "Create or reuse story PR",
+          status: "fail",
+          summary: "Story PR creation failed",
+          detail: ensured.error,
+          metadata: { branch: storyBranchName, base: autoBase },
+        });
         context["auto_pr_create_failed"] = ensured.error;
         context["previous_failure"] = ensured.error;
         context["failure_category"] = "AUTO_PR_CREATE_FAILED";
@@ -6277,6 +7931,44 @@ async function handleSuperviseEachCompletion(
   } catch (e) { logger.warn(`[claim-log] Failed to resolve supervise_each completion: ${String(e)}`, { runId: superviseStep.run_id }); }
 
   if (!story) {
+    const finalSupervise = await shouldAutoCompleteFinalSuperviseEachStep(superviseStep.run_id, context);
+    if (finalSupervise.ok) {
+      delete context["previous_failure"];
+      delete context["failure_category"];
+      delete context["failure_suggestion"];
+      context["supervisor_scope"] = "final-product";
+      await updateRunContext(superviseStep.run_id, context);
+      await pgRun("UPDATE steps SET status = 'done', output = $1, current_story_id = NULL, updated_at = $2 WHERE id = $3", [
+        [
+          "STATUS: done",
+          "SUPERVISOR_DECISION: pass",
+          `AC_COVERAGE: ${finalSupervise.reason}`,
+          "CHECKS: deterministic supervise-each final gate accepted existing completion",
+        ].join("\n"),
+        now(),
+        superviseStep.id,
+      ]);
+      await recordStepTransition(superviseStep.id, superviseStep.run_id, "waiting", "done", undefined, "superviseEach:final-completion-auto-complete");
+      await refreshRunContractSafe(superviseStep.run_id, `step.${superviseStep.step_id}.done`, context);
+      emitEvent({
+        ts: now(),
+        event: "step.done",
+        runId: superviseStep.run_id,
+        workflowId: await getWorkflowId(superviseStep.run_id),
+        stepId: superviseStep.step_id,
+        detail: "supervise_each deterministic final gate completed from completion path",
+      });
+      await recordObservation({
+        runId: superviseStep.run_id,
+        stepId: superviseStep.step_id,
+        phase: superviseStep.step_id,
+        checkId: "supervise_each.final_completion_auto_complete",
+        status: "pass",
+        label: "Supervise-each final completion accepted deterministically",
+        detail: finalSupervise.reason,
+      });
+      return advancePipeline(superviseStep.run_id);
+    }
     context["previous_failure"] = "SUPERVISE_EACH_ORPHAN: supervisor completed but no status=done story was available.";
     context["failure_category"] = "SUPERVISE_EACH_ORPHAN";
     await updateRunContext(superviseStep.run_id, context);
@@ -6342,7 +8034,7 @@ async function handleSuperviseEachCompletion(
     }
 
     await pgRun(
-      "UPDATE stories SET status = 'pending', retry_count = $1, output = $2, pr_url = NULL, merge_status = NULL, updated_at = $3 WHERE id = $4",
+      "UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, retry_count = $1, output = $2, pr_url = NULL, merge_status = NULL, updated_at = $3 WHERE id = $4",
       [newRetry, issues, now(), story.id],
     );
     await updateRunContext(superviseStep.run_id, context);
@@ -6365,6 +8057,74 @@ async function handleSuperviseEachCompletion(
     logger.warn(`[supervise-each] Could not resolve story worktree for ${story.story_id}: ${String(e).slice(0, 150)}`, { runId: superviseStep.run_id });
   }
 
+  const blockingSupervisorEvidence = findBlockingSupervisorEvidenceForStory(
+    [supervisorLedgerWorkdir, supervisorWorkdir],
+    superviseStep.run_id,
+    story.story_id,
+    story.story_branch,
+  );
+  if (blockingSupervisorEvidence) {
+    const newRetry = (story.retry_count || 0) + 1;
+    const failure = blockingSupervisorEvidence.detail.slice(0, 6000);
+    context["previous_failure"] = failure;
+    context["failure_category"] = blockingSupervisorEvidence.category;
+    context["failure_suggestion"] = "Return to the same story branch and fix the supervisor evidence blocker before verify can run. The LLM supervisor pass cannot override open visual/state evidence.";
+    context["current_story_id"] = story.story_id;
+    context["current_story_title"] = story.title;
+    if (story.story_branch) context["story_branch"] = story.story_branch;
+    clearStorySupervised(context, story.story_id);
+    if (supervisorWorkdir) {
+      upsertSupervisorRunMetadata({
+        workdir: supervisorWorkdir,
+        runId: superviseStep.run_id,
+        scope: "story",
+        status: "blocked",
+        mainRepo: context["repo"] || "",
+        storyId: story.story_id,
+        storyWorkdir: supervisorWorkdir,
+      });
+      markSupervisorInterventions({
+        workdir: supervisorWorkdir,
+        runId: superviseStep.run_id,
+        storyId: story.story_id,
+        result: "sent",
+      });
+    }
+    await recordObservation({
+      runId: superviseStep.run_id,
+      stepId: superviseStep.step_id,
+      storyId: story.story_id,
+      phase: superviseStep.step_id,
+      checkId: "supervise_each.supervisor_evidence_blocked",
+      status: "fail",
+      label: "Supervisor evidence blocked story",
+      detail: failure.slice(0, 1800),
+    });
+
+    if (newRetry > (story.max_retries || 0)) {
+      await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [newRetry, failure, now(), story.id]);
+      await updateRunContext(superviseStep.run_id, context);
+      await setStepStatus(loopStepId, "failed");
+      await failRun(superviseStep.run_id, true);
+      const wfId = await getWorkflowId(superviseStep.run_id);
+      emitEvent({ ts: now(), event: "story.failed", runId: superviseStep.run_id, workflowId: wfId, stepId: superviseStep.step_id, storyId: story.story_id, detail: blockingSupervisorEvidence.message });
+      emitEvent({ ts: now(), event: "run.failed", runId: superviseStep.run_id, workflowId: wfId, detail: blockingSupervisorEvidence.message });
+      scheduleRunCronTeardown(superviseStep.run_id);
+      return { advanced: false, runCompleted: false };
+    }
+
+    await pgRun(
+      "UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, retry_count = $1, output = $2, pr_url = NULL, merge_status = NULL, updated_at = $3 WHERE id = $4",
+      [newRetry, failure, now(), story.id],
+    );
+    await updateRunContext(superviseStep.run_id, context);
+    await setStepStatus(loopStepId, "pending");
+    await pgRun("UPDATE steps SET status = 'waiting', retry_count = 0, current_story_id = NULL, updated_at = $1 WHERE run_id = $2 AND step_id = $3", [now(), superviseStep.run_id, verifyStepName]);
+    emitEvent({ ts: now(), event: "story.retry", runId: superviseStep.run_id, workflowId: await getWorkflowId(superviseStep.run_id), stepId: superviseStep.step_id, storyId: story.story_id, detail: failure.slice(0, 500) });
+    logger.warn(`[supervise-each] Supervisor evidence blocked ${story.story_id}; returning to implement`, { runId: superviseStep.run_id });
+    return { advanced: false, runCompleted: false };
+  }
+
   const supervisorCommit = commitStoryWorktreeScopeIfNeeded(
     supervisorWorkdir,
     story.story_id,
@@ -6375,9 +8135,22 @@ async function handleSuperviseEachCompletion(
   if (supervisorCommit.error) {
     const newRetry = (story.retry_count || 0) + 1;
     const failure = `PLATFORM_SUPERVISOR_COMMIT_FAILED for ${story.story_id}: ${supervisorCommit.error}`;
+    const cleanedScopeBlockedFiles = /PLATFORM_STORY_COMMIT_SCOPE_BLOCKED/i.test(supervisorCommit.error)
+      ? cleanupBlockedStoryCommitScope(
+          supervisorWorkdir,
+          story.story_id,
+          parseDeclaredScopeFiles(story.scope_files),
+          superviseStep.run_id,
+        )
+      : [];
     context["previous_failure"] = failure;
     context["failure_category"] = "PLATFORM_SUPERVISOR_COMMIT_FAILED";
-    context["failure_suggestion"] = "Supervisor left uncommitted or out-of-scope code. Return to the same story branch, keep edits inside scope_files, and do not let verify run until platform commit succeeds.";
+    context["failure_suggestion"] = cleanedScopeBlockedFiles.length > 0
+      ? `Supervisor left out-of-scope code; Setfarm cleaned ${cleanedScopeBlockedFiles.length} dirty file(s). Retry the same story using only scope_files.`
+      : "Supervisor left uncommitted or out-of-scope code. Return to the same story branch, keep edits inside scope_files, and do not let verify run until platform commit succeeds.";
+    if (cleanedScopeBlockedFiles.length > 0) {
+      context["scope_bleed_cleanup"] = `Cleaned ${cleanedScopeBlockedFiles.length} out-of-scope file(s) after supervisor commit scope block: ${cleanedScopeBlockedFiles.slice(0, 5).join(", ")}`;
+    }
     context["current_story_id"] = story.story_id;
     context["current_story_title"] = story.title;
     if (story.story_branch) context["story_branch"] = story.story_branch;
@@ -6393,6 +8166,18 @@ async function handleSuperviseEachCompletion(
         storyWorkdir: supervisorWorkdir,
       });
     }
+    if (cleanedScopeBlockedFiles.length > 0) {
+      await recordObservation({
+        runId: superviseStep.run_id,
+        stepId: superviseStep.step_id,
+        storyId: story.story_id,
+        phase: superviseStep.step_id,
+        checkId: "supervise_each.platform_commit_scope_cleanup",
+        status: "pass",
+        label: "Supervisor scope cleanup",
+        detail: cleanedScopeBlockedFiles.join("\n"),
+      });
+    }
     if (newRetry > (story.max_retries || 0)) {
       await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [newRetry, failure, now(), story.id]);
       await updateRunContext(superviseStep.run_id, context);
@@ -6405,7 +8190,7 @@ async function handleSuperviseEachCompletion(
       return { advanced: false, runCompleted: false };
     }
     await pgRun(
-      "UPDATE stories SET status = 'pending', retry_count = $1, output = $2, pr_url = NULL, merge_status = NULL, updated_at = $3 WHERE id = $4",
+      "UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, retry_count = $1, output = $2, pr_url = NULL, merge_status = NULL, updated_at = $3 WHERE id = $4",
       [newRetry, failure, now(), story.id],
     );
     await updateRunContext(superviseStep.run_id, context);
@@ -6450,7 +8235,7 @@ async function handleSuperviseEachCompletion(
         return { advanced: false, runCompleted: false };
       }
       await pgRun(
-        "UPDATE stories SET status = 'pending', retry_count = $1, output = $2, pr_url = NULL, merge_status = NULL, updated_at = $3 WHERE id = $4",
+        "UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, retry_count = $1, output = $2, pr_url = NULL, merge_status = NULL, updated_at = $3 WHERE id = $4",
         [newRetry, failure, now(), story.id],
       );
       await updateRunContext(superviseStep.run_id, context);
@@ -6464,13 +8249,23 @@ async function handleSuperviseEachCompletion(
     logger.info(`[platform-supervisor-commit] ${story.story_id} committed ${supervisorCommit.stagedFiles.length} supervisor file(s) at ${supervisorCommit.sha}`, { runId: superviseStep.run_id });
   }
 
+  const acCoverage = parsedOutput["ac_coverage"] || "";
+  const stateWorkdirs = [...new Set([supervisorLedgerWorkdir, supervisorWorkdir].filter(Boolean))];
+  for (const stateWorkdir of stateWorkdirs) {
+    try {
+      markStorySupervisorStatePassedInWorkdir(stateWorkdir, superviseStep.run_id, story.story_id, decision || status || "pass", acCoverage);
+    } catch (e) {
+      logger.warn(`[supervise-each] Could not clear supervisor state for ${story.story_id} in ${stateWorkdir}: ${String(e).slice(0, 150)}`, { runId: superviseStep.run_id });
+    }
+  }
+
   markStorySupervised(context, story.story_id);
   context["supervisor_scope"] = "story";
   context["current_story_id"] = story.story_id;
   context["current_story_title"] = story.title;
   if (story.pr_url) context["pr_url"] = story.pr_url;
   if (story.story_branch) context["story_branch"] = story.story_branch;
-  delete context["previous_failure"];
+  clearVerifiedStoryFailureContext(context);
   if (supervisorWorkdir) {
     upsertSupervisorRunMetadata({
       workdir: supervisorWorkdir,
@@ -6599,6 +8394,63 @@ async function handleVerifyEachCompletion(
   }
 
   if (status === "retry") {
+    const issues = resolveVerifyRetryIssues(parsedOutput, context, output);
+    if (verifiedStoryId && isVerifyRetryOutsideStoryVisualScope(issues, context, verifiedStoryId)) {
+      context["verify_visual_scope_deferred"] = `${verifiedStoryId}:${new Date().toISOString()}`;
+      context["failure_category"] = "VISUAL_QA_SCOPE_DEFERRED";
+      context["failure_suggestion"] = "Retry verify with story-scoped visual QA deferred to the screen-owner story.";
+      delete context["verify_feedback"];
+      delete context["previous_failure"];
+      await updateRunContext(verifyStep.run_id, context);
+      await pgRun(
+        "UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = $1 WHERE id = $2",
+        [now(), verifyStep.id],
+      );
+      await pgRun(
+        "UPDATE steps SET status = 'running', started_at = COALESCE(started_at, NOW()), updated_at = $1 WHERE id = $2",
+        [now(), loopStepId],
+      );
+      emitEvent({
+        ts: now(),
+        event: "step.progress",
+        runId: verifyStep.run_id,
+        workflowId: await getWorkflowId(verifyStep.run_id),
+        stepId: verifyStep.step_id,
+        storyId: verifiedStoryId,
+        detail: `Deferred visual retry outside ${verifiedStoryId} screen ownership.`,
+      });
+      logger.warn(`[verify] Deferred visual retry outside ${verifiedStoryId} screen ownership; retrying verify without returning to implement`, { runId: verifyStep.run_id });
+      return { advanced: false, runCompleted: false };
+    }
+
+    if (isVerifyRetryInfraFailure(output)) {
+      context["verify_infra_retry"] = issues.slice(0, 4000);
+      context["failure_category"] = "VISUAL_QA_INFRA_ERROR";
+      context["failure_suggestion"] = "Retry verify after browser/visual QA infrastructure recovers; do not send the story back to implementation for infrastructure-only browser failures.";
+      delete context["verify_feedback"];
+      delete context["previous_failure"];
+      await updateRunContext(verifyStep.run_id, context);
+      await pgRun(
+        "UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = $1 WHERE id = $2",
+        [now(), verifyStep.id],
+      );
+      await pgRun(
+        "UPDATE steps SET status = 'running', started_at = COALESCE(started_at, NOW()), updated_at = $1 WHERE id = $2",
+        [now(), loopStepId],
+      );
+      emitEvent({
+        ts: now(),
+        event: "step.progress",
+        runId: verifyStep.run_id,
+        workflowId: await getWorkflowId(verifyStep.run_id),
+        stepId: verifyStep.step_id,
+        storyId: verifiedStoryId || undefined,
+        detail: issues.slice(0, 800),
+      });
+      logger.warn(`[verify] Infrastructure-only verify retry for ${verifiedStoryId || "unknown story"}; keeping story done and retrying verify`, { runId: verifyStep.run_id });
+      return { advanced: false, runCompleted: false };
+    }
+
     // Verify failed — retry the story
     // Find the specific story that was being verified
     let retryStory: { id: string; retry_count: number; max_retries: number } | undefined;
@@ -6612,7 +8464,6 @@ async function handleVerifyEachCompletion(
 
     if (retryStory) {
       const newRetry = retryStory.retry_count + 1;
-      const issues = resolveVerifyRetryIssues(parsedOutput, context, output);
       const failureCategory = isVerifyRetryMergeBlocker(issues) ? "VERIFY_MERGE_BLOCKER" : undefined;
       const failureSuggestion = failureCategory
         ? "Resolve the conflicting PR/story branch state in the same story branch, push it, and do not route this to QA-FIX."
@@ -6622,9 +8473,38 @@ async function handleVerifyEachCompletion(
       if (failureCategory) context["failure_category"] = failureCategory;
       if (failureSuggestion) context["failure_suggestion"] = failureSuggestion;
 
-      if (newRetry > retryStory.max_retries) {
-        // Story retries exhausted — fail everything (Wave 13 J-2: terminal flag)
-        await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [newRetry, issues, now(), retryStory.id]);
+	      if (newRetry > retryStory.max_retries) {
+	        if (await shouldDeferVerifyRetryExhaustionForResolvedEvidence(verifyStep.run_id, verifiedStoryId, issues, context)) {
+	          context["verify_retry_exhaustion_deferred"] = `${verifiedStoryId}:${new Date().toISOString()}`;
+	          context["failure_category"] = "VERIFY_STALE_VISUAL_RETRY_DEFERRED";
+	          context["failure_suggestion"] = "Fresh story pass evidence exists after the visual retry source was resolved; rerun verify once instead of terminally failing on stale retry output.";
+	          delete context["verify_feedback"];
+	          delete context["previous_failure"];
+	          await updateRunContext(verifyStep.run_id, context);
+	          await recordGateObservation({
+	            runId: verifyStep.run_id,
+	            stepId: verifyStep.step_id,
+	            storyId: verifiedStoryId,
+	            checkId: "verify.retry_exhaustion.deferred",
+	            label: "Verify retry exhaustion deferred",
+	            status: "retry",
+	            summary: "Retry exhaustion deferred because current story pass evidence resolves the visual blocker.",
+	            detail: issues.slice(0, 1500),
+	            metadata: { retryCount: newRetry, maxRetries: retryStory.max_retries },
+	          });
+	          await pgRun(
+	            "UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = $1 WHERE id = $2",
+	            [now(), verifyStep.id],
+	          );
+	          await pgRun(
+	            "UPDATE steps SET status = 'running', started_at = COALESCE(started_at, NOW()), updated_at = $1 WHERE id = $2",
+	            [now(), loopStepId],
+	          );
+	          logger.warn(`[verify] Deferred retry exhaustion for ${verifiedStoryId}; stale visual retry has newer pass evidence`, { runId: verifyStep.run_id });
+	          return { advanced: false, runCompleted: false };
+	        }
+	        // Story retries exhausted — fail everything (Wave 13 J-2: terminal flag)
+	        await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [newRetry, issues, now(), retryStory.id]);
         await updateRunContext(verifyStep.run_id, context);
         await setStepStatus(loopStepId, "failed");
         await failRun(verifyStep.run_id, true);
@@ -6636,7 +8516,7 @@ async function handleVerifyEachCompletion(
       }
 
       // Set story back to pending for retry
-      await pgRun("UPDATE stories SET status = 'pending', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [newRetry, issues, now(), retryStory.id]);
+      await pgRun("UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [newRetry, issues, now(), retryStory.id]);
       emitEvent({ ts: now(), event: "story.retry", runId: verifyStep.run_id, workflowId: await getWorkflowId(verifyStep.run_id), stepId: verifyStep.step_id, detail: issues });
       await updateRunContext(verifyStep.run_id, context);
     }
@@ -6668,6 +8548,8 @@ async function handleVerifyEachCompletion(
         verifiedRow.pr_url,
         verifiedStoryId,
         context,
+        verifyStep.run_id,
+        verifyStep.step_id,
       );
       if (prReviewCommentsFailure) {
         if (verifiedRow.story_branch) context["story_branch"] = verifiedRow.story_branch;
@@ -6675,18 +8557,31 @@ async function handleVerifyEachCompletion(
         context["current_story_id"] = verifiedStoryId;
         await routeVerifyScopeFailureToImplement(verifyStep as StepRow, context, verifiedStoryId, prReviewCommentsFailure, {
           category: "PR_REVIEW_COMMENTS_OPEN",
-          suggestion: "Address every actionable PR review comment in the same story branch. After a retry produces a clean candidate, Setfarm resolves current inline review threads and only then allows verify to merge.",
+          suggestion: "Address every actionable PR review comment in the same story branch. Setfarm must not resolve current actionable review threads; verify only passes after the comments are no longer actionable from a real code change or reviewer action.",
         });
         await setStepStatus(verifyStep.id, "waiting");
         logger.warn(`[verify-pr-comments] ${verifiedStoryId} has actionable PR review comments — routed back to implement before merge`, { runId: verifyStep.run_id });
         return { advanced: false, runCompleted: false };
       }
-      let prState = getPRState(verifiedRow.pr_url);
+      let prState = await fetchFreshPrStateName(verifiedRow.pr_url, verifiedStoryId, context, verifyStep.run_id, verifyStep.step_id);
       if (prState === "OPEN") {
+        if (!prReviewSettleComplete(context)) {
+          const remaining = Math.round(prReviewSettleRemainingMs(context) / 1000);
+          context["previous_failure"] = `PR_REVIEW_SETTLE_PENDING: ${verifiedStoryId} PR is still inside the external review settle window (${remaining}s remaining).`;
+          context["failure_category"] = "PR_REVIEW_SETTLE_PENDING";
+          context["failure_suggestion"] = "Wait for Gemini/Copilot/human review signals before merging. Setfarm will re-check PR comments after the settle window.";
+          context["pr_url"] = verifiedRow.pr_url;
+          context["current_story_id"] = verifiedStoryId;
+          if (verifiedRow.story_branch) context["story_branch"] = verifiedRow.story_branch;
+          await updateRunContext(verifyStep.run_id, context);
+          await setStepStatus(verifyStep.id, "pending");
+          logger.info(`[verify] ${verifiedStoryId} PR still inside review settle window (${remaining}s remaining) — deferring merge`, { runId: verifyStep.run_id });
+          return { advanced: false, runCompleted: false };
+        }
         const merged = tryAutoMergePR(verifiedRow.pr_url, verifiedStoryId, verifyStep.run_id);
         if (merged) {
           invalidatePRStateCache(verifiedRow.pr_url);
-          prState = getPRState(verifiedRow.pr_url);
+          prState = await fetchFreshPrStateName(verifiedRow.pr_url, verifiedStoryId, context, verifyStep.run_id, verifyStep.step_id);
         }
       }
       if (prState !== "MERGED") {
@@ -6787,13 +8682,11 @@ async function handleVerifyEachCompletion(
       }
 
       await verifyStory(verifiedRow.id, output);
+      clearVerifiedStoryFailureContext(context);
       logger.info(`Story verified: ${verifiedStoryId}`, { runId: verifyStep.run_id });
     }
   }
   emitEvent({ ts: now(), event: "story.verified", runId: verifyStep.run_id, workflowId: await getWorkflowId(verifyStep.run_id), stepId: verifyStep.step_id, storyId: verifiedStoryId });
-
-  // Clear feedback
-  delete context["verify_feedback"];
 
   // Auto-verify 'done' stories whose PRs are already merged (prevents redundant verify cycles)
   const nextUnverifiedStory = await autoVerifyDoneStories(verifyStep.run_id, context, "handleVerifyEach");
@@ -6827,6 +8720,7 @@ async function handleVerifyEachCompletion(
 
   // No more unverified stories — persist context and check loop continuation
   context["supervisor_scope"] = "final-product";
+  clearVerifiedStoryFailureContext(context);
   delete context["current_story_id"];
   delete context["current_story_title"];
   delete context["current_story"];
@@ -6847,6 +8741,17 @@ async function handleVerifyEachCompletion(
 // ── Auto-verify helper (shared by claim-auto-verify and handleVerifyEach) ──
 
 const MAX_AUTO_VERIFY_ITERATIONS = 5;
+
+function clearVerifiedStoryFailureContext(context: Record<string, string>): void {
+  delete context["verify_feedback"];
+  delete context["previous_failure"];
+  delete context["failure_category"];
+  delete context["failure_suggestion"];
+  delete context["verify_infra_retry"];
+  delete context["verify_visual_scope_deferred"];
+  delete context["verify_pending_pr_url"];
+  delete context["verify_pending_since"];
+}
 
 /**
  * Auto-verify 'done' stories whose PRs are already merged/closed-with-ancestry.
@@ -6882,11 +8787,20 @@ export async function autoVerifyDoneStories(
     );
     let verifyStepName = "verify";
     try { verifyStepName = JSON.parse(loopStepRow?.loop_config || "{}").verifyStep || "verify"; } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
-    const verifyStep = await pgGet<{ id: string; step_index: number; agent_id: string | null; status: string; abandoned_count: number }>(
-      "SELECT id, step_index, agent_id, status, abandoned_count FROM steps WHERE run_id = $1 AND step_id = $2 AND status IN ('running','pending','failed','waiting') LIMIT 1",
+    const verifyStep = await pgGet<(StepRow & { agent_id: string | null; abandoned_count: number })>(
+      `SELECT id, step_id, run_id, step_index, input_template, type, loop_config,
+              status AS step_status, current_story_id, retry_count, output,
+              agent_id, abandoned_count
+         FROM steps
+        WHERE run_id = $1 AND step_id = $2 AND status IN ('running','pending','failed','waiting')
+        LIMIT 1`,
       [runId, verifyStepName]
     );
     const verifyStepAbandons = verifyStep?.abandoned_count ?? 0;
+    const readPrStateForVerify = async (prUrl: string): Promise<string> => {
+      if (!verifyStep) return getPRState(prUrl);
+      return fetchFreshPrStateName(prUrl, story.story_id, context, runId, verifyStep.id);
+    };
     const routeAutoVerifySmokeFailure = async (): Promise<boolean> => {
       if (!["VERIFY_SYSTEM_SMOKE_FAILURE", "BUILD_FAILED"].includes(context["failure_category"] || "") || !verifyStep) return false;
       const failure = context["previous_failure"] || `VERIFY_SYSTEM_SMOKE_FAILURE for ${story.story_id}`;
@@ -6909,7 +8823,7 @@ ${failure}`,
     if (verifyStepAbandons >= 3) {
       const prUrl = story.pr_url || "";
       if (prUrl) {
-        const fvState = getPRState(prUrl);
+        const fvState = await readPrStateForVerify(prUrl);
         if (fvState === "MERGED") {
           if (!(await ensureSystemSmokeBeforeAutoVerify(runId, context, logPrefix, story))) {
             if (await routeAutoVerifySmokeFailure()) return null;
@@ -6919,6 +8833,7 @@ ${failure}`,
             "STATUS: verified",
             `VERIFICATION_SUMMARY: Force-verified after PR was already merged and verify was abandoned ${verifyStepAbandons} time(s).`,
           ].join("\n"));
+          clearVerifiedStoryFailureContext(context);
           logger.info(`[${logPrefix}] Story ${story.story_id} force-verified — PR already merged, verify abandoned ${verifyStepAbandons}x`, { runId });
           emitEvent({ ts: now(), event: "story.verified", runId, workflowId: await getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title, detail: `Force-verified — PR merged, verify abandoned ${verifyStepAbandons}x` });
           continue;
@@ -6968,7 +8883,7 @@ ${failure}`,
     }
 
     try {
-      const prState = getPRState(prUrl);
+      const prState = await readPrStateForVerify(prUrl);
 
       if (prState === "MERGED") {
         // A merged PR is not enough; run the same smoke gate normal verify uses
@@ -6991,6 +8906,7 @@ ${failure}`,
           return story;
         }
         await verifyStory(story.id, "STATUS: verified\nVERIFICATION_SUMMARY: Auto-verified after PR was already merged and Setfarm gates passed.");
+        clearVerifiedStoryFailureContext(context);
         logger.info(`[${logPrefix}] Story ${story.story_id} auto-verified — PR merged`, { runId });
         emitEvent({ ts: now(), event: "story.verified", runId, workflowId: await getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title });
         continue;
@@ -7012,6 +8928,7 @@ ${failure}`,
             return story;
           }
           await verifyStory(story.id, "STATUS: verified\nVERIFICATION_SUMMARY: Auto-verified after closed PR content was confirmed in the base branch and Setfarm gates passed.");
+          clearVerifiedStoryFailureContext(context);
           logger.info(`[${logPrefix}] Story ${story.story_id} auto-verified — CLOSED PR content in base branch`, { runId });
           emitEvent({ ts: now(), event: "story.verified", runId, workflowId: await getWorkflowId(runId), storyId: story.story_id, storyTitle: story.title, detail: "Auto-verified — CLOSED PR content in base branch" });
           continue;
@@ -7026,8 +8943,52 @@ ${failure}`,
       }
 
       if (prState === "OPEN") {
-        // OPEN PR = needs agent review. Agent must read Gemini+Copilot comments,
-        // fix issues, then merge. No auto-merge — review is mandatory.
+        const prReviewCommentsFailure = await detectOpenPrReviewCommentFailure(
+          prUrl,
+          story.story_id,
+          context,
+          runId,
+          verifyStepName,
+        );
+        if (prReviewCommentsFailure && verifyStep) {
+          context["pr_url"] = prUrl;
+          context["current_story_id"] = story.story_id;
+          if (story.story_branch) context["story_branch"] = story.story_branch;
+          await routeVerifyScopeFailureToImplement(verifyStep as StepRow, context, story.story_id, prReviewCommentsFailure, {
+            category: "PR_REVIEW_COMMENTS_OPEN",
+            suggestion: "Address every actionable PR review comment in the same story branch before Setfarm can mechanically merge the PR.",
+          });
+          logger.warn(`[${logPrefix}] Story ${story.story_id} OPEN PR has actionable review comments — routed before reviewer spawn`, { runId });
+          return story;
+        }
+
+        const reviewSettled = prReviewSettleComplete(context);
+        if (!reviewSettled) {
+          const remaining = Math.round(prReviewSettleRemainingMs(context) / 1000);
+          logger.info(`[${logPrefix}] Story ${story.story_id} clean OPEN PR still inside external review settle window (${remaining}s remaining); deferring auto-merge`, { runId });
+        }
+
+        const cleanOpenPr =
+          reviewSettled &&
+          context["pr_check_state"] === "passing" &&
+          context["pr_mergeable"] !== "CONFLICTING" &&
+          !["DIRTY", "BLOCKED"].includes(context["pr_merge_state_status"] || "");
+
+        if (cleanOpenPr) {
+          const merged = tryAutoMergePR(prUrl, story.story_id, runId);
+          if (merged) {
+            invalidatePRStateCache(prUrl);
+            const refreshedState = await readPrStateForVerify(prUrl);
+            if (refreshedState === "MERGED") {
+              continue;
+            }
+            logger.info(`[${logPrefix}] Story ${story.story_id} auto-merge requested; PR state is ${refreshedState}, deferring verification`, { runId });
+          } else {
+            logger.warn(`[${logPrefix}] Story ${story.story_id} clean OPEN PR could not be auto-merged; reviewer still needed`, { runId });
+          }
+        }
+
+        // OPEN PR with no actionable comments but no clean merge signal still needs reviewer attention.
         return story;
       }
     } catch (e) {

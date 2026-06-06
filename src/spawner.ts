@@ -3,6 +3,7 @@
  * Listens to PostgreSQL NOTIFY events for pending steps/stories
  * and immediately spawns agent sessions via openclaw CLI.
  */
+import "./runtime-config.js";
 import postgres from "postgres";
 import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
@@ -11,15 +12,24 @@ import os from "node:os";
 import { pgClose, pgGet, pgMigrate, pgQuery, pgRun } from "./db-pg.js";
 import { loadWorkflowSpec } from "./installer/workflow-spec.js";
 import { resolveWorkflowDir } from "./installer/paths.js";
-import { claimStep, completeStep } from "./installer/step-ops.js";
+import { claimStep, completeStep, commitStoryWorktreeScopeIfNeeded } from "./installer/step-ops.js";
 import { failStep } from "./installer/step-fail.js";
 import { getRunContext } from "./installer/repo.js";
 import { discardStoryWorktreeAndResetBranch } from "./installer/worktree-ops.js";
 import { cleanupProjectEphemera, cleanupRunningRunOrphanedToolWorkers } from "./installer/cleanup-ops.js";
 import { updateSupervisorMemory } from "./installer/product-supervisor.js";
 import { buildClaimSummary, buildPreclaimedPrompt, buildResolvedClaimBootstrapScript, claimTaskPreview } from "./spawner-prompt.js";
+import { recordObservation } from "./installer/observations.js";
 
-type AgentRuntime = "codex" | "openclaw";
+type AgentRuntime = "codex" | "openclaw" | "kimi";
+type OperationalRecoveryIntent = "observe_fix" | "platform_replay" | "project_rescue";
+
+function classifyOperationalRecoveryIntent(source: string): OperationalRecoveryIntent {
+  const normalized = String(source || "").trim().toLowerCase();
+  if (normalized.includes("platform-fix") || normalized.includes("observe-fix")) return "observe_fix";
+  if (normalized.includes("orphan") || normalized.includes("runtime-guard") || normalized.includes("agent-exit")) return "platform_replay";
+  return "project_rescue";
+}
 
 function commandFromPath(name: string): string {
   try {
@@ -109,27 +119,49 @@ function resolveOpenClawCli(): string {
   return firstUsableCommand(candidates) || candidates.find(isExecutable) || "openclaw";
 }
 
+function resolveKimiCli(): string {
+  const candidates = uniqueStrings([
+    process.env.KIMI_CLI || "",
+    commandFromPath("kimi"),
+    commandFromPath("kimi-cli"),
+    ...pathCommandCandidates("kimi"),
+    ...pathCommandCandidates("kimi-cli"),
+      path.join(os.homedir(), ".local", "bin", "kimi"),
+      path.join(os.homedir(), ".local", "bin", "kimi-cli"),
+      path.join(os.homedir(), ".npm-global", "bin", "kimi"),
+      path.join(os.homedir(), ".npm-global", "bin", "kimi-cli"),
+      "/opt/homebrew/bin/kimi",
+      "/usr/local/bin/kimi",
+  ]);
+  return firstUsableCommand(candidates) || candidates.find(isExecutable) || "kimi";
+}
+
 function resolveAgentRuntime(): AgentRuntime {
   const requested = (process.env.SETFARM_AGENT_RUNTIME || "").trim().toLowerCase();
   if (requested === "codex" && commandIsUsable(CODEX_CLI)) return "codex";
   if (requested === "openclaw" && commandIsUsable(OPENCLAW_CLI)) return "openclaw";
-  if (requested === "codex" || requested === "openclaw") {
+  if (requested === "kimi" && commandIsUsable(KIMI_CLI)) return "kimi";
+  if (requested === "codex" || requested === "openclaw" || requested === "kimi") {
     console.warn(`[spawner] Requested runtime ${requested} is not usable; falling back to available runtime`);
   }
-  if (commandIsUsable(CODEX_CLI)) return "codex";
   if (commandIsUsable(OPENCLAW_CLI)) return "openclaw";
-  return requested === "openclaw" ? "openclaw" : "codex";
+  if (commandIsUsable(KIMI_CLI)) return "kimi";
+  if (commandIsUsable(CODEX_CLI)) return "codex";
+  return requested === "openclaw" ? "openclaw" : requested === "kimi" ? "kimi" : "codex";
 }
 
 const CODEX_CLI = resolveCodexCli();
 const OPENCLAW_CLI = resolveOpenClawCli();
+const KIMI_CLI = resolveKimiCli();
 const AGENT_RUNTIME: AgentRuntime = resolveAgentRuntime();
 const OPENCLAW_TASKS_DB = process.env.OPENCLAW_TASKS_DB || path.join(os.homedir(), ".openclaw", "tasks", "runs.sqlite");
 const POLL_INTERVAL_MS = 30_000;
 const AGENT_TIMEOUT_SECONDS = 1800;
 const PID_FILE = path.join(os.homedir(), ".openclaw", "setfarm", "spawner.pid");
-const MAX_CONCURRENT = 8;
+const DEFAULT_MAX_CONCURRENT = AGENT_RUNTIME === "openclaw" ? 8 : 2;
+const MAX_CONCURRENT = parsePositiveInt(process.env.SETFARM_MAX_CONCURRENT, DEFAULT_MAX_CONCURRENT);
 const SPAWN_STAGGER_MS = parseInt(process.env.SETFARM_SPAWN_STAGGER_MS || "12000", 10);
+const RUNTIME_USAGE_LIMIT_DEFAULT_COOLDOWN_MS = parsePositiveInt(process.env.SETFARM_RUNTIME_USAGE_LIMIT_COOLDOWN_MS, 4 * 60_000);
 const WORKFLOW_DEFER_RETRY_MS = parsePositiveInt(process.env.SETFARM_WORKFLOW_DEFER_RETRY_MS, POLL_INTERVAL_MS);
 const BACKGROUND_WORKFLOWS = new Set((process.env.SETFARM_BACKGROUND_WORKFLOWS || "daily-standup")
   .split(",")
@@ -138,6 +170,9 @@ const BACKGROUND_WORKFLOWS = new Set((process.env.SETFARM_BACKGROUND_WORKFLOWS |
 const VERIFY_AGENT_HARD_TIMEOUT_MS = parsePositiveInt(process.env.SETFARM_VERIFY_AGENT_HARD_TIMEOUT_MS, 10 * 60_000);
 const VERIFY_BOUNDED_REVIEW_MIN_AGE_MS = parsePositiveInt(process.env.SETFARM_VERIFY_BOUNDED_REVIEW_MIN_AGE_MS, 2 * 60_000);
 const VERIFY_BOUNDED_REVIEW_MAX_SOURCE_READS = parsePositiveInt(process.env.SETFARM_VERIFY_BOUNDED_REVIEW_MAX_SOURCE_READS, 6);
+const SUPERVISOR_BOUNDED_AUDIT_MIN_AGE_MS = parsePositiveInt(process.env.SETFARM_SUPERVISOR_BOUNDED_AUDIT_MIN_AGE_MS, 90_000);
+const SUPERVISOR_BOUNDED_AUDIT_MAX_TOOL_CALLS = parsePositiveInt(process.env.SETFARM_SUPERVISOR_BOUNDED_AUDIT_MAX_TOOL_CALLS, 28);
+const SUPERVISOR_BOUNDED_AUDIT_MAX_SOURCE_READS = parsePositiveInt(process.env.SETFARM_SUPERVISOR_BOUNDED_AUDIT_MAX_SOURCE_READS, 10);
 const SESSION_GUARD_HEAD_BYTES = parsePositiveInt(process.env.SETFARM_SESSION_GUARD_HEAD_BYTES, 768_000);
 const SESSION_GUARD_TAIL_BYTES = parsePositiveInt(process.env.SETFARM_SESSION_GUARD_TAIL_BYTES, 768_000);
 const NON_DEVELOPER_STUCK_MS = parsePositiveInt(process.env.SETFARM_AGENT_STUCK_MS, 12 * 60_000);
@@ -146,16 +181,21 @@ const QA_FIX_AGENT_STUCK_MS = parsePositiveInt(process.env.SETFARM_QA_FIX_AGENT_
 const STARTUP_RUNNING_GRACE_MS = parsePositiveInt(process.env.SETFARM_STARTUP_RUNNING_GRACE_MS, 0);
 const QA_AGENT_STUCK_MS = parsePositiveInt(process.env.SETFARM_QA_AGENT_STUCK_MS, 6 * 60_000);
 const AGENT_ACTIVITY_GRACE_MS = parsePositiveInt(process.env.SETFARM_AGENT_ACTIVITY_GRACE_MS, 4 * 60_000);
+const AGENT_ACTIVE_WATCHDOG_OVERRUN_MS = parsePositiveInt(process.env.SETFARM_AGENT_ACTIVE_WATCHDOG_OVERRUN_MS, 8 * 60_000);
 const AGENT_HEARTBEAT_MS = parsePositiveInt(process.env.SETFARM_AGENT_HEARTBEAT_MS, 60_000);
-const AGENT_STARTUP_SILENCE_MS = parsePositiveInt(process.env.SETFARM_AGENT_STARTUP_SILENCE_MS, 4 * 60_000);
+const DEFAULT_AGENT_STARTUP_SILENCE_MS = AGENT_RUNTIME === "kimi" ? 12 * 60_000 : 4 * 60_000;
+const AGENT_STARTUP_SILENCE_MS = parsePositiveInt(process.env.SETFARM_AGENT_STARTUP_SILENCE_MS, DEFAULT_AGENT_STARTUP_SILENCE_MS);
 const AGENT_MODEL_TURN_STALL_MS = parsePositiveInt(process.env.SETFARM_AGENT_MODEL_TURN_STALL_MS, 8 * 60_000);
 const AGENT_SELF_LOOP_CHECK_AFTER_MS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_CHECK_AFTER_MS, 6 * 60_000);
+const AGENT_REPEATED_TOOL_LOOP_CHECK_AFTER_MS = parsePositiveInt(process.env.SETFARM_AGENT_REPEATED_TOOL_LOOP_CHECK_AFTER_MS, 2 * 60_000);
 const IMPLEMENT_NO_DELTA_GRACE_MS = parsePositiveInt(process.env.SETFARM_IMPLEMENT_NO_DELTA_GRACE_MS, 8 * 60_000);
+const IMPLEMENT_RETRY_HARD_TIMEOUT_MS = parsePositiveInt(process.env.SETFARM_IMPLEMENT_RETRY_HARD_TIMEOUT_MS, 7 * 60_000);
 const IMPLEMENT_PRE_DELTA_MAX_CONTEXT_READS = parsePositiveInt(process.env.SETFARM_IMPLEMENT_PRE_DELTA_MAX_CONTEXT_READS, 10);
 const AGENT_SELF_LOOP_MIN_ACTIONS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_ACTIONS, 7);
 const AGENT_SELF_LOOP_MIN_NOOP_EDITS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_NOOP_EDITS, 4);
 const AGENT_SELF_LOOP_MIN_REPEATED_FAILURES = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_REPEATED_FAILURES, 4);
 const AGENT_SELF_LOOP_MIN_REPEATED_COMMANDS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_REPEATED_COMMANDS, 8);
+const RUNTIME_GUARD_REPEAT_LIMIT = parsePositiveInt(process.env.SETFARM_RUNTIME_GUARD_REPEAT_LIMIT, 3);
 const CLAIM_PARSE_LOOP_MIN_READS = parsePositiveInt(process.env.SETFARM_CLAIM_PARSE_LOOP_MIN_READS, 6);
 const REAP_FINISHED_ACTIVE_GRACE_MS = parsePositiveInt(process.env.SETFARM_REAP_FINISHED_ACTIVE_GRACE_MS, 60_000);
 const ORPHANED_SINGLE_STEP_CLAIM_MS = parsePositiveInt(process.env.SETFARM_ORPHANED_SINGLE_STEP_CLAIM_MS, 2 * 60_000);
@@ -198,7 +238,7 @@ const TRANSCRIPT_ROOT = path.join(os.homedir(), ".openclaw", "workspace", "trans
 const OPENCLAW_AGENTS_ROOT = path.join(os.homedir(), ".openclaw", "agents");
 
 function assertAgentRuntimeAvailable(): void {
-  const command = AGENT_RUNTIME === "codex" ? CODEX_CLI : OPENCLAW_CLI;
+  const command = AGENT_RUNTIME === "codex" ? CODEX_CLI : AGENT_RUNTIME === "openclaw" ? OPENCLAW_CLI : KIMI_CLI;
   if (!commandIsUsable(command)) {
     throw new Error(`AGENT_RUNTIME_UNAVAILABLE: ${AGENT_RUNTIME} CLI is not executable or failed --version at ${command}`);
   }
@@ -391,6 +431,7 @@ function gitTrackedFiles(repo: string): string[] {
 }
 
 function isSecurityScanCandidate(file: string): boolean {
+  if (/(^|\/)(stitch|\.setfarm)\//.test(file)) return false;
   if (/(^|\/)(node_modules|dist|build|coverage|\.git|\.next|\.nuxt|out)\//.test(file)) return false;
   if (/(^|\/)(package-lock|pnpm-lock|yarn\.lock|bun\.lockb)$/.test(file)) return false;
   if (/\.(png|jpe?g|gif|webp|avif|ico|woff2?|ttf|otf|mp4|mov|zip|gz|pdf)$/i.test(file)) return false;
@@ -606,6 +647,8 @@ type SessionCommandCallStats = {
 const activeProcesses = new Map<string, ActiveProcess>();
 const queuedSpawns = new Set<string>();
 const claimingSpawns = new Set<string>();
+const agentCooldownUntil = new Map<string, number>();
+let runtimeUsageLimitCooldownUntil = 0;
 let shuttingDown = false;
 let nextSpawnEarliest = 0;
 let claimMaintenanceInFlight = false;
@@ -741,16 +784,61 @@ function extractSessionText(content: unknown): string {
     .join("\n");
 }
 
+function sessionEventMessage(event: any): any {
+  if (event?.message && typeof event.message === "object") return event.message;
+  return event && typeof event === "object" ? event : {};
+}
+
+function parseToolArguments(raw: unknown): Record<string, any> {
+  if (!raw) return {};
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return typeof raw === "object" ? raw as Record<string, any> : {};
+}
+
+function isWriteToolCallName(name: string): boolean {
+  return /^(?:write|edit|writefile|strreplacefile|applypatch|apply_patch)$/i.test(String(name || ""));
+}
+
+function isEditToolCallName(name: string): boolean {
+  return /^(?:edit|strreplacefile|applypatch|apply_patch)$/i.test(String(name || ""));
+}
+
 function extractToolCalls(content: unknown): Array<{ name: string; path: string; command: string; limit: number | null }> {
-  if (!Array.isArray(content)) return [];
   const calls: Array<{ name: string; path: string; command: string; limit: number | null }> = [];
-  for (const part of content as any[]) {
+  const message = content && typeof content === "object" && !Array.isArray(content) ? content as any : {};
+  const parts = Array.isArray(content) ? content as any[] : Array.isArray(message.content) ? message.content : [];
+  for (const part of parts) {
     if (!part || typeof part !== "object") continue;
     const type = String(part.type || "");
     if (type !== "toolCall" && type !== "tool_use") continue;
     const name = String(part.name || part.toolName || "");
-    const args = part.arguments || part.input || {};
-    const candidate = typeof args.path === "string" ? args.path : "";
+    const args = parseToolArguments(part.arguments || part.input || {});
+    const candidate = typeof args.path === "string" ? args.path : typeof args.filePath === "string" ? args.filePath : typeof args.file_path === "string" ? args.file_path : "";
+    const command = typeof args.command === "string" ? args.command : "";
+    const rawLimit = args.limit ?? args.maxLines ?? args.max_lines ?? args.max_output_tokens;
+    const parsedLimit = rawLimit === undefined || rawLimit === null || rawLimit === ""
+      ? null
+      : Number(rawLimit);
+    calls.push({ name, path: candidate, command, limit: parsedLimit !== null && Number.isFinite(parsedLimit) ? parsedLimit : null });
+  }
+  const toolCalls = Array.isArray(message.tool_calls)
+    ? message.tool_calls
+    : Array.isArray(message.toolCalls)
+      ? message.toolCalls
+      : [];
+  for (const call of toolCalls) {
+    if (!call || typeof call !== "object") continue;
+    const fn = call.function && typeof call.function === "object" ? call.function : {};
+    const name = String(fn.name || call.name || call.toolName || "");
+    const args = parseToolArguments(fn.arguments || call.arguments || call.input || {});
+    const candidate = typeof args.path === "string" ? args.path : typeof args.filePath === "string" ? args.filePath : typeof args.file_path === "string" ? args.file_path : "";
     const command = typeof args.command === "string" ? args.command : "";
     const rawLimit = args.limit ?? args.maxLines ?? args.max_lines ?? args.max_output_tokens;
     const parsedLimit = rawLimit === undefined || rawLimit === null || rawLimit === ""
@@ -836,10 +924,10 @@ function implementReferenceReadGuard(active: ActiveProcess): { detected: boolean
   for (const line of raw.split(/\n/).filter(Boolean)) {
     let event: any;
     try { event = JSON.parse(line); } catch { continue; }
-    const message = event?.message || {};
+    const message = sessionEventMessage(event);
     if (String(message.role || "") !== "assistant") continue;
 
-    for (const call of extractToolCalls(message.content)) {
+    for (const call of extractToolCalls(message)) {
       const candidates: Array<{ path: string; via: string; full: boolean }> = [];
       if (call.name === "read" && call.path) {
         const relativePath = normalizeWorktreeRelativePath(active.spawnCwd, call.path);
@@ -956,10 +1044,10 @@ function generatedScreenReadGuard(active: ActiveProcess): { detected: boolean; r
   for (const line of raw.split(/\n/).filter(Boolean)) {
     let event: any;
     try { event = JSON.parse(line); } catch { continue; }
-    const message = event?.message || {};
+    const message = sessionEventMessage(event);
     if (String(message.role || "") !== "assistant") continue;
 
-    for (const call of extractToolCalls(message.content)) {
+    for (const call of extractToolCalls(message)) {
       const candidates: Array<{ path: string; via: string }> = [];
       if (call.name === "read" && call.path) {
         const relativePath = normalizeWorktreeRelativePath(active.spawnCwd, call.path);
@@ -1039,10 +1127,10 @@ function rawStitchDesignReadGuard(active: ActiveProcess): { detected: boolean; r
   for (const line of raw.split(/\n/).filter(Boolean)) {
     let event: any;
     try { event = JSON.parse(line); } catch { continue; }
-    const message = event?.message || {};
+    const message = sessionEventMessage(event);
     if (String(message.role || "") !== "assistant") continue;
 
-    for (const call of extractToolCalls(message.content)) {
+    for (const call of extractToolCalls(message)) {
       const candidates: Array<{ path: string; via: string }> = [];
       if (call.name === "read" && call.path) {
         const relativePath = normalizeWorktreeRelativePath(active.spawnCwd, call.path);
@@ -1134,10 +1222,10 @@ function implementPreDeltaCheckGuard(active: ActiveProcess): { detected: boolean
   for (const line of raw.split(/\n/).filter(Boolean)) {
     let event: any;
     try { event = JSON.parse(line); } catch { continue; }
-    const message = event?.message || {};
+    const message = sessionEventMessage(event);
     if (String(message.role || "") !== "assistant") continue;
 
-    for (const call of extractToolCalls(message.content)) {
+    for (const call of extractToolCalls(message)) {
       if (!call.command || !isVerifyDeterministicEvidenceCommand(call.command)) continue;
       const command = compactCommandForDiagnostic(call.command);
       return {
@@ -1167,10 +1255,10 @@ function implementPreDeltaExplorationGuard(active: ActiveProcess): { detected: b
   for (const line of raw.split(/\n/).filter(Boolean)) {
     let event: any;
     try { event = JSON.parse(line); } catch { continue; }
-    const message = event?.message || {};
+    const message = sessionEventMessage(event);
     if (String(message.role || "") !== "assistant") continue;
 
-    for (const call of extractToolCalls(message.content)) {
+    for (const call of extractToolCalls(message)) {
       if (call.name === "read" && call.path) {
         const relativePath = normalizeSessionProjectRelativePath(active, call.path);
         if (isPreDeltaProjectContextPath(relativePath) && !isPreDeltaSafeContextPath(relativePath, allowed)) {
@@ -1197,8 +1285,18 @@ function implementPreDeltaExplorationGuard(active: ActiveProcess): { detected: b
   return { detected: false, reason: "" };
 }
 
-function isRuntimeScopeAllowedWrite(relativePath: string, allowed: Set<string>): boolean {
+function isImplementEvidenceRequestArtifact(relativePath: string, storyId?: string): boolean {
+  if (!storyId) return false;
+  const normalizedStoryId = String(storyId || "").trim();
+  if (!normalizedStoryId || normalizedStoryId.includes("/") || normalizedStoryId.includes("\\")) return false;
+  const base = `.setfarm/implement/${normalizedStoryId}/`;
+  return relativePath === `${base}IMPLEMENT_INTENT.json`
+    || relativePath === `${base}IMPLEMENT_VERIFICATION_REQUEST.json`;
+}
+
+function isRuntimeScopeAllowedWrite(relativePath: string, allowed: Set<string>, storyId?: string): boolean {
   if (allowed.has(relativePath)) return true;
+  if (isImplementEvidenceRequestArtifact(relativePath, storyId)) return true;
   if (relativePath === ".story-scope-files" || relativePath === ".story-branch" || relativePath === "pre-commit") return true;
   if (/\.(test|spec)\.[cm]?[jt]sx?$/i.test(relativePath)) return true;
   return /^(vitest|jest)\.config\.[cm]?[jt]s$/i.test(relativePath)
@@ -1222,12 +1320,12 @@ function implementScopeWriteGuard(active: ActiveProcess): { detected: boolean; r
   for (const line of raw.split(/\n/).filter(Boolean)) {
     let event: any;
     try { event = JSON.parse(line); } catch { continue; }
-    const message = event?.message || {};
+    const message = sessionEventMessage(event);
     if (String(message.role || "") !== "assistant") continue;
-    for (const call of extractToolCalls(message.content)) {
-      if (call.name !== "write" && call.name !== "edit") continue;
+    for (const call of extractToolCalls(message)) {
+      if (!isWriteToolCallName(call.name)) continue;
       const relativePath = normalizeWorktreeRelativePath(active.spawnCwd, call.path);
-      if (!relativePath || isRuntimeScopeAllowedWrite(relativePath, allowed)) continue;
+      if (!relativePath || isRuntimeScopeAllowedWrite(relativePath, allowed, active.storyId)) continue;
       const probeHint = /(?:^|\/|_)(probe|scratch|tmp)[^/]*\.[cm]?[jt]sx?$/i.test(relativePath)
         ? " Do not create TypeScript probe/scratch files in the project tree to infer shared component props; use claim-summary designContracts.componentTypes or a /tmp-only experiment that never writes under WORKDIR."
         : "";
@@ -1239,6 +1337,55 @@ function implementScopeWriteGuard(active: ActiveProcess): { detected: boolean; r
   }
 
   return { detected: false, reason: "" };
+}
+
+function rejectedRetryDeletionLinesFromClaimSummary(active: ActiveProcess): string[] {
+  if (!active.claimSummaryPath || !fs.existsSync(active.claimSummaryPath)) return [];
+  try {
+    const raw = fs.readFileSync(active.claimSummaryPath, "utf-8");
+    const text = JSON.stringify(JSON.parse(raw));
+    const match = text.match(/Repeated deletions:\s*([\s\S]*?)(?:\s+ALSO_FIX:|\s+RETRY_ACTION|\s+RETRY_INSTRUCTION|$)/);
+    if (!match) return [];
+    return match[1]
+      .split("|")
+      .map((line) => line.replace(/\\+"/g, "\"").replace(/\\n/g, "\n").trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function deletedLinesFromCurrentWorktreeDiff(workdir: string): string[] {
+  try {
+    const diff = execFileSync("git", ["diff", "--no-ext-diff", "HEAD", "--"], {
+      cwd: workdir,
+      encoding: "utf-8",
+      timeout: 10_000,
+      maxBuffer: 5 * 1024 * 1024,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    return diff
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("-") && !line.startsWith("---"))
+      .map((line) => line.slice(1).trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function implementRejectedRetryPatchRuntimeGuard(active: ActiveProcess): { detected: boolean; reason: string } {
+  if (!active.storyId || !active.spawnCwd || !fs.existsSync(path.join(active.spawnCwd, ".git"))) return { detected: false, reason: "" };
+  const rejectedLines = rejectedRetryDeletionLinesFromClaimSummary(active);
+  if (rejectedLines.length === 0) return { detected: false, reason: "" };
+  const currentDeleted = new Set(deletedLinesFromCurrentWorktreeDiff(active.spawnCwd));
+  const repeated = rejectedLines.filter((line) => currentDeleted.has(line));
+  const uniqueRepeated = [...new Set(repeated)];
+  if (uniqueRepeated.length < 2) return { detected: false, reason: "" };
+  return {
+    detected: true,
+    reason: `RETRY_PATCH_REAPPLIED_RUNTIME_GUARD: ${active.agentId} reintroduced ${uniqueRepeated.length} deletion(s) from a rejected retry patch for ${active.storyId}; killing before completion so the next claim starts from a clean worktree. Preserve/restore previously verified lines: ${uniqueRepeated.slice(0, 6).join(" | ")}`,
+  };
 }
 
 function compactCommandForDiagnostic(command: string): string {
@@ -1298,9 +1445,9 @@ function implementGitDisciplineGuard(active: ActiveProcess): { detected: boolean
   for (const line of raw.split(/\n/).filter(Boolean)) {
     let event: any;
     try { event = JSON.parse(line); } catch { continue; }
-    const message = event?.message || {};
+    const message = sessionEventMessage(event);
     if (String(message.role || "") !== "assistant") continue;
-    for (const call of extractToolCalls(message.content)) {
+    for (const call of extractToolCalls(message)) {
       if (!call.command) continue;
       const command = compactCommandForDiagnostic(call.command);
       const wrapperBypassHint = wrapperInstalled && commandBypassesImplementGitWrapper(command)
@@ -1346,6 +1493,44 @@ function implementGitDisciplineGuard(active: ActiveProcess): { detected: boolean
   return { detected: false, reason: "" };
 }
 
+function isBroadProcessCleanupCommand(command: string): boolean {
+  const compact = compactCommandForDiagnostic(command);
+  if (!compact) return false;
+
+  const broadTargets = "(?:node|npm|pnpm|yarn|bun|vite|vitest|tsx|ts-node|playwright|chromium|chrome)";
+  return new RegExp(`\\bpkill\\b[^;&|]*(?:-f\\b[^;&|]*)?\\b${broadTargets}\\b`, "i").test(compact)
+    || new RegExp(`\\bkillall\\b[^;&|]*\\b${broadTargets}\\b`, "i").test(compact)
+    || new RegExp(`\\bkill\\b[^;&|]*\\$\\([^)]*\\bpgrep\\b[^)]*(?:-f\\b[^)]*)?\\b${broadTargets}\\b[^)]*\\)`, "i").test(compact)
+    || new RegExp(`\\bpgrep\\b[^;&|]*(?:-f\\b[^;&|]*)?\\b${broadTargets}\\b[^;&|]*\\|\\s*xargs\\s+(?:-[^;&|]+\\s+)*kill\\b`, "i").test(compact);
+}
+
+function implementProcessCleanupGuard(active: ActiveProcess): { detected: boolean; reason: string } {
+  let raw = "";
+  try {
+    raw = fs.readFileSync(active.sessionJsonlPath, "utf-8").slice(-512_000).trim();
+  } catch {
+    return { detected: false, reason: "" };
+  }
+  if (!raw) return { detected: false, reason: "" };
+
+  for (const line of raw.split(/\n/).filter(Boolean)) {
+    let event: any;
+    try { event = JSON.parse(line); } catch { continue; }
+    const message = sessionEventMessage(event);
+    if (String(message.role || "") !== "assistant") continue;
+    for (const call of extractToolCalls(message)) {
+      if (!call.command || !isBroadProcessCleanupCommand(call.command)) continue;
+      const command = compactCommandForDiagnostic(call.command);
+      return {
+        detected: true,
+        reason: `BROAD_PROCESS_CLEANUP_VIOLATION: ${active.agentId} ran broad process cleanup (${command}). Implement agents may not kill shared dev/runtime processes with pkill/killall/pgrep pipelines; Setfarm owns runtime port lifecycle and cleanup. Runtime supervisor killed the claim before shared previews could be disrupted.`,
+      };
+    }
+  }
+
+  return { detected: false, reason: "" };
+}
+
 function isRawClaimFileRead(command: string, claimSummaryPath?: string): boolean {
   if (!command) return false;
   if (claimSummaryPath && command.includes(claimSummaryPath)) return false;
@@ -1378,11 +1563,11 @@ function claimParseLoopGuard(active: ActiveProcess): { detected: boolean; reason
   for (const line of raw.split(/\n/).filter(Boolean)) {
     let event: any;
     try { event = JSON.parse(line); } catch { continue; }
-    const message = event?.message || {};
+    const message = sessionEventMessage(event);
     if (String(message.role || "") !== "assistant") continue;
-    for (const call of extractToolCalls(message.content)) {
-      if (call.name === "write") writes += 1;
-      if (call.name === "edit") edits += 1;
+    for (const call of extractToolCalls(message)) {
+      if (isWriteToolCallName(call.name) && !isEditToolCallName(call.name)) writes += 1;
+      if (isEditToolCallName(call.name)) edits += 1;
       if (call.path && active.claimSummaryPath && call.path.includes(active.claimSummaryPath)) summaryReads += 1;
       if (call.path && /\/tmp\/claim-[^'"`\s;|&]+\.json\b/.test(call.path)) rawClaimReads += 1;
       if (call.command) {
@@ -1502,10 +1687,10 @@ function verifyBoundedReviewGuard(active: ActiveProcess, ageMs: number): { detec
   for (const line of raw.split(/\n/).filter(Boolean)) {
     let event: any;
     try { event = JSON.parse(line); } catch { continue; }
-    const message = event?.message || {};
+    const message = sessionEventMessage(event);
     if (String(message.role || "") !== "assistant") continue;
 
-    for (const call of extractToolCalls(message.content)) {
+    for (const call of extractToolCalls(message)) {
       if (call.command && isVerifyDeterministicEvidenceCommand(call.command)) {
         sawDeterministicEvidence = true;
         continue;
@@ -1534,12 +1719,63 @@ function verifyBoundedReviewGuard(active: ActiveProcess, ageMs: number): { detec
   return { detected: false, reason: "" };
 }
 
+function supervisorBoundedAuditGuard(active: ActiveProcess, ageMs: number): { detected: boolean; reason: string } {
+  if (ageMs < SUPERVISOR_BOUNDED_AUDIT_MIN_AGE_MS) return { detected: false, reason: "" };
+  if (fileSize(active.outputPath) > 0) return { detected: false, reason: "" };
+
+  const raw = readSessionJsonlForGuard(active.sessionJsonlPath);
+  if (!raw) return { detected: false, reason: "" };
+
+  let toolCalls = 0;
+  const sourceReads = new Set<string>();
+
+  for (const line of raw.split(/\n/).filter(Boolean)) {
+    let event: any;
+    try { event = JSON.parse(line); } catch { continue; }
+    const message = sessionEventMessage(event);
+    if (String(message.role || "") !== "assistant") continue;
+
+    for (const call of extractToolCalls(message)) {
+      toolCalls++;
+      if (call.name === "read" && call.path) {
+        const relativePath = normalizeSessionProjectRelativePath(active, call.path);
+        if (isSourceReviewPath(relativePath)) sourceReads.add(relativePath);
+      }
+      if (call.command) {
+        for (const relativePath of sourceReviewReadsFromCommand(active, call.command)) {
+          sourceReads.add(relativePath);
+        }
+      }
+    }
+  }
+
+  if (toolCalls >= SUPERVISOR_BOUNDED_AUDIT_MAX_TOOL_CALLS || sourceReads.size >= SUPERVISOR_BOUNDED_AUDIT_MAX_SOURCE_READS) {
+    const details = [
+      `${toolCalls} tool calls`,
+      `${sourceReads.size} source/test reads`,
+    ].join(", ");
+    const sampleReads = Array.from(sourceReads).slice(0, 8).join(", ");
+    return {
+      detected: true,
+      reason: `SUPERVISOR_BOUNDED_AUDIT_VIOLATION: ${active.agentId} kept a supervise audit open without STATUS/output after ${details}${sampleReads ? ` (${sampleReads})` : ""}. Supervisor is a bounded product coherence gate: use claim summary, supervisor ledger, direct evidence artifacts, and only directly relevant files; emit STATUS before broad source-review loops or provider step limits.`,
+    };
+  }
+
+  return { detected: false, reason: "" };
+}
+
 function normalizedSessionCommand(command: string): string {
   const compact = command.replace(/\s+/g, " " ).trim();
   if (!compact) return "";
-  if (!/\b(vitest|npm\s+(run\s+)?test|pnpm\s+test|yarn\s+test|bun\s+test|playwright|npm\s+run\s+build|tsc)\b/i.test(compact)) return "";
+  const isEvidenceCommand = /\b(vitest|npm\s+(run\s+)?test|pnpm\s+test|yarn\s+test|bun\s+test|playwright|npm\s+run\s+build|tsc)\b/i.test(compact);
+  const isReadOnlyExplorationCommand =
+    /\b(rg|grep|cat|sed|nl|head|tail|awk|wc)\b/i.test(compact)
+    && !/\b(>|>>|tee|perl\s+-pi|sed\s+-i|python3?|node|apply_patch|git\s+(?:add|commit|push|checkout|switch|reset))\b/i.test(compact);
+  if (!isEvidenceCommand && !isReadOnlyExplorationCommand) return "";
   return compact
     .replace(/\/home\/setrox\/\.openclaw\/workspaces\/workflows\/[^ ]+/g, "<workdir>")
+    .replace(/\/Users\/[^ ]+\/\.openclaw\/workspaces\/workflows\/[^ ]+/g, "<workdir>")
+    .replace(/\/Users\/[^ ]+\/projects\/[A-Za-z0-9._-]+/g, "<project>")
     .replace(/--reporter(=|\s+)\S+/g, "--reporter")
     .replace(/\|\s*(tail|head)\s+-\d+.*$/i, "")
     .replace(/\|\s*grep\b.*$/i, "")
@@ -1580,7 +1816,7 @@ function latestSessionActivitySummary(active: ActiveProcess): string {
   for (let i = lines.length - 1; i >= 0; i--) {
     let event: any;
     try { event = JSON.parse(lines[i]); } catch { continue; }
-    const message = event?.message || {};
+    const message = sessionEventMessage(event);
     const role = String(message.role || "");
     const content = message.content;
 
@@ -1645,6 +1881,15 @@ function repeatedTranscriptToolLoop(active: ActiveProcess): { detected: boolean;
           " (repeats=" + maxRepeats + ")",
       };
     }
+
+    const reminderRepeats = (tail.match(/repeating the exact same tool call with identical parameters/gi) || []).length;
+    if (reminderRepeats >= AGENT_SELF_LOOP_MIN_REPEATED_COMMANDS) {
+      return {
+        detected: true,
+        reason: "AGENT_SELF_LOOP: runtime reported repeated identical tool calls" +
+          " (reminders=" + reminderRepeats + ")",
+      };
+    }
   } catch {}
   return { detected: false, reason: "" };
 }
@@ -1670,12 +1915,10 @@ function repeatedSessionFileLoop(active: ActiveProcess): { detected: boolean; re
   for (const line of lines) {
     let event: any;
     try { event = JSON.parse(line); } catch { continue; }
-    const message = event?.message || {};
+    const message = sessionEventMessage(event);
     const role = String(message.role || "");
-    const content = message.content;
-
     if (role === "assistant") {
-      for (const call of extractToolCalls(content)) {
+      for (const call of extractToolCalls(message)) {
         if (call.name === "exec") {
           currentCommand = normalizedSessionCommand(call.command);
           currentToolPath = "";
@@ -1687,13 +1930,13 @@ function repeatedSessionFileLoop(active: ActiveProcess): { detected: boolean; re
           continue;
         }
         currentCommand = "";
-        if (call.name !== "write" && call.name !== "edit") continue;
+        if (!isWriteToolCallName(call.name)) continue;
         const target = call.path || currentToolPath;
         if (!target) continue;
         const stats = fileStats.get(target) || { actions: 0, writes: 0, edits: 0, noopEdits: 0 };
         stats.actions += 1;
-        if (call.name === "write") stats.writes += 1;
-        if (call.name === "edit") stats.edits += 1;
+        if (isWriteToolCallName(call.name) && !isEditToolCallName(call.name)) stats.writes += 1;
+        if (isEditToolCallName(call.name)) stats.edits += 1;
         fileStats.set(target, stats);
         currentToolPath = target;
       }
@@ -1701,7 +1944,7 @@ function repeatedSessionFileLoop(active: ActiveProcess): { detected: boolean; re
     }
 
     if (role === "toolResult") {
-      const text = extractSessionText(content);
+      const text = extractSessionText(message.content);
       if (currentCommand) {
         const signature = sessionFailureSignature(text);
         if (signature) {
@@ -1921,10 +2164,55 @@ function buildOpenClawChildEnv(pathPrefix?: string): NodeJS.ProcessEnv {
   return e as NodeJS.ProcessEnv;
 }
 
-function buildAgentChildEnv(pathPrefix?: string): NodeJS.ProcessEnv {
+function symlinkOrCopyIfExists(source: string, target: string): void {
+  try {
+    if (!fs.existsSync(source) || fs.existsSync(target)) return;
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.symlinkSync(source, target);
+  } catch {
+    try {
+      const stats = fs.statSync(source);
+      if (stats.isDirectory()) {
+        fs.cpSync(source, target, { recursive: true, force: false, errorOnExist: false });
+      } else {
+        fs.copyFileSync(source, target);
+      }
+    } catch {
+      // Best-effort only. If auth/config cannot be prepared, the child process
+      // will fail normally and Setfarm's infra routing will surface it.
+    }
+  }
+}
+
+function prepareKimiIsolatedHome(sessionId: string): string {
+  const root = path.join(os.homedir(), ".openclaw", "setfarm", "kimi-runtime", sessionId);
+  const home = path.join(root, "home");
+  const kimiDir = path.join(home, ".kimi");
+  fs.mkdirSync(kimiDir, { recursive: true });
+  const sourceKimi = path.join(os.homedir(), ".kimi");
+  for (const entry of ["config.toml", "credentials", "device_id", "mcp.json", "latest_version.txt"]) {
+    symlinkOrCopyIfExists(path.join(sourceKimi, entry), path.join(kimiDir, entry));
+  }
+  fs.mkdirSync(path.join(kimiDir, "sessions"), { recursive: true });
+  fs.mkdirSync(path.join(kimiDir, "logs"), { recursive: true });
+  fs.mkdirSync(path.join(kimiDir, "telemetry"), { recursive: true });
+  fs.mkdirSync(path.join(home, ".cache"), { recursive: true });
+  fs.mkdirSync(path.join(home, ".config"), { recursive: true });
+  return home;
+}
+
+function buildAgentChildEnv(pathPrefix?: string, options: { runtime?: AgentRuntime; sessionId?: string } = {}): NodeJS.ProcessEnv {
   const e = buildOpenClawChildEnv(pathPrefix);
   if (AGENT_RUNTIME === "codex") {
     e.CODEX_HOME = e.CODEX_HOME || path.join(os.homedir(), ".codex");
+  }
+  if ((options.runtime || AGENT_RUNTIME) === "kimi" && options.sessionId) {
+    const kimiHome = prepareKimiIsolatedHome(options.sessionId);
+    e.HOME = kimiHome;
+    e.KIMI_HOME = path.join(kimiHome, ".kimi");
+    e.XDG_CONFIG_HOME = path.join(kimiHome, ".config");
+    e.XDG_CACHE_HOME = path.join(kimiHome, ".cache");
+    e.XDG_STATE_HOME = path.join(kimiHome, ".local", "state");
   }
   return e;
 }
@@ -2592,7 +2880,17 @@ function sourceDiffFiles(workdir: string, baseRef: string): string[] {
 }
 
 function sourceStatusFiles(workdir: string): string[] {
-  const raw = gitOutput(workdir, ["status", "--porcelain", "--", ...RECOVERABLE_SOURCE_PATHS]);
+  let raw: string | null = null;
+  try {
+    raw = execFileSync("git", ["status", "--porcelain", "-uall", "--", ...RECOVERABLE_SOURCE_PATHS], {
+      cwd: workdir,
+      encoding: "utf-8",
+      timeout: 10_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trimEnd();
+  } catch {
+    raw = null;
+  }
   if (!raw) return [];
   return raw
     .split("\n")
@@ -2618,6 +2916,18 @@ function implementNoDeltaStallGuard(active: ActiveProcess, ageMs: number): { det
   return {
     detected: true,
     reason: `IMPLEMENT_NO_DELTA_STALL: ${active.agentId} kept ${active.wfId}/${active.role} running for ${formatDurationMs(ageMs)} without writing any project source/worktree delta. Supervisor should redirect the same worker toward a small scoped code change before extended analysis; use CLAIM_SUMMARY_FILE and injected contracts instead of reasoning in place.`,
+  };
+}
+
+function implementRetryHardTimeoutGuard(active: ActiveProcess, ageMs: number): { detected: boolean; reason: string } {
+  if (ageMs < IMPLEMENT_RETRY_HARD_TIMEOUT_MS) return { detected: false, reason: "" };
+  if (fileSize(active.outputPath) > 0) return { detected: false, reason: "" };
+  const retryMode = claimSummaryRetryDisciplineMode(active);
+  if (!retryMode) return { detected: false, reason: "" };
+
+  return {
+    detected: true,
+    reason: `IMPLEMENT_RETRY_HARD_TIMEOUT: ${active.agentId} kept ${active.wfId}/${active.role} running for ${formatDurationMs(ageMs)} in retry discipline mode "${retryMode}" without producing final output. Retry workers must make a bounded scoped fix, run verification, and either finish or fail; Setfarm is requeueing instead of allowing an active-analysis loop.`,
   };
 }
 
@@ -2687,6 +2997,18 @@ function commitRecoveredImplementWork(workdir: string, storyId: string, files: s
   }
 }
 
+function commitRecoveredImplementWorkThroughScopeGate(workdir: string, storyId: string, storyTitle: string): { sha: string; stagedFiles: string[]; error: string } {
+  const result = commitStoryWorktreeScopeIfNeeded(workdir, storyId, storyTitle, [], "chore");
+  if (!result.committed || !result.sha) {
+    return {
+      sha: "",
+      stagedFiles: result.stagedFiles || [],
+      error: result.error || `PLATFORM_STORY_RECOVERY_NO_SCOPED_COMMIT: ${storyId} had no scoped uncommitted source delta to recover.`,
+    };
+  }
+  return { sha: result.sha, stagedFiles: result.stagedFiles, error: "" };
+}
+
 async function tryRecoverExitedImplementWork(
   stepDbId: string,
   row: RunningStepRow,
@@ -2736,8 +3058,11 @@ async function tryRecoverExitedImplementWork(
   const changedFiles = sourceTouchedFiles(workdir, baseRef).slice(0, 20);
   if (changedFiles.length === 0) return false;
   if (!runBuildGate(workdir)) return false;
-  const recoveryCommit = commitRecoveredImplementWork(workdir, story.story_id, changedFiles);
-  if (!recoveryCommit) return false;
+  const recoveryCommit = commitRecoveredImplementWorkThroughScopeGate(workdir, story.story_id, story.title);
+  if (!recoveryCommit.sha) {
+    console.warn(`[spawner] implement recovery scope gate blocked ${story.story_id}: ${recoveryCommit.error}`);
+    return false;
+  }
 
   context["story_workdir"] = workdir;
   context["story_branch"] = storyBranch;
@@ -2746,12 +3071,12 @@ async function tryRecoverExitedImplementWork(
   const recoveryOutput = [
     "STATUS: done",
     `STORY_BRANCH: ${storyBranch}`,
-    `CHANGES: Recovered ${story.story_id} after agent exited with build-passing work on ${storyBranch}. Commit: ${recoveryCommit}.`,
+    `CHANGES: Recovered ${story.story_id} after agent exited with build-passing scoped work on ${storyBranch}. Commit: ${recoveryCommit.sha}.`,
     "BUILD_CMD: npm run build",
-    "RECOVERY: agent-exit-build-passing",
-    `RECOVERY_COMMIT: ${recoveryCommit}`,
+    "RECOVERY: agent-exit-build-and-scope-passing",
+    `RECOVERY_COMMIT: ${recoveryCommit.sha}`,
     `TRANSCRIPT: ${transcriptPath}`,
-    `CHANGED_FILES: ${changedFiles.join(", ")}`,
+    `CHANGED_FILES: ${(recoveryCommit.stagedFiles.length > 0 ? recoveryCommit.stagedFiles : changedFiles).join(", ")}`,
   ].join("\n");
 
   const result = await completeStep(stepDbId, recoveryOutput);
@@ -2817,6 +3142,26 @@ async function failClaimIfStillRunning(stepId: string, agentId: string, wfId: st
 
     if (row.status !== "running") return;
 
+    const usageLimit = detectRuntimeUsageLimit(transcriptPath);
+    if (usageLimit.limited) {
+      const cooldownMs = usageLimit.retryAfterMs || RUNTIME_USAGE_LIMIT_DEFAULT_COOLDOWN_MS;
+      const cooldownUntil = Date.now() + cooldownMs;
+      agentCooldownUntil.set(agentId, cooldownUntil);
+      runtimeUsageLimitCooldownUntil = Math.max(runtimeUsageLimitCooldownUntil, cooldownUntil);
+      const reason = `AGENT_RUNTIME_USAGE_LIMIT: ${agentId} hit a runtime usage limit; backing off ${formatDurationMs(cooldownMs)} before retrying ${wfId}/${role}. Transcript: ${transcriptPath}`;
+      console.warn(`[spawner] ${reason}`);
+      await recordSupervisorInfraEvent(row.run_id, row.step_id, row.current_story_id, reason);
+      await pgRun(
+        "UPDATE steps SET status = 'pending', output = $1, current_story_id = NULL, updated_at = $2 WHERE id = $3 AND status = 'running'",
+        [reason, new Date().toISOString(), stepId],
+      );
+      await pgRun(
+        "UPDATE claim_log SET outcome = 'infra_retry', abandoned_at = NOW(), diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND agent_id = $4 AND outcome IS NULL",
+        [reason, row.run_id, row.step_id, agentId],
+      );
+      return;
+    }
+
     const reason = `AGENT_PROCESS_EXITED: ${agentId} exited before completing ${wfId}/${role}. ${compactExitReason(err)}. Transcript: ${transcriptPath}`;
     console.warn(`[spawner] failing still-running claim ${stepId} (${row.step_id}) after agent exit`);
     await recordSupervisorInfraEvent(row.run_id, row.step_id, row.current_story_id, reason);
@@ -2824,6 +3169,29 @@ async function failClaimIfStillRunning(stepId: string, agentId: string, wfId: st
   } catch (failErr) {
     console.warn(`[spawner] failed to mark exited agent claim as failed: ${String(failErr).slice(0, 300)}`);
   }
+}
+
+function detectRuntimeUsageLimit(transcriptPath: string): { limited: boolean; retryAfterMs?: number } {
+  let text = "";
+  try {
+    text = fs.readFileSync(transcriptPath, "utf-8").slice(-12000);
+  } catch {
+    return { limited: false };
+  }
+  if (!/(usage limit|(?:api\s*)?429|too many requests|rate limit|resource exhausted|access_terminated_error|only available for Coding Agents)/i.test(text)) return { limited: false };
+  const retryAt = /\btry again at\s+(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?/i.exec(text);
+  if (!retryAt) return { limited: true };
+  const nowDate = new Date();
+  let hour = parseInt(retryAt[1] || "0", 10);
+  const minute = parseInt(retryAt[2] || "0", 10);
+  const meridiem = (retryAt[3] || "").toUpperCase();
+  if (meridiem === "PM" && hour < 12) hour += 12;
+  if (meridiem === "AM" && hour === 12) hour = 0;
+  const target = new Date(nowDate);
+  target.setHours(hour, minute, 0, 0);
+  if (target.getTime() <= nowDate.getTime()) target.setDate(target.getDate() + 1);
+  const retryAfterMs = Math.min(Math.max(target.getTime() - nowDate.getTime(), 60_000), 30 * 60_000);
+  return { limited: true, retryAfterMs };
 }
 
 async function recordSupervisorInfraEvent(runId: string, stepId: string, storyDbId: string | null, reason: string): Promise<void> {
@@ -2844,9 +3212,13 @@ async function recordSupervisorRuntimeEvent(
     try { context = contextRow?.context ? JSON.parse(contextRow.context) : {}; } catch { context = {}; }
 
     let storyLabel = "";
+    let storyPublicId = "";
     if (storyDbId) {
       const story = await pgGet<{ story_id: string; title: string }>("SELECT story_id, title FROM stories WHERE id = $1 LIMIT 1", [storyDbId]);
-      if (story) storyLabel = ` story=${story.story_id} title=${story.title.slice(0, 120)}`;
+      if (story) {
+        storyPublicId = story.story_id;
+        storyLabel = ` story=${story.story_id} title=${story.title.slice(0, 120)}`;
+      }
     }
 
     const entry = [
@@ -2857,8 +3229,39 @@ async function recordSupervisorRuntimeEvent(
     ].join("\n") + "\n";
     updateSupervisorMemory(context, entry);
     await pgRun("UPDATE runs SET context = $1, updated_at = NOW() WHERE id = $2", [JSON.stringify(context), runId]);
+    await recordObservation({
+      runId,
+      stepId,
+      storyId: storyPublicId,
+      checkId: `${eventType}:${code}:${Date.now()}`,
+      label: `Supervisor ${eventType}`,
+      status: eventType.includes("retry")
+        ? "retry"
+        : eventType.includes("guard") || eventType.includes("violation") || eventType.includes("stuck") || eventType.includes("limit")
+          ? "blocked"
+          : "info",
+      summary: code,
+      detail: summary,
+      eventType: `supervisor.${eventType}`,
+      completedAt: new Date().toISOString(),
+      metadata: { code },
+    });
   } catch (err) {
     console.warn(`[spawner] supervisor runtime memory update failed: ${String(err).slice(0, 220)}`);
+  }
+}
+
+async function checkRuntimeGuardLoopContinuation(runId: string, stepId: string): Promise<void> {
+  try {
+    const step = await pgGet<{ id: string }>(
+      "SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1",
+      [runId, stepId],
+    );
+    if (!step?.id) return;
+    const { checkLoopContinuation } = await import("./installer/step-advance.js");
+    await checkLoopContinuation(runId, step.id);
+  } catch (err) {
+    console.warn(`[spawner] runtime guard loop continuation failed for ${runId}/${stepId}: ${String(err).slice(0, 220)}`);
   }
 }
 
@@ -2882,6 +3285,28 @@ async function recordRuntimeSupervisorSignal(
   await recordSupervisorRuntimeEvent(active.runId, stepId, storyDbId, "PRODUCT_SUPERVISOR_RUNTIME_SIGNAL", "supervisor-signal", diagnostic);
 }
 
+function runtimeGuardDiagnosticKey(diagnostic: string): string {
+  const key = String(diagnostic || "").match(/^\s*([A-Z][A-Z0-9_]{2,80})(?::|\b)/)?.[1] || "";
+  return key || "RUNTIME_GUARD";
+}
+
+async function runtimeGuardRepeatDecision(runId: string, stepId: string, storyId: string, agentId: string, diagnostic: string): Promise<{ hardFail: boolean; key: string; previousCount: number }> {
+  const key = runtimeGuardDiagnosticKey(diagnostic);
+  const row = await pgGet<{ count: string }>(
+    `SELECT COUNT(*)::text as count
+     FROM claim_log
+     WHERE run_id = $1
+       AND step_id = $2
+       AND story_id = $3
+       AND agent_id = $4
+       AND outcome IN ('infra_retry', 'failed')
+       AND diagnostic LIKE $5`,
+    [runId, stepId, storyId, agentId, `${key}:%`],
+  );
+  const previousCount = parseInt(row?.count || "0", 10) || 0;
+  return { hardFail: previousCount + 1 >= RUNTIME_GUARD_REPEAT_LIMIT, key, previousCount };
+}
+
 async function requeueOrphanedStoryClaim(runId: string, stepId: string, agentId: string, diagnostic: string): Promise<boolean> {
   const row = await pgGet<{ id: string; story_id: string }>(
     `SELECT st.id, st.story_id
@@ -2897,6 +3322,21 @@ async function requeueOrphanedStoryClaim(runId: string, stepId: string, agentId:
     [runId, stepId, agentId],
   );
   if (!row) return false;
+
+  const repeatDecision = await runtimeGuardRepeatDecision(runId, stepId, row.story_id, agentId, diagnostic);
+  if (repeatDecision.hardFail) {
+    const hardDiagnostic = `${diagnostic}\nRUNTIME_GUARD_REPEAT_LIMIT: ${repeatDecision.key} repeated ${repeatDecision.previousCount + 1}/${RUNTIME_GUARD_REPEAT_LIMIT} time(s) for ${row.story_id}; blocking the story instead of requeueing indefinitely.`;
+    await pgRun(
+      "UPDATE stories SET status = 'failed', claimed_by = NULL, output = $2, updated_at = NOW() WHERE id = $1 AND status IN ('running','pending')",
+      [row.id, hardDiagnostic],
+    );
+    await pgRun("UPDATE steps SET status = 'waiting', current_story_id = NULL, updated_at = NOW() WHERE run_id = $1 AND step_id = $2 AND status IN ('pending','running','waiting')", [runId, stepId]);
+    await pgRun("UPDATE claim_log SET outcome = 'failed', abandoned_at = NOW(), diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND story_id = $4 AND agent_id = $5 AND outcome IS NULL", [hardDiagnostic, runId, stepId, row.story_id, agentId]);
+    await recordSupervisorRuntimeEvent(runId, stepId, row.id, "RUNTIME_GUARD_REPEAT_LIMIT", "runtime-guard-repeat-limit", hardDiagnostic);
+    await checkRuntimeGuardLoopContinuation(runId, stepId);
+    console.warn(`[spawner] blocked repeated runtime guard ${repeatDecision.key} for ${row.story_id}: ${repeatDecision.previousCount + 1}/${RUNTIME_GUARD_REPEAT_LIMIT}`);
+    return true;
+  }
 
   // Runtime guard retries are manager/discipline failures, not semantic story
   // failures. Keep the diagnostic, but preserve both story retry and abandon
@@ -2930,6 +3370,20 @@ async function requeueOpenStoryClaim(runId: string, stepId: string, storyId: str
   await discardRuntimeGuardRetryWorktree(runId, storyId, agentId, diagnostic);
 
   if (row.story_db_id) {
+    const repeatDecision = await runtimeGuardRepeatDecision(runId, stepId, storyId, agentId, diagnostic);
+    if (repeatDecision.hardFail) {
+      const hardDiagnostic = `${diagnostic}\nRUNTIME_GUARD_REPEAT_LIMIT: ${repeatDecision.key} repeated ${repeatDecision.previousCount + 1}/${RUNTIME_GUARD_REPEAT_LIMIT} time(s) for ${storyId}; blocking the story instead of requeueing indefinitely.`;
+      await pgRun(
+        "UPDATE stories SET status = 'failed', claimed_by = NULL, output = $2, updated_at = NOW() WHERE id = $1 AND status IN ('running','pending')",
+        [row.story_db_id, hardDiagnostic],
+      );
+      await pgRun("UPDATE steps SET status = 'waiting', current_story_id = NULL, updated_at = NOW() WHERE run_id = $1 AND step_id = $2 AND status IN ('pending','running','waiting')", [runId, stepId]);
+      await pgRun("UPDATE claim_log SET outcome = 'failed', abandoned_at = NOW(), diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND story_id = $4 AND agent_id = $5 AND outcome IS NULL", [hardDiagnostic, runId, stepId, storyId, agentId]);
+      await recordSupervisorRuntimeEvent(runId, stepId, row.story_db_id, "RUNTIME_GUARD_REPEAT_LIMIT", "runtime-guard-repeat-limit", hardDiagnostic);
+      await checkRuntimeGuardLoopContinuation(runId, stepId);
+      console.warn(`[spawner] blocked repeated runtime guard ${repeatDecision.key} for ${storyId}: ${repeatDecision.previousCount + 1}/${RUNTIME_GUARD_REPEAT_LIMIT}`);
+      return true;
+    }
     // Runtime guard retries are manager/discipline failures, not semantic story
     // failures. Keep the diagnostic, but preserve both story retry and abandon
     // budgets for real build/design/verify feedback and crash recovery.
@@ -2957,9 +3411,96 @@ async function discardRuntimeGuardRetryWorktree(runId: string, storyId: string, 
   }
 }
 
+async function tryRecoverOrphanedRunningImplementWork(row: {
+  story_db_id: string;
+  story_id: string;
+  story_title: string;
+  story_branch: string | null;
+  run_id: string;
+  step_db_id: string | null;
+  step_id: string | null;
+}): Promise<boolean> {
+  if (!row.step_db_id || row.step_id !== "implement") return false;
+
+  const storyBranch = (row.story_branch || `${row.run_id.slice(0, 8)}-${row.story_id}`).toLowerCase();
+  const contextRow = await pgGet<{ context: string | null }>("SELECT context FROM runs WHERE id = $1 LIMIT 1", [row.run_id]);
+  let context: Record<string, string> = {};
+  try {
+    context = contextRow?.context ? JSON.parse(contextRow.context) : {};
+  } catch {
+    context = {};
+  }
+
+  const workdirCandidates = [
+    safeAgentCwdFromCandidate(context["story_workdir"]),
+    context["repo"] ? findWorktreeByBranch(context["repo"], storyBranch) : null,
+  ].filter((candidate): candidate is string => !!candidate);
+  const workdir = [...new Set(workdirCandidates)].find((candidate) => {
+    const branch = gitOutput(candidate, ["branch", "--show-current"]);
+    return branch?.toLowerCase() === storyBranch;
+  });
+  if (!workdir) return false;
+
+  const baseRef = findDiffBaseRef(workdir);
+  if (!baseRef) return false;
+  const changedFiles = sourceTouchedFiles(workdir, baseRef).slice(0, 20);
+  if (changedFiles.length === 0) return false;
+  if (!runBuildGate(workdir)) return false;
+  const recoveryCommit = commitRecoveredImplementWorkThroughScopeGate(workdir, row.story_id, row.story_title);
+  if (!recoveryCommit.sha) {
+    console.warn(`[spawner] orphan implement recovery scope gate blocked ${row.story_id}: ${recoveryCommit.error}`);
+    return false;
+  }
+
+  context["story_workdir"] = workdir;
+  context["story_branch"] = storyBranch;
+  await pgRun("UPDATE runs SET context = $1, updated_at = NOW() WHERE id = $2", [JSON.stringify(context), row.run_id]);
+
+  const recoveryOutput = [
+    "STATUS: done",
+    `STORY_BRANCH: ${storyBranch}`,
+    `CHANGES: Recovered ${row.story_id} after spawner restart found build-passing scoped work on ${storyBranch}. Commit: ${recoveryCommit.sha}.`,
+    "BUILD_CMD: npm run build",
+    "RECOVERY: orphaned-running-story-build-and-scope-passing",
+    `RECOVERY_COMMIT: ${recoveryCommit.sha}`,
+    `CHANGED_FILES: ${(recoveryCommit.stagedFiles.length > 0 ? recoveryCommit.stagedFiles : changedFiles).join(", ")}`,
+    "PR_URL:",
+  ].join("\n");
+
+  const recoveryIntent = classifyOperationalRecoveryIntent("orphaned-running-implement-build-scope-passing");
+  if (recoveryIntent === "project_rescue") return false;
+  await recordObservation({
+    runId: row.run_id,
+    stepId: row.step_id,
+    storyId: row.story_id,
+    phase: "operations",
+    checkId: `operational_recovery:${recoveryIntent}:orphaned_running_implement`,
+    label: "Operational recovery classified",
+    status: "info",
+    summary: `Spawner classified orphaned implement recovery as ${recoveryIntent}.`,
+    detail: `Recovered ${row.story_id} after spawner restart found build-passing scoped work on ${storyBranch}. Evidence was preserved and Setfarm will continue through normal gates.`,
+    eventType: "operational_recovery",
+    filePaths: recoveryCommit.stagedFiles.length > 0 ? recoveryCommit.stagedFiles : changedFiles,
+    metadata: {
+      recoveryIntent,
+      source: "orphaned-running-implement-build-scope-passing",
+      storyBranch,
+      recoveryCommit: recoveryCommit.sha,
+    },
+  });
+
+  const result = await completeStep(row.step_db_id, recoveryOutput);
+  if (!result.advanced && !result.runCompleted) {
+    const refreshed = await pgGet<{ status: string }>("SELECT status FROM stories WHERE id = $1 LIMIT 1", [row.story_db_id]);
+    if (!["done", "verified"].includes(refreshed?.status || "")) return false;
+  }
+  console.warn(`[spawner] recovered orphaned running implement story ${row.story_id}: build passed in ${workdir}`);
+  return true;
+}
+
 async function requeueOrphanedRunningStories(): Promise<void> {
-  const rows = await pgQuery<{ story_db_id: string; story_id: string; run_id: string; run_number: number; step_db_id: string | null; step_id: string | null; step_status: string | null; agent_id: string | null }>(
-    `SELECT st.id as story_db_id, st.story_id, st.run_id, r.run_number,
+  const rows = await pgQuery<{ story_db_id: string; story_id: string; story_title: string; story_branch: string | null; run_id: string; run_number: number; step_db_id: string | null; step_id: string | null; step_status: string | null; agent_id: string | null }>(
+    `SELECT st.id as story_db_id, st.story_id, st.title as story_title, st.story_branch, st.run_id, r.run_number,
             loop_step.id as step_db_id, loop_step.step_id, loop_step.status as step_status,
             cl.agent_id
      FROM stories st
@@ -2987,6 +3528,12 @@ async function requeueOrphanedRunningStories(): Promise<void> {
     if (trackedByActiveProcess) {
       console.log(`[spawner] preserving running story ${row.story_id} for run #${row.run_number}: active ${row.agent_id || "agent"} process is still tracked`);
       continue;
+    }
+
+    try {
+      if (await tryRecoverOrphanedRunningImplementWork(row)) continue;
+    } catch (recoveryErr) {
+      console.warn(`[spawner] orphaned running implement recovery failed for ${row.story_id}: ${String(recoveryErr).slice(0, 300)}`);
     }
 
     const diagnostic = `ORPHANED_RUNNING_STORY: ${row.story_id} was running but loop step ${row.step_id || "(missing)"} is ${row.step_status || "(missing)"} or no longer points at story`;
@@ -3118,6 +3665,19 @@ async function reapFinishedClaims(): Promise<void> {
             continue;
           }
 
+          const retryPatchReapplied = implementRejectedRetryPatchRuntimeGuard(active);
+          if (retryPatchReapplied.detected) {
+            const reason = retryPatchReapplied.reason + ` Transcript: ${active.transcriptPath}`;
+            console.warn(`[spawner] ${reason}`);
+            try { fs.appendFileSync(active.transcriptPath, `--- RETRY PATCH RUNTIME GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
+            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "RETRY_PATCH_REAPPLIED_RUNTIME_GUARD", "retry-patch-runtime-guard", reason);
+            terminateActiveProcess(active, "retry-patch-runtime-guard");
+            activeProcesses.delete(key);
+            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
+            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
+            continue;
+          }
+
           const gitDiscipline = implementGitDisciplineGuard(active);
           if (gitDiscipline.detected) {
             const reason = gitDiscipline.reason + ` Transcript: ${active.transcriptPath}`;
@@ -3125,6 +3685,19 @@ async function reapFinishedClaims(): Promise<void> {
             try { fs.appendFileSync(active.transcriptPath, `--- GIT DISCIPLINE GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
             await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "runtime-guard", reason);
             terminateActiveProcess(active, "git-discipline-guard");
+            activeProcesses.delete(key);
+            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
+            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
+            continue;
+          }
+
+          const processCleanup = implementProcessCleanupGuard(active);
+          if (processCleanup.detected) {
+            const reason = processCleanup.reason + ` Transcript: ${active.transcriptPath}`;
+            console.warn(`[spawner] ${reason}`);
+            try { fs.appendFileSync(active.transcriptPath, `--- PROCESS CLEANUP GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
+            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "runtime-guard", reason);
+            terminateActiveProcess(active, "process-cleanup-guard");
             activeProcesses.delete(key);
             if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
             await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
@@ -3154,6 +3727,14 @@ async function reapFinishedClaims(): Promise<void> {
           const preDeltaCheck = implementPreDeltaCheckGuard(active);
           if (preDeltaCheck.detected) {
             await recordRuntimeSupervisorSignal(active, row.step_id, effectiveStoryDbId || null, "implement-pre-delta-check-guard", "IMPLEMENT PRE-DELTA CHECK", preDeltaCheck.reason);
+            if (process.env.SETFARM_IMPLEMENT_PRE_DELTA_CHECK_FATAL === "1") {
+              const reason = preDeltaCheck.reason + ` Transcript: ${active.transcriptPath}`;
+              terminateActiveProcess(active, "implement-pre-delta-check");
+              activeProcesses.delete(key);
+              if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
+              await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
+              continue;
+            }
           }
 
           const preDeltaExploration = implementPreDeltaExplorationGuard(active);
@@ -3166,6 +3747,17 @@ async function reapFinishedClaims(): Promise<void> {
             await recordRuntimeSupervisorSignal(active, row.step_id, effectiveStoryDbId || null, "implement-no-delta-stall", "IMPLEMENT NO DELTA STALL", noDeltaStall.reason);
             const reason = noDeltaStall.reason + ` Transcript: ${active.transcriptPath}`;
             terminateActiveProcess(active, "implement-no-delta-stall");
+            activeProcesses.delete(key);
+            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
+            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
+            continue;
+          }
+
+          const retryHardTimeout = implementRetryHardTimeoutGuard(active, ageMs);
+          if (retryHardTimeout.detected) {
+            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "IMPLEMENT_RETRY_HARD_TIMEOUT", "implement-retry-hard-timeout", retryHardTimeout.reason);
+            const reason = retryHardTimeout.reason + ` Transcript: ${active.transcriptPath}`;
+            terminateActiveProcess(active, "implement-retry-hard-timeout");
             activeProcesses.delete(key);
             if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
             await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
@@ -3225,6 +3817,20 @@ ${reason}
           }
         }
 
+        if (row.step_id === "supervise") {
+          const boundedAudit = supervisorBoundedAuditGuard(active, ageMs);
+          if (boundedAudit.detected) {
+            const reason = boundedAudit.reason + ` Transcript: ${active.transcriptPath}`;
+            console.warn(`[spawner] ${reason}`);
+            try { fs.appendFileSync(active.transcriptPath, `--- SUPERVISOR BOUNDED AUDIT GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
+            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "SUPERVISOR_BOUNDED_AUDIT_VIOLATION", "supervisor-bounded-audit", reason);
+            terminateActiveProcess(active, "supervisor-bounded-audit");
+            activeProcesses.delete(key);
+            await retryActiveSingleStepClaim(active, row.step_id, reason);
+            continue;
+          }
+        }
+
         await updateRunningStepHeartbeat(active, row.step_id, ageMs);
 
         if (row.step_id === "verify" && ageMs >= VERIFY_AGENT_HARD_TIMEOUT_MS) {
@@ -3238,7 +3844,7 @@ ${reason}
         }
 
         if (ageMs >= AGENT_STARTUP_SILENCE_MS && !activeProcessHasStartupActivity(active)) {
-          const reason = `AGENT_STARTUP_SILENT: ${active.agentId} kept ${active.wfId}/${active.role} running for ${formatDurationMs(ageMs)} without transcript/output; OpenClaw session likely stuck before first model/tool turn. Transcript: ${active.transcriptPath}`;
+          const reason = `AGENT_STARTUP_SILENT: ${active.agentId} kept ${active.wfId}/${active.role} running for ${formatDurationMs(ageMs)} without transcript/output; agent runtime likely stuck before first model/tool turn. Transcript: ${active.transcriptPath}`;
           console.warn(`[spawner] ${reason}`);
           try { fs.appendFileSync(active.transcriptPath, `--- STARTUP SILENCE ${new Date().toISOString()} ---
 ${reason}
@@ -3247,6 +3853,26 @@ ${reason}
           activeProcesses.delete(key);
           await failClaimIfStillRunning(active.stepId, active.agentId, active.wfId, active.role, active.transcriptPath, new Error(reason), active.startedAtMs, active.spawnCwd, active.outputPath);
           continue;
+        }
+
+        if (ageMs >= AGENT_REPEATED_TOOL_LOOP_CHECK_AFTER_MS && !isTerminalTestRole(active.role, active.agentId)) {
+          const transcriptLoop = repeatedTranscriptToolLoop(active);
+          if (transcriptLoop.detected) {
+            const reason = transcriptLoop.reason + "; retrying " + active.wfId + "/" + active.role +
+              " instead of waiting on synthetic session activity. Transcript: " + active.transcriptPath;
+            console.warn("[spawner] " + reason);
+            try { fs.appendFileSync(active.transcriptPath, "--- SELF LOOP " + new Date().toISOString() + " ---\n" + reason + "\n"); } catch {}
+            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "AGENT_SELF_LOOP", "agent-self-loop", reason);
+            terminateActiveProcess(active, "repeated-tool-loop");
+            activeProcesses.delete(key);
+            if (row.type === "loop" && active.storyId) {
+              if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
+              await requeueOpenStoryClaim(active.runId, row.step_id, active.storyId, active.agentId, reason);
+            } else {
+              await retryActiveSingleStepClaim(active, row.step_id, reason);
+            }
+            continue;
+          }
         }
 
         if (ageMs >= AGENT_SELF_LOOP_CHECK_AFTER_MS && !isTerminalTestRole(active.role, active.agentId)) {
@@ -3285,6 +3911,19 @@ ${reason}
 
         const idleMs = Date.now() - activeProcessLastActivityMs(active);
         if (idleMs < AGENT_ACTIVITY_GRACE_MS) {
+          const hardDeadlineMs = thresholdMs + AGENT_ACTIVE_WATCHDOG_OVERRUN_MS;
+          if (ageMs >= hardDeadlineMs) {
+            const reason = `AGENT_PROCESS_HARD_STUCK: ${active.agentId} kept ${active.wfId}/${active.role} running for ${formatDurationMs(ageMs)} after exceeding watchdog threshold ${formatDurationMs(thresholdMs)} while still producing activity; killed by hard watchdog overrun. Transcript: ${active.transcriptPath}`;
+            console.warn(`[spawner] ${reason}`);
+            try { fs.appendFileSync(active.transcriptPath, `--- HARD WATCHDOG ${new Date().toISOString()} ---
+${reason}
+`); } catch {}
+            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "AGENT_PROCESS_HARD_STUCK", "watchdog-hard-stuck", reason);
+            terminateActiveProcess(active, "watchdog-hard-stuck");
+            activeProcesses.delete(key);
+            await failClaimIfStillRunning(active.stepId, active.agentId, active.wfId, active.role, active.transcriptPath, new Error(reason), active.startedAtMs, active.spawnCwd, active.outputPath);
+            continue;
+          }
           console.log(`[spawner] ${active.agentId} exceeded ${formatDurationMs(thresholdMs)} but is active (last activity ${formatDurationMs(idleMs)} ago); watchdog deferred`);
           continue;
         }
@@ -3326,6 +3965,15 @@ ${reason}
 
 function spawnAgent(agentId: string, wfId: string, role: string): void {
   const key = `${wfId}:${role}:${agentId}`;
+  if (runtimeUsageLimitCooldownUntil > Date.now()) {
+    console.log(`[spawner] Runtime usage-limit cooldown active; retry ${key} in ${formatDurationMs(runtimeUsageLimitCooldownUntil - Date.now())}`);
+    return;
+  }
+  const cooldownUntil = agentCooldownUntil.get(agentId) || 0;
+  if (cooldownUntil > Date.now()) {
+    console.log(`[spawner] Cooldown active for ${agentId}; retry in ${formatDurationMs(cooldownUntil - Date.now())}`);
+    return;
+  }
   if (activeProcesses.has(key) || claimingSpawns.has(key)) {
     console.log(`[spawner] Already running/claiming: ${key}, skip`);
     return;
@@ -3344,6 +3992,33 @@ function spawnAgent(agentId: string, wfId: string, role: string): void {
     if (shuttingDown) return;
     void spawnAgentNow(agentId, wfId, role);
   }, delayMs);
+}
+
+function safeClaimScopeRelPath(raw: unknown): string {
+  const rel = String(raw || "").trim().replace(/\\/g, "/").replace(/^\.\//, "");
+  if (!rel || rel.includes("\0") || path.isAbsolute(rel)) return "";
+  if (rel.split("/").some((part) => part === "..")) return "";
+  return rel;
+}
+
+function ensureClaimScopeParentDirs(workdir: string, claimSummary: Record<string, unknown>): string[] {
+  if (!workdir || !fs.existsSync(workdir)) return [];
+  const root = path.resolve(workdir);
+  const scopeFiles = Array.isArray(claimSummary.scopeFiles) ? claimSummary.scopeFiles : [];
+  const created = new Set<string>();
+
+  for (const raw of scopeFiles) {
+    const rel = safeClaimScopeRelPath(raw);
+    if (!rel) continue;
+    const dir = path.dirname(rel);
+    if (!dir || dir === ".") continue;
+    const abs = path.resolve(root, dir);
+    if (abs !== root && !abs.startsWith(root + path.sep)) continue;
+    fs.mkdirSync(abs, { recursive: true });
+    created.add(dir);
+  }
+
+  return [...created].sort();
 }
 
 async function spawnAgentNow(agentId: string, wfId: string, role: string): Promise<void> {
@@ -3432,7 +4107,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     return;
   }
   fs.writeFileSync(claimFile, JSON.stringify({ stepId: claim.stepId, runId: claim.runId, workdir: spawnCwd, repo: spawnCwd, input: claim.resolvedInput }) + "\n");
-  fs.writeFileSync(claimSummaryFile, JSON.stringify(buildClaimSummary({
+  const claimSummary = buildClaimSummary({
     wfId,
     role,
     claimFile,
@@ -3444,7 +4119,11 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     repo: spawnCwd,
     storyId: claim.storyId,
     input: claim.resolvedInput,
-  }), null, 2) + "\n");
+  });
+  fs.writeFileSync(claimSummaryFile, JSON.stringify(claimSummary, null, 2) + "\n");
+  const preparedScopeParentDirs = claim.storyId
+    ? ensureClaimScopeParentDirs(spawnCwd, claimSummary as Record<string, unknown>)
+    : [];
   fs.writeFileSync(bootstrapFile, buildResolvedClaimBootstrapScript({
     claimFile,
     outputFile,
@@ -3467,6 +4146,11 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   claimingSpawns.delete(key);
   try { fs.mkdirSync(path.dirname(transcriptPath), { recursive: true }); } catch {}
   try { fs.writeFileSync(transcriptPath, "[spawner] " + new Date().toISOString() + " " + wfId + "/" + role + " agent=" + agentId + "\n"); } catch {}
+  if (preparedScopeParentDirs.length > 0) {
+    try {
+      fs.appendFileSync(transcriptPath, `[spawner] prepared scope parent dirs: ${preparedScopeParentDirs.slice(0, 40).join(", ")}${preparedScopeParentDirs.length > 40 ? ", ..." : ""}\n`);
+    } catch {}
+  }
 
   // Use the same per-spawn id for the gateway session and /tmp handoff files.
   // A reaped child can still have late gateway activity; sharing claim/output
@@ -3475,6 +4159,8 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   const sessionKey = buildSessionKey(agentId, sessionId);
   const sessionJsonlPath = agentSessionJsonlPath(agentId, sessionId);
   const codexModelArgs = process.env.SETFARM_CODEX_MODEL ? ["--model", process.env.SETFARM_CODEX_MODEL] : [];
+  const kimiModelArgs = process.env.SETFARM_KIMI_MODEL ? ["--model", process.env.SETFARM_KIMI_MODEL] : [];
+  const kimiOutputFormat = process.env.SETFARM_KIMI_OUTPUT_FORMAT || "stream-json";
   const childArgs = AGENT_RUNTIME === "codex"
     ? [
       "--ask-for-approval", "never",
@@ -3487,6 +4173,16 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
       ...codexModelArgs,
       "-",
     ]
+    : AGENT_RUNTIME === "kimi"
+      ? [
+        "--work-dir", spawnCwd,
+        "--yolo",
+        "--afk",
+        "--print",
+        "--input-format", "text",
+        "--output-format", kimiOutputFormat,
+        ...kimiModelArgs,
+      ]
     : [
       "agent", "--json", "--agent", agentId,
       ...(OPENCLAW_AGENT_LOCAL ? ["--local"] : []),
@@ -3494,14 +4190,14 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
       "--message", prompt, "--timeout", String(AGENT_TIMEOUT_SECONDS),
     ];
   try {
-    const agentCli = AGENT_RUNTIME === "codex" ? CODEX_CLI : OPENCLAW_CLI;
+    const agentCli = AGENT_RUNTIME === "codex" ? CODEX_CLI : AGENT_RUNTIME === "openclaw" ? OPENCLAW_CLI : KIMI_CLI;
     fs.appendFileSync(transcriptPath, `[spawner] runtime=${AGENT_RUNTIME} cli=${agentCli} session_id=${sessionId} session_key=${sessionKey} timeout=${AGENT_TIMEOUT_SECONDS}s cwd=${spawnCwd}\n`);
   } catch {}
   const shouldInstallImplementGitWrapper = role === "developer" && Boolean(claim.storyId);
   const pathPrefix = shouldInstallImplementGitWrapper ? installImplementGitWrapper(spawnCwd, transcriptPath) : undefined;
   const outFd = fs.openSync(transcriptPath, "a");
   const errFd = fs.openSync(transcriptPath, "a");
-  const child = spawn(AGENT_RUNTIME === "codex" ? CODEX_CLI : OPENCLAW_CLI, childArgs, {
+  const child = spawn(AGENT_RUNTIME === "codex" ? CODEX_CLI : AGENT_RUNTIME === "openclaw" ? OPENCLAW_CLI : KIMI_CLI, childArgs, {
     cwd: spawnCwd,  // Use the claimed worktree when available so relative tool paths resolve correctly.
     // Security audit S-1: explicit env allowlist. Previous `{...process.env}` leaked
     // ALL secrets (API keys, DB password, master URLs) to every agent child process.
@@ -3510,11 +4206,11 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     // Security: denylist DB credentials from agent env. Keep everything
     // else — OpenClaw CLI needs many env vars and allowlist is too fragile.
     env: (() => {
-      return buildAgentChildEnv(pathPrefix);
+      return buildAgentChildEnv(pathPrefix, { runtime: AGENT_RUNTIME, sessionId });
     })(),
-    stdio: AGENT_RUNTIME === "codex" ? ["pipe", outFd, errFd] : ["ignore", outFd, errFd],
+    stdio: AGENT_RUNTIME === "openclaw" ? ["ignore", outFd, errFd] : ["pipe", outFd, errFd],
   });
-  if (AGENT_RUNTIME === "codex") {
+  if (AGENT_RUNTIME === "codex" || AGENT_RUNTIME === "kimi") {
     child.stdin?.write(prompt);
     child.stdin?.end();
   }
@@ -3537,7 +4233,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     spawnCwd,
     sessionId,
     sessionKey,
-    sessionJsonlPath: AGENT_RUNTIME === "codex" ? transcriptPath : sessionJsonlPath,
+    sessionJsonlPath: AGENT_RUNTIME === "openclaw" ? sessionJsonlPath : transcriptPath,
     lastCpuTicks: readProcessCpuTicks(child.pid) ?? undefined,
     lastCpuActivityMs: startedAtMs,
   };
@@ -3635,6 +4331,21 @@ async function failStaleRunningClaimsFromPreviousSpawner(): Promise<void> {
             [row.current_story_id, row.run_id],
           );
           if (currentStory?.status === "running") {
+            const recovered = await tryRecoverExitedImplementWork(
+              row.id,
+              {
+                status: "running",
+                step_id: row.step_id,
+                run_id: row.run_id,
+                type: "loop",
+                current_story_id: row.current_story_id,
+              },
+              row.agent_id,
+              "spawner-startup-stale-running-claim",
+              new Error("AGENT_PROCESS_ORPHANED: spawner restarted or lost the tracked implement agent before step completion"),
+              undefined,
+            );
+            if (recovered) continue;
             await pgRun(
               "UPDATE stories SET status = 'pending', claimed_by = NULL, updated_at = NOW() WHERE id = $1 AND status = 'running'",
               [row.current_story_id],
@@ -3761,7 +4472,18 @@ function cancelRunAgents(runId: string): void {
 
 async function handleStepPending(payload: { agentId: string; runId: string; stepId: string }) {
   if (shuttingDown) return;
-  const { agentId, runId, stepId } = payload;
+  let { agentId, runId, stepId } = payload;
+  if (!agentId && runId && stepId) {
+    const step = await pgGet<{ agent_id: string }>(
+      "SELECT agent_id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1",
+      [runId, stepId],
+    );
+    agentId = step?.agent_id || "";
+  }
+  if (!agentId) {
+    console.warn(`[spawner] step_pending ignored without agentId for ${runId || "unknown-run"}/${stepId || "unknown-step"}`);
+    return;
+  }
   const run = await pgGet<{ workflow_id: string }>("SELECT workflow_id FROM runs WHERE id = $1", [runId]);
   if (!run) return;
   const wfId = run.workflow_id;
@@ -3884,7 +4606,7 @@ async function autoVerifyMergedPrEachStories() {
            SELECT 1 FROM steps verify_step
            WHERE verify_step.run_id = r.id
              AND verify_step.step_id = COALESCE(loop_step.loop_config::jsonb->>'verifyStep', 'verify')
-             AND verify_step.status IN ('pending', 'running')
+             AND verify_step.status = 'running'
          )
          AND EXISTS (
            SELECT 1 FROM stories st
@@ -3939,9 +4661,22 @@ async function queuePendingSuperviseEachSteps(): Promise<void> {
           AND st.status = 'done'
          WHERE sup.step_id = COALESCE(NULLIF(loop_step.loop_config::jsonb ->> 'superviseStep', ''), 'supervise')
            AND sup.status IN ('waiting', 'done', 'pending')
-           AND (
-             COALESCE(r.context::jsonb ->> 'supervised_story_ids', '') = ''
-             OR POSITION(',' || st.story_id || ',' IN ',' || COALESCE(r.context::jsonb ->> 'supervised_story_ids', '') || ',') = 0
+           AND NOT EXISTS (
+             SELECT 1 FROM run_observations supervised_obs
+             WHERE supervised_obs.run_id = sup.run_id
+               AND supervised_obs.step_id = sup.step_id
+               AND supervised_obs.story_id = st.story_id
+               AND supervised_obs.status = 'pass'
+               AND supervised_obs.label = 'Supervisor decision'
+               AND supervised_obs.created_at >= COALESCE((
+                 SELECT MAX(evidence_marker.created_at)
+                 FROM run_observations evidence_marker
+                 WHERE evidence_marker.run_id = sup.run_id
+                   AND evidence_marker.step_id = 'implement'
+                   AND evidence_marker.story_id = st.story_id
+                   AND evidence_marker.check_id = 'implement.evidence'
+                   AND evidence_marker.status = 'pass'
+               ), TIMESTAMP 'epoch')
            )
            AND NOT EXISTS (
              SELECT 1 FROM stories active_st
@@ -3981,6 +4716,187 @@ async function queuePendingSuperviseEachSteps(): Promise<void> {
   }
 }
 
+function markSupervisedStoryInSpawnerContext(context: Record<string, any>, storyId: string): void {
+  const ids = new Set(
+    String(context.supervised_story_ids || "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean),
+  );
+  ids.add(storyId);
+  context.supervised_story_ids = Array.from(ids).sort().join(",");
+}
+
+function clearVerifyFailureContextInSpawner(context: Record<string, any>): void {
+  delete context.verify_feedback;
+  delete context.previous_failure;
+  delete context.failure_category;
+  delete context.failure_suggestion;
+  delete context.verify_infra_retry;
+  delete context.verify_visual_scope_deferred;
+  delete context.verify_pending_pr_url;
+  delete context.verify_pending_since;
+}
+
+async function autoPassEvidenceReadySuperviseEachSteps(): Promise<void> {
+  try {
+    const rows = await pgQuery<{
+      run_id: string;
+      context: string | null;
+      supervise_step_db_id: string;
+      supervise_step_id: string;
+      loop_step_db_id: string;
+      story_db_id: string;
+      story_id: string;
+      story_title: string | null;
+      story_branch: string | null;
+      pr_url: string | null;
+      verify_step: string;
+    }>(
+      `WITH candidates AS (
+         SELECT DISTINCT ON (sup.id)
+           sup.id AS supervise_step_db_id,
+           sup.run_id,
+           r.context::text AS context,
+           sup.step_id AS supervise_step_id,
+           loop_step.id AS loop_step_db_id,
+           st.id AS story_db_id,
+           st.story_id,
+           st.title AS story_title,
+           st.story_branch,
+           st.pr_url,
+           COALESCE(NULLIF(loop_step.loop_config::jsonb ->> 'verifyStep', ''), 'verify') AS verify_step
+         FROM steps sup
+         JOIN runs r ON r.id = sup.run_id AND r.status = 'running'
+         JOIN steps loop_step
+           ON loop_step.run_id = sup.run_id
+          AND loop_step.type = 'loop'
+          AND loop_step.step_id = 'implement'
+          AND loop_step.status = 'running'
+          AND COALESCE(loop_step.loop_config::jsonb, '{}'::jsonb) @> '{"superviseEach":true}'::jsonb
+         JOIN stories st
+           ON st.run_id = sup.run_id
+          AND st.status = 'done'
+         WHERE sup.step_id = COALESCE(NULLIF(loop_step.loop_config::jsonb ->> 'superviseStep', ''), 'supervise')
+           AND sup.status IN ('waiting', 'done', 'pending', 'running')
+           AND NOT EXISTS (
+             SELECT 1 FROM run_observations supervised_obs
+             WHERE supervised_obs.run_id = sup.run_id
+               AND supervised_obs.step_id = sup.step_id
+               AND supervised_obs.story_id = st.story_id
+               AND supervised_obs.status = 'pass'
+               AND supervised_obs.label = 'Supervisor decision'
+               AND supervised_obs.created_at >= COALESCE((
+                 SELECT MAX(evidence_marker.created_at)
+                 FROM run_observations evidence_marker
+                 WHERE evidence_marker.run_id = sup.run_id
+                   AND evidence_marker.step_id = 'implement'
+                   AND evidence_marker.story_id = st.story_id
+                   AND evidence_marker.check_id = 'implement.evidence'
+                   AND evidence_marker.status = 'pass'
+               ), TIMESTAMP 'epoch')
+           )
+           AND EXISTS (
+             SELECT 1 FROM run_observations evidence_obs
+             WHERE evidence_obs.run_id = sup.run_id
+               AND evidence_obs.step_id = 'implement'
+               AND evidence_obs.story_id = st.story_id
+               AND evidence_obs.check_id = 'implement.evidence'
+               AND evidence_obs.status = 'pass'
+           )
+           AND EXISTS (
+             SELECT 1 FROM run_observations product_obs
+             WHERE product_obs.run_id = sup.run_id
+               AND product_obs.step_id = 'implement'
+               AND product_obs.story_id = st.story_id
+               AND product_obs.check_id = 'implement.product_supervisor'
+               AND product_obs.status = 'pass'
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM run_observations blocker_obs
+             WHERE blocker_obs.run_id = sup.run_id
+               AND blocker_obs.story_id = st.story_id
+               AND blocker_obs.status IN ('fail', 'blocked')
+               AND blocker_obs.check_id IN (
+                 'supervise_each.supervisor_evidence_blocked',
+                 'verify_each.supervisor_evidence_blocked'
+               )
+           )
+         ORDER BY sup.id, st.story_index ASC
+       )
+       SELECT * FROM candidates`
+    );
+
+    for (const row of rows) {
+      let context: Record<string, any> = {};
+      try {
+        context = row.context ? JSON.parse(row.context) : {};
+      } catch {
+        context = {};
+      }
+      markSupervisedStoryInSpawnerContext(context, row.story_id);
+      clearVerifyFailureContextInSpawner(context);
+      context.supervisor_scope = "story";
+      context.current_story_id = row.story_id;
+      context.current_story_title = row.story_title || "";
+      if (row.pr_url) context.pr_url = row.pr_url;
+      if (row.story_branch) context.story_branch = row.story_branch;
+
+      const detail = "implement evidence and implement product-supervisor gate already passed; no LLM story-supervisor spawned";
+      const output = [
+        "STATUS: done",
+        "SUPERVISOR_DECISION: pass",
+        `AC_COVERAGE: ${detail}`,
+        "SUPERVISOR_MEMORY_APPEND: deterministic story supervisor accepted Setfarm-owned implement evidence.",
+        "CHECKS: implement.evidence pass; implement.product_supervisor pass",
+        "CHANGES: none",
+        "RISKS: none",
+      ].join("\n");
+
+      await pgRun(
+        "UPDATE runs SET context = $1, updated_at = NOW() WHERE id = $2",
+        [JSON.stringify(context), row.run_id],
+      );
+      await pgRun(
+        "UPDATE steps SET status = 'waiting', output = $1, current_story_id = NULL, updated_at = NOW() WHERE id = $2",
+        [output, row.supervise_step_db_id],
+      );
+      await pgRun(
+        "UPDATE steps SET status = 'running', started_at = COALESCE(started_at, NOW()), updated_at = NOW() WHERE id = $1",
+        [row.loop_step_db_id],
+      );
+      await pgRun(
+        "UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = NOW() WHERE run_id = $1 AND step_id = $2 AND status IN ('waiting', 'done', 'pending')",
+        [row.run_id, row.verify_step],
+      );
+      await pgRun(
+        "UPDATE claim_log SET outcome = 'completed', abandoned_at = COALESCE(abandoned_at, NOW()), duration_ms = LEAST(CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at::timestamptz)) * 1000 AS BIGINT), 2147483647)::INTEGER, diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND story_id IS NULL AND outcome IS NULL",
+        ["deterministic supervise_each auto-pass from implement evidence", row.run_id, row.supervise_step_id],
+      );
+      await recordObservation({
+        runId: row.run_id,
+        stepId: row.supervise_step_id,
+        storyId: row.story_id,
+        phase: row.supervise_step_id,
+        checkId: "supervise_each.deterministic_story_auto_pass",
+        status: "pass",
+        label: "Supervisor decision",
+        detail,
+        metadata: { eventType: "supervise_each.deterministic_story_auto_pass" },
+      });
+
+      for (const active of activeProcesses.values()) {
+        if (active.runId === row.run_id && active.stepId === row.supervise_step_db_id) {
+          terminateActiveProcess(active, "supervise-each-deterministic-auto-pass");
+        }
+      }
+      console.log(`[spawner] Deterministically supervised ${row.story_id}; reviewer no longer waits for LLM supervisor`);
+    }
+  } catch (err) {
+    console.error(`[spawner] auto-pass supervise_each: ${String(err)}`);
+  }
+}
+
 async function pollForPendingWork() {
   if (shuttingDown) return;
   try {
@@ -3988,6 +4904,7 @@ async function pollForPendingWork() {
     await cleanupRunningRunOrphanedToolWorkers();
     cleanupSpawnerDetachedToolChildren("poll-orphan-sweep");
     await autoVerifyMergedPrEachStories();
+    await autoPassEvidenceReadySuperviseEachSteps();
     await queuePendingSuperviseEachSteps();
     await advanceCompletedVerifyEachLoops();
     const steps = await pgQuery<{ agent_id: string; run_id: string; step_id: string }>(

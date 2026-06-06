@@ -7,6 +7,7 @@
 
 import { pgGet, pgQuery, pgRun, pgBegin, now } from "../db-pg.js";
 import { logger } from "../lib/logger.js";
+import { OPTIONAL_TEMPLATE_VARS } from "./constants.js";
 
 
 // ── Run queries ─────────────────────────────────────────────────────
@@ -21,13 +22,27 @@ export async function getRunContext(runId: string): Promise<Record<string, strin
   return row ? JSON.parse(row.context) : {};
 }
 
+export function mergeRunContextForUpdate(existing: unknown, next: Record<string, string>): Record<string, string> {
+  const base = existing && typeof existing === "object" && !Array.isArray(existing)
+    ? existing as Record<string, string>
+    : {};
+  const merged = { ...base };
+  const optionalKeys = new Set<string>(OPTIONAL_TEMPLATE_VARS);
+  for (const [key, value] of Object.entries(next)) {
+    if (value === "" && optionalKeys.has(key) && base[key]) {
+      continue;
+    }
+    merged[key] = value;
+  }
+  return merged;
+}
+
 export async function updateRunContext(runId: string, context: Record<string, string>): Promise<void> {
   // Atomic read-merge-write inside transaction to prevent race conditions
   await pgBegin(async (sql) => {
     const row = await sql.unsafe("SELECT context FROM runs WHERE id = $1 FOR UPDATE", [runId]);
     const existing = row[0]?.context ? (typeof row[0].context === "string" ? JSON.parse(row[0].context) : row[0].context) : {};
-    const base = Array.isArray(existing) ? {} : existing;
-    const merged = { ...base, ...context };
+    const merged = mergeRunContextForUpdate(existing, context);
     await sql.unsafe("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(merged), now(), runId]);
   });
 }
@@ -54,12 +69,40 @@ export async function failRun(runId: string, terminal = false): Promise<void> {
     } catch (e) {
       logger.warn(`[failRun] Could not persist terminal_failure flag for ${runId}: ${String(e)}`);
     }
+    await recordTerminalPlatformSelfHealPlanFromRun(runId);
   }
   try {
     const { refreshRunContractSafe } = await import("./contract-ledger.js");
     await refreshRunContractSafe(runId, "run.failed");
   } catch (e) {
     logger.warn(`[failRun] Contract refresh failed for ${runId}: ${String(e)}`);
+  }
+}
+
+async function recordTerminalPlatformSelfHealPlanFromRun(runId: string): Promise<void> {
+  try {
+    const step = await pgGet<{ id: string; step_id: string; agent_id: string | null; output: string | null }>(
+      `
+        SELECT id, step_id, agent_id, output
+        FROM steps
+        WHERE run_id = $1
+          AND status = 'failed'
+        ORDER BY updated_at DESC
+        LIMIT 1
+      `,
+      [runId],
+    );
+    if (!step) return;
+    const error = String(step.output || `Terminal failure in ${step.step_id}`).trim();
+    const { maybeRunPlatformSelfHeal } = await import("./platform-self-heal/runner.js");
+    await maybeRunPlatformSelfHeal({
+      runId,
+      stepId: step.step_id || step.id,
+      agentId: step.agent_id,
+      error,
+    });
+  } catch (e) {
+    logger.warn(`[failRun] Platform self-heal hook failed for ${runId}: ${String(e).slice(0, 240)}`);
   }
 }
 

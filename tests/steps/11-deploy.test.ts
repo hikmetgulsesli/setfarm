@@ -15,10 +15,13 @@ describe("11-deploy step module", () => {
     assert.equal(deployModule.maxPromptSize, 10240);
   });
 
-  it("injectContext is a no-op", async () => {
+  it("injectContext adds stack evidence context", async () => {
     const context: Record<string, string> = { foo: "bar" };
     await deployModule.injectContext({ runId: "r1", stepId: "deploy", task: "t", context });
-    assert.deepEqual(context, { foo: "bar" });
+    assert.equal(context.foo, "bar");
+    assert.equal(context.stack_pack_id, "needs-reconcile");
+    assert.match(context.stack_contract, /Schema: setfarm\.stack-contract\.v1/);
+    assert.match(context.stack_verification_contract, /no stack-specific verification/i);
   });
 
   it("buildPrompt derives PROJECT_NAME from REPO path", () => {

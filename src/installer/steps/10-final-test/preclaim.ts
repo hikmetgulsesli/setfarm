@@ -5,6 +5,12 @@ import { execFileSync } from "node:child_process";
 import type { ClaimContext } from "../types.js";
 import { pgGet } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
+import { allocateRuntimePort, writeRunRuntimeArtifact } from "../../runtime-ports.js";
+import { recordGateObservation, recordStackEvidencePlanObservation } from "../../operation-observability.js";
+import { isBrowserRuntimeStack, resolveOperationalStackContract, stackEvidenceMetadata } from "../../stack-evidence.js";
+import { updateRunContext } from "../../repo.js";
+import { resolvePlatformScript } from "../../paths.js";
+import { ensureSmokeBuildFresh } from "../../smoke-gate.js";
 
 function cleanProcessText(value: unknown): string {
   const text = Buffer.isBuffer(value) ? value.toString("utf-8") : String(value || "");
@@ -57,17 +63,233 @@ function summarizeSmoke(result: any): string[] {
   return lines;
 }
 
+function countArrayField(result: any, key: string): number {
+  const value = result?.[key];
+  return Array.isArray(value) ? value.length : 0;
+}
+
+function numericField(result: any, key: string, fallback = 0): number {
+  const value = Number(result?.[key]);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function writeFinalJsonReport(repo: string, result: any, rawOutput: string, status: string, runtime: any): string {
+  const reportDir = path.join(repo, "quality-reports");
+  fs.mkdirSync(reportDir, { recursive: true });
+  const relPath = "quality-reports/final-test-1.json";
+  const routesTested = Math.max(
+    1,
+    numericField(result, "routesDiscovered"),
+    countArrayField(result, "routes"),
+    countArrayField(result, "hashRoutes"),
+  );
+  const interactionsTested =
+    numericField(result, "buttonsChecked") +
+    numericField(result, "formsChecked") +
+    numericField(result, "flowsChecked");
+  const failures = Array.isArray(result?.failures)
+    ? result.failures.map((item: unknown) => String(item).replace(/\n/g, " "))
+    : (status === "retry" ? [rawOutput.slice(0, 2000).replace(/\n/g, " ")] : []);
+  const payload = {
+    schema: "setfarm.final-test.v1",
+    status,
+    generatedAt: new Date().toISOString(),
+    runtime,
+    smokeStatus: result?.status || (status === "done" ? "pass" : status),
+    confidence: result?.confidence ?? null,
+    routesTested,
+    screensTested: Math.max(routesTested, numericField(result, "screensDiscovered")),
+    interactionsTested,
+    buttonsChecked: numericField(result, "buttonsChecked"),
+    formsChecked: numericField(result, "formsChecked"),
+    flowsChecked: numericField(result, "flowsChecked"),
+    issueCount: failures.length,
+    failures,
+    rawOutput: rawOutput.slice(0, 4000),
+  };
+  fs.writeFileSync(path.join(repo, relPath), JSON.stringify(payload, null, 2));
+  return relPath;
+}
+
+export function classifyFinalSystemSmokeResult(result: any, rawOutput: string, commandFailed: boolean): {
+  result: any;
+  status: "done" | "retry" | "skip";
+  smokeSummary: string;
+} {
+  const hasStructuredResult = !!result && typeof result === "object";
+  const smokeStatus = hasStructuredResult && result?.status ? String(result.status).toLowerCase() : "";
+  const baseFailures = Array.isArray(result?.failures)
+    ? result.failures.map((item: unknown) => String(item).replace(/\n/g, " "))
+    : [];
+  const interactionsTested =
+    numericField(result, "buttonsChecked") +
+    numericField(result, "formsChecked") +
+    numericField(result, "flowsChecked");
+  const syntheticFailures: string[] = [];
+
+  if (!hasStructuredResult) {
+    syntheticFailures.push(`Final system smoke did not return structured JSON. ${rawOutput.slice(0, 1000).replace(/\n/g, " ")}`);
+  } else if (smokeStatus !== "skip" && interactionsTested <= 0) {
+    syntheticFailures.push("Final system smoke produced no interaction evidence; final-test cannot complete without at least one tested click, control, form, or flow.");
+  }
+
+  const failures = [...baseFailures, ...syntheticFailures];
+  const enrichedResult = hasStructuredResult
+    ? { ...result, failures }
+    : {
+        status: commandFailed ? "fail" : "retry",
+        failures,
+        rawOutput: rawOutput.slice(0, 4000),
+      };
+  const status = smokeStatus === "skip"
+    ? "skip"
+    : (commandFailed || smokeStatus === "fail" || smokeStatus === "warn" || failures.length > 0 ? "retry" : "done");
+  const smokeSummary = smokeStatus
+    ? `${smokeStatus} (system smoke gate)`
+    : (rawOutput.trim().split(/\n/).filter(Boolean).slice(-1)[0] || "retry (system smoke gate)").slice(0, 500);
+
+  return { result: enrichedResult, status, smokeSummary };
+}
+
+function runPreflight(command: string, cwd: string, timeoutMs: number): { ok: boolean; output: string } {
+  try {
+    const output = execFileSync("sh", ["-lc", command], { cwd, timeout: timeoutMs, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+    return { ok: true, output: cleanProcessText(output).slice(0, 500) };
+  } catch (err) {
+    return { ok: false, output: formatFailure(err).slice(0, 1500) };
+  }
+}
+
 export async function preClaim(ctx: ClaimContext): Promise<void> {
   const repo = (ctx.context["repo"] || ctx.context["REPO"] || "").replace(/^~/, os.homedir());
-  if (!repo || !fs.existsSync(repo)) {
-    logger.warn(`[module:final-test preclaim] skipped - repo missing: ${repo || "(empty)"}`, { runId: ctx.runId });
+  const stackContract = resolveOperationalStackContract(ctx.context, false);
+  await recordStackEvidencePlanObservation({
+    run_id: ctx.runId,
+    step_id: ctx.stepId,
+    agent_id: "tester",
+  }, ctx.context, "running", "Final-test preclaim resolved stack evidence contract.");
+
+  if (!isBrowserRuntimeStack(stackContract)) {
+    await recordGateObservation({
+      runId: ctx.runId,
+      stepId: ctx.stepId,
+      agentId: "tester",
+      checkId: "final-stack-preclaim",
+      label: "Final stack preclaim",
+      status: "info",
+      summary: "Browser smoke preclaim skipped for non-browser stack",
+      detail: "Final-test will use the stack-specific agent prompt/evidence contract instead of Setfarm's browser smoke preclaim.",
+      metadata: stackEvidenceMetadata(stackContract),
+    });
     return;
   }
 
-  const smokeScript = path.join(os.homedir(), ".openclaw", "setfarm-repo", "scripts", "smoke-test.mjs");
+  if (!repo || !fs.existsSync(repo)) {
+    logger.warn(`[module:final-test preclaim] skipped - repo missing: ${repo || "(empty)"}`, { runId: ctx.runId });
+    await recordGateObservation({
+      runId: ctx.runId,
+      stepId: ctx.stepId,
+      agentId: "tester",
+      checkId: "final-repo-preclaim",
+      label: "Final repo preclaim",
+      status: "pending",
+      summary: "Final-test preclaim waiting for repository",
+      detail: repo || "repo missing",
+      metadata: stackEvidenceMetadata(stackContract),
+    });
+    return;
+  }
+
+  const smokeScript = resolvePlatformScript("smoke-test.mjs");
   if (!fs.existsSync(smokeScript)) {
     logger.warn("[module:final-test preclaim] skipped - smoke-test.mjs missing", { runId: ctx.runId });
+    await recordGateObservation({
+      runId: ctx.runId,
+      stepId: ctx.stepId,
+      agentId: "tester",
+      checkId: "final-smoke-script",
+      label: "Final smoke script",
+      status: "pending",
+      summary: "Browser smoke preclaim unavailable",
+      detail: "smoke-test.mjs missing",
+      metadata: stackEvidenceMetadata(stackContract),
+    });
     return;
+  }
+
+  const runRow = await pgGet<{ run_number: number | null }>("SELECT run_number FROM runs WHERE id = $1 LIMIT 1", [ctx.runId]);
+  const runtime = await allocateRuntimePort({
+    runId: ctx.runId,
+    runNumber: runRow?.run_number ?? null,
+    band: stackContract.runtime?.portBand || "preview",
+    host: stackContract.runtime?.host || "127.0.0.1",
+  });
+  ctx.context["preview_port"] = String(runtime.port);
+  ctx.context["dev_server_port"] = String(runtime.port);
+  ctx.context["dev_server_url"] = runtime.url;
+  ctx.context["qa_url"] = runtime.url;
+  const runtimeArtifact = writeRunRuntimeArtifact({
+    repo,
+    runId: ctx.runId,
+    runNumber: runRow?.run_number ?? null,
+    stepId: ctx.stepId,
+    runtime,
+    status: "allocated",
+  });
+  ctx.context["run_runtime_json"] = runtimeArtifact;
+  await updateRunContext(ctx.runId, ctx.context);
+
+  await recordGateObservation({
+    runId: ctx.runId,
+    stepId: ctx.stepId,
+    agentId: "tester",
+    checkId: "final-runtime-port-allocation",
+    label: "Final runtime port allocation",
+    status: "pass",
+    summary: `Allocated ${runtime.band} port ${runtime.port}`,
+    detail: runtime.url,
+    metadata: { runtime, artifactPath: runtimeArtifact, ...stackEvidenceMetadata(stackContract) },
+  });
+
+  for (const tool of stackContract.toolPreflight || []) {
+    await recordGateObservation({
+      runId: ctx.runId,
+      stepId: ctx.stepId,
+      agentId: "tester",
+      checkId: `final-tool-preflight:${tool.tool}`,
+      label: `Final ${tool.tool} preflight`,
+      status: "running",
+      summary: `Running ${tool.command}`,
+      metadata: { tool, ...stackEvidenceMetadata(stackContract) },
+    });
+    const result = runPreflight(tool.command, repo, tool.timeoutMs);
+    await recordGateObservation({
+      runId: ctx.runId,
+      stepId: ctx.stepId,
+      agentId: "tester",
+      checkId: `final-tool-preflight:${tool.tool}`,
+      label: `Final ${tool.tool} preflight`,
+      status: result.ok ? "pass" : (tool.required ? "blocked" : "info"),
+      summary: result.ok ? `${tool.tool} available` : `${tool.tool} unavailable`,
+      detail: result.output,
+      metadata: { tool, failureCategory: tool.failureCategory, runtime, ...stackEvidenceMetadata(stackContract) },
+    });
+    if (!result.ok && tool.required) {
+      const jsonPath = writeFinalJsonReport(repo, { status: "fail", failures: [`${tool.tool} preflight failed: ${result.output}`] }, result.output, "retry", runtime);
+      const step = await pgGet<{ id: string }>("SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1", [ctx.runId, ctx.stepId]);
+      if (!step?.id) throw new Error(`final-test preclaim could not resolve step id for ${ctx.runId}/${ctx.stepId}`);
+      const { completeStep } = await import("../../step-ops.js");
+      await completeStep(step.id, [
+        "STATUS: retry",
+        `SMOKE_TEST_RESULT: ${tool.tool} preflight failed before final smoke.`,
+        `FINAL_TEST_JSON: ${jsonPath}`,
+        "FINAL_GATE: system-smoke-preclaim",
+        "FAILURE_CATEGORY: tooling_contract_missing",
+        "TEST_FAILURES:",
+        `- ${tool.tool} preflight failed before final-test. ${result.output.replace(/\n/g, " ")}`,
+      ].join("\n"));
+      return;
+    }
   }
 
   try {
@@ -80,27 +302,86 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   let output = "";
   let failed = false;
   try {
+    const buildFresh = ensureSmokeBuildFresh(repo, {
+      runId: ctx.runId,
+      stepId: ctx.stepId,
+      buildCommand: stackContract.setup?.build,
+      timeoutMs: stackContract.runtime?.timeoutMs || 240_000,
+      logPrefix: "final-smoke-prebuild",
+      env: {
+        DEV_SERVER_PORT: String(runtime.port),
+        PREVIEW_PORT: String(runtime.port),
+        PORT: String(runtime.port),
+      },
+    });
+    if (!buildFresh.ok) {
+      failed = true;
+      output = buildFresh.failure;
+      throw new Error(buildFresh.failure);
+    }
     logger.info(`[module:final-test preclaim] Running system smoke gate in ${repo}`, { runId: ctx.runId });
-    output = execFileSync("node", [smokeScript, repo], { cwd: repo, timeout: 240_000, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+    await recordGateObservation({
+      runId: ctx.runId,
+      stepId: ctx.stepId,
+      agentId: "tester",
+      checkId: "final-system-smoke",
+      label: "Final system smoke",
+      status: "running",
+      summary: "Running final browser smoke gate",
+      detail: repo,
+      metadata: stackEvidenceMetadata(stackContract),
+    });
+    output = execFileSync("node", [smokeScript, repo, "--port", String(runtime.port)], {
+      cwd: repo,
+      timeout: stackContract.runtime?.timeoutMs || 240_000,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        DEV_SERVER_PORT: String(runtime.port),
+        PREVIEW_PORT: String(runtime.port),
+        PORT: String(runtime.port),
+        DEV_SERVER_URL: runtime.url,
+        QA_URL: runtime.url,
+      },
+    });
   } catch (err) {
     failed = true;
-    output = formatFailure(err);
+    output = output || formatFailure(err);
   }
 
   const parsed = firstJsonObject(output);
-  const smokeStatus = parsed?.status ? String(parsed.status).toLowerCase() : "";
-  const status = failed || smokeStatus === "fail" ? "retry" : (smokeStatus === "skip" ? "skip" : "done");
-  const smokeSummary = smokeStatus
-    ? `${smokeStatus} (system smoke gate)`
-    : (output.trim().split(/\n/).filter(Boolean).slice(-1)[0] || "pass (system smoke gate)").slice(0, 500);
+  const decision = classifyFinalSystemSmokeResult(parsed, output, failed);
+  const status = decision.status;
+  const jsonPath = writeFinalJsonReport(repo, decision.result, output, status, runtime);
+  writeRunRuntimeArtifact({
+    repo,
+    runId: ctx.runId,
+    runNumber: runRow?.run_number ?? null,
+    stepId: ctx.stepId,
+    runtime,
+    status: status === "done" ? "passed" : "failed",
+  });
+  await recordGateObservation({
+    runId: ctx.runId,
+    stepId: ctx.stepId,
+    agentId: "tester",
+    checkId: "final-system-smoke",
+    label: "Final system smoke",
+    status: status === "retry" ? "retry" : status === "skip" ? "info" : "pass",
+    summary: `Final smoke ${status}`,
+    detail: output.slice(0, 2000),
+    metadata: { runtime, ...stackEvidenceMetadata(stackContract) },
+  });
   const lines = [
     `STATUS: ${status}`,
-    `SMOKE_TEST_RESULT: ${smokeSummary}`,
+    `SMOKE_TEST_RESULT: ${decision.smokeSummary}`,
+    `FINAL_TEST_JSON: ${jsonPath}`,
     "FINAL_GATE: system-smoke-preclaim",
-    ...summarizeSmoke(parsed),
+    ...summarizeSmoke(decision.result),
   ];
-  if (!parsed) {
-    lines.push(status === "retry" ? "TEST_FAILURES:" : "ISSUES:");
+  if (status === "retry" && !Array.isArray(decision.result?.failures)) {
+    lines.push("TEST_FAILURES:");
     lines.push(`- ${output.slice(0, 2000).replace(/\n/g, " ")}`);
   }
 

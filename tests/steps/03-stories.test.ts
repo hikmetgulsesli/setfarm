@@ -328,6 +328,10 @@ describe("03-stories step module", () => {
       assert.equal(hasScopeTarget(stories[0], "state_store"), true);
       assert.ok(stories[0].implementation_contract.state_contract.some((item: string) => /gameplay/i.test(item)));
       assert.equal(hasScopeTarget(stories[0], "game_runtime"), true);
+      assert.match(stories[0].file_skeletons["src/test/bridge.ts"], /publishAppBridge/);
+      assert.match(stories[0].file_skeletons["src/test/bridge.ts"], /\(window as any\)\.app = bridge/);
+      assert.match(stories[0].file_skeletons["src/test/bridge.ts"], /\(globalThis as any\)\.app = bridge/);
+      assert.match(stories[0].file_skeletons["src/test/bridge.ts"], /live state and actions/);
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }

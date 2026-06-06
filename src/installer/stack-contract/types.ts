@@ -36,6 +36,7 @@ export interface StackCommandSet {
   build?: string;
   test?: string;
   smoke?: string;
+  preview?: string;
 }
 
 export interface StackFileContract {
@@ -192,6 +193,33 @@ export interface SandboxPrewarmPolicy {
   artifactPath: string;
 }
 
+export type StackRuntimeService = "frontend" | "backend" | "preview" | "none";
+export type StackPortPolicy = "allocated_by_mc" | "not_required";
+export type StackReadinessProbe = "http_200" | "port_open" | "log_pattern" | "not_required";
+export type StackSmokeRunner = "setfarm-smoke-test" | "agent-browser" | "maestro" | "xctest" | "none";
+
+export interface StackRuntimeContract {
+  service: StackRuntimeService;
+  host: string;
+  portPolicy: StackPortPolicy;
+  portBand?: "frontend" | "backend" | "preview";
+  devCommand?: string;
+  previewCommand?: string;
+  readinessProbe: StackReadinessProbe;
+  rootUrlPath?: string;
+  appRootSelector?: string;
+  smokeRunner: StackSmokeRunner;
+  timeoutMs: number;
+}
+
+export interface StackToolPreflight {
+  tool: string;
+  command: string;
+  required: boolean;
+  timeoutMs: number;
+  failureCategory: "tooling_contract_missing" | "browser_infra_failure" | "stack_preflight_failed";
+}
+
 export interface StackPack {
   id: StackPackId;
   label: string;
@@ -223,6 +251,8 @@ export interface StackPack {
   utilityFilePolicy?: UtilityFilePolicy;
   buildStrippingPolicy?: BuildStrippingPolicy;
   sandboxPrewarm?: SandboxPrewarmPolicy;
+  runtime?: StackRuntimeContract;
+  toolPreflight?: StackToolPreflight[];
   nativeEquivalentContract?: string;
   prompt: string;
 }
@@ -258,6 +288,8 @@ export interface StackContract {
   utilityFilePolicy?: UtilityFilePolicy;
   buildStrippingPolicy?: BuildStrippingPolicy;
   sandboxPrewarm?: SandboxPrewarmPolicy;
+  runtime?: StackRuntimeContract;
+  toolPreflight?: StackToolPreflight[];
   nativeEquivalentContract?: string;
   prompt: string;
   createdAt: string;

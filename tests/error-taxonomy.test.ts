@@ -26,6 +26,50 @@ describe("error taxonomy", () => {
     assert.equal(scopeFileMissing.category, "SCOPE_FILE_MISSING");
     assert.match(scopeFileMissing.suggestion, /declared scope_files/);
 
+    const implementEvidenceIncomplete = classifyError(
+      "IMPLEMENT_EVIDENCE_INCOMPLETE: Story US-001 reported STATUS: done without acceptable orchestrator-owned implementation evidence.",
+    );
+    assert.equal(implementEvidenceIncomplete.category, "IMPLEMENT_EVIDENCE_INCOMPLETE");
+    assert.match(implementEvidenceIncomplete.suggestion, /runtimeEvidenceRequired/);
+    assert.match(implementEvidenceIncomplete.suggestion, /Setfarm owns IMPLEMENT_EVIDENCE\.json/);
+
+    const occludedRuntimeClick = classifyError(
+      [
+        "IMPLEMENT_EVIDENCE_INCOMPLETE: Story US-001 reported STATUS: done without acceptable orchestrator-owned implementation evidence.",
+        "IMPLEMENT_INTERACTION_FAILED: locator.click: Timeout 1000ms exceeded.",
+        "Call log: <header class=\"fixed top-0 left-0 w-full z-50\"> intercepts pointer events",
+      ].join("\n"),
+    );
+    assert.equal(occludedRuntimeClick.category, "UI_INTERACTION_TARGET_OCCLUDED");
+    assert.match(occludedRuntimeClick.suggestion, /physically clickable/);
+    assert.doesNotMatch(occludedRuntimeClick.suggestion, /schema setfarm\.implement-intent/);
+
+    const unreachableRuntimeClick = classifyError(
+      [
+        "IMPLEMENT_EVIDENCE_INCOMPLETE: Story US-003 reported STATUS: done without acceptable orchestrator-owned implementation evidence.",
+        "IMPLEMENT_INTERACTION_FAILED: locator.click: Timeout 1000ms exceeded.",
+        "currentScreen=boot | availableActionIds=act-start-game-2 | missingTargetActionId=save-and-return-4 | hint=target is not present in the current runtime surface",
+      ].join("\n"),
+    );
+    assert.equal(unreachableRuntimeClick.category, "UI_INTERACTION_TARGET_UNREACHABLE");
+    assert.match(unreachableRuntimeClick.suggestion, /initial loaded state/);
+    assert.match(unreachableRuntimeClick.suggestion, /reachable opener/);
+    assert.doesNotMatch(unreachableRuntimeClick.suggestion, /schema setfarm\.implement-intent/);
+
+    const retryPatchReapplied = classifyError(
+      "RETRY_PATCH_REAPPLIED: Story US-003 repeated 3 deletion(s) from a previously rejected retry patch. Preserve/restore: import { Gameplay } from './Gameplay' | case 'gameplay': return <Gameplay />",
+    );
+    assert.equal(retryPatchReapplied.category, "RETRY_PATCH_REAPPLIED");
+    assert.match(retryPatchReapplied.suggestion, /previously verified wiring/);
+    assert.match(retryPatchReapplied.suggestion, /preserved or restored first/);
+    assert.match(retryPatchReapplied.suggestion, /route\/render branches/);
+
+    const retryPatchRuntimeGuard = classifyError(
+      "RETRY_PATCH_REAPPLIED_RUNTIME_GUARD: feature-dev_developer reintroduced 3 deletion(s) from a rejected retry patch for US-003; killing before completion so the next claim starts from a clean worktree.",
+    );
+    assert.equal(retryPatchRuntimeGuard.category, "RETRY_PATCH_REAPPLIED");
+    assert.match(retryPatchRuntimeGuard.suggestion, /rejected cleanup\/deletion patch/);
+
     const generatedScreenNotIntegrated = classifyError(
       "GENERATED_SCREEN_NOT_INTEGRATED: owned generated screen(s) are not rendered by the app/router surface: MainMenu (src/screens/MainMenu.tsx).",
     );
@@ -59,6 +103,13 @@ describe("error taxonomy", () => {
     assert.equal(generatedScreenRegression.category, "GENERATED_SCREEN_REGRESSION");
     assert.match(generatedScreenRegression.suggestion, /previously verified generated screen/i);
 
+    const appIntegrationRegression = classifyError(
+      "APP_INTEGRATION_SEMANTIC_REGRESSION: app/router diff removes previously accepted semantic UI contract \"data-testid=gameplay-action-feedback\".",
+    );
+    assert.equal(appIntegrationRegression.category, "APP_INTEGRATION_REGRESSION");
+    assert.match(appIntegrationRegression.suggestion, /previously accepted app\/router wiring/);
+    assert.match(appIntegrationRegression.suggestion, /data-testid/);
+
     const generatedShellChrome = classifyError(
       "GENERATED_SCREEN_SHELL_CHROME_UNSAFE: src/App.tsx renders visible diagnostic/session/status/debug/QA chrome around generated full-screen screens.",
     );
@@ -72,6 +123,12 @@ describe("error taxonomy", () => {
     assert.equal(generatedShellLandmark.category, "GENERATED_SCREEN_SHELL_CHROME_UNSAFE");
     assert.match(generatedShellLandmark.suggestion, /main landmark/);
     assert.match(generatedShellLandmark.suggestion, /data-setfarm-root/);
+
+    const generatedLayoutMount = classifyError(
+      "GENERATED_SCREEN_LAYOUT_MOUNT_UNSAFE: src/App.tsx mounts a generated full-screen Stitch screen with sibling sidebar/content layout inside a non-flex data-setfarm-root container.",
+    );
+    assert.equal(generatedLayoutMount.category, "GENERATED_SCREEN_SHELL_CHROME_UNSAFE");
+    assert.match(generatedLayoutMount.suggestion, /flex data-setfarm-root/);
 
     const designImport = classifyError(
       [
@@ -188,6 +245,13 @@ describe("error taxonomy", () => {
     assert.match(visualQaInfra.suggestion, /browser sandbox/i);
     assert.doesNotMatch(visualQaInfra.suggestion, /source files|scoped source/i);
 
+    const stepLimit = classifyError(
+      "AGENT_PROCESS_EXITED: feature-dev_supervisor exited before completing feature-dev/supervisor. Max number of steps reached: 100",
+    );
+    assert.equal(stepLimit.category, "AGENT_STEP_LIMIT_EXHAUSTED");
+    assert.match(stepLimit.suggestion, /bounded audit/);
+    assert.match(stepLimit.suggestion, /emit STATUS/);
+
     const exited = classifyError(
       "AGENT_PROCESS_EXITED: feature-dev_reviewer exited before completing feature-dev/reviewer. exit code 1",
     );
@@ -205,6 +269,14 @@ describe("error taxonomy", () => {
     assert.equal(preDeltaCheck.category, "IMPLEMENT_PRE_DELTA_CHECK_VIOLATION");
     assert.match(preDeltaCheck.suggestion, /CLAIM_SUMMARY_FILE/);
     assert.match(preDeltaCheck.suggestion, /source delta first/);
+
+    const broadCleanup = classifyError(
+      "BROAD_PROCESS_CLEANUP_VIOLATION: feature-dev_developer ran broad process cleanup (pkill -f \"vite preview\"; npx vite preview --port 5173). Implement agents may not kill shared dev/runtime processes.",
+    );
+    assert.equal(broadCleanup.category, "BROAD_PROCESS_CLEANUP_VIOLATION");
+    assert.match(broadCleanup.suggestion, /Setfarm owns runtime lifecycle/);
+    assert.match(broadCleanup.suggestion, /scoped source fix first/);
+    assert.match(broadCleanup.suggestion, /npx vite preview/);
 
     const noWork = classifyError(
       "NO WORK DETECTED: Story US-002 (Pong arcade - Main Menu and Game Board screens) reported STATUS: done but the worktree has ZERO source-file changes vs main. The agent appears to have shortcut the task.",
@@ -233,6 +305,34 @@ describe("error taxonomy", () => {
     assert.equal(boundedVerify.category, "VERIFY_BOUNDED_REVIEW_VIOLATION");
     assert.match(boundedVerify.suggestion, /bounded manager gate/);
     assert.match(boundedVerify.suggestion, /deterministic build\/test\/lint evidence/);
+
+    const boundedSupervisor = classifyError(
+      "SUPERVISOR_BOUNDED_AUDIT_VIOLATION: feature-dev_supervisor kept a supervise audit open without STATUS/output after 32 tool calls, 11 source/test reads.",
+    );
+    assert.equal(boundedSupervisor.category, "SUPERVISOR_BOUNDED_AUDIT_VIOLATION");
+    assert.match(boundedSupervisor.suggestion, /product-coherence pass/);
+    assert.match(boundedSupervisor.suggestion, /broad source review/);
+  });
+
+  it("classifies system smoke failures before generic test-fail matching", () => {
+    const qaFixSmoke = classifyError([
+      "QA_FIX_SMOKE_STILL_FAILING: Story QA-FIX-001 reported STATUS: done but platform smoke-test still fails.",
+      "- browser game has no visible runtime loop wired through setInterval/requestAnimationFrame and a tick/advance/update action",
+      "- src/screens/GameplaySignaldockLite.tsx: gameplay runtime exposes moving position state, but visible game objects are not positioned from runtime data",
+      "- layout z-overlap: BUTTON blocked by DIV.absolute",
+    ].join("\n"));
+    assert.equal(qaFixSmoke.category, "QA_FIX_SMOKE_STILL_FAILING");
+    assert.match(qaFixSmoke.suggestion, /runtime loop/i);
+    assert.match(qaFixSmoke.suggestion, /rendered state wiring/i);
+    assert.match(qaFixSmoke.suggestion, /layout blocker/i);
+    assert.doesNotMatch(qaFixSmoke.suggestion, /fix assertions/i);
+
+    const verifySmoke = classifyError(
+      "VERIFY_SYSTEM_SMOKE_FAILURE: Full smoke failed after US-003 merge; smoke.test reports no visible gameplay motion and blocked settings controls.",
+    );
+    assert.equal(verifySmoke.category, "SYSTEM_SMOKE_FAILURE");
+    assert.match(verifySmoke.suggestion, /runtime\/render\/layout implementation blocker/i);
+    assert.doesNotMatch(verifySmoke.suggestion, /fix assertions|update test expectations/i);
   });
 
 
@@ -247,6 +347,19 @@ describe("error taxonomy", () => {
       "PLATFORM_STORY_COMMIT_SCOPE_BLOCKED: US-001 has out-of-scope uncommitted file(s): src/contexts/.",
     );
     assert.equal(platformScoped.category, "SCOPE_BLEED");
+
+    const supervisorScoped = classifyError(
+      "PLATFORM_SUPERVISOR_COMMIT_FAILED for US-002: PLATFORM_STORY_COMMIT_SCOPE_BLOCKED: US-002 has out-of-scope uncommitted file(s): src/index.css.",
+    );
+    assert.equal(supervisorScoped.category, "SCOPE_BLEED");
+    assert.match(supervisorScoped.suggestion, /Supervisor/);
+
+    const packageScoped = classifyError(
+      "SCOPE_BLEED: Story US-001 committed QA/test artifact(s) that do not belong in product code: package-lock.json, package.json.",
+    );
+    assert.equal(packageScoped.category, "SCOPE_BLEED");
+    assert.match(packageScoped.suggestion, /package\/dependency files/);
+    assert.match(packageScoped.suggestion, /setup-build\/stack-pack dependency request/);
   });
 
   it("classifies review and supervisor retry reports instead of UNKNOWN", () => {
@@ -271,6 +384,15 @@ describe("error taxonomy", () => {
       "- npm run build: passed",
     ].join("\n"));
     assert.equal(reviewRetryWithConflictWord.category, "QUALITY_RETRY_FEEDBACK");
+
+    const visualHarnessRetry = classifyError([
+      "STATUS: retry",
+      "FINDINGS:",
+      "- Supervisor visual QA report shows blocker navigation_error on desktop /: page.evaluate ReferenceError: isTilingBackgroundRepeat is not defined.",
+      "- Same report shows blocker navigation_error on mobile / with the same isTilingBackgroundRepeat ReferenceError.",
+    ].join("\n"));
+    assert.equal(visualHarnessRetry.category, "VISUAL_QA_INFRA_ERROR");
+    assert.match(visualHarnessRetry.suggestion, /do not change product code/);
 
     const supervisorRetry = classifyError([
       "STATUS: retry",

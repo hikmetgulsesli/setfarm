@@ -123,6 +123,32 @@ describe("product supervisor", () => {
     assert.equal(result.ok, true, result.reason);
   });
 
+  it("allows generic item surface labels when the purpose preserves the requested domain", () => {
+    const task = "Build a compact browser warehouse maintenance command center app called WarehouseOps Console. It should manage equipment work orders, technician dispatch, live queue status, exception insights, reports, settings, help, and logout.";
+    const prd = [
+      "# WarehouseOps Console PRD",
+      "The product manages equipment work orders, technician dispatch, live queue status, exception insights, reports, settings, help, and logout.",
+      "## 4. Product Surfaces",
+      "### SURFACE: SURF_ITEM_OPERATIONS",
+      "- Name: Item Operations",
+      "- Purpose: Manage equipment work orders, technician dispatch, live queue status, exception insights, reports, settings, help, and logout.",
+      "### SURFACE: SURF_ITEM_EDITOR",
+      "- Name: Item Editor",
+      "- Purpose: Create and update equipment work orders while preserving technician dispatch and live queue context.",
+    ].join("\n");
+
+    const result = runProductSupervisorGate({
+      phase: "plan",
+      runId: "run-1",
+      stepId: "plan",
+      task,
+      parsed: { status: "done", prd },
+      context: { task },
+    });
+
+    assert.equal(result.ok, true, result.reason);
+  });
+
   it("allows requested singular/plural service desk surfaces and ignores negative profile anti-goals", () => {
     const task = "Build a compact browser service desk app called SurfaceGate Desk. It should manage tickets, queues, agents, SLA status, insights, settings, empty and error states.";
     const prd = [
@@ -443,6 +469,34 @@ describe("product supervisor", () => {
 
       assert.equal(result.ok, false);
       assert.match(result.reason, /IMPLEMENT_PLACEHOLDER/);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("allows neutral implement output that mentions preserving a generated placeholder attribute", () => {
+    const repo = mkdtempSync(path.join(tmpdir(), "setfarm-supervisor-placeholder-neutral-"));
+    try {
+      mkdirSync(path.join(repo, "src"), { recursive: true });
+      execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
+      execFileSync("git", ["config", "user.email", "setfarm@example.test"], { cwd: repo });
+      execFileSync("git", ["config", "user.name", "Setfarm Test"], { cwd: repo });
+      writeFileSync(path.join(repo, "src", "App.tsx"), "export default function App() { return <main />; }\n");
+      execFileSync("git", ["add", "."], { cwd: repo });
+      execFileSync("git", ["commit", "-m", "base"], { cwd: repo, stdio: "ignore" });
+      writeFileSync(path.join(repo, "src", "App.tsx"), "export default function App() { return <main>Ready</main>; }\n");
+
+      const result = runProductSupervisorGate({
+        phase: "implement",
+        runId: "run-1",
+        stepId: "implement",
+        workdir: repo,
+        baseRef: "HEAD",
+        currentStory: { story_id: "US-001", title: "Report neutral placeholder mention" },
+        rawOutput: "STATUS: done\nCHANGES: Added an accessible label while preserving the generated layout and placeholder. Verified build and tests.",
+      });
+
+      assert.equal(result.ok, true);
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }

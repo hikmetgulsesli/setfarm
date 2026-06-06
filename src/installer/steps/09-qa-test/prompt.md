@@ -62,6 +62,11 @@ is installed or use explicit `if (...) throw new Error(...)` checks. If a
 temporary QA script becomes syntactically invalid after edits, recreate it from
 scratch instead of patching a broken temp file.
 
+Do not run `agent-browser skills get ...` or block on optional agent-browser
+skill discovery. Some installed CLI versions do not provide that subcommand.
+If the browser CLI is needed, use `agent-browser --help` only when necessary and
+then run the bounded commands below against `DEV_SERVER_URL`.
+
 Do not start the dev server with uncontrolled `npm run dev & ...`. Do not
 compress this lifecycle into a one-line `&& ... & DEV_PID=$! ...` command: `&`
 will background the preceding shell list, lose `PORT`/`LOG`, and make readiness
@@ -183,8 +188,8 @@ Do not leave `vite`, `serve`, or Chromium processes running after the test.
 
 ## Required QA Report
 
-Create `quality-reports/qa-test-1.md`. Create the directory if needed. The
-report must contain:
+Create `quality-reports/qa-test-1.md` and `quality-reports/qa-test-1.json`.
+The markdown report must contain:
 
 - `Summary`: decision and confidence.
 - `Environment`: commit/branch, build command, test command, dev server port.
@@ -202,11 +207,17 @@ report must contain:
 
 This report is a batch-fix input, not a reason to create one retry per issue.
 
+The JSON report is the machine-readable QA contract: valid JSON with
+`schema: "setfarm.qa-report.v1"` and the same routes, screens, interactions,
+screenshots, console state, and findings as markdown. If QA fails, still write
+both files with the batched failure list.
+
 ## Output Format
 
 ```
 STATUS: done|retry|skip|fail
 QA_REPORT: quality-reports/qa-test-1.md
+QA_JSON: quality-reports/qa-test-1.json
 QA_SCREENS_TESTED: <number>
 QA_ROUTES_TESTED: <number>
 QA_INTERACTIONS_TESTED: <number>

@@ -5,10 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { implementModule } from "../../dist/installer/steps/06-implement/module.js";
-import { checkBuildGate, checkGeneratedScreenRequiredPropsGate, checkGeneratedScreenShellChromeGate, checkScopeFilesGate, checkTestGate, computeScopeFileLimits, detectPackageBuildCommand, findDesignDomImplementationFindings, findDesignDomImplementationIssues, findGeneratedScreenIntegrationIssues, findGeneratedScreenRegressionIssues, findGeneratedScreenRequiredPropIssues, findGeneratedScreenShellChromeIssues, getOutOfScopeStoryFiles, normalize, parseGitStatusPorcelainPath, sourceExposesWindowApp, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
-import { cleanupOutOfScopeWorktreeFiles } from "../../dist/installer/steps/06-implement/context.js";
-import { commitStoryWorktreeScopeIfNeeded, decideStorySystemSmokeGate } from "../../dist/installer/step-ops.js";
+import { checkBuildGate, checkGeneratedRuntimeSemanticGate, checkGeneratedScreenRequiredPropsGate, checkGeneratedScreenShellChromeGate, checkImplementEvidenceGate, checkPlatformHelperContaminationGate, checkScopeEnforcement, checkScopeFilesGate, checkTestGate, computeScopeFileLimits, detectPackageBuildCommand, findDesignDomImplementationFindings, findDesignDomImplementationIssues, findGeneratedRuntimeSemanticIssues, findGeneratedScreenIntegrationIssues, findGeneratedScreenRegressionIssues, findGeneratedScreenRequiredPropIssues, findGeneratedScreenShellChromeIssues, findPlatformHelperContaminationIssues, getOutOfScopeStoryFiles, normalize, parseGitStatusPorcelainPath, selectMatchingStoryWorktree, sourceExposesWindowApp, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
+import { buildScopeFilesRetryFailureForWorkdir, cleanupOutOfScopeWorktreeFiles, mergeRetryFailureTexts } from "../../dist/installer/steps/06-implement/context.js";
+import { cleanupBlockedStoryCommitScope, commitStoryWorktreeScopeIfNeeded, decideStorySystemSmokeGate } from "../../dist/installer/step-ops.js";
 import { createStoryWorktree, ensureStoryBranchWorktree } from "../../dist/installer/worktree-ops.js";
+import { assembleImplementContext, fileTreeManifestPath, setupCertificatePath, sharedGrantsPath } from "../../dist/installer/setup-handoff.js";
 import { IMPLICIT_STORY_SCOPE_FILES, isImplicitStoryScopeFile } from "../../dist/installer/story-scope.js";
 import { checkStoryDesignCompliance } from "../../dist/installer/step-guardrails.js";
 import { STACK_RULES } from "../../dist/installer/steps/06-implement/stack-rules.js";
@@ -63,6 +64,12 @@ describe("06-implement step module", () => {
     assert.match(prompt, /same current value/);
     assert.match(prompt, /390px mobile viewport/);
     assert.match(prompt, /window\.app`\/`globalThis\.app/);
+    assert.match(prompt, /preserve the generated screen's required mount layout/);
+    assert.match(prompt, /flex min-h-screen w-full/);
+    assert.match(prompt, /do not trade shell-chrome removal for a broken non-flex root/);
+    assert.match(prompt, /Browser games and full-viewport interactive surfaces must render one continuous viewport scene/);
+    assert.match(prompt, /Do not fake a scene by repeating the same large `<img>` tile across a grid/);
+    assert.match(prompt, /settings, pause, and game-over panels as overlays on that scene/);
     assert.match(rules, /Generated screen content must be state-driven/);
     assert.match(rules, /visible tables, rows, cards, metrics, forms/);
     assert.match(rules, /not complete until a real owned action changes visible DOM/);
@@ -72,6 +79,133 @@ describe("06-implement step module", () => {
     assert.match(rules, /Generated screens own their semantic landmarks/);
     assert.match(rules, /window\.app` or `globalThis\.app/);
     assert.match(rules, /horizontally overflows the generated screen on mobile/);
+    assert.match(rules, /preserve the generated screen's required mount layout/);
+    assert.match(rules, /not at the cost of a broken non-flex root/);
+    assert.match(rules, /one continuous viewport scene/);
+    assert.match(rules, /do not repeat the same large `<img>` as tiled scene content/);
+  });
+
+  it("documents orchestrator-owned implementation evidence rollout modes", () => {
+    const prompt = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/prompt.md"), "utf-8");
+    const rules = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/rules.md"), "utf-8");
+
+    assert.match(prompt, /required when Setfarm runs with `SETFARM_IMPLEMENT_EVIDENCE_GATE=blocking`/);
+    assert.match(prompt, /strongly expected when it runs with `advisory`/);
+    assert.match(prompt, /IMPLEMENT_INTENT\.json` before broad coding/);
+    assert.match(prompt, /IMPLEMENT_VERIFICATION_REQUEST\.json` after coding/);
+    assert.match(prompt, /Do not write `IMPLEMENT_EVIDENCE\.json`; Setfarm owns that file/);
+    assert.match(prompt, /Do not report `STATUS: done` for a runtime\/UI story without those request artifacts in blocking mode/);
+    assert.match(prompt, /"schema": "setfarm\.implement-intent\.v1"/);
+    assert.match(prompt, /"schema": "setfarm\.implement-verification-request\.v1"/);
+    assert.match(prompt, /"status": "ready_for_orchestrator_verification"/);
+    assert.match(prompt, /"minFlowCount": 1/);
+    assert.doesNotMatch(prompt, /\{\{ACTION_ID\}\}/);
+    assert.match(prompt, /\[data-action-id='<action-id>'\]/);
+    assert.match(prompt, /Build, test, source-grep, and prose checks do not belong there/);
+    assert.match(rules, /with `SETFARM_IMPLEMENT_EVIDENCE_GATE=blocking`, runtime\/UI stories must create `\.setfarm\/implement\/<story-id>\/IMPLEMENT_INTENT\.json` before broad coding/);
+    assert.match(rules, /In `advisory` mode these artifacts are still expected and surfaced in Mission Control, but missing artifacts do not block completion/);
+    assert.match(rules, /"schema": "setfarm\.implement-intent\.v1"/);
+    assert.match(rules, /"status": "ready_for_orchestrator_verification"/);
+    assert.match(rules, /runtimeEvidenceRequired\.minFlowCount: 0/);
+    assert.match(rules, /never put build\/test\/source-grep\/prose checks there/);
+  });
+
+  it("blocks generated-screen runtime stories without evidence even when preview script is absent", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-implement-evidence-no-preview-runtime-"));
+    const previous = process.env.SETFARM_IMPLEMENT_EVIDENCE_GATE;
+    try {
+      process.env.SETFARM_IMPLEMENT_EVIDENCE_GATE = "blocking";
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({ scripts: { build: "tsc" } }));
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { screenId: "gameplay", componentName: "GameplayScreen", file: "src/screens/GameplayScreen.tsx" },
+      ]));
+
+      const gate = checkImplementEvidenceGate("US-001", "Game engine and runtime", tmp);
+
+      assert.equal(gate.passed, false);
+      assert.equal(gate.category, "IMPLEMENT_EVIDENCE_INCOMPLETE");
+      assert.match(gate.reason || "", /Missing artifacts/);
+      assert.match(gate.reason || "", /intent/);
+      assert.match(gate.reason || "", /request/);
+      assert.match(gate.reason || "", /evidence/);
+    } finally {
+      if (previous === undefined) delete process.env.SETFARM_IMPLEMENT_EVIDENCE_GATE;
+      else process.env.SETFARM_IMPLEMENT_EVIDENCE_GATE = previous;
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("classifies occluded runtime interaction evidence as a clickable target layout failure", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-implement-evidence-occluded-"));
+    const previous = process.env.SETFARM_IMPLEMENT_EVIDENCE_GATE;
+    try {
+      process.env.SETFARM_IMPLEMENT_EVIDENCE_GATE = "blocking";
+      const evidenceDir = path.join(tmp, ".setfarm", "implement", "US-001");
+      fs.mkdirSync(evidenceDir, { recursive: true });
+      fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({ scripts: { preview: "vite preview" } }));
+      fs.writeFileSync(path.join(evidenceDir, "IMPLEMENT_INTENT.json"), JSON.stringify({
+        schema: "setfarm.implement-intent.v1",
+        storyId: "US-001",
+        storyType: "ui_interactive",
+        acceptanceCriteria: [{ id: "AC-001", description: "Start control is clickable" }],
+        runtimeEvidenceRequired: { minFlowCount: 1 },
+      }));
+      fs.writeFileSync(path.join(evidenceDir, "IMPLEMENT_VERIFICATION_REQUEST.json"), JSON.stringify({
+        schema: "setfarm.implement-verification-request.v1",
+        storyId: "US-001",
+        status: "ready_for_orchestrator_verification",
+        interactionRequests: [{ actionId: "ACT_START" }],
+        uncoveredCriteria: [],
+        knownGaps: [],
+      }));
+      fs.writeFileSync(path.join(evidenceDir, "IMPLEMENT_EVIDENCE.json"), JSON.stringify({
+        schema: "setfarm.implement-evidence.v1",
+        storyId: "US-001",
+        runtime: { url: "http://127.0.0.1:6123", portAllocatedByMC: true },
+        commands: [],
+        flows: [{
+          flowId: "ACT_START",
+          passed: false,
+          interactions: [{
+            id: "start-game-1",
+            status: "fail",
+            detail: "locator.click: Timeout 30000ms exceeded. <header class=\"fixed top-0 left-0 w-full z-50\"> intercepts pointer events",
+          }],
+        }],
+        visualEvidence: { status: "skipped" },
+        verdict: "fail",
+      }));
+
+      const gate = checkImplementEvidenceGate("US-001", "Gameplay", tmp);
+
+      assert.equal(gate.passed, false);
+      assert.equal(gate.category, "UI_INTERACTION_TARGET_OCCLUDED");
+      assert.match(gate.reason || "", /intercepts pointer events/);
+      assert.match(gate.suggestion || "", /z-index|pointer-events/);
+    } finally {
+      if (previous === undefined) delete process.env.SETFARM_IMPLEMENT_EVIDENCE_GATE;
+      else process.env.SETFARM_IMPLEMENT_EVIDENCE_GATE = previous;
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps retry worktree patch feedback compact instead of injecting raw diffs", () => {
+    const sources = [
+      "dist/installer/steps/06-implement/context.js",
+      "dist/installer/step-ops.js",
+    ];
+    for (const sourcePath of sources) {
+      const source = fs.readFileSync(path.join(process.cwd(), sourcePath), "utf-8");
+      const blockStart = source.indexOf("RETRY_WORKTREE_PATCH:");
+      assert.notEqual(blockStart, -1, `${sourcePath} retry patch feedback block missing`);
+      const block = source.slice(blockStart, blockStart + 1200);
+      assert.match(block, /compact diagnostic summary/, sourcePath);
+      assert.match(block, /Touched files/, sourcePath);
+      assert.match(block, /Patch size/, sourcePath);
+      assert.doesNotMatch(block, /```diff/, sourcePath);
+      assert.doesNotMatch(source, /maxChars\s*=\s*30000/, sourcePath);
+    }
   });
 
   it("blocks visible app-shell diagnostics around generated full-screen Stitch screens", () => {
@@ -161,6 +295,48 @@ describe("06-implement step module", () => {
     }
   });
 
+  it("blocks app shell status test hooks around generated full-screen Stitch screens", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-generated-shell-testid-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        {
+          screenId: "operations",
+          title: "Operations",
+          componentName: "OperationsScreen",
+          file: "src/screens/OperationsScreen.tsx",
+        },
+      ]));
+      fs.writeFileSync(
+        path.join(tmp, "src/screens/OperationsScreen.tsx"),
+        "export function OperationsScreen() { return <main data-testid=\"operations-screen\">Operations</main>; }\n",
+      );
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "import { OperationsScreen } from './screens/OperationsScreen';",
+        "export default function App() {",
+        "  return <div data-setfarm-root=\"clinicflow-lite\" className=\"min-h-screen bg-background\">",
+        "    <section aria-live=\"polite\" data-testid=\"clinicflow-shell-status\" className=\"border-b w-full\">",
+        "      <span data-testid=\"clinicflow-storage-message\">Clinic workspace is ready.</span>",
+        "      <span data-testid=\"clinicflow-active-panel\">Panel: patients</span>",
+        "    </section>",
+        "    <OperationsScreen />",
+        "  </div>;",
+        "}",
+        "",
+      ].join("\n"));
+
+      const issues = findGeneratedScreenShellChromeIssues(tmp);
+      assert.equal(issues.length, 1);
+      assert.match(issues.join("\n"), /GENERATED_SCREEN_SHELL_CHROME_UNSAFE/);
+
+      const gate = checkGeneratedScreenShellChromeGate("US-001", "App Shell", tmp);
+      assert.equal(gate.passed, false);
+      assert.equal(gate.category, "GENERATED_SCREEN_SHELL_CHROME_UNSAFE");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("blocks duplicate app-shell main landmarks around generated full-screen Stitch screens", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-generated-shell-landmark-"));
     try {
@@ -197,6 +373,158 @@ describe("06-implement step module", () => {
       assert.equal(gate.passed, false);
       assert.equal(gate.category, "GENERATED_SCREEN_SHELL_CHROME_UNSAFE");
       assert.match(gate.reason || "", /main landmark/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("allows sibling app-shell main landmarks that do not wrap generated screens", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-generated-shell-landmark-sibling-ok-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        {
+          screenId: "operations",
+          title: "Operations",
+          componentName: "OperationsScreen",
+          file: "src/screens/OperationsScreen.tsx",
+        },
+      ]));
+      fs.writeFileSync(
+        path.join(tmp, "src/screens/OperationsScreen.tsx"),
+        "export function OperationsScreen() { return <main data-testid=\"operations-screen\">Operations</main>; }\n",
+      );
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "import { OperationsScreen } from './screens/OperationsScreen';",
+        "export default function App() {",
+        "  return <div data-setfarm-root=\"app\">",
+        "    <div role=\"main\" aria-label=\"Operations runtime\" className=\"sr-only\">Ready</div>",
+        "    <OperationsScreen />",
+        "  </div>;",
+        "}",
+        "",
+      ].join("\n"));
+
+      assert.deepEqual(findGeneratedScreenShellChromeIssues(tmp), []);
+      assert.equal(checkGeneratedScreenShellChromeGate("US-001", "App Shell", tmp).passed, true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks non-flex mounts for generated sibling sidebar/content screens", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-generated-flex-mount-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        {
+          screenId: "board",
+          title: "Board",
+          componentName: "BoardScreen",
+          file: "src/screens/BoardScreen.tsx",
+        },
+      ]));
+      fs.writeFileSync(path.join(tmp, "src/screens/BoardScreen.tsx"), [
+        "export function BoardScreen() {",
+        "  return (<>",
+        "    <nav className=\"h-screen w-[240px] shrink-0 hidden md:flex\">Nav</nav>",
+        "    <div className=\"flex-1 flex flex-col h-screen\"><main>Board</main></div>",
+        "  </>);",
+        "}",
+        "",
+      ].join("\n"));
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "import { BoardScreen } from './screens/BoardScreen';",
+        "export default function App() {",
+        "  return <div data-setfarm-root=\"board\" className=\"min-h-screen bg-white\">",
+        "    <BoardScreen />",
+        "  </div>;",
+        "}",
+        "",
+      ].join("\n"));
+
+      const issues = findGeneratedScreenShellChromeIssues(tmp);
+      assert.equal(issues.length, 1);
+      assert.match(issues[0], /GENERATED_SCREEN_LAYOUT_MOUNT_UNSAFE/);
+      assert.match(issues[0], /non-flex data-setfarm-root/);
+
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "import { BoardScreen } from './screens/BoardScreen';",
+        "export default function App() {",
+        "  return <div data-setfarm-root=\"board\" className=\"flex min-h-screen bg-white\">",
+        "    <BoardScreen />",
+        "  </div>;",
+        "}",
+        "",
+      ].join("\n"));
+
+      assert.deepEqual(findGeneratedScreenShellChromeIssues(tmp), []);
+
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "import { BoardScreen } from './screens/BoardScreen';",
+        "export default function App() {",
+        "  return <div data-setfarm-root=\"board\" className=\"min-h-screen bg-white\" style={{ display: 'flex', minHeight: '100vh', width: '100%' }}>",
+        "    <BoardScreen />",
+        "  </div>;",
+        "}",
+        "",
+      ].join("\n"));
+
+      assert.deepEqual(findGeneratedScreenShellChromeIssues(tmp), []);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks collapsed roots for generated absolute viewport screens", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-generated-viewport-mount-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        {
+          screenId: "gameplay",
+          title: "Gameplay",
+          componentName: "GameplayScreen",
+          file: "src/screens/GameplayScreen.tsx",
+        },
+      ]));
+      fs.writeFileSync(path.join(tmp, "src/screens/GameplayScreen.tsx"), [
+        "export function GameplayScreen() {",
+        "  return (<>",
+        "    <div className=\"absolute inset-0 bg-background\" />",
+        "    <main className=\"absolute inset-0 flex items-center justify-center\">Game</main>",
+        "  </>);",
+        "}",
+        "",
+      ].join("\n"));
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "import { GameplayScreen } from './screens/GameplayScreen';",
+        "export default function App() {",
+        "  return <div data-setfarm-root data-testid=\"setfarm-app-root\" className=\"min-h-screen\">",
+        "    <GameplayScreen />",
+        "  </div>;",
+        "}",
+        "",
+      ].join("\n"));
+
+      const issues = findGeneratedScreenShellChromeIssues(tmp);
+      assert.equal(issues.length, 1);
+      assert.match(issues[0], /GENERATED_SCREEN_VIEWPORT_MOUNT_UNSAFE/);
+      assert.match(issues[0], /relative min-h-screen/);
+      assert.match(issues[0], /w-full overflow-hidden/);
+
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "import { GameplayScreen } from './screens/GameplayScreen';",
+        "export default function App() {",
+        "  return <div data-setfarm-root data-testid=\"setfarm-app-root\" className=\"relative min-h-screen w-full overflow-hidden\">",
+        "    <GameplayScreen />",
+        "  </div>;",
+        "}",
+        "",
+      ].join("\n"));
+
+      assert.deepEqual(findGeneratedScreenShellChromeIssues(tmp), []);
+      assert.equal(checkGeneratedScreenShellChromeGate("US-002", "Gameplay", tmp).passed, true);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -339,6 +667,204 @@ describe("06-implement step module", () => {
 
       assert.deepEqual(findGeneratedScreenRequiredPropIssues(tmp), []);
       assert.equal(checkGeneratedScreenRequiredPropsGate("US-001", "App Shell", tmp).passed, true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks generated runtime semantic shortcuts that make fake UI progress look complete", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-generated-runtime-semantics-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.mkdirSync(path.join(tmp, "src/features/return-desk"), { recursive: true });
+      fs.mkdirSync(path.join(tmp, "src/features/surf-triage"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { screenId: "triage", title: "Triage", componentName: "TriageScreen", file: "src/screens/TriageScreen.tsx" },
+        { screenId: "reports", title: "Reports", componentName: "ReportsScreen", file: "src/screens/ReportsScreen.tsx" },
+        { screenId: "settings", title: "Settings", componentName: "SettingsScreen", file: "src/screens/SettingsScreen.tsx" },
+      ]));
+      fs.writeFileSync(path.join(tmp, "src/screens/TriageScreen.tsx"), [
+        "import { BadgeHelp, Circle } from 'lucide-react';",
+        "export function TriageScreen() {",
+        "  return <nav><a href=\"#\"><Circle />Dashboard</a><a href=\"#\"><BadgeHelp />Reports</a><button><BadgeHelp />Sort</button></nav>;",
+        "}",
+        "",
+      ].join("\n"));
+      fs.writeFileSync(path.join(tmp, "src/screens/ReportsScreen.tsx"), "export function ReportsScreen() { return <main>Reports</main>; }\n");
+      fs.writeFileSync(path.join(tmp, "src/screens/SettingsScreen.tsx"), "export function SettingsScreen() { return <main>Settings</main>; }\n");
+      fs.writeFileSync(path.join(tmp, "src/features/return-desk/store.ts"), [
+        "export function useStore(state: any) {",
+        "  return { snapshot: { activeScreen: 'TriageScreen', activeRoute: state.route, activePanel: state.panel } };",
+        "}",
+        "",
+      ].join("\n"));
+      fs.writeFileSync(path.join(tmp, "src/features/surf-triage/act_update_record_status.ts"), [
+        "export function updateRecordStatus(store: any, id: string, status: string) {",
+        "  store.selectRecord(id);",
+        "  store.setActivePanel(status);",
+        "}",
+        "",
+      ].join("\n"));
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "import { TriageScreen } from './screens/TriageScreen';",
+        "import { ReportsScreen } from './screens/ReportsScreen';",
+        "import { SettingsScreen } from './screens/SettingsScreen';",
+        "export default function App({ activeRoute }: { activeRoute: string }) {",
+        "  if (activeRoute !== 'triage') return <ReportsScreen />;",
+        "  return <TriageScreen />;",
+        "}",
+        "",
+      ].join("\n"));
+
+      const issues = findGeneratedRuntimeSemanticIssues(tmp);
+      assert.equal(issues.some((issue) => issue.includes("GENERATED_RUNTIME_HARDCODED_SCREEN")), true);
+      assert.equal(issues.some((issue) => issue.includes("GENERATED_ICON_FALLBACK")), true);
+      assert.equal(issues.some((issue) => issue.includes("ACTION_SEMANTIC_NOOP")), true);
+      assert.equal(issues.some((issue) => issue.includes("GENERATED_ROUTE_COLLAPSE")), true);
+
+      const gate = checkGeneratedRuntimeSemanticGate("US-001", "App Shell", tmp);
+      assert.equal(gate.passed, false);
+      assert.equal(gate.category, "GENERATED_RUNTIME_SEMANTIC_INCOMPLETE");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks browser-game runtime stories without an automatic game loop", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-browser-game-loop-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({ name: "loopless-game", keywords: ["browser-game"] }));
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { componentName: "GameplayScreen", file: "src/screens/GameplayScreen.tsx", title: "Gameplay" },
+      ]));
+      fs.writeFileSync(path.join(tmp, "src/screens/GameplayScreen.tsx"), [
+        "export function GameplayScreen({ runtime, actions }: any) {",
+        "  return <main><button onClick={actions.advance}>Advance</button><span>{runtime.score}</span></main>;",
+        "}",
+      ].join("\n"));
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "import { GameplayScreen } from './screens/GameplayScreen';",
+        "const actions = { advance() { return undefined; } };",
+        "export default function App() {",
+        "  return <GameplayScreen runtime={{ score: 0 }} actions={actions} />;",
+        "}",
+      ].join("\n"));
+
+      const issues = findGeneratedRuntimeSemanticIssues(tmp);
+      assert.equal(issues.some((issue) => issue.includes("BROWSER_GAME_RUNTIME_LOOP_MISSING")), true);
+      const gate = checkGeneratedRuntimeSemanticGate("US-001", "Game Runtime", tmp);
+      assert.equal(gate.passed, false);
+      assert.equal(gate.category, "GENERATED_RUNTIME_SEMANTIC_INCOMPLETE");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts browser-game runtime stories with a scheduled game loop", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-browser-game-loop-pass-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({ name: "looped-game", keywords: ["browser-game"] }));
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { componentName: "GameplayScreen", file: "src/screens/GameplayScreen.tsx", title: "Gameplay" },
+      ]));
+      fs.writeFileSync(path.join(tmp, "src/screens/GameplayScreen.tsx"), [
+        "export function GameplayScreen({ runtime, actions }: any) {",
+        "  return <main><button onClick={actions.advance}>Advance</button><span>{runtime.score}</span></main>;",
+        "}",
+      ].join("\n"));
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "import { useEffect } from 'react';",
+        "import { GameplayScreen } from './screens/GameplayScreen';",
+        "const actions = { advance() { return undefined; } };",
+        "export default function App() {",
+        "  useEffect(() => { const id = setInterval(() => actions.advance(), 100); return () => clearInterval(id); }, []);",
+        "  return <GameplayScreen runtime={{ score: 0 }} actions={actions} />;",
+        "}",
+      ].join("\n"));
+
+      const issues = findGeneratedRuntimeSemanticIssues(tmp);
+      assert.equal(issues.some((issue) => issue.includes("BROWSER_GAME_RUNTIME_LOOP_MISSING")), false);
+      const gate = checkGeneratedRuntimeSemanticGate("US-001", "Game Runtime", tmp);
+      assert.equal(gate.passed, true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts browser-game scheduled reducer dispatch and state updater loops", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-browser-game-dispatch-loop-pass-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({ name: "reducer-game", keywords: ["browser-game"] }));
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { componentName: "GameplayScreen", file: "src/screens/GameplayScreen.tsx", title: "Gameplay" },
+      ]));
+      fs.writeFileSync(path.join(tmp, "src/screens/GameplayScreen.tsx"), [
+        "export function GameplayScreen({ runtime, actions }: any) {",
+        "  return <main><button onClick={actions.pause}>Pause</button><span>{runtime.score}</span></main>;",
+        "}",
+      ].join("\n"));
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "import { useEffect, useReducer, useState } from 'react';",
+        "import { GameplayScreen } from './screens/GameplayScreen';",
+        "function advanceGame(state: any) { return { ...state, score: state.score + 1 }; }",
+        "function reducer(state: any, action: any) { return action.type === 'tick' ? advanceGame(state) : state; }",
+        "export default function App() {",
+        "  const [runtime, dispatch] = useReducer(reducer, { score: 0 });",
+        "  const [, setPreview] = useState(runtime);",
+        "  useEffect(() => { const id = setInterval(() => dispatch({ type: 'tick' }), 100); return () => clearInterval(id); }, []);",
+        "  useEffect(() => { const id = setInterval(() => setPreview((prev) => advanceGame(prev)), 100); return () => clearInterval(id); }, []);",
+        "  return <GameplayScreen runtime={runtime} actions={{ pause() {} }} />;",
+        "}",
+      ].join("\n"));
+
+      const issues = findGeneratedRuntimeSemanticIssues(tmp);
+      assert.equal(issues.some((issue) => issue.includes("BROWSER_GAME_RUNTIME_LOOP_MISSING")), false);
+      const gate = checkGeneratedRuntimeSemanticGate("US-001", "Game Runtime", tmp);
+      assert.equal(gate.passed, true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts browser-game requestAnimationFrame named callback dispatch loops", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-browser-game-raf-named-loop-pass-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({ name: "raf-game", keywords: ["browser-game"] }));
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { componentName: "GameplayScreen", file: "src/screens/GameplayScreen.tsx", title: "Gameplay" },
+      ]));
+      fs.writeFileSync(path.join(tmp, "src/screens/GameplayScreen.tsx"), [
+        "export function GameplayScreen({ runtime, actions }: any) {",
+        "  return <main><button onClick={actions.pause}>Pause</button><span>{runtime.score}</span></main>;",
+        "}",
+      ].join("\n"));
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "import { useEffect, useReducer } from 'react';",
+        "import { GameplayScreen } from './screens/GameplayScreen';",
+        "function reducer(state: any, action: any) { return action.type === 'TICK' ? { ...state, score: state.score + 1 } : state; }",
+        "export default function App() {",
+        "  const [runtime, dispatch] = useReducer(reducer, { score: 0 });",
+        "  useEffect(() => {",
+        "    let handle = 0;",
+        "    function loop() {",
+        "      dispatch({ type: 'TICK' });",
+        "      handle = requestAnimationFrame(loop);",
+        "    }",
+        "    handle = requestAnimationFrame(loop);",
+        "    return () => cancelAnimationFrame(handle);",
+        "  }, []);",
+        "  return <GameplayScreen runtime={runtime} actions={{ pause() {} }} />;",
+        "}",
+      ].join("\n"));
+
+      const issues = findGeneratedRuntimeSemanticIssues(tmp);
+      assert.equal(issues.some((issue) => issue.includes("BROWSER_GAME_RUNTIME_LOOP_MISSING")), false);
+      const gate = checkGeneratedRuntimeSemanticGate("US-001", "Game Runtime", tmp);
+      assert.equal(gate.passed, true);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -532,6 +1058,31 @@ describe("06-implement step module", () => {
     }
   });
 
+  it("prefers the current matching supervisor worktree over a stale canonical path", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-story-worktree-select-"));
+    const repo = path.join(tmp, "repo");
+    const supervisorWorktree = path.join(tmp, "supervisor", "story-worktrees", "33d23f10-us-003");
+    const staleCanonical = path.join(tmp, "developer", "story-worktrees", "33d23f10-us-003");
+
+    try {
+      fs.mkdirSync(path.join(repo, "src"), { recursive: true });
+      fs.writeFileSync(path.join(repo, "src/App.tsx"), "export const app = 'main';\n");
+      git(repo, ["init", "-b", "main"]);
+      git(repo, ["add", "src/App.tsx"]);
+      git(repo, ["commit", "-m", "base"]);
+      git(repo, ["branch", "33d23f10-us-003", "main"]);
+      fs.mkdirSync(path.dirname(supervisorWorktree), { recursive: true });
+      git(repo, ["worktree", "add", supervisorWorktree, "33d23f10-us-003"]);
+      fs.mkdirSync(staleCanonical, { recursive: true });
+
+      const selected = selectMatchingStoryWorktree("33d23f10-us-003", supervisorWorktree, staleCanonical);
+
+      assert.equal(selected, supervisorWorktree);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("uses one implicit story scope rule for runtime guard and platform commit", () => {
     assert.equal(isImplicitStoryScopeFile("src/test/utils.tsx"), true);
     assert.equal(isImplicitStoryScopeFile("./src/test/setup.mts"), true);
@@ -567,6 +1118,38 @@ describe("06-implement step module", () => {
       assert.match(result.error, /PLATFORM_STORY_COMMIT_SCOPE_BLOCKED/);
       assert.match(result.error, /src\/Other\.tsx/);
       assert.equal(git(tmp, ["log", "-1", "--format=%s"]), "base");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("cleans out-of-scope dirty files after platform commit scope blocks", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-platform-commit-clean-block-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), "export const app = 'base';\n");
+      fs.writeFileSync(path.join(tmp, "src/index.css"), "body { color: black; }\n");
+      git(tmp, ["init", "-b", "main"]);
+      git(tmp, ["add", "src/App.tsx", "src/index.css"]);
+      git(tmp, ["commit", "-m", "base"]);
+      fs.writeFileSync(path.join(tmp, ".story-scope-files"), "src/App.tsx\n");
+
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), "export const app = 'changed';\n");
+      fs.writeFileSync(path.join(tmp, "src/index.css"), "body { color: red; }\n");
+      fs.writeFileSync(path.join(tmp, "src/Stray.tsx"), "export const stray = true;\n");
+
+      const blocked = commitStoryWorktreeScopeIfNeeded(tmp, "US-002", "blocked scope");
+      assert.match(blocked.error, /PLATFORM_STORY_COMMIT_SCOPE_BLOCKED/);
+
+      const cleaned = cleanupBlockedStoryCommitScope(tmp, "US-002");
+
+      assert.deepEqual(cleaned.sort(), ["src/Stray.tsx", "src/index.css"].sort());
+      assert.equal(fs.existsSync(path.join(tmp, "src/Stray.tsx")), false);
+      assert.equal(fs.readFileSync(path.join(tmp, "src/index.css"), "utf-8"), "body { color: black; }\n");
+      assert.equal(fs.readFileSync(path.join(tmp, "src/App.tsx"), "utf-8"), "export const app = 'changed';\n");
+      const status = git(tmp, ["status", "--porcelain"]);
+      assert.match(status, /M src\/App\.tsx/);
+      assert.doesNotMatch(status, /src\/index\.css|src\/Stray\.tsx/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -609,6 +1192,179 @@ describe("06-implement step module", () => {
       assert.equal(git(tmp, ["log", "-1", "--format=%s"]), "feat: US-001 - scoped directories");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("scope enforcement counts untracked declared source files as real work", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-scope-untracked-work-"));
+    const runId = "scope-untracked-run";
+    const storyDbId = "scope-untracked-story-" + Date.now();
+    try {
+      fs.writeFileSync(path.join(tmp, "README.md"), "base\n");
+      git(tmp, ["init", "-b", "main"]);
+      git(tmp, ["add", "README.md"]);
+      git(tmp, ["commit", "-m", "base"]);
+      fs.mkdirSync(path.join(tmp, "src/features/surf-game-settings"), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmp, "src/features/surf-game-settings/act_save_preferences.ts"),
+        "export function actSavePreferences() { return true; }\n",
+      );
+
+      await pgRun(
+        `INSERT INTO runs (id, workflow_id, task, status, created_at, updated_at)
+         VALUES ($1, 'feature-dev', 'untracked scope work test', 'running', NOW(), NOW())
+         ON CONFLICT (id) DO NOTHING`,
+        [runId],
+      );
+      await pgRun(
+        `INSERT INTO stories (id, run_id, story_index, story_id, title, status, scope_files, created_at, updated_at)
+         VALUES ($1, $2, 0, 'US-001', 'Untracked Scope Story', 'running', $3, NOW(), NOW())`,
+        [storyDbId, runId, JSON.stringify(["src/features/surf-game-settings/act_save_preferences.ts"])],
+      );
+
+      const result = await checkScopeEnforcement("US-001", storyDbId, "Untracked Scope Story", tmp, "main", 0, 3);
+
+      assert.equal(result.passed, true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+      await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);
+      await pgRun("DELETE FROM runs WHERE id = $1", [runId]);
+    }
+  });
+
+  it("scope enforcement blocks untracked out-of-scope tool writes", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-scope-untracked-bleed-"));
+    const runId = "scope-untracked-bleed-run";
+    const storyDbId = "scope-untracked-bleed-story-" + Date.now();
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/GameBoard.tsx"), "export function GameBoard() { return null; }\n");
+      fs.writeFileSync(path.join(tmp, "README.md"), "base\n");
+      git(tmp, ["init", "-b", "main"]);
+      git(tmp, ["add", "."]);
+      git(tmp, ["commit", "-m", "base"]);
+
+      fs.writeFileSync(path.join(tmp, "src/screens/GameBoard.tsx"), "export function GameBoard() { return <main>Done</main>; }\n");
+      fs.writeFileSync(path.join(tmp, "src/index.css"), ".out-of-scope { color: red; }\n");
+
+      await pgRun(
+        `INSERT INTO runs (id, workflow_id, task, status, created_at, updated_at)
+         VALUES ($1, 'feature-dev', 'untracked scope bleed test', 'running', NOW(), NOW())
+         ON CONFLICT (id) DO NOTHING`,
+        [runId],
+      );
+      await pgRun(
+        `INSERT INTO stories (id, run_id, story_index, story_id, title, status, scope_files, created_at, updated_at)
+         VALUES ($1, $2, 0, 'US-001', 'Untracked Scope Bleed Story', 'running', $3, NOW(), NOW())`,
+        [storyDbId, runId, JSON.stringify(["src/screens/GameBoard.tsx"])],
+      );
+
+      const result = await checkScopeEnforcement("US-001", storyDbId, "Untracked Scope Bleed Story", tmp, "main", 0, 3);
+
+      assert.equal(result.passed, false);
+      assert.equal(result.category, "SCOPE_BLEED");
+      assert.match(result.reason || "", /src\/index\.css/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+      await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);
+      await pgRun("DELETE FROM runs WHERE id = $1", [runId]);
+    }
+  });
+
+  it("scope enforcement blocks reapplying deletions from a rejected retry patch", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-retry-reapply-"));
+    const runId = "retry-reapply-run";
+    const storyDbId = "retry-reapply-story-" + Date.now();
+    try {
+      fs.mkdirSync(path.join(tmp, "src"), { recursive: true });
+      const appPath = path.join(tmp, "src/App.tsx");
+      fs.writeFileSync(appPath, [
+        "import { actSavePreferences } from './features/surf-game-settings/act_save_preferences';",
+        "import { actReturnToGameplay } from './features/surf-game-settings/act_return_to_gameplay';",
+        "export function App() {",
+        "  actSavePreferences();",
+        "  actReturnToGameplay();",
+        "  return null;",
+        "}",
+        "",
+      ].join("\n"));
+      git(tmp, ["init", "-b", "main"]);
+      git(tmp, ["add", "."]);
+      git(tmp, ["commit", "-m", "base"]);
+
+      const retryPatchDir = path.join(tmp, ".setfarm", "retry-patches");
+      fs.mkdirSync(retryPatchDir, { recursive: true });
+      fs.writeFileSync(path.join(retryPatchDir, "257439ea-qa-fix-001-2026-06-05T08-04-07-492Z.patch"), [
+        "diff --git a/src/App.tsx b/src/App.tsx",
+        "--- a/src/App.tsx",
+        "+++ b/src/App.tsx",
+        "-import { actSavePreferences } from './features/surf-game-settings/act_save_preferences';",
+        "-import { actReturnToGameplay } from './features/surf-game-settings/act_return_to_gameplay';",
+        "",
+      ].join("\n"));
+      fs.writeFileSync(appPath, [
+        "export function App() {",
+        "  return null;",
+        "}",
+        "",
+      ].join("\n"));
+
+      await pgRun(
+        `INSERT INTO runs (id, workflow_id, task, status, created_at, updated_at)
+         VALUES ($1, 'feature-dev', 'retry patch reapply test', 'running', NOW(), NOW())
+         ON CONFLICT (id) DO NOTHING`,
+        [runId],
+      );
+      await pgRun(
+        `INSERT INTO stories (id, run_id, story_index, story_id, title, status, scope_files, created_at, updated_at)
+         VALUES ($1, $2, 0, 'QA-FIX-001', 'Retry Patch Story', 'running', $3, NOW(), NOW())`,
+        [storyDbId, runId, JSON.stringify(["src/App.tsx"])],
+      );
+
+      const result = await checkScopeEnforcement("QA-FIX-001", storyDbId, "Retry Patch Story", tmp, "main", 1, 3);
+
+      assert.equal(result.passed, false);
+      assert.equal(result.category, "RETRY_PATCH_REAPPLIED");
+      assert.match(result.reason || "", /actSavePreferences/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+      await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);
+      await pgRun("DELETE FROM runs WHERE id = $1", [runId]);
+    }
+  });
+
+  it("scope enforcement keeps zero-work as a hard gate on the final retry", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-scope-zero-final-"));
+    const runId = "scope-zero-final-run";
+    const storyDbId = "scope-zero-final-story-" + Date.now();
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/GameSettings.tsx"), "export function GameSettings() { return null; }\n");
+      git(tmp, ["init", "-b", "main"]);
+      git(tmp, ["add", "."]);
+      git(tmp, ["commit", "-m", "base"]);
+
+      await pgRun(
+        `INSERT INTO runs (id, workflow_id, task, status, created_at, updated_at)
+         VALUES ($1, 'feature-dev', 'zero work final retry test', 'running', NOW(), NOW())
+         ON CONFLICT (id) DO NOTHING`,
+        [runId],
+      );
+      await pgRun(
+        `INSERT INTO stories (id, run_id, story_index, story_id, title, status, scope_files, retry_count, max_retries, created_at, updated_at)
+         VALUES ($1, $2, 0, 'US-003', 'Settings Story', 'running', $3, 3, 3, NOW(), NOW())`,
+        [storyDbId, runId, JSON.stringify(["src/screens/GameSettings.tsx"])],
+      );
+
+      const result = await checkScopeEnforcement("US-003", storyDbId, "Settings Story", tmp, "main", 3, 3);
+
+      assert.equal(result.passed, false);
+      assert.equal(result.category, "NO_WORK_DETECTED");
+      assert.match(result.reason || "", /NO WORK DETECTED/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+      await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);
+      await pgRun("DELETE FROM runs WHERE id = $1", [runId]);
     }
   });
 
@@ -756,6 +1512,8 @@ describe("06-implement step module", () => {
     assert.match(prompt, /If TypeScript says a prop does not exist on a shared component/i);
     assert.match(prompt, /Generated Stitch screen components may declare an `actions` prop/i);
     assert.match(prompt, /do not infer actions from `textContent`/i);
+    assert.match(prompt, /treat them as additive integration surfaces/i);
+    assert.match(prompt, /Preserve every existing reachable render branch/i);
     assert.match(prompt, /do not use `read`, `cat`, `sed`, `head`, `tail`, `rg`, `grep`, `find`, `awk`, `node`, or `python` on that `src\/screens\/\*\.tsx` file/i);
     assert.match(prompt, /Read generated screen source only when that exact `src\/screens\/\*\.tsx` file is listed in SCOPE_FILES/i);
     assert.doesNotMatch(prompt, /If exact detail is\s+still needed, inspect one relevant file/i);
@@ -785,6 +1543,62 @@ describe("06-implement step module", () => {
     assert.match(source, /loop buildPrompt override/);
     assert.ok(source.includes("resolveTemplate(_modulePrompt, renderContext)"));
     assert.ok(source.includes("await resolveLoopClaimInput(step, prunedContextLoop, context)"));
+  });
+
+  it("resets story scope context before each loop claim", () => {
+    const source = fs.readFileSync(path.join(process.cwd(), "src/installer/step-ops.ts"), "utf-8");
+    const scopeRead = source.indexOf("SELECT scope_files, shared_files, scope_description");
+    const baseRepo = source.indexOf("const baseRepo = context[\"repo\"] || context[\"REPO\"] || \"\";", scopeRead);
+    assert.notEqual(scopeRead, -1, "scope row lookup should exist");
+    assert.notEqual(baseRepo, -1, "base repo line should exist after scope row lookup");
+    const block = source.slice(scopeRead, baseRepo);
+    assert.match(block, /delete context\["story_scope_files"\]/);
+    assert.match(block, /delete context\["story_shared_files"\]/);
+    assert.match(block, /delete context\["scope_reminder"\]/);
+  });
+
+  it("sets pr-each story diff base for story-scoped supervisor audits", () => {
+    const source = fs.readFileSync(path.join(process.cwd(), "src/installer/step-ops.ts"), "utf-8");
+    assert.match(source, /const storyDiffBase = \(lcCheck\.mergeStrategy === "pr-each" \|\| lcCheck\.verifyEach\)/);
+    assert.match(source, /context\["story_diff_base"\] = storyDiffBase/);
+    assert.match(source, /context\["story_diff_base"\] = \(loopConfig\.mergeStrategy === "pr-each" \|\| loopConfig\.verifyEach\)/);
+  });
+
+  it("cleans dirty worktrees after failed scope attempts before retry", () => {
+    const source = fs.readFileSync(path.join(process.cwd(), "src/installer/step-ops.ts"), "utf-8");
+    assert.match(source, /discardDirtyRetryWorktreeState/);
+    assert.match(source, /scopeResult\.category === "RETRY_PATCH_REAPPLIED"/);
+    assert.match(source, /scopeResult\.category === "NO_WORK_DETECTED"/);
+    assert.match(source, /implement\.failed_scope_attempt_cleanup/);
+    assert.match(source, /Failed scope attempt cleanup/);
+
+    const guardStart = source.indexOf("const shouldDiscardFailedScopeAttempt");
+    const guardEnd = source.indexOf("applyRetryFailureContext(context, scopeResult.reason!", guardStart);
+    assert.notEqual(guardStart, -1, "retry patch cleanup block missing");
+    assert.notEqual(guardEnd, -1, "retry patch cleanup block end missing");
+    const block = source.slice(guardStart, guardEnd);
+    assert.match(block, /discardDirtyRetryWorktreeState\(wd,\s*storyRow\.story_id,\s*step\.run_id\)/);
+    assert.ok(
+      block.indexOf("discardDirtyRetryWorktreeState") < block.indexOf("recordLiveObservation"),
+      "cleanup should happen before recording pass observation",
+    );
+  });
+
+  it("allows zero-work retries when the story branch is already integrated in the base branch", () => {
+    const source = fs.readFileSync(path.join(process.cwd(), "src/installer/step-ops.ts"), "utf-8");
+    const helper = source.indexOf("async function storyAlreadyIntegratedInBase");
+    const scopeCheck = source.indexOf("let scopeResult = await checkScopeEnforcement");
+    const integratedCheck = source.indexOf("storyAlreadyIntegratedInBase({", scopeCheck);
+    const observation = source.indexOf("recordImplementGateObservation(step, storyRow, \"implement.scope_enforcement\"", scopeCheck);
+
+    assert.notEqual(helper, -1, "story integration helper should exist");
+    assert.notEqual(scopeCheck, -1, "scope enforcement call should exist");
+    assert.notEqual(integratedCheck, -1, "integrated zero-work check should exist after scope enforcement");
+    assert.notEqual(observation, -1, "scope observation should exist after integration adjustment");
+    assert.ok(integratedCheck > scopeCheck, "integration check must run after scope enforcement result");
+    assert.ok(integratedCheck < observation, "integration check must adjust the result before recording the gate observation");
+    assert.match(source, /NO_WORK_ALREADY_INTEGRATED/);
+    assert.match(source, /merge-base", "--is-ancestor"/);
   });
 
   it("injectContext is a no-op (real work happens in injectStoryContext post-selection)", async () => {
@@ -1260,6 +2074,154 @@ describe("06-implement step module", () => {
     }
   });
 
+  it("blocks later app integration stories when they remove prior screen adapters", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-generated-screen-adapter-regression-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { screenId: "gameplay", title: "Gameplay", componentName: "GameplayScreen", file: "src/screens/GameplayScreen.tsx" },
+        { screenId: "settings", title: "Settings", componentName: "SettingsScreen", file: "src/screens/SettingsScreen.tsx" },
+      ]));
+      fs.writeFileSync(path.join(tmp, "src/screens/GameplayScreen.tsx"), "export function GameplayScreen() { return <div>Gameplay</div>; }\n");
+      fs.writeFileSync(path.join(tmp, "src/screens/SettingsScreen.tsx"), "export function SettingsScreen() { return <div>Settings</div>; }\n");
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "import { useEffect } from 'react';",
+        "import { GameplayScreen } from './screens/GameplayScreen';",
+        "import { SettingsScreen } from './screens/SettingsScreen';",
+        "import { actStartGame } from './features/surf-gameplay/act_start_game';",
+        "export default function App({ state, actions }: any) {",
+        "  useEffect(() => { window.addEventListener('keydown', () => actStartGame(actions)); }, [actions]);",
+        "  return state.view === 'settings' ? <SettingsScreen /> : <GameplayScreen actions={{ start: () => actStartGame(actions) }} runtime={state} />;",
+        "}",
+        "",
+      ].join("\n"));
+      execFileSync("git", ["init"], { cwd: tmp, stdio: "ignore" });
+      execFileSync("git", ["config", "user.email", "setfarm@example.test"], { cwd: tmp, stdio: "ignore" });
+      execFileSync("git", ["config", "user.name", "Setfarm Test"], { cwd: tmp, stdio: "ignore" });
+      execFileSync("git", ["add", "."], { cwd: tmp, stdio: "ignore" });
+      execFileSync("git", ["commit", "-m", "prior gameplay integration"], { cwd: tmp, stdio: "ignore" });
+
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "import { GameplayScreen } from './screens/GameplayScreen';",
+        "import { SettingsScreen } from './screens/SettingsScreen';",
+        "import { actSavePreferences } from './features/surf-settings/act_save_preferences';",
+        "export default function App({ state, actions }: any) {",
+        "  return state.view === 'settings' ? <SettingsScreen actions={{ save: () => actSavePreferences(actions) }} /> : <GameplayScreen actions={actions} />;",
+        "}",
+        "",
+      ].join("\n"));
+
+      const issues = findGeneratedScreenRegressionIssues(
+        tmp,
+        [[{ screenId: "gameplay", name: "Gameplay", type: "game" }]],
+        "",
+        ["src/screens/SettingsScreen.tsx", "src/features/surf-settings/act_save_preferences.ts", "src/App.tsx"],
+      );
+
+      assert.equal(issues.some((issue) => issue.includes("APP_INTEGRATION_SCOPE_REGRESSION")), true);
+      assert.equal(issues.some((issue) => issue.includes("APP_INTEGRATION_PROP_REGRESSION") && issue.includes("runtime")), true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks later app integration stories when they remove prior semantic UI contracts", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-generated-screen-semantic-regression-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { screenId: "gameplay", title: "Gameplay", componentName: "GameplayScreen", file: "src/screens/GameplayScreen.tsx" },
+        { screenId: "settings", title: "Settings", componentName: "SettingsScreen", file: "src/screens/SettingsScreen.tsx" },
+      ]));
+      fs.writeFileSync(path.join(tmp, "src/screens/GameplayScreen.tsx"), "export function GameplayScreen() { return <div>Gameplay</div>; }\n");
+      fs.writeFileSync(path.join(tmp, "src/screens/SettingsScreen.tsx"), "export function SettingsScreen() { return <div>Settings</div>; }\n");
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "import { GameplayScreen } from './screens/GameplayScreen';",
+        "import { SettingsScreen } from './screens/SettingsScreen';",
+        "export default function App({ state }: any) {",
+        "  return <><div role=\"status\" aria-live=\"polite\" data-testid=\"setfarm-action-status\">Gameplay ready</div>{state.view === 'settings' ? <SettingsScreen /> : <GameplayScreen />}</>;",
+        "}",
+        "",
+      ].join("\n"));
+      execFileSync("git", ["init"], { cwd: tmp, stdio: "ignore" });
+      execFileSync("git", ["config", "user.email", "setfarm@example.test"], { cwd: tmp, stdio: "ignore" });
+      execFileSync("git", ["config", "user.name", "Setfarm Test"], { cwd: tmp, stdio: "ignore" });
+      execFileSync("git", ["add", "."], { cwd: tmp, stdio: "ignore" });
+      execFileSync("git", ["commit", "-m", "prior semantic integration"], { cwd: tmp, stdio: "ignore" });
+
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "import { GameplayScreen } from './screens/GameplayScreen';",
+        "import { SettingsScreen } from './screens/SettingsScreen';",
+        "export default function App({ state }: any) {",
+        "  return state.view === 'settings' ? <SettingsScreen /> : <GameplayScreen />;",
+        "}",
+        "",
+      ].join("\n"));
+
+      const issues = findGeneratedScreenRegressionIssues(
+        tmp,
+        [[{ screenId: "gameplay", name: "Gameplay", type: "game" }]],
+        "",
+        ["src/screens/SettingsScreen.tsx", "src/App.tsx"],
+      );
+
+      assert.equal(issues.some((issue) => issue.includes("APP_INTEGRATION_SEMANTIC_REGRESSION") && issue.includes("data-testid=setfarm-action-status")), true);
+      assert.equal(issues.some((issue) => issue.includes("APP_INTEGRATION_SEMANTIC_REGRESSION") && issue.includes("aria-live=polite")), true);
+      assert.equal(issues.some((issue) => issue.includes("APP_INTEGRATION_SEMANTIC_REGRESSION") && issue.includes("role=status")), true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks Setfarm platform helper contamination in generated app source", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-platform-helper-contamination-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "export const isTilingBackgroundRepeat = (value?: unknown) => Boolean(value);",
+        "globalThis.isTilingBackgroundRepeat = isTilingBackgroundRepeat;",
+        "export default function App() { return <main />; }",
+        "",
+      ].join("\n"));
+      fs.writeFileSync(path.join(tmp, "src/App.test.tsx"), [
+        "it('allows test-only mentions', () => {",
+        "  expect('isTilingBackgroundRepeat').toBeTruthy();",
+        "});",
+        "",
+      ].join("\n"));
+
+      const issues = findPlatformHelperContaminationIssues(tmp);
+      assert.equal(issues.length, 1);
+      assert.match(issues[0], /PLATFORM_HELPER_CONTAMINATION/);
+      assert.match(issues[0], /src\/App\.tsx/);
+
+      const gate = checkPlatformHelperContaminationGate("US-002", "Gameplay", tmp);
+      assert.equal(gate.passed, false);
+      assert.equal(gate.category, "PLATFORM_HELPER_CONTAMINATION");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts normal generated app source without Setfarm platform helpers", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-platform-helper-clean-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "export default function App() {",
+        "  window.app = { status: 'ready', actions: {} };",
+        "  return <main data-setfarm-root=\"demo\" />;",
+        "}",
+        "",
+      ].join("\n"));
+
+      assert.deepEqual(findPlatformHelperContaminationIssues(tmp), []);
+      assert.equal(checkPlatformHelperContaminationGate("US-001", "App", tmp).passed, true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("detects package build scripts for implement build gate", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-build-gate-"));
     try {
@@ -1323,6 +2285,113 @@ describe("06-implement step module", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
       await pgRun("DELETE FROM stories WHERE run_id = $1", ["scope-file-run"]);
       await pgRun("DELETE FROM runs WHERE id = $1", ["scope-file-run"]);
+    }
+  });
+
+  it("preserves missing scope files as retry feedback before later guardrails", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-scope-retry-feedback-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src", "App.tsx"), "export default function App() { return null; }\n");
+
+      const feedback = buildScopeFilesRetryFailureForWorkdir(
+        "US-001",
+        "Scope File Story",
+        JSON.stringify(["src/App.tsx", "src/features/app.store.ts", "src/features/app.repo.ts", "src/index.css"]),
+        tmp,
+      );
+
+      assert.match(feedback, /SCOPE_FILE_MISSING/);
+      assert.match(feedback, /Before fixing later guardrails/);
+      assert.match(feedback, /src\/features\/app\.store\.ts/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps distinct prior retry blockers together for clean retry worktrees", () => {
+    const feedback = mergeRetryFailureTexts([
+      "RUNTIME_BRIDGE_MISSING: add window.app from live runtime state.",
+      "GENERATED_SCREEN_LAYOUT_MOUNT_UNSAFE: mount generated screens in a flex root.",
+      "RUNTIME_BRIDGE_MISSING: add window.app from live runtime state.",
+    ]);
+
+    assert.match(feedback, /RUNTIME_BRIDGE_MISSING/);
+    assert.match(feedback, /GENERATED_SCREEN_LAYOUT_MOUNT_UNSAFE/);
+    assert.match(feedback, /ALSO_FIX/);
+    assert.equal((feedback.match(/RUNTIME_BRIDGE_MISSING/g) || []).length, 1);
+  });
+
+  it("does not fail screen stories only because optional action companion files are absent", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-scope-action-companions-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), "export default function App() { return null; }\n");
+      fs.writeFileSync(path.join(tmp, "src/screens/VehicleEditor.tsx"), "export function VehicleEditor() { return null; }\n");
+      fs.writeFileSync(path.join(tmp, "src/screens/VehicleOperations.tsx"), "export function VehicleOperations() { return null; }\n");
+      const storyId = "scope-action-companion-story-" + Date.now();
+      await pgRun(
+        `INSERT INTO runs (id, workflow_id, task, status, created_at, updated_at)
+         VALUES ($1, 'feature-dev', 'scope action companion test', 'running', NOW(), NOW())
+         ON CONFLICT (id) DO NOTHING`,
+        ["scope-action-companion-run"],
+      );
+      await pgRun(
+        `INSERT INTO stories (id, run_id, story_index, story_id, title, status, scope_files, created_at, updated_at)
+         VALUES ($1, $2, 0, 'US-002', 'Screen Story', 'running', $3, NOW(), NOW())`,
+        [storyId, "scope-action-companion-run", JSON.stringify([
+          "src/screens/VehicleEditor.tsx",
+          "src/features/surf-vehicle-editor/act_save_record.ts",
+          "src/features/surf-vehicle-editor/act_cancel_edit.ts",
+          "src/screens/VehicleOperations.tsx",
+          "src/features/surf-vehicle-operations/act_search_records.ts",
+          "src/features/surf-vehicle-operations/act_create_record.ts",
+          "src/features/surf-vehicle-operations/act_select_record.ts",
+          "src/features/surf-vehicle-operations/act_retry_load.ts",
+          "src/App.tsx",
+        ])],
+      );
+
+      const result = await checkScopeFilesGate("US-002", storyId, "Screen Story", tmp);
+      assert.equal(result.passed, true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+      await pgRun("DELETE FROM stories WHERE run_id = $1", ["scope-action-companion-run"]);
+      await pgRun("DELETE FROM runs WHERE id = $1", ["scope-action-companion-run"]);
+    }
+  });
+
+  it("fails screen stories when the declared generated screen file is absent", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-scope-required-screen-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), "export default function App() { return null; }\n");
+      const storyId = "scope-required-screen-story-" + Date.now();
+      await pgRun(
+        `INSERT INTO runs (id, workflow_id, task, status, created_at, updated_at)
+         VALUES ($1, 'feature-dev', 'scope required screen test', 'running', NOW(), NOW())
+         ON CONFLICT (id) DO NOTHING`,
+        ["scope-required-screen-run"],
+      );
+      await pgRun(
+        `INSERT INTO stories (id, run_id, story_index, story_id, title, status, scope_files, created_at, updated_at)
+         VALUES ($1, $2, 0, 'US-003', 'Settings Screen Story', 'running', $3, NOW(), NOW())`,
+        [storyId, "scope-required-screen-run", JSON.stringify([
+          "src/screens/GameSettingsWingloopLite.tsx",
+          "src/features/surf-game-settings/act_save_preferences.ts",
+          "src/features/surf-game-settings/act_return_to_gameplay.ts",
+          "src/App.tsx",
+        ])],
+      );
+
+      const result = await checkScopeFilesGate("US-003", storyId, "Settings Screen Story", tmp);
+      assert.equal(result.passed, false);
+      assert.equal(result.category, "SCOPE_FILE_MISSING");
+      assert.match(result.reason || "", /src\/screens\/GameSettingsWingloopLite\.tsx/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+      await pgRun("DELETE FROM stories WHERE run_id = $1", ["scope-required-screen-run"]);
+      await pgRun("DELETE FROM runs WHERE id = $1", ["scope-required-screen-run"]);
     }
   });
 
@@ -1438,6 +2507,24 @@ describe("06-implement step module", () => {
     assert.match(stepOps, /verify-generated-screen-regression-preflight/);
   });
 
+  it("platform smoke gates resolve smoke-test from the active platform build", () => {
+    const guards = fs.readFileSync(path.join(process.cwd(), "src/installer/steps/06-implement/guards.ts"), "utf-8");
+    const stepOps = fs.readFileSync(path.join(process.cwd(), "src/installer/step-ops.ts"), "utf-8");
+    const stepAdvance = fs.readFileSync(path.join(process.cwd(), "src/installer/step-advance.ts"), "utf-8");
+    const combined = [guards, stepOps, stepAdvance].join("\n");
+    assert.match(combined, /resolvePlatformScript\("smoke-test\.mjs"\)/);
+    assert.doesNotMatch(combined, /\.openclaw["',\s]+["']setfarm-repo["',\s]+["']scripts["',\s]+["']smoke-test\.mjs/);
+  });
+
+  it("platform smoke gates rebuild before smoke-test to avoid stale dist artifacts", () => {
+    const guards = fs.readFileSync(path.join(process.cwd(), "src/installer/steps/06-implement/guards.ts"), "utf-8");
+    const stepOps = fs.readFileSync(path.join(process.cwd(), "src/installer/step-ops.ts"), "utf-8");
+    assert.match(guards, /ensureSmokeBuildFresh\(workdir/);
+    assert.match(guards, /QA_FIX_SMOKE_PREBUILD_FAILED/);
+    assert.match(stepOps, /ensureSmokeBuildFresh\(repoPath/);
+    assert.match(stepOps, /system-smoke-prebuild/);
+  });
+
   it("defers full system smoke until later UI story owns the app surface", () => {
     const decision = decideStorySystemSmokeGate("US-001", [
       {
@@ -1481,5 +2568,69 @@ describe("06-implement step module", () => {
     ]);
 
     assert.equal(decision.run, true);
+  });
+
+  it("uses declared scope_files for dynamically created QA-FIX stories missing from setup manifest", () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-qa-fix-context-"));
+    fs.mkdirSync(path.join(repo, ".setfarm", "setup"), { recursive: true });
+    fs.writeFileSync(setupCertificatePath(repo), JSON.stringify({
+      schema: "setfarm.setup-certificate.v1",
+      runId: "run-qa-fix",
+      projectName: "Repair App",
+      projectSlug: "repair-app",
+      platform: "web",
+      techStack: "vite-react",
+      stackPackId: "vite-react-web-app",
+      commands: {},
+      entrypoints: ["src/App.tsx"],
+      setupOwnedFiles: [],
+      forbiddenDuringImplement: ["package.json"],
+      sharedFiles: ["src/App.tsx", "src/main.tsx", "src/index.css"],
+      scaffoldSnapshot: [],
+      generatedDesignFiles: [],
+      designAuthority: {
+        required: false,
+        source: "none",
+        screenMap: "",
+        rules: [],
+        conversionPolicy: "none",
+        conversionNote: "",
+      },
+      fileTreeManifestPath: ".setfarm/setup/FILE_TREE_MANIFEST.json",
+      sharedGrantsPath: ".setfarm/setup/SHARED_GRANTS.json",
+      targetResolutionRules: {},
+      dependencyEvidence: { requested: [], approved: [], installed: [], rejected: [] },
+      dependencyResolutionPolicy: "setup_build_only",
+      designImportValidate: { status: "pass", reportPath: ".setfarm/setup/DESIGN_IMPORT_VALIDATE.json", screensValidated: [], failedRules: [], fixesApplied: [] },
+      sandboxPrewarm: {},
+    }, null, 2));
+    fs.writeFileSync(fileTreeManifestPath(repo), JSON.stringify({
+      schema: "setfarm.file-tree-manifest.v1",
+      runId: "run-qa-fix",
+      stackPackId: "vite-react-web-app",
+      resolvedTargets: [],
+      dependencyPlan: { requested: [], approved: [], installed: [], rejected: [] },
+      mockInjectionPoints: [],
+      routeRegistrationPlan: [],
+    }, null, 2));
+    fs.writeFileSync(sharedGrantsPath(repo), JSON.stringify({
+      schema: "setfarm.shared-grants.v1",
+      version: 1,
+      runId: "run-qa-fix",
+      grants: [],
+    }, null, 2));
+
+    const context = assembleImplementContext({
+      repo,
+      runId: "run-qa-fix",
+      storyId: "QA-FIX-001",
+      storyRow: {
+        scope_files: JSON.stringify(["src/App.tsx", "src/game/runtime.ts"]),
+        implementation_contract: "{}",
+      },
+    });
+
+    assert.deepEqual(context?.resolvedScopeFiles, ["src/App.tsx", "src/game/runtime.ts"]);
+    assert.deepEqual(context?.readOnlyFiles, ["src/main.tsx", "src/index.css"]);
   });
 });

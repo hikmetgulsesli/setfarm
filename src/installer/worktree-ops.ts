@@ -105,6 +105,283 @@ function isPlatformInternalStatusLine(line: string): boolean {
     || file.startsWith("references/");
 }
 
+function porcelainStatusPaths(output: string): string[] {
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+    .map(statusPathFromPorcelainLine)
+    .filter(Boolean);
+}
+
+function safeRetryPatchId(value: string): string {
+  return String(value || "unknown")
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 120) || "unknown";
+}
+
+function retryPatchDir(repo: string): string {
+  return path.join(repo, ".setfarm", "retry-patches");
+}
+
+function retryPatchTimestamp(): string {
+  return new Date().toISOString().replace(/[:.]/g, "-");
+}
+
+function captureDirtyStoryWorktreePatch(repo: string, worktreeDir: string, storyId: string, status: string): string {
+  try {
+    // Include untracked files in the diff without staging their content.
+    try {
+      execFileSync("git", ["add", "-N", "--", "."], {
+        cwd: worktreeDir,
+        timeout: 10000,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+    } catch {
+      // Best effort: tracked-file diffs are still useful.
+    }
+    const patch = execFileSync("git", ["diff", "--binary", "--no-ext-diff", "HEAD", "--"], {
+      cwd: worktreeDir,
+      encoding: "utf-8",
+      timeout: 20000,
+      maxBuffer: 10 * 1024 * 1024,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    try {
+      execFileSync("git", ["reset", "-q", "--", "."], {
+        cwd: worktreeDir,
+        timeout: 10000,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+    } catch {
+      // Leave normal cleanup/stash handling to the caller.
+    }
+    if (!patch.trim()) return "";
+
+    const dir = retryPatchDir(repo);
+    fs.mkdirSync(dir, { recursive: true });
+    const id = safeRetryPatchId(storyId);
+    const patchPath = path.join(dir, `${id}-${retryPatchTimestamp()}.patch`);
+    const header = [
+      `# setfarm.retry-worktree-patch.v1`,
+      `# story_id=${storyId}`,
+      `# worktree=${worktreeDir}`,
+      `# captured_at=${new Date().toISOString()}`,
+      `# status=${status.split(/\r?\n/).slice(0, 20).join(" | ")}`,
+      "",
+    ].join("\n");
+    fs.writeFileSync(patchPath, header + patch);
+    logger.warn(`[worktree] Captured dirty retry patch for ${storyId}: ${path.relative(repo, patchPath)}`, {});
+    return patchPath;
+  } catch (e) {
+    logger.warn(`[worktree] Failed to capture dirty retry patch for ${storyId}: ${String(e).slice(0, 160)}`, {});
+    return "";
+  }
+}
+
+export function latestRetryPatchForStory(repo: string, storyId: string): string {
+  try {
+    const dir = retryPatchDir(repo);
+    if (!fs.existsSync(dir)) return "";
+    const id = safeRetryPatchId(storyId);
+    const files = fs.readdirSync(dir)
+      .filter((file) => file.endsWith(".patch") && (file.startsWith(`${id}-`) || file.includes(`-${id}-`)))
+      .map((file) => path.join(dir, file))
+      .filter((file) => {
+        try { return fs.statSync(file).isFile(); } catch { return false; }
+      })
+      .sort((a, b) => {
+        try { return fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs; } catch { return 0; }
+      });
+    return files[0] || "";
+  } catch {
+    return "";
+  }
+}
+
+export function latestRetryStashPatchForStory(worktreeDir: string, storyId: string): string {
+  if (!worktreeDir || !fs.existsSync(worktreeDir)) return "";
+  try {
+    const needle = `setfarm-auto-stash dirty story worktree before ${storyId}`.toLowerCase();
+    const list = execFileSync("git", ["stash", "list", "--format=%gd%x00%s"], {
+      cwd: worktreeDir,
+      encoding: "utf-8",
+      timeout: 5000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const ref = list.split(/\r?\n/)
+      .map((line) => {
+        const [stashRef, subject] = line.split("\0");
+        return { stashRef, subject };
+      })
+      .find((item) => String(item.subject || "").toLowerCase().includes(needle))
+      ?.stashRef;
+    if (!ref) return "";
+    return execFileSync("git", ["stash", "show", "--patch", "--binary", ref], {
+      cwd: worktreeDir,
+      encoding: "utf-8",
+      timeout: 20000,
+      maxBuffer: 10 * 1024 * 1024,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+  } catch {
+    return "";
+  }
+}
+
+export interface RetryPatchRestoreResult {
+  applied: boolean;
+  reason: string;
+  patchPath?: string;
+  touchedFiles?: string[];
+}
+
+function stripRetryPatchHeader(patch: string): string {
+  const index = patch.indexOf("diff --git ");
+  return index >= 0 ? patch.slice(index) : patch;
+}
+
+export function retryPatchTouchedFiles(patch: string): string[] {
+  const files = new Set<string>();
+  for (const line of stripRetryPatchHeader(patch).split(/\r?\n/)) {
+    let match = line.match(/^diff --git a\/(.+?) b\/(.+)$/);
+    if (match) {
+      const left = normalizePatchPath(match[1]);
+      const right = normalizePatchPath(match[2]);
+      if (left && left !== "/dev/null") files.add(left);
+      if (right && right !== "/dev/null") files.add(right);
+      continue;
+    }
+    match = line.match(/^(?:---|\+\+\+) (?:a|b)\/(.+)$/);
+    if (match) {
+      const file = normalizePatchPath(match[1]);
+      if (file && file !== "/dev/null") files.add(file);
+    }
+  }
+  return [...files].sort();
+}
+
+function normalizePatchPath(raw: string): string {
+  const file = String(raw || "").trim().replace(/^"|"$/g, "").replace(/\\/g, "/").replace(/^\.\//, "");
+  if (!file || file === "/dev/null") return file;
+  if (file.startsWith("/") || file.includes("../") || file === "..") return "";
+  return file;
+}
+
+function normalizeScopePath(raw: string): string {
+  return normalizePatchPath(String(raw || "").trim());
+}
+
+function scopeAllowsRetryPatchPath(file: string, allowed: Set<string>): boolean {
+  if (!file) return false;
+  if (allowed.has(file)) return true;
+  return allowed.has("*");
+}
+
+export function applyScopedRetryPatchForStory(repo: string, worktreeDir: string, storyId: string, scopeFiles: string[], runId = ""): RetryPatchRestoreResult {
+  if (!repo || !worktreeDir || !storyId || !fs.existsSync(worktreeDir)) {
+    return { applied: false, reason: "missing_inputs" };
+  }
+  const patchPath = latestRetryPatchForStory(repo, storyId);
+  if (!patchPath) return { applied: false, reason: "no_retry_patch" };
+
+  let patch = "";
+  try {
+    patch = fs.readFileSync(patchPath, "utf-8");
+  } catch {
+    return { applied: false, reason: "patch_read_failed", patchPath };
+  }
+  const patchBody = stripRetryPatchHeader(patch);
+  if (!patchBody.trim()) return { applied: false, reason: "empty_patch", patchPath };
+
+  const touchedFiles = retryPatchTouchedFiles(patchBody);
+  if (touchedFiles.length === 0) return { applied: false, reason: "no_touched_files", patchPath };
+
+  const allowed = new Set(scopeFiles.map(normalizeScopePath).filter(Boolean));
+  const outOfScope = touchedFiles.filter((file) => !scopeAllowsRetryPatchPath(file, allowed));
+  if (outOfScope.length > 0) {
+    logger.warn(`[worktree] Retry patch for ${storyId} not restored; out-of-scope files: ${outOfScope.slice(0, 12).join(", ")}`, { runId });
+    return { applied: false, reason: "out_of_scope", patchPath, touchedFiles };
+  }
+
+  try {
+    const status = execFileSync("git", ["status", "--porcelain"], {
+      cwd: worktreeDir,
+      encoding: "utf-8",
+      timeout: 5000,
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+    if (status) return { applied: false, reason: "worktree_not_clean", patchPath, touchedFiles };
+  } catch {
+    return { applied: false, reason: "status_failed", patchPath, touchedFiles };
+  }
+
+  try {
+    execFileSync("git", ["apply", "--3way", "--whitespace=nowarn"], {
+      cwd: worktreeDir,
+      input: patchBody,
+      encoding: "utf-8",
+      timeout: 20000,
+      maxBuffer: 10 * 1024 * 1024,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    logger.warn(`[worktree] Restored scoped retry patch for ${storyId}: ${touchedFiles.slice(0, 12).join(", ")}`, { runId });
+    return { applied: true, reason: "applied", patchPath, touchedFiles };
+  } catch (e) {
+    logger.warn(`[worktree] Failed to restore retry patch for ${storyId}: ${String(e).slice(0, 160)}`, { runId });
+    return { applied: false, reason: "apply_failed", patchPath, touchedFiles };
+  }
+}
+
+/**
+ * Guard retries must not inherit dirty files from the failed attempt. The
+ * retry output is the artifact; the next worker should start from the committed
+ * story branch plus that feedback, not from an unreviewed working tree.
+ */
+export function discardDirtyRetryWorktreeState(worktreeDir: string, storyId: string, runId = ""): string[] {
+  if (!worktreeDir || !fs.existsSync(worktreeDir)) return [];
+  const gitPath = path.join(worktreeDir, ".git");
+  if (!fs.existsSync(gitPath)) return [];
+
+  let status = "";
+  try {
+    clearUnexpectedWorktreeIndexFlags(worktreeDir);
+    status = execFileSync("git", ["status", "--porcelain"], {
+      cwd: worktreeDir,
+      encoding: "utf-8",
+      timeout: 5000,
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trimEnd();
+  } catch (e) {
+    logger.warn(`[worktree] Could not inspect retry worktree ${storyId}: ${String(e).slice(0, 140)}`, { runId });
+    return [];
+  }
+  if (!status) return [];
+
+  const dirtyFiles = porcelainStatusPaths(status).filter((file) => !isPlatformInternalStatusLine(`?? ${file}`));
+  if (dirtyFiles.length === 0) return [];
+
+  try {
+    execFileSync("git", ["reset", "--hard", "HEAD"], {
+      cwd: worktreeDir,
+      timeout: 10000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    execFileSync("git", ["clean", "-fd"], {
+      cwd: worktreeDir,
+      timeout: 10000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    logger.warn(`[worktree] Discarded dirty retry state for ${storyId} before claim: ${dirtyFiles.slice(0, 12).join(", ")}`, { runId });
+    return dirtyFiles;
+  } catch (e) {
+    logger.warn(`[worktree] Failed to discard dirty retry state for ${storyId}: ${String(e).slice(0, 160)}`, { runId });
+    return [];
+  }
+}
+
 function sameFilesystemPath(a: string, b: string): boolean {
   try {
     return fs.realpathSync.native(a) === fs.realpathSync.native(b);
@@ -373,6 +650,81 @@ function hideTrackedPathForImplement(worktreeDir: string, relativePath: string):
   }
 }
 
+function isIntentionalHiddenWorktreePath(relativePath: string): boolean {
+  const file = relativePath.replace(/\\/g, "/");
+  return file === "references"
+    || file.startsWith("references/")
+    || file === "stitch"
+    || file.startsWith("stitch/")
+    || /^\.stitch-screens.*\.json$/i.test(file)
+    || file === "node_modules"
+    || file.startsWith("node_modules/")
+    || file === ".setfarm"
+    || file.startsWith(".setfarm/")
+    || file === ".setfarm-bin"
+    || file.startsWith(".setfarm-bin/");
+}
+
+function chunked<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
+  return chunks;
+}
+
+export function clearUnexpectedWorktreeIndexFlags(worktreeDir: string): string[] {
+  if (!worktreeDir || !fs.existsSync(worktreeDir)) return [];
+
+  let output = "";
+  try {
+    output = execFileSync("git", ["ls-files", "-v"], {
+      cwd: worktreeDir,
+      encoding: "utf-8",
+      timeout: 10_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+  } catch {
+    return [];
+  }
+
+  const flagged = output
+    .split(/\r?\n/)
+    .map((line) => {
+      const flag = line.slice(0, 1);
+      const file = line.slice(2).trim();
+      return { flag, file };
+    })
+    .filter(({ flag, file }) => {
+      if (!flag || !file || isIntentionalHiddenWorktreePath(file)) return false;
+      return flag === flag.toLowerCase() || flag === "S";
+    })
+    .map(({ file }) => file);
+
+  if (flagged.length === 0) return [];
+
+  for (const files of chunked(flagged, 80)) {
+    try {
+      execFileSync("git", ["update-index", "--no-assume-unchanged", "--no-skip-worktree", "--", ...files], {
+        cwd: worktreeDir,
+        timeout: 10_000,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+    } catch {
+      try {
+        execFileSync("git", ["update-index", "--no-assume-unchanged", "--", ...files], {
+          cwd: worktreeDir,
+          timeout: 10_000,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+      } catch (e) {
+        logger.warn(`[worktree] Failed to clear hidden index flags in ${worktreeDir}: ${String(e).slice(0, 140)}`, {});
+      }
+    }
+  }
+
+  logger.warn(`[worktree] Cleared hidden git index flags for ${flagged.length} tracked file(s): ${flagged.slice(0, 8).join(", ")}`, {});
+  return flagged;
+}
+
 function listStitchCorpusPaths(worktreeDir: string): string[] {
   const stitchDir = path.join(worktreeDir, "stitch");
   const paths: string[] = [];
@@ -543,6 +895,7 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
   // P2-03: Prune orphaned worktrees before creating new ones
   try { execFileSync("git", ["worktree", "prune"], { cwd: repo, timeout: 5000, stdio: ["pipe", "pipe", "pipe"] }); } catch {}
   stashDirtyMainRepo(repo, storyId);
+  const baseIsSha = /^[0-9a-f]{40}$/i.test(baseBranch);
 
   const worktreeBase = resolveWorktreeBaseDir(repo, agentId);
   const worktreeDir = path.join(worktreeBase, storyId.toLowerCase());
@@ -579,6 +932,7 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
         }).trim().toLowerCase();
         const expected = storyId.toLowerCase();
         if (branch === expected) {
+          clearUnexpectedWorktreeIndexFlags(worktreeDir);
           const status = execFileSync("git", ["status", "--porcelain"], {
             cwd: worktreeDir, encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
           }).trim();
@@ -586,6 +940,7 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
             const summary = status.split(/\r?\n/).slice(0, 12).join("; ");
             const stashName = `setfarm-auto-stash dirty story worktree before ${storyId} ${new Date().toISOString()}`;
             try {
+              captureDirtyStoryWorktreePatch(repo, worktreeDir, storyId, status);
               execFileSync("git", ["stash", "push", "-u", "-m", stashName], {
                 cwd: worktreeDir, timeout: 20000, stdio: ["pipe", "pipe", "pipe"],
               });
@@ -605,7 +960,20 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
             logger.warn(`[worktree] Existing worktree ${worktreeDir} has WIP/auto-save retry history; discarding before claim`, {});
             discardStoryWorktreeAndResetBranch(repo, expected, baseBranch, agentId);
           }
+          if (fs.existsSync(worktreeDir) && !baseIsSha) {
+            try {
+              execFileSync("git", ["merge-base", "--is-ancestor", baseBranch, "HEAD"], {
+                cwd: worktreeDir,
+                timeout: 5000,
+                stdio: ["pipe", "pipe", "pipe"],
+              });
+            } catch {
+              logger.warn(`[worktree] Existing worktree ${worktreeDir} is behind ${baseBranch}; discarding before claim`, {});
+              saveAndRemoveWorktree(repo, worktreeDir, expected);
+            }
+          }
           if (fs.existsSync(worktreeDir)) {
+            clearUnexpectedWorktreeIndexFlags(worktreeDir);
             prepareStoryWorktreeAssets(repo, worktreeDir, storyId, "implement");
             logger.info(`[worktree] Reusing existing worktree ${worktreeDir} for ${storyId}`, {});
             return worktreeDir;
@@ -627,8 +995,6 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
   // implement loop to the same parent commit. When we get a SHA, the fetch +
   // branch-sync dance below is wrong (you can't `git branch -f <sha> origin/<sha>`)
   // — skip it and go straight to creating the worktree from the explicit ref.
-  const baseIsSha = /^[0-9a-f]{40}$/i.test(baseBranch);
-
   try {
     if (!baseIsSha) {
       // MERGE_CONFLICT FIX (run #338): Before creating a worktree, make sure the local
@@ -719,6 +1085,7 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
         }
       }
     }
+    clearUnexpectedWorktreeIndexFlags(worktreeDir);
     prepareStoryWorktreeAssets(repo, worktreeDir, storyId, "implement");
 
     logger.info(`[worktree] Created ${worktreeDir} from ${baseBranch}`, {});
@@ -737,6 +1104,7 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
           throw fallback_err;
         }
       }
+      clearUnexpectedWorktreeIndexFlags(worktreeDir);
       prepareStoryWorktreeAssets(repo, worktreeDir, storyId, "implement");
       logger.info(`[worktree] Created ${worktreeDir} (existing branch)`, {});
       return worktreeDir;
@@ -831,6 +1199,7 @@ export function ensureStoryBranchWorktree(repo: string, storyBranch: string, age
         stdio: ["pipe", "pipe", "pipe"],
       }).trim().toLowerCase();
       if (current === branch) {
+        clearUnexpectedWorktreeIndexFlags(existing);
         prepareStoryWorktreeAssets(repo, existing, branch);
         return existing;
       }
@@ -897,6 +1266,7 @@ export function ensureStoryBranchWorktree(repo: string, storyBranch: string, age
   } catch (err: any) {
     const occupied = gitWorktreePathForBranch(repo, branch);
     if (occupied && fs.existsSync(occupied)) {
+      clearUnexpectedWorktreeIndexFlags(occupied);
       prepareStoryWorktreeAssets(repo, occupied, branch);
       return occupied;
     }
@@ -904,6 +1274,7 @@ export function ensureStoryBranchWorktree(repo: string, storyBranch: string, age
     return "";
   }
 
+  clearUnexpectedWorktreeIndexFlags(worktreeDir);
   prepareStoryWorktreeAssets(repo, worktreeDir, branch);
   logger.info(`[worktree] Created review worktree ${worktreeDir} for ${branch}`, {});
   return worktreeDir;
@@ -1103,13 +1474,44 @@ export function removeStoryWorktree(repo: string, storyId: string, agentId?: str
  * after a step completes. Uses /proc/<pid>/cwd to detect CWD on Linux.
  */
 export function killWorktreeProcesses(dir: string): void {
-  if (process.platform !== "linux") return;
   // Validate dir is within a known worktree location (safety guard against accidental kills)
   if (!dir.includes(".worktrees") && !dir.includes("story-worktrees")) {
     logger.warn(`[worktree] Refusing to kill processes in non-worktree dir: ${dir}`, {});
     return;
   }
   try {
+    if (process.platform === "darwin") {
+      let out = "";
+      try {
+        out = execFileSync("lsof", ["-t", "+D", dir], {
+          encoding: "utf-8",
+          stdio: ["ignore", "pipe", "ignore"],
+          timeout: 5000,
+        }).trim();
+      } catch {
+        return;
+      }
+
+      const pids = [...new Set(out.split(/\s+/).map((value) => Number(value)).filter((pid) => Number.isFinite(pid)))]
+        .filter((pid) => pid !== process.pid && pid !== process.ppid);
+      if (pids.length === 0) return;
+
+      for (const pid of pids) {
+        try { process.kill(pid, "SIGTERM"); } catch { /* already dead */ }
+      }
+      try { const _b = new SharedArrayBuffer(4); Atomics.wait(new Int32Array(_b), 0, 0, 2000); } catch { /* wait OK */ }
+      for (const pid of pids) {
+        try {
+          process.kill(pid, 0);
+          process.kill(pid, "SIGKILL");
+        } catch { /* already dead */ }
+      }
+      logger.info(`[worktree] Killed ${pids.length} orphaned process(es) in ${dir}`, {});
+      return;
+    }
+
+    if (process.platform !== "linux") return;
+
     // Node.js native /proc scanning — no shell, no injection risk
     const procDir = "/proc";
     let entries: string[];

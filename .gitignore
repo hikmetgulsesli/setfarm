@@ -19,6 +19,7 @@ wrk/
 .setfarm-step-output.txt
 .setfarm-*.txt
 .setfarm-*.json
+.setfarm/
 prd-*.md
 
 # Security cleanup

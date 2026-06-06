@@ -24,6 +24,7 @@ import {
 import { removeStoryWorktree } from "./worktree-ops.js";
 import { cleanupProjectEphemera, scheduleRunCronTeardown } from "./cleanup-ops.js";
 import { refreshRunContractSafe } from "./contract-ledger.js";
+import { maybeRunPlatformSelfHeal } from "./platform-self-heal/runner.js";
 
 // ── failStep ─────────────────────────────────────────────────────────
 
@@ -79,6 +80,8 @@ function isTransientAgentInfrastructureFailure(error: string): boolean {
     normalized.includes("openclaw agent exited") ||
     normalized.includes("agent_process_stuck") ||
     normalized.includes("agent_process_orphaned") ||
+    normalized.includes("agent_model_turn_stalled") ||
+    normalized.includes("agent_startup_silent") ||
     normalized.includes("task is already terminal")
   );
 }
@@ -98,7 +101,7 @@ async function handleLoopStepFailurePG(
   const storyRow = await getStoryInfo(step.current_story_id!);
   if (isTransientAgentInfrastructureFailure(error)) {
     await pgBegin(async (sql) => {
-      await sql`UPDATE stories SET status = 'pending', output = ${error}, claimed_by = NULL, updated_at = ${now()} WHERE id = ${story.id}`;
+      await sql`UPDATE stories SET status = 'pending', output = ${error}, claimed_by = NULL, claimed_at = NULL, updated_at = ${now()} WHERE id = ${story.id}`;
       await sql`UPDATE steps SET status = 'pending', current_story_id = NULL, output = ${error}, updated_at = ${now()} WHERE id = ${stepId}`;
       try { await sql`UPDATE claim_log SET outcome = 'infra_retry', duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at)) * 1000 AS INTEGER), diagnostic = ${error} WHERE story_id = ${storyRow?.story_id || ""} AND outcome IS NULL`; } catch (e) { logger.warn("[claim-log] update failed: " + String(e), {}); }
     });
@@ -133,6 +136,7 @@ async function handleLoopStepFailurePG(
     emitEvent({ ts: now(), event: "story.failed", runId: step.run_id, workflowId: wfId, stepId: workflowStepId, storyId: storyRow?.story_id, storyTitle: storyRow?.title, detail: `Story retries exhausted (${newRetry}/${story.max_retries}) — failing run` });
     emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: workflowStepId, detail: runFailReason });
     emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: runFailReason });
+    await recordTerminalPlatformSelfHealPlan({ runId: step.run_id, stepId: workflowStepId, agentId: step.agent_id, error: runFailReason });
     scheduleRunCronTeardown(step.run_id);
     logger.warn(`[failStep] Story ${storyRow?.story_id} retries exhausted — failing run (policy: fail-fast on unrecoverable story)`, { runId: step.run_id });
     await refreshRunContractSafe(step.run_id, "story.failed");
@@ -140,7 +144,7 @@ async function handleLoopStepFailurePG(
   }
 
   await pgBegin(async (sql) => {
-    await sql`UPDATE stories SET status = 'pending', retry_count = ${newRetry}, output = ${error}, updated_at = ${now()} WHERE id = ${story.id}`;
+    await sql`UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, retry_count = ${newRetry}, output = ${error}, updated_at = ${now()} WHERE id = ${story.id}`;
     await sql`UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = ${now()} WHERE id = ${stepId}`;
     try { await sql`UPDATE claim_log SET outcome = 'failed', duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at)) * 1000 AS INTEGER), diagnostic = ${error} WHERE story_id = ${storyRow?.story_id || ""} AND outcome IS NULL`; } catch (e) { logger.warn("[claim-log] update failed: " + String(e), {}); }
   });
@@ -161,6 +165,19 @@ const CRITICAL_STEPS = new Set(["deploy", "plan", "design", "setup-repo", "setup
 /** Quality gate steps get boosted max_retries so agents have more chances to fix issues */
 const QUALITY_GATE_STEPS = new Set(["supervise", "final-test", "qa-test", "security-gate", "verify"]);
 const QUALITY_GATE_MIN_RETRIES = 4;
+
+async function recordTerminalPlatformSelfHealPlan(params: {
+  runId: string;
+  stepId: string;
+  agentId?: string | null;
+  error: string;
+}): Promise<void> {
+  try {
+    await maybeRunPlatformSelfHeal(params);
+  } catch (error) {
+    logger.warn(`[platform-self-heal] terminal failure hook failed: ${String(error).slice(0, 220)}`, { runId: params.runId, stepId: params.stepId });
+  }
+}
 
 function formatVerifyFailureAsRetryOutput(error: string): string {
   const trimmed = error.trim() || "Verify requested retry without details.";
@@ -274,6 +291,7 @@ async function handleSingleStepFailurePG(
       const wfId2 = await getWorkflowId(step.run_id);
       emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId2, stepId: workflowStepId || stepId, detail: error });
       emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId2, detail: "Critical step retries exhausted" });
+      await recordTerminalPlatformSelfHealPlan({ runId: step.run_id, stepId: workflowStepId || stepId, agentId: step.agent_id, error });
       scheduleRunCronTeardown(step.run_id);
       await refreshRunContractSafe(step.run_id, "step.failed");
       return { retrying: false, runFailed: true };

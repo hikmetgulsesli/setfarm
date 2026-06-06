@@ -4,6 +4,9 @@ const VERIFY_RETRY_QUALITY_SIGNAL =
 const VERIFY_RETRY_MERGE_BLOCKER_SIGNAL =
   /\b(?:PR|pull request|mergeable|mergeStateStatus|merge state)\b[\s\S]{0,360}\b(?:CONFLICTING|DIRTY|BLOCKED)\b|\b(?:CONFLICTING|DIRTY|BLOCKED)\b[\s\S]{0,160}\b(?:PR|pull request|mergeable|mergeStateStatus|merge state)\b|\bunresolved\s+merge\s+conflicts?\b|\bmerge\s+conflicts?\b[\s\S]{0,160}\b(?:unresolved|markers?|resolve|blocking|failed|dirty)\b|\bconflict\s+markers?\b|\bTS1185\b/i;
 
+const VERIFY_RETRY_INFRA_SIGNAL =
+  /\b(?:visual qa|supervisor visual|agent-browser|playwright|browser|chromium|page\.(?:evaluate|goto|locator|click)|context)\b[\s\S]{0,520}\b(?:target page, context or browser has been closed|browser has been closed|target closed|context closed|page closed|browser context was closed|Protocol error:.*Target closed|ReferenceError:\s*isTilingBackgroundRepeat\s+is\s+not\s+defined|hung|timed out|timeout|exited\s+-?1)\b/i;
+
 const SOURCE_FILE_SIGNAL = /\b[\w./-]+\.(?:tsx?|jsx?|css|html|json|md)\b/i;
 const ACTIONABLE_QUALITY_SIGNAL =
   /\b(unresolved|still|must|should|does not|doesn't|fails?|failed|bug|incorrect|broken|not fixed|regression|missing|wrong|blank|empty|preserve|append|convert|render|navigate|click|open|close|save|delete|edit)\b/i;
@@ -29,7 +32,14 @@ export function isVerifyRetryQualityFailure(output: string): boolean {
   if (!text) return false;
   if (/^SYSTEM_SMOKE_FAILURE:/i.test(text)) return true;
   if (!/\bSTATUS\s*:\s*retry\b/i.test(text)) return false;
+  if (isVerifyRetryInfraFailure(text)) return false;
   return VERIFY_RETRY_QUALITY_SIGNAL.test(text);
+}
+
+export function isVerifyRetryInfraFailure(output: string): boolean {
+  const text = output.trim();
+  if (!text || !/\bSTATUS\s*:\s*retry\b/i.test(text)) return false;
+  return VERIFY_RETRY_INFRA_SIGNAL.test(text);
 }
 
 export function isVerifyRetryMergeBlocker(output: string): boolean {

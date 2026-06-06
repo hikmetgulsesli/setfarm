@@ -106,6 +106,7 @@ if (isCli && !repoPath) { console.error('Usage: node smoke-test.mjs <repo-path> 
 
 const portArgIdx = args.indexOf('--port');
 const requestedPort = portArgIdx !== -1 ? parseInt(args[portArgIdx + 1], 10) : 0;
+const externalServer = args.includes('--external-server');
 
 // ── agent-browser wrapper ───────────────────────────────────────────
 function ab(...cmdArgs) {
@@ -229,11 +230,10 @@ function discoverHashRoutes(repo) {
         .map(m => m[1])
         .filter(route => !isIgnoredHashRoute(route));
       if (/\b(HashRouter|createHashRouter|hashchange|location\.hash)\b/.test(content) ||
-          /\bnavigate\s*\(\s*["'][^"']+["']/.test(content) ||
           realHrefHashes.length > 0) {
         hasExplicitHashRouting = true;
       }
-      for (const m of content.matchAll(/\bnavigate\s*\(\s*["']([^"']+)["']/g)) add(m[1]);
+      for (const m of content.matchAll(/\bnavigate\s*\(\s*["'](#\/?[^"']+)["']/g)) add(m[1]);
       for (const m of content.matchAll(/\bhref\s*=\s*["']#([^"']+)["']/g)) add(m[1]);
       for (const m of content.matchAll(/\blocation\.hash\s*=\s*["']#?([^"']+)["']/g)) add(m[1]);
     });
@@ -279,7 +279,11 @@ function collectSourceFiles(repo) {
 }
 
 function nearestFunctionNameBefore(source, index) {
-  const prefix = source.slice(Math.max(0, index - 1400), index);
+  let prefix = source.slice(Math.max(0, index - 1400), index);
+  const fileMarkerIndex = prefix.lastIndexOf("\n// FILE:");
+  if (fileMarkerIndex !== -1) {
+    prefix = prefix.slice(fileMarkerIndex);
+  }
   const patterns = [
     /\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*(?:useCallback\s*\()?[^;{}]*=>/g,
     /\bfunction\s+([A-Za-z_$][\w$]*)\s*\(/g,
@@ -322,9 +326,86 @@ function transitionFunctionsForToken(source, token) {
       continue;
     }
     const name = nearestFunctionNameBefore(source, idx);
-    if (name && !/^getInitial/i.test(name)) names.add(name);
+    if (name && !/^(?:get|create)Initial/i.test(name) && !/^reduce[A-Z_]/.test(name)) names.add(name);
   }
   return [...names];
+}
+
+function readBalancedBlock(source, openBraceIndex) {
+  if (openBraceIndex < 0 || source[openBraceIndex] !== "{") return "";
+  let depth = 0;
+  for (let i = openBraceIndex; i < source.length; i++) {
+    const ch = source[i];
+    if (ch === "{") depth += 1;
+    if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(openBraceIndex + 1, i);
+    }
+  }
+  return "";
+}
+
+function collectCallableBodies(source) {
+  const bodies = new Map();
+  const declarations = [
+    /\b(?:export\s+)?function\s+([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{/g,
+    /\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*(?:useCallback\s*\()?\s*(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>\s*\{/g,
+  ];
+  for (const re of declarations) {
+    for (const m of source.matchAll(re)) {
+      const name = m[1];
+      const braceIndex = (m.index || 0) + m[0].length - 1;
+      const body = readBalancedBlock(source, braceIndex);
+      if (name && body) bodies.set(name, body);
+    }
+  }
+
+  const expressionFns = /\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*(?:useCallback\s*\()?\s*(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>\s*([^;\n]+)[;\n]/g;
+  for (const m of source.matchAll(expressionFns)) {
+    const name = m[1];
+    const body = m[2] || "";
+    if (name && body && !bodies.has(name)) bodies.set(name, body);
+  }
+  return bodies;
+}
+
+function collectVisibleHandlerNames(source) {
+  const handlers = new Set();
+  const directEventRefs = /\b(?:onClick|onKeyDown|onSubmit|onPointerDown|onTouchStart)\s*=\s*\{\s*([A-Za-z_$][\w$]*)\s*\}/g;
+  for (const m of source.matchAll(directEventRefs)) handlers.add(m[1]);
+
+  const visibleActionIds = new Set();
+  for (const m of source.matchAll(/\bdata-action-id\s*=\s*["']([^"']+)["']/g)) visibleActionIds.add(m[1]);
+  for (const m of source.matchAll(/\bdata-action-id\s*=\s*\{["']([^"']+)["']\}/g)) visibleActionIds.add(m[1]);
+
+  if (visibleActionIds.size > 0) {
+    const objectEntry = /["']([^"']+)["']\s*:\s*([A-Za-z_$][\w$]*)/g;
+    for (const m of source.matchAll(objectEntry)) {
+      if (visibleActionIds.has(m[1])) handlers.add(m[2]);
+    }
+  }
+  return [...handlers];
+}
+
+function callableReachesTransition(name, bodies, transitionNames, seen = new Set()) {
+  if (!name || seen.has(name)) return false;
+  seen.add(name);
+  const body = bodies.get(name) || "";
+  if (!body) return false;
+
+  for (const transitionName of transitionNames) {
+    const transitionRe = new RegExp(`(?:\\b|\\.)${escapeRegExp(transitionName)}\\s*\\(`);
+    if (transitionRe.test(body)) return true;
+  }
+
+  const callRe = /\b([A-Za-z_$][\w$]*)\s*\(/g;
+  for (const m of body.matchAll(callRe)) {
+    const callee = m[1];
+    if (callee && bodies.has(callee) && callableReachesTransition(callee, bodies, transitionNames, seen)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function hasVisibleTransitionReference(source, token, functionNames) {
@@ -347,6 +428,10 @@ function hasVisibleTransitionReference(source, token, functionNames) {
       new RegExp(`\\bwindow\\.app\\s*=\\s*\\{[\\s\\S]{0,1200}\\b${nameRe}\\b`),
     ];
     if (uiRefs.some((re) => re.test(source))) return true;
+  }
+  const bodies = collectCallableBodies(source);
+  for (const handler of collectVisibleHandlerNames(source)) {
+    if (callableReachesTransition(handler, bodies, functionNames)) return true;
   }
   return false;
 }
@@ -371,6 +456,157 @@ function checkUnreachableStateScreens(repo) {
       `state "${token}" is rendered but transition action ${functionNames.join(", ")} is not wired to a visible button/link/keyboard handler; wire a user path or remove/embed the orphan screen`,
     );
   }
+  return issues;
+}
+
+function checkUnknownActionFallbacks(repo) {
+  const issues = [];
+  const sourceRoots = ["src", "app", "pages", "components"];
+
+  for (const root of sourceRoots) {
+    const dir = join(repo, root);
+    if (!existsSync(dir)) continue;
+
+    walkDir(dir, (f) => {
+      if (!/\.(tsx?|jsx?)$/.test(f)) return;
+
+      let src = "";
+      try {
+        src = readFileSync(f, "utf-8");
+      } catch {
+        return;
+      }
+
+      const compact = src.replace(/\s+/g, " ");
+      const hasUnknownActionFallback =
+        /actionDispatch\s*\[[^\]]+\]\s*\?\?\s*\{\s*type\s*:\s*['"]panel['"]\s*,\s*panel\s*:\s*[^}]+}/.test(compact) ||
+        /actions?\s*\[[^\]]+\]\s*\|\|\s*\{\s*type\s*:\s*['"]panel['"]\s*,\s*panel\s*:\s*[^}]+}/.test(compact) ||
+        /\?\?\s*\{\s*type\s*:\s*['"]panel['"]\s*,\s*panel\s*:\s*(?:id|actionId|target)\b/.test(compact);
+
+      if (hasUnknownActionFallback) {
+        issues.push(
+          `${relative(repo, f).replace(/\\/g, "/")}: unknown action IDs fall back to a generic panel state. ` +
+            "Every generated action ID must map to a visible route, dialog, panel, toast, disabled state, or explicit error.",
+        );
+      }
+    });
+  }
+
+  return issues;
+}
+
+function readJsonFile(filePath, fallback) {
+  try {
+    return JSON.parse(readFileSync(filePath, "utf-8"));
+  } catch {
+    return fallback;
+  }
+}
+
+function isBrowserGameRepo(repo) {
+  const candidates = [
+    join(repo, "stitch", "SCREEN_MAP.json"),
+    join(repo, "src", "screens", "SCREEN_INDEX.json"),
+    join(repo, "package.json"),
+  ];
+  const combined = candidates.map((file) => {
+    try { return readFileSync(file, "utf-8"); } catch { return ""; }
+  }).join("\n").toLowerCase();
+  return /\b(browser-game|canvas-game|arcade|gameplay|game settings|breakout|flappy|paddle|score|high score|level|lives|paused|game over)\b/.test(combined);
+}
+
+function checkBrowserGameStaticContracts(repo) {
+  if (!isBrowserGameRepo(repo)) return [];
+  const issues = [];
+  const sourceFiles = collectSourceFiles(repo);
+  const allSource = sourceFiles.map((f) => {
+    try { return `\n// FILE: ${relative(repo, f).replace(/\\/g, "/")}\n${readFileSync(f, "utf-8")}`; } catch { return ""; }
+  }).join("\n");
+
+  const hasScheduledLoop = /\b(setInterval|requestAnimationFrame)\b/.test(allSource);
+  const hasImperativeTickCall = /\b(actions?\.)?(tick|advance|step|update)\s*\(/.test(allSource);
+  const hasDispatchedTickAction = /\bdispatch\s*\(\s*\{[^}]*\btype\s*:\s*['"`](?:TICK|ADVANCE|STEP|UPDATE)['"`]/.test(allSource);
+  if (!hasScheduledLoop || (!hasImperativeTickCall && !hasDispatchedTickAction)) {
+    issues.push("browser game has no visible runtime loop wired through setInterval/requestAnimationFrame and a tick/advance/update action");
+  }
+
+  const appPath = join(repo, "src", "App.tsx");
+  let app = "";
+  if (existsSync(appPath)) {
+    app = readFileSync(appPath, "utf-8");
+    const rootMatch = app.match(/data-setfarm-root(?:=["'][^"']+["'])?[^>]*className=["']([^"']*)["']/s);
+    const rootClass = rootMatch?.[1] || "";
+    const hasRootMarker = /\bdata-setfarm-root\b/.test(app);
+    const hasViewportHeight = /\b(?:h-screen|min-h-screen|h-dvh|min-h-dvh|h-\[(?:100d?vh|100%)\]|min-h-\[(?:100d?vh|100%)\])\b/.test(rootClass);
+    const hasViewportWidth = /\b(?:w-full|w-screen|min-w-full|min-w-screen)\b/.test(rootClass);
+    const hasOverflowControl = /\b(?:overflow-hidden|overflow-x-hidden)\b/.test(rootClass);
+    const hasViewportFrame = /\b(?:relative|flex|fixed|absolute)\b/.test(rootClass);
+    if (!hasRootMarker || !rootClass || !hasViewportHeight || !hasViewportWidth || !hasOverflowControl || !hasViewportFrame) {
+      issues.push(`browser game app root must declare a full viewport frame with position/flex, height, width, and overflow control: ${rootClass || "<missing className>"}`);
+    }
+    if (!/\b(?:Escape|KeyP|settings|openSettings)\b/.test(app)) {
+      issues.push("browser game does not expose a visible or keyboard settings path from gameplay");
+    }
+  }
+
+  const screenIndex = readJsonFile(join(repo, "src", "screens", "SCREEN_INDEX.json"), []);
+  const gameplayScreens = Array.isArray(screenIndex)
+    ? screenIndex.filter((screen) => {
+      const label = `${screen.title || ""} ${screen.componentName || ""} ${screen.file || ""}`;
+      return /\b(gameplay|playfield)\b/i.test(label) || (/\bgame\b/i.test(label) && !/\b(settings?|config|preferences?|pause|menu)\b/i.test(label));
+    })
+    : [];
+  for (const screen of gameplayScreens) {
+    const rel = String(screen.file || "");
+    if (!rel) continue;
+    const abs = join(repo, rel);
+    if (!existsSync(abs)) continue;
+    const code = readFileSync(abs, "utf-8");
+    const classValues = [...code.matchAll(/\bclassName=["']([^"']*)["']/g)].map((m) => m[1]);
+    const primaryClass = classValues.find((value) => /\b(?:aspect-video|max-w-\[|m-playfield-margin|border|overflow-hidden)\b/.test(value)) || "";
+    if (primaryClass && /\bmax-w-\[/.test(primaryClass) && !/\b(?:h-screen|min-h-screen|w-screen)\b/.test(primaryClass)) {
+      issues.push(`${rel}: gameplay surface is boxed (${primaryClass}) instead of owning a stable viewport game scene`);
+    }
+    const runtimeType = (code.match(/runtime\?\s*:\s*([^;]+);/s)?.[1] || "").replace(/\s+/g, " ");
+    const hasGameRuntimeShape = /\b(ball|paddle|bricks|lives|player|obstacles|velocity)\b/.test(runtimeType);
+    const hasStaticGameObjects =
+      /{\s*\/\*\s*(Ball|Paddle|Player|Obstacle|Bricks?)/i.test(code) ||
+      /\b(?:top-1\/2|left-1\/[23]|left-1\/2|bottom-8|translate-x-1\/2)\b/.test(code);
+    if (hasStaticGameObjects && !hasGameRuntimeShape) {
+      issues.push(`${rel}: visible game objects are static CSS placeholders; runtime prop does not include ball/paddle/bricks/lives/player position state`);
+    }
+    const hasPositionRuntimeShape = /\b(?:player|ball|paddle|obstacles?|shards?|items?|enemies?)\??\s*:\s*(?:Array<)?[^{;]*\{[^}]*\b(?:lane|x|y|position|top|left|row|col)\b/i.test(runtimeType) ||
+      /\b(?:player|ball|paddle|obstacles?|shards?|items?|enemies?)\b[\s\S]{0,140}\b(?:lane|x|y|position|top|left|row|col)\b/i.test(runtimeType);
+    const usesRuntimePosition = /\bruntime\??\.(?:player|ball|paddle|obstacles?|shards?|items?|enemies?)[\s\S]{0,220}\b(?:lane|x|y|position|top|left|row|col)\b/i.test(code) ||
+      /\b(?:style|className)\s*=\s*\{[\s\S]{0,300}\bruntime\??\./i.test(code) ||
+      /\.map\(\s*\(?\s*(?:obstacle|shard|item|enemy|brick|entity|o|s|i)\b[\s\S]{0,320}\b(?:style|className)\s*=/i.test(code);
+    if (hasPositionRuntimeShape && hasStaticGameObjects && !usesRuntimePosition) {
+      issues.push(`${rel}: gameplay runtime exposes moving position state, but visible game objects are not positioned from runtime data`);
+    }
+  }
+
+  if (app) {
+    const overlayScreens = gameplayScreens
+      .map((screen) => String(screen.file || ""))
+      .filter(Boolean);
+    const screenIndexAll = Array.isArray(screenIndex) ? screenIndex : [];
+    const modalScreens = screenIndexAll.filter((screen) => {
+      const rel = String(screen.file || "");
+      if (!rel || overlayScreens.includes(rel)) return false;
+      const title = `${screen.title || ""} ${screen.componentName || ""} ${rel}`;
+      if (!/\b(settings?|config|preferences?|pause|menu)\b/i.test(title)) return false;
+      const abs = join(repo, rel);
+      if (!existsSync(abs)) return false;
+      const code = readFileSync(abs, "utf-8");
+      return /\b(?:modal|overlay|backdrop|absolute inset-0|fixed inset-0|z-\d+|backdrop-blur)\b/i.test(code);
+    });
+    const exclusiveSettingsRender = /\?\s*\(?\s*<[^>]*(?:Settings|Config|Preferences|Pause|Menu)[\s\S]{0,260}\)?\s*:\s*\(?\s*<[^>]*(?:Gameplay|Game|Playfield)/i.test(app) ||
+      /\bactiveScreen\s*===\s*["'](?:settings|config|preferences|pause|menu)["'][\s\S]{0,260}\?\s*\(?\s*</i.test(app);
+    if (modalScreens.length > 0 && gameplayScreens.length > 0 && exclusiveSettingsRender) {
+      issues.push(`browser game modal/settings overlay replaces gameplay instead of rendering above it; keep the gameplay scene mounted behind overlay screens (${modalScreens.map(s => s.file).join(", ")})`);
+    }
+  }
+
   return issues;
 }
 
@@ -954,11 +1190,21 @@ function minRequiredDesignControls(expected) {
 }
 
 function countSourceControls(srcContent) {
+  const dataActionControls = [...srcContent.matchAll(/<([A-Za-z][A-Za-z0-9_.:-]*)\b[^>]*\bdata-action-id\b[^>]*>/g)]
+    .filter((m) => {
+      const tagName = String(m[1] || "").toLowerCase();
+      const tag = String(m[0] || "");
+      if (tagName === "button") return false;
+      if (tagName === "input" || tagName === "textarea" || tagName === "select") return false;
+      if (/\brole\s*=\s*["']button["']/i.test(tag)) return false;
+      return /\bonClick\s*=|\bhref\s*=/i.test(tag);
+    }).length;
   return {
     buttons: (
       (srcContent.match(/<button\b/gi) || []).length +
       (srcContent.match(/<Button\b/g) || []).length +
-      (srcContent.match(/\brole\s*=\s*["']button["']/gi) || []).length
+      (srcContent.match(/\brole\s*=\s*["']button["']/gi) || []).length +
+      dataActionControls
     ),
     inputs: (
       (srcContent.match(/<input\b|<textarea\b|<select\b/gi) || []).length +
@@ -1402,16 +1648,22 @@ async function main() {
   for (const s of semanticClickIssues) failures.push('NON_SEMANTIC_CLICK_TARGET: ' + s);
   const unreachableStateScreenIssues = checkUnreachableStateScreens(repoPath);
   for (const s of unreachableStateScreenIssues) failures.push('UNREACHABLE_SCREEN: ' + s);
+  const unknownActionFallbackIssues = checkUnknownActionFallbacks(repoPath);
+  for (const a of unknownActionFallbackIssues) failures.push('UNKNOWN_ACTION_FALLBACK: ' + a);
   const weakInteractionIssues = checkWeakInteractionAssertions(repoPath);
   for (const t of weakInteractionIssues) failures.push('[TEST] WEAK_INTERACTION_ASSERTION: ' + t);
+  const browserGameStaticIssues = checkBrowserGameStaticContracts(repoPath);
+  for (const g of browserGameStaticIssues) failures.push('[GAME] ' + g);
+  const browserGameRepo = isBrowserGameRepo(repoPath);
 
   // ── Phase 2: Browser (homepage + primary action) ──
   const port = requestedPort > 0 ? requestedPort : 9100 + Math.floor(Math.random()*900);
   let serverProc = null;
 
   try {
-    // Start server only if we need to
-    if (requestedPort <= 0) {
+    // Start the static preview server on the requested deterministic port unless
+    // the caller explicitly owns the server lifecycle.
+    if (!externalServer) {
       serverProc = await startServer(serveDir, port);
       activeServerProc = serverProc;
     }
@@ -1944,6 +2196,83 @@ async function main() {
         failures.push('[LAYOUT] Phase 8 error: ' + e.message);
       }
 
+      // ── Phase 8b: Viewport Integrity ──────────────────────────
+      // Catches game/dashboard shells that technically render controls but
+      // break the actual scene: repeated tiled backgrounds, non-viewport roots,
+      // or a root that leaves obvious browser/background gaps.
+      try {
+        const viewportJson = abOk('eval',
+          '(function() {' +
+          '  var issues = [];' +
+          '  var vw = window.innerWidth, vh = window.innerHeight;' +
+          '  function visible(el) {' +
+          '    var r = el.getBoundingClientRect(); var cs = window.getComputedStyle(el);' +
+          '    return r.width > 4 && r.height > 4 && cs.display !== "none" && cs.visibility !== "hidden" && Number(cs.opacity || 1) > 0.03;' +
+          '  }' +
+          '  var root = document.getElementById("root") || document.querySelector("[data-setfarm-root]") || document.body.firstElementChild;' +
+          '  if (root) {' +
+          '    var rr = root.getBoundingClientRect();' +
+          '    if (rr.height < vh * 0.92) issues.push({type:"root-short", detail:"root height=" + Math.round(rr.height) + " viewport=" + vh});' +
+          '    if (rr.width < vw * 0.92) issues.push({type:"root-narrow", detail:"root width=" + Math.round(rr.width) + " viewport=" + vw});' +
+          '  }' +
+          '  var bodyBg = window.getComputedStyle(document.body).backgroundColor;' +
+          '  var htmlBg = window.getComputedStyle(document.documentElement).backgroundColor;' +
+          '  if (document.body.scrollHeight < vh * 0.92 && /rgb\\(255, 255, 255\\)|rgba\\(0, 0, 0, 0\\)/.test(bodyBg + htmlBg)) {' +
+          '    issues.push({type:"viewport-gap", detail:"body shorter than viewport with default/transparent page background"});' +
+          '  }' +
+          '  var largeImgs = Array.from(document.images).filter(function(img) {' +
+          '    if (!visible(img)) return false;' +
+          '    var r = img.getBoundingClientRect();' +
+          '    return (r.width * r.height) > (vw * vh * 0.025);' +
+          '  }).map(function(img) {' +
+          '    var r = img.getBoundingClientRect();' +
+          '    return {src: img.currentSrc || img.src || "", x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height)};' +
+          '  });' +
+          '  var bySrc = {};' +
+          '  largeImgs.forEach(function(img){ bySrc[img.src] = bySrc[img.src] || []; bySrc[img.src].push(img); });' +
+          '  Object.keys(bySrc).forEach(function(src) {' +
+          '    var items = bySrc[src];' +
+          '    if (items.length < 4) return;' +
+          '    var xs = Array.from(new Set(items.map(function(i){return i.x;}))).length;' +
+          '    var ys = Array.from(new Set(items.map(function(i){return i.y;}))).length;' +
+          '    if (xs >= 2 && ys >= 2) {' +
+          '      issues.push({type:"tiled-scene", detail:items.length + " repeated large image tiles; first=" + src.split("/").pop()});' +
+          '    }' +
+          '  });' +
+          '  Array.from(document.querySelectorAll("*")).forEach(function(el) {' +
+          '    if (!visible(el)) return;' +
+          '    var r = el.getBoundingClientRect();' +
+          '    if ((r.width * r.height) < (vw * vh * 0.35)) return;' +
+          '    var cs = window.getComputedStyle(el);' +
+          '    if (!/url\\(/.test(cs.backgroundImage || "")) return;' +
+          '    var repeat = (cs.backgroundRepeat || "").toLowerCase();' +
+          '    var size = (cs.backgroundSize || "").toLowerCase();' +
+          '    if (/repeat/.test(repeat) || !/(cover|contain|100%|calc\\()/.test(size)) {' +
+          '      var label = (el.getAttribute("data-alt") || el.getAttribute("aria-label") || el.className || el.tagName || "").toString().replace(/\\s+/g, " ").slice(0, 80);' +
+          '      issues.push({type:"css-tiled-background", detail:"large scene background uses repeat=" + repeat + " size=" + size + " on " + label});' +
+          '    }' +
+          '  });' +
+          '  var gameish = /\\b(score|high score|level|paused|game over|start game|space to|tap or space|retry|difficulty)\\b/i.test(document.body.innerText || "");' +
+          '  if (gameish) {' +
+          '    var scene = document.querySelector("canvas,[data-game-scene],[data-game-root],[data-setfarm-root],main,#root");' +
+          '    if (scene) {' +
+          '      var sr = scene.getBoundingClientRect();' +
+          '      if (sr.width < vw * 0.9 || sr.height < vh * 0.72) {' +
+          '        issues.push({type:"game-scene-not-viewport", detail:"scene=" + Math.round(sr.width) + "x" + Math.round(sr.height) + " viewport=" + vw + "x" + vh});' +
+          '      }' +
+          '    }' +
+          '  }' +
+          '  return issues;' +
+          '})()'
+        );
+        const viewportIssues = parseEvalJson(viewportJson, []);
+        if (Array.isArray(viewportIssues) && viewportIssues.length > 0) {
+          for (const i of viewportIssues) failures.push('[VIEWPORT] ' + i.type + ': ' + i.detail);
+        }
+      } catch (e) {
+        failures.push('[VIEWPORT] Phase 8b error: ' + e.message);
+      }
+
       // ── Phase 9: Network Silent Failures ──────────────────────
       let networkErrors = [];
       try {
@@ -2366,11 +2695,15 @@ async function main() {
 
   // ── Output ──
   // ── Confidence Score ──
+  if (browserGameRepo && buttonsChecked + formsChecked + flowsChecked === 0) {
+    failures.push('[INTERACT] browser-game-zero-interactions: browser-game smoke cannot pass without exercising at least one gameplay/settings control');
+  }
   let confidence = 100;
   const consoleCount = failures.filter(f => f.startsWith('[CONSOLE]')).length;
   const networkCount = failures.filter(f => f.startsWith('[NETWORK]')).length;
   const visualCount = failures.filter(f => f.startsWith('[VISUAL]')).length;
   const layoutCount = failures.filter(f => f.startsWith('[LAYOUT]')).length;
+  const viewportCount = failures.filter(f => f.startsWith('[VIEWPORT]')).length;
   const a11yCount = failures.filter(f => f.startsWith('[A11Y]')).length;
   const hydrationCount = failures.filter(f => f.startsWith('[HYDRATION]')).length;
   const contentCount = failures.filter(f => f.startsWith('[CONTENT]')).length;
@@ -2378,9 +2711,11 @@ async function main() {
   const flowCount = failures.filter(f => f.startsWith('[FLOW]')).length;
   const interactCount = failures.filter(f => f.startsWith('[INTERACT]')).length;
   const testCount = failures.filter(f => f.startsWith('[TEST]')).length;
+  const gameCount = failures.filter(f => f.startsWith('[GAME]')).length;
   if (consoleCount > 0) confidence -= 40;
   if (networkCount > 0) confidence -= 30;
   if (layoutCount > 0) confidence -= 20;
+  if (viewportCount > 0) confidence -= 35;
   if (visualCount > 0) confidence -= 10;
   if (a11yCount > 0) confidence -= 5;
   if (hydrationCount > 0) confidence -= 15;
@@ -2388,12 +2723,14 @@ async function main() {
   if (uxCount > 0) confidence -= 10;
   if (flowCount > 0) confidence -= 40;
   if (interactCount > 0) confidence -= 40;
+  if (gameCount > 0) confidence -= 45;
   const fidelityCount = failures.filter(f => f.startsWith('[FIDELITY]')).length;
   if (fidelityCount > 0) confidence -= 35;
   if (wiringIssues.length > 0) confidence -= 20;
   if (buttonWiringIssues.length > 0) confidence -= 35;
   if (semanticClickIssues.length > 0) confidence -= 35;
   if (unreachableStateScreenIssues.length > 0) confidence -= 40;
+  if (unknownActionFallbackIssues.length > 0) confidence -= 40;
   if (testCount > 0) confidence -= 20;
   if (linksBroken > 0) confidence -= 10;
   confidence = Math.max(0, confidence);
@@ -2413,8 +2750,12 @@ async function main() {
     semanticClickDetails: semanticClickIssues,
     unreachableStateScreens: unreachableStateScreenIssues.length,
     unreachableStateScreenDetails: unreachableStateScreenIssues,
+    unknownActionFallbacks: unknownActionFallbackIssues.length,
+    unknownActionFallbackDetails: unknownActionFallbackIssues,
     weakInteractionAssertions: weakInteractionIssues.length,
     weakInteractionDetails: weakInteractionIssues,
+    browserGameStaticIssues: browserGameStaticIssues.length,
+    browserGameStaticDetails: browserGameStaticIssues,
     linksChecked,
     linksBroken,
     buttonsChecked,
@@ -2425,6 +2766,7 @@ async function main() {
     a11yIssues: a11yCount,
     visualIssues: visualCount,
     layoutIssues: layoutCount,
+    viewportIssues: viewportCount,
     networkErrors: networkCount,
     hydrationIssues: hydrationCount,
     contentIssues: contentCount,
@@ -2445,7 +2787,11 @@ export {
   checkNativeButtonWiring,
   checkSemanticClickTargets,
   checkUnreachableStateScreens,
+  checkUnknownActionFallbacks,
+  isBrowserGameRepo,
+  checkBrowserGameStaticContracts,
   checkWeakInteractionAssertions,
+  countSourceControlUsages,
 };
 
 if (isCli) {

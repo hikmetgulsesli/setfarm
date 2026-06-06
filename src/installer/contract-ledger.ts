@@ -137,6 +137,7 @@ interface DbStory {
   shared_files?: string | null;
   shared_edit_requests?: string | null;
   story_screens?: string | null;
+  implementation_contract?: string | null;
   pr_url?: string | null;
   story_branch?: string | null;
   merge_status?: string | null;
@@ -210,6 +211,18 @@ function parseScreenRefs(raw: unknown): ScreenRef[] {
     });
   }
   return screens;
+}
+
+function parseOwnedScreenRefs(story: DbStory): ScreenRef[] {
+  const explicit = parseScreenRefs(story.story_screens);
+  if (explicit.length > 0) return explicit;
+  const contract = safeParse<Record<string, unknown>>(story.implementation_contract, {});
+  const ids = parseStringList(contract.owned_screen_ids);
+  const files = parseStringList(contract.owned_screen_files);
+  return ids.map((screenId, index) => ({
+    screenId,
+    name: files[index] ? path.basename(files[index], path.extname(files[index])) : screenId,
+  }));
 }
 
 function formatScreenRef(screen: ScreenRef): string {
@@ -401,7 +414,7 @@ export function buildRunContract(input: BuildRunContractInput): RunContract {
   const buildDone = done("setup-build");
 
   const storyOwnership: InternalStoryOwnership[] = input.stories.map((story) => {
-    const screenRefs = parseScreenRefs(story.story_screens);
+    const screenRefs = parseOwnedScreenRefs(story);
     const ownsScreens = screenRefs.map(formatScreenRef);
     const ownsScreenIds = screenRefs.map(normalizeScreenId).filter(Boolean);
     const resolvedScopeFiles = parseStringList(story.resolved_scope_files);
@@ -462,7 +475,7 @@ export function buildRunContract(input: BuildRunContractInput): RunContract {
     || parseStringList(story.resolved_scope_files).length > 0
     || parseStringList(story.scope_files).length > 0
   );
-  const storiesWithScreens = input.stories.filter((story) => parseScreenRefs(story.story_screens).length > 0);
+  const storiesWithScreens = input.stories.filter((story) => parseOwnedScreenRefs(story).length > 0);
   const storyItems: ContractItem[] = [
     makeItem("stories.count", "Stories decomposed", requiredStatus(storiesDone, input.stories.length > 0), "planner", updatedAt, { stepId: "stories", evidence: `${input.stories.length} story(ies)` }),
     makeItem("stories.ac", "Every story has acceptance criteria", requiredStatus(storiesDone, input.stories.length > 0 && storiesWithAc.length === input.stories.length), "planner", updatedAt, { stepId: "stories", evidence: `${storiesWithAc.length}/${input.stories.length}` }),
@@ -603,7 +616,7 @@ export async function refreshRunContract(runId: string, reason = "refresh", cont
   );
   const stories = await pgQuery<DbStory>(
     `SELECT id, run_id, story_index, story_id, title, description, acceptance_criteria, status, output, retry_count, max_retries,
-            depends_on, scope_files, scope_targets, resolved_scope_files, shared_files, shared_edit_requests, story_screens, pr_url, story_branch, merge_status
+            depends_on, scope_files, scope_targets, resolved_scope_files, shared_files, shared_edit_requests, story_screens, implementation_contract, pr_url, story_branch, merge_status
        FROM stories WHERE run_id = $1 ORDER BY story_index ASC`,
     [runId],
   );

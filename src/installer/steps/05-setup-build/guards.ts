@@ -3,6 +3,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { materializeSetupBuildContracts } from "../../setup-handoff.js";
+import { findGeneratedScreenIconFallbackIssues } from "../06-implement/guards.js";
+
+const DESIGN_IMPORT_REPORT_REL = ".setfarm/setup/DESIGN_IMPORT_VALIDATE.json";
 
 function cleanProcessText(value: unknown): string {
   const text = Buffer.isBuffer(value) ? value.toString("utf-8") : String(value || "");
@@ -70,6 +73,64 @@ function refreshBaselineFailure(parsed: ParsedOutput, context: Record<string, st
   const packageJson = path.join(repo, "package.json");
   if (!repo || !fs.existsSync(packageJson)) {
     throw new Error(`BASELINE: npm run build failed — ${context["baseline_fail"].slice(0, 300)}`);
+  }
+
+  if (context["failure_category"] === "design_import_failure") {
+    const designImportReport = path.join(repo, DESIGN_IMPORT_REPORT_REL);
+    if (fs.existsSync(designImportReport)) {
+      try {
+        const report = JSON.parse(fs.readFileSync(designImportReport, "utf-8"));
+        if (String(report?.status || "").toLowerCase() === "fail" || report?.ok === false) {
+          const failures = Array.isArray(report.failures)
+            ? report.failures
+            : Array.isArray(report.failedRules)
+              ? report.failedRules
+              : Array.isArray(report.errors)
+                ? report.errors
+                : [];
+          throw new Error([
+            "DESIGN_IMPORT_VALIDATE:",
+            ...failures.slice(0, 10).map((item: unknown) => {
+              if (item && typeof item === "object") {
+                const rule = item as Record<string, unknown>;
+                return `- ${[
+                  rule.code || rule.ruleId || "rule",
+                  rule.file || "",
+                  rule.message || "",
+                ].filter(Boolean).join(": ").slice(0, 400)}`;
+              }
+              return `- ${String(item).replace(/\n/g, " ").slice(0, 400)}`;
+            }),
+          ].join("\n").slice(0, 1200));
+        }
+      } catch (e) {
+        if (e instanceof Error && e.message.startsWith("DESIGN_IMPORT_VALIDATE:")) throw e;
+        throw new Error(`DESIGN_IMPORT_VALIDATE: report unreadable at ${DESIGN_IMPORT_REPORT_REL}`);
+      }
+    }
+    const unknownIconReport = path.join(repo, ".setfarm", "setup", "UNKNOWN_MATERIAL_ICONS.json");
+    if (fs.existsSync(unknownIconReport)) {
+      try {
+        const report = JSON.parse(fs.readFileSync(unknownIconReport, "utf-8"));
+        const icons = Array.isArray(report.icons) ? report.icons : [];
+        if (report.status === "fail" || icons.length > 0) {
+          throw new Error([
+            "UNKNOWN_MATERIAL_ICONS:",
+            ...icons.slice(0, 12).map((icon: any) => `- ${String(icon.iconName || "unknown")} (${String(icon.count || 1)})`),
+          ].join("\n").slice(0, 1200));
+        }
+      } catch (e) {
+        if (e instanceof Error && e.message.startsWith("UNKNOWN_MATERIAL_ICONS:")) throw e;
+        throw new Error(`UNKNOWN_MATERIAL_ICONS: report unreadable at .setfarm/setup/UNKNOWN_MATERIAL_ICONS.json`);
+      }
+    }
+    const generatedIconFallbackIssues = findGeneratedScreenIconFallbackIssues(repo);
+    if (generatedIconFallbackIssues.length > 0) {
+      throw new Error([
+        "DESIGN_IMPORT_ICON_FALLBACK:",
+        ...generatedIconFallbackIssues.slice(0, 8),
+      ].join("\n").slice(0, 1200));
+    }
   }
 
   const pkg = JSON.parse(fs.readFileSync(packageJson, "utf-8"));

@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
@@ -6,6 +6,7 @@ import { chromium, type Browser, type Page } from "playwright";
 import {
   appendSupervisorEvent,
   applyScanFindings,
+  resolveVisualFindingsForStory,
   supervisorVisualDir,
   writeSupervisorVisualResult,
 } from "./state.js";
@@ -21,6 +22,7 @@ interface VisualQaParams {
   runId: string;
   workdir: string;
   repoPath?: string;
+  ownershipRepoPath?: string;
   storyId?: string;
   maxRoutes?: number;
   maxControlsPerRoute?: number;
@@ -38,6 +40,20 @@ interface ViewportSpec {
   isMobile?: boolean;
 }
 
+export interface VisualScreenHint {
+  storyId?: string;
+  title: string;
+  file: string;
+  actionIds: string[];
+  labels: string[];
+}
+
+export interface VisualScreenClassification {
+  storyId?: string;
+  title?: string;
+  score: number;
+}
+
 const VIEWPORTS: ViewportSpec[] = [
   { name: "desktop", width: 1280, height: 800 },
   { name: "mobile", width: 390, height: 844, isMobile: true },
@@ -49,10 +65,178 @@ const CONTROL_SELECTOR = [
   "a[href]:visible",
 ].join(", ");
 
+export function isTilingBackgroundRepeat(value: string | undefined): boolean {
+  const repeat = String(value || "").toLowerCase().trim();
+  if (!repeat || repeat === "no-repeat") return false;
+  return repeat
+    .split(/\s+/)
+    .some((part) => part === "repeat" || part === "repeat-x" || part === "repeat-y" || part === "round" || part === "space");
+}
+
+export function hasSceneFillingBackgroundSize(value: string | undefined): boolean {
+  return /(cover|contain|100%|calc\()/i.test(String(value || ""));
+}
+
+export function isUnsafeSceneBackground(repeat: string | undefined, size: string | undefined): boolean {
+  if (hasSceneFillingBackgroundSize(size)) return false;
+  return isTilingBackgroundRepeat(repeat) || !String(size || "").trim();
+}
+
+export function resolveStoryVisualScope(repoPath: string, storyId?: string, fallbackRepoPaths: string[] = []): { skip: boolean; reason?: string } {
+  if (!repoPath || !storyId) return { skip: false };
+  const candidates = [repoPath, ...fallbackRepoPaths]
+    .filter(Boolean)
+    .map((candidate) => path.join(candidate, ".setfarm", "STORY_OWNERSHIP.json"));
+  const file = candidates.find((candidate) => fs.existsSync(candidate));
+  if (!file) return { skip: false };
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, "utf-8")) as {
+      stories?: Array<{
+        storyId?: string;
+        ownsScreens?: unknown[];
+        scopeFiles?: unknown[];
+      }>;
+    };
+    const story = parsed.stories?.find((item) => item.storyId === storyId);
+    if (!story) return { skip: false };
+    const ownsScreens = Array.isArray(story.ownsScreens) ? story.ownsScreens.filter(Boolean) : [];
+    const scopeFiles = Array.isArray(story.scopeFiles) ? story.scopeFiles.map(String) : [];
+    const ownsScreenFiles = scopeFiles.some((rel) => /^src\/screens\/.+\.(tsx|jsx|ts|js)$/i.test(rel));
+    if (ownsScreens.length === 0 && !ownsScreenFiles) {
+      return {
+        skip: true,
+        reason: `Story ${storyId} owns no visual screens; visual QA is deferred to the screen-owner story.`,
+      };
+    }
+  } catch {
+    return { skip: false };
+  }
+  return { skip: false };
+}
+
+export function classifyVisibleScreenText(text: string, hints: VisualScreenHint[], currentStoryId?: string): VisualScreenClassification {
+  const haystack = normalizeTextForScreenMatch(text);
+  let best: VisualScreenClassification = { score: 0 };
+  for (const hint of hints) {
+    const titleTokens = tokenizeScreenText(hint.title);
+    const titleMatches = titleTokens.filter((token) => haystack.includes(token)).length;
+    const labelTokens = hint.labels.flatMap(tokenizeScreenText);
+    const labelMatches = labelTokens.filter((token) => haystack.includes(token)).length;
+    const score = (titleMatches * 2) + labelMatches;
+    if (score > best.score) best = { storyId: hint.storyId, title: hint.title, score };
+  }
+  if (best.score < 2) return { score: 0 };
+  if (currentStoryId && best.storyId === currentStoryId) return best;
+  return best;
+}
+
+function readVisualScreenHints(repoPath: string, fallbackRepoPaths: string[] = []): VisualScreenHint[] {
+  const repos = [repoPath, ...fallbackRepoPaths].filter(Boolean);
+  const ownership = readStoryOwnershipForVisualScope(repos);
+  const screenIndexFile = repos
+    .map((repo) => path.join(repo, "src", "screens", "SCREEN_INDEX.json"))
+    .find((file) => fs.existsSync(file));
+  if (!screenIndexFile) return [];
+  try {
+    const screens = JSON.parse(fs.readFileSync(screenIndexFile, "utf-8")) as Array<{
+      title?: string;
+      file?: string;
+      actions?: Array<{ label?: string; id?: string }>;
+      buttons?: unknown;
+    }>;
+    return screens
+      .map((screen) => {
+        const file = String(screen.file || "");
+        const title = String(screen.title || "");
+        if (!file || !title) return null;
+        return {
+          file,
+          title,
+          storyId: ownership.titleToStory.get(normalizeOwnedScreenTitle(title)) || ownership.fileToStory.get(file),
+          actionIds: (screen.actions || []).map((action) => String(action.id || "").trim()).filter(Boolean),
+          labels: [
+            title,
+            ...((screen.actions || []).flatMap((action) => [action.label, action.id]).filter(Boolean).map(String)),
+          ],
+        } satisfies VisualScreenHint;
+      })
+      .filter(Boolean) as VisualScreenHint[];
+  } catch {
+    return [];
+  }
+}
+
+function readStoryOwnershipForVisualScope(repos: string[]): {
+  fileToStory: Map<string, string>;
+  titleToStory: Map<string, string>;
+} {
+  const fileToStory = new Map<string, string>();
+  const titleToStory = new Map<string, string>();
+  const file = repos
+    .map((repo) => path.join(repo, ".setfarm", "STORY_OWNERSHIP.json"))
+    .find((candidate) => fs.existsSync(candidate));
+  if (!file) return { fileToStory, titleToStory };
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, "utf-8")) as {
+      stories?: Array<{ storyId?: string; ownsScreens?: unknown[]; scopeFiles?: unknown[] }>;
+    };
+    for (const story of parsed.stories || []) {
+      const storyId = String(story.storyId || "");
+      if (!storyId) continue;
+      for (const rel of Array.isArray(story.scopeFiles) ? story.scopeFiles.map(String) : []) {
+        if (/^src\/screens\/.+\.(tsx|jsx|ts|js)$/i.test(rel) && !fileToStory.has(rel)) fileToStory.set(rel, storyId);
+      }
+      for (const title of Array.isArray(story.ownsScreens) ? story.ownsScreens.map(String) : []) {
+        titleToStory.set(normalizeOwnedScreenTitle(title), storyId);
+      }
+    }
+  } catch {
+    return { fileToStory, titleToStory };
+  }
+  return { fileToStory, titleToStory };
+}
+
+function normalizeOwnedScreenTitle(value: string): string {
+  return normalizeTextForScreenMatch(value.replace(/\([^)]*\)/g, " "));
+}
+
+function normalizeTextForScreenMatch(value: string): string {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function tokenizeScreenText(value: string): string[] {
+  return normalizeTextForScreenMatch(value)
+    .split(" ")
+    .filter((token) => token.length >= 3 && !["the", "and", "for", "screen", "button"].includes(token));
+}
+
 export async function runSupervisorVisualQa(params: VisualQaParams): Promise<SupervisorVisualResult> {
   const repoPath = params.repoPath || params.workdir;
   const artifactDir = supervisorVisualDir(params.workdir, params.runId);
   fs.mkdirSync(artifactDir, { recursive: true });
+
+  const storyScope = resolveStoryVisualScope(repoPath, params.storyId, [params.ownershipRepoPath || ""]);
+  if (storyScope.skip) {
+    const result = persistVisualResult(params, {
+      ok: true,
+      skipped: true,
+      reason: storyScope.reason,
+      routesChecked: [],
+      controlsChecked: 0,
+      screenshots: [],
+      issues: [],
+      artifactDir,
+    });
+    if (params.storyId) {
+      resolveVisualFindingsForStory({
+        workdir: params.workdir,
+        runId: params.runId,
+        storyId: params.storyId,
+        checkedAt: result.createdAt,
+      });
+    }
+    return result;
+  }
 
   const webProject = readWebProject(repoPath);
   if (!webProject) {
@@ -101,7 +285,7 @@ export async function runSupervisorVisualQa(params: VisualQaParams): Promise<Sup
         maxControlsPerRoute: params.maxControlsPerRoute || 24,
       });
       await browser.close();
-      return persistVisualResult(params, result);
+      return persistVisualResult(params, suppressBrowserInfraIssues(result));
     } catch (error) {
       await browser.close().catch(() => {});
       throw error;
@@ -120,7 +304,30 @@ export async function runSupervisorVisualQa(params: VisualQaParams): Promise<Sup
     });
   } finally {
     await stopPreviewServer(server.proc);
+    cleanupDetachedPlaywrightChildren("visual-qa-finally");
   }
+}
+
+export function suppressBrowserInfraIssues(
+  result: Omit<SupervisorVisualResult, "schema" | "runId" | "storyId" | "createdAt">,
+): Omit<SupervisorVisualResult, "schema" | "runId" | "storyId" | "createdAt"> {
+  const productIssues = result.issues.filter((issue) => !isBrowserInfraIssue(issue));
+  if (productIssues.length === result.issues.length) return result;
+  return {
+    ...result,
+    ok: productIssues.every((issue) => issue.severity !== "blocker"),
+    reason: productIssues.length === 0
+      ? "Browser infrastructure navigation errors were ignored; no product visual blockers remained."
+      : result.reason,
+    issues: productIssues,
+  };
+}
+
+function isBrowserInfraIssue(issue: SupervisorVisualIssue): boolean {
+  if (!/\b(target page, context or browser has been closed|browser has been closed|target closed|context closed|page closed|browser context was closed|Protocol error:.*Target closed)\b/i.test(issue.detail)) {
+    return false;
+  }
+  return issue.type === "navigation_error" || issue.type === "dead_control";
 }
 
 export function formatSupervisorVisualReport(result: SupervisorVisualResult): string {
@@ -144,6 +351,7 @@ export function formatSupervisorVisualReport(result: SupervisorVisualResult): st
 async function scanBrowserApp(params: Required<Pick<VisualQaParams, "runId" | "workdir">> & {
   browser: Browser;
   repoPath: string;
+  ownershipRepoPath?: string;
   storyId?: string;
   artifactDir: string;
   baseUrl: string;
@@ -151,6 +359,7 @@ async function scanBrowserApp(params: Required<Pick<VisualQaParams, "runId" | "w
   maxControlsPerRoute: number;
 }): Promise<Omit<SupervisorVisualResult, "schema" | "runId" | "storyId" | "createdAt">> {
   const routes = await discoverRoutes(params.browser, params.baseUrl, params.maxRoutes);
+  const screenHints = readVisualScreenHints(params.repoPath, [params.workdir, params.ownershipRepoPath || ""]);
   const issues: SupervisorVisualIssue[] = [];
   const screenshots: string[] = [];
   let controlsChecked = 0;
@@ -187,6 +396,8 @@ async function scanBrowserApp(params: Required<Pick<VisualQaParams, "runId" | "w
           maxControls: params.maxControlsPerRoute,
           workdir: params.workdir,
           artifactDir: params.artifactDir,
+          storyId: params.storyId,
+          screenHints,
         });
         controlsChecked += clickResult.controlsChecked;
         screenshots.push(...clickResult.screenshots);
@@ -248,25 +459,129 @@ async function newPage(browser: Browser, viewport: ViewportSpec): Promise<Page> 
 async function gotoRoute(page: Page, url: string): Promise<void> {
   await page.goto(url, { timeout: 20000, waitUntil: "domcontentloaded" });
   await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+  await waitForMeaningfulRender(page);
+}
+
+async function waitForMeaningfulRender(page: Page): Promise<void> {
+  await page.waitForFunction(() => {
+    const root = document.getElementById("root") || document.querySelector("[data-setfarm-root]") || document.body;
+    const text = root?.textContent?.replace(/\s+/g, " ").trim() || "";
+    const meaningful = document.querySelectorAll("canvas,svg,img,button,a,input,select,textarea,[role],[data-setfarm-root]").length;
+    return text.length >= 5 || meaningful > 0;
+  }, { timeout: 5000 }).catch(() => {});
+  await page.waitForTimeout(250).catch(() => {});
 }
 
 async function inspectPage(page: Page, route: string, viewport: string, screenshot?: string): Promise<SupervisorVisualIssue[]> {
-  const snapshot = await page.evaluate(() => {
-    const body = document.body;
-    const text = body?.innerText?.replace(/\s+/g, " ").trim() || "";
-    const meaningful = document.querySelectorAll("canvas,svg,img,button,a,input,select,textarea,[role]").length;
-    const overflow = Array.from(document.body.querySelectorAll("*")).flatMap((node) => {
-      const el = node as HTMLElement;
-      const rect = el.getBoundingClientRect();
+    const snapshot = await page.evaluate(() => {
+      const body = document.body;
+      const text = body?.innerText?.replace(/\s+/g, " ").trim() || "";
+      const meaningful = document.querySelectorAll("canvas,svg,img,button,a,input,select,textarea,[role]").length;
+      const viewportIssues: string[] = [];
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const visible = (el: Element) => {
+        const rect = (el as HTMLElement).getBoundingClientRect();
+        const style = window.getComputedStyle(el);
+        return rect.width > 4 && rect.height > 4 && style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity || 1) > 0.03;
+      };
+      const isTilingBackgroundRepeat = (value: string | undefined) => {
+        const repeat = String(value || "").toLowerCase().trim();
+        if (!repeat || repeat === "no-repeat") return false;
+        return repeat
+          .split(/\s+/)
+          .some((part) => part === "repeat" || part === "repeat-x" || part === "repeat-y" || part === "round" || part === "space");
+      };
+      const hasSceneFillingBackgroundSize = (value: string | undefined) => /(cover|contain|100%|calc\()/i.test(String(value || ""));
+      const isUnsafeSceneBackground = (repeat: string | undefined, size: string | undefined) => {
+        if (hasSceneFillingBackgroundSize(size)) return false;
+        return isTilingBackgroundRepeat(repeat) || !String(size || "").trim();
+      };
+      const root = document.getElementById("root") || document.querySelector("[data-setfarm-root]") || document.body.firstElementChild;
+      if (root) {
+        const rect = (root as HTMLElement).getBoundingClientRect();
+        if (rect.height < vh * 0.92) viewportIssues.push(`root height=${Math.round(rect.height)} viewport=${vh}`);
+        if (rect.width < vw * 0.92) viewportIssues.push(`root width=${Math.round(rect.width)} viewport=${vw}`);
+      }
+      const largeImages = Array.from(document.images)
+        .filter((img) => visible(img) && img.getBoundingClientRect().width * img.getBoundingClientRect().height > vw * vh * 0.025)
+        .map((img) => {
+          const rect = img.getBoundingClientRect();
+          return {
+            src: img.currentSrc || img.src || "",
+            x: Math.round(rect.left),
+            y: Math.round(rect.top),
+          };
+        });
+      const imageGroups = new Map<string, Array<{ x: number; y: number }>>();
+      for (const img of largeImages) {
+        if (!imageGroups.has(img.src)) imageGroups.set(img.src, []);
+        imageGroups.get(img.src)?.push({ x: img.x, y: img.y });
+      }
+      for (const [src, items] of imageGroups) {
+        if (items.length < 4) continue;
+        const xs = new Set(items.map((item) => item.x)).size;
+        const ys = new Set(items.map((item) => item.y)).size;
+        if (xs >= 2 && ys >= 2) viewportIssues.push(`${items.length} repeated large image tiles; first=${src.split("/").pop() || src}`);
+      }
+      for (const node of Array.from(document.querySelectorAll("*"))) {
+        if (!visible(node)) continue;
+        const rect = (node as HTMLElement).getBoundingClientRect();
+        if (rect.width * rect.height < vw * vh * 0.35) continue;
+        const style = window.getComputedStyle(node);
+        if (!/url\(/.test(style.backgroundImage || "")) continue;
+        const repeat = (style.backgroundRepeat || "").toLowerCase();
+        const size = (style.backgroundSize || "").toLowerCase();
+        if (isUnsafeSceneBackground(repeat, size)) {
+          const label = (
+            (node as HTMLElement).getAttribute("data-alt")
+            || (node as HTMLElement).getAttribute("aria-label")
+            || String((node as HTMLElement).className || (node as HTMLElement).tagName)
+          ).replace(/\s+/g, " ").slice(0, 80);
+          viewportIssues.push(`large scene background uses repeat=${repeat} size=${size} on ${label}`);
+        }
+      }
+      const gameish = /\b(score|high score|level|paused|game over|start game|space to|tap or space|retry|difficulty)\b/i.test(text);
+      if (gameish) {
+        const scene = document.querySelector("canvas,[data-game-scene],[data-game-root],[data-setfarm-root],main,#root");
+        if (scene) {
+          const rect = (scene as HTMLElement).getBoundingClientRect();
+          if (rect.width < vw * 0.9 || rect.height < vh * 0.72) {
+            viewportIssues.push(`game scene=${Math.round(rect.width)}x${Math.round(rect.height)} viewport=${vw}x${vh}`);
+          }
+        }
+      }
+      const pageHorizontallyScrollable = Math.max(
+        document.documentElement.scrollWidth,
+        document.body.scrollWidth,
+      ) > window.innerWidth + 8;
+      const overflow = Array.from(document.body.querySelectorAll("*")).flatMap((node) => {
+        const el = node as HTMLElement;
+        const rect = el.getBoundingClientRect();
       const style = window.getComputedStyle(el);
       const visible = rect.width > 1 && rect.height > 1 && style.visibility !== "hidden" && style.display !== "none";
       if (!visible) return [];
       const tooWide = rect.width > window.innerWidth + 8 || rect.left < -8 || rect.right > window.innerWidth + 8;
       if (!tooWide) return [];
+      let ancestor = el.parentElement;
+      let hasClippingAncestor = false;
+      while (ancestor) {
+        const ancestorStyle = window.getComputedStyle(ancestor);
+        if (
+          ["hidden", "clip"].includes(ancestorStyle.overflow)
+          || ["hidden", "clip"].includes(ancestorStyle.overflowX)
+        ) {
+          hasClippingAncestor = true;
+          break;
+        }
+        ancestor = ancestor.parentElement;
+      }
+      const transformed = Boolean(style.transform && style.transform !== "none");
+      if (hasClippingAncestor && (transformed || !pageHorizontallyScrollable)) return [];
       const label = (el.getAttribute("aria-label") || el.textContent || el.tagName).replace(/\s+/g, " ").trim().slice(0, 120);
       return [`${el.tagName.toLowerCase()} ${label} width=${Math.round(rect.width)} left=${Math.round(rect.left)} right=${Math.round(rect.right)}`];
     }).slice(0, 6);
-    return { text, meaningful, overflow };
+    return { text, meaningful, overflow, viewportIssues };
   });
 
   const issues: SupervisorVisualIssue[] = [];
@@ -275,6 +590,9 @@ async function inspectPage(page: Page, route: string, viewport: string, screensh
   }
   for (const detail of snapshot.overflow) {
     issues.push(makeIssue("layout_overflow", "blocker", route, viewport, detail, screenshot));
+  }
+  for (const detail of snapshot.viewportIssues) {
+    issues.push(makeIssue("viewport_integrity", "blocker", route, viewport, detail, screenshot));
   }
   return issues;
 }
@@ -286,6 +604,8 @@ async function exerciseControls(page: Page, params: {
   maxControls: number;
   workdir: string;
   artifactDir: string;
+  storyId?: string;
+  screenHints: VisualScreenHint[];
 }): Promise<{ controlsChecked: number; issues: SupervisorVisualIssue[]; screenshots: string[] }> {
   await gotoRoute(page, params.routeUrl);
   const descriptors = await page.locator(CONTROL_SELECTOR).evaluateAll((elements, max) => {
@@ -297,6 +617,7 @@ async function exerciseControls(page: Page, params: {
         index,
         tag: el.tagName.toLowerCase(),
         label: (el.getAttribute("aria-label") || el.textContent || el.getAttribute("title") || el.tagName).replace(/\s+/g, " ").trim().slice(0, 140),
+        actionId: el.getAttribute("data-action-id") || "",
         href: anchor?.getAttribute("href") || "",
         disabled: Boolean(button?.disabled) || el.getAttribute("aria-disabled") === "true",
       };
@@ -309,9 +630,19 @@ async function exerciseControls(page: Page, params: {
   for (const descriptor of descriptors) {
     if (descriptor.disabled) continue;
     if (descriptor.href && !normalizeInternalRoute(descriptor.href, params.routeUrl)) continue;
+    const ownerByAction = descriptor.actionId
+      ? params.screenHints.find((hint) => hint.actionIds.includes(descriptor.actionId))
+      : undefined;
+    if (params.storyId && ownerByAction?.storyId && ownerByAction.storyId !== params.storyId) continue;
     await gotoRoute(page, params.routeUrl);
+    const locator = descriptor.actionId
+      ? page.locator(`[data-action-id=${JSON.stringify(descriptor.actionId)}]:visible`).first()
+      : page.locator(CONTROL_SELECTOR).nth(descriptor.index);
+    if (!descriptor.actionId) {
+      const visibleControlCount = await page.locator(CONTROL_SELECTOR).count().catch(() => 0);
+      if (descriptor.index >= visibleControlCount) continue;
+    }
     const before = await pageFingerprint(page);
-    const locator = page.locator(CONTROL_SELECTOR).nth(descriptor.index);
     try {
       await locator.click({ timeout: 4000 });
       controlsChecked += 1;
@@ -323,6 +654,10 @@ async function exerciseControls(page: Page, params: {
       continue;
     }
     const after = await pageFingerprint(page);
+    const ownerShift = await classifyCurrentPageOwner(page, params.screenHints, params.storyId);
+    if (ownerShift.storyId && params.storyId && ownerShift.storyId !== params.storyId) {
+      continue;
+    }
     const postInspect = await inspectPage(page, params.route, params.viewport);
     issues.push(...postInspect);
     if (before === after) {
@@ -332,6 +667,16 @@ async function exerciseControls(page: Page, params: {
     }
   }
   return { controlsChecked, issues, screenshots };
+}
+
+async function classifyCurrentPageOwner(page: Page, hints: VisualScreenHint[], currentStoryId?: string): Promise<VisualScreenClassification> {
+  if (!hints.length) return { score: 0 };
+  try {
+    const text = await page.evaluate(() => document.body?.innerText || "");
+    return classifyVisibleScreenText(text, hints, currentStoryId);
+  } catch {
+    return { score: 0 };
+  }
 }
 
 async function captureControlScreenshot(page: Page, params: {
@@ -409,6 +754,8 @@ function visualStatus(type: SupervisorVisualIssueType): SupervisorEvidenceStatus
       return "blank-screen";
     case "layout_overflow":
       return "layout-overflow";
+    case "viewport_integrity":
+      return "visual-failure";
     case "dead_control":
       return "dead-control";
     case "console_error":
@@ -469,7 +816,7 @@ async function startPreviewServer(repoPath: string, scripts: Array<"preview" | "
 async function startSinglePreviewServer(repoPath: string, script: "preview" | "dev"): Promise<PreviewServer | null> {
   const port = await findFreePort();
   const url = `http://127.0.0.1:${port}`;
-  const proc = spawn("npm", ["run", script, "--", "--host", "127.0.0.1", "--port", String(port)], {
+  const proc = spawn("npm", ["run", script, "--", "--host", "127.0.0.1", "--port", String(port), "--strictPort"], {
     cwd: repoPath,
     detached: true,
     stdio: ["ignore", "ignore", "ignore"],
@@ -507,6 +854,37 @@ function terminateProcessGroup(proc: ChildProcess, signal: NodeJS.Signals): void
   try { proc.kill(signal); } catch {}
 }
 
+function cleanupDetachedPlaywrightChildren(context: string): void {
+  if (process.platform === "win32") return;
+  let output = "";
+  try {
+    output = execFileSync("ps", ["-axo", "pid=,ppid=,pgid=,command="], {
+      encoding: "utf8",
+      timeout: 5000,
+      maxBuffer: 2_000_000,
+    });
+  } catch {
+    return;
+  }
+
+  for (const line of output.split(/\r?\n/)) {
+    const match = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(.+)$/);
+    if (!match) continue;
+    const pid = Number(match[1]);
+    const command = match[4] || "";
+    if (!Number.isFinite(pid) || pid <= 0 || pid === process.pid) continue;
+    if (!/chromium_headless_shell|playwright_chromiumdev_profile/i.test(command)) continue;
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      continue;
+    }
+    setTimeout(() => {
+      try { process.kill(pid, "SIGKILL"); } catch {}
+    }, 1500).unref?.();
+  }
+}
+
 function waitForExit(proc: ChildProcess, timeoutMs: number): Promise<boolean> {
   if (proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve(true);
   return new Promise((resolve) => {
@@ -535,7 +913,7 @@ async function waitForServer(url: string, timeoutMs: number, isProcessExited?: (
     if (isProcessExited?.()) return false;
     try {
       const response = await fetch(url, { signal: AbortSignal.timeout(2500) });
-      if (response.status < 500) return true;
+      if (response.ok) return true;
     } catch {
       await new Promise((resolve) => setTimeout(resolve, 500));
     }

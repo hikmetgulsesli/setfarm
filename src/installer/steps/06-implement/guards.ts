@@ -13,12 +13,16 @@ import { logger } from "../../../lib/logger.js";
 import type { ParsedOutput, ValidationResult } from "../types.js";
 import { buildTestFixPrompt, detectTestFramework, runTests } from "../../test-generation.js";
 import { isImplicitStoryScopeFile } from "../../story-scope.js";
-import { ensureStoryBranchWorktree } from "../../worktree-ops.js";
+import { ensureStoryBranchWorktree, latestRetryPatchForStory, latestRetryStashPatchForStory } from "../../worktree-ops.js";
 import { buildSupervisorChecklistFromProject } from "../../supervisor/checklist.js";
 import { formatSupervisorBlockerFeedback } from "../../supervisor/intervention.js";
 import { runImplementSupervisorScan } from "../../supervisor/run-supervisor.js";
 import { formatSupervisorFindings, scanSupervisorChecklist } from "../../supervisor/scanner.js";
 import type { SupervisorFinding } from "../../supervisor/types.js";
+import { resolvePlatformScript } from "../../paths.js";
+import { ensureSmokeBuildFresh } from "../../smoke-gate.js";
+import { summarizeImplementEvidenceValidation, validateImplementEvidenceArtifacts } from "../../implement-evidence.js";
+import { classifyError } from "../../error-taxonomy.js";
 
 // ── Module interface methods ────────────────────────────────────
 
@@ -145,7 +149,7 @@ function listTouchedFiles(workdir: string, baseBranch: string): string[] {
     diffOut.split("\n").map(s => s.trim()).filter(Boolean).forEach(f => files.add(f));
   } catch {}
   try {
-    const statusOut = execFileSync("git", ["status", "--porcelain"], {
+    const statusOut = execFileSync("git", ["status", "--porcelain", "-uall"], {
       cwd: workdir, timeout: 5000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8",
     });
     statusOut.split(/\r?\n/).map(parseGitStatusPorcelainPath).filter(Boolean).forEach(f => files.add(f));
@@ -321,10 +325,23 @@ export function checkQaFixSmokeGate(storyId: string, storyTitle: string, workdir
   if (!/^QA-FIX-\d+/i.test(storyId)) return { passed: true };
   if (!workdir || !fs.existsSync(workdir)) return { passed: true };
 
-  const smokeScript = path.join(os.homedir(), ".openclaw", "setfarm-repo", "scripts", "smoke-test.mjs");
+  const smokeScript = resolvePlatformScript("smoke-test.mjs");
   if (!fs.existsSync(smokeScript)) return { passed: true };
 
   try {
+    const buildFresh = ensureSmokeBuildFresh(workdir, {
+      logPrefix: "qa-fix-smoke-prebuild",
+      stepId: "implement",
+    });
+    if (!buildFresh.ok) {
+      cleanupSmokeArtifacts(workdir);
+      return {
+        passed: false,
+        reason: `QA_FIX_SMOKE_PREBUILD_FAILED: Story ${storyId} (${storyTitle}) reported STATUS: done but the project build failed before platform smoke-test could run.\n${buildFresh.failure}`,
+        category: "QA_FIX_SMOKE_PREBUILD_FAILED",
+        suggestion: "Fix the project build first. QA-FIX smoke evidence must be produced from fresh build artifacts, not stale dist output.",
+      };
+    }
     execFileSync("node", [smokeScript, workdir], {
       cwd: workdir,
       timeout: 180000,
@@ -346,13 +363,96 @@ export function checkQaFixSmokeGate(storyId: string, storyTitle: string, workdir
   }
 }
 
+export function checkImplementEvidenceGate(storyId: string, storyTitle: string, workdir: string): ScopeCheckResult {
+  const safeStoryId = storyId.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const evidenceDir = path.join(workdir, ".setfarm", "implement", safeStoryId);
+  const hasRuntimeSurfaceContract = fs.existsSync(path.join(workdir, "src", "screens", "SCREEN_INDEX.json"));
+  if (!hasPackageScript(workdir, "preview") && !hasRuntimeSurfaceContract && !fs.existsSync(evidenceDir)) {
+    return {
+      passed: true,
+      reason: "Implement evidence skipped: package.json has no preview script and no generated screen contract, so this story is treated as non-runtime evidence scope.",
+    };
+  }
+  const result = validateImplementEvidenceArtifacts(workdir, storyId);
+  const summary = summarizeImplementEvidenceValidation(result);
+  if (!result.ok) {
+    const evidenceRuntimeDetails = summarizeRuntimeEvidenceFailures(result.artifactPaths.evidence);
+    const details = [
+      result.missingArtifacts.length > 0 ? `Missing artifacts: ${result.missingArtifacts.join(", ")}` : "",
+      ...result.issues.map((issue) => `${issue.code}: ${issue.message}`),
+      evidenceRuntimeDetails,
+    ].filter(Boolean).join("\n");
+    const visualIssue = result.issues.find((issue) => issue.code.startsWith("VISUAL_EVIDENCE"));
+    const classified = classifyError(`IMPLEMENT_EVIDENCE_INCOMPLETE:\n${details}`);
+    return {
+      passed: false,
+      category: visualIssue?.code || classified.category || "IMPLEMENT_EVIDENCE_INCOMPLETE",
+      reason: `IMPLEMENT_EVIDENCE_INCOMPLETE: Story ${storyId} (${storyTitle}) reported STATUS: done without acceptable orchestrator-owned implementation evidence.\n${summary}\n${details}`,
+      suggestion: classified.category !== "IMPLEMENT_EVIDENCE_INCOMPLETE"
+        ? classified.suggestion
+        : "Write IMPLEMENT_INTENT.json and IMPLEMENT_VERIFICATION_REQUEST.json, then let Setfarm generate IMPLEMENT_EVIDENCE.json from runtime execution. Do not self-certify flow success in prose.",
+    };
+  }
+  return {
+    passed: true,
+    reason: summary,
+  };
+}
+
+function summarizeRuntimeEvidenceFailures(evidencePath: string | undefined): string {
+  if (!evidencePath || !fs.existsSync(evidencePath)) return "";
+  try {
+    const evidence = JSON.parse(fs.readFileSync(evidencePath, "utf-8"));
+    const lines: string[] = [];
+    if (Array.isArray(evidence?.issues)) {
+      for (const issue of evidence.issues.slice(0, 4)) {
+        const code = String(issue?.code || "IMPLEMENT_EVIDENCE_RUNTIME_ISSUE").trim();
+        const message = String(issue?.message || issue?.detail || "").replace(/\s+/g, " ").trim();
+        if (message) lines.push(`${code}: ${message.slice(0, 700)}`);
+      }
+    }
+    for (const flow of Array.isArray(evidence?.flows) ? evidence.flows : []) {
+      for (const interaction of Array.isArray(flow?.interactions) ? flow.interactions : []) {
+        const status = String(interaction?.status || "").toLowerCase();
+        if (status && status !== "pass" && status !== "passed") {
+          const id = String(interaction?.id || flow?.flowId || "interaction");
+          const detail = String(interaction?.detail || interaction?.error || interaction?.message || "").replace(/\s+/g, " ").trim();
+          lines.push(`IMPLEMENT_INTERACTION_FAILED: ${id}${detail ? `: ${detail.slice(0, 900)}` : ""}`);
+        }
+      }
+      if (lines.length >= 6) break;
+    }
+    return lines.length > 0 ? `Runtime evidence details:\n${lines.slice(0, 6).join("\n")}` : "";
+  } catch (err: any) {
+    return `Runtime evidence details unavailable: ${String(err?.message || err).slice(0, 300)}`;
+  }
+}
+
+function hasPackageScript(workdir: string, scriptName: string): boolean {
+  try {
+    const pkgPath = path.join(workdir, "package.json");
+    if (!fs.existsSync(pkgPath)) return false;
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+    return typeof pkg?.scripts?.[scriptName] === "string" && pkg.scripts[scriptName].trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
 type JsxBlock = { attrs: string; inner: string; index: number };
 
 const ICON_ALIASES: Record<string, string[]> = {
+  analytics: ["BarChart3", "ChartBar", "LineChart", "analytics"],
+  assignment_return: ["PackageCheck", "Undo2", "ClipboardCheck", "assignment_return"],
   arrow_drop_down: ["ChevronDown", "ArrowDown", "CaretDown", "arrow_drop_down"],
   arrow_drop_up: ["ChevronUp", "ArrowUp", "CaretUp", "arrow_drop_up"],
+  calendar_today: ["CalendarDays", "Calendar", "calendar_today"],
+  dashboard: ["LayoutDashboard", "Gauge", "Home", "dashboard"],
+  description: ["FileText", "ScrollText", "description"],
   emoji_events: ["Trophy", "Award", "Medal", "emoji_events"],
+  filter_list: ["ListFilter", "Filter", "filter_list"],
   help: ["HelpCircle", "CircleHelp", "help"],
+  inventory_2: ["PackageSearch", "Archive", "Package", "Boxes", "inventory_2"],
   keyboard_arrow_down: ["ArrowDown", "ChevronDown", "keyboard_arrow_down"],
   keyboard_arrow_left: ["ArrowLeft", "ChevronLeft", "keyboard_arrow_left"],
   keyboard_arrow_right: ["ArrowRight", "ChevronRight", "keyboard_arrow_right"],
@@ -361,14 +461,20 @@ const ICON_ALIASES: Record<string, string[]> = {
   memory: ["Cpu", "MemoryStick", "memory"],
   menu: ["Menu", "menu"],
   menu_book: ["BookOpen", "Book", "NotebookText", "menu_book"],
+  notifications: ["Bell", "BellRing", "notifications"],
   play_arrow: ["Play", "play_arrow"],
   play_circle: ["CirclePlay", "PlayCircle", "Play", "play_circle"],
+  policy: ["ShieldAlert", "ShieldCheck", "policy"],
   power_settings_new: ["Power", "power_settings_new"],
   refresh: ["RefreshCw", "RefreshCcw", "RotateCw", "refresh"],
   restart_alt: ["RefreshCw", "RefreshCcw", "RotateCcw", "restart_alt"],
+  search_off: ["SearchX", "Search", "search_off"],
+  sort: ["ArrowUpDown", "ArrowDownUp", "ListFilter", "sort"],
   sports_esports: ["Gamepad2", "Gamepad", "Joystick", "sports_esports"],
   settings: ["Settings", "settings"],
   terminal: ["Terminal", "terminal"],
+  tune: ["SlidersHorizontal", "ListFilter", "Settings2", "tune"],
+  widgets: ["Boxes", "LayoutGrid", "Grid3X3", "widgets"],
 };
 
 function attrValue(attrs: string, name: string): string | null {
@@ -646,6 +752,43 @@ function listSourceFiles(root: string, relDir = ""): string[] {
   return out;
 }
 
+const PLATFORM_HELPER_CONTAMINATION_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
+  {
+    name: "isTilingBackgroundRepeat",
+    pattern: /\b(?:isTilingBackgroundRepeat|window\s*\.\s*isTilingBackgroundRepeat|globalThis\s*\.\s*isTilingBackgroundRepeat)\b/,
+  },
+];
+
+export function findPlatformHelperContaminationIssues(workdir: string, repoPath = ""): string[] {
+  const root = workdir && fs.existsSync(workdir) ? workdir : (repoPath && fs.existsSync(repoPath) ? repoPath : "");
+  if (!root) return [];
+
+  const issues: string[] = [];
+  for (const file of listSourceFiles(root)) {
+    if (!/^src\//i.test(file)) continue;
+    if (/\.(test|spec)\.(tsx?|jsx?)$/i.test(file)) continue;
+    if (/^src\/test\//i.test(file)) continue;
+
+    let source = "";
+    try {
+      source = fs.readFileSync(path.join(root, file), "utf-8");
+    } catch {
+      continue;
+    }
+    const clean = stripSourceComments(source);
+    for (const marker of PLATFORM_HELPER_CONTAMINATION_PATTERNS) {
+      const match = marker.pattern.exec(clean);
+      if (!match) continue;
+      issues.push(
+        `PLATFORM_HELPER_CONTAMINATION: ${file} contains Setfarm platform helper "${marker.name}". ` +
+        "Visual QA/test harness helpers must live in Setfarm, not generated product source.",
+      );
+      break;
+    }
+  }
+  return issues.slice(0, 20);
+}
+
 function sourceRendersComponent(source: string, componentName: string): boolean {
   const clean = stripSourceComments(source);
   const escaped = escapeRegExp(componentName);
@@ -772,10 +915,301 @@ export function findGeneratedScreenRequiredPropIssues(workdir: string, repoPath 
   return issues.slice(0, 24);
 }
 
+function generatedScreenComponents(workdir: string, repoPath = ""): Set<string> {
+  return new Set(loadScreenIndex(workdir, repoPath).map(componentNameForScreenEntry).filter(Boolean));
+}
+
+function readTextIfExists(filePath: string): string {
+  try {
+    return fs.readFileSync(filePath, "utf-8");
+  } catch {
+    return "";
+  }
+}
+
+function repoLooksLikeBrowserGame(workdir: string, repoPath = ""): boolean {
+  const roots = [workdir, repoPath].filter((root, index, arr) => root && fs.existsSync(root) && arr.indexOf(root) === index);
+  const combined = roots.map((root) => [
+    readTextIfExists(path.join(root, "package.json")),
+    readTextIfExists(path.join(root, "stitch", "SCREEN_MAP.json")),
+    readTextIfExists(path.join(root, "src", "screens", "SCREEN_INDEX.json")),
+    readTextIfExists(path.join(root, ".setfarm", "RUN_CONTRACT.json")),
+    readTextIfExists(path.join(root, "PROJECT_MEMORY.md")),
+  ].join("\n")).join("\n").toLowerCase();
+
+  return /\b(browser-game|browser game|canvas-game|arcade|gameplay|game settings|playfield|score|high score|level|lives|paused|game over|paddle|runner|flappy|breakout|tetris|pong)\b/.test(combined);
+}
+
+function browserGameRuntimeLoopIssues(workdir: string, repoPath = ""): string[] {
+  if (!repoLooksLikeBrowserGame(workdir, repoPath)) return [];
+  const allSource = listSourceFiles(workdir)
+    .filter((file) => !/\.(test|spec)\.(tsx?|jsx?)$/i.test(file))
+    .map((file) => {
+      const source = readTextIfExists(path.join(workdir, file));
+      return `\n// FILE: ${file}\n${source}`;
+    })
+    .join("\n");
+  const clean = stripSourceComments(allSource);
+  const hasTimerPrimitive = /\b(?:setInterval|requestAnimationFrame)\s*\(/.test(clean);
+  const namedRafDispatchLoop =
+    /\bfunction\s+([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{[\s\S]{0,2400}\bdispatch\s*\(\s*\{[\s\S]{0,240}\btype\s*:\s*['"`](?:tick|advance|step|update)['"`][\s\S]{0,2400}\brequestAnimationFrame\s*\(\s*\1\s*\)/i.test(clean) ||
+    /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>\s*\{[\s\S]{0,2400}\bdispatch\s*\(\s*\{[\s\S]{0,240}\btype\s*:\s*['"`](?:tick|advance|step|update)['"`][\s\S]{0,2400}\brequestAnimationFrame\s*\(\s*\1\s*\)/i.test(clean);
+  const hasScheduledRuntimeAction =
+    /\b(?:setInterval|requestAnimationFrame)\s*\([\s\S]{0,800}\b(?:actions?\.)?(?:tick|advance|step|update)[A-Za-z0-9_]*\s*(?:\(|,|\))/i.test(clean) ||
+    /\b(?:tick|advance|step|update)[A-Za-z0-9_]*\s*\([^)]*\)\s*[\s\S]{0,800}\b(?:setInterval|requestAnimationFrame)\s*\(/i.test(clean) ||
+    /\b(?:setInterval|requestAnimationFrame)\s*\([\s\S]{0,800}\bdispatch\s*\(\s*\{[\s\S]{0,180}\btype\s*:\s*['"`](?:tick|advance|step|update)['"`]/i.test(clean) ||
+    /\b(?:setInterval|requestAnimationFrame)\s*\([\s\S]{0,800}\bset[A-Z][A-Za-z0-9_]*\s*\([\s\S]{0,300}\b(?:tick|advance|step|update)[A-Za-z0-9_]*\s*\(/i.test(clean) ||
+    namedRafDispatchLoop;
+
+  if (hasTimerPrimitive && hasScheduledRuntimeAction) return [];
+  return [
+    "BROWSER_GAME_RUNTIME_LOOP_MISSING: browser-game projects must wire a visible runtime loop with setInterval/requestAnimationFrame and a scheduled tick/advance/step/update action. Defining an advance reducer or exposing a manual settings button is not enough; the playable scene must move or progress without manual debug calls.",
+  ];
+}
+
+function appRouterFiles(workdir: string): string[] {
+  return listSourceFiles(workdir)
+    .filter((file) => !/^src\/screens\//i.test(file))
+    .filter((file) => !/\.(test|spec)\.(tsx?|jsx?)$/i.test(file))
+    .filter((file) => /(^|\/)(App|app|Root|root|Layout|layout|Router|router|main)\.(tsx?|jsx?)$/i.test(file));
+}
+
+function gitDiffForFiles(workdir: string, files: string[]): string {
+  if (files.length === 0) return "";
+  const chunks: string[] = [];
+  for (const args of [
+    ["diff", "--unified=0", "HEAD", "--", ...files],
+    ["diff", "--unified=0", "HEAD^..HEAD", "--", ...files],
+  ]) {
+    try {
+      const out = execFileSync("git", args, {
+        cwd: workdir,
+        timeout: 10000,
+        stdio: ["pipe", "pipe", "pipe"],
+        encoding: "utf-8",
+      }).trim();
+      if (out) chunks.push(out);
+    } catch {}
+  }
+  return chunks.join("\n");
+}
+
+function removedDiffLines(diff: string): string[] {
+  return diff
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("-") && !line.startsWith("---"))
+    .map((line) => line.slice(1).trim())
+    .filter(Boolean);
+}
+
+function addedDiffLines(diff: string): string[] {
+  return diff
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("+") && !line.startsWith("+++"))
+    .map((line) => line.slice(1).trim())
+    .filter(Boolean);
+}
+
+function extractSurfSegments(line: string): string[] {
+  const segments = new Set<string>();
+  const re = /(?:^|[./])features\/(surf-[A-Za-z0-9_-]+)\//g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(line)) !== null) segments.add(match[1]);
+  return [...segments];
+}
+
+function extractJsxAttrNames(fragment: string): string[] {
+  const attrs = new Set<string>();
+  const attrRe = /\b([A-Za-z_$][\w$]*)\s*=/g;
+  let match: RegExpExecArray | null;
+  while ((match = attrRe.exec(fragment)) !== null) {
+    const name = match[1];
+    if (!["className", "style", "data"].includes(name)) attrs.add(name);
+  }
+  return [...attrs];
+}
+
+function componentHasPropInSources(
+  sources: Array<{ file: string; source: string }>,
+  componentName: string,
+  propName: string,
+): boolean {
+  const componentRe = new RegExp(`<\\s*${escapeRegExp(componentName)}\\b([^>]*)`, "g");
+  for (const { source } of sources) {
+    let match: RegExpExecArray | null;
+    while ((match = componentRe.exec(source)) !== null) {
+      const attrs = match[1] || "";
+      if (attrs.includes("...")) return true;
+      if (new RegExp(`\\b${escapeRegExp(propName)}\\s*=`).test(attrs)) return true;
+    }
+  }
+  return false;
+}
+
+function extractSemanticIntegrationTokens(line: string): string[] {
+  const tokens = new Set<string>();
+  const attrRe = /\b(data-testid|data-action-id|aria-live|aria-label|role)\s*=\s*(?:"([^"]+)"|'([^']+)'|\{\s*["']([^"']+)["']\s*\})/g;
+  let match: RegExpExecArray | null;
+  while ((match = attrRe.exec(line)) !== null) {
+    const name = match[1];
+    const value = (match[2] ?? match[3] ?? match[4] ?? "").trim();
+    if (!value) continue;
+    tokens.add(`${name}=${value}`);
+  }
+  return [...tokens];
+}
+
+function sourceHasSemanticIntegrationToken(source: string, token: string): boolean {
+  const [name, value] = token.split("=", 2);
+  if (!name || !value) return false;
+  const valuePattern = escapeRegExp(value);
+  return new RegExp(`\\b${escapeRegExp(name)}\\s*=\\s*(?:"${valuePattern}"|'${valuePattern}'|\\{\\s*["']${valuePattern}["']\\s*\\})`).test(source);
+}
+
+function findAppIntegrationBehaviorRegressionIssues(
+  workdir: string,
+  previousEntries: Array<{ file: string; componentName: string; title: string }>,
+  currentScopeFiles: string[],
+): string[] {
+  const routerFiles = appRouterFiles(workdir);
+  if (routerFiles.length === 0) return [];
+  const diff = gitDiffForFiles(workdir, routerFiles);
+  if (!diff) return [];
+
+  const scopeSet = new Set(currentScopeFiles.map(normalizeRelPath));
+  const scopeText = currentScopeFiles.map(normalizeRelPath).join("\n");
+  const removed = removedDiffLines(diff);
+  const added = addedDiffLines(diff);
+  const issues: string[] = [];
+
+  const removedForeignSurfSegments = new Set<string>();
+  for (const line of removed) {
+    for (const segment of extractSurfSegments(line)) {
+      if (!scopeText.includes(`src/features/${segment}/`) && !scopeText.includes(`features/${segment}/`)) {
+        removedForeignSurfSegments.add(segment);
+      }
+    }
+  }
+  if (removedForeignSurfSegments.size > 0) {
+    issues.push(`APP_INTEGRATION_SCOPE_REGRESSION: app/router diff removes existing feature action wiring outside the current story scope (${[...removedForeignSurfSegments].join(", ")}). Later stories may add their own wiring but must not delete previous story action helpers or keyboard/control bridges without an explicit replacement contract.`);
+  }
+
+  const sources = routerFiles.map((file) => {
+    try {
+      return { file, source: fs.readFileSync(path.join(workdir, file), "utf-8") };
+    } catch {
+      return { file, source: "" };
+    }
+  });
+
+  const removedSemanticTokens = new Set<string>();
+  for (const line of removed) {
+    for (const token of extractSemanticIntegrationTokens(line)) removedSemanticTokens.add(token);
+  }
+  for (const token of removedSemanticTokens) {
+    if (sources.some(({ source }) => sourceHasSemanticIntegrationToken(source, token))) continue;
+    issues.push(`APP_INTEGRATION_SEMANTIC_REGRESSION: app/router diff removes previously accepted semantic UI contract "${token}". Later stories may extend shared shell integration but must not remove prior story-visible test IDs, action IDs, ARIA labels, live regions, or roles without an explicit equivalent replacement.`);
+  }
+
+  for (const entry of previousEntries) {
+    if (scopeSet.has(normalizeRelPath(entry.file))) continue;
+    const componentRemovedLines = removed.filter((line) => new RegExp(`<\\s*${escapeRegExp(entry.componentName)}\\b`).test(line));
+    if (componentRemovedLines.length === 0) continue;
+    const componentAddedLines = added.filter((line) => new RegExp(`<\\s*${escapeRegExp(entry.componentName)}\\b`).test(line)).join("\n");
+    for (const line of componentRemovedLines) {
+      for (const prop of extractJsxAttrNames(line)) {
+        if (componentAddedLines.includes(`${prop}=`)) continue;
+        if (componentHasPropInSources(sources, entry.componentName, prop)) continue;
+        issues.push(`APP_INTEGRATION_PROP_REGRESSION: app/router diff removes prop "${prop}" from previously verified generated screen ${entry.componentName} (${entry.file}). Preserve prior screen state/action adapters when adding later screens, or replace them with an equivalent explicit adapter.`);
+      }
+    }
+  }
+
+  return [...new Set(issues)].slice(0, 12);
+}
+
+function actionFunctionIsOnlyShellState(source: string): boolean {
+  const clean = stripSourceComments(source);
+  if (!/\bexport\s+function\s+\w*(?:save|update|apply|search|filter|sort|resolve|retry)\w*\s*\(/i.test(clean)) return false;
+  const bodyMatch = clean.match(/\bexport\s+function\s+\w+\s*\([^)]*\)\s*\{([\s\S]*)\}\s*$/m);
+  const body = bodyMatch ? bodyMatch[1] : clean;
+  if (!/\bstore\.(?:setActivePanel|navigate|selectRecord)\s*\(/.test(body)) return false;
+  if (/\bstore\.(?:createDraftReturn|updateRecord|saveRecord|setRecords|replaceRecords|mutate|dispatch)\s*\(/.test(body)) return false;
+  if (/\b(?:records|items|rows|cards|tasks)\s*(?:=|\.map\s*\(|\.filter\s*\(|\.reduce\s*\(|\.push\s*\()/.test(body)) return false;
+  if (/\b(?:localStorage|sessionStorage|indexedDB|fetch)\b/.test(body)) return false;
+  return true;
+}
+
+function fileHasGeneratedIconFallback(source: string): boolean {
+  const clean = stripSourceComments(source);
+  if (!/\b(?:Circle|BadgeHelp)\b/.test(clean)) return false;
+  // BadgeHelp is our converter fallback. It is never a real Stitch intent, so
+  // any generated screen that imports/renders it must be repaired upstream.
+  if (/\bBadgeHelp\b/.test(clean)) return true;
+  const semanticTerms = "Dashboard|Inventory|Reports|Help|Logout|Sort|Date Range|Missing Proof|Notifications|Analytics|Settings|Policy|Status|Filter|Search|Save|Retry";
+  const semanticLabels = new RegExp(`\\b(?:${semanticTerms})\\b`);
+  const genericIconNearSemanticText = new RegExp(`<Circle\\b[\\s\\S]{0,220}(?:${semanticTerms})|(?:${semanticTerms})[\\s\\S]{0,220}<Circle\\b`);
+  return semanticLabels.test(clean) && genericIconNearSemanticText.test(clean);
+}
+
+export function findGeneratedScreenIconFallbackIssues(workdir: string, repoPath = ""): string[] {
+  const root = repoPath && fs.existsSync(repoPath) ? repoPath : workdir;
+  if (!root || !fs.existsSync(root)) return [];
+  const issues: string[] = [];
+  for (const file of listSourceFiles(root).filter((rel) => /^src\/screens\/.+\.(tsx|jsx)$/i.test(rel))) {
+    const abs = path.join(root, file);
+    let source = "";
+    try { source = fs.readFileSync(abs, "utf-8"); } catch { continue; }
+    if (fileHasGeneratedIconFallback(source)) {
+      issues.push(`GENERATED_ICON_FALLBACK: ${file} renders generic BadgeHelp/Circle icons in a generated screen. Material/Stitch icons must map to a meaningful SVG icon; do not silently replace domain, navigation, status, filter, search, save, retry, settings, reports, help, or logout icons with a generic fallback.`);
+    }
+  }
+  return issues.slice(0, 24);
+}
+
+export function findGeneratedRuntimeSemanticIssues(workdir: string, repoPath = ""): string[] {
+  if (!workdir || !fs.existsSync(workdir)) return [];
+  const components = generatedScreenComponents(workdir, repoPath);
+  if (components.size === 0) return [];
+  const componentList = [...components];
+  const issues: string[] = [];
+
+  issues.push(...browserGameRuntimeLoopIssues(workdir, repoPath));
+
+  for (const file of listSourceFiles(workdir).filter((rel) => !/\.(test|spec)\.(tsx?|jsx?)$/i.test(rel))) {
+    const abs = path.join(workdir, file);
+    let source = "";
+    try { source = fs.readFileSync(abs, "utf-8"); } catch { continue; }
+    const clean = stripSourceComments(source);
+
+    if (components.size > 1 && /\bactiveScreen\s*:\s*["'][A-Z][A-Za-z0-9_$]*["']/.test(clean)) {
+      issues.push(`GENERATED_RUNTIME_HARDCODED_SCREEN: ${file} assigns activeScreen to a string literal while multiple generated screens exist. Derive the screen from the actual route/panel/render branch so QA bridge evidence cannot lie.`);
+    }
+
+    if (/^src\/features\/surf-[^/]+\/act_[^/]+\.(ts|tsx|js|jsx)$/i.test(file) && actionFunctionIsOnlyShellState(source)) {
+      issues.push(`ACTION_SEMANTIC_NOOP: ${file} appears to complete a visible save/update/search/filter/sort/resolve/retry action by changing only route/panel/selection shell state. Declared actions must mutate/search/filter/persist/recover domain data or render a visible in-screen result.`);
+    }
+  }
+
+  issues.push(...findGeneratedScreenIconFallbackIssues(workdir, repoPath));
+
+  for (const file of appRouterFiles(workdir)) {
+    let source = "";
+    try { source = fs.readFileSync(path.join(workdir, file), "utf-8"); } catch { continue; }
+    const clean = stripSourceComments(source);
+    const rendered = componentList.filter((name) => sourceRendersComponent(clean, name));
+    if (components.size >= 3 && rendered.length >= 2 && /\bactiveRoute\s*!==\s*["'][^"']+["']/.test(clean)) {
+      issues.push(`GENERATED_ROUTE_COLLAPSE: ${file} routes every non-primary activeRoute through a single generated screen branch. Each generated Product Surface or visible nav destination must have a distinct render path, or be explicitly disabled/inert in the generated UI.`);
+    }
+  }
+
+  return [...new Set(issues)].slice(0, 24);
+}
+
 const GENERATED_SHELL_DIAGNOSTIC_TEXT =
-  /\b(?:session\s+status|storage\s+status|runtime\s+status|app\s+status|qa\s+status|smoke\s+status|status\s*bar|statusbar|debug\s+(?:panel|bar|strip|status|statusbar)|diagnostic\s+(?:panel|bar|strip|status|statusbar)|telemetry\s+(?:panel|bar|strip|status|statusbar))\b/i;
+  /\b(?:session\s+status|storage\s+status|runtime\s+status|app\s+status|shell\s+status|qa\s+status|smoke\s+status|status\s*bar|statusbar|debug\s+(?:panel|bar|strip|status|statusbar)|diagnostic\s+(?:panel|bar|strip|status|statusbar)|telemetry\s+(?:panel|bar|strip|status|statusbar))\b/i;
 const GENERATED_SHELL_DIAGNOSTIC_MARKUP =
-  /(?:data-testid|aria-label|className|class|id)\s*=\s*(?:"[^"]*\b(?:(?:session|storage|runtime|debug|diagnostic|telemetry|smoke|qa)[-_ ]?(?:status|statusbar|strip|bar|panel|banner)|status[-_ ]?bar)\b[^"]*"|'[^']*\b(?:(?:session|storage|runtime|debug|diagnostic|telemetry|smoke|qa)[-_ ]?(?:status|statusbar|strip|bar|panel|banner)|status[-_ ]?bar)\b[^']*'|\{`[^`]*\b(?:(?:session|storage|runtime|debug|diagnostic|telemetry|smoke|qa)[-_ ]?(?:status|statusbar|strip|bar|panel|banner)|status[-_ ]?bar)\b[^`]*`\})/i;
+  /(?:data-testid|aria-label|className|class|id)\s*=\s*(?:"[^"]*\b(?:(?:session|storage|runtime|shell|app[-_ ]?shell|debug|diagnostic|telemetry|smoke|qa)[-_ ]?(?:status|statusbar|strip|bar|panel|banner|message)|status[-_ ]?bar)\b[^"]*"|'[^']*\b(?:(?:session|storage|runtime|shell|app[-_ ]?shell|debug|diagnostic|telemetry|smoke|qa)[-_ ]?(?:status|statusbar|strip|bar|panel|banner|message)|status[-_ ]?bar)\b[^']*'|\{`[^`]*\b(?:(?:session|storage|runtime|shell|app[-_ ]?shell|debug|diagnostic|telemetry|smoke|qa)[-_ ]?(?:status|statusbar|strip|bar|panel|banner|message)|status[-_ ]?bar)\b[^`]*`\})/i;
 const GENERATED_SHELL_GLOBAL_LAYOUT =
   /\b(?:fixed|absolute|sticky|top-0|inset-x-0|left-0|right-0|w-screen|w-full|min-w-\[|z-\d+|overflow-x-(?:auto|scroll|visible))\b/i;
 const GENERATED_SHELL_VISIBLE_DIAGNOSTIC_JSX =
@@ -794,6 +1228,58 @@ function hasVisibleGeneratedShellDiagnosticChrome(source: string): boolean {
 function sourceHasMainLandmark(source: string): boolean {
   const clean = stripSourceComments(source);
   return JSX_MAIN_LANDMARK_TAG.test(clean) || JSX_MAIN_ROLE_LANDMARK.test(clean);
+}
+
+function findClosingTagEnd(source: string, tagName: string, openStart: number): number {
+  const tagPattern = new RegExp(`<\\s*(/?)\\s*${escapeRegExp(tagName)}\\b[^>]*>`, "ig");
+  tagPattern.lastIndex = openStart;
+  let depth = 0;
+  let match: RegExpExecArray | null;
+  while ((match = tagPattern.exec(source))) {
+    const full = match[0] || "";
+    const closing = Boolean(match[1]);
+    const selfClosing = /\/\s*>$/.test(full);
+    if (closing) {
+      depth -= 1;
+    } else if (!selfClosing) {
+      depth += 1;
+    }
+    if (depth === 0) return (match.index || 0) + full.length;
+  }
+  return source.length;
+}
+
+function mainLandmarkSpans(source: string): Array<{ start: number; end: number }> {
+  const spans: Array<{ start: number; end: number }> = [];
+  for (const match of source.matchAll(/<\s*main\b[^>]*>/ig)) {
+    const start = match.index || 0;
+    spans.push({ start, end: findClosingTagEnd(source, "main", start) });
+  }
+  const rolePattern = /<\s*(div|section|article)\b[^>]*\brole\s*=\s*(?:"main"|'main'|\{\s*["']main["']\s*\})[^>]*>/ig;
+  for (const match of source.matchAll(rolePattern)) {
+    const start = match.index || 0;
+    const tagName = match[1] || "";
+    if (!tagName) continue;
+    spans.push({ start, end: findClosingTagEnd(source, tagName, start) });
+  }
+  return spans;
+}
+
+function sourceWrapsGeneratedComponentInMainLandmark(source: string, componentNames: Set<string>): boolean {
+  if (componentNames.size === 0) return false;
+  const clean = stripSourceComments(source);
+  const spans = mainLandmarkSpans(clean);
+  if (spans.length === 0) return false;
+  for (const componentName of componentNames) {
+    if (!sourceRendersComponent(clean, componentName)) continue;
+    const escaped = escapeRegExp(componentName);
+    const componentPattern = new RegExp(`<\\s*${escaped}\\b`, "ig");
+    for (const match of clean.matchAll(componentPattern)) {
+      const componentIndex = match.index || 0;
+      if (spans.some((span) => componentIndex > span.start && componentIndex < span.end)) return true;
+    }
+  }
+  return false;
 }
 
 function generatedScreenMainComponents(workdir: string, repoPath: string, screenIndex: any[]): Set<string> {
@@ -819,12 +1305,123 @@ function generatedScreenMainComponents(workdir: string, repoPath: string, screen
   return components;
 }
 
+function generatedScreenRequiresFlexMount(source: string): boolean {
+  const clean = stripSourceComments(source);
+  const hasSidebarWidth = /(?:^|[\s"'`])(?:w-\[[^\]]+\]|w-\d+)(?=[\s"'`])/m.test(clean);
+  return /return\s*\(\s*<>/.test(clean)
+    && hasSidebarWidth
+    && /\bshrink-0\b/.test(clean)
+    && /\bflex-1\b/.test(clean)
+    && /\bh-screen\b/.test(clean);
+}
+
+function generatedScreenRequiresViewportMount(source: string): boolean {
+  const clean = stripSourceComments(source);
+  const returnFragment = /return\s*\(\s*<>/.test(clean);
+  const firstViewportLayer = /return\s*\(\s*(?:<>\s*)?<(?:div|main|section)\b[^>]*\bclassName\s*=\s*(?:"[^"]*\b(?:absolute|fixed)\b[^"]*\binset-0\b[^"]*"|'[^']*\b(?:absolute|fixed)\b[^']*\binset-0\b[^']*'|\{\s*["'][^"']*\b(?:absolute|fixed)\b[^"']*\binset-0\b[^"']*["']\s*\})/m.test(clean);
+  const fixedViewportChrome = /\b(?:fixed|absolute)\b/.test(clean)
+    && /\b(?:inset-0|top-0|bottom-0|left-0|right-0|h-screen|w-full)\b/.test(clean);
+  return returnFragment && (firstViewportLayer || fixedViewportChrome);
+}
+
+function generatedFlexMountComponents(workdir: string, repoPath: string, screenIndex: any[]): Set<string> {
+  const components = new Set<string>();
+  for (const entry of screenIndex) {
+    const componentName = componentNameForScreenEntry(entry);
+    const screenFile = normalizeRelPath(String(entry?.file || entry?.filePath || ""));
+    if (!componentName || !screenFile || !/^src\/screens\/.+\.(tsx|jsx)$/i.test(screenFile)) continue;
+    const candidates = [
+      path.join(workdir, screenFile),
+      repoPath ? path.join(repoPath, screenFile) : "",
+    ].filter(Boolean);
+    for (const candidate of candidates) {
+      try {
+        if (!fs.existsSync(candidate)) continue;
+        if (generatedScreenRequiresFlexMount(fs.readFileSync(candidate, "utf-8"))) {
+          components.add(componentName);
+        }
+        break;
+      } catch {}
+    }
+  }
+  return components;
+}
+
+function generatedViewportMountComponents(workdir: string, repoPath: string, screenIndex: any[]): Set<string> {
+  const components = new Set<string>();
+  for (const entry of screenIndex) {
+    const componentName = componentNameForScreenEntry(entry);
+    const screenFile = normalizeRelPath(String(entry?.file || entry?.filePath || ""));
+    if (!componentName || !screenFile || !/^src\/screens\/.+\.(tsx|jsx)$/i.test(screenFile)) continue;
+    const candidates = [
+      path.join(workdir, screenFile),
+      repoPath ? path.join(repoPath, screenFile) : "",
+    ].filter(Boolean);
+    for (const candidate of candidates) {
+      try {
+        if (!fs.existsSync(candidate)) continue;
+        if (generatedScreenRequiresViewportMount(fs.readFileSync(candidate, "utf-8"))) {
+          components.add(componentName);
+        }
+        break;
+      } catch {}
+    }
+  }
+  return components;
+}
+
+function generatedRootMounts(source: string): Array<{ className: string; attrs: string }> {
+  const mounts: Array<{ className: string; attrs: string }> = [];
+  const rootAttrPattern = /<([A-Za-z][\w.]*)\b([^>]*\bdata-setfarm-root\b[^>]*)>/g;
+  for (const match of source.matchAll(rootAttrPattern)) {
+    const attrs = match[2] || "";
+    const classMatch = attrs.match(/\bclassName\s*=\s*(?:"([^"]*)"|'([^']*)'|{\s*["']([^"']*)["']\s*})/);
+    mounts.push({ className: classMatch ? (classMatch[1] || classMatch[2] || classMatch[3] || "") : "", attrs });
+  }
+  return mounts;
+}
+
+function rootMountHasFlex(mount: { className: string; attrs: string }): boolean {
+  if (/\bflex\b/.test(mount.className)) return true;
+  return /\bstyle\s*=\s*\{\s*\{[^}]*\bdisplay\s*:\s*["']flex["'][^}]*\}\s*\}/m.test(mount.attrs);
+}
+
+function sourceMountsGeneratedFlexScreenSafely(source: string, componentNames: Set<string>): boolean {
+  if (componentNames.size === 0) return true;
+  if (![...componentNames].some((name) => sourceRendersComponent(source, name))) return true;
+  const mounts = generatedRootMounts(source);
+  if (mounts.length === 0) return true;
+  return mounts.some(rootMountHasFlex);
+}
+
+function rootMountHasViewportFrame(mount: { className: string; attrs: string }): boolean {
+  const hasPosition = /\b(?:relative|fixed|absolute)\b/.test(mount.className)
+    || /\bstyle\s*=\s*\{\s*\{[^}]*\bposition\s*:\s*["'](?:relative|fixed|absolute)["'][^}]*\}\s*\}/m.test(mount.attrs);
+  const hasViewportHeight = /\b(?:min-h-screen|h-screen|min-h-dvh|h-dvh|min-h-\[(?:100d?vh|100%)\]|h-\[(?:100d?vh|100%)\])\b/.test(mount.className)
+    || /\bstyle\s*=\s*\{\s*\{[^}]*\b(?:minHeight|height)\s*:\s*["'](?:100d?vh|100%)["'][^}]*\}\s*\}/m.test(mount.attrs);
+  const hasViewportWidth = /\b(?:w-full|w-screen|min-w-full|min-w-screen)\b/.test(mount.className)
+    || /\bstyle\s*=\s*\{\s*\{[^}]*\b(?:width|minWidth)\s*:\s*["'](?:100d?vw|100vw|100%)["'][^}]*\}\s*\}/m.test(mount.attrs);
+  const hasOverflowControl = /\b(?:overflow-hidden|overflow-x-hidden)\b/.test(mount.className)
+    || /\bstyle\s*=\s*\{\s*\{[^}]*\boverflow(?:X)?\s*:\s*["']hidden["'][^}]*\}\s*\}/m.test(mount.attrs);
+  return hasPosition && hasViewportHeight && hasViewportWidth && hasOverflowControl;
+}
+
+function sourceMountsGeneratedViewportScreenSafely(source: string, componentNames: Set<string>): boolean {
+  if (componentNames.size === 0) return true;
+  if (![...componentNames].some((name) => sourceRendersComponent(source, name))) return true;
+  const mounts = generatedRootMounts(source);
+  if (mounts.length === 0) return true;
+  return mounts.some(rootMountHasViewportFrame);
+}
+
 export function findGeneratedScreenShellChromeIssues(workdir: string, repoPath = ""): string[] {
   if (!workdir || !fs.existsSync(workdir)) return [];
   const screenIndex = loadScreenIndex(workdir, repoPath);
   const componentNames = screenIndex.map(componentNameForScreenEntry).filter(Boolean);
   if (componentNames.length === 0) return [];
   const mainLandmarkComponents = generatedScreenMainComponents(workdir, repoPath, screenIndex);
+  const flexMountComponents = generatedFlexMountComponents(workdir, repoPath, screenIndex);
+  const viewportMountComponents = generatedViewportMountComponents(workdir, repoPath, screenIndex);
 
   const candidateFiles = listSourceFiles(workdir)
     .filter((file) => !/^src\/screens\//i.test(file))
@@ -842,10 +1439,15 @@ export function findGeneratedScreenShellChromeIssues(workdir: string, repoPath =
     }
     if (!sourceReferencesGeneratedScreens(source, componentNames)) continue;
     if (hasVisibleGeneratedShellDiagnosticChrome(source)) offenders.push(file);
+    if (!sourceMountsGeneratedFlexScreenSafely(source, flexMountComponents)) {
+      landmarkOffenders.push(`${file}:flex-mount`);
+    }
+    if (!sourceMountsGeneratedViewportScreenSafely(source, viewportMountComponents)) {
+      landmarkOffenders.push(`${file}:viewport-mount`);
+    }
     if (
       mainLandmarkComponents.size > 0
-      && sourceHasMainLandmark(source)
-      && [...mainLandmarkComponents].some((name) => sourceRendersComponent(source, name))
+      && sourceWrapsGeneratedComponentInMainLandmark(source, mainLandmarkComponents)
     ) {
       landmarkOffenders.push(file);
     }
@@ -856,7 +1458,11 @@ export function findGeneratedScreenShellChromeIssues(workdir: string, repoPath =
     `GENERATED_SCREEN_SHELL_CHROME_UNSAFE: ${file} renders visible diagnostic/session/status/debug/QA chrome around generated full-screen screens. Keep smoke/debug state in window.app/globalThis.app or test-only data, not visible app shell chrome that can push, cover, or overflow generated screens on mobile.`,
     ),
     ...landmarkOffenders.map((file) =>
-      `GENERATED_SCREEN_SHELL_LANDMARK_UNSAFE: ${file} wraps generated full-screen Stitch screens in an app-shell main landmark while generated screen components already render their own main landmark. Use a neutral <div data-setfarm-root> container and keep generated screens as the semantic and visual root.`,
+      file.endsWith(":flex-mount")
+        ? `GENERATED_SCREEN_LAYOUT_MOUNT_UNSAFE: ${file.replace(/:flex-mount$/, "")} mounts a generated full-screen Stitch screen with sibling sidebar/content layout inside a non-flex data-setfarm-root container. Preserve the generated screen structure and make the mount root a flex container so desktop sidebar and content render side-by-side.`
+        : file.endsWith(":viewport-mount")
+          ? `GENERATED_SCREEN_VIEWPORT_MOUNT_UNSAFE: ${file.replace(/:viewport-mount$/, "")} mounts an absolute/fixed generated full-screen Stitch screen inside a data-setfarm-root container without stable viewport height and positioning. Use a neutral root such as <div data-setfarm-root className="relative min-h-screen w-full overflow-hidden"> so absolute generated layers have a real viewport frame.`
+        : `GENERATED_SCREEN_SHELL_LANDMARK_UNSAFE: ${file} wraps generated full-screen Stitch screens in an app-shell main landmark while generated screen components already render their own main landmark. Use a neutral <div data-setfarm-root> container and keep generated screens as the semantic and visual root.`,
     ),
   ];
 }
@@ -921,6 +1527,7 @@ export function findGeneratedScreenRegressionIssues(
   workdir: string,
   previousStoryScreensRaw: unknown[] = [],
   repoPath = "",
+  currentScopeFiles: string[] = [],
 ): string[] {
   if (!workdir || !fs.existsSync(workdir)) return [];
   const previousRefs = previousStoryScreensRaw.flatMap((raw) => parseStoryScreenRefs(raw));
@@ -931,11 +1538,12 @@ export function findGeneratedScreenRegressionIssues(
   const byFile = new Map<string, { file: string; componentName: string; title: string }>();
   for (const entry of previousEntries) byFile.set(entry.file, entry);
   const missing = missingRenderedGeneratedScreens(workdir, [...byFile.values()]);
-  if (missing.length === 0) return [];
-
-  return [
-    `GENERATED_SCREEN_REGRESSION: previously verified generated screen(s) are no longer rendered by the app/router surface: ${missing.map((entry) => `${entry.componentName} (${entry.file})`).join(", ")}. Keep prior story screens reachable while integrating the current story screens; do not replace prior generated screens with custom duplicate UI.`,
-  ];
+  const issues: string[] = [];
+  if (missing.length > 0) {
+    issues.push(`GENERATED_SCREEN_REGRESSION: previously verified generated screen(s) are no longer rendered by the app/router surface: ${missing.map((entry) => `${entry.componentName} (${entry.file})`).join(", ")}. Keep prior story screens reachable while integrating the current story screens; do not replace prior generated screens with custom duplicate UI.`);
+  }
+  issues.push(...findAppIntegrationBehaviorRegressionIssues(workdir, [...byFile.values()], currentScopeFiles));
+  return issues;
 }
 
 export async function checkDesignDomImplementationGate(
@@ -1003,11 +1611,12 @@ export async function checkGeneratedScreenRegressionGate(
   repoPath = "",
 ): Promise<ScopeCheckResult> {
   if (!workdir || !fs.existsSync(workdir)) return { passed: true };
-  const current = await pgGet<{ story_index: number | null }>(
-    "SELECT story_index FROM stories WHERE id = $1",
+  const current = await pgGet<{ story_index: number | null; scope_files: string | null }>(
+    "SELECT story_index, scope_files FROM stories WHERE id = $1",
     [currentStoryDbId],
   );
   if (current?.story_index == null) return { passed: true };
+  const scopeFiles = parseScopeFiles(current.scope_files);
   const previousRows = await pgQuery<{ story_screens: string | null }>(
     "SELECT story_screens FROM stories WHERE run_id = $1 AND story_index < $2 AND status IN ('done', 'verified') ORDER BY story_index",
     [runId, current.story_index],
@@ -1016,6 +1625,7 @@ export async function checkGeneratedScreenRegressionGate(
     workdir,
     previousRows.map((row) => row.story_screens || []),
     repoPath,
+    scopeFiles,
   );
   if (issues.length === 0) return { passed: true };
   return {
@@ -1060,6 +1670,40 @@ export function checkGeneratedScreenRequiredPropsGate(
   };
 }
 
+export function checkGeneratedRuntimeSemanticGate(
+  storyId: string,
+  storyTitle: string,
+  workdir: string,
+  repoPath = "",
+): ScopeCheckResult {
+  if (!workdir || !fs.existsSync(workdir)) return { passed: true };
+  const issues = findGeneratedRuntimeSemanticIssues(workdir, repoPath);
+  if (issues.length === 0) return { passed: true };
+  return {
+    passed: false,
+    reason: `${issues.join("\n")}\nStory ${storyId} (${storyTitle}) reported STATUS: done while generated-screen runtime semantics are incomplete or misleading.`,
+    category: "GENERATED_RUNTIME_SEMANTIC_INCOMPLETE",
+    suggestion: "Use real generated-screen route branches, derive runtime bridge state from the actual rendered screen, replace generic icon fallbacks with semantic SVG icons, and make visible actions mutate/search/filter/persist domain data instead of only route/panel state.",
+  };
+}
+
+export function checkPlatformHelperContaminationGate(
+  storyId: string,
+  storyTitle: string,
+  workdir: string,
+  repoPath = "",
+): ScopeCheckResult {
+  if (!workdir || !fs.existsSync(workdir)) return { passed: true };
+  const issues = findPlatformHelperContaminationIssues(workdir, repoPath);
+  if (issues.length === 0) return { passed: true };
+  return {
+    passed: false,
+    reason: `${issues.join("\n")}\nStory ${storyId} (${storyTitle}) reported STATUS: done while generated product source contains Setfarm platform/test harness helper code.`,
+    category: "PLATFORM_HELPER_CONTAMINATION",
+    suggestion: "Remove Setfarm visual-QA/test harness helpers from app source. Fix the platform scanner/router in Setfarm instead of adding globals or helper shims to generated projects.",
+  };
+}
+
 /**
  * Check scope_files declaration against actual worktree files.
  * scope_files is an ownership boundary, not a promise that every listed file
@@ -1095,14 +1739,110 @@ export async function checkScopeFilesGate(
       if (st.isFile() && st.size > 0) present.push(rel); else missing.push(rel);
     } catch { missing.push(rel); }
   }
-  const required = Math.max(1, Math.ceil(declared.length * 0.5));
-  if (present.length < required) {
+  const missingRequired = missing.filter(isRequiredDeclaredScopeFile);
+  if (missingRequired.length > 0) {
     return {
       passed: false,
-      reason: `SCOPE_FILE_MISSING: Story ${storyId} (${storyTitle}) declared scope_files=${JSON.stringify(declared)} but only ${present.length}/${declared.length} exist as non-empty files (required at least ${required}). Missing: ${missing.join(", ") || "none"}. You reported STATUS: done but too little of the owned scope exists.`,
+      reason: `SCOPE_FILE_MISSING: Story ${storyId} (${storyTitle}) reported STATUS: done but required declared scope file(s) do not exist as non-empty files: ${missingRequired.join(", ")}. Declared scope_files=${JSON.stringify(declared)}.`,
+      category: "SCOPE_FILE_MISSING",
+      suggestion: "Create the required screen/app/runtime files listed in scope_files before reporting done. Do not replace an owned generated screen with a custom overlay in another file.",
+    };
+  }
+
+  const primaryDeclared = declared.filter(rel => !isOptionalScopeCompanionFile(rel));
+  const primaryPresent = present.filter(rel => !isOptionalScopeCompanionFile(rel));
+  const requiredUniverse = primaryDeclared.length > 0 ? primaryDeclared : declared;
+  const presentUniverse = primaryDeclared.length > 0 ? primaryPresent : present;
+  const required = Math.max(1, Math.ceil(requiredUniverse.length * 0.5));
+  if (presentUniverse.length < required) {
+    return {
+      passed: false,
+      reason: `SCOPE_FILE_MISSING: Story ${storyId} (${storyTitle}) declared scope_files=${JSON.stringify(declared)} but only ${presentUniverse.length}/${requiredUniverse.length} primary files exist as non-empty files (required at least ${required}; ${present.length}/${declared.length} total declared files exist). Missing: ${missing.join(", ") || "none"}. You reported STATUS: done but too little of the owned primary scope exists.`,
       category: "SCOPE_FILE_MISSING",
       suggestion: "Write meaningful non-empty implementation code in the primary files listed in scope_files before reporting done",
     };
+  }
+  return { passed: true };
+}
+
+function isOptionalScopeCompanionFile(rel: string): boolean {
+  return /^src\/features\/surf-[^/]+\/act_[^/]+\.[cm]?[tj]sx?$/.test(rel);
+}
+
+function isRequiredDeclaredScopeFile(rel: string): boolean {
+  return /^src\/screens\/.+\.(tsx|jsx)$/i.test(rel);
+}
+
+function meaningfulDeletedDiffLines(diff: string): string[] {
+  return diff
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("-") && !line.startsWith("---"))
+    .map((line) => line.slice(1).trim())
+    .filter((line) => line.length >= 12)
+    .filter((line) => !/^[{}()[\],;]+$/.test(line));
+}
+
+function retryPatchRepoCandidates(workdir: string): string[] {
+  const candidates = [workdir].filter(Boolean);
+  if (workdir && fs.existsSync(workdir)) {
+    try {
+      const commonDir = execFileSync("git", ["rev-parse", "--git-common-dir"], {
+        cwd: workdir,
+        encoding: "utf-8",
+        timeout: 5000,
+        stdio: ["pipe", "pipe", "pipe"],
+      }).trim();
+      const absoluteCommonDir = path.isAbsolute(commonDir) ? commonDir : path.resolve(workdir, commonDir);
+      if (path.basename(absoluteCommonDir) === ".git") candidates.push(path.dirname(absoluteCommonDir));
+    } catch {
+      // Best effort; workdir remains a candidate.
+    }
+  }
+  return [...new Set(candidates)];
+}
+
+function latestRetryPatchTextForStory(workdir: string, storyId: string, baseBranch: string): string {
+  const aliases = [...new Set([storyId, `${String(baseBranch || "").slice(0, 8)}-${storyId}`].map((id) => String(id || "").trim()).filter(Boolean))];
+  for (const repo of retryPatchRepoCandidates(workdir)) {
+    for (const id of aliases) {
+      const patchPath = latestRetryPatchForStory(repo, id);
+      if (patchPath && fs.existsSync(patchPath)) {
+        try { return fs.readFileSync(patchPath, "utf-8"); } catch {}
+      }
+    }
+  }
+  for (const id of aliases) {
+    const patch = latestRetryStashPatchForStory(workdir, id);
+    if (patch.trim()) return patch;
+  }
+  return "";
+}
+
+function checkRejectedRetryPatchReapplied(workdir: string, storyId: string, baseBranch: string): ScopeCheckResult {
+  try {
+    const retryPatch = latestRetryPatchTextForStory(workdir, storyId, baseBranch);
+    if (!retryPatch.trim()) return { passed: true };
+    const previousDeleted = new Set(meaningfulDeletedDiffLines(retryPatch));
+    if (previousDeleted.size === 0) return { passed: true };
+    const currentDiff = execFileSync("git", ["diff", "--no-ext-diff", "HEAD", "--"], {
+      cwd: workdir,
+      encoding: "utf-8",
+      timeout: 10000,
+      maxBuffer: 5 * 1024 * 1024,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const repeated = meaningfulDeletedDiffLines(currentDiff).filter((line) => previousDeleted.has(line));
+    const uniqueRepeated = [...new Set(repeated)];
+    if (uniqueRepeated.length >= 2) {
+      return {
+        passed: false,
+        reason: `RETRY_PATCH_REAPPLIED: Story ${storyId} repeated ${uniqueRepeated.length} deletion(s) from a previously rejected retry patch. Do not re-apply discarded worktree deletions. Treat the listed lines as previously verified wiring to preserve or restore before making the current scoped fix. Preserve/restore: ${uniqueRepeated.slice(0, 6).join(" | ")}`,
+        category: "RETRY_PATCH_REAPPLIED",
+        suggestion: "Preserve or restore the repeated lines from the rejected retry patch, then make a fresh minimal fix for the current failure",
+      };
+    }
+  } catch (err) {
+    logger.debug(`[retry-patch-gate] skipped for ${storyId}: ${String(err).slice(0, 120)}`);
   }
   return { passed: true };
 }
@@ -1132,7 +1872,7 @@ export async function checkScopeEnforcement(
 
   let dirtyFiles: string[] = [];
   try {
-    const statusOut = execFileSync("git", ["status", "--porcelain"], {
+    const statusOut = execFileSync("git", ["status", "--porcelain", "-uall"], {
       cwd: workdir, timeout: 5000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8",
     });
     dirtyFiles = statusOut.split(/\r?\n/).map(parseGitStatusPorcelainPath).filter(Boolean);
@@ -1141,7 +1881,7 @@ export async function checkScopeEnforcement(
   const allTouched = Array.from(new Set([...changedFiles, ...dirtyFiles]));
   const sourceFiles = allTouched.filter(f => SCOPE_EXTS.test(f) && !SCOPE_IGNORE.test(f));
   const forbiddenArtifacts = allTouched.filter(f => /^(QA_REPORT\.md|qa-report\.(md|json|txt)|smoke-(home|after-click)\.png|index\.html|package(-lock)?\.json|vite\.config\.[cm]?[jt]s|tailwind\.config\.[cm]?[jt]s|postcss\.config\.[cm]?[jt]s|eslint\.config\.[cm]?[jt]s)$/i.test(f));
-  if (forbiddenArtifacts.length > 0 && retryCount < maxRetries) {
+  if (forbiddenArtifacts.length > 0) {
     return {
       passed: false,
       reason: `SCOPE_BLEED: Story ${storyId} committed QA/test artifact(s) that do not belong in product code: ${forbiddenArtifacts.join(", ")}. Remove these files/commits and keep reports in step output, not in the repo.`,
@@ -1164,14 +1904,17 @@ export async function checkScopeEnforcement(
   const { hardLimit: HARD_LIMIT, softLimit: SOFT_LIMIT } = computeScopeFileLimits(!!hasDeps, declaredScopeFiles, declaredSharedFiles, implicitSourceFiles);
 
   // Zero-work floor
-  if (sourceFiles.length === 0 && retryCount < maxRetries) {
+  if (sourceFiles.length === 0) {
     return {
       passed: false,
       reason: `NO WORK DETECTED: Story ${storyId} (${storyTitle}) reported STATUS: done but the worktree has ZERO source-file changes vs ${baseBranch}. The agent appears to have shortcut the task.`,
-      category: "NO_WORK",
+      category: "NO_WORK_DETECTED",
       suggestion: "Actually implement the story — write files and commit them",
     };
   }
+
+  const retryPatchResult = checkRejectedRetryPatchReapplied(workdir, storyId, baseBranch);
+  if (!retryPatchResult.passed) return retryPatchResult;
 
   // Anti-stub check is intentionally advisory. Small QA fixes often change a
   // color token, aria label, handler, import, or dependency in fewer than ten
@@ -1192,7 +1935,7 @@ export async function checkScopeEnforcement(
   }
 
   // Scope bleed detection
-  if (sourceFiles.length > 0 && retryCount < maxRetries) {
+  if (sourceFiles.length > 0) {
     if (declaredScopeFiles.length > 0) {
       const allowed = new Set<string>();
       declaredScopeFiles.forEach(f => allowed.add(f));
@@ -1218,7 +1961,7 @@ export async function checkScopeEnforcement(
   // This catches the common App.tsx integration failure mode where the agent
   // removes accepted search/form/card tests while adding unrelated UI.
   const testFiles = sourceFiles.filter(f => /\.(test|spec)\.(tsx?|jsx?)$/i.test(f));
-  if (testFiles.length > 0 && retryCount < maxRetries) {
+  if (testFiles.length > 0) {
     let storyText = storyTitle;
     try {
       const storyRow = await pgGet<{ description: string | null; acceptance_criteria: string | null }>(
@@ -1256,7 +1999,7 @@ export async function checkScopeEnforcement(
   }
 
   // Hard overflow
-  if (sourceFiles.length > HARD_LIMIT && retryCount < maxRetries) {
+  if (sourceFiles.length > HARD_LIMIT) {
     return {
       passed: false,
       reason: `SCOPE OVERFLOW: Story ${storyId} (${storyTitle}) modified ${sourceFiles.length} source files — hard limit is ${HARD_LIMIT}. Files: ${sourceFiles.slice(0, 15).join(", ")}`,
@@ -1273,6 +2016,33 @@ export async function checkScopeEnforcement(
   return { passed: true, reason: sourceFiles.length > SOFT_LIMIT ? `Story ${storyId} touched ${sourceFiles.length} files — above typical scope` : undefined };
 }
 
+function worktreeBranch(workdir: string): string {
+  if (!workdir || !fs.existsSync(workdir)) return "";
+  try {
+    return execFileSync("git", ["branch", "--show-current"], {
+      cwd: workdir,
+      encoding: "utf-8",
+      timeout: 5000,
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim().toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+export function selectMatchingStoryWorktree(storyBranch: string, contextWorkdir: string, canonicalWorkdir: string): string {
+  const branch = String(storyBranch || "").trim().toLowerCase();
+  if (!branch) return contextWorkdir && fs.existsSync(contextWorkdir) ? contextWorkdir : "";
+
+  if (contextWorkdir && fs.existsSync(contextWorkdir) && worktreeBranch(contextWorkdir) === branch) {
+    return contextWorkdir;
+  }
+  if (canonicalWorkdir && fs.existsSync(canonicalWorkdir) && worktreeBranch(canonicalWorkdir) === branch) {
+    return canonicalWorkdir;
+  }
+  return "";
+}
+
 /**
  * Resolve worktree path for scope check (fixes parallel story context overwrite bug).
  */
@@ -1284,20 +2054,8 @@ export async function resolveStoryWorktree(currentStoryDbId: string, contextWork
   if (storyBranch) {
     const worktreeBase = path.join(os.homedir(), ".openclaw", "workspaces", "workflows", "feature-dev", "agents", "developer", "story-worktrees");
     const candidateWd = path.join(worktreeBase, storyBranch);
-    if (fs.existsSync(candidateWd)) return candidateWd;
-    if (contextWorkdir && fs.existsSync(contextWorkdir)) {
-      try {
-        const branch = execFileSync("git", ["branch", "--show-current"], {
-          cwd: contextWorkdir,
-          encoding: "utf-8",
-          timeout: 5000,
-          stdio: ["pipe", "pipe", "pipe"],
-        }).trim().toLowerCase();
-        if (branch === storyBranch.toLowerCase()) return contextWorkdir;
-      } catch {
-        // Fall through to rehydrate from the canonical repo.
-      }
-    }
+    const selected = selectMatchingStoryWorktree(storyBranch, contextWorkdir, candidateWd);
+    if (selected) return selected;
     try {
       const runContext = JSON.parse(storyBranchRow?.context || "{}") as Record<string, string>;
       const repo = runContext["repo"] || "";

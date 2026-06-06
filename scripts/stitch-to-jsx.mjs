@@ -355,8 +355,12 @@ function dedupeJsxAttributes(input) {
   });
 }
 
+function stripInlineEventHandlerAttributes(input) {
+  return String(input || "").replace(/\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*')/gi, "");
+}
+
 function htmlToJsx(html) {
-  let out = normalizeJsxAttributeValues(normalizeJsxAttributeNames(normalizeJsxTagNames(html)))
+  let out = normalizeJsxAttributeValues(normalizeJsxAttributeNames(normalizeJsxTagNames(stripInlineEventHandlerAttributes(html))))
     .replace(/<(img|br|hr|input|meta|link)([^>]*?)>/gi, (_, tag, attrs) => {
       const cleanAttrs = String(attrs || "").replace(/\/\s*$/, "").trimEnd();
       return `<${tag}${cleanAttrs} />`;
@@ -397,45 +401,271 @@ function textFromHtml(input) {
     .trim();
 }
 
+function materialIconNamesFromHtml(input) {
+  const names = [];
+  String(input || "").replace(
+    /<span\b([^>]*)\b(class|className)=(["'])([^"']*\b(?:material-symbols(?:-outlined)?|material-icons)\b[^"']*)\3([^>]*)>([\s\S]*?)<\/span>/gi,
+    (_match, beforeClass, _classAttr, _quote, _classValue, afterClass, inner) => {
+      const attrs = `${beforeClass || ""}${afterClass || ""}`;
+      const name = attrValue(attrs, "data-icon") || materialIconKey(inner);
+      if (name) names.push(name);
+      return "";
+    },
+  );
+  return names;
+}
+
+function stripMaterialIconSpans(input) {
+  return String(input || "").replace(
+    /<span\b([^>]*)\b(class|className)=(["'])([^"']*\b(?:material-symbols(?:-outlined)?|material-icons)\b[^"']*)\3([^>]*)>[\s\S]*?<\/span>/gi,
+    " ",
+  );
+}
+
+function humanizeActionLabel(value) {
+  return String(value || "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function labelFromInteractive(attrs, inner, fallback) {
+  const explicit = attrValue(attrs, "aria-label") || attrValue(attrs, "title");
+  if (explicit) return explicit;
+
+  const visible = textFromHtml(stripMaterialIconSpans(inner));
+  if (visible) return visible;
+
+  const iconName = materialIconNamesFromHtml(inner)[0];
+  if (iconName) return humanizeActionLabel(iconName);
+
+  return fallback;
+}
+
 const MATERIAL_TO_LUCIDE = {
   account_circle: "CircleUserRound",
   add: "Plus",
+  add_box: "PlusSquare",
+  add_circle: "CirclePlus",
+  ads_click: "MousePointerClick",
+  airline_seat_recline_normal: "Armchair",
+  analytics: "BarChart3",
   arrow_back: "ArrowLeft",
+  arrow_drop_down: "ChevronDown",
+  arrow_drop_up: "ChevronUp",
   arrow_downward: "ArrowDown",
   arrow_forward: "ArrowRight",
   arrow_left: "ArrowLeft",
   arrow_right: "ArrowRight",
   arrow_upward: "ArrowUp",
+  assignment: "ClipboardList",
+  assignment_ind: "ClipboardCheck",
+  assignment_return: "PackageCheck",
   auto_awesome: "Sparkles",
+  badge: "Badge",
+  bed: "Bed",
+  blur_on: "Sparkles",
+  bolt: "Bolt",
+  build: "Wrench",
   calendar_month: "CalendarDays",
+  calendar_today: "CalendarDays",
+  cancel: "Ban",
   check: "Check",
+  check_circle: "CheckCircle2",
+  change_history: "Triangle",
+  checklist: "ListChecks",
   chevron_left: "ChevronLeft",
   chevron_right: "ChevronRight",
+  cleaning_services: "Sparkles",
+  clinical_notes: "ClipboardPlus",
   close: "X",
+  cloud_off: "CloudOff",
+  contact_phone: "PhoneCall",
+  contact_support: "CircleHelp",
+  dashboard: "LayoutDashboard",
+  data_object: "Braces",
+  dataset: "Database",
+  date_range: "CalendarDays",
   delete: "Trash2",
+  density_medium: "Rows3",
+  density_small: "Rows2",
+  deployed_code: "Package",
+  description: "FileText",
+  desktop_windows: "Monitor",
+  device_reset: "RotateCcw",
+  directions_car: "Car",
+  display_settings: "Monitor",
+  dns: "Server",
+  done_all: "CheckCheck",
   download: "Download",
+  drag_indicator: "GripVertical",
   edit: "Pencil",
+  edit_document: "FilePenLine",
+  edit_note: "Pencil",
+  edit_square: "Pencil",
+  ecg_heart: "HeartPulse",
+  electric_bolt: "Zap",
+  emoji_events: "Trophy",
+  engineering: "HardHat",
+  error: "CircleAlert",
   exercise: "Dumbbell",
+  exit_to_app: "LogOut",
+  fact_check: "BadgeCheck",
+  fast_forward: "FastForward",
+  face: "Smile",
+  filter_alt: "Filter",
   filter_list: "ListFilter",
+  filter_list_off: "FilterX",
+  flash_on: "Zap",
+  flight: "Plane",
+  flight_land: "PlaneLanding",
+  flight_takeoff: "PlaneTakeoff",
+  folder_off: "FolderX",
+  folder_open: "FolderOpen",
+  favorite: "Heart",
   gavel: "Gavel",
+  equalizer: "AudioWaveform",
+  graphic_eq: "AudioWaveform",
+  grid_view: "Grid3X3",
+  group: "Users",
+  group_remove: "UserMinus",
+  groups: "UsersRound",
+  help: "CircleHelp",
+  help_center: "CircleHelp",
+  help_outline: "CircleHelp",
+  history: "History",
   home: "Home",
+  how_to_reg: "UserCheck",
+  hub: "Network",
   info: "Info",
+  inventory: "Archive",
+  inventory_2: "PackageSearch",
+  key: "Key",
+  keyboard: "Keyboard",
+  keyboard_alt: "Keyboard",
+  keyboard_arrow_down: "ChevronDown",
+  keyboard_arrow_left: "ChevronLeft",
+  keyboard_arrow_right: "ChevronRight",
+  keyboard_voice: "Mic",
+  keyboard_return: "CornerDownLeft",
+  label: "Tag",
+  leaderboard: "Trophy",
+  layers: "Layers",
+  lightbulb: "Lightbulb",
+  list: "List",
+  list_alt: "ListTodo",
+  format_list_numbered: "ListOrdered",
+  local_fire_department: "Flame",
+  local_gas_station: "Fuel",
+  local_shipping: "Truck",
+  local_hospital: "Hospital",
+  location_on: "MapPin",
+  login: "LogIn",
+  logout: "LogOut",
+  mail: "Mail",
+  map: "Map",
+  medical_services: "BriefcaseMedical",
+  meeting_room: "DoorOpen",
   menu: "Menu",
+  monitor: "Monitor",
+  mouse: "MousePointerClick",
+  near_me: "Navigation",
+  notifications: "Bell",
+  notifications_active: "BellRing",
+  notification_important: "BellRing",
   more_horiz: "Ellipsis",
   more_vert: "EllipsisVertical",
+  monitoring: "Activity",
+  monitor_heart: "HeartPulse",
+  music_note: "Music",
+  open_in_full: "Expand",
   pause: "Pause",
+  pause_circle: "CirclePause",
   person: "User",
+  person_add: "UserPlus",
+  person_search: "UserSearch",
+  pending_actions: "ClipboardList",
+  policy: "ShieldAlert",
   play_arrow: "Play",
+  play_circle: "CirclePlay",
+  power: "Power",
+  power_settings_new: "Power",
+  precision_manufacturing: "Factory",
+  priority_high: "BadgeAlert",
+  progress_activity: "LoaderCircle",
+  queue: "ListOrdered",
   refresh: "RefreshCw",
+  reorder: "GripHorizontal",
+  restart_alt: "RotateCcw",
+  replay: "RefreshCcw",
+  restore: "RotateCcw",
   rotate_right: "RotateCw",
+  route: "Route",
+  rocket_launch: "Rocket",
   save: "Save",
+  schedule: "Clock",
   search: "Search",
+  search_off: "SearchX",
+  sensors: "RadioTower",
   settings: "Settings",
+  settings_applications: "Settings2",
+  settings_input_component: "SlidersHorizontal",
+  settings_suggest: "Settings2",
+  shield: "Shield",
+  sort: "ArrowUpDown",
+  south_east: "MoveDownRight",
+  speed: "Gauge",
+  sports_esports: "Gamepad2",
+  space_bar: "Space",
+  style: "Palette",
   swords: "Swords",
+  swap_horiz: "ArrowLeftRight",
+  sync: "RefreshCw",
+  sync_alt: "RefreshCcw",
+  sync_problem: "RefreshCwOff",
+  support_agent: "Headphones",
+  table_rows: "Rows3",
+  task_alt: "BadgeCheck",
+  terrain: "Mountain",
+  terminal: "Terminal",
+  timer: "Timer",
+  toggle_on: "ToggleRight",
   touch_app: "MousePointerClick",
+  train: "Train",
+  trending_up: "TrendingUp",
+  trophy: "Trophy",
+  tune: "SlidersHorizontal",
+  unfold_more: "ChevronsUpDown",
   videogame_asset: "Gamepad2",
+  vibration: "Vibrate",
+  vital_signs: "HeartPulse",
+  volume_down: "Volume1",
+  volume_mute: "VolumeX",
+  volume_up: "Volume2",
+  view_agenda: "Rows3",
+  view_column: "Columns3",
+  view_week: "Columns3",
+  view_kanban: "Kanban",
+  view_list: "List",
+  view_module: "LayoutGrid",
+  visibility: "Eye",
   view_timeline: "Activity",
   warning: "TriangleAlert",
+  widgets: "Boxes",
+  warehouse: "Warehouse",
+  wifi_off: "WifiOff",
+  wifi_tether: "RadioTower",
+  wifi_tethering: "RadioTower",
+  expand_more: "ChevronDown",
+  tv_options_parental: "MonitorCog",
+  update: "RefreshCw",
+  call: "Phone",
+  block: "Ban",
+  report: "FileWarning",
+  star: "Star",
+  stars: "Sparkles",
+  straighten: "Ruler",
 };
 
 function materialIconKey(inner) {
@@ -448,7 +678,17 @@ function normalizeClassTokens(classValue) {
     .map(cls => (cls === "transition-all" ? "transition-colors" : cls))
     .filter(Boolean);
 
-  return normalizePositionedFullWidth(tokens).join(" ");
+  return normalizeSceneBackgroundRepeat(normalizePositionedFullWidth(tokens)).join(" ");
+}
+
+function normalizeSceneBackgroundRepeat(tokens) {
+  const normalized = [...tokens];
+  const parsed = normalized.map((token) => ({ token, ...splitTailwindVariant(token) }));
+  const hasSceneImage = parsed.some(({ base }) => /^bg-\[url\(.+\)\]$/.test(base));
+  const hasSceneSizing = parsed.some(({ base }) => ["bg-cover", "bg-contain"].includes(base));
+  const hasRepeatPolicy = parsed.some(({ base }) => /^bg-(?:no-repeat|repeat|repeat-x|repeat-y|repeat-round|repeat-space)$/.test(base));
+  if (hasSceneImage && hasSceneSizing && !hasRepeatPolicy) normalized.push("bg-no-repeat");
+  return normalized;
 }
 
 function splitTailwindVariant(token) {
@@ -462,6 +702,57 @@ function splitTailwindVariant(token) {
   }
   if (splitAt === -1) return { variant: "", base: token };
   return { variant: token.slice(0, splitAt), base: token.slice(splitAt + 1) };
+}
+
+function splitVariantParts(variant) {
+  if (!variant) return [];
+  const parts = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < variant.length; i += 1) {
+    const ch = variant[i];
+    if (ch === "[") depth += 1;
+    if (ch === "]") depth = Math.max(0, depth - 1);
+    if (ch === ":" && depth === 0) {
+      parts.push(variant.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(variant.slice(start));
+  return parts.filter(Boolean);
+}
+
+function wrapResponsiveVariant(rule, variantParts) {
+  const screens = {
+    sm: "640px",
+    md: "768px",
+    lg: "1024px",
+    xl: "1280px",
+    "2xl": "1536px",
+  };
+  const responsive = variantParts.find(part => screens[part]);
+  return responsive ? `@media (min-width: ${screens[responsive]}) { ${rule} }` : rule;
+}
+
+function selectorForClassVariant(cls, variant) {
+  const parts = splitVariantParts(variant);
+  let prefix = "";
+  let pseudo = "";
+  for (const part of parts) {
+    if (part === "dark") prefix += ".dark ";
+    if (part === "group-hover") prefix += ".group:hover ";
+    if (part === "hover") pseudo += ":hover";
+    if (part === "focus") pseudo += ":focus";
+    if (part === "focus-visible") pseudo += ":focus-visible";
+    if (part === "focus-within") pseudo += ":focus-within";
+    if (part === "active") pseudo += ":active";
+    if (part === "disabled") pseudo += ":disabled";
+    if (part === "visited") pseudo += ":visited";
+  }
+  return {
+    selector: `${prefix}.${cssEscapeSelector(cls)}${pseudo}`,
+    variantParts: parts,
+  };
 }
 
 function normalizePositionedFullWidth(tokens) {
@@ -493,13 +784,18 @@ function normalizePositionedFullWidth(tokens) {
 
 function normalizeDesignClassAttributes(html) {
   return String(html || "").replace(
-    /\b(class|className)=(["'])([^"']*)\2/gi,
-    (_match, attr, quote, value) => `${attr}=${quote}${normalizeClassTokens(value)}${quote}`,
+    /\b(class|className)=("([^"]*)"|'([^']*)')/gi,
+    (_match, attr, quoted, doubleValue, singleValue) => {
+      const quote = quoted.startsWith('"') ? '"' : "'";
+      const value = doubleValue ?? singleValue ?? "";
+      return `${attr}=${quote}${normalizeClassTokens(value)}${quote}`;
+    },
   );
 }
 
 function collectClassTokens(html, out) {
-  String(html || "").replace(/\b(?:class|className)=(["'])([^"']*)\1/gi, (_match, _quote, value) => {
+  String(html || "").replace(/\b(?:class|className)=("([^"]*)"|'([^']*)')/gi, (_match, _quoted, doubleValue, singleValue) => {
+    const value = doubleValue ?? singleValue ?? "";
     normalizeClassTokens(value).split(/\s+/).forEach(cls => {
       if (cls) out.add(cls);
     });
@@ -509,12 +805,129 @@ function collectClassTokens(html, out) {
 
 const STITCH_RUNTIME_CSS_START = "/* SETFARM_STITCH_RUNTIME_UTILITIES_START */";
 const STITCH_RUNTIME_CSS_END = "/* SETFARM_STITCH_RUNTIME_UTILITIES_END */";
+const STITCH_CUSTOM_CSS_START = "/* SETFARM_STITCH_CUSTOM_CSS_START */";
+const STITCH_CUSTOM_CSS_END = "/* SETFARM_STITCH_CUSTOM_CSS_END */";
 
 function cssEscapeSelector(cls) {
   return cls.replace(/([^a-zA-Z0-9_-])/g, "\\$1");
 }
 
-function ruleForClass(cls) {
+function parseDesignTokensCss(css) {
+  const tokens = { colors: new Set(), fonts: new Set(), radii: new Set(), spacing: new Set() };
+  String(css || "").replace(/--(color|font|radius|spacing)-([a-zA-Z0-9_-]+)\s*:/g, (_match, kind, key) => {
+    if (kind === "color") tokens.colors.add(key);
+    if (kind === "font") tokens.fonts.add(key);
+    if (kind === "radius") tokens.radii.add(key);
+    if (kind === "spacing") tokens.spacing.add(key);
+    return "";
+  });
+  return tokens;
+}
+
+function designTokensForRepo(repoPath) {
+  const stitchTokensPath = path.join(repoPath, "stitch", "design-tokens.css");
+  if (!fs.existsSync(stitchTokensPath)) return parseDesignTokensCss("");
+  return parseDesignTokensCss(fs.readFileSync(stitchTokensPath, "utf-8"));
+}
+
+function tokenColorValue(key, opacity) {
+  const value = `var(--color-${key})`;
+  if (!opacity) return value;
+  const pct = Math.max(0, Math.min(100, Number(opacity)));
+  if (!Number.isFinite(pct)) return value;
+  return `color-mix(in srgb, ${value} ${pct}%, transparent)`;
+}
+
+function splitOpacityToken(value) {
+  const match = String(value || "").match(/^([a-zA-Z0-9_-]+)(?:\/(\d{1,3}))?$/);
+  return match ? { key: match[1], opacity: match[2] || "" } : null;
+}
+
+function buildDesignTokenUtilityRule(baseClass, selector, tokens) {
+  const colorPrefixes = [
+    ["bg-", "background-color"],
+    ["text-", "color"],
+    ["border-", "border-color"],
+    ["outline-", "outline-color"],
+    ["divide-", "border-color"],
+    ["accent-", "accent-color"],
+    ["caret-", "caret-color"],
+  ];
+  for (const [prefix, prop] of colorPrefixes) {
+    if (!baseClass.startsWith(prefix)) continue;
+    const parsed = splitOpacityToken(baseClass.slice(prefix.length));
+    if (parsed && tokens.colors.has(parsed.key)) {
+      return `${selector} { ${prop}: ${tokenColorValue(parsed.key, parsed.opacity)}; }`;
+    }
+  }
+
+  if (baseClass.startsWith("ring-")) {
+    const parsed = splitOpacityToken(baseClass.slice("ring-".length));
+    if (parsed && tokens.colors.has(parsed.key)) {
+      return `${selector} { --tw-ring-color: ${tokenColorValue(parsed.key, parsed.opacity)}; }`;
+    }
+  }
+
+  if (baseClass.startsWith("font-")) {
+    const key = baseClass.slice("font-".length);
+    if (tokens.fonts.has(key)) {
+      return `${selector} { font-family: var(--font-${key}), sans-serif; }`;
+    }
+  }
+
+  if (baseClass === "rounded" && tokens.radii.has("DEFAULT")) {
+    return `${selector} { border-radius: var(--radius-DEFAULT); }`;
+  }
+  if (baseClass.startsWith("rounded-")) {
+    const key = baseClass.slice("rounded-".length);
+    if (tokens.radii.has(key)) {
+      return `${selector} { border-radius: var(--radius-${key}); }`;
+    }
+  }
+
+  const spacingMatch = baseClass.match(/^(p|px|py|pt|pr|pb|pl|m|mx|my|mt|mr|mb|ml|gap|gap-x|gap-y|space-x|space-y|inset|inset-x|inset-y|top|right|bottom|left)-([a-zA-Z0-9_-]+)$/);
+  if (spacingMatch && tokens.spacing.has(spacingMatch[2])) {
+    const value = `var(--spacing-${spacingMatch[2]})`;
+    const propMap = {
+      p: `padding: ${value}`,
+      px: `padding-left: ${value}; padding-right: ${value}`,
+      py: `padding-top: ${value}; padding-bottom: ${value}`,
+      pt: `padding-top: ${value}`,
+      pr: `padding-right: ${value}`,
+      pb: `padding-bottom: ${value}`,
+      pl: `padding-left: ${value}`,
+      m: `margin: ${value}`,
+      mx: `margin-left: ${value}; margin-right: ${value}`,
+      my: `margin-top: ${value}; margin-bottom: ${value}`,
+      mt: `margin-top: ${value}`,
+      mr: `margin-right: ${value}`,
+      mb: `margin-bottom: ${value}`,
+      ml: `margin-left: ${value}`,
+      gap: `gap: ${value}`,
+      "gap-x": `column-gap: ${value}`,
+      "gap-y": `row-gap: ${value}`,
+      "space-x": `--tw-space-x-reverse: 0; margin-right: calc(${value} * var(--tw-space-x-reverse)); margin-left: calc(${value} * calc(1 - var(--tw-space-x-reverse)))`,
+      "space-y": `--tw-space-y-reverse: 0; margin-top: calc(${value} * calc(1 - var(--tw-space-y-reverse))); margin-bottom: calc(${value} * var(--tw-space-y-reverse))`,
+      inset: `inset: ${value}`,
+      "inset-x": `left: ${value}; right: ${value}`,
+      "inset-y": `top: ${value}; bottom: ${value}`,
+      top: `top: ${value}`,
+      right: `right: ${value}`,
+      bottom: `bottom: ${value}`,
+      left: `left: ${value}`,
+    };
+    return `${selector} { ${propMap[spacingMatch[1]]}; }`;
+  }
+
+  return "";
+}
+
+function ruleForClass(cls, tokens = parseDesignTokensCss("")) {
+  const { variant, base } = splitTailwindVariant(cls);
+  const { selector, variantParts } = selectorForClassVariant(cls, variant);
+  const tokenRule = buildDesignTokenUtilityRule(base, selector, tokens);
+  if (tokenRule) return wrapResponsiveVariant(tokenRule, variantParts);
+
   const textScale = {
     "text-label-sm": "font-size: 0.75rem; line-height: 1rem;",
     "text-label-md": "font-size: 0.875rem; line-height: 1.25rem;",
@@ -522,9 +935,11 @@ function ruleForClass(cls) {
     "text-body-lg": "font-size: 1.125rem; line-height: 1.75rem;",
     "text-headline-md": "font-size: 1.5rem; line-height: 2rem;",
     "text-headline-lg": "font-size: 2rem; line-height: 2.4rem;",
+    "text-display-md": "font-size: 2.25rem; line-height: 1.1;",
     "text-display-lg": "font-size: clamp(2.5rem, 7vw, 4.5rem); line-height: 1;",
+    "text-display-xl": "font-size: 4.5rem; line-height: 1;",
   };
-  if (textScale[cls]) return `.${cssEscapeSelector(cls)} { ${textScale[cls]} }`;
+  if (textScale[base]) return wrapResponsiveVariant(`${selector} { ${textScale[base]} }`, variantParts);
 
   const fontScale = {
     "font-label-sm": "font-weight: 600; letter-spacing: 0.02em;",
@@ -533,11 +948,13 @@ function ruleForClass(cls) {
     "font-body-lg": "font-weight: 400;",
     "font-headline-md": "font-weight: 700;",
     "font-headline-lg": "font-weight: 800;",
+    "font-display-md": "font-weight: 800;",
     "font-display-lg": "font-weight: 900;",
+    "font-display-xl": "font-weight: 900;",
   };
-  if (fontScale[cls]) return `.${cssEscapeSelector(cls)} { ${fontScale[cls]} }`;
+  if (fontScale[base]) return wrapResponsiveVariant(`${selector} { ${fontScale[base]} }`, variantParts);
 
-  const tetromino = cls.match(/^tetromino-([iotszjl])$/i);
+  const tetromino = base.match(/^tetromino-([iotszjl])$/i);
   if (tetromino) {
     const key = tetromino[1].toLowerCase();
     const colors = {
@@ -549,23 +966,24 @@ function ruleForClass(cls) {
       j: "#3b82f6",
       l: "#ef4444",
     };
-    return `.${cssEscapeSelector(cls)} { background: var(--tetromino-${key}, ${colors[key]}); border: 1px solid color-mix(in srgb, var(--tetromino-${key}, ${colors[key]}) 72%, white); box-shadow: inset 0 1px 0 rgba(255,255,255,0.32), inset 0 -2px 0 rgba(0,0,0,0.24); }`;
+    return `${selector} { background: var(--tetromino-${key}, ${colors[key]}); border: 1px solid color-mix(in srgb, var(--tetromino-${key}, ${colors[key]}) 72%, white); box-shadow: inset 0 1px 0 rgba(255,255,255,0.32), inset 0 -2px 0 rgba(0,0,0,0.24); }`;
   }
 
-  if (cls === "ghost-piece") return ".ghost-piece { background: transparent; border: 1px dashed rgba(248,250,252,0.45); opacity: 0.55; }";
-  if (cls === "bg-grid") return ".bg-grid { background-image: linear-gradient(rgba(148,163,184,0.12) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,0.12) 1px, transparent 1px); background-size: 24px 24px; }";
-  if (cls === "machined-border") return ".machined-border { border: 1px solid rgba(148,163,184,0.35); box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 30px rgba(2,6,23,0.35); }";
-  if (cls === "neon-glow-red") return ".neon-glow-red { box-shadow: 0 0 0 1px rgba(244,63,94,0.5), 0 0 24px rgba(244,63,94,0.28); }";
-  if (cls === "min-touch") return ".min-touch { min-width: 44px; min-height: 44px; }";
-  if (cls === "h-touch-target") return ".h-touch-target { height: 44px; }";
-  if (cls === "w-grid-block") return ".w-grid-block { width: clamp(1.1rem, 5vw, 1.85rem); }";
-  if (cls === "h-grid-block") return ".h-grid-block { height: clamp(1.1rem, 5vw, 1.85rem); }";
-  if (cls === "px-gutter") return ".px-gutter { padding-left: clamp(1rem, 4vw, 2rem); padding-right: clamp(1rem, 4vw, 2rem); }";
+  if (base === "ghost-piece") return `${selector} { background: transparent; border: 1px dashed rgba(248,250,252,0.45); opacity: 0.55; }`;
+  if (base === "bg-grid") return `${selector} { background-image: linear-gradient(rgba(148,163,184,0.12) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,0.12) 1px, transparent 1px); background-size: 24px 24px; }`;
+  if (base === "bg-no-repeat") return `${selector} { background-repeat: no-repeat; }`;
+  if (base === "machined-border") return `${selector} { border: 1px solid rgba(148,163,184,0.35); box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 30px rgba(2,6,23,0.35); }`;
+  if (base === "neon-glow-red") return `${selector} { box-shadow: 0 0 0 1px rgba(244,63,94,0.5), 0 0 24px rgba(244,63,94,0.28); }`;
+  if (base === "min-touch") return `${selector} { min-width: 44px; min-height: 44px; }`;
+  if (base === "h-touch-target") return `${selector} { height: 44px; }`;
+  if (base === "w-grid-block") return `${selector} { width: clamp(1.1rem, 5vw, 1.85rem); }`;
+  if (base === "h-grid-block") return `${selector} { height: clamp(1.1rem, 5vw, 1.85rem); }`;
+  if (base === "px-gutter") return `${selector} { padding-left: clamp(1rem, 4vw, 2rem); padding-right: clamp(1rem, 4vw, 2rem); }`;
   return "";
 }
 
-function buildRuntimeUtilityCss(classTokens) {
-  const rules = [...classTokens].map(ruleForClass).filter(Boolean);
+function buildRuntimeUtilityCss(classTokens, tokens = parseDesignTokensCss("")) {
+  const rules = [...classTokens].map(cls => ruleForClass(cls, tokens)).filter(Boolean);
   const hasTetromino = [...classTokens].some(cls => /^tetromino-/i.test(cls));
   if (hasTetromino) {
     rules.unshift(
@@ -583,10 +1001,43 @@ function buildRuntimeUtilityCss(classTokens) {
   ].join("\n");
 }
 
-function ensureStitchRuntimeCss(repoPath, classTokens) {
-  const block = buildRuntimeUtilityCss(classTokens);
+function collectStyleBlocks(html, out) {
+  String(html || "").replace(/<style\b[^>]*>([\s\S]*?)<\/style>/gi, (_match, css) => {
+    const cleaned = sanitizeStitchCustomCss(css);
+    if (cleaned) out.add(cleaned);
+    return "";
+  });
+}
+
+function sanitizeStitchCustomCss(css) {
+  return String(css || "")
+    .replace(/\.material-symbols(?:-[a-z0-9_-]+)?\s*\{[\s\S]*?\}\s*/gi, "")
+    .replace(/font-family\s*:\s*['"]?(?:Material Symbols|Material Icons)[^;]*;?/gi, "")
+    .replace(/theme\(\s*['"]colors\.([a-z0-9_.-]+)['"]\s*\)/gi, (_match, token) => {
+      const cssVar = String(token || "").replace(/[_.]+/g, "-").replace(/[^a-z0-9-]/gi, "").toLowerCase();
+      return cssVar ? `var(--color-${cssVar})` : "currentColor";
+    })
+    .replace(/\btransition\s*:\s*all\b/gi, "transition: color, background-color, border-color, box-shadow, opacity, transform")
+    .trim();
+}
+
+function buildStitchCustomCss(styleBlocks) {
+  const blocks = [...styleBlocks].map((block) => block.trim()).filter(Boolean);
+  if (blocks.length === 0) return "";
+  return [
+    STITCH_CUSTOM_CSS_START,
+    "/* Auto-generated by stitch-to-jsx.mjs from Stitch <style> blocks. */",
+    ...blocks,
+    STITCH_CUSTOM_CSS_END,
+  ].join("\n");
+}
+
+function ensureStitchRuntimeCss(repoPath, classTokens, styleBlocks = new Set()) {
+  const designTokens = designTokensForRepo(repoPath);
+  const utilityBlock = buildRuntimeUtilityCss(classTokens, designTokens);
+  const customBlock = buildStitchCustomCss(styleBlocks);
   const stitchTokensPath = path.join(repoPath, "stitch", "design-tokens.css");
-  if (!block && !fs.existsSync(stitchTokensPath)) return;
+  if (!utilityBlock && !customBlock && !fs.existsSync(stitchTokensPath)) return;
 
   const candidates = ["src/index.css", "src/main.css", "src/App.css", "app/globals.css"];
   let cssRel = candidates.find(rel => fs.existsSync(path.join(repoPath, rel)));
@@ -602,18 +1053,25 @@ function ensureStitchRuntimeCss(repoPath, classTokens) {
     css = `@import '${relImport}';\n${css}`;
   }
 
-  const blockPattern = new RegExp(`${escapeRegExp(STITCH_RUNTIME_CSS_START)}[\\s\\S]*?${escapeRegExp(STITCH_RUNTIME_CSS_END)}\\n?`, "m");
-  css = css.replace(blockPattern, "").trimEnd();
-  if (block) css = `${css}\n\n${block}\n`;
+  const utilityBlockPattern = new RegExp(`${escapeRegExp(STITCH_RUNTIME_CSS_START)}[\\s\\S]*?${escapeRegExp(STITCH_RUNTIME_CSS_END)}\\n?`, "m");
+  const customBlockPattern = new RegExp(`${escapeRegExp(STITCH_CUSTOM_CSS_START)}[\\s\\S]*?${escapeRegExp(STITCH_CUSTOM_CSS_END)}\\n?`, "m");
+  css = css.replace(utilityBlockPattern, "").replace(customBlockPattern, "").trimEnd();
+  if (utilityBlock) css = `${css}\n\n${utilityBlock}\n`;
+  if (customBlock) css = `${css}\n\n${customBlock}\n`;
   fs.writeFileSync(cssPath, css.endsWith("\n") ? css : `${css}\n`);
 }
 
-function replaceMaterialSymbolSpans(html, lucideImports) {
+function replaceMaterialSymbolSpans(html, lucideImports, unknownMaterialIcons) {
   return String(html || "").replace(
     /<span\b([^>]*)\b(class|className)=(["'])([^"']*\b(?:material-symbols(?:-outlined)?|material-icons)\b[^"']*)\3([^>]*)>([\s\S]*?)<\/span>/gi,
     (_match, beforeClass, _classAttr, _quote, classValue, afterClass, inner) => {
       const iconName = materialIconKey(inner);
-      const component = MATERIAL_TO_LUCIDE[iconName] || "Circle";
+      const mappedComponent = MATERIAL_TO_LUCIDE[iconName];
+      if (!mappedComponent) {
+        const key = iconName || "(empty)";
+        unknownMaterialIcons.set(key, (unknownMaterialIcons.get(key) || 0) + 1);
+      }
+      const component = mappedComponent || "BadgeHelp";
       lucideImports.add(component);
       const cleanedClass = normalizeClassTokens(classValue)
         .split(/\s+/)
@@ -626,6 +1084,23 @@ function replaceMaterialSymbolSpans(html, lucideImports) {
       return `<${component}${attrs}${classAttr} aria-hidden="true" focusable="false" />`;
     },
   );
+}
+
+function writeUnknownMaterialIconsReport(repoPath, unknownMaterialIcons) {
+  const setupDir = path.join(repoPath, ".setfarm", "setup");
+  fs.mkdirSync(setupDir, { recursive: true });
+  const icons = [...unknownMaterialIcons.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([iconName, count]) => ({ iconName, count }));
+  fs.writeFileSync(path.join(setupDir, "UNKNOWN_MATERIAL_ICONS.json"), JSON.stringify({
+    status: icons.length > 0 ? "fail" : "pass",
+    generatedAt: new Date().toISOString(),
+    count: icons.length,
+    icons,
+    guidance: icons.length > 0
+      ? "Add deterministic Material Symbol to lucide-react mappings in scripts/stitch-to-jsx.mjs before setup-build can pass."
+      : "All Material Symbols used by Stitch HTML were mapped to lucide-react components.",
+  }, null, 2));
 }
 
 function slugifyActionId(label, fallback) {
@@ -660,13 +1135,21 @@ function attrValue(attrs, attrName) {
   return match ? String(match[1] ?? match[2] ?? match[3] ?? "").trim() : "";
 }
 
+function escapeHtmlAttr(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 function annotateInteractiveElements(html) {
   const actions = [];
   let buttonIndex = 0;
   let linkIndex = 0;
   const withButtons = String(html || "").replace(/<button\b([^>]*)>([\s\S]*?)<\/button>/gi, (match, attrs, inner) => {
     const index = buttonIndex++;
-    const label = textFromHtml(inner) || `Button ${index + 1}`;
+    const label = labelFromInteractive(attrs, inner, `Button ${index + 1}`);
     const base = slugifyActionId(label, "button");
     const id = uniqueActionId(actions, base, index);
     actions.push({ id, kind: "button", label, index });
@@ -676,13 +1159,16 @@ function annotateInteractiveElements(html) {
       .replace(/\sonclick=(?:"[^"]*"|'[^']*')/gi, "")
       .replace(/\sonClick=\{[^}]*\}/g, "");
     if (!/\btype\s*=/.test(cleanAttrs)) cleanAttrs += ' type="button"';
+    if (!/\baria-label\s*=/.test(cleanAttrs) && !/\btitle\s*=/.test(cleanAttrs) && !textFromHtml(stripMaterialIconSpans(inner))) {
+      cleanAttrs += ` aria-label="${escapeHtmlAttr(label)}"`;
+    }
 
     return `<button${cleanAttrs} data-action-id="${id}" onClick={actions?.["${id}"]}>${inner}</button>`;
   });
   const annotated = withButtons.replace(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi, (match, attrs, inner) => {
     const index = linkIndex++;
     const href = attrValue(attrs, "href");
-    const label = textFromHtml(inner) || href || `Link ${index + 1}`;
+    const label = labelFromInteractive(attrs, inner, href || `Link ${index + 1}`);
     const base = slugifyActionId(label, "link");
     const id = uniqueActionId(actions, base, index);
     actions.push({ id, kind: "link", label, href, index });
@@ -691,37 +1177,66 @@ function annotateInteractiveElements(html) {
       .replace(/\sdata-action-id=(?:"[^"]*"|'[^']*')/gi, "")
       .replace(/\sonclick=(?:"[^"]*"|'[^']*')/gi, "")
       .replace(/\sonClick=\{[^}]*\}/g, "");
+    const accessibleAttrs = !/\baria-label\s*=/.test(cleanAttrs) && !/\btitle\s*=/.test(cleanAttrs) && !textFromHtml(stripMaterialIconSpans(inner))
+      ? `${cleanAttrs} aria-label="${escapeHtmlAttr(label)}"`
+      : cleanAttrs;
 
-    return `<a${cleanAttrs} data-action-id="${id}" onClick={actions?.["${id}"]}>${inner}</a>`;
+    return `<a${accessibleAttrs} data-action-id="${id}" data-setfarm-link-action="${id}">${inner}</a>`;
   });
   return { html: annotated, actions };
 }
 
+function restoreGeneratedLinkActionHandlers(jsx) {
+  return String(jsx || "").replace(
+    /\sdata-setfarm-link-action="([^"]+)"/g,
+    (_match, id) => ` onClick={(event) => { event.preventDefault(); actions?.["${id}"]?.(); }}`,
+  );
+}
+
+function isGameplayScreen(screen) {
+  return /\b(gameplay|playfield|browser[- ]?game|arcade|SURF_GAMEPLAY)\b/i.test(
+    [screen?.title, screen?.screenId, screen?.surfaceId, screen?.kind].filter(Boolean).join(" "),
+  );
+}
+
+function gameRuntimeType() {
+  return "{ player?: { lane?: number; position?: number }; obstacles?: Array<{ lane?: number; position?: number }>; shards?: Array<{ lane?: number; position?: number }>; score?: number; energy?: number; lives?: number; paused?: boolean }";
+}
+
 const screenIndex = [];
 const usedClassTokens = new Set();
+const stitchStyleBlocks = new Set();
+const unknownMaterialIcons = new Map();
 for (const screen of manifest) {
   if (isPrdPseudoScreen(screen)) { console.warn("  SKIP PRD:", screen.title); continue; }
   const htmlFile = findScreenHtml(screen);
   if (!htmlFile) { console.warn("  SKIP invalid/missing HTML:", screen.title); continue; }
   const raw = fs.readFileSync(htmlFile, "utf-8");
+  collectStyleBlocks(raw, stitchStyleBlocks);
   const body = extractBody(raw);
   const lucideImports = new Set();
-  const normalizedBody = replaceMaterialSymbolSpans(normalizeDesignClassAttributes(body), lucideImports);
+  const classNormalizedBody = normalizeDesignClassAttributes(body);
+  const { html: interactiveBody, actions } = annotateInteractiveElements(classNormalizedBody);
+  const normalizedBody = replaceMaterialSymbolSpans(interactiveBody, lucideImports, unknownMaterialIcons);
   collectClassTokens(normalizedBody, usedClassTokens);
-  const { html: interactiveBody, actions } = annotateInteractiveElements(normalizedBody);
-  const jsx = htmlToJsx(interactiveBody);
+  const jsx = restoreGeneratedLinkActionHandlers(htmlToJsx(normalizedBody));
   const name = toComponentName(screen.title);
   if (!name) { console.warn("  SKIP empty component name:", screen.title); continue; }
   const buttons = [...body.matchAll(/<button[^>]*>/gi)].length;
   const inputs = [...body.matchAll(/<input[^>]*>/gi)].length;
   const links = [...body.matchAll(/<a\s[^>]*>/gi)].length;
   const actionType = actions.length > 0 ? actions.map((action) => JSON.stringify(action.id)).join(" | ") : "never";
-  const functionSignature = actions.length > 0
-    ? `export function ${name}({ actions }: ${name}Props) {`
+  const needsRuntime = isGameplayScreen(screen);
+  const functionSignature = actions.length > 0 || needsRuntime
+    ? `export function ${name}({ ${[
+      actions.length > 0 ? "actions" : "",
+      needsRuntime ? "runtime" : "",
+    ].filter(Boolean).join(", ")} }: ${name}Props) {`
     : `export function ${name}(_props: ${name}Props) {`;
   const importBlock = lucideImports.size > 0
     ? `import { ${[...lucideImports].sort().join(", ")} } from "lucide-react";\n\n`
     : "";
+  const runtimeProp = needsRuntime ? `  runtime?: ${gameRuntimeType()};\n` : "";
 
   const code = `// AUTO-GENERATED from Stitch — DO NOT modify layout or CSS
 // Screen: ${screen.title}
@@ -737,10 +1252,11 @@ export type ${name}ActionId = ${actionType};
 
 export interface ${name}Props {
   actions?: Partial<Record<${name}ActionId, () => void>>;
+${runtimeProp}
 }
 
 ${functionSignature}
-  return (
+${needsRuntime ? "  void runtime;\n" : ""}  return (
     <>
 ${jsx.split("\n").map(l => "      " + l).join("\n")}
     </>
@@ -753,12 +1269,28 @@ ${jsx.split("\n").map(l => "      " + l).join("\n")}
 }
 
 fs.writeFileSync(path.join(screensDir, "SCREEN_INDEX.json"), JSON.stringify(screenIndex, null, 2));
-const barrel = screenIndex
+const uniqueBarrelScreens = [];
+const seenBarrelComponents = new Set();
+for (const screen of screenIndex) {
+  if (!screen?.componentName || seenBarrelComponents.has(screen.componentName)) continue;
+  seenBarrelComponents.add(screen.componentName);
+  uniqueBarrelScreens.push(screen);
+}
+const barrel = uniqueBarrelScreens
   .map((screen) => [
     `export { ${screen.componentName} } from "./${screen.componentName}";`,
     `export type { ${screen.componentName}Props, ${screen.componentName}ActionId } from "./${screen.componentName}";`,
   ].join("\n"))
   .join("\n");
 fs.writeFileSync(path.join(screensDir, "index.ts"), barrel ? `${barrel}\n` : "");
-ensureStitchRuntimeCss(repoPath, usedClassTokens);
+ensureStitchRuntimeCss(repoPath, usedClassTokens, stitchStyleBlocks);
+writeUnknownMaterialIconsReport(repoPath, unknownMaterialIcons);
+if (unknownMaterialIcons.size > 0 && process.env.SETFARM_ALLOW_UNKNOWN_MATERIAL_ICONS !== "1") {
+  console.error("UNKNOWN_MATERIAL_ICONS: stitch-to-jsx could not map Material Symbols to lucide-react.");
+  for (const [iconName, count] of [...unknownMaterialIcons.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    console.error(`  - ${iconName} (${count})`);
+  }
+  console.error("Add deterministic mappings in scripts/stitch-to-jsx.mjs before setup-build can pass.");
+  process.exit(2);
+}
 console.log("Generated", screenIndex.length, "screen(s)");

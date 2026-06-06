@@ -4,6 +4,7 @@ import fs from "node:fs";
 import { resolveSetfarmCli } from "./installer/paths.js";
 import { classifyError } from "./installer/error-taxonomy.js";
 import { readSupervisorState, supervisorStatePath } from "./installer/supervisor/state.js";
+import { implementEvidenceArtifactPaths, readImplementEvidenceConfig } from "./installer/implement-evidence.js";
 
 function shellQuote(value: string): string {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
@@ -153,13 +154,49 @@ function extractOutputContract(input: string): { format: string; requiredFields:
     .join("\n")
     .slice(0, 1800);
   if (!format) return undefined;
-  const requiredFields = Array.from(new Set(
-    format
-      .split(/\r?\n/)
-      .map((line) => line.match(/^\s*([A-Z][A-Z0-9_]+)\s*:/)?.[1])
-      .filter((value): value is string => Boolean(value)),
-  ));
+  const requiredFields = outputContractRequiredFields(format);
   return { format, requiredFields };
+}
+
+function outputContractRequiredFields(format: string): string[] {
+  const lines = format.split(/\r?\n/);
+  const hasConditionalBranches = lines.some((line) => /^\s*If\b/i.test(line));
+  if (!hasConditionalBranches) {
+    return Array.from(new Set(
+      lines
+        .map((line) => line.match(/^\s*([A-Z][A-Z0-9_]+)\s*:/)?.[1])
+        .filter((value): value is string => Boolean(value)),
+    ));
+  }
+
+  const positiveFields: string[] = [];
+  const neutralFields: string[] = [];
+  let branch: "neutral" | "positive" | "blocked" = "neutral";
+  for (const line of lines) {
+    if (/^\s*If\b/i.test(line)) {
+      branch = /\b(clean|fixed|you fixed|success|passes?)\b/i.test(line)
+        ? "positive"
+        : "blocked";
+      continue;
+    }
+    const field = line.match(/^\s*([A-Z][A-Z0-9_]+)\s*:/)?.[1];
+    if (!field) continue;
+    if (branch === "positive") positiveFields.push(field);
+    else if (branch === "neutral") neutralFields.push(field);
+  }
+
+  const fields = positiveFields.length ? [...neutralFields, ...positiveFields] : [...neutralFields];
+  if (!fields.length) {
+    return Array.from(new Set(
+      lines
+        .map((line) => line.match(/^\s*([A-Z][A-Z0-9_]+)\s*:/)?.[1])
+        .filter((value): value is string => Boolean(value)),
+    ));
+  }
+  const requiredFields = Array.from(new Set(
+    fields,
+  ));
+  return requiredFields;
 }
 
 function defaultOutputContract(role: string): { source: string; format: string; requiredFields: string[]; instruction: string } {
@@ -177,7 +214,7 @@ function defaultOutputContract(role: string): { source: string; format: string; 
         "SCOPE: <files changed/read or none>",
       ].join("\n"),
       requiredFields: ["STATUS", "STORY", "ROLE", "RESULT", "FINDINGS", "CHECKS", "SCOPE"],
-      instruction: "Final step output must include these fields. Use STATUS: retry for real defects, STATUS: fail only for unrecoverable infrastructure, and STATUS: done only after the role prompt's pass requirements are met.",
+      instruction: "Final step output must include these fields. Use STATUS: retry for real defects, STATUS: fail only for unrecoverable infrastructure, and STATUS: done only after the role prompt's pass requirements are met. After proving the first real blocker with one primary check and, for missing behavior, one narrower confirmation check, return STATUS: retry immediately instead of continuing source hunting.",
     };
   }
   if (normalized === "supervisor") {
@@ -193,7 +230,7 @@ function defaultOutputContract(role: string): { source: string; format: string; 
         "RISKS: <remaining risks or none>",
         "ISSUES: <blocking issues or none>",
       ].join("\n"),
-      requiredFields: ["STATUS", "SUPERVISOR_DECISION", "AC_COVERAGE", "SUPERVISOR_MEMORY_APPEND", "CHECKS", "CHANGES", "RISKS", "ISSUES"],
+      requiredFields: ["STATUS", "SUPERVISOR_DECISION", "AC_COVERAGE", "SUPERVISOR_MEMORY_APPEND", "CHECKS", "CHANGES", "RISKS"],
       instruction: "Final step output must include these fields. Use SUPERVISOR_DECISION: block when implementation must retry.",
     };
   }
@@ -347,10 +384,101 @@ function sliceSection(input: string, start: RegExp, ends: RegExp[], limit: numbe
   return input.slice(startIndex, endIndex).trim().slice(0, limit);
 }
 
+function sliceSectionUnbounded(input: string, start: RegExp, ends: RegExp[]): string {
+  const match = start.exec(input);
+  if (!match || match.index === undefined) return "";
+  const startIndex = match.index + match[0].length;
+  let endIndex = input.length;
+  const rest = input.slice(startIndex);
+  for (const end of ends) {
+    const endMatch = end.exec(rest);
+    if (endMatch && endMatch.index !== undefined) endIndex = Math.min(endIndex, startIndex + endMatch.index);
+  }
+  return input.slice(startIndex, endIndex).trim();
+}
+
+function summarizeArrayItems(value: unknown, limit = 6): string[] {
+  return Array.isArray(value)
+    ? value
+        .map((item) => typeof item === "string" ? item : JSON.stringify(item))
+        .filter(Boolean)
+        .slice(0, limit)
+    : [];
+}
+
+function compactStoryImplementationContract(raw: string): string {
+  const jsonStart = raw.indexOf("{");
+  const jsonEnd = raw.lastIndexOf("}");
+  if (jsonStart < 0 || jsonEnd <= jsonStart) return "";
+  try {
+    const contract = JSON.parse(raw.slice(jsonStart, jsonEnd + 1));
+    const lines: string[] = [];
+    lines.push("Story implementation contract summary (full JSON omitted from bootstrap to avoid unsafe truncation):");
+    const ownedActions = Array.isArray(contract.owned_actions) ? contract.owned_actions : [];
+    if (ownedActions.length) {
+      lines.push(`- owned_actions: ${ownedActions.slice(0, 8).map((action: any) => {
+        const id = String(action?.id || "").trim();
+        const trigger = String(action?.trigger || action?.state_change || "").replace(/\s+/g, " ").trim();
+        return trigger ? `${id} (${trigger.slice(0, 120)})` : id;
+      }).filter(Boolean).join("; ")}`);
+    }
+    for (const [label, key] of [
+      ["state_contract", "state_contract"],
+      ["persistence_contract", "persistence_contract"],
+      ["navigation_contract", "navigation_contract"],
+      ["test_contract", "test_contract"],
+    ] as const) {
+      const items = summarizeArrayItems(contract[key], 4);
+      if (items.length) lines.push(`- ${label}: ${items.join("; ")}`);
+    }
+    const scopeRoles = Array.isArray(contract.resolved_scope_roles) ? contract.resolved_scope_roles : [];
+    if (scopeRoles.length) {
+      lines.push(`- resolved_scope_roles: ${scopeRoles.slice(0, 12).map((role: any) => {
+        const roleName = String(role?.role || "").trim();
+        const rolePath = String(role?.path || "").trim();
+        return roleName && rolePath ? `${roleName}:${rolePath}` : roleName || rolePath;
+      }).filter(Boolean).join("; ")}`);
+    }
+    return lines.join("\n").slice(0, 2400);
+  } catch {
+    return "";
+  }
+}
+
+function safeAcceptanceCriteria(raw: string, limit = 1800): string {
+  const value = raw.trim();
+  if (!value || value.length <= limit) return value;
+  const contractSummary = compactStoryImplementationContract(value);
+  if (contractSummary) {
+    const beforeJson = value.slice(0, Math.max(0, value.indexOf("{")))
+      .split(/\r?\n/)
+      .map((line) => line.trimEnd())
+      .filter((line) => line.trim())
+      .slice(0, 10)
+      .join("\n");
+    return [beforeJson, contractSummary].filter(Boolean).join("\n\n").slice(0, 3000);
+  }
+  const safeCut = value.lastIndexOf("\n", limit);
+  const head = value.slice(0, safeCut > 200 ? safeCut : limit).trimEnd();
+  return `${head}\n...(truncated at safe boundary; use claim summary fields and scope files, not partial JSON)`;
+}
+
 function cleanPreviousFailureSection(raw: string): string {
   let value = String(raw || "").trim();
   const claimHandoff = value.search(/^\s*##\s*Claim Handoff\b/im);
   if (claimHandoff >= 0) value = value.slice(0, claimHandoff).trim();
+  value = value.replace(
+    /(?:\n\s*)?ALSO_FIX:\s*\n\s*RETRY_WORKTREE_PATCH:\s*[\s\S]*?(?=\n\s*(?:Failure category|Suggested response|RETRY_ACTION|RETRY_INSTRUCTION|##\s|CURRENT STORY|IMPLEMENTATION PHASE)\b|$)/gi,
+    "\nALSO_FIX:\nRETRY_WORKTREE_PATCH: omitted from retry feedback because raw diffs are not safe claim context. Use the compact retryFeedback category/suggestion plus scopeFiles and current source state.",
+  );
+  value = value.replace(
+    /```diff[\s\S]*?```/gi,
+    "[raw diff omitted from retry feedback]",
+  );
+  value = value.replace(
+    /^diff --git [\s\S]*$/gim,
+    "[raw diff omitted from retry feedback]",
+  );
   value = value
     .split(/\r?\n/)
     .filter((line) => !/^\s*(?:Failure category|Suggested response):\s*$/i.test(line))
@@ -598,11 +726,12 @@ function readCurrentSupervisorEvidenceSummary(params: {
   runId: string;
   storyId?: string;
   storyBranch?: string;
+  role?: string;
 }): Record<string, unknown> | undefined {
-  const { workdir, repo, runId, storyId, storyBranch } = params;
+  const { workdir, repo, runId, storyId, storyBranch, role } = params;
   if (!workdir || !runId) return undefined;
   const summaries = supervisorEvidenceRoots(workdir, repo, storyBranch)
-    .map((root) => readSupervisorEvidenceSummaryFromRoot(root, runId, storyId))
+    .map((root) => readSupervisorEvidenceSummaryFromRoot(root, runId, storyId, role))
     .filter((summary): summary is Record<string, unknown> => Boolean(summary));
   if (!summaries.length) return undefined;
 
@@ -614,6 +743,7 @@ function readSupervisorEvidenceSummaryFromRoot(
   root: string,
   runId: string,
   storyId?: string,
+  role?: string,
 ): Record<string, unknown> | undefined {
   const stateFile = supervisorStatePath(root, runId);
   if (!fs.existsSync(stateFile)) return undefined;
@@ -626,36 +756,54 @@ function readSupervisorEvidenceSummaryFromRoot(
   ]);
   const evidenceEntries = Object.entries(state.evidence)
     .filter(([itemId, evidence]) => scopedIds.has(itemId) || (!!storyId && (evidence as any).storyId === storyId));
+  const resolvedIds = new Set(story?.resolved || []);
+  const isActiveFinding = (itemId: string): boolean => {
+    const evidence = state.evidence[itemId];
+    if (!evidence) return false;
+    if (resolvedIds.has(itemId)) return false;
+    return evidence.status !== "passed";
+  };
+  const activeBlockerIds = (story?.openBlockers || []).filter(isActiveFinding);
+  const activeWarningIds = (story?.warnings || []).filter(isActiveFinding);
+  const derivedStoryStatus = activeBlockerIds.length > 0
+    ? "blocked"
+    : activeWarningIds.length > 0
+      ? "warning"
+      : story
+        ? "passed"
+        : "unknown";
 
-  const blockers = (story?.openBlockers || [])
+  const blockers = activeBlockerIds
     .map((itemId) => state.evidence[itemId])
     .filter(Boolean)
-    .map(compactSupervisorEvidence)
+    .map((evidence) => compactSupervisorEvidence(evidence, role))
     .slice(0, 8);
-  const warnings = (story?.warnings || [])
+  const warnings = activeWarningIds
     .map((itemId) => state.evidence[itemId])
     .filter(Boolean)
-    .map(compactSupervisorEvidence)
+    .map((evidence) => compactSupervisorEvidence(evidence, role))
     .slice(0, 8);
   const resolved = (story?.resolved || [])
     .map((itemId) => state.evidence[itemId])
     .filter(Boolean)
     .sort((a, b) => String(b.checkedAt || "").localeCompare(String(a.checkedAt || "")))
-    .map(compactSupervisorEvidence)
+    .map((evidence) => compactSupervisorEvidence(evidence, role))
     .slice(0, 12);
 
   return {
     source: "current-supervisor-state",
-    instruction: "Current-source scanner evidence is newer than initial Stitch/UI_CONTRACT data. For audit-mode retries, trust openBlockers/warnings here over stale retryFeedback or original designContracts when they conflict.",
+    instruction: role === "reviewer"
+      ? "Current-source scanner evidence is system-owned. If open visual blockers exist, report them concisely from this summary; do not open screenshot/image artifacts or run broad browser rechecks."
+      : "Current-source scanner evidence is newer than initial Stitch/UI_CONTRACT data. For audit-mode retries, trust openBlockers/warnings here over stale retryFeedback or original designContracts when they conflict.",
     path: stateFile,
     workdir: root,
     projectStatus: state.projectStatus,
     updatedAt: state.updatedAt,
     storyId,
-    storyStatus: story?.status || "unknown",
+    storyStatus: derivedStoryStatus,
     counts: {
-      blockers: story?.openBlockers.length || 0,
-      warnings: story?.warnings.length || 0,
+      blockers: activeBlockerIds.length,
+      warnings: activeWarningIds.length,
       resolved: story?.resolved.length || 0,
       evidence: evidenceEntries.length,
       passed: evidenceEntries.filter(([, evidence]) => evidence.status === "passed").length,
@@ -674,15 +822,15 @@ function supervisorEvidenceScore(summary: Record<string, unknown>): number {
   };
   const storyStatus = String(summary.storyStatus || "");
   const updatedAt = Date.parse(String(summary.updatedAt || ""));
-  const recencyTieBreaker = Number.isFinite(updatedAt) ? Math.min(updatedAt / 1_000_000_000_000_000, 1) : 0;
+  const recencyScore = Number.isFinite(updatedAt) ? updatedAt : 0;
   return (
-    (storyStatus && storyStatus !== "unknown" ? 10_000 : 0) +
+    (storyStatus && storyStatus !== "unknown" ? 1_000_000_000_000_000 : 0) +
+    recencyScore +
     numeric("blockers") * 1_000 +
     numeric("warnings") * 400 +
     numeric("resolved") * 120 +
     numeric("passed") * 80 +
-    numeric("evidence") * 50 +
-    recencyTieBreaker
+    numeric("evidence") * 50
   );
 }
 
@@ -707,15 +855,18 @@ function supervisorEvidenceRoots(workdir: string, repo: string, storyBranch?: st
   return [...new Set(roots.map((item) => path.resolve(item)))];
 }
 
-function compactSupervisorEvidence(evidence: any): Record<string, unknown> {
+function compactSupervisorEvidence(evidence: any, role?: string): Record<string, unknown> {
+  const reviewerVisual = role === "reviewer" && (String(evidence.itemId || "").startsWith("visual:") || evidence.lastScan === "visual-qa");
   return {
     itemId: evidence.itemId,
     status: evidence.status,
     severity: evidence.severity,
-    file: Array.isArray(evidence.files) ? evidence.files[0] : undefined,
+    file: reviewerVisual ? undefined : (Array.isArray(evidence.files) ? evidence.files[0] : undefined),
     line: evidence.line,
-    message: String(evidence.message || "").slice(0, 240),
-    observed: Array.isArray(evidence.observed) ? evidence.observed.slice(0, 4) : [],
+    message: reviewerVisual
+      ? String(evidence.message || "").replace(/\s+/g, " ").slice(0, 180)
+      : String(evidence.message || "").slice(0, 240),
+    observed: reviewerVisual ? [] : (Array.isArray(evidence.observed) ? evidence.observed.slice(0, 4) : []),
     checkedAt: evidence.checkedAt,
   };
 }
@@ -738,20 +889,58 @@ function retryDisciplineForFailure(
       instruction: "Scope-file retry discipline: first create meaningful non-empty code in the declared scope_files that belong to this story, especially app shell, context, hooks, domain types, storage helpers, and CSS files when listed. Do not collapse the implementation into one file and do not report STATUS: done until the owned scope files exist.",
     };
   }
+  if (/\bSCOPE_BLEED\b[\s\S]{0,520}\b(?:package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock)\b/i.test(signal)) {
+    return {
+      mode: "semantic-fix",
+      instruction: "Package-scope retry discipline: first remove package.json, package-lock.json, pnpm-lock.yaml, and yarn.lock changes from the story worktree. Do not install dependencies, rewrite package scripts, or create lockfile deltas in IMPLEMENT. Use the existing BUILD_CMD/TEST_CMD and existing stack-pack dependencies; if the story cannot be implemented without a new dependency, report that as a setup-build/stack-pack dependency blocker instead of editing package files.",
+    };
+  }
   if (/\bSUPERVISOR_BLOCKERS_OPEN\b/i.test(signal)) {
     return {
       mode: "semantic-fix",
       instruction: "Supervisor checklist discipline: fix the exact reported blocker ids in scoped files first. Missing controls, dead links, and static active controls are blockers; labeled icon/label drift is warning-level unless the checklist marks it blocker. Do not read raw Stitch files or broaden scope.",
     };
   }
-  if (!/(AGENT_STALL|IMPLEMENT_NO_DELTA_STALL|IMPLEMENT_PRE_DELTA_CHECK_VIOLATION|NO_WORK_DETECTED|CLAIM_SUMMARY_IGNORED|CLAIM_PARSE_LOOP|GENERATED_SCREEN_SHARED_READ|RAW_STITCH_CONTEXT_READ|IRRELEVANT_REFERENCE_CONTEXT|FULL_REFERENCE_CONTEXT_READ|SCOPE_WRITE_VIOLATION)/i.test(signal)) {
+  if (/\bAPP_INTEGRATION_REGRESSION\b|\bAPP_INTEGRATION_(?:SCOPE|SEMANTIC|PROP)_REGRESSION\b/i.test(signal)) {
+    return {
+      mode: "semantic-fix",
+      instruction: "App integration regression discipline: first restore the previously accepted app/router wiring from the story branch base, including prior story action helper imports, keyboard/control bridges, data-testid values, ARIA/live-region/status contracts, and generated screen props. Then apply only this story's scoped additions. Do not remove or simplify previous story branches to make the current story pass.",
+    };
+  }
+  if (!/(AGENT_STALL|IMPLEMENT_NO_DELTA_STALL|IMPLEMENT_PRE_DELTA_CHECK_VIOLATION|NO_WORK_DETECTED|CLAIM_SUMMARY_IGNORED|CLAIM_PARSE_LOOP|GENERATED_SCREEN_SHARED_READ|RAW_STITCH_CONTEXT_READ|IRRELEVANT_REFERENCE_CONTEXT|FULL_REFERENCE_CONTEXT_READ|SCOPE_WRITE_VIOLATION|LLM_SUPERVISOR_BLOCKED|SUPERVISOR_VISUAL_QA_BLOCKED|layout_overflow)/i.test(signal)) {
     return undefined;
   }
   return {
     mode: "first-delta",
     maxPreDeltaContextReads: 10,
-    instruction: "Hard manager retry discipline: after bootstrap and the claim summary, inspect only the owned scope files plus safe metadata needed for the first edit, then make a small scoped source delta before broad analysis/build/test. Do not read raw stitch files, forbidden generated screens, full claims, or unrelated shared source to re-learn the project.",
+    instruction: "Hard manager retry discipline: after bootstrap and the claim summary, inspect only the owned scope files plus safe metadata needed for the first edit, then make a small scoped source delta that addresses the reported blocker before broad analysis/build/test. Do not read raw stitch files, forbidden generated screens, full claims, or unrelated shared source to re-learn the project.",
   };
+}
+
+function acceptanceCriteriaLines(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(String);
+  return String(value || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+
+function looksLikeBrowserGameClaim(input: string, task: string, currentStory: { storyTitle: string; acceptanceCriteria: unknown }): boolean {
+  const signal = [
+    input,
+    task,
+    currentStory.storyTitle,
+    ...acceptanceCriteriaLines(currentStory.acceptanceCriteria),
+  ].join("\n").toLowerCase();
+  return /\b(browser-game|browser game|canvas-game|arcade|gameplay|game settings|playfield|score|high score|level|lives|paused|game over|paddle|runner|flappy|breakout|tetris|pong)\b/.test(signal);
+}
+
+function runtimeDoneChecklistForClaim(input: string, task: string, currentStory: { storyTitle: string; acceptanceCriteria: unknown }): string[] {
+  if (!looksLikeBrowserGameClaim(input, task, currentStory)) return [];
+  return [
+    "Browser-game interactive stories must keep every data-setfarm-root wrapper as a neutral viewport frame: className includes relative, min-h-screen or h-screen, w-full or w-screen, and overflow-hidden.",
+    "Browser-game runtime must contain a visible scheduled loop using setInterval or requestAnimationFrame that dispatches or calls a tick/advance/step/update action; reducer definitions without a timer do not count.",
+    "Interactive runtime state must be exposed from live source through window.app or globalThis.app with state and actions; window.game, comments, and type declarations do not count.",
+    "Generated Stitch screens must remain imported/reachable and wired through their declared actions prop IDs; do not replace generated gameplay/settings screens with custom shells.",
+    "Before STATUS: done, run build/test and search scoped source for the runtime loop primitive plus window.app/globalThis.app assignment.",
+  ];
 }
 
 function meaningfulFailureCategory(value: string): string {
@@ -769,29 +958,43 @@ function compactFailureLine(value: string, limit = 1200): string {
   return value.replace(/\s+/g, " ").trim().slice(0, limit);
 }
 
+function retryFeedbackBlockerLimit(value: string): number {
+  return /\bPR_REVIEW_COMMENTS_OPEN\b|##\s*PR Comments\b/i.test(value) ? 6000 : 1200;
+}
+
+function extractPrReviewThreadIds(value: string): string[] {
+  const ids = new Set<string>();
+  const re = /\bthread=([A-Za-z0-9_-]+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(value)) !== null) {
+    if (match[1]) ids.add(match[1]);
+  }
+  return Array.from(ids);
+}
+
 function extractCurrentStory(input: string): { storyId: string; storyTitle: string; currentStory: string; acceptanceCriteria: string } {
-  const currentStorySection = sliceSection(
+  const currentStorySection = sliceSectionUnbounded(
     input,
     /^\s*CURRENT STORY:\s*/m,
     [/^\s*For `SUPERVISOR_SCOPE/m, /^\s*PREVIOUS FAILURE:/m, /^\s*=== PROJECT CONTEXT/m, /^\s*FILE TREE/m, /^\s*DESIGN DATA/m],
-    2600,
   );
   const source = currentStorySection || input;
-  const storyMatch = source.match(/\bStory\s+([A-Z]+-\d+):\s*([^\n]+)/i)
-    || source.match(/^\s*CURRENT_STORY:\s*([A-Z]+-\d+)\s+([^\n]+)/im)
-    || source.match(/^\s*STORY[=:]\s*([A-Z]+-\d+)\s+([^\n]+)/im);
-  const acceptanceCriteria = sliceSection(
+  const storyIdPattern = "([A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*-\\d+)";
+  const storyMatch = source.match(new RegExp(`\\bStory\\s+${storyIdPattern}:\\s*([^\\n]+)`, "i"))
+    || source.match(new RegExp(`^\\s*CURRENT_STORY:\\s*${storyIdPattern}\\s+([^\\n]+)`, "im"))
+    || source.match(new RegExp(`^\\s*STORY[=:]\\s*${storyIdPattern}\\s+([^\\n]+)`, "im"));
+  const acceptanceCriteriaRaw = sliceSectionUnbounded(
     source,
     /^\s*Acceptance Criteria:\s*/m,
     [/^\s*SCOPE:/m, /^\s*[A-Z][A-Z _-]+:/m, /^\s*===/m],
-    1800,
   );
+  const acceptanceCriteria = safeAcceptanceCriteria(acceptanceCriteriaRaw, 1800);
   const storyId = (storyMatch?.[1] || "").trim();
   const storyTitle = (storyMatch?.[2] || "").trim();
   return {
     storyId,
     storyTitle,
-    currentStory: currentStorySection || (storyId ? `Story ${storyId}: ${storyTitle}`.trim() : ""),
+    currentStory: (currentStorySection || (storyId ? `Story ${storyId}: ${storyTitle}`.trim() : "")).slice(0, 3000),
     acceptanceCriteria,
   };
 }
@@ -855,6 +1058,10 @@ export function buildClaimSummary(params: {
   const generatedScreenFiles = readGeneratedScreenFiles(workdir);
   const generatedScreenAllowed = generatedScreenFiles.filter((file) => scopeFileSet.has(file));
   const generatedScreenReadOnly = generatedScreenFiles.filter((file) => !scopeFileSet.has(file));
+  const touchesAppIntegration = scopeFiles.some((file) =>
+    /(^|\/)(App|main|router|routes|Navigation|ContentView|MainActivity|RootView)\.(tsx?|jsx?|swift|kt|java)$/i.test(file)
+    || /(^|\/)(app|router|routes|navigation|content-view|main-activity|root-view)\//i.test(file)
+  );
   const designContracts = readDesignContractSummary(workdir);
   const supervisorMemoryFromInput = sliceSection(
     input,
@@ -874,7 +1081,7 @@ export function buildClaimSummary(params: {
       /^\s*IMPLEMENTATION PHASE/im,
       /^\s*FILE SKELETONS/im,
     ],
-    2200,
+    12000,
   ));
   const explicitFailureCategory = meaningfulFailureCategory(
     lineValue(previousFailure, "Failure category") || lineValue(input, "Failure category"),
@@ -892,6 +1099,9 @@ export function buildClaimSummary(params: {
   const buildCommand = resolvedCommand(input, "BUILD_CMD", [workdir, repo], "build", "true");
   const testCommand = resolvedCommand(input, "TEST_CMD", [workdir, repo], "test", "true");
   const lintCommand = resolvedCommand(input, "LINT_CMD", [workdir, repo], "lint", "true");
+  const runtimeDoneChecklist = runtimeDoneChecklistForClaim(input, task, currentStory);
+  const implementEvidenceConfig = readImplementEvidenceConfig();
+  const implementEvidencePaths = storyId ? implementEvidenceArtifactPaths(workdir, storyId) : null;
   return {
     schema: "setfarm.claim-summary.v1",
     workflow: params.wfId,
@@ -910,6 +1120,7 @@ export function buildClaimSummary(params: {
     storyWorkdir,
     verifyWorkdir: storyWorkdir || workdir,
     storyBranch,
+    storyDiffBase: lineValue(input, "STORY_DIFF_BASE"),
     runBranch: lineValue(input, "RUN_BRANCH"),
     buildCommand,
     testCommand,
@@ -948,6 +1159,7 @@ export function buildClaimSummary(params: {
       runId: params.runId,
       storyId,
       storyBranch,
+      role: params.role,
     }),
     sharedFiles: splitCsvList(lineValue(input, "story_shared_files")),
     storyScreens: parseJsonArray(storyScreensRaw),
@@ -959,6 +1171,27 @@ export function buildClaimSummary(params: {
       forbiddenSourceFiles: generatedScreenReadOnly,
       safeMetadataFiles: ["src/screens/SCREEN_INDEX.json", "src/screens/index.ts"],
     },
+    integrationPolicy: {
+      applies: touchesAppIntegration,
+      summary: touchesAppIntegration
+        ? "This story may touch app/router/shell integration, so preserve existing reachable render paths before adding the current story. Do not replace, delete, or stop rendering previously integrated generated screens/components. Add the new screen through an explicit state/route/branch using declared contracts and keep prior branches intact."
+        : "This story does not own app/router/shell integration. Do not add or remove app-level render paths.",
+      requiredCheck: touchesAppIntegration
+        ? "Before STATUS: done, compare the app/router diff and confirm previous generated screen imports/render branches remain reachable while the current story screen is added."
+        : "Before STATUS: done, confirm no app/router/shell integration file was changed outside scope.",
+    },
+    runtimeDoneChecklist,
+    implementEvidenceContract: storyId ? {
+      mode: implementEvidenceConfig.mode,
+      visualGate: implementEvidenceConfig.visualGate,
+      visualProvider: implementEvidenceConfig.visualProvider,
+      intentPath: implementEvidencePaths?.intent,
+      verificationRequestPath: implementEvidencePaths?.request,
+      evidencePath: implementEvidencePaths?.evidence,
+      instruction: "For runtime/UI stories, write IMPLEMENT_INTENT.json before broad coding and IMPLEMENT_VERIFICATION_REQUEST.json before STATUS: done. Setfarm owns IMPLEMENT_EVIDENCE.json and executes the runtime evidence. Use the top-level JSON key named schema; do not use $schema.",
+      intentSchema: "top-level schema key, not $schema. Required exact JSON for interactive criteria: {\"schema\":\"setfarm.implement-intent.v1\",\"storyId\":\"<storyId>\",\"storyType\":\"ui_interactive\",\"acceptanceCriteria\":[{\"id\":\"AC-001\",\"description\":\"...\"}],\"runtimeEvidenceRequired\":{\"minFlowCount\":1}}. Use minFlowCount:0 only when acceptance criteria require no user/runtime interaction.",
+      verificationRequestSchema: "top-level schema key, not $schema. Required exact JSON: {\"schema\":\"setfarm.implement-verification-request.v1\",\"storyId\":\"<storyId>\",\"status\":\"ready_for_orchestrator_verification\",\"interactionRequests\":[{\"id\":\"flow-1\",\"action\":\"click\",\"target\":\"[data-action-id='<action-id>']\",\"waitCondition\":\"dom_idle\",\"timeoutMs\":1000}],\"uncoveredCriteria\":[],\"knownGaps\":[]}. interactionRequests may be [] only when criteria require no interaction; otherwise request executable actions or list criteria in uncoveredCriteria. Interactions start from the app's initial loaded state and run in order; if the target is on a later surface, first include or implement a reachable opener action, then request the target action.",
+    } : undefined,
     designContracts,
     currentStory: currentStory.currentStory || (storyId ? `Story ${storyId}: ${currentStory.storyTitle}`.trim() : ""),
     acceptanceCriteria: currentStory.acceptanceCriteria,
@@ -976,7 +1209,9 @@ export function buildClaimSummary(params: {
       mode: retryMode,
       category: failureCategory,
       suggestion: failureSuggestion,
-      blocker: compactFailureLine(previousFailure),
+      blocker: compactFailureLine(previousFailure, retryFeedbackBlockerLimit(previousFailure)),
+      details: previousFailure,
+      prThreadIds: extractPrReviewThreadIds(previousFailure),
       discipline: retryDiscipline,
       instruction: retryFeedbackInstruction(retryMode),
     } : undefined,
@@ -1051,6 +1286,7 @@ const s = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
 const lines = [];
 if (s.storyId || s.storyTitle) lines.push(("STORY=" + (s.storyId || "") + " " + (s.storyTitle || "")).trim());
 if (s.storyBranch) lines.push("STORY_BRANCH=" + String(s.storyBranch));
+if (s.storyDiffBase) lines.push("STORY_DIFF_BASE=" + String(s.storyDiffBase));
 if (s.storyWorkdir) lines.push("STORY_WORKDIR=" + String(s.storyWorkdir));
 if (s.verifyWorkdir) lines.push("VERIFY_WORKDIR=" + String(s.verifyWorkdir));
 if (s.repo) lines.push("MAIN_REPO=" + String(s.repo));
@@ -1074,12 +1310,36 @@ if (s.failureCategory) lines.push("FAILURE_CATEGORY=" + String(s.failureCategory
 if (s.failureSuggestion) lines.push("FAILURE_SUGGESTION=" + String(s.failureSuggestion).slice(0, 240));
 const rf = s.retryFeedback || {};
 if (rf.mode) lines.push("RETRY_MODE=" + String(rf.mode));
-if (rf.blocker) lines.push("RETRY_BLOCKER=" + String(rf.blocker).slice(0, 700));
+if (rf.blocker) lines.push("RETRY_BLOCKER_PREVIEW=" + String(rf.blocker).slice(0, 700));
+if (Array.isArray(rf.prThreadIds) && rf.prThreadIds.length) lines.push("PR_REVIEW_THREADS=" + rf.prThreadIds.join(", "));
+if (rf.details) lines.push("RETRY_DETAIL=full retry detail is in claimSummary.retryFeedback.details and claimSummary.previousFailure; do not rely on RETRY_BLOCKER_PREVIEW alone");
 if (rf.suggestion) lines.push("RETRY_ACTION=" + String(rf.suggestion).slice(0, 300));
 if (rf.instruction) lines.push("RETRY_INSTRUCTION=" + String(rf.instruction).slice(0, 300));
 if (s.retryDiscipline && s.retryDiscipline.mode) lines.push("RETRY_DISCIPLINE=" + String(s.retryDiscipline.mode) + ": " + String(s.retryDiscipline.instruction || "").slice(0, 240));
 if (s.previousFailure) lines.push("PREVIOUS_FAILURE=present " + String(s.previousFailure).length + " chars");
 if (s.generatedScreenPolicy && s.generatedScreenPolicy.summary) lines.push("GENERATED_SCREEN_POLICY=" + s.generatedScreenPolicy.summary);
+if (s.integrationPolicy && s.integrationPolicy.summary) lines.push("INTEGRATION_POLICY=" + String(s.integrationPolicy.summary).slice(0, 700));
+if (s.integrationPolicy && s.integrationPolicy.requiredCheck) lines.push("INTEGRATION_CHECK=" + String(s.integrationPolicy.requiredCheck).slice(0, 500));
+if (Array.isArray(s.runtimeDoneChecklist) && s.runtimeDoneChecklist.length) {
+  lines.push("RUNTIME_DONE_CHECKLIST=" + s.runtimeDoneChecklist.length + " required invariant(s)");
+  for (const item of s.runtimeDoneChecklist.slice(0, 8)) {
+    lines.push("RUNTIME_DONE_CHECK=" + String(item).slice(0, 360));
+  }
+}
+const ie = s.implementEvidenceContract || {};
+if (ie.mode) {
+  lines.push("IMPLEMENT_EVIDENCE_GATE=" + [
+    "mode=" + ie.mode,
+    "visual=" + (ie.visualGate || "off"),
+    "provider=" + (ie.visualProvider || "none"),
+  ].join(" "));
+  if (ie.intentPath) lines.push("IMPLEMENT_INTENT_PATH=" + ie.intentPath);
+  if (ie.verificationRequestPath) lines.push("IMPLEMENT_VERIFICATION_REQUEST_PATH=" + ie.verificationRequestPath);
+  if (ie.evidencePath) lines.push("IMPLEMENT_EVIDENCE_PATH_SETFARM_OWNS=" + ie.evidencePath);
+  if (ie.instruction) lines.push("IMPLEMENT_EVIDENCE_RULE=" + String(ie.instruction).slice(0, 420));
+  if (ie.intentSchema) lines.push("IMPLEMENT_INTENT_SCHEMA=" + String(ie.intentSchema).slice(0, 500));
+  if (ie.verificationRequestSchema) lines.push("IMPLEMENT_VERIFICATION_REQUEST_SCHEMA=" + String(ie.verificationRequestSchema).slice(0, 600));
+}
 const se = s.supervisorEvidence || {};
 if (se.source) {
   const counts = se.counts || {};
@@ -1144,8 +1404,9 @@ BOOTSTRAP_FILE=${params.bootstrapFile}
 First exec command:
 bash ${shellQuote(params.bootstrapFile)}
 
-Do ${params.wfId}/${params.role} work in WORKDIR only. Read the structured claim summary at ${params.claimSummaryFile} first; it is the authoritative handoff for story id/title, workdir, mainRepo, storyWorkdir, verifyWorkdir, build/test/lint commands, scopeFiles, scopeFileStates, missingScopeFiles, scopeFileInstruction, gitPolicy, supervisor checklist paths, supervisorEvidence, screenUsageContract, generatedScreenPolicy, designContracts, supervisorMemory, screen refs, retry feedback, outputContract, and output paths. Do NOT print or dump the entire claim summary JSON to the transcript; use the bootstrap lines or targeted field extraction for only the fields you need. Use outputContract.requiredFields and outputContract.format exactly for the final step output; guard-backed roles will reject prose-only summaries even when the work itself passed. Use retryFeedback.mode exactly: mode="fix" means the blocker is an open implementation requirement and must be fixed before unrelated work; mode="audit" means prior feedback may be stale, so first verify whether it is still present with bounded evidence before reporting or changing code. Obey scopeFileInstruction exactly: missingScopeFiles are expected owned files that may be created directly; do not treat them as blockers and do not retry update-only patches against missing files. Obey gitPolicy exactly: when owner is setfarm-platform, do not run git add/commit/push/branch/PR commands; Setfarm performs the scoped commit and PR handoff after gates pass. Use supervisorEvidence before retryFeedback/designContracts when it is present: it is current-source scanner evidence and stale original UI_CONTRACT findings must not block when supervisorEvidence shows zero open blockers. Use screenUsageContract first for generated screen component names, props, and action IDs; use designContracts.screenIndex, designContracts.uiContract, designContracts.componentRegistry, and designContracts.componentTypes as fallback instead of reading raw Stitch files, shared generated screen source, or creating TypeScript probe files. The full claim at ${params.claimFile} is an audit fallback only. Do NOT parse or dump claim.input with jq/sed/head/node loops; use the summary fields and only fall back to the full claim for a missing focused field. Obey generatedScreenPolicy exactly: if you accidentally read a forbidden src/screens/*.tsx file, stop broad reading and return to summary/contracts; supervisor records that as a correction signal.
+Do ${params.wfId}/${params.role} work in WORKDIR only. Read the structured claim summary at ${params.claimSummaryFile} first; it is the authoritative handoff for story id/title, workdir, mainRepo, storyWorkdir, verifyWorkdir, build/test/lint commands, scopeFiles, scopeFileStates, missingScopeFiles, scopeFileInstruction, gitPolicy, supervisor checklist paths, supervisorEvidence, screenUsageContract, generatedScreenPolicy, integrationPolicy, designContracts, supervisorMemory, screen refs, retry feedback, outputContract, and output paths. Do NOT print or dump the entire claim summary JSON to the transcript; use the bootstrap lines or targeted field extraction for only the fields you need. Use outputContract.requiredFields and outputContract.format exactly for the final step output; guard-backed roles will reject prose-only summaries even when the work itself passed. Use retryFeedback.mode exactly: mode="fix" means the blocker is an open implementation requirement and must be fixed before unrelated work; mode="audit" means prior feedback may be stale, so first verify whether it is still present with bounded evidence before reporting or changing code. For PR_REVIEW_COMMENTS_OPEN retries, retryFeedback.details and previousFailure are the complete review contract; fix every listed prThreadIds entry before STATUS: done, not just the RETRY_BLOCKER_PREVIEW bootstrap line. Obey scopeFileInstruction exactly: missingScopeFiles are expected owned files that may be created directly; do not treat them as blockers and do not retry update-only patches against missing files. Obey gitPolicy exactly: when owner is setfarm-platform, do not run git add/commit/push/branch/PR commands; Setfarm performs the scoped commit and PR handoff after gates pass. Obey integrationPolicy exactly: app/router/shell changes must add current-story reachability without deleting or bypassing previously reachable generated screens or working render branches. Use supervisorEvidence before retryFeedback/designContracts when it is present: it is current-source scanner evidence and stale original UI_CONTRACT findings must not block when supervisorEvidence shows zero open blockers. Use screenUsageContract first for generated screen component names, props, and action IDs; use designContracts.screenIndex, designContracts.uiContract, designContracts.componentRegistry, and designContracts.componentTypes as fallback instead of reading raw Stitch files, shared generated screen source, or creating TypeScript probe files. The full claim at ${params.claimFile} is an audit fallback only. Do NOT parse or dump claim.input with jq/sed/head/node loops; use the summary fields and only fall back to the full claim for a missing focused field. Obey generatedScreenPolicy exactly: if you accidentally read a forbidden src/screens/*.tsx file, stop broad reading and return to summary/contracts; supervisor records that as a correction signal.
 For retryFeedback.mode="fix", treat retryDiscipline.mode as a hard implementation instruction. For retryDiscipline.mode="first-delta", after bootstrap and summary, inspect only the owned scope files plus safe metadata needed for the first edit, then make a small scoped source delta before broad analysis/build/test. For retryDiscipline.mode="semantic-fix", implement the named blocker first, then run the relevant checks. For retryFeedback.mode="audit", do not convert prior feedback into a source-edit mandate unless the role-specific prompt explicitly owns that fix.
+If claimSummary.runtimeDoneChecklist is present, it is a hard done checklist, not optional guidance. Preserve every listed invariant while fixing the current blocker; a retry that fixes one item but regresses another must not report STATUS: done.
 Do NOT create scratch/progress/todo/note/probe files inside WORKDIR unless they are explicitly listed in scopeFiles. Files like src/_probe.tsx, src/probe.tsx, tmp.ts, scratch.tsx, TODO.md, and progress.txt are forbidden in the project worktree. Use ${params.outputFile} for final output and /tmp/setfarm-progress-<run-id>.txt for checkpoints only.
 Important: OpenClaw read/edit/write tools resolve relative paths against the configured agent workspace, not the shell cwd. When using read/edit/write tools for project files, use absolute paths under WORKDIR, for example "$WORKDIR/src/App.tsx". For exec commands, rerun the bootstrap command above or pass workdir="$WORKDIR" after resolving it.
 Do not rely on CLAIM_FILE, CLAIM_SUMMARY_FILE, OUTPUT_FILE, STEP_ID, or WORKDIR shell variables persisting across separate exec calls; each exec starts a fresh shell. If you need claim context again, use the literal summary path ${params.claimSummaryFile}. Write final output to the literal path ${params.outputFile}. Do NOT run step peek/claim. No subagents/background delegation. No PR actions unless claim explicitly owns PR work.

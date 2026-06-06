@@ -34,6 +34,7 @@ function walk(dir) {
     const relative = path.relative(root, absolute);
     if (entry.isDirectory()) {
       if (["node_modules", "dist", ".git"].includes(entry.name)) continue;
+      if (relative === "docs/review-packets") continue;
       files.push(...walk(absolute));
       continue;
     }

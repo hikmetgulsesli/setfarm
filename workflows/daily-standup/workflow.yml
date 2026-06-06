@@ -14,7 +14,7 @@ cron:
   interval_ms: 240000
 
 polling:
-  model: minimax-openai/MiniMax-M2.7
+  model: minimax-openai/MiniMax-M3
   timeoutSeconds: 600
 
 notifications:
@@ -24,7 +24,7 @@ agents:
   - id: collector
     name: Collector
     role: analysis
-    model: minimax-openai/MiniMax-M2.7
+    model: minimax-openai/MiniMax-M3
     description: Collects agent activity, run status, and system health from the last 24 hours.
     workspace:
       baseDir: agents/collector
@@ -35,7 +35,7 @@ agents:
   - id: reporter
     name: Reporter
     role: analysis
-    model: minimax-openai/MiniMax-M2.7
+    model: minimax-openai/MiniMax-M3
     description: Summarizes collected data and sends it to Discord and Telegram.
     workspace:
       baseDir: agents/reporter

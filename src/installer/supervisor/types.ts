@@ -203,6 +203,7 @@ export type SupervisorVisualIssueType =
   | "page_error"
   | "network_error"
   | "layout_overflow"
+  | "viewport_integrity"
   | "dead_control"
   | "navigation_error"
   | "preview_failed";

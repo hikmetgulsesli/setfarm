@@ -134,6 +134,15 @@ describe("05-setup-build step module", () => {
     assert.ok(preclaim.includes("summarizeDesignImportReport(repo)"), "validator reports should be summarized for the retry agent");
   });
 
+  it("setup-build is a hard preclaim gate", () => {
+    const stepOps = fs.readFileSync("src/installer/step-ops.ts", "utf-8");
+    const preclaim = fs.readFileSync("src/installer/steps/05-setup-build/preclaim.ts", "utf-8");
+    assert.match(stepOps, /HARD_PRECLAIM_STEPS\s*=\s*new Set\(\["setup-build", "security-gate", "qa-test", "final-test"\]\)/);
+    assert.ok(preclaim.includes("function throwPreclaimFailure"), "setup-build should hard-stop preclaim failures instead of looping through the agent");
+    assert.ok(preclaim.includes('throwPreclaimFailure(ctx, msg, "design_import_failure", DESIGN_IMPORT_REPAIR_SUGGESTION)'), "design import failures should throw from preclaim");
+    assert.ok(preclaim.includes("DESIGN_IMPORT_VALIDATE failed before setup-build completion"), "final design validation failures should still be hard blockers");
+  });
+
   it("commits Stitch runtime CSS generated alongside screens", () => {
     const preclaim = fs.readFileSync("src/installer/steps/05-setup-build/preclaim.ts", "utf-8");
     assert.ok(preclaim.includes("generatedPaths"), "setup-build should stage all generated Stitch artifacts together");
@@ -145,7 +154,7 @@ describe("05-setup-build step module", () => {
   it("validates generated screens before committing or building them", () => {
     const preclaim = fs.readFileSync("src/installer/steps/05-setup-build/preclaim.ts", "utf-8");
     const convert = preclaim.indexOf('resolvePlatformScript("stitch-to-jsx.mjs")');
-    const validate = preclaim.indexOf('resolvePlatformScript("generated-screen-validator.mjs")');
+    const validate = preclaim.indexOf('resolvePlatformScript("generated-screen-validator.mjs")', convert);
     const commit = preclaim.indexOf("chore: auto-generate JSX screens from Stitch HTML");
     const postBuild = preclaim.indexOf("post-stitch build ok");
     assert.ok(convert >= 0, "setup-build should run stitch-to-jsx");
@@ -153,6 +162,9 @@ describe("05-setup-build step module", () => {
     assert.ok(commit > validate, "generated screens should be committed only after validation");
     assert.ok(postBuild > validate, "post-stitch build should run only after validation");
     assert.ok(preclaim.includes("[validatorPath, repo, \"--fix\"]"), "setup-build should auto-fix deterministic generated screen defects before failing");
+    assert.ok(preclaim.indexOf("await writeSetupHandoff(ctx, repo, buildCmd)", validate) > validate, "setup-build should refresh setup certificate after design validation");
+    assert.ok(preclaim.includes("enforceFinalDesignImportValidation(ctx, repo)"), "setup-build completion should be blocked by final manifest/screen validation even when stitch-to-jsx is skipped");
+    assert.ok(preclaim.includes("DESIGN_IMPORT_VALIDATE failed before setup-build completion"), "final design validation failures should be classified before setup-build completes");
   });
 
   it("onComplete stamps build_cmd from parsed output", async () => {
@@ -213,6 +225,74 @@ describe("05-setup-build step module", () => {
       }),
       /BASELINE: npm run build failed/
     );
+  });
+
+  it("onComplete keeps design import failure active when generated icon fallback remains", async () => {
+    const tmp = fs.mkdtempSync("/tmp/setfarm-setup-build-icons-");
+    try {
+      fs.mkdirSync(`${tmp}/src/screens`, { recursive: true });
+      fs.writeFileSync(`${tmp}/package.json`, JSON.stringify({
+        scripts: { build: "node -e \"process.exit(0)\"" },
+      }));
+      fs.writeFileSync(
+        `${tmp}/src/screens/Operations.tsx`,
+        [
+          "import { BadgeHelp } from 'lucide-react';",
+          "export function Operations() { return <main><BadgeHelp />Operations</main>; }",
+          "",
+        ].join("\n"),
+      );
+      const context: Record<string, string> = {
+        repo: tmp,
+        baseline_fail: "DESIGN_IMPORT_ICON_FALLBACK failed after stitch-to-jsx",
+        failure_category: "design_import_failure",
+      };
+
+      await assert.rejects(
+        onComplete({
+          runId: "r1",
+          stepId: "setup-build",
+          parsed: { status: "done", build_cmd: "npm run build" } as ParsedOutput,
+          context,
+        }),
+        /DESIGN_IMPORT_ICON_FALLBACK/
+      );
+      assert.match(context["baseline_fail"], /DESIGN_IMPORT_ICON_FALLBACK/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("onComplete keeps design import failure active when validation report still fails even if build passes", async () => {
+    const tmp = fs.mkdtempSync("/tmp/setfarm-setup-build-design-report-");
+    try {
+      fs.mkdirSync(`${tmp}/.setfarm/setup`, { recursive: true });
+      fs.writeFileSync(`${tmp}/package.json`, JSON.stringify({
+        scripts: { build: "node -e \"process.exit(0)\"" },
+      }));
+      fs.writeFileSync(`${tmp}/.setfarm/setup/DESIGN_IMPORT_VALIDATE.json`, JSON.stringify({
+        status: "fail",
+        failures: ["SCREEN_SURFACE_MISMATCH: SURF_RETURNS missing generated screen"],
+      }));
+      const context: Record<string, string> = {
+        repo: tmp,
+        baseline_fail: "DESIGN_IMPORT_VALIDATE failed after stitch-to-jsx",
+        failure_category: "design_import_failure",
+      };
+
+      await assert.rejects(
+        onComplete({
+          runId: "r1",
+          stepId: "setup-build",
+          parsed: { status: "done", build_cmd: "npm run build" } as ParsedOutput,
+          context,
+        }),
+        /DESIGN_IMPORT_VALIDATE/
+      );
+      assert.match(context["baseline_fail"], /DESIGN_IMPORT_VALIDATE/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("onComplete clears stale baseline_fail when the current build passes", async () => {

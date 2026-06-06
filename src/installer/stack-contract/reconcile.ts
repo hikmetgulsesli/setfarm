@@ -63,6 +63,8 @@ export function resolveStackContract(input: ResolveStackContractInput): StackCon
     utilityFilePolicy: pack.utilityFilePolicy,
     buildStrippingPolicy: pack.buildStrippingPolicy,
     sandboxPrewarm: pack.sandboxPrewarm,
+    runtime: pack.runtime,
+    toolPreflight: pack.toolPreflight,
     nativeEquivalentContract: pack.nativeEquivalentContract,
     prompt: pack.prompt,
     createdAt: now,

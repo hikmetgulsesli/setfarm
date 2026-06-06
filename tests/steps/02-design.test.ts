@@ -189,6 +189,12 @@ describe("02-design step module", () => {
     assert.match(source, /screenTargetsForSurfaces/);
   });
 
+  it("auto-completed reusable design screens preserve Product Surface ids for downstream guards", () => {
+    const source = stepOpsSource();
+    assert.match(source, /surfaceIds\?: string\[\]/);
+    assert.match(source, /surfaceIds: \[surface\.surfaceId\]/);
+  });
+
   it("Product Surface extraction drives Stitch targets", () => {
     const prd = `# Product Contract
 

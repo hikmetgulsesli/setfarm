@@ -199,14 +199,16 @@ export const OPTIONAL_TEMPLATE_VARS = [
 ] as const;
 
 
-// ── Per-Step Context Allowlist (Wave 14 Bug K) ──────────────────────
+// ── Per-Step Context Allowlist Reference (Wave 14 Bug K) ─────────────
 
 /**
- * Per-step context allowlist. Keys NOT in the allowlist are pruned from
- * the context object BEFORE input_template resolution. Pruning is claim-scope
- * only — DB storage is unaffected. Prevents bloat leak (stitch_html, design_dom,
- * recent_stories_code injected at implement time) from drowning verify /
- * security-gate / qa-test / deploy steps in ~29K useless tokens.
+ * Reference list for the older per-step allowlist model.
+ *
+ * Runtime pruning is currently denylist-based in context-ops.ts so template
+ * resolution cannot break when a step gains a new contract key. Keep this list
+ * synchronized as documentation for expected step inputs, but do not rely on it
+ * as the active enforcement mechanism unless pruneContextForStep is changed
+ * back to allowlist mode.
  *
  * Wave 14 Bug K: discovered in run #344 postmortem — verify step received 115KB
  * of context, template referenced ~1.5KB. Rest was dead weight + DB credentials.
@@ -242,7 +244,7 @@ export const STEP_CONTEXT_ALLOWLIST: Record<string, string[]> = {
     "implement_phase", "scope_creep_warning", "test_generation_prompt",
     "file_skeletons", "scope_reminder",
     "detected_platform", "implement_base_commit",
-    "stack_contract", "stack_pack_id", "stack_prompt", "stack_setup_contract", "stack_verification_contract",
+    "stack_contract", "stack_pack_id", "stack_prompt", "stack_setup_contract", "stack_verification_contract", "stack_runtime_contract", "stack_tool_preflight_contract",
     "library_pack_ids", "library_packs", "library_prompt",
     "detected_stack", "stack_rules",
     "story_scope_files", "story_scope_description", "story_shared_files",
@@ -267,12 +269,12 @@ export const STEP_CONTEXT_ALLOWLIST: Record<string, string[]> = {
     "product_supervisor_status", "product_supervisor_blocked",
     "package_json_excerpt", "project_tree", "installed_packages", "component_registry",
     "api_routes", "shared_code", "dev_server_port",
-    "stack_contract", "stack_pack_id", "stack_prompt", "stack_setup_contract", "stack_verification_contract",
+    "stack_contract", "stack_pack_id", "stack_prompt", "stack_setup_contract", "stack_verification_contract", "stack_runtime_contract", "stack_tool_preflight_contract",
     "library_pack_ids", "library_packs", "library_prompt",
   ],
   "security-gate": ["security_notes"],
-  "qa-test": ["dev_server_port", "project_name", "date"],
-  "final-test": ["dev_server_port", "browser_check_result"],
+  "qa-test": ["dev_server_port", "preview_port", "dev_server_url", "qa_url", "project_name", "date", "stack_contract", "stack_pack_id", "stack_runtime_contract", "stack_tool_preflight_contract"],
+  "final-test": ["dev_server_port", "preview_port", "dev_server_url", "qa_url", "browser_check_result", "stack_contract", "stack_pack_id", "stack_runtime_contract", "stack_tool_preflight_contract"],
   deploy: ["deploy_url"],
 };
 
@@ -300,8 +302,8 @@ export const DEFAULT_STORY_MAX_RETRIES = 5;
 /** After this many retries, switch to fallback model */
 export const STORY_FALLBACK_RETRY_THRESHOLD = 2;
 
-/** Fallback model for story retries (minimax when primary is kimi, vice versa) */
-export const STORY_FALLBACK_MODEL = "minimax-openai/MiniMax-M2.7";
+/** Fallback model for story retries when the active worker model stalls. */
+export const STORY_FALLBACK_MODEL = "kimi-coding/kimi-for-coding";
 // ── Stories ──────────────────────────────────────────────────────────
 
 /** Maximum number of stories a planner can produce */

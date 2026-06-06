@@ -21,7 +21,7 @@ normalize_stack() {
   raw=$(printf "%s" "${1:-vite-react}" | tr '[:upper:]' '[:lower:]')
   raw=$(printf "%s" "$raw" | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')
   case "$raw" in
-    vite-react|react-vite|react-vite-typescript|vite-react-typescript|react-ts-vite|vite-ts-react|react-typescript-vite|web|react)
+    vite-react|react-vite|react-vite-typescript|vite-react-typescript|react-ts-vite|vite-ts-react|react-typescript-vite|web|react|browser-game|canvas-game|arcade|game)
       printf "vite-react"
       ;;
     *)
@@ -406,6 +406,34 @@ EOF
       mkdir -p src/test
       cat > src/test/setup.ts <<'EOF'
 import '@testing-library/jest-dom/vitest';
+import { cleanup } from '@testing-library/react';
+import { afterEach } from 'vitest';
+
+const rafHandles = new Set<number>();
+const realRequestAnimationFrame = globalThis.requestAnimationFrame;
+const realCancelAnimationFrame = globalThis.cancelAnimationFrame;
+
+globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+  const handle = (realRequestAnimationFrame
+    ? realRequestAnimationFrame(callback)
+    : globalThis.setTimeout(() => callback(Date.now()), 16)) as number;
+  rafHandles.add(handle);
+  return handle;
+}) as typeof requestAnimationFrame;
+
+globalThis.cancelAnimationFrame = ((handle: number) => {
+  rafHandles.delete(handle);
+  if (realCancelAnimationFrame) realCancelAnimationFrame(handle);
+  else globalThis.clearTimeout(handle);
+}) as typeof cancelAnimationFrame;
+
+afterEach(() => {
+  cleanup();
+  for (const handle of Array.from(rafHandles)) {
+    globalThis.cancelAnimationFrame(handle);
+  }
+  rafHandles.clear();
+});
 EOF
       cat > src/App.test.tsx <<'EOF'
 import { render, screen } from '@testing-library/react';
@@ -415,7 +443,7 @@ import App from './App';
 describe('App', () => {
   it('renders an application root', () => {
     render(<App />);
-    expect(screen.getByRole('main')).toBeInTheDocument();
+    expect(screen.getByTestId('setfarm-app-root')).toBeInTheDocument();
   });
 });
 EOF
@@ -449,7 +477,7 @@ ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
 EOF
       cat > src/App.tsx <<'EOF'
 export default function App() {
-  return <main data-setfarm-root="baseline" className="min-h-screen bg-slate-50 text-slate-950" />;
+  return <div data-setfarm-root="baseline" data-testid="setfarm-app-root" className="min-h-screen bg-slate-50 text-slate-950" />;
 }
 EOF
       cat > src/index.css <<'EOF'
@@ -578,7 +606,7 @@ export default function RootLayout({
 EOF
       cat > src/app/page.tsx <<'EOF'
 export default function Home() {
-  return <main data-setfarm-root="baseline" className="min-h-screen bg-slate-50 text-slate-950" />;
+  return <div data-setfarm-root="baseline" data-testid="setfarm-app-root" className="min-h-screen bg-slate-50 text-slate-950" />;
 }
 EOF
       cat > src/app/globals.css <<'EOF'

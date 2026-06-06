@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { logger } from "../lib/logger.js";
 import fs from "node:fs";
 import path from "node:path";
+import { findGeneratedRuntimeSemanticIssues, findGeneratedScreenShellChromeIssues } from "./steps/06-implement/guards.js";
 
 export interface QualityIssue {
   rule: string;
@@ -22,6 +23,38 @@ export function runQualityChecks(repoPath: string): QualityIssue[] {
     execFileSync("test", ["-d", `${repoPath}/src`], { timeout: 5000 });
   } catch {
     return []; // No src/ — skip (backend-only or non-standard layout)
+  }
+
+  // --- GENERATED FULL-SCREEN SCREEN MOUNT/SHELL CHECKS ---
+  // These are deterministic platform checks for Stitch-generated app surfaces.
+  // They run outside the LLM reviewer path so auto-verify/final-test cannot
+  // accept broken app-shell wrappers or desktop sidebar/content mount layouts.
+  try {
+    const generatedScreenIssues = findGeneratedScreenShellChromeIssues(repoPath);
+    for (const issue of generatedScreenIssues) {
+      issues.push({
+        rule: "generated_screen_shell_layout",
+        severity: "error",
+        detail: issue,
+        matches: [issue],
+      });
+    }
+  } catch (err) {
+    logger.warn(`[quality-gates] generated screen shell/layout check failed: ${String(err).slice(0, 240)}`);
+  }
+
+  try {
+    const generatedSemanticIssues = findGeneratedRuntimeSemanticIssues(repoPath);
+    for (const issue of generatedSemanticIssues) {
+      issues.push({
+        rule: "generated_runtime_semantics",
+        severity: "error",
+        detail: issue,
+        matches: [issue],
+      });
+    }
+  } catch (err) {
+    logger.warn(`[quality-gates] generated runtime semantic check failed: ${String(err).slice(0, 240)}`);
   }
 
   // --- DEAD LINK CHECKS ---

@@ -5,6 +5,11 @@ import { execFileSync } from "node:child_process";
 import type { ClaimContext } from "../types.js";
 import { pgGet } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
+import { allocateRuntimePort, writeRunRuntimeArtifact, type RuntimeAllocation } from "../../runtime-ports.js";
+import { recordGateObservation, recordStackEvidencePlanObservation } from "../../operation-observability.js";
+import { isBrowserRuntimeStack, resolveOperationalStackContract, stackEvidenceMetadata } from "../../stack-evidence.js";
+import { resolvePlatformScript } from "../../paths.js";
+import { ensureSmokeBuildFresh } from "../../smoke-gate.js";
 
 function cleanProcessText(value: unknown): string {
   const text = Buffer.isBuffer(value) ? value.toString("utf-8") : String(value || "");
@@ -67,15 +72,114 @@ function countArrayField(result: any, key: string): number {
   return Array.isArray(value) ? value.length : 0;
 }
 
-function buildQaReport(repo: string, result: any, rawOutput: string, status: string): string {
+function failuresFor(result: any, rawOutput: string): string[] {
+  if (Array.isArray(result?.failures)) {
+    return result.failures.map((item: unknown) => String(item).replace(/\n/g, " "));
+  }
+  if (result && typeof result === "object") return [];
+  return [rawOutput.slice(0, 3000).replace(/\n/g, " ")].filter(Boolean);
+}
+
+export function classifyQaSystemSmokeResult(result: any, rawOutput: string, commandFailed: boolean): {
+  result: any;
+  status: "done" | "retry" | "skip";
+  issueCount: number;
+  routesTested: number;
+  screensTested: number;
+  interactionsTested: number;
+} {
+  const hasStructuredResult = !!result && typeof result === "object";
+  const smokeStatus = hasStructuredResult && result?.status ? String(result.status).toLowerCase() : "";
+  const baseFailures = Array.isArray(result?.failures)
+    ? result.failures.map((item: unknown) => String(item).replace(/\n/g, " "))
+    : [];
+  const routesTested = Math.max(
+    1,
+    numericField(result, "routesDiscovered"),
+    countArrayField(result, "routes"),
+    countArrayField(result, "hashRoutes"),
+  );
+  const screensTested = Math.max(routesTested, numericField(result, "screensDiscovered"));
+  const interactionsTested =
+    numericField(result, "buttonsChecked") +
+    numericField(result, "formsChecked") +
+    numericField(result, "flowsChecked");
+  const syntheticFailures: string[] = [];
+
+  if (!hasStructuredResult) {
+    syntheticFailures.push(`QA system smoke did not return structured JSON. ${rawOutput.slice(0, 1000).replace(/\n/g, " ")}`);
+  } else if (smokeStatus !== "skip" && interactionsTested <= 0) {
+    syntheticFailures.push("QA system smoke produced no interaction evidence; browser QA cannot complete without at least one tested click, control, form, or flow.");
+  }
+
+  const failures = [...baseFailures, ...syntheticFailures];
+  const enrichedResult = hasStructuredResult
+    ? { ...result, failures }
+    : {
+        status: commandFailed ? "fail" : "retry",
+        failures,
+        rawOutput: rawOutput.slice(0, 4000),
+      };
+  const status = smokeStatus === "skip"
+    ? "skip"
+    : (commandFailed || smokeStatus === "fail" || smokeStatus === "warn" || failures.length > 0 ? "retry" : "done");
+  const issueCount = status === "retry" ? Math.max(failures.length, 1) : failures.length;
+
+  return {
+    result: enrichedResult,
+    status,
+    issueCount,
+    routesTested,
+    screensTested,
+    interactionsTested,
+  };
+}
+
+function buildQaArtifacts(repo: string, result: any, rawOutput: string, status: string, runtime: RuntimeAllocation): { markdownPath: string; jsonPath: string } {
   const reportDir = path.join(repo, "quality-reports");
   fs.mkdirSync(reportDir, { recursive: true });
-  const reportPath = path.join(reportDir, "qa-smoke-preclaim.md");
-  const failures: string[] = Array.isArray(result?.failures)
-    ? result.failures.map((item: unknown) => String(item).replace(/\n/g, " "))
-    : [rawOutput.slice(0, 3000).replace(/\n/g, " ")].filter(Boolean);
+  const reportPath = path.join(reportDir, "qa-test-1.md");
+  const jsonPath = path.join(reportDir, "qa-test-1.json");
+  const failures = failuresFor(result, rawOutput);
+  const routesTested = Math.max(
+    1,
+    numericField(result, "routesDiscovered"),
+    countArrayField(result, "routes"),
+    countArrayField(result, "hashRoutes"),
+  );
+  const screensTested = Math.max(routesTested, numericField(result, "screensDiscovered"));
+  const interactionsTested =
+    numericField(result, "buttonsChecked") +
+    numericField(result, "formsChecked") +
+    numericField(result, "flowsChecked");
+  const issueCount = status === "retry" ? Math.max(failures.length, 1) : failures.length;
+  const screenshots = [
+    fs.existsSync(path.join(repo, "smoke-home.png")) ? "smoke-home.png" : "",
+    fs.existsSync(path.join(repo, "smoke-after-click.png")) ? "smoke-after-click.png" : "",
+  ].filter(Boolean);
+  if (screenshots.length === 0) screenshots.push("smoke-home.png");
+
+  const json = {
+    schema: "setfarm.qa-report.v1",
+    status,
+    generatedAt: new Date().toISOString(),
+    runtime,
+    summary: {
+      smokeStatus: String(result?.status || status),
+      confidence: result?.confidence ?? null,
+      routesTested,
+      screensTested,
+      interactionsTested,
+      totalIssues: issueCount,
+    },
+    screenshots,
+    failures,
+    raw: result && typeof result === "object" ? result : { output: rawOutput.slice(0, 4000) },
+  };
+  fs.writeFileSync(jsonPath, JSON.stringify(json, null, 2) + "\n");
+
   const lines = [
-    "# QA Smoke Preclaim Report",
+    "# QA Test Report",
     "",
     `Status: ${status.toUpperCase()}`,
     `Generated: ${new Date().toISOString()}`,
@@ -83,33 +187,197 @@ function buildQaReport(repo: string, result: any, rawOutput: string, status: str
     "## Summary",
     `- Smoke status: ${String(result?.status || status)}`,
     `- Confidence: ${String(result?.confidence ?? "unknown")}`,
+    `- Routes tested: ${String(routesTested)}`,
+    `- Screens tested: ${String(screensTested)}`,
+    `- Interactions tested: ${String(interactionsTested)}`,
+    `- Total issues: ${String(issueCount)}`,
+    "",
+    "## Environment",
+    `- URL: ${runtime.url}`,
+    `- Host: ${runtime.host}`,
+    `- Port: ${runtime.port}`,
+    `- Port band: ${runtime.band}`,
+    "",
+    "## Routes Tested",
+    `- /: ${status === "done" ? "loaded" : "attempted"}`,
     `- Routes discovered: ${String(result?.routesDiscovered ?? 0)}`,
     `- Hash routes discovered: ${String(result?.hashRoutesDiscovered ?? 0)}`,
+    "",
+    "## Interactions Tested",
     `- Buttons checked: ${String(result?.buttonsChecked ?? 0)}`,
     `- Forms checked: ${String(result?.formsChecked ?? 0)}`,
     `- Flows checked: ${String(result?.flowsChecked ?? 0)}`,
+    "",
+    "## Screenshots",
+    ...screenshots.map((screenshot) => `- ${screenshot}`),
+    "",
+    "## Console",
+    `- Console errors: ${String(result?.consoleErrors ?? 0)}`,
+    "",
+    "## Visual/Layout Findings",
+    ...(status === "done" ? ["- None."] : failures.slice(0, 20).map((failure) => `- ${failure}`)),
+    "",
+    "## Functional Findings",
     `- Flow issues: ${String(result?.flowIssues ?? 0)}`,
+    ...(failures.length > 0 ? failures.slice(0, 20).map((failure) => `- ${failure}`) : ["- None."]),
+    "",
+    "## Semantic/Test Findings",
     `- Semantic click issues: ${String(result?.semanticClickIssues ?? 0)}`,
     `- Weak interaction assertions: ${String(result?.weakInteractionAssertions ?? 0)}`,
-    `- Failure count: ${String(failures.length)}`,
+    ...(status === "done" ? ["- None."] : failures.slice(0, 20).map((failure) => `- ${failure}`)),
     "",
-    "## Findings",
-    ...(failures.length > 0 ? failures.slice(0, 40).map((failure) => `- ${failure}`) : ["- None"]),
+    "## Batch Fix Plan",
+    ...(status === "done"
+      ? ["- None."]
+      : ["- Route the batched failures to the owning phase; do not retry with ad-hoc browser setup.", ...failures.slice(0, 10).map((failure) => `- Fix: ${failure}`)]),
   ];
   fs.writeFileSync(reportPath, lines.join("\n") + "\n");
-  return path.relative(repo, reportPath).replace(/\\/g, "/");
+  return {
+    markdownPath: path.relative(repo, reportPath).replace(/\\/g, "/"),
+    jsonPath: path.relative(repo, jsonPath).replace(/\\/g, "/"),
+  };
+}
+
+function runPreflight(command: string, cwd: string, timeoutMs: number): { ok: boolean; output: string } {
+  try {
+    const output = execFileSync("sh", ["-lc", command], { cwd, timeout: timeoutMs, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+    return { ok: true, output: cleanProcessText(output).slice(0, 500) };
+  } catch (err) {
+    return { ok: false, output: formatFailure(err).slice(0, 1500) };
+  }
 }
 
 export async function preClaim(ctx: ClaimContext): Promise<void> {
   const repo = (ctx.context["repo"] || ctx.context["REPO"] || "").replace(/^~/, os.homedir());
-  if (!repo || !fs.existsSync(repo)) {
-    logger.warn(`[module:qa preclaim] skipped - repo missing: ${repo || "(empty)"}`, { runId: ctx.runId });
+  const stackContract = resolveOperationalStackContract(ctx.context, false);
+  await recordStackEvidencePlanObservation({
+    run_id: ctx.runId,
+    step_id: ctx.stepId,
+    agent_id: "qa-tester",
+  }, ctx.context, "running", "QA preclaim resolved stack evidence contract.");
+
+  if (!isBrowserRuntimeStack(stackContract)) {
+    await recordGateObservation({
+      runId: ctx.runId,
+      stepId: ctx.stepId,
+      agentId: "qa-tester",
+      checkId: "qa-stack-preclaim",
+      label: "QA stack preclaim",
+      status: "info",
+      summary: "Browser smoke preclaim skipped for non-browser stack",
+      detail: "QA will use the stack-specific agent prompt/evidence contract instead of Setfarm's browser smoke preclaim.",
+      metadata: stackEvidenceMetadata(stackContract),
+    });
     return;
   }
 
-  const smokeScript = path.join(os.homedir(), ".openclaw", "setfarm-repo", "scripts", "smoke-test.mjs");
+  if (!repo || !fs.existsSync(repo)) {
+    logger.warn(`[module:qa preclaim] skipped - repo missing: ${repo || "(empty)"}`, { runId: ctx.runId });
+    await recordGateObservation({
+      runId: ctx.runId,
+      stepId: ctx.stepId,
+      agentId: "qa-tester",
+      checkId: "qa-repo-preclaim",
+      label: "QA repo preclaim",
+      status: "pending",
+      summary: "QA preclaim waiting for repository",
+      detail: repo || "repo missing",
+      metadata: stackEvidenceMetadata(stackContract),
+    });
+    return;
+  }
+
+  const runRow = await pgGet<{ run_number: number | null }>("SELECT run_number FROM runs WHERE id = $1 LIMIT 1", [ctx.runId]);
+  const runtime = await allocateRuntimePort({
+    runId: ctx.runId,
+    runNumber: runRow?.run_number ?? null,
+    band: stackContract.runtime?.portBand || "preview",
+    host: stackContract.runtime?.host || "127.0.0.1",
+  });
+  ctx.context["preview_port"] = String(runtime.port);
+  ctx.context["dev_server_port"] = String(runtime.port);
+  ctx.context["dev_server_url"] = runtime.url;
+  ctx.context["qa_url"] = runtime.url;
+  const runtimeArtifact = writeRunRuntimeArtifact({
+    repo,
+    runId: ctx.runId,
+    runNumber: runRow?.run_number ?? null,
+    stepId: ctx.stepId,
+    runtime,
+    status: "allocated",
+  });
+  ctx.context["run_runtime_json"] = runtimeArtifact;
+
+  await recordGateObservation({
+    runId: ctx.runId,
+    stepId: ctx.stepId,
+    agentId: "qa-tester",
+    checkId: "runtime-port-allocation",
+    label: "Runtime port allocation",
+    status: "pass",
+    summary: `Allocated ${runtime.band} port ${runtime.port}`,
+    detail: runtime.url,
+    metadata: { runtime, artifactPath: runtimeArtifact, ...stackEvidenceMetadata(stackContract) },
+  });
+
+  for (const tool of stackContract.toolPreflight || []) {
+    await recordGateObservation({
+      runId: ctx.runId,
+      stepId: ctx.stepId,
+      agentId: "qa-tester",
+      checkId: `tool-preflight:${tool.tool}`,
+      label: `${tool.tool} preflight`,
+      status: "running",
+      summary: `Running ${tool.command}`,
+      metadata: { tool, ...stackEvidenceMetadata(stackContract) },
+    });
+    const result = runPreflight(tool.command, repo, tool.timeoutMs);
+    await recordGateObservation({
+      runId: ctx.runId,
+      stepId: ctx.stepId,
+      agentId: "qa-tester",
+      checkId: `tool-preflight:${tool.tool}`,
+      label: `${tool.tool} preflight`,
+      status: result.ok ? "pass" : (tool.required ? "blocked" : "info"),
+      summary: result.ok ? `${tool.tool} available` : `${tool.tool} unavailable`,
+      detail: result.output,
+      metadata: { tool, failureCategory: tool.failureCategory, ...stackEvidenceMetadata(stackContract) },
+    });
+    if (!result.ok && tool.required) {
+      const artifacts = buildQaArtifacts(repo, { status: "fail", failures: [`${tool.tool} preflight failed: ${result.output}`] }, result.output, "retry", runtime);
+      const step = await pgGet<{ id: string }>("SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1", [ctx.runId, ctx.stepId]);
+      if (!step?.id) throw new Error(`qa preclaim could not resolve step id for ${ctx.runId}/${ctx.stepId}`);
+      const { completeStep } = await import("../../step-ops.js");
+      await completeStep(step.id, [
+        "STATUS: retry",
+        `QA_REPORT: ${artifacts.markdownPath}`,
+        `QA_JSON: ${artifacts.jsonPath}`,
+        "QA_SCREENS_TESTED: 1",
+        "QA_ROUTES_TESTED: 1",
+        "QA_INTERACTIONS_TESTED: 0",
+        "QA_TOTAL_ISSUES: 1",
+        "FAILURE_CATEGORY: tooling_contract_missing",
+        "TEST_FAILURES:",
+        `- ${tool.tool} preflight failed before browser QA. ${result.output.replace(/\n/g, " ")}`,
+      ].join("\n"));
+      return;
+    }
+  }
+
+  const smokeScript = resolvePlatformScript("smoke-test.mjs");
   if (!fs.existsSync(smokeScript)) {
     logger.warn("[module:qa preclaim] skipped - smoke-test.mjs missing", { runId: ctx.runId });
+    await recordGateObservation({
+      runId: ctx.runId,
+      stepId: ctx.stepId,
+      agentId: "qa-tester",
+      checkId: "qa-smoke-script",
+      label: "QA smoke script",
+      status: "pending",
+      summary: "Browser smoke preclaim unavailable",
+      detail: "smoke-test.mjs missing",
+      metadata: stackEvidenceMetadata(stackContract),
+    });
     return;
   }
 
@@ -123,40 +391,90 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   let output = "";
   let failed = false;
   try {
+    const buildFresh = ensureSmokeBuildFresh(repo, {
+      runId: ctx.runId,
+      stepId: ctx.stepId,
+      buildCommand: stackContract.setup?.build,
+      timeoutMs: stackContract.runtime?.timeoutMs || 240_000,
+      logPrefix: "qa-smoke-prebuild",
+      env: {
+        DEV_SERVER_PORT: String(runtime.port),
+        PREVIEW_PORT: String(runtime.port),
+        PORT: String(runtime.port),
+      },
+    });
+    if (!buildFresh.ok) {
+      failed = true;
+      output = buildFresh.failure;
+      throw new Error(buildFresh.failure);
+    }
     logger.info(`[module:qa preclaim] Running system smoke gate in ${repo}`, { runId: ctx.runId });
-    output = execFileSync("node", [smokeScript, repo], { cwd: repo, timeout: 240_000, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+    await recordGateObservation({
+      runId: ctx.runId,
+      stepId: ctx.stepId,
+      agentId: "qa-tester",
+      checkId: "qa-system-smoke",
+      label: "QA system smoke",
+      status: "running",
+      summary: "Running browser QA smoke gate",
+      detail: repo,
+      metadata: stackEvidenceMetadata(stackContract),
+    });
+    output = execFileSync("node", [smokeScript, repo, "--port", String(runtime.port)], {
+      cwd: repo,
+      timeout: stackContract.runtime?.timeoutMs || 240_000,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        DEV_SERVER_PORT: String(runtime.port),
+        PREVIEW_PORT: String(runtime.port),
+        PORT: String(runtime.port),
+        DEV_SERVER_URL: runtime.url,
+        QA_URL: runtime.url,
+      },
+    });
   } catch (err) {
     failed = true;
-    output = formatFailure(err);
+    output = output || formatFailure(err);
   }
 
   const parsed = firstJsonObject(output);
-  const smokeStatus = parsed?.status ? String(parsed.status).toLowerCase() : "";
-  const failureCount = countArrayField(parsed, "failures");
-  const status = failed || smokeStatus === "fail" || failureCount > 0 ? "retry" : (smokeStatus === "skip" ? "skip" : "done");
-  const issueCount = status === "retry" ? Math.max(failureCount, 1) : failureCount;
-  const reportPath = buildQaReport(repo, parsed, output, status);
-  const routesTested = Math.max(
-    1,
-    numericField(parsed, "routesDiscovered"),
-    countArrayField(parsed, "routes"),
-    countArrayField(parsed, "hashRoutes"),
-  );
-  const screensTested = Math.max(routesTested, numericField(parsed, "screensDiscovered"));
-  const interactionsTested = numericField(parsed, "buttonsChecked") + numericField(parsed, "formsChecked");
+  const decision = classifyQaSystemSmokeResult(parsed, output, failed);
+  const status = decision.status;
+  const issueCount = decision.issueCount;
+  const reportArtifacts = buildQaArtifacts(repo, decision.result, output, status, runtime);
+  await recordGateObservation({
+    runId: ctx.runId,
+    stepId: ctx.stepId,
+    agentId: "qa-tester",
+    checkId: "qa-system-smoke",
+    label: "QA system smoke",
+    status: status === "retry" ? "retry" : status === "skip" ? "info" : "pass",
+    summary: `QA smoke ${status}`,
+    detail: output.slice(0, 2000),
+    metadata: { reportPath: reportArtifacts.markdownPath, jsonPath: reportArtifacts.jsonPath, runtime, ...stackEvidenceMetadata(stackContract) },
+  });
   const lines = [
     `STATUS: ${status}`,
-    `QA_REPORT: ${reportPath}`,
-    `QA_SCREENS_TESTED: ${screensTested}`,
-    `QA_ROUTES_TESTED: ${routesTested}`,
-    `QA_INTERACTIONS_TESTED: ${interactionsTested}`,
+    `QA_REPORT: ${reportArtifacts.markdownPath}`,
+    `QA_JSON: ${reportArtifacts.jsonPath}`,
+    `QA_SCREENS_TESTED: ${decision.screensTested}`,
+    `QA_ROUTES_TESTED: ${decision.routesTested}`,
+    `QA_INTERACTIONS_TESTED: ${decision.interactionsTested}`,
     `QA_TOTAL_ISSUES: ${issueCount}`,
     "QA_GATE: system-smoke-preclaim",
-    ...summarizeSmoke(parsed),
+    ...summarizeSmoke(decision.result),
   ];
-  if (!parsed) {
-    lines.push(status === "retry" ? "TEST_FAILURES:" : "ISSUES:");
-    lines.push(`- ${output.slice(0, 2000).replace(/\n/g, " ")}`);
+  if (status === "skip") {
+    lines.push(`SKIP_REASON: ${String(decision.result?.reason || "Smoke gate reported skip for this repository.")}`);
+  }
+  if (status === "retry" && failuresFor(decision.result, output).length === 0) {
+    const failures = failuresFor(decision.result, output);
+    lines.push("TEST_FAILURES:");
+    for (const failure of (failures.length > 0 ? failures : [output.slice(0, 2000).replace(/\n/g, " ")]).slice(0, 20)) {
+      lines.push(`- ${failure}`);
+    }
   }
 
   const step = await pgGet<{ id: string }>("SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1", [ctx.runId, ctx.stepId]);

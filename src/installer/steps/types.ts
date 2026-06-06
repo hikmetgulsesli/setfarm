@@ -32,6 +32,7 @@ export interface CompleteContext {
   stepId: string;
   parsed: ParsedOutput;
   context: Record<string, string>;
+  currentStoryId?: string;
   // Raw agent output (multi-line). Needed by stories module to ingest
   // STORIES_JSON which doesn't fit the line-based parsed[] map.
   rawOutput?: string;

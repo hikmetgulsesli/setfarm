@@ -800,11 +800,22 @@ function readJsonFile<T>(file: string): T | null {
   }
 }
 
+function safeJsonStringArray(raw: unknown): string[] {
+  try {
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((item) => String(item || "").trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 export function assembleImplementContext(params: {
   repo: string;
   runId: string;
   storyId: string;
   storyRow: {
+    scope_files?: string | null;
     scope_targets?: string | null;
     shared_edit_requests?: string | null;
     implementation_contract?: string | null;
@@ -818,9 +829,11 @@ export function assembleImplementContext(params: {
   assertDesignImportReady(params.repo, certificate);
 
   const storyTargets = manifest.resolvedTargets.filter((target) => target.storyId === params.storyId);
+  const declaredScopeFiles = safeJsonStringArray(params.storyRow.scope_files);
   const forbidden = new Set(certificate.forbiddenDuringImplement || []);
   const grantsById = new Map((sharedGrants?.grants || []).map((grant) => [grant.grantId, grant]));
-  const resolvedScopeFiles = [...new Set(storyTargets.filter((target) => !target.sharedEdit).map((target) => target.path))];
+  const manifestScopeFiles = storyTargets.filter((target) => !target.sharedEdit).map((target) => target.path);
+  const resolvedScopeFiles = [...new Set(manifestScopeFiles.length > 0 ? manifestScopeFiles : declaredScopeFiles)];
   const sharedEditableFiles = storyTargets
     .filter((target) => {
       if (!target.sharedEdit) return false;
@@ -869,7 +882,7 @@ export function assembleImplementContext(params: {
     },
     routeGuardPolicy: {},
     assemblyRules: {
-      scopeResolution: "apply FILE_TREE_MANIFEST resolvedTargets for this story only",
+      scopeResolution: "apply FILE_TREE_MANIFEST resolvedTargets for this story; dynamically created repair stories fall back to declared story scope_files",
       sharedEditConflict: "forbiddenDuringImplement beats story.shared_edit_requests; SHARED_GRANTS is the permission source",
       sharedGrantPolicy: "sharedEditableFiles are emitted only for grants with status=granted",
       dependencyCheck: "all depends_on story IDs must be completed before this story starts",

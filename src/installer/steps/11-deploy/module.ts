@@ -27,7 +27,7 @@ function buildPrompt(ctx: PromptContext): string {
     FINAL_PR: c["final_pr"] || c["pr_url"] || "",
     PROGRESS: c["progress"] || "",
   });
-  return `${resolved}\n\n---\n\n# Rules\n\n${rulesBody}`;
+  return `${resolved}\n\n---\n\n# Stack Evidence Contract\n\n${c["stack_contract"] || ""}\n\n${c["stack_verification_contract"] || ""}\n\n---\n\n# Rules\n\n${rulesBody}`;
 }
 
 export const deployModule: StepModule = {

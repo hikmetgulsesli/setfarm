@@ -164,6 +164,64 @@ describe("01-plan step module", () => {
     assert.doesNotMatch(parsed.prd, /SURF_TICKET/);
   });
 
+  it("auto-plan keeps assignment surfaces traceable to the requested domain", () => {
+    const output = buildAutoPlanOutput(
+      "Build a compact browser offline field kit planning app called TrailForge Offline Kit. It should help field teams prepare route kits, assign gear packs, track offline readiness checks, flag missing safety items, manage sync conflicts, show empty and error recovery states, and every visible action should update real app state.",
+      { runId: "3e774d9c-43a8-4260-8196-d8b10fb4eaf1" },
+    );
+    const parsed = parsePlanOutput(output);
+    planModule.normalize?.(parsed);
+    const validation = planModule.validateOutput(parsed);
+
+    assert.equal(validation.ok, true, validation.errors.join("; "));
+    assert.equal(parsed.project_name, "TrailForge Offline Kit");
+    assert.equal(parsed.project_slug, "trailforge-offline-kit");
+    assert.match(parsed.prd, /- Kit:/);
+    assert.match(parsed.prd, /SURF_KIT_OPERATIONS/);
+    assert.match(parsed.prd, /SURF_GEAR_PACK_ASSIGNMENT/);
+    assert.match(parsed.prd, /Name: Gear Pack Assignment/);
+    assert.doesNotMatch(parsed.prd, /SURF_AGENT_WORKLOAD/);
+    assert.doesNotMatch(parsed.prd, /Name: Agent Workload/);
+  });
+
+  it("auto-plan does not introduce agent workload surfaces for operator owner workflows", () => {
+    const output = buildAutoPlanOutput(
+      "Build a compact browser-based shift handoff board called ShiftLedger Lite. It should manage operators, handoff notes, open tasks, priority incidents, daily status metrics, and settings. Use a Vite React web app with responsive desktop and mobile screens, persistent local state, and clear actions for create handoff, assign owner, mark resolved, filter tasks, and update settings.",
+      { runId: "01147d6c-42da-460c-bf65-6a27e91f53ff" },
+    );
+    const parsed = parsePlanOutput(output);
+    planModule.normalize?.(parsed);
+    const validation = planModule.validateOutput(parsed);
+
+    assert.equal(validation.ok, true, validation.errors.join("; "));
+    assert.match(parsed.prd, /SURF_OPERATOR_ASSIGNMENT|SURF_OWNER_ASSIGNMENT/);
+    assert.doesNotMatch(parsed.prd, /SURF_AGENT_WORKLOAD/);
+    assert.doesNotMatch(parsed.prd, /Name: Agent Workload/);
+  });
+
+  it("auto-plan keeps triage board surfaces domain-specific and does not infer CLI from product names", () => {
+    const output = buildAutoPlanOutput(
+      "Build a compact browser emergency clinic triage board called ClinicPulse Triage. It should help nurses register walk-in patients, assign triage priority, track room readiness, manage handoff notes, flag missing consent forms, handle offline intake recovery, show empty and error states, and every visible action should update real app state.",
+      { runId: "1f159630-a037-4dd6-867e-57c1c565687b" },
+    );
+    const parsed = parsePlanOutput(output);
+    planModule.normalize?.(parsed);
+    const validation = planModule.validateOutput(parsed);
+
+    assert.equal(validation.ok, true, validation.errors.join("; "));
+    assert.equal(parsed.project_name, "ClinicPulse Triage");
+    assert.equal(parsed.project_slug, "clinicpulse-triage");
+    assert.equal(parsed.platform, "web");
+    assert.equal(parsed.tech_stack, "vite-react");
+    assert.match(parsed.prd, /SURF_PATIENT_OPERATIONS/);
+    assert.match(parsed.prd, /SURF_TRIAGE_BOARD/);
+    assert.match(parsed.prd, /Name: Triage Board/);
+    assert.match(parsed.prd, /ACT_UPDATE_RECORD_STATUS/);
+    assert.doesNotMatch(parsed.prd, /SURF_QUEUE_AND_STATUS_MANAGEMENT/);
+    assert.doesNotMatch(parsed.prd, /Name: Queue and Status Management/);
+    assert.doesNotMatch(parsed.prd, /\bSLA\b/);
+  });
+
   it("preserves explicitly named product casing from the request", () => {
     const output = buildAutoPlanOutput("Build a compact browser service desk app called SurfaceGate Desk with tickets and queues.");
     const parsed = parsePlanOutput(output);

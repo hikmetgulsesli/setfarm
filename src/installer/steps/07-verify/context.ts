@@ -42,13 +42,15 @@ export async function injectContext(ctx: ClaimContext): Promise<void> {
 
   // Supervisor visual QA persists screenshots, console/browser issues, route
   // crawl results, and clicked-control evidence under .setfarm/supervisor/<runId>.
-  const repoPath = ctx.context["story_workdir"] || ctx.context["repo"] || "";
-  if (repoPath) {
+  const workdir = ctx.context["story_workdir"] || ctx.context["repo"] || "";
+  const mainRepo = ctx.context["repo"] || "";
+  if (workdir) {
     try {
       const result = await runSupervisorVisualQa({
         runId: ctx.runId,
-        workdir: repoPath,
-        repoPath,
+        workdir,
+        repoPath: workdir,
+        ownershipRepoPath: mainRepo,
         storyId: ctx.context["current_story_id"] || undefined,
       });
       const report = formatSupervisorVisualReport(result);

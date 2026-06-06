@@ -1,5 +1,7 @@
 import type { CompleteContext, ParsedOutput, ValidationResult } from "../types.js";
 import { updateSupervisorMemory } from "../../product-supervisor.js";
+import { readSupervisorState, writeSupervisorState } from "../../supervisor/state.js";
+import { recordGateObservation, recordStackEvidencePlanObservation } from "../../operation-observability.js";
 
 function firstWord(value: string | undefined): string {
   return String(value || "").trim().split(/\s+/)[0].toLowerCase();
@@ -52,6 +54,11 @@ export function normalizeOutput(parsed: ParsedOutput): void {
 
 export async function onComplete(ctx: CompleteContext): Promise<void> {
   const decision = firstWord(ctx.parsed.supervisor_decision) || "unknown";
+  await recordStackEvidencePlanObservation({
+    run_id: ctx.runId,
+    step_id: ctx.stepId,
+    agent_id: "supervisor",
+  }, ctx.context, "running", "Supervisor resolved stack evidence contract.");
   const memoryAppend = (ctx.parsed.supervisor_memory_append || "").trim();
   const checks = (ctx.parsed.checks || "").trim();
   const changes = (ctx.parsed.changes || "").trim();
@@ -93,6 +100,25 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
   updateSupervisorMemory(ctx.context, `${lines.join("\n")}\n`);
   ctx.context["supervisor_last_decision"] = decision;
   ctx.context["supervisor_last_summary"] = (memoryAppend || changes || checks || issues || ctx.rawOutput || "").slice(0, 1500);
+  await recordGateObservation({
+    runId: ctx.runId,
+    stepId: ctx.stepId,
+    agentId: "supervisor",
+    storyId: ctx.currentStoryId || ctx.context["current_story_id"] || "",
+    checkId: "supervisor-decision",
+    label: "Supervisor decision",
+    status: decision === "block" ? "blocked" : "pass",
+    summary: `Supervisor ${decision}`,
+    detail: (issues || memoryAppend || changes || checks || ctx.rawOutput || "").slice(0, 1500),
+    metadata: {
+      scope: ctx.context["supervisor_scope"] || "final-product",
+      acCoverage,
+    },
+  });
+
+  if ((decision === "pass" || decision === "fixed") && String(ctx.context["supervisor_scope"] || "") === "story") {
+    markStorySupervisorStatePassed(ctx, decision);
+  }
 
   if (decision === "block") {
     ctx.context["previous_failure"] = issues || memoryAppend || "Supervisor blocked the product checkpoint.";
@@ -100,4 +126,66 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
     ctx.context["failure_suggestion"] = "Treat this as manager feedback. Fix the root product/code contract violation, then rerun supervisor.";
     throw new Error(`LLM_SUPERVISOR_BLOCKED: ${(issues || memoryAppend || "blocked").slice(0, 400)}`);
   }
+}
+
+function markStorySupervisorStatePassed(ctx: CompleteContext, decision: string): void {
+  const storyId = String(ctx.context["current_story_id"] || "").trim();
+  const workdir = String(ctx.context["story_workdir"] || ctx.context["repo"] || "").trim();
+  if (!storyId || !workdir) return;
+
+  const nowIso = new Date().toISOString();
+  const state = readSupervisorState(workdir, ctx.runId);
+  const story = state.stories[storyId] || {
+    status: "passed",
+    currentWorker: undefined,
+    openBlockers: [],
+    warnings: [],
+    resolved: [],
+    lastEvidenceAt: nowIso,
+  };
+
+  const previousOpen = [...new Set([...(story.openBlockers || []), ...(story.warnings || [])])];
+  for (const itemId of previousOpen) {
+    if (!story.resolved.includes(itemId)) story.resolved.push(itemId);
+    const evidence = state.evidence[itemId];
+    if (evidence) {
+      state.evidence[itemId] = {
+        ...evidence,
+        status: "passed",
+        severity: evidence.severity || "blocker",
+        observed: [
+          ...(Array.isArray(evidence.observed) ? evidence.observed : []),
+          `Resolved by story-scoped LLM supervisor ${decision} decision.`,
+        ].slice(-12),
+        message: `Supervisor ${decision} decision cleared this previous finding.`,
+        checkedAt: nowIso,
+      };
+    }
+  }
+
+  const syntheticId = `llm-supervisor:${storyId}:decision`;
+  if (!story.resolved.includes(syntheticId)) story.resolved.push(syntheticId);
+  story.openBlockers = [];
+  story.warnings = [];
+  story.status = "passed";
+  story.lastEvidenceAt = nowIso;
+  state.stories[storyId] = story;
+  state.evidence[syntheticId] = {
+    itemId: syntheticId,
+    storyId,
+    status: "passed",
+    severity: "info",
+    observed: [
+      `SUPERVISOR_DECISION: ${decision}`,
+      String(ctx.parsed.ac_coverage || "").slice(0, 500),
+    ].filter(Boolean),
+    lastScan: "llm-supervisor",
+    files: [],
+    message: `Story-scoped supervisor completed with ${decision}.`,
+    checkedAt: nowIso,
+  } as any;
+  state.projectStatus = Object.values(state.stories).some((item) => item.openBlockers.length > 0)
+    ? "blocked"
+    : "implementing";
+  writeSupervisorState(workdir, state);
 }

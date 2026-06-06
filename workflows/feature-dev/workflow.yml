@@ -39,7 +39,7 @@ cron:
   interval_ms: 30000  # 1 minute
 
 polling:
-  model: minimax-openai/MiniMax-M2.7
+  model: minimax-openai/MiniMax-M3
   timeoutSeconds: 1800
 
 agents:

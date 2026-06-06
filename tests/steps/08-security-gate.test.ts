@@ -13,12 +13,15 @@ describe("08-security-gate step module", () => {
     assert.deepEqual(securityGateModule.requiredOutputFields, ["STATUS"]);
   });
 
-  it("injectContext is a no-op (security-gate is placeholder)", async () => {
+  it("injectContext adds stack evidence context", async () => {
     const context: Record<string, string> = { foo: "bar" };
     await securityGateModule.injectContext({
       runId: "r1", stepId: "security-gate", task: "t", context,
     });
-    assert.deepEqual(context, { foo: "bar" });
+    assert.equal(context.foo, "bar");
+    assert.equal(context.stack_pack_id, "needs-reconcile");
+    assert.match(context.stack_contract, /Schema: setfarm\.stack-contract\.v1/);
+    assert.match(context.stack_verification_contract, /no stack-specific verification/i);
   });
 
   it("buildPrompt substitutes REPO/BRANCH/FINAL_PR/STORIES_JSON", () => {

@@ -125,6 +125,9 @@ select:focus{outline:none;border-color:#8ECFC0}
 /* ── Theme toggle ─────────────────────────────────────────────── */
 .theme-toggle{background:none;border:1px solid rgba(255,255,255,.2);border-radius:6px;color:#fff;cursor:pointer;padding:5px 8px;font-size:16px;line-height:1;transition:border-color .15s}
 .theme-toggle:hover{border-color:rgba(255,255,255,.5)}
+.terminal-toggle{display:flex;align-items:center;gap:6px;color:rgba(255,255,255,.78);font-size:12px;border:1px solid rgba(255,255,255,.15);border-radius:6px;padding:5px 9px;cursor:pointer;user-select:none}
+.terminal-toggle:hover{border-color:rgba(255,255,255,.4);color:#fff}
+.terminal-toggle input{accent-color:var(--accent-highlight);cursor:pointer}
 
 /* ── Tab navigation ────────────────────────────────────────────── */
 .tab-nav{display:flex;gap:4px;margin-left:8px}
@@ -313,6 +316,10 @@ select:focus{outline:none;border-color:#8ECFC0}
     <button class="tab-btn" id="tab-rules" onclick="switchTab('rules')">Rules</button>
   </div>
   <select id="wf-select"><option value="">Loading...</option></select>
+  <label class="terminal-toggle" title="Show failed and cancelled run cards">
+    <input type="checkbox" id="terminal-toggle" onchange="toggleTerminalRuns(this.checked)">
+    <span>Show terminal</span>
+  </label>
   <button class="theme-toggle" id="theme-toggle" title="Toggle light/dark mode" aria-label="Toggle light/dark mode">&#9728;&#65039;</button>
   <div class="medic-badge" id="medic-badge" onclick="toggleMedicPanel()" title="Medic watchdog status">
     <span class="medic-dot unknown" id="medic-dot"></span>
@@ -426,6 +433,7 @@ const API = '';
 let workflows = [];
 let currentWf = null;
 let currentTab = 'runs';
+let showTerminalRuns = false;
 
 // ── Tab switching ──
 function switchTab(name) {
@@ -490,8 +498,14 @@ function selectWorkflow(id) {
 
 async function loadRuns() {
   if (!currentWf) return;
-  const runs = await fetchJSON('/api/runs?workflow=' + currentWf.id);
+  const terminalParam = showTerminalRuns ? '&include_terminal=1' : '';
+  const runs = await fetchJSON('/api/runs?workflow=' + currentWf.id + terminalParam);
   renderBoard(currentWf, runs);
+}
+
+function toggleTerminalRuns(checked) {
+  showTerminalRuns = !!checked;
+  if (currentWf && currentTab === 'runs') loadRuns();
 }
 
 function getActiveStepId(run) {
@@ -710,6 +724,11 @@ async function openRun(id) {
 }
 
 function formatEventDesc(evt) {
+  if (evt.kind === 'observation') {
+    var text = evt.label || evt.summary || evt.checkId || 'Observation';
+    var detail = evt.summary && evt.summary !== text ? ': ' + evt.summary : '';
+    return '[' + (evt.status || 'info') + '] ' + text + detail;
+  }
   var e = evt.event;
   var story = evt.storyTitle ? evt.storyId + ': "' + evt.storyTitle + '"' : evt.storyId || '';
   switch (e) {
@@ -732,23 +751,191 @@ function formatEventDesc(evt) {
   }
 }
 
+function isEvidenceObservation(obs) {
+  var checkId = String(obs.checkId || '');
+  var eventType = String(obs.eventType || '');
+  return checkId.indexOf('implement.evidence') === 0 ||
+    checkId.indexOf('implement.runtime') === 0 ||
+    eventType.indexOf('implement.runtime') === 0 ||
+    eventType.indexOf('implement.evidence') === 0;
+}
+
+function storyKey(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function observationTimeMs(obs) {
+  return new Date(obs.createdAt || obs.updatedAt || obs.completedAt || obs.startedAt || 0).getTime();
+}
+
+function isStoryVerifiedObservation(obs) {
+  var label = String(obs.label || '');
+  var eventType = String(obs.eventType || '');
+  return obs.status === 'pass' && (
+    eventType === 'story.verified' ||
+    /^Story US[-\s]?\d+\s+verified$/i.test(label)
+  );
+}
+
+function filterSupersededObservations(observations) {
+  var verifiedAtByStory = {};
+  var passAtByStoryCheck = {};
+  (observations || []).forEach(function(obs) {
+    var story = storyKey(obs.storyId);
+    if (!story) return;
+    var ts = observationTimeMs(obs);
+    if (isStoryVerifiedObservation(obs)) {
+      verifiedAtByStory[story] = Math.max(verifiedAtByStory[story] || 0, ts);
+    }
+    if (obs.status === 'pass') {
+      var key = story + '|' + String(obs.checkId || obs.label || '');
+      passAtByStoryCheck[key] = Math.max(passAtByStoryCheck[key] || 0, ts);
+    }
+  });
+
+  return (observations || []).filter(function(obs) {
+    if (obs.status !== 'blocked') return true;
+    var story = storyKey(obs.storyId);
+    if (!story) return true;
+    var ts = observationTimeMs(obs);
+    var sameCheckKey = story + '|' + String(obs.checkId || obs.label || '');
+    if ((passAtByStoryCheck[sameCheckKey] || 0) > ts) return false;
+    if ((verifiedAtByStory[story] || 0) > ts) return false;
+    return true;
+  });
+}
+
+function statusColor(status) {
+  switch (String(status || '').toLowerCase()) {
+    case 'pass': return 'var(--accent-green)';
+    case 'fail': return 'var(--accent-red)';
+    case 'running': return 'var(--accent-teal)';
+    case 'retry': return 'var(--accent-orange)';
+    case 'blocked': return 'var(--accent-red)';
+    default: return 'var(--text-secondary)';
+  }
+}
+
+function renderEvidenceFilmstrip(observations) {
+  var evidenceItems = (observations || []).filter(isEvidenceObservation)
+    .sort(function(a, b) {
+      return new Date(a.createdAt || a.startedAt || 0).getTime() - new Date(b.createdAt || b.startedAt || 0).getTime();
+    });
+  if (evidenceItems.length === 0) return null;
+
+  var wrapper = document.createElement('div');
+  wrapper.style.cssText = 'margin-top:24px;border-top:1px solid var(--border);padding-top:20px';
+
+  var header = document.createElement('div');
+  header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px';
+  var h3 = document.createElement('h3');
+  h3.style.cssText = 'font-size:15px;font-weight:600;color:var(--text-primary);margin:0';
+  h3.textContent = 'Implementation Evidence';
+  header.appendChild(h3);
+  var count = document.createElement('span');
+  count.style.cssText = 'font-family:Geist Mono,monospace;font-size:11px;color:var(--text-secondary)';
+  count.textContent = evidenceItems.length + ' event' + (evidenceItems.length === 1 ? '' : 's');
+  header.appendChild(count);
+  wrapper.appendChild(header);
+
+  var strip = document.createElement('div');
+  strip.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px';
+  evidenceItems.slice(-12).forEach(function(obs) {
+    var metadata = obs.metadata || {};
+    var evidence = obs.evidence || {};
+    var card = document.createElement('div');
+    card.style.cssText = 'border:1px solid var(--border);background:var(--bg-panel);border-radius:6px;padding:10px;min-height:112px';
+
+    var top = document.createElement('div');
+    top.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px';
+    var label = document.createElement('div');
+    label.style.cssText = 'font-size:12px;font-weight:600;color:var(--text-primary);line-height:1.3';
+    label.textContent = obs.label || obs.checkId || 'Evidence';
+    top.appendChild(label);
+    var badge = document.createElement('span');
+    badge.style.cssText = 'font-family:Geist Mono,monospace;font-size:10px;text-transform:uppercase;color:' + statusColor(obs.status) + ';border:1px solid ' + statusColor(obs.status) + ';border-radius:4px;padding:2px 5px;white-space:nowrap';
+    badge.textContent = obs.status || 'info';
+    top.appendChild(badge);
+    card.appendChild(top);
+
+    var summary = document.createElement('div');
+    summary.style.cssText = 'font-size:11px;color:var(--text-secondary);line-height:1.45;min-height:30px';
+    summary.textContent = obs.summary || obs.detail || obs.checkId || '';
+    card.appendChild(summary);
+
+    var meta = document.createElement('div');
+    meta.style.cssText = 'margin-top:8px;font-family:Geist Mono,monospace;font-size:10px;color:var(--text-secondary);display:grid;gap:4px';
+    if (metadata.url) {
+      var link = document.createElement('a');
+      link.href = metadata.url;
+      link.target = '_blank';
+      link.rel = 'noreferrer';
+      link.style.cssText = 'color:var(--accent-teal);text-decoration:none';
+      link.textContent = metadata.url;
+      meta.appendChild(link);
+    }
+    if (metadata.port) {
+      var port = document.createElement('div');
+      port.textContent = 'port: ' + metadata.port;
+      meta.appendChild(port);
+    }
+    if (metadata.evidencePath) {
+      var evidencePath = document.createElement('div');
+      evidencePath.textContent = 'artifact: ' + metadata.evidencePath;
+      meta.appendChild(evidencePath);
+    }
+    if (evidence.screenshotPath) {
+      var shot = document.createElement('div');
+      shot.textContent = 'screenshot: ' + evidence.screenshotPath;
+      meta.appendChild(shot);
+    }
+    if (meta.childNodes.length > 0) card.appendChild(meta);
+    strip.appendChild(card);
+  });
+
+  wrapper.appendChild(strip);
+  return wrapper;
+}
+
 async function loadActivity(runId) {
   const events = await fetchJSON('/api/runs/' + runId + '/events');
+  let observations = [];
+  try {
+    observations = await fetchJSON('/api/runs/' + runId + '/observations');
+  } catch (e) {
+    observations = [];
+  }
   const container = document.getElementById('activity-panel');
-  if (!events || events.length === 0) { container.textContent = ''; return; }
+  const visibleObservations = filterSupersededObservations(observations || []);
+  const observationActivity = visibleObservations.map(function(obs) {
+      return Object.assign({ kind: 'observation', ts: obs.createdAt || obs.updatedAt || obs.completedAt || obs.startedAt }, obs);
+    });
+  const legacyEventActivity = (events || []).map(function(evt) {
+      return Object.assign({ kind: 'event', legacy: true }, evt);
+    });
+  const activitySource = observationActivity.length > 0 ? observationActivity : legacyEventActivity;
+  const activity = activitySource
+    .sort(function(a, b) {
+      return new Date(b.ts || b.createdAt || 0).getTime() - new Date(a.ts || a.createdAt || 0).getTime();
+    })
+    .slice(0, 120);
+  if (activity.length === 0) { container.textContent = ''; return; }
 
   container.textContent = '';
+  var evidenceFilmstrip = renderEvidenceFilmstrip(visibleObservations);
+  if (evidenceFilmstrip) container.appendChild(evidenceFilmstrip);
+
   var wrapper = document.createElement('div');
   wrapper.style.cssText = 'margin-top:24px;border-top:1px solid var(--border);padding-top:20px';
   var h3 = document.createElement('h3');
   h3.style.cssText = 'font-size:15px;font-weight:600;color:var(--text-primary);margin-bottom:12px';
-  h3.textContent = 'Activity';
+  h3.textContent = observationActivity.length > 0 ? 'Activity (Observations)' : 'Activity (Legacy Events)';
   wrapper.appendChild(h3);
 
   var scrollDiv = document.createElement('div');
   scrollDiv.style.cssText = 'max-height:300px;overflow-y:auto';
-  events.forEach(function(evt) {
-    var t = parseTS(evt.ts);
+  activity.forEach(function(evt) {
+    var t = parseTS(evt.ts || evt.createdAt);
     var time = t.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
     var agent = evt.agentId ? evt.agentId.split('/').pop() : '';
     var desc = formatEventDesc(evt);

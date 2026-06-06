@@ -57,13 +57,13 @@ const WEB_TOOL_DENY = ["web_search", "web_fetch"];
 const WORKFLOW_AGENT_SKILLS = ["setfarm-workflows"];
 const WORKFLOW_AGENT_SKILLS_LIMITS = { maxSkillsPromptChars: 1200 } as const;
 const MINIMAX_OPENAI_PROVIDER_ID = "minimax-openai";
-const MINIMAX_OPENAI_MODEL_REF = `${MINIMAX_OPENAI_PROVIDER_ID}/MiniMax-M2.7`;
+const MINIMAX_OPENAI_MODEL_REF = `${MINIMAX_OPENAI_PROVIDER_ID}/MiniMax-M3`;
 const KIMI_CODING_MODEL_REF = "kimi-coding/kimi-for-coding";
 const CODEX_DEFAULT_MODEL_REF = "default";
 const WORKFLOW_MODEL_TIMEOUT_MS = 10 * 60 * 1000;
-const CODEX_FIRST_AGENT_MODEL = {
-  primary: CODEX_DEFAULT_MODEL_REF,
-  fallbacks: [KIMI_CODING_MODEL_REF, MINIMAX_OPENAI_MODEL_REF],
+const MINIMAX_FIRST_AGENT_MODEL = {
+  primary: MINIMAX_OPENAI_MODEL_REF,
+  fallbacks: [KIMI_CODING_MODEL_REF, CODEX_DEFAULT_MODEL_REF],
   timeoutMs: WORKFLOW_MODEL_TIMEOUT_MS,
 } as const;
 
@@ -259,22 +259,13 @@ function ensureMinimaxOpenAIProvider(config: OpenClawConfig): void {
     authHeader: true,
     models: [
       {
-        id: "MiniMax-M2.7",
-        name: "MiniMax M2.7 (OpenAI compat)",
+        id: "MiniMax-M3",
+        name: "MiniMax M3 (OpenAI compat)",
         reasoning: false,
         input: ["text"],
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-        contextWindow: 200000,
-        maxTokens: 16384,
-      },
-      {
-        id: "MiniMax-M2.7-lightning",
-        name: "MiniMax M2.7 Lightning (OpenAI compat)",
-        reasoning: false,
-        input: ["text"],
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-        contextWindow: 200000,
-        maxTokens: 16384,
+        contextWindow: 1000000,
+        maxTokens: 65536,
       },
     ],
   };
@@ -298,7 +289,7 @@ function ensureSessionMaintenance(config: OpenClawConfig): void {
 }
 
 function defaultModelForAgent(_agentId: string): Record<string, unknown> {
-  return { ...CODEX_FIRST_AGENT_MODEL };
+  return { ...MINIMAX_FIRST_AGENT_MODEL };
 }
 
 function upsertAgent(

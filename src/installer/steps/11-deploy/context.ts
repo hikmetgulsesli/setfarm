@@ -1,4 +1,5 @@
 import type { ClaimContext } from "../types.js";
+import { applyStackContractContext } from "../../stack-contract/context.js";
 
 // Deploy step inline logic (handleDeployEnvGuard at step-ops.ts:355, the
 // env-check invocation at :1135, and the status=done handler at :2139)
@@ -8,6 +9,6 @@ import type { ClaimContext } from "../types.js";
 //
 // Minimum viable module: register the step so module-delegation runs
 // normalize/validateOutput on the agent's output.
-export async function injectContext(_ctx: ClaimContext): Promise<void> {
-  return;
+export async function injectContext(ctx: ClaimContext): Promise<void> {
+  applyStackContractContext(ctx.context, { repoPath: ctx.context["repo"] || ctx.context["REPO"] || "", taskText: ctx.task, persist: true });
 }
