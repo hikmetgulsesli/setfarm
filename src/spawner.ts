@@ -2201,8 +2201,19 @@ function prepareKimiIsolatedHome(sessionId: string): string {
   return home;
 }
 
+function resolveHostPlaywrightBrowsersPath(): string | undefined {
+  if (process.env.PLAYWRIGHT_BROWSERS_PATH?.trim()) return process.env.PLAYWRIGHT_BROWSERS_PATH.trim();
+  const candidates = [
+    path.join(os.homedir(), "Library", "Caches", "ms-playwright"),
+    path.join(os.homedir(), ".cache", "ms-playwright"),
+  ];
+  return candidates.find((candidate) => fs.existsSync(candidate));
+}
+
 function buildAgentChildEnv(pathPrefix?: string, options: { runtime?: AgentRuntime; sessionId?: string } = {}): NodeJS.ProcessEnv {
   const e = buildOpenClawChildEnv(pathPrefix);
+  const playwrightBrowsersPath = resolveHostPlaywrightBrowsersPath();
+  if (playwrightBrowsersPath) e.PLAYWRIGHT_BROWSERS_PATH = playwrightBrowsersPath;
   if (AGENT_RUNTIME === "codex") {
     e.CODEX_HOME = e.CODEX_HOME || path.join(os.homedir(), ".codex");
   }

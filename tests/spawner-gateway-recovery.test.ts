@@ -174,6 +174,26 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /buildAgentChildEnv\(pathPrefix, \{ runtime: AGENT_RUNTIME, sessionId \}\)/);
   });
 
+  it("preserves host Playwright browser cache for isolated Kimi browser evidence", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    const helperStart = source.indexOf("function resolveHostPlaywrightBrowsersPath()");
+    const envStart = source.indexOf("function buildAgentChildEnv(", helperStart);
+    assert.notEqual(helperStart, -1, "Playwright browser cache resolver not found");
+    assert.notEqual(envStart, -1, "agent child env builder not found");
+    const helperSource = source.slice(helperStart, envStart);
+    const envSource = source.slice(envStart, source.indexOf("function shellQuote", envStart));
+
+    assert.match(helperSource, /PLAYWRIGHT_BROWSERS_PATH/);
+    assert.match(helperSource, /"Library", "Caches", "ms-playwright"/);
+    assert.match(helperSource, /"\.cache", "ms-playwright"/);
+    assert.match(envSource, /resolveHostPlaywrightBrowsersPath\(\)/);
+    assert.match(envSource, /e\.PLAYWRIGHT_BROWSERS_PATH = playwrightBrowsersPath/);
+    assert.ok(
+      envSource.indexOf("e.PLAYWRIGHT_BROWSERS_PATH = playwrightBrowsersPath") < envSource.indexOf("e.HOME = kimiHome"),
+      "Playwright cache must be pinned before Kimi HOME isolation changes browser lookup",
+    );
+  });
+
   it("gives Kimi a longer startup silence window because print mode may buffer output", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /const DEFAULT_AGENT_STARTUP_SILENCE_MS = AGENT_RUNTIME === "kimi" \? 12 \* 60_000 : 4 \* 60_000/);
