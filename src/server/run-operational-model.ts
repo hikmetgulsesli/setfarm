@@ -31,6 +31,7 @@ type ObservationRow = {
 };
 
 export type OperationalFailureOwner = "product" | "infra" | "platform" | "none";
+export type OperationalFailureAction = StackFailureClassification["action"] | "manual_review" | "none";
 export type OperationalRecoveryPolicy = "no_action" | "manual_review" | "product_retry" | "infra_retry" | "platform_fix";
 
 export interface RunOperationalModel {
@@ -74,7 +75,7 @@ export interface RunOperationalModel {
   failure: {
     present: boolean;
     owner: OperationalFailureOwner;
-    action: StackFailureClassification["action"] | "none";
+    action: OperationalFailureAction;
     category: string;
     reason: string;
     retryable: boolean;
@@ -184,7 +185,7 @@ function currentStep(steps: StepInfo[]): string | null {
   return firstOpen?.step_id || null;
 }
 
-function recoveryPolicyFor(classification: StackFailureClassification | null, runStatus: string, postMergeQualityRegression: boolean): OperationalRecoveryPolicy {
+function recoveryPolicyFor(classification: { owner: OperationalFailureOwner; action: OperationalFailureAction } | null, runStatus: string, postMergeQualityRegression: boolean): OperationalRecoveryPolicy {
   if (!classification) return "no_action";
   if (postMergeQualityRegression) return "manual_review";
   if (classification.owner === "infra") return "infra_retry";
@@ -204,7 +205,8 @@ export function buildRunOperationalModel(input: {
   const stack = inferStackPackId(run);
   const pack = getStackPack(stack.id);
   const module = getStackModule(stack.id);
-  const currentStepId = currentStep(steps);
+  const runIsTerminal = TERMINAL_RUN_STATUSES.has(String(run.status || "").toLowerCase());
+  const currentStepId = runIsTerminal ? null : currentStep(steps);
   const failedStep = steps.find((step) => String(step.status || "").toLowerCase() === "failed") || null;
   const failureSource = latestFailureSource(steps, stories, observations);
   const failureText = failureSource.text;
@@ -216,7 +218,7 @@ export function buildRunOperationalModel(input: {
     ? postMergeQualityRegression
       ? {
           owner: "product" as const,
-          action: "product_retry" as const,
+          action: "manual_review" as const,
           category: "post_merge_quality_regression",
           reason: "A merged story PR failed downstream product evidence; Setfarm must not reopen the merged story branch.",
         }
@@ -236,7 +238,7 @@ export function buildRunOperationalModel(input: {
       runNumber: (run as any).run_number,
       workflow: (run as any).workflow_id || "",
       status: run.status,
-      terminal: TERMINAL_RUN_STATUSES.has(String(run.status || "").toLowerCase()),
+      terminal: runIsTerminal,
       task: run.task,
       updatedAt: (run as any).updated_at,
     },

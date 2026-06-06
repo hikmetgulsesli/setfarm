@@ -61,9 +61,12 @@ describe("run operational model", () => {
     assert.equal(model.failure.present, true);
     assert.equal(model.failure.category, "post_merge_quality_regression");
     assert.equal(model.failure.owner, "product");
+    assert.equal(model.failure.action, "manual_review");
     assert.equal(model.failure.postMergeQualityRegression, true);
     assert.equal(model.failure.recoveryPolicy, "manual_review");
     assert.equal(model.failure.retryable, false);
+    assert.equal(model.pipeline.currentStepId, null);
+    assert.equal(model.pipeline.failedStepId, "verify");
     assert.deepEqual(model.stories, {
       total: 3,
       verified: 2,
