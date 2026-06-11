@@ -123,6 +123,41 @@ describe("stitch-to-jsx", () => {
     }
   });
 
+  it("normalizes SVG filter primitive tag casing for React JSX", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-svg-filter-tags-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "glow-screen", title: "Glow Screen" },
+      ]));
+      writeHtml(path.join(stitchDir, "glow-screen.html"), `
+        <main>
+          <svg viewbox="0 0 100 100">
+            <filter id="glow">
+              <fegaussianblur stdDeviation="2"></fegaussianblur>
+              <fecolormatrix type="matrix" values="1 0 0 0 0 0 1 0 0 0 0 0 1 0 0 0 0 0 1 0"></fecolormatrix>
+              <femerge><femergenode></femergenode></femerge>
+            </filter>
+          </svg>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "GlowScreen.tsx"), "utf-8");
+      assert.match(code, /<feGaussianBlur stdDeviation="2"><\/feGaussianBlur>/);
+      assert.match(code, /<feColorMatrix type="matrix"/);
+      assert.match(code, /<feMerge><feMergeNode><\/feMergeNode><\/feMerge>/);
+      assert.doesNotMatch(code, /<fegaussianblur|<fecolormatrix|<femerge/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("emits stable action ids for generated screen controls", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-actions-"));
     try {
