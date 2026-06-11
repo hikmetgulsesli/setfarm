@@ -16,10 +16,11 @@ import { claimStep, completeStep, commitStoryWorktreeScopeIfNeeded } from "./ins
 import { failStep } from "./installer/step-fail.js";
 import { getRunContext } from "./installer/repo.js";
 import { discardStoryWorktreeAndResetBranch } from "./installer/worktree-ops.js";
-import { cleanupProjectEphemera, cleanupRunningRunOrphanedToolWorkers } from "./installer/cleanup-ops.js";
+import { cleanupProjectEphemera, cleanupRunningRunOrphanedToolWorkers, scheduleRunCronTeardown } from "./installer/cleanup-ops.js";
 import { updateSupervisorMemory } from "./installer/product-supervisor.js";
 import { buildClaimSummary, buildPreclaimedPrompt, buildResolvedClaimBootstrapScript, claimTaskPreview } from "./spawner-prompt.js";
 import { recordObservation } from "./installer/observations.js";
+import { emitEvent } from "./installer/events.js";
 
 type AgentRuntime = "codex" | "openclaw" | "kimi";
 type OperationalRecoveryIntent = "observe_fix" | "platform_replay" | "project_rescue";
@@ -3173,12 +3174,66 @@ async function failClaimIfStillRunning(stepId: string, agentId: string, wfId: st
       return;
     }
 
+    const authFailure = detectRuntimeAuthFailure(transcriptPath);
+    if (authFailure.failed) {
+      const reason = `AGENT_RUNTIME_AUTH_FAILED: ${agentId} cannot start ${AGENT_RUNTIME} because runtime authentication failed. ${authFailure.detail} Transcript: ${transcriptPath}`;
+      console.warn(`[spawner] ${reason}`);
+      await recordSupervisorInfraEvent(row.run_id, row.step_id, row.current_story_id, reason);
+      const workflow = await pgGet<{ workflow_id: string }>("SELECT workflow_id FROM runs WHERE id = $1 LIMIT 1", [row.run_id]);
+      const nowIso = new Date().toISOString();
+      if (row.current_story_id) {
+        await pgRun("UPDATE stories SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3", [reason, nowIso, row.current_story_id]);
+        await pgRun("UPDATE stories SET status = 'skipped', output = $1, updated_at = $2 WHERE run_id = $3 AND status IN ('pending', 'running') AND id <> $4", [reason, nowIso, row.run_id, row.current_story_id]);
+      }
+      await pgRun("UPDATE steps SET status = 'failed', output = $1, current_story_id = NULL, updated_at = $2 WHERE id = $3 AND status = 'running'", [reason, nowIso, stepId]);
+      await pgRun("UPDATE steps SET status = 'cancelled', output = $1, updated_at = $2 WHERE run_id = $3 AND status IN ('waiting', 'pending')", [reason, nowIso, row.run_id]);
+      await pgRun("UPDATE runs SET status = 'failed', updated_at = $1 WHERE id = $2", [nowIso, row.run_id]);
+      await pgRun(
+        "UPDATE claim_log SET outcome = 'failed', abandoned_at = NOW(), diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND agent_id = $4 AND outcome IS NULL",
+        [reason, row.run_id, row.step_id, agentId],
+      );
+      const workflowId = workflow?.workflow_id || wfId;
+      emitEvent({ ts: nowIso, event: "step.failed", runId: row.run_id, workflowId, stepId: row.step_id, detail: reason });
+      emitEvent({ ts: nowIso, event: "run.failed", runId: row.run_id, workflowId, detail: "AGENT_RUNTIME_AUTH_FAILED" });
+      scheduleRunCronTeardown(row.run_id);
+      await refreshRunContractForAuthFailure(row.run_id);
+      return;
+    }
+
     const reason = `AGENT_PROCESS_EXITED: ${agentId} exited before completing ${wfId}/${role}. ${compactExitReason(err)}. Transcript: ${transcriptPath}`;
     console.warn(`[spawner] failing still-running claim ${stepId} (${row.step_id}) after agent exit`);
     await recordSupervisorInfraEvent(row.run_id, row.step_id, row.current_story_id, reason);
     await failStep(stepId, reason);
   } catch (failErr) {
     console.warn(`[spawner] failed to mark exited agent claim as failed: ${String(failErr).slice(0, 300)}`);
+  }
+}
+
+function detectRuntimeAuthFailure(transcriptPath: string): { failed: boolean; detail: string } {
+  let text = "";
+  try {
+    text = fs.readFileSync(transcriptPath, "utf-8").slice(-12000);
+  } catch {
+    return { failed: false, detail: "" };
+  }
+  if (!/(invalid[_ -]?authentication|api key appears to be invalid|api key.*expired|unauthorized|401\b|authentication failed|invalid api key|auth token.*expired)/i.test(text)) {
+    return { failed: false, detail: "" };
+  }
+  const compact = text
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter((line) => /(invalid[_ -]?authentication|api key|expired|unauthorized|401\b|authentication failed|invalid api key|auth token)/i.test(line))
+    .slice(-3)
+    .join(" ");
+  return { failed: true, detail: compact.slice(0, 500) || "Runtime returned an authentication error." };
+}
+
+async function refreshRunContractForAuthFailure(runId: string): Promise<void> {
+  try {
+    const { refreshRunContractSafe } = await import("./installer/contract-ledger.js");
+    await refreshRunContractSafe(runId, "runtime.auth_failed");
+  } catch (error) {
+    console.warn(`[spawner] run contract refresh after auth failure failed: ${String(error).slice(0, 220)}`);
   }
 }
 

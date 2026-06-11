@@ -220,6 +220,30 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /runtimeUsageLimitCooldownUntil = Math\.max\(runtimeUsageLimitCooldownUntil,\s*cooldownUntil\)/);
   });
 
+  it("terminally fails runs on runtime authentication errors instead of retry looping", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    const authStart = source.indexOf("function detectRuntimeAuthFailure(");
+    const authEnd = source.indexOf("function detectRuntimeUsageLimit(", authStart);
+    const claimStart = source.indexOf("async function failClaimIfStillRunning(");
+    const genericExit = source.indexOf("const reason = `AGENT_PROCESS_EXITED:", claimStart);
+    assert.notEqual(authStart, -1, "detectRuntimeAuthFailure helper not found");
+    assert.notEqual(authEnd, -1, "detectRuntimeAuthFailure helper end not found");
+    assert.notEqual(claimStart, -1, "failClaimIfStillRunning not found");
+    assert.notEqual(genericExit, -1, "generic process-exit path not found");
+    const authSource = source.slice(authStart, authEnd);
+    const claimPreamble = source.slice(claimStart, genericExit);
+
+    assert.match(authSource, /invalid\[_ -\]\?authentication/);
+    assert.match(authSource, /api key appears to be invalid/);
+    assert.match(authSource, /401\\b/);
+    assert.match(claimPreamble, /const authFailure = detectRuntimeAuthFailure\(transcriptPath\)/);
+    assert.match(claimPreamble, /AGENT_RUNTIME_AUTH_FAILED/);
+    assert.match(claimPreamble, /UPDATE runs SET status = 'failed'/);
+    assert.match(claimPreamble, /emitEvent\(\{ ts: nowIso, event: "run\.failed"/);
+    assert.match(claimPreamble, /scheduleRunCronTeardown\(row\.run_id\)/);
+    assert.doesNotMatch(claimPreamble, /AGENT_PROCESS_EXITED/);
+  });
+
   it("self-heals supervise-each queues before reviewer polling", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     const helperStart = source.indexOf("async function queuePendingSuperviseEachSteps()");
