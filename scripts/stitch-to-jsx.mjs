@@ -658,6 +658,7 @@ const MATERIAL_TO_LUCIDE = {
   warning: "TriangleAlert",
   widgets: "Boxes",
   warehouse: "Warehouse",
+  wifi: "Wifi",
   wifi_off: "WifiOff",
   wifi_tether: "RadioTower",
   wifi_tethering: "RadioTower",

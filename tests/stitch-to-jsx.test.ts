@@ -883,6 +883,7 @@ describe("stitch-to-jsx", () => {
           <span class="material-symbols-outlined">equalizer</span>
           <span class="material-symbols-outlined">volume_down</span>
           <span class="material-symbols-outlined">vibration</span>
+          <span class="material-symbols-outlined">wifi</span>
           <span class="material-symbols-outlined">wifi_tethering</span>
           <span class="material-symbols-outlined">directions_car</span>
           <span class="material-symbols-outlined">flash_on</span>
