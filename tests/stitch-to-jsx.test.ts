@@ -135,7 +135,7 @@ describe("stitch-to-jsx", () => {
         <main>
           <svg viewbox="0 0 100 100">
             <filter id="glow">
-              <fegaussianblur stdDeviation="2"></fegaussianblur>
+              <fegaussianblur stddeviation="2"></fegaussianblur>
               <fecolormatrix type="matrix" values="1 0 0 0 0 0 1 0 0 0 0 0 1 0 0 0 0 0 1 0"></fecolormatrix>
               <femerge><femergenode></femergenode></femerge>
             </filter>
