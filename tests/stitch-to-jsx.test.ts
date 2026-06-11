@@ -887,11 +887,15 @@ describe("stitch-to-jsx", () => {
           <span class="material-symbols-outlined">directions_car</span>
           <span class="material-symbols-outlined">flash_on</span>
           <span class="material-symbols-outlined">hub</span>
+          <span class="material-symbols-outlined">interests</span>
           <span class="material-symbols-outlined">keyboard_alt</span>
           <span class="material-symbols-outlined">keyboard_arrow_down</span>
           <span class="material-symbols-outlined">keyboard_voice</span>
+          <span class="material-symbols-outlined">scoreboard</span>
           <span class="material-symbols-outlined">settings_suggest</span>
           <span class="material-symbols-outlined">space_bar</span>
+          <span class="material-symbols-outlined">token</span>
+          <span class="material-symbols-outlined">trip_origin</span>
         </main>
       `);
 
@@ -904,6 +908,8 @@ describe("stitch-to-jsx", () => {
       assert.match(code, /Car/);
       assert.match(code, /AudioWaveform/);
       assert.match(code, /ChevronDown/);
+      assert.match(code, /CircleDot/);
+      assert.match(code, /Coins/);
       assert.match(code, /Flame/);
       assert.match(code, /Fuel/);
       assert.match(code, /Keyboard/);
@@ -913,7 +919,9 @@ describe("stitch-to-jsx", () => {
       assert.match(code, /RadioTower/);
       assert.match(code, /Ruler/);
       assert.match(code, /Settings2/);
+      assert.match(code, /Shapes/);
       assert.match(code, /Space/);
+      assert.match(code, /Trophy/);
       assert.match(code, /Vibrate/);
       assert.match(code, /Volume1/);
       assert.match(code, /Zap/);
