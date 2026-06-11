@@ -55,6 +55,24 @@ describe("smoke-test static rules", () => {
     });
   });
 
+  it("ignores mixed imports whose type export is only used as a TypeScript type", () => {
+    withRepo(repo => {
+      fs.writeFileSync(path.join(repo, "src", "App.tsx"), [
+        'import { AppState, subscribeAppState } from "./store";',
+        'function useState<T>(initial: T): [T, (next: T) => void] { return [initial, () => {}]; }',
+        'const [state] = useState<AppState | null>(null);',
+        'subscribeAppState((next: AppState) => next);',
+        "export const current = state;",
+      ].join("\n"));
+      fs.writeFileSync(path.join(repo, "src", "store.ts"), [
+        'export interface AppState { screen: "gameplay" | "settings"; }',
+        'export function subscribeAppState(cb: (state: AppState) => void) { cb({ screen: "gameplay" }); }',
+      ].join("\n"));
+
+      assert.deepEqual(checkEntryPointImports(repo), []);
+    });
+  });
+
   it("does not treat type-only exports as runtime values", () => {
     withRepo(repo => {
       fs.writeFileSync(path.join(repo, "src", "App.tsx"), [

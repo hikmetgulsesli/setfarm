@@ -972,7 +972,11 @@ function checkEntryPointImports(repo) {
         // JS identifiers are safe for regex (letters, digits, _, $)
         const pat1 = new RegExp('export\\s+(function|const|let|var|class)\\s+' + name + '\\b');
         const pat2 = new RegExp('export\\s*\\{(?![^}]*\\btype\\s+' + name + '\\b)[^}]*\\b' + name + '\\b[^}]*\\}');
+        const typePat = new RegExp('export\\s+(type|interface)\\s+' + name + '\\b');
         if (!pat1.test(targetContent) && !pat2.test(targetContent)) {
+          if (typePat.test(targetContent) && importedNameIsTypeOnlyInSource(content, name)) {
+            continue;
+          }
           issues.push(
             relative(repo, fp) + ': imports "' + name + '" from "' + specifier +
             '" but target does not export it'
@@ -982,6 +986,23 @@ function checkEntryPointImports(repo) {
     }
   }
   return issues;
+}
+
+function importedNameIsTypeOnlyInSource(source, name) {
+  let body = source
+    .replace(/^\s*import\s+[^;]+;?\s*$/gm, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/.*$/gm, '')
+    .replace(/(['"`])(?:\\.|(?!\1)[\s\S])*?\1/g, '');
+
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  body = body
+    .replace(new RegExp('<[^<>\\n]*\\b' + escaped + '\\b[^<>\\n]*>', 'g'), '')
+    .replace(new RegExp(':\\s*[^=;,){}\\n]*\\b' + escaped + '\\b[^=;,){}\\n]*', 'g'), '')
+    .replace(new RegExp('\\bas\\s+' + escaped + '\\b', 'g'), '')
+    .replace(new RegExp('\\bsatisfies\\s+' + escaped + '\\b', 'g'), '');
+
+  return !new RegExp('\\b' + escaped + '\\b').test(body);
 }
 
 // ── Phase 1c: Native button wiring validation ─────────────────────────
