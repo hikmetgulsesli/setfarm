@@ -1142,6 +1142,26 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(singleFailureSource, /routeVerifyEachFailureToImplement\(stepId, step, workflowStepId, error\)/);
   });
 
+  it("does not route exhausted PR review product loops into platform self-heal", () => {
+    const source = fs.readFileSync(path.join(root, "src", "installer", "step-fail.ts"), "utf-8");
+    const helperStart = source.indexOf("function isProductManualReviewTerminalFailure(");
+    const helperEnd = source.indexOf("async function handleLoopStepFailurePG(", helperStart);
+    const exhaustedStart = source.indexOf("if (newRetry > story.max_retries)");
+    const exhaustedEnd = source.indexOf("return { retrying: false, runFailed: true };", exhaustedStart);
+    assert.notEqual(helperStart, -1, "product manual review helper not found");
+    assert.notEqual(helperEnd, -1, "product manual review helper end not found");
+    assert.notEqual(exhaustedStart, -1, "story exhausted branch not found");
+    assert.notEqual(exhaustedEnd, -1, "story exhausted branch end not found");
+
+    const helperSource = source.slice(helperStart, helperEnd);
+    const exhaustedSource = source.slice(exhaustedStart, exhaustedEnd);
+    assert.match(helperSource, /PR_REVIEW_COMMENTS_OPEN/);
+    assert.match(helperSource, /actionable PR review comments/);
+    assert.match(helperSource, /DESIGN_IMPORT/);
+    assert.match(exhaustedSource, /!isProductManualReviewTerminalFailure\(runFailReason\)/);
+    assert.match(exhaustedSource, /recordTerminalPlatformSelfHealPlan/);
+  });
+
   it("treats supervisor as a critical quality gate instead of skipping it", () => {
     const source = fs.readFileSync(path.join(root, "src", "installer", "step-fail.ts"), "utf-8");
     const criticalStart = source.indexOf("const CRITICAL_STEPS");

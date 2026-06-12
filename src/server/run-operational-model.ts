@@ -194,6 +194,12 @@ function recoveryPolicyFor(classification: { owner: OperationalFailureOwner; act
   return "product_retry";
 }
 
+function isPrReviewRetryExhausted(runStatus: string, failureText: string): boolean {
+  return String(runStatus || "").toLowerCase() === "failed" &&
+    /\bPR_REVIEW_COMMENTS_OPEN\b|actionable PR review comments/i.test(failureText) &&
+    /retries exhausted|\bretry(?:_count)?\b|retry \d+\/\d+/i.test(failureText);
+}
+
 export function buildRunOperationalModel(input: {
   run: RunInfo;
   steps: StepInfo[];
@@ -212,6 +218,7 @@ export function buildRunOperationalModel(input: {
   const failureText = failureSource.text;
   const hasFailure = Boolean(failureText || failedStep || String(run.status || "").toLowerCase() === "failed");
   const postMergeQualityRegression = /POST_MERGE_QUALITY_REGRESSION|PR is already MERGED|already MERGED|merged PR/i.test(failureText);
+  const prReviewRetryExhausted = isPrReviewRetryExhausted(run.status, failureText);
   const mergedPrQualityFailure = postMergeQualityRegression || /VERIFY_SYSTEM_SMOKE_FAILURE|SYSTEM_SMOKE_FAILURE/i.test(failureText) && /MERGED|merged/i.test(failureText);
   const classifyStep = failureSource.stepId || failedStep?.step_id || currentStepId || "verify";
   const classification = hasFailure
@@ -222,6 +229,13 @@ export function buildRunOperationalModel(input: {
           category: "post_merge_quality_regression",
           reason: "A merged story PR failed downstream product evidence; Setfarm must not reopen the merged story branch.",
         }
+      : prReviewRetryExhausted
+        ? {
+            owner: "product" as const,
+            action: "manual_review" as const,
+            category: "pr_review_retry_exhausted",
+            reason: "A story exhausted its bounded PR-review repair attempts; stop the generated project and require manual review instead of platform self-heal.",
+          }
       : classifyStackFailure(stack.id, { stepId: classifyStep, failure: failureText || String((failedStep as any)?.output || ""), hasMachineEvidence: true })
     : null;
   const executionPlan = module.executionPlanForStep(classifyStep);

@@ -90,6 +90,11 @@ function isTransientAgentInfrastructureFailure(error: string): boolean {
   );
 }
 
+function isProductManualReviewTerminalFailure(error: string): boolean {
+  return /\bPR_REVIEW_COMMENTS_OPEN\b|actionable PR review comments|Story .* retries exhausted/i.test(error) &&
+    !/\bDESIGN_IMPORT|stitch-to-jsx|generated-screen-validator|SCOPE_BLEED|VERIFY_MERGE_BLOCKER|MERGE_CONFLICT|SYSTEM_SMOKE_FAILURE|VERIFY_SYSTEM_SMOKE_FAILURE|AGENT_RUNTIME_AUTH_FAILED|CLAIM_PARSE_LOOP\b/i.test(error);
+}
+
 async function handleLoopStepFailurePG(
   stepId: string,
   step: { run_id: string; step_id?: string; step_index: number; retry_count: number; max_retries: number; type: string; current_story_id: string | null; agent_id: string },
@@ -140,7 +145,9 @@ async function handleLoopStepFailurePG(
     emitEvent({ ts: now(), event: "story.failed", runId: step.run_id, workflowId: wfId, stepId: workflowStepId, storyId: storyRow?.story_id, storyTitle: storyRow?.title, detail: `Story retries exhausted (${newRetry}/${story.max_retries}) — failing run` });
     emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: workflowStepId, detail: runFailReason });
     emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: runFailReason });
-    await recordTerminalPlatformSelfHealPlan({ runId: step.run_id, stepId: workflowStepId, agentId: step.agent_id, error: runFailReason });
+    if (!isProductManualReviewTerminalFailure(runFailReason)) {
+      await recordTerminalPlatformSelfHealPlan({ runId: step.run_id, stepId: workflowStepId, agentId: step.agent_id, error: runFailReason });
+    }
     scheduleRunCronTeardown(step.run_id);
     logger.warn(`[failStep] Story ${storyRow?.story_id} retries exhausted — failing run (policy: fail-fast on unrecoverable story)`, { runId: step.run_id });
     await refreshRunContractSafe(step.run_id, "story.failed");

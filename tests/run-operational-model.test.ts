@@ -79,6 +79,36 @@ describe("run operational model", () => {
     });
   });
 
+  it("classifies exhausted PR review repair loops as product manual review", () => {
+    const model = buildRunOperationalModel({
+      run: run(),
+      steps: [
+        step("plan", "done"),
+        step("implement", "failed", [
+          "Story US-001 retries exhausted (6/5):",
+          "PR_REVIEW_COMMENTS_OPEN: US-001 has actionable PR review comments that must be fixed before merge.",
+        ].join("\n")),
+      ],
+      stories: [
+        {
+          story_id: "US-001",
+          status: "failed",
+          retry_count: 6,
+          max_retries: 5,
+          output: "PR_REVIEW_COMMENTS_OPEN: US-001 has actionable PR review comments that must be fixed before merge.",
+        },
+        { story_id: "US-002", status: "pending" },
+      ],
+    });
+
+    assert.equal(model.failure.present, true);
+    assert.equal(model.failure.owner, "product");
+    assert.equal(model.failure.action, "manual_review");
+    assert.equal(model.failure.category, "pr_review_retry_exhausted");
+    assert.equal(model.failure.recoveryPolicy, "manual_review");
+    assert.equal(model.failure.retryable, false);
+  });
+
   it("keeps verified story counts separate from done-awaiting-verify", () => {
     const model = buildRunOperationalModel({
       run: run({ status: "completed" }),
