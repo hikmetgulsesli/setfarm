@@ -157,6 +157,17 @@ function latestFailureSource(steps: StepInfo[], stories: StoryRow[], observation
   storyId: string | null;
   text: string;
 } {
+  const failedStory = [...stories].reverse().find((story) => String(story.status || "").toLowerCase() === "failed" && String(story.output || "").trim());
+  if (failedStory) {
+    const retryText = failedStory.retry_count != null && failedStory.max_retries != null
+      ? `\nStory retry ${failedStory.retry_count}/${failedStory.max_retries}`
+      : "";
+    return { stepId: null, storyId: failedStory.story_id, text: `${String(failedStory.output || "")}${retryText}` };
+  }
+
+  const failedStep = [...steps].reverse().find((step) => String(step.status || "").toLowerCase() === "failed");
+  if (failedStep) return { stepId: failedStep.step_id, storyId: (failedStep as any).current_story_id || null, text: String((failedStep as any).output || "") };
+
   const failedObservation = observations.find((row) => {
     const status = String(row.status || "").toLowerCase();
     return status === "fail" || status === "failed" || /failure|failed|regression/i.test(`${row.summary || ""} ${row.detail || ""}`);
@@ -169,11 +180,8 @@ function latestFailureSource(steps: StepInfo[], stories: StoryRow[], observation
     };
   }
 
-  const failedStep = [...steps].reverse().find((step) => String(step.status || "").toLowerCase() === "failed");
-  if (failedStep) return { stepId: failedStep.step_id, storyId: (failedStep as any).current_story_id || null, text: String((failedStep as any).output || "") };
-
-  const failedStory = [...stories].reverse().find((story) => String(story.status || "").toLowerCase() === "failed");
-  if (failedStory) return { stepId: null, storyId: failedStory.story_id, text: String(failedStory.output || "") };
+  const failedStoryWithoutOutput = [...stories].reverse().find((story) => String(story.status || "").toLowerCase() === "failed");
+  if (failedStoryWithoutOutput) return { stepId: null, storyId: failedStoryWithoutOutput.story_id, text: String(failedStoryWithoutOutput.output || "") };
 
   return { stepId: null, storyId: null, text: "" };
 }

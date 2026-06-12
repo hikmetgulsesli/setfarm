@@ -99,6 +99,14 @@ describe("run operational model", () => {
         },
         { story_id: "US-002", status: "pending" },
       ],
+      observations: [
+        {
+          step_id: "implement",
+          status: "info",
+          summary: "ambiguous_failure/unknown: Failure is not mechanically confirmed as platform failure.",
+          detail: "older platform-self-heal observation should not mask the failed story output",
+        },
+      ],
     });
 
     assert.equal(model.failure.present, true);
