@@ -560,7 +560,10 @@ describe("stitch-to-jsx", () => {
           <button><span class="material-symbols-outlined">view_kanban</span>Visual Board</button>
           <button><span class="material-symbols-outlined">train</span>Train</button>
           <button><span class="material-symbols-outlined">data_object</span>Data Object</button>
+          <button><span class="material-symbols-outlined">database</span>Database</button>
           <button><span class="material-symbols-outlined">dataset</span>Dataset</button>
+          <button><span class="material-symbols-outlined">menu_book</span>Guide</button>
+          <button><span class="material-symbols-outlined">rebase_edit</span>Rebase</button>
           <button><span class="material-symbols-outlined">add_box</span>Create</button>
           <button><span class="material-symbols-outlined">swap_horiz</span>Swap</button>
           <button><span class="material-symbols-outlined">route</span>Route</button>
@@ -682,7 +685,7 @@ describe("stitch-to-jsx", () => {
       const iconReport = JSON.parse(fs.readFileSync(path.join(tmp, ".setfarm", "setup", "UNKNOWN_MATERIAL_ICONS.json"), "utf-8"));
       assert.equal(iconReport.status, "pass");
       assert.deepEqual(iconReport.icons, []);
-      assert.match(code, /import \{ Activity, Armchair, ArrowLeftRight, ArrowUpDown, AudioWaveform, BadgeAlert, BadgeCheck, Ban, BarChart3, Bed, Bell, BellRing, Bolt, Braces, BriefcaseMedical, CheckCheck, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ChevronsUpDown, CircleHelp, ClipboardCheck, ClipboardList, ClipboardPlus, Clock, CloudOff, Columns3, Database, DoorOpen, Expand, Eye, Factory, FastForward, FilePenLine, FileWarning, Filter, FilterX, FolderOpen, FolderX, Gauge, Grid3X3, GripHorizontal, GripVertical, HardHat, Headphones, Heart, HeartPulse, History, Hospital, Kanban, Keyboard, LayoutDashboard, Lightbulb, ListChecks, ListOrdered, ListTodo, LoaderCircle, LogIn, LogOut, Mail, Map, MapPin, Monitor, MonitorCog, MoveDownRight, Music, Navigation, Package, PackageCheck, PackageSearch, Palette, Pencil, Phone, PhoneCall, Plane, PlaneLanding, PlaneTakeoff, PlusSquare, Power, RadioTower, RefreshCcw, RefreshCw, RefreshCwOff, Rocket, RotateCcw, Route, Rows2, Rows3, Server, Sparkles, Star, Tag, Terminal, Timer, ToggleRight, Train, TrendingUp, Triangle, Truck, UserCheck, UserMinus, UserPlus, UserSearch, Users, UsersRound, Volume2, VolumeX, Warehouse, WifiOff, Wrench \} from "lucide-react";/);
+      assert.match(code, /import \{ Activity, Armchair, ArrowLeftRight, ArrowUpDown, AudioWaveform, BadgeAlert, BadgeCheck, Ban, BarChart3, Bed, Bell, BellRing, Bolt, BookOpen, Braces, BriefcaseMedical, CheckCheck, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ChevronsUpDown, CircleHelp, ClipboardCheck, ClipboardList, ClipboardPlus, Clock, CloudOff, Columns3, Database, DoorOpen, Expand, Eye, Factory, FastForward, FilePenLine, FileWarning, Filter, FilterX, FolderOpen, FolderX, Gauge, GitCompareArrows, Grid3X3, GripHorizontal, GripVertical, HardHat, Headphones, Heart, HeartPulse, History, Hospital, Kanban, Keyboard, LayoutDashboard, Lightbulb, ListChecks, ListOrdered, ListTodo, LoaderCircle, LogIn, LogOut, Mail, Map, MapPin, Monitor, MonitorCog, MoveDownRight, Music, Navigation, Package, PackageCheck, PackageSearch, Palette, Pencil, Phone, PhoneCall, Plane, PlaneLanding, PlaneTakeoff, PlusSquare, Power, RadioTower, RefreshCcw, RefreshCw, RefreshCwOff, Rocket, RotateCcw, Route, Rows2, Rows3, Server, Sparkles, Star, Tag, Terminal, Timer, ToggleRight, Train, TrendingUp, Triangle, Truck, UserCheck, UserMinus, UserPlus, UserSearch, Users, UsersRound, Volume2, VolumeX, Warehouse, WifiOff, Wrench \} from "lucide-react";/);
       assert.match(code, /<LayoutDashboard/);
       assert.match(code, /<PackageCheck/);
       assert.match(code, /<PackageSearch/);
@@ -696,6 +699,8 @@ describe("stitch-to-jsx", () => {
       assert.match(code, /<Train/);
       assert.match(code, /<Braces/);
       assert.match(code, /<Database/);
+      assert.match(code, /<BookOpen/);
+      assert.match(code, /<GitCompareArrows/);
       assert.match(code, /<PlusSquare/);
       assert.match(code, /<ArrowLeftRight/);
       assert.match(code, /<Route/);
