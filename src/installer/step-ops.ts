@@ -2737,6 +2737,33 @@ function setLocalMainAuthoritative(repo: string, enabled: boolean, runId: string
   }
 }
 
+function isLocalMainAuthoritative(repo: string): boolean {
+  try {
+    const value = execFileSync("git", ["config", "--get", "setfarm.localMainAuthoritative"], {
+      cwd: repo,
+      encoding: "utf-8",
+      timeout: 5000,
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+    return value === "true";
+  } catch {
+    return false;
+  }
+}
+
+function resolveVerifyPreflightBaseRef(
+  repo: string,
+  context: Record<string, string>,
+  analysisBranch: string,
+): string {
+  if (!analysisBranch || analysisBranch === "main") return "main";
+
+  const storyBaseRef = (context["story_base_ref"] || "").trim();
+  if (storyBaseRef) return storyBaseRef;
+
+  return isLocalMainAuthoritative(repo) ? "main" : "origin/main";
+}
+
 function pointLocalMainAtHead(repo: string, runId: string): boolean {
   const current = currentGitBranch(repo);
   if (current === "main") return true;
@@ -4288,7 +4315,7 @@ async function claimSingleStep(
           logger.warn(`[preflight] Could not prepare PR branch ${analysisBranch}: ${String(checkoutErr).slice(0, 220)}`, { runId: step.run_id });
         }
       }
-      const baseRef = analysisBranch && analysisBranch !== "main" ? "origin/main" : "main";
+      const baseRef = resolveVerifyPreflightBaseRef(repoPath, context, analysisBranch);
       const report = buildPreFlightReport(repoPath, baseRef, "HEAD");
       context["preflight_analysis"] = formatPreFlightForAgent(report);
       context["preflight_diff"] = report.diffSummary;

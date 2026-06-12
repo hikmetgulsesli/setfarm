@@ -242,11 +242,14 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(clearSource, /delete next\["current_story_title"\]/);
   });
 
-  it("runs verify preflight against the PR branch diff, not story branch against itself", () => {
+  it("runs verify preflight against the PR branch diff using the story base", () => {
     const fullSource = stepOpsSource();
     assert.match(fullSource, /execFileSync\("git", \["fetch", "--prune", "origin", "main", analysisBranch\]/);
     assert.match(fullSource, /execFileSync\("git", \["checkout", "-B", analysisBranch, `origin\/\$\{analysisBranch\}`\]/);
-    assert.match(fullSource, /const baseRef = analysisBranch && analysisBranch !== "main" \? "origin\/main" : "main"/);
+    assert.match(fullSource, /function resolveVerifyPreflightBaseRef/);
+    assert.match(fullSource, /const storyBaseRef = \(context\["story_base_ref"\] \|\| ""\)\.trim\(\)/);
+    assert.match(fullSource, /return isLocalMainAuthoritative\(repo\) \? "main" : "origin\/main"/);
+    assert.match(fullSource, /const baseRef = resolveVerifyPreflightBaseRef\(repoPath, context, analysisBranch\)/);
     assert.match(fullSource, /buildPreFlightReport\(repoPath, baseRef, "HEAD"\)/);
     assert.doesNotMatch(fullSource, /buildPreFlightReport\(context\["repo"\], analysisBranch\)/);
   });
