@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { StackCandidate, StackEvidence, StackPackId } from "./types.js";
+import { hasExplicitNonGameIntent } from "../task-intent.js";
 
 interface PackageJson {
   dependencies?: Record<string, string>;
@@ -48,16 +49,20 @@ export function detectStackCandidates(repoPath?: string, taskText = ""): StackCa
 export function extractTaskHints(taskText = ""): string[] {
   const normalized = taskText.trim();
   if (!normalized) return [];
+  const suppressBrowserGame = hasExplicitNonGameIntent(normalized);
   return TASK_HINTS
     .filter((hint) => hint.pattern.test(normalized))
+    .filter((hint) => !(suppressBrowserGame && hint.packId === "browser-game-canvas"))
     .map((hint) => hint.value);
 }
 
 function extractTaskHintEvidence(taskText: string): Array<{ packId: StackPackId; evidence: StackEvidence }> {
   const normalized = taskText.trim();
   if (!normalized) return [];
+  const suppressBrowserGame = hasExplicitNonGameIntent(normalized);
   return TASK_HINTS
     .filter((hint) => hint.pattern.test(normalized))
+    .filter((hint) => !(suppressBrowserGame && hint.packId === "browser-game-canvas"))
     .map((hint) => ({
       packId: hint.packId,
       evidence: {

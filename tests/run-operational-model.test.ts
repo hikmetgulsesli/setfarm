@@ -149,4 +149,20 @@ describe("run operational model", () => {
     assert.equal(model.stack.confidence, "high");
     assert.match(model.stack.evidence.join(" "), /override generic vite-react/);
   });
+
+  it("does not infer browser-game stack from explicit non-game task text", () => {
+    const model = buildRunOperationalModel({
+      run: run({
+        task: "Build a compact browser tool called StackLens Canary. Use a frontend web app stack, not a game. Compare module stack health across projects.",
+        status: "running",
+        context: JSON.stringify({ tech_stack: "vite-react", platform: "web" }),
+      }),
+      steps: [step("plan", "done"), step("design", "running")],
+      stories: [],
+    });
+
+    assert.equal(model.stack.stackPackId, "vite-react-web-app");
+    assert.equal(model.stack.confidence, "low");
+    assert.notEqual(model.stack.stackPackId, "browser-game-canvas");
+  });
 });

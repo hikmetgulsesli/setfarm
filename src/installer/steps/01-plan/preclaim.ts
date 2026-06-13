@@ -2,6 +2,7 @@ import { pgGet } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
 import type { ClaimContext } from "../types.js";
 import { slugifyIdentity, transliterateIdentity } from "../../runtime-identity.js";
+import { hasBrowserGameIntent } from "../../task-intent.js";
 
 const DEFAULT_STACK = "vite-react";
 const PLAN_CONTRACT_SCHEMA_VERSION = "setfarm.plan.v2.2";
@@ -109,7 +110,7 @@ function inferPlatform(task: string): string {
   if (/\b(cli|command line|terminal app)\b/.test(lower)) return "cli";
   if (/\b(electron|desktop app|desktop application|macos|windows app|linux desktop)\b/.test(lower)) return "desktop";
   if (/\breact native\b|\bmobile app\b|\bios\b|\bandroid\b/.test(lower)) return "mobile";
-  if (/\b(game|arcade|puzzle|playfield|score|level|pause|restart)\b/.test(lower)) return "game";
+  if (hasBrowserGameIntent(task)) return "game";
   return "web";
 }
 
@@ -119,7 +120,7 @@ function inferTechStack(task: string): string {
   if (/\bios\b|\biphone\b|\bipad\b/.test(lower) && !/\breact native\b|\bexpo\b/.test(lower)) return "ios-native";
   if (/\breact native\b|\bexpo\b|mobile app/.test(lower)) return "react-native-expo";
   if (/\belectron\b|desktop app|desktop application/.test(lower)) return "desktop-electron";
-  if (/\b(game|arcade|puzzle|playfield|score|level|pause|restart)\b/.test(lower)) return "browser-game";
+  if (hasBrowserGameIntent(task)) return "browser-game";
   if (/\bnext\s*(?:\.?js|js)\b|\bnextjs\b|\bseo\b|\bssr\b/.test(lower)) return "nextjs";
   if (/\bpython\b/.test(lower) && /\b(cli|command line|terminal app)\b/.test(lower)) return "python-cli";
   if (/\bpython\b/.test(lower) && /\b(api only|backend service|rest api|graphql|fastapi|flask|django)\b/.test(lower)) return "python-web";

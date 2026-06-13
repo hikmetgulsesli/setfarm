@@ -88,6 +88,27 @@ describe("stack contract", () => {
     }
   });
 
+  it("does not select browser-game-canvas for explicit non-game web tools", () => {
+    const repo = tmpDir("stack-non-game-tool");
+    try {
+      writeJson(path.join(repo, "package.json"), {
+        dependencies: { react: "^19.0.0" },
+        devDependencies: { vite: "^7.0.0", "@vitejs/plugin-react": "^5.0.0" },
+        scripts: { build: "vite build", dev: "vite" },
+      });
+
+      const contract = resolveStackContract({
+        repoPath: repo,
+        taskText: "Build a compact browser tool called StackLens Canary. Use a frontend web app stack, not a game. Compare module stack health across projects.",
+      });
+      assert.equal(contract.status, "resolved");
+      assert.equal(contract.packId, "vite-react-web-app");
+      assert.doesNotMatch(contract.prompt, /game loop/);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
   it("keeps coherent Next.js repository evidence stronger than generic game hints", () => {
     const repo = tmpDir("stack-next-game");
     try {

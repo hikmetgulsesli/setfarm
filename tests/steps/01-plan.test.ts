@@ -242,6 +242,22 @@ describe("01-plan step module", () => {
     assert.match(parsed.prd, /DESIGN_REQUIRED=false/);
   });
 
+  it("auto-plan honors explicit non-game requests even when the task mentions game", () => {
+    const output = buildAutoPlanOutput(
+      "Build a compact browser tool called StackLens Canary. Use a frontend web app stack, not a game. No database required. First viewport must be an operational dashboard with module cards and stack status.",
+      { runId: "8a2de030-9455-46fa-9c53-5e8c1f13420f" },
+    );
+    const parsed = parsePlanOutput(output);
+    planModule.normalize?.(parsed);
+    const validation = planModule.validateOutput(parsed);
+
+    assert.equal(validation.ok, true, validation.errors.join("; "));
+    assert.equal(parsed.platform, "web");
+    assert.equal(parsed.tech_stack, "vite-react");
+    assert.doesNotMatch(parsed.prd, /SURF_GAMEPLAY|ACT_START_GAME|GameSession/);
+    assert.match(parsed.prd, /dashboard|module|stack/i);
+  });
+
   it("auto-plan emits platform-specific contracts and design routing", () => {
     const cases = [
       {
