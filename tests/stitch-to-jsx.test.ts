@@ -839,6 +839,49 @@ describe("stitch-to-jsx", () => {
     }
   });
 
+  it("maps analytics dashboard Material Symbols used by operational screens", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-analytics-icons-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "analytics-console", title: "Analytics Console" },
+      ]));
+      writeHtml(path.join(stitchDir, "analytics-console.html"), `
+        <main>
+          <button><span class="material-symbols-outlined">arrow_right_alt</span>Open</button>
+          <button><span class="material-symbols-outlined">blur_off</span>Disable focus</button>
+          <button><span class="material-symbols-outlined">memory</span>Runtime</button>
+          <button><span class="material-symbols-outlined">pie_chart</span>Mix</button>
+          <button><span class="material-symbols-outlined">query_stats</span>Query stats</button>
+          <button><span class="material-symbols-outlined">stacked_line_chart</span>Trend</button>
+          <button><span class="material-symbols-outlined">tips_and_updates</span>Advice</button>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "AnalyticsConsole.tsx"), "utf-8");
+      const iconReport = JSON.parse(fs.readFileSync(path.join(tmp, ".setfarm", "setup", "UNKNOWN_MATERIAL_ICONS.json"), "utf-8"));
+      assert.equal(iconReport.status, "pass");
+      assert.deepEqual(iconReport.icons, []);
+      assert.match(code, /import \{ ArrowRight, BarChart3, Cpu, EyeOff, Lightbulb, PieChart, TrendingUp \} from "lucide-react";/);
+      assert.match(code, /<ArrowRight/);
+      assert.match(code, /<EyeOff/);
+      assert.match(code, /<Cpu/);
+      assert.match(code, /<PieChart/);
+      assert.match(code, /<BarChart3/);
+      assert.match(code, /<TrendingUp/);
+      assert.match(code, /<Lightbulb/);
+      assert.doesNotMatch(code, /\bBadgeHelp\b|material-symbols|arrow_right_alt|blur_off|query_stats/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("fails generated screen conversion when Stitch uses an unmapped Material Symbol", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-unknown-icon-"));
     try {
