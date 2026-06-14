@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { implementModule } from "../../dist/installer/steps/06-implement/module.js";
-import { checkBuildGate, checkGeneratedRuntimeSemanticGate, checkGeneratedScreenRequiredPropsGate, checkGeneratedScreenShellChromeGate, checkImplementEvidenceGate, checkPlatformHelperContaminationGate, checkScopeEnforcement, checkScopeFilesGate, checkTestGate, computeScopeFileLimits, detectPackageBuildCommand, findDesignDomImplementationFindings, findDesignDomImplementationIssues, findGeneratedRuntimeSemanticIssues, findGeneratedScreenIntegrationIssues, findGeneratedScreenRegressionIssues, findGeneratedScreenRequiredPropIssues, findGeneratedScreenShellChromeIssues, findPlatformHelperContaminationIssues, getOutOfScopeStoryFiles, normalize, parseGitStatusPorcelainPath, selectMatchingStoryWorktree, sourceExposesWindowApp, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
+import { checkBuildGate, checkGeneratedRuntimeSemanticGate, checkGeneratedScreenRequiredPropsGate, checkGeneratedScreenShellChromeGate, checkImplementEvidenceGate, checkPlatformHelperContaminationGate, checkScopeEnforcement, checkScopeFilesGate, checkTestGate, computeScopeFileLimits, detectPackageBuildCommand, findDesignDomImplementationFindings, findDesignDomImplementationIssues, findGeneratedRuntimeSemanticIssues, findGeneratedRuntimeSupervisorQualityIssues, findGeneratedScreenIntegrationIssues, findGeneratedScreenRegressionIssues, findGeneratedScreenRequiredPropIssues, findGeneratedScreenShellChromeIssues, findPlatformHelperContaminationIssues, getOutOfScopeStoryFiles, normalize, parseGitStatusPorcelainPath, selectMatchingStoryWorktree, sourceExposesWindowApp, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
 import { buildScopeFilesRetryFailureForWorkdir, cleanupOutOfScopeWorktreeFiles, mergeRetryFailureTexts } from "../../dist/installer/steps/06-implement/context.js";
 import { cleanupBlockedStoryCommitScope, commitStoryWorktreeScopeIfNeeded, decideStorySystemSmokeGate } from "../../dist/installer/step-ops.js";
 import { createStoryWorktree, ensureStoryBranchWorktree } from "../../dist/installer/worktree-ops.js";
@@ -717,10 +717,12 @@ describe("06-implement step module", () => {
       ].join("\n"));
 
       const issues = findGeneratedRuntimeSemanticIssues(tmp);
+      const qualityIssues = findGeneratedRuntimeSupervisorQualityIssues(tmp);
       assert.equal(issues.some((issue) => issue.includes("GENERATED_RUNTIME_HARDCODED_SCREEN")), true);
-      assert.equal(issues.some((issue) => issue.includes("GENERATED_ICON_FALLBACK")), true);
       assert.equal(issues.some((issue) => issue.includes("ACTION_SEMANTIC_NOOP")), true);
       assert.equal(issues.some((issue) => issue.includes("GENERATED_ROUTE_COLLAPSE")), true);
+      assert.equal(issues.some((issue) => issue.includes("GENERATED_ICON_FALLBACK")), false);
+      assert.equal(qualityIssues.some((issue) => issue.includes("GENERATED_ICON_FALLBACK")), true);
 
       const gate = checkGeneratedRuntimeSemanticGate("US-001", "App Shell", tmp);
       assert.equal(gate.passed, false);

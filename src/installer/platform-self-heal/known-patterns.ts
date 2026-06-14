@@ -23,10 +23,10 @@ export const KNOWN_FAILURE_PATTERNS: KnownFailurePattern[] = [
   },
   {
     id: "unknown-material-icons",
-    category: "design_import_gap",
-    stepIds: ["setup-build", "design"],
+    category: "supervisor_quality_gap",
+    stepIds: ["implement", "verify", "supervise", "qa-test", "final-test"],
     patterns: ["UNKNOWN_MATERIAL_ICONS", "Unknown Material Symbols", "BadgeHelp"],
-    evidence: "Unknown design icon import must be stopped at design/setup-build gates.",
+    evidence: "Unknown generated icons are build-safe fallback quality issues that should be routed to supervisor repair, not setup-build failure.",
   },
   {
     id: "final-test-json-missing",

@@ -71,7 +71,9 @@ describe("quality gates", () => {
 
       const issues = runQualityChecks(tmp);
       assert.equal(issues.some((issue) => issue.severity === "error" && issue.rule === "generated_runtime_semantics"), true);
-      assert.match(issues.map((issue) => issue.detail).join("\n"), /GENERATED_ROUTE_COLLAPSE|GENERATED_ICON_FALLBACK/);
+      assert.equal(issues.some((issue) => issue.severity === "warning" && issue.rule === "generated_supervisor_quality"), true);
+      assert.match(issues.filter((issue) => issue.severity === "error").map((issue) => issue.detail).join("\n"), /GENERATED_ROUTE_COLLAPSE/);
+      assert.match(issues.filter((issue) => issue.severity === "warning").map((issue) => issue.detail).join("\n"), /GENERATED_ICON_FALLBACK/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

@@ -138,6 +138,39 @@ function compactTaskSummary(input: string, rawInput: unknown): string {
     .find((line) => line && !line.startsWith("#"))?.slice(0, 700) || "";
 }
 
+function stringListFromUnknown(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item || "").trim()).filter(Boolean);
+  }
+  if (typeof value === "string") {
+    return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+function extractSetupQualityWarnings(input: string, rawInput: unknown): string[] {
+  const warnings: string[] = [];
+  if (rawInput && typeof rawInput === "object" && !Array.isArray(rawInput)) {
+    const record = rawInput as Record<string, unknown>;
+    warnings.push(...stringListFromUnknown(record["setup_quality_warnings"]));
+    const context = record["context"];
+    if (context && typeof context === "object" && !Array.isArray(context)) {
+      warnings.push(...stringListFromUnknown((context as Record<string, unknown>)["setup_quality_warnings"]));
+    }
+  }
+
+  const direct = lineValue(input, "setup_quality_warnings") || lineValue(input, "SETUP_QUALITY_WARNINGS");
+  warnings.push(...stringListFromUnknown(direct));
+  const section = sliceSection(
+    input,
+    /^\s*(?:##\s*)?SETUP QUALITY WARNINGS\s*:?\s*$/im,
+    [/^\s*##\s+/m, /^\s*[A-Z][A-Z _-]+:\s*/m],
+    2200,
+  );
+  warnings.push(...stringListFromUnknown(section));
+  return Array.from(new Set(warnings)).slice(0, 12);
+}
+
 function extractOutputContract(input: string): { format: string; requiredFields: string[] } | undefined {
   const section = sliceSection(
     input,
@@ -1101,6 +1134,7 @@ export function buildClaimSummary(params: {
   const testCommand = resolvedCommand(input, "TEST_CMD", [workdir, repo], "test", "true");
   const lintCommand = resolvedCommand(input, "LINT_CMD", [workdir, repo], "lint", "true");
   const runtimeDoneChecklist = runtimeDoneChecklistForClaim(input, task, currentStory);
+  const setupQualityWarnings = extractSetupQualityWarnings(input, params.input);
   const implementEvidenceConfig = readImplementEvidenceConfig();
   const implementEvidencePaths = storyId ? implementEvidenceArtifactPaths(workdir, storyId) : null;
   return {
@@ -1182,6 +1216,10 @@ export function buildClaimSummary(params: {
         : "Before STATUS: done, confirm no app/router/shell integration file was changed outside scope.",
     },
     runtimeDoneChecklist,
+    setupQualityWarnings: setupQualityWarnings.length > 0 ? {
+      warnings: setupQualityWarnings,
+      instruction: "These are recoverable setup/build quality findings. Do not fail setup-build for them; supervisor/verify should repair or explicitly accept residual UI fidelity risk before final acceptance.",
+    } : undefined,
     implementEvidenceContract: storyId ? {
       mode: implementEvidenceConfig.mode,
       visualGate: implementEvidenceConfig.visualGate,

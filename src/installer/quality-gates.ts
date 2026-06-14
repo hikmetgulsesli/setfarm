@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { logger } from "../lib/logger.js";
 import fs from "node:fs";
 import path from "node:path";
-import { findGeneratedRuntimeSemanticIssues, findGeneratedScreenShellChromeIssues } from "./steps/06-implement/guards.js";
+import { findGeneratedRuntimeSemanticIssues, findGeneratedRuntimeSupervisorQualityIssues, findGeneratedScreenShellChromeIssues } from "./steps/06-implement/guards.js";
 
 export interface QualityIssue {
   rule: string;
@@ -55,6 +55,20 @@ export function runQualityChecks(repoPath: string): QualityIssue[] {
     }
   } catch (err) {
     logger.warn(`[quality-gates] generated runtime semantic check failed: ${String(err).slice(0, 240)}`);
+  }
+
+  try {
+    const generatedSupervisorQualityIssues = findGeneratedRuntimeSupervisorQualityIssues(repoPath);
+    for (const issue of generatedSupervisorQualityIssues) {
+      issues.push({
+        rule: "generated_supervisor_quality",
+        severity: "warning",
+        detail: issue,
+        matches: [issue],
+      });
+    }
+  } catch (err) {
+    logger.warn(`[quality-gates] generated supervisor quality check failed: ${String(err).slice(0, 240)}`);
   }
 
   // --- DEAD LINK CHECKS ---

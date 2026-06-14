@@ -1188,12 +1188,13 @@ function writeUnknownMaterialIconsReport(repoPath, unknownMaterialIcons) {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([iconName, count]) => ({ iconName, count }));
   fs.writeFileSync(path.join(setupDir, "UNKNOWN_MATERIAL_ICONS.json"), JSON.stringify({
-    status: icons.length > 0 ? "fail" : "pass",
+    status: icons.length > 0 ? "warning" : "pass",
     generatedAt: new Date().toISOString(),
     count: icons.length,
     icons,
+    severity: icons.length > 0 ? "supervisor_fixable" : "none",
     guidance: icons.length > 0
-      ? "Add deterministic Material Symbol to lucide-react mappings in scripts/stitch-to-jsx.mjs before setup-build can pass."
+      ? "Generated code used build-safe fallback icons for unmapped Material Symbols. Treat this as supervisor-fixable UI fidelity work, not a setup-build failure."
       : "All Material Symbols used by Stitch HTML were mapped to lucide-react components.",
   }, null, 2));
 }
@@ -1380,12 +1381,11 @@ const barrel = uniqueBarrelScreens
 fs.writeFileSync(path.join(screensDir, "index.ts"), barrel ? `${barrel}\n` : "");
 ensureStitchRuntimeCss(repoPath, usedClassTokens, stitchStyleBlocks);
 writeUnknownMaterialIconsReport(repoPath, unknownMaterialIcons);
-if (unknownMaterialIcons.size > 0 && process.env.SETFARM_ALLOW_UNKNOWN_MATERIAL_ICONS !== "1") {
-  console.error("UNKNOWN_MATERIAL_ICONS: stitch-to-jsx could not map Material Symbols to lucide-react.");
+if (unknownMaterialIcons.size > 0) {
+  console.warn("UNKNOWN_MATERIAL_ICONS: stitch-to-jsx used build-safe fallback icons.");
   for (const [iconName, count] of [...unknownMaterialIcons.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-    console.error(`  - ${iconName} (${count})`);
+    console.warn(`  - ${iconName} (${count})`);
   }
-  console.error("Add deterministic mappings in scripts/stitch-to-jsx.mjs before setup-build can pass.");
-  process.exit(2);
+  console.warn("Supervisor should repair icon fidelity if the generated fallback harms the UI.");
 }
 console.log("Generated", screenIndex.length, "screen(s)");

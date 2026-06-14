@@ -6,16 +6,21 @@ import { pgGet } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
 import { resolvePlatformScript } from "../../paths.js";
 import { materializeSetupBuildContracts } from "../../setup-handoff.js";
-import { findGeneratedScreenIconFallbackIssues } from "../06-implement/guards.js";
 
 const MIN_STITCH_HTML_BYTES = 1000;
 const DESIGN_IMPORT_REPORT_REL = ".setfarm/setup/DESIGN_IMPORT_VALIDATE.json";
 const UNKNOWN_MATERIAL_ICONS_REPORT_REL = ".setfarm/setup/UNKNOWN_MATERIAL_ICONS.json";
 const DESIGN_IMPORT_REPAIR_SUGGESTION =
-  "Inspect .setfarm/setup/DESIGN_IMPORT_VALIDATE.json, .setfarm/setup/UNKNOWN_MATERIAL_ICONS.json, scripts/stitch-to-jsx.mjs, " +
+  "Inspect .setfarm/setup/DESIGN_IMPORT_VALIDATE.json, scripts/stitch-to-jsx.mjs, " +
   "scripts/generated-screen-validator.mjs, and src/screens/*.tsx. Fix the deterministic " +
   "Stitch-to-JSX import/conversion baseline, rerun generated-screen-validator --fix, then rerun npm run build. " +
   "Do not pass generated-screen mechanical defects to IMPLEMENT.";
+
+function appendSetupQualityWarning(ctx: ClaimContext, warning: string): void {
+  const existing = ctx.context["setup_quality_warnings"] || "";
+  const next = existing ? `${existing}\n${warning}` : warning;
+  ctx.context["setup_quality_warnings"] = next.slice(0, 4000);
+}
 
 function isReusableStitchHtml(filePath: string): boolean {
   try {
@@ -177,6 +182,13 @@ function enforceFinalDesignImportValidation(ctx: ClaimContext, repo: string): bo
     execFileSync("node", [validatorPath, repo, "--fix"], { cwd: repo, timeout: 60000, stdio: "pipe" });
     ctx.context["design_import_validate_report"] = DESIGN_IMPORT_REPORT_REL;
     logger.info(`[module:setup-build preclaim] final design import validate ok`, { runId: ctx.runId });
+    const unknownIconSummary = summarizeDesignImportReport(repo, 1200)
+      .split("\n")
+      .filter((line) => line.startsWith("UNKNOWN_MATERIAL_ICONS_REPORT:") || line.startsWith("status=") || line.startsWith("icons="))
+      .join("\n");
+    if (/UNKNOWN_MATERIAL_ICONS_REPORT:[\s\S]*icons=/i.test(unknownIconSummary)) {
+      appendSetupQualityWarning(ctx, `DESIGN_ICON_FALLBACK_WARNING:\n${unknownIconSummary}`);
+    }
     return true;
   } catch (e) {
     ctx.context["design_import_validate_report"] = DESIGN_IMPORT_REPORT_REL;
@@ -492,15 +504,6 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
             logger.warn(`[module:setup-build preclaim] ${msg}`, { runId: ctx.runId });
             throwPreclaimFailure(ctx, msg, "design_import_failure", DESIGN_IMPORT_REPAIR_SUGGESTION);
           }
-        }
-        const generatedIconFallbackIssues = findGeneratedScreenIconFallbackIssues(repo);
-        if (generatedIconFallbackIssues.length > 0) {
-          const msg = [
-            "DESIGN_IMPORT_ICON_FALLBACK failed after stitch-to-jsx:",
-            ...generatedIconFallbackIssues.slice(0, 8),
-          ].join("\n");
-          logger.warn(`[module:setup-build preclaim] ${msg.slice(0, 500)}`, { runId: ctx.runId });
-          throwPreclaimFailure(ctx, msg, "design_import_failure", DESIGN_IMPORT_REPAIR_SUGGESTION);
         }
         try {
           const generatedPaths = ["src/screens/", "src/index.css", "src/main.css", "src/App.css", "app/globals.css"]

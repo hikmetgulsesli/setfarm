@@ -1162,10 +1162,14 @@ export function findGeneratedScreenIconFallbackIssues(workdir: string, repoPath 
     let source = "";
     try { source = fs.readFileSync(abs, "utf-8"); } catch { continue; }
     if (fileHasGeneratedIconFallback(source)) {
-      issues.push(`GENERATED_ICON_FALLBACK: ${file} renders generic BadgeHelp/Circle icons in a generated screen. Material/Stitch icons must map to a meaningful SVG icon; do not silently replace domain, navigation, status, filter, search, save, retry, settings, reports, help, or logout icons with a generic fallback.`);
+      issues.push(`GENERATED_ICON_FALLBACK: ${file} renders generic BadgeHelp/Circle icons in a generated screen. This is supervisor-fixable UI fidelity work; do not fail setup-build for it, but repair it before final acceptance when it harms user-visible meaning.`);
     }
   }
   return issues.slice(0, 24);
+}
+
+export function findGeneratedRuntimeSupervisorQualityIssues(workdir: string, repoPath = ""): string[] {
+  return findGeneratedScreenIconFallbackIssues(workdir, repoPath);
 }
 
 export function findGeneratedRuntimeSemanticIssues(workdir: string, repoPath = ""): string[] {
@@ -1191,8 +1195,6 @@ export function findGeneratedRuntimeSemanticIssues(workdir: string, repoPath = "
       issues.push(`ACTION_SEMANTIC_NOOP: ${file} appears to complete a visible save/update/search/filter/sort/resolve/retry action by changing only route/panel/selection shell state. Declared actions must mutate/search/filter/persist/recover domain data or render a visible in-screen result.`);
     }
   }
-
-  issues.push(...findGeneratedScreenIconFallbackIssues(workdir, repoPath));
 
   for (const file of appRouterFiles(workdir)) {
     let source = "";
@@ -1684,7 +1686,7 @@ export function checkGeneratedRuntimeSemanticGate(
     passed: false,
     reason: `${issues.join("\n")}\nStory ${storyId} (${storyTitle}) reported STATUS: done while generated-screen runtime semantics are incomplete or misleading.`,
     category: "GENERATED_RUNTIME_SEMANTIC_INCOMPLETE",
-    suggestion: "Use real generated-screen route branches, derive runtime bridge state from the actual rendered screen, replace generic icon fallbacks with semantic SVG icons, and make visible actions mutate/search/filter/persist domain data instead of only route/panel state.",
+    suggestion: "Use real generated-screen route branches, derive runtime bridge state from the actual rendered screen, and make visible actions mutate/search/filter/persist domain data instead of only route/panel state.",
   };
 }
 

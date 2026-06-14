@@ -1975,4 +1975,40 @@ describe("spawner prompt bootstrap", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it("carries recoverable setup quality warnings into claim summaries", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-quality-warnings-"));
+    try {
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "supervisor",
+        claimFile: "/tmp/claim.json",
+        outputFile: "/tmp/output.txt",
+        bootstrapFile: "/tmp/bootstrap.sh",
+        stepId: "step-123",
+        runId: "33d23f10-f68c-4c75-a9e9-4a48996d075b",
+        workdir: tmp,
+        repo: tmp,
+        input: {
+          task: "Project: quality warning sensor",
+          context: {
+            setup_quality_warnings: [
+              "DESIGN_ICON_FALLBACK_WARNING: build-safe fallback used; route to supervisor before final acceptance.",
+            ],
+          },
+        },
+      });
+
+      assert.deepEqual(
+        (summary.setupQualityWarnings as { warnings: string[] }).warnings,
+        ["DESIGN_ICON_FALLBACK_WARNING: build-safe fallback used; route to supervisor before final acceptance."],
+      );
+      assert.match(
+        (summary.setupQualityWarnings as { instruction: string }).instruction,
+        /Do not fail setup-build/,
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });

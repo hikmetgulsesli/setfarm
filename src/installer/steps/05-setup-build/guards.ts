@@ -3,7 +3,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { materializeSetupBuildContracts } from "../../setup-handoff.js";
-import { findGeneratedScreenIconFallbackIssues } from "../06-implement/guards.js";
 
 const DESIGN_IMPORT_REPORT_REL = ".setfarm/setup/DESIGN_IMPORT_VALIDATE.json";
 
@@ -41,6 +40,11 @@ function clearPreclaimFailureContext(context: Record<string, string>): void {
   delete context["previous_failure"];
   delete context["failure_category"];
   delete context["failure_suggestion"];
+}
+
+function appendSetupQualityWarning(context: Record<string, string>, warning: string): void {
+  const existing = context["setup_quality_warnings"] || "";
+  context["setup_quality_warnings"] = (existing ? `${existing}\n${warning}` : warning).slice(0, 4000);
 }
 
 async function refreshCompatFailure(context: Record<string, string>): Promise<void> {
@@ -113,23 +117,16 @@ function refreshBaselineFailure(parsed: ParsedOutput, context: Record<string, st
       try {
         const report = JSON.parse(fs.readFileSync(unknownIconReport, "utf-8"));
         const icons = Array.isArray(report.icons) ? report.icons : [];
-        if (report.status === "fail" || icons.length > 0) {
-          throw new Error([
-            "UNKNOWN_MATERIAL_ICONS:",
+        if (icons.length > 0) {
+          appendSetupQualityWarning(context, [
+            "DESIGN_ICON_FALLBACK_WARNING:",
+            ".setfarm/setup/UNKNOWN_MATERIAL_ICONS.json",
             ...icons.slice(0, 12).map((icon: any) => `- ${String(icon.iconName || "unknown")} (${String(icon.count || 1)})`),
-          ].join("\n").slice(0, 1200));
+          ].join("\n"));
         }
       } catch (e) {
-        if (e instanceof Error && e.message.startsWith("UNKNOWN_MATERIAL_ICONS:")) throw e;
         throw new Error(`UNKNOWN_MATERIAL_ICONS: report unreadable at .setfarm/setup/UNKNOWN_MATERIAL_ICONS.json`);
       }
-    }
-    const generatedIconFallbackIssues = findGeneratedScreenIconFallbackIssues(repo);
-    if (generatedIconFallbackIssues.length > 0) {
-      throw new Error([
-        "DESIGN_IMPORT_ICON_FALLBACK:",
-        ...generatedIconFallbackIssues.slice(0, 8),
-      ].join("\n").slice(0, 1200));
     }
   }
 

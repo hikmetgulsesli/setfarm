@@ -227,7 +227,7 @@ describe("05-setup-build step module", () => {
     );
   });
 
-  it("onComplete keeps design import failure active when generated icon fallback remains", async () => {
+  it("onComplete treats generated icon fallback as supervisor quality warning when build passes", async () => {
     const tmp = fs.mkdtempSync("/tmp/setfarm-setup-build-icons-");
     try {
       fs.mkdirSync(`${tmp}/src/screens`, { recursive: true });
@@ -244,20 +244,19 @@ describe("05-setup-build step module", () => {
       );
       const context: Record<string, string> = {
         repo: tmp,
-        baseline_fail: "DESIGN_IMPORT_ICON_FALLBACK failed after stitch-to-jsx",
+        baseline_fail: "DESIGN_IMPORT_ICON_FALLBACK warning after stitch-to-jsx",
         failure_category: "design_import_failure",
       };
 
-      await assert.rejects(
-        onComplete({
-          runId: "r1",
-          stepId: "setup-build",
-          parsed: { status: "done", build_cmd: "npm run build" } as ParsedOutput,
-          context,
-        }),
-        /DESIGN_IMPORT_ICON_FALLBACK/
-      );
-      assert.match(context["baseline_fail"], /DESIGN_IMPORT_ICON_FALLBACK/);
+      await onComplete({
+        runId: "r1",
+        stepId: "setup-build",
+        parsed: { status: "done", build_cmd: "npm run build" } as ParsedOutput,
+        context,
+      });
+      assert.equal(context["baseline_fail"], undefined);
+      assert.equal(context["failure_category"], undefined);
+      assert.equal(context["build_cmd"], "npm run build");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

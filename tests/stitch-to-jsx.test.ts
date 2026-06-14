@@ -1093,7 +1093,7 @@ describe("stitch-to-jsx", () => {
     }
   });
 
-  it("fails generated screen conversion when Stitch uses an unmapped Material Symbol", () => {
+  it("keeps generated screen conversion build-safe when Stitch uses an unmapped Material Symbol", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-unknown-icon-"));
     try {
       const stitchDir = path.join(tmp, "stitch");
@@ -1107,22 +1107,18 @@ describe("stitch-to-jsx", () => {
         </main>
       `);
 
-      assert.throws(
-        () => execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
-          cwd: process.cwd(),
-          stdio: "pipe",
-        }),
-        (error: any) => {
-          const stderr = String(error.stderr || "");
-          assert.match(stderr, /UNKNOWN_MATERIAL_ICONS/);
-          assert.match(stderr, /domain_specific_unknown_icon/);
-          return true;
-        },
-      );
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
 
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "UnknownIconScreen.tsx"), "utf-8");
       const iconReport = JSON.parse(fs.readFileSync(path.join(tmp, ".setfarm", "setup", "UNKNOWN_MATERIAL_ICONS.json"), "utf-8"));
-      assert.equal(iconReport.status, "fail");
+      assert.equal(iconReport.status, "warning");
+      assert.equal(iconReport.severity, "supervisor_fixable");
       assert.deepEqual(iconReport.icons, [{ iconName: "domain_specific_unknown_icon", count: 1 }]);
+      assert.match(code, /import \{ BadgeHelp \} from "lucide-react";/);
+      assert.doesNotMatch(code, /material-symbols|domain_specific_unknown_icon/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

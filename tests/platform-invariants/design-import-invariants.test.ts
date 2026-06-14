@@ -18,7 +18,7 @@ function writeHtml(filePath: string, body: string): void {
 }
 
 describe("immutable design import invariants", () => {
-  it("fails stitch-to-jsx on unknown Material Symbols instead of emitting fallback icons", () => {
+  it("keeps stitch-to-jsx build-safe on unknown Material Symbols and records supervisor-fixable evidence", () => {
     const repo = makeRepo("setfarm-design-import-invariant-icon-");
     try {
       fs.writeFileSync(path.join(repo, "stitch", "DESIGN_MANIFEST.json"), JSON.stringify([
@@ -28,10 +28,11 @@ describe("immutable design import invariants", () => {
         <main><button><span class="material-symbols-outlined">not_a_real_material_symbol</span></button></main>
       `);
 
-      assert.throws(
-        () => execFileSync("node", ["scripts/stitch-to-jsx.mjs", repo], { cwd: process.cwd(), stdio: "pipe" }),
-        /UNKNOWN_MATERIAL_ICONS|not_a_real_material_symbol/,
-      );
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", repo], { cwd: process.cwd(), stdio: "pipe" });
+      const report = JSON.parse(fs.readFileSync(path.join(repo, ".setfarm", "setup", "UNKNOWN_MATERIAL_ICONS.json"), "utf-8"));
+      assert.equal(report.status, "warning");
+      assert.equal(report.severity, "supervisor_fixable");
+      assert.deepEqual(report.icons, [{ iconName: "not_a_real_material_symbol", count: 1 }]);
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }
