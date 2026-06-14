@@ -371,6 +371,40 @@ describe("03-stories step module", () => {
     }
   });
 
+  it("honors explicit non-game tool intent even when score language appears", () => {
+    const repo = mkdtempSync(path.join(tmpdir(), "setfarm-non-game-score-stories-"));
+    try {
+      mkdirSync(path.join(repo, "stitch"));
+      writeFileSync(path.join(repo, "stitch", "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "SCR-001", title: "Module Health Dashboard" },
+        { screenId: "SCR-002", title: "Stack Score Detail" },
+      ]));
+      writeFileSync(path.join(repo, "stitch", "DESIGN_DOM.json"), JSON.stringify({ screens: {} }));
+
+      const predicted = computePredictedScreenFiles(repo);
+      const output = buildAutoStoriesOutput({
+        repo,
+        task: "Build a compact browser tool called StackLens Canary. Use a frontend web app stack, not a game. Show module risk score and stack health.",
+        context: {
+          platform: "web",
+          tech_stack: "vite-react",
+          project_name: "StackLens Canary",
+        },
+        predicted,
+      });
+
+      const storiesJson = output.match(/STORIES_JSON:\n([\s\S]*?)\nSCREEN_MAP:/)?.[1] || "[]";
+      const stories = JSON.parse(storiesJson);
+      const allText = JSON.stringify(stories);
+
+      assert.match(stories[0].title, /app shell, state and persistence$/);
+      assert.doesNotMatch(stories[0].title, /game engine/i);
+      assert.doesNotMatch(allText, /game_runtime|GameSession|shared game shell|gameplay state/i);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
   it("story prompt requires generated screens to be reachable or embedded", async () => {
     const result = await runModule(storiesModule, "Test", { status: "done" });
 

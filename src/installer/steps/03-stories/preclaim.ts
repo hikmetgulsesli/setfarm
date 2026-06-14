@@ -17,6 +17,7 @@ import {
   type StoryOwnedAction,
 } from "./action-control-mapper.js";
 import { contextPrdText, parsePrdContract, type PrdSurfaceAction } from "./prd-contract-parser.js";
+import { hasBrowserGameIntent } from "../../task-intent.js";
 
 type PredictedScreen = ReturnType<typeof computePredictedScreenFiles>[number];
 type ProjectKind = "game" | "product";
@@ -187,7 +188,7 @@ function inferProjectKind(params: {
     screenText,
   ].join(" ").toLowerCase();
 
-  if (/\b(game|puzzle|arcade|score|level|pause|resume|restart|keyboard controls?|playfield|game board)\b/.test(text)) {
+  if (hasBrowserGameIntent(text)) {
     return "game";
   }
   return "product";

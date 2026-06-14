@@ -5,6 +5,7 @@ import { resolveSetfarmCli } from "./installer/paths.js";
 import { classifyError } from "./installer/error-taxonomy.js";
 import { readSupervisorState, supervisorStatePath } from "./installer/supervisor/state.js";
 import { implementEvidenceArtifactPaths, readImplementEvidenceConfig } from "./installer/implement-evidence.js";
+import { hasBrowserGameIntent } from "./installer/task-intent.js";
 
 function shellQuote(value: string): string {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
@@ -929,7 +930,7 @@ function looksLikeBrowserGameClaim(input: string, task: string, currentStory: { 
     currentStory.storyTitle,
     ...acceptanceCriteriaLines(currentStory.acceptanceCriteria),
   ].join("\n").toLowerCase();
-  return /\b(browser-game|browser game|canvas-game|arcade|gameplay|game settings|playfield|score|high score|level|lives|paused|game over|paddle|runner|flappy|breakout|tetris|pong)\b/.test(signal);
+  return hasBrowserGameIntent(signal);
 }
 
 function runtimeDoneChecklistForClaim(input: string, task: string, currentStory: { storyTitle: string; acceptanceCriteria: unknown }): string[] {

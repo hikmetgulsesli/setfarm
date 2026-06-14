@@ -1156,6 +1156,40 @@ describe("spawner prompt bootstrap", () => {
     }
   });
 
+  it("does not add browser-game checklist for explicit non-game score tools", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-non-game-score-summary-"));
+    try {
+      fs.writeFileSync(path.join(tmp, ".story-scope-files"), "src/App.tsx\nsrc/hooks/useStackHealth.ts\n");
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: "/tmp/claim.json",
+        outputFile: "/tmp/output.txt",
+        bootstrapFile: "/tmp/bootstrap.sh",
+        stepId: "step-123",
+        runId: "run-123",
+        workdir: tmp,
+        repo: tmp,
+        storyId: "US-001",
+        input: [
+          "TASK: Build a compact browser tool called StackLens Canary. Use a frontend web app stack, not a game. Show module risk score.",
+          `WORKDIR: ${tmp}`,
+          "CURRENT STORY: Story US-001: StackLens Canary - app shell, state and persistence",
+          "",
+          "Acceptance Criteria:",
+          "  1. Risk score is visible.",
+          "  2. Shared state is visible through window.app.",
+          "",
+          "## Current Story",
+        ].join("\n"),
+      });
+
+      assert.deepEqual((summary as any).runtimeDoneChecklist, []);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("elevates verifier retry findings into bounded quality-fix feedback", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-quality-retry-summary-"));
     try {

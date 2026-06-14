@@ -23,6 +23,7 @@ import { resolvePlatformScript } from "../../paths.js";
 import { ensureSmokeBuildFresh } from "../../smoke-gate.js";
 import { summarizeImplementEvidenceValidation, validateImplementEvidenceArtifacts } from "../../implement-evidence.js";
 import { classifyError } from "../../error-taxonomy.js";
+import { hasBrowserGameIntent } from "../../task-intent.js";
 
 // ── Module interface methods ────────────────────────────────────
 
@@ -937,7 +938,7 @@ function repoLooksLikeBrowserGame(workdir: string, repoPath = ""): boolean {
     readTextIfExists(path.join(root, "PROJECT_MEMORY.md")),
   ].join("\n")).join("\n").toLowerCase();
 
-  return /\b(browser-game|browser game|canvas-game|arcade|gameplay|game settings|playfield|score|high score|level|lives|paused|game over|paddle|runner|flappy|breakout|tetris|pong)\b/.test(combined);
+  return hasBrowserGameIntent(combined);
 }
 
 function browserGameRuntimeLoopIssues(workdir: string, repoPath = ""): string[] {
