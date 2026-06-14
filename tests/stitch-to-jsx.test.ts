@@ -808,6 +808,37 @@ describe("stitch-to-jsx", () => {
     }
   });
 
+  it("maps data usage Material Symbol used by dashboard screens", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-data-usage-icon-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "stack-health", title: "Stack Health Dashboard" },
+      ]));
+      writeHtml(path.join(stitchDir, "stack-health.html"), `
+        <main>
+          <button><span class="material-symbols-outlined">data_usage</span>Usage</button>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "StackHealthDashboard.tsx"), "utf-8");
+      const iconReport = JSON.parse(fs.readFileSync(path.join(tmp, ".setfarm", "setup", "UNKNOWN_MATERIAL_ICONS.json"), "utf-8"));
+      assert.equal(iconReport.status, "pass");
+      assert.deepEqual(iconReport.icons, []);
+      assert.match(code, /import \{ Database \} from "lucide-react";/);
+      assert.match(code, /<Database/);
+      assert.doesNotMatch(code, /\bBadgeHelp\b|material-symbols|>data_usage</);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("fails generated screen conversion when Stitch uses an unmapped Material Symbol", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-unknown-icon-"));
     try {

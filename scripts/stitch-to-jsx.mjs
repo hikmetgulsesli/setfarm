@@ -522,6 +522,7 @@ const MATERIAL_TO_LUCIDE = {
   contact_support: "CircleHelp",
   dashboard: "LayoutDashboard",
   data_object: "Braces",
+  data_usage: "Database",
   database: "Database",
   dataset: "Database",
   date_range: "CalendarDays",
