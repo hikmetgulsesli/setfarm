@@ -882,6 +882,43 @@ describe("stitch-to-jsx", () => {
     }
   });
 
+  it("maps API and risk Material Symbols used by generated dashboards", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-api-risk-icons-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "risk-console", title: "Risk Console" },
+      ]));
+      writeHtml(path.join(stitchDir, "risk-console.html"), `
+        <main>
+          <button><span class="material-symbols-outlined">api</span>API</button>
+          <button><span class="material-symbols-outlined">delete_sweep</span>Clear</button>
+          <button><span class="material-symbols-outlined">donut_small</span>Share</button>
+          <button><span class="material-symbols-outlined">gpp_bad</span>Risk</button>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "RiskConsole.tsx"), "utf-8");
+      const iconReport = JSON.parse(fs.readFileSync(path.join(tmp, ".setfarm", "setup", "UNKNOWN_MATERIAL_ICONS.json"), "utf-8"));
+      assert.equal(iconReport.status, "pass");
+      assert.deepEqual(iconReport.icons, []);
+      assert.match(code, /import \{ Braces, PieChart, ShieldAlert, Trash2 \} from "lucide-react";/);
+      assert.match(code, /<Braces/);
+      assert.match(code, /<Trash2/);
+      assert.match(code, /<PieChart/);
+      assert.match(code, /<ShieldAlert/);
+      assert.doesNotMatch(code, /\bBadgeHelp\b|material-symbols|delete_sweep|donut_small|gpp_bad/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("fails generated screen conversion when Stitch uses an unmapped Material Symbol", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-unknown-icon-"));
     try {
