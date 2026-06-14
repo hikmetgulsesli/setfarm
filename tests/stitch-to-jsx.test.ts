@@ -1309,6 +1309,47 @@ describe("stitch-to-jsx", () => {
     }
   });
 
+  it("keeps form JSX valid when void tag attributes contain comparison-like text", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-void-quoted-gt-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "record-editor", title: "Record Editor" },
+      ]));
+      writeHtml(path.join(stitchDir, "record-editor.html"), `
+        <main>
+          <form>
+            <label for="query">Query</label>
+            <input id="query" placeholder="Use A > B threshold" value="priority > medium">
+            <button>Save</button>
+          </form>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "RecordEditor.tsx"), "utf-8");
+      assert.match(code, /<form>/);
+      assert.match(code, /<input id="query" placeholder="Use A > B threshold" value="priority > medium" \/>/);
+      assert.match(code, /<\/form>/);
+      const transpiled = ts.transpileModule(code, {
+        compilerOptions: {
+          jsx: ts.JsxEmit.ReactJSX,
+          module: ts.ModuleKind.ESNext,
+          target: ts.ScriptTarget.ES2020,
+        },
+        reportDiagnostics: true,
+      });
+      assert.equal((transpiled.diagnostics || []).length, 0);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("normalizes SVG attributes into JSX names", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-svg-"));
     try {

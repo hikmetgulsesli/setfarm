@@ -405,12 +405,49 @@ function stripInlineEventHandlerAttributes(input) {
   return String(input || "").replace(/\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*')/gi, "");
 }
 
+const VOID_HTML_TAGS = new Set(["img", "br", "hr", "input", "meta", "link"]);
+
+function findTagEndRespectingQuotes(input, start) {
+  let quote = "";
+  for (let i = start; i < input.length; i += 1) {
+    const ch = input[i];
+    if (quote) {
+      if (ch === quote) quote = "";
+      continue;
+    }
+    if (ch === "\"" || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (ch === ">") return i;
+  }
+  return -1;
+}
+
+function normalizeVoidElementStartTags(input) {
+  const source = String(input || "");
+  let out = "";
+  let cursor = 0;
+  const tagPattern = /<\/?\s*([A-Za-z][\w:-]*)\b/g;
+  let match;
+  while ((match = tagPattern.exec(source)) !== null) {
+    const tagStart = match.index;
+    const tagName = String(match[1] || "").toLowerCase();
+    if (!VOID_HTML_TAGS.has(tagName) || source[tagStart + 1] === "/") continue;
+    const tagEnd = findTagEndRespectingQuotes(source, tagPattern.lastIndex);
+    if (tagEnd < 0) break;
+    const attrs = source.slice(tagPattern.lastIndex, tagEnd);
+    const cleanAttrs = attrs.replace(/\/\s*$/, "").trimEnd();
+    out += source.slice(cursor, tagStart);
+    out += `<${match[1]}${cleanAttrs} />`;
+    cursor = tagEnd + 1;
+    tagPattern.lastIndex = tagEnd + 1;
+  }
+  return out + source.slice(cursor);
+}
+
 function htmlToJsx(html) {
-  let out = normalizeJsxAttributeValues(normalizeJsxAttributeNames(normalizeJsxTagNames(stripInlineEventHandlerAttributes(html))))
-    .replace(/<(img|br|hr|input|meta|link)([^>]*?)>/gi, (_, tag, attrs) => {
-      const cleanAttrs = String(attrs || "").replace(/\/\s*$/, "").trimEnd();
-      return `<${tag}${cleanAttrs} />`;
-    })
+  let out = normalizeVoidElementStartTags(normalizeJsxAttributeValues(normalizeJsxAttributeNames(normalizeJsxTagNames(stripInlineEventHandlerAttributes(html)))))
     .replace(/<script[\s\S]*?<\/script>/gi, "")
     .replace(/<link[^>]*\/?\s*>/gi, "")
     .replace(/<meta[^>]*\/?\s*>/gi, "")
