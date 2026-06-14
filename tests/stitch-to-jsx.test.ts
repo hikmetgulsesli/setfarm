@@ -1520,6 +1520,44 @@ Awaiting input...</pre>
     }
   });
 
+  it("drops Stitch responsive inline style declarations that are invalid React CSSProperties", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-responsive-inline-style-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "analytics-screen", title: "Analytics Screen" },
+      ]));
+      writeHtml(path.join(stitchDir, "analytics-screen.html"), `
+        <main>
+          <header class="fixed left-16 md:left-64" style="width: calc(100% - 64px); md:width: calc(100% - 256px); padding-left: 16px; md:padding-left: 272px;">Header</header>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "AnalyticsScreen.tsx"), "utf-8");
+      assert.match(code, /style=\{\{width: "calc\(100% - 64px\)", paddingLeft: "16px"\}\}/);
+      assert.doesNotMatch(code, /\bmd: "/);
+
+      const transpiled = ts.transpileModule(code, {
+        compilerOptions: {
+          jsx: ts.JsxEmit.ReactJSX,
+          module: ts.ModuleKind.ESNext,
+          target: ts.ScriptTarget.ES2020,
+        },
+        reportDiagnostics: true,
+      });
+      const errors = (transpiled.diagnostics || []).filter(d => d.category === ts.DiagnosticCategory.Error);
+      assert.deepEqual(errors.map(d => d.messageText), []);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("extracts build-safe design tokens from Google font URLs", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-token-css-"));
     try {

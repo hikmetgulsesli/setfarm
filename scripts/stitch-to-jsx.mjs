@@ -343,6 +343,13 @@ function toReactStylePropertyKey(rawKey) {
   return /^[A-Za-z_$][\w$]*$/.test(jsKey) ? jsKey : JSON.stringify(cssKey);
 }
 
+const RESPONSIVE_STYLE_PREFIXES = new Set(["sm", "md", "lg", "xl", "2xl"]);
+
+function isResponsiveInlineStyleDeclaration(cssKey, rawValue) {
+  return RESPONSIVE_STYLE_PREFIXES.has(cssKey)
+    && /^[a-z-]+\s*:/i.test(String(rawValue || "").trim());
+}
+
 function inlineStyleToJsx(styleText) {
   let needsTypeEscape = false;
   const pairs = String(styleText || "")
@@ -352,10 +359,12 @@ function inlineStyleToJsx(styleText) {
     .map(x => {
       const [rawKey, ...rawValue] = x.split(":");
       const cssKey = String(rawKey || "").trim();
+      const value = rawValue.join(":").trim();
+      if (isResponsiveInlineStyleDeclaration(cssKey, value)) return "";
       const key = toReactStylePropertyKey(cssKey);
       if (!key) return "";
       if (cssKey.startsWith("--")) needsTypeEscape = true;
-      return `${key}: ${JSON.stringify(rawValue.join(":").trim())}`;
+      return `${key}: ${JSON.stringify(value)}`;
     })
     .filter(Boolean);
   const suffix = needsTypeEscape ? " as any" : "";
