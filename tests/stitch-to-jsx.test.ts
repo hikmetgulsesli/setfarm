@@ -1059,6 +1059,9 @@ describe("stitch-to-jsx", () => {
           <button><span class="material-symbols-outlined">clear_all</span>Clear filters</button>
           <button><span class="material-symbols-outlined">dataset_linked</span>Linked dataset</button>
           <button><span class="material-symbols-outlined">science</span>Experiment</button>
+          <button><span class="material-symbols-outlined">code</span>Code</button>
+          <button><span class="material-symbols-outlined">language</span>Language</button>
+          <button><span class="material-symbols-outlined">smartphone</span>Mobile</button>
         </main>
       `);
 
@@ -1071,13 +1074,16 @@ describe("stitch-to-jsx", () => {
       const iconReport = JSON.parse(fs.readFileSync(path.join(tmp, ".setfarm", "setup", "UNKNOWN_MATERIAL_ICONS.json"), "utf-8"));
       assert.equal(iconReport.status, "pass");
       assert.deepEqual(iconReport.icons, []);
-      assert.match(code, /import \{ DatabaseZap, ExternalLink, FlaskConical, ListX, Minus \} from "lucide-react";/);
+      assert.match(code, /import \{ Code, DatabaseZap, ExternalLink, FlaskConical, Languages, ListX, Minus, Smartphone \} from "lucide-react";/);
       assert.match(code, /<Minus/);
       assert.match(code, /<ExternalLink/);
       assert.match(code, /<ListX/);
       assert.match(code, /<DatabaseZap/);
       assert.match(code, /<FlaskConical/);
-      assert.doesNotMatch(code, /\bBadgeHelp\b|material-symbols|horizontal_rule|open_in_new|clear_all|dataset_linked|science/);
+      assert.match(code, /<Code/);
+      assert.match(code, /<Languages/);
+      assert.match(code, /<Smartphone/);
+      assert.doesNotMatch(code, /\bBadgeHelp\b|material-symbols|horizontal_rule|open_in_new|clear_all|dataset_linked|science|smartphone/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
