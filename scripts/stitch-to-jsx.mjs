@@ -482,6 +482,7 @@ function labelFromInteractive(attrs, inner, fallback) {
 
 const MATERIAL_TO_LUCIDE = {
   account_circle: "CircleUserRound",
+  account_tree: "GitBranch",
   add: "Plus",
   add_box: "PlusSquare",
   add_circle: "CirclePlus",
@@ -556,6 +557,7 @@ const MATERIAL_TO_LUCIDE = {
   emoji_events: "Trophy",
   engineering: "HardHat",
   error: "CircleAlert",
+  error_outline: "CircleAlert",
   exercise: "Dumbbell",
   exit_to_app: "LogOut",
   fact_check: "BadgeCheck",
@@ -564,6 +566,7 @@ const MATERIAL_TO_LUCIDE = {
   filter_alt: "Filter",
   filter_list: "ListFilter",
   filter_list_off: "FilterX",
+  flag: "Flag",
   flash_on: "Zap",
   flight: "Plane",
   flight_land: "PlaneLanding",
@@ -588,6 +591,7 @@ const MATERIAL_TO_LUCIDE = {
   hub: "Network",
   inbox: "Inbox",
   info: "Info",
+  insights: "Lightbulb",
   interests: "Shapes",
   inventory: "Archive",
   inventory_2: "PackageSearch",
@@ -600,6 +604,7 @@ const MATERIAL_TO_LUCIDE = {
   keyboard_voice: "Mic",
   keyboard_return: "CornerDownLeft",
   label: "Tag",
+  lan: "Network",
   leaderboard: "Trophy",
   layers: "Layers",
   lightbulb: "Lightbulb",
@@ -690,6 +695,7 @@ const MATERIAL_TO_LUCIDE = {
   terrain: "Mountain",
   terminal: "Terminal",
   timer: "Timer",
+  title: "Type",
   tips_and_updates: "Lightbulb",
   toggle_on: "ToggleRight",
   token: "Coins",
@@ -730,6 +736,8 @@ const MATERIAL_TO_LUCIDE = {
   star: "Star",
   stars: "Sparkles",
   straighten: "Ruler",
+  storage: "Database",
+  work: "Briefcase",
 };
 
 function materialIconKey(inner) {

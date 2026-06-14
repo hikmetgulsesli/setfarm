@@ -962,6 +962,51 @@ describe("stitch-to-jsx", () => {
     }
   });
 
+  it("maps system topology Material Symbols used by generated dashboards", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-topology-icons-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "system-topology", title: "System Topology" },
+      ]));
+      writeHtml(path.join(stitchDir, "system-topology.html"), `
+        <main>
+          <button><span class="material-symbols-outlined">account_tree</span>Topology</button>
+          <button><span class="material-symbols-outlined">error_outline</span>Error</button>
+          <button><span class="material-symbols-outlined">flag</span>Flag</button>
+          <button><span class="material-symbols-outlined">insights</span>Insights</button>
+          <button><span class="material-symbols-outlined">lan</span>Network</button>
+          <button><span class="material-symbols-outlined">storage</span>Storage</button>
+          <button><span class="material-symbols-outlined">title</span>Title</button>
+          <button><span class="material-symbols-outlined">work</span>Work</button>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "SystemTopology.tsx"), "utf-8");
+      const iconReport = JSON.parse(fs.readFileSync(path.join(tmp, ".setfarm", "setup", "UNKNOWN_MATERIAL_ICONS.json"), "utf-8"));
+      assert.equal(iconReport.status, "pass");
+      assert.deepEqual(iconReport.icons, []);
+      assert.match(code, /import \{ Briefcase, CircleAlert, Database, Flag, GitBranch, Lightbulb, Network, Type \} from "lucide-react";/);
+      assert.match(code, /<GitBranch/);
+      assert.match(code, /<CircleAlert/);
+      assert.match(code, /<Flag/);
+      assert.match(code, /<Lightbulb/);
+      assert.match(code, /<Network/);
+      assert.match(code, /<Database/);
+      assert.match(code, /<Type/);
+      assert.match(code, /<Briefcase/);
+      assert.doesNotMatch(code, /\bBadgeHelp\b|material-symbols|account_tree|error_outline/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("fails generated screen conversion when Stitch uses an unmapped Material Symbol", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-unknown-icon-"));
     try {
