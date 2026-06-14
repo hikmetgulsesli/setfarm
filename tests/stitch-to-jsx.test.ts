@@ -1007,6 +1007,43 @@ describe("stitch-to-jsx", () => {
     }
   });
 
+  it("maps network and risk trend Material Symbols used by generated dashboards", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-network-risk-icons-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "network-risk", title: "Network Risk" },
+      ]));
+      writeHtml(path.join(stitchDir, "network-risk.html"), `
+        <main>
+          <button><span class="material-symbols-outlined">cloud</span>Cloud</button>
+          <button><span class="material-symbols-outlined">gpp_maybe</span>Risk</button>
+          <button><span class="material-symbols-outlined">router</span>Router</button>
+          <button><span class="material-symbols-outlined">show_chart</span>Trend</button>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "NetworkRisk.tsx"), "utf-8");
+      const iconReport = JSON.parse(fs.readFileSync(path.join(tmp, ".setfarm", "setup", "UNKNOWN_MATERIAL_ICONS.json"), "utf-8"));
+      assert.equal(iconReport.status, "pass");
+      assert.deepEqual(iconReport.icons, []);
+      assert.match(code, /import \{ Cloud, Router, ShieldAlert, TrendingUp \} from "lucide-react";/);
+      assert.match(code, /<Cloud/);
+      assert.match(code, /<ShieldAlert/);
+      assert.match(code, /<Router/);
+      assert.match(code, /<TrendingUp/);
+      assert.doesNotMatch(code, /\bBadgeHelp\b|material-symbols|gpp_maybe|show_chart/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("fails generated screen conversion when Stitch uses an unmapped Material Symbol", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-unknown-icon-"));
     try {
