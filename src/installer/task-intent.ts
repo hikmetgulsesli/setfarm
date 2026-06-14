@@ -11,3 +11,11 @@ export function hasBrowserGameIntent(text: string): boolean {
   if (hasExplicitNonGameIntent(text)) return false;
   return /\b(browser-game|browser game|canvas-game|canvas game|arcade|gameplay|playable game|game loop|playfield|score|high score|level|lives|paused|game over|keyboard controls|touch controls|paddle|runner|flappy|breakout|tetris|pong)\b/i.test(text);
 }
+
+export function hasExplicitNoDatabaseIntent(text: string): boolean {
+  const normalized = String(text || "").toLowerCase().replace(/\s+/g, " ").trim();
+  if (!normalized) return false;
+  return /\b(?:no|not|without)[-\s]+(?:database|db|postgres|postgresql|sqlite)\b/.test(normalized)
+    || /\b(?:database|db)[-\s]+(?:not|required\s*:\s*none|none|unneeded|unnecessary)\b/.test(normalized)
+    || /\bdb_required\s*[:=]\s*none\b/.test(normalized);
+}

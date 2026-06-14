@@ -127,6 +127,46 @@ describe("run contract ledger", () => {
     assert.equal(contract.artifacts.pngCount, 3);
   });
 
+  it("does not classify explicit non-game score dashboards as browser games", () => {
+    const repo = tempRepo("non-game-score");
+    const run = baseRun(repo);
+    const prd = [
+      "# StackLens Canary Product Contract",
+      "Build a compact browser tool for module stack health. Use a frontend web app stack, not a game.",
+      "The dashboard shows risk score, stack status, module cards, and a detail panel.",
+      "## 4. Product Surfaces",
+      "### SURFACE: SURF_MODULE_OVERVIEW",
+      "- Name: Module Overview",
+      "- Purpose: Compare modules and stack health.",
+      "### SURFACE: SURF_SCORE_DETAIL",
+      "- Name: Score Detail",
+      "- Purpose: Explain risk score drivers.",
+      "## 8. Testability Contract",
+      "- The PRD text is intentionally long enough to satisfy captured-context evidence for a completed plan phase.",
+    ].join("\n");
+
+    run.task = "Build a compact browser tool called StackLens Canary. Use a frontend web app stack, not a game. Show module risk score.";
+    run.context = JSON.stringify({
+      repo,
+      branch: "feature/stacklens-canary",
+      tech_stack: "vite-react",
+      prd,
+      design_required: "true",
+      ui_language: "English",
+      build_cmd: "npm run build",
+    });
+
+    const contract = buildRunContract({
+      run,
+      steps: steps() as any,
+      stories: [] as any,
+      reason: "test",
+      now: "2026-05-17T00:00:00.000Z",
+    });
+
+    assert.equal(contract.stackPack.id, "vite-react-web-app");
+  });
+
   it("keeps future story surfaces deferred instead of failing the current story", () => {
     const repo = tempRepo("deferred");
     writeDesign(repo, [

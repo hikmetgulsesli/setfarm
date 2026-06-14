@@ -4,6 +4,7 @@ import { pgBegin, pgGet, pgQuery, now } from "../db-pg.js";
 import { logger } from "../lib/logger.js";
 import { STACK_PACKS } from "./stack-contract/packs.js";
 import type { StackPackId } from "./stack-contract/types.js";
+import { hasBrowserGameIntent } from "./task-intent.js";
 
 export type ContractStatus = "pass" | "fail" | "pending" | "deferred" | "na";
 
@@ -316,7 +317,7 @@ function detectStackPack(context: Record<string, any>, run: DbRun, repo: string)
     id = "ios-app";
     confidence = "medium";
     evidence.push("iOS project signals");
-  } else if (/\b(game|arcade|puzzle|tetris|pong|breakout|playable|score|canvas)\b/.test(task)) {
+  } else if (hasBrowserGameIntent(`${tech} ${task}`)) {
     id = "browser-game-canvas";
     confidence = "medium";
     evidence.push("Browser game task or PRD hints");

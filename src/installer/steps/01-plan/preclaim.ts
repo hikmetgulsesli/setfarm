@@ -2,7 +2,7 @@ import { pgGet } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
 import type { ClaimContext } from "../types.js";
 import { slugifyIdentity, transliterateIdentity } from "../../runtime-identity.js";
-import { hasBrowserGameIntent } from "../../task-intent.js";
+import { hasBrowserGameIntent, hasExplicitNoDatabaseIntent } from "../../task-intent.js";
 
 const DEFAULT_STACK = "vite-react";
 const PLAN_CONTRACT_SCHEMA_VERSION = "setfarm.plan.v2.2";
@@ -132,6 +132,7 @@ function inferTechStack(task: string): string {
 
 function inferDbRequired(task: string): string {
   const lower = task.toLowerCase();
+  if (hasExplicitNoDatabaseIntent(task)) return "none";
   if (/\bfirebase\b|\bsupabase\b|\bstripe\b|\bexternal api\b|\bmanaged service\b/.test(lower)) return "external";
   if (/\bsqlite\b/.test(lower)) return "sqlite";
   if (/\bpostgres\b|\bpostgresql\b|\bauth\b|login|sign in|account|create account|user data|multi user|shared data|database/.test(lower)) return "postgres";

@@ -254,6 +254,7 @@ describe("01-plan step module", () => {
     assert.equal(validation.ok, true, validation.errors.join("; "));
     assert.equal(parsed.platform, "web");
     assert.equal(parsed.tech_stack, "vite-react");
+    assert.equal(parsed.db_required, "none");
     assert.doesNotMatch(parsed.prd, /SURF_GAMEPLAY|ACT_START_GAME|GameSession/);
     assert.match(parsed.prd, /dashboard|module|stack/i);
   });
