@@ -27,6 +27,7 @@ describe("spawner prompt bootstrap", () => {
     assert.match(prompt, /outputContract\.requiredFields and outputContract\.format exactly/);
     assert.match(prompt, /guard-backed roles will reject prose-only summaries/);
     assert.match(prompt, /Use retryFeedback\.mode exactly/);
+    assert.match(prompt, /retryFeedback\.actionableReviewThreads first/);
     assert.match(prompt, /supervisorEvidence/);
     assert.match(prompt, /current-source scanner evidence/);
     assert.match(prompt, /mode="fix" means the blocker is an open implementation requirement/);
@@ -158,6 +159,15 @@ describe("spawner prompt bootstrap", () => {
           suggestion: "Use claim-summary designContracts instead of shared generated source.",
           blocker: "GENERATED_SCREEN_SHARED_READ: previous worker read src/screens/MainMenu.tsx",
           details: "GENERATED_SCREEN_SHARED_READ: previous worker read src/screens/MainMenu.tsx",
+          actionableReviewThreads: [
+            {
+              threadId: "PRRT_bootstrap",
+              file: "src/App.tsx",
+              line: 12,
+              author: "gemini-code-assist",
+              comment: "Fix the scoped bootstrap regression.",
+            },
+          ],
           instruction: "Previous feedback is an open implementation blocker.",
         },
       }) + "\n");
@@ -197,7 +207,9 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, /FAILURE_SUGGESTION=Use claim-summary designContracts instead of shared generated source/);
       assert.match(out, /RETRY_MODE=fix/);
       assert.match(out, /RETRY_BLOCKER_PREVIEW=GENERATED_SCREEN_SHARED_READ: previous worker read src\/screens\/MainMenu\.tsx/);
-      assert.match(out, /RETRY_DETAIL=full retry detail is in claimSummary\.retryFeedback\.details/);
+      assert.match(out, /PR_REVIEW_ACTIONABLE_THREADS=1/);
+      assert.match(out, /PR_REVIEW_THREAD_1=thread=PRRT_bootstrap src\/App\.tsx:12 @gemini-code-assist Fix the scoped bootstrap regression/);
+      assert.match(out, /RETRY_DETAIL=full retry detail is in claimSummary\.retryFeedback\.details.*prefer claimSummary\.retryFeedback\.actionableReviewThreads/);
       assert.match(out, /RETRY_ACTION=Use claim-summary designContracts instead of shared generated source/);
       assert.match(out, /RETRY_INSTRUCTION=Previous feedback is an open implementation blocker/);
       assert.match(out, /RETRY_DISCIPLINE=first-delta: Hard manager retry discipline/);
@@ -593,6 +605,21 @@ describe("spawner prompt bootstrap", () => {
       assert.match(String((summary.retryFeedback as any).details), /thread=PRRT_four/);
       assert.match(String((summary.retryFeedback as any).blocker), /thread=PRRT_four/);
       assert.deepEqual((summary.retryFeedback as any).prThreadIds, ["PRRT_one", "PRRT_two", "PRRT_three", "PRRT_four"]);
+      assert.deepEqual(
+        (summary.retryFeedback as any).actionableReviewThreads.map((thread: any) => ({
+          threadId: thread.threadId,
+          file: thread.file,
+          line: thread.line,
+          author: thread.author,
+        })),
+        [
+          { threadId: "PRRT_one", file: "src/store.ts", line: 10, author: "gemini-code-assist" },
+          { threadId: "PRRT_two", file: "src/App.tsx", line: 20, author: "gemini-code-assist" },
+          { threadId: "PRRT_three", file: "src/store.ts", line: 30, author: "gemini-code-assist" },
+          { threadId: "PRRT_four", file: "src/game-runtime.ts", line: 40, author: "gemini-code-assist" },
+        ],
+      );
+      assert.match((summary.retryFeedback as any).actionableReviewThreads[3].comment, /Throttle requestAnimationFrame to 60 FPS/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
