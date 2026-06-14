@@ -1056,6 +1056,9 @@ describe("stitch-to-jsx", () => {
         <main>
           <button><span class="material-symbols-outlined">horizontal_rule</span>Minimize</button>
           <button><span class="material-symbols-outlined">open_in_new</span>Open</button>
+          <button><span class="material-symbols-outlined">clear_all</span>Clear filters</button>
+          <button><span class="material-symbols-outlined">dataset_linked</span>Linked dataset</button>
+          <button><span class="material-symbols-outlined">science</span>Experiment</button>
         </main>
       `);
 
@@ -1068,10 +1071,13 @@ describe("stitch-to-jsx", () => {
       const iconReport = JSON.parse(fs.readFileSync(path.join(tmp, ".setfarm", "setup", "UNKNOWN_MATERIAL_ICONS.json"), "utf-8"));
       assert.equal(iconReport.status, "pass");
       assert.deepEqual(iconReport.icons, []);
-      assert.match(code, /import \{ ExternalLink, Minus \} from "lucide-react";/);
+      assert.match(code, /import \{ DatabaseZap, ExternalLink, FlaskConical, ListX, Minus \} from "lucide-react";/);
       assert.match(code, /<Minus/);
       assert.match(code, /<ExternalLink/);
-      assert.doesNotMatch(code, /\bBadgeHelp\b|material-symbols|horizontal_rule|open_in_new/);
+      assert.match(code, /<ListX/);
+      assert.match(code, /<DatabaseZap/);
+      assert.match(code, /<FlaskConical/);
+      assert.doesNotMatch(code, /\bBadgeHelp\b|material-symbols|horizontal_rule|open_in_new|clear_all|dataset_linked|science/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
