@@ -1044,6 +1044,39 @@ describe("stitch-to-jsx", () => {
     }
   });
 
+  it("maps compact dashboard utility Material Symbols used by generated navigation", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-dashboard-utility-icons-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "dashboard-utility", title: "Dashboard Utility" },
+      ]));
+      writeHtml(path.join(stitchDir, "dashboard-utility.html"), `
+        <main>
+          <button><span class="material-symbols-outlined">horizontal_rule</span>Minimize</button>
+          <button><span class="material-symbols-outlined">open_in_new</span>Open</button>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "DashboardUtility.tsx"), "utf-8");
+      const iconReport = JSON.parse(fs.readFileSync(path.join(tmp, ".setfarm", "setup", "UNKNOWN_MATERIAL_ICONS.json"), "utf-8"));
+      assert.equal(iconReport.status, "pass");
+      assert.deepEqual(iconReport.icons, []);
+      assert.match(code, /import \{ ExternalLink, Minus \} from "lucide-react";/);
+      assert.match(code, /<Minus/);
+      assert.match(code, /<ExternalLink/);
+      assert.doesNotMatch(code, /\bBadgeHelp\b|material-symbols|horizontal_rule|open_in_new/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("fails generated screen conversion when Stitch uses an unmapped Material Symbol", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-unknown-icon-"));
     try {
