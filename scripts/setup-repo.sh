@@ -400,6 +400,12 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    pool: 'forks',
+    maxWorkers: 1,
+    minWorkers: 1,
+    fileParallelism: false,
+    isolate: false,
+    teardownTimeout: 1000,
   },
 });
 EOF
@@ -410,8 +416,14 @@ import { cleanup } from '@testing-library/react';
 import { afterEach } from 'vitest';
 
 const rafHandles = new Set<number>();
+const intervalHandles = new Set<ReturnType<typeof globalThis.setInterval>>();
+const timeoutHandles = new Set<ReturnType<typeof globalThis.setTimeout>>();
 const realRequestAnimationFrame = globalThis.requestAnimationFrame;
 const realCancelAnimationFrame = globalThis.cancelAnimationFrame;
+const realSetInterval = globalThis.setInterval;
+const realClearInterval = globalThis.clearInterval;
+const realSetTimeout = globalThis.setTimeout;
+const realClearTimeout = globalThis.clearTimeout;
 
 globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
   const handle = (realRequestAnimationFrame
@@ -427,12 +439,42 @@ globalThis.cancelAnimationFrame = ((handle: number) => {
   else globalThis.clearTimeout(handle);
 }) as typeof cancelAnimationFrame;
 
+globalThis.setInterval = ((handler: TimerHandler, timeout?: number, ...args: any[]) => {
+  const handle = realSetInterval(handler, timeout, ...args);
+  intervalHandles.add(handle);
+  return handle;
+}) as typeof setInterval;
+
+globalThis.clearInterval = ((handle: ReturnType<typeof setInterval>) => {
+  intervalHandles.delete(handle);
+  realClearInterval(handle);
+}) as typeof clearInterval;
+
+globalThis.setTimeout = ((handler: TimerHandler, timeout?: number, ...args: any[]) => {
+  const handle = realSetTimeout(handler, timeout, ...args);
+  timeoutHandles.add(handle);
+  return handle;
+}) as typeof setTimeout;
+
+globalThis.clearTimeout = ((handle: ReturnType<typeof setTimeout>) => {
+  timeoutHandles.delete(handle);
+  realClearTimeout(handle);
+}) as typeof clearTimeout;
+
 afterEach(() => {
   cleanup();
   for (const handle of Array.from(rafHandles)) {
     globalThis.cancelAnimationFrame(handle);
   }
   rafHandles.clear();
+  for (const handle of Array.from(intervalHandles)) {
+    globalThis.clearInterval(handle);
+  }
+  intervalHandles.clear();
+  for (const handle of Array.from(timeoutHandles)) {
+    globalThis.clearTimeout(handle);
+  }
+  timeoutHandles.clear();
 });
 EOF
       cat > src/App.test.tsx <<'EOF'

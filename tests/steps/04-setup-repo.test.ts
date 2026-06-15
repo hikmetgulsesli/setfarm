@@ -105,9 +105,14 @@ describe("04-setup-repo step module", () => {
     assert.ok(script.includes('"@testing-library/user-event"'), "Vite scaffold should include user-event because agents write interaction tests");
     assert.ok(script.includes('"test:run": "vitest run"'), "Vite scaffold should include non-watch test:run script");
     assert.ok(script.includes("cat > vitest.config.ts"), "Vite scaffold should create separate Vitest config");
+    assert.ok(script.includes("pool: 'forks'"), "Vitest scaffold should avoid runaway thread pools in agent runs");
+    assert.ok(script.includes("maxWorkers: 1"), "Vitest scaffold should run one worker for deterministic agent checks");
+    assert.ok(script.includes("fileParallelism: false"), "Vitest scaffold should disable file-level parallelism");
     assert.ok(script.includes("cat > src/test/setup.ts"), "Vite scaffold should create test setup helper");
     assert.ok(script.includes("cleanup();"), "Vite scaffold test setup should cleanup React renders");
     assert.ok(script.includes("rafHandles"), "Vite scaffold test setup should cleanup RAF loops from browser-game runtimes");
+    assert.ok(script.includes("intervalHandles"), "Vite scaffold test setup should cleanup interval loops from generated runtimes");
+    assert.ok(script.includes("timeoutHandles"), "Vite scaffold test setup should cleanup pending timers from generated runtimes");
     assert.ok(script.includes("cat > src/App.test.tsx"), "Vite scaffold should create a durable baseline render test");
     assert.ok(script.includes("renders an application root"), "baseline render test should survive later App.tsx implementations");
     assert.ok(script.includes("getByTestId('setfarm-app-root')"), "baseline render test should assert the neutral app root, not a semantic main wrapper");

@@ -128,6 +128,31 @@ function readProcessCwd(pid: number): string | undefined {
   try { return fs.readlinkSync(`/proc/${pid}/cwd`); } catch { return undefined; }
 }
 
+function readDarwinProcessCwd(pid: number): string | undefined {
+  if (process.platform !== "darwin") return undefined;
+  try {
+    const out = execFileSync("lsof", ["-a", "-d", "cwd", "-p", String(pid), "-Fn"], {
+      timeout: 1000,
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const line = out.split("\n").find((item) => item.startsWith("n"));
+    return line ? line.slice(1) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function commandCanHaveProjectCwd(command: string): boolean {
+  return /\b(vite|vitest|jest|tailwind|postcss|eslint|npm|npx|node|sh|bash|bun|bunx|pnpm|yarn|tsx|tsc|vue-tsc|esbuild)\b/.test(command);
+}
+
+function processCwd(row: ProcessRow): string | undefined {
+  if (row.cwd || process.platform !== "darwin" || !commandCanHaveProjectCwd(row.command)) return row.cwd;
+  row.cwd = readDarwinProcessCwd(row.pid);
+  return row.cwd;
+}
+
 function readProcessCgroup(pid: number): string | undefined {
   if (process.platform !== "linux") return undefined;
   try { return fs.readFileSync(`/proc/${pid}/cgroup`, "utf-8").trim().split("\n").pop(); } catch { return undefined; }
@@ -197,7 +222,7 @@ function isSetfarmOwnedProcess(row: ProcessRow): boolean {
 
 function isTransientPreviewCommand(row: ProcessRow, repoPath: string, ports: Set<string>): boolean {
   const command = row.command;
-  const cwd = row.cwd || "";
+  const cwd = processCwd(row) || "";
   if (isManagedProjectService(row)) return false;
   // Deleted Setfarm story worktrees cannot be valid active project servers.
   // Agents sometimes leave Vite/esbuild behind after git worktree removal; those
@@ -210,7 +235,7 @@ function isTransientPreviewCommand(row: ProcessRow, repoPath: string, ports: Set
   ) {
     return true;
   }
-  if (!command.includes(repoPath) && !isPathInside(row.cwd, repoPath)) return false;
+  if (!command.includes(repoPath) && !isPathInside(processCwd(row), repoPath)) return false;
   if (!hasAllowedTransientPort(command, ports)) return false;
   return /\b(vite|next)\b[\s\S]{0,80}\b(dev|preview|start)\b|\bnpx\s+vite\b|\bnpm\s+exec\s+vite\b|\bserve\b[\s\S]{0,80}\bdist\b/.test(command);
 }
@@ -224,16 +249,17 @@ function isRunScopedStoryWorktree(value: string | undefined, runId: string): boo
 
 function isProcessScopedToProject(row: ProcessRow, repoPath: string, runId: string): boolean {
   const command = row.command;
+  const cwd = processCwd(row);
   return (
     command.includes(repoPath) ||
-    isPathInside(row.cwd, repoPath) ||
-    isRunScopedStoryWorktree(row.cwd, runId) ||
+    isPathInside(cwd, repoPath) ||
+    isRunScopedStoryWorktree(cwd, runId) ||
     command.includes(runId.slice(0, 8))
   );
 }
 
 function isTransientProjectToolCommand(row: ProcessRow, repoPath: string, runId: string): boolean {
-  if (!isSetfarmOwnedProcess(row)) return false;
+  if (row.cgroup && !isSetfarmOwnedProcess(row)) return false;
   if (isManagedProjectService(row)) return false;
   if (!isProcessScopedToProject(row, repoPath, runId)) return false;
 
@@ -332,7 +358,7 @@ function reapTransientProjectToolProcesses(repoPath: string, runId: string): num
 
     let parent = byPid.get(row.ppid);
     while (parent && parent.pid !== 1 && parent.pid !== process.pid) {
-      if (!isSetfarmOwnedProcess(parent)) break;
+      if (parent.cgroup && !isSetfarmOwnedProcess(parent)) break;
       if (!isProcessScopedToProject(parent, repoPath, runId)) break;
       if (!/\b(npm|npx|node|sh|bash|bun|bunx|pnpm|yarn)\b/.test(parent.command)) break;
       targets.add(parent.pid);
