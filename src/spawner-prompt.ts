@@ -941,6 +941,12 @@ function retryDisciplineForFailure(
       instruction: "App integration regression discipline: first restore the previously accepted app/router wiring from the story branch base, including prior story action helper imports, keyboard/control bridges, data-testid values, ARIA/live-region/status contracts, and generated screen props. Then apply only this story's scoped additions. Do not remove or simplify previous story branches to make the current story pass.",
     };
   }
+  if (/\bRETRY_PATCH_REAPPLIED\b/i.test(signal)) {
+    return {
+      mode: "semantic-fix",
+      instruction: "Rejected retry-patch discipline: first restore or preserve every retryFeedback.protectedSnippets entry in scoped source, verify each literal snippet with rg -F or an equivalent exact search, then make only the current story addition around that preserved wiring. Do not replace prior helpers, render branches, props, or action adapters with a cleaner-looking equivalent unless the protected snippet still remains present.",
+    };
+  }
   if (!/(AGENT_STALL|IMPLEMENT_NO_DELTA_STALL|IMPLEMENT_PRE_DELTA_CHECK_VIOLATION|NO_WORK_DETECTED|CLAIM_SUMMARY_IGNORED|CLAIM_PARSE_LOOP|GENERATED_SCREEN_SHARED_READ|RAW_STITCH_CONTEXT_READ|IRRELEVANT_REFERENCE_CONTEXT|FULL_REFERENCE_CONTEXT_READ|SCOPE_WRITE_VIOLATION|LLM_SUPERVISOR_BLOCKED|SUPERVISOR_VISUAL_QA_BLOCKED|layout_overflow)/i.test(signal)) {
     return undefined;
   }
@@ -1049,6 +1055,30 @@ function extractPrReviewThreads(value: string): Array<Record<string, string | nu
     }
   }
   return threads;
+}
+
+function splitProtectedSnippetList(value: string): string[] {
+  return [...new Set(value
+    .split(/\s*\|\s*/)
+    .map((line) => line.replace(/\\"/g, "\"").replace(/\\n/g, "\n").trim())
+    .filter((line) => line.length >= 2)
+    .filter((line) => !/^(?:ALSO_FIX|RETRY_ACTION|RETRY_INSTRUCTION|CURRENT STORY|##\s)/i.test(line))
+  )].slice(0, 20);
+}
+
+function extractRetryProtectedSnippets(value: string): string[] {
+  const snippets: string[] = [];
+  const patterns = [
+    /Preserve\/restore(?: previously verified lines)?:\s*([\s\S]*?)(?=\n\s*(?:ALSO_FIX|RETRY_ACTION|RETRY_INSTRUCTION|CURRENT STORY|##\s)|$)/gi,
+    /Repeated deletions:\s*([\s\S]*?)(?=\n\s*(?:ALSO_FIX|RETRY_ACTION|RETRY_INSTRUCTION|CURRENT STORY|##\s)|$)/gi,
+  ];
+  for (const pattern of patterns) {
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(value)) !== null) {
+      snippets.push(...splitProtectedSnippetList(match[1] || ""));
+    }
+  }
+  return [...new Set(snippets)].slice(0, 20);
 }
 
 function extractCurrentStory(input: string): { storyId: string; storyTitle: string; currentStory: string; acceptanceCriteria: string } {
@@ -1176,6 +1206,7 @@ export function buildClaimSummary(params: {
     ? retryDisciplineForFailure(failureCategory, failureSuggestion, previousFailure)
     : undefined;
   const prReviewThreads = extractPrReviewThreads(previousFailure);
+  const protectedSnippets = extractRetryProtectedSnippets(previousFailure);
   const buildCommand = resolvedCommand(input, "BUILD_CMD", [workdir, repo], "build", "true");
   const testCommand = resolvedCommand(input, "TEST_CMD", [workdir, repo], "test", "true");
   const lintCommand = resolvedCommand(input, "LINT_CMD", [workdir, repo], "lint", "true");
@@ -1298,6 +1329,7 @@ export function buildClaimSummary(params: {
       details: previousFailure,
       prThreadIds: extractPrReviewThreadIds(previousFailure),
       actionableReviewThreads: prReviewThreads,
+      protectedSnippets,
       discipline: retryDiscipline,
       instruction: retryFeedbackInstruction(retryMode),
     } : undefined,
@@ -1397,6 +1429,12 @@ if (s.failureSuggestion) lines.push("FAILURE_SUGGESTION=" + String(s.failureSugg
 const rf = s.retryFeedback || {};
 if (rf.mode) lines.push("RETRY_MODE=" + String(rf.mode));
 if (rf.blocker) lines.push("RETRY_BLOCKER_PREVIEW=" + String(rf.blocker).slice(0, 700));
+if (Array.isArray(rf.protectedSnippets) && rf.protectedSnippets.length) {
+  lines.push("RETRY_PROTECTED_SNIPPETS=" + rf.protectedSnippets.length);
+  for (const [index, snippet] of rf.protectedSnippets.slice(0, 12).entries()) {
+    lines.push("RETRY_PROTECTED_SNIPPET_" + String(index + 1) + "=" + String(snippet).slice(0, 500));
+  }
+}
 if (Array.isArray(rf.prThreadIds) && rf.prThreadIds.length) lines.push("PR_REVIEW_THREADS=" + rf.prThreadIds.join(", "));
 if (Array.isArray(rf.actionableReviewThreads) && rf.actionableReviewThreads.length) {
   lines.push("PR_REVIEW_ACTIONABLE_THREADS=" + rf.actionableReviewThreads.length);
@@ -1503,7 +1541,7 @@ BOOTSTRAP_FILE=${params.bootstrapFile}
 First exec command:
 bash ${shellQuote(params.bootstrapFile)}
 
-Do ${params.wfId}/${params.role} work in WORKDIR only. Read the structured claim summary at ${params.claimSummaryFile} first; it is the authoritative handoff for story id/title, workdir, mainRepo, storyWorkdir, verifyWorkdir, build/test/lint commands, scopeFiles, scopeFileStates, missingScopeFiles, scopeFileInstruction, gitPolicy, supervisor checklist paths, supervisorEvidence, screenUsageContract, generatedScreenPolicy, integrationPolicy, designContracts, supervisorMemory, screen refs, retry feedback, outputContract, and output paths. Do NOT print or dump the entire claim summary JSON to the transcript; use the bootstrap lines or targeted field extraction for only the fields you need. Use outputContract.requiredFields and outputContract.format exactly for the final step output; guard-backed roles will reject prose-only summaries even when the work itself passed. Use retryFeedback.mode exactly: mode="fix" means the blocker is an open implementation requirement and must be fixed before unrelated work; mode="audit" means prior feedback may be stale, so first verify whether it is still present with bounded evidence before reporting or changing code. For PR_REVIEW_COMMENTS_OPEN retries, use retryFeedback.actionableReviewThreads first; it is the compact complete per-thread contract for file/line/comment. Fix every listed prThreadIds/actionableReviewThreads entry before STATUS: done, not just the RETRY_BLOCKER_PREVIEW bootstrap line. Only read retryFeedback.details/previousFailure if actionableReviewThreads is missing information. Obey scopeFileInstruction exactly: missingScopeFiles are expected owned files that may be created directly; do not treat them as blockers and do not retry update-only patches against missing files. Obey gitPolicy exactly: when owner is setfarm-platform, do not run git add/commit/push/branch/PR commands; Setfarm performs the scoped commit and PR handoff after gates pass. Obey integrationPolicy exactly: app/router/shell changes must add current-story reachability without deleting or bypassing previously reachable generated screens or working render branches. Use supervisorEvidence before retryFeedback/designContracts when it is present: it is current-source scanner evidence and stale original UI_CONTRACT findings must not block when supervisorEvidence shows zero open blockers. Use screenUsageContract first for generated screen component names, props, and action IDs; use designContracts.screenIndex, designContracts.uiContract, designContracts.componentRegistry, and designContracts.componentTypes as fallback instead of reading raw Stitch files, shared generated screen source, or creating TypeScript probe files. The full claim at ${params.claimFile} is an audit fallback only. Do NOT parse or dump claim.input with jq/sed/head/node loops; use the summary fields and only fall back to the full claim for a missing focused field. Obey generatedScreenPolicy exactly: if you accidentally read a forbidden src/screens/*.tsx file, stop broad reading and return to summary/contracts; supervisor records that as a correction signal.
+Do ${params.wfId}/${params.role} work in WORKDIR only. Read the structured claim summary at ${params.claimSummaryFile} first; it is the authoritative handoff for story id/title, workdir, mainRepo, storyWorkdir, verifyWorkdir, build/test/lint commands, scopeFiles, scopeFileStates, missingScopeFiles, scopeFileInstruction, gitPolicy, supervisor checklist paths, supervisorEvidence, screenUsageContract, generatedScreenPolicy, integrationPolicy, designContracts, supervisorMemory, screen refs, retry feedback, outputContract, and output paths. Do NOT print or dump the entire claim summary JSON to the transcript; use the bootstrap lines or targeted field extraction for only the fields you need. Use outputContract.requiredFields and outputContract.format exactly for the final step output; guard-backed roles will reject prose-only summaries even when the work itself passed. Use retryFeedback.mode exactly: mode="fix" means the blocker is an open implementation requirement and must be fixed before unrelated work; mode="audit" means prior feedback may be stale, so first verify whether it is still present with bounded evidence before reporting or changing code. For RETRY_PATCH_REAPPLIED retries, use retryFeedback.protectedSnippets first: restore or preserve each literal snippet in scoped source, verify it with rg -F or an exact search, then make the current-story fix around that preserved wiring. For PR_REVIEW_COMMENTS_OPEN retries, use retryFeedback.actionableReviewThreads first; it is the compact complete per-thread contract for file/line/comment. Fix every listed prThreadIds/actionableReviewThreads entry before STATUS: done, not just the RETRY_BLOCKER_PREVIEW bootstrap line. Only read retryFeedback.details/previousFailure if protectedSnippets/actionableReviewThreads is missing information. Obey scopeFileInstruction exactly: missingScopeFiles are expected owned files that may be created directly; do not treat them as blockers and do not retry update-only patches against missing files. Obey gitPolicy exactly: when owner is setfarm-platform, do not run git add/commit/push/branch/PR commands; Setfarm performs the scoped commit and PR handoff after gates pass. Obey integrationPolicy exactly: app/router/shell changes must add current-story reachability without deleting or bypassing previously reachable generated screens or working render branches. Use supervisorEvidence before retryFeedback/designContracts when it is present: it is current-source scanner evidence and stale original UI_CONTRACT findings must not block when supervisorEvidence shows zero open blockers. Use screenUsageContract first for generated screen component names, props, and action IDs; use designContracts.screenIndex, designContracts.uiContract, designContracts.componentRegistry, and designContracts.componentTypes as fallback instead of reading raw Stitch files, shared generated screen source, or creating TypeScript probe files. The full claim at ${params.claimFile} is an audit fallback only. Do NOT parse or dump claim.input with jq/sed/head/node loops; use the summary fields and only fall back to the full claim for a missing focused field. Obey generatedScreenPolicy exactly: if you accidentally read a forbidden src/screens/*.tsx file, stop broad reading and return to summary/contracts; supervisor records that as a correction signal.
 For retryFeedback.mode="fix", treat retryDiscipline.mode as a hard implementation instruction. For retryDiscipline.mode="first-delta", after bootstrap and summary, inspect only the owned scope files plus safe metadata needed for the first edit, then make a small scoped source delta before broad analysis/build/test. For retryDiscipline.mode="semantic-fix", implement the named blocker first, then run the relevant checks. For retryFeedback.mode="audit", do not convert prior feedback into a source-edit mandate unless the role-specific prompt explicitly owns that fix.
 If claimSummary.runtimeDoneChecklist is present, it is a hard done checklist, not optional guidance. Preserve every listed invariant while fixing the current blocker; a retry that fixes one item but regresses another must not report STATUS: done.
 Do NOT create scratch/progress/todo/note/probe files inside WORKDIR unless they are explicitly listed in scopeFiles. Files like src/_probe.tsx, src/probe.tsx, tmp.ts, scratch.tsx, TODO.md, and progress.txt are forbidden in the project worktree. Use ${params.outputFile} for final output and /tmp/setfarm-progress-<run-id>.txt for checkpoints only.

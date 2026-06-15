@@ -27,6 +27,7 @@ describe("spawner prompt bootstrap", () => {
     assert.match(prompt, /outputContract\.requiredFields and outputContract\.format exactly/);
     assert.match(prompt, /guard-backed roles will reject prose-only summaries/);
     assert.match(prompt, /Use retryFeedback\.mode exactly/);
+    assert.match(prompt, /retryFeedback\.protectedSnippets first/);
     assert.match(prompt, /retryFeedback\.actionableReviewThreads first/);
     assert.match(prompt, /supervisorEvidence/);
     assert.match(prompt, /current-source scanner evidence/);
@@ -620,6 +621,65 @@ describe("spawner prompt bootstrap", () => {
         ],
       );
       assert.match((summary.retryFeedback as any).actionableReviewThreads[3].comment, /Throttle requestAnimationFrame to 60 FPS/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("extracts retry patch protected snippets into claim summary and bootstrap", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-retry-snippets-"));
+    try {
+      const workdir = path.join(tmp, "worktree");
+      fs.mkdirSync(workdir, { recursive: true });
+      fs.writeFileSync(path.join(workdir, ".story-scope-files"), "src/App.tsx\n");
+      const input = [
+        "TASK: Project: retry snippet sensor",
+        "CURRENT STORY: Story US-003: Retry snippet sensor",
+        "",
+        "## Previous Failure / Retry Feedback",
+        "RETRY_PATCH_REAPPLIED: Story US-003 repeated 3 deletion(s) from a previously rejected retry patch.",
+        "Preserve/restore: 'filter-6': () => setPanel('filter'), | 'export-summary-7': () => setPanel('export'), | [createRecordAction],",
+        "",
+        "## Current Story",
+      ].join("\n");
+
+      const claimSummaryFile = path.join(tmp, "claim-summary.json");
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        bootstrapFile: path.join(tmp, "bootstrap.sh"),
+        stepId: "step-123",
+        runId: "run-123",
+        workdir,
+        repo: workdir,
+        storyId: "US-003",
+        input,
+      });
+      fs.writeFileSync(claimSummaryFile, JSON.stringify(summary, null, 2));
+
+      assert.equal((summary.retryFeedback as any).category, "RETRY_PATCH_REAPPLIED");
+      assert.equal((summary.retryDiscipline as any).mode, "semantic-fix");
+      assert.deepEqual((summary.retryFeedback as any).protectedSnippets, [
+        "'filter-6': () => setPanel('filter'),",
+        "'export-summary-7': () => setPanel('export'),",
+        "[createRecordAction],",
+      ]);
+
+      const bootstrap = buildResolvedClaimBootstrapScript({
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        claimSummaryFile,
+        stepId: "step-123",
+        workdir,
+      });
+      fs.writeFileSync(path.join(tmp, "bootstrap.sh"), bootstrap, { mode: 0o755 });
+      const out = execFileSync("bash", [path.join(tmp, "bootstrap.sh")], { encoding: "utf-8" });
+      assert.match(out, /RETRY_PROTECTED_SNIPPETS=3/);
+      assert.match(out, /RETRY_PROTECTED_SNIPPET_1='filter-6': \(\) => setPanel\('filter'\),/);
+      assert.match(out, /RETRY_PROTECTED_SNIPPET_2='export-summary-7': \(\) => setPanel\('export'\),/);
+      assert.match(out, /RETRY_PROTECTED_SNIPPET_3=\[createRecordAction\],/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

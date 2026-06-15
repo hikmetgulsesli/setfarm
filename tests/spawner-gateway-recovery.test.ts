@@ -945,6 +945,7 @@ describe("spawner gateway recovery wiring", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /function implementRejectedRetryPatchRuntimeGuard\(active: ActiveProcess\)/);
     assert.match(source, /function rejectedRetryDeletionLinesFromClaimSummary/);
+    assert.match(source, /retryFeedback\?\.protectedSnippets/);
     assert.match(source, /function deletedLinesFromCurrentWorktreeDiff/);
     assert.match(source, /Repeated deletions:/);
     assert.match(source, /RETRY_PATCH_REAPPLIED_RUNTIME_GUARD/);

@@ -1344,7 +1344,15 @@ function rejectedRetryDeletionLinesFromClaimSummary(active: ActiveProcess): stri
   if (!active.claimSummaryPath || !fs.existsSync(active.claimSummaryPath)) return [];
   try {
     const raw = fs.readFileSync(active.claimSummaryPath, "utf-8");
-    const text = JSON.stringify(JSON.parse(raw));
+    const summary = JSON.parse(raw);
+    const protectedSnippets = summary?.retryFeedback?.protectedSnippets;
+    if (Array.isArray(protectedSnippets) && protectedSnippets.length > 0) {
+      return [...new Set(protectedSnippets
+        .map((line) => String(line || "").trim())
+        .filter(Boolean)
+      )];
+    }
+    const text = JSON.stringify(summary);
     const match = text.match(/Repeated deletions:\s*([\s\S]*?)(?:\s+ALSO_FIX:|\s+RETRY_ACTION|\s+RETRY_INSTRUCTION|$)/);
     if (!match) return [];
     return match[1]
