@@ -831,6 +831,106 @@ describe("07-verify step module", () => {
     assert.equal(commentLooksMechanicallySatisfied(debounceComment, "const query = event.target.value;"), false);
   });
 
+  it("marks React external-store and supported-action review comments as mechanically satisfied from source evidence", () => {
+    const externalStoreComment = {
+      id: "external-store-inline",
+      threadId: "PRRT_external_store",
+      kind: "review-comment" as const,
+      author: "gemini-code-assist",
+      body: [
+        "Use `useSyncExternalStore` to subscribe to the external store. This prevents state tearing and simplifies the hook implementation.",
+        "",
+        "```",
+        "export function useRetrySignalStore() {",
+        "  const state = useSyncExternalStore(",
+        "    retrySignalStore.subscribe,",
+        "    () => retrySignalStore.state",
+        "  );",
+        "  return { state, dispatch: retrySignalStore.dispatch };",
+        "}",
+        "```",
+      ].join("\n"),
+      createdAt: "2026-06-15T12:48:38Z",
+      path: "src/features/app.store.tsx",
+      line: 73,
+      originalLine: 73,
+      threadResolved: false,
+      outdated: false,
+    };
+    const supportedActionComment = {
+      id: "supported-actions-inline",
+      threadId: "PRRT_supported_actions",
+      kind: "review-comment" as const,
+      author: "gemini-code-assist",
+      body: [
+        "Optimizing `createActions` to only assign handlers for supported action IDs. This avoids allocating unnecessary closures for unhandled actions and allows screen components to correctly detect if an action is supported.",
+        "",
+        "```",
+        "function createActions<T extends string>(",
+        "  ids: readonly T[],",
+        "): Partial<Record<T, () => void>> {",
+        "  const actions = {} as Partial<Record<T, () => void>>;",
+        "  for (const id of ids) {",
+        "    switch (id as string) {",
+        "      case 'open':",
+        "        actions[id] = () => openPanel();",
+        "        break;",
+        "      default:",
+        "        break;",
+        "    }",
+        "  }",
+        "  return actions;",
+        "}",
+        "```",
+      ].join("\n"),
+      createdAt: "2026-06-15T12:48:38Z",
+      path: "src/App.tsx",
+      line: 165,
+      originalLine: 165,
+      threadResolved: false,
+      outdated: false,
+    };
+    const fixedSource = `
+      import { useSyncExternalStore } from "react";
+
+      export function useRetrySignalStore() {
+        const state = useSyncExternalStore(
+          retrySignalStore.subscribe,
+          () => retrySignalStore.state,
+        );
+        return { state, dispatch: retrySignalStore.dispatch };
+      }
+
+      function createActions<T extends string>(ids: readonly T[]): Partial<Record<T, () => void>> {
+        const actions = {} as Partial<Record<T, () => void>>;
+        for (const id of ids) {
+          switch (id as string) {
+            case "open":
+              actions[id] = () => openPanel();
+              break;
+            case "reset":
+              actions[id] = () => reset();
+              break;
+            default:
+              break;
+          }
+        }
+        return actions;
+      }
+    `;
+
+    assert.equal(commentLooksMechanicallySatisfied(externalStoreComment, fixedSource), true);
+    assert.equal(commentLooksMechanicallySatisfied(supportedActionComment, fixedSource), true);
+    assert.equal(commentLooksMechanicallySatisfied(externalStoreComment, "const [state, setState] = useState(store.state);"), false);
+    assert.equal(
+      commentLooksMechanicallySatisfied(
+        supportedActionComment,
+        "function createActions(ids) { return Object.fromEntries(ids.map(id => [id, () => undefined])); }",
+      ),
+      false,
+    );
+  });
+
   it("finds mechanically satisfied inline review thread ids from current PR source files", () => {
     const root = mkdtempSync(join(tmpdir(), "setfarm-pr-comments-"));
     try {

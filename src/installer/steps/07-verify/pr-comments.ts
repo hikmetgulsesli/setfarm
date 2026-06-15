@@ -271,6 +271,27 @@ function commentProseLooksMechanicallySatisfied(body: string, normalizedSource: 
     return true;
   }
 
+  if (
+    /\buseSyncExternalStore\b/.test(body) &&
+    /\bsubscribe\b|\bsubscription\b|\bexternal\s+store\b/i.test(body) &&
+    /import\s*\{[^}]*\buseSyncExternalStore\b[^}]*\}\s*from\s*['"]react['"]/.test(normalizedSource) &&
+    /useSyncExternalStore\s*\(\s*[^,]+\.subscribe\s*,\s*\(\s*\)\s*=>\s*[^,]+\.state\s*,?/.test(normalizedSource) &&
+    /return\s*\{[^}]*\bstate\b[^}]*\bdispatch\b[^}]*\}/.test(normalizedSource)
+  ) {
+    return true;
+  }
+
+  if (
+    /\bcreateActions\b/.test(body) &&
+    /\bsupported\s+action\s+IDs?\b/i.test(body) &&
+    /\bunsupported|unhandled\b/i.test(body) &&
+    /function\s+createActions\b/.test(normalizedSource) &&
+    /const\s+actions\s*=\s*\{\}\s+as\s+Partial\s*<\s*Record\s*</.test(normalizedSource) &&
+    /for\s*\(\s*const\s+\w+\s+of\s+\w+\s*\)\s*\{[^]*?switch\s*\([^)]*\)\s*\{[^]*?actions\s*\[\s*\w+\s*\]\s*=\s*\(\s*\)\s*=>[^]*?default\s*:\s*break\s*;?[^]*?\}/.test(normalizedSource)
+  ) {
+    return true;
+  }
+
   return false;
 }
 
