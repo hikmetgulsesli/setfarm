@@ -123,6 +123,34 @@ describe("product supervisor", () => {
     assert.equal(result.ok, true, result.reason);
   });
 
+  it("allows generic operations pipeline surface labels for recovery dashboards", () => {
+    const task = "Build a compact recovery operations board. It should track failed jobs, supervisor retries, recoverable UI issues, final pass/fail status, editable job cards, retry notes, status filters, persistent local state, and visible error recovery states.";
+    const prd = [
+      "# Recovery Operations PRD",
+      "The product tracks failed jobs, supervisor retries, recoverable UI issues, final pass/fail status, editable job cards, retry notes, status filters, persistent local state, and visible error recovery states.",
+      "## 4. Product Surfaces",
+      "### SURFACE: SURF_PIPELINE_BOARD",
+      "- Name: Pipeline Board",
+      "- Purpose: Track failed jobs, supervisor retries, recoverable UI issues, and final pass/fail status.",
+      "- Permitted Actions: ACT_FILTER_STATUS (control_hint: segmented_control), ACT_SELECT_JOB (control_hint: list_item)",
+      "### SURFACE: SURF_JOB_EDITOR",
+      "- Name: Job Editor",
+      "- Purpose: Edit job cards and retry notes while preserving visible error recovery states.",
+      "- Permitted Actions: ACT_SAVE_JOB (control_hint: form_submit)",
+    ].join("\n");
+
+    const result = runProductSupervisorGate({
+      phase: "plan",
+      runId: "run-1",
+      stepId: "plan",
+      task,
+      parsed: { status: "done", prd },
+      context: { task },
+    });
+
+    assert.equal(result.ok, true, result.reason);
+  });
+
   it("allows generic item surface labels when the purpose preserves the requested domain", () => {
     const task = "Build a compact browser warehouse maintenance command center app called WarehouseOps Console. It should manage equipment work orders, technician dispatch, live queue status, exception insights, reports, settings, help, and logout.";
     const prd = [
