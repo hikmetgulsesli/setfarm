@@ -714,7 +714,7 @@ describe("spawner prompt bootstrap", () => {
         ],
         resolved_scope_roles: [
           { role: "app_shell", path: "src/App.tsx", source: "scope_target" },
-          { role: "state_store", path: "src/features/pulsegate-lite/pulsegate-lite.store.ts", source: "scope_target" },
+          { role: "state_store", path: "src/features/pulsegate-lite/pulsegate-lite.store.tsx", source: "scope_target" },
           { role: "fixture_data", path: "src/__fixtures__/pulsegate-lite.fixture.ts", source: "scope_target" },
           { role: "test_bridge", path: "src/test/bridge.ts", source: "scope_target" },
           { role: "runtime_loop", path: "src/game/game-runtime.ts", source: "scope_target" },
