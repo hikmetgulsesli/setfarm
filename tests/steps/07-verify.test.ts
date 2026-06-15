@@ -761,6 +761,76 @@ describe("07-verify step module", () => {
     );
   });
 
+  it("marks React debounced search review comments as mechanically satisfied from source evidence", () => {
+    const importComment = {
+      id: "react-import-inline",
+      threadId: "PRRT_react_import",
+      kind: "review-comment" as const,
+      author: "gemini-code-assist",
+      body: [
+        "To implement a debounced search input and avoid performance lag, we need to import `useState` and `useEffect` from React.",
+        "",
+        "```",
+        "import { useState, useEffect } from 'react';",
+        "```",
+      ].join("\n"),
+      createdAt: "2026-06-15T08:45:48Z",
+      path: "src/screens/RecordOperations.tsx",
+      line: 13,
+      originalLine: 13,
+      threadResolved: false,
+      outdated: false,
+    };
+    const debounceComment = {
+      id: "react-debounce-inline",
+      threadId: "PRRT_react_debounce",
+      kind: "review-comment" as const,
+      author: "gemini-code-assist",
+      body: [
+        "To prevent keystroke latency and unnecessary full-app re-renders on every keystroke, introduce a local state for the search query and debounce the propagation to the global store.",
+        "",
+        "```",
+        "const [localSearchQuery, setLocalSearchQuery] = useState(searchQuery);",
+        "useEffect(() => { setLocalSearchQuery(searchQuery); }, [searchQuery]);",
+        "useEffect(() => { const timer = setTimeout(() => { actions?.[\"search-records\"]?.(localSearchQuery); }, 300); return () => clearTimeout(timer); }, [localSearchQuery, searchQuery, actions]);",
+        "```",
+      ].join("\n"),
+      createdAt: "2026-06-15T08:45:48Z",
+      path: "src/screens/RecordOperations.tsx",
+      line: 23,
+      originalLine: 23,
+      threadResolved: false,
+      outdated: false,
+    };
+    const fixedSource = `
+      import { Search } from 'lucide-react';
+      import { useState, useEffect } from "react";
+
+      export function RecordOperations({ actions, searchQuery = "" }) {
+        const [localSearchQuery, setLocalSearchQuery] = useState(searchQuery);
+
+        useEffect(() => {
+          setLocalSearchQuery(searchQuery);
+        }, [searchQuery]);
+
+        useEffect(() => {
+          const timer = window.setTimeout(() => {
+            if (localSearchQuery !== searchQuery) {
+              actions?.["search-records"]?.(localSearchQuery);
+            }
+          }, 300);
+          return () => window.clearTimeout(timer);
+        }, [localSearchQuery, searchQuery, actions]);
+
+        return <input value={localSearchQuery} onChange={(event) => setLocalSearchQuery(event.target.value)} />;
+      }
+    `;
+
+    assert.equal(commentLooksMechanicallySatisfied(importComment, fixedSource), true);
+    assert.equal(commentLooksMechanicallySatisfied(debounceComment, fixedSource), true);
+    assert.equal(commentLooksMechanicallySatisfied(debounceComment, "const query = event.target.value;"), false);
+  });
+
   it("finds mechanically satisfied inline review thread ids from current PR source files", () => {
     const root = mkdtempSync(join(tmpdir(), "setfarm-pr-comments-"));
     try {

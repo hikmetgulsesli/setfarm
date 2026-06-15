@@ -246,6 +246,31 @@ function commentProseLooksMechanicallySatisfied(body: string, normalizedSource: 
     return true;
   }
 
+  if (
+    /\bimport\b/i.test(body) &&
+    /\buseState\b/.test(body) &&
+    /\buseEffect\b/.test(body) &&
+    /import\s*\{[^}]*\buseState\b[^}]*\buseEffect\b[^}]*\}\s*from\s*['"]react['"]/.test(normalizedSource)
+  ) {
+    return true;
+  }
+
+  if (
+    /\bdebounc/i.test(body) &&
+    /\bsearch\b/i.test(body) &&
+    /\blocal\s+state\b/i.test(body) &&
+    /\buseState\b/.test(body) &&
+    /\buseEffect\b/.test(body) &&
+    /useState\s*\(\s*searchQuery\s*\)/.test(normalizedSource) &&
+    /useEffect\s*\([^]*?setLocalSearchQuery\s*\(\s*searchQuery\s*\)[^]*?\[\s*searchQuery\s*\]/.test(normalizedSource) &&
+    /(?:window\.)?setTimeout\s*\(/.test(normalizedSource) &&
+    /(?:window\.)?clearTimeout\s*\(/.test(normalizedSource) &&
+    /search-records/.test(normalizedSource) &&
+    /localSearchQuery/.test(normalizedSource)
+  ) {
+    return true;
+  }
+
   return false;
 }
 
