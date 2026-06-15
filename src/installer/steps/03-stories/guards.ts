@@ -10,7 +10,7 @@ import {
 } from "./context.js";
 import { runProductSupervisorGate, updateSupervisorMemory } from "../../product-supervisor.js";
 import { isReopenableAppIntegrationFile } from "../../story-scope.js";
-import { detectPrdActionCoverageGaps } from "./story-coverage-gates.js";
+import { detectPrdActionCoverageGaps, planPrdActionOwnershipDedupes } from "./story-coverage-gates.js";
 
 // validateOutput is intentionally minimal at the field level — STORIES_JSON
 // arrives as multi-line raw text (not in parsed[]) and is ingested by
@@ -490,6 +490,24 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
     logger.warn(`[module:stories] ${implementationContractErr}`, { runId });
     await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);
     throw new Error(implementationContractErr);
+  }
+
+  const prdActionOwnershipDedupes = planPrdActionOwnershipDedupes(context, semanticRows);
+  if (prdActionOwnershipDedupes.length > 0) {
+    for (const update of prdActionOwnershipDedupes) {
+      await pgRun(
+        "UPDATE stories SET implementation_contract = $1, updated_at = $2 WHERE run_id = $3 AND story_id = $4",
+        [update.implementationContract, now(), runId, update.storyId],
+      );
+    }
+    const removed = prdActionOwnershipDedupes
+      .map((update) => `${update.storyId}: ${update.removed.join(", ")}`)
+      .join("; ");
+    logger.info(`[module:stories] Auto-deduplicated PRD action ownership: ${removed}`, { runId });
+    semanticRows = await pgQuery<SemanticStoryInput>(
+      "SELECT story_index, story_id, title, description, acceptance_criteria, scope_description, scope_files, shared_files, scope_targets, requested_dependencies, shared_edit_requests, implementation_contract FROM stories WHERE run_id = $1 ORDER BY story_index",
+      [runId],
+    );
   }
 
   const prdActionCoverageErr = detectPrdActionCoverageGaps(context, semanticRows);

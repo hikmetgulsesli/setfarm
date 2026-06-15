@@ -23,7 +23,10 @@ import {
   extractStoryDomainTerms,
   planUiBehaviorCriteriaInjections,
 } from "../../dist/installer/steps/03-stories/guards.js";
-import { detectPrdActionCoverageGaps } from "../../dist/installer/steps/03-stories/story-coverage-gates.js";
+import {
+  detectPrdActionCoverageGaps,
+  planPrdActionOwnershipDedupes,
+} from "../../dist/installer/steps/03-stories/story-coverage-gates.js";
 import { normalizeScopeFilesForStory } from "../../dist/installer/story-ops.js";
 import { runModule } from "./harness.js";
 
@@ -522,6 +525,58 @@ describe("03-stories step module", () => {
       }),
     }]);
     assert.equal(ok, null);
+  });
+
+  it("plans deterministic repair for duplicate PRD action ownership", () => {
+    const context = {
+      prd: [
+        "4. Product Surfaces",
+        "SURFACE: SURF_RECOVERY",
+        "- Name: Recovery",
+        "- Permitted Actions: ACT_RETRY_LOAD (control_hint: primary_button), ACT_CREATE_RECORD (control_hint: form_submit)",
+      ].join("\n"),
+    };
+    const stories = [
+      {
+        story_index: 4,
+        story_id: "US-004",
+        implementation_contract: JSON.stringify({
+          owned_surface_ids: ["SURF_RECOVERY"],
+          owned_actions: [
+            { id: "ACT_RETRY_LOAD", surface_id: "SURF_RECOVERY" },
+            { id: "ACT_CREATE_RECORD", surface_id: "SURF_RECOVERY" },
+          ],
+        }),
+      },
+      {
+        story_index: 5,
+        story_id: "US-005",
+        implementation_contract: JSON.stringify({
+          owned_surface_ids: ["SURF_RECOVERY"],
+          owned_actions: [
+            { id: "ACT_RETRY_LOAD", surface_id: "SURF_RECOVERY" },
+            { id: "ACT_CREATE_RECORD", surface_id: "SURF_RECOVERY" },
+            { id: "ACT_LOCAL_NOTE", surface_id: "SURF_RECOVERY" },
+          ],
+        }),
+      },
+    ];
+
+    assert.match(detectPrdActionCoverageGaps(context, stories) || "", /duplicated/);
+    const updates = planPrdActionOwnershipDedupes(context, stories);
+    assert.equal(updates.length, 1);
+    assert.equal(updates[0]?.storyId, "US-005");
+    assert.deepEqual(updates[0]?.removed, [
+      "SURF_RECOVERY:ACT_RETRY_LOAD",
+      "SURF_RECOVERY:ACT_CREATE_RECORD",
+    ]);
+
+    const repairedStories = stories.map((story) => story.story_id === "US-005"
+      ? { ...story, implementation_contract: updates[0]?.implementationContract }
+      : story);
+    assert.equal(detectPrdActionCoverageGaps(context, repairedStories), null);
+    const repairedContract = JSON.parse(String(repairedStories[1]?.implementation_contract));
+    assert.deepEqual(repairedContract.owned_actions.map((action: any) => action.id), ["ACT_LOCAL_NOTE"]);
   });
 
   it("keeps repeated PRD action IDs distinct by surface", () => {
