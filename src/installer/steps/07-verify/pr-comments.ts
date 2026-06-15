@@ -234,6 +234,18 @@ function commentProseLooksMechanicallySatisfied(body: string, normalizedSource: 
     return true;
   }
 
+  if (
+    /\btype\s*guard\b|\bisPersistedState\b|\bvalidation\b/i.test(body) &&
+    /\brecords?\b/i.test(body) &&
+    /\bsettings\b/i.test(body) &&
+    /\bpollingInterval\b/i.test(body) &&
+    /\.every\s*\(\s*is\w+Record\s*\)/.test(normalizedSource) &&
+    /is\w+Settings\s*\(\s*candidate\.settings\s*\)/.test(normalizedSource) &&
+    /Number\.isFinite\s*\([^)]*pollingInterval[^)]*\)/.test(normalizedSource)
+  ) {
+    return true;
+  }
+
   return false;
 }
 

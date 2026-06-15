@@ -704,6 +704,63 @@ describe("07-verify step module", () => {
     );
   });
 
+  it("marks persisted state type guard review comments as mechanically satisfied from source evidence", () => {
+    const typeGuardComment = {
+      id: "persisted-state-inline",
+      threadId: "PRRT_persisted_state",
+      kind: "review-comment" as const,
+      author: "reviewer",
+      body: "The `isPersistedState` type guard is too loose. It only checks if `records` is an array and `settings` is an object. Validate internal record properties and settings.pollingInterval to prevent runtime errors like NaN.",
+      createdAt: "2026-06-15T08:45:48Z",
+      path: "src/features/example/example.repo.ts",
+      line: 70,
+      originalLine: 33,
+      threadResolved: false,
+      outdated: false,
+    };
+
+    assert.equal(
+      commentLooksMechanicallySatisfied(
+        typeGuardComment,
+        `
+        function isRetryRecord(value: unknown): value is RetryRecord {
+          if (typeof value !== 'object' || value === null) return false;
+          const record = value as Record<string, unknown>;
+          return typeof record.id === 'string' &&
+            typeof record.name === 'string' &&
+            typeof record.status === 'string' &&
+            typeof record.retryAt === 'number' &&
+            Number.isFinite(record.retryAt);
+        }
+
+        function isRetrySettings(value: unknown): value is RetrySettings {
+          if (typeof value !== 'object' || value === null) return false;
+          const settings = value as Record<string, unknown>;
+          return typeof settings.autoRetry === 'boolean' &&
+            typeof settings.darkMode === 'boolean' &&
+            typeof settings.pollingInterval === 'number' &&
+            Number.isFinite(settings.pollingInterval);
+        }
+
+        function isPersistedState(value: unknown): value is PersistedState {
+          if (typeof value !== 'object' || value === null) return false;
+          const candidate = value as Record<string, unknown>;
+          return Array.isArray(candidate.records) &&
+            candidate.records.every(isRetryRecord) &&
+            isRetrySettings(candidate.settings);
+        }`,
+      ),
+      true,
+    );
+    assert.equal(
+      commentLooksMechanicallySatisfied(
+        typeGuardComment,
+        "function isPersistedState(value: any) { return Array.isArray(value.records) && typeof value.settings === 'object'; }",
+      ),
+      false,
+    );
+  });
+
   it("finds mechanically satisfied inline review thread ids from current PR source files", () => {
     const root = mkdtempSync(join(tmpdir(), "setfarm-pr-comments-"));
     try {
