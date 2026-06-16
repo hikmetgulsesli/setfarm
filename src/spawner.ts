@@ -3042,7 +3042,8 @@ async function tryRecoverExitedImplementWork(
     exitReason.includes("without calling setfarm step complete/fail") ||
     exitReason.includes("AGENT_STARTUP_SILENT") ||
     exitReason.includes("AGENT_PROCESS_STUCK") ||
-    exitReason.includes("AGENT_PROCESS_TERMINAL");
+    exitReason.includes("AGENT_PROCESS_TERMINAL") ||
+    exitReason.includes("IMPLEMENT_RETRY_HARD_TIMEOUT");
   if (!recoverableExit) return false;
   if (row.status !== "running" || row.type !== "loop" || row.step_id !== "implement" || !row.current_story_id) return false;
 
@@ -3834,6 +3835,18 @@ async function reapFinishedClaims(): Promise<void> {
             terminateActiveProcess(active, "implement-retry-hard-timeout");
             activeProcesses.delete(key);
             if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
+            try {
+              const recoveryRow: RunningStepRow = {
+                status: row.step_status,
+                step_id: row.step_id,
+                run_id: row.run_id,
+                type: row.type,
+                current_story_id: row.current_story_id,
+              };
+              if (await tryRecoverExitedImplementWork(active.stepId, recoveryRow, active.agentId, active.transcriptPath, new Error(reason), active.spawnCwd)) continue;
+            } catch (recoveryErr) {
+              console.warn(`[spawner] retry timeout implement recovery failed for ${active.wfId}/${active.role}: ${String(recoveryErr).slice(0, 300)}`);
+            }
             await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
             continue;
           }

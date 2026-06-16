@@ -1129,7 +1129,24 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /IMPLEMENT_RETRY_HARD_TIMEOUT/);
     assert.match(source, /recordSupervisorRuntimeEvent\(active\.runId,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"IMPLEMENT_RETRY_HARD_TIMEOUT"/);
     assert.match(source, /terminateActiveProcess\(active,\s*"implement-retry-hard-timeout"\)/);
+    assert.match(source, /exitReason\.includes\("IMPLEMENT_RETRY_HARD_TIMEOUT"\)/);
+    assert.match(source, /const recoveryRow: RunningStepRow = \{/);
+    assert.match(source, /tryRecoverExitedImplementWork\(active\.stepId,\s*recoveryRow,\s*active\.agentId,\s*active\.transcriptPath,\s*new Error\(reason\),\s*active\.spawnCwd\)/);
     assert.match(source, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.agentId,\s*reason\)/);
+
+    const timeoutStart = source.indexOf("const retryHardTimeout = implementRetryHardTimeoutGuard(active, ageMs)");
+    const terminalStart = source.indexOf("const terminalReason = childProcessTerminalReason(active.child)", timeoutStart);
+    assert.notEqual(timeoutStart, -1, "retry hard-timeout block missing");
+    assert.notEqual(terminalStart, -1, "terminal recovery block missing after retry timeout");
+    const block = source.slice(timeoutStart, terminalStart);
+    assert.ok(
+      block.indexOf("completeRunningClaimFromOutputFile(active.stepId") < block.indexOf("tryRecoverExitedImplementWork(active.stepId"),
+      "retry timeout must first honor explicit output files, then recover build-passing scoped work",
+    );
+    assert.ok(
+      block.indexOf("tryRecoverExitedImplementWork(active.stepId") < block.indexOf("await requeueOpenStoryClaim(active.runId"),
+      "retry timeout must attempt build/scope recovery before requeueing the story",
+    );
   });
 
   it("hard-times out active agents after watchdog overrun even when they keep producing activity", () => {
