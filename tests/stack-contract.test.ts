@@ -56,6 +56,16 @@ describe("stack contract", () => {
     assert.deepEqual(parseStackPrefix("python: Build a FastAPI status API")?.packId, "python-web");
     assert.deepEqual(parseStackPrefix("python: Build a terminal backup tool")?.packId, "python-cli");
     assert.deepEqual(parseStackPrefix("rn: Build a mobile habit tracker")?.packId, "react-native-expo");
+    assert.deepEqual(parseStackPrefix("react: Build a frontend dashboard")?.packId, "vite-react-web-app");
+    assert.deepEqual(parseStackPrefix("frontend: Build an ops panel")?.packId, "vite-react-web-app");
+    assert.deepEqual(parseStackPrefix("static: Build a simple docs page")?.packId, "static-html-site");
+    assert.deepEqual(parseStackPrefix("backend: Build a REST service")?.packId, "node-express-api");
+    assert.deepEqual(parseStackPrefix("node: Build a terminal release tool")?.packId, "node-cli");
+    assert.deepEqual(parseStackPrefix("node: Build an Express API")?.packId, "node-express-api");
+    assert.deepEqual(parseStackPrefix("typescript: Build a browser admin tool")?.packId, "vite-react-web-app");
+    assert.deepEqual(parseStackPrefix("swiftui: Build an iPhone habit tracker")?.packId, "ios-app");
+    assert.deepEqual(parseStackPrefix("kotlin: Build an Android field app")?.packId, "android-app");
+    assert.deepEqual(parseStackPrefix("electron: Build a desktop notes app")?.packId, "desktop-electron");
     assert.equal(parseStackPrefix("Project: Build a web app"), null);
     assert.equal(stripStackPrefix("game: Build NeonSwitch"), "Build NeonSwitch");
   });
