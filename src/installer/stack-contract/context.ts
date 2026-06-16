@@ -1,6 +1,7 @@
 import path from "node:path";
 import { resolveStackContract } from "./reconcile.js";
 import { writeStackContract } from "./ledger.js";
+import { parseStackPrefix } from "./prefix.js";
 import type { StackCommandSet, StackContract } from "./types.js";
 
 export interface StackContractContextOptions {
@@ -16,6 +17,7 @@ export function applyStackContractContext(
 ): StackContract {
   const repoPath = normalizeRepoPath(options.repoPath || context["story_workdir"] || context["repo"] || context["REPO"] || "");
   const taskText = options.taskText || context["prd"] || context["task"] || context["TASK"] || "";
+  const prefix = parseStackPrefix(taskText);
   const contract = resolveStackContract({
     repoPath: repoPath || undefined,
     taskText,
@@ -28,6 +30,12 @@ export function applyStackContractContext(
 
   context["stack_contract"] = formatStackContractForPrompt(contract);
   context["stack_pack_id"] = contract.packId || "needs-reconcile";
+  if (prefix) {
+    context["requested_stack_prefix"] = prefix.prefix;
+    context["task"] = prefix.taskText;
+    context["platform"] = prefix.platform;
+    context["tech_stack"] = prefix.techStack;
+  }
   context["stack_prompt"] = contract.prompt;
   context["stack_setup_contract"] = formatCommandContract(contract.setup);
   context["stack_verification_contract"] = formatVerificationContract(contract.verification);

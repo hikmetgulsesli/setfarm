@@ -21,6 +21,7 @@ const TOOLING_INFRA = /\b(tooling_contract_missing|prewarm_failed|command not fo
 const MERGE_BLOCKER = /\b(?:VERIFY_MERGE_BLOCKER|merge conflict|CONFLICTING|DIRTY|unresolved merge conflicts?|conflict markers?)\b/i;
 const DESIGN_IMPORT = /\b(?:DESIGN_IMPORT|stitch-to-jsx|generated-screen-validator|SCREEN_MAP)\b/i;
 const IMPLEMENT_EVIDENCE = /\b(?:IMPLEMENT_EVIDENCE|runtime evidence|IMPLEMENT_VERIFICATION_REQUEST)\b/i;
+const SUPERVISOR_QUALITY_GAP = /\b(?:GENERATED_ICON_FALLBACK|UNKNOWN_MATERIAL_ICONS|Unknown Material Symbols|missing expected icon|icon-missing|BadgeHelp|Circle icons)\b/i;
 
 function runtimeKindFor(packId: StackPackId): StackRuntimeKind {
   if (BROWSER_PACKS.has(packId)) return "browser";
@@ -91,6 +92,14 @@ function classifyFailureFor(packId: StackPackId, input: StackFailureInput): Stac
       action: "product_retry",
       category: "implement_evidence_failure",
       reason: `${packId} implementation evidence failed with stack-owned product evidence.`,
+    };
+  }
+  if (SUPERVISOR_QUALITY_GAP.test(raw)) {
+    return {
+      owner: "product",
+      action: "product_retry",
+      category: "supervisor_quality_gap",
+      reason: `${packId} has repairable generated UI quality work; route it through story/supervisor recovery instead of failing setup-build.`,
     };
   }
 

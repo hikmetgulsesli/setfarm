@@ -3,6 +3,7 @@ import { logger } from "../../../lib/logger.js";
 import type { ClaimContext } from "../types.js";
 import { slugifyIdentity, transliterateIdentity } from "../../runtime-identity.js";
 import { hasBrowserGameIntent, hasExplicitNoDatabaseIntent } from "../../task-intent.js";
+import { parseStackPrefix, stripStackPrefix } from "../../stack-contract/prefix.js";
 
 const DEFAULT_STACK = "vite-react";
 const PLAN_CONTRACT_SCHEMA_VERSION = "setfarm.plan.v2.2";
@@ -105,6 +106,8 @@ function extractProjectDisplayName(task: string, fallbackRawName: string): strin
 }
 
 function inferPlatform(task: string): string {
+  const prefix = parseStackPrefix(task);
+  if (prefix) return prefix.platform;
   const lower = task.toLowerCase();
   if (/\b(api only|backend service|rest api|graphql)\b/.test(lower)) return "api";
   if (/\b(cli|command line|terminal app)\b/.test(lower)) return "cli";
@@ -115,6 +118,8 @@ function inferPlatform(task: string): string {
 }
 
 function inferTechStack(task: string): string {
+  const prefix = parseStackPrefix(task);
+  if (prefix) return prefix.techStack;
   const lower = task.toLowerCase();
   if (/\bandroid\b/.test(lower) && !/\breact native\b|\bexpo\b/.test(lower)) return "android-native";
   if (/\bios\b|\biphone\b|\bipad\b/.test(lower) && !/\breact native\b|\bexpo\b/.test(lower)) return "ios-native";
@@ -615,6 +620,7 @@ function mockDataContract(kind: ProjectKind, entity: string, dbRequired: string)
 }
 
 export function buildAutoPlanOutput(task: string, _options: AutoPlanOptions = {}): string {
+  task = stripStackPrefix(task);
   const rawProjectName = extractProjectName(task);
   const projectName = extractProjectDisplayName(task, rawProjectName);
   const projectSlug = slugify(projectName);

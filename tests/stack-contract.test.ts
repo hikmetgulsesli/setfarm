@@ -7,6 +7,7 @@ import { resolveStackContract } from "../dist/installer/stack-contract/reconcile
 import { readStackContract, stackContractPath, writeStackContract } from "../dist/installer/stack-contract/ledger.js";
 import { getStackPack, listStackPacks } from "../dist/installer/stack-contract/packs.js";
 import { applyStackContractContext } from "../dist/installer/stack-contract/context.js";
+import { parseStackPrefix, stripStackPrefix } from "../dist/installer/stack-contract/prefix.js";
 import { validateAllStackPacks } from "../dist/installer/stack-contract/validators.js";
 
 function tmpDir(name: string): string {
@@ -24,6 +25,41 @@ function writeText(file: string, value = ""): void {
 }
 
 describe("stack contract", () => {
+  it("treats explicit task prefixes as authoritative stack selection", () => {
+    const repo = tmpDir("stack-prefix");
+    try {
+      writeJson(path.join(repo, "package.json"), {
+        dependencies: { next: "^16.0.0", react: "^19.0.0" },
+        scripts: { build: "next build" },
+      });
+      writeText(path.join(repo, "app/page.tsx"), "");
+
+      const game = resolveStackContract({ repoPath: repo, taskText: "game: Build a compact browser puzzle with keyboard controls." });
+      assert.equal(game.packId, "browser-game-canvas");
+      assert.equal(game.requestedPrefix, "game");
+      assert.equal(game.normalizedTaskText, "Build a compact browser puzzle with keyboard controls.");
+      assert.match(game.reason, /explicit task prefix/);
+
+      const next = resolveStackContract({ repoPath: repo, taskText: "nextjs: Build a playable route editor game-like dashboard." });
+      assert.equal(next.packId, "nextjs-web-app");
+      assert.equal(next.requestedPrefix, "nextjs");
+
+      const android = resolveStackContract({ repoPath: repo, taskText: "android: Build the same workflow for phones." });
+      assert.equal(android.packId, "android-app");
+      assert.equal(android.normalizedTaskText, "Build the same workflow for phones.");
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("parses prefix aliases without treating ordinary colons as stack commands", () => {
+    assert.deepEqual(parseStackPrefix("python: Build a FastAPI status API")?.packId, "python-web");
+    assert.deepEqual(parseStackPrefix("python: Build a terminal backup tool")?.packId, "python-cli");
+    assert.deepEqual(parseStackPrefix("rn: Build a mobile habit tracker")?.packId, "react-native-expo");
+    assert.equal(parseStackPrefix("Project: Build a web app"), null);
+    assert.equal(stripStackPrefix("game: Build NeonSwitch"), "Build NeonSwitch");
+  });
+
   it("detects Vite React projects from package evidence", () => {
     const repo = tmpDir("stack-vite");
     try {
@@ -233,6 +269,27 @@ describe("stack contract", () => {
       assert.equal(context.detected_stack, "nextjs-web-app");
       assert.equal(context.stack_rules, context.stack_prompt);
       assert.equal(readStackContract(repo)?.packId, "nextjs-web-app");
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("applies explicit prefix metadata into run context", () => {
+    const repo = tmpDir("stack-prefix-context");
+    try {
+      writeText(path.join(repo, ".git/info/exclude"), "");
+      const context: Record<string, string> = {
+        repo,
+        task: "game: Build NeonSwitch with settings and pause controls.",
+      };
+      const contract = applyStackContractContext(context);
+
+      assert.equal(contract.packId, "browser-game-canvas");
+      assert.equal(context.requested_stack_prefix, "game");
+      assert.equal(context.task, "Build NeonSwitch with settings and pause controls.");
+      assert.equal(context.platform, "game");
+      assert.equal(context.tech_stack, "browser-game");
+      assert.equal(context.stack_pack_id, "browser-game-canvas");
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }

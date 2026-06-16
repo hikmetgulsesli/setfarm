@@ -8,6 +8,7 @@ import { ensureWorkflowCrons } from "./agent-cron.js";
 import { cleanAgentWorkspace } from "./worktree-ops.js";
 import { emitEvent } from "./events.js";
 import { refreshRunContractSafe } from "./contract-ledger.js";
+import { parseStackPrefix } from "./stack-contract/prefix.js";
 
 export async function runWorkflow(params: {
   workflowId: string;
@@ -18,11 +19,21 @@ export async function runWorkflow(params: {
   const workflow = await loadWorkflowSpec(workflowDir);
   const ts = now();
   const runId = crypto.randomUUID();
+  const stackPrefix = parseStackPrefix(params.taskTitle);
+  const contextTaskTitle = stackPrefix?.taskText || params.taskTitle;
 
   const initialContext: Record<string, string> = {
-    task: params.taskTitle,
+    task: contextTaskTitle,
     ...workflow.context,
   };
+  if (stackPrefix) {
+    initialContext.original_task = params.taskTitle;
+    initialContext.requested_stack_prefix = stackPrefix.prefix;
+    initialContext.stack_pack_id = stackPrefix.packId;
+    initialContext.detected_stack = stackPrefix.packId;
+    initialContext.platform = stackPrefix.platform;
+    initialContext.tech_stack = stackPrefix.techStack;
+  }
 
   // Parse --repo and --branch from task text into initial context
   const repoFlag = params.taskTitle.match(/--repo\s+(\S+)/);

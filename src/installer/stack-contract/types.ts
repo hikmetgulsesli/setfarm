@@ -262,6 +262,8 @@ export interface StackContract {
   status: StackContractStatus;
   packId?: StackPackId;
   label?: string;
+  requestedPrefix?: string;
+  normalizedTaskText?: string;
   confidence: StackContractConfidence;
   reason: string;
   repoPath?: string;

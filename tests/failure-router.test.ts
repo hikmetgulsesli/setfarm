@@ -59,6 +59,21 @@ describe("failure router", () => {
     assert.equal(design.category, "design_import_failure");
   });
 
+  it("routes generated icon quality gaps back to story recovery instead of setup-build failure", () => {
+    const decision = routeDownstreamQualityFailure({
+      runId: "run-1",
+      stepId: "implement",
+      stackPackId: "browser-game-canvas",
+      currentStoryId: "US-001",
+      failure: "GENERATED_ICON_FALLBACK: src/screens/Game.tsx renders generic BadgeHelp/Circle icons in a generated screen.",
+      hasMachineEvidence: true,
+    });
+
+    assert.equal(decision.category, "supervisor_quality_gap");
+    assert.equal(decision.action, "re_claim");
+    assert.equal(decision.qaFixAllowed, false);
+  });
+
   it("only allows bounded QA-FIX when explicitly enabled and evidence-backed", () => {
     process.env.SETFARM_QA_FIX_ENABLED = "1";
     const allowed = routeDownstreamQualityFailure({

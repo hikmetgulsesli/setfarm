@@ -38,6 +38,7 @@ export function readPlatformSelfHealConfig(): PlatformSelfHealConfig {
       "qa_contract_gap",
       "final_test_contract_gap",
       "design_import_gap",
+      "supervisor_quality_gap",
     ]),
     forbidDirtyRepo: boolEnv("SETFARM_PLATFORM_SELF_HEAL_FORBID_DIRTY_REPO", true),
     requireTestDelta: boolEnv("SETFARM_PLATFORM_SELF_HEAL_REQUIRE_TEST_DELTA", true),

@@ -1,12 +1,27 @@
 import { detectStackCandidates, extractTaskHints } from "./detector.js";
 import { getStackPack } from "./packs.js";
-import type { ResolveStackContractInput, StackCandidate, StackContract, StackContractConfidence } from "./types.js";
+import { parseStackPrefix } from "./prefix.js";
+import type { ResolveStackContractInput, StackCandidate, StackContract, StackContractConfidence, StackPackId } from "./types.js";
 
 const HIGH_CONFIDENCE = 100;
 const MEDIUM_CONFIDENCE = 55;
 
 export function resolveStackContract(input: ResolveStackContractInput): StackContract {
   const now = input.now ?? new Date().toISOString();
+  const prefix = parseStackPrefix(input.taskText);
+  if (prefix) {
+    return contractFromPack(prefix.packId, {
+      confidence: "high",
+      reason: `Selected ${prefix.packId} from explicit task prefix "${prefix.prefix}".`,
+      repoPath: input.repoPath,
+      taskHints: [`task prefix "${prefix.prefix}" selected ${prefix.packId}`],
+      evidence: [{ type: "task-hint", value: `task prefix "${prefix.prefix}"`, weight: 999 }],
+      requestedPrefix: prefix.prefix,
+      normalizedTaskText: prefix.taskText,
+      now,
+    });
+  }
+
   const taskHints = extractTaskHints(input.taskText ?? "");
   const candidates = detectStackCandidates(input.repoPath, input.taskText ?? "");
   const selected = candidates[0];
@@ -30,18 +45,43 @@ export function resolveStackContract(input: ResolveStackContractInput): StackCon
     };
   }
 
-  const pack = getStackPack(selected.packId);
   const confidence = confidenceForCandidate(selected);
-  return {
-    schema: "setfarm.stack-contract.v1",
-    status: "resolved",
-    packId: pack.id,
-    label: pack.label,
+  return contractFromPack(selected.packId, {
     confidence,
     reason: buildReason(selected, confidence),
     repoPath: input.repoPath,
     taskHints,
     evidence: selected.evidence,
+    now,
+  });
+}
+
+function contractFromPack(
+  packId: StackPackId,
+  input: {
+    confidence: StackContractConfidence;
+    reason: string;
+    repoPath?: string;
+    taskHints: string[];
+    evidence: StackContract["evidence"];
+    requestedPrefix?: string;
+    normalizedTaskText?: string;
+    now: string;
+  },
+): StackContract {
+  const pack = getStackPack(packId);
+  return {
+    schema: "setfarm.stack-contract.v1",
+    status: "resolved",
+    packId: pack.id,
+    label: pack.label,
+    requestedPrefix: input.requestedPrefix,
+    normalizedTaskText: input.normalizedTaskText,
+    confidence: input.confidence,
+    reason: input.reason,
+    repoPath: input.repoPath,
+    taskHints: input.taskHints,
+    evidence: input.evidence,
     setup: pack.setup,
     fileContract: pack.fileContract,
     routeContract: pack.routeContract,
@@ -67,8 +107,8 @@ export function resolveStackContract(input: ResolveStackContractInput): StackCon
     toolPreflight: pack.toolPreflight,
     nativeEquivalentContract: pack.nativeEquivalentContract,
     prompt: pack.prompt,
-    createdAt: now,
-    updatedAt: now,
+    createdAt: input.now,
+    updatedAt: input.now,
   };
 }
 
