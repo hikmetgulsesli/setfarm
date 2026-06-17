@@ -212,9 +212,25 @@ function hasDelegatedActionHandler(source: string): boolean {
     && /(?:closest|matches)\s*\(\s*["']\[data-action-id\]["']\s*\)|getAttribute\s*\(\s*["']data-action-id["']\s*\)/i.test(source);
 }
 
+function scriptRefsForHtml(workdir: string, rel: string, source: string): string[] {
+  const refs: string[] = [];
+  const baseDir = path.dirname(rel);
+  for (const match of source.matchAll(/<script\b[^>]*\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)')[^>]*>/gi)) {
+    const src = (match[1] || match[2] || "").trim();
+    if (!src || /^(?:https?:)?\/\//i.test(src) || /^data:/i.test(src)) continue;
+    const withoutQuery = src.split(/[?#]/)[0] || "";
+    const candidate = path.normalize(path.join(baseDir, withoutQuery)).replace(/\\/g, "/").replace(/^\.\//, "");
+    if (!candidate || candidate.startsWith("../") || path.isAbsolute(candidate)) continue;
+    if (!/\.[cm]?js$/i.test(candidate) || IMPLEMENT_SCAN_IGNORE.test(candidate)) continue;
+    if (fs.existsSync(path.join(workdir, candidate))) refs.push(candidate);
+  }
+  return refs;
+}
+
 function findStaticInteractionIssues(workdir: string, files: string[]): string[] {
   const issues: string[] = [];
   const sources: Array<{ rel: string; source: string; clean: string }> = [];
+  const seen = new Set<string>();
   for (const rel of files.filter((file) => IMPLEMENT_SCAN_EXT.test(file)).slice(0, 80)) {
     const abs = path.join(workdir, rel);
     let source = "";
@@ -224,7 +240,22 @@ function findStaticInteractionIssues(workdir: string, files: string[]): string[]
     } catch {
       continue;
     }
+    seen.add(rel);
     sources.push({ rel, source, clean: sourceWithoutComments(source) });
+  }
+
+  for (const { rel, source } of [...sources]) {
+    if (!/\.html?$/i.test(rel)) continue;
+    for (const scriptRel of scriptRefsForHtml(workdir, rel, source)) {
+      if (seen.has(scriptRel)) continue;
+      seen.add(scriptRel);
+      try {
+        const scriptSource = fs.readFileSync(path.join(workdir, scriptRel), "utf-8");
+        sources.push({ rel: scriptRel, source: scriptSource, clean: sourceWithoutComments(scriptSource) });
+      } catch {
+        // Ignore missing or unreadable script references; missing source is handled by runtime checks.
+      }
+    }
   }
 
   const projectHasActionDelegation = sources.some(({ clean }) => hasDelegatedActionHandler(clean));
