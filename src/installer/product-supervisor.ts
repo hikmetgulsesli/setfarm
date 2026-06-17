@@ -204,7 +204,7 @@ function isExplicitlyInertAnchor(attrs: string): boolean {
 }
 
 function hasInteractionHandler(attrs: string): boolean {
-  return /\bon(?:Click|PointerDown|PointerUp|MouseDown|MouseUp|TouchStart|TouchEnd|KeyDown|Submit)\s*=/.test(attrs);
+  return /\bon(?:click|pointerdown|pointerup|mousedown|mouseup|touchstart|touchend|keydown|input|change|submit)\s*=/i.test(attrs);
 }
 
 function findStaticInteractionIssues(workdir: string, files: string[]): string[] {

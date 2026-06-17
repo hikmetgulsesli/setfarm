@@ -430,6 +430,58 @@ describe("product supervisor", () => {
     }
   });
 
+  it("allows static html lowercase handlers on multiline controls", () => {
+    const repo = mkdtempSync(path.join(tmpdir(), "setfarm-supervisor-static-handlers-"));
+    try {
+      execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
+      execFileSync("git", ["config", "user.email", "setfarm@example.test"], { cwd: repo });
+      execFileSync("git", ["config", "user.name", "Setfarm Test"], { cwd: repo });
+      writeFileSync(path.join(repo, "index.html"), "<main></main>\n");
+      execFileSync("git", ["add", "."], { cwd: repo });
+      execFileSync("git", ["commit", "-m", "base"], { cwd: repo, stdio: "ignore" });
+
+      writeFileSync(
+        path.join(repo, "index.html"),
+        [
+          "<main>",
+          "  <button",
+          "    type=\"button\"",
+          "    data-action-id=\"ACT_NAV_RECORDS\"",
+          "    onclick=\"window.app.actions.navigate('records')\"",
+          "  >Records</button>",
+          "  <input",
+          "    type=\"text\"",
+          "    data-action-id=\"ACT_SEARCH_RECORDS\"",
+          "    oninput=\"window.app.actions.setSearch(this.value)\"",
+          "  />",
+          "  <label>",
+          "    <input",
+          "      type=\"checkbox\"",
+          "      onchange=\"window.app.actions.savePreferences({ notifications: this.checked })\"",
+          "    />",
+          "    Notifications",
+          "  </label>",
+          "</main>",
+          "",
+        ].join("\n"),
+      );
+
+      const result = runProductSupervisorGate({
+        phase: "implement",
+        runId: "run-1",
+        stepId: "implement",
+        workdir: repo,
+        baseRef: "HEAD",
+        currentStory: { story_id: "US-001", title: "Wire static controls" },
+        rawOutput: "STATUS: done\nCHANGES: wired static html controls",
+      });
+
+      assert.equal(result.ok, true, result.reason);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
   it("does not block implement completion when placeholder wording is reported as fixed", () => {
     const repo = mkdtempSync(path.join(tmpdir(), "setfarm-supervisor-placeholder-fixed-"));
     try {
