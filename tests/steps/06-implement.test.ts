@@ -1226,7 +1226,7 @@ describe("06-implement step module", () => {
 
       const result = await checkScopeEnforcement("US-001", storyDbId, "Untracked Scope Story", tmp, "main", 0, 3);
 
-      assert.equal(result.passed, true);
+      assert.equal(result.passed, true, result.reason);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
       await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);
@@ -1299,7 +1299,7 @@ describe("06-implement step module", () => {
 
       const result = await checkScopeEnforcement("US-001", storyDbId, "Static Index Story", tmp, "main", 0, 3);
 
-      assert.equal(result.passed, true);
+      assert.equal(result.passed, true, result.reason);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
       await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);

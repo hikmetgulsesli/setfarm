@@ -1882,7 +1882,6 @@ export async function checkScopeEnforcement(
   } catch {}
 
   const allTouched = Array.from(new Set([...changedFiles, ...dirtyFiles]));
-  const sourceFiles = allTouched.filter(f => SCOPE_EXTS.test(f) && !SCOPE_IGNORE.test(f));
   const scopeRow = await pgGet<{ scope_files: string | null; shared_files: string | null }>(
     "SELECT scope_files, shared_files FROM stories WHERE id = $1",
     [currentStoryDbId]
@@ -1890,6 +1889,10 @@ export async function checkScopeEnforcement(
   const declaredScopeFiles = parseScopeFiles(scopeRow?.scope_files);
   const declaredSharedFiles = parseScopeFiles(scopeRow?.shared_files);
   const declaredScopeSet = new Set(declaredScopeFiles);
+  const sourceFiles = allTouched.filter(f => {
+    if (f === "index.html" && declaredScopeSet.has("index.html")) return true;
+    return SCOPE_EXTS.test(f) && !SCOPE_IGNORE.test(f);
+  });
   const forbiddenArtifacts = allTouched.filter(f => {
     if (f === "index.html" && declaredScopeSet.has("index.html")) return false;
     return /^(QA_REPORT\.md|qa-report\.(md|json|txt)|smoke-(home|after-click)\.png|index\.html|package(-lock)?\.json|vite\.config\.[cm]?[jt]s|tailwind\.config\.[cm]?[jt]s|postcss\.config\.[cm]?[jt]s|eslint\.config\.[cm]?[jt]s)$/i.test(f);
