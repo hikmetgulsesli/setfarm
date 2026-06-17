@@ -1862,6 +1862,30 @@ describe("06-implement step module", () => {
     }
   });
 
+  it("checks static HTML asset CSS for design token imports", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-static-design-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "stitch"), { recursive: true });
+      fs.mkdirSync(path.join(tmp, "assets/css"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "stitch/design-tokens.css"), ":root { --color-background: #000; }\n");
+      fs.writeFileSync(path.join(tmp, "assets/css/styles.css"), ".app-shell { min-height: 100vh; }\n");
+
+      const result = checkStoryDesignCompliance({
+        repo: tmp,
+        story_workdir: tmp,
+        story_scope_files: "assets/css/styles.css",
+      });
+
+      assert.equal(result, null);
+      assert.match(
+        fs.readFileSync(path.join(tmp, "assets/css/styles.css"), "utf-8"),
+        /@import '\.\.\/\.\.\/stitch\/design-tokens\.css';/,
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("catches scoped screen controls that drift from DESIGN_DOM before verify retries are spent", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-design-dom-gate-"));
     try {

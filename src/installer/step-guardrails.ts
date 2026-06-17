@@ -985,13 +985,13 @@ export function checkStoryDesignCompliance(
   const workdir = context["story_workdir"] || repo;
   if (!workdir) return null;
 
-  const stitchDir = path.join(repo, "stitch");
+  const workdirStitchDir = path.join(workdir, "stitch");
+  const repoStitchDir = path.join(repo, "stitch");
+  const stitchDir = fs.existsSync(workdirStitchDir) ? workdirStitchDir : repoStitchDir;
   if (!fs.existsSync(stitchDir)) return null;
   if (!fs.existsSync(path.join(stitchDir, "design-tokens.css"))) return null;
 
-  // Only check if src/ directory exists in workdir
   const srcDir = path.join(workdir, "src");
-  if (!fs.existsSync(srcDir)) return null;
 
   const issues: string[] = [];
 
@@ -999,7 +999,7 @@ export function checkStoryDesignCompliance(
     let entries: string[];
     try { entries = fs.readdirSync(dir); } catch { return out; }
     for (const entry of entries) {
-      if (entry === "node_modules" || entry === "dist" || entry === "build" || entry.startsWith(".")) continue;
+      if (entry === "node_modules" || entry === "dist" || entry === "build" || entry === "coverage" || entry === "stitch" || entry === "references" || entry.startsWith(".")) continue;
       const full = path.join(dir, entry);
       let stat: fs.Stats;
       try { stat = fs.statSync(full); } catch { continue; }
@@ -1044,7 +1044,9 @@ export function checkStoryDesignCompliance(
         .filter(file => fs.existsSync(path.join(workdir, file)));
     } catch {}
   }
-  if (contractFiles.length === 0) contractFiles = collectSourceFiles(srcDir);
+  if (contractFiles.length === 0) {
+    contractFiles = fs.existsSync(srcDir) ? collectSourceFiles(srcDir) : collectSourceFiles(workdir);
+  }
 
   const normalizedGeneratedFiles = normalizeGeneratedSourceContractTokens(workdir, contractFiles);
   if (normalizedGeneratedFiles.length > 0) {
@@ -1057,33 +1059,48 @@ export function checkStoryDesignCompliance(
   }
 
   // 1. design-tokens.css imported/referenced? Auto-fix if missing.
-  let tokenImported = false;
-  try {
-    const result = execFileSync("grep", ["-rl", "design-tokens", srcDir], {
-      encoding: "utf-8",
-      timeout: 5000,
-      stdio: ["pipe", "pipe", "pipe"],
-    }).trim();
-    tokenImported = !!result;
-  } catch (err: any) {
-    // grep exit 1 = no match (expected). Exit 2+ = real error — skip check.
-    if (err.status !== undefined && err.status !== 1) {
-      logger.warn(`[design-compliance] grep failed with status ${err.status}: ${err.message}`, {});
-      return null;
+  let tokenImported = contractFiles.some((file) => {
+    try {
+      return fs.readFileSync(path.join(workdir, file), "utf-8").includes("design-tokens");
+    } catch {
+      return false;
+    }
+  });
+  if (!tokenImported && fs.existsSync(srcDir)) {
+    try {
+      const result = execFileSync("grep", ["-rl", "design-tokens", srcDir], {
+        encoding: "utf-8",
+        timeout: 5000,
+        stdio: ["pipe", "pipe", "pipe"],
+      }).trim();
+      tokenImported = !!result;
+    } catch (err: any) {
+      // grep exit 1 = no match (expected). Exit 2+ = real error - skip check.
+      if (err.status !== undefined && err.status !== 1) {
+        logger.warn(`[design-compliance] grep failed with status ${err.status}: ${err.message}`, {});
+        return null;
+      }
     }
   }
 
   if (!tokenImported) {
     // Auto-inject design-tokens import into the first CSS entry point found
-    const candidates = ["src/index.css", "src/main.css", "src/App.css", "src/globals.css", "app/globals.css"];
+    const candidates = [
+      ...contractFiles.filter(file => /\.css$/.test(file)),
+      "assets/css/styles.css",
+      "src/index.css",
+      "src/main.css",
+      "src/App.css",
+      "src/globals.css",
+      "app/globals.css",
+    ];
     let injected = false;
     for (const rel of candidates) {
-      const cssPath = path.join(repo, rel);
+      const cssPath = path.join(workdir, rel);
       if (fs.existsSync(cssPath)) {
         const content = fs.readFileSync(cssPath, "utf-8");
         if (!content.includes("design-tokens")) {
-          const importLine = `@import './stitch/design-tokens.css';\n`;
-          const relPath = path.relative(path.dirname(cssPath), path.join(repo, "stitch", "design-tokens.css")).replace(/\\/g, "/");
+          const relPath = path.relative(path.dirname(cssPath), path.join(stitchDir, "design-tokens.css")).replace(/\\/g, "/");
           const fixedImport = `@import '${relPath}';\n`;
           fs.writeFileSync(cssPath, fixedImport + content);
           injected = true;
