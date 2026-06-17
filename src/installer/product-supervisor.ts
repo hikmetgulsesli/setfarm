@@ -159,7 +159,7 @@ function changedFilesForImplement(workdir: string, baseRef: string): string[] {
   const diff = safeGit(workdir, ["diff", "--name-only", diffRef]);
   diff.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).forEach((file) => files.add(file));
 
-  const status = safeGit(workdir, ["status", "--porcelain"]);
+  const status = safeGit(workdir, ["status", "--porcelain", "--untracked-files=all"]);
   for (const line of status.split(/\r?\n/)) {
     const rel = line.slice(3).trim();
     if (rel) files.add(rel.replace(/^"|"$/g, ""));
@@ -207,8 +207,14 @@ function hasInteractionHandler(attrs: string): boolean {
   return /\bon(?:click|pointerdown|pointerup|mousedown|mouseup|touchstart|touchend|keydown|input|change|submit)\s*=/i.test(attrs);
 }
 
+function hasDelegatedActionHandler(source: string): boolean {
+  return /\.addEventListener\s*\(\s*["'](?:click|input|change|submit)["']/i.test(source)
+    && /(?:closest|matches)\s*\(\s*["']\[data-action-id\]["']\s*\)|getAttribute\s*\(\s*["']data-action-id["']\s*\)/i.test(source);
+}
+
 function findStaticInteractionIssues(workdir: string, files: string[]): string[] {
   const issues: string[] = [];
+  const sources: Array<{ rel: string; source: string; clean: string }> = [];
   for (const rel of files.filter((file) => IMPLEMENT_SCAN_EXT.test(file)).slice(0, 80)) {
     const abs = path.join(workdir, rel);
     let source = "";
@@ -218,18 +224,25 @@ function findStaticInteractionIssues(workdir: string, files: string[]): string[]
     } catch {
       continue;
     }
+    sources.push({ rel, source, clean: sourceWithoutComments(source) });
+  }
+
+  const projectHasActionDelegation = sources.some(({ clean }) => hasDelegatedActionHandler(clean));
+
+  for (const { rel, source, clean } of sources) {
     const malformedUrl = /https?:\/\/https?\/\//i.exec(source);
     if (malformedUrl) {
       issues.push(`${rel}:${lineForIndex(source, malformedUrl.index)} malformed URL/protocol: ${malformedUrl[0]}`);
     }
 
-    const clean = sourceWithoutComments(source);
+    const hasActionDelegation = projectHasActionDelegation || hasDelegatedActionHandler(clean);
 
     const deadHref = /<a\b([^>]*)>/gi;
     let linkMatch: RegExpExecArray | null;
     while ((linkMatch = deadHref.exec(clean)) !== null) {
       const attrs = linkMatch[1] || "";
-      if (isDeadHrefValue(attrValue(attrs, "href")) && !isExplicitlyInertAnchor(attrs) && !hasInteractionHandler(attrs)) {
+      const hasDelegatedHandler = hasActionDelegation && attrValue(attrs, "data-action-id");
+      if (isDeadHrefValue(attrValue(attrs, "href")) && !isExplicitlyInertAnchor(attrs) && !hasInteractionHandler(attrs) && !hasDelegatedHandler) {
         issues.push(`${rel}:${lineForIndex(clean, linkMatch.index)} active link uses a dead href`);
         if (issues.length >= 12) break;
       }
@@ -242,7 +255,8 @@ function findStaticInteractionIssues(workdir: string, files: string[]): string[]
       const isDisabled = booleanAttributeIsTruthy(attrs, "disabled") || booleanAttributeIsTruthy(attrs, "aria-disabled");
       const isSubmit = /\btype\s*=\s*(?:"submit"|'submit'|{\s*["']submit["']\s*})/i.test(attrs);
       const hasHandler = hasInteractionHandler(attrs);
-      if (!isDisabled && !isSubmit && !hasHandler) {
+      const hasDelegatedHandler = hasActionDelegation && attrValue(attrs, "data-action-id");
+      if (!isDisabled && !isSubmit && !hasHandler && !hasDelegatedHandler) {
         issues.push(`${rel}:${lineForIndex(clean, match.index)} active <button> has no event handler, disabled state, or submit type`);
         if (issues.length >= 12) break;
       }

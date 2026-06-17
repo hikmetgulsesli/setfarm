@@ -482,6 +482,58 @@ describe("product supervisor", () => {
     }
   });
 
+  it("allows static html data-action-id controls wired by delegated listeners", () => {
+    const repo = mkdtempSync(path.join(tmpdir(), "setfarm-supervisor-delegated-actions-"));
+    try {
+      mkdirSync(path.join(repo, "assets/js"), { recursive: true });
+      execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
+      execFileSync("git", ["config", "user.email", "setfarm@example.test"], { cwd: repo });
+      execFileSync("git", ["config", "user.name", "Setfarm Test"], { cwd: repo });
+      writeFileSync(path.join(repo, "index.html"), "<main></main>\n");
+      execFileSync("git", ["add", "."], { cwd: repo });
+      execFileSync("git", ["commit", "-m", "base"], { cwd: repo, stdio: "ignore" });
+
+      writeFileSync(
+        path.join(repo, "index.html"),
+        [
+          "<main>",
+          "  <button type=\"button\" data-action-id=\"ACT_NAV_RECORDS\">Records</button>",
+          "  <button type=\"button\" data-action-id=\"ACT_CREATE_RECORD\">Create Record</button>",
+          "  <a href=\"#\" data-action-id=\"ACT_OPEN_DETAILS\">Details</a>",
+          "  <script src=\"assets/js/app.js\"></script>",
+          "</main>",
+          "",
+        ].join("\n"),
+      );
+      writeFileSync(
+        path.join(repo, "assets/js", "app.js"),
+        [
+          "document.addEventListener('click', (event) => {",
+          "  const target = event.target.closest('[data-action-id]');",
+          "  if (!target) return;",
+          "  const actionId = target.getAttribute('data-action-id');",
+          "  window.app.actions[actionId]?.();",
+          "});",
+          "",
+        ].join("\n"),
+      );
+
+      const result = runProductSupervisorGate({
+        phase: "implement",
+        runId: "run-1",
+        stepId: "implement",
+        workdir: repo,
+        baseRef: "HEAD",
+        currentStory: { story_id: "US-001", title: "Wire delegated static controls" },
+        rawOutput: "STATUS: done\nCHANGES: wired delegated static controls",
+      });
+
+      assert.equal(result.ok, true, result.reason);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
   it("does not block implement completion when placeholder wording is reported as fixed", () => {
     const repo = mkdtempSync(path.join(tmpdir(), "setfarm-supervisor-placeholder-fixed-"));
     try {
