@@ -757,6 +757,44 @@ describe("spawner prompt bootstrap", () => {
     }
   });
 
+  it("treats product supervisor retry feedback as audit-first for developer claims", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-product-supervisor-audit-"));
+    try {
+      const workdir = path.join(tmp, "worktree");
+      fs.mkdirSync(workdir, { recursive: true });
+      fs.writeFileSync(path.join(workdir, ".story-scope-files"), "index.html\n");
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        bootstrapFile: path.join(tmp, "bootstrap.sh"),
+        stepId: "step-123",
+        runId: "run-123",
+        workdir,
+        repo: workdir,
+        storyId: "US-002",
+        input: [
+          "TASK: html: Build a compact single-page tool called Audit Sensor.",
+          "CURRENT STORY: Story US-002: Audit Sensor screen",
+          "",
+          "## Previous Failure / Retry Feedback",
+          "Failure category: PRODUCT_SUPERVISOR_BLOCKED",
+          "Suggested response: Product supervisor blocked a contract drift.",
+          "GUARDRAIL [product-supervisor:implement]: IMPLEMENT_INTERACTION_CONTRACT: active controls or URLs are not wired correctly.",
+          "",
+          "## Current Story",
+        ].join("\n"),
+      });
+
+      assert.equal((summary.retryFeedback as any).category, "PRODUCT_SUPERVISOR_BLOCKED");
+      assert.equal((summary.retryFeedback as any).mode, "audit");
+      assert.match((summary.retryFeedback as any).instruction, /First verify whether it is already resolved/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("derives single-step project roots from claim context and keeps task text compact", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-single-step-summary-"));
     try {

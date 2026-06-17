@@ -353,7 +353,8 @@ function deriveStoryWorkdir(input: string, fallbackWorkdir: string, wfId: string
     : "";
 }
 
-function retryFeedbackMode(role: string): "fix" | "audit" {
+function retryFeedbackMode(role: string, failureCategory = ""): "fix" | "audit" {
+  if (/\bPRODUCT_SUPERVISOR_BLOCKED\b/i.test(failureCategory)) return "audit";
   return role === "developer" ? "fix" : "audit";
 }
 
@@ -1211,7 +1212,7 @@ export function buildClaimSummary(params: {
   );
   const classifiedFailure = classifyError([previousFailure, explicitFailureCategory, explicitFailureSuggestion].filter(Boolean).join("\n"));
   const failureCategory = explicitFailureCategory || (previousFailure ? classifiedFailure.category : "");
-  const retryMode = retryFeedbackMode(params.role);
+  const retryMode = retryFeedbackMode(params.role, failureCategory);
   const failureSuggestion = explicitFailureSuggestion || (previousFailure ? classifiedFailure.suggestion : "");
   const retryDiscipline = retryMode === "fix"
     ? retryDisciplineForFailure(failureCategory, failureSuggestion, previousFailure)
