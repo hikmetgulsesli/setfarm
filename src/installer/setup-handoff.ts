@@ -350,6 +350,45 @@ function resolveSharedEdit(repo: string, pack: StackPack, story: StoryRow, reque
   return resolveTarget(repo, pack, story.story_id, target, "shared_edit_request", request.edit_scope || request.action || request.role);
 }
 
+export function expandCompanionTargets(pack: StackPack, targets: ResolvedTarget[]): ResolvedTarget[] {
+  const expanded: ResolvedTarget[] = [];
+  const seen = new Set<string>();
+
+  const push = (target: ResolvedTarget): void => {
+    const key = `${target.storyId}:${target.path}:${target.role}:${target.source}:${target.editScope || ""}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    expanded.push(target);
+  };
+
+  for (const target of targets) {
+    push(target);
+    const companions = ruleFor(pack, target.role).companionFiles || [];
+    for (const companion of companions) {
+      const companionPath = normalizePath(interpolate(companion, {
+        story_id: slugify(target.storyId, "story"),
+        story_slug: slugify(target.storyId, "story"),
+        domain_slug: target.domainSlug,
+        target_slug: target.targetSlug,
+        ComponentName: pascalCase(target.targetSlug),
+        screen_id: slugify(target.screenId, target.targetSlug),
+        action_id: target.targetSlug,
+        ActionId: normalizeActionId(target.targetSlug),
+        entity_slug: target.domainSlug,
+      }));
+      if (!companionPath || companionPath === target.path) continue;
+      push({
+        ...target,
+        path: companionPath,
+        resolvedPath: companionPath,
+        ruleId: `${target.ruleId}.companion`,
+      });
+    }
+  }
+
+  return expanded;
+}
+
 function dependencyEvidence(pack: StackPack, stories: StoryRow[]): DependencyEvidence {
   const requested = stories.flatMap((story) => safeJsonArray<StoryDependencyRequest>(story.requested_dependencies));
   const allowed = new Set(pack.dependencyPolicy?.allowedDependencies || []);
@@ -713,8 +752,9 @@ export async function materializeSetupBuildContracts(
       if (!forbidden.has(sharedTarget.path)) resolved.push(sharedTarget);
     }
   }
-  assertNoTargetConflicts(resolved, pack);
-  const { targets: resolvedTargets, grants } = annotateResolvedTargetsForSetup(resolved, pack, runId);
+  const expandedResolved = expandCompanionTargets(pack, resolved);
+  assertNoTargetConflicts(expandedResolved, pack);
+  const { targets: resolvedTargets, grants } = annotateResolvedTargetsForSetup(expandedResolved, pack, runId);
   await writeResolvedStories(runId, rows, resolvedTargets, pack);
 
   const relManifest = ".setfarm/setup/FILE_TREE_MANIFEST.json";

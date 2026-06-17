@@ -14,11 +14,11 @@ import type {
   UtilityFilePolicy,
 } from "./types.js";
 
-function rule(ruleId: string, role: ScopeTargetRole, template: string): TargetResolutionRule {
+function rule(ruleId: string, role: ScopeTargetRole, template: string, companionFiles: string[] = []): TargetResolutionRule {
   const kind = role === "route_registration" || role === "style_integration" || role === "test_bridge"
     ? "shared_file"
     : "single_file";
-  return { ruleId, template, allowedRoles: [role], kind };
+  return { ruleId, template, allowedRoles: [role], kind, companionFiles };
 }
 
 function rules(prefix: string, templates: Record<ScopeTargetRole, string>): Record<ScopeTargetRole, TargetResolutionRule> {
@@ -71,6 +71,8 @@ const STATIC_TARGET_RULES = rules("static", {
   api_route: "assets/js/api/{target_slug}.js",
   cli_command: "scripts/{target_slug}.js",
 });
+
+STATIC_TARGET_RULES.app_shell = rule("static.app_shell", "app_shell", "index.html", ["assets/js/app.js"]);
 
 const PYTHON_TARGET_RULES = rules("python", {
   app_shell: "main.py",

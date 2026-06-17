@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { getStackPack } from "../dist/installer/stack-contract/packs.js";
-import { annotateResolvedTargetsForSetup, type ResolvedTarget } from "../dist/installer/setup-handoff.js";
+import { annotateResolvedTargetsForSetup, expandCompanionTargets, type ResolvedTarget } from "../dist/installer/setup-handoff.js";
 
 function target(partial: Partial<ResolvedTarget>): ResolvedTarget {
   return {
@@ -91,5 +91,23 @@ describe("setup handoff contracts", () => {
     assert.equal(result.targets[0].sharedGrantRequestId, undefined);
     assert.equal(result.targets[1].collisionStatus, "pending_shared_grant");
     assert.ok(result.targets[1].sharedGrantRequestId);
+  });
+
+  it("expands static html app shell ownership to the scaffold bootstrap script", () => {
+    const pack = getStackPack("static-html-site");
+    const result = expandCompanionTargets(pack, [
+      target({
+        storyId: "US-001",
+        role: "app_shell",
+        domainSlug: "signalshelf-mini",
+        targetSlug: "signalshelf-mini",
+        path: "index.html",
+        resolvedPath: "index.html",
+        ruleId: "static.app_shell",
+        source: "scope_target",
+      }),
+    ]);
+
+    assert.deepEqual(result.map((item) => item.path), ["index.html", "assets/js/app.js"]);
   });
 });

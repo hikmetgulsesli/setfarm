@@ -109,6 +109,7 @@ export interface TargetResolutionRule {
   template: string;
   allowedRoles: ScopeTargetRole[];
   kind?: TargetResolutionKind;
+  companionFiles?: string[];
 }
 
 export interface SlugRules {
