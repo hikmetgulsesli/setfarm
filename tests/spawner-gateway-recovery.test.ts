@@ -966,7 +966,9 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /function implementRejectedRetryPatchRuntimeGuard\(active: ActiveProcess\)/);
     assert.match(source, /function rejectedRetryDeletionLinesFromClaimSummary/);
     assert.match(source, /retryFeedback\?\.protectedSnippets/);
-    assert.match(source, /function deletedLinesFromCurrentWorktreeDiff/);
+    assert.match(source, /function currentWorktreeDiffLineStats/);
+    assert.match(source, /meaningfulDiffLines\(diff,\s*"\+"\)/);
+    assert.match(source, /uniqueAdded\.length >= Math\.max\(5,\s*uniqueRepeated\.length \+ 3\)/);
     assert.match(source, /Repeated deletions:/);
     assert.match(source, /RETRY_PATCH_REAPPLIED_RUNTIME_GUARD/);
     assert.match(source, /terminateActiveProcess\(active,\s*"retry-patch-runtime-guard"\)/);

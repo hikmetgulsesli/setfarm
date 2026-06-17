@@ -1364,7 +1364,17 @@ function rejectedRetryDeletionLinesFromClaimSummary(active: ActiveProcess): stri
   }
 }
 
-function deletedLinesFromCurrentWorktreeDiff(workdir: string): string[] {
+function meaningfulDiffLines(diff: string, marker: "+" | "-"): string[] {
+  const header = marker === "+" ? "+++" : "---";
+  return diff
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith(marker) && !line.startsWith(header))
+    .map((line) => line.slice(1).trim())
+    .filter((line) => line.length >= 12)
+    .filter((line) => !/^[{}()[\],;]+$/.test(line));
+}
+
+function currentWorktreeDiffLineStats(workdir: string): { deleted: string[]; added: string[] } {
   try {
     const diff = execFileSync("git", ["diff", "--no-ext-diff", "HEAD", "--"], {
       cwd: workdir,
@@ -1373,13 +1383,12 @@ function deletedLinesFromCurrentWorktreeDiff(workdir: string): string[] {
       maxBuffer: 5 * 1024 * 1024,
       stdio: ["pipe", "pipe", "pipe"],
     });
-    return diff
-      .split(/\r?\n/)
-      .filter((line) => line.startsWith("-") && !line.startsWith("---"))
-      .map((line) => line.slice(1).trim())
-      .filter(Boolean);
+    return {
+      deleted: meaningfulDiffLines(diff, "-"),
+      added: meaningfulDiffLines(diff, "+"),
+    };
   } catch {
-    return [];
+    return { deleted: [], added: [] };
   }
 }
 
@@ -1387,10 +1396,13 @@ function implementRejectedRetryPatchRuntimeGuard(active: ActiveProcess): { detec
   if (!active.storyId || !active.spawnCwd || !fs.existsSync(path.join(active.spawnCwd, ".git"))) return { detected: false, reason: "" };
   const rejectedLines = rejectedRetryDeletionLinesFromClaimSummary(active);
   if (rejectedLines.length === 0) return { detected: false, reason: "" };
-  const currentDeleted = new Set(deletedLinesFromCurrentWorktreeDiff(active.spawnCwd));
+  const diffStats = currentWorktreeDiffLineStats(active.spawnCwd);
+  const currentDeleted = new Set(diffStats.deleted);
   const repeated = rejectedLines.filter((line) => currentDeleted.has(line));
   const uniqueRepeated = [...new Set(repeated)];
   if (uniqueRepeated.length < 2) return { detected: false, reason: "" };
+  const uniqueAdded = [...new Set(diffStats.added)];
+  if (uniqueAdded.length >= Math.max(5, uniqueRepeated.length + 3)) return { detected: false, reason: "" };
   return {
     detected: true,
     reason: `RETRY_PATCH_REAPPLIED_RUNTIME_GUARD: ${active.agentId} reintroduced ${uniqueRepeated.length} deletion(s) from a rejected retry patch for ${active.storyId}; killing before completion so the next claim starts from a clean worktree. Preserve/restore previously verified lines: ${uniqueRepeated.slice(0, 6).join(" | ")}`,
