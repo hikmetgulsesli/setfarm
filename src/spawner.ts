@@ -1306,6 +1306,16 @@ function isRuntimeScopeAllowedWrite(relativePath: string, allowed: Set<string>, 
     || relativePath === "src/setupTests.ts";
 }
 
+function isRuntimeControlArtifactWrite(rawPath: string | undefined, active: ActiveProcess): boolean {
+  if (!rawPath) return false;
+  const resolved = path.resolve(active.spawnCwd, rawPath);
+  if (active.outputPath && resolved === path.resolve(active.outputPath)) return true;
+
+  if (path.dirname(resolved) !== "/tmp") return false;
+  const base = path.basename(resolved);
+  return /^setfarm-progress-[A-Za-z0-9_.-]+\.txt$/.test(base);
+}
+
 function implementScopeWriteGuard(active: ActiveProcess): { detected: boolean; reason: string } {
   const allowed = readStoryScopeFileSet(active.spawnCwd);
   if (!allowed.size) return { detected: false, reason: "" };
@@ -1325,6 +1335,7 @@ function implementScopeWriteGuard(active: ActiveProcess): { detected: boolean; r
     if (String(message.role || "") !== "assistant") continue;
     for (const call of extractToolCalls(message)) {
       if (!isWriteToolCallName(call.name)) continue;
+      if (isRuntimeControlArtifactWrite(call.path, active)) continue;
       const relativePath = normalizeWorktreeRelativePath(active.spawnCwd, call.path);
       if (!relativePath || isRuntimeScopeAllowedWrite(relativePath, allowed, active.storyId)) continue;
       const probeHint = /(?:^|\/|_)(probe|scratch|tmp)[^/]*\.[cm]?[jt]sx?$/i.test(relativePath)
