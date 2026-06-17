@@ -1273,6 +1273,40 @@ describe("06-implement step module", () => {
     }
   });
 
+  it("scope enforcement allows index.html when explicitly owned by the story", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-static-index-scope-"));
+    const runId = "static-index-scope-run";
+    const storyDbId = "static-index-scope-story-" + Date.now();
+    try {
+      fs.writeFileSync(path.join(tmp, "index.html"), "<main>baseline</main>\n");
+      git(tmp, ["init", "-b", "main"]);
+      git(tmp, ["add", "."]);
+      git(tmp, ["commit", "-m", "base"]);
+
+      fs.writeFileSync(path.join(tmp, "index.html"), "<main data-setfarm-root=\"baseline\">implemented</main>\n");
+
+      await pgRun(
+        `INSERT INTO runs (id, workflow_id, task, status, created_at, updated_at)
+         VALUES ($1, 'feature-dev', 'static index scope test', 'running', NOW(), NOW())
+         ON CONFLICT (id) DO NOTHING`,
+        [runId],
+      );
+      await pgRun(
+        `INSERT INTO stories (id, run_id, story_index, story_id, title, status, scope_files, created_at, updated_at)
+         VALUES ($1, $2, 0, 'US-001', 'Static Index Story', 'running', $3, NOW(), NOW())`,
+        [storyDbId, runId, JSON.stringify(["index.html"])],
+      );
+
+      const result = await checkScopeEnforcement("US-001", storyDbId, "Static Index Story", tmp, "main", 0, 3);
+
+      assert.equal(result.passed, true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+      await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);
+      await pgRun("DELETE FROM runs WHERE id = $1", [runId]);
+    }
+  });
+
   it("scope enforcement blocks reapplying deletions from a rejected retry patch", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-retry-reapply-"));
     const runId = "retry-reapply-run";

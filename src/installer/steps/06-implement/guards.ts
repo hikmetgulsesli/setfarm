@@ -1883,7 +1883,17 @@ export async function checkScopeEnforcement(
 
   const allTouched = Array.from(new Set([...changedFiles, ...dirtyFiles]));
   const sourceFiles = allTouched.filter(f => SCOPE_EXTS.test(f) && !SCOPE_IGNORE.test(f));
-  const forbiddenArtifacts = allTouched.filter(f => /^(QA_REPORT\.md|qa-report\.(md|json|txt)|smoke-(home|after-click)\.png|index\.html|package(-lock)?\.json|vite\.config\.[cm]?[jt]s|tailwind\.config\.[cm]?[jt]s|postcss\.config\.[cm]?[jt]s|eslint\.config\.[cm]?[jt]s)$/i.test(f));
+  const scopeRow = await pgGet<{ scope_files: string | null; shared_files: string | null }>(
+    "SELECT scope_files, shared_files FROM stories WHERE id = $1",
+    [currentStoryDbId]
+  );
+  const declaredScopeFiles = parseScopeFiles(scopeRow?.scope_files);
+  const declaredSharedFiles = parseScopeFiles(scopeRow?.shared_files);
+  const declaredScopeSet = new Set(declaredScopeFiles);
+  const forbiddenArtifacts = allTouched.filter(f => {
+    if (f === "index.html" && declaredScopeSet.has("index.html")) return false;
+    return /^(QA_REPORT\.md|qa-report\.(md|json|txt)|smoke-(home|after-click)\.png|index\.html|package(-lock)?\.json|vite\.config\.[cm]?[jt]s|tailwind\.config\.[cm]?[jt]s|postcss\.config\.[cm]?[jt]s|eslint\.config\.[cm]?[jt]s)$/i.test(f);
+  });
   if (forbiddenArtifacts.length > 0) {
     return {
       passed: false,
@@ -1897,12 +1907,6 @@ export async function checkScopeEnforcement(
   // Dependencies increase limits
   const depRow = await pgGet<{ depends_on: string | null }>("SELECT depends_on FROM stories WHERE id = $1", [currentStoryDbId]);
   const hasDeps = depRow?.depends_on && depRow.depends_on !== "[]" && depRow.depends_on !== "null";
-  const scopeRow = await pgGet<{ scope_files: string | null; shared_files: string | null }>(
-    "SELECT scope_files, shared_files FROM stories WHERE id = $1",
-    [currentStoryDbId]
-  );
-  const declaredScopeFiles = parseScopeFiles(scopeRow?.scope_files);
-  const declaredSharedFiles = parseScopeFiles(scopeRow?.shared_files);
   const implicitSourceFiles = sourceFiles.filter(isImplicitSharedSourceFile);
   const { hardLimit: HARD_LIMIT, softLimit: SOFT_LIMIT } = computeScopeFileLimits(!!hasDeps, declaredScopeFiles, declaredSharedFiles, implicitSourceFiles);
 
