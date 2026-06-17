@@ -1785,6 +1785,15 @@ function meaningfulDeletedDiffLines(diff: string): string[] {
     .filter((line) => !/^[{}()[\],;]+$/.test(line));
 }
 
+function meaningfulAddedDiffLines(diff: string): string[] {
+  return diff
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("+") && !line.startsWith("+++"))
+    .map((line) => line.slice(1).trim())
+    .filter((line) => line.length >= 12)
+    .filter((line) => !/^[{}()[\],;]+$/.test(line));
+}
+
 function retryPatchRepoCandidates(workdir: string): string[] {
   const candidates = [workdir].filter(Boolean);
   if (workdir && fs.existsSync(workdir)) {
@@ -1837,6 +1846,11 @@ function checkRejectedRetryPatchReapplied(workdir: string, storyId: string, base
     const repeated = meaningfulDeletedDiffLines(currentDiff).filter((line) => previousDeleted.has(line));
     const uniqueRepeated = [...new Set(repeated)];
     if (uniqueRepeated.length >= 2) {
+      const uniqueAdded = [...new Set(meaningfulAddedDiffLines(currentDiff))];
+      if (uniqueAdded.length >= Math.max(5, uniqueRepeated.length + 3)) {
+        logger.warn(`[retry-patch-gate] Story ${storyId} repeated ${uniqueRepeated.length} rejected deletion(s) but added ${uniqueAdded.length} meaningful replacement line(s); allowing recovery rewrite`, {});
+        return { passed: true };
+      }
       return {
         passed: false,
         reason: `RETRY_PATCH_REAPPLIED: Story ${storyId} repeated ${uniqueRepeated.length} deletion(s) from a previously rejected retry patch. Do not re-apply discarded worktree deletions. Treat the listed lines as previously verified wiring to preserve or restore before making the current scoped fix. Preserve/restore: ${uniqueRepeated.slice(0, 6).join(" | ")}`,

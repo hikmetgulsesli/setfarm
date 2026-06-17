@@ -1369,6 +1369,76 @@ describe("06-implement step module", () => {
     }
   });
 
+  it("scope enforcement allows rejected deletions when retry adds a substantial replacement implementation", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-retry-rewrite-"));
+    const runId = "retry-rewrite-run";
+    const storyDbId = "retry-rewrite-story-" + Date.now();
+    try {
+      const cssPath = path.join(tmp, "assets/css/styles.css");
+      fs.mkdirSync(path.dirname(cssPath), { recursive: true });
+      fs.writeFileSync(cssPath, [
+        ".app-shell {",
+        "  min-height: 100vh;",
+        "  display: grid;",
+        "  place-items: center;",
+        "  padding: 32px;",
+        "}",
+        "",
+      ].join("\n"));
+      git(tmp, ["init", "-b", "main"]);
+      git(tmp, ["add", "."]);
+      git(tmp, ["commit", "-m", "base"]);
+
+      const retryPatchDir = path.join(tmp, ".setfarm", "retry-patches");
+      fs.mkdirSync(retryPatchDir, { recursive: true });
+      fs.writeFileSync(path.join(retryPatchDir, "257439ea-us-001-2026-06-05T08-04-07-492Z.patch"), [
+        "diff --git a/assets/css/styles.css b/assets/css/styles.css",
+        "--- a/assets/css/styles.css",
+        "+++ b/assets/css/styles.css",
+        "-  place-items: center;",
+        "-  padding: 32px;",
+        "",
+      ].join("\n"));
+      fs.writeFileSync(cssPath, [
+        "@import url(\"../../stitch/design-tokens.css\");",
+        ".app-shell {",
+        "  min-height: 100vh;",
+        "  display: grid;",
+        "  grid-template-rows: auto 1fr;",
+        "  overflow: hidden;",
+        "}",
+        ".app-topbar { display: flex; align-items: center; justify-content: space-between; }",
+        ".app-nav { display: flex; gap: 8px; flex-wrap: wrap; }",
+        ".app-panel { width: min(960px, 100%); margin: 0 auto; }",
+        ".app-error { border: 1px solid rgba(186, 26, 26, 0.45); }",
+        ".record-list { display: grid; gap: 8px; }",
+        ".record-row { display: grid; grid-template-columns: 1fr auto; }",
+        ".status-pill { border-radius: 999px; padding: 2px 8px; }",
+        "",
+      ].join("\n"));
+
+      await pgRun(
+        `INSERT INTO runs (id, workflow_id, task, status, created_at, updated_at)
+         VALUES ($1, 'feature-dev', 'retry rewrite test', 'running', NOW(), NOW())
+         ON CONFLICT (id) DO NOTHING`,
+        [runId],
+      );
+      await pgRun(
+        `INSERT INTO stories (id, run_id, story_index, story_id, title, status, scope_files, created_at, updated_at)
+         VALUES ($1, $2, 0, 'US-001', 'Retry Rewrite Story', 'running', $3, NOW(), NOW())`,
+        [storyDbId, runId, JSON.stringify(["assets/css/styles.css"])],
+      );
+
+      const result = await checkScopeEnforcement("US-001", storyDbId, "Retry Rewrite Story", tmp, "main", 2, 3);
+
+      assert.equal(result.passed, true, result.reason);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+      await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);
+      await pgRun("DELETE FROM runs WHERE id = $1", [runId]);
+    }
+  });
+
   it("scope enforcement keeps zero-work as a hard gate on the final retry", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-scope-zero-final-"));
     const runId = "scope-zero-final-run";
