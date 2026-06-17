@@ -962,9 +962,8 @@ function acceptanceCriteriaLines(value: unknown): string[] {
   return String(value || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 }
 
-function looksLikeBrowserGameClaim(input: string, task: string, currentStory: { storyTitle: string; acceptanceCriteria: unknown }): boolean {
+function looksLikeBrowserGameClaim(_input: string, task: string, currentStory: { storyTitle: string; acceptanceCriteria: unknown }): boolean {
   const signal = [
-    input,
     task,
     currentStory.storyTitle,
     ...acceptanceCriteriaLines(currentStory.acceptanceCriteria),
@@ -1084,8 +1083,15 @@ function extractRetryProtectedSnippets(value: string): string[] {
 function extractCurrentStory(input: string): { storyId: string; storyTitle: string; currentStory: string; acceptanceCriteria: string } {
   const currentStorySection = sliceSectionUnbounded(
     input,
-    /^\s*CURRENT STORY:\s*/m,
-    [/^\s*For `SUPERVISOR_SCOPE/m, /^\s*PREVIOUS FAILURE:/m, /^\s*=== PROJECT CONTEXT/m, /^\s*FILE TREE/m, /^\s*DESIGN DATA/m],
+    /^\s*(?:##\s*)?CURRENT STORY:?\s*/im,
+    [
+      /^\s*For `SUPERVISOR_SCOPE/im,
+      /^\s*(?:##\s*)?PREVIOUS FAILURE\b/im,
+      /^\s*=== PROJECT CONTEXT/im,
+      /^\s*FILE TREE/im,
+      /^\s*DESIGN DATA/im,
+      /^\s*##\s+(?:Output Format|Claim Handoff|Retry Feedback)\b/im,
+    ],
   );
   const source = currentStorySection || input;
   const storyIdPattern = "([A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*-\\d+)";
@@ -1095,7 +1101,12 @@ function extractCurrentStory(input: string): { storyId: string; storyTitle: stri
   const acceptanceCriteriaRaw = sliceSectionUnbounded(
     source,
     /^\s*Acceptance Criteria:\s*/m,
-    [/^\s*SCOPE:/m, /^\s*[A-Z][A-Z _-]+:/m, /^\s*===/m],
+    [
+      /^\s*SCOPE:/m,
+      /^\s*(?:##\s*)?PREVIOUS FAILURE\b/im,
+      /^\s*[A-Z][A-Z _-]+:/m,
+      /^\s*===/m,
+    ],
   );
   const acceptanceCriteria = safeAcceptanceCriteria(acceptanceCriteriaRaw, 1800);
   const storyId = (storyMatch?.[1] || "").trim();
