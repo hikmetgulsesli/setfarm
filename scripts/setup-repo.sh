@@ -322,11 +322,13 @@ if [ ! -f package.json ]; then
 </html>
 EOF
       cat > assets/css/styles.css <<'EOF'
+@import "../../stitch/design-tokens.css";
+
 :root {
   color-scheme: dark;
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background: #05070b;
-  color: #e5f7ff;
+  font-family: var(--font-family-base, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  background: var(--color-background, #05070b);
+  color: var(--color-on-background, #e5f7ff);
 }
 
 * {

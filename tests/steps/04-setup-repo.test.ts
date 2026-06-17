@@ -179,6 +179,10 @@ describe("04-setup-repo step module", () => {
       assert.equal(fs.existsSync(path.join(repo, "assets/js/app.js")), true);
       assert.equal(fs.existsSync(path.join(repo, "package.json")), false);
       assert.match(fs.readFileSync(path.join(repo, "index.html"), "utf-8"), /data-setfarm-root="baseline"/);
+      const css = fs.readFileSync(path.join(repo, "assets/css/styles.css"), "utf-8");
+      assert.match(css, /@import "\.\.\/\.\.\/stitch\/design-tokens\.css"/);
+      assert.match(css, /font-family: var\(--font-family-base/);
+      assert.doesNotMatch(css, /font-family:\s*Inter\b/i);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
