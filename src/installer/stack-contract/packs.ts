@@ -61,7 +61,7 @@ const STATIC_TARGET_RULES = rules("static", {
   app_shell: "index.html",
   route_registration: "index.html",
   surface_component: "{target_slug}.html",
-  action_handler: "assets/js/{action_id}.js",
+  action_handler: "assets/js/{story_slug}/{action_id}.js",
   state_store: "assets/js/{domain_slug}.state.js",
   fixture_data: "assets/data/{domain_slug}.json",
   persistence_adapter: "assets/js/{domain_slug}.storage.js",

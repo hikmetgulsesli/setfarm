@@ -331,6 +331,15 @@ describe("stack contract", () => {
     }
   });
 
+  it("keeps static HTML action handlers story-scoped to avoid setup ownership conflicts", () => {
+    const pack = getStackPack("static-html-site");
+    assert.equal(pack.targetResolutionRules.action_handler.template, "assets/js/{story_slug}/{action_id}.js");
+
+    const setupHandoff = fs.readFileSync(path.resolve(import.meta.dirname, "..", "src", "installer", "setup-handoff.ts"), "utf-8");
+    assert.match(setupHandoff, /const storySlug = slugify\(storyId,\s*"story"\)/);
+    assert.match(setupHandoff, /story_slug:\s*storySlug/);
+  });
+
   it("validates all stack packs against the frozen contract schema", () => {
     const issues = validateAllStackPacks();
     assert.deepEqual(issues, []);

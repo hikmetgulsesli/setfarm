@@ -309,7 +309,10 @@ function resolveTarget(
     : pascalCase(targetSlug);
   const actionId = normalizeActionId(target.action_ids?.[0] || target.target_slug || role);
   const entitySlug = slugify(target.entity_names?.[0] || domainSlug, domainSlug);
+  const storySlug = slugify(storyId, "story");
   const resolvedPath = normalizePath(interpolate(rule.template, {
+    story_id: storySlug,
+    story_slug: storySlug,
     domain_slug: domainSlug,
     target_slug: targetSlug,
     ComponentName: componentName,
