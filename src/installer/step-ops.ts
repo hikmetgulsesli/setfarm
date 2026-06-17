@@ -70,6 +70,27 @@ const QA_FIX_SOURCE_EXT = /\.(tsx?|jsx?|css|scss|vue|svelte)$/i;
 const QA_FIX_IGNORE = /^(node_modules\/|dist\/|build\/|\.next\/|coverage\/|stitch\/|references\/)|(^|\/)(package(-lock)?\.json|tsconfig[^/]*\.json|vite\.config\.[^/]+|tailwind\.config\.[^/]+|postcss\.config\.[^/]+|eslint\.config\.[^/]+|index\.html)$/;
 const SMOKE_INFRA_FAILURE = /(?:\b(agent-browser|browser control|playwright|chromium|chrome|page\.goto|browser|context|target page)\b[\s\S]{0,320}\b(ETIMEDOUT|ECONNREFUSED|ECONNRESET|EPIPE|timed out|timeout|target page|context or browser has been closed|browser has been closed|target closed|protocol error)\b|\bsystem smoke did not return structured JSON\b|\bsmoke did not return structured JSON\b)/i;
 
+function recoverableOutputTmpFiles(callerGatewayAgent?: string): string[] {
+  let files: string[];
+  try {
+    files = fs.readdirSync("/tmp").filter((file) => file.startsWith("setfarm-output-") && file.endsWith(".txt"));
+  } catch {
+    return [];
+  }
+  if (callerGatewayAgent) {
+    const direct = `setfarm-output-${callerGatewayAgent}.txt`;
+    const spawnerPrefix = `setfarm-output-${callerGatewayAgent}-spawner-`;
+    files = files.filter((file) => file === direct || file.startsWith(spawnerPrefix));
+  }
+  return files.sort((a, b) => {
+    try {
+      return fs.statSync(path.join("/tmp", b)).mtimeMs - fs.statSync(path.join("/tmp", a)).mtimeMs;
+    } catch {
+      return 0;
+    }
+  });
+}
+
 function applyRetryFailureContext(
   context: Record<string, any>,
   failure: string,
@@ -2881,14 +2902,9 @@ export async function peekStep(agentId: string, callerGatewayAgent?: string): Pr
     // Scans ALL output files in /tmp — each parallel agent writes to its own file
     // (e.g. setfarm-output-koda.txt, setfarm-output-flux.txt)
     try {
-      // FIX (2026-04-14 cross-contamination): when a caller is specified
-      // (pool-based agents always pass --caller), ONLY inspect this caller's
-      // own output file. The previous readdir-everything scan let an assigned
-      // developer's stale /tmp/setfarm-output-<other>.txt get auto-completed
-      // into a different run's implement step.
-      const tmpFiles = callerGatewayAgent
-        ? (fs.existsSync(`/tmp/setfarm-output-${callerGatewayAgent}.txt`) ? [`setfarm-output-${callerGatewayAgent}.txt`] : [])
-        : fs.readdirSync('/tmp').filter(f => f.startsWith('setfarm-output-') && f.endsWith('.txt'));
+      // Caller-scoped recovery must include both legacy direct files and
+      // spawner-owned files: setfarm-output-<agent>-spawner-<id>.txt.
+      const tmpFiles = recoverableOutputTmpFiles(callerGatewayAgent);
       for (const fileName of tmpFiles) {
         const filePath = `/tmp/${fileName}`;
         try {
@@ -4607,11 +4623,9 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
   // OUTPUT RECOVERY: If a previous agent session died after writing output but before completing,
   // recover the output. Scans all setfarm-output-*.txt files (each parallel agent has its own).
   try {
-    // FIX (2026-04-14 cross-contamination): restrict to caller-owned tmp file
-    // when callerGatewayAgent is provided. See peekStep for rationale.
-    const tmpFiles = callerGatewayAgent
-      ? (fs.existsSync(`/tmp/setfarm-output-${callerGatewayAgent}.txt`) ? [`setfarm-output-${callerGatewayAgent}.txt`] : [])
-      : fs.readdirSync('/tmp').filter(f => f.startsWith('setfarm-output-') && f.endsWith('.txt'));
+    // Caller-scoped recovery must include both legacy direct files and
+    // spawner-owned files: setfarm-output-<agent>-spawner-<id>.txt.
+    const tmpFiles = recoverableOutputTmpFiles(callerGatewayAgent);
     for (const fileName of tmpFiles) {
       const filePath = `/tmp/${fileName}`;
       try {

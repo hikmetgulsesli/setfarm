@@ -104,6 +104,19 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /await readFreshStepOutputFile\(target,\s*outputArgs\[0\]\)/);
   });
 
+  it("recovers caller-owned spawner output files during peek and claim", () => {
+    const source = fs.readFileSync(path.join(root, "src", "installer", "step-ops.ts"), "utf-8");
+    assert.match(source, /function recoverableOutputTmpFiles\(callerGatewayAgent\?: string\): string\[\]/);
+    assert.match(source, /const spawnerPrefix = `setfarm-output-\$\{callerGatewayAgent\}-spawner-`/);
+    assert.match(source, /file === direct \|\| file\.startsWith\(spawnerPrefix\)/);
+    assert.match(source, /const tmpFiles = recoverableOutputTmpFiles\(callerGatewayAgent\)/);
+    assert.equal(
+      (source.match(/recoverableOutputTmpFiles\(callerGatewayAgent\)/g) || []).length,
+      2,
+      "peekStep and claimStep must both recover caller-owned spawner output files",
+    );
+  });
+
   it("delegates verify review-delay decisions to claimStep", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.doesNotMatch(source, /isVerifyReviewDelayActive/);
