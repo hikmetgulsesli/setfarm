@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const loadedEnvKeys = new Set<string>();
@@ -56,6 +56,30 @@ export function loadRuntimeEnv(): void {
     loadEnvFile(envDir, ".env", false);
     loadEnvFile(envDir, ".env.local", true);
   }
+  ensureRuntimePath();
+}
+
+function ensureRuntimePath(): void {
+  const nodeDir = dirname(process.execPath);
+  const existing = (process.env.PATH || "")
+    .split(delimiter)
+    .filter(Boolean);
+  const required = [
+    nodeDir,
+    join(homedir(), ".local", "bin"),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+  ];
+  const next: string[] = [];
+  for (const entry of [...required, ...existing]) {
+    if (!entry || next.includes(entry)) continue;
+    next.push(entry);
+  }
+  process.env.PATH = next.join(delimiter);
 }
 
 loadRuntimeEnv();

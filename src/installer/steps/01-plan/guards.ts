@@ -1,5 +1,8 @@
 import type { ParsedOutput, ValidationResult, CompleteContext } from "../types.js";
 import { resolveRuntimeIdentity, slugifyIdentity } from "../../runtime-identity.js";
+import { parseStackPrefix } from "../../stack-contract/prefix.js";
+import { getStackPack } from "../../stack-contract/packs.js";
+import type { StackPackId } from "../../stack-contract/types.js";
 
 const VALID_TECH_STACKS = new Set([
   "vite-react",
@@ -22,6 +25,26 @@ const VALID_UI_LANGUAGES = new Set(["english", "turkish"]);
 const VALID_BOOLEAN = new Set(["true", "false"]);
 const PLAN_CONTRACT_SCHEMA_VERSION = "setfarm.plan.v2.2";
 const MIN_PRD_LENGTH = 2000;
+
+function canonicalExplicitStackContext(context: Record<string, string>): { platform: string; techStack: string } | null {
+  const prefix = context["requested_stack_prefix"] || "";
+  if (prefix) {
+    const parsed = parseStackPrefix(`${prefix}: placeholder`);
+    if (parsed) return { platform: parsed.platform, techStack: parsed.techStack };
+  }
+
+  const packId = context["stack_pack_id"] || context["detected_stack"] || "";
+  if (packId) {
+    try {
+      const pack = getStackPack(packId as StackPackId);
+      const techStack = pack.techStackAliases?.[0] || "";
+      if (pack.platform && techStack) return { platform: pack.platform, techStack };
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
 
 const REQUIRED_PRD_SECTIONS = [
   "Context And Goals",
@@ -232,7 +255,13 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
   context["app_title"] = identity.appTitle;
   context["package_name"] = identity.packageName;
   const hasExplicitStackPrefix = Boolean(context["requested_stack_prefix"] && context["stack_pack_id"]);
-  if (!hasExplicitStackPrefix) {
+  if (hasExplicitStackPrefix) {
+    const canonical = canonicalExplicitStackContext(context);
+    if (canonical) {
+      context["platform"] = canonical.platform;
+      context["tech_stack"] = canonical.techStack;
+    }
+  } else {
     context["platform"] = (parsed.platform || "").toLowerCase();
     context["tech_stack"] = (parsed.tech_stack || "").toLowerCase();
   }

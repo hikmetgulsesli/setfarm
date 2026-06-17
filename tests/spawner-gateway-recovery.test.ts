@@ -205,7 +205,23 @@ describe("spawner gateway recovery wiring", () => {
     const source = fs.readFileSync(path.join(root, "src", "server", "spawnerctl.ts"), "utf-8");
     assert.match(source, /import \{ loadRuntimeEnv \} from "\.\.\/runtime-config\.js"/);
     assert.match(source, /loadRuntimeEnv\(\);\s*const logFile = getSpawnerLogFile\(\)/);
+    assert.match(source, /spawn\(process\.execPath,\s*\[spawnerScript\]/);
     assert.match(source, /env:\s*\{\s*\.\.\.process\.env,/);
+  });
+
+  it("starts dashboard daemon with the current Node executable instead of PATH lookup", () => {
+    const source = fs.readFileSync(path.join(root, "src", "server", "daemonctl.ts"), "utf-8");
+    assert.match(source, /import "\.\.\/runtime-config\.js"/);
+    assert.match(source, /spawn\(process\.execPath,\s*\[daemonScript,\s*String\(port\)\]/);
+  });
+
+  it("normalizes runtime PATH so child scripts can resolve node under launch agents", () => {
+    const source = fs.readFileSync(path.join(root, "src", "runtime-config.ts"), "utf-8");
+    assert.match(source, /import \{ basename,\s*delimiter,\s*dirname,\s*join \} from "node:path"/);
+    assert.match(source, /ensureRuntimePath\(\);\s*\}/);
+    assert.match(source, /function ensureRuntimePath\(\): void/);
+    assert.match(source, /const nodeDir = dirname\(process\.execPath\)/);
+    assert.match(source, /process\.env\.PATH = next\.join\(delimiter\)/);
   });
 
   it("backs off runtime claims on API 429 and rate-limit transcript text", () => {

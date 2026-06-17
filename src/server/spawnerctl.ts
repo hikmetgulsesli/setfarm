@@ -44,7 +44,7 @@ export async function startSpawner(): Promise<{ pid: number; logFile: string }> 
   const err = fs.openSync(logFile, "a");
   const spawnerScript = path.resolve(__dirname, "..", "spawner.js");
   const repoRoot = path.resolve(__dirname, "..", "..");
-  const child = spawn("node", [spawnerScript], {
+  const child = spawn(process.execPath, [spawnerScript], {
     cwd: repoRoot,
     detached: true,
     stdio: ["ignore", out, err],

@@ -3,6 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import "../runtime-config.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -43,7 +44,7 @@ export async function startDaemon(port = 3333): Promise<{ pid: number; port: num
   const err = fs.openSync(logFile, "a");
 
   const daemonScript = path.resolve(__dirname, "daemon.js");
-  const child = spawn("node", [daemonScript, String(port)], {
+  const child = spawn(process.execPath, [daemonScript, String(port)], {
     detached: true,
     stdio: ["ignore", out, err],
   });

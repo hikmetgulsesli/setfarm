@@ -58,7 +58,7 @@ describe("01-plan step module", () => {
         requested_stack_prefix: "html",
         stack_pack_id: "static-html-site",
         platform: "web",
-        tech_stack: "static-html",
+        tech_stack: "vite-react",
       },
     );
 
