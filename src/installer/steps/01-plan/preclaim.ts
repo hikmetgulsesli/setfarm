@@ -12,6 +12,7 @@ const COMMAND_VERB_RE = /\b(build|create|make|develop|implement|design|write|add
 type ProjectKind = "game" | "product" | "api" | "cli" | "mobile" | "desktop";
 type AutoPlanOptions = {
   runId?: string;
+  context?: Record<string, string>;
 };
 
 export function slugify(input: string): string {
@@ -619,14 +620,14 @@ function mockDataContract(kind: ProjectKind, entity: string, dbRequired: string)
   ];
 }
 
-export function buildAutoPlanOutput(task: string, _options: AutoPlanOptions = {}): string {
+export function buildAutoPlanOutput(task: string, options: AutoPlanOptions = {}): string {
   task = stripStackPrefix(task);
   const rawProjectName = extractProjectName(task);
   const projectName = extractProjectDisplayName(task, rawProjectName);
   const projectSlug = slugify(projectName);
   const kind = inferProjectKind(task);
-  const platform = inferPlatform(task);
-  const stack = inferTechStack(task);
+  const platform = String(options.context?.["platform"] || inferPlatform(task)).toLowerCase();
+  const stack = String(options.context?.["tech_stack"] || inferTechStack(task)).toLowerCase();
   const dbRequired = inferDbRequired(task);
   const uiLanguage = inferUiLanguage(task);
   const designRequired = designRequiredFor(kind);
@@ -741,7 +742,7 @@ export function buildAutoPlanOutput(task: string, _options: AutoPlanOptions = {}
 export async function preClaim(ctx: ClaimContext): Promise<void> {
   if (process.env.SETFARM_DISABLE_AUTO_PLAN === "1") return;
 
-  const output = buildAutoPlanOutput(ctx.task || ctx.context["task"] || "", { runId: ctx.runId });
+  const output = buildAutoPlanOutput(ctx.task || ctx.context["task"] || "", { runId: ctx.runId, context: ctx.context });
   const step = await pgGet<{ id: string }>(
     "SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1",
     [ctx.runId, ctx.stepId],

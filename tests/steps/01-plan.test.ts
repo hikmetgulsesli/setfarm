@@ -69,6 +69,20 @@ describe("01-plan step module", () => {
     assert.equal(result.contextAfterComplete["tech_stack"], "static-html");
   });
 
+  it("auto plan output uses explicit stack context instead of default stack inference", () => {
+    const parsed = parsePlanOutput(buildAutoPlanOutput("html: Build a compact static tool", {
+      context: {
+        requested_stack_prefix: "html",
+        stack_pack_id: "static-html-site",
+        platform: "web",
+        tech_stack: "static-html",
+      },
+    }));
+
+    assert.equal(parsed.platform, "web");
+    assert.equal(parsed.tech_stack, "static-html");
+  });
+
   it("rejects runtime-owned fields and screen tables", async () => {
     const result = await runModule(
       planModule,
