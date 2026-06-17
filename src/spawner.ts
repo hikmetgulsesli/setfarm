@@ -2884,7 +2884,7 @@ function buildScriptExists(workdir: string): boolean {
 }
 
 const RECOVERABLE_SOURCE_PATHS = [
-  "src", "app", "components", "lib", "pages", "public",
+  "src", "app", "components", "lib", "pages", "public", "assets",
   "index.html", "package.json", "package-lock.json",
   "vite.config.ts", "vite.config.js", "tsconfig.json",
   "tailwind.config.ts", "tailwind.config.js", "postcss.config.js",
@@ -2892,9 +2892,18 @@ const RECOVERABLE_SOURCE_PATHS = [
   "jest.config.ts", "jest.config.js",
 ];
 
+function scopedRecoverableSourcePaths(workdir: string): string[] {
+  const scoped = Array.from(readStoryScopeFileSet(workdir)).filter((file) => {
+    if (!file || file.startsWith("../") || path.isAbsolute(file)) return false;
+    if (/^(?:\.git|\.setfarm|references|node_modules|dist|build|coverage|\.story-branch|pre-commit)(?:\/|$)/.test(file)) return false;
+    return true;
+  });
+  return [...new Set([...RECOVERABLE_SOURCE_PATHS, ...scoped])];
+}
+
 function sourceDiffFiles(workdir: string, baseRef: string): string[] {
   const raw = gitOutput(workdir, [
-    "diff", "--name-only", `${baseRef}...HEAD`, "--", ...RECOVERABLE_SOURCE_PATHS,
+    "diff", "--name-only", `${baseRef}...HEAD`, "--", ...scopedRecoverableSourcePaths(workdir),
   ]);
   return raw ? raw.split("\n").map((line) => line.trim()).filter(Boolean) : [];
 }
@@ -2902,7 +2911,7 @@ function sourceDiffFiles(workdir: string, baseRef: string): string[] {
 function sourceStatusFiles(workdir: string): string[] {
   let raw: string | null = null;
   try {
-    raw = execFileSync("git", ["status", "--porcelain", "-uall", "--", ...RECOVERABLE_SOURCE_PATHS], {
+    raw = execFileSync("git", ["status", "--porcelain", "-uall", "--", ...scopedRecoverableSourcePaths(workdir)], {
       cwd: workdir,
       encoding: "utf-8",
       timeout: 10_000,

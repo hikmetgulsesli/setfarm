@@ -646,7 +646,10 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /row\.step_id !== "implement"/);
     assert.match(source, /findDiffBaseRef\(workdir\)/);
     assert.match(source, /sourceStatusFiles\(workdir\)/);
-    assert.match(source, /"status",\s*"--porcelain",\s*"-uall",\s*"--",\s*\.\.\.RECOVERABLE_SOURCE_PATHS/);
+    assert.match(source, /function scopedRecoverableSourcePaths\(workdir: string\)/);
+    assert.match(source, /readStoryScopeFileSet\(workdir\)/);
+    assert.match(source, /"assets"/);
+    assert.match(source, /"status",\s*"--porcelain",\s*"-uall",\s*"--",\s*\.\.\.scopedRecoverableSourcePaths\(workdir\)/);
     assert.match(source, /\.trimEnd\(\)/);
     assert.match(source, /sourceTouchedFiles\(workdir,\s*baseRef\)/);
     assert.match(source, /runBuildGate\(workdir\)/);
@@ -777,6 +780,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /SETFARM_IMPLEMENT_NO_DELTA_GRACE_MS/);
     assert.match(source, /function implementNoDeltaStallGuard\(active: ActiveProcess, ageMs: number\)/);
     assert.match(source, /sourceStatusFiles\(active\.spawnCwd\)/);
+    assert.match(source, /scopedRecoverableSourcePaths\(workdir\)/);
     assert.match(source, /IMPLEMENT_NO_DELTA_STALL/);
     assert.match(source, /recordRuntimeSupervisorSignal\(active,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"implement-no-delta-stall"/);
     assert.match(source, /terminateActiveProcess\(active,\s*"implement-no-delta-stall"\)/);
