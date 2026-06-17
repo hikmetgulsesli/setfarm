@@ -1,6 +1,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { setupRepoModule } from "../../dist/installer/steps/04-setup-repo/module.js";
 import type { ParsedOutput } from "../../dist/installer/steps/types.js";
 
@@ -98,6 +101,10 @@ describe("04-setup-repo step module", () => {
     assert.ok(script.includes('git init -b main'), "fresh repos should initialize main directly");
     assert.ok(script.includes("normalize_stack()"), "setup-repo should normalize planner TECH_STACK labels");
     assert.ok(script.includes("react-vite-typescript"), "React/Vite/TypeScript labels should map to vite-react");
+    assert.ok(script.includes("static|html|static-html|static-site|plain-html|site|landing|landing-page"), "static HTML labels should map to static-html");
+    assert.ok(script.includes("static-html)"), "Static HTML should have a first-class scaffold case");
+    assert.ok(script.includes("chore: scaffold static html app"), "Static HTML scaffold should commit a project-neutral baseline");
+    assert.ok(script.includes('[ "$TECH_STACK" = "static-html" ] && [ ! -f index.html ]'), "Static HTML scaffold should require index.html instead of package.json");
     assert.ok(script.includes("browser-game|canvas-game|arcade|game"), "browser game labels should scaffold on the Vite React baseline");
     assert.ok(script.includes("nextjs)"), "Next.js should have a first-class scaffold case");
     assert.ok(script.includes('"build": "next build"'), "Next.js scaffold should build with next build");
@@ -134,6 +141,47 @@ describe("04-setup-repo step module", () => {
     assert.equal(script.includes("useNotes"), false);
     assert.equal(script.includes("NoteStatus"), false);
     assert.equal(script.includes("setfarm-notes"), false);
+  });
+
+  it("setup-repo.sh scaffolds static HTML without a framework package", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-static-scaffold-"));
+    try {
+      const repo = path.join(tmp, "repo");
+      fs.mkdirSync(repo, { recursive: true });
+      execFileSync("git", ["init", "-b", "main"], { cwd: repo, stdio: "pipe" });
+      execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: repo, stdio: "pipe" });
+      execFileSync("git", ["config", "user.name", "Setfarm Test"], { cwd: repo, stdio: "pipe" });
+      execFileSync("git", ["remote", "add", "origin", "https://example.com/setfarm/static-test.git"], { cwd: repo, stdio: "pipe" });
+
+      execFileSync("bash", [
+        "scripts/setup-repo.sh",
+        repo,
+        "feature-static",
+        "",
+        "",
+        "static-html",
+        "Static Canary",
+        "English",
+      ], {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          SETFARM_GITHUB_REPO: "",
+          SETFARM_RUN_SLUG: "static-canary",
+          SETFARM_APP_TITLE: "Static Canary",
+        },
+        stdio: "pipe",
+        timeout: 30000,
+      });
+
+      assert.equal(fs.existsSync(path.join(repo, "index.html")), true);
+      assert.equal(fs.existsSync(path.join(repo, "assets/css/styles.css")), true);
+      assert.equal(fs.existsSync(path.join(repo, "assets/js/app.js")), true);
+      assert.equal(fs.existsSync(path.join(repo, "package.json")), false);
+      assert.match(fs.readFileSync(path.join(repo, "index.html"), "utf-8"), /data-setfarm-root="baseline"/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("preClaim passes project display name into setup-repo scaffold", () => {

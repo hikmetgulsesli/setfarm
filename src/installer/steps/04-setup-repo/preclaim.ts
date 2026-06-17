@@ -6,6 +6,28 @@ import { pgGet } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
 import { processSetupCompletion, processSetupDesignContracts } from "../../step-guardrails.js";
 import { resolvePlatformScript } from "../../paths.js";
+import { getStackPack } from "../../stack-contract/packs.js";
+import type { StackPackId } from "../../stack-contract/types.js";
+
+function resolveSetupTechStack(context: Record<string, string>): string {
+  const packId = context["stack_pack_id"] || context["detected_stack"] || "";
+  if (packId) {
+    try {
+      const pack = getStackPack(packId as StackPackId);
+      const alias = pack.techStackAliases?.[0];
+      if (alias) return alias;
+    } catch {
+      // Fall back to the legacy context keys below.
+    }
+  }
+  return context["tech_stack"] || context["TECH_STACK"] || "vite-react";
+}
+
+function repoHasRequiredBaseline(repo: string, context: Record<string, string>): boolean {
+  const packId = context["stack_pack_id"] || context["detected_stack"] || "";
+  if (packId === "static-html-site") return fs.existsSync(path.join(repo, "index.html"));
+  return fs.existsSync(path.join(repo, "package.json"));
+}
 
 // Heavy work before the agent:
 // 1. Run setup-repo.sh (git init + branch + scaffold)
@@ -22,7 +44,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   const branch = ctx.context["branch"] || ctx.context["BRANCH"] || ctx.context["run_slug"] || ctx.runId;
   ctx.context["branch"] = branch;
   ctx.context["BRANCH"] = branch;
-  const techStack = ctx.context["tech_stack"] || ctx.context["TECH_STACK"] || "vite-react";
+  const techStack = resolveSetupTechStack(ctx.context);
   if (!repo) {
     logger.warn(`[module:setup-repo preclaim] skipped — no repo in context`, { runId: ctx.runId });
     return;
@@ -101,8 +123,8 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
         commitCount = parseInt(execFileSync("git", ["rev-list", "--count", "HEAD"],
           { cwd: repo, encoding: "utf-8", timeout: 5000 }).trim(), 10) || 0;
       } catch { /* ignore */ }
-      const hasPkg = fs.existsSync(path.join(repo, "package.json"));
-      ctx.context["existing_code_hint"] = (hasPkg && commitCount > 5) ? "true" : "false";
+      const hasBaseline = repoHasRequiredBaseline(repo, ctx.context);
+      ctx.context["existing_code_hint"] = (hasBaseline && commitCount > 5) ? "true" : "false";
     }
   } catch (e) {
     logger.debug(`[module:setup-repo preclaim] existing_code hint: ${String(e).slice(0, 80)}`);
@@ -110,7 +132,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
 
   const repoReady = fs.existsSync(repo)
     && fs.existsSync(path.join(repo, ".git"))
-    && fs.existsSync(path.join(repo, "package.json"));
+    && repoHasRequiredBaseline(repo, ctx.context);
   if (!setupRepoFailed && repoReady) {
     const step = await pgGet<{ id: string }>(
       "SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1",

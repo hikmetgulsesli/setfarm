@@ -38,6 +38,15 @@ describe("05-setup-build step module", () => {
     assert.ok(preclaim.includes("String(uiLanguage)"), "recovery path should preserve UI language for scaffold html lang");
   });
 
+  it("preClaim treats static HTML as an index.html baseline instead of package.json baseline", () => {
+    const preclaim = fs.readFileSync("src/installer/steps/05-setup-build/preclaim.ts", "utf-8");
+    assert.ok(preclaim.includes("isStaticHtmlStack"), "setup-build should detect static HTML from the stack contract");
+    assert.ok(preclaim.includes('path.join(repo, "index.html")'), "static HTML setup-build should key readiness off index.html");
+    assert.ok(preclaim.includes('const buildCmd = "true"'), "static HTML setup-build should use a no-op build command");
+    assert.ok(preclaim.includes("STATIC_HTML_BASELINE: index.html"), "static HTML setup-build output should expose the baseline type");
+    assert.ok(preclaim.includes("AUTO-COMPLETED static-html setup-build without package baseline"), "static HTML should not spawn setup-build repair for missing package.json");
+  });
+
   it("preClaim re-evaluates stale setup-build failure flags before auto-complete", () => {
     const preclaim = fs.readFileSync("src/installer/steps/05-setup-build/preclaim.ts", "utf-8");
     const repoReady = preclaim.indexOf("package.json");

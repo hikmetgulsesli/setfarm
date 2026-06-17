@@ -21,6 +21,9 @@ normalize_stack() {
   raw=$(printf "%s" "${1:-vite-react}" | tr '[:upper:]' '[:lower:]')
   raw=$(printf "%s" "$raw" | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')
   case "$raw" in
+    static|html|static-html|static-site|plain-html|site|landing|landing-page)
+      printf "static-html"
+      ;;
     vite-react|react-vite|react-vite-typescript|vite-react-typescript|react-ts-vite|vite-ts-react|react-typescript-vite|web|react|browser-game|canvas-game|arcade|game)
       printf "vite-react"
       ;;
@@ -294,6 +297,94 @@ git add .gitignore && git commit -m "chore: add .gitignore" 2>/dev/null || true
 # gets a stable node_modules symlink from the main repo.
 if [ ! -f package.json ]; then
   case "$TECH_STACK" in
+    static-html)
+      mkdir -p assets/css assets/js assets/data
+      cat > index.html <<EOF
+<!doctype html>
+<html lang="$HTML_LANG">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>$HTML_TITLE</title>
+    <link rel="stylesheet" href="assets/css/styles.css" />
+  </head>
+  <body>
+    <main data-setfarm-root="baseline" data-testid="setfarm-app-root" class="app-shell">
+      <section class="hero">
+        <p class="eyebrow">Setfarm Static HTML</p>
+        <h1>$HTML_TITLE</h1>
+        <p class="summary">Baseline static page ready for plain HTML, CSS, and JavaScript implementation.</p>
+      </section>
+    </main>
+    <script src="assets/js/app.js" defer></script>
+    <script src="assets/js/test-bridge.js" defer></script>
+  </body>
+</html>
+EOF
+      cat > assets/css/styles.css <<'EOF'
+:root {
+  color-scheme: dark;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #05070b;
+  color: #e5f7ff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: #05070b;
+}
+
+.app-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+}
+
+.hero {
+  width: min(720px, 100%);
+  border: 1px solid rgba(103, 232, 249, 0.35);
+  background: rgba(9, 16, 26, 0.82);
+  padding: 28px;
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+  color: #67e8f9;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 0;
+  font-size: 32px;
+}
+
+.summary {
+  margin: 14px 0 0;
+  color: #a8b3c7;
+}
+EOF
+      cat > assets/js/app.js <<'EOF'
+window.setfarmStaticReady = true;
+EOF
+      cat > assets/js/test-bridge.js <<'EOF'
+window.__SETFARM_TEST_BRIDGE__ = {
+  stack: "static-html",
+  ready: true
+};
+EOF
+      git add index.html assets/
+      git commit -m "chore: scaffold static html app" 2>/dev/null || true
+      ;;
     vite-react|react|web)
       mkdir -p src
       cat > package.json <<EOF
@@ -682,8 +773,14 @@ EOF
   esac
 fi
 
-if [ ! -f package.json ]; then
+if [ "$TECH_STACK" != "static-html" ] && [ ! -f package.json ]; then
   echo "FATAL: baseline scaffold did not create package.json for TECH_STACK=$TECH_STACK_RAW (normalized: $TECH_STACK)"
+  echo "STATUS: fail"
+  exit 1
+fi
+
+if [ "$TECH_STACK" = "static-html" ] && [ ! -f index.html ]; then
+  echo "FATAL: baseline scaffold did not create index.html for TECH_STACK=$TECH_STACK_RAW (normalized: $TECH_STACK)"
   echo "STATUS: fail"
   exit 1
 fi

@@ -6,6 +6,8 @@ import { pgGet } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
 import { resolvePlatformScript } from "../../paths.js";
 import { materializeSetupBuildContracts } from "../../setup-handoff.js";
+import { getStackPack } from "../../stack-contract/packs.js";
+import type { StackPackId } from "../../stack-contract/types.js";
 
 const MIN_STITCH_HTML_BYTES = 1000;
 const DESIGN_IMPORT_REPORT_REL = ".setfarm/setup/DESIGN_IMPORT_VALIDATE.json";
@@ -43,6 +45,25 @@ function ensureFile(filePath: string, content: string): boolean {
   if (fs.existsSync(filePath)) return false;
   fs.writeFileSync(filePath, content);
   return true;
+}
+
+function resolveSetupTechStack(context: Record<string, string>): string {
+  const packId = context["stack_pack_id"] || context["detected_stack"] || "";
+  if (packId) {
+    try {
+      const pack = getStackPack(packId as StackPackId);
+      const alias = pack.techStackAliases?.[0];
+      if (alias) return alias;
+    } catch {
+      // Fall back to the legacy context keys below.
+    }
+  }
+  return context["tech_stack"] || context["TECH_STACK"] || "vite-react";
+}
+
+function isStaticHtmlStack(context: Record<string, string>): boolean {
+  return (context["stack_pack_id"] || context["detected_stack"] || "") === "static-html-site"
+    || resolveSetupTechStack(context) === "static-html";
 }
 
 function cleanProcessText(value: unknown): string {
@@ -245,7 +266,7 @@ function rerunSetupRepoScaffold(ctx: ClaimContext, repo: string): boolean {
   const branch = ctx.context["branch"] || ctx.context["BRANCH"] || ctx.runId;
   const stitchProjectId = ctx.context["stitch_project_id"] || ctx.context["STITCH_PROJECT_ID"] || "";
   const screenMap = ctx.context["screen_map"] || ctx.context["SCREEN_MAP"] || "";
-  const techStack = ctx.context["tech_stack"] || ctx.context["TECH_STACK"] || "vite-react";
+  const techStack = resolveSetupTechStack(ctx.context);
   const displayName = ctx.context["project_display_name"] || ctx.context["PROJECT_DISPLAY_NAME"] || ctx.context["project_name"] || "";
   const uiLanguage = ctx.context["ui_language"] || ctx.context["UI_LANGUAGE"] || "English";
   try {
@@ -325,6 +346,38 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     );
     return;
   }
+  const staticHtmlStack = isStaticHtmlStack(ctx.context);
+  const staticIndexPath = path.join(repo, "index.html");
+  if (staticHtmlStack && fs.existsSync(staticIndexPath)) {
+    delete ctx.context["baseline_fail"];
+    delete ctx.context["compat_fail"];
+    delete ctx.context["previous_failure"];
+    delete ctx.context["failure_category"];
+    delete ctx.context["failure_suggestion"];
+    const buildCmd = "true";
+    ctx.context["build_cmd_hint"] = buildCmd;
+    await writeSetupHandoff(ctx, repo, buildCmd);
+    const step = await pgGet<{ id: string }>(
+      "SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1",
+      [ctx.runId, ctx.stepId],
+    );
+    if (!step?.id) return;
+
+    const output = [
+      "STATUS: done",
+      `BUILD_CMD: ${buildCmd}`,
+      "STATIC_HTML_BASELINE: index.html",
+      "",
+    ].join("\n");
+    const { completeStep } = await import("../../step-ops.js");
+    await completeStep(step.id, output);
+    logger.info(`[module:setup-build preclaim] AUTO-COMPLETED static-html setup-build without package baseline`, {
+      runId: ctx.runId,
+      stepId: ctx.stepId,
+    });
+    return;
+  }
+
   if (!fs.existsSync(path.join(repo, "package.json"))) {
     rerunSetupRepoScaffold(ctx, repo);
   }
