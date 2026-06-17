@@ -231,8 +231,11 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
   context["github_repo"] = identity.githubRepo;
   context["app_title"] = identity.appTitle;
   context["package_name"] = identity.packageName;
-  context["platform"] = (parsed.platform || "").toLowerCase();
-  context["tech_stack"] = (parsed.tech_stack || "").toLowerCase();
+  const hasExplicitStackPrefix = Boolean(context["requested_stack_prefix"] && context["stack_pack_id"]);
+  if (!hasExplicitStackPrefix) {
+    context["platform"] = (parsed.platform || "").toLowerCase();
+    context["tech_stack"] = (parsed.tech_stack || "").toLowerCase();
+  }
   context["prd"] = parsed.prd || "";
   context["db_required"] = (parsed.db_required || "").toLowerCase();
   context["design_required"] = (parsed.design_required || "").toLowerCase();

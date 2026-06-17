@@ -18,9 +18,10 @@ export interface HarnessResult {
 export async function runModule(
   m: StepModule,
   task: string,
-  mockAgentOutput: ParsedOutput
+  mockAgentOutput: ParsedOutput,
+  initialContext: Record<string, string> = {},
 ): Promise<HarnessResult> {
-  const context: Record<string, string> = {};
+  const context: Record<string, string> = { ...initialContext };
   const claimCtx: ClaimContext = {
     runId: "test-run-" + Math.random().toString(36).slice(2, 10),
     stepId: m.id,

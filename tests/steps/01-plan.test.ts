@@ -49,6 +49,26 @@ describe("01-plan step module", () => {
     assert.ok(result.onCompleteCalled);
   });
 
+  it("preserves explicit stack prefix platform and tech stack through PLAN completion", async () => {
+    const result = await runModule(
+      planModule,
+      "html: Build a compact static tool",
+      validPlanOutput({ platform: "web", tech_stack: "vite-react" }),
+      {
+        requested_stack_prefix: "html",
+        stack_pack_id: "static-html-site",
+        platform: "web",
+        tech_stack: "static-html",
+      },
+    );
+
+    assert.ok(result.validation.ok, `validation failed: ${result.validation.errors.join("; ")}`);
+    assert.equal(result.contextAfterComplete["requested_stack_prefix"], "html");
+    assert.equal(result.contextAfterComplete["stack_pack_id"], "static-html-site");
+    assert.equal(result.contextAfterComplete["platform"], "web");
+    assert.equal(result.contextAfterComplete["tech_stack"], "static-html");
+  });
+
   it("rejects runtime-owned fields and screen tables", async () => {
     const result = await runModule(
       planModule,
