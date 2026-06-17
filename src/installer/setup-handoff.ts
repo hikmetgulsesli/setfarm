@@ -363,6 +363,7 @@ export function expandCompanionTargets(pack: StackPack, targets: ResolvedTarget[
 
   for (const target of targets) {
     push(target);
+    if (target.source !== "scope_target" || target.sharedEdit) continue;
     const companions = ruleFor(pack, target.role).companionFiles || [];
     for (const companion of companions) {
       const companionPath = normalizePath(interpolate(companion, {

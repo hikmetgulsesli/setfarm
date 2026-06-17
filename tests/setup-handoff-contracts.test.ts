@@ -110,4 +110,47 @@ describe("setup handoff contracts", () => {
 
     assert.deepEqual(result.map((item) => item.path), ["index.html", "assets/js/app.js"]);
   });
+
+  it("does not expand static html companion files for shared edit grants", () => {
+    const pack = getStackPack("static-html-site");
+    const expanded = expandCompanionTargets(pack, [
+      target({
+        storyId: "US-001",
+        role: "app_shell",
+        domainSlug: "taskbeacon-mini",
+        targetSlug: "taskbeacon-mini",
+        path: "index.html",
+        resolvedPath: "index.html",
+        ruleId: "static.app_shell",
+        source: "scope_target",
+      }),
+      target({
+        storyId: "US-002",
+        role: "app_shell",
+        domainSlug: "taskbeacon-mini",
+        targetSlug: "taskbeacon-mini",
+        path: "index.html",
+        resolvedPath: "index.html",
+        ruleId: "static.app_shell",
+        source: "shared_edit_request",
+        sharedEdit: true,
+        editScope: "wire_action",
+      }),
+    ]);
+
+    assert.deepEqual(
+      expanded.map((item) => `${item.storyId}:${item.path}:${item.source}`),
+      [
+        "US-001:index.html:scope_target",
+        "US-001:assets/js/app.js:scope_target",
+        "US-002:index.html:shared_edit_request",
+      ],
+    );
+
+    const annotated = annotateResolvedTargetsForSetup(expanded, pack, "run-1");
+    assert.equal(annotated.grants.length, 1);
+    assert.equal(annotated.grants[0].storyId, "US-002");
+    assert.equal(annotated.grants[0].path, "index.html");
+    assert.equal(annotated.targets.some((item) => item.storyId === "US-002" && item.path === "assets/js/app.js"), false);
+  });
 });
