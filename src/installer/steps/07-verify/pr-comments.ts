@@ -292,7 +292,45 @@ function commentProseLooksMechanicallySatisfied(body: string, normalizedSource: 
     return true;
   }
 
+  const classStateResolution = cssClassStateToggleResolution(body, normalizedSource);
+  if (classStateResolution) return true;
+
   return false;
+}
+
+function cssClassStateToggleResolution(body: string, normalizedSource: string): boolean {
+  const bodyText = String(body || "");
+  const lower = bodyText.toLowerCase();
+  if (!/\bclass\b/.test(lower) || !/\btoggl/.test(lower)) return false;
+  if (!/\bbase\s+styling\s+class\b|\bbase\s+class\b|\blayout\s+class\b|\berror-specific\b|\bstate-specific\b/.test(lower)) return false;
+
+  const quoted = [...bodyText.matchAll(/`([^`]+)`/g)]
+    .map((match) => String(match[1] || "").trim())
+    .filter(Boolean);
+  const cssClassNames = quoted.filter((value) => /^[A-Za-z_-][A-Za-z0-9_-]*$/.test(value));
+  const baseClass = cssClassNames.find((value) => /[-_](?:banner|container|panel|shell|layout|base)$/i.test(value))
+    || cssClassNames[0];
+  if (!baseClass) return false;
+
+  const escapedBase = escapeRegExp(baseClass);
+  if (new RegExp(`\\.classList\\.toggle\\(\\s*['"]${escapedBase}['"]`).test(normalizedSource)) return false;
+
+  const stateClassNames = cssClassNames.filter((value) =>
+    value !== baseClass &&
+    /(?:^|[-_])(?:is|has|error|success|warning|active|selected|open|closed|invalid|valid|state)(?:[-_]|$)/i.test(value)
+  );
+  const togglesQuotedState = stateClassNames.some((value) =>
+    new RegExp(`\\.classList\\.toggle\\(\\s*['"]${escapeRegExp(value)}['"]`).test(normalizedSource)
+  );
+  if (togglesQuotedState) return true;
+
+  const togglesAnyStateClass = new RegExp("\\.classList\\.toggle\\(\\s*['\"][A-Za-z_-][A-Za-z0-9_-]*(?:[-_](?:state|error|success|warning|active|selected|open|closed|invalid|valid)|(?:^|[-_])is[-_][A-Za-z0-9_-]+)['\"]").test(normalizedSource);
+  const keepsBaseClass = new RegExp("\\.classList\\.add\\(\\s*['\"][A-Za-z_-][A-Za-z0-9_-]*(?:[-_](?:banner|container|panel|shell|layout|base))?['\"]").test(normalizedSource);
+  return togglesAnyStateClass && keepsBaseClass;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 export function getMechanicallySatisfiedInlineReviewThreadIds(state: PrState, repoPath: string): string[] {

@@ -931,6 +931,45 @@ describe("07-verify step module", () => {
     );
   });
 
+  it("marks base CSS class toggle review comments as mechanically satisfied from state-class source evidence", () => {
+    const classToggleComment = {
+      id: "css-class-toggle-inline",
+      threadId: "PRRT_css_class_toggle",
+      kind: "review-comment" as const,
+      author: "gemini-code-assist",
+      body: "The `showFeedback` function toggles the `error-banner` class on the `save-feedback` element based on `isError`. However, `error-banner` is the base styling class for the banner layout. Consider using a separate class like `error-state` for error-specific colors, or keep the base class always on.",
+      createdAt: "2026-06-17T09:45:48Z",
+      path: "assets/js/us-004/act_save_preferences.js",
+      line: 65,
+      originalLine: 65,
+      threadResolved: false,
+      outdated: false,
+    };
+
+    assert.equal(
+      commentLooksMechanicallySatisfied(
+        classToggleComment,
+        `
+        function showFeedback(message, isError) {
+          const feedback = document.getElementById('save-feedback');
+          feedback.textContent = message;
+          feedback.classList.add('feedback-banner');
+          feedback.classList.toggle('error-state', !!isError);
+          feedback.classList.toggle('success-state', !isError);
+          feedback.classList.remove('hidden');
+        }`,
+      ),
+      true,
+    );
+    assert.equal(
+      commentLooksMechanicallySatisfied(
+        classToggleComment,
+        "feedback.classList.toggle('error-banner', !!isError);",
+      ),
+      false,
+    );
+  });
+
   it("finds mechanically satisfied inline review thread ids from current PR source files", () => {
     const root = mkdtempSync(join(tmpdir(), "setfarm-pr-comments-"));
     try {
