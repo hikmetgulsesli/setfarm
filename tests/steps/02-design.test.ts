@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { designModule } from "../../dist/installer/steps/02-design/module.js";
-import { classifyDesignFailure, inferPrdScreens, manifestUsesLocalFallback, parseProductSurfaces, stitchApiKeyAvailable, surfaceCoverageMode, verifyScreenMapToSurfaces } from "../../dist/installer/steps/02-design/preclaim.js";
+import { classifyDesignFailure, inferPrdScreens, manifestUsesLocalFallback, parseProductSurfaces, stitchApiKeyAvailable, surfaceCoverageMode, synthesizeDesignMarkdownFromStitchAssets, verifyScreenMapToSurfaces } from "../../dist/installer/steps/02-design/preclaim.js";
 import { runModule } from "./harness.js";
 
 function designPreclaimSource(): string {
@@ -98,8 +98,38 @@ describe("02-design step module", () => {
     assert.doesNotMatch(source, /completeWithLocalFallbackDesign/);
     assert.match(source, /DESIGN_STITCH_HTML_UNAVAILABLE/);
     assert.match(source, /DESIGN_STITCH_DESIGN_MD_UNAVAILABLE/);
+    assert.match(source, /synthesizeDesignMarkdownFromStitchAssets/);
     assert.match(source, /local fallback design generation is disabled/);
     assert.match(source, /get-design-md/);
+  });
+
+  it("recovers DESIGN.md from real Stitch assets when extraction is unavailable", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-design-md-recovery-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "scr-1", title: "Record Operations - SignalDesk", htmlFile: "scr-1.html", deviceType: "DESKTOP" },
+      ]));
+      fs.writeFileSync(path.join(stitchDir, "design-tokens.json"), JSON.stringify({
+        "--color-primary": "#123456",
+        "--color-surface": "#ffffff",
+        "--color-on-surface": "#111111",
+        "--font-body-md": "Inter",
+        "--radius-lg": "0.25rem",
+        "--spacing-md": "16px",
+      }));
+      fs.writeFileSync(path.join(stitchDir, "scr-1.html"), `<!doctype html><html><head><title>Record Operations</title></head><body>${"x".repeat(1200)}</body></html>`);
+
+      assert.equal(synthesizeDesignMarkdownFromStitchAssets(stitchDir, "project-123"), true);
+      const designMd = fs.readFileSync(path.join(stitchDir, "DESIGN.md"), "utf-8");
+      assert.match(designMd, /Design System: Record Operations/);
+      assert.match(designMd, /Project ID:\*\* project-123/);
+      assert.match(designMd, /#123456/);
+      assert.match(designMd, /Recovered by Setfarm from Stitch HTML/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("classifies first-attempt Stitch failures for operator reporting", () => {

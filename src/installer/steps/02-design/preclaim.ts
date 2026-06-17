@@ -458,6 +458,102 @@ function hasValidStitchDesignMarkdown(stitchDir: string): boolean {
   }
 }
 
+function readJsonObject(filePath: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
+function readJsonArray(filePath: string): any[] {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function markdownEscape(value: unknown): string {
+  return String(value || "").replace(/\s+/g, " ").replace(/[|]/g, "\\|").trim();
+}
+
+function describeRadius(value: unknown): string {
+  const text = String(value || "").trim();
+  if (!text) return "restrained corners";
+  if (/0(?:px|rem)?$/.test(text)) return `sharp squared edges (${text})`;
+  if (/0\.125|2px/.test(text)) return `crisp micro-rounded corners (${text})`;
+  if (/0\.25|4px/.test(text)) return `subtly rounded corners (${text})`;
+  if (/0\.5|8px/.test(text)) return `soft rounded corners (${text})`;
+  return `rounded geometry (${text})`;
+}
+
+export function synthesizeDesignMarkdownFromStitchAssets(stitchDir: string, projectId: string): boolean {
+  if (!stitchDir || !fs.existsSync(stitchDir)) return false;
+  const manifestPath = path.join(stitchDir, "DESIGN_MANIFEST.json");
+  const tokensPath = path.join(stitchDir, "design-tokens.json");
+  const manifest = readJsonArray(manifestPath).filter((entry) => !isPrdPseudoScreen(entry));
+  const tokens = readJsonObject(tokensPath);
+  const htmlCount = countValidStitchHtml(stitchDir);
+  if (manifest.length === 0 || htmlCount === 0 || Object.keys(tokens).length === 0) return false;
+
+  const title = markdownEscape(String(manifest[0]?.title || "Stitch Project").replace(/\s+-\s+.+$/, "")) || "Stitch Project";
+  const screenLines = manifest
+    .map((entry) => `- ${markdownEscape(entry.title || entry.name || entry.screenId)} (${markdownEscape(entry.deviceType || "screen")})`)
+    .join("\n");
+  const colorKeys = [
+    "--color-primary",
+    "--color-primary-container",
+    "--color-secondary",
+    "--color-tertiary",
+    "--color-background",
+    "--color-surface",
+    "--color-surface-container",
+    "--color-on-surface",
+    "--color-outline",
+    "--color-error",
+  ];
+  const colors = colorKeys
+    .filter((key) => typeof tokens[key] === "string")
+    .map((key) => `- **${key.replace("--color-", "").replace(/-/g, " ")}** (${tokens[key]}): ${key.includes("surface") || key.includes("background") ? "layout and container foundation" : key.includes("on-") ? "foreground text and icon contrast" : "interactive emphasis and semantic accent"}.`)
+    .join("\n");
+  const font = markdownEscape(tokens["--font-body-md"] || tokens["--font-google-0"] || tokens["--font-headline-md"] || "system sans-serif");
+  const radius = describeRadius(tokens["--radius-lg"] || tokens["--radius-DEFAULT"]);
+  const spacing = markdownEscape(tokens["--spacing-md"] || tokens["--spacing-gutter"] || "16px");
+  const md = [
+    `# Design System: ${title}`,
+    `**Project ID:** ${markdownEscape(projectId || "unknown")}`,
+    "",
+    "## 1. Visual Theme & Atmosphere",
+    "Dense, work-focused product UI generated from Stitch screens. The system favors direct operational surfaces, visible recovery states, compact controls, and clear state changes over marketing composition.",
+    "",
+    "## 2. Color Palette & Roles",
+    colors || "- **primary**: use the generated design tokens in stitch/design-tokens.css as the authoritative palette.",
+    "",
+    "## 3. Typography Rules",
+    `Use ${font} as the primary interface family. Headings should be compact and task-oriented; body text should stay readable in dense panels without oversized hero treatment.`,
+    "",
+    "## 4. Component Stylings",
+    `* **Buttons:** Compact controls with ${radius}; primary actions use the primary token family and secondary actions use surface/outline contrast.`,
+    `* **Cards/Containers:** Layered surfaces use generated surface tokens, ${radius}, and restrained borders rather than decorative card stacks.`,
+    `* **Inputs/Forms:** Inputs align to the operational grid, use outline tokens for boundaries, and keep validation or recovery feedback adjacent to the affected control.`,
+    "",
+    "## 5. Layout Principles",
+    `Use a constrained product workspace with approximately ${spacing} gutters, stable navigation, and scannable lists/details. Screens should preserve the generated Stitch visual system and keep every control tied to product behavior.`,
+    "",
+    "## 6. Generated Screen References",
+    screenLines,
+    "",
+    "_Recovered by Setfarm from Stitch HTML, manifest, screenshots, and design token artifacts when Stitch DESIGN.md extraction was unavailable._",
+    "",
+  ].join("\n");
+
+  fs.writeFileSync(path.join(stitchDir, "DESIGN.md"), md, "utf-8");
+  return hasValidStitchDesignMarkdown(stitchDir);
+}
+
 export function stitchApiKeyAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
   if (String(env.STITCH_API_KEY || "").trim()) return true;
   if (String(env.STITCH_API_KEYS || "").trim()) return true;
@@ -1297,11 +1393,20 @@ async function downloadStitchDesignMarkdown(
 ): Promise<void> {
   if (!projId || projId === "local-fallback") return;
   await recordPreClaimProgress(ctx, "Design preclaim: downloading Stitch DESIGN.md");
-  const out = await execFileText("node", [stitchScript, "get-design-md", projId, stitchDir], {
-    timeout: 45000,
-    cwd: repo,
-    onProgress: () => recordPreClaimProgress(ctx, "Design preclaim: still downloading Stitch DESIGN.md"),
-  });
+  let out = "";
+  try {
+    out = await execFileText("node", [stitchScript, "get-design-md", projId, stitchDir], {
+      timeout: 45000,
+      cwd: repo,
+      onProgress: () => recordPreClaimProgress(ctx, "Design preclaim: still downloading Stitch DESIGN.md"),
+    });
+  } catch (e) {
+    if (synthesizeDesignMarkdownFromStitchAssets(stitchDir, projId)) {
+      await recordPreClaimProgress(ctx, "Design preclaim: recovered DESIGN.md from Stitch assets");
+      return;
+    }
+    throw e;
+  }
   let designMd = "";
   try {
     const parsed = JSON.parse(out);
@@ -1311,6 +1416,10 @@ async function downloadStitchDesignMarkdown(
   }
   const designPath = path.join(stitchDir, "DESIGN.md");
   if (!designMd || !fs.existsSync(designPath) || fs.statSync(designPath).size < 500) {
+    if (synthesizeDesignMarkdownFromStitchAssets(stitchDir, projId)) {
+      await recordPreClaimProgress(ctx, "Design preclaim: recovered DESIGN.md from Stitch assets");
+      return;
+    }
     throw new Error("DESIGN_STITCH_DESIGN_MD_UNAVAILABLE: Stitch get-design-md did not produce stitch/DESIGN.md.");
   }
 }
