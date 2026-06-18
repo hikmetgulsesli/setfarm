@@ -47,8 +47,12 @@ function ensureFile(filePath: string, content: string): boolean {
   return true;
 }
 
+function resolveSetupStackPackId(context: Record<string, string>): string {
+  return context["stack_pack_id"] || context["detected_stack"] || context["setup_stack_pack_id"] || "";
+}
+
 function resolveSetupTechStack(context: Record<string, string>): string {
-  const packId = context["stack_pack_id"] || context["detected_stack"] || "";
+  const packId = resolveSetupStackPackId(context);
   if (packId) {
     try {
       const pack = getStackPack(packId as StackPackId);
@@ -62,8 +66,13 @@ function resolveSetupTechStack(context: Record<string, string>): string {
 }
 
 function isStaticHtmlStack(context: Record<string, string>): boolean {
-  return (context["stack_pack_id"] || context["detected_stack"] || "") === "static-html-site"
+  return resolveSetupStackPackId(context) === "static-html-site"
     || resolveSetupTechStack(context) === "static-html";
+}
+
+function repoHasRequiredSetupBuildBaseline(repo: string, context: Record<string, string>): boolean {
+  if (isStaticHtmlStack(context)) return fs.existsSync(path.join(repo, "index.html"));
+  return fs.existsSync(path.join(repo, "package.json"));
 }
 
 function cleanProcessText(value: unknown): string {
@@ -282,9 +291,14 @@ function rerunSetupRepoScaffold(ctx: ClaimContext, repo: string): boolean {
         SETFARM_PACKAGE_NAME: ctx.context["package_name"] || "",
       },
     });
-    logger.info(`[module:setup-build preclaim] recovered missing package.json via setup-repo.sh`, { runId: ctx.runId });
-    return fs.existsSync(path.join(repo, "package.json"));
+    const recovered = repoHasRequiredSetupBuildBaseline(repo, ctx.context);
+    logger.info(`[module:setup-build preclaim] recovered setup baseline via setup-repo.sh`, { runId: ctx.runId });
+    return recovered;
   } catch (e) {
+    if (repoHasRequiredSetupBuildBaseline(repo, ctx.context)) {
+      logger.warn(`[module:setup-build preclaim] setup-repo recovery script failed after baseline became ready; continuing with local baseline`, { runId: ctx.runId });
+      return true;
+    }
     const details = formatProcessFailure(e, 600);
     logger.warn(`[module:setup-build preclaim] setup-repo recovery failed: ${details.slice(0, 300)}`, { runId: ctx.runId });
     setPreclaimFailure(

@@ -41,10 +41,18 @@ describe("05-setup-build step module", () => {
   it("preClaim treats static HTML as an index.html baseline instead of package.json baseline", () => {
     const preclaim = fs.readFileSync("src/installer/steps/05-setup-build/preclaim.ts", "utf-8");
     assert.ok(preclaim.includes("isStaticHtmlStack"), "setup-build should detect static HTML from the stack contract");
+    assert.ok(preclaim.includes('context["setup_stack_pack_id"]'), "setup-build should preserve static stack identity across retry context updates");
     assert.ok(preclaim.includes('path.join(repo, "index.html")'), "static HTML setup-build should key readiness off index.html");
     assert.ok(preclaim.includes('const buildCmd = "true"'), "static HTML setup-build should use a no-op build command");
     assert.ok(preclaim.includes("STATIC_HTML_BASELINE: index.html"), "static HTML setup-build output should expose the baseline type");
     assert.ok(preclaim.includes("AUTO-COMPLETED static-html setup-build without package baseline"), "static HTML should not spawn setup-build repair for missing package.json");
+  });
+
+  it("setup-repo recovery can continue from an already-ready stack baseline", () => {
+    const preclaim = fs.readFileSync("src/installer/steps/05-setup-build/preclaim.ts", "utf-8");
+    assert.ok(preclaim.includes("repoHasRequiredSetupBuildBaseline"), "setup-build recovery should evaluate stack-specific baseline readiness");
+    assert.ok(preclaim.includes("setup-repo recovery script failed after baseline became ready"), "remote setup-repo recovery failures should not kill a ready local baseline");
+    assert.ok(preclaim.includes("return true;"), "ready baseline recovery should continue instead of forcing retry loops");
   });
 
   it("preClaim re-evaluates stale setup-build failure flags before auto-complete", () => {
