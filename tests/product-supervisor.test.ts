@@ -594,6 +594,68 @@ describe("product supervisor", () => {
     }
   });
 
+  it("allows static html data-action-id controls wired by direct action modules", () => {
+    const repo = mkdtempSync(path.join(tmpdir(), "setfarm-supervisor-direct-action-modules-"));
+    try {
+      mkdirSync(path.join(repo, "assets", "js", "us-002"), { recursive: true });
+      execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
+      execFileSync("git", ["config", "user.email", "setfarm@example.test"], { cwd: repo });
+      execFileSync("git", ["config", "user.name", "Setfarm Test"], { cwd: repo });
+      writeFileSync(path.join(repo, "index.html"), "<main></main>\n");
+      execFileSync("git", ["add", "."], { cwd: repo });
+      execFileSync("git", ["commit", "-m", "base"], { cwd: repo, stdio: "ignore" });
+
+      writeFileSync(
+        path.join(repo, "index.html"),
+        [
+          "<main>",
+          "  <button type=\"button\" data-action-id=\"ACT_CREATE_RECORD\">Create Record</button>",
+          "  <button type=\"button\" data-action-id=\"ACT_RETRY_LOAD\">Retry Load</button>",
+          "  <script src=\"assets/js/us-002/act_create_record.js\" defer></script>",
+          "  <script src=\"assets/js/us-002/act_retry_load.js\" defer></script>",
+          "</main>",
+          "",
+        ].join("\n"),
+      );
+      writeFileSync(
+        path.join(repo, "assets", "js", "us-002", "act_create_record.js"),
+        [
+          "window.NotePulseReady.then(function (store) {",
+          "  var button = document.querySelector('[data-action-id=\"ACT_CREATE_RECORD\"]');",
+          "  if (!button) return;",
+          "  button.addEventListener('click', function () { store.createRecord(); });",
+          "});",
+          "",
+        ].join("\n"),
+      );
+      writeFileSync(
+        path.join(repo, "assets", "js", "us-002", "act_retry_load.js"),
+        [
+          "window.NotePulseReady.then(function (store) {",
+          "  var button = document.querySelector(\"[data-action-id=\\\"ACT_RETRY_LOAD\\\"]\");",
+          "  if (!button) return;",
+          "  button.addEventListener('click', function () { store.retryLoad(); });",
+          "});",
+          "",
+        ].join("\n"),
+      );
+
+      const result = runProductSupervisorGate({
+        phase: "implement",
+        runId: "run-1",
+        stepId: "implement",
+        workdir: repo,
+        baseRef: "HEAD",
+        currentStory: { story_id: "US-002", title: "Wire static action modules" },
+        rawOutput: "STATUS: done\nCHANGES: wired direct static action modules",
+      });
+
+      assert.equal(result.ok, true, result.reason);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
   it("does not block implement completion when placeholder wording is reported as fixed", () => {
     const repo = mkdtempSync(path.join(tmpdir(), "setfarm-supervisor-placeholder-fixed-"));
     try {
