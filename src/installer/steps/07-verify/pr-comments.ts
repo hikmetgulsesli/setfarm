@@ -247,6 +247,32 @@ function commentProseLooksMechanicallySatisfied(body: string, normalizedSource: 
   }
 
   if (
+    /\bfocus(?:ed)?\b|\bcursor\b|\bselection\b/i.test(body) &&
+    /\brerender\b|\bre-render\b|\brender\b|\bupdate\b/i.test(body) &&
+    /document\.activeElement/.test(normalizedSource) &&
+    /getAttribute\s*\(\s*['"]data-action-id['"]\s*\)|\.dataset\.actionId/.test(normalizedSource) &&
+    /\bselectionStart\b/.test(normalizedSource) &&
+    /\bselectionEnd\b/.test(normalizedSource) &&
+    /\.setSelectionRange\s*\(/.test(normalizedSource) &&
+    /\.focus\s*\(/.test(normalizedSource)
+  ) {
+    return true;
+  }
+
+  if (
+    /\bmissing\b|\bmalformed\b|\bnull\b|\bundefined\b|\bdefensive\b|\bguard\b/i.test(body) &&
+    /\bname\b/i.test(body) &&
+    /\bid\b/i.test(body) &&
+    /\.filter\s*\(/.test(normalizedSource) &&
+    /String\s*\([^)]*\bname\b[^)]*\)\.toLowerCase\s*\(\s*\)/.test(normalizedSource) &&
+    /String\s*\([^)]*\bid\b[^)]*\)\.toLowerCase\s*\(\s*\)/.test(normalizedSource) &&
+    /(?:\b\w+\s*&&\s*\w+\.name\b|\?\.\s*name\b|\bname\b[^;\n]*(?:\?\?|\|\|)\s*['"]{2})/.test(normalizedSource) &&
+    /(?:\b\w+\s*&&\s*\w+\.id\b|\?\.\s*id\b|\bid\b[^;\n]*(?:\?\?|\|\|)\s*['"]{2})/.test(normalizedSource)
+  ) {
+    return true;
+  }
+
+  if (
     /\bimport\b/i.test(body) &&
     /\buseState\b/.test(body) &&
     /\buseEffect\b/.test(body) &&

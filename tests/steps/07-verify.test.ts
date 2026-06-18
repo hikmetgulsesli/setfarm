@@ -761,6 +761,80 @@ describe("07-verify step module", () => {
     );
   });
 
+  it("marks plain DOM focus restoration review comments as mechanically satisfied from source evidence", () => {
+    const focusComment = {
+      id: "dom-focus-inline",
+      threadId: "PRRT_dom_focus",
+      kind: "review-comment" as const,
+      author: "reviewer",
+      body: "The current render clears the DOM and loses focus/cursor position on every re-render. Preserve the focused input by data-action-id and restore the text selection after rendering.",
+      createdAt: "2026-06-18T08:45:48Z",
+      path: "assets/js/app.js",
+      line: 154,
+      originalLine: 154,
+      threadResolved: false,
+      outdated: false,
+    };
+
+    const fixedSource = `
+      function render() {
+        var activeEl = document.activeElement;
+        var activeId = activeEl && typeof activeEl.getAttribute === 'function'
+          ? activeEl.getAttribute('data-action-id')
+          : null;
+        var selectionStart = null;
+        var selectionEnd = null;
+        if (activeEl && activeEl.tagName === 'INPUT') {
+          selectionStart = activeEl.selectionStart;
+          selectionEnd = activeEl.selectionEnd;
+        }
+        root.innerHTML = '';
+        renderSurface();
+        if (activeId) {
+          var elementToFocus = root.querySelector("[data-action-id='" + activeId + "']");
+          if (elementToFocus) {
+            elementToFocus.focus();
+            elementToFocus.setSelectionRange(selectionStart, selectionEnd);
+          }
+        }
+      }`;
+
+    assert.equal(commentLooksMechanicallySatisfied(focusComment, fixedSource), true);
+    assert.equal(commentLooksMechanicallySatisfied(focusComment, "function render() { root.innerHTML = ''; renderSurface(); }"), false);
+  });
+
+  it("marks defensive DOM search filter review comments as mechanically satisfied from source evidence", () => {
+    const defensiveFilterComment = {
+      id: "dom-filter-inline",
+      threadId: "PRRT_dom_filter",
+      kind: "review-comment" as const,
+      author: "reviewer",
+      body: "Filtering assumes every record has well-formed name and id strings. Guard against null, undefined, or malformed records before calling toLowerCase().",
+      createdAt: "2026-06-18T08:45:48Z",
+      path: "assets/js/app.js",
+      line: 212,
+      originalLine: 212,
+      threadResolved: false,
+      outdated: false,
+    };
+
+    const fixedSource = `
+      var filtered = state.records.filter(function (r) {
+        var name = r && r.name ? String(r.name).toLowerCase() : '';
+        var id = r && r.id ? String(r.id).toLowerCase() : '';
+        return !query || name.indexOf(query) !== -1 || id.indexOf(query) !== -1;
+      });`;
+
+    assert.equal(commentLooksMechanicallySatisfied(defensiveFilterComment, fixedSource), true);
+    assert.equal(
+      commentLooksMechanicallySatisfied(
+        defensiveFilterComment,
+        "var filtered = state.records.filter(function (r) { return r.name.toLowerCase().includes(query) || r.id.toLowerCase().includes(query); });",
+      ),
+      false,
+    );
+  });
+
   it("marks React debounced search review comments as mechanically satisfied from source evidence", () => {
     const importComment = {
       id: "react-import-inline",
