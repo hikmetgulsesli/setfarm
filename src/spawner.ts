@@ -1354,6 +1354,11 @@ function isRuntimeControlArtifactWrite(rawPath: string | undefined, active: Acti
   const resolved = path.resolve(active.spawnCwd, rawPath);
   if (active.outputPath && resolved === path.resolve(active.outputPath)) return true;
 
+  const runtimePrivateRoots = [
+    path.join(os.homedir(), ".openclaw", "setfarm", "kimi-runtime"),
+  ].map((item) => path.resolve(item));
+  if (runtimePrivateRoots.some((root) => resolved === root || resolved.startsWith(`${root}${path.sep}`))) return true;
+
   if (path.dirname(resolved) !== "/tmp") return false;
   const base = path.basename(resolved);
   return /^setfarm-progress-[A-Za-z0-9_.-]+\.txt$/.test(base);

@@ -944,6 +944,9 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /attempted \$\{call\.name\} on \$\{relativePath\}/);
     assert.match(source, /isRuntimeScopeAllowedWrite/);
     assert.match(source, /isImplementEvidenceRequestArtifact/);
+    assert.match(source, /function isRuntimeControlArtifactWrite/);
+    assert.match(source, /"kimi-runtime"/);
+    assert.match(source, /runtimePrivateRoots\.some/);
     assert.match(source, /IMPLEMENT_INTENT\.json/);
     assert.match(source, /IMPLEMENT_VERIFICATION_REQUEST\.json/);
     assert.doesNotMatch(source, /IMPLEMENT_EVIDENCE\.json`\s*\|\|\s*relativePath ===/);
