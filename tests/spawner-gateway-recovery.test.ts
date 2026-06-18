@@ -1040,6 +1040,8 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /blocked agent staging/);
     assert.match(source, /blocked agent commit/);
     assert.match(source, /blocked agent push/);
+    assert.match(source, /blocked agent checkout/);
+    assert.match(source, /blocked agent switch/);
     assert.match(source, /Developer agents do not stage, commit, push, or open PRs/);
     assert.match(source, /Setfarm commits the allowed \.story-scope-files entries after build\/scope\/supervisor gates pass/);
     assert.match(source, /const shouldInstallImplementGitWrapper = role === "developer" && Boolean\(claim\.storyId\)/);
@@ -1047,6 +1049,20 @@ describe("spawner gateway recovery wiring", () => {
     assert.doesNotMatch(source, /claim\.stepId === "implement" \? installImplementGitWrapper/);
     assert.match(source, /buildOpenClawChildEnv\(pathPrefix\)/);
     assert.doesNotMatch(wrapperSource, /SETFARM_PLATFORM_COMMIT|SETFARM_RECOVERY_COMMIT/);
+  });
+
+  it("does not route static-safe innerHTML clearing through security recovery", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    const scanStart = source.indexOf("function runInlineSecurityScan");
+    const scanEnd = source.indexOf("function formatInlineSecurityOutput", scanStart);
+    const scanSource = source.slice(scanStart, scanEnd);
+
+    assert.match(source, /function isStaticSafeInnerHtmlAssignment\(line: string\)/);
+    assert.match(scanSource, /&& !isStaticSafeInnerHtmlAssignment\(line\)/);
+    assert.match(scanSource, /if \(!html\.trim\(\)\) return true/);
+    assert.match(scanSource, /<\\s\*script\\b/);
+    assert.match(scanSource, /\\son\\w\+\\s\*=/);
+    assert.match(scanSource, /javascript\\s\*:/);
   });
 
   it("persists runtime guard diagnostics without consuming story retry budgets", () => {

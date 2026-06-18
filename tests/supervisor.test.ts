@@ -512,6 +512,61 @@ describe("supervisor checklist scanning", () => {
     }
   });
 
+  it("matches static HTML controls rendered through DOM factory helpers", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-supervisor-dom-factory-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.mkdirSync(path.join(tmp, "stitch"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { screenId: "SCR-001", title: "Static Editor", file: "editor.html" },
+      ]));
+      fs.writeFileSync(path.join(tmp, "stitch/DESIGN_DOM.json"), JSON.stringify({
+        screens: {
+          "SCR-001": {
+            screenId: "SCR-001",
+            title: "Static Editor",
+            file: "editor.html",
+            buttons: [
+              { kind: "button", label: "Save Changes", action: "ACT_SAVE" },
+            ],
+            inputs: [
+              { kind: "input", type: "text", label: "text" },
+              { kind: "input", type: "select", label: "select" },
+              { kind: "input", type: "textarea", label: "textarea" },
+            ],
+          },
+        },
+      }));
+      fs.writeFileSync(path.join(tmp, "editor.html"), [
+        "<!doctype html>",
+        "<html><body>",
+        "<script>",
+        "function el(tag, attrs, children) { return document.createElement(tag); }",
+        "el('input', { id: 'record-name', name: 'record-name', type: 'text' });",
+        "el('select', { id: 'record-state', name: 'record-state' });",
+        "el('textarea', { id: 'record-notes', name: 'record-notes' });",
+        "el('button', { type: 'button', 'data-action-id': 'ACT_SAVE' }, ['Save Changes']);",
+        "</script>",
+        "</body></html>",
+      ].join("\n"));
+
+      const result = await runImplementSupervisorScan({
+        runId: "run-dom-factory-controls",
+        workdir: tmp,
+        storyId: "US-001",
+        scopeFiles: ["editor.html"],
+      });
+
+      assert.equal(result.blockers.length, 0);
+      assert.equal(result.passed.some((finding) => finding.itemId.includes(":input:") && finding.itemId.endsWith(":text")), true);
+      assert.equal(result.passed.some((finding) => finding.itemId.includes(":input:") && finding.itemId.endsWith(":select")), true);
+      assert.equal(result.passed.some((finding) => finding.itemId.includes(":input:") && finding.itemId.endsWith(":textarea")), true);
+      assert.equal(result.passed.some((finding) => finding.itemId.includes(":button:") && finding.itemId.endsWith(":save-changes")), true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("does not require sample placeholder text as a supervisor input identity", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-supervisor-sample-placeholder-"));
     try {

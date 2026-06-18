@@ -513,7 +513,7 @@ function runInlineSecurityScan(repo: string): { findings: InlineSecurityFinding[
           message: "dangerouslySetInnerHTML without an obvious sanitizer in the file.",
         });
       }
-      if (/\binnerHTML\s*=/.test(line) && !fileHasSanitizer) {
+      if (/\binnerHTML\s*=/.test(line) && !fileHasSanitizer && !isStaticSafeInnerHtmlAssignment(line)) {
         findings.push({
           file,
           line: lineNo,
@@ -549,6 +549,16 @@ function runInlineSecurityScan(repo: string): { findings: InlineSecurityFinding[
   }
 
   return { findings, scanned };
+}
+
+function isStaticSafeInnerHtmlAssignment(line: string): boolean {
+  const match = /\binnerHTML\s*=\s*(`([^`]*)`|"([^"]*)"|'([^']*)')\s*;?\s*$/.exec(line.trim());
+  if (!match) return false;
+  const quote = match[1]?.[0] || "";
+  const html = match[2] ?? match[3] ?? match[4] ?? "";
+  if (quote === "`" && /\$\{/.test(match[1] || "")) return false;
+  if (!html.trim()) return true;
+  return !/<\s*script\b/i.test(html) && !/\son\w+\s*=/i.test(html) && !/\bjavascript\s*:/i.test(html);
 }
 
 function formatInlineSecurityOutput(repo: string): string {
@@ -2411,13 +2421,11 @@ if [ "$cmd" = "push" ]; then
 fi
 
 if [ "$cmd" = "checkout" ]; then
-  for arg in "$@"; do
-    case "$arg" in
-      -b|-B|--orphan)
-        blocked "blocked agent branch creation: git $*"
-        ;;
-    esac
-  done
+  blocked "blocked agent checkout: git $*"
+fi
+
+if [ "$cmd" = "switch" ]; then
+  blocked "blocked agent switch: git $*"
 fi
 
 if [ "$cmd" = "branch" ]; then

@@ -92,22 +92,36 @@ function scanItem(workdir: string, item: SupervisorChecklistItem): SupervisorFin
 
 function blocksForItem(source: string, item: SupervisorChecklistItem): JsxBlock[] {
   if (item.type === "button" || item.type === "icon") {
-    return [...extractJsxBlocks(source, "button"), ...extractJsxBlocks(source, "a")];
+    return [
+      ...extractJsxBlocks(source, "button"),
+      ...extractDomFactoryBlocks(source, "button"),
+      ...extractJsxBlocks(source, "a"),
+      ...extractDomFactoryBlocks(source, "a"),
+    ];
   }
-  if (item.type === "link" || item.type === "nav") return extractJsxBlocks(source, "a");
-  if (item.type === "select") return extractJsxBlocks(source, "select");
+  if (item.type === "link" || item.type === "nav") {
+    return [...extractJsxBlocks(source, "a"), ...extractDomFactoryBlocks(source, "a")];
+  }
+  if (item.type === "select") return [...extractJsxBlocks(source, "select"), ...extractDomFactoryBlocks(source, "select")];
   if (item.type === "input") {
     return [
       ...extractJsxBlocks(source, "input"),
+      ...extractDomFactoryBlocks(source, "input"),
       ...extractJsxBlocks(source, "textarea"),
+      ...extractDomFactoryBlocks(source, "textarea"),
       ...extractJsxBlocks(source, "select"),
+      ...extractDomFactoryBlocks(source, "select"),
     ];
   }
   return [
     ...extractJsxBlocks(source, "button"),
+    ...extractDomFactoryBlocks(source, "button"),
     ...extractJsxBlocks(source, "a"),
+    ...extractDomFactoryBlocks(source, "a"),
     ...extractJsxBlocks(source, "input"),
+    ...extractDomFactoryBlocks(source, "input"),
     ...extractJsxBlocks(source, "select"),
+    ...extractDomFactoryBlocks(source, "select"),
   ];
 }
 
@@ -126,6 +140,77 @@ function extractJsxBlocks(source: string, tag: string): JsxBlock[] {
     blocks.push({ tag, attrs: match[1] || "", inner: "", block: match[0], index: match.index });
   }
   return blocks.sort((a, b) => a.index - b.index);
+}
+
+function extractDomFactoryBlocks(source: string, tag: string): JsxBlock[] {
+  const blocks: JsxBlock[] = [];
+  const call = new RegExp(`\\b(?:el|createElement)\\s*\\(\\s*["']${escapeRegex(tag)}["']\\s*(?:,\\s*([\\s\\S]*?))?\\)`, "gi");
+  let match: RegExpExecArray | null;
+  while ((match = call.exec(source)) !== null) {
+    if (isInsideJsxBlockComment(source, match.index)) continue;
+    const args = match[1] || "";
+    const attrsLiteral = firstBalancedObject(args);
+    const attrs = normalizeDomFactoryAttrs(attrsLiteral || "");
+    const inner = quotedStrings(args.slice(attrsLiteral ? args.indexOf(attrsLiteral) + attrsLiteral.length : 0)).join(" ");
+    blocks.push({ tag, attrs, inner, block: match[0], index: match.index });
+  }
+  return blocks.sort((a, b) => a.index - b.index);
+}
+
+function firstBalancedObject(source: string): string | null {
+  const start = source.indexOf("{");
+  if (start === -1) return null;
+  let depth = 0;
+  let quote: string | null = null;
+  let escaped = false;
+  for (let i = start; i < source.length; i += 1) {
+    const ch = source[i];
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (ch === "\"" || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (ch === "{") depth += 1;
+    if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
+function normalizeDomFactoryAttrs(attrs: string): string {
+  if (!attrs) return "";
+  return attrs
+    .replace(/["']?className["']?\s*:\s*(["'][^"']*["'])/g, "class=$1")
+    .replace(/["']?([A-Za-z][\w-]*)["']?\s*:\s*(["'][^"']*["'])/g, "$1=$2")
+    .replace(/dataset\s*:\s*\{([\s\S]*?)\}/g, (_all, body: string) =>
+      body.replace(/["']?([A-Za-z][\w]*)["']?\s*:\s*(["'][^"']*["'])/g, (_m: string, key: string, value: string) =>
+        `data-${key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}=${value}`,
+      ),
+    );
+}
+
+function quotedStrings(source: string): string[] {
+  const values: string[] = [];
+  const re = /(["'])(?:(?=(\\?))\2.)*?\1/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(source)) !== null) {
+    const raw = match[0].slice(1, -1).trim();
+    if (raw && !/^(?:class|className|type|href|id|name|data-|aria-|role|button|input|select|textarea|a)$/i.test(raw)) {
+      values.push(raw);
+    }
+  }
+  return values;
 }
 
 function isInsideJsxBlockComment(source: string, index: number): boolean {
@@ -164,7 +249,8 @@ function buttonIsActionable(block: JsxBlock): boolean {
   const isDisabled = booleanAttrIsTruthy(attrs, "disabled") || booleanAttrIsTruthy(attrs, "aria-disabled");
   const isSubmit = /\btype\s*=\s*(?:"submit"|'submit'|\{\s*["']submit["']\s*\})/i.test(attrs);
   const hasHandler = /\bon(?:Click|PointerDown|PointerUp|MouseDown|MouseUp|TouchStart|TouchEnd|KeyDown|Submit)\s*=/.test(attrs);
-  return isDisabled || isSubmit || hasHandler;
+  const hasActionId = attrValue(attrs, "data-action-id") !== null;
+  return isDisabled || isSubmit || hasHandler || hasActionId;
 }
 
 function booleanAttrIsTruthy(attrs: string, name: string): boolean {
