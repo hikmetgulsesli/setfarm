@@ -2216,13 +2216,50 @@ function symlinkOrCopyIfExists(source: string, target: string): void {
   }
 }
 
+function stripKimiOauthSections(config: string): string {
+  return config
+    .split(/\n(?=\[)/g)
+    .filter((section) => {
+      const header = section.match(/^\s*\[([^\]]+)\]/)?.[1] || "";
+      return !/\.oauth(?:\.|$)/.test(header);
+    })
+    .join("\n");
+}
+
+function replaceKimiApiKeys(config: string, apiKey: string): string {
+  return config.replace(/^(\s*api_key\s*=\s*)["'][^"']*["']/gm, `$1"${apiKey.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`);
+}
+
+function writeKimiApiKeyConfig(sourceConfigPath: string, targetConfigPath: string, apiKey: string): boolean {
+  if (!apiKey.trim() || !fs.existsSync(sourceConfigPath)) return false;
+  try {
+    const source = fs.readFileSync(sourceConfigPath, "utf-8");
+    const rewritten = replaceKimiApiKeys(stripKimiOauthSections(source), apiKey.trim());
+    fs.mkdirSync(path.dirname(targetConfigPath), { recursive: true });
+    fs.writeFileSync(targetConfigPath, rewritten, { mode: 0o600 });
+    return true;
+  } catch (err) {
+    console.warn(`[spawner] failed to prepare Kimi API-key config: ${String(err).slice(0, 220)}`);
+    return false;
+  }
+}
+
 function prepareKimiIsolatedHome(sessionId: string): string {
   const root = path.join(os.homedir(), ".openclaw", "setfarm", "kimi-runtime", sessionId);
   const home = path.join(root, "home");
   const kimiDir = path.join(home, ".kimi");
   fs.mkdirSync(kimiDir, { recursive: true });
   const sourceKimi = path.join(os.homedir(), ".kimi");
-  for (const entry of ["config.toml", "credentials", "device_id", "mcp.json", "latest_version.txt"]) {
+  const apiKey = process.env.KIMI_API_KEY || process.env.MOONSHOT_API_KEY || "";
+  const wroteApiKeyConfig = writeKimiApiKeyConfig(
+    path.join(sourceKimi, "config.toml"),
+    path.join(kimiDir, "config.toml"),
+    apiKey,
+  );
+  const entries = wroteApiKeyConfig
+    ? ["device_id", "mcp.json", "latest_version.txt"]
+    : ["config.toml", "credentials", "device_id", "mcp.json", "latest_version.txt"];
+  for (const entry of entries) {
     symlinkOrCopyIfExists(path.join(sourceKimi, entry), path.join(kimiDir, entry));
   }
   fs.mkdirSync(path.join(kimiDir, "sessions"), { recursive: true });

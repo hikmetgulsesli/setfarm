@@ -176,11 +176,16 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /AGENT_RUNTIME === "codex" \|\| AGENT_RUNTIME === "kimi"/);
   });
 
-  it("isolates Kimi per-claim session state while preserving auth config", () => {
+  it("isolates Kimi per-claim session state with API-key config instead of stale OAuth credentials", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /function prepareKimiIsolatedHome\(sessionId: string\): string/);
     assert.match(source, /\.openclaw", "setfarm", "kimi-runtime", sessionId/);
-    assert.match(source, /for \(const entry of \["config\.toml", "credentials", "device_id", "mcp\.json", "latest_version\.txt"\]\)/);
+    assert.match(source, /function stripKimiOauthSections\(config: string\): string/);
+    assert.match(source, /function writeKimiApiKeyConfig\(sourceConfigPath: string, targetConfigPath: string, apiKey: string\): boolean/);
+    assert.match(source, /const apiKey = process\.env\.KIMI_API_KEY \|\| process\.env\.MOONSHOT_API_KEY \|\| ""/);
+    assert.match(source, /const wroteApiKeyConfig = writeKimiApiKeyConfig\(/);
+    assert.match(source, /\? \["device_id", "mcp\.json", "latest_version\.txt"\]/);
+    assert.match(source, /: \["config\.toml", "credentials", "device_id", "mcp\.json", "latest_version\.txt"\]/);
     assert.match(source, /fs\.mkdirSync\(path\.join\(kimiDir, "sessions"\), \{ recursive: true \}\)/);
     assert.match(source, /e\.HOME = kimiHome/);
     assert.match(source, /e\.KIMI_HOME = path\.join\(kimiHome, "\.kimi"\)/);
