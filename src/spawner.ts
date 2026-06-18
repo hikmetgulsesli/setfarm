@@ -159,6 +159,7 @@ const OPENCLAW_TASKS_DB = process.env.OPENCLAW_TASKS_DB || path.join(os.homedir(
 const POLL_INTERVAL_MS = 30_000;
 const AGENT_TIMEOUT_SECONDS = 1800;
 const PID_FILE = path.join(os.homedir(), ".openclaw", "setfarm", "spawner.pid");
+const LOCK_FILE = path.join(os.homedir(), ".openclaw", "setfarm", "spawner.lock");
 const DEFAULT_MAX_CONCURRENT = AGENT_RUNTIME === "openclaw" ? 8 : 2;
 const MAX_CONCURRENT = parsePositiveInt(process.env.SETFARM_MAX_CONCURRENT, DEFAULT_MAX_CONCURRENT);
 const SPAWN_STAGGER_MS = parseInt(process.env.SETFARM_SPAWN_STAGGER_MS || "12000", 10);
@@ -221,6 +222,7 @@ let gatewayNotReadySinceMs: number | null = null;
 let gatewayRestartInFlight = false;
 let lastGatewayPrespawnRestartMs = 0;
 let lastGatewayCleanupRestartMs = 0;
+let spawnerLockFd: number | null = null;
 
 // Wave 13 Bug M (run #344 postmortem): agent default cwd must NOT be the
 // setfarm-repo. Previously execFile inherited the spawner's cwd (the systemd
@@ -277,6 +279,47 @@ function safeAgentCwdFromCandidate(raw: unknown): string | null {
     return null;
   }
   return resolved;
+}
+
+function processIsAlive(pid: number): boolean {
+  if (!Number.isFinite(pid) || pid <= 0 || pid === process.pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function acquireSpawnerSingletonLock(): void {
+  fs.mkdirSync(path.dirname(LOCK_FILE), { recursive: true });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      spawnerLockFd = fs.openSync(LOCK_FILE, "wx");
+      fs.writeFileSync(spawnerLockFd, `${process.pid}\n`);
+      return;
+    } catch (err: any) {
+      if (err?.code !== "EEXIST") throw err;
+      const existingPid = Number(fs.readFileSync(LOCK_FILE, "utf-8").trim());
+      if (processIsAlive(existingPid)) {
+        console.warn(`[spawner] Another spawner is already running (PID ${existingPid}); exiting duplicate PID ${process.pid}`);
+        process.exit(0);
+      }
+      try { fs.unlinkSync(LOCK_FILE); } catch {}
+    }
+  }
+  throw new Error("SPAWNER_LOCK_UNAVAILABLE: could not acquire singleton lock");
+}
+
+function releaseSpawnerSingletonLock(): void {
+  if (spawnerLockFd !== null) {
+    try { fs.closeSync(spawnerLockFd); } catch {}
+    spawnerLockFd = null;
+  }
+  try {
+    const existingPid = Number(fs.readFileSync(LOCK_FILE, "utf-8").trim());
+    if (existingPid === process.pid || !processIsAlive(existingPid)) fs.unlinkSync(LOCK_FILE);
+  } catch {}
 }
 
 const STORY_WORKDIR_CANDIDATE_KEYS = [
@@ -5142,6 +5185,7 @@ async function main() {
     console.warn(`[spawner] unhandled rejection: ${String(err).slice(0, 500)}`);
   });
 
+  acquireSpawnerSingletonLock();
   fs.mkdirSync(path.dirname(PID_FILE), { recursive: true });
   fs.writeFileSync(PID_FILE, String(process.pid));
   assertAgentRuntimeAvailable();
@@ -5164,6 +5208,7 @@ async function main() {
     }
     await pgClose();
     try { fs.unlinkSync(PID_FILE); } catch {}
+    releaseSpawnerSingletonLock();
     setTimeout(() => process.exit(0), 5000);
   };
   process.on("SIGTERM", shutdown);
@@ -5198,4 +5243,8 @@ async function main() {
   console.log("[spawner] Ready");
 }
 
-main().catch((err) => { console.error(`[spawner] Fatal: ${String(err)}`); process.exit(1); });
+main().catch((err) => {
+  releaseSpawnerSingletonLock();
+  console.error(`[spawner] Fatal: ${String(err)}`);
+  process.exit(1);
+});

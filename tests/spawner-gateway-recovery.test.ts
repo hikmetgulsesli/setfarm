@@ -227,6 +227,21 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /env:\s*\{\s*\.\.\.process\.env,/);
   });
 
+  it("prevents duplicate event spawners when the pidfile is stale", () => {
+    const controlSource = fs.readFileSync(path.join(root, "src", "server", "spawnerctl.ts"), "utf-8");
+    assert.match(controlSource, /function listSpawnerProcessPids\(\): number\[\]/);
+    assert.match(controlSource, /execFileSync\("ps",\s*\["-axo",\s*"pid=,command="\]/);
+    assert.match(controlSource, /\/dist\\\/spawner\\\.js\\b/);
+    assert.match(controlSource, /const pids = new Set<number>\(listSpawnerProcessPids\(\)\)/);
+
+    const spawnerSource = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(spawnerSource, /const LOCK_FILE = path\.join\(os\.homedir\(\),\s*"\.openclaw",\s*"setfarm",\s*"spawner\.lock"\)/);
+    assert.match(spawnerSource, /fs\.openSync\(LOCK_FILE,\s*"wx"\)/);
+    assert.match(spawnerSource, /Another spawner is already running/);
+    assert.match(spawnerSource, /acquireSpawnerSingletonLock\(\);\s*fs\.mkdirSync\(path\.dirname\(PID_FILE\)/);
+    assert.match(spawnerSource, /releaseSpawnerSingletonLock\(\);\s*setTimeout\(\(\) => process\.exit\(0\),\s*5000\)/);
+  });
+
   it("starts dashboard daemon with the current Node executable instead of PATH lookup", () => {
     const source = fs.readFileSync(path.join(root, "src", "server", "daemonctl.ts"), "utf-8");
     assert.match(source, /import "\.\.\/runtime-config\.js"/);
