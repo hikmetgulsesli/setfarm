@@ -438,15 +438,18 @@ describe("single-step claim_log lifecycle", () => {
     const prSelect = helperSource.indexOf("story_branch, pr_url FROM stories");
     const mergedGuard = helperSource.indexOf('retryStory.pr_url && getPRState(retryStory.pr_url) === "MERGED"', prSelect);
     const postMergeCategory = helperSource.indexOf("POST_MERGE_QUALITY_REGRESSION", mergedGuard);
+    const exhaustedCategory = helperSource.indexOf("POST_MERGE_QUALITY_REGRESSION_RETRY_EXHAUSTED", mergedGuard);
     const clearBranch = helperSource.indexOf("story_branch = NULL", mergedGuard);
     const routeTransition = helperSource.indexOf("qualityFailure:routeMergedStoryMainRepair", mergedGuard);
 
     assert.ok(prSelect >= 0, "original story router must read pr_url");
     assert.ok(mergedGuard > prSelect, "merged PR guard must run after loading story metadata");
     assert.ok(postMergeCategory > mergedGuard, "merged PR guard must classify post-merge quality regression");
+    assert.ok(exhaustedCategory > mergedGuard, "merged PR retry exhaustion must have a distinct terminal category");
     assert.ok(clearBranch > postMergeCategory, "merged PR retry must clear stale branch metadata before rerunning implement");
     assert.ok(routeTransition > clearBranch, "merged PR retry must route through implement instead of terminal failure");
     assert.match(helperSource, /retry on current main with a fresh story branch instead of reopening the merged branch/);
+    assert.match(helperSource, /retryStory\.max_retries \|\| retryStory\.retry_count \|\| 0/);
     assert.match(helperSource, /post-merge quality failure routed to original story/);
   });
 

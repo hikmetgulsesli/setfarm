@@ -2127,6 +2127,33 @@ async function routeOriginalStoryQualityFailureToImplement(
   delete context["status"];
 
   if (retryStory.pr_url && getPRState(retryStory.pr_url) === "MERGED") {
+    if (newRetry > (retryStory.max_retries || 0)) {
+      const exhaustedRetryFailure = [
+        "POST_MERGE_QUALITY_REGRESSION_RETRY_EXHAUSTED:",
+        `${retryStory.story_id} PR is already MERGED and current-main repair retries are exhausted (${retryStory.max_retries}/${retryStory.max_retries}).`,
+        routeReason,
+        "",
+        "Failure report:",
+        failure.slice(0, 3000),
+      ].join("\n");
+      await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [retryStory.max_retries || retryStory.retry_count || 0, exhaustedRetryFailure, now(), retryStory.id]);
+      context["previous_failure"] = exhaustedRetryFailure;
+      context["failure_category"] = "POST_MERGE_QUALITY_REGRESSION";
+      context["failure_suggestion"] = "Post-merge main repair retry budget is exhausted.";
+      context["post_merge_quality_regression_story_id"] = retryStory.story_id;
+      context["post_merge_quality_regression_pr_url"] = retryStory.pr_url;
+      await updateRunContext(step.run_id, context);
+      await setStepStatus(loopStep.id, "failed");
+      await failStepWithOutput(step.id, exhaustedRetryFailure);
+      await failRun(step.run_id, true);
+      scheduleRunCronTeardown(step.run_id);
+      const wfId = await _getWorkflowId(step.run_id);
+      emitEvent({ ts: now(), event: "story.failed", runId: step.run_id, workflowId: wfId, stepId: "implement", storyId: retryStory.story_id, detail: exhaustedRetryFailure.slice(0, 500) });
+      emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: "POST_MERGE_QUALITY_REGRESSION_RETRY_EXHAUSTED" });
+      logger.error(`[quality-router] Post-merge story retry exhausted for ${retryStory.story_id} after ${step.step_id} failure`, { runId: step.run_id });
+      return true;
+    }
+
     const mergedRetryFailure = [
       "POST_MERGE_QUALITY_REGRESSION:",
       `${retryStory.story_id} PR is already MERGED; retry on current main with a fresh story branch instead of reopening the merged branch.`,
@@ -2135,25 +2162,6 @@ async function routeOriginalStoryQualityFailureToImplement(
       "Failure report:",
       failure.slice(0, 3000),
     ].join("\n");
-    if (newRetry > (retryStory.max_retries || 0)) {
-      await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [newRetry, mergedRetryFailure, now(), retryStory.id]);
-      context["previous_failure"] = mergedRetryFailure;
-      context["failure_category"] = "POST_MERGE_QUALITY_REGRESSION";
-      context["failure_suggestion"] = "Post-merge main repair retry budget is exhausted.";
-      context["post_merge_quality_regression_story_id"] = retryStory.story_id;
-      context["post_merge_quality_regression_pr_url"] = retryStory.pr_url;
-      await updateRunContext(step.run_id, context);
-      await setStepStatus(loopStep.id, "failed");
-      await failStepWithOutput(step.id, mergedRetryFailure);
-      await failRun(step.run_id, true);
-      scheduleRunCronTeardown(step.run_id);
-      const wfId = await _getWorkflowId(step.run_id);
-      emitEvent({ ts: now(), event: "story.failed", runId: step.run_id, workflowId: wfId, stepId: "implement", storyId: retryStory.story_id, detail: mergedRetryFailure.slice(0, 500) });
-      emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: "POST_MERGE_QUALITY_REGRESSION" });
-      logger.error(`[quality-router] Post-merge story retry exhausted for ${retryStory.story_id} after ${step.step_id} failure`, { runId: step.run_id });
-      return true;
-    }
-
     context["previous_failure"] = mergedRetryFailure;
     context["failure_category"] = "POST_MERGE_QUALITY_REGRESSION";
     context["failure_suggestion"] = "Retry the original story on current main with a fresh branch; do not reopen the already merged PR branch.";
