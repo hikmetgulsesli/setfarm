@@ -296,6 +296,24 @@ function commentProseLooksMechanicallySatisfied(body: string, normalizedSource: 
   }
 
   if (
+    /\baria-label\b/i.test(body) &&
+    /\brole\s*=\s*["']img["']|\brole\b[^.\n]{0,80}\bimg\b/i.test(body) &&
+    /\bspan\b/i.test(body) &&
+    /createEl\s*\(\s*['"]span['"][^)]*aria-label[^)]*(?:['"]role['"]|role)\s*:\s*['"]img['"][^)]*\)/.test(normalizedSource)
+  ) {
+    return true;
+  }
+
+  if (
+    /\baria-label\b/i.test(body) &&
+    /\brole\s*=\s*["']img["']|\brole\b[^.\n]{0,80}\bimg\b/i.test(body) &&
+    /\bspan\b/i.test(body) &&
+    /<span\b[^>]*\baria-label\s*=\s*["'][^"']+["'][^>]*\brole\s*=\s*["']img["'][^>]*>/i.test(normalizedSource)
+  ) {
+    return true;
+  }
+
+  if (
     /\brouting\b|\bnavigation\b|\bpage\s+structure\b|\bMPA\b|\bSPA\b|\bempty\s+shell\b/i.test(body) &&
     /\bindex\.html\b/i.test(body) &&
     /(?:http-equiv\s*=\s*["']refresh["'][^>]*url\s*=\s*[^"'>\s]+\.html|window\.location|location\.replace|location\.href|href\s*=\s*["'][^"']+\.html["'])/i.test(normalizedSource) &&

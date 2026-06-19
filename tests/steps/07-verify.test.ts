@@ -1044,7 +1044,7 @@ describe("07-verify step module", () => {
     );
   });
 
-  it("marks static web init, defensive filter, and action-id review comments as mechanically satisfied", () => {
+  it("marks static web init, defensive filter, action-id, and aria role review comments as mechanically satisfied", () => {
     const initComment = {
       id: "static-init-inline",
       threadId: "PRRT_static_init",
@@ -1084,6 +1084,19 @@ describe("07-verify step module", () => {
       threadResolved: false,
       outdated: false,
     };
+    const ariaRoleComment = {
+      id: "static-aria-role-inline",
+      threadId: "PRRT_static_aria_role",
+      kind: "review-comment" as const,
+      author: "gemini-code-assist",
+      body: 'The `span` element representing the status dot has an `aria-label` but lacks a semantic `role`. Adding `role="img"` ensures assistive technologies announce its status label.',
+      createdAt: "2026-06-18T13:32:50Z",
+      path: "assets/js/app.js",
+      line: 42,
+      originalLine: 42,
+      threadResolved: false,
+      outdated: false,
+    };
 
     const fixedJs = `
       function getItems() {
@@ -1102,13 +1115,20 @@ describe("07-verify step module", () => {
       } else {
         init();
       }
+      const dotVisual = createEl('span', 'dot-visual dot-visual--' + dot.status, {
+        'aria-label': 'Status: ' + dot.status,
+        role: 'img'
+      });
     `;
-    const fixedHtml = '<button type="button" data-action-id="ACT_RESOLVE_ACTION">Resolve</button>';
+    const fixedHtml = '<button type="button" data-action-id="ACT_RESOLVE_ACTION">Resolve</button><span aria-label="Status: ready" role="img"></span>';
 
     assert.equal(commentLooksMechanicallySatisfied(initComment, fixedJs), true);
     assert.equal(commentLooksMechanicallySatisfied(defensiveComment, fixedJs), true);
     assert.equal(commentLooksMechanicallySatisfied(actionIdComment, fixedHtml), true);
+    assert.equal(commentLooksMechanicallySatisfied(ariaRoleComment, fixedJs), true);
+    assert.equal(commentLooksMechanicallySatisfied(ariaRoleComment, fixedHtml), true);
     assert.equal(commentLooksMechanicallySatisfied(actionIdComment, '<button data-action-id="resolve-action">Resolve</button>'), false);
+    assert.equal(commentLooksMechanicallySatisfied(ariaRoleComment, '<span aria-label="Status: ready"></span>'), false);
   });
 
   it("finds mechanically satisfied inline review thread ids from current PR source files", () => {
