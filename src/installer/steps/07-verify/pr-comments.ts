@@ -260,6 +260,52 @@ function commentProseLooksMechanicallySatisfied(body: string, normalizedSource: 
   }
 
   if (
+    /\bDOM\s+is\s+ready\b|\bDOMContentLoaded\b|\bon\s+(?:initial\s+)?page\s+load\b|\bimmediately\s+upon\s+loading\b/i.test(body) &&
+    /\binitiali[sz]e\b|\bactual\b|\breal-?time\b|\bstore\s+data\b|\bstate\b/i.test(body) &&
+    /document\.addEventListener\s*\(\s*['"]DOMContentLoaded['"]/.test(normalizedSource) &&
+    /document\.readyState/.test(normalizedSource) &&
+    /\b(?:init|initialize|refresh|render)\s*\(\s*\)/i.test(normalizedSource) &&
+    (
+      /\b(?:update|render|refresh)\w*\s*\([^)]*\b(?:get\w+\s*\(\s*\)|state|store)\b[^)]*\)/i.test(normalizedSource) ||
+      /\bvar\s+\w+\s*=\s*get\w+\s*\(\s*\)\s*;?\s*\b(?:update|render|refresh)\w*\s*\(\s*\w+/i.test(normalizedSource)
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    /\bnull\b|\bnon-object\b|\bnon\s*object\b|\bdefensive\b|\bfilter\s+out\b/i.test(body) &&
+    /\barray\b|\belements?\b|\brecords?\b|\bitems?\b|\bnotes?\b|\bentries\b/i.test(body) &&
+    /\.filter\s*\(\s*function\s*\([^)]*\)\s*\{[^}]*!==\s*null[^}]*typeof\s+\w+\s*===\s*['"]object['"][^}]*\}/.test(normalizedSource)
+  ) {
+    return true;
+  }
+
+  if (
+    /\baction\s+IDs?\b|\bdata-action-id\b/i.test(body) &&
+    /\buppercase\b|\bACT_\b|\bnaming\s+convention\b|\bprefix\b/i.test(body) &&
+    /data-action-id\s*=\s*["']ACT_[A-Z0-9_]+["']/.test(normalizedSource)
+  ) {
+    const quoted = [...String(body || "").matchAll(/`([^`]+)`/g)]
+      .map(match => String(match[1] || "").trim())
+      .filter(Boolean);
+    const oldIds = quoted.filter(value => /^[a-z][a-z0-9-]*$/.test(value));
+    if (oldIds.length === 0 || oldIds.every(value => !normalizedSource.includes(`data-action-id="${value}"`) && !normalizedSource.includes(`data-action-id='${value}'`))) {
+      return true;
+    }
+  }
+
+  if (
+    /\brouting\b|\bnavigation\b|\bpage\s+structure\b|\bMPA\b|\bSPA\b|\bempty\s+shell\b/i.test(body) &&
+    /\bindex\.html\b/i.test(body) &&
+    /(?:http-equiv\s*=\s*["']refresh["'][^>]*url\s*=\s*[^"'>\s]+\.html|window\.location|location\.replace|location\.href|href\s*=\s*["'][^"']+\.html["'])/i.test(normalizedSource) &&
+    /<!doctype\s+html>|<html\b/i.test(normalizedSource) &&
+    /data-testid\s*=\s*["']setfarm-app-root["']|data-setfarm-root\s*=\s*["']baseline["']/.test(normalizedSource)
+  ) {
+    return true;
+  }
+
+  if (
     /\bmissing\b|\bmalformed\b|\bnull\b|\bundefined\b|\bdefensive\b|\bguard\b/i.test(body) &&
     /\bname\b/i.test(body) &&
     /\bid\b/i.test(body) &&
@@ -366,7 +412,7 @@ export function getMechanicallySatisfiedInlineReviewThreadIds(state: PrState, re
   const ids = new Set<string>();
   for (const comment of getActionablePrComments(state)) {
     if (comment.kind !== "review-comment" || !comment.threadId || !comment.path) continue;
-    for (const source of readReviewCommentCandidateSources(root, state.headRefName, comment.path)) {
+    for (const source of readReviewCommentCandidateSources(root, state.headRefName, comment.path, comment.body)) {
       if (commentLooksMechanicallySatisfied(comment, source)) ids.add(comment.threadId);
       if (ids.has(comment.threadId)) break;
     }
@@ -374,35 +420,60 @@ export function getMechanicallySatisfiedInlineReviewThreadIds(state: PrState, re
   return [...ids];
 }
 
-function readReviewCommentCandidateSources(repoPath: string, headRefName: string | undefined, relativePath: string): string[] {
+function extractReferencedReviewPaths(body: string): string[] {
+  const paths = new Set<string>();
+  for (const match of String(body || "").matchAll(/`([^`]+)`/g)) {
+    const value = String(match[1] || "").trim().replace(/^\/+/, "");
+    if (/^[A-Za-z0-9._/-]+\.(?:html|css|js|jsx|ts|tsx|mjs|cjs|json)$/.test(value) && !value.includes("..")) {
+      paths.add(value);
+    }
+  }
+  return [...paths];
+}
+
+function readReviewCommentCandidateSources(repoPath: string, headRefName: string | undefined, relativePath: string, body = ""): string[] {
   const sources: string[] = [];
   const rootPath = path.resolve(repoPath);
-  const safeRelative = String(relativePath || "").replace(/^\/+/, "");
-  if (!safeRelative || safeRelative.includes("\0")) return sources;
+  const safeRelatives = [...new Set([
+    String(relativePath || "").replace(/^\/+/, ""),
+    ...extractReferencedReviewPaths(body),
+  ])].filter(value => value && !value.includes("\0"));
+  if (safeRelatives.length === 0) return sources;
 
-  if (headRefName && /^[A-Za-z0-9._/-]+$/.test(headRefName)) {
-    for (const ref of [headRefName, `origin/${headRefName}`]) {
-      try {
-        sources.push(execFileSync("git", ["-C", rootPath, "show", `${ref}:${safeRelative}`], {
-          encoding: "utf-8",
-          timeout: 10000,
-          maxBuffer: 2_000_000,
-        }));
-        break;
-      } catch {
-        // Fall back to the next ref or the working tree below.
+  const readOne = (safeRelative: string): string[] => {
+    const candidates: string[] = [];
+    if (safeRelative.includes("..")) return candidates;
+
+    if (headRefName && /^[A-Za-z0-9._/-]+$/.test(headRefName)) {
+      for (const ref of [headRefName, `origin/${headRefName}`]) {
+        try {
+          candidates.push(execFileSync("git", ["-C", rootPath, "show", `${ref}:${safeRelative}`], {
+            encoding: "utf-8",
+            timeout: 10000,
+            maxBuffer: 2_000_000,
+          }));
+          break;
+        } catch {
+          // Fall back to the next ref or the working tree below.
+        }
       }
     }
-  }
 
-  const filePath = path.resolve(rootPath, safeRelative);
-  if (filePath.startsWith(`${rootPath}${path.sep}`) && existsSync(filePath)) {
-    try {
-      sources.push(readFileSync(filePath, "utf-8"));
-    } catch {
-      // A transient read failure should not unblock review comments.
+    const filePath = path.resolve(rootPath, safeRelative);
+    if (filePath.startsWith(`${rootPath}${path.sep}`) && existsSync(filePath)) {
+      try {
+        candidates.push(readFileSync(filePath, "utf-8"));
+      } catch {
+        // A transient read failure should not unblock review comments.
+      }
     }
+    return candidates;
+  };
+
+  for (const safeRelative of safeRelatives) {
+    sources.push(...readOne(safeRelative));
   }
+  if (sources.length > 1) sources.push(sources.join("\n"));
   return sources;
 }
 

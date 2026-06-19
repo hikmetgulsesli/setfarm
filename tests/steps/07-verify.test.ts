@@ -1044,6 +1044,73 @@ describe("07-verify step module", () => {
     );
   });
 
+  it("marks static web init, defensive filter, and action-id review comments as mechanically satisfied", () => {
+    const initComment = {
+      id: "static-init-inline",
+      threadId: "PRRT_static_init",
+      kind: "review-comment" as const,
+      author: "gemini-code-assist",
+      body: "The metrics and recent activity list display hardcoded placeholder values on initial page load. Initialize the metrics and list with actual store data when the DOM is ready.",
+      createdAt: "2026-06-18T13:32:50Z",
+      path: "assets/js/actions.js",
+      line: 80,
+      originalLine: 80,
+      threadResolved: false,
+      outdated: false,
+    };
+    const defensiveComment = {
+      id: "static-defensive-inline",
+      threadId: "PRRT_static_defensive",
+      kind: "review-comment" as const,
+      author: "gemini-code-assist",
+      body: "Defensively filter out null or non-object elements from the retrieved notes array before downstream functions access properties.",
+      createdAt: "2026-06-18T13:32:50Z",
+      path: "assets/js/actions.js",
+      line: 16,
+      originalLine: 16,
+      threadResolved: false,
+      outdated: false,
+    };
+    const actionIdComment = {
+      id: "static-action-id-inline",
+      threadId: "PRRT_static_action_id",
+      kind: "review-comment" as const,
+      author: "gemini-code-assist",
+      body: "For consistency with all other action IDs, the `resolve-action` action ID should use the uppercase `ACT_` prefix with underscores.",
+      createdAt: "2026-06-18T13:32:50Z",
+      path: "screen.html",
+      line: 111,
+      originalLine: 111,
+      threadResolved: false,
+      outdated: false,
+    };
+
+    const fixedJs = `
+      function getItems() {
+        var state = window.AppStore.getState();
+        var items = (state && state.items) || [];
+        return items.filter(function (item) {
+          return item !== null && typeof item === 'object';
+        });
+      }
+      function init() {
+        var items = getItems();
+        updateMetrics(items, 'all');
+      }
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+      } else {
+        init();
+      }
+    `;
+    const fixedHtml = '<button type="button" data-action-id="ACT_RESOLVE_ACTION">Resolve</button>';
+
+    assert.equal(commentLooksMechanicallySatisfied(initComment, fixedJs), true);
+    assert.equal(commentLooksMechanicallySatisfied(defensiveComment, fixedJs), true);
+    assert.equal(commentLooksMechanicallySatisfied(actionIdComment, fixedHtml), true);
+    assert.equal(commentLooksMechanicallySatisfied(actionIdComment, '<button data-action-id="resolve-action">Resolve</button>'), false);
+  });
+
   it("finds mechanically satisfied inline review thread ids from current PR source files", () => {
     const root = mkdtempSync(join(tmpdir(), "setfarm-pr-comments-"));
     try {
@@ -1101,6 +1168,58 @@ describe("07-verify step module", () => {
       };
 
       assert.deepEqual(getMechanicallySatisfiedInlineReviewThreadIds(state, root), ["PRRT_current"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("finds mechanically satisfied static routing threads from files referenced in review prose", () => {
+    const root = mkdtempSync(join(tmpdir(), "setfarm-pr-comments-static-route-"));
+    try {
+      execFileSync("git", ["init", "-b", "main"], { cwd: root, stdio: "ignore" });
+      execFileSync("git", ["config", "user.email", "setfarm@example.test"], { cwd: root });
+      execFileSync("git", ["config", "user.name", "Setfarm Test"], { cwd: root });
+      writeFileSync(join(root, "index.html"), '<main data-testid="setfarm-app-root"></main>');
+      writeFileSync(join(root, "insights.html"), '<!doctype html><html><body><main data-testid="setfarm-app-root"></main></body></html>');
+      execFileSync("git", ["add", "."], { cwd: root });
+      execFileSync("git", ["commit", "-m", "main"], { cwd: root, stdio: "ignore" });
+      execFileSync("git", ["checkout", "-b", "feature-route"], { cwd: root, stdio: "ignore" });
+      writeFileSync(
+        join(root, "index.html"),
+        '<!doctype html><html><head><meta http-equiv="refresh" content="0; url=insights.html"></head><body><main data-setfarm-root="baseline" data-testid="setfarm-app-root"><a href="insights.html">Insights</a></main></body></html>',
+      );
+      writeFileSync(
+        join(root, "insights.html"),
+        '<!doctype html><html><body><main data-testid="setfarm-app-root"><a href="index.html">Insights</a></main></body></html>',
+      );
+      execFileSync("git", ["add", "."], { cwd: root });
+      execFileSync("git", ["commit", "-m", "feature"], { cwd: root, stdio: "ignore" });
+      execFileSync("git", ["checkout", "main"], { cwd: root, stdio: "ignore" });
+
+      const state: PrState = {
+        state: "OPEN",
+        headRefName: "feature-route",
+        checksStatus: "passing",
+        mergeable: "MERGEABLE",
+        mergeStateStatus: "CLEAN",
+        comments: [
+          {
+            id: "static-route-inline",
+            threadId: "PRRT_static_route",
+            kind: "review-comment",
+            author: "gemini-code-assist",
+            body: "There is an inconsistency in how navigation and page structure are handled between `index.html` and `insights.html`. Clarify the MPA routing model so index.html is not an empty shell.",
+            createdAt: "2026-06-18T13:32:50Z",
+            path: "insights.html",
+            line: 40,
+            originalLine: 40,
+            threadResolved: false,
+            outdated: false,
+          },
+        ],
+      };
+
+      assert.deepEqual(getMechanicallySatisfiedInlineReviewThreadIds(state, root), ["PRRT_static_route"]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
