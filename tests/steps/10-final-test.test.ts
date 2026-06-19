@@ -72,6 +72,19 @@ describe("10-final-test step module", () => {
     assert.match(sourcePreclaim, /final-smoke-prebuild/);
   });
 
+  it("final preclaim self-heals a missing Playwright browser cache before retrying smoke", () => {
+    const smokeStart = sourcePreclaim.indexOf("let output = \"\";");
+    const catchBlock = sourcePreclaim.slice(sourcePreclaim.indexOf("} catch (err) {", smokeStart));
+    assert.match(sourcePreclaim, /isMissingPlaywrightBrowserFailure/);
+    assert.match(sourcePreclaim, /ensurePlaywrightChromiumInstalled/);
+    assert.match(sourcePreclaim, /final-playwright-browser-install/);
+    assert.ok(
+      catchBlock.indexOf("ensurePlaywrightChromiumInstalled") < catchBlock.indexOf("output = runSmoke();"),
+      "missing browser install must happen before the smoke retry",
+    );
+    assert.match(catchBlock, /failed = false/);
+  });
+
   it("validateOutput rejects missing STATUS", () => {
     assert.equal(validateOutput({} as ParsedOutput).ok, false);
   });

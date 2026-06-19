@@ -11,6 +11,7 @@ import { resolveOperationalStackContract, stackEvidenceMetadata, stackExecutionP
 import { updateRunContext } from "../../repo.js";
 import { resolvePlatformScript } from "../../paths.js";
 import { ensureSmokeBuildFresh } from "../../smoke-gate.js";
+import { ensurePlaywrightChromiumInstalled, isMissingPlaywrightBrowserFailure } from "../../playwright-runtime.js";
 
 function cleanProcessText(value: unknown): string {
   const text = Buffer.isBuffer(value) ? value.toString("utf-8") : String(value || "");
@@ -300,6 +301,21 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     logger.warn(`[module:final-test preclaim] main sync warning: ${formatFailure(syncErr).slice(0, 300)}`, { runId: ctx.runId });
   }
 
+  const runSmoke = (): string => execFileSync("node", [smokeScript, repo, "--port", String(runtime.port)], {
+    cwd: repo,
+    timeout: stackContract.runtime?.timeoutMs || 240_000,
+    encoding: "utf-8",
+    stdio: ["pipe", "pipe", "pipe"],
+    env: {
+      ...process.env,
+      DEV_SERVER_PORT: String(runtime.port),
+      PREVIEW_PORT: String(runtime.port),
+      PORT: String(runtime.port),
+      DEV_SERVER_URL: runtime.url,
+      QA_URL: runtime.url,
+    },
+  });
+
   let output = "";
   let failed = false;
   try {
@@ -332,23 +348,43 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       detail: repo,
       metadata: stackEvidenceMetadata(stackContract),
     });
-    output = execFileSync("node", [smokeScript, repo, "--port", String(runtime.port)], {
-      cwd: repo,
-      timeout: stackContract.runtime?.timeoutMs || 240_000,
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-      env: {
-        ...process.env,
-        DEV_SERVER_PORT: String(runtime.port),
-        PREVIEW_PORT: String(runtime.port),
-        PORT: String(runtime.port),
-        DEV_SERVER_URL: runtime.url,
-        QA_URL: runtime.url,
-      },
-    });
+    output = runSmoke();
   } catch (err) {
     failed = true;
     output = output || formatFailure(err);
+    if (isMissingPlaywrightBrowserFailure(output)) {
+      await recordGateObservation({
+        runId: ctx.runId,
+        stepId: ctx.stepId,
+        agentId: "tester",
+        checkId: "final-playwright-browser-install",
+        label: "Final Playwright browser install",
+        status: "running",
+        summary: "Installing missing Playwright Chromium browser",
+        detail: output.slice(0, 1000),
+        metadata: stackEvidenceMetadata(stackContract),
+      });
+      const install = ensurePlaywrightChromiumInstalled(stackContract.runtime?.timeoutMs || 240_000);
+      await recordGateObservation({
+        runId: ctx.runId,
+        stepId: ctx.stepId,
+        agentId: "tester",
+        checkId: "final-playwright-browser-install",
+        label: "Final Playwright browser install",
+        status: install.ok ? "pass" : "blocked",
+        summary: install.ok ? "Playwright Chromium browser installed" : "Playwright Chromium browser install failed",
+        detail: install.output,
+        metadata: stackEvidenceMetadata(stackContract),
+      });
+      if (install.ok) {
+        try {
+          output = runSmoke();
+          failed = false;
+        } catch (retryErr) {
+          output = formatFailure(retryErr);
+        }
+      }
+    }
   }
 
   const parsed = firstJsonObject(output);

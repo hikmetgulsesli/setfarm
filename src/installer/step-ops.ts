@@ -1774,6 +1774,26 @@ function qualityFixAcceptanceCriteria(failure: string): string[] {
   ];
 }
 
+async function resolveQualityFailureStoryId(runId: string, context: Record<string, string>, failure: string): Promise<string> {
+  const explicit = String(context["current_story_id"] || "").trim();
+  if (explicit) return explicit;
+
+  const reportedStoryIds = [...new Set((failure.match(/\b(?:US|QA-FIX)-\d{3}\b/g) || []).map((id) => id.trim()))];
+  for (const storyId of reportedStoryIds) {
+    const row = await pgGet<{ story_id: string }>(
+      "SELECT story_id FROM stories WHERE run_id = $1 AND story_id = $2 AND status IN ('pending','running','done','verified','skipped') LIMIT 1",
+      [runId, storyId],
+    );
+    if (row?.story_id) return row.story_id;
+  }
+
+  const latest = await pgGet<{ story_id: string }>(
+    "SELECT story_id FROM stories WHERE run_id = $1 AND story_id NOT LIKE 'QA-FIX-%' AND status IN ('pending','running','done','verified','skipped') ORDER BY story_index DESC LIMIT 1",
+    [runId],
+  );
+  return latest?.story_id || "";
+}
+
 export async function routeQualityFailureToImplement(
   step: { id: string; run_id: string; step_id: string; step_index: number; agent_id: string },
   output: string,
@@ -1835,13 +1855,14 @@ export async function routeQualityFailureToImplement(
     [step.run_id],
   );
   const existingFixCountNum = parseInt(existingFixCount?.cnt || "0", 10) || 0;
+  const qualityRouteStoryId = await resolveQualityFailureStoryId(step.run_id, context, failure);
 
   const routeDecision = routeDownstreamQualityFailure({
     runId: step.run_id,
     stepId: step.step_id,
     failure,
     stackPackId: context["stack_pack_id"] || context["detected_stack"] || "",
-    currentStoryId: context["current_story_id"] || "",
+    currentStoryId: qualityRouteStoryId,
     hasMachineEvidence: /\b(smoke|screenshot|QA_JSON|FINAL_TEST|IMPLEMENT_EVIDENCE|runtime|browser|interaction)\b/i.test(failure),
     existingRepairCount: existingFixCountNum,
     repeatedFailureCount: repeatCount,
@@ -1873,7 +1894,7 @@ export async function routeQualityFailureToImplement(
       const routed = await routeOriginalStoryQualityFailureToImplement(
         step,
         context,
-        context["current_story_id"] || "",
+        qualityRouteStoryId,
         failure,
         routeDecision.category,
         routeDecision.reason,
@@ -2103,33 +2124,75 @@ async function routeOriginalStoryQualityFailureToImplement(
   context["failure_suggestion"] = "Retry the original implementation story with orchestrator-owned evidence. Do not create a QA-FIX story.";
   context["current_story_id"] = retryStory.story_id;
   context["current_story_title"] = retryStory.title || "";
-  if (retryStory.story_branch) context["story_branch"] = retryStory.story_branch;
   delete context["status"];
 
   if (retryStory.pr_url && getPRState(retryStory.pr_url) === "MERGED") {
-    const reason = [
+    const mergedRetryFailure = [
       "POST_MERGE_QUALITY_REGRESSION:",
-      `${retryStory.story_id} PR is already MERGED; Setfarm must not reopen or recode the original story branch.`,
+      `${retryStory.story_id} PR is already MERGED; retry on current main with a fresh story branch instead of reopening the merged branch.`,
       routeReason,
       "",
       "Failure report:",
       failure.slice(0, 3000),
     ].join("\n");
-    context["previous_failure"] = reason;
+    if (newRetry > (retryStory.max_retries || 0)) {
+      await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [newRetry, mergedRetryFailure, now(), retryStory.id]);
+      context["previous_failure"] = mergedRetryFailure;
+      context["failure_category"] = "POST_MERGE_QUALITY_REGRESSION";
+      context["failure_suggestion"] = "Post-merge main repair retry budget is exhausted.";
+      context["post_merge_quality_regression_story_id"] = retryStory.story_id;
+      context["post_merge_quality_regression_pr_url"] = retryStory.pr_url;
+      await updateRunContext(step.run_id, context);
+      await setStepStatus(loopStep.id, "failed");
+      await failStepWithOutput(step.id, mergedRetryFailure);
+      await failRun(step.run_id, true);
+      scheduleRunCronTeardown(step.run_id);
+      const wfId = await _getWorkflowId(step.run_id);
+      emitEvent({ ts: now(), event: "story.failed", runId: step.run_id, workflowId: wfId, stepId: "implement", storyId: retryStory.story_id, detail: mergedRetryFailure.slice(0, 500) });
+      emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: "POST_MERGE_QUALITY_REGRESSION" });
+      logger.error(`[quality-router] Post-merge story retry exhausted for ${retryStory.story_id} after ${step.step_id} failure`, { runId: step.run_id });
+      return true;
+    }
+
+    context["previous_failure"] = mergedRetryFailure;
     context["failure_category"] = "POST_MERGE_QUALITY_REGRESSION";
-    context["failure_suggestion"] = "Handle this on current main through the bounded QA-FIX/main-fix path or stop for platform diagnosis; do not reset the merged story to pending or clear its PR metadata.";
+    context["failure_suggestion"] = "Retry the original story on current main with a fresh branch; do not reopen the already merged PR branch.";
     context["post_merge_quality_regression_story_id"] = retryStory.story_id;
     context["post_merge_quality_regression_pr_url"] = retryStory.pr_url;
+    delete context["story_branch"];
     await updateRunContext(step.run_id, context);
-    await failStepWithOutput(step.id, reason);
-    await failRun(step.run_id, true);
-    scheduleRunCronTeardown(step.run_id);
+    await pgBegin(async (sql) => {
+      await sql.unsafe(
+        "UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, retry_count = $1, output = $2, pr_url = NULL, story_branch = NULL, merge_status = NULL, updated_at = $3 WHERE id = $4",
+        [newRetry, mergedRetryFailure, now(), retryStory.id],
+      );
+      await sql.unsafe(
+        "UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = $1 WHERE id = $2",
+        [now(), loopStep.id],
+      );
+      await sql.unsafe(
+        "UPDATE steps SET status = 'waiting', retry_count = 0, current_story_id = NULL, updated_at = $1 WHERE run_id = $2 AND step_index > $3",
+        [now(), step.run_id, loopStep.step_index],
+      );
+    });
+    await recordStepTransition(loopStep.id, step.run_id, loopStep.status, "pending", undefined, "qualityFailure:routeMergedStoryMainRepair", { storyId: retryStory.story_id, fromStep: step.step_id });
+    await recordStepTransition(step.id, step.run_id, "running", "waiting", step.agent_id, "qualityFailure:routeMergedStoryMainRepair", { storyId: retryStory.story_id });
+    try {
+      await pgRun(
+        "UPDATE claim_log SET outcome = 'completed', duration_ms = EXTRACT(EPOCH FROM NOW() - claimed_at::timestamptz) * 1000, diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND story_id IS NULL AND outcome IS NULL",
+        [`post-merge quality failure routed to original story ${retryStory.story_id} on current main`, step.run_id, step.step_id],
+      );
+    } catch (e) {
+      logger.warn(`[claim-log] Failed to close routed post-merge quality claim: ${String(e)}`, { runId: step.run_id });
+    }
     const wfId = await _getWorkflowId(step.run_id);
-    emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, storyId: retryStory.story_id, detail: reason.slice(0, 500) });
-    emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: "POST_MERGE_QUALITY_REGRESSION" });
-    logger.error(`[quality-router] Refusing to retry merged story ${retryStory.story_id} after ${step.step_id} failure`, { runId: step.run_id });
+    emitEvent({ ts: now(), event: "story.retry", runId: step.run_id, workflowId: wfId, stepId: "implement", storyId: retryStory.story_id, detail: `Post-merge downstream ${step.step_id} failure routed to current-main story retry` });
+    emitEvent({ ts: now(), event: "step.pending", runId: step.run_id, workflowId: wfId, stepId: "implement", detail: `Post-merge quality failure routed to original story ${retryStory.story_id} on current main` });
+    logger.warn(`[quality-router] Routed post-merge ${step.step_id} failure back to original story ${retryStory.story_id} on current main`, { runId: step.run_id });
     return true;
   }
+
+  if (retryStory.story_branch) context["story_branch"] = retryStory.story_branch;
 
   if (retryStory.status === "pending" || retryStory.status === "running") {
     await updateRunContext(step.run_id, context);

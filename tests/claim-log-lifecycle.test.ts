@@ -427,7 +427,7 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(helperSource, /quality failure already routed to original story/);
   });
 
-  it("refuses to reopen merged story PRs for post-merge quality regressions", () => {
+  it("routes post-merge quality regressions to current-main story retry without reopening the merged branch", () => {
     const source = stepOpsSource();
     const start = source.indexOf("async function routeOriginalStoryQualityFailureToImplement(");
     const end = source.indexOf("// Predicted screen file helpers", start);
@@ -438,14 +438,35 @@ describe("single-step claim_log lifecycle", () => {
     const prSelect = helperSource.indexOf("story_branch, pr_url FROM stories");
     const mergedGuard = helperSource.indexOf('retryStory.pr_url && getPRState(retryStory.pr_url) === "MERGED"', prSelect);
     const postMergeCategory = helperSource.indexOf("POST_MERGE_QUALITY_REGRESSION", mergedGuard);
-    const storyReset = helperSource.indexOf("UPDATE stories SET status = 'pending'", mergedGuard);
+    const clearBranch = helperSource.indexOf("story_branch = NULL", mergedGuard);
+    const routeTransition = helperSource.indexOf("qualityFailure:routeMergedStoryMainRepair", mergedGuard);
 
     assert.ok(prSelect >= 0, "original story router must read pr_url");
     assert.ok(mergedGuard > prSelect, "merged PR guard must run after loading story metadata");
     assert.ok(postMergeCategory > mergedGuard, "merged PR guard must classify post-merge quality regression");
-    assert.ok(storyReset > postMergeCategory, "story reset may only appear after the merged PR guard");
-    assert.match(helperSource, /must not reopen or recode the original story branch/);
-    assert.match(helperSource, /do not reset the merged story to pending or clear its PR metadata/);
+    assert.ok(clearBranch > postMergeCategory, "merged PR retry must clear stale branch metadata before rerunning implement");
+    assert.ok(routeTransition > clearBranch, "merged PR retry must route through implement instead of terminal failure");
+    assert.match(helperSource, /retry on current main with a fresh story branch instead of reopening the merged branch/);
+    assert.match(helperSource, /post-merge quality failure routed to original story/);
+  });
+
+  it("resolves step-level QA failures to an existing story when current_story_id is empty", () => {
+    const source = stepOpsSource();
+    const start = source.indexOf("async function resolveQualityFailureStoryId(");
+    const end = source.indexOf("export async function routeQualityFailureToImplement(", start);
+    assert.notEqual(start, -1, "resolveQualityFailureStoryId source not found");
+    assert.notEqual(end, -1, "resolveQualityFailureStoryId end marker not found");
+    const helperSource = source.slice(start, end);
+    const routeStart = source.indexOf("export async function routeQualityFailureToImplement(");
+    const routeEnd = source.indexOf("async function routeOriginalStoryQualityFailureToImplement(", routeStart);
+    const routeSource = source.slice(routeStart, routeEnd);
+
+    assert.match(helperSource, /current_story_id/);
+    assert.match(helperSource, /failure\.match\(\/\\b\(\?:US\|QA-FIX\)-\\d\{3\}\\b\/g\)/);
+    assert.match(helperSource, /ORDER BY story_index DESC LIMIT 1/);
+    assert.match(routeSource, /const qualityRouteStoryId = await resolveQualityFailureStoryId/);
+    assert.match(routeSource, /currentStoryId: qualityRouteStoryId/);
+    assert.match(routeSource, /qualityRouteStoryId,\s*\n\s*failure/);
   });
 
   it("enforces active story id uniqueness at the database boundary", () => {

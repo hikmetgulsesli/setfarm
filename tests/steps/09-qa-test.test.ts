@@ -83,6 +83,19 @@ describe("09-qa-test step module", () => {
     assert.match(sourcePreclaim, /qa-smoke-prebuild/);
   });
 
+  it("QA preclaim self-heals a missing Playwright browser cache before retrying smoke", () => {
+    const smokeStart = sourcePreclaim.indexOf("let output = \"\";");
+    const catchBlock = sourcePreclaim.slice(sourcePreclaim.indexOf("} catch (err) {", smokeStart));
+    assert.match(sourcePreclaim, /isMissingPlaywrightBrowserFailure/);
+    assert.match(sourcePreclaim, /ensurePlaywrightChromiumInstalled/);
+    assert.match(sourcePreclaim, /qa-playwright-browser-install/);
+    assert.ok(
+      catchBlock.indexOf("ensurePlaywrightChromiumInstalled") < catchBlock.indexOf("output = runSmoke();"),
+      "missing browser install must happen before the smoke retry",
+    );
+    assert.match(catchBlock, /failed = false/);
+  });
+
   it("QA prompt overrides external browser examples with lifecycle URLs", () => {
     assert.match(sourcePrompt, /Setfarm\s+lifecycle\s+is\s+authoritative/i);
     assert.match(sourcePrompt, /DEV_SERVER_URL/);
