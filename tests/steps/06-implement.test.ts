@@ -1234,6 +1234,40 @@ describe("06-implement step module", () => {
     }
   });
 
+  it("scope enforcement counts untracked declared static data files as real work", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-scope-untracked-data-work-"));
+    const runId = "scope-untracked-data-run";
+    const storyDbId = "scope-untracked-data-story-" + Date.now();
+    try {
+      fs.writeFileSync(path.join(tmp, "index.html"), "<main>baseline</main>\n");
+      git(tmp, ["init", "-b", "main"]);
+      git(tmp, ["add", "."]);
+      git(tmp, ["commit", "-m", "base"]);
+      fs.mkdirSync(path.join(tmp, "assets/data"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "assets/data/pulsebadge-mini.json"), "{\"records\":[]}\n");
+
+      await pgRun(
+        `INSERT INTO runs (id, workflow_id, task, status, created_at, updated_at)
+         VALUES ($1, 'feature-dev', 'untracked static data work test', 'running', NOW(), NOW())
+         ON CONFLICT (id) DO NOTHING`,
+        [runId],
+      );
+      await pgRun(
+        `INSERT INTO stories (id, run_id, story_index, story_id, title, status, scope_files, created_at, updated_at)
+         VALUES ($1, $2, 0, 'US-001', 'Untracked Static Data Story', 'running', $3, NOW(), NOW())`,
+        [storyDbId, runId, JSON.stringify(["assets/data/pulsebadge-mini.json"])],
+      );
+
+      const result = await checkScopeEnforcement("US-001", storyDbId, "Untracked Static Data Story", tmp, "main", 0, 3);
+
+      assert.equal(result.passed, true, result.reason);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+      await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);
+      await pgRun("DELETE FROM runs WHERE id = $1", [runId]);
+    }
+  });
+
   it("scope enforcement blocks untracked out-of-scope tool writes", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-scope-untracked-bleed-"));
     const runId = "scope-untracked-bleed-run";

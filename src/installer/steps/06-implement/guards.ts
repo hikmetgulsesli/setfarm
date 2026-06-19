@@ -66,10 +66,16 @@ export interface ScopeCheckResult {
 }
 
 const SCOPE_EXTS = /\.(tsx?|jsx?|vue|svelte|css|scss|html)$/i;
+const SCOPE_DATA_EXTS = /\.(json)$/i;
 const SCOPE_IGNORE = /^(node_modules\/|dist\/|\.next\/|build\/|coverage\/|stitch\/|references\/|DESIGN\.md|PROJECT_MEMORY\.md|\.gitignore|package(-lock)?\.json|tsconfig|vite\.config|tailwind\.config|postcss\.config|eslint\.config|README|index\.html$)/;
 
 function isImplicitSharedSourceFile(f: string): boolean {
   return isImplicitStoryScopeFile(f);
+}
+
+function isDeclaredDataSourceFile(file: string, declaredScopeSet: Set<string>): boolean {
+  if (!declaredScopeSet.has(file)) return false;
+  return /^(assets\/data\/|src\/data\/|public\/data\/)/.test(file) && SCOPE_DATA_EXTS.test(file);
 }
 
 export function getOutOfScopeStoryFiles(sourceFiles: string[], declaredScopeFiles: string[]): string[] {
@@ -1905,6 +1911,7 @@ export async function checkScopeEnforcement(
   const declaredScopeSet = new Set(declaredScopeFiles);
   const sourceFiles = allTouched.filter(f => {
     if (f === "index.html" && declaredScopeSet.has("index.html")) return true;
+    if (isDeclaredDataSourceFile(f, declaredScopeSet)) return true;
     return SCOPE_EXTS.test(f) && !SCOPE_IGNORE.test(f);
   });
   const forbiddenArtifacts = allTouched.filter(f => {
