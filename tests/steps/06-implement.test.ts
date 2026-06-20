@@ -2337,6 +2337,50 @@ describe("06-implement step module", () => {
     }
   });
 
+  it("allows dynamic data-action-id equivalents after DOM security refactors", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-generated-screen-semantic-equivalent-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { screenId: "gameplay", title: "Gameplay", componentName: "GameplayScreen", file: "src/screens/GameplayScreen.tsx" },
+      ]));
+      fs.writeFileSync(path.join(tmp, "src/screens/GameplayScreen.tsx"), "export function GameplayScreen() { return <div>Gameplay</div>; }\n");
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "export function renderCycleControl(escapedId: string) {",
+        "  return '<button type=\"button\" data-action-id=\"cycle-' + escapedId + '\">Cycle</button>';",
+        "}",
+        "",
+      ].join("\n"));
+      execFileSync("git", ["init"], { cwd: tmp, stdio: "ignore" });
+      execFileSync("git", ["config", "user.email", "setfarm@example.test"], { cwd: tmp, stdio: "ignore" });
+      execFileSync("git", ["config", "user.name", "Setfarm Test"], { cwd: tmp, stdio: "ignore" });
+      execFileSync("git", ["add", "."], { cwd: tmp, stdio: "ignore" });
+      execFileSync("git", ["commit", "-m", "prior dynamic action id integration"], { cwd: tmp, stdio: "ignore" });
+
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "export function renderCycleControl(escapedId: string) {",
+        "  const button = document.createElement('button');",
+        "  button.type = 'button';",
+        "  button.setAttribute('data-action-id', 'cycle-' + escapedId);",
+        "  button.textContent = 'Cycle';",
+        "  return button;",
+        "}",
+        "",
+      ].join("\n"));
+
+      const issues = findGeneratedScreenRegressionIssues(
+        tmp,
+        [[{ screenId: "gameplay", name: "Gameplay", type: "game" }]],
+        "",
+        ["src/App.tsx"],
+      );
+
+      assert.equal(issues.some((issue) => issue.includes("APP_INTEGRATION_SEMANTIC_REGRESSION") && issue.includes("data-action-id=cycle-")), false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("blocks Setfarm platform helper contamination in generated app source", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-platform-helper-contamination-"));
     try {

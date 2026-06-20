@@ -1070,7 +1070,39 @@ function sourceHasSemanticIntegrationToken(source: string, token: string): boole
   const [name, value] = token.split("=", 2);
   if (!name || !value) return false;
   const valuePattern = escapeRegExp(value);
-  return new RegExp(`\\b${escapeRegExp(name)}\\s*=\\s*(?:"${valuePattern}"|'${valuePattern}'|\\{\\s*["']${valuePattern}["']\\s*\\})`).test(source);
+  if (new RegExp(`\\b${escapeRegExp(name)}\\s*=\\s*(?:"${valuePattern}"|'${valuePattern}'|\\{\\s*["']${valuePattern}["']\\s*\\})`).test(source)) {
+    return true;
+  }
+  return sourceHasEquivalentSemanticIntegrationToken(source, name, value);
+}
+
+function sourceHasEquivalentSemanticIntegrationToken(source: string, name: string, value: string): boolean {
+  if (name !== "data-action-id") return false;
+  const fragments = semanticTokenValueFragments(value);
+  if (fragments.length === 0) return false;
+
+  const setAttributeRe = /\.setAttribute\s*\(\s*["']data-action-id["']\s*,\s*([^)]+)\)/g;
+  const datasetRe = /\.dataset\.actionId\s*=\s*([^;\n]+)/g;
+  for (const re of [setAttributeRe, datasetRe]) {
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(source)) !== null) {
+      const expression = match[1] ?? "";
+      if (fragments.every((fragment) => expression.includes(fragment))) return true;
+    }
+  }
+  return false;
+}
+
+function semanticTokenValueFragments(value: string): string[] {
+  const fragments = new Set<string>();
+  const directLiterals = value.match(/[^'"${}+`\\\s][^'"${}+`\\]*/g) ?? [];
+  for (const literal of directLiterals) {
+    const fragment = literal.trim();
+    if (fragment.length >= 2 && !/^[A-Za-z_$][\w$]*$/.test(fragment)) {
+      fragments.add(fragment);
+    }
+  }
+  return [...fragments];
 }
 
 function findAppIntegrationBehaviorRegressionIssues(
