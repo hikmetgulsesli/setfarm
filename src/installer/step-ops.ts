@@ -615,6 +615,36 @@ function parseDeclaredScopeFiles(raw: string | null | undefined): string[] {
     .filter(Boolean);
 }
 
+function extractQualityFailureScopeFiles(failure: string): string[] {
+  const files = new Set<string>();
+  const text = String(failure || "");
+  const candidateRe = /(?:^|[\s`'"])((?:\.\/)?(?:(?:src|assets|public|pages|app|components|lib|styles|css|scripts|test|tests)\/[A-Za-z0-9._/@+\-]+|[A-Za-z0-9._@+\-]+\.html))(?::\d+)?(?=[\s`'"),.;:—-]|$)/gm;
+  let match: RegExpExecArray | null;
+  while ((match = candidateRe.exec(text))) {
+    const file = normalizeScopeFile(match[1] || "")
+      .replace(/:\d+$/, "")
+      .replace(/[),.;]+$/, "");
+    if (!file || file.includes("://")) continue;
+    if (/^(node_modules|dist|build|coverage|\.next)\//.test(file)) continue;
+    if (!/\.(?:html|css|scss|js|jsx|mjs|cjs|ts|tsx|json)$/i.test(file)) continue;
+    files.add(file);
+  }
+  return [...files];
+}
+
+function mergeScopeFilesJson(existingRaw: string | null | undefined, extraFiles: string[]): { json: string; files: string[]; added: string[] } {
+  const existing = parseDeclaredScopeFiles(existingRaw);
+  const seen = new Set(existing);
+  const added: string[] = [];
+  for (const file of extraFiles.map(normalizeScopeFile).filter(Boolean)) {
+    if (seen.has(file)) continue;
+    seen.add(file);
+    added.push(file);
+  }
+  const files = [...seen];
+  return { json: JSON.stringify(files), files, added };
+}
+
 function isPlatformInternalCommitPath(file: string): boolean {
   return file === ".story-scope-files"
     || file === ".story-branch"
@@ -2099,8 +2129,8 @@ async function routeOriginalStoryQualityFailureToImplement(
   const normalizedStoryId = String(storyId || "").trim();
   if (!normalizedStoryId) return false;
 
-  const retryStory = await pgGet<{ id: string; story_id: string; title: string | null; status: string; retry_count: number; max_retries: number; story_branch: string | null; pr_url: string | null }>(
-    "SELECT id, story_id, title, status, retry_count, max_retries, story_branch, pr_url FROM stories WHERE run_id = $1 AND story_id = $2 AND status IN ('pending','running','done','verified','skipped') LIMIT 1",
+  const retryStory = await pgGet<{ id: string; story_id: string; title: string | null; status: string; retry_count: number; max_retries: number; story_branch: string | null; pr_url: string | null; scope_files: string | null }>(
+    "SELECT id, story_id, title, status, retry_count, max_retries, story_branch, pr_url, scope_files FROM stories WHERE run_id = $1 AND story_id = $2 AND status IN ('pending','running','done','verified','skipped') LIMIT 1",
     [step.run_id, normalizedStoryId],
   );
   if (!retryStory) return false;
@@ -2125,6 +2155,15 @@ async function routeOriginalStoryQualityFailureToImplement(
   context["current_story_id"] = retryStory.story_id;
   context["current_story_title"] = retryStory.title || "";
   delete context["status"];
+
+  const repairScope = mergeScopeFilesJson(retryStory.scope_files, extractQualityFailureScopeFiles(failure));
+  if (repairScope.files.length > 0) {
+    context["story_scope_files"] = repairScope.files.join(", ");
+  }
+  if (repairScope.added.length > 0) {
+    context["failure_suggestion"] =
+      `Retry the original implementation story with downstream repair scope expanded to: ${repairScope.added.join(", ")}. Do not create a QA-FIX story.`;
+  }
 
   if (retryStory.pr_url && getPRState(retryStory.pr_url) === "MERGED") {
     if (newRetry > (retryStory.max_retries || 0)) {
@@ -2171,8 +2210,8 @@ async function routeOriginalStoryQualityFailureToImplement(
     await updateRunContext(step.run_id, context);
     await pgBegin(async (sql) => {
       await sql.unsafe(
-        "UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, retry_count = $1, output = $2, pr_url = NULL, story_branch = NULL, merge_status = NULL, updated_at = $3 WHERE id = $4",
-        [newRetry, mergedRetryFailure, now(), retryStory.id],
+        "UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, retry_count = $1, output = $2, pr_url = NULL, story_branch = NULL, merge_status = NULL, scope_files = $3, resolved_scope_files = $3, updated_at = $4 WHERE id = $5",
+        [newRetry, mergedRetryFailure, repairScope.json, now(), retryStory.id],
       );
       await sql.unsafe(
         "UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = $1 WHERE id = $2",
@@ -2247,8 +2286,8 @@ async function routeOriginalStoryQualityFailureToImplement(
   await updateRunContext(step.run_id, context);
   await pgBegin(async (sql) => {
     await sql.unsafe(
-      "UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, retry_count = $1, output = $2, pr_url = NULL, merge_status = NULL, updated_at = $3 WHERE id = $4",
-      [newRetry, retryFailure, now(), retryStory.id],
+      "UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, retry_count = $1, output = $2, pr_url = NULL, merge_status = NULL, scope_files = $3, resolved_scope_files = $3, updated_at = $4 WHERE id = $5",
+      [newRetry, retryFailure, repairScope.json, now(), retryStory.id],
     );
     await sql.unsafe(
       "UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = $1 WHERE id = $2",

@@ -444,11 +444,13 @@ describe("single-step claim_log lifecycle", () => {
     assert.notEqual(end, -1, "routeOriginalStoryQualityFailureToImplement end marker not found");
     const helperSource = source.slice(start, end);
 
-    const prSelect = helperSource.indexOf("story_branch, pr_url FROM stories");
+    const prSelect = helperSource.indexOf("story_branch, pr_url, scope_files FROM stories");
     const mergedGuard = helperSource.indexOf('retryStory.pr_url && getPRState(retryStory.pr_url) === "MERGED"', prSelect);
     const postMergeCategory = helperSource.indexOf("POST_MERGE_QUALITY_REGRESSION", mergedGuard);
     const exhaustedCategory = helperSource.indexOf("POST_MERGE_QUALITY_REGRESSION_RETRY_EXHAUSTED", mergedGuard);
     const clearBranch = helperSource.indexOf("story_branch = NULL", mergedGuard);
+    const repairScope = helperSource.indexOf("extractQualityFailureScopeFiles(failure)");
+    const scopePersist = helperSource.indexOf("scope_files = $3, resolved_scope_files = $3", mergedGuard);
     const routeTransition = helperSource.indexOf("qualityFailure:routeMergedStoryMainRepair", mergedGuard);
 
     assert.ok(prSelect >= 0, "original story router must read pr_url");
@@ -456,10 +458,26 @@ describe("single-step claim_log lifecycle", () => {
     assert.ok(postMergeCategory > mergedGuard, "merged PR guard must classify post-merge quality regression");
     assert.ok(exhaustedCategory > mergedGuard, "merged PR retry exhaustion must have a distinct terminal category");
     assert.ok(clearBranch > postMergeCategory, "merged PR retry must clear stale branch metadata before rerunning implement");
+    assert.ok(repairScope > prSelect, "original story retry must derive repair scope from downstream quality findings");
+    assert.ok(scopePersist > repairScope, "merged PR retry must persist expanded repair scope before rerunning implement");
     assert.ok(routeTransition > clearBranch, "merged PR retry must route through implement instead of terminal failure");
     assert.match(helperSource, /retry on current main with a fresh story branch instead of reopening the merged branch/);
     assert.match(helperSource, /retryStory\.max_retries \|\| retryStory\.retry_count \|\| 0/);
     assert.match(helperSource, /post-merge quality failure routed to original story/);
+  });
+
+  it("extracts downstream quality file paths for story repair scope expansion", () => {
+    const source = stepOpsSource();
+    const start = source.indexOf("function extractQualityFailureScopeFiles(");
+    const end = source.indexOf("function mergeScopeFilesJson(", start);
+    assert.notEqual(start, -1, "extractQualityFailureScopeFiles helper not found");
+    assert.notEqual(end, -1, "extractQualityFailureScopeFiles helper end not found");
+    const helperSource = source.slice(start, end);
+
+    assert.match(helperSource, /assets\|public/);
+    assert.match(helperSource, /\.html/);
+    assert.match(helperSource, /node_modules\|dist\|build\|coverage/);
+    assert.match(helperSource, /normalizeScopeFile/);
   });
 
   it("resolves step-level QA failures to an existing story when current_story_id is empty", () => {
