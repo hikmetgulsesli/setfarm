@@ -82,7 +82,7 @@ export function buildStackMemory(input: StackMemoryInput = {}): StackMemoryResul
     }
   }
 
-  const runNotes = String(input.runNotes || "").trim();
+  const runNotes = cleanRunNotes(input.runNotes || "");
   if (runNotes) {
     sections.push(["## Run Memory", truncate(runNotes, 2200)].join("\n"));
   }
@@ -119,6 +119,20 @@ function readMemoryFile(filePath: string): string {
   } catch {
     return "";
   }
+}
+
+function cleanRunNotes(value: string): string {
+  return String(value || "")
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return true;
+      return !/^\((?:no supervisor memory yet|no project memory yet|no supervisor state|no supervisor interventions|no supervisor visual qa report|no supervisor checklist|no supervisor run metadata)\)$/i.test(trimmed);
+    })
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function truncate(value: string, maxChars: number): string {

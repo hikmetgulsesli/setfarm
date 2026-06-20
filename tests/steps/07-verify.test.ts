@@ -36,6 +36,10 @@ describe("07-verify step module", () => {
     await verifyModule.injectContext({
       runId: "r1", stepId: "verify", task: "t", context,
     });
+    assert.match(context.setfarm_memory || "", /# Setfarm Memory[\s\S]*## Global Memory/);
+    assert.equal(context.stack_memory_files, "memory/global.md");
+    delete context.setfarm_memory;
+    delete context.stack_memory_files;
     assert.deepEqual(context, {
       foo: "bar",
       supervisor_memory: "(no supervisor memory yet)",

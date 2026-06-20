@@ -83,3 +83,15 @@ test("stack memory truncates run notes without dropping selected files", () => {
   assert.equal(result.files.includes("memory/stacks/node-cli.md"), true);
   assert.match(result.text, /stack memory truncated/);
 });
+
+test("stack memory ignores empty placeholder run notes", () => {
+  const result = buildStackMemory({
+    repoRoot,
+    stackPackId: "static-html-site",
+    runNotes: "(no supervisor memory yet)\n\n(no supervisor state)",
+    maxChars: 20000,
+  });
+
+  assert.doesNotMatch(result.text, /## Run Memory/);
+  assert.doesNotMatch(result.text, /no supervisor memory yet/);
+});
