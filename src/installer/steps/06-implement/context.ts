@@ -21,6 +21,7 @@ import { IMPLICIT_STORY_SCOPE_FILES } from "../../story-scope.js";
 import { applyStackContractContext } from "../../stack-contract/context.js";
 import { applyLibraryPackContext } from "../../library-packs/context.js";
 import { assembleImplementContext } from "../../setup-handoff.js";
+import { buildStackMemory } from "../../stack-memory.js";
 import { applyScopedRetryPatchForStory, discardDirtyRetryWorktreeState, latestRetryPatchForStory, latestRetryStashPatchForStory } from "../../worktree-ops.js";
 
 const STITCH_HTML_EXCERPT_CHARS = 2500;
@@ -65,6 +66,7 @@ const OPTIONAL_TEMPLATE_VARS = [
   "stack_prompt", "stack_setup_contract", "stack_verification_contract",
   "library_pack_ids", "library_packs", "library_prompt",
   "supervisor_memory",
+  "setfarm_memory", "stack_memory_files",
 ];
 
 function normalizedStatusFromStepOutput(output: string): string {
@@ -403,6 +405,18 @@ export async function injectStoryContext(
         ? priorContextFailureSuggestion
       : classified.suggestion;
   }
+
+  const stackMemory = buildStackMemory({
+    stackPackId: context["stack_pack_id"] || context["detected_stack"],
+    failureCategory: context["failure_category"],
+    runNotes: mergeRetryFailureTexts([
+      context["supervisor_memory"],
+      context["verify_feedback"],
+      context["previous_failure"],
+    ]),
+  });
+  context["setfarm_memory"] = stackMemory.text;
+  context["stack_memory_files"] = stackMemory.files.join(", ");
 
   // Default optional template vars
   for (const v of OPTIONAL_TEMPLATE_VARS) {

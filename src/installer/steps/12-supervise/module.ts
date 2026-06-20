@@ -37,6 +37,8 @@ function buildPrompt(ctx: PromptContext): string {
     DESIGN_MD_EXCERPT: c["design_md_excerpt"] || "(no DESIGN.md)",
     UI_BEHAVIOR_CONTRACT: c["ui_behavior_contract"] || "",
     SUPERVISOR_MEMORY: c["supervisor_memory"] || "(no supervisor memory yet)",
+    SETFARM_MEMORY: c["setfarm_memory"] || "(no Setfarm stack memory resolved)",
+    STACK_MEMORY_FILES: c["stack_memory_files"] || "(none)",
     SUPERVISOR_RUN: c["supervisor_run"] || "(no supervisor run metadata)",
     SUPERVISOR_STATE: c["supervisor_state"] || "(no supervisor state)",
     SUPERVISOR_CHECKLIST: c["supervisor_checklist"] || "(no supervisor checklist)",

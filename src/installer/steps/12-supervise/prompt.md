@@ -52,6 +52,12 @@ PREVIOUS FAILURE:
 
 {{SUPERVISOR_MEMORY}}
 
+## Setfarm Stack Memory
+
+Resolved files: {{STACK_MEMORY_FILES}}
+
+{{SETFARM_MEMORY}}
+
 ## Supervisor Runtime Ledger
 
 SUPERVISOR_RUN:

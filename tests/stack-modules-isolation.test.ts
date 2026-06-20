@@ -67,3 +67,20 @@ test("QA and final preclaims use stack execution plans instead of generic browse
     assert.doesNotMatch(source, /isBrowserRuntimeStack/);
   }
 });
+
+test("agent prompt surfaces compact stack memory without broad stack leakage", () => {
+  const implementPrompt = fs.readFileSync(path.join(process.cwd(), "src/installer/steps/06-implement/prompt.md"), "utf-8");
+  const verifyPrompt = fs.readFileSync(path.join(process.cwd(), "src/installer/steps/07-verify/prompt.md"), "utf-8");
+  const supervisePrompt = fs.readFileSync(path.join(process.cwd(), "src/installer/steps/12-supervise/prompt.md"), "utf-8");
+  const constants = fs.readFileSync(path.join(process.cwd(), "src/installer/constants.ts"), "utf-8");
+
+  for (const prompt of [implementPrompt, verifyPrompt, supervisePrompt]) {
+    assert.match(prompt, /\{\{SETFARM_MEMORY\}\}/);
+    assert.match(prompt, /\{\{STACK_MEMORY_FILES\}\}/);
+    assert.doesNotMatch(prompt, /memory\/stacks\/browser-game-canvas\.md/);
+    assert.doesNotMatch(prompt, /memory\/stacks\/nextjs-web-app\.md/);
+  }
+
+  assert.match(constants, /"setfarm_memory"/);
+  assert.match(constants, /"stack_memory_files"/);
+});

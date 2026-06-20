@@ -26,6 +26,13 @@ REPO: {{REPO}}
 - `{{PR_MERGE_STATE_STATUS}}` — CLEAN/DIRTY/BLOCKED/UNKNOWN
 - `{{PLAYWRIGHT_REPORT}}` — runtime/visual smoke report
 - `{{SUPERVISOR_MEMORY}}` — durable manager decisions from earlier phases
+- `{{SETFARM_MEMORY}}` — compact global, stack, and failure memory resolved for this claim
+
+## Setfarm Stack Memory
+
+Resolved files: {{STACK_MEMORY_FILES}}
+
+{{SETFARM_MEMORY}}
 
 ## Role Boundary
 

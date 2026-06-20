@@ -19,6 +19,11 @@ This is the persistent product-manager memory for this run. Treat blockers and p
 
 {{SUPERVISOR_MEMORY}}
 
+## Setfarm Stack Memory
+Resolved files: {{STACK_MEMORY_FILES}}
+
+{{SETFARM_MEMORY}}
+
 ## Previous Failure / Retry Feedback
 Failure category: {{FAILURE_CATEGORY}}
 Suggested response: {{FAILURE_SUGGESTION}}

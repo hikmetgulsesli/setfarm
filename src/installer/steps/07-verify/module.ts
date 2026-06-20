@@ -37,6 +37,8 @@ function buildPrompt(ctx: PromptContext): string {
     PR_MERGE_STATE_STATUS: c["pr_merge_state_status"] || "",
     PLAYWRIGHT_REPORT: c["playwright_report"] || "",
     SUPERVISOR_MEMORY: c["supervisor_memory"] || "(no supervisor memory yet)",
+    SETFARM_MEMORY: c["setfarm_memory"] || "(no Setfarm stack memory resolved)",
+    STACK_MEMORY_FILES: c["stack_memory_files"] || "(none)",
   });
   return `${resolved}\n\n---\n\n# Rules\n\n${rulesBody}`;
 }

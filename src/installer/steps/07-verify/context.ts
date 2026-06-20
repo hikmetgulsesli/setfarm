@@ -3,6 +3,7 @@ import { fetchPrState, formatPrCommentsForAgent } from "./pr-comments.js";
 import { runSupervisorVisualQa, formatSupervisorVisualReport } from "../../supervisor/visual-qa.js";
 import { logger } from "../../../lib/logger.js";
 import { readSupervisorMemory } from "../../product-supervisor.js";
+import { buildStackMemory } from "../../stack-memory.js";
 
 // Verify context injection lives mostly in step-ops.ts (injectVerifyContext) because
 // it depends on the verify_each loop mechanism (autoVerifyDoneStories,
@@ -61,4 +62,16 @@ export async function injectContext(ctx: ClaimContext): Promise<void> {
       logger.warn(`[verify] Supervisor visual QA errored (non-fatal): ${String(e).slice(0, 160)}`, { runId: ctx.runId });
     }
   }
+
+  const stackMemory = buildStackMemory({
+    stackPackId: ctx.context["stack_pack_id"] || ctx.context["detected_stack"],
+    failureCategory: ctx.context["failure_category"],
+    runNotes: [
+      ctx.context["supervisor_memory"],
+      ctx.context["pr_comments"],
+      ctx.context["playwright_report"],
+    ].filter(Boolean).join("\n\n"),
+  });
+  ctx.context["setfarm_memory"] = stackMemory.text;
+  ctx.context["stack_memory_files"] = stackMemory.files.join(", ");
 }

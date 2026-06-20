@@ -13,6 +13,7 @@ import {
   readProjectMemory,
 } from "../../context-ops.js";
 import { readSupervisorMemory } from "../../product-supervisor.js";
+import { buildStackMemory } from "../../stack-memory.js";
 import {
   supervisorChecklistPath,
   supervisorInterventionsPath,
@@ -69,6 +70,16 @@ export async function injectContext(ctx: ClaimContext): Promise<void> {
 
   if (!repo || !fs.existsSync(repo)) {
     ctx.context["supervisor_git_summary"] = "(repo not available)";
+    const stackMemory = buildStackMemory({
+      stackPackId: ctx.context["stack_pack_id"] || ctx.context["detected_stack"],
+      failureCategory: ctx.context["failure_category"],
+      runNotes: [
+        ctx.context["supervisor_memory"],
+        ctx.context["previous_failure"],
+      ].filter(Boolean).join("\n\n"),
+    });
+    ctx.context["setfarm_memory"] = stackMemory.text;
+    ctx.context["stack_memory_files"] = stackMemory.files.join(", ");
     return;
   }
 
@@ -85,4 +96,18 @@ export async function injectContext(ctx: ClaimContext): Promise<void> {
   ctx.context["supervisor_checklist"] = readIfExists(supervisorChecklistPath(repo, ctx.runId), 12000) || "(no supervisor checklist)";
   ctx.context["supervisor_interventions"] = readIfExists(supervisorInterventionsPath(repo, ctx.runId), 12000) || "(no supervisor interventions)";
   ctx.context["supervisor_visual_report"] = readIfExists(supervisorVisualReportPath(repo, ctx.runId), 12000) || "(no supervisor visual QA report)";
+
+  const stackMemory = buildStackMemory({
+    stackPackId: ctx.context["stack_pack_id"] || ctx.context["detected_stack"],
+    failureCategory: ctx.context["failure_category"],
+    runNotes: [
+      ctx.context["supervisor_memory"],
+      ctx.context["previous_failure"],
+      ctx.context["supervisor_state"],
+      ctx.context["supervisor_interventions"],
+      ctx.context["supervisor_visual_report"],
+    ].filter(Boolean).join("\n\n"),
+  });
+  ctx.context["setfarm_memory"] = stackMemory.text;
+  ctx.context["stack_memory_files"] = stackMemory.files.join(", ");
 }
