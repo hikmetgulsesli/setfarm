@@ -2,6 +2,14 @@
 
 This repository now keeps agent-facing operational notes in English only.
 
+## Unreleased
+
+- Added QA and final-test browser smoke self-healing for missing Playwright Chromium caches, so browser tooling gaps retry after installing the required runtime instead of repeatedly failing as product evidence.
+- Routed step-level QA quality failures with empty `current_story_id` back to an existing implementation story, allowing supervisor/story recovery to handle generated product issues instead of terminal platform failure.
+- Retried post-merge quality regressions on current main with a fresh story branch instead of reopening already merged story branches.
+- Capped post-merge repair exhaustion reporting so failed stories do not display retry counts above their configured budget, and emit a distinct `POST_MERGE_QUALITY_REGRESSION_RETRY_EXHAUSTED` terminal category.
+- Validated the recovery changes against live run #1076; the platform route worked, but the generated product exhausted US-003 retries after repeated QA issues and was intentionally left failed.
+
 ## 2.3.79 - 2026-05-18
 
 - Generated valid PNG previews for local fallback design screens so the design contract remains complete when Stitch is unavailable.
