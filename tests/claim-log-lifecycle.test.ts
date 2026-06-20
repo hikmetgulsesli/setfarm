@@ -178,6 +178,15 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(fullSource, /LIMIT 1`, \[agentId, callerGatewayAgent \?\? null, PR_REVIEW_DELAY_MS\]/);
   });
 
+  it("requeues orphaned running story loops when pending stories remain", () => {
+    const source = stepAdvanceSource();
+    assert.match(source, /status, step_id, current_story_id FROM steps/);
+    assert.match(source, /orphanedRunningLoop/);
+    assert.match(source, /SELECT id FROM claim_log WHERE run_id = \$1 AND step_id = \$2 AND outcome IS NULL LIMIT 1/);
+    assert.match(source, /UPDATE steps SET status = 'pending', current_story_id = NULL/);
+    assert.match(source, /checkLoopContinuation:orphanedRunningLoop/);
+  });
+
   it("allows supervise_each supervisor claims to bypass verify_each ordering delay", () => {
     const source = previousStepSelectionBypassSource(claimStepSelectionSource());
     assert.match(source, /"superviseEach":true/);

@@ -194,20 +194,37 @@ export async function advancePipeline(runId: string): Promise<{ advanced: boolea
 export async function checkLoopContinuation(runId: string, loopStepId: string): Promise<{ advanced: boolean; runCompleted: boolean }> {
   const pendingStory = await findStoryByStatus(runId, "pending") as { id: string } | undefined;
 
-  const loopStatus = await pgGet<{ status: string }>(
-    "SELECT status FROM steps WHERE id = $1", [loopStepId]
+  const loopStatus = await pgGet<{ status: string; step_id: string; current_story_id: string | null }>(
+    "SELECT status, step_id, current_story_id FROM steps WHERE id = $1", [loopStepId]
   );
 
   if (pendingStory) {
     if (loopStatus?.status === STEP_STATUS.FAILED) {
       return { advanced: false, runCompleted: false };
     }
-    if (loopStatus?.status !== STEP_STATUS.RUNNING) {
+
+    let orphanedRunningLoop = false;
+    if (loopStatus?.status === STEP_STATUS.RUNNING && !loopStatus.current_story_id) {
+      const orphanedOpenClaim = await pgGet<{ id: string }>(
+        "SELECT id FROM claim_log WHERE run_id = $1 AND step_id = $2 AND outcome IS NULL LIMIT 1",
+        [runId, loopStatus.step_id],
+      );
+      orphanedRunningLoop = !orphanedOpenClaim;
+    }
+
+    if (loopStatus?.status !== STEP_STATUS.RUNNING || orphanedRunningLoop) {
       await pgRun(
-        "UPDATE steps SET status = 'pending', updated_at = $1 WHERE id = $2",
+        "UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = $1 WHERE id = $2",
         [now(), loopStepId]
       );
-      await recordStepTransition(loopStepId, runId, loopStatus?.status || null, "pending", undefined, "checkLoopContinuation:moreStories");
+      await recordStepTransition(
+        loopStepId,
+        runId,
+        loopStatus?.status || null,
+        "pending",
+        undefined,
+        orphanedRunningLoop ? "checkLoopContinuation:orphanedRunningLoop" : "checkLoopContinuation:moreStories",
+      );
     }
     return { advanced: false, runCompleted: false };
   }
