@@ -175,8 +175,43 @@ export function commentLooksMechanicallySatisfied(comment: PrComment, source: st
   return false;
 }
 
+function extractQuotedHumanLabels(body: string): string[] {
+  return [...String(body || "").matchAll(/`([^`]{3,120})`/g)]
+    .map(match => String(match[1] || "").trim())
+    .filter(value =>
+      /[A-Za-z]/.test(value) &&
+      !/[\\/]/.test(value) &&
+      !/\.(?:css|html|js|jsx|json|mjs|cjs|ts|tsx)$/i.test(value) &&
+      !/^\[[\s\S]*\]$/.test(value) &&
+      !/^[A-Za-z0-9_-]{20,}$/.test(value),
+    );
+}
+
+function missingInputFieldLooksSatisfied(body: string, normalizedSource: string): boolean {
+  if (!/\bmissing\b/i.test(body) || !/\binput\s+field\b/i.test(body)) return false;
+
+  for (const label of extractQuotedHumanLabels(body)) {
+    const escaped = escapeRegExp(label).replace(/\s+/g, "\\s+");
+    const inputWithMatchingAttribute = new RegExp(
+      `<input\\b[^>]*(?:placeholder|aria-label|value|name|id)\\s*=\\s*["'][^"']*${escaped}[^"']*["'][^>]*>`,
+      "i",
+    );
+    if (inputWithMatchingAttribute.test(normalizedSource)) return true;
+
+    const matchingLabelWithInput = new RegExp(
+      `<label\\b[^>]*>[\\s\\S]{0,180}${escaped}[\\s\\S]{0,180}<input\\b`,
+      "i",
+    );
+    if (matchingLabelWithInput.test(normalizedSource)) return true;
+  }
+
+  return false;
+}
+
 function commentProseLooksMechanicallySatisfied(body: string, normalizedSource: string): boolean {
   const text = String(body || "").toLowerCase();
+
+  if (missingInputFieldLooksSatisfied(body, normalizedSource)) return true;
 
   if (
     /\bclamp\b/.test(text) &&

@@ -807,6 +807,42 @@ describe("07-verify step module", () => {
     assert.equal(commentLooksMechanicallySatisfied(focusComment, "function render() { root.innerHTML = ''; renderSurface(); }"), false);
   });
 
+  it("marks missing input field review comments as mechanically satisfied from current HTML source", () => {
+    const inputComment = {
+      id: "input-inline",
+      threadId: "PRRT_input",
+      kind: "review-comment" as const,
+      author: "reviewer",
+      body: "The `Record Editor` form is missing the `Add tag and press Enter` input field specified in the UI contract. Currently, the values array is hardcoded to `[]` in `app.js`.",
+      createdAt: "2026-06-18T08:45:48Z",
+      path: "index.html",
+      line: 81,
+      originalLine: 81,
+      threadResolved: false,
+      outdated: false,
+    };
+
+    const fixedHtml = `
+      <form id="record-editor">
+        <label>
+          Tags
+          <input
+            type="text"
+            id="draft-tags"
+            data-action-id="ACT_ADD_TAG"
+            placeholder="Add tag and press Enter"
+            aria-label="Add tag and press Enter"
+          />
+        </label>
+      </form>`;
+
+    assert.equal(commentLooksMechanicallySatisfied(inputComment, fixedHtml), true);
+    assert.equal(
+      commentLooksMechanicallySatisfied(inputComment, '<form><input type="text" placeholder="Different field" /></form>'),
+      false,
+    );
+  });
+
   it("marks defensive DOM search filter review comments as mechanically satisfied from source evidence", () => {
     const defensiveFilterComment = {
       id: "dom-filter-inline",

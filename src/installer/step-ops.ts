@@ -1539,7 +1539,8 @@ async function routeVerifyScopeFailureToImplement(
   context["failure_suggestion"] = options.suggestion || "Revert out-of-scope files from the story branch. Only modify files listed in scope_files; use local adapters instead of changing shared exported types.";
 
   if (newRetry > retryStory.max_retries) {
-    await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [newRetry, failure, now(), retryStory.id]);
+    const terminalRetry = Math.max(0, retryStory.max_retries);
+    await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [terminalRetry, failure, now(), retryStory.id]);
     await updateRunContext(verifyStep.run_id, context);
     const loopStep = await findLoopStep(verifyStep.run_id);
     if (loopStep?.id) await setStepStatus(loopStep.id, "failed");
@@ -8720,7 +8721,8 @@ async function handleVerifyEachCompletion(
 	          return { advanced: false, runCompleted: false };
 	        }
 	        // Story retries exhausted — fail everything (Wave 13 J-2: terminal flag)
-	        await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [newRetry, issues, now(), retryStory.id]);
+	        const terminalRetry = Math.max(0, retryStory.max_retries);
+	        await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [terminalRetry, issues, now(), retryStory.id]);
         await updateRunContext(verifyStep.run_id, context);
         await setStepStatus(loopStepId, "failed");
         await failRun(verifyStep.run_id, true);
