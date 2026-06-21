@@ -4,6 +4,7 @@ This repository now keeps agent-facing operational notes in English only.
 
 ## Unreleased
 
+- Hardened medic disk-output recovery for active story claims: spawner-owned output files are matched by the active claim's agent id and fresh claim time, and successful loop completions are no longer misread as failed recovery just because the pipeline did not immediately advance.
 - Documented the recovery ownership model in `AGENTS.md`: classify platform, stack, and generated-product failures first; route product defects through implementation and supervisor recovery before adding permanent rules; and avoid project-specific hardcoding.
 - Resolved current inline PR review threads when a missing input-field comment is satisfied by the latest HTML source, and capped terminal verify retry counters at the configured budget.
 - Accepted common `window`/`globalThis` alias assignments in the runtime bridge gate, preventing static HTML IIFEs from spending retries after exposing a real `window.app` bridge.

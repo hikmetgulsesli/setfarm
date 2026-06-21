@@ -1369,6 +1369,22 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(block, /st\.title as story_title, st\.story_branch/);
   });
 
+  it("medic disk fallback accepts active claim spawner output files as successful recovery", () => {
+    const source = fs.readFileSync(path.join(root, "src", "medic", "medic.ts"), "utf-8");
+    const start = source.indexOf("Circuit breaker disk fallback");
+    const end = source.indexOf("const recentChecks", start);
+    assert.notEqual(start, -1, "medic disk fallback block not found");
+    assert.notEqual(end, -1, "medic disk fallback end not found");
+    const block = source.slice(start, end);
+
+    assert.match(block, /FROM claim_log/);
+    assert.match(block, /WHERE run_id = \$1 AND step_id = \$2 AND outcome IS NULL/);
+    assert.match(block, /setfarm-output-\$\{claim\.agent_id\}-spawner-/);
+    assert.match(block, /stat\.mtimeMs >= claimedAtMs - 5000/);
+    assert.match(block, /await completeStep\(finding\.stepId,\s*content\)/);
+    assert.doesNotMatch(block, /result\.advanced \|\| result\.runCompleted/);
+  });
+
   it("tells verify agents to fail fast on first blocker", () => {
     const prompt = fs.readFileSync(path.join(root, "src", "installer", "steps", "07-verify", "prompt.md"), "utf-8");
     const rules = fs.readFileSync(path.join(root, "src", "installer", "steps", "07-verify", "rules.md"), "utf-8");

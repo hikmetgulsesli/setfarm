@@ -89,7 +89,7 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
   switch (finding.action) {
     case "reset_step": {
       if (!finding.stepId) return false;
-      const step = await pgGet<{ abandoned_count: number; output: string | null; status: string }>("SELECT abandoned_count, output, status FROM steps WHERE id = $1", [finding.stepId]);
+      const step = await pgGet<{ abandoned_count: number; output: string | null; status: string; run_id: string; step_id: string; agent_id: string }>("SELECT abandoned_count, output, status, run_id, step_id, agent_id FROM steps WHERE id = $1", [finding.stepId]);
       if (!step) return false;
 
       // Alive check (2026-04-23): agent may be writing to /tmp/setfarm-progress-<runId>.txt
@@ -114,7 +114,11 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
         const statusMatch = step.output.match(/^\s*STATUS:\s*(\w+)/im);
         const statusVal = statusMatch?.[1]?.trim().toLowerCase();
         if (statusVal && ["done", "pass", "passed", "verified", "skip", "skipped"].includes(statusVal)) {
-          try { const result = await completeStep(finding.stepId, step.output); if (result.advanced || result.runCompleted) { emitEvent({ ts: now(), event: "step.done" as EventType, runId: finding.runId ?? "", stepId: finding.stepId, detail: "Medic: auto-completed stuck step (output had STATUS: done)" }); return true; } } catch (err) { /* fall through */ }
+          try {
+            await completeStep(finding.stepId, step.output);
+            emitEvent({ ts: now(), event: "step.done" as EventType, runId: finding.runId ?? step.run_id, stepId: finding.stepId, detail: "Medic: auto-completed stuck step (output had STATUS: done)" });
+            return true;
+          } catch (err) { /* fall through */ }
         }
       }
 
@@ -129,17 +133,44 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
         try {
           const fs = await import("node:fs");
           const path = await import("node:path");
-          const files = fs.readdirSync("/tmp").filter(f => f.startsWith(`setfarm-output-`) && f.includes(finding.stepId || ""));
+          const activeClaims = await pgQuery<{ agent_id: string; claimed_at: string }>(
+            `SELECT agent_id, claimed_at
+             FROM claim_log
+             WHERE run_id = $1 AND step_id = $2 AND outcome IS NULL
+             ORDER BY claimed_at DESC
+             LIMIT 5`,
+            [finding.runId || step.run_id, step.step_id],
+          );
+          const candidates = activeClaims.length > 0 ? activeClaims : [{ agent_id: step.agent_id, claimed_at: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString() }];
+          const prefixes = new Set<string>();
+          for (const claim of candidates) {
+            if (!claim.agent_id) continue;
+            prefixes.add(`setfarm-output-${claim.agent_id}.txt`);
+            prefixes.add(`setfarm-output-${claim.agent_id}-spawner-`);
+          }
+          const files = fs.readdirSync("/tmp").filter((f) => {
+            if (!f.startsWith("setfarm-output-") || !f.endsWith(".txt")) return false;
+            if (f.includes(finding.stepId || "")) return true;
+            for (const prefix of prefixes) {
+              if (f === prefix || f.startsWith(prefix)) return true;
+            }
+            return false;
+          });
           for (const f of files) {
-            const content = fs.readFileSync(path.join("/tmp", f), "utf-8");
+            const fullPath = path.join("/tmp", f);
+            const stat = fs.statSync(fullPath);
+            const matchesFreshClaim = candidates.some((claim) => {
+              const claimedAtMs = claim.claimed_at ? new Date(claim.claimed_at).getTime() : 0;
+              return !Number.isFinite(claimedAtMs) || stat.mtimeMs >= claimedAtMs - 5000;
+            });
+            if (!matchesFreshClaim) continue;
+            const content = fs.readFileSync(fullPath, "utf-8");
             if (/^\s*STATUS:\s*(done|pass|passed|verified)\b/im.test(content)) {
               try {
-                const result = await completeStep(finding.stepId, content);
-                if (result.advanced || result.runCompleted) {
-                  logger.info(`[medic] Disk-fallback auto-complete: found STATUS: done in /tmp/${f}`, { runId: finding.runId, stepId: finding.stepId });
-                  emitEvent({ ts: now(), event: "step.done" as EventType, runId: finding.runId ?? "", stepId: finding.stepId, detail: `Medic: disk-fallback auto-complete (/tmp/${f})` });
-                  return true;
-                }
+                await completeStep(finding.stepId, content);
+                logger.info(`[medic] Disk-fallback auto-complete: found STATUS: done in /tmp/${f}`, { runId: finding.runId, stepId: finding.stepId });
+                emitEvent({ ts: now(), event: "step.done" as EventType, runId: finding.runId ?? step.run_id, stepId: finding.stepId, detail: `Medic: disk-fallback auto-complete (/tmp/${f})` });
+                return true;
               } catch { /* try next file */ }
             }
           }
