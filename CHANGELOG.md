@@ -8,6 +8,7 @@ This repository now keeps agent-facing operational notes in English only.
 - Resolved current inline PR review threads when a missing input-field comment is satisfied by the latest HTML source, and capped terminal verify retry counters at the configured budget.
 - Accepted common `window`/`globalThis` alias assignments in the runtime bridge gate, preventing static HTML IIFEs from spending retries after exposing a real `window.app` bridge.
 - Recovered story PR URLs through the GitHub pulls API when unauthenticated `gh` commands fail after a PR already exists, and clear stale auto-PR failure context once a usable PR URL is present.
+- Escalated exhausted actionable PR review feedback to the story supervisor instead of immediately failing the run, giving manager-owned scoped repair a final chance after developer retries are spent.
 - Preserved specific `APP_INTEGRATION_*_REGRESSION` categories when generated-screen regression gates fail, so retries load the correct stack/failure memory instead of falling back to generic generated-screen guidance.
 - Recognized mechanically equivalent dynamic `data-action-id` preservation after DOM/security refactors, preventing semantic contract repairs from consuming story retries when observable action IDs remain intact.
 - Added a canonical Stack Memory Registry for global, stack-specific, and failure-specific recovery notes, and injected compact memory into implement, verify, and supervisor prompts so repair behavior can evolve by stack without project-specific hardcoding.

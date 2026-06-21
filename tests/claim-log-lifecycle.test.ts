@@ -863,6 +863,21 @@ describe("single-step claim_log lifecycle", () => {
     assert.ok(noSpawn > route, "claim path should suppress reviewer spawn");
   });
 
+  it("escalates exhausted PR review feedback to supervisor instead of failing immediately", () => {
+    const source = stepOpsSource();
+    const helperStart = source.indexOf("async function routeVerifyScopeFailureToImplement");
+    const helperEnd = source.indexOf("function getImplicitScopeFiles", helperStart);
+    assert.notEqual(helperStart, -1, "routeVerifyScopeFailureToImplement source not found");
+    assert.notEqual(helperEnd, -1, "routeVerifyScopeFailureToImplement source end not found");
+    const helper = source.slice(helperStart, helperEnd);
+    assert.match(source, /function isSupervisorEscalatableReviewFailure/);
+    assert.match(helper, /isSupervisorEscalatableReviewFailure\(options\.category, failure\)/);
+    assert.match(helper, /Developer retries are exhausted\. Escalate this actionable PR review feedback to the story supervisor/);
+    assert.match(helper, /UPDATE stories SET status = 'done', retry_count = \$1/);
+    assert.match(helper, /UPDATE steps SET status = 'pending', current_story_id = \$1/);
+    assert.match(helper, /review retry budget exhausted; escalated to/);
+  });
+
   it("auto-verifies clean open PRs mechanically after comments are clear", () => {
     const source = autoVerifyDoneStoriesSource();
     const openStart = source.indexOf("if (prState === \"OPEN\")");
