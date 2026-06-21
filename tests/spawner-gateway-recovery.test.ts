@@ -1194,6 +1194,27 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /checkLoopContinuation\(runId,\s*step\.id\)/);
   });
 
+  it("retries active agents immediately when their claimed step is no longer running", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    const marker = source.indexOf("AGENT_STEP_STATE_MISMATCH");
+    const branchStart = source.lastIndexOf("row.run_status === \"running\"", marker);
+    const branchEnd = source.indexOf("const nonRunningActiveGraceMs", branchStart);
+    assert.notEqual(branchStart, -1, "step state mismatch guard missing");
+    assert.notEqual(branchEnd, -1, "guard must run before non-running active grace");
+
+    const block = source.slice(branchStart, branchEnd);
+    assert.match(block, /\["pending", "waiting"\]\.includes\(row\.step_status\)/);
+    assert.match(block, /terminateActiveProcess\(active,\s*"step-state-mismatch"\)/);
+    assert.match(block, /activeProcesses\.delete\(key\)/);
+    assert.match(block, /completeRunningClaimFromOutputFile\(active\.stepId,\s*active\.agentId,\s*active\.outputPath,\s*active\.startedAtMs\)/);
+    assert.match(block, /requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*active\.storyId,\s*active\.agentId,\s*reason\)/);
+    assert.match(block, /retryActiveSingleStepClaim\(active,\s*row\.step_id,\s*reason\)/);
+    assert.ok(
+      branchStart < source.indexOf("Deferring reap for active"),
+      "pending/waiting step mismatch must not wait for non-running active grace",
+    );
+  });
+
   it("hard-times out retry-disciplined implement claims that keep analyzing after a delta", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /IMPLEMENT_RETRY_HARD_TIMEOUT_MS/);

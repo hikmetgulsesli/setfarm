@@ -4153,6 +4153,24 @@ ${reason}
         const ageMs = Date.now() - active.startedAtMs;
         const idleMs = activeProcessIdleMs(active);
         const terminalReason = childProcessTerminalReason(active.child);
+        if (
+          row.run_status === "running"
+          && ["pending", "waiting"].includes(row.step_status)
+          && !terminalReason
+        ) {
+          const reason = `AGENT_STEP_STATE_MISMATCH: ${active.agentId} has an active ${active.wfId}/${active.role} process for ${row.step_id}, but the step is ${row.step_status}; retrying the open claim instead of waiting on a non-running step. Transcript: ${active.transcriptPath}`;
+          console.warn(`[spawner] ${reason}`);
+          try { fs.appendFileSync(active.transcriptPath, `--- STEP STATE MISMATCH ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
+          terminateActiveProcess(active, "step-state-mismatch");
+          activeProcesses.delete(key);
+          if (row.type === "loop" && active.storyId) {
+            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
+            await requeueOpenStoryClaim(active.runId, row.step_id, active.storyId, active.agentId, reason);
+          } else {
+            await retryActiveSingleStepClaim(active, row.step_id, reason);
+          }
+          continue;
+        }
         const nonRunningActiveGraceMs = Math.max(REAP_FINISHED_ACTIVE_GRACE_MS, stuckThresholdMs(active.role, active.storyId));
         if (row.run_status === "running" && row.step_status !== "running" && !terminalReason && ageMs < nonRunningActiveGraceMs) {
           console.log(`[spawner] Deferring reap for active ${key}: step ${row.step_id} is ${row.step_status}, run is ${row.run_status}, age ${formatDurationMs(ageMs)}`);
