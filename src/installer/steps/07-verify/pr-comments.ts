@@ -66,6 +66,7 @@ function reviewSummaryLooksActionable(comment: PrComment, state: PrState): boole
 
   const body = String(comment.body || "").trim();
   if (!body) return false;
+  if (reviewSummaryLooksLikeDigest(body)) return false;
 
   const hasActionableLanguage = /\b(fix|bug|issue|critical|high-priority|high priority|incorrect|destructive|unhandled|missing|prevent|avoid|must|should)\b/i.test(body);
   // Service lifecycle banners and generic review summaries are not blockers
@@ -76,6 +77,19 @@ function reviewSummaryLooksActionable(comment: PrComment, state: PrState): boole
   // body (no inline thread). Treat those as current blockers so Setfarm cannot
   // merge before the implementer addresses them.
   return /\b(feedback|highlights?|suggests?|recommends?|critical|high-priority|high priority|must|should)\b/i.test(body);
+}
+
+function reviewSummaryLooksLikeDigest(body: string): boolean {
+  const text = String(body || "").trim();
+  if (!text) return false;
+  if (/```/.test(text)) return false;
+  if (/\b(?:line|lines)\s+\d+\b|:[0-9]+\b/.test(text)) return false;
+  if (/\b(?:please|must\s+(?:fix|change|update)|required\s+change|blocking|breaks?|fails?|error)\b/i.test(text)) return false;
+  return (
+    /\bThis pull request\b[\s\S]{0,500}\bfeedback focuses on\b/i.test(text) ||
+    /\bThe feedback focuses on\b/i.test(text) ||
+    /\bfeedback focuses on enhancing\b/i.test(text)
+  );
 }
 
 export function getActionablePrComments(state: PrState): PrComment[] {

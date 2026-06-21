@@ -325,6 +325,57 @@ describe("07-verify step module", () => {
     assert.doesNotMatch(formatted, /banner-only/);
   });
 
+  it("ignores Gemini COMMENTED digest summaries after inline feedback is resolved", () => {
+    const digest = formatPrCommentsForAgent({
+      state: "OPEN",
+      headOid: "head-1",
+      headCommittedAt: "2026-06-21T13:13:28Z",
+      checksStatus: "passing",
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+      comments: [
+        {
+          id: "gemini-review-digest",
+          kind: "review",
+          state: "COMMENTED",
+          author: "gemini-code-assist",
+          body: [
+            "## Code Review",
+            "",
+            "This pull request transitions the application from a static HTML page to a dynamic, state-managed counter application. The feedback focuses on enhancing security and robustness: escaping counter IDs and colors to prevent DOM-based XSS, removing a redundant polling mechanism, and adding defensive checks in the state module.",
+            "",
+            "> [!IMPORTANT]",
+            "> The consumer version of Gemini Code Assist on GitHub is being sunset.",
+          ].join("\n"),
+          commitOid: "head-1",
+          createdAt: "2026-06-21T13:15:08Z",
+        },
+      ],
+    });
+    const actionable = formatPrCommentsForAgent({
+      state: "OPEN",
+      headOid: "head-1",
+      headCommittedAt: "2026-06-21T13:13:28Z",
+      checksStatus: "passing",
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+      comments: [
+        {
+          id: "review-actionable",
+          kind: "review",
+          state: "COMMENTED",
+          author: "reviewer",
+          body: "Please fix the persistence bug before merge; the reset button currently fails after reload.",
+          commitOid: "head-1",
+          createdAt: "2026-06-21T13:15:08Z",
+        },
+      ],
+    });
+
+    assert.equal(digest, "");
+    assert.match(actionable, /Please fix the persistence bug/);
+  });
+
   it("does not re-block stale COMMENTED review summaries after a newer head commit", () => {
     const body = [
       "## Code Review",
