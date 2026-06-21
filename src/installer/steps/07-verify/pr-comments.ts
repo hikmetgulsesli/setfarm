@@ -76,7 +76,10 @@ function reviewSummaryLooksActionable(comment: PrComment, state: PrState): boole
   // Gemini Code Assist often emits actionable findings only in the review
   // body (no inline thread). Treat those as current blockers so Setfarm cannot
   // merge before the implementer addresses them.
-  return /\b(feedback|highlights?|suggests?|recommends?|critical|high-priority|high priority|must|should)\b/i.test(body);
+  return (
+    /\b(?:please\s+(?:fix|change|update|add|remove|handle|prevent|avoid)|must\s+(?:fix|change|update|handle|prevent|avoid)|required\s+change|blocking|breaks?|fails?|error)\b/i.test(body) ||
+    /\b(feedback|highlights?|suggests?|recommends?|critical|high-priority|high priority|must|should)\b/i.test(body)
+  );
 }
 
 function reviewSummaryLooksLikeDigest(body: string): boolean {
