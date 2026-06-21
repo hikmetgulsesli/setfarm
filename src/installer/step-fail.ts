@@ -133,16 +133,17 @@ async function handleLoopStepFailurePG(
     // Previously loop continued with other stories, allowing pipeline to reach merge-queue
     // with partial work; downstream verify/qa/deploy then ran on a broken feature set.
     // Fail-fast at the first unrecoverable story is simpler and matches user intent.
-    const runFailReason = `Story ${storyRow?.story_id} retries exhausted (${newRetry}/${story.max_retries}): ${error}`;
+    const terminalRetry = Math.max(0, story.max_retries || 0);
+    const runFailReason = `Story ${storyRow?.story_id} retries exhausted (${terminalRetry}/${story.max_retries}): ${error}`;
     await pgBegin(async (sql) => {
-      await sql`UPDATE stories SET status = 'failed', retry_count = ${newRetry}, output = ${error}, updated_at = ${now()} WHERE id = ${story.id}`;
+      await sql`UPDATE stories SET status = 'failed', retry_count = ${terminalRetry}, output = ${error}, updated_at = ${now()} WHERE id = ${story.id}`;
       await sql`UPDATE steps SET status = 'failed', output = ${runFailReason}, current_story_id = NULL, updated_at = ${now()} WHERE id = ${stepId}`;
       await sql`UPDATE runs SET status = 'failed', updated_at = ${now()} WHERE id = ${step.run_id}`;
       try { await sql`UPDATE claim_log SET outcome = 'failed', duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at)) * 1000 AS INTEGER), diagnostic = ${error} WHERE story_id = ${storyRow?.story_id || ""} AND outcome IS NULL`; } catch (e) { logger.warn("[claim-log] update failed: " + String(e), {}); }
     });
-    await recordStepTransition(stepId, step.run_id, "running", "failed", step.agent_id, "failStep:loopStoryExhausted", { storyId: storyRow?.story_id, retry: newRetry });
+    await recordStepTransition(stepId, step.run_id, "running", "failed", step.agent_id, "failStep:loopStoryExhausted", { storyId: storyRow?.story_id, retry: terminalRetry });
     const wfId = await getWorkflowId(step.run_id);
-    emitEvent({ ts: now(), event: "story.failed", runId: step.run_id, workflowId: wfId, stepId: workflowStepId, storyId: storyRow?.story_id, storyTitle: storyRow?.title, detail: `Story retries exhausted (${newRetry}/${story.max_retries}) — failing run` });
+    emitEvent({ ts: now(), event: "story.failed", runId: step.run_id, workflowId: wfId, stepId: workflowStepId, storyId: storyRow?.story_id, storyTitle: storyRow?.title, detail: `Story retries exhausted (${terminalRetry}/${story.max_retries}) — failing run` });
     emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: workflowStepId, detail: runFailReason });
     emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: runFailReason });
     if (!isProductManualReviewTerminalFailure(runFailReason)) {
@@ -277,13 +278,14 @@ async function handleSingleStepFailurePG(
   await pgBegin(async (sql) => {
     if (newRetryCount > step.max_retries) {
       const isCritical = CRITICAL_STEPS.has(workflowStepId);
+      const terminalRetry = Math.max(0, step.max_retries || 0);
 
       if (isCritical) {
-        await sql`UPDATE steps SET status = 'failed', output = ${error}, retry_count = ${newRetryCount}, updated_at = ${now()} WHERE id = ${stepId}`;
+        await sql`UPDATE steps SET status = 'failed', output = ${error}, retry_count = ${terminalRetry}, updated_at = ${now()} WHERE id = ${stepId}`;
         await sql`UPDATE runs SET status = 'failed', updated_at = ${now()} WHERE id = ${step.run_id}`;
         try { await sql`UPDATE claim_log SET outcome = 'failed', duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at)) * 1000 AS INTEGER), diagnostic = ${error} WHERE run_id = ${step.run_id} AND step_id = ${workflowStepId} AND story_id IS NULL AND outcome IS NULL`; } catch (e) { logger.warn("[claim-log] update failed: " + String(e), {}); }
       } else {
-        await sql`UPDATE steps SET status = 'skipped', output = ${"SKIPPED: " + error}, retry_count = ${newRetryCount}, updated_at = ${now()} WHERE id = ${stepId}`;
+        await sql`UPDATE steps SET status = 'skipped', output = ${"SKIPPED: " + error}, retry_count = ${terminalRetry}, updated_at = ${now()} WHERE id = ${stepId}`;
         try { await sql`UPDATE claim_log SET outcome = 'skipped', duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at)) * 1000 AS INTEGER), diagnostic = ${error} WHERE run_id = ${step.run_id} AND step_id = ${workflowStepId} AND story_id IS NULL AND outcome IS NULL`; } catch (e) { logger.warn("[claim-log] update failed: " + String(e), {}); }
       }
     } else {
@@ -297,8 +299,9 @@ async function handleSingleStepFailurePG(
   // Post-transaction side effects
   if (newRetryCount > step.max_retries) {
     const isCritical = CRITICAL_STEPS.has(workflowStepId);
+    const terminalRetry = Math.max(0, step.max_retries || 0);
     if (isCritical) {
-      await recordStepTransition(stepId, step.run_id, "running", "failed", step.agent_id, "failStep:critical", { error, retry: newRetryCount });
+      await recordStepTransition(stepId, step.run_id, "running", "failed", step.agent_id, "failStep:critical", { error, retry: terminalRetry });
       const wfId2 = await getWorkflowId(step.run_id);
       emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId2, stepId: workflowStepId || stepId, detail: error });
       emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId2, detail: "Critical step retries exhausted" });
@@ -307,10 +310,10 @@ async function handleSingleStepFailurePG(
       await refreshRunContractSafe(step.run_id, "step.failed");
       return { retrying: false, runFailed: true };
     } else {
-      await recordStepTransition(stepId, step.run_id, "running", "skipped", step.agent_id, "failStep:nonCritical", { error, retry: newRetryCount });
+      await recordStepTransition(stepId, step.run_id, "running", "skipped", step.agent_id, "failStep:nonCritical", { error, retry: terminalRetry });
       const wfId2 = await getWorkflowId(step.run_id);
       emitEvent({ ts: now(), event: "step.skipped", runId: step.run_id, workflowId: wfId2, stepId: workflowStepId, detail: `Retries exhausted — skipped: ${error}` });
-      logger.warn(`[failStep] Non-critical step ${workflowStepId} skipped after ${newRetryCount} retries — pipeline continues`, { runId: step.run_id });
+      logger.warn(`[failStep] Non-critical step ${workflowStepId} skipped after ${terminalRetry} retries — pipeline continues`, { runId: step.run_id });
       const { advancePipeline } = await import("./step-advance.js");
       await refreshRunContractSafe(step.run_id, "step.skipped");
       await advancePipeline(step.run_id);

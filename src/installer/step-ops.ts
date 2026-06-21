@@ -2264,15 +2264,16 @@ async function routeOriginalStoryQualityFailureToImplement(
 
   if (retryStory.pr_url && getPRState(retryStory.pr_url) === "MERGED") {
     if (newRetry > (retryStory.max_retries || 0)) {
+      const terminalRetry = Math.max(0, retryStory.max_retries || 0);
       const exhaustedRetryFailure = [
         "POST_MERGE_QUALITY_REGRESSION_RETRY_EXHAUSTED:",
-        `${retryStory.story_id} PR is already MERGED and current-main repair retries are exhausted (${retryStory.max_retries}/${retryStory.max_retries}).`,
+        `${retryStory.story_id} PR is already MERGED and current-main repair retries are exhausted (${terminalRetry}/${retryStory.max_retries}).`,
         routeReason,
         "",
         "Failure report:",
         failure.slice(0, 3000),
       ].join("\n");
-      await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [retryStory.max_retries || retryStory.retry_count || 0, exhaustedRetryFailure, now(), retryStory.id]);
+      await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [terminalRetry, exhaustedRetryFailure, now(), retryStory.id]);
       context["previous_failure"] = exhaustedRetryFailure;
       context["failure_category"] = "POST_MERGE_QUALITY_REGRESSION";
       context["failure_suggestion"] = "Post-merge main repair retry budget is exhausted.";
@@ -2367,7 +2368,8 @@ async function routeOriginalStoryQualityFailureToImplement(
   }
 
   if (newRetry > (retryStory.max_retries || 0)) {
-    await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [newRetry, retryFailure, now(), retryStory.id]);
+    const terminalRetry = Math.max(0, retryStory.max_retries || 0);
+    await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [terminalRetry, retryFailure, now(), retryStory.id]);
     await updateRunContext(step.run_id, context);
     await setStepStatus(loopStep.id, "failed");
     await failStepWithOutput(step.id, retryFailure);
@@ -2825,7 +2827,8 @@ async function routeBlockingSupervisorEvidenceToImplement(params: {
   });
 
   if (newRetry > (story.max_retries || 0)) {
-    await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [newRetry, failure, now(), story.id]);
+    const terminalRetry = Math.max(0, story.max_retries || 0);
+    await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [terminalRetry, failure, now(), story.id]);
     await updateRunContext(params.runId, params.context);
     await setStepStatus(params.loopStepId, "failed");
     await failRun(params.runId, true);
@@ -8340,7 +8343,8 @@ async function handleSuperviseEachCompletion(
     }
 
     if (newRetry > (story.max_retries || 0)) {
-      await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [newRetry, issues, now(), story.id]);
+      const terminalRetry = Math.max(0, story.max_retries || 0);
+      await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [terminalRetry, issues, now(), story.id]);
       await updateRunContext(superviseStep.run_id, context);
       await setStepStatus(loopStepId, "failed");
       await failRun(superviseStep.run_id, true);
@@ -8420,7 +8424,8 @@ async function handleSuperviseEachCompletion(
     });
 
     if (newRetry > (story.max_retries || 0)) {
-      await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [newRetry, failure, now(), story.id]);
+      const terminalRetry = Math.max(0, story.max_retries || 0);
+      await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [terminalRetry, failure, now(), story.id]);
       await updateRunContext(superviseStep.run_id, context);
       await setStepStatus(loopStepId, "failed");
       await failRun(superviseStep.run_id, true);
@@ -8497,7 +8502,8 @@ async function handleSuperviseEachCompletion(
       });
     }
     if (newRetry > (story.max_retries || 0)) {
-      await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [newRetry, failure, now(), story.id]);
+      const terminalRetry = Math.max(0, story.max_retries || 0);
+      await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [terminalRetry, failure, now(), story.id]);
       await updateRunContext(superviseStep.run_id, context);
       await setStepStatus(loopStepId, "failed");
       await failRun(superviseStep.run_id, true);
@@ -8542,7 +8548,8 @@ async function handleSuperviseEachCompletion(
         });
       }
       if (newRetry > (story.max_retries || 0)) {
-        await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [newRetry, failure, now(), story.id]);
+        const terminalRetry = Math.max(0, story.max_retries || 0);
+        await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [terminalRetry, failure, now(), story.id]);
         await updateRunContext(superviseStep.run_id, context);
         await setStepStatus(loopStepId, "failed");
         await failRun(superviseStep.run_id, true);

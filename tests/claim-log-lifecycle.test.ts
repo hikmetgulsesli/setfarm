@@ -466,7 +466,7 @@ describe("single-step claim_log lifecycle", () => {
     assert.ok(scopePersist > repairScope, "merged PR retry must persist expanded repair scope before rerunning implement");
     assert.ok(routeTransition > clearBranch, "merged PR retry must route through implement instead of terminal failure");
     assert.match(helperSource, /retry on current main with a fresh story branch instead of reopening the merged branch/);
-    assert.match(helperSource, /retryStory\.max_retries \|\| retryStory\.retry_count \|\| 0/);
+    assert.match(helperSource, /const terminalRetry = Math\.max\(0, retryStory\.max_retries \|\| 0\)/);
     assert.match(helperSource, /post-merge quality failure routed to original story/);
   });
 
@@ -1276,5 +1276,49 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(failSource, /story_id IS NULL/);
     assert.match(failSource, /outcome IS NULL/);
     assert.doesNotMatch(failSource, /claim_log[\s\S]*step_id = \$\{stepId\}/);
+  });
+
+  it("caps terminal failStep retry counters at configured max retries", () => {
+    const source = fs.readFileSync(path.join(root, "src", "installer", "step-fail.ts"), "utf-8");
+    const loopStart = source.indexOf("if (newRetry > story.max_retries)");
+    const loopEnd = source.indexOf("return { retrying: false, runFailed: true };", loopStart);
+    const singleStart = source.indexOf("if (newRetryCount > step.max_retries)");
+    const singleEnd = source.indexOf("await cleanupProjectEphemera", singleStart);
+    assert.notEqual(loopStart, -1, "loop story exhaustion branch not found");
+    assert.notEqual(loopEnd, -1, "loop story exhaustion branch end not found");
+    assert.notEqual(singleStart, -1, "single step exhaustion branch not found");
+    assert.notEqual(singleEnd, -1, "single step exhaustion branch end not found");
+
+    const loopSource = source.slice(loopStart, loopEnd);
+    const singleSource = source.slice(singleStart, singleEnd);
+    const singleTerminalSource = singleSource.slice(0, singleSource.indexOf("    } else {"));
+    assert.match(loopSource, /const terminalRetry = Math\.max\(0, story\.max_retries \|\| 0\)/);
+    assert.match(loopSource, /retry_count = \$\{terminalRetry\}/);
+    assert.doesNotMatch(loopSource, /retry_count = \$\{newRetry\}/);
+    assert.match(singleSource, /const terminalRetry = Math\.max\(0, step\.max_retries \|\| 0\)/);
+    assert.match(singleTerminalSource, /retry_count = \$\{terminalRetry\}/);
+    assert.doesNotMatch(singleTerminalSource, /retry_count = \$\{newRetryCount\}/);
+  });
+
+  it("caps terminal story retry counters in quality and supervisor recovery paths", () => {
+    const source = stepOpsSource();
+    const terminalUpdates = [...source.matchAll(/UPDATE stories SET status = 'failed', retry_count = \$1[\s\S]{0,160}/g)].map((match) => match[0]);
+    assert.ok(terminalUpdates.length >= 8, "expected terminal story retry updates in step-ops");
+    for (const update of terminalUpdates) {
+      assert.match(update, /\[terminalRetry,/, `terminal failed story retry must use terminalRetry: ${update}`);
+      assert.doesNotMatch(update, /\[newRetry,/, `terminal failed story retry must not persist newRetry: ${update}`);
+    }
+
+    const qualityRouterStart = source.indexOf("async function routeOriginalStoryQualityFailureToImplement(");
+    const qualityRouterEnd = source.indexOf("async function routeBlockingSupervisorEvidenceToImplement(", qualityRouterStart);
+    const supervisorRouterEnd = source.indexOf("async function shouldAutoCompleteFinalSuperviseEachStep(", qualityRouterEnd);
+    assert.notEqual(qualityRouterStart, -1, "original story quality router not found");
+    assert.notEqual(qualityRouterEnd, -1, "blocking supervisor router start not found");
+    assert.notEqual(supervisorRouterEnd, -1, "blocking supervisor router end not found");
+
+    const qualityRouter = source.slice(qualityRouterStart, qualityRouterEnd);
+    const supervisorRouter = source.slice(qualityRouterEnd, supervisorRouterEnd);
+    assert.match(qualityRouter, /const terminalRetry = Math\.max\(0, retryStory\.max_retries \|\| 0\)/);
+    assert.match(supervisorRouter, /const terminalRetry = Math\.max\(0, story\.max_retries \|\| 0\)/);
   });
 });

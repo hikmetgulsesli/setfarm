@@ -4,6 +4,7 @@ This repository now keeps agent-facing operational notes in English only.
 
 ## Unreleased
 
+- Capped terminal story and step retry counters at their configured max retry budget across quality and supervisor recovery paths, so Mission Control no longer displays impossible states like `6/5` while retaining the terminal failure reason.
 - Hardened medic disk-output recovery for active story claims: spawner-owned output files are matched by the active claim's agent id and fresh claim time, and successful loop completions are no longer misread as failed recovery just because the pipeline did not immediately advance.
 - Documented the recovery ownership model in `AGENTS.md`: classify platform, stack, and generated-product failures first; route product defects through implementation and supervisor recovery before adding permanent rules; and avoid project-specific hardcoding.
 - Resolved current inline PR review threads when a missing input-field comment is satisfied by the latest HTML source, and capped terminal verify retry counters at the configured budget.
