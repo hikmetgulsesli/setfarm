@@ -1527,14 +1527,14 @@ function isOpenPrDeliveryBlockerContext(context: Record<string, string>): boolea
   const category = String(context["failure_category"] || "").trim();
   const failure = `${context["previous_failure"] || ""}\n${context["verify_feedback"] || ""}`;
   return (
-    ["PR_NOT_MERGED", "PR_MISSING", "VERIFY_MERGE_BLOCKER"].includes(category) ||
-    /\b(PR_NOT_MERGED|PR_MISSING|VERIFY_MERGE_BLOCKER):/i.test(failure)
+    ["PR_NOT_MERGED", "PR_MISSING", "VERIFY_MERGE_BLOCKER", "PR_REVIEW_COMMENTS_OPEN"].includes(category) ||
+    /\b(PR_NOT_MERGED|PR_MISSING|VERIFY_MERGE_BLOCKER|PR_REVIEW_COMMENTS_OPEN):/i.test(failure)
   );
 }
 
 function prDeliveryBlockerStoryId(context: Record<string, string>): string {
   const failure = `${context["previous_failure"] || ""}\n${context["verify_feedback"] || ""}`;
-  const explicit = failure.match(/\b(?:PR_NOT_MERGED|PR_MISSING|VERIFY_MERGE_BLOCKER):\s*([A-Z]+-\d+)\b/i)?.[1];
+  const explicit = failure.match(/\b(?:PR_NOT_MERGED|PR_MISSING|VERIFY_MERGE_BLOCKER|PR_REVIEW_COMMENTS_OPEN):\s*([A-Z]+-\d+)\b/i)?.[1];
   return (explicit || context["current_story_id"] || "").trim();
 }
 

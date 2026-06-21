@@ -6,6 +6,7 @@ This repository now keeps agent-facing operational notes in English only.
 
 - Recognized mechanically satisfied DOM XSS review comments when current source replaces unsafe `innerHTML` interpolation with DOM node construction, text assignment, attribute setting, and defensive validation, preventing fixed PR feedback from looping through supervisor retries.
 - Stopped Gemini COMMENTED review digest summaries, including service deprecation admonitions, from reopening already-handled inline PR feedback while preserving genuinely actionable direct review summaries.
+- Cleared stale PR review delivery blockers after the blocked story is verified, preventing old PR feedback context from leaking into the next story claim.
 - Hardened runtime authentication failure detection so Setfarm's own prior failure summaries and generated source snippets do not poison later agent transcripts into false terminal auth failures.
 - Persisted LLM supervise-each pass decisions as reusable supervisor observations and added spawner recovery for supervise steps that already wrote `STATUS: done` output but remained `running`, preventing repeated supervisor claim loops before verify.
 - Requeued active agent claims immediately when the owning step falls back to `pending` or `waiting`, preventing live runs from stalling behind a still-running process that no longer owns a running pipeline step.

@@ -676,6 +676,7 @@ describe("single-step claim_log lifecycle", () => {
 
     const selectionPrelude = source.slice(autoComplete, pendingSelection);
     assert.match(source, /function prDeliveryBlockerStoryId\(context: Record<string, string>\): string/);
+    assert.match(source, /PR_REVIEW_COMMENTS_OPEN/);
     assert.match(source, /\(explicit \|\| context\["current_story_id"\] \|\| ""\)\.trim\(\)/);
     assert.match(selectionPrelude, /blockedStory\?\.status === "verified"/);
     assert.match(selectionPrelude, /const blockedStoryId = prDeliveryBlockerStoryId\(context\)/);
