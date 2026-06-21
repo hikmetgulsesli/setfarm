@@ -84,14 +84,19 @@ function reviewSummaryLooksActionable(comment: PrComment, state: PrState): boole
 
 function reviewSummaryLooksLikeDigest(body: string): boolean {
   const text = String(body || "").trim();
+  const prose = text
+    .split(/\r?\n/)
+    .filter(line => !line.trim().startsWith(">"))
+    .join("\n")
+    .trim();
   if (!text) return false;
   if (/```/.test(text)) return false;
-  if (/\b(?:line|lines)\s+\d+\b|:[0-9]+\b/.test(text)) return false;
-  if (/\b(?:please|must\s+(?:fix|change|update)|required\s+change|blocking|breaks?|fails?|error)\b/i.test(text)) return false;
+  if (/\b(?:line|lines)\s+\d+\b|:[0-9]+\b/.test(prose)) return false;
+  if (/\b(?:please|must\s+(?:fix|change|update)|required\s+change|blocking|breaks?|fails?|error)\b/i.test(prose)) return false;
   return (
-    /\bThis pull request\b[\s\S]{0,500}\bfeedback focuses on\b/i.test(text) ||
-    /\bThe feedback focuses on\b/i.test(text) ||
-    /\bfeedback focuses on enhancing\b/i.test(text)
+    /\bThis pull request\b[\s\S]{0,500}\bfeedback focuses on\b/i.test(prose) ||
+    /\bThe feedback focuses on\b/i.test(prose) ||
+    /\bfeedback focuses on enhancing\b/i.test(prose)
   );
 }
 

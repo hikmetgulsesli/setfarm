@@ -305,6 +305,7 @@ describe("07-verify step module", () => {
             "",
             "> [!IMPORTANT]",
             "> The consumer version of Gemini Code Assist on GitHub is being sunset.",
+            "> Starting June 18, 2026, new organization installations will be blocked.",
           ].join("\n"),
           commitOid: "head-1",
           createdAt: "2026-06-06T13:11:22Z",
