@@ -362,6 +362,35 @@ describe("spawner gateway recovery wiring", () => {
     );
   });
 
+  it("repairs completed supervise_each DB output before requeueing another supervisor", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    const helperStart = source.indexOf("async function repairCompletedSuperviseEachSteps()");
+    const helperEnd = source.indexOf("async function pollForPendingWork()", helperStart);
+    const pollStart = source.indexOf("async function pollForPendingWork()");
+    const pollEnd = source.indexOf("async function main()", pollStart);
+    assert.notEqual(helperStart, -1, "repairCompletedSuperviseEachSteps helper not found");
+    assert.notEqual(helperEnd, -1, "repairCompletedSuperviseEachSteps helper end not found");
+    assert.notEqual(pollStart, -1, "pollForPendingWork source not found");
+    assert.notEqual(pollEnd, -1, "pollForPendingWork end not found");
+
+    const helperSource = source.slice(helperStart, helperEnd);
+    const pollSource = source.slice(pollStart, pollEnd);
+
+    assert.match(helperSource, /sup\.status = 'running'/);
+    assert.match(helperSource, /sup\.output ~\* '\(\^\|\\\\n\)STATUS\\\\s\*:\\\\s\*done'/);
+    assert.match(helperSource, /sup\.output ~\* '\(\^\|\\\\n\)SUPERVISOR_DECISION\\\\s\*:\\\\s\*\(pass\|fixed\)'/);
+    assert.match(helperSource, /completeStep\(row\.supervise_step_db_id,\s*row\.output\)/);
+    assert.match(helperSource, /terminateActiveProcess\(active,\s*"supervise-each-db-output-recovered"\)/);
+    assert.ok(
+      pollSource.indexOf("await repairCompletedSuperviseEachSteps()") > pollSource.indexOf("await autoPassEvidenceReadySuperviseEachSteps()"),
+      "completed supervise_each repair should run after deterministic auto-pass",
+    );
+    assert.ok(
+      pollSource.indexOf("await repairCompletedSuperviseEachSteps()") < pollSource.indexOf("await queuePendingSuperviseEachSteps()"),
+      "completed supervise_each repair must run before LLM supervisor queueing",
+    );
+  });
+
   it("auto-verifies merged PR stories even when verify is pending from a stale review delay", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     const helperStart = source.indexOf("async function autoVerifyMergedPrEachStories()");

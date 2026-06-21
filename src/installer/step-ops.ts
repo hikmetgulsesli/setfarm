@@ -8610,6 +8610,18 @@ async function handleSuperviseEachCompletion(
   }
   await updateRunContext(superviseStep.run_id, context);
 
+  await recordObservation({
+    runId: superviseStep.run_id,
+    stepId: superviseStep.step_id,
+    storyId: story.story_id,
+    phase: superviseStep.step_id,
+    checkId: "supervise_each.llm_story_decision",
+    status: "pass",
+    label: "Supervisor decision",
+    detail: acCoverage || issues.slice(0, 1800) || "Supervisor passed story gate",
+    metadata: { decision: decision || status || "pass" },
+  });
+
   await pgRun(
     "UPDATE steps SET status = 'pending', updated_at = $1 WHERE run_id = $2 AND step_id = $3 AND status IN ('waiting', 'done', 'pending')",
     [now(), superviseStep.run_id, verifyStepName],

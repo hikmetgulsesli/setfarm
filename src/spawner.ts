@@ -5127,6 +5127,47 @@ async function autoPassEvidenceReadySuperviseEachSteps(): Promise<void> {
   }
 }
 
+async function repairCompletedSuperviseEachSteps(): Promise<void> {
+  try {
+    const rows = await pgQuery<{ run_id: string; run_number: number; supervise_step_db_id: string; supervise_step_id: string; output: string }>(
+      `SELECT sup.run_id,
+              r.run_number,
+              sup.id AS supervise_step_db_id,
+              sup.step_id AS supervise_step_id,
+              sup.output
+       FROM steps sup
+       JOIN runs r ON r.id = sup.run_id AND r.status = 'running'
+       JOIN steps loop_step
+         ON loop_step.run_id = sup.run_id
+        AND loop_step.type = 'loop'
+        AND loop_step.step_id = 'implement'
+        AND loop_step.status = 'running'
+        AND COALESCE(loop_step.loop_config::jsonb, '{}'::jsonb) @> '{"superviseEach":true}'::jsonb
+       JOIN stories st
+         ON st.run_id = sup.run_id
+        AND st.id = sup.current_story_id
+        AND st.status = 'done'
+       WHERE sup.step_id = COALESCE(NULLIF(loop_step.loop_config::jsonb ->> 'superviseStep', ''), 'supervise')
+         AND sup.status = 'running'
+         AND sup.output ~* '(^|\\n)STATUS\\s*:\\s*done'
+         AND sup.output ~* '(^|\\n)SUPERVISOR_DECISION\\s*:\\s*(pass|fixed)'
+       ORDER BY sup.updated_at ASC
+       LIMIT 10`,
+    );
+    for (const row of rows) {
+      const result = await completeStep(row.supervise_step_db_id, row.output);
+      for (const active of activeProcesses.values()) {
+        if (active.runId === row.run_id && active.stepId === row.supervise_step_db_id) {
+          terminateActiveProcess(active, "supervise-each-db-output-recovered");
+        }
+      }
+      console.warn(`[spawner] Recovered completed supervise_each output for run #${row.run_number}: ${row.supervise_step_id}; advanced=${result.advanced} runCompleted=${result.runCompleted}`);
+    }
+  } catch (err) {
+    console.error(`[spawner] repair completed supervise_each: ${String(err)}`);
+  }
+}
+
 async function pollForPendingWork() {
   if (shuttingDown) return;
   try {
@@ -5135,6 +5176,7 @@ async function pollForPendingWork() {
     cleanupSpawnerDetachedToolChildren("poll-orphan-sweep");
     await autoVerifyMergedPrEachStories();
     await autoPassEvidenceReadySuperviseEachSteps();
+    await repairCompletedSuperviseEachSteps();
     await queuePendingSuperviseEachSteps();
     await advanceCompletedVerifyEachLoops();
     const steps = await pgQuery<{ agent_id: string; run_id: string; step_id: string }>(

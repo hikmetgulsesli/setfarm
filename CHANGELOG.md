@@ -4,6 +4,7 @@ This repository now keeps agent-facing operational notes in English only.
 
 ## Unreleased
 
+- Persisted LLM supervise-each pass decisions as reusable supervisor observations and added spawner recovery for supervise steps that already wrote `STATUS: done` output but remained `running`, preventing repeated supervisor claim loops before verify.
 - Requeued active agent claims immediately when the owning step falls back to `pending` or `waiting`, preventing live runs from stalling behind a still-running process that no longer owns a running pipeline step.
 - Capped terminal story and step retry counters at their configured max retry budget across quality and supervisor recovery paths, so Mission Control no longer displays impossible states like `6/5` while retaining the terminal failure reason.
 - Hardened medic disk-output recovery for active story claims: spawner-owned output files are matched by the active claim's agent id and fresh claim time, and successful loop completions are no longer misread as failed recovery just because the pipeline did not immediately advance.
