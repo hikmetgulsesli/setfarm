@@ -1587,6 +1587,32 @@ export function findGeneratedScreenRegressionIssues(
   return issues;
 }
 
+export function classifyGeneratedScreenRegressionIssues(issues: string[]): Pick<ScopeCheckResult, "category" | "suggestion"> {
+  const joined = issues.join("\n");
+  if (/^APP_INTEGRATION_SEMANTIC_REGRESSION:/m.test(joined)) {
+    return {
+      category: "APP_INTEGRATION_SEMANTIC_REGRESSION",
+      suggestion: "Restore or preserve the previously accepted semantic UI contract. If a security/rendering refactor replaces literal HTML with DOM creation, keep an observable equivalent such as setAttribute('data-action-id', equivalentExpression) or dataset.actionId with the same stable fragments.",
+    };
+  }
+  if (/^APP_INTEGRATION_SCOPE_REGRESSION:/m.test(joined)) {
+    return {
+      category: "APP_INTEGRATION_SCOPE_REGRESSION",
+      suggestion: "Restore previously accepted app/router wiring outside the current story scope first, then apply only the current story additions. Do not delete prior story action helpers, routes, imports, or keyboard/control bridges.",
+    };
+  }
+  if (/^APP_INTEGRATION_PROP_REGRESSION:/m.test(joined)) {
+    return {
+      category: "APP_INTEGRATION_PROP_REGRESSION",
+      suggestion: "Restore previously accepted generated screen props/adapters before adding the current story screen. Preserve prior screen state/action adapters or replace them with an explicit equivalent adapter.",
+    };
+  }
+  return {
+    category: "GENERATED_SCREEN_REGRESSION",
+    suggestion: "Preserve previously verified generated screens through the app/router surface while adding the current story screens. Restore the prior render path and keep current-story changes bounded.",
+  };
+}
+
 export async function checkDesignDomImplementationGate(
   runId: string,
   storyId: string,
@@ -1669,11 +1695,12 @@ export async function checkGeneratedScreenRegressionGate(
     scopeFiles,
   );
   if (issues.length === 0) return { passed: true };
+  const classification = classifyGeneratedScreenRegressionIssues(issues);
   return {
     passed: false,
     reason: `${issues.join("\n")}\nStory ${storyId} (${storyTitle}) reported STATUS: done while regressing a previously verified generated screen integration.`,
-    category: "GENERATED_SCREEN_REGRESSION",
-    suggestion: "Preserve previously verified generated screens through the app/router surface while adding the current story screens. Restore the prior render path and keep current-story changes bounded.",
+    category: classification.category,
+    suggestion: classification.suggestion,
   };
 }
 
