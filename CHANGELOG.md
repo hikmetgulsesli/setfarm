@@ -4,6 +4,7 @@ This repository now keeps agent-facing operational notes in English only.
 
 ## Unreleased
 
+- Preserved specific `APP_INTEGRATION_*_REGRESSION` categories when generated-screen regression gates fail, so retries load the correct stack/failure memory instead of falling back to generic generated-screen guidance.
 - Recognized mechanically equivalent dynamic `data-action-id` preservation after DOM/security refactors, preventing semantic contract repairs from consuming story retries when observable action IDs remain intact.
 - Added a canonical Stack Memory Registry for global, stack-specific, and failure-specific recovery notes, and injected compact memory into implement, verify, and supervisor prompts so repair behavior can evolve by stack without project-specific hardcoding.
 - Added QA and final-test browser smoke self-healing for missing Playwright Chromium caches, so browser tooling gaps retry after installing the required runtime instead of repeatedly failing as product evidence.
