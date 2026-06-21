@@ -285,6 +285,12 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(authSource, /invalid\[_ -\]\?authentication/);
     assert.match(authSource, /api key appears to be invalid/);
     assert.match(authSource, /401\\b/);
+    assert.match(authSource, /selfPoisonLine/);
+    assert.match(authSource, /AGENT_RUNTIME_AUTH_FAILED/);
+    assert.match(authSource, /PREVIOUS_FAILURE/);
+    assert.match(authSource, /strongAuthLine/);
+    assert.match(authSource, /providerContextLine/);
+    assert.match(authSource, /authLines\.length === 0/);
     assert.match(claimPreamble, /const authFailure = detectRuntimeAuthFailure\(transcriptPath\)/);
     assert.match(claimPreamble, /AGENT_RUNTIME_AUTH_FAILED/);
     assert.match(claimPreamble, /UPDATE runs SET status = 'failed'/);

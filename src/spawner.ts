@@ -3350,13 +3350,26 @@ function detectRuntimeAuthFailure(transcriptPath: string): { failed: boolean; de
   } catch {
     return { failed: false, detail: "" };
   }
-  if (!/(invalid[_ -]?authentication|api key appears to be invalid|api key.*expired|unauthorized|401\b|authentication failed|invalid api key|auth token.*expired)/i.test(text)) {
-    return { failed: false, detail: "" };
-  }
-  const compact = text
+
+  const selfPoisonLine =
+    /(AGENT_RUNTIME_AUTH_FAILED|cannot start .* because runtime authentication failed|runtime authentication failed|PREVIOUS_FAILURE|RETRY_BLOCKER|FAILURE_CATEGORY|FAILURE_SUGGESTION|CLAIM_SUMMARY|OUTPUT_CONTRACT|Transcript:)/i;
+  const strongAuthLine =
+    /(invalid[_ -]?authentication|api key appears to be invalid|invalid api key|api key.*(?:invalid|expired)|auth token.*expired|unauthorized|401\b)/i;
+  const genericAuthLine = /\bauthentication failed\b/i;
+  const providerContextLine = /\b(kimi|moonshot|openclaw|codex|provider|runtime|stderr|error|login|sign in|api)\b/i;
+
+  const authLines = text
     .split(/\n+/)
     .map((line) => line.trim())
-    .filter((line) => /(invalid[_ -]?authentication|api key|expired|unauthorized|401\b|authentication failed|invalid api key|auth token)/i.test(line))
+    .filter(Boolean)
+    .filter((line) => !selfPoisonLine.test(line))
+    .filter((line) => strongAuthLine.test(line) || (genericAuthLine.test(line) && providerContextLine.test(line)));
+
+  if (authLines.length === 0) {
+    return { failed: false, detail: "" };
+  }
+
+  const compact = authLines
     .slice(-3)
     .join(" ");
   return { failed: true, detail: compact.slice(0, 500) || "Runtime returned an authentication error." };
