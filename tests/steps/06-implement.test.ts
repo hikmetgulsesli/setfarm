@@ -190,7 +190,7 @@ describe("06-implement step module", () => {
     }
   });
 
-  it("keeps retry worktree patch feedback compact instead of injecting raw diffs", () => {
+  it("exposes retry worktree patch memory instead of compact-only feedback", () => {
     const sources = [
       "dist/installer/steps/06-implement/context.js",
       "dist/installer/step-ops.js",
@@ -200,11 +200,12 @@ describe("06-implement step module", () => {
       const blockStart = source.indexOf("RETRY_WORKTREE_PATCH:");
       assert.notEqual(blockStart, -1, `${sourcePath} retry patch feedback block missing`);
       const block = source.slice(blockStart, blockStart + 1200);
-      assert.match(block, /compact diagnostic summary/, sourcePath);
+      assert.match(source, /RETRY_WORKTREE_PATCH_MEMORY:/, sourcePath);
+      assert.match(source, /RETRY_WORKTREE_PATCH_BODY:/, sourcePath);
       assert.match(block, /Touched files/, sourcePath);
-      assert.match(block, /Patch size/, sourcePath);
-      assert.doesNotMatch(block, /```diff/, sourcePath);
-      assert.doesNotMatch(source, /maxChars\s*=\s*30000/, sourcePath);
+      assert.match(block, /Full patch body is available/, sourcePath);
+      assert.match(source, /```diff/, sourcePath);
+      assert.match(source, /900_000|900000/, sourcePath);
     }
   });
 

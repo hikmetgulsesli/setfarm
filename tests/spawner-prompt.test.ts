@@ -562,6 +562,75 @@ describe("spawner prompt bootstrap", () => {
     }
   });
 
+  it("exposes full retry worktree patch and source snapshot as structured retry context", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-full-retry-context-"));
+    try {
+      const workdir = path.join(tmp, "worktree");
+      fs.mkdirSync(workdir, { recursive: true });
+      fs.writeFileSync(path.join(workdir, ".story-scope-files"), "src/App.tsx\n");
+
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        bootstrapFile: path.join(tmp, "bootstrap.sh"),
+        stepId: "step-123",
+        runId: "run-123",
+        workdir,
+        repo: workdir,
+        storyId: "US-001",
+        input: [
+          "TASK: Project: retry context sensor",
+          "CURRENT STORY: Story US-001: Retry context sensor",
+          "",
+          "## Previous Failure / Retry Feedback",
+          "DESIGN_MISMATCH: remove icon font.",
+          "",
+          "## Retry Worktree Patch Memory",
+          "RETRY_WORKTREE_PATCH_MEMORY:",
+          "RETRY_WORKTREE_PATCH_SOURCE: .setfarm/retry-patches/run-us-001.patch",
+          "RETRY_WORKTREE_PATCH_TOUCHED_FILES: src/App.tsx, src/actions.ts",
+          "RETRY_WORKTREE_PATCH_STATS: +2 -1 across 2 file(s)",
+          "RETRY_WORKTREE_PATCH_BYTES: 92",
+          "RETRY_WORKTREE_PATCH_BODY:",
+          "```diff",
+          "diff --git a/src/App.tsx b/src/App.tsx",
+          "--- a/src/App.tsx",
+          "+++ b/src/App.tsx",
+          "@@ -1 +1 @@",
+          "-old",
+          "+new",
+          "```",
+          "",
+          "## Retry Source Snapshot",
+          "RETRY_SOURCE_SNAPSHOT:",
+          "SCOPE_FILES: src/App.tsx",
+          "SHARED_FILES: src/state.ts",
+          "## Project file tree (git ls-files)",
+          "src/App.tsx",
+          "## Scope file contents",
+          "### src/App.tsx",
+          "```",
+          "export const app = true;",
+          "```",
+          "",
+          "## Claim Handoff",
+        ].join("\n"),
+      });
+
+      const feedback = summary.retryFeedback as any;
+      assert.match(String(summary.previousFailure), /DESIGN_MISMATCH/);
+      assert.doesNotMatch(String(summary.previousFailure), /diff --git/);
+      assert.match(feedback.worktreePatch.body, /diff --git a\/src\/App\.tsx/);
+      assert.deepEqual(feedback.worktreePatch.touchedFiles, ["src/App.tsx", "src/actions.ts"]);
+      assert.match(feedback.sourceSnapshot.section, /export const app = true/);
+      assert.deepEqual(feedback.sourceSnapshot.scopeFiles, ["src/App.tsx"]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("preserves all actionable PR review threads in retry feedback details", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-pr-review-"));
     try {

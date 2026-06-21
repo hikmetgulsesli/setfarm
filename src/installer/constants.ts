@@ -82,6 +82,8 @@ export const OPTIONAL_TEMPLATE_VARS = [
   // Verify/progress
   "verify_feedback",
   "previous_failure",
+  "retry_worktree_patch_memory",
+  "retry_source_snapshot",
   "progress",
   "project_memory",
   "setfarm_memory",
@@ -251,6 +253,7 @@ export const STEP_CONTEXT_ALLOWLIST: Record<string, string[]> = {
     "detected_stack", "stack_rules",
     "setfarm_memory", "stack_memory_files",
     "story_scope_files", "story_scope_description", "story_shared_files",
+    "retry_worktree_patch_memory", "retry_source_snapshot",
     "story_implementation_contract", "implement_context", "implement_context_path",
     "setup_certificate_path", "file_tree_manifest_path",
     "verify_feedback", "claim_generation",
