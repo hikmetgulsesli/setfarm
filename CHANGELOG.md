@@ -4,6 +4,7 @@ This repository now keeps agent-facing operational notes in English only.
 
 ## Unreleased
 
+- Documented the recovery ownership model in `AGENTS.md`: classify platform, stack, and generated-product failures first; route product defects through implementation and supervisor recovery before adding permanent rules; and avoid project-specific hardcoding.
 - Preserved specific `APP_INTEGRATION_*_REGRESSION` categories when generated-screen regression gates fail, so retries load the correct stack/failure memory instead of falling back to generic generated-screen guidance.
 - Recognized mechanically equivalent dynamic `data-action-id` preservation after DOM/security refactors, preventing semantic contract repairs from consuming story retries when observable action IDs remain intact.
 - Added a canonical Stack Memory Registry for global, stack-specific, and failure-specific recovery notes, and injected compact memory into implement, verify, and supervisor prompts so repair behavior can evolve by stack without project-specific hardcoding.

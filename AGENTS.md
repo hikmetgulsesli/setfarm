@@ -41,6 +41,14 @@ Use observe-first recovery:
 - Any operational recovery must be bounded, documented in `run_observations`, preserve evidence, and explain the platform cause.
 - Prefer starting a new run over carrying forward polluted state after the platform behavior has been learned.
 
+Use recovery ownership before adding new rules:
+
+- Classify failures as platform/core, stack-specific, or generated-product repair before deciding where to fix.
+- Send generated-product defects back to the scoped implementation agent first with exact evidence and the failing gate.
+- If the implementation agent cannot converge, route the same evidence to supervisor as bounded recovery; do not turn every product mistake into a permanent rule.
+- Patch Setfarm or Mission Control only when live evidence shows a systemic classifier, routing, stack-memory, retry, supervisor, or presentation defect.
+- Do not hardcode project names, app names, file names, icon names, or other one-off generated identifiers. Generalize through stack contracts, failure taxonomy, stack memory, recovery routing, and regression tests.
+
 ## Platform Invariants
 
 Agents do not self-certify correctness. Agent output is a claim; Setfarm-owned evidence is authority. For implementation stories that require runtime evidence, agents may declare intent and request verification, but Setfarm must run the app, execute interactions, capture screenshots/DOM/state/logs, write authoritative artifacts, and decide pass/fail.
