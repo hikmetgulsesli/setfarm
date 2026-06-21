@@ -212,6 +212,7 @@ function commentProseLooksMechanicallySatisfied(body: string, normalizedSource: 
   const text = String(body || "").toLowerCase();
 
   if (missingInputFieldLooksSatisfied(body, normalizedSource)) return true;
+  if (domXssInnerHtmlLooksSatisfied(body, normalizedSource)) return true;
 
   if (
     /\bclamp\b/.test(text) &&
@@ -421,6 +422,40 @@ function commentProseLooksMechanicallySatisfied(body: string, normalizedSource: 
   if (classStateResolution) return true;
 
   return false;
+}
+
+function domXssInnerHtmlLooksSatisfied(body: string, normalizedSource: string): boolean {
+  const text = String(body || "");
+  if (!/\binnerhtml\b/i.test(text)) return false;
+  if (!/\bxss\b|cross-site scripting|attribute breakout|user-controlled|localstorage/i.test(text)) return false;
+
+  const hasDomConstruction =
+    /\b(?:document\.)?createElement\s*\(/.test(normalizedSource) &&
+    (/\btextContent\s*=/.test(normalizedSource) || /\bcreateTextNode\s*\(/.test(normalizedSource)) &&
+    (/\bsetAttribute\s*\(/.test(normalizedSource) || /\bdataset\.[A-Za-z_$][\w$]*\s*=/.test(normalizedSource));
+  if (!hasDomConstruction) return false;
+
+  const hasDefensiveCoercionOrValidation =
+    /\bString\s*\(/.test(normalizedSource) ||
+    /\b(?:Array\.isArray|Number\.isFinite|Object\.values)\s*\(/.test(normalizedSource) ||
+    /\b(?:allowed|valid|safe|saniti[sz]ed)[A-Za-z0-9_$]*\b/i.test(normalizedSource) ||
+    /\.(?:includes|has)\s*\(/.test(normalizedSource);
+  if (!hasDefensiveCoercionOrValidation) return false;
+
+  const suspiciousInnerHtmlAssignment =
+    /\.innerHTML\s*(?:\+?=)\s*(?!['"`]\s*['"`])/.test(normalizedSource) &&
+    !/\.innerHTML\s*=\s*['"`]\s*['"`]/.test(normalizedSource);
+  if (suspiciousInnerHtmlAssignment) return false;
+
+  if (/\bclass(?:Name|List)\b/i.test(text) || /\bcolor\b/i.test(text)) {
+    const hasClassValidation =
+      /\b(?:allowed|valid|safe)[A-Za-z0-9_$]*(?:Colors?|Classes?)?\b/i.test(normalizedSource) ||
+      /\bclassList\.add\s*\(/.test(normalizedSource) ||
+      /\bclassName\s*=\s*[^;\n]*(?:\?|&&|\|\|)/.test(normalizedSource);
+    if (!hasClassValidation) return false;
+  }
+
+  return true;
 }
 
 function cssClassStateToggleResolution(body: string, normalizedSource: string): boolean {

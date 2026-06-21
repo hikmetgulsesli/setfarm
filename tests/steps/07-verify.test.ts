@@ -608,6 +608,59 @@ describe("07-verify step module", () => {
     assert.equal(commentLooksMechanicallySatisfied(deltaComment, "const delta = now - lastTime;"), false);
   });
 
+  it("marks DOM XSS innerHTML review comments as mechanically satisfied by safe DOM construction", () => {
+    const xssComment = {
+      id: "xss-inline",
+      threadId: "PRRT_xss",
+      kind: "review-comment" as const,
+      author: "reviewer",
+      body: [
+        "The `counter.id` and `counter.color` values are inserted directly into the `innerHTML` string without escaping.",
+        "Since these values can be loaded from `localStorage` (which is user-controlled), this introduces a potential DOM-based Cross-Site Scripting (XSS) vulnerability and attribute breakout risk.",
+      ].join("\n"),
+      createdAt: "2026-06-21T12:00:00Z",
+      path: "assets/js/app.js",
+      line: 64,
+      originalLine: 64,
+      threadResolved: false,
+      outdated: false,
+    };
+    const fixedSource = `
+      const allowedColors = new Set(['blue', 'amber', 'emerald']);
+      function renderCounter(counter) {
+        const article = document.createElement('article');
+        const safeId = String(counter.id || '');
+        const safeColor = allowedColors.has(counter.color) ? counter.color : 'blue';
+        article.className = 'counter-card';
+        article.classList.add('counter-card--' + safeColor);
+        article.setAttribute('data-counter-id', safeId);
+        const label = document.createElement('span');
+        label.textContent = String(counter.label || '');
+        const add = document.createElement('button');
+        add.setAttribute('data-counter-id', safeId);
+        add.textContent = 'Add';
+        article.append(label, add);
+        return article;
+      }
+    `;
+
+    assert.equal(commentLooksMechanicallySatisfied(xssComment, fixedSource), true);
+    assert.equal(
+      commentLooksMechanicallySatisfied(
+        xssComment,
+        "function renderCounter(counter) { card.innerHTML = '<button data-counter-id=\"' + counter.id + '\">Add</button>'; }",
+      ),
+      false,
+    );
+    assert.equal(
+      commentLooksMechanicallySatisfied(
+        xssComment,
+        "function renderCounter(counter) { const el = document.createElement('article'); el.setAttribute('data-counter-id', counter.id); return el; }",
+      ),
+      false,
+    );
+  });
+
   it("marks selector ref subscriptions and raf throttle review comments as mechanically satisfied from source evidence", () => {
     const selectorComment = {
       id: "selector-inline",
