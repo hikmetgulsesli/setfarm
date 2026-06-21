@@ -186,7 +186,10 @@ export function sourceExposesWindowApp(source: string): boolean {
   const clean = stripSourceComments(source);
   return (
     /\b(?:window|globalThis)\s*(?:\.\s*app|\[\s*["']app["']\s*\])\s*=/.test(clean) ||
-    /\(\s*(?:window|globalThis)(?:\s+as\s+[^)]+)+\)\s*(?:\.\s*app|\[\s*["']app["']\s*\])\s*=/.test(clean)
+    /\(\s*(?:window|globalThis)(?:\s+as\s+[^)]+)+\)\s*(?:\.\s*app|\[\s*["']app["']\s*\])\s*=/.test(clean) ||
+    /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:window|globalThis)\b[\s\S]*?\b\1\s*(?:\.\s*app|\[\s*["']app["']\s*\])\s*=/.test(clean) ||
+    /\(\s*function\s*\(\s*([A-Za-z_$][\w$]*)\s*\)\s*\{[\s\S]*?\b\1\s*(?:\.\s*app|\[\s*["']app["']\s*\])\s*=[\s\S]*?\}\s*\)\s*\(\s*(?:window|globalThis)\s*\)/.test(clean) ||
+    /\(\s*\(\s*([A-Za-z_$][\w$]*)\s*\)\s*=>\s*\{[\s\S]*?\b\1\s*(?:\.\s*app|\[\s*["']app["']\s*\])\s*=[\s\S]*?\}\s*\)\s*\(\s*(?:window|globalThis)\s*\)/.test(clean)
   );
 }
 

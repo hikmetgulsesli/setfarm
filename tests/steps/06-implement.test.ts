@@ -2472,10 +2472,14 @@ describe("06-implement step module", () => {
     assert.equal(sourceExposesWindowApp("(window as any).app = bridge;\n"), true);
     assert.equal(sourceExposesWindowApp("(window as unknown as Record<string, unknown>).app = bridge;\n"), true);
     assert.equal(sourceExposesWindowApp("(globalThis as any)['app'] = bridge;\n"), true);
+    assert.equal(sourceExposesWindowApp("const root = window;\nroot.app = bridge;\n"), true);
+    assert.equal(sourceExposesWindowApp("(function (root) { root.app = bridge; })(window);\n"), true);
+    assert.equal(sourceExposesWindowApp("((root) => { root['app'] = bridge; })(globalThis);\n"), true);
     assert.equal(sourceExposesWindowApp("window.game = bridge;\n"), false);
     assert.equal(sourceExposesWindowApp("declare global { interface Window { app: unknown } }\n"), false);
     assert.equal(sourceExposesWindowApp("// window.app = bridge;\nconst ready = true;\n"), false);
     assert.equal(sourceExposesWindowApp("/* globalThis.app = bridge; */\nconst ready = true;\n"), false);
+    assert.equal(sourceExposesWindowApp("(function (root) { root.app = bridge; })(fakeWindow);\n"), false);
   });
 
   it("reports missing declared scope files with a dedicated category", async () => {
