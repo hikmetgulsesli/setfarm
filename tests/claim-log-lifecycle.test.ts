@@ -289,6 +289,10 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(helper, /Ignoring \$\{existingState\} existing PR/);
     assert.match(helper, /"--json", "url,state"/);
     assert.match(helper, /select\(\.state == \\"OPEN\\" or \.state == \\"MERGED\\"\)/);
+    assert.match(fullSource, /function githubRepoSlugFromRemote/);
+    assert.match(fullSource, /function findGithubPrUrlByBranchApi/);
+    assert.match(helper, /const apiExistingPr = findGithubPrUrlByBranchApi\(repoPath, storyBranchName, expectedRepoName\)/);
+    assert.match(helper, /const apiCreatedPr = findGithubPrUrlByBranchApi\(repoPath, storyBranchName, expectedRepoName\)/);
     assert.doesNotMatch(helper, /"--state", "all", "--json", "url", "--jq", "\.\[0\]\.url/);
   });
 

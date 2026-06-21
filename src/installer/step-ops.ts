@@ -414,6 +414,59 @@ function isValidGithubPrUrl(prUrl: string, expectedRepoName = ""): boolean {
   return GH_PR_URL_REGEX.test(prUrl) && (!expectedRepoName || prUrl.includes(`/${expectedRepoName}/`));
 }
 
+function githubRepoSlugFromRemote(remoteUrl: string): string {
+  const remote = String(remoteUrl || "").trim();
+  const httpsMatch = remote.match(/^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?(?:[#?].*)?$/i);
+  if (httpsMatch) return `${httpsMatch[1]}/${httpsMatch[2]}`;
+  const sshMatch = remote.match(/^git@github\.com:([^/\s]+)\/([^/\s]+?)(?:\.git)?$/i);
+  if (sshMatch) return `${sshMatch[1]}/${sshMatch[2]}`;
+  return "";
+}
+
+function githubRepoSlugForPath(repoPath: string): string {
+  try {
+    const remote = execFileSync("git", ["remote", "get-url", "origin"], {
+      cwd: repoPath,
+      timeout: 5000,
+      stdio: ["pipe", "pipe", "pipe"],
+      encoding: "utf-8",
+    }).toString().trim();
+    return githubRepoSlugFromRemote(remote);
+  } catch {
+    return "";
+  }
+}
+
+function findGithubPrUrlByBranchApi(repoPath: string, branch: string, expectedRepoName: string): string {
+  const slug = githubRepoSlugForPath(repoPath);
+  if (!slug || !branch) return "";
+  const [owner] = slug.split("/");
+  const params = new URLSearchParams({ head: `${owner}:${branch}`, state: "all", per_page: "20" });
+  try {
+    const raw = execFileSync("curl", [
+      "-fsSL",
+      "-H", "Accept: application/vnd.github+json",
+      "-H", "User-Agent: setfarm-auto-pr-recovery",
+      `https://api.github.com/repos/${slug}/pulls?${params.toString()}`,
+    ], {
+      cwd: repoPath,
+      timeout: 15_000,
+      stdio: ["pipe", "pipe", "pipe"],
+      encoding: "utf-8",
+    }).toString();
+    const prs = JSON.parse(raw) as Array<{ html_url?: string; state?: string; merged_at?: string | null }>;
+    for (const pr of prs) {
+      const state = String(pr.state || "").toLowerCase();
+      const usable = state === "open" || Boolean(pr.merged_at);
+      const url = String(pr.html_url || "");
+      if (usable && isValidGithubPrUrl(url, expectedRepoName)) return url;
+    }
+  } catch {
+    return "";
+  }
+  return "";
+}
+
 async function ensureStoryPrUrlForBranch(options: {
   runId: string;
   repoPath: string;
@@ -466,6 +519,12 @@ async function ensureStoryPrUrlForBranch(options: {
     logger.warn(`[auto-pr] pr list failed for ${storyBranchName}: ${formatCommandError(listErr)}`, { runId });
   }
 
+  const apiExistingPr = findGithubPrUrlByBranchApi(repoPath, storyBranchName, expectedRepoName);
+  if (apiExistingPr) {
+    logger.info(`[auto-pr] Reusing GitHub API discovered PR ${apiExistingPr} for story ${storyId}`, { runId });
+    return { prUrl: apiExistingPr, error: "" };
+  }
+
   const prTitle = `feat: ${storyId || "story"} - ${(storyTitle || "").slice(0, 70)}`;
   const prBody = `## Story\n${storyId || ""}: ${storyTitle || ""}\n\n## Changes\n${changes.slice(0, 1500)}\n\n_Auto-created by setfarm after story completion._`;
   try {
@@ -480,6 +539,11 @@ async function ensureStoryPrUrlForBranch(options: {
     }
     return { prUrl: "", error: `AUTO_PR_CREATE_FAILED: gh pr create returned no valid PR URL for ${storyBranchName}. Output: ${prOut.slice(0, 300)}` };
   } catch (createErr) {
+    const apiCreatedPr = findGithubPrUrlByBranchApi(repoPath, storyBranchName, expectedRepoName);
+    if (apiCreatedPr) {
+      logger.info(`[auto-pr] Recovered PR ${apiCreatedPr} after gh pr create failed for story ${storyId}`, { runId });
+      return { prUrl: apiCreatedPr, error: "" };
+    }
     return { prUrl: "", error: `AUTO_PR_CREATE_FAILED: ${storyBranchName}: ${formatCommandError(createErr)}` };
   }
 }
@@ -7718,6 +7782,13 @@ ${prd}`;
     // the next story starts from stale local main.
     const storyLoopConfig = parseLoopConfigSafe(step.loop_config, step.run_id);
     const requiredPrBase = (storyLoopConfig?.mergeStrategy === "pr-each" || storyLoopConfig?.verifyEach) ? "main" : "";
+    if (storyStatus === STORY_STATUS.DONE && storyPrUrl && context["auto_pr_create_failed"]) {
+      delete context["auto_pr_create_failed"];
+      if (context["failure_category"] === "AUTO_PR_CREATE_FAILED") {
+        delete context["failure_category"];
+        delete context["failure_suggestion"];
+      }
+    }
     if (storyStatus === STORY_STATUS.DONE && storyPrUrl && requiredPrBase && context["repo"]) {
       try {
         const infoRaw = execFileSync("gh", ["pr", "view", storyPrUrl, "--json", "baseRefName,url"], {
