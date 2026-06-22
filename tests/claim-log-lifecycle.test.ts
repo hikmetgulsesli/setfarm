@@ -1056,12 +1056,13 @@ describe("single-step claim_log lifecycle", () => {
     const peekSource = peekStepSource();
     const claimBypassSource = previousStepSelectionBypassSource(claimSource);
     const peekBypassSource = previousStepSelectionBypassSource(peekSource);
-    const activeStoryGuard = /NOT EXISTS \(SELECT 1 FROM stories active_st WHERE active_st\.run_id = s\.run_id AND active_st\.status IN \('pending', 'running'\) AND active_st\.retry_count > 0\)/;
+    const activeStoryGuard = /NOT EXISTS \(SELECT 1 FROM stories active_st WHERE active_st\.run_id = s\.run_id AND active_st\.status IN \('pending', 'running'\) AND \$\{ACTIVE_RETRY_STORY_ALIAS_SQL\}\)/;
 
     const claimPendingBypass = claimBypassSource.slice(claimBypassSource.indexOf("prev.status = 'pending'"));
     const peekPendingBypass = peekBypassSource.slice(peekBypassSource.indexOf("prev.status = 'pending'"));
     assert.match(claimPendingBypass, activeStoryGuard);
     assert.match(peekPendingBypass, activeStoryGuard);
+    assert.match(stepOpsSource(), /ACTIVE_RETRY_STORY_ALIAS_SQL = "\([\s\S]*PR_REVIEW_COMMENTS_OPEN\|actionable PR review comments/);
 
     const claimRunningStart = claimBypassSource.indexOf("prev.status = 'running'");
     const peekRunningStart = peekBypassSource.indexOf("prev.status = 'running'");
@@ -1116,7 +1117,8 @@ describe("single-step claim_log lifecycle", () => {
     assert.notEqual(waitGate, -1, "verify wait gate must check active retried stories");
     assert.ok(activeRetry < awaitingVerify, "active retry guard should be computed before verify wait decision");
     assert.ok(awaitingVerify < waitGate, "active retry guard must affect the pr-each wait gate");
-    assert.match(source, /status IN \('pending', 'running'\) AND retry_count > 0/);
+    assert.match(stepOpsSource(), /ACTIVE_RETRY_STORY_SQL = "\([\s\S]*PR_REVIEW_COMMENTS_OPEN\|actionable PR review comments/);
+    assert.match(source, /status IN \('pending', 'running'\) AND \$\{ACTIVE_RETRY_STORY_SQL\}/);
   });
 
   it("prioritizes QA-FIX stories before normal pending stories", () => {

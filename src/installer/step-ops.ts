@@ -69,6 +69,8 @@ const HARD_PRECLAIM_STEPS = new Set(["setup-build", "security-gate", "qa-test", 
 const QA_FIX_SOURCE_EXT = /\.(tsx?|jsx?|css|scss|vue|svelte)$/i;
 const QA_FIX_IGNORE = /^(node_modules\/|dist\/|build\/|\.next\/|coverage\/|stitch\/|references\/)|(^|\/)(package(-lock)?\.json|tsconfig[^/]*\.json|vite\.config\.[^/]+|tailwind\.config\.[^/]+|postcss\.config\.[^/]+|eslint\.config\.[^/]+|index\.html)$/;
 const SMOKE_INFRA_FAILURE = /(?:\b(agent-browser|browser control|playwright|chromium|chrome|page\.goto|browser|context|target page)\b[\s\S]{0,320}\b(ETIMEDOUT|ECONNREFUSED|ECONNRESET|EPIPE|timed out|timeout|target page|context or browser has been closed|browser has been closed|target closed|protocol error)\b|\bsystem smoke did not return structured JSON\b|\bsmoke did not return structured JSON\b)/i;
+const ACTIVE_RETRY_STORY_SQL = "(retry_count > 0 OR COALESCE(output, '') ~* 'PR_REVIEW_COMMENTS_OPEN|actionable PR review comments')";
+const ACTIVE_RETRY_STORY_ALIAS_SQL = "(active_st.retry_count > 0 OR COALESCE(active_st.output, '') ~* 'PR_REVIEW_COMMENTS_OPEN|actionable PR review comments')";
 
 function recoverableOutputTmpFiles(callerGatewayAgent?: string): string[] {
   let files: string[];
@@ -3307,7 +3309,7 @@ export async function peekStep(agentId: string, callerGatewayAgent?: string): Pr
                AND COALESCE(prev.loop_config::jsonb, '{}'::jsonb) @> '{"verifyEach":true}'::jsonb
                AND COALESCE(prev.loop_config::jsonb ->> 'verifyStep', '') = s.step_id
                AND EXISTS (SELECT 1 FROM stories done_st WHERE done_st.run_id = s.run_id AND done_st.status = 'done')
-               AND NOT EXISTS (SELECT 1 FROM stories active_st WHERE active_st.run_id = s.run_id AND active_st.status IN ('pending', 'running') AND active_st.retry_count > 0)
+               AND NOT EXISTS (SELECT 1 FROM stories active_st WHERE active_st.run_id = s.run_id AND active_st.status IN ('pending', 'running') AND ${ACTIVE_RETRY_STORY_ALIAS_SQL})
                AND NOT EXISTS (SELECT 1 FROM stories fix_st WHERE fix_st.run_id = s.run_id AND fix_st.story_id LIKE 'QA-FIX-%' AND fix_st.status IN ('pending', 'running'))
              )
              AND NOT (
@@ -3316,7 +3318,7 @@ export async function peekStep(agentId: string, callerGatewayAgent?: string): Pr
                AND COALESCE(prev.loop_config::jsonb, '{}'::jsonb) @> '{"verifyEach":true}'::jsonb
                AND COALESCE(prev.loop_config::jsonb ->> 'verifyStep', '') = s.step_id
                AND EXISTS (SELECT 1 FROM stories done_st WHERE done_st.run_id = s.run_id AND done_st.status = 'done')
-               AND NOT EXISTS (SELECT 1 FROM stories active_st WHERE active_st.run_id = s.run_id AND active_st.status IN ('pending', 'running') AND active_st.retry_count > 0)
+               AND NOT EXISTS (SELECT 1 FROM stories active_st WHERE active_st.run_id = s.run_id AND active_st.status IN ('pending', 'running') AND ${ACTIVE_RETRY_STORY_ALIAS_SQL})
                AND NOT EXISTS (SELECT 1 FROM stories fix_st WHERE fix_st.run_id = s.run_id AND fix_st.story_id LIKE 'QA-FIX-%' AND fix_st.status IN ('pending', 'running'))
              )
          )
@@ -3327,7 +3329,7 @@ export async function peekStep(agentId: string, callerGatewayAgent?: string): Pr
               s.type = 'loop'
               AND COALESCE(s.loop_config::jsonb, '{}'::jsonb) @> '{"verifyEach":true}'::jsonb
               AND EXISTS (SELECT 1 FROM stories done_st WHERE done_st.run_id = s.run_id AND done_st.status = 'done')
-              AND NOT EXISTS (SELECT 1 FROM stories active_st WHERE active_st.run_id = s.run_id AND active_st.status IN ('pending', 'running') AND active_st.retry_count > 0)
+              AND NOT EXISTS (SELECT 1 FROM stories active_st WHERE active_st.run_id = s.run_id AND active_st.status IN ('pending', 'running') AND ${ACTIVE_RETRY_STORY_ALIAS_SQL})
               AND NOT EXISTS (SELECT 1 FROM stories fix_st WHERE fix_st.run_id = s.run_id AND fix_st.story_id LIKE 'QA-FIX-%' AND fix_st.status IN ('pending', 'running'))
             )
           )
@@ -5076,7 +5078,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
 	                 AND COALESCE(prev.loop_config::jsonb, '{}'::jsonb) @> '{"verifyEach":true}'::jsonb
 	                 AND COALESCE(prev.loop_config::jsonb ->> 'verifyStep', '') = s.step_id
 	                 AND EXISTS (SELECT 1 FROM stories done_st WHERE done_st.run_id = s.run_id AND done_st.status = 'done')
-	                 AND NOT EXISTS (SELECT 1 FROM stories active_st WHERE active_st.run_id = s.run_id AND active_st.status IN ('pending', 'running') AND active_st.retry_count > 0)
+	                 AND NOT EXISTS (SELECT 1 FROM stories active_st WHERE active_st.run_id = s.run_id AND active_st.status IN ('pending', 'running') AND ${ACTIVE_RETRY_STORY_ALIAS_SQL})
 	                 AND NOT EXISTS (SELECT 1 FROM stories fix_st WHERE fix_st.run_id = s.run_id AND fix_st.story_id LIKE 'QA-FIX-%' AND fix_st.status IN ('pending', 'running'))
 	               )
 	               AND NOT (
@@ -5085,7 +5087,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
 	                 AND COALESCE(prev.loop_config::jsonb, '{}'::jsonb) @> '{"verifyEach":true}'::jsonb
 	                 AND COALESCE(prev.loop_config::jsonb ->> 'verifyStep', '') = s.step_id
 	                 AND EXISTS (SELECT 1 FROM stories done_st WHERE done_st.run_id = s.run_id AND done_st.status = 'done')
-	                 AND NOT EXISTS (SELECT 1 FROM stories active_st WHERE active_st.run_id = s.run_id AND active_st.status IN ('pending', 'running') AND active_st.retry_count > 0)
+	                 AND NOT EXISTS (SELECT 1 FROM stories active_st WHERE active_st.run_id = s.run_id AND active_st.status IN ('pending', 'running') AND ${ACTIVE_RETRY_STORY_ALIAS_SQL})
 	                 AND NOT EXISTS (SELECT 1 FROM stories fix_st WHERE fix_st.run_id = s.run_id AND fix_st.story_id LIKE 'QA-FIX-%' AND fix_st.status IN ('pending', 'running'))
 	               )
 	               AND NOT (
@@ -5103,7 +5105,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
 	                   WHERE sup_done_st.run_id = s.run_id
 	                     AND sup_done_st.status = 'done'
 	                 )
-	                 AND NOT EXISTS (SELECT 1 FROM stories active_st WHERE active_st.run_id = s.run_id AND active_st.status IN ('pending', 'running') AND active_st.retry_count > 0)
+	                 AND NOT EXISTS (SELECT 1 FROM stories active_st WHERE active_st.run_id = s.run_id AND active_st.status IN ('pending', 'running') AND ${ACTIVE_RETRY_STORY_ALIAS_SQL})
 	                 AND NOT EXISTS (SELECT 1 FROM stories fix_st WHERE fix_st.run_id = s.run_id AND fix_st.story_id LIKE 'QA-FIX-%' AND fix_st.status IN ('pending', 'running'))
 	               )
 	           )
@@ -5240,7 +5242,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
 
       if (isPrEach && isOpenPrDeliveryBlockerContext(context)) {
         const activeRetriedForDeliveryBlocker = await pgGet<{ cnt: string }>(
-          "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status IN ('pending', 'running') AND retry_count > 0",
+          `SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status IN ('pending', 'running') AND ${ACTIVE_RETRY_STORY_SQL}`,
           [step.run_id],
         );
         const activeQaFixForDeliveryBlocker = await pgGet<{ cnt: string }>(
@@ -5278,7 +5280,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
       // stale baseline while US-001's PR is still open.
       if (loopConfig?.superviseEach && loopConfig.superviseStep) {
         const superviseActiveRetriedStory = await pgGet<{ cnt: string }>(
-          "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status IN ('pending', 'running') AND retry_count > 0",
+          `SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status IN ('pending', 'running') AND ${ACTIVE_RETRY_STORY_SQL}`,
           [step.run_id],
         );
         const activeQaFix = await pgGet<{ cnt: string }>(
@@ -5311,7 +5313,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
 
       if (loopConfig?.verifyEach && loopConfig.verifyStep) {
         const activeRetriedStory = await pgGet<{ cnt: string }>(
-          "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status IN ('pending', 'running') AND retry_count > 0",
+          `SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status IN ('pending', 'running') AND ${ACTIVE_RETRY_STORY_SQL}`,
           [step.run_id],
         );
         const awaitingVerify = await pgGet<{ cnt: string }>(
