@@ -4,6 +4,7 @@ This repository now keeps agent-facing operational notes in English only.
 
 ## Unreleased
 
+- Preserved actionable PR review retry feedback when infra recovery requeues a story claim, appending stale process/claim diagnostics as metadata instead of replacing the developer's real fix target.
 - Recognized mechanically satisfied DOM XSS review comments when current source replaces unsafe `innerHTML` interpolation with DOM node construction, text assignment, attribute setting, and defensive validation, preventing fixed PR feedback from looping through supervisor retries.
 - Stopped Gemini COMMENTED review digest summaries, including service deprecation admonitions, from reopening already-handled inline PR feedback while preserving genuinely actionable direct review summaries.
 - Cleared stale PR review delivery blockers after the blocked story is verified, preventing old PR feedback context from leaking into the next story claim.

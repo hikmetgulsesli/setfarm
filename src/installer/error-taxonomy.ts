@@ -68,6 +68,7 @@ export interface ClassifiedError {
 }
 
 const PATTERNS: Array<{ pattern: RegExp; category: ErrorCategory; suggestion: string }> = [
+  { pattern: /AGENT_(?:STORY|STEP)_STATE_MISMATCH:/i, category: "AGENT_PROCESS_EXITED", suggestion: "Spawner recovered a stale active process/claim state. Treat as platform recovery metadata; retry the original actionable story feedback and do not ask the developer agent to solve process state." },
   { pattern: /AGENT_MODEL_TURN_STALLED:/i, category: "AGENT_STALL", suggestion: "Model turn stalled without file/output/progress changes. Treat as provider/session infra; retry the same claim, and if repeated switch model or reduce injected context." },
   { pattern: /^IMPLEMENT_NO_DELTA_STALL:/i, category: "AGENT_STALL", suggestion: "Implement agent spent the grace window without any project source delta. Retry the same scoped story and require a small code edit before extended analysis." },
   { pattern: /^IMPLEMENT_PRE_DELTA_CHECK_VIOLATION:/i, category: "IMPLEMENT_PRE_DELTA_CHECK_VIOLATION", suggestion: "First-delta retry discipline was violated. Re-read CLAIM_SUMMARY_FILE, inspect only owned scope files plus safe metadata, make a small scoped source delta first, then run build/test/lint." },

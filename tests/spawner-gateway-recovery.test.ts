@@ -1250,6 +1250,15 @@ describe("spawner gateway recovery wiring", () => {
     );
   });
 
+  it("preserves actionable PR review output when infra requeues a story claim", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /function preserveActionableStoryRetryOutput/);
+    assert.match(source, /PR_REVIEW_COMMENTS_OPEN\\b\|actionable PR review comments/);
+    assert.match(source, /INFRA_RETRY:/);
+    assert.match(source, /const storyOutput = preserveActionableStoryRetryOutput\(row\.story_output,\s*diagnostic\)/);
+    assert.match(source, /st\.output as story_output/);
+  });
+
   it("hard-times out retry-disciplined implement claims that keep analyzing after a delta", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /IMPLEMENT_RETRY_HARD_TIMEOUT_MS/);

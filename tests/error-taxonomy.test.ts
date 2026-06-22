@@ -223,6 +223,12 @@ describe("error taxonomy", () => {
   });
 
   it("classifies model/session infra failures instead of UNKNOWN", () => {
+    const storyMismatch = classifyError(
+      "AGENT_STORY_STATE_MISMATCH: feature-dev_developer is still running US-003, but loop step points at US-003 (pending); requeueing stale claim.",
+    );
+    assert.equal(storyMismatch.category, "AGENT_PROCESS_EXITED");
+    assert.match(storyMismatch.suggestion, /original actionable story feedback/);
+
     const stalled = classifyError(
       "AGENT_PROCESS_EXITED: feature-dev_developer exited before completing feature-dev/developer. AGENT_MODEL_TURN_STALLED: feature-dev_developer kept feature-dev/developer running for 9m38s but session/output/progress files have not changed for 8m4s.",
     );

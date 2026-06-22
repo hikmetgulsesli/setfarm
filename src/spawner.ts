@@ -3565,8 +3565,8 @@ async function requeueOrphanedStoryClaim(runId: string, stepId: string, agentId:
 }
 
 async function requeueOpenStoryClaim(runId: string, stepId: string, storyId: string, agentId: string, diagnostic: string): Promise<boolean> {
-  const row = await pgGet<{ story_db_id: string | null; story_status: string | null; claim_story_id: string }>(
-    `SELECT st.id as story_db_id, st.status as story_status, cl.story_id as claim_story_id
+  const row = await pgGet<{ story_db_id: string | null; story_status: string | null; story_output: string | null; claim_story_id: string }>(
+    `SELECT st.id as story_db_id, st.status as story_status, st.output as story_output, cl.story_id as claim_story_id
      FROM claim_log cl
      LEFT JOIN stories st ON st.run_id = cl.run_id AND st.story_id = cl.story_id
      WHERE cl.run_id = $1
@@ -3600,15 +3600,25 @@ async function requeueOpenStoryClaim(runId: string, stepId: string, storyId: str
     // Runtime guard retries are manager/discipline failures, not semantic story
     // failures. Keep the diagnostic, but preserve both story retry and abandon
     // budgets for real build/design/verify feedback and crash recovery.
+    const storyOutput = preserveActionableStoryRetryOutput(row.story_output, diagnostic);
     await pgRun(
       "UPDATE stories SET status = 'pending', claimed_by = NULL, output = $2, updated_at = NOW() WHERE id = $1 AND status IN ('running','pending')",
-      [row.story_db_id, diagnostic],
+      [row.story_db_id, storyOutput],
     );
   }
   await pgRun("UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = NOW() WHERE run_id = $1 AND step_id = $2 AND status IN ('pending','running','waiting')", [runId, stepId]);
   await pgRun("UPDATE claim_log SET outcome = 'infra_retry', abandoned_at = NOW(), diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND story_id = $4 AND agent_id = $5 AND outcome IS NULL", [diagnostic, runId, stepId, storyId, agentId]);
   console.warn(`[spawner] requeued open story claim ${storyId} for ${agentId}: ${diagnostic.slice(0, 180)}`);
   return true;
+}
+
+function preserveActionableStoryRetryOutput(currentOutput: string | null | undefined, diagnostic: string): string {
+  const existing = String(currentOutput || "").trim();
+  const next = String(diagnostic || "").trim();
+  if (!existing || /\bPR_REVIEW_COMMENTS_OPEN\b|actionable PR review comments/i.test(next)) return next;
+  if (!/\bPR_REVIEW_COMMENTS_OPEN\b|actionable PR review comments/i.test(existing)) return next;
+  if (existing.includes(next.slice(0, 400))) return existing;
+  return `${existing}\n\nINFRA_RETRY:\n${next}`.slice(0, 12000);
 }
 
 async function discardRuntimeGuardRetryWorktree(runId: string, storyId: string, agentId: string, diagnostic: string): Promise<void> {
