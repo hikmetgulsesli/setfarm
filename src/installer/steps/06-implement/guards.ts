@@ -1080,13 +1080,18 @@ function sourceHasSemanticIntegrationToken(source: string, token: string): boole
 }
 
 function sourceHasEquivalentSemanticIntegrationToken(source: string, name: string, value: string): boolean {
-  if (name !== "data-action-id") return false;
   const fragments = semanticTokenValueFragments(value);
   if (fragments.length === 0) return false;
 
-  const setAttributeRe = /\.setAttribute\s*\(\s*["']data-action-id["']\s*,\s*([^)]+)\)/g;
-  const datasetRe = /\.dataset\.actionId\s*=\s*([^;\n]+)/g;
-  for (const re of [setAttributeRe, datasetRe]) {
+  const equivalentExpressions: RegExp[] = [
+    new RegExp(`\\.setAttribute\\s*\\(\\s*["']${escapeRegExp(name)}["']\\s*,\\s*([^)]+)\\)`, "g"),
+  ];
+  const datasetProp = datasetPropertyForDataAttribute(name);
+  if (datasetProp) {
+    equivalentExpressions.push(new RegExp(`\\.dataset\\.${escapeRegExp(datasetProp)}\\s*=\\s*([^;\\n]+)`, "g"));
+  }
+
+  for (const re of equivalentExpressions) {
     let match: RegExpExecArray | null;
     while ((match = re.exec(source)) !== null) {
       const expression = match[1] ?? "";
@@ -1094,6 +1099,13 @@ function sourceHasEquivalentSemanticIntegrationToken(source: string, name: strin
     }
   }
   return false;
+}
+
+function datasetPropertyForDataAttribute(name: string): string {
+  if (!name.startsWith("data-")) return "";
+  const rest = name.slice("data-".length);
+  if (!rest) return "";
+  return rest.replace(/-([a-z])/g, (_match, letter: string) => letter.toUpperCase());
 }
 
 function semanticTokenValueFragments(value: string): string[] {

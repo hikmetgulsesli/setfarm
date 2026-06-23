@@ -2382,6 +2382,50 @@ describe("06-implement step module", () => {
     }
   });
 
+  it("allows data-testid setAttribute equivalents after DOM security refactors", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-generated-screen-testid-equivalent-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { screenId: "gameplay", title: "Gameplay", componentName: "GameplayScreen", file: "src/screens/GameplayScreen.tsx" },
+      ]));
+      fs.writeFileSync(path.join(tmp, "src/screens/GameplayScreen.tsx"), "export function GameplayScreen() { return <div>Gameplay</div>; }\n");
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "export function renderCounterValue(value: number) {",
+        "  return '<div class=\"counter-value\" data-testid=\"counter-value\">' + value + '</div>';",
+        "}",
+        "",
+      ].join("\n"));
+      execFileSync("git", ["init"], { cwd: tmp, stdio: "ignore" });
+      execFileSync("git", ["config", "user.email", "setfarm@example.test"], { cwd: tmp, stdio: "ignore" });
+      execFileSync("git", ["config", "user.name", "Setfarm Test"], { cwd: tmp, stdio: "ignore" });
+      execFileSync("git", ["add", "."], { cwd: tmp, stdio: "ignore" });
+      execFileSync("git", ["commit", "-m", "prior dynamic test id integration"], { cwd: tmp, stdio: "ignore" });
+
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "export function renderCounterValue(value: number) {",
+        "  const el = document.createElement('div');",
+        "  el.className = 'counter-value';",
+        "  el.setAttribute('data-testid', 'counter-value');",
+        "  el.textContent = String(value);",
+        "  return el;",
+        "}",
+        "",
+      ].join("\n"));
+
+      const issues = findGeneratedScreenRegressionIssues(
+        tmp,
+        [[{ screenId: "gameplay", name: "Gameplay", type: "game" }]],
+        "",
+        ["src/App.tsx"],
+      );
+
+      assert.equal(issues.some((issue) => issue.includes("APP_INTEGRATION_SEMANTIC_REGRESSION") && issue.includes("data-testid=counter-value")), false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("keeps specific app integration categories for generated screen regression retries", () => {
     const classification = classifyGeneratedScreenRegressionIssues([
       "APP_INTEGRATION_SEMANTIC_REGRESSION: app/router diff removes previously accepted semantic UI contract \"data-action-id=cycle-' + escapedId + '\".",

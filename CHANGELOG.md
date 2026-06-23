@@ -4,6 +4,7 @@ This repository now keeps agent-facing operational notes in English only.
 
 ## Unreleased
 
+- Accepted DOM security refactors that preserve semantic UI contracts with `setAttribute("data-testid", ...)` or equivalent `dataset` assignments, preventing XSS fixes from being rejected as app integration regressions when the observable test/action IDs remain intact.
 - Classified post-merge `STATUS: retry` security/quality reports even when they are wrapped by routing headers, preventing developer retries from receiving `UNKNOWN` guidance for actionable `VULNERABILITIES` feedback.
 - Converted `APP_INTEGRATION_SEMANTIC_REGRESSION` feedback into exact protected restore snippets in developer claim summaries and bootstrap output, making lost `data-testid`, `data-action-id`, ARIA, and role contracts a deterministic retry checklist instead of general guidance.
 - Preserved actionable PR review retry feedback when infra recovery requeues a story claim, appending stale process/claim diagnostics as metadata instead of replacing the developer's real fix target.
