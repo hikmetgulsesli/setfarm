@@ -391,6 +391,19 @@ describe("error taxonomy", () => {
     ].join("\n"));
     assert.equal(reviewRetryWithConflictWord.category, "QUALITY_RETRY_FEEDBACK");
 
+    const postMergeSecurityRetry = classifyError([
+      "POST_MERGE_QUALITY_REGRESSION:",
+      "US-003 PR is already MERGED; retry on current main with a fresh story branch instead of reopening the merged branch.",
+      "",
+      "Failure report:",
+      "STATUS: retry",
+      "VULNERABILITIES:",
+      "- assets/js/app.js:42 — XSS: innerHTML assignment without an obvious sanitizer in the file.",
+      "FINDINGS:",
+      "- Inline read-only security scan checked 20 tracked text file(s).",
+    ].join("\n"));
+    assert.equal(postMergeSecurityRetry.category, "QUALITY_RETRY_FEEDBACK");
+
     const visualHarnessRetry = classifyError([
       "STATUS: retry",
       "FINDINGS:",
