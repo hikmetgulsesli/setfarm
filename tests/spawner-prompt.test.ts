@@ -27,7 +27,7 @@ describe("spawner prompt bootstrap", () => {
     assert.match(prompt, /outputContract\.requiredFields and outputContract\.format exactly/);
     assert.match(prompt, /guard-backed roles will reject prose-only summaries/);
     assert.match(prompt, /Use retryFeedback\.mode exactly/);
-    assert.match(prompt, /retryFeedback\.protectedSnippets first/);
+    assert.match(prompt, /retryFeedback\.restoreTargets first, then retryFeedback\.protectedSnippets/);
     assert.match(prompt, /retryFeedback\.actionableReviewThreads first/);
     assert.match(prompt, /supervisorEvidence/);
     assert.match(prompt, /current-source scanner evidence/);
@@ -754,6 +754,97 @@ describe("spawner prompt bootstrap", () => {
     }
   });
 
+  it("summarizes retry patch restore targets by file", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-retry-targets-"));
+    try {
+      const workdir = path.join(tmp, "worktree");
+      fs.mkdirSync(workdir, { recursive: true });
+      fs.writeFileSync(path.join(workdir, ".story-scope-files"), "src/App.tsx\nsrc/router.tsx\n");
+      const input = [
+        "TASK: Project: retry restore target sensor",
+        "CURRENT STORY: Story US-003: Retry restore target sensor",
+        "",
+        "## Previous Failure / Retry Feedback",
+        "RETRY_PATCH_REAPPLIED: Story US-003 repeated 3 deletion(s) from a previously rejected retry patch.",
+        "Preserve/restore: import { PreviousScreen } from './PreviousScreen'; | case 'previous': return <PreviousScreen />",
+        "",
+        "## Retry Worktree Patch Memory",
+        "RETRY_WORKTREE_PATCH_MEMORY:",
+        "RETRY_WORKTREE_PATCH_SOURCE: .setfarm/retry-patches/run-us-003.patch",
+        "RETRY_WORKTREE_PATCH_TOUCHED_FILES: src/App.tsx, src/router.tsx",
+        "RETRY_WORKTREE_PATCH_BODY:",
+        "```diff",
+        "diff --git a/src/App.tsx b/src/App.tsx",
+        "--- a/src/App.tsx",
+        "+++ b/src/App.tsx",
+        "-import { PreviousScreen } from './PreviousScreen';",
+        "-const preserveActionBridge = createActionBridge(previousActions);",
+        "+const currentOnly = true;",
+        "diff --git a/src/router.tsx b/src/router.tsx",
+        "--- a/src/router.tsx",
+        "+++ b/src/router.tsx",
+        "-case 'previous': return <PreviousScreen />",
+        "-return routeMap.previous;",
+        "diff --git a/src/state.ts b/src/state.ts",
+        "--- a/src/state.ts",
+        "+++ b/src/state.ts",
+        "-export const preservedState = true;",
+        "```",
+        "",
+        "## Current Story",
+      ].join("\n");
+
+      const claimSummaryFile = path.join(tmp, "claim-summary.json");
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        bootstrapFile: path.join(tmp, "bootstrap.sh"),
+        stepId: "step-123",
+        runId: "run-123",
+        workdir,
+        repo: workdir,
+        storyId: "US-003",
+        input,
+      });
+      fs.writeFileSync(claimSummaryFile, JSON.stringify(summary, null, 2));
+
+      assert.deepEqual((summary.retryFeedback as any).restoreTargets, [
+        {
+          file: "src/App.tsx",
+          lines: [
+            "import { PreviousScreen } from './PreviousScreen';",
+            "const preserveActionBridge = createActionBridge(previousActions);",
+          ],
+        },
+        {
+          file: "src/router.tsx",
+          lines: [
+            "case 'previous': return <PreviousScreen />",
+            "return routeMap.previous;",
+          ],
+        },
+      ]);
+      assert.doesNotMatch(JSON.stringify((summary.retryFeedback as any).restoreTargets), /state\.ts/);
+
+      const bootstrap = buildResolvedClaimBootstrapScript({
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        claimSummaryFile,
+        stepId: "step-123",
+        workdir,
+      });
+      fs.writeFileSync(path.join(tmp, "bootstrap.sh"), bootstrap, { mode: 0o755 });
+      const out = execFileSync("bash", [path.join(tmp, "bootstrap.sh")], { encoding: "utf-8" });
+      assert.match(out, /RETRY_RESTORE_TARGETS=2/);
+      assert.match(out, /RETRY_RESTORE_TARGET_1=src\/App\.tsx :: import \{ PreviousScreen \} from '\.\/PreviousScreen';/);
+      assert.match(out, /RETRY_RESTORE_TARGET_2=src\/router\.tsx :: case 'previous': return <PreviousScreen \/>/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("turns app integration semantic regressions into protected restore snippets", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-semantic-snippets-"));
     try {
@@ -768,6 +859,16 @@ describe("spawner prompt bootstrap", () => {
         "APP_INTEGRATION_SEMANTIC_REGRESSION: app/router diff removes previously accepted semantic UI contract \"data-testid=counter-value\".",
         "APP_INTEGRATION_SEMANTIC_REGRESSION: app/router diff removes previously accepted semantic UI contract \"data-action-id=add\".",
         "APP_INTEGRATION_SEMANTIC_REGRESSION: app/router diff removes previously accepted semantic UI contract \"data-action-id=reset\".",
+        "",
+        "## Retry Worktree Patch Memory",
+        "```diff",
+        "diff --git a/assets/js/app.js b/assets/js/app.js",
+        "--- a/assets/js/app.js",
+        "+++ b/assets/js/app.js",
+        "-article.innerHTML = '<button data-action-id=\"add\">Add</button>';",
+        "-root.innerHTML = '';",
+        "+article.appendChild(addButton);",
+        "```",
         "",
         "## Current Story",
       ].join("\n");
@@ -795,6 +896,7 @@ describe("spawner prompt bootstrap", () => {
         'data-action-id="add"',
         'data-action-id="reset"',
       ]);
+      assert.deepEqual((summary.retryFeedback as any).restoreTargets, []);
 
       const bootstrap = buildResolvedClaimBootstrapScript({
         claimFile: path.join(tmp, "claim.json"),
@@ -809,6 +911,8 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, /RETRY_PROTECTED_SNIPPET_1=data-testid="counter-value"/);
       assert.match(out, /RETRY_PROTECTED_SNIPPET_2=data-action-id="add"/);
       assert.match(out, /RETRY_PROTECTED_SNIPPET_3=data-action-id="reset"/);
+      assert.doesNotMatch(out, /RETRY_RESTORE_TARGETS=/);
+      assert.doesNotMatch(out, /article\.innerHTML/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

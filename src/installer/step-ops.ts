@@ -69,8 +69,10 @@ const HARD_PRECLAIM_STEPS = new Set(["setup-build", "security-gate", "qa-test", 
 const QA_FIX_SOURCE_EXT = /\.(tsx?|jsx?|css|scss|vue|svelte)$/i;
 const QA_FIX_IGNORE = /^(node_modules\/|dist\/|build\/|\.next\/|coverage\/|stitch\/|references\/)|(^|\/)(package(-lock)?\.json|tsconfig[^/]*\.json|vite\.config\.[^/]+|tailwind\.config\.[^/]+|postcss\.config\.[^/]+|eslint\.config\.[^/]+|index\.html)$/;
 const SMOKE_INFRA_FAILURE = /(?:\b(agent-browser|browser control|playwright|chromium|chrome|page\.goto|browser|context|target page)\b[\s\S]{0,320}\b(ETIMEDOUT|ECONNREFUSED|ECONNRESET|EPIPE|timed out|timeout|target page|context or browser has been closed|browser has been closed|target closed|protocol error)\b|\bsystem smoke did not return structured JSON\b|\bsmoke did not return structured JSON\b)/i;
-const ACTIVE_RETRY_STORY_SQL = "(retry_count > 0 OR COALESCE(output, '') ~* 'PR_REVIEW_COMMENTS_OPEN|actionable PR review comments')";
-const ACTIVE_RETRY_STORY_ALIAS_SQL = "(active_st.retry_count > 0 OR COALESCE(active_st.output, '') ~* 'PR_REVIEW_COMMENTS_OPEN|actionable PR review comments')";
+const ACTIONABLE_RETRY_OUTPUT_PATTERN = "PR_REVIEW_COMMENTS_OPEN|actionable PR review comments|APP_INTEGRATION_[A-Z_]*REGRESSION|POST_MERGE_QUALITY_REGRESSION|VULNERABILITIES|SECURITY_FINDINGS?|STATUS:[[:space:]]*retry";
+const ACTIVE_RETRY_STORY_SQL = `(retry_count > 0 OR COALESCE(output, '') ~* '${ACTIONABLE_RETRY_OUTPUT_PATTERN}')`;
+const ACTIVE_RETRY_STORY_ALIAS_SQL = `(active_st.retry_count > 0 OR COALESCE(active_st.output, '') ~* '${ACTIONABLE_RETRY_OUTPUT_PATTERN}')`;
+const ACTIONABLE_RETRY_OUTPUT_RE = /\b(?:PR_REVIEW_COMMENTS_OPEN|APP_INTEGRATION_[A-Z_]*REGRESSION|POST_MERGE_QUALITY_REGRESSION|VULNERABILITIES|SECURITY_FINDINGS?|STATUS:\s*retry)\b|actionable PR review comments/i;
 
 function recoverableOutputTmpFiles(callerGatewayAgent?: string): string[] {
   let files: string[];
@@ -2387,11 +2389,13 @@ async function routeOriginalStoryQualityFailureToImplement(
   }
 
   if (retryStory.pr_url && getPRState(retryStory.pr_url) === "MERGED") {
-    if (newRetry > (retryStory.max_retries || 0)) {
+    const matchingQualityRetry = Math.max(1, parseInt(context["quality_failure_repeat_count"] || "1", 10) || 1);
+    if (matchingQualityRetry > QA_FIX_REPEAT_LIMIT) {
       const terminalRetry = Math.max(0, retryStory.max_retries || 0);
       const exhaustedRetryFailure = [
         "POST_MERGE_QUALITY_REGRESSION_RETRY_EXHAUSTED:",
-        `${retryStory.story_id} PR is already MERGED and current-main repair retries are exhausted (${terminalRetry}/${retryStory.max_retries}).`,
+        `${retryStory.story_id} PR is already MERGED and matching current-main repair retries are exhausted (${QA_FIX_REPEAT_LIMIT}/${QA_FIX_REPEAT_LIMIT}).`,
+        `Story retry count is ${retryStory.retry_count}/${retryStory.max_retries}; post-merge quality repair budget is tracked by matching failure fingerprint so infra/model retries do not consume it.`,
         routeReason,
         "",
         "Failure report:",
@@ -3825,8 +3829,10 @@ async function autoCompleteStoriesWithPRs(
   const autoCompleteStories = await pgQuery<any>("SELECT * FROM stories WHERE run_id = $1 AND status = 'pending' ORDER BY story_index ASC", [step.run_id]);
   for (const rs of autoCompleteStories) {
     const retryCount = Number(rs.retry_count || 0);
-    if (retryCount > 0) {
-      logger.info(`[claim-auto-complete] Story ${rs.story_id} has retry_count=${retryCount}; skipping stale PR auto-complete so implement can apply verify feedback`, { runId: step.run_id });
+    const hasActionableRetryOutput = ACTIONABLE_RETRY_OUTPUT_RE.test(String(rs.output || ""));
+    if (retryCount > 0 || hasActionableRetryOutput) {
+      const reason = retryCount > 0 ? `retry_count=${retryCount}` : "actionable retry output";
+      logger.info(`[claim-auto-complete] Story ${rs.story_id} has ${reason}; skipping stale PR auto-complete so implement can apply verify feedback`, { runId: step.run_id });
       continue;
     }
 
@@ -5494,7 +5500,15 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
       nextStory = claimedStory;
       // ISSUE-1 FIX: Use {runIdPrefix}-{storyId} for branch name to prevent collisions across runs
       const storyRunPrefix = step.run_id.slice(0, 8);
-      const storyBranch = `${storyRunPrefix}-${nextStory.story_id}`.toLowerCase();
+      const isPostMergeQualityRepair =
+        context["failure_category"] === "POST_MERGE_QUALITY_REGRESSION" ||
+        context["post_merge_quality_regression_story_id"] === nextStory.story_id ||
+        /\bPOST_MERGE_QUALITY_REGRESSION\b/i.test(String(nextStory.output || ""));
+      const storyBranch = (
+        isPostMergeQualityRepair
+          ? `${storyRunPrefix}-${nextStory.story_id}-repair-${Math.max(1, Number(nextStory.retry_count || 0))}`
+          : `${storyRunPrefix}-${nextStory.story_id}`
+      ).toLowerCase();
 
       // Wave 4 fix #10 (plan: reactive-frolicking-cupcake): previously we updated
       // `steps.current_story_id` BEFORE creating the worktree. If the process died

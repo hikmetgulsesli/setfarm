@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { preserveActionableStoryRetryOutput } from "../src/installer/retry-output.ts";
 
 const root = path.resolve(import.meta.dirname, "..");
 
@@ -24,6 +25,10 @@ function stepAdvanceSource(): string {
 
 function repoSource(): string {
   return fs.readFileSync(path.join(root, "src", "installer", "repo.ts"), "utf-8");
+}
+
+function cliSource(): string {
+  return fs.readFileSync(path.join(root, "src", "cli", "cli.ts"), "utf-8");
 }
 
 function handleVerifyEachSource(): string {
@@ -456,6 +461,7 @@ describe("single-step claim_log lifecycle", () => {
     const repairScope = helperSource.indexOf("extractQualityFailureScopeFiles(failure)");
     const scopePersist = helperSource.indexOf("scope_files = $3, resolved_scope_files = $3", mergedGuard);
     const routeTransition = helperSource.indexOf("qualityFailure:routeMergedStoryMainRepair", mergedGuard);
+    const claimSource = stepOpsSource();
 
     assert.ok(prSelect >= 0, "original story router must read pr_url");
     assert.ok(mergedGuard > prSelect, "merged PR guard must run after loading story metadata");
@@ -466,8 +472,27 @@ describe("single-step claim_log lifecycle", () => {
     assert.ok(scopePersist > repairScope, "merged PR retry must persist expanded repair scope before rerunning implement");
     assert.ok(routeTransition > clearBranch, "merged PR retry must route through implement instead of terminal failure");
     assert.match(helperSource, /retry on current main with a fresh story branch instead of reopening the merged branch/);
-    assert.match(helperSource, /const terminalRetry = Math\.max\(0, retryStory\.max_retries \|\| 0\)/);
+    assert.match(helperSource, /quality_failure_repeat_count/);
+    assert.match(helperSource, /matching current-main repair retries are exhausted/);
+    assert.match(helperSource, /infra\/model retries do not consume it/);
     assert.match(helperSource, /post-merge quality failure routed to original story/);
+    assert.match(claimSource, /isPostMergeQualityRepair/);
+    assert.match(claimSource, /POST_MERGE_QUALITY_REGRESSION[\s\S]*nextStory\.output/);
+    assert.match(claimSource, /\$\{storyRunPrefix\}-\$\{nextStory\.story_id\}-repair-\$\{Math\.max\(1, Number\(nextStory\.retry_count \|\| 0\)\)\}/);
+  });
+
+  it("manual resume clears stale quality failure repeat context", () => {
+    const source = cliSource();
+    const start = source.indexOf("async function clearManualResumeState(");
+    const end = source.indexOf("async function main(", start);
+    assert.notEqual(start, -1, "clearManualResumeState source not found");
+    assert.notEqual(end, -1, "clearManualResumeState end marker not found");
+    const clearSource = source.slice(start, end);
+
+    assert.match(clearSource, /quality_failure_fingerprint/);
+    assert.match(clearSource, /quality_failure_repeat_count/);
+    assert.match(clearSource, /post_merge_quality_regression_story_id/);
+    assert.match(clearSource, /failure_route_action/);
   });
 
   it("extracts downstream quality file paths for story repair scope expansion", () => {
@@ -1062,7 +1087,8 @@ describe("single-step claim_log lifecycle", () => {
     const peekPendingBypass = peekBypassSource.slice(peekBypassSource.indexOf("prev.status = 'pending'"));
     assert.match(claimPendingBypass, activeStoryGuard);
     assert.match(peekPendingBypass, activeStoryGuard);
-    assert.match(stepOpsSource(), /ACTIVE_RETRY_STORY_ALIAS_SQL = "\([\s\S]*PR_REVIEW_COMMENTS_OPEN\|actionable PR review comments/);
+    assert.match(stepOpsSource(), /ACTIONABLE_RETRY_OUTPUT_PATTERN = "PR_REVIEW_COMMENTS_OPEN\|actionable PR review comments/);
+    assert.match(stepOpsSource(), /ACTIVE_RETRY_STORY_ALIAS_SQL = `\(active_st\.retry_count > 0 OR COALESCE\(active_st\.output, ''\) ~\* '\$\{ACTIONABLE_RETRY_OUTPUT_PATTERN\}'\)`/);
 
     const claimRunningStart = claimBypassSource.indexOf("prev.status = 'running'");
     const peekRunningStart = peekBypassSource.indexOf("prev.status = 'running'");
@@ -1086,17 +1112,21 @@ describe("single-step claim_log lifecycle", () => {
   it("does not auto-complete retried stories from stale PRs", () => {
     const source = autoCompleteStoriesWithPRsSource();
     const retryGuard = source.indexOf("Number(rs.retry_count || 0)");
+    const outputGuard = source.indexOf("ACTIONABLE_RETRY_OUTPUT_RE.test");
     const stalePrSkip = source.indexOf("skipping stale PR auto-complete");
     const prCompletion = source.indexOf("if (prFound && prUrlValid)");
     const doneUpdate = source.indexOf("UPDATE stories SET status = 'done'");
 
     assert.notEqual(retryGuard, -1, "retry_count guard not found");
+    assert.notEqual(outputGuard, -1, "actionable retry output guard not found");
     assert.notEqual(stalePrSkip, -1, "stale PR skip log not found");
     assert.notEqual(prCompletion, -1, "PR completion branch not found");
     assert.notEqual(doneUpdate, -1, "story done update not found");
     assert.ok(retryGuard < prCompletion, "retry guard must run before PR completion");
+    assert.ok(outputGuard < prCompletion, "actionable retry output guard must run before PR completion");
     assert.ok(stalePrSkip < doneUpdate, "retried stories must be skipped before status=done update");
-    assert.match(source, /if \(retryCount > 0\) \{[\s\S]*continue;/);
+    assert.match(source, /if \(retryCount > 0 \|\| hasActionableRetryOutput\) \{[\s\S]*continue;/);
+    assert.match(stepOpsSource(), /ACTIONABLE_RETRY_OUTPUT_PATTERN = "PR_REVIEW_COMMENTS_OPEN\|actionable PR review comments\|APP_INTEGRATION_\[A-Z_\]\*REGRESSION\|POST_MERGE_QUALITY_REGRESSION\|VULNERABILITIES/);
   });
 
   it("allows implement to claim active QA-FIX stories even when older stories are done", () => {
@@ -1117,7 +1147,8 @@ describe("single-step claim_log lifecycle", () => {
     assert.notEqual(waitGate, -1, "verify wait gate must check active retried stories");
     assert.ok(activeRetry < awaitingVerify, "active retry guard should be computed before verify wait decision");
     assert.ok(awaitingVerify < waitGate, "active retry guard must affect the pr-each wait gate");
-    assert.match(stepOpsSource(), /ACTIVE_RETRY_STORY_SQL = "\([\s\S]*PR_REVIEW_COMMENTS_OPEN\|actionable PR review comments/);
+    assert.match(stepOpsSource(), /ACTIONABLE_RETRY_OUTPUT_PATTERN = "PR_REVIEW_COMMENTS_OPEN\|actionable PR review comments/);
+    assert.match(stepOpsSource(), /ACTIVE_RETRY_STORY_SQL = `\(retry_count > 0 OR COALESCE\(output, ''\) ~\* '\$\{ACTIONABLE_RETRY_OUTPUT_PATTERN\}'\)`/);
     assert.match(source, /status IN \('pending', 'running'\) AND \$\{ACTIVE_RETRY_STORY_SQL\}/);
   });
 
@@ -1301,6 +1332,37 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(singleSource, /const terminalRetry = Math\.max\(0, step\.max_retries \|\| 0\)/);
     assert.match(singleTerminalSource, /retry_count = \$\{terminalRetry\}/);
     assert.doesNotMatch(singleTerminalSource, /retry_count = \$\{newRetryCount\}/);
+  });
+
+  it("preserves actionable story retry output when loop failStep retries or exhausts", () => {
+    const source = fs.readFileSync(path.join(root, "src", "installer", "step-fail.ts"), "utf-8");
+    assert.match(source, /import \{ preserveActionableStoryRetryOutput \} from "\.\/retry-output\.js"/);
+    assert.match(source, /SELECT id, retry_count, max_retries, output FROM stories WHERE id = \$1/);
+    assert.match(source, /const storyOutput = preserveActionableStoryRetryOutput\(story\.output,\s*error\)/);
+    assert.match(source, /Story \$\{storyRow\?\.story_id\} retries exhausted \(\$\{terminalRetry\}\/\$\{story\.max_retries\}\): \$\{storyOutput\}/);
+    assert.match(source, /UPDATE stories SET status = 'failed', retry_count = \$\{terminalRetry\}, output = \$\{storyOutput\}/);
+    assert.match(source, /UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, retry_count = \$\{newRetry\}, output = \$\{storyOutput\}/);
+  });
+
+  it("preserves multiple actionable retry targets instead of replacing earlier quality feedback", () => {
+    const quality = [
+      "POST_MERGE_QUALITY_REGRESSION:",
+      "STATUS: retry",
+      "VULNERABILITIES:",
+      "- assets/js/app.js:42 - XSS: innerHTML assignment without an obvious sanitizer in the file.",
+    ].join("\n");
+    const semantic = [
+      "APP_INTEGRATION_SEMANTIC_REGRESSION: app/router diff removes previously accepted semantic UI contract \"data-action-id=add\".",
+      "APP_INTEGRATION_SEMANTIC_REGRESSION: app/router diff removes previously accepted semantic UI contract \"data-action-id=reset\".",
+    ].join("\n");
+    const combined = preserveActionableStoryRetryOutput(quality, semantic);
+
+    assert.match(combined, /POST_MERGE_QUALITY_REGRESSION/);
+    assert.match(combined, /VULNERABILITIES/);
+    assert.match(combined, /ALSO_FIX:/);
+    assert.match(combined, /APP_INTEGRATION_SEMANTIC_REGRESSION/);
+    assert.match(combined, /data-action-id=add/);
+    assert.match(combined, /data-action-id=reset/);
   });
 
   it("caps terminal story retry counters in quality and supervisor recovery paths", () => {

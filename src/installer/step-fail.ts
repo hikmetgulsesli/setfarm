@@ -25,6 +25,7 @@ import { removeStoryWorktree } from "./worktree-ops.js";
 import { cleanupProjectEphemera, scheduleRunCronTeardown } from "./cleanup-ops.js";
 import { refreshRunContractSafe } from "./contract-ledger.js";
 import { maybeRunPlatformSelfHeal } from "./platform-self-heal/runner.js";
+import { preserveActionableStoryRetryOutput } from "./retry-output.js";
 
 // ── failStep ─────────────────────────────────────────────────────────
 
@@ -101,16 +102,17 @@ async function handleLoopStepFailurePG(
   error: string,
 ): Promise<{ retrying: boolean; runFailed: boolean }> {
   const workflowStepId = step.step_id || stepId;
-  const story = await pgGet<{ id: string; retry_count: number; max_retries: number }>(
-    "SELECT id, retry_count, max_retries FROM stories WHERE id = $1", [step.current_story_id!]
+  const story = await pgGet<{ id: string; retry_count: number; max_retries: number; output: string | null }>(
+    "SELECT id, retry_count, max_retries, output FROM stories WHERE id = $1", [step.current_story_id!]
   );
 
   if (!story) return handleSingleStepFailurePG(stepId, step, error);
 
   const storyRow = await getStoryInfo(step.current_story_id!);
   if (isTransientAgentInfrastructureFailure(error)) {
+    const storyOutput = preserveActionableStoryRetryOutput(story.output, error);
     await pgBegin(async (sql) => {
-      await sql`UPDATE stories SET status = 'pending', output = ${error}, claimed_by = NULL, claimed_at = NULL, updated_at = ${now()} WHERE id = ${story.id}`;
+      await sql`UPDATE stories SET status = 'pending', output = ${storyOutput}, claimed_by = NULL, claimed_at = NULL, updated_at = ${now()} WHERE id = ${story.id}`;
       await sql`UPDATE steps SET status = 'pending', current_story_id = NULL, output = ${error}, updated_at = ${now()} WHERE id = ${stepId}`;
       try { await sql`UPDATE claim_log SET outcome = 'infra_retry', duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at)) * 1000 AS INTEGER), diagnostic = ${error} WHERE story_id = ${storyRow?.story_id || ""} AND outcome IS NULL`; } catch (e) { logger.warn("[claim-log] update failed: " + String(e), {}); }
     });
@@ -134,9 +136,10 @@ async function handleLoopStepFailurePG(
     // with partial work; downstream verify/qa/deploy then ran on a broken feature set.
     // Fail-fast at the first unrecoverable story is simpler and matches user intent.
     const terminalRetry = Math.max(0, story.max_retries || 0);
-    const runFailReason = `Story ${storyRow?.story_id} retries exhausted (${terminalRetry}/${story.max_retries}): ${error}`;
+    const storyOutput = preserveActionableStoryRetryOutput(story.output, error);
+    const runFailReason = `Story ${storyRow?.story_id} retries exhausted (${terminalRetry}/${story.max_retries}): ${storyOutput}`;
     await pgBegin(async (sql) => {
-      await sql`UPDATE stories SET status = 'failed', retry_count = ${terminalRetry}, output = ${error}, updated_at = ${now()} WHERE id = ${story.id}`;
+      await sql`UPDATE stories SET status = 'failed', retry_count = ${terminalRetry}, output = ${storyOutput}, updated_at = ${now()} WHERE id = ${story.id}`;
       await sql`UPDATE steps SET status = 'failed', output = ${runFailReason}, current_story_id = NULL, updated_at = ${now()} WHERE id = ${stepId}`;
       await sql`UPDATE runs SET status = 'failed', updated_at = ${now()} WHERE id = ${step.run_id}`;
       try { await sql`UPDATE claim_log SET outcome = 'failed', duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at)) * 1000 AS INTEGER), diagnostic = ${error} WHERE story_id = ${storyRow?.story_id || ""} AND outcome IS NULL`; } catch (e) { logger.warn("[claim-log] update failed: " + String(e), {}); }
@@ -155,8 +158,9 @@ async function handleLoopStepFailurePG(
     return { retrying: false, runFailed: true };
   }
 
+  const storyOutput = preserveActionableStoryRetryOutput(story.output, error);
   await pgBegin(async (sql) => {
-    await sql`UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, retry_count = ${newRetry}, output = ${error}, updated_at = ${now()} WHERE id = ${story.id}`;
+    await sql`UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, retry_count = ${newRetry}, output = ${storyOutput}, updated_at = ${now()} WHERE id = ${story.id}`;
     await sql`UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = ${now()} WHERE id = ${stepId}`;
     try { await sql`UPDATE claim_log SET outcome = 'failed', duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at)) * 1000 AS INTEGER), diagnostic = ${error} WHERE story_id = ${storyRow?.story_id || ""} AND outcome IS NULL`; } catch (e) { logger.warn("[claim-log] update failed: " + String(e), {}); }
   });

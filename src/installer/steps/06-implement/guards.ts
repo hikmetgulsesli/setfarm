@@ -1113,7 +1113,7 @@ function semanticTokenValueFragments(value: string): string[] {
   const directLiterals = value.match(/[^'"${}+`\\\s][^'"${}+`\\]*/g) ?? [];
   for (const literal of directLiterals) {
     const fragment = literal.trim();
-    if (fragment.length >= 2 && !/^[A-Za-z_$][\w$]*$/.test(fragment)) {
+    if (fragment.length >= 2) {
       fragments.add(fragment);
     }
   }

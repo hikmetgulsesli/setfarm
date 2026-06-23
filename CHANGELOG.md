@@ -4,10 +4,19 @@ This repository now keeps agent-facing operational notes in English only.
 
 ## Unreleased
 
+- Reaped active agent processes with already closed claim_log rows without emitting `AGENT_STEP_STATE_MISMATCH`, preventing completed or guard-closed claims from being misclassified as fresh infra retries.
+- Preserved multiple actionable retry targets together when a downstream quality/security failure is followed by app integration feedback, so agents keep fixing the original vulnerability while restoring lost semantic contracts.
+- Blocked stale PR auto-completion for pending stories whose output still contains actionable retry feedback, preventing manual resume from bypassing the developer repair when retry counters are reset.
+- Accepted simple `setAttribute('data-action-id', 'add')` and similar DOM security refactor equivalents for prior semantic UI contracts, preventing safe XSS repairs from being rejected for removed literal HTML attributes.
+- Created unique repair branch names for post-merge quality retries, preventing fresh current-main repairs from being auto-verified against the already merged original story PR.
+- Cleared stale downstream quality fingerprints and route metadata during manual workflow resume, preventing a resumed post-merge repair from immediately exhausting on prior failed-attempt context.
+- Filtered retry patch restore targets to the active story scope so developer agents are not asked to restore read-only shared files during scoped repairs.
+- Tracked post-merge quality repair exhaustion by matching failure fingerprint instead of the story's total retry count, so infra/model retry loops no longer consume the actual downstream security/quality repair budget.
+- Added file-scoped restore targets from rejected retry patches to developer claim summaries and bootstrap output, giving retry agents exact files and deleted lines to preserve before applying the next scoped fix.
 - Accepted DOM security refactors that preserve semantic UI contracts with `setAttribute("data-testid", ...)` or equivalent `dataset` assignments, preventing XSS fixes from being rejected as app integration regressions when the observable test/action IDs remain intact.
 - Classified post-merge `STATUS: retry` security/quality reports even when they are wrapped by routing headers, preventing developer retries from receiving `UNKNOWN` guidance for actionable `VULNERABILITIES` feedback.
 - Converted `APP_INTEGRATION_SEMANTIC_REGRESSION` feedback into exact protected restore snippets in developer claim summaries and bootstrap output, making lost `data-testid`, `data-action-id`, ARIA, and role contracts a deterministic retry checklist instead of general guidance.
-- Preserved actionable PR review retry feedback when infra recovery requeues a story claim, appending stale process/claim diagnostics as metadata instead of replacing the developer's real fix target.
+- Preserved actionable PR review and downstream quality retry feedback when infra recovery, product-supervisor no-delta diagnostics, or terminal story retry exhaustion record a story claim, appending process/claim metadata instead of replacing the developer's real fix target.
 - Treated pending stories with actionable PR review output as active retry work even after manual resume resets retry counters, preventing verify-each ordering guards from hiding the developer claim.
 - Recognized mechanically satisfied DOM XSS review comments when current source replaces unsafe `innerHTML` interpolation with DOM node construction, text assignment, attribute setting, and defensive validation, preventing fixed PR feedback from looping through supervisor retries.
 - Stopped Gemini COMMENTED review digest summaries, including service deprecation admonitions, from reopening already-handled inline PR feedback while preserving genuinely actionable direct review summaries.

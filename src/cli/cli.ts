@@ -225,6 +225,14 @@ async function clearManualResumeState(runId: string): Promise<void> {
     "story_workdir",
     "story_branch",
     "pr_url",
+    "quality_failure_fingerprint",
+    "quality_failure_repeat_count",
+    "failure_route_action",
+    "failure_route_category",
+    "failure_route_policy",
+    "failure_route_reason",
+    "post_merge_quality_regression_story_id",
+    "post_merge_quality_regression_pr_url",
   ]) {
     delete context[key];
   }

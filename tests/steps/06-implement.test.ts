@@ -2382,6 +2382,51 @@ describe("06-implement step module", () => {
     }
   });
 
+  it("allows simple data-action-id setAttribute equivalents after DOM security refactors", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-generated-screen-action-id-equivalent-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { screenId: "gameplay", title: "Gameplay", componentName: "GameplayScreen", file: "src/screens/GameplayScreen.tsx" },
+      ]));
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "export function App() {",
+        "  return '<button data-action-id=\"add\">Add</button><button data-action-id=\"reset\">Reset</button>';",
+        "}",
+        "",
+      ].join("\n"));
+      execFileSync("git", ["init"], { cwd: tmp });
+      execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tmp });
+      execFileSync("git", ["config", "user.name", "Test"], { cwd: tmp });
+      execFileSync("git", ["add", "."], { cwd: tmp });
+      execFileSync("git", ["commit", "-m", "base"], { cwd: tmp, stdio: "ignore" });
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "export function App() {",
+        "  const add = document.createElement('button');",
+        "  add.setAttribute('data-action-id', 'add');",
+        "  add.textContent = 'Add';",
+        "  const reset = document.createElement('button');",
+        "  reset.setAttribute('data-action-id', 'reset');",
+        "  reset.textContent = 'Reset';",
+        "  return document.createDocumentFragment();",
+        "}",
+        "",
+      ].join("\n"));
+
+      const issues = findGeneratedScreenRegressionIssues(
+        tmp,
+        [[{ screenId: "gameplay", name: "Gameplay", type: "game" }]],
+        "",
+        ["src/App.tsx"],
+      );
+
+      assert.equal(issues.some((issue) => issue.includes("APP_INTEGRATION_SEMANTIC_REGRESSION") && issue.includes("data-action-id=add")), false);
+      assert.equal(issues.some((issue) => issue.includes("APP_INTEGRATION_SEMANTIC_REGRESSION") && issue.includes("data-action-id=reset")), false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("allows data-testid setAttribute equivalents after DOM security refactors", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-generated-screen-testid-equivalent-"));
     try {

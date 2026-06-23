@@ -1233,6 +1233,9 @@ describe("spawner gateway recovery wiring", () => {
 
   it("retries active agents immediately when their claimed step is no longer running", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /async function activeProcessHasOpenClaim/);
+    assert.match(source, /FROM claim_log/);
+    assert.match(source, /AND outcome IS NULL/);
     const marker = source.indexOf("AGENT_STEP_STATE_MISMATCH");
     const branchStart = source.lastIndexOf("row.run_status === \"running\"", marker);
     const branchEnd = source.indexOf("const nonRunningActiveGraceMs", branchStart);
@@ -1241,11 +1244,17 @@ describe("spawner gateway recovery wiring", () => {
 
     const block = source.slice(branchStart, branchEnd);
     assert.match(block, /\["pending", "waiting"\]\.includes\(row\.step_status\)/);
+    assert.match(block, /activeProcessHasOpenClaim\(active,\s*row\.step_id\)/);
+    assert.match(block, /step-state-closed-claim/);
     assert.match(block, /terminateActiveProcess\(active,\s*"step-state-mismatch"\)/);
     assert.match(block, /activeProcesses\.delete\(key\)/);
     assert.match(block, /completeRunningClaimFromOutputFile\(active\.stepId,\s*active\.agentId,\s*active\.outputPath,\s*active\.startedAtMs\)/);
     assert.match(block, /requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*active\.storyId,\s*active\.agentId,\s*reason\)/);
     assert.match(block, /retryActiveSingleStepClaim\(active,\s*row\.step_id,\s*reason\)/);
+    assert.ok(
+      block.indexOf("activeProcessHasOpenClaim") < block.indexOf("AGENT_STEP_STATE_MISMATCH"),
+      "closed claims must be reaped before emitting retry feedback",
+    );
     assert.ok(
       branchStart < source.indexOf("Deferring reap for active"),
       "pending/waiting step mismatch must not wait for non-running active grace",
@@ -1254,9 +1263,16 @@ describe("spawner gateway recovery wiring", () => {
 
   it("preserves actionable PR review output when infra requeues a story claim", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
-    assert.match(source, /function preserveActionableStoryRetryOutput/);
-    assert.match(source, /PR_REVIEW_COMMENTS_OPEN\\b\|actionable PR review comments/);
-    assert.match(source, /INFRA_RETRY:/);
+    const retryOutput = fs.readFileSync(path.join(root, "src", "installer", "retry-output.ts"), "utf-8");
+    assert.match(source, /import \{ preserveActionableStoryRetryOutput \} from "\.\/installer\/retry-output\.js"/);
+    assert.match(retryOutput, /function preserveActionableStoryRetryOutput/);
+    assert.ok(retryOutput.includes("PR_REVIEW_COMMENTS_OPEN|APP_INTEGRATION_[A-Z_]*REGRESSION"));
+    assert.ok(retryOutput.includes("actionable PR review comments"));
+    assert.ok(retryOutput.includes("POST_MERGE_QUALITY_REGRESSION"));
+    assert.ok(retryOutput.includes("VULNERABILITIES"));
+    assert.ok(retryOutput.includes("AGENT_(?:STEP|STORY)_STATE_MISMATCH"));
+    assert.ok(retryOutput.includes("IMPLEMENT_NO_DELTA"));
+    assert.ok(retryOutput.includes("INFRA_RETRY:"));
     assert.match(source, /const storyOutput = preserveActionableStoryRetryOutput\(row\.story_output,\s*diagnostic\)/);
     assert.match(source, /st\.output as story_output/);
   });

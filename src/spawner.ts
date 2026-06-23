@@ -18,6 +18,7 @@ import { getRunContext } from "./installer/repo.js";
 import { discardStoryWorktreeAndResetBranch } from "./installer/worktree-ops.js";
 import { cleanupProjectEphemera, cleanupRunningRunOrphanedToolWorkers, scheduleRunCronTeardown } from "./installer/cleanup-ops.js";
 import { updateSupervisorMemory } from "./installer/product-supervisor.js";
+import { preserveActionableStoryRetryOutput } from "./installer/retry-output.js";
 import { buildClaimSummary, buildPreclaimedPrompt, buildResolvedClaimBootstrapScript, claimTaskPreview } from "./spawner-prompt.js";
 import { recordObservation } from "./installer/observations.js";
 import { emitEvent } from "./installer/events.js";
@@ -2880,6 +2881,35 @@ async function retryActiveSingleStepClaim(active: ActiveProcess, stepIdName: str
   ]);
 }
 
+async function activeProcessHasOpenClaim(active: ActiveProcess, stepIdName: string): Promise<boolean> {
+  if (active.storyId) {
+    const row = await pgGet<{ id: string }>(
+      `SELECT id
+       FROM claim_log
+       WHERE run_id = $1
+         AND step_id = $2
+         AND story_id = $3
+         AND agent_id = $4
+         AND outcome IS NULL
+       LIMIT 1`,
+      [active.runId, stepIdName, active.storyId, active.agentId],
+    );
+    return Boolean(row);
+  }
+  const row = await pgGet<{ id: string }>(
+    `SELECT id
+     FROM claim_log
+     WHERE run_id = $1
+       AND step_id = $2
+       AND story_id IS NULL
+       AND agent_id = $3
+       AND outcome IS NULL
+     LIMIT 1`,
+    [active.runId, stepIdName, active.agentId],
+  );
+  return Boolean(row);
+}
+
 function readProcessArgs(pid: number): string {
   try {
     return execFileSync("ps", ["-o", "args=", "-p", String(pid)], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
@@ -3614,15 +3644,6 @@ async function requeueOpenStoryClaim(runId: string, stepId: string, storyId: str
   return true;
 }
 
-function preserveActionableStoryRetryOutput(currentOutput: string | null | undefined, diagnostic: string): string {
-  const existing = String(currentOutput || "").trim();
-  const next = String(diagnostic || "").trim();
-  if (!existing || /\bPR_REVIEW_COMMENTS_OPEN\b|actionable PR review comments/i.test(next)) return next;
-  if (!/\bPR_REVIEW_COMMENTS_OPEN\b|actionable PR review comments/i.test(existing)) return next;
-  if (existing.includes(next.slice(0, 400))) return existing;
-  return `${existing}\n\nINFRA_RETRY:\n${next}`.slice(0, 12000);
-}
-
 async function discardRuntimeGuardRetryWorktree(runId: string, storyId: string, agentId: string, diagnostic: string): Promise<void> {
   try {
     const ctx = await getRunContext(runId);
@@ -4183,6 +4204,12 @@ ${reason}
           && ["pending", "waiting"].includes(row.step_status)
           && !terminalReason
         ) {
+          if (!await activeProcessHasOpenClaim(active, row.step_id)) {
+            console.log(`[spawner] Reaping closed active process ${key}: step ${row.step_id} is ${row.step_status}, run is ${row.run_status}, and claim_log is already closed`);
+            terminateActiveProcess(active, "step-state-closed-claim");
+            activeProcesses.delete(key);
+            continue;
+          }
           const reason = `AGENT_STEP_STATE_MISMATCH: ${active.agentId} has an active ${active.wfId}/${active.role} process for ${row.step_id}, but the step is ${row.step_status}; retrying the open claim instead of waiting on a non-running step. Transcript: ${active.transcriptPath}`;
           console.warn(`[spawner] ${reason}`);
           try { fs.appendFileSync(active.transcriptPath, `--- STEP STATE MISMATCH ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
