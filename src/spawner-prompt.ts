@@ -1129,6 +1129,19 @@ function extractRetryProtectedSnippets(value: string): string[] {
       snippets.push(...splitProtectedSnippetList(match[1] || ""));
     }
   }
+  const semanticContractRe = /APP_INTEGRATION_SEMANTIC_REGRESSION:[^\n]{0,360}semantic UI contract\s+["']([^"']+)["']/gi;
+  let contractMatch: RegExpExecArray | null;
+  while ((contractMatch = semanticContractRe.exec(value)) !== null) {
+    const contract = String(contractMatch[1] || "").trim();
+    const attrMatch = contract.match(/^([A-Za-z_:][A-Za-z0-9_:.:-]*)=(.+)$/);
+    if (!attrMatch) continue;
+    const attr = attrMatch[1];
+    const rawContractValue = attrMatch[2].trim();
+    if (!/^(?:data-testid|data-action-id|aria-live|role|aria-label)$/i.test(attr)) continue;
+    const contractValue = rawContractValue.replace(/^["']|["']$/g, "");
+    if (!contractValue) continue;
+    snippets.push(`${attr}="${contractValue.replace(/"/g, "&quot;")}"`);
+  }
   return [...new Set(snippets)].slice(0, 20);
 }
 

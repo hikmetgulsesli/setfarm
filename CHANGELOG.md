@@ -4,6 +4,7 @@ This repository now keeps agent-facing operational notes in English only.
 
 ## Unreleased
 
+- Converted `APP_INTEGRATION_SEMANTIC_REGRESSION` feedback into exact protected restore snippets in developer claim summaries and bootstrap output, making lost `data-testid`, `data-action-id`, ARIA, and role contracts a deterministic retry checklist instead of general guidance.
 - Preserved actionable PR review retry feedback when infra recovery requeues a story claim, appending stale process/claim diagnostics as metadata instead of replacing the developer's real fix target.
 - Treated pending stories with actionable PR review output as active retry work even after manual resume resets retry counters, preventing verify-each ordering guards from hiding the developer claim.
 - Recognized mechanically satisfied DOM XSS review comments when current source replaces unsafe `innerHTML` interpolation with DOM node construction, text assignment, attribute setting, and defensive validation, preventing fixed PR feedback from looping through supervisor retries.
