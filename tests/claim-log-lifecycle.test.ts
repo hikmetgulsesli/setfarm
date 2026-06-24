@@ -726,6 +726,20 @@ describe("single-step claim_log lifecycle", () => {
     assert.ok(updateContext > clearFailure, "supervisor pass must persist cleaned context before queuing verify");
   });
 
+  it("pushes story branch before verifying an existing PR", () => {
+    const source = stepOpsSource();
+    const pushStart = source.indexOf("checkId: \"implement.platform_push.start\"");
+    const pushFailure = source.indexOf("PLATFORM_STORY_PUSH_FAILED for", pushStart);
+    const autoPrStart = source.indexOf("checkId: \"implement.auto_pr.start\"");
+    const storyUpdate = source.indexOf("UPDATE stories SET status = $1, output = $2, pr_url = $3", pushStart);
+
+    assert.ok(pushStart > 0, "story completion must push branch before verify can inspect GitHub PR state");
+    assert.ok(pushFailure > pushStart, "push failure must be classified before continuing");
+    assert.ok(source.indexOf("await failStep(stepId, pushFailure)", pushFailure) > pushFailure, "push failure must stop story completion");
+    assert.ok(autoPrStart > pushStart, "platform push must also run when PR_URL already exists and auto-pr is skipped");
+    assert.ok(storyUpdate > pushStart, "story must not be marked done in DB before branch push succeeds");
+  });
+
   it("does not let LLM supervisor pass override blocking visual/state evidence", () => {
     const source = stepOpsSource();
     const start = source.indexOf("async function handleSuperviseEachCompletion(");

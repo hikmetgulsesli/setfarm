@@ -7823,6 +7823,67 @@ ${prd}`;
         return { advanced: false, runCompleted: false };
       }
     }
+
+    // PLATFORM STORY PUSH: retry/fix commits on an existing PR must update the
+    // remote head before verify reads GitHub review comments. The auto-PR path
+    // pushes only when it needs to create/discover a PR, so an already-known
+    // PR_URL used to leave fresh local commits invisible to GitHub.
+    if (
+      storyStatus === STORY_STATUS.DONE &&
+      !storyIsQaFix &&
+      storyBranchName &&
+      context["repo"] &&
+      storyBranchName.toLowerCase() !== (context["branch"] || "").toLowerCase()
+    ) {
+      const pushWorkdir = implementSupervisorWorkdir || context["story_workdir"] || context["repo"];
+      await recordLiveObservation({
+        runId: step.run_id,
+        stepId: step.step_id,
+        storyId: storyRow?.story_id || "",
+        agentId: step.agent_id || "",
+        checkId: "implement.platform_push.start",
+        label: "Push story branch",
+        status: "running",
+        summary: `Pushing ${storyBranchName}`,
+        detail: pushWorkdir,
+        metadata: { branch: storyBranchName },
+      });
+      const pushResult = pushStoryBranch(pushWorkdir, storyBranchName);
+      if (pushResult.error) {
+        const pushFailure = `PLATFORM_STORY_PUSH_FAILED for ${storyRow?.story_id || "story"}: ${pushResult.error}`;
+        await recordLiveObservation({
+          runId: step.run_id,
+          stepId: step.step_id,
+          storyId: storyRow?.story_id || "",
+          agentId: step.agent_id || "",
+          checkId: "implement.platform_push.failed",
+          label: "Push story branch",
+          status: "fail",
+          summary: "Story branch push failed",
+          detail: pushFailure,
+          metadata: { branch: storyBranchName },
+        });
+        context["previous_failure"] = pushFailure;
+        context["failure_category"] = "PLATFORM_STORY_PUSH_FAILED";
+        context["failure_suggestion"] = "This is a Setfarm git transport failure. Do not ask the developer agent to push; fix platform git/remote access, then retry the same story.";
+        await updateRunContext(step.run_id, context);
+        await failStep(stepId, pushFailure);
+        return { advanced: false, runCompleted: false };
+      }
+      await recordLiveObservation({
+        runId: step.run_id,
+        stepId: step.step_id,
+        storyId: storyRow?.story_id || "",
+        agentId: step.agent_id || "",
+        checkId: "implement.platform_push.done",
+        label: "Push story branch",
+        status: "pass",
+        summary: `Pushed ${storyBranchName}`,
+        detail: pushWorkdir,
+        metadata: { branch: storyBranchName },
+      });
+      context["platform_story_push"] = `${storyRow?.story_id || "story"}:${storyBranchName}:${new Date().toISOString()}`;
+    }
     // FIX: Validate PR URL belongs to correct repo (cross-contamination guard)
     if (storyPrUrl && context["repo"]) {
       const expectedRepo = context["repo"].split("/").pop() || "";
