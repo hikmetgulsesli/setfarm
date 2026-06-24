@@ -3172,6 +3172,22 @@ function resolveVerifyPreflightBaseRef(
   return isLocalMainAuthoritative(repo) ? "main" : "origin/main";
 }
 
+function gitRefHasProjectSource(repo: string, ref = "main"): boolean {
+  if (!repo) return false;
+  try {
+    const output = execFileSync("git", ["ls-tree", "--name-only", ref, "--", "package.json", "index.html", "src", "assets"], {
+      cwd: repo,
+      encoding: "utf-8",
+      timeout: 5000,
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+    return /\b(package\.json|index\.html|src|assets)\b/.test(output);
+  } catch (e) {
+    logger.debug(`[git-source-check] ${String(e).slice(0, 80)}`);
+    return false;
+  }
+}
+
 function pointLocalMainAtHead(repo: string, runId: string): boolean {
   const current = currentGitBranch(repo);
   if (current === "main") return true;
@@ -6958,16 +6974,13 @@ ${prd}`;
 
       // After all merge attempts, verify main has source code
       let mainHasSource = false;
-      try {
-        execFileSync("git", ["show", "main:package.json"], { cwd: mergeRepo, timeout: 5000, stdio: "pipe" });
-        mainHasSource = true;
-      } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
+      mainHasSource = gitRefHasProjectSource(mergeRepo, "main");
 
       if (!mainHasSource && step.retry_count < step.max_retries) {
-        context["previous_failure"] = "MERGE FAIL: Feature branch not merged into main. Main branch has no source code.";
+        context["previous_failure"] = "MERGE FAIL: Feature branch not merged into main. Main branch has no project source files.";
         context["failure_category"] = "MERGE_CONFLICT";
         context["failure_suggestion"] = isPrEachFinal
-          ? "pr-each flow should already have story PRs merged; sync origin/main or inspect missing package.json"
+          ? "pr-each flow should already have story PRs merged; sync origin/main or inspect missing project source files"
           : "Merge feature branch into main manually or resolve conflicts";
         await updateRunContext(step.run_id, context);
         await failStep(stepId, "Feature branch not merged into main — source code missing");

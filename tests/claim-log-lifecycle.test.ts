@@ -1080,6 +1080,21 @@ describe("single-step claim_log lifecycle", () => {
     assert.ok(ensureSource.indexOf("runPostMergeBuildGate(repoPath") < ensureSource.indexOf("shouldRunStorySystemSmokeGate"), "auto-verify build must run before smoke deferral");
   });
 
+  it("accepts static HTML source when final-test verifies merged main", () => {
+    const source = stepOpsSource();
+    const guardStart = source.indexOf("// After final-test completes successfully, verify the feature branch is merged into main.");
+    const guardEnd = source.indexOf("await pgRun(\"UPDATE runs SET context", guardStart);
+    assert.notEqual(guardStart, -1, "final-test merge guard not found");
+    assert.notEqual(guardEnd, -1, "final-test merge guard end not found");
+    const guard = source.slice(guardStart, guardEnd);
+
+    assert.match(source, /function gitRefHasProjectSource/);
+    assert.match(source, /"package\.json", "index\.html", "src", "assets"/);
+    assert.match(guard, /gitRefHasProjectSource\(mergeRepo, "main"\)/);
+    assert.doesNotMatch(guard, /main:package\.json/);
+    assert.match(guard, /missing project source files/);
+  });
+
   it("injects stored verify retry feedback before developer claim context is persisted", () => {
     const stepOps = stepOpsSource();
     const stepOpsStart = stepOps.indexOf("async function injectStoryContext(");
