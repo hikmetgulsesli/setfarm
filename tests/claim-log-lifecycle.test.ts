@@ -904,6 +904,41 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(helper, /review retry budget exhausted; escalated to/);
   });
 
+  it("keeps PR review retries on the authoritative PR head branch", () => {
+    const source = stepOpsSource();
+    const helperStart = source.indexOf("async function routeVerifyScopeFailureToImplement");
+    const helperEnd = source.indexOf("function getImplicitScopeFiles", helperStart);
+    assert.notEqual(helperStart, -1, "routeVerifyScopeFailureToImplement source not found");
+    assert.notEqual(helperEnd, -1, "routeVerifyScopeFailureToImplement source end not found");
+    const helper = source.slice(helperStart, helperEnd);
+    const claimStart = source.indexOf("const storyRunPrefix = step.run_id.slice(0, 8);");
+    const claimEnd = source.indexOf("// Wave 4 fix #10", claimStart);
+    assert.notEqual(claimStart, -1, "claim story branch block not found");
+    assert.notEqual(claimEnd, -1, "claim story branch block end not found");
+    const claim = source.slice(claimStart, claimEnd);
+
+    assert.match(source, /getPRHeadBranch/);
+    assert.match(helper, /SELECT id, retry_count, max_retries, pr_url, story_branch FROM stories/);
+    assert.match(helper, /const prHeadBranch = retryStory\.pr_url \? getPRHeadBranch\(retryStory\.pr_url, context\["repo"\] \|\| ""\) : null/);
+    assert.match(helper, /const retryStoryBranch = \(prHeadBranch \|\| retryStory\.story_branch \|\| ""\)\.trim\(\)\.toLowerCase\(\)/);
+    assert.match(helper, /story_branch = COALESCE\(NULLIF\(\$5, ''\), story_branch\)/);
+    assert.match(claim, /const existingStoryBranch = String\(nextStory\.story_branch \|\| ""\)\.trim\(\)\.toLowerCase\(\)/);
+    assert.match(claim, /existingStoryBranch \|\| `\$\{storyRunPrefix\}-\$\{nextStory\.story_id\}`/);
+  });
+
+  it("ignores output-contract PR_URL placeholders in implement completion guards", () => {
+    const source = stepOpsSource();
+    const start = source.indexOf("// Mark current story done or skipped + persist PR context for verify_each");
+    const end = source.indexOf("// CROSS-PROJECT CONTAMINATION GUARD", start);
+    assert.notEqual(start, -1, "implement completion PR context block not found");
+    assert.notEqual(end, -1, "implement completion PR context block end not found");
+    const block = source.slice(start, end);
+
+    assert.match(block, /let storyPrUrl = GH_PR_URL_REGEX\.test\(parsed\["pr_url"\] \|\| ""\) \? parsed\["pr_url"\] : ""/);
+    assert.match(block, /const agentOriginalPrRaw = \(parsed\["pr_url"\] \|\| ""\)\.trim\(\)/);
+    assert.match(block, /const agentOriginalPr = GH_PR_URL_REGEX\.test\(agentOriginalPrRaw\) \? agentOriginalPrRaw : ""/);
+  });
+
   it("auto-verifies clean open PRs mechanically after comments are clear", () => {
     const source = autoVerifyDoneStoriesSource();
     const openStart = source.indexOf("if (prState === \"OPEN\")");

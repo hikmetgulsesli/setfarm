@@ -19,7 +19,7 @@ import {
   OPTIONAL_TEMPLATE_VARS,
   PR_REVIEW_DELAY_MS,
 } from "./constants.js";
-import { getPRState, invalidatePRStateCache, tryReopenPR, tryAutoMergePR, findPrByBranch, resolveClosedPR } from "./pr-state.js";
+import { getPRState, invalidatePRStateCache, tryReopenPR, tryAutoMergePR, findPrByBranch, resolveClosedPR, getPRHeadBranch } from "./pr-state.js";
 import { failStep } from "./step-fail.js";
 import { advancePipeline, checkLoopContinuation } from "./step-advance.js";
 import { mergeStoryIntoFeature, runMergeQueue } from "./merge-queue-ops.js";
@@ -1723,17 +1723,21 @@ async function routeVerifyScopeFailureToImplement(
     suggestion?: string;
   } = {},
 ): Promise<void> {
-  const retryStory = await pgGet<{ id: string; retry_count: number; max_retries: number }>(
-    "SELECT id, retry_count, max_retries FROM stories WHERE run_id = $1 AND story_id = $2 AND status = 'done' LIMIT 1",
+  const retryStory = await pgGet<{ id: string; retry_count: number; max_retries: number; pr_url: string | null; story_branch: string | null }>(
+    "SELECT id, retry_count, max_retries, pr_url, story_branch FROM stories WHERE run_id = $1 AND story_id = $2 AND status = 'done' LIMIT 1",
     [verifyStep.run_id, storyId],
   );
   if (!retryStory) return;
 
   const newRetry = retryStory.retry_count + 1;
+  const prHeadBranch = retryStory.pr_url ? getPRHeadBranch(retryStory.pr_url, context["repo"] || "") : null;
+  const retryStoryBranch = (prHeadBranch || retryStory.story_branch || "").trim().toLowerCase();
   context["verify_feedback"] = failure;
   context["previous_failure"] = failure;
   context["failure_category"] = options.category || "SCOPE_BLEED";
   context["failure_suggestion"] = options.suggestion || "Revert out-of-scope files from the story branch. Only modify files listed in scope_files; use local adapters instead of changing shared exported types.";
+  if (retryStory.pr_url) context["pr_url"] = retryStory.pr_url;
+  if (retryStoryBranch) context["story_branch"] = retryStoryBranch;
 
   if (newRetry > retryStory.max_retries) {
     const terminalRetry = Math.max(0, retryStory.max_retries);
@@ -1769,7 +1773,10 @@ async function routeVerifyScopeFailureToImplement(
     return;
   }
 
-  await pgRun("UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [newRetry, failure, now(), retryStory.id]);
+  await pgRun(
+    "UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, retry_count = $1, output = $2, story_branch = COALESCE(NULLIF($5, ''), story_branch), updated_at = $3 WHERE id = $4",
+    [newRetry, failure, now(), retryStory.id, retryStoryBranch],
+  );
   await updateRunContext(verifyStep.run_id, context);
   const loopStep = await findLoopStep(verifyStep.run_id);
   if (loopStep?.id) await setStepStatus(loopStep.id, "pending");
@@ -5504,10 +5511,11 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
         context["failure_category"] === "POST_MERGE_QUALITY_REGRESSION" ||
         context["post_merge_quality_regression_story_id"] === nextStory.story_id ||
         /\bPOST_MERGE_QUALITY_REGRESSION\b/i.test(String(nextStory.output || ""));
+      const existingStoryBranch = String(nextStory.story_branch || "").trim().toLowerCase();
       const storyBranch = (
         isPostMergeQualityRepair
           ? `${storyRunPrefix}-${nextStory.story_id}-repair-${Math.max(1, Number(nextStory.retry_count || 0))}`
-          : `${storyRunPrefix}-${nextStory.story_id}`
+          : (existingStoryBranch || `${storyRunPrefix}-${nextStory.story_id}`)
       ).toLowerCase();
 
       // Wave 4 fix #10 (plan: reactive-frolicking-cupcake): previously we updated
@@ -7727,7 +7735,7 @@ ${prd}`;
 
     // Mark current story done or skipped + persist PR context for verify_each
     // FIX: Remove context fallback to prevent cross-contamination between parallel stories
-    let storyPrUrl = parsed["pr_url"] || "";
+    let storyPrUrl = GH_PR_URL_REGEX.test(parsed["pr_url"] || "") ? parsed["pr_url"] : "";
     let storyMergeStatus: string | null = null;
     const storyIsQaFix = isQaFixStoryId(storyRow?.story_id);
 
@@ -7742,7 +7750,8 @@ ${prd}`;
     // landed as a 1067-line commit inside ~/.openclaw/setfarm-repo which had to be
     // reverted manually.
     const agentOriginalBranch = (parsed["story_branch"] || "").trim();
-    const agentOriginalPr = (parsed["pr_url"] || "").trim();
+    const agentOriginalPrRaw = (parsed["pr_url"] || "").trim();
+    const agentOriginalPr = GH_PR_URL_REGEX.test(agentOriginalPrRaw) ? agentOriginalPrRaw : "";
 
     // ISSUE-1 FIX: Prefer pipeline-set branch (from DB) over agent's output (agents create wrong names)
     const dbStoryBranch = await pgGet<{ story_branch: string }>("SELECT story_branch FROM stories WHERE id = $1", [step.current_story_id]);

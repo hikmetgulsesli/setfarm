@@ -163,6 +163,19 @@ export function findAlternativePR(repoPath: string, storyId: string, runIdPrefix
   return null;
 }
 
+export function getPRHeadBranch(prUrl: string, repoPath = ""): string | null {
+  try {
+    const headRefName = execFileSync("gh", ["pr", "view", prUrl, "--json", "headRefName", "--jq", ".headRefName"], {
+      cwd: repoPath || undefined,
+      timeout: GH_CLI_TIMEOUT,
+      stdio: "pipe"
+    }).toString().trim();
+    return headRefName || null;
+  } catch {
+    return null;
+  }
+}
+
 // ── Check if Story Content is in Base Branch ─────────────────────────
 
 /**
