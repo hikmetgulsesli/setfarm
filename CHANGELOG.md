@@ -6,6 +6,7 @@ This repository now keeps agent-facing operational notes in English only.
 
 - Reaped active agent processes with already closed claim_log rows without emitting `AGENT_STEP_STATE_MISMATCH`, preventing completed or guard-closed claims from being misclassified as fresh infra retries.
 - Kept actionable PR review retries on the open PR's head branch instead of recomputing the original story branch, preventing repair PR comments from sending agents back to stale merged worktrees.
+- Loaded `story_branch` and `pr_url` during atomic pending-story claims, so retry branch preservation has the metadata it needs before creating a worktree.
 - Ignored output-contract `PR_URL` placeholders during implement completion validation, preventing `<leave empty; pipeline creates the PR>` from being treated as cross-project contamination.
 - Preserved multiple actionable retry targets together when a downstream quality/security failure is followed by app integration feedback, so agents keep fixing the original vulnerability while restoring lost semantic contracts.
 - Blocked stale PR auto-completion for pending stories whose output still contains actionable retry feedback, preventing manual resume from bypassing the developer repair when retry counters are reset.

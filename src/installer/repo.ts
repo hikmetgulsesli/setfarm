@@ -198,10 +198,10 @@ export async function claimNextStory(runId: string, agentId: string, eligibleSto
     // If a specific dependency-eligible story ID is provided, claim that one.
     // Otherwise fall back to first pending story by index.
     const query = eligibleStoryId
-      ? `SELECT id, story_id, title, story_index, output, retry_count, max_retries, abandoned_count, depends_on, scope_files, shared_files, scope_description, file_skeletons
+      ? `SELECT id, story_id, title, story_index, output, retry_count, max_retries, abandoned_count, depends_on, scope_files, shared_files, scope_description, file_skeletons, story_branch, pr_url
          FROM stories WHERE run_id = $1 AND id = $2 AND status = 'pending'
          FOR UPDATE SKIP LOCKED`
-      : `SELECT id, story_id, title, story_index, output, retry_count, max_retries, abandoned_count, depends_on, scope_files, shared_files, scope_description, file_skeletons
+      : `SELECT id, story_id, title, story_index, output, retry_count, max_retries, abandoned_count, depends_on, scope_files, shared_files, scope_description, file_skeletons, story_branch, pr_url
          FROM stories WHERE run_id = $1 AND status = 'pending'
          ORDER BY CASE WHEN story_id LIKE 'QA-FIX-%' THEN 0 ELSE 1 END, story_index ASC LIMIT 1 FOR UPDATE SKIP LOCKED`;
     const params = eligibleStoryId ? [runId, eligibleStoryId] : [runId];

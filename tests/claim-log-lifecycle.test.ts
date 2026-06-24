@@ -926,6 +926,19 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(claim, /existingStoryBranch \|\| `\$\{storyRunPrefix\}-\$\{nextStory\.story_id\}`/);
   });
 
+  it("loads story branch metadata during atomic pending story claims", () => {
+    const source = repoSource();
+    const start = source.indexOf("export async function claimNextStory(");
+    const end = source.indexOf("export async function getNextDoneStory(", start);
+    assert.notEqual(start, -1, "claimNextStory source not found");
+    assert.notEqual(end, -1, "claimNextStory source end not found");
+    const helper = source.slice(start, end);
+
+    assert.match(helper, /file_skeletons, story_branch, pr_url/);
+    assert.match(helper, /FROM stories WHERE run_id = \$1 AND id = \$2 AND status = 'pending'/);
+    assert.match(helper, /FROM stories WHERE run_id = \$1 AND status = 'pending'/);
+  });
+
   it("ignores output-contract PR_URL placeholders in implement completion guards", () => {
     const source = stepOpsSource();
     const start = source.indexOf("// Mark current story done or skipped + persist PR context for verify_each");
