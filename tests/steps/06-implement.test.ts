@@ -1509,19 +1509,20 @@ describe("06-implement step module", () => {
     }
   });
 
-  it("does not tell implement agents to read raw Stitch design corpus", () => {
+  it("treats Stitch design as binding while separating generated and non-generated stacks", () => {
     const prompt = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/prompt.md"), "utf-8");
     const contextSource = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/context.js"), "utf-8");
 
-    assert.match(prompt, /Do not read raw `stitch\/\*\.html`/);
-    assert.match(contextSource, /use UI_CONTRACT, SCREEN_INDEX, and story-owned generated screens instead of reading raw stitch HTML/);
+    assert.match(prompt, /Treat Stitch, DESIGN_DOM, UI_CONTRACT, and generated screen contracts as binding product design inputs/);
+    assert.match(prompt, /If no generated component exists for this stack, recreate the assigned screen from Stitch HTML, DESIGN_DOM, UI_CONTRACT/);
+    assert.match(contextSource, /DESIGN_SOURCE_OF_TRUTH/);
+    assert.match(contextSource, /binding visual contract/);
     assert.doesNotMatch(contextSource, /read stitch files for full design/);
     assert.doesNotMatch(contextSource, /read stitch\/DESIGN_DOM\.json for full DOM/);
     assert.doesNotMatch(contextSource, /read stitch\/DESIGN_DOM\.json for the full behavior contract/);
 
     const stepOps = fs.readFileSync(path.join(process.cwd(), "dist/installer/step-ops.js"), "utf-8");
     assert.doesNotMatch(stepOps, /read stitch\/DESIGN_DOM\.json for full DOM/);
-    assert.match(stepOps, /use injected UI behavior contract instead of reading full DESIGN_DOM\.json/);
   });
 
   it("scope gate treats shared_files as read-only context, not completion-allowed files", () => {

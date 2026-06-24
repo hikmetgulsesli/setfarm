@@ -1,34 +1,36 @@
 # DESIGN-FIRST (MANDATORY)
 
 The injected Stitch contracts below are the design source of truth during
-implement. Do not read raw Stitch export files from the worktree during
-implement; use STORY_SCREENS, DESIGN_MANIFEST, DESIGN_TOKENS, UI CONTRACT,
-LAYOUT STRUCTURE, SCREEN_INDEX/index.ts, and scoped generated screen contracts.
+implement. Use STORY_SCREENS, DESIGN_MANIFEST, DESIGN_TOKENS, UI CONTRACT,
+LAYOUT STRUCTURE, SCREEN_INDEX/index.ts, claim-summary designContracts, and
+scoped generated screen contracts.
 If a generated screen is shared/read-only for this story, use
 SCREEN_INDEX/index.ts and the injected contracts instead of reading any
 component source from that shared screen. Focused line-range reads are allowed
-only for generated screen files explicitly listed in SCOPE_FILES. Write only
-files in the current story scope. Setfarm enforces this at runtime: reading a
-generated src/screens/*.tsx file outside SCOPE_FILES, or raw
-stitch/*.html/.stitch-screens*/DESIGN_DOM corpus files, kills and retries the
-claim before context overload.
+only for generated screen files explicitly listed in SCOPE_FILES. If no
+generated screen source exists for the stack, focused story-owned Stitch
+HTML/DESIGN_DOM files are allowed binding design sources. Write only files in
+the current story scope. Setfarm enforces generated-screen source boundaries at
+runtime.
 
 STORY SCREENS:
 {{story_screens}}
 
 STITCH RAW FILES:
-Do NOT read raw stitch/*.html, .stitch-screens*.json, stitch/DESIGN_DOM.json,
-or stitch/design-tokens.css during implement. If the injected contract is
-missing required detail, report STATUS: retry with the exact missing contract
-instead of loading raw Stitch files.
+For generated-screen claims, do not read unrelated stitch/*.html,
+.stitch-screens*.json, stitch/DESIGN_DOM.json, or stitch/design-tokens.css.
+For stacks without generated screens, focused story-owned Stitch HTML and
+DESIGN_DOM are allowed binding design sources.
 
 DESIGN TOKENS:
 {{design_tokens}}
 
 DESIGN DOM:
-Use only the injected STORY_SCREENS, UI CONTRACT, LAYOUT STRUCTURE,
-DESIGN_MANIFEST, DESIGN_TOKENS, SCREEN_INDEX/index.ts, and generated screen
-contracts in this claim. Do not load the full project DOM.
+Use injected STORY_SCREENS, UI CONTRACT, LAYOUT STRUCTURE, DESIGN_MANIFEST,
+DESIGN_TOKENS, SCREEN_INDEX/index.ts, claim-summary designContracts, and
+generated screen contracts as binding design input. For stacks without generated
+screens, focused story-owned Stitch HTML/DESIGN_DOM files are allowed for
+missing detail.
 
 UI CONTRACT (auto-generated from Stitch design — EVERY element MUST work):
 {{ui_contract}}

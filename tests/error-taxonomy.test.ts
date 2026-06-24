@@ -202,7 +202,8 @@ describe("error taxonomy", () => {
     );
     assert.equal(rawStitch.category, "RAW_STITCH_CONTEXT_READ");
     assert.match(rawStitch.suggestion, /CLAIM_SUMMARY_FILE/);
-    assert.match(rawStitch.suggestion, /stitch\/\*\.html/);
+    assert.match(rawStitch.suggestion, /generated-screen implement claims/);
+    assert.match(rawStitch.suggestion, /focused story-owned Stitch HTML\/DESIGN_DOM files are allowed/);
     assert.doesNotMatch(rawStitch.suggestion, /design guardrail/i);
 
     const product = classifyError(
@@ -482,7 +483,8 @@ describe("error taxonomy", () => {
     ].join("\n"));
 
     assert.match(feedback, /CLAIM_SUMMARY_FILE/);
-    assert.match(feedback, /stitch\/\*\.html/);
+    assert.match(feedback, /generated-screen implement claims/);
+    assert.match(feedback, /focused story-owned Stitch HTML\/DESIGN_DOM files are allowed/);
     assert.doesNotMatch(feedback, /design guardrail/i);
     assert.doesNotMatch(feedback, /design-token|hardcoded colors/i);
   });

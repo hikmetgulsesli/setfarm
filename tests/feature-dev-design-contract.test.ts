@@ -46,7 +46,7 @@ describe("feature-dev design contract prompt", () => {
     assert.doesNotMatch(implement.input, /If any Stitch screen has NO matching page/);
   });
 
-  it("does not instruct implement agents to read raw Stitch DOM files", async () => {
+  it("treats Stitch as binding design input across generated and non-generated stacks", async () => {
     const spec = await loadWorkflowSpec(WORKFLOW_DIR);
     const implement = spec.steps.find(step => step.id === "implement");
 
@@ -59,10 +59,12 @@ describe("feature-dev design contract prompt", () => {
     assert.doesNotMatch(implement.input, /If full structure is needed, read\s+only the current story screens from stitch\/DESIGN_DOM\.json/i);
     assert.doesNotMatch(implement.input, /read only current SCOPE_FILES from WORKDIR/i);
     assert.doesNotMatch(implement.input, /Read the story description and acceptance criteria from the claim with jq/);
-    assert.match(implement.input, /Use only the injected STORY_SCREENS, UI BEHAVIOR CONTRACT/);
+    assert.match(implement.input, /Use injected STORY_SCREENS, UI CONTRACT, LAYOUT STRUCTURE/);
+    assert.match(implement.input, /claim-summary designContracts/);
     assert.match(implement.input, /STITCH RAW FILES:/);
-    assert.match(implement.input, /Do NOT read raw stitch\/\*\.html, \.stitch-screens\*\.json, or full\s+stitch\/DESIGN_DOM\.json during implement/i);
-    assert.match(implement.input, /Do NOT read raw Stitch corpus files during implement/);
+    assert.match(implement.input, /For generated-screen claims, do not read unrelated stitch\/\*\.html/i);
+    assert.match(implement.input, /focused story-owned Stitch HTML and\s+DESIGN_DOM are allowed binding design sources/i);
+    assert.match(implement.input, /focused story-owned Stitch HTML\/DESIGN_DOM files are allowed for\s+missing detail/i);
   });
 
   it("runs the product supervisor between each story and verification", async () => {

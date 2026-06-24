@@ -145,9 +145,9 @@ describe("agent prompt contracts", () => {
     const output = sanitizeAgentPromptContracts(input);
 
     assert.doesNotMatch(output, /Use stitch\/DESIGN_DOM\.json from WORKDIR/);
-    assert.match(output, /Use only the injected STORY_SCREENS, UI BEHAVIOR CONTRACT/);
-    assert.match(output, /Do NOT read raw stitch\/\*\.html, \.stitch-screens\*\.json, or full/);
-    assert.match(output, /gateway enforces this/);
+    assert.match(output, /Use the injected STORY_SCREENS, UI BEHAVIOR CONTRACT/);
+    assert.match(output, /For generated-screen claims, do not/);
+    assert.match(output, /focused\s+story-owned Stitch HTML\/DESIGN_DOM files are allowed binding design sources/);
   });
 
   it("rewrites stale implement Stitch file-read instructions to injected contracts", () => {
@@ -167,9 +167,10 @@ describe("agent prompt contracts", () => {
     const output = sanitizeAgentPromptContracts(input);
 
     assert.doesNotMatch(output, /Read only the stitch\/\*\.html files|Read stitch\/DESIGN_MANIFEST\.json/);
-    assert.match(output, /Do NOT read raw Stitch corpus files during implement/);
+    assert.match(output, /Use Stitch as binding design input during implement/);
+    assert.match(output, /For generated-screen claims, do not read unrelated stitch\/\*\.html/);
+    assert.match(output, /focused story-owned Stitch HTML\/DESIGN_DOM files are allowed and binding/);
     assert.match(output, /Use injected STORY_SCREENS, DESIGN_MANIFEST, DESIGN_TOKENS/);
-    assert.match(output, /report STATUS: retry with the\s+exact missing contract/);
   });
 
   it("removes raw Stitch read hints from UI contract fragments and injected excerpts", () => {
@@ -184,7 +185,7 @@ describe("agent prompt contracts", () => {
 
     assert.doesNotMatch(output, /Read `stitch\/<screen>\.html`|read file for full HTML|read stitch files for full design/);
     assert.match(output, /claim-summary designContracts/);
-    assert.match(output, /report STATUS: retry with the exact missing contract/);
+    assert.match(output, /focused story-owned Stitch HTML\/DESIGN_DOM files are allowed for missing detail/);
     assert.match(output, /use injected contracts or report the exact missing contract/);
   });
 
@@ -227,9 +228,11 @@ describe("agent prompt contracts", () => {
     assert.doesNotMatch(output, /If full structure is needed, read\s+only the current story screens from stitch\/DESIGN_DOM\.json/i);
     assert.doesNotMatch(output, /read only current SCOPE_FILES from WORKDIR/i);
     assert.match(output, /STITCH RAW FILES:/);
-    assert.match(output, /Do NOT read raw stitch\/\*\.html, \.stitch-screens\*\.json, stitch\/DESIGN_DOM\.json/);
-    assert.match(output, /report STATUS: retry with the exact missing contract/);
-    assert.match(output, /Use only the injected STORY_SCREENS, UI CONTRACT, LAYOUT STRUCTURE/);
+    assert.match(output, /For generated-screen claims, do not read unrelated stitch\/\*\.html/);
+    assert.match(output, /focused story-owned Stitch HTML and\s+DESIGN_DOM are allowed binding design sources/);
+    assert.match(output, /Use injected STORY_SCREENS, UI CONTRACT, LAYOUT STRUCTURE, DESIGN_MANIFEST/);
+    assert.match(output, /claim-summary designContracts/);
+    assert.match(output, /focused story-owned Stitch HTML\/DESIGN_DOM files are allowed for\s+missing detail/);
   });
 
   it("rewrites stale Design DOM nav/control rules that caused layout removal", () => {

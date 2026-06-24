@@ -35,7 +35,8 @@ describe("spawner prompt bootstrap", () => {
     assert.match(prompt, /mode="audit" means prior feedback may be stale/);
     assert.match(prompt, /gitPolicy/);
     assert.match(prompt, /Setfarm performs the scoped commit and PR handoff after gates pass/);
-    assert.match(prompt, /designContracts\.screenIndex, designContracts\.uiContract, designContracts\.componentRegistry, and designContracts\.componentTypes/);
+    assert.match(prompt, /designContracts\.screenMap, designContracts\.designDom, designContracts\.uiContract/);
+    assert.match(prompt, /focused story-owned Stitch files as binding implementation sources/);
     assert.match(prompt, /Do NOT print or dump the entire claim summary JSON/);
     assert.match(prompt, /retryDiscipline\.mode/);
     assert.match(prompt, /retryDiscipline\.mode="first-delta"/);
@@ -321,6 +322,58 @@ describe("spawner prompt bootstrap", () => {
     }
   });
 
+  it("treats Stitch as binding design source when no generated screen corpus exists", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-static-design-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "stitch"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, ".story-scope-files"), "index.html\nassets/js/app.js\n");
+      fs.writeFileSync(path.join(tmp, "stitch", "SCREEN_MAP.json"), JSON.stringify({
+        screens: [{ screenId: "record-operations", htmlFile: "stitch/record-operations.html" }],
+      }));
+      fs.writeFileSync(path.join(tmp, "stitch", "UI_CONTRACT.json"), JSON.stringify([
+        { screenId: "record-operations", screenTitle: "Record Operations", buttons: [{ label: "Create Record" }] },
+      ]));
+      fs.writeFileSync(path.join(tmp, "stitch", "DESIGN_DOM.json"), JSON.stringify({
+        screens: {
+          "record-operations": {
+            title: "Record Operations",
+            cards: [{ title: "Q3 Metric Anomaly" }],
+            tables: [{ label: "Operations table" }],
+            buttons: [{ label: "Create Record" }],
+          },
+        },
+      }));
+
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        bootstrapFile: path.join(tmp, "bootstrap.sh"),
+        stepId: "step-123",
+        runId: "run-123",
+        workdir: tmp,
+        repo: tmp,
+        storyId: "US-002",
+        input: [
+          "# Developer Task",
+          "CURRENT STORY: Story US-002: Record Operations",
+          "STORY_SCREENS=[{\"screenId\":\"record-operations\",\"name\":\"Record Operations\",\"htmlFile\":\"stitch/record-operations.html\"}]",
+        ].join("\n"),
+      });
+
+      assert.deepEqual((summary.designContracts as any).generatedScreenFiles, []);
+      assert.match(String((summary.generatedScreenPolicy as any).summary), /No generated screen source corpus exists/);
+      assert.match(String((summary.generatedScreenPolicy as any).summary), /binding design implementation source/);
+      assert.match(String((summary.designContracts as any).source), /Stitch HTML, DESIGN_DOM, UI_CONTRACT, and screen map are binding/);
+      assert.match(String((summary.designContracts as any).rule), /visible structure/);
+      assert.match(JSON.stringify((summary.designContracts as any).designDom), /Q3 Metric Anomaly/);
+      assert.match(JSON.stringify((summary.designContracts as any).screenMap), /record-operations\.html/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("builds a compact structured claim summary so agents do not parse claim.input", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-"));
     try {
@@ -487,8 +540,9 @@ describe("spawner prompt bootstrap", () => {
       assert.equal((summary.designContracts as any).componentTypes.length, 2);
       assert.match(JSON.stringify((summary.designContracts as any).componentTypes), /MainMenuProps/);
       assert.match(JSON.stringify((summary.designContracts as any).componentTypes), /MainMenuActionId.*start-game-1/);
-      assert.match(String((summary.designContracts as any).source), /instead of reading raw stitch\/\*\.html/);
-      assert.match(String((summary.designContracts as any).source), /creating source-tree probe files/);
+      assert.match(String((summary.designContracts as any).source), /Generated screen contracts are the preferred source/);
+      assert.match(String((summary.designContracts as any).rule), /Every owned product surface must match/);
+      assert.match(String((summary.designContracts as any).source), /create source-tree probe files/);
       assert.match(String(summary.supervisorMemory), /forbidden generated screens/);
       assert.equal((summary.supervisorEvidence as any).storyStatus, "passed");
       assert.equal((summary.supervisorEvidence as any).counts.blockers, 0);

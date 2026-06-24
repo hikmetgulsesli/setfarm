@@ -1172,7 +1172,31 @@ function extractRawStitchDesignReadsFromCommand(workdir: string, command: string
   return reads;
 }
 
+function hasGeneratedScreenCorpus(workdir: string): boolean {
+  const indexPath = path.join(workdir, "src", "screens", "SCREEN_INDEX.json");
+  try {
+    const parsed = JSON.parse(fs.readFileSync(indexPath, "utf-8"));
+    if (Array.isArray(parsed) && parsed.some((item) => isGeneratedScreenComponentPath(String(item?.file || "")))) {
+      return true;
+    }
+  } catch {
+    // Fall through to directory scan.
+  }
+
+  try {
+    const screensDir = path.join(workdir, "src", "screens");
+    return fs.existsSync(screensDir)
+      && fs.readdirSync(screensDir).some((name) => /^[^/]+\.tsx$/.test(name));
+  } catch {
+    return false;
+  }
+}
+
 function rawStitchDesignReadGuard(active: ActiveProcess): { detected: boolean; reason: string } {
+  if (!hasGeneratedScreenCorpus(active.spawnCwd)) {
+    return { detected: false, reason: "" };
+  }
+
   let raw = "";
   try {
     raw = fs.readFileSync(active.sessionJsonlPath, "utf-8").slice(-512_000).trim();
@@ -1202,7 +1226,7 @@ function rawStitchDesignReadGuard(active: ActiveProcess): { detected: boolean; r
         if (!candidate) continue;
         return {
           detected: true,
-          reason: `RAW_STITCH_CONTEXT_READ: ${active.agentId} used ${candidate.via} on ${candidate.path}. Implement claims must use injected Stitch excerpts, UI_CONTRACT, SCREEN_INDEX, and story-owned generated screens instead of loading raw stitch HTML/full DESIGN_DOM context. Setfarm recorded a supervisor signal so the worker can be redirected without restarting the claim.`,
+          reason: `RAW_STITCH_CONTEXT_READ: ${active.agentId} used ${candidate.via} on ${candidate.path}. This generated-screen implement claim must use injected Stitch excerpts, UI_CONTRACT, SCREEN_INDEX, and story-owned generated screens instead of loading raw stitch HTML/full DESIGN_DOM context. Non-generated stacks may use focused story-owned Stitch files as binding design input. Setfarm recorded a supervisor signal so the worker can be redirected without restarting the claim.`,
         };
       }
     }

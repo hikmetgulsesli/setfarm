@@ -822,9 +822,11 @@ describe("spawner gateway recovery wiring", () => {
     );
   });
 
-  it("records supervisor signals when implement claims read raw Stitch design corpus", () => {
+  it("records supervisor signals when generated-screen implement claims read raw Stitch design corpus", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /function rawStitchDesignReadGuard\(active: ActiveProcess\)/);
+    assert.match(source, /function hasGeneratedScreenCorpus\(workdir: string\)/);
+    assert.match(source, /if \(!hasGeneratedScreenCorpus\(active\.spawnCwd\)\)/);
     assert.match(source, /function isRawStitchDesignPath/);
     assert.match(source, /stitch\/\*\.html/);
     assert.match(source, /stitch\/\*/);
@@ -833,6 +835,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /\.stitch-screens\*\.json/);
     assert.match(source, /RAW_STITCH_CONTEXT_READ/);
     assert.match(source, /injected Stitch excerpts, UI_CONTRACT, SCREEN_INDEX/);
+    assert.match(source, /Non-generated stacks may use focused story-owned Stitch files/);
     assert.match(source, /recordRuntimeSupervisorSignal\(active,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"raw-stitch-read-guard"/);
     assert.ok(
       source.indexOf("rawStitchDesignReadGuard(active)") > source.indexOf("generatedScreenReadGuard(active)"),

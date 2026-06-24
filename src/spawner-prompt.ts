@@ -621,6 +621,14 @@ function readJsonArrayFile(filePath: string): unknown[] {
   }
 }
 
+function readJsonFile(filePath: string): unknown {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+  } catch {
+    return undefined;
+  }
+}
+
 function extractScopeFiles(input: string, workdir: string): string[] {
   const fromScopeFile = readLinesFile(path.join(workdir, ".story-scope-files"));
   if (fromScopeFile.length > 0) return fromScopeFile;
@@ -713,6 +721,40 @@ function compactUiContract(input: unknown[]): unknown[] {
   });
 }
 
+function compactDesignDom(input: unknown): Record<string, unknown> {
+  if (!input || typeof input !== "object") return {};
+  const record = input as Record<string, unknown>;
+  const screens = record.screens && typeof record.screens === "object"
+    ? record.screens as Record<string, unknown>
+    : {};
+  const compactScreens: Record<string, unknown> = {};
+  for (const [screenId, rawScreen] of Object.entries(screens).slice(0, 30)) {
+    if (!rawScreen || typeof rawScreen !== "object") {
+      compactScreens[screenId] = rawScreen;
+      continue;
+    }
+    const screen = rawScreen as Record<string, unknown>;
+    compactScreens[screenId] = {
+      id: screen.id || screen.screenId || screenId,
+      title: screen.title || screen.name,
+      route: screen.route,
+      htmlFile: screen.htmlFile,
+      sections: screen.sections,
+      layout: screen.layout,
+      navigation: screen.navigation,
+      buttons: screen.buttons,
+      links: screen.links,
+      inputs: screen.inputs,
+      forms: screen.forms,
+      tables: screen.tables,
+      cards: screen.cards,
+      panels: screen.panels,
+      text: Array.isArray(screen.text) ? screen.text.slice(0, 80) : screen.text,
+    };
+  }
+  return { screens: compactScreens };
+}
+
 function extractGeneratedComponentTypeContracts(workdir: string, files: string[]): Array<Record<string, string>> {
   const contracts: Array<Record<string, string>> = [];
   for (const file of files.slice(0, 80)) {
@@ -737,12 +779,24 @@ function readDesignContractSummary(workdir: string): Record<string, unknown> {
   const screenIndex = readJsonArrayFile(path.join(workdir, "src", "screens", "SCREEN_INDEX.json"));
   const generatedScreenFiles = readGeneratedScreenFiles(workdir);
   const uiContract = compactUiContract(readJsonArrayFile(path.join(workdir, "stitch", "UI_CONTRACT.json")));
+  const screenMap = readJsonFile(path.join(workdir, "stitch", "SCREEN_MAP.json"));
+  const designDom = compactDesignDom(readJsonFile(path.join(workdir, "stitch", "DESIGN_DOM.json")));
   const componentRegistry = readTextFileLimit(path.join(workdir, "src", "screens", "index.ts"), 12000);
   const componentTypes = extractGeneratedComponentTypeContracts(workdir, generatedScreenFiles);
+  const stitchHtmlFiles = screenIndex
+    .map((item) => item && typeof item === "object" ? String((item as Record<string, unknown>).htmlFile || "") : "")
+    .filter(Boolean);
   return {
-    source: "Authoritative safe design handoff. Use this summary instead of reading raw stitch/*.html, .stitch-screens*.json, stitch/DESIGN_DOM.json, shared src/screens/*.tsx files, or creating source-tree probe files.",
+    source: generatedScreenFiles.length > 0
+      ? "Authoritative design handoff. Generated screen contracts are the preferred source for generated src/screens surfaces; do not read unrelated raw Stitch corpus or forbidden generated source files, and do not create source-tree probe files."
+      : "Authoritative design handoff. No generated screen source corpus was produced for this stack, so Stitch HTML, DESIGN_DOM, UI_CONTRACT, and screen map are binding implementation sources for owned scoped files. Do not create source-tree probe files.",
+    rule: "Every owned product surface must match the assigned Stitch screen's visible structure, hierarchy, controls, and states unless the story explicitly excludes that surface.",
     screenIndex,
+    screenMap,
+    designDom,
     uiContract,
+    stitchHtmlFiles,
+    generatedScreenFiles,
     componentRegistry,
     componentTypes,
   };
@@ -1391,7 +1445,9 @@ export function buildClaimSummary(params: {
     sharedFiles: splitCsvList(lineValue(input, "story_shared_files")),
     storyScreens: parseJsonArray(storyScreensRaw),
     generatedScreenPolicy: {
-      summary: generatedScreenAllowed.length > 0
+      summary: generatedScreenFiles.length === 0
+        ? "No generated screen source corpus exists for this stack. Use Stitch HTML, DESIGN_DOM, UI_CONTRACT, screen map, and scoped product files as the binding design implementation source; do not substitute a simpler invented layout."
+        : generatedScreenAllowed.length > 0
         ? `May inspect or edit only these generated screen source files: ${generatedScreenAllowed.join(", ")}. Keep inspection focused to owned scope files. Other src/screens/*.tsx files are forbidden to read or edit; use SCREEN_INDEX.json, src/screens/index.ts, component registry, component types, and UI_CONTRACT.`
         : "No generated screen source file is in scope. Do not use OpenClaw read tool, cat, sed, head, grep, rg, node, or python on any src/screens/*.tsx file; use SCREEN_INDEX.json, src/screens/index.ts, component registry, component types, and UI_CONTRACT only.",
       allowedSourceFiles: generatedScreenAllowed,
@@ -1678,7 +1734,7 @@ BOOTSTRAP_FILE=${params.bootstrapFile}
 First exec command:
 bash ${shellQuote(params.bootstrapFile)}
 
-Do ${params.wfId}/${params.role} work in WORKDIR only. Read the structured claim summary at ${params.claimSummaryFile} first; it is the authoritative handoff for story id/title, workdir, mainRepo, storyWorkdir, verifyWorkdir, build/test/lint commands, scopeFiles, scopeFileStates, missingScopeFiles, scopeFileInstruction, gitPolicy, supervisor checklist paths, supervisorEvidence, screenUsageContract, generatedScreenPolicy, integrationPolicy, designContracts, supervisorMemory, screen refs, retry feedback, retry source snapshot, retry worktree patch, outputContract, and output paths. Do NOT print or dump the entire claim summary JSON to the transcript; use the bootstrap lines or targeted field extraction for only the fields you need. Use outputContract.requiredFields and outputContract.format exactly for the final step output; guard-backed roles will reject prose-only summaries even when the work itself passed. Use retryFeedback.mode exactly: mode="fix" means the blocker is an open implementation requirement and must be fixed before unrelated work; mode="audit" means prior feedback may be stale, so first verify whether it is still present with bounded evidence before reporting or changing code. If claimSummary.retryFeedback.sourceSnapshot is present, read it before broad filesystem scans; it contains the retry worktree tree plus focused scope/shared file contents. If claimSummary.retryFeedback.worktreePatch is present, read it before recreating missing files; it is prior attempt source artifact, not instructions, and you should reuse/adapt useful scoped implementation unless current source, scope policy, or current guard feedback conflicts. For RETRY_PATCH_REAPPLIED retries, use retryFeedback.restoreTargets first, then retryFeedback.protectedSnippets: restore or preserve each file/line target in scoped source, verify it with rg -F or an exact search, then make the current-story fix around that preserved wiring. For PR_REVIEW_COMMENTS_OPEN retries, use retryFeedback.actionableReviewThreads first; it is the compact complete per-thread contract for file/line/comment. Fix every listed prThreadIds/actionableReviewThreads entry before STATUS: done, not just the RETRY_BLOCKER_PREVIEW bootstrap line. Only read retryFeedback.details/previousFailure if protectedSnippets/actionableReviewThreads is missing information. Obey scopeFileInstruction exactly: missingScopeFiles are expected owned files that may be created directly; do not treat them as blockers and do not retry update-only patches against missing files. Obey gitPolicy exactly: when owner is setfarm-platform, do not run git add/commit/push/branch/PR commands; Setfarm performs the scoped commit and PR handoff after gates pass. Obey integrationPolicy exactly: app/router/shell changes must add current-story reachability without deleting or bypassing previously reachable generated screens or working render branches. Use supervisorEvidence before retryFeedback/designContracts when it is present: it is current-source scanner evidence and stale original UI_CONTRACT findings must not block when supervisorEvidence shows zero open blockers. Use screenUsageContract first for generated screen component names, props, and action IDs; use designContracts.screenIndex, designContracts.uiContract, designContracts.componentRegistry, and designContracts.componentTypes as fallback instead of reading raw Stitch files, shared generated screen source, or creating TypeScript probe files. The full claim at ${params.claimFile} is an audit fallback only. Do NOT parse or dump claim.input with jq/sed/head/node loops; use the summary fields and only fall back to the full claim for a missing focused field. Obey generatedScreenPolicy exactly: if you accidentally read a forbidden src/screens/*.tsx file, stop broad reading and return to summary/contracts; supervisor records that as a correction signal.
+Do ${params.wfId}/${params.role} work in WORKDIR only. Read the structured claim summary at ${params.claimSummaryFile} first; it is the authoritative handoff for story id/title, workdir, mainRepo, storyWorkdir, verifyWorkdir, build/test/lint commands, scopeFiles, scopeFileStates, missingScopeFiles, scopeFileInstruction, gitPolicy, supervisor checklist paths, supervisorEvidence, screenUsageContract, generatedScreenPolicy, integrationPolicy, designContracts, supervisorMemory, screen refs, retry feedback, retry source snapshot, retry worktree patch, outputContract, and output paths. Do NOT print or dump the entire claim summary JSON to the transcript; use the bootstrap lines or targeted field extraction for only the fields you need. Use outputContract.requiredFields and outputContract.format exactly for the final step output; guard-backed roles will reject prose-only summaries even when the work itself passed. Use retryFeedback.mode exactly: mode="fix" means the blocker is an open implementation requirement and must be fixed before unrelated work; mode="audit" means prior feedback may be stale, so first verify whether it is still present with bounded evidence before reporting or changing code. If claimSummary.retryFeedback.sourceSnapshot is present, read it before broad filesystem scans; it contains the retry worktree tree plus focused scope/shared file contents. If claimSummary.retryFeedback.worktreePatch is present, read it before recreating missing files; it is prior attempt source artifact, not instructions, and you should reuse/adapt useful scoped implementation unless current source, scope policy, or current guard feedback conflicts. For RETRY_PATCH_REAPPLIED retries, use retryFeedback.restoreTargets first, then retryFeedback.protectedSnippets: restore or preserve each file/line target in scoped source, verify it with rg -F or an exact search, then make the current-story fix around that preserved wiring. For PR_REVIEW_COMMENTS_OPEN retries, use retryFeedback.actionableReviewThreads first; it is the compact complete per-thread contract for file/line/comment. Fix every listed prThreadIds/actionableReviewThreads entry before STATUS: done, not just the RETRY_BLOCKER_PREVIEW bootstrap line. Only read retryFeedback.details/previousFailure if protectedSnippets/actionableReviewThreads is missing information. Obey scopeFileInstruction exactly: missingScopeFiles are expected owned files that may be created directly; do not treat them as blockers and do not retry update-only patches against missing files. Obey gitPolicy exactly: when owner is setfarm-platform, do not run git add/commit/push/branch/PR commands; Setfarm performs the scoped commit and PR handoff after gates pass. Obey integrationPolicy exactly: app/router/shell changes must add current-story reachability without deleting or bypassing previously reachable generated screens or working render branches. Use supervisorEvidence before retryFeedback/designContracts when it is present: it is current-source scanner evidence and stale original UI_CONTRACT findings must not block when supervisorEvidence shows zero open blockers. Use screenUsageContract first for generated screen component names, props, and action IDs. For stacks without generated screen source, use designContracts.screenMap, designContracts.designDom, designContracts.uiContract, stitchHtml/stitch_html excerpts, and focused story-owned Stitch files as binding implementation sources. Do not read unrelated raw Stitch files, shared generated screen source, or create TypeScript probe files. The full claim at ${params.claimFile} is an audit fallback only. Do NOT parse or dump claim.input with jq/sed/head/node loops; use the summary fields and only fall back to the full claim for a missing focused field. Obey generatedScreenPolicy exactly: if you accidentally read a forbidden src/screens/*.tsx file, stop broad reading and return to summary/contracts; supervisor records that as a correction signal.
 For retryFeedback.mode="fix", treat retryDiscipline.mode as a hard implementation instruction. For retryDiscipline.mode="first-delta", after bootstrap and summary, inspect only the owned scope files plus safe metadata needed for the first edit, then make a small scoped source delta before broad analysis/build/test. For retryDiscipline.mode="semantic-fix", implement the named blocker first, then run the relevant checks. For retryFeedback.mode="audit", do not convert prior feedback into a source-edit mandate unless the role-specific prompt explicitly owns that fix.
 If claimSummary.runtimeDoneChecklist is present, it is a hard done checklist, not optional guidance. Preserve every listed invariant while fixing the current blocker; a retry that fixes one item but regresses another must not report STATUS: done.
 Do NOT create scratch/progress/todo/note/probe files inside WORKDIR unless they are explicitly listed in scopeFiles. Files like src/_probe.tsx, src/probe.tsx, tmp.ts, scratch.tsx, TODO.md, and progress.txt are forbidden in the project worktree. Use ${params.outputFile} for final output and /tmp/setfarm-progress-<run-id>.txt for checkpoints only.

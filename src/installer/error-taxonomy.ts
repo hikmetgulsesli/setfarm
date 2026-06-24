@@ -112,7 +112,7 @@ const PATTERNS: Array<{ pattern: RegExp; category: ErrorCategory; suggestion: st
   { pattern: /\b(?:PR\s*#\d+\s+still\s+has|current|actionable|unresolved|non-outdated)\b[\s\S]{0,220}\breview\s+(?:comment|thread)s?\b/i, category: "PR_REVIEW_COMMENTS_OPEN", suggestion: "Address, reply to, or resolve every current actionable PR review thread in the same story branch before retrying verify or merge gates." },
   { pattern: /^PR_NOT_MERGED:/i, category: "PR_NOT_MERGED", suggestion: "Do not accept STATUS: done while the story PR is still open. Address review comments/checks, merge the PR into main, and then let verify re-check the merged state." },
   { pattern: /^PR_MISSING:/i, category: "PR_MISSING", suggestion: "Create or recover the story PR before verify runs. A story cannot be verified from local worktree output alone." },
-  { pattern: /^RAW_STITCH_CONTEXT_READ:/i, category: "RAW_STITCH_CONTEXT_READ", suggestion: "Use CLAIM_SUMMARY_FILE, injected Stitch excerpts, UI_CONTRACT, SCREEN_INDEX.json, and only story-owned generated screens. Do not read or exec stitch/*.html, .stitch-screens*.json, or stitch/DESIGN_DOM.json inside implement claims." },
+  { pattern: /^RAW_STITCH_CONTEXT_READ:/i, category: "RAW_STITCH_CONTEXT_READ", suggestion: "For generated-screen implement claims, use CLAIM_SUMMARY_FILE, injected Stitch excerpts, UI_CONTRACT, SCREEN_INDEX.json, and only story-owned generated screens instead of unrelated raw Stitch corpus reads. For stacks without generated screens, focused story-owned Stitch HTML/DESIGN_DOM files are allowed binding design sources." },
   { pattern: /^DESIGN_DOM_IMPLEMENTATION_MISMATCH:/i, category: "DESIGN_DOM_IMPLEMENTATION_MISMATCH", suggestion: "Use the injected DESIGN_DOM/UI_CONTRACT/screenUsageContract handoff and restore the exact scoped controls, labels, and action IDs reported by the guard. Labeled icon mismatches are supervisor warnings unless the control is icon-only. Do not read raw Stitch HTML or broaden the story scope." },
   { pattern: /^SUPERVISOR_BLOCKERS_OPEN:/i, category: "SUPERVISOR_BLOCKERS_OPEN", suggestion: "Fix the exact supervisor checklist blocker ids in scoped files first. Missing controls, dead links, and static active controls are blockers; warning-level design drift can be handled after blockers pass. Do not read raw Stitch HTML or broaden scope." },
   { pattern: /^CLAIM_WORKDIR_MISSING:/i, category: "CLAIM_WORKDIR_MISSING", suggestion: "Setfarm could not resolve the prepared story worktree. Fix claim/workdir handoff before spawning a developer in agent scratch." },
@@ -169,9 +169,9 @@ function sanitizeGeneratedScreenSharedReadFeedback(errorText: string): string {
 
 export function buildRawStitchContextSuggestion(): string {
   return [
-    "do not read or exec stitch/*.html, .stitch-screens*.json, or stitch/DESIGN_DOM.json inside implement claims",
-    "use CLAIM_SUMMARY_FILE, injected Stitch excerpts, UI_CONTRACT, SCREEN_INDEX.json, and only story-owned generated screens",
-    "if the injected design handoff is insufficient, report the exact missing contract instead of loading the raw design corpus",
+    "for generated-screen implement claims, use CLAIM_SUMMARY_FILE, injected Stitch excerpts, UI_CONTRACT, SCREEN_INDEX.json, and only story-owned generated screens instead of unrelated raw Stitch corpus reads",
+    "for stacks without generated screens, focused story-owned Stitch HTML/DESIGN_DOM files are allowed binding design sources",
+    "do not read unrelated cross-story Stitch files or broaden the story scope",
   ].join("; ");
 }
 

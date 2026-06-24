@@ -24,10 +24,10 @@ import { assembleImplementContext } from "../../setup-handoff.js";
 import { buildStackMemory } from "../../stack-memory.js";
 import { applyScopedRetryPatchForStory, discardDirtyRetryWorktreeState, latestRetryPatchForStory, latestRetryStashPatchForStory } from "../../worktree-ops.js";
 
-const STITCH_HTML_EXCERPT_CHARS = 2500;
-const STITCH_HTML_TOTAL_CHARS = 6000;
-const DESIGN_DOM_EXCERPT_CHARS = 3000;
-const UI_BEHAVIOR_CONTRACT_CHARS = 4500;
+const STITCH_HTML_EXCERPT_CHARS = 12000;
+const STITCH_HTML_TOTAL_CHARS = 50000;
+const DESIGN_DOM_EXCERPT_CHARS = 30000;
+const UI_BEHAVIOR_CONTRACT_CHARS = 12000;
 
 const WORKTREE_METADATA_FILES = new Set([
   ".story-scope-files",
@@ -893,11 +893,11 @@ async function injectStitchHtml(context: Record<string, string>, runId: string, 
           const html = fs.readFileSync(htmlFile, "utf-8");
           const excerpt = html.replace(/\s+/g, " ").trim();
           const truncated = excerpt.length > STITCH_HTML_EXCERPT_CHARS
-            ? excerpt.slice(0, STITCH_HTML_EXCERPT_CHARS) + " ...(truncated; use injected UI contracts instead of reading raw HTML)"
+            ? excerpt.slice(0, STITCH_HTML_EXCERPT_CHARS) + " ...(truncated; continue from injected DESIGN_DOM/UI_CONTRACT and focused story-owned design files if needed)"
             : excerpt;
-          stitchHtmlContent += `\nSTITCH SCREEN: ${screen.name || screen.screenId}\nFILE: ${screen.htmlFile || `stitch/${screen.screenId}.html`}\nHTML_EXCERPT: ${truncated}\n`;
+          stitchHtmlContent += `\nSTITCH SCREEN: ${screen.name || screen.screenId}\nFILE: ${screen.htmlFile || `stitch/${screen.screenId}.html`}\nDESIGN_SOURCE_OF_TRUTH: This Stitch screen is the binding visual contract for the owned product surface. Recreate the visible structure, hierarchy, navigation, cards/tables/forms/panels, spacing, and interaction affordances in scoped files unless the story explicitly excludes them.\nHTML_EXCERPT: ${truncated}\n`;
           if (stitchHtmlContent.length > STITCH_HTML_TOTAL_CHARS) {
-            stitchHtmlContent = stitchHtmlContent.slice(0, STITCH_HTML_TOTAL_CHARS) + "\n...(truncated; use UI_CONTRACT, SCREEN_INDEX, and story-owned generated screens instead of reading raw stitch HTML)\n";
+            stitchHtmlContent = stitchHtmlContent.slice(0, STITCH_HTML_TOTAL_CHARS) + "\n...(truncated; continue from injected DESIGN_DOM/UI_CONTRACT and story-owned generated screens or focused story-owned Stitch files if needed)\n";
             break;
           }
         }
@@ -928,9 +928,10 @@ function injectDesignDom(context: Record<string, string>): void {
         }
         const domToInject = Object.keys(filteredScreens).length > 0 ? filteredScreens : fullDom.screens;
         const domJson = JSON.stringify(domToInject);
-        context["design_dom"] = domJson.length > DESIGN_DOM_EXCERPT_CHARS
-          ? domJson.substring(0, DESIGN_DOM_EXCERPT_CHARS) + "...(truncated; use injected UI behavior contract instead of reading full DESIGN_DOM.json)"
-          : domJson;
+        const prefix = "DESIGN_SOURCE_OF_TRUTH: DESIGN_DOM is binding for every owned story screen, across React, static HTML, canvas, and any other stack. Implement its visible regions and controls in scoped files; do not replace it with a simpler invented layout.\n";
+        context["design_dom"] = domJson.length + prefix.length > DESIGN_DOM_EXCERPT_CHARS
+          ? prefix + domJson.substring(0, Math.max(0, DESIGN_DOM_EXCERPT_CHARS - prefix.length)) + "...(truncated; use injected UI behavior contract and focused story-owned DESIGN_DOM/Stitch detail if needed)"
+          : prefix + domJson;
       }
     }
   } catch (e) { logger.debug(`[design-dom] ${String(e).slice(0, 80)}`); }
