@@ -1780,6 +1780,16 @@ async function routeVerifyScopeFailureToImplement(
   await updateRunContext(verifyStep.run_id, context);
   const loopStep = await findLoopStep(verifyStep.run_id);
   if (loopStep?.id) await setStepStatus(loopStep.id, "pending");
+  const loopConfig = parseLoopConfigSafe(loopStep?.loop_config || "", verifyStep.run_id);
+  const superviseStepName = loopConfig?.superviseStep || "supervise";
+  await pgRun(
+    "UPDATE steps SET status = 'waiting', current_story_id = NULL, updated_at = $1 WHERE run_id = $2 AND step_id = $3 AND status IN ('pending','running')",
+    [now(), verifyStep.run_id, superviseStepName],
+  );
+  await pgRun(
+    "UPDATE claim_log SET outcome = 'infra_retry', abandoned_at = COALESCE(abandoned_at, NOW()), duration_ms = EXTRACT(EPOCH FROM NOW() - claimed_at::timestamptz) * 1000, diagnostic = COALESCE(NULLIF(diagnostic, ''), $1) WHERE run_id = $2 AND step_id = $3 AND story_id IS NULL AND outcome IS NULL",
+    [`${options.category || "VERIFY_SCOPE_FAILURE"} routed story back to implement; stale supervisor claim invalidated`, verifyStep.run_id, superviseStepName],
+  );
   emitEvent({ ts: now(), event: "story.retry", runId: verifyStep.run_id, workflowId: await getWorkflowId(verifyStep.run_id), stepId: verifyStep.step_id, storyId, detail: failure });
 }
 

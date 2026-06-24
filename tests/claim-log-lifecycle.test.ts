@@ -926,6 +926,21 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(claim, /existingStoryBranch \|\| `\$\{storyRunPrefix\}-\$\{nextStory\.story_id\}`/);
   });
 
+  it("invalidates stale supervisor claims when verify routes a story back to implement", () => {
+    const source = stepOpsSource();
+    const helperStart = source.indexOf("async function routeVerifyScopeFailureToImplement");
+    const helperEnd = source.indexOf("function getImplicitScopeFiles", helperStart);
+    assert.notEqual(helperStart, -1, "routeVerifyScopeFailureToImplement source not found");
+    assert.notEqual(helperEnd, -1, "routeVerifyScopeFailureToImplement source end not found");
+    const helper = source.slice(helperStart, helperEnd);
+
+    assert.match(helper, /const loopConfig = parseLoopConfigSafe\(loopStep\?\.loop_config \|\| "", verifyStep\.run_id\)/);
+    assert.match(helper, /const superviseStepName = loopConfig\?\.superviseStep \|\| "supervise"/);
+    assert.match(helper, /UPDATE steps SET status = 'waiting', current_story_id = NULL/);
+    assert.match(helper, /UPDATE claim_log SET outcome = 'infra_retry'/);
+    assert.match(helper, /stale supervisor claim invalidated/);
+  });
+
   it("loads story branch metadata during atomic pending story claims", () => {
     const source = repoSource();
     const start = source.indexOf("export async function claimNextStory(");
