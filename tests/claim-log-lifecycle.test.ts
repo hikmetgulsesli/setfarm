@@ -458,6 +458,8 @@ describe("single-step claim_log lifecycle", () => {
     const postMergeCategory = helperSource.indexOf("POST_MERGE_QUALITY_REGRESSION", mergedGuard);
     const exhaustedCategory = helperSource.indexOf("POST_MERGE_QUALITY_REGRESSION_RETRY_EXHAUSTED", mergedGuard);
     const clearBranch = helperSource.indexOf("story_branch = NULL", mergedGuard);
+    const repairMax = helperSource.indexOf("postMergeRepairMaxRetries", mergedGuard);
+    const maxRetryPersist = helperSource.indexOf("max_retries = $6", mergedGuard);
     const repairScope = helperSource.indexOf("extractQualityFailureScopeFiles(failure)");
     const scopePersist = helperSource.indexOf("scope_files = $3, resolved_scope_files = $3", mergedGuard);
     const routeTransition = helperSource.indexOf("qualityFailure:routeMergedStoryMainRepair", mergedGuard);
@@ -468,11 +470,14 @@ describe("single-step claim_log lifecycle", () => {
     assert.ok(postMergeCategory > mergedGuard, "merged PR guard must classify post-merge quality regression");
     assert.ok(exhaustedCategory > mergedGuard, "merged PR retry exhaustion must have a distinct terminal category");
     assert.ok(clearBranch > postMergeCategory, "merged PR retry must clear stale branch metadata before rerunning implement");
+    assert.ok(repairMax > postMergeCategory, "merged PR retry must calculate a visible current-main repair retry budget");
+    assert.ok(maxRetryPersist > repairMax, "merged PR retry must persist max_retries with the repair budget");
     assert.ok(repairScope > prSelect, "original story retry must derive repair scope from downstream quality findings");
     assert.ok(scopePersist > repairScope, "merged PR retry must persist expanded repair scope before rerunning implement");
     assert.ok(routeTransition > clearBranch, "merged PR retry must route through implement instead of terminal failure");
     assert.match(helperSource, /retry on current main with a fresh story branch instead of reopening the merged branch/);
     assert.match(helperSource, /quality_failure_repeat_count/);
+    assert.match(helperSource, /post_merge_quality_repair_budget/);
     assert.match(helperSource, /matching current-main repair retries are exhausted/);
     assert.match(helperSource, /infra\/model retries do not consume it/);
     assert.match(helperSource, /post-merge quality failure routed to original story/);
@@ -738,6 +743,20 @@ describe("single-step claim_log lifecycle", () => {
     assert.ok(source.indexOf("await failStep(stepId, pushFailure)", pushFailure) > pushFailure, "push failure must stop story completion");
     assert.ok(autoPrStart > pushStart, "platform push must also run when PR_URL already exists and auto-pr is skipped");
     assert.ok(storyUpdate > pushStart, "story must not be marked done in DB before branch push succeeds");
+  });
+
+  it("retries platform story branch push after installing GitHub CLI git credentials", () => {
+    const source = stepOpsSource();
+    const start = source.indexOf("function pushStoryBranch(");
+    const end = source.indexOf("function storyWorkdirMatchesBranch(", start);
+    assert.notEqual(start, -1, "pushStoryBranch source not found");
+    assert.notEqual(end, -1, "pushStoryBranch end not found");
+    const helper = source.slice(start, end);
+
+    assert.match(helper, /const pushArgs = \["push", "-u", "origin", branch\]/);
+    assert.match(helper, /GIT_TERMINAL_PROMPT: "0"/);
+    assert.match(helper, /"gh", \["auth", "setup-git", "--hostname", "github\.com"\]/);
+    assert.match(helper, /after gh auth setup-git/);
   });
 
   it("does not let LLM supervisor pass override blocking visual/state evidence", () => {

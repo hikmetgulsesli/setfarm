@@ -5,6 +5,7 @@ This repository now keeps agent-facing operational notes in English only.
 ## Unreleased
 
 - Pushed story branches after scoped platform commits even when a PR already exists, preventing verify from rereading stale GitHub review comments against an old remote PR head.
+- Retried platform story branch pushes through GitHub CLI git credentials when non-interactive HTTPS git lacks a username, and kept post-merge repair retry budgets visible in story state.
 - Reaped active agent processes with already closed claim_log rows without emitting `AGENT_STEP_STATE_MISMATCH`, preventing completed or guard-closed claims from being misclassified as fresh infra retries.
 - Kept actionable PR review retries on the open PR's head branch instead of recomputing the original story branch, preventing repair PR comments from sending agents back to stale merged worktrees.
 - Loaded `story_branch` and `pr_url` during atomic pending-story claims, so retry branch preservation has the metadata it needs before creating a worktree.

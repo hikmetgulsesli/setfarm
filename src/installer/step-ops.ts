@@ -1043,15 +1043,37 @@ function pushStoryBranch(workdir: string, storyBranch: string | null | undefined
     }
   }
   if (!branch) return { pushed: false, error: "PLATFORM_STORY_PUSH_MISSING_BRANCH" };
+  const pushArgs = ["push", "-u", "origin", branch];
   try {
-    execPlatformGit(["push", "-u", "origin", branch], {
+    execPlatformGit(pushArgs, {
       cwd: workdir,
       timeout: 45_000,
       stdio: ["pipe", "pipe", "pipe"],
+      env: { GIT_TERMINAL_PROMPT: "0" },
     });
     return { pushed: true, error: "" };
   } catch (err) {
-    return { pushed: false, error: `PLATFORM_STORY_PUSH_FAILED: ${formatCommandError(err)}` };
+    const firstError = formatCommandError(err);
+    if (/github\.com|could not read Username|Authentication failed|terminal prompts disabled/i.test(firstError)) {
+      try {
+        execFileSync("gh", ["auth", "setup-git", "--hostname", "github.com"], {
+          cwd: workdir,
+          timeout: 20_000,
+          stdio: ["ignore", "pipe", "pipe"],
+          env: platformGitEnv(),
+        });
+        execPlatformGit(pushArgs, {
+          cwd: workdir,
+          timeout: 45_000,
+          stdio: ["pipe", "pipe", "pipe"],
+          env: { GIT_TERMINAL_PROMPT: "0" },
+        });
+        return { pushed: true, error: "" };
+      } catch (retryErr) {
+        return { pushed: false, error: `PLATFORM_STORY_PUSH_FAILED: ${firstError}; after gh auth setup-git: ${formatCommandError(retryErr)}` };
+      }
+    }
+    return { pushed: false, error: `PLATFORM_STORY_PUSH_FAILED: ${firstError}` };
   }
 }
 
@@ -1867,6 +1889,14 @@ function qualityFailureFingerprint(failure: string): string {
   return crypto.createHash("sha1").update(normalized).digest("hex");
 }
 
+function postMergeRepairMaxRetries(currentRetryCount: number, maxRetries: number, matchingRetryCount: number): number {
+  const current = Math.max(0, Number(currentRetryCount || 0));
+  const configuredMax = Math.max(0, Number(maxRetries || 0));
+  const matching = Math.max(1, Number(matchingRetryCount || 1));
+  const remainingPostMergeAttempts = Math.max(0, QA_FIX_REPEAT_LIMIT - matching + 1);
+  return Math.max(configuredMax, current + remainingPostMergeAttempts);
+}
+
 function runSystemSmokeGate(repoPath: string, runId: string, stepId: string): { ok: boolean; output: string; failure: string; infraFailure: boolean } {
   const smokeScript = resolvePlatformScript("smoke-test.mjs");
   if (!repoPath || !fs.existsSync(repoPath) || !fs.existsSync(smokeScript)) {
@@ -2449,12 +2479,14 @@ async function routeOriginalStoryQualityFailureToImplement(
     context["failure_suggestion"] = "Retry the original story on current main with a fresh branch; do not reopen the already merged PR branch.";
     context["post_merge_quality_regression_story_id"] = retryStory.story_id;
     context["post_merge_quality_regression_pr_url"] = retryStory.pr_url;
+    context["post_merge_quality_repair_budget"] = `${matchingQualityRetry}/${QA_FIX_REPEAT_LIMIT}`;
     delete context["story_branch"];
+    const postMergeMaxRetries = postMergeRepairMaxRetries(retryStory.retry_count, retryStory.max_retries, matchingQualityRetry);
     await updateRunContext(step.run_id, context);
     await pgBegin(async (sql) => {
       await sql.unsafe(
-        "UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, retry_count = $1, output = $2, pr_url = NULL, story_branch = NULL, merge_status = NULL, scope_files = $3, resolved_scope_files = $3, updated_at = $4 WHERE id = $5",
-        [newRetry, mergedRetryFailure, repairScope.json, now(), retryStory.id],
+        "UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, retry_count = $1, output = $2, pr_url = NULL, story_branch = NULL, merge_status = NULL, scope_files = $3, resolved_scope_files = $3, updated_at = $4, max_retries = $6 WHERE id = $5",
+        [newRetry, mergedRetryFailure, repairScope.json, now(), retryStory.id, postMergeMaxRetries],
       );
       await sql.unsafe(
         "UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = $1 WHERE id = $2",
