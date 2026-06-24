@@ -7911,9 +7911,22 @@ ${prd}`;
         });
         context["previous_failure"] = pushFailure;
         context["failure_category"] = "PLATFORM_STORY_PUSH_FAILED";
-        context["failure_suggestion"] = "This is a Setfarm git transport failure. Do not ask the developer agent to push; fix platform git/remote access, then retry the same story.";
+        context["failure_suggestion"] = "This is a Setfarm git transport failure. Do not ask the developer agent to push; fix platform git/remote access, then restart or retry the run.";
         await updateRunContext(step.run_id, context);
-        await failStep(stepId, pushFailure);
+        await pgBegin(async (sql) => {
+          if (step.current_story_id) {
+            await sql`UPDATE stories SET status = 'failed', output = ${pushFailure}, updated_at = ${now()} WHERE id = ${step.current_story_id}`;
+          }
+          await sql`UPDATE steps SET status = 'failed', output = ${pushFailure}, current_story_id = NULL, updated_at = ${now()} WHERE id = ${stepId}`;
+          await sql`UPDATE claim_log SET outcome = 'failed', duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at)) * 1000 AS INTEGER), diagnostic = ${pushFailure} WHERE run_id = ${step.run_id} AND step_id = ${step.step_id} AND story_id = ${storyRow?.story_id || ""} AND outcome IS NULL`;
+        });
+        await failRun(step.run_id, true);
+        await recordStepTransition(stepId, step.run_id, "running", "failed", step.agent_id, "completeStep:platformStoryPushFailed", { storyId: storyRow?.story_id, error: pushFailure.slice(0, 300) });
+        const wfId = await _getWorkflowId(step.run_id);
+        emitEvent({ ts: now(), event: "story.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, storyId: storyRow?.story_id, storyTitle: storyRow?.title, detail: "Platform story branch push failed; story retry was not consumed." });
+        emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: pushFailure });
+        emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: pushFailure });
+        scheduleRunCronTeardown(step.run_id);
         return { advanced: false, runCompleted: false };
       }
       await recordLiveObservation({

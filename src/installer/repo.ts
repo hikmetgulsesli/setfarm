@@ -60,6 +60,27 @@ export async function failRun(runId: string, terminal = false): Promise<void> {
   await pgRun("UPDATE runs SET status = 'failed', updated_at = $1 WHERE id = $2",
     [now(), runId]);
   if (terminal) {
+    await pgBegin(async (sql) => {
+      await sql`
+        UPDATE stories
+        SET status = 'failed',
+            claimed_by = NULL,
+            claimed_at = NULL,
+            output = COALESCE(NULLIF(output, ''), 'RUN_TERMINAL_FAILURE: run failed before the active story completed.'),
+            updated_at = ${now()}
+        WHERE run_id = ${runId}
+          AND status = 'running'
+      `;
+      await sql`
+        UPDATE claim_log
+        SET outcome = 'failed',
+            abandoned_at = COALESCE(abandoned_at, NOW()),
+            duration_ms = LEAST(CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at::timestamptz)) * 1000 AS BIGINT), 2147483647)::INTEGER,
+            diagnostic = COALESCE(NULLIF(diagnostic, ''), 'RUN_TERMINAL_FAILURE: run failed while claim was open.')
+        WHERE run_id = ${runId}
+          AND outcome IS NULL
+      `;
+    });
     try {
       const row = await pgGet<{ meta: string | null }>("SELECT meta FROM runs WHERE id = $1", [runId]);
       const meta = row?.meta ? JSON.parse(row.meta) : {};

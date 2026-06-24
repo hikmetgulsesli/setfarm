@@ -740,7 +740,9 @@ describe("single-step claim_log lifecycle", () => {
 
     assert.ok(pushStart > 0, "story completion must push branch before verify can inspect GitHub PR state");
     assert.ok(pushFailure > pushStart, "push failure must be classified before continuing");
-    assert.ok(source.indexOf("await failStep(stepId, pushFailure)", pushFailure) > pushFailure, "push failure must stop story completion");
+    assert.ok(source.indexOf("completeStep:platformStoryPushFailed", pushFailure) > pushFailure, "push failure must stop story completion as a platform failure");
+    assert.ok(source.indexOf("story retry was not consumed", pushFailure) > pushFailure, "push failure must not consume story retry budget");
+    assert.equal(source.indexOf("await failStep(stepId, pushFailure)", pushFailure), -1, "push failure must not be routed back to the developer agent");
     assert.ok(autoPrStart > pushStart, "platform push must also run when PR_URL already exists and auto-pr is skipped");
     assert.ok(storyUpdate > pushStart, "story must not be marked done in DB before branch push succeeds");
   });
@@ -1453,6 +1455,21 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(source, /Story \$\{storyRow\?\.story_id\} retries exhausted \(\$\{terminalRetry\}\/\$\{story\.max_retries\}\): \$\{storyOutput\}/);
     assert.match(source, /UPDATE stories SET status = 'failed', retry_count = \$\{terminalRetry\}, output = \$\{storyOutput\}/);
     assert.match(source, /UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, retry_count = \$\{newRetry\}, output = \$\{storyOutput\}/);
+  });
+
+  it("terminal failRun clears active stories and open claims", () => {
+    const source = fs.readFileSync(path.join(root, "src", "installer", "repo.ts"), "utf-8");
+    const start = source.indexOf("export async function failRun(");
+    const end = source.indexOf("async function recordTerminalPlatformSelfHealPlanFromRun", start);
+    assert.notEqual(start, -1, "failRun source not found");
+    assert.notEqual(end, -1, "failRun end not found");
+    const failRunSource = source.slice(start, end);
+
+    assert.match(failRunSource, /if \(terminal\) \{/);
+    assert.match(failRunSource, /UPDATE stories[\s\S]*status = 'failed'[\s\S]*WHERE run_id = \$\{runId\}[\s\S]*AND status = 'running'/);
+    assert.match(failRunSource, /claimed_by = NULL/);
+    assert.match(failRunSource, /UPDATE claim_log[\s\S]*outcome = 'failed'[\s\S]*WHERE run_id = \$\{runId\}[\s\S]*AND outcome IS NULL/);
+    assert.match(failRunSource, /RUN_TERMINAL_FAILURE/);
   });
 
   it("preserves multiple actionable retry targets instead of replacing earlier quality feedback", () => {
