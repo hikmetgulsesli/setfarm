@@ -13,6 +13,7 @@ import {
   checkBrowserGameStaticContracts,
   checkWeakInteractionAssertions,
   countSourceControlUsages,
+  semanticNavigationTargetIssue,
 } from "../scripts/smoke-test.mjs";
 
 function withRepo(fn: (repo: string) => void) {
@@ -26,6 +27,26 @@ function withRepo(fn: (repo: string) => void) {
 }
 
 describe("smoke-test static rules", () => {
+  it("flags navigation links whose destination title does not match the link label", () => {
+    assert.match(
+      semanticNavigationTargetIssue("Technical Status", {
+        title: "Signal Cards Canary",
+        headings: ["Signal Cards Canary"],
+        url: "http://localhost:3618/index.html",
+      }) || "",
+      /semantic target mismatch/,
+    );
+
+    assert.equal(
+      semanticNavigationTargetIssue("Technical Status", {
+        title: "Technical Status - Signal Cards Canary",
+        headings: ["Technical Status"],
+        url: "http://localhost:3618/technical-status-signal-cards-canary.html",
+      }),
+      null,
+    );
+  });
+
   it("ignores type-only imports from TS entry points", () => {
     withRepo(repo => {
       fs.writeFileSync(path.join(repo, "src", "App.tsx"), [

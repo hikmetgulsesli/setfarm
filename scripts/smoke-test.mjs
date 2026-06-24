@@ -132,6 +132,33 @@ function parseEvalJson(raw, fallback) {
   }
 }
 
+function normalizeNavText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isSemanticNavigationLabel(label) {
+  const normalized = normalizeNavText(label);
+  if (!normalized || normalized.length < 4) return false;
+  if (/^(?:home|back|close|cancel|edit|delete|save|submit|record|add|reset|retry|view|open|more|next|previous)$/.test(normalized)) return false;
+  if (normalized.split(" ").length >= 2) return true;
+  return /^(?:operations|insights|analytics|reports|dashboard|settings|profile|records|technical|status|admin|billing|projects|files|stories|supervisor)$/.test(normalized);
+}
+
+function semanticNavigationTargetIssue(label, destination) {
+  const normalizedLabel = normalizeNavText(label);
+  if (!isSemanticNavigationLabel(normalizedLabel)) return null;
+  const title = normalizeNavText(destination?.title || "");
+  const headings = Array.isArray(destination?.headings) ? destination.headings.map(normalizeNavText).filter(Boolean) : [];
+  const url = normalizeNavText(destination?.url || "");
+  const haystacks = [title, ...headings, url].filter(Boolean);
+  if (haystacks.some((text) => text.includes(normalizedLabel))) return null;
+  return `semantic target mismatch: expected destination title/heading/url to include "${label}", got title="${destination?.title || ""}" headings="${headings.join(" | ")}" url="${destination?.url || ""}"`;
+}
+
 // ── Filesystem helpers ──────────────────────────────────────────────
 function walkDir(dir, cb) {
   try {
@@ -1896,6 +1923,19 @@ async function main() {
             continue;
           }
 
+          const destinationInfo = parseEvalJson(abOk('eval',
+            'JSON.stringify({' +
+            'title: document.title || "",' +
+            'url: location.href,' +
+            'headings: Array.from(document.querySelectorAll("h1,h2,[role=\\"heading\\"]")).map(function(h){ return h.textContent ? h.textContent.trim() : ""; }).filter(Boolean).slice(0, 8)' +
+            '})'
+          ), {});
+          const targetIssue = semanticNavigationTargetIssue(link.text, destinationInfo);
+          if (targetIssue) {
+            linksBroken++;
+            failures.push('[LINK] "' + link.text + '" (' + href + ') — ' + targetIssue);
+          }
+
           const errCount = getJsErrorCount();
           if (errCount > 0) {
             linksBroken++;
@@ -2813,6 +2853,7 @@ export {
   checkBrowserGameStaticContracts,
   checkWeakInteractionAssertions,
   countSourceControlUsages,
+  semanticNavigationTargetIssue,
 };
 
 if (isCli) {
