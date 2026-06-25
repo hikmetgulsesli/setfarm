@@ -424,11 +424,18 @@ function stripSetfarmGitWrapperPath(value: string | undefined): string {
 }
 
 function platformGitEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  return {
+  const hostUser = os.userInfo();
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     ...extra,
+    HOME: hostUser.homedir || os.homedir(),
+    USER: hostUser.username || process.env.USER,
     PATH: stripSetfarmGitWrapperPath(extra.PATH || process.env.PATH),
   };
+  for (const key of ["GH_CONFIG_DIR", "GH_TOKEN", "GITHUB_TOKEN", "XDG_CONFIG_HOME"]) {
+    if (!(key in extra)) delete env[key];
+  }
+  return env;
 }
 
 function sanitizePlatformProcessPath(): void {

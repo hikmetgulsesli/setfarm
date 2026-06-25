@@ -761,6 +761,21 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(helper, /after gh auth setup-git/);
   });
 
+  it("runs platform git with host GitHub auth instead of agent session auth", () => {
+    const source = stepOpsSource();
+    const start = source.indexOf("function platformGitEnv(");
+    const end = source.indexOf("function sanitizePlatformProcessPath(", start);
+    assert.notEqual(start, -1, "platformGitEnv source not found");
+    assert.notEqual(end, -1, "platformGitEnv end not found");
+    const helper = source.slice(start, end);
+
+    assert.match(helper, /const hostUser = os\.userInfo\(\)/);
+    assert.match(helper, /HOME: hostUser\.homedir \|\| os\.homedir\(\)/);
+    assert.match(helper, /USER: hostUser\.username \|\| process\.env\.USER/);
+    assert.match(helper, /\["GH_CONFIG_DIR", "GH_TOKEN", "GITHUB_TOKEN", "XDG_CONFIG_HOME"\]/);
+    assert.match(helper, /if \(!\(key in extra\)\) delete env\[key\]/);
+  });
+
   it("does not let LLM supervisor pass override blocking visual/state evidence", () => {
     const source = stepOpsSource();
     const start = source.indexOf("async function handleSuperviseEachCompletion(");
