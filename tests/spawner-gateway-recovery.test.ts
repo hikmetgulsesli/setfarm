@@ -1416,6 +1416,31 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /setInterval\(\(\) => \{ void runClaimMaintenance\(\); \}, Math\.min\(POLL_INTERVAL_MS, 10_000\)\)/);
   });
 
+  it("retries running loop story claims that are no longer tracked by the spawner", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /async function requeueUntrackedRunningLoopStoryClaims/);
+    const start = source.indexOf("async function requeueUntrackedRunningLoopStoryClaims");
+    const end = source.indexOf("async function requeueUntrackedRunningSingleStepClaims", start);
+    assert.notEqual(start, -1, "requeueUntrackedRunningLoopStoryClaims not found");
+    assert.notEqual(end, -1, "requeueUntrackedRunningLoopStoryClaims end not found");
+    const block = source.slice(start, end);
+
+    assert.match(block, /loop_step\.type = 'loop'/);
+    assert.match(block, /loop_step\.status = 'running'/);
+    assert.match(block, /loop_step\.current_story_id = st\.id/);
+    assert.match(block, /cl\.story_id = st\.story_id/);
+    assert.match(block, /cl\.outcome IS NULL/);
+    assert.match(block, /cl\.claimed_at <= NOW\(\) - \(\$1::int \* interval '1 millisecond'\)/);
+    assert.match(block, /Array\.from\(activeProcesses\.values\(\)\)\.some/);
+    assert.match(block, /active\.storyDbId === row\.story_db_id \|\| active\.storyId === row\.story_id/);
+    assert.match(block, /!childProcessTerminalReason\(active\.child\)/);
+    assert.match(block, /tryRecoverOrphanedRunningImplementWork\(row\)/);
+    assert.match(block, /UNTRACKED_RUNNING_LOOP_STORY/);
+    assert.match(block, /UPDATE stories SET status = 'pending'/);
+    assert.match(block, /UPDATE claim_log SET outcome = 'infra_retry'/);
+    assert.match(source, /await requeueOrphanedRunningStories\(\);\s*await requeueUntrackedRunningLoopStoryClaims\(\);\s*await requeueUntrackedRunningSingleStepClaims\(\);/);
+  });
+
   it("does not requeue a running story while its agent process is still tracked", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     const start = source.indexOf("async function requeueOrphanedRunningStories");

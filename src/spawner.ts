@@ -3818,6 +3818,72 @@ async function requeueOrphanedRunningStories(): Promise<void> {
   }
 }
 
+async function requeueUntrackedRunningLoopStoryClaims(): Promise<void> {
+  const thresholdMs = Math.max(0, ORPHANED_SINGLE_STEP_CLAIM_MS);
+  const rows = await pgQuery<{ story_db_id: string; story_id: string; story_title: string; story_branch: string | null; run_id: string; run_number: number; step_db_id: string; step_id: string; agent_id: string; claimed_at: string }>(
+    `SELECT st.id as story_db_id, st.story_id, st.title as story_title, st.story_branch,
+            st.run_id, r.run_number, loop_step.id as step_db_id, loop_step.step_id,
+            cl.agent_id, cl.claimed_at
+     FROM stories st
+     JOIN runs r ON r.id = st.run_id
+     JOIN steps loop_step
+       ON loop_step.run_id = st.run_id
+      AND loop_step.type = 'loop'
+      AND loop_step.status = 'running'
+      AND loop_step.current_story_id = st.id
+     JOIN claim_log cl
+       ON cl.run_id = st.run_id
+      AND cl.step_id = loop_step.step_id
+      AND cl.story_id = st.story_id
+      AND cl.outcome IS NULL
+     WHERE st.status = 'running'
+       AND r.status = 'running'
+       AND cl.claimed_at <= NOW() - ($1::int * interval '1 millisecond')
+       AND loop_step.updated_at <= NOW() - ($1::int * interval '1 millisecond')
+       AND st.updated_at <= NOW() - ($1::int * interval '1 millisecond')
+     ORDER BY cl.claimed_at ASC
+     LIMIT 20`,
+    [thresholdMs],
+  );
+
+  for (const row of rows) {
+    const tracked = Array.from(activeProcesses.values()).some((active) =>
+      active.runId === row.run_id
+      && active.stepId === row.step_db_id
+      && (active.storyDbId === row.story_db_id || active.storyId === row.story_id)
+      && active.agentId === row.agent_id
+      && !childProcessTerminalReason(active.child)
+    );
+    if (tracked) continue;
+
+    try {
+      if (await tryRecoverOrphanedRunningImplementWork(row)) continue;
+    } catch (recoveryErr) {
+      console.warn(`[spawner] untracked loop implement recovery failed for ${row.story_id}: ${String(recoveryErr).slice(0, 300)}`);
+    }
+
+    const claimedAtMs = new Date(row.claimed_at).getTime();
+    const ageMs = Number.isFinite(claimedAtMs) ? Date.now() - claimedAtMs : thresholdMs;
+    const diagnostic = `UNTRACKED_RUNNING_LOOP_STORY: ${row.agent_id} has an open ${row.step_id}/${row.story_id} claim for ${formatDurationMs(ageMs)} but no active spawner process is tracking it; retrying instead of leaving the run idle.`;
+    await pgRun(
+      "UPDATE stories SET status = 'pending', claimed_by = NULL, output = $2, updated_at = NOW() WHERE id = $1 AND status = 'running'",
+      [row.story_db_id, diagnostic],
+    );
+    await pgRun(
+      "UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = NOW() WHERE id = $1 AND status = 'running'",
+      [row.step_db_id],
+    );
+    await pgRun(
+      "UPDATE claim_log SET outcome = 'infra_retry', abandoned_at = NOW(), duration_ms = LEAST(CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at::timestamptz)) * 1000 AS BIGINT), 2147483647)::INTEGER, diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND story_id = $4 AND agent_id = $5 AND outcome IS NULL",
+      [diagnostic, row.run_id, row.step_id, row.story_id, row.agent_id],
+    );
+    await pgRun("SELECT pg_notify('step_pending', $1)", [
+      JSON.stringify({ agentId: row.agent_id, runId: row.run_id, stepId: row.step_id, storyId: row.story_id }),
+    ]);
+    console.warn(`[spawner] requeued untracked loop story claim for run #${row.run_number}: ${row.step_id}/${row.story_id}/${row.agent_id}`);
+  }
+}
+
 async function requeueUntrackedRunningSingleStepClaims(): Promise<void> {
   const thresholdMs = Math.max(0, ORPHANED_SINGLE_STEP_CLAIM_MS);
   const rows = await pgQuery<{ step_db_id: string; step_id: string; run_id: string; run_number: number; agent_id: string; claimed_at: string }>(
@@ -3872,6 +3938,7 @@ async function runClaimMaintenance(): Promise<void> {
   try {
     await reapFinishedClaims();
     await requeueOrphanedRunningStories();
+    await requeueUntrackedRunningLoopStoryClaims();
     await requeueUntrackedRunningSingleStepClaims();
   } catch (err) {
     console.warn(`[spawner] claim maintenance failed: ${String(err).slice(0, 300)}`);
