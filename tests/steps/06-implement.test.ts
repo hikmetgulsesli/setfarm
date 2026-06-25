@@ -6,7 +6,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { implementModule } from "../../dist/installer/steps/06-implement/module.js";
 import { checkBuildGate, checkGeneratedRuntimeSemanticGate, checkGeneratedScreenRequiredPropsGate, checkGeneratedScreenShellChromeGate, checkImplementEvidenceGate, checkPlatformHelperContaminationGate, checkScopeEnforcement, checkScopeFilesGate, checkTestGate, classifyGeneratedScreenRegressionIssues, computeScopeFileLimits, detectPackageBuildCommand, findDesignDomImplementationFindings, findDesignDomImplementationIssues, findGeneratedRuntimeSemanticIssues, findGeneratedRuntimeSupervisorQualityIssues, findGeneratedScreenIntegrationIssues, findGeneratedScreenRegressionIssues, findGeneratedScreenRequiredPropIssues, findGeneratedScreenShellChromeIssues, findPlatformHelperContaminationIssues, getOutOfScopeStoryFiles, normalize, parseGitStatusPorcelainPath, selectMatchingStoryWorktree, sourceExposesWindowApp, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
-import { buildScopeFilesRetryFailureForWorkdir, cleanupOutOfScopeWorktreeFiles, mergeRetryFailureTexts } from "../../dist/installer/steps/06-implement/context.js";
+import { buildScopeFilesRetryFailureForWorkdir, cleanupOutOfScopeWorktreeFiles, mergeRetryFailureTexts, shouldRestoreRetryWorktreePatchForCategory } from "../../dist/installer/steps/06-implement/context.js";
 import { cleanupBlockedStoryCommitScope, commitStoryWorktreeScopeIfNeeded, decideStorySystemSmokeGate } from "../../dist/installer/step-ops.js";
 import { createStoryWorktree, ensureStoryBranchWorktree } from "../../dist/installer/worktree-ops.js";
 import { assembleImplementContext, fileTreeManifestPath, setupCertificatePath, sharedGrantsPath } from "../../dist/installer/setup-handoff.js";
@@ -2634,6 +2634,14 @@ describe("06-implement step module", () => {
     assert.match(feedback, /GENERATED_SCREEN_LAYOUT_MOUNT_UNSAFE/);
     assert.match(feedback, /ALSO_FIX/);
     assert.equal((feedback.match(/RUNTIME_BRIDGE_MISSING/g) || []).length, 1);
+  });
+
+  it("does not auto-restore retry patches for focused PR review comment retries", () => {
+    assert.equal(shouldRestoreRetryWorktreePatchForCategory("PR_REVIEW_COMMENTS_OPEN"), false);
+    assert.equal(shouldRestoreRetryWorktreePatchForCategory("RETRY_PATCH_REAPPLIED"), false);
+    assert.equal(shouldRestoreRetryWorktreePatchForCategory("QUALITY_RETRY_FEEDBACK"), false);
+    assert.equal(shouldRestoreRetryWorktreePatchForCategory("NO_WORK_DETECTED"), true);
+    assert.equal(shouldRestoreRetryWorktreePatchForCategory("SCOPE_FILE_MISSING"), true);
   });
 
   it("does not fail screen stories only because optional action companion files are absent", async () => {

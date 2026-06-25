@@ -166,6 +166,15 @@ function collectRetryWorktreePatchFeedback(repoPath: string, worktreeDir: string
   ].join("\n");
 }
 
+export function shouldRestoreRetryWorktreePatchForCategory(category: string): boolean {
+  const normalized = String(category || "").trim().toUpperCase();
+  if (!normalized) return true;
+  return normalized === "NO_WORK_DETECTED" ||
+    normalized === "SCOPE_FILE_MISSING" ||
+    normalized === "SCOPE_BLEED" ||
+    normalized === "IMPLEMENT_PRE_DELTA_CHECK_VIOLATION";
+}
+
 function lineValueFromBlock(block: string, label: string): string {
   const match = block.match(new RegExp(`^${label}:\\s*(.*)$`, "m"));
   return (match?.[1] || "").trim();
@@ -431,26 +440,31 @@ export async function injectStoryContext(
   context["story_branch"] = pipelineStoryBranch || `${step.run_id.slice(0, 8)}-${story.storyId}`.toLowerCase();
   context["story_workdir"] = pipelineStoryWorkdir;
 
+  const retryRestoreCategoryHint = priorContextFailureCategory || "";
   if (story.retryCount > 0 && context["story_workdir"]) {
     discardDirtyRetryWorktreeState(context["story_workdir"], story.storyId, step.run_id);
-    const scopedRetryPatchFiles = [
-      ...parseScopeFileList(context["story_scope_files"]),
-      ...IMPLICIT_STORY_SCOPE_FILES,
-    ];
-    const restoreResult = applyScopedRetryPatchForStory(
-      context["repo"] || context["REPO"] || storyRepoPath,
-      context["story_workdir"],
-      story.storyId,
-      scopedRetryPatchFiles,
-      step.run_id,
-    );
-    if (restoreResult.applied) {
-      context["retry_worktree_patch_restored"] = [
-        "RETRY_WORKTREE_PATCH_RESTORED: Setfarm restored the last failed attempt patch because every touched file was inside this story's scoped write set.",
-        `FILES: ${(restoreResult.touchedFiles || []).join(", ")}`,
-      ].join("\n");
-    } else if (restoreResult.reason !== "no_retry_patch") {
-      context["retry_worktree_patch_restored"] = `RETRY_WORKTREE_PATCH_NOT_RESTORED: ${restoreResult.reason}`;
+    if (shouldRestoreRetryWorktreePatchForCategory(retryRestoreCategoryHint)) {
+      const scopedRetryPatchFiles = [
+        ...parseScopeFileList(context["story_scope_files"]),
+        ...IMPLICIT_STORY_SCOPE_FILES,
+      ];
+      const restoreResult = applyScopedRetryPatchForStory(
+        context["repo"] || context["REPO"] || storyRepoPath,
+        context["story_workdir"],
+        story.storyId,
+        scopedRetryPatchFiles,
+        step.run_id,
+      );
+      if (restoreResult.applied) {
+        context["retry_worktree_patch_restored"] = [
+          "RETRY_WORKTREE_PATCH_RESTORED: Setfarm restored the last failed attempt patch because every touched file was inside this story's scoped write set.",
+          `FILES: ${(restoreResult.touchedFiles || []).join(", ")}`,
+        ].join("\n");
+      } else if (restoreResult.reason !== "no_retry_patch") {
+        context["retry_worktree_patch_restored"] = `RETRY_WORKTREE_PATCH_NOT_RESTORED: ${restoreResult.reason}`;
+      }
+    } else {
+      context["retry_worktree_patch_restored"] = `RETRY_WORKTREE_PATCH_NOT_RESTORED: current failure category ${retryRestoreCategoryHint} requires current source plus focused retry feedback, not automatic replay of the last failed patch.`;
     }
   }
   const scopeFilesRetryFailure = story.retryCount > 0
@@ -473,8 +487,10 @@ export async function injectStoryContext(
     context["story_branch"],
     pipelineStoryBranch,
   ]);
-  context["retry_worktree_patch_memory"] = retryPatchMemory;
-  context["retry_source_snapshot"] = (story.retryCount > 0 || Boolean(retryPatchMemory || retryPatchFailureText || retryFailureText || priorStoryFailureText || preservedContextRetryFailure))
+  const exposeRetryPatchContext = shouldRestoreRetryWorktreePatchForCategory(retryRestoreCategoryHint);
+  const focusedRetryPatchFailureText = exposeRetryPatchContext ? retryPatchFailureText : "";
+  context["retry_worktree_patch_memory"] = exposeRetryPatchContext ? retryPatchMemory : "";
+  context["retry_source_snapshot"] = (story.retryCount > 0 || Boolean((exposeRetryPatchContext && retryPatchMemory) || focusedRetryPatchFailureText || retryFailureText || priorStoryFailureText || preservedContextRetryFailure))
     ? buildRetrySourceSnapshot(
         context["story_workdir"] || storyRepoPath,
         context["story_scope_files"] || "",
@@ -484,7 +500,7 @@ export async function injectStoryContext(
 
   // Inject source tree
   const repoPath = storyRepoPath;
-  context["verify_feedback"] = mergeRetryFailureTexts([preservedContextRetryFailure, retryFailureText, priorStoryFailureText, retryPatchFailureText, context["retry_worktree_patch_restored"] || ""]);
+  context["verify_feedback"] = mergeRetryFailureTexts([preservedContextRetryFailure, retryFailureText, priorStoryFailureText, focusedRetryPatchFailureText, context["retry_worktree_patch_restored"] || ""]);
 
   if (repoPath && !context["src_tree"]) {
     const srcTree = helpers.generateSrcTree(repoPath);
@@ -528,7 +544,7 @@ export async function injectStoryContext(
     preservedContextRetryFailure,
     retryFailureText,
     priorStoryFailureText,
-    retryPatchFailureText,
+    focusedRetryPatchFailureText,
   ]);
 
   if (combinedRetryFailure) {

@@ -1366,6 +1366,7 @@ export function buildClaimSummary(params: {
   );
   const classifiedFailure = classifyError([previousFailure, explicitFailureCategory, explicitFailureSuggestion].filter(Boolean).join("\n"));
   const failureCategory = explicitFailureCategory || (previousFailure ? classifiedFailure.category : "");
+  const retryWorktreePatchForSummary = failureCategory === "PR_REVIEW_COMMENTS_OPEN" ? undefined : retryWorktreePatch;
   const retryMode = retryFeedbackMode(params.role, failureCategory);
   const failureSuggestion = explicitFailureSuggestion || (previousFailure ? classifiedFailure.suggestion : "");
   const retryDiscipline = retryMode === "fix"
@@ -1374,7 +1375,7 @@ export function buildClaimSummary(params: {
   const prReviewThreads = extractPrReviewThreads(previousFailure);
   const protectedSnippets = extractRetryProtectedSnippets(previousFailure);
   const retryRestoreTargets = failureCategory === "RETRY_PATCH_REAPPLIED"
-    ? extractRetryRestoreTargets(retryWorktreePatch, protectedSnippets, scopeFiles)
+    ? extractRetryRestoreTargets(retryWorktreePatchForSummary, protectedSnippets, scopeFiles)
     : [];
   const buildCommand = resolvedCommand(input, "BUILD_CMD", [workdir, repo], "build", "true");
   const testCommand = resolvedCommand(input, "TEST_CMD", [workdir, repo], "test", "true");
@@ -1492,13 +1493,13 @@ export function buildClaimSummary(params: {
     failureCategory,
     failureSuggestion,
     retryDiscipline,
-    retryFeedback: (previousFailure || retryWorktreePatch || retrySourceSnapshot) ? {
+    retryFeedback: (previousFailure || retryWorktreePatchForSummary || retrySourceSnapshot) ? {
       mode: retryMode,
       category: failureCategory,
       suggestion: failureSuggestion,
       blocker: compactFailureLine(previousFailure, retryFeedbackBlockerLimit(previousFailure)),
       details: previousFailure,
-      worktreePatch: retryWorktreePatch,
+      worktreePatch: retryWorktreePatchForSummary,
       sourceSnapshot: retrySourceSnapshot,
       prThreadIds: extractPrReviewThreadIds(previousFailure),
       actionableReviewThreads: prReviewThreads,

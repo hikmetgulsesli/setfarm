@@ -749,6 +749,61 @@ describe("spawner prompt bootstrap", () => {
     }
   });
 
+  it("omits retry worktree patches from PR review comment retry summaries", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-pr-review-no-patch-"));
+    try {
+      const workdir = path.join(tmp, "worktree");
+      fs.mkdirSync(workdir, { recursive: true });
+      fs.writeFileSync(path.join(workdir, ".story-scope-files"), "src/App.tsx\n");
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        bootstrapFile: path.join(tmp, "bootstrap.sh"),
+        stepId: "step-123",
+        runId: "run-123",
+        workdir,
+        repo: workdir,
+        storyId: "US-003",
+        input: [
+          "TASK: Project: PR retry sensor",
+          "CURRENT STORY: Story US-003: PR retry sensor",
+          "",
+          "## Previous Failure / Retry Feedback",
+          "PR_REVIEW_COMMENTS_OPEN: US-003 has actionable PR review comments that must be fixed before merge.",
+          "",
+          "## PR Comments (1 actionable)",
+          "- [review-comment] thread=PRRT_one src/App.tsx:42 @gemini-code-assist:",
+          "  Guard item.price before toFixed.",
+          "",
+          "## Retry Worktree Patch Memory",
+          "RETRY_WORKTREE_PATCH_MEMORY:",
+          "RETRY_WORKTREE_PATCH_SOURCE: .setfarm/retry-patches/run-us-003.patch",
+          "RETRY_WORKTREE_PATCH_TOUCHED_FILES: src/App.tsx",
+          "RETRY_WORKTREE_PATCH_BODY:",
+          "```diff",
+          "diff --git a/src/App.tsx b/src/App.tsx",
+          "--- a/src/App.tsx",
+          "+++ b/src/App.tsx",
+          "-const preserved = true;",
+          "+const replayed = true;",
+          "```",
+          "",
+          "## Current Story",
+        ].join("\n"),
+      });
+
+      const retryFeedback = summary.retryFeedback as any;
+      assert.equal(retryFeedback.category, "PR_REVIEW_COMMENTS_OPEN");
+      assert.equal(retryFeedback.worktreePatch, undefined);
+      assert.deepEqual(retryFeedback.prThreadIds, ["PRRT_one"]);
+      assert.match(retryFeedback.actionableReviewThreads[0].comment, /Guard item\.price/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("extracts retry patch protected snippets into claim summary and bootstrap", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-retry-snippets-"));
     try {
