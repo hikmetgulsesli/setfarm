@@ -6,7 +6,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { implementModule } from "../../dist/installer/steps/06-implement/module.js";
 import { checkBuildGate, checkGeneratedRuntimeSemanticGate, checkGeneratedScreenRequiredPropsGate, checkGeneratedScreenShellChromeGate, checkImplementEvidenceGate, checkPlatformHelperContaminationGate, checkScopeEnforcement, checkScopeFilesGate, checkTestGate, classifyGeneratedScreenRegressionIssues, computeScopeFileLimits, detectPackageBuildCommand, findDesignDomImplementationFindings, findDesignDomImplementationIssues, findGeneratedRuntimeSemanticIssues, findGeneratedRuntimeSupervisorQualityIssues, findGeneratedScreenIntegrationIssues, findGeneratedScreenRegressionIssues, findGeneratedScreenRequiredPropIssues, findGeneratedScreenShellChromeIssues, findPlatformHelperContaminationIssues, getOutOfScopeStoryFiles, normalize, parseGitStatusPorcelainPath, selectMatchingStoryWorktree, sourceExposesWindowApp, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
-import { buildScopeFilesRetryFailureForWorkdir, cleanupOutOfScopeWorktreeFiles, mergeRetryFailureTexts, shouldRestoreRetryWorktreePatchForCategory } from "../../dist/installer/steps/06-implement/context.js";
+import { buildScopeFilesRetryFailureForWorkdir, cleanupOutOfScopeWorktreeFiles, mergeRetryFailureTexts, retryPatchCategoryHint, shouldRestoreRetryWorktreePatchForCategory } from "../../dist/installer/steps/06-implement/context.js";
 import { cleanupBlockedStoryCommitScope, commitStoryWorktreeScopeIfNeeded, decideStorySystemSmokeGate } from "../../dist/installer/step-ops.js";
 import { createStoryWorktree, ensureStoryBranchWorktree } from "../../dist/installer/worktree-ops.js";
 import { assembleImplementContext, fileTreeManifestPath, setupCertificatePath, sharedGrantsPath } from "../../dist/installer/setup-handoff.js";
@@ -2642,6 +2642,20 @@ describe("06-implement step module", () => {
     assert.equal(shouldRestoreRetryWorktreePatchForCategory("QUALITY_RETRY_FEEDBACK"), false);
     assert.equal(shouldRestoreRetryWorktreePatchForCategory("NO_WORK_DETECTED"), true);
     assert.equal(shouldRestoreRetryWorktreePatchForCategory("SCOPE_FILE_MISSING"), true);
+  });
+
+  it("classifies current retry failure text before deciding retry patch restore", () => {
+    const qualityCategory = retryPatchCategoryHint(
+      "",
+      "",
+      "POST_MERGE_QUALITY_REGRESSION:\nFailure report:\nSTATUS: retry\nVULNERABILITIES:\n- assets/js/app.js:172 — XSS: innerHTML assignment without an obvious sanitizer in the file.",
+      "",
+      "",
+    );
+    assert.equal(qualityCategory, "QUALITY_RETRY_FEEDBACK");
+    assert.equal(shouldRestoreRetryWorktreePatchForCategory(qualityCategory), false);
+
+    assert.equal(retryPatchCategoryHint("SCOPE_FILE_MISSING: src/features/app.store.ts", "", "", "", ""), "SCOPE_FILE_MISSING");
   });
 
   it("does not fail screen stories only because optional action companion files are absent", async () => {

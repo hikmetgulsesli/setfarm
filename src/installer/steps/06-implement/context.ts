@@ -14,7 +14,7 @@ import { getStories, getCurrentStory, formatStoryForTemplate, formatCompletedSto
 import type { Story } from "../../types.js";
 import { parseOutputKeyValues } from "../../context-ops.js";
 import { collectUiBehaviorRequirements, type UiBehaviorRequirement } from "../03-stories/context.js";
-import { sanitizeDesignMismatchFeedback } from "../../error-taxonomy.js";
+import { classifyError, sanitizeDesignMismatchFeedback } from "../../error-taxonomy.js";
 import { sanitizeRetryFeedbackForCurrentSource } from "../../retry-feedback.js";
 import { readSupervisorMemory } from "../../product-supervisor.js";
 import { IMPLICIT_STORY_SCOPE_FILES } from "../../story-scope.js";
@@ -173,6 +173,17 @@ export function shouldRestoreRetryWorktreePatchForCategory(category: string): bo
     normalized === "SCOPE_FILE_MISSING" ||
     normalized === "SCOPE_BLEED" ||
     normalized === "IMPLEMENT_PRE_DELTA_CHECK_VIOLATION";
+}
+
+export function retryPatchCategoryHint(scopeFilesRetryFailure: string, preservedContextRetryFailure: string, retryFailureText: string, priorStoryFailureText: string, priorContextFailureCategory: string): string {
+  if (scopeFilesRetryFailure.trim()) return "SCOPE_FILE_MISSING";
+  if (preservedContextRetryFailure.trim() && priorContextFailureCategory.trim()) return priorContextFailureCategory;
+  const classified = classifyError(mergeRetryFailureTexts([
+    preservedContextRetryFailure,
+    retryFailureText,
+    priorStoryFailureText,
+  ]));
+  return classified.category || priorContextFailureCategory || "";
 }
 
 function lineValueFromBlock(block: string, label: string): string {
@@ -440,7 +451,24 @@ export async function injectStoryContext(
   context["story_branch"] = pipelineStoryBranch || `${step.run_id.slice(0, 8)}-${story.storyId}`.toLowerCase();
   context["story_workdir"] = pipelineStoryWorkdir;
 
-  const retryRestoreCategoryHint = priorContextFailureCategory || "";
+  const scopeFilesRetryFailure = story.retryCount > 0
+    ? buildScopeFilesRetryFailureForWorkdir(
+        story.storyId,
+        story.title,
+        nextStory.scope_files,
+        context["story_workdir"] || storyRepoPath,
+      )
+    : "";
+  const priorStoryFailureText = story.retryCount > 0
+    ? await collectPriorStoryFailureText(step.run_id, story.storyId, storyRepoPath)
+    : "";
+  const retryRestoreCategoryHint = retryPatchCategoryHint(
+    scopeFilesRetryFailure,
+    preservedContextRetryFailure,
+    retryFailureText,
+    priorStoryFailureText,
+    priorContextFailureCategory,
+  );
   if (story.retryCount > 0 && context["story_workdir"]) {
     discardDirtyRetryWorktreeState(context["story_workdir"], story.storyId, step.run_id);
     if (shouldRestoreRetryWorktreePatchForCategory(retryRestoreCategoryHint)) {
@@ -467,17 +495,6 @@ export async function injectStoryContext(
       context["retry_worktree_patch_restored"] = `RETRY_WORKTREE_PATCH_NOT_RESTORED: current failure category ${retryRestoreCategoryHint} requires current source plus focused retry feedback, not automatic replay of the last failed patch.`;
     }
   }
-  const scopeFilesRetryFailure = story.retryCount > 0
-    ? buildScopeFilesRetryFailureForWorkdir(
-        story.storyId,
-        story.title,
-        nextStory.scope_files,
-        context["story_workdir"] || storyRepoPath,
-      )
-    : "";
-  const priorStoryFailureText = story.retryCount > 0
-    ? await collectPriorStoryFailureText(step.run_id, story.storyId, storyRepoPath)
-    : "";
   const retryPatchRepoPath = context["repo"] || context["REPO"] || storyRepoPath;
   const retryPatchFailureText = collectRetryWorktreePatchFeedback(retryPatchRepoPath, context["story_workdir"] || "", story.storyId, [
     context["story_branch"],
@@ -548,7 +565,6 @@ export async function injectStoryContext(
   ]);
 
   if (combinedRetryFailure) {
-    const { classifyError } = await import("../../error-taxonomy.js");
     const classified = classifyError(combinedRetryFailure);
     context["previous_failure"] = combinedRetryFailure;
     context["failure_category"] = scopeFilesRetryFailure
