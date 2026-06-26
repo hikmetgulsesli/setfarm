@@ -623,21 +623,25 @@ async function ensureStoryPrUrlForBranch(options: {
   const expectedRepoName = repoPath.split("/").pop() || "";
   if (existingPrUrl && isValidGithubPrUrl(existingPrUrl, expectedRepoName)) {
     const existingState = getPRState(existingPrUrl);
+    const existingHeadBranch = getPRHeadBranch(existingPrUrl, repoPath);
+    const headMatchesStoryBranch = (existingHeadBranch || "").toLowerCase() === storyBranchName.toLowerCase();
     if (existingState === "OPEN" || existingState === "MERGED") {
-      return { prUrl: existingPrUrl, error: "" };
+      if (headMatchesStoryBranch) {
+        return { prUrl: existingPrUrl, error: "" };
+      }
+      logger.warn(`[auto-pr] Ignoring ${existingState} existing PR ${existingPrUrl} for story ${storyId}; head ${existingHeadBranch || "(unknown)"} does not match ${storyBranchName}`, { runId });
     }
-    logger.warn(`[auto-pr] Ignoring ${existingState} existing PR ${existingPrUrl} for story ${storyId}; Setfarm will search/create a usable PR`, { runId });
+    if (existingState !== "OPEN" && existingState !== "MERGED") {
+      logger.warn(`[auto-pr] Ignoring ${existingState} existing PR ${existingPrUrl} for story ${storyId}; Setfarm will search/create a usable PR`, { runId });
+    }
   }
   if (!repoPath || !storyBranchName) {
     return { prUrl: "", error: `AUTO_PR_CREATE_FAILED: missing repo or story branch for ${storyId}` };
   }
 
-  try {
-    execFileSync("git", ["push", "-u", "origin", storyBranchName], {
-      cwd: repoPath, timeout: 30_000, stdio: ["pipe", "pipe", "pipe"],
-    });
-  } catch (pushErr) {
-    logger.warn(`[auto-pr] push failed for ${storyBranchName}: ${formatCommandError(pushErr)}`, { runId });
+  const pushResult = pushStoryBranch(repoPath, storyBranchName);
+  if (pushResult.error) {
+    logger.warn(`[auto-pr] push failed for ${storyBranchName}: ${pushResult.error}`, { runId });
   }
 
   try {

@@ -776,6 +776,20 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(helper, /after force-with-lease/);
   });
 
+  it("does not reuse a recorded story PR whose head branch differs from the story branch", () => {
+    const source = stepOpsSource();
+    const start = source.indexOf("async function ensureStoryPrUrlForBranch(");
+    const end = source.indexOf("function gitCommandOk(", start);
+    assert.notEqual(start, -1, "ensureStoryPrUrlForBranch source not found");
+    assert.notEqual(end, -1, "ensureStoryPrUrlForBranch end not found");
+    const helper = source.slice(start, end);
+
+    assert.match(helper, /const existingHeadBranch = getPRHeadBranch\(existingPrUrl, repoPath\)/);
+    assert.match(helper, /\(existingHeadBranch \|\| ""\)\.toLowerCase\(\) === storyBranchName\.toLowerCase\(\)/);
+    assert.match(helper, /head .* does not match/);
+    assert.match(helper, /const pushResult = pushStoryBranch\(repoPath, storyBranchName\)/);
+  });
+
   it("runs platform git with host GitHub auth instead of agent session auth", () => {
     const source = stepOpsSource();
     const start = source.indexOf("function platformGitEnv(");
