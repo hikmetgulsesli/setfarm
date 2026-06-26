@@ -290,14 +290,15 @@ describe("single-step claim_log lifecycle", () => {
     assert.notEqual(end, -1, "ensureStoryPrUrlForBranch source end not found");
     const helper = fullSource.slice(start, end);
     assert.match(helper, /const existingState = getPRState\(existingPrUrl\)/);
-    assert.match(helper, /existingState === "OPEN" \|\| existingState === "MERGED"/);
+    assert.match(helper, /existingState === "OPEN" \|\| \(existingState === "MERGED" && branchIntegrated\)/);
+    assert.match(helper, /Ignoring MERGED existing PR[\s\S]*still has commits not integrated/);
     assert.match(helper, /Ignoring \$\{existingState\} existing PR/);
+    assert.match(helper, /"--state", "open"/);
     assert.match(helper, /"--json", "url,state"/);
-    assert.match(helper, /select\(\.state == \\"OPEN\\" or \.state == \\"MERGED\\"\)/);
     assert.match(fullSource, /function githubRepoSlugFromRemote/);
     assert.match(fullSource, /function findGithubPrUrlByBranchApi/);
-    assert.match(helper, /const apiExistingPr = findGithubPrUrlByBranchApi\(repoPath, storyBranchName, expectedRepoName\)/);
-    assert.match(helper, /const apiCreatedPr = findGithubPrUrlByBranchApi\(repoPath, storyBranchName, expectedRepoName\)/);
+    assert.match(helper, /const apiExistingPr = findGithubPrUrlByBranchApi\(repoPath, storyBranchName, expectedRepoName, branchIntegrated\)/);
+    assert.match(helper, /const apiCreatedPr = findGithubPrUrlByBranchApi\(repoPath, storyBranchName, expectedRepoName, branchIntegrated\)/);
     assert.doesNotMatch(helper, /"--state", "all", "--json", "url", "--jq", "\.\[0\]\.url/);
   });
 
@@ -785,7 +786,11 @@ describe("single-step claim_log lifecycle", () => {
     const helper = source.slice(start, end);
 
     assert.match(helper, /const existingHeadBranch = getPRHeadBranch\(existingPrUrl, repoPath\)/);
+    assert.match(helper, /const branchIntegrated = storyBranchIntegratedInBase\(repoPath, storyBranchName, baseBranch \|\| "main"\)/);
     assert.match(helper, /\(existingHeadBranch \|\| ""\)\.toLowerCase\(\) === storyBranchName\.toLowerCase\(\)/);
+    assert.match(helper, /existingState === "OPEN" \|\| \(existingState === "MERGED" && branchIntegrated\)/);
+    assert.match(helper, /Ignoring MERGED existing PR[\s\S]*still has commits not integrated/);
+    assert.match(helper, /"--state", "open"/);
     assert.match(helper, /head .* does not match/);
     assert.match(helper, /const pushResult = pushStoryBranch\(repoPath, storyBranchName\)/);
   });

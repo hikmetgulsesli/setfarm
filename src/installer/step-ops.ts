@@ -570,7 +570,53 @@ function githubRepoSlugForPath(repoPath: string): string {
   }
 }
 
-function findGithubPrUrlByBranchApi(repoPath: string, branch: string, expectedRepoName: string): string {
+function gitRefExists(repoPath: string, ref: string): boolean {
+  try {
+    execPlatformGit(["rev-parse", "--verify", ref], {
+      cwd: repoPath,
+      timeout: 5000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function storyBranchIntegratedInBase(repoPath: string, storyBranchName: string, baseBranch: string): boolean {
+  if (!repoPath || !storyBranchName) return false;
+  const baseRefs = [`origin/${baseBranch || "main"}`, baseBranch || "main"];
+  const branchRefs = [`origin/${storyBranchName}`, storyBranchName];
+  try {
+    execPlatformGit(["fetch", "origin", "--prune"], {
+      cwd: repoPath,
+      timeout: 30_000,
+      stdio: ["pipe", "pipe", "pipe"],
+      env: { GIT_TERMINAL_PROMPT: "0" },
+    });
+  } catch {
+    // Best effort; local refs may still be sufficient.
+  }
+  for (const branchRef of branchRefs) {
+    if (!gitRefExists(repoPath, branchRef)) continue;
+    for (const baseRef of baseRefs) {
+      if (!gitRefExists(repoPath, baseRef)) continue;
+      try {
+        execPlatformGit(["merge-base", "--is-ancestor", branchRef, baseRef], {
+          cwd: repoPath,
+          timeout: 10_000,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+        return true;
+      } catch {
+        // Branch has commits not present in this base ref.
+      }
+    }
+  }
+  return false;
+}
+
+function findGithubPrUrlByBranchApi(repoPath: string, branch: string, expectedRepoName: string, allowMerged = true): string {
   const slug = githubRepoSlugForPath(repoPath);
   if (!slug || !branch) return "";
   const [owner] = slug.split("/");
@@ -590,7 +636,7 @@ function findGithubPrUrlByBranchApi(repoPath: string, branch: string, expectedRe
     const prs = JSON.parse(raw) as Array<{ html_url?: string; state?: string; merged_at?: string | null }>;
     for (const pr of prs) {
       const state = String(pr.state || "").toLowerCase();
-      const usable = state === "open" || Boolean(pr.merged_at);
+      const usable = state === "open" || (allowMerged && Boolean(pr.merged_at));
       const url = String(pr.html_url || "");
       if (usable && isValidGithubPrUrl(url, expectedRepoName)) return url;
     }
@@ -621,17 +667,20 @@ async function ensureStoryPrUrlForBranch(options: {
     existingPrUrl = "",
   } = options;
   const expectedRepoName = repoPath.split("/").pop() || "";
+  const branchIntegrated = storyBranchIntegratedInBase(repoPath, storyBranchName, baseBranch || "main");
   if (existingPrUrl && isValidGithubPrUrl(existingPrUrl, expectedRepoName)) {
     const existingState = getPRState(existingPrUrl);
     const existingHeadBranch = getPRHeadBranch(existingPrUrl, repoPath);
     const headMatchesStoryBranch = (existingHeadBranch || "").toLowerCase() === storyBranchName.toLowerCase();
-    if (existingState === "OPEN" || existingState === "MERGED") {
+    if (existingState === "OPEN" || (existingState === "MERGED" && branchIntegrated)) {
       if (headMatchesStoryBranch) {
         return { prUrl: existingPrUrl, error: "" };
       }
       logger.warn(`[auto-pr] Ignoring ${existingState} existing PR ${existingPrUrl} for story ${storyId}; head ${existingHeadBranch || "(unknown)"} does not match ${storyBranchName}`, { runId });
     }
-    if (existingState !== "OPEN" && existingState !== "MERGED") {
+    if (existingState === "MERGED" && !branchIntegrated) {
+      logger.warn(`[auto-pr] Ignoring MERGED existing PR ${existingPrUrl} for story ${storyId}; branch ${storyBranchName} still has commits not integrated into ${baseBranch || "main"}`, { runId });
+    } else if (existingState !== "OPEN" && existingState !== "MERGED") {
       logger.warn(`[auto-pr] Ignoring ${existingState} existing PR ${existingPrUrl} for story ${storyId}; Setfarm will search/create a usable PR`, { runId });
     }
   }
@@ -645,7 +694,7 @@ async function ensureStoryPrUrlForBranch(options: {
   }
 
   try {
-    const existingPr = execFileSync("gh", ["pr", "list", "--head", storyBranchName, "--state", "all", "--json", "url,state", "--jq", "[.[] | select(.state == \"OPEN\" or .state == \"MERGED\")][0].url // \"\""], {
+    const existingPr = execFileSync("gh", ["pr", "list", "--head", storyBranchName, "--state", "open", "--json", "url,state", "--jq", ".[0].url // \"\""], {
       cwd: repoPath, timeout: 15_000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8",
     }).toString().trim();
     if (existingPr && isValidGithubPrUrl(existingPr, expectedRepoName)) {
@@ -656,7 +705,7 @@ async function ensureStoryPrUrlForBranch(options: {
     logger.warn(`[auto-pr] pr list failed for ${storyBranchName}: ${formatCommandError(listErr)}`, { runId });
   }
 
-  const apiExistingPr = findGithubPrUrlByBranchApi(repoPath, storyBranchName, expectedRepoName);
+  const apiExistingPr = findGithubPrUrlByBranchApi(repoPath, storyBranchName, expectedRepoName, branchIntegrated);
   if (apiExistingPr) {
     logger.info(`[auto-pr] Reusing GitHub API discovered PR ${apiExistingPr} for story ${storyId}`, { runId });
     return { prUrl: apiExistingPr, error: "" };
@@ -676,7 +725,7 @@ async function ensureStoryPrUrlForBranch(options: {
     }
     return { prUrl: "", error: `AUTO_PR_CREATE_FAILED: gh pr create returned no valid PR URL for ${storyBranchName}. Output: ${prOut.slice(0, 300)}` };
   } catch (createErr) {
-    const apiCreatedPr = findGithubPrUrlByBranchApi(repoPath, storyBranchName, expectedRepoName);
+    const apiCreatedPr = findGithubPrUrlByBranchApi(repoPath, storyBranchName, expectedRepoName, branchIntegrated);
     if (apiCreatedPr) {
       logger.info(`[auto-pr] Recovered PR ${apiCreatedPr} after gh pr create failed for story ${storyId}`, { runId });
       return { prUrl: apiCreatedPr, error: "" };
