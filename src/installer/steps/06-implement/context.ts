@@ -517,7 +517,14 @@ export async function injectStoryContext(
 
   // Inject source tree
   const repoPath = storyRepoPath;
-  context["verify_feedback"] = mergeRetryFailureTexts([preservedContextRetryFailure, retryFailureText, priorStoryFailureText, focusedRetryPatchFailureText, context["retry_worktree_patch_restored"] || ""]);
+  context["verify_feedback"] = mergeRetryFailureTexts([
+    scopeFilesRetryFailure,
+    preservedContextRetryFailure,
+    retryFailureText,
+    priorStoryFailureText,
+    focusedRetryPatchFailureText,
+    context["retry_worktree_patch_restored"] || "",
+  ]);
 
   if (repoPath && !context["src_tree"]) {
     const srcTree = helpers.generateSrcTree(repoPath);

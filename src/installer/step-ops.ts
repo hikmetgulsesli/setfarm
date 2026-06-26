@@ -1051,16 +1051,32 @@ function pushStoryBranch(workdir: string, storyBranch: string | null | undefined
   }
   if (!branch) return { pushed: false, error: "PLATFORM_STORY_PUSH_MISSING_BRANCH" };
   const pushArgs = ["push", "-u", "origin", branch];
+  const leasePushArgs = ["push", "--force-with-lease", "-u", "origin", branch];
+  const runPush = (args: string[]) => execPlatformGit(args, {
+    cwd: workdir,
+    timeout: 45_000,
+    stdio: ["pipe", "pipe", "pipe"],
+    env: { GIT_TERMINAL_PROMPT: "0" },
+  });
+  const isStaleRemotePush = (message: string) => (
+    /\bnon-fast-forward\b/i.test(message)
+    || /\[rejected\]/i.test(message)
+    || /fetch first/i.test(message)
+    || /Updates were rejected/i.test(message)
+  );
   try {
-    execPlatformGit(pushArgs, {
-      cwd: workdir,
-      timeout: 45_000,
-      stdio: ["pipe", "pipe", "pipe"],
-      env: { GIT_TERMINAL_PROMPT: "0" },
-    });
+    runPush(pushArgs);
     return { pushed: true, error: "" };
   } catch (err) {
     const firstError = formatCommandError(err);
+    if (isStaleRemotePush(firstError)) {
+      try {
+        runPush(leasePushArgs);
+        return { pushed: true, error: "" };
+      } catch (leaseErr) {
+        return { pushed: false, error: `PLATFORM_STORY_PUSH_FAILED: ${firstError}; after force-with-lease: ${formatCommandError(leaseErr)}` };
+      }
+    }
     if (/github\.com|could not read Username|Authentication failed|terminal prompts disabled/i.test(firstError)) {
       try {
         execFileSync("gh", ["auth", "setup-git", "--hostname", "github.com"], {
@@ -1069,15 +1085,19 @@ function pushStoryBranch(workdir: string, storyBranch: string | null | undefined
           stdio: ["ignore", "pipe", "pipe"],
           env: platformGitEnv(),
         });
-        execPlatformGit(pushArgs, {
-          cwd: workdir,
-          timeout: 45_000,
-          stdio: ["pipe", "pipe", "pipe"],
-          env: { GIT_TERMINAL_PROMPT: "0" },
-        });
+        runPush(pushArgs);
         return { pushed: true, error: "" };
       } catch (retryErr) {
-        return { pushed: false, error: `PLATFORM_STORY_PUSH_FAILED: ${firstError}; after gh auth setup-git: ${formatCommandError(retryErr)}` };
+        const authRetryError = formatCommandError(retryErr);
+        if (isStaleRemotePush(authRetryError)) {
+          try {
+            runPush(leasePushArgs);
+            return { pushed: true, error: "" };
+          } catch (leaseErr) {
+            return { pushed: false, error: `PLATFORM_STORY_PUSH_FAILED: ${firstError}; after gh auth setup-git: ${authRetryError}; after force-with-lease: ${formatCommandError(leaseErr)}` };
+          }
+        }
+        return { pushed: false, error: `PLATFORM_STORY_PUSH_FAILED: ${firstError}; after gh auth setup-git: ${authRetryError}` };
       }
     }
     return { pushed: false, error: `PLATFORM_STORY_PUSH_FAILED: ${firstError}` };

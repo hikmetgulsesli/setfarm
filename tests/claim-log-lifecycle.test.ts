@@ -761,6 +761,21 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(helper, /after gh auth setup-git/);
   });
 
+  it("recovers stale platform-owned story branch pushes with force-with-lease", () => {
+    const source = stepOpsSource();
+    const start = source.indexOf("function pushStoryBranch(");
+    const end = source.indexOf("function storyWorkdirMatchesBranch(", start);
+    assert.notEqual(start, -1, "pushStoryBranch source not found");
+    assert.notEqual(end, -1, "pushStoryBranch end not found");
+    const helper = source.slice(start, end);
+
+    assert.match(helper, /const leasePushArgs = \["push", "--force-with-lease", "-u", "origin", branch\]/);
+    assert.match(helper, /isStaleRemotePush/);
+    assert.match(helper, /non-fast-forward/);
+    assert.match(helper, /Updates were rejected/);
+    assert.match(helper, /after force-with-lease/);
+  });
+
   it("runs platform git with host GitHub auth instead of agent session auth", () => {
     const source = stepOpsSource();
     const start = source.indexOf("function platformGitEnv(");
@@ -1160,7 +1175,8 @@ describe("single-step claim_log lifecycle", () => {
     const clearPreviousFailure = source.indexOf("delete context[\"previous_failure\"]");
     const preservedRetry = source.indexOf("const preservedContextRetryFailure =");
     const retryFailure = source.indexOf("const retryFailureText = nextStory.output");
-    const verifyFeedback = source.indexOf("context[\"verify_feedback\"] = mergeRetryFailureTexts([preservedContextRetryFailure, retryFailureText, priorStoryFailureText, retryPatchFailureText, context[\"retry_worktree_patch_restored\"] || \"\"])");
+    const verifyFeedback = source.indexOf("context[\"verify_feedback\"] = mergeRetryFailureTexts([");
+    const verifyFeedbackSource = source.slice(verifyFeedback, verifyFeedback + 360);
     const combinedRetry = source.indexOf("const combinedRetryFailure = mergeRetryFailureTexts([");
     const combinedRetrySource = source.slice(combinedRetry, combinedRetry + 260);
     const categoryPreserve = source.indexOf("preservedContextRetryFailure && priorContextFailureCategory");
@@ -1172,6 +1188,7 @@ describe("single-step claim_log lifecycle", () => {
     assert.ok(preservedRetry > clearPreviousFailure, "same-story preserved retry failure should be rebuilt after story identity is known");
     assert.ok(retryFailure > preservedRetry, "story output retry text is secondary to preserved current gate failure");
     assert.ok(verifyFeedback > retryFailure, "verify feedback should prioritize preserved current gate failure");
+    assert.match(verifyFeedbackSource, /scopeFilesRetryFailure,[\s\S]*preservedContextRetryFailure,[\s\S]*retryFailureText,[\s\S]*priorStoryFailureText/);
     assert.ok(combinedRetry > verifyFeedback, "previous_failure should be rebuilt after verify feedback");
     assert.match(combinedRetrySource, /scopeFilesRetryFailure,[\s\S]*preservedContextRetryFailure,[\s\S]*retryFailureText,[\s\S]*priorStoryFailureText/);
     assert.ok(categoryPreserve > combinedRetry, "failure category should preserve the current gate category when available");
