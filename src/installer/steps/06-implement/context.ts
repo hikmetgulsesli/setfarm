@@ -981,6 +981,7 @@ function renderUiBehaviorContract(reqs: UiBehaviorRequirement[]): string {
   const lines = [
     "Every control below is from Stitch DOM and MUST be implemented in this story when its screen is in scope.",
     "Each control needs real visible behavior: route/panel/dialog/state change/form validation. Empty onClick is forbidden.",
+    "UI_CONTRACT labels like notifications/help_outline/dashboard/settings/edit/delete may be icon ligature tokens; do not render them as visible text or add Material Symbols/icon-font CSS. Use inline SVG, installed SVG icons, or real product labels.",
     "Generated screen content must render from story-owned props/store/adapters; do not leave static Stitch placeholder rows, metrics, forms, checklist/status chips, detail panels, or empty/error states when an owned action changes that state.",
     "A completed story must prove at least one owned action changes visible DOM inside the generated screen, not only window.app/globalThis.app, hidden shell state, logs, or a status snapshot.",
   ];
