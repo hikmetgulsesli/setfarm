@@ -777,6 +777,15 @@ describe("spawner prompt bootstrap", () => {
           "- [review-comment] thread=PRRT_one src/App.tsx:42 @gemini-code-assist:",
           "  Guard item.price before toFixed.",
           "",
+          "## Retry Source Snapshot",
+          "RETRY_SOURCE_SNAPSHOT:",
+          "SCOPE_FILES: src/App.tsx",
+          "## Scope file contents",
+          "### src/App.tsx",
+          "```",
+          "export const hugeContext = true;",
+          "```",
+          "",
           "## Retry Worktree Patch Memory",
           "RETRY_WORKTREE_PATCH_MEMORY:",
           "RETRY_WORKTREE_PATCH_SOURCE: .setfarm/retry-patches/run-us-003.patch",
@@ -797,6 +806,7 @@ describe("spawner prompt bootstrap", () => {
       const retryFeedback = summary.retryFeedback as any;
       assert.equal(retryFeedback.category, "PR_REVIEW_COMMENTS_OPEN");
       assert.equal(retryFeedback.worktreePatch, undefined);
+      assert.equal(retryFeedback.sourceSnapshot, undefined);
       assert.deepEqual(retryFeedback.prThreadIds, ["PRRT_one"]);
       assert.match(retryFeedback.actionableReviewThreads[0].comment, /Guard item\.price/);
     } finally {

@@ -1365,14 +1365,18 @@ export function buildClaimSummary(params: {
     lineValue(previousFailure, "Suggested response") || lineValue(input, "Suggested response"),
   );
   const classifiedFailure = classifyError([previousFailure, explicitFailureCategory, explicitFailureSuggestion].filter(Boolean).join("\n"));
-  const failureCategory = explicitFailureCategory || (previousFailure ? classifiedFailure.category : "");
+  const prReviewThreads = extractPrReviewThreads(previousFailure);
+  const failureCategory =
+    explicitFailureCategory ||
+    (prReviewThreads.length > 0 ? "PR_REVIEW_COMMENTS_OPEN" : "") ||
+    (previousFailure ? classifiedFailure.category : "");
   const retryWorktreePatchForSummary = failureCategory === "PR_REVIEW_COMMENTS_OPEN" ? undefined : retryWorktreePatch;
+  const retrySourceSnapshotForSummary = failureCategory === "PR_REVIEW_COMMENTS_OPEN" ? undefined : retrySourceSnapshot;
   const retryMode = retryFeedbackMode(params.role, failureCategory);
   const failureSuggestion = explicitFailureSuggestion || (previousFailure ? classifiedFailure.suggestion : "");
   const retryDiscipline = retryMode === "fix"
     ? retryDisciplineForFailure(failureCategory, failureSuggestion, previousFailure)
     : undefined;
-  const prReviewThreads = extractPrReviewThreads(previousFailure);
   const protectedSnippets = extractRetryProtectedSnippets(previousFailure);
   const retryRestoreTargets = failureCategory === "RETRY_PATCH_REAPPLIED"
     ? extractRetryRestoreTargets(retryWorktreePatchForSummary, protectedSnippets, scopeFiles)
@@ -1493,14 +1497,14 @@ export function buildClaimSummary(params: {
     failureCategory,
     failureSuggestion,
     retryDiscipline,
-    retryFeedback: (previousFailure || retryWorktreePatchForSummary || retrySourceSnapshot) ? {
+    retryFeedback: (previousFailure || retryWorktreePatchForSummary || retrySourceSnapshotForSummary) ? {
       mode: retryMode,
       category: failureCategory,
       suggestion: failureSuggestion,
       blocker: compactFailureLine(previousFailure, retryFeedbackBlockerLimit(previousFailure)),
       details: previousFailure,
       worktreePatch: retryWorktreePatchForSummary,
-      sourceSnapshot: retrySourceSnapshot,
+      sourceSnapshot: retrySourceSnapshotForSummary,
       prThreadIds: extractPrReviewThreadIds(previousFailure),
       actionableReviewThreads: prReviewThreads,
       protectedSnippets,

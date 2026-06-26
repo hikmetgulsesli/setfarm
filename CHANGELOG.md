@@ -4,6 +4,7 @@ This repository now keeps agent-facing operational notes in English only.
 
 ## Unreleased
 
+- Omitted raw retry source snapshots from PR review comment retry summaries while preserving actionable thread/file/line/comment contracts, preventing agents from dumping large handoff JSON during small PR-comment repairs.
 - Pushed story branches after scoped platform commits even when a PR already exists, preventing verify from rereading stale GitHub review comments against an old remote PR head.
 - Retried platform story branch pushes through GitHub CLI git credentials when non-interactive HTTPS git lacks a username, and kept post-merge repair retry budgets visible in story state.
 - Accepted static HTML source files when final-test verifies merged `main`, preventing package-less static sites from failing the merge guard as missing source code.
