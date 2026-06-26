@@ -983,9 +983,13 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(source, /function isSupervisorEscalatableReviewFailure/);
     assert.match(helper, /isSupervisorEscalatableReviewFailure\(options\.category, failure\)/);
     assert.match(helper, /Developer retries are exhausted\. Escalate this actionable PR review feedback to the story supervisor/);
+    assert.match(helper, /pr_review_supervisor_escalated_story_id/);
     assert.match(helper, /UPDATE stories SET status = 'done', retry_count = \$1/);
     assert.match(helper, /UPDATE steps SET status = 'pending', current_story_id = \$1/);
     assert.match(helper, /review retry budget exhausted; escalated to/);
+    assert.match(helper, /PR_REVIEW_COMMENTS_MANUAL_REVIEW/);
+    assert.match(helper, /Manual review required: developer retries and supervisor escalation did not clear actionable PR review comments/);
+    assert.match(helper, /review retry budget and supervisor escalation exhausted; failing for manual review/);
   });
 
   it("keeps PR review retries on the authoritative PR head branch", () => {

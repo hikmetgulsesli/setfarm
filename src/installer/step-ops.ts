@@ -1844,6 +1844,25 @@ async function routeVerifyScopeFailureToImplement(
   if (newRetry > retryStory.max_retries) {
     const terminalRetry = Math.max(0, retryStory.max_retries);
     if (isSupervisorEscalatableReviewFailure(options.category, failure)) {
+      if (context["pr_review_supervisor_escalated_story_id"] === storyId) {
+        const terminalFailure = [
+          `PR_REVIEW_COMMENTS_MANUAL_REVIEW: ${storyId} exhausted developer retries and one supervisor escalation, but actionable PR review comments remain.`,
+          failure,
+        ].join("\n");
+        context["verify_feedback"] = terminalFailure;
+        context["previous_failure"] = terminalFailure;
+        context["failure_category"] = "PR_REVIEW_COMMENTS_OPEN";
+        context["failure_suggestion"] = "Manual review required: developer retries and supervisor escalation did not clear actionable PR review comments.";
+        context["current_story_id"] = storyId;
+        await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [terminalRetry, terminalFailure, now(), retryStory.id]);
+        await updateRunContext(verifyStep.run_id, context);
+        const loopStep = await findLoopStep(verifyStep.run_id);
+        if (loopStep?.id) await setStepStatus(loopStep.id, "failed");
+        await failRun(verifyStep.run_id, true);
+        scheduleRunCronTeardown(verifyStep.run_id);
+        logger.warn(`[verify-pr-comments] ${storyId} review retry budget and supervisor escalation exhausted; failing for manual review`, { runId: verifyStep.run_id });
+        return;
+      }
       const loopStep = await findLoopStep(verifyStep.run_id);
       const loopConfig = parseLoopConfigSafe(loopStep?.loop_config || "", verifyStep.run_id);
       const superviseStepName = loopConfig?.superviseStep || "supervise";
@@ -1853,6 +1872,7 @@ async function routeVerifyScopeFailureToImplement(
       context["failure_suggestion"] = "Developer retries are exhausted. Escalate this actionable PR review feedback to the story supervisor for a scoped manager-owned fix; do not fail the run until supervisor has audited or patched the story.";
       context["current_story_id"] = storyId;
       context["supervisor_scope"] = "story";
+      context["pr_review_supervisor_escalated_story_id"] = storyId;
       clearStorySupervised(context, storyId);
       await pgRun("UPDATE stories SET status = 'done', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [terminalRetry, failure, now(), retryStory.id]);
       if (loopStep?.id) await setStepStatus(loopStep.id, "running");
