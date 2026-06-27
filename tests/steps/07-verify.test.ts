@@ -713,6 +713,59 @@ describe("07-verify step module", () => {
     );
   });
 
+  it("marks CSV all-cell escaping review comments as mechanically satisfied from source evidence", () => {
+    const csvComment = {
+      id: "csv-inline",
+      threadId: "PRRT_csv",
+      kind: "review-comment" as const,
+      author: "gemini-code-assist",
+      body: [
+        "Currently, only `item.name` is escaped for CSV output. If other fields such as `item.category` or `item.sku` contain commas, double quotes, or newlines, the generated CSV file will be malformed.",
+        "Using a dedicated helper function to escape all CSV cells ensures the output is always valid RFC 4180 compliant CSV.",
+      ].join("\n"),
+      createdAt: "2026-06-26T12:35:18Z",
+      path: "assets/js/us-003/act_export_summary.js",
+      line: 111,
+      originalLine: 111,
+      threadResolved: false,
+      outdated: false,
+    };
+
+    const fixedSource = `
+      function toCsv(summary) {
+        function escapeCell(val) {
+          var str = val === null || val === undefined ? '' : String(val);
+          if (str.indexOf(',') !== -1 || str.indexOf('"') !== -1 || str.indexOf('\\n') !== -1 || str.indexOf('\\r') !== -1) {
+            return '"' + str.replace(/"/g, '""') + '"';
+          }
+          return str;
+        }
+        function row(cells) {
+          return cells.map(escapeCell).join(',');
+        }
+        var lines = [];
+        lines.push(row(['Top Category', summary.metrics.topCategory]));
+        summary.items.forEach(function (item) {
+          lines.push(row([item.id, item.name, item.sku, item.category, item.status]));
+        });
+        return lines.join('\\n');
+      }
+    `;
+    const partialSource = `
+      function toCsv(summary) {
+        function escapeCell(val) { return '"' + String(val).replace(/"/g, '""') + '"'; }
+        var lines = [];
+        summary.items.forEach(function (item) {
+          lines.push([item.id, escapeCell(item.name), item.sku, item.category, item.status].join(','));
+        });
+        return lines.join('\\n');
+      }
+    `;
+
+    assert.equal(commentLooksMechanicallySatisfied(csvComment, fixedSource), true);
+    assert.equal(commentLooksMechanicallySatisfied(csvComment, partialSource), false);
+  });
+
   it("marks selector ref subscriptions and raf throttle review comments as mechanically satisfied from source evidence", () => {
     const selectorComment = {
       id: "selector-inline",

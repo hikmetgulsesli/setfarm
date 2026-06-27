@@ -4,6 +4,7 @@ This repository now keeps agent-facing operational notes in English only.
 
 ## Unreleased
 
+- Recognized current inline PR review comments about CSV/RFC 4180 all-cell escaping as mechanically satisfied when the PR head source has a dedicated cell escaper applied to complete rows, preventing stale review threads from consuming product retries after the code is already fixed.
 - Omitted raw retry source snapshots from PR review comment retry summaries while preserving actionable thread/file/line/comment contracts, preventing agents from dumping large handoff JSON during small PR-comment repairs.
 - Pushed story branches after scoped platform commits even when a PR already exists, preventing verify from rereading stale GitHub review comments against an old remote PR head.
 - Retried platform story branch pushes through GitHub CLI git credentials when non-interactive HTTPS git lacks a username, and kept post-merge repair retry budgets visible in story state.

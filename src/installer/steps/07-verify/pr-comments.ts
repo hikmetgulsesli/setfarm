@@ -235,6 +235,7 @@ function commentProseLooksMechanicallySatisfied(body: string, normalizedSource: 
 
   if (missingInputFieldLooksSatisfied(body, normalizedSource)) return true;
   if (domXssInnerHtmlLooksSatisfied(body, normalizedSource)) return true;
+  if (csvEscapingReviewLooksSatisfied(body, normalizedSource)) return true;
 
   if (
     /\bclamp\b/.test(text) &&
@@ -478,6 +479,49 @@ function domXssInnerHtmlLooksSatisfied(body: string, normalizedSource: string): 
   }
 
   return true;
+}
+
+function csvEscapingReviewLooksSatisfied(body: string, normalizedSource: string): boolean {
+  if (!/\bCSV\b|RFC\s*4180/i.test(body)) return false;
+  if (!/\bescap/i.test(body)) return false;
+  if (!/\bcell(?:s)?\b|\bfield(?:s)?\b|\bcolumn(?:s)?\b|\bvalue(?:s)?\b/i.test(body)) return false;
+
+  const hasCsvQuoteEscaper =
+    /String\s*\([^)]*\)/.test(normalizedSource) &&
+    (
+      /indexOf\s*\(\s*['"],['"]\s*\)/.test(normalizedSource) ||
+      /indexOf\s*\(\s*['"]\\n['"]\s*\)/.test(normalizedSource) ||
+      /indexOf\s*\(\s*['"]\\r['"]\s*\)/.test(normalizedSource) ||
+      /\/[^/]*"[^/]*\\n[^/]*\\r[^/]*\/\.test\s*\(/.test(normalizedSource)
+    ) &&
+    /replace\s*\(\s*\/"\/g\s*,\s*['"]""['"]\s*\)/.test(normalizedSource);
+  if (!hasCsvQuoteEscaper) return false;
+
+  const escapeName = [...normalizedSource.matchAll(/\bfunction\s+([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{/g)]
+    .map(match => match[1])
+    .find(name => {
+      const start = normalizedSource.indexOf(`function ${name}`);
+      const window = start >= 0 ? normalizedSource.slice(start, start + 700) : "";
+      return (
+        /replace\s*\(\s*\/"\/g\s*,\s*['"]""['"]\s*\)/.test(window) &&
+        (normalizedSource.includes(`.map(${name})`) || new RegExp(`\\.map\\s*\\(\\s*${escapeRegExp(name)}\\s*\\)`).test(normalizedSource))
+      );
+    });
+  if (!escapeName) return false;
+
+  const escapedName = escapeRegExp(escapeName);
+  const mapsRowsThroughEscaper =
+    new RegExp(`\\.map\\s*\\(\\s*${escapedName}\\s*\\)\\s*\\.join\\s*\\(\\s*['"],['"]\\s*\\)`).test(normalizedSource) ||
+    normalizedSource.includes(`.map(${escapeName}).join(',')`) ||
+    normalizedSource.includes(`.map(${escapeName}).join(",")`);
+  if (!mapsRowsThroughEscaper) return false;
+
+  const itemFields = ["id", "name", "sku", "category", "status"].filter(field =>
+    new RegExp(`\\bitem\\.${field}\\b`).test(normalizedSource),
+  );
+  const hasItemRow = /summary\.items\.forEach|items\.forEach/.test(normalizedSource) && itemFields.length >= 3;
+  const hasMetricRows = /\bsummary\.metrics\b/.test(normalizedSource) || /\bmetrics\b/.test(normalizedSource);
+  return hasItemRow && hasMetricRows;
 }
 
 function cssClassStateToggleResolution(body: string, normalizedSource: string): boolean {
