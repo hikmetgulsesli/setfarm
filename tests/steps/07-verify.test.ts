@@ -1396,6 +1396,110 @@ describe("07-verify step module", () => {
     assert.equal(commentLooksMechanicallySatisfied(optionalMethodComment, unsafeSource), false);
   });
 
+  it("marks Run Probe status utility review comments as mechanically satisfied", () => {
+    const reviewSummaryState: PrState = {
+      state: "OPEN",
+      checksStatus: "passing",
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+      comments: [{
+        id: "gemini-summary",
+        kind: "review",
+        state: "COMMENTED",
+        author: "gemini-code-assist",
+        body: "## Code Review\n\nThis pull request simplifies the application. However, these changes introduced several critical issues: markRefreshed and system-state-toggle wiring regressed. Feedback is provided to restore these functionalities, along with corresponding action types.",
+        createdAt: "2026-07-01T10:00:00Z",
+      }],
+    };
+    const refreshComment = {
+      id: "run-probe-refresh",
+      threadId: "PRRT_run_probe_refresh",
+      kind: "review-comment" as const,
+      author: "gemini-code-assist",
+      body: "The refresh handlers `handleRefreshAction` and `handleManualRefreshAction` no longer call `markRefreshed()`. Additionally, restore `handleSystemStateToggleAction` to handle toggling the auto-refresh state.",
+      createdAt: "2026-07-01T10:00:00Z",
+      path: "src/App.tsx",
+      line: 49,
+      originalLine: 49,
+      threadResolved: false,
+      outdated: false,
+    };
+    const propsComment = {
+      ...refreshComment,
+      id: "run-probe-props",
+      threadId: "PRRT_run_probe_props",
+      body: "The `StatusUtilityRunProbe` component requires the `lastRefreshedAt` and `autoRefresh` props to display the actual refresh timestamp and bind the system state toggle.",
+      line: 128,
+      originalLine: 128,
+    };
+    const unionComment = {
+      ...refreshComment,
+      id: "run-probe-union",
+      threadId: "PRRT_run_probe_union",
+      path: "src/screens/StatusUtilityRunProbe.tsx",
+      body: 'Restore `"system-state-toggle"` to the `StatusUtilityRunProbeActionId` type union so that the toggle action is properly typed.',
+      line: 14,
+      originalLine: 14,
+    };
+    const toggleComment = {
+      ...unionComment,
+      id: "run-probe-toggle",
+      threadId: "PRRT_run_probe_toggle",
+      body: 'The `handleToggle` function is currently invoking `actions?.["manual-refresh-3"]?.()` instead of toggling the system state. Restore the `"system-state-toggle"` action call.',
+      line: 46,
+      originalLine: 46,
+    };
+    const attrsComment = {
+      ...unionComment,
+      id: "run-probe-attrs",
+      threadId: "PRRT_run_probe_attrs",
+      body: "Restore the `data-action-id` and `data-state` attributes on the checkbox input and remove the unnecessary `defaultValue` attribute.",
+      line: 81,
+      originalLine: 81,
+    };
+    const fixedAppSource = `
+      const handleRefreshAction = useCallback(() => {
+        actRefreshStatus(currentSelected, fallback, { markRefreshed: () => markRefreshed() });
+      }, [markRefreshed]);
+      const handleManualRefreshAction = useCallback(() => {
+        actRefreshStatus(current, fallback, { markRefreshed: () => markRefreshed() });
+      }, [markRefreshed]);
+      const handleSystemStateToggleAction = useCallback(() => {
+        actToggleStatus(autoRefresh, { setAutoRefresh });
+      }, [autoRefresh, setAutoRefresh]);
+      const screenActions = useMemo(() => ({ "system-state-toggle": handleSystemStateToggleAction }), [handleSystemStateToggleAction]);
+      <StatusUtilityRunProbe actions={screenActions} lastRefreshedAt={lastRefreshedAt} autoRefresh={autoRefresh} />
+    `;
+    const fixedScreenSource = `
+      export type StatusUtilityRunProbeActionId =
+        | "refresh-1"
+        | "settings-2"
+        | "manual-refresh-3"
+        | "documentation-1"
+        | "privacy-2"
+        | "system-state-toggle";
+      function formatTimestamp(at: number | null | undefined): string { return typeof at === "number" ? "Jan 01, 00:00:00" : "—"; }
+      export function StatusUtilityRunProbe({ actions, autoRefresh }: StatusUtilityRunProbeProps) {
+        const [systemEnabled, setSystemEnabled] = useState<boolean>(autoRefresh ?? true);
+        const handleSystemToggle = useCallback(() => {
+          setSystemEnabled((prev) => {
+            const next = !prev;
+            actions?.["system-state-toggle"]?.();
+            return next;
+          });
+        }, [actions]);
+        return <input checked={systemEnabled} onChange={handleSystemToggle} className="sr-only peer" id="system-state-toggle" type="checkbox" data-action-id="system-state-toggle" data-state={systemEnabled ? "ready" : "paused"} />;
+      }
+    `;
+
+    assert.equal(formatPrCommentsForAgent(reviewSummaryState), "");
+    assert.equal(commentLooksMechanicallySatisfied(refreshComment, fixedAppSource), true);
+    assert.equal(commentLooksMechanicallySatisfied(propsComment, fixedAppSource), true);
+    assert.equal(commentLooksMechanicallySatisfied(unionComment, fixedScreenSource), true);
+    assert.equal(commentLooksMechanicallySatisfied(toggleComment, fixedScreenSource), true);
+    assert.equal(commentLooksMechanicallySatisfied(attrsComment, fixedScreenSource), true);
+  });
+
   it("marks static web init, defensive filter, action-id, and aria role review comments as mechanically satisfied", () => {
     const initComment = {
       id: "static-init-inline",

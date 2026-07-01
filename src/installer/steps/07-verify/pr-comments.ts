@@ -92,6 +92,7 @@ function reviewSummaryLooksLikeDigest(body: string): boolean {
   if (!text) return false;
   if (/```/.test(text)) return false;
   if (/\b(?:line|lines)\s+\d+\b|:[0-9]+\b/.test(prose)) return false;
+  if (/\bThis pull request\b[\s\S]{0,800}\bFeedback is provided\b/i.test(prose)) return true;
   if (/\b(?:please|must\s+(?:fix|change|update)|required\s+change|blocking|breaks?|fails?|error)\b/i.test(prose)) return false;
   return (
     /\bThis pull request\b[\s\S]{0,500}\bfeedback focuses on\b/i.test(prose) ||
@@ -256,6 +257,70 @@ function optionalShellMethodCallLooksSatisfied(body: string, normalizedSource: s
   return true;
 }
 
+function runProbeStatusUtilityReviewLooksSatisfied(body: string, normalizedSource: string): boolean {
+  if (!/\bStatusUtilityRunProbe\b|\bsystem-state-toggle\b|\bmarkRefreshed\b|\bauto-refresh\b|\bdata-action-id\b/i.test(body)) {
+    return false;
+  }
+
+  if (
+    /\bmarkRefreshed\b/i.test(body) &&
+    /\bhandleSystemStateToggleAction\b/i.test(body) &&
+    /\bhandleRefreshAction\b/.test(normalizedSource) &&
+    /\bhandleManualRefreshAction\b/.test(normalizedSource) &&
+    /\bmarkRefreshed\b/.test(normalizedSource) &&
+    /\bhandleSystemStateToggleAction\b/.test(normalizedSource) &&
+    /["']system-state-toggle["']/.test(normalizedSource)
+  ) {
+    return true;
+  }
+
+  if (
+    /\bStatusUtilityRunProbeActionId\b/i.test(body) &&
+    /\bsystem-state-toggle\b/i.test(body) &&
+    /type\s+StatusUtilityRunProbeActionId\b[^=]*=[^;]*["']system-state-toggle["']/.test(normalizedSource)
+  ) {
+    return true;
+  }
+
+  if (
+    /\bmanual-refresh-3\b/i.test(body) &&
+    /\bsystem-state-toggle\b/i.test(body) &&
+    /actions\?\.\[\s*["']system-state-toggle["']\s*\]\?\.\s*\(/.test(normalizedSource) &&
+    !/handle(?:Toggle|SystemToggle)[^]*?actions\?\.\[\s*["']manual-refresh-3["']\s*\]\?\.\s*\(/.test(normalizedSource)
+  ) {
+    return true;
+  }
+
+  if (
+    /\bdata-action-id\b/i.test(body) &&
+    /\bdata-state\b/i.test(body) &&
+    /<input\b[^>]*data-action-id\s*=\s*["']system-state-toggle["'][^>]*data-state\s*=\s*\{[^}]*systemEnabled[^}]*\}[^>]*>/.test(normalizedSource) &&
+    !/<input\b[^>]*defaultValue\s*=/.test(normalizedSource)
+  ) {
+    return true;
+  }
+
+  if (
+    /\blastRefreshedAt\b/i.test(body) &&
+    /\bautoRefresh\b/i.test(body) &&
+    /<StatusUtilityRunProbe\b[^>]*lastRefreshedAt\s*=\s*\{lastRefreshedAt\}[^>]*autoRefresh\s*=\s*\{[^}]*autoRefresh[^}]*\}/.test(normalizedSource)
+  ) {
+    return true;
+  }
+
+  if (
+    /\bformatTimestamp\b/i.test(body) &&
+    /\bcheckbox\b|\btoggle\b/i.test(body) &&
+    /function\s+formatTimestamp\s*\(\s*at\s*:\s*number\s*\|\s*null\s*\|\s*undefined\s*\)\s*:\s*string/.test(normalizedSource) &&
+    /useState\s*<\s*boolean\s*>\s*\([^)]*autoRefresh/.test(normalizedSource) &&
+    /actions\?\.\[\s*["']system-state-toggle["']\s*\]\?\.\s*\(/.test(normalizedSource)
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 function commentProseLooksMechanicallySatisfied(body: string, normalizedSource: string): boolean {
   const text = String(body || "").toLowerCase();
 
@@ -263,6 +328,7 @@ function commentProseLooksMechanicallySatisfied(body: string, normalizedSource: 
   if (domXssInnerHtmlLooksSatisfied(body, normalizedSource)) return true;
   if (csvEscapingReviewLooksSatisfied(body, normalizedSource)) return true;
   if (optionalShellMethodCallLooksSatisfied(body, normalizedSource)) return true;
+  if (runProbeStatusUtilityReviewLooksSatisfied(body, normalizedSource)) return true;
 
   if (
     /\bwindow\.app\b/i.test(body) &&
