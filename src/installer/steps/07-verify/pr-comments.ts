@@ -259,8 +259,14 @@ function commentProseLooksMechanicallySatisfied(body: string, normalizedSource: 
     /\bcallback\b|\bdependencies\b|\bre-?renders?\b|\bscreenActions\b/i.test(body) &&
     /\bshell\b/i.test(body) &&
     /\bdestructure\b|\bstable\s+methods?\b|\bselectRecord\b|\bsetActivePanel\b/i.test(body) &&
-    /const\s*\{[^}]*\b(?:selectRecord|setActivePanel|setActiveSurface|markRefreshed|cycleSelectedRecord)\b[^}]*\}\s*=\s*shell\b/.test(normalizedSource) &&
-    /useMemo\s*\([^]*?\[[^\]]*\b(?:selectRecord|setActivePanel|setActiveSurface|markRefreshed|cycleSelectedRecord)\b[^\]]*\]\s*\)/.test(normalizedSource) &&
+    (
+      /const\s*\{[^}]*\b(?:state|selectRecord|setActivePanel|setActiveSurface|markRefreshed|cycleSelectedRecord)\b[^}]*\}\s*=\s*use\w+Shell\s*\(\s*\)/.test(normalizedSource) ||
+      /const\s*\{[^}]*\b(?:selectRecord|setActivePanel|setActiveSurface|markRefreshed|cycleSelectedRecord)\b[^}]*\}\s*=\s*shell\b/.test(normalizedSource)
+    ) &&
+    (
+      /useMemo\s*\([^]*?\[[^\]]*\b(?:selectRecord|setActivePanel|setActiveSurface|markRefreshed|cycleSelectedRecord|handle\w+)\b[^\]]*\]\s*\)/.test(normalizedSource) ||
+      /useCallback\s*\([^]*?\[[^\]]*\b(?:selectRecord|setActivePanel|selectedRecordId|firstRecordId)\b[^\]]*\]\s*\)/.test(normalizedSource)
+    ) &&
     !/useMemo\s*\([^]*?\[[^\]]*\bshell\b[^\]]*\]\s*\)/.test(normalizedSource)
   ) {
     return true;

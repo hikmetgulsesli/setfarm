@@ -1327,10 +1327,34 @@ describe("07-verify step module", () => {
         return <div data-testid="setfarm-app-root" />;
       }
     `;
+    const fixedCallbackSource = `
+      function AppShell() {
+        const { state, selectRecord, setActivePanel } = useRunProbeShell();
+        const selectedRecordId = state.preferences.selectedRecordId;
+        const firstRecordId = state.records[0]?.id ?? null;
+        const handleRefreshAction = useCallback(() => {
+          selectRecord(null);
+        }, [selectRecord]);
+        const handleManualRefreshAction = useCallback(() => {
+          const next = selectedRecordId ?? firstRecordId;
+          selectRecord(next);
+        }, [selectedRecordId, firstRecordId, selectRecord]);
+        const handleSettingsAction = useCallback(() => {
+          setActivePanel("settings");
+        }, [setActivePanel]);
+        const screenActions = useMemo(() => ({
+          "refresh-1": handleRefreshAction,
+          "settings-2": handleSettingsAction,
+          "manual-refresh-3": handleManualRefreshAction,
+        }), [handleRefreshAction, handleSettingsAction, handleManualRefreshAction]);
+        return <div data-testid="setfarm-app-root" />;
+      }
+    `;
 
     assert.equal(commentLooksMechanicallySatisfied(getterCleanupComment, fixedStoreSource), true);
     assert.equal(commentLooksMechanicallySatisfied(methodCleanupComment, fixedStoreSource), true);
     assert.equal(commentLooksMechanicallySatisfied(stableCallbacksComment, fixedAppSource), true);
+    assert.equal(commentLooksMechanicallySatisfied(stableCallbacksComment, fixedCallbackSource), true);
     assert.equal(commentLooksMechanicallySatisfied(getterCleanupComment, `Object.defineProperty(app, "activeSurface", { get: () => state.activeSurface });`), false);
     assert.equal(commentLooksMechanicallySatisfied(stableCallbacksComment, `const shell = useRunProbeShell(); const screenActions = useMemo(() => ({}), [shell]);`), false);
   });
