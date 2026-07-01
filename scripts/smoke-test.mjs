@@ -596,10 +596,25 @@ function readProjectIntentText(repo) {
   return chunks.join("\n").toLowerCase();
 }
 
+function readRunContractIntentText(repo) {
+  try {
+    const raw = readFileSync(join(repo, ".setfarm", "RUN_CONTRACT.json"), "utf-8");
+    const parsed = JSON.parse(raw);
+    return [parsed.task || "", parsed.prd || ""].join("\n").toLowerCase();
+  } catch {
+    return readProjectIntentText(repo);
+  }
+}
+
 function excludedFlowIntentsForRepo(repo) {
-  const text = readProjectIntentText(repo);
+  const text = readRunContractIntentText(repo);
   const excluded = new Set();
-  if (/\b(?:do not add|don't add|without|no)\b[^.\n]{0,120}\bsettings?\b/.test(text)) {
+  const settingsExplicitlyRequested = /\b(settings?|configuration|preferences?)\b/.test(text);
+  const simpleLocalOnlyApp = /\b(?:keep\s+it\s+simple|simple|tiny|local-only|local\s+only)\b/.test(text);
+  if (
+    /\b(?:do not add|don't add|without|no)\b[^.\n]{0,120}\bsettings?\b/.test(text) ||
+    (simpleLocalOnlyApp && !settingsExplicitlyRequested)
+  ) {
     excluded.add("settings");
   }
   return [...excluded];
@@ -665,6 +680,30 @@ const FLOW_AUDIT_EVAL =
         return { records:null, items:null, tasks:null, notes:null, entries:null };
       }
     }
+    function appStateText() {
+      var parts = [];
+      try {
+        var app = window.app || {};
+        var st = app.state || {};
+        ["screen","route","currentRoute","currentScreen","activePanel","activeSurface","selectedRecordId","selectedItemId"].forEach(function(k) {
+          if (st[k] != null) parts.push(k + "=" + String(st[k]));
+          if (app[k] != null) parts.push(k + "=" + String(app[k]));
+        });
+        var pref = st.preferences || app.preferences || {};
+        ["activePanel","activeSurfaceId","selectedRecordId","autoRefresh","intervalSeconds"].forEach(function(k) {
+          if (pref[k] != null) parts.push("preferences." + k + "=" + String(pref[k]));
+        });
+      } catch(e) {}
+      Array.from(document.querySelectorAll("[data-active-panel],[data-active-surface],[data-current-screen],[data-current-route],[data-selected-record],[data-refresh-tick],[data-last-refreshed-at],[aria-pressed=true]"))
+        .slice(0, 20)
+        .forEach(function(el) {
+          ["data-active-panel","data-active-surface","data-current-screen","data-current-route","data-selected-record","data-refresh-tick","data-last-refreshed-at","aria-pressed"].forEach(function(name) {
+            var value = el.getAttribute(name);
+            if (value != null && value !== "") parts.push(name + "=" + value);
+          });
+        });
+      return parts.join(" ");
+    }
     function countIncreased(before, after) {
       return ["records","items","tasks","notes","entries"].some(function(k) {
         return typeof before[k] === "number" && typeof after[k] === "number" && after[k] > before[k];
@@ -694,6 +733,7 @@ const FLOW_AUDIT_EVAL =
         href: location.href,
         hash: location.hash,
         route: appRoute(),
+        stateText: appStateText(),
         text: text(),
         headings: headings(),
         counts: appCounts(),
@@ -716,6 +756,10 @@ const FLOW_AUDIT_EVAL =
       if (intent === "detail") return /detail|summary|status|assign|export|location/i.test(bodyText);
       if (intent === "create") return /new|create|add|log|report|record|title|description|save/i.test(bodyText);
       return false;
+    }
+    function stateMatches(intent, stateText) {
+      if (!intent) return false;
+      return String(stateText || "").toLowerCase().indexOf(intent) >= 0;
     }
     function fillForm() {
       var inputs = Array.from(document.querySelectorAll("input:not([type=hidden]), textarea"));
@@ -812,7 +856,10 @@ const FLOW_AUDIT_EVAL =
       var after = snapshot();
       var ok = false;
       if (["settings","insights","dashboard","profile","detail","create"].indexOf(intent) >= 0) {
-        ok = routeMatches(intent, after.route) || routeMatches(intent, after.hash) || textMatches(intent, after.text);
+        ok = routeMatches(intent, after.route) ||
+          routeMatches(intent, after.hash) ||
+          textMatches(intent, after.text) ||
+          (after.stateText !== before.stateText && stateMatches(intent, after.stateText));
         if (intent === "create") {
           ok = ok && (after.inputs > before.inputs || after.forms > before.forms || textMatches(intent, after.text));
           if (ok) {
@@ -2745,8 +2792,8 @@ async function main() {
     unknownActionFallbackDetails: unknownActionFallbackIssues,
     weakInteractionAssertions: weakInteractionIssues.length,
     weakInteractionDetails: weakInteractionIssues,
-    browserGameStaticIssues: browserGameStaticIssues.length,
-    browserGameStaticDetails: browserGameStaticIssues,
+    browserGameStaticIssues: stackStaticIssues.length,
+    browserGameStaticDetails: stackStaticIssues,
     linksChecked,
     linksBroken,
     buttonsChecked,

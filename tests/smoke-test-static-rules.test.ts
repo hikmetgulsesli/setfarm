@@ -60,6 +60,18 @@ describe("smoke-test static rules", () => {
     });
   });
 
+  it("excludes settings flow audit for simple local-only apps unless settings are requested", () => {
+    withRepo(repo => {
+      fs.mkdirSync(path.join(repo, ".setfarm"), { recursive: true });
+      fs.writeFileSync(path.join(repo, ".setfarm", "RUN_CONTRACT.json"), JSON.stringify({
+        task: "Build a tiny single-page status utility. Keep it simple and local-only.",
+      }));
+      fs.writeFileSync(path.join(repo, "PROJECT_MEMORY.md"), "Previous retry mentioned settings-2 wiring.");
+
+      assert.deepEqual(excludedFlowIntentsForRepo(repo), ["settings"]);
+    });
+  });
+
   it("flags navigation links whose destination title does not match the link label", () => {
     assert.match(
       semanticNavigationTargetIssue("Technical Status", {
@@ -515,6 +527,27 @@ describe("smoke-test static rules", () => {
     assert.match(smokeScript, /status: failures\.length === 0 \? 'pass' : \(confidence >= 70 \? 'warn' : 'fail'\)/);
     assert.match(smokeScript, /process\.exit\(result\.status === 'fail' \? 1 : 0\)/);
     assert.doesNotMatch(smokeScript, /process\.exit\(failures\.length > 0 \? 1 : 0\)/);
+  });
+
+  it("reports stack static issues without referencing stale browser-game variables", () => {
+    const smokeScript = fs.readFileSync(path.join(process.cwd(), "scripts/smoke-test.mjs"), "utf-8");
+
+    assert.match(smokeScript, /const stackStaticIssues = checkStackStaticContracts\(repoPath\)/);
+    assert.match(smokeScript, /browserGameStaticIssues: stackStaticIssues\.length/);
+    assert.match(smokeScript, /browserGameStaticDetails: stackStaticIssues/);
+    assert.doesNotMatch(smokeScript, /browserGameStaticIssues: browserGameStaticIssues\.length/);
+  });
+
+  it("accepts visible app state changes as flow-audit evidence", () => {
+    const smokeScript = fs.readFileSync(path.join(process.cwd(), "scripts/smoke-test.mjs"), "utf-8");
+
+    assert.match(smokeScript, /function appStateText\(\)/);
+    assert.match(smokeScript, /\[data-active-panel\]/);
+    assert.match(smokeScript, /"autoRefresh"/);
+    assert.match(smokeScript, /"preferences\." \+ k/);
+    assert.match(smokeScript, /\[data-refresh-tick\]/);
+    assert.match(smokeScript, /stateText: appStateText\(\)/);
+    assert.match(smokeScript, /after\.stateText !== before\.stateText && stateMatches\(intent, after\.stateText\)/);
   });
 
   it("does not require a globally installed static server for smoke tests", () => {
