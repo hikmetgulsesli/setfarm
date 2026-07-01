@@ -4567,7 +4567,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   const codexModelArgs = process.env.SETFARM_CODEX_MODEL ? ["--model", process.env.SETFARM_CODEX_MODEL] : [];
   const kimiModelArgs = process.env.SETFARM_KIMI_MODEL ? ["--model", process.env.SETFARM_KIMI_MODEL] : [];
   const kimiOutputFormat = process.env.SETFARM_KIMI_OUTPUT_FORMAT || "stream-json";
-  const opencodeModel = process.env.SETFARM_OPENCODE_MODEL || process.env.SETFARM_MINIMAX_MODEL || "minimax-openai/MiniMax-M3";
+  const opencodeModel = process.env.SETFARM_OPENCODE_MODEL || process.env.SETFARM_MINIMAX_MODEL || "minimax-coding-plan/MiniMax-M3";
   const opencodePromptFile = path.join(path.dirname(transcriptPath), `${agentId}-${sessionId}-prompt.md`);
   if (AGENT_RUNTIME === "opencode") {
     try { fs.writeFileSync(opencodePromptFile, prompt); } catch {}
