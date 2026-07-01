@@ -230,12 +230,39 @@ function missingInputFieldLooksSatisfied(body: string, normalizedSource: string)
   return false;
 }
 
+function optionalShellMethodCallLooksSatisfied(body: string, normalizedSource: string): boolean {
+  const text = String(body || "").toLowerCase();
+  if (!/\boptional\s+chaining\b/.test(text)) return false;
+  if (!/\bmethod\s+call\b|\bsetautorefresh\b|\bmarkrefreshed\b|\bselectrecord\b/.test(text)) return false;
+  if (!/\boptions\.shell\b/.test(body)) return false;
+
+  const methodNames = [...new Set([...String(body || "").matchAll(/\b(?:setAutoRefresh|markRefreshed|selectRecord)\b/g)]
+    .map((match) => match[0]))];
+  if (methodNames.length === 0) return false;
+
+  for (const methodName of methodNames) {
+    const escapedMethod = escapeRegExp(methodName);
+    const unsafeOptionsShellOptional = new RegExp(`\\boptions\\.shell\\?\\.${escapedMethod}\\s*\\(`);
+    const unsafeOptionsShellMethod = new RegExp(`\\boptions\\.shell\\.${escapedMethod}\\s*\\(`);
+    if (unsafeOptionsShellOptional.test(normalizedSource) || unsafeOptionsShellMethod.test(normalizedSource)) {
+      return false;
+    }
+
+    const safeShellMethod = new RegExp(`\\bshell\\.${escapedMethod}\\?\\.\\s*\\(`);
+    const capturesShellBeforeUse = /\bconst\s+shell\s*=\s*options\.shell\b/.test(normalizedSource);
+    if (!capturesShellBeforeUse || !safeShellMethod.test(normalizedSource)) return false;
+  }
+
+  return true;
+}
+
 function commentProseLooksMechanicallySatisfied(body: string, normalizedSource: string): boolean {
   const text = String(body || "").toLowerCase();
 
   if (missingInputFieldLooksSatisfied(body, normalizedSource)) return true;
   if (domXssInnerHtmlLooksSatisfied(body, normalizedSource)) return true;
   if (csvEscapingReviewLooksSatisfied(body, normalizedSource)) return true;
+  if (optionalShellMethodCallLooksSatisfied(body, normalizedSource)) return true;
 
   if (
     /\bwindow\.app\b/i.test(body) &&

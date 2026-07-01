@@ -1359,6 +1359,43 @@ describe("07-verify step module", () => {
     assert.equal(commentLooksMechanicallySatisfied(stableCallbacksComment, `const shell = useRunProbeShell(); const screenActions = useMemo(() => ({}), [shell]);`), false);
   });
 
+  it("marks optional shell method-call review comments as mechanically satisfied", () => {
+    const optionalMethodComment = {
+      id: "optional-shell-method",
+      threadId: "PRRT_optional_shell_method",
+      kind: "review-comment" as const,
+      author: "gemini-code-assist",
+      body: "Similar to `actRefreshStatus`, using optional chaining on `options.shell` (e.g., `options.shell?.setAutoRefresh(enabled)`) will throw a `TypeError` if `options.shell` is defined but `setAutoRefresh` is undefined. Use optional chaining on the method call itself to ensure safe execution.",
+      createdAt: "2026-07-01T10:00:00Z",
+      path: "src/features/surf-status-utility/act_toggle_status.ts",
+      line: 29,
+      originalLine: 29,
+      threadResolved: false,
+      outdated: false,
+    };
+    const fixedSource = `
+      export function actToggleStatus(options: ToggleStatusOptions = {}) {
+        const shell = options.shell;
+        const doSetAutoRefresh =
+          options.setAutoRefresh ??
+          (shell
+            ? (enabled: boolean) => shell.setAutoRefresh?.(enabled)
+            : FALLBACK_SET_AUTO_REFRESH);
+        doSetAutoRefresh(true);
+      }
+    `;
+    const unsafeSource = `
+      const doSetAutoRefresh =
+        options.setAutoRefresh ??
+        (options.shell
+          ? (enabled: boolean) => options.shell?.setAutoRefresh(enabled)
+          : FALLBACK_SET_AUTO_REFRESH);
+    `;
+
+    assert.equal(commentLooksMechanicallySatisfied(optionalMethodComment, fixedSource), true);
+    assert.equal(commentLooksMechanicallySatisfied(optionalMethodComment, unsafeSource), false);
+  });
+
   it("marks static web init, defensive filter, action-id, and aria role review comments as mechanically satisfied", () => {
     const initComment = {
       id: "static-init-inline",
