@@ -1242,6 +1242,99 @@ describe("07-verify step module", () => {
     );
   });
 
+  it("marks window.app cleanup and stable callback review comments as mechanically satisfied", () => {
+    const getterCleanupComment = {
+      id: "window-app-getters",
+      threadId: "PRRT_window_getters",
+      kind: "review-comment" as const,
+      author: "gemini-code-assist",
+      body: "The `useEffect` that defines getters on `window.app` does not clean them up when the component unmounts. Add a cleanup function to delete the defined properties from `window.app` on unmount.",
+      createdAt: "2026-07-01T10:00:00Z",
+      path: "src/features/run-probe/run-probe.store.tsx",
+      line: 380,
+      originalLine: 380,
+      threadResolved: false,
+      outdated: false,
+    };
+    const methodCleanupComment = {
+      id: "window-app-methods",
+      threadId: "PRRT_window_methods",
+      kind: "review-comment" as const,
+      author: "gemini-code-assist",
+      body: "Clean Up Window App Methods on Unmount. Add a cleanup function to delete the action methods assigned to `window.app` when the component unmounts.",
+      createdAt: "2026-07-01T10:00:00Z",
+      path: "src/features/run-probe/run-probe.store.tsx",
+      line: 403,
+      originalLine: 403,
+      threadResolved: false,
+      outdated: false,
+    };
+    const stableCallbacksComment = {
+      id: "stable-callbacks",
+      threadId: "PRRT_stable_callbacks",
+      kind: "review-comment" as const,
+      author: "gemini-code-assist",
+      body: "Unnecessary Callback Recreation. The `shell` object returned by `useRunProbeShell()` changes on every state update. Destructure the stable methods (`selectRecord`, `setActivePanel`) and only depend on the specific state values needed.",
+      createdAt: "2026-07-01T10:00:00Z",
+      path: "src/App.tsx",
+      line: 70,
+      originalLine: 70,
+      threadResolved: false,
+      outdated: false,
+    };
+    const fixedStoreSource = `
+      useEffect(() => {
+        if (typeof window === "undefined") return;
+        const w = window as unknown as { app?: Record<string, unknown> };
+        const app = (w.app ?? {}) as Record<string, unknown>;
+        Object.defineProperty(app, "activeSurface", { configurable: true, get: () => stateRef.current.preferences.activeSurfaceId });
+        Object.defineProperty(app, "activePanel", { configurable: true, get: () => stateRef.current.preferences.activePanel });
+        w.app = app;
+        return () => {
+          const currentApp = w.app;
+          if (!currentApp) return;
+          delete currentApp.activeSurface;
+          delete currentApp.activePanel;
+          if (Object.keys(currentApp).length === 0) delete w.app;
+        };
+      }, []);
+
+      useEffect(() => {
+        if (typeof window === "undefined") return;
+        const w = window as unknown as { app?: Record<string, unknown> };
+        const app = (w.app ?? {}) as Record<string, unknown>;
+        app.setActiveSurface = (id: string) => setActiveSurface(id);
+        app.setActivePanel = (panel: string) => setActivePanel(panel);
+        w.app = app;
+        return () => {
+          const currentApp = w.app;
+          if (!currentApp) return;
+          delete currentApp.setActiveSurface;
+          delete currentApp.setActivePanel;
+          if (Object.keys(currentApp).length === 0) delete w.app;
+        };
+      }, [setActiveSurface, setActivePanel]);
+    `;
+    const fixedAppSource = `
+      function AppShell() {
+        const shell = useRunProbeShell();
+        const { setActiveSurface, setActivePanel, selectRecord, markRefreshed } = shell;
+        const screenActions = useMemo(() => ({
+          "refresh-1": () => markRefreshed(Date.now()),
+          "settings-2": () => setActivePanel("settings"),
+          "manual-refresh-3": () => selectRecord("probe-api"),
+        }), [markRefreshed, selectRecord, setActivePanel, setActiveSurface]);
+        return <div data-testid="setfarm-app-root" />;
+      }
+    `;
+
+    assert.equal(commentLooksMechanicallySatisfied(getterCleanupComment, fixedStoreSource), true);
+    assert.equal(commentLooksMechanicallySatisfied(methodCleanupComment, fixedStoreSource), true);
+    assert.equal(commentLooksMechanicallySatisfied(stableCallbacksComment, fixedAppSource), true);
+    assert.equal(commentLooksMechanicallySatisfied(getterCleanupComment, `Object.defineProperty(app, "activeSurface", { get: () => state.activeSurface });`), false);
+    assert.equal(commentLooksMechanicallySatisfied(stableCallbacksComment, `const shell = useRunProbeShell(); const screenActions = useMemo(() => ({}), [shell]);`), false);
+  });
+
   it("marks static web init, defensive filter, action-id, and aria role review comments as mechanically satisfied", () => {
     const initComment = {
       id: "static-init-inline",

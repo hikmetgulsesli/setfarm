@@ -238,6 +238,35 @@ function commentProseLooksMechanicallySatisfied(body: string, normalizedSource: 
   if (csvEscapingReviewLooksSatisfied(body, normalizedSource)) return true;
 
   if (
+    /\bwindow\.app\b/i.test(body) &&
+    /\bcleanup|clean\s+up|unmount|memory\s+leak|stale\s+references?\b/i.test(body) &&
+    /Object\.defineProperty\s*\(\s*app\s*,\s*["'][A-Za-z_$][\w$]*["']/.test(normalizedSource) &&
+    /return\s*\(\s*\)\s*=>\s*\{[^]*?delete\s+currentApp\.[A-Za-z_$][\w$]*[^]*?\}/.test(normalizedSource)
+  ) {
+    return true;
+  }
+
+  if (
+    /\bwindow\.app\b/i.test(body) &&
+    /\bcleanup|clean\s+up|unmount|action\s+methods?\b/i.test(body) &&
+    /\bapp\.[A-Za-z_$][\w$]*\s*=\s*\([^)]*\)\s*=>/.test(normalizedSource) &&
+    /return\s*\(\s*\)\s*=>\s*\{[^]*?delete\s+currentApp\.[A-Za-z_$][\w$]*[^]*?\}/.test(normalizedSource)
+  ) {
+    return true;
+  }
+
+  if (
+    /\bcallback\b|\bdependencies\b|\bre-?renders?\b|\bscreenActions\b/i.test(body) &&
+    /\bshell\b/i.test(body) &&
+    /\bdestructure\b|\bstable\s+methods?\b|\bselectRecord\b|\bsetActivePanel\b/i.test(body) &&
+    /const\s*\{[^}]*\b(?:selectRecord|setActivePanel|setActiveSurface|markRefreshed|cycleSelectedRecord)\b[^}]*\}\s*=\s*shell\b/.test(normalizedSource) &&
+    /useMemo\s*\([^]*?\[[^\]]*\b(?:selectRecord|setActivePanel|setActiveSurface|markRefreshed|cycleSelectedRecord)\b[^\]]*\]\s*\)/.test(normalizedSource) &&
+    !/useMemo\s*\([^]*?\[[^\]]*\bshell\b[^\]]*\]\s*\)/.test(normalizedSource)
+  ) {
+    return true;
+  }
+
+  if (
     /\bclamp\b/.test(text) &&
     /\bdelta\b/.test(text) &&
     /\b100\s*ms\b|\b100ms\b|\b100\b/.test(text) &&
