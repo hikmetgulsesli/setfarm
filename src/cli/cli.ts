@@ -18,7 +18,7 @@ import { runMedicCheck, getMedicStatus, getRecentMedicChecks } from "../medic/me
 import { pgQuery, pgGet, pgRun, pgClose, now } from "../db-pg.js";
 import { installMedicCron, uninstallMedicCron, isMedicCronInstalled } from "../medic/medic-cron.js";
 import { missionControlApi } from "../runtime-config.js";
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -43,6 +43,19 @@ function getVersion(): string {
     return pkg.version ?? "unknown";
   } catch {
     return "unknown";
+  }
+}
+
+function commandUsable(name: string): boolean {
+  try {
+    execFileSync(name, ["--version"], {
+      encoding: "utf-8",
+      timeout: 5000,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -984,14 +997,23 @@ async function main() {
           const r = snapshot?.rateWindow;
           const resetMs = (w?.remaining === 0 ? w?.resetInMs : r?.resetInMs) || 0;
           const resetMin = Math.max(1, Math.round(resetMs / 60000));
+          if (commandUsable(process.env.OPENCODE_CLI || "opencode")) {
+            process.stderr.write(
+              `Kimi quota exhausted — continuing with opencode/minimax fallback.\n` +
+              `  Weekly: ${w?.used ?? "?"}/${w?.limit ?? "?"} remaining=${w?.remaining ?? "?"}\n` +
+              `  5h window: ${r?.used ?? "?"}/${r?.limit ?? "?"} remaining=${r?.remaining ?? "?"}\n` +
+              `  Kimi resets in ~${resetMin} min.\n`,
+            );
+          } else {
           process.stderr.write(
             `Kimi quota exhausted — refusing to start run.\n` +
             `  Weekly: ${w?.used ?? "?"}/${w?.limit ?? "?"} remaining=${w?.remaining ?? "?"}\n` +
             `  5h window: ${r?.used ?? "?"}/${r?.limit ?? "?"} remaining=${r?.remaining ?? "?"}\n` +
             `  Resets in ~${resetMin} min.\n` +
-            `  Re-run with --force-quota to bypass (e.g. for non-Kimi workflows).\n`,
+              `  Install/configure opencode/minimax or re-run with --force-quota to bypass.\n`,
           );
           process.exit(2);
+          }
         }
         if (sev === "critical") {
           const w = snapshot?.weekly;

@@ -23,7 +23,7 @@ import { buildClaimSummary, buildPreclaimedPrompt, buildResolvedClaimBootstrapSc
 import { recordObservation } from "./installer/observations.js";
 import { emitEvent } from "./installer/events.js";
 
-type AgentRuntime = "codex" | "openclaw" | "kimi";
+type AgentRuntime = "codex" | "openclaw" | "kimi" | "opencode";
 type OperationalRecoveryIntent = "observe_fix" | "platform_replay" | "project_rescue";
 
 function classifyOperationalRecoveryIntent(source: string): OperationalRecoveryIntent {
@@ -138,16 +138,48 @@ function resolveKimiCli(): string {
   return firstUsableCommand(candidates) || candidates.find(isExecutable) || "kimi";
 }
 
+function resolveOpencodeCli(): string {
+  const candidates = uniqueStrings([
+    process.env.OPENCODE_CLI || "",
+    commandFromPath("opencode"),
+    ...pathCommandCandidates("opencode"),
+      path.join(os.homedir(), ".local", "bin", "opencode"),
+      "/opt/homebrew/bin/opencode",
+      "/usr/local/bin/opencode",
+  ]);
+  return firstUsableCommand(candidates) || candidates.find(isExecutable) || "opencode";
+}
+
+function kimiWeeklyQuotaExhausted(): boolean {
+  try {
+    const raw = execFileSync("curl", ["-fsS", "http://127.0.0.1:3080/api/kimi-quota"], {
+      encoding: "utf-8",
+      timeout: 3500,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const data = JSON.parse(raw);
+    return data?.severity === "exhausted" || Number(data?.snapshot?.weekly?.remaining ?? 1) <= 0;
+  } catch {
+    return false;
+  }
+}
+
 function resolveAgentRuntime(): AgentRuntime {
   const requested = (process.env.SETFARM_AGENT_RUNTIME || "").trim().toLowerCase();
   if (requested === "codex" && commandIsUsable(CODEX_CLI)) return "codex";
   if (requested === "openclaw" && commandIsUsable(OPENCLAW_CLI)) return "openclaw";
   if (requested === "kimi" && commandIsUsable(KIMI_CLI)) return "kimi";
-  if (requested === "codex" || requested === "openclaw" || requested === "kimi") {
+  if ((requested === "opencode" || requested === "minimax") && commandIsUsable(OPENCODE_CLI)) return "opencode";
+  if (requested === "codex" || requested === "openclaw" || requested === "kimi" || requested === "opencode" || requested === "minimax") {
     console.warn(`[spawner] Requested runtime ${requested} is not usable; falling back to available runtime`);
   }
   if (commandIsUsable(OPENCLAW_CLI)) return "openclaw";
+  if (commandIsUsable(OPENCODE_CLI) && kimiWeeklyQuotaExhausted()) {
+    console.warn("[spawner] Kimi weekly quota exhausted; using opencode/minimax runtime fallback");
+    return "opencode";
+  }
   if (commandIsUsable(KIMI_CLI)) return "kimi";
+  if (commandIsUsable(OPENCODE_CLI)) return "opencode";
   if (commandIsUsable(CODEX_CLI)) return "codex";
   return requested === "openclaw" ? "openclaw" : requested === "kimi" ? "kimi" : "codex";
 }
@@ -155,6 +187,7 @@ function resolveAgentRuntime(): AgentRuntime {
 const CODEX_CLI = resolveCodexCli();
 const OPENCLAW_CLI = resolveOpenClawCli();
 const KIMI_CLI = resolveKimiCli();
+const OPENCODE_CLI = resolveOpencodeCli();
 const AGENT_RUNTIME: AgentRuntime = resolveAgentRuntime();
 const OPENCLAW_TASKS_DB = process.env.OPENCLAW_TASKS_DB || path.join(os.homedir(), ".openclaw", "tasks", "runs.sqlite");
 const POLL_INTERVAL_MS = 30_000;
@@ -244,7 +277,7 @@ const TRANSCRIPT_ROOT = path.join(os.homedir(), ".openclaw", "workspace", "trans
 const OPENCLAW_AGENTS_ROOT = path.join(os.homedir(), ".openclaw", "agents");
 
 function assertAgentRuntimeAvailable(): void {
-  const command = AGENT_RUNTIME === "codex" ? CODEX_CLI : AGENT_RUNTIME === "openclaw" ? OPENCLAW_CLI : KIMI_CLI;
+  const command = AGENT_RUNTIME === "codex" ? CODEX_CLI : AGENT_RUNTIME === "openclaw" ? OPENCLAW_CLI : AGENT_RUNTIME === "opencode" ? OPENCODE_CLI : KIMI_CLI;
   if (!commandIsUsable(command)) {
     throw new Error(`AGENT_RUNTIME_UNAVAILABLE: ${AGENT_RUNTIME} CLI is not executable or failed --version at ${command}`);
   }
@@ -4534,6 +4567,11 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   const codexModelArgs = process.env.SETFARM_CODEX_MODEL ? ["--model", process.env.SETFARM_CODEX_MODEL] : [];
   const kimiModelArgs = process.env.SETFARM_KIMI_MODEL ? ["--model", process.env.SETFARM_KIMI_MODEL] : [];
   const kimiOutputFormat = process.env.SETFARM_KIMI_OUTPUT_FORMAT || "stream-json";
+  const opencodeModel = process.env.SETFARM_OPENCODE_MODEL || process.env.SETFARM_MINIMAX_MODEL || "minimax-openai/MiniMax-M3";
+  const opencodePromptFile = path.join(path.dirname(transcriptPath), `${agentId}-${sessionId}-prompt.md`);
+  if (AGENT_RUNTIME === "opencode") {
+    try { fs.writeFileSync(opencodePromptFile, prompt); } catch {}
+  }
   const childArgs = AGENT_RUNTIME === "codex"
     ? [
       "--ask-for-approval", "never",
@@ -4556,6 +4594,16 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
         "--output-format", kimiOutputFormat,
         ...kimiModelArgs,
       ]
+    : AGENT_RUNTIME === "opencode"
+      ? [
+        "run",
+        "Follow the attached Setfarm claim instructions exactly. Complete the task and write the required output file.",
+        "--format", "json",
+        "--dir", spawnCwd,
+        "--model", opencodeModel,
+        "--dangerously-skip-permissions",
+        "--file", opencodePromptFile,
+      ]
     : [
       "agent", "--json", "--agent", agentId,
       ...(OPENCLAW_AGENT_LOCAL ? ["--local"] : []),
@@ -4563,14 +4611,14 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
       "--message", prompt, "--timeout", String(AGENT_TIMEOUT_SECONDS),
     ];
   try {
-    const agentCli = AGENT_RUNTIME === "codex" ? CODEX_CLI : AGENT_RUNTIME === "openclaw" ? OPENCLAW_CLI : KIMI_CLI;
+    const agentCli = AGENT_RUNTIME === "codex" ? CODEX_CLI : AGENT_RUNTIME === "openclaw" ? OPENCLAW_CLI : AGENT_RUNTIME === "opencode" ? OPENCODE_CLI : KIMI_CLI;
     fs.appendFileSync(transcriptPath, `[spawner] runtime=${AGENT_RUNTIME} cli=${agentCli} session_id=${sessionId} session_key=${sessionKey} timeout=${AGENT_TIMEOUT_SECONDS}s cwd=${spawnCwd}\n`);
   } catch {}
   const shouldInstallImplementGitWrapper = role === "developer" && Boolean(claim.storyId);
   const pathPrefix = shouldInstallImplementGitWrapper ? installImplementGitWrapper(spawnCwd, transcriptPath) : undefined;
   const outFd = fs.openSync(transcriptPath, "a");
   const errFd = fs.openSync(transcriptPath, "a");
-  const child = spawn(AGENT_RUNTIME === "codex" ? CODEX_CLI : AGENT_RUNTIME === "openclaw" ? OPENCLAW_CLI : KIMI_CLI, childArgs, {
+  const child = spawn(AGENT_RUNTIME === "codex" ? CODEX_CLI : AGENT_RUNTIME === "openclaw" ? OPENCLAW_CLI : AGENT_RUNTIME === "opencode" ? OPENCODE_CLI : KIMI_CLI, childArgs, {
     cwd: spawnCwd,  // Use the claimed worktree when available so relative tool paths resolve correctly.
     // Security audit S-1: explicit env allowlist. Previous `{...process.env}` leaked
     // ALL secrets (API keys, DB password, master URLs) to every agent child process.
@@ -4581,7 +4629,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     env: (() => {
       return buildAgentChildEnv(pathPrefix, { runtime: AGENT_RUNTIME, sessionId });
     })(),
-    stdio: AGENT_RUNTIME === "openclaw" ? ["ignore", outFd, errFd] : ["pipe", outFd, errFd],
+    stdio: AGENT_RUNTIME === "openclaw" || AGENT_RUNTIME === "opencode" ? ["ignore", outFd, errFd] : ["pipe", outFd, errFd],
   });
   if (AGENT_RUNTIME === "codex" || AGENT_RUNTIME === "kimi") {
     child.stdin?.write(prompt);
