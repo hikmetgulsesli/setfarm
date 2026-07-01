@@ -1,5 +1,7 @@
 import { buildDesignMismatchSuggestion, sanitizeDesignMismatchFeedback } from "./error-taxonomy.js";
 import { runProjectContractChecks } from "./static-analysis.js";
+import { findGeneratedRuntimeSemanticIssues } from "./steps/06-implement/guards.js";
+import { sanitizeStackRetryFeedback } from "./stack-modules/registry.js";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -30,6 +32,39 @@ function readScopeFiles(repoPath: string): Set<string> {
   } catch {
     return new Set();
   }
+}
+
+function repoTaskExcludesSettingsFlow(repoPath: string): boolean {
+  if (!repoPath) return false;
+  const chunks: string[] = [];
+  for (const rel of [path.join(".setfarm", "RUN_CONTRACT.json"), "PROJECT_MEMORY.md"]) {
+    try {
+      const raw = fs.readFileSync(path.join(repoPath, rel), "utf-8");
+      if (rel.endsWith(".json")) {
+        try {
+          const parsed = JSON.parse(raw);
+          chunks.push(String(parsed.task || ""), String(parsed.prd || ""));
+        } catch {
+          chunks.push(raw);
+        }
+      } else {
+        chunks.push(raw);
+      }
+    } catch {}
+  }
+  const text = chunks.join("\n").toLowerCase();
+  return /\b(?:do not add|don't add|without|no)\b[^.\n]{0,120}\bsettings?\b/.test(text);
+}
+
+function removeExcludedSettingsFlowFeedback(feedback: string, repoPath?: string, contractRepoPath?: string): string {
+  const candidateRepos = [...new Set([contractRepoPath, repoPath].map((item) => String(item || "").trim()).filter(Boolean))];
+  if (candidateRepos.length === 0 || !candidateRepos.some((repo) => repoTaskExcludesSettingsFlow(repo))) return feedback;
+  if (!/\bSettings expected settings flow\b/i.test(feedback)) return feedback;
+  return feedback
+    .split(/\n\s*ALSO_FIX:\s*\n/i)
+    .filter((block) => !/\bSettings expected settings flow\b/i.test(block))
+    .join("\n\nALSO_FIX:\n")
+    .trim();
 }
 
 function sanitizeSharedTypeRetryFeedback(feedback: string, repoPath?: string): string {
@@ -66,13 +101,31 @@ function sanitizeSharedTypeRetryFeedback(feedback: string, repoPath?: string): s
  */
 export function sanitizeRetryFeedbackForCurrentSource(
   feedback: string,
-  options: { repoPath?: string } = {},
+  options: { repoPath?: string; workdir?: string; contractRepoPath?: string } = {},
 ): string {
-  const sanitized = sanitizeSharedTypeRetryFeedback(
-    sanitizeDesignMismatchFeedback(feedback),
-    options.repoPath,
-  );
   const repoPath = options.repoPath?.trim();
+  let sanitized = removeExcludedSettingsFlowFeedback(
+    sanitizeStackRetryFeedback(
+      sanitizeSharedTypeRetryFeedback(
+        sanitizeDesignMismatchFeedback(feedback),
+        repoPath,
+      ),
+      { repoPath, contractRepoPath: options.contractRepoPath },
+    ),
+    repoPath,
+    options.contractRepoPath,
+  );
+  const workdir = options.workdir?.trim() || repoPath || "";
+  if (workdir && /\b(?:GENERATED_RUNTIME_|ACTION_SEMANTIC_NOOP)\b/i.test(sanitized)) {
+    const currentRuntimeIssues = findGeneratedRuntimeSemanticIssues(workdir, repoPath || "");
+    if (currentRuntimeIssues.length === 0) {
+      sanitized = sanitized
+        .split(/\n\s*ALSO_FIX:\s*\n/i)
+        .filter((block) => !/\b(?:GENERATED_RUNTIME_|ACTION_SEMANTIC_NOOP)\b/i.test(block))
+        .join("\n\nALSO_FIX:\n")
+        .trim();
+    }
+  }
   if (!repoPath || !/\bUI_CONTRACT\b/i.test(sanitized)) return sanitized;
 
   const files = extractUiContractFiles(sanitized);

@@ -5,7 +5,8 @@ import { resolveSetfarmCli } from "./installer/paths.js";
 import { classifyError } from "./installer/error-taxonomy.js";
 import { readSupervisorState, supervisorStatePath } from "./installer/supervisor/state.js";
 import { implementEvidenceArtifactPaths, readImplementEvidenceConfig } from "./installer/implement-evidence.js";
-import { hasBrowserGameIntent } from "./installer/task-intent.js";
+import { getStackModule } from "./installer/stack-modules/registry.js";
+import type { StackPackId } from "./installer/stack-contract/types.js";
 
 function shellQuote(value: string): string {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
@@ -1068,24 +1069,29 @@ function acceptanceCriteriaLines(value: unknown): string[] {
   return String(value || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 }
 
-function looksLikeBrowserGameClaim(_input: string, task: string, currentStory: { storyTitle: string; acceptanceCriteria: unknown }): boolean {
-  const signal = [
-    task,
-    currentStory.storyTitle,
-    ...acceptanceCriteriaLines(currentStory.acceptanceCriteria),
-  ].join("\n").toLowerCase();
-  return hasBrowserGameIntent(signal);
+function stackPackFromClaimInput(input: string): string {
+  const direct = lineValue(input, "STACK_PACK_ID")
+    || lineValue(input, "DETECTED_STACK")
+    || lineValue(input, "SETUP_STACK_PACK_ID");
+  if (direct) return direct;
+  const contractPack = input.match(/^\s*Pack:\s*([a-z0-9-]+)\s*$/im)?.[1];
+  if (contractPack) return contractPack;
+  return "";
 }
 
 function runtimeDoneChecklistForClaim(input: string, task: string, currentStory: { storyTitle: string; acceptanceCriteria: unknown }): string[] {
-  if (!looksLikeBrowserGameClaim(input, task, currentStory)) return [];
-  return [
-    "Browser-game interactive stories must keep every data-setfarm-root wrapper as a neutral viewport frame: className includes relative, min-h-screen or h-screen, w-full or w-screen, and overflow-hidden.",
-    "Browser-game runtime must contain a visible scheduled loop using setInterval or requestAnimationFrame that dispatches or calls a tick/advance/step/update action; reducer definitions without a timer do not count.",
-    "Interactive runtime state must be exposed from live source through window.app or globalThis.app with state and actions; window.game, comments, and type declarations do not count.",
-    "Generated Stitch screens must remain imported/reachable and wired through their declared actions prop IDs; do not replace generated gameplay/settings screens with custom shells.",
-    "Before STATUS: done, run build/test and search scoped source for the runtime loop primitive plus window.app/globalThis.app assignment.",
-  ];
+  const packId = stackPackFromClaimInput(input);
+  if (!packId) return [];
+  try {
+    return getStackModule(packId as StackPackId).claimDoneChecklist({
+      input,
+      task,
+      storyTitle: currentStory.storyTitle,
+      acceptanceCriteria: currentStory.acceptanceCriteria,
+    });
+  } catch {
+    return [];
+  }
 }
 
 function meaningfulFailureCategory(value: string): string {
@@ -1160,6 +1166,33 @@ function extractPrReviewThreads(value: string): Array<Record<string, string | nu
     }
   }
   return threads;
+}
+
+function normalizeReviewThreadPath(value: unknown): string {
+  return String(value || "")
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^\.\/+/, "")
+    .replace(/^\/+/, "");
+}
+
+function splitPrReviewThreadsByScope(
+  threads: Array<Record<string, string | number>>,
+  scopeFiles: string[],
+): {
+  inScope: Array<Record<string, string | number>>;
+  outOfScope: Array<Record<string, string | number>>;
+} {
+  const allowed = new Set(scopeFiles.map(normalizeReviewThreadPath).filter(Boolean));
+  if (allowed.size === 0) return { inScope: threads, outOfScope: [] };
+  const inScope: Array<Record<string, string | number>> = [];
+  const outOfScope: Array<Record<string, string | number>> = [];
+  for (const thread of threads) {
+    const file = normalizeReviewThreadPath(thread.file);
+    if (!file || allowed.has(file)) inScope.push(thread);
+    else outOfScope.push(thread);
+  }
+  return { inScope, outOfScope };
 }
 
 function splitProtectedSnippetList(value: string): string[] {
@@ -1365,13 +1398,18 @@ export function buildClaimSummary(params: {
     lineValue(previousFailure, "Suggested response") || lineValue(input, "Suggested response"),
   );
   const classifiedFailure = classifyError([previousFailure, explicitFailureCategory, explicitFailureSuggestion].filter(Boolean).join("\n"));
-  const prReviewThreads = extractPrReviewThreads(previousFailure);
+  const prReviewThreadScope = splitPrReviewThreadsByScope(extractPrReviewThreads(previousFailure), scopeFiles);
+  const prReviewThreads = prReviewThreadScope.inScope;
   const failureCategory =
     explicitFailureCategory ||
     (prReviewThreads.length > 0 ? "PR_REVIEW_COMMENTS_OPEN" : "") ||
     (previousFailure ? classifiedFailure.category : "");
-  const retryWorktreePatchForSummary = failureCategory === "PR_REVIEW_COMMENTS_OPEN" ? undefined : retryWorktreePatch;
-  const retrySourceSnapshotForSummary = failureCategory === "PR_REVIEW_COMMENTS_OPEN" ? undefined : retrySourceSnapshot;
+  const retryWorktreePatchForSummary = /^(?:PR_REVIEW_COMMENTS_OPEN|SCOPE_BLEED)$/i.test(failureCategory)
+    ? undefined
+    : retryWorktreePatch;
+  const retrySourceSnapshotForSummary = /^(?:PR_REVIEW_COMMENTS_OPEN|SCOPE_BLEED)$/i.test(failureCategory)
+    ? undefined
+    : retrySourceSnapshot;
   const retryMode = retryFeedbackMode(params.role, failureCategory);
   const failureSuggestion = explicitFailureSuggestion || (previousFailure ? classifiedFailure.suggestion : "");
   const retryDiscipline = retryMode === "fix"
@@ -1507,6 +1545,7 @@ export function buildClaimSummary(params: {
       sourceSnapshot: retrySourceSnapshotForSummary,
       prThreadIds: extractPrReviewThreadIds(previousFailure),
       actionableReviewThreads: prReviewThreads,
+      outOfScopeReviewThreads: prReviewThreadScope.outOfScope,
       protectedSnippets,
       restoreTargets: retryRestoreTargets,
       discipline: retryDiscipline,
@@ -1608,6 +1647,9 @@ if (s.failureSuggestion) lines.push("FAILURE_SUGGESTION=" + String(s.failureSugg
 const rf = s.retryFeedback || {};
 if (rf.mode) lines.push("RETRY_MODE=" + String(rf.mode));
 if (rf.blocker) lines.push("RETRY_BLOCKER_PREVIEW=" + String(rf.blocker).slice(0, 700));
+if (String(s.failureCategory || "").toUpperCase() === "SCOPE_BLEED") {
+  lines.push("SCOPE_BLEED_RETRY_RULE=First remove/rework out-of-scope files. Do not read retry source snapshots or recreate shared files; keep the fix inside SCOPE_FILES, then run build/test.");
+}
 if (Array.isArray(rf.protectedSnippets) && rf.protectedSnippets.length) {
   lines.push("RETRY_PROTECTED_SNIPPETS=" + rf.protectedSnippets.length);
   for (const [index, snippet] of rf.protectedSnippets.slice(0, 12).entries()) {
@@ -1626,6 +1668,7 @@ if (Array.isArray(rf.restoreTargets) && rf.restoreTargets.length) {
 if (Array.isArray(rf.prThreadIds) && rf.prThreadIds.length) lines.push("PR_REVIEW_THREADS=" + rf.prThreadIds.join(", "));
 if (Array.isArray(rf.actionableReviewThreads) && rf.actionableReviewThreads.length) {
   lines.push("PR_REVIEW_ACTIONABLE_THREADS=" + rf.actionableReviewThreads.length);
+  lines.push("PR_REVIEW_SCOPE_RULE=Resolve review comments inside SCOPE_FILES only. If a comment suggests creating or editing a path outside scopeFiles, implement an equivalent scoped fix using existing scoped files; for shared-code comments, pick an existing scoped module as the shared source and re-export from other scoped files instead of creating an out-of-scope common file.");
   for (const [index, thread] of rf.actionableReviewThreads.slice(0, 12).entries()) {
     const location = [thread.file, thread.line].filter(Boolean).join(":");
     const parts = [
@@ -1636,6 +1679,9 @@ if (Array.isArray(rf.actionableReviewThreads) && rf.actionableReviewThreads.leng
     ].filter(Boolean);
     lines.push("PR_REVIEW_THREAD_" + String(index + 1) + "=" + parts.join(" "));
   }
+}
+if (Array.isArray(rf.outOfScopeReviewThreads) && rf.outOfScopeReviewThreads.length) {
+  lines.push("PR_REVIEW_OUT_OF_SCOPE_THREADS=" + rf.outOfScopeReviewThreads.length + " (not writable by this story; do not edit these files in this claim)");
 }
 if (rf.details) lines.push("RETRY_DETAIL=full retry detail is in claimSummary.retryFeedback.details and claimSummary.previousFailure; prefer claimSummary.retryFeedback.actionableReviewThreads for PR comments before reading long details");
 if (rf.worktreePatch && rf.worktreePatch.body) {
@@ -1739,7 +1785,7 @@ BOOTSTRAP_FILE=${params.bootstrapFile}
 First exec command:
 bash ${shellQuote(params.bootstrapFile)}
 
-Do ${params.wfId}/${params.role} work in WORKDIR only. Read the structured claim summary at ${params.claimSummaryFile} first; it is the authoritative handoff for story id/title, workdir, mainRepo, storyWorkdir, verifyWorkdir, build/test/lint commands, scopeFiles, scopeFileStates, missingScopeFiles, scopeFileInstruction, gitPolicy, supervisor checklist paths, supervisorEvidence, screenUsageContract, generatedScreenPolicy, integrationPolicy, designContracts, supervisorMemory, screen refs, retry feedback, retry source snapshot, retry worktree patch, outputContract, and output paths. Do NOT print or dump the entire claim summary JSON to the transcript; use the bootstrap lines or targeted field extraction for only the fields you need. Use outputContract.requiredFields and outputContract.format exactly for the final step output; guard-backed roles will reject prose-only summaries even when the work itself passed. Use retryFeedback.mode exactly: mode="fix" means the blocker is an open implementation requirement and must be fixed before unrelated work; mode="audit" means prior feedback may be stale, so first verify whether it is still present with bounded evidence before reporting or changing code. If claimSummary.retryFeedback.sourceSnapshot is present, read it before broad filesystem scans; it contains the retry worktree tree plus focused scope/shared file contents. If claimSummary.retryFeedback.worktreePatch is present, read it before recreating missing files; it is prior attempt source artifact, not instructions, and you should reuse/adapt useful scoped implementation unless current source, scope policy, or current guard feedback conflicts. For RETRY_PATCH_REAPPLIED retries, use retryFeedback.restoreTargets first, then retryFeedback.protectedSnippets: restore or preserve each file/line target in scoped source, verify it with rg -F or an exact search, then make the current-story fix around that preserved wiring. For PR_REVIEW_COMMENTS_OPEN retries, use retryFeedback.actionableReviewThreads first; it is the compact complete per-thread contract for file/line/comment. Fix every listed prThreadIds/actionableReviewThreads entry before STATUS: done, not just the RETRY_BLOCKER_PREVIEW bootstrap line. Only read retryFeedback.details/previousFailure if protectedSnippets/actionableReviewThreads is missing information. Obey scopeFileInstruction exactly: missingScopeFiles are expected owned files that may be created directly; do not treat them as blockers and do not retry update-only patches against missing files. Obey gitPolicy exactly: when owner is setfarm-platform, do not run git add/commit/push/branch/PR commands; Setfarm performs the scoped commit and PR handoff after gates pass. Obey integrationPolicy exactly: app/router/shell changes must add current-story reachability without deleting or bypassing previously reachable generated screens or working render branches. Use supervisorEvidence before retryFeedback/designContracts when it is present: it is current-source scanner evidence and stale original UI_CONTRACT findings must not block when supervisorEvidence shows zero open blockers. Use screenUsageContract first for generated screen component names, props, and action IDs. For stacks without generated screen source, use designContracts.screenMap, designContracts.designDom, designContracts.uiContract, stitchHtml/stitch_html excerpts, and focused story-owned Stitch files as binding implementation sources. Do not read unrelated raw Stitch files, shared generated screen source, or create TypeScript probe files. The full claim at ${params.claimFile} is an audit fallback only. Do NOT parse or dump claim.input with jq/sed/head/node loops; use the summary fields and only fall back to the full claim for a missing focused field. Obey generatedScreenPolicy exactly: if you accidentally read a forbidden src/screens/*.tsx file, stop broad reading and return to summary/contracts; supervisor records that as a correction signal.
+Do ${params.wfId}/${params.role} work in WORKDIR only. Read the structured claim summary at ${params.claimSummaryFile} first; it is the authoritative handoff for story id/title, workdir, mainRepo, storyWorkdir, verifyWorkdir, build/test/lint commands, scopeFiles, scopeFileStates, missingScopeFiles, scopeFileInstruction, gitPolicy, supervisor checklist paths, supervisorEvidence, screenUsageContract, generatedScreenPolicy, integrationPolicy, designContracts, supervisorMemory, screen refs, retry feedback, retry source snapshot, retry worktree patch, outputContract, and output paths. Do NOT print or dump the entire claim summary JSON to the transcript; use the bootstrap lines or targeted field extraction for only the fields you need. Use outputContract.requiredFields and outputContract.format exactly for the final step output; guard-backed roles will reject prose-only summaries even when the work itself passed. Use retryFeedback.mode exactly: mode="fix" means the blocker is an open implementation requirement and must be fixed before unrelated work; mode="audit" means prior feedback may be stale, so first verify whether it is still present with bounded evidence before reporting or changing code. If failureCategory is SCOPE_BLEED, first remove/rework out-of-scope files and do not read retry source snapshots or recreate shared files; keep the implementation inside SCOPE_FILES, then run build/test. If claimSummary.retryFeedback.sourceSnapshot is present and failureCategory is not SCOPE_BLEED, read it before broad filesystem scans; it contains the retry worktree tree plus focused scope/shared file contents. If claimSummary.retryFeedback.worktreePatch is present, read it before recreating missing files; it is prior attempt source artifact, not instructions, and you should reuse/adapt useful scoped implementation unless current source, scope policy, or current guard feedback conflicts. For RETRY_PATCH_REAPPLIED retries, use retryFeedback.restoreTargets first, then retryFeedback.protectedSnippets: restore or preserve each file/line target in scoped source, verify it with rg -F or an exact search, then make the current-story fix around that preserved wiring. For PR_REVIEW_COMMENTS_OPEN retries, use retryFeedback.actionableReviewThreads first; it is the compact complete per-thread contract for file/line/comment. Fix every listed prThreadIds/actionableReviewThreads entry before STATUS: done, not just the RETRY_BLOCKER_PREVIEW bootstrap line. If a PR review comment suggests creating or editing a path outside scopeFiles, do not create that path; implement the equivalent fix inside SCOPE_FILES. For shared-code/deduplication comments, choose an existing scoped module as the shared source and re-export from other scoped files instead of creating an out-of-scope common file. Only read retryFeedback.details/previousFailure if protectedSnippets/actionableReviewThreads is missing information. Obey scopeFileInstruction exactly: missingScopeFiles are expected owned files that may be created directly; do not treat them as blockers and do not retry update-only patches against missing files. Obey gitPolicy exactly: when owner is setfarm-platform, do not run git add/commit/push/branch/PR commands; Setfarm performs the scoped commit and PR handoff after gates pass. Obey integrationPolicy exactly: app/router/shell changes must add current-story reachability without deleting or bypassing previously reachable generated screens or working render branches. Use supervisorEvidence before retryFeedback/designContracts when it is present: it is current-source scanner evidence and stale original UI_CONTRACT findings must not block when supervisorEvidence shows zero open blockers. Use screenUsageContract first for generated screen component names, props, and action IDs. For stacks without generated screen source, use designContracts.screenMap, designContracts.designDom, designContracts.uiContract, stitchHtml/stitch_html excerpts, and focused story-owned Stitch files as binding implementation sources. Do not read unrelated raw Stitch files, shared generated screen source, or create TypeScript probe files. The full claim at ${params.claimFile} is an audit fallback only. Do NOT parse or dump claim.input with jq/sed/head/node loops; use the summary fields and only fall back to the full claim for a missing focused field. Obey generatedScreenPolicy exactly: if you accidentally read a forbidden src/screens/*.tsx file, stop broad reading and return to summary/contracts; supervisor records that as a correction signal.
 For retryFeedback.mode="fix", treat retryDiscipline.mode as a hard implementation instruction. For retryDiscipline.mode="first-delta", after bootstrap and summary, inspect only the owned scope files plus safe metadata needed for the first edit, then make a small scoped source delta before broad analysis/build/test. For retryDiscipline.mode="semantic-fix", implement the named blocker first, then run the relevant checks. For retryFeedback.mode="audit", do not convert prior feedback into a source-edit mandate unless the role-specific prompt explicitly owns that fix.
 If claimSummary.runtimeDoneChecklist is present, it is a hard done checklist, not optional guidance. Preserve every listed invariant while fixing the current blocker; a retry that fixes one item but regresses another must not report STATUS: done.
 Do NOT create scratch/progress/todo/note/probe files inside WORKDIR unless they are explicitly listed in scopeFiles. Files like src/_probe.tsx, src/probe.tsx, tmp.ts, scratch.tsx, TODO.md, and progress.txt are forbidden in the project worktree. Use ${params.outputFile} for final output and /tmp/setfarm-progress-<run-id>.txt for checkpoints only.

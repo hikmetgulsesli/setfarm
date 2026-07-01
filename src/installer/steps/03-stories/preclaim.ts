@@ -17,7 +17,8 @@ import {
   type StoryOwnedAction,
 } from "./action-control-mapper.js";
 import { contextPrdText, parsePrdContract, type PrdSurfaceAction } from "./prd-contract-parser.js";
-import { hasBrowserGameIntent } from "../../task-intent.js";
+import { hasBrowserGameIntent } from "../../stack-contract/detector.js";
+import { isBrowserGameStackPack, stackPackFromContext } from "../../stack-contract/identity.js";
 
 type PredictedScreen = ReturnType<typeof computePredictedScreenFiles>[number];
 type ProjectKind = "game" | "product";
@@ -171,6 +172,8 @@ function inferProjectKind(params: {
   predicted?: PredictedScreen[];
   screenMap?: any[];
 }): ProjectKind {
+  const packId = stackPackFromContext(params.context);
+  if (packId) return isBrowserGameStackPack(packId) ? "game" : "product";
   const platform = String(params.context?.["platform"] || params.context?.["PLATFORM"] || "").toLowerCase();
   if (platform === "game") return "game";
   if (platform && ["web", "mobile", "desktop", "api", "cli"].includes(platform)) return "product";

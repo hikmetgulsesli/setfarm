@@ -87,4 +87,125 @@ describe("retry feedback sanitization", () => {
       fs.rmSync(repo, { recursive: true, force: true });
     }
   });
+
+  it("drops stale browser-game runtime feedback when current source is not a browser game", () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-retry-feedback-runtime-stale-"));
+    try {
+      fs.mkdirSync(path.join(repo, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(repo, "package.json"), JSON.stringify({ name: "fixloop-smoke-board" }));
+      fs.writeFileSync(path.join(repo, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { componentName: "StatusUtilityScreen", file: "src/screens/StatusUtilityScreen.tsx", title: "Status Utility" },
+      ]));
+      fs.writeFileSync(path.join(repo, "src/screens/StatusUtilityScreen.tsx"), [
+        "export function StatusUtilityScreen({ actions }: any) {",
+        "  return <main><button onClick={actions.refresh}>Refresh</button><span>Ready/Paused</span></main>;",
+        "}",
+      ].join("\n"));
+      fs.writeFileSync(path.join(repo, "src/App.tsx"), [
+        "import { StatusUtilityScreen } from './screens/StatusUtilityScreen';",
+        "export default function App() {",
+        "  return <StatusUtilityScreen actions={{ refresh() {} }} />;",
+        "}",
+      ].join("\n"));
+
+      const feedback = [
+        "BROWSER_GAME_RUNTIME_LOOP_MISSING: browser-game projects must wire a visible runtime loop with setInterval/requestAnimationFrame and a scheduled tick/advance/step/update action.",
+        "Story US-002 reported STATUS: done while generated-screen runtime semantics are incomplete or misleading.",
+      ].join("\n");
+
+      assert.equal(sanitizeRetryFeedbackForCurrentSource(feedback, { repoPath: repo, workdir: repo }), "");
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("drops browser-game retry feedback when stack contract resolves to web", () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-retry-feedback-stack-web-"));
+    try {
+      fs.mkdirSync(path.join(repo, ".setfarm/ledger"), { recursive: true });
+      fs.writeFileSync(path.join(repo, ".setfarm/ledger/stack-contract.json"), JSON.stringify({
+        schema: "setfarm.stack-contract.v1",
+        status: "resolved",
+        packId: "vite-react-web-app",
+      }));
+      fs.mkdirSync(path.join(repo, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(repo, "package.json"), JSON.stringify({ name: "score-paused-board", keywords: ["browser-game"] }));
+      fs.writeFileSync(path.join(repo, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { componentName: "StatusBoard", file: "src/screens/StatusBoard.tsx", title: "Score Paused Board" },
+      ]));
+      fs.writeFileSync(path.join(repo, "src/screens/StatusBoard.tsx"), "export function StatusBoard() { return <main>Paused score</main>; }\n");
+      fs.writeFileSync(path.join(repo, "src/App.tsx"), "import { StatusBoard } from './screens/StatusBoard'; export default function App() { return <StatusBoard />; }\n");
+
+      const feedback = [
+        "BROWSER_GAME_RUNTIME_LOOP_MISSING: browser-game projects must wire a visible runtime loop with setInterval/requestAnimationFrame.",
+        "ALSO_FIX:",
+        "Keep this non-game issue.",
+      ].join("\n");
+      const output = sanitizeRetryFeedbackForCurrentSource(feedback, { repoPath: repo, workdir: repo });
+
+      assert.doesNotMatch(output, /BROWSER_GAME_RUNTIME_LOOP_MISSING/);
+      assert.match(output, /Keep this non-game issue/);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps browser-game runtime feedback when current source still reproduces it", () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-retry-feedback-runtime-active-"));
+    try {
+      fs.mkdirSync(path.join(repo, ".setfarm", "ledger"), { recursive: true });
+      fs.mkdirSync(path.join(repo, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(repo, ".setfarm", "ledger", "stack-contract.json"), JSON.stringify({ packId: "browser-game-canvas" }));
+      fs.writeFileSync(path.join(repo, "package.json"), JSON.stringify({ name: "tiny-browser-game", keywords: ["browser-game"] }));
+      fs.writeFileSync(path.join(repo, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { componentName: "GameplayScreen", file: "src/screens/GameplayScreen.tsx", title: "Gameplay" },
+      ]));
+      fs.writeFileSync(path.join(repo, "src/screens/GameplayScreen.tsx"), [
+        "export function GameplayScreen({ runtime, actions }: any) {",
+        "  return <main><button onClick={actions.advance}>Advance</button><span>{runtime.score}</span></main>;",
+        "}",
+      ].join("\n"));
+      fs.writeFileSync(path.join(repo, "src/App.tsx"), [
+        "import { GameplayScreen } from './screens/GameplayScreen';",
+        "export default function App() {",
+        "  return <GameplayScreen runtime={{ score: 0 }} actions={{ advance() {} }} />;",
+        "}",
+      ].join("\n"));
+
+      const feedback = "BROWSER_GAME_RUNTIME_LOOP_MISSING: browser-game projects must wire a visible runtime loop with setInterval/requestAnimationFrame and a scheduled tick/advance/step/update action.";
+      const output = sanitizeRetryFeedbackForCurrentSource(feedback, { repoPath: repo, workdir: repo });
+      assert.match(output, /BROWSER_GAME_RUNTIME_LOOP_MISSING/);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("drops stale settings-flow smoke feedback when settings are explicitly out of scope", () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-retry-feedback-settings-flow-"));
+    try {
+      fs.mkdirSync(path.join(repo, ".setfarm"), { recursive: true });
+      fs.writeFileSync(path.join(repo, ".setfarm", "RUN_CONTRACT.json"), JSON.stringify({
+        task: "Build a tiny status board. Do not add navigation, auth, analytics, settings, or unrelated modules.",
+      }));
+      const feedback = [
+        "SYSTEM_SMOKE_FAILURE:",
+        "VERIFY_SYSTEM_SMOKE_FAILURE for US-002:",
+        "[FLOW] flow-no-visible-result: Settings expected settings flow; route/hash/text/form state did not confirm it",
+        "ALSO_FIX:",
+        "RETRY_WORKTREE_PATCH: omitted from retry feedback because raw diffs are not safe claim context.",
+      ].join("\n");
+
+      const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-retry-feedback-settings-workdir-"));
+      const output = sanitizeRetryFeedbackForCurrentSource(feedback, {
+        repoPath: workdir,
+        workdir,
+        contractRepoPath: repo,
+      });
+      assert.doesNotMatch(output, /Settings expected settings flow/);
+      assert.match(output, /RETRY_WORKTREE_PATCH/);
+      fs.rmSync(workdir, { recursive: true, force: true });
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
 });

@@ -19,7 +19,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import os from "node:os";
+import { fileURLToPath } from "node:url";
 
 export interface BuildInfo {
   sha: string;
@@ -36,9 +36,12 @@ export interface RuntimeGuardResult {
   branch?: string;
 }
 
-const SETFARM_REPO_DIR =
-  process.env.SETFARM_REPO_DIR ||
-  path.join(os.homedir(), ".openclaw", "setfarm-repo");
+function defaultRepoDir(): string {
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+}
+
+const SETFARM_REPO_DIR = process.env.SETFARM_REPO_DIR || defaultRepoDir();
+const SETFARM_REPO_LABEL = SETFARM_REPO_DIR;
 
 function git(args: string[]): string {
   return execFileSync("git", args, {
@@ -51,7 +54,7 @@ function git(args: string[]): string {
 
 export function verifyRuntimeIntegrity(options?: { allowDirty?: boolean }): RuntimeGuardResult {
   if (!existsSync(SETFARM_REPO_DIR) || !existsSync(path.join(SETFARM_REPO_DIR, ".git"))) {
-    return { ok: true, reason: "setfarm-repo not found — assumed packaged install" };
+    return { ok: true, reason: `${SETFARM_REPO_LABEL} not found — assumed packaged install` };
   }
 
   let branch: string;
@@ -59,7 +62,7 @@ export function verifyRuntimeIntegrity(options?: { allowDirty?: boolean }): Runt
   catch (e) { return { ok: false, reason: "git branch failed: " + String(e).slice(0, 160) }; }
 
   if (branch !== "main") {
-    return { ok: false, reason: "setfarm-repo is on branch '" + branch + "' (expected 'main'). Runtime refuses to start from a non-main checkout. Run: cd ~/.openclaw/setfarm-repo && git checkout main && npm run build", branch };
+    return { ok: false, reason: `${SETFARM_REPO_LABEL} is on branch '${branch}' (expected 'main'). Runtime refuses to start from a non-main checkout. Run: cd ${SETFARM_REPO_DIR} && git checkout main && npm run build`, branch };
   }
 
   let headSha: string;
@@ -71,13 +74,13 @@ export function verifyRuntimeIntegrity(options?: { allowDirty?: boolean }): Runt
     try { porcelain = git(["status", "--porcelain"]); }
     catch (e) { return { ok: false, reason: "git status failed: " + String(e).slice(0, 160) }; }
     if (porcelain.length > 0) {
-      return { ok: false, reason: "setfarm-repo has uncommitted local changes — platform source tree must be clean. Run: cd ~/.openclaw/setfarm-repo && git status", branch, headSha };
+      return { ok: false, reason: `${SETFARM_REPO_LABEL} has uncommitted local changes — platform source tree must be clean. Run: cd ${SETFARM_REPO_DIR} && git status`, branch, headSha };
     }
   }
 
   const buildInfoPath = path.join(SETFARM_REPO_DIR, "dist", "BUILD_INFO.json");
   if (!existsSync(buildInfoPath)) {
-    return { ok: false, reason: "dist/BUILD_INFO.json missing — dist was built without the prebuild stamp. Run: cd ~/.openclaw/setfarm-repo && npm run build", branch, headSha };
+    return { ok: false, reason: "dist/BUILD_INFO.json missing — dist was built without the prebuild stamp. Run: cd " + SETFARM_REPO_DIR + " && npm run build", branch, headSha };
   }
 
   let buildInfo: BuildInfo;
@@ -85,7 +88,7 @@ export function verifyRuntimeIntegrity(options?: { allowDirty?: boolean }): Runt
   catch (e) { return { ok: false, reason: "dist/BUILD_INFO.json parse failed: " + String(e).slice(0, 160), branch, headSha }; }
 
   if (buildInfo.sha !== headSha) {
-    return { ok: false, reason: "dist/BUILD_INFO.json sha (" + buildInfo.sha.slice(0, 8) + ") does not match HEAD (" + headSha.slice(0, 8) + "). dist/ is stale. Run: cd ~/.openclaw/setfarm-repo && npm run build", branch, headSha, buildInfo };
+    return { ok: false, reason: "dist/BUILD_INFO.json sha (" + buildInfo.sha.slice(0, 8) + ") does not match HEAD (" + headSha.slice(0, 8) + "). dist/ is stale. Run: cd " + SETFARM_REPO_DIR + " && npm run build", branch, headSha, buildInfo };
   }
 
   if (buildInfo.branch !== "main") {

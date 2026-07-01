@@ -110,7 +110,7 @@ export function mergeRetryFailureTexts(items: Array<string | undefined | null>):
   return merged.join("\n\nALSO_FIX:\n");
 }
 
-async function collectPriorStoryFailureText(runId: string, storyId: string, storyRepoPath: string): Promise<string> {
+async function collectPriorStoryFailureText(runId: string, storyId: string, storyRepoPath: string, workdir?: string, contractRepoPath?: string): Promise<string> {
   try {
     const rows = await pgQuery<{ diagnostic: string | null }>(
       `SELECT diagnostic
@@ -124,7 +124,7 @@ async function collectPriorStoryFailureText(runId: string, storyId: string, stor
         LIMIT 4`,
       [runId, storyId],
     );
-    return mergeRetryFailureTexts(rows.map((row) => sanitizedRetryFailureText(String(row.diagnostic || ""), storyRepoPath)));
+    return mergeRetryFailureTexts(rows.map((row) => sanitizedRetryFailureText(String(row.diagnostic || ""), storyRepoPath, workdir || storyRepoPath, contractRepoPath)));
   } catch (err) {
     logger.warn(`[implement-context] failed to collect prior story failure diagnostics for ${storyId}: ${String(err).slice(0, 160)}`, { runId });
     return "";
@@ -344,10 +344,10 @@ function buildRetrySourceSnapshot(workdir: string, scopeFilesRaw: string, shared
   return snapshot;
 }
 
-function sanitizedRetryFailureText(text: string, repoPath?: string): string {
+function sanitizedRetryFailureText(text: string, repoPath?: string, workdir?: string, contractRepoPath?: string): string {
   const actionable = extractActionableRetryFailureText(text);
   if (!actionable.trim()) return "";
-  return sanitizeRetryFeedbackForCurrentSource(actionable, { repoPath });
+  return sanitizeRetryFeedbackForCurrentSource(actionable, { repoPath, workdir, contractRepoPath });
 }
 
 /**
@@ -405,15 +405,16 @@ export async function injectStoryContext(
     maxRetries: nextStory.max_retries,
   };
   const storyRepoPath = context["story_workdir"] || context["repo"] || context["REPO"] || "";
+  const contractRepoPath = context["repo"] || context["REPO"] || storyRepoPath || pipelineStoryWorkdir || "";
   const preservedContextRetryFailure =
     story.retryCount > 0 && priorContextFailure && (!priorContextStoryId || priorContextStoryId === story.storyId)
-      ? sanitizedRetryFailureText(priorContextFailure, storyRepoPath || pipelineStoryWorkdir)
+      ? sanitizedRetryFailureText(priorContextFailure, storyRepoPath || pipelineStoryWorkdir, pipelineStoryWorkdir || storyRepoPath, contractRepoPath)
       : "";
   const retryFailureText = nextStory.output
     ? (() => {
         const isQualityFixStory = /^QA-FIX-\d+$/i.test(nextStory.story_id || "");
         return (isQualityFixStory || nextStory.abandoned_count > 0 || nextStory.retry_count > 0)
-          ? sanitizedRetryFailureText(String(nextStory.output), storyRepoPath)
+          ? sanitizedRetryFailureText(String(nextStory.output), storyRepoPath, pipelineStoryWorkdir || storyRepoPath, contractRepoPath)
           : "";
       })()
     : "";
@@ -460,7 +461,7 @@ export async function injectStoryContext(
       )
     : "";
   const priorStoryFailureText = story.retryCount > 0
-    ? await collectPriorStoryFailureText(step.run_id, story.storyId, storyRepoPath)
+    ? await collectPriorStoryFailureText(step.run_id, story.storyId, storyRepoPath, context["story_workdir"] || storyRepoPath, contractRepoPath)
     : "";
   const retryRestoreCategoryHint = retryPatchCategoryHint(
     scopeFilesRetryFailure,
@@ -552,7 +553,7 @@ export async function injectStoryContext(
   // Platform-Specific Design Rules (implement + verify)
   if (step.step_id === "implement" || step.step_id === "verify") {
     try {
-      const { detectPlatform, getDesignRules } = await import("../../design-rules.js");
+      const { detectPlatform, getDesignRules } = await import("../../stack-modules/design-rules.js");
       const platform = detectPlatform(context["repo"] || "");
       context["design_rules"] = getDesignRules(platform);
       context["detected_platform"] = platform;

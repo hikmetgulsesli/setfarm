@@ -4397,7 +4397,7 @@ async function injectStoryContext(
   // ── Platform-Specific Design Rules Injection ────────────────────────
   if (step.step_id === "implement" || step.step_id === "verify") {
     try {
-      const { detectPlatform, getDesignRules } = await import("./design-rules.js");
+      const { detectPlatform, getDesignRules } = await import("./stack-modules/design-rules.js");
       const platform = detectPlatform(context["repo"] || "");
       context["design_rules"] = getDesignRules(platform);
       context["detected_platform"] = platform;

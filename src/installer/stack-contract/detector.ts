@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { StackCandidate, StackEvidence, StackPackId } from "./types.js";
-import { hasExplicitNonGameIntent } from "../task-intent.js";
 
 interface PackageJson {
   dependencies?: Record<string, string>;
@@ -13,7 +12,7 @@ const TASK_HINTS: Array<{ packId: StackPackId; pattern: RegExp; value: string; w
   { packId: "nextjs-web-app", pattern: /\b(next\.?js|nextjs)\b/i, value: "task mentions Next.js", weight: 70 },
   { packId: "vite-react-web-app", pattern: /\b(vite|react spa|single page app|single-page app)\b/i, value: "task mentions Vite or React SPA", weight: 55 },
   { packId: "static-html-site", pattern: /\b(static html|plain html|single html|landing page|marketing page)\b/i, value: "task mentions static HTML or landing page", weight: 55 },
-  { packId: "browser-game-canvas", pattern: /\b(browser game|arcade|tetris|pong|breakout|canvas game|game loop|playable game|keyboard controls|touch controls)\b/i, value: "task mentions browser game behavior", weight: 85 },
+  { packId: "browser-game-canvas", pattern: /\b(browser\s+(?:puzzle\s+|arcade\s+|canvas\s+)?game|puzzle game|arcade|tetris|pong|breakout|canvas game|game loop|playable game|keyboard controls|touch controls)\b/i, value: "task mentions browser game behavior", weight: 85 },
   { packId: "node-express-api", pattern: /\b(node express|express api|node api|backend api|rest api)\b/i, value: "task mentions Node/Express API", weight: 70 },
   { packId: "node-cli", pattern: /\b(node cli|typescript cli|commander|yargs)\b/i, value: "task mentions Node CLI", weight: 65 },
   { packId: "python-cli", pattern: /\b(python cli|command line|terminal tool|automation script)\b/i, value: "task mentions Python CLI", weight: 65 },
@@ -23,6 +22,20 @@ const TASK_HINTS: Array<{ packId: StackPackId; pattern: RegExp; value: string; w
   { packId: "ios-app", pattern: /\b(ios|iphone|swiftui|swift|xcode|uikit)\b/i, value: "task mentions iOS", weight: 85 },
   { packId: "desktop-electron", pattern: /\b(electron|desktop app|desktop-electron)\b/i, value: "task mentions Electron desktop", weight: 75 },
 ];
+
+export function hasExplicitNonGameIntent(text: string): boolean {
+  const normalized = String(text || "").toLowerCase().replace(/\s+/g, " ").trim();
+  if (!normalized) return false;
+  return /\b(?:not|no|non)[-\s]+(?:a\s+|an\s+|the\s+)?(?:browser\s+|canvas\s+)?game\b/.test(normalized)
+    || /\bnot\s+(?:a\s+|an\s+|the\s+)?game\b/.test(normalized)
+    || /\bnot\s+gameplay\b/.test(normalized)
+    || /\bno\s+gameplay\b/.test(normalized);
+}
+
+export function hasBrowserGameIntent(text: string): boolean {
+  if (hasExplicitNonGameIntent(text)) return false;
+  return /\b(browser-game|browser game|canvas-game|canvas game|arcade|gameplay|playable game|game loop|playfield|score|high score|level|lives|game over|keyboard controls|touch controls|paddle|runner|flappy|breakout|tetris|pong)\b/i.test(text);
+}
 
 export function detectStackCandidates(repoPath?: string, taskText = ""): StackCandidate[] {
   const candidates = new Map<StackPackId, StackCandidate>();
@@ -185,11 +198,11 @@ function adjustBrowserGameSpecificity(candidates: Map<StackPackId, StackCandidat
     return;
   }
   if (candidates.has("vite-react-web-app") || candidates.has("static-html-site")) {
-    game.score += 40;
+    game.score += 220;
     game.evidence.push({
       type: "task-hint",
       value: "browser game hint is more specific than generic browser runtime evidence",
-      weight: 40,
+      weight: 220,
     });
   }
 }

@@ -4,7 +4,7 @@ import { pgBegin, pgGet, pgQuery, now } from "../db-pg.js";
 import { logger } from "../lib/logger.js";
 import { STACK_PACKS } from "./stack-contract/packs.js";
 import type { StackPackId } from "./stack-contract/types.js";
-import { hasBrowserGameIntent } from "./task-intent.js";
+import { hasBrowserGameIntent } from "./stack-contract/detector.js";
 
 export type ContractStatus = "pass" | "fail" | "pending" | "deferred" | "na";
 

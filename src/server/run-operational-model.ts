@@ -4,7 +4,8 @@ import type { StackFailureClassification } from "../installer/stack-modules/type
 import { getStackPack, listStackPacks } from "../installer/stack-contract/packs.js";
 import type { StackPackId } from "../installer/stack-contract/types.js";
 import type { RunInfo, StepInfo } from "../installer/status.js";
-import { hasBrowserGameIntent } from "../installer/task-intent.js";
+import { hasBrowserGameIntent } from "../installer/stack-contract/detector.js";
+import { explicitWebStackPrefix } from "../installer/stack-contract/identity.js";
 
 type StoryRow = {
   story_id: string;
@@ -119,6 +120,10 @@ function asStackPackId(value: unknown): StackPackId | null {
 function inferStackPackId(run: Pick<RunInfo, "task" | "context">): { id: StackPackId; confidence: "high" | "medium" | "low"; evidence: string[] } {
   const context = safeJson((run as any).context);
   const explicit = asStackPackId(context.stack_pack_id || context.detected_stack || context.setup_stack_pack_id);
+  const requestedPrefix = String(context.requested_stack_prefix || "").trim();
+  if ((explicit === "vite-react-web-app" || explicit === "static-html-site" || explicit === "nextjs-web-app") && (explicitWebStackPrefix(run.task) || explicitWebStackPrefix(`${requestedPrefix}: ${run.task || ""}`))) {
+    return { id: explicit, confidence: "high", evidence: [`explicit web stack prefix selected ${explicit}`] };
+  }
   const text = `${run.task || ""} ${context.tech_stack || ""} ${context.platform || ""}`.toLowerCase();
   const browserGameHint = hasBrowserGameIntent(text);
   if (explicit && explicit !== "vite-react-web-app") return { id: explicit, confidence: "high", evidence: [`context stack_pack_id=${explicit}`] };

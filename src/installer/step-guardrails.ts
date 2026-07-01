@@ -13,7 +13,7 @@ import { pgGet, pgRun, pgQuery, now } from "../db-pg.js";
 import { logger } from "../lib/logger.js";
 import { isFrontendChange } from "../lib/frontend-detect.js";
 import { runQualityChecks, formatQualityReport } from "./quality-gates.js";
-import { detectPlatform, checkDesignViolations } from "./design-rules.js";
+import { detectPlatform, checkDesignViolations } from "./stack-modules/design-rules.js";
 import { buildDesignContracts, generateUIContract, enrichStoriesWithDesignContract, validateDesignCompliance, generateLayoutSkeletons, checkCrossScreenConsistency, checkDesignFidelity, detectUnusedModules, reconcileDesignWithStories, checkIntegrationWiring, checkDuplicateInlineCode } from "./design-contract.js";
 import { provisionDatabase, resolveDbType } from "./db-provision.js";
 import { runBrowserDomCheck } from "./browser-tools.js";

@@ -2,8 +2,10 @@ import { pgGet } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
 import type { ClaimContext } from "../types.js";
 import { slugifyIdentity, transliterateIdentity } from "../../runtime-identity.js";
-import { hasBrowserGameIntent, hasExplicitNoDatabaseIntent } from "../../task-intent.js";
+import { hasExplicitNoDatabaseIntent } from "../../task-intent.js";
+import { hasBrowserGameIntent } from "../../stack-contract/detector.js";
 import { parseStackPrefix, stripStackPrefix } from "../../stack-contract/prefix.js";
+import { getStackModule } from "../../stack-modules/registry.js";
 
 const DEFAULT_STACK = "vite-react";
 const PLAN_CONTRACT_SCHEMA_VERSION = "setfarm.plan.v2.2";
@@ -110,6 +112,7 @@ function inferPlatform(task: string): string {
   const prefix = parseStackPrefix(task);
   if (prefix) return prefix.platform;
   const lower = task.toLowerCase();
+  if (isSimpleSinglePageUtility(lower)) return "web";
   if (/\b(api only|backend service|rest api|graphql)\b/.test(lower)) return "api";
   if (/\b(cli|command line|terminal app)\b/.test(lower)) return "cli";
   if (/\b(electron|desktop app|desktop application|macos|windows app|linux desktop)\b/.test(lower)) return "desktop";
@@ -122,6 +125,7 @@ function inferTechStack(task: string): string {
   const prefix = parseStackPrefix(task);
   if (prefix) return prefix.techStack;
   const lower = task.toLowerCase();
+  if (isSimpleSinglePageUtility(lower)) return DEFAULT_STACK;
   if (/\bandroid\b/.test(lower) && !/\breact native\b|\bexpo\b/.test(lower)) return "android-native";
   if (/\bios\b|\biphone\b|\bipad\b/.test(lower) && !/\breact native\b|\bexpo\b/.test(lower)) return "ios-native";
   if (/\breact native\b|\bexpo\b|mobile app/.test(lower)) return "react-native-expo";
@@ -138,6 +142,7 @@ function inferTechStack(task: string): string {
 
 function inferDbRequired(task: string): string {
   const lower = task.toLowerCase();
+  if (isSimpleSinglePageUtility(lower)) return "none";
   if (hasExplicitNoDatabaseIntent(task)) return "none";
   if (/\bfirebase\b|\bsupabase\b|\bstripe\b|\bexternal api\b|\bmanaged service\b/.test(lower)) return "external";
   if (/\bsqlite\b/.test(lower)) return "sqlite";
@@ -199,6 +204,14 @@ function primaryEntity(task: string, kind: ProjectKind): string {
 
 function hasAny(text: string, terms: RegExp): boolean {
   return terms.test(text.toLowerCase());
+}
+
+function isSimpleSinglePageUtility(lowerTask: string): boolean {
+  const scopeText = lowerTask.replace(/\b(?:do not|don't|without)\s+(?:add|include|introduce|use)?[^.]{0,220}/g, " ");
+  const simpleIntent = /\b(tiny|simple|small|compact|minimal|single[- ]page|one[- ]page|utility|widget)\b/.test(scopeText);
+  const localControlIntent = /\b(refresh|timestamp|toggle|ready|paused|status cards?|counter|note counter|badge|tile)\b/.test(scopeText);
+  const heavyProductIntent = /\b(create\/edit|create and edit|editor|crud|login|auth|account|profile|admin|dashboard|analytics|insights|reporting|settings|queue|ticket|crm|kanban|pipeline|table|database|backend|api)\b/.test(scopeText);
+  return simpleIntent && localControlIntent && !heavyProductIntent;
 }
 
 function entityToken(entity: string): string {
@@ -305,6 +318,22 @@ function statusWorkflowSurface(task: string): { id: string; name: string; contex
 
 function productSurfaceBlocks(task: string, entity: string): string[] {
   const lower = task.toLowerCase();
+  if (isSimpleSinglePageUtility(lower)) {
+    return [
+      [
+        "### SURFACE: SURF_STATUS_UTILITY",
+        "- Name: Status Utility",
+        "- Purpose: Provide the requested single-page utility controls and live status feedback without extra product modules.",
+        "- Data Entities Bound: StatusItem, Preference",
+        "- Core Content: compact status cards, current timestamp, refresh control, ready/paused toggle, and concise empty/error feedback if local state fails.",
+        "- Permitted Actions: ACT_REFRESH_STATUS (control_hint: primary_button), ACT_TOGGLE_STATUS (control_hint: toggle)",
+        "- Entry Points: direct_url",
+        "- Exit & Guard Rules: Stay on the same page; every action must update visible state immediately.",
+        "- Auth Required: false",
+        "- Design Guidance: Keep the interface small, direct, and task-specific; do not add navigation, profile/account areas, editor flows, analytics, or settings unless explicitly requested.",
+      ].join("\n"),
+    ].map((surface) => addSurfaceMetadata(surface, "StatusItem.label, StatusItem.status, StatusItem.updatedAt, Preference.key, Preference.value"));
+  }
   const token = entityToken(entity);
   const statusSurface = statusWorkflowSurface(task);
   const surfaces: string[] = [
@@ -483,6 +512,13 @@ function actionBlocks(kind: ProjectKind, entity: string, task = ""): string[] {
     ];
   }
 
+  if (isSimpleSinglePageUtility(task.toLowerCase())) {
+    return [
+      "### ACTION: ACT_REFRESH_STATUS\n- Surface Bound: SURF_STATUS_UTILITY\n- Trigger: User clicks Refresh or the equivalent primary update control.\n- Preconditions & Auth: Local app state is loaded; no authentication required.\n- Async Behavior: Immediate local update; no hidden network call unless the task explicitly requests one.\n- Success Effect: Visible timestamp and status card freshness update deterministically.\n- Failure Effect: Keep last visible state and show concise retryable local-state feedback.\n- Navigation After Success: target same, method replace.\n- Navigation After Failure: target same, preserve_form_data true.\n- State Changes: lastUpdated and any derived status-card freshness labels.\n- Persistence Effects: None unless the task explicitly asks for persistence.\n- User Feedback: Timestamp changes visibly.\n- Required Role: any.\n- Unauthorized Effect: Not applicable.",
+      "### ACTION: ACT_TOGGLE_STATUS\n- Surface Bound: SURF_STATUS_UTILITY\n- Trigger: User toggles the ready/paused status control.\n- Preconditions & Auth: Toggle is enabled and local state is available.\n- Async Behavior: Immediate local state update.\n- Success Effect: Visible status label switches between Ready and Paused.\n- Failure Effect: Preserve the previous label and show concise retryable local-state feedback.\n- Navigation After Success: target same, method replace.\n- Navigation After Failure: target same, preserve_form_data true.\n- State Changes: statusMode toggles between ready and paused.\n- Persistence Effects: Optional localStorage only if persistence is requested.\n- User Feedback: Toggle state and label update visibly.\n- Required Role: any.\n- Unauthorized Effect: Not applicable.",
+    ];
+  }
+
   const token = entityToken(entity);
   const operationsSurface = `SURF_${token}_OPERATIONS`;
   const editorSurface = `SURF_${token}_EDITOR`;
@@ -516,6 +552,15 @@ function actionBlocks(kind: ProjectKind, entity: string, task = ""): string[] {
 }
 
 function platformContract(kind: ProjectKind, stack: string): string {
+  if (kind === "game") {
+    const override = getStackModule("browser-game-canvas").planPlatformContract({
+      projectName: "",
+      entity: "GameSession",
+      task: "",
+      dbRequired: "none",
+    });
+    if (override) return override;
+  }
   if (kind === "api") {
     return "- Type: API\n- Auth Scheme: bearer_jwt or api_key when task requires auth; otherwise anonymous-safe endpoints.\n- Endpoint Contract: define route, method, request DTO, response DTO, and status codes per action.\n- Pagination: cursor for collections, none for single-resource endpoints.\n- Error Envelope: { error: { code, message, details } }.\n- Rate Limit: Include 429 behavior when public or auth endpoints exist.\n### route_guard_policy\n- Protected Surfaces: none; endpoint authorization is enforced by endpoint/auth middleware when auth is in scope.\n- Public Surfaces: not applicable.\n- Guard Implementation Owner: setup/implementation resolves middleware from endpoint contract, not PLAN paths.";
   }
@@ -524,9 +569,6 @@ function platformContract(kind: ProjectKind, stack: string): string {
   }
   if (kind === "mobile") {
     return "- Type: Mobile\n- Navigation: React Native navigation surfaces map to Product Surfaces.\n- Offline Policy: read-only or local-first when DB_REQUIRED is none.\n- Native Permissions: request only if the task explicitly needs camera, location, files, or notifications.\n- Test Handles: use testID for all interactive controls.\n### route_guard_policy\n- Protected Surfaces: none by default; add SURF_* entries only when auth is explicitly requested.\n- Public Surfaces: all anonymous/local surfaces.\n- Redirect On Unauthorized: show permission/auth surface or inline message without data loss.\n- Guard Implementation Owner: app shell story owns navigation plumbing only.";
-  }
-  if (kind === "game") {
-    return "- Type: Game\n- Runtime: browser game loop or React-hosted simulation depending on TECH_STACK.\n- Input Model: keyboard and touch controls are first-class and visible/recoverable.\n- Pause/Restart: pause freezes simulation; restart resets session state without clearing high score/preferences.\n- Save State: high score/preferences only unless task asks for saved games.\n- Design Conversion Policy: reference visual shell/overlays only; gameplay runtime and physics are implemented from action/state contracts.\n### route_guard_policy\n- Protected Surfaces: none by default.\n- Public Surfaces: SURF_GAMEPLAY and SURF_GAME_SETTINGS.\n- Guard Implementation Owner: app/game shell story owns panel visibility only.";
   }
   if (kind === "desktop") {
     return "- Type: Desktop\n- Runtime: Electron desktop shell when TECH_STACK=desktop-electron.\n- Local File Policy: only user-selected files or app-owned data directories; no hardcoded paths.\n- Persistence: local storage or SQLite only when requested.\n- Test Handles: deterministic DOM/test handles for desktop shell smoke tests.\n### route_guard_policy\n- Protected Surfaces: none by default; add protected surfaces only when auth is explicitly requested.\n- Public Surfaces: all local anonymous surfaces.\n- Guard Implementation Owner: app shell story owns navigation plumbing only.";
@@ -549,12 +591,21 @@ function platformBehaviorLabel(platform: string): string {
   return "web product behavior";
 }
 
-function uiVisionSummary(projectName: string, kind: ProjectKind, entity: string): string {
+function uiVisionSummary(projectName: string, kind: ProjectKind, entity: string, task = ""): string {
   if (kind === "api" || kind === "cli") {
     return `${projectName} has DESIGN_REQUIRED=false, so no visual UI is generated. The downstream contract should still preserve a concise operational interface through clear command or endpoint responses, deterministic errors, and product-specific naming. Any future UI surface must derive from Product Surfaces, not from repo or runtime paths.`;
   }
   if (kind === "game") {
-    return `${projectName} should feel like a playable browser game from the first viewport, with the playfield, score, pause/restart controls, and recovery states immediately visible. Stitch may design the game shell, HUD, overlays, and settings surfaces, but gameplay runtime details remain governed by the GameSession action/state contract. The design should avoid generic dashboards and keep every visual element tied to play, progress, input, or recovery.`;
+    const override = getStackModule("browser-game-canvas").planUiVisionSummary({
+      projectName,
+      entity,
+      task,
+      dbRequired: "none",
+    });
+    if (override) return override;
+  }
+  if (isSimpleSinglePageUtility(task.toLowerCase())) {
+    return `${projectName} should feel like a small single-page utility: compact status cards, one refresh action, one ready/paused toggle, and a visible timestamp. Stitch must not add navigation, account/profile areas, editor flows, analytics, settings, or unrelated operational modules.`;
   }
   return `${projectName} should feel like a focused ${entity.toLowerCase()} operations product, not a marketing page. Stitch should emphasize dense but readable working surfaces, stable navigation, visible actions, validation/recovery feedback, and domain-specific data content. The visual system must stay inside the declared Product Surfaces and avoid unrelated admin, billing, profile, ecommerce, or generic BI modules.`;
 }
@@ -591,19 +642,13 @@ function mockDataContract(kind: ProjectKind, entity: string, dbRequired: string)
     ];
   }
   if (kind === "game") {
-    return [
-      "### mock_data_contract",
-      "- Strategy: fixture seed function for GameSession, ScoreState, PlayerInput, and Preference.",
-      "- Required Entities: GameSession, PlayerInput, ScoreState, Preference.",
-      "- Required States: ready, playing, paused, game_over, empty_preferences, storage_error, input_disabled.",
-      "- Persistence Seed Policy: localStorage high score/preferences only unless saved games are requested.",
-      "- Injection Boundary: stack pack resolves game fixture/runtime seed location.",
-      "### data_access_contract",
-      "- Client Data Access: single game runtime state store with deterministic debug exposure for tests.",
-      "- Server Data Access: none for local browser games unless explicitly requested.",
-      "- Fetching Strategy: no hidden network calls.",
-      "- Mutation Strategy: game loop/actions update GameSession once per tick/action and preserve high score/preferences.",
-    ];
+    const override = getStackModule("browser-game-canvas").planMockDataContract({
+      projectName: "",
+      entity,
+      task: "",
+      dbRequired,
+    });
+    if (override) return override;
   }
   return [
     "### mock_data_contract",
@@ -632,7 +677,7 @@ export function buildAutoPlanOutput(task: string, options: AutoPlanOptions = {})
   const uiLanguage = inferUiLanguage(task);
   const designRequired = designRequiredFor(kind);
   const entity = primaryEntity(task, kind);
-  const uiSummary = uiVisionSummary(projectName, kind, entity);
+  const uiSummary = uiVisionSummary(projectName, kind, entity, task);
   const bullets = taskBullets(task).map((line, idx) => `- FR-${String(idx + 1).padStart(3, "0")}: ${line}`);
   const surfaces = surfaceBlocks(kind, entity, task);
   const actions = actionBlocks(kind, entity, task);

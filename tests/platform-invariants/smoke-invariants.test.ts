@@ -4,10 +4,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
-  checkBrowserGameStaticContracts,
   checkNativeButtonWiring,
   checkWeakInteractionAssertions,
 } from "../../scripts/smoke-test.mjs";
+import { checkBrowserGameStaticContracts } from "../../scripts/stack-modules/browser-game-canvas.mjs";
 
 function withRepo(fn: (repo: string) => void) {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-smoke-invariant-"));
@@ -17,6 +17,11 @@ function withRepo(fn: (repo: string) => void) {
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
+}
+
+function writeStackContract(repo: string, packId = "browser-game-canvas"): void {
+  fs.mkdirSync(path.join(repo, ".setfarm", "ledger"), { recursive: true });
+  fs.writeFileSync(path.join(repo, ".setfarm", "ledger", "stack-contract.json"), JSON.stringify({ packId }));
 }
 
 describe("immutable smoke invariants", () => {
@@ -37,6 +42,7 @@ describe("immutable smoke invariants", () => {
     withRepo((repo) => {
       fs.mkdirSync(path.join(repo, "stitch"), { recursive: true });
       fs.mkdirSync(path.join(repo, "src", "screens"), { recursive: true });
+      writeStackContract(repo);
       fs.writeFileSync(path.join(repo, "stitch", "SCREEN_MAP.json"), JSON.stringify([
         { screenId: "gameplay-1", name: "Gameplay", type: "game", surfaceIds: ["SURF_GAMEPLAY"] },
       ]));
@@ -66,6 +72,7 @@ describe("immutable smoke invariants", () => {
 
   it("rejects browser-game roots that do not provide a complete viewport frame", () => {
     withRepo((repo) => {
+      writeStackContract(repo);
       fs.writeFileSync(path.join(repo, "package.json"), JSON.stringify({ keywords: ["browser-game"] }));
       fs.writeFileSync(path.join(repo, "src", "App.tsx"), [
         "export function App() {",

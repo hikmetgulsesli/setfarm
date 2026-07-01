@@ -23,7 +23,9 @@ import { resolvePlatformScript } from "../../paths.js";
 import { ensureSmokeBuildFresh } from "../../smoke-gate.js";
 import { summarizeImplementEvidenceValidation, validateImplementEvidenceArtifacts } from "../../implement-evidence.js";
 import { classifyError } from "../../error-taxonomy.js";
-import { hasBrowserGameIntent } from "../../task-intent.js";
+import { stackPackFromRepo } from "../../stack-contract/identity.js";
+import { getStackModule } from "../../stack-modules/registry.js";
+import type { StackPackId } from "../../stack-contract/types.js";
 
 // ── Module interface methods ────────────────────────────────────
 
@@ -937,44 +939,44 @@ function readTextIfExists(filePath: string): string {
   }
 }
 
-function repoLooksLikeBrowserGame(workdir: string, repoPath = ""): boolean {
+function repoIntentText(workdir: string, repoPath = ""): string {
   const roots = [workdir, repoPath].filter((root, index, arr) => root && fs.existsSync(root) && arr.indexOf(root) === index);
-  const combined = roots.map((root) => [
-    readTextIfExists(path.join(root, "package.json")),
-    readTextIfExists(path.join(root, "stitch", "SCREEN_MAP.json")),
-    readTextIfExists(path.join(root, "src", "screens", "SCREEN_INDEX.json")),
+  return roots.map((root) => [
     readTextIfExists(path.join(root, ".setfarm", "RUN_CONTRACT.json")),
     readTextIfExists(path.join(root, "PROJECT_MEMORY.md")),
+    readTextIfExists(path.join(root, "package.json")),
   ].join("\n")).join("\n").toLowerCase();
-
-  return hasBrowserGameIntent(combined);
 }
 
-function browserGameRuntimeLoopIssues(workdir: string, repoPath = ""): string[] {
-  if (!repoLooksLikeBrowserGame(workdir, repoPath)) return [];
+function unrequestedUtilityRuntimeLoopIssues(workdir: string, repoPath = ""): string[] {
+  const intent = repoIntentText(workdir, repoPath);
+  if (!/\b(?:one\s+refresh\s+button|refresh\s+button|ready\/paused\s+toggle|ready\s+paused\s+toggle)\b/i.test(intent)) return [];
+  if (/\b(?:auto(?:matic)?[-\s]?refresh|real[-\s]?time|live\s+(?:updates?|data|status)|polling|timer|countdown|clock|every\s+\d+|interval)\b/i.test(intent)) return [];
+
   const allSource = listSourceFiles(workdir)
     .filter((file) => !/\.(test|spec)\.(tsx?|jsx?)$/i.test(file))
-    .map((file) => {
-      const source = readTextIfExists(path.join(workdir, file));
-      return `\n// FILE: ${file}\n${source}`;
-    })
+    .map((file) => `\n// FILE: ${file}\n${readTextIfExists(path.join(workdir, file))}`)
     .join("\n");
   const clean = stripSourceComments(allSource);
-  const hasTimerPrimitive = /\b(?:setInterval|requestAnimationFrame)\s*\(/.test(clean);
-  const namedRafDispatchLoop =
-    /\bfunction\s+([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{[\s\S]{0,2400}\bdispatch\s*\(\s*\{[\s\S]{0,240}\btype\s*:\s*['"`](?:tick|advance|step|update)['"`][\s\S]{0,2400}\brequestAnimationFrame\s*\(\s*\1\s*\)/i.test(clean) ||
-    /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>\s*\{[\s\S]{0,2400}\bdispatch\s*\(\s*\{[\s\S]{0,240}\btype\s*:\s*['"`](?:tick|advance|step|update)['"`][\s\S]{0,2400}\brequestAnimationFrame\s*\(\s*\1\s*\)/i.test(clean);
-  const hasScheduledRuntimeAction =
-    /\b(?:setInterval|requestAnimationFrame)\s*\([\s\S]{0,800}\b(?:actions?\.)?(?:tick|advance|step|update)[A-Za-z0-9_]*\s*(?:\(|,|\))/i.test(clean) ||
-    /\b(?:tick|advance|step|update)[A-Za-z0-9_]*\s*\([^)]*\)\s*[\s\S]{0,800}\b(?:setInterval|requestAnimationFrame)\s*\(/i.test(clean) ||
-    /\b(?:setInterval|requestAnimationFrame)\s*\([\s\S]{0,800}\bdispatch\s*\(\s*\{[\s\S]{0,180}\btype\s*:\s*['"`](?:tick|advance|step|update)['"`]/i.test(clean) ||
-    /\b(?:setInterval|requestAnimationFrame)\s*\([\s\S]{0,800}\bset[A-Z][A-Za-z0-9_]*\s*\([\s\S]{0,300}\b(?:tick|advance|step|update)[A-Za-z0-9_]*\s*\(/i.test(clean) ||
-    namedRafDispatchLoop;
-
-  if (hasTimerPrimitive && hasScheduledRuntimeAction) return [];
+  const hasScheduler = /\b(?:setInterval|requestAnimationFrame)\s*\(/.test(clean);
+  const schedulesStatusMutation =
+    /\b(?:tickStatus|advanceStatus|updateStatus|refreshStatusLoop)\s*\(/i.test(clean) ||
+    /\b(?:setInterval|requestAnimationFrame)\s*\([\s\S]{0,900}\bset[A-Z][A-Za-z0-9_]*\s*\([\s\S]{0,360}\blastRefreshedAt\b/i.test(clean);
+  if (!hasScheduler || !schedulesStatusMutation) return [];
   return [
-    "BROWSER_GAME_RUNTIME_LOOP_MISSING: browser-game projects must wire a visible runtime loop with setInterval/requestAnimationFrame and a scheduled tick/advance/step/update action. Defining an advance reducer or exposing a manual settings button is not enough; the playable scene must move or progress without manual debug calls.",
+    "UNREQUESTED_RUNTIME_LOOP: this simple status utility asks for a manual refresh button and Ready/Paused toggle, not an automatic setInterval/requestAnimationFrame runtime loop. Remove scheduled tick/status updates unless the task explicitly requests live, realtime, timer, polling, or auto-refresh behavior.",
   ];
+}
+
+function activeStackPackIds(workdir: string, repoPath = ""): StackPackId[] {
+  const roots = [workdir, repoPath].filter((root, index, arr) => root && fs.existsSync(root) && arr.indexOf(root) === index);
+  return [...new Set(roots.map(stackPackFromRepo).filter(Boolean))] as StackPackId[];
+}
+
+function stackRuntimeSemanticIssues(workdir: string, repoPath = ""): string[] {
+  return activeStackPackIds(workdir, repoPath).flatMap((packId) =>
+    getStackModule(packId).runtimeSemanticIssues({ workdir, repoPath }),
+  );
 }
 
 function appRouterFiles(workdir: string): string[] {
@@ -1232,7 +1234,8 @@ export function findGeneratedRuntimeSemanticIssues(workdir: string, repoPath = "
   const componentList = [...components];
   const issues: string[] = [];
 
-  issues.push(...browserGameRuntimeLoopIssues(workdir, repoPath));
+  issues.push(...stackRuntimeSemanticIssues(workdir, repoPath));
+  issues.push(...unrequestedUtilityRuntimeLoopIssues(workdir, repoPath));
 
   for (const file of listSourceFiles(workdir).filter((rel) => !/\.(test|spec)\.(tsx?|jsx?)$/i.test(rel))) {
     const abs = path.join(workdir, file);

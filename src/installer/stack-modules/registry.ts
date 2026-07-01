@@ -1,14 +1,25 @@
 import { getStackPack, listStackPacks } from "../stack-contract/packs.js";
 import type { StackContract, StackPack, StackPackId } from "../stack-contract/types.js";
 import type {
+  StackClaimChecklistContext,
   StackEvidenceClass,
   StackEvidencePlan,
   StackExecutionPlan,
   StackFailureClassification,
   StackFailureInput,
   StackModule,
+  StackPlanContext,
+  StackRetryFeedbackContext,
   StackRuntimeKind,
 } from "./types.js";
+import {
+  browserGameClaimDoneChecklist,
+  browserGamePlanMockDataContract,
+  browserGamePlanPlatformContract,
+  browserGamePlanUiVisionSummary,
+  browserGameRuntimeSemanticIssues,
+  browserGameSanitizeRetryFeedback,
+} from "./browser-game-canvas.js";
 
 const BROWSER_PACKS = new Set<StackPackId>(["nextjs-web-app", "vite-react-web-app", "static-html-site", "browser-game-canvas", "desktop-electron"]);
 const NATIVE_PACKS = new Set<StackPackId>(["react-native-expo", "android-app", "ios-app"]);
@@ -146,11 +157,32 @@ function makeModule(pack: StackPack): StackModule {
     },
     classifyFailure: (input) => classifyFailureFor(pack.id, input),
     resolveContract: (base) => base,
+    runtimeSemanticIssues: () => [],
+    claimDoneChecklist: () => [],
+    sanitizeRetryFeedback: (context: StackRetryFeedbackContext) => context.feedback,
+    planPlatformContract: (_context: StackPlanContext) => null,
+    planUiVisionSummary: (_context: StackPlanContext) => null,
+    planMockDataContract: (_context: StackPlanContext) => null,
+  };
+}
+
+function makeBrowserGameModule(pack: StackPack): StackModule {
+  const base = makeModule(pack);
+  return {
+    ...base,
+    runtimeSemanticIssues: browserGameRuntimeSemanticIssues,
+    claimDoneChecklist: (context: StackClaimChecklistContext) => browserGameClaimDoneChecklist(context),
+    sanitizeRetryFeedback: browserGameSanitizeRetryFeedback,
+    planPlatformContract: browserGamePlanPlatformContract,
+    planUiVisionSummary: browserGamePlanUiVisionSummary,
+    planMockDataContract: browserGamePlanMockDataContract,
   };
 }
 
 const MODULES = new Map<StackPackId, StackModule>();
-for (const pack of listStackPacks()) MODULES.set(pack.id, makeModule(pack));
+for (const pack of listStackPacks()) {
+  MODULES.set(pack.id, pack.id === "browser-game-canvas" ? makeBrowserGameModule(pack) : makeModule(pack));
+}
 
 export function getStackModule(packId: StackPackId): StackModule {
   const module = MODULES.get(packId);
@@ -168,4 +200,11 @@ export function stackModuleForContract(contract: Pick<StackContract, "packId"> |
 
 export function classifyStackFailure(packId: StackPackId, input: StackFailureInput): StackFailureClassification {
   return getStackModule(packId).classifyFailure(input);
+}
+
+export function sanitizeStackRetryFeedback(feedback: string, context: Omit<StackRetryFeedbackContext, "feedback"> = {}): string {
+  return listStackModules().reduce(
+    (current, module) => module.sanitizeRetryFeedback({ ...context, feedback: current }),
+    feedback,
+  );
 }

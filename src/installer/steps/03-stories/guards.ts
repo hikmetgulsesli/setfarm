@@ -686,7 +686,7 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
   //    root layout). Stack detected from repo structure; rules come from
   //    stack-rules.ts. Runs #494/#496 US-002 observed identical SCOPE_BLEED
   //    on src/main.tsx before this guard.
-  const { detectStack, STACK_RULES } = await import("../06-implement/stack-rules.js");
+  const { detectStack, STACK_RULES } = await import("../../stack-modules/stack-rules.js");
   const detectedStack = detectStack(context["repo"] || "");
   const VITE_SIBLINGS: Array<[string, string]> = STACK_RULES[detectedStack].siblings;
   for (const row of allRows) {

@@ -18,6 +18,31 @@ export interface StackFailureInput {
   hasMachineEvidence?: boolean;
 }
 
+export interface StackRuntimeIssueContext {
+  workdir: string;
+  repoPath?: string;
+}
+
+export interface StackClaimChecklistContext {
+  input: string;
+  task: string;
+  storyTitle: string;
+  acceptanceCriteria: unknown;
+}
+
+export interface StackRetryFeedbackContext {
+  feedback: string;
+  repoPath?: string;
+  contractRepoPath?: string;
+}
+
+export interface StackPlanContext {
+  projectName: string;
+  entity: string;
+  task: string;
+  dbRequired: string;
+}
+
 export interface StackEvidencePlan {
   stackPackId: StackPackId;
   runtimeKind: StackRuntimeKind;
@@ -43,4 +68,10 @@ export interface StackModule {
   executionPlanForStep(stepId: string): StackExecutionPlan;
   classifyFailure(input: StackFailureInput): StackFailureClassification;
   resolveContract(base: StackContract): StackContract;
+  runtimeSemanticIssues(context: StackRuntimeIssueContext): string[];
+  claimDoneChecklist(context: StackClaimChecklistContext): string[];
+  sanitizeRetryFeedback(context: StackRetryFeedbackContext): string;
+  planPlatformContract(context: StackPlanContext): string | null;
+  planUiVisionSummary(context: StackPlanContext): string | null;
+  planMockDataContract(context: StackPlanContext): string[] | null;
 }

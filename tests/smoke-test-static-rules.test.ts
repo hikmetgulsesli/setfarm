@@ -10,11 +10,13 @@ import {
   checkSemanticClickTargets,
   checkUnreachableStateScreens,
   checkUnknownActionFallbacks,
-  checkBrowserGameStaticContracts,
   checkWeakInteractionAssertions,
   countSourceControlUsages,
   semanticNavigationTargetIssue,
+  excludedFlowIntentsForRepo,
+  buildFlowAuditEval,
 } from "../scripts/smoke-test.mjs";
+import { checkBrowserGameStaticContracts } from "../scripts/stack-modules/browser-game-canvas.mjs";
 
 function withRepo(fn: (repo: string) => void) {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-smoke-static-"));
@@ -26,7 +28,38 @@ function withRepo(fn: (repo: string) => void) {
   }
 }
 
+function writeStackContract(repo: string, packId = "browser-game-canvas"): void {
+  fs.mkdirSync(path.join(repo, ".setfarm", "ledger"), { recursive: true });
+  fs.writeFileSync(path.join(repo, ".setfarm", "ledger", "stack-contract.json"), JSON.stringify({ packId }));
+}
+
 describe("smoke-test static rules", () => {
+  it("excludes settings flow audit when the run contract explicitly forbids settings", () => {
+    withRepo(repo => {
+      fs.mkdirSync(path.join(repo, ".setfarm"), { recursive: true });
+      fs.writeFileSync(path.join(repo, ".setfarm", "RUN_CONTRACT.json"), JSON.stringify({
+        task: "Build a tiny status board. Do not add navigation, auth, analytics, settings, or unrelated modules.",
+      }));
+
+      assert.deepEqual(excludedFlowIntentsForRepo(repo), ["settings"]);
+      const evalSource = buildFlowAuditEval(excludedFlowIntentsForRepo(repo));
+      assert.match(evalSource, /excludedIntents\.indexOf\(intent\) >= 0/);
+      assert.match(evalSource, /\["settings"\]/);
+    });
+  });
+
+  it("keeps settings flow audit active when settings are requested", () => {
+    withRepo(repo => {
+      fs.mkdirSync(path.join(repo, ".setfarm"), { recursive: true });
+      fs.writeFileSync(path.join(repo, ".setfarm", "RUN_CONTRACT.json"), JSON.stringify({
+        task: "Build a compact dashboard with settings and preferences.",
+      }));
+
+      assert.deepEqual(excludedFlowIntentsForRepo(repo), []);
+      assert.match(buildFlowAuditEval(excludedFlowIntentsForRepo(repo)), /\[\]/);
+    });
+  });
+
   it("flags navigation links whose destination title does not match the link label", () => {
     assert.match(
       semanticNavigationTargetIssue("Technical Status", {
@@ -548,6 +581,7 @@ describe("smoke-test static rules", () => {
     withRepo(repo => {
       fs.mkdirSync(path.join(repo, "src", "screens"), { recursive: true });
       fs.mkdirSync(path.join(repo, "stitch"), { recursive: true });
+      writeStackContract(repo);
       fs.writeFileSync(path.join(repo, "stitch", "SCREEN_MAP.json"), JSON.stringify([
         { screenId: "gameplay-1", name: "Gameplay", type: "game", surfaceIds: ["SURF_GAMEPLAY"] },
       ]));
@@ -578,6 +612,7 @@ describe("smoke-test static rules", () => {
   it("blocks browser games whose app root only declares partial viewport sizing", () => {
     withRepo(repo => {
       fs.mkdirSync(path.join(repo, "src", "screens"), { recursive: true });
+      writeStackContract(repo);
       fs.writeFileSync(path.join(repo, "package.json"), JSON.stringify({ keywords: ["browser-game"] }));
       fs.writeFileSync(path.join(repo, "src", "App.tsx"), [
         "export function App() {",
@@ -605,6 +640,7 @@ describe("smoke-test static rules", () => {
   it("blocks browser games whose moving runtime state is not rendered into gameplay objects", () => {
     withRepo(repo => {
       fs.mkdirSync(path.join(repo, "src", "screens"), { recursive: true });
+      writeStackContract(repo);
       fs.writeFileSync(path.join(repo, "package.json"), JSON.stringify({ keywords: ["browser-game"] }));
       fs.writeFileSync(path.join(repo, "src", "screens", "SCREEN_INDEX.json"), JSON.stringify([
         { title: "Gameplay", componentName: "Gameplay", file: "src/screens/Gameplay.tsx" },
@@ -626,6 +662,7 @@ describe("smoke-test static rules", () => {
   it("allows browser games that position visible entities from runtime state", () => {
     withRepo(repo => {
       fs.mkdirSync(path.join(repo, "src", "screens"), { recursive: true });
+      writeStackContract(repo);
       fs.writeFileSync(path.join(repo, "package.json"), JSON.stringify({ keywords: ["browser-game"] }));
       fs.writeFileSync(path.join(repo, "src", "screens", "SCREEN_INDEX.json"), JSON.stringify([
         { title: "Gameplay", componentName: "Gameplay", file: "src/screens/Gameplay.tsx" },
@@ -651,9 +688,33 @@ describe("smoke-test static rules", () => {
     });
   });
 
+  it("does not apply browser-game smoke contracts when stack contract is web", () => {
+    withRepo(repo => {
+      fs.mkdirSync(path.join(repo, ".setfarm/ledger"), { recursive: true });
+      fs.mkdirSync(path.join(repo, "src", "screens"), { recursive: true });
+      fs.writeFileSync(path.join(repo, ".setfarm/ledger/stack-contract.json"), JSON.stringify({
+        schema: "setfarm.stack-contract.v1",
+        status: "resolved",
+        packId: "vite-react-web-app",
+      }));
+      fs.writeFileSync(path.join(repo, "package.json"), JSON.stringify({ keywords: ["browser-game"] }));
+      fs.writeFileSync(path.join(repo, "src", "screens", "SCREEN_INDEX.json"), JSON.stringify([
+        { title: "Score Paused Dashboard", componentName: "ScorePausedDashboard", file: "src/screens/ScorePausedDashboard.tsx" },
+      ]));
+      fs.writeFileSync(path.join(repo, "src", "App.tsx"), [
+        "export default function App() {",
+        '  return <div data-setfarm-root="web" className="min-h-screen w-full"><button>Refresh</button><span>Paused score</span></div>;',
+        "}",
+      ].join("\n"));
+
+      assert.deepEqual(checkBrowserGameStaticContracts(repo), []);
+    });
+  });
+
   it("allows browser games whose requestAnimationFrame loop dispatches TICK actions", () => {
     withRepo(repo => {
       fs.mkdirSync(path.join(repo, "src", "screens"), { recursive: true });
+      writeStackContract(repo);
       fs.writeFileSync(path.join(repo, "package.json"), JSON.stringify({ keywords: ["browser-game"] }));
       fs.writeFileSync(path.join(repo, "src", "screens", "SCREEN_INDEX.json"), JSON.stringify([
         { title: "Gameplay", componentName: "Gameplay", file: "src/screens/Gameplay.tsx" },
@@ -685,6 +746,7 @@ describe("smoke-test static rules", () => {
   it("blocks browser game settings overlays that replace gameplay instead of layering above it", () => {
     withRepo(repo => {
       fs.mkdirSync(path.join(repo, "src", "screens"), { recursive: true });
+      writeStackContract(repo);
       fs.writeFileSync(path.join(repo, "package.json"), JSON.stringify({ keywords: ["browser-game"] }));
       fs.writeFileSync(path.join(repo, "src", "App.tsx"), [
         "export function App({ activeScreen }) {",
@@ -713,9 +775,9 @@ describe("smoke-test static rules", () => {
   });
 
   it("documents that browser-game smoke cannot pass with zero interactions", () => {
-    const smokeScript = fs.readFileSync(path.join(process.cwd(), "scripts/smoke-test.mjs"), "utf-8");
-    assert.match(smokeScript, /browser-game-zero-interactions/);
-    assert.match(smokeScript, /buttonsChecked \+ formsChecked \+ flowsChecked === 0/);
+    const moduleScript = fs.readFileSync(path.join(process.cwd(), "scripts/stack-modules/browser-game-canvas.mjs"), "utf-8");
+    assert.match(moduleScript, /browser-game-zero-interactions/);
+    assert.match(moduleScript, /interactionCount > 0/);
   });
 
   it("blocks QA-FIX completion while platform smoke still fails", () => {

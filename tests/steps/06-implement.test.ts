@@ -12,7 +12,7 @@ import { createStoryWorktree, ensureStoryBranchWorktree } from "../../dist/insta
 import { assembleImplementContext, fileTreeManifestPath, setupCertificatePath, sharedGrantsPath } from "../../dist/installer/setup-handoff.js";
 import { IMPLICIT_STORY_SCOPE_FILES, isImplicitStoryScopeFile } from "../../dist/installer/story-scope.js";
 import { checkStoryDesignCompliance } from "../../dist/installer/step-guardrails.js";
-import { STACK_RULES } from "../../dist/installer/steps/06-implement/stack-rules.js";
+import { STACK_RULES } from "../../dist/installer/stack-modules/stack-rules.js";
 import { pgRun } from "../../dist/db-pg.js";
 import type { ParsedOutput } from "../../dist/installer/steps/types.js";
 
@@ -29,6 +29,11 @@ function git(cwd: string, args: string[]): string {
       GIT_COMMITTER_EMAIL: "setfarm-test@example.test",
     },
   }).trim();
+}
+
+function writeStackContract(repo: string, packId = "browser-game-canvas"): void {
+  fs.mkdirSync(path.join(repo, ".setfarm", "ledger"), { recursive: true });
+  fs.writeFileSync(path.join(repo, ".setfarm", "ledger", "stack-contract.json"), JSON.stringify({ packId }));
 }
 
 describe("06-implement step module", () => {
@@ -737,6 +742,7 @@ describe("06-implement step module", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-browser-game-loop-"));
     try {
       fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      writeStackContract(tmp);
       fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({ name: "loopless-game", keywords: ["browser-game"] }));
       fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
         { componentName: "GameplayScreen", file: "src/screens/GameplayScreen.tsx", title: "Gameplay" },
@@ -768,6 +774,7 @@ describe("06-implement step module", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-browser-game-loop-pass-"));
     try {
       fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      writeStackContract(tmp);
       fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({ name: "looped-game", keywords: ["browser-game"] }));
       fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
         { componentName: "GameplayScreen", file: "src/screens/GameplayScreen.tsx", title: "Gameplay" },
@@ -796,10 +803,108 @@ describe("06-implement step module", () => {
     }
   });
 
+  it("does not require browser-game runtime loops for ready/paused status utilities", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-status-utility-loop-skip-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({ name: "fixloop-smoke-board", dependencies: { react: "^18.0.0" } }));
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { componentName: "StatusUtilityScreen", file: "src/screens/StatusUtilityScreen.tsx", title: "Status Utility - FixLoop Smoke Board" },
+      ]));
+      fs.writeFileSync(path.join(tmp, "src/screens/StatusUtilityScreen.tsx"), [
+        "export function StatusUtilityScreen({ actions }: any) {",
+        "  return <main><button onClick={actions.refresh}>Refresh</button><span>Ready/Paused</span></main>;",
+        "}",
+      ].join("\n"));
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "import { StatusUtilityScreen } from './screens/StatusUtilityScreen';",
+        "export default function App() {",
+        "  return <StatusUtilityScreen actions={{ refresh() {} }} />;",
+        "}",
+      ].join("\n"));
+
+      const issues = findGeneratedRuntimeSemanticIssues(tmp);
+      assert.equal(issues.some((issue) => issue.includes("BROWSER_GAME_RUNTIME_LOOP_MISSING")), false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("does not run browser-game runtime guards when stack contract is web even if repo text is game-ish", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-web-contract-gameish-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.mkdirSync(path.join(tmp, ".setfarm/ledger"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, ".setfarm/ledger/stack-contract.json"), JSON.stringify({
+        schema: "setfarm.stack-contract.v1",
+        status: "resolved",
+        packId: "vite-react-web-app",
+      }));
+      fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({ name: "score-paused-dashboard", keywords: ["browser-game"] }));
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { componentName: "StatusBoard", file: "src/screens/StatusBoard.tsx", title: "Score and Paused Status Board" },
+      ]));
+      fs.writeFileSync(path.join(tmp, "src/screens/StatusBoard.tsx"), [
+        "export function StatusBoard({ actions }: any) {",
+        "  return <main><button onClick={actions.refresh}>Refresh</button><span>Paused</span><span>Score</span></main>;",
+        "}",
+      ].join("\n"));
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "import { StatusBoard } from './screens/StatusBoard';",
+        "export default function App() {",
+        "  return <StatusBoard actions={{ refresh() {} }} />;",
+        "}",
+      ].join("\n"));
+
+      const issues = findGeneratedRuntimeSemanticIssues(tmp);
+      assert.equal(issues.some((issue) => issue.includes("BROWSER_GAME_RUNTIME_LOOP_MISSING")), false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks unrequested automatic runtime loops in manual refresh status utilities", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-status-utility-unrequested-loop-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.mkdirSync(path.join(tmp, ".setfarm"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, ".setfarm/RUN_CONTRACT.json"), JSON.stringify({
+        task: "web: Build a tiny single-page app called FixLoop Smoke Board. It should show three compact status cards, one refresh button that updates a visible timestamp, and one Ready/Paused toggle.",
+      }));
+      fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({ name: "fixloop-smoke-board", dependencies: { react: "^18.0.0" } }));
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { componentName: "StatusUtilityScreen", file: "src/screens/StatusUtilityScreen.tsx", title: "Status Utility - FixLoop Smoke Board" },
+      ]));
+      fs.writeFileSync(path.join(tmp, "src/screens/StatusUtilityScreen.tsx"), [
+        "export function StatusUtilityScreen({ actions }: any) {",
+        "  return <main><button onClick={actions.refresh}>Refresh</button><span>Ready/Paused</span></main>;",
+        "}",
+      ].join("\n"));
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "import { useEffect, useState } from 'react';",
+        "import { StatusUtilityScreen } from './screens/StatusUtilityScreen';",
+        "function tickStatus(state: any) { return { ...state, lastRefreshedAt: new Date().toISOString() }; }",
+        "export default function App() {",
+        "  const [state, setState] = useState({ lastRefreshedAt: '' });",
+        "  useEffect(() => { const id = setInterval(() => setState((prev) => tickStatus(prev)), 2000); return () => clearInterval(id); }, []);",
+        "  return <StatusUtilityScreen actions={{ refresh() {} }} />;",
+        "}",
+      ].join("\n"));
+
+      const issues = findGeneratedRuntimeSemanticIssues(tmp);
+      assert.equal(issues.some((issue) => issue.includes("UNREQUESTED_RUNTIME_LOOP")), true);
+      const gate = checkGeneratedRuntimeSemanticGate("US-002", "Status Utility", tmp);
+      assert.equal(gate.passed, false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("accepts browser-game scheduled reducer dispatch and state updater loops", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-browser-game-dispatch-loop-pass-"));
     try {
       fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      writeStackContract(tmp);
       fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({ name: "reducer-game", keywords: ["browser-game"] }));
       fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
         { componentName: "GameplayScreen", file: "src/screens/GameplayScreen.tsx", title: "Gameplay" },
@@ -836,6 +941,7 @@ describe("06-implement step module", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-browser-game-raf-named-loop-pass-"));
     try {
       fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      writeStackContract(tmp);
       fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({ name: "raf-game", keywords: ["browser-game"] }));
       fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
         { componentName: "GameplayScreen", file: "src/screens/GameplayScreen.tsx", title: "Gameplay" },
@@ -858,6 +964,50 @@ describe("06-implement step module", () => {
         "      handle = requestAnimationFrame(loop);",
         "    }",
         "    handle = requestAnimationFrame(loop);",
+        "    return () => cancelAnimationFrame(handle);",
+        "  }, []);",
+        "  return <GameplayScreen runtime={runtime} actions={{ pause() {} }} />;",
+        "}",
+      ].join("\n"));
+
+      const issues = findGeneratedRuntimeSemanticIssues(tmp);
+      assert.equal(issues.some((issue) => issue.includes("BROWSER_GAME_RUNTIME_LOOP_MISSING")), false);
+      const gate = checkGeneratedRuntimeSemanticGate("US-001", "Game Runtime", tmp);
+      assert.equal(gate.passed, true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts browser-game requestAnimationFrame loops dispatching through a ref", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-browser-game-raf-ref-loop-pass-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      writeStackContract(tmp);
+      fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({ name: "raf-ref-game", keywords: ["browser-game"] }));
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { componentName: "GameplayScreen", file: "src/screens/GameplayScreen.tsx", title: "Gameplay" },
+      ]));
+      fs.writeFileSync(path.join(tmp, "src/screens/GameplayScreen.tsx"), [
+        "export function GameplayScreen({ runtime, actions }: any) {",
+        "  return <main><button onClick={actions.pause}>Pause</button><span>{runtime.score}</span></main>;",
+        "}",
+      ].join("\n"));
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "import { useEffect, useReducer, useRef } from 'react';",
+        "import { GameplayScreen } from './screens/GameplayScreen';",
+        "function reducer(state: any, action: any) { return action.type === 'TICK' ? { ...state, score: state.score + 1 } : state; }",
+        "export default function App() {",
+        "  const [runtime, dispatch] = useReducer(reducer, { score: 0 });",
+        "  const dispatchRef = useRef(dispatch);",
+        "  dispatchRef.current = dispatch;",
+        "  useEffect(() => {",
+        "    let handle = 0;",
+        "    function frame(now: number) {",
+        "      dispatchRef.current({ type: 'TICK' });",
+        "      handle = requestAnimationFrame(frame);",
+        "    }",
+        "    handle = requestAnimationFrame(frame);",
         "    return () => cancelAnimationFrame(handle);",
         "  }, []);",
         "  return <GameplayScreen runtime={runtime} actions={{ pause() {} }} />;",

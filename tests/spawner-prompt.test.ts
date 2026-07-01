@@ -27,6 +27,7 @@ describe("spawner prompt bootstrap", () => {
     assert.match(prompt, /outputContract\.requiredFields and outputContract\.format exactly/);
     assert.match(prompt, /guard-backed roles will reject prose-only summaries/);
     assert.match(prompt, /Use retryFeedback\.mode exactly/);
+    assert.match(prompt, /If failureCategory is SCOPE_BLEED, first remove\/rework out-of-scope files/);
     assert.match(prompt, /retryFeedback\.restoreTargets first, then retryFeedback\.protectedSnippets/);
     assert.match(prompt, /retryFeedback\.actionableReviewThreads first/);
     assert.match(prompt, /supervisorEvidence/);
@@ -210,6 +211,8 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, /RETRY_MODE=fix/);
       assert.match(out, /RETRY_BLOCKER_PREVIEW=GENERATED_SCREEN_SHARED_READ: previous worker read src\/screens\/MainMenu\.tsx/);
       assert.match(out, /PR_REVIEW_ACTIONABLE_THREADS=1/);
+      assert.match(out, /PR_REVIEW_SCOPE_RULE=Resolve review comments inside SCOPE_FILES only/);
+      assert.match(out, /PR_REVIEW_SCOPE_RULE=.*instead of creating an out-of-scope common file/);
       assert.match(out, /PR_REVIEW_THREAD_1=thread=PRRT_bootstrap src\/App\.tsx:12 @gemini-code-assist Fix the scoped bootstrap regression/);
       assert.match(out, /RETRY_DETAIL=full retry detail is in claimSummary\.retryFeedback\.details.*prefer claimSummary\.retryFeedback\.actionableReviewThreads/);
       assert.match(out, /RETRY_ACTION=Use claim-summary designContracts instead of shared generated source/);
@@ -685,7 +688,7 @@ describe("spawner prompt bootstrap", () => {
     }
   });
 
-  it("preserves all actionable PR review threads in retry feedback details", () => {
+  it("preserves PR review details but only routes in-scope actionable threads", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-pr-review-"));
     try {
       const workdir = path.join(tmp, "worktree");
@@ -740,10 +743,20 @@ describe("spawner prompt bootstrap", () => {
           { threadId: "PRRT_one", file: "src/store.ts", line: 10, author: "gemini-code-assist" },
           { threadId: "PRRT_two", file: "src/App.tsx", line: 20, author: "gemini-code-assist" },
           { threadId: "PRRT_three", file: "src/store.ts", line: 30, author: "gemini-code-assist" },
+        ],
+      );
+      assert.deepEqual(
+        (summary.retryFeedback as any).outOfScopeReviewThreads.map((thread: any) => ({
+          threadId: thread.threadId,
+          file: thread.file,
+          line: thread.line,
+          author: thread.author,
+        })),
+        [
           { threadId: "PRRT_four", file: "src/game-runtime.ts", line: 40, author: "gemini-code-assist" },
         ],
       );
-      assert.match((summary.retryFeedback as any).actionableReviewThreads[3].comment, /Throttle requestAnimationFrame to 60 FPS/);
+      assert.match((summary.retryFeedback as any).outOfScopeReviewThreads[0].comment, /Throttle requestAnimationFrame to 60 FPS/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -1593,6 +1606,7 @@ describe("spawner prompt bootstrap", () => {
         repo: tmp,
         storyId: "US-001",
         input: [
+          "STACK_PACK_ID: browser-game-canvas",
           "TASK: Build a compact browser-game called VectorGate Lite.",
           `WORKDIR: ${tmp}`,
           "CURRENT STORY: Story US-001: VectorGate Lite - game engine, state and test bridge",
@@ -1692,6 +1706,41 @@ describe("spawner prompt bootstrap", () => {
           "",
           "## Previous Failure / Retry Feedback",
           "RUNTIME_DONE_CHECK=Browser-game runtime must contain a visible scheduled loop using setInterval or requestAnimationFrame.",
+          "",
+          "## Current Story",
+        ].join("\n"),
+      });
+
+      assert.deepEqual((summary as any).runtimeDoneChecklist, []);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("does not add browser-game checklist when claim stack pack is explicitly web", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-web-stack-claim-summary-"));
+    try {
+      fs.writeFileSync(path.join(tmp, ".story-scope-files"), "src/App.tsx\nsrc/test/bridge.ts\n");
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: "/tmp/claim.json",
+        outputFile: "/tmp/output.txt",
+        bootstrapFile: "/tmp/bootstrap.sh",
+        stepId: "step-123",
+        runId: "run-123",
+        workdir: tmp,
+        repo: tmp,
+        storyId: "US-001",
+        input: [
+          "TASK: web: Build a compact status dashboard with score, level, and paused labels.",
+          "STACK_PACK_ID: vite-react-web-app",
+          `WORKDIR: ${tmp}`,
+          "CURRENT STORY: Story US-001: Score dashboard - app shell",
+          "",
+          "Acceptance Criteria:",
+          "  1. Score and paused labels are visible.",
+          "  2. Shared state is visible through window.app.",
           "",
           "## Current Story",
         ].join("\n"),
@@ -1810,6 +1859,67 @@ describe("spawner prompt bootstrap", () => {
       assert.equal((summary.retryDiscipline as any).mode, "semantic-fix");
       assert.match(String((summary.retryDiscipline as any).instruction), /Do not install dependencies/);
       assert.match(String((summary.retryDiscipline as any).instruction), /setup-build\/stack-pack dependency blocker/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("omits retry source snapshots and patch bodies for scope bleed retries", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-scope-bleed-no-snapshot-"));
+    try {
+      fs.writeFileSync(path.join(tmp, ".story-scope-files"), "src/App.tsx\n");
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        bootstrapFile: path.join(tmp, "bootstrap.sh"),
+        stepId: "step-123",
+        runId: "run-123",
+        workdir: tmp,
+        repo: tmp,
+        storyId: "US-001",
+        input: [
+          "TASK: Project: scope bleed retry sensor",
+          "CURRENT STORY: Story US-001: App shell",
+          "",
+          "## Previous Failure / Retry Feedback",
+          "SCOPE_BLEED: Story US-001 modified 1 file(s) outside its SCOPE_FILES list: src/shared.ts.",
+          "",
+          "## Retry Source Snapshot",
+          "RETRY_SOURCE_SNAPSHOT:",
+          "SCOPE_FILES: src/App.tsx",
+          "SHARED_FILES: src/shared.ts",
+          "## Project file tree (git ls-files)",
+          "src/App.tsx",
+          "src/shared.ts",
+          "## Scope file contents",
+          "### src/App.tsx",
+          "```",
+          "export const app = true;",
+          "```",
+          "## Shared/dependency file contents",
+          "### src/shared.ts",
+          "```",
+          "export const shared = true;",
+          "```",
+          "",
+          "## Current Story",
+        ].join("\n"),
+      });
+
+      assert.equal(summary.failureCategory, "SCOPE_BLEED");
+      assert.equal((summary.retryFeedback as any).sourceSnapshot, undefined);
+      assert.equal((summary.retryFeedback as any).worktreePatch, undefined);
+      const bootstrap = buildResolvedClaimBootstrapScript({
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        claimSummaryFile: path.join(tmp, "summary.json"),
+        stepId: "step-123",
+        workdir: tmp,
+      });
+      assert.match(bootstrap, /SCOPE_BLEED_RETRY_RULE=First remove\/rework out-of-scope files/);
+      assert.match(bootstrap, /Do not read retry source snapshots or recreate shared files/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

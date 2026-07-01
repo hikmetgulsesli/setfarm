@@ -27,6 +27,7 @@ import { execFileSync, spawn } from 'child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { join, basename, relative } from 'path';
 import { pathToFileURL } from 'url';
+import { checkStackStaticContracts, stackZeroInteractionIssues } from './stack-modules/registry.mjs';
 
 const args = process.argv.slice(2);
 const repoPath = args[0];
@@ -530,113 +531,6 @@ function readJsonFile(filePath, fallback) {
   }
 }
 
-function isBrowserGameRepo(repo) {
-  const candidates = [
-    join(repo, "stitch", "SCREEN_MAP.json"),
-    join(repo, "src", "screens", "SCREEN_INDEX.json"),
-    join(repo, "package.json"),
-  ];
-  const combined = candidates.map((file) => {
-    try { return readFileSync(file, "utf-8"); } catch { return ""; }
-  }).join("\n").toLowerCase();
-  return /\b(browser-game|canvas-game|arcade|gameplay|game settings|breakout|flappy|paddle|score|high score|level|lives|paused|game over)\b/.test(combined);
-}
-
-function checkBrowserGameStaticContracts(repo) {
-  if (!isBrowserGameRepo(repo)) return [];
-  const issues = [];
-  const sourceFiles = collectSourceFiles(repo);
-  const allSource = sourceFiles.map((f) => {
-    try { return `\n// FILE: ${relative(repo, f).replace(/\\/g, "/")}\n${readFileSync(f, "utf-8")}`; } catch { return ""; }
-  }).join("\n");
-
-  const hasScheduledLoop = /\b(setInterval|requestAnimationFrame)\b/.test(allSource);
-  const hasImperativeTickCall = /\b(actions?\.)?(tick|advance|step|update)\s*\(/.test(allSource);
-  const hasDispatchedTickAction = /\bdispatch\s*\(\s*\{[^}]*\btype\s*:\s*['"`](?:TICK|ADVANCE|STEP|UPDATE)['"`]/.test(allSource);
-  if (!hasScheduledLoop || (!hasImperativeTickCall && !hasDispatchedTickAction)) {
-    issues.push("browser game has no visible runtime loop wired through setInterval/requestAnimationFrame and a tick/advance/update action");
-  }
-
-  const appPath = join(repo, "src", "App.tsx");
-  let app = "";
-  if (existsSync(appPath)) {
-    app = readFileSync(appPath, "utf-8");
-    const rootMatch = app.match(/data-setfarm-root(?:=["'][^"']+["'])?[^>]*className=["']([^"']*)["']/s);
-    const rootClass = rootMatch?.[1] || "";
-    const hasRootMarker = /\bdata-setfarm-root\b/.test(app);
-    const hasViewportHeight = /\b(?:h-screen|min-h-screen|h-dvh|min-h-dvh|h-\[(?:100d?vh|100%)\]|min-h-\[(?:100d?vh|100%)\])\b/.test(rootClass);
-    const hasViewportWidth = /\b(?:w-full|w-screen|min-w-full|min-w-screen)\b/.test(rootClass);
-    const hasOverflowControl = /\b(?:overflow-hidden|overflow-x-hidden)\b/.test(rootClass);
-    const hasViewportFrame = /\b(?:relative|flex|fixed|absolute)\b/.test(rootClass);
-    if (!hasRootMarker || !rootClass || !hasViewportHeight || !hasViewportWidth || !hasOverflowControl || !hasViewportFrame) {
-      issues.push(`browser game app root must declare a full viewport frame with position/flex, height, width, and overflow control: ${rootClass || "<missing className>"}`);
-    }
-    if (!/\b(?:Escape|KeyP|settings|openSettings)\b/.test(app)) {
-      issues.push("browser game does not expose a visible or keyboard settings path from gameplay");
-    }
-  }
-
-  const screenIndex = readJsonFile(join(repo, "src", "screens", "SCREEN_INDEX.json"), []);
-  const gameplayScreens = Array.isArray(screenIndex)
-    ? screenIndex.filter((screen) => {
-      const label = `${screen.title || ""} ${screen.componentName || ""} ${screen.file || ""}`;
-      return /\b(gameplay|playfield)\b/i.test(label) || (/\bgame\b/i.test(label) && !/\b(settings?|config|preferences?|pause|menu)\b/i.test(label));
-    })
-    : [];
-  for (const screen of gameplayScreens) {
-    const rel = String(screen.file || "");
-    if (!rel) continue;
-    const abs = join(repo, rel);
-    if (!existsSync(abs)) continue;
-    const code = readFileSync(abs, "utf-8");
-    const classValues = [...code.matchAll(/\bclassName=["']([^"']*)["']/g)].map((m) => m[1]);
-    const primaryClass = classValues.find((value) => /\b(?:aspect-video|max-w-\[|m-playfield-margin|border|overflow-hidden)\b/.test(value)) || "";
-    if (primaryClass && /\bmax-w-\[/.test(primaryClass) && !/\b(?:h-screen|min-h-screen|w-screen)\b/.test(primaryClass)) {
-      issues.push(`${rel}: gameplay surface is boxed (${primaryClass}) instead of owning a stable viewport game scene`);
-    }
-    const runtimeType = (code.match(/runtime\?\s*:\s*([^;]+);/s)?.[1] || "").replace(/\s+/g, " ");
-    const hasGameRuntimeShape = /\b(ball|paddle|bricks|lives|player|obstacles|velocity)\b/.test(runtimeType);
-    const hasStaticGameObjects =
-      /{\s*\/\*\s*(Ball|Paddle|Player|Obstacle|Bricks?)/i.test(code) ||
-      /\b(?:top-1\/2|left-1\/[23]|left-1\/2|bottom-8|translate-x-1\/2)\b/.test(code);
-    if (hasStaticGameObjects && !hasGameRuntimeShape) {
-      issues.push(`${rel}: visible game objects are static CSS placeholders; runtime prop does not include ball/paddle/bricks/lives/player position state`);
-    }
-    const hasPositionRuntimeShape = /\b(?:player|ball|paddle|obstacles?|shards?|items?|enemies?)\??\s*:\s*(?:Array<)?[^{;]*\{[^}]*\b(?:lane|x|y|position|top|left|row|col)\b/i.test(runtimeType) ||
-      /\b(?:player|ball|paddle|obstacles?|shards?|items?|enemies?)\b[\s\S]{0,140}\b(?:lane|x|y|position|top|left|row|col)\b/i.test(runtimeType);
-    const usesRuntimePosition = /\bruntime\??\.(?:player|ball|paddle|obstacles?|shards?|items?|enemies?)[\s\S]{0,220}\b(?:lane|x|y|position|top|left|row|col)\b/i.test(code) ||
-      /\b(?:style|className)\s*=\s*\{[\s\S]{0,300}\bruntime\??\./i.test(code) ||
-      /\.map\(\s*\(?\s*(?:obstacle|shard|item|enemy|brick|entity|o|s|i)\b[\s\S]{0,320}\b(?:style|className)\s*=/i.test(code);
-    if (hasPositionRuntimeShape && hasStaticGameObjects && !usesRuntimePosition) {
-      issues.push(`${rel}: gameplay runtime exposes moving position state, but visible game objects are not positioned from runtime data`);
-    }
-  }
-
-  if (app) {
-    const overlayScreens = gameplayScreens
-      .map((screen) => String(screen.file || ""))
-      .filter(Boolean);
-    const screenIndexAll = Array.isArray(screenIndex) ? screenIndex : [];
-    const modalScreens = screenIndexAll.filter((screen) => {
-      const rel = String(screen.file || "");
-      if (!rel || overlayScreens.includes(rel)) return false;
-      const title = `${screen.title || ""} ${screen.componentName || ""} ${rel}`;
-      if (!/\b(settings?|config|preferences?|pause|menu)\b/i.test(title)) return false;
-      const abs = join(repo, rel);
-      if (!existsSync(abs)) return false;
-      const code = readFileSync(abs, "utf-8");
-      return /\b(?:modal|overlay|backdrop|absolute inset-0|fixed inset-0|z-\d+|backdrop-blur)\b/i.test(code);
-    });
-    const exclusiveSettingsRender = /\?\s*\(?\s*<[^>]*(?:Settings|Config|Preferences|Pause|Menu)[\s\S]{0,260}\)?\s*:\s*\(?\s*<[^>]*(?:Gameplay|Game|Playfield)/i.test(app) ||
-      /\bactiveScreen\s*===\s*["'](?:settings|config|preferences|pause|menu)["'][\s\S]{0,260}\?\s*\(?\s*</i.test(app);
-    if (modalScreens.length > 0 && gameplayScreens.length > 0 && exclusiveSettingsRender) {
-      issues.push(`browser game modal/settings overlay replaces gameplay instead of rendering above it; keep the gameplay scene mounted behind overlay screens (${modalScreens.map(s => s.file).join(", ")})`);
-    }
-  }
-
-  return issues;
-}
-
 function normalizeSnapshotText(text) {
   return String(text || "")
     .replace(/\[ref=\w+\]/g, "[ref]")
@@ -679,8 +573,46 @@ function intentMatchesRoute(intent, routeText) {
   return route.includes(intent);
 }
 
+function readProjectIntentText(repo) {
+  const chunks = [];
+  for (const file of [
+    join(repo, ".setfarm", "RUN_CONTRACT.json"),
+    join(repo, "PROJECT_MEMORY.md"),
+  ]) {
+    try {
+      const raw = readFileSync(file, "utf-8");
+      if (file.endsWith(".json")) {
+        try {
+          const parsed = JSON.parse(raw);
+          chunks.push(parsed.task || "", parsed.prd || "");
+        } catch {
+          chunks.push(raw);
+        }
+      } else {
+        chunks.push(raw);
+      }
+    } catch {}
+  }
+  return chunks.join("\n").toLowerCase();
+}
+
+function excludedFlowIntentsForRepo(repo) {
+  const text = readProjectIntentText(repo);
+  const excluded = new Set();
+  if (/\b(?:do not add|don't add|without|no)\b[^.\n]{0,120}\bsettings?\b/.test(text)) {
+    excluded.add("settings");
+  }
+  return [...excluded];
+}
+
+function buildFlowAuditEval(excludedIntents = []) {
+  const encoded = JSON.stringify(Array.isArray(excludedIntents) ? excludedIntents : []);
+  return FLOW_AUDIT_EVAL.replace("__SETFARM_EXCLUDED_FLOW_INTENTS__", encoded);
+}
+
 const FLOW_AUDIT_EVAL =
-  `((async function(limit) {
+  `((async function(limit, excludedIntents) {
+    excludedIntents = Array.isArray(excludedIntents) ? excludedIntents : [];
     function sleep(ms) { return new Promise(function(resolve) { setTimeout(resolve, ms); }); }
     function labelFor(el, idx) {
       var explicit = el.getAttribute("aria-label") ||
@@ -854,6 +786,7 @@ const FLOW_AUDIT_EVAL =
     controls().forEach(function(item) {
       var intent = intentFor(item.label);
       if (!intent || seen[intent]) return;
+      if (excludedIntents.indexOf(intent) >= 0) return;
       if (intent === "destructive") return;
       seen[intent] = true;
       selected.push({ label: item.label, intent: intent });
@@ -915,7 +848,7 @@ const FLOW_AUDIT_EVAL =
       }
     }
     return { issues: issues, tested: tested };
-  })(8))`;
+  })(8, __SETFARM_EXCLUDED_FLOW_INTENTS__))`;
 
 function checkComponentWiring(repo) {
   const issues = [];
@@ -1700,9 +1633,8 @@ async function main() {
   for (const a of unknownActionFallbackIssues) failures.push('UNKNOWN_ACTION_FALLBACK: ' + a);
   const weakInteractionIssues = checkWeakInteractionAssertions(repoPath);
   for (const t of weakInteractionIssues) failures.push('[TEST] WEAK_INTERACTION_ASSERTION: ' + t);
-  const browserGameStaticIssues = checkBrowserGameStaticContracts(repoPath);
-  for (const g of browserGameStaticIssues) failures.push('[GAME] ' + g);
-  const browserGameRepo = isBrowserGameRepo(repoPath);
+  const stackStaticIssues = checkStackStaticContracts(repoPath);
+  for (const issue of stackStaticIssues) failures.push('[GAME] ' + issue);
 
   // ── Phase 2: Browser (homepage + primary action) ──
   const port = requestedPort > 0 ? requestedPort : 9100 + Math.floor(Math.random()*900);
@@ -2495,7 +2427,7 @@ async function main() {
         await sleep(1500);
         injectErrorCollector();
 
-        const flowJson = abOk('eval', FLOW_AUDIT_EVAL);
+        const flowJson = abOk('eval', buildFlowAuditEval(excludedFlowIntentsForRepo(repoPath)));
         const flowAudit = parseEvalJson(flowJson, { issues: [], tested: [] });
         flowIssues = Array.isArray(flowAudit.issues) ? flowAudit.issues : [];
         flowsChecked += Array.isArray(flowAudit.tested) ? flowAudit.tested.length : 0;
@@ -2756,9 +2688,7 @@ async function main() {
 
   // ── Output ──
   // ── Confidence Score ──
-  if (browserGameRepo && buttonsChecked + formsChecked + flowsChecked === 0) {
-    failures.push('[INTERACT] browser-game-zero-interactions: browser-game smoke cannot pass without exercising at least one gameplay/settings control');
-  }
+  failures.push(...stackZeroInteractionIssues(repoPath, buttonsChecked + formsChecked + flowsChecked));
   let confidence = 100;
   const consoleCount = failures.filter(f => f.startsWith('[CONSOLE]')).length;
   const networkCount = failures.filter(f => f.startsWith('[NETWORK]')).length;
@@ -2849,11 +2779,12 @@ export {
   checkSemanticClickTargets,
   checkUnreachableStateScreens,
   checkUnknownActionFallbacks,
-  isBrowserGameRepo,
-  checkBrowserGameStaticContracts,
+  checkStackStaticContracts,
   checkWeakInteractionAssertions,
   countSourceControlUsages,
   semanticNavigationTargetIssue,
+  excludedFlowIntentsForRepo,
+  buildFlowAuditEval,
 };
 
 if (isCli) {
