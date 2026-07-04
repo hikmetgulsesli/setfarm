@@ -31,6 +31,16 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+async function launchBrowser(chromium: any): Promise<any> {
+  try {
+    return await chromium.launch({ headless: true });
+  } catch (err: any) {
+    const message = String(err?.message || err);
+    if (!/Executable doesn't exist|playwright install|chromium_headless_shell/i.test(message)) throw err;
+    return await chromium.launch({ channel: "chrome", headless: true });
+  }
+}
+
 async function waitForHttp200(url: string, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let lastError = "";
@@ -100,7 +110,7 @@ export class WebPreviewRuntimeDriver implements RuntimeDriver {
     const existing = this.pages.get(session.sessionId);
     if (existing && !existing.isClosed?.()) return existing;
     const { chromium } = await import("playwright");
-    const browser = await chromium.launch({ headless: true });
+    const browser = await launchBrowser(chromium);
     const page = await browser.newPage({ viewport: { width: 1440, height: 960 } });
     await page.goto(session.url, { waitUntil: "domcontentloaded", timeout: 30000 });
     await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => undefined);

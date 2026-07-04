@@ -26,6 +26,9 @@ test("web runtime driver preserves one page per runtime session for interaction 
   const source = fs.readFileSync(path.join(root, "src", "installer", "web-runtime-driver.ts"), "utf-8");
   assert.match(source, /private readonly browsers = new Map/);
   assert.match(source, /private readonly pages = new Map/);
+  assert.match(source, /async function launchBrowser\(chromium: any\)/);
+  assert.match(source, /channel: "chrome"/);
+  assert.match(source, /chromium_headless_shell/);
   assert.match(source, /private async sessionPage\(session: RuntimeSession\)/);
   assert.match(source, /const page = await this\.sessionPage\(session\)/);
   assert.match(source, /this\.pages\.delete\(session\.sessionId\)/);
