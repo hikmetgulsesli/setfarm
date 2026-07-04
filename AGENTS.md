@@ -49,6 +49,33 @@ Use recovery ownership before adding new rules:
 - Patch Setfarm or Mission Control only when live evidence shows a systemic classifier, routing, stack-memory, retry, supervisor, or presentation defect.
 - Do not hardcode project names, app names, file names, icon names, or other one-off generated identifiers. Generalize through stack contracts, failure taxonomy, stack memory, recovery routing, and regression tests.
 
+## Mac Mini Autonomous Loop
+
+On the Mac mini, Setfarm is the always-on evidence generator. Use it to produce
+fresh failures, classify them, and apply root fixes without drifting into
+project-specific rescue.
+
+Loop order:
+
+1. Check repo status and service health.
+2. Inspect active/failed runs from Postgres, events, claim logs, observations,
+   and PR state.
+3. Classify the failure owner: generated product, stack module, Setfarm core,
+   Mission Control presentation, provider/quota/fallback, or infrastructure.
+4. If systemic, create or continue one small fix branch.
+5. Apply the smallest code change at the correct layer.
+6. Run focused tests/builds based on touched files.
+7. Push the branch and read review comments when GitHub auth is available.
+8. Start a clean new run when an old run is polluted by pre-fix behavior.
+
+Do not run multiple code-writing branches in the same repo at once. It is fine to
+observe a run and poll PR comments while waiting, but code edits must be
+serialized.
+
+Provider and quota failures are infrastructure unless code evidence shows the
+fallback policy is wrong. Do not patch generated apps for Kimi quota, OpenClaw
+gateway, model stall, browser infrastructure, or GitHub review-settle failures.
+
 ## Platform Invariants
 
 Agents do not self-certify correctness. Agent output is a claim; Setfarm-owned evidence is authority. For implementation stories that require runtime evidence, agents may declare intent and request verification, but Setfarm must run the app, execute interactions, capture screenshots/DOM/state/logs, write authoritative artifacts, and decide pass/fail.
