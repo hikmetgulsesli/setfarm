@@ -288,3 +288,22 @@ export function formatQualityReport(issues: QualityIssue[]): string {
   }
   return report;
 }
+
+export function formatQualityRetryReport(issues: QualityIssue[]): string {
+  if (issues.length === 0) return "";
+
+  const errors = issues.filter(i => i.severity === "error");
+  const warnings = issues.filter(i => i.severity === "warning");
+
+  let report = `QUALITY GATE: ${errors.length} error(s), ${warnings.length} warning(s)\n`;
+  for (const issue of errors) {
+    report += `  [${issue.severity.toUpperCase()}] ${issue.rule}: ${issue.detail}\n`;
+    for (const m of issue.matches.slice(0, 3)) {
+      report += `    → ${m}\n`;
+    }
+  }
+  if (warnings.length > 0) {
+    report += `  [WARNING] ${warnings.length} warning(s) omitted from retry instructions; fix the blocking error first.\n`;
+  }
+  return report;
+}

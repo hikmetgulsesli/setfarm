@@ -3,9 +3,32 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { runQualityChecks } from "../dist/installer/quality-gates.js";
+import { formatQualityRetryReport, runQualityChecks } from "../dist/installer/quality-gates.js";
 
 describe("quality gates", () => {
+  it("omits warning match details from retry reports", () => {
+    const report = formatQualityRetryReport([
+      {
+        rule: "generated_screen_shell_layout",
+        severity: "error",
+        detail: "GENERATED_SCREEN_VIEWPORT_MOUNT_UNSAFE: src/App.tsx needs a stable root.",
+        matches: ["src/App.tsx:1:<div data-setfarm-root>"],
+      },
+      {
+        rule: "dead_link_hash",
+        severity: "warning",
+        detail: "Found placeholder links.",
+        matches: ["src/screens/Generated.tsx:42:<a href=\"#\">"],
+      },
+    ]);
+
+    assert.match(report, /generated_screen_shell_layout/);
+    assert.match(report, /src\/App\.tsx/);
+    assert.match(report, /1 warning\(s\) omitted/);
+    assert.doesNotMatch(report, /src\/screens\/Generated\.tsx/);
+    assert.doesNotMatch(report, /dead_link_hash/);
+  });
+
   it("blocks generated sibling sidebar/content screens mounted in non-flex app roots", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-quality-generated-layout-"));
     try {

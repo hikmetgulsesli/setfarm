@@ -12,7 +12,7 @@ import { execFileSync } from "node:child_process";
 import { pgGet, pgRun, pgQuery, now } from "../db-pg.js";
 import { logger } from "../lib/logger.js";
 import { isFrontendChange } from "../lib/frontend-detect.js";
-import { runQualityChecks, formatQualityReport } from "./quality-gates.js";
+import { runQualityChecks, formatQualityRetryReport } from "./quality-gates.js";
 import { detectPlatform, checkDesignViolations } from "./stack-modules/design-rules.js";
 import { buildDesignContracts, generateUIContract, enrichStoriesWithDesignContract, validateDesignCompliance, generateLayoutSkeletons, checkCrossScreenConsistency, checkDesignFidelity, detectUnusedModules, reconcileDesignWithStories, checkIntegrationWiring, checkDuplicateInlineCode } from "./design-contract.js";
 import { provisionDatabase, resolveDbType } from "./db-provision.js";
@@ -127,7 +127,7 @@ export function checkQualityGate(stepId: string, repoPath: string): string | nul
       const qualityIssues = runQualityChecks(repoPath);
       const errors = qualityIssues.filter(i => i.severity === "error");
       if (errors.length > 0) {
-        const report = formatQualityReport(qualityIssues);
+        const report = formatQualityRetryReport(qualityIssues);
         return `GUARDRAIL: Quality gate failed — ${errors.length} error(s) detected.\n${report}\nFix these issues and retry.`;
       }
     }
