@@ -59,7 +59,7 @@ const GENERIC_SCREEN_TERMS = new Set([
   "editor", "form", "game", "gameplay", "help", "home", "insight", "insights", "list", "main", "management", "menu",
   "metric", "metrics", "operation", "operations", "option", "options", "over", "overlay", "overview", "panel", "pause", "play",
   "pipeline", "player", "preferences", "primary", "progress", "recovery", "result", "results", "settings", "status",
-  "summary", "support", "workflow", "workspace", "entity", "entities", "item", "items", "resource", "resources",
+  "summary", "support", "utility", "workflow", "workspace", "entity", "entities", "item", "items", "resource", "resources",
 ]);
 
 const PRODUCT_OPTIONAL_GROUPS: Array<{ name: string; terms: string[]; taskHints: RegExp }> = [

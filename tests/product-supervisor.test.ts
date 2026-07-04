@@ -151,6 +151,30 @@ describe("product supervisor", () => {
     assert.equal(result.ok, true, result.reason);
   });
 
+  it("allows generic utility surface labels for tiny status boards", () => {
+    const task = "web: Build a tiny single-page status board called Fresh Loop Check. It should show three compact status tiles, one Refresh button that updates a visible timestamp, and one Ready/Paused toggle. Keep it simple and local-only.";
+    const prd = [
+      "# Fresh Loop Check PRD",
+      "Fresh Loop Check shows three compact status tiles, a refresh timestamp, and a ready/paused toggle.",
+      "## 4. Product Surfaces",
+      "### SURFACE: SURF_STATUS_UTILITY",
+      "- Name: Status Utility",
+      "- Purpose: Show the requested compact status tiles, refresh action, ready/paused toggle, and visible timestamp.",
+      "- Permitted Actions: ACT_REFRESH_STATUS (control_hint: primary_button), ACT_TOGGLE_READY (control_hint: toggle)",
+    ].join("\n");
+
+    const result = runProductSupervisorGate({
+      phase: "plan",
+      runId: "run-1",
+      stepId: "plan",
+      task,
+      parsed: { status: "done", prd },
+      context: { task },
+    });
+
+    assert.equal(result.ok, true, result.reason);
+  });
+
   it("allows generic item surface labels when the purpose preserves the requested domain", () => {
     const task = "Build a compact browser warehouse maintenance command center app called WarehouseOps Console. It should manage equipment work orders, technician dispatch, live queue status, exception insights, reports, settings, help, and logout.";
     const prd = [
