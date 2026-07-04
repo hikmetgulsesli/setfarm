@@ -1606,6 +1606,9 @@ fi
 
 mkdir -p "$WORKDIR"
 cd "$WORKDIR"
+if [ -d "$WORKDIR/.setfarm-bin" ]; then
+  export PATH="$WORKDIR/.setfarm-bin:$PATH"
+fi
 case "$(pwd)" in
   "$HOME"/.openclaw/setfarm-repo|"$HOME"/.openclaw/setfarm-repo/*)
     echo FATAL_PLATFORM_CWD

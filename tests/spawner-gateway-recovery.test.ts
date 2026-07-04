@@ -975,6 +975,10 @@ describe("spawner gateway recovery wiring", () => {
   it("kills implement claims that write outside story scope during runtime", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /function implementScopeWriteGuard\(active: ActiveProcess\)/);
+    assert.match(source, /function implementPackageScopeDirtyGuard\(active: ActiveProcess\)/);
+    assert.match(source, /PACKAGE_SCOPE_MUTATION_FILES/);
+    assert.match(source, /package-scope-dirty-guard/);
+    assert.match(source, /changed package\/dependency file\(s\) outside \.story-scope-files/);
     assert.match(source, /readStoryScopeFileSet\(active\.spawnCwd\)/);
     assert.match(source, /SCOPE_WRITE_VIOLATION/);
     assert.match(source, /function sessionEventMessage\(event: any\)/);
@@ -998,9 +1002,24 @@ describe("spawner gateway recovery wiring", () => {
       "scope write guard should run before loop/context guards",
     );
     assert.ok(
+      source.indexOf("implementPackageScopeDirtyGuard(active)") < source.indexOf("implementScopeWriteGuard(active)"),
+      "package dirty guard must catch shell/npm package mutations before tool-call scope guard",
+    );
+    assert.ok(
       source.indexOf("recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId") < source.indexOf("terminateActiveProcess(active, \"scope-write-guard\")"),
       "scope write guard must write supervisor runtime memory before killing the claim",
     );
+  });
+
+  it("keeps implement wrappers first in PATH and passes only the Setfarm DB URL", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    const promptSource = fs.readFileSync(path.join(root, "src", "spawner-prompt.ts"), "utf-8");
+    assert.match(source, /import \{ runtimeConfig \} from "\.\/runtime-config\.js"/);
+    assert.match(source, /for \(const k of \["MASTER_POSTGRES_URL", "MASTER_MARIADB_URL", "MASTER_MONGODB_URL"\]\)/);
+    assert.doesNotMatch(source, /for \(const k of \["SETFARM_PG_URL", "MASTER_POSTGRES_URL"/);
+    assert.match(source, /e\["SETFARM_PG_URL"\] = runtimeConfig\.setfarmPgUrl/);
+    assert.match(source, /e\["PATH"\] = `\$\{pathPrefix\}\$\{path\.delimiter\}\$\{e\["PATH"\]/);
+    assert.match(promptSource, /export PATH="\$WORKDIR\/\.setfarm-bin:\$PATH"/);
   });
 
   it("kills all agent-side git ownership even when the wrapper should also block it", () => {

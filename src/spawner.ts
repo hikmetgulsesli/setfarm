@@ -3,7 +3,7 @@
  * Listens to PostgreSQL NOTIFY events for pending steps/stories
  * and immediately spawns agent sessions via openclaw CLI.
  */
-import "./runtime-config.js";
+import { runtimeConfig } from "./runtime-config.js";
 import postgres from "postgres";
 import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
@@ -2300,9 +2300,10 @@ function maybeRestartGatewayForReadiness(reason: string, key: string): void {
 
 function buildOpenClawChildEnv(pathPrefix?: string): NodeJS.ProcessEnv {
   const e: Record<string, string | undefined> = { ...process.env, OPENCLAW_AUTO_APPROVE: "1" };
-  for (const k of ["SETFARM_PG_URL", "MASTER_POSTGRES_URL", "MASTER_MARIADB_URL", "MASTER_MONGODB_URL"]) {
+  for (const k of ["MASTER_POSTGRES_URL", "MASTER_MARIADB_URL", "MASTER_MONGODB_URL"]) {
     delete e[k];
   }
+  e["SETFARM_PG_URL"] = runtimeConfig.setfarmPgUrl;
   // Project agents run build, test, and verification commands. A global
   // NODE_ENV=production from the service environment makes React/Vitest load
   // production React, which breaks Testing Library's act() and creates false
@@ -3180,6 +3181,41 @@ function sourceStatusFiles(workdir: string): string[] {
 
 function sourceTouchedFiles(workdir: string, baseRef: string): string[] {
   return [...new Set([...sourceDiffFiles(workdir, baseRef), ...sourceStatusFiles(workdir)])];
+}
+
+const PACKAGE_SCOPE_MUTATION_FILES = ["package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"];
+
+function packageScopeStatusFiles(workdir: string): string[] {
+  let raw: string | null = null;
+  try {
+    raw = execFileSync("git", ["status", "--porcelain", "-uall", "--", ...PACKAGE_SCOPE_MUTATION_FILES], {
+      cwd: workdir,
+      encoding: "utf-8",
+      timeout: 10_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trimEnd();
+  } catch {
+    raw = null;
+  }
+  if (!raw) return [];
+  return raw
+    .split("\n")
+    .map((line) => {
+      let rel = line.slice(3).trim();
+      if (rel.includes(" -> ")) rel = rel.split(" -> ").pop() || rel;
+      return rel.replace(/^"|"$/g, "");
+    })
+    .filter(Boolean);
+}
+
+function implementPackageScopeDirtyGuard(active: ActiveProcess): { detected: boolean; reason: string } {
+  const allowed = readStoryScopeFileSet(active.spawnCwd);
+  const dirty = packageScopeStatusFiles(active.spawnCwd).filter((file) => !allowed.has(file));
+  if (dirty.length === 0) return { detected: false, reason: "" };
+  return {
+    detected: true,
+    reason: `SCOPE_WRITE_VIOLATION: ${active.agentId} changed package/dependency file(s) outside .story-scope-files: ${dirty.slice(0, 8).join(", ")}. Developer agents must not change package.json or lockfiles during IMPLEMENT unless those files are in SCOPE_FILES. Revert package/lockfile changes and use existing stack-pack dependencies; if a new dependency is required, report a setup-build/stack-pack dependency blocker.`,
+  };
 }
 
 function implementNoDeltaStallGuard(active: ActiveProcess, ageMs: number): { detected: boolean; reason: string } {
@@ -4064,6 +4100,19 @@ async function reapFinishedClaims(): Promise<void> {
         const effectiveStoryDbId = active.storyDbId || row.current_story_id || undefined;
 
         if (row.type === "loop" && row.step_id === "implement" && effectiveStoryId && !isTerminalTestRole(active.role, active.agentId)) {
+          const packageScopeDirty = implementPackageScopeDirtyGuard(active);
+          if (packageScopeDirty.detected) {
+            const reason = packageScopeDirty.reason + ` Transcript: ${active.transcriptPath}`;
+            console.warn(`[spawner] ${reason}`);
+            try { fs.appendFileSync(active.transcriptPath, `--- PACKAGE SCOPE DIRTY GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
+            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "package-scope-dirty-guard", reason);
+            terminateActiveProcess(active, "package-scope-dirty-guard");
+            activeProcesses.delete(key);
+            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
+            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
+            continue;
+          }
+
           const scopeWrite = implementScopeWriteGuard(active);
           if (scopeWrite.detected) {
             const reason = scopeWrite.reason + ` Transcript: ${active.transcriptPath}`;
