@@ -42,6 +42,13 @@ const VITE_TARGET_RULES = rules("vite", {
   cli_command: "scripts/{target_slug}.ts",
 });
 
+VITE_TARGET_RULES.state_store = rule(
+  "vite.state_store",
+  "state_store",
+  "src/features/{domain_slug}/{domain_slug}.store.tsx",
+  ["src/features/{domain_slug}/{domain_slug}.types.ts"],
+);
+
 const NEXT_TARGET_RULES = rules("next", {
   app_shell: "app/page.tsx",
   route_registration: "app/page.tsx",
@@ -56,6 +63,13 @@ const NEXT_TARGET_RULES = rules("next", {
   api_route: "app/api/{target_slug}/route.ts",
   cli_command: "scripts/{target_slug}.ts",
 });
+
+NEXT_TARGET_RULES.state_store = rule(
+  "next.state_store",
+  "state_store",
+  "src/features/{domain_slug}/{domain_slug}.store.tsx",
+  ["src/features/{domain_slug}/{domain_slug}.types.ts"],
+);
 
 const STATIC_TARGET_RULES = rules("static", {
   app_shell: "index.html",
@@ -133,6 +147,13 @@ const MOBILE_TARGET_RULES = rules("mobile", {
   api_route: "src/api/{target_slug}.ts",
   cli_command: "scripts/{target_slug}.ts",
 });
+
+MOBILE_TARGET_RULES.state_store = rule(
+  "mobile.state_store",
+  "state_store",
+  "src/features/{domain_slug}/{domain_slug}.store.ts",
+  ["src/features/{domain_slug}/{domain_slug}.types.ts"],
+);
 
 const DEFAULT_SLUG_RULES: SlugRules = {
   surface_slug: "kebab-case: strip SURF_ prefix, lowercase, replace non-alphanumeric separators with hyphen",

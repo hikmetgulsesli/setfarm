@@ -111,6 +111,27 @@ describe("setup handoff contracts", () => {
     assert.deepEqual(result.map((item) => item.path), ["index.html", "assets/js/app.js"]);
   });
 
+  it("expands Vite feature state ownership to local domain types", () => {
+    const pack = getStackPack("vite-react-web-app");
+    const result = expandCompanionTargets(pack, [
+      target({
+        storyId: "US-001",
+        role: "state_store",
+        domainSlug: "clean-loop-meter",
+        targetSlug: "clean-loop-meter",
+        path: "src/features/clean-loop-meter/clean-loop-meter.store.tsx",
+        resolvedPath: "src/features/clean-loop-meter/clean-loop-meter.store.tsx",
+        ruleId: "vite.state_store",
+        source: "scope_target",
+      }),
+    ]);
+
+    assert.deepEqual(result.map((item) => item.path), [
+      "src/features/clean-loop-meter/clean-loop-meter.store.tsx",
+      "src/features/clean-loop-meter/clean-loop-meter.types.ts",
+    ]);
+  });
+
   it("does not expand static html companion files for shared edit grants", () => {
     const pack = getStackPack("static-html-site");
     const expanded = expandCompanionTargets(pack, [
