@@ -349,6 +349,7 @@ export const STACK_PACKS: Record<StackPackId, StackPack> = {
       "Use Next.js routing conventions instead of inventing client-only routing.",
       "Do not add app/api handlers unless explicitly required by the story.",
       "Use 'use client' only for components that need state, effects, or browser APIs.",
+      "A state_store scope target does not imply Zustand. Use built-in React state/context/reducer unless Zustand is already installed by setup-build.",
     ].join("\n"),
   },
   "vite-react-web-app": {
@@ -426,6 +427,7 @@ export const STACK_PACKS: Record<StackPackId, StackPack> = {
       "Use src/main.tsx or src/main.jsx as the browser entrypoint.",
       "Keep package scripts and Vite config stable unless they are explicitly in scope.",
       "Use client-side route/state patterns appropriate for a Vite SPA.",
+      "A state_store scope target does not imply Zustand. Use built-in React state/context/reducer unless Zustand is already installed by setup-build.",
     ].join("\n"),
   },
   "static-html-site": {

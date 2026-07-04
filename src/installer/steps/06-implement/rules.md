@@ -64,7 +64,7 @@ You are assigned ONE story with a FIXED list of files. You MUST NOT create or mo
 - Use `/tmp/setfarm-progress-<run>.txt` checkpoints for long work, not partial git commits.
 - Setfarm creates the final scoped commit as `feat: <story-id> - <description>` after build/scope/supervisor gates pass.
 - Do NOT force push, rewrite history, or bypass the git wrapper/guards.
-- Do NOT modify package.json dependencies unless the story requires it.
+- Do NOT modify package.json dependencies in IMPLEMENT unless package.json is explicitly listed in SCOPE_FILES. If a library such as Zustand is not already installed, use built-in React state/context/reducer or report a setup-build dependency blocker instead of editing package files.
 - Do NOT create, edit, merge, retarget, or close GitHub PRs. Setfarm creates the story PR after completion.
 
 ## Output Contract

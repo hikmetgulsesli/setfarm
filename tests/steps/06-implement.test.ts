@@ -1812,6 +1812,7 @@ describe("06-implement step module", () => {
     assert.match(prompt, /Reducers and state transition functions must be pure/i);
     assert.match(prompt, /`vite\.config\.\*` is app\/toolchain config and is forbidden/i);
     assert.match(prompt, /Do not edit `index\.html` for title, Google fonts, icon fonts, metadata, or root markup/i);
+    assert.match(prompt, /If a library such as Zustand is not already installed, use built-in React state\/context\/reducer/i);
     assert.match(prompt, /Shared domain\/type files \(`src\/types\/\*`, `src\/types\.ts`, domain model files\) are read-only unless they are explicitly listed in SCOPE_FILES/i);
     assert.match(prompt, /local display\/render type or adapter/i);
     assert.match(prompt, /do not render movement,\s+pickup\/drop, pause, or other gameplay-only controls as active buttons/i);

@@ -108,7 +108,7 @@ The following library packs were selected by Setfarm from the PRD, design contra
    - **Every bash command prefix:** `cd "{{STORY_WORKDIR}}" && ...`. Do NOT cd anywhere else.
    - **Branch:** This story uses exactly `{{STORY_BRANCH}}`. The branch is already checked out.
    - **NEVER run** `git checkout -b`, `git branch -m`, or create/rename a branch.
-   - **NEVER run** dependency install commands during implement. If a dependency is missing, report it.
+   - **NEVER run** dependency install commands during implement. If a dependency is missing, report it. If a library such as Zustand is not already installed, use built-in React state/context/reducer or report a setup-build dependency blocker instead of editing package files.
    - **NEVER run broad process cleanup or ad hoc preview servers.** Do not use `pkill`, `killall`, `pgrep` pipelines, `kill $(pgrep ...)`, `npx vite preview`, `npm run dev`, or background preview commands to manage runtime processes. Setfarm owns runtime port lifecycle and cleanup. Your job is scoped source changes plus the declared build/test/lint commands.
    - **Do not run git staging, commit, push, branch, or PR commands.** Finish code + local checks and report `STATUS: done`; Setfarm commits the allowed story scope, pushes `{{STORY_BRANCH}}`, and owns the PR gate.
    - **Toolchain freeze:** do not inspect, rewrite, upgrade, or debate Vite/Tailwind/TypeScript/test config unless a local build/test command actually fails. If checks pass, leave config untouched. `vite.config.*` is app/toolchain config and is forbidden unless explicitly listed in SCOPE_FILES. If Vitest setup is needed, use/create `vitest.config.*` or `src/test/setup.ts` only.

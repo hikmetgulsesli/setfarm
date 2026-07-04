@@ -1030,7 +1030,7 @@ function retryDisciplineForFailure(
       instruction: "Scope-file retry discipline: first create meaningful non-empty code in the declared scope_files that belong to this story, especially app shell, context, hooks, domain types, storage helpers, and CSS files when listed. Do not collapse the implementation into one file and do not report STATUS: done until the owned scope files exist.",
     };
   }
-  if (/\bSCOPE_BLEED\b[\s\S]{0,520}\b(?:package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock)\b/i.test(signal)) {
+  if (/\b(?:SCOPE_BLEED|SCOPE_WRITE_VIOLATION)\b[\s\S]{0,520}\b(?:package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|package\/dependency file)/i.test(signal)) {
     return {
       mode: "semantic-fix",
       instruction: "Package-scope retry discipline: first remove package.json, package-lock.json, pnpm-lock.yaml, and yarn.lock changes from the story worktree. Do not install dependencies, rewrite package scripts, or create lockfile deltas in IMPLEMENT. Use the existing BUILD_CMD/TEST_CMD and existing stack-pack dependencies; if the story cannot be implemented without a new dependency, report that as a setup-build/stack-pack dependency blocker instead of editing package files.",

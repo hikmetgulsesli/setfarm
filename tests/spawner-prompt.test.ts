@@ -1864,6 +1864,41 @@ describe("spawner prompt bootstrap", () => {
     }
   });
 
+  it("gives package scope writes a dependency-safe retry discipline", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-package-scope-write-"));
+    try {
+      fs.writeFileSync(path.join(tmp, ".story-scope-files"), "src/App.tsx\n");
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: "/tmp/claim.json",
+        outputFile: "/tmp/output.txt",
+        bootstrapFile: "/tmp/bootstrap.sh",
+        stepId: "step-123",
+        runId: "run-123",
+        workdir: tmp,
+        repo: tmp,
+        storyId: "US-001",
+        input: [
+          "TASK: Project: package write sensor",
+          `WORKDIR: ${tmp}`,
+          "CURRENT STORY: Story US-001: App shell",
+          "",
+          "## Previous Failure / Retry Feedback",
+          "SCOPE_WRITE_VIOLATION: feature-dev_developer changed package/dependency file(s) outside .story-scope-files: package.json.",
+          "",
+          "## Current Story",
+        ].join("\n"),
+      });
+
+      assert.equal((summary.retryDiscipline as any).mode, "semantic-fix");
+      assert.match(String((summary.retryDiscipline as any).instruction), /Do not install dependencies/);
+      assert.match(String((summary.retryDiscipline as any).instruction), /setup-build\/stack-pack dependency blocker/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("omits retry source snapshots and patch bodies for scope bleed retries", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-scope-bleed-no-snapshot-"));
     try {
