@@ -73,6 +73,7 @@ const ACTIONABLE_RETRY_OUTPUT_PATTERN = "PR_REVIEW_COMMENTS_OPEN|actionable PR r
 const ACTIVE_RETRY_STORY_SQL = `(retry_count > 0 OR COALESCE(output, '') ~* '${ACTIONABLE_RETRY_OUTPUT_PATTERN}')`;
 const ACTIVE_RETRY_STORY_ALIAS_SQL = `(active_st.retry_count > 0 OR COALESCE(active_st.output, '') ~* '${ACTIONABLE_RETRY_OUTPUT_PATTERN}')`;
 const ACTIONABLE_RETRY_OUTPUT_RE = /\b(?:PR_REVIEW_COMMENTS_OPEN|APP_INTEGRATION_[A-Z_]*REGRESSION|POST_MERGE_QUALITY_REGRESSION|VULNERABILITIES|SECURITY_FINDINGS?|STATUS:\s*retry)\b|actionable PR review comments/i;
+const PR_REVIEW_COMMENT_RETRY_LIMIT = 3;
 
 function recoverableOutputTmpFiles(callerGatewayAgent?: string): string[] {
   let files: string[];
@@ -1773,6 +1774,13 @@ function isSupervisorEscalatableReviewFailure(category: string | undefined, fail
   );
 }
 
+function extractPrReviewActionableCount(failure: string): number | null {
+  const header = String(failure || "").match(/^## PR Comments \((\d+) actionable\)/m);
+  if (!header) return null;
+  const count = Number.parseInt(header[1] || "", 10);
+  return Number.isFinite(count) && count >= 0 ? count : null;
+}
+
 async function fetchFreshPrStateName(
   prUrl: string,
   storyId: string,
@@ -1841,51 +1849,91 @@ async function routeVerifyScopeFailureToImplement(
   if (retryStory.pr_url) context["pr_url"] = retryStory.pr_url;
   if (retryStoryBranch) context["story_branch"] = retryStoryBranch;
 
-  if (newRetry > retryStory.max_retries) {
-    const terminalRetry = Math.max(0, retryStory.max_retries);
-    if (isSupervisorEscalatableReviewFailure(options.category, failure)) {
-      if (context["pr_review_supervisor_escalated_story_id"] === storyId) {
-        const terminalFailure = [
-          `PR_REVIEW_COMMENTS_MANUAL_REVIEW: ${storyId} exhausted developer retries and one supervisor escalation, but actionable PR review comments remain.`,
-          failure,
-        ].join("\n");
-        context["verify_feedback"] = terminalFailure;
-        context["previous_failure"] = terminalFailure;
-        context["failure_category"] = "PR_REVIEW_COMMENTS_OPEN";
-        context["failure_suggestion"] = "Manual review required: developer retries and supervisor escalation did not clear actionable PR review comments.";
-        context["current_story_id"] = storyId;
-        await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [terminalRetry, terminalFailure, now(), retryStory.id]);
-        await updateRunContext(verifyStep.run_id, context);
-        const loopStep = await findLoopStep(verifyStep.run_id);
-        if (loopStep?.id) await setStepStatus(loopStep.id, "failed");
-        await failRun(verifyStep.run_id, true);
-        scheduleRunCronTeardown(verifyStep.run_id);
-        logger.warn(`[verify-pr-comments] ${storyId} review retry budget and supervisor escalation exhausted; failing for manual review`, { runId: verifyStep.run_id });
-        return;
-      }
+  const isReviewFailure = isSupervisorEscalatableReviewFailure(options.category, failure);
+  if (isReviewFailure) {
+    const actionableCount = extractPrReviewActionableCount(failure);
+    const previousReviewStoryId = context["pr_review_retry_story_id"] || "";
+    const previousReviewCount = Number.parseInt(context["pr_review_retry_count"] || "0", 10);
+    const previousActionableCount = Number.parseInt(context["pr_review_last_actionable_count"] || "", 10);
+    const sameReviewStory = previousReviewStoryId === storyId;
+    const madeReviewProgress = sameReviewStory && actionableCount !== null && Number.isFinite(previousActionableCount) && actionableCount < previousActionableCount;
+    const nextReviewRetry = madeReviewProgress ? 1 : (sameReviewStory && Number.isFinite(previousReviewCount) ? previousReviewCount + 1 : 1);
+    const reviewRetryExhausted = nextReviewRetry > PR_REVIEW_COMMENT_RETRY_LIMIT;
+    const storyRetryForReview = Math.min(newRetry, Math.max(0, retryStory.max_retries));
+
+    context["pr_review_retry_story_id"] = storyId;
+    context["pr_review_retry_count"] = String(nextReviewRetry);
+    if (actionableCount !== null) context["pr_review_last_actionable_count"] = String(actionableCount);
+    if (madeReviewProgress) delete context["pr_review_supervisor_escalated_story_id"];
+
+    if (!reviewRetryExhausted) {
+      await pgRun(
+        "UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, retry_count = $1, output = $2, story_branch = COALESCE(NULLIF($5, ''), story_branch), updated_at = $3 WHERE id = $4",
+        [storyRetryForReview, failure, now(), retryStory.id, retryStoryBranch],
+      );
+      await updateRunContext(verifyStep.run_id, context);
       const loopStep = await findLoopStep(verifyStep.run_id);
+      if (loopStep?.id) await setStepStatus(loopStep.id, "pending");
       const loopConfig = parseLoopConfigSafe(loopStep?.loop_config || "", verifyStep.run_id);
       const superviseStepName = loopConfig?.superviseStep || "supervise";
-      context["verify_feedback"] = failure;
-      context["previous_failure"] = failure;
-      context["failure_category"] = "PR_REVIEW_COMMENTS_OPEN";
-      context["failure_suggestion"] = "Developer retries are exhausted. Escalate this actionable PR review feedback to the story supervisor for a scoped manager-owned fix; do not fail the run until supervisor has audited or patched the story.";
-      context["current_story_id"] = storyId;
-      context["supervisor_scope"] = "story";
-      context["pr_review_supervisor_escalated_story_id"] = storyId;
-      clearStorySupervised(context, storyId);
-      await pgRun("UPDATE stories SET status = 'done', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [terminalRetry, failure, now(), retryStory.id]);
-      if (loopStep?.id) await setStepStatus(loopStep.id, "running");
       await pgRun(
-        "UPDATE steps SET status = 'pending', current_story_id = $1, updated_at = $2 WHERE run_id = $3 AND step_id = $4 AND status IN ('waiting','done','pending','failed')",
-        [retryStory.id, now(), verifyStep.run_id, superviseStepName],
+        "UPDATE steps SET status = 'waiting', current_story_id = NULL, updated_at = $1 WHERE run_id = $2 AND step_id = $3 AND status IN ('pending','running')",
+        [now(), verifyStep.run_id, superviseStepName],
       );
-      await pgRun("UPDATE steps SET status = 'waiting', retry_count = 0, current_story_id = NULL, updated_at = $1 WHERE id = $2", [now(), verifyStep.id]);
-      await updateRunContext(verifyStep.run_id, context);
-      emitEvent({ ts: now(), event: "story.retry", runId: verifyStep.run_id, workflowId: await getWorkflowId(verifyStep.run_id), stepId: superviseStepName, storyId, detail: "PR review retry budget exhausted; escalated to supervisor" });
-      logger.warn(`[verify-pr-comments] ${storyId} review retry budget exhausted; escalated to ${superviseStepName}`, { runId: verifyStep.run_id });
+      await pgRun(
+        "UPDATE claim_log SET outcome = 'infra_retry', abandoned_at = COALESCE(abandoned_at, NOW()), duration_ms = EXTRACT(EPOCH FROM NOW() - claimed_at::timestamptz) * 1000, diagnostic = COALESCE(NULLIF(diagnostic, ''), $1) WHERE run_id = $2 AND step_id = $3 AND story_id IS NULL AND outcome IS NULL",
+        [`${options.category || "VERIFY_SCOPE_FAILURE"} routed story back to implement; stale supervisor claim invalidated`, verifyStep.run_id, superviseStepName],
+      );
+      emitEvent({ ts: now(), event: "story.retry", runId: verifyStep.run_id, workflowId: await getWorkflowId(verifyStep.run_id), stepId: verifyStep.step_id, storyId, detail: failure });
       return;
     }
+
+    const terminalRetry = Math.max(0, retryStory.max_retries);
+    if (context["pr_review_supervisor_escalated_story_id"] === storyId) {
+      const terminalFailure = [
+        `PR_REVIEW_COMMENTS_MANUAL_REVIEW: ${storyId} exhausted developer retries and one supervisor escalation, but actionable PR review comments remain.`,
+        failure,
+      ].join("\n");
+      context["verify_feedback"] = terminalFailure;
+      context["previous_failure"] = terminalFailure;
+      context["failure_category"] = "PR_REVIEW_COMMENTS_OPEN";
+      context["failure_suggestion"] = "Manual review required: developer retries and supervisor escalation did not clear actionable PR review comments.";
+      context["current_story_id"] = storyId;
+      await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [terminalRetry, terminalFailure, now(), retryStory.id]);
+      await updateRunContext(verifyStep.run_id, context);
+      const loopStep = await findLoopStep(verifyStep.run_id);
+      if (loopStep?.id) await setStepStatus(loopStep.id, "failed");
+      await failRun(verifyStep.run_id, true);
+      scheduleRunCronTeardown(verifyStep.run_id);
+      logger.warn(`[verify-pr-comments] ${storyId} review retry budget and supervisor escalation exhausted; failing for manual review`, { runId: verifyStep.run_id });
+      return;
+    }
+    const loopStep = await findLoopStep(verifyStep.run_id);
+    const loopConfig = parseLoopConfigSafe(loopStep?.loop_config || "", verifyStep.run_id);
+    const superviseStepName = loopConfig?.superviseStep || "supervise";
+    context["verify_feedback"] = failure;
+    context["previous_failure"] = failure;
+    context["failure_category"] = "PR_REVIEW_COMMENTS_OPEN";
+    context["failure_suggestion"] = "Developer PR review retries are exhausted. Escalate this actionable PR review feedback to the story supervisor for a scoped manager-owned fix; do not fail the run until supervisor has audited or patched the story.";
+    context["current_story_id"] = storyId;
+    context["supervisor_scope"] = "story";
+    context["pr_review_supervisor_escalated_story_id"] = storyId;
+    clearStorySupervised(context, storyId);
+    await pgRun("UPDATE stories SET status = 'done', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [terminalRetry, failure, now(), retryStory.id]);
+    if (loopStep?.id) await setStepStatus(loopStep.id, "running");
+    await pgRun(
+      "UPDATE steps SET status = 'pending', current_story_id = $1, updated_at = $2 WHERE run_id = $3 AND step_id = $4 AND status IN ('waiting','done','pending','failed')",
+      [retryStory.id, now(), verifyStep.run_id, superviseStepName],
+    );
+    await pgRun("UPDATE steps SET status = 'waiting', retry_count = 0, current_story_id = NULL, updated_at = $1 WHERE id = $2", [now(), verifyStep.id]);
+    await updateRunContext(verifyStep.run_id, context);
+    emitEvent({ ts: now(), event: "story.retry", runId: verifyStep.run_id, workflowId: await getWorkflowId(verifyStep.run_id), stepId: superviseStepName, storyId, detail: "PR review retry budget exhausted; escalated to supervisor" });
+    logger.warn(`[verify-pr-comments] ${storyId} review retry budget exhausted; escalated to ${superviseStepName}`, { runId: verifyStep.run_id });
+    return;
+  }
+
+  if (newRetry > retryStory.max_retries) {
+    const terminalRetry = Math.max(0, retryStory.max_retries);
     await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [terminalRetry, failure, now(), retryStory.id]);
     await updateRunContext(verifyStep.run_id, context);
     const loopStep = await findLoopStep(verifyStep.run_id);
