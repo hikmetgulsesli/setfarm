@@ -159,7 +159,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.notEqual(end, -1, "resolveAgentRuntime end not found");
     const block = source.slice(start, end);
 
-    assert.match(block, /if \(commandIsUsable\(OPENCLAW_CLI\)\) return "openclaw";\s+if \(commandIsUsable\(KIMI_CLI\)\) return "kimi";\s+if \(commandIsUsable\(CODEX_CLI\)\) return "codex";/);
+    assert.match(block, /if \(commandIsUsable\(OPENCLAW_CLI\)\) return "openclaw";[\s\S]*if \(commandIsUsable\(KIMI_CLI\)\) return "kimi";[\s\S]*if \(commandIsUsable\(OPENCODE_CLI\)\) return "opencode";[\s\S]*if \(commandIsUsable\(CODEX_CLI\)\) return "codex";/);
     assert.match(block, /requested === "kimi"/);
   });
 
@@ -192,6 +192,27 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /e\.HOME = kimiHome/);
     assert.match(source, /e\.KIMI_HOME = path\.join\(kimiHome, "\.kimi"\)/);
     assert.match(source, /buildAgentChildEnv\(pathPrefix, \{ runtime: AGENT_RUNTIME, sessionId \}\)/);
+  });
+
+  it("isolates OpenClaw agent config from Codex plugin session middleware", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    const helperStart = source.indexOf("function prepareOpenClawIsolatedConfig(sessionId: string)");
+    const envStart = source.indexOf("function buildAgentChildEnv(", helperStart);
+    assert.notEqual(helperStart, -1, "OpenClaw isolated config helper not found");
+    assert.notEqual(envStart, -1, "agent child env builder not found");
+    const helperSource = source.slice(helperStart, envStart);
+    const envSource = source.slice(envStart, source.indexOf("function shellQuote", envStart));
+
+    assert.match(source, /const DEFAULT_SETFARM_OPENCLAW_PLUGIN_ALLOW = \["minimax", "kimi", "moonshot", "lmstudio"\]/);
+    assert.match(helperSource, /SETFARM_OPENCLAW_ISOLATED_CONFIG === "0"/);
+    assert.match(helperSource, /OPENCLAW_CONFIG_PATH\?\.trim\(\) \|\| path\.join\(os\.homedir\(\), "\.openclaw", "openclaw\.json"\)/);
+    assert.match(helperSource, /entries\.codex = \{ \.\.\.codexEntry, enabled: false \}/);
+    assert.match(helperSource, /plugins\.allow = parseOpenClawAgentPluginAllow\(\)/);
+    assert.match(helperSource, /\.openclaw", "setfarm", "openclaw-runtime", sessionId/);
+    assert.match(helperSource, /fs\.writeFileSync\(targetConfigPath, JSON\.stringify\(next, null, 2\) \+ "\\n", \{ mode: 0o600 \}\)/);
+    assert.match(envSource, /\(options\.runtime \|\| AGENT_RUNTIME\) === "openclaw" && options\.sessionId/);
+    assert.match(envSource, /const isolatedConfigPath = prepareOpenClawIsolatedConfig\(options\.sessionId\)/);
+    assert.match(envSource, /e\.OPENCLAW_CONFIG_PATH = isolatedConfigPath/);
   });
 
   it("preserves host Playwright browser cache for isolated Kimi browser evidence", () => {

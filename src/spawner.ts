@@ -2389,6 +2389,46 @@ function prepareKimiIsolatedHome(sessionId: string): string {
   return home;
 }
 
+const DEFAULT_SETFARM_OPENCLAW_PLUGIN_ALLOW = ["minimax", "kimi", "moonshot", "lmstudio"];
+
+function parseOpenClawAgentPluginAllow(): string[] {
+  const raw = process.env.SETFARM_OPENCLAW_PLUGIN_ALLOW || DEFAULT_SETFARM_OPENCLAW_PLUGIN_ALLOW.join(",");
+  const values = raw
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return values.length > 0 ? [...new Set(values)] : [...DEFAULT_SETFARM_OPENCLAW_PLUGIN_ALLOW];
+}
+
+function isJsonRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function prepareOpenClawIsolatedConfig(sessionId: string): string | undefined {
+  if (process.env.SETFARM_OPENCLAW_ISOLATED_CONFIG === "0") return undefined;
+  const sourceConfigPath = process.env.OPENCLAW_CONFIG_PATH?.trim() || path.join(os.homedir(), ".openclaw", "openclaw.json");
+  try {
+    const source = JSON.parse(fs.readFileSync(sourceConfigPath, "utf-8")) as unknown;
+    const next = isJsonRecord(source) ? JSON.parse(JSON.stringify(source)) as Record<string, unknown> : {};
+    const plugins = isJsonRecord(next.plugins) ? next.plugins : {};
+    const entries = isJsonRecord(plugins.entries) ? plugins.entries : {};
+    const codexEntry = isJsonRecord(entries.codex) ? entries.codex : {};
+    entries.codex = { ...codexEntry, enabled: false };
+    plugins.entries = entries;
+    plugins.allow = parseOpenClawAgentPluginAllow();
+    next.plugins = plugins;
+
+    const targetDir = path.join(os.homedir(), ".openclaw", "setfarm", "openclaw-runtime", sessionId);
+    const targetConfigPath = path.join(targetDir, "openclaw.json");
+    fs.mkdirSync(targetDir, { recursive: true });
+    fs.writeFileSync(targetConfigPath, JSON.stringify(next, null, 2) + "\n", { mode: 0o600 });
+    return targetConfigPath;
+  } catch (err) {
+    console.warn(`[spawner] failed to prepare isolated OpenClaw config for ${sessionId}: ${String(err).slice(0, 220)}`);
+    return undefined;
+  }
+}
+
 function resolveHostPlaywrightBrowsersPath(): string | undefined {
   if (process.env.PLAYWRIGHT_BROWSERS_PATH?.trim()) return process.env.PLAYWRIGHT_BROWSERS_PATH.trim();
   const candidates = [
@@ -2412,6 +2452,10 @@ function buildAgentChildEnv(pathPrefix?: string, options: { runtime?: AgentRunti
     e.XDG_CONFIG_HOME = path.join(kimiHome, ".config");
     e.XDG_CACHE_HOME = path.join(kimiHome, ".cache");
     e.XDG_STATE_HOME = path.join(kimiHome, ".local", "state");
+  }
+  if ((options.runtime || AGENT_RUNTIME) === "openclaw" && options.sessionId) {
+    const isolatedConfigPath = prepareOpenClawIsolatedConfig(options.sessionId);
+    if (isolatedConfigPath) e.OPENCLAW_CONFIG_PATH = isolatedConfigPath;
   }
   return e;
 }
