@@ -1084,6 +1084,11 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /blocked agent switch/);
     assert.match(source, /Developer agents do not stage, commit, push, or open PRs/);
     assert.match(source, /Setfarm commits the allowed \.story-scope-files entries after build\/scope\/supervisor gates pass/);
+    assert.match(source, /function resolveNpmBinary\(\): string/);
+    assert.match(source, /SETFARM_NPM_WRAPPER/);
+    assert.match(source, /blocked package\/dependency mutation/);
+    assert.match(source, /install\|i\|add\|remove\|rm\|uninstall\|update\|upgrade/);
+    assert.match(source, /setup-build\/stack-pack dependency blocker/);
     assert.match(source, /const shouldInstallImplementGitWrapper = role === "developer" && Boolean\(claim\.storyId\)/);
     assert.match(source, /shouldInstallImplementGitWrapper \? installImplementGitWrapper/);
     assert.doesNotMatch(source, /claim\.stepId === "implement" \? installImplementGitWrapper/);

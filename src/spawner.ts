@@ -2431,6 +2431,18 @@ function resolveGitBinary(): string {
   return "/usr/bin/git";
 }
 
+function resolveNpmBinary(): string {
+  try {
+    const out = execFileSync("bash", ["-lc", "command -v npm"], {
+      encoding: "utf-8",
+      timeout: 5000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    if (out) return out;
+  } catch {}
+  return "/usr/bin/npm";
+}
+
 function installImplementGitWrapper(workdir: string, transcriptPath: string): string | undefined {
   if (!workdir) return undefined;
   try {
@@ -2501,10 +2513,40 @@ fi
 exec "$REAL_GIT" "$@"
 `;
     fs.writeFileSync(wrapperPath, script, { mode: 0o755 });
-    try { fs.appendFileSync(transcriptPath, `[spawner] installed implement git wrapper at ${wrapperPath}\n`); } catch {}
+
+    const npmWrapperPath = path.join(wrapperDir, "npm");
+    const realNpm = resolveNpmBinary();
+    const npmScript = `#!/usr/bin/env bash
+REAL_NPM=${shellQuote(realNpm)}
+cmd="$1"
+
+package_scope_allowed() {
+  [ -f ".story-scope-files" ] || return 1
+  grep -Eq '(^|[,[:space:]])(package\\.json|package-lock\\.json|pnpm-lock\\.yaml|yarn\\.lock)([,[:space:]]|$)' .story-scope-files
+}
+
+blocked() {
+  echo "SETFARM_NPM_WRAPPER: $1" >&2
+  echo "Developer agents must not change package.json or lockfiles during IMPLEMENT unless those files are in SCOPE_FILES." >&2
+  echo "Use existing stack-pack dependencies and BUILD_CMD/TEST_CMD. If a new dependency is truly required, report a setup-build/stack-pack dependency blocker instead of running npm install." >&2
+  exit 2
+}
+
+case "$cmd" in
+  install|i|add|remove|rm|uninstall|update|upgrade)
+    if ! package_scope_allowed; then
+      blocked "blocked package/dependency mutation: npm $*"
+    fi
+    ;;
+esac
+
+exec "$REAL_NPM" "$@"
+`;
+    fs.writeFileSync(npmWrapperPath, npmScript, { mode: 0o755 });
+    try { fs.appendFileSync(transcriptPath, `[spawner] installed implement wrappers at ${wrapperDir} (git,npm)\n`); } catch {}
     return wrapperDir;
   } catch (err) {
-    try { fs.appendFileSync(transcriptPath, `[spawner] failed to install implement git wrapper: ${String(err).slice(0, 180)}\n`); } catch {}
+    try { fs.appendFileSync(transcriptPath, `[spawner] failed to install implement wrappers: ${String(err).slice(0, 180)}\n`); } catch {}
     return undefined;
   }
 }
