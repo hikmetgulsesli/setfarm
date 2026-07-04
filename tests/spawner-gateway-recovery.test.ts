@@ -215,6 +215,13 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(envSource, /e\.OPENCLAW_CONFIG_PATH = isolatedConfigPath/);
   });
 
+  it("uses OpenClaw gateway mode by default to avoid local embedded session takeover", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /const OPENCLAW_AGENT_LOCAL = process\.env\.SETFARM_OPENCLAW_AGENT_LOCAL === "1"/);
+    assert.match(source, /\.\.\.\(OPENCLAW_AGENT_LOCAL \? \["--local"\] : \[\]\)/);
+    assert.doesNotMatch(source, /process\.env\.SETFARM_OPENCLAW_AGENT_LOCAL !== "0"/);
+  });
+
   it("preserves host Playwright browser cache for isolated Kimi browser evidence", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     const helperStart = source.indexOf("function resolveHostPlaywrightBrowsersPath()");
