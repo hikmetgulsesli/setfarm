@@ -731,7 +731,8 @@ describe("spawner prompt bootstrap", () => {
       assert.match(String(summary.previousFailure), /thread=PRRT_four/);
       assert.match(String((summary.retryFeedback as any).details), /thread=PRRT_four/);
       assert.match(String((summary.retryFeedback as any).blocker), /thread=PRRT_four/);
-      assert.deepEqual((summary.retryFeedback as any).prThreadIds, ["PRRT_one", "PRRT_two", "PRRT_three", "PRRT_four"]);
+      assert.deepEqual((summary.retryFeedback as any).prThreadIds, ["PRRT_one", "PRRT_two", "PRRT_three"]);
+      assert.deepEqual((summary.retryFeedback as any).outOfScopePrThreadIds, ["PRRT_four"]);
       assert.deepEqual(
         (summary.retryFeedback as any).actionableReviewThreads.map((thread: any) => ({
           threadId: thread.threadId,
