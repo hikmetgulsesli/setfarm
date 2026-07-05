@@ -1577,6 +1577,22 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(combined, /AGENT_STEP_STATE_MISMATCH/);
   });
 
+  it("preserves generated-screen quality guard feedback across masked-check requeues", () => {
+    const quality = [
+      "GUARDRAIL: Quality gate failed - 1 error(s) detected.",
+      "GENERATED_SCREEN_VIEWPORT_MOUNT_UNSAFE: src/App.tsx needs a stable viewport root.",
+    ].join("\n");
+    const infra = [
+      "MASKED_CHECK_COMMAND: feature-dev_developer ran deterministic build/test evidence through an output-filtering pipeline.",
+      "Rerun the declared build/test command without a pipe.",
+    ].join("\n");
+    const combined = preserveActionableStoryRetryOutput(quality, infra);
+
+    assert.match(combined, /GENERATED_SCREEN_VIEWPORT_MOUNT_UNSAFE/);
+    assert.match(combined, /INFRA_RETRY:/);
+    assert.match(combined, /MASKED_CHECK_COMMAND/);
+  });
+
   it("caps terminal story retry counters in quality and supervisor recovery paths", () => {
     const source = stepOpsSource();
     const terminalUpdates = [...source.matchAll(/UPDATE stories SET status = 'failed', retry_count = \$1[\s\S]{0,160}/g)].map((match) => match[0]);

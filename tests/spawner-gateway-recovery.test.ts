@@ -1418,6 +1418,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.ok(retryOutput.includes("POST_MERGE_QUALITY_REGRESSION"));
     assert.ok(retryOutput.includes("VULNERABILITIES"));
     assert.ok(retryOutput.includes("AGENT_(?:STEP|STORY)_STATE_MISMATCH"));
+    assert.ok(retryOutput.includes("MASKED_CHECK_COMMAND"));
     assert.ok(retryOutput.includes("IMPLEMENT_NO_DELTA"));
     assert.ok(retryOutput.includes("INFRA_RETRY:"));
     assert.match(source, /const storyOutput = preserveActionableStoryRetryOutput\(row\.story_output,\s*diagnostic\)/);
