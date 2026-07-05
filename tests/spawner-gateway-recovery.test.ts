@@ -544,6 +544,10 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /cleanupStaleSetfarmOpenClawTaskRecords\("prespawn"\)/);
     assert.match(source, /const result = cleanupStaleSetfarmOpenClawTaskRecords\("interval"\)/);
     assert.match(source, /void restartGatewayAfterOpenClawCleanup\("interval",\s*result\)/);
+    assert.match(source, /process\.platform === "darwin"/);
+    assert.match(source, /command: OPENCLAW_CLI,\s*args: \["gateway", "restart"\]/);
+    assert.match(source, /restarting \$\{restartCommand\.label\} after stale OpenClaw cleanup/);
+    assert.doesNotMatch(source, /gateway restart after stale OpenClaw cleanup skipped on \$\{process\.platform\}[\s\S]{0,220}process\.platform !== "linux"/);
   });
 
   it("marks stale OpenClaw session index records timed out before spawning", () => {

@@ -3029,7 +3029,13 @@ async function restartGatewayAfterOpenClawCleanup(context: string, result: OpenC
   }
   const nowMs = Date.now();
   if (nowMs - lastGatewayCleanupRestartMs < GATEWAY_PRESPAWN_RESTART_COOLDOWN_MS) return false;
-  if (process.platform !== "linux") {
+
+  const restartCommand = process.platform === "linux"
+    ? { command: "systemctl", args: ["--user", "restart", "openclaw-gateway"], env: process.env, label: "openclaw-gateway" }
+    : process.platform === "darwin"
+      ? { command: OPENCLAW_CLI, args: ["gateway", "restart"], env: buildOpenClawChildEnv(), label: "openclaw gateway" }
+      : null;
+  if (!restartCommand) {
     lastGatewayCleanupRestartMs = nowMs;
     console.warn(`[spawner] gateway restart after stale OpenClaw cleanup skipped on ${process.platform} (${context}): sessions=${result.sessions} tasks=${result.tasks}`);
     return false;
@@ -3037,9 +3043,14 @@ async function restartGatewayAfterOpenClawCleanup(context: string, result: OpenC
 
   gatewayRestartInFlight = true;
   lastGatewayCleanupRestartMs = nowMs;
-  console.warn(`[spawner] restarting openclaw-gateway after stale OpenClaw cleanup (${context}): sessions=${result.sessions} tasks=${result.tasks}`);
+  console.warn(`[spawner] restarting ${restartCommand.label} after stale OpenClaw cleanup (${context}): sessions=${result.sessions} tasks=${result.tasks}`);
   const restarted = await new Promise<boolean>((resolve) => {
-    execFile("systemctl", ["--user", "restart", "openclaw-gateway"], { timeout: 20_000 }, (err, stdout, stderr) => {
+    execFile(restartCommand.command, restartCommand.args, {
+      cwd: AGENT_SAFE_CWD,
+      timeout: 20_000,
+      env: restartCommand.env,
+      maxBuffer: 2 * 1024 * 1024,
+    }, (err, stdout, stderr) => {
       if (err) {
         const msg = compactExitReason(stderr || stdout || (err as any).message || err);
         console.warn(`[spawner] gateway stale-cleanup restart failed: ${msg}`);
