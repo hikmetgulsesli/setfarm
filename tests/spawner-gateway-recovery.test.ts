@@ -995,6 +995,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /SETFARM_IMPLEMENT_PRE_DELTA_MAX_CONTEXT_READS/);
     assert.match(source, /function implementPreDeltaExplorationGuard\(active: ActiveProcess\)/);
     assert.match(source, /function isPreDeltaSafeContextPath\(relativePath: string,\s*allowed: Set<string>\)/);
+    assert.match(source, /claimSummaryRetryDisciplineMode\(active\)/);
     assert.match(source, /const allowed = readStoryScopeFileSet\(active\.spawnCwd\)/);
     assert.match(source, /allowed\.has\(normalized\)/);
     assert.match(source, /src\\\/screens\(\?:\\\/\(\?:SCREEN_INDEX\\\.json\|index\\\.ts\)\)\?/);

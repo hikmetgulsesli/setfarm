@@ -1436,6 +1436,7 @@ function implementPreDeltaCheckGuard(active: ActiveProcess): { detected: boolean
 function implementPreDeltaExplorationGuard(active: ActiveProcess): { detected: boolean; reason: string } {
   if (fileSize(active.outputPath) > 0) return { detected: false, reason: "" };
   if (sourceStatusFiles(active.spawnCwd).length > 0) return { detected: false, reason: "" };
+  if (!/^first-delta$/i.test(claimSummaryRetryDisciplineMode(active))) return { detected: false, reason: "" };
 
   let raw = "";
   try {
