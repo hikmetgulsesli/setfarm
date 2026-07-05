@@ -608,6 +608,8 @@ const IMPLEMENT_REFERENCE_README = [
   "",
 ].join("\n");
 
+const GENERATED_SCREEN_STUB_MARKER = "Setfarm generated screen source stub";
+
 /** Copy stitch/ design assets from main repo into worktree so agents can reference them */
 function ensureReferencesLink(repo: string, worktreeDir: string): void {
   const refsSrc = path.join(repo, "references");
@@ -765,6 +767,63 @@ function hardenImplementStoryAssets(worktreeDir: string): void {
   } catch (e) {
     logger.warn(`[worktree] Failed to write implement reference policy: ${String(e).slice(0, 120)}`, {});
   }
+}
+
+function generatedComponentNameFromPath(relativePath: string): string {
+  const base = path.basename(relativePath).replace(/\.tsx$/i, "");
+  const safe = base.replace(/[^A-Za-z0-9_$]/g, "");
+  return /^[A-Za-z_$]/.test(safe) ? safe : "GeneratedScreen";
+}
+
+function generatedScreenSourceStub(relativePath: string): string {
+  const component = generatedComponentNameFromPath(relativePath);
+  return [
+    `// ${GENERATED_SCREEN_STUB_MARKER}.`,
+    "// The full generated source is intentionally hidden from this non-owner story worktree.",
+    "// Use src/screens/SCREEN_INDEX.json, src/screens/index.ts, component registry, and UI_CONTRACT.",
+    `export type ${component}ActionId = never;`,
+    `export interface ${component}Props {`,
+    `  actions?: Partial<Record<${component}ActionId, () => void>>;`,
+    "}",
+    `export function ${component}(_props: ${component}Props) {`,
+    "  return null;",
+    "}",
+    "",
+  ].join("\n");
+}
+
+export function hardenGeneratedScreenSourcesForScope(worktreeDir: string, allowedFiles: string[]): string[] {
+  const allowed = new Set(allowedFiles.map(file => file.replace(/\\/g, "/")));
+  const screensDir = path.join(worktreeDir, "src", "screens");
+  const hardened: string[] = [];
+  if (!fs.existsSync(screensDir)) return hardened;
+
+  let entries: string[] = [];
+  try {
+    entries = fs.readdirSync(screensDir);
+  } catch {
+    return hardened;
+  }
+
+  for (const entry of entries) {
+    if (!/\.tsx$/i.test(entry)) continue;
+    const rel = path.join("src", "screens", entry).replace(/\\/g, "/");
+    if (allowed.has(rel)) continue;
+    const abs = path.join(worktreeDir, rel);
+    try {
+      hideTrackedPathForImplement(worktreeDir, rel);
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      fs.writeFileSync(abs, generatedScreenSourceStub(rel));
+      hardened.push(rel);
+    } catch (e) {
+      logger.warn(`[worktree] Failed to harden generated screen source ${rel}: ${String(e).slice(0, 120)}`, {});
+    }
+  }
+
+  if (hardened.length > 0) {
+    logger.info(`[worktree] Hardened ${hardened.length} non-owner generated screen source file(s)`, {});
+  }
+  return hardened;
 }
 
 export function copyStitchToWorktree(repo: string, worktreeDir: string): void {

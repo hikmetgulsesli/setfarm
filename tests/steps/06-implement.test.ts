@@ -8,7 +8,7 @@ import { implementModule } from "../../dist/installer/steps/06-implement/module.
 import { checkBuildGate, checkGeneratedRuntimeSemanticGate, checkGeneratedScreenRequiredPropsGate, checkGeneratedScreenShellChromeGate, checkImplementEvidenceGate, checkPlatformHelperContaminationGate, checkScopeEnforcement, checkScopeFilesGate, checkTestGate, classifyGeneratedScreenRegressionIssues, computeScopeFileLimits, detectPackageBuildCommand, findDesignDomImplementationFindings, findDesignDomImplementationIssues, findGeneratedRuntimeSemanticIssues, findGeneratedRuntimeSupervisorQualityIssues, findGeneratedScreenIntegrationIssues, findGeneratedScreenRegressionIssues, findGeneratedScreenRequiredPropIssues, findGeneratedScreenShellChromeIssues, findPlatformHelperContaminationIssues, getOutOfScopeStoryFiles, normalize, parseGitStatusPorcelainPath, selectMatchingStoryWorktree, sourceExposesWindowApp, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
 import { buildScopeFilesRetryFailureForWorkdir, cleanupOutOfScopeWorktreeFiles, mergeRetryFailureTexts, retryPatchCategoryHint, shouldRestoreRetryWorktreePatchForCategory } from "../../dist/installer/steps/06-implement/context.js";
 import { cleanupBlockedStoryCommitScope, commitStoryWorktreeScopeIfNeeded, decideStorySystemSmokeGate } from "../../dist/installer/step-ops.js";
-import { createStoryWorktree, ensureStoryBranchWorktree } from "../../dist/installer/worktree-ops.js";
+import { createStoryWorktree, ensureStoryBranchWorktree, hardenGeneratedScreenSourcesForScope } from "../../dist/installer/worktree-ops.js";
 import { assembleImplementContext, fileTreeManifestPath, setupCertificatePath, sharedGrantsPath } from "../../dist/installer/setup-handoff.js";
 import { IMPLICIT_STORY_SCOPE_FILES, isImplicitStoryScopeFile } from "../../dist/installer/story-scope.js";
 import { checkStoryDesignCompliance } from "../../dist/installer/step-guardrails.js";
@@ -2915,6 +2915,43 @@ describe("06-implement step module", () => {
       assert.equal(fs.existsSync(path.join(worktree, "references", "game-dev-guide.md")), false);
       assert.match(fs.readFileSync(path.join(worktree, "references", "README.md"), "utf-8"), /Full reference manuals are intentionally not mounted/);
       assert.equal(git(worktree, ["status", "--porcelain", "--", "references", "stitch"]).trim(), "");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("hides non-owner generated screen source behind compile-safe stubs", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-generated-screen-stub-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src", "screens"), { recursive: true });
+      const screenPath = path.join(tmp, "src", "screens", "StatusUtilityProbe.tsx");
+      fs.writeFileSync(
+        screenPath,
+        [
+          "export type StatusUtilityProbeActionId = 'refresh-1';",
+          "export interface StatusUtilityProbeProps { actions?: Partial<Record<StatusUtilityProbeActionId, () => void>>; }",
+          "export function StatusUtilityProbe({ actions }: StatusUtilityProbeProps) {",
+          "  return <button onClick={() => actions?.['refresh-1']?.()}>Refresh</button>;",
+          "}",
+          "",
+        ].join("\n"),
+      );
+      fs.writeFileSync(path.join(tmp, "src", "screens", "SCREEN_INDEX.json"), "[]\n");
+      fs.writeFileSync(path.join(tmp, "src", "screens", "index.ts"), "export { StatusUtilityProbe } from './StatusUtilityProbe';\n");
+      git(tmp, ["init", "-b", "main"]);
+      git(tmp, ["add", "."]);
+      git(tmp, ["commit", "-m", "base"]);
+
+      assert.deepEqual(hardenGeneratedScreenSourcesForScope(tmp, ["src/App.tsx"]), ["src/screens/StatusUtilityProbe.tsx"]);
+      const stub = fs.readFileSync(screenPath, "utf-8");
+      assert.match(stub, /Setfarm generated screen source stub/);
+      assert.match(stub, /export function StatusUtilityProbe\(_props: StatusUtilityProbeProps\)/);
+      assert.equal(git(tmp, ["status", "--porcelain", "--", "src/screens/StatusUtilityProbe.tsx"]).trim(), "");
+
+      git(tmp, ["update-index", "--no-skip-worktree", "--", "src/screens/StatusUtilityProbe.tsx"]);
+      git(tmp, ["checkout", "--", "src/screens/StatusUtilityProbe.tsx"]);
+      assert.deepEqual(hardenGeneratedScreenSourcesForScope(tmp, ["src/screens/StatusUtilityProbe.tsx"]), []);
+      assert.doesNotMatch(fs.readFileSync(screenPath, "utf-8"), /Setfarm generated screen source stub/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

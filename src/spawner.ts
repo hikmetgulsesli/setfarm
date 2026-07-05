@@ -957,6 +957,20 @@ function isGeneratedScreenComponentPath(relativePath: string): boolean {
   return /^src\/screens\/[^/]+\.tsx$/.test(relativePath);
 }
 
+function isGeneratedScreenSourceStubFile(workdir: string, relativePath: string): boolean {
+  if (!isGeneratedScreenComponentPath(relativePath)) return false;
+  try {
+    const abs = path.join(workdir, relativePath);
+    const stat = fs.statSync(abs);
+    if (!stat.isFile() || stat.size > 2_000) return false;
+    const text = fs.readFileSync(abs, "utf-8");
+    return /\bSetfarm generated screen source stub\b/.test(text)
+      && /\bfull generated source is intentionally hidden\b/.test(text);
+  } catch {
+    return false;
+  }
+}
+
 function readStoryScopeFileSet(workdir: string): Set<string> {
   const scopePath = path.join(workdir, ".story-scope-files");
   let raw = "";
@@ -1169,6 +1183,7 @@ function generatedScreenReadGuard(active: ActiveProcess): { detected: boolean; r
 
       for (const candidate of candidates) {
         if (allowed.has(candidate.path)) continue;
+        if (isGeneratedScreenSourceStubFile(active.spawnCwd, candidate.path)) continue;
         return {
           detected: true,
           reason: `GENERATED_SCREEN_SHARED_READ: ${active.agentId} used ${candidate.via} on ${candidate.path}, but that generated screen is not in this story's .story-scope-files. Shared generated screens must be consumed through src/screens/SCREEN_INDEX.json, src/screens/index.ts, the component registry, and UI_CONTRACT. Setfarm recorded a supervisor signal so the worker can be redirected without restarting the claim.`,

@@ -35,7 +35,7 @@ export { failStep } from "./step-fail.js";
 // ── Imports from extracted modules (used internally) ──
 import { resolveTemplate, parseOutputKeyValues, readProgressFile, readProjectMemory, updateProjectMemory, getProjectTree, getInstalledPackages, getSharedCode, getRecentStoryCode, getComponentRegistry, getApiRoutes, pruneContextForStep } from "./context-ops.js";
 import { getStories, formatStoryForTemplate, formatCompletedStories, parseAcceptanceCriteria, parseAndInsertStories } from "./story-ops.js";
-import { createStoryWorktree, removeStoryWorktree, findWorktreeDir, syncBaseBranch, ensureStoryBranchWorktree, latestRetryPatchForStory, latestRetryStashPatchForStory, discardDirtyRetryWorktreeState } from "./worktree-ops.js";
+import { createStoryWorktree, removeStoryWorktree, findWorktreeDir, syncBaseBranch, ensureStoryBranchWorktree, latestRetryPatchForStory, latestRetryStashPatchForStory, discardDirtyRetryWorktreeState, hardenGeneratedScreenSourcesForScope } from "./worktree-ops.js";
 import { computeHasFrontendChanges, checkTestFailures, checkQualityGate, checkRequiredOutputFields, processDesignCompletion, processSetupCompletion, processSetupDesignContracts, processBrowserCheck, processDesignFidelityCheck, checkStoryDesignCompliance, checkImportConsistency } from "./step-guardrails.js";
 import { cleanupAbandonedSteps as _cleanupAbandonedSteps, cleanupProjectEphemera, scheduleRunCronTeardown } from "./cleanup-ops.js";
 import { isVerifyRetryInfraFailure, isVerifyRetryMergeBlocker, isVerifyRetryQualityFailure } from "./verify-retry-routing.js";
@@ -4284,6 +4284,7 @@ async function injectStoryContext(
         const allAllowed = [...new Set([...scopeList, ...implicitFiles])];
         // Also allow *.test.tsx and *.spec.tsx (wildcard — hook uses grep -qxF so these wont match, but test files are caught by the hook logic)
         const _scopeFP = path.join(context["story_workdir"], ".story-scope-files"); fs.writeFileSync(_scopeFP, allAllowed.join("\n") + "\n"); try { fs.chmodSync(_scopeFP, 0o664); } catch { /* best effort */ }
+        hardenGeneratedScreenSourcesForScope(context["story_workdir"], allAllowed);
         cleanupOutOfScopeWorktreeFiles(
           context["story_workdir"],
           allAllowed,
