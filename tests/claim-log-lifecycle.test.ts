@@ -1056,6 +1056,22 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(helper, /FROM stories WHERE run_id = \$1 AND status = 'pending'/);
   });
 
+  it("fast-forwards mechanically satisfied PR review retries before developer claim", () => {
+    const source = stepOpsSource();
+    const helper = source.indexOf("async function fastForwardMechanicallySatisfiedPrReviewRetry");
+    const call = source.indexOf("fastForwardMechanicallySatisfiedPrReviewRetry(step, nextStory, context)");
+    const reservation = source.indexOf("// ── DEVELOPER RESERVATION", call);
+    const claim = source.indexOf("const claimedStory = await claimNextStory", call);
+
+    assert.notEqual(helper, -1, "PR review retry fast-forward helper missing");
+    assert.notEqual(call, -1, "PR review retry fast-forward call missing");
+    assert.ok(call > helper, "claim path should call the helper");
+    assert.ok(reservation > call, "fast-forward must run before developer reservation");
+    assert.ok(claim > call, "fast-forward must run before atomic story claim");
+    assert.match(source.slice(helper, call), /resolveMechanicallySatisfiedInlineReviewThreads/);
+    assert.match(source.slice(helper, call), /mechanically_satisfied_current_thread_preclaim/);
+  });
+
   it("ignores output-contract PR_URL placeholders in implement completion guards", () => {
     const source = stepOpsSource();
     const start = source.indexOf("// Mark current story done or skipped + persist PR context for verify_each");

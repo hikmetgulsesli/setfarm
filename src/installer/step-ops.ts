@@ -1753,6 +1753,96 @@ async function detectOpenPrReviewCommentFailure(
   return "";
 }
 
+async function fastForwardMechanicallySatisfiedPrReviewRetry(
+  step: any,
+  story: any,
+  context: Record<string, string>,
+): Promise<boolean> {
+  const storyOutput = String(story?.output || "");
+  if (!/\bPR_REVIEW_COMMENTS_OPEN\b|actionable PR review comments/i.test(storyOutput)) return false;
+
+  const prUrl = String(story?.pr_url || context["pr_url"] || context["final_pr"] || "").trim();
+  const repoPath = String(context["repo"] || "").trim();
+  if (!prUrl || !repoPath) return false;
+
+  try {
+    const {
+      fetchPrState,
+      formatPrCommentsForAgent,
+      resolveMechanicallySatisfiedInlineReviewThreads,
+    } = await import("./steps/07-verify/pr-comments.js");
+    let state = await fetchPrState(prUrl, context["repo_full"] || "");
+    if (!state) return false;
+
+    let formatted = formatPrCommentsForAgent(state);
+    if (formatted) {
+      const reviewStateAllowsResolution =
+        state.checksStatus !== "failing" &&
+        state.mergeable !== "CONFLICTING" &&
+        !["DIRTY", "BLOCKED"].includes(state.mergeStateStatus || "");
+      if (!reviewStateAllowsResolution) return false;
+
+      const resolution = await resolveMechanicallySatisfiedInlineReviewThreads(state, repoPath);
+      if (resolution.candidates === 0 || resolution.failed > 0) return false;
+
+      const refreshedState = await fetchPrState(prUrl, context["repo_full"] || "");
+      if (!refreshedState) return false;
+      state = refreshedState;
+      formatted = formatPrCommentsForAgent(refreshedState);
+      if (formatted) return false;
+    }
+
+    const output = [
+      "STATUS: done",
+      `STORY_BRANCH: ${String(story.story_branch || context["story_branch"] || "").trim()}`,
+      `PR_URL: ${prUrl}`,
+      "CHANGES: Current PR review retry is already satisfied by the PR head; Setfarm returned the story to verify without spawning another implement claim.",
+      "RECOVERY: mechanically-satisfied-pr-review-retry",
+    ].join("\n");
+    await pgRun(
+      "UPDATE stories SET status = 'done', claimed_by = NULL, claimed_at = NULL, output = $1, updated_at = $2 WHERE id = $3 AND status = 'pending'",
+      [output, now(), story.id],
+    );
+    await pgRun(
+      "UPDATE steps SET status = 'pending', current_story_id = NULL, output = $1, updated_at = $2 WHERE id = $3 AND status IN ('pending','running','waiting')",
+      [output, now(), step.id],
+    );
+    await recordLiveObservation({
+      runId: step.run_id,
+      stepId: step.step_id,
+      storyId: story.story_id,
+      checkId: "implement.pr_comments.fast_forward_satisfied",
+      label: "Fast-forward satisfied PR review retry",
+      status: "pass",
+      summary: "PR review retry already satisfied by current PR head",
+      detail: output,
+      github: {
+        prUrl,
+        state: state.state,
+        checksStatus: state.checksStatus || "",
+        mergeable: state.mergeable || "",
+        mergeStateStatus: state.mergeStateStatus || "",
+        policyDecision: "mechanically_satisfied_current_thread_preclaim",
+      },
+      metadata: { policyDecision: "mechanically_satisfied_current_thread_preclaim" },
+    });
+    emitEvent({
+      ts: now(),
+      event: "story.done",
+      runId: step.run_id,
+      workflowId: await getWorkflowId(step.run_id),
+      stepId: step.step_id,
+      storyId: story.story_id,
+      storyTitle: story.title,
+      detail: "PR review retry already satisfied by current PR head",
+    });
+    return true;
+  } catch (err) {
+    logger.warn(`[claim] PR review retry fast-forward failed for ${story?.story_id || "unknown"}: ${String(err).slice(0, 180)}`, { runId: step.run_id });
+    return false;
+  }
+}
+
 function prReviewSettleRemainingMs(context: Record<string, string>): number {
   const createdAt = String(context["pr_created_at"] || context["verify_pending_since"] || "").trim();
   const createdMs = createdAt ? new Date(createdAt).getTime() : 0;
@@ -5671,6 +5761,11 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
         await pgRun("UPDATE steps SET status = 'done', updated_at = $1 WHERE id = $2", [now(), step.id]);
         emitEvent({ ts: now(), event: "step.done", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId });
         await advancePipeline(step.run_id);
+        return { found: false };
+      }
+
+      if (await fastForwardMechanicallySatisfiedPrReviewRetry(step, nextStory, context)) {
+        logger.info(`[claim] Fast-forwarded satisfied PR review retry for ${nextStory.story_id}; verify will re-check PR state`, { runId: step.run_id });
         return { found: false };
       }
 
