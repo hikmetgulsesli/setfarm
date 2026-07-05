@@ -2668,6 +2668,14 @@ function isSpawnerDetachedToolCommand(command: string): boolean {
   );
 }
 
+function commandStoryWorktreeRoots(command: string): string[] {
+  const roots = new Set<string>();
+  for (const match of command.matchAll(/\/[^\s"'`]+\/story-worktrees\/[A-Za-z0-9._-]+/g)) {
+    roots.add(path.resolve(match[0]));
+  }
+  return [...roots];
+}
+
 function cleanupSpawnerDetachedToolChildren(context: string): void {
   let out = "";
   try {
@@ -2681,6 +2689,9 @@ function cleanupSpawnerDetachedToolChildren(context: string): void {
   }
 
   const activePids = new Set([...activeProcesses.values()].map((active) => active.child.pid).filter((pid): pid is number => Number.isFinite(pid)));
+  const activeWorktrees = [...activeProcesses.values()]
+    .map((active) => active.spawnCwd ? path.resolve(active.spawnCwd) : "")
+    .filter(Boolean);
   const targets: number[] = [];
   for (const line of out.split("\n")) {
     const match = line.trim().match(/^(\d+)\s+(\d+)\s+([\s\S]+)$/);
@@ -2689,8 +2700,13 @@ function cleanupSpawnerDetachedToolChildren(context: string): void {
     const ppid = Number(match[2]);
     const command = match[3] || "";
     if (!Number.isFinite(pid) || !Number.isFinite(ppid)) continue;
-    if (ppid !== process.pid || pid === process.pid || activePids.has(pid)) continue;
-    if (!isSpawnerDetachedToolCommand(command)) continue;
+    if (pid === process.pid || activePids.has(pid)) continue;
+    const isDirectDetachedTool = ppid === process.pid && isSpawnerDetachedToolCommand(command);
+    const worktreeRoots = commandStoryWorktreeRoots(command);
+    const isInactiveStoryWorktreeTool = worktreeRoots.length > 0 && !worktreeRoots.some((root) =>
+      activeWorktrees.some((activeRoot) => root === activeRoot || root.startsWith(`${activeRoot}${path.sep}`)),
+    );
+    if (!isDirectDetachedTool && !isInactiveStoryWorktreeTool) continue;
     targets.push(pid);
   }
 

@@ -621,9 +621,13 @@ describe("spawner gateway recovery wiring", () => {
   it("cleans detached preview and Playwright children after agent exit or reap", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /function isSpawnerDetachedToolCommand\(command: string\): boolean/);
+    assert.match(source, /function commandStoryWorktreeRoots\(command: string\): string\[\]/);
     assert.match(source, /function cleanupSpawnerDetachedToolChildren\(context: string\): void/);
-    assert.match(source, /ppid !== process\.pid/);
+    assert.match(source, /const isDirectDetachedTool = ppid === process\.pid && isSpawnerDetachedToolCommand\(command\)/);
+    assert.match(source, /const isInactiveStoryWorktreeTool = worktreeRoots\.length > 0/);
+    assert.match(source, /story-worktrees/);
     assert.match(source, /activePids\.has\(pid\)/);
+    assert.match(source, /activeWorktrees/);
     assert.match(source, /chromium_headless_shell\\b\[\\s\\S\]\*\\bplaywright_chromiumdev_profile-/);
     assert.match(source, /setTimeout\(\(\) => cleanupSpawnerDetachedToolChildren\(context\),\s*1500\)/);
     assert.match(source, /cleanupSpawnerDetachedToolChildren\("poll-orphan-sweep"\)/);
