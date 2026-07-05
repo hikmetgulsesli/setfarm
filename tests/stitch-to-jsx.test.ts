@@ -415,6 +415,7 @@ describe("stitch-to-jsx", () => {
             font-size: 24px;
           }
           .toggle {
+            font-family: 'Inter', sans-serif;
             transition: all 0.2s;
             background: theme('colors.primary-container');
             box-shadow: 0 0 8px theme('colors.outline-variant');
@@ -431,6 +432,8 @@ describe("stitch-to-jsx", () => {
       const css = fs.readFileSync(path.join(tmp, "src", "index.css"), "utf-8");
       const code = fs.readFileSync(path.join(tmp, "src", "screens", "SettingsScreen.tsx"), "utf-8");
       assert.doesNotMatch(css, /material-symbols|Material Symbols|font-family:\s*['"]?Material/i);
+      assert.doesNotMatch(css, /font-family:\s*['"]?Inter/i);
+      assert.match(css, /font-family: var\(--font-body-md, "Hanken Grotesk"\), "Segoe UI", sans-serif;/);
       assert.doesNotMatch(css, /transition:\s*all/i);
       assert.doesNotMatch(css, /theme\(/i);
       assert.match(css, /background: var\(--color-primary-container\);/);

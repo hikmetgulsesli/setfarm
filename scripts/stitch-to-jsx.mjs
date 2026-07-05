@@ -1146,6 +1146,7 @@ function sanitizeStitchCustomCss(css) {
   return String(css || "")
     .replace(/\.material-symbols(?:-[a-z0-9_-]+)?\s*\{[\s\S]*?\}\s*/gi, "")
     .replace(/font-family\s*:\s*['"]?(?:Material Symbols|Material Icons)[^;]*;?/gi, "")
+    .replace(/font-family\s*:\s*(["']?)(?:Inter|Roboto|Arial|Helvetica|system-ui)\1(?:\s*,[^;{}]+)?;?/gi, "font-family: var(--font-body-md, \"Hanken Grotesk\"), \"Segoe UI\", sans-serif;")
     .replace(/theme\(\s*['"]colors\.([a-z0-9_.-]+)['"]\s*\)/gi, (_match, token) => {
       const cssVar = String(token || "").replace(/[_.]+/g, "-").replace(/[^a-z0-9-]/gi, "").toLowerCase();
       return cssVar ? `var(--color-${cssVar})` : "currentColor";
