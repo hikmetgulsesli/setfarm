@@ -36,6 +36,7 @@ describe("spawner gateway recovery wiring", () => {
 
   it("keeps masked deterministic check blocking segment-scoped", () => {
     assert.equal(isMaskedDeterministicCheckCommand("npx tsc --noEmit 2>&1 | tail -50"), true);
+    assert.equal(isMaskedDeterministicCheckCommand("npx tsc --noEmit src/features/foo.ts 2>&1 | head -20"), false);
     assert.equal(isMaskedDeterministicCheckCommand("vitest run src/App.test.tsx 2>&1 | head -100"), true);
     assert.equal(isMaskedDeterministicCheckCommand("eslint . 2>&1 | tail -50"), true);
     assert.equal(isMaskedDeterministicCheckCommand("npm run lint > /tmp/lint-final.log 2>&1; echo \"LINT_EXIT=$?\"; cat /tmp/lint-final.log 2>&1 | head -20"), false);
