@@ -157,8 +157,8 @@ describe("spawner prompt bootstrap", () => {
         missingScopeFiles: ["src/App.tsx"],
         scopeFileInstruction: "scopeFiles is the owned write set for this story. Missing scope files are expected new owned files; create them directly with add-file/create-file semantics when needed instead of retrying update-only patches.",
         retryDiscipline: {
-          mode: "first-delta",
-          instruction: "Hard manager retry discipline: inspect owned scope files and make a small scoped source delta before broad analysis.",
+          mode: "semantic-fix",
+          instruction: "Generated-screen source retry discipline: do not inspect forbidden generated screen source.",
         },
         retryFeedback: {
           mode: "fix",
@@ -224,7 +224,7 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, /RETRY_DETAIL=full retry detail is in claimSummary\.retryFeedback\.details.*prefer claimSummary\.retryFeedback\.actionableReviewThreads/);
       assert.match(out, /RETRY_ACTION=Use claim-summary designContracts instead of shared generated source/);
       assert.match(out, /RETRY_INSTRUCTION=Previous feedback is an open implementation blocker/);
-      assert.match(out, /RETRY_DISCIPLINE=first-delta: Hard manager retry discipline/);
+      assert.match(out, /RETRY_DISCIPLINE=semantic-fix: Generated-screen source retry discipline/);
       assert.match(out, /PREVIOUS_FAILURE=present \d+ chars/);
       assert.match(out, /GENERATED_SCREEN_POLICY=No generated screen source file is in scope/);
       assert.match(out, /INTEGRATION_POLICY=This story may touch app\/router\/shell integration/);
@@ -562,11 +562,11 @@ describe("spawner prompt bootstrap", () => {
       assert.equal(summary.failureCategory, "GENERATED_SCREEN_SHARED_READ");
       assert.equal(summary.failureSuggestion, "Use claim-summary designContracts instead.");
       assert.equal((summary.retryFeedback as any).mode, "fix");
-      assert.equal((summary.retryDiscipline as any).mode, "first-delta");
+      assert.equal((summary.retryDiscipline as any).mode, "semantic-fix");
       assert.match((summary.retryFeedback as any).blocker, /GENERATED_SCREEN_SHARED_READ/);
       assert.match((summary.retryFeedback as any).suggestion, /claim-summary designContracts/);
       assert.match((summary.retryFeedback as any).instruction, /open implementation blocker/);
-      assert.match(String((summary.retryDiscipline as any).instruction), /small scoped source delta/);
+      assert.match(String((summary.retryDiscipline as any).instruction), /safeMetadataFiles/);
       assert.match(String(summary.acceptanceCriteria), /Pieces fall and rotate/);
       assert.match(String(summary.currentStory), /Story US-001: Tetris engine/);
       assert.match(JSON.stringify(summary.handoff), /Audit fallback only/);

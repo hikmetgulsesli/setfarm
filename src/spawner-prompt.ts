@@ -1086,6 +1086,12 @@ function retryDisciplineForFailure(
       instruction: "Rejected retry-patch discipline: first restore or preserve every retryFeedback.restoreTargets file/line entry, then every retryFeedback.protectedSnippets entry, and verify with rg -F or an equivalent exact search. Make only the current story addition around that preserved wiring. Do not replace prior helpers, render branches, props, or action adapters with a cleaner-looking equivalent unless the protected lines still remain present.",
     };
   }
+  if (/\bGENERATED_SCREEN_SHARED_READ\b/i.test(signal)) {
+    return {
+      mode: "semantic-fix",
+      instruction: "Generated-screen source retry discipline: do not read, cat, sed, rg, grep, head, tail, node-print, or otherwise inspect any src/screens/*.tsx file unless it is listed in generatedScreenPolicy.allowedSourceFiles for this exact story. Use screenUsageContract, generatedScreenPolicy.safeMetadataFiles, src/screens/SCREEN_INDEX.json, src/screens/index.ts, component registry/types, UI_CONTRACT, and owned scope files for names, props, and action ids. First make the scoped app/router/shell delta from those contracts, then run the declared checks. If a forbidden screen source seems necessary, report the missing metadata contract instead of opening the file.",
+    };
+  }
   if (!/(AGENT_STALL|IMPLEMENT_NO_DELTA_STALL|IMPLEMENT_PRE_DELTA_CHECK_VIOLATION|NO_WORK_DETECTED|CLAIM_SUMMARY_IGNORED|CLAIM_PARSE_LOOP|GENERATED_SCREEN_SHARED_READ|RAW_STITCH_CONTEXT_READ|IRRELEVANT_REFERENCE_CONTEXT|FULL_REFERENCE_CONTEXT_READ|SCOPE_WRITE_VIOLATION|LLM_SUPERVISOR_BLOCKED|SUPERVISOR_VISUAL_QA_BLOCKED|layout_overflow)/i.test(signal)) {
     return undefined;
   }
