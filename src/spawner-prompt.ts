@@ -67,6 +67,18 @@ function lineValue(input: string, label: string): string {
   return (match?.[1] || "").trim();
 }
 
+function meaningfulLineValue(input: string, label: string): string {
+  const re = new RegExp("^[ \\t]*" + escapeRegExp(label) + ":[ \\t]*(.*)$", "gmi");
+  const values: string[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(input)) !== null) {
+    const value = (match[1] || "").trim();
+    if (value) values.push(value);
+  }
+  const meaningful = values.filter((value) => !/^UNKNOWN$/i.test(value) && !/^Unexpected error\b/i.test(value));
+  return (meaningful.at(-1) || values.at(-1) || "").trim();
+}
+
 function isPlaceholderValue(value: string): boolean {
   const trimmed = value.trim();
   return !trimmed ||
@@ -518,6 +530,8 @@ function cleanPreviousFailureSection(raw: string): string {
   value = value
     .split(/\r?\n/)
     .filter((line) => !/^\s*(?:Failure category|Suggested response):\s*$/i.test(line))
+    .filter((line) => !/^\s*Failure category:\s*UNKNOWN\s*$/i.test(line))
+    .filter((line) => !/^\s*Suggested response:\s*Unexpected error\b/i.test(line))
     .join("\n")
     .trim();
   if (!value || /^##\s*Claim Handoff\b/im.test(value)) return "";
@@ -1416,10 +1430,10 @@ export function buildClaimSummary(params: {
   const retryWorktreePatch = extractRetryPatchMemory(input);
   const retrySourceSnapshot = extractRetrySourceSnapshot(input);
   const explicitFailureCategory = meaningfulFailureCategory(
-    lineValue(previousFailure, "Failure category") || lineValue(input, "Failure category"),
+    meaningfulLineValue(previousFailure, "Failure category") || meaningfulLineValue(input, "Failure category"),
   );
   const explicitFailureSuggestion = meaningfulFailureSuggestion(
-    lineValue(previousFailure, "Suggested response") || lineValue(input, "Suggested response"),
+    meaningfulLineValue(previousFailure, "Suggested response") || meaningfulLineValue(input, "Suggested response"),
   );
   const classifiedFailure = classifyFailureWithInputFallback(previousFailure, explicitFailureCategory, explicitFailureSuggestion, input);
   const prReviewThreadScope = splitPrReviewThreadsByScope(extractPrReviewThreads(previousFailure), scopeFiles);

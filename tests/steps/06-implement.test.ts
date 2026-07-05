@@ -2813,6 +2813,27 @@ describe("06-implement step module", () => {
     assert.equal(retryPatchCategoryHint("SCOPE_FILE_MISSING: src/features/app.store.ts", "", "", "", ""), "SCOPE_FILE_MISSING");
   });
 
+  it("preserves meaningful infra retry categories when UNKNOWN appears first", () => {
+    const category = retryPatchCategoryHint(
+      "",
+      "",
+      [
+        "Failure category: UNKNOWN",
+        "Suggested response: Unexpected error — review agent output for details",
+        "",
+        "SETFARM_INFRA_RETRY:",
+        "IMPLEMENT_EVIDENCE_RUNTIME_FAILED",
+        "Failure category: browser_infra_failure",
+        "",
+        "Implementation evidence runner hit stack tooling infrastructure before product behavior could be judged.",
+      ].join("\n"),
+      "",
+      "",
+    );
+
+    assert.equal(category, "browser_infra_failure");
+  });
+
   it("does not fail screen stories only because optional action companion files are absent", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-scope-action-companions-"));
     try {

@@ -2056,6 +2056,47 @@ describe("spawner prompt bootstrap", () => {
     }
   });
 
+  it("prefers a later meaningful retry failure category over UNKNOWN", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-meaningful-failure-category-"));
+    try {
+      fs.writeFileSync(path.join(tmp, ".story-scope-files"), "src/App.tsx\n");
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        bootstrapFile: path.join(tmp, "bootstrap.sh"),
+        stepId: "step-123",
+        runId: "run-123",
+        workdir: tmp,
+        repo: tmp,
+        storyId: "US-001",
+        input: [
+          "TASK: Project: runtime infra retry sensor",
+          "CURRENT STORY: Story US-001: App shell",
+          "",
+          "## Previous Failure / Retry Feedback",
+          "Failure category: UNKNOWN",
+          "Suggested response: Unexpected error — review agent output for details",
+          "",
+          "SETFARM_INFRA_RETRY:",
+          "IMPLEMENT_EVIDENCE_RUNTIME_FAILED",
+          "Failure category: browser_infra_failure",
+          "",
+          "Implementation evidence runner hit stack tooling infrastructure before product behavior could be judged.",
+          "",
+          "## Current Story",
+        ].join("\n"),
+      });
+
+      assert.equal(summary.failureCategory, "browser_infra_failure");
+      assert.equal((summary.retryFeedback as any).category, "browser_infra_failure");
+      assert.doesNotMatch((summary.retryFeedback as any).blocker, /^Failure category: UNKNOWN/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("omits retry source snapshots and patch bodies for scope bleed retries", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-scope-bleed-no-snapshot-"));
     try {

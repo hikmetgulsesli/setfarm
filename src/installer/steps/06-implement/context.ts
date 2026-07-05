@@ -178,17 +178,30 @@ export function shouldRestoreRetryWorktreePatchForCategory(category: string): bo
 export function retryPatchCategoryHint(scopeFilesRetryFailure: string, preservedContextRetryFailure: string, retryFailureText: string, priorStoryFailureText: string, priorContextFailureCategory: string): string {
   if (scopeFilesRetryFailure.trim()) return "SCOPE_FILE_MISSING";
   if (preservedContextRetryFailure.trim() && priorContextFailureCategory.trim()) return priorContextFailureCategory;
-  const classified = classifyError(mergeRetryFailureTexts([
+  const merged = mergeRetryFailureTexts([
     preservedContextRetryFailure,
     retryFailureText,
     priorStoryFailureText,
-  ]));
-  return classified.category || priorContextFailureCategory || "";
+  ]);
+  const classified = classifyError(merged);
+  return meaningfulLineValueFromBlock(merged, "Failure category") || classified.category || priorContextFailureCategory || "";
 }
 
 function lineValueFromBlock(block: string, label: string): string {
   const match = block.match(new RegExp(`^${label}:\\s*(.*)$`, "m"));
   return (match?.[1] || "").trim();
+}
+
+function meaningfulLineValueFromBlock(block: string, label: string): string {
+  const re = new RegExp(`^${label}:\\s*(.*)$`, "gmi");
+  const values: string[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(block)) !== null) {
+    const value = (match[1] || "").trim();
+    if (value) values.push(value);
+  }
+  const meaningful = values.filter((value) => !/^UNKNOWN$/i.test(value) && !/^Unexpected error\b/i.test(value));
+  return (meaningful.at(-1) || values.at(-1) || "").trim();
 }
 
 function collectRetryWorktreePatchMemory(repoPath: string, worktreeDir: string, storyId: string, aliases: string[] = []): string {
@@ -574,17 +587,19 @@ export async function injectStoryContext(
 
   if (combinedRetryFailure) {
     const classified = classifyError(combinedRetryFailure);
+    const explicitRetryCategory = meaningfulLineValueFromBlock(combinedRetryFailure, "Failure category");
+    const explicitRetrySuggestion = meaningfulLineValueFromBlock(combinedRetryFailure, "Suggested response");
     context["previous_failure"] = combinedRetryFailure;
     context["failure_category"] = scopeFilesRetryFailure
       ? "SCOPE_FILE_MISSING"
       : preservedContextRetryFailure && priorContextFailureCategory
         ? priorContextFailureCategory
-        : classified.category;
+        : explicitRetryCategory || classified.category;
     context["failure_suggestion"] = scopeFilesRetryFailure
       ? "Create meaningful non-empty implementation files in the declared scope_files before addressing later guardrails. Do not report STATUS: done until the primary owned files exist."
       : preservedContextRetryFailure && priorContextFailureSuggestion
         ? priorContextFailureSuggestion
-      : classified.suggestion;
+      : explicitRetrySuggestion || classified.suggestion;
   }
 
   const stackMemory = buildStackMemory({
