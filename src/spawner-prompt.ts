@@ -1039,7 +1039,7 @@ function retryDisciplineForFailure(
   if (/\bMASKED_CHECK_COMMAND\b/i.test(signal)) {
     return {
       mode: "semantic-fix",
-      instruction: "Masked-check retry discipline: first rerun the exact failing build/test/lint/typecheck command without any pipe to head, tail, grep, rg, tee, cat, awk, or sed. If output must be shortened, redirect to a log while preserving the command exit status, then inspect the log in a separate command. Do not report STATUS: done until an unmasked deterministic check has exited successfully.",
+      instruction: "Masked-check retry discipline: first rerun the exact failing build/test/lint/typecheck command as a standalone command without any pipe to head, tail, grep, rg, tee, cat, awk, or sed. Do not use forms like `npm run build 2>&1 | tail -40; echo $?`; that still hides the real build exit status. If output must be shortened, redirect to a log while preserving the command exit status, then inspect the log in a separate command. Do not report STATUS: done until an unmasked deterministic check has exited successfully.",
     };
   }
   if (/\bDESIGN_MISMATCH\b|\bDESIGN MISMATCH\b|\bUI_CONTRACT\b|\bdesign compliance\b/i.test(signal)) {
@@ -1678,7 +1678,11 @@ const rf = s.retryFeedback || {};
 if (rf.mode) lines.push("RETRY_MODE=" + String(rf.mode));
 if (rf.blocker) lines.push("RETRY_BLOCKER_PREVIEW=" + String(rf.blocker).slice(0, 700));
 if (/^MASKED_CHECK_COMMAND$/i.test(String(s.failureCategory || ""))) {
-  lines.push("MASKED_CHECK_RULE=Rerun the exact build/test/lint/typecheck command without output-filtering pipes first. If you need shorter output, redirect to a log while preserving exit status, then inspect the log separately.");
+  lines.push("MASKED_CHECK_RULE=Rerun the exact build/test/lint/typecheck command as a standalone command without output-filtering pipes. Do not run build/test/lint/typecheck with pipe-to-head, pipe-to-tail, pipe-to-grep, pipe-to-rg, pipe-to-tee, pipe-to-cat, pipe-to-awk, or pipe-to-sed, even if followed by echo $? or echo BUILD_EXIT=$?.");
+  if (s.buildCommand) lines.push("MASKED_CHECK_EXACT_BUILD_CMD=" + String(s.buildCommand));
+  if (s.testCommand) lines.push("MASKED_CHECK_EXACT_TEST_CMD=" + String(s.testCommand));
+  if (s.lintCommand && String(s.lintCommand) !== "true") lines.push("MASKED_CHECK_EXACT_LINT_CMD=" + String(s.lintCommand));
+  lines.push("MASKED_CHECK_DONE_GATE=Before STATUS: done, run the exact standalone commands above with no pipe. If you need shorter output, redirect to a log while preserving the command exit status, then inspect the log in a separate command.");
 }
 if (/^DESIGN_MISMATCH$/i.test(String(s.failureCategory || ""))) {
   lines.push("DESIGN_RETRY_RULE=Fix the exact UI_CONTRACT/design-token file and line first; search scoped files for the rejected token or pattern and replace it before broad feature work.");

@@ -1930,7 +1930,8 @@ describe("spawner prompt bootstrap", () => {
 
       assert.equal(summary.failureCategory, "MASKED_CHECK_COMMAND");
       assert.equal((summary.retryDiscipline as any).mode, "semantic-fix");
-      assert.match(String((summary.retryDiscipline as any).instruction), /rerun the exact failing build\/test\/lint\/typecheck command without any pipe/i);
+      assert.match(String((summary.retryDiscipline as any).instruction), /rerun the exact failing build\/test\/lint\/typecheck command as a standalone command without any pipe/i);
+      assert.match(String((summary.retryDiscipline as any).instruction), /npm run build 2>&1 \| tail -40; echo \$\?/);
       assert.match(String((summary.retryDiscipline as any).instruction), /Do not report STATUS: done until an unmasked deterministic check has exited successfully/);
       const bootstrap = buildResolvedClaimBootstrapScript({
         claimFile: path.join(tmp, "claim.json"),
@@ -1939,7 +1940,10 @@ describe("spawner prompt bootstrap", () => {
         stepId: "step-123",
         workdir: tmp,
       });
-      assert.match(bootstrap, /MASKED_CHECK_RULE=Rerun the exact build\/test\/lint\/typecheck command without output-filtering pipes first/);
+      assert.match(bootstrap, /MASKED_CHECK_RULE=Rerun the exact build\/test\/lint\/typecheck command as a standalone command without output-filtering pipes/);
+      assert.match(bootstrap, /MASKED_CHECK_EXACT_BUILD_CMD=/);
+      assert.match(bootstrap, /MASKED_CHECK_EXACT_TEST_CMD=/);
+      assert.match(bootstrap, /MASKED_CHECK_DONE_GATE=Before STATUS: done, run the exact standalone commands above with no pipe/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
