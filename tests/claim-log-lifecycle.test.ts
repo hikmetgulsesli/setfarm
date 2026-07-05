@@ -1629,6 +1629,22 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(combined, /MASKED_CHECK_COMMAND/);
   });
 
+  it("replaces stale pre-delta runtime discipline output on masked-check requeues", () => {
+    const staleDiscipline = [
+      "IMPLEMENT_PRE_DELTA_CONTEXT_SPRAWL: feature-dev_developer read 11 project/design context paths before any source delta.",
+      "Paths included stitch/UI_CONTRACT.json.",
+    ].join("\n");
+    const infra = [
+      "MASKED_CHECK_COMMAND: feature-dev_developer ran deterministic build/test evidence through an output-filtering pipeline.",
+      "Rerun the declared build/test command without a pipe.",
+    ].join("\n");
+    const combined = preserveActionableStoryRetryOutput(staleDiscipline, infra);
+
+    assert.doesNotMatch(combined, /IMPLEMENT_PRE_DELTA_CONTEXT_SPRAWL/);
+    assert.doesNotMatch(combined, /INFRA_RETRY:/);
+    assert.match(combined, /MASKED_CHECK_COMMAND/);
+  });
+
   it("caps terminal story retry counters in quality and supervisor recovery paths", () => {
     const source = stepOpsSource();
     const terminalUpdates = [...source.matchAll(/UPDATE stories SET status = 'failed', retry_count = \$1[\s\S]{0,160}/g)].map((match) => match[0]);
