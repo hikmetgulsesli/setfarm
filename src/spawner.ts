@@ -4659,7 +4659,6 @@ async function reapFinishedClaims(): Promise<void> {
             await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "masked-check-command-guard", reason);
             terminateActiveProcess(active, "masked-check-command-guard");
             activeProcesses.delete(key);
-            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
             await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
             continue;
           }
