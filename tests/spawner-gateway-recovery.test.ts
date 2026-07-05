@@ -1,11 +1,45 @@
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { expandSupportedGuardGlob, isMaskedDeterministicCheckCommand } from "../dist/spawner.js";
 
 const root = path.resolve(import.meta.dirname, "..");
 
 describe("spawner gateway recovery wiring", () => {
+  it("expands implement guard globs to concrete visible files", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-guard-glob-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "references"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "references", "README.md"), "policy\n");
+      fs.writeFileSync(path.join(tmp, "references", ".setfarm-reference-policy.md"), "policy\n");
+      fs.writeFileSync(path.join(tmp, "references", "backend-standards.md"), "real\n");
+      fs.mkdirSync(path.join(tmp, "src", "screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src", "screens", "Owned.tsx"), "export function Owned() { return null; }\n");
+      fs.writeFileSync(path.join(tmp, "src", "screens", "Other.tsx"), "export function Other() { return null; }\n");
+
+      assert.deepEqual(expandSupportedGuardGlob(tmp, "references/*.md"), [
+        "references/.setfarm-reference-policy.md",
+        "references/README.md",
+        "references/backend-standards.md",
+      ]);
+      assert.deepEqual(expandSupportedGuardGlob(tmp, "src/screens/*.tsx"), [
+        "src/screens/Other.tsx",
+        "src/screens/Owned.tsx",
+      ]);
+      assert.deepEqual(expandSupportedGuardGlob(tmp, "references/*.txt"), []);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps masked deterministic check blocking segment-scoped", () => {
+    assert.equal(isMaskedDeterministicCheckCommand("npx tsc --noEmit 2>&1 | tail -50"), true);
+    assert.equal(isMaskedDeterministicCheckCommand("npm run lint > /tmp/lint-final.log 2>&1; echo \"LINT_EXIT=$?\"; cat /tmp/lint-final.log 2>&1 | head -20"), false);
+    assert.equal(isMaskedDeterministicCheckCommand("set -o pipefail; npm run build 2>&1 | tee /tmp/build.log"), false);
+  });
+
   it("notifies the event-driven spawner when a run starts", () => {
     const source = fs.readFileSync(path.join(root, "src", "installer", "run.ts"), "utf-8");
     assert.match(source, /pg_notify\('step_pending'/);

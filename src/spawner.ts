@@ -9,6 +9,7 @@ import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_pro
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { pathToFileURL } from "node:url";
 import { pgClose, pgGet, pgMigrate, pgQuery, pgRun } from "./db-pg.js";
 import { loadWorkflowSpec } from "./installer/workflow-spec.js";
 import { resolveWorkflowDir } from "./installer/paths.js";
@@ -991,6 +992,40 @@ function isReferenceMarkdownPath(relativePath: string): boolean {
   return /^references\/[^/]+\.md$/.test(relativePath);
 }
 
+export function expandSupportedGuardGlob(workdir: string, relativePath: string): string[] {
+  const normalized = normalizeWorktreeRelativePath(workdir, relativePath);
+  if (!normalized || normalized.startsWith("..")) return [];
+  if (!normalized.includes("*")) return [normalized];
+
+  if (normalized === "references/*.md") {
+    try {
+      const dir = path.join(workdir, "references");
+      if (!fs.existsSync(dir)) return [];
+      return fs.readdirSync(dir)
+        .filter((entry) => /^[^/]+\.md$/i.test(entry))
+        .map((entry) => `references/${entry}`)
+        .sort();
+    } catch {
+      return [];
+    }
+  }
+
+  if (normalized === "src/screens/*.tsx") {
+    try {
+      const dir = path.join(workdir, "src", "screens");
+      if (!fs.existsSync(dir)) return [];
+      return fs.readdirSync(dir)
+        .filter((entry) => /^[^/]+\.tsx$/i.test(entry))
+        .map((entry) => `src/screens/${entry}`)
+        .sort();
+    } catch {
+      return [];
+    }
+  }
+
+  return [];
+}
+
 function isBackendReferencePath(relativePath: string): boolean {
   return relativePath === "references/backend-standards.md";
 }
@@ -1028,7 +1063,8 @@ function extractReferenceReadsFromCommand(workdir: string, command: string): Arr
 
   for (const match of command.matchAll(/(?:^|[\s"'`=])((?:\.\/|\/)?(?:[\w.-]+\/)*references\/[^'"`\s;|&]+\.md)/g)) {
     const relativePath = normalizeWorktreeRelativePath(workdir, match[1] || "");
-    if (isReferenceMarkdownPath(relativePath)) reads.push({ path: relativePath, via: "exec", full: fullReadCommand });
+    const expanded = expandSupportedGuardGlob(workdir, relativePath).filter(isReferenceMarkdownPath);
+    for (const path of expanded) reads.push({ path, via: "exec", full: fullReadCommand });
   }
   return reads;
 }
@@ -1054,8 +1090,8 @@ function implementReferenceReadGuard(active: ActiveProcess): { detected: boolean
       const candidates: Array<{ path: string; via: string; full: boolean }> = [];
       if (call.name === "read" && call.path) {
         const relativePath = normalizeWorktreeRelativePath(active.spawnCwd, call.path);
-        if (isReferenceMarkdownPath(relativePath)) {
-          candidates.push({ path: relativePath, via: "read", full: call.limit === null || call.limit > 220 });
+        for (const path of expandSupportedGuardGlob(active.spawnCwd, relativePath).filter(isReferenceMarkdownPath)) {
+          candidates.push({ path, via: "read", full: call.limit === null || call.limit > 220 });
         }
       }
       if (call.name === "exec" && call.command) {
@@ -1087,6 +1123,9 @@ function implementReferenceReadGuard(active: ActiveProcess): { detected: boolean
 function candidateSourceExists(workdir: string, relativePath: string): boolean {
   if (!relativePath || relativePath.startsWith("..")) return false;
   if (relativePath.includes("*")) {
+    const expanded = expandSupportedGuardGlob(workdir, relativePath);
+    if (expanded.length > 0) return expanded.some((item) => fs.existsSync(path.join(workdir, item)));
+    if (relativePath === "references/*.md" || relativePath === "src/screens/*.tsx") return false;
     if (relativePath === "stitch/*.html") return directoryHasMatch(path.join(workdir, "stitch"), /\.html$/i);
     if (relativePath === ".stitch-screens*.json") return directoryHasMatch(workdir, /^\.stitch-screens.*\.json$/i);
     if (relativePath === "stitch/*") {
@@ -1175,18 +1214,25 @@ function generatedScreenReadGuard(active: ActiveProcess): { detected: boolean; r
       const candidates: Array<{ path: string; via: string }> = [];
       if (call.name === "read" && call.path) {
         const relativePath = normalizeWorktreeRelativePath(active.spawnCwd, call.path);
-        if (isGeneratedScreenComponentPath(relativePath)) candidates.push({ path: relativePath, via: "read" });
+        for (const path of expandSupportedGuardGlob(active.spawnCwd, relativePath).filter(isGeneratedScreenComponentPath)) {
+          candidates.push({ path, via: "read" });
+        }
       }
       if (call.name === "exec" && call.command) {
         candidates.push(...extractGeneratedScreenReadsFromCommand(active.spawnCwd, call.command));
       }
 
       for (const candidate of candidates) {
-        if (allowed.has(candidate.path)) continue;
-        if (isGeneratedScreenSourceStubFile(active.spawnCwd, candidate.path)) continue;
+        const candidatePaths = expandSupportedGuardGlob(active.spawnCwd, candidate.path)
+          .filter(isGeneratedScreenComponentPath);
+        if (candidatePaths.length === 0) continue;
+        const unsafePath = candidatePaths.find((candidatePath) =>
+          !allowed.has(candidatePath) && !isGeneratedScreenSourceStubFile(active.spawnCwd, candidatePath)
+        );
+        if (!unsafePath) continue;
         return {
           detected: true,
-          reason: `GENERATED_SCREEN_SHARED_READ: ${active.agentId} used ${candidate.via} on ${candidate.path}, but that generated screen is not in this story's .story-scope-files. Shared generated screens must be consumed through src/screens/SCREEN_INDEX.json, src/screens/index.ts, the component registry, and UI_CONTRACT. Setfarm recorded a supervisor signal so the worker can be redirected without restarting the claim.`,
+          reason: `GENERATED_SCREEN_SHARED_READ: ${active.agentId} used ${candidate.via} on ${candidate.path} (matched ${unsafePath}), but that generated screen is not in this story's .story-scope-files. Shared generated screens must be consumed through src/screens/SCREEN_INDEX.json, src/screens/index.ts, the component registry, and UI_CONTRACT. Setfarm recorded a supervisor signal so the worker can be redirected without restarting the claim.`,
         };
       }
     }
@@ -1812,12 +1858,15 @@ function preservesPipelineExitStatus(command: string): boolean {
     || /\bPIPESTATUS\s*\[\s*0\s*\]/.test(command);
 }
 
-function isMaskedDeterministicCheckCommand(command: string): boolean {
+export function isMaskedDeterministicCheckCommand(command: string): boolean {
   const compact = compactCommandForDiagnostic(command);
   if (!compact || !isVerifyDeterministicEvidenceCommand(compact)) return false;
   if (!/[|]/.test(compact) || preservesPipelineExitStatus(command)) return false;
-  return /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:build|test|test:run|lint|typecheck)\b[\s\S]{0,160}\|[\s\S]{0,120}\b(?:head|tail|grep|rg|tee|cat|awk|sed)\b/i.test(compact)
-    || /\b(?:npx\s+)?(?:vitest|tsc|eslint)\b[\s\S]{0,160}\|[\s\S]{0,120}\b(?:head|tail|grep|rg|tee|cat|awk|sed)\b/i.test(compact);
+  return shellCommandSegments(compact).some((segment) => {
+    if (!/[|]/.test(segment) || !isVerifyDeterministicEvidenceCommand(segment)) return false;
+    return /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:build|test|test:run|lint|typecheck)\b[\s\S]{0,160}\|[\s\S]{0,120}\b(?:head|tail|grep|rg|tee|cat|awk|sed)\b/i.test(segment)
+      || /\b(?:npx\s+)?(?:vitest|tsc|eslint)\b[\s\S]{0,160}\|[\s\S]{0,120}\b(?:head|tail|grep|rg|tee|cat|awk|sed)\b/i.test(segment);
+  });
 }
 
 function implementMaskedCheckCommandGuard(active: ActiveProcess): { detected: boolean; reason: string } {
@@ -6035,8 +6084,10 @@ async function main() {
   console.log("[spawner] Ready");
 }
 
-main().catch((err) => {
-  releaseSpawnerSingletonLock();
-  console.error(`[spawner] Fatal: ${String(err)}`);
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    releaseSpawnerSingletonLock();
+    console.error(`[spawner] Fatal: ${String(err)}`);
+    process.exit(1);
+  });
+}
