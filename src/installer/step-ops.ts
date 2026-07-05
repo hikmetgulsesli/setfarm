@@ -72,6 +72,18 @@ const SMOKE_INFRA_FAILURE = /(?:\b(agent-browser|browser control|playwright|chro
 const ACTIONABLE_RETRY_OUTPUT_PATTERN = "PR_REVIEW_COMMENTS_OPEN|actionable PR review comments|APP_INTEGRATION_[A-Z_]*REGRESSION|POST_MERGE_QUALITY_REGRESSION|VULNERABILITIES|SECURITY_FINDINGS?|STATUS:[[:space:]]*retry";
 const ACTIVE_RETRY_STORY_SQL = `(retry_count > 0 OR COALESCE(output, '') ~* '${ACTIONABLE_RETRY_OUTPUT_PATTERN}')`;
 const ACTIVE_RETRY_STORY_ALIAS_SQL = `(active_st.retry_count > 0 OR COALESCE(active_st.output, '') ~* '${ACTIONABLE_RETRY_OUTPUT_PATTERN}')`;
+const PR_EACH_DELIVERY_BLOCKED_STEP_SQL = `(
+  s.step_id = 'implement'
+  AND s.type = 'loop'
+  AND COALESCE(s.loop_config::jsonb, '{}'::jsonb) @> '{"verifyEach":true}'::jsonb
+  AND (
+    COALESCE(r.context::jsonb ->> 'failure_category', '') = 'PR_REVIEW_COMMENTS_OPEN'
+    OR COALESCE(r.context::jsonb ->> 'previous_failure', '') ILIKE '%PR_REVIEW_COMMENTS_OPEN%'
+    OR COALESCE(r.context::jsonb ->> 'verify_feedback', '') ILIKE '%PR_REVIEW_COMMENTS_OPEN%'
+  )
+  AND NOT EXISTS (SELECT 1 FROM stories active_st WHERE active_st.run_id = s.run_id AND active_st.status IN ('pending', 'running') AND ${ACTIVE_RETRY_STORY_ALIAS_SQL})
+  AND NOT EXISTS (SELECT 1 FROM stories fix_st WHERE fix_st.run_id = s.run_id AND fix_st.story_id LIKE 'QA-FIX-%' AND fix_st.status IN ('pending', 'running'))
+)`;
 const ACTIONABLE_RETRY_OUTPUT_RE = /\b(?:PR_REVIEW_COMMENTS_OPEN|APP_INTEGRATION_[A-Z_]*REGRESSION|POST_MERGE_QUALITY_REGRESSION|VULNERABILITIES|SECURITY_FINDINGS?|STATUS:\s*retry)\b|actionable PR review comments/i;
 const PR_REVIEW_COMMENT_RETRY_LIMIT = 3;
 
@@ -3515,6 +3527,7 @@ export async function peekStep(agentId: string, callerGatewayAgent?: string): Pr
       `SELECT COUNT(*) as cnt FROM steps s
        JOIN runs r ON r.id = s.run_id
        WHERE s.agent_id = $1 AND r.status = 'running'
+         AND NOT ${PR_EACH_DELIVERY_BLOCKED_STEP_SQL}
          AND NOT EXISTS (
            SELECT 1 FROM steps prev
            WHERE prev.run_id = s.run_id
@@ -5249,6 +5262,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
              OR s.status = 'running'
            )
            AND r.status NOT IN ('failed', 'cancelled')
+           AND NOT ${PR_EACH_DELIVERY_BLOCKED_STEP_SQL}
            AND (
              $2::text IS NULL
              OR s.step_id <> 'implement'

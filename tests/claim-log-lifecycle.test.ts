@@ -692,6 +692,8 @@ describe("single-step claim_log lifecycle", () => {
     assert.ok(pendingSelection > autoComplete, "pending story selection must happen after auto-complete");
 
     const selectionPrelude = source.slice(autoComplete, pendingSelection);
+    assert.match(source, /PR_EACH_DELIVERY_BLOCKED_STEP_SQL/);
+    assert.match(source, /AND NOT \$\{PR_EACH_DELIVERY_BLOCKED_STEP_SQL\}/);
     assert.match(selectionPrelude, /isPrEach && isOpenPrDeliveryBlockerContext\(context\)/);
     assert.match(selectionPrelude, /implement\.pr_each_delivery_blocker/);
     assert.match(selectionPrelude, /Blocking new story claim while verify delivery blocker is open/);
