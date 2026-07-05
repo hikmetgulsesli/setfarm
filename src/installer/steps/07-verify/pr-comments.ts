@@ -139,6 +139,16 @@ function normalizeCodeForReviewResolution(value: string): string {
     .trim();
 }
 
+function normalizeCodeCompactForReviewResolution(value: string): string {
+  return String(value || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\/\/.*$/gm, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/,\s*([}\]])/g, "$1")
+    .replace(/;\s*/g, "")
+    .replace(/\s+/g, "");
+}
+
 function extractSuggestionBlocks(body: string): string[] {
   const blocks: string[] = [];
   const pattern = /```suggestion[^\n]*\n([\s\S]*?)```/gi;
@@ -183,11 +193,19 @@ export function commentLooksMechanicallySatisfied(comment: PrComment, source: st
   for (const block of extractFencedCodeBlocks(comment.body)) {
     const normalizedBlock = normalizeCodeForReviewResolution(block);
     if (normalizedBlock.length >= 24 && sourceText.includes(normalizedBlock)) return true;
+
+    const compactBlock = normalizeCodeCompactForReviewResolution(block);
+    const compactSource = normalizeCodeCompactForReviewResolution(source);
+    if (compactBlock.length >= 32 && compactSource.includes(compactBlock)) return true;
   }
 
   for (const suggestion of extractSuggestionBlocks(comment.body)) {
     const normalizedSuggestion = normalizeCodeForReviewResolution(suggestion);
     if (normalizedSuggestion.length >= 24 && sourceText.includes(normalizedSuggestion)) return true;
+
+    const compactSuggestion = normalizeCodeCompactForReviewResolution(suggestion);
+    const compactSource = normalizeCodeCompactForReviewResolution(source);
+    if (compactSuggestion.length >= 32 && compactSource.includes(compactSuggestion)) return true;
 
     const tokens = semanticSuggestionTokens(suggestion);
     if (tokens.length >= 2 && tokens.every(token => sourceText.includes(token))) return true;

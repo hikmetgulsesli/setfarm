@@ -615,6 +615,58 @@ describe("07-verify step module", () => {
     );
   });
 
+  it("matches fenced review snippets despite formatting and trailing comma differences", () => {
+    const comment = {
+      id: "fallback-inline",
+      threadId: "PRRT_fallback",
+      kind: "review-comment" as const,
+      author: "gemini-code-assist",
+      body: [
+        "Check for fallbackState and skip the storage read if it is provided.",
+        "",
+        "```",
+        "useEffect(() => {",
+        "  if (fallbackState) {",
+        "    dispatch({",
+        "      type: \"BOOTSTRAP\",",
+        "      payload: {",
+        "        ...fallbackState,",
+        "        loadStatus: \"ready\",",
+        "      },",
+        "    });",
+        "    return;",
+        "  }",
+        "  const storageInstance = resolveStorage(storage);",
+        "```",
+      ].join("\n"),
+      createdAt: "2026-07-05T16:47:00Z",
+      path: "src/features/pulse-note/pulse-note.store.tsx",
+      line: 289,
+      originalLine: 289,
+      threadResolved: false,
+      outdated: false,
+    };
+
+    assert.equal(
+      commentLooksMechanicallySatisfied(
+        comment,
+        [
+          "useEffect(() => {",
+          "  if (fallbackState) {",
+          "    dispatch({",
+          "      type: \"BOOTSTRAP\",",
+          "      payload: { ...fallbackState, loadStatus: \"ready\" },",
+          "    });",
+          "    return;",
+          "  }",
+          "  const storageInstance = resolveStorage(storage);",
+          "}, [fallbackState, storage]);",
+        ].join("\n"),
+      ),
+      true,
+    );
+  });
+
   it("marks delta clamp and animation lifecycle review comments as mechanically satisfied from source evidence", () => {
     const deltaComment = {
       id: "delta-inline",
