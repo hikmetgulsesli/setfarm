@@ -59,6 +59,10 @@ const VIEWPORTS: ViewportSpec[] = [
   { name: "mobile", width: 390, height: 844, isMobile: true },
 ];
 
+const VISUAL_QA_BROWSER_LAUNCH_TIMEOUT_MS = 20_000;
+const VISUAL_QA_SCAN_TIMEOUT_MS = Number(process.env.SETFARM_VISUAL_QA_SCAN_TIMEOUT_MS || 120_000);
+const VISUAL_QA_BROWSER_CLOSE_TIMEOUT_MS = 5_000;
+
 const CONTROL_SELECTOR = [
   "button:visible",
   "[role='button']:visible",
@@ -272,10 +276,29 @@ export async function runSupervisorVisualQa(params: VisualQaParams): Promise<Sup
     });
   }
 
+  let browser: Browser | null = null;
   try {
-    const browser = await chromium.launch();
-    try {
-      const result = await scanBrowserApp({
+    const launched = await withVisualQaTimeout(
+      chromium.launch(),
+      VISUAL_QA_BROWSER_LAUNCH_TIMEOUT_MS,
+      "Playwright browser launch timed out",
+    );
+    if (!launched.ok) {
+      return persistVisualResult(params, {
+        ok: true,
+        skipped: true,
+        reason: launched.reason,
+        baseUrl: server.url,
+        routesChecked: [],
+        controlsChecked: 0,
+        screenshots: [],
+        issues: [],
+        artifactDir,
+      });
+    }
+    browser = launched.value;
+    const scan = await withVisualQaTimeout(
+      scanBrowserApp({
         ...params,
         browser,
         repoPath,
@@ -283,13 +306,24 @@ export async function runSupervisorVisualQa(params: VisualQaParams): Promise<Sup
         baseUrl: server.url,
         maxRoutes: params.maxRoutes || 16,
         maxControlsPerRoute: params.maxControlsPerRoute || 24,
+      }),
+      VISUAL_QA_SCAN_TIMEOUT_MS,
+      `Supervisor visual QA timed out after ${VISUAL_QA_SCAN_TIMEOUT_MS}ms`,
+    );
+    if (!scan.ok) {
+      return persistVisualResult(params, {
+        ok: true,
+        skipped: true,
+        reason: scan.reason,
+        baseUrl: server.url,
+        routesChecked: [],
+        controlsChecked: 0,
+        screenshots: [],
+        issues: [],
+        artifactDir,
       });
-      await browser.close();
-      return persistVisualResult(params, suppressBrowserInfraIssues(result));
-    } catch (error) {
-      await browser.close().catch(() => {});
-      throw error;
     }
+    return persistVisualResult(params, suppressBrowserInfraIssues(scan.value));
   } catch (error) {
     return persistVisualResult(params, {
       ok: true,
@@ -303,9 +337,32 @@ export async function runSupervisorVisualQa(params: VisualQaParams): Promise<Sup
       artifactDir,
     });
   } finally {
+    if (browser) await closeBrowserWithTimeout(browser);
     await stopPreviewServer(server.proc);
     cleanupDetachedPlaywrightChildren("visual-qa-finally");
   }
+}
+
+type TimedResult<T> = { ok: true; value: T } | { ok: false; reason: string };
+
+function withVisualQaTimeout<T>(promise: Promise<T>, timeoutMs: number, reason: string): Promise<TimedResult<T>> {
+  let timer: NodeJS.Timeout | undefined;
+  return Promise.race<TimedResult<T>>([
+    promise.then((value) => ({ ok: true as const, value })),
+    new Promise<TimedResult<T>>((resolve) => {
+      timer = setTimeout(() => resolve({ ok: false, reason }), Math.max(1, timeoutMs));
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+async function closeBrowserWithTimeout(browser: Browser): Promise<void> {
+  await withVisualQaTimeout(
+    browser.close(),
+    VISUAL_QA_BROWSER_CLOSE_TIMEOUT_MS,
+    "Playwright browser close timed out",
+  ).catch(() => ({ ok: false, reason: "Playwright browser close failed" }));
 }
 
 export function suppressBrowserInfraIssues(

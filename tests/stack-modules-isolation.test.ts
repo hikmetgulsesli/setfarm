@@ -50,6 +50,17 @@ test("stack modules keep game product evidence separate from framework selection
   assert.equal(next.category, "verify_quality_failure");
 });
 
+test("browser stacks route runtime preview readiness failures to infra retry", () => {
+  const decision = classifyStackFailure("vite-react-web-app", {
+    stepId: "implement",
+    failure: "IMPLEMENT_EVIDENCE_RUNTIME_FAILED: Runtime did not become ready at http://127.0.0.1:6667: fetch failed",
+    hasMachineEvidence: true,
+  });
+  assert.equal(decision.owner, "infra");
+  assert.equal(decision.action, "infra_retry");
+  assert.equal(decision.category, "browser_infra_failure");
+});
+
 test("stack module integration prevents infra evidence from reaching product gate", () => {
   const source = fs.readFileSync(path.join(process.cwd(), "src/installer/step-ops.ts"), "utf-8");
   assert.match(source, /stackPackId: context\["stack_pack_id"\] \|\| context\["detected_stack"\]/);

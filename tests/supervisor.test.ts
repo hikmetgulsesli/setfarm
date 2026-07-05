@@ -1030,6 +1030,14 @@ describe("supervisor checklist scanning", () => {
     assert.match(String(result.reason), /Browser infrastructure navigation errors/);
   });
 
+  it("bounds visual QA scan and browser cleanup so preview servers cannot hang completion", () => {
+    const source = fs.readFileSync(path.join(process.cwd(), "src/installer/supervisor/visual-qa.ts"), "utf-8");
+    assert.match(source, /VISUAL_QA_SCAN_TIMEOUT_MS/);
+    assert.match(source, /withVisualQaTimeout\(\s*scanBrowserApp/s);
+    assert.match(source, /closeBrowserWithTimeout\(browser\)/);
+    assert.match(source, /await stopPreviewServer\(server\.proc\)/);
+  });
+
   it("suppresses browser infrastructure click errors misreported as dead controls", () => {
     const result = suppressBrowserInfraIssues({
       ok: false,
