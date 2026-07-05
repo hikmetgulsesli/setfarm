@@ -1848,8 +1848,10 @@ function isVerifyDeterministicEvidenceCommand(command: string): boolean {
   const compact = compactCommandForDiagnostic(command);
   if (!compact) return false;
   return /\b(npm|pnpm|yarn|bun)\s+(run\s+)?(build|test|test:run|lint|typecheck)\b/i.test(compact)
-    || /\bnpx\s+(vitest|tsc|eslint)\b/i.test(compact)
-    || /\b(vitest|tsc|eslint)\s+(run|--noEmit|\.)?/i.test(compact)
+    || /(?:^|[\s;&|()])npx\s+(vitest\s+run|tsc\s+--noEmit|eslint\s+(?:\.|src|app|components|lib|pages|tests?|--))/i.test(compact)
+    || /(?:^|[\s;&|()])vitest\s+run\b/i.test(compact)
+    || /(?:^|[\s;&|()])tsc\s+--noEmit\b/i.test(compact)
+    || /(?:^|[\s;&|()])eslint\s+(?:\.|src|app|components|lib|pages|tests?|--)/i.test(compact)
     || /\bnode\b[^;&|]*\b(smoke-test|playwright-check)\b/i.test(compact);
 }
 
@@ -1866,7 +1868,7 @@ export function isMaskedDeterministicCheckCommand(command: string): boolean {
   return shellCommandSegments(compact).some((segment) => {
     if (!/[|]/.test(segment) || !isVerifyDeterministicEvidenceCommand(segment)) return false;
     return /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:build|test|test:run|lint|typecheck)\b[\s\S]{0,160}\|[\s\S]{0,120}\b(?:head|tail|grep|rg|tee|cat|awk|sed)\b/i.test(segment)
-      || /\b(?:npx\s+)?(?:vitest|tsc|eslint)\b[\s\S]{0,160}\|[\s\S]{0,120}\b(?:head|tail|grep|rg|tee|cat|awk|sed)\b/i.test(segment);
+      || /(?:^|[\s;&|()])(?:npx\s+)?(?:vitest\s+run\b|tsc\s+--noEmit\b|eslint\s+(?:\.|src|app|components|lib|pages|tests?|--))[\s\S]{0,160}\|[\s\S]{0,120}\b(?:head|tail|grep|rg|tee|cat|awk|sed)\b/i.test(segment);
   });
 }
 

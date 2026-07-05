@@ -36,8 +36,12 @@ describe("spawner gateway recovery wiring", () => {
 
   it("keeps masked deterministic check blocking segment-scoped", () => {
     assert.equal(isMaskedDeterministicCheckCommand("npx tsc --noEmit 2>&1 | tail -50"), true);
+    assert.equal(isMaskedDeterministicCheckCommand("vitest run src/App.test.tsx 2>&1 | head -100"), true);
+    assert.equal(isMaskedDeterministicCheckCommand("eslint . 2>&1 | tail -50"), true);
     assert.equal(isMaskedDeterministicCheckCommand("npm run lint > /tmp/lint-final.log 2>&1; echo \"LINT_EXIT=$?\"; cat /tmp/lint-final.log 2>&1 | head -20"), false);
     assert.equal(isMaskedDeterministicCheckCommand("set -o pipefail; npm run build 2>&1 | tee /tmp/build.log"), false);
+    assert.equal(isMaskedDeterministicCheckCommand("ls -la node_modules/.bin/vitest 2>&1 | head -3"), false);
+    assert.equal(isMaskedDeterministicCheckCommand("ls -la node_modules/.bin/tsc 2>&1 | head -3"), false);
   });
 
   it("clears claiming state when pre-spawn handoff preparation fails", () => {
