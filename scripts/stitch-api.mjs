@@ -45,6 +45,51 @@ function normalizeGoogleFontFamily(raw) {
   return decoded.split(':')[0].trim();
 }
 
+const BANNED_PRIMARY_FONT_RE = /^(?:inter|roboto|arial|helvetica|system-ui|material symbols(?: outlined)?|material icons)$/i;
+
+function splitCssFamilyList(value) {
+  const out = [];
+  let current = '';
+  let quote = '';
+  for (const ch of String(value || '')) {
+    if (quote) {
+      current += ch;
+      if (ch === quote) quote = '';
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      current += ch;
+      continue;
+    }
+    if (ch === ',') {
+      out.push(current.trim());
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  if (current.trim()) out.push(current.trim());
+  return out;
+}
+
+function normalizeFontFamilyName(value) {
+  return String(value || '')
+    .split(':')[0]
+    .replace(/^['"]|['"]$/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+function sanitizeDesignFontTokenValue(prop, value) {
+  if (!String(prop || '').startsWith('--font-')) return value;
+  const families = splitCssFamilyList(value);
+  const primary = normalizeFontFamilyName(families[0] || value);
+  if (!BANNED_PRIMARY_FONT_RE.test(primary)) return value;
+  if (String(prop || '').startsWith('--font-google-')) return '"Hanken Grotesk"';
+  return '"Hanken Grotesk", "Segoe UI", sans-serif';
+}
+
 function screenIdOf(screen) {
   return String(
     (screen?.name || '').replace(/^projects\/\d+\/screens\//, '') ||
@@ -1217,7 +1262,8 @@ const commands = {
             if (extend.fontFamily && typeof extend.fontFamily === 'object') {
               for (const [key, value] of Object.entries(extend.fontFamily)) {
                 const fontValue = Array.isArray(value) ? value.join(', ') : String(value);
-                properties.set(`--font-${key}`, fontValue);
+                const prop = `--font-${key}`;
+                properties.set(prop, sanitizeDesignFontTokenValue(prop, fontValue));
               }
             }
 
@@ -1256,7 +1302,8 @@ const commands = {
     // Add Google Fonts as tokens
     let fontIndex = 0;
     for (const family of googleFonts) {
-      properties.set(`--font-google-${fontIndex}`, family);
+      const prop = `--font-google-${fontIndex}`;
+      properties.set(prop, sanitizeDesignFontTokenValue(prop, family));
       fontIndex++;
     }
 
@@ -1273,7 +1320,7 @@ const commands = {
     let css = '/* design-tokens.css -- auto-generated from Stitch HTML */\n:root {\n';
     const jsonTokens = {};
     for (const [prop, value] of properties) {
-      const safeValue = sanitizeCssCustomPropertyValue(value);
+      const safeValue = sanitizeCssCustomPropertyValue(sanitizeDesignFontTokenValue(prop, value));
       if (!safeValue) continue;
       css += `  ${prop}: ${safeValue};\n`;
       jsonTokens[prop] = safeValue;

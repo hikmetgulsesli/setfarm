@@ -1712,6 +1712,49 @@ Awaiting input...</pre>
     }
   });
 
+  it("sanitizes banned Stitch font tokens before agents read design-tokens.css", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-safe-font-css-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      writeHtml(path.join(stitchDir, "main.html"), `
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+        <script id="tailwind-config">
+          tailwind.config = {
+            theme: {
+              extend: {
+                fontFamily: {
+                  body: ["Inter", "sans-serif"],
+                  heading: ["Roboto", "sans-serif"],
+                  mono: ["JetBrains Mono", "monospace"],
+                },
+                colors: { surface: "#101116" }
+              }
+            }
+          };
+        </script>
+      `);
+
+      execFileSync("node", ["scripts/stitch-api.mjs", "extract-tokens", stitchDir], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const css = fs.readFileSync(path.join(stitchDir, "design-tokens.css"), "utf-8");
+      assert.match(css, /--font-body: "Hanken Grotesk", "Segoe UI", sans-serif;/);
+      assert.match(css, /--font-heading: "Hanken Grotesk", "Segoe UI", sans-serif;/);
+      assert.match(css, /--font-mono: JetBrains Mono, monospace;/);
+      assert.match(css, /--font-google-0: "Hanken Grotesk";/);
+      assert.doesNotMatch(css, /\b(?:Inter|Roboto)\b/);
+
+      const json = JSON.parse(fs.readFileSync(path.join(stitchDir, "design-tokens.json"), "utf-8"));
+      assert.equal(json["--font-body"], '"Hanken Grotesk", "Segoe UI", sans-serif');
+      assert.equal(json["--font-google-0"], '"Hanken Grotesk"');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("writes runtime CSS for Stitch utility classes used by generated screens", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-runtime-css-"));
     try {
