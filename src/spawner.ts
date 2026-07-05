@@ -2993,6 +2993,84 @@ function markOpenClawTaskRecordsCancelledForLookup(lookup: string, context: stri
   });
 }
 
+function openClawTaskIdsForLookupSync(lookup: string): string[] {
+  if (!lookup || !fs.existsSync(OPENCLAW_TASKS_DB)) return [];
+  const sql = [
+    "SELECT task_id FROM task_runs",
+    "WHERE runtime = 'cli'",
+    "AND status = 'running'",
+    "AND (",
+    `requester_session_key = ${sqliteString(lookup)}`,
+    `OR owner_key = ${sqliteString(lookup)}`,
+    `OR child_session_key = ${sqliteString(lookup)}`,
+    ");",
+  ].join(" ");
+  try {
+    const stdout = execFileSync("sqlite3", [OPENCLAW_TASKS_DB, sql], {
+      encoding: "utf-8",
+      timeout: 10_000,
+      maxBuffer: 1024 * 1024,
+    });
+    return stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  } catch (err) {
+    console.warn(`[spawner] OpenClaw registry lookup failed for ${lookup}: ${compactExitReason(err)}`);
+    return [];
+  }
+}
+
+function markOpenClawTaskRecordsCancelledForLookupSync(lookup: string, context: string): number {
+  if (!lookup || !fs.existsSync(OPENCLAW_TASKS_DB)) return 0;
+  const now = Date.now();
+  const message = "Cancelled by Setfarm spawner before retrying guarded claim.";
+  const sql = [
+    "UPDATE task_runs",
+    `SET status = 'cancelled', ended_at = ${now}, last_event_at = ${now}, error = ${sqliteString(message)}`,
+    "WHERE runtime = 'cli'",
+    "AND status = 'running'",
+    "AND (",
+    `requester_session_key = ${sqliteString(lookup)}`,
+    `OR owner_key = ${sqliteString(lookup)}`,
+    `OR child_session_key = ${sqliteString(lookup)}`,
+    ");",
+    "SELECT changes();",
+  ].join(" ");
+  try {
+    const stdout = execFileSync("sqlite3", [OPENCLAW_TASKS_DB, sql], {
+      encoding: "utf-8",
+      timeout: 10_000,
+      maxBuffer: 1024 * 1024,
+    });
+    const changed = parseInt(String(stdout || "").trim().split(/\s+/).pop() || "0", 10);
+    if (changed > 0) {
+      console.warn(`[spawner] OpenClaw registry sync fallback marked ${changed} task record(s) cancelled for ${lookup} (${context})`);
+    }
+    return Number.isFinite(changed) ? changed : 0;
+  } catch (err) {
+    console.warn(`[spawner] OpenClaw registry sync fallback failed for ${lookup} (${context}): ${compactExitReason(err)}`);
+    return 0;
+  }
+}
+
+function forceCancelOpenClawLookupSync(lookup: string, context: string): void {
+  if (!lookup || AGENT_RUNTIME !== "openclaw") return;
+  const taskIds = openClawTaskIdsForLookupSync(lookup);
+  const targets = uniqueStrings([lookup, ...taskIds]);
+  for (const target of targets) {
+    try {
+      execFileSync(OPENCLAW_CLI, ["tasks", "cancel", target], {
+        cwd: AGENT_SAFE_CWD,
+        timeout: 20_000,
+        env: buildOpenClawChildEnv(),
+        stdio: ["ignore", "pipe", "pipe"],
+        maxBuffer: 2 * 1024 * 1024,
+      });
+    } catch (err) {
+      console.warn(`[spawner] OpenClaw sync cancel failed for ${target} from ${lookup} (${context}): ${compactExitReason(err)}`);
+    }
+  }
+  markOpenClawTaskRecordsCancelledForLookupSync(lookup, context);
+}
+
 function cancelOpenClawTaskId(taskId: string, context: string, originalLookup: string): void {
   execFile(OPENCLAW_CLI, ["tasks", "cancel", taskId], {
     cwd: AGENT_SAFE_CWD,
@@ -3128,6 +3206,7 @@ function cancelRuntimeTask(lookup: string, context: string): void {
 
 function terminateActiveProcess(active: ActiveProcess, context: string): void {
   cancelRuntimeTask(active.sessionKey, context);
+  forceCancelOpenClawLookupSync(active.sessionKey, context);
   killProcessTree(active.child.pid, "SIGTERM");
   setTimeout(() => killProcessTree(active.child.pid, "SIGKILL"), 5000);
   setTimeout(() => cleanupSpawnerDetachedToolChildren(context), 1500);
