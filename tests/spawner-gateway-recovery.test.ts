@@ -40,6 +40,14 @@ describe("spawner gateway recovery wiring", () => {
     assert.equal(isMaskedDeterministicCheckCommand("set -o pipefail; npm run build 2>&1 | tee /tmp/build.log"), false);
   });
 
+  it("clears claiming state when pre-spawn handoff preparation fails", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /async function retryPreSpawnSingleStepClaim/);
+    assert.match(source, /CLAIM_HANDOFF_PREP_FAILED/);
+    assert.match(source, /catch \(err\) \{\s*claimingSpawns\.delete\(key\);[\s\S]*retryPreSpawnSingleStepClaim/);
+    assert.match(source, /completeInlineSecurityGateIfApplicable[\s\S]*claimingSpawns\.delete\(key\);[\s\S]*return;/);
+  });
+
   it("notifies the event-driven spawner when a run starts", () => {
     const source = fs.readFileSync(path.join(root, "src", "installer", "run.ts"), "utf-8");
     assert.match(source, /pg_notify\('step_pending'/);
@@ -530,7 +538,8 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /const spawnCwd = safeAgentCwdFromClaimInput\(claim\.resolvedInput\)/);
     assert.match(source, /JSON\.stringify\(\{ stepId: claim\.stepId, runId: claim\.runId, workdir: spawnCwd, repo: spawnCwd, input: claim\.resolvedInput \}\)/);
     assert.match(source, /const claimSummaryFile = path\.join\("\/tmp", "claim-summary-" \+ outputFileId \+ "\.json"\)/);
-    assert.match(source, /const claimSummary = buildClaimSummary\(\{/);
+    assert.match(source, /let claimSummary: Record<string, unknown>/);
+    assert.match(source, /claimSummary = buildClaimSummary\(\{/);
     assert.match(source, /JSON\.stringify\(claimSummary,\s*null,\s*2\)/);
     assert.match(source, /claimSummaryFile,/);
     assert.match(source, /buildResolvedClaimBootstrapScript\(\{/);
@@ -1077,10 +1086,11 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /safeClaimScopeRelPath/);
     assert.match(source, /Array\.isArray\(claimSummary\.scopeFiles\)/);
     assert.match(source, /fs\.mkdirSync\(abs,\s*\{\s*recursive: true\s*\}\)/);
-    assert.match(source, /const preparedScopeParentDirs = claim\.storyId/);
+    assert.match(source, /let preparedScopeParentDirs: string\[\] = \[\]/);
+    assert.match(source, /preparedScopeParentDirs = claim\.storyId/);
     assert.match(source, /prepared scope parent dirs/);
     assert.ok(
-      source.indexOf("const claimSummary = buildClaimSummary") < source.indexOf("ensureClaimScopeParentDirs(spawnCwd"),
+      source.indexOf("claimSummary = buildClaimSummary") < source.indexOf("ensureClaimScopeParentDirs(spawnCwd"),
       "scope parent dirs must be derived from the claim summary before the agent child process starts",
     );
     assert.ok(

@@ -3336,6 +3336,26 @@ async function retryActiveSingleStepClaim(active: ActiveProcess, stepIdName: str
   ]);
 }
 
+async function retryPreSpawnSingleStepClaim(runId: string, stepDbId: string, stepIdName: string, agentId: string, diagnostic: string): Promise<void> {
+  await pgRun(
+    "UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = retry_count + 1, updated_at = NOW() WHERE id = $1 AND status = 'running'",
+    [stepDbId],
+  );
+  await pgRun(
+    "UPDATE claim_log SET outcome = 'infra_retry', abandoned_at = NOW(), duration_ms = LEAST(CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at::timestamptz)) * 1000 AS BIGINT), 2147483647)::INTEGER, diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND story_id IS NULL AND agent_id = $4 AND outcome IS NULL",
+    [diagnostic, runId, stepIdName, agentId],
+  );
+  await pgRun("SELECT pg_notify('step_pending', $1)", [
+    JSON.stringify({ agentId, runId, stepId: stepIdName }),
+  ]);
+}
+
+async function stepNameForDbId(stepDbId: string): Promise<string> {
+  if (!stepDbId) return "";
+  const row = await pgGet<{ step_id: string }>("SELECT step_id FROM steps WHERE id = $1 LIMIT 1", [stepDbId]);
+  return row?.step_id || "";
+}
+
 async function activeProcessHasOpenClaim(active: ActiveProcess, stepIdName: string): Promise<boolean> {
   if (active.storyId) {
     const row = await pgGet<{ id: string }>(
@@ -5089,38 +5109,57 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     if (claim.stepId) await failStep(claim.stepId, reason);
     return;
   }
-  fs.writeFileSync(claimFile, JSON.stringify({ stepId: claim.stepId, runId: claim.runId, workdir: spawnCwd, repo: spawnCwd, input: claim.resolvedInput }) + "\n");
-  const claimSummary = buildClaimSummary({
-    wfId,
-    role,
-    claimFile,
-    outputFile,
-    bootstrapFile,
-    stepId: claim.stepId || "",
-    runId: claim.runId || "",
-    workdir: spawnCwd,
-    repo: spawnCwd,
-    storyId: claim.storyId,
-    input: claim.resolvedInput,
-  });
-  fs.writeFileSync(claimSummaryFile, JSON.stringify(claimSummary, null, 2) + "\n");
-  const preparedScopeParentDirs = claim.storyId
-    ? ensureClaimScopeParentDirs(spawnCwd, claimSummary as Record<string, unknown>)
-    : [];
-  fs.writeFileSync(bootstrapFile, buildResolvedClaimBootstrapScript({
-    claimFile,
-    outputFile,
-    claimSummaryFile,
-    stepId: claim.stepId || "",
-    workdir: spawnCwd,
-    taskPreview: claimTaskPreview(claim.resolvedInput),
-  }), { mode: 0o700 });
-  try { fs.chmodSync(bootstrapFile, 0o700); } catch { /* best-effort */ }
+  let claimSummary: Record<string, unknown>;
+  let preparedScopeParentDirs: string[] = [];
+  try {
+    fs.writeFileSync(claimFile, JSON.stringify({ stepId: claim.stepId, runId: claim.runId, workdir: spawnCwd, repo: spawnCwd, input: claim.resolvedInput }) + "\n");
+    claimSummary = buildClaimSummary({
+      wfId,
+      role,
+      claimFile,
+      outputFile,
+      bootstrapFile,
+      stepId: claim.stepId || "",
+      runId: claim.runId || "",
+      workdir: spawnCwd,
+      repo: spawnCwd,
+      storyId: claim.storyId,
+      input: claim.resolvedInput,
+    }) as Record<string, unknown>;
+    fs.writeFileSync(claimSummaryFile, JSON.stringify(claimSummary, null, 2) + "\n");
+    preparedScopeParentDirs = claim.storyId
+      ? ensureClaimScopeParentDirs(spawnCwd, claimSummary)
+      : [];
+    fs.writeFileSync(bootstrapFile, buildResolvedClaimBootstrapScript({
+      claimFile,
+      outputFile,
+      claimSummaryFile,
+      stepId: claim.stepId || "",
+      workdir: spawnCwd,
+      taskPreview: claimTaskPreview(claim.resolvedInput),
+    }), { mode: 0o700 });
+    try { fs.chmodSync(bootstrapFile, 0o700); } catch { /* best-effort */ }
+  } catch (err) {
+    claimingSpawns.delete(key);
+    const stepName = await stepNameForDbId(claim.stepId || "");
+    const diagnostic = `CLAIM_HANDOFF_PREP_FAILED: ${fullAgentId} could not prepare spawner handoff files before launch: ${String(err).slice(0, 500)}`;
+    console.warn(`[spawner] ${diagnostic}`);
+    if (claim.runId) await recordSupervisorInfraEvent(claim.runId, stepName || "spawner", claim.storyDbId || null, diagnostic);
+    if (claim.storyId && claim.runId && stepName) {
+      await requeueOpenStoryClaim(claim.runId, stepName, claim.storyId, agentId, diagnostic);
+    } else if (claim.runId && claim.stepId && stepName) {
+      await retryPreSpawnSingleStepClaim(claim.runId, claim.stepId, stepName, agentId, diagnostic);
+    } else if (claim.stepId) {
+      await failStep(claim.stepId, diagnostic);
+    }
+    return;
+  }
 
   // capture agent stdout/stderr to a transcript file for post-hoc diagnosis.
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
   const transcriptPath = path.join(TRANSCRIPT_ROOT, wfId, agentId + "-" + ts + ".log");
   if (await completeInlineSecurityGateIfApplicable({ role, agentId, wfId, key, claim, repo: spawnCwd, transcriptPath })) {
+    claimingSpawns.delete(key);
     return;
   }
 
