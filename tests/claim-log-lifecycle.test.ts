@@ -1538,6 +1538,22 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(failRunSource, /RUN_TERMINAL_FAILURE/);
   });
 
+  it("fails loop runs on failed stories before pending siblings can keep the loop alive", () => {
+    const source = fs.readFileSync(path.join(root, "src", "installer", "step-advance.ts"), "utf-8");
+    const start = source.indexOf("export async function checkLoopContinuation(");
+    const end = source.indexOf("// All stories verified/skipped", start);
+    assert.notEqual(start, -1, "checkLoopContinuation source not found");
+    assert.notEqual(end, -1, "checkLoopContinuation terminal guard end not found");
+    const loopSource = source.slice(start, end);
+
+    const failedCheck = loopSource.indexOf("SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status = 'failed'");
+    const pendingCheck = loopSource.indexOf('const pendingStory = await findStoryByStatus(runId, "pending")');
+    assert.ok(failedCheck >= 0, "failed-story terminal guard must exist");
+    assert.ok(pendingCheck >= 0, "pending-story continuation guard must exist");
+    assert.ok(failedCheck < pendingCheck, "failed stories must terminally fail the loop before pending siblings are considered");
+    assert.match(loopSource, /UPDATE runs SET status = 'failed'/);
+  });
+
   it("preserves multiple actionable retry targets instead of replacing earlier quality feedback", () => {
     const quality = [
       "POST_MERGE_QUALITY_REGRESSION:",

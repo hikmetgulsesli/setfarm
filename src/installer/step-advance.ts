@@ -192,6 +192,37 @@ export async function advancePipeline(runId: string): Promise<{ advanced: boolea
  * Check if the loop has more stories; if so set loop step pending, otherwise done + advance.
  */
 export async function checkLoopContinuation(runId: string, loopStepId: string): Promise<{ advanced: boolean; runCompleted: boolean }> {
+  // Failed stories are terminal for the whole loop even when sibling stories
+  // remain pending. Otherwise a failed first story can leave the run "running"
+  // forever and keep the developer reservation locked.
+  const preSkipFailedRows = await pgQuery<{ cnt: string }>(
+    "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status = 'failed'", [runId]
+  );
+  const originalFailedCount = parseInt(preSkipFailedRows[0]?.cnt || "0", 10);
+
+  if (originalFailedCount > 0) {
+    const failedStoryRows = await pgQuery<{ story_id: string; title: string }>(
+      "SELECT story_id, title FROM stories WHERE run_id = $1 AND status = 'failed' ORDER BY story_index ASC",
+      [runId]
+    );
+    const failedList = failedStoryRows.map(s => `${s.story_id} (${s.title})`).join(", ");
+    const failReason = `Loop step failed — ${originalFailedCount} story/stories failed: ${failedList}`;
+    logger.error(`[checkLoopContinuation] ${failReason}`, { runId });
+
+    await pgRun(
+      "UPDATE steps SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3",
+      [failReason, now(), loopStepId]
+    );
+    await pgRun(
+      "UPDATE runs SET status = 'failed', updated_at = $1 WHERE id = $2",
+      [now(), runId]
+    );
+    const wfId = await getWorkflowId(runId);
+    emitEvent({ ts: now(), event: "step.failed" as any, runId, workflowId: wfId, stepId: loopStepId, detail: failReason });
+    emitEvent({ ts: now(), event: "run.failed" as any, runId, workflowId: wfId, detail: failReason });
+    return { advanced: false, runCompleted: false };
+  }
+
   const pendingStory = await findStoryByStatus(runId, "pending") as { id: string } | undefined;
 
   const loopStatus = await pgGet<{ status: string; step_id: string; current_story_id: string | null }>(
@@ -252,38 +283,6 @@ export async function checkLoopContinuation(runId: string, loopStepId: string): 
         return { advanced: false, runCompleted: false };
       }
     }
-  }
-
-  // Count failed stories BEFORE skip conversion (P1-05)
-  const preSkipFailedRows = await pgQuery<{ cnt: string }>(
-    "SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status = 'failed'", [runId]
-  );
-  const originalFailedCount = parseInt(preSkipFailedRows[0]?.cnt || "0", 10);
-
-  // CRITICAL (2026-04-07): If ANY story failed, FAIL the entire run.
-  // Previously skipFailedStories converted failed → skipped and pipeline marched on,
-  // deploying broken apps. Quality requires all stories to succeed.
-  if (originalFailedCount > 0) {
-    const failedStoryRows = await pgQuery<{ story_id: string; title: string }>(
-      "SELECT story_id, title FROM stories WHERE run_id = $1 AND status = 'failed' ORDER BY story_index ASC",
-      [runId]
-    );
-    const failedList = failedStoryRows.map(s => `${s.story_id} (${s.title})`).join(", ");
-    const failReason = `Loop step failed — ${originalFailedCount} story/stories failed: ${failedList}`;
-    logger.error(`[checkLoopContinuation] ${failReason}`, { runId });
-
-    await pgRun(
-      "UPDATE steps SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3",
-      [failReason, now(), loopStepId]
-    );
-    await pgRun(
-      "UPDATE runs SET status = 'failed', updated_at = $1 WHERE id = $2",
-      [now(), runId]
-    );
-    const wfId = await getWorkflowId(runId);
-    emitEvent({ ts: now(), event: "step.failed" as any, runId, workflowId: wfId, stepId: loopStepId, detail: failReason });
-    emitEvent({ ts: now(), event: "run.failed" as any, runId, workflowId: wfId, detail: failReason });
-    return { advanced: false, runCompleted: false };
   }
 
   // All stories verified/skipped — mark loop step done
