@@ -258,6 +258,7 @@ let gatewayNotReadySinceMs: number | null = null;
 let gatewayRestartInFlight = false;
 let lastGatewayPrespawnRestartMs = 0;
 let lastGatewayCleanupRestartMs = 0;
+let lastGuardGatewayRestartMs = 0;
 let spawnerLockFd: number | null = null;
 
 // Wave 13 Bug M (run #344 postmortem): agent default cwd must NOT be the
@@ -3071,6 +3072,30 @@ function forceCancelOpenClawLookupSync(lookup: string, context: string): void {
   markOpenClawTaskRecordsCancelledForLookupSync(lookup, context);
 }
 
+function restartOpenClawGatewayAfterGuardSync(context: string): void {
+  if (AGENT_RUNTIME !== "openclaw") return;
+  if (activeProcesses.size > 1) {
+    console.warn(`[spawner] OpenClaw guard gateway restart skipped; ${activeProcesses.size} active process(es) (${context})`);
+    return;
+  }
+  const nowMs = Date.now();
+  if (nowMs - lastGuardGatewayRestartMs < 15_000) return;
+  lastGuardGatewayRestartMs = nowMs;
+  try {
+    execFileSync(OPENCLAW_CLI, ["gateway", "restart"], {
+      cwd: AGENT_SAFE_CWD,
+      timeout: 25_000,
+      env: buildOpenClawChildEnv(),
+      stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: 2 * 1024 * 1024,
+    });
+    gatewayNotReadySinceMs = null;
+    console.warn(`[spawner] restarted OpenClaw gateway after runtime guard (${context})`);
+  } catch (err) {
+    console.warn(`[spawner] OpenClaw guard gateway restart failed (${context}): ${compactExitReason(err)}`);
+  }
+}
+
 function cancelOpenClawTaskId(taskId: string, context: string, originalLookup: string): void {
   execFile(OPENCLAW_CLI, ["tasks", "cancel", taskId], {
     cwd: AGENT_SAFE_CWD,
@@ -3207,6 +3232,7 @@ function cancelRuntimeTask(lookup: string, context: string): void {
 function terminateActiveProcess(active: ActiveProcess, context: string): void {
   cancelRuntimeTask(active.sessionKey, context);
   forceCancelOpenClawLookupSync(active.sessionKey, context);
+  restartOpenClawGatewayAfterGuardSync(context);
   killProcessTree(active.child.pid, "SIGTERM");
   setTimeout(() => killProcessTree(active.child.pid, "SIGKILL"), 5000);
   setTimeout(() => cleanupSpawnerDetachedToolChildren(context), 1500);
