@@ -45,9 +45,10 @@ describe("spawner prompt bootstrap", () => {
     assert.match(prompt, /claimSummary\.runtimeDoneChecklist/);
     assert.match(prompt, /hard done checklist/);
     assert.match(prompt, /make a small scoped source delta before broad analysis\/build\/test/);
-    assert.match(prompt, /src\/_probe\.tsx, src\/probe\.tsx, tmp\.ts, scratch\.tsx/);
+    assert.match(prompt, /src\/_probe\.tsx, src\/probe\.tsx, src\/features\/test-write\.ts, tmp\.ts, scratch\.tsx/);
+    assert.match(prompt, /Never create a project file just to verify that writes persist/);
     assert.match(prompt, /Do NOT parse or dump claim\.input with jq\/sed\/head\/node loops/);
-    assert.match(prompt, /Do NOT create scratch\/progress\/todo\/note\/probe files inside WORKDIR/);
+    assert.match(prompt, /Do NOT create scratch\/progress\/todo\/note\/probe\/test-write files inside WORKDIR/);
     assert.doesNotMatch(prompt, /First exec command should start with/);
     assert.doesNotMatch(prompt, /jq -r/);
     assert.doesNotMatch(prompt, /case "\$WORKDIR" in/);

@@ -1428,6 +1428,7 @@ function isForbiddenProjectScratchArtifact(relativePath: string): boolean {
   const normalized = normalizeRelativePath(relativePath);
   if (!normalized) return false;
   const base = path.basename(normalized);
+  if (/^(?:test|write|test-write|write-test)(?:[-_.].*)?\.[cm]?[jt]sx?$/i.test(base)) return true;
   if (/^_?(?:debug|probe|scratch|tmp|temp)(?:[-_.].*)?\.[cm]?[jt]sx?$/i.test(base)) return true;
   if (/(?:^|\/)src\/(?:_)?(?:debug|probe|scratch|tmp|temp)\.[cm]?[jt]sx?$/i.test(normalized)) return true;
   return /(?:^|\/)(?:debug|probe|scratch|tmp|temp)\.(?:test|spec)\.[cm]?[jt]sx?$/i.test(normalized)
@@ -1471,8 +1472,8 @@ function implementScopeWriteGuard(active: ActiveProcess): { detected: boolean; r
       if (isRuntimeControlArtifactWrite(call.path, active)) continue;
       const relativePath = normalizeWorktreeRelativePath(active.spawnCwd, call.path);
       if (!relativePath || isRuntimeScopeAllowedWrite(relativePath, allowed, active.storyId)) continue;
-      const probeHint = /(?:^|\/|_)(probe|scratch|tmp)[^/]*\.[cm]?[jt]sx?$/i.test(relativePath)
-        ? " Do not create TypeScript probe/scratch files in the project tree to infer shared component props; use claim-summary designContracts.componentTypes or a /tmp-only experiment that never writes under WORKDIR."
+      const probeHint = /(?:^|\/|_)(probe|scratch|tmp|test-write|write-test)[^/]*\.[cm]?[jt]sx?$/i.test(relativePath)
+        ? " Do not create TypeScript probe/scratch/test-write files in the project tree to infer shared component props or test write persistence; use claim-summary designContracts.componentTypes or a /tmp-only experiment that never writes under WORKDIR."
         : "";
       return {
         detected: true,

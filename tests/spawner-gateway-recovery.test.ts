@@ -1065,6 +1065,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /changed package\/dependency file\(s\) outside \.story-scope-files/);
     assert.match(source, /changed file\(s\) outside \.story-scope-files via shell\/runtime side effects/);
     assert.match(source, /debug\/probe\/scratch files are forbidden even when they match \*\.test\.\*/);
+    assert.match(source, /test-write files in the project tree/);
     assert.match(source, /readStoryScopeFileSet\(active\.spawnCwd\)/);
     assert.match(source, /SCOPE_WRITE_VIOLATION/);
     assert.match(source, /function sessionEventMessage\(event: any\)/);
