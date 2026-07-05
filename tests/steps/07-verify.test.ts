@@ -1203,6 +1203,99 @@ describe("07-verify step module", () => {
     );
   });
 
+  it("marks React store side-effect review comments as mechanically satisfied from source evidence", () => {
+    const sideEffectComment = {
+      id: "react-store-side-effects",
+      threadId: "PRRT_react_store_side_effects",
+      kind: "review-comment" as const,
+      author: "gemini-code-assist",
+      body: [
+        "### React Anti-Pattern: Side Effects in State Updaters & Synchronous I/O in Callbacks",
+        "",
+        "Inside `createRecord`, `updateRecord`, and `deleteRecord`, `saveRecords(next)` is called inside the `setRecords` functional state updater.",
+        "`setActiveSurface` and `setActivePanel` perform synchronous localStorage reads (`getDefaultPanel()` / `getDefaultSurface()`) and writes.",
+        "`new Date().toISOString()` is called inside state updaters and twice in `updateRecord`.",
+        "`crypto.randomUUID()` can throw in non-secure contexts.",
+        "",
+        "Refactor the store to use declarative `useEffect` hooks to synchronize state changes to `localStorage` when `storageStatus === 'ready'`.",
+      ].join("\n"),
+      createdAt: "2026-07-05T01:05:38Z",
+      path: "src/features/skill-wiring-probe-fixed/skill-wiring-probe-fixed.store.tsx",
+      line: 127,
+      originalLine: 122,
+      threadResolved: false,
+      outdated: false,
+    };
+    const fixedSource = `
+      import { useCallback, useEffect, useMemo, useState } from 'react';
+
+      export function StoreProvider() {
+        const [activeSurface, setActiveSurfaceState] = useState(() => getDefaultSurface());
+        const [activePanel, setActivePanelState] = useState(() => getDefaultPanel());
+        const [records, setRecords] = useState([]);
+        const [storageStatus, setStorageStatus] = useState('loading');
+
+        useEffect(() => {
+          if (storageStatus === 'ready') {
+            try {
+              saveRecords(records);
+            } catch {}
+          }
+        }, [records, storageStatus]);
+
+        useEffect(() => {
+          if (storageStatus === 'ready') {
+            try {
+              savePreferences({ activeSurface, activePanel });
+            } catch {}
+          }
+        }, [activeSurface, activePanel, storageStatus]);
+
+        const setActiveSurface = useCallback((surface) => {
+          setActiveSurfaceState(surface);
+        }, []);
+
+        const setActivePanel = useCallback((panel) => {
+          setActivePanelState(panel);
+        }, []);
+
+        const createRecord = useCallback((record) => {
+          const now = new Date().toISOString();
+          const newRecord = {
+            ...record,
+            id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15),
+            createdAt: now,
+            updatedAt: now,
+          };
+          setRecords((prev) => [...prev, newRecord]);
+        }, []);
+
+        const updateRecord = useCallback((record) => {
+          const now = new Date().toISOString();
+          const updated = { ...record, updatedAt: now };
+          setRecords((prev) => prev.map((r) => (r.id === record.id ? updated : r)));
+          setSelectedRecord((prev) => (prev?.id === record.id ? updated : prev));
+        }, []);
+      }
+    `;
+    const unsafeSource = `
+      const setActiveSurface = useCallback((surface) => {
+        setActiveSurfaceState(surface);
+        savePreferences({ activeSurface: surface, activePanel: getDefaultPanel() });
+      }, []);
+      const createRecord = useCallback((record) => {
+        setRecords((prev) => {
+          const next = [...prev, { ...record, id: crypto.randomUUID() }];
+          saveRecords(next);
+          return next;
+        });
+      }, []);
+    `;
+
+    assert.equal(commentLooksMechanicallySatisfied(sideEffectComment, fixedSource), true);
+    assert.equal(commentLooksMechanicallySatisfied(sideEffectComment, unsafeSource), false);
+  });
+
   it("marks base CSS class toggle review comments as mechanically satisfied from state-class source evidence", () => {
     const classToggleComment = {
       id: "css-class-toggle-inline",

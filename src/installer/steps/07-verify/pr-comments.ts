@@ -321,6 +321,39 @@ function runProbeStatusUtilityReviewLooksSatisfied(body: string, normalizedSourc
   return false;
 }
 
+function reactStoreSideEffectsReviewLooksSatisfied(body: string, normalizedSource: string): boolean {
+  const text = String(body || "");
+  if (!/\bSide Effects in State Updaters\b|\bsaveRecords\s*\(\s*next\s*\)/i.test(text)) return false;
+  if (!/\bsetRecords\b/i.test(text) || !/\bsavePreferences\b|\bgetDefault(?:Panel|Surface)\b/i.test(text)) return false;
+  if (!/\bcrypto\.randomUUID\b/i.test(text)) return false;
+
+  const hasDeclarativeRecordSync =
+    /useEffect\s*\(\s*\(\s*\)\s*=>\s*\{[^]*?\bstorageStatus\s*===\s*['"]ready['"][^]*?\bsaveRecords\s*\(\s*records\s*\)[^]*?\}\s*,\s*\[\s*records\s*,\s*storageStatus\s*\]\s*\)/.test(normalizedSource);
+  const hasDeclarativePreferenceSync =
+    /useEffect\s*\(\s*\(\s*\)\s*=>\s*\{[^]*?\bstorageStatus\s*===\s*['"]ready['"][^]*?\bsavePreferences\s*\(\s*\{\s*activeSurface\s*,\s*activePanel\s*\}\s*\)[^]*?\}\s*,\s*\[\s*activeSurface\s*,\s*activePanel\s*,\s*storageStatus\s*\]\s*\)/.test(normalizedSource);
+  if (!hasDeclarativeRecordSync || !hasDeclarativePreferenceSync) return false;
+
+  const recordsUpdaterHasSave =
+    /setRecords\s*\(\s*\([^)]*\)\s*=>[^;]{0,700}\bsaveRecords\s*\(/.test(normalizedSource);
+  const activeSurfaceCallbackHasStorageIo =
+    /const\s+setActiveSurface\s*=\s*useCallback\s*\([^]*?\{[^}]{0,500}\b(?:savePreferences|getDefaultPanel|getDefaultSurface)\s*\(/.test(normalizedSource);
+  const activePanelCallbackHasStorageIo =
+    /const\s+setActivePanel\s*=\s*useCallback\s*\([^]*?\{[^}]{0,500}\b(?:savePreferences|getDefaultPanel|getDefaultSurface)\s*\(/.test(normalizedSource);
+  if (recordsUpdaterHasSave || activeSurfaceCallbackHasStorageIo || activePanelCallbackHasStorageIo) return false;
+
+  const hasSafeIdFallback =
+    /typeof\s+crypto\s*!==\s*['"]undefined['"]/.test(normalizedSource) &&
+    /\bcrypto\.randomUUID\b/.test(normalizedSource) &&
+    /\bMath\.random\s*\(\s*\)/.test(normalizedSource);
+  const hasConsistentUpdateRecordTimestamp =
+    /const\s+(?:updatedAt|now)\s*=\s*new\s+Date\s*\(\s*\)\s*\.toISOString\s*\(\s*\)/.test(normalizedSource) &&
+    /const\s+(?:updatedRecord|updated)\s*=\s*\{\s*\.\.\.record\s*,\s*updatedAt\s*:?\s*(?:updatedAt|now)?\s*\}/.test(normalizedSource) &&
+    /setRecords\s*\(\s*\([^)]*\)\s*=>[^]*?\?\s*(?:updatedRecord|updated)\s*:/.test(normalizedSource) &&
+    /setSelectedRecord\s*\(\s*\([^)]*\)\s*=>[^]*?\?\s*(?:updatedRecord|updated)\s*:/.test(normalizedSource);
+
+  return hasSafeIdFallback && hasConsistentUpdateRecordTimestamp;
+}
+
 function commentProseLooksMechanicallySatisfied(body: string, normalizedSource: string): boolean {
   const text = String(body || "").toLowerCase();
 
@@ -329,6 +362,7 @@ function commentProseLooksMechanicallySatisfied(body: string, normalizedSource: 
   if (csvEscapingReviewLooksSatisfied(body, normalizedSource)) return true;
   if (optionalShellMethodCallLooksSatisfied(body, normalizedSource)) return true;
   if (runProbeStatusUtilityReviewLooksSatisfied(body, normalizedSource)) return true;
+  if (reactStoreSideEffectsReviewLooksSatisfied(body, normalizedSource)) return true;
 
   if (
     /\bwindow\.app\b/i.test(body) &&
