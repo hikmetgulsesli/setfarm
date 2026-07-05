@@ -1505,6 +1505,7 @@ function isForbiddenProjectScratchArtifact(relativePath: string): boolean {
   const normalized = normalizeRelativePath(relativePath);
   if (!normalized) return false;
   const base = path.basename(normalized);
+  if (/^__test[-_.].*\.(?:txt|json|log)$/i.test(base)) return true;
   if (/^(?:test|write|test-write|write-test)(?:[-_.].*)?\.[cm]?[jt]sx?$/i.test(base)) return true;
   if (/^_?(?:debug|probe|scratch|tmp|temp)(?:[-_.].*)?\.[cm]?[jt]sx?$/i.test(base)) return true;
   if (/(?:^|\/)src\/(?:_)?(?:debug|probe|scratch|tmp|temp)\.[cm]?[jt]sx?$/i.test(normalized)) return true;

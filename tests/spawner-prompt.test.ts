@@ -1902,6 +1902,96 @@ describe("spawner prompt bootstrap", () => {
     }
   });
 
+  it("gives masked check retries an unmasked command discipline", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-masked-check-retry-"));
+    try {
+      fs.writeFileSync(path.join(tmp, ".story-scope-files"), "src/App.tsx\n");
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        bootstrapFile: path.join(tmp, "bootstrap.sh"),
+        stepId: "step-123",
+        runId: "run-123",
+        workdir: tmp,
+        repo: tmp,
+        storyId: "US-001",
+        input: [
+          "TASK: Project: masked check retry sensor",
+          "CURRENT STORY: Story US-001: App shell",
+          "",
+          "## Previous Failure / Retry Feedback",
+          "MASKED_CHECK_COMMAND: feature-dev_developer ran deterministic build/test evidence through an output-filtering pipeline (npx vitest run src/App.test.tsx 2>&1 | head -100).",
+          "",
+          "## Current Story",
+        ].join("\n"),
+      });
+
+      assert.equal(summary.failureCategory, "MASKED_CHECK_COMMAND");
+      assert.equal((summary.retryDiscipline as any).mode, "semantic-fix");
+      assert.match(String((summary.retryDiscipline as any).instruction), /rerun the exact failing build\/test\/lint\/typecheck command without any pipe/i);
+      assert.match(String((summary.retryDiscipline as any).instruction), /Do not report STATUS: done until an unmasked deterministic check has exited successfully/);
+      const bootstrap = buildResolvedClaimBootstrapScript({
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        claimSummaryFile: path.join(tmp, "summary.json"),
+        stepId: "step-123",
+        workdir: tmp,
+      });
+      assert.match(bootstrap, /MASKED_CHECK_RULE=Rerun the exact build\/test\/lint\/typecheck command without output-filtering pipes first/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("gives design mismatch retries an exact UI contract fix discipline", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-design-mismatch-retry-"));
+    try {
+      fs.writeFileSync(path.join(tmp, ".story-scope-files"), "src/index.css\n");
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        bootstrapFile: path.join(tmp, "bootstrap.sh"),
+        stepId: "step-123",
+        runId: "run-123",
+        workdir: tmp,
+        repo: tmp,
+        storyId: "US-001",
+        input: [
+          "TASK: Project: design mismatch retry sensor",
+          "CURRENT STORY: Story US-001: App shell",
+          "",
+          "## Previous Failure / Retry Feedback",
+          "DESIGN MISMATCH:",
+          "- CRITICAL DESIGN CONTRACT:",
+          "src/index.css:70 — UI_CONTRACT: banned primary font \"inter\" in font-family; use project design tokens or a distinctive approved font first.",
+          "FIX:",
+          "- Replace the banned primary font with the project design token font or an approved distinctive font.",
+          "",
+          "## Current Story",
+        ].join("\n"),
+      });
+
+      assert.equal(summary.failureCategory, "DESIGN_MISMATCH");
+      assert.equal((summary.retryDiscipline as any).mode, "semantic-fix");
+      assert.match(String((summary.retryDiscipline as any).instruction), /fix the exact reported file and UI_CONTRACT\/design-token line/i);
+      assert.match(String((summary.retryDiscipline as any).instruction), /Search the scoped files for the rejected token or pattern/i);
+      const bootstrap = buildResolvedClaimBootstrapScript({
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        claimSummaryFile: path.join(tmp, "summary.json"),
+        stepId: "step-123",
+        workdir: tmp,
+      });
+      assert.match(bootstrap, /DESIGN_RETRY_RULE=Fix the exact UI_CONTRACT\/design-token file and line first/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("omits retry source snapshots and patch bodies for scope bleed retries", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-scope-bleed-no-snapshot-"));
     try {

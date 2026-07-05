@@ -1396,6 +1396,13 @@ describe("spawner gateway recovery wiring", () => {
     );
   });
 
+  it("treats project-tree write probe artifacts as forbidden scratch files", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /function isForbiddenProjectScratchArtifact/);
+    assert.match(source, /__test\[-_\.\]\.\*\\\.\(\?:txt\|json\|log\)/);
+    assert.match(source, /Project-tree debug\/probe\/scratch files are forbidden/);
+  });
+
   it("tells implement agents not to manage runtime cleanup or preview servers", () => {
     const prompt = fs.readFileSync(path.join(root, "src", "installer", "steps", "06-implement", "prompt.md"), "utf-8");
     assert.match(prompt, /NEVER run broad process cleanup or ad hoc preview servers/);

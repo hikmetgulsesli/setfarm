@@ -1036,6 +1036,18 @@ function retryDisciplineForFailure(
       instruction: "Package-scope retry discipline: first remove package.json, package-lock.json, pnpm-lock.yaml, and yarn.lock changes from the story worktree. Do not install dependencies, rewrite package scripts, or create lockfile deltas in IMPLEMENT. Use the existing BUILD_CMD/TEST_CMD and existing stack-pack dependencies; if the story cannot be implemented without a new dependency, report that as a setup-build/stack-pack dependency blocker instead of editing package files.",
     };
   }
+  if (/\bMASKED_CHECK_COMMAND\b/i.test(signal)) {
+    return {
+      mode: "semantic-fix",
+      instruction: "Masked-check retry discipline: first rerun the exact failing build/test/lint/typecheck command without any pipe to head, tail, grep, rg, tee, cat, awk, or sed. If output must be shortened, redirect to a log while preserving the command exit status, then inspect the log in a separate command. Do not report STATUS: done until an unmasked deterministic check has exited successfully.",
+    };
+  }
+  if (/\bDESIGN_MISMATCH\b|\bDESIGN MISMATCH\b|\bUI_CONTRACT\b|\bdesign compliance\b/i.test(signal)) {
+    return {
+      mode: "semantic-fix",
+      instruction: "Design-mismatch retry discipline: first fix the exact reported file and UI_CONTRACT/design-token line before broad refactors. Search the scoped files for the rejected token or pattern, replace it with the project design token or approved equivalent, then run the declared build/test command. Do not continue feature work while the same design mismatch remains present.",
+    };
+  }
   if (/\bSUPERVISOR_BLOCKERS_OPEN\b/i.test(signal)) {
     return {
       mode: "semantic-fix",
@@ -1665,6 +1677,12 @@ if (s.failureSuggestion) lines.push("FAILURE_SUGGESTION=" + String(s.failureSugg
 const rf = s.retryFeedback || {};
 if (rf.mode) lines.push("RETRY_MODE=" + String(rf.mode));
 if (rf.blocker) lines.push("RETRY_BLOCKER_PREVIEW=" + String(rf.blocker).slice(0, 700));
+if (/^MASKED_CHECK_COMMAND$/i.test(String(s.failureCategory || ""))) {
+  lines.push("MASKED_CHECK_RULE=Rerun the exact build/test/lint/typecheck command without output-filtering pipes first. If you need shorter output, redirect to a log while preserving exit status, then inspect the log separately.");
+}
+if (/^DESIGN_MISMATCH$/i.test(String(s.failureCategory || ""))) {
+  lines.push("DESIGN_RETRY_RULE=Fix the exact UI_CONTRACT/design-token file and line first; search scoped files for the rejected token or pattern and replace it before broad feature work.");
+}
 if (/^(?:SCOPE_BLEED|SCOPE_WRITE_VIOLATION)$/i.test(String(s.failureCategory || ""))) {
   lines.push("SCOPE_RETRY_RULE=First remove/rework out-of-scope files or shell-created project artifacts. Do not read retry source snapshots, do not read retry worktree patches, and do not recreate shared/debug/scratch files; keep the fix inside SCOPE_FILES, then run build/test.");
 }
