@@ -79,6 +79,8 @@ describe("spawner prompt bootstrap", () => {
       fs.writeFileSync(claimSummaryFile, JSON.stringify({
         storyId: "US-001",
         storyTitle: "Bootstrap story",
+        currentStory: "Story US-001: Bootstrap story\n\nState and persistence must stay readable after whitespace normalization.",
+        acceptanceCriteria: "1. State persists after save.\n2. Stored status remains visible.",
         storyBranch: "run-us-001",
         repo: "/home/setrox/projects/bootstrap-sensor",
         mainRepo: "/home/setrox/projects/bootstrap-sensor",
@@ -194,6 +196,9 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, new RegExp(`WORKDIR=${workdir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
       assert.match(out, new RegExp(`CLAIM_SUMMARY_FILE=${claimSummaryFile.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
       assert.match(out, /STORY=US-001 Bootstrap story/);
+      assert.match(out, /CURRENT_STORY_BRIEF=Story US-001: Bootstrap story State and persistence must stay readable after whitespace normalization\./);
+      assert.match(out, /ACCEPTANCE_CRITERIA=1\. State persists after save\. 2\. Stored status remains visible\./);
+      assert.doesNotMatch(out, /\b tate\b|\bper i t|\b tatus\b/);
       assert.match(out, /STORY_BRANCH=run-us-001/);
       assert.match(out, /STORY_WORKDIR=\/home\/setrox\/\.openclaw\/workspaces\/workflows\/feature-dev\/agents\/developer\/story-worktrees\/run-us-001/);
       assert.match(out, /VERIFY_WORKDIR=\/home\/setrox\/\.openclaw\/workspaces\/workflows\/feature-dev\/agents\/developer\/story-worktrees\/run-us-001/);
