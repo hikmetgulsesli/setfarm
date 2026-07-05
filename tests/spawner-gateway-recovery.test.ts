@@ -996,6 +996,9 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /references\\\/\[\^\/\]\+\\\.md/);
     assert.match(source, /IRRELEVANT_REFERENCE_CONTEXT/);
     assert.match(source, /FULL_REFERENCE_CONTEXT_READ/);
+    assert.match(source, /function isImplementReferencePolicyFile\(workdir: string, relativePath: string\)/);
+    assert.match(source, /Setfarm Implement Reference Policy/);
+    assert.match(source, /isImplementReferencePolicyFile\(active\.spawnCwd, candidate\.path\)/);
     assert.match(source, /Backend\/API\/DB standards must not be loaded into frontend\/game story context/);
     assert.match(source, /candidate\.full/);
     assert.match(source, /recordRuntimeSupervisorSignal\(active,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"reference-read-guard"/);

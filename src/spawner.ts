@@ -981,6 +981,20 @@ function isBackendReferencePath(relativePath: string): boolean {
   return relativePath === "references/backend-standards.md";
 }
 
+function isImplementReferencePolicyFile(workdir: string, relativePath: string): boolean {
+  if (relativePath !== "references/README.md" && relativePath !== "references/.setfarm-reference-policy.md") return false;
+  try {
+    const abs = path.join(workdir, relativePath);
+    const stat = fs.statSync(abs);
+    if (!stat.isFile() || stat.size > 2_000) return false;
+    const text = fs.readFileSync(abs, "utf-8");
+    return /\bSetfarm Implement Reference Policy\b/.test(text)
+      && /\bFull reference manuals are intentionally not mounted\b/.test(text);
+  } catch {
+    return false;
+  }
+}
+
 function storyScopeLooksBackend(workdir: string): boolean {
   const allowed = Array.from(readStoryScopeFileSet(workdir));
   if (allowed.length === 0) return true;
@@ -1036,6 +1050,7 @@ function implementReferenceReadGuard(active: ActiveProcess): { detected: boolean
 
       for (const candidate of candidates) {
         if (!candidateSourceExists(active.spawnCwd, candidate.path)) continue;
+        if (isImplementReferencePolicyFile(active.spawnCwd, candidate.path)) continue;
         if (isBackendReferencePath(candidate.path) && !backendScope) {
           return {
             detected: true,
