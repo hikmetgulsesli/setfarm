@@ -871,11 +871,13 @@ describe("spawner gateway recovery wiring", () => {
     assert.doesNotMatch(source, /allowed\.size === 0\)\s*return \{ detected: false/);
     assert.match(source, /GENERATED_SCREEN_SHARED_READ/);
     assert.match(source, /async function recordRuntimeSupervisorSignal/);
+    assert.match(source, /async function requeueRuntimeSupervisorSignal/);
     assert.match(source, /PRODUCT_SUPERVISOR_RUNTIME_SIGNAL/);
     assert.match(source, /const effectiveStoryId = active\.storyId \|\| row\.story_id \|\| undefined/);
     assert.match(source, /const effectiveStoryDbId = active\.storyDbId \|\| row\.current_story_id \|\| undefined/);
     assert.match(source, /row\.type === "loop" && row\.step_id === "implement" && effectiveStoryId/);
     assert.match(source, /recordRuntimeSupervisorSignal\(active,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"generated-screen-read-guard"/);
+    assert.match(source, /requeueRuntimeSupervisorSignal\(active,\s*key,\s*row\.step_id,\s*effectiveStoryId,\s*generatedScreenRead\.reason,\s*"generated-screen-read-guard"\)/);
     assert.ok(
       source.indexOf("generatedScreenReadGuard(active)") < source.indexOf("rawStitchDesignReadGuard(active)"),
       "generated screen guard should run before raw Stitch guard",
@@ -901,6 +903,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /injected Stitch excerpts, UI_CONTRACT, SCREEN_INDEX/);
     assert.match(source, /Non-generated stacks may use focused story-owned Stitch files/);
     assert.match(source, /recordRuntimeSupervisorSignal\(active,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"raw-stitch-read-guard"/);
+    assert.match(source, /requeueRuntimeSupervisorSignal\(active,\s*key,\s*row\.step_id,\s*effectiveStoryId,\s*rawStitchRead\.reason,\s*"raw-stitch-read-guard"\)/);
     assert.ok(
       source.indexOf("rawStitchDesignReadGuard(active)") > source.indexOf("generatedScreenReadGuard(active)"),
       "raw Stitch guard should run after the more specific generated-screen guard",
@@ -944,6 +947,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /!isPreDeltaSafeContextPath\(relativePath,\s*allowed\)/);
     assert.match(source, /contextReads\.add\(normalizePreDeltaContextPath\(relativePath\)\)/);
     assert.match(source, /recordRuntimeSupervisorSignal\(active,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"implement-pre-delta-context-guard"/);
+    assert.match(source, /requeueRuntimeSupervisorSignal\(active,\s*key,\s*row\.step_id,\s*effectiveStoryId,\s*preDeltaExploration\.reason,\s*"implement-pre-delta-context-guard"\)/);
     assert.ok(
       source.indexOf("implementPreDeltaExplorationGuard(active)") > source.indexOf("rawStitchDesignReadGuard(active)"),
       "pre-delta context guard should run after more specific context guards",
@@ -985,6 +989,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /Backend\/API\/DB standards must not be loaded into frontend\/game story context/);
     assert.match(source, /candidate\.full/);
     assert.match(source, /recordRuntimeSupervisorSignal\(active,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"reference-read-guard"/);
+    assert.match(source, /requeueRuntimeSupervisorSignal\(active,\s*key,\s*row\.step_id,\s*effectiveStoryId,\s*referenceRead\.reason,\s*"reference-read-guard"\)/);
     assert.match(source, /--- SUPERVISOR SIGNAL/);
     assert.ok(
       source.indexOf("implementReferenceReadGuard(active)") < source.indexOf("generatedScreenReadGuard(active)"),
@@ -1012,6 +1017,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /CLAIM_PARSE_LOOP/);
     assert.match(source, /CLAIM_SUMMARY_IGNORED/);
     assert.match(source, /recordRuntimeSupervisorSignal\(active,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"claim-parse-loop-guard"/);
+    assert.match(source, /requeueRuntimeSupervisorSignal\(active,\s*key,\s*row\.step_id,\s*effectiveStoryId,\s*claimParseLoop\.reason,\s*"claim-parse-loop-guard"\)/);
     assert.ok(
       source.indexOf("claimParseLoopGuard(active)") < source.indexOf("implementReferenceReadGuard(active)"),
       "claim parse loop guard should run before context-pollution guards",

@@ -3759,6 +3759,21 @@ async function recordRuntimeSupervisorSignal(
   await recordSupervisorRuntimeEvent(active.runId, stepId, storyDbId, "PRODUCT_SUPERVISOR_RUNTIME_SIGNAL", "supervisor-signal", diagnostic);
 }
 
+async function requeueRuntimeSupervisorSignal(
+  active: ActiveProcess,
+  key: string,
+  rowStepId: string,
+  storyId: string,
+  reason: string,
+  terminateReason: string,
+): Promise<void> {
+  const diagnostic = reason + ` Transcript: ${active.transcriptPath}`;
+  terminateActiveProcess(active, terminateReason);
+  activeProcesses.delete(key);
+  if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) return;
+  await requeueOpenStoryClaim(active.runId, rowStepId, storyId, active.agentId, diagnostic);
+}
+
 function runtimeGuardDiagnosticKey(diagnostic: string): string {
   const key = String(diagnostic || "").match(/^\s*([A-Z][A-Z0-9_]{2,80})(?::|\b)/)?.[1] || "";
   return key || "RUNTIME_GUARD";
@@ -4262,21 +4277,29 @@ async function reapFinishedClaims(): Promise<void> {
           const claimParseLoop = claimParseLoopGuard(active);
           if (claimParseLoop.detected) {
             await recordRuntimeSupervisorSignal(active, row.step_id, effectiveStoryDbId || null, "claim-parse-loop-guard", "CLAIM PARSE LOOP", claimParseLoop.reason);
+            await requeueRuntimeSupervisorSignal(active, key, row.step_id, effectiveStoryId, claimParseLoop.reason, "claim-parse-loop-guard");
+            continue;
           }
 
           const referenceRead = implementReferenceReadGuard(active);
           if (referenceRead.detected) {
             await recordRuntimeSupervisorSignal(active, row.step_id, effectiveStoryDbId || null, "reference-read-guard", "REFERENCE READ", referenceRead.reason);
+            await requeueRuntimeSupervisorSignal(active, key, row.step_id, effectiveStoryId, referenceRead.reason, "reference-read-guard");
+            continue;
           }
 
           const generatedScreenRead = generatedScreenReadGuard(active);
           if (generatedScreenRead.detected) {
             await recordRuntimeSupervisorSignal(active, row.step_id, effectiveStoryDbId || null, "generated-screen-read-guard", "GENERATED SCREEN READ", generatedScreenRead.reason);
+            await requeueRuntimeSupervisorSignal(active, key, row.step_id, effectiveStoryId, generatedScreenRead.reason, "generated-screen-read-guard");
+            continue;
           }
 
           const rawStitchRead = rawStitchDesignReadGuard(active);
           if (rawStitchRead.detected) {
             await recordRuntimeSupervisorSignal(active, row.step_id, effectiveStoryDbId || null, "raw-stitch-read-guard", "RAW STITCH READ", rawStitchRead.reason);
+            await requeueRuntimeSupervisorSignal(active, key, row.step_id, effectiveStoryId, rawStitchRead.reason, "raw-stitch-read-guard");
+            continue;
           }
 
           const preDeltaCheck = implementPreDeltaCheckGuard(active);
@@ -4295,6 +4318,8 @@ async function reapFinishedClaims(): Promise<void> {
           const preDeltaExploration = implementPreDeltaExplorationGuard(active);
           if (preDeltaExploration.detected) {
             await recordRuntimeSupervisorSignal(active, row.step_id, effectiveStoryDbId || null, "implement-pre-delta-context-guard", "IMPLEMENT PRE-DELTA CONTEXT", preDeltaExploration.reason);
+            await requeueRuntimeSupervisorSignal(active, key, row.step_id, effectiveStoryId, preDeltaExploration.reason, "implement-pre-delta-context-guard");
+            continue;
           }
 
           const noDeltaStall = implementNoDeltaStallGuard(active, ageMs);
