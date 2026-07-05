@@ -292,6 +292,13 @@ describe("error taxonomy", () => {
     assert.match(broadCleanup.suggestion, /scoped source fix first/);
     assert.match(broadCleanup.suggestion, /npx vite preview/);
 
+    const fullReference = classifyError(
+      "FULL_REFERENCE_CONTEXT_READ: feature-dev_developer loaded full references/README.md. Implement claims must use injected rules.",
+    );
+    assert.equal(fullReference.category, "REFERENCE_CONTEXT_READ");
+    assert.match(fullReference.suggestion, /Do not load full or irrelevant reference manuals/);
+    assert.match(fullReference.suggestion, /claim summary/);
+
     const noWork = classifyError(
       "NO WORK DETECTED: Story US-002 (Pong arcade - Main Menu and Game Board screens) reported STATUS: done but the worktree has ZERO source-file changes vs main. The agent appears to have shortcut the task.",
     );

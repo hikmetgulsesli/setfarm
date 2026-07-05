@@ -50,6 +50,7 @@ export type ErrorCategory =
   | "APP_INTEGRATION_REGRESSION"
   | "GENERATED_SCREEN_SHELL_CHROME_UNSAFE"
   | "RAW_STITCH_CONTEXT_READ"
+  | "REFERENCE_CONTEXT_READ"
   | "CLAIM_WORKDIR_MISSING"
   | "CLAIM_PARSE_LOOP"
   | "CLAIM_SUMMARY_IGNORED"
@@ -80,6 +81,7 @@ const PATTERNS: Array<{ pattern: RegExp; category: ErrorCategory; suggestion: st
   { pattern: /^RETRY_PATCH_REAPPLIED(?:_RUNTIME_GUARD)?:/i, category: "RETRY_PATCH_REAPPLIED", suggestion: "Do not repeat the rejected cleanup/deletion patch. Treat the listed lines as previously verified wiring that must be preserved or restored first, then make the smallest current-story addition. Do not remove prior story imports, route/render branches, action helpers, keyboard/control bridges, data-testid values, or generated screen props." },
   { pattern: /^RUNTIME_GUARD_REPEAT_LIMIT:[\s\S]{0,260}\bRETRY_PATCH_REAPPLIED_RUNTIME_GUARD\b/i, category: "RETRY_PATCH_REAPPLIED", suggestion: "The same rejected retry-patch deletion was repeated until Setfarm blocked the story. Start the next attempt from a clean worktree, preserve previously verified wiring, and add only the current story behavior; do not replay transcript diff edits." },
   { pattern: /^BROAD_PROCESS_CLEANUP_VIOLATION:/i, category: "BROAD_PROCESS_CLEANUP_VIOLATION", suggestion: "Do not run pkill, killall, pgrep pipelines, background preview servers, npx vite preview, or ad hoc runtime cleanup. Setfarm owns runtime lifecycle. Continue by making the scoped source fix first, then run only the declared build/test/lint commands." },
+  { pattern: /^(?:FULL_REFERENCE_CONTEXT_READ|IRRELEVANT_REFERENCE_CONTEXT):/i, category: "REFERENCE_CONTEXT_READ", suggestion: "Do not load full or irrelevant reference manuals during implement. Use the injected claim summary, screenUsageContract, designContracts excerpts, supervisor memory, and owned scope files; make the scoped implementation delta without reopening broad references." },
   { pattern: /^NO WORK DETECTED:/i, category: "NO_WORK_DETECTED", suggestion: "The story reported done with no source delta. Re-read CLAIM_SUMMARY_FILE, inspect only owned scope files, make a small scoped implementation change before broad checks, then run the required build/test commands before reporting done." },
   { pattern: /^AGENT_SELF_LOOP:/i, category: "AGENT_SELF_LOOP", suggestion: "Agent repeated the same tool/test/build action without new code progress. Treat as supervisor feedback: inspect the first failing signal once, change the owned code or test expectation before rerunning, and avoid repeating identical commands." },
   { pattern: /^CROSS-PROJECT CONTAMINATION:/i, category: "CROSS_PROJECT_CONTAMINATION", suggestion: "Treat as manager feedback and ignore the contaminated branch/PR claim. Re-read CLAIM_SUMMARY_FILE, use its storyBranch/workdir/main repo as the only source of truth, work only in the prepared story worktree, and report the exact storyBranch from the summary." },
