@@ -4663,25 +4663,14 @@ async function reapFinishedClaims(): Promise<void> {
           const maskedCheck = implementMaskedCheckCommandGuard(active);
           if (maskedCheck.detected) {
             const reason = maskedCheck.reason + ` Transcript: ${active.transcriptPath}`;
-            console.warn(`[spawner] ${reason}`);
-            try { fs.appendFileSync(active.transcriptPath, `--- MASKED CHECK COMMAND GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
-            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "masked-check-command-guard", reason);
-            terminateActiveProcess(active, "masked-check-command-guard");
-            activeProcesses.delete(key);
-            try {
-              const recoveryRow: RunningStepRow = {
-                status: row.step_status,
-                step_id: row.step_id,
-                run_id: row.run_id,
-                type: row.type,
-                current_story_id: row.current_story_id,
-              };
-              if (await tryRecoverExitedImplementWork(active.stepId, recoveryRow, active.agentId, active.transcriptPath, new Error(reason), active.spawnCwd)) continue;
-            } catch (recoveryErr) {
-              console.warn(`[spawner] masked-check implement recovery failed for ${active.wfId}/${active.role}: ${String(recoveryErr).slice(0, 300)}`);
+            const signalKey = "masked-check-command-advisory";
+            if (!active.supervisorSignals) active.supervisorSignals = new Set<string>();
+            if (!active.supervisorSignals.has(signalKey)) {
+              active.supervisorSignals.add(signalKey);
+              console.warn(`[spawner] ${reason}`);
+              try { fs.appendFileSync(active.transcriptPath, `--- MASKED CHECK COMMAND ADVISORY ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
+              await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_ADVISORY", signalKey, reason);
             }
-            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
-            continue;
           }
 
           const claimParseLoop = claimParseLoopGuard(active);
