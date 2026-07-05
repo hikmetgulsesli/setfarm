@@ -1699,7 +1699,7 @@ if (/^DESIGN_MISMATCH$/i.test(String(s.failureCategory || ""))) {
   lines.push("DESIGN_RETRY_RULE=Fix the exact UI_CONTRACT/design-token file and line first; search scoped files for the rejected token or pattern and replace it before broad feature work.");
 }
 if (/^(?:SCOPE_BLEED|SCOPE_WRITE_VIOLATION)$/i.test(String(s.failureCategory || ""))) {
-  lines.push("SCOPE_RETRY_RULE=First remove/rework out-of-scope files or shell-created project artifacts. Do not read retry source snapshots, do not read retry worktree patches, and do not recreate shared/debug/scratch files; keep the fix inside SCOPE_FILES, then run build/test.");
+  lines.push("SCOPE_RETRY_RULE=First remove/rework out-of-scope files or shell-created project artifacts. Do not read retry source snapshots, do not read retry worktree patches, and do not recreate shared/debug/scratch files, including /tmp probe scripts via OpenClaw write/edit; use inline node -e or existing scoped tests instead. Keep the fix inside SCOPE_FILES, then run build/test.");
 }
 if (Array.isArray(rf.protectedSnippets) && rf.protectedSnippets.length) {
   lines.push("RETRY_PROTECTED_SNIPPETS=" + rf.protectedSnippets.length);

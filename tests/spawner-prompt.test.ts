@@ -2111,6 +2111,7 @@ describe("spawner prompt bootstrap", () => {
         workdir: tmp,
       });
       assert.match(bootstrap, /SCOPE_RETRY_RULE=First remove\/rework out-of-scope files/);
+      assert.match(bootstrap, /\/tmp probe scripts via OpenClaw write\/edit/);
       assert.match(bootstrap, /Do not read retry source snapshots, do not read retry worktree patches/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
