@@ -1046,9 +1046,15 @@ describe("spawner gateway recovery wiring", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /function implementScopeWriteGuard\(active: ActiveProcess\)/);
     assert.match(source, /function implementPackageScopeDirtyGuard\(active: ActiveProcess\)/);
+    assert.match(source, /function implementScopeDirtyGuard\(active: ActiveProcess\)/);
+    assert.match(source, /function worktreeStatusFiles\(workdir: string\)/);
+    assert.match(source, /function isForbiddenProjectScratchArtifact\(relativePath: string\)/);
     assert.match(source, /PACKAGE_SCOPE_MUTATION_FILES/);
     assert.match(source, /package-scope-dirty-guard/);
+    assert.match(source, /scope-dirty-guard/);
     assert.match(source, /changed package\/dependency file\(s\) outside \.story-scope-files/);
+    assert.match(source, /changed file\(s\) outside \.story-scope-files via shell\/runtime side effects/);
+    assert.match(source, /debug\/probe\/scratch files are forbidden even when they match \*\.test\.\*/);
     assert.match(source, /readStoryScopeFileSet\(active\.spawnCwd\)/);
     assert.match(source, /SCOPE_WRITE_VIOLATION/);
     assert.match(source, /function sessionEventMessage\(event: any\)/);
@@ -1057,6 +1063,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /writefile\|strreplacefile/);
     assert.match(source, /attempted \$\{call\.name\} on \$\{relativePath\}/);
     assert.match(source, /isRuntimeScopeAllowedWrite/);
+    assert.match(source, /isForbiddenProjectScratchArtifact\(relativePath\)/);
     assert.match(source, /isImplementEvidenceRequestArtifact/);
     assert.match(source, /function isRuntimeControlArtifactWrite/);
     assert.match(source, /"kimi-runtime"/);
@@ -1066,7 +1073,9 @@ describe("spawner gateway recovery wiring", () => {
     assert.doesNotMatch(source, /IMPLEMENT_EVIDENCE\.json`\s*\|\|\s*relativePath ===/);
     assert.match(source, /\\\.\(test\|spec\)\\\.\[cm\]\?\[jt\]sx\?/);
     assert.match(source, /terminateActiveProcess\(active,\s*"scope-write-guard"\)/);
+    assert.match(source, /terminateActiveProcess\(active,\s*"scope-dirty-guard"\)/);
     assert.match(source, /--- SCOPE WRITE GUARD/);
+    assert.match(source, /--- SCOPE DIRTY GUARD/);
     assert.ok(
       source.indexOf("implementScopeWriteGuard(active)") < source.indexOf("claimParseLoopGuard(active)"),
       "scope write guard should run before loop/context guards",
@@ -1074,6 +1083,11 @@ describe("spawner gateway recovery wiring", () => {
     assert.ok(
       source.indexOf("implementPackageScopeDirtyGuard(active)") < source.indexOf("implementScopeWriteGuard(active)"),
       "package dirty guard must catch shell/npm package mutations before tool-call scope guard",
+    );
+    assert.ok(
+      source.indexOf("implementPackageScopeDirtyGuard(active)") < source.indexOf("implementScopeDirtyGuard(active)")
+        && source.indexOf("implementScopeDirtyGuard(active)") < source.indexOf("implementScopeWriteGuard(active)"),
+      "general dirty guard must catch shell-created out-of-scope files before tool-call scope guard",
     );
     assert.ok(
       source.indexOf("recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId") < source.indexOf("terminateActiveProcess(active, \"scope-write-guard\")"),

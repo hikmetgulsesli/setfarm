@@ -948,6 +948,10 @@ function normalizeWorktreeRelativePath(workdir: string, rawPath: string): string
   return path.normalize(relative).replace(/\\/g, "/").replace(/^\.\//, "");
 }
 
+function normalizeRelativePath(rawPath: string): string {
+  return normalizeWorktreeRelativePath(process.cwd(), rawPath);
+}
+
 function isGeneratedScreenComponentPath(relativePath: string): boolean {
   return /^src\/screens\/[^/]+\.tsx$/.test(relativePath);
 }
@@ -1409,6 +1413,7 @@ function isImplementEvidenceRequestArtifact(relativePath: string, storyId?: stri
 }
 
 function isRuntimeScopeAllowedWrite(relativePath: string, allowed: Set<string>, storyId?: string): boolean {
+  if (isForbiddenProjectScratchArtifact(relativePath)) return false;
   if (allowed.has(relativePath)) return true;
   if (isImplementEvidenceRequestArtifact(relativePath, storyId)) return true;
   if (relativePath === ".story-scope-files" || relativePath === ".story-branch" || relativePath === "pre-commit") return true;
@@ -1417,6 +1422,16 @@ function isRuntimeScopeAllowedWrite(relativePath: string, allowed: Set<string>, 
     || relativePath === "src/test/setup.ts"
     || relativePath === "src/test/utils.ts"
     || relativePath === "src/setupTests.ts";
+}
+
+function isForbiddenProjectScratchArtifact(relativePath: string): boolean {
+  const normalized = normalizeRelativePath(relativePath);
+  if (!normalized) return false;
+  const base = path.basename(normalized);
+  if (/^_?(?:debug|probe|scratch|tmp|temp)(?:[-_.].*)?\.[cm]?[jt]sx?$/i.test(base)) return true;
+  if (/(?:^|\/)src\/(?:_)?(?:debug|probe|scratch|tmp|temp)\.[cm]?[jt]sx?$/i.test(normalized)) return true;
+  return /(?:^|\/)(?:debug|probe|scratch|tmp|temp)\.(?:test|spec)\.[cm]?[jt]sx?$/i.test(normalized)
+    || /(?:^|\/)_(?:debug|probe|scratch|tmp|temp)\.(?:test|spec)\.[cm]?[jt]sx?$/i.test(normalized);
 }
 
 function isRuntimeControlArtifactWrite(rawPath: string | undefined, active: ActiveProcess): boolean {
@@ -3261,6 +3276,29 @@ function packageScopeStatusFiles(workdir: string): string[] {
     .filter(Boolean);
 }
 
+function worktreeStatusFiles(workdir: string): string[] {
+  let raw: string | null = null;
+  try {
+    raw = execFileSync("git", ["status", "--porcelain", "-uall"], {
+      cwd: workdir,
+      encoding: "utf-8",
+      timeout: 10_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trimEnd();
+  } catch {
+    raw = null;
+  }
+  if (!raw) return [];
+  return raw
+    .split("\n")
+    .map((line) => {
+      let rel = line.slice(3).trim();
+      if (rel.includes(" -> ")) rel = rel.split(" -> ").pop() || rel;
+      return normalizeRelativePath(rel.replace(/^"|"$/g, ""));
+    })
+    .filter(Boolean);
+}
+
 function implementPackageScopeDirtyGuard(active: ActiveProcess): { detected: boolean; reason: string } {
   const allowed = readStoryScopeFileSet(active.spawnCwd);
   const dirty = packageScopeStatusFiles(active.spawnCwd).filter((file) => !allowed.has(file));
@@ -3268,6 +3306,22 @@ function implementPackageScopeDirtyGuard(active: ActiveProcess): { detected: boo
   return {
     detected: true,
     reason: `SCOPE_WRITE_VIOLATION: ${active.agentId} changed package/dependency file(s) outside .story-scope-files: ${dirty.slice(0, 8).join(", ")}. Developer agents must not change package.json or lockfiles during IMPLEMENT unless those files are in SCOPE_FILES. Revert package/lockfile changes and use existing stack-pack dependencies; if a new dependency is required, report a setup-build/stack-pack dependency blocker.`,
+  };
+}
+
+function implementScopeDirtyGuard(active: ActiveProcess): { detected: boolean; reason: string } {
+  const allowed = readStoryScopeFileSet(active.spawnCwd);
+  if (!allowed.size) return { detected: false, reason: "" };
+  const dirty = worktreeStatusFiles(active.spawnCwd)
+    .filter((file) => !isRuntimeScopeAllowedWrite(file, allowed, active.storyId));
+  if (dirty.length === 0) return { detected: false, reason: "" };
+  const scratch = dirty.filter(isForbiddenProjectScratchArtifact);
+  const scratchHint = scratch.length > 0
+    ? " Project-tree debug/probe/scratch files are forbidden even when they match *.test.*; run one-off experiments under /tmp instead."
+    : "";
+  return {
+    detected: true,
+    reason: `SCOPE_WRITE_VIOLATION: ${active.agentId} changed file(s) outside .story-scope-files via shell/runtime side effects: ${dirty.slice(0, 8).join(", ")}.${scratchHint} Runtime supervisor killed the claim before out-of-scope work could be committed.`,
   };
 }
 
@@ -4216,6 +4270,19 @@ async function reapFinishedClaims(): Promise<void> {
             try { fs.appendFileSync(active.transcriptPath, `--- PACKAGE SCOPE DIRTY GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
             await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "package-scope-dirty-guard", reason);
             terminateActiveProcess(active, "package-scope-dirty-guard");
+            activeProcesses.delete(key);
+            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
+            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
+            continue;
+          }
+
+          const scopeDirty = implementScopeDirtyGuard(active);
+          if (scopeDirty.detected) {
+            const reason = scopeDirty.reason + ` Transcript: ${active.transcriptPath}`;
+            console.warn(`[spawner] ${reason}`);
+            try { fs.appendFileSync(active.transcriptPath, `--- SCOPE DIRTY GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
+            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "scope-dirty-guard", reason);
+            terminateActiveProcess(active, "scope-dirty-guard");
             activeProcesses.delete(key);
             if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
             await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
