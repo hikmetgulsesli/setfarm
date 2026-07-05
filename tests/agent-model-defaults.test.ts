@@ -19,6 +19,8 @@ describe("workflow agent model defaults", () => {
     assert.match(source, /const MINIMAX_OPENAI_MODEL_REF = `\$\{MINIMAX_OPENAI_PROVIDER_ID\}\/MiniMax-M3`/);
     assert.match(source, /const CODEX_DEFAULT_MODEL_REF = "default"/);
     assert.match(source, /fallbacks: \[KIMI_CODING_MODEL_REF, CODEX_DEFAULT_MODEL_REF\]/);
+    assert.doesNotMatch(source, /WORKFLOW_MODEL_TIMEOUT_MS/);
+    assert.doesNotMatch(source, /timeoutMs:\s*WORKFLOW_MODEL_TIMEOUT_MS/);
     assert.doesNotMatch(source, /MINIMAX_OPENAI_LEGACY_MODEL_REF/);
     assert.doesNotMatch(source, /MiniMax-M2\.7/);
     assert.match(fn, /return \{ \.\.\.MINIMAX_FIRST_AGENT_MODEL \};/);
