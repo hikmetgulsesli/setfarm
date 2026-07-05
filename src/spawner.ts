@@ -2960,6 +2960,38 @@ function markOpenClawTaskRecordCancelled(taskId: string, lookup: string, context
   });
 }
 
+function markOpenClawTaskRecordsCancelledForLookup(lookup: string, context: string): void {
+  if (!lookup) return;
+  const now = Date.now();
+  const message = "Cancelled by Setfarm spawner after OpenClaw runtime cancel reported success but registry stayed running.";
+  const sql = [
+    "UPDATE task_runs",
+    `SET status = 'cancelled', ended_at = ${now}, last_event_at = ${now}, error = ${sqliteString(message)}`,
+    "WHERE runtime = 'cli'",
+    "AND status = 'running'",
+    "AND (",
+    `requester_session_key = ${sqliteString(lookup)}`,
+    `OR owner_key = ${sqliteString(lookup)}`,
+    `OR child_session_key = ${sqliteString(lookup)}`,
+    ");",
+    "SELECT changes();",
+  ].join(" ");
+  execFile("sqlite3", [OPENCLAW_TASKS_DB, sql], {
+    timeout: 10_000,
+    maxBuffer: 1024 * 1024,
+  }, (err, stdout, stderr) => {
+    if (err) {
+      const msg = compactExitReason(stderr || stdout || (err as any).message || err);
+      console.warn(`[spawner] OpenClaw registry lookup fallback failed for ${lookup} (${context}): ${msg}`);
+      return;
+    }
+    const changed = parseInt(String(stdout || "").trim().split(/\s+/).pop() || "0", 10);
+    if (changed > 0) {
+      console.warn(`[spawner] OpenClaw registry lookup fallback marked ${changed} task record(s) cancelled for ${lookup} (${context})`);
+    }
+  });
+}
+
 function cancelOpenClawTaskId(taskId: string, context: string, originalLookup: string): void {
   execFile(OPENCLAW_CLI, ["tasks", "cancel", taskId], {
     cwd: AGENT_SAFE_CWD,
@@ -3079,9 +3111,11 @@ function cancelOpenClawTask(lookup: string, context: string): void {
       const msg = compactExitReason(stderr || stdout || (err as any).message || err);
       console.warn(`[spawner] OpenClaw task cancel failed for ${lookup} (${context}): ${msg}`);
       cancelLingeringOpenClawTasksForLookup(lookup, context);
+      setTimeout(() => markOpenClawTaskRecordsCancelledForLookup(lookup, context), OPENCLAW_TASK_REGISTRY_SETTLE_MS);
       return;
     }
     console.log(`[spawner] OpenClaw task cancelled for ${lookup} (${context})`);
+    setTimeout(() => markOpenClawTaskRecordsCancelledForLookup(lookup, context), OPENCLAW_TASK_REGISTRY_SETTLE_MS);
     setTimeout(() => cancelLingeringOpenClawTasksForLookup(lookup, context), 1500);
   });
 }

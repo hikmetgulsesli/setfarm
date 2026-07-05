@@ -1559,6 +1559,24 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(combined, /data-action-id=reset/);
   });
 
+  it("preserves generated-screen quality guard feedback across infra requeues", () => {
+    const quality = [
+      "GUARDRAIL: Quality gate failed - 1 error(s) detected.",
+      "QUALITY GATE: 1 error(s), 3 warning(s)",
+      "GENERATED_SCREEN_VIEWPORT_MOUNT_UNSAFE: src/App.tsx mounts an absolute generated full-screen Stitch screen without stable viewport height.",
+      "Fix these issues and retry.",
+    ].join("\n");
+    const infra = [
+      "AGENT_STEP_STATE_MISMATCH: feature-dev_developer has an active feature-dev/developer process for implement, but the step is pending.",
+      "Transcript: /tmp/transcript.log",
+    ].join("\n");
+    const combined = preserveActionableStoryRetryOutput(quality, infra);
+
+    assert.match(combined, /GENERATED_SCREEN_VIEWPORT_MOUNT_UNSAFE/);
+    assert.match(combined, /INFRA_RETRY:/);
+    assert.match(combined, /AGENT_STEP_STATE_MISMATCH/);
+  });
+
   it("caps terminal story retry counters in quality and supervisor recovery paths", () => {
     const source = stepOpsSource();
     const terminalUpdates = [...source.matchAll(/UPDATE stories SET status = 'failed', retry_count = \$1[\s\S]{0,160}/g)].map((match) => match[0]);

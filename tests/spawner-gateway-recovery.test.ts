@@ -532,9 +532,11 @@ describe("spawner gateway recovery wiring", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /OPENCLAW_TASKS_DB/);
     assert.match(source, /function markOpenClawTaskRecordCancelled\(taskId: string,\s*lookup: string,\s*context: string\)/);
+    assert.match(source, /function markOpenClawTaskRecordsCancelledForLookup\(lookup: string,\s*context: string\)/);
     assert.match(source, /UPDATE task_runs/);
     assert.match(source, /status = 'cancelled'/);
     assert.match(source, /requester_session_key = \$\{sqliteString\(lookup\)\}/);
+    assert.match(source, /setTimeout\(\(\) => markOpenClawTaskRecordsCancelledForLookup\(lookup,\s*context\),\s*OPENCLAW_TASK_REGISTRY_SETTLE_MS\)/);
     assert.match(source, /function markStaleSetfarmOpenClawTaskRecordsCancelledSync\(context: string\)/);
     assert.match(source, /requester_session_key GLOB 'agent:\*:explicit:spawner-\*'/);
     assert.match(source, /function activeSessionKeyExclusionSql\(\)/);
@@ -1410,6 +1412,8 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /import \{ preserveActionableStoryRetryOutput \} from "\.\/installer\/retry-output\.js"/);
     assert.match(retryOutput, /function preserveActionableStoryRetryOutput/);
     assert.ok(retryOutput.includes("PR_REVIEW_COMMENTS_OPEN|APP_INTEGRATION_[A-Z_]*REGRESSION"));
+    assert.ok(retryOutput.includes("GENERATED_SCREEN_[A-Z_]+"));
+    assert.ok(retryOutput.includes("QUALITY GATE"));
     assert.ok(retryOutput.includes("actionable PR review comments"));
     assert.ok(retryOutput.includes("POST_MERGE_QUALITY_REGRESSION"));
     assert.ok(retryOutput.includes("VULNERABILITIES"));
