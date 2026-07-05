@@ -780,6 +780,34 @@ describe("product supervisor", () => {
     }
   });
 
+  it("allows negative implement output that reports no TODO or probe files", () => {
+    const repo = mkdtempSync(path.join(tmpdir(), "setfarm-supervisor-no-todo-report-"));
+    try {
+      mkdirSync(path.join(repo, "src"), { recursive: true });
+      execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
+      execFileSync("git", ["config", "user.email", "setfarm@example.test"], { cwd: repo });
+      execFileSync("git", ["config", "user.name", "Setfarm Test"], { cwd: repo });
+      writeFileSync(path.join(repo, "src", "App.tsx"), "export default function App() { return <main />; }\n");
+      execFileSync("git", ["add", "."], { cwd: repo });
+      execFileSync("git", ["commit", "-m", "base"], { cwd: repo, stdio: "ignore" });
+      writeFileSync(path.join(repo, "src", "App.tsx"), "export default function App() { return <main>Ready</main>; }\n");
+
+      const result = runProductSupervisorGate({
+        phase: "implement",
+        runId: "run-1",
+        stepId: "implement",
+        workdir: repo,
+        baseRef: "HEAD",
+        currentStory: { story_id: "US-001", title: "Report clean workspace" },
+        rawOutput: "STATUS: done\nScope compliance: No scratch/probe/TODO/progress files written. Build and tests passed.",
+      });
+
+      assert.equal(result.ok, true, result.reason);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
   it("allows explicitly inert hash anchors without treating them as active dead links", () => {
     const repo = mkdtempSync(path.join(tmpdir(), "setfarm-supervisor-inert-anchor-"));
     try {

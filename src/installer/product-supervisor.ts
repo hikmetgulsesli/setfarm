@@ -588,7 +588,8 @@ function implementationOutputHasUnresolvedPlaceholder(output: string): boolean {
 function isResolvedPlaceholderReportLine(line: string): boolean {
   const normalized = line.toLowerCase();
   if (/\b(still|remaining|left|needs|must|should|contains?)\b/.test(normalized)) return false;
-  return /\b(removed|replaced|resolved|fixed|cleared|clean|no longer|without|does not|do not|did not|none found)\b/.test(normalized);
+  return /\b(removed|replaced|resolved|fixed|cleared|clean|no longer|without|does not|do not|did not|none found)\b/.test(normalized)
+    || /^\s*(?:[-*]\s*)?(?:[a-z][\w -]{0,40}:\s*)?no\b/.test(normalized);
 }
 
 function placeholderLineLooksUnresolved(line: string): boolean {
