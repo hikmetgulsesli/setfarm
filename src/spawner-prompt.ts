@@ -1679,7 +1679,16 @@ if (s.failureSuggestion) lines.push("FAILURE_SUGGESTION=" + String(s.failureSugg
 const rf = s.retryFeedback || {};
 if (rf.mode) lines.push("RETRY_MODE=" + String(rf.mode));
 if (rf.blocker) lines.push("RETRY_BLOCKER_PREVIEW=" + String(rf.blocker).slice(0, 700));
-if (/^MASKED_CHECK_COMMAND$/i.test(String(s.failureCategory || ""))) {
+const checkRuleSignal = [
+  s.role,
+  s.failureCategory,
+  rf.category,
+  rf.blocker,
+  rf.details,
+  s.previousFailure,
+  s.retryDiscipline && s.retryDiscipline.instruction,
+].filter(Boolean).join("\\n");
+if (/^developer$/i.test(String(s.role || "")) || /\\bMASKED_CHECK_COMMAND\\b/i.test(checkRuleSignal)) {
   lines.push("MASKED_CHECK_RULE=Rerun the exact build/test/lint/typecheck command as a standalone command without output-filtering pipes. Do not run build/test/lint/typecheck with pipe-to-head, pipe-to-tail, pipe-to-grep, pipe-to-rg, pipe-to-tee, pipe-to-cat, pipe-to-awk, or pipe-to-sed, even if followed by echo $? or echo BUILD_EXIT=$?.");
   if (s.buildCommand) lines.push("MASKED_CHECK_EXACT_BUILD_CMD=" + String(s.buildCommand));
   if (s.testCommand) lines.push("MASKED_CHECK_EXACT_TEST_CMD=" + String(s.testCommand));

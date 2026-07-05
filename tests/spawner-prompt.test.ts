@@ -23,7 +23,8 @@ describe("spawner prompt bootstrap", () => {
 
     assert.match(prompt, /First exec command:\nbash '\/tmp\/setfarm-claim-bootstrap-feature-dev_developer-spawner-test\.sh'/);
     assert.match(prompt, /CLAIM_SUMMARY_FILE=\/tmp\/claim-summary-feature-dev_developer-spawner-test\.json/);
-    assert.match(prompt, /Read the structured claim summary at \/tmp\/claim-summary-feature-dev_developer-spawner-test\.json first/);
+    assert.match(prompt, /The bootstrap command prints the authoritative quick handoff/);
+    assert.match(prompt, /Read the structured claim summary at \/tmp\/claim-summary-feature-dev_developer-spawner-test\.json only with targeted field extraction/);
     assert.match(prompt, /outputContract\.requiredFields and outputContract\.format exactly/);
     assert.match(prompt, /guard-backed roles will reject prose-only summaries/);
     assert.match(prompt, /Use retryFeedback\.mode exactly/);
@@ -36,9 +37,9 @@ describe("spawner prompt bootstrap", () => {
     assert.match(prompt, /mode="audit" means prior feedback may be stale/);
     assert.match(prompt, /gitPolicy/);
     assert.match(prompt, /Setfarm performs the scoped commit and PR handoff after gates pass/);
-    assert.match(prompt, /designContracts\.screenMap, designContracts\.designDom, designContracts\.uiContract/);
+    assert.match(prompt, /designContracts\.screenMap, designContracts\.designDom, uiContract/);
     assert.match(prompt, /focused story-owned Stitch files as binding implementation sources/);
-    assert.match(prompt, /Do NOT print or dump the entire claim summary JSON/);
+    assert.match(prompt, /Do NOT use OpenClaw read\/cat\/head\/sed\/grep\/node loops to print or dump the entire claim summary JSON/);
     assert.match(prompt, /retryDiscipline\.mode/);
     assert.match(prompt, /retryDiscipline\.mode="first-delta"/);
     assert.match(prompt, /retryDiscipline\.mode="semantic-fix"/);
@@ -1944,6 +1945,65 @@ describe("spawner prompt bootstrap", () => {
       assert.match(bootstrap, /MASKED_CHECK_EXACT_BUILD_CMD=/);
       assert.match(bootstrap, /MASKED_CHECK_EXACT_TEST_CMD=/);
       assert.match(bootstrap, /MASKED_CHECK_DONE_GATE=Before STATUS: done, run the exact standalone commands above with no pipe/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps unmasked check discipline visible during PR review retries", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-pr-review-check-rule-"));
+    try {
+      fs.writeFileSync(path.join(tmp, ".story-scope-files"), "src/App.tsx\n");
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        bootstrapFile: path.join(tmp, "bootstrap.sh"),
+        stepId: "step-123",
+        runId: "run-123",
+        workdir: tmp,
+        repo: tmp,
+        storyId: "US-001",
+        input: [
+          "TASK: Project: PR review retry sensor",
+          "CURRENT STORY: Story US-001: App shell",
+          "",
+          "## Previous Failure / Retry Feedback",
+          "Failure category: PR_REVIEW_COMMENTS_OPEN",
+          "Suggested response: Address every actionable PR review comment.",
+          "PR_REVIEW_COMMENTS_OPEN: US-001 has actionable PR review comments that must be fixed before merge.",
+          "- [review-comment] thread=PRRT_one src/App.tsx:10 @reviewer: Keep storage errors visible.",
+          "",
+          "BUILD_CMD: npm run build",
+          "TEST_CMD: npm run test:run",
+          "",
+          "## Current Story",
+        ].join("\n"),
+      });
+
+      assert.equal(summary.failureCategory, "PR_REVIEW_COMMENTS_OPEN");
+      assert.doesNotMatch(String(summary.previousFailure), /MASKED_CHECK_COMMAND/);
+
+      const summaryFile = path.join(tmp, "summary.json");
+      fs.writeFileSync(summaryFile, JSON.stringify(summary));
+      const bootstrapFile = path.join(tmp, "bootstrap.sh");
+      fs.writeFileSync(bootstrapFile, buildResolvedClaimBootstrapScript({
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        claimSummaryFile: summaryFile,
+        stepId: "step-123",
+        workdir: tmp,
+      }));
+      fs.chmodSync(bootstrapFile, 0o755);
+      const out = execFileSync("bash", [bootstrapFile], { cwd: tmp, encoding: "utf8" });
+
+      assert.match(out, /FAILURE_CATEGORY=PR_REVIEW_COMMENTS_OPEN/);
+      assert.match(out, /PR_REVIEW_ACTIONABLE_THREADS=1/);
+      assert.match(out, /MASKED_CHECK_RULE=Rerun the exact build\/test\/lint\/typecheck command as a standalone command without output-filtering pipes/);
+      assert.match(out, /MASKED_CHECK_EXACT_BUILD_CMD=npm run build/);
+      assert.match(out, /MASKED_CHECK_EXACT_TEST_CMD=npm run test:run/);
+      assert.match(out, /MASKED_CHECK_DONE_GATE=Before STATUS: done, run the exact standalone commands above with no pipe/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
