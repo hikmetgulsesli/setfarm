@@ -26,4 +26,13 @@ describe("workflow agent model defaults", () => {
     assert.doesNotMatch(fn, /setup-build/);
     assert.doesNotMatch(fn, /setup-repo/);
   });
+
+  it("keeps workflow skill injection step-scoped and excludes interactive skills", () => {
+    const source = installSource();
+    assert.match(source, /const WORKFLOW_AGENT_BASE_SKILLS = \["setfarm-workflows"\]/);
+    assert.match(source, /maxSkillsPromptChars: 6000/);
+    assert.match(source, /skills,\n    skillsLimits: WORKFLOW_AGENT_SKILLS_LIMITS/);
+    assert.doesNotMatch(source, /brainstorming/);
+    assert.doesNotMatch(source, /find-skills/);
+  });
 });

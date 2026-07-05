@@ -24,4 +24,27 @@ describe("workflow-spec skills parsing", () => {
     assert.ok(planner, "planner agent should exist");
     assert.equal(planner.workspace?.skills, undefined, "planner should not have skills");
   });
+
+  it("scopes installed skills to setup-build and implement agents", async () => {
+    const spec = await loadWorkflowSpec(featureDevDir);
+    const setupBuild = spec.agents.find((a) => a.id === "setup-build");
+    const developer = spec.agents.find((a) => a.id === "developer");
+    const setupRepo = spec.agents.find((a) => a.id === "setup-repo");
+
+    assert.deepEqual(setupBuild?.workspace.skills, [
+      "diagnosing-bugs",
+      "systematic-debugging",
+      "verification-before-completion",
+      "setup-auditor",
+      "dependency-auditor",
+    ]);
+    assert.deepEqual(developer?.workspace.skills, [
+      "implement",
+      "systematic-debugging",
+      "verification-before-completion",
+      "receiving-code-review",
+      "code-review",
+    ]);
+    assert.equal(setupRepo?.workspace.skills, undefined, "setup-repo should not inherit setup-build skill config");
+  });
 });

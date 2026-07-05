@@ -54,8 +54,8 @@ const ALWAYS_DENY = [
   "image_generate", "music_generate", "video_generate",
 ];
 const WEB_TOOL_DENY = ["web_search", "web_fetch"];
-const WORKFLOW_AGENT_SKILLS = ["setfarm-workflows"];
-const WORKFLOW_AGENT_SKILLS_LIMITS = { maxSkillsPromptChars: 1200 } as const;
+const WORKFLOW_AGENT_BASE_SKILLS = ["setfarm-workflows"];
+const WORKFLOW_AGENT_SKILLS_LIMITS = { maxSkillsPromptChars: 6000 } as const;
 const MINIMAX_OPENAI_PROVIDER_ID = "minimax-openai";
 const MINIMAX_OPENAI_MODEL_REF = `${MINIMAX_OPENAI_PROVIDER_ID}/MiniMax-M3`;
 const KIMI_CODING_MODEL_REF = "kimi-coding/kimi-for-coding";
@@ -294,11 +294,15 @@ function defaultModelForAgent(_agentId: string): Record<string, unknown> {
 
 function upsertAgent(
   list: Array<Record<string, unknown>>,
-  agent: { id: string; name?: string; model?: string; timeoutSeconds?: number; workspaceDir: string; agentDir: string; role: AgentRole },
+  agent: { id: string; name?: string; model?: string; skills?: string[]; timeoutSeconds?: number; workspaceDir: string; agentDir: string; role: AgentRole },
 ) {
   const existing = list.find((entry) => entry.id === agent.id);
   // Never overwrite the user's default (main) agent — it was configured outside setfarm.
   if (existing?.default === true) return;
+  const skills = Array.from(new Set([
+    ...WORKFLOW_AGENT_BASE_SKILLS,
+    ...(agent.skills ?? []),
+  ].filter(Boolean)));
   const payload: Record<string, unknown> = {
     id: agent.id,
     name: agent.name ?? agent.id,
@@ -306,7 +310,7 @@ function upsertAgent(
     agentDir: agent.agentDir,
     tools: buildToolsConfig(agent.role),
     subagents: SUBAGENT_POLICY,
-    skills: WORKFLOW_AGENT_SKILLS,
+    skills,
     skillsLimits: WORKFLOW_AGENT_SKILLS_LIMITS,
   };
   payload.model = agent.model ?? defaultModelForAgent(agent.id);

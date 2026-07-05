@@ -71,6 +71,12 @@ agents:
     description: Installs dependencies, establishes build baseline, configures lint.
     workspace:
       baseDir: agents/setup
+      skills:
+        - diagnosing-bugs
+        - systematic-debugging
+        - verification-before-completion
+        - setup-auditor
+        - dependency-auditor
       files:
         AGENTS.md: ../../agents/shared/setup/AGENTS.md
         SOUL.md: ../../agents/shared/setup/SOUL.md
@@ -82,6 +88,12 @@ agents:
     description: Implements features per story on prepared branches. Setfarm owns PR creation.
     workspace:
       baseDir: agents/developer
+      skills:
+        - implement
+        - systematic-debugging
+        - verification-before-completion
+        - receiving-code-review
+        - code-review
       files:
         AGENTS.md: agents/developer/AGENTS.md
         SOUL.md: agents/developer/SOUL.md
