@@ -81,7 +81,7 @@ const PR_EACH_DELIVERY_BLOCKED_STEP_SQL = `(
     OR COALESCE(r.context::jsonb ->> 'previous_failure', '') ILIKE '%PR_REVIEW_COMMENTS_OPEN%'
     OR COALESCE(r.context::jsonb ->> 'verify_feedback', '') ILIKE '%PR_REVIEW_COMMENTS_OPEN%'
   )
-  AND NOT EXISTS (SELECT 1 FROM stories active_st WHERE active_st.run_id = s.run_id AND active_st.status IN ('pending', 'running') AND ${ACTIVE_RETRY_STORY_ALIAS_SQL})
+  AND NOT EXISTS (SELECT 1 FROM stories active_st WHERE active_st.run_id = s.run_id AND active_st.status IN ('pending', 'running'))
   AND NOT EXISTS (SELECT 1 FROM stories fix_st WHERE fix_st.run_id = s.run_id AND fix_st.story_id LIKE 'QA-FIX-%' AND fix_st.status IN ('pending', 'running'))
 )`;
 const ACTIONABLE_RETRY_OUTPUT_RE = /\b(?:PR_REVIEW_COMMENTS_OPEN|APP_INTEGRATION_[A-Z_]*REGRESSION|POST_MERGE_QUALITY_REGRESSION|VULNERABILITIES|SECURITY_FINDINGS?|STATUS:\s*retry)\b|actionable PR review comments/i;

@@ -694,6 +694,7 @@ describe("single-step claim_log lifecycle", () => {
     const selectionPrelude = source.slice(autoComplete, pendingSelection);
     assert.match(source, /PR_EACH_DELIVERY_BLOCKED_STEP_SQL/);
     assert.match(source, /AND NOT \$\{PR_EACH_DELIVERY_BLOCKED_STEP_SQL\}/);
+    assert.match(source, /active_st\.status IN \('pending', 'running'\)\)/);
     assert.match(selectionPrelude, /isPrEach && isOpenPrDeliveryBlockerContext\(context\)/);
     assert.match(selectionPrelude, /implement\.pr_each_delivery_blocker/);
     assert.match(selectionPrelude, /Blocking new story claim while verify delivery blocker is open/);
