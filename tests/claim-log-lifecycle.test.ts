@@ -1416,6 +1416,7 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(helperSource, /STATUS: retry/);
     assert.match(routeSource, /workflowStepId !== "verify"/);
     assert.match(routeSource, /isTransientAgentInfrastructureFailure\(error\)/);
+    assert.match(source, /normalized\.includes\("masked_check_command"\)/);
     assert.match(routeSource, /type = 'loop' AND step_id = 'implement'/);
     assert.match(routeSource, /loopConfig\.verifyEach/);
     assert.match(routeSource, /loopConfig\.verifyStep \|\| "verify"/);
