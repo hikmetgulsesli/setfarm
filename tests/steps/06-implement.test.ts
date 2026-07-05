@@ -106,12 +106,16 @@ describe("06-implement step module", () => {
     assert.match(prompt, /"minFlowCount": 1/);
     assert.doesNotMatch(prompt, /\{\{ACTION_ID\}\}/);
     assert.match(prompt, /\[data-action-id='<action-id>'\]/);
+    assert.match(prompt, /Only target action IDs that are actually present in the rendered runtime DOM/);
+    assert.match(prompt, /Do not request a SCREEN_INDEX action when the generated component action type is `never`/);
     assert.match(prompt, /Build, test, source-grep, and prose checks do not belong there/);
     assert.match(rules, /with `SETFARM_IMPLEMENT_EVIDENCE_GATE=blocking`, runtime\/UI stories must create `\.setfarm\/implement\/<story-id>\/IMPLEMENT_INTENT\.json` before broad coding/);
     assert.match(rules, /In `advisory` mode these artifacts are still expected and surfaced in Mission Control, but missing artifacts do not block completion/);
     assert.match(rules, /"schema": "setfarm\.implement-intent\.v1"/);
     assert.match(rules, /"status": "ready_for_orchestrator_verification"/);
     assert.match(rules, /runtimeEvidenceRequired\.minFlowCount: 0/);
+    assert.match(rules, /Only request clicks for action IDs that are actually present in the rendered DOM/);
+    assert.match(rules, /Do not request a SCREEN_INDEX action when the generated component action type is `never`/);
     assert.match(rules, /never put build\/test\/source-grep\/prose checks there/);
   });
 
