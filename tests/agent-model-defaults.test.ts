@@ -16,9 +16,12 @@ describe("workflow agent model defaults", () => {
     assert.notEqual(end, -1, "defaultModelForAgent end marker not found");
     const fn = source.slice(start, end);
 
-    assert.match(source, /const MINIMAX_OPENAI_MODEL_REF = `\$\{MINIMAX_OPENAI_PROVIDER_ID\}\/MiniMax-M3`/);
+    assert.match(source, /const MINIMAX_MODEL_REF = `\$\{MINIMAX_PROVIDER_ID\}\/MiniMax-M3`/);
+    assert.match(source, /const MINIMAX_PROVIDER_ID = "minimax"/);
+    assert.match(source, /const KIMI_CODING_MODEL_REF = "kimi\/kimi-for-coding"/);
     assert.match(source, /const CODEX_DEFAULT_MODEL_REF = "default"/);
     assert.match(source, /fallbacks: \[KIMI_CODING_MODEL_REF, CODEX_DEFAULT_MODEL_REF\]/);
+    assert.doesNotMatch(source, /minimax-openai/);
     assert.doesNotMatch(source, /WORKFLOW_MODEL_TIMEOUT_MS/);
     assert.doesNotMatch(source, /timeoutMs:\s*WORKFLOW_MODEL_TIMEOUT_MS/);
     assert.doesNotMatch(source, /MINIMAX_OPENAI_LEGACY_MODEL_REF/);
@@ -27,6 +30,19 @@ describe("workflow agent model defaults", () => {
     assert.doesNotMatch(fn, /security-gate/);
     assert.doesNotMatch(fn, /setup-build/);
     assert.doesNotMatch(fn, /setup-repo/);
+  });
+
+  it("disables workflow exec approvals that block unattended agents", () => {
+    const source = installSource();
+    const start = source.indexOf("function ensureExecConfig(");
+    const end = source.indexOf("function ensureSessionMaintenance(", start);
+    assert.notEqual(start, -1, "ensureExecConfig source not found");
+    assert.notEqual(end, -1, "ensureExecConfig end marker not found");
+    const fn = source.slice(start, end);
+
+    assert.match(fn, /tools\.exec\.ask = "off"/);
+    assert.match(fn, /tools\.exec\.strictInlineEval = false/);
+    assert.doesNotMatch(fn, /if \(tools\.exec\.ask === undefined\)/);
   });
 
   it("keeps workflow skill injection step-scoped and excludes interactive skills", () => {

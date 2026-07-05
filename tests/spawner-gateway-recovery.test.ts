@@ -582,6 +582,42 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /\.finally\(\(\) => cleanupSpawnerDetachedToolChildren\("spawn-clean-exit"\)\)/);
   });
 
+  it("hardens isolated OpenClaw workflow config for unattended exec", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    const start = source.indexOf("function prepareOpenClawIsolatedConfig(");
+    const end = source.indexOf("function resolveHostPlaywrightBrowsersPath(", start);
+    assert.notEqual(start, -1, "prepareOpenClawIsolatedConfig source not found");
+    assert.notEqual(end, -1, "prepareOpenClawIsolatedConfig end marker not found");
+    const fn = source.slice(start, end);
+
+    assert.match(fn, /entries\.codex = \{ \.\.\.codexEntry, enabled: false \}/);
+    assert.match(fn, /ask: "off"/);
+    assert.match(fn, /security: "full"/);
+    assert.match(fn, /strictInlineEval: false/);
+  });
+
+  it("requeues approval-pending workflow exits as infra retries", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    const helperStart = source.indexOf("function detectRuntimeApprovalPending(");
+    const helperEnd = source.indexOf("function detectRuntimeAuthFailure(", helperStart);
+    const claimStart = source.indexOf("async function failClaimIfStillRunning(");
+    const genericExit = source.indexOf("const reason = `AGENT_PROCESS_EXITED:", claimStart);
+    assert.notEqual(helperStart, -1, "detectRuntimeApprovalPending helper not found");
+    assert.notEqual(helperEnd, -1, "detectRuntimeApprovalPending end marker not found");
+    assert.notEqual(genericExit, -1, "generic process-exit path not found");
+    const helper = source.slice(helperStart, helperEnd);
+    const claimPreamble = source.slice(claimStart, genericExit);
+
+    assert.match(helper, /approval-pending/);
+    assert.match(helper, /Approval required/);
+    assert.match(helper, /strict inline-eval mode requires explicit approval/);
+    assert.match(helper, /finalAssistant\(\?:Visible\|Raw\)Text/);
+    assert.match(claimPreamble, /const approvalPending = detectRuntimeApprovalPending\(transcriptPath\)/);
+    assert.match(claimPreamble, /AGENT_RUNTIME_APPROVAL_PENDING/);
+    assert.match(claimPreamble, /requeueOpenStoryClaim\(row\.run_id,\s*row\.step_id,\s*row\.current_story_id,\s*agentId,\s*reason\)/);
+    assert.match(claimPreamble, /outcome = 'infra_retry'/);
+  });
+
   it("cleans detached preview and Playwright children after agent exit or reap", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /function isSpawnerDetachedToolCommand\(command: string\): boolean/);

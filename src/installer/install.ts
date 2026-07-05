@@ -56,12 +56,12 @@ const ALWAYS_DENY = [
 const WEB_TOOL_DENY = ["web_search", "web_fetch"];
 const WORKFLOW_AGENT_BASE_SKILLS = ["setfarm-workflows"];
 const WORKFLOW_AGENT_SKILLS_LIMITS = { maxSkillsPromptChars: 6000 } as const;
-const MINIMAX_OPENAI_PROVIDER_ID = "minimax-openai";
-const MINIMAX_OPENAI_MODEL_REF = `${MINIMAX_OPENAI_PROVIDER_ID}/MiniMax-M3`;
-const KIMI_CODING_MODEL_REF = "kimi-coding/kimi-for-coding";
+const MINIMAX_PROVIDER_ID = "minimax";
+const MINIMAX_MODEL_REF = `${MINIMAX_PROVIDER_ID}/MiniMax-M3`;
+const KIMI_CODING_MODEL_REF = "kimi/kimi-for-coding";
 const CODEX_DEFAULT_MODEL_REF = "default";
 const MINIMAX_FIRST_AGENT_MODEL = {
-  primary: MINIMAX_OPENAI_MODEL_REF,
+  primary: MINIMAX_MODEL_REF,
   fallbacks: [KIMI_CODING_MODEL_REF, CODEX_DEFAULT_MODEL_REF],
 } as const;
 
@@ -235,38 +235,10 @@ function ensureExecConfig(config: OpenClawConfig): void {
   if (!tools.exec || typeof tools.exec !== "object") tools.exec = {};
   tools.exec.host = "auto";
   tools.exec.security = "full";
-  if (tools.exec.ask === undefined) tools.exec.ask = "off";
+  tools.exec.ask = "off";
+  tools.exec.strictInlineEval = false;
   if (!tools.fs || typeof tools.fs !== "object") tools.fs = {};
   tools.fs.workspaceOnly = false;
-}
-
-function ensureMinimaxOpenAIProvider(config: OpenClawConfig): void {
-  const root = config as Record<string, any>;
-  if (!root.models || typeof root.models !== "object") root.models = {};
-  if (!root.models.providers || typeof root.models.providers !== "object") root.models.providers = {};
-  const providers = root.models.providers as Record<string, any>;
-  const source = providers.minimax;
-  const existing = providers[MINIMAX_OPENAI_PROVIDER_ID];
-  const apiKey = existing?.apiKey ?? source?.apiKey;
-  if (!apiKey) return;
-  providers[MINIMAX_OPENAI_PROVIDER_ID] = {
-    ...(existing && typeof existing === "object" ? existing : {}),
-    baseUrl: "https://api.minimax.io/v1",
-    apiKey,
-    api: "openai-completions",
-    authHeader: true,
-    models: [
-      {
-        id: "MiniMax-M3",
-        name: "MiniMax M3 (OpenAI compat)",
-        reasoning: false,
-        input: ["text"],
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-        contextWindow: 1000000,
-        maxTokens: 65536,
-      },
-    ],
-  };
 }
 
 function ensureSessionMaintenance(config: OpenClawConfig): void {
@@ -338,7 +310,6 @@ export async function installWorkflow(params: { workflowId: string }): Promise<W
   const { path: configPath, config } = await readOpenClawConfig();
   ensureCronSessionRetention(config);
   ensureExecConfig(config);
-  ensureMinimaxOpenAIProvider(config);
   ensureSessionMaintenance(config);
   const list = ensureAgentList(config);
   ensureMainAgentInList(list, config);

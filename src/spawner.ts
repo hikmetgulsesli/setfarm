@@ -2417,6 +2417,15 @@ function prepareOpenClawIsolatedConfig(sessionId: string): string | undefined {
     plugins.entries = entries;
     plugins.allow = parseOpenClawAgentPluginAllow();
     next.plugins = plugins;
+    const tools = isJsonRecord(next.tools) ? next.tools : {};
+    const execConfig = isJsonRecord(tools.exec) ? tools.exec : {};
+    tools.exec = {
+      ...execConfig,
+      ask: "off",
+      security: "full",
+      strictInlineEval: false,
+    };
+    next.tools = tools;
 
     const targetDir = path.join(os.homedir(), ".openclaw", "setfarm", "openclaw-runtime", sessionId);
     const targetConfigPath = path.join(targetDir, "openclaw.json");
@@ -3545,6 +3554,26 @@ async function failClaimIfStillRunning(stepId: string, agentId: string, wfId: st
       return;
     }
 
+    const approvalPending = detectRuntimeApprovalPending(transcriptPath);
+    if (approvalPending.pending) {
+      const reason = `AGENT_RUNTIME_APPROVAL_PENDING: ${agentId} stopped at a runtime approval prompt before completing ${wfId}/${role}. ${approvalPending.detail} Transcript: ${transcriptPath}`;
+      console.warn(`[spawner] ${reason}`);
+      await recordSupervisorInfraEvent(row.run_id, row.step_id, row.current_story_id, reason);
+      if (row.current_story_id) {
+        const requeued = await requeueOpenStoryClaim(row.run_id, row.step_id, row.current_story_id, agentId, reason);
+        if (requeued) return;
+      }
+      await pgRun(
+        "UPDATE steps SET status = 'pending', output = $1, current_story_id = NULL, updated_at = $2 WHERE id = $3 AND status = 'running'",
+        [reason, new Date().toISOString(), stepId],
+      );
+      await pgRun(
+        "UPDATE claim_log SET outcome = 'infra_retry', abandoned_at = NOW(), diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND agent_id = $4 AND outcome IS NULL",
+        [reason, row.run_id, row.step_id, agentId],
+      );
+      return;
+    }
+
     const reason = `AGENT_PROCESS_EXITED: ${agentId} exited before completing ${wfId}/${role}. ${compactExitReason(err)}. Transcript: ${transcriptPath}`;
     console.warn(`[spawner] failing still-running claim ${stepId} (${row.step_id}) after agent exit`);
     await recordSupervisorInfraEvent(row.run_id, row.step_id, row.current_story_id, reason);
@@ -3552,6 +3581,27 @@ async function failClaimIfStillRunning(stepId: string, agentId: string, wfId: st
   } catch (failErr) {
     console.warn(`[spawner] failed to mark exited agent claim as failed: ${String(failErr).slice(0, 300)}`);
   }
+}
+
+function detectRuntimeApprovalPending(transcriptPath: string): { pending: boolean; detail: string } {
+  let text = "";
+  try {
+    text = fs.readFileSync(transcriptPath, "utf-8").slice(-24000);
+  } catch {
+    return { pending: false, detail: "" };
+  }
+
+  const hasApprovalStatus = /"status"\s*:\s*"approval-pending"|Approval required \(id\s+[a-f0-9-]+/i.test(text);
+  const hasApprovalInstruction = /Reply with:\s*\/approve\b|\/approve\s+[a-f0-9-]+\s+allow-(?:once|always)/i.test(text);
+  const finalApproveOnly = /"finalAssistant(?:Visible|Raw)Text"\s*:\s*"\/approve\s+[a-f0-9-]+\s+allow-(?:once|always)"/i.test(text);
+  if (!hasApprovalStatus && !finalApproveOnly) return { pending: false, detail: "" };
+
+  const inlineEval = /strict inline-eval mode requires explicit approval/i.test(text);
+  const detailParts = [
+    inlineEval ? "OpenClaw strict inline-eval approval blocked an exec command." : "OpenClaw requested interactive approval.",
+    hasApprovalInstruction || finalApproveOnly ? "The model answered with /approve instead of continuing the claim." : "",
+  ].filter(Boolean);
+  return { pending: true, detail: detailParts.join(" ") };
 }
 
 function detectRuntimeAuthFailure(transcriptPath: string): { failed: boolean; detail: string } {
