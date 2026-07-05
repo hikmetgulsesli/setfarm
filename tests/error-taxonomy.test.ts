@@ -277,6 +277,13 @@ describe("error taxonomy", () => {
     assert.match(preDeltaCheck.suggestion, /CLAIM_SUMMARY_FILE/);
     assert.match(preDeltaCheck.suggestion, /source delta first/);
 
+    const maskedCheck = classifyError(
+      "MASKED_CHECK_COMMAND: feature-dev_developer ran deterministic build/test evidence through an output-filtering pipeline (npm run build 2>&1 | tail -80).",
+    );
+    assert.equal(maskedCheck.category, "MASKED_CHECK_COMMAND");
+    assert.match(maskedCheck.suggestion, /without a pipe/);
+    assert.match(maskedCheck.suggestion, /exit status/);
+
     const broadCleanup = classifyError(
       "BROAD_PROCESS_CLEANUP_VIOLATION: feature-dev_developer ran broad process cleanup (pkill -f \"vite preview\"; npx vite preview --port 5173). Implement agents may not kill shared dev/runtime processes.",
     );

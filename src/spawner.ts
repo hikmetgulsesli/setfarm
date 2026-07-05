@@ -1774,6 +1774,47 @@ function isVerifyDeterministicEvidenceCommand(command: string): boolean {
     || /\bnode\b[^;&|]*\b(smoke-test|playwright-check)\b/i.test(compact);
 }
 
+function preservesPipelineExitStatus(command: string): boolean {
+  return /\bset\s+-(?:[A-Za-z]*o\s+)?pipefail\b/i.test(command)
+    || /\bset\s+-[A-Za-z]*\b[^\n;|&]*\bpipefail\b/i.test(command)
+    || /\bPIPESTATUS\s*\[\s*0\s*\]/.test(command);
+}
+
+function isMaskedDeterministicCheckCommand(command: string): boolean {
+  const compact = compactCommandForDiagnostic(command);
+  if (!compact || !isVerifyDeterministicEvidenceCommand(compact)) return false;
+  if (!/[|]/.test(compact) || preservesPipelineExitStatus(command)) return false;
+  return /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:build|test|test:run|lint|typecheck)\b[\s\S]{0,160}\|[\s\S]{0,120}\b(?:head|tail|grep|rg|tee|cat|awk|sed)\b/i.test(compact)
+    || /\b(?:npx\s+)?(?:vitest|tsc|eslint)\b[\s\S]{0,160}\|[\s\S]{0,120}\b(?:head|tail|grep|rg|tee|cat|awk|sed)\b/i.test(compact);
+}
+
+function implementMaskedCheckCommandGuard(active: ActiveProcess): { detected: boolean; reason: string } {
+  let raw = "";
+  try {
+    raw = fs.readFileSync(active.sessionJsonlPath, "utf-8").slice(-512_000).trim();
+  } catch {
+    return { detected: false, reason: "" };
+  }
+  if (!raw) return { detected: false, reason: "" };
+
+  for (const line of raw.split(/\n/).filter(Boolean)) {
+    let event: any;
+    try { event = JSON.parse(line); } catch { continue; }
+    const message = sessionEventMessage(event);
+    if (String(message.role || "") !== "assistant") continue;
+    for (const call of extractToolCalls(message)) {
+      if (!call.command || !isMaskedDeterministicCheckCommand(call.command)) continue;
+      const command = compactCommandForDiagnostic(call.command);
+      return {
+        detected: true,
+        reason: `MASKED_CHECK_COMMAND: ${active.agentId} ran deterministic build/test evidence through an output-filtering pipeline (${command}). Pipelines such as build/test | tail/head/grep/tee/cat can hide the real failing exit code. Rerun the declared build/test command without a pipe, or save output to a log and inspect it after preserving the command exit status.`,
+      };
+    }
+  }
+
+  return { detected: false, reason: "" };
+}
+
 function readSessionJsonlForGuard(filePath: string): string {
   let stat: fs.Stats;
   try {
@@ -4351,6 +4392,19 @@ async function reapFinishedClaims(): Promise<void> {
             try { fs.appendFileSync(active.transcriptPath, `--- PROCESS CLEANUP GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
             await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "runtime-guard", reason);
             terminateActiveProcess(active, "process-cleanup-guard");
+            activeProcesses.delete(key);
+            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
+            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
+            continue;
+          }
+
+          const maskedCheck = implementMaskedCheckCommandGuard(active);
+          if (maskedCheck.detected) {
+            const reason = maskedCheck.reason + ` Transcript: ${active.transcriptPath}`;
+            console.warn(`[spawner] ${reason}`);
+            try { fs.appendFileSync(active.transcriptPath, `--- MASKED CHECK COMMAND GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
+            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "masked-check-command-guard", reason);
+            terminateActiveProcess(active, "masked-check-command-guard");
             activeProcesses.delete(key);
             if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
             await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
