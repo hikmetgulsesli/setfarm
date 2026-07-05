@@ -7657,6 +7657,7 @@ ${prd}`;
               scopeResult.category === "RETRY_PATCH_REAPPLIED"
               || scopeResult.category === "NO_WORK_DETECTED"
               || scopeResult.category === "APP_INTEGRATION_SCOPE_REGRESSION"
+              || scopeResult.category === "APP_INTEGRATION_PROP_REGRESSION"
               || scopeResult.category === "APP_INTEGRATION_SEMANTIC_REGRESSION"
               || scopeResult.category === "GENERATED_SCREEN_INTEGRATION_REGRESSION";
             if (shouldDiscardFailedScopeAttempt && wd) {

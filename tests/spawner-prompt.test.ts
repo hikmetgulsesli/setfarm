@@ -1049,6 +1049,89 @@ describe("spawner prompt bootstrap", () => {
     }
   });
 
+  it("turns app integration scope and prop regressions into invariant restore targets", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-integration-targets-"));
+    try {
+      const workdir = path.join(tmp, "worktree");
+      fs.mkdirSync(workdir, { recursive: true });
+      fs.writeFileSync(path.join(workdir, ".story-scope-files"), "src/App.tsx\nsrc/features/surf-insights/act_filter.ts\n");
+      const input = [
+        "TASK: Project: integration invariant sensor",
+        "CURRENT STORY: Story US-003: Integration invariant sensor",
+        "",
+        "## Previous Failure / Retry Feedback",
+        "APP_INTEGRATION_SCOPE_REGRESSION: app/router diff removes existing feature action wiring outside the current story scope (surf-record-editor, surf-record-operations). Later stories may add their own wiring but must not delete previous story action helpers or keyboard/control bridges without an explicit replacement contract.",
+        "APP_INTEGRATION_PROP_REGRESSION: app/router diff removes prop \"actions\" from previously verified generated screen RecordEditorScreen (src/screens/RecordEditorScreen.tsx). Preserve prior screen state/action adapters when adding later screens, or replace them with an equivalent explicit adapter.",
+        "",
+        "## Retry Worktree Patch Memory",
+        "RETRY_WORKTREE_PATCH_BODY:",
+        "```diff",
+        "diff --git a/src/App.tsx b/src/App.tsx",
+        "--- a/src/App.tsx",
+        "+++ b/src/App.tsx",
+        "-import { useRecordEditorActions } from './features/surf-record-editor/useRecordEditorActions';",
+        "-const editorActions = useRecordEditorActions();",
+        "-return <RecordEditorScreen actions={editorActions} />;",
+        "+return <InsightsScreen />;",
+        "```",
+        "",
+        "## Current Story",
+      ].join("\n");
+
+      const claimSummaryFile = path.join(tmp, "claim-summary.json");
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        bootstrapFile: path.join(tmp, "bootstrap.sh"),
+        stepId: "step-123",
+        runId: "run-123",
+        workdir,
+        repo: workdir,
+        storyId: "US-003",
+        input,
+      });
+      fs.writeFileSync(claimSummaryFile, JSON.stringify(summary, null, 2));
+
+      assert.equal((summary.retryFeedback as any).category, "APP_INTEGRATION_REGRESSION");
+      assert.deepEqual((summary.retryFeedback as any).protectedSnippets.slice(0, 7), [
+        "surf-record-editor",
+        "features/surf-record-editor/",
+        "surf-record-operations",
+        "features/surf-record-operations/",
+        "RecordEditorScreen",
+        "actions=",
+        "src/screens/RecordEditorScreen.tsx",
+      ]);
+      assert.deepEqual((summary.retryFeedback as any).restoreTargets, [
+        {
+          file: "src/App.tsx",
+          lines: [
+            "return <RecordEditorScreen actions={editorActions} />;",
+            "import { useRecordEditorActions } from './features/surf-record-editor/useRecordEditorActions';",
+            "const editorActions = useRecordEditorActions();",
+          ],
+        },
+      ]);
+
+      const bootstrap = buildResolvedClaimBootstrapScript({
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        claimSummaryFile,
+        stepId: "step-123",
+        workdir,
+      });
+      fs.writeFileSync(path.join(tmp, "bootstrap.sh"), bootstrap, { mode: 0o755 });
+      const out = execFileSync("bash", [path.join(tmp, "bootstrap.sh")], { encoding: "utf-8" });
+      assert.match(out, /RETRY_PROTECTED_SNIPPETS=7/);
+      assert.match(out, /RETRY_RESTORE_TARGETS=1/);
+      assert.match(out, /RETRY_RESTORE_TARGET_1=src\/App\.tsx :: return <RecordEditorScreen actions=\{editorActions\} \/>;/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("turns app integration semantic regressions into protected restore snippets", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-semantic-snippets-"));
     try {
