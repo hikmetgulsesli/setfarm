@@ -1394,8 +1394,10 @@ describe("spawner gateway recovery wiring", () => {
     const block = source.slice(guardStart, guardEnd);
     assert.match(block, /recordSupervisorRuntimeEvent\(active\.runId,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"PRODUCT_SUPERVISOR_RUNTIME_GUARD"/);
     assert.match(block, /terminateActiveProcess\(active,\s*"masked-check-command-guard"\)/);
+    assert.match(block, /const recoveryRow: RunningStepRow = \{/);
+    assert.match(block, /tryRecoverExitedImplementWork\(active\.stepId,\s*recoveryRow,\s*active\.agentId,\s*active\.transcriptPath,\s*new Error\(reason\),\s*active\.spawnCwd\)/);
     assert.match(block, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.agentId,\s*reason\)/);
-    assert.doesNotMatch(block, /completeRunningClaimFromOutputFile/);
+    assert.match(source, /exitReason\.includes\("MASKED_CHECK_COMMAND"\)/);
     assert.ok(
       source.indexOf("const processCleanup = implementProcessCleanupGuard(active)") < guardStart,
       "masked check guard should run after destructive process-cleanup guard",

@@ -3752,7 +3752,8 @@ async function tryRecoverExitedImplementWork(
     exitReason.includes("AGENT_STARTUP_SILENT") ||
     exitReason.includes("AGENT_PROCESS_STUCK") ||
     exitReason.includes("AGENT_PROCESS_TERMINAL") ||
-    exitReason.includes("IMPLEMENT_RETRY_HARD_TIMEOUT");
+    exitReason.includes("IMPLEMENT_RETRY_HARD_TIMEOUT") ||
+    exitReason.includes("MASKED_CHECK_COMMAND");
   if (!recoverableExit) return false;
   if (row.status !== "running" || row.type !== "loop" || row.step_id !== "implement" || !row.current_story_id) return false;
 
@@ -4659,6 +4660,18 @@ async function reapFinishedClaims(): Promise<void> {
             await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "masked-check-command-guard", reason);
             terminateActiveProcess(active, "masked-check-command-guard");
             activeProcesses.delete(key);
+            try {
+              const recoveryRow: RunningStepRow = {
+                status: row.step_status,
+                step_id: row.step_id,
+                run_id: row.run_id,
+                type: row.type,
+                current_story_id: row.current_story_id,
+              };
+              if (await tryRecoverExitedImplementWork(active.stepId, recoveryRow, active.agentId, active.transcriptPath, new Error(reason), active.spawnCwd)) continue;
+            } catch (recoveryErr) {
+              console.warn(`[spawner] masked-check implement recovery failed for ${active.wfId}/${active.role}: ${String(recoveryErr).slice(0, 300)}`);
+            }
             await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
             continue;
           }
