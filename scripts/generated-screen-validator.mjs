@@ -752,6 +752,7 @@ const reactAttrMap = {
   "xlink:href": "xlinkHref",
   "xmlns:xlink": "xmlnsXlink",
   viewbox: "viewBox",
+  spellcheck: "spellCheck",
 };
 
 function autoFixScreen(screen) {

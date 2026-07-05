@@ -158,6 +158,33 @@ describe("stitch-to-jsx", () => {
     }
   });
 
+  it("normalizes lowercase HTML form attributes to React JSX prop casing", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-form-attrs-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "form-screen", title: "Form Screen" },
+      ]));
+      writeHtml(path.join(stitchDir, "form-screen.html"), `
+        <main>
+          <textarea class="notes" spellcheck="false">Notes</textarea>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "FormScreen.tsx"), "utf-8");
+      assert.match(code, /<textarea className="notes" spellCheck="false">Notes<\/textarea>/);
+      assert.doesNotMatch(code, /\bspellcheck=/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("emits stable action ids for generated screen controls", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-actions-"));
     try {

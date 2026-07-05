@@ -66,6 +66,7 @@ const JSX_ATTRIBUTE_MAP = {
   "playsinline": "playsInline",
   "readonly": "readOnly",
   "rowspan": "rowSpan",
+  "spellcheck": "spellCheck",
   "srcset": "srcSet",
   "tabindex": "tabIndex",
   "usemap": "useMap",
