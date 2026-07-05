@@ -4552,7 +4552,7 @@ async function injectVerifyContext(
     return false;
   }
   if (step.retry_count === 0 && context["previous_failure"]) {
-    const staleImplementFailure = /\b(RUNTIME_BRIDGE_MISSING|BUILD_FAILED|TEST_FAILED|SCOPE_BLEED|NO_WORK|SCOPE_FILE_MISSING|PRODUCT_SUPERVISOR_IMPLEMENT_BLOCKED)\b/i
+    const staleImplementFailure = /\b(RUNTIME_BRIDGE_MISSING|BUILD_FAILED|TEST_FAILED|SCOPE_BLEED|SCOPE_WRITE_VIOLATION|NO_WORK|SCOPE_FILE_MISSING|PRODUCT_SUPERVISOR_IMPLEMENT_BLOCKED)\b/i
       .test(`${context["failure_category"] || ""}\n${context["previous_failure"] || ""}`);
     if (staleImplementFailure) {
       delete context["previous_failure"];

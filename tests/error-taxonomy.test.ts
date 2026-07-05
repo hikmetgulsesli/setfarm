@@ -367,6 +367,12 @@ describe("error taxonomy", () => {
     assert.equal(packageScoped.category, "SCOPE_BLEED");
     assert.match(packageScoped.suggestion, /package\/dependency files/);
     assert.match(packageScoped.suggestion, /setup-build\/stack-pack dependency request/);
+
+    const scopeWrite = classifyError(
+      "SCOPE_WRITE_VIOLATION: feature-dev_developer changed file(s) outside .story-scope-files via shell/runtime side effects: src/test/_debug.test.tsx.",
+    );
+    assert.equal(scopeWrite.category, "SCOPE_WRITE_VIOLATION");
+    assert.match(scopeWrite.suggestion, /scratch\/probe files outside the project worktree/);
   });
 
   it("classifies review and supervisor retry reports instead of UNKNOWN", () => {

@@ -27,7 +27,7 @@ describe("spawner prompt bootstrap", () => {
     assert.match(prompt, /outputContract\.requiredFields and outputContract\.format exactly/);
     assert.match(prompt, /guard-backed roles will reject prose-only summaries/);
     assert.match(prompt, /Use retryFeedback\.mode exactly/);
-    assert.match(prompt, /If failureCategory is SCOPE_BLEED, first remove\/rework out-of-scope files/);
+    assert.match(prompt, /If failureCategory is SCOPE_BLEED or SCOPE_WRITE_VIOLATION, first remove\/rework out-of-scope files/);
     assert.match(prompt, /retryFeedback\.restoreTargets first, then retryFeedback\.protectedSnippets/);
     assert.match(prompt, /retryFeedback\.actionableReviewThreads first/);
     assert.match(prompt, /supervisorEvidence/);
@@ -1892,6 +1892,7 @@ describe("spawner prompt bootstrap", () => {
         ].join("\n"),
       });
 
+      assert.equal(summary.failureCategory, "SCOPE_WRITE_VIOLATION");
       assert.equal((summary.retryDiscipline as any).mode, "semantic-fix");
       assert.match(String((summary.retryDiscipline as any).instruction), /Do not install dependencies/);
       assert.match(String((summary.retryDiscipline as any).instruction), /setup-build\/stack-pack dependency blocker/);
@@ -1954,8 +1955,70 @@ describe("spawner prompt bootstrap", () => {
         stepId: "step-123",
         workdir: tmp,
       });
-      assert.match(bootstrap, /SCOPE_BLEED_RETRY_RULE=First remove\/rework out-of-scope files/);
-      assert.match(bootstrap, /Do not read retry source snapshots or recreate shared files/);
+      assert.match(bootstrap, /SCOPE_RETRY_RULE=First remove\/rework out-of-scope files/);
+      assert.match(bootstrap, /Do not read retry source snapshots, do not read retry worktree patches/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("classifies scope write retries and hides contaminated retry artifacts", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-scope-write-no-patch-"));
+    try {
+      fs.writeFileSync(path.join(tmp, ".story-scope-files"), "src/App.tsx\n");
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        bootstrapFile: path.join(tmp, "bootstrap.sh"),
+        stepId: "step-123",
+        runId: "run-123",
+        workdir: tmp,
+        repo: tmp,
+        storyId: "US-001",
+        input: [
+          "TASK: Project: scope write retry sensor",
+          "CURRENT STORY: Story US-001: App shell",
+          "",
+          "## Previous Failure / Retry Feedback",
+          "",
+          "## Retry Worktree Patch Memory",
+          "RETRY_WORKTREE_PATCH:",
+          "Touched files: .tmp/retry.patch, src/test/_debug.test.tsx",
+          "```diff",
+          "diff --git a/src/test/_debug.test.tsx b/src/test/_debug.test.tsx",
+          "+++ b/src/test/_debug.test.tsx",
+          "+test('debug', () => {})",
+          "```",
+          "",
+          "SCOPE_WRITE_VIOLATION: feature-dev_developer changed file(s) outside .story-scope-files via shell/runtime side effects: .tmp/retry.patch, src/test/_debug.test.tsx.",
+          "",
+          "## Retry Source Snapshot",
+          "RETRY_SOURCE_SNAPSHOT:",
+          "### src/test/_debug.test.tsx",
+          "```",
+          "test('debug', () => {})",
+          "```",
+          "",
+          "## Current Story",
+        ].join("\n"),
+      });
+
+      assert.equal(summary.failureCategory, "SCOPE_WRITE_VIOLATION");
+      assert.equal((summary.retryFeedback as any).category, "SCOPE_WRITE_VIOLATION");
+      assert.equal((summary.retryFeedback as any).sourceSnapshot, undefined);
+      assert.equal((summary.retryFeedback as any).worktreePatch, undefined);
+      assert.match(String((summary.retryDiscipline as any).instruction), /small scoped source delta/);
+      const bootstrap = buildResolvedClaimBootstrapScript({
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        claimSummaryFile: path.join(tmp, "summary.json"),
+        stepId: "step-123",
+        workdir: tmp,
+      });
+      assert.match(bootstrap, /SCOPE_RETRY_RULE=First remove\/rework out-of-scope files or shell-created project artifacts/);
+      assert.match(bootstrap, /do not read retry worktree patches/i);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
