@@ -690,6 +690,70 @@ describe("spawner prompt bootstrap", () => {
     }
   });
 
+  it("omits retry worktree patches that would reintroduce design-contract violations", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-design-dirty-patch-"));
+    try {
+      const workdir = path.join(tmp, "worktree");
+      fs.mkdirSync(workdir, { recursive: true });
+      fs.writeFileSync(path.join(workdir, ".story-scope-files"), "src/index.css\nsrc/App.tsx\n");
+
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        bootstrapFile: path.join(tmp, "bootstrap.sh"),
+        stepId: "step-123",
+        runId: "run-123",
+        workdir,
+        repo: workdir,
+        storyId: "US-001",
+        input: [
+          "TASK: Project: design dirty retry patch sensor",
+          "CURRENT STORY: Story US-001: App shell",
+          "",
+          "## Previous Failure / Retry Feedback",
+          "BROAD_PROCESS_CLEANUP_VIOLATION: runtime cleanup was blocked.",
+          "",
+          "## Retry Worktree Patch Memory",
+          "RETRY_WORKTREE_PATCH_MEMORY:",
+          "RETRY_WORKTREE_PATCH_SOURCE: .setfarm/retry-patches/run-us-001.patch",
+          "RETRY_WORKTREE_PATCH_TOUCHED_FILES: src/index.css",
+          "RETRY_WORKTREE_PATCH_STATS: +2 -1 across 1 file(s)",
+          "RETRY_WORKTREE_PATCH_BYTES: 180",
+          "RETRY_WORKTREE_PATCH_BODY:",
+          "```diff",
+          "diff --git a/src/index.css b/src/index.css",
+          "--- a/src/index.css",
+          "+++ b/src/index.css",
+          "@@ -1 +1,2 @@",
+          "+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');",
+          "+.material-symbols-outlined { font-family: 'Material Symbols Outlined'; }",
+          "```",
+          "",
+          "## Retry Source Snapshot",
+          "RETRY_SOURCE_SNAPSHOT:",
+          "SCOPE_FILES: src/index.css, src/App.tsx",
+          "SHARED_FILES:",
+          "## Scope file contents",
+          "### src/index.css",
+          "```",
+          ":root { font-family: var(--font-body-md, \"Hanken Grotesk\"), \"Segoe UI\", sans-serif; }",
+          "```",
+          "",
+          "## Claim Handoff",
+        ].join("\n"),
+      });
+
+      const feedback = summary.retryFeedback as any;
+      assert.equal(feedback.category, "BROAD_PROCESS_CLEANUP_VIOLATION");
+      assert.equal(feedback.worktreePatch, undefined);
+      assert.match(feedback.sourceSnapshot.section, /Hanken Grotesk/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("preserves PR review details but only routes in-scope actionable threads", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-pr-review-"));
     try {

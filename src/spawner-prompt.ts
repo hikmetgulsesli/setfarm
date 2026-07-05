@@ -567,6 +567,12 @@ function extractRetryPatchMemory(input: string): Record<string, unknown> | undef
   };
 }
 
+function retryPatchViolatesDesignContract(patch: Record<string, unknown> | undefined): boolean {
+  const body = String(patch?.body || patch?.section || "");
+  if (!body.trim()) return false;
+  return /(?:Material Symbols|Material Icons|material-symbols(?:-[a-z0-9_-]+)?|fonts\.googleapis\.com[\s\S]{0,220}\bInter\b|font-family\s*:\s*['"]?(?:Inter|Roboto|Arial|Helvetica|system-ui)\b)/i.test(body);
+}
+
 function extractRetrySourceSnapshot(input: string): Record<string, unknown> | undefined {
   const section = sliceSection(
     input,
@@ -1444,7 +1450,7 @@ export function buildClaimSummary(params: {
     explicitFailureCategory ||
     (prReviewThreads.length > 0 ? "PR_REVIEW_COMMENTS_OPEN" : "") ||
     ((previousFailure || classifiedFailure.category !== "UNKNOWN") ? classifiedFailure.category : "");
-  const retryWorktreePatchForSummary = /^(?:PR_REVIEW_COMMENTS_OPEN)$/i.test(failureCategory) || isScopeIsolationFailure(failureCategory)
+  const retryWorktreePatchForSummary = /^(?:PR_REVIEW_COMMENTS_OPEN)$/i.test(failureCategory) || isScopeIsolationFailure(failureCategory) || retryPatchViolatesDesignContract(retryWorktreePatch)
     ? undefined
     : retryWorktreePatch;
   const retrySourceSnapshotForSummary = /^(?:PR_REVIEW_COMMENTS_OPEN)$/i.test(failureCategory) || isScopeIsolationFailure(failureCategory)
