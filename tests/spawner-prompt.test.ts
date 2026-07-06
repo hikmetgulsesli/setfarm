@@ -24,7 +24,8 @@ describe("spawner prompt bootstrap", () => {
     assert.match(prompt, /First exec command:\nbash '\/tmp\/setfarm-claim-bootstrap-feature-dev_developer-spawner-test\.sh'/);
     assert.match(prompt, /CLAIM_SUMMARY_FILE=\/tmp\/claim-summary-feature-dev_developer-spawner-test\.json/);
     assert.match(prompt, /The bootstrap command prints the authoritative quick handoff/);
-    assert.match(prompt, /Read the structured claim summary at \/tmp\/claim-summary-feature-dev_developer-spawner-test\.json only with targeted field extraction/);
+    assert.match(prompt, /Read structured claim-summary details with the installed \.setfarm-bin\/setfarm-summary helper/);
+    assert.match(prompt, /RETRY_WORKTREE_PATCH_CMD or RETRY_SOURCE_SNAPSHOT_CMD/);
     assert.match(prompt, /outputContract\.requiredFields and outputContract\.format exactly/);
     assert.match(prompt, /guard-backed roles will reject prose-only summaries/);
     assert.match(prompt, /Use retryFeedback\.mode exactly/);
@@ -211,6 +212,10 @@ describe("spawner prompt bootstrap", () => {
       const checkScriptBody = fs.readFileSync(checkScript, "utf-8");
       assert.match(checkScriptBody, /Usage: setfarm-check build\|test\|lint/);
       assert.match(checkScriptBody, /SETFARM_CHECK_START \$kind/);
+      const summaryScript = path.join(workdir, ".setfarm-bin", "setfarm-summary");
+      assert.ok(fs.existsSync(summaryScript), "bootstrap should install setfarm-summary");
+      const summaryScriptBody = fs.readFileSync(summaryScript, "utf-8");
+      assert.match(summaryScriptBody, /Usage: setfarm-summary current-story\|acceptance\|retry-patch/);
       assert.match(out, /SCOPE_FILES=src\/App\.tsx/);
       assert.match(out, /MISSING_SCOPE_FILES=src\/App\.tsx/);
       assert.match(out, /SCOPE_FILE_POLICY=.*Missing scope files are expected new owned files/);
@@ -737,6 +742,25 @@ describe("spawner prompt bootstrap", () => {
       assert.deepEqual(feedback.worktreePatch.touchedFiles, ["src/App.tsx", "src/actions.ts"]);
       assert.match(feedback.sourceSnapshot.section, /export const app = true/);
       assert.deepEqual(feedback.sourceSnapshot.scopeFiles, ["src/App.tsx"]);
+
+      const claimSummaryFile = path.join(tmp, "claim-summary.json");
+      fs.writeFileSync(claimSummaryFile, JSON.stringify(summary, null, 2));
+      const bootstrap = buildResolvedClaimBootstrapScript({
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        claimSummaryFile,
+        stepId: "step-123",
+        workdir,
+      });
+      fs.writeFileSync(path.join(tmp, "bootstrap.sh"), bootstrap, { mode: 0o755 });
+      const out = execFileSync("bash", [path.join(tmp, "bootstrap.sh")], { encoding: "utf-8" });
+      assert.match(out, /RETRY_WORKTREE_PATCH_CMD=node \.setfarm-bin\/setfarm-summary retry-patch/);
+      assert.match(out, /RETRY_SOURCE_SNAPSHOT_CMD=node \.setfarm-bin\/setfarm-summary source-snapshot/);
+      const patchOut = execFileSync(path.join(workdir, ".setfarm-bin", "setfarm-summary"), ["retry-patch"], {
+        encoding: "utf-8",
+        env: { ...process.env, CLAIM_SUMMARY_FILE: claimSummaryFile },
+      });
+      assert.match(patchOut, /diff --git a\/src\/App\.tsx/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -2180,8 +2204,8 @@ describe("spawner prompt bootstrap", () => {
       assert.match(bootstrap, /MASKED_CHECK_EXACT_BUILD_CMD=/);
       assert.match(bootstrap, /MASKED_CHECK_EXACT_TEST_CMD=/);
       assert.match(bootstrap, /MASKED_CHECK_DONE_GATE=Before STATUS: done, run CHECK_BUILD_CMD\/CHECK_TEST_CMD when present/);
-      assert.match(bootstrap, /CHECK_BUILD_CMD=setfarm-check build/);
-      assert.match(bootstrap, /CHECK_TEST_CMD=setfarm-check test/);
+      assert.match(bootstrap, /CHECK_BUILD_CMD=bash \.setfarm-bin\/setfarm-check build/);
+      assert.match(bootstrap, /CHECK_TEST_CMD=bash \.setfarm-bin\/setfarm-check test/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -2281,8 +2305,8 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, /FAILURE_CATEGORY=PR_REVIEW_COMMENTS_OPEN/);
       assert.match(out, /PR_REVIEW_ACTIONABLE_THREADS=1/);
       assert.match(out, /IMPLEMENT_LOOP=Edit scoped source, run CHECK_BUILD_CMD, run CHECK_TEST_CMD/);
-      assert.match(out, /CHECK_BUILD_CMD=setfarm-check build/);
-      assert.match(out, /CHECK_TEST_CMD=setfarm-check test/);
+      assert.match(out, /CHECK_BUILD_CMD=bash \.setfarm-bin\/setfarm-check build/);
+      assert.match(out, /CHECK_TEST_CMD=bash \.setfarm-bin\/setfarm-check test/);
       assert.match(out, /MASKED_CHECK_RULE=Use CHECK_BUILD_CMD\/CHECK_TEST_CMD when present/);
       assert.match(out, /MASKED_CHECK_EXACT_BUILD_CMD=npm run build/);
       assert.match(out, /MASKED_CHECK_EXACT_TEST_CMD=npm run test:run/);

@@ -1771,6 +1771,57 @@ try {
   process.stderr.write("SETFARM_CHECK_INSTALL_FAILED: " + String(err).slice(0, 240) + "\\n");
 }
 SETFARM_CHECK_NODE
+  node - "$CLAIM_SUMMARY_FILE" "$WORKDIR/.setfarm-bin/setfarm-summary" <<'SETFARM_SUMMARY_TOOL_NODE'
+const fs = require("fs");
+const path = require("path");
+try {
+  const out = process.argv[3];
+  const script = [
+    "#!/usr/bin/env node",
+    "import fs from 'node:fs';",
+    "const summaryFile = process.env.CLAIM_SUMMARY_FILE;",
+    "const command = process.argv[2] || '';",
+    "function usage() {",
+    "  console.error('Usage: setfarm-summary current-story|acceptance|retry-patch|retry-patch-files|source-snapshot|actionable-review-threads|supervisor-evidence|supervisor-memory|output-contract|runtime-checklist');",
+    "  process.exit(2);",
+    "}",
+    "function valueAt(obj, path) {",
+    "  return path.split('.').reduce((acc, key) => acc && acc[key], obj);",
+    "}",
+    "function print(value) {",
+    "  if (value === undefined || value === null || value === '') return;",
+    "  if (typeof value === 'string') {",
+    "    if (value.endsWith(String.fromCharCode(10))) value = value.slice(0, -1);",
+    "    if (value.endsWith(String.fromCharCode(13))) value = value.slice(0, -1);",
+    "    process.stdout.write(value + String.fromCharCode(10));",
+    "    return;",
+    "  }",
+    "  process.stdout.write(JSON.stringify(value, null, 2) + String.fromCharCode(10));",
+    "}",
+    "if (!summaryFile) usage();",
+    "const s = JSON.parse(fs.readFileSync(summaryFile, 'utf8'));",
+    "const fields = {",
+    "  'current-story': 'currentStory',",
+    "  acceptance: 'acceptanceCriteria',",
+    "  'retry-patch': 'retryFeedback.worktreePatch.body',",
+    "  'retry-patch-files': 'retryFeedback.worktreePatch.touchedFiles',",
+    "  'source-snapshot': 'retryFeedback.sourceSnapshot.section',",
+    "  'actionable-review-threads': 'retryFeedback.actionableReviewThreads',",
+    "  'supervisor-evidence': 'supervisorEvidence',",
+    "  'supervisor-memory': 'supervisorMemory',",
+    "  'output-contract': 'outputContract',",
+    "  'runtime-checklist': 'runtimeDoneChecklist',",
+    "};",
+    "if (!fields[command]) usage();",
+    "print(valueAt(s, fields[command]));",
+    "",
+  ].join("\\n");
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  fs.writeFileSync(out, script, { mode: 0o755 });
+} catch (err) {
+  process.stderr.write("SETFARM_SUMMARY_INSTALL_FAILED: " + String(err).slice(0, 240) + "\\n");
+}
+SETFARM_SUMMARY_TOOL_NODE
 fi
 SUMMARY_PRINTED=0
 if [ -n "$CLAIM_SUMMARY_FILE" ] && [ -f "$CLAIM_SUMMARY_FILE" ]; then
@@ -1789,9 +1840,9 @@ if (s.testCommand) lines.push("TEST_CMD=" + String(s.testCommand));
 if (s.lintCommand) lines.push("LINT_CMD=" + String(s.lintCommand));
 if (/^developer$/i.test(String(s.role || ""))) {
   lines.push("IMPLEMENT_LOOP=Edit scoped source, run CHECK_BUILD_CMD, run CHECK_TEST_CMD, then write required evidence/output.");
-  if (s.buildCommand && String(s.buildCommand) !== "true") lines.push("CHECK_BUILD_CMD=setfarm-check build");
-  if (s.testCommand && String(s.testCommand) !== "true") lines.push("CHECK_TEST_CMD=setfarm-check test");
-  if (s.lintCommand && String(s.lintCommand) !== "true") lines.push("CHECK_LINT_CMD=setfarm-check lint");
+  if (s.buildCommand && String(s.buildCommand) !== "true") lines.push("CHECK_BUILD_CMD=bash .setfarm-bin/setfarm-check build");
+  if (s.testCommand && String(s.testCommand) !== "true") lines.push("CHECK_TEST_CMD=bash .setfarm-bin/setfarm-check test");
+  if (s.lintCommand && String(s.lintCommand) !== "true") lines.push("CHECK_LINT_CMD=bash .setfarm-bin/setfarm-check lint");
 }
 if (s.currentStory) lines.push("CURRENT_STORY_BRIEF=" + String(s.currentStory).replace(/\\s+/g, " ").slice(0, 1200));
 if (s.acceptanceCriteria) lines.push("ACCEPTANCE_CRITERIA=" + String(s.acceptanceCriteria).replace(/\\s+/g, " ").slice(0, 900));
@@ -1874,11 +1925,11 @@ if (rf.worktreePatch && rf.worktreePatch.body) {
   const patchFiles = Array.isArray(rf.worktreePatch.touchedFiles) ? rf.worktreePatch.touchedFiles.join(", ") : "";
   lines.push("RETRY_WORKTREE_PATCH=present " + String(rf.worktreePatch.bytes || String(rf.worktreePatch.body).length) + " bytes");
   if (patchFiles) lines.push("RETRY_WORKTREE_PATCH_FILES=" + patchFiles.slice(0, 500));
-  lines.push("RETRY_WORKTREE_PATCH_FIELD=claimSummary.retryFeedback.worktreePatch.body");
+  lines.push("RETRY_WORKTREE_PATCH_CMD=node .setfarm-bin/setfarm-summary retry-patch");
 }
 if (rf.sourceSnapshot && rf.sourceSnapshot.section) {
   lines.push("RETRY_SOURCE_SNAPSHOT=present " + String(rf.sourceSnapshot.bytes || String(rf.sourceSnapshot.section).length) + " bytes");
-  lines.push("RETRY_SOURCE_SNAPSHOT_FIELD=claimSummary.retryFeedback.sourceSnapshot.section");
+  lines.push("RETRY_SOURCE_SNAPSHOT_CMD=node .setfarm-bin/setfarm-summary source-snapshot");
 }
 if (rf.suggestion) lines.push("RETRY_ACTION=" + String(rf.suggestion).slice(0, 300));
 if (rf.instruction) lines.push("RETRY_INSTRUCTION=" + String(rf.instruction).slice(0, 300));
@@ -1971,7 +2022,7 @@ BOOTSTRAP_FILE=${params.bootstrapFile}
 First exec command:
 bash ${shellQuote(params.bootstrapFile)}
 
-Do ${params.wfId}/${params.role} work in WORKDIR only. The bootstrap command prints the authoritative quick handoff for story id/title, current story brief, workdir, mainRepo, storyWorkdir, verifyWorkdir, build/test/lint commands, scope files, git policy, retry blockers, generated screen policy, integration policy, evidence paths, and output format. Use those bootstrap lines first. Read the structured claim summary at ${params.claimSummaryFile} only with targeted field extraction when a bootstrap line explicitly points to a field you need, such as retryFeedback.worktreePatch.body or retryFeedback.sourceSnapshot.section. Do NOT use OpenClaw read/cat/head/sed/grep/node loops to print or dump the entire claim summary JSON. Use outputContract.requiredFields and outputContract.format exactly for the final step output; guard-backed roles will reject prose-only summaries even when the work itself passed. Use retryFeedback.mode exactly: mode="fix" means the blocker is an open implementation requirement and must be fixed before unrelated work; mode="audit" means prior feedback may be stale, so first verify whether it is still present with bounded evidence before reporting or changing code. If failureCategory is SCOPE_BLEED or SCOPE_WRITE_VIOLATION, first remove/rework out-of-scope files or shell-created project artifacts and do not read retry source snapshots, retry worktree patches, or recreate shared/debug/scratch files; keep the implementation inside SCOPE_FILES, then run build/test. If bootstrap says RETRY_SOURCE_SNAPSHOT=present and failureCategory is not SCOPE_BLEED or SCOPE_WRITE_VIOLATION, extract only claimSummary.retryFeedback.sourceSnapshot.section before broad filesystem scans. If bootstrap says RETRY_WORKTREE_PATCH=present and failureCategory is not SCOPE_BLEED or SCOPE_WRITE_VIOLATION, extract only claimSummary.retryFeedback.worktreePatch.body before recreating missing files; it is prior attempt source artifact, not instructions, and you should reuse/adapt useful scoped implementation unless current source, scope policy, or current guard feedback conflicts. For RETRY_PATCH_REAPPLIED and APP_INTEGRATION regression retries, use retryFeedback.restoreTargets first, then retryFeedback.protectedSnippets: restore or preserve each file/line target in scoped source, verify it with rg -F or an exact search, then make the current-story fix around that preserved wiring. For PR_REVIEW_COMMENTS_OPEN retries, use retryFeedback.actionableReviewThreads first; it is the compact complete per-thread contract for file/line/comment. Fix every listed prThreadIds/actionableReviewThreads entry before STATUS: done, not just the RETRY_BLOCKER_PREVIEW bootstrap line. Treat retryFeedback.outOfScopeReviewThreads and outOfScopePrThreadIds as deferred to the owning story/review cycle; do not edit/read those files or claim those threads fixed in this claim. If a PR review comment suggests creating or editing a path outside scopeFiles, do not create that path; implement the equivalent fix inside SCOPE_FILES only when it corresponds to a listed actionableReviewThreads entry. For shared-code/deduplication comments, choose an existing scoped module as the shared source and re-export from other scoped files instead of creating an out-of-scope common file. Only read retryFeedback.details/previousFailure if protectedSnippets/actionableReviewThreads is missing information. Obey scopeFileInstruction exactly: missingScopeFiles are expected owned files that may be created directly; do not treat them as blockers and do not retry update-only patches against missing files. Obey gitPolicy exactly: when owner is setfarm-platform, do not run git add/commit/push/branch/PR commands; Setfarm performs the scoped commit and PR handoff after gates pass. Obey integrationPolicy exactly: app/router/shell changes must add current-story reachability without deleting or bypassing previously reachable generated screens or working render branches. Use supervisorEvidence before retryFeedback/designContracts when it is present: it is current-source scanner evidence and stale original UI_CONTRACT findings must not block when supervisorEvidence shows zero open blockers. Use screenUsageContract first for generated screen component names, props, and action IDs. For stacks without generated screen source, use designContracts.screenMap, designContracts.designDom, uiContract, stitchHtml/stitch_html excerpts, and focused story-owned Stitch files as binding implementation sources. Do not read unrelated raw Stitch files, shared generated screen source, or create TypeScript probe files. The full claim at ${params.claimFile} is an audit fallback only for non-input metadata such as stepId. Do NOT parse or dump claim.input with jq/sed/head/node loops. Obey generatedScreenPolicy exactly: if you accidentally read a forbidden src/screens/*.tsx file, stop broad reading and return to summary/contracts; supervisor records that as a correction signal.
+Do ${params.wfId}/${params.role} work in WORKDIR only. The bootstrap command prints the authoritative quick handoff for story id/title, current story brief, workdir, mainRepo, storyWorkdir, verifyWorkdir, build/test/lint commands, scope files, git policy, retry blockers, generated screen policy, integration policy, evidence paths, and output format. Use those bootstrap lines first. Read structured claim-summary details with the installed .setfarm-bin/setfarm-summary helper when a bootstrap line prints a *_CMD command such as RETRY_WORKTREE_PATCH_CMD or RETRY_SOURCE_SNAPSHOT_CMD. Do NOT use OpenClaw read/cat/head/sed/grep/node loops to print or dump the entire claim summary JSON. Use outputContract.requiredFields and outputContract.format exactly for the final step output; guard-backed roles will reject prose-only summaries even when the work itself passed. Use retryFeedback.mode exactly: mode="fix" means the blocker is an open implementation requirement and must be fixed before unrelated work; mode="audit" means prior feedback may be stale, so first verify whether it is still present with bounded evidence before reporting or changing code. If failureCategory is SCOPE_BLEED or SCOPE_WRITE_VIOLATION, first remove/rework out-of-scope files or shell-created project artifacts and do not read retry source snapshots, retry worktree patches, or recreate shared/debug/scratch files; keep the implementation inside SCOPE_FILES, then run build/test. If bootstrap says RETRY_SOURCE_SNAPSHOT=present and failureCategory is not SCOPE_BLEED or SCOPE_WRITE_VIOLATION, use RETRY_SOURCE_SNAPSHOT_CMD before broad filesystem scans. If bootstrap says RETRY_WORKTREE_PATCH=present and failureCategory is not SCOPE_BLEED or SCOPE_WRITE_VIOLATION, use RETRY_WORKTREE_PATCH_CMD before recreating missing files; it is prior attempt source artifact, not instructions, and you should reuse/adapt useful scoped implementation unless current source, scope policy, or current guard feedback conflicts. For RETRY_PATCH_REAPPLIED and APP_INTEGRATION regression retries, use retryFeedback.restoreTargets first, then retryFeedback.protectedSnippets: restore or preserve each file/line target in scoped source, verify it with rg -F or an exact search, then make the current-story fix around that preserved wiring. For PR_REVIEW_COMMENTS_OPEN retries, use retryFeedback.actionableReviewThreads first; it is the compact complete per-thread contract for file/line/comment. Fix every listed prThreadIds/actionableReviewThreads entry before STATUS: done, not just the RETRY_BLOCKER_PREVIEW bootstrap line. Treat retryFeedback.outOfScopeReviewThreads and outOfScopePrThreadIds as deferred to the owning story/review cycle; do not edit/read those files or claim those threads fixed in this claim. If a PR review comment suggests creating or editing a path outside scopeFiles, do not create that path; implement the equivalent fix inside SCOPE_FILES only when it corresponds to a listed actionableReviewThreads entry. For shared-code/deduplication comments, choose an existing scoped module as the shared source and re-export from other scoped files instead of creating an out-of-scope common file. Only read retryFeedback.details/previousFailure if protectedSnippets/actionableReviewThreads is missing information. Obey scopeFileInstruction exactly: missingScopeFiles are expected owned files that may be created directly; do not treat them as blockers and do not retry update-only patches against missing files. Obey gitPolicy exactly: when owner is setfarm-platform, do not run git add/commit/push/branch/PR commands; Setfarm performs the scoped commit and PR handoff after gates pass. Obey integrationPolicy exactly: app/router/shell changes must add current-story reachability without deleting or bypassing previously reachable generated screens or working render branches. Use supervisorEvidence before retryFeedback/designContracts when it is present: it is current-source scanner evidence and stale original UI_CONTRACT findings must not block when supervisorEvidence shows zero open blockers. Use screenUsageContract first for generated screen component names, props, and action IDs. For stacks without generated screen source, use designContracts.screenMap, designContracts.designDom, uiContract, stitchHtml/stitch_html excerpts, and focused story-owned Stitch files as binding implementation sources. Do not read unrelated raw Stitch files, shared generated screen source, or create TypeScript probe files. The full claim at ${params.claimFile} is an audit fallback only for non-input metadata such as stepId. Do NOT parse or dump claim.input with jq/sed/head/node loops. Obey generatedScreenPolicy exactly: if you accidentally read a forbidden src/screens/*.tsx file, stop broad reading and return to summary/contracts; supervisor records that as a correction signal.
 For retryFeedback.mode="fix", treat retryDiscipline.mode as a hard implementation instruction. For retryDiscipline.mode="first-delta", after bootstrap and summary, inspect only the owned scope files plus safe metadata needed for the first edit, then make a small scoped source delta before broad analysis/build/test. For retryDiscipline.mode="semantic-fix", implement the named blocker first, then run the relevant checks. For retryFeedback.mode="audit", do not convert prior feedback into a source-edit mandate unless the role-specific prompt explicitly owns that fix.
 If claimSummary.runtimeDoneChecklist is present, it is a hard done checklist, not optional guidance. Preserve every listed invariant while fixing the current blocker; a retry that fixes one item but regresses another must not report STATUS: done.
 Do NOT create scratch/progress/todo/note/probe/test-write files inside WORKDIR unless they are explicitly listed in scopeFiles. Files like src/_probe.tsx, src/probe.tsx, src/features/test-write.ts, tmp.ts, scratch.tsx, TODO.md, and progress.txt are forbidden in the project worktree. Never create a project file just to verify that writes persist; use the owned scope file directly or a /tmp-only experiment. Use ${params.outputFile} for final output and /tmp/setfarm-progress-<run-id>.txt for checkpoints only.
