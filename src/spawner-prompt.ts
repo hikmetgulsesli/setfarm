@@ -1056,10 +1056,10 @@ function retryDisciplineForFailure(
       instruction: "Package-scope retry discipline: first remove package.json, package-lock.json, pnpm-lock.yaml, and yarn.lock changes from the story worktree. Do not install dependencies, rewrite package scripts, or create lockfile deltas in IMPLEMENT. Use the existing BUILD_CMD/TEST_CMD and existing stack-pack dependencies; if the story cannot be implemented without a new dependency, report that as a setup-build/stack-pack dependency blocker instead of editing package files.",
     };
   }
-  if (/\bSCOPE_WRITE_VIOLATION\b[\s\S]{0,900}\b(?:debug|probe|scratch|_debug|tmp\.(?:ts|tsx|js|jsx)|project-tree)/i.test(signal)) {
+  if (/\bSCOPE_WRITE_VIOLATION\b[\s\S]{0,900}\b(?:debug|probe|scratch|_debug|test-write|ad hoc|out-of-scope|project-tree|tmp\.(?:ts|tsx|js|jsx|txt)|src\/__fixtures__\/[^ \n]*\.txt)/i.test(signal)) {
     return {
       mode: "semantic-fix",
-      instruction: "Project-tree debug/probe retry discipline: first remove every out-of-scope debug, probe, scratch, or ad hoc test file from the story worktree. Do not create _debug.test.ts, probe.tsx, scratch files, or temporary source/tests inside src/ or the project tree. Use inline commands or /tmp plain checkpoint notes for experiments, then make the required implementation only in SCOPE_FILES and allowed test/config exceptions. Before STATUS: done, run git diff/status and confirm no unlisted project-tree files remain.",
+      instruction: "Project-tree probe retry discipline: first remove every out-of-scope debug, probe, scratch, test-write, temporary fixture, or ad hoc test file from the story worktree. Do not create _debug.test.ts, test-write.txt, probe.tsx, scratch files, or temporary source/tests inside src/ or the project tree. Use inline commands or /tmp plain checkpoint notes for experiments, then make the required implementation only in SCOPE_FILES and allowed test/config exceptions. Before STATUS: done, run git diff/status and confirm no unlisted project-tree files remain.",
     };
   }
   if (/\bMASKED_CHECK_COMMAND\b/i.test(signal)) {

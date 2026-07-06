@@ -2076,7 +2076,7 @@ describe("spawner prompt bootstrap", () => {
           "CURRENT STORY: Story US-001: App shell",
           "",
           "## Previous Failure / Retry Feedback",
-          "SCOPE_WRITE_VIOLATION: feature-dev_developer changed file(s) outside .story-scope-files via shell/runtime side effects: src/features/focus-pad/_debug.test.ts. Project-tree debug/probe/scratch files are forbidden.",
+          "SCOPE_WRITE_VIOLATION: feature-dev_developer changed file(s) outside .story-scope-files via shell/runtime side effects: src/__fixtures__/test-write.txt. Runtime supervisor killed the claim before out-of-scope work could be committed.",
           "",
           "## Current Story",
         ].join("\n"),
@@ -2084,7 +2084,7 @@ describe("spawner prompt bootstrap", () => {
 
       assert.equal(summary.failureCategory, "SCOPE_WRITE_VIOLATION");
       assert.equal((summary.retryDiscipline as any).mode, "semantic-fix");
-      assert.match(String((summary.retryDiscipline as any).instruction), /Do not create _debug\.test\.ts/);
+      assert.match(String((summary.retryDiscipline as any).instruction), /Do not create _debug\.test\.ts, test-write\.txt/);
       assert.match(String((summary.retryDiscipline as any).instruction), /git diff\/status/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
