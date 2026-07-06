@@ -381,7 +381,7 @@ describe("06-implement step module", () => {
 
       const gate = checkGeneratedScreenShellChromeGate("US-001", "App Shell", tmp);
       assert.equal(gate.passed, false);
-      assert.equal(gate.category, "GENERATED_SCREEN_SHELL_CHROME_UNSAFE");
+      assert.equal(gate.category, "GENERATED_SCREEN_SHELL_LANDMARK_UNSAFE");
       assert.match(gate.reason || "", /main landmark/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -458,6 +458,11 @@ describe("06-implement step module", () => {
       assert.match(issues[0], /GENERATED_SCREEN_LAYOUT_MOUNT_UNSAFE/);
       assert.match(issues[0], /non-flex data-setfarm-root/);
 
+      const gate = checkGeneratedScreenShellChromeGate("US-002", "Board", tmp);
+      assert.equal(gate.passed, false);
+      assert.equal(gate.category, "GENERATED_SCREEN_LAYOUT_MOUNT_UNSAFE");
+      assert.match(gate.suggestion || "", /flex data-setfarm-root/);
+
       fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
         "import { BoardScreen } from './screens/BoardScreen';",
         "export default function App() {",
@@ -522,6 +527,11 @@ describe("06-implement step module", () => {
       assert.match(issues[0], /GENERATED_SCREEN_VIEWPORT_MOUNT_UNSAFE/);
       assert.match(issues[0], /relative min-h-screen/);
       assert.match(issues[0], /w-full overflow-hidden/);
+
+      const gate = checkGeneratedScreenShellChromeGate("US-002", "Gameplay", tmp);
+      assert.equal(gate.passed, false);
+      assert.equal(gate.category, "GENERATED_SCREEN_VIEWPORT_MOUNT_UNSAFE");
+      assert.match(gate.suggestion || "", /relative min-h-screen w-full overflow-hidden/);
 
       fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
         "import { GameplayScreen } from './screens/GameplayScreen';",

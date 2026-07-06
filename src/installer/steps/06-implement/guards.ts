@@ -1731,11 +1731,26 @@ export function checkGeneratedScreenShellChromeGate(
   if (!workdir || !fs.existsSync(workdir)) return { passed: true };
   const issues = findGeneratedScreenShellChromeIssues(workdir, repoPath);
   if (issues.length === 0) return { passed: true };
+  const joinedIssues = issues.join("\n");
+  const category = joinedIssues.includes("GENERATED_SCREEN_VIEWPORT_MOUNT_UNSAFE")
+    ? "GENERATED_SCREEN_VIEWPORT_MOUNT_UNSAFE"
+    : joinedIssues.includes("GENERATED_SCREEN_LAYOUT_MOUNT_UNSAFE")
+      ? "GENERATED_SCREEN_LAYOUT_MOUNT_UNSAFE"
+      : joinedIssues.includes("GENERATED_SCREEN_SHELL_LANDMARK_UNSAFE")
+        ? "GENERATED_SCREEN_SHELL_LANDMARK_UNSAFE"
+        : "GENERATED_SCREEN_SHELL_CHROME_UNSAFE";
+  const suggestion = category === "GENERATED_SCREEN_VIEWPORT_MOUNT_UNSAFE"
+    ? "Keep generated full-screen Stitch screens mounted in a neutral data-setfarm-root container with a real viewport frame, for example className=\"relative min-h-screen w-full overflow-hidden\". Do not wrap the generated screen in app chrome."
+    : category === "GENERATED_SCREEN_LAYOUT_MOUNT_UNSAFE"
+      ? "Keep generated sibling sidebar/content Stitch screens mounted in a neutral flex data-setfarm-root container, for example className=\"flex min-h-screen w-full\". Do not collapse the generated screen root."
+      : category === "GENERATED_SCREEN_SHELL_LANDMARK_UNSAFE"
+        ? "Replace app-shell main/section landmarks around generated full-screen Stitch screens with a neutral data-setfarm-root div. Generated screens own their semantic landmarks."
+        : "Remove visible diagnostic/session/status/debug/QA strips from the app shell around generated screens. Expose deterministic smoke state through window.app/globalThis.app and keep generated screens mounted as the visual viewport root.";
   return {
     passed: false,
-    reason: `${issues.join("\n")}\nStory ${storyId} (${storyTitle}) reported STATUS: done while app-level chrome can visually break generated full-screen Stitch surfaces.`,
-    category: "GENERATED_SCREEN_SHELL_CHROME_UNSAFE",
-    suggestion: "Remove visible diagnostic/session/status/debug/QA strips from the app shell around generated screens. Expose deterministic smoke state through window.app/globalThis.app and keep generated screens mounted as the visual viewport root.",
+    reason: `${joinedIssues}\nStory ${storyId} (${storyTitle}) reported STATUS: done while app-level chrome or shell/mount structure can visually break generated full-screen Stitch surfaces.`,
+    category,
+    suggestion,
   };
 }
 
