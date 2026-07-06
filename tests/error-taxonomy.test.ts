@@ -48,11 +48,12 @@ describe("error taxonomy", () => {
       [
         "IMPLEMENT_EVIDENCE_INCOMPLETE: Story US-003 reported STATUS: done without acceptable orchestrator-owned implementation evidence.",
         "IMPLEMENT_INTERACTION_FAILED: locator.click: Timeout 1000ms exceeded.",
-        "currentScreen=boot | availableActionIds=act-start-game-2 | missingTargetActionId=save-and-return-4 | hint=target is not present in the current runtime surface",
+        "currentScreen=boot | availableActionIds=act-start-game-2 | missingTargetActionId=save-and-return-4 | suggestedActionIds=act-start-game-2 | hint=target is not present in the current runtime surface",
       ].join("\n"),
     );
     assert.equal(unreachableRuntimeClick.category, "UI_INTERACTION_TARGET_UNREACHABLE");
     assert.match(unreachableRuntimeClick.suggestion, /initial loaded state/);
+    assert.match(unreachableRuntimeClick.suggestion, /exact DOM ids/);
     assert.match(unreachableRuntimeClick.suggestion, /reachable opener/);
     assert.doesNotMatch(unreachableRuntimeClick.suggestion, /schema setfarm\.implement-intent/);
 

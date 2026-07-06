@@ -60,9 +60,11 @@ describe("implement evidence runner", () => {
   it("adds current surface and available action ids to failed interaction context", () => {
     const source = fs.readFileSync(path.join(process.cwd(), "src/installer/implement-evidence-runner.ts"), "utf-8");
     assert.match(source, /function failedInteractionContext/);
+    assert.match(source, /function suggestedActionIds/);
     assert.match(source, /currentScreen=/);
     assert.match(source, /availableActionIds=/);
     assert.match(source, /missingTargetActionId=/);
+    assert.match(source, /suggestedActionIds=/);
     assert.match(source, /target is not present in the current runtime surface/);
     assert.match(source, /actionIdsFromDomSnapshot\(capture\?\.domSnapshotPath\)/);
     assert.match(source, /stateBridgeScreen\(capture\?\.stateBridge\)/);

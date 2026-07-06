@@ -124,6 +124,35 @@ function actionIdsFromDomSnapshot(domSnapshotPath: string | undefined): string[]
   }
 }
 
+function actionIdTokens(value: string): Set<string> {
+  return new Set(String(value || "")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/g)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3)
+    .filter((token) => !/^\d+$/.test(token))
+    .filter((token) => !["action", "button", "click", "open", "show"].includes(token)));
+}
+
+function suggestedActionIds(missingActionId: string, availableActionIds: string[]): string[] {
+  const wanted = actionIdTokens(missingActionId);
+  if (wanted.size === 0) return [];
+  return availableActionIds
+    .map((candidate) => {
+      const have = actionIdTokens(candidate);
+      let score = 0;
+      for (const token of wanted) {
+        if (have.has(token)) score += 2;
+        else if ([...have].some((item) => item.includes(token) || token.includes(item))) score += 1;
+      }
+      return { candidate, score };
+    })
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || a.candidate.localeCompare(b.candidate))
+    .map((item) => item.candidate)
+    .slice(0, 5);
+}
+
 function stateBridgeScreen(stateBridge: Record<string, unknown> | null | undefined): string {
   const state = stateBridge && typeof stateBridge === "object" ? (stateBridge as any).state : null;
   const screen = state && typeof state === "object" ? state.screen : (stateBridge as any)?.screen;
@@ -139,6 +168,8 @@ function failedInteractionContext(interaction: InteractionRequest, capture: any)
   const targetActionId = extractTargetActionId(interaction.target);
   if (targetActionId && actionIds.length > 0 && !actionIds.includes(targetActionId)) {
     parts.push(`missingTargetActionId=${targetActionId}`);
+    const suggestions = suggestedActionIds(targetActionId, actionIds);
+    if (suggestions.length > 0) parts.push(`suggestedActionIds=${suggestions.join(",")}`);
     parts.push("hint=target is not present in the current runtime surface; add an executable prerequisite navigation/open-surface interaction or expose a reachable control before requesting this target");
   }
   return parts.length > 0 ? parts.join(" | ") : "";
