@@ -381,6 +381,27 @@ function reactStoreSideEffectsReviewLooksSatisfied(body: string, normalizedSourc
   return hasSafeIdFallback && hasConsistentUpdateRecordTimestamp;
 }
 
+function redundantBootstrapPersistenceReviewLooksSatisfied(body: string, normalizedSource: string): boolean {
+  const text = String(body || "").toLowerCase();
+  if (!/\b(?:initial mount|bootstrap|hydrate|hydrated|loads? notes?)\b/.test(text)) return false;
+  if (!/\b(?:redundant|unnecessary|duplicate)\b/.test(text)) return false;
+  if (!/\b(?:localstorage|persistence|persist|save|write)\b/.test(text)) return false;
+  if (!/\b(?:skip|avoid|prevent)\b[\s\S]{0,80}\b(?:first|initial|post-bootstrap)\b[\s\S]{0,80}\b(?:save|write|persist)\b/.test(text)) return false;
+
+  const hasBootstrapRef =
+    /\b\w*bootstrap\w*Ref\s*=\s*useRef\s*\(\s*false\s*\)/i.test(normalizedSource);
+  const hasFirstSaveRef =
+    /\b(?:\w*first\w*save\w*Ref|\w*skip\w*save\w*Ref|\w*skip\w*persist\w*Ref)\s*=\s*useRef\s*\(\s*true\s*\)/i.test(normalizedSource);
+  const hasBootstrapInitEffect =
+    /useEffect\s*\(\s*\(\s*\)\s*=>\s*\{[^]*?\bdispatch\s*\(\s*\{\s*type\s*:\s*['"]INIT['"][^]*?\}\s*\)[^]*?\}\s*,\s*\[[^\]]*(?:repo|initialLoad)[^\]]*\]\s*\)/.test(normalizedSource);
+  const hasPersistenceEffect =
+    /useEffect\s*\(\s*\(\s*\)\s*=>\s*\{[^]*?\brepo\.save\s*\(\s*state\.notes\s*\)[^]*?\}\s*,\s*\[[^\]]*state\.notes[^\]]*\]\s*\)/.test(normalizedSource);
+  const skipsBeforeSave =
+    /if\s*\(\s*(?:\w*first\w*save\w*Ref|\w*skip\w*save\w*Ref|\w*skip\w*persist\w*Ref)\.current\s*\)\s*\{[^}]*\.current\s*=\s*false\s*;?[^}]*return\s*;?[^}]*\}[^]*?\brepo\.save\s*\(\s*state\.notes\s*\)/i.test(normalizedSource);
+
+  return hasBootstrapRef && hasFirstSaveRef && hasBootstrapInitEffect && hasPersistenceEffect && skipsBeforeSave;
+}
+
 function commentProseLooksMechanicallySatisfied(body: string, normalizedSource: string): boolean {
   const text = String(body || "").toLowerCase();
 
@@ -390,6 +411,7 @@ function commentProseLooksMechanicallySatisfied(body: string, normalizedSource: 
   if (optionalShellMethodCallLooksSatisfied(body, normalizedSource)) return true;
   if (runProbeStatusUtilityReviewLooksSatisfied(body, normalizedSource)) return true;
   if (reactStoreSideEffectsReviewLooksSatisfied(body, normalizedSource)) return true;
+  if (redundantBootstrapPersistenceReviewLooksSatisfied(body, normalizedSource)) return true;
 
   if (
     /\bwindow\.app\b/i.test(body) &&

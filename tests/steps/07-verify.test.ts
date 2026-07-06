@@ -1408,6 +1408,74 @@ describe("07-verify step module", () => {
     assert.equal(commentLooksMechanicallySatisfied(sideEffectComment, unsafeSource), false);
   });
 
+  it("marks redundant bootstrap persistence review comments as mechanically satisfied", () => {
+    const redundantSaveComment = {
+      id: "bootstrap-redundant-save",
+      threadId: "PRRT_bootstrap_save",
+      kind: "review-comment" as const,
+      author: "gemini-code-assist",
+      body: [
+        "On initial mount, the bootstrap effect loads notes from the repository and dispatches `INIT`, which sets the storage status to `'ready'.",
+        "This immediately triggers the persistence effect, writing the newly loaded notes back to `localStorage` redundantly.",
+        "Using a ref to skip the first save operation after bootstrap avoids this unnecessary write.",
+      ].join(" "),
+      createdAt: "2026-07-06T00:31:02Z",
+      path: "src/features/focus-pad/focus-pad.store.tsx",
+      line: 233,
+      originalLine: 221,
+      threadResolved: false,
+      outdated: false,
+    };
+    const fixedSource = `
+      import { useEffect, useReducer, useRef } from 'react';
+
+      export function FocusPadProvider({ repo, initialLoad }) {
+        const [state, dispatch] = useReducer(reducer, EMPTY_STATE);
+        const bootstrappedRef = useRef(false);
+        const skipNextSaveRef = useRef(true);
+
+        useEffect(() => {
+          if (bootstrappedRef.current) return;
+          bootstrappedRef.current = true;
+          dispatch({ type: 'SET_STORAGE_STATUS', storageStatus: 'loading' });
+          const result = initialLoad ? initialLoad() : repo.load();
+          dispatch({
+            type: 'INIT',
+            payload: {
+              notes: result.ok ? result.notes : [],
+              storageStatus: result.ok ? 'ready' : 'error',
+              lastError: null,
+            },
+          });
+        }, [repo, initialLoad]);
+
+        useEffect(() => {
+          if (!bootstrappedRef.current) return;
+          if (state.storageStatus === 'idle' || state.storageStatus === 'loading') return;
+          if (skipNextSaveRef.current) {
+            skipNextSaveRef.current = false;
+            return;
+          }
+          const result = repo.save(state.notes);
+          if (!result.ok) {
+            dispatch({ type: 'SET_LAST_ERROR', error: result.message });
+          }
+        }, [state.notes, state.storageStatus, repo]);
+      }
+    `;
+    const unsafeSource = `
+      useEffect(() => {
+        dispatch({ type: 'INIT', payload: { notes: repo.load().notes, storageStatus: 'ready' } });
+      }, [repo]);
+      useEffect(() => {
+        repo.save(state.notes);
+      }, [state.notes, state.storageStatus, repo]);
+    `;
+
+    assert.equal(commentLooksMechanicallySatisfied(redundantSaveComment, fixedSource), true);
+    assert.equal(commentLooksMechanicallySatisfied(redundantSaveComment, unsafeSource), false);
+  });
+
   it("marks base CSS class toggle review comments as mechanically satisfied from state-class source evidence", () => {
     const classToggleComment = {
       id: "css-class-toggle-inline",
