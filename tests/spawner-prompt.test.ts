@@ -206,6 +206,11 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, /BUILD_CMD=npm run build/);
       assert.match(out, /TEST_CMD=npm run test:run/);
       assert.match(out, /LINT_CMD=true/);
+      const checkScript = path.join(workdir, ".setfarm-bin", "setfarm-check");
+      assert.ok(fs.existsSync(checkScript), "bootstrap should install setfarm-check");
+      const checkScriptBody = fs.readFileSync(checkScript, "utf-8");
+      assert.match(checkScriptBody, /Usage: setfarm-check build\|test\|lint/);
+      assert.match(checkScriptBody, /SETFARM_CHECK_START \$kind/);
       assert.match(out, /SCOPE_FILES=src\/App\.tsx/);
       assert.match(out, /MISSING_SCOPE_FILES=src\/App\.tsx/);
       assert.match(out, /SCOPE_FILE_POLICY=.*Missing scope files are expected new owned files/);
@@ -2171,10 +2176,12 @@ describe("spawner prompt bootstrap", () => {
         stepId: "step-123",
         workdir: tmp,
       });
-      assert.match(bootstrap, /MASKED_CHECK_RULE=Rerun the exact build\/test\/lint\/typecheck command as a standalone command without output-filtering pipes/);
+      assert.match(bootstrap, /MASKED_CHECK_RULE=Use CHECK_BUILD_CMD\/CHECK_TEST_CMD when present/);
       assert.match(bootstrap, /MASKED_CHECK_EXACT_BUILD_CMD=/);
       assert.match(bootstrap, /MASKED_CHECK_EXACT_TEST_CMD=/);
-      assert.match(bootstrap, /MASKED_CHECK_DONE_GATE=Before STATUS: done, run the exact standalone commands above with no pipe/);
+      assert.match(bootstrap, /MASKED_CHECK_DONE_GATE=Before STATUS: done, run CHECK_BUILD_CMD\/CHECK_TEST_CMD when present/);
+      assert.match(bootstrap, /CHECK_BUILD_CMD=setfarm-check build/);
+      assert.match(bootstrap, /CHECK_TEST_CMD=setfarm-check test/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -2273,10 +2280,13 @@ describe("spawner prompt bootstrap", () => {
 
       assert.match(out, /FAILURE_CATEGORY=PR_REVIEW_COMMENTS_OPEN/);
       assert.match(out, /PR_REVIEW_ACTIONABLE_THREADS=1/);
-      assert.match(out, /MASKED_CHECK_RULE=Rerun the exact build\/test\/lint\/typecheck command as a standalone command without output-filtering pipes/);
+      assert.match(out, /IMPLEMENT_LOOP=Edit scoped source, run CHECK_BUILD_CMD, run CHECK_TEST_CMD/);
+      assert.match(out, /CHECK_BUILD_CMD=setfarm-check build/);
+      assert.match(out, /CHECK_TEST_CMD=setfarm-check test/);
+      assert.match(out, /MASKED_CHECK_RULE=Use CHECK_BUILD_CMD\/CHECK_TEST_CMD when present/);
       assert.match(out, /MASKED_CHECK_EXACT_BUILD_CMD=npm run build/);
       assert.match(out, /MASKED_CHECK_EXACT_TEST_CMD=npm run test:run/);
-      assert.match(out, /MASKED_CHECK_DONE_GATE=Before STATUS: done, run the exact standalone commands above with no pipe/);
+      assert.match(out, /MASKED_CHECK_DONE_GATE=Before STATUS: done, run CHECK_BUILD_CMD\/CHECK_TEST_CMD when present/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

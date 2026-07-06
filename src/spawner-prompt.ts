@@ -1719,9 +1719,8 @@ fi
 
 mkdir -p "$WORKDIR"
 cd "$WORKDIR"
-if [ -d "$WORKDIR/.setfarm-bin" ]; then
-  export PATH="$WORKDIR/.setfarm-bin:$PATH"
-fi
+mkdir -p "$WORKDIR/.setfarm-bin"
+export PATH="$WORKDIR/.setfarm-bin:$PATH"
 case "$(pwd)" in
   "$HOME"/.openclaw/setfarm-repo|"$HOME"/.openclaw/setfarm-repo/*)
     echo FATAL_PLATFORM_CWD
@@ -1730,6 +1729,49 @@ case "$(pwd)" in
 esac
 
 printf 'STEP_ID=%s\\nWORKDIR=%s\\nCLAIM_SUMMARY_FILE=%s\\n' "$STEP_ID" "$(pwd)" "$CLAIM_SUMMARY_FILE"
+if [ -n "$CLAIM_SUMMARY_FILE" ] && [ -f "$CLAIM_SUMMARY_FILE" ]; then
+  node - "$CLAIM_SUMMARY_FILE" "$WORKDIR/.setfarm-bin/setfarm-check" <<'SETFARM_CHECK_NODE'
+const fs = require("fs");
+const path = require("path");
+function shq(value) {
+  return "'" + String(value || "").replace(/'/g, "'\\''") + "'";
+}
+try {
+  const s = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+  const out = process.argv[3];
+  const buildCommand = s.buildCommand || "true";
+  const testCommand = s.testCommand || "true";
+  const lintCommand = s.lintCommand || "true";
+  const script = [
+    "#!/usr/bin/env bash",
+    "set -euo pipefail",
+    "usage() {",
+    "  echo \\"Usage: setfarm-check build|test|lint\\" >&2",
+    "  echo \\"Runs the Setfarm-declared check as one standalone command with its real exit status.\\" >&2",
+    "  exit 2",
+    "}",
+    "kind=\\"$1\\"",
+    "case \\"$kind\\" in",
+    "  build) cmd=" + shq(buildCommand) + " ;;",
+    "  test) cmd=" + shq(testCommand) + " ;;",
+    "  lint) cmd=" + shq(lintCommand) + " ;;",
+    "  *) usage ;;",
+    "esac",
+    "if [ -z \\"$cmd\\" ] || [ \\"$cmd\\" = \\"true\\" ]; then",
+    "  echo \\"SETFARM_CHECK_SKIP $kind\\"",
+    "  exit 0",
+    "fi",
+    "echo \\"SETFARM_CHECK_START $kind: $cmd\\" >&2",
+    "bash -lc \\"$cmd\\"",
+    "",
+  ].join("\\n");
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  fs.writeFileSync(out, script, { mode: 0o755 });
+} catch (err) {
+  process.stderr.write("SETFARM_CHECK_INSTALL_FAILED: " + String(err).slice(0, 240) + "\\n");
+}
+SETFARM_CHECK_NODE
+fi
 SUMMARY_PRINTED=0
 if [ -n "$CLAIM_SUMMARY_FILE" ] && [ -f "$CLAIM_SUMMARY_FILE" ]; then
   node - "$CLAIM_SUMMARY_FILE" <<'SETFARM_SUMMARY_NODE'
@@ -1737,8 +1779,6 @@ const fs = require("fs");
 const s = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
 const lines = [];
 if (s.storyId || s.storyTitle) lines.push(("STORY=" + (s.storyId || "") + " " + (s.storyTitle || "")).trim());
-if (s.currentStory) lines.push("CURRENT_STORY_BRIEF=" + String(s.currentStory).replace(/\\s+/g, " ").slice(0, 1200));
-if (s.acceptanceCriteria) lines.push("ACCEPTANCE_CRITERIA=" + String(s.acceptanceCriteria).replace(/\\s+/g, " ").slice(0, 900));
 if (s.storyBranch) lines.push("STORY_BRANCH=" + String(s.storyBranch));
 if (s.storyDiffBase) lines.push("STORY_DIFF_BASE=" + String(s.storyDiffBase));
 if (s.storyWorkdir) lines.push("STORY_WORKDIR=" + String(s.storyWorkdir));
@@ -1747,6 +1787,14 @@ if (s.repo) lines.push("MAIN_REPO=" + String(s.repo));
 if (s.buildCommand) lines.push("BUILD_CMD=" + String(s.buildCommand));
 if (s.testCommand) lines.push("TEST_CMD=" + String(s.testCommand));
 if (s.lintCommand) lines.push("LINT_CMD=" + String(s.lintCommand));
+if (/^developer$/i.test(String(s.role || ""))) {
+  lines.push("IMPLEMENT_LOOP=Edit scoped source, run CHECK_BUILD_CMD, run CHECK_TEST_CMD, then write required evidence/output.");
+  if (s.buildCommand && String(s.buildCommand) !== "true") lines.push("CHECK_BUILD_CMD=setfarm-check build");
+  if (s.testCommand && String(s.testCommand) !== "true") lines.push("CHECK_TEST_CMD=setfarm-check test");
+  if (s.lintCommand && String(s.lintCommand) !== "true") lines.push("CHECK_LINT_CMD=setfarm-check lint");
+}
+if (s.currentStory) lines.push("CURRENT_STORY_BRIEF=" + String(s.currentStory).replace(/\\s+/g, " ").slice(0, 1200));
+if (s.acceptanceCriteria) lines.push("ACCEPTANCE_CRITERIA=" + String(s.acceptanceCriteria).replace(/\\s+/g, " ").slice(0, 900));
 if (Array.isArray(s.scopeFiles)) lines.push("SCOPE_FILES=" + s.scopeFiles.join(", "));
 if (Array.isArray(s.existingScopeFiles) && s.existingScopeFiles.length) lines.push("EXISTING_SCOPE_FILES=" + s.existingScopeFiles.join(", "));
 if (Array.isArray(s.missingScopeFiles) && s.missingScopeFiles.length) lines.push("MISSING_SCOPE_FILES=" + s.missingScopeFiles.join(", "));
@@ -1775,11 +1823,11 @@ const checkRuleSignal = [
   s.retryDiscipline && s.retryDiscipline.instruction,
 ].filter(Boolean).join("\\n");
 if (/^developer$/i.test(String(s.role || "")) || /\\bMASKED_CHECK_COMMAND\\b/i.test(checkRuleSignal)) {
-  lines.push("MASKED_CHECK_RULE=Rerun the exact build/test/lint/typecheck command as a standalone command without output-filtering pipes. Do not run build/test/lint/typecheck with pipe-to-head, pipe-to-tail, pipe-to-grep, pipe-to-rg, pipe-to-tee, pipe-to-cat, pipe-to-awk, or pipe-to-sed, even if followed by echo $? or echo BUILD_EXIT=$?.");
+  lines.push("MASKED_CHECK_RULE=Use CHECK_BUILD_CMD/CHECK_TEST_CMD when present. Otherwise rerun the exact build/test/lint/typecheck command as a standalone command without output-filtering pipes.");
   if (s.buildCommand) lines.push("MASKED_CHECK_EXACT_BUILD_CMD=" + String(s.buildCommand));
   if (s.testCommand) lines.push("MASKED_CHECK_EXACT_TEST_CMD=" + String(s.testCommand));
   if (s.lintCommand && String(s.lintCommand) !== "true") lines.push("MASKED_CHECK_EXACT_LINT_CMD=" + String(s.lintCommand));
-  lines.push("MASKED_CHECK_DONE_GATE=Before STATUS: done, run the exact standalone commands above with no pipe. If you need shorter output, redirect to a log while preserving the command exit status, then inspect the log in a separate command.");
+  lines.push("MASKED_CHECK_DONE_GATE=Before STATUS: done, run CHECK_BUILD_CMD/CHECK_TEST_CMD when present, or the exact standalone commands above with no pipe. If you need shorter output, redirect to a log while preserving the command exit status, then inspect the log in a separate command.");
 }
 if (/^DESIGN_MISMATCH$/i.test(String(s.failureCategory || ""))) {
   lines.push("DESIGN_RETRY_RULE=Fix the exact UI_CONTRACT/design-token file and line first; search scoped files for the rejected token or pattern and replace it before broad feature work.");
