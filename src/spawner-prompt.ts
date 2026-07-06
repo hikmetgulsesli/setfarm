@@ -1068,6 +1068,12 @@ function retryDisciplineForFailure(
       instruction: "Masked-check retry discipline: first rerun the exact failing build/test/lint/typecheck command as a standalone command without any pipe to head, tail, grep, rg, tee, cat, awk, or sed. Do not use forms like `npm run build 2>&1 | tail -40; echo $?`; that still hides the real build exit status. If output must be shortened, redirect to a log while preserving the command exit status, then inspect the log in a separate command. Do not report STATUS: done until an unmasked deterministic check has exited successfully.",
     };
   }
+  if (/\b(?:IMPLEMENT_EVIDENCE_INCOMPLETE|IMPLEMENT_EVIDENCE_VERDICT_NOT_PASSED|IMPLEMENT_INTERACTION_FAILED|UI_INTERACTION_TARGET_UNREACHABLE)\b/i.test(signal)) {
+    return {
+      mode: "semantic-fix",
+      instruction: "Implementation-evidence retry discipline: first fix .setfarm/implement/<story-id>/IMPLEMENT_VERIFICATION_REQUEST.json so Setfarm can execute it from the initial rendered runtime state. interactionRequests may contain only executable browser actions supported by Setfarm, primarily click with a target selector such as [data-action-id='save-1'], or snapshot for capture-only flows; never use assert, source-grep, build/test commands, prose checks, or selectors for elements that are not currently reachable. If a control is only visible after another surface opens, include the reachable opener click first. If no reachable DOM target exists in this story's scope, put that criterion in uncoveredCriteria/knownGaps instead of claiming it covered or requesting a nonexistent selector. Do not report STATUS: done until runtime evidence can pass or the request honestly lists uncovered criteria.",
+    };
+  }
   if (/\bDESIGN_MISMATCH\b|\bDESIGN MISMATCH\b|\bUI_CONTRACT\b|\bdesign compliance\b/i.test(signal)) {
     return {
       mode: "semantic-fix",

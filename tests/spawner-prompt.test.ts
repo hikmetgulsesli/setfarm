@@ -626,6 +626,48 @@ describe("spawner prompt bootstrap", () => {
     }
   });
 
+  it("gives implementation evidence interaction failures an executable request discipline", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-implement-evidence-retry-"));
+    try {
+      const workdir = path.join(tmp, "worktree");
+      fs.mkdirSync(workdir, { recursive: true });
+      fs.writeFileSync(path.join(workdir, ".story-scope-files"), "src/App.tsx\n");
+
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        bootstrapFile: path.join(tmp, "bootstrap.sh"),
+        stepId: "step-123",
+        runId: "run-123",
+        workdir,
+        repo: workdir,
+        storyId: "US-001",
+        input: [
+          "TASK: Project: evidence retry sensor",
+          "CURRENT STORY: Story US-001: Evidence retry sensor",
+          "",
+          "## Previous Failure / Retry Feedback",
+          "IMPLEMENT_EVIDENCE_INCOMPLETE: Story US-001 reported STATUS: done without acceptable orchestrator-owned implementation evidence.",
+          "IMPLEMENT_EVIDENCE_VERDICT_NOT_PASSED: evidence.verdict must be pass before story completion.",
+          "IMPLEMENT_INTERACTION_FAILED: Unsupported or incomplete interaction: assert",
+          "IMPLEMENT_INTERACTION_FAILED: locator.click: Timeout 1000ms exceeded while waiting for locator('[data-testid=\\'focus-pad-error\\'] button').first()",
+          "",
+          "## Current Story",
+        ].join("\n"),
+      });
+
+      assert.equal(summary.failureCategory, "IMPLEMENT_EVIDENCE_INCOMPLETE");
+      assert.equal((summary.retryDiscipline as any).mode, "semantic-fix");
+      assert.match(String((summary.retryDiscipline as any).instruction), /never use assert/);
+      assert.match(String((summary.retryDiscipline as any).instruction), /uncoveredCriteria\/knownGaps/);
+      assert.match(String((summary.retryDiscipline as any).instruction), /Do not report STATUS: done until runtime evidence can pass/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("exposes full retry worktree patch and source snapshot as structured retry context", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-full-retry-context-"));
     try {
