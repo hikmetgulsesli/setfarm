@@ -59,6 +59,29 @@ function commandUsable(name: string): boolean {
   }
 }
 
+function openclawMinimaxFallbackUsable(): boolean {
+  if (!commandUsable(process.env.OPENCLAW_CLI || "openclaw")) return false;
+  const home = process.env.HOME || "";
+  const candidates = [
+    process.env.OPENCLAW_CONFIG_PATH || "",
+    home ? join(home, ".openclaw", "openclaw.json") : "",
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    try {
+      if (!existsSync(candidate)) continue;
+      const config = JSON.parse(readFileSync(candidate, "utf-8"));
+      const hasMinimaxAuth = Array.isArray(config?.auth?.order?.minimax)
+        ? config.auth.order.minimax.length > 0
+        : Object.values(config?.auth?.profiles || {}).some((profile: any) => profile?.provider === "minimax");
+      const hasMinimaxProvider = Boolean(config?.models?.providers?.minimax);
+      if (hasMinimaxAuth && hasMinimaxProvider) return true;
+    } catch {
+      // Keep quota preflight best-effort; malformed local config should not crash the CLI.
+    }
+  }
+  return false;
+}
+
 function isLikelyOutputFileArg(arg: string): boolean {
   return arg.startsWith("/") || arg.startsWith("./") || arg.startsWith("../") || /\.(md|out|txt)$/i.test(arg);
 }
@@ -997,9 +1020,9 @@ async function main() {
           const r = snapshot?.rateWindow;
           const resetMs = (w?.remaining === 0 ? w?.resetInMs : r?.resetInMs) || 0;
           const resetMin = Math.max(1, Math.round(resetMs / 60000));
-          if (commandUsable(process.env.OPENCODE_CLI || "opencode")) {
+          if (commandUsable(process.env.OPENCODE_CLI || "opencode") || openclawMinimaxFallbackUsable()) {
             process.stderr.write(
-              `Kimi quota exhausted — continuing with opencode/minimax fallback.\n` +
+              `Kimi quota exhausted — continuing with minimax fallback.\n` +
               `  Weekly: ${w?.used ?? "?"}/${w?.limit ?? "?"} remaining=${w?.remaining ?? "?"}\n` +
               `  5h window: ${r?.used ?? "?"}/${r?.limit ?? "?"} remaining=${r?.remaining ?? "?"}\n` +
               `  Kimi resets in ~${resetMin} min.\n`,

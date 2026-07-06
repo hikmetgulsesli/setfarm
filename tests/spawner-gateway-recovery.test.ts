@@ -144,6 +144,15 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /event-driven spawner owns workflow/);
   });
 
+  it("allows workflow runs to proceed on OpenClaw Minimax fallback when Kimi quota is exhausted", () => {
+    const source = fs.readFileSync(path.join(root, "src", "cli", "cli.ts"), "utf-8");
+    assert.match(source, /function openclawMinimaxFallbackUsable\(\): boolean/);
+    assert.match(source, /config\?\.auth\?\.order\?\.minimax/);
+    assert.match(source, /config\?\.models\?\.providers\?\.minimax/);
+    assert.match(source, /commandUsable\(process\.env\.OPENCODE_CLI \|\| "opencode"\) \|\| openclawMinimaxFallbackUsable\(\)/);
+    assert.match(source, /Kimi quota exhausted — continuing with minimax fallback/);
+  });
+
   it("accepts positional output file paths for step completion", () => {
     const source = fs.readFileSync(path.join(root, "src", "cli", "cli.ts"), "utf-8");
     assert.match(source, /function isLikelyOutputFileArg/);
