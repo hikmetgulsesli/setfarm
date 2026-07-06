@@ -12,6 +12,40 @@ function writeHtml(filePath: string, body: string): void {
 }
 
 describe("stitch-to-jsx", () => {
+  it("falls back to SCREEN_MAP when DESIGN_MANIFEST is empty but HTML exists", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-screen-map-fallback-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([]));
+      fs.writeFileSync(path.join(stitchDir, "SCREEN_MAP.json"), JSON.stringify([
+        {
+          screenId: "23263bf1cb31439783750946de23756c",
+          name: "Status Utility - Quick Tally",
+          type: "app-screen",
+          surfaceIds: ["SURF_STATUS_UTILITY"],
+        },
+      ]));
+      writeHtml(path.join(stitchDir, "23263bf1cb31439783750946de23756c.html"), "<main><h1>Quick Tally</h1><button>Add</button></main>");
+
+      const out = execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+
+      const screensDir = path.join(tmp, "src", "screens");
+      assert.equal(fs.existsSync(path.join(screensDir, "StatusUtilityQuickTally.tsx")), true);
+      const index = JSON.parse(fs.readFileSync(path.join(screensDir, "SCREEN_INDEX.json"), "utf-8"));
+      assert.equal(index.length, 1);
+      assert.equal(index[0].screenId, "23263bf1cb31439783750946de23756c");
+      assert.equal(index[0].componentName, "StatusUtilityQuickTally");
+      assert.match(out, /Generated 1 screen/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("skips PRD pseudo screens and invalid HTML, while honoring htmlFile", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-jsx-"));
     try {

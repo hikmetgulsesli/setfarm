@@ -9,10 +9,17 @@ const stitchDir = path.join(repoPath, "stitch");
 const manifestPath = path.join(stitchDir, "DESIGN_MANIFEST.json");
 if (!fs.existsSync(manifestPath)) { console.log("No DESIGN_MANIFEST.json — skipping"); process.exit(0); }
 
-const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+const rawManifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
 const screensDir = path.join(repoPath, "src", "screens");
 fs.mkdirSync(screensDir, { recursive: true });
 const MIN_STITCH_HTML_BYTES = 1000;
+
+function manifestScreens(value) {
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value?.screens)) return value.screens;
+  if (value?.screens && typeof value.screens === "object") return Object.values(value.screens);
+  return [];
+}
 
 function isPrdPseudoScreen(screen) {
   const title = String(screen?.title || screen?.name || "").trim().toLowerCase();
@@ -40,6 +47,42 @@ function findScreenHtml(screen) {
     screen?.screenId ? `${screen.screenId}.html` : "",
   ].filter(Boolean);
   return candidates.map(file => path.join(stitchDir, file)).find(isValidStitchHtml);
+}
+
+function fallbackManifestFromScreenMap() {
+  const screenMapPath = path.join(stitchDir, "SCREEN_MAP.json");
+  if (!fs.existsSync(screenMapPath)) return [];
+  let screenMap = [];
+  try {
+    const parsed = JSON.parse(fs.readFileSync(screenMapPath, "utf-8"));
+    screenMap = Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+  return screenMap
+    .map((screen) => {
+      const screenId = String(screen?.screenId || screen?.id || "").trim();
+      if (!screenId) return null;
+      const htmlFile = `${screenId}.html`;
+      if (!isValidStitchHtml(path.join(stitchDir, htmlFile))) return null;
+      return {
+        screenId,
+        title: String(screen?.title || screen?.name || screenId).trim(),
+        htmlFile,
+        surfaceIds: Array.isArray(screen?.surfaceIds) ? screen.surfaceIds : [],
+        type: screen?.type || "",
+      };
+    })
+    .filter(Boolean);
+}
+
+let manifest = manifestScreens(rawManifest);
+if (manifest.length === 0) {
+  const fallbackManifest = fallbackManifestFromScreenMap();
+  if (fallbackManifest.length > 0) {
+    console.warn(`DESIGN_MANIFEST_EMPTY: falling back to SCREEN_MAP for ${fallbackManifest.length} screen(s)`);
+    manifest = fallbackManifest;
+  }
 }
 
 const JSX_ATTRIBUTE_MAP = {
