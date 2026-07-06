@@ -2055,6 +2055,42 @@ describe("spawner prompt bootstrap", () => {
     }
   });
 
+  it("gives project-tree debug probe scope writes a source-clean retry discipline", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-debug-probe-scope-write-"));
+    try {
+      fs.writeFileSync(path.join(tmp, ".story-scope-files"), "src/App.tsx\n");
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: "/tmp/claim.json",
+        outputFile: "/tmp/output.txt",
+        bootstrapFile: "/tmp/bootstrap.sh",
+        stepId: "step-123",
+        runId: "run-123",
+        workdir: tmp,
+        repo: tmp,
+        storyId: "US-001",
+        input: [
+          "TASK: Project: debug probe sensor",
+          `WORKDIR: ${tmp}`,
+          "CURRENT STORY: Story US-001: App shell",
+          "",
+          "## Previous Failure / Retry Feedback",
+          "SCOPE_WRITE_VIOLATION: feature-dev_developer changed file(s) outside .story-scope-files via shell/runtime side effects: src/features/focus-pad/_debug.test.ts. Project-tree debug/probe/scratch files are forbidden.",
+          "",
+          "## Current Story",
+        ].join("\n"),
+      });
+
+      assert.equal(summary.failureCategory, "SCOPE_WRITE_VIOLATION");
+      assert.equal((summary.retryDiscipline as any).mode, "semantic-fix");
+      assert.match(String((summary.retryDiscipline as any).instruction), /Do not create _debug\.test\.ts/);
+      assert.match(String((summary.retryDiscipline as any).instruction), /git diff\/status/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("gives masked check retries an unmasked command discipline", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-masked-check-retry-"));
     try {
