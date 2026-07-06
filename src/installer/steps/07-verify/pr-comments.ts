@@ -93,6 +93,7 @@ function reviewSummaryLooksLikeDigest(body: string): boolean {
   if (/```/.test(text)) return false;
   if (/\b(?:line|lines)\s+\d+\b|:[0-9]+\b/.test(prose)) return false;
   if (/\bThis pull request\b[\s\S]{0,800}\bFeedback is provided\b/i.test(prose)) return true;
+  if (/\bThis pull request\b[\s\S]{0,800}\bFeedback highlights?\b/i.test(prose)) return true;
   if (/\b(?:please|must\s+(?:fix|change|update)|required\s+change|blocking|breaks?|fails?|error)\b/i.test(prose)) return false;
   return (
     /\bThis pull request\b[\s\S]{0,500}\bfeedback focuses on\b/i.test(prose) ||
@@ -102,6 +103,11 @@ function reviewSummaryLooksLikeDigest(body: string): boolean {
 }
 
 export function getActionablePrComments(state: PrState): PrComment[] {
+  const hasCurrentInlineReviewComments = (state.comments || []).some(c =>
+    c.kind === "review-comment" &&
+    !(c.outdated || c.threadResolved || c.threadOutdated),
+  );
+
   return (state.comments || []).filter(c => {
     if (!c.body || c.body.trim().length < 5) return false;
     // GitHub keeps old inline review comments after a branch moves. When the
@@ -114,7 +120,10 @@ export function getActionablePrComments(state: PrState): PrComment[] {
     // been fixed/resolved. Plain summaries are not blockers, but Gemini Code
     // Assist can put actionable findings directly in the COMMENTED review body
     // without inline threads, so inspect body severity before auto-merge.
-    if (c.kind === "review") return reviewSummaryLooksActionable(c, state);
+    if (c.kind === "review") {
+      if (hasCurrentInlineReviewComments && reviewSummaryLooksLikeDigest(c.body)) return false;
+      return reviewSummaryLooksActionable(c, state);
+    }
     // Skip bot-generated auto-merge notifications and similar noise.
     if (/^(auto-merge|automerge|merge conflict|ci)\b/i.test(c.body.trim())) return false;
     return true;

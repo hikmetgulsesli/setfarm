@@ -377,6 +377,66 @@ describe("07-verify step module", () => {
     assert.match(actionable, /Please fix the persistence bug/);
   });
 
+  it("does not count Gemini digest summaries when current inline threads exist", () => {
+    const formatted = formatPrCommentsForAgent({
+      state: "OPEN",
+      headOid: "head-1",
+      checksStatus: "passing",
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+      comments: [
+        {
+          id: "gemini-review-digest",
+          kind: "review",
+          state: "COMMENTED",
+          author: "gemini-code-assist",
+          body: [
+            "## Code Review",
+            "",
+            "This pull request implements the Focus Pad application shell. Feedback highlights a bug where the note input textarea is not cleared after saving, a redundant localStorage write on initial mount, and performance overhead from repeatedly probing localStorage availability.",
+            "",
+            "> [!IMPORTANT]",
+            "> The consumer version of Gemini Code Assist on GitHub is being sunset.",
+          ].join("\n"),
+          commitOid: "head-1",
+          createdAt: "2026-07-06T00:31:00Z",
+        },
+        {
+          id: "inline-clear",
+          threadId: "PRRT_clear",
+          kind: "review-comment",
+          author: "gemini-code-assist",
+          body: "Clear the local input state directly after saving.",
+          createdAt: "2026-07-06T00:31:01Z",
+          path: "src/App.tsx",
+          line: 45,
+          originalLine: 45,
+          threadResolved: false,
+          outdated: false,
+        },
+        {
+          id: "inline-storage",
+          threadId: "PRRT_storage",
+          kind: "review-comment",
+          author: "gemini-code-assist",
+          body: "Cache the localStorage capability probe result.",
+          createdAt: "2026-07-06T00:31:02Z",
+          path: "src/features/focus-pad/focus-pad.repo.ts",
+          line: 76,
+          originalLine: 76,
+          threadResolved: false,
+          outdated: false,
+        },
+      ],
+    });
+
+    assert.match(formatted, /2 actionable/);
+    assert.match(formatted, /thread=PRRT_clear/);
+    assert.match(formatted, /thread=PRRT_storage/);
+    assert.doesNotMatch(formatted, /\[review:COMMENTED\]/);
+    assert.doesNotMatch(formatted, /consumer version of Gemini Code Assist/);
+  });
+
   it("does not re-block stale COMMENTED review summaries after a newer head commit", () => {
     const body = [
       "## Code Review",
