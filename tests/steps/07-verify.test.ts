@@ -1955,6 +1955,124 @@ describe("07-verify step module", () => {
     assert.equal(commentLooksMechanicallySatisfied(selectedRecordComment, unsafeSource), false);
   });
 
+  it("marks live window.app bridge getter comments as mechanically satisfied", () => {
+    const bridgeComment = {
+      id: "live-window-app-bridge",
+      threadId: "PRRT_live_window_app_bridge",
+      kind: "review-comment" as const,
+      author: "gemini-code-assist",
+      body: "The test bridge properties are currently copied by value during mounting. If a test runner holds a reference to `window.app` and then triggers an action that updates the state, reading properties like `app.activeSurface` will yield stale values. Using ES6 getters that dynamically read from a module-level mutable reference to the latest store context ensures held references return up-to-date state.",
+      createdAt: "2026-07-06T15:28:04Z",
+      path: "src/test/bridge.ts",
+      line: 129,
+      originalLine: 95,
+      threadResolved: false,
+      outdated: false,
+    };
+    const fixedSource = `
+      let mountedHandle: QuickNoteAppHandle | null = null;
+      let currentStore: QuickNoteContextValue | null = null;
+
+      export function mountQuickNoteAppBridge(value: QuickNoteContextValue): QuickNoteAppHandle {
+        currentStore = value;
+        const handle: QuickNoteAppHandle = {
+          get state() {
+            return (currentStore ?? value).state;
+          },
+          get counts() {
+            return (currentStore ?? value).counts;
+          },
+          get activeSurface() {
+            return (currentStore ?? value).state.activeSurface;
+          },
+          get activePanel() {
+            return (currentStore ?? value).state.activePanel;
+          },
+          actions: {
+            bootstrap: () => (currentStore ?? value).bootstrap(),
+            setActiveSurface: (surface) => (currentStore ?? value).setActiveSurface(surface),
+          },
+        };
+        if (typeof window !== 'undefined') {
+          window.app = handle;
+        }
+        mountedHandle = handle;
+        return handle;
+      }
+
+      export function unmountQuickNoteAppBridge(): void {
+        if (typeof window !== 'undefined') delete window.app;
+        mountedHandle = null;
+        currentStore = null;
+      }
+    `;
+    const staleSnapshotSource = `
+      export function mountQuickNoteAppBridge(value: QuickNoteContextValue): QuickNoteAppHandle {
+        const handle = {
+          state: value.state,
+          activeSurface: value.state.activeSurface,
+          actions: { bootstrap: value.bootstrap },
+        };
+        window.app = handle;
+        return handle;
+      }
+    `;
+
+    assert.equal(commentLooksMechanicallySatisfied(bridgeComment, fixedSource), true);
+    assert.equal(commentLooksMechanicallySatisfied(bridgeComment, staleSnapshotSource), false);
+  });
+
+  it("marks persistable payload dedup comments as mechanically satisfied", () => {
+    const payloadComment = {
+      id: "persist-payload-dedup",
+      threadId: "PRRT_persist_payload_dedup",
+      kind: "review-comment" as const,
+      author: "gemini-code-assist",
+      body: "When `saveQuickNoteState` dispatches `SET_STORAGE_STATUS`, `state` dependencies trigger the effect again. Without a guard, this causes a redundant second call to `saveQuickNoteState`. Track the last attempted persistable payload in a `useRef` and skip redundant writes when only non-persistable fields like `storageStatus` change.",
+      createdAt: "2026-07-06T15:28:04Z",
+      path: "src/features/quick-note/quick-note.store.tsx",
+      line: 200,
+      originalLine: 177,
+      threadResolved: false,
+      outdated: false,
+    };
+    const fixedSource = `
+      const hydratedRef = useRef(false);
+      const lastSavedPayloadRef = useRef<string | null>(null);
+      useEffect(() => {
+        if (disablePersistence) return;
+        if (!state.hydrated) return;
+        if (!hydratedRef.current) {
+          hydratedRef.current = true;
+          return;
+        }
+        const persistable = {
+          records: state.records,
+          selectedRecordId: state.selectedRecordId,
+          activeSurface: state.activeSurface,
+          activePanel: state.activePanel,
+        };
+        const signature = JSON.stringify(persistable);
+        if (signature === lastSavedPayloadRef.current) {
+          return;
+        }
+        lastSavedPayloadRef.current = signature;
+        const ok = saveQuickNoteState(state);
+        if (!ok) dispatch({ type: 'SET_STORAGE_STATUS', status: 'error' });
+      }, [disablePersistence, state]);
+    `;
+    const redundantSource = `
+      useEffect(() => {
+        if (!state.hydrated) return;
+        const ok = saveQuickNoteState(state);
+        if (!ok) dispatch({ type: 'SET_STORAGE_STATUS', status: 'error' });
+      }, [state]);
+    `;
+
+    assert.equal(commentLooksMechanicallySatisfied(payloadComment, fixedSource), true);
+    assert.equal(commentLooksMechanicallySatisfied(payloadComment, redundantSource), false);
+  });
+
   it("finds mechanically satisfied inline review thread ids from current PR source files", () => {
     const root = mkdtempSync(join(tmpdir(), "setfarm-pr-comments-"));
     try {

@@ -451,6 +451,65 @@ function selectedRecordIdValidationReviewLooksSatisfied(body: string, normalized
   return fallsBackToNull;
 }
 
+function liveWindowAppBridgeReviewLooksSatisfied(body: string, normalizedSource: string): boolean {
+  if (!/\bwindow\.app\b/i.test(body)) return false;
+  if (!/\bcop(?:y|ied)\s+by\s+value\b|\bstale\b|\bheld reference\b|\bholds? a reference\b/i.test(body)) return false;
+  if (!/\bES6\s+getters?\b|\bgetters?\b|\bmodule-level\b|\bmutable reference\b|\blatest store\b/i.test(body)) return false;
+
+  const hasMutableStoreRef =
+    /\blet\s+currentStore\s*:[^=;]*\bnull\s*=\s*null\s*;?/.test(normalizedSource) &&
+    /\bcurrentStore\s*=\s*value\s*;?/.test(normalizedSource);
+  if (!hasMutableStoreRef) return false;
+
+  const hasLiveGetters =
+    /\bget\s+state\s*\(\s*\)\s*\{[^}]*currentStore[^}]*\.state[^}]*\}/.test(normalizedSource) &&
+    /\bget\s+activeSurface\s*\(\s*\)\s*\{[^}]*currentStore[^}]*\.state\.activeSurface[^}]*\}/.test(normalizedSource);
+  if (!hasLiveGetters) return false;
+
+  const hasLiveActions =
+    /\bactions\s*:\s*\{[^]*?\(\s*currentStore\s*(?:\|\||\?\?)\s*value\s*\)\.[A-Za-z_$][\w$]*\s*\(/.test(normalizedSource);
+  if (!hasLiveActions) return false;
+
+  return (
+    /\bwindow\.app\s*=\s*handle\s*;?/.test(normalizedSource) &&
+    /\bmountedHandle\s*=\s*handle\s*;?/.test(normalizedSource) &&
+    /\bcurrentStore\s*=\s*null\s*;?/.test(normalizedSource)
+  );
+}
+
+function persistablePayloadDedupReviewLooksSatisfied(body: string, normalizedSource: string): boolean {
+  if (!/\bsaveQuickNoteState\b|\bsave\w*State\b/i.test(body)) return false;
+  if (!/\bSET_STORAGE_STATUS\b|\bstorageStatus\b/i.test(body)) return false;
+  if (!/\bredundant\b|\bsecond call\b|\bskip\b|\bnon-persistable\b|\bpersistable payload\b/i.test(body)) return false;
+  if (!/\buseRef\b|\blast attempted\b|\bpayload\b/i.test(body)) return false;
+
+  const refNameMatch = normalizedSource.match(/\bconst\s+([A-Za-z_$][\w$]*(?:[Pp]ayload|[Ss]ignature)[A-Za-z_$\w]*Ref)\s*=\s*useRef(?:<[^>]+>)?\s*\(\s*(?:""|''|null)\s*\)/);
+  const refName = refNameMatch?.[1];
+  if (!refName) return false;
+  const escapedRef = escapeRegExp(refName);
+
+  const directPayloadMatch = normalizedSource.match(/\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*JSON\.stringify\s*\(\s*\{([^]*?)\}\s*\)\s*;?/);
+  let payloadName = directPayloadMatch?.[1] || "";
+  let payloadBody = directPayloadMatch?.[2] || "";
+
+  if (!payloadName) {
+    const persistableMatch = normalizedSource.match(/\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*\{([^]*?)\}\s*;\s*const\s+([A-Za-z_$][\w$]*)\s*=\s*JSON\.stringify\s*\(\s*\1\s*\)\s*;?/);
+    payloadBody = persistableMatch?.[2] || "";
+    payloadName = persistableMatch?.[3] || "";
+  }
+
+  if (!payloadName) return false;
+  if (!/\brecords\b/.test(payloadBody) || !/\bselectedRecordId\b/.test(payloadBody)) return false;
+  if (!/\bactiveSurface\b/.test(payloadBody) || !/\bactivePanel\b/.test(payloadBody)) return false;
+  const escapedPayload = escapeRegExp(payloadName);
+
+  const checksDuplicatePayload = new RegExp(`if\\s*\\(\\s*${escapedPayload}\\s*===\\s*${escapedRef}\\.current\\s*\\)\\s*\\{[^}]*return\\s*;?[^}]*\\}`).test(normalizedSource);
+  const recordsAttemptedPayload = new RegExp(`${escapedRef}\\.current\\s*=\\s*${escapedPayload}\\s*;?`).test(normalizedSource);
+  if (!checksDuplicatePayload || !recordsAttemptedPayload) return false;
+
+  return /\bsaveQuickNoteState\s*\(\s*state\s*\)/.test(normalizedSource) || /\bsave\w*State\s*\(\s*state\s*\)/.test(normalizedSource);
+}
+
 function commentProseLooksMechanicallySatisfied(body: string, normalizedSource: string): boolean {
   const text = String(body || "").toLowerCase();
 
@@ -463,6 +522,8 @@ function commentProseLooksMechanicallySatisfied(body: string, normalizedSource: 
   if (reactStoreSideEffectsReviewLooksSatisfied(body, normalizedSource)) return true;
   if (redundantBootstrapPersistenceReviewLooksSatisfied(body, normalizedSource)) return true;
   if (selectedRecordIdValidationReviewLooksSatisfied(body, normalizedSource)) return true;
+  if (liveWindowAppBridgeReviewLooksSatisfied(body, normalizedSource)) return true;
+  if (persistablePayloadDedupReviewLooksSatisfied(body, normalizedSource)) return true;
 
   if (
     /\bwindow\.app\b/i.test(body) &&
