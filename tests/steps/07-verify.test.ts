@@ -1974,6 +1974,57 @@ describe("07-verify step module", () => {
     }
   });
 
+  it("normalizes bare review prose file names to existing source paths", () => {
+    const root = mkdtempSync(join(tmpdir(), "setfarm-pr-comments-bare-src-path-"));
+    try {
+      execFileSync("git", ["init", "-b", "main"], { cwd: root, stdio: "ignore" });
+      execFileSync("git", ["config", "user.email", "setfarm@example.test"], { cwd: root });
+      execFileSync("git", ["config", "user.name", "Setfarm Test"], { cwd: root });
+      mkdirSync(join(root, "src"), { recursive: true });
+      writeFileSync(join(root, "src", "App.tsx"), "export function App() { const actions = useMemo(() => ({ save }), [save]); return null; }\n");
+      writeFileSync(join(root, "src", "store.ts"), "export const save = () => undefined;\n");
+      execFileSync("git", ["add", "."], { cwd: root });
+      execFileSync("git", ["commit", "-m", "main"], { cwd: root, stdio: "ignore" });
+      execFileSync("git", ["checkout", "-b", "feature-stable-actions"], { cwd: root, stdio: "ignore" });
+      writeFileSync(join(root, "src", "App.tsx"), "export function App() { const actions = useMemo(() => ({ save }), [save]); return null; }\n");
+      execFileSync("git", ["commit", "--allow-empty", "-m", "feature"], { cwd: root, stdio: "ignore" });
+      execFileSync("git", ["checkout", "main"], { cwd: root, stdio: "ignore" });
+
+      const state: PrState = {
+        state: "OPEN",
+        headRefName: "feature-stable-actions",
+        checksStatus: "passing",
+        mergeable: "MERGEABLE",
+        mergeStateStatus: "CLEAN",
+        comments: [
+          {
+            id: "bare-app-reference",
+            threadId: "PRRT_bare_app",
+            kind: "review-comment",
+            author: "gemini-code-assist",
+            body: [
+              "The actions memoization in `App.tsx` should use stable dependencies such as `save` instead of the full shell object.",
+              "",
+              "```suggestion",
+              "const actions = useMemo(() => ({ save }), [save]);",
+              "```",
+            ].join("\n"),
+            createdAt: "2026-07-06T08:00:00Z",
+            path: "src/store.ts",
+            line: 1,
+            originalLine: 1,
+            threadResolved: false,
+            outdated: false,
+          },
+        ],
+      };
+
+      assert.deepEqual(getMechanicallySatisfiedInlineReviewThreadIds(state, root), ["PRRT_bare_app"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("checks the PR head ref source before the local working tree", () => {
     const root = mkdtempSync(join(tmpdir(), "setfarm-pr-comments-git-"));
     try {

@@ -796,13 +796,26 @@ function extractReferencedReviewPaths(body: string): string[] {
   return [...paths];
 }
 
+function normalizeReviewSourcePath(rootPath: string, value: string): string {
+  const safe = String(value || "").trim().replace(/^\/+/, "");
+  if (!safe || safe.includes("\0") || safe.includes("..")) return "";
+  if (safe.includes("/") || existsSync(path.resolve(rootPath, safe))) return safe;
+  if (!/\.(?:js|jsx|ts|tsx|css|html|json)$/.test(safe)) return safe;
+
+  for (const prefix of ["src", "app", "components", "lib", "pages"]) {
+    const candidate = `${prefix}/${safe}`;
+    if (existsSync(path.resolve(rootPath, candidate))) return candidate;
+  }
+  return safe;
+}
+
 function readReviewCommentCandidateSources(repoPath: string, headRefName: string | undefined, relativePath: string, body = ""): string[] {
   const sources: string[] = [];
   const rootPath = path.resolve(repoPath);
   const safeRelatives = [...new Set([
     String(relativePath || "").replace(/^\/+/, ""),
     ...extractReferencedReviewPaths(body),
-  ])].filter(value => value && !value.includes("\0"));
+  ].map((value) => normalizeReviewSourcePath(rootPath, value)))].filter(value => value && !value.includes("\0"));
   if (safeRelatives.length === 0) return sources;
 
   const readOne = (safeRelative: string): string[] => {
