@@ -432,6 +432,25 @@ function redundantBootstrapPersistenceReviewLooksSatisfied(body: string, normali
   return hasBootstrapRef && hasFirstSaveRef && hasBootstrapInitEffect && hasPersistenceEffect && skipsBeforeSave;
 }
 
+function selectedRecordIdValidationReviewLooksSatisfied(body: string, normalizedSource: string): boolean {
+  if (!/\bselectedRecordId\b/.test(body)) return false;
+  if (!/\brecords?\b/i.test(body)) return false;
+  if (!/\bstale\b|\bmissing\b|\bexists?\b|\bsanitized\b|\bnull\b/i.test(body)) return false;
+
+  const hasSelectedRecordId =
+    /\bconst\s+selectedRecordId\s*=/.test(normalizedSource) ||
+    /\bselectedRecordId\s*:/.test(normalizedSource);
+  if (!hasSelectedRecordId) return false;
+
+  const validatesAgainstRecords =
+    /\brecords\.some\s*\(\s*\(?\s*\w+\s*\)?\s*=>\s*\w+\.id\s*===\s*(?:candidate\.selectedRecordId|[A-Za-z_$][\w$]*SelectedRecordId|selectedRecordId)\s*\)/.test(normalizedSource);
+  if (!validatesAgainstRecords) return false;
+
+  const fallsBackToNull =
+    /\?\s*(?:candidate\.selectedRecordId|[A-Za-z_$][\w$]*SelectedRecordId|selectedRecordId)\s*:\s*null/.test(normalizedSource);
+  return fallsBackToNull;
+}
+
 function commentProseLooksMechanicallySatisfied(body: string, normalizedSource: string): boolean {
   const text = String(body || "").toLowerCase();
 
@@ -443,6 +462,7 @@ function commentProseLooksMechanicallySatisfied(body: string, normalizedSource: 
   if (reactStableApiObjectReviewLooksSatisfied(body, normalizedSource)) return true;
   if (reactStoreSideEffectsReviewLooksSatisfied(body, normalizedSource)) return true;
   if (redundantBootstrapPersistenceReviewLooksSatisfied(body, normalizedSource)) return true;
+  if (selectedRecordIdValidationReviewLooksSatisfied(body, normalizedSource)) return true;
 
   if (
     /\bwindow\.app\b/i.test(body) &&
@@ -808,7 +828,7 @@ export function getMechanicallySatisfiedInlineReviewThreadIds(state: PrState, re
   const ids = new Set<string>();
   for (const comment of getActionablePrComments(state)) {
     if (comment.kind !== "review-comment" || !comment.threadId || !comment.path) continue;
-    for (const source of readReviewCommentCandidateSources(root, state.headRefName, comment.path, comment.body)) {
+    for (const source of readReviewCommentCandidateSources(root, state.headRefName, state.headOid, comment.path, comment.body)) {
       if (commentLooksMechanicallySatisfied(comment, source)) ids.add(comment.threadId);
       if (ids.has(comment.threadId)) break;
     }
@@ -840,7 +860,7 @@ function normalizeReviewSourcePath(rootPath: string, value: string): string {
   return safe;
 }
 
-function readReviewCommentCandidateSources(repoPath: string, headRefName: string | undefined, relativePath: string, body = ""): string[] {
+function readReviewCommentCandidateSources(repoPath: string, headRefName: string | undefined, headOid: string | undefined, relativePath: string, body = ""): string[] {
   const sources: string[] = [];
   const rootPath = path.resolve(repoPath);
   let fetchedHeadRef = false;
@@ -854,11 +874,25 @@ function readReviewCommentCandidateSources(repoPath: string, headRefName: string
     const candidates: string[] = [];
     if (safeRelative.includes("..")) return candidates;
 
+    if (headOid && /^[a-f0-9]{7,64}$/i.test(headOid)) {
+      try {
+        candidates.push(execFileSync("git", ["-C", rootPath, "show", `${headOid}:${safeRelative}`], {
+          encoding: "utf-8",
+          stdio: ["ignore", "pipe", "ignore"],
+          timeout: 10000,
+          maxBuffer: 2_000_000,
+        }));
+      } catch {
+        // Fall back to branch refs or the working tree below.
+      }
+    }
+
     if (headRefName && /^[A-Za-z0-9._/-]+$/.test(headRefName)) {
       for (const ref of [headRefName, `origin/${headRefName}`]) {
         try {
           candidates.push(execFileSync("git", ["-C", rootPath, "show", `${ref}:${safeRelative}`], {
             encoding: "utf-8",
+            stdio: ["ignore", "pipe", "ignore"],
             timeout: 10000,
             maxBuffer: 2_000_000,
           }));
@@ -871,12 +905,14 @@ function readReviewCommentCandidateSources(repoPath: string, headRefName: string
         try {
           execFileSync("git", ["-C", rootPath, "fetch", "origin", `${headRefName}:refs/remotes/origin/${headRefName}`], {
             encoding: "utf-8",
+            stdio: ["ignore", "pipe", "ignore"],
             timeout: 30000,
             maxBuffer: 2_000_000,
           });
           fetchedHeadRef = true;
           candidates.push(execFileSync("git", ["-C", rootPath, "show", `origin/${headRefName}:${safeRelative}`], {
             encoding: "utf-8",
+            stdio: ["ignore", "pipe", "ignore"],
             timeout: 10000,
             maxBuffer: 2_000_000,
           }));

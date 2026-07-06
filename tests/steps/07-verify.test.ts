@@ -1922,6 +1922,39 @@ describe("07-verify step module", () => {
     assert.equal(commentLooksMechanicallySatisfied(ariaRoleComment, '<span aria-label="Status: ready"></span>'), false);
   });
 
+  it("marks selectedRecordId existence validation comments as mechanically satisfied", () => {
+    const selectedRecordComment = {
+      id: "selected-record-validation",
+      threadId: "PRRT_selected_record",
+      kind: "review-comment" as const,
+      author: "gemini-code-assist",
+      body: "Verify that the loaded `selectedRecordId` actually exists in the sanitized `records` array. If the ID is stale or missing, default it to `null`.",
+      createdAt: "2026-07-06T15:08:01Z",
+      path: "src/features/quick-note/quick-note.repo.ts",
+      line: 80,
+      originalLine: 73,
+      threadResolved: false,
+      outdated: false,
+    };
+    const fixedSource = `
+      const candidateSelectedRecordId = candidate.selectedRecordId;
+      const selectedRecordId =
+        typeof candidateSelectedRecordId === 'string' &&
+        records.some((r) => r.id === candidateSelectedRecordId)
+          ? candidateSelectedRecordId
+          : null;
+    `;
+    const unsafeSource = `
+      const selectedRecordId =
+        typeof candidate.selectedRecordId === 'string'
+          ? candidate.selectedRecordId
+          : null;
+    `;
+
+    assert.equal(commentLooksMechanicallySatisfied(selectedRecordComment, fixedSource), true);
+    assert.equal(commentLooksMechanicallySatisfied(selectedRecordComment, unsafeSource), false);
+  });
+
   it("finds mechanically satisfied inline review thread ids from current PR source files", () => {
     const root = mkdtempSync(join(tmpdir(), "setfarm-pr-comments-"));
     try {
@@ -2105,11 +2138,13 @@ describe("07-verify step module", () => {
       );
       execFileSync("git", ["add", "."], { cwd: root });
       execFileSync("git", ["commit", "-m", "feature"], { cwd: root, stdio: "ignore" });
+      const headOid = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf-8" }).trim();
       execFileSync("git", ["checkout", "main"], { cwd: root, stdio: "ignore" });
 
       const state: PrState = {
         state: "OPEN",
-        headRefName: "feature-lives",
+        headRefName: "missing-remote-branch",
+        headOid,
         checksStatus: "passing",
         mergeable: "MERGEABLE",
         mergeStateStatus: "CLEAN",
