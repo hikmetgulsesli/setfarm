@@ -342,7 +342,7 @@ function blockHasIcon(block: JsxBlock, icon: string): boolean {
 }
 
 function blockMatchesClassSignature(block: JsxBlock, item: SupervisorChecklistItem): boolean {
-  const expected = (item.classes || []).map(normalizeClassToken).filter(Boolean);
+  const expected = (item.classes || []).map(normalizeClassToken).filter((token) => token && !isBannedIconFontClass(token));
   if (expected.length === 0) return false;
   const actual = new Set(extractClassTokens(block.attrs).map(normalizeClassToken).filter(Boolean));
   if (actual.size === 0) return false;
@@ -369,6 +369,10 @@ function normalizeClassToken(value: string): string {
 
 function isWeakClassToken(value: string): boolean {
   return /^(flex|grid|block|hidden|relative|absolute|fixed|items-|justify-|text-|bg-|border$|border-|rounded-|p[trblxy]?-\d|m[trblxy]?-\d|w-|h-|gap-|transition|transition-|duration-)/.test(value);
+}
+
+function isBannedIconFontClass(value: string): boolean {
+  return value === "material-icons" || value.startsWith("material-symbols");
 }
 
 function iconCandidates(icon: string): string[] {

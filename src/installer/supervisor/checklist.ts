@@ -270,7 +270,9 @@ function addControlItems(items: SupervisorChecklistItem[], params: {
     const icon = String(control.icon || "").trim();
     const href = String(control.href || "").trim();
     const action = String(control.action || control.actionId || control.onClick || "").trim();
-    const classes = Array.isArray(control.classes) ? control.classes.map((value) => String(value || "").trim()).filter(Boolean) : [];
+    const classes = Array.isArray(control.classes)
+      ? control.classes.map((value) => String(value || "").trim()).filter((value) => value && !isBannedIconFontClass(value))
+      : [];
     if (!label && !icon && !href) continue;
 
     const baseId = checklistId(type, screen, label || href || icon, file);
@@ -337,6 +339,10 @@ function evidenceForControl(type: SupervisorChecklistItemType): string[] {
   if (type === "link") return ["static-control", "href-or-inert"];
   if (type === "input" || type === "select") return ["static-control"];
   return ["static-control"];
+}
+
+function isBannedIconFontClass(value: string): boolean {
+  return value === "material-icons" || value.startsWith("material-symbols");
 }
 
 function checklistId(type: SupervisorChecklistItemType, screen: string, label: string, file: string): string {

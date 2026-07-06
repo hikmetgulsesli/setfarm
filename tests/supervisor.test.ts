@@ -624,8 +624,8 @@ describe("supervisor checklist scanning", () => {
             screenId: "SCR-001",
             title: "Panel",
             buttons: [
-              { label: "Close", icon: "close", classes: ["text-muted", "p-2", "rounded-DEFAULT", "transition-colors"], action: "dismiss" },
-              { label: "help", icon: "help", classes: ["w-touch-target-min", "h-touch-target-min", "items-center", "justify-center", "rounded-DEFAULT"], action: "navigate" },
+              { label: "Close", icon: "close", classes: ["material-symbols-outlined", "text-muted", "p-2", "rounded-DEFAULT", "transition-colors"], action: "dismiss" },
+              { label: "help", icon: "help", classes: ["material-icons", "w-touch-target-min", "h-touch-target-min", "items-center", "justify-center", "rounded-DEFAULT"], action: "navigate" },
             ],
           },
         },
@@ -639,6 +639,14 @@ describe("supervisor checklist scanning", () => {
         "  </main>;",
         "}",
       ].join("\n"));
+
+      const checklist = buildSupervisorChecklistFromProject({
+        runId: "run-icon-buttons",
+        workdir: tmp,
+        storyId: "US-001",
+        scopeFiles: ["src/screens/Panel.tsx"],
+      });
+      assert.equal(checklist.items.some((item) => (item.classes || []).some((token) => token.startsWith("material-"))), false);
 
       const result = await runImplementSupervisorScan({
         runId: "run-icon-buttons",
