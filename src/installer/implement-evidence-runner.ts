@@ -57,6 +57,8 @@ function numberOrUndefined(value: unknown): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+const SUPPORTED_INTERACTION_ACTIONS = new Set(["click", "fill", "press", "wait", "navigate", "snapshot"]);
+
 export function normalizeInteractionRequests(value: unknown): InteractionRequest[] {
   if (!Array.isArray(value)) return [];
   const interactions: InteractionRequest[] = [];
@@ -75,7 +77,7 @@ export function normalizeInteractionRequests(value: unknown): InteractionRequest
     }
     const action = typeof raw.action === "string" ? raw.action.trim() : "";
     const target = typeof raw.target === "string" ? raw.target.trim() : "";
-    if (action) {
+    if (SUPPORTED_INTERACTION_ACTIONS.has(action)) {
       interactions.push({
         id: typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : `flow-${index + 1}`,
         action: action as InteractionRequest["action"],

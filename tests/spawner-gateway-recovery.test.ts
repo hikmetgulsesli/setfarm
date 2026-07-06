@@ -1198,6 +1198,9 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /isAnyGitAddCommand/);
     assert.match(source, /isGitPushCommand/);
     assert.match(source, /gitCommitMessages/);
+    assert.match(source, /function isTextSearchCommand\(command: string\)/);
+    assert.match(source, /if \(isTextSearchCommand\(command\)\) return false/);
+    assert.match(source, /if \(isTextSearchCommand\(command\)\) return \[\]/);
     assert.match(source, /terminateActiveProcess\(active,\s*"git-discipline-guard"\)/);
     assert.match(source, /--- GIT DISCIPLINE GUARD/);
     assert.ok(

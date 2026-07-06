@@ -1653,20 +1653,30 @@ function commandBypassesImplementGitWrapper(command: string): boolean {
     || /\bSETFARM_(?:PLATFORM|RECOVERY)_COMMIT=1\b/.test(compact);
 }
 
+function isTextSearchCommand(command: string): boolean {
+  const compact = compactCommandForDiagnostic(command);
+  return /(?:^|[\s;&|])(?:rg|grep|egrep|fgrep|awk|sed)\b/i.test(compact)
+    && !/(?:^|[\s;&|])(?:git|\/usr\/bin\/git|\/bin\/git|\/opt\/homebrew\/bin\/git|\/usr\/local\/bin\/git)\s+(?:add|commit|push)\b/i.test(compact);
+}
+
 function isBroadGitAddCommand(command: string): boolean {
+  if (isTextSearchCommand(command)) return false;
   const compact = compactCommandForDiagnostic(command);
   return /\bgit\s+add\s+(?:-[A-Za-z]*A[A-Za-z]*\b|--all\b|\.(?:\s|$|&&|\|\||;))/i.test(compact);
 }
 
 function isAnyGitAddCommand(command: string): boolean {
+  if (isTextSearchCommand(command)) return false;
   return /\bgit\s+add\b/i.test(compactCommandForDiagnostic(command));
 }
 
 function isGitPushCommand(command: string): boolean {
+  if (isTextSearchCommand(command)) return false;
   return /\bgit\s+push\b/i.test(compactCommandForDiagnostic(command));
 }
 
 function gitCommitMessages(command: string): string[] {
+  if (isTextSearchCommand(command)) return [];
   const compact = compactCommandForDiagnostic(command);
   const messages: string[] = [];
   for (const match of compact.matchAll(/\bgit\s+commit\b[^;&|]*(?:-m|--message=?)\s*(?:"([^"]*)"|'([^']*)'|([^\s;&|]+))/gi)) {

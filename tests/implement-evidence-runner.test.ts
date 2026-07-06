@@ -24,10 +24,11 @@ describe("implement evidence runner", () => {
   it("normalizes UI contract actionId shorthand into browser click interactions", () => {
     const interactions = normalizeInteractionRequests([
       { actionId: "start-game-4", target: "GameplayVectordriftLite", description: "Start the game" },
-      { id: "pause-flow", action: "pause", actionId: "pause-2", target: "GameplayVectordriftLite" },
+      { id: "pause-flow", actionId: "pause-2", target: "GameplayVectordriftLite" },
       { id: "settings", action: "click", target: "[data-action-id='settings-2']" },
       "Open settings",
       {},
+      { id: "bad-evaluate", action: "evaluate", target: "[data-action-id='save-1']" },
     ]);
 
     assert.deepEqual(interactions, [

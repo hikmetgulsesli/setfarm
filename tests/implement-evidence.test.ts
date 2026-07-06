@@ -204,6 +204,85 @@ describe("implement evidence contract", () => {
     }
   });
 
+  it("rejects unsupported interaction action names before runtime execution", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-implement-evidence-unsupported-action-"));
+    try {
+      process.env.SETFARM_IMPLEMENT_EVIDENCE_GATE = "blocking";
+      const paths = implementEvidenceArtifactPaths(tmp, "US-001");
+      writeJson(paths.intent, {
+        schema: "setfarm.implement-intent.v1",
+        storyId: "US-001",
+        storyType: "ui_interactive",
+        acceptanceCriteria: ["Save a note"],
+        runtimeEvidenceRequired: { minFlowCount: 1 },
+      });
+      writeJson(paths.request, {
+        schema: "setfarm.implement-verification-request.v1",
+        storyId: "US-001",
+        status: "ready_for_orchestrator_verification",
+        interactionRequests: [{ id: "flow-1", action: "evaluate", target: "[data-action-id='save-1']" }],
+        uncoveredCriteria: [],
+        knownGaps: [],
+      });
+      writeJson(paths.evidence, {
+        schema: "setfarm.implement-evidence.v1",
+        storyId: "US-001",
+        runtime: { url: "http://127.0.0.1:6101", port: 6101 },
+        commands: [],
+        flows: [{ flowId: "initial", captures: [] }],
+        visualEvidence: { status: "disabled" },
+        verdict: "pass",
+      });
+
+      const result = validateImplementEvidenceArtifacts(tmp, "US-001");
+
+      assert.equal(result.ok, false);
+      assert.equal(result.issues.some((issue) => issue.code === "IMPLEMENT_VERIFICATION_REQUEST_INTERACTIONS_INVALID"), true);
+      assert.match(result.issues.map((issue) => issue.message).join("\n"), /click, fill, press, wait, navigate, or snapshot/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects click-like interactions that do not name a reachable target or actionId", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-implement-evidence-missing-target-"));
+    try {
+      process.env.SETFARM_IMPLEMENT_EVIDENCE_GATE = "blocking";
+      const paths = implementEvidenceArtifactPaths(tmp, "US-001");
+      writeJson(paths.intent, {
+        schema: "setfarm.implement-intent.v1",
+        storyId: "US-001",
+        storyType: "ui_interactive",
+        acceptanceCriteria: ["Save a note"],
+        runtimeEvidenceRequired: { minFlowCount: 1 },
+      });
+      writeJson(paths.request, {
+        schema: "setfarm.implement-verification-request.v1",
+        storyId: "US-001",
+        status: "ready_for_orchestrator_verification",
+        interactionRequests: [{ id: "flow-1", action: "click" }],
+        uncoveredCriteria: [],
+        knownGaps: [],
+      });
+      writeJson(paths.evidence, {
+        schema: "setfarm.implement-evidence.v1",
+        storyId: "US-001",
+        runtime: { url: "http://127.0.0.1:6101", port: 6101 },
+        commands: [],
+        flows: [{ flowId: "initial", captures: [] }],
+        visualEvidence: { status: "disabled" },
+        verdict: "pass",
+      });
+
+      const result = validateImplementEvidenceArtifacts(tmp, "US-001");
+
+      assert.equal(result.ok, false);
+      assert.match(result.issues.map((issue) => issue.message).join("\n"), /must include target or actionId/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("rejects interactive acceptance criteria that are neither tested nor declared uncovered", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-implement-evidence-untested-criteria-"));
     try {
@@ -277,6 +356,45 @@ describe("implement evidence contract", () => {
 
       assert.equal(result.ok, true);
       assert.equal(result.issues.some((issue) => issue.code === "IMPLEMENT_VERIFICATION_REQUEST_INTERACTIONS_INVALID"), false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects actionId shorthand when paired with a custom unsupported action verb", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-implement-evidence-action-id-custom-action-"));
+    try {
+      process.env.SETFARM_IMPLEMENT_EVIDENCE_GATE = "blocking";
+      const paths = implementEvidenceArtifactPaths(tmp, "US-001");
+      writeJson(paths.intent, {
+        schema: "setfarm.implement-intent.v1",
+        storyId: "US-001",
+        storyType: "browser-game",
+        acceptanceCriteria: ["Start game"],
+        runtimeEvidenceRequired: { minFlowCount: 1 },
+      });
+      writeJson(paths.request, {
+        schema: "setfarm.implement-verification-request.v1",
+        storyId: "US-001",
+        status: "ready_for_orchestrator_verification",
+        interactionRequests: [{ action: "verify", actionId: "start-game-4" }],
+        uncoveredCriteria: [],
+        knownGaps: [],
+      });
+      writeJson(paths.evidence, {
+        schema: "setfarm.implement-evidence.v1",
+        storyId: "US-001",
+        runtime: { url: "http://127.0.0.1:6101", port: 6101 },
+        commands: [],
+        flows: [{ flowId: "initial", captures: [] }, { flowId: "start-game-4", captures: [] }],
+        visualEvidence: { status: "disabled" },
+        verdict: "pass",
+      });
+
+      const result = validateImplementEvidenceArtifacts(tmp, "US-001");
+
+      assert.equal(result.ok, false);
+      assert.match(result.issues.map((issue) => issue.message).join("\n"), /Use actionId without a custom action/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

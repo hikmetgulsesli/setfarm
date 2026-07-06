@@ -89,6 +89,36 @@ function isExecutableInteractionRequest(value: Record<string, any>): boolean {
   return !!action || !!actionId;
 }
 
+const SUPPORTED_INTERACTION_ACTIONS = new Set(["click", "fill", "press", "wait", "navigate", "snapshot"]);
+
+function interactionActionIssue(value: Record<string, any>, index: number): ArtifactValidationIssue | null {
+  const action = typeof value.action === "string" ? value.action.trim() : "";
+  const actionId = typeof value.actionId === "string" ? value.actionId.trim() : "";
+  const target = typeof value.target === "string" ? value.target.trim() : "";
+  const valueText = typeof value.value === "string" ? value.value.trim() : "";
+
+  if (action && !SUPPORTED_INTERACTION_ACTIONS.has(action)) {
+    return {
+      code: "IMPLEMENT_VERIFICATION_REQUEST_INTERACTIONS_INVALID",
+      message: `request.interactionRequests[${index}].action must be one of click, fill, press, wait, navigate, or snapshot. Use actionId without a custom action, or use action:"click" with a data-action-id selector.`,
+    };
+  }
+  if (actionId && !action) return null;
+  if (["click", "fill", "press"].includes(action) && !target && !actionId) {
+    return {
+      code: "IMPLEMENT_VERIFICATION_REQUEST_INTERACTIONS_INVALID",
+      message: `request.interactionRequests[${index}] ${action} actions must include target or actionId.`,
+    };
+  }
+  if (action === "navigate" && !valueText) {
+    return {
+      code: "IMPLEMENT_VERIFICATION_REQUEST_INTERACTIONS_INVALID",
+      message: `request.interactionRequests[${index}] navigate actions must include value.`,
+    };
+  }
+  return null;
+}
+
 function flowCount(value: any): number {
   return Array.isArray(value?.flows) ? value.flows.filter((flow: any) => flow?.flowId !== "initial").length : 0;
 }
@@ -192,6 +222,11 @@ export function validateImplementEvidenceArtifacts(workdir: string, storyId: str
             code: "IMPLEMENT_VERIFICATION_REQUEST_INTERACTIONS_INVALID",
             message: `request.interactionRequests[${index}] must include action or actionId so Setfarm can execute it.`,
           });
+          break;
+        }
+        const actionIssue = interactionActionIssue(interaction, index);
+        if (actionIssue) {
+          issues.push(actionIssue);
           break;
         }
       }
