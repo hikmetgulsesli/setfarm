@@ -72,6 +72,7 @@ describe("implement evidence runner", () => {
     assert.match(source, /function suggestedActionIds/);
     assert.match(source, /currentScreen=/);
     assert.match(source, /availableActionIds=/);
+    assert.ok(source.includes('availableActionIds=${actionIds.length > 0 ? actionIds.join(",") : "(none)"}'));
     assert.match(source, /missingTargetActionId=/);
     assert.match(source, /suggestedActionIds=/);
     assert.match(source, /target is not present in the current runtime surface/);

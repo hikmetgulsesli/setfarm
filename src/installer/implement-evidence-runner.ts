@@ -183,9 +183,13 @@ function failedInteractionContext(interaction: InteractionRequest, capture: any)
   const screen = stateBridgeScreen(capture?.stateBridge);
   if (screen) parts.push(`currentScreen=${screen}`);
   const actionIds = actionIdsFromDomSnapshot(capture?.domSnapshotPath);
-  if (actionIds.length > 0) parts.push(`availableActionIds=${actionIds.join(",")}`);
   const targetActionId = extractTargetActionId(interaction.target);
-  if (targetActionId && actionIds.length > 0 && !actionIds.includes(targetActionId)) {
+  if (targetActionId) {
+    parts.push(`availableActionIds=${actionIds.length > 0 ? actionIds.join(",") : "(none)"}`);
+  } else if (actionIds.length > 0) {
+    parts.push(`availableActionIds=${actionIds.join(",")}`);
+  }
+  if (targetActionId && !actionIds.includes(targetActionId)) {
     parts.push(`missingTargetActionId=${targetActionId}`);
     const suggestions = suggestedActionIds(targetActionId, actionIds);
     if (suggestions.length > 0) parts.push(`suggestedActionIds=${suggestions.join(",")}`);
