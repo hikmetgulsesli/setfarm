@@ -120,15 +120,22 @@ describe("error taxonomy", () => {
     const generatedShellLandmark = classifyError(
       "GENERATED_SCREEN_SHELL_LANDMARK_UNSAFE: src/App.tsx wraps generated full-screen Stitch screens in an app-shell main landmark.",
     );
-    assert.equal(generatedShellLandmark.category, "GENERATED_SCREEN_SHELL_CHROME_UNSAFE");
+    assert.equal(generatedShellLandmark.category, "GENERATED_SCREEN_SHELL_LANDMARK_UNSAFE");
     assert.match(generatedShellLandmark.suggestion, /main landmark/);
     assert.match(generatedShellLandmark.suggestion, /data-setfarm-root/);
 
     const generatedLayoutMount = classifyError(
       "GENERATED_SCREEN_LAYOUT_MOUNT_UNSAFE: src/App.tsx mounts a generated full-screen Stitch screen with sibling sidebar/content layout inside a non-flex data-setfarm-root container.",
     );
-    assert.equal(generatedLayoutMount.category, "GENERATED_SCREEN_SHELL_CHROME_UNSAFE");
+    assert.equal(generatedLayoutMount.category, "GENERATED_SCREEN_LAYOUT_MOUNT_UNSAFE");
     assert.match(generatedLayoutMount.suggestion, /flex data-setfarm-root/);
+    assert.match(generatedLayoutMount.suggestion, /relative flex min-h-screen w-full overflow-hidden/);
+
+    const generatedViewportMount = classifyError(
+      "GENERATED_SCREEN_VIEWPORT_MOUNT_UNSAFE: src/App.tsx mounts an absolute/fixed generated full-screen Stitch screen inside a data-setfarm-root container without stable viewport height and positioning.",
+    );
+    assert.equal(generatedViewportMount.category, "GENERATED_SCREEN_VIEWPORT_MOUNT_UNSAFE");
+    assert.match(generatedViewportMount.suggestion, /relative flex min-h-screen w-full overflow-hidden/);
 
     const designImport = classifyError(
       [
