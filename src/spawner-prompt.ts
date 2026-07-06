@@ -1038,6 +1038,16 @@ function retryDisciplineForFailure(
   previousFailure: string,
 ): Record<string, unknown> | undefined {
   const signal = `${failureCategory}\n${failureSuggestion}\n${previousFailure}`;
+  const generatedMountFiles = extractGeneratedMountDiagnosticFiles(signal);
+  if (/\bGENERATED_SCREEN_(?:VIEWPORT_MOUNT|LAYOUT_MOUNT|SHELL_LANDMARK)_UNSAFE\b/i.test(signal)) {
+    const fileTarget = generatedMountFiles.length > 0
+      ? ` Reported file(s): ${generatedMountFiles.join(", ")}.`
+      : " Use the file path named in the GENERATED_SCREEN_*_UNSAFE diagnostic.";
+    return {
+      mode: "semantic-fix",
+      instruction: `Generated-screen mount retry discipline: first edit the app/root wrapper file named by the failure diagnostic, not a hardcoded project path.${fileTarget} Fix the data-setfarm-root wrapper so it provides a neutral generated-screen frame: use a positioned viewport root for absolute/fixed screens, a flex root for sibling sidebar/content screens, and avoid app-shell main/section landmarks around generated screens. A combined class such as className="relative flex min-h-screen w-full overflow-hidden" is usually safe when the stack uses utility classes. Preserve generated screen components and previously verified action/prop adapters; do not rewrite generated screens, test fixtures, evidence JSON, or unrelated config before this mount fix. Then run the declared build/test commands without output-filtering pipes before STATUS: done.`,
+    };
+  }
   if (/\bRUNTIME_BRIDGE_MISSING\b/i.test(signal)) {
     return {
       mode: "semantic-fix",
@@ -1112,6 +1122,19 @@ function retryDisciplineForFailure(
     maxPreDeltaContextReads: 10,
     instruction: "Hard manager retry discipline: after bootstrap and the claim summary, inspect only the owned scope files plus safe metadata needed for the first edit, then make a small scoped source delta that addresses the reported blocker before broad analysis/build/test. Do not read raw stitch files, forbidden generated screens, full claims, or unrelated shared source to re-learn the project.",
   };
+}
+
+function extractGeneratedMountDiagnosticFiles(signal: string): string[] {
+  const files: string[] = [];
+  const re = /\bGENERATED_SCREEN_(?:VIEWPORT_MOUNT|LAYOUT_MOUNT|SHELL_LANDMARK)_UNSAFE:\s+([^\s:()]+(?:\.[cm]?[jt]sx?|\.html)?)/gi;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(signal)) !== null) {
+    const file = String(match[1] || "").trim().replace(/[,.;]+$/g, "");
+    if (!file || file === "Story") continue;
+    if (/^(?:mounts|wraps|renders|reported)$/i.test(file)) continue;
+    files.push(file);
+  }
+  return [...new Set(files)].slice(0, 8);
 }
 
 function acceptanceCriteriaLines(value: unknown): string[] {

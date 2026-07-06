@@ -2180,6 +2180,49 @@ describe("spawner prompt bootstrap", () => {
     }
   });
 
+  it("steers generated screen mount retries to the diagnostic file generically", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-generated-mount-retry-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src", "shell"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, ".story-scope-files"), "src/shell/RootSurface.tsx\nsrc/features/insights/actions.ts\n");
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        bootstrapFile: path.join(tmp, "bootstrap.sh"),
+        stepId: "step-123",
+        runId: "run-123",
+        workdir: tmp,
+        repo: tmp,
+        storyId: "US-003",
+        input: [
+          "TASK: Project: generated mount retry sensor",
+          "CURRENT STORY: Story US-003: Insights surface",
+          "",
+          "## Previous Failure / Retry Feedback",
+          "GUARDRAIL: Quality gate failed — 1 error(s) detected.",
+          "GENERATED_SCREEN_VIEWPORT_MOUNT_UNSAFE: src/shell/RootSurface.tsx mounts an absolute/fixed generated full-screen Stitch screen inside a data-setfarm-root container without stable viewport height and positioning.",
+          "IMPLEMENT_EVIDENCE_INCOMPLETE: Runtime evidence also failed because target action ids were not visible.",
+          "",
+          "## Current Story",
+        ].join("\n"),
+      });
+
+      assert.equal(summary.failureCategory, "GENERATED_SCREEN_VIEWPORT_MOUNT_UNSAFE");
+      assert.equal((summary.retryDiscipline as any).mode, "semantic-fix");
+      assert.match(String((summary.retryDiscipline as any).instruction), /Generated-screen mount retry discipline/);
+      assert.match(String((summary.retryDiscipline as any).instruction), /Reported file\(s\): src\/shell\/RootSurface\.tsx/);
+      assert.match(String((summary.retryDiscipline as any).instruction), /not a hardcoded project path/);
+      assert.match(String((summary.retryDiscipline as any).instruction), /data-setfarm-root wrapper/);
+      assert.match(String((summary.retryDiscipline as any).instruction), /relative flex min-h-screen w-full overflow-hidden/);
+      assert.match(String((summary.retryDiscipline as any).instruction), /Preserve generated screen components and previously verified action\/prop adapters/);
+      assert.match(String((summary.retryDiscipline as any).instruction), /do not rewrite generated screens, test fixtures, evidence JSON, or unrelated config before this mount fix/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("keeps unmasked check discipline visible during PR review retries", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-pr-review-check-rule-"));
     try {

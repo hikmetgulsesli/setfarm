@@ -138,6 +138,13 @@ describe("error taxonomy", () => {
     assert.equal(generatedViewportMount.category, "GENERATED_SCREEN_VIEWPORT_MOUNT_UNSAFE");
     assert.match(generatedViewportMount.suggestion, /relative flex min-h-screen w-full overflow-hidden/);
 
+    const generatedViewportMountInsideGuardrail = classifyError([
+      "GUARDRAIL: Quality gate failed - 1 error(s) detected.",
+      "QUALITY GATE: 1 error(s), 2 warning(s)",
+      "  [ERROR] generated_screen_shell_layout: GENERATED_SCREEN_VIEWPORT_MOUNT_UNSAFE: src/shell/RootSurface.tsx mounts an absolute/fixed generated full-screen Stitch screen inside a data-setfarm-root container without stable viewport height and positioning.",
+    ].join("\n"));
+    assert.equal(generatedViewportMountInsideGuardrail.category, "GENERATED_SCREEN_VIEWPORT_MOUNT_UNSAFE");
+
     const designImport = classifyError(
       [
         "SETUP_BUILD_PRECLAIM_BLOCKER:",

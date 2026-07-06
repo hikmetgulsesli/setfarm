@@ -116,7 +116,7 @@ describe("06-implement step module", () => {
     assert.match(rules, /runtimeEvidenceRequired\.minFlowCount: 0/);
     assert.match(rules, /Only request clicks for action IDs that are actually present in the rendered DOM/);
     assert.match(rules, /Do not request a SCREEN_INDEX action when the generated component action type is `never`/);
-    assert.match(rules, /never put build\/test\/source-grep\/prose checks there/);
+    assert.match(rules, /never put .*build\/test\/source-grep\/prose checks there/i);
   });
 
   it("blocks generated-screen runtime stories without evidence even when preview script is absent", () => {
