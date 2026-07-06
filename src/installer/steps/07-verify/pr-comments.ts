@@ -381,6 +381,36 @@ function reactStoreSideEffectsReviewLooksSatisfied(body: string, normalizedSourc
   return hasSafeIdFallback && hasConsistentUpdateRecordTimestamp;
 }
 
+function reactStableApiObjectReviewLooksSatisfied(body: string, normalizedSource: string): boolean {
+  const text = String(body || "");
+  if (!/\bapi\b/i.test(text)) return false;
+  if (!/\buseRef\b|\bstateRef\b/i.test(text)) return false;
+  if (!/\bre-?created\b|\bre-?evaluate\b|\bre-?render\b|\bstable\b|\bdependency array\b|\bdependencies\b/i.test(text)) return false;
+  if (!/\bstate change\b|\bstate transition\b|\bdepends on `?state`?\b|\bdependency array\b/i.test(text)) return false;
+
+  const hasStateRef =
+    /\bconst\s+stateRef\s*=\s*useRef(?:<[^>]+>)?\s*\(\s*state\s*\)/.test(normalizedSource) &&
+    /useEffect\s*\(\s*\(\s*\)\s*=>\s*\{[^]*?stateRef\.current\s*=\s*state\s*;?[^]*?\}\s*,\s*\[\s*state\s*\]\s*\)/.test(normalizedSource);
+  if (!hasStateRef) return false;
+
+  const hasStableDispatch =
+    /\bconst\s*\[\s*state\s*,\s*dispatch\s*\]\s*=\s*useReducer\s*\(/.test(normalizedSource) ||
+    /\bconst\s+dispatch\s*=\s*useCallback\s*\([^]*?\[\s*\]\s*\)/.test(normalizedSource);
+  if (!hasStableDispatch) return false;
+
+  const apiStart = normalizedSource.search(/\bconst\s+api\s*=\s*useMemo(?:<[^>]+>)?\s*\(/);
+  if (apiStart < 0) return false;
+  const apiWindow = normalizedSource.slice(apiStart, apiStart + 2500);
+  if (!/\bstate\s*:\s*\(\s*\)\s*=>\s*stateRef\.current\b/.test(apiWindow)) return false;
+  if (!/\bdispatch\s*\(\s*\{/.test(apiWindow)) return false;
+
+  const depsMatch = apiWindow.match(/\}\s*\)\s*,[\s\S]{0,600}?\[([^\]]*)\]\s*,?\s*\)\s*;?/);
+  if (!depsMatch) return false;
+  const deps = depsMatch[1] || "";
+  if (/\bstate\b/.test(deps)) return false;
+  return deps.trim() === "" || /^\s*dispatch\s*$/.test(deps);
+}
+
 function redundantBootstrapPersistenceReviewLooksSatisfied(body: string, normalizedSource: string): boolean {
   const text = String(body || "").toLowerCase();
   if (!/\b(?:initial mount|bootstrap|hydrate|hydrated|loads? notes?)\b/.test(text)) return false;
@@ -410,6 +440,7 @@ function commentProseLooksMechanicallySatisfied(body: string, normalizedSource: 
   if (csvEscapingReviewLooksSatisfied(body, normalizedSource)) return true;
   if (optionalShellMethodCallLooksSatisfied(body, normalizedSource)) return true;
   if (runProbeStatusUtilityReviewLooksSatisfied(body, normalizedSource)) return true;
+  if (reactStableApiObjectReviewLooksSatisfied(body, normalizedSource)) return true;
   if (reactStoreSideEffectsReviewLooksSatisfied(body, normalizedSource)) return true;
   if (redundantBootstrapPersistenceReviewLooksSatisfied(body, normalizedSource)) return true;
 
@@ -812,6 +843,7 @@ function normalizeReviewSourcePath(rootPath: string, value: string): string {
 function readReviewCommentCandidateSources(repoPath: string, headRefName: string | undefined, relativePath: string, body = ""): string[] {
   const sources: string[] = [];
   const rootPath = path.resolve(repoPath);
+  let fetchedHeadRef = false;
   const safeRelatives = [...new Set([
     String(relativePath || "").replace(/^\/+/, ""),
     ...extractReferencedReviewPaths(body),
@@ -833,6 +865,23 @@ function readReviewCommentCandidateSources(repoPath: string, headRefName: string
           break;
         } catch {
           // Fall back to the next ref or the working tree below.
+        }
+      }
+      if (candidates.length === 0 && !fetchedHeadRef) {
+        try {
+          execFileSync("git", ["-C", rootPath, "fetch", "origin", `${headRefName}:refs/remotes/origin/${headRefName}`], {
+            encoding: "utf-8",
+            timeout: 30000,
+            maxBuffer: 2_000_000,
+          });
+          fetchedHeadRef = true;
+          candidates.push(execFileSync("git", ["-C", rootPath, "show", `origin/${headRefName}:${safeRelative}`], {
+            encoding: "utf-8",
+            timeout: 10000,
+            maxBuffer: 2_000_000,
+          }));
+        } catch {
+          // Fall back to the working tree below.
         }
       }
     }

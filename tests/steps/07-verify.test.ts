@@ -1632,6 +1632,68 @@ describe("07-verify step module", () => {
     assert.equal(commentLooksMechanicallySatisfied(stableCallbacksComment, `const shell = useRunProbeShell(); const screenActions = useMemo(() => ({}), [shell]);`), false);
   });
 
+  it("marks stable React api object review comments as mechanically satisfied", () => {
+    const stableApiComment = {
+      id: "stable-api-object",
+      threadId: "PRRT_stable_api_object",
+      kind: "review-comment" as const,
+      author: "gemini-code-assist",
+      body: "The `api` object is re-created on every state change because it depends on `state` in its dependency array. This causes any component or hook depending on `useNotePinApi()` to re-evaluate and potentially re-render on every state transition. Use a `useRef` to capture the latest state and make the `api` object completely stable.\n\n```\nconst stateRef = useRef(state);\nuseEffect(() => {\n  stateRef.current = state;\n}, [state]);\n\nconst api = useMemo<NotePinAppApi>(\n  () => ({\n    state: () => stateRef.current,\n    navigate: (panel) => dispatch({ type: 'NAVIGATE', panel }),\n  }),\n  [dispatch],\n);\n```",
+      createdAt: "2026-07-06T08:14:57Z",
+      path: "src/features/note-pin/note-pin.store.tsx",
+      line: 165,
+      originalLine: 151,
+      threadResolved: false,
+      outdated: false,
+    };
+    const fixedReducerSource = `
+      const [state, dispatch] = useReducer(notePinReducer, INITIAL_STATE);
+      const stateRef = useRef<NotePinAppState>(state);
+      useEffect(() => {
+        stateRef.current = state;
+      }, [state]);
+
+      const api = useMemo<NotePinAppApi>(
+        () => ({
+          state: () => stateRef.current,
+          navigate: (panel) => dispatch({ type: 'NAVIGATE', panel }),
+          reload: () => dispatch({ type: 'LOAD_START' }),
+          clearError: () => dispatch({ type: 'CLEAR_ERROR' }),
+        }),
+        [],
+      );
+    `;
+    const fixedCallbackDispatchSource = `
+      const [state, setState] = useState(INITIAL_STATE);
+      const dispatch = useCallback((action) => {
+        setState((prev) => reducer(prev, action));
+      }, []);
+      const stateRef = useRef(state);
+      useEffect(() => {
+        stateRef.current = state;
+      }, [state]);
+      const api = useMemo(() => ({
+        state: () => stateRef.current,
+        navigate: (panel) => dispatch({ type: 'NAVIGATE', panel }),
+      }), [dispatch]);
+    `;
+    const unsafeStateDependencySource = `
+      const [state, dispatch] = useReducer(notePinReducer, INITIAL_STATE);
+      const stateRef = useRef(state);
+      useEffect(() => {
+        stateRef.current = state;
+      }, [state]);
+      const api = useMemo(() => ({
+        state: () => state,
+        navigate: (panel) => dispatch({ type: 'NAVIGATE', panel }),
+      }), [state, dispatch]);
+    `;
+
+    assert.equal(commentLooksMechanicallySatisfied(stableApiComment, fixedReducerSource), true);
+    assert.equal(commentLooksMechanicallySatisfied(stableApiComment, fixedCallbackDispatchSource), true);
+    assert.equal(commentLooksMechanicallySatisfied(stableApiComment, unsafeStateDependencySource), false);
+  });
+
   it("marks optional shell method-call review comments as mechanically satisfied", () => {
     const optionalMethodComment = {
       id: "optional-shell-method",
