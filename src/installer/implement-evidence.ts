@@ -90,6 +90,13 @@ function isExecutableInteractionRequest(value: Record<string, any>): boolean {
 }
 
 const SUPPORTED_INTERACTION_ACTIONS = new Set(["click", "fill", "press", "wait", "navigate", "snapshot"]);
+const SNAPSHOT_ALIAS_ACTIONS = new Set(["read", "inspect", "observe"]);
+
+function isSnapshotAliasInteraction(action: string, target: string, valueText = ""): boolean {
+  if (!SNAPSHOT_ALIAS_ACTIONS.has(action)) return false;
+  const subject = `${target} ${valueText}`.trim().toLowerCase();
+  return /\bwindow\.app\b|\bglobalthis\.app\b|\bapp\s+state\b|\bstate\s+bridge\b|\bdocument\b|\bdom\b|\bbody\b/.test(subject);
+}
 
 function interactionActionIssue(value: Record<string, any>, index: number): ArtifactValidationIssue | null {
   const action = typeof value.action === "string" ? value.action.trim() : "";
@@ -97,10 +104,10 @@ function interactionActionIssue(value: Record<string, any>, index: number): Arti
   const target = typeof value.target === "string" ? value.target.trim() : "";
   const valueText = typeof value.value === "string" ? value.value.trim() : "";
 
-  if (action && !SUPPORTED_INTERACTION_ACTIONS.has(action)) {
+  if (action && !SUPPORTED_INTERACTION_ACTIONS.has(action) && !isSnapshotAliasInteraction(action, target, valueText)) {
     return {
       code: "IMPLEMENT_VERIFICATION_REQUEST_INTERACTIONS_INVALID",
-      message: `request.interactionRequests[${index}].action must be one of click, fill, press, wait, navigate, or snapshot. Use actionId without a custom action, or use action:"click" with a data-action-id selector.`,
+      message: `request.interactionRequests[${index}].action must be one of click, fill, press, wait, navigate, or snapshot. For read/inspect requests against window.app, DOM, or document state, use action:"snapshot". Use actionId without a custom action, or use action:"click" with a data-action-id selector.`,
     };
   }
   if (actionId && !action) return null;

@@ -26,6 +26,7 @@ describe("implement evidence runner", () => {
       { actionId: "start-game-4", target: "GameplayVectordriftLite", description: "Start the game" },
       { id: "pause-flow", actionId: "pause-2", target: "GameplayVectordriftLite" },
       { id: "settings", action: "click", target: "[data-action-id='settings-2']" },
+      { id: "app-state", action: "read", target: "window.app", waitCondition: "dom_idle", timeoutMs: 1000 },
       "Open settings",
       {},
       { id: "bad-evaluate", action: "evaluate", target: "[data-action-id='save-1']" },
@@ -53,6 +54,14 @@ describe("implement evidence runner", () => {
         value: undefined,
         waitCondition: undefined,
         timeoutMs: undefined,
+      },
+      {
+        id: "app-state",
+        action: "snapshot",
+        target: "window.app",
+        value: undefined,
+        waitCondition: "dom_idle",
+        timeoutMs: 1000,
       },
     ]);
   });

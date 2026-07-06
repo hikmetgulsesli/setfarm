@@ -244,6 +244,45 @@ describe("implement evidence contract", () => {
     }
   });
 
+  it("accepts read-style window.app requests as snapshot evidence requests", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-implement-evidence-read-window-app-"));
+    try {
+      process.env.SETFARM_IMPLEMENT_EVIDENCE_GATE = "blocking";
+      const paths = implementEvidenceArtifactPaths(tmp, "US-001");
+      writeJson(paths.intent, {
+        schema: "setfarm.implement-intent.v1",
+        storyId: "US-001",
+        storyType: "ui_interactive",
+        acceptanceCriteria: ["Expose runtime state on window.app"],
+        runtimeEvidenceRequired: { minFlowCount: 1 },
+      });
+      writeJson(paths.request, {
+        schema: "setfarm.implement-verification-request.v1",
+        storyId: "US-001",
+        status: "ready_for_orchestrator_verification",
+        interactionRequests: [{ id: "flow-1", action: "read", target: "window.app", waitCondition: "dom_idle", timeoutMs: 1000 }],
+        uncoveredCriteria: [],
+        knownGaps: [],
+      });
+      writeJson(paths.evidence, {
+        schema: "setfarm.implement-evidence.v1",
+        storyId: "US-001",
+        runtime: { url: "http://127.0.0.1:6101", port: 6101 },
+        commands: [{ cmd: "npm run build", exitCode: 0 }],
+        flows: [{ flowId: "flow-1", action: "snapshot", captures: [{ stateBridge: { state: { ready: true } } }] }],
+        visualEvidence: { status: "disabled" },
+        verdict: "pass",
+      });
+
+      const result = validateImplementEvidenceArtifacts(tmp, "US-001");
+
+      assert.equal(result.ok, true);
+      assert.equal(result.issues.some((issue) => issue.code === "IMPLEMENT_VERIFICATION_REQUEST_INTERACTIONS_INVALID"), false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("rejects click-like interactions that do not name a reachable target or actionId", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-implement-evidence-missing-target-"));
     try {

@@ -58,6 +58,13 @@ function numberOrUndefined(value: unknown): number | undefined {
 }
 
 const SUPPORTED_INTERACTION_ACTIONS = new Set(["click", "fill", "press", "wait", "navigate", "snapshot"]);
+const SNAPSHOT_ALIAS_ACTIONS = new Set(["read", "inspect", "observe"]);
+
+function isSnapshotAliasInteraction(action: string, target: string, value = ""): boolean {
+  if (!SNAPSHOT_ALIAS_ACTIONS.has(action)) return false;
+  const subject = `${target} ${value}`.trim().toLowerCase();
+  return /\bwindow\.app\b|\bglobalthis\.app\b|\bapp\s+state\b|\bstate\s+bridge\b|\bdocument\b|\bdom\b|\bbody\b/.test(subject);
+}
 
 export function normalizeInteractionRequests(value: unknown): InteractionRequest[] {
   if (!Array.isArray(value)) return [];
@@ -77,12 +84,24 @@ export function normalizeInteractionRequests(value: unknown): InteractionRequest
     }
     const action = typeof raw.action === "string" ? raw.action.trim() : "";
     const target = typeof raw.target === "string" ? raw.target.trim() : "";
+    const rawValue = typeof raw.value === "string" ? raw.value : "";
+    if (isSnapshotAliasInteraction(action, target, rawValue)) {
+      interactions.push({
+        id: typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : `flow-${index + 1}`,
+        action: "snapshot",
+        target: target || undefined,
+        value: rawValue || undefined,
+        waitCondition: typeof raw.waitCondition === "string" ? raw.waitCondition as InteractionRequest["waitCondition"] : undefined,
+        timeoutMs: numberOrUndefined(raw.timeoutMs),
+      });
+      continue;
+    }
     if (SUPPORTED_INTERACTION_ACTIONS.has(action)) {
       interactions.push({
         id: typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : `flow-${index + 1}`,
         action: action as InteractionRequest["action"],
         target: target || undefined,
-        value: typeof raw.value === "string" ? raw.value : undefined,
+        value: rawValue || undefined,
         waitCondition: typeof raw.waitCondition === "string" ? raw.waitCondition as InteractionRequest["waitCondition"] : undefined,
         timeoutMs: numberOrUndefined(raw.timeoutMs),
       });
