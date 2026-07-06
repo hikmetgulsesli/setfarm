@@ -398,6 +398,7 @@ describe("stitch-to-jsx", () => {
           <span title="Triggers visual warning when limit is exceeded." class="material-symbols-outlined text-outline text-[16px] cursor-help">info</span>
           <button><span class="material-symbols-outlined">help_center</span>Help Center</button>
           <button class="transition-all"><span data-icon="rotate_right" aria-hidden="true" focusable="false" class="material-symbols-outlined text-[18px]">rotate_right</span>Rotate</button>
+          <button class="material-symbols-outlined text-[12px] hover:text-error transition-colors">close</button>
         </main>
       `);
 
@@ -407,16 +408,17 @@ describe("stitch-to-jsx", () => {
       });
 
       const code = fs.readFileSync(path.join(tmp, "src", "screens", "ControlsHelp.tsx"), "utf-8");
-      assert.match(code, /import \{ CircleHelp, Info, RotateCw, TriangleAlert \} from "lucide-react";/);
+      assert.match(code, /import \{ CircleHelp, Info, RotateCw, TriangleAlert, X \} from "lucide-react";/);
       assert.match(code, /<TriangleAlert className="text-primary transition-colors" aria-hidden=\{true\} focusable="false" \/>/);
       assert.match(code, /<Info className="text-outline text-\[16px\] cursor-help" aria-hidden=\{true\} focusable="false" \/>/);
       assert.match(code, /<CircleHelp aria-hidden=\{true\} focusable="false" \/>Help Center/);
       assert.match(code, /<RotateCw className="text-\[18px\]" aria-hidden=\{true\} focusable="false" \/>Rotate/);
+      assert.match(code, /<button[^>]*data-action-id="close-3"[^>]*className="text-\[12px\] hover:text-error transition-colors"[^>]*aria-label="Close"><X aria-hidden=\{true\} focusable="false" \/><\/button>/);
       assert.match(code, /<button className="transition-colors"/);
-      assert.equal((code.match(/aria-hidden/g) || []).length, 4);
-      assert.equal((code.match(/focusable=/g) || []).length, 4);
+      assert.equal((code.match(/aria-hidden/g) || []).length, 5);
+      assert.equal((code.match(/focusable=/g) || []).length, 5);
       assert.doesNotMatch(code, /<Info[^>]*\stitle=/);
-      assert.doesNotMatch(code, /material-symbols|Material Symbols|>warning<|>help_center<|>rotate_right</);
+      assert.doesNotMatch(code, /material-symbols|Material Symbols|>warning<|>help_center<|>rotate_right|>close</);
       assert.doesNotMatch(code, /transition-all/);
 
       const transpiled = ts.transpileModule(code, {

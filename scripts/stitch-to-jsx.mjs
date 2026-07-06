@@ -1238,22 +1238,31 @@ function ensureStitchRuntimeCss(repoPath, classTokens, styleBlocks = new Set()) 
   fs.writeFileSync(cssPath, css.endsWith("\n") ? css : `${css}\n`);
 }
 
+function materialIconComponentForName(iconName, lucideImports, unknownMaterialIcons) {
+  const mappedComponent = MATERIAL_TO_LUCIDE[iconName];
+  if (!mappedComponent) {
+    const key = iconName || "(empty)";
+    unknownMaterialIcons.set(key, (unknownMaterialIcons.get(key) || 0) + 1);
+  }
+  const component = mappedComponent || "BadgeHelp";
+  lucideImports.add(component);
+  return component;
+}
+
+function cleanMaterialIconClass(classValue) {
+  return normalizeClassTokens(classValue)
+    .split(/\s+/)
+    .filter(cls => cls && cls !== "material-icons" && !cls.startsWith("material-symbols"))
+    .join(" ");
+}
+
 function replaceMaterialSymbolSpans(html, lucideImports, unknownMaterialIcons) {
-  return String(html || "").replace(
+  let out = String(html || "").replace(
     /<span\b([^>]*)\b(class|className)=(["'])([^"']*\b(?:material-symbols(?:-outlined)?|material-icons)\b[^"']*)\3([^>]*)>([\s\S]*?)<\/span>/gi,
     (_match, beforeClass, _classAttr, _quote, classValue, afterClass, inner) => {
       const iconName = materialIconKey(inner);
-      const mappedComponent = MATERIAL_TO_LUCIDE[iconName];
-      if (!mappedComponent) {
-        const key = iconName || "(empty)";
-        unknownMaterialIcons.set(key, (unknownMaterialIcons.get(key) || 0) + 1);
-      }
-      const component = mappedComponent || "BadgeHelp";
-      lucideImports.add(component);
-      const cleanedClass = normalizeClassTokens(classValue)
-        .split(/\s+/)
-        .filter(cls => cls && cls !== "material-icons" && !cls.startsWith("material-symbols"))
-        .join(" ");
+      const component = materialIconComponentForName(iconName, lucideImports, unknownMaterialIcons);
+      const cleanedClass = cleanMaterialIconClass(classValue);
       const attrs = ["aria-hidden", "focusable", "data-icon", "title"]
         .reduce((next, attr) => stripJsxAttribute(next, attr), `${beforeClass || ""}${afterClass || ""}`)
         .trimEnd();
@@ -1261,6 +1270,23 @@ function replaceMaterialSymbolSpans(html, lucideImports, unknownMaterialIcons) {
       return `<${component}${attrs}${classAttr} aria-hidden="true" focusable="false" />`;
     },
   );
+  out = out.replace(
+    /<(button|a|i)\b([^>]*)\b(class|className)=(["'])([^"']*\b(?:material-symbols(?:-outlined)?|material-icons)\b[^"']*)\4([^>]*)>([\s\S]*?)<\/\1>/gi,
+    (_match, tag, beforeClass, _classAttr, _quote, classValue, afterClass, inner) => {
+      const iconName = attrValue(`${beforeClass || ""}${afterClass || ""}`, "data-icon") || materialIconKey(inner);
+      const component = materialIconComponentForName(iconName, lucideImports, unknownMaterialIcons);
+      const cleanedClass = cleanMaterialIconClass(classValue);
+      let attrs = ["data-icon"]
+        .reduce((next, attr) => stripJsxAttribute(next, attr), `${beforeClass || ""}${afterClass || ""}`)
+        .trimEnd();
+      if (cleanedClass) attrs += ` class="${cleanedClass}"`;
+      if ((tag.toLowerCase() === "button" || tag.toLowerCase() === "a") && !/\baria-label\s*=|\btitle\s*=/.test(attrs)) {
+        attrs += ` aria-label="${escapeHtmlAttr(humanizeActionLabel(iconName))}"`;
+      }
+      return `<${tag}${attrs}><${component} aria-hidden="true" focusable="false" /></${tag}>`;
+    },
+  );
+  return out;
 }
 
 function writeUnknownMaterialIconsReport(repoPath, unknownMaterialIcons) {
