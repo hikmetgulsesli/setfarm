@@ -2219,9 +2219,11 @@ describe("spawner prompt bootstrap", () => {
 
       assert.equal(summary.failureCategory, "MASKED_CHECK_COMMAND");
       assert.equal((summary.retryDiscipline as any).mode, "semantic-fix");
-      assert.match(String((summary.retryDiscipline as any).instruction), /CHECK_BUILD_CMD, CHECK_TEST_CMD, or CHECK_LINT_CMD is present, use those declared Setfarm check wrappers first/i);
+      assert.match(String((summary.retryDiscipline as any).instruction), /CHECK_BUILD_CMD, CHECK_TEST_CMD, or CHECK_LINT_CMD is present, run that printed command exactly/i);
+      assert.match(String((summary.retryDiscipline as any).instruction), /Do not append, prepend, wrap, pipe, tee, redirect, timeout, group, or combine it/i);
       assert.match(String((summary.retryDiscipline as any).instruction), /do not rerun the old masked ad hoc command/i);
       assert.match(String((summary.retryDiscipline as any).instruction), /npm run build 2>&1 \| tail -40; echo \$\?/);
+      assert.match(String((summary.retryDiscipline as any).instruction), /bash \.setfarm-bin\/setfarm-check test 2>&1 \| tail -40/);
       assert.match(String((summary.retryDiscipline as any).instruction), /After the declared checks and setfarm-evidence validate pass, write the output contract, call step complete, and stop/i);
       assert.match(String((summary.retryDiscipline as any).instruction), /do not run optional extra vitest\/tsc\/eslint probes/i);
       const bootstrap = buildResolvedClaimBootstrapScript({
@@ -2231,10 +2233,11 @@ describe("spawner prompt bootstrap", () => {
         stepId: "step-123",
         workdir: tmp,
       });
-      assert.match(bootstrap, /MASKED_CHECK_RULE=Use CHECK_BUILD_CMD\/CHECK_TEST_CMD when present/);
+      assert.match(bootstrap, /MASKED_CHECK_RULE=Use CHECK_BUILD_CMD\/CHECK_TEST_CMD when present, exactly as printed and as standalone commands/);
       assert.match(bootstrap, /MASKED_CHECK_EXACT_BUILD_CMD=/);
       assert.match(bootstrap, /MASKED_CHECK_EXACT_TEST_CMD=/);
-      assert.match(bootstrap, /MASKED_CHECK_DONE_GATE=Before STATUS: done, run CHECK_BUILD_CMD\/CHECK_TEST_CMD when present/);
+      assert.match(bootstrap, /MASKED_CHECK_DONE_GATE=Before STATUS: done, run CHECK_BUILD_CMD\/CHECK_TEST_CMD when present exactly as printed/);
+      assert.match(bootstrap, /CHECK_CMD_ATOMIC_RULE=Run each CHECK_\*_CMD value exactly as printed/);
       assert.match(bootstrap, /CHECK_BUILD_CMD=bash \.setfarm-bin\/setfarm-check build/);
       assert.match(bootstrap, /CHECK_TEST_CMD=bash \.setfarm-bin\/setfarm-check test/);
     } finally {
@@ -2274,7 +2277,7 @@ describe("spawner prompt bootstrap", () => {
       });
 
       assert.equal(summary.failureCategory, "MASKED_CHECK_COMMAND");
-      assert.match(String((summary.retryDiscipline as any).instruction), /declared Setfarm check wrappers first/i);
+      assert.match(String((summary.retryDiscipline as any).instruction), /run that printed command exactly as its own shell command/i);
       assert.match(String((summary.retryFeedback as any).details), /MASKED_CHECK_COMMAND/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -2374,13 +2377,14 @@ describe("spawner prompt bootstrap", () => {
 
       assert.match(out, /FAILURE_CATEGORY=PR_REVIEW_COMMENTS_OPEN/);
       assert.match(out, /PR_REVIEW_ACTIONABLE_THREADS=1/);
-      assert.match(out, /IMPLEMENT_LOOP=Edit scoped source, run CHECK_BUILD_CMD, run CHECK_TEST_CMD/);
+      assert.match(out, /IMPLEMENT_LOOP=Edit scoped source, run CHECK_BUILD_CMD exactly, run CHECK_TEST_CMD exactly/);
       assert.match(out, /CHECK_BUILD_CMD=bash \.setfarm-bin\/setfarm-check build/);
       assert.match(out, /CHECK_TEST_CMD=bash \.setfarm-bin\/setfarm-check test/);
-      assert.match(out, /MASKED_CHECK_RULE=Use CHECK_BUILD_CMD\/CHECK_TEST_CMD when present/);
+      assert.match(out, /CHECK_CMD_ATOMIC_RULE=Run each CHECK_\*_CMD value exactly as printed/);
+      assert.match(out, /MASKED_CHECK_RULE=Use CHECK_BUILD_CMD\/CHECK_TEST_CMD when present, exactly as printed and as standalone commands/);
       assert.match(out, /MASKED_CHECK_EXACT_BUILD_CMD=npm run build/);
       assert.match(out, /MASKED_CHECK_EXACT_TEST_CMD=npm run test:run/);
-      assert.match(out, /MASKED_CHECK_DONE_GATE=Before STATUS: done, run CHECK_BUILD_CMD\/CHECK_TEST_CMD when present/);
+      assert.match(out, /MASKED_CHECK_DONE_GATE=Before STATUS: done, run CHECK_BUILD_CMD\/CHECK_TEST_CMD when present exactly as printed/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
