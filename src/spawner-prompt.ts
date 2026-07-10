@@ -1833,6 +1833,11 @@ try {
   process.stderr.write("SETFARM_SUMMARY_INSTALL_FAILED: " + String(err).slice(0, 240) + "\\n");
 }
 SETFARM_SUMMARY_TOOL_NODE
+  echo "SUMMARY_CURRENT_STORY_CMD=CLAIM_SUMMARY_FILE='$CLAIM_SUMMARY_FILE' node .setfarm-bin/setfarm-summary current-story"
+  echo "SUMMARY_ACCEPTANCE_CMD=CLAIM_SUMMARY_FILE='$CLAIM_SUMMARY_FILE' node .setfarm-bin/setfarm-summary acceptance"
+  echo "SUMMARY_OUTPUT_CONTRACT_CMD=CLAIM_SUMMARY_FILE='$CLAIM_SUMMARY_FILE' node .setfarm-bin/setfarm-summary output-contract"
+  echo "SUMMARY_SUPERVISOR_MEMORY_CMD=CLAIM_SUMMARY_FILE='$CLAIM_SUMMARY_FILE' node .setfarm-bin/setfarm-summary supervisor-memory"
+  echo "SUMMARY_HELPER_RULE=Use the SUMMARY_*_CMD lines exactly when more context is needed; do not guess setfarm-summary flags, cat the helper script, or parse raw /tmp/claim JSON."
   node - "$CLAIM_SUMMARY_FILE" "$WORKDIR/.setfarm-bin/setfarm-evidence" <<'SETFARM_EVIDENCE_TOOL_NODE'
 const fs = require("fs");
 const path = require("path");
