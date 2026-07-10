@@ -1391,7 +1391,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(block, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.agentId,\s*reason\)/);
   });
 
-  it("records masked build and test pipelines as advisory while final gates stay authoritative", () => {
+  it("retries implement agents that mask build and test pipeline exit codes", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /function isMaskedDeterministicCheckCommand/);
     assert.match(source, /function implementMaskedCheckCommandGuard/);
@@ -1399,17 +1399,17 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /preservesPipelineExitStatus/);
     assert.match(source, /PIPESTATUS/);
     assert.match(source, /head\|tail\|grep\|rg\|tee\|cat\|awk\|sed/);
-    assert.match(source, /masked-check-command-advisory/);
+    assert.match(source, /masked-check-command-guard/);
 
     const guardStart = source.indexOf("const maskedCheck = implementMaskedCheckCommandGuard(active)");
     const guardEnd = source.indexOf("const claimParseLoop = claimParseLoopGuard(active)", guardStart);
     assert.notEqual(guardStart, -1, "masked check guard block missing");
-    assert.notEqual(guardEnd, -1, "masked check advisory should run before softer signal guards");
+    assert.notEqual(guardEnd, -1, "masked check guard should run before softer signal guards");
     const block = source.slice(guardStart, guardEnd);
-    assert.match(block, /recordSupervisorRuntimeEvent\(active\.runId,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"PRODUCT_SUPERVISOR_RUNTIME_ADVISORY"/);
-    assert.match(block, /PRODUCT_SUPERVISOR_RUNTIME_ADVISORY/);
-    assert.doesNotMatch(block, /terminateActiveProcess\(active,\s*"masked-check-command-guard"\)/);
-    assert.doesNotMatch(block, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.agentId,\s*reason\)/);
+    assert.match(block, /recordSupervisorRuntimeEvent\(active\.runId,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"PRODUCT_SUPERVISOR_RUNTIME_GUARD"/);
+    assert.match(block, /PRODUCT_SUPERVISOR_RUNTIME_GUARD/);
+    assert.match(block, /terminateActiveProcess\(active,\s*"masked-check-command-guard"\)/);
+    assert.match(block, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.agentId,\s*reason\)/);
     assert.match(source, /exitReason\.includes\("MASKED_CHECK_COMMAND"\)/);
     assert.ok(
       source.indexOf("const processCleanup = implementProcessCleanupGuard(active)") < guardStart,
