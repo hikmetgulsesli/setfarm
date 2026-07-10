@@ -229,6 +229,7 @@ const AGENT_SELF_LOOP_CHECK_AFTER_MS = parsePositiveInt(process.env.SETFARM_AGEN
 const AGENT_REPEATED_TOOL_LOOP_CHECK_AFTER_MS = parsePositiveInt(process.env.SETFARM_AGENT_REPEATED_TOOL_LOOP_CHECK_AFTER_MS, 2 * 60_000);
 const IMPLEMENT_NO_DELTA_GRACE_MS = parsePositiveInt(process.env.SETFARM_IMPLEMENT_NO_DELTA_GRACE_MS, 8 * 60_000);
 const IMPLEMENT_RETRY_HARD_TIMEOUT_MS = parsePositiveInt(process.env.SETFARM_IMPLEMENT_RETRY_HARD_TIMEOUT_MS, 7 * 60_000);
+const IMPLEMENT_RETRY_WITH_DELTA_HARD_TIMEOUT_MS = parsePositiveInt(process.env.SETFARM_IMPLEMENT_RETRY_WITH_DELTA_HARD_TIMEOUT_MS, Math.max(IMPLEMENT_RETRY_HARD_TIMEOUT_MS, 18 * 60_000));
 const IMPLEMENT_PRE_DELTA_MAX_CONTEXT_READS = parsePositiveInt(process.env.SETFARM_IMPLEMENT_PRE_DELTA_MAX_CONTEXT_READS, 10);
 const AGENT_SELF_LOOP_MIN_ACTIONS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_ACTIONS, 7);
 const AGENT_SELF_LOOP_MIN_NOOP_EDITS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_NOOP_EDITS, 4);
@@ -3671,10 +3672,15 @@ function implementRetryHardTimeoutGuard(active: ActiveProcess, ageMs: number): {
   if (fileSize(active.outputPath) > 0) return { detected: false, reason: "" };
   const retryMode = claimSummaryRetryDisciplineMode(active);
   if (!retryMode) return { detected: false, reason: "" };
+  const changedFiles = sourceStatusFiles(active.spawnCwd);
+  if (changedFiles.length > 0 && ageMs < IMPLEMENT_RETRY_WITH_DELTA_HARD_TIMEOUT_MS) return { detected: false, reason: "" };
+  const progressHint = changedFiles.length > 0
+    ? ` after changing scoped source files (${changedFiles.slice(0, 8).join(", ")})`
+    : "";
 
   return {
     detected: true,
-    reason: `IMPLEMENT_RETRY_HARD_TIMEOUT: ${active.agentId} kept ${active.wfId}/${active.role} running for ${formatDurationMs(ageMs)} in retry discipline mode "${retryMode}" without producing final output. Retry workers must make a bounded scoped fix, run verification, and either finish or fail; Setfarm is requeueing instead of allowing an active-analysis loop.`,
+    reason: `IMPLEMENT_RETRY_HARD_TIMEOUT: ${active.agentId} kept ${active.wfId}/${active.role} running for ${formatDurationMs(ageMs)} in retry discipline mode "${retryMode}" without producing final output${progressHint}. Retry workers must make a bounded scoped fix, run verification, and either finish or fail; Setfarm is requeueing instead of allowing an active-analysis loop.`,
   };
 }
 

@@ -1505,8 +1505,12 @@ describe("spawner gateway recovery wiring", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /IMPLEMENT_RETRY_HARD_TIMEOUT_MS/);
     assert.match(source, /SETFARM_IMPLEMENT_RETRY_HARD_TIMEOUT_MS/);
+    assert.match(source, /IMPLEMENT_RETRY_WITH_DELTA_HARD_TIMEOUT_MS/);
+    assert.match(source, /SETFARM_IMPLEMENT_RETRY_WITH_DELTA_HARD_TIMEOUT_MS/);
     assert.match(source, /function implementRetryHardTimeoutGuard/);
     assert.match(source, /claimSummaryRetryDisciplineMode\(active\)/);
+    assert.match(source, /sourceStatusFiles\(active\.spawnCwd\)/);
+    assert.match(source, /changedFiles\.length > 0 && ageMs < IMPLEMENT_RETRY_WITH_DELTA_HARD_TIMEOUT_MS/);
     assert.match(source, /IMPLEMENT_RETRY_HARD_TIMEOUT/);
     assert.match(source, /recordSupervisorRuntimeEvent\(active\.runId,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"IMPLEMENT_RETRY_HARD_TIMEOUT"/);
     assert.match(source, /terminateActiveProcess\(active,\s*"implement-retry-hard-timeout"\)/);
