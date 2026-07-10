@@ -217,9 +217,12 @@ describe("spawner prompt bootstrap", () => {
       const summaryScript = path.join(workdir, ".setfarm-bin", "setfarm-summary");
       assert.ok(fs.existsSync(summaryScript), "bootstrap should install setfarm-summary");
       const summaryScriptBody = fs.readFileSync(summaryScript, "utf-8");
-      assert.match(summaryScriptBody, /Usage: setfarm-summary current-story\|acceptance\|screen-usage-contract\|design-contracts\|retry-patch/);
+      assert.match(summaryScriptBody, /Usage: setfarm-summary current-story\|acceptance\|scope-files\|checks\|workdirs\|git-policy\|integration-policy\|generated-screen-policy\|screen-usage-contract\|design-contracts\|retry-feedback/);
       const evidenceEnv = { ...process.env, CLAIM_SUMMARY_FILE: claimSummaryFile };
       assert.match(execFileSync("bash", [summaryScript, "acceptance"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /State persists after save/);
+      assert.match(execFileSync("bash", [summaryScript, "scope-files"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /src\/App\.tsx/);
+      assert.match(execFileSync("bash", [summaryScript, "checks"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /bash \.setfarm-bin\/setfarm-check build/);
+      assert.match(execFileSync("bash", [summaryScript, "workdirs"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /run-us-001/);
       assert.match(execFileSync("bash", [summaryScript, "screen-usage-contract"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /MainMenu/);
       assert.match(execFileSync("bash", [summaryScript, "design-contracts"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /Main Menu/);
       const evidenceScript = path.join(workdir, ".setfarm-bin", "setfarm-evidence");
@@ -2428,6 +2431,10 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, /CHECK_CMD_ATOMIC_RULE=Run each CHECK_\*_CMD value exactly as printed/);
       assert.match(out, /SUMMARY_CURRENT_STORY_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary current-story/);
       assert.match(out, /SUMMARY_ACCEPTANCE_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary acceptance/);
+      assert.match(out, /SUMMARY_SCOPE_FILES_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary scope-files/);
+      assert.match(out, /SUMMARY_CHECKS_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary checks/);
+      assert.match(out, /SUMMARY_WORKDIRS_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary workdirs/);
+      assert.match(out, /SUMMARY_RETRY_FEEDBACK_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary retry-feedback/);
       assert.match(out, /SUMMARY_SCREEN_USAGE_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary screen-usage-contract/);
       assert.match(out, /SUMMARY_DESIGN_CONTRACTS_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary design-contracts/);
       assert.match(out, /SUMMARY_OUTPUT_CONTRACT_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary output-contract/);
