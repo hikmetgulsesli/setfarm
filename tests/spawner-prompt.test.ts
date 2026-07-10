@@ -2219,9 +2219,11 @@ describe("spawner prompt bootstrap", () => {
 
       assert.equal(summary.failureCategory, "MASKED_CHECK_COMMAND");
       assert.equal((summary.retryDiscipline as any).mode, "semantic-fix");
-      assert.match(String((summary.retryDiscipline as any).instruction), /rerun the exact failing build\/test\/lint\/typecheck command as a standalone command without any pipe/i);
+      assert.match(String((summary.retryDiscipline as any).instruction), /CHECK_BUILD_CMD, CHECK_TEST_CMD, or CHECK_LINT_CMD is present, use those declared Setfarm check wrappers first/i);
+      assert.match(String((summary.retryDiscipline as any).instruction), /do not rerun the old masked ad hoc command/i);
       assert.match(String((summary.retryDiscipline as any).instruction), /npm run build 2>&1 \| tail -40; echo \$\?/);
-      assert.match(String((summary.retryDiscipline as any).instruction), /Do not report STATUS: done until an unmasked deterministic check has exited successfully/);
+      assert.match(String((summary.retryDiscipline as any).instruction), /After the declared checks and setfarm-evidence validate pass, write the output contract, call step complete, and stop/i);
+      assert.match(String((summary.retryDiscipline as any).instruction), /do not run optional extra vitest\/tsc\/eslint probes/i);
       const bootstrap = buildResolvedClaimBootstrapScript({
         claimFile: path.join(tmp, "claim.json"),
         outputFile: path.join(tmp, "output.txt"),

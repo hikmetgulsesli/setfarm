@@ -1075,7 +1075,7 @@ function retryDisciplineForFailure(
   if (/\bMASKED_CHECK_COMMAND\b/i.test(signal)) {
     return {
       mode: "semantic-fix",
-      instruction: "Masked-check retry discipline: first rerun the exact failing build/test/lint/typecheck command as a standalone command without any pipe to head, tail, grep, rg, tee, cat, awk, or sed. Do not use forms like `npm run build 2>&1 | tail -40; echo $?`; that still hides the real build exit status. If output must be shortened, redirect to a log while preserving the command exit status, then inspect the log in a separate command. Do not report STATUS: done until an unmasked deterministic check has exited successfully.",
+      instruction: "Masked-check retry discipline: when CHECK_BUILD_CMD, CHECK_TEST_CMD, or CHECK_LINT_CMD is present, use those declared Setfarm check wrappers first and do not rerun the old masked ad hoc command. Only fall back to the exact failing build/test/lint/typecheck command when no matching CHECK_* wrapper exists. The command that decides pass/fail must run without any pipe to head, tail, grep, rg, tee, cat, awk, or sed. Do not use forms like `npm run build 2>&1 | tail -40; echo $?`; that still hides the real build exit status. If output must be shortened, redirect to a log while preserving the command exit status, then inspect the log in a separate command. After the declared checks and setfarm-evidence validate pass, write the output contract, call step complete, and stop; do not run optional extra vitest/tsc/eslint probes.",
     };
   }
   if (/\b(?:IMPLEMENT_EVIDENCE_INCOMPLETE|IMPLEMENT_EVIDENCE_VERDICT_NOT_PASSED|IMPLEMENT_INTERACTION_FAILED|UI_INTERACTION_TARGET_UNREACHABLE)\b/i.test(signal)) {
