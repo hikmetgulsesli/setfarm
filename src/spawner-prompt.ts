@@ -1415,7 +1415,7 @@ function extractCurrentStory(input: string): { storyId: string; storyTitle: stri
 
 function currentStoryRetryFailureSignal(currentStoryText: string): string {
   const text = String(currentStoryText || "");
-  const direct = text.match(/\b(?:MASKED_CHECK_COMMAND|SCOPE_BLEED|SCOPE_WRITE_VIOLATION|PRODUCT_SUPERVISOR(?:_BLOCKED)?|IMPLEMENT_EVIDENCE(?:_INCOMPLETE|_VERDICT_NOT_PASSED)?|IMPLEMENT_INTERACTION_FAILED|UI_INTERACTION_TARGET_UNREACHABLE|DESIGN_MISMATCH|RUNTIME_BRIDGE_MISSING)\b:[^\n]*(?:\n[^\n]*){0,6}/i)?.[0] || "";
+  const direct = text.match(/\b(?:AGENT_PROCESS_EXITED|MASKED_CHECK_COMMAND|SCOPE_BLEED|SCOPE_WRITE_VIOLATION|PRODUCT_SUPERVISOR(?:_BLOCKED)?|IMPLEMENT_EVIDENCE(?:_INCOMPLETE|_VERDICT_NOT_PASSED)?|IMPLEMENT_INTERACTION_FAILED|UI_INTERACTION_TARGET_UNREACHABLE|DESIGN_MISMATCH|RUNTIME_BRIDGE_MISSING)\b:[^\n]*(?:\n[^\n]*){0,6}/i)?.[0] || "";
   if (direct.trim()) return cleanPreviousFailureSection(direct);
   if (!/\b(?:Failure report|Previous failure|Retry feedback)\b/i.test(text)) return "";
   return cleanPreviousFailureSection(text);
