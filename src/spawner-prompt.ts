@@ -1793,7 +1793,7 @@ try {
     "const summaryFile = process.env.CLAIM_SUMMARY_FILE;",
     "const command = process.argv[2] || '';",
     "function usage() {",
-    "  console.error('Usage: setfarm-summary current-story|acceptance|retry-patch|retry-patch-files|source-snapshot|actionable-review-threads|supervisor-evidence|supervisor-memory|output-contract|runtime-checklist');",
+    "  console.error('Usage: setfarm-summary current-story|acceptance|screen-usage-contract|design-contracts|retry-patch|retry-patch-files|source-snapshot|actionable-review-threads|supervisor-evidence|supervisor-memory|output-contract|runtime-checklist');",
     "  process.exit(2);",
     "}",
     "function valueAt(obj, path) {",
@@ -1814,6 +1814,8 @@ try {
     "const fields = {",
     "  'current-story': 'currentStory',",
     "  acceptance: 'acceptanceCriteria',",
+    "  'screen-usage-contract': 'screenUsageContract',",
+    "  'design-contracts': 'designContracts',",
     "  'retry-patch': 'retryFeedback.worktreePatch.body',",
     "  'retry-patch-files': 'retryFeedback.worktreePatch.touchedFiles',",
     "  'source-snapshot': 'retryFeedback.sourceSnapshot.section',",
@@ -1835,9 +1837,11 @@ try {
 SETFARM_SUMMARY_TOOL_NODE
   echo "SUMMARY_CURRENT_STORY_CMD=CLAIM_SUMMARY_FILE='$CLAIM_SUMMARY_FILE' node .setfarm-bin/setfarm-summary current-story"
   echo "SUMMARY_ACCEPTANCE_CMD=CLAIM_SUMMARY_FILE='$CLAIM_SUMMARY_FILE' node .setfarm-bin/setfarm-summary acceptance"
+  echo "SUMMARY_SCREEN_USAGE_CMD=CLAIM_SUMMARY_FILE='$CLAIM_SUMMARY_FILE' node .setfarm-bin/setfarm-summary screen-usage-contract"
+  echo "SUMMARY_DESIGN_CONTRACTS_CMD=CLAIM_SUMMARY_FILE='$CLAIM_SUMMARY_FILE' node .setfarm-bin/setfarm-summary design-contracts"
   echo "SUMMARY_OUTPUT_CONTRACT_CMD=CLAIM_SUMMARY_FILE='$CLAIM_SUMMARY_FILE' node .setfarm-bin/setfarm-summary output-contract"
   echo "SUMMARY_SUPERVISOR_MEMORY_CMD=CLAIM_SUMMARY_FILE='$CLAIM_SUMMARY_FILE' node .setfarm-bin/setfarm-summary supervisor-memory"
-  echo "SUMMARY_HELPER_RULE=Use the SUMMARY_*_CMD lines exactly when more context is needed; do not guess setfarm-summary flags, cat the helper script, or parse raw /tmp/claim JSON."
+  echo "SUMMARY_HELPER_RULE=Use the SUMMARY_*_CMD lines exactly when more context is needed; do not append pipes/redirection/chaining, guess setfarm-summary flags, cat the helper script, or parse raw /tmp/claim JSON."
   node - "$CLAIM_SUMMARY_FILE" "$WORKDIR/.setfarm-bin/setfarm-evidence" <<'SETFARM_EVIDENCE_TOOL_NODE'
 const fs = require("fs");
 const path = require("path");
@@ -2007,9 +2011,11 @@ if (/^developer$/i.test(String(s.role || ""))) {
   lines.push("CHECK_CMD_ATOMIC_RULE=Run each CHECK_*_CMD value exactly as printed, as its own command. Do not append 2>&1, | head, | tail, tee, cat, echo, timeout, parentheses, &&, ||, ;, or any other suffix/prefix/wrapper to a CHECK_*_CMD command.");
   lines.push("SUMMARY_CURRENT_STORY_CMD=" + summaryCommandPrefix + "current-story");
   lines.push("SUMMARY_ACCEPTANCE_CMD=" + summaryCommandPrefix + "acceptance");
+  lines.push("SUMMARY_SCREEN_USAGE_CMD=" + summaryCommandPrefix + "screen-usage-contract");
+  lines.push("SUMMARY_DESIGN_CONTRACTS_CMD=" + summaryCommandPrefix + "design-contracts");
   lines.push("SUMMARY_OUTPUT_CONTRACT_CMD=" + summaryCommandPrefix + "output-contract");
   lines.push("SUMMARY_SUPERVISOR_MEMORY_CMD=" + summaryCommandPrefix + "supervisor-memory");
-  lines.push("SUMMARY_HELPER_RULE=Use the SUMMARY_*_CMD lines exactly when more context is needed; do not guess setfarm-summary flags, cat the helper script, or parse raw /tmp/claim JSON.");
+  lines.push("SUMMARY_HELPER_RULE=Use the SUMMARY_*_CMD lines exactly when more context is needed; do not append pipes/redirection/chaining, guess setfarm-summary flags, cat the helper script, or parse raw /tmp/claim JSON.");
 }
 if (s.currentStory) lines.push("CURRENT_STORY_BRIEF=" + String(s.currentStory).replace(/\\s+/g, " ").slice(0, 1200));
 if (s.acceptanceCriteria) lines.push("ACCEPTANCE_CRITERIA=" + String(s.acceptanceCriteria).replace(/\\s+/g, " ").slice(0, 900));
