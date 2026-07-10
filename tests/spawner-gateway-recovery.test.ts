@@ -39,8 +39,11 @@ describe("spawner gateway recovery wiring", () => {
     assert.equal(isMaskedDeterministicCheckCommand("npx tsc --noEmit src/features/foo.ts 2>&1 | head -20"), false);
     assert.equal(isMaskedDeterministicCheckCommand("vitest run src/App.test.tsx 2>&1 | head -100"), true);
     assert.equal(isMaskedDeterministicCheckCommand("eslint . 2>&1 | tail -50"), true);
+    assert.equal(isMaskedDeterministicCheckCommand("bash .setfarm-bin/setfarm-check build 2>&1 | tail -40"), true);
+    assert.equal(isMaskedDeterministicCheckCommand("sh .setfarm-bin/setfarm-check test 2>&1 | head -80"), true);
     assert.equal(isMaskedDeterministicCheckCommand("npm run lint > /tmp/lint-final.log 2>&1; echo \"LINT_EXIT=$?\"; cat /tmp/lint-final.log 2>&1 | head -20"), false);
     assert.equal(isMaskedDeterministicCheckCommand("set -o pipefail; npm run build 2>&1 | tee /tmp/build.log"), false);
+    assert.equal(isMaskedDeterministicCheckCommand("set -o pipefail; bash .setfarm-bin/setfarm-check build 2>&1 | tee /tmp/build.log"), false);
     assert.equal(isMaskedDeterministicCheckCommand("ls -la node_modules/.bin/vitest 2>&1 | head -3"), false);
     assert.equal(isMaskedDeterministicCheckCommand("ls -la node_modules/.bin/tsc 2>&1 | head -3"), false);
   });
@@ -1398,6 +1401,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /MASKED_CHECK_COMMAND/);
     assert.match(source, /preservesPipelineExitStatus/);
     assert.match(source, /PIPESTATUS/);
+    assert.match(source, /\.setfarm-bin\\\/setfarm-check/);
     assert.match(source, /head\|tail\|grep\|rg\|tee\|cat\|awk\|sed/);
     assert.match(source, /masked-check-command-guard/);
 
