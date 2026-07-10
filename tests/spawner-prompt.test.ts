@@ -2290,6 +2290,45 @@ describe("spawner prompt bootstrap", () => {
     }
   });
 
+  it("keeps quality gate retry reports out of the current story handoff", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-current-story-quality-gate-"));
+    try {
+      fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({ scripts: { build: "vite build", "test:run": "vitest run" } }));
+      fs.mkdirSync(path.join(tmp, "src"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src", "App.tsx"), "export default function App() { return null; }\n");
+      fs.writeFileSync(path.join(tmp, ".story-scope-files"), "src/App.tsx\n");
+
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        bootstrapFile: path.join(tmp, "bootstrap.sh"),
+        stepId: "step-123",
+        runId: "run-123",
+        workdir: tmp,
+        repo: tmp,
+        storyId: "US-001",
+        input: [
+          "TASK: Project: current story quality gate",
+          "CURRENT STORY: Story US-001: App shell",
+          "",
+          "QUALITY GATE: 1 error(s), 0 warning(s)",
+          "  [ERROR] generated_screen_shell_layout: GENERATED_SCREEN_SHELL_CHROME_UNSAFE: src/App.tsx renders visible diagnostic chrome.",
+          "Fix these issues and retry.",
+          "",
+          "Acceptance Criteria:",
+          "  1. Implement the story behavior described above and verify it in the running app.",
+        ].join("\n"),
+      });
+
+      assert.match(String(summary.currentStory), /Story US-001: App shell/);
+      assert.doesNotMatch(String(summary.currentStory), /QUALITY GATE|GENERATED_SCREEN_SHELL_CHROME_UNSAFE/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("steers generated screen mount retries to the diagnostic file generically", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-generated-mount-retry-"));
     try {
