@@ -1860,6 +1860,7 @@ function isVerifyDeterministicEvidenceCommand(command: string): boolean {
   const compact = compactCommandForDiagnostic(command);
   if (!compact) return false;
   return /\b(npm|pnpm|yarn|bun)\s+(run\s+)?(build|test|test:run|lint|typecheck)\b/i.test(compact)
+    || /(?:^|[\s;&|()])(?:bash|sh)?\s*\.setfarm-bin\/setfarm-check\s+(?:build|test|lint)\b/i.test(compact)
     || /(?:^|[\s;&|()])npx\s+(vitest\s+run|eslint\s+(?:\.|src|app|components|lib|pages|tests?|--))/i.test(compact)
     || /(?:^|[\s;&|()])vitest\s+run\b/i.test(compact)
     || isProjectWideTscNoEmitCommand(compact)
@@ -1886,6 +1887,7 @@ export function isMaskedDeterministicCheckCommand(command: string): boolean {
   return shellCommandSegments(compact).some((segment) => {
     if (!/[|]/.test(segment) || !isVerifyDeterministicEvidenceCommand(segment)) return false;
     return /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:build|test|test:run|lint|typecheck)\b[\s\S]{0,160}\|[\s\S]{0,120}\b(?:head|tail|grep|rg|tee|cat|awk|sed)\b/i.test(segment)
+      || /(?:^|[\s;&|()])(?:bash|sh)?\s*\.setfarm-bin\/setfarm-check\s+(?:build|test|lint)\b[\s\S]{0,160}\|[\s\S]{0,120}\b(?:head|tail|grep|rg|tee|cat|awk|sed)\b/i.test(segment)
       || /(?:^|[\s;&|()])(?:npx\s+)?(?:vitest\s+run\b|eslint\s+(?:\.|src|app|components|lib|pages|tests?|--))[\s\S]{0,160}\|[\s\S]{0,120}\b(?:head|tail|grep|rg|tee|cat|awk|sed)\b/i.test(segment)
       || (isProjectWideTscNoEmitCommand(segment) && /(?:^|[\s;&|()])(?:npx\s+)?tsc\s+--noEmit\b[\s\S]{0,160}\|[\s\S]{0,120}\b(?:head|tail|grep|rg|tee|cat|awk|sed)\b/i.test(segment));
   });
