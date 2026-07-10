@@ -1877,7 +1877,7 @@ try {
     "  };",
     "}",
     "function acceptance(s) {",
-    "  const text = String(s.acceptanceCriteria || s.currentStory || s.storyTitle || 'Story acceptance criterion implemented').replace(/\\s+/g, ' ').trim();",
+    "  const text = String(s.acceptanceCriteria || s.currentStory || s.storyTitle || 'Story acceptance criterion implemented').replace(/\\\\s+/g, ' ').trim();",
     "  return text.slice(0, 500) || 'Story acceptance criterion implemented';",
     "}",
     "function init() {",
@@ -1900,7 +1900,8 @@ try {
     "  } else if (kind === 'action') {",
     "    const actionId = arg('--action-id', positional());",
     "    if (!actionId) throw new Error('action requires --action-id ID');",
-    "    interaction = { id: arg('--id', actionId), actionId, waitCondition: 'dom_idle', timeoutMs: 1000 };",
+    "    const target = '[data-action-id=' + JSON.stringify(actionId) + ']';",
+    "    interaction = { id: arg('--id', actionId), action: 'click', actionId, target, waitCondition: 'dom_idle', timeoutMs: 1000 };",
     "  } else usage();",
     "  writeJson(paths(s).request, {",
     "    schema: 'setfarm.implement-verification-request.v1',",
@@ -1955,6 +1956,11 @@ try {
   process.stderr.write("SETFARM_EVIDENCE_INSTALL_FAILED: " + String(err).slice(0, 240) + "\\n");
 }
 SETFARM_EVIDENCE_TOOL_NODE
+  if node "$WORKDIR/.setfarm-bin/setfarm-evidence" init >/dev/null && node "$WORKDIR/.setfarm-bin/setfarm-evidence" snapshot --target window.app >/dev/null && node "$WORKDIR/.setfarm-bin/setfarm-evidence" validate >/dev/null; then
+    echo "IMPLEMENT_EVIDENCE_SEEDED=default snapshot request ready; refine with node .setfarm-bin/setfarm-evidence action --action-id <visible-action-id> when a visible generated-screen action is the stronger proof."
+  else
+    echo "IMPLEMENT_EVIDENCE_SEED_FAILED=run node .setfarm-bin/setfarm-evidence init, snapshot/action, and validate before STATUS: done"
+  fi
 fi
 SUMMARY_PRINTED=0
 if [ -n "$CLAIM_SUMMARY_FILE" ] && [ -f "$CLAIM_SUMMARY_FILE" ]; then
@@ -2088,7 +2094,7 @@ if (ie.mode) {
   if (ie.verificationRequestPath) lines.push("IMPLEMENT_VERIFICATION_REQUEST_PATH=" + ie.verificationRequestPath);
   if (ie.evidencePath) lines.push("IMPLEMENT_EVIDENCE_PATH_SETFARM_OWNS=" + ie.evidencePath);
   if (ie.instruction) lines.push("IMPLEMENT_EVIDENCE_RULE=" + String(ie.instruction).slice(0, 420));
-  lines.push("IMPLEMENT_EVIDENCE_HELPER=Use node .setfarm-bin/setfarm-evidence init, then node .setfarm-bin/setfarm-evidence snapshot --target window.app for app-shell/test-bridge stories or node .setfarm-bin/setfarm-evidence action --action-id <visible-action-id> for generated-screen actions; run node .setfarm-bin/setfarm-evidence validate before STATUS: done. Do not hand-write evaluate/assert/source-grep interaction requests.");
+  lines.push("IMPLEMENT_EVIDENCE_HELPER=Default valid intent/request are already seeded. Use node .setfarm-bin/setfarm-evidence snapshot --target window.app for app-shell/test-bridge stories or node .setfarm-bin/setfarm-evidence action --action-id <visible-action-id> for generated-screen actions when refining proof; run node .setfarm-bin/setfarm-evidence validate before STATUS: done. Do not hand-write evaluate/assert/source-grep interaction requests.");
   if (ie.intentSchema) lines.push("IMPLEMENT_INTENT_SCHEMA=" + String(ie.intentSchema).slice(0, 500));
   if (ie.verificationRequestSchema) lines.push("IMPLEMENT_VERIFICATION_REQUEST_SCHEMA=" + String(ie.verificationRequestSchema).slice(0, 600));
 }

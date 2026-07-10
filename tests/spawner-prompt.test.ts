@@ -221,18 +221,22 @@ describe("spawner prompt bootstrap", () => {
       const evidenceScriptBody = fs.readFileSync(evidenceScript, "utf-8");
       assert.match(evidenceScriptBody, /Usage: setfarm-evidence init/);
       assert.match(evidenceScriptBody, /unsupported: ' \+ action/);
+      assert.match(out, /IMPLEMENT_EVIDENCE_SEEDED=default snapshot request ready/);
       const evidenceEnv = { ...process.env, CLAIM_SUMMARY_FILE: claimSummaryFile };
-      execFileSync(evidenceScript, ["init"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" });
-      execFileSync(evidenceScript, ["snapshot", "--target", "window.app"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" });
+      execFileSync(evidenceScript, ["validate"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" });
+      execFileSync(evidenceScript, ["action", "--action-id", "start-game-1"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" });
       assert.equal(execFileSync(evidenceScript, ["validate"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }).trim(), "SETFARM_EVIDENCE_OK");
       const intent = JSON.parse(fs.readFileSync(path.join(workdir, ".setfarm", "implement", "US-001", "IMPLEMENT_INTENT.json"), "utf-8"));
       const request = JSON.parse(fs.readFileSync(path.join(workdir, ".setfarm", "implement", "US-001", "IMPLEMENT_VERIFICATION_REQUEST.json"), "utf-8"));
       assert.equal(intent.schema, "setfarm.implement-intent.v1");
       assert.equal(intent.runtimeEvidenceRequired.minFlowCount, 1);
+      assert.match(intent.acceptanceCriteria[0].description, /State persists after save/);
+      assert.doesNotMatch(intent.acceptanceCriteria[0].description, /\b tate\b|\bper i t/);
       assert.deepEqual(request.interactionRequests, [{
-        id: "flow-1",
-        action: "snapshot",
-        target: "window.app",
+        id: "start-game-1",
+        action: "click",
+        actionId: "start-game-1",
+        target: '[data-action-id="start-game-1"]',
         waitCondition: "dom_idle",
         timeoutMs: 1000,
       }]);
@@ -265,7 +269,7 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, /IMPLEMENT_EVIDENCE_PATH_SETFARM_OWNS=.*\/\.setfarm\/implement\/US-001\/IMPLEMENT_EVIDENCE\.json/);
       assert.match(out, /IMPLEMENT_EVIDENCE_RULE=For runtime\/UI stories, write IMPLEMENT_INTENT\.json/);
       assert.match(out, /IMPLEMENT_EVIDENCE_RULE=.*top-level JSON key named schema; do not use \$schema/);
-      assert.match(out, /IMPLEMENT_EVIDENCE_HELPER=Use node \.setfarm-bin\/setfarm-evidence init/);
+      assert.match(out, /IMPLEMENT_EVIDENCE_HELPER=Default valid intent\/request are already seeded/);
       assert.match(out, /setfarm-evidence snapshot --target window\.app/);
       assert.match(out, /setfarm-evidence action --action-id <visible-action-id>/);
       assert.match(out, /IMPLEMENT_INTENT_SCHEMA=top-level schema key, not \$schema/);
