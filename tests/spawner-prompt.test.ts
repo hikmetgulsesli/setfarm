@@ -24,7 +24,7 @@ describe("spawner prompt bootstrap", () => {
     assert.match(prompt, /First exec command:\nbash '\/tmp\/setfarm-claim-bootstrap-feature-dev_developer-spawner-test\.sh'/);
     assert.match(prompt, /CLAIM_SUMMARY_FILE=\/tmp\/claim-summary-feature-dev_developer-spawner-test\.json/);
     assert.match(prompt, /The bootstrap command prints the authoritative quick handoff/);
-    assert.match(prompt, /Read structured claim-summary details with the installed \.setfarm-bin\/setfarm-summary helper/);
+    assert.match(prompt, /Read the structured claim summary through the installed \.setfarm-bin\/setfarm-summary helper/);
     assert.match(prompt, /RETRY_WORKTREE_PATCH_CMD or RETRY_SOURCE_SNAPSHOT_CMD/);
     assert.match(prompt, /outputContract\.requiredFields and outputContract\.format exactly/);
     assert.match(prompt, /guard-backed roles will reject prose-only summaries/);
@@ -216,6 +216,26 @@ describe("spawner prompt bootstrap", () => {
       assert.ok(fs.existsSync(summaryScript), "bootstrap should install setfarm-summary");
       const summaryScriptBody = fs.readFileSync(summaryScript, "utf-8");
       assert.match(summaryScriptBody, /Usage: setfarm-summary current-story\|acceptance\|retry-patch/);
+      const evidenceScript = path.join(workdir, ".setfarm-bin", "setfarm-evidence");
+      assert.ok(fs.existsSync(evidenceScript), "bootstrap should install setfarm-evidence");
+      const evidenceScriptBody = fs.readFileSync(evidenceScript, "utf-8");
+      assert.match(evidenceScriptBody, /Usage: setfarm-evidence init/);
+      assert.match(evidenceScriptBody, /unsupported: ' \+ action/);
+      const evidenceEnv = { ...process.env, CLAIM_SUMMARY_FILE: claimSummaryFile };
+      execFileSync(evidenceScript, ["init"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" });
+      execFileSync(evidenceScript, ["snapshot", "--target", "window.app"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" });
+      assert.equal(execFileSync(evidenceScript, ["validate"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }).trim(), "SETFARM_EVIDENCE_OK");
+      const intent = JSON.parse(fs.readFileSync(path.join(workdir, ".setfarm", "implement", "US-001", "IMPLEMENT_INTENT.json"), "utf-8"));
+      const request = JSON.parse(fs.readFileSync(path.join(workdir, ".setfarm", "implement", "US-001", "IMPLEMENT_VERIFICATION_REQUEST.json"), "utf-8"));
+      assert.equal(intent.schema, "setfarm.implement-intent.v1");
+      assert.equal(intent.runtimeEvidenceRequired.minFlowCount, 1);
+      assert.deepEqual(request.interactionRequests, [{
+        id: "flow-1",
+        action: "snapshot",
+        target: "window.app",
+        waitCondition: "dom_idle",
+        timeoutMs: 1000,
+      }]);
       assert.match(out, /SCOPE_FILES=src\/App\.tsx/);
       assert.match(out, /MISSING_SCOPE_FILES=src\/App\.tsx/);
       assert.match(out, /SCOPE_FILE_POLICY=.*Missing scope files are expected new owned files/);
@@ -245,6 +265,9 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, /IMPLEMENT_EVIDENCE_PATH_SETFARM_OWNS=.*\/\.setfarm\/implement\/US-001\/IMPLEMENT_EVIDENCE\.json/);
       assert.match(out, /IMPLEMENT_EVIDENCE_RULE=For runtime\/UI stories, write IMPLEMENT_INTENT\.json/);
       assert.match(out, /IMPLEMENT_EVIDENCE_RULE=.*top-level JSON key named schema; do not use \$schema/);
+      assert.match(out, /IMPLEMENT_EVIDENCE_HELPER=Use node \.setfarm-bin\/setfarm-evidence init/);
+      assert.match(out, /setfarm-evidence snapshot --target window\.app/);
+      assert.match(out, /setfarm-evidence action --action-id <visible-action-id>/);
       assert.match(out, /IMPLEMENT_INTENT_SCHEMA=top-level schema key, not \$schema/);
       assert.match(out, /IMPLEMENT_INTENT_SCHEMA=.*"schema":"setfarm\.implement-intent\.v1"/);
       assert.match(out, /IMPLEMENT_VERIFICATION_REQUEST_SCHEMA=top-level schema key, not \$schema/);
