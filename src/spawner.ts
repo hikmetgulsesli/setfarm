@@ -1880,6 +1880,40 @@ function preservesPipelineExitStatus(command: string): boolean {
     || /\bPIPESTATUS\s*\[\s*0\s*\]/.test(command);
 }
 
+function isModifiedBootstrapCommand(command: string): boolean {
+  const compact = compactCommandForDiagnostic(command);
+  if (!/\/tmp\/setfarm-claim-bootstrap-[^'"`\s;|&]+\.sh\b/.test(compact)) return false;
+  if (/^\s*bash\s+['"]?\/tmp\/setfarm-claim-bootstrap-[^'"`\s;|&]+\.sh['"]?\s*$/.test(compact)) return false;
+  return true;
+}
+
+function implementBootstrapCommandGuard(active: ActiveProcess): { detected: boolean; reason: string } {
+  let raw = "";
+  try {
+    raw = fs.readFileSync(active.sessionJsonlPath, "utf-8").slice(-256_000).trim();
+  } catch {
+    return { detected: false, reason: "" };
+  }
+  if (!raw) return { detected: false, reason: "" };
+
+  for (const line of raw.split(/\n/).filter(Boolean)) {
+    let event: any;
+    try { event = JSON.parse(line); } catch { continue; }
+    const message = sessionEventMessage(event);
+    if (String(message.role || "") !== "assistant") continue;
+    for (const call of extractToolCalls(message)) {
+      if (!call.command || !isModifiedBootstrapCommand(call.command)) continue;
+      const command = compactCommandForDiagnostic(call.command);
+      return {
+        detected: true,
+        reason: `BOOTSTRAP_COMMAND_MODIFIED: ${active.agentId} changed the required first bootstrap exec command (${command}). The bootstrap command must run exactly as printed with no redirection, pipe, head/tail, tee, timeout, grouping, or command chaining so the worker receives the complete Setfarm handoff.`,
+      };
+    }
+  }
+
+  return { detected: false, reason: "" };
+}
+
 export function isMaskedDeterministicCheckCommand(command: string): boolean {
   const compact = compactCommandForDiagnostic(command);
   if (!compact || !isVerifyDeterministicEvidenceCommand(compact)) return false;
@@ -4672,6 +4706,19 @@ async function reapFinishedClaims(): Promise<void> {
             try { fs.appendFileSync(active.transcriptPath, `--- PROCESS CLEANUP GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
             await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "runtime-guard", reason);
             terminateActiveProcess(active, "process-cleanup-guard");
+            activeProcesses.delete(key);
+            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
+            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
+            continue;
+          }
+
+          const bootstrapCommand = implementBootstrapCommandGuard(active);
+          if (bootstrapCommand.detected) {
+            const reason = bootstrapCommand.reason + ` Transcript: ${active.transcriptPath}`;
+            console.warn(`[spawner] ${reason}`);
+            try { fs.appendFileSync(active.transcriptPath, `--- BOOTSTRAP COMMAND GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
+            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "bootstrap-command-guard", reason);
+            terminateActiveProcess(active, "bootstrap-command-guard");
             activeProcesses.delete(key);
             if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
             await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
