@@ -1980,6 +1980,10 @@ if [ -n "$CLAIM_SUMMARY_FILE" ] && [ -f "$CLAIM_SUMMARY_FILE" ]; then
 const fs = require("fs");
 const s = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
 const lines = [];
+function shq(value) {
+  return "'" + String(value || "").replace(/'/g, "'\\''") + "'";
+}
+const summaryCommandPrefix = "CLAIM_SUMMARY_FILE=" + shq(process.argv[2]) + " node .setfarm-bin/setfarm-summary ";
 if (s.storyId || s.storyTitle) lines.push(("STORY=" + (s.storyId || "") + " " + (s.storyTitle || "")).trim());
 if (s.storyBranch) lines.push("STORY_BRANCH=" + String(s.storyBranch));
 if (s.storyDiffBase) lines.push("STORY_DIFF_BASE=" + String(s.storyDiffBase));
@@ -1996,6 +2000,11 @@ if (/^developer$/i.test(String(s.role || ""))) {
   if (s.testCommand && String(s.testCommand) !== "true") lines.push("CHECK_TEST_CMD=bash .setfarm-bin/setfarm-check test");
   if (s.lintCommand && String(s.lintCommand) !== "true") lines.push("CHECK_LINT_CMD=bash .setfarm-bin/setfarm-check lint");
   lines.push("CHECK_CMD_ATOMIC_RULE=Run each CHECK_*_CMD value exactly as printed, as its own command. Do not append 2>&1, | head, | tail, tee, cat, echo, timeout, parentheses, &&, ||, ;, or any other suffix/prefix/wrapper to a CHECK_*_CMD command.");
+  lines.push("SUMMARY_CURRENT_STORY_CMD=" + summaryCommandPrefix + "current-story");
+  lines.push("SUMMARY_ACCEPTANCE_CMD=" + summaryCommandPrefix + "acceptance");
+  lines.push("SUMMARY_OUTPUT_CONTRACT_CMD=" + summaryCommandPrefix + "output-contract");
+  lines.push("SUMMARY_SUPERVISOR_MEMORY_CMD=" + summaryCommandPrefix + "supervisor-memory");
+  lines.push("SUMMARY_HELPER_RULE=Use the SUMMARY_*_CMD lines exactly when more context is needed; do not guess setfarm-summary flags, cat the helper script, or parse raw /tmp/claim JSON.");
 }
 if (s.currentStory) lines.push("CURRENT_STORY_BRIEF=" + String(s.currentStory).replace(/\\s+/g, " ").slice(0, 1200));
 if (s.acceptanceCriteria) lines.push("ACCEPTANCE_CRITERIA=" + String(s.acceptanceCriteria).replace(/\\s+/g, " ").slice(0, 900));
