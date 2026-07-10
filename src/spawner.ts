@@ -1906,7 +1906,7 @@ function implementBootstrapCommandGuard(active: ActiveProcess): { detected: bool
       const command = compactCommandForDiagnostic(call.command);
       return {
         detected: true,
-        reason: `BOOTSTRAP_COMMAND_MODIFIED: ${active.agentId} changed the required first bootstrap exec command (${command}). The bootstrap command must run exactly as printed with no redirection, pipe, head/tail, tee, timeout, grouping, or command chaining so the worker receives the complete Setfarm handoff.`,
+        reason: `BOOTSTRAP_COMMAND_MODIFIED: ${active.agentId} used the bootstrap file outside the exact executable handoff command (${command}). The bootstrap file must only run as the exact printed command, with no cat/read/inspection, redirection, pipe, head/tail, tee, timeout, grouping, or command chaining; use the printed bootstrap lines and Setfarm summary helpers instead.`,
       };
     }
   }
