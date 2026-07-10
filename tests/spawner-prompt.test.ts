@@ -2283,6 +2283,8 @@ describe("spawner prompt bootstrap", () => {
       assert.equal(summary.failureCategory, "MASKED_CHECK_COMMAND");
       assert.match(String((summary.retryDiscipline as any).instruction), /run that printed command exactly as its own shell command/i);
       assert.match(String((summary.retryFeedback as any).details), /MASKED_CHECK_COMMAND/);
+      assert.match(String(summary.currentStory), /Story US-001: App shell/);
+      assert.doesNotMatch(String(summary.currentStory), /MASKED_CHECK_COMMAND|Failure report/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
