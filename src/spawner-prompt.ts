@@ -1413,6 +1413,20 @@ function extractCurrentStory(input: string): { storyId: string; storyTitle: stri
   };
 }
 
+function cleanCurrentStoryForSummary(raw: string): string {
+  let text = String(raw || "").trim();
+  if (!text) return "";
+  text = text.replace(
+    /\n\s*(?:Failure report|Previous failure|Retry feedback):\s*[\s\S]*?(?=\n\s*Acceptance Criteria:|\n\s*##\s*Story Implementation Contract\b|\n\s*Story Implementation Contract\b|\n\s*##\s+[A-Z]|\n\s*[A-Z][A-Z _-]+:|$)/gi,
+    "\n",
+  );
+  text = text.replace(
+    /\n\s*(?:AGENT_PROCESS_EXITED|MASKED_CHECK_COMMAND|SCOPE_BLEED|SCOPE_WRITE_VIOLATION|PRODUCT_SUPERVISOR(?:_BLOCKED)?|IMPLEMENT_EVIDENCE(?:_INCOMPLETE|_VERDICT_NOT_PASSED)?|IMPLEMENT_INTERACTION_FAILED|UI_INTERACTION_TARGET_UNREACHABLE|DESIGN_MISMATCH|RUNTIME_BRIDGE_MISSING)\b:[^\n]*(?:\n(?!\s*(?:Acceptance Criteria:|##\s+|[A-Z][A-Z _-]+:)).*){0,6}/gi,
+    "\n",
+  );
+  return text.replace(/\n{3,}/g, "\n\n").trim();
+}
+
 function currentStoryRetryFailureSignal(currentStoryText: string): string {
   const text = String(currentStoryText || "");
   const direct = text.match(/\b(?:AGENT_PROCESS_EXITED|MASKED_CHECK_COMMAND|SCOPE_BLEED|SCOPE_WRITE_VIOLATION|PRODUCT_SUPERVISOR(?:_BLOCKED)?|IMPLEMENT_EVIDENCE(?:_INCOMPLETE|_VERDICT_NOT_PASSED)?|IMPLEMENT_INTERACTION_FAILED|UI_INTERACTION_TARGET_UNREACHABLE|DESIGN_MISMATCH|RUNTIME_BRIDGE_MISSING)\b:[^\n]*(?:\n[^\n]*){0,6}/i)?.[0] || "";
@@ -1645,7 +1659,7 @@ export function buildClaimSummary(params: {
       verificationRequestSchema: "top-level schema key, not $schema. Required exact JSON: {\"schema\":\"setfarm.implement-verification-request.v1\",\"storyId\":\"<storyId>\",\"status\":\"ready_for_orchestrator_verification\",\"interactionRequests\":[{\"id\":\"flow-1\",\"action\":\"click\",\"target\":\"[data-action-id='<action-id>']\",\"waitCondition\":\"dom_idle\",\"timeoutMs\":1000}],\"uncoveredCriteria\":[],\"knownGaps\":[]}. interactionRequests may be [] only when criteria require no interaction; otherwise request executable actions or list criteria in uncoveredCriteria. Interactions start from the app's initial loaded state and run in order; if the target is on a later surface, first include or implement a reachable opener action, then request the target action.",
     } : undefined,
     designContracts,
-    currentStory: currentStory.currentStory || (storyId ? `Story ${storyId}: ${currentStory.storyTitle}`.trim() : ""),
+    currentStory: cleanCurrentStoryForSummary(currentStory.currentStory || (storyId ? `Story ${storyId}: ${currentStory.storyTitle}`.trim() : "")),
     acceptanceCriteria: currentStory.acceptanceCriteria,
     uiBehaviorContract: sliceSection(
       input,
