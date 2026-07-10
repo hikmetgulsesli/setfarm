@@ -1811,8 +1811,8 @@ try {
     "const summaryFile = process.env.CLAIM_SUMMARY_FILE;",
     "const command = process.argv[2] || '';",
     "function usage() {",
-    "  console.error('Usage: setfarm-summary current-story|acceptance|screen-usage-contract|design-contracts|retry-patch|retry-patch-files|source-snapshot|actionable-review-threads|supervisor-evidence|supervisor-memory|output-contract|runtime-checklist');",
-    "  process.exit(2);",
+    "  console.error('Usage: setfarm-summary current-story|acceptance|scope-files|checks|workdirs|git-policy|integration-policy|generated-screen-policy|screen-usage-contract|design-contracts|retry-feedback|retry-discipline|retry-patch|retry-patch-files|source-snapshot|actionable-review-threads|supervisor-evidence|supervisor-memory|output-contract|runtime-checklist');",
+    "  process.exit(command === 'help' || command === '--help' || command === '-h' ? 0 : 2);",
     "}",
     "function valueAt(obj, path) {",
     "  return path.split('.').reduce((acc, key) => acc && acc[key], obj);",
@@ -1829,11 +1829,23 @@ try {
     "}",
     "if (!summaryFile) usage();",
     "const s = JSON.parse(fs.readFileSync(summaryFile, 'utf8'));",
+    "if (command === 'checks') print({ buildCommand: s.buildCommand, testCommand: s.testCommand, lintCommand: s.lintCommand, checkBuildCommand: s.buildCommand && s.buildCommand !== 'true' ? 'bash .setfarm-bin/setfarm-check build' : '', checkTestCommand: s.testCommand && s.testCommand !== 'true' ? 'bash .setfarm-bin/setfarm-check test' : '', checkLintCommand: s.lintCommand && s.lintCommand !== 'true' ? 'bash .setfarm-bin/setfarm-check lint' : '' });",
+    "else if (command === 'workdirs') print({ workdir: s.workdir, storyWorkdir: s.storyWorkdir, verifyWorkdir: s.verifyWorkdir, mainRepo: s.mainRepo || s.repo, storyBranch: s.storyBranch, storyDiffBase: s.storyDiffBase });",
+    "else {",
     "const fields = {",
     "  'current-story': 'currentStory',",
     "  acceptance: 'acceptanceCriteria',",
+    "  'task-brief': 'taskBrief',",
+    "  'scope-files': 'scopeFiles',",
+    "  'scope-file-states': 'scopeFileStates',",
+    "  'scope-file-instruction': 'scopeFileInstruction',",
+    "  'git-policy': 'gitPolicy',",
+    "  'integration-policy': 'integrationPolicy',",
+    "  'generated-screen-policy': 'generatedScreenPolicy',",
     "  'screen-usage-contract': 'screenUsageContract',",
     "  'design-contracts': 'designContracts',",
+    "  'retry-feedback': 'retryFeedback',",
+    "  'retry-discipline': 'retryDiscipline',",
     "  'retry-patch': 'retryFeedback.worktreePatch.body',",
     "  'retry-patch-files': 'retryFeedback.worktreePatch.touchedFiles',",
     "  'source-snapshot': 'retryFeedback.sourceSnapshot.section',",
@@ -1845,6 +1857,7 @@ try {
     "};",
     "if (!fields[command]) usage();",
     "print(valueAt(s, fields[command]));",
+    "}",
     "",
   ].join("\\n");
   fs.mkdirSync(path.dirname(out), { recursive: true });
@@ -1855,6 +1868,10 @@ try {
 SETFARM_SUMMARY_TOOL_NODE
   echo "SUMMARY_CURRENT_STORY_CMD=CLAIM_SUMMARY_FILE='$CLAIM_SUMMARY_FILE' node .setfarm-bin/setfarm-summary current-story"
   echo "SUMMARY_ACCEPTANCE_CMD=CLAIM_SUMMARY_FILE='$CLAIM_SUMMARY_FILE' node .setfarm-bin/setfarm-summary acceptance"
+  echo "SUMMARY_SCOPE_FILES_CMD=CLAIM_SUMMARY_FILE='$CLAIM_SUMMARY_FILE' node .setfarm-bin/setfarm-summary scope-files"
+  echo "SUMMARY_CHECKS_CMD=CLAIM_SUMMARY_FILE='$CLAIM_SUMMARY_FILE' node .setfarm-bin/setfarm-summary checks"
+  echo "SUMMARY_WORKDIRS_CMD=CLAIM_SUMMARY_FILE='$CLAIM_SUMMARY_FILE' node .setfarm-bin/setfarm-summary workdirs"
+  echo "SUMMARY_RETRY_FEEDBACK_CMD=CLAIM_SUMMARY_FILE='$CLAIM_SUMMARY_FILE' node .setfarm-bin/setfarm-summary retry-feedback"
   echo "SUMMARY_SCREEN_USAGE_CMD=CLAIM_SUMMARY_FILE='$CLAIM_SUMMARY_FILE' node .setfarm-bin/setfarm-summary screen-usage-contract"
   echo "SUMMARY_DESIGN_CONTRACTS_CMD=CLAIM_SUMMARY_FILE='$CLAIM_SUMMARY_FILE' node .setfarm-bin/setfarm-summary design-contracts"
   echo "SUMMARY_OUTPUT_CONTRACT_CMD=CLAIM_SUMMARY_FILE='$CLAIM_SUMMARY_FILE' node .setfarm-bin/setfarm-summary output-contract"
@@ -2029,6 +2046,10 @@ if (/^developer$/i.test(String(s.role || ""))) {
   lines.push("CHECK_CMD_ATOMIC_RULE=Run each CHECK_*_CMD value exactly as printed, as its own command. Do not append 2>&1, | head, | tail, tee, cat, echo, timeout, parentheses, &&, ||, ;, or any other suffix/prefix/wrapper to a CHECK_*_CMD command.");
   lines.push("SUMMARY_CURRENT_STORY_CMD=" + summaryCommandPrefix + "current-story");
   lines.push("SUMMARY_ACCEPTANCE_CMD=" + summaryCommandPrefix + "acceptance");
+  lines.push("SUMMARY_SCOPE_FILES_CMD=" + summaryCommandPrefix + "scope-files");
+  lines.push("SUMMARY_CHECKS_CMD=" + summaryCommandPrefix + "checks");
+  lines.push("SUMMARY_WORKDIRS_CMD=" + summaryCommandPrefix + "workdirs");
+  lines.push("SUMMARY_RETRY_FEEDBACK_CMD=" + summaryCommandPrefix + "retry-feedback");
   lines.push("SUMMARY_SCREEN_USAGE_CMD=" + summaryCommandPrefix + "screen-usage-contract");
   lines.push("SUMMARY_DESIGN_CONTRACTS_CMD=" + summaryCommandPrefix + "design-contracts");
   lines.push("SUMMARY_OUTPUT_CONTRACT_CMD=" + summaryCommandPrefix + "output-contract");
