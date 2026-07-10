@@ -1777,7 +1777,8 @@ const path = require("path");
 try {
   const out = process.argv[3];
   const script = [
-    "#!/usr/bin/env node",
+    "#!/usr/bin/env sh",
+    "':' //; exec node \\\"$0\\\" \\\"$@\\\"",
     "import fs from 'node:fs';",
     "const summaryFile = process.env.CLAIM_SUMMARY_FILE;",
     "const command = process.argv[2] || '';",
@@ -1828,7 +1829,8 @@ const path = require("path");
 try {
   const out = process.argv[3];
   const script = [
-    "#!/usr/bin/env node",
+    "#!/usr/bin/env sh",
+    "':' //; exec node \\\"$0\\\" \\\"$@\\\"",
     "import fs from 'node:fs';",
     "import path from 'node:path';",
     "const summaryFile = process.env.CLAIM_SUMMARY_FILE;",
