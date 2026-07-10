@@ -2383,6 +2383,10 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, /CHECK_BUILD_CMD=bash \.setfarm-bin\/setfarm-check build/);
       assert.match(out, /CHECK_TEST_CMD=bash \.setfarm-bin\/setfarm-check test/);
       assert.match(out, /CHECK_CMD_ATOMIC_RULE=Run each CHECK_\*_CMD value exactly as printed/);
+      assert.match(out, /SUMMARY_CURRENT_STORY_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary current-story/);
+      assert.match(out, /SUMMARY_ACCEPTANCE_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary acceptance/);
+      assert.match(out, /SUMMARY_OUTPUT_CONTRACT_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary output-contract/);
+      assert.match(out, /SUMMARY_HELPER_RULE=Use the SUMMARY_\*_CMD lines exactly when more context is needed/);
       assert.match(out, /MASKED_CHECK_RULE=Use CHECK_BUILD_CMD\/CHECK_TEST_CMD when present, exactly as printed and as standalone commands/);
       assert.match(out, /MASKED_CHECK_EXACT_BUILD_CMD=npm run build/);
       assert.match(out, /MASKED_CHECK_EXACT_TEST_CMD=npm run test:run/);
