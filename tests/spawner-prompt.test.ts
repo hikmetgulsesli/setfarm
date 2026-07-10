@@ -2242,6 +2242,45 @@ describe("spawner prompt bootstrap", () => {
     }
   });
 
+  it("classifies masked check retry reports embedded in the current story", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-current-story-masked-check-"));
+    try {
+      fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({ scripts: { build: "vite build", "test:run": "vitest run" } }));
+      fs.mkdirSync(path.join(tmp, "src"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src", "App.tsx"), "export default function App() { return null; }\n");
+      fs.writeFileSync(path.join(tmp, ".story-scope-files"), "src/App.tsx\n");
+
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        bootstrapFile: path.join(tmp, "bootstrap.sh"),
+        stepId: "step-123",
+        runId: "run-123",
+        workdir: tmp,
+        repo: tmp,
+        storyId: "US-001",
+        input: [
+          "TASK: Project: current story masked check",
+          "CURRENT STORY: Story US-001: App shell",
+          "",
+          "Failure report:",
+          "MASKED_CHECK_COMMAND: feature-dev_developer ran deterministic build/test evidence through an output-filtering pipeline (timeout 30 npx vitest run --reporter=verbose --no-color 2>&1 | head -80; echo \"EXIT=$?\").",
+          "",
+          "Acceptance Criteria:",
+          "  1. Implement the story behavior described above and verify it in the running app.",
+        ].join("\n"),
+      });
+
+      assert.equal(summary.failureCategory, "MASKED_CHECK_COMMAND");
+      assert.match(String((summary.retryDiscipline as any).instruction), /declared Setfarm check wrappers first/i);
+      assert.match(String((summary.retryFeedback as any).details), /MASKED_CHECK_COMMAND/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("steers generated screen mount retries to the diagnostic file generically", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-generated-mount-retry-"));
     try {

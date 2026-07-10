@@ -1413,6 +1413,14 @@ function extractCurrentStory(input: string): { storyId: string; storyTitle: stri
   };
 }
 
+function currentStoryRetryFailureSignal(currentStoryText: string): string {
+  const text = String(currentStoryText || "");
+  const direct = text.match(/\b(?:MASKED_CHECK_COMMAND|SCOPE_BLEED|SCOPE_WRITE_VIOLATION|PRODUCT_SUPERVISOR(?:_BLOCKED)?|IMPLEMENT_EVIDENCE(?:_INCOMPLETE|_VERDICT_NOT_PASSED)?|IMPLEMENT_INTERACTION_FAILED|UI_INTERACTION_TARGET_UNREACHABLE|DESIGN_MISMATCH|RUNTIME_BRIDGE_MISSING)\b:[^\n]*(?:\n[^\n]*){0,6}/i)?.[0] || "";
+  if (direct.trim()) return cleanPreviousFailureSection(direct);
+  if (!/\b(?:Failure report|Previous failure|Retry feedback)\b/i.test(text)) return "";
+  return cleanPreviousFailureSection(text);
+}
+
 export function buildClaimSummary(params: {
   wfId: string;
   role: string;
@@ -1499,15 +1507,17 @@ export function buildClaimSummary(params: {
     ],
     12000,
   ));
+  const currentStoryFailure = previousFailure ? "" : currentStoryRetryFailureSignal(currentStory.currentStory);
+  const retryFailureSignal = previousFailure || currentStoryFailure;
   const retryWorktreePatch = extractRetryPatchMemory(input);
   const retrySourceSnapshot = extractRetrySourceSnapshot(input);
   const explicitFailureCategory = meaningfulFailureCategory(
-    meaningfulLineValue(previousFailure, "Failure category") || meaningfulLineValue(input, "Failure category"),
+    meaningfulLineValue(retryFailureSignal, "Failure category") || meaningfulLineValue(input, "Failure category"),
   );
   const explicitFailureSuggestion = meaningfulFailureSuggestion(
-    meaningfulLineValue(previousFailure, "Suggested response") || meaningfulLineValue(input, "Suggested response"),
+    meaningfulLineValue(retryFailureSignal, "Suggested response") || meaningfulLineValue(input, "Suggested response"),
   );
-  const classifiedFailure = classifyFailureWithInputFallback(previousFailure, explicitFailureCategory, explicitFailureSuggestion, input);
+  const classifiedFailure = classifyFailureWithInputFallback(retryFailureSignal, explicitFailureCategory, explicitFailureSuggestion, input);
   const prReviewThreadScope = splitPrReviewThreadsByScope(extractPrReviewThreads(previousFailure), scopeFiles);
   const prReviewThreads = prReviewThreadScope.inScope;
   const prReviewThreadIds = prReviewThreads.map((thread) => String(thread.threadId || "")).filter(Boolean);
@@ -1515,7 +1525,7 @@ export function buildClaimSummary(params: {
   const failureCategory =
     explicitFailureCategory ||
     (prReviewThreads.length > 0 ? "PR_REVIEW_COMMENTS_OPEN" : "") ||
-    ((previousFailure || classifiedFailure.category !== "UNKNOWN") ? classifiedFailure.category : "");
+    ((retryFailureSignal || classifiedFailure.category !== "UNKNOWN") ? classifiedFailure.category : "");
   const retryWorktreePatchForSummary = /^(?:PR_REVIEW_COMMENTS_OPEN)$/i.test(failureCategory) || isScopeIsolationFailure(failureCategory) || retryPatchViolatesDesignContract(retryWorktreePatch)
     ? undefined
     : retryWorktreePatch;
@@ -1523,12 +1533,12 @@ export function buildClaimSummary(params: {
     ? undefined
     : retrySourceSnapshot;
   const retryMode = retryFeedbackMode(params.role, failureCategory);
-  const failureSuggestion = explicitFailureSuggestion || (previousFailure ? classifiedFailure.suggestion : "");
+  const failureSuggestion = explicitFailureSuggestion || (retryFailureSignal ? classifiedFailure.suggestion : "");
   const retryDiscipline = retryMode === "fix"
-    ? retryDisciplineForFailure(failureCategory, failureSuggestion, previousFailure)
+    ? retryDisciplineForFailure(failureCategory, failureSuggestion, retryFailureSignal)
     : undefined;
-  const protectedSnippets = extractRetryProtectedSnippets(previousFailure);
-  const retryRestoreTargets = failureCategory === "RETRY_PATCH_REAPPLIED" || hasRestorableAppIntegrationRegression(previousFailure)
+  const protectedSnippets = extractRetryProtectedSnippets(retryFailureSignal);
+  const retryRestoreTargets = failureCategory === "RETRY_PATCH_REAPPLIED" || hasRestorableAppIntegrationRegression(retryFailureSignal)
     ? extractRetryRestoreTargets(retryWorktreePatchForSummary, protectedSnippets, scopeFiles)
     : [];
   const buildCommand = resolvedCommand(input, "BUILD_CMD", [workdir, repo], "build", "true");
@@ -1643,16 +1653,16 @@ export function buildClaimSummary(params: {
       [/^\s*DESIGN DOM RULES/m, /^\s*DESIGN\.MD INTEGRATION/m],
       2600,
     ),
-    previousFailure,
+    previousFailure: retryFailureSignal,
     failureCategory,
     failureSuggestion,
     retryDiscipline,
-    retryFeedback: (previousFailure || failureCategory || retryWorktreePatchForSummary || retrySourceSnapshotForSummary) ? {
+    retryFeedback: (retryFailureSignal || failureCategory || retryWorktreePatchForSummary || retrySourceSnapshotForSummary) ? {
       mode: retryMode,
       category: failureCategory,
       suggestion: failureSuggestion,
-      blocker: compactFailureLine(previousFailure, retryFeedbackBlockerLimit(previousFailure)),
-      details: previousFailure,
+      blocker: compactFailureLine(retryFailureSignal, retryFeedbackBlockerLimit(retryFailureSignal)),
+      details: retryFailureSignal,
       worktreePatch: retryWorktreePatchForSummary,
       sourceSnapshot: retrySourceSnapshotForSummary,
       prThreadIds: prReviewThreadIds,
