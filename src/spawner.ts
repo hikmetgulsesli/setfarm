@@ -4679,14 +4679,14 @@ async function reapFinishedClaims(): Promise<void> {
           const maskedCheck = implementMaskedCheckCommandGuard(active);
           if (maskedCheck.detected) {
             const reason = maskedCheck.reason + ` Transcript: ${active.transcriptPath}`;
-            const signalKey = "masked-check-command-advisory";
-            if (!active.supervisorSignals) active.supervisorSignals = new Set<string>();
-            if (!active.supervisorSignals.has(signalKey)) {
-              active.supervisorSignals.add(signalKey);
-              console.warn(`[spawner] ${reason}`);
-              try { fs.appendFileSync(active.transcriptPath, `--- MASKED CHECK COMMAND ADVISORY ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
-              await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_ADVISORY", signalKey, reason);
-            }
+            console.warn(`[spawner] ${reason}`);
+            try { fs.appendFileSync(active.transcriptPath, `--- MASKED CHECK COMMAND GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
+            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "masked-check-command-guard", reason);
+            terminateActiveProcess(active, "masked-check-command-guard");
+            activeProcesses.delete(key);
+            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
+            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
+            continue;
           }
 
           const claimParseLoop = claimParseLoopGuard(active);
