@@ -1421,6 +1421,10 @@ function cleanCurrentStoryForSummary(raw: string): string {
     "\n",
   );
   text = text.replace(
+    /\n\s*QUALITY GATE:\s*[\s\S]*?(?=\n\s*Acceptance Criteria:|\n\s*##\s*Story Implementation Contract\b|\n\s*Story Implementation Contract\b|\n\s*##\s+[A-Z]|\n\s*[A-Z][A-Z _-]+:|$)/gi,
+    "\n",
+  );
+  text = text.replace(
     /\n\s*(?:AGENT_PROCESS_EXITED|MASKED_CHECK_COMMAND|SCOPE_BLEED|SCOPE_WRITE_VIOLATION|PRODUCT_SUPERVISOR(?:_BLOCKED)?|IMPLEMENT_EVIDENCE(?:_INCOMPLETE|_VERDICT_NOT_PASSED)?|IMPLEMENT_INTERACTION_FAILED|UI_INTERACTION_TARGET_UNREACHABLE|DESIGN_MISMATCH|RUNTIME_BRIDGE_MISSING)\b:[^\n]*(?:\n(?!\s*(?:Acceptance Criteria:|##\s+|[A-Z][A-Z _-]+:)).*){0,6}/gi,
     "\n",
   );
