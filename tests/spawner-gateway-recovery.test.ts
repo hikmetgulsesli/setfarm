@@ -1421,6 +1421,24 @@ describe("spawner gateway recovery wiring", () => {
     );
   });
 
+  it("retries implement agents that modify the first bootstrap command", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /function isModifiedBootstrapCommand/);
+    assert.match(source, /function implementBootstrapCommandGuard/);
+    assert.match(source, /BOOTSTRAP_COMMAND_MODIFIED/);
+    assert.match(source, /\/tmp\\\/setfarm-claim-bootstrap-/);
+    assert.match(source, /bootstrap-command-guard/);
+
+    const guardStart = source.indexOf("const bootstrapCommand = implementBootstrapCommandGuard(active)");
+    const maskedStart = source.indexOf("const maskedCheck = implementMaskedCheckCommandGuard(active)", guardStart);
+    assert.notEqual(guardStart, -1, "bootstrap command guard block missing");
+    assert.notEqual(maskedStart, -1, "bootstrap command guard should run before masked check guard");
+    const block = source.slice(guardStart, maskedStart);
+    assert.match(block, /recordSupervisorRuntimeEvent\(active\.runId,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"PRODUCT_SUPERVISOR_RUNTIME_GUARD"/);
+    assert.match(block, /terminateActiveProcess\(active,\s*"bootstrap-command-guard"\)/);
+    assert.match(block, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.agentId,\s*reason\)/);
+  });
+
   it("treats project-tree write probe artifacts as forbidden scratch files", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /function isForbiddenProjectScratchArtifact/);
