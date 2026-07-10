@@ -216,13 +216,15 @@ describe("spawner prompt bootstrap", () => {
       assert.ok(fs.existsSync(summaryScript), "bootstrap should install setfarm-summary");
       const summaryScriptBody = fs.readFileSync(summaryScript, "utf-8");
       assert.match(summaryScriptBody, /Usage: setfarm-summary current-story\|acceptance\|retry-patch/);
+      const evidenceEnv = { ...process.env, CLAIM_SUMMARY_FILE: claimSummaryFile };
+      assert.match(execFileSync("bash", [summaryScript, "acceptance"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /State persists after save/);
       const evidenceScript = path.join(workdir, ".setfarm-bin", "setfarm-evidence");
       assert.ok(fs.existsSync(evidenceScript), "bootstrap should install setfarm-evidence");
       const evidenceScriptBody = fs.readFileSync(evidenceScript, "utf-8");
       assert.match(evidenceScriptBody, /Usage: setfarm-evidence init/);
       assert.match(evidenceScriptBody, /unsupported: ' \+ action/);
       assert.match(out, /IMPLEMENT_EVIDENCE_SEEDED=default snapshot request ready/);
-      const evidenceEnv = { ...process.env, CLAIM_SUMMARY_FILE: claimSummaryFile };
+      assert.equal(execFileSync("bash", [evidenceScript, "validate"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }).trim(), "SETFARM_EVIDENCE_OK");
       execFileSync(evidenceScript, ["validate"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" });
       execFileSync(evidenceScript, ["action", "--action-id", "start-game-1"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" });
       assert.equal(execFileSync(evidenceScript, ["validate"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }).trim(), "SETFARM_EVIDENCE_OK");
