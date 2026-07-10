@@ -217,9 +217,11 @@ describe("spawner prompt bootstrap", () => {
       const summaryScript = path.join(workdir, ".setfarm-bin", "setfarm-summary");
       assert.ok(fs.existsSync(summaryScript), "bootstrap should install setfarm-summary");
       const summaryScriptBody = fs.readFileSync(summaryScript, "utf-8");
-      assert.match(summaryScriptBody, /Usage: setfarm-summary current-story\|acceptance\|retry-patch/);
+      assert.match(summaryScriptBody, /Usage: setfarm-summary current-story\|acceptance\|screen-usage-contract\|design-contracts\|retry-patch/);
       const evidenceEnv = { ...process.env, CLAIM_SUMMARY_FILE: claimSummaryFile };
       assert.match(execFileSync("bash", [summaryScript, "acceptance"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /State persists after save/);
+      assert.match(execFileSync("bash", [summaryScript, "screen-usage-contract"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /MainMenu/);
+      assert.match(execFileSync("bash", [summaryScript, "design-contracts"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /Main Menu/);
       const evidenceScript = path.join(workdir, ".setfarm-bin", "setfarm-evidence");
       assert.ok(fs.existsSync(evidenceScript), "bootstrap should install setfarm-evidence");
       const evidenceScriptBody = fs.readFileSync(evidenceScript, "utf-8");
@@ -2385,6 +2387,8 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, /CHECK_CMD_ATOMIC_RULE=Run each CHECK_\*_CMD value exactly as printed/);
       assert.match(out, /SUMMARY_CURRENT_STORY_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary current-story/);
       assert.match(out, /SUMMARY_ACCEPTANCE_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary acceptance/);
+      assert.match(out, /SUMMARY_SCREEN_USAGE_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary screen-usage-contract/);
+      assert.match(out, /SUMMARY_DESIGN_CONTRACTS_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary design-contracts/);
       assert.match(out, /SUMMARY_OUTPUT_CONTRACT_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary output-contract/);
       assert.match(out, /SUMMARY_HELPER_RULE=Use the SUMMARY_\*_CMD lines exactly when more context is needed/);
       assert.match(out, /MASKED_CHECK_RULE=Use CHECK_BUILD_CMD\/CHECK_TEST_CMD when present, exactly as printed and as standalone commands/);
