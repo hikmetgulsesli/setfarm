@@ -22,6 +22,7 @@ describe("spawner prompt bootstrap", () => {
     });
 
     assert.match(prompt, /First exec command \(copy exactly; do not append redirection, pipes, head\/tail, tee, timeout, chaining, or any wrapper\):\nbash '\/tmp\/setfarm-claim-bootstrap-feature-dev_developer-spawner-test\.sh'/);
+    assert.match(prompt, /The bootstrap file is executable-only handoff plumbing: do not cat\/read\/inspect\/rerun\/redirect it after the first exact exec/);
     assert.match(prompt, /Never append 2>&1, \| head, \| tail, tee, cat, echo, timeout, parentheses, &&, \|\|, ;, or any other wrapper\/suffix\/prefix to the bootstrap command or a CHECK_\*_CMD command/);
     assert.match(prompt, /CLAIM_SUMMARY_FILE=\/tmp\/claim-summary-feature-dev_developer-spawner-test\.json/);
     assert.match(prompt, /The bootstrap command prints the authoritative quick handoff/);
