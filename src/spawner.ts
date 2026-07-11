@@ -1869,6 +1869,7 @@ function isVerifyDeterministicEvidenceCommand(command: string): boolean {
     || /(?:^|[\s;&|()])(?:bash|sh)?\s*\.setfarm-bin\/setfarm-check\s+(?:build|test|lint)\b/i.test(compact)
     || /(?:^|[\s;&|()])npx\s+(vitest\s+run|eslint\s+(?:\.|src|app|components|lib|pages|tests?|--))/i.test(compact)
     || /(?:^|[\s;&|()])vitest\s+run\b/i.test(compact)
+    || /(?:^|[\s;&|()])(?:timeout\s+\d+\s+)?(?:\.\/)?node_modules\/\.bin\/vitest\s+run\b/i.test(compact)
     || isProjectWideTscNoEmitCommand(compact)
     || /(?:^|[\s;&|()])eslint\s+(?:\.|src|app|components|lib|pages|tests?|--)/i.test(compact)
     || /\bnode\b[^;&|]*\b(smoke-test|playwright-check)\b/i.test(compact);
@@ -2035,7 +2036,7 @@ export function isMaskedDeterministicCheckCommand(command: string): boolean {
     if (!/[|]/.test(segment) || !isVerifyDeterministicEvidenceCommand(segment)) return false;
     return /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:build|test|test:run|lint|typecheck)\b[\s\S]{0,160}\|[\s\S]{0,120}\b(?:head|tail|grep|rg|tee|cat|awk|sed)\b/i.test(segment)
       || /(?:^|[\s;&|()])(?:bash|sh)?\s*\.setfarm-bin\/setfarm-check\s+(?:build|test|lint)\b[\s\S]{0,160}\|[\s\S]{0,120}\b(?:head|tail|grep|rg|tee|cat|awk|sed)\b/i.test(segment)
-      || /(?:^|[\s;&|()])(?:npx\s+)?(?:vitest\s+run\b|eslint\s+(?:\.|src|app|components|lib|pages|tests?|--))[\s\S]{0,160}\|[\s\S]{0,120}\b(?:head|tail|grep|rg|tee|cat|awk|sed)\b/i.test(segment)
+      || /(?:^|[\s;&|()])(?:timeout\s+\d+\s+)?(?:(?:npx\s+)?vitest\s+run\b|(?:\.\/)?node_modules\/\.bin\/vitest\s+run\b|eslint\s+(?:\.|src|app|components|lib|pages|tests?|--))[\s\S]{0,160}\|[\s\S]{0,120}\b(?:head|tail|grep|rg|tee|cat|awk|sed)\b/i.test(segment)
       || (isProjectWideTscNoEmitCommand(segment) && /(?:^|[\s;&|()])(?:npx\s+)?tsc\s+--noEmit\b[\s\S]{0,160}\|[\s\S]{0,120}\b(?:head|tail|grep|rg|tee|cat|awk|sed)\b/i.test(segment));
   });
 }
@@ -4548,10 +4549,31 @@ async function discardRuntimeGuardRetryWorktree(runId: string, storyId: string, 
     if (!ctx["repo"]) return;
     const storyBranch = `${runId.slice(0, 8)}-${storyId}`.toLowerCase();
     const baseRef = ctx["implement_base_commit"] || ctx["story_base_ref"] || ctx["branch"] || "main";
+    discardRuntimeGuardSiblingArtifacts(storyBranch, diagnostic);
     discardStoryWorktreeAndResetBranch(ctx["repo"], storyBranch, baseRef, agentId);
     console.warn(`[spawner] discarded guarded retry worktree ${storyBranch} before requeue: ${diagnostic.slice(0, 160)}`);
   } catch (err) {
     console.warn(`[spawner] guarded retry worktree discard failed for ${storyId}: ${String(err).slice(0, 220)}`);
+  }
+}
+
+function discardRuntimeGuardSiblingArtifacts(storyBranch: string, diagnostic: string): void {
+  const attempted = diagnostic.match(/attempted\s+\S+\s+on\s+([^,\s]+),/i)?.[1];
+  if (!attempted || !attempted.startsWith("..")) return;
+  const canonicalWorktree = path.join(AGENT_SAFE_CWD, "story-worktrees", storyBranch);
+  const storyWorktreesRoot = path.dirname(canonicalWorktree);
+  const resolved = path.resolve(canonicalWorktree, attempted);
+  if (!resolved.startsWith(`${storyWorktreesRoot}${path.sep}`)) return;
+  if (resolved === canonicalWorktree || resolved.startsWith(`${canonicalWorktree}${path.sep}`)) return;
+  const relative = path.relative(storyWorktreesRoot, resolved);
+  const sibling = relative.split(path.sep)[0] || "";
+  if (!sibling.startsWith(`${storyBranch}-`) && !sibling.startsWith(`${storyBranch}.`)) return;
+  const siblingPath = path.join(storyWorktreesRoot, sibling);
+  try {
+    fs.rmSync(siblingPath, { recursive: true, force: true });
+    console.warn(`[spawner] discarded guarded retry sibling artifact ${sibling}`);
+  } catch (err) {
+    console.warn(`[spawner] guarded retry sibling artifact discard failed for ${sibling}: ${String(err).slice(0, 180)}`);
   }
 }
 

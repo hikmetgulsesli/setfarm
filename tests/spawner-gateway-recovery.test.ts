@@ -38,6 +38,8 @@ describe("spawner gateway recovery wiring", () => {
     assert.equal(isMaskedDeterministicCheckCommand("npx tsc --noEmit 2>&1 | tail -50"), true);
     assert.equal(isMaskedDeterministicCheckCommand("npx tsc --noEmit src/features/foo.ts 2>&1 | head -20"), false);
     assert.equal(isMaskedDeterministicCheckCommand("vitest run src/App.test.tsx 2>&1 | head -100"), true);
+    assert.equal(isMaskedDeterministicCheckCommand("node_modules/.bin/vitest run --reporter=verbose src/App.test.tsx 2>&1 | head -80"), true);
+    assert.equal(isMaskedDeterministicCheckCommand("timeout 50 node_modules/.bin/vitest run --reporter=basic --no-color 2>&1 | tail -60"), true);
     assert.equal(isMaskedDeterministicCheckCommand("eslint . 2>&1 | tail -50"), true);
     assert.equal(isMaskedDeterministicCheckCommand("bash .setfarm-bin/setfarm-check build 2>&1 | tail -40"), true);
     assert.equal(isMaskedDeterministicCheckCommand("sh .setfarm-bin/setfarm-check test 2>&1 | head -80"), true);
@@ -1187,6 +1189,9 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /function setRuntimeGuardRequeueCooldown\(agentId: string, reason: string\)/);
     assert.match(source, /agentCooldownUntil\.set\(agentId/);
     assert.match(source, /setRuntimeGuardRequeueCooldown\(agentId,\s*diagnostic\)/);
+    assert.match(source, /function discardRuntimeGuardSiblingArtifacts\(storyBranch: string, diagnostic: string\)/);
+    assert.match(source, /discardRuntimeGuardSiblingArtifacts\(storyBranch,\s*diagnostic\)/);
+    assert.match(source, /discarded guarded retry sibling artifact/);
     assert.ok(
       source.indexOf("implementScopeWriteGuard(active)") < source.indexOf("claimParseLoopGuard(active)"),
       "scope write guard should run before loop/context guards",
@@ -1443,6 +1448,8 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /preservesPipelineExitStatus/);
     assert.match(source, /PIPESTATUS/);
     assert.match(source, /\.setfarm-bin\\\/setfarm-check/);
+    assert.match(source, /node_modules\\\/\\.bin\\\/vitest/);
+    assert.match(source, /timeout\\s\+\\d\+\\s\+/);
     assert.match(source, /head\|tail\|grep\|rg\|tee\|cat\|awk\|sed/);
     assert.match(source, /masked-check-command-guard/);
 
