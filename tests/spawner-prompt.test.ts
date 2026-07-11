@@ -23,19 +23,18 @@ describe("spawner prompt bootstrap", () => {
 
     assert.match(prompt, /First exec command \(copy exactly; do not append redirection, pipes, head\/tail, tee, timeout, chaining, or any wrapper\):\nbash '\/tmp\/setfarm-claim-bootstrap-feature-dev_developer-spawner-test\.sh'/);
     assert.match(prompt, /The bootstrap file is executable-only handoff plumbing: do not cat\/read\/inspect\/rerun\/redirect it after the first exact exec/);
-    assert.match(prompt, /Never append 2>&1, \| head, \| tail, tee, cat, echo, timeout, parentheses, &&, \|\|, ;, or any other wrapper\/suffix\/prefix to the bootstrap command or a CHECK_\*_CMD command/);
+    assert.match(prompt, /Never append 2>&1, \| head, \| tail, tee, cat, echo, timeout, parentheses, &&, \|\|, ;, or any other wrapper\/suffix\/prefix to the bootstrap command, SUMMARY_IMPLEMENT_CONTEXT_CMD, or a CHECK_\*_CMD command/);
     assert.match(prompt, /CLAIM_SUMMARY_FILE=\/tmp\/claim-summary-feature-dev_developer-spawner-test\.json/);
     assert.match(prompt, /The bootstrap command prints the authoritative quick handoff/);
-    assert.match(prompt, /Read the structured claim summary only through the printed SUMMARY_\*_CMD commands/);
-    assert.match(prompt, /Story brief\/details are available through SUMMARY_CURRENT_STORY_CMD and SUMMARY_ACCEPTANCE_CMD/);
-    assert.match(prompt, /do not invent story-brief, full, all, or other setfarm-summary topics/);
+    assert.match(prompt, /run SUMMARY_IMPLEMENT_CONTEXT_CMD exactly once as its own command/);
+    assert.match(prompt, /Do NOT guess setfarm-summary topics such as story-brief, full, all, retry-worktree-patch, or retry-patch-files/);
     assert.doesNotMatch(prompt, /current story brief, workdir/);
     assert.match(prompt, /outputContract\.requiredFields and outputContract\.format exactly/);
     assert.match(prompt, /guard-backed roles will reject prose-only summaries/);
     assert.match(prompt, /Use retryFeedback\.mode exactly/);
     assert.match(prompt, /If failureCategory is SCOPE_BLEED or SCOPE_WRITE_VIOLATION, first remove\/rework out-of-scope files/);
     assert.match(prompt, /retryFeedback\.restoreTargets first, then retryFeedback\.protectedSnippets/);
-    assert.match(prompt, /retryFeedback\.actionableReviewThreads first/);
+    assert.match(prompt, /retryFeedback\.actionableReviewThreads from SUMMARY_IMPLEMENT_CONTEXT_CMD/);
     assert.match(prompt, /supervisorEvidence/);
     assert.match(prompt, /current-source scanner evidence/);
     assert.match(prompt, /mode="fix" means the blocker is an open implementation requirement/);
@@ -43,7 +42,7 @@ describe("spawner prompt bootstrap", () => {
     assert.match(prompt, /gitPolicy/);
     assert.match(prompt, /Setfarm performs the scoped commit and PR handoff after gates pass/);
     assert.match(prompt, /designContracts\.screenMap, designContracts\.designDom, uiContract/);
-    assert.match(prompt, /focused story-owned Stitch files as binding implementation sources/);
+    assert.match(prompt, /focused story-owned Stitch files from SUMMARY_IMPLEMENT_CONTEXT_CMD as binding implementation sources/);
     assert.match(prompt, /Do NOT use OpenClaw read\/cat\/head\/sed\/grep\/node loops to print or dump the entire claim summary JSON/);
     assert.match(prompt, /retryDiscipline\.mode/);
     assert.match(prompt, /retryDiscipline\.mode="first-delta"/);
@@ -227,6 +226,12 @@ describe("spawner prompt bootstrap", () => {
       const scopeOut = execFileSync("bash", [summaryScript, "scope-files"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" });
       assert.match(scopeOut, /^SCOPE_FILES=/);
       assert.match(scopeOut, /src\/App\.tsx/);
+      const implementContext = JSON.parse(execFileSync("bash", [summaryScript, "implement-context"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }));
+      assert.equal(implementContext.mode, "implement-context");
+      assert.match(implementContext.story.currentStory, /Boot trap/);
+      assert.deepEqual(implementContext.scope.files, ["src/App.tsx"]);
+      assert.equal(implementContext.checks.CHECK_BUILD_CMD, "bash .setfarm-bin/setfarm-check build");
+      assert.match(JSON.stringify(implementContext.design), /MainMenu/);
       assert.match(execFileSync("bash", [summaryScript, "--help"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }), /^$/);
       assert.match(execFileSync("bash", [summaryScript, "checks"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /bash \.setfarm-bin\/setfarm-check build/);
       assert.match(execFileSync("bash", [summaryScript, "git-policy"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /setfarm-platform/);
@@ -267,7 +272,7 @@ describe("spawner prompt bootstrap", () => {
       assert.doesNotMatch(out, /FAILURE_CATEGORY=GENERATED_SCREEN_SHARED_READ/);
       assert.doesNotMatch(out, /PR_REVIEW_THREAD_1=/);
       assert.match(out, /DETAILS_RULE=Initial bootstrap output intentionally omits long story, retry, PR, and supervisor text/);
-      assert.match(out, /SUMMARY_RETRY_FEEDBACK_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary retry-feedback/);
+      assert.match(out, /SUMMARY_IMPLEMENT_CONTEXT_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary implement-context/);
       assert.match(out, /RETRY_ACTION=Use claim-summary designContracts instead of shared generated source/);
       assert.match(out, /RETRY_INSTRUCTION=Previous feedback is an open implementation blocker/);
       assert.match(out, /RETRY_DISCIPLINE=semantic-fix: Generated-screen source retry discipline/);
@@ -1072,7 +1077,7 @@ describe("spawner prompt bootstrap", () => {
       });
       fs.writeFileSync(path.join(tmp, "bootstrap.sh"), bootstrap, { mode: 0o755 });
       const out = execFileSync("bash", [path.join(tmp, "bootstrap.sh")], { encoding: "utf-8" });
-      assert.match(out, /SUMMARY_RETRY_FEEDBACK_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary retry-feedback/);
+      assert.match(out, /SUMMARY_IMPLEMENT_CONTEXT_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary implement-context/);
       assert.doesNotMatch(out, /RETRY_PROTECTED_SNIPPET_1=/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -1162,7 +1167,7 @@ describe("spawner prompt bootstrap", () => {
       });
       fs.writeFileSync(path.join(tmp, "bootstrap.sh"), bootstrap, { mode: 0o755 });
       const out = execFileSync("bash", [path.join(tmp, "bootstrap.sh")], { encoding: "utf-8" });
-      assert.match(out, /SUMMARY_RETRY_FEEDBACK_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary retry-feedback/);
+      assert.match(out, /SUMMARY_IMPLEMENT_CONTEXT_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary implement-context/);
       assert.doesNotMatch(out, /RETRY_RESTORE_TARGET_1=/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -1244,7 +1249,7 @@ describe("spawner prompt bootstrap", () => {
       });
       fs.writeFileSync(path.join(tmp, "bootstrap.sh"), bootstrap, { mode: 0o755 });
       const out = execFileSync("bash", [path.join(tmp, "bootstrap.sh")], { encoding: "utf-8" });
-      assert.match(out, /SUMMARY_RETRY_FEEDBACK_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary retry-feedback/);
+      assert.match(out, /SUMMARY_IMPLEMENT_CONTEXT_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary implement-context/);
       assert.doesNotMatch(out, /RETRY_RESTORE_TARGET_1=/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -1313,7 +1318,7 @@ describe("spawner prompt bootstrap", () => {
       });
       fs.writeFileSync(path.join(tmp, "bootstrap.sh"), bootstrap, { mode: 0o755 });
       const out = execFileSync("bash", [path.join(tmp, "bootstrap.sh")], { encoding: "utf-8" });
-      assert.match(out, /SUMMARY_RETRY_FEEDBACK_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary retry-feedback/);
+      assert.match(out, /SUMMARY_IMPLEMENT_CONTEXT_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary implement-context/);
       assert.doesNotMatch(out, /RETRY_PROTECTED_SNIPPET_1=/);
       assert.doesNotMatch(out, /RETRY_RESTORE_TARGETS=/);
       assert.doesNotMatch(out, /article\.innerHTML/);
@@ -2435,23 +2440,14 @@ describe("spawner prompt bootstrap", () => {
 
       assert.doesNotMatch(out, /FAILURE_CATEGORY=PR_REVIEW_COMMENTS_OPEN/);
       assert.doesNotMatch(out, /PR_REVIEW_ACTIONABLE_THREADS=1/);
-      assert.match(out, /SUMMARY_RETRY_FEEDBACK_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary retry-feedback/);
+      assert.match(out, /SUMMARY_IMPLEMENT_CONTEXT_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary implement-context/);
       assert.match(out, /IMPLEMENT_LOOP=Edit scoped source, run CHECK_BUILD_CMD exactly, run CHECK_TEST_CMD exactly/);
       assert.match(out, /CHECK_BUILD_CMD=bash \.setfarm-bin\/setfarm-check build/);
       assert.match(out, /CHECK_TEST_CMD=bash \.setfarm-bin\/setfarm-check test/);
       assert.match(out, /CHECK_CMD_ATOMIC_RULE=Run each CHECK_\*_CMD value exactly as printed/);
-      assert.match(out, /SUMMARY_CURRENT_STORY_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary current-story/);
-      assert.match(out, /SUMMARY_ACCEPTANCE_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary acceptance/);
-      assert.match(out, /SUMMARY_SCOPE_FILES_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary scope-files/);
-      assert.match(out, /SUMMARY_CHECKS_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary checks/);
-      assert.match(out, /SUMMARY_WORKDIRS_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary workdirs/);
-      assert.match(out, /SUMMARY_RETRY_FEEDBACK_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary retry-feedback/);
-      assert.match(out, /SUMMARY_SCREEN_USAGE_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary screen-usage-contract/);
-      assert.match(out, /SUMMARY_DESIGN_CONTRACTS_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary design-contracts/);
-      assert.match(out, /SUMMARY_OUTPUT_CONTRACT_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary output-contract/);
-      assert.match(out, /SUMMARY_HELPER_RULE=Use the printed SUMMARY_\*_CMD lines exactly when more context is needed/);
-      assert.match(out, /Allowed setfarm-summary topics are only: current-story, acceptance, scope-files, checks, workdirs, retry-feedback, screen-usage-contract, design-contracts, output-contract, supervisor-memory, plus retry-patch\/source-snapshot only when a RETRY_\*_CMD line is printed/);
-      assert.match(out, /Do not invent story-brief\/full\/all topics/);
+      assert.match(out, /SUMMARY_IMPLEMENT_CONTEXT_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary implement-context/);
+      assert.match(out, /SUMMARY_HELPER_RULE=Use SUMMARY_IMPLEMENT_CONTEXT_CMD as the primary handoff/);
+      assert.match(out, /Do not guess setfarm-summary topics/);
       assert.match(out, /MASKED_CHECK_RULE=Use CHECK_BUILD_CMD\/CHECK_TEST_CMD when present, exactly as printed and as standalone commands/);
       assert.match(out, /MASKED_CHECK_EXACT_BUILD_CMD=npm run build/);
       assert.match(out, /MASKED_CHECK_EXACT_TEST_CMD=npm run test:run/);

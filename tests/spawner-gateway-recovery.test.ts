@@ -61,6 +61,7 @@ describe("spawner gateway recovery wiring", () => {
   it("detects unsupported or wrapped Setfarm summary helper commands", () => {
     assert.equal(isUnsupportedSetfarmSummaryCommand("CLAIM_SUMMARY_FILE=/tmp/s.json node .setfarm-bin/setfarm-summary checks"), false);
     assert.equal(isUnsupportedSetfarmSummaryCommand("CLAIM_SUMMARY_FILE='/tmp/s.json' node .setfarm-bin/setfarm-summary current-story"), false);
+    assert.equal(isUnsupportedSetfarmSummaryCommand("CLAIM_SUMMARY_FILE=/tmp/s.json node .setfarm-bin/setfarm-summary implement-context"), false);
     assert.equal(isSetfarmSummaryHelpCommand("CLAIM_SUMMARY_FILE=/tmp/s.json node .setfarm-bin/setfarm-summary --help 2>&1 || true"), true);
     assert.equal(isUnsupportedSetfarmSummaryCommand("CLAIM_SUMMARY_FILE=/tmp/s.json node .setfarm-bin/setfarm-summary --help 2>&1 || true"), false);
     assert.equal(isUnsupportedSetfarmSummaryCommand("CLAIM_SUMMARY_FILE=/tmp/s.json node .setfarm-bin/setfarm-summary retry-patch"), false);
@@ -1107,7 +1108,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(promptSource, /readSupervisorMemoryFile/);
     assert.match(promptSource, /supervisorMemory/);
     assert.match(promptSource, /No generated screen source file is in scope/);
-    assert.match(promptSource, /Read the structured claim summary/);
+    assert.match(promptSource, /SUMMARY_IMPLEMENT_CONTEXT_CMD/);
     assert.match(promptSource, /Do NOT parse or dump claim\.input with jq\/sed\/head\/node loops/);
     assert.match(promptSource, /CLAIM_SUMMARY_FILE/);
     assert.match(source, /CLAIM_PARSE_LOOP_MIN_READS/);
