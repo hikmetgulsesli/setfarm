@@ -219,13 +219,15 @@ describe("spawner prompt bootstrap", () => {
       const summaryScript = path.join(workdir, ".setfarm-bin", "setfarm-summary");
       assert.ok(fs.existsSync(summaryScript), "bootstrap should install setfarm-summary");
       const summaryScriptBody = fs.readFileSync(summaryScript, "utf-8");
-      assert.match(summaryScriptBody, /Usage: setfarm-summary current-story\|acceptance\|scope-files\|checks\|workdirs\|retry-feedback\|screen-usage-contract\|design-contracts\|output-contract\|supervisor-memory\|retry-patch\|source-snapshot/);
+      assert.match(summaryScriptBody, /Usage: setfarm-summary <printed SUMMARY_\*_CMD or RETRY_\*_CMD topic>/);
+      assert.match(summaryScriptBody, /Use only the printed SUMMARY_\*_CMD and RETRY_\*_CMD commands exactly/);
       assert.doesNotMatch(summaryScriptBody, /git-policy\|integration-policy\|generated-screen-policy/);
       const evidenceEnv = { ...process.env, CLAIM_SUMMARY_FILE: claimSummaryFile };
       assert.match(execFileSync("bash", [summaryScript, "acceptance"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /State persists after save/);
       const scopeOut = execFileSync("bash", [summaryScript, "scope-files"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" });
       assert.match(scopeOut, /^SCOPE_FILES=/);
       assert.match(scopeOut, /src\/App\.tsx/);
+      assert.match(execFileSync("bash", [summaryScript, "--help"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }), /^$/);
       assert.match(execFileSync("bash", [summaryScript, "checks"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /bash \.setfarm-bin\/setfarm-check build/);
       assert.match(execFileSync("bash", [summaryScript, "workdirs"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /run-us-001/);
       assert.match(execFileSync("bash", [summaryScript, "screen-usage-contract"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /MainMenu/);
