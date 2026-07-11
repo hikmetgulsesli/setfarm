@@ -301,8 +301,9 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, /IMPLEMENT_EVIDENCE_RULE=For runtime\/UI stories, write IMPLEMENT_INTENT\.json/);
       assert.match(out, /IMPLEMENT_EVIDENCE_RULE=.*top-level JSON key named schema; do not use \$schema/);
       assert.match(out, /IMPLEMENT_EVIDENCE_HELPER=Default valid intent\/request are already seeded/);
-      assert.match(out, /setfarm-evidence snapshot --target window\.app/);
-      assert.match(out, /setfarm-evidence action --action-id <visible-action-id>/);
+      assert.match(out, /Do not run or inspect setfarm-evidence in the normal implement loop/);
+      assert.doesNotMatch(out, /setfarm-evidence snapshot --target window\.app/);
+      assert.doesNotMatch(out, /setfarm-evidence action --action-id <visible-action-id>/);
       assert.match(out, /IMPLEMENT_INTENT_SCHEMA=top-level schema key, not \$schema/);
       assert.match(out, /IMPLEMENT_INTENT_SCHEMA=.*"schema":"setfarm\.implement-intent\.v1"/);
       assert.match(out, /IMPLEMENT_VERIFICATION_REQUEST_SCHEMA=top-level schema key, not \$schema/);
@@ -2269,7 +2270,7 @@ describe("spawner prompt bootstrap", () => {
       assert.match(String((summary.retryDiscipline as any).instruction), /do not rerun the old masked ad hoc command/i);
       assert.match(String((summary.retryDiscipline as any).instruction), /npm run build 2>&1 \| tail -40; echo \$\?/);
       assert.match(String((summary.retryDiscipline as any).instruction), /bash \.setfarm-bin\/setfarm-check test 2>&1 \| tail -40/);
-      assert.match(String((summary.retryDiscipline as any).instruction), /After the declared checks and setfarm-evidence validate pass, write the output contract, call step complete, and stop/i);
+      assert.match(String((summary.retryDiscipline as any).instruction), /After the declared checks pass, write the output contract, call step complete, and stop/i);
       assert.match(String((summary.retryDiscipline as any).instruction), /do not run optional extra vitest\/tsc\/eslint probes/i);
       const bootstrap = buildResolvedClaimBootstrapScript({
         claimFile: path.join(tmp, "claim.json"),
