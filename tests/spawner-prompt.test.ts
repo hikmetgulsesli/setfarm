@@ -231,7 +231,8 @@ describe("spawner prompt bootstrap", () => {
       assert.match(scopeOut, /src\/App\.tsx/);
       const implementContext = JSON.parse(execFileSync("bash", [summaryScript, "implement-context"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }));
       assert.equal(implementContext.mode, "implement-context");
-      assert.match(implementContext.story.currentStory, /Boot trap/);
+      assert.match(implementContext.story.currentStory, /Bootstrap story/);
+      assert.doesNotMatch(implementContext.story.currentStory, /\b tate\b|\bper i t|\b tatus\b/);
       assert.deepEqual(implementContext.scope.files, ["src/App.tsx"]);
       assert.equal(implementContext.checks.CHECK_BUILD_CMD, "npm run build");
       assert.match(JSON.stringify(implementContext.design), /MainMenu/);

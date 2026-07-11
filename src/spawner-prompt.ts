@@ -1823,7 +1823,7 @@ try {
     "  return path.split('.').reduce((acc, key) => acc && acc[key], obj);",
     "}",
     "function shortText(value, max = 900) {",
-    "  const text = String(value || '').replace(/\\s+/g, ' ').trim();",
+    "  const text = String(value || '').replace(/\\\\s+/g, ' ').trim();",
     "  return text.length > max ? text.slice(0, max) + '...' : text;",
     "}",
     "function compactForCommand(value) {",
