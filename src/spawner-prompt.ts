@@ -2112,7 +2112,7 @@ if (s.lintCommand) lines.push("LINT_CMD=" + String(s.lintCommand));
 if (/^developer$/i.test(String(s.role || ""))) {
   const implementContextFile = s.workdir ? String(s.workdir).replace(/\\/+$/, "") + "/.setfarm/implement-context.json" : "";
   const implementContextReady = !!(implementContextFile && fs.existsSync(implementContextFile));
-  lines.push("IMPLEMENT_LOOP=Edit scoped source, run CHECK_BUILD_CMD exactly, run CHECK_TEST_CMD exactly, validate evidence, then write required output. Once declared build/test pass, do not add optional new tests or probes; finish the claim.");
+  lines.push("IMPLEMENT_LOOP=Edit scoped source, run CHECK_BUILD_CMD exactly, run CHECK_TEST_CMD exactly, then write required output. Setfarm validates seeded implementation evidence after completion. Once declared build/test pass, do not add optional new tests or probes; finish the claim.");
   lines.push("IMPLEMENT_DONE_FAST_PATH=After CHECK_BUILD_CMD and CHECK_TEST_CMD pass as exact standalone commands, write OUTPUT_CONTRACT fields, call step complete, then stop. Setfarm will validate seeded implementation evidence after completion.");
   if (s.buildCommand && String(s.buildCommand) !== "true") lines.push("CHECK_BUILD_CMD=bash .setfarm-bin/setfarm-check build");
   if (s.testCommand && String(s.testCommand) !== "true") lines.push("CHECK_TEST_CMD=bash .setfarm-bin/setfarm-check test");
