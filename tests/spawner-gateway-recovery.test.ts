@@ -282,12 +282,13 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /fs\.mkdirSync\(path\.join\(kimiDir, "sessions"\), \{ recursive: true \}\)/);
     assert.match(source, /e\.HOME = kimiHome/);
     assert.match(source, /e\.KIMI_HOME = path\.join\(kimiHome, "\.kimi"\)/);
-    assert.match(source, /buildAgentChildEnv\(pathPrefix, \{ runtime: AGENT_RUNTIME, sessionId \}\)/);
+    assert.match(source, /buildAgentChildEnv\(pathPrefix, \{/);
+    assert.match(source, /openClawWorkspaceDir: spawnCwd/);
   });
 
   it("isolates OpenClaw agent config from Codex plugin session middleware", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
-    const helperStart = source.indexOf("function prepareOpenClawIsolatedConfig(sessionId: string)");
+    const helperStart = source.indexOf("function prepareOpenClawIsolatedConfig(sessionId: string");
     const envStart = source.indexOf("function buildAgentChildEnv(", helperStart);
     assert.notEqual(helperStart, -1, "OpenClaw isolated config helper not found");
     assert.notEqual(envStart, -1, "agent child env builder not found");
@@ -299,10 +300,15 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(helperSource, /OPENCLAW_CONFIG_PATH\?\.trim\(\) \|\| path\.join\(os\.homedir\(\), "\.openclaw", "openclaw\.json"\)/);
     assert.match(helperSource, /entries\.codex = \{ \.\.\.codexEntry, enabled: false \}/);
     assert.match(helperSource, /plugins\.allow = parseOpenClawAgentPluginAllow\(\)/);
+    assert.match(helperSource, /options\.agentId && options\.workspaceDir/);
+    assert.match(helperSource, /entry\.id !== options\.agentId/);
+    assert.match(helperSource, /workspace: options\.workspaceDir/);
     assert.match(helperSource, /\.openclaw", "setfarm", "openclaw-runtime", sessionId/);
     assert.match(helperSource, /fs\.writeFileSync\(targetConfigPath, JSON\.stringify\(next, null, 2\) \+ "\\n", \{ mode: 0o600 \}\)/);
     assert.match(envSource, /\(options\.runtime \|\| AGENT_RUNTIME\) === "openclaw" && options\.sessionId/);
-    assert.match(envSource, /const isolatedConfigPath = prepareOpenClawIsolatedConfig\(options\.sessionId\)/);
+    assert.match(envSource, /const isolatedConfigPath = prepareOpenClawIsolatedConfig\(options\.sessionId, \{/);
+    assert.match(envSource, /agentId: options\.agentId/);
+    assert.match(envSource, /workspaceDir: options\.openClawWorkspaceDir/);
     assert.match(envSource, /e\.OPENCLAW_CONFIG_PATH = isolatedConfigPath/);
   });
 
@@ -1191,6 +1197,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /setRuntimeGuardRequeueCooldown\(agentId,\s*diagnostic\)/);
     assert.match(source, /function discardRuntimeGuardSiblingArtifacts\(storyBranch: string, diagnostic: string\)/);
     assert.match(source, /discardRuntimeGuardSiblingArtifacts\(storyBranch,\s*diagnostic\)/);
+    assert.match(source, /runStoryPrefix/);
     assert.match(source, /discarded guarded retry sibling artifact/);
     assert.ok(
       source.indexOf("implementScopeWriteGuard(active)") < source.indexOf("claimParseLoopGuard(active)"),

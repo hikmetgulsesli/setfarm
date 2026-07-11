@@ -2713,7 +2713,7 @@ function isJsonRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
-function prepareOpenClawIsolatedConfig(sessionId: string): string | undefined {
+function prepareOpenClawIsolatedConfig(sessionId: string, options: { agentId?: string; workspaceDir?: string } = {}): string | undefined {
   if (process.env.SETFARM_OPENCLAW_ISOLATED_CONFIG === "0") return undefined;
   const sourceConfigPath = process.env.OPENCLAW_CONFIG_PATH?.trim() || path.join(os.homedir(), ".openclaw", "openclaw.json");
   try {
@@ -2735,6 +2735,15 @@ function prepareOpenClawIsolatedConfig(sessionId: string): string | undefined {
       strictInlineEval: false,
     };
     next.tools = tools;
+    if (options.agentId && options.workspaceDir && path.isAbsolute(options.workspaceDir)) {
+      const agents = isJsonRecord(next.agents) ? next.agents : {};
+      const list = Array.isArray(agents.list) ? agents.list : [];
+      agents.list = list.map((entry) => {
+        if (!isJsonRecord(entry) || entry.id !== options.agentId) return entry;
+        return { ...entry, workspace: options.workspaceDir };
+      });
+      next.agents = agents;
+    }
 
     const targetDir = path.join(os.homedir(), ".openclaw", "setfarm", "openclaw-runtime", sessionId);
     const targetConfigPath = path.join(targetDir, "openclaw.json");
@@ -2756,7 +2765,7 @@ function resolveHostPlaywrightBrowsersPath(): string | undefined {
   return candidates.find((candidate) => fs.existsSync(candidate));
 }
 
-function buildAgentChildEnv(pathPrefix?: string, options: { runtime?: AgentRuntime; sessionId?: string } = {}): NodeJS.ProcessEnv {
+function buildAgentChildEnv(pathPrefix?: string, options: { runtime?: AgentRuntime; sessionId?: string; agentId?: string; openClawWorkspaceDir?: string } = {}): NodeJS.ProcessEnv {
   const e = buildOpenClawChildEnv(pathPrefix);
   const playwrightBrowsersPath = resolveHostPlaywrightBrowsersPath();
   if (playwrightBrowsersPath) e.PLAYWRIGHT_BROWSERS_PATH = playwrightBrowsersPath;
@@ -2772,7 +2781,10 @@ function buildAgentChildEnv(pathPrefix?: string, options: { runtime?: AgentRunti
     e.XDG_STATE_HOME = path.join(kimiHome, ".local", "state");
   }
   if ((options.runtime || AGENT_RUNTIME) === "openclaw" && options.sessionId) {
-    const isolatedConfigPath = prepareOpenClawIsolatedConfig(options.sessionId);
+    const isolatedConfigPath = prepareOpenClawIsolatedConfig(options.sessionId, {
+      agentId: options.agentId,
+      workspaceDir: options.openClawWorkspaceDir,
+    });
     if (isolatedConfigPath) e.OPENCLAW_CONFIG_PATH = isolatedConfigPath;
   }
   return e;
@@ -4567,7 +4579,9 @@ function discardRuntimeGuardSiblingArtifacts(storyBranch: string, diagnostic: st
   if (resolved === canonicalWorktree || resolved.startsWith(`${canonicalWorktree}${path.sep}`)) return;
   const relative = path.relative(storyWorktreesRoot, resolved);
   const sibling = relative.split(path.sep)[0] || "";
-  if (!sibling.startsWith(`${storyBranch}-`) && !sibling.startsWith(`${storyBranch}.`)) return;
+  const branchParts = storyBranch.split("-");
+  const runStoryPrefix = branchParts.length >= 2 ? `${branchParts[0]}-${branchParts[1]}-` : `${storyBranch}-`;
+  if (!sibling.startsWith(`${storyBranch}-`) && !sibling.startsWith(`${storyBranch}.`) && !sibling.startsWith(runStoryPrefix)) return;
   const siblingPath = path.join(storyWorktreesRoot, sibling);
   try {
     fs.rmSync(siblingPath, { recursive: true, force: true });
@@ -5620,7 +5634,12 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     // Security: denylist DB credentials from agent env. Keep everything
     // else — OpenClaw CLI needs many env vars and allowlist is too fragile.
     env: (() => {
-      return buildAgentChildEnv(pathPrefix, { runtime: AGENT_RUNTIME, sessionId });
+      return buildAgentChildEnv(pathPrefix, {
+        runtime: AGENT_RUNTIME,
+        sessionId,
+        agentId,
+        openClawWorkspaceDir: spawnCwd,
+      });
     })(),
     stdio: AGENT_RUNTIME === "openclaw" || AGENT_RUNTIME === "opencode" ? ["ignore", outFd, errFd] : ["pipe", outFd, errFd],
   });
