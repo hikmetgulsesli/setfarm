@@ -229,6 +229,7 @@ describe("spawner prompt bootstrap", () => {
       assert.match(scopeOut, /src\/App\.tsx/);
       assert.match(execFileSync("bash", [summaryScript, "--help"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }), /^$/);
       assert.match(execFileSync("bash", [summaryScript, "checks"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /bash \.setfarm-bin\/setfarm-check build/);
+      assert.match(execFileSync("bash", [summaryScript, "git-policy"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /setfarm-platform/);
       assert.match(execFileSync("bash", [summaryScript, "workdirs"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /run-us-001/);
       assert.match(execFileSync("bash", [summaryScript, "screen-usage-contract"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /MainMenu/);
       assert.match(execFileSync("bash", [summaryScript, "design-contracts"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /Main Menu/);
@@ -798,9 +799,15 @@ describe("spawner prompt bootstrap", () => {
         encoding: "utf-8",
         env: { ...process.env, CLAIM_SUMMARY_FILE: claimSummaryFile },
       });
+      const retryAliasOut = execFileSync(path.join(workdir, ".setfarm-bin", "setfarm-summary"), ["retry"], {
+        encoding: "utf-8",
+        env: { ...process.env, CLAIM_SUMMARY_FILE: claimSummaryFile },
+      });
       assert.match(retryOut, /"worktreePatch":/);
       assert.match(retryOut, /"sourceSnapshot":/);
       assert.doesNotMatch(retryOut, /diff --git a\/src\/App\.tsx/);
+      assert.match(retryAliasOut, /"worktreePatch":/);
+      assert.doesNotMatch(retryAliasOut, /diff --git a\/src\/App\.tsx/);
       const patchOut = execFileSync(path.join(workdir, ".setfarm-bin", "setfarm-summary"), ["retry-patch"], {
         encoding: "utf-8",
         env: { ...process.env, CLAIM_SUMMARY_FILE: claimSummaryFile },
