@@ -2779,6 +2779,8 @@ describe("spawner prompt bootstrap", () => {
       assert.equal((summary.retryFeedback as any).sourceSnapshot, undefined);
       assert.equal((summary.retryFeedback as any).worktreePatch, undefined);
       assert.match(String((summary.retryDiscipline as any).instruction), /small scoped source delta/);
+      assert.match(String((summary.retryDiscipline as any).instruction), /absolute WORKDIR/i);
+      assert.match(String((summary.retryDiscipline as any).instruction), /never shorten/i);
       const bootstrap = buildResolvedClaimBootstrapScript({
         claimFile: path.join(tmp, "claim.json"),
         outputFile: path.join(tmp, "output.txt"),

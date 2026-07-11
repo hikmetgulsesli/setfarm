@@ -1126,7 +1126,7 @@ function retryDisciplineForFailure(
   return {
     mode: "first-delta",
     maxPreDeltaContextReads: 10,
-    instruction: "Hard manager retry discipline: after bootstrap and the claim summary, inspect only the owned scope files plus safe metadata needed for the first edit, then make a small scoped source delta that addresses the reported blocker before broad analysis/build/test. Do not read raw stitch files, forbidden generated screens, full claims, or unrelated shared source to re-learn the project.",
+    instruction: "Hard manager retry discipline: after bootstrap and the claim summary, inspect only the owned scope files plus safe metadata needed for the first edit, then make a small scoped source delta that addresses the reported blocker before broad analysis/build/test. When creating missing scope files, use the exact relative path from MISSING_SCOPE_FILES/SCOPE_FILES resolved under WORKDIR as an absolute WORKDIR path; never shorten it to a parent directory or sibling filename. Do not read raw stitch files, forbidden generated screens, full claims, or unrelated shared source to re-learn the project.",
   };
 }
 
@@ -2181,7 +2181,7 @@ if (/^DESIGN_MISMATCH$/i.test(String(s.failureCategory || ""))) {
   lines.push("DESIGN_RETRY_RULE=Fix the exact UI_CONTRACT/design-token file and line first; search scoped files for the rejected token or pattern and replace it before broad feature work.");
 }
 if (/^(?:SCOPE_BLEED|SCOPE_WRITE_VIOLATION)$/i.test(String(s.failureCategory || ""))) {
-  lines.push("SCOPE_RETRY_RULE=First remove/rework out-of-scope files or shell-created project artifacts. Do not read retry source snapshots, do not read retry worktree patches, and do not recreate shared/debug/scratch files, including /tmp probe scripts via OpenClaw write/edit; use inline node -e or existing scoped tests instead. Keep the fix inside SCOPE_FILES, then run build/test.");
+  lines.push("SCOPE_RETRY_RULE=First remove/rework out-of-scope files or shell-created project artifacts. Do not read retry source snapshots, do not read retry worktree patches, and do not recreate shared/debug/scratch files, including /tmp probe scripts via OpenClaw write/edit; use inline node -e or existing scoped tests instead. Keep the fix inside SCOPE_FILES, and when creating missing scope files use the exact relative path from MISSING_SCOPE_FILES/SCOPE_FILES resolved under WORKDIR as an absolute path. Never shorten a scoped path to a parent directory such as ../utility.fixture.ts or ../../../utility.fixture.ts. Then run build/test.");
 }
 if (rf.worktreePatch && rf.worktreePatch.body) {
   const patchFiles = Array.isArray(rf.worktreePatch.touchedFiles) ? rf.worktreePatch.touchedFiles.join(", ") : "";

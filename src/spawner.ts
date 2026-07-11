@@ -752,6 +752,11 @@ function parsePositiveInt(raw: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+const RUNTIME_GUARD_REQUEUE_SETTLE_MS = parsePositiveInt(
+  process.env.SETFARM_RUNTIME_GUARD_REQUEUE_SETTLE_MS,
+  15_000,
+);
+
 function formatDurationMs(ms: number): string {
   const seconds = Math.max(0, Math.round(ms / 1000));
   const minutes = Math.floor(seconds / 60);
@@ -4434,6 +4439,15 @@ async function runtimeGuardRepeatDecision(runId: string, stepId: string, storyId
   return { hardFail: previousCount + 1 >= RUNTIME_GUARD_REPEAT_LIMIT, key, previousCount };
 }
 
+function setRuntimeGuardRequeueCooldown(agentId: string, reason: string): void {
+  if (RUNTIME_GUARD_REQUEUE_SETTLE_MS <= 0) return;
+  const until = Date.now() + RUNTIME_GUARD_REQUEUE_SETTLE_MS;
+  agentCooldownUntil.set(agentId, Math.max(agentCooldownUntil.get(agentId) || 0, until));
+  console.warn(
+    `[spawner] runtime guard settle cooldown for ${agentId}: ${formatDurationMs(RUNTIME_GUARD_REQUEUE_SETTLE_MS)} after ${runtimeGuardDiagnosticKey(reason)}`,
+  );
+}
+
 async function requeueOrphanedStoryClaim(runId: string, stepId: string, agentId: string, diagnostic: string): Promise<boolean> {
   const row = await pgGet<{ id: string; story_id: string }>(
     `SELECT st.id, st.story_id
@@ -4474,6 +4488,7 @@ async function requeueOrphanedStoryClaim(runId: string, stepId: string, agentId:
   );
   await pgRun("UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = NOW() WHERE run_id = $1 AND step_id = $2 AND status IN ('pending','running','waiting')", [runId, stepId]);
   await pgRun("UPDATE claim_log SET outcome = 'infra_retry', abandoned_at = NOW(), diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND story_id = $4 AND agent_id = $5 AND outcome IS NULL", [diagnostic, runId, stepId, row.story_id, agentId]);
+  setRuntimeGuardRequeueCooldown(agentId, diagnostic);
   console.warn(`[spawner] requeued orphaned story claim ${row.story_id} for ${agentId}: ${diagnostic.slice(0, 180)}`);
   return true;
 }
@@ -4522,6 +4537,7 @@ async function requeueOpenStoryClaim(runId: string, stepId: string, storyId: str
   }
   await pgRun("UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = NOW() WHERE run_id = $1 AND step_id = $2 AND status IN ('pending','running','waiting')", [runId, stepId]);
   await pgRun("UPDATE claim_log SET outcome = 'infra_retry', abandoned_at = NOW(), diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND story_id = $4 AND agent_id = $5 AND outcome IS NULL", [diagnostic, runId, stepId, storyId, agentId]);
+  setRuntimeGuardRequeueCooldown(agentId, diagnostic);
   console.warn(`[spawner] requeued open story claim ${storyId} for ${agentId}: ${diagnostic.slice(0, 180)}`);
   return true;
 }

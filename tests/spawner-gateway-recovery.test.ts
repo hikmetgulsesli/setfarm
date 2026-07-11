@@ -1183,6 +1183,10 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /terminateActiveProcess\(active,\s*"scope-dirty-guard"\)/);
     assert.match(source, /--- SCOPE WRITE GUARD/);
     assert.match(source, /--- SCOPE DIRTY GUARD/);
+    assert.match(source, /RUNTIME_GUARD_REQUEUE_SETTLE_MS/);
+    assert.match(source, /function setRuntimeGuardRequeueCooldown\(agentId: string, reason: string\)/);
+    assert.match(source, /agentCooldownUntil\.set\(agentId/);
+    assert.match(source, /setRuntimeGuardRequeueCooldown\(agentId,\s*diagnostic\)/);
     assert.ok(
       source.indexOf("implementScopeWriteGuard(active)") < source.indexOf("claimParseLoopGuard(active)"),
       "scope write guard should run before loop/context guards",
