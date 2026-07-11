@@ -1862,22 +1862,23 @@ try {
     "  if (value.details) out.details = shortText(value.details, 1000);",
     "  if (Array.isArray(value.prThreadIds) && value.prThreadIds.length) out.prThreadIds = value.prThreadIds;",
     "  if (Array.isArray(value.actionableReviewThreads) && value.actionableReviewThreads.length) out.actionableReviewThreads = compactDeep(value.actionableReviewThreads, 1000, 12);",
-    "  if (value.worktreePatch && value.worktreePatch.body) out.worktreePatch = { present: true, bytes: value.worktreePatch.bytes || String(value.worktreePatch.body).length, touchedFiles: value.worktreePatch.touchedFiles || [] };",
-    "  if (value.sourceSnapshot && value.sourceSnapshot.section) out.sourceSnapshot = { present: true, bytes: value.sourceSnapshot.bytes || String(value.sourceSnapshot.section).length, scopeFiles: value.sourceSnapshot.scopeFiles || [] };",
+    "  if (value.worktreePatch && value.worktreePatch.body) out.worktreePatch = { present: true, bytes: value.worktreePatch.bytes || String(value.worktreePatch.body).length, touchedFiles: value.worktreePatch.touchedFiles || [], body: shortText(value.worktreePatch.body, 6000) };",
+    "  if (value.sourceSnapshot && value.sourceSnapshot.section) out.sourceSnapshot = { present: true, bytes: value.sourceSnapshot.bytes || String(value.sourceSnapshot.section).length, scopeFiles: value.sourceSnapshot.scopeFiles || [], section: shortText(value.sourceSnapshot.section, 5000) };",
     "  return out;",
     "}",
     "function implementContext(s) {",
     "  return {",
     "    mode: 'implement-context',",
     "    rules: [",
-    "      'Use this implement-context as the primary handoff; do not guess setfarm-summary topics.',",
+    "      'Use this implement-context as the primary handoff; do not guess or run setfarm-summary topics while this file exists.',",
     "      'Read only owned scope files plus safe metadata before the first source delta; avoid broad project exploration.',",
     "      'Do not read .setfarm-bin/* helper scripts; they are executable-only commands, not implementation context.',",
     "      'Do not read shared generated src/screens/*.tsx source unless that exact file is in scope.files; use screenUsageContract instead.',",
     "      'Do not read raw Stitch/design files unless they are focused story-owned inputs named in this context; use design.screenUsageContract/designContracts/uiContract first.',",
     "      'Edit scoped source first, then run CHECK_BUILD_CMD and CHECK_TEST_CMD exactly as standalone commands.',",
     "      'If CHECK_BUILD_CMD or CHECK_TEST_CMD is present, do not replace it with npx/npm/tsc/vitest guesses.',",
-    "      'Do not append pipes, redirection, head/tail, tee, timeout, grouping, or chaining to CHECK_* or SUMMARY_* commands.',",
+    "      'Do not append pipes, redirection, head/tail, tee, timeout, grouping, or chaining to CHECK_* commands.',",
+    "      'If retry.worktreePatch.body or retry.sourceSnapshot.section is present, use that embedded context instead of running helper commands.',",
     "      'Keep smoke/debug state in window.app/globalThis.app or test-only data, not visible shell chrome.',",
     "      'After checks pass, run node .setfarm-bin/setfarm-evidence validate and write the output contract.'",
     "    ],",
@@ -1938,12 +1939,13 @@ SETFARM_SUMMARY_TOOL_NODE
   mkdir -p "$WORKDIR/.setfarm"
   if CLAIM_SUMMARY_FILE="$CLAIM_SUMMARY_FILE" node "$WORKDIR/.setfarm-bin/setfarm-summary" implement-context > "$IMPLEMENT_CONTEXT_FILE"; then
     echo "IMPLEMENT_CONTEXT_FILE=$IMPLEMENT_CONTEXT_FILE"
+    echo "SUMMARY_HELPER_RULE=IMPLEMENT_CONTEXT_FILE is ready; do not run setfarm-summary or retry helper commands for this claim."
   else
     rm -f "$IMPLEMENT_CONTEXT_FILE"
     echo "IMPLEMENT_CONTEXT_FILE_UNAVAILABLE=run SUMMARY_IMPLEMENT_CONTEXT_CMD exactly once without redirection"
+    echo "SUMMARY_IMPLEMENT_CONTEXT_CMD=CLAIM_SUMMARY_FILE='$CLAIM_SUMMARY_FILE' node '$WORKDIR/.setfarm-bin/setfarm-summary' implement-context"
+    echo "SUMMARY_HELPER_RULE=Use SUMMARY_IMPLEMENT_CONTEXT_CMD only because IMPLEMENT_CONTEXT_FILE is unavailable. Do not guess setfarm-summary topics, append pipes/redirection/chaining, cat helper scripts, or parse raw /tmp/claim JSON."
   fi
-  echo "SUMMARY_IMPLEMENT_CONTEXT_CMD=CLAIM_SUMMARY_FILE='$CLAIM_SUMMARY_FILE' node '$WORKDIR/.setfarm-bin/setfarm-summary' implement-context"
-  echo "SUMMARY_HELPER_RULE=Use IMPLEMENT_CONTEXT_FILE as the primary handoff. Use SUMMARY_IMPLEMENT_CONTEXT_CMD only if that file is unavailable. Do not guess setfarm-summary topics, append pipes/redirection/chaining, cat helper scripts, or parse raw /tmp/claim JSON. Use RETRY_WORKTREE_PATCH_CMD/RETRY_SOURCE_SNAPSHOT_CMD only when those exact lines are printed."
   node - "$CLAIM_SUMMARY_FILE" "$WORKDIR/.setfarm-bin/setfarm-evidence" <<'SETFARM_EVIDENCE_TOOL_NODE'
 const fs = require("fs");
 const path = require("path");
@@ -2106,15 +2108,21 @@ if (s.buildCommand) lines.push("BUILD_CMD=" + String(s.buildCommand));
 if (s.testCommand) lines.push("TEST_CMD=" + String(s.testCommand));
 if (s.lintCommand) lines.push("LINT_CMD=" + String(s.lintCommand));
 if (/^developer$/i.test(String(s.role || ""))) {
+  const implementContextFile = s.workdir ? String(s.workdir).replace(/\\/+$/, "") + "/.setfarm/implement-context.json" : "";
+  const implementContextReady = !!(implementContextFile && fs.existsSync(implementContextFile));
   lines.push("IMPLEMENT_LOOP=Edit scoped source, run CHECK_BUILD_CMD exactly, run CHECK_TEST_CMD exactly, validate evidence, then write required output. Once declared build/test pass, do not add optional new tests or probes; finish the claim.");
   lines.push("IMPLEMENT_DONE_FAST_PATH=After CHECK_BUILD_CMD and CHECK_TEST_CMD pass as exact standalone commands, run node .setfarm-bin/setfarm-evidence validate, write OUTPUT_CONTRACT fields, call step complete, then stop.");
   if (s.buildCommand && String(s.buildCommand) !== "true") lines.push("CHECK_BUILD_CMD=bash .setfarm-bin/setfarm-check build");
   if (s.testCommand && String(s.testCommand) !== "true") lines.push("CHECK_TEST_CMD=bash .setfarm-bin/setfarm-check test");
   if (s.lintCommand && String(s.lintCommand) !== "true") lines.push("CHECK_LINT_CMD=bash .setfarm-bin/setfarm-check lint");
   lines.push("CHECK_CMD_ATOMIC_RULE=Run each CHECK_*_CMD value exactly as printed, as its own command. Do not append 2>&1, | head, | tail, tee, cat, echo, timeout, parentheses, &&, ||, ;, or any other suffix/prefix/wrapper to a CHECK_*_CMD command.");
-  if (s.workdir) lines.push("IMPLEMENT_CONTEXT_FILE=" + String(s.workdir).replace(/\\/+$/, "") + "/.setfarm/implement-context.json");
-  lines.push("SUMMARY_IMPLEMENT_CONTEXT_CMD=" + summaryCommandPrefix + "implement-context");
-  lines.push("SUMMARY_HELPER_RULE=Use IMPLEMENT_CONTEXT_FILE as the primary handoff. Use SUMMARY_IMPLEMENT_CONTEXT_CMD only if that file is unavailable. Do not guess setfarm-summary topics, append pipes/redirection/chaining, cat helper scripts, or parse raw /tmp/claim JSON. Use RETRY_WORKTREE_PATCH_CMD/RETRY_SOURCE_SNAPSHOT_CMD only when those exact lines are printed.");
+  if (implementContextFile) lines.push("IMPLEMENT_CONTEXT_FILE=" + implementContextFile);
+  if (implementContextReady) {
+    lines.push("SUMMARY_HELPER_RULE=IMPLEMENT_CONTEXT_FILE is ready; do not run setfarm-summary or retry helper commands for this claim.");
+  } else {
+    lines.push("SUMMARY_IMPLEMENT_CONTEXT_CMD=" + summaryCommandPrefix + "implement-context");
+    lines.push("SUMMARY_HELPER_RULE=Use SUMMARY_IMPLEMENT_CONTEXT_CMD only because IMPLEMENT_CONTEXT_FILE is unavailable. Do not guess setfarm-summary topics, append pipes/redirection/chaining, cat helper scripts, or parse raw /tmp/claim JSON.");
+  }
 }
 if (Array.isArray(s.scopeFiles)) lines.push("SCOPE_FILES=" + s.scopeFiles.join(", "));
 if (Array.isArray(s.existingScopeFiles) && s.existingScopeFiles.length) lines.push("EXISTING_SCOPE_FILES=" + s.existingScopeFiles.join(", "));
@@ -2129,6 +2137,7 @@ if (Array.isArray(sc.components)) {
 }
 lines.push("DETAILS_RULE=Initial bootstrap output intentionally omits long story, retry, PR, and supervisor text. Read IMPLEMENT_CONTEXT_FILE for the complete compact implement handoff. Use SUMMARY_IMPLEMENT_CONTEXT_CMD only if the file is unavailable; do not request all/full/story-brief helper topics.");
 const rf = s.retryFeedback || {};
+const implementContextReadyForCommands = !!(s.workdir && fs.existsSync(String(s.workdir).replace(/\\/+$/, "") + "/.setfarm/implement-context.json"));
 const checkRuleSignal = [
   s.role,
   s.failureCategory,
@@ -2155,11 +2164,11 @@ if (rf.worktreePatch && rf.worktreePatch.body) {
   const patchFiles = Array.isArray(rf.worktreePatch.touchedFiles) ? rf.worktreePatch.touchedFiles.join(", ") : "";
   lines.push("RETRY_WORKTREE_PATCH=present " + String(rf.worktreePatch.bytes || String(rf.worktreePatch.body).length) + " bytes");
   if (patchFiles) lines.push("RETRY_WORKTREE_PATCH_FILES=" + patchFiles.slice(0, 500));
-  lines.push("RETRY_WORKTREE_PATCH_CMD=node .setfarm-bin/setfarm-summary retry-patch");
+  if (!implementContextReadyForCommands) lines.push("RETRY_WORKTREE_PATCH_CMD=node .setfarm-bin/setfarm-summary retry-patch");
 }
 if (rf.sourceSnapshot && rf.sourceSnapshot.section) {
   lines.push("RETRY_SOURCE_SNAPSHOT=present " + String(rf.sourceSnapshot.bytes || String(rf.sourceSnapshot.section).length) + " bytes");
-  lines.push("RETRY_SOURCE_SNAPSHOT_CMD=node .setfarm-bin/setfarm-summary source-snapshot");
+  if (!implementContextReadyForCommands) lines.push("RETRY_SOURCE_SNAPSHOT_CMD=node .setfarm-bin/setfarm-summary source-snapshot");
 }
 if (rf.suggestion) lines.push("RETRY_ACTION=" + String(rf.suggestion).slice(0, 300));
 if (rf.instruction) lines.push("RETRY_INSTRUCTION=" + String(rf.instruction).slice(0, 300));

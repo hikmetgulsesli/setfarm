@@ -276,11 +276,13 @@ describe("spawner prompt bootstrap", () => {
       assert.doesNotMatch(out, /PR_REVIEW_THREAD_1=/);
       assert.match(out, /DETAILS_RULE=Initial bootstrap output intentionally omits long story, retry, PR, and supervisor text/);
       assert.match(out, /IMPLEMENT_CONTEXT_FILE=.*\/\.setfarm\/implement-context\.json/);
-      assert.match(out, /SUMMARY_IMPLEMENT_CONTEXT_CMD=CLAIM_SUMMARY_FILE='[^']+' node '[^']+\/\.setfarm-bin\/setfarm-summary' implement-context/);
+      assert.doesNotMatch(out, /SUMMARY_IMPLEMENT_CONTEXT_CMD=/);
+      assert.match(out, /SUMMARY_HELPER_RULE=IMPLEMENT_CONTEXT_FILE is ready; do not run setfarm-summary or retry helper commands/);
       const implementContextFile = path.join(workdir, ".setfarm", "implement-context.json");
       assert.ok(fs.existsSync(implementContextFile), "bootstrap should write IMPLEMENT_CONTEXT_FILE");
       const implementContextJson = JSON.parse(fs.readFileSync(implementContextFile, "utf-8"));
       assert.equal(implementContextJson.mode, "implement-context");
+      assert.match(implementContextJson.rules.join("\n"), /do not guess or run setfarm-summary topics while this file exists/);
       assert.match(implementContextJson.rules.join("\n"), /Do not read \.setfarm-bin\/\* helper scripts/);
       assert.match(implementContextJson.rules.join("\n"), /Do not read shared generated src\/screens\/\*\.tsx source/);
       assert.match(implementContextJson.rules.join("\n"), /do not replace it with npx\/npm\/tsc\/vitest guesses/);
@@ -809,8 +811,12 @@ describe("spawner prompt bootstrap", () => {
       });
       fs.writeFileSync(path.join(tmp, "bootstrap.sh"), bootstrap, { mode: 0o755 });
       const out = execFileSync("bash", [path.join(tmp, "bootstrap.sh")], { encoding: "utf-8" });
-      assert.match(out, /RETRY_WORKTREE_PATCH_CMD=node \.setfarm-bin\/setfarm-summary retry-patch/);
-      assert.match(out, /RETRY_SOURCE_SNAPSHOT_CMD=node \.setfarm-bin\/setfarm-summary source-snapshot/);
+      assert.doesNotMatch(out, /RETRY_WORKTREE_PATCH_CMD=/);
+      assert.doesNotMatch(out, /RETRY_SOURCE_SNAPSHOT_CMD=/);
+      const implementContext = JSON.parse(fs.readFileSync(path.join(workdir, ".setfarm", "implement-context.json"), "utf-8"));
+      assert.match(implementContext.retry.retryFeedback.worktreePatch.body, /diff --git/);
+      assert.match(implementContext.retry.retryFeedback.worktreePatch.body, /\+new/);
+      assert.match(implementContext.retry.retryFeedback.sourceSnapshot.section, /SCOPE_FILES:/);
       const retryOut = execFileSync(path.join(workdir, ".setfarm-bin", "setfarm-summary"), ["retry-feedback"], {
         encoding: "utf-8",
         env: { ...process.env, CLAIM_SUMMARY_FILE: claimSummaryFile },
@@ -1089,7 +1095,8 @@ describe("spawner prompt bootstrap", () => {
       fs.writeFileSync(path.join(tmp, "bootstrap.sh"), bootstrap, { mode: 0o755 });
       const out = execFileSync("bash", [path.join(tmp, "bootstrap.sh")], { encoding: "utf-8" });
       assert.match(out, /IMPLEMENT_CONTEXT_FILE=.*\/\.setfarm\/implement-context\.json/);
-      assert.match(out, /SUMMARY_IMPLEMENT_CONTEXT_CMD=CLAIM_SUMMARY_FILE='[^']+' node '[^']+\/\.setfarm-bin\/setfarm-summary' implement-context/);
+      assert.doesNotMatch(out, /SUMMARY_IMPLEMENT_CONTEXT_CMD=/);
+      assert.match(out, /SUMMARY_HELPER_RULE=IMPLEMENT_CONTEXT_FILE is ready; do not run setfarm-summary or retry helper commands/);
       assert.doesNotMatch(out, /RETRY_PROTECTED_SNIPPET_1=/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -1179,7 +1186,8 @@ describe("spawner prompt bootstrap", () => {
       });
       fs.writeFileSync(path.join(tmp, "bootstrap.sh"), bootstrap, { mode: 0o755 });
       const out = execFileSync("bash", [path.join(tmp, "bootstrap.sh")], { encoding: "utf-8" });
-      assert.match(out, /SUMMARY_IMPLEMENT_CONTEXT_CMD=CLAIM_SUMMARY_FILE='[^']+' node '[^']+\/\.setfarm-bin\/setfarm-summary' implement-context/);
+      assert.doesNotMatch(out, /SUMMARY_IMPLEMENT_CONTEXT_CMD=/);
+      assert.match(out, /SUMMARY_HELPER_RULE=IMPLEMENT_CONTEXT_FILE is ready; do not run setfarm-summary or retry helper commands/);
       assert.doesNotMatch(out, /RETRY_RESTORE_TARGET_1=/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -1261,7 +1269,8 @@ describe("spawner prompt bootstrap", () => {
       });
       fs.writeFileSync(path.join(tmp, "bootstrap.sh"), bootstrap, { mode: 0o755 });
       const out = execFileSync("bash", [path.join(tmp, "bootstrap.sh")], { encoding: "utf-8" });
-      assert.match(out, /SUMMARY_IMPLEMENT_CONTEXT_CMD=CLAIM_SUMMARY_FILE='[^']+' node '[^']+\/\.setfarm-bin\/setfarm-summary' implement-context/);
+      assert.doesNotMatch(out, /SUMMARY_IMPLEMENT_CONTEXT_CMD=/);
+      assert.match(out, /SUMMARY_HELPER_RULE=IMPLEMENT_CONTEXT_FILE is ready; do not run setfarm-summary or retry helper commands/);
       assert.doesNotMatch(out, /RETRY_RESTORE_TARGET_1=/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -1330,7 +1339,8 @@ describe("spawner prompt bootstrap", () => {
       });
       fs.writeFileSync(path.join(tmp, "bootstrap.sh"), bootstrap, { mode: 0o755 });
       const out = execFileSync("bash", [path.join(tmp, "bootstrap.sh")], { encoding: "utf-8" });
-      assert.match(out, /SUMMARY_IMPLEMENT_CONTEXT_CMD=CLAIM_SUMMARY_FILE='[^']+' node '[^']+\/\.setfarm-bin\/setfarm-summary' implement-context/);
+      assert.doesNotMatch(out, /SUMMARY_IMPLEMENT_CONTEXT_CMD=/);
+      assert.match(out, /SUMMARY_HELPER_RULE=IMPLEMENT_CONTEXT_FILE is ready; do not run setfarm-summary or retry helper commands/);
       assert.doesNotMatch(out, /RETRY_PROTECTED_SNIPPET_1=/);
       assert.doesNotMatch(out, /RETRY_RESTORE_TARGETS=/);
       assert.doesNotMatch(out, /article\.innerHTML/);
@@ -2452,14 +2462,12 @@ describe("spawner prompt bootstrap", () => {
 
       assert.doesNotMatch(out, /FAILURE_CATEGORY=PR_REVIEW_COMMENTS_OPEN/);
       assert.doesNotMatch(out, /PR_REVIEW_ACTIONABLE_THREADS=1/);
-      assert.match(out, /SUMMARY_IMPLEMENT_CONTEXT_CMD=CLAIM_SUMMARY_FILE='[^']+' node '[^']+\/\.setfarm-bin\/setfarm-summary' implement-context/);
+      assert.doesNotMatch(out, /SUMMARY_IMPLEMENT_CONTEXT_CMD=/);
       assert.match(out, /IMPLEMENT_LOOP=Edit scoped source, run CHECK_BUILD_CMD exactly, run CHECK_TEST_CMD exactly/);
       assert.match(out, /CHECK_BUILD_CMD=bash \.setfarm-bin\/setfarm-check build/);
       assert.match(out, /CHECK_TEST_CMD=bash \.setfarm-bin\/setfarm-check test/);
       assert.match(out, /CHECK_CMD_ATOMIC_RULE=Run each CHECK_\*_CMD value exactly as printed/);
-      assert.match(out, /SUMMARY_IMPLEMENT_CONTEXT_CMD=CLAIM_SUMMARY_FILE='[^']+' node '[^']+\/\.setfarm-bin\/setfarm-summary' implement-context/);
-      assert.match(out, /SUMMARY_HELPER_RULE=Use IMPLEMENT_CONTEXT_FILE as the primary handoff/);
-      assert.match(out, /Do not guess setfarm-summary topics/);
+      assert.match(out, /SUMMARY_HELPER_RULE=IMPLEMENT_CONTEXT_FILE is ready; do not run setfarm-summary or retry helper commands/);
       assert.match(out, /MASKED_CHECK_RULE=Use CHECK_BUILD_CMD\/CHECK_TEST_CMD when present, exactly as printed and as standalone commands/);
       assert.match(out, /MASKED_CHECK_EXACT_BUILD_CMD=npm run build/);
       assert.match(out, /MASKED_CHECK_EXACT_TEST_CMD=npm run test:run/);
