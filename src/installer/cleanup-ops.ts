@@ -492,6 +492,10 @@ export async function cleanupAbandonedSteps(advancePipeline: (runId: string) => 
         );
 
         if (story) {
+          const claimedAt = story.claimed_at || step.updated_at;
+          const storyElapsedMs = Date.now() - new Date(claimedAt as string).getTime();
+          if (storyElapsedMs < threshold) continue;
+
           try {
             const ctx = await getRunContext(step.run_id);
             const repo = ctx.repo || ctx.REPO;
@@ -503,9 +507,8 @@ export async function cleanupAbandonedSteps(advancePipeline: (runId: string) => 
 
           const newAbandonCount = (story.abandoned_count ?? 0) + 1;
           const wfId = await getWorkflowId(step.run_id);
-          const claimedAt = story.claimed_at || step.updated_at;
           const abandonedAt = now();
-          const durationMin = Math.round((Date.now() - new Date(claimedAt as string).getTime()) / 60000);
+          const durationMin = Math.round(storyElapsedMs / 60000);
 
           if (newAbandonCount >= MAX_ABANDON_RESETS) {
             const diagnostic = `ABANDONED: Agent ${step.agent_id} claimed at ${claimedAt}, timed out after ~${durationMin}min. No output produced. Attempt ${newAbandonCount}/${MAX_ABANDON_RESETS}. Limit reached — story failed.`;
