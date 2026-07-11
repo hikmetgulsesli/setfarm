@@ -1847,6 +1847,59 @@ describe("spawner prompt bootstrap", () => {
     }
   });
 
+  it("bootstrap prefers developer story workdir over main repo handoff", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-story-workdir-bootstrap-"));
+    try {
+      const mainRepo = path.join(tmp, "main-repo");
+      const storyWorkdir = path.join(tmp, "story-worktree");
+      const scratch = path.join(tmp, "agent-scratch");
+      fs.mkdirSync(mainRepo, { recursive: true });
+      fs.mkdirSync(storyWorkdir, { recursive: true });
+      fs.mkdirSync(scratch, { recursive: true });
+      const claimFile = path.join(tmp, "claim.json");
+      const claimSummaryFile = path.join(tmp, "claim-summary.json");
+      const outputFile = path.join(tmp, "output.txt");
+      const bootstrapFile = path.join(tmp, "bootstrap.sh");
+      fs.writeFileSync(claimFile, JSON.stringify({
+        stepId: "implement",
+        runId: "run-qa",
+        workdir: scratch,
+        repo: mainRepo,
+      }) + "\n");
+      fs.writeFileSync(claimSummaryFile, JSON.stringify({
+        role: "developer",
+        storyId: "US-001",
+        storyBranch: "run-us-001",
+        workdir: mainRepo,
+        storyWorkdir,
+        verifyWorkdir: storyWorkdir,
+        repo: mainRepo,
+        mainRepo,
+        taskBrief: "Developer story workdir sensor",
+      }) + "\n");
+      fs.writeFileSync(bootstrapFile, buildResolvedClaimBootstrapScript({
+        claimFile,
+        claimSummaryFile,
+        outputFile,
+        stepId: "implement",
+        workdir: scratch,
+        taskPreview: "Developer story workdir sensor",
+      }), { mode: 0o700 });
+
+      const out = execFileSync("bash", [bootstrapFile], {
+        encoding: "utf-8",
+        timeout: 10_000,
+      });
+
+      assert.match(out, new RegExp(`WORKDIR=${storyWorkdir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+      assert.match(out, new RegExp(`STORY_WORKDIR=${storyWorkdir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+      assert.match(out, new RegExp(`IMPLEMENT_CONTEXT_FILE=${path.join(storyWorkdir, ".setfarm", "implement-context.json").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+      assert.doesNotMatch(out, new RegExp(`WORKDIR=${mainRepo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("elevates raw runtime-bridge retry feedback into a semantic-fix manager instruction", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-runtime-bridge-summary-"));
     try {

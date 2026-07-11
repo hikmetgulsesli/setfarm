@@ -1724,10 +1724,13 @@ export CLAIM_FILE CLAIM_SUMMARY_FILE OUTPUT_FILE STEP_ID WORKDIR
 
 if [ -n "$CLAIM_SUMMARY_FILE" ] && [ -f "$CLAIM_SUMMARY_FILE" ]; then
   SUMMARY_WORKDIR="$(node - "$CLAIM_SUMMARY_FILE" <<'SETFARM_WORKDIR_NODE'
-const fs = require("fs");
-try {
-  const s = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-  for (const value of [s.workdir, s.verifyWorkdir, s.mainRepo, s.repo]) {
+	const fs = require("fs");
+	try {
+	  const s = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+	  const candidates = /^developer$/i.test(String(s.role || "")) && (s.storyId || s.storyBranch)
+	    ? [s.storyWorkdir, s.workdir, s.verifyWorkdir, s.mainRepo, s.repo]
+	    : [s.workdir, s.verifyWorkdir, s.storyWorkdir, s.mainRepo, s.repo];
+	  for (const value of candidates) {
     if (!value) continue;
     try {
       if (fs.existsSync(String(value)) && fs.statSync(String(value)).isDirectory()) {
@@ -2096,13 +2099,14 @@ fi
 SUMMARY_PRINTED=0
 if [ -n "$CLAIM_SUMMARY_FILE" ] && [ -f "$CLAIM_SUMMARY_FILE" ]; then
   node - "$CLAIM_SUMMARY_FILE" <<'SETFARM_SUMMARY_NODE'
-const fs = require("fs");
-const s = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-const lines = [];
-function shq(value) {
-  return "'" + String(value || "").replace(/'/g, "'\\''") + "'";
-}
-const helperPath = (s.workdir ? String(s.workdir).replace(/\\/+$/, "") + "/" : "") + ".setfarm-bin/setfarm-summary";
+	const fs = require("fs");
+	const s = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+	const lines = [];
+	function shq(value) {
+	  return "'" + String(value || "").replace(/'/g, "'\\''") + "'";
+	}
+	const activeWorkdir = String(process.env.WORKDIR || s.workdir || s.storyWorkdir || s.verifyWorkdir || s.mainRepo || s.repo || "").replace(/\\/+$/, "");
+	const helperPath = (activeWorkdir ? activeWorkdir + "/" : "") + ".setfarm-bin/setfarm-summary";
 const summaryCommandPrefix = "CLAIM_SUMMARY_FILE=" + shq(process.argv[2]) + " node " + shq(helperPath) + " ";
 if (s.storyId || s.storyTitle) lines.push(("STORY=" + (s.storyId || "") + " " + (s.storyTitle || "")).trim());
 if (s.storyBranch) lines.push("STORY_BRANCH=" + String(s.storyBranch));
@@ -2113,8 +2117,8 @@ if (s.repo) lines.push("MAIN_REPO=" + String(s.repo));
 if (s.buildCommand) lines.push("BUILD_CMD=" + String(s.buildCommand));
 if (s.testCommand) lines.push("TEST_CMD=" + String(s.testCommand));
 if (s.lintCommand) lines.push("LINT_CMD=" + String(s.lintCommand));
-if (/^developer$/i.test(String(s.role || ""))) {
-  const implementContextFile = s.workdir ? String(s.workdir).replace(/\\/+$/, "") + "/.setfarm/implement-context.json" : "";
+	if (/^developer$/i.test(String(s.role || ""))) {
+	  const implementContextFile = activeWorkdir ? activeWorkdir + "/.setfarm/implement-context.json" : "";
   const implementContextReady = !!(implementContextFile && fs.existsSync(implementContextFile));
   lines.push("IMPLEMENT_LOOP=Edit scoped source, run CHECK_BUILD_CMD exactly, run CHECK_TEST_CMD exactly, then write required output. Setfarm validates seeded implementation evidence after completion. Once declared build/test pass, do not add optional new tests or probes; finish the claim.");
   lines.push("IMPLEMENT_DONE_FAST_PATH=After CHECK_BUILD_CMD and CHECK_TEST_CMD pass as exact standalone commands, write OUTPUT_CONTRACT fields, call step complete, then stop. Setfarm will validate seeded implementation evidence after completion.");

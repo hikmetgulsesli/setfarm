@@ -510,6 +510,57 @@ function persistablePayloadDedupReviewLooksSatisfied(body: string, normalizedSou
   return /\bsaveQuickNoteState\s*\(\s*state\s*\)/.test(normalizedSource) || /\bsave\w*State\s*\(\s*state\s*\)/.test(normalizedSource);
 }
 
+function generatedScreenActionsPropReviewLooksSatisfied(body: string, normalizedSource: string): boolean {
+  if (!/\bgenerated\s+screen\s+components?\b|\bscreen components?\b/i.test(body)) return false;
+  if (!/\bactions?\s+prop\b|\baction\s+ids?\b|\bnon-interactive\b|\buser interactions?\b/i.test(body)) return false;
+
+  const componentNames = [...new Set([...String(body || "").matchAll(/`([A-Z][A-Za-z0-9_]*)`/g)]
+    .map((match) => match[1])
+    .filter((value) => /(?:Screen|Record|Recovery|Operations|Editor|Utility|Dashboard|Panel|View|Form|List|Table|Detail|Compact)/.test(value)))];
+  if (componentNames.length === 0) return false;
+
+  const componentsReceiveActions = componentNames.every((name) =>
+    new RegExp(`<${escapeRegExp(name)}\\b[^>]*\\bactions\\s*=\\s*\\{[A-Za-z_$][\\w$]*\\}`, "m").test(normalizedSource)
+  );
+  if (!componentsReceiveActions) return false;
+
+  const actionIds = [...new Set([...String(body || "").matchAll(/['"`]([a-z][a-z0-9-]*-\d+)['"`]/gi)]
+    .map((match) => match[1]))];
+  if (actionIds.length > 0 && !actionIds.every((id) =>
+    new RegExp(`['"]${escapeRegExp(id)}['"]\\s*:`, "m").test(normalizedSource)
+  )) {
+    return false;
+  }
+
+  return (
+    /\b(?:store\.)?actions\.[A-Za-z_$][\w$]*\s*\(/.test(normalizedSource) ||
+    /\bdispatch\s*\(\s*\{/.test(normalizedSource)
+  );
+}
+
+function recoveredStorageStatusReviewLooksSatisfied(body: string, normalizedSource: string): boolean {
+  if (!/\bstorageStatus\b/i.test(body) || !/\brecovered\b/i.test(body)) return false;
+  if (!/\bbootstrap\b|\bpersist(?:ence|ed|ing)?\b|\blocalStorage\b|\boverwrite|clobber|redundant/i.test(body)) return false;
+
+  const recoveredEarlyReturns = [...normalizedSource.matchAll(
+    /if\s*\(\s*state\.storageStatus\s*={2,3}\s*['"]recovered['"]\s*\)\s*\{[^}]*\breturn\s*;?/g,
+  )].length;
+  if (recoveredEarlyReturns < 2) return false;
+
+  const hasBootstrapGuard =
+    /\bconst\s+bootstrappedRef\s*=\s*useRef/.test(normalizedSource) &&
+    /\bbootstrappedRef\.current\s*=\s*true\s*;?/.test(normalizedSource);
+  if (!hasBootstrapGuard) return false;
+
+  const recoveryStateIsVisible =
+    /\bsurface\s*:\s*['"]recovery['"]/.test(normalizedSource) &&
+    /\bstorageStatus\s*:\s*['"]recovered['"]/.test(normalizedSource);
+  if (!recoveryStateIsVisible) return false;
+
+  return /\bbootstrap\s*:\s*\(\s*\)\s*=>\s*\{[^]*?storageStatus\s*:\s*['"]ready['"][^]*?surface\s*:\s*['"]tasks['"]/.test(normalizedSource) ||
+    /\bdispatch\s*\(\s*\{[^}]*status\s*:\s*['"]ready['"][^}]*\}\s*\)/.test(normalizedSource);
+}
+
 function commentProseLooksMechanicallySatisfied(body: string, normalizedSource: string): boolean {
   const text = String(body || "").toLowerCase();
 
@@ -524,6 +575,8 @@ function commentProseLooksMechanicallySatisfied(body: string, normalizedSource: 
   if (selectedRecordIdValidationReviewLooksSatisfied(body, normalizedSource)) return true;
   if (liveWindowAppBridgeReviewLooksSatisfied(body, normalizedSource)) return true;
   if (persistablePayloadDedupReviewLooksSatisfied(body, normalizedSource)) return true;
+  if (generatedScreenActionsPropReviewLooksSatisfied(body, normalizedSource)) return true;
+  if (recoveredStorageStatusReviewLooksSatisfied(body, normalizedSource)) return true;
 
   if (
     /\bwindow\.app\b/i.test(body) &&
