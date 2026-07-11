@@ -1458,6 +1458,32 @@ describe("spawner gateway recovery wiring", () => {
     );
   });
 
+  it("recovers implement agents that pass checks but stall before final output", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /IMPLEMENT_POST_CHECK_OUTPUT_STALL_MS/);
+    assert.match(source, /function implementPostCheckOutputStallGuard\(active: ActiveProcess,\s*ageMs: number\)/);
+    assert.match(source, /passed build and test/);
+    assert.match(source, /After declared checks pass, implement workers must write the output contract and stop/);
+    assert.match(source, /toolResultSucceeded/);
+    assert.match(source, /isImplementBuildCommand/);
+    assert.match(source, /isImplementTestCommand/);
+    assert.match(source, /exitReason\.includes\("IMPLEMENT_POST_CHECK_OUTPUT_STALL"\)/);
+
+    const guardStart = source.indexOf("const postCheckOutputStall = implementPostCheckOutputStallGuard(active, ageMs)");
+    const retryStart = source.indexOf("const retryHardTimeout = implementRetryHardTimeoutGuard(active, ageMs)", guardStart);
+    assert.notEqual(guardStart, -1, "post-check output stall guard block missing");
+    assert.notEqual(retryStart, -1, "post-check output stall guard should run before retry hard timeout");
+    const block = source.slice(guardStart, retryStart);
+    assert.match(block, /recordSupervisorRuntimeEvent\(active\.runId,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"IMPLEMENT_POST_CHECK_OUTPUT_STALL"/);
+    assert.match(block, /terminateActiveProcess\(active,\s*"implement-post-check-output-stall"\)/);
+    assert.match(block, /tryRecoverExitedImplementWork\(active\.stepId,\s*recoveryRow,\s*active\.agentId,\s*active\.transcriptPath,\s*new Error\(reason\),\s*active\.spawnCwd\)/);
+    assert.match(block, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.agentId,\s*reason\)/);
+    assert.ok(
+      source.indexOf("const noDeltaStall = implementNoDeltaStallGuard(active, ageMs)") < guardStart,
+      "post-check guard should run after no-delta guard",
+    );
+  });
+
   it("retries implement agents that modify the first bootstrap command", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /function isModifiedBootstrapCommand/);

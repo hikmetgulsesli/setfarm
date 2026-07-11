@@ -230,6 +230,7 @@ const AGENT_REPEATED_TOOL_LOOP_CHECK_AFTER_MS = parsePositiveInt(process.env.SET
 const IMPLEMENT_NO_DELTA_GRACE_MS = parsePositiveInt(process.env.SETFARM_IMPLEMENT_NO_DELTA_GRACE_MS, 8 * 60_000);
 const IMPLEMENT_RETRY_HARD_TIMEOUT_MS = parsePositiveInt(process.env.SETFARM_IMPLEMENT_RETRY_HARD_TIMEOUT_MS, 7 * 60_000);
 const IMPLEMENT_RETRY_WITH_DELTA_HARD_TIMEOUT_MS = parsePositiveInt(process.env.SETFARM_IMPLEMENT_RETRY_WITH_DELTA_HARD_TIMEOUT_MS, Math.max(IMPLEMENT_RETRY_HARD_TIMEOUT_MS, 18 * 60_000));
+const IMPLEMENT_POST_CHECK_OUTPUT_STALL_MS = parsePositiveInt(process.env.SETFARM_IMPLEMENT_POST_CHECK_OUTPUT_STALL_MS, 2 * 60_000);
 const IMPLEMENT_PRE_DELTA_MAX_CONTEXT_READS = parsePositiveInt(process.env.SETFARM_IMPLEMENT_PRE_DELTA_MAX_CONTEXT_READS, 10);
 const AGENT_SELF_LOOP_MIN_ACTIONS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_ACTIONS, 7);
 const AGENT_SELF_LOOP_MIN_NOOP_EDITS = parsePositiveInt(process.env.SETFARM_AGENT_SELF_LOOP_MIN_NOOP_EDITS, 4);
@@ -3846,6 +3847,84 @@ function implementRetryHardTimeoutGuard(active: ActiveProcess, ageMs: number): {
   };
 }
 
+function isImplementBuildCommand(command: string): boolean {
+  return /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?build\b/i.test(compactCommandForDiagnostic(command));
+}
+
+function isImplementTestCommand(command: string): boolean {
+  return /\b(?:npm|pnpm|yarn|bun)\s+(?:(?:run\s+)?test(?::run)?|test)\b/i.test(compactCommandForDiagnostic(command))
+    || /(?:^|[\s;&|()])(?:npx\s+)?vitest\s+run\b/i.test(compactCommandForDiagnostic(command));
+}
+
+function toolResultSucceeded(message: any, text: string): boolean {
+  const exitCode = message?.details?.exitCode ?? message?.details?.statusCode;
+  if (Number(exitCode) === 0) return true;
+  return /\b(?:✓ built in|Test Files\s+\d+\s+passed|Tests?\s+\d+\s+passed)\b/i.test(text)
+    && !/\b(?:exit\s+[1-9]\d*|Command exited with code [1-9]\d*|failed|FAIL)\b/i.test(text);
+}
+
+function implementPostCheckOutputStallGuard(active: ActiveProcess, ageMs: number): { detected: boolean; reason: string } {
+  if (fileSize(active.outputPath) > 0) return { detected: false, reason: "" };
+  const changedFiles = sourceStatusFiles(active.spawnCwd);
+  if (changedFiles.length === 0) return { detected: false, reason: "" };
+
+  const raw = readSessionJsonlForGuard(active.sessionJsonlPath);
+  if (!raw) return { detected: false, reason: "" };
+
+  let currentCommand = "";
+  let buildPassed = false;
+  let testPassed = false;
+  let lastCheckPassAtMs = 0;
+  let postCheckToolCalls = 0;
+  const postCheckTools: string[] = [];
+
+  for (const line of raw.split(/\n/).filter(Boolean)) {
+    let event: any;
+    try { event = JSON.parse(line); } catch { continue; }
+    const eventAtMs = Number.isFinite(Date.parse(String(event.timestamp || ""))) ? Date.parse(String(event.timestamp || "")) : 0;
+    const message = sessionEventMessage(event);
+    const role = String(message.role || "");
+
+    if (role === "assistant") {
+      for (const call of extractToolCalls(message)) {
+        if (call.name === "exec") currentCommand = call.command || "";
+        else currentCommand = "";
+
+        if (buildPassed && testPassed) {
+          const command = compactCommandForDiagnostic(call.command || "");
+          const completesClaim = command.includes(active.outputPath) && /\bstep\s+complete\b/.test(command);
+          if (!completesClaim) {
+            postCheckToolCalls += 1;
+            postCheckTools.push(call.name === "exec" ? `exec:${command.slice(0, 80)}` : call.name);
+          }
+        }
+      }
+      continue;
+    }
+
+    if (role === "toolResult") {
+      const text = extractSessionText(message.content);
+      if (currentCommand && toolResultSucceeded(message, text)) {
+        if (isImplementBuildCommand(currentCommand)) buildPassed = true;
+        if (isImplementTestCommand(currentCommand)) testPassed = true;
+        if ((isImplementBuildCommand(currentCommand) || isImplementTestCommand(currentCommand)) && eventAtMs > 0) {
+          lastCheckPassAtMs = Math.max(lastCheckPassAtMs, eventAtMs);
+        }
+      }
+    }
+  }
+
+  if (!buildPassed || !testPassed || postCheckToolCalls === 0) return { detected: false, reason: "" };
+  const nowMs = Date.now();
+  const idleAfterChecksMs = lastCheckPassAtMs > 0 ? nowMs - lastCheckPassAtMs : ageMs;
+  if (idleAfterChecksMs < IMPLEMENT_POST_CHECK_OUTPUT_STALL_MS) return { detected: false, reason: "" };
+
+  return {
+    detected: true,
+    reason: `IMPLEMENT_POST_CHECK_OUTPUT_STALL: ${active.agentId} passed build and test, then kept ${active.wfId}/${active.role} running for ${formatDurationMs(idleAfterChecksMs)} without writing final output after ${postCheckToolCalls} extra tool call(s) (${postCheckTools.slice(0, 5).join(", ")}). After declared checks pass, implement workers must write the output contract and stop; Setfarm is recovering build-passing scoped work instead of waiting for post-check drift.`,
+  };
+}
+
 function findDiffBaseRef(workdir: string): string | null {
   for (const ref of ["main", "origin/main", "HEAD~1"]) {
     if (!gitOutput(workdir, ["rev-parse", "--verify", ref])) continue;
@@ -3939,6 +4018,7 @@ async function tryRecoverExitedImplementWork(
     exitReason.includes("AGENT_PROCESS_STUCK") ||
     exitReason.includes("AGENT_PROCESS_TERMINAL") ||
     exitReason.includes("IMPLEMENT_RETRY_HARD_TIMEOUT") ||
+    exitReason.includes("IMPLEMENT_POST_CHECK_OUTPUT_STALL") ||
     exitReason.includes("MASKED_CHECK_COMMAND");
   if (!recoverableExit) return false;
   if (row.status !== "running" || row.type !== "loop" || row.step_id !== "implement" || !row.current_story_id) return false;
@@ -4952,6 +5032,29 @@ async function reapFinishedClaims(): Promise<void> {
             terminateActiveProcess(active, "implement-no-delta-stall");
             activeProcesses.delete(key);
             if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
+            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
+            continue;
+          }
+
+          const postCheckOutputStall = implementPostCheckOutputStallGuard(active, ageMs);
+          if (postCheckOutputStall.detected) {
+            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "IMPLEMENT_POST_CHECK_OUTPUT_STALL", "implement-post-check-output-stall", postCheckOutputStall.reason);
+            const reason = postCheckOutputStall.reason + ` Transcript: ${active.transcriptPath}`;
+            terminateActiveProcess(active, "implement-post-check-output-stall");
+            activeProcesses.delete(key);
+            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
+            try {
+              const recoveryRow: RunningStepRow = {
+                status: row.step_status,
+                step_id: row.step_id,
+                run_id: row.run_id,
+                type: row.type,
+                current_story_id: row.current_story_id,
+              };
+              if (await tryRecoverExitedImplementWork(active.stepId, recoveryRow, active.agentId, active.transcriptPath, new Error(reason), active.spawnCwd)) continue;
+            } catch (recoveryErr) {
+              console.warn(`[spawner] post-check output stall recovery failed for ${active.wfId}/${active.role}: ${String(recoveryErr).slice(0, 300)}`);
+            }
             await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
             continue;
           }
