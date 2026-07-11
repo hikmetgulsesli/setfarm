@@ -306,6 +306,13 @@ function normalizeStyleTagChildren(input) {
   });
 }
 
+function escapeDiagnosticPseudoTags(input) {
+  return String(input || "").replace(/<\/?\s*(anonymous|unknown|native)\s*>/gi, (match, tagName) => {
+    const closing = /^<\s*\//.test(match) ? "/" : "";
+    return `&lt;${closing}${String(tagName || "").toLowerCase()}&gt;`;
+  });
+}
+
 function copyJsxExpression(input, start) {
   if (input.startsWith("{/*", start)) {
     const end = input.indexOf("*/}", start + 3);
@@ -497,6 +504,7 @@ function htmlToJsx(html) {
     .replace(/<meta[^>]*\/?\s*>/gi, "")
       .replace(/style="([^"]+)"/g, (_, s) => inlineStyleToJsx(s));
   out = normalizeStyleTagChildren(out);
+  out = escapeDiagnosticPseudoTags(out);
   return dedupeJsxAttributes(escapeJsxTextBraces(normalizeHtmlComments(out)));
 }
 

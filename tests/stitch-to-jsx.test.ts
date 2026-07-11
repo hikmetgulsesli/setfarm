@@ -1668,6 +1668,47 @@ Awaiting input...</pre>
     }
   });
 
+  it("escapes diagnostic pseudo tags so stack traces do not become JSX elements", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-pseudo-tags-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "error-recovery", title: "Error Recovery" },
+      ]));
+      writeHtml(path.join(stitchDir, "error-recovery.html"), `
+        <main>
+          <div class="font-mono whitespace-pre">
+Error: QuotaExceededError
+Stack: at Storage.setItem (&lt;anonymous&gt;)
+          </anonymous></div>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "ErrorRecovery.tsx"), "utf-8");
+      assert.match(code, /Stack: at Storage\.setItem \(&lt;anonymous&gt;\)/);
+      assert.doesNotMatch(code, /<\/?anonymous>/);
+
+      const transpiled = ts.transpileModule(code, {
+        compilerOptions: {
+          jsx: ts.JsxEmit.ReactJSX,
+          module: ts.ModuleKind.ESNext,
+          target: ts.ScriptTarget.ES2020,
+        },
+        reportDiagnostics: true,
+      });
+      const errors = (transpiled.diagnostics || []).filter(d => d.category === ts.DiagnosticCategory.Error);
+      assert.deepEqual(errors.map(d => d.messageText), []);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("keeps CSS custom properties valid in JSX inline style objects", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-inline-style-"));
     try {
