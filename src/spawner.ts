@@ -1929,6 +1929,8 @@ const ALLOWED_SETFARM_SUMMARY_TOPICS = new Set([
   "scope-files",
   "checks",
   "workdirs",
+  "git-policy",
+  "retry",
   "retry-feedback",
   "retry-patch",
   "source-snapshot",
