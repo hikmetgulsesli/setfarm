@@ -2888,6 +2888,25 @@ blocked() {
   exit 2
 }
 
+masked_check_blocked() {
+  echo "SETFARM_NPM_WRAPPER_MASKED_CHECK: $1" >&2
+  echo "Run the declared CHECK_BUILD_CMD/CHECK_TEST_CMD exactly as its own command." >&2
+  echo "Do not append pipes, 2>&1, head, tail, grep, rg, tee, cat, awk, sed, or wrappers to build/test checks." >&2
+  exit 2
+}
+
+if [ "$cmd" = "run" ]; then
+  script_name="\${2:-}"
+  case "$script_name" in
+    build|test|test:run|typecheck|lint)
+      parent_cmd="$(ps -o command= -p "$PPID" 2>/dev/null || true)"
+      if [[ "$parent_cmd" =~ [\|] ]] && [[ "$parent_cmd" =~ (head|tail|grep|rg|tee|cat|awk|sed) ]]; then
+        masked_check_blocked "blocked masked check pipeline from parent shell: npm $*"
+      fi
+      ;;
+  esac
+fi
+
 case "$cmd" in
   install|i|add|remove|rm|uninstall|update|upgrade)
     if ! package_scope_allowed; then

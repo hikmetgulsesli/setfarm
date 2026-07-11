@@ -1299,6 +1299,11 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /Setfarm commits the allowed \.story-scope-files entries after build\/scope\/supervisor gates pass/);
     assert.match(source, /function resolveNpmBinary\(\): string/);
     assert.match(source, /SETFARM_NPM_WRAPPER/);
+    assert.match(source, /SETFARM_NPM_WRAPPER_MASKED_CHECK/);
+    assert.match(source, /masked_check_blocked\(\)/);
+    assert.match(source, /ps -o command= -p "\$PPID"/);
+    assert.match(source, /blocked masked check pipeline from parent shell/);
+    assert.match(source, /Run the declared CHECK_BUILD_CMD\/CHECK_TEST_CMD exactly as its own command/);
     assert.match(source, /blocked package\/dependency mutation/);
     assert.match(source, /install\|i\|add\|remove\|rm\|uninstall\|update\|upgrade/);
     assert.match(source, /setup-build\/stack-pack dependency blocker/);
