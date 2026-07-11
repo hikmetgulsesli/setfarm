@@ -233,10 +233,10 @@ describe("spawner prompt bootstrap", () => {
       assert.equal(implementContext.mode, "implement-context");
       assert.match(implementContext.story.currentStory, /Boot trap/);
       assert.deepEqual(implementContext.scope.files, ["src/App.tsx"]);
-      assert.equal(implementContext.checks.CHECK_BUILD_CMD, "bash .setfarm-bin/setfarm-check build");
+      assert.equal(implementContext.checks.CHECK_BUILD_CMD, "npm run build");
       assert.match(JSON.stringify(implementContext.design), /MainMenu/);
       assert.match(execFileSync("bash", [summaryScript, "--help"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }), /^$/);
-      assert.match(execFileSync("bash", [summaryScript, "checks"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /bash \.setfarm-bin\/setfarm-check build/);
+      assert.match(execFileSync("bash", [summaryScript, "checks"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /npm run build/);
       assert.match(execFileSync("bash", [summaryScript, "git-policy"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /setfarm-platform/);
       assert.match(execFileSync("bash", [summaryScript, "workdirs"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /run-us-001/);
       assert.match(execFileSync("bash", [summaryScript, "screen-usage-contract"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /MainMenu/);
@@ -2269,7 +2269,7 @@ describe("spawner prompt bootstrap", () => {
       assert.match(String((summary.retryDiscipline as any).instruction), /Do not append, prepend, wrap, pipe, tee, redirect, timeout, group, or combine it/i);
       assert.match(String((summary.retryDiscipline as any).instruction), /do not rerun the old masked ad hoc command/i);
       assert.match(String((summary.retryDiscipline as any).instruction), /npm run build 2>&1 \| tail -40; echo \$\?/);
-      assert.match(String((summary.retryDiscipline as any).instruction), /bash \.setfarm-bin\/setfarm-check test 2>&1 \| tail -40/);
+      assert.match(String((summary.retryDiscipline as any).instruction), /npm run test:run 2>&1 \| tail -40/);
       assert.match(String((summary.retryDiscipline as any).instruction), /After the declared checks pass, write the output contract, call step complete, and stop/i);
       assert.match(String((summary.retryDiscipline as any).instruction), /do not run optional extra vitest\/tsc\/eslint probes/i);
       const bootstrap = buildResolvedClaimBootstrapScript({
@@ -2284,8 +2284,8 @@ describe("spawner prompt bootstrap", () => {
       assert.match(bootstrap, /MASKED_CHECK_EXACT_TEST_CMD=/);
       assert.match(bootstrap, /MASKED_CHECK_DONE_GATE=Before STATUS: done, run CHECK_BUILD_CMD\/CHECK_TEST_CMD when present exactly as printed/);
       assert.match(bootstrap, /CHECK_CMD_ATOMIC_RULE=Run each CHECK_\*_CMD value exactly as printed/);
-      assert.match(bootstrap, /CHECK_BUILD_CMD=bash \.setfarm-bin\/setfarm-check build/);
-      assert.match(bootstrap, /CHECK_TEST_CMD=bash \.setfarm-bin\/setfarm-check test/);
+      assert.doesNotMatch(bootstrap, /CHECK_BUILD_CMD=bash \.setfarm-bin\/setfarm-check build/);
+      assert.doesNotMatch(bootstrap, /CHECK_TEST_CMD=bash \.setfarm-bin\/setfarm-check test/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -2466,8 +2466,8 @@ describe("spawner prompt bootstrap", () => {
       assert.doesNotMatch(out, /PR_REVIEW_ACTIONABLE_THREADS=1/);
       assert.doesNotMatch(out, /SUMMARY_IMPLEMENT_CONTEXT_CMD=/);
       assert.match(out, /IMPLEMENT_LOOP=Edit scoped source, run CHECK_BUILD_CMD exactly, run CHECK_TEST_CMD exactly/);
-      assert.match(out, /CHECK_BUILD_CMD=bash \.setfarm-bin\/setfarm-check build/);
-      assert.match(out, /CHECK_TEST_CMD=bash \.setfarm-bin\/setfarm-check test/);
+      assert.match(out, /CHECK_BUILD_CMD=npm run build/);
+      assert.match(out, /CHECK_TEST_CMD=npm run test:run/);
       assert.match(out, /CHECK_CMD_ATOMIC_RULE=Run each CHECK_\*_CMD value exactly as printed/);
       assert.match(out, /SUMMARY_HELPER_RULE=IMPLEMENT_CONTEXT_FILE is ready; do not run setfarm-summary or retry helper commands/);
       assert.match(out, /MASKED_CHECK_RULE=Use CHECK_BUILD_CMD\/CHECK_TEST_CMD when present, exactly as printed and as standalone commands/);

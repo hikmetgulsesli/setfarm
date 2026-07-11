@@ -1075,7 +1075,7 @@ function retryDisciplineForFailure(
   if (/\bMASKED_CHECK_COMMAND\b/i.test(signal)) {
     return {
       mode: "semantic-fix",
-      instruction: "Masked-check retry discipline: when CHECK_BUILD_CMD, CHECK_TEST_CMD, or CHECK_LINT_CMD is present, run that printed command exactly as its own shell command. Do not append, prepend, wrap, pipe, tee, redirect, timeout, group, or combine it with head, tail, grep, rg, cat, awk, sed, echo, or another command. Do not rerun the old masked ad hoc command. Only fall back to the exact failing build/test/lint/typecheck command when no matching CHECK_* wrapper exists. The command that decides pass/fail must run without any output-filtering pipe. Do not use forms like `npm run build 2>&1 | tail -40; echo $?` or `bash .setfarm-bin/setfarm-check test 2>&1 | tail -40`; those still hide the real check exit status. If output must be shortened, first run the standalone check command exactly and let it decide pass/fail; only after it returns may you inspect an existing log in a separate non-decisive command. After the declared checks pass, write the output contract, call step complete, and stop; do not run optional extra vitest/tsc/eslint probes.",
+      instruction: "Masked-check retry discipline: when CHECK_BUILD_CMD, CHECK_TEST_CMD, or CHECK_LINT_CMD is present, run that printed command exactly as its own shell command. Do not append, prepend, wrap, pipe, tee, redirect, timeout, group, or combine it with head, tail, grep, rg, cat, awk, sed, echo, or another command. Do not rerun the old masked ad hoc command. Only fall back to the exact failing build/test/lint/typecheck command when no matching CHECK_* command exists. The command that decides pass/fail must run without any output-filtering pipe. Do not use forms like `npm run build 2>&1 | tail -40; echo $?` or `npm run test:run 2>&1 | tail -40`; those still hide the real check exit status. If output must be shortened, first run the standalone check command exactly and let it decide pass/fail; only after it returns may you inspect an existing log in a separate non-decisive command. After the declared checks pass, write the output contract, call step complete, and stop; do not run optional extra vitest/tsc/eslint probes.",
     };
   }
   if (/\b(?:IMPLEMENT_EVIDENCE_INCOMPLETE|IMPLEMENT_EVIDENCE_VERDICT_NOT_PASSED|IMPLEMENT_INTERACTION_FAILED|UI_INTERACTION_TARGET_UNREACHABLE)\b/i.test(signal)) {
@@ -1867,6 +1867,10 @@ try {
     "  if (value.sourceSnapshot && value.sourceSnapshot.section) out.sourceSnapshot = { present: true, bytes: value.sourceSnapshot.bytes || String(value.sourceSnapshot.section).length, scopeFiles: value.sourceSnapshot.scopeFiles || [], section: shortText(value.sourceSnapshot.section, 5000) };",
     "  return out;",
     "}",
+    "function checkCommand(value) {",
+    "  const text = String(value || '').trim();",
+    "  return text && text !== 'true' ? text : '';",
+    "}",
     "function implementContext(s) {",
     "  return {",
     "    mode: 'implement-context',",
@@ -1886,7 +1890,7 @@ try {
     "    story: { id: s.storyId, title: s.storyTitle, branch: s.storyBranch, currentStory: shortText(s.currentStory, 5000), acceptanceCriteria: compactDeep(s.acceptanceCriteria, 1800, 12) },",
     "    scope: { files: s.scopeFiles || [], existing: s.existingScopeFiles || [], missing: s.missingScopeFiles || [], instruction: shortText(s.scopeFileInstruction, 1200), targets: compactDeep(s.scopeTargets, 1200, 20) },",
     "    workdirs: { workdir: s.workdir, storyWorkdir: s.storyWorkdir, verifyWorkdir: s.verifyWorkdir, mainRepo: s.mainRepo || s.repo, storyDiffBase: s.storyDiffBase },",
-    "    checks: { buildCommand: s.buildCommand, testCommand: s.testCommand, lintCommand: s.lintCommand, CHECK_BUILD_CMD: s.buildCommand && s.buildCommand !== 'true' ? 'bash .setfarm-bin/setfarm-check build' : '', CHECK_TEST_CMD: s.testCommand && s.testCommand !== 'true' ? 'bash .setfarm-bin/setfarm-check test' : '', CHECK_LINT_CMD: s.lintCommand && s.lintCommand !== 'true' ? 'bash .setfarm-bin/setfarm-check lint' : '' },",
+    "    checks: { buildCommand: s.buildCommand, testCommand: s.testCommand, lintCommand: s.lintCommand, CHECK_BUILD_CMD: checkCommand(s.buildCommand), CHECK_TEST_CMD: checkCommand(s.testCommand), CHECK_LINT_CMD: checkCommand(s.lintCommand) },",
     "    policies: { gitPolicy: compactDeep(s.gitPolicy, 1200, 12), integrationPolicy: compactDeep(s.integrationPolicy, 1200, 12), generatedScreenPolicy: compactDeep(s.generatedScreenPolicy, 1200, 12) },",
     "    design: { screenUsageContract: compactDeep(s.screenUsageContract, 1800, 20), designContracts: compactDeep(s.designContracts, 1800, 20), uiContract: compactDeep(s.uiContract, 1800, 20) },",
     "    retry: { failureCategory: s.failureCategory, retryFeedback: retrySummary(s.retryFeedback), retryDiscipline: compactDeep(s.retryDiscipline, 1200, 8), previousFailure: shortText(s.previousFailure, 1200) },",
@@ -1908,7 +1912,7 @@ try {
     "if (!summaryFile) usage();",
     "const s = JSON.parse(fs.readFileSync(summaryFile, 'utf8'));",
     "if (command === 'implement-context') print(implementContext(s));",
-    "else if (command === 'checks') print({ buildCommand: s.buildCommand, testCommand: s.testCommand, lintCommand: s.lintCommand, checkBuildCommand: s.buildCommand && s.buildCommand !== 'true' ? 'bash .setfarm-bin/setfarm-check build' : '', checkTestCommand: s.testCommand && s.testCommand !== 'true' ? 'bash .setfarm-bin/setfarm-check test' : '', checkLintCommand: s.lintCommand && s.lintCommand !== 'true' ? 'bash .setfarm-bin/setfarm-check lint' : '' });",
+    "else if (command === 'checks') print({ buildCommand: s.buildCommand, testCommand: s.testCommand, lintCommand: s.lintCommand, checkBuildCommand: checkCommand(s.buildCommand), checkTestCommand: checkCommand(s.testCommand), checkLintCommand: checkCommand(s.lintCommand) });",
     "else if (command === 'workdirs') print({ workdir: s.workdir, storyWorkdir: s.storyWorkdir, verifyWorkdir: s.verifyWorkdir, mainRepo: s.mainRepo || s.repo, storyBranch: s.storyBranch, storyDiffBase: s.storyDiffBase });",
     "else {",
     "const fields = {",
@@ -2114,9 +2118,16 @@ if (/^developer$/i.test(String(s.role || ""))) {
   const implementContextReady = !!(implementContextFile && fs.existsSync(implementContextFile));
   lines.push("IMPLEMENT_LOOP=Edit scoped source, run CHECK_BUILD_CMD exactly, run CHECK_TEST_CMD exactly, then write required output. Setfarm validates seeded implementation evidence after completion. Once declared build/test pass, do not add optional new tests or probes; finish the claim.");
   lines.push("IMPLEMENT_DONE_FAST_PATH=After CHECK_BUILD_CMD and CHECK_TEST_CMD pass as exact standalone commands, write OUTPUT_CONTRACT fields, call step complete, then stop. Setfarm will validate seeded implementation evidence after completion.");
-  if (s.buildCommand && String(s.buildCommand) !== "true") lines.push("CHECK_BUILD_CMD=bash .setfarm-bin/setfarm-check build");
-  if (s.testCommand && String(s.testCommand) !== "true") lines.push("CHECK_TEST_CMD=bash .setfarm-bin/setfarm-check test");
-  if (s.lintCommand && String(s.lintCommand) !== "true") lines.push("CHECK_LINT_CMD=bash .setfarm-bin/setfarm-check lint");
+  const checkCommand = (value) => {
+    const text = String(value || "").trim();
+    return text && text !== "true" ? text : "";
+  };
+  const checkBuildCommand = checkCommand(s.buildCommand);
+  const checkTestCommand = checkCommand(s.testCommand);
+  const checkLintCommand = checkCommand(s.lintCommand);
+  if (checkBuildCommand) lines.push("CHECK_BUILD_CMD=" + checkBuildCommand);
+  if (checkTestCommand) lines.push("CHECK_TEST_CMD=" + checkTestCommand);
+  if (checkLintCommand) lines.push("CHECK_LINT_CMD=" + checkLintCommand);
   lines.push("CHECK_CMD_ATOMIC_RULE=Run each CHECK_*_CMD value exactly as printed, as its own command. Do not append 2>&1, | head, | tail, tee, cat, echo, timeout, parentheses, &&, ||, ;, or any other suffix/prefix/wrapper to a CHECK_*_CMD command.");
   if (implementContextFile) lines.push("IMPLEMENT_CONTEXT_FILE=" + implementContextFile);
   if (implementContextReady) {
