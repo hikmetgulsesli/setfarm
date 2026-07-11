@@ -90,6 +90,40 @@ describe("stitch-to-jsx", () => {
     }
   });
 
+  it("does not create actions from buttons inside script templates", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-script-actions-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "script-actions", title: "Script Action Screen" },
+      ]));
+      writeHtml(path.join(stitchDir, "script-actions.html"), `
+        <main>
+          <button>Save Task</button>
+          <script>
+            const chip = '<button class="delete-btn"><span class="material-symbols-outlined">close</span></button>';
+          </script>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const screensDir = path.join(tmp, "src", "screens");
+      const code = fs.readFileSync(path.join(screensDir, "ScriptActionScreen.tsx"), "utf-8");
+      const index = JSON.parse(fs.readFileSync(path.join(screensDir, "SCREEN_INDEX.json"), "utf-8"));
+      assert.deepEqual(index[0].actions.map((action: any) => action.id), ["save-task-1"]);
+      assert.equal(index[0].buttons, 1);
+      assert.match(code, /data-action-id="save-task-1"/);
+      assert.doesNotMatch(code, /close-2|delete-btn|const chip|<script/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("deduplicates barrel exports when Stitch returns repeated screen titles", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-barrel-dedupe-"));
     try {

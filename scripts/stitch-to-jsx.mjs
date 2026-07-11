@@ -1397,6 +1397,12 @@ function restoreGeneratedLinkActionHandlers(jsx) {
   );
 }
 
+function stripNonRenderedHtmlBlocks(html) {
+  return String(html || "")
+    .replace(/<script\b[\s\S]*?<\/script>/gi, "")
+    .replace(/<template\b[\s\S]*?<\/template>/gi, "");
+}
+
 function isGameplayScreen(screen) {
   return /\b(gameplay|playfield|browser[- ]?game|arcade|SURF_GAMEPLAY)\b/i.test(
     [screen?.title, screen?.screenId, screen?.surfaceId, screen?.kind].filter(Boolean).join(" "),
@@ -1419,16 +1425,17 @@ for (const screen of manifest) {
   collectStyleBlocks(raw, stitchStyleBlocks);
   const body = extractBody(raw);
   const lucideImports = new Set();
-  const classNormalizedBody = normalizeDesignClassAttributes(body);
+  const renderableBody = stripNonRenderedHtmlBlocks(body);
+  const classNormalizedBody = normalizeDesignClassAttributes(renderableBody);
   const { html: interactiveBody, actions } = annotateInteractiveElements(classNormalizedBody);
   const normalizedBody = replaceMaterialSymbolSpans(interactiveBody, lucideImports, unknownMaterialIcons);
   collectClassTokens(normalizedBody, usedClassTokens);
   const jsx = restoreGeneratedLinkActionHandlers(htmlToJsx(normalizedBody));
   const name = toComponentName(screen.title);
   if (!name) { console.warn("  SKIP empty component name:", screen.title); continue; }
-  const buttons = [...body.matchAll(/<button[^>]*>/gi)].length;
-  const inputs = [...body.matchAll(/<input[^>]*>/gi)].length;
-  const links = [...body.matchAll(/<a\s[^>]*>/gi)].length;
+  const buttons = [...renderableBody.matchAll(/<button[^>]*>/gi)].length;
+  const inputs = [...renderableBody.matchAll(/<input[^>]*>/gi)].length;
+  const links = [...renderableBody.matchAll(/<a\s[^>]*>/gi)].length;
   const actionType = actions.length > 0 ? actions.map((action) => JSON.stringify(action.id)).join(" | ") : "never";
   const needsRuntime = isGameplayScreen(screen);
   const functionSignature = actions.length > 0 || needsRuntime
