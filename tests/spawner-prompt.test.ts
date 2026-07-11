@@ -223,7 +223,9 @@ describe("spawner prompt bootstrap", () => {
       assert.doesNotMatch(summaryScriptBody, /git-policy\|integration-policy\|generated-screen-policy/);
       const evidenceEnv = { ...process.env, CLAIM_SUMMARY_FILE: claimSummaryFile };
       assert.match(execFileSync("bash", [summaryScript, "acceptance"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /State persists after save/);
-      assert.match(execFileSync("bash", [summaryScript, "scope-files"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /src\/App\.tsx/);
+      const scopeOut = execFileSync("bash", [summaryScript, "scope-files"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" });
+      assert.match(scopeOut, /^SCOPE_FILES=/);
+      assert.match(scopeOut, /src\/App\.tsx/);
       assert.match(execFileSync("bash", [summaryScript, "checks"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /bash \.setfarm-bin\/setfarm-check build/);
       assert.match(execFileSync("bash", [summaryScript, "workdirs"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /run-us-001/);
       assert.match(execFileSync("bash", [summaryScript, "screen-usage-contract"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /MainMenu/);
@@ -790,6 +792,13 @@ describe("spawner prompt bootstrap", () => {
       const out = execFileSync("bash", [path.join(tmp, "bootstrap.sh")], { encoding: "utf-8" });
       assert.match(out, /RETRY_WORKTREE_PATCH_CMD=node \.setfarm-bin\/setfarm-summary retry-patch/);
       assert.match(out, /RETRY_SOURCE_SNAPSHOT_CMD=node \.setfarm-bin\/setfarm-summary source-snapshot/);
+      const retryOut = execFileSync(path.join(workdir, ".setfarm-bin", "setfarm-summary"), ["retry-feedback"], {
+        encoding: "utf-8",
+        env: { ...process.env, CLAIM_SUMMARY_FILE: claimSummaryFile },
+      });
+      assert.match(retryOut, /"worktreePatch":/);
+      assert.match(retryOut, /"sourceSnapshot":/);
+      assert.doesNotMatch(retryOut, /diff --git a\/src\/App\.tsx/);
       const patchOut = execFileSync(path.join(workdir, ".setfarm-bin", "setfarm-summary"), ["retry-patch"], {
         encoding: "utf-8",
         env: { ...process.env, CLAIM_SUMMARY_FILE: claimSummaryFile },
