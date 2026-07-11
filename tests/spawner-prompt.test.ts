@@ -279,7 +279,11 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, /SUMMARY_IMPLEMENT_CONTEXT_CMD=CLAIM_SUMMARY_FILE='[^']+' node '[^']+\/\.setfarm-bin\/setfarm-summary' implement-context/);
       const implementContextFile = path.join(workdir, ".setfarm", "implement-context.json");
       assert.ok(fs.existsSync(implementContextFile), "bootstrap should write IMPLEMENT_CONTEXT_FILE");
-      assert.equal(JSON.parse(fs.readFileSync(implementContextFile, "utf-8")).mode, "implement-context");
+      const implementContextJson = JSON.parse(fs.readFileSync(implementContextFile, "utf-8"));
+      assert.equal(implementContextJson.mode, "implement-context");
+      assert.match(implementContextJson.rules.join("\n"), /Do not read \.setfarm-bin\/\* helper scripts/);
+      assert.match(implementContextJson.rules.join("\n"), /Do not read shared generated src\/screens\/\*\.tsx source/);
+      assert.match(implementContextJson.rules.join("\n"), /do not replace it with npx\/npm\/tsc\/vitest guesses/);
       assert.match(out, /RETRY_ACTION=Use claim-summary designContracts instead of shared generated source/);
       assert.match(out, /RETRY_INSTRUCTION=Previous feedback is an open implementation blocker/);
       assert.match(out, /RETRY_DISCIPLINE=semantic-fix: Generated-screen source retry discipline/);
