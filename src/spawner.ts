@@ -4679,6 +4679,7 @@ async function tryRecoverOrphanedRunningImplementWork(row: {
 }
 
 async function requeueOrphanedRunningStories(): Promise<void> {
+  const thresholdMs = Math.max(0, ORPHANED_SINGLE_STEP_CLAIM_MS);
   const rows = await pgQuery<{ story_db_id: string; story_id: string; story_title: string; story_branch: string | null; run_id: string; run_number: number; step_db_id: string | null; step_id: string | null; step_status: string | null; agent_id: string | null }>(
     `SELECT st.id as story_db_id, st.story_id, st.title as story_title, st.story_branch, st.run_id, r.run_number,
             loop_step.id as step_db_id, loop_step.step_id, loop_step.status as step_status,
@@ -4689,6 +4690,11 @@ async function requeueOrphanedRunningStories(): Promise<void> {
      LEFT JOIN steps loop_step ON loop_step.run_id = st.run_id AND loop_step.type = 'loop'
      WHERE st.status = 'running'
        AND r.status = 'running'
+       AND st.updated_at <= NOW() - ($1::int * interval '1 millisecond')
+       AND (
+         loop_step.id IS NULL
+         OR loop_step.updated_at <= NOW() - ($1::int * interval '1 millisecond')
+       )
        AND (
          loop_step.id IS NULL
          OR loop_step.status <> 'running'
@@ -4696,7 +4702,8 @@ async function requeueOrphanedRunningStories(): Promise<void> {
          OR cl.agent_id IS NULL
        )
      ORDER BY st.updated_at ASC
-     LIMIT 20`
+     LIMIT 20`,
+    [thresholdMs],
   );
 
   for (const row of rows) {

@@ -923,6 +923,23 @@ describe("spawner gateway recovery wiring", () => {
     );
   });
 
+  it("does not requeue freshly claimed loop stories before claim_log insert settles", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    const start = source.indexOf("async function requeueOrphanedRunningStories");
+    const end = source.indexOf("async function requeueUntrackedRunningLoopStoryClaims", start);
+    assert.notEqual(start, -1, "orphan running story requeue function missing");
+    assert.notEqual(end, -1, "orphan running story requeue function end missing");
+
+    const block = source.slice(start, end);
+    assert.match(block, /const thresholdMs = Math\.max\(0,\s*ORPHANED_SINGLE_STEP_CLAIM_MS\)/);
+    assert.match(block, /st\.updated_at <= NOW\(\) - \(\$1::int \* interval '1 millisecond'\)/);
+    assert.match(block, /loop_step\.updated_at <= NOW\(\) - \(\$1::int \* interval '1 millisecond'\)/);
+    assert.ok(
+      block.indexOf("st.updated_at <= NOW()") < block.indexOf("OR cl.agent_id IS NULL"),
+      "fresh story/step updates must get a grace window before no-claim orphan recovery",
+    );
+  });
+
   it("treats CPU progress as agent activity before watchdog kills a process", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /lastCpuTicks\?: number/);
