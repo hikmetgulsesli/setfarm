@@ -1038,6 +1038,12 @@ function retryDisciplineForFailure(
   previousFailure: string,
 ): Record<string, unknown> | undefined {
   const signal = `${failureCategory}\n${failureSuggestion}\n${previousFailure}`;
+  if (/^PR_REVIEW_COMMENTS_OPEN$/i.test(failureCategory)) {
+    return {
+      mode: "first-delta",
+      instruction: "PR-review retry discipline: use retryFeedback.actionableReviewThreads as the current blocker list. First edit or create the listed in-scope files and apply each requested code fix; if a listed path is missing but appears in missingScopeFiles/scopeFiles, create it directly instead of searching GitHub, stashes, transcripts, helper scripts, or old branches. Do not investigate prior masked-check, helper-script, or agent-exit diagnostics before the first source delta. After the scoped PR-review fixes exist, run the declared build/test commands exactly as printed and complete the output contract.",
+    };
+  }
   const generatedMountFiles = extractGeneratedMountDiagnosticFiles(signal);
   if (/\bGENERATED_SCREEN_(?:VIEWPORT_MOUNT|LAYOUT_MOUNT|SHELL_LANDMARK)_UNSAFE\b/i.test(signal)) {
     const fileTarget = generatedMountFiles.length > 0

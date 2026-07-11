@@ -2533,6 +2533,54 @@ describe("spawner prompt bootstrap", () => {
     }
   });
 
+  it("keeps PR review retry discipline ahead of stale masked-check diagnostics", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-pr-review-discipline-"));
+    try {
+      fs.writeFileSync(path.join(tmp, ".story-scope-files"), [
+        "src/App.tsx",
+        "src/__fixtures__/compact-one-page-task-chip-utility.fixture.ts",
+        "src/features/compact-one-page-task-chip-utility/compact-one-page-task-chip-utility.repo.ts",
+      ].join("\n"));
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        bootstrapFile: path.join(tmp, "bootstrap.sh"),
+        stepId: "step-123",
+        runId: "run-123",
+        workdir: tmp,
+        repo: tmp,
+        storyId: "US-001",
+        input: [
+          "TASK: Project: PR review retry sensor",
+          "CURRENT STORY: Story US-001: App shell",
+          "",
+          "## Previous Failure / Retry Feedback",
+          "Failure category: PR_REVIEW_COMMENTS_OPEN",
+          "Suggested response: Address every actionable PR review comment.",
+          "PR_REVIEW_COMMENTS_OPEN: US-001 has actionable PR review comments that must be fixed before merge.",
+          "- [review-comment] thread=PRRT_one src/__fixtures__/compact-one-page-task-chip-utility.fixture.ts:84 @reviewer: Archived records must not be double-counted.",
+          "- [review-comment] thread=PRRT_two src/features/compact-one-page-task-chip-utility/compact-one-page-task-chip-utility.repo.ts:137 @reviewer: Validate activeSurface and activePanel against allowed values.",
+          "MASKED_CHECK_COMMAND: previous retry ran npm run build 2>&1 | tail -40.",
+          "",
+          "BUILD_CMD: npm run build",
+          "TEST_CMD: npm run test:run",
+          "",
+          "## Current Story",
+        ].join("\n"),
+      });
+
+      assert.equal(summary.failureCategory, "PR_REVIEW_COMMENTS_OPEN");
+      assert.equal((summary.retryDiscipline as any)?.mode, "first-delta");
+      assert.match(String((summary.retryDiscipline as any)?.instruction), /PR-review retry discipline/);
+      assert.match(String((summary.retryDiscipline as any)?.instruction), /create it directly/);
+      assert.doesNotMatch(String((summary.retryDiscipline as any)?.instruction), /Masked-check retry discipline/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("gives design mismatch retries an exact UI contract fix discipline", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-design-mismatch-retry-"));
     try {
