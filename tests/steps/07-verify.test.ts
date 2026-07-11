@@ -1476,6 +1476,131 @@ describe("07-verify step module", () => {
     assert.equal(commentLooksMechanicallySatisfied(redundantSaveComment, unsafeSource), false);
   });
 
+  it("marks generated screen action prop review comments as mechanically satisfied", () => {
+    const actionPropComment = {
+      id: "generated-screen-actions",
+      threadId: "PRRT_generated_actions",
+      kind: "review-comment" as const,
+      author: "gemini-code-assist",
+      body: [
+        "The generated screen components (`RecordEditorCompactOnePageTaskChipUtility`, `EmptyAndErrorRecoveryCompactOnePageTaskChipUtility`, and `RecordOperationsCompactOnePageTaskChipUtility`) are rendered without passing the `actions` prop.",
+        "Wire up these action IDs so the screens are not non-interactive.",
+        "`tasks-1`, `editor-2`, `status-3`, `create-task-3`, `add-circle-1`, `edit-4`, `delete-5`, `close-8`, `save-record-6`, `retry-load-4`",
+      ].join(" "),
+      createdAt: "2026-07-11T16:03:05Z",
+      path: "src/App.tsx",
+      line: 121,
+      originalLine: 49,
+      threadResolved: false,
+      outdated: false,
+    };
+    const fixedSource = `
+      function Shell() {
+        const store = useCompactOnePageTaskChipUtilityStore();
+        const goTasks = () => store.actions.setSurface('tasks');
+        const goEditor = () => store.actions.setSurface('editor');
+        const goRecovery = () => store.actions.setSurface('recovery');
+        const newTask = () => store.actions.setSelectedId(null);
+        const operationsActions = {
+          'tasks-1': goTasks,
+          'editor-2': goEditor,
+          'status-3': goRecovery,
+          'create-task-3': newTask,
+          'add-circle-1': newTask,
+          'edit-4': () => store.actions.setSelectedId('task-plan-sprint'),
+          'delete-5': () => store.actions.removeItem('task-plan-sprint'),
+          'close-8': () => store.actions.setActivePanel(null),
+        };
+        const editorActions = {
+          'tasks-1': goTasks,
+          'editor-2': goEditor,
+          'status-3': goRecovery,
+          'save-record-6': (event) => { event?.preventDefault?.(); goTasks(); },
+        };
+        const recoveryActions = {
+          'tasks-1': goTasks,
+          'editor-2': goEditor,
+          'status-3': goRecovery,
+          'retry-load-4': () => store.actions.bootstrap(),
+        };
+        if (store.state.surface === 'editor') {
+          return <RecordEditorCompactOnePageTaskChipUtility actions={editorActions} />;
+        }
+        if (store.state.surface === 'recovery') {
+          return <EmptyAndErrorRecoveryCompactOnePageTaskChipUtility actions={recoveryActions} />;
+        }
+        return <RecordOperationsCompactOnePageTaskChipUtility actions={operationsActions} />;
+      }
+    `;
+    const unsafeSource = `
+      function Shell() {
+        return <RecordOperationsCompactOnePageTaskChipUtility />;
+      }
+    `;
+
+    assert.equal(commentLooksMechanicallySatisfied(actionPropComment, fixedSource), true);
+    assert.equal(commentLooksMechanicallySatisfied(actionPropComment, unsafeSource), false);
+  });
+
+  it("marks recovered storage status bootstrap comments as mechanically satisfied", () => {
+    const recoveryComment = {
+      id: "recovered-storage-status",
+      threadId: "PRRT_recovered_storage",
+      kind: "review-comment" as const,
+      author: "gemini-code-assist",
+      body: [
+        "If the store initializer detects a corrupted state and sets `storageStatus` to `'recovered'`, the bootstrap effect immediately overwrites it to ready.",
+        "Preserve the recovered storageStatus during bootstrap and avoid redundant localStorage writes in the persistence effect.",
+      ].join(" "),
+      createdAt: "2026-07-11T16:03:05Z",
+      path: "src/features/task-chip/task-chip.store.tsx",
+      line: 199,
+      originalLine: 172,
+      threadResolved: false,
+      outdated: false,
+    };
+    const fixedSource = `
+      const [state, dispatch] = useReducer(reducer, seed, () => ({
+        ...seed,
+        surface: 'recovery',
+        storageStatus: 'recovered',
+      }));
+      const bootstrappedRef = useRef(false);
+      useEffect(() => {
+        if (bootstrappedRef.current) return;
+        bootstrappedRef.current = true;
+        if (state.storageStatus === 'recovered') {
+          return;
+        }
+        const ok = savePersistedState(state);
+        dispatch({ type: 'set-storage-status', status: ok ? 'ready' : 'error' });
+      }, []);
+      useEffect(() => {
+        if (!bootstrappedRef.current) return;
+        if (state.storageStatus === 'recovered') {
+          return;
+        }
+        savePersistedState(state);
+      }, [state]);
+      const actions = {
+        bootstrap: () => {
+          dispatch({ type: 'hydrate', state: { storageStatus: 'ready', surface: 'tasks' } });
+        },
+      };
+    `;
+    const unsafeSource = `
+      const bootstrappedRef = useRef(false);
+      useEffect(() => {
+        bootstrappedRef.current = true;
+        savePersistedState(state);
+        dispatch({ type: 'set-storage-status', status: 'ready' });
+      }, []);
+    `;
+
+    assert.equal(commentLooksMechanicallySatisfied(recoveryComment, fixedSource), true);
+    assert.equal(commentLooksMechanicallySatisfied(recoveryComment, unsafeSource), false);
+  });
+
   it("marks base CSS class toggle review comments as mechanically satisfied from state-class source evidence", () => {
     const classToggleComment = {
       id: "css-class-toggle-inline",
