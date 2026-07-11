@@ -114,6 +114,52 @@ describe("worktree operations", () => {
     }
   });
 
+  it("replaces a managed story worktree path that was left as a normal git repository", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-worktree-gitdir-"));
+    const origin = path.join(tmp, "origin.git");
+    const repo = path.join(tmp, "repo");
+    const storyBranch = "c62e1bc1-us-009";
+
+    try {
+      execFileSync("git", ["init", "--bare", "--initial-branch=main", origin], {
+        encoding: "utf-8",
+        timeout: 30000,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      execFileSync("git", ["clone", origin, repo], {
+        encoding: "utf-8",
+        timeout: 30000,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+
+      git(repo, ["config", "user.email", "setfarm@example.invalid"]);
+      git(repo, ["config", "user.name", "Setfarm Test"]);
+      fs.writeFileSync(path.join(repo, "README.md"), "base\n");
+      git(repo, ["add", "README.md"]);
+      git(repo, ["commit", "-m", "base"]);
+      git(repo, ["push", "origin", "main"]);
+
+      const stalePath = path.join(repo, ".worktrees", storyBranch);
+      fs.mkdirSync(stalePath, { recursive: true });
+      execFileSync("git", ["init", "--initial-branch=main"], {
+        cwd: stalePath,
+        encoding: "utf-8",
+        timeout: 30000,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      assert.equal(fs.lstatSync(path.join(stalePath, ".git")).isDirectory(), true);
+
+      const worktree = createStoryWorktree(repo, storyBranch, "main");
+
+      assert.equal(worktree, stalePath);
+      assert.equal(fs.lstatSync(path.join(worktree, ".git")).isFile(), true);
+      assert.equal(git(worktree, ["branch", "--show-current"]), storyBranch);
+      assert.equal(fs.readFileSync(path.join(worktree, "README.md"), "utf-8"), "base\n");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("finds retry patches captured under run-prefixed story branches", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-worktree-retry-patch-"));
     const repo = path.join(tmp, "repo");

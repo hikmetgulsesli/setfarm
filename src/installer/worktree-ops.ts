@@ -967,14 +967,20 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
     const gitFile = path.join(worktreeDir, ".git");
     if (fs.existsSync(gitFile)) {
       try {
-        const gitContent = fs.readFileSync(gitFile, "utf-8").trim();
-        // Parse gitdir entries that point back to the source repository worktree metadata.
-        const m = gitContent.match(/gitdir:\s*(.+?)\/.git\/worktrees\//);
-        if (m) {
-          const worktreeRepo = m[1];
-          if (!sameFilesystemPath(worktreeRepo, repo)) {
-            shouldRemove = true;
-            logger.info(`[worktree] Stale cross-project worktree: ${worktreeDir} belongs to ${worktreeRepo}, current repo is ${repo}`, {});
+        const gitStat = fs.lstatSync(gitFile);
+        if (gitStat.isDirectory()) {
+          shouldRemove = true;
+          logger.warn(`[worktree] Existing managed path ${worktreeDir} has a .git directory, not a worktree gitdir file; recreating`, {});
+        } else {
+          const gitContent = fs.readFileSync(gitFile, "utf-8").trim();
+          // Parse gitdir entries that point back to the source repository worktree metadata.
+          const m = gitContent.match(/gitdir:\s*(.+?)\/.git\/worktrees\//);
+          if (m) {
+            const worktreeRepo = m[1];
+            if (!sameFilesystemPath(worktreeRepo, repo)) {
+              shouldRemove = true;
+              logger.info(`[worktree] Stale cross-project worktree: ${worktreeDir} belongs to ${worktreeRepo}, current repo is ${repo}`, {});
+            }
           }
         }
       } catch (e) { logger.warn(`[worktree] Failed to read .git file in ${worktreeDir}: ${String(e)}`, {}); }
@@ -983,7 +989,7 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
       shouldRemove = true;
     }
     if (shouldRemove) {
-      try { fs.rmSync(worktreeDir, { recursive: true, force: true }); } catch (e) { logger.warn(`[worktree] Failed to remove stale worktree ${worktreeDir}: ${String(e)}`, {}); }
+      removeManagedWorktreePath(repo, worktreeDir, "stale or non-worktree directory");
     } else {
       try {
         const branch = execFileSync("git", ["branch", "--show-current"], {
@@ -1213,6 +1219,23 @@ function gitWorktreePathForBranch(repo: string, branch: string): string {
   return "";
 }
 
+function removeManagedWorktreePath(repo: string, worktreeDir: string, reason: string): void {
+  if (!fs.existsSync(worktreeDir)) return;
+  try { execFileSync("git", ["worktree", "remove", worktreeDir, "--force"], { cwd: repo, timeout: 10000, stdio: "pipe" }); } catch {}
+  try { execFileSync("git", ["worktree", "prune"], { cwd: repo, timeout: 5000, stdio: "pipe" }); } catch {}
+  if (!fs.existsSync(worktreeDir)) return;
+  if (!isManagedWorktreePath(worktreeDir)) {
+    logger.warn(`[worktree] Refusing filesystem removal for non-managed path ${worktreeDir} (${reason})`, {});
+    return;
+  }
+  try {
+    fs.rmSync(worktreeDir, { recursive: true, force: true });
+    logger.warn(`[worktree] Removed stale managed worktree path ${worktreeDir} (${reason})`, {});
+  } catch (err) {
+    logger.warn(`[worktree] Failed filesystem removal for stale managed worktree ${worktreeDir}: ${String(err).slice(0, 180)}`, {});
+  }
+}
+
 function prepareStoryWorktreeAssets(repo: string, worktreeDir: string, storyBranch: string, mode: StoryWorktreeAssetMode = "full"): void {
   const nmSrc = path.join(repo, "node_modules");
   const nmDst = path.join(worktreeDir, "node_modules");
@@ -1306,9 +1329,8 @@ export function ensureStoryBranchWorktree(repo: string, storyBranch: string, age
   const worktreeBase = resolveWorktreeBaseDir(repo, agentId);
   const worktreeDir = path.join(worktreeBase, branch);
   if (fs.existsSync(worktreeDir)) {
-    const normalized = path.resolve(worktreeDir);
-    if (normalized.includes(`${path.sep}story-worktrees${path.sep}`) || normalized.includes(`${path.sep}.worktrees${path.sep}`)) {
-      try { fs.rmSync(normalized, { recursive: true, force: true }); } catch {}
+    if (isManagedWorktreePath(worktreeDir)) {
+      removeManagedWorktreePath(repo, worktreeDir, "review worktree recreate");
     } else {
       logger.warn(`[worktree] Refusing to recreate non-managed review worktree path ${worktreeDir}`, {});
       return "";
@@ -1404,8 +1426,7 @@ export function saveAndRemoveWorktree(repo: string, worktreeDir: string, storyBr
   try { fs.unlinkSync(path.join(worktreeDir, "node_modules")); } catch {}
 
   // 3. Remove worktree + prune
-  try { execFileSync("git", ["worktree", "remove", worktreeDir, "--force"], { cwd: repo, timeout: 10000, stdio: "pipe" }); } catch {}
-  try { execFileSync("git", ["worktree", "prune"], { cwd: repo, timeout: 5000, stdio: "pipe" }); } catch {}
+  removeManagedWorktreePath(repo, worktreeDir, "save-and-remove");
 }
 
 function safeManagedStoryBranch(storyBranch: string): string {
