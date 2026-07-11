@@ -1814,6 +1814,9 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(block, /active\.runId === row\.run_id/);
     assert.match(block, /active\.storyDbId === row\.story_db_id \|\| active\.storyId === row\.story_id/);
     assert.match(block, /!childProcessTerminalReason\(active\.child\)/);
+    assert.match(block, /OR cl\.agent_id IS NULL/);
+    assert.match(block, /was running without an open claim/);
+    assert.match(block, /UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL/);
     assert.ok(
       block.indexOf("trackedByActiveProcess") < block.indexOf("ORPHANED_RUNNING_STORY"),
       "active-process preservation must run before orphan retry mutation",

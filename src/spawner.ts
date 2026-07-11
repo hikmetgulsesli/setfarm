@@ -4693,6 +4693,7 @@ async function requeueOrphanedRunningStories(): Promise<void> {
          loop_step.id IS NULL
          OR loop_step.status <> 'running'
          OR loop_step.current_story_id IS DISTINCT FROM st.id
+         OR cl.agent_id IS NULL
        )
      ORDER BY st.updated_at ASC
      LIMIT 20`
@@ -4716,8 +4717,10 @@ async function requeueOrphanedRunningStories(): Promise<void> {
       console.warn(`[spawner] orphaned running implement recovery failed for ${row.story_id}: ${String(recoveryErr).slice(0, 300)}`);
     }
 
-    const diagnostic = `ORPHANED_RUNNING_STORY: ${row.story_id} was running but loop step ${row.step_id || "(missing)"} is ${row.step_status || "(missing)"} or no longer points at story`;
-    await pgRun("UPDATE stories SET status = 'pending', claimed_by = NULL, updated_at = NOW() WHERE id = $1 AND status = 'running'", [row.story_db_id]);
+    const diagnostic = row.agent_id
+      ? `ORPHANED_RUNNING_STORY: ${row.story_id} was running but loop step ${row.step_id || "(missing)"} is ${row.step_status || "(missing)"} or no longer points at story`
+      : `ORPHANED_RUNNING_STORY: ${row.story_id} was running without an open claim; retrying instead of leaving the run idle`;
+    await pgRun("UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, updated_at = NOW() WHERE id = $1 AND status = 'running'", [row.story_db_id]);
     if (row.step_db_id) {
       await pgRun("UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = NOW() WHERE id = $1 AND status IN ('pending','waiting','running')", [row.step_db_id]);
     }
