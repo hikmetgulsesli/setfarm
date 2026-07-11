@@ -1914,6 +1914,43 @@ function implementBootstrapCommandGuard(active: ActiveProcess): { detected: bool
   return { detected: false, reason: "" };
 }
 
+export function isSetfarmHelperScriptReadCommand(command: string): boolean {
+  const compact = compactCommandForDiagnostic(command);
+  if (!compact || !/\.setfarm-bin\/setfarm-(?:check|summary|evidence)\b/.test(compact)) return false;
+  return shellCommandSegments(compact).some((segment) => {
+    if (!/\.setfarm-bin\/setfarm-(?:check|summary|evidence)\b/.test(segment)) return false;
+    return /(?:^|[\s;&|()])(?:cat|head|tail|sed|grep|rg|awk|less|more|nl|wc)\b/i.test(segment)
+      || /\b(?:cat|head|tail|sed|grep|rg|awk|less|more|nl|wc)\b[\s\S]{0,160}\.setfarm-bin\/setfarm-(?:check|summary|evidence)\b/i.test(segment);
+  });
+}
+
+function implementSetfarmHelperScriptReadGuard(active: ActiveProcess): { detected: boolean; reason: string } {
+  let raw = "";
+  try {
+    raw = fs.readFileSync(active.sessionJsonlPath, "utf-8").slice(-256_000).trim();
+  } catch {
+    return { detected: false, reason: "" };
+  }
+  if (!raw) return { detected: false, reason: "" };
+
+  for (const line of raw.split(/\n/).filter(Boolean)) {
+    let event: any;
+    try { event = JSON.parse(line); } catch { continue; }
+    const message = sessionEventMessage(event);
+    if (String(message.role || "") !== "assistant") continue;
+    for (const call of extractToolCalls(message)) {
+      if (!call.command || !isSetfarmHelperScriptReadCommand(call.command)) continue;
+      const command = compactCommandForDiagnostic(call.command);
+      return {
+        detected: true,
+        reason: `SETFARM_HELPER_SCRIPT_READ: ${active.agentId} inspected Setfarm helper implementation instead of using it as a command (${command}). Use printed SUMMARY_*_CMD and CHECK_*_CMD commands exactly; do not cat/read/head/grep/sed helper scripts.`,
+      };
+    }
+  }
+
+  return { detected: false, reason: "" };
+}
+
 export function isMaskedDeterministicCheckCommand(command: string): boolean {
   const compact = compactCommandForDiagnostic(command);
   if (!compact || !isVerifyDeterministicEvidenceCommand(compact)) return false;
@@ -4719,6 +4756,19 @@ async function reapFinishedClaims(): Promise<void> {
             try { fs.appendFileSync(active.transcriptPath, `--- BOOTSTRAP COMMAND GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
             await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "bootstrap-command-guard", reason);
             terminateActiveProcess(active, "bootstrap-command-guard");
+            activeProcesses.delete(key);
+            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
+            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
+            continue;
+          }
+
+          const helperScriptRead = implementSetfarmHelperScriptReadGuard(active);
+          if (helperScriptRead.detected) {
+            const reason = helperScriptRead.reason + ` Transcript: ${active.transcriptPath}`;
+            console.warn(`[spawner] ${reason}`);
+            try { fs.appendFileSync(active.transcriptPath, `--- SETFARM HELPER SCRIPT READ GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
+            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "setfarm-helper-script-read-guard", reason);
+            terminateActiveProcess(active, "setfarm-helper-script-read-guard");
             activeProcesses.delete(key);
             if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
             await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);

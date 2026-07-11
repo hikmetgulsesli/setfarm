@@ -3,7 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { expandSupportedGuardGlob, isMaskedDeterministicCheckCommand } from "../dist/spawner.js";
+import { expandSupportedGuardGlob, isMaskedDeterministicCheckCommand, isSetfarmHelperScriptReadCommand } from "../dist/spawner.js";
 
 const root = path.resolve(import.meta.dirname, "..");
 
@@ -46,6 +46,15 @@ describe("spawner gateway recovery wiring", () => {
     assert.equal(isMaskedDeterministicCheckCommand("set -o pipefail; bash .setfarm-bin/setfarm-check build 2>&1 | tee /tmp/build.log"), false);
     assert.equal(isMaskedDeterministicCheckCommand("ls -la node_modules/.bin/vitest 2>&1 | head -3"), false);
     assert.equal(isMaskedDeterministicCheckCommand("ls -la node_modules/.bin/tsc 2>&1 | head -3"), false);
+  });
+
+  it("detects attempts to inspect Setfarm helper scripts", () => {
+    assert.equal(isSetfarmHelperScriptReadCommand("cat .setfarm-bin/setfarm-check"), true);
+    assert.equal(isSetfarmHelperScriptReadCommand("cat .setfarm-bin/setfarm-evidence 2>&1 | head -100"), true);
+    assert.equal(isSetfarmHelperScriptReadCommand("grep -n Usage .setfarm-bin/setfarm-summary"), true);
+    assert.equal(isSetfarmHelperScriptReadCommand("CLAIM_SUMMARY_FILE=/tmp/s.json node .setfarm-bin/setfarm-summary checks"), false);
+    assert.equal(isSetfarmHelperScriptReadCommand("bash .setfarm-bin/setfarm-check build"), false);
+    assert.equal(isSetfarmHelperScriptReadCommand("ls -la .setfarm-bin/"), false);
   });
 
   it("clears claiming state when pre-spawn handoff preparation fails", () => {
@@ -1436,6 +1445,22 @@ describe("spawner gateway recovery wiring", () => {
     const block = source.slice(guardStart, maskedStart);
     assert.match(block, /recordSupervisorRuntimeEvent\(active\.runId,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"PRODUCT_SUPERVISOR_RUNTIME_GUARD"/);
     assert.match(block, /terminateActiveProcess\(active,\s*"bootstrap-command-guard"\)/);
+    assert.match(block, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.agentId,\s*reason\)/);
+  });
+
+  it("retries implement agents that inspect Setfarm helper scripts", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /function implementSetfarmHelperScriptReadGuard/);
+    assert.match(source, /SETFARM_HELPER_SCRIPT_READ/);
+    assert.match(source, /setfarm-helper-script-read-guard/);
+
+    const helperStart = source.indexOf("const helperScriptRead = implementSetfarmHelperScriptReadGuard(active)");
+    const maskedStart = source.indexOf("const maskedCheck = implementMaskedCheckCommandGuard(active)", helperStart);
+    assert.notEqual(helperStart, -1, "helper script read guard block missing");
+    assert.notEqual(maskedStart, -1, "helper script read guard should run before masked check guard");
+    const block = source.slice(helperStart, maskedStart);
+    assert.match(block, /recordSupervisorRuntimeEvent\(active\.runId,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"PRODUCT_SUPERVISOR_RUNTIME_GUARD"/);
+    assert.match(block, /terminateActiveProcess\(active,\s*"setfarm-helper-script-read-guard"\)/);
     assert.match(block, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.agentId,\s*reason\)/);
   });
 

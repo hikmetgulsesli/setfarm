@@ -2056,14 +2056,10 @@ if (/^developer$/i.test(String(s.role || ""))) {
   lines.push("SUMMARY_SUPERVISOR_MEMORY_CMD=" + summaryCommandPrefix + "supervisor-memory");
   lines.push("SUMMARY_HELPER_RULE=Use the SUMMARY_*_CMD lines exactly when more context is needed; do not append pipes/redirection/chaining, guess setfarm-summary flags, cat the helper script, or parse raw /tmp/claim JSON.");
 }
-if (s.currentStory) lines.push("CURRENT_STORY_BRIEF=" + String(s.currentStory).replace(/\\s+/g, " ").slice(0, 1200));
-if (s.acceptanceCriteria) lines.push("ACCEPTANCE_CRITERIA=" + String(s.acceptanceCriteria).replace(/\\s+/g, " ").slice(0, 900));
 if (Array.isArray(s.scopeFiles)) lines.push("SCOPE_FILES=" + s.scopeFiles.join(", "));
 if (Array.isArray(s.existingScopeFiles) && s.existingScopeFiles.length) lines.push("EXISTING_SCOPE_FILES=" + s.existingScopeFiles.join(", "));
 if (Array.isArray(s.missingScopeFiles) && s.missingScopeFiles.length) lines.push("MISSING_SCOPE_FILES=" + s.missingScopeFiles.join(", "));
 if (s.scopeFileInstruction) lines.push("SCOPE_FILE_POLICY=" + String(s.scopeFileInstruction).slice(0, 500));
-if (s.gitPolicy && s.gitPolicy.summary) lines.push("GIT_POLICY=" + s.gitPolicy.summary);
-if (Array.isArray(s.gitPolicy && s.gitPolicy.forbiddenForAgent) && s.gitPolicy.forbiddenForAgent.length) lines.push("FORBIDDEN_GIT=" + s.gitPolicy.forbiddenForAgent.join(", "));
 const sc = s.screenUsageContract || {};
 if (sc.summary) lines.push("SCREEN_USAGE=" + String(sc.summary).slice(0, 500));
 if (Array.isArray(sc.components)) {
@@ -2071,11 +2067,8 @@ if (Array.isArray(sc.components)) {
     lines.push("SCREEN_COMPONENT=" + [c.componentName, c.file, c.sourceRead, "actions=" + (Array.isArray(c.actionIds) ? c.actionIds.join("|") : "")].filter(Boolean).join(" "));
   }
 }
-if (s.failureCategory) lines.push("FAILURE_CATEGORY=" + String(s.failureCategory).slice(0, 160));
-if (s.failureSuggestion) lines.push("FAILURE_SUGGESTION=" + String(s.failureSuggestion).slice(0, 240));
+lines.push("DETAILS_RULE=Initial bootstrap output intentionally omits long story, retry, PR, and supervisor text. Use the printed SUMMARY_*_CMD commands for details; do not cat helper scripts or parse raw /tmp claim JSON.");
 const rf = s.retryFeedback || {};
-if (rf.mode) lines.push("RETRY_MODE=" + String(rf.mode));
-if (rf.blocker) lines.push("RETRY_BLOCKER_PREVIEW=" + String(rf.blocker).slice(0, 700));
 const checkRuleSignal = [
   s.role,
   s.failureCategory,
@@ -2098,41 +2091,6 @@ if (/^DESIGN_MISMATCH$/i.test(String(s.failureCategory || ""))) {
 if (/^(?:SCOPE_BLEED|SCOPE_WRITE_VIOLATION)$/i.test(String(s.failureCategory || ""))) {
   lines.push("SCOPE_RETRY_RULE=First remove/rework out-of-scope files or shell-created project artifacts. Do not read retry source snapshots, do not read retry worktree patches, and do not recreate shared/debug/scratch files, including /tmp probe scripts via OpenClaw write/edit; use inline node -e or existing scoped tests instead. Keep the fix inside SCOPE_FILES, then run build/test.");
 }
-if (Array.isArray(rf.protectedSnippets) && rf.protectedSnippets.length) {
-  lines.push("RETRY_PROTECTED_SNIPPETS=" + rf.protectedSnippets.length);
-  for (const [index, snippet] of rf.protectedSnippets.slice(0, 12).entries()) {
-    lines.push("RETRY_PROTECTED_SNIPPET_" + String(index + 1) + "=" + String(snippet).slice(0, 500));
-  }
-}
-if (Array.isArray(rf.restoreTargets) && rf.restoreTargets.length) {
-  lines.push("RETRY_RESTORE_TARGETS=" + rf.restoreTargets.length);
-  for (const [index, target] of rf.restoreTargets.slice(0, 8).entries()) {
-    const file = String(target && target.file || "").slice(0, 180);
-    const targetLines = Array.isArray(target && target.lines) ? target.lines : [];
-    const preview = targetLines.slice(0, 5).map((line) => String(line).slice(0, 140)).join(" | ");
-    lines.push("RETRY_RESTORE_TARGET_" + String(index + 1) + "=" + file + (preview ? " :: " + preview : ""));
-  }
-}
-if (Array.isArray(rf.prThreadIds) && rf.prThreadIds.length) lines.push("PR_REVIEW_THREADS=" + rf.prThreadIds.join(", "));
-if (Array.isArray(rf.actionableReviewThreads) && rf.actionableReviewThreads.length) {
-  lines.push("PR_REVIEW_ACTIONABLE_THREADS=" + rf.actionableReviewThreads.length);
-  lines.push("PR_REVIEW_SCOPE_RULE=Resolve review comments inside SCOPE_FILES only. If a comment suggests creating or editing a path outside scopeFiles, implement an equivalent scoped fix using existing scoped files; for shared-code comments, pick an existing scoped module as the shared source and re-export from other scoped files instead of creating an out-of-scope common file.");
-  for (const [index, thread] of rf.actionableReviewThreads.slice(0, 12).entries()) {
-    const location = [thread.file, thread.line].filter(Boolean).join(":");
-    const parts = [
-      thread.threadId ? "thread=" + thread.threadId : "",
-      location,
-      thread.author ? "@" + thread.author : "",
-      thread.comment ? String(thread.comment).slice(0, 520) : "",
-    ].filter(Boolean);
-    lines.push("PR_REVIEW_THREAD_" + String(index + 1) + "=" + parts.join(" "));
-  }
-}
-if (Array.isArray(rf.outOfScopeReviewThreads) && rf.outOfScopeReviewThreads.length) {
-  const ids = Array.isArray(rf.outOfScopePrThreadIds) && rf.outOfScopePrThreadIds.length ? " ids=" + rf.outOfScopePrThreadIds.join(",") : "";
-  lines.push("PR_REVIEW_OUT_OF_SCOPE_THREADS=" + rf.outOfScopeReviewThreads.length + ids + " (not writable by this story; do not edit or fix these files in this claim)");
-}
-if (rf.details) lines.push("RETRY_DETAIL=full retry detail is in claimSummary.retryFeedback.details and claimSummary.previousFailure; prefer claimSummary.retryFeedback.actionableReviewThreads for PR comments before reading long details");
 if (rf.worktreePatch && rf.worktreePatch.body) {
   const patchFiles = Array.isArray(rf.worktreePatch.touchedFiles) ? rf.worktreePatch.touchedFiles.join(", ") : "";
   lines.push("RETRY_WORKTREE_PATCH=present " + String(rf.worktreePatch.bytes || String(rf.worktreePatch.body).length) + " bytes");
