@@ -219,7 +219,8 @@ describe("spawner prompt bootstrap", () => {
       const summaryScript = path.join(workdir, ".setfarm-bin", "setfarm-summary");
       assert.ok(fs.existsSync(summaryScript), "bootstrap should install setfarm-summary");
       const summaryScriptBody = fs.readFileSync(summaryScript, "utf-8");
-      assert.match(summaryScriptBody, /Usage: setfarm-summary current-story\|acceptance\|scope-files\|checks\|workdirs\|git-policy\|integration-policy\|generated-screen-policy\|screen-usage-contract\|design-contracts\|retry-feedback/);
+      assert.match(summaryScriptBody, /Usage: setfarm-summary current-story\|acceptance\|scope-files\|checks\|workdirs\|retry-feedback\|screen-usage-contract\|design-contracts\|output-contract\|supervisor-memory\|retry-patch\|source-snapshot/);
+      assert.doesNotMatch(summaryScriptBody, /git-policy\|integration-policy\|generated-screen-policy/);
       const evidenceEnv = { ...process.env, CLAIM_SUMMARY_FILE: claimSummaryFile };
       assert.match(execFileSync("bash", [summaryScript, "acceptance"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /State persists after save/);
       assert.match(execFileSync("bash", [summaryScript, "scope-files"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }), /src\/App\.tsx/);
@@ -2431,7 +2432,7 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, /SUMMARY_DESIGN_CONTRACTS_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary design-contracts/);
       assert.match(out, /SUMMARY_OUTPUT_CONTRACT_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary output-contract/);
       assert.match(out, /SUMMARY_HELPER_RULE=Use the printed SUMMARY_\*_CMD lines exactly when more context is needed/);
-      assert.match(out, /Allowed setfarm-summary topics are only: current-story, acceptance, scope-files, checks, workdirs, retry-feedback, screen-usage-contract, design-contracts, output-contract, supervisor-memory/);
+      assert.match(out, /Allowed setfarm-summary topics are only: current-story, acceptance, scope-files, checks, workdirs, retry-feedback, screen-usage-contract, design-contracts, output-contract, supervisor-memory, plus retry-patch\/source-snapshot only when a RETRY_\*_CMD line is printed/);
       assert.match(out, /Do not invent story-brief\/full\/all topics/);
       assert.match(out, /MASKED_CHECK_RULE=Use CHECK_BUILD_CMD\/CHECK_TEST_CMD when present, exactly as printed and as standalone commands/);
       assert.match(out, /MASKED_CHECK_EXACT_BUILD_CMD=npm run build/);

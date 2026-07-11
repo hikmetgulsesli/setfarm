@@ -1930,6 +1930,8 @@ const ALLOWED_SETFARM_SUMMARY_TOPICS = new Set([
   "checks",
   "workdirs",
   "retry-feedback",
+  "retry-patch",
+  "source-snapshot",
   "screen-usage-contract",
   "design-contracts",
   "output-contract",

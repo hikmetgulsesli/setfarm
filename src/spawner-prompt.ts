@@ -1811,7 +1811,7 @@ try {
     "const summaryFile = process.env.CLAIM_SUMMARY_FILE;",
     "const command = process.argv[2] || '';",
     "function usage() {",
-    "  console.error('Usage: setfarm-summary current-story|acceptance|scope-files|checks|workdirs|git-policy|integration-policy|generated-screen-policy|screen-usage-contract|design-contracts|retry-feedback|retry-discipline|retry-patch|retry-patch-files|source-snapshot|actionable-review-threads|supervisor-evidence|supervisor-memory|output-contract|runtime-checklist');",
+    "  console.error('Usage: setfarm-summary current-story|acceptance|scope-files|checks|workdirs|retry-feedback|screen-usage-contract|design-contracts|output-contract|supervisor-memory|retry-patch|source-snapshot');",
     "  process.exit(command === 'help' || command === '--help' || command === '-h' ? 0 : 2);",
     "}",
     "function valueAt(obj, path) {",
@@ -1835,25 +1835,14 @@ try {
     "const fields = {",
     "  'current-story': 'currentStory',",
     "  acceptance: 'acceptanceCriteria',",
-    "  'task-brief': 'taskBrief',",
     "  'scope-files': 'scopeFiles',",
-    "  'scope-file-states': 'scopeFileStates',",
-    "  'scope-file-instruction': 'scopeFileInstruction',",
-    "  'git-policy': 'gitPolicy',",
-    "  'integration-policy': 'integrationPolicy',",
-    "  'generated-screen-policy': 'generatedScreenPolicy',",
     "  'screen-usage-contract': 'screenUsageContract',",
     "  'design-contracts': 'designContracts',",
     "  'retry-feedback': 'retryFeedback',",
-    "  'retry-discipline': 'retryDiscipline',",
     "  'retry-patch': 'retryFeedback.worktreePatch.body',",
-    "  'retry-patch-files': 'retryFeedback.worktreePatch.touchedFiles',",
     "  'source-snapshot': 'retryFeedback.sourceSnapshot.section',",
-    "  'actionable-review-threads': 'retryFeedback.actionableReviewThreads',",
-    "  'supervisor-evidence': 'supervisorEvidence',",
     "  'supervisor-memory': 'supervisorMemory',",
     "  'output-contract': 'outputContract',",
-    "  'runtime-checklist': 'runtimeDoneChecklist',",
     "};",
     "if (!fields[command]) usage();",
     "print(valueAt(s, fields[command]));",
@@ -1876,7 +1865,7 @@ SETFARM_SUMMARY_TOOL_NODE
   echo "SUMMARY_DESIGN_CONTRACTS_CMD=CLAIM_SUMMARY_FILE='$CLAIM_SUMMARY_FILE' node .setfarm-bin/setfarm-summary design-contracts"
   echo "SUMMARY_OUTPUT_CONTRACT_CMD=CLAIM_SUMMARY_FILE='$CLAIM_SUMMARY_FILE' node .setfarm-bin/setfarm-summary output-contract"
   echo "SUMMARY_SUPERVISOR_MEMORY_CMD=CLAIM_SUMMARY_FILE='$CLAIM_SUMMARY_FILE' node .setfarm-bin/setfarm-summary supervisor-memory"
-  echo "SUMMARY_HELPER_RULE=Use the printed SUMMARY_*_CMD lines exactly when more context is needed. Allowed setfarm-summary topics are only: current-story, acceptance, scope-files, checks, workdirs, retry-feedback, screen-usage-contract, design-contracts, output-contract, supervisor-memory. Do not invent story-brief/full/all topics, append pipes/redirection/chaining, cat helper scripts, or parse raw /tmp/claim JSON."
+  echo "SUMMARY_HELPER_RULE=Use the printed SUMMARY_*_CMD lines exactly when more context is needed. Allowed setfarm-summary topics are only: current-story, acceptance, scope-files, checks, workdirs, retry-feedback, screen-usage-contract, design-contracts, output-contract, supervisor-memory, plus retry-patch/source-snapshot only when a RETRY_*_CMD line is printed. Do not invent story-brief/full/all topics, append pipes/redirection/chaining, cat helper scripts, or parse raw /tmp/claim JSON."
   node - "$CLAIM_SUMMARY_FILE" "$WORKDIR/.setfarm-bin/setfarm-evidence" <<'SETFARM_EVIDENCE_TOOL_NODE'
 const fs = require("fs");
 const path = require("path");
@@ -2054,7 +2043,7 @@ if (/^developer$/i.test(String(s.role || ""))) {
   lines.push("SUMMARY_DESIGN_CONTRACTS_CMD=" + summaryCommandPrefix + "design-contracts");
   lines.push("SUMMARY_OUTPUT_CONTRACT_CMD=" + summaryCommandPrefix + "output-contract");
   lines.push("SUMMARY_SUPERVISOR_MEMORY_CMD=" + summaryCommandPrefix + "supervisor-memory");
-  lines.push("SUMMARY_HELPER_RULE=Use the printed SUMMARY_*_CMD lines exactly when more context is needed. Allowed setfarm-summary topics are only: current-story, acceptance, scope-files, checks, workdirs, retry-feedback, screen-usage-contract, design-contracts, output-contract, supervisor-memory. Do not invent story-brief/full/all topics, append pipes/redirection/chaining, cat helper scripts, or parse raw /tmp/claim JSON.");
+  lines.push("SUMMARY_HELPER_RULE=Use the printed SUMMARY_*_CMD lines exactly when more context is needed. Allowed setfarm-summary topics are only: current-story, acceptance, scope-files, checks, workdirs, retry-feedback, screen-usage-contract, design-contracts, output-contract, supervisor-memory, plus retry-patch/source-snapshot only when a RETRY_*_CMD line is printed. Do not invent story-brief/full/all topics, append pipes/redirection/chaining, cat helper scripts, or parse raw /tmp/claim JSON.");
 }
 if (Array.isArray(s.scopeFiles)) lines.push("SCOPE_FILES=" + s.scopeFiles.join(", "));
 if (Array.isArray(s.existingScopeFiles) && s.existingScopeFiles.length) lines.push("EXISTING_SCOPE_FILES=" + s.existingScopeFiles.join(", "));
