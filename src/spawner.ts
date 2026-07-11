@@ -1925,6 +1925,7 @@ export function isSetfarmHelperScriptReadCommand(command: string): boolean {
 
 const ALLOWED_SETFARM_SUMMARY_TOPICS = new Set([
   "current-story",
+  "implement-context",
   "acceptance",
   "scope-files",
   "checks",
