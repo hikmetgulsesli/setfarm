@@ -3,7 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { expandSupportedGuardGlob, isMaskedDeterministicCheckCommand, isSetfarmHelperScriptReadCommand } from "../dist/spawner.js";
+import { expandSupportedGuardGlob, isMaskedDeterministicCheckCommand, isSetfarmHelperScriptReadCommand, isUnsupportedSetfarmSummaryCommand } from "../dist/spawner.js";
 
 const root = path.resolve(import.meta.dirname, "..");
 
@@ -52,9 +52,20 @@ describe("spawner gateway recovery wiring", () => {
     assert.equal(isSetfarmHelperScriptReadCommand("cat .setfarm-bin/setfarm-check"), true);
     assert.equal(isSetfarmHelperScriptReadCommand("cat .setfarm-bin/setfarm-evidence 2>&1 | head -100"), true);
     assert.equal(isSetfarmHelperScriptReadCommand("grep -n Usage .setfarm-bin/setfarm-summary"), true);
+    assert.equal(isSetfarmHelperScriptReadCommand("CLAIM_SUMMARY_FILE=/tmp/s.json node .setfarm-bin/setfarm-summary full 2>&1 | head -200"), false);
     assert.equal(isSetfarmHelperScriptReadCommand("CLAIM_SUMMARY_FILE=/tmp/s.json node .setfarm-bin/setfarm-summary checks"), false);
     assert.equal(isSetfarmHelperScriptReadCommand("bash .setfarm-bin/setfarm-check build"), false);
     assert.equal(isSetfarmHelperScriptReadCommand("ls -la .setfarm-bin/"), false);
+  });
+
+  it("detects unsupported or wrapped Setfarm summary helper commands", () => {
+    assert.equal(isUnsupportedSetfarmSummaryCommand("CLAIM_SUMMARY_FILE=/tmp/s.json node .setfarm-bin/setfarm-summary checks"), false);
+    assert.equal(isUnsupportedSetfarmSummaryCommand("CLAIM_SUMMARY_FILE='/tmp/s.json' node .setfarm-bin/setfarm-summary current-story"), false);
+    assert.equal(isUnsupportedSetfarmSummaryCommand("CLAIM_SUMMARY_FILE=/tmp/s.json node .setfarm-bin/setfarm-summary full"), true);
+    assert.equal(isUnsupportedSetfarmSummaryCommand("CLAIM_SUMMARY_FILE=/tmp/s.json node .setfarm-bin/setfarm-summary full 2>&1 | head -200"), true);
+    assert.equal(isUnsupportedSetfarmSummaryCommand("CLAIM_SUMMARY_FILE=/tmp/s.json node .setfarm-bin/setfarm-summary checks | head -40"), true);
+    assert.equal(isUnsupportedSetfarmSummaryCommand("CLAIM_SUMMARY_FILE=/tmp/s.json node .setfarm-bin/setfarm-summary checks && echo ok"), true);
+    assert.equal(isUnsupportedSetfarmSummaryCommand("grep -n Usage .setfarm-bin/setfarm-summary"), false);
   });
 
   it("clears claiming state when pre-spawn handoff preparation fails", () => {
@@ -1461,6 +1472,22 @@ describe("spawner gateway recovery wiring", () => {
     const block = source.slice(helperStart, maskedStart);
     assert.match(block, /recordSupervisorRuntimeEvent\(active\.runId,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"PRODUCT_SUPERVISOR_RUNTIME_GUARD"/);
     assert.match(block, /terminateActiveProcess\(active,\s*"setfarm-helper-script-read-guard"\)/);
+    assert.match(block, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.agentId,\s*reason\)/);
+  });
+
+  it("retries implement agents that guess or wrap summary helper commands", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /function implementUnsupportedSetfarmSummaryCommandGuard/);
+    assert.match(source, /SETFARM_SUMMARY_COMMAND_UNSUPPORTED/);
+    assert.match(source, /setfarm-summary-command-guard/);
+
+    const summaryStart = source.indexOf("const unsupportedSummaryCommand = implementUnsupportedSetfarmSummaryCommandGuard(active)");
+    const helperStart = source.indexOf("const helperScriptRead = implementSetfarmHelperScriptReadGuard(active)", summaryStart);
+    assert.notEqual(summaryStart, -1, "summary command guard block missing");
+    assert.notEqual(helperStart, -1, "summary command guard should run before helper script read guard");
+    const block = source.slice(summaryStart, helperStart);
+    assert.match(block, /recordSupervisorRuntimeEvent\(active\.runId,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"PRODUCT_SUPERVISOR_RUNTIME_GUARD"/);
+    assert.match(block, /terminateActiveProcess\(active,\s*"setfarm-summary-command-guard"\)/);
     assert.match(block, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.agentId,\s*reason\)/);
   });
 

@@ -1919,8 +1919,39 @@ export function isSetfarmHelperScriptReadCommand(command: string): boolean {
   if (!compact || !/\.setfarm-bin\/setfarm-(?:check|summary|evidence)\b/.test(compact)) return false;
   return shellCommandSegments(compact).some((segment) => {
     if (!/\.setfarm-bin\/setfarm-(?:check|summary|evidence)\b/.test(segment)) return false;
-    return /(?:^|[\s;&|()])(?:cat|head|tail|sed|grep|rg|awk|less|more|nl|wc)\b/i.test(segment)
-      || /\b(?:cat|head|tail|sed|grep|rg|awk|less|more|nl|wc)\b[\s\S]{0,160}\.setfarm-bin\/setfarm-(?:check|summary|evidence)\b/i.test(segment);
+    return /\b(?:cat|head|tail|sed|grep|rg|awk|less|more|nl|wc)\b[\s\S]{0,160}\.setfarm-bin\/setfarm-(?:check|summary|evidence)\b/i.test(segment);
+  });
+}
+
+const ALLOWED_SETFARM_SUMMARY_TOPICS = new Set([
+  "current-story",
+  "acceptance",
+  "scope-files",
+  "checks",
+  "workdirs",
+  "retry-feedback",
+  "screen-usage-contract",
+  "design-contracts",
+  "output-contract",
+  "supervisor-memory",
+]);
+
+export function isUnsupportedSetfarmSummaryCommand(command: string): boolean {
+  const compact = compactCommandForDiagnostic(command);
+  if (!compact || !/\.setfarm-bin\/setfarm-summary\b/.test(compact)) return false;
+  if (isSetfarmHelperScriptReadCommand(compact)) return false;
+  if (/\.setfarm-bin\/setfarm-summary\b[\s\S]*(?:[|<>]|&&|\|\||;)/.test(compact)) return true;
+
+  const summaryRe = /(?:^|[\s;&|()])(?:CLAIM_SUMMARY_FILE=(?:'[^']+'|"[^"]+"|\S+)\s+)?node\s+\.setfarm-bin\/setfarm-summary(?:\s+([A-Za-z0-9_-]+))?/g;
+  let match: RegExpExecArray | null;
+  while ((match = summaryRe.exec(compact)) !== null) {
+    const topic = String(match[1] || "").trim();
+    if (!topic || !ALLOWED_SETFARM_SUMMARY_TOPICS.has(topic)) return true;
+  }
+
+  return shellCommandSegments(compact).some((segment) => {
+    if (!/\.setfarm-bin\/setfarm-summary\b/.test(segment)) return false;
+    return /[|<>]/.test(segment) || /(?:^|[\s;&|()])(?:&&|\|\||;)\s*/.test(segment);
   });
 }
 
@@ -1944,6 +1975,33 @@ function implementSetfarmHelperScriptReadGuard(active: ActiveProcess): { detecte
       return {
         detected: true,
         reason: `SETFARM_HELPER_SCRIPT_READ: ${active.agentId} inspected Setfarm helper implementation instead of using it as a command (${command}). Use printed SUMMARY_*_CMD and CHECK_*_CMD commands exactly; do not cat/read/head/grep/sed helper scripts.`,
+      };
+    }
+  }
+
+  return { detected: false, reason: "" };
+}
+
+function implementUnsupportedSetfarmSummaryCommandGuard(active: ActiveProcess): { detected: boolean; reason: string } {
+  let raw = "";
+  try {
+    raw = fs.readFileSync(active.sessionJsonlPath, "utf-8").slice(-256_000).trim();
+  } catch {
+    return { detected: false, reason: "" };
+  }
+  if (!raw) return { detected: false, reason: "" };
+
+  for (const line of raw.split(/\n/).filter(Boolean)) {
+    let event: any;
+    try { event = JSON.parse(line); } catch { continue; }
+    const message = sessionEventMessage(event);
+    if (String(message.role || "") !== "assistant") continue;
+    for (const call of extractToolCalls(message)) {
+      if (!call.command || !isUnsupportedSetfarmSummaryCommand(call.command)) continue;
+      const command = compactCommandForDiagnostic(call.command);
+      return {
+        detected: true,
+        reason: `SETFARM_SUMMARY_COMMAND_UNSUPPORTED: ${active.agentId} ran setfarm-summary outside the printed exact helper commands (${command}). Use only the printed SUMMARY_*_CMD commands exactly, without guessed topics, pipes, redirection, head/tail, tee, timeout, grouping, or command chaining.`,
       };
     }
   }
@@ -4756,6 +4814,19 @@ async function reapFinishedClaims(): Promise<void> {
             try { fs.appendFileSync(active.transcriptPath, `--- BOOTSTRAP COMMAND GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
             await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "bootstrap-command-guard", reason);
             terminateActiveProcess(active, "bootstrap-command-guard");
+            activeProcesses.delete(key);
+            if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
+            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
+            continue;
+          }
+
+          const unsupportedSummaryCommand = implementUnsupportedSetfarmSummaryCommandGuard(active);
+          if (unsupportedSummaryCommand.detected) {
+            const reason = unsupportedSummaryCommand.reason + ` Transcript: ${active.transcriptPath}`;
+            console.warn(`[spawner] ${reason}`);
+            try { fs.appendFileSync(active.transcriptPath, `--- SETFARM SUMMARY COMMAND GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
+            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "setfarm-summary-command-guard", reason);
+            terminateActiveProcess(active, "setfarm-summary-command-guard");
             activeProcesses.delete(key);
             if (await completeRunningClaimFromOutputFile(active.stepId, active.agentId, active.outputPath, active.startedAtMs)) continue;
             await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.agentId, reason);
