@@ -1938,10 +1938,17 @@ const ALLOWED_SETFARM_SUMMARY_TOPICS = new Set([
   "supervisor-memory",
 ]);
 
+export function isSetfarmSummaryHelpCommand(command: string): boolean {
+  const compact = compactCommandForDiagnostic(command);
+  if (!compact || !/\.setfarm-bin\/setfarm-summary\b/.test(compact)) return false;
+  return /(?:^|[\s;&|()])(?:CLAIM_SUMMARY_FILE=(?:'[^']+'|"[^"]+"|\S+)\s+)?node\s+\.setfarm-bin\/setfarm-summary\s+(?:--help|-h|help)\b/.test(compact);
+}
+
 export function isUnsupportedSetfarmSummaryCommand(command: string): boolean {
   const compact = compactCommandForDiagnostic(command);
   if (!compact || !/\.setfarm-bin\/setfarm-summary\b/.test(compact)) return false;
   if (isSetfarmHelperScriptReadCommand(compact)) return false;
+  if (isSetfarmSummaryHelpCommand(compact)) return false;
   if (/\.setfarm-bin\/setfarm-summary\b[\s\S]*(?:[|<>]|&&|\|\||;)/.test(compact)) return true;
 
   const summaryRe = /(?:^|[\s;&|()])(?:CLAIM_SUMMARY_FILE=(?:'[^']+'|"[^"]+"|\S+)\s+)?node\s+\.setfarm-bin\/setfarm-summary(?:\s+([A-Za-z0-9_-]+))?/g;

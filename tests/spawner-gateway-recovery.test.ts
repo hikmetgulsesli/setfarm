@@ -3,7 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { expandSupportedGuardGlob, isMaskedDeterministicCheckCommand, isSetfarmHelperScriptReadCommand, isUnsupportedSetfarmSummaryCommand } from "../dist/spawner.js";
+import { expandSupportedGuardGlob, isMaskedDeterministicCheckCommand, isSetfarmHelperScriptReadCommand, isSetfarmSummaryHelpCommand, isUnsupportedSetfarmSummaryCommand } from "../dist/spawner.js";
 
 const root = path.resolve(import.meta.dirname, "..");
 
@@ -61,6 +61,8 @@ describe("spawner gateway recovery wiring", () => {
   it("detects unsupported or wrapped Setfarm summary helper commands", () => {
     assert.equal(isUnsupportedSetfarmSummaryCommand("CLAIM_SUMMARY_FILE=/tmp/s.json node .setfarm-bin/setfarm-summary checks"), false);
     assert.equal(isUnsupportedSetfarmSummaryCommand("CLAIM_SUMMARY_FILE='/tmp/s.json' node .setfarm-bin/setfarm-summary current-story"), false);
+    assert.equal(isSetfarmSummaryHelpCommand("CLAIM_SUMMARY_FILE=/tmp/s.json node .setfarm-bin/setfarm-summary --help 2>&1 || true"), true);
+    assert.equal(isUnsupportedSetfarmSummaryCommand("CLAIM_SUMMARY_FILE=/tmp/s.json node .setfarm-bin/setfarm-summary --help 2>&1 || true"), false);
     assert.equal(isUnsupportedSetfarmSummaryCommand("CLAIM_SUMMARY_FILE=/tmp/s.json node .setfarm-bin/setfarm-summary retry-patch"), false);
     assert.equal(isUnsupportedSetfarmSummaryCommand("CLAIM_SUMMARY_FILE=/tmp/s.json node .setfarm-bin/setfarm-summary source-snapshot"), false);
     assert.equal(isUnsupportedSetfarmSummaryCommand("CLAIM_SUMMARY_FILE=/tmp/s.json node .setfarm-bin/setfarm-summary git-policy"), true);
