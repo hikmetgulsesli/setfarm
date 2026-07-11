@@ -26,8 +26,10 @@ describe("spawner prompt bootstrap", () => {
     assert.match(prompt, /Never append 2>&1, \| head, \| tail, tee, cat, echo, timeout, parentheses, &&, \|\|, ;, or any other wrapper\/suffix\/prefix to the bootstrap command or a CHECK_\*_CMD command/);
     assert.match(prompt, /CLAIM_SUMMARY_FILE=\/tmp\/claim-summary-feature-dev_developer-spawner-test\.json/);
     assert.match(prompt, /The bootstrap command prints the authoritative quick handoff/);
-    assert.match(prompt, /Read the structured claim summary through the installed \.setfarm-bin\/setfarm-summary helper/);
-    assert.match(prompt, /RETRY_WORKTREE_PATCH_CMD or RETRY_SOURCE_SNAPSHOT_CMD/);
+    assert.match(prompt, /Read the structured claim summary only through the printed SUMMARY_\*_CMD commands/);
+    assert.match(prompt, /Story brief\/details are available through SUMMARY_CURRENT_STORY_CMD and SUMMARY_ACCEPTANCE_CMD/);
+    assert.match(prompt, /do not invent story-brief, full, all, or other setfarm-summary topics/);
+    assert.doesNotMatch(prompt, /current story brief, workdir/);
     assert.match(prompt, /outputContract\.requiredFields and outputContract\.format exactly/);
     assert.match(prompt, /guard-backed roles will reject prose-only summaries/);
     assert.match(prompt, /Use retryFeedback\.mode exactly/);
@@ -2428,7 +2430,9 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, /SUMMARY_SCREEN_USAGE_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary screen-usage-contract/);
       assert.match(out, /SUMMARY_DESIGN_CONTRACTS_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary design-contracts/);
       assert.match(out, /SUMMARY_OUTPUT_CONTRACT_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary output-contract/);
-      assert.match(out, /SUMMARY_HELPER_RULE=Use the SUMMARY_\*_CMD lines exactly when more context is needed/);
+      assert.match(out, /SUMMARY_HELPER_RULE=Use the printed SUMMARY_\*_CMD lines exactly when more context is needed/);
+      assert.match(out, /Allowed setfarm-summary topics are only: current-story, acceptance, scope-files, checks, workdirs, retry-feedback, screen-usage-contract, design-contracts, output-contract, supervisor-memory/);
+      assert.match(out, /Do not invent story-brief\/full\/all topics/);
       assert.match(out, /MASKED_CHECK_RULE=Use CHECK_BUILD_CMD\/CHECK_TEST_CMD when present, exactly as printed and as standalone commands/);
       assert.match(out, /MASKED_CHECK_EXACT_BUILD_CMD=npm run build/);
       assert.match(out, /MASKED_CHECK_EXACT_TEST_CMD=npm run test:run/);
