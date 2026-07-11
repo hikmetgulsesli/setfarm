@@ -249,8 +249,9 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, /IMPLEMENT_EVIDENCE_SEEDED=default snapshot request ready/);
       assert.equal(execFileSync("bash", [evidenceScript, "validate"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }).trim(), "SETFARM_EVIDENCE_OK");
       execFileSync(evidenceScript, ["validate"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" });
+      assert.equal(execFileSync("node", [evidenceScript, "validate"], { cwd: workdir, encoding: "utf-8" }).trim(), "SETFARM_EVIDENCE_OK");
       execFileSync(evidenceScript, ["action", "--action-id", "start-game-1"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" });
-      assert.equal(execFileSync(evidenceScript, ["validate"], { cwd: workdir, env: evidenceEnv, encoding: "utf-8" }).trim(), "SETFARM_EVIDENCE_OK");
+      assert.equal(execFileSync(evidenceScript, ["validate"], { cwd: workdir, encoding: "utf-8" }).trim(), "SETFARM_EVIDENCE_OK");
       const intent = JSON.parse(fs.readFileSync(path.join(workdir, ".setfarm", "implement", "US-001", "IMPLEMENT_INTENT.json"), "utf-8"));
       const request = JSON.parse(fs.readFileSync(path.join(workdir, ".setfarm", "implement", "US-001", "IMPLEMENT_VERIFICATION_REQUEST.json"), "utf-8"));
       assert.equal(intent.schema, "setfarm.implement-intent.v1");
