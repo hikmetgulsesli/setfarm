@@ -199,8 +199,8 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, new RegExp(`WORKDIR=${workdir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
       assert.match(out, new RegExp(`CLAIM_SUMMARY_FILE=${claimSummaryFile.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
       assert.match(out, /STORY=US-001 Bootstrap story/);
-      assert.match(out, /CURRENT_STORY_BRIEF=Story US-001: Bootstrap story State and persistence must stay readable after whitespace normalization\./);
-      assert.match(out, /ACCEPTANCE_CRITERIA=1\. State persists after save\. 2\. Stored status remains visible\./);
+      assert.doesNotMatch(out, /CURRENT_STORY_BRIEF=/);
+      assert.doesNotMatch(out, /ACCEPTANCE_CRITERIA=/);
       assert.doesNotMatch(out, /\b tate\b|\bper i t|\b tatus\b/);
       assert.match(out, /STORY_BRANCH=run-us-001/);
       assert.match(out, /STORY_WORKDIR=\/home\/setrox\/\.openclaw\/workspaces\/workflows\/feature-dev\/agents\/developer\/story-worktrees\/run-us-001/);
@@ -252,19 +252,14 @@ describe("spawner prompt bootstrap", () => {
       assert.match(out, /SCOPE_FILES=src\/App\.tsx/);
       assert.match(out, /MISSING_SCOPE_FILES=src\/App\.tsx/);
       assert.match(out, /SCOPE_FILE_POLICY=.*Missing scope files are expected new owned files/);
-      assert.match(out, /GIT_POLICY=Developer story agents write code only/);
-      assert.match(out, /FORBIDDEN_GIT=git add, git commit, git push/);
+      assert.doesNotMatch(out, /GIT_POLICY=Developer story agents write code only/);
+      assert.doesNotMatch(out, /FORBIDDEN_GIT=git add, git commit, git push/);
       assert.match(out, /SCREEN_USAGE=Use compact screen contract first/);
       assert.match(out, /SCREEN_COMPONENT=MainMenu src\/screens\/MainMenu\.tsx forbidden actions=start-game-1\|settings-4/);
-      assert.match(out, /FAILURE_CATEGORY=GENERATED_SCREEN_SHARED_READ/);
-      assert.match(out, /FAILURE_SUGGESTION=Use claim-summary designContracts instead of shared generated source/);
-      assert.match(out, /RETRY_MODE=fix/);
-      assert.match(out, /RETRY_BLOCKER_PREVIEW=GENERATED_SCREEN_SHARED_READ: previous worker read src\/screens\/MainMenu\.tsx/);
-      assert.match(out, /PR_REVIEW_ACTIONABLE_THREADS=1/);
-      assert.match(out, /PR_REVIEW_SCOPE_RULE=Resolve review comments inside SCOPE_FILES only/);
-      assert.match(out, /PR_REVIEW_SCOPE_RULE=.*instead of creating an out-of-scope common file/);
-      assert.match(out, /PR_REVIEW_THREAD_1=thread=PRRT_bootstrap src\/App\.tsx:12 @gemini-code-assist Fix the scoped bootstrap regression/);
-      assert.match(out, /RETRY_DETAIL=full retry detail is in claimSummary\.retryFeedback\.details.*prefer claimSummary\.retryFeedback\.actionableReviewThreads/);
+      assert.doesNotMatch(out, /FAILURE_CATEGORY=GENERATED_SCREEN_SHARED_READ/);
+      assert.doesNotMatch(out, /PR_REVIEW_THREAD_1=/);
+      assert.match(out, /DETAILS_RULE=Initial bootstrap output intentionally omits long story, retry, PR, and supervisor text/);
+      assert.match(out, /SUMMARY_RETRY_FEEDBACK_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary retry-feedback/);
       assert.match(out, /RETRY_ACTION=Use claim-summary designContracts instead of shared generated source/);
       assert.match(out, /RETRY_INSTRUCTION=Previous feedback is an open implementation blocker/);
       assert.match(out, /RETRY_DISCIPLINE=semantic-fix: Generated-screen source retry discipline/);
@@ -1056,10 +1051,8 @@ describe("spawner prompt bootstrap", () => {
       });
       fs.writeFileSync(path.join(tmp, "bootstrap.sh"), bootstrap, { mode: 0o755 });
       const out = execFileSync("bash", [path.join(tmp, "bootstrap.sh")], { encoding: "utf-8" });
-      assert.match(out, /RETRY_PROTECTED_SNIPPETS=3/);
-      assert.match(out, /RETRY_PROTECTED_SNIPPET_1='filter-6': \(\) => setPanel\('filter'\),/);
-      assert.match(out, /RETRY_PROTECTED_SNIPPET_2='export-summary-7': \(\) => setPanel\('export'\),/);
-      assert.match(out, /RETRY_PROTECTED_SNIPPET_3=\[createRecordAction\],/);
+      assert.match(out, /SUMMARY_RETRY_FEEDBACK_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary retry-feedback/);
+      assert.doesNotMatch(out, /RETRY_PROTECTED_SNIPPET_1=/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -1148,9 +1141,8 @@ describe("spawner prompt bootstrap", () => {
       });
       fs.writeFileSync(path.join(tmp, "bootstrap.sh"), bootstrap, { mode: 0o755 });
       const out = execFileSync("bash", [path.join(tmp, "bootstrap.sh")], { encoding: "utf-8" });
-      assert.match(out, /RETRY_RESTORE_TARGETS=2/);
-      assert.match(out, /RETRY_RESTORE_TARGET_1=src\/App\.tsx :: import \{ PreviousScreen \} from '\.\/PreviousScreen';/);
-      assert.match(out, /RETRY_RESTORE_TARGET_2=src\/router\.tsx :: case 'previous': return <PreviousScreen \/>/);
+      assert.match(out, /SUMMARY_RETRY_FEEDBACK_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary retry-feedback/);
+      assert.doesNotMatch(out, /RETRY_RESTORE_TARGET_1=/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -1231,9 +1223,8 @@ describe("spawner prompt bootstrap", () => {
       });
       fs.writeFileSync(path.join(tmp, "bootstrap.sh"), bootstrap, { mode: 0o755 });
       const out = execFileSync("bash", [path.join(tmp, "bootstrap.sh")], { encoding: "utf-8" });
-      assert.match(out, /RETRY_PROTECTED_SNIPPETS=7/);
-      assert.match(out, /RETRY_RESTORE_TARGETS=1/);
-      assert.match(out, /RETRY_RESTORE_TARGET_1=src\/App\.tsx :: return <RecordEditorScreen actions=\{editorActions\} \/>;/);
+      assert.match(out, /SUMMARY_RETRY_FEEDBACK_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary retry-feedback/);
+      assert.doesNotMatch(out, /RETRY_RESTORE_TARGET_1=/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -1301,10 +1292,8 @@ describe("spawner prompt bootstrap", () => {
       });
       fs.writeFileSync(path.join(tmp, "bootstrap.sh"), bootstrap, { mode: 0o755 });
       const out = execFileSync("bash", [path.join(tmp, "bootstrap.sh")], { encoding: "utf-8" });
-      assert.match(out, /RETRY_PROTECTED_SNIPPETS=3/);
-      assert.match(out, /RETRY_PROTECTED_SNIPPET_1=data-testid="counter-value"/);
-      assert.match(out, /RETRY_PROTECTED_SNIPPET_2=data-action-id="add"/);
-      assert.match(out, /RETRY_PROTECTED_SNIPPET_3=data-action-id="reset"/);
+      assert.match(out, /SUMMARY_RETRY_FEEDBACK_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary retry-feedback/);
+      assert.doesNotMatch(out, /RETRY_PROTECTED_SNIPPET_1=/);
       assert.doesNotMatch(out, /RETRY_RESTORE_TARGETS=/);
       assert.doesNotMatch(out, /article\.innerHTML/);
     } finally {
@@ -2423,8 +2412,9 @@ describe("spawner prompt bootstrap", () => {
       fs.chmodSync(bootstrapFile, 0o755);
       const out = execFileSync("bash", [bootstrapFile], { cwd: tmp, encoding: "utf8" });
 
-      assert.match(out, /FAILURE_CATEGORY=PR_REVIEW_COMMENTS_OPEN/);
-      assert.match(out, /PR_REVIEW_ACTIONABLE_THREADS=1/);
+      assert.doesNotMatch(out, /FAILURE_CATEGORY=PR_REVIEW_COMMENTS_OPEN/);
+      assert.doesNotMatch(out, /PR_REVIEW_ACTIONABLE_THREADS=1/);
+      assert.match(out, /SUMMARY_RETRY_FEEDBACK_CMD=CLAIM_SUMMARY_FILE='[^']+' node \.setfarm-bin\/setfarm-summary retry-feedback/);
       assert.match(out, /IMPLEMENT_LOOP=Edit scoped source, run CHECK_BUILD_CMD exactly, run CHECK_TEST_CMD exactly/);
       assert.match(out, /CHECK_BUILD_CMD=bash \.setfarm-bin\/setfarm-check build/);
       assert.match(out, /CHECK_TEST_CMD=bash \.setfarm-bin\/setfarm-check test/);
