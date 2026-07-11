@@ -1338,6 +1338,8 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /SETFARM_RUNTIME_GUARD_REPEAT_LIMIT/);
     assert.match(source, /function runtimeGuardDiagnosticKey\(diagnostic: string\)/);
     assert.match(source, /async function runtimeGuardRepeatDecision/);
+    assert.match(source, /ORDER BY id DESC\s+LIMIT 50/);
+    assert.match(source, /runtimeGuardDiagnosticKey\(String\(row\.diagnostic \|\| ""\)\) !== key\) break/);
     assert.match(source, /blocking the story instead of requeueing indefinitely/);
     assert.match(source, /UPDATE stories SET status = 'failed'/);
     assert.ok(

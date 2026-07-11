@@ -4313,18 +4313,25 @@ function runtimeGuardDiagnosticKey(diagnostic: string): string {
 
 async function runtimeGuardRepeatDecision(runId: string, stepId: string, storyId: string, agentId: string, diagnostic: string): Promise<{ hardFail: boolean; key: string; previousCount: number }> {
   const key = runtimeGuardDiagnosticKey(diagnostic);
-  const row = await pgGet<{ count: string }>(
-    `SELECT COUNT(*)::text as count
+  const rows = await pgQuery<{ outcome: string | null; diagnostic: string | null }>(
+    `SELECT outcome, diagnostic
      FROM claim_log
      WHERE run_id = $1
        AND step_id = $2
        AND story_id = $3
        AND agent_id = $4
-       AND outcome IN ('infra_retry', 'failed')
-       AND diagnostic LIKE $5`,
-    [runId, stepId, storyId, agentId, `${key}:%`],
+       AND outcome IS NOT NULL
+     ORDER BY id DESC
+     LIMIT 50`,
+    [runId, stepId, storyId, agentId],
   );
-  const previousCount = parseInt(row?.count || "0", 10) || 0;
+  let previousCount = 0;
+  for (const row of rows) {
+    const outcome = String(row.outcome || "");
+    if (outcome !== "infra_retry" && outcome !== "failed") break;
+    if (runtimeGuardDiagnosticKey(String(row.diagnostic || "")) !== key) break;
+    previousCount += 1;
+  }
   return { hardFail: previousCount + 1 >= RUNTIME_GUARD_REPEAT_LIMIT, key, previousCount };
 }
 
