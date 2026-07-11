@@ -1804,11 +1804,12 @@ const fs = require("fs");
 const path = require("path");
 try {
   const out = process.argv[3];
+  const defaultSummaryFile = String(process.argv[2] || "");
   const script = [
     "#!/usr/bin/env sh",
     "':' //; exec node \\\"$0\\\" \\\"$@\\\"",
     "import fs from 'node:fs';",
-    "const summaryFile = process.env.CLAIM_SUMMARY_FILE;",
+    "const summaryFile = process.env.CLAIM_SUMMARY_FILE || " + JSON.stringify(defaultSummaryFile) + ";",
     "const command = process.argv[2] || '';",
     "function usage() {",
     "  const isHelp = command === 'help' || command === '--help' || command === '-h';",
@@ -1951,12 +1952,13 @@ const fs = require("fs");
 const path = require("path");
 try {
   const out = process.argv[3];
+  const defaultSummaryFile = String(process.argv[2] || "");
   const script = [
     "#!/usr/bin/env sh",
     "':' //; exec node \\\"$0\\\" \\\"$@\\\"",
     "import fs from 'node:fs';",
     "import path from 'node:path';",
-    "const summaryFile = process.env.CLAIM_SUMMARY_FILE;",
+    "const summaryFile = process.env.CLAIM_SUMMARY_FILE || " + JSON.stringify(defaultSummaryFile) + ";",
     "const command = process.argv[2] || '';",
     "const args = process.argv.slice(3);",
     "const supported = new Set(['click', 'fill', 'press', 'wait', 'navigate', 'snapshot']);",
