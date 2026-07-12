@@ -23,6 +23,12 @@
   ],
   "sources": [
     {
+      "locator": "sources/contract-relations.json",
+      "sha256": "f09843ceac612adce5f4669a471a176ae93ecdbf91d44fa0ea559d73ce20fa38",
+      "mediaType": "application/json",
+      "redaction": "minimal_excerpt"
+    },
+    {
       "locator": "sources/generated-control.tsx",
       "sha256": "b75fdeb84e15ae7cb9c162d29e4bbaaaf792b04c85a3b87ee757e1df1c9e7f44",
       "mediaType": "text/typescript",

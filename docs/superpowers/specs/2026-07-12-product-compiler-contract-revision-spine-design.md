@@ -692,10 +692,13 @@ Required cases:
 - Missing `close-1` behavior is represented as failed required evidence.
 - An advisory wrapper cannot turn it into packet/release evidence PASS.
 
-### Vibe Breaker ID mismatch
+### Vibe Breaker unspecified control identity
 
-- `menu-btn` and `main-menu-btn` mismatch is detected by exact locator binding.
-- An integration-complete claim cannot override the link failure.
+- The Stitch control has no stable ID, so no exact design-to-runtime locator
+  binding exists. The pre-fix JavaScript and HTML both used `menu-btn`; the
+  later `main-menu-btn` correction is post-completion churn, not proof of an
+  earlier mismatch.
+- An integration-complete claim cannot override the missing design identity.
 
 ### #1887 and #1893
 

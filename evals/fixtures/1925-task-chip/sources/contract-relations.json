@@ -1,0 +1,18 @@
+{
+  "schema": "setfarm.fixture.contract-relations.v1",
+  "declaredActions": [
+    { "actionRef": "ACT_FILTER_INSIGHTS", "surfaceRef": "SURF_INSIGHTS" },
+    { "actionRef": "ACT_EXPORT_SUMMARY", "surfaceRef": "SURF_INSIGHTS" },
+    { "actionRef": "ACT_SAVE_RECORD", "surfaceRef": "SURF_SHORT_EDITOR" }
+  ],
+  "projectedActions": [
+    { "actionRef": "ACT_EXPORT_JSON", "surfaceRef": "SURF_SHORT_EDITOR" },
+    { "actionRef": "ACT_SAVE_RECORD", "surfaceRef": "SURF_SHORT_EDITOR" }
+  ],
+  "knownSurfaces": [
+    "SURF_SHORT_EDITOR"
+  ],
+  "renames": [
+    { "fromActionRef": "ACT_EXPORT_SUMMARY", "toActionRef": "ACT_EXPORT_JSON" }
+  ]
+}

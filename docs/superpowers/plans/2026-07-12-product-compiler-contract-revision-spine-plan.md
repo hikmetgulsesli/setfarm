@@ -405,7 +405,9 @@ capture explicit without inference or live runtime dependencies.
   control while guessed IDs remain separate evidence;
 - #1894 contains distinct correct-head and later-base revisions;
 - #847 contains required child evidence failure;
-- Vibe contains the exact `menu-btn`/`main-menu-btn` mismatch.
+- Vibe preserves the design control with no stable ID plus the later
+  `menu-btn` to `main-menu-btn` corrective change; it does not misstate the
+  pre-fix JavaScript and HTML as mismatched.
 
 ### Implementation
 
@@ -579,7 +581,8 @@ rejection report or one sealed packet and deterministic story slice.
 - guessed zero-overlap mappings are rejected and poison prose tokens never
   become controls;
 - #847 required evidence failure cannot aggregate to sealed PASS;
-- Vibe control-ID mismatch remains an exact link failure;
+- Vibe's unspecified design control identity remains an exact completeness
+  failure; later assigned-ID churn cannot backfill the design contract;
 - #1887/#1893 missing state/persistence relations emit generic stable
   diagnostics, not project-specific codes.
 
@@ -865,7 +868,9 @@ a command whose module does not exist:
 - #1894: correct head and later base are distinct; continuity mismatch is
   `ATTEMPT_SOURCE_REVISION_CHANGED`.
 - #847: failed required child evidence cannot aggregate PASS.
-- Vibe: exact control-ID mismatch blocks completeness despite completion prose.
+- Vibe: the design control's missing stable identity blocks completeness; later
+  completion prose and a corrective ID assignment cannot retroactively supply
+  design-time identity.
 - #1887: control/value/state gap has a stable generic diagnostic.
 - #1893: action/persistence gap has a stable generic diagnostic and unchanged
   exact tuple dedupes.
