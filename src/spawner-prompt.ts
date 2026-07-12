@@ -1038,12 +1038,6 @@ function retryDisciplineForFailure(
   previousFailure: string,
 ): Record<string, unknown> | undefined {
   const signal = `${failureCategory}\n${failureSuggestion}\n${previousFailure}`;
-  if (/^PR_REVIEW_COMMENTS_OPEN$/i.test(failureCategory)) {
-    return {
-      mode: "first-delta",
-      instruction: "PR-review retry discipline: use retryFeedback.actionableReviewThreads as the current blocker list. First edit or create the listed in-scope files and apply each requested code fix; if a listed path is missing but appears in missingScopeFiles/scopeFiles, create it directly instead of searching GitHub, stashes, transcripts, helper scripts, or old branches. Do not investigate prior masked-check, helper-script, or agent-exit diagnostics before the first source delta. After the scoped PR-review fixes exist, run the declared build/test commands exactly as printed and complete the output contract.",
-    };
-  }
   const generatedMountFiles = extractGeneratedMountDiagnosticFiles(signal);
   if (/\bGENERATED_SCREEN_(?:VIEWPORT_MOUNT|LAYOUT_MOUNT|SHELL_LANDMARK)_UNSAFE\b/i.test(signal)) {
     const fileTarget = generatedMountFiles.length > 0
@@ -1078,10 +1072,16 @@ function retryDisciplineForFailure(
       instruction: "Project-tree probe retry discipline: first remove every out-of-scope debug, probe, scratch, test-write, temporary fixture, or ad hoc test file from the story worktree. Do not create _debug.test.ts, test-write.txt, probe.tsx, scratch files, or temporary source/tests inside src/ or the project tree. Use inline commands or /tmp plain checkpoint notes for experiments, then make the required implementation only in SCOPE_FILES and allowed test/config exceptions. Before STATUS: done, run git diff/status and confirm no unlisted project-tree files remain.",
     };
   }
-  if (/\bMASKED_CHECK_COMMAND\b/i.test(signal)) {
+  if (/\bMASKED_CHECK_COMMAND\b/i.test(signal) && (!/^PR_REVIEW_COMMENTS_OPEN$/i.test(failureCategory) || /\b(?:INFRA_RETRY|RUNTIME_GUARD_REPEAT_LIMIT)\b/i.test(signal))) {
     return {
       mode: "semantic-fix",
       instruction: "Masked-check retry discipline: when CHECK_BUILD_CMD, CHECK_TEST_CMD, or CHECK_LINT_CMD is present, run that printed command exactly as its own shell command. Do not append, prepend, wrap, pipe, tee, redirect, timeout, group, or combine it with head, tail, grep, rg, cat, awk, sed, echo, or another command. Do not rerun the old masked ad hoc command. Only fall back to the exact failing build/test/lint/typecheck command when no matching CHECK_* command exists. The command that decides pass/fail must run without any output-filtering pipe. Do not use forms like `npm run build 2>&1 | tail -40; echo $?` or `npm run test:run 2>&1 | tail -40`; those still hide the real check exit status. If output must be shortened, first run the standalone check command exactly and let it decide pass/fail; only after it returns may you inspect an existing log in a separate non-decisive command. After the declared checks pass, write the output contract, call step complete, and stop; do not run optional extra vitest/tsc/eslint probes.",
+    };
+  }
+  if (/^PR_REVIEW_COMMENTS_OPEN$/i.test(failureCategory)) {
+    return {
+      mode: "first-delta",
+      instruction: "PR-review retry discipline: use retryFeedback.actionableReviewThreads as the current blocker list. First edit or create the listed in-scope files and apply each requested code fix; if a listed path is missing but appears in missingScopeFiles/scopeFiles, create it directly instead of searching GitHub, stashes, transcripts, helper scripts, or old branches. Do not investigate prior masked-check, helper-script, or agent-exit diagnostics before the first source delta. After the scoped PR-review fixes exist, run the declared build/test commands exactly as printed and complete the output contract.",
     };
   }
   if (/\b(?:IMPLEMENT_EVIDENCE_INCOMPLETE|IMPLEMENT_EVIDENCE_VERDICT_NOT_PASSED|IMPLEMENT_INTERACTION_FAILED|UI_INTERACTION_TARGET_UNREACHABLE)\b/i.test(signal)) {

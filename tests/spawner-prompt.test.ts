@@ -1047,6 +1047,55 @@ describe("spawner prompt bootstrap", () => {
     }
   });
 
+  it("prioritizes runtime guard discipline while preserving PR review retry context", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-pr-review-masked-check-"));
+    try {
+      const workdir = path.join(tmp, "worktree");
+      fs.mkdirSync(path.join(workdir, "src"), { recursive: true });
+      fs.writeFileSync(path.join(workdir, "src", "App.tsx"), "export default function App() { return null; }\n");
+      fs.writeFileSync(path.join(workdir, ".story-scope-files"), "src/App.tsx\n");
+      const input = [
+        "TASK: Project: PR retry plus runtime guard",
+        "CURRENT STORY: Story US-002: PR retry plus runtime guard",
+        "",
+        "## Previous Failure / Retry Feedback",
+        "INFRA_RETRY:",
+        "MASKED_CHECK_COMMAND: feature-dev_developer ran deterministic build/test evidence through an output-filtering pipeline (npm run build 2>&1 | tail -20).",
+        "",
+        "STILL_OPEN_ACTIONABLE_FEEDBACK:",
+        "PR_REVIEW_COMMENTS_OPEN: US-002 has actionable PR review comments that must be fixed before merge.",
+        "## PR Comments (1 actionable)",
+        "PR state: OPEN, checks: passing, mergeable: MERGEABLE, mergeStateStatus: CLEAN",
+        "- [review-comment] thread=PRRT_one src/App.tsx:20 @gemini-code-assist:",
+        "  Fix the static generated screen action mapping.",
+        "",
+        "## Current Story",
+      ].join("\n");
+
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "developer",
+        claimFile: path.join(tmp, "claim.json"),
+        outputFile: path.join(tmp, "output.txt"),
+        bootstrapFile: path.join(tmp, "bootstrap.sh"),
+        stepId: "step-123",
+        runId: "run-123",
+        workdir,
+        repo: workdir,
+        storyId: "US-002",
+        input,
+      });
+
+      assert.equal(summary.failureCategory, "PR_REVIEW_COMMENTS_OPEN");
+      assert.deepEqual((summary.retryFeedback as any).prThreadIds, ["PRRT_one"]);
+      assert.equal((summary.retryDiscipline as any).mode, "semantic-fix");
+      assert.match(String((summary.retryDiscipline as any).instruction), /Masked-check retry discipline/);
+      assert.doesNotMatch(String((summary.retryDiscipline as any).instruction), /PR-review retry discipline/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("extracts retry patch protected snippets into claim summary and bootstrap", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-summary-retry-snippets-"));
     try {

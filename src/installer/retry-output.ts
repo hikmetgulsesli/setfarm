@@ -16,5 +16,5 @@ export function preserveActionableStoryRetryOutput(currentOutput: string | null 
   }
   if (!existingActionable || !nextInfra) return next;
   if (existing.includes(next.slice(0, 400))) return existing;
-  return `${existing}\n\nINFRA_RETRY:\n${next}`.slice(0, 12000);
+  return `INFRA_RETRY:\n${next}\n\nSTILL_OPEN_ACTIONABLE_FEEDBACK:\n${existing}`.slice(0, 12000);
 }

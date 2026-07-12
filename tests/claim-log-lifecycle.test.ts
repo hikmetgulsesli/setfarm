@@ -1627,6 +1627,25 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(combined, /GENERATED_SCREEN_VIEWPORT_MOUNT_UNSAFE/);
     assert.match(combined, /INFRA_RETRY:/);
     assert.match(combined, /MASKED_CHECK_COMMAND/);
+    assert.ok(combined.indexOf("INFRA_RETRY:") < combined.indexOf("GENERATED_SCREEN_VIEWPORT_MOUNT_UNSAFE"));
+  });
+
+  it("keeps repeated runtime guard feedback visible before long actionable story output", () => {
+    const quality = [
+      "PR_REVIEW_COMMENTS_OPEN: US-002 has actionable PR review comments that must be fixed before merge.",
+      "## PR Comments (2 actionable)",
+      "thread=PRRT_one src/App.tsx:303 " + "long review context ".repeat(160),
+    ].join("\n");
+    const infra = [
+      "MASKED_CHECK_COMMAND: feature-dev_developer ran deterministic build/test evidence through an output-filtering pipeline.",
+      "Rerun the declared build/test command without a pipe.",
+    ].join("\n");
+    const combined = preserveActionableStoryRetryOutput(quality, infra);
+
+    assert.match(combined, /^INFRA_RETRY:\nMASKED_CHECK_COMMAND:/);
+    assert.match(combined, /STILL_OPEN_ACTIONABLE_FEEDBACK:/);
+    assert.match(combined, /PR_REVIEW_COMMENTS_OPEN/);
+    assert.ok(combined.indexOf("MASKED_CHECK_COMMAND") < combined.indexOf("PR_REVIEW_COMMENTS_OPEN"));
   });
 
   it("replaces stale pre-delta runtime discipline output on masked-check requeues", () => {
