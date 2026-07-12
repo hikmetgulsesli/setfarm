@@ -102,6 +102,15 @@ export const runtimeConfig = {
   cliPath: envPath("CLI_PATH", join(homedir(), ".local", "bin")),
 };
 
+export function resolveProductArtifactDir(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const explicit = env.SETFARM_PRODUCT_ARTIFACT_DIR?.trim();
+  return explicit
+    ? expandRuntimePath(explicit)
+    : join(runtimeConfig.setfarmDir, "product-compiler", "artifacts", "sha256");
+}
+
 export function missionControlApi(pathname: string): string {
   const normalizedPath = pathname.startsWith("/") ? pathname : `/${pathname}`;
   return `${runtimeConfig.missionControlInternalUrl}${normalizedPath}`;

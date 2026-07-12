@@ -576,9 +576,10 @@ This preserves observability without creating a second workflow decision maker.
 
 The exact hook boundaries are fixed:
 
-- **Claim start:** `src/installer/step-ops.ts`, immediately after worktree
-  creation, actual branch discovery, `claim_log` insertion, and story claim
-  metadata update. At this point `claim_generation`, worktree, branch, and
+- **Claim start:** `src/installer/step-ops.ts`, after worktree creation, actual
+  branch discovery, `claim_log` insertion, story claim metadata, dependency
+  projection, and final input guards, immediately before successful handoff.
+  At this point `claim_generation`, worktree, branch, and
   `source_before_sha` are all known. Worktree/bootstrap failures before this
   boundary do not create an execution attempt.
 - **Successful story completion:** `src/installer/step-ops.ts`, after Setfarm's

@@ -248,6 +248,22 @@ export function createAttemptRepository(
       return row ? mapAttempt(row) : undefined;
     },
 
+    async findActive(identity: Readonly<{
+      runId: string;
+      stepId: string;
+      storyId: string;
+    }>): Promise<ExecutionAttemptV1 | undefined> {
+      const row = await one(
+        sql,
+        `SELECT * FROM execution_attempts
+          WHERE run_id = $1 AND step_id = $2 AND story_id = $3
+            AND disposition IN ('claimed', 'running')
+          LIMIT 1`,
+        [identity.runId, identity.stepId, identity.storyId],
+      );
+      return row ? mapAttempt(row) : undefined;
+    },
+
     async heartbeat(
       input: unknown,
       options: Readonly<{ now?: Date; leaseMs?: number }> = {},

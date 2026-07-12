@@ -745,9 +745,12 @@ zero default behavior and all legacy decisions.
 
 ### Exact Hook Boundaries
 
-1. Claim start in `src/installer/step-ops.ts`: immediately after worktree
-   creation, actual branch discovery, `claim_log` insert, and story claim
-   metadata update (current region around lines 5817-5936).
+1. Claim start in `src/installer/step-ops.ts`: after worktree creation, actual
+   branch discovery, `claim_log` insert, story claim metadata update, dependency
+   projection, and final input guards, immediately before the successful claim
+   handoff. This ordering is required because dependency projection mutates the
+   agent-visible worktree and may mark files `assume-unchanged`; an earlier
+   fingerprint would not identify the source the agent actually receives.
 2. Successful story completion in `src/installer/step-ops.ts`: after Setfarm's
    commit/PR handling and story status update, before legacy claim-log close
    (current region around lines 8467-8473).

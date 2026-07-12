@@ -24,6 +24,10 @@ import { failStep } from "./step-fail.js";
 import { advancePipeline, checkLoopContinuation } from "./step-advance.js";
 import { mergeStoryIntoFeature, runMergeQueue } from "./merge-queue-ops.js";
 import { refreshRunContractSafe } from "./contract-ledger.js";
+import {
+  observeShadowAttemptClaim,
+  observeShadowAttemptSuccess,
+} from "../execution/shadow-attempt-recorder.js";
 
 // ── Re-exports from extracted modules (backwards compat for cli.ts, medic.ts) ──
 export { resolveTemplate, parseOutputKeyValues } from "./context-ops.js";
@@ -5930,11 +5934,12 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
 
       // v1.5.50: Record claim in claim_log + update story claim metadata
       const claimNow = now();
+      let legacyClaimRecorded = false;
       try {
         await pgRun("INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at) VALUES ($1, $2, $3, $4, $5)", [step.run_id, step.step_id, nextStory.story_id, agentId, claimNow]);
         await pgRun("UPDATE stories SET claimed_at = $1, claimed_by = $2 WHERE id = $3", [claimNow, agentId, nextStory.id]);
+        legacyClaimRecorded = true;
       } catch (e) { logger.warn(`[claim-log] Failed to record claim: ${String(e)}`, { runId: step.run_id }); }
-
       // v2026.4.12: Merge dependency branches into worktree for integration stories.
       // Stories with depends_on start from implement_base_commit (empty project).
       // Without this, the agent sees no code from prior stories and reimplements
@@ -6140,6 +6145,19 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
         try { await pgRun("UPDATE claim_log SET outcome = 'failed', diagnostic = $1 WHERE story_id = $2 AND outcome IS NULL", [emptyReason, nextStory.story_id]); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
         if (context["repo"]) removeStoryWorktree(context["repo"], storyBranch, agentId);
         return { found: false };
+      }
+
+      if (legacyClaimRecorded) {
+        await observeShadowAttemptClaim({
+          runId: step.run_id,
+          stepId: step.step_id,
+          storyId: nextStory.story_id,
+          legacyClaimGeneration: Number(nextStory.claim_generation ?? 0),
+          role: agentId,
+          agentId,
+          branch: String(context["story_branch"] || storyBranch),
+          worktree: storyWorkdir,
+        });
       }
 
       return { found: true, stepId: step.id, runId: step.run_id, storyId: nextStory.story_id, storyDbId: nextStory.id, resolvedInput };
@@ -8467,6 +8485,18 @@ ${prd}`;
     await pgRun("UPDATE stories SET status = $1, output = $2, pr_url = $3, story_branch = $4, updated_at = $5, merge_status = COALESCE($7, merge_status) WHERE id = $6", [storyStatus, output, storyPrUrl, storyBranchName, now(), step.current_story_id, storyMergeStatus]);
     emitEvent({ ts: now(), event: storyEvent as import("./events.js").EventType, runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, storyId: storyRow?.story_id, storyTitle: storyRow?.title });
     logger.info(`Story ${storyStatus}: ${storyRow?.story_id} — ${storyRow?.title}`, { runId: step.run_id, stepId: step.step_id });
+
+    const shadowCompletionWorktree = context["story_workdir"] || context["repo"] || "";
+    if (storyRow?.story_id && shadowCompletionWorktree) {
+      await observeShadowAttemptSuccess({
+        runId: step.run_id,
+        stepId: step.step_id,
+        storyId: storyRow.story_id,
+        worktree: shadowCompletionWorktree,
+        output,
+        evidenceRefs: [],
+      });
+    }
 
     // v1.5.50: Resolve claim_log outcome
     try {
