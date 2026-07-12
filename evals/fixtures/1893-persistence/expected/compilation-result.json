@@ -1,0 +1,9 @@
+{
+  "schema": "setfarm.expected-compilation-result.v1",
+  "status": "rejected",
+  "diagnosticCodes": [
+    "CONTRACT_PERSISTENCE_BINDING_MISSING",
+    "LINK_ACTION_PROP_UNBOUND"
+  ],
+  "exactBindings": []
+}

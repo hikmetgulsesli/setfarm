@@ -1,0 +1,43 @@
+{
+  "schema": "setfarm.contract-replay-fixture.v1",
+  "caseId": "1894-branch-continuity",
+  "productClass": "utility",
+  "provenance": [
+    {
+      "authority": "local_git",
+      "locator": "local-git:compact-one-page-task-chip-utility-73ffbe6b@42ec4eb",
+      "revision": "42ec4ebff979bda4519e56965cd60e5d19af8039",
+      "statement": "The correct US-002 head contains the integrated action wrappers."
+    },
+    {
+      "authority": "local_git",
+      "locator": "local-git:compact-one-page-task-chip-utility-73ffbe6b@e7c9f31",
+      "revision": "e7c9f31b51b58dd85c6b089fb1383af9fcc3fc51",
+      "statement": "The next claim used the earlier base after the correct branch was deleted."
+    }
+  ],
+  "sources": [
+    {
+      "locator": "sources/correct-head-app.tsx",
+      "sha256": "de1f50d9882b05a4861900d84d266ba1262f3727cf915390456179e3984a57b8",
+      "mediaType": "text/typescript",
+      "redaction": "minimal_excerpt"
+    },
+    {
+      "locator": "sources/revisions.json",
+      "sha256": "e1c937ee33b15955c467748e0915d2dbcaa6ec1e8f0813b8a78af95bce7a0258",
+      "mediaType": "application/json",
+      "redaction": "none"
+    }
+  ],
+  "redaction": {
+    "containsCredentials": false,
+    "containsPrivateTranscripts": false,
+    "notes": "Full immutable commit and tree hashes are retained; host paths and sessions are omitted."
+  },
+  "expected": {
+    "packetStatus": "rejected",
+    "compilationResult": "expected/compilation-result.json",
+    "attemptResult": "expected/attempt-result.json"
+  }
+}

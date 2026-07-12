@@ -1,0 +1,49 @@
+{
+  "schema": "setfarm.contract-replay-fixture.v1",
+  "caseId": "1893-persistence",
+  "productClass": "utility",
+  "provenance": [
+    {
+      "authority": "local_git",
+      "locator": "local-git:compact-one-page-task-chip-utility-cad5ba05@d280a2f:src",
+      "revision": "d280a2fb2f1f34c3828dfd5df24f6a5a88552685",
+      "statement": "The shell renders generated screens without actions while persistence exists separately and no save payload binding connects them."
+    }
+  ],
+  "sources": [
+    {
+      "locator": "sources/app-shell-excerpt.tsx",
+      "sha256": "be20a3ff2ac260289907a534a52ebda5722a775c1bd3aaee4e49ce187bc85ea6",
+      "mediaType": "text/typescript",
+      "redaction": "minimal_excerpt"
+    },
+    {
+      "locator": "sources/generated-editor-excerpt.tsx",
+      "sha256": "55c6fb6c6018f5cca644d5fb3ecc073e74f37f3c0c4db9aada08570c50a5160c",
+      "mediaType": "text/typescript",
+      "redaction": "minimal_excerpt"
+    },
+    {
+      "locator": "sources/integration-gap.json",
+      "sha256": "b1cca89a1bcd57dcd1587bdcc3d7e8fab9a1384d79cefe91e2bab18db4e11660",
+      "mediaType": "application/json",
+      "redaction": "minimal_excerpt"
+    },
+    {
+      "locator": "sources/persistence-repo-excerpt.ts",
+      "sha256": "187ac35017c0ff5c0d2ff7e2766226252e6a6081afa235e8fafc73b777e6976f",
+      "mediaType": "text/typescript",
+      "redaction": "minimal_excerpt"
+    }
+  ],
+  "redaction": {
+    "containsCredentials": false,
+    "containsPrivateTranscripts": false,
+    "notes": "Only the shell, generated editor, and audited integration relation are retained."
+  },
+  "expected": {
+    "packetStatus": "rejected",
+    "compilationResult": "expected/compilation-result.json",
+    "attemptResult": "expected/attempt-result.json"
+  }
+}

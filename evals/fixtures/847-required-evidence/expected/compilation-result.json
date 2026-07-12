@@ -1,0 +1,8 @@
+{
+  "schema": "setfarm.expected-compilation-result.v1",
+  "status": "rejected",
+  "diagnosticCodes": [
+    "EVIDENCE_REQUIRED_CHILD_FAILED"
+  ],
+  "exactBindings": []
+}

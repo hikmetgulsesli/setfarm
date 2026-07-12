@@ -1,0 +1,15 @@
+{
+  "ownedAction": {
+    "id": "ACT_SAVE_RECORD",
+    "surfaceId": "SURF_SHORT_EDITOR",
+    "controlHint": "form_submit",
+    "generatedActionIds": [
+      "Search tasks...",
+      "dismiss",
+      "form-submit",
+      "Enter task designation...",
+      "Provide detailed context, links, or sub-tasks...",
+      "Add label..."
+    ]
+  }
+}
