@@ -808,6 +808,35 @@ function sourceRendersComponent(source: string, componentName: string): boolean 
     || new RegExp(`React\\.createElement\\(\\s*${escaped}\\b`).test(clean);
 }
 
+function sourceRendersComponentThroughRegistry(source: string, componentName: string): boolean {
+  const clean = stripSourceComments(source);
+  const identifier = "[A-Za-z_$][\\w$]*";
+  const component = escapeRegExp(componentName);
+  const registryDeclaration = new RegExp(
+    `\\b(?:const|let|var)\\s+(${identifier})(?:\\s*:[^=;\\n]+)?\\s*=\\s*\\{([\\s\\S]*?)\\n?\\};`,
+    "g",
+  );
+  for (const match of clean.matchAll(registryDeclaration)) {
+    const registryName = match[1];
+    const registryBody = match[2];
+    const containsComponentValue = new RegExp(
+      `(?:^|[:,]\\s*)${component}(?:\\s+as\\b|\\s*[,}])`,
+      "m",
+    ).test(registryBody);
+    if (!containsComponentValue) continue;
+
+    const aliasSelection = new RegExp(
+      `\\b(?:const|let|var)\\s+(${identifier})(?:\\s*:[^=;\\n]+)?\\s*=\\s*${escapeRegExp(registryName)}\\s*(?:\\[[^\\]]+\\]|\\.${identifier})`,
+      "g",
+    );
+    for (const aliasMatch of clean.matchAll(aliasSelection)) {
+      if (sourceRendersComponent(clean, aliasMatch[1])) return true;
+    }
+  }
+
+  return false;
+}
+
 function sourceReferencesGeneratedScreens(source: string, componentNames: string[]): boolean {
   const clean = stripSourceComments(source);
   if (/from\s+["'][^"']*(?:\/screens|\\screens|src\/screens|src\\screens)/i.test(clean)) return true;
@@ -1559,7 +1588,10 @@ function missingRenderedGeneratedScreens(workdir: string, entries: Array<{ file:
     }
   });
 
-  return entries.filter((entry) => !sources.some(({ source }) => sourceRendersComponent(source, entry.componentName)));
+  return entries.filter((entry) => !sources.some(({ source }) =>
+    sourceRendersComponent(source, entry.componentName)
+    || sourceRendersComponentThroughRegistry(source, entry.componentName),
+  ));
 }
 
 export function findGeneratedScreenIntegrationIssues(

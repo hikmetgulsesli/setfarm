@@ -2343,6 +2343,67 @@ describe("06-implement step module", () => {
     }
   });
 
+  it("accepts generated screens rendered through a typed component registry", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-generated-screen-registry-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { screenId: "short-editor", title: "Short Editor", componentName: "ShortEditor", file: "src/screens/ShortEditor.tsx" },
+      ]));
+      fs.writeFileSync(path.join(tmp, "src/screens/ShortEditor.tsx"), "export function ShortEditor() { return <div>Editor</div>; }\n");
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "import { ShortEditor } from './screens/ShortEditor';",
+        "type SurfaceComponent = React.ComponentType<Record<string, unknown>>;",
+        "const SURFACE_COMPONENTS: Record<string, SurfaceComponent> = {",
+        "  'short-editor': ShortEditor as unknown as SurfaceComponent,",
+        "};",
+        "export default function App({ activeSurface }: { activeSurface: string }) {",
+        "  const Component = SURFACE_COMPONENTS[activeSurface];",
+        "  return <Component />;",
+        "}",
+        "",
+      ].join("\n"));
+
+      assert.deepEqual(
+        findGeneratedScreenIntegrationIssues(
+          tmp,
+          ["src/screens/ShortEditor.tsx", "src/App.tsx"],
+          [{ screenId: "short-editor", name: "Short Editor", type: "editor" }],
+        ),
+        [],
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("does not accept a generated screen merely because an unused registry references it", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-generated-screen-unused-registry-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src/screens"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src/screens/SCREEN_INDEX.json"), JSON.stringify([
+        { screenId: "short-editor", title: "Short Editor", componentName: "ShortEditor", file: "src/screens/ShortEditor.tsx" },
+      ]));
+      fs.writeFileSync(path.join(tmp, "src/screens/ShortEditor.tsx"), "export function ShortEditor() { return <div>Editor</div>; }\n");
+      fs.writeFileSync(path.join(tmp, "src/App.tsx"), [
+        "import { ShortEditor } from './screens/ShortEditor';",
+        "const SURFACE_COMPONENTS = { 'short-editor': ShortEditor };",
+        "export default function App() { return <div>Not integrated</div>; }",
+        "",
+      ].join("\n"));
+
+      const issues = findGeneratedScreenIntegrationIssues(
+        tmp,
+        ["src/screens/ShortEditor.tsx", "src/App.tsx"],
+        [{ screenId: "short-editor", name: "Short Editor", type: "editor" }],
+      );
+      assert.equal(issues.length, 1);
+      assert.match(issues[0], /GENERATED_SCREEN_NOT_INTEGRATED/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("blocks later screen stories when they remove previously verified generated screens", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-generated-screen-regression-"));
     try {
