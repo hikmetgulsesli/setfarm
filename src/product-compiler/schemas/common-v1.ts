@@ -38,7 +38,10 @@ export const DesignSurfaceIdSchema = prefixedReference("DSURF");
 export const ActionIdSchema = prefixedReference("ACT");
 export const EvidenceIdSchema = prefixedReference("EVID");
 export const AssumptionIdSchema = prefixedReference("ASSUMPTION");
-export const ControlIdSchema = prefixedReference("CTRL");
+export const ControlIdSchema = z.union([
+  prefixedReference("CTRL"),
+  z.string().regex(/^CTRL_[a-f0-9]{16}$/, "Expected a derived CTRL_ hash reference"),
+]);
 export const CapabilityIdSchema = prefixedReference("CAP");
 export const OwnerIdSchema = prefixedReference("OWNER");
 export const PathBindingIdSchema = prefixedReference("PATH");
