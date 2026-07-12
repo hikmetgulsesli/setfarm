@@ -96,6 +96,9 @@ describe("worktree operations", () => {
 
       const firstWorktree = createStoryWorktree(repo, storyBranch, "main");
       fs.writeFileSync(path.join(firstWorktree, "dirty.txt"), "uncommitted retry context\n");
+      fs.writeFileSync(path.join(firstWorktree, "AGENTS.md"), "# OpenClaw workspace instructions\n");
+      fs.mkdirSync(path.join(firstWorktree, ".openclaw"), { recursive: true });
+      fs.writeFileSync(path.join(firstWorktree, ".openclaw", "workspace-state.json"), "{}\n");
       assert.notEqual(git(firstWorktree, ["status", "--porcelain"]), "");
 
       const secondWorktree = createStoryWorktree(repo, storyBranch, "main");
@@ -107,8 +110,10 @@ describe("worktree operations", () => {
       assert.match(git(repo, ["stash", "list"]), /setfarm-auto-stash dirty story worktree before c62e1bc1-qa-fix-001/);
       const retryPatch = latestRetryPatchForStory(repo, storyBranch);
       assert.ok(retryPatch.endsWith(".patch"));
-      assert.match(fs.readFileSync(retryPatch, "utf-8"), /dirty\.txt/);
-      assert.match(fs.readFileSync(retryPatch, "utf-8"), /uncommitted retry context/);
+      const retryPatchBody = fs.readFileSync(retryPatch, "utf-8");
+      assert.match(retryPatchBody, /dirty\.txt/);
+      assert.match(retryPatchBody, /uncommitted retry context/);
+      assert.doesNotMatch(retryPatchBody, /AGENTS\.md|workspace-state\.json|\.openclaw/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

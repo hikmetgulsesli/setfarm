@@ -88,9 +88,33 @@ function statusPathFromPorcelainLine(line: string): string {
   return renamed[renamed.length - 1] || raw;
 }
 
+const OPENCLAW_WORKTREE_INTERNAL_PATHS = [
+  ".openclaw",
+  "SOUL.md",
+  "AGENTS.md",
+  "IDENTITY.md",
+  "HEARTBEAT.md",
+  "TOOLS.md",
+  "USER.md",
+  "BOOTSTRAP.md",
+] as const;
+
+function isOpenClawWorktreeInternalPath(file: string): boolean {
+  return OPENCLAW_WORKTREE_INTERNAL_PATHS.some((entry) => file === entry || file.startsWith(`${entry}/`));
+}
+
+function retryPatchPathspecs(): string[] {
+  return [
+    ".",
+    ...OPENCLAW_WORKTREE_INTERNAL_PATHS.map((entry) => `:(exclude)${entry}`),
+    ":(exclude).openclaw/**",
+  ];
+}
+
 function isPlatformInternalStatusLine(line: string): boolean {
   const file = statusPathFromPorcelainLine(line);
-  return file === "SUPERVISOR_MEMORY.md"
+  return isOpenClawWorktreeInternalPath(file)
+    || file === "SUPERVISOR_MEMORY.md"
     || file === "PROJECT_MEMORY.md"
     || file === "CLAUDE.md"
     || file === ".worktrees"
@@ -132,9 +156,10 @@ function retryPatchTimestamp(): string {
 
 function captureDirtyStoryWorktreePatch(repo: string, worktreeDir: string, storyId: string, status: string): string {
   try {
+    const patchPathspecs = retryPatchPathspecs();
     // Include untracked files in the diff without staging their content.
     try {
-      execFileSync("git", ["add", "-N", "--", "."], {
+      execFileSync("git", ["add", "-N", "--", ...patchPathspecs], {
         cwd: worktreeDir,
         timeout: 10000,
         stdio: ["pipe", "pipe", "pipe"],
@@ -142,7 +167,7 @@ function captureDirtyStoryWorktreePatch(repo: string, worktreeDir: string, story
     } catch {
       // Best effort: tracked-file diffs are still useful.
     }
-    const patch = execFileSync("git", ["diff", "--binary", "--no-ext-diff", "HEAD", "--"], {
+    const patch = execFileSync("git", ["diff", "--binary", "--no-ext-diff", "HEAD", "--", ...patchPathspecs], {
       cwd: worktreeDir,
       encoding: "utf-8",
       timeout: 20000,
@@ -164,12 +189,15 @@ function captureDirtyStoryWorktreePatch(repo: string, worktreeDir: string, story
     fs.mkdirSync(dir, { recursive: true });
     const id = safeRetryPatchId(storyId);
     const patchPath = path.join(dir, `${id}-${retryPatchTimestamp()}.patch`);
+    const filteredStatus = status
+      .split(/\r?\n/)
+      .filter((line) => line && !isPlatformInternalStatusLine(line));
     const header = [
       `# setfarm.retry-worktree-patch.v1`,
       `# story_id=${storyId}`,
       `# worktree=${worktreeDir}`,
       `# captured_at=${new Date().toISOString()}`,
-      `# status=${status.split(/\r?\n/).slice(0, 20).join(" | ")}`,
+      `# status=${filteredStatus.slice(0, 20).join(" | ")}`,
       "",
     ].join("\n");
     fs.writeFileSync(patchPath, header + patch);
