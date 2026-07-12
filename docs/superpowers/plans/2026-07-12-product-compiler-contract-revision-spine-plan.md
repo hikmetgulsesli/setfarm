@@ -105,19 +105,18 @@ runtime behavior.
 
 ### Steps
 
-1. Add package scripts:
+1. Add the first package script:
 
    ```json
    {
-     "test:product-compiler": "node --import tsx --test tests/product-compiler/*.test.ts",
-     "test:execution-attempts": "node --import tsx --test tests/execution-attempts/*.test.ts",
-     "eval:contracts": "node --import tsx src/evals/contract-replay.ts --fixtures evals/fixtures"
+     "test:product-compiler": "node --import tsx --test tests/product-compiler/*.test.ts"
    }
    ```
 
-2. Extend `test` so the two nested suites run in addition to current root,
-   step, and script tests. Do not remove or reorder existing suites in a way
-   that hides failures.
+2. Extend `test` so the compiler suite runs in addition to current root, step,
+   and script tests. Task 8 adds the execution suite only after its first real
+   tests exist; Task 10 adds the eval command with its entry point. Do not add a
+   glob that has no matching tests, and do not hide it behind a silent skip.
 3. Add the first red protocol test that imports the intended module and fails
    because it does not exist yet. Do not add a vacuous passing assertion.
 4. Document that fixtures are redacted, deterministic, network-free evidence;
@@ -635,6 +634,7 @@ transactional duplicate/lease handling without touching legacy workflow state.
 - Add: `src/execution/output-envelope.ts`
 - Add: `src/execution/lease-fence.ts`
 - Add: `src/execution/attempt-repository.ts`
+- Modify: `package.json`
 - Modify: `src/db-pg.ts`
 - Add: `tests/execution-attempts/test-database.ts`
 - Add: `tests/execution-attempts/schemas.test.ts`
@@ -655,6 +655,14 @@ the existing additive `pgMigrate()` convention:
 - all DDL is idempotent.
 
 Do not run this migration against live PostgreSQL in this phase.
+
+Add and include the execution suite only now that real tests exist:
+
+```json
+{
+  "test:execution-attempts": "node --import tsx --test tests/execution-attempts/*.test.ts"
+}
+```
 
 ### Isolated Database Harness
 
@@ -823,9 +831,18 @@ without a live run, provider, browser, GitHub, OpenClaw, or operational DB.
 - Add: `tests/product-compiler/contract-replay.test.ts`
 - Complete: `evals/fixtures/*/expected/compilation-result.json`
 - Complete: `evals/fixtures/*/expected/attempt-result.json`
-- Modify: `package.json` only if the Task 0 script needs its final arguments
+- Modify: `package.json`
 
 ### CLI Contract
+
+Add the entry point together with its script, so no intermediate commit exposes
+a command whose module does not exist:
+
+```json
+{
+  "eval:contracts": "node --import tsx src/evals/contract-replay.ts --fixtures evals/fixtures"
+}
+```
 
 `npm run eval:contracts`:
 
