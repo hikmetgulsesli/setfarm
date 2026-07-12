@@ -28,6 +28,7 @@ export async function createIsolatedTestDatabase() {
     await admin`SELECT 1`;
     operations.push(`CREATE DATABASE ${database}`);
     await admin.unsafe(`CREATE DATABASE "${database}"`);
+    process.stderr.write(`[execution-test-db] created ${database}\n`);
   } catch (error) {
     await admin.end({ timeout: 2 }).catch(() => {});
     throw new Error(`ISOLATED_POSTGRES_UNAVAILABLE: ${error instanceof Error ? error.message : String(error)}`);
@@ -67,6 +68,7 @@ export async function createIsolatedTestDatabase() {
       await admin`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = ${database} AND pid <> pg_backend_pid()`;
       operations.push(`DROP DATABASE ${database}`);
       await admin.unsafe(`DROP DATABASE "${database}"`);
+      process.stderr.write(`[execution-test-db] dropped ${database}\n`);
       await admin.end({ timeout: 5 });
     },
   };
