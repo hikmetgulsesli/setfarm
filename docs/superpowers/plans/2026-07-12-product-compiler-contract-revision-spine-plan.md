@@ -484,9 +484,7 @@ generated source. This changes projection data, not runtime gate strictness.
 ### Files
 
 - Modify: `scripts/stitch-to-jsx.mjs`
-- Modify: `scripts/__tests__/stitch-to-jsx.test.js`
-- Modify: `tests/stitch-to-jsx.test.ts` only if its model expectations require
-  the new fields
+- Verify: `tests/stitch-to-jsx.test.ts`
 - Add: `tests/product-compiler/converter-projection.test.ts`
 
 ### Tests First
@@ -506,7 +504,6 @@ Add converter fixtures asserting:
 Run and expect failure:
 
 ```bash
-node --test scripts/__tests__/stitch-to-jsx.test.js
 node --import tsx --test tests/product-compiler/converter-projection.test.ts
 ```
 
@@ -521,7 +518,6 @@ node --import tsx --test tests/product-compiler/converter-projection.test.ts
 ### Verification
 
 ```bash
-node --test scripts/__tests__/stitch-to-jsx.test.js
 node --import tsx --test \
   tests/stitch-to-jsx.test.ts \
   tests/product-compiler/converter-projection.test.ts
