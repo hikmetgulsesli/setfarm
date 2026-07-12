@@ -8,11 +8,49 @@ export const GitCodeShaSchema = z
   .string()
   .regex(/^[a-f0-9]{7,64}$/, "Expected a lowercase Git code revision");
 
+export const GitObjectHashSchema = z
+  .string()
+  .regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/, "Expected a full Git object hash");
+
 export const StableReferenceSchema = z
   .string()
   .min(1)
   .max(160)
   .regex(/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$/, "Expected a stable uppercase reference");
+
+function prefixedReference(prefix: string): z.ZodString {
+  return z.string().min(prefix.length + 1).max(160).regex(
+    new RegExp(`^${prefix}_[A-Z0-9]+(?:_[A-Z0-9]+)*$`),
+    `Expected a ${prefix}_ stable reference`,
+  );
+}
+
+export const ProductIdSchema = prefixedReference("PROD");
+export const GoalIdSchema = prefixedReference("GOAL");
+export const NonGoalIdSchema = prefixedReference("NONGOAL");
+export const EntityIdSchema = prefixedReference("ENTITY");
+export const EntityFieldIdSchema = prefixedReference("FIELD");
+export const StateIdSchema = prefixedReference("STATE");
+export const PersistenceIdSchema = prefixedReference("PERSIST");
+export const RouteIdSchema = prefixedReference("ROUTE");
+export const SurfaceIdSchema = prefixedReference("SURF");
+export const DesignSurfaceIdSchema = prefixedReference("DSURF");
+export const ActionIdSchema = prefixedReference("ACT");
+export const EvidenceIdSchema = prefixedReference("EVID");
+export const AssumptionIdSchema = prefixedReference("ASSUMPTION");
+export const ControlIdSchema = prefixedReference("CTRL");
+export const CapabilityIdSchema = prefixedReference("CAP");
+export const OwnerIdSchema = prefixedReference("OWNER");
+export const PathBindingIdSchema = prefixedReference("PATH");
+export const SharedGrantIdSchema = prefixedReference("GRANT");
+export const EntrypointIdSchema = prefixedReference("ENTRY");
+export const CommandIdSchema = prefixedReference("CMD");
+
+export const StoryIdSchema = z
+  .string()
+  .min(3)
+  .max(160)
+  .regex(/^[A-Z][A-Z0-9]*(?:[-_][A-Z0-9]+)+$/, "Expected a stable story reference");
 
 export const NormalizedRelativeLocatorSchema = z
   .string()
@@ -34,6 +72,20 @@ export const NormalizedRelativeLocatorSchema = z
         message: "Expected a normalized relative locator without traversal",
       });
     }
+  });
+
+export const RepoRelativePathSchema = z.union([
+  z.literal("."),
+  NormalizedRelativeLocatorSchema,
+]);
+
+export const ProductRoutePathSchema = z
+  .string()
+  .min(1)
+  .max(500)
+  .refine((value) => value.startsWith("/"), "Product routes must start with /")
+  .refine((value) => !value.includes("\\") && !value.includes("\0"), {
+    message: "Product routes cannot contain backslashes or NUL",
   });
 
 export const ProvenanceConfidenceSchema = z.enum([
