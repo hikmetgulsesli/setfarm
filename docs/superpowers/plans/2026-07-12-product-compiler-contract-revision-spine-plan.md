@@ -268,9 +268,11 @@ node --import tsx --test \
    serialization. Do not depend on `JSON.stringify(value, sortedKeys)` because
    it does not provide the required recursive semantics by itself.
 2. Hash UTF-8 bytes with SHA-256.
-3. Implement same-directory temporary write, file `fsync`, atomic rename, and
-   parent-directory `fsync` where supported.
-4. On rename races, verify the final target rather than overwriting it.
+3. Implement same-directory temporary write, file `fsync`, atomic no-replace
+   publication, and parent-directory `fsync` where supported. Use a
+   same-filesystem hard link followed by temporary unlink because Node's
+   `rename()` may overwrite an existing immutable hash target.
+4. On publication races, verify the final target rather than overwriting it.
 5. Make the store root constructor-injected. Runtime defaults are added only in
    Task 9.
 

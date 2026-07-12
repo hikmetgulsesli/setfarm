@@ -250,10 +250,12 @@ It contains no timestamp, host, PID, absolute path, or random ID. Operational
 creation metadata belongs in PostgreSQL or the caller's report and is not part
 of the semantic hash.
 
-Writes use a same-directory temporary file, `fsync`, and atomic rename. If the
-target exists, the store reads and verifies its bytes. Same hash with different
-bytes returns `ARTIFACT_HASH_COLLISION_OR_CORRUPTION`; it never overwrites.
-Reads recompute the hash before returning content.
+Writes use a same-directory temporary file, `fsync`, and atomic no-replace
+publication. In Node this is a same-filesystem hard link followed by temporary
+unlink because `rename()` may overwrite an existing immutable hash target. If
+the target exists, the store reads and verifies its bytes. Same hash with
+different bytes returns `ARTIFACT_HASH_COLLISION_OR_CORRUPTION`; it never
+overwrites. Reads recompute the hash before returning content.
 
 ### Legacy adapters
 
