@@ -12,7 +12,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && cp src/server/index.html dist/server/index.html && cp src/installer/compat-rules.json dist/installer/compat-rules.json && mkdir -p dist/installer/prompts && cp src/installer/prompts/*.md dist/installer/prompts/ && node scripts/copy-step-assets.mjs && chmod +x dist/cli/cli.js && node scripts/inject-version.js",
     "start": "node dist/cli/cli.js",
-    "test": "node --import tsx --test tests/*.test.ts && npm run test:steps && npm run test:scripts",
+    "test": "node --import tsx --test tests/*.test.ts && npm run test:steps && npm run test:scripts && npm run test:product-compiler",
+    "test:product-compiler": "node --import tsx --test tests/product-compiler/*.test.ts",
     "test:steps": "node --import tsx --test tests/steps/*.test.ts",
     "test:scripts": "node --test scripts/__tests__/*.test.js",
     "check:version": "node scripts/check-version-contract.mjs",
@@ -24,7 +25,8 @@
     "json5": "^2.2.3",
     "playwright": "^1.58.2",
     "postgres": "^3.4.8",
-    "yaml": "^2.4.5"
+    "yaml": "^2.4.5",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^25.2.1",
