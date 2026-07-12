@@ -1818,6 +1818,38 @@ describe("07-verify step module", () => {
     assert.equal(commentLooksMechanicallySatisfied(persistComment, unsafePersist), false);
   });
 
+  it("marks uncontrolled editor DOM value persistence as mechanically satisfied", () => {
+    const comment = {
+      id: "uncontrolled-editor-save",
+      threadId: "PRRT_uncontrolled_editor_save",
+      kind: "review-comment" as const,
+      author: "gemini-code-assist",
+      body: "The generated editor form is uncontrolled, so user edits are ignored on save. Retrieve values directly from the DOM using `task-title` and `task-desc` element IDs before persisting.",
+      createdAt: "2026-07-12T14:35:00Z",
+      path: "src/features/editor/act_save_record.ts",
+      line: 69,
+      originalLine: 49,
+      threadResolved: false,
+      outdated: false,
+    };
+    const fixedSource = `
+      const titleInput = document.getElementById("task-title") as HTMLInputElement | null;
+      const descTextarea = document.getElementById("task-desc") as HTMLTextAreaElement | null;
+      const title = titleInput?.value.trim() || draftItem.title;
+      const description = descTextarea?.value ?? draftItem.description;
+      const updatedDraft = { ...draftItem, title, description };
+      const nextItems = currentItems.map((item) => item.id === updatedDraft.id ? updatedDraft : item);
+      setItems(nextItems);
+    `;
+    const unsafeSource = `
+      const updatedDraft = { ...draftItem, title: draftItem.title, description: draftItem.description };
+      setItems([updatedDraft]);
+    `;
+
+    assert.equal(commentLooksMechanicallySatisfied(comment, fixedSource), true);
+    assert.equal(commentLooksMechanicallySatisfied(comment, unsafeSource), false);
+  });
+
   it("marks stable React api object review comments as mechanically satisfied", () => {
     const stableApiComment = {
       id: "stable-api-object",

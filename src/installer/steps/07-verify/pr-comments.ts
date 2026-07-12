@@ -590,6 +590,25 @@ function persistenceErrorPropagationReviewLooksSatisfied(body: string, normalize
   return /\bcatch\s*\([^)]*\)\s*\{[^}]*\bthrow\b/.test(persistWindow);
 }
 
+function uncontrolledEditorDomSaveReviewLooksSatisfied(body: string, normalizedSource: string): boolean {
+  if (!/\buncontrolled\b/i.test(body)) return false;
+  if (!/\b(?:edit|input|field|form)\b/i.test(body) || !/\b(?:save|persist|lost|ignored)\b/i.test(body)) return false;
+  if (!/\b(?:getElementById|DOM|element IDs?)\b/i.test(body)) return false;
+
+  const ids = [...new Set([...String(body || "").matchAll(/["'`]([A-Za-z][A-Za-z0-9_-]{2,})["'`]/g)]
+    .map((match) => match[1])
+    .filter((value) => /(?:title|desc|description|name|note|record|task)/i.test(value)))];
+  if (ids.length === 0) return false;
+  if (!ids.every((id) => new RegExp(`document\\.getElementById\\(\\s*["']${escapeRegExp(id)}["']\\s*\\)`).test(normalizedSource))) {
+    return false;
+  }
+
+  const readsInputValues = /\b[A-Za-z_$][\w$]*(?:Input|Textarea|Field)\??\.value\b/.test(normalizedSource);
+  const buildsUpdatedPayload = /\bconst\s+[A-Za-z_$][\w$]*(?:Draft|Item|Record)\s*=\s*\{\s*\.\.\.[A-Za-z_$][\w$]*\s*,[^}]*\b(?:title|name)\b[^}]*\b(?:description|desc|details|content)\b[^}]*\}/.test(normalizedSource);
+  const persistsCollection = /\bset(?:Items|Records|Tasks|Notes)\s*\(/.test(normalizedSource);
+  return readsInputValues && buildsUpdatedPayload && persistsCollection;
+}
+
 function commentProseLooksMechanicallySatisfied(body: string, normalizedSource: string): boolean {
   const text = String(body || "").toLowerCase();
 
@@ -608,6 +627,7 @@ function commentProseLooksMechanicallySatisfied(body: string, normalizedSource: 
   if (recoveredStorageStatusReviewLooksSatisfied(body, normalizedSource)) return true;
   if (windowAppCleanupReviewLooksSatisfied(body, normalizedSource)) return true;
   if (persistenceErrorPropagationReviewLooksSatisfied(body, normalizedSource)) return true;
+  if (uncontrolledEditorDomSaveReviewLooksSatisfied(body, normalizedSource)) return true;
 
   if (
     /\bwindow\.app\b/i.test(body) &&
