@@ -75,6 +75,7 @@ export function buildMinimalValidContracts() {
       {
         id: "ACT_SAVE_TASK",
         name: "Save task",
+        surfaceRefs: ["SURF_EDITOR"],
         trigger: { kind: "user" as const },
         input: {
           fields: [

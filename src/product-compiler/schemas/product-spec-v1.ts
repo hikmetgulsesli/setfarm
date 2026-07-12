@@ -270,6 +270,9 @@ export const ProductActionV1Schema = z
   .object({
     id: ActionIdSchema,
     name: z.string().min(1).max(200),
+    surfaceRefs: z.array(SurfaceIdSchema).min(1).max(1_000).refine(hasUniqueStrings, {
+      message: "Action surface refs must be unique",
+    }),
     trigger: ActionTriggerV1Schema,
     input: ActionInputV1Schema,
     preconditions: z.array(ActionPreconditionV1Schema).max(500),
@@ -423,6 +426,14 @@ export const ProductSpecV1Schema = z
 
     value.actions.forEach((action, actionIndex) => {
       const inputFields = new Set(action.input.fields.map((field) => field.name));
+      action.surfaceRefs.forEach((surfaceRef, surfaceIndex) => {
+        requireRef(
+          surfaceIds,
+          surfaceRef,
+          ["actions", actionIndex, "surfaceRefs", surfaceIndex],
+          "surface ref",
+        );
+      });
       action.input.fields.forEach((field, fieldIndex) => {
         if (field.entityFieldRef) {
           requireRef(fieldIds, field.entityFieldRef, ["actions", actionIndex, "input", "fields", fieldIndex, "entityFieldRef"], "entity field ref");

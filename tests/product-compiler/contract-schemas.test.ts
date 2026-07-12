@@ -84,6 +84,10 @@ describe("versioned Product Build Packet contract schemas", () => {
     const missingEvidence = clone(values.productSpec);
     missingEvidence.actions[0]!.evidenceRefs = ["EVID_MISSING"];
     assert.equal(ProductSpecV1Schema.safeParse(missingEvidence).success, false);
+
+    const missingActionSurface = clone(values.productSpec);
+    missingActionSurface.actions[0]!.surfaceRefs = ["SURF_MISSING"];
+    assert.equal(ProductSpecV1Schema.safeParse(missingActionSurface).success, false);
   });
 
   it("requires exactly one binding or unresolved record per interactive control", () => {
