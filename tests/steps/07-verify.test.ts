@@ -1757,6 +1757,67 @@ describe("07-verify step module", () => {
     assert.equal(commentLooksMechanicallySatisfied(stableCallbacksComment, `const shell = useRunProbeShell(); const screenActions = useMemo(() => ({}), [shell]);`), false);
   });
 
+  it("marks window.app rest cleanup and persistence error propagation as mechanically satisfied", () => {
+    const appCleanupComment = {
+      id: "window-app-rest-cleanup",
+      threadId: "PRRT_window_app_rest_cleanup",
+      kind: "review-comment" as const,
+      author: "gemini-code-assist",
+      body: "The useEffect installs a global window.app snapshot but does not clean it up on unmount, causing stale references and test cross-contamination.",
+      createdAt: "2026-07-12T14:10:52Z",
+      path: "src/App.tsx",
+      line: 41,
+      originalLine: 41,
+      threadResolved: false,
+      outdated: false,
+    };
+    const persistComment = {
+      id: "persist-error-propagation",
+      threadId: "PRRT_persist_error_propagation",
+      kind: "review-comment" as const,
+      author: "gemini-code-assist",
+      body: "The persist function catches and swallows QuotaExceededError, so callers cannot surface storage errors. Propagate the error to the caller.",
+      createdAt: "2026-07-12T14:10:52Z",
+      path: "src/repo.ts",
+      line: 93,
+      originalLine: 93,
+      threadResolved: false,
+      outdated: false,
+    };
+    const fixedCleanup = `
+      useEffect(() => {
+        const target = globalThis as { app?: Record<string, unknown> };
+        target.app = { ...(target.app ?? {}), taskChip: { state, actions } };
+        return () => {
+          if (target.app) {
+            const { taskChip: omitted, ...rest } = target.app;
+            target.app = rest;
+          }
+        };
+      }, [state, actions]);
+    `;
+    const fixedPersist = `
+      function persist(storage: Storage, items: Item[]): void {
+        try {
+          storage.setItem(KEY, JSON.stringify(items));
+        } catch (error) {
+          throw error instanceof Error ? error : new Error("Failed to persist storage.");
+        }
+      }
+    `;
+    const unsafeCleanup = `target.app = { taskChip: { state } };`;
+    const unsafePersist = `
+      function persist(storage: Storage, items: Item[]): void {
+        try { storage.setItem(KEY, JSON.stringify(items)); } catch (error) { console.warn(error); }
+      }
+    `;
+
+    assert.equal(commentLooksMechanicallySatisfied(appCleanupComment, fixedCleanup), true);
+    assert.equal(commentLooksMechanicallySatisfied(appCleanupComment, unsafeCleanup), false);
+    assert.equal(commentLooksMechanicallySatisfied(persistComment, fixedPersist), true);
+    assert.equal(commentLooksMechanicallySatisfied(persistComment, unsafePersist), false);
+  });
+
   it("marks stable React api object review comments as mechanically satisfied", () => {
     const stableApiComment = {
       id: "stable-api-object",

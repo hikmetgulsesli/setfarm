@@ -561,6 +561,35 @@ function recoveredStorageStatusReviewLooksSatisfied(body: string, normalizedSour
     /\bdispatch\s*\(\s*\{[^}]*status\s*:\s*['"]ready['"][^}]*\}\s*\)/.test(normalizedSource);
 }
 
+function windowAppCleanupReviewLooksSatisfied(body: string, normalizedSource: string): boolean {
+  if (!/\bwindow\.app\b/i.test(body)) return false;
+  if (!/\bcleanup|clean\s+up|unmount|memory\s+leak|cross-contamination|stale\s+references?\b/i.test(body)) return false;
+  if (!/\b(?:window|globalThis|target)\.app\s*=/.test(normalizedSource)) return false;
+
+  const deletesInstalledField =
+    /return\s*\(\s*\)\s*=>\s*\{[^]*?delete\s+(?:window|globalThis|target)\.app(?:\?\.)?\.[A-Za-z_$][\w$]*[^]*?\}/.test(normalizedSource);
+  const deletesWholeBridge =
+    /return\s*\(\s*\)\s*=>\s*\{[^]*?delete\s+(?:window|globalThis|target)\.app\s*;?[^]*?\}/.test(normalizedSource);
+  const removesFieldWithRest =
+    /return\s*\(\s*\)\s*=>\s*\{[^]*?const\s*\{\s*[A-Za-z_$][\w$]*\s*:\s*[A-Za-z_$][\w$]*\s*,\s*\.\.\.([A-Za-z_$][\w$]*)\s*\}\s*=\s*([A-Za-z_$][\w$]*)\.app\s*;?[^]*?\2\.app\s*=\s*\1\s*;?[^]*?\}/.test(normalizedSource);
+
+  return deletesInstalledField || deletesWholeBridge || removesFieldWithRest;
+}
+
+function persistenceErrorPropagationReviewLooksSatisfied(body: string, normalizedSource: string): boolean {
+  if (!/\bpersist\b/i.test(body) || !/\b(?:catch|swallow|propagat|QuotaExceededError|quota|caller)\b/i.test(body)) return false;
+  if (!/\b(?:setItem|localStorage|storage)\b/i.test(body)) return false;
+
+  const persistStart = normalizedSource.search(/\bfunction\s+persist\s*\(/);
+  if (persistStart < 0) return false;
+  const persistWindow = normalizedSource.slice(persistStart, persistStart + 1800);
+  if (!/\.setItem\s*\(/.test(persistWindow)) return false;
+
+  const catches = /\bcatch\s*\(/.test(persistWindow);
+  if (!catches) return true;
+  return /\bcatch\s*\([^)]*\)\s*\{[^}]*\bthrow\b/.test(persistWindow);
+}
+
 function commentProseLooksMechanicallySatisfied(body: string, normalizedSource: string): boolean {
   const text = String(body || "").toLowerCase();
 
@@ -577,6 +606,8 @@ function commentProseLooksMechanicallySatisfied(body: string, normalizedSource: 
   if (persistablePayloadDedupReviewLooksSatisfied(body, normalizedSource)) return true;
   if (generatedScreenActionsPropReviewLooksSatisfied(body, normalizedSource)) return true;
   if (recoveredStorageStatusReviewLooksSatisfied(body, normalizedSource)) return true;
+  if (windowAppCleanupReviewLooksSatisfied(body, normalizedSource)) return true;
+  if (persistenceErrorPropagationReviewLooksSatisfied(body, normalizedSource)) return true;
 
   if (
     /\bwindow\.app\b/i.test(body) &&
